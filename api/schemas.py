@@ -731,3 +731,48 @@ class TradingMetricsResponse(BaseModel):
     unrealized_pnl: float = 0.0
     win_count: int = 0
     loss_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Live Trading (demo mode) — 第8步 API schemas
+# ---------------------------------------------------------------------------
+
+
+class LiveTradingTaskCreate(BaseModel):
+    symbol: str
+    timeframe: str
+    dna_json: str
+    direction: str = "mixed"
+    config_json: Optional[str] = None
+
+
+class LiveTradingTaskUpdate(BaseModel):
+    status: Optional[str] = None
+    config_json: Optional[str] = None
+    stop_reason: Optional[str] = None
+
+
+class LiveTradingTaskResponse(BaseModel):
+    task_id: str
+    symbol: str
+    timeframe: str
+    status: str
+    config_json: Optional[str] = None
+    direction: str = "mixed"
+    position_side: str = ""
+    position_qty: float = 0.0
+    position_entry: float = 0.0
+    balance: float = 0.0
+    equity: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_trades: int = 0
+    total_pnl: float = 0.0
+    last_bar_time: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class LiveTradingTaskListResponse(BaseModel):
+    tasks: List[LiveTradingTaskResponse]
+    total: int

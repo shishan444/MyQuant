@@ -19,6 +19,7 @@ from .routes import validate as validate_route
 from .routes import scene as scene_route
 from .routes import discovery as discovery_route
 from .routes import trading as trading_route
+from .routes import live_trading as live_trading_route
 from .schemas import HealthResponse
 
 
@@ -47,6 +48,8 @@ def create_app(
         db_path.parent.mkdir(parents=True, exist_ok=True)
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
+        from core.live_trading.persistence import init_live_trading_tables
+        init_live_trading_tables(db_path)
 
         # Start EvolutionRunner background thread
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
@@ -126,6 +129,7 @@ def create_app(
     app.include_router(data.router)
     app.include_router(ws.router)
     app.include_router(trading_route.router)
+    app.include_router(live_trading_route.router)
     app.include_router(validate_route.router)
     app.include_router(scene_route.router)
     app.include_router(discovery_route.router)

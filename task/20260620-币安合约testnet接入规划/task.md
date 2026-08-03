@@ -1,6 +1,14 @@
-# 币安 U本位永续合约 testnet 接入规划（v2·已冻结）
+# 币安 U本位永续合约 demo mode 接入规划（v3·已冻结）
 
-> **状态：推理链 v2 已冻结（2026-06-20）**。本轮只规划不写代码。本文件为未来实现的基准。
+> **v3 修正（2026-06-21，基于官方文档纠正）**：原 v2 用 testnet（testnet.binancefuture.com），**改为 demo mode（demo-fapi.binance.com）**。
+> - **端点**：`testnet.binancefuture.com` → **`demo-fapi.binance.com`**
+> - **python_binance**：`Client(testnet=True)` → **`Client(demo=True)`**（源码 base_client.py:307 切 `FUTURES_DEMO_URL`）
+> - **凭证机制**：独立 testnet 账户 → **主账户 → Binance Demo Trading → API Key Management 创建 key**
+> - **理由**：① testnet 正被币安废弃（旧 key 删除）；② CCXT #26487 旧 testnet 端点有**错误路由到实盘**的 bug（严重风险）；③ demo mode **行情接近实盘**（解决原 R6「testnet 行情偏差、不评估策略」局限）、功能/过滤器与实盘完全一致、当前官方推荐。
+> - **已交付代码已改**：`credentials.py`(SERVICE_DEMO/demo 字段)、`binance_client.py`(Client(demo=True))、类名 `BinanceDemoClient`/`BinanceDemoGateway`，105 测试全绿。
+> - 正文残留 testnet 字样为 v2 历史，**以本块为准**；原 R6「testnet 行情偏差」在 demo mode 下**不再成立**（demo 行情接近实盘，策略验证有意义）。
+>
+> **状态：推理链 v3 已冻结**。实现已启动（引擎层 9 模块完成，见文末实施进度）。
 > **v2 相对 v1 的变更**（经架构评审 + 用户决策）：
 > - **持仓**：HEDGE 双向 → **单向 One-Way Mode**（偏差3 决策）。理由：单仓=模拟交易持仓模型→实盘与模拟可对照验证；方向由 `DNA.direction` 自适应（long/short/mixed 三值全支持），不阉割方向能力。
 > - **时序**：未明确 → **bar 轮询模型**（偏差2 决策）。理由：模拟是 bar 驱动，`judgment` 决策语义/SL-TP 触发语义只在 bar 闭合模型下成立；tick 实时会全部失效。
