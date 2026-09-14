@@ -332,8 +332,11 @@ class TestEquityNonNegativity:
                 make_dna(leverage=lev, stop_loss=0, take_profit=0),
                 df, signal_set=sig,
             )
-            # Allow small negative due to rounding, but not large negative
-            assert r.equity_curve.min() > -1000, (
+            # Allow small negative due to rounding/bar-intra penetration, but not large negative
+            # batch1 D1 重标定: 0.9/L 口径下清算更晚(价差 0.9/L 而非 0.9/L^2)，
+            # 权益谷值更深——边界从 -1000 放宽到 -5000(实测 L=10 谷值约 -3443，
+            # 占 init_cash 3.4%，仍在「不显著为负」不变量语义内)
+            assert r.equity_curve.min() > -5000, (
                 f"Equity went to {r.equity_curve.min():.2f} with L={lev}"
             )
 

@@ -130,6 +130,11 @@ def recover_stale_tasks(db_path: Path) -> None:
     """Mark all running tasks as stopped (crash recovery).
 
     Called once at app startup to clean up after unclean shutdowns.
+
+    batch1 D3 语义注记: 恢复类写入是「残留态清理」（WHERE status='running'
+    的条件更新即其前态语义），不走 update_task 的动作前态守护——pending
+    任务不受影响（创建即 pending 后不会被误清，spec 场景「崩溃恢复不误清
+    未接手任务」）。
     """
     from core.persistence.db import _connect
     with _connect(db_path) as conn:
@@ -346,6 +351,8 @@ class EvolutionRunner(threading.Thread):
             self._execute_task(task_row, task_id, controller)
         except TaskStopRequested:
             logger.info("Task %s stopped via TaskController", task_id)
+            # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
+            # 前态必然 running（单线程执行流内），不接动作前态守护
             update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
         except _StopEvolution as e:
             logger.info("Task %s stopped: %s", task_id, e)
@@ -738,11 +745,14 @@ class EvolutionRunner(threading.Thread):
 
         # Save champion
         if champion is not None:
+            # batch1 D3: completed 前态守护 {running}——与路由 stop 写入的竞态中
+            # 先到者胜（先 completed 则 stop 被 409 拒绝；先 stopped 则本写不生效）
             update_task(
                 self.db_path, task_id,
                 status="completed",
                 champion_dna=champion,
                 stop_reason=stop_reason,
+                expected_statuses=("running",),
             )
 
             # Save final champion metrics from tracker (consistent snapshot)
@@ -789,6 +799,7 @@ class EvolutionRunner(threading.Thread):
                 self.db_path, task_id,
                 status="completed",
                 stop_reason=stop_reason,
+                expected_statuses=("running",),
             )
 
         # Final WS push

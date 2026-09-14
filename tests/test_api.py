@@ -476,6 +476,9 @@ class TestEvolutionTaskPause:
         """POST /api/evolution/tasks/{id}/pause should pause task."""
         create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
         task_id = create_resp.json()["task_id"]
+        # D3: pause 前态 {running}——先推进到 running（模拟 runner 拾取）
+        from core.persistence.db import update_task as _ut
+        _ut(client.app.state.db_path, task_id, status="running")
         response = client.post(f"/api/evolution/tasks/{task_id}/pause")
         assert response.status_code == 200
         data = response.json()

@@ -309,7 +309,7 @@ def create_task(
     conn.execute(
         """UPDATE evolution_task
            SET population_size = ?, max_generations = ?,
-               elite_ratio = ?, n_workers = ?, status = 'pending',
+               elite_ratio = ?, n_workers = ?,
                leverage = ?, direction = ?,
                data_start = ?, data_end = ?,
                data_time_start = ?, data_time_end = ?, data_row_count = ?,
@@ -418,7 +418,14 @@ def pause_task(
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    update_task(db_path, task_id, status="paused")
+    # batch1 D3: 合法前态守护——仅 running 可暂停；拒绝返回 409（非法迁移禁止任何写入）
+    applied = update_task(db_path, task_id, status="paused", expected_statuses=("running",))
+    if not applied:
+        current = get_task(db_path, task_id)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task is not running (current: {current['status'] if current else 'missing'})",
+        )
     row = get_task(db_path, task_id)
     return _task_row_to_response(row)
 
@@ -440,7 +447,17 @@ def stop_task(
     if controller is not None:
         controller.request_stop()
 
-    update_task(db_path, task_id, status="stopped", stop_reason="user_stop")
+    # batch1 D3: 合法前态守护——终态(completed/error)不可停止，防止覆写自然完成的结果
+    applied = update_task(
+        db_path, task_id, status="stopped", stop_reason="user_stop",
+        expected_statuses=("running", "paused", "pending"),
+    )
+    if not applied:
+        current = get_task(db_path, task_id)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task already finished (current: {current['status'] if current else 'missing'})",
+        )
     row = get_task(db_path, task_id)
     return _task_row_to_response(row)
 

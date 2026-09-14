@@ -97,8 +97,14 @@ def save_task(
     symbol: str,
     timeframe: str,
     initial_dna: StrategyDNA,
+    status: str = "pending",
 ) -> None:
-    """Create a new evolution task."""
+    """Create a new evolution task, atomically entering ``status``.
+
+    batch1 D4: 任务创建单次写入进入 pending——历史上先插 'running' 再由
+    路由 UPDATE 改 'pending' 的双写序列已废弃（崩溃窗口内会被
+    recover_stale_tasks 误清）。
+    """
     now = _now()
     conn = _connect(db_path)
     conn.execute(
@@ -106,7 +112,7 @@ def save_task(
            (task_id, status, target_score, score_template, symbol, timeframe,
             initial_dna, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (task_id, "running", target_score, template, symbol, timeframe,
+        (task_id, status, target_score, template, symbol, timeframe,
          initial_dna.to_json(), now, now),
     )
     conn.commit()
@@ -119,8 +125,19 @@ def update_task(
     status: Optional[str] = None,
     champion_dna: Optional[StrategyDNA] = None,
     stop_reason: Optional[str] = None,
-) -> None:
-    """Update task status, champion, or stop reason."""
+    expected_statuses: Optional[tuple] = None,
+) -> bool:
+    """Update task status, champion, or stop reason.
+
+    batch1 D3 条件更新：提供 ``expected_statuses`` 且本次写入 status 时，
+    UPDATE 仅在当前状态属于合法前态集合时生效——生效行数为 0 时返回
+    False（调用方转 409），不静默无效果。不提供时保持既有无条件写
+    （向后兼容：恢复类/失败路径的「任意残留态最后写」语义，调用点注释）。
+
+    Returns:
+        True 表示写入生效；False 表示前态不匹配被拒绝（仅当
+        expected_statuses 提供且包含 status 写入时可能返回 False）。
+    """
     conn = _connect(db_path)
     updates = ["updated_at = ?"]
     params: list = [_now()]
@@ -135,13 +152,21 @@ def update_task(
         updates.append("stop_reason = ?")
         params.append(stop_reason)
 
+    where = "WHERE task_id = ?"
     params.append(task_id)
-    conn.execute(
-        f"UPDATE evolution_task SET {', '.join(updates)} WHERE task_id = ?",
+    if expected_statuses is not None and status is not None:
+        placeholders = ",".join("?" * len(expected_statuses))
+        where += f" AND status IN ({placeholders})"
+        params.extend(expected_statuses)
+
+    cursor = conn.execute(
+        f"UPDATE evolution_task SET {', '.join(updates)} {where}",
         params,
     )
+    applied = cursor.rowcount > 0
     conn.commit()
     conn.close()
+    return applied
 
 
 def get_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:

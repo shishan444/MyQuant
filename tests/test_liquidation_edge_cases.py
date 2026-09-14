@@ -87,15 +87,19 @@ def test_liquidation_with_remaining_funds_continues():
 
     Setup:
     - Enter long at bar 4 (close=100) with 5x leverage
-    - Price drops 30% by bar 15 (close=70), triggering liquidation
+    - Price drops hard (close to 30), triggering order-level liquidation
     - Some funds remain after liquidation
-    - New entry signal at bar 25 (close=80, then rises to 100)
+    - New entry signal at bar 25 (then rises)
     - Should be able to open a new position
+
+    batch1 D1 重标定: 旧场景(跌 35%)绑定 0.9/L^2 旧口径(价差 3.6%)。
+    新口径 0.9/L@L=5 价差 18%，且订单层判定基于真实账户值(含
+    position_size 缩水)——需更深跌幅使订单层真实触发清算平仓。
     """
     n = 60
     close_arr = np.ones(n) * 100
-    # Drop from 100 to 65 (35% drop, should trigger liquidation with 5x leverage)
-    close_arr[5:20] = np.linspace(100, 65, 15)
+    # Drop from 100 to 30 (70% drop, triggers order-level liquidation with 5x leverage under 0.9/L)
+    close_arr[5:20] = np.linspace(100, 30, 15)
     # Recover and rise
     close_arr[20:40] = np.linspace(65, 90, 20)
     close_arr[40:55] = np.linspace(90, 110, 15)

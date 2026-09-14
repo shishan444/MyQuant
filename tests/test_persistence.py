@@ -70,7 +70,7 @@ class TestTask:
         task = get_task(initialized_db, "task-001")
         assert task is not None
         assert task["task_id"] == "task-001"
-        assert task["status"] == "running"
+        assert task["status"] == "pending"  # D4: 创建原子进入 pending
         assert task["target_score"] == 80.0
 
     def test_update_task_status(self, initialized_db, sample_dna):
@@ -86,6 +86,7 @@ class TestTask:
     def test_get_running_task(self, initialized_db, sample_dna):
         save_task(initialized_db, "task-003", 80.0, "profit_first",
                   "BTCUSDT", "4h", sample_dna)
+        update_task(initialized_db, "task-003", status="running")  # runner 拾取
         running = get_running_task(initialized_db)
         assert running is not None
         assert running["task_id"] == "task-003"
@@ -146,6 +147,8 @@ class TestCheckpoint:
         save_task(initialized_db, "task-ck", 80.0, "profit_first",
                   "BTCUSDT", "4h", sample_dna)
 
+        # resume_evolution 仅对 running 任务恢复（D4: 创建即 pending——显式推进模拟 runner 拾取）
+        update_task(initialized_db, "task-ck", status="running")
         # Save 3 generations
         population = [sample_dna]
         for gen in [1, 2, 3]:
@@ -181,6 +184,7 @@ class TestListAllTasks:
     def test_status_filter(self, initialized_db, sample_dna):
         save_task(initialized_db, "task-filter-1", 80.0, "profit_first",
                   "BTCUSDT", "4h", sample_dna)
+        update_task(initialized_db, "task-filter-1", status="running")  # D4: 显式推进
         save_task(initialized_db, "task-filter-2", 80.0, "profit_first",
                   "BTCUSDT", "4h", sample_dna)
         update_task(initialized_db, "task-filter-2", status="completed")

@@ -754,7 +754,7 @@ class TestEvolutionTaskExtended:
         task = get_task(db_path, "pre-migration-001")
         assert task is not None
         assert task["task_id"] == "pre-migration-001"
-        assert task["status"] == "running"
+        assert task["status"] == "pending"  # D4: save_task 直插 pending（旧 running 硬编码已废弃）
         assert task["target_score"] == 90.0
         assert task["symbol"] == "BTCUSDT"
         # Extended columns should have defaults
