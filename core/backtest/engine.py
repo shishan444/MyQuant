@@ -19,6 +19,27 @@ from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_sign
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# 清算模型（batch1 D1：单一权威源）
+#
+# 合约清算第一性公式: 清算价差 d = (1 - 维持保证金率) / 杠杆 L。
+# MAINTENANCE_MARGIN_FRACTION 近似 (1 - mmr)，即价格反向走
+# MAINTENANCE_MARGIN_FRACTION / L 时触及清算线。注意：真实币安 USDT-M
+# 分层维持率约 0.4-1%，此处 0.9 为偏保守的简化口径（遗留标注，精确化
+# 归市场模型层批次）。禁止在本模块其他位置出现第二个维持率字面量。
+# ---------------------------------------------------------------------------
+MAINTENANCE_MARGIN_FRACTION = 0.9
+
+
+@njit(cache=True)
+def maintenance_threshold(init_cash: float, leverage: float) -> float:
+    """权益清算线：权益低于 init_cash * (1 - MAINTENANCE_MARGIN_FRACTION / leverage) 触发清算。
+
+    纯算术函数——@njit 订单回调（order_func_nb）与事后检测（run 内）
+    共同引用此唯一实现，保证逐 bar 判定与事后检测结论一致。
+    """
+    return init_cash * (1.0 - MAINTENANCE_MARGIN_FRACTION / leverage)
+
 
 @dataclass
 class BacktestResult:
@@ -34,6 +55,9 @@ class BacktestResult:
     liquidated: bool = False
     data_bars: int = 0
     trade_win_rate: float | None = None
+    # 胜率三态（batch1 D2）：None+win_rate_failed=False=无交易（合法缺失）；
+    # 数值=计算成功；None+win_rate_failed=True=计算失败（显式失败，禁止按缺失降级）
+    win_rate_failed: bool = False
     trade_returns: np.ndarray | None = None
     bars_per_year: int = 2190
     add_count: int = 0
@@ -262,7 +286,7 @@ def order_func_nb(c, entry_price, is_liquidated,
 
     # Liquidation check BEFORE SL/TP (for leveraged positions)
     if leverage > 1.0 and c.position_now != 0.0:
-        maintenance = c.init_cash[0] * (1.0 - 0.9 / (leverage * leverage))
+        maintenance = maintenance_threshold(c.init_cash[0], leverage)
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
@@ -518,7 +542,7 @@ class BacktestEngine:
         # Check if liquidation occurred (on amplified curve)
         liquidated = False
         if leverage > 1 and len(equity_curve) > 0:
-            maintenance = self.init_cash * (1 - 0.9 / leverage)
+            maintenance = maintenance_threshold(self.init_cash, leverage)
             if (equity_curve < maintenance).any():
                 liquidated = True
 
@@ -543,6 +567,7 @@ class BacktestEngine:
 
         trade_win_rate = None
         trade_returns = None
+        win_rate_failed = False
         if total_trades_val > 0:
             try:
                 trade_pnl = portfolio.trades.pnl
@@ -556,7 +581,12 @@ class BacktestEngine:
                     trade_win_rate = winning / len(pnl_arr)
                     trade_returns = pnl_arr / self.init_cash
             except Exception:
-                pass
+                # 三态（D2）：计算失败不得静默降级为「无胜率」——记录原因链并显式标记
+                win_rate_failed = True
+                logger.error(
+                    "win_rate computation failed: total_trades=%s", total_trades_val,
+                    exc_info=True,
+                )
 
         metrics = compute_metrics(
             equity_curve, total_trades=total_trades_val,
@@ -589,6 +619,7 @@ class BacktestEngine:
             liquidated=liquidated,
             data_bars=len(enhanced_df),
             trade_win_rate=trade_win_rate,
+            win_rate_failed=win_rate_failed,
             trade_returns=trade_returns,
             bars_per_year=bars_per_year,
             add_count=add_count,

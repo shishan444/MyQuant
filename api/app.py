@@ -22,6 +22,12 @@ from .routes import trading as trading_route
 from .routes import live_trading as live_trading_route
 from .schemas import HealthResponse
 
+try:
+    from importlib.metadata import version as _pkg_version
+    APP_VERSION = _pkg_version("MyQuant")
+except Exception:  # 包未安装（非 editable 运行）时回退常量，与 pyproject 同步维护
+    APP_VERSION = "0.16.0"
+
 
 def create_app(
     db_path: Path | None = None,
@@ -109,7 +115,7 @@ def create_app(
 
     app = FastAPI(
         title="MyQuant API",
-        version="0.16.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -139,7 +145,7 @@ def create_app(
     def health_check() -> HealthResponse:
         return HealthResponse(
             status="ok",
-            version="0.16.0",
+            version=APP_VERSION,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
