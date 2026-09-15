@@ -1,5 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
-@import "tailwindcss";
+/* Tailwind 分层引入：跳过 preflight（AntD reset 优先，避免双 reset 冲突）；
+   主题视觉语义唯一来源=AntD theme token（G4），本文件 @theme 仅过渡期保留布局 token
+   与旧视觉变量（页面批迁移期间旧 JSX 仍消费，删除断点=G13） */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
 
 @custom-variant dark (&:is(.dark *));
 
