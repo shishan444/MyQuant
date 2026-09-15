@@ -2,23 +2,22 @@ import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
-  Play, Loader2, Check, X as XIcon, Plus, Trash2, Clock,
+  Play, Check, X as XIcon, Plus, Trash2, Clock,
   ShieldCheck, ChevronDown, ChevronUp,
   ArrowUpDown, History, Eye, Dna, TrendingUp,
 } from "lucide-react";
+import { LoadingOutlined } from "@ant-design/icons";
+import { Button as AntButton, Input, InputNumber, Progress, Tag, Tooltip } from "antd";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   useStrategies,
   useVerifyStream,
   useVerifySessions,
   useSessionResults,
 } from "@/hooks/useStrategies";
-import { cn, getFitnessColor } from "@/lib/utils";
+import { cn, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
 import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse } from "@/types/api";
 
 interface DateRange {
@@ -38,16 +37,6 @@ type FilterKey = "all" | "qualified" | "unqualified";
 function formatReturn(v: number): string {
   const sign = v >= 0 ? "+" : "";
   return `${sign}${(v * 100).toFixed(1)}%`;
-}
-
-function monthsAgo(m: number): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - m);
-  return d.toISOString().slice(0, 10);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function describeCondition(cond: SignalGene["condition"], _indicator: string, _field?: string | null): string {
@@ -170,7 +159,7 @@ export function Verify() {
   );
 
   const applyPreset = useCallback((months: number) => {
-    setDateRanges([{ start: monthsAgo(months), end: today() }]);
+    setDateRanges([{ start: monthsAgo(months), end: todayISO() }]);
     setConfigCollapsed(false);
   }, []);
 
@@ -272,14 +261,14 @@ export function Verify() {
               {totalStrategies} 条策略 · {strategyGroups.length} 品种
             </span>
           </div>
-          <Button
-            variant={view === "history" ? "default" : "ghost"}
-            size="xs"
+          <AntButton
+            type={view === "history" ? "primary" : "text"}
+            size="small"
             onClick={() => setView(view === "history" ? "verify" : "history")}
           >
             <History className="w-3 h-3 mr-1" />
             {view === "history" ? "返回验证" : "历史记录"}
-          </Button>
+          </AntButton>
         </div>
 
         {view === "history" ? (
@@ -298,9 +287,9 @@ export function Verify() {
                 <span className="text-xs text-text-secondary">
                   已验证 {filledRanges.length} 个区间 ({filledRanges.map((r) => `${r.start.slice(0, 10)}~${r.end.slice(0, 10)}`).join("、")}) · {advancedParams.init_cash} 资金
                 </span>
-                <Button variant="ghost" size="xs" onClick={() => { setConfigCollapsed(false); stream.reset(); }}>
+                <AntButton type="text" size="small" onClick={() => { setConfigCollapsed(false); stream.reset(); }}>
                   重新验证
-                </Button>
+                </AntButton>
               </div>
             ) : (
               <div className="p-3 rounded-lg bg-slate-800/40 border border-slate-700/30 space-y-2">
@@ -308,14 +297,14 @@ export function Verify() {
                 <div className="flex items-center justify-between">
                   <div className="flex gap-1">
                     {DATE_PRESETS.map((p) => (
-                      <Button key={p.months} variant="ghost" size="xs" className="text-[10px] text-text-secondary" onClick={() => applyPreset(p.months)}>
+                      <AntButton key={p.months} type="text" size="small" className="!text-[10px] !text-text-secondary" onClick={() => applyPreset(p.months)}>
                         {p.label}
-                      </Button>
+                      </AntButton>
                     ))}
                   </div>
-                  <Button variant="ghost" size="xs" onClick={addDateRange} className="text-[10px] text-text-secondary">
+                  <AntButton type="text" size="small" className="!text-[10px] !text-text-secondary" onClick={addDateRange}>
                     <Plus className="h-3 w-3 mr-0.5" /> 自定义区间
-                  </Button>
+                  </AntButton>
                 </div>
 
                 {/* Date ranges */}
@@ -326,19 +315,21 @@ export function Verify() {
                         type="date"
                         value={range.start}
                         onChange={(e) => handleDateChange(i, "start", e.target.value)}
-                        className="bg-slate-800 border-slate-700/50 text-text-primary text-xs h-7 flex-1"
+                        size="small"
+                        className="text-xs flex-1"
                       />
                       <span className="text-slate-600 text-xs">~</span>
                       <Input
                         type="date"
                         value={range.end}
                         onChange={(e) => handleDateChange(i, "end", e.target.value)}
-                        className="bg-slate-800 border-slate-700/50 text-text-primary text-xs h-7 flex-1"
+                        size="small"
+                        className="text-xs flex-1"
                       />
                       {dateRanges.length > 1 && (
-                        <Button variant="ghost" size="icon-xs" onClick={() => removeDateRange(i)} className="text-slate-500 hover:text-red-400">
+                        <AntButton type="text" size="small" danger onClick={() => removeDateRange(i)} aria-label="删除该日期区间">
                           <Trash2 className="h-3 w-3" />
-                        </Button>
+                        </AntButton>
                       )}
                     </div>
                   ))}
@@ -349,57 +340,57 @@ export function Verify() {
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-text-secondary shrink-0">资金</span>
-                      <Input
-                        type="number"
-                        step="10000"
-                        min="1000"
-                        value={advancedParams.init_cash}
-                        onChange={(e) => setAdvancedParams((p) => ({ ...p, init_cash: e.target.value }))}
-                        className="text-[11px] h-6 w-24 bg-slate-800 border-slate-700/50 text-text-primary"
+                      <InputNumber
+                        step={10000}
+                        min={1000}
+                        value={Number(advancedParams.init_cash) || undefined}
+                        onChange={(v) => setAdvancedParams((p) => ({ ...p, init_cash: String(v ?? 100000) }))}
+                        size="small"
+                        className="!w-24 !text-[11px]"
                       />
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-text-secondary shrink-0">杠杆</span>
-                      <Input
-                        type="number"
-                        step="1"
-                        min="1"
-                        max="10"
-                        value={advancedParams.leverage}
-                        onChange={(e) => setAdvancedParams((p) => ({ ...p, leverage: e.target.value }))}
-                        className="text-[11px] h-6 w-12 bg-slate-800 border-slate-700/50 text-text-primary"
+                      <InputNumber
+                        step={1}
+                        min={1}
+                        max={10}
+                        value={Number(advancedParams.leverage) || undefined}
+                        onChange={(v) => setAdvancedParams((p) => ({ ...p, leverage: String(v ?? 1) }))}
+                        size="small"
+                        className="!w-12 !text-[11px]"
                       />
                       <span className="text-[10px] text-text-secondary">x</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-text-secondary shrink-0">费率</span>
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        min="0"
-                        max="0.01"
-                        value={advancedParams.fee}
-                        onChange={(e) => setAdvancedParams((p) => ({ ...p, fee: e.target.value }))}
-                        className="text-[11px] h-6 w-20 bg-slate-800 border-slate-700/50 text-text-primary"
+                      <InputNumber
+                        step={0.0001}
+                        min={0}
+                        max={0.01}
+                        value={Number(advancedParams.fee) || undefined}
+                        onChange={(v) => setAdvancedParams((p) => ({ ...p, fee: String(v ?? 0.001) }))}
+                        size="small"
+                        className="!w-20 !text-[11px]"
                       />
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-text-secondary shrink-0">滑点</span>
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        min="0"
-                        max="0.01"
-                        value={advancedParams.slippage}
-                        onChange={(e) => setAdvancedParams((p) => ({ ...p, slippage: e.target.value }))}
-                        className="text-[11px] h-6 w-20 bg-slate-800 border-slate-700/50 text-text-primary"
+                      <InputNumber
+                        step={0.0001}
+                        min={0}
+                        max={0.01}
+                        value={Number(advancedParams.slippage) || undefined}
+                        onChange={(v) => setAdvancedParams((p) => ({ ...p, slippage: String(v ?? 0.0005) }))}
+                        size="small"
+                        className="!w-20 !text-[11px]"
                       />
                     </div>
                   </div>
-                  <Button size="xs" disabled={!canVerify} onClick={handleVerify}>
+                  <AntButton size="small" type="primary" disabled={!canVerify} onClick={handleVerify}>
                     <Play className="w-3 h-3 mr-1" />
                     开始验证 ({strategies.length})
-                  </Button>
+                  </AntButton>
                 </div>
               </div>
             )}
@@ -409,26 +400,26 @@ export function Verify() {
               <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/30 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                    <LoadingOutlined className="text-base" style={{ color: "#8B5CF6" }} />
                     <span className="text-sm font-medium text-text-primary">验证中...</span>
                   </div>
                   <span className="text-xs font-mono text-text-secondary">
                     {stream.progress.current}/{stream.progress.total} 步骤
                   </span>
                 </div>
-                <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-400 rounded-full transition-all duration-300"
-                    style={{ width: `${stream.progress.total > 0 ? (stream.progress.current / stream.progress.total) * 100 : 0}%` }}
-                  />
-                </div>
+                <Progress
+                  percent={stream.progress.total > 0 ? (stream.progress.current / stream.progress.total) * 100 : 0}
+                  showInfo={false}
+                  size={{ height: 6 }}
+                  strokeColor="#8B5CF6"
+                />
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-text-secondary">
                     正在处理 {stream.currentGroup} · {stream.rangeLabel}
                   </span>
-                  <Button variant="ghost" size="xs" onClick={handleCancel} className="text-red-400/80 hover:text-red-400">
+                  <AntButton type="text" size="small" danger onClick={handleCancel}>
                     取消验证
-                  </Button>
+                  </AntButton>
                 </div>
               </div>
             )}
@@ -438,9 +429,9 @@ export function Verify() {
               <div className="p-3 rounded-lg bg-slate-800/40 border border-red-900/30 flex items-center gap-2">
                 <XIcon className="w-4 h-4 text-red-400" />
                 <span className="text-xs text-red-400">{stream.error}</span>
-                <Button variant="ghost" size="xs" onClick={() => { stream.reset(); handleVerify(); }} className="ml-auto">
+                <AntButton type="text" size="small" onClick={() => { stream.reset(); handleVerify(); }} className="ml-auto">
                   重试
-                </Button>
+                </AntButton>
               </div>
             )}
 
@@ -458,29 +449,29 @@ export function Verify() {
                 <div className="flex items-center justify-between">
                   <div className="flex gap-1">
                     {(["all", "qualified", "unqualified"] as FilterKey[]).map((k) => (
-                      <Button
+                      <AntButton
                         key={k}
-                        variant={filterKey === k ? "default" : "ghost"}
-                        size="xs"
-                        className="text-[10px]"
+                        type={filterKey === k ? "primary" : "text"}
+                        size="small"
+                        className="!text-[10px]"
                         onClick={() => setFilterKey(k)}
                       >
                         {k === "all" ? "全部" : k === "qualified" ? "达标" : "未达标"}
-                      </Button>
+                      </AntButton>
                     ))}
                   </div>
                   <div className="flex items-center gap-1">
                     <ArrowUpDown className="w-3 h-3 text-text-secondary" />
                     {(["score", "qualified", "return"] as SortKey[]).map((k) => (
-                      <Button
+                      <AntButton
                         key={k}
-                        variant={sortKey === k ? "default" : "ghost"}
-                        size="xs"
-                        className="text-[10px]"
+                        type={sortKey === k ? "primary" : "text"}
+                        size="small"
+                        className="!text-[10px]"
                         onClick={() => setSortKey(k)}
                       >
                         {k === "score" ? "评分" : k === "qualified" ? "达标率" : "收益"}
-                      </Button>
+                      </AntButton>
                     ))}
                   </div>
                 </div>
@@ -587,9 +578,9 @@ function StrategyCard({
               {item.strategy_name}
             </span>
             {strategy && (
-              <Badge variant="ghost" className="h-4 text-[9px] px-1 shrink-0">
+              <Tag className="!m-0 !text-[9px] !leading-4 !px-1 shrink-0">
                 {strategy.source === "evolution" ? "进化" : strategy.source === "lab" ? "实验室" : strategy.source ?? ""}
-              </Badge>
+              </Tag>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -685,16 +676,20 @@ function StrategyCard({
 
           {/* Expanded action buttons */}
           <div className="flex gap-2 pt-1">
-            <Button size="xs" onClick={onTrade} disabled={!hasDna}
-              className={cn(allQualified ? "bg-emerald-600 hover:bg-emerald-700" : "")}>
+            <AntButton
+              size="small"
+              onClick={onTrade}
+              disabled={!hasDna}
+              style={allQualified ? { background: "#009966", borderColor: "#009966" } : undefined}
+            >
               <TrendingUp className="w-3 h-3 mr-1" /> 开始交易
-            </Button>
-            <Button variant="outline" size="xs" onClick={onBacktest} disabled={!hasDna}>
+            </AntButton>
+            <AntButton size="small" onClick={onBacktest} disabled={!hasDna}>
               <Eye className="w-3 h-3 mr-1" /> 查看回测
-            </Button>
-            <Button variant="outline" size="xs" onClick={onEvolve} disabled={!hasDna}>
+            </AntButton>
+            <AntButton size="small" onClick={onEvolve} disabled={!hasDna}>
               <Dna className="w-3 h-3 mr-1" /> 继续进化
-            </Button>
+            </AntButton>
           </div>
         </div>
       )}
@@ -703,27 +698,33 @@ function StrategyCard({
       {!expanded && (
         <div className="flex items-center gap-2 pt-1 border-t border-slate-700/20">
           {allQualified ? (
-            <Button size="xs" onClick={onTrade} disabled={!hasDna}
-              className="bg-emerald-600 hover:bg-emerald-700 text-[10px]">
+            <AntButton size="small" onClick={onTrade} disabled={!hasDna}
+              className="!text-[10px]" style={{ background: "#009966", borderColor: "#009966" }}>
               <Play className="w-3 h-3 mr-0.5" /> 开始交易
-            </Button>
+            </AntButton>
           ) : (
-            <Button size="xs" onClick={onEvolve} disabled={!hasDna}
-              className="bg-blue-600 hover:bg-blue-700 text-[10px]">
+            <AntButton size="small" onClick={onEvolve} disabled={!hasDna}
+              className="!text-[10px]" style={{ background: "#1d4ed8", borderColor: "#1d4ed8" }}>
               <Dna className="w-3 h-3 mr-0.5" /> 继续优化
-            </Button>
+            </AntButton>
           )}
-          <Button variant="ghost" size="icon-xs" onClick={onBacktest} disabled={!hasDna} title="查看回测">
-            <Eye className="w-3 h-3 text-text-secondary" />
-          </Button>
+          <Tooltip title="查看回测">
+            <AntButton type="text" size="small" onClick={onBacktest} disabled={!hasDna} aria-label="查看回测">
+              <Eye className="w-3 h-3 text-text-secondary" />
+            </AntButton>
+          </Tooltip>
           {allQualified ? (
-            <Button variant="ghost" size="icon-xs" onClick={onEvolve} disabled={!hasDna} title="继续优化">
-              <Dna className="w-3 h-3 text-text-secondary" />
-            </Button>
+            <Tooltip title="继续优化">
+              <AntButton type="text" size="small" onClick={onEvolve} disabled={!hasDna} aria-label="继续优化">
+                <Dna className="w-3 h-3 text-text-secondary" />
+              </AntButton>
+            </Tooltip>
           ) : (
-            <Button variant="ghost" size="icon-xs" onClick={onTrade} disabled={!hasDna} title="模拟交易">
-              <TrendingUp className="w-3 h-3 text-text-secondary" />
-            </Button>
+            <Tooltip title="模拟交易">
+              <AntButton type="text" size="small" onClick={onTrade} disabled={!hasDna} aria-label="模拟交易">
+                <TrendingUp className="w-3 h-3 text-text-secondary" />
+              </AntButton>
+            </Tooltip>
           )}
         </div>
       )}
@@ -828,13 +829,12 @@ function HistoryView({
                 <span className="text-xs text-text-primary font-mono">
                   {session.created_at.slice(0, 16).replace("T", " ")}
                 </span>
-                <Badge variant="outline" className={cn("h-4 text-[9px]",
-                  session.status === "completed" ? "text-emerald-400 border-emerald-400/30" :
-                  session.status === "failed" ? "text-red-400 border-red-400/30" :
-                  "text-yellow-400 border-yellow-400/30"
-                )}>
+                <Tag
+                  className="!m-0 !text-[9px] !leading-4"
+                  color={session.status === "completed" ? "success" : session.status === "failed" ? "error" : "warning"}
+                >
                   {session.status === "completed" ? "完成" : session.status === "failed" ? "失败" : "运行中"}
-                </Badge>
+                </Tag>
                 <span className="text-[11px] text-text-secondary">{strategyCount} 条策略</span>
               </div>
               <div className="flex items-center gap-2">
@@ -884,7 +884,7 @@ function HistoryView({
                   </table>
                 ) : (
                   <div className="py-4 text-center text-[11px] text-text-secondary">
-                    <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> 加载中...
+                    <LoadingOutlined className="mr-1" /> 加载中...
                   </div>
                 )}
               </div>
