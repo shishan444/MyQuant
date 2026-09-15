@@ -29,7 +29,6 @@ export interface TradingTask {
   loss_count: number;
   last_bar_time: string | null;
   last_bar_close: number | null;
-  bars_held: number;
   confidence_sizing_enabled: boolean;
 }
 
@@ -92,16 +91,6 @@ export async function createTradingTask(
 
 export async function stopTradingTask(taskId: string): Promise<TradingTask> {
   const { data } = await api.post(`/api/trading/tasks/${taskId}/stop`);
-  return data;
-}
-
-export async function pauseTradingTask(taskId: string): Promise<TradingTask> {
-  const { data } = await api.post(`/api/trading/tasks/${taskId}/pause`);
-  return data;
-}
-
-export async function resumeTradingTask(taskId: string): Promise<TradingTask> {
-  const { data } = await api.post(`/api/trading/tasks/${taskId}/resume`);
   return data;
 }
 

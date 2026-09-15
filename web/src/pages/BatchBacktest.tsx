@@ -14,7 +14,6 @@ import { fetchBatchBacktestDetail } from "@/services/strategies";
 import { cn } from "@/lib/utils";
 import { EquityCurveChart, BacktestMetricsPanel } from "@/components/lab";
 import type {
-  Strategy,
   BatchBacktestResultItem,
   BatchBacktestSummaryItem,
   BacktestResult,
@@ -118,11 +117,6 @@ export function BatchBacktest() {
     if (stream.status === "done" && Array.isArray(stream.summary)) return stream.summary as BatchBacktestSummaryItem[];
     return [];
   }, [stream.status, stream.summary]);
-
-  const results = useMemo<BatchBacktestResultItem[]>(() => {
-    if (stream.status === "done" && Array.isArray(stream.results)) return stream.results as BatchBacktestResultItem[];
-    return [];
-  }, [stream.status, stream.results]);
 
   const stats = useMemo(() => {
     if (summary.length === 0) return null;
@@ -627,7 +621,7 @@ function PeriodDetailRow({
   result, detail, detailLoading, detailError, onLoadDetail, expanded, onToggleDetail,
 }: {
   result: BatchBacktestResultItem; detail?: BacktestResult; detailLoading: boolean;
-  detailError: string; onLoadDetail: () => void; expanded: boolean; onToggleDetail: () => void;
+  detailError: string; onLoadDetail: (id: string) => void; expanded: boolean; onToggleDetail: () => void;
 }) {
   return (
     <>
@@ -646,7 +640,7 @@ function PeriodDetailRow({
           {result.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <X className="w-3 h-3 text-red-400/60 inline" />}
         </td>
         <td className="py-1.5 text-right">
-          <Button variant="ghost" size="xs" onClick={() => { if (!expanded) onLoadDetail(); onToggleDetail(); }} className="text-[10px]">
+          <Button variant="ghost" size="xs" onClick={() => { if (!expanded) onLoadDetail(result.result_id); onToggleDetail(); }} className="text-[10px]">
             {expanded ? "收起" : "详情"}
           </Button>
         </td>

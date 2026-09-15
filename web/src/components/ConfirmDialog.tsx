@@ -9,17 +9,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  description: string;
+  description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "default" | "destructive";
   onConfirm: () => void;
   loading?: boolean;
+  /** 可选自定义内容（如表单），渲染在描述与操作区之间。 */
+  children?: ReactNode;
 }
 
 function ConfirmDialog({
@@ -32,14 +35,16 @@ function ConfirmDialog({
   variant = "default",
   onConfirm,
   loading = false,
+  children,
 }: ConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
+          {description != null && <AlertDialogDescription>{description}</AlertDialogDescription>}
         </AlertDialogHeader>
+        {children}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>
             {cancelLabel}

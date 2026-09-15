@@ -19,8 +19,6 @@ import {
   getTradingTask,
   createTradingTask,
   stopTradingTask,
-  pauseTradingTask,
-  resumeTradingTask,
   getTradingTrades,
   getTradingRunnerStatus,
   getTradingEquity,
@@ -86,26 +84,6 @@ describe("trading service", () => {
 
     const result = await stopTradingTask("t1");
     expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/stop");
-    expect(result).toEqual(mockTask);
-  });
-
-  // --- pauseTradingTask ---
-  it("pauseTradingTask calls POST with correct endpoint", async () => {
-    const mockTask = { task_id: "t1", status: "paused" };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
-
-    const result = await pauseTradingTask("t1");
-    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/pause");
-    expect(result).toEqual(mockTask);
-  });
-
-  // --- resumeTradingTask ---
-  it("resumeTradingTask calls POST with correct endpoint", async () => {
-    const mockTask = { task_id: "t1", status: "running" };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
-
-    const result = await resumeTradingTask("t1");
-    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/resume");
     expect(result).toEqual(mockTask);
   });
 

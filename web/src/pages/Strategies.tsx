@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  BookOpen, Play, Pencil, Trash2, Search, TrendingUp, Shield, Target,
+  BookOpen, Play, Pencil, Trash2, Search,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
   Copy, Check, X, GitBranch, LineChart, AlertCircle,
 } from "lucide-react";
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { useStrategies, useDeleteStrategy, useUpdateStrategy } from "@/hooks/useStrategies";
 import { deleteStrategy } from "@/services/strategies";
+import { toast } from "sonner";
 import { cn, getFitnessColor } from "@/lib/utils";
 import { INDICATOR_LABELS, CONDITION_TYPE_LABELS } from "@/lib/constants";
 import type { Strategy } from "@/types/api";
@@ -49,11 +50,6 @@ function fmtWinRate(value: number | undefined | null): string {
 function fmtPF(value: number | undefined | null): string {
   if (value == null) return "--";
   return value.toFixed(2);
-}
-
-function fmtMetric(value: number | undefined | null, digits = 1, suffix = "%", mul = 100): string {
-  if (value == null) return "--";
-  return `${(value * mul).toFixed(digits)}${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,12 +342,14 @@ function MetricItem({ label, value, positive }: { label: string; value: string; 
 // Strategy card row
 // ---------------------------------------------------------------------------
 
+const ROW_EASE: [number, number, number, number] = [0.25, 0.46, 0.45, 0.94];
+
 const rowVariants = {
   hidden: { opacity: 0, y: 12 },
   visible: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.03, duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] },
+    transition: { delay: i * 0.03, duration: 0.3, ease: ROW_EASE },
   }),
   exit: { opacity: 0, y: -8, transition: { duration: 0.2 } },
 };
@@ -721,13 +719,21 @@ export function Strategies() {
     deleteMutation.mutate(id, { onSuccess: () => setDeleteTarget(null) });
   };
 
-  const handleBatchDelete = () => {
+  /** 批量删除：部分失败不静默——呈现成功/失败计数，选中态与缓存始终清理。 */
+  const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
-    Promise.all(ids.map((id) => deleteStrategy(id))).then(() => {
-      setSelectedIds(new Set());
-      setBatchDeleteTargets([]);
-      queryClient.invalidateQueries({ queryKey: ["strategies"] });
-    });
+    const results = await Promise.allSettled(ids.map((id) => deleteStrategy(id)));
+    const failedCount = results.filter((r) => r.status === "rejected").length;
+
+    setSelectedIds(new Set());
+    setBatchDeleteTargets([]);
+    queryClient.invalidateQueries({ queryKey: ["strategies"] });
+
+    if (failedCount > 0) {
+      toast.error(`批量删除：成功 ${ids.length - failedCount} 个，失败 ${failedCount} 个`);
+    } else {
+      toast.success(`已删除 ${ids.length} 个策略`);
+    }
   };
 
   const handleRun = (strategy: Strategy) => {

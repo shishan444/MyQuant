@@ -161,6 +161,21 @@ export function verifyStrategiesStream(
       const decoder = new TextDecoder();
       let buffer = "";
 
+      // 定义在循环外：流结束时残留 buffer 的事件也能被处理（此前定义在 while 内导致末尾事件被静默丢弃）
+      const processPart = (part: string) => {
+        if (!part.trim()) return;
+        const lines = part.split("\n");
+        const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
+        const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
+        if (!eventType || !dataRaw) return;
+        try {
+          const data = JSON.parse(dataRaw);
+          if (eventType === "progress") callbacks.onProgress(data);
+          else if (eventType === "complete") callbacks.onComplete(data);
+          else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
+        } catch { /* ignore parse errors */ }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -168,20 +183,6 @@ export function verifyStrategiesStream(
 
         const parts = buffer.split("\n\n");
         buffer = parts.pop()!;
-
-        const processPart = (part: string) => {
-          if (!part.trim()) return;
-          const lines = part.split("\n");
-          const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-          const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-          if (!eventType || !dataRaw) return;
-          try {
-            const data = JSON.parse(dataRaw);
-            if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") callbacks.onComplete(data);
-            else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-          } catch { /* ignore parse errors */ }
-        };
 
         for (const part of parts) processPart(part);
       }
@@ -223,6 +224,21 @@ export function batchBacktestStream(
       const decoder = new TextDecoder();
       let buffer = "";
 
+      // 定义在循环外：流结束时残留 buffer 的事件也能被处理（与 verify 流同修）
+      const processPart = (part: string) => {
+        if (!part.trim()) return;
+        const lines = part.split("\n");
+        const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
+        const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
+        if (!eventType || !dataRaw) return;
+        try {
+          const data = JSON.parse(dataRaw);
+          if (eventType === "progress") callbacks.onProgress(data);
+          else if (eventType === "complete") callbacks.onComplete(data);
+          else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
+        } catch { /* ignore */ }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -230,20 +246,6 @@ export function batchBacktestStream(
 
         const parts = buffer.split("\n\n");
         buffer = parts.pop()!;
-
-        const processPart = (part: string) => {
-          if (!part.trim()) return;
-          const lines = part.split("\n");
-          const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-          const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-          if (!eventType || !dataRaw) return;
-          try {
-            const data = JSON.parse(dataRaw);
-            if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") callbacks.onComplete(data);
-            else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-          } catch { /* ignore */ }
-        };
 
         for (const part of parts) processPart(part);
       }

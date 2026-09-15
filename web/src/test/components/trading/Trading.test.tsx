@@ -109,7 +109,6 @@ function makeTask(overrides: Partial<TradingTask> = {}): TradingTask {
     loss_count: 2,
     last_bar_time: null,
     last_bar_close: null,
-    bars_held: 0,
     confidence_sizing_enabled: false,
     ...overrides,
   };
@@ -247,9 +246,6 @@ describe("Trading page", () => {
 
     render(<Trading />, { wrapper: createWrapper() });
 
-    // Find and click delete button on stopped task
-    const deleteButtons = screen.getAllByRole("button");
-    const deleteBtn = deleteButtons.find((btn) => btn.querySelector("svg.lucide-trash-2") || btn.textContent === "");
     // The delete flow requires clicking a button then confirming in AlertDialog
     // Since the AlertDialog is controlled by deleteTarget state, we test the mutation hook
     expect(mockUseDeleteTradingTask).toHaveBeenCalled();

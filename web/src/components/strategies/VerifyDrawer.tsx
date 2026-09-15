@@ -1,4 +1,5 @@
 import { useState, useCallback, Fragment } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { X, Play, Loader2, Check, X as XIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +33,7 @@ export function VerifyDrawer({ open, strategies, onClose }: VerifyDrawerProps) {
   const [result, setResult] = useState<VerifyResponse | null>(null);
 
   const verifyMutation = useVerifyStrategies();
-  const { data: sourcesData } = useAvailableSources();
+  const { data: sourcesData } = useQuery(useAvailableSources());
 
   const defaultSymbol = strategies[0]?.symbol ?? "BTCUSDT";
   const defaultTimeframe = strategies[0]?.timeframe ?? "1h";

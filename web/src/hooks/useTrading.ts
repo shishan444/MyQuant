@@ -11,8 +11,6 @@ import {
   getTradingTask,
   createTradingTask,
   stopTradingTask,
-  pauseTradingTask,
-  resumeTradingTask,
   restartTradingTask,
   getTradingTrades,
   getTradingRunnerStatus,
@@ -20,7 +18,6 @@ import {
   getTradingMetrics,
   deleteTradingTask,
   type CreateTradingTaskParams,
-  type TradingTask,
 } from "@/services/trading";
 
 // -- Query key factory --
@@ -150,36 +147,6 @@ export function useStopTradingTask() {
   });
 }
 
-export function usePauseTradingTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (taskId: string) => pauseTradingTask(taskId),
-    onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
-      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
-      toast.success("Task paused");
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to pause: ${err.message}`);
-    },
-  });
-}
-
-export function useResumeTradingTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (taskId: string) => resumeTradingTask(taskId),
-    onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
-      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
-      toast.success("Task resumed");
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to resume: ${err.message}`);
-    },
-  });
-}
-
 export function useRestartTradingTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -213,7 +180,7 @@ export function useDeleteTradingTask() {
 export function useTradingWebSocket(taskId: string | null) {
   const qc = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [isConnected, setIsConnected] = useState(false);
 
   const scheduleInvalidation = useCallback(() => {

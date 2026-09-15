@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   TrendingUp,
-  Pause,
-  Play,
   Square,
   Trash2,
   Plus,
@@ -39,8 +37,6 @@ import {
   useTradingTasks,
   useTradingTrades,
   useStopTradingTask,
-  usePauseTradingTask,
-  useResumeTradingTask,
   useCreateTradingTask,
   useRestartTradingTask,
   useDeleteTradingTask,
@@ -61,7 +57,6 @@ type PositionSide = "long" | "short" | "flat";
 const STATUS_BADGE_MAP: Record<string, { label: string; className: string }> = {
   pending: { label: "等待中", className: "text-accent-gold border-accent-gold/30" },
   running: { label: "运行中", className: "text-profit border-profit/30" },
-  paused: { label: "已暂停", className: "text-accent-gold border-accent-gold/30" },
   stopped: { label: "已停止", className: "text-loss border-loss/30" },
 };
 
@@ -473,8 +468,6 @@ function TaskDetailPanel({
   onRestart: () => void;
 }) {
   const stopMut = useStopTradingTask();
-  const pauseMut = usePauseTradingTask();
-  const resumeMut = useResumeTradingTask();
 
   const { data: tradeData } = useTradingTrades(task.task_id, 500);
   const { data: equityData } = useTradingEquity(task.task_id);
@@ -484,10 +477,9 @@ function TaskDetailPanel({
   const totalTrades = tradeData?.total ?? 0;
   const equitySnapshots = equityData?.snapshots ?? [];
   const isRunning = task.status === "running";
-  const isPaused = task.status === "paused";
-  const isActive = isRunning || isPaused || task.status === "pending";
+  const isActive = isRunning || task.status === "pending";
   const isStopped = task.status === "stopped";
-  const mutating = stopMut.isPending || pauseMut.isPending || resumeMut.isPending;
+  const mutating = stopMut.isPending;
 
   const [visibleTrades, setVisibleTrades] = useState(TRADE_PAGE_SIZE);
 
@@ -504,8 +496,8 @@ function TaskDetailPanel({
   const hasPosition = posSide !== "flat";
   const upnl = task.unrealized_pnl ?? 0;
   const equity = hasPosition
-    ? task.balance + (task.position_margin ?? 0) + upnl
-    : task.balance;
+    ? (task.balance ?? 0) + (task.position_margin ?? 0) + upnl
+    : task.balance ?? 0;
   const equityReturn =
     task.initial_cash > 0 ? (equity - task.initial_cash) / task.initial_cash : 0;
 
@@ -557,28 +549,6 @@ function TaskDetailPanel({
           <div className="flex items-center gap-2">
             {isActive && (
               <>
-                {isRunning && (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    className="gap-1 text-xs"
-                    disabled={mutating}
-                    onClick={() => pauseMut.mutate(task.task_id)}
-                  >
-                    <Pause className="h-3 w-3" /> 暂停
-                  </Button>
-                )}
-                {isPaused && (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    className="gap-1 text-xs"
-                    disabled={mutating}
-                    onClick={() => resumeMut.mutate(task.task_id)}
-                  >
-                    <Play className="h-3 w-3" /> 继续
-                  </Button>
-                )}
                 <Button
                   variant="ghost"
                   size="xs"
@@ -610,7 +580,7 @@ function TaskDetailPanel({
               账户余额
             </span>
             <p className="font-num text-lg font-semibold text-text-primary">
-              {formatCurrency(task.balance)}
+              {formatCurrency(task.balance ?? 0)}
             </p>
             <span
               className={cn(
@@ -658,16 +628,13 @@ function TaskDetailPanel({
         {/* Position detail line (only when position is open) */}
         {hasPosition && (
           <div className="mt-2 pt-2 border-t border-border-default flex items-center gap-4 text-xs text-text-muted flex-wrap">
-            <span>开仓价 {formatCurrency(task.position_entry)}</span>
+            <span>开仓价 {formatCurrency(task.position_entry ?? 0)}</span>
             <span>
               数量 {task.position_quantity?.toFixed(6)}
             </span>
             <span>
-              保证金 {formatCurrency(task.position_margin)}
+              保证金 {formatCurrency(task.position_margin ?? 0)}
             </span>
-            {task.bars_held > 0 && (
-              <span>已持仓 {task.bars_held}根K线</span>
-            )}
           </div>
         )}
       </GlassCard>

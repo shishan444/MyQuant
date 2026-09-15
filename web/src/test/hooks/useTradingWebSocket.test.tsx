@@ -13,8 +13,6 @@ vi.mock("@/services/trading", () => ({
   getTradingTask: vi.fn(),
   createTradingTask: vi.fn(),
   stopTradingTask: vi.fn(),
-  pauseTradingTask: vi.fn(),
-  resumeTradingTask: vi.fn(),
   getTradingTrades: vi.fn(),
   getTradingRunnerStatus: vi.fn(),
   getTradingEquity: vi.fn(),

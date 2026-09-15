@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
-import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS, REQUIREMENTS_DEFAULTS } from "@/lib/constants";
+import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
 import { StrategyDetail } from "@/components/evolution/StrategyDetail";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import {
@@ -44,7 +44,7 @@ export function TaskDetailDrawer({
   if (!open || !task) return null;
 
   const historyRecords = historyData?.records ?? [];
-  const strategies = strategiesData?.items ?? [];
+  const strategies = strategiesData?.strategies ?? [];
   const championDna = task.champion_dna;
 
   const tabs: { key: TabKey; label: string }[] = [

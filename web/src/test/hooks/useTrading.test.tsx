@@ -12,8 +12,6 @@ vi.mock("@/services/trading", () => ({
   getTradingTask: vi.fn(),
   createTradingTask: vi.fn(),
   stopTradingTask: vi.fn(),
-  pauseTradingTask: vi.fn(),
-  resumeTradingTask: vi.fn(),
   getTradingTrades: vi.fn(),
   getTradingRunnerStatus: vi.fn(),
   getTradingEquity: vi.fn(),
@@ -60,7 +58,17 @@ describe("useTrading hooks", () => {
   // --- useTradingTasks ---
   describe("useTradingTasks", () => {
     it("fetches task list on mount", async () => {
-      const mockData = { tasks: [{ task_id: "t1", status: "stopped" }], total: 1 };
+      const mockData = {
+        tasks: [{
+          task_id: "t1", status: "stopped", strategy_name: null, symbol: "BTCUSDT", timeframe: "4h",
+          initial_cash: 100000, fee: 0.001, leverage: 1, direction: "long", score_template: "default",
+          created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", started_at: null, stopped_at: null,
+          stop_reason: null, position_side: null, position_entry: null, position_quantity: null, position_margin: null,
+          position_funding: null, balance: null, unrealized_pnl: 0, total_trades: 0, total_pnl: 0, win_count: 0,
+          loss_count: 0, last_bar_time: null, last_bar_close: null, confidence_sizing_enabled: false,
+        }],
+        total: 1,
+      };
       vi.mocked(listTradingTasks).mockResolvedValueOnce(mockData);
 
       const { result } = renderHook(() => useTradingTasks(), { wrapper: createWrapper() });
