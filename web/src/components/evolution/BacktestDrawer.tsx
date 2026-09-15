@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { X, Loader2, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button as AntButton } from "antd";
 import { cn, formatNumber, getFitnessColor } from "@/lib/utils";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, CandleData, SignalData } from "@/components/charts/KlineChart";
@@ -123,9 +123,9 @@ export function BacktestDrawer({
               {symbol} / {timeframe}
             </span>
           </div>
-          <Button variant="ghost" size="icon-xs" onClick={onClose}>
+          <AntButton type="text" size="small" onClick={onClose} aria-label="关闭">
             <X className="h-4 w-4" />
-          </Button>
+          </AntButton>
         </div>
 
         {/* Content */}
@@ -141,9 +141,9 @@ export function BacktestDrawer({
             <div className="flex flex-col items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-8">
               <AlertTriangle className="h-8 w-8 text-red-400" />
               <p className="text-sm text-red-400">{error}</p>
-              <Button variant="outline" size="sm" onClick={onClose}>
+              <AntButton size="small" onClick={onClose}>
                 关闭
-              </Button>
+              </AntButton>
             </div>
           )}
 

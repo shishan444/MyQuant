@@ -1,15 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { Play, ChevronDown, AlertTriangle, X, Plus } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Play, ChevronDown, AlertTriangle, X } from "lucide-react";
+import { Badge, Button, InputNumber, Select as AntSelect } from "antd";
 import { cn } from "@/lib/utils";
 import {
   SYMBOL_OPTIONS,
@@ -186,18 +177,14 @@ export function AutoConfigForm({
       {/* Data source row */}
       <div className="flex items-center gap-3">
         <span className="w-14 shrink-0 text-xs text-slate-400">数据源</span>
-        <Select value={symbol} onValueChange={setSymbol}>
-          <SelectTrigger className="h-7 w-28 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(symbolOptions ?? SYMBOL_OPTIONS).map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <AntSelect
+          size="small"
+          value={symbol}
+          onChange={setSymbol}
+          className="!w-28 !text-xs"
+          aria-label="数据源"
+          options={(symbolOptions ?? SYMBOL_OPTIONS).map((opt) => ({ value: opt.value, label: opt.label }))}
+        />
       </div>
 
       {/* Data range info */}
@@ -250,20 +237,16 @@ export function AutoConfigForm({
               );
             })}
             {sortedPool.length < 4 && (
-              <Select onValueChange={addTimeframe}>
-                <SelectTrigger className="h-6 w-6 border-dashed border-slate-700/50 bg-transparent p-0 text-[10px] hover:border-slate-600">
-                  <Plus className="h-3 w-3 text-slate-500" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIMEFRAME_POOL_OPTIONS.filter(
-                    (tf) => !timeframePool.includes(tf) && availableTimeframes.includes(tf)
-                  ).map((tf) => (
-                    <SelectItem key={tf} value={tf}>
-                      {TIMEFRAME_LABELS[tf]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AntSelect
+                size="small"
+                placeholder="+"
+                onChange={(v) => addTimeframe(v as string)}
+                className="!w-16 !text-[10px]"
+                aria-label="添加周期到探索池"
+                options={TIMEFRAME_POOL_OPTIONS.filter(
+                  (tf) => !timeframePool.includes(tf) && availableTimeframes.includes(tf)
+                ).map((tf) => ({ value: tf, label: TIMEFRAME_LABELS[tf] }))}
+              />
             )}
           </div>
           <span className="text-[11px] text-slate-500">
@@ -293,12 +276,11 @@ export function AutoConfigForm({
                 return (
                   <Badge
                     key={ind}
-                    variant="outline"
                     className={cn(
-                      "cursor-pointer text-[11px] transition-colors",
+                      "!m-0 cursor-pointer !text-[11px] transition-colors",
                       selected
-                        ? "border-amber-400/30 bg-amber-400/20 text-amber-400 hover:bg-amber-400/30"
-                        : "border-slate-700/50 text-slate-400 hover:text-slate-300"
+                        ? "!bg-amber-400/20 !text-amber-400 hover:!bg-amber-400/30"
+                        : "!text-slate-400 hover:!text-slate-300"
                     )}
                     onClick={() => toggleIndicator(ind)}
                   >
@@ -319,108 +301,94 @@ export function AutoConfigForm({
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-slate-500">优化目标</span>
-            <Select
+            <AntSelect
+              size="small"
               value={requirements.objective ?? "sharpe"}
-              onValueChange={(v) =>
-                setRequirements((prev) => ({ ...prev, objective: v }))
-              }
-            >
-              <SelectTrigger className="h-7 w-28 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {OBJECTIVE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(v) => setRequirements((prev) => ({ ...prev, objective: v }))}
+              className="!w-28 !text-xs"
+              aria-label="优化目标"
+              options={OBJECTIVE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+            />
           </div>
           <div className="grid grid-cols-5 gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-[10px] text-slate-500">年化收益 %</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
                 max={1000}
                 step={1}
+                size="small"
                 value={requirements.min_annual_return * 100}
-                onChange={(e) =>
+                onChange={(v) =>
                   setRequirements((prev) => ({
                     ...prev,
-                    min_annual_return: Number(e.target.value) / 100 || 0,
+                    min_annual_return: (v ?? 0) / 100 || 0,
                   }))
                 }
-                className="h-7 w-full text-xs"
+                className="!w-full !text-xs"
+                aria-label="年化收益百分比"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[10px] text-slate-500">最大回撤 %</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
                 max={100}
                 step={1}
+                size="small"
                 value={requirements.max_drawdown * 100}
-                onChange={(e) =>
+                onChange={(v) =>
                   setRequirements((prev) => ({
                     ...prev,
-                    max_drawdown: Number(e.target.value) / 100 || 0,
+                    max_drawdown: (v ?? 0) / 100 || 0,
                   }))
                 }
-                className="h-7 w-full text-xs"
+                className="!w-full !text-xs"
+                aria-label="最大回撤百分比"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[10px] text-slate-500">最低胜率 %</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
                 max={100}
                 step={1}
+                size="small"
                 value={requirements.min_win_rate * 100}
-                onChange={(e) =>
+                onChange={(v) =>
                   setRequirements((prev) => ({
                     ...prev,
-                    min_win_rate: Number(e.target.value) / 100 || 0,
+                    min_win_rate: (v ?? 0) / 100 || 0,
                   }))
                 }
-                className="h-7 w-full text-xs"
+                className="!w-full !text-xs"
+                aria-label="最低胜率百分比"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[10px] text-slate-500">最少交易</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
                 max={1000}
                 step={1}
+                size="small"
                 value={requirements.min_total_trades}
-                onChange={(e) =>
-                  setRequirements((prev) => ({
-                    ...prev,
-                    min_total_trades: Number(e.target.value) || 0,
-                  }))
-                }
-                className="h-7 w-full text-xs"
+                onChange={(v) => setRequirements((prev) => ({ ...prev, min_total_trades: v ?? 0 }))}
+                className="!w-full !text-xs"
+                aria-label="最少交易次数"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[10px] text-slate-500">盈亏比</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
                 max={10}
                 step={0.1}
+                size="small"
                 value={requirements.min_profit_factor}
-                onChange={(e) =>
-                  setRequirements((prev) => ({
-                    ...prev,
-                    min_profit_factor: Number(e.target.value) || 0,
-                  }))
-                }
-                className="h-7 w-full text-xs"
+                onChange={(v) => setRequirements((prev) => ({ ...prev, min_profit_factor: v ?? 0 }))}
+                className="!w-full !text-xs"
+                aria-label="盈亏比下限"
               />
             </div>
           </div>
@@ -435,33 +403,25 @@ export function AutoConfigForm({
         <span className="w-14 shrink-0 text-xs text-slate-400">约束</span>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-500">杠杆</span>
-          <Select value={String(leverage)} onValueChange={(v) => setLeverage(Number(v))}>
-            <SelectTrigger className="h-7 w-16 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LEVERAGE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={String(opt.value)}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <AntSelect
+            size="small"
+            value={String(leverage)}
+            onChange={(v) => setLeverage(Number(v))}
+            className="!w-16 !text-xs"
+            aria-label="杠杆"
+            options={LEVERAGE_OPTIONS.map((opt) => ({ value: String(opt.value), label: opt.label }))}
+          />
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-500">方向</span>
-          <Select value={direction} onValueChange={(v) => setDirection(v as "long" | "short" | "mixed")}>
-            <SelectTrigger className="h-7 w-16 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DIRECTION_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <AntSelect
+            size="small"
+            value={direction}
+            onChange={(v) => setDirection(v as "long" | "short" | "mixed")}
+            className="!w-16 !text-xs"
+            aria-label="方向约束"
+            options={DIRECTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+          />
         </div>
       </div>
       {leverage > 1 && (
@@ -519,28 +479,26 @@ export function AutoConfigForm({
           <div className="flex items-center gap-4 rounded-lg border border-slate-700/30 bg-white/[0.02] p-3">
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-slate-500">种群大小 (10-50)</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={10}
                 max={50}
+                size="small"
                 value={populationSize}
-                onChange={(e) =>
-                  setPopulationSize(Number(e.target.value) || 15)
-                }
-                className="h-7 w-24 text-xs"
+                onChange={(v) => setPopulationSize(v ?? 15)}
+                className="!w-24 !text-xs"
+                aria-label="种群大小"
               />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-slate-500">最大代数 (50-500)</label>
-              <Input
-                type="number"
+              <InputNumber
                 min={50}
                 max={500}
+                size="small"
                 value={maxGenerations}
-                onChange={(e) =>
-                  setMaxGenerations(Number(e.target.value) || 200)
-                }
-                className="h-7 w-24 text-xs"
+                onChange={(v) => setMaxGenerations(v ?? 200)}
+                className="!w-24 !text-xs"
+                aria-label="最大代数"
               />
             </div>
           </div>
@@ -549,8 +507,8 @@ export function AutoConfigForm({
 
       {/* Submit */}
       <Button
-        size="sm"
-        className="w-full gap-1.5 bg-amber-400 text-black hover:bg-amber-400/90"
+        type="primary"
+        block
         disabled={!canSubmit || isPending}
         onClick={handleSubmit}
       >

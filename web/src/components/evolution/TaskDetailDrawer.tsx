@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { X, Eye } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/badge";
+import { Button as AntButton, Tag } from "antd";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
 import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
 import { StrategyDetail } from "@/components/StrategyDetail";
@@ -69,21 +68,13 @@ export function TaskDetailDrawer({
             <h3 className="text-sm font-medium text-slate-200">
               任务详情
             </h3>
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                task.status === "completed"
-                  ? "border-emerald-400/30 text-emerald-400"
-                  : "border-slate-600/30 text-slate-500"
-              )}
-            >
+            <Tag color={task.status === "completed" ? "success" : "default"} className="!m-0 !text-[10px]">
               {task.status === "completed" ? "已完成" : task.status}
-            </Badge>
+            </Tag>
           </div>
-          <Button variant="ghost" size="icon-xs" onClick={onClose}>
+          <AntButton type="text" size="small" onClick={onClose} aria-label="关闭">
             <X className="h-4 w-4" />
-          </Button>
+          </AntButton>
         </div>
 
         {/* Tabs */}
@@ -251,23 +242,23 @@ function OverviewTab({
             champion_qualified={task.qualified_count != null && task.qualified_count > 0 ? true : undefined}
           />
           <div className="mt-3 flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="xs"
-              className="gap-1 text-[11px] text-emerald-400"
+            <AntButton
+              size="small"
+              className="!text-[11px]"
+              style={{ color: "#34d399" }}
               onClick={() => onVisualVerify(championDna, task)}
             >
               <Eye className="h-3 w-3" />
               可视化验证
-            </Button>
-            <Button
-              variant="outline"
-              size="xs"
-              className="gap-1 text-[11px] text-purple-400"
+            </AntButton>
+            <AntButton
+              size="small"
+              className="!text-[11px]"
+              style={{ color: "#c084fc" }}
               onClick={() => onSeedEvolve(championDna)}
             >
               以此为种子继续进化
-            </Button>
+            </AntButton>
           </div>
         </Section>
       )}
@@ -419,17 +410,12 @@ function SnapshotsTab({
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-[10px]",
-                  s.source === "champion"
-                    ? "border-amber-400/30 text-amber-400"
-                    : "border-slate-700/50 text-slate-500"
-                )}
+              <Tag
+                color={s.source === "champion" ? "warning" : "default"}
+                className="!m-0 !text-[10px]"
               >
                 {s.source === "champion" ? "最优" : `Gen ${s.generation ?? "?"}`}
-              </Badge>
+              </Tag>
               <span className="text-xs font-mono text-slate-300">
                 {formatNumber(s.score)}
               </span>

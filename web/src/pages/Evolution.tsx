@@ -8,7 +8,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "antd";
 
 import { SegmentedControl } from "@/components/evolution/SegmentedControl";
 import type { ExploreMode } from "@/components/evolution/SegmentedControl";

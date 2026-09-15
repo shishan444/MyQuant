@@ -1,7 +1,7 @@
 import { useMemo, useCallback, memo } from "react";
 import { Eye, Dna, Play, Save } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/badge";
+import { Button as AntButton } from "antd";
+import { Tag } from "antd";
 import { cn, formatPercent, formatNumber, getFitnessColor } from "@/lib/utils";
 import { getStrategyName, getStrategyType } from "@/lib/strategy-utils";
 import type { DiscoveredStrategy, DNA } from "@/types/api";
@@ -139,28 +139,13 @@ const StrategyRow = memo(function StrategyRow({
             {strategy.qualified && (
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" title="达标" />
             )}
-            <Badge
-              variant="outline"
-              className={cn(
-                "border-slate-700/50 px-1.5 py-0 text-[10px]",
-                strategyType === "趋势"
-                  ? "text-blue-400"
-                  : strategyType === "动量"
-                    ? "text-amber-400"
-                    : strategyType === "波动"
-                      ? "text-purple-400"
-                      : "text-slate-400"
-              )}
-            >
+            <Tag className="!m-0 !px-1.5 !py-0 !text-[10px]" color={strategyType === "趋势" ? "blue" : strategyType === "动量" ? "gold" : strategyType === "波动" ? "purple" : "default"}>
               {strategyType}
-            </Badge>
+            </Tag>
             {mtfBadge && (
-              <Badge
-                variant="outline"
-                className="border-purple-400/30 px-1 py-0 text-[10px] text-purple-400"
-              >
+              <Tag color="purple" className="!m-0 !px-1 !py-0 !text-[10px]">
                 {mtfBadge}
-              </Badge>
+              </Tag>
             )}
             <span className="truncate text-sm text-slate-100">
               {strategyName}
@@ -204,45 +189,45 @@ const StrategyRow = memo(function StrategyRow({
 
         {/* Actions */}
         <div className="flex w-28 shrink-0 items-center justify-end gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-xs"
+          <AntButton
+            type="text"
+            size="small"
             onClick={onToggle}
             aria-label="查看详情"
           >
             <Eye className="h-3.5 w-3.5" />
-          </Button>
+          </AntButton>
           {onVisualVerify && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-emerald-400"
+            <AntButton
+              type="text"
+              size="small"
+              style={{ color: "#34d399" }}
               onClick={onVisualVerify}
               aria-label="回测"
             >
               <Play className="h-3.5 w-3.5" />
-            </Button>
+            </AntButton>
           )}
           {onSave && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-amber-400"
+            <AntButton
+              type="text"
+              size="small"
+              style={{ color: "#fbbf24" }}
               onClick={onSave}
               aria-label="保存"
             >
               <Save className="h-3.5 w-3.5" />
-            </Button>
+            </AntButton>
           )}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-purple-400"
+          <AntButton
+            type="text"
+            size="small"
+            style={{ color: "#c084fc" }}
             onClick={onSeedEvolve}
             aria-label="继续进化"
           >
             <Dna className="h-3.5 w-3.5" />
-          </Button>
+          </AntButton>
         </div>
       </div>
 
@@ -356,12 +341,7 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
                   Layer {idx + 1} - {layer.timeframe.toUpperCase()}
                 </span>
                 {roleLabel && (
-                  <Badge
-                    variant="outline"
-                    className="border-slate-700/50 text-[10px] text-slate-500"
-                  >
-                    {roleLabel}
-                  </Badge>
+                  <Tag className="!m-0 !text-[10px]">{roleLabel}</Tag>
                 )}
               </div>
               <div className="flex flex-col gap-1 rounded-lg border border-slate-700/30 p-2">
@@ -510,12 +490,7 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
               </>
             )}
             {strategy.qualified && (
-              <Badge
-                variant="outline"
-                className="ml-2 border-emerald-400/30 text-[9px] text-emerald-400 px-1 py-0"
-              >
-                达标
-              </Badge>
+              <Tag color="success" className="!m-0 ml-2 !text-[9px] !px-1 !py-0">达标</Tag>
             )}
           </div>
         </div>
@@ -533,14 +508,9 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
 
       {/* Actions */}
       <div className="mt-3 flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="xs"
-          className="text-slate-500"
-          onClick={onClose}
-        >
+        <AntButton type="text" size="small" className="!text-xs !text-slate-500" onClick={onClose}>
           收起
-        </Button>
+        </AntButton>
       </div>
     </div>
   );

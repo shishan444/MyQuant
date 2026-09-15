@@ -148,7 +148,7 @@ describe("Evolution page", () => {
     mockGetEvolutionTasks.mockReturnValue(new Promise(() => {}));
 
     render(<Evolution />, { wrapper: createWrapper() });
-    const skeletons = screen.getAllByTestId("skeleton");
+    const skeletons = document.querySelectorAll(".ant-skeleton"); // AntD Skeleton（断言语义保持：加载占位存在）
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 

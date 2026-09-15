@@ -1,7 +1,6 @@
 import { useMemo, memo } from "react";
 import { Eye, Dna } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/badge";
+import { Button as AntButton, Tag } from "antd";
 import { cn, formatNumber } from "@/lib/utils";
 import { TIMEFRAME_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA } from "@/types/api";
@@ -87,12 +86,9 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
     <tr className="group border-b border-slate-700/10 transition-colors hover:bg-white/[0.02]">
       <td className="py-3 text-slate-200">{pairDisplay}</td>
       <td className="py-3 text-center">
-        <Badge
-          variant="outline"
-          className={cn("text-[10px]", directionColor)}
-        >
+        <Tag className={cn("!m-0 !text-[10px]", directionColor)}>
           {directionLabel}
-        </Badge>
+        </Tag>
       </td>
       <td className="py-3 text-right font-mono font-semibold text-slate-200">
         {formatNumber(task.best_score ?? 0)}
@@ -104,12 +100,9 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
       </td>
       <td className="py-3 text-center">
         {strategyCount > 0 ? (
-          <Badge
-            variant="outline"
-            className="border-emerald-400/30 text-[10px] text-emerald-400"
-          >
+          <Tag color="success" className="!m-0 !text-[10px]">
             {strategyCount}
-          </Badge>
+          </Tag>
         ) : (
           <span className="text-slate-600">0</span>
         )}
@@ -121,40 +114,33 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
         {task.current_generation}/{task.max_generations}
       </td>
       <td className="py-3 text-center">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px]",
-            isCompleted
-              ? "border-emerald-400/30 text-emerald-400"
-              : isStopped
-                ? "border-slate-600/30 text-slate-500"
-                : "border-slate-700/30 text-slate-500"
-          )}
+        <Tag
+          color={isCompleted ? "success" : undefined}
+          className="!m-0 !text-[10px]"
         >
           {isCompleted ? "完成" : isStopped ? "停止" : task.status}
-        </Badge>
+        </Tag>
       </td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon-xs"
+          <AntButton
+            type="text"
+            size="small"
             onClick={onView}
             aria-label="查看"
           >
             <Eye className="h-3.5 w-3.5" />
-          </Button>
+          </AntButton>
           {task.champion_dna && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-purple-400"
+            <AntButton
+              type="text"
+              size="small"
               onClick={onSeedEvolve}
               aria-label="继续进化"
+              style={{ color: "#a78bfa" }}
             >
               <Dna className="h-3.5 w-3.5" />
-            </Button>
+            </AntButton>
           )}
         </div>
       </td>

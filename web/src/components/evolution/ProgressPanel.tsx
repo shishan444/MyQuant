@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Pause, Square, Play, AlertTriangle, CheckCircle, Database, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Progress } from "@/components/ui/progress";
+import { Button as AntButton, Progress as AntProgress } from "antd";
 import { StatCard } from "@/components/StatCard";
 import { cn, formatNumber } from "@/lib/utils";
 import { STATUS_LABELS as STATUS_LABEL, isActiveStatus } from "@/lib/constants";
@@ -100,14 +99,11 @@ export function ProgressPanel({
             {progressPercent}%
           </span>
         </div>
-        <Progress
-          value={progressPercent}
-          className={cn(
-            "h-2",
-            reachedTarget
-              ? "bg-emerald-400/10 [&>[data-slot=progress-indicator]]:bg-gradient-to-r [&>[data-slot=progress-indicator]]:from-emerald-400/80 [&>[data-slot=progress-indicator]]:to-amber-400/80"
-              : "bg-amber-400/10 [&>[data-slot=progress-indicator]]:bg-gradient-to-r [&>[data-slot=progress-indicator]]:from-blue-500 [&>[data-slot=progress-indicator]]:to-purple-500"
-          )}
+        <AntProgress
+          percent={progressPercent}
+          showInfo={false}
+          size={{ height: 8 }}
+          strokeColor={reachedTarget ? { from: "#00b37a", to: "#d9a514" } : { from: "#3b82f6", to: "#8B5CF6" }}
         />
       </div>
       )}
@@ -227,38 +223,38 @@ export function ProgressPanel({
       {(isActive || isPaused) && (
         <div className="flex items-center gap-2">
           {isPaused ? (
-            <Button
-              size="sm"
-              variant="outline"
+            <AntButton
+              size="small"
+             
               className="gap-1.5"
               onClick={onResume}
               disabled={resumePending}
             >
               <Play className="h-3.5 w-3.5" />
               恢复
-            </Button>
+            </AntButton>
           ) : (
-            <Button
-              size="sm"
-              variant="outline"
+            <AntButton
+              size="small"
+             
               className="gap-1.5"
               onClick={onPause}
               disabled={pausePending}
             >
               <Pause className="h-3.5 w-3.5" />
               暂停
-            </Button>
+            </AntButton>
           )}
-          <Button
-            size="sm"
-            variant="outline"
+          <AntButton
+            size="small"
+           
             className="gap-1.5 border-red-400/30 text-red-400 hover:bg-red-400/10"
             onClick={onStop}
             disabled={stopPending}
           >
             <Square className="h-3.5 w-3.5" />
             停止
-          </Button>
+          </AntButton>
         </div>
       )}
     </div>
