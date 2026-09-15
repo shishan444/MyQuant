@@ -19,7 +19,7 @@ import {
   useSessionResults,
 } from "@/hooks/useStrategies";
 import { cn, getFitnessColor } from "@/lib/utils";
-import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene } from "@/types/api";
+import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse } from "@/types/api";
 
 interface DateRange {
   start: string;
@@ -50,7 +50,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function describeCondition(cond: SignalGene["condition"], _indicator: string, _field?: string): string {
+function describeCondition(cond: SignalGene["condition"], _indicator: string, _field?: string | null): string {
   const v = cond.value !== undefined ? cond.value.toFixed(cond.value < 1 ? 2 : 0) : "";
   const ref = cond.ref_indicator ? cond.ref_indicator : "";
   switch (cond.type) {
@@ -784,11 +784,11 @@ function HistoryView({
   setExpandedSessionId,
   sessionResults,
 }: {
-  sessionsData: { items: Array<{ session_id: string; status: string; strategy_ids: string; data_ranges: string; total_results: number; created_at: string; error_message?: string }> } | undefined;
+  sessionsData: VerifySessionListResponse | undefined;
   sessionsLoading: boolean;
   expandedSessionId: string | null;
   setExpandedSessionId: (id: string | null) => void;
-  sessionResults: { items: Array<{ result_id: string; strategy_id: string; strategy_name?: string; symbol: string; timeframe: string; total_return: number; sharpe_ratio: number; fitness: number; qualified: number; data_start: string; data_end: string }> } | undefined;
+  sessionResults: VerifyHistoryResponse | undefined;
 }) {
   if (sessionsLoading) {
     return (

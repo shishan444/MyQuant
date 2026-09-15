@@ -247,7 +247,7 @@ function OverviewTab({
             champion_metrics={task.champion_metrics}
             champion_dimension_scores={task.champion_dimension_scores}
             champion_satisfaction={task.champion_satisfaction}
-            champion_fitness={task.best_fitness}
+            champion_fitness={task.best_fitness ?? undefined}
             champion_qualified={task.qualified_count != null && task.qualified_count > 0 ? true : undefined}
           />
           <div className="mt-3 flex items-center gap-2">

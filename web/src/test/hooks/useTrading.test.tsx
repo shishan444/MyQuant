@@ -66,6 +66,7 @@ describe("useTrading hooks", () => {
           stop_reason: null, position_side: null, position_entry: null, position_quantity: null, position_margin: null,
           position_funding: null, balance: null, unrealized_pnl: 0, total_trades: 0, total_pnl: 0, win_count: 0,
           loss_count: 0, last_bar_time: null, last_bar_close: null, confidence_sizing_enabled: false,
+          execution_model: "v1",
         }],
         total: 1,
       };

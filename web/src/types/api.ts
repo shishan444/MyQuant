@@ -1,38 +1,62 @@
-export interface SignalGene {
-  indicator: string;
-  params: Record<string, unknown>;
-  role: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard" | "add_trigger" | "add_guard" | "reduce_trigger" | "reduce_guard" | "direction";
-  field?: string;
-  condition: {
-    type: "lt" | "gt" | "le" | "ge" | "cross_above" | "cross_below" | "price_above" | "price_below";
-    value?: number;
-    ref_indicator?: string;
-    ref_field?: string;
-  };
+/**
+ * 语义别名层——前端域语言 ↔ 后端 Pydantic 模型的命名映射。
+ *
+ * 形状唯一权威 = ./generated/api.ts（openapi-typescript 从后端 openapi.json 生成，
+ * 禁止手改）。契约调整流程：改后端 → `npm run generate:types` → 本层随 tsc 暴露差异。
+ *
+ * 本层只做三类事，不含独立于生成源的形状定义：
+ * 1. 域语言重命名（映射处以「← 后端模型名」标注）；
+ * 2. 消费端语义收窄：后端 string 的枚举字段收窄为判别联合；可选性以消费端现状为准，
+ *    与后端声明不一致处注释标注；
+ * 3. dict 洞补形：后端 `list[dict]`/`dict` 无元素 schema 的字段（openapi 表达洞），
+ *    按实际 JSON 形状收窄；后端补子模型后应改回纯别名。
+ *
+ * 例外保留手写（均注明来源）：WS 推送消息（G2 事件契约冻结时收编 zod）、
+ * 后端未声明 response_model 的端点响应、纯前端本地类型。
+ */
+import type { components } from "./generated/api";
+
+type S = components["schemas"];
+
+// ---------------------------------------------------------------------------
+// Evolution / Strategy core (进化与策略核心域)
+// ---------------------------------------------------------------------------
+
+/** 信号基因条件 ← 后端 SignalGeneModel.condition（dict 洞补形：后端无子 schema） */
+export interface SignalGeneCondition {
+  type: "lt" | "gt" | "le" | "ge" | "cross_above" | "cross_below" | "price_above" | "price_below";
+  value?: number;
+  ref_indicator?: string;
+  ref_field?: string;
 }
 
-export interface LogicGenes {
+/** 信号基因 ← 后端 SignalGeneModel-Output；condition 为 dict 洞补形 */
+export type SignalGene = Omit<S["SignalGeneModel-Output"], "condition"> & {
+  condition: SignalGeneCondition;
+};
+
+/** 逻辑基因 ← 后端 LogicGenesModel；枚举收窄；add/reduce 后端必填（default AND），前端保持可选 */
+export type LogicGenes = Omit<
+  S["LogicGenesModel"],
+  "entry_logic" | "exit_logic" | "add_logic" | "reduce_logic"
+> & {
   entry_logic: "AND" | "OR";
   exit_logic: "AND" | "OR";
   add_logic?: "AND" | "OR";
   reduce_logic?: "AND" | "OR";
-}
+};
 
-export interface ExecutionGenes {
-  timeframe: string;
-  symbol: string;
-}
+/** 执行基因 ← 后端 ExecutionGenesModel（形状一致） */
+export type ExecutionGenes = S["ExecutionGenesModel"];
 
-export interface RiskGenes {
-  stop_loss: number;
-  take_profit: number | null;
-  position_size: number;
-  leverage: number;
+/** 风险基因 ← 后端 RiskGenesModel；direction/sl_mode 枚举收窄；sl_mode/atr_period 后端 default 兜底（openapi 因 default 标必填，消费端保持可选） */
+export type RiskGenes = Omit<S["RiskGenesModel"], "direction" | "sl_mode" | "atr_period"> & {
   direction: "long" | "short" | "mixed";
   sl_mode?: "pct" | "atr";
   atr_period?: number;
-}
+};
 
+/** 多周期层 ← 后端 DNAModel.layers（dict 洞补形：后端无 TimeframeLayer 子模型） */
 export interface TimeframeLayerModel {
   timeframe: string;
   signal_genes: SignalGene[];
@@ -40,75 +64,51 @@ export interface TimeframeLayerModel {
   role?: string; // "structure" | "zone" | "execution"
 }
 
-export interface DNA {
+/**
+ * 策略 DNA ← 后端 DNAModel-Output。
+ * - signal_genes/logic_genes/risk_genes/execution_genes 后端声明可选，
+ *   进化构造与响应实际恒有——消费端收窄断言；
+ * - layers 为 dict 洞补形；cross_layer_logic 枚举收窄；
+ * - confluence_threshold/proximity_mult 后端必填（default），前端保持可选。
+ */
+export type DNA = Omit<
+  S["DNAModel-Output"],
+  | "signal_genes"
+  | "logic_genes"
+  | "execution_genes"
+  | "risk_genes"
+  | "layers"
+  | "cross_layer_logic"
+  | "confluence_threshold"
+  | "proximity_mult"
+> & {
   signal_genes: SignalGene[];
   logic_genes: LogicGenes;
   execution_genes: ExecutionGenes;
   risk_genes: RiskGenes;
-  strategy_id?: string;
-  generation: number;
-  parent_ids: string[];
-  mutation_ops: string[];
   layers?: TimeframeLayerModel[] | null;
   cross_layer_logic?: "AND" | "OR";
-  mtf_mode?: string | null;
   confluence_threshold?: number;
   proximity_mult?: number;
-}
+};
 
-export interface Strategy {
-  strategy_id: string;
-  name?: string;
-  dna?: DNA;
-  symbol: string;
-  timeframe: string;
-  source: string;
-  source_task_id?: string;
-  best_score?: number;
-  best_fitness?: number;
-  qualified?: boolean | null;
+/** 策略 ← 后端 StrategyResponse；dna/metrics 以消费端收窄类型替代生成源原始形状 */
+export type Strategy = Omit<S["StrategyResponse"], "dna" | "metrics"> & {
+  dna?: DNA | null;
   metrics?: StrategyMetrics | null;
-  generation: number;
-  parent_ids?: string;
-  tags?: string;
-  notes?: string;
-  verify_count?: number;
-  verify_avg_score?: number | null;
-  verify_best_score?: number | null;
-  last_verified_at?: string | null;
-  verify_star?: number | null;
-  created_at: string;
-  updated_at: string;
-}
+};
 
-export interface BacktestResult {
-  result_id: string;
-  strategy_id: string;
-  symbol: string;
-  timeframe: string;
-  data_start?: string;
-  data_end?: string;
-  init_cash: number;
-  fee: number;
-  slippage: number;
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  win_rate: number;
-  total_trades: number;
-  total_score: number;
-  fitness: number;
-  qualified: boolean;
-  template_name: string;
+/** 回测结果 ← 后端 BacktestResponse；equity_curve/signals/dimension_scores 为 dict 洞补形 */
+export type BacktestResult = Omit<
+  S["BacktestResponse"],
+  "equity_curve" | "signals" | "dimension_scores"
+> & {
   dimension_scores?: Record<string, number>;
-  satisfaction?: Record<string, unknown>;
-  run_source: string;
-  equity_curve?: Array<{ timestamp: string; value: number }>;
-  signals?: TradeSignal[];
-  total_funding_cost: number;
-  liquidated: boolean;
-}
+  equity_curve?: Array<{ timestamp: string; value: number }> | null;
+  signals?: TradeSignal[] | null;
+};
 
+/** 交易信号 ← 后端 BacktestResponse.signals 元素（dict 洞补形） */
 export interface TradeSignal {
   type: "buy" | "sell";
   timestamp: string;
@@ -117,37 +117,32 @@ export interface TradeSignal {
   reason: string;
 }
 
+/** 任务状态 ← 后端 string（EvolutionTaskResponse.status），消费端判别联合收窄 */
 export type EvolutionTaskStatus = "pending" | "running" | "paused" | "stopped" | "completed";
 
-export interface EvolutionTask {
-  task_id: string;
+/**
+ * 进化任务 ← 后端 EvolutionTaskResponse。
+ * - status/mode/direction 枚举收窄；
+ * - champion_metrics/champion_dimension_scores 为 dict 洞补形；
+ * - n_workers/elite_ratio/min_annual_return 等为后端字段（后端容器裁决移除中）。
+ */
+export type EvolutionTask = Omit<
+  S["EvolutionTaskResponse"],
+  | "status"
+  | "mode"
+  | "direction"
+  | "initial_dna"
+  | "champion_dna"
+  | "champion_metrics"
+  | "champion_dimension_scores"
+  | "champion_satisfaction"
+  | "progress_json"
+> & {
   status: EvolutionTaskStatus;
-  target_score: number;
-  score_template: string;
-  symbol: string;
-  timeframe: string;
+  mode?: "auto" | "seed";
+  direction: "long" | "short" | "mixed";
   initial_dna?: DNA;
   champion_dna?: DNA;
-  population_size: number;
-  max_generations: number;
-  current_generation: number;
-  created_at: string;
-  updated_at: string;
-  stop_reason?: string;
-  best_score?: number;
-  best_fitness?: number;
-  requirements?: RequirementsConfig;
-  qualified_count?: number;
-  indicator_pool?: string[];
-  timeframe_pool?: string[];
-  mode?: "auto" | "seed";
-  leverage: number;
-  direction: "long" | "short" | "mixed";
-  data_start?: string;
-  data_end?: string;
-  data_time_start?: string;
-  data_time_end?: string;
-  data_row_count?: number;
   champion_metrics?: {
     annual_return: number;
     sharpe_ratio: number;
@@ -158,49 +153,31 @@ export interface EvolutionTask {
   };
   champion_dimension_scores?: Record<string, number>;
   champion_satisfaction?: Record<string, unknown>;
-  continuous?: boolean;
-  population_count?: number;
-  strategy_threshold?: number;
-  strategy_count?: number;
-  exploration_efficiency?: number;
-  current_phase?: string;
   progress_json?: Record<string, unknown>;
-}
+};
 
-export interface EvolutionHistoryRecord {
-  generation: number;
-  best_score: number;
-  avg_score: number;
+/** 历史记录 ← 后端 EvolutionHistoryRecord；best_fitness 等后端含 null，前端收窄为可选 */
+export type EvolutionHistoryRecord = Omit<
+  S["EvolutionHistoryRecord"],
+  "best_fitness" | "avg_fitness" | "top3_summary"
+> & {
   best_fitness?: number;
   avg_fitness?: number;
   top3_summary?: string;
-  created_at: string;
-}
+};
 
-export interface RequirementsConfig {
+/** 达标要求 ← 后端 RequirementsConfigModel；objective 后端必填（default sharpe），前端可选 */
+export type RequirementsConfig = Omit<S["RequirementsConfigModel"], "objective"> & {
   objective?: string;
-  min_annual_return: number;
-  max_drawdown: number;
-  min_win_rate: number;
-  min_total_trades: number;
-  min_profit_factor: number;
-}
+};
 
-export interface Dataset {
-  dataset_id: string;
-  symbol: string;
-  interval: string;
-  row_count: number;
-  time_start?: string;
-  time_end?: string;
+/** 数据集 ← 后端 DatasetResponse；quality_status 枚举收窄 */
+export type Dataset = Omit<S["DatasetResponse"], "quality_status"> & {
   quality_status: "complete" | "warning" | "error" | "unknown";
-  gap_count: number;
-  created_at: string;
-  updated_at: string;
-}
+};
 
-export interface OhlcvData {
-  dataset_id: string;
+/** K 线数据 ← 后端 OhlcvResponse；data 为 dict 洞补形 */
+export type OhlcvData = Omit<S["OhlcvResponse"], "data"> & {
   data: Array<{
     timestamp: string;
     open: number;
@@ -209,8 +186,9 @@ export interface OhlcvData {
     close: number;
     volume: number;
   }>;
-}
+};
 
+/** 前端分页容器辅助（泛型工具，非后端形状：各 List 响应自带 items/total） */
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
@@ -218,31 +196,41 @@ export interface PaginatedResponse<T> {
   page_size?: number;
 }
 
-export interface StrategyListResponse {
+/** 策略列表 ← 后端 StrategyListResponse；items 收窄为域类型 */
+export type StrategyListResponse = Omit<S["StrategyListResponse"], "items"> & {
   items: Strategy[];
-  total: number;
-}
+};
 
-export interface EvolutionTaskListResponse {
+/** 任务列表 ← 后端 EvolutionTaskListResponse；items 收窄为域类型；page/page_size 后端必填（default 1/20），消费端保持可选 */
+export type EvolutionTaskListResponse = Omit<
+  S["EvolutionTaskListResponse"],
+  "items" | "page" | "page_size"
+> & {
   items: EvolutionTask[];
-  total: number;
   page?: number;
   page_size?: number;
-}
+};
 
-export interface DatasetListResponse {
+/** 数据集列表 ← 后端 DatasetListResponse；items 收窄为域类型 */
+export type DatasetListResponse = Omit<S["DatasetListResponse"], "items"> & {
   items: Dataset[];
-  total: number;
-}
+};
 
+/**
+ * 进化历史响应：service 层视图（非后端契约直译）。
+ * 后端真实形状 = EvolutionHistoryResponse { task_id, generations }（见生成源），
+ * services/evolution.ts 已适配为 { records, total }；元素为后端契约。
+ */
 export interface EvolutionHistoryResponse {
   records: EvolutionHistoryRecord[];
   total: number;
 }
 
+/**
+ * WS 推送消息（runner → 前端，非 openapi 契约）。
+ * G2 实时层契约先行时冻结事件契约并经 zod 校验收编。
+ */
 export interface GenerationUpdate {
-  // F0 最小扩充：补齐 runner 实际推送的消息类型与字段（useEvolution.ts 已在消费）；
-  // F2 WS 层统一时将收窄为判别联合并经 zod 校验
   type:
     | "generation_complete"
     | "evolution_complete"
@@ -276,20 +264,32 @@ export interface GenerationUpdate {
   phase?: string;
 }
 
-export interface StrategyMetrics {
+/**
+ * 策略指标 ← 后端 StrategyMetrics（Response.metrics 声明的 6 字段）。
+ * - 6 字段后端声明可空，实际由回测产出后整体挂载（无 metrics 时整个字段为 null）——
+ *   消费端收窄为必填；
+ * - 消费端补形：core/scoring/metrics.py 实际计算含 calmar_ratio 等更多字段
+ *   （经 dict 洞通道到达，如 champion_metrics/回测详情）；后端补全 response_model
+ *   后应改回纯别名。
+ */
+export type StrategyMetrics = Omit<
+  S["StrategyMetrics"],
+  "annual_return" | "sharpe_ratio" | "max_drawdown" | "win_rate" | "total_trades" | "profit_factor"
+> & {
   annual_return: number;
   sharpe_ratio: number;
   max_drawdown: number;
   win_rate: number;
   total_trades: number;
-  calmar_ratio: number;
   profit_factor: number;
+  calmar_ratio?: number;
   sortino_ratio?: number;
   max_consecutive_losses?: number;
   monthly_consistency?: number;
   r_squared?: number;
-}
+};
 
+/** 发现策略 ← /api/evolution/strategies 端点（响应未声明 response_model，dict 洞），按实际 JSON 形状 */
 export interface DiscoveredStrategy {
   strategy_id: string;
   name: string;
@@ -306,12 +306,14 @@ export interface DiscoveredStrategy {
   qualified?: boolean;
 }
 
+/** 变异记录 ← WS 推送（非 openapi 契约，G2 收编） */
 export interface MutationRecord {
   generation: number;
   operation: string;
   details: string;
 }
 
+/** 进化产出策略 ← /api/evolution/tasks/{id}/strategies 端点（响应未声明 schema），按实际 JSON 形状 */
 export interface EvolvedStrategy {
   strategy_id: string;
   dna: DNA;
@@ -326,26 +328,15 @@ export interface EvolvedStrategy {
 // Validation types (Strategy Lab v2.3)
 // ---------------------------------------------------------------------------
 
-export interface ConditionInput {
-  subject: string;
-  action: string;
-  target: string;
-  window?: number;
+/** 条件输入 ← 后端 ConditionInput；logic 枚举收窄 */
+export type ConditionInput = Omit<S["ConditionInput"], "logic"> & {
   logic: "AND" | "OR";
-  timeframe?: string;
-}
+};
 
-export interface ValidateRequest {
-  pair: string;
-  timeframe: string;
-  base_timeframe?: string;
-  start: string;
-  end: string;
-  when: ConditionInput[];
-  then: ConditionInput[];
-  indicator_params?: Record<string, unknown>;
-}
+/** 验证请求 ← 后端 ValidateRequest */
+export type ValidateRequest = S["ValidateRequest"];
 
+/** 图表指标配置（纯前端本地类型：localStorage 持久化形态，作为 query 参数发往后端） */
 export interface ChartIndicatorConfig {
   ema_periods: number[];
   ema_colors: string[];
@@ -354,15 +345,10 @@ export interface ChartIndicatorConfig {
   vol: { enabled: boolean; position: "overlay" | "separate" };
 }
 
-export interface TriggerRecord {
-  id: number;
-  time: string;
-  trigger_price: number;
-  change_pct: number;
-  matched: boolean;
-  indicator_values: Record<string, number>;
-}
+/** 触发记录 ← 后端 TriggerRecordResponse */
+export type TriggerRecord = S["TriggerRecordResponse"];
 
+/** 分布桶 ← 后端 ValidateResponse.distribution 元素（dict 洞补形） */
 export interface DistributionBucket {
   range: [number, number];
   match_count: number;
@@ -370,80 +356,46 @@ export interface DistributionBucket {
   total_count: number;
 }
 
-export interface ValidateResponse {
-  match_rate: number;
-  total_count: number;
-  match_count: number;
-  mismatch_count: number;
-  triggers: TriggerRecord[];
+/** 验证响应 ← 后端 ValidateResponse；distribution/concentration/extremes 为 dict 洞补形 */
+export type ValidateResponse = Omit<
+  S["ValidateResponse"],
+  "distribution" | "concentration" | "extremes"
+> & {
   distribution: DistributionBucket[];
-  percentiles: Record<string, number>;
   concentration: Record<string, number[]>;
-  signal_frequency: Record<string, number>;
   extremes: Array<{ change_pct: number; time: string; is_match: boolean }>;
-  warnings: string[];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Available data sources
 // ---------------------------------------------------------------------------
 
-export interface AvailableSource {
-  symbol: string;
-  timeframe: string;
-  time_start?: string;
-  time_end?: string;
-}
+/** 可用数据源 ← 后端 AvailableSource */
+export type AvailableSource = S["AvailableSource"];
 
-export interface AvailableSourcesResponse {
-  sources: AvailableSource[];
-}
+/** 可用数据源列表 ← 后端 AvailableSourcesResponse */
+export type AvailableSourcesResponse = S["AvailableSourcesResponse"];
 
 // ---------------------------------------------------------------------------
 // Rule validation (Strategy Lab v2.4)
 // ---------------------------------------------------------------------------
 
-export interface RuleCondition {
+/** 规则条件 ← 后端 RuleConditionInput；logic 枚举收窄（前端含行首 IF） */
+export type RuleCondition = Omit<S["RuleConditionInput"], "logic"> & {
   logic: "IF" | "AND" | "OR";
-  timeframe: string;
-  subject: string;
-  action: string;
-  target: string;
-}
+};
 
-export interface RuleValidateRequest {
-  pair: string;
-  timeframe: string;
-  start: string;
-  end: string;
-  entry_conditions: RuleCondition[];
-  exit_conditions: RuleCondition[];
-}
+/** 规则验证请求 ← 后端 RuleValidateRequest */
+export type RuleValidateRequest = S["RuleValidateRequest"];
 
-export interface RuleValidateResponse {
-  buy_signals: Array<{ time: string; price: number; type: string }>;
-  sell_signals: Array<{ time: string; price: number; type: string }>;
-  trades: Array<{
-    entry_time: string;
-    entry_price: number;
-    exit_time: string;
-    exit_price: number;
-    return_pct: number;
-    is_win: boolean;
-  }>;
-  total_trades: number;
-  win_trades: number;
-  loss_trades: number;
-  win_rate: number;
-  total_return_pct: number;
-  avg_return_pct: number;
-  warnings: string[];
-}
+/** 规则验证响应 ← 后端 RuleValidateResponse */
+export type RuleValidateResponse = S["RuleValidateResponse"];
 
 // ---------------------------------------------------------------------------
 // Chart indicators (computed by backend)
 // ---------------------------------------------------------------------------
 
+/** 图表指标响应 ← /api/data/chart-indicators 端点（响应未声明 response_model），按实际 JSON 形状 */
 export interface ChartIndicatorsResponse {
   ema: Record<string, Array<{ time: string; value: number }>>;
   boll: {
@@ -468,114 +420,44 @@ export interface ChartIndicatorsResponse {
 // Strategy Verify (multi-period validation)
 // ---------------------------------------------------------------------------
 
-export interface VerifyDateRange {
-  start: string;
-  end: string;
-}
+/** 验证日期区间 ← 后端 VerifyDateRange */
+export type VerifyDateRange = S["VerifyDateRange"];
 
-export interface VerifyRequest {
-  strategy_ids: string[];
-  data_ranges: VerifyDateRange[];
-  init_cash?: number;
-  fee?: number;
-  slippage?: number;
-}
+/** 验证请求 ← 后端 VerifyRequest */
+export type VerifyRequest = S["VerifyRequest"];
 
-export interface VerifyResultItem {
-  strategy_id: string;
-  data_start: string;
-  data_end: string;
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  win_rate: number;
-  total_trades: number;
-  profit_factor: number;
-  fitness: number;
-  qualified: boolean;
-  error?: string;
-}
+/** 验证明细 ← 后端 VerifyResultItem */
+export type VerifyResultItem = S["VerifyResultItem"];
 
-export interface VerifyPeriodSummary {
-  data_start: string;
-  data_end: string;
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  fitness: number;
-  qualified: boolean;
-}
+/** 周期汇总 ← 后端 VerifyPeriodSummary */
+export type VerifyPeriodSummary = S["VerifyPeriodSummary"];
 
-export interface VerifySummaryItem {
-  strategy_id: string;
-  strategy_name: string;
-  comprehensive_score: number;
-  avg_fitness: number;
-  qualified_count: number;
-  total_periods: number;
-  per_period_metrics: VerifyPeriodSummary[];
-}
+/** 策略汇总 ← 后端 VerifySummaryItem */
+export type VerifySummaryItem = S["VerifySummaryItem"];
 
-export interface VerifyResponse {
-  results: VerifyResultItem[];
-  summary: VerifySummaryItem[];
-}
+/** 验证响应 ← 后端 VerifyResponse */
+export type VerifyResponse = S["VerifyResponse"];
 
-export interface VerifyHistoryItem {
-  result_id: string;
-  strategy_id: string;
-  strategy_name?: string;
-  symbol: string;
-  timeframe: string;
-  data_start: string;
-  data_end: string;
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  fitness: number;
-  qualified: number;
-  created_at: string;
-}
+/** 验证历史条目 ← 后端 VerifyHistoryItem */
+export type VerifyHistoryItem = S["VerifyHistoryItem"];
 
-export interface VerifyHistoryResponse {
-  items: VerifyHistoryItem[];
-  total: number;
-}
+/** 验证历史响应 ← 后端 VerifyHistoryResponse */
+export type VerifyHistoryResponse = S["VerifyHistoryResponse"];
 
-export interface VerifySession {
-  session_id: string;
-  status: string;
-  strategy_ids: string;
-  data_ranges: string;
-  init_cash: number;
-  fee: number;
-  slippage: number;
-  summary_json?: string;
-  total_results: number;
-  total_strategies: number;
-  error_message?: string;
-  created_at: string;
-  completed_at?: string;
-}
+/** 验证会话 ← 后端 VerifySessionResponse */
+export type VerifySession = S["VerifySessionResponse"];
 
-export interface VerifySessionListResponse {
-  items: VerifySession[];
-  total: number;
-}
+/** 验证会话列表 ← 后端 VerifySessionListResponse */
+export type VerifySessionListResponse = S["VerifySessionListResponse"];
 
 // ---------------------------------------------------------------------------
 // Batch Backtest (multi-strategy × multi-period detailed backtesting)
 // ---------------------------------------------------------------------------
 
-export interface BatchBacktestRequest {
-  strategy_ids: string[];
-  data_ranges: Array<{ start: string; end: string }>;
-  init_cash?: number;
-  fee?: number;
-  slippage?: number;
-  leverage?: number;
-}
+/** 批量回测请求 ← 后端 BatchBacktestRequest */
+export type BatchBacktestRequest = S["BatchBacktestRequest"];
 
+/** 批量回测结果明细 ← /api/strategies/batch-backtest/{id} 端点（响应未声明 response_model），按实际 JSON 形状 */
 export interface BatchBacktestResultItem {
   result_id: string;
   strategy_id: string;
@@ -597,6 +479,7 @@ export interface BatchBacktestResultItem {
   error?: string;
 }
 
+/** 批量回测策略汇总 ← 同上端点（响应未声明 schema），按实际 JSON 形状 */
 export interface BatchBacktestSummaryItem {
   strategy_id: string;
   strategy_name: string;
@@ -609,4 +492,78 @@ export interface BatchBacktestSummaryItem {
   qualified_count: number;
   total_periods: number;
   per_period_results: BatchBacktestResultItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Trading (纸交易域)
+// ---------------------------------------------------------------------------
+
+/**
+ * 交易任务 ← 后端 PaperTradingTaskResponse。
+ * strategy_name、started_at 等可空字段后端声明可选，实际响应恒有——
+ * 消费端收窄为必填可空。
+ */
+export type TradingTask = Omit<
+  S["PaperTradingTaskResponse"],
+  | "strategy_name"
+  | "started_at"
+  | "stopped_at"
+  | "stop_reason"
+  | "position_side"
+  | "position_entry"
+  | "position_quantity"
+  | "position_margin"
+  | "position_funding"
+  | "balance"
+  | "last_bar_time"
+  | "last_bar_close"
+> & {
+  strategy_name: string | null;
+  started_at: string | null;
+  stopped_at: string | null;
+  stop_reason: string | null;
+  position_side: string | null;
+  position_entry: number | null;
+  position_quantity: number | null;
+  position_margin: number | null;
+  position_funding: number | null;
+  balance: number | null;
+  last_bar_time: string | null;
+  last_bar_close: number | null;
+};
+
+/** 交易任务列表 ← 后端 PaperTradingTaskListResponse；tasks 收窄为域类型 */
+export type TradingTaskList = Omit<S["PaperTradingTaskListResponse"], "tasks"> & {
+  tasks: TradingTask[];
+};
+
+/** 纸交易成交 ← 后端 PaperTradeResponse；pnl/reason 后端可选，消费端收窄必填可空 */
+export type PaperTrade = Omit<S["PaperTradeResponse"], "pnl" | "reason"> & {
+  pnl: number | null;
+  reason: string | null;
+};
+
+/** 纸交易成交列表 ← 后端 PaperTradeListResponse；trades 收窄为域类型 */
+export type PaperTradeList = Omit<S["PaperTradeListResponse"], "trades"> & {
+  trades: PaperTrade[];
+};
+
+/** 建任务参数 ← 后端 PaperTradingTaskCreate；后端 default 必填，构造端保持可选（dna_json 必给） */
+export type CreateTradingTaskParams = Partial<S["PaperTradingTaskCreate"]> & {
+  dna_json: string;
+};
+
+/** 权益快照 ← 后端 EquitySnapshotResponse（形状一致） */
+export type EquitySnapshot = S["EquitySnapshotResponse"];
+
+/** 权益快照列表 ← 后端 EquitySnapshotListResponse */
+export type EquitySnapshotList = S["EquitySnapshotListResponse"];
+
+/** 交易指标 ← 后端 TradingMetricsResponse（形状覆盖前端原用子集） */
+export type TradingMetrics = S["TradingMetricsResponse"];
+
+/** runner 状态 ← /api/trading/runner-status 端点（响应为裸 dict 无 schema），按实际 JSON 形状 */
+export interface TradingRunnerStatus {
+  is_alive: boolean;
+  active_task_id: string | null;
 }

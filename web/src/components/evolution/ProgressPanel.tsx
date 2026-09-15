@@ -45,7 +45,6 @@ export function ProgressPanel({
   const isPaused = task.status === "paused";
   const reachedTarget = (task.qualified_count ?? 0) > 0;
   const isContinuous = task.continuous === true;
-  const populationCount = task.population_count ?? 1;
   const [showChampion, setShowChampion] = useState(false);
   const phaseLabel = task.current_phase ? PHASE_LABELS[task.current_phase] ?? task.current_phase : null;
   const showPhaseHint = isActive && currentGeneration === 0 && phaseLabel;
@@ -80,11 +79,6 @@ export function ProgressPanel({
           第 <span className="font-mono text-slate-400">{currentGeneration}</span>{" "}
           代{isContinuous ? "" : ` / ${maxGenerations} 代`}
         </span>
-        {isContinuous && populationCount > 1 && (
-          <span className="text-xs text-amber-400">
-            第 <span className="font-mono">{populationCount}</span> 轮探索
-          </span>
-        )}
       </div>
 
       {/* Phase hint: show meaningful progress when generation=0 */}

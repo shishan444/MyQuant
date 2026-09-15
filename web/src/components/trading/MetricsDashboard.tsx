@@ -1,20 +1,9 @@
 import { StatCard } from "@/components/StatCard";
 import { formatCurrency, formatPercent } from "@/lib/utils";
-
-interface MetricsData {
-  total_return_pct: number;
-  total_pnl: number;
-  win_rate: number;
-  profit_factor: number | null;
-  max_drawdown_pct: number;
-  avg_trade_pnl: number;
-  total_trades: number;
-  win_count: number;
-  loss_count: number;
-}
+import type { TradingMetrics } from "@/types/api";
 
 interface MetricsDashboardProps {
-  metrics: MetricsData | undefined;
+  metrics: TradingMetrics | undefined;
   initialCash: number;
 }
 

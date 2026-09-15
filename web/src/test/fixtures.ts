@@ -202,6 +202,8 @@ export const mockTradingMetrics = {
   avg_trade_pnl: 400,
   total_trades: 5,
   total_pnl: 2000,
+  realized_pnl: 2000,
+  unrealized_pnl: 0,
   win_count: 3,
   loss_count: 2,
 };

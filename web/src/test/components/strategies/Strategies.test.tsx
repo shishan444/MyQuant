@@ -95,6 +95,7 @@ function makeStrategy(overrides: Partial<Strategy> = {}): Strategy {
     tags: "",
     notes: "",
     generation: 0,
+    verify_count: 0,
     created_at: "2025-01-15T00:00:00Z",
     updated_at: "2025-01-15T00:00:00Z",
     ...overrides,
