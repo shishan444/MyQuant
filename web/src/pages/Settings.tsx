@@ -1,42 +1,30 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import {
+  Button as AntButton,
+  Divider,
+  Input,
+  InputNumber,
+  Select,
+  Skeleton,
+  Switch,
+  Tabs,
+  Form,
+} from "antd";
+import { Plus, Trash2 } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
 import { PageTransition } from "@/components/PageTransition";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { api } from "@/services/api";
 import { useChartSettings } from "@/stores/chart-settings";
-import { cn } from "@/lib/utils";
-import { Plus, Trash2 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
 
-type SettingsTab = "general" | "indicators" | "data" | "about";
-
-const TABS: { value: SettingsTab; label: string }[] = [
-  { value: "general", label: "通用" },
-  { value: "indicators", label: "指标参数" },
-  { value: "data", label: "数据管理" },
-  { value: "about", label: "关于" },
-];
-
-// ---------------------------------------------------------------------------
-// Main Settings component
-// ---------------------------------------------------------------------------
-
+/**
+ * 通用配置形状 ← /api/config 端点（响应为 dict 无 schema——G1 无 schema 清单项），
+ * 手写按实际 JSON 形状。
+ */
 interface AppConfig {
   language: string;
   timezone: string;
@@ -66,7 +54,6 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [config, setConfig] = useState<AppConfig | null>(null);
 
   useEffect(() => {
@@ -87,9 +74,8 @@ export function Settings() {
     return (
       <PageTransition>
         <div className="flex flex-col gap-6 max-w-2xl">
-          <Skeleton className="h-64 w-full rounded-xl" />
-          <Skeleton className="h-64 w-full rounded-xl" />
-          <Skeleton className="h-48 w-full rounded-xl" />
+          <Skeleton active paragraph={{ rows: 6 }} className="rounded-xl" />
+          <Skeleton active paragraph={{ rows: 6 }} className="rounded-xl" />
         </div>
       </PageTransition>
     );
@@ -98,136 +84,132 @@ export function Settings() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-6 max-w-2xl">
-        {/* Tab bar */}
-        <div className="flex gap-0 border-b border-border-default">
-          {TABS.map((tab) => (
-            <button
-              key={tab.value}
-              type="button"
-              onClick={() => setActiveTab(tab.value)}
-              className={cn(
-                "px-4 py-2 text-sm font-medium transition-colors border-b-2",
-                activeTab === tab.value
-                  ? "border-accent-gold text-accent-gold"
-                  : "border-transparent text-text-muted hover:text-text-secondary",
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        {activeTab === "general" && (
-          <>
-            <GeneralSettings config={config} onSave={savePartial} />
-            <BinanceApiSettings config={config} onSave={savePartial} />
-            <TradingSettings config={config} onSave={savePartial} />
-          </>
-        )}
-        {activeTab === "indicators" && <IndicatorSettings />}
-        {activeTab === "data" && (
-          <GlassCard className="p-6" hover={false}>
-            <p className="text-sm text-text-muted">数据管理功能请前往数据管理页面</p>
-          </GlassCard>
-        )}
-        {activeTab === "about" && (
-          <GlassCard className="p-6" hover={false}>
-            <h2 className="text-base font-medium text-text-primary mb-2">MyQuant v3.0</h2>
-            <p className="text-sm text-text-muted">策略实验室 - 多周期假设验证与智能进化平台</p>
-          </GlassCard>
-        )}
+        <Tabs
+          defaultActiveKey="general"
+          items={[
+            {
+              key: "general",
+              label: "通用",
+              children: (
+                <>
+                  <GeneralSettings config={config} onSave={savePartial} />
+                  <BinanceApiSettings config={config} onSave={savePartial} />
+                  <TradingSettings config={config} onSave={savePartial} />
+                </>
+              ),
+            },
+            { key: "indicators", label: "指标参数", children: <IndicatorSettings /> },
+            {
+              key: "data",
+              label: "数据管理",
+              children: (
+                <GlassCard className="p-6" hover={false}>
+                  <p className="text-sm text-text-muted">数据管理功能请前往数据管理页面</p>
+                </GlassCard>
+              ),
+            },
+            {
+              key: "about",
+              label: "关于",
+              children: (
+                <GlassCard className="p-6" hover={false}>
+                  <h2 className="text-base font-medium text-text-primary mb-2">MyQuant v3.0</h2>
+                  <p className="text-sm text-text-muted">策略实验室 - 多周期假设验证与智能进化平台</p>
+                </GlassCard>
+              ),
+            },
+          ]}
+        />
       </div>
     </PageTransition>
   );
 }
 
 // ---------------------------------------------------------------------------
-// General settings (unchanged from original)
+// General settings（表单草稿=AntD Form 唯一持有）
 // ---------------------------------------------------------------------------
 
+type GeneralFormValues = Pick<AppConfig, "language" | "timezone" | "notify_evolution" | "notify_signal">;
+
 function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
-  const [language, setLanguage] = useState(config.language);
-  const [timezone, setTimezone] = useState(config.timezone);
-  const [notifyEvolution, setNotifyEvolution] = useState(config.notify_evolution);
-  const [notifySignal, setNotifySignal] = useState(config.notify_signal);
+  const [form] = Form.useForm<GeneralFormValues>();
 
   const handleSave = () => {
-    onSave({ language, timezone, notify_evolution: notifyEvolution, notify_signal: notifySignal });
+    const values = form.getFieldsValue();
+    onSave(values);
   };
 
   return (
-    <GlassCard className="p-6" hover={false}>
+    <GlassCard className="p-6 !mb-6" hover={false}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-medium text-text-primary">通用设置</h2>
-        <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+        <AntButton size="small" type="primary" onClick={handleSave}>
           保存更改
-        </Button>
+        </AntButton>
       </div>
 
-      <div className="flex flex-col gap-4">
+      <Form form={form} layout="horizontal" initialValues={config} className="!mb-0">
         <div className="flex items-center justify-between">
-          <Label className="text-sm text-text-secondary">主题</Label>
+          <span className="text-sm text-text-secondary">主题</span>
           <span className="text-sm text-text-primary">深色模式</span>
         </div>
-        <Separator className="bg-border-default" />
+        <Divider className="!my-3" />
+        <Form.Item label="语言" name="language" className="!mb-3" colon={false}>
+          <Select
+            className="w-40"
+            options={[
+              { value: "zh-CN", label: "简体中文" },
+              { value: "en", label: "English" },
+            ]}
+          />
+        </Form.Item>
+        <Divider className="!my-3" />
+        <Form.Item label="时区" name="timezone" className="!mb-3" colon={false}>
+          <Select
+            className="w-44"
+            options={[
+              { value: "UTC+8", label: "UTC+8 北京时间" },
+              { value: "UTC+0", label: "UTC+0 格林威治" },
+              { value: "UTC-5", label: "UTC-5 纽约" },
+              { value: "UTC+9", label: "UTC+9 东京" },
+            ]}
+          />
+        </Form.Item>
+        <Divider className="!my-3" />
         <div className="flex items-center justify-between">
-          <Label className="text-sm text-text-secondary">语言</Label>
-          <Select value={language} onValueChange={setLanguage}>
-            <SelectTrigger className="w-40 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="zh-CN">简体中文</SelectItem>
-              <SelectItem value="en">English</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center justify-between">
-          <Label className="text-sm text-text-secondary">时区</Label>
-          <Select value={timezone} onValueChange={setTimezone}>
-            <SelectTrigger className="w-44 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="UTC+8">UTC+8 北京时间</SelectItem>
-              <SelectItem value="UTC+0">UTC+0 格林威治</SelectItem>
-              <SelectItem value="UTC-5">UTC-5 纽约</SelectItem>
-              <SelectItem value="UTC+9">UTC+9 东京</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center justify-between">
-          <Label className="text-sm text-text-secondary">通知</Label>
+          <span className="text-sm text-text-secondary">通知</span>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch checked={notifyEvolution} onCheckedChange={setNotifyEvolution} />
-              <span className="text-xs text-text-secondary">进化完成时通知</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={notifySignal} onCheckedChange={setNotifySignal} />
-              <span className="text-xs text-text-secondary">策略信号通知</span>
-            </div>
+            <Form.Item name="notify_evolution" valuePropName="checked" className="!mb-0" noStyle>
+              <Switch aria-label="进化完成时通知" />
+            </Form.Item>
+            <span className="text-xs text-text-secondary">进化完成时通知</span>
+            <Form.Item name="notify_signal" valuePropName="checked" className="!mb-0" noStyle>
+              <Switch aria-label="策略信号通知" />
+            </Form.Item>
+            <span className="text-xs text-text-secondary">策略信号通知</span>
           </div>
         </div>
-      </div>
+      </Form>
     </GlassCard>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Binance API settings（凭证回显风险 S1 记录在案：GET /api/config 明文回显，
+// 前端无修复项——移交后端容器；本页行为等价保留）
+// ---------------------------------------------------------------------------
+
+type BinanceFormValues = Pick<AppConfig, "binance_api_key" | "binance_secret_key">;
+
 function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
-  const [apiKey, setApiKey] = useState(config.binance_api_key);
-  const [secretKey, setSecretKey] = useState(config.binance_secret_key);
-  const [showApi, setShowApi] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
+  const [form] = Form.useForm<BinanceFormValues>();
   const [connected, setConnected] = useState(config.binance_connected);
   const [testing, setTesting] = useState(false);
 
   const handleTest = async () => {
     setTesting(true);
     await new Promise((r) => setTimeout(r, 1500));
+    const { binance_api_key: apiKey, binance_secret_key: secretKey } = form.getFieldsValue();
     setConnected(!!apiKey && !!secretKey);
     setTesting(false);
     if (apiKey && secretKey) {
@@ -238,156 +220,139 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
   };
 
   const handleSave = () => {
-    onSave({ binance_api_key: apiKey, binance_secret_key: secretKey, binance_connected: connected });
+    const values = form.getFieldsValue();
+    onSave({ ...values, binance_connected: connected });
   };
 
   return (
-    <GlassCard className="p-6" hover={false}>
+    <GlassCard className="p-6 !mb-6" hover={false}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-medium text-text-primary">Binance API 配置</h2>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={handleTest} disabled={testing}>
+          <AntButton size="small" onClick={handleTest} disabled={testing}>
             {testing ? "测试中..." : "测试连接"}
-          </Button>
-          <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+          </AntButton>
+          <AntButton size="small" type="primary" onClick={handleSave}>
             保存
-          </Button>
+          </AntButton>
         </div>
       </div>
 
-      <div className="flex flex-col gap-4">
+      <Form form={form} layout="horizontal" initialValues={config} className="!mb-0">
+        <Form.Item label="API Key" name="binance_api_key" className="!mb-3" colon={false}>
+          <Input.Password placeholder="输入 API Key" visibilityToggle={{ visible: false }} />
+        </Form.Item>
+        <Divider className="!my-3" />
+        <Form.Item label="Secret Key" name="binance_secret_key" className="!mb-3" colon={false}>
+          <Input.Password placeholder="输入 Secret Key" visibilityToggle={{ visible: false }} />
+        </Form.Item>
+        <Divider className="!my-3" />
         <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-24 shrink-0">API Key</Label>
-          <div className="relative flex-1">
-            <Input
-              type={showApi ? "text" : "password"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="输入 API Key"
-              className="h-8 text-xs pr-16"
-            />
-            <button
-              type="button"
-              onClick={() => setShowApi(!showApi)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-secondary"
-            >
-              {showApi ? "隐藏" : "显示"}
-            </button>
-          </div>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-24 shrink-0">Secret Key</Label>
-          <div className="relative flex-1">
-            <Input
-              type={showSecret ? "text" : "password"}
-              value={secretKey}
-              onChange={(e) => setSecretKey(e.target.value)}
-              placeholder="输入 Secret Key"
-              className="h-8 text-xs pr-16"
-            />
-            <button
-              type="button"
-              onClick={() => setShowSecret(!showSecret)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-secondary"
-            >
-              {showSecret ? "隐藏" : "显示"}
-            </button>
-          </div>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-24 shrink-0">状态</Label>
+          <span className="text-sm text-text-secondary w-24 shrink-0">状态</span>
           <div className="flex items-center gap-2">
-            <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-profit" : "bg-text-muted"}`} />
-            <span className="text-xs text-text-secondary">
-              {connected ? "已连接" : "未配置"}
-            </span>
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: connected ? "#00C853" : "#484f58" }}
+            />
+            {/* 状态非纯颜色载体：文字伴随指示点 */}
+            <span className="text-xs text-text-secondary">{connected ? "已连接" : "未配置"}</span>
           </div>
         </div>
-      </div>
+      </Form>
     </GlassCard>
   );
 }
 
-function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
-  const [initCash, setInitCash] = useState(String(config.init_cash));
-  const [makerFee, setMakerFee] = useState(String(config.maker_fee));
-  const [takerFee, setTakerFee] = useState(String(config.taker_fee));
-  const [maxPositions, setMaxPositions] = useState(String(config.max_positions));
+// ---------------------------------------------------------------------------
+// Trading settings（数值字段经 InputNumber+rules：失败保留草稿+错误就近展示）
+// ---------------------------------------------------------------------------
 
-  const handleSave = () => {
-    onSave({
-      init_cash: Number(initCash),
-      maker_fee: Number(makerFee),
-      taker_fee: Number(takerFee),
-      max_positions: Number(maxPositions),
-    });
+type TradingFormValues = Pick<AppConfig, "init_cash" | "maker_fee" | "taker_fee" | "max_positions">;
+
+function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
+  const [form] = Form.useForm<TradingFormValues>();
+
+  const handleSave = async () => {
+    try {
+      const values = await form.validateFields();
+      onSave(values);
+    } catch {
+      // 校验失败：AntD Form 保留草稿并就近展示错误（ui-state spec 场景）
+    }
   };
 
   return (
     <GlassCard className="p-6" hover={false}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-medium text-text-primary">模拟交易配置</h2>
-        <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+        <AntButton size="small" type="primary" onClick={handleSave}>
           保存
-        </Button>
+        </AntButton>
       </div>
 
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-28 shrink-0">初始资金</Label>
-          <Input
-            type="number"
-            value={initCash}
-            onChange={(e) => setInitCash(e.target.value)}
-            className="h-8 w-40 text-xs font-num"
-          />
+      <Form
+        form={form}
+        layout="horizontal"
+        initialValues={config}
+        className="!mb-0"
+        labelWrap
+        labelCol={{ flex: "84px" }}
+      >
+        <Form.Item
+          label="初始资金"
+          name="init_cash"
+          className="!mb-3"
+          colon={false}
+          rules={[{ type: "number", min: 1, message: "初始资金须为正数" }]}
+        >
+          <InputNumber className="w-40 font-num" />
+        </Form.Item>
+        <Divider className="!my-3" />
+        <div className="flex items-start gap-2">
+          <span className="text-sm text-text-secondary shrink-0 leading-8" style={{ width: 108 }}>
+            手续费率
+          </span>
+          <Form.Item
+            name="maker_fee"
+            noStyle
+            rules={[{ type: "number", min: 0, max: 100, message: "Maker 费率须在 0-100%" }]}
+          >
+            <InputNumber className="w-24 font-num" aria-label="Maker 手续费率（%）" />
+          </Form.Item>
+          <span className="text-xs text-text-muted leading-8">% (Maker) /</span>
+          <Form.Item
+            name="taker_fee"
+            noStyle
+            rules={[{ type: "number", min: 0, max: 100, message: "Taker 费率须在 0-100%" }]}
+          >
+            <InputNumber className="w-24 font-num" aria-label="Taker 手续费率（%）" />
+          </Form.Item>
+          <span className="text-xs text-text-muted leading-8">% (Taker)</span>
         </div>
-        <Separator className="bg-border-default" />
+        <Divider className="!my-3" />
+        <Form.Item
+          label="最大持仓"
+          name="max_positions"
+          className="!mb-3"
+          colon={false}
+          rules={[{ type: "integer" as never, min: 1, message: "最大持仓须为 ≥1 整数" }]}
+          extra={<span className="text-xs text-text-muted">个策略同时运行</span>}
+        >
+          <InputNumber className="w-24 font-num" />
+        </Form.Item>
+        <Divider className="!my-3" />
         <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-28 shrink-0">手续费率</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              value={makerFee}
-              onChange={(e) => setMakerFee(e.target.value)}
-              className="h-8 w-24 text-xs font-num"
-            />
-            <span className="text-xs text-text-muted">% (Maker)</span>
-            <span className="text-text-muted">/</span>
-            <Input
-              type="number"
-              value={takerFee}
-              onChange={(e) => setTakerFee(e.target.value)}
-              className="h-8 w-24 text-xs font-num"
-            />
-            <span className="text-xs text-text-muted">% (Taker)</span>
-          </div>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-28 shrink-0">最大持仓</Label>
-          <Input
-            type="number"
-            value={maxPositions}
-            onChange={(e) => setMaxPositions(e.target.value)}
-            className="h-8 w-24 text-xs font-num"
-          />
-          <span className="text-xs text-text-muted">个策略同时运行</span>
-        </div>
-        <Separator className="bg-border-default" />
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-28 shrink-0">数据刷新</Label>
+          <span className="text-sm text-text-secondary" style={{ flex: "0 0 84px" }}>数据刷新</span>
           <span className="text-sm text-text-primary">实时 (WebSocket)</span>
         </div>
-      </div>
+      </Form>
     </GlassCard>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Indicator settings tab
+// Indicator settings tab（zustand persist store 持久化；订阅形态记录：本组件
+// 全量订阅 useChartSettings()，selector 化归 G17 终核）
 // ---------------------------------------------------------------------------
 
 function IndicatorSettings() {
@@ -396,18 +361,12 @@ function IndicatorSettings() {
   return (
     <>
       {/* EMA section */}
-      <GlassCard className="p-6" hover={false}>
+      <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">EMA 配置</h2>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => settings.addEma(20)}
-            className="gap-1"
-          >
-            <Plus className="h-3 w-3" />
+          <AntButton size="small" icon={<Plus className="h-3 w-3" />} onClick={() => settings.addEma(20)}>
             添加 EMA
-          </Button>
+          </AntButton>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -415,30 +374,36 @@ function IndicatorSettings() {
             <div key={i} className="flex items-center gap-3">
               <Switch
                 checked={ema.enabled}
-                onCheckedChange={(v) => settings.updateEma(i, { enabled: v })}
+                onChange={(v) => settings.updateEma(i, { enabled: v })}
+                aria-label={`EMA${ema.period} 启用`}
               />
               <span className="text-xs text-text-muted w-8">EMA</span>
-              <Input
-                type="number"
+              <InputNumber
                 value={ema.period}
-                onChange={(e) => settings.updateEma(i, { period: Number(e.target.value) || 10 })}
-                className="h-8 w-20 text-xs font-num"
+                onChange={(v) => settings.updateEma(i, { period: v ?? 10 })}
                 min={2}
                 max={500}
+                className="w-20 text-xs font-num"
+                aria-label={`EMA${ema.period} 周期`}
               />
-              <input
-                type="color"
-                value={ema.color}
-                onChange={(e) => settings.updateEma(i, { color: e.target.value })}
-                className="h-8 w-8 cursor-pointer rounded border border-border-default bg-transparent"
-              />
-              <button
-                type="button"
+              <label className="inline-flex items-center gap-1 text-xs text-text-muted cursor-pointer">
+                <input
+                  type="color"
+                  value={ema.color}
+                  onChange={(e) => settings.updateEma(i, { color: e.target.value })}
+                  className="h-8 w-8 cursor-pointer rounded border border-border-default bg-transparent"
+                  aria-label={`EMA${ema.period} 颜色`}
+                />
+                颜色
+              </label>
+              <AntButton
+                type="text"
+                size="small"
+                danger
+                icon={<Trash2 className="h-3.5 w-3.5" />}
+                aria-label={`删除 EMA${ema.period}`}
                 onClick={() => settings.removeEma(i)}
-                className="rounded p-1 text-text-muted transition-colors hover:bg-loss/10 hover:text-loss"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              />
             </div>
           ))}
           {settings.emaList.length === 0 && (
@@ -448,137 +413,134 @@ function IndicatorSettings() {
       </GlassCard>
 
       {/* BOLL section */}
-      <GlassCard className="p-6" hover={false}>
+      <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">BOLL 配置</h2>
           <Switch
             checked={settings.boll.enabled}
-            onCheckedChange={(v) => settings.setBoll({ enabled: v })}
+            onChange={(v) => settings.setBoll({ enabled: v })}
+            aria-label="BOLL 启用"
           />
         </div>
 
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">周期</Label>
-            <Input
-              type="number"
+            <span className="text-sm text-text-secondary w-16 shrink-0">周期</span>
+            <InputNumber
               value={settings.boll.period}
-              onChange={(e) => settings.setBoll({ period: Number(e.target.value) || 20 })}
-              className="h-8 w-20 text-xs font-num"
+              onChange={(v) => settings.setBoll({ period: v ?? 20 })}
               min={2}
+              className="w-20 text-xs font-num"
+              aria-label="BOLL 周期"
             />
           </div>
-          <Separator className="bg-border-default" />
+          <Divider className="!my-2" />
           <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">标准差</Label>
-            <Input
-              type="number"
+            <span className="text-sm text-text-secondary w-16 shrink-0">标准差</span>
+            <InputNumber
               value={settings.boll.std}
-              onChange={(e) => settings.setBoll({ std: Number(e.target.value) || 2 })}
-              className="h-8 w-20 text-xs font-num"
+              onChange={(v) => settings.setBoll({ std: v ?? 2 })}
               min={0.5}
               max={4}
               step={0.5}
+              className="w-20 text-xs font-num"
+              aria-label="BOLL 标准差"
             />
           </div>
-          <Separator className="bg-border-default" />
-          <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">颜色</Label>
+          <Divider className="!my-2" />
+          <label className="flex items-center gap-3 cursor-pointer">
+            <span className="text-sm text-text-secondary w-16 shrink-0">颜色</span>
             <input
               type="color"
               value={settings.boll.color}
               onChange={(e) => settings.setBoll({ color: e.target.value })}
               className="h-8 w-8 cursor-pointer rounded border border-border-default bg-transparent"
+              aria-label="BOLL 颜色"
             />
-          </div>
+          </label>
         </div>
       </GlassCard>
 
       {/* RSI section */}
-      <GlassCard className="p-6" hover={false}>
+      <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">RSI 配置</h2>
           <Switch
             checked={settings.rsi.enabled}
-            onCheckedChange={(v) => settings.setRsi({ enabled: v })}
+            onChange={(v) => settings.setRsi({ enabled: v })}
+            aria-label="RSI 启用"
           />
         </div>
 
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">周期</Label>
-            <Input
-              type="number"
+            <span className="text-sm text-text-secondary w-16 shrink-0">周期</span>
+            <InputNumber
               value={settings.rsi.period}
-              onChange={(e) => settings.setRsi({ period: Number(e.target.value) || 14 })}
-              className="h-8 w-20 text-xs font-num"
+              onChange={(v) => settings.setRsi({ period: v ?? 14 })}
               min={2}
+              className="w-20 text-xs font-num"
+              aria-label="RSI 周期"
             />
           </div>
-          <Separator className="bg-border-default" />
+          <Divider className="!my-2" />
           <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">超买线</Label>
-            <Input
-              type="number"
+            <span className="text-sm text-text-secondary w-16 shrink-0">超买线</span>
+            <InputNumber
               value={settings.rsi.overbought}
-              onChange={(e) => settings.setRsi({ overbought: Number(e.target.value) || 70 })}
-              className="h-8 w-20 text-xs font-num"
+              onChange={(v) => settings.setRsi({ overbought: v ?? 70 })}
               min={50}
               max={100}
+              className="w-20 text-xs font-num"
+              aria-label="RSI 超买线"
             />
           </div>
-          <Separator className="bg-border-default" />
+          <Divider className="!my-2" />
           <div className="flex items-center gap-3">
-            <Label className="text-sm text-text-secondary w-16 shrink-0">超卖线</Label>
-            <Input
-              type="number"
+            <span className="text-sm text-text-secondary w-16 shrink-0">超卖线</span>
+            <InputNumber
               value={settings.rsi.oversold}
-              onChange={(e) => settings.setRsi({ oversold: Number(e.target.value) || 30 })}
-              className="h-8 w-20 text-xs font-num"
+              onChange={(v) => settings.setRsi({ oversold: v ?? 30 })}
               min={0}
               max={50}
+              className="w-20 text-xs font-num"
+              aria-label="RSI 超卖线"
             />
           </div>
         </div>
       </GlassCard>
 
       {/* VOL section */}
-      <GlassCard className="p-6" hover={false}>
+      <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">成交量配置</h2>
           <Switch
             checked={settings.vol.enabled}
-            onCheckedChange={(v) => settings.setVol({ enabled: v })}
+            onChange={(v) => settings.setVol({ enabled: v })}
+            aria-label="成交量指标启用"
           />
         </div>
 
         <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-16 shrink-0">位置</Label>
+          <span className="text-sm text-text-secondary w-16 shrink-0">位置</span>
           <Select
             value={settings.vol.position}
-            onValueChange={(v) => settings.setVol({ position: v as "overlay" | "separate" })}
-          >
-            <SelectTrigger className="w-32 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="overlay">叠加在主图</SelectItem>
-              <SelectItem value="separate">独立子图</SelectItem>
-            </SelectContent>
-          </Select>
+            onChange={(v) => settings.setVol({ position: v as "overlay" | "separate" })}
+            className="w-32"
+            aria-label="成交量显示位置"
+            options={[
+              { value: "overlay", label: "叠加在主图" },
+              { value: "separate", label: "独立子图" },
+            ]}
+          />
         </div>
       </GlassCard>
 
       {/* Actions */}
       <div className="flex items-center justify-between">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={settings.resetToDefaults}
-          className="text-text-muted"
-        >
+        <AntButton size="small" onClick={settings.resetToDefaults}>
           恢复默认
-        </Button>
+        </AntButton>
       </div>
     </>
   );
