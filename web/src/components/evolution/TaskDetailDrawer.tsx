@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
 import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
-import { StrategyDetail } from "@/components/evolution/StrategyDetail";
+import { StrategyDetail } from "@/components/StrategyDetail";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import {
   useEvolutionTask,

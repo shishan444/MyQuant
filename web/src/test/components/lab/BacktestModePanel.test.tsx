@@ -43,7 +43,7 @@ vi.mock("@/components/lab/EquityCurveChart", () => ({
 }));
 
 // Mock StrategyDetail
-vi.mock("@/components/evolution/StrategyDetail", () => ({
+vi.mock("@/components/StrategyDetail", () => ({
   StrategyDetail: vi.fn(() => <div data-testid="strategy-detail" />),
 }));
 

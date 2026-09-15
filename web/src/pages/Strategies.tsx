@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,15 +11,7 @@ import {
 import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button as AntButton, Input, Modal, Form, Select as AntSelect } from "antd";
 import { useStrategies, useDeleteStrategy, useUpdateStrategy } from "@/hooks/useStrategies";
 import { deleteStrategy } from "@/services/strategies";
 import { toast } from "sonner";
@@ -88,60 +81,56 @@ function EditStrategyDialog({
   onClose: () => void;
 }) {
   const updateMutation = useUpdateStrategy();
-  const [name, setName] = useState("");
-  const [tags, setTags] = useState("");
-  const [notes, setNotes] = useState("");
+  // 表单草稿唯一持有者=AntD Form（ui-state spec；失败保留草稿）
+  const [form] = Form.useForm<{ name: string; tags: string; notes: string }>();
 
-  const syncForm = () => {
-    if (strategy) {
-      setName(strategy.name ?? "");
-      setTags(strategy.tags ?? "");
-      setNotes(strategy.notes ?? "");
+  // 打开时同步策略当前值到表单草稿
+  useEffect(() => {
+    if (open && strategy) {
+      form.setFieldsValue({ name: strategy.name ?? "", tags: strategy.tags ?? "", notes: strategy.notes ?? "" });
     }
-  };
+  }, [open, strategy, form]);
 
-  const handleOpen = (val: boolean) => {
-    if (val) syncForm();
-    else onClose();
-  };
+  const handleCancel = () => onClose();
 
   if (!strategy) return null;
 
+  const handleSave = () => {
+    const values = form.getFieldsValue();
+    updateMutation.mutate(
+      { id: strategy.strategy_id, payload: { name: values.name || undefined, tags: values.tags || undefined, notes: values.notes || undefined } },
+      { onSuccess: onClose },
+    );
+  };
+
   return (
-    <ConfirmDialog
+    <Modal
       open={open}
-      onOpenChange={handleOpen}
+      onCancel={handleCancel}
+      destroyOnHidden
       title="编辑策略"
-      confirmLabel="保存"
-      onConfirm={() => {
-        updateMutation.mutate(
-          { id: strategy.strategy_id, payload: { name: name || undefined, tags: tags || undefined, notes: notes || undefined } },
-          { onSuccess: onClose },
-        );
-      }}
-      loading={updateMutation.isPending}
+      width={440}
+      footer={[
+        <AntButton key="cancel" onClick={handleCancel}>
+          取消
+        </AntButton>,
+        <AntButton key="save" type="primary" loading={updateMutation.isPending} onClick={handleSave}>
+          保存
+        </AntButton>,
+      ]}
     >
-      <div className="flex flex-col gap-3 py-2">
-        <div>
-          <label className="text-xs text-text-muted mb-1 block">名称</label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="策略名称" className="h-8 text-sm" />
-        </div>
-        <div>
-          <label className="text-xs text-text-muted mb-1 block">标签</label>
-          <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="用逗号分隔" className="h-8 text-sm" />
-        </div>
-        <div>
-          <label className="text-xs text-text-muted mb-1 block">备注</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="策略备注..."
-            rows={3}
-            className="w-full rounded-md border border-border-default bg-transparent px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-gold/50"
-          />
-        </div>
-      </div>
-    </ConfirmDialog>
+      <Form form={form} layout="vertical" className="!mb-0 pt-2">
+        <Form.Item label="名称" name="name" className="!mb-3">
+          <Input placeholder="策略名称" />
+        </Form.Item>
+        <Form.Item label="标签" name="tags" className="!mb-3">
+          <Input placeholder="用逗号分隔" />
+        </Form.Item>
+        <Form.Item label="备注" name="notes" className="!mb-0">
+          <Input.TextArea placeholder="策略备注..." rows={3} />
+        </Form.Item>
+      </Form>
+    </Modal>
   );
 }
 
@@ -292,19 +281,19 @@ function ExpandPanel({ strategy, onRun, onPaperTrade, onSeedEvolve }: {
             )}
 
             <div className="flex flex-wrap gap-2 mt-3">
-              <Button variant="ghost" size="sm" className="text-xs gap-1 text-profit/80 hover:text-profit" onClick={onRun}>
+              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#00C853" }} onClick={onRun}>
                 <Play className="h-3 w-3" /> 运行回测
-              </Button>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 text-emerald-400/80 hover:text-emerald-400" onClick={onPaperTrade}>
+              </AntButton>
+              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#00b37a" }} onClick={onPaperTrade}>
                 <Zap className="h-3 w-3" /> 模拟交易
-              </Button>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 text-accent-purple/80 hover:text-accent-purple" onClick={onSeedEvolve}>
+              </AntButton>
+              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#8B5CF6" }} onClick={onSeedEvolve}>
                 <GitBranch className="h-3 w-3" /> 继续进化
-              </Button>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 text-text-muted hover:text-text-primary" onClick={handleCopy}>
+              </AntButton>
+              <AntButton type="text" size="small" className="!text-xs !text-text-muted" onClick={handleCopy}>
                 {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 {copied ? "已复制" : "复制DNA"}
-              </Button>
+              </AntButton>
             </div>
           </div>
         </div>
@@ -493,18 +482,18 @@ function StrategyCardRow({
         {/* Actions */}
         <td className="py-3 pr-4 text-right w-28">
           <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all duration-200">
-            <Button variant="ghost" size="icon-xs" aria-label="运行回测" onClick={onRun} className="text-profit/70 hover:text-profit hover:bg-profit/10">
+            <AntButton type="text" size="small" aria-label="运行回测" onClick={onRun} style={{ color: "#00b37a" }}>
               <Play className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon-xs" aria-label="模拟交易" onClick={onPaperTrade} className="text-accent-gold/70 hover:text-accent-gold hover:bg-accent-gold/10">
+            </AntButton>
+            <AntButton type="text" size="small" aria-label="模拟交易" onClick={onPaperTrade} style={{ color: "#c78d1e" }}>
               <Zap className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon-xs" aria-label="编辑策略" onClick={onEdit} className="text-text-muted hover:text-accent-gold hover:bg-accent-gold/10">
+            </AntButton>
+            <AntButton type="text" size="small" aria-label="编辑策略" onClick={onEdit} className="!text-text-muted">
               <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon-xs" className="text-loss/60 hover:text-loss hover:bg-loss/10" aria-label="删除策略" onClick={onDelete}>
+            </AntButton>
+            <AntButton type="text" size="small" danger aria-label="删除策略" onClick={onDelete}>
               <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            </AntButton>
           </div>
         </td>
       </motion.tr>
@@ -559,10 +548,10 @@ function AnimatedEmptyState({ onNavigate }: { onNavigate: () => void }) {
         </p>
       </div>
       <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-        <Button onClick={onNavigate} className="gap-2 bg-accent-gold/90 hover:bg-accent-gold text-bg-base font-medium">
+        <AntButton type="primary" size="large" onClick={onNavigate}>
           <FlaskConical className="h-4 w-4" />
           前往实验室
-        </Button>
+        </AntButton>
       </motion.div>
     </motion.div>
   );
@@ -617,10 +606,35 @@ export function Strategies() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<string>("all");
-  const [verifyFilter, setVerifyFilter] = useState<string>("all");
+  // Filters——URL 所有（ui-state spec：筛选刷新可恢复，?q=&source=&verify=）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchQuery = searchParams.get("q") ?? "";
+  const sourceFilter = searchParams.get("source") ?? "all";
+  const verifyFilter = searchParams.get("verify") ?? "all";
+
+  const setSearchQuery = useCallback((v: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v) next.set("q", v); else next.delete("q");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSourceFilter = useCallback((v: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v !== "all") next.set("source", v); else next.delete("source");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setVerifyFilter = useCallback((v: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v !== "all") next.set("verify", v); else next.delete("verify");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -801,14 +815,15 @@ export function Strategies() {
 
           {/* Batch actions */}
           {selectedIds.size > 0 && !allSelected && sortedStrategies.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-7 text-accent-gold hover:bg-accent-gold/10"
+            <AntButton
+              type="text"
+              size="small"
+              className="!text-xs"
+              style={{ color: "#F59E0B" }}
               onClick={() => setSelectedIds(new Set(sortedStrategies.map((s) => s.strategy_id)))}
             >
               全选当前筛选 ({sortedStrategies.length})
-            </Button>
+            </AntButton>
           )}
           {selectedIds.size > 0 && (
             <motion.div
@@ -817,71 +832,76 @@ export function Strategies() {
               className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-1"
             >
               <span className="text-sm text-text-secondary">已选 {selectedIds.size} 项</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-7 text-accent-gold border-accent-gold/30 hover:bg-accent-gold/10"
+              <AntButton
+                size="small"
+                className="!text-xs"
+                icon={<LineChart className="h-3 w-3" />}
                 onClick={() => {
                   navigate("/batch-backtest", { state: { strategy_ids: Array.from(selectedIds) } });
                 }}
               >
-                <LineChart className="h-3 w-3 mr-1" /> 批量回测
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-7 text-loss border-loss/30 hover:bg-loss/10"
+                批量回测
+              </AntButton>
+              <AntButton
+                size="small"
+                danger
+                className="!text-xs"
+                icon={<Trash2 className="h-3 w-3" />}
                 onClick={() => {
                   const selected = sortedStrategies.filter((s) => selectedIds.has(s.strategy_id));
                   setBatchDeleteTargets(selected);
                 }}
               >
-                <Trash2 className="h-3 w-3 mr-1" /> 批量删除
-              </Button>
-              <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setSelectedIds(new Set())}>
+                批量删除
+              </AntButton>
+              <AntButton type="text" size="small" className="!text-xs" onClick={() => setSelectedIds(new Set())}>
                 <X className="h-3 w-3 mr-1" /> 取消选择
-              </Button>
+              </AntButton>
             </motion.div>
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="relative group/search">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted/60 group-focus-within/search:text-text-secondary transition-colors" />
-              <Input
-                placeholder="搜索策略..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-8 w-48 pl-8 text-xs bg-white/[0.03] border-border-default/50 focus:border-accent-gold/30 transition-colors"
-              />
-            </div>
+            <Input
+              size="small"
+              placeholder="搜索策略..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              prefix={<Search className="h-3.5 w-3.5 text-text-muted" />}
+              className="!w-48 !text-xs"
+              allowClear
+            />
 
-            <Select value={sourceFilter} onValueChange={setSourceFilter}>
-              <SelectTrigger className="h-8 w-28 text-xs bg-white/[0.03] border-border-default/50">
-                <SelectValue placeholder="来源" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部来源</SelectItem>
-                <SelectItem value="lab">实验室</SelectItem>
-                <SelectItem value="evolution">进化</SelectItem>
-                <SelectItem value="import">导入</SelectItem>
-              </SelectContent>
-            </Select>
+            <AntSelect
+              size="small"
+              value={sourceFilter}
+              onChange={setSourceFilter}
+              className="!w-28 !text-xs"
+              aria-label="来源筛选"
+              options={[
+                { value: "all", label: "全部来源" },
+                { value: "lab", label: "实验室" },
+                { value: "evolution", label: "进化" },
+                { value: "import", label: "导入" },
+              ]}
+            />
 
-            <Select value={verifyFilter} onValueChange={setVerifyFilter}>
-              <SelectTrigger className="h-8 w-28 text-xs bg-white/[0.03] border-border-default/50">
-                <SelectValue placeholder="验证" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部策略</SelectItem>
-                <SelectItem value="qualified">达标</SelectItem>
-                <SelectItem value="unqualified">未达标</SelectItem>
-                <SelectItem value="verified">已验证</SelectItem>
-                <SelectItem value="unverified">未验证</SelectItem>
-                <SelectItem value="star3">3★ 以上</SelectItem>
-                <SelectItem value="star4">4★ 以上</SelectItem>
-                <SelectItem value="star5">5★</SelectItem>
-              </SelectContent>
-            </Select>
+            <AntSelect
+              size="small"
+              value={verifyFilter}
+              onChange={setVerifyFilter}
+              className="!w-28 !text-xs"
+              aria-label="验证状态筛选"
+              options={[
+                { value: "all", label: "全部策略" },
+                { value: "qualified", label: "达标" },
+                { value: "unqualified", label: "未达标" },
+                { value: "verified", label: "已验证" },
+                { value: "unverified", label: "未验证" },
+                { value: "star3", label: "3★ 以上" },
+                { value: "star4", label: "4★ 以上" },
+                { value: "star5", label: "5★" },
+              ]}
+            />
           </div>
         </div>
 

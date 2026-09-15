@@ -11,7 +11,7 @@ import { runBacktest } from "@/services/strategies";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useChartIndicators } from "@/hooks/useChartIndicators";
 import type { SubChartType } from "@/hooks/useChartIndicators";
-import { StrategyDetail } from "@/components/evolution/StrategyDetail";
+import { StrategyDetail } from "@/components/StrategyDetail";
 import type { DNA, BacktestResult, TradeSignal } from "@/types/api";
 import { cn } from "@/lib/utils";
 

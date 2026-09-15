@@ -12,7 +12,7 @@ vi.mock("framer-motion", () => ({
   AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
-import { StrategyDetail } from "@/components/evolution/StrategyDetail";
+import { StrategyDetail } from "@/components/StrategyDetail";
 import type { DNA } from "@/types/api";
 
 function makeDna(overrides: Partial<DNA> = {}): DNA {

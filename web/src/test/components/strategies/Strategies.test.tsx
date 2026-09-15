@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import type { ReactNode } from "react";
 
 // Mock API services
@@ -28,9 +29,14 @@ vi.mock("@/hooks/useStrategies", async (importOriginal) => {
   };
 });
 
-vi.mock("react-router", () => ({
-  useNavigate: vi.fn(() => vi.fn()),
-}));
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return {
+    ...actual,
+    useNavigate: vi.fn(() => vi.fn()),
+    // useSearchParams 走真实实现（由 MemoryRouter 提供）——URL 化筛选测试需要真实读写
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -71,7 +77,11 @@ function createWrapper() {
     defaultOptions: { queries: { retry: false } },
   });
   return function Wrapper({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
   };
 }
 
@@ -265,9 +275,9 @@ describe("Strategies page", () => {
 
     render(<Strategies />, { wrapper: createWrapper() });
     await screen.findByText("Test Strategy");
-    // The qualified filter select is rendered
-    const selects = document.querySelectorAll("button[role='combobox']");
-    expect(selects.length).toBeGreaterThanOrEqual(2); // source + qualified
+    // 筛选下拉存在（断言语义保持：来源+验证两个筛选器）
+    expect(screen.getByLabelText("来源筛选")).toBeInTheDocument();
+    expect(screen.getByLabelText("验证状态筛选")).toBeInTheDocument();
   });
 
   // --- Expand panel on row click ---
