@@ -308,9 +308,9 @@ python -m pytest tests
 
 ```bash
 cd MyQuant/web
-npm run lint
-npm run test
-npm run build
+pnpm run lint
+pnpm run test
+pnpm run build
 ```
 
 UI 改动在可行时启动开发服务器，并检查相关页面在常见桌面和移动宽度下没有重叠、溢出或不可操作状态。

@@ -120,7 +120,7 @@ start_web() {
 
     if [[ ! -d "$WEB_DIR/node_modules" ]]; then
         warn "未找到 node_modules，正在安装依赖..."
-        (cd "$WEB_DIR" && npm install)
+        (cd "$WEB_DIR" && pnpm install)
     fi
 
     local log_file="$LOG_DIR/web.log"
@@ -129,7 +129,7 @@ start_web() {
     info "  日志: $log_file"
 
     cd "$WEB_DIR"
-    npx vite --host --port "$WEB_PORT" >> "$log_file" 2>&1 &
+    pnpm exec vite --host --port "$WEB_PORT" >> "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$WEB_PID_FILE"
     cd "$APP_DIR"

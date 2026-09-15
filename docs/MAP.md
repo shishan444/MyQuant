@@ -11,7 +11,7 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | 后端框架 | FastAPI 0.100+ / Uvicorn |
 | 前端语言 | TypeScript 6.0 |
 | 前端框架 | React 19 / Vite 8 |
-| 构建/包管理 | setuptools (后端) / npm (前端) |
+| 构建/包管理 | setuptools (后端) / pnpm (前端) |
 | 数据库/存储 | SQLite (WAL) / Parquet 文件 |
 | 核心计算库 | vectorbt 0.28.5 / pandas-ta / numba / sklearn |
 
