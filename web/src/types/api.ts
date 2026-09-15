@@ -241,7 +241,16 @@ export interface EvolutionHistoryResponse {
 }
 
 export interface GenerationUpdate {
-  type: "generation_complete" | "evolution_complete" | "population_started" | "strategy_discovered";
+  // F0 最小扩充：补齐 runner 实际推送的消息类型与字段（useEvolution.ts 已在消费）；
+  // F2 WS 层统一时将收窄为判别联合并经 zod 校验
+  type:
+    | "generation_complete"
+    | "evolution_complete"
+    | "population_started"
+    | "strategy_discovered"
+    | "task_started"
+    | "task_snapshot"
+    | "phase_changed";
   task_id: string;
   generation: number;
   best_score: number;
@@ -261,6 +270,10 @@ export interface GenerationUpdate {
   strategy_id?: string;
   score?: number;
   name?: string;
+  current_generation?: number;
+  current_phase?: string;
+  status?: string;
+  phase?: string;
 }
 
 export interface StrategyMetrics {

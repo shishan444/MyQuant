@@ -1,5 +1,5 @@
 import { StatCard } from "@/components/StatCard";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 
 interface MetricsData {
   total_return_pct: number;
@@ -49,17 +49,17 @@ export function MetricsDashboard({ metrics }: MetricsDashboardProps) {
     {
       label: "胜率",
       value: `${(metrics.win_rate * 100).toFixed(1)}%`,
-      trend: metrics.win_rate >= 0.5 ? "up" : "down",
+      trend: metrics.win_rate >= 0.5 ? ("up" as const) : ("down" as const),
     },
     {
       label: "盈亏比",
       value: metrics.profit_factor != null ? metrics.profit_factor.toFixed(2) : "N/A",
-      trend: (metrics.profit_factor ?? 0) >= 1 ? "up" : "down",
+      trend: (metrics.profit_factor ?? 0) >= 1 ? ("up" as const) : ("down" as const),
     },
     {
       label: "最大回撤",
       value: `-${metrics.max_drawdown_pct.toFixed(1)}%`,
-      trend: "down",
+      trend: "down" as const,
     },
     {
       label: "交易次数",

@@ -81,12 +81,12 @@ export function AutoConfigForm({
 
   // Pre-fill date range from the most recent task that has dates
   useEffect(() => {
-    getEvolutionTasks({ limit: 5 })
+    getEvolutionTasks({ page: 1, page_size: 5 })
       .then((res) => {
         const last = res.items?.find(
           (t) => t.data_start && t.data_end
         );
-        if (last) {
+        if (last?.data_start && last?.data_end) {
           setDataStart(last.data_start);
           setDataEnd(last.data_end);
         }

@@ -2,7 +2,7 @@ import { useMemo, memo } from "react";
 import { Eye, Dna } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatNumber, formatDuration } from "@/lib/utils";
+import { cn, formatNumber } from "@/lib/utils";
 import { TIMEFRAME_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA } from "@/types/api";
 

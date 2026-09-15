@@ -1,10 +1,11 @@
-import type { ChartIndicatorsResponse } from "@/types/api";
+import type { BacktestResult, ChartIndicatorsResponse, DNA } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Mock: OHLCV candle data
 // ---------------------------------------------------------------------------
 
 export const mockOhlcvData = {
+  dataset_id: "test-dataset",
   data: [
     { timestamp: "2025-01-01T00:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 },
     { timestamp: "2025-01-01T04:00:00Z", open: 105, high: 115, low: 100, close: 112, volume: 1200 },
@@ -132,27 +133,28 @@ export const mockChartSettings = {
 // Mock: DNA
 // ---------------------------------------------------------------------------
 
-export const mockDNA = {
+export const mockDNA: DNA = {
   signal_genes: [
     {
       indicator: "ema",
       params: { period: 10 },
       role: "entry_trigger",
-      field_name: null,
-      condition: { type: "cross_above", threshold: "20" },
-      timeframe: "4h",
+      condition: { type: "cross_above", value: 20 },
     },
   ],
   logic_genes: { entry_logic: "AND", exit_logic: "OR" },
-  execution_genes: { timeframe: "4h", symbol: "BTCUSDT", leverage: 1, direction: "long" },
-  risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3 },
+  execution_genes: { timeframe: "4h", symbol: "BTCUSDT" },
+  risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long" },
+  generation: 0,
+  parent_ids: [],
+  mutation_ops: [],
 };
 
 // ---------------------------------------------------------------------------
 // Mock: BacktestResult
 // ---------------------------------------------------------------------------
 
-export const mockBacktestResult = {
+export const mockBacktestResult: BacktestResult = {
   result_id: "test-result-001",
   strategy_id: "test-strategy-001",
   symbol: "BTCUSDT",
@@ -175,8 +177,8 @@ export const mockBacktestResult = {
   total_funding_cost: 0,
   liquidated: false,
   signals: [
-    { type: "buy" as const, timestamp: "2025-01-05T08:00:00Z", price: 100 },
-    { type: "sell" as const, timestamp: "2025-01-10T12:00:00Z", price: 110 },
+    { type: "buy" as const, timestamp: "2025-01-05T08:00:00Z", price: 100, reason: "entry" },
+    { type: "sell" as const, timestamp: "2025-01-10T12:00:00Z", price: 110, reason: "exit" },
   ],
   equity_curve: [
     { timestamp: "2025-01-01T00:00:00Z", value: 100000 },

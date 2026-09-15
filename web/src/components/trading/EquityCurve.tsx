@@ -68,8 +68,8 @@ export function EquityCurve({ data, initialCash, height = 200 }: EquityCurveProp
           domain={["dataMin - 500", "dataMax + 500"]}
         />
         <Tooltip
-          formatter={(value: number) => [formatMoney(value), "Equity"]}
-          labelFormatter={formatTime}
+          formatter={(value) => [formatMoney(Number(value)), "Equity"]}
+          labelFormatter={(label) => formatTime(String(label))}
           contentStyle={{
             backgroundColor: "#1a1a2e",
             border: "1px solid #2a2a3e",

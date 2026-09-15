@@ -124,7 +124,7 @@ export function Verify() {
 
   const saved = useMemo(() => loadSavedConfig(), []);
   const [dateRanges, setDateRanges] = useState<DateRange[]>(saved?.dateRanges ?? [{ start: "", end: "" }]);
-  const [advancedParams, setAdvancedParams] = useState(saved?.advancedParams ?? {
+  const [advancedParams, setAdvancedParams] = useState<{ init_cash: string; fee: string; slippage: string; leverage: string }>(saved?.advancedParams ?? {
     init_cash: "100000",
     fee: "0.001",
     slippage: "0.0005",

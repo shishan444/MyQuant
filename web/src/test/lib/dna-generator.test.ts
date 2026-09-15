@@ -7,10 +7,10 @@ import type { ConditionInput } from "@/types/api";
 
 describe("generateDnaFromValidation", () => {
   const when: ConditionInput[] = [
-    { subject: "RSI", action: "lt", target: "30" },
+    { logic: "AND", subject: "RSI", action: "lt", target: "30" },
   ];
   const then: ConditionInput[] = [
-    { subject: "RSI", action: "gt", target: "70" },
+    { logic: "AND", subject: "RSI", action: "gt", target: "70" },
   ];
 
   it("produces a valid DNA object", () => {
@@ -52,8 +52,8 @@ describe("generateDnaFromValidation", () => {
 
   it("filters out empty subjects", () => {
     const whenEmpty: ConditionInput[] = [
-      { subject: "", action: "lt", target: "30" },
-      { subject: "EMA", action: "cross_above", target: "20" },
+      { logic: "AND", subject: "", action: "lt", target: "30" },
+      { logic: "AND", subject: "EMA", action: "cross_above", target: "20" },
     ];
     const dna = generateDnaFromValidation(whenEmpty, [], "BTCUSDT", "4h");
     // Only EMA should be included (empty subject filtered)
@@ -63,7 +63,7 @@ describe("generateDnaFromValidation", () => {
 
   it("maps touch action to price_above", () => {
     const whenTouch: ConditionInput[] = [
-      { subject: "EMA", action: "touch", target: "0" },
+      { logic: "AND", subject: "EMA", action: "touch", target: "0" },
     ];
     const dna = generateDnaFromValidation(whenTouch, [], "BTCUSDT", "4h");
     expect(dna.signal_genes[0].condition.type).toBe("price_above");

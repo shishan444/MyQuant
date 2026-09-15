@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatPercent, formatNumber, getFitnessColor } from "@/lib/utils";
 import { getStrategyName, getStrategyType } from "@/lib/strategy-utils";
-import type { DiscoveredStrategy, StrategyMetrics, DNA } from "@/types/api";
+import type { DiscoveredStrategy, DNA } from "@/types/api";
 
 interface StrategyListProps {
   strategies: DiscoveredStrategy[];

@@ -11,8 +11,7 @@ const makeDNA = (overrides: Partial<DNA> = {}): DNA => ({
       indicator: "RSI",
       params: { period: 14 },
       role: "entry_trigger",
-      field_name: null,
-      condition: { type: "lt", threshold: 30 },
+      condition: { type: "lt", value: 30 },
     },
   ],
   logic_genes: { entry_logic: "AND", exit_logic: "AND" },
@@ -42,7 +41,6 @@ describe("getStrategyType", () => {
         indicator: "EMA",
         params: { period: 20 },
         role: "entry_trigger",
-        field_name: null,
         condition: { type: "price_above" },
       }],
     });
@@ -63,8 +61,7 @@ describe("getStrategyType", () => {
         indicator: "CUSTOM",
         params: {},
         role: "entry_trigger",
-        field_name: null,
-        condition: { type: "gt", threshold: 0 },
+        condition: { type: "gt", value: 0 },
       }],
     });
     expect(getStrategyType(dna)).toBe("混合");
@@ -78,8 +75,7 @@ describe("getStrategyType", () => {
           indicator: "BB",
           params: { period: 20, std: 2 },
           role: "entry_trigger",
-          field_name: null,
-          condition: { type: "price_above" },
+            condition: { type: "price_above" },
         }],
         logic_genes: { entry_logic: "AND", exit_logic: "AND" },
       }],

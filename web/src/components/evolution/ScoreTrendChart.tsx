@@ -30,12 +30,12 @@ function CustomTooltip({
   targetFitness = 1.0,
 }: {
   active?: boolean;
-  payload?: Array<{ value: number; name: string; color: string; dataKey: string }>;
+  payload?: Array<{ value: number; name: string; color: string; dataKey: string; payload?: ChartDataPoint }>;
   label?: number;
   targetFitness?: number;
 }) {
   if (!active || !payload) return null;
-  const dataPoint = payload[0]?.payload as ChartDataPoint | undefined;
+  const dataPoint = payload[0]?.payload;
   if (!dataPoint) return null;
 
   const delta = dataPoint.prevBestScore != null

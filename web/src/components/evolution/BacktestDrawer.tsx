@@ -240,7 +240,7 @@ function EquityCurve({ data }: { data: Array<{ timestamp: string; value: number 
 
       const lineSeries = chart.addSeries(LineSeries, {
         color: "#f59e0b",
-        lineWidth: 1.5,
+        lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: true,
       });

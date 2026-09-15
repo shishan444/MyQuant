@@ -11,7 +11,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation } from "react-router";
 
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
@@ -103,7 +103,6 @@ function getDefaultDates(): { start: string; end: string } {
 export function Lab() {
   // -- Router state (DNA from Evolution) --
   const location = useLocation();
-  const navigate = useNavigate();
   const routeState = location.state as {
     dna?: DNA;
     symbol?: string;
@@ -127,7 +126,7 @@ export function Lab() {
     end: routeState?.dataEnd ?? "",
   });
   const [btLeverage, setBtLeverage] = useState(1);
-  const [btDirection, setBtDirection] = useState<string>("long");
+  const [btDirection, setBtDirection] = useState<"long" | "short" | "mixed">("long");
   const [btStopLoss, setBtStopLoss] = useState(0.05);
   const [btTakeProfit, setBtTakeProfit] = useState(0.1);
   const [btPositionSize, setBtPositionSize] = useState(0.3);
@@ -157,7 +156,7 @@ export function Lab() {
   // -- Result state --
   const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [hypoSubChartType, setHypoSubChartType] = useState<SubChartType>("volume");
+  const [hypoSubChartType] = useState<SubChartType>("volume");
   const [hypoFetchEnabled, setHypoFetchEnabled] = useState(false);
 
   // -- Refs --
@@ -376,34 +375,6 @@ export function Lab() {
     setExitConditions([]);
     setRuleResult(null);
     setHypoFetchEnabled(false);
-  }, []);
-
-  const handlePreset = useCallback((idx: number) => {
-    const presets = [
-      {
-        entry: [
-          { logic: "IF" as const, timeframe: "4h", subject: "ema", action: "cross_above", target: "bb_upper" },
-        ],
-        exit: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
-        ],
-      },
-      {
-        entry: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "lt", target: "30" },
-          { logic: "AND" as const, timeframe: "15m", subject: "kdj", action: "cross_above", target: "" },
-        ],
-        exit: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
-        ],
-      },
-    ];
-    const preset = presets[idx];
-    if (preset) {
-      setEntryConditions([...preset.entry]);
-      setExitConditions([...preset.exit]);
-      setRuleResult(null);
-    }
   }, []);
 
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
@@ -677,7 +648,7 @@ export function Lab() {
                           <span className="text-xs text-text-muted">方向</span>
                           <Select
                             value={btDirection}
-                            onValueChange={(v) => setBtDirection(v)}
+                            onValueChange={(v) => setBtDirection(v as "long" | "short" | "mixed")}
                           >
                             <SelectTrigger className="h-7 w-20 text-xs">
                               <SelectValue />

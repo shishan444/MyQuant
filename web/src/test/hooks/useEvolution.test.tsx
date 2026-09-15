@@ -65,7 +65,6 @@ import {
   useEvolutionWebSocket,
 } from "@/hooks/useEvolution";
 import {
-  getEvolutionTasks,
   createEvolutionTask,
   stopEvolutionTask,
   pauseEvolutionTask,

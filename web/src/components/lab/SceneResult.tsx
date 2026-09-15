@@ -1,7 +1,6 @@
 /** Scene verification result display. */
 import { useMemo } from "react";
 import { TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
-import { GlassCard } from "@/components/GlassCard";
 import type { SceneVerifyResponse, SceneTriggerDetail } from "@/types/scene";
 
 interface SceneResultProps {
