@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { Tag } from "antd";
 import { cn, getFitnessColor } from "@/lib/utils";
 import type { DNA, TimeframeLayerModel } from "@/types/api";
 
@@ -81,17 +81,9 @@ export function StrategyDetail({
             </span>
           )}
           {champion_qualified != null && (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                champion_qualified
-                  ? "border-emerald-400/30 text-emerald-400"
-                  : "border-slate-700/30 text-slate-500"
-              )}
-            >
+            <Tag color={champion_qualified ? "success" : "default"} className="!m-0 !text-[10px]">
               {champion_qualified ? "达标" : "未达标"}
-            </Badge>
+            </Tag>
           )}
         </div>
       )}
@@ -116,12 +108,7 @@ export function StrategyDetail({
                   Layer {idx + 1}: {layer.timeframe.toUpperCase()}
                 </span>
                 {role && (
-                  <Badge
-                    variant="outline"
-                    className="border-slate-700/50 text-[10px] text-slate-500"
-                  >
-                    {role}
-                  </Badge>
+                  <Tag className="!m-0 !text-[10px]">{role}</Tag>
                 )}
               </div>
               <div className="flex flex-col gap-0.5 rounded-lg border border-slate-700/30 p-2">
@@ -300,17 +287,9 @@ export function StrategyDetail({
                   )}>
                     {typeof info.ratio === "number" ? info.ratio.toFixed(2) : String(info.ratio)}
                   </span>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[9px] px-1 py-0",
-                      info.met
-                        ? "border-emerald-400/30 text-emerald-400"
-                        : "border-red-400/30 text-red-400/70"
-                    )}
-                  >
+                  <Tag color={info.met ? "success" : "error"} className="!m-0 !text-[9px] !px-1 !py-0">
                     {info.met ? "达标" : "未达标"}
-                  </Badge>
+                  </Tag>
                 </div>
               </div>
             ))}

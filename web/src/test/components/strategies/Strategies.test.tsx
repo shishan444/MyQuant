@@ -138,7 +138,7 @@ describe("Strategies page", () => {
     render(<Strategies />, { wrapper: createWrapper() });
     await screen.findByText("加载失败");
     expect(screen.getByText("服务器错误")).toBeInTheDocument();
-    expect(screen.getByText("重试")).toBeInTheDocument();
+    expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
   });
 
   // --- Empty state ---

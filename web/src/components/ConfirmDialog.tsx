@@ -1,14 +1,4 @@
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Loader2 } from "lucide-react";
+import { Button, Modal } from "antd";
 import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
@@ -38,28 +28,31 @@ function ConfirmDialog({
   children,
 }: ConfirmDialogProps) {
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          {description != null && <AlertDialogDescription>{description}</AlertDialogDescription>}
-        </AlertDialogHeader>
-        {children}
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>
-            {cancelLabel}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant={variant === "destructive" ? "destructive" : "default"}
-            onClick={onConfirm}
-            disabled={loading}
-          >
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {confirmLabel}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <Modal
+      open={open}
+      onCancel={() => onOpenChange(false)}
+      title={title}
+      width={440}
+      footer={[
+        <Button key="cancel" disabled={loading} onClick={() => onOpenChange(false)}>
+          {cancelLabel}
+        </Button>,
+        <Button
+          key="confirm"
+          type="primary"
+          danger={variant === "destructive"}
+          onClick={onConfirm}
+          loading={loading}
+        >
+          {confirmLabel}
+        </Button>,
+      ]}
+    >
+      {description != null && (
+        <p className="text-sm text-text-secondary mb-2">{description}</p>
+      )}
+      {children}
+    </Modal>
   );
 }
 

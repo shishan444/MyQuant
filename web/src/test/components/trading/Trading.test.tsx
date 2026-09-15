@@ -143,7 +143,7 @@ describe("Trading page", () => {
     render(<Trading />, { wrapper: createWrapper() });
     expect(screen.getByText("加载失败")).toBeInTheDocument();
     expect(screen.getByText("网络错误")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("重试"));
+    fireEvent.click(screen.getByText(/重\s*试/));
     expect(refetch).toHaveBeenCalled();
   });
 
