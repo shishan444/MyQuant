@@ -227,42 +227,9 @@ export interface EvolutionHistoryResponse {
 }
 
 /**
- * WS 推送消息（runner → 前端，非 openapi 契约）。
- * G2 实时层契约先行时冻结事件契约并经 zod 校验收编。
+ * WS 推送消息已收编实时契约层（src/realtime/schemas.ts，zod 判别联合），
+ * 本层不再承载 WS 类型。
  */
-export interface GenerationUpdate {
-  type:
-    | "generation_complete"
-    | "evolution_complete"
-    | "population_started"
-    | "strategy_discovered"
-    | "task_started"
-    | "task_snapshot"
-    | "phase_changed";
-  task_id: string;
-  generation: number;
-  best_score: number;
-  avg_score: number;
-  target_score: number;
-  max_generations: number;
-  champion_dna?: DNA;
-  population_diversity?: number;
-  last_mutations?: string[];
-  population_count?: number;
-  best_score_ever?: number;
-  best_fitness?: number;
-  qualified_count?: number;
-  fitness?: number;
-  qualified?: boolean;
-  total_generations_so_far?: number;
-  strategy_id?: string;
-  score?: number;
-  name?: string;
-  current_generation?: number;
-  current_phase?: string;
-  status?: string;
-  phase?: string;
-}
 
 /**
  * 策略指标 ← 后端 StrategyMetrics（Response.metrics 声明的 6 字段）。

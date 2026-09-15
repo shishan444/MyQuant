@@ -215,7 +215,7 @@ describe("useEvolutionWebSocket", () => {
 
     const ws = MockWebSocket.getLast()!;
     act(() => {
-      ws.onmessage!({ data: JSON.stringify({ type: "task_started" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "task_started", task_id: "task1", status: "running", target_score: 80, max_generations: 200 }) });
     });
 
     expect(invalidateSpy).toHaveBeenCalled();
@@ -246,10 +246,13 @@ describe("useEvolutionWebSocket", () => {
       ws.onmessage!({
         data: JSON.stringify({
           type: "generation_complete",
+          task_id: "task1",
           generation: 6,
           best_score: 72,
           avg_score: 45,
           best_fitness: 0.68,
+          target_score: 80,
+          max_generations: 200,
           qualified_count: 3,
         }),
       });
@@ -283,9 +286,15 @@ describe("useEvolutionWebSocket", () => {
       ws.onmessage!({
         data: JSON.stringify({
           type: "evolution_complete",
+          task_id: "task1",
+          stop_reason: "target",
+          total_generations: 42,
+          champion_score: 85,
+          generation: 42,
           best_score: 85,
           best_fitness: 0.82,
-          champion_dna: '{"signal_genes":[]}',
+          target_score: 80,
+          max_generations: 200,
         }),
       });
     });
@@ -293,5 +302,24 @@ describe("useEvolutionWebSocket", () => {
     const taskData = qc.getQueryData(evolutionKeys.task("task1")) as Record<string, unknown>;
     expect(taskData.status).toBe("completed");
     expect(taskData.best_score).toBe(85);
+  });
+
+  it("协议消息不进业务缓存（subscribed 到达时 task 缓存不变）", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const initial = { task_id: "task1", status: "running", best_score: 10 };
+    qc.setQueryData(evolutionKeys.task("task1"), initial);
+
+    renderHook(() => useEvolutionWebSocket("task1"), { wrapper });
+    const ws = MockWebSocket.getLast()!;
+    act(() => {
+      ws.onmessage!({ data: JSON.stringify({ type: "subscribed", task_id: "task1" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "pong" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "generation_complete", generation: "bad" }) });
+    });
+
+    expect(qc.getQueryData(evolutionKeys.task("task1"))).toEqual(initial);
   });
 });

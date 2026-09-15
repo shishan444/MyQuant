@@ -103,7 +103,7 @@ describe("useTradingWebSocket", () => {
 
     const ws = MockWS.getLast()!;
     act(() => {
-      ws.onmessage!({ data: JSON.stringify({ type: "position_update" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "position_update", task_id: "t1", position: null, balance: 100000, equity: 100000, unrealized_pnl: 0, total_trades: 0, total_pnl: 0 }) });
     });
 
     // Invalidation is delayed 2000ms
@@ -122,7 +122,7 @@ describe("useTradingWebSocket", () => {
 
     const ws = MockWS.getLast()!;
     act(() => {
-      ws.onmessage!({ data: JSON.stringify({ type: "task_started" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "task_started", task_id: "t1" }) });
     });
 
     act(() => { vi.advanceTimersByTime(2000); });

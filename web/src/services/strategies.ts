@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { streamSse, type StreamHandlers } from "@/realtime/sse";
 import type {
   Strategy,
   StrategyListResponse,
@@ -111,26 +112,10 @@ export async function getSessionResults(sessionId: string): Promise<VerifyHistor
   return data;
 }
 
-export interface VerifyProgressEvent {
-  current: number;
-  total: number;
-  group: string;
-  range_start: string;
-  range_end: string;
-  batch_results: Array<Record<string, unknown>>;
-}
-
-export interface VerifyStreamCallbacks {
-  onProgress: (event: VerifyProgressEvent) => void;
-  onComplete: (data: { session_id: string; summary: unknown[]; results: unknown[] }) => void;
-  onError: (message: string) => void;
-}
-
-export interface BatchBacktestStreamCallbacks {
-  onProgress: (event: VerifyProgressEvent) => void;
-  onComplete: (data: { summary: unknown[]; results: unknown[] }) => void;
-  onError: (message: string) => void;
-}
+// 流式回调契约类型已收编 realtime 层（src/realtime/sse.ts），此处 re-export 保消费方零改动
+export type { StreamProgressEvent as VerifyProgressEvent } from "@/realtime/sse";
+export type VerifyStreamCallbacks = StreamHandlers<{ session_id: string; summary: unknown[]; results: unknown[] }>;
+export type BatchBacktestStreamCallbacks = StreamHandlers<{ summary: unknown[]; results: unknown[] }>;
 
 export function verifyStrategiesStream(
   payload: {
@@ -144,55 +129,7 @@ export function verifyStrategiesStream(
   callbacks: VerifyStreamCallbacks,
   signal?: AbortSignal,
 ): void {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  fetch(`${baseUrl}/api/strategies/verify/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const text = await response.text();
-        callbacks.onError(text || `HTTP ${response.status}`);
-        return;
-      }
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      // 定义在循环外：流结束时残留 buffer 的事件也能被处理（此前定义在 while 内导致末尾事件被静默丢弃）
-      const processPart = (part: string) => {
-        if (!part.trim()) return;
-        const lines = part.split("\n");
-        const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-        const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-        if (!eventType || !dataRaw) return;
-        try {
-          const data = JSON.parse(dataRaw);
-          if (eventType === "progress") callbacks.onProgress(data);
-          else if (eventType === "complete") callbacks.onComplete(data);
-          else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-        } catch { /* ignore parse errors */ }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop()!;
-
-        for (const part of parts) processPart(part);
-      }
-
-      // Process any remaining data in buffer after stream ends
-      if (buffer.trim()) processPart(buffer);
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") callbacks.onError(err.message);
-    });
+  streamSse("/api/strategies/verify/stream", payload, callbacks, signal);
 }
 
 export function batchBacktestStream(
@@ -207,53 +144,7 @@ export function batchBacktestStream(
   callbacks: BatchBacktestStreamCallbacks,
   signal?: AbortSignal,
 ): void {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  fetch(`${baseUrl}/api/strategies/batch-backtest/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const text = await response.text();
-        callbacks.onError(text || `HTTP ${response.status}`);
-        return;
-      }
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      // 定义在循环外：流结束时残留 buffer 的事件也能被处理（与 verify 流同修）
-      const processPart = (part: string) => {
-        if (!part.trim()) return;
-        const lines = part.split("\n");
-        const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-        const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-        if (!eventType || !dataRaw) return;
-        try {
-          const data = JSON.parse(dataRaw);
-          if (eventType === "progress") callbacks.onProgress(data);
-          else if (eventType === "complete") callbacks.onComplete(data);
-          else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-        } catch { /* ignore */ }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop()!;
-
-        for (const part of parts) processPart(part);
-      }
-      if (buffer.trim()) processPart(buffer);
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") callbacks.onError(err.message);
-    });
+  streamSse("/api/strategies/batch-backtest/stream", payload, callbacks, signal);
 }
 
 export async function fetchBatchBacktestDetail(resultId: string): Promise<BacktestResult> {
