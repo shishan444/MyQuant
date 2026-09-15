@@ -206,7 +206,7 @@ describe("BacktestModePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("API timeout")).toBeInTheDocument();
-      expect(screen.getByText("重试")).toBeInTheDocument();
+      expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
     });
   });
 });

@@ -5,7 +5,7 @@
  * while full strategy DNA supports guards, logic, risk genes etc.
  * The generated DNA is sufficient for saving and basic backtesting.
  */
-import type { ConditionInput, DNA } from "@/types/api";
+import type { ConditionInput, DNA, SignalGene } from "@/types/api";
 
 const CONDITION_TYPE_MAP: Record<string, string> = {
   gt: "gt",
@@ -26,9 +26,9 @@ const CONDITION_TYPE_MAP: Record<string, string> = {
 function mapCondition(
   cond: ConditionInput,
   role: "entry_trigger" | "exit_trigger"
-): unknown {
+): SignalGene {
   const indicator = cond.subject || "close";
-  const condType = CONDITION_TYPE_MAP[cond.action] || "gt";
+  const condType: string = CONDITION_TYPE_MAP[cond.action] || "gt";
   const target = cond.target || "0";
 
   let params: Record<string, number> = {};
@@ -42,21 +42,24 @@ function mapCondition(
   }
 
   // Build condition dict
-  let condition: Record<string, unknown>;
+  // condType 经 CONDITION_TYPE_MAP 收敛到契约枚举；阈值经 threshold 字段承载
+  // （后端 executor 消费键）；无阈值时回退固定 1 保持条件可求值
+  const condTypeNarrow = condType as SignalGene["condition"]["type"];
+  let condition: SignalGene["condition"];
   if (condType === "price_above" || condType === "price_below") {
-    condition = { type: condType };
+    condition = { type: condTypeNarrow };
   } else {
     const threshold = parseFloat(target);
     condition = isNaN(threshold)
-      ? { type: condType, target }
-      : { type: condType, threshold };
+      ? { type: condTypeNarrow, threshold: 1 }
+      : { type: condTypeNarrow, threshold };
   }
 
   return {
     indicator: indicator.toUpperCase(),
     params,
     role,
-    field_name: null,
+    field: null,
     condition,
   };
 }

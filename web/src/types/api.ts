@@ -22,10 +22,14 @@ type S = components["schemas"];
 // Evolution / Strategy core (进化与策略核心域)
 // ---------------------------------------------------------------------------
 
-/** 信号基因条件 ← 后端 SignalGeneModel.condition（dict 洞补形：后端无子 schema） */
+/**
+ * 信号基因条件 ← 后端 SignalGeneModel.condition（dict 洞补形）。
+ * 阈值字段名=threshold：core/strategy/executor.py 条件求值真实消费
+ * `condition["threshold"]`（G12 批实证修正——原手写 value 为无依据幻觉）。
+ */
 export interface SignalGeneCondition {
   type: "lt" | "gt" | "le" | "ge" | "cross_above" | "cross_below" | "price_above" | "price_below";
-  value?: number;
+  threshold?: number;
   ref_indicator?: string;
   ref_field?: string;
 }

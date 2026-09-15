@@ -99,7 +99,7 @@ export function SeedConfigForm({
         conditions: layer.signal_genes.map((sg) => ({
           indicator: sg.indicator,
           conditionType: sg.condition.type,
-          value: sg.condition.value?.toString() ?? "",
+          value: sg.condition.threshold?.toString() ?? "",
         })),
       }));
     }
@@ -125,7 +125,7 @@ export function SeedConfigForm({
           conditions: layer.signal_genes.map((sg) => ({
             indicator: sg.indicator,
             conditionType: sg.condition.type,
-            value: sg.condition.value?.toString() ?? "",
+            value: sg.condition.threshold?.toString() ?? "",
           })),
         }))
       );

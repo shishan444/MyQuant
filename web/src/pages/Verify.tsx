@@ -40,7 +40,7 @@ function formatReturn(v: number): string {
 }
 
 function describeCondition(cond: SignalGene["condition"], _indicator: string, _field?: string | null): string {
-  const v = cond.value !== undefined ? cond.value.toFixed(cond.value < 1 ? 2 : 0) : "";
+  const v = cond.threshold !== undefined ? cond.threshold.toFixed(cond.threshold < 1 ? 2 : 0) : "";
   const ref = cond.ref_indicator ? cond.ref_indicator : "";
   switch (cond.type) {
     case "cross_above": return ref ? `上穿${ref}` : `>${v}`;

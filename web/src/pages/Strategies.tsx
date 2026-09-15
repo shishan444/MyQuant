@@ -163,12 +163,12 @@ function SortIcon({ field, currentSort }: { field: SortField; currentSort: { fie
 // DNA condition text
 // ---------------------------------------------------------------------------
 
-function describeGene(gene: { indicator: string; params: Record<string, unknown>; role: string; condition?: { type: string; value?: number; ref_indicator?: string } }): string {
+function describeGene(gene: { indicator: string; params: Record<string, unknown>; role: string; condition?: { type: string; threshold?: number; ref_indicator?: string } }): string {
   const label = INDICATOR_LABELS[gene.indicator] ?? gene.indicator;
   const paramStr = Object.values(gene.params).join(",");
   const cond = gene.condition;
   const condLabel = cond ? (CONDITION_TYPE_LABELS[cond.type] ?? cond.type) : "";
-  const condValue = cond?.value != null ? ` ${cond.value}` : cond?.ref_indicator ? ` ${cond.ref_indicator}` : "";
+  const condValue = cond?.threshold != null ? ` ${cond.threshold}` : cond?.ref_indicator ? ` ${cond.ref_indicator}` : "";
   const roleMap: Record<string, string> = {
     entry_trigger: "入场触发", entry_guard: "入场条件",
     exit_trigger: "出场触发", exit_guard: "出场条件",

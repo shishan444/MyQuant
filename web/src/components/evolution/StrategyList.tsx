@@ -278,7 +278,7 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
   const m = strategy.metrics;
 
   const renderCondition = useCallback(
-    (gene: { indicator: string; params?: Record<string, unknown>; condition: { type: string; value?: number } }) => {
+    (gene: { indicator: string; params?: Record<string, unknown>; condition: { type: string; threshold?: number } }) => {
       const condLabel: Record<string, string> = {
         lt: "<",
         gt: ">",
@@ -291,7 +291,7 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
       };
       const label = condLabel[gene.condition.type] ?? gene.condition.type;
       const val =
-        gene.condition.value != null ? ` ${gene.condition.value}` : "";
+        gene.condition.threshold != null ? ` ${gene.condition.threshold}` : "";
       const period = gene.params?.period;
       const periodStr = period ? `(${period})` : "";
       return `${gene.indicator}${periodStr} ${label}${val}`;
@@ -359,9 +359,9 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
                     <span className="text-slate-600">
                       {gene.condition.type}
                     </span>
-                    {gene.condition.value != null && (
+                    {gene.condition.threshold != null && (
                       <span className="font-mono text-slate-300">
-                        {gene.condition.value}
+                        {gene.condition.threshold}
                       </span>
                     )}
                   </div>

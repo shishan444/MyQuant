@@ -11,7 +11,7 @@ const makeDNA = (overrides: Partial<DNA> = {}): DNA => ({
       indicator: "RSI",
       params: { period: 14 },
       role: "entry_trigger",
-      condition: { type: "lt", value: 30 },
+      condition: { type: "lt", threshold: 30 },
     },
   ],
   logic_genes: { entry_logic: "AND", exit_logic: "AND" },
@@ -61,7 +61,7 @@ describe("getStrategyType", () => {
         indicator: "CUSTOM",
         params: {},
         role: "entry_trigger",
-        condition: { type: "gt", value: 0 },
+        condition: { type: "gt", threshold: 0 },
       }],
     });
     expect(getStrategyType(dna)).toBe("混合");

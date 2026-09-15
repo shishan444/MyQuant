@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useImperativeHandle, forwardRef } from "reac
 import { Loader2, AlertTriangle, Dna } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
-import { Button } from "@/components/ui/Button";
+import { Button as AntButton } from "antd";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, SignalData } from "@/components/charts/KlineChart";
 import { BacktestMetricsPanel } from "./BacktestMetricsPanel";
@@ -155,9 +155,9 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
         <div className="flex flex-col items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-8">
           <AlertTriangle className="h-8 w-8 text-red-400" />
           <p className="text-sm text-red-400">{error}</p>
-          <Button variant="outline" size="sm" onClick={runBacktestAction}>
+          <AntButton size="small" onClick={runBacktestAction}>
             重试
-          </Button>
+          </AntButton>
         </div>
       );
     }
@@ -273,32 +273,27 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
 
             {/* Actions */}
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={runBacktestAction}
-                className="text-[11px]"
-              >
+              <AntButton size="small" onClick={runBacktestAction} className="!text-[11px]">
                 重新运行
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+              </AntButton>
+              <AntButton
+                size="small"
                 onClick={handleSave}
                 disabled={saveStrategy.isPending}
-                className="gap-1 text-[11px] text-amber-400"
+                className="!text-[11px]"
+                style={{ color: "#fbbf24" }}
               >
                 保存策略
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+              </AntButton>
+              <AntButton
+                size="small"
                 onClick={() => navigate("/evolution", { state: { seedDna: dna } })}
-                className="gap-1 text-[11px] text-purple-400"
+                className="!text-[11px]"
+                style={{ color: "#c084fc" }}
               >
                 <Dna className="h-3.5 w-3.5" />
                 继续优化
-              </Button>
+              </AntButton>
             </div>
           </>
         )}

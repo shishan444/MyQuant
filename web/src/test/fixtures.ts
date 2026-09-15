@@ -139,7 +139,7 @@ export const mockDNA: DNA = {
       indicator: "ema",
       params: { period: 10 },
       role: "entry_trigger",
-      condition: { type: "cross_above", value: 20 },
+      condition: { type: "cross_above", threshold: 20 },
     },
   ],
   logic_genes: { entry_logic: "AND", exit_logic: "OR" },
