@@ -1370,35 +1370,23 @@ def save_dataset_meta(
     quality_notes: Optional[str] = None,
     import_batch_id: Optional[str] = None,
 ) -> None:
-    """Insert a dataset metadata record."""
-    now = _now()
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO dataset_meta
-           (dataset_id, symbol, interval, parquet_path, row_count, time_start,
-            time_end, file_size_bytes, source, format_detected, timestamp_precision,
-            ohlcv_stats, gap_count, quality_status, quality_notes, import_batch_id,
-            last_import_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (dataset_id, symbol, interval, parquet_path, row_count, time_start,
-         time_end, file_size_bytes, source, format_detected, timestamp_precision,
-         ohlcv_stats, gap_count, quality_status, quality_notes, import_batch_id,
-         now, now, now),
+    """Insert a dataset metadata record（B3a.3 起委托 repository，签名不变）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.save_dataset_meta(
+        db_path, dataset_id=dataset_id, symbol=symbol, interval=interval,
+        parquet_path=parquet_path, row_count=row_count, time_start=time_start,
+        time_end=time_end, file_size_bytes=file_size_bytes, source=source,
+        format_detected=format_detected,
+        timestamp_precision=timestamp_precision, ohlcv_stats=ohlcv_stats,
+        gap_count=gap_count, quality_status=quality_status,
+        quality_notes=quality_notes, import_batch_id=import_batch_id,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_dataset(db_path: Path, dataset_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single dataset by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM dataset_meta WHERE dataset_id = ?", (dataset_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single dataset by ID, or None if not found（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    return repo.get_dataset(db_path, dataset_id)
 
 
 def list_datasets(
@@ -1408,25 +1396,11 @@ def list_datasets(
     interval: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List datasets with optional filtering."""
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if interval is not None:
-        conditions.append("interval = ?")
-        params.append(interval)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM dataset_meta{where} ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List datasets with optional filtering（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    return repo.list_datasets(
+        db_path, symbol=symbol, interval=interval, limit=limit,
+    )
 
 
 def update_dataset_stats(
@@ -1435,40 +1409,12 @@ def update_dataset_stats(
     dataset_id: str,
     **fields: Any,
 ) -> None:
-    """Update fields on a dataset record. Refreshes ``updated_at``."""
-    allowed = {
-        "row_count", "time_start", "time_end", "file_size_bytes",
-        "format_detected", "timestamp_precision", "ohlcv_stats",
-        "gap_count", "quality_status", "quality_notes", "import_batch_id",
-        "last_import_at", "parquet_path",
-    }
-    updates: list[str] = []
-    params: list[Any] = []
-
-    for key, value in fields.items():
-        if key in allowed:
-            updates.append(f"{key} = ?")
-            params.append(value)
-
-    if not updates:
-        return
-
-    updates.append("updated_at = ?")
-    params.append(_now())
-    params.append(dataset_id)
-
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE dataset_meta SET {', '.join(updates)} WHERE dataset_id = ?",
-        params,
-    )
-    conn.commit()
-    conn.close()
+    """Update fields on a dataset record（委托 repository，白名单不变）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.update_dataset_stats(db_path, dataset_id=dataset_id, **fields)
 
 
 def delete_dataset(db_path: Path, dataset_id: str) -> None:
-    """Delete a dataset by ID. No error if not found."""
-    conn = _connect(db_path)
-    conn.execute("DELETE FROM dataset_meta WHERE dataset_id = ?", (dataset_id,))
-    conn.commit()
-    conn.close()
+    """Delete a dataset by ID（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.delete_dataset(db_path, dataset_id)
