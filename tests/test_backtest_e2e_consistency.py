@@ -186,7 +186,7 @@ class TestLiquidatedConsistency:
         )
 
         with patch(
-            "api.routes.strategies._bt_engine_mod.BacktestEngine.run",
+            "api.routes.strategies.backtest._bt_engine_mod.BacktestEngine.run",
             return_value=fake_result,
         ):
             payload = {
@@ -265,7 +265,7 @@ class TestLiquidatedScoreConsistency:
         )
 
         with patch(
-            "api.routes.strategies._bt_engine_mod.BacktestEngine.run",
+            "api.routes.strategies.backtest._bt_engine_mod.BacktestEngine.run",
             return_value=fake_result,
         ):
             payload = {
@@ -326,7 +326,7 @@ class TestMetricsDictConsistency:
         )
 
         with patch(
-            "api.routes.strategies._bt_engine_mod.BacktestEngine.run",
+            "api.routes.strategies.backtest._bt_engine_mod.BacktestEngine.run",
             return_value=fake_result,
         ):
             payload = {
@@ -401,7 +401,7 @@ class TestCompareRouteMetricsConsistency:
         )
 
         with patch(
-            "api.routes.strategies._bt_engine_mod.BacktestEngine.run",
+            "api.routes.strategies.backtest._bt_engine_mod.BacktestEngine.run",
             return_value=fake_result,
         ):
             compare_payload = {

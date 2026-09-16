@@ -50,7 +50,7 @@ class TestVerifyProcessor:
         )
         df = make_ohlcv(50, "4h")
 
-        with patch("api.routes.strategies._bt_engine_mod") as bt_mod:
+        with patch("api.routes.strategies.backtest._bt_engine_mod") as bt_mod:
             bt_mod.BacktestEngine.return_value.batch_run.return_value = [_fake_bt_result()]
             processor = _VerifyProcessor(payload, verify_db, tmp_path)
             processor._load_df = lambda *a, **kw: df  # bypass parquet loading
@@ -79,7 +79,7 @@ class TestVerifyProcessor:
             data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
-        with patch("api.routes.strategies._bt_engine_mod"):
+        with patch("api.routes.strategies.backtest._bt_engine_mod"):
             processor = _VerifyProcessor(payload, verify_db, tmp_path)
             with pytest.raises(HTTPException) as exc:
                 processor.init()
@@ -97,7 +97,7 @@ class TestVerifyProcessor:
         )
         short_df = make_ohlcv(5, "4h")  # < 10 rows
 
-        with patch("api.routes.strategies._bt_engine_mod") as bt_mod:
+        with patch("api.routes.strategies.backtest._bt_engine_mod") as bt_mod:
             processor = _VerifyProcessor(payload, verify_db, tmp_path)
             processor._load_df = lambda *a, **kw: short_df
             processor.init()

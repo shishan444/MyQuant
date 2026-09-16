@@ -312,7 +312,7 @@ class TestVerifyMarkFailedNotSwallowed:
         processor.session_id = "b1-verify-session"
 
         with caplog.at_level(logging.ERROR, logger="api.routes.strategies"), \
-             patch("api.routes.strategies.update_verify_session",
+             patch("api.routes.strategies.verify.update_verify_session",
                    side_effect=RuntimeError("db locked")):
             # 不得再抛出（调用方在异常处理路径中），但必须留痕
             processor.mark_failed("boom")

@@ -40,7 +40,7 @@ class TestBatchBacktestProcessorInit:
             data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
-        with patch("api.routes.strategies._bt_engine_mod"):
+        with patch("api.routes.strategies.backtest._bt_engine_mod"):
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
             processor.init()
 
@@ -62,7 +62,7 @@ class TestBatchBacktestProcessorInit:
             data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
-        with patch("api.routes.strategies._bt_engine_mod"):
+        with patch("api.routes.strategies.backtest._bt_engine_mod"):
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
             with pytest.raises(HTTPException) as exc:
                 processor.init()
@@ -101,7 +101,7 @@ class TestBatchBacktestProcessorProcessStep:
         )
         df = make_ohlcv(50, "4h")
 
-        with patch("api.routes.strategies._bt_engine_mod"), \
+        with patch("api.routes.strategies.backtest._bt_engine_mod"), \
              patch("core.trading.replay.ReplayRunner") as replay_cls:
             replay_cls.return_value.run.return_value = _fake_replay_result()
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
@@ -129,7 +129,7 @@ class TestBatchBacktestProcessorProcessStep:
         )
         short_df = make_ohlcv(5, "4h")  # < 10 rows
 
-        with patch("api.routes.strategies._bt_engine_mod"), \
+        with patch("api.routes.strategies.backtest._bt_engine_mod"), \
              patch("core.trading.replay.ReplayRunner") as replay_cls:
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
             processor._load_df = lambda *a, **kw: short_df

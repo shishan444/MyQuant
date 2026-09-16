@@ -250,8 +250,8 @@ class TestStrategyDelete:
 # ── Test: Strategy Backtest ──
 
 class TestStrategyBacktest:
-    @patch("MyQuant.api.routes.strategies._bt_engine_mod")
-    @patch("MyQuant.api.routes.strategies.score_strategy")
+    @patch("MyQuant.api.routes.strategies.backtest._bt_engine_mod")
+    @patch("MyQuant.api.routes.strategies.backtest.score_strategy")
     def test_backtest_strategy(
         self,
         mock_score: MagicMock,
@@ -323,8 +323,8 @@ class TestStrategyBacktest:
 # ── Test: Strategy Compare ──
 
 class TestStrategyCompare:
-    @patch("MyQuant.api.routes.strategies._bt_engine_mod")
-    @patch("MyQuant.api.routes.strategies.score_strategy")
+    @patch("MyQuant.api.routes.strategies.backtest._bt_engine_mod")
+    @patch("MyQuant.api.routes.strategies.backtest.score_strategy")
     def test_compare_strategies(
         self,
         mock_score: MagicMock,
