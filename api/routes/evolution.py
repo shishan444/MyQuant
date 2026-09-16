@@ -304,36 +304,25 @@ def create_task(
     if payload.requirements:
         requirements_json = json.dumps(payload.requirements.model_dump())
 
-    conn = _get_connection(db_path)
-    conn.execute(
-        """UPDATE evolution_task
-           SET population_size = ?, max_generations = ?,
-               elite_ratio = ?,
-               leverage = ?, direction = ?,
-               data_start = ?, data_end = ?,
-               data_time_start = ?, data_time_end = ?, data_row_count = ?,
-               indicator_pool = ?, timeframe_pool = ?, mode = ?,
-               continuous = ?,
-               strategy_threshold = ?,
-               min_annual_return = ?, max_drawdown_limit = ?,
-               requirements_json = ?
-           WHERE task_id = ?""",
-        (payload.population_size, payload.max_generations,
-         payload.elite_ratio,
-         payload.leverage, payload.direction,
-         payload.data_start, payload.data_end,
-         data_time_start, data_time_end, data_row_count,
-         json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
-         json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
-         payload.mode,
-         1 if payload.continuous else 0,
-         payload.strategy_threshold,
-         payload.min_annual_return, payload.max_drawdown_limit,
-         requirements_json,
-         task_id),
+    from core.persistence.repository import evolution as _repo
+    _repo.update_task_config(
+        db_path, task_id,
+        population_size=payload.population_size,
+        max_generations=payload.max_generations,
+        elite_ratio=payload.elite_ratio,
+        leverage=payload.leverage, direction=payload.direction,
+        data_start=payload.data_start, data_end=payload.data_end,
+        data_time_start=data_time_start, data_time_end=data_time_end,
+        data_row_count=data_row_count,
+        indicator_pool=json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
+        timeframe_pool=json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
+        mode=payload.mode,
+        continuous=1 if payload.continuous else 0,
+        strategy_threshold=payload.strategy_threshold,
+        min_annual_return=payload.min_annual_return,
+        max_drawdown_limit=payload.max_drawdown_limit,
+        requirements_json=requirements_json,
     )
-    conn.commit()
-    conn.close()
 
     row = get_task(db_path, task_id)
     if row is None:
@@ -508,14 +497,8 @@ def get_task_strategies(
             pass
 
     # Snapshot-based strategies
-    from core.persistence.db import _connect
-    conn = _connect(db_path)
-    snapshots = conn.execute(
-        """SELECT generation, best_score, best_dna FROM generation_snapshot
-           WHERE task_id = ? ORDER BY best_score DESC LIMIT 10""",
-        (task_id,),
-    ).fetchall()
-    conn.close()
+    from core.persistence.repository import evolution as _repo
+    snapshots = _repo.list_top_snapshots(db_path, task_id, limit=10)
 
     for snap in snapshots:
         try:
@@ -587,12 +570,6 @@ def get_discovered_strategies(
             "metrics": metrics,
         })
     return result
-
-
-def _get_connection(db_path: Path):
-    """Get a SQLite connection (delegates to core.persistence.db.connect)."""
-    from core.persistence.db import connect
-    return connect(db_path)
 
 
 # ── Timeframe utilities ──

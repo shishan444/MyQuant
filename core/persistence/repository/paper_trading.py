@@ -243,3 +243,32 @@ def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, A
     )
     metrics["task_id"] = task_id
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# B3d.2 收口：trading runner 原裸 SQL 的等价迁移
+# ---------------------------------------------------------------------------
+
+def recover_stale_trading_tasks(db_path: Path) -> int:
+    """Mark running paper trading tasks as stopped (crash recovery)——返回清理数。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(PaperTradingTask)
+            .where(PaperTradingTask.status == "running")
+            .values(status="stopped", stop_reason="crash_recovery",
+                    updated_at=_now())
+        )
+        return result.rowcount
+
+
+def find_pending_trading_task(db_path: Path) -> Optional[Dict[str, Any]]:
+    """取最早创建的 pending 模拟盘任务（runner 拾取序）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(PaperTradingTask)
+            .where(PaperTradingTask.status == "pending")
+            .order_by(PaperTradingTask.created_at.asc()).limit(1)
+        ).mappings().first()
+    return dict(row) if row is not None else None

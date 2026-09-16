@@ -15,7 +15,7 @@ pytestmark = [pytest.mark.unit]
 
 from api.runner import restart_crashed_tasks, EvolutionRunner  # noqa: E402
 from core.persistence.db_ext import init_db_ext  # noqa: E402
-from core.persistence.db import _connect  # noqa: E402
+from core.persistence.db_ext import _connect  # noqa: E402
 
 
 def _insert_task(db, task_id, status="stopped", stop_reason="crash_recovery",

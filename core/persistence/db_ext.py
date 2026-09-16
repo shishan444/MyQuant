@@ -18,7 +18,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.persistence.db import _connect, init_db
+from core.persistence.db import init_db
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """legacy init/ALTER 链专用连接（迁移工具属性；业务代码走 orm.engine 工厂）。"""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.row_factory = sqlite3.Row
+    return conn
 from core.scoring import trading_metrics
 
 logger = logging.getLogger(__name__)

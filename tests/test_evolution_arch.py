@@ -25,7 +25,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.persistence.db import _connect, get_task, init_db, save_task, update_task
+from core.persistence.db_ext import _connect
+from core.persistence.db import get_task, init_db, save_task, update_task
 from tests.helpers.data_factory import make_dna
 
 pytestmark = [pytest.mark.integration]

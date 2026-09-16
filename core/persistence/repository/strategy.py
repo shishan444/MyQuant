@@ -230,3 +230,43 @@ def delete_strategy(db_path: Path, strategy_id: str) -> None:
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(delete(Strategy).where(Strategy.strategy_id == strategy_id))
+
+
+def update_strategy_verify_stats(
+    db_path: Path,
+    strategy_id: str,
+    *,
+    new_score: float,
+    verify_star: int,
+    verified_at: str,
+) -> None:
+    """verify 滚动统计（COALESCE/MAX 增量语义原样保真，单事务）。"""
+    from sqlalchemy import case, func
+
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(Strategy)
+            .where(Strategy.strategy_id == strategy_id)
+            .values(
+                verify_count=func.coalesce(Strategy.verify_count, 0) + 1,
+                verify_avg_score=func.round_(
+                    case(
+                        (Strategy.verify_avg_score.is_(None), new_score),
+                        else_=(Strategy.verify_avg_score * func.coalesce(Strategy.verify_count, 0) + new_score)
+                        / (func.coalesce(Strategy.verify_count, 0) + 1),
+                    ),
+                    4,
+                ),
+                verify_best_score=func.round_(
+                    case(
+                        (Strategy.verify_best_score.is_(None), new_score),
+                        else_=func.max(Strategy.verify_best_score, new_score),
+                    ),
+                    4,
+                ),
+                last_verified_at=verified_at,
+                verify_star=verify_star,
+                updated_at=verified_at,
+            )
+        )

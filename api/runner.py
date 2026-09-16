@@ -23,7 +23,6 @@ from core.evolution.champion import ChampionTracker
 from core.evolution import evaluation
 from core.strategy.dna import StrategyDNA
 from core.persistence.db import (
-    connect,
     save_history,
     save_snapshot,
     update_task,
@@ -81,28 +80,18 @@ def _now_iso() -> str:
 
 def update_heartbeat(db_path: Path, task_id: str) -> None:
     """Update heartbeat_at timestamp for a running task."""
-    from core.persistence.db import _connect
+    from core.persistence.repository import evolution as repo
     try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET heartbeat_at = ? WHERE task_id = ?",
-                (_now_iso(), task_id),
-            )
-            conn.commit()
+        repo.update_heartbeat(db_path, task_id)
     except Exception:
         logger.warning("heartbeat update failed for %s", task_id, exc_info=True)
 
 
 def update_phase(db_path: Path, task_id: str, phase: str) -> None:
     """Update current_phase for a task and push WS notification."""
-    from core.persistence.db import _connect
+    from core.persistence.repository import evolution as repo
     try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET current_phase = ?, updated_at = ? WHERE task_id = ?",
-                (phase, _now_iso(), task_id),
-            )
-            conn.commit()
+        repo.update_phase(db_path, task_id, phase)
     except Exception:
         logger.warning("phase update failed for %s", task_id, exc_info=True)
     _push_ws(task_id, {
@@ -114,14 +103,9 @@ def update_phase(db_path: Path, task_id: str, phase: str) -> None:
 
 def update_progress(db_path: Path, task_id: str, progress: dict) -> None:
     """Write structured progress JSON to DB."""
-    from core.persistence.db import _connect
+    from core.persistence.repository import evolution as repo
     try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET progress_json = ?, updated_at = ? WHERE task_id = ?",
-                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
-            )
-            conn.commit()
+        repo.update_progress(db_path, task_id, json.dumps(progress, ensure_ascii=False))
     except Exception:
         logger.warning("progress update failed for %s", task_id, exc_info=True)
 
@@ -136,17 +120,10 @@ def recover_stale_tasks(db_path: Path) -> None:
     任务不受影响（创建即 pending 后不会被误清，spec 场景「崩溃恢复不误清
     未接手任务」）。
     """
-    from core.persistence.db import _connect
-    with _connect(db_path) as conn:
-        result = conn.execute(
-            "UPDATE evolution_task SET status = 'stopped', "
-            "stop_reason = 'crash_recovery', updated_at = ? "
-            "WHERE status = 'running'",
-            (_now_iso(),),
-        )
-        conn.commit()
-        if result.rowcount > 0:
-            logger.info("Recovered %d stale tasks on startup", result.rowcount)
+    from core.persistence.repository import evolution as repo
+    recovered = repo.recover_stale_tasks(db_path)
+    if recovered > 0:
+        logger.info("Recovered %d stale tasks on startup", recovered)
 
 
 def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
@@ -162,32 +139,8 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
     no initial_population param (checkpoint resume 已按裁决 6 移除)
     (dead code). Crashed-but-incomplete tasks get a bounded retry instead of silent loss.
     """
-    from core.persistence.db import _connect
-    restarted = 0
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT task_id, progress_json FROM evolution_task "
-            "WHERE status = 'stopped' "
-            "AND stop_reason IN ('crash_recovery', 'heartbeat_timeout') "
-            "AND (champion_dna IS NULL OR champion_dna = '')",
-        ).fetchall()
-        for row in rows:
-            task_id = row["task_id"]
-            try:
-                progress = json.loads(row["progress_json"]) if row["progress_json"] else {}
-            except Exception:
-                progress = {}
-            restart_count = int(progress.get("restart_count", 0))
-            if restart_count >= max_restarts:
-                continue
-            progress["restart_count"] = restart_count + 1
-            conn.execute(
-                "UPDATE evolution_task SET status = 'pending', progress_json = ?, "
-                "stop_reason = NULL, updated_at = ? WHERE task_id = ?",
-                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
-            )
-            restarted += 1
-        conn.commit()
+    from core.persistence.repository import evolution as repo
+    restarted = repo.restart_crashed_tasks(db_path, max_restarts)
     if restarted > 0:
         logger.info("Restarted %d crashed tasks (max %d retries each)", restarted, max_restarts)
     return restarted
@@ -310,12 +263,8 @@ class EvolutionRunner(threading.Thread):
     # ------------------------------------------------------------------
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        conn = connect(self.db_path)
-        row = conn.execute(
-            "SELECT * FROM evolution_task WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        from core.persistence.repository import evolution as repo
+        return repo.find_pending_task(self.db_path)
 
     def _run_task(self, task_row: Dict[str, Any]) -> None:
         """Exception boundary for task execution.
@@ -497,13 +446,8 @@ class EvolutionRunner(threading.Thread):
 
             # Update current_generation in DB (use global offset for continuous mode)
             global_gen = gen + global_gen_offset
-            conn = connect(self.db_path)
-            conn.execute(
-                "UPDATE evolution_task SET current_generation = ?, updated_at = ? WHERE task_id = ?",
-                (global_gen, datetime.now(timezone.utc).isoformat(), task_id),
-            )
-            conn.commit()
-            conn.close()
+            from core.persistence.repository import evolution as _repo
+            _repo.update_current_generation(self.db_path, task_id, global_gen)
 
             # Compute generation-level diagnostics from population
             gen_diag = {}
@@ -561,31 +505,19 @@ class EvolutionRunner(threading.Thread):
                     )
 
                     if updated:
+                        from core.persistence.repository import evolution as _repo
                         champion_rec = champion_tracker.get_champion()
-                        conn2 = connect(self.db_path)
-                        conn2.execute(
-                            "UPDATE evolution_task SET best_score = ?, best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                            (
-                                champion_rec.score,
-                                champion_rec.score,
-                                json.dumps(champion_rec.metrics),
-                                json.dumps(champion_rec.dimension_scores),
-                                task_id,
-                            ),
+                        _repo.update_champion_full(
+                            self.db_path, task_id, best_score=champion_rec.score,
+                            champion_metrics=json.dumps(champion_rec.metrics),
+                            champion_dimension_scores=json.dumps(champion_rec.dimension_scores),
                         )
-                        conn2.commit()
-                        conn2.close()
                 elif best_score > 0:
                     # No diagnostics but score is positive - update best_score only
                     updated = champion_tracker.update(score=best_score, generation=global_gen)
                     if updated:
-                        conn2 = connect(self.db_path)
-                        conn2.execute(
-                            "UPDATE evolution_task SET best_score = ?, best_fitness = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
-                            (best_score, best_score, task_id, best_score),
-                        )
-                        conn2.commit()
-                        conn2.close()
+                        from core.persistence.repository import evolution as _repo
+                        _repo.update_best_score_if_higher(self.db_path, task_id, best_score)
 
             # Auto-extract high-scoring strategies to strategy table
             if hasattr(engine, '_population') and engine._population:
@@ -746,16 +678,13 @@ class EvolutionRunner(threading.Thread):
             # Save final champion metrics from tracker (consistent snapshot)
             champion_rec = champion_tracker.get_champion()
             if champion_rec and champion_rec.metrics:
-                conn = connect(self.db_path)
-                conn.execute(
-                    "UPDATE evolution_task SET best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                    (champion_rec.score,
-                     json.dumps(champion_rec.metrics),
-                     json.dumps(champion_rec.dimension_scores),
-                     task_id),
+                from core.persistence.repository import evolution as _repo
+                _repo.update_champion_metrics(
+                    self.db_path, task_id,
+                    best_fitness=champion_rec.score,
+                    champion_metrics=json.dumps(champion_rec.metrics),
+                    champion_dimension_scores=json.dumps(champion_rec.dimension_scores),
                 )
-                conn.commit()
-                conn.close()
 
             # Out-of-sample validation on test split
             if _test_df is not None and len(_test_df) >= 50:
@@ -774,13 +703,12 @@ class EvolutionRunner(threading.Thread):
                 )
 
                 # Persist OOS results
-                conn = connect(self.db_path)
-                conn.execute(
-                    "UPDATE evolution_task SET oos_fitness = ?, oos_qualified = ?, oos_metrics = ? WHERE task_id = ?",
-                    (oos_fitness, int(oos_qualified), json.dumps(oos_metrics), task_id),
+                from core.persistence.repository import evolution as _repo
+                _repo.update_oos_results(
+                    self.db_path, task_id,
+                    oos_fitness=oos_fitness, oos_qualified=int(oos_qualified),
+                    oos_metrics=json.dumps(oos_metrics),
                 )
-                conn.commit()
-                conn.close()
 
         else:
             update_task(

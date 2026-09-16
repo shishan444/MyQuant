@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from core.persistence.db import connect
 from core.persistence.db_ext import (
     count_strategies,
     delete_strategy,
@@ -537,38 +536,23 @@ def compute_verify_star(avg_fitness: float, qualified_count: int, total_periods:
     return 0
 
 
-def _update_strategy_verify_fields(db_path: Path, summary: list) -> None:
-    """Write verification summary back to each strategy row using atomic SQL."""
-    now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    conn = connect(db_path)
+def _update_strategy_verify_fields(db_path: Path, summary) -> None:
+    """Update strategy verification summary fields（B3d.2 收口 repository）。"""
+    from core.persistence.repository import strategy as repo
+    from api.routes.strategies import compute_verify_star  # noqa: F401 语义注记：star 公式单源
     try:
         for item in summary:
-            sid = item.strategy_id
-            new_score = item.comprehensive_score
-            star = compute_verify_star(item.avg_fitness, item.qualified_count, item.total_periods)
-            conn.execute(
-                """UPDATE strategy SET
-                    verify_count = COALESCE(verify_count, 0) + 1,
-                    verify_avg_score = ROUND(
-                        CASE WHEN verify_avg_score IS NULL THEN ?
-                        ELSE (verify_avg_score * COALESCE(verify_count, 0) + ?) / (COALESCE(verify_count, 0) + 1)
-                        END, 4),
-                    verify_best_score = ROUND(
-                        CASE WHEN verify_best_score IS NULL THEN ?
-                        ELSE MAX(verify_best_score, ?)
-                        END, 4),
-                    last_verified_at = ?,
-                    verify_star = ?,
-                    updated_at = ?
-                WHERE strategy_id = ?""",
-                (new_score, new_score, new_score, new_score, now_str, star, now_str, sid),
+            star = compute_verify_star(
+                item.avg_fitness, item.qualified_count, item.total_periods,
             )
-        conn.commit()
+            repo.update_strategy_verify_stats(
+                db_path, item.strategy_id,
+                new_score=item.comprehensive_score,
+                verify_star=star,
+                verified_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
     except Exception:
         logger.warning("Failed to update verify fields for strategies", exc_info=True)
-    finally:
-        conn.close()
-
 
 @router.post("/verify")
 def verify_strategies(

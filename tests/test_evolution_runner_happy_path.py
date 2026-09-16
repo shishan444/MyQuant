@@ -70,7 +70,7 @@ class TestEvolutionRunnerHappyPath:
     def test_happy_path_progress_persisted(self, tmp_db, tmp_path):
         """正常任务跑完后, generation_snapshot 被持久化。"""
         from api.runner import EvolutionRunner
-        from core.persistence.db import _connect
+        from core.persistence.db_ext import _connect
         from core.features.indicators import compute_all_indicators
 
         runner = EvolutionRunner(db_path=tmp_db, data_dir=tmp_path)

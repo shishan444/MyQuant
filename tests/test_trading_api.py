@@ -37,7 +37,7 @@ class TestPaperTradingMigration:
         from core.persistence.db_ext import init_db_ext
         init_db_ext(db_path)
 
-        from core.persistence.db import _connect
+        from core.persistence.db_ext import _connect
         with _connect(db_path) as conn:
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"

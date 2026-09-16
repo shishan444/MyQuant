@@ -20,24 +20,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def connect(db_path: Path) -> sqlite3.Connection:
-    """Public connection helper for external modules.
-
-    core.persistence owns connection setup (WAL / synchronous / busy_timeout /
-    row_factory). External modules (e.g. core.trading.runner) should use this
-    instead of reaching into the private _connect, so persistence stays the
-    single DB access point. Internally db.py still uses _connect directly.
-    """
-    return _connect(db_path)
+# B3d.2 退役注记：_connect/connect 已删——业务代码连接一律经
+# core.persistence.orm.engine 工厂（WAL/busy_timeout 统一）；legacy
+# init/ALTER 链的连接工具移至 db_ext（迁移工具属性，随 init 轨存续）。
 
 
 def init_db(db_path: Path) -> None:

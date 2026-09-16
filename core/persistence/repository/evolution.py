@@ -172,3 +172,183 @@ def count_all_tasks(
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         return conn.execute(stmt).scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# B3d.2 收口：runner/路由原裸 SQL 的等价迁移
+# ---------------------------------------------------------------------------
+
+def update_heartbeat(db_path: Path, task_id: str) -> None:
+    """Update heartbeat_at timestamp for a running task."""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(heartbeat_at=_now())
+        )
+
+
+def update_phase(db_path: Path, task_id: str, phase: str) -> None:
+    """Update current_phase for a task（WS 推送在调用方）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(current_phase=phase, updated_at=_now())
+        )
+
+
+def update_progress(db_path: Path, task_id: str, progress_json: str) -> None:
+    """Write structured progress JSON to DB（序列化在调用方）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(progress_json=progress_json, updated_at=_now())
+        )
+
+
+def recover_stale_tasks(db_path: Path) -> int:
+    """Mark all running tasks as stopped (crash recovery)——返回清理数。
+
+    batch1 D3 语义注记: 恢复类写入是「残留态清理」（WHERE status='running'
+    的条件更新即其前态语义），不走 update_task 的动作前态守护。
+    """
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(EvolutionTask)
+            .where(EvolutionTask.status == "running")
+            .values(status="stopped", stop_reason="crash_recovery",
+                    updated_at=_now())
+        )
+        return result.rowcount
+
+
+def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
+    """Restart crashed tasks without champion（bounded retry，语义同旧轨）。"""
+    engine = _engine_for(db_path)
+    restarted = 0
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(EvolutionTask.task_id, EvolutionTask.progress_json).where(
+                EvolutionTask.status == "stopped",
+                EvolutionTask.stop_reason.in_(["crash_recovery", "heartbeat_timeout"]),
+                (EvolutionTask.champion_dna.is_(None)) | (EvolutionTask.champion_dna == ""),
+            )
+        ).all()
+        for task_id, progress_raw in rows:
+            try:
+                progress = json.loads(progress_raw) if progress_raw else {}
+            except Exception:
+                progress = {}
+            if int(progress.get("restart_count", 0)) >= max_restarts:
+                continue
+            progress["restart_count"] = int(progress.get("restart_count", 0)) + 1
+            conn.execute(
+                update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+                .values(status="pending", progress_json=json.dumps(progress, ensure_ascii=False),
+                        stop_reason=None, updated_at=_now())
+            )
+            restarted += 1
+    return restarted
+
+
+def find_pending_task(db_path: Path) -> Optional[Dict[str, Any]]:
+    """取最早创建的 pending 任务（runner 拾取序）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(EvolutionTask)
+            .where(EvolutionTask.status == "pending")
+            .order_by(EvolutionTask.created_at.asc()).limit(1)
+        ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def list_top_snapshots(db_path: Path, task_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """按 best_score 倒序取代际快照（路由 top-strategies 用）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(GenerationSnapshot.generation, GenerationSnapshot.best_score,
+                   GenerationSnapshot.best_dna)
+            .where(GenerationSnapshot.task_id == task_id)
+            .order_by(GenerationSnapshot.best_score.desc()).limit(limit)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def update_current_generation(db_path: Path, task_id: str, generation: int) -> None:
+    """代际游标推进（runner 每代）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(current_generation=generation, updated_at=_now())
+        )
+
+
+def update_champion_metrics(
+    db_path: Path, task_id: str, *, best_fitness: float,
+    champion_metrics: str, champion_dimension_scores: str,
+) -> None:
+    """冠军最终指标写入（tracker 一致快照）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(best_fitness=best_fitness, champion_metrics=champion_metrics,
+                    champion_dimension_scores=champion_dimension_scores)
+        )
+
+
+def update_oos_results(
+    db_path: Path, task_id: str, *, oos_fitness: float,
+    oos_qualified: int, oos_metrics: str,
+) -> None:
+    """样本外验证结果写入。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(oos_fitness=oos_fitness, oos_qualified=oos_qualified,
+                    oos_metrics=oos_metrics)
+        )
+
+
+def update_champion_full(
+    db_path: Path, task_id: str, *, best_score: float,
+    champion_metrics: str, champion_dimension_scores: str,
+) -> None:
+    """冠军代际更新（best_score/best_fitness 同值，tracker 更新成功时）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(best_score=best_score, best_fitness=best_score,
+                    champion_metrics=champion_metrics,
+                    champion_dimension_scores=champion_dimension_scores)
+        )
+
+
+def update_best_score_if_higher(db_path: Path, task_id: str, best_score: float) -> None:
+    """仅当现有 best_score 更低或为 NULL 时更新（乐观锁语义）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask)
+            .where(EvolutionTask.task_id == task_id,
+                   (EvolutionTask.best_score.is_(None)) | (EvolutionTask.best_score < best_score))
+            .values(best_score=best_score, best_fitness=best_score)
+        )
+
+
+def update_task_config(db_path: Path, task_id: str, **values: Any) -> None:
+    """任务创建后的扩展配置写入（列由调用方白名单化）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
+            .values(**values)
+        )
