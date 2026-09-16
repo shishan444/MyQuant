@@ -66,7 +66,7 @@ class TestEngineFactory:
                 fk = conn.exec_driver_sql("PRAGMA foreign_keys").scalar()
             assert jm == "wal"
             assert bt == 5000
-            assert fk == 1
+            assert fk == 0, "FK 强制保持旧轨默认 OFF（行为等价，见 engine.py 注记）"
         finally:
             engine.dispose()
 
@@ -322,3 +322,54 @@ class TestDatasetMetaRepository:
             if t == "alembic_version":
                 continue
             assert before[t] == after.get(t), f"{t} 被 adopt 改动"
+
+
+class TestStrategyRepositoryEquivalence:
+    """B3b.1 行为等价锚定：gene_signature 去重是 strategy 域最易漂移的语义。"""
+
+    def _save(self, db, sid, sig, score, symbol="BTCUSDT"):
+        from core.persistence.repository import strategy as repo
+        repo.save_strategy(
+            db, strategy_id=sid, dna_json="{}", symbol=symbol,
+            timeframe="4h", best_score=score, gene_signature=sig,
+        )
+
+    def test_dedup_higher_score_replaces(self, tmp_path: Path):
+        from core.persistence.db_ext import init_db_ext
+        from core.persistence.repository import strategy as repo
+
+        db = tmp_path / "s.db"
+        init_db_ext(db)
+        self._save(db, "s-old", "SIG-A", 50.0)
+        self._save(db, "s-new", "SIG-A", 80.0)  # 高分替换
+
+        rows = repo.list_strategies(db)
+        assert len(rows) == 1, "同签名只保留一条"
+        assert rows[0]["strategy_id"] == "s-new"
+        assert rows[0]["best_score"] == 80.0
+
+    def test_dedup_lower_score_skipped(self, tmp_path: Path):
+        from core.persistence.db_ext import init_db_ext
+        from core.persistence.repository import strategy as repo
+
+        db = tmp_path / "s.db"
+        init_db_ext(db)
+        self._save(db, "s-old", "SIG-A", 80.0)
+        self._save(db, "s-new", "SIG-A", 50.0)  # 低分不替换
+
+        rows = repo.list_strategies(db)
+        assert len(rows) == 1
+        assert rows[0]["strategy_id"] == "s-old"
+
+    def test_count_by_tasks_zero_fills_and_filters(self, tmp_path: Path):
+        from core.persistence.db_ext import init_db_ext
+        from core.persistence.repository import strategy as repo
+
+        db = tmp_path / "s.db"
+        init_db_ext(db)
+        self._save(db, "s1", None, 90.0)  # 无签名不参与去重
+        repo.update_strategy(db, strategy_id="s1", source="evolution", source_task_id="t1")
+        repo.update_strategy(db, strategy_id="s1", best_score=90.0)
+
+        got = repo.count_strategies_by_tasks(db, ["t1", "t2"], min_score=80)
+        assert got == {"t1": 1, "t2": 0}, "缺失任务补 0，低于 min_score 不计"

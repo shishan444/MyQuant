@@ -20,8 +20,10 @@ def create_db_engine(db_path: Path) -> Engine:
 
     - journal_mode=WAL：库级持久属性，读写不互斥
     - busy_timeout：写锁竞争时等待而非立即失败
-    - foreign_keys=ON：与 ORM ForeignKey 声明配套（旧轨未开，模型已如实
-      声明存量 FK，开启后对既有数据无影响——插入侧由应用保证）
+    - foreign_keys 保持 SQLite 默认 OFF：旧轨 `_connect` 从未启用 FK 强制
+      （存量写入序不保证父行先在，如 backtest_result 早于 strategy 落库），
+      开启=行为变更，违反绞杀者行为等价铁律；模型中的 ForeignKey 仅为
+      元数据声明（表关系事实），不构成运行时约束
     - check_same_thread=False：连接池线程复用必需（runner 后台线程与
       API 线程各自拿连接，同一连接可能先后被不同线程使用）
     """
@@ -35,7 +37,6 @@ def create_db_engine(db_path: Path) -> Engine:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
     return engine

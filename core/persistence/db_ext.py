@@ -922,75 +922,21 @@ def save_strategy(
     metrics_json: Optional[str] = None,
     gene_signature: Optional[str] = None,
 ) -> None:
-    """Insert a new strategy record. Deduplicates by gene_signature.
-
-    If a strategy with the same gene_signature already exists, keeps the one
-    with the higher best_score.
-    """
-    # Compute gene_signature from DNA if not provided
-    if gene_signature is None:
-        try:
-            from core.strategy.dna import StrategyDNA
-            dna = StrategyDNA.from_json(dna_json)
-            gene_signature = dna.gene_signature
-        except Exception:
-            gene_signature = None
-
-    now = _now()
-    conn = _connect(db_path)
-
-    # Dedup by gene_signature: keep the higher-scoring version.
-    if gene_signature:
-        existing = conn.execute(
-            "SELECT strategy_id, best_score FROM strategy WHERE gene_signature = ? LIMIT 1",
-            (gene_signature,),
-        ).fetchone()
-        if existing:
-            existing_id, existing_score = existing[0], existing[1]
-            new_is_better = (
-                best_score is not None
-                and (existing_score is None or best_score > existing_score)
-            )
-            if new_is_better:
-                # New strategy is better: replace the old one
-                conn.execute(
-                    """UPDATE strategy SET
-                       strategy_id=?, name=?, dna_json=?, source=?, source_task_id=?,
-                       symbol=?, timeframe=?, best_score=?, generation=?, parent_ids=?,
-                       tags=?, notes=?, metrics_json=?, gene_signature=?, updated_at=?
-                       WHERE strategy_id=?""",
-                    (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-                     best_score, generation, parent_ids, tags, notes, metrics_json,
-                     gene_signature, now, existing_id),
-                )
-                conn.commit()
-            conn.close()
-            return
-
-    conn.execute(
-        """INSERT INTO strategy
-           (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-            best_score, generation, parent_ids, tags, notes, metrics_json,
-            gene_signature, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-         best_score, generation, parent_ids, tags, notes, metrics_json,
-         gene_signature, now, now),
+    """Insert a new strategy record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import strategy as repo
+    repo.save_strategy(
+        db_path, strategy_id=strategy_id, dna_json=dna_json, symbol=symbol,
+        timeframe=timeframe, name=name, source=source,
+        source_task_id=source_task_id, best_score=best_score,
+        generation=generation, parent_ids=parent_ids, tags=tags, notes=notes,
+        metrics_json=metrics_json, gene_signature=gene_signature,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single strategy by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM strategy WHERE strategy_id = ?", (strategy_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single strategy by ID（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.get_strategy(db_path, strategy_id)
 
 
 def count_strategies_by_tasks(
@@ -998,66 +944,9 @@ def count_strategies_by_tasks(
     task_ids: List[str],
     min_score: float = 0,
 ) -> Dict[str, int]:
-    """Batch count strategies per task_id.
-
-    Returns {task_id: count} for strategies with best_score >= min_score.
-    """
-    if not task_ids:
-        return {}
-    conn = _connect(db_path)
-    placeholders = ",".join("?" for _ in task_ids)
-    rows = conn.execute(
-        f"""SELECT source_task_id, COUNT(*) as cnt
-           FROM strategy
-           WHERE source_task_id IN ({placeholders})
-             AND source = 'evolution'
-             AND best_score >= ?
-           GROUP BY source_task_id""",
-        (*task_ids, min_score),
-    ).fetchall()
-    conn.close()
-    result: Dict[str, int] = {tid: 0 for tid in task_ids}
-    for r in rows:
-        result[r["source_task_id"]] = r["cnt"]
-    return result
-
-
-_SORT_ALLOWED_COLUMNS = {
-    "created_at", "updated_at", "best_score", "best_fitness",
-    "name", "symbol", "timeframe", "source", "generation",
-}
-_SORT_ALLOWED_ORDERS = {"asc", "desc"}
-
-
-def _build_strategy_where(
-    *,
-    symbol: Optional[str] = None,
-    source: Optional[str] = None,
-    source_task_id: Optional[str] = None,
-    tags: Optional[str] = None,
-    qualified: Optional[bool] = None,
-) -> tuple[str, list[Any]]:
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if source is not None:
-        conditions.append("source = ?")
-        params.append(source)
-    if source_task_id is not None:
-        conditions.append("source_task_id = ?")
-        params.append(source_task_id)
-    if tags is not None:
-        conditions.append("tags LIKE ?")
-        params.append(f"%{tags}%")
-    if qualified is not None:
-        conditions.append("qualified = ?")
-        params.append(1 if qualified else 0)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    return where, params
+    """Batch count strategies per task_id（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.count_strategies_by_tasks(db_path, task_ids, min_score)
 
 
 def count_strategies(
@@ -1069,14 +958,12 @@ def count_strategies(
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
 ) -> int:
-    where, params = _build_strategy_where(
-        symbol=symbol, source=source, source_task_id=source_task_id,
+    """Count strategies with optional filtering（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.count_strategies(
+        db_path, symbol=symbol, source=source, source_task_id=source_task_id,
         tags=tags, qualified=qualified,
     )
-    conn = _connect(db_path)
-    row = conn.execute(f"SELECT COUNT(*) FROM strategy{where}", params).fetchone()
-    conn.close()
-    return row[0]
 
 
 def list_strategies(
@@ -1092,24 +979,13 @@ def list_strategies(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List strategies with optional filtering, sorting, and pagination."""
-    if sort_by not in _SORT_ALLOWED_COLUMNS:
-        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
-    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
-        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
-
-    where, params = _build_strategy_where(
-        symbol=symbol, source=source, source_task_id=source_task_id,
-        tags=tags, qualified=qualified,
+    """List strategies with filtering, sorting, pagination（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.list_strategies(
+        db_path, symbol=symbol, source=source, source_task_id=source_task_id,
+        tags=tags, qualified=qualified, sort_by=sort_by, sort_order=sort_order,
+        limit=limit, offset=offset,
     )
-    order = f" ORDER BY {sort_by} {sort_order.upper()}"
-    query = f"SELECT * FROM strategy{where}{order} LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 def update_strategy(
@@ -1118,48 +994,17 @@ def update_strategy(
     strategy_id: str,
     **fields: Any,
 ) -> None:
-    """Update one or more fields on an existing strategy.
-
-    Automatically refreshes ``updated_at``.
-    """
-    allowed = {
-        "name", "dna_json", "source", "source_task_id", "symbol", "timeframe",
-        "best_score", "generation", "parent_ids", "tags", "notes", "metrics_json",
-        "verify_count", "verify_avg_score", "verify_best_score", "last_verified_at", "verify_star",
-    }
-    updates: list[str] = []
-    params: list[Any] = []
-
-    for key, value in fields.items():
-        if key in allowed:
-            updates.append(f"{key} = ?")
-            params.append(value)
-
-    if not updates:
-        return
-
-    updates.append("updated_at = ?")
-    params.append(_now())
-    params.append(strategy_id)
-
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE strategy SET {', '.join(updates)} WHERE strategy_id = ?",
-        params,
-    )
-    conn.commit()
-    conn.close()
+    """Update one or more fields on an existing strategy（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    repo.update_strategy(db_path, strategy_id=strategy_id, **fields)
 
 
 def delete_strategy(db_path: Path, strategy_id: str) -> None:
-    """Delete a strategy by ID. No error if not found."""
-    conn = _connect(db_path)
-    conn.execute("DELETE FROM strategy WHERE strategy_id = ?", (strategy_id,))
-    conn.commit()
-    conn.close()
+    """Delete a strategy by ID（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    repo.delete_strategy(db_path, strategy_id)
 
 
-# ===================================================================
 # Backtest Result
 # ===================================================================
 
@@ -1191,38 +1036,26 @@ def save_backtest_result(
     satisfaction_json: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Insert a backtest result record."""
-    now = _now()
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO backtest_result
-           (result_id, strategy_id, symbol, timeframe, data_start, data_end,
-            init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
-            win_rate, total_trades, total_score, template_name, dimension_scores,
-            equity_curve, trades_json, run_source, created_at,
-            fitness, qualified, satisfaction_json, session_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                   ?, ?, ?, ?)""",
-        (result_id, strategy_id, symbol, timeframe, data_start, data_end,
-         init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
-         win_rate, total_trades, total_score, template_name, dimension_scores,
-         equity_curve, trades_json, run_source, now,
-         fitness, qualified, satisfaction_json, session_id),
+    """Insert a backtest result record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import backtest_result as repo
+    repo.save_backtest_result(
+        db_path, result_id=result_id, strategy_id=strategy_id, symbol=symbol,
+        timeframe=timeframe, data_start=data_start, data_end=data_end,
+        init_cash=init_cash, fee=fee, slippage=slippage,
+        total_return=total_return, sharpe_ratio=sharpe_ratio,
+        max_drawdown=max_drawdown, win_rate=win_rate, total_trades=total_trades,
+        total_score=total_score, template_name=template_name,
+        dimension_scores=dimension_scores, equity_curve=equity_curve,
+        trades_json=trades_json, run_source=run_source, fitness=fitness,
+        qualified=qualified, satisfaction_json=satisfaction_json,
+        session_id=session_id,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_backtest_result(db_path: Path, result_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single backtest result by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM backtest_result WHERE result_id = ?", (result_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single backtest result by ID（委托 repository）。"""
+    from core.persistence.repository import backtest_result as repo
+    return repo.get_backtest_result(db_path, result_id)
 
 
 def list_backtest_results(
@@ -1235,32 +1068,14 @@ def list_backtest_results(
     sort_order: str = "desc",
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List backtest results with optional filtering and sorting."""
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if strategy_id is not None:
-        conditions.append("strategy_id = ?")
-        params.append(strategy_id)
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if run_source is not None:
-        conditions.append("run_source = ?")
-        params.append(run_source)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    order = f" ORDER BY {sort_by} {sort_order.upper()}"
-    query = f"SELECT * FROM backtest_result{where}{order} LIMIT ?"
-    params.append(limit)
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List backtest results with optional filtering（委托 repository）。"""
+    from core.persistence.repository import backtest_result as repo
+    return repo.list_backtest_results(
+        db_path, strategy_id=strategy_id, symbol=symbol, run_source=run_source,
+        sort_by=sort_by, sort_order=sort_order, limit=limit,
+    )
 
 
-# ===================================================================
 # Verify Session CRUD
 # ===================================================================
 
@@ -1275,26 +1090,19 @@ def save_verify_session(
     slippage: float = 0.0005,
     status: str = "running",
 ) -> None:
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO verify_session
-           (session_id, status, strategy_ids, data_ranges,
-            init_cash, fee, slippage, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (session_id, status, strategy_ids, data_ranges,
-         init_cash, fee, slippage, _now()),
+    """Insert a verify session record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import verify_session as repo
+    repo.save_verify_session(
+        db_path, session_id=session_id, strategy_ids=strategy_ids,
+        data_ranges=data_ranges, init_cash=init_cash, fee=fee,
+        slippage=slippage, status=status,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_verify_session(db_path: Path, session_id: str) -> Optional[Dict[str, Any]]:
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM verify_session WHERE session_id = ?", (session_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    """Retrieve a verify session by ID（委托 repository）。"""
+    from core.persistence.repository import verify_session as repo
+    return repo.get_verify_session(db_path, session_id)
 
 
 def update_verify_session(
@@ -1308,45 +1116,24 @@ def update_verify_session(
     error_message: Optional[str] = None,
     completed_at: Optional[str] = None,
 ) -> None:
-    fields: Dict[str, Any] = {}
-    if status is not None:
-        fields["status"] = status
-    if summary_json is not None:
-        fields["summary_json"] = summary_json
-    if total_results is not None:
-        fields["total_results"] = total_results
-    if total_strategies is not None:
-        fields["total_strategies"] = total_strategies
-    if error_message is not None:
-        fields["error_message"] = error_message
-    if completed_at is not None:
-        fields["completed_at"] = completed_at
-    if not fields:
-        return
-    sets = ", ".join(f"{k} = ?" for k in fields)
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE verify_session SET {sets} WHERE session_id = ?",
-        (*fields.values(), session_id),
+    """Update verify session fields（委托 repository，非 None 字段语义不变）。"""
+    from core.persistence.repository import verify_session as repo
+    repo.update_verify_session(
+        db_path, session_id, status=status, summary_json=summary_json,
+        total_results=total_results, total_strategies=total_strategies,
+        error_message=error_message, completed_at=completed_at,
     )
-    conn.commit()
-    conn.close()
 
 
 def list_verify_sessions(
     db_path: Path,
     limit: int = 20,
 ) -> List[Dict[str, Any]]:
-    conn = _connect(db_path)
-    rows = conn.execute(
-        "SELECT * FROM verify_session ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List verify sessions（委托 repository）。"""
+    from core.persistence.repository import verify_session as repo
+    return repo.list_verify_sessions(db_path, limit)
 
 
-# ===================================================================
 # Dataset Metadata CRUD
 # ===================================================================
 
