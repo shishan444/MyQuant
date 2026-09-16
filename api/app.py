@@ -80,14 +80,25 @@ def create_app(
         # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
         event_loop = asyncio.get_event_loop()
 
-        def _ws_push(task_id: str, payload: dict) -> None:
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    get_manager().push(task_id, payload), event_loop
-                )
-                future.add_done_callback(_on_ws_push_done)
-            except Exception:
-                logger.warning("WS push schedule failed for task %s", task_id, exc_info=True)
+        # B8.2: socket.io 桥接就绪（loop 捕获供 runner 线程跨线程 emit）
+        from . import realtime
+        realtime.capture_loop()
+
+        def _make_push(namespace: str):
+            """B8.2: native WS（manager.push，room 按 task_id）+ socket.io 定向
+            namespace emit 双发——切换验证后 native 侧退役（11.4）。"""
+            def _push(task_id: str, payload: dict) -> None:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        get_manager().push(task_id, payload), event_loop
+                    )
+                    future.add_done_callback(_on_ws_push_done)
+                except Exception:
+                    logger.warning("WS push schedule failed for task %s", task_id, exc_info=True)
+                realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
+            return _push
+        _ws_push_evolution = _make_push("/evolution")
+        _ws_push_trading = _make_push("/trading")
 
         def _on_ws_push_done(future: asyncio.Future) -> None:
             """Log any exception from the WS push coroutine."""
@@ -96,8 +107,8 @@ def create_app(
             except Exception:
                 logger.warning("WS push coroutine failed", exc_info=True)
 
-        set_ws_push_fn(_ws_push)
-        set_trading_ws_push_fn(_ws_push)
+        set_ws_push_fn(_ws_push_evolution)
+        set_trading_ws_push_fn(_ws_push_trading)
         runner.start()
         trading_runner.start()
 
@@ -150,5 +161,11 @@ def create_app(
     return app
 
 
-# Default app instance for uvicorn
-app = create_app()
+# Default app instance for uvicorn：FastAPI + socket.io ASGI 组合
+# （socket.io 端点在 /socket.io 路径；namespace 经连接参数路由）
+_fastapi_app = create_app()
+
+import socketio as _socketio_mod  # noqa: E402
+from .realtime import sio as _realtime_sio  # noqa: E402
+
+app = _socketio_mod.ASGIApp(_realtime_sio, other_asgi_app=_fastapi_app, socketio_path="socket.io")
