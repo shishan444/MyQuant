@@ -557,7 +557,13 @@ class EvolutionRunner(threading.Thread):
                         mutation_log=json.dumps(gen_diag) if gen_diag else None,
                     )
                 except Exception:
-                    pass
+                    # B1.2: 快照为非关键路径数据，写失败降级为本代快照缺失 +
+                    # error 日志（含原因链），不吞掉也不中断进化
+                    logger.error(
+                        "save_snapshot failed for task %s gen %d — 本代快照缺失，进化继续",
+                        task_id, global_gen,
+                        exc_info=True,
+                    )
 
             # Update champion atomically via ChampionTracker
             if best_score > 0 and hasattr(engine, '_population') and engine._population:

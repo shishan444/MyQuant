@@ -1,6 +1,7 @@
 """Data management routes: datasets CRUD, CSV import, preview, OHLCV."""
 from __future__ import annotations
 
+import logging
 import tempfile
 import uuid
 from pathlib import Path
@@ -26,6 +27,8 @@ from api.schemas import (
 )
 from core.data.csv_importer import import_csv, import_csv_batch, parse_filename, ImportMode
 from core.data.storage import load_parquet
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -550,6 +553,12 @@ def get_chart_indicators(
                         for idx, val in series.items()
                     ]
             except Exception:
+                # B1.5: 图表层缺失必须可区分「未开启」与「计算失败」
+                logger.warning(
+                    "chart-indicators %s/%s: EMA(%d) 计算失败，该层将缺失",
+                    safe_symbol, timeframe, period,
+                    exc_info=True,
+                )
                 continue
 
     # Compute Bollinger Bands
@@ -576,7 +585,11 @@ def get_chart_indicators(
                     ],
                 }
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: BOLL 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     # Compute RSI
     if rsi_enabled:
@@ -590,7 +603,11 @@ def get_chart_indicators(
                     for idx, val in series.items()
                 ]
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: RSI 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     # Compute RVOL (Relative Volume)
     if rvol_enabled:
@@ -604,7 +621,11 @@ def get_chart_indicators(
                     for idx, val in series.items()
                 ]
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: RVOL 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     # Compute VWMA (Volume Weighted Moving Average)
     if vwma_enabled:
@@ -618,7 +639,11 @@ def get_chart_indicators(
                     for idx, val in series.items()
                 ]
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: VWMA 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     # Compute MACD
     if macd_enabled:
@@ -643,7 +668,11 @@ def get_chart_indicators(
                     ],
                 }
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: MACD 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     # Compute KDJ
     if kdj_enabled:
@@ -675,6 +704,10 @@ def get_chart_indicators(
                     ],
                 }
         except Exception:
-            pass
+            logger.warning(
+                "chart-indicators %s/%s: KDJ 计算失败，该层将缺失",
+                safe_symbol, timeframe,
+                exc_info=True,
+            )
 
     return result

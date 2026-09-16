@@ -158,17 +158,20 @@ class TestBuildRequirementsFallback:
         result = runner._build_requirements(task_row)
         assert result.min_annual_return == 0.12
 
-    def test_malformed_json_falls_back(self):
-        """Invalid JSON string → fallback, no exception raised."""
+    def test_malformed_json_raises(self):
+        """Invalid JSON string → 显式报错，不静默回退 legacy（B1.1 重锚定）。
+
+        旧行为（malformed → fallback legacy 列）会静默偷换进化优化目标，
+        已由 B1.1 修复为显式 ValueError + error 日志（含原因链）。
+        """
         runner = _make_runner()
         task_row = {
             "requirements_json": "{invalid json!!!",
             "min_annual_return": 0.10,
             "max_drawdown_limit": 0.30,
         }
-        result = runner._build_requirements(task_row)
-        assert result.min_annual_return == 0.10
-        assert result.max_drawdown == 0.30
+        with pytest.raises(ValueError):
+            runner._build_requirements(task_row)
 
     def test_legacy_min_annual_return_default(self):
         """Legacy path: min_annual_return missing → default 0.0 (constraint disabled)."""

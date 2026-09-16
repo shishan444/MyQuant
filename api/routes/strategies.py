@@ -1102,7 +1102,14 @@ class _VerifyProcessor:
                 status="failed", error_message=error_message,
             )
         except Exception:
-            pass
+            # B1.4: 失败状态的兜底写入自身失败必须可见——静默吞掉会让
+            # session 永久卡 running 且无任何排查线索
+            logger.error(
+                "verify session %s mark_failed 写入失败（session 将停留在 "
+                "running，原始错误: %s）",
+                self.session_id, error_message,
+                exc_info=True,
+            )
 
     def _progress_payload(self, step_index: int, group_key: str,
                           dr, batch_results: list) -> Dict:
