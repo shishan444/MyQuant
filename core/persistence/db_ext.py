@@ -353,29 +353,11 @@ def init_db_ext(db_path: Path) -> None:
         _ensure_schema_version_table(conn)
         applied = _get_applied_versions(conn)
 
-        # 2. Run numbered SQL migrations
-        if _MIGRATIONS_DIR.is_dir():
-            sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
-            for sql_file in sql_files:
-                # extract leading digits as version number
-                version_str = ""
-                for ch in sql_file.name:
-                    if ch.isdigit():
-                        version_str += ch
-                    else:
-                        break
-                if not version_str:
-                    continue
-                version = int(version_str)
-                if version in applied:
-                    continue
-                sql_text = sql_file.read_text(encoding="utf-8")
-                # Skip migration 005/006 — handled separately via ALTER
-                if version in (5, 6):
-                    continue
-                conn.executescript(sql_text)
-                _record_version(conn, version)
-                logger.info("Applied migration %s", sql_file.name)
+        # 2. SQL 轨退役（B3d.1）：建表语义已由 init_db 的 ORM 元数据承接
+        #（CREATE IF NOT EXISTS 被抢先满足；008 的裸 ALTER 会对 ORM 建好的
+        # 列撞 duplicate column）。migrations/*.sql 保留为历史文档，schema
+        # 演进权归 Alembic 版本链、建表权归 ORM 模型。历史库的列补齐由
+        # 下方 Python ALTER 轨（PRAGMA guard 幂等）继续承载。
 
         # 3. Always ensure schema_version table is recorded
         if 1 not in applied:

@@ -302,7 +302,8 @@ class TestRunnerStopCheckChain:
     def test_stop_during_data_loading(self, tmp_path: Path):
         """Stop signal during data loading should be detected."""
         from api.runner import EvolutionRunner, TaskController, TaskStopRequested
-        from core.persistence.db import init_db, save_task, get_task
+        from core.persistence.db import save_task, get_task
+        from core.persistence.db_ext import init_db_ext as init_db  # B3d.1：对齐生产全列库
         from core.strategy.dna import (
             SignalGene, SignalRole, LogicGenes, RiskGenes, ExecutionGenes, StrategyDNA,
         )
@@ -335,17 +336,27 @@ class TestRunnerStopCheckChain:
         original_compute = __import__(
             "core.features.indicators", fromlist=["compute_all_indicators"]
         ).compute_all_indicators
-        call_count = 0
+
+        stop_check_calls = 0
 
         def compute_with_stop(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            stop_check = kwargs.get("stop_check")
-            if stop_check and call_count >= 2:
-                with pytest.raises(TaskStopRequested):
-                    stop_check()
-                raise TaskStopRequested()
-            return original_compute(*args, **kwargs)
+            # B3d.1 重锚定：在指标计算的 stop 检查序列第 5 次触发停止——
+            # 模拟「数据加载中途 stop 信号到达」。旧实现依赖第二次
+            # compute 调用（缺列库异常 fallback 路径的偶发产物，全列库下
+            # 不再发生；真跑进化会触发 vectorbt merge_dicts 死循环的
+            # 既有病）；stop 检查贯穿加载链的契约由本形态直接验证
+            nonlocal stop_check_calls
+            inner_stop = kwargs.get("stop_check")
+
+            def stop_at_nth():
+                nonlocal stop_check_calls
+                stop_check_calls += 1
+                if stop_check_calls >= 5:
+                    raise TaskStopRequested()
+                if inner_stop:
+                    inner_stop()
+
+            return original_compute(*args, stop_check=stop_at_nth)
 
         with patch("core.features.indicators.compute_all_indicators", side_effect=compute_with_stop):
             runner._run_task(task_row)

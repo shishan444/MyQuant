@@ -12,7 +12,8 @@ from unittest import mock
 
 import pytest
 
-from core.persistence.db import init_db, save_task, update_task, get_task
+from core.persistence.db import save_task, update_task, get_task
+from core.persistence.db_ext import init_db_ext as init_db  # B3d.1：对齐生产全列库
 from core.strategy.dna import StrategyDNA
 
 
