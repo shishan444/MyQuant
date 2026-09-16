@@ -548,6 +548,19 @@ def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_paper_trade_task
         ON paper_trade(task_id, bar_time)
     """)
+    # B1.3 幂等迁移：bar 游标与事件落库的原子性兜底——同 (task_id, bar_time,
+    # action) 唯一。存量重复（历史重放 bug 产物）保留最早一条后建唯一索引
+    conn.execute("""
+        DELETE FROM paper_trade
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM paper_trade
+            GROUP BY task_id, bar_time, action
+        )
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_trade_unique
+        ON paper_trade(task_id, bar_time, action)
+    """)
 
 
 def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
@@ -762,8 +775,9 @@ def save_paper_trade(
     reason: Optional[str] = None,
 ) -> None:
     with _connect(db_path) as conn:
+        # B1.3: INSERT OR IGNORE——重放同一 (task_id, bar_time, action) 不重复落库
         conn.execute(
-            """INSERT INTO paper_trade
+            """INSERT OR IGNORE INTO paper_trade
                (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason),

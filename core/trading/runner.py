@@ -402,6 +402,11 @@ class TradingRunner(threading.Thread):
                             save_paper_trade, task_id, ts.isoformat(), pipe_result.events,
                         )
                         pending_decision = pipe_result.pending_decision
+                        # B1.3: 事件落库成功即推进游标——中途异常被外层兜底后，
+                        # 下一轮 poll 从断点继续，只重试未完成 bar，不重放已
+                        # 落库 bar（消除重复 paper_trade 事件；range 已固化，
+                        # 循环内改 df 不影响本轮迭代）
+                        df = new_df.iloc[:i + 1]
 
                     df = new_df
             except Exception:
