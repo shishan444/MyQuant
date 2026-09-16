@@ -6,6 +6,12 @@
 > 连接层=api/routes/ws.py、流式=web/src/services/strategies.ts。
 > 当前载体为原生 WebSocket + fetch/SSE；**事件模型按目标态 socket.io 语义表达**，切换由 B8 双端同批完成。
 
+> **2026-09-15 后端容器方案设计确认（用户裁决）**：四通道**全量切换** socket.io（含 verify/batch 流式通道，
+> 不保留 SSE 长期双载体）；流式子批施工形态=POST 返回 `{session_id}` + socket.io emit（namespace `/streams`、
+> room=session_id、事件名 progress/complete/error 与 SSE 帧同名）。取消/断线语义由 B8.0 冻结时在本文件补注
+> （裁决方向：C→S cancel 事件协作取消；断线不丢结果，任务跑完落库经 HTTP 查询面恢复）。
+> native WS 与 SSE 端点在切换验证通过后于 B8 组内退役。
+
 ## 通道
 
 | 通道 | 当前载体 | socket.io 目标形态 | 订阅粒度 |
