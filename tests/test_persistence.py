@@ -1,4 +1,4 @@
-"""Tests for SQLite persistence and checkpoint resume."""
+"""Tests for SQLite persistence."""
 
 import pytest
 
@@ -11,11 +11,9 @@ from MyQuant.core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes, StrategyDNA,
 )
 from MyQuant.core.persistence.db import (
-    init_db, save_task, update_task, get_running_task, get_task,
-    save_snapshot, get_latest_snapshot,
+    init_db, save_task, update_task, get_task, save_snapshot,
     save_history, get_history, list_all_tasks,
 )
-from MyQuant.core.persistence.checkpoint import save_generation, resume_evolution
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -83,19 +81,18 @@ class TestTask:
         assert task["status"] == "completed"
         assert task["stop_reason"] == "target_reached"
 
-    def test_get_running_task(self, initialized_db, sample_dna):
-        save_task(initialized_db, "task-003", 80.0, "profit_first",
-                  "BTCUSDT", "4h", sample_dna)
-        update_task(initialized_db, "task-003", status="running")  # runner 拾取
-        running = get_running_task(initialized_db)
-        assert running is not None
-        assert running["task_id"] == "task-003"
+def _read_snapshot(db_path, task_id):
+    """裸 SQL 读回 generation_snapshot（get_latest_snapshot 已随 resume 死链移除）。"""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM generation_snapshot WHERE task_id = ? "
+        "ORDER BY generation DESC LIMIT 1", (task_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
-    def test_no_running_task_returns_none(self, initialized_db, sample_dna):
-        save_task(initialized_db, "task-004", 80.0, "profit_first",
-                  "BTCUSDT", "4h", sample_dna)
-        update_task(initialized_db, "task-004", status="completed")
-        assert get_running_task(initialized_db) is None
 
 class TestSnapshot:
     def test_save_and_get_snapshot(self, initialized_db, sample_dna):
@@ -108,7 +105,7 @@ class TestSnapshot:
             best_dna=sample_dna,
             population=[sample_dna],
         )
-        snap = get_latest_snapshot(initialized_db, "task-001")
+        snap = _read_snapshot(initialized_db, "task-001")
         assert snap is not None
         assert snap["generation"] == 5
         assert snap["best_score"] == 72.5
@@ -124,7 +121,7 @@ class TestSnapshot:
                 best_dna=sample_dna,
                 population=[sample_dna],
             )
-        snap = get_latest_snapshot(initialized_db, "task-001")
+        snap = _read_snapshot(initialized_db, "task-001")
         assert snap["generation"] == 7
 
 class TestHistory:
@@ -141,37 +138,6 @@ class TestHistory:
         hist = get_history(initialized_db, "task-001")
         assert len(hist) == 3
         assert hist[0]["generation"] == 1
-
-class TestCheckpoint:
-    def test_save_generation_and_resume(self, initialized_db, sample_dna):
-        save_task(initialized_db, "task-ck", 80.0, "profit_first",
-                  "BTCUSDT", "4h", sample_dna)
-
-        # resume_evolution 仅对 running 任务恢复（D4: 创建即 pending——显式推进模拟 runner 拾取）
-        update_task(initialized_db, "task-ck", status="running")
-        # Save 3 generations
-        population = [sample_dna]
-        for gen in [1, 2, 3]:
-            save_generation(
-                db_path=initialized_db,
-                task_id="task-ck",
-                generation=gen,
-                best_score=gen * 25.0,
-                avg_score=gen * 12.0,
-                best_dna=sample_dna,
-                population=population,
-            )
-
-        # Resume should find generation 3
-        state = resume_evolution(initialized_db, "task-ck")
-        assert state is not None
-        assert state["generation"] == 3
-        assert state["population"] is not None
-        assert len(state["population"]) >= 1
-
-    def test_resume_no_task_returns_none(self, initialized_db):
-        state = resume_evolution(initialized_db, "nonexistent")
-        assert state is None
 
 class TestListAllTasks:
     def test_returns_all_tasks(self, initialized_db, sample_dna):

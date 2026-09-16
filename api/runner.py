@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.evolution.engine import EvolutionEngine
-from core.evolution.diversity import compute_diversity, compute_phenotype_diversity
+from core.evolution.diversity import compute_phenotype_diversity
 from core.evolution.champion import ChampionTracker
 from core.evolution import evaluation
 from core.strategy.dna import StrategyDNA
@@ -159,7 +159,7 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
 
     Called at app startup after recover_stale_tasks. NOTE: this re-runs evolution from
     initial_dna (same config), NOT individual-level resume — EvolutionEngine.evolve has
-    no initial_population param, and checkpoint.resume_evolution is currently unwired
+    no initial_population param (checkpoint resume 已按裁决 6 移除)
     (dead code). Crashed-but-incomplete tasks get a bounded retry instead of silent loss.
     """
     from core.persistence.db import _connect
@@ -191,22 +191,6 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
     if restarted > 0:
         logger.info("Restarted %d crashed tasks (max %d retries each)", restarted, max_restarts)
     return restarted
-
-
-def check_stale_heartbeats(db_path: Path, timeout_minutes: int = 5) -> None:
-    """Detect tasks with expired heartbeat and mark them stopped."""
-    from core.persistence.db import _connect
-    threshold = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=timeout_minutes)).isoformat()
-    with _connect(db_path) as conn:
-        result = conn.execute(
-            "UPDATE evolution_task SET status = 'stopped', "
-            "stop_reason = 'heartbeat_timeout', updated_at = ? "
-            "WHERE status = 'running' AND heartbeat_at IS NOT NULL AND heartbeat_at < ?",
-            (_now_iso(), threshold),
-        )
-        conn.commit()
-        if result.rowcount > 0:
-            logger.warning("Heartbeat timeout: %d tasks marked stopped", result.rowcount)
 
 
 def set_ws_push_fn(fn: Callable) -> None:
@@ -354,8 +338,6 @@ class EvolutionRunner(threading.Thread):
             # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
             # 前态必然 running（单线程执行流内），不接动作前态守护
             update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
-        except _StopEvolution as e:
-            logger.info("Task %s stopped: %s", task_id, e)
         except Exception:
             logger.error("Task %s failed", task_id, exc_info=True)
             update_task(self.db_path, task_id, status="stopped", stop_reason="error")
@@ -857,6 +839,3 @@ class EvolutionRunner(threading.Thread):
         return find_parquet(self.data_dir, safe_symbol, timeframe)
 
 
-class _StopEvolution(Exception):
-    """Signal to break out of the evolution loop."""
-    pass

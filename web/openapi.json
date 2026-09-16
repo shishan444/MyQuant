@@ -4477,11 +4477,6 @@
             "title": "Elite Ratio",
             "default": 0.5
           },
-          "n_workers": {
-            "type": "integer",
-            "title": "N Workers",
-            "default": 6
-          },
           "indicator_pool": {
             "anyOf": [
               {
@@ -4690,11 +4685,6 @@
             "type": "number",
             "title": "Elite Ratio",
             "default": 0.5
-          },
-          "n_workers": {
-            "type": "integer",
-            "title": "N Workers",
-            "default": 6
           },
           "current_generation": {
             "type": "integer",

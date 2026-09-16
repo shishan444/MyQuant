@@ -180,19 +180,6 @@ def get_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
         return None
     return dict(row)
 
-
-def get_running_task(db_path: Path) -> Optional[Dict[str, Any]]:
-    """Get the currently running task (if any)."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM evolution_task WHERE status = 'running' ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
-
-
 # ── Snapshot operations ──
 
 def save_snapshot(
@@ -220,21 +207,6 @@ def save_snapshot(
     )
     conn.commit()
     conn.close()
-
-
-def get_latest_snapshot(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Get the latest generation snapshot for a task."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        """SELECT * FROM generation_snapshot
-           WHERE task_id = ? ORDER BY generation DESC LIMIT 1""",
-        (task_id,),
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
-
 
 # ── History operations ──
 

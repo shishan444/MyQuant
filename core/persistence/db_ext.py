@@ -64,7 +64,6 @@ _ALTER_COLUMNS = [
     ("population_size",      "INTEGER DEFAULT 15"),
     ("max_generations",      "INTEGER DEFAULT 200"),
     ("elite_ratio",          "REAL DEFAULT 0.5"),
-    ("n_workers",            "INTEGER DEFAULT 6"),
     ("current_generation",   "INTEGER DEFAULT 0"),
 ]
 

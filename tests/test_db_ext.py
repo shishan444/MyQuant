@@ -177,7 +177,6 @@ class TestInitDbExt:
         assert "population_size" in columns
         assert "max_generations" in columns
         assert "elite_ratio" in columns
-        assert "n_workers" in columns
         assert "current_generation" in columns
 
     def test_migration_idempotent(self, db_path: Path) -> None:
@@ -704,7 +703,6 @@ class TestEvolutionTaskExtended:
         assert row["population_size"] == 15
         assert row["max_generations"] == 200
         assert row["elite_ratio"] == 0.5
-        assert row["n_workers"] == 6
         assert row["current_generation"] == 0
         assert row["champion_strategy_id"] is None
 
@@ -716,11 +714,11 @@ class TestEvolutionTaskExtended:
                (task_id, status, target_score, score_template, symbol, timeframe,
                 initial_dna, created_at, updated_at,
                 champion_strategy_id, population_size, max_generations,
-                elite_ratio, n_workers, current_generation)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                elite_ratio, current_generation)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             ("ext-002", "running", 80.0, "profit_first", "BTCUSDT", "4h",
              "{}", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
-             "strat-champ", 20, 300, 0.3, 8, 5),
+             "strat-champ", 20, 300, 0.3, 5),
         )
         conn.commit()
 
@@ -734,7 +732,6 @@ class TestEvolutionTaskExtended:
         assert row["population_size"] == 20
         assert row["max_generations"] == 300
         assert row["elite_ratio"] == pytest.approx(0.3)
-        assert row["n_workers"] == 8
         assert row["current_generation"] == 5
 
     def test_old_task_data_preserved_after_migration(self, db_path: Path) -> None:

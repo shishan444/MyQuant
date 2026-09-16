@@ -1,4 +1,4 @@
-"""Tests for evolution engine: operators, population, diversity, lineage, early stopping."""
+"""Tests for evolution engine: operators, population, diversity, early stopping."""
 
 import pytest
 
@@ -19,7 +19,6 @@ from core.evolution.population import (
     create_random_dna, init_population, create_random_mtf_layer,
 )
 from core.evolution.diversity import compute_diversity, inject_fresh_blood
-from core.evolution.lineage import record_mutation, get_lineage
 from core.evolution.engine import EarlyStopChecker, EvolutionEngine
 
 def _make_simple_dna() -> StrategyDNA:
@@ -181,19 +180,6 @@ class TestDiversity:
         original_size = len(pop)
         pop = inject_fresh_blood(pop, n=2)
         assert len(pop) == original_size + 2
-
-class TestLineage:
-    def test_record_mutation(self):
-        dna = _make_simple_dna()
-        dna = record_mutation(dna, "RSI_period_14->21")
-        assert "RSI_period_14->21" in dna.mutation_ops
-
-    def test_get_lineage(self):
-        dna = _make_simple_dna()
-        dna = record_mutation(dna, "mut_1")
-        lineage = get_lineage(dna)
-        assert isinstance(lineage, list)
-        assert len(lineage) == 1
 
 class TestEarlyStopChecker:
     def test_target_reached(self):

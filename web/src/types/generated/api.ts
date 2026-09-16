@@ -1636,11 +1636,6 @@ export interface components {
              * @default 0.5
              */
             elite_ratio: number;
-            /**
-             * N Workers
-             * @default 6
-             */
-            n_workers: number;
             /** Indicator Pool */
             indicator_pool?: string[] | null;
             /** Timeframe Pool */
@@ -1733,11 +1728,6 @@ export interface components {
              * @default 0.5
              */
             elite_ratio: number;
-            /**
-             * N Workers
-             * @default 6
-             */
-            n_workers: number;
             /**
              * Current Generation
              * @default 0

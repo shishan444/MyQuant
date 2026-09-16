@@ -245,44 +245,6 @@ def compute_phenotype_diversity(population: List[StrategyDNA]) -> Dict[str, floa
 
 
 # ---------------------------------------------------------------------------
-# Fitness sharing
-# ---------------------------------------------------------------------------
-
-def apply_fitness_sharing(
-    scored: List[Tuple[StrategyDNA, float]],
-    share_radius: float = 0.3,
-) -> List[Tuple[StrategyDNA, float]]:
-    """Apply fitness sharing to reduce effective fitness of similar individuals.
-
-    Shared fitness = raw_score / sharing_sum
-    where sharing_sum counts how many individuals are within share_radius.
-
-    Args:
-        scored: List of (individual, raw_score) tuples, sorted by score desc.
-        share_radius: Distance threshold for sharing (0.0-1.0).
-
-    Returns:
-        Same list with adjusted (shared) scores.
-    """
-    n = len(scored)
-    if n <= 1:
-        return scored
-
-    shared_scores = []
-    for i in range(n):
-        sharing_sum = 0.0
-        for j in range(n):
-            dist = signal_distance(scored[i][0], scored[j][0])
-            if dist < share_radius:
-                sharing_sum += 1.0 - (dist / share_radius)
-        # Avoid division by zero (shouldn't happen since self-distance = 0)
-        shared_score = scored[i][1] / max(sharing_sum, 1.0)
-        shared_scores.append((scored[i][0], shared_score))
-
-    return shared_scores
-
-
-# ---------------------------------------------------------------------------
 # Fresh blood injection (existing, unchanged)
 # ---------------------------------------------------------------------------
 

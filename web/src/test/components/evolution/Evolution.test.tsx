@@ -205,7 +205,6 @@ describe("Evolution page", () => {
         current_generation: 10,
         max_generations: 10,
         elite_ratio: 0.5,
-        n_workers: 6,
         continuous: true,
         strategy_threshold: 80,
         strategy_count: 0,

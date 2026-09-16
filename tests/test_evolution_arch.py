@@ -364,43 +364,6 @@ class TestHeartbeatWatchdog:
 
         assert t_after is not None
 
-    def test_watchdog_detects_stale_heartbeat(self, tmp_db: Path) -> None:
-        """Watchdog should detect tasks with expired heartbeat."""
-        from api.runner import check_stale_heartbeats
-
-        _create_task(tmp_db, "stale-hb")
-        update_task(tmp_db, "stale-hb", status="running")
-
-        # Set heartbeat to 10 minutes ago
-        stale_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
-        conn = _connect(tmp_db)
-        conn.execute(
-            "UPDATE evolution_task SET heartbeat_at = ? WHERE task_id = ?",
-            (stale_time, "stale-hb"),
-        )
-        conn.commit()
-        conn.close()
-
-        check_stale_heartbeats(tmp_db, timeout_minutes=5)
-
-        task = get_task(tmp_db, "stale-hb")
-        assert task["status"] == "stopped"
-        assert "heartbeat" in (task.get("stop_reason") or "").lower()
-
-    def test_watchdog_ignores_fresh_heartbeat(self, tmp_db: Path) -> None:
-        """Watchdog should NOT touch tasks with recent heartbeat."""
-        from api.runner import check_stale_heartbeats, update_heartbeat
-
-        _create_task(tmp_db, "fresh-hb")
-        update_task(tmp_db, "fresh-hb", status="running")
-        update_heartbeat(tmp_db, "fresh-hb")
-
-        check_stale_heartbeats(tmp_db, timeout_minutes=5)
-
-        task = get_task(tmp_db, "fresh-hb")
-        assert task["status"] == "running"
-
-
 # ===========================================================================
 # Domain 6: WS push reliability
 # ===========================================================================

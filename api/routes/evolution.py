@@ -111,7 +111,6 @@ def _task_row_to_response(
         population_size=row.get("population_size", 15),
         max_generations=row.get("max_generations", 200),
         elite_ratio=row.get("elite_ratio", 0.5),
-        n_workers=row.get("n_workers", 6),
         current_generation=row.get("current_generation", 0),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -309,7 +308,7 @@ def create_task(
     conn.execute(
         """UPDATE evolution_task
            SET population_size = ?, max_generations = ?,
-               elite_ratio = ?, n_workers = ?,
+               elite_ratio = ?,
                leverage = ?, direction = ?,
                data_start = ?, data_end = ?,
                data_time_start = ?, data_time_end = ?, data_row_count = ?,
@@ -320,7 +319,7 @@ def create_task(
                requirements_json = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
-         payload.elite_ratio, payload.n_workers,
+         payload.elite_ratio,
          payload.leverage, payload.direction,
          payload.data_start, payload.data_end,
          data_time_start, data_time_end, data_row_count,
