@@ -33,7 +33,7 @@ describe("strategies service", () => {
   });
 
   it("getStrategies passes filter params", async () => {
-    mockedGet.mockResolvedValueOnce({ data: { items: [], total: 0 } });
+    mockedGet.mockResolvedValueOnce({ items: [], total: 0 });
     await getStrategies({ symbol: "BTCUSDT", limit: 10 });
     expect(mockedGet).toHaveBeenCalledWith("/api/strategies", {
       params: { symbol: "BTCUSDT", limit: 10 },
@@ -42,7 +42,7 @@ describe("strategies service", () => {
 
   it("getStrategy fetches by id", async () => {
     const mockStrategy = { strategy_id: "s1", symbol: "BTCUSDT", timeframe: "4h" };
-    mockedGet.mockResolvedValueOnce({ data: mockStrategy });
+    mockedGet.mockResolvedValueOnce(mockStrategy);
     const result = await getStrategy("s1");
     expect(mockedGet).toHaveBeenCalledWith("/api/strategies/s1");
     expect(result.strategy_id).toBe("s1");
@@ -55,13 +55,13 @@ describe("strategies service", () => {
       timeframe: "4h",
       source: "manual",
     };
-    mockedPost.mockResolvedValueOnce({ data: { strategy_id: "new", ...payload } });
+    mockedPost.mockResolvedValueOnce({ strategy_id: "new", ...payload });
     await createStrategy(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/strategies", payload);
+    expect(mockedPost).toHaveBeenCalledWith("/api/strategies", { json: payload });
   });
 
   it("deleteStrategy calls correct endpoint", async () => {
-    mockedDelete.mockResolvedValueOnce({ data: null });
+    mockedDelete.mockResolvedValueOnce(null);
     await deleteStrategy("s1");
     expect(mockedDelete).toHaveBeenCalledWith("/api/strategies/s1");
   });
@@ -84,9 +84,9 @@ describe("strategies service", () => {
       fitness: 0.68,
       qualified: true,
     };
-    mockedPost.mockResolvedValueOnce({ data: mockResult });
+    mockedPost.mockResolvedValueOnce(mockResult);
     const result = await runBacktest(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/backtest", payload, { timeout: 60000 });
+    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/backtest", { json: payload, timeout: 60000 });
     expect(result.fee).toBe(0.001);
     expect(result.run_source).toBe("lab");
   });
@@ -97,8 +97,8 @@ describe("strategies service", () => {
       dataset_id: "BTCUSDT_4h",
       score_template: "profit_first",
     };
-    mockedPost.mockResolvedValueOnce({ data: { results: [] } });
+    mockedPost.mockResolvedValueOnce({ results: [] });
     await compareStrategies(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/compare", payload);
+    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/compare", { json: payload });
   });
 });

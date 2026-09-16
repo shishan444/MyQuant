@@ -7,13 +7,11 @@ import type {
 } from "@/types/scene";
 
 export async function getSceneTypes(): Promise<{ types: SceneTypeInfo[] }> {
-  const { data } = await api.get("/api/scene/types");
-  return data;
+    return api.get("/api/scene/types");
 }
 
 export async function verifyScene(
   payload: SceneVerifyRequest,
 ): Promise<SceneVerifyResponse> {
-  const { data } = await api.post("/api/validate/scene", payload);
-  return data;
+    return api.post("/api/validate/scene", { json: payload });
 }

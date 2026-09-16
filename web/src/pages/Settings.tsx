@@ -57,12 +57,12 @@ export function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null);
 
   useEffect(() => {
-    api.get("/api/config").then((r) => setConfig(r.data)).catch(() => setConfig(DEFAULT_CONFIG));
+    api.get<AppConfig>("/api/config").then(setConfig).catch(() => setConfig(DEFAULT_CONFIG));
   }, []);
 
   const savePartial = useCallback(async (updates: Partial<AppConfig>) => {
     try {
-      const { data } = await api.put("/api/config", updates);
+      const data = await api.put<AppConfig>("/api/config", { json: updates });
       setConfig(data);
       toast.success("设置已保存");
     } catch {

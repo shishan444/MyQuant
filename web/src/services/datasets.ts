@@ -10,13 +10,11 @@ import type {
 export async function getDatasets(
   params?: { symbol?: string; interval?: string }
 ): Promise<DatasetListResponse> {
-  const { data } = await api.get("/api/data/datasets", { params });
-  return data;
+    return api.get("/api/data/datasets", { params });
 }
 
 export async function getDataset(id: string): Promise<Dataset> {
-  const { data } = await api.get(`/api/data/datasets/${id}`);
-  return data;
+    return api.get(`/api/data/datasets/${id}`);
 }
 
 export async function importCsv(formData: FormData): Promise<{
@@ -25,10 +23,7 @@ export async function importCsv(formData: FormData): Promise<{
   interval: string;
   rows_imported: number;
 }> {
-  const { data } = await api.post("/api/data/import", formData, {
-    timeout: 120000,
-  });
-  return data;
+    return api.post("/api/data/import", { body: formData, timeout: 120000 });
 }
 
 export async function importCsvBatch(formData: FormData): Promise<{
@@ -38,10 +33,7 @@ export async function importCsvBatch(formData: FormData): Promise<{
   rows_imported: number;
   files_processed: number;
 }> {
-  const { data } = await api.post("/api/data/import-batch", formData, {
-    timeout: 300000,
-  });
-  return data;
+    return api.post("/api/data/import-batch", { body: formData, timeout: 300000 });
 }
 
 export async function deleteDataset(id: string): Promise<void> {
@@ -52,21 +44,18 @@ export async function getOhlcv(
   id: string,
   params?: { start?: string; end?: string; limit?: number }
 ): Promise<OhlcvData> {
-  const { data } = await api.get(`/api/data/datasets/${id}/ohlcv`, { params });
-  return data;
+    return api.get(`/api/data/datasets/${id}/ohlcv`, { params });
 }
 
 export async function getDatasetPreview(
   id: string,
   params?: { rows?: number }
 ): Promise<{ rows: Record<string, unknown>[]; columns: string[] }> {
-  const { data } = await api.get(`/api/data/datasets/${id}/preview`, { params });
-  return data;
+    return api.get(`/api/data/datasets/${id}/preview`, { params });
 }
 
 export async function getAvailableSources(): Promise<AvailableSourcesResponse> {
-  const { data } = await api.get("/api/data/available-sources");
-  return data;
+    return api.get("/api/data/available-sources");
 }
 
 export async function getOhlcvBySymbol(
@@ -74,8 +63,7 @@ export async function getOhlcvBySymbol(
   timeframe: string,
   params?: { start?: string; end?: string; limit?: number }
 ): Promise<OhlcvData> {
-  const { data } = await api.get(`/api/data/ohlcv/${symbol}/${timeframe}`, { params });
-  return data;
+    return api.get(`/api/data/ohlcv/${symbol}/${timeframe}`, { params });
 }
 
 export async function getChartIndicators(
@@ -100,6 +88,5 @@ export async function getChartIndicators(
     limit?: number;
   }
 ): Promise<ChartIndicatorsResponse> {
-  const { data } = await api.get(`/api/data/chart-indicators/${symbol}/${timeframe}`, { params });
-  return data;
+    return api.get(`/api/data/chart-indicators/${symbol}/${timeframe}`, { params });
 }

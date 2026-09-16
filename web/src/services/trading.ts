@@ -29,58 +29,48 @@ export async function listTradingTasks(params?: {
   limit?: number;
   offset?: number;
 }): Promise<TradingTaskList> {
-  const { data } = await api.get("/api/trading/tasks", { params });
-  return data;
+    return api.get("/api/trading/tasks", { params });
 }
 
 export async function getTradingTask(taskId: string): Promise<TradingTask> {
-  const { data } = await api.get(`/api/trading/tasks/${taskId}`);
-  return data;
+    return api.get(`/api/trading/tasks/${taskId}`);
 }
 
 export async function createTradingTask(
   params: CreateTradingTaskParams
 ): Promise<TradingTask> {
-  const { data } = await api.post("/api/trading/tasks", params);
-  return data;
+    return api.post("/api/trading/tasks", { json: params });
 }
 
 export async function stopTradingTask(taskId: string): Promise<TradingTask> {
-  const { data } = await api.post(`/api/trading/tasks/${taskId}/stop`);
-  return data;
+    return api.post(`/api/trading/tasks/${taskId}/stop`);
 }
 
 export async function restartTradingTask(taskId: string): Promise<TradingTask> {
-  const { data } = await api.post(`/api/trading/tasks/${taskId}/restart`);
-  return data;
+    return api.post(`/api/trading/tasks/${taskId}/restart`);
 }
 
 export async function getTradingTrades(
   taskId: string,
   limit?: number
 ): Promise<PaperTradeList> {
-  const { data } = await api.get(`/api/trading/tasks/${taskId}/trades`, {
+    return api.get(`/api/trading/tasks/${taskId}/trades`, {
     params: { limit },
   });
-  return data;
 }
 
 export async function getTradingRunnerStatus(): Promise<TradingRunnerStatus> {
-  const { data } = await api.get("/api/trading/runner-status");
-  return data;
+    return api.get("/api/trading/runner-status");
 }
 
 export async function getTradingEquity(taskId: string): Promise<EquitySnapshotList> {
-  const { data } = await api.get(`/api/trading/tasks/${taskId}/equity`);
-  return data;
+    return api.get(`/api/trading/tasks/${taskId}/equity`);
 }
 
 export async function getTradingMetrics(taskId: string): Promise<TradingMetrics> {
-  const { data } = await api.get(`/api/trading/tasks/${taskId}/metrics`);
-  return data;
+    return api.get(`/api/trading/tasks/${taskId}/metrics`);
 }
 
 export async function deleteTradingTask(taskId: string): Promise<{ deleted: boolean }> {
-  const { data } = await api.delete(`/api/trading/tasks/${taskId}`);
-  return data;
+    return api.delete(`/api/trading/tasks/${taskId}`);
 }

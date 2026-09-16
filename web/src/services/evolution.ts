@@ -6,6 +6,7 @@ import type {
   EvolvedStrategy,
   DiscoveredStrategy,
   RequirementsConfig,
+  EvolutionHistoryRecord,
 } from "@/types/api";
 
 export async function getEvolutionTasks(params?: {
@@ -13,13 +14,11 @@ export async function getEvolutionTasks(params?: {
   page?: number;
   page_size?: number;
 }): Promise<EvolutionTaskListResponse> {
-  const { data } = await api.get("/api/evolution/tasks", { params });
-  return data;
+    return api.get("/api/evolution/tasks", { params });
 }
 
 export async function getEvolutionTask(id: string): Promise<EvolutionTask> {
-  const { data } = await api.get(`/api/evolution/tasks/${id}`);
-  return data;
+    return api.get(`/api/evolution/tasks/${id}`);
 }
 
 export async function createEvolutionTask(payload: {
@@ -42,30 +41,29 @@ export async function createEvolutionTask(payload: {
   max_drawdown_limit?: number;
   requirements?: RequirementsConfig;
 }): Promise<EvolutionTask> {
-  const { data } = await api.post("/api/evolution/tasks", payload);
-  return data;
+    return api.post("/api/evolution/tasks", { json: payload });
 }
 
 export async function pauseEvolutionTask(id: string): Promise<EvolutionTask> {
-  const { data } = await api.post(`/api/evolution/tasks/${id}/pause`);
-  return data;
+    return api.post(`/api/evolution/tasks/${id}/pause`);
 }
 
 export async function stopEvolutionTask(id: string): Promise<EvolutionTask> {
-  const { data } = await api.post(`/api/evolution/tasks/${id}/stop`);
-  return data;
+    return api.post(`/api/evolution/tasks/${id}/stop`);
 }
 
 export async function resumeEvolutionTask(id: string): Promise<EvolutionTask> {
-  const { data } = await api.post(`/api/evolution/tasks/${id}/resume`);
-  return data;
+    return api.post(`/api/evolution/tasks/${id}/resume`);
 }
 
 export async function getEvolutionHistory(
   id: string,
   params?: { limit?: number; offset?: number }
 ): Promise<EvolutionHistoryResponse> {
-  const { data } = await api.get(`/api/evolution/tasks/${id}/history`, { params });
+  const data = await api.get<{
+    generations?: EvolutionHistoryRecord[];
+    records?: EvolutionHistoryRecord[];
+  }>(`/api/evolution/tasks/${id}/history`, { params });
   // Backend returns { task_id, generations }, frontend expects { records, total }
   const generations = data.generations ?? data.records ?? [];
   return {
@@ -78,21 +76,18 @@ export async function getTaskStrategies(taskId: string): Promise<{
   task_id: string;
   strategies: EvolvedStrategy[];
 }> {
-  const { data } = await api.get(`/api/evolution/tasks/${taskId}/strategies`);
-  return data;
+  return api.get(`/api/evolution/tasks/${taskId}/strategies`);
 }
 
 export async function getDiscoveredStrategies(
   taskId: string,
   params?: { min_score?: number; limit?: number }
 ): Promise<DiscoveredStrategy[]> {
-  const { data } = await api.get(`/api/evolution/tasks/${taskId}/discovered-strategies`, { params });
-  return data;
+    return api.get(`/api/evolution/tasks/${taskId}/discovered-strategies`, { params });
 }
 
 export async function getAllDiscoveredStrategies(
   params?: { min_score?: number; limit?: number }
 ): Promise<DiscoveredStrategy[]> {
-  const { data } = await api.get("/api/evolution/strategies", { params });
-  return data;
+    return api.get("/api/evolution/strategies", { params });
 }

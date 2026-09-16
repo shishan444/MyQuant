@@ -36,7 +36,7 @@ describe("datasets service", () => {
       ],
       total: 1,
     };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await getDatasets();
     expect(result.items).toHaveLength(1);
@@ -44,7 +44,7 @@ describe("datasets service", () => {
   });
 
   it("getDatasets passes filter params", async () => {
-    mockedGet.mockResolvedValueOnce({ data: { items: [], total: 0 } });
+    mockedGet.mockResolvedValueOnce({ items: [], total: 0 });
     await getDatasets({ symbol: "BTCUSDT", interval: "4h" });
     expect(mockedGet).toHaveBeenCalledWith("/api/data/datasets", {
       params: { symbol: "BTCUSDT", interval: "4h" },
@@ -56,7 +56,7 @@ describe("datasets service", () => {
       dataset_id: "BTCUSDT_4h",
       data: [{ timestamp: "2024-01-01", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
     };
-    mockedGet.mockResolvedValueOnce({ data: mockOhlcv });
+    mockedGet.mockResolvedValueOnce(mockOhlcv);
     const result = await getOhlcv("BTCUSDT_4h");
     expect(mockedGet).toHaveBeenCalledWith("/api/data/datasets/BTCUSDT_4h/ohlcv", { params: undefined });
     expect(result.dataset_id).toBe("BTCUSDT_4h");
@@ -64,24 +64,20 @@ describe("datasets service", () => {
   });
 
   it("getOhlcvBySymbol constructs correct URL", async () => {
-    mockedGet.mockResolvedValueOnce({
-      data: { dataset_id: "BTCUSDT_4h", data: [] },
-    });
+    mockedGet.mockResolvedValueOnce({ dataset_id: "BTCUSDT_4h", data: [] });
     await getOhlcvBySymbol("BTCUSDT", "4h", { limit: 100 });
     expect(mockedGet).toHaveBeenCalledWith("/api/data/ohlcv/BTCUSDT/4h", { params: { limit: 100 } });
   });
 
   it("getAvailableSources calls correct endpoint", async () => {
-    mockedGet.mockResolvedValueOnce({
-      data: { sources: [{ symbol: "BTCUSDT", timeframe: "4h" }] },
-    });
+    mockedGet.mockResolvedValueOnce({ sources: [{ symbol: "BTCUSDT", timeframe: "4h" }] });
     const result = await getAvailableSources();
     expect(mockedGet).toHaveBeenCalledWith("/api/data/available-sources");
     expect(result.sources).toHaveLength(1);
   });
 
   it("deleteDataset calls correct endpoint", async () => {
-    mockedDelete.mockResolvedValueOnce({ data: null });
+    mockedDelete.mockResolvedValueOnce(null);
     await deleteDataset("d1");
     expect(mockedDelete).toHaveBeenCalledWith("/api/data/datasets/d1");
   });

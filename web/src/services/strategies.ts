@@ -18,13 +18,11 @@ export async function getStrategies(params?: {
   limit?: number;
   offset?: number;
 }): Promise<StrategyListResponse> {
-  const { data } = await api.get("/api/strategies", { params });
-  return data;
+    return api.get("/api/strategies", { params });
 }
 
 export async function getStrategy(id: string): Promise<Strategy> {
-  const { data } = await api.get(`/api/strategies/${id}`);
-  return data;
+    return api.get(`/api/strategies/${id}`);
 }
 
 export async function createStrategy(payload: {
@@ -37,16 +35,14 @@ export async function createStrategy(payload: {
   tags?: string;
   notes?: string;
 }): Promise<Strategy> {
-  const { data } = await api.post("/api/strategies", payload);
-  return data;
+    return api.post("/api/strategies", { json: payload });
 }
 
 export async function updateStrategy(
   id: string,
   payload: Partial<{ name: string; tags: string; notes: string }>
 ): Promise<Strategy> {
-  const { data } = await api.put(`/api/strategies/${id}`, payload);
-  return data;
+    return api.put(`/api/strategies/${id}`, { json: payload });
 }
 
 export async function deleteStrategy(id: string): Promise<void> {
@@ -66,10 +62,7 @@ export async function runBacktest(payload: {
   data_end?: string;
   timeframe_pool?: string[];
 }): Promise<BacktestResult> {
-  const { data } = await api.post("/api/strategies/backtest", payload, {
-    timeout: 60000,
-  });
-  return data;
+  return api.post("/api/strategies/backtest", { json: payload, timeout: 60000 });
 }
 
 export async function compareStrategies(payload: {
@@ -77,8 +70,7 @@ export async function compareStrategies(payload: {
   dataset_id?: string;
   score_template?: string;
 }): Promise<{ results: BacktestResult[] }> {
-  const { data } = await api.post("/api/strategies/compare", payload);
-  return data;
+    return api.post("/api/strategies/compare", { json: payload });
 }
 
 export async function verifyStrategies(payload: {
@@ -88,28 +80,22 @@ export async function verifyStrategies(payload: {
   fee?: number;
   slippage?: number;
 }): Promise<VerifyResponse> {
-  const { data } = await api.post("/api/strategies/verify", payload, {
-    timeout: 300000,
-  });
-  return data;
+  return api.post("/api/strategies/verify", { json: payload, timeout: 300000 });
 }
 
 export async function getVerifyHistory(params?: {
   strategy_id?: string;
   limit?: number;
 }): Promise<VerifyHistoryResponse> {
-  const { data } = await api.get("/api/strategies/verify/history", { params });
-  return data;
+    return api.get("/api/strategies/verify/history", { params });
 }
 
 export async function getVerifySessions(limit?: number): Promise<VerifySessionListResponse> {
-  const { data } = await api.get("/api/strategies/verify/sessions", { params: { limit } });
-  return data;
+    return api.get("/api/strategies/verify/sessions", { params: { limit } });
 }
 
 export async function getSessionResults(sessionId: string): Promise<VerifyHistoryResponse> {
-  const { data } = await api.get(`/api/strategies/verify/sessions/${sessionId}/results`);
-  return data;
+    return api.get(`/api/strategies/verify/sessions/${sessionId}/results`);
 }
 
 // 流式回调契约类型已收编 realtime 层（src/realtime/sse.ts），此处 re-export 保消费方零改动
@@ -148,6 +134,5 @@ export function batchBacktestStream(
 }
 
 export async function fetchBatchBacktestDetail(resultId: string): Promise<BacktestResult> {
-  const { data } = await api.get(`/api/strategies/batch-backtest/${resultId}`);
-  return data;
+    return api.get(`/api/strategies/batch-backtest/${resultId}`);
 }

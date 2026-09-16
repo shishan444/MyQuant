@@ -4,13 +4,11 @@ import type { ValidateRequest, ValidateResponse, RuleValidateRequest, RuleValida
 export async function validateHypothesis(
   payload: ValidateRequest,
 ): Promise<ValidateResponse> {
-  const { data } = await api.post("/api/validate", payload);
-  return data;
+    return api.post("/api/validate", { json: payload });
 }
 
 export async function validateRules(
   payload: RuleValidateRequest,
 ): Promise<RuleValidateResponse> {
-  const { data } = await api.post("/api/validate/rules", payload);
-  return data;
+    return api.post("/api/validate/rules", { json: payload });
 }
