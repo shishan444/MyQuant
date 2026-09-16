@@ -41,27 +41,7 @@ def get_trading_controllers() -> Dict[str, "TaskController"]:
     return _active_controllers
 
 
-class TaskStopRequested(Exception):
-    pass
-
-
-class TaskController:
-    def __init__(self) -> None:
-        self._stop_event = threading.Event()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def check_stop(self) -> None:
-        if self._stop_event.is_set():
-            raise TaskStopRequested()
-
-    def wait(self, timeout: float) -> None:
-        self._stop_event.wait(timeout)
+from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
 
 
 from core.persistence.timestamps import utc_now_iso as _now_iso  # B4.1 归一

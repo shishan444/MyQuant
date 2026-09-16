@@ -47,27 +47,7 @@ def get_active_controllers() -> Dict[str, "TaskController"]:
 # TaskController: direct stop signal via threading.Event
 # ---------------------------------------------------------------------------
 
-class TaskStopRequested(Exception):
-    """Raised when a task stop is requested via TaskController."""
-    pass
-
-
-class TaskController:
-    """Thread-safe task controller for cooperative cancellation."""
-
-    def __init__(self) -> None:
-        self._stop_event = threading.Event()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def check_stop(self) -> None:
-        if self._stop_event.is_set():
-            raise TaskStopRequested()
+from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
 
 
 # ---------------------------------------------------------------------------
