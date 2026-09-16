@@ -21,6 +21,7 @@ import { useChartSync } from "./core/useChartSync";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
 import { useChartSettings } from "@/stores/chart-settings";
+import { useShallow } from "zustand/react/shallow";
 import type { BollingerBandData, MTFIndicatorData, LegendGroup, LegendItem } from "@/types/chart";
 
 // ---------------------------------------------------------------------------
@@ -143,8 +144,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
   const [legendValues, setLegendValues] = useState<Record<string, string>>({});
 
-  // Chart settings from store
-  const chartSettings = useChartSettings();
+  // Chart settings from store（G17.1：全量订阅改字段级 selector）
+  const chartSettings = useChartSettings(
+    useShallow((s) => ({ emaList: s.emaList, boll: s.boll })),
+  );
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);

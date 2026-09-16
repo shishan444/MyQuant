@@ -351,8 +351,9 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 }
 
 // ---------------------------------------------------------------------------
-// Indicator settings tab（zustand persist store 持久化；订阅形态记录：本组件
-// 全量订阅 useChartSettings()，selector 化归 G17 终核）
+// Indicator settings tab（zustand persist store 持久化；订阅形态：G17.1 终核
+// 裁决豁免 selector 化——设置编辑页渲染全部分区并调用全部 actions，
+// 字段级订阅无收益，全量订阅为正确形态）
 // ---------------------------------------------------------------------------
 
 function IndicatorSettings() {

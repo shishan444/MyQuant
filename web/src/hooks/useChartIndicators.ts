@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useChartSettings } from "@/stores/chart-settings";
+import { useShallow } from "zustand/react/shallow";
 import { ohlcvOptions, chartIndicatorOptions } from "./queries/chartQueries";
 import type { IndicatorData } from "@/components/charts/KlineChart";
 import type { BollingerBandData } from "@/types/chart";
@@ -78,7 +79,10 @@ export function useChartIndicators(
     refetchInterval = false,
     limit = 50000,
   } = params;
-  const chartSettings = useChartSettings();
+  // G17.1：全量订阅改字段级 selector（本 hook 只消费 ema/boll/rsi 三分区）
+  const chartSettings = useChartSettings(
+    useShallow((s) => ({ emaList: s.emaList, boll: s.boll, rsi: s.rsi })),
+  );
 
   // Query 1: OHLCV candle data
   const { data: ohlcvResponse, isLoading: isLoadingOhlcv } = useQuery({
