@@ -39,3 +39,10 @@ api/{app,runner,runner_progress,realtime,stream_control} + routes/{strategies �
 - L3 全量 14 passed（默认 socketio 形态，前后端真实服务）
 - 提交链 24 个（BE1..BE11 tag 锚点）；evidence 13 份落档 docs/validation/
 - **终验清单移交用户**：合并 main（唯一合并点，用户约束）——建议以 --no-ff 合并保留任务边界
+
+## 终验实测（2026-09-16）
+
+- 后端全量：**2162 passed**（--ignore=tests/e2e 口径）
+- 前端三件套：tsc ✓（0 error）/ vitest **314 passed** / lint **零增量**（87=87 基线，全部既有）
+- L3 全量：**14 passed**（默认 socketio 形态，前后端真实服务）
+- 容器完成判据达成：14 组全勾 + 三重验证全绿 → 终验移交用户合并 main
