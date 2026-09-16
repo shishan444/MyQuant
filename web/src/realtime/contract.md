@@ -128,3 +128,11 @@
 3. 消息分发无 else 兜底合并；未识别事件丢弃留痕
 4. 重连排程与业务防抖失效为两个独立定时器，互不覆盖
 5. chart-indicators 为轮询 GET（非流式），不在本契约范围
+
+> **B8.4 终态落档（2026-09-16）**：四通道已全量切换 socket.io——native WS
+> 端点（/ws/evolution /ws/trading）与 SSE 流式响应体退役删除；连接即下发
+> task_snapshot（重连恢复快照语义迁移至 /evolution /trading connect）；
+> 连接层协议消息（subscribed/ping/pong）由 socket.io 内建机制承接；
+> 流式取消=C→S cancel（/streams，payload {session_id}，步粒度协作）；
+> 前端默认 transport=socketio（VITE_REALTIME_TRANSPORT=native 为无服务端
+> 支持的本地逃生口）。

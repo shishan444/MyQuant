@@ -73,6 +73,9 @@ const opts = { channel: "evolution" as const, taskId: "t1" };
 
 describe("实现一 · 原生 WS 连接", () => {
   beforeEach(() => {
+    vi.stubEnv("VITE_REALTIME_TRANSPORT", "native");
+  });
+  beforeEach(() => {
     MockWebSocket.instances = [];
     vi.useFakeTimers();
   });
@@ -182,13 +185,10 @@ describe("实现二 · socket.io 连接（就位未启用）", () => {
     vi.unstubAllEnvs();
   });
 
-  it("默认（无开关）走原生 WS 分支", () => {
-    MockWebSocket.instances = [];
-    withMockWs(() => {
-      const conn = createRealtimeConnection(opts);
-      expect(ioMock).not.toHaveBeenCalled();
-      expect(MockWebSocket.instances).toHaveLength(1);
-      conn.close();
-    });
+  it("默认（无开关）走 socket.io 分支（B8.4 退役批后默认反转）", () => {
+    vi.unstubAllEnvs();
+    const c = createRealtimeConnection({ channel: "evolution", taskId: "t1" });
+    expect(ioMock).toHaveBeenCalled();
+    c.close();
   });
 });

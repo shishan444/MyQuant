@@ -57,11 +57,54 @@ def _join_by_query(sid: str, environ: dict, namespace: str) -> None:
 @sio.on("connect", namespace="/evolution")
 async def _connect_evolution(sid: str, environ: dict) -> None:
     _join_by_query(sid, environ, "/evolution")
+    await _emit_task_snapshot(sid, environ, "/evolution")
 
 
 @sio.on("connect", namespace="/trading")
 async def _connect_trading(sid: str, environ: dict) -> None:
     _join_by_query(sid, environ, "/trading")
+    await _emit_task_snapshot(sid, environ, "/trading")
+
+
+async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
+    """B8.4：连接即下发重连恢复快照（native WS 语义迁移，contract 消费纪律 4）。
+
+    快照读库为同步调用（SQLite 本地读，connect 一次性）——to_thread 卸载。
+    """
+    import asyncio
+    import os
+    from urllib.parse import parse_qs
+    room = (parse_qs(environ.get("QUERY_STRING") or {}).get("task_id") or [None])[0]
+    if not room:
+        return
+    db_path = os.environ.get("MYQUANT_DB_PATH")
+    if db_path is None:
+        return  # 测试上下文无库——跳过快照
+
+    def _read() -> dict | None:
+        from core.persistence.repository import evolution as evo, paper_trading as ptt
+        if namespace == "/evolution":
+            row = evo.get_task(db_path, room)
+            if row is None or row.get("status") not in ("running", "paused", "pending", "stopped"):
+                return None
+            return {
+                "type": "task_snapshot", "task_id": room, "status": row.get("status"),
+                "current_generation": row.get("current_generation", 0),
+                "best_score": row.get("best_score"), "target_score": row.get("target_score"),
+                "max_generations": row.get("max_generations"),
+                "current_phase": row.get("current_phase"),
+            }
+        row = ptt.get_paper_trading_task(db_path, room)
+        if row is None or row.get("status") not in ("running", "paused", "stopped"):
+            return None
+        return {
+            "type": "task_snapshot", "task_id": room, "status": row.get("status"),
+            "position_side": row.get("position_side"), "balance": row.get("balance"),
+            "total_trades": row.get("total_trades", 0), "total_pnl": row.get("total_pnl"),
+        }
+    snapshot = await asyncio.to_thread(_read)
+    if snapshot is not None:
+        await sio.emit("task_snapshot", snapshot, namespace=namespace, room=room)
 
 
 @sio.on("connect", namespace="/streams")

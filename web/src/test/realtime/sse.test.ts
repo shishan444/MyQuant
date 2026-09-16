@@ -7,14 +7,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Socket } from "socket.io-client";
 import { streamSse, type StreamHandlers } from "@/realtime/sse";
 
-type Emit = (event: string, data: unknown) => void;
+type Emit = (data: unknown) => void;
 
-const socketEvents = new Map<string, Emit>();
 const emitted: Array<{ event: string; data: unknown }> = [];
 let lastSocket: Socket;
 
 vi.mock("socket.io-client", () => ({
-  io: vi.fn((_ns: string, _opts: unknown) => {
+  io: vi.fn((..._args: unknown[]) => {
     const listeners = new Map<string, Emit>();
     lastSocket = {
       on: (e: string, h: Emit) => listeners.set(e, h),

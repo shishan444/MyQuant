@@ -2,6 +2,13 @@
  * Tests for useEvolution hooks: query key factory, mutations, WebSocket invalidation.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+vi.mock("socket.io-client", () => ({
+  io: vi.fn(() => ({
+    on: vi.fn(), onAny: vi.fn(), emit: vi.fn(),
+    disconnect: vi.fn(), removeAllListeners: vi.fn(),
+    connected: true,
+  })),
+}));
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -86,6 +93,7 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+    vi.stubEnv("VITE_REALTIME_TRANSPORT", "native");  // B8.4 后默认 socketio——本套锚定 native 实现面
   vi.clearAllMocks();
   MockWebSocket.reset();
 });

@@ -720,29 +720,6 @@ class TestDatasetOhlcv:
 
 # ── Test: WebSocket ──
 
-class TestWebSocket:
-    def test_websocket_connect_and_disconnect(self, client: TestClient) -> None:
-        """WebSocket should connect and disconnect cleanly."""
-        with client.websocket_connect("/ws/evolution/test-task-id") as websocket:
-            # Just test connection succeeds
-            pass  # clean disconnect
-
-    def test_websocket_receives_messages(self, client: TestClient) -> None:
-        """WebSocket should be able to send/receive messages."""
-        with client.websocket_connect("/ws/evolution/test-task-id") as websocket:
-            # First message is auto-subscribed confirmation
-            sub = websocket.receive_json()
-            assert sub["type"] == "subscribed"
-            assert sub["task_id"] == "test-task-id"
-
-            # Send a ping
-            websocket.send_json({"type": "ping"})
-            # Receive a pong
-            data = websocket.receive_json()
-            assert data["type"] == "pong"
-
-# ── Test: Health Check ──
-
 class TestHealthCheck:
     def test_health_check(self, client: TestClient) -> None:
         """GET /api/health should return OK status."""

@@ -61,6 +61,7 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+    vi.stubEnv("VITE_REALTIME_TRANSPORT", "native");  // B8.4 后默认 socketio——本套锚定 native 实现面
   vi.clearAllMocks();
   MockWS.reset();
   vi.useFakeTimers();

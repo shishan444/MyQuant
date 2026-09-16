@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 logger = logging.getLogger("app")
 
 from core.persistence.db_ext import init_db_ext
-from .routes import config, data, evolution, strategies, ws
+from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
 from .routes import discovery as discovery_route
@@ -57,7 +57,6 @@ def create_app(
 
         # Start EvolutionRunner background thread
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
-        from .routes.ws import get_manager
 
         recover_stale_tasks(db_path)
         restart_crashed_tasks(db_path)
@@ -80,21 +79,16 @@ def create_app(
         # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
         event_loop = asyncio.get_event_loop()
 
-        # B8.2: socket.io 桥接就绪（loop 捕获供 runner 线程跨线程 emit）
+        # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
+        import os as _os
         from . import realtime
         realtime.capture_loop()
+        _os.environ["MYQUANT_DB_PATH"] = str(db_path)
 
         def _make_push(namespace: str):
             """B8.2: native WS（manager.push，room 按 task_id）+ socket.io 定向
             namespace emit 双发——切换验证后 native 侧退役（11.4）。"""
             def _push(task_id: str, payload: dict) -> None:
-                try:
-                    future = asyncio.run_coroutine_threadsafe(
-                        get_manager().push(task_id, payload), event_loop
-                    )
-                    future.add_done_callback(_on_ws_push_done)
-                except Exception:
-                    logger.warning("WS push schedule failed for task %s", task_id, exc_info=True)
                 realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
             return _push
         _ws_push_evolution = _make_push("/evolution")
@@ -142,7 +136,6 @@ def create_app(
     app.include_router(strategies.router)
     app.include_router(evolution.router)
     app.include_router(data.router)
-    app.include_router(ws.router)
     app.include_router(trading_route.router)
     app.include_router(live_trading_route.router)
     app.include_router(validate_route.router)

@@ -142,9 +142,11 @@ function createSocketIoConnection({ channel, taskId }: RealtimeConnectionOptions
 export function createRealtimeConnection(
   opts: RealtimeConnectionOptions,
 ): RealtimeConnection {
+  // B8.4 退役批：socket.io 为默认形态（native WS 后端端点已删）；
+  // VITE_REALTIME_TRANSPORT=native 保留本地逃生口（仅前端实现，无服务端）
   const transport = import.meta.env.VITE_REALTIME_TRANSPORT as string | undefined;
-  if (transport === "socketio") {
-    return createSocketIoConnection(opts);
+  if (transport === "native") {
+    return createNativeWsConnection(opts);
   }
-  return createNativeWsConnection(opts);
+  return createSocketIoConnection(opts);
 }
