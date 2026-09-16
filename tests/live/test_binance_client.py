@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第2步 BinanceDemoClient 单元测试（mock binance.Client，不连实盘）。"""
 import time
 

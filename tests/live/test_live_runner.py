@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第7步 LiveTradingRunner 单元测试（parse/sync/run_iteration/孤儿单）。"""
 from pathlib import Path
 

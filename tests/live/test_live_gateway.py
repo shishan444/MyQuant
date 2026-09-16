@@ -2,6 +2,10 @@
 
 验证 One-Way 下单矩阵（4 动作）、精度取整、reduceOnly、托管止损止盈 side/closePosition。
 """
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 import pytest
 
 from core.live_trading.binance_client import BinanceDemoClient

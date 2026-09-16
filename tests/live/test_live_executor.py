@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第7步 LiveTradingExecutor 单元测试（单 bar 决策→风控→下单→SL/TP 闭环）。"""
 from types import SimpleNamespace
 

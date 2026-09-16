@@ -3,6 +3,10 @@
 用内存 keyring backend 隔离真实 macOS Keychain，不依赖真实凭证。
 核心安全约束：禁止非 demo 凭证（demo=False 被 reject，防生产/主网 key）。
 """
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 import json
 
 import pytest

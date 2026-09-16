@@ -6,6 +6,10 @@ B7.0 口径卡冻结：维持率由 0.9/L 简化近似改为币安 USDT-M 分层
 """
 from __future__ import annotations
 
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
+
 import inspect
 import re
 

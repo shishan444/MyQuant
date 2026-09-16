@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第5步 RiskGuard 单元测试（下单前拦截，实盘生命线）。"""
 import pytest
 

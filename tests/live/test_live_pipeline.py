@@ -2,6 +2,10 @@
 
 构造 fake SignalSet + LiveAccountState，验证 open/close/hold/反手/方向过滤路径。
 """
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 import math
 
 import pandas as pd

@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第3步 实盘数据类 单元测试（One-Way 单仓 + 下单矩阵）。"""
 import pytest
 

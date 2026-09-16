@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第6步 LiveOMS 单元测试（订单生命周期状态机）。"""
 import pytest
 

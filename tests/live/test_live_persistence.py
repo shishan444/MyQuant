@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第9步 live_trading_task 持久化测试（tmp_path 临时 db）。"""
 import pytest
 

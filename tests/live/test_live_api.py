@@ -1,3 +1,7 @@
+
+import pytest
+
+pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 """第8步 实盘 API 单元测试（独立 FastAPI app + dependency_overrides，不连实盘）。"""
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
