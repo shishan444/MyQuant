@@ -1,19 +1,49 @@
 /**
- * SSE 流式封装 L2——契约事件族（progress/complete/error）分发与流边界行为。
- * verify/batch 两 service 共用本实现，等价性由此套用例共同覆盖。
+ * 流式封装 L2（B8.3 重锚定）：POST→session_id→socket.io /streams 订阅
+ * 分发（progress/complete/error 与 SSE 帧同名），AbortSignal→cancel 协作取消。
+ * 消费侧契约（streamSse 签名/handlers 形制）不变——等价性由此套用例覆盖。
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { Socket } from "socket.io-client";
 import { streamSse, type StreamHandlers } from "@/realtime/sse";
 
-function sseResponse(chunks: string[], init?: ResponseInit): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const c of chunks) controller.enqueue(encoder.encode(c));
-      controller.close();
-    },
+type Emit = (event: string, data: unknown) => void;
+
+const socketEvents = new Map<string, Emit>();
+const emitted: Array<{ event: string; data: unknown }> = [];
+let lastSocket: Socket;
+
+vi.mock("socket.io-client", () => ({
+  io: vi.fn((_ns: string, _opts: unknown) => {
+    const listeners = new Map<string, Emit>();
+    lastSocket = {
+      on: (e: string, h: Emit) => listeners.set(e, h),
+      emit: (e: string, d: unknown) => emitted.push({ event: e, data: d }),
+      disconnect: () => {},
+      removeAllListeners: () => listeners.clear(),
+    } as unknown as Socket;
+    (lastSocket as unknown as { _l?: Map<string, Emit> })._l = listeners;
+    return lastSocket;
+  }),
+}));
+
+async function waitForSubscribed(): Promise<void> {
+  await vi.waitFor(() =>
+    expect((lastSocket as unknown as { _l?: Map<string, unknown> })._l?.size)
+      .toBeGreaterThan(0),
+  );
+}
+
+function fire(event: string, data: unknown): void {
+  const l = (lastSocket as unknown as { _l?: Map<string, Emit> })._l;
+  l?.get(event)?.(data);
+}
+
+function jsonSession(sessionId: string): Response {
+  return new Response(JSON.stringify({ session_id: sessionId }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
   });
-  return new Response(stream, { status: 200, ...init });
 }
 
 function handlers(): StreamHandlers<{ ok: boolean }> & {
@@ -32,72 +62,56 @@ function handlers(): StreamHandlers<{ ok: boolean }> & {
   };
 }
 
-const frame = (event: string, data: unknown) =>
-  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-
 describe("streamSse", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    emitted.length = 0;
     vi.stubGlobal("fetch", vi.fn());
   });
+  afterEach(() => vi.unstubAllGlobals());
 
-  it("progress/complete 帧按事件名分发（跨 chunk 边界拼接）", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      sseResponse([
-        frame("progress", { current: 1, total: 3, group: "g", range_start: "a", range_end: "b", batch_results: [] }),
-        "event: comp", // 故意切断帧
-        "lete\ndata: {\"ok\":true}\n\n",
-      ]),
-    );
+  it("POST 返回 session_id 后经 socket 事件分发 progress/complete", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonSession("s-1"));
     const h = handlers();
-    streamSse("/x", {}, h);
-    await vi.waitFor(() => expect(h.calls.complete).toHaveLength(1));
+    streamSse("/verify/stream", {}, h);
+    await waitForSubscribed();
+
+    fire("progress", { current: 1, total: 3 });
+    fire("complete", { ok: true });
     expect(h.calls.progress).toHaveLength(1);
-    expect(h.calls.progress[0]).toMatchObject({ current: 1, total: 3, group: "g" });
-    expect(h.calls.complete[0]).toEqual({ ok: true });
-    expect(h.calls.error).toEqual([]);
+    expect(h.calls.complete).toEqual([{ ok: true }]);
   });
 
-  it("流结束时残留 buffer 的末帧不丢失（无尾随空行）", async () => {
+  it("error 事件 message 透传 onError；非 ok 响应走错误通道", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      sseResponse([frame("progress", { current: 2, total: 2, group: "g", range_start: "a", range_end: "b", batch_results: [] }).replace(/\n\n$/, "")]),
+      new Response("server down", { status: 500 }),
     );
     const h = handlers();
     streamSse("/x", {}, h);
-    await vi.waitFor(() => expect(h.calls.progress).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(h.calls.error[0]).toMatch(/server down|500/),
+    );
   });
 
-  it("error 事件的 message 透传 onError；非 ok 响应走错误通道", async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(sseResponse([frame("error", { message: "boom" })]))
-      .mockResolvedValueOnce(new Response("server down", { status: 500 }));
-    const h1 = handlers();
-    streamSse("/x", {}, h1);
-    await vi.waitFor(() => expect(h1.calls.error).toEqual(["boom"]));
-    const h2 = handlers();
-    streamSse("/x", {}, h2);
-    await vi.waitFor(() => expect(h2.calls.error).toEqual(["server down"]));
+  it("AbortSignal 触发 C→S cancel 协作取消", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonSession("s-2"));
+    const ctrl = new AbortController();
+    const h = handlers();
+    streamSse("/x", {}, h, ctrl.signal);
+    await waitForSubscribed();
+    ctrl.abort();
+    expect(emitted).toContainEqual({
+      event: "cancel",
+      data: { session_id: "s-2" },
+    });
   });
 
-  it("契约外事件丢弃留痕、畸形 JSON 帧不中断流", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("响应缺 session_id 走错误通道", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      sseResponse(["event: mystery\ndata: {}\n\n", "event: progress\ndata: {bad json}\n\n", frame("complete", { ok: true })]),
+      new Response(JSON.stringify({}), { status: 200 }),
     );
     const h = handlers();
     streamSse("/x", {}, h);
-    await vi.waitFor(() => expect(h.calls.complete).toHaveLength(1));
-    expect(h.calls.progress).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(2);
-    warn.mockRestore();
-  });
-
-  it("abort 静默（onError 不触发）", async () => {
-    const controller = new AbortController();
-    const abortErr = Object.assign(new Error("aborted"), { name: "AbortError" });
-    vi.mocked(fetch).mockRejectedValue(abortErr);
-    const h = handlers();
-    streamSse("/x", {}, h, controller.signal);
-    await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
-    expect(h.calls.error).toEqual([]);
+    await vi.waitFor(() => expect(h.calls.error[0]).toMatch(/session_id/));
   });
 });

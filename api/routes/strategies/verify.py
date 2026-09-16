@@ -665,29 +665,42 @@ async def verify_strategies_stream(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ):
-    """SSE streaming variant of /verify. Yields progress events per group×range step."""
+    """B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。
+
+    断线语义（B8.0 ②）：任务跑完并落库（verify_session 持久化在），
+    重连恢复面=GET /verify/sessions/{session_id}/results。
+    取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。
+    """
+    import asyncio as _asyncio
+    import threading as _threading
+
+    from api import realtime, stream_control
+
     processor = _VerifyProcessor(payload, db_path, data_dir)
     await asyncio.to_thread(processor.init)
+    session_id = processor.session_id
+    cancel_event = _threading.Event()
+    stream_control.register(session_id, cancel_event.set)
 
-    async def event_stream():
+    async def _run_stream() -> None:
         try:
             for i in range(len(processor.steps)):
+                if cancel_event.is_set():
+                    await asyncio.to_thread(processor.mark_failed, "Cancelled by client")
+                    realtime.broadcast("/streams", session_id, "error", {"message": "Cancelled by client"})
+                    return
                 progress = await asyncio.to_thread(processor.process_step, i)
-                yield f"event: progress\ndata: {json.dumps(progress, ensure_ascii=False)}\n\n"
-
+                realtime.broadcast("/streams", session_id, "progress", progress)
             complete = await asyncio.to_thread(processor.finalize)
-            yield f"event: complete\ndata: {json.dumps(complete, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            await asyncio.to_thread(processor.mark_failed, "Client disconnected")
+            realtime.broadcast("/streams", session_id, "complete", complete)
         except Exception as exc:
             await asyncio.to_thread(processor.mark_failed, str(exc))
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+            realtime.broadcast("/streams", session_id, "error", {"message": str(exc)})
+        finally:
+            stream_control.unregister(session_id)
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    _asyncio.create_task(_run_stream())
+    return {"session_id": session_id}
 
 
 @router.get("/verify/history", response_model=VerifyHistoryResponse)

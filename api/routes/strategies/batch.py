@@ -428,29 +428,44 @@ async def batch_backtest_stream(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ):
-    """SSE streaming endpoint for batch backtesting multiple strategies across date ranges."""
+    """B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。
+
+    batch 无持久 session（SSE 时代逐请求）——session_id 为本请求生成的
+    room 键；取消/断线语义同 verify（B8.0 ①②）。
+    """
+    import asyncio as _asyncio
+    import threading as _threading
+    import uuid as _uuid
+
+    from api import realtime, stream_control
+
     processor = _BatchBacktestProcessor(payload, db_path, data_dir)
     await asyncio.to_thread(processor.init)
+    session_id = f"batch_{_uuid.uuid4().hex[:12]}"
+    cancel_event = _threading.Event()
+    stream_control.register(session_id, cancel_event.set)
 
-    async def event_stream():
+    async def _run_stream() -> None:
         try:
             for i in range(len(processor.steps)):
+                if cancel_event.is_set():
+                    if hasattr(processor, "mark_failed"):
+                        await asyncio.to_thread(processor.mark_failed, "Cancelled by client")
+                    realtime.broadcast("/streams", session_id, "error", {"message": "Cancelled by client"})
+                    return
                 progress = await asyncio.to_thread(processor.process_step, i)
-                yield f"event: progress\ndata: {json.dumps(progress, ensure_ascii=False)}\n\n"
-
+                realtime.broadcast("/streams", session_id, "progress", progress)
             complete = await asyncio.to_thread(processor.finalize)
-            yield f"event: complete\ndata: {json.dumps(complete, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            await asyncio.to_thread(processor.mark_failed, "Client disconnected")
+            realtime.broadcast("/streams", session_id, "complete", complete)
         except Exception as exc:
-            await asyncio.to_thread(processor.mark_failed, str(exc))
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+            if hasattr(processor, "mark_failed"):
+                await asyncio.to_thread(processor.mark_failed, str(exc))
+            realtime.broadcast("/streams", session_id, "error", {"message": str(exc)})
+        finally:
+            stream_control.unregister(session_id)
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    _asyncio.create_task(_run_stream())
+    return {"session_id": session_id}
 
 
 @router.get("/batch-backtest/{result_id}")
