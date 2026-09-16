@@ -402,20 +402,15 @@ def pause_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Pause an evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    # B6.2 路由薄化：判定与前态守护在 service 用例（batch1 D3 语义不变）
+    from core.services import evolution_service
+    try:
+        result = evolution_service.pause_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    # batch1 D3: 合法前态守护——仅 running 可暂停；拒绝返回 409（非法迁移禁止任何写入）
-    applied = update_task(db_path, task_id, status="paused", expected_statuses=("running",))
-    if not applied:
-        current = get_task(db_path, task_id)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Task is not running (current: {current['status'] if current else 'missing'})",
-        )
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.post("/tasks/{task_id}/stop")
@@ -424,30 +419,14 @@ def stop_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Stop an evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    from core.services import evolution_service
+    try:
+        result = evolution_service.stop_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    # Direct signal via TaskController (instant response, no DB polling delay)
-    from api.runner import get_active_controllers
-    controllers = get_active_controllers()
-    controller = controllers.get(task_id)
-    if controller is not None:
-        controller.request_stop()
-
-    # batch1 D3: 合法前态守护——终态(completed/error)不可停止，防止覆写自然完成的结果
-    applied = update_task(
-        db_path, task_id, status="stopped", stop_reason="user_stop",
-        expected_statuses=("running", "paused", "pending"),
-    )
-    if not applied:
-        current = get_task(db_path, task_id)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Task already finished (current: {current['status'] if current else 'missing'})",
-        )
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.post("/tasks/{task_id}/resume")
@@ -456,16 +435,14 @@ def resume_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Resume a paused evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    from core.services import evolution_service
+    try:
+        result = evolution_service.resume_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    if row["status"] != "paused":
-        raise HTTPException(status_code=400, detail="Task is not paused")
-
-    update_task(db_path, task_id, status="pending")
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.get("/tasks/{task_id}/strategies")

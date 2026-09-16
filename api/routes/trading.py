@@ -80,7 +80,9 @@ def create_task(
         from core.strategy.dna import StrategyDNA
         StrategyDNA.from_json(body.dna_json)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid dna_json: {e}")
+        # B6.1 status 正确性：dna_json 解析失败=业务拒绝（422 保留给 Pydantic
+        # 校验明细数组——G16.0 契约分层）
+        raise HTTPException(status_code=400, detail=f"Invalid dna_json: {e}")
 
     task_id = uuid.uuid4().hex[:12]
     save_paper_trading_task(
