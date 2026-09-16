@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from api.deps import get_db_path
 from api.routes.live_trading import router as live_router
-from core.live_trading.persistence import init_live_trading_tables
+from core.persistence.db_ext import init_db_ext  # B3c.1：live 建表并入 init 链
 
 
 def _app(db_path):
@@ -16,7 +16,7 @@ def _app(db_path):
 
 def _client(tmp_path):
     db = tmp_path / "live.db"
-    init_live_trading_tables(db)
+    init_db_ext(db)
     return TestClient(_app(db))
 
 

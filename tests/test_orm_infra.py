@@ -108,12 +108,10 @@ def _read_schema(db: Path):
 
 
 def _legacy_schema(tmp_path: Path):
-    from core.live_trading.persistence import init_live_trading_tables
     from core.persistence.db_ext import init_db_ext
 
     db = tmp_path / "legacy.db"
-    init_db_ext(db)
-    init_live_trading_tables(db)
+    init_db_ext(db)  # B3c.1 起 init 链含 live 表
     return _read_schema(db)
 
 
@@ -190,12 +188,10 @@ class TestAlembicBaseline:
 
     def test_adopt_legacy_db_stamps_head(self, tmp_path: Path):
         """接管流程：legacy 库（无 alembic_version）→ stamp head，schema 不动。"""
-        from core.live_trading.persistence import init_live_trading_tables
         from core.persistence.db_ext import init_db_ext
 
         db = tmp_path / "adopt.db"
         init_db_ext(db)
-        init_live_trading_tables(db)
         before = _read_schema(db)
 
         from scripts.adopt_alembic_baseline import adopt_legacy_db

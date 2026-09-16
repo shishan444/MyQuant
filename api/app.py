@@ -54,8 +54,6 @@ def create_app(
         db_path.parent.mkdir(parents=True, exist_ok=True)
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
-        from core.live_trading.persistence import init_live_trading_tables
-        init_live_trading_tables(db_path)
 
         # Start EvolutionRunner background thread
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks

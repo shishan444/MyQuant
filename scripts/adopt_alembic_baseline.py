@@ -26,11 +26,9 @@ def adopt_legacy_db(db_path: Path) -> None:
     from alembic import command
     from alembic.config import Config
 
-    # 1) legacy 轨补齐（幂等）
-    from core.live_trading.persistence import init_live_trading_tables
+    # 1) legacy 轨补齐（幂等，含 live 表——B3c.1 收编进 init 链）
     from core.persistence.db_ext import init_db_ext
     init_db_ext(db_path)
-    init_live_trading_tables(db_path)
 
     # 2) 纳入版本链（env.py 经 MYQUANT_DB_PATH 解析库位置）
     import os

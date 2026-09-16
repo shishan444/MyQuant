@@ -411,6 +411,8 @@ def init_db_ext(db_path: Path) -> None:
             (23, _step_23),
             (24, _apply_verify_strategy_columns),
             (25, _apply_verify_strategy_columns),
+            # B3c.1: live 表收编进 init 链（原 core/live_trading/persistence.py）
+            (26, _create_live_trading_tables),
         ]
         for version, runner in migrations:
             runner(conn)
@@ -655,6 +657,42 @@ def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
 
 # -- Paper Trading Task CRUD --
 
+# ===================================================================
+# Live Trading Task（B3c.1 收编：原 core/live_trading/persistence.py）
+# ===================================================================
+
+def _create_live_trading_tables(conn: sqlite3.Connection) -> None:
+    """Create live_trading_task table (idempotent，收编自 live 轨)。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS live_trading_task (
+            task_id       TEXT PRIMARY KEY,
+            symbol        TEXT NOT NULL,
+            timeframe     TEXT NOT NULL,
+            dna_json      TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'pending',
+            stop_reason   TEXT,
+            direction     TEXT DEFAULT 'mixed',
+            position_side TEXT DEFAULT '',
+            position_qty  REAL DEFAULT 0,
+            position_entry REAL DEFAULT 0,
+            position_sl   REAL,
+            position_tp   REAL,
+            balance       REAL DEFAULT 0,
+            equity        REAL DEFAULT 0,
+            unrealized_pnl REAL DEFAULT 0,
+            total_trades  INTEGER DEFAULT 0,
+            total_pnl     REAL DEFAULT 0,
+            win_count     INTEGER DEFAULT 0,
+            loss_count    INTEGER DEFAULT 0,
+            last_bar_time TEXT,
+            heartbeat_at  TEXT,
+            config_json   TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        )
+    """)
+
+
 def save_paper_trading_task(
     db_path: Path,
     *,
@@ -671,93 +709,44 @@ def save_paper_trading_task(
     confidence_sizing_enabled: bool = False,
     prediction_dna_json: Optional[str] = None,
 ) -> None:
-    now = _now()
-    with _connect(db_path) as conn:
-        conn.execute(
-            """INSERT INTO paper_trading_task
-               (task_id, status, strategy_name, symbol, timeframe,
-                initial_cash, fee, leverage, direction, dna_json,
-                score_template, created_at, updated_at, balance,
-                execution_model, confidence_sizing_enabled, prediction_dna_json)
-               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?)""",
-            (task_id, strategy_name, symbol, timeframe,
-             initial_cash, fee, leverage, direction, dna_json,
-             score_template, now, now, initial_cash,
-             int(confidence_sizing_enabled), prediction_dna_json),
-        )
-        conn.commit()
+    """Insert a paper trading task（B3c.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_paper_trading_task(
+        db_path, task_id=task_id, dna_json=dna_json, symbol=symbol,
+        timeframe=timeframe, initial_cash=initial_cash, fee=fee,
+        leverage=leverage, direction=direction, score_template=score_template,
+        strategy_name=strategy_name,
+        confidence_sizing_enabled=confidence_sizing_enabled,
+        prediction_dna_json=prediction_dna_json,
+    )
 
 
 def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-
-_ALLOWED_COLUMNS = frozenset({
-    "status", "started_at", "stopped_at", "stop_reason", "heartbeat_at",
-    "position_side", "position_entry", "position_quantity", "position_margin",
-    "position_funding", "position_open_cost", "balance", "unrealized_pnl",
-    "total_trades", "total_pnl", "win_count", "loss_count", "bars_held",
-    "last_bar_time", "last_bar_close", "execution_model", "pending_decision_json",
-    "prediction_dna_json", "updated_at",
-})
+    """Retrieve a paper trading task（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.get_paper_trading_task(db_path, task_id)
 
 
 def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
-    if not kwargs:
-        return
-    # Filter to allowed columns only
-    filtered = {k: v for k, v in kwargs.items() if k in _ALLOWED_COLUMNS}
-    if not filtered:
-        return
-    filtered["updated_at"] = _now()
-    sets = ", ".join(f"{k} = ?" for k in filtered)
-    vals = list(filtered.values()) + [task_id]
-    with _connect(db_path) as conn:
-        conn.execute(
-            f"UPDATE paper_trading_task SET {sets} WHERE task_id = ?", vals
-        )
-        conn.commit()
+    """Update task fields（委托 repository，白名单不变）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.update_paper_trading_task(db_path, task_id, **kwargs)
 
 
 def list_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50, offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM paper_trading_task WHERE status = ? "
-                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM paper_trading_task ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    """List paper trading tasks（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_paper_trading_tasks(db_path, status=status, limit=limit, offset=offset)
 
 
 def count_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None,
 ) -> int:
-    """Return total count of paper trading tasks, optionally filtered by status."""
-    with _connect(db_path) as conn:
-        if status:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM paper_trading_task WHERE status = ?",
-                (status,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM paper_trading_task"
-            ).fetchone()
-        return row[0]
+    """Count paper trading tasks（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.count_paper_trading_tasks(db_path, status=status)
 
 
 def save_paper_trade(
@@ -773,134 +762,56 @@ def save_paper_trade(
     fee_paid: float = 0.0,
     reason: Optional[str] = None,
 ) -> None:
-    with _connect(db_path) as conn:
-        # B1.3: INSERT OR IGNORE——重放同一 (task_id, bar_time, action) 不重复落库
-        conn.execute(
-            """INSERT OR IGNORE INTO paper_trade
-               (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason),
-        )
-        conn.commit()
+    """Insert a paper trade（委托 repository；INSERT OR IGNORE 幂等，B1.3）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_paper_trade(
+        db_path, task_id=task_id, bar_time=bar_time, side=side, action=action,
+        price=price, quantity=quantity, pnl=pnl, fee_paid=fee_paid, reason=reason,
+    )
 
 
 def list_paper_trades(
     db_path: Path, task_id: str, limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM paper_trade WHERE task_id = ? "
-            "ORDER BY bar_time DESC LIMIT ?",
-            (task_id, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    """List paper trades（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_paper_trades(db_path, task_id, limit=limit)
 
 
 def count_paper_trades(db_path: Path, task_id: str) -> int:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM paper_trade WHERE task_id = ?",
-            (task_id,),
-        ).fetchone()
-        return row[0]
+    """Count paper trades（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.count_paper_trades(db_path, task_id)
 
-
-# -- Paper Equity Snapshot CRUD --
 
 def save_equity_snapshots(
     db_path: Path, task_id: str, snapshots: list[dict],
 ) -> None:
-    """Batch insert equity snapshots for a task."""
-    if not snapshots:
-        return
-    with _connect(db_path) as conn:
-        conn.executemany(
-            """INSERT OR IGNORE INTO paper_equity_snapshot
-               (task_id, timestamp, equity, balance, unrealized_pnl, position_side)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [
-                (task_id, s["timestamp"], s["equity"], s["balance"],
-                 s.get("unrealized_pnl", 0.0), s.get("position_side", "flat"))
-                for s in snapshots
-            ],
-        )
-        conn.commit()
+    """Batch insert equity snapshots（委托 repository，OR IGNORE 幂等）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_equity_snapshots(db_path, task_id, snapshots)
 
 
 def list_equity_snapshots(
     db_path: Path, task_id: str,
 ) -> List[Dict[str, Any]]:
-    """Return all equity snapshots for a task in chronological order."""
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM paper_equity_snapshot WHERE task_id = ? "
-            "ORDER BY timestamp ASC",
-            (task_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    """List equity snapshots（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_equity_snapshots(db_path, task_id)
 
 
 def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
-    """Delete a paper trading task and all associated data."""
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT task_id FROM paper_trading_task WHERE task_id = ?",
-            (task_id,),
-        ).fetchone()
-        if row is None:
-            return False
-        conn.execute("DELETE FROM paper_equity_snapshot WHERE task_id = ?", (task_id,))
-        conn.execute("DELETE FROM paper_trade WHERE task_id = ?", (task_id,))
-        conn.execute("DELETE FROM paper_trading_task WHERE task_id = ?", (task_id,))
-        conn.commit()
-        return True
+    """Delete a paper trading task and all associated data（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.delete_paper_trading_task(db_path, task_id)
 
 
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Compute performance metrics for a paper trading task.
-
-    Reads task/trades/snapshots from DB and delegates the math to
-    core.scoring.trading_metrics (single source of truth for the formulas).
-    """
-    task = get_paper_trading_task(db_path, task_id)
-    if task is None:
-        return None
-
-    initial_cash = task["initial_cash"]
-    balance = task.get("balance") if task.get("balance") is not None else initial_cash
-
-    with _connect(db_path) as conn:
-        close_rows = conn.execute(
-            "SELECT pnl FROM paper_trade WHERE task_id = ? AND pnl IS NOT NULL AND action = 'close'",
-            (task_id,),
-        ).fetchall()
-        eq_rows = conn.execute(
-            "SELECT equity FROM paper_equity_snapshot WHERE task_id = ? ORDER BY timestamp ASC",
-            (task_id,),
-        ).fetchall()
-
-    metrics = trading_metrics.compute_trading_metrics(
-        trading_metrics.TradingMetricsInput(
-            initial_cash=initial_cash,
-            balance=balance,
-            total_trades=task.get("total_trades", 0),
-            win_count=task.get("win_count", 0),
-            loss_count=task.get("loss_count", 0),
-            realized_pnl=task.get("total_pnl", 0.0) or 0.0,
-            unrealized_pnl=task.get("unrealized_pnl", 0.0) or 0.0,
-            position_side=task.get("position_side"),
-            position_margin=task.get("position_margin") or 0.0,
-            close_pnls=[r[0] for r in close_rows],
-            equity_snapshots=[r[0] for r in eq_rows],
-        )
-    )
-    metrics["task_id"] = task_id
-    return metrics
+    """Compute performance metrics（委托 repository；公式单源 core.scoring）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.compute_trading_metrics(db_path, task_id)
 
 
-# ===================================================================
 # Strategy CRUD
 # ===================================================================
 

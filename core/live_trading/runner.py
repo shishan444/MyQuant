@@ -15,7 +15,7 @@ import pandas as pd
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signal_set
 
-from . import persistence
+from core.persistence.repository import live_trading as persistence  # B3c.1：原 .persistence 退役收编
 from .executor import LiveTradingExecutor
 from .types import LiveAccountState, LivePosition
 

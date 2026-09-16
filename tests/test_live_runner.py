@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from core.live_trading import persistence
+from core.persistence.repository import live_trading as persistence  # B3c.1 退役重锚定
 from core.live_trading.runner import (
     LiveTradingRunner,
     klines_to_df,
@@ -90,7 +90,8 @@ def _make_runner(tmp_path, executor_action=None, position_raw=None):
         raw = FakeRaw()
 
     db = tmp_path / "t.db"
-    persistence.init_live_trading_tables(db)
+    from core.persistence.db_ext import init_db_ext
+    init_db_ext(db)
     persistence.save_live_trading_task(db, "t1", "BTCUSDT", "1h", "{}")
     runner = LiveTradingRunner(
         executor=FakeExecutor(), client=FakeClient(),

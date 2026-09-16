@@ -1,21 +1,21 @@
 """第9步 live_trading_task 持久化测试（tmp_path 临时 db）。"""
 import pytest
 
-from core.live_trading.persistence import (
+from core.persistence.repository.live_trading import (  # B3c.1：原 core.live_trading.persistence 退役
     delete_live_trading_task,
     get_live_trading_task,
-    init_live_trading_tables,
     list_live_trading_tasks,
     save_live_trading_task,
     update_heartbeat,
     update_live_trading_task,
 )
+from core.persistence.db_ext import init_db_ext
 
 
 @pytest.fixture
 def db(tmp_path):
     db_path = tmp_path / "test_live.db"
-    init_live_trading_tables(db_path)
+    init_db_ext(db_path)  # live 表建表已并入 init 链（migration 26）
     return db_path
 
 
@@ -93,6 +93,6 @@ class TestDelete:
 class TestInitIdempotent:
     def test_double_init(self, db):
         # 幂等：重复建表不报错
-        init_live_trading_tables(db)
+        init_db_ext(db)
         _save(db)
         assert get_live_trading_task(db, "t1") is not None
