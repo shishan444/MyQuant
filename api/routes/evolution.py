@@ -574,15 +574,11 @@ def get_discovered_strategies(
 
 # ── Timeframe utilities ──
 
-_TF_DURATION_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
-    "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
-}
+from core.data.timeframes import TF_SECONDS as _TF_SECONDS  # B4.1 归一
 
 
 def sort_timeframes(tfs: List[str]) -> List[str]:
     """Sort timeframes by duration, longest first."""
     def _key(tf: str) -> int:
-        return _TF_DURATION_MINUTES.get(tf, 0)
+        return _TF_SECONDS.get(tf, 0)
     return sorted(tfs, key=_key, reverse=True)

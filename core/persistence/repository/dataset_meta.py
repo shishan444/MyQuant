@@ -34,10 +34,7 @@ def _engine_for(db_path: Path) -> Engine:
     return create_db_engine(Path(db_path))
 
 
-def _now() -> str:
-    """与旧轨 _now 一致的时间戳格式（UTC ISO）。"""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
+from core.persistence.timestamps import utc_now_iso as _now  # B4.1 归一
 
 
 def save_dataset_meta(

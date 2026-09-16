@@ -64,8 +64,7 @@ class TaskController:
         self._stop_event.wait(timeout)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from core.persistence.timestamps import utc_now_iso as _now_iso  # B4.1 归一
 
 
 def _push_ws(task_id: str, payload: dict) -> None:
@@ -84,10 +83,7 @@ def recover_stale_trading_tasks(db_path: Path) -> None:
         logger.info("Recovered %d stale trading tasks", recovered)
 
 
-_BAR_SECONDS = {
-    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "3d": 259200,
-}
+from core.data.timeframes import TF_SECONDS as _BAR_SECONDS  # B4.1 归一
 
 
 class TradingRunner(threading.Thread):

@@ -16,10 +16,6 @@ from typing import Any, Dict, List, Optional
 from core.strategy.dna import StrategyDNA
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 # B3d.2 退役注记：_connect/connect 已删——业务代码连接一律经
 # core.persistence.orm.engine 工厂（WAL/busy_timeout 统一）；legacy
 # init/ALTER 链的连接工具移至 db_ext（迁移工具属性，随 init 轨存续）。

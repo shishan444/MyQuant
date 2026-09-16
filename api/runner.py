@@ -74,8 +74,7 @@ class TaskController:
 # Progress & heartbeat helpers
 # ---------------------------------------------------------------------------
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from core.persistence.timestamps import utc_now_iso as _now_iso  # B4.1 归一
 
 
 def update_heartbeat(db_path: Path, task_id: str) -> None:
