@@ -19,26 +19,10 @@ from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_sign
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# 清算模型（batch1 D1：单一权威源）
-#
-# 合约清算第一性公式: 清算价差 d = (1 - 维持保证金率) / 杠杆 L。
-# MAINTENANCE_MARGIN_FRACTION 近似 (1 - mmr)，即价格反向走
-# MAINTENANCE_MARGIN_FRACTION / L 时触及清算线。注意：真实币安 USDT-M
-# 分层维持率约 0.4-1%，此处 0.9 为偏保守的简化口径（遗留标注，精确化
-# 归市场模型层批次）。禁止在本模块其他位置出现第二个维持率字面量。
-# ---------------------------------------------------------------------------
-MAINTENANCE_MARGIN_FRACTION = 0.9
-
-
-@njit(cache=True)
-def maintenance_threshold(init_cash: float, leverage: float) -> float:
-    """权益清算线：权益低于 init_cash * (1 - MAINTENANCE_MARGIN_FRACTION / leverage) 触发清算。
-
-    纯算术函数——@njit 订单回调（order_func_nb）与事后检测（run 内）
-    共同引用此唯一实现，保证逐 bar 判定与事后检测结论一致。
-    """
-    return init_cash * (1.0 - MAINTENANCE_MARGIN_FRACTION / leverage)
+# B7.1：清算口径移交 core/market_model（币安 USDT-M 分层 mmr，权益<
+# 仓位名义×档位 mmr 触发）——本模块不再持有维持率字面量（单一权威源）。
+from core.market_model import maintenance_threshold as _mm_threshold
+from core.market_model.liquidation import tier_arrays as _mm_tier_arrays
 
 
 @dataclass
@@ -231,7 +215,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, fee, slippage,
-                  high_arr, low_arr, direction_signal):
+                  high_arr, low_arr, direction_signal,
+                  mmr_tier_max, mmr_tier_rate):
     """Per-bar order callback with real-time SL/TP and liquidation.
 
     Args via lifecycle chain:
@@ -285,8 +270,16 @@ def order_func_nb(c, entry_price, is_liquidated,
     current_price = c.close[i, col]
 
     # Liquidation check BEFORE SL/TP (for leveraged positions)
+    # B7.1 口径（架构约束修订）：等效换算形态 init_cash×(1−(1−mmr)/L)，
+    # mmr 按等效名义 init_cash×L 选档（内联，与 market_model 同源）
     if leverage > 1.0 and c.position_now != 0.0:
-        maintenance = maintenance_threshold(c.init_cash[0], leverage)
+        notional_eq = c.init_cash[0] * leverage
+        mmr = mmr_tier_rate[len(mmr_tier_rate) - 1]
+        for t in range(len(mmr_tier_rate)):
+            if notional_eq <= mmr_tier_max[t]:
+                mmr = mmr_tier_rate[t]
+                break
+        maintenance = c.init_cash[0] * (1.0 - (1.0 - mmr) / leverage)
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
@@ -494,6 +487,8 @@ class BacktestEngine:
             high_2d,
             low_2d,
             direction_signal_2d,
+            _mm_tier_arrays()[0],
+            _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,
@@ -542,7 +537,7 @@ class BacktestEngine:
         # Check if liquidation occurred (on amplified curve)
         liquidated = False
         if leverage > 1 and len(equity_curve) > 0:
-            maintenance = maintenance_threshold(self.init_cash, leverage)
+            maintenance = _mm_threshold(self.init_cash, leverage)
             if (equity_curve < maintenance).any():
                 liquidated = True
 
@@ -799,6 +794,8 @@ class BacktestEngine:
             high_2d,
             low_2d,
             direction_signal_matrix,
+            _mm_tier_arrays()[0],
+            _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,

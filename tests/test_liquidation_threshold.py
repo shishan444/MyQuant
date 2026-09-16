@@ -1,8 +1,8 @@
-"""清算判定单一权威源 · 区分性测试（batch1 D1，任务 2.3）。
+"""清算判定单一权威源 · 区分性测试（batch1 D1 任务 2.3；B7.1 重锚定）。
 
-验证: (a) 阈值函数为 0.9/L 口径（清算价差 d = 0.9/L，非 0.9/L^2）;
-      (b) 模块内无第二个维持率字面量（除常量定义处）;
-      (c) 逐 bar 判定与事后检测消费同一函数。
+B7.0 口径卡冻结：维持率由 0.9/L 简化近似改为币安 USDT-M 分层档位，
+基准由全额 init_cash 改为仓位名义价值。守护不变量不变——单一权威源、
+逐 bar 与事后同源；数值断言按新口径重锚定（守护不变量非历史数值）。
 """
 from __future__ import annotations
 
@@ -11,41 +11,57 @@ import re
 
 import pytest
 
-from core.backtest.engine import (
-    MAINTENANCE_MARGIN_FRACTION,
+from core.market_model import (
+    BinanceMmrTiers,
+    maintenance_margin_rate,
     maintenance_threshold,
+    tier_arrays,
 )
 
 
-def test_threshold_matches_0_9_over_L_formula():
-    """id=口径形态 0.9/L 而非 0.9/L^2"""
-    # L=10: 维持线 = init_cash * (1 - 0.9/10) = 0.91 * init_cash（价差 9%）
-    assert maintenance_threshold(100_000.0, 10.0) == pytest.approx(100_000.0 * (1 - 0.9 / 10.0))
-    # L=2: 维持线 = 0.55 * init_cash（价差 45%）
-    assert maintenance_threshold(100_000.0, 2.0) == pytest.approx(55_000.0)
-    # 若为旧笔误口径 0.9/L^2，L=10 时应为 0.991*init_cash——显式排除
-    assert maintenance_threshold(100_000.0, 10.0) != pytest.approx(100_000.0 * (1 - 0.9 / 100.0))
+def test_tier_selection_at_boundaries():
+    """id=档位边界正确选择（MODIFIED spec 场景）"""
+    assert maintenance_margin_rate(30_000) == 0.004
+    assert maintenance_margin_rate(50_000) == 0.004   # 边界含
+    assert maintenance_margin_rate(50_001) == 0.005
+    assert maintenance_margin_rate(1_000_000) == 0.010
+    assert maintenance_margin_rate(1e12) == 0.100      # 超界取最高档
 
 
-def test_constant_single_source_no_second_literal():
-    """id=常量单一定义（模块内除常量定义处无 0.9 维持率字面量）"""
+def test_threshold_formula_tiered():
+    """id=清算线=等效换算形态 init_cash×(1−(1−mmr)/L)，mmr 按名义选档"""
+    # L=5, init_cash=100k → 名义 500k → mmr 1% → 80.2k（旧简化口径 82k）
+    assert maintenance_threshold(100_000, 5) == pytest.approx(80_200)
+    # L=10 → 名义 1M → mmr 1% → 90.1k（旧简化 91k——分层后略宽松）
+    assert maintenance_threshold(100_000, 10) == pytest.approx(90_100)
+
+
+def test_single_source_no_mmr_literal_in_engine():
+    """id=常量单一定义（engine 内无维持率字面量，档位表唯一源在 market_model）"""
     import core.backtest.engine as eng
     src = inspect.getsource(eng)
-    # 移除常量定义行与注释行后，不应再有裸 0.9 参与清算表达
     code_lines = [
         ln for ln in src.splitlines()
         if ln.strip() and not ln.strip().startswith("#")
-        and "MAINTENANCE_MARGIN_FRACTION = 0.9" not in ln
     ]
-    code = "\n".join(code_lines)
-    offenders = [ln for ln in code_lines if re.search(r"0\.9\s*/", ln)]
-    assert offenders == [], f"发现绕过常量的维持率字面量: {offenders}"
+    offenders = [
+        ln for ln in code_lines
+        if re.search(r"=\s*0\.9\b", ln) or re.search(r"0\.00[45]\b", ln)
+    ]
+    assert offenders == [], f"engine 内发现维持率字面量: {offenders}"
 
 
-def test_both_consumers_reference_single_function():
-    """id=两处消费点均引用唯一函数"""
+def test_both_consumers_reference_market_model():
+    """id=两处消费点均引用 market_model（单一权威源）"""
     import core.backtest.engine as eng
     src = inspect.getsource(eng)
-    assert 'maintenance = maintenance_threshold(c.init_cash[0], leverage)' in src, "njit 逐 bar 判定未引用唯一函数"
-    assert 'maintenance = maintenance_threshold(self.init_cash, leverage)' in src, "事后检测未引用唯一函数"
-    assert MAINTENANCE_MARGIN_FRACTION == 0.9
+    assert "mmr_tier_max, mmr_tier_rate" in src          # njit 逐 bar 内联选档
+    assert "_mm_tier_arrays()[0]" in src and "_mm_tier_arrays()[1]" in src
+    assert "_mm_threshold(" in src                        # 事后检测引用唯一函数
+
+
+def test_tier_arrays_match_python_tiers():
+    """id=njit 数组与 Python 档位表一致（两形制同源）"""
+    maxs, rates = tier_arrays()
+    assert list(rates) == [t.mmr for t in BinanceMmrTiers]
+    assert float(maxs[-1]) == float("inf")
