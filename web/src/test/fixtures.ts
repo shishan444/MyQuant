@@ -221,8 +221,3 @@ export const mockPaperTrade = {
   reason: null,
 };
 
-export const mockEquitySnapshots = [
-  { timestamp: "2025-01-01T00:00:00Z", equity: 100000, balance: 100000, unrealized_pnl: 0, position_side: "flat" },
-  { timestamp: "2025-01-05T08:00:00Z", equity: 102000, balance: 100000, unrealized_pnl: 2000, position_side: "long" },
-  { timestamp: "2025-01-10T12:00:00Z", equity: 105000, balance: 105000, unrealized_pnl: 0, position_side: "flat" },
-];

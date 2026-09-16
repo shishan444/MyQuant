@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   BookOpen, Play, Pencil, Trash2, Search,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,

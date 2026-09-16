@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Play, X, ChevronDown, ChevronUp, LineChart,
   Search, Check, Star,
@@ -12,7 +12,8 @@ import { PageTransition } from "@/components/PageTransition";
 import { useStrategies, useBatchBacktestStream } from "@/hooks/useStrategies";
 import { fetchBatchBacktestDetail } from "@/services/strategies";
 import { cn, monthsAgo, todayISO } from "@/lib/utils";
-import { EquityCurveChart, BacktestMetricsPanel } from "@/components/lab";
+import { BacktestMetricsPanel } from "@/components/lab";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import type {
   BatchBacktestResultItem,
   BatchBacktestSummaryItem,
@@ -648,7 +649,7 @@ function PeriodDetailRow({
                 <>
                   <div>
                     <div className="text-[10px] text-text-secondary mb-1">资金曲线</div>
-                    <EquityCurveChart data={detail.equity_curve ?? []} height={200} />
+                    <EquityCurve data={detail.equity_curve ?? []} height={200} />
                   </div>
                   <BacktestMetricsPanel result={detail} />
                 </>

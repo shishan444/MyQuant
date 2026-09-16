@@ -88,7 +88,8 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("framer-motion", () => ({
+vi.mock("motion/react", () => ({
+  useReducedMotion: () => false,
   motion: {
     div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   },

@@ -1,10 +1,17 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "motion/react";
 
 interface PageTransitionProps {
   children: React.ReactNode;
 }
 
 function PageTransition({ children }: PageTransitionProps) {
+  // prefers-reduced-motion 降级：跳过进入动画直接呈现终态
+  const prefersReducedMotion = useReducedMotion();
+
+  if (prefersReducedMotion) {
+    return <div>{children}</div>;
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}

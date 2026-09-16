@@ -37,9 +37,9 @@ vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: vi.fn(() => <div data-testid="kline-chart" />),
 }));
 
-// Mock EquityCurveChart to avoid recharts issues
-vi.mock("@/components/lab/EquityCurveChart", () => ({
-  EquityCurveChart: vi.fn(() => <div data-testid="equity-curve" />),
+// Mock EquityCurve to avoid echarts canvas issues in jsdom
+vi.mock("@/components/charts/EquityCurve", () => ({
+  EquityCurve: vi.fn(() => <div data-testid="equity-curve" />),
 }));
 
 // Mock StrategyDetail

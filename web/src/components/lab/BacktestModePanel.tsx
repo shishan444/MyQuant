@@ -6,7 +6,7 @@ import { Button as AntButton } from "antd";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, SignalData } from "@/components/charts/KlineChart";
 import { BacktestMetricsPanel } from "./BacktestMetricsPanel";
-import { EquityCurveChart } from "./EquityCurveChart";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import { runBacktest } from "@/services/strategies";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useChartIndicators } from "@/hooks/useChartIndicators";
@@ -255,7 +255,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
               <div>
                 <h4 className="mb-2 text-xs font-medium text-slate-400">资金曲线</h4>
                 <div className="rounded-lg border border-slate-700/30 bg-slate-950/50 p-3">
-                  <EquityCurveChart data={equityPoints} />
+                  <EquityCurve data={equityPoints} height={180} />
                 </div>
                 <div className="mt-1.5 flex items-center gap-4 text-[10px] text-slate-500">
                   <span>初始: {equityPoints[0]?.value?.toLocaleString()}</span>

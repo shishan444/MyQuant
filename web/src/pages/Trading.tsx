@@ -27,7 +27,7 @@ import {
   useRunnerStatus,
 } from "@/hooks/useTrading";
 import { TradingChart } from "@/components/trading/TradingChart";
-import { EquityCurve } from "@/components/trading/EquityCurve";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import { MetricsDashboard } from "@/components/trading/MetricsDashboard";
 import { RunnerStatusBadge } from "@/components/trading/RunnerStatusBadge";
 import { CreateTaskDialog } from "@/components/trading/CreateTaskDialog";
@@ -593,8 +593,8 @@ function TaskDetailPanel({
           <div className="mt-2 pt-2 border-t border-border-default">
             <span className="text-xs text-text-secondary mb-1 block">权益曲线</span>
             <EquityCurve
-              data={equitySnapshots}
-              initialCash={task.initial_cash}
+              data={equitySnapshots.map((s) => ({ timestamp: s.timestamp, value: s.equity }))}
+              baseline={task.initial_cash}
               height={120}
             />
           </div>

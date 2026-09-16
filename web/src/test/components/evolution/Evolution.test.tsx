@@ -42,8 +42,9 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-// Mock framer-motion
-vi.mock("framer-motion", () => ({
+// Mock motion/react
+vi.mock("motion/react", () => ({
+  useReducedMotion: () => false,
   motion: new Proxy({}, {
     get: (_, tag) => {
       return ({ children, ...props }: any) => {

@@ -7,7 +7,7 @@ import type { Time, UTCTimestamp } from "lightweight-charts";
  * ("2024-01-02 03:00:00") input. Falls back to the date-only slice when the
  * input cannot be parsed, so malformed rows never break chart rendering.
  *
- * Shared by KlineChart and EquityCurveChart (previously duplicated verbatim).
+ * Shared by KlineChart series time conversions.
  */
 export function toTime(ts: string): Time {
   const withT = ts.includes("T") ? ts : ts.replace(" ", "T");

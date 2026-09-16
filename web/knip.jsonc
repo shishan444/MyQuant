@@ -7,7 +7,6 @@
     "src/types/generated/**"
   ],
   "ignoreDependencies": [
-    "@testing-library/user-event"
   ],
   "ignoreBinaries": ["perl"]
 }
