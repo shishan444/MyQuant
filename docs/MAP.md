@@ -8,12 +8,18 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | 类别 | 技术 |
 |------|------|
 | 后端语言 | Python 3.12+ |
-| 后端框架 | FastAPI 0.100+ / Uvicorn |
+| 后端框架 | FastAPI 0.137 / Uvicorn |
+| ORM/迁移 | SQLAlchemy 2.0（repository 层，表访问唯一入口）/ Alembic（schema 演进唯一轨） |
+| 实时通道 | python-socketio（四通道：evolution/trading/streams+streams 流式；native WS/SSE 已退役） |
 | 前端语言 | TypeScript 6.0 |
 | 前端框架 | React 19 / Vite 8 |
 | 构建/包管理 | setuptools (后端) / pnpm (前端) |
 | 数据库/存储 | SQLite (WAL) / Parquet 文件 |
 | 核心计算库 | vectorbt 0.28.5 / pandas-ta / numba / sklearn |
+
+不引入（显式裁决）：structlog/uv（单用户本地工具，标准 logging 已承担）、
+异步 ORM（SQLite 单写者无收益）、config.json 文件加密（本地单用户威胁
+模型，见 docs/security）。
 
 ## 架构风格
 单体应用，前后端分离。后端采用分层架构（API 层 -> 核心领域层 -> 数据/基础设施层），核心领域层按业务能力拆分为独立模块。前端采用页面-服务-Hook 三层架构，使用 Zustand 管理 UI 状态，TanStack React Query 管理服务端数据。
