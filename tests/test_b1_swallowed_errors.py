@@ -148,7 +148,7 @@ class TestSnapshotWriteFailureVisible:
         enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
         with caplog.at_level(logging.ERROR, logger="api.runner"), \
              patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
-             patch("api.runner._push_ws"), \
+             patch("api.runner_progress._push_ws"), \
              patch.object(runner, "_evaluate_population",
                           lambda pop, *a, **kw: [_stub_score(d) for d in pop]), \
              patch("api.runner.save_snapshot", side_effect=RuntimeError("disk full")):

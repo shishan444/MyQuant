@@ -32,9 +32,6 @@ from core.logging import get_logger
 
 logger = get_logger("RUNNER")
 
-# Global reference to the FastAPI app's asyncio loop for WS push
-_ws_push_fn: Optional[Callable] = None
-
 # Active task controllers: task_id -> TaskController
 _active_controllers: Dict[str, "TaskController"] = {}
 
@@ -54,39 +51,9 @@ from core.concurrency.task_control import TaskController, TaskStopRequested  # B
 # Progress & heartbeat helpers
 # ---------------------------------------------------------------------------
 
-from core.persistence.timestamps import utc_now_iso as _now_iso  # B4.1 归一
-
-
-def update_heartbeat(db_path: Path, task_id: str) -> None:
-    """Update heartbeat_at timestamp for a running task."""
-    from core.persistence.repository import evolution as repo
-    try:
-        repo.update_heartbeat(db_path, task_id)
-    except Exception:
-        logger.warning("heartbeat update failed for %s", task_id, exc_info=True)
-
-
-def update_phase(db_path: Path, task_id: str, phase: str) -> None:
-    """Update current_phase for a task and push WS notification."""
-    from core.persistence.repository import evolution as repo
-    try:
-        repo.update_phase(db_path, task_id, phase)
-    except Exception:
-        logger.warning("phase update failed for %s", task_id, exc_info=True)
-    _push_ws(task_id, {
-        "type": "phase_changed",
-        "task_id": task_id,
-        "phase": phase,
-    })
-
-
-def update_progress(db_path: Path, task_id: str, progress: dict) -> None:
-    """Write structured progress JSON to DB."""
-    from core.persistence.repository import evolution as repo
-    try:
-        repo.update_progress(db_path, task_id, json.dumps(progress, ensure_ascii=False))
-    except Exception:
-        logger.warning("progress update failed for %s", task_id, exc_info=True)
+from api.runner_progress import (  # B5.2 拆分
+    _push_ws, set_ws_push_fn, update_heartbeat, update_phase, update_progress,
+)
 
 
 def recover_stale_tasks(db_path: Path) -> None:
@@ -123,24 +90,6 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
     if restarted > 0:
         logger.info("Restarted %d crashed tasks (max %d retries each)", restarted, max_restarts)
     return restarted
-
-
-def set_ws_push_fn(fn: Callable) -> None:
-    """Register a function that the runner can call to push WS messages.
-
-    Called once during app startup.
-    """
-    global _ws_push_fn
-    _ws_push_fn = fn
-
-
-def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
-    """Fire-and-forget WS push (non-blocking) with observability."""
-    if _ws_push_fn is not None:
-        try:
-            _ws_push_fn(task_id, payload)
-        except Exception:
-            logger.warning("ws push failed for task %s", task_id, exc_info=True)
 
 
 def _split_train_test(
