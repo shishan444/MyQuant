@@ -192,4 +192,20 @@
 | web/e2e 既有 14 条 | L0 保留为冒烟门；L2 由 Phase 3 闭环升级 | 4.x |
 
 ---
-*矩阵为容器期工件：组 3 完成后逐格回填终态（3.6），随后归档。*
+
+## 6. 矩阵销项终态回填（3.6，2026-09-16）
+
+五链路 L2 补齐完成（tests/journeys/，9 测试全绿）：
+
+| 链 | 格 → 终态 | 落地测试锚点 |
+|---|---|---|
+| A 数据导入 | 落盘/入库/列表/preview/删除 全部 **L2**（数值跨步自洽：落盘=源 CSV、meta=导入参数、preview=落盘） | `tests/journeys/test_journey_data_import.py::test_data_import_journey_l2` |
+| B 单回测 | 指标数值 **L2**（=裁判判定值，逐指标 1e-9）；compare 入口并入复验 | `test_journey_backtest.py::test_backtest_journey_l2_metrics_equal_reference` |
+| C 对比 | 并入 B 链（同引擎全等） | `test_journey_backtest.py::test_backtest_journey_compare_entry_aligned` |
+| D 进化闭环 | 推进/代际 history/冠军/产出引用/状态机 全部 **L2**（R-7/R-9 注记在案） | `test_journey_evolution.py::test_evolution_closed_loop_l2` + `test_evolution_lifecycle_transitions_l2` |
+| E 验证 | 分段=同窗单回测全等 / 汇总=逐段聚合 / 会话历史跨步 **L2** | `test_journey_verify_batch.py::test_verify_journey_multi_segment_l2` |
+| F 批量 | 流式序列语义（步序/total/终态结构/跨步取回）**L2**；socket 传输层由 B8+Phase 3 覆盖 | `test_journey_verify_batch.py::test_batch_journey_stream_sequence_l2` |
+| G 模拟盘 | bar 推进/幂等（B1.3 实战零重复）/权益守恒/stop 状态机 **L2** | `test_journey_trading.py::test_paper_trading_journey_l2` |
+| 页面渲染数字 | Phase 3（web/e2e/closed-loop.spec.ts） | 4.x |
+
+未销格（豁免/登记）：H/I/J 链按 5.2 豁免维持；策略库 CRUD→回测的 strategy_id 路径因 D-4 断裂（哨兵锁定，修复日升级为链路 L2）。

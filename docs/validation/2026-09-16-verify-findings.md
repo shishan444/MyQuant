@@ -12,6 +12,8 @@
 | D-4 | DNA 环变性：`to_dict` 序列化 auto-wrap 单层 layers，`from_dict` 读回判为显式 MTF（is_mtf 翻转）→ **API 创建策略后 strategy_id 路径回测 500**（`MTF DNA requires dfs_by_timeframe`） | `core/strategy/dna.py:357-364`；哨兵 `test_four_entry_consistency.py::test_d4_sentinel_strategy_id_backtest_broken` | 用户主路径断裂（策略库→回测）；单元层全绿（mock 绕过信号层）——链路级 bug 首例实锤 | 哨兵锁定；待独立 fix（**高优先**） |
 | D-5 | backtest(dna) 静默降级：不传 payload.symbol/timeframe 时按 "UNKNOWN"/"1d" 找盘失败 → 无告警走 legacy fallback（不做日期切片+逐 gene 指标路径）→ 口径漂移无感知 | `api/routes/strategies/backtest.py:95-140`；R-5 裁决注记 | 同入口两条数据加载路径指标不可比（实测 0.0141 vs 0.0075 同窗差异） | 测试注记锁定；待独立 fix |
 | D-2b | NaN 泄漏产非法 JSON：`json.dumps` 默认放行 NaN 字面量，JS `JSON.parse` 抛 SyntaxError → 指标层泄漏 NaN 即前端整响应解析崩溃 | `tests/consistency/test_transport_invariance.py::test_nan_leak_produces_invalid_json`；`web/src/test/transport.test.ts` | 与 D-2 同族传输边界风险 | 风险面锁定；待独立 fix |
+| D-7 | import 端点临时文件名破坏 parse_filename 自动检测：`原名-随机后缀.csv` 恒解析失败——**不显式传 symbol/interval 的上传导入全 500** | `api/routes/data.py:111-112`（prefix 污染）+ `core/data/csv_importer.py:277`；`test_journey_data_import.py` 注记 | API 面裸用断裂；前端因表单显式传参幸存 | 测试注记锁定；待独立 fix |
+| D-8 | 坏 CSV 导入未捕 ValueError：OHLCV 校验失败冒泡为 500 而非 400/422 | `test_journey_data_import.py::test_import_bad_csv_rejected`（当前以 raises 锁定） | 错误契约违背（B6 家族）；数据未落盘（无污染） | 行为锁定；待独立 fix |
 
 ## 口径裁决记录（本容器锁定）
 
@@ -23,6 +25,9 @@
 | R-4 | verify 分段切片语义：`df.index <= end日期` 切至当日 00:00（日期粒度），与全量回测（末根 20:00）差尾部同日 bar——**同窗对齐（三入口传相同 data_start/end）后全等成立**（G-1 裁决：豁免不成立，口径修正成立） | `core/data/mtf_loader.py:69-71`；`test_engine_three_entries_identical` | verify/batch 的 data_ranges 用户须知：end 日期当日晚间 bar 不含 | 已锁定 |
 | R-5 | 四入口参数面不对齐：BacktestRequest 有 symbol/timeframe，CompareRequest 无；dna 直传不传 symbol/timeframe 即走 legacy（D-5） | schemas.py 217-274 | API 契约层修复属生产代码变更，登记跟进 | 已锁定 |
 | R-6 | batch 入口 = ReplayRunner 重放语义（DecisionPipeline bar 级订单流+VirtualAccount），与引擎三入口（信号回测语义）**设计性不同构**——「四入口全等」修正为「三引擎入口全等」（已验证成立）；batch 差异实测：trades 1 vs 3、total_return −1.06% vs +1.41%（同窗同策略） | `core/trading/replay.py` 头注；`test_batch_replay_semantics_locked` | 批量页指标与验证页指标不可直接比较——产品层是否提示用户为跟进项 | 已锁定（差异锁定断言） |
+| R-7 | 进化 continuous 默认 True：max_generations 仅限单种群，跑完自动开新种群直到手动 stop——**字段名与实际行为背离的语义陷阱**（API 创建任务默认无限跑） | `api/runner.py:519-527`；`test_journey_evolution.py` 注记 | 用户设置 max_generations=2 期望有限运行，实际无限（资源占用）；前端是否有 continuous 开关待查 | 已锁定（continuous=False 走完成路径） |
+| R-8 | best_fitness 全链 None：OOS validation fitness 有计算（日志 0.0）但未回填 task.best_fitness 与代际 best_fitness——数据链断裂候选 | `test_journey_evolution.py` 注记；实测 final.best_fitness=None | 前端冠军展示字段空值；进化质量评估失锚 | 疑点登记（待查回填路径） |
+| R-9 | `GET tasks/{id}/strategies` 返回 champion_dna 内嵌 strategy_id，不保证在策略表存在（低分场景 404）——跨步引用一致性缺口 | `api/routes/evolution.py:464-474`；`test_journey_evolution.py` D6 段注记 | 用户拿到查无此行的 id；discovered-strategies（查表）语义正确 | 已锁定（跨步断言锚 discovered） |
 
 ## 疑点跟踪（未决）
 
