@@ -8,17 +8,10 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from core.data.storage import load_parquet
+from core.data.timeframes import TF_SECONDS
 
-
-# ---------------------------------------------------------------------------
-# Timeframe helpers
-# ---------------------------------------------------------------------------
-
-_TF_MINUTES: Dict[str, int] = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720,
-    "1d": 1440, "3d": 4320, "1w": 10080,
-}
+# B4.1 归一：分钟表由统一秒表推导（消除第三张 TF 表）
+_TF_MINUTES: Dict[str, int] = {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
 
 
 def get_timeframe_minutes(tf: str) -> int:
@@ -60,9 +53,11 @@ def load_mtf_data(
     safe_symbol = re.sub(r"[^A-Za-z0-9]", "", pair)
     result: Dict[str, pd.DataFrame] = {}
 
+    from core.data.mtf_loader import find_parquet  # B4.1：共享路径发现（含别名兜底）
+
     for tf in timeframes:
-        path = Path(data_dir) / f"{safe_symbol}_{tf}.parquet"
-        if not path.exists():
+        path = find_parquet(Path(data_dir), safe_symbol, tf)
+        if path is None:
             continue
 
         df = load_parquet(path)

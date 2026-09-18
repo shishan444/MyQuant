@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { streamSse, type StreamHandlers } from "@/realtime/sse";
 import type {
   Strategy,
   StrategyListResponse,
@@ -17,13 +18,11 @@ export async function getStrategies(params?: {
   limit?: number;
   offset?: number;
 }): Promise<StrategyListResponse> {
-  const { data } = await api.get("/api/strategies", { params });
-  return data;
+    return api.get("/api/strategies", { params });
 }
 
 export async function getStrategy(id: string): Promise<Strategy> {
-  const { data } = await api.get(`/api/strategies/${id}`);
-  return data;
+    return api.get(`/api/strategies/${id}`);
 }
 
 export async function createStrategy(payload: {
@@ -36,16 +35,14 @@ export async function createStrategy(payload: {
   tags?: string;
   notes?: string;
 }): Promise<Strategy> {
-  const { data } = await api.post("/api/strategies", payload);
-  return data;
+    return api.post("/api/strategies", { json: payload });
 }
 
 export async function updateStrategy(
   id: string,
   payload: Partial<{ name: string; tags: string; notes: string }>
 ): Promise<Strategy> {
-  const { data } = await api.put(`/api/strategies/${id}`, payload);
-  return data;
+    return api.put(`/api/strategies/${id}`, { json: payload });
 }
 
 export async function deleteStrategy(id: string): Promise<void> {
@@ -65,10 +62,7 @@ export async function runBacktest(payload: {
   data_end?: string;
   timeframe_pool?: string[];
 }): Promise<BacktestResult> {
-  const { data } = await api.post("/api/strategies/backtest", payload, {
-    timeout: 60000,
-  });
-  return data;
+  return api.post("/api/strategies/backtest", { json: payload, timeout: 60000 });
 }
 
 export async function compareStrategies(payload: {
@@ -76,8 +70,7 @@ export async function compareStrategies(payload: {
   dataset_id?: string;
   score_template?: string;
 }): Promise<{ results: BacktestResult[] }> {
-  const { data } = await api.post("/api/strategies/compare", payload);
-  return data;
+    return api.post("/api/strategies/compare", { json: payload });
 }
 
 export async function verifyStrategies(payload: {
@@ -87,50 +80,28 @@ export async function verifyStrategies(payload: {
   fee?: number;
   slippage?: number;
 }): Promise<VerifyResponse> {
-  const { data } = await api.post("/api/strategies/verify", payload, {
-    timeout: 300000,
-  });
-  return data;
+  return api.post("/api/strategies/verify", { json: payload, timeout: 300000 });
 }
 
 export async function getVerifyHistory(params?: {
   strategy_id?: string;
   limit?: number;
 }): Promise<VerifyHistoryResponse> {
-  const { data } = await api.get("/api/strategies/verify/history", { params });
-  return data;
+    return api.get("/api/strategies/verify/history", { params });
 }
 
 export async function getVerifySessions(limit?: number): Promise<VerifySessionListResponse> {
-  const { data } = await api.get("/api/strategies/verify/sessions", { params: { limit } });
-  return data;
+    return api.get("/api/strategies/verify/sessions", { params: { limit } });
 }
 
 export async function getSessionResults(sessionId: string): Promise<VerifyHistoryResponse> {
-  const { data } = await api.get(`/api/strategies/verify/sessions/${sessionId}/results`);
-  return data;
+    return api.get(`/api/strategies/verify/sessions/${sessionId}/results`);
 }
 
-export interface VerifyProgressEvent {
-  current: number;
-  total: number;
-  group: string;
-  range_start: string;
-  range_end: string;
-  batch_results: Array<Record<string, unknown>>;
-}
-
-export interface VerifyStreamCallbacks {
-  onProgress: (event: VerifyProgressEvent) => void;
-  onComplete: (data: { session_id: string; summary: unknown[]; results: unknown[] }) => void;
-  onError: (message: string) => void;
-}
-
-export interface BatchBacktestStreamCallbacks {
-  onProgress: (event: VerifyProgressEvent) => void;
-  onComplete: (data: { summary: unknown[]; results: unknown[] }) => void;
-  onError: (message: string) => void;
-}
+// 流式回调契约类型已收编 realtime 层（src/realtime/sse.ts），此处 re-export 保消费方零改动
+export type { StreamProgressEvent as VerifyProgressEvent } from "@/realtime/sse";
+export type VerifyStreamCallbacks = StreamHandlers<{ session_id: string; summary: unknown[]; results: unknown[] }>;
+export type BatchBacktestStreamCallbacks = StreamHandlers<{ summary: unknown[]; results: unknown[] }>;
 
 export function verifyStrategiesStream(
   payload: {
@@ -144,54 +115,7 @@ export function verifyStrategiesStream(
   callbacks: VerifyStreamCallbacks,
   signal?: AbortSignal,
 ): void {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  fetch(`${baseUrl}/api/strategies/verify/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const text = await response.text();
-        callbacks.onError(text || `HTTP ${response.status}`);
-        return;
-      }
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop()!;
-
-        const processPart = (part: string) => {
-          if (!part.trim()) return;
-          const lines = part.split("\n");
-          const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-          const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-          if (!eventType || !dataRaw) return;
-          try {
-            const data = JSON.parse(dataRaw);
-            if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") callbacks.onComplete(data);
-            else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-          } catch { /* ignore parse errors */ }
-        };
-
-        for (const part of parts) processPart(part);
-      }
-
-      // Process any remaining data in buffer after stream ends
-      if (buffer.trim()) processPart(buffer);
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") callbacks.onError(err.message);
-    });
+  streamSse("/api/strategies/verify/stream", payload, callbacks, signal);
 }
 
 export function batchBacktestStream(
@@ -206,55 +130,9 @@ export function batchBacktestStream(
   callbacks: BatchBacktestStreamCallbacks,
   signal?: AbortSignal,
 ): void {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  fetch(`${baseUrl}/api/strategies/batch-backtest/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const text = await response.text();
-        callbacks.onError(text || `HTTP ${response.status}`);
-        return;
-      }
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop()!;
-
-        const processPart = (part: string) => {
-          if (!part.trim()) return;
-          const lines = part.split("\n");
-          const eventType = lines.find((l) => l.startsWith("event: "))?.slice(7);
-          const dataRaw = lines.find((l) => l.startsWith("data: "))?.slice(6);
-          if (!eventType || !dataRaw) return;
-          try {
-            const data = JSON.parse(dataRaw);
-            if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") callbacks.onComplete(data);
-            else if (eventType === "error") callbacks.onError(data.message || "Unknown error");
-          } catch { /* ignore */ }
-        };
-
-        for (const part of parts) processPart(part);
-      }
-      if (buffer.trim()) processPart(buffer);
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") callbacks.onError(err.message);
-    });
+  streamSse("/api/strategies/batch-backtest/stream", payload, callbacks, signal);
 }
 
 export async function fetchBatchBacktestDetail(resultId: string): Promise<BacktestResult> {
-  const { data } = await api.get(`/api/strategies/batch-backtest/${resultId}`);
-  return data;
+    return api.get(`/api/strategies/batch-backtest/${resultId}`);
 }

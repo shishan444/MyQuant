@@ -5,7 +5,7 @@ interface RunnerStatusBadgeProps {
   activeTaskId: string | null;
 }
 
-export function RunnerStatusBadge({ isAlive, activeTaskId }: RunnerStatusBadgeProps) {
+export function RunnerStatusBadge({ isAlive }: RunnerStatusBadgeProps) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
       <span

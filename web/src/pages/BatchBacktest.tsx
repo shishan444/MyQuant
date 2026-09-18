@@ -1,20 +1,20 @@
 import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
-  Play, X, ChevronDown, ChevronUp, Loader2, LineChart,
+  Play, X, ChevronDown, ChevronUp, LineChart,
   Search, Check, Star,
 } from "lucide-react";
+import { LoadingOutlined } from "@ant-design/icons";
+import { Button as AntButton, Input, InputNumber, Progress } from "antd";
 import { PageTransition } from "@/components/PageTransition";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
 import { useStrategies, useBatchBacktestStream } from "@/hooks/useStrategies";
 import { fetchBatchBacktestDetail } from "@/services/strategies";
-import { cn } from "@/lib/utils";
-import { EquityCurveChart, BacktestMetricsPanel } from "@/components/lab";
+import { cn, monthsAgo, todayISO } from "@/lib/utils";
+import { BacktestMetricsPanel } from "@/components/lab";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import type {
-  Strategy,
   BatchBacktestResultItem,
   BatchBacktestSummaryItem,
   BacktestResult,
@@ -32,16 +32,6 @@ const DATE_PRESETS = [
 
 type StarFilter = "all" | "4+" | "3+";
 type QualifiedFilter = "all" | "qualified" | "unqualified";
-
-function monthsAgo(m: number): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - m);
-  return d.toISOString().slice(0, 10);
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function formatReturn(v: number): string {
   const sign = v >= 0 ? "+" : "";
@@ -119,11 +109,6 @@ export function BatchBacktest() {
     return [];
   }, [stream.status, stream.summary]);
 
-  const results = useMemo<BatchBacktestResultItem[]>(() => {
-    if (stream.status === "done" && Array.isArray(stream.results)) return stream.results as BatchBacktestResultItem[];
-    return [];
-  }, [stream.status, stream.results]);
-
   const stats = useMemo(() => {
     if (summary.length === 0) return null;
     const avgReturn = summary.reduce((s, item) => s + item.avg_total_return, 0) / summary.length;
@@ -172,7 +157,7 @@ export function BatchBacktest() {
   }, []);
 
   const applyPreset = useCallback((months: number) => {
-    setDateRanges([{ start: monthsAgo(months), end: today() }]);
+    setDateRanges([{ start: monthsAgo(months), end: todayISO() }]);
   }, []);
 
   const addDateRange = useCallback(() => {
@@ -261,43 +246,44 @@ export function BatchBacktest() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
                   {(["all", "4+", "3+"] as StarFilter[]).map((f) => (
-                    <Button key={f} variant={starFilter === f ? "default" : "ghost"} size="xs" className="text-[10px]" onClick={() => setStarFilter(f)}>
+                    <AntButton key={f} type={starFilter === f ? "primary" : "text"} size="small" className="!text-[10px]" onClick={() => setStarFilter(f)}>
                       {f === "all" ? "全部" : `≥${f.replace("+", "+")}星`}
-                    </Button>
+                    </AntButton>
                   ))}
                   <span className="text-border-default/30 mx-0.5">|</span>
                   {(["all", "qualified", "unqualified"] as QualifiedFilter[]).map((f) => (
-                    <Button key={f} variant={qualifiedFilter === f ? "default" : "ghost"} size="xs" className="text-[10px]" onClick={() => setQualifiedFilter(f)}>
+                    <AntButton key={f} type={qualifiedFilter === f ? "primary" : "text"} size="small" className="!text-[10px]" onClick={() => setQualifiedFilter(f)}>
                       {f === "all" ? "全部" : f === "qualified" ? "达标" : "未达标"}
-                    </Button>
+                    </AntButton>
                   ))}
                 </div>
                 <div className="relative">
-                  <Search className="h-3 w-3 absolute left-1.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="搜索策略..."
-                    className="text-[10px] h-6 w-28 pl-6 bg-white/[0.02] border-border-default/50 text-text-primary"
+                    size="small"
+                    prefix={<Search className="h-3 w-3 text-text-muted" />}
+                    className="!w-28 !text-[10px]"
                   />
                 </div>
               </div>
 
               {/* Select actions */}
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="xs" className="text-[10px]" onClick={selectAllFiltered} disabled={allFilteredSelected}>
+                <AntButton type="text" size="small" className="!text-[10px]" onClick={selectAllFiltered} disabled={allFilteredSelected}>
                   全选当前
-                </Button>
-                <Button variant="ghost" size="xs" className="text-[10px]" onClick={clearSelection} disabled={selectedIds.size === 0}>
+                </AntButton>
+                <AntButton type="text" size="small" className="!text-[10px]" onClick={clearSelection} disabled={selectedIds.size === 0}>
                   清空
-                </Button>
+                </AntButton>
               </div>
 
               {/* Strategy table */}
               <div className="max-h-[220px] overflow-y-auto rounded-lg border border-border-default/30">
                 {strategiesLoading ? (
                   <div className="py-6 text-center">
-                    <Loader2 className="w-4 h-4 text-text-muted animate-spin mx-auto" />
+                    <LoadingOutlined className="text-base text-text-muted" />
                     <p className="text-[10px] text-text-secondary mt-2">加载策略列表...</p>
                   </div>
                 ) : filteredStrategies.length === 0 ? (
@@ -370,27 +356,27 @@ export function BatchBacktest() {
                 <label className="text-xs font-medium text-text-secondary">日期区间</label>
                 <div className="flex gap-1">
                   {DATE_PRESETS.map((p) => (
-                    <Button key={p.months} variant="ghost" size="xs" className="text-[10px] text-text-secondary" onClick={() => applyPreset(p.months)}>
+                    <AntButton key={p.months} type="text" size="small" className="!text-[10px] !text-text-secondary" onClick={() => applyPreset(p.months)}>
                       {p.label}
-                    </Button>
+                    </AntButton>
                   ))}
-                  <Button variant="ghost" size="xs" onClick={addDateRange} className="text-[10px] text-text-secondary" disabled={dateRanges.length >= 3}>
+                  <AntButton type="text" size="small" onClick={addDateRange} className="!text-[10px] !text-text-secondary" disabled={dateRanges.length >= 3}>
                     + 自定义区间
-                  </Button>
+                  </AntButton>
                 </div>
               </div>
               <div className="space-y-1.5">
                 {dateRanges.map((range, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <Input type="date" value={range.start} onChange={(e) => handleDateChange(i, "start", e.target.value)}
-                      className="bg-white/[0.02] border-border-default/50 text-text-primary text-xs h-7 flex-1" />
+                      size="small" className="text-xs flex-1" />
                     <span className="text-text-muted text-xs">~</span>
                     <Input type="date" value={range.end} onChange={(e) => handleDateChange(i, "end", e.target.value)}
-                      className="bg-white/[0.02] border-border-default/50 text-text-primary text-xs h-7 flex-1" />
+                      size="small" className="text-xs flex-1" />
                     {dateRanges.length > 1 && (
-                      <Button variant="ghost" size="icon-xs" onClick={() => removeDateRange(i)} className="text-text-muted hover:text-red-400">
+                      <AntButton type="text" size="small" onClick={() => removeDateRange(i)} aria-label="删除该日期区间">
                         <X className="h-3 w-3" />
-                      </Button>
+                      </AntButton>
                     )}
                   </div>
                 ))}
@@ -400,15 +386,15 @@ export function BatchBacktest() {
             {/* Params inline + Start */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
-                <InlineParam label="资金" value={params.init_cash} onChange={(v) => setParams((p) => ({ ...p, init_cash: v }))} w="w-24" />
-                <InlineParam label="杠杆" value={params.leverage} onChange={(v) => setParams((p) => ({ ...p, leverage: v }))} suffix="x" w="w-12" />
-                <InlineParam label="费率" value={params.fee} onChange={(v) => setParams((p) => ({ ...p, fee: v }))} w="w-20" />
-                <InlineParam label="滑点" value={params.slippage} onChange={(v) => setParams((p) => ({ ...p, slippage: v }))} w="w-20" />
+                <InlineParam label="资金" value={params.init_cash} onChange={(v) => setParams((p) => ({ ...p, init_cash: v }))} w="!w-24" />
+                <InlineParam label="杠杆" value={params.leverage} onChange={(v) => setParams((p) => ({ ...p, leverage: v }))} suffix="x" w="!w-12" />
+                <InlineParam label="费率" value={params.fee} onChange={(v) => setParams((p) => ({ ...p, fee: v }))} w="!w-20" />
+                <InlineParam label="滑点" value={params.slippage} onChange={(v) => setParams((p) => ({ ...p, slippage: v }))} w="!w-20" />
               </div>
-              <Button size="sm" disabled={!canStart} onClick={handleStart} className="min-w-[140px]">
+              <AntButton type="primary" disabled={!canStart} onClick={handleStart} className="min-w-[140px]">
                 <Play className="w-3.5 h-3.5 mr-1.5" />
                 开始回测 ({selectedIds.size})
-              </Button>
+              </AntButton>
             </div>
           </motion.div>
         )}
@@ -419,7 +405,7 @@ export function BatchBacktest() {
             <span className="text-xs text-text-secondary">
               已选 {selectedIds.size} 条策略 · {filledRanges.map((r) => `${r.start}~${r.end}`).join("、")} · 资金 {params.init_cash}
             </span>
-            <Button variant="ghost" size="xs" onClick={handleReset}>重新配置</Button>
+            <AntButton type="text" size="small" onClick={handleReset}>重新配置</AntButton>
           </div>
         )}
 
@@ -432,23 +418,21 @@ export function BatchBacktest() {
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-accent-gold animate-spin" />
+                <LoadingOutlined className="text-base" style={{ color: "#F59E0B" }} />
                 <span className="text-sm font-medium text-text-primary">批量回测中...</span>
               </div>
               <span className="text-xs font-mono text-text-secondary">
                 {stream.progress.current}/{stream.progress.total} 步骤
               </span>
             </div>
-            <div className="w-full h-2 bg-accent-gold/20 rounded-full overflow-hidden">
-              <div className="h-full bg-accent-gold rounded-full transition-all duration-300" style={{ width: `${progressPct}%` }} />
-            </div>
+            <Progress percent={progressPct} showInfo={false} size={{ height: 8 }} strokeColor="#F59E0B" />
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-secondary">
                 正在处理 {stream.currentGroup} · {stream.rangeLabel}
               </span>
               <div className="flex items-center gap-3">
                 <span className="text-[11px] font-mono text-text-muted">已完成 {stream.results.length} 条</span>
-                <Button variant="ghost" size="xs" onClick={handleCancel} className="text-red-400/80 hover:text-red-400">取消</Button>
+                <AntButton type="text" size="small" danger onClick={handleCancel}>取消</AntButton>
               </div>
             </div>
           </motion.div>
@@ -459,7 +443,7 @@ export function BatchBacktest() {
           <div className="rounded-xl border border-red-900/30 bg-white/[0.01] p-3 flex items-center gap-2">
             <X className="w-4 h-4 text-red-400 shrink-0" />
             <span className="text-xs text-red-400 flex-1">{stream.error}</span>
-            <Button variant="ghost" size="xs" onClick={handleReset}>重试</Button>
+            <AntButton type="text" size="small" onClick={handleReset}>重试</AntButton>
           </div>
         )}
 
@@ -510,14 +494,14 @@ export function BatchBacktest() {
 
 /* ── Sub-components ── */
 
-function InlineParam({ label, value, onChange, suffix, w = "w-20" }: {
+function InlineParam({ label, value, onChange, suffix, w = "!w-20" }: {
   label: string; value: string; onChange: (v: string) => void; suffix?: string; w?: string;
 }) {
   return (
     <div className="flex items-center gap-1">
       <span className="text-[10px] text-text-secondary shrink-0">{label}</span>
-      <Input type="number" value={value} onChange={(e) => onChange(e.target.value)}
-        className={cn("text-[11px] h-6 bg-white/[0.02] border-border-default/50 text-text-primary", w)} />
+      <InputNumber value={Number(value) || undefined} onChange={(v) => onChange(String(v ?? 0))}
+        size="small" className={cn("!text-[11px]", w)} aria-label={label} />
       {suffix && <span className="text-[10px] text-text-secondary">{suffix}</span>}
     </div>
   );
@@ -627,7 +611,7 @@ function PeriodDetailRow({
   result, detail, detailLoading, detailError, onLoadDetail, expanded, onToggleDetail,
 }: {
   result: BatchBacktestResultItem; detail?: BacktestResult; detailLoading: boolean;
-  detailError: string; onLoadDetail: () => void; expanded: boolean; onToggleDetail: () => void;
+  detailError: string; onLoadDetail: (id: string) => void; expanded: boolean; onToggleDetail: () => void;
 }) {
   return (
     <>
@@ -646,9 +630,9 @@ function PeriodDetailRow({
           {result.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <X className="w-3 h-3 text-red-400/60 inline" />}
         </td>
         <td className="py-1.5 text-right">
-          <Button variant="ghost" size="xs" onClick={() => { if (!expanded) onLoadDetail(); onToggleDetail(); }} className="text-[10px]">
+          <AntButton type="text" size="small" onClick={() => { if (!expanded) onLoadDetail(result.result_id); onToggleDetail(); }} className="!text-[10px]">
             {expanded ? "收起" : "详情"}
-          </Button>
+          </AntButton>
         </td>
       </tr>
       {expanded && (
@@ -657,7 +641,7 @@ function PeriodDetailRow({
             <div className="px-4 py-3 bg-white/[0.005] border-b border-border-default/10 space-y-3">
               {detailLoading && (
                 <div className="flex items-center gap-2 text-xs text-text-secondary">
-                  <Loader2 className="w-3 h-3 animate-spin" />加载详情...
+                  <LoadingOutlined className="mr-1" />加载详情...
                 </div>
               )}
               {detailError && <div className="text-xs text-red-400">{detailError}</div>}
@@ -665,7 +649,7 @@ function PeriodDetailRow({
                 <>
                   <div>
                     <div className="text-[10px] text-text-secondary mb-1">资金曲线</div>
-                    <EquityCurveChart data={detail.equity_curve ?? []} height={200} />
+                    <EquityCurve data={detail.equity_curve ?? []} height={200} />
                   </div>
                   <BacktestMetricsPanel result={detail} />
                 </>

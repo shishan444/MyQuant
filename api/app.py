@@ -14,13 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 logger = logging.getLogger("app")
 
 from core.persistence.db_ext import init_db_ext
-from .routes import config, data, evolution, strategies, ws
+from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
 from .routes import discovery as discovery_route
 from .routes import trading as trading_route
 from .routes import live_trading as live_trading_route
 from .schemas import HealthResponse
+
+try:
+    from importlib.metadata import version as _pkg_version
+    APP_VERSION = _pkg_version("MyQuant")
+except Exception:  # 包未安装（非 editable 运行）时回退常量，与 pyproject 同步维护
+    APP_VERSION = "0.16.0"
 
 
 def create_app(
@@ -48,12 +54,9 @@ def create_app(
         db_path.parent.mkdir(parents=True, exist_ok=True)
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
-        from core.live_trading.persistence import init_live_trading_tables
-        init_live_trading_tables(db_path)
 
         # Start EvolutionRunner background thread
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
-        from .routes.ws import get_manager
 
         recover_stale_tasks(db_path)
         restart_crashed_tasks(db_path)
@@ -76,14 +79,20 @@ def create_app(
         # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
         event_loop = asyncio.get_event_loop()
 
-        def _ws_push(task_id: str, payload: dict) -> None:
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    get_manager().push(task_id, payload), event_loop
-                )
-                future.add_done_callback(_on_ws_push_done)
-            except Exception:
-                logger.warning("WS push schedule failed for task %s", task_id, exc_info=True)
+        # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
+        import os as _os
+        from . import realtime
+        realtime.capture_loop()
+        _os.environ["MYQUANT_DB_PATH"] = str(db_path)
+
+        def _make_push(namespace: str):
+            """B8.2: native WS（manager.push，room 按 task_id）+ socket.io 定向
+            namespace emit 双发——切换验证后 native 侧退役（11.4）。"""
+            def _push(task_id: str, payload: dict) -> None:
+                realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
+            return _push
+        _ws_push_evolution = _make_push("/evolution")
+        _ws_push_trading = _make_push("/trading")
 
         def _on_ws_push_done(future: asyncio.Future) -> None:
             """Log any exception from the WS push coroutine."""
@@ -92,8 +101,8 @@ def create_app(
             except Exception:
                 logger.warning("WS push coroutine failed", exc_info=True)
 
-        set_ws_push_fn(_ws_push)
-        set_trading_ws_push_fn(_ws_push)
+        set_ws_push_fn(_ws_push_evolution)
+        set_trading_ws_push_fn(_ws_push_trading)
         runner.start()
         trading_runner.start()
 
@@ -109,7 +118,7 @@ def create_app(
 
     app = FastAPI(
         title="MyQuant API",
-        version="0.16.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -127,7 +136,6 @@ def create_app(
     app.include_router(strategies.router)
     app.include_router(evolution.router)
     app.include_router(data.router)
-    app.include_router(ws.router)
     app.include_router(trading_route.router)
     app.include_router(live_trading_route.router)
     app.include_router(validate_route.router)
@@ -139,12 +147,18 @@ def create_app(
     def health_check() -> HealthResponse:
         return HealthResponse(
             status="ok",
-            version="0.16.0",
+            version=APP_VERSION,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
     return app
 
 
-# Default app instance for uvicorn
-app = create_app()
+# Default app instance for uvicorn：FastAPI + socket.io ASGI 组合
+# （socket.io 端点在 /socket.io 路径；namespace 经连接参数路由）
+_fastapi_app = create_app()
+
+import socketio as _socketio_mod  # noqa: E402
+from .realtime import sio as _realtime_sio  # noqa: E402
+
+app = _socketio_mod.ASGIApp(_realtime_sio, other_asgi_app=_fastapi_app, socketio_path="socket.io")

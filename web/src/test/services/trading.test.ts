@@ -19,8 +19,6 @@ import {
   getTradingTask,
   createTradingTask,
   stopTradingTask,
-  pauseTradingTask,
-  resumeTradingTask,
   getTradingTrades,
   getTradingRunnerStatus,
   getTradingEquity,
@@ -40,7 +38,7 @@ describe("trading service", () => {
   // --- listTradingTasks ---
   it("listTradingTasks calls correct endpoint with params", async () => {
     const mockResponse = { tasks: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await listTradingTasks({ status: "running", limit: 10, offset: 0 });
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks", {
@@ -51,7 +49,7 @@ describe("trading service", () => {
 
   it("listTradingTasks works without params", async () => {
     const mockResponse = { tasks: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await listTradingTasks();
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks", { params: undefined });
@@ -61,7 +59,7 @@ describe("trading service", () => {
   // --- getTradingTask ---
   it("getTradingTask calls correct endpoint", async () => {
     const mockTask = { task_id: "t1", status: "running" };
-    mockedGet.mockResolvedValueOnce({ data: mockTask });
+    mockedGet.mockResolvedValueOnce(mockTask);
 
     const result = await getTradingTask("t1");
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks/t1");
@@ -72,47 +70,27 @@ describe("trading service", () => {
   it("createTradingTask calls POST with correct params", async () => {
     const params = { dna_json: '{"signal_genes":[]}', symbol: "BTCUSDT", timeframe: "4h" };
     const mockTask = { task_id: "t2", status: "pending", ...params };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
+    mockedPost.mockResolvedValueOnce(mockTask);
 
     const result = await createTradingTask(params);
-    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks", params);
+    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks", { json: params });
     expect(result).toEqual(mockTask);
   });
 
   // --- stopTradingTask ---
   it("stopTradingTask calls POST with correct endpoint", async () => {
     const mockTask = { task_id: "t1", status: "stopped" };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
+    mockedPost.mockResolvedValueOnce(mockTask);
 
     const result = await stopTradingTask("t1");
     expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/stop");
     expect(result).toEqual(mockTask);
   });
 
-  // --- pauseTradingTask ---
-  it("pauseTradingTask calls POST with correct endpoint", async () => {
-    const mockTask = { task_id: "t1", status: "paused" };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
-
-    const result = await pauseTradingTask("t1");
-    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/pause");
-    expect(result).toEqual(mockTask);
-  });
-
-  // --- resumeTradingTask ---
-  it("resumeTradingTask calls POST with correct endpoint", async () => {
-    const mockTask = { task_id: "t1", status: "running" };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
-
-    const result = await resumeTradingTask("t1");
-    expect(mockedPost).toHaveBeenCalledWith("/api/trading/tasks/t1/resume");
-    expect(result).toEqual(mockTask);
-  });
-
   // --- getTradingTrades ---
   it("getTradingTrades calls correct endpoint with limit", async () => {
     const mockResponse = { trades: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await getTradingTrades("t1", 50);
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks/t1/trades", {
@@ -123,7 +101,7 @@ describe("trading service", () => {
 
   it("getTradingTrades works without limit", async () => {
     const mockResponse = { trades: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await getTradingTrades("t1");
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks/t1/trades", {
@@ -135,7 +113,7 @@ describe("trading service", () => {
   // --- getTradingRunnerStatus ---
   it("getTradingRunnerStatus calls correct endpoint", async () => {
     const mockStatus = { is_alive: true, active_task_id: "t1" };
-    mockedGet.mockResolvedValueOnce({ data: mockStatus });
+    mockedGet.mockResolvedValueOnce(mockStatus);
 
     const result = await getTradingRunnerStatus();
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/runner-status");
@@ -145,7 +123,7 @@ describe("trading service", () => {
   // --- getTradingEquity ---
   it("getTradingEquity calls correct endpoint", async () => {
     const mockEquity = { snapshots: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockEquity });
+    mockedGet.mockResolvedValueOnce(mockEquity);
 
     const result = await getTradingEquity("t1");
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks/t1/equity");
@@ -155,7 +133,7 @@ describe("trading service", () => {
   // --- getTradingMetrics ---
   it("getTradingMetrics calls correct endpoint", async () => {
     const mockMetrics = { task_id: "t1", total_return: 0.1, win_rate: 0.6 };
-    mockedGet.mockResolvedValueOnce({ data: mockMetrics });
+    mockedGet.mockResolvedValueOnce(mockMetrics);
 
     const result = await getTradingMetrics("t1");
     expect(mockedGet).toHaveBeenCalledWith("/api/trading/tasks/t1/metrics");
@@ -165,7 +143,7 @@ describe("trading service", () => {
   // --- deleteTradingTask ---
   it("deleteTradingTask calls DELETE with correct endpoint", async () => {
     const mockResponse = { deleted: true };
-    mockedDelete.mockResolvedValueOnce({ data: mockResponse });
+    mockedDelete.mockResolvedValueOnce(mockResponse);
 
     const result = await deleteTradingTask("t1");
     expect(mockedDelete).toHaveBeenCalledWith("/api/trading/tasks/t1");

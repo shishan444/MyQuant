@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   TrendingUp,
-  Pause,
-  Play,
   Square,
   Trash2,
   Plus,
@@ -14,33 +12,12 @@ import {
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { App, Button as AntButton, Input, Table, Tag, type TableProps } from "antd";
 import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 import {
   useTradingTasks,
   useTradingTrades,
   useStopTradingTask,
-  usePauseTradingTask,
-  useResumeTradingTask,
   useCreateTradingTask,
   useRestartTradingTask,
   useDeleteTradingTask,
@@ -50,7 +27,7 @@ import {
   useRunnerStatus,
 } from "@/hooks/useTrading";
 import { TradingChart } from "@/components/trading/TradingChart";
-import { EquityCurve } from "@/components/trading/EquityCurve";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import { MetricsDashboard } from "@/components/trading/MetricsDashboard";
 import { RunnerStatusBadge } from "@/components/trading/RunnerStatusBadge";
 import { CreateTaskDialog } from "@/components/trading/CreateTaskDialog";
@@ -58,17 +35,16 @@ import type { TradingTask, PaperTrade } from "@/services/trading";
 
 type PositionSide = "long" | "short" | "flat";
 
-const STATUS_BADGE_MAP: Record<string, { label: string; className: string }> = {
-  pending: { label: "等待中", className: "text-accent-gold border-accent-gold/30" },
-  running: { label: "运行中", className: "text-profit border-profit/30" },
-  paused: { label: "已暂停", className: "text-accent-gold border-accent-gold/30" },
-  stopped: { label: "已停止", className: "text-loss border-loss/30" },
+const STATUS_BADGE_MAP: Record<string, { label: string; color: string }> = {
+  pending: { label: "等待中", color: "warning" },
+  running: { label: "运行中", color: "success" },
+  stopped: { label: "已停止", color: "error" },
 };
 
-const POSITION_BADGE_MAP: Record<PositionSide, { label: string; className: string }> = {
-  long: { label: "做多", className: "text-profit border-profit/30" },
-  short: { label: "做空", className: "text-loss border-loss/30" },
-  flat: { label: "空仓", className: "text-text-muted border-border-default" },
+const POSITION_BADGE_MAP: Record<PositionSide, { label: string; color: string }> = {
+  long: { label: "做多", color: "success" },
+  short: { label: "做空", color: "error" },
+  flat: { label: "空仓", color: "default" },
 };
 
 const DIR_LABEL: Record<string, string> = {
@@ -101,6 +77,7 @@ function TaskListItem({
   onRestart: () => void;
 }) {
   const statusBadge = STATUS_BADGE_MAP[task.status] ?? STATUS_BADGE_MAP.stopped;
+
   const returnRate =
     task.initial_cash > 0 ? (task.total_pnl || 0) / task.initial_cash : 0;
   const isStopped = task.status === "stopped";
@@ -123,12 +100,9 @@ function TaskListItem({
             {task.symbol} / {task.timeframe} / {task.leverage}x
           </span>
         </div>
-        <Badge
-          variant="outline"
-          className={cn("h-4 text-[9px] shrink-0", statusBadge.className)}
-        >
+        <Tag color={statusBadge.color} className="!m-0 !text-[9px] !leading-4 shrink-0">
           {statusBadge.label}
-        </Badge>
+        </Tag>
       </div>
       <div className="flex items-end justify-between">
         <span className="font-num text-sm font-semibold text-text-primary">
@@ -147,30 +121,29 @@ function TaskListItem({
       </div>
       {isStopped && (
         <div className="flex items-center gap-1 self-end">
-          <Button
-            variant="ghost"
-            size="xs"
-            className="text-accent-gold text-[10px] h-5 px-1"
+          <AntButton
+            type="text"
+            size="small"
+            aria-label="重新开始"
             onClick={(e) => {
               e.stopPropagation();
               onRestart();
             }}
-            title="重新开始"
           >
-            <RotateCcw className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="text-loss text-[10px] h-5 px-1"
+            <RotateCcw className="h-3 w-3" style={{ color: "#F59E0B" }} />
+          </AntButton>
+          <AntButton
+            type="text"
+            size="small"
+            danger
+            aria-label="删除任务"
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
             }}
-            title="删除"
           >
             <Trash2 className="h-3 w-3" />
-          </Button>
+          </AntButton>
         </div>
       )}
     </GlassCard>
@@ -182,12 +155,11 @@ function TaskListItem({
 // ---------------------------------------------------------------------------
 
 export function Trading() {
+  const { modal } = App.useApp();
   const { data: taskList, isLoading, isError, error, refetch } = useTradingTasks();
   const { data: runnerStatus } = useRunnerStatus();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [restartTarget, setRestartTarget] = useState<TradingTask | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
@@ -269,11 +241,31 @@ export function Trading() {
     [pendingCreate, createTask],
   );
 
-  const handleRestart = useCallback(() => {
-    if (!restartTarget) return;
-    restartMut.mutate(restartTarget.task_id);
-    setRestartTarget(null);
-  }, [restartTarget, restartMut]);
+  const openDeleteConfirm = useCallback((taskId: string) => {
+    modal.confirm({
+      title: "删除任务",
+      content: "将永久删除该任务及所有关联数据（交易记录、权益快照），此操作不可撤销。",
+      okText: "确认删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: () => {
+        deleteMut.mutate(taskId);
+        if (selectedTaskId === taskId) setSelectedTaskId(null);
+      },
+    });
+  }, [modal, deleteMut, selectedTaskId]);
+
+  const openRestartConfirm = useCallback((task: TradingTask) => {
+    modal.confirm({
+      title: "重新开始模拟交易",
+      content: `使用相同策略（${task.strategy_name || task.symbol}）在 ${task.symbol} / ${task.timeframe} 上创建新任务？初始资金: ${formatCurrency(task.initial_cash)}。`,
+      okText: "创建任务",
+      cancelText: "取消",
+      onOk: () => {
+        restartMut.mutate(task.task_id);
+      },
+    });
+  }, [modal, restartMut]);
 
   if (isLoading) {
     return (
@@ -343,25 +335,24 @@ export function Trading() {
             />
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full gap-1 text-xs text-accent-gold border-accent-gold/30 hover:bg-accent-gold/10"
+          <AntButton
+            block
+            size="small"
+            icon={<Plus className="h-3 w-3" />}
             onClick={() => navigate("/strategies")}
           >
-            <Plus className="h-3 w-3" /> 新建任务
-          </Button>
+            新建任务
+          </AntButton>
 
           {tasks.length > 3 && (
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-text-muted" />
-              <input
-                className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md bg-[#0f0f18] border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-gold/50"
-                placeholder="搜索策略名或交易对..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+            <Input
+              size="small"
+              prefix={<Search className="h-3 w-3 text-text-muted" />}
+              placeholder="搜索策略名或交易对..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              allowClear
+            />
           )}
 
           {filteredTasks.map((task) => (
@@ -370,8 +361,8 @@ export function Trading() {
               task={task}
               isSelected={task.task_id === activeTaskId}
               onSelect={() => setSelectedTaskId(task.task_id)}
-              onDelete={() => setDeleteTarget(task.task_id)}
-              onRestart={() => setRestartTarget(task)}
+              onDelete={() => openDeleteConfirm(task.task_id)}
+              onRestart={() => openRestartConfirm(task)}
             />
           ))}
         </div>
@@ -382,7 +373,7 @@ export function Trading() {
             <TaskDetailPanel
               task={activeTask}
               wsConnected={wsConnected}
-              onRestart={() => setRestartTarget(activeTask)}
+              onRestart={() => openRestartConfirm(activeTask)}
             />
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -405,54 +396,8 @@ export function Trading() {
         onConfirm={handleConfirmCreate}
       />
 
-      {/* Delete confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>删除任务</AlertDialogTitle>
-            <AlertDialogDescription>
-              将永久删除该任务及所有关联数据（交易记录、权益快照），此操作不可撤销。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-loss text-white hover:bg-loss/80"
-              disabled={deleteMut.isPending}
-              onClick={() => {
-                if (deleteTarget) {
-                  deleteMut.mutate(deleteTarget);
-                  if (selectedTaskId === deleteTarget) setSelectedTaskId(null);
-                  setDeleteTarget(null);
-                }
-              }}
-            >
-              确认删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Restart confirmation */}
-      <AlertDialog open={!!restartTarget} onOpenChange={() => setRestartTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>重新开始模拟交易</AlertDialogTitle>
-            <AlertDialogDescription>
-              使用相同策略
-              ({restartTarget?.strategy_name || restartTarget?.symbol})
-              在 {restartTarget?.symbol} / {restartTarget?.timeframe} 上创建新任务？
-              初始资金: {formatCurrency(restartTarget?.initial_cash ?? 100_000)}。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction disabled={restartMut.isPending} onClick={handleRestart}>
-              创建任务
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* 确认交互单源=AntD modal 体系（原 AlertDialog×2 收敛） */}
+      {/* 删除/重启弹层由 openDeleteConfirm/openRestartConfirm 命令式触发 */}
     </PageTransition>
   );
 }
@@ -473,8 +418,6 @@ function TaskDetailPanel({
   onRestart: () => void;
 }) {
   const stopMut = useStopTradingTask();
-  const pauseMut = usePauseTradingTask();
-  const resumeMut = useResumeTradingTask();
 
   const { data: tradeData } = useTradingTrades(task.task_id, 500);
   const { data: equityData } = useTradingEquity(task.task_id);
@@ -484,10 +427,9 @@ function TaskDetailPanel({
   const totalTrades = tradeData?.total ?? 0;
   const equitySnapshots = equityData?.snapshots ?? [];
   const isRunning = task.status === "running";
-  const isPaused = task.status === "paused";
-  const isActive = isRunning || isPaused || task.status === "pending";
+  const isActive = isRunning || task.status === "pending";
   const isStopped = task.status === "stopped";
-  const mutating = stopMut.isPending || pauseMut.isPending || resumeMut.isPending;
+  const mutating = stopMut.isPending;
 
   const [visibleTrades, setVisibleTrades] = useState(TRADE_PAGE_SIZE);
 
@@ -504,8 +446,8 @@ function TaskDetailPanel({
   const hasPosition = posSide !== "flat";
   const upnl = task.unrealized_pnl ?? 0;
   const equity = hasPosition
-    ? task.balance + (task.position_margin ?? 0) + upnl
-    : task.balance;
+    ? (task.balance ?? 0) + (task.position_margin ?? 0) + upnl
+    : task.balance ?? 0;
   const equityReturn =
     task.initial_cash > 0 ? (equity - task.initial_cash) / task.initial_cash : 0;
 
@@ -527,25 +469,13 @@ function TaskDetailPanel({
                 </span>
               )}
             </span>
-            <Badge
-              variant="outline"
-              className={cn(
-                "h-5 text-[10px]",
-                STATUS_BADGE_MAP[task.status]?.className,
-              )}
-            >
+            <Tag color={STATUS_BADGE_MAP[task.status]?.color} className="!m-0 !text-[10px]">
               {STATUS_BADGE_MAP[task.status]?.label ?? task.status}
-            </Badge>
+            </Tag>
             {hasPosition && (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "h-5 text-[10px]",
-                  POSITION_BADGE_MAP[posSide].className,
-                )}
-              >
+              <Tag color={POSITION_BADGE_MAP[posSide].color} className="!m-0 !text-[10px]">
                 {POSITION_BADGE_MAP[posSide].label}
-              </Badge>
+              </Tag>
             )}
             {wsConnected && isRunning && (
               <span
@@ -556,49 +486,20 @@ function TaskDetailPanel({
           </div>
           <div className="flex items-center gap-2">
             {isActive && (
-              <>
-                {isRunning && (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    className="gap-1 text-xs"
-                    disabled={mutating}
-                    onClick={() => pauseMut.mutate(task.task_id)}
-                  >
-                    <Pause className="h-3 w-3" /> 暂停
-                  </Button>
-                )}
-                {isPaused && (
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    className="gap-1 text-xs"
-                    disabled={mutating}
-                    onClick={() => resumeMut.mutate(task.task_id)}
-                  >
-                    <Play className="h-3 w-3" /> 继续
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="gap-1 text-xs text-loss"
-                  disabled={mutating}
-                  onClick={() => stopMut.mutate(task.task_id)}
-                >
-                  <Square className="h-3 w-3" /> 停止
-                </Button>
-              </>
+              <AntButton
+                type="text"
+                size="small"
+                danger
+                disabled={mutating}
+                onClick={() => stopMut.mutate(task.task_id)}
+              >
+                <Square className="h-3 w-3" /> 停止
+              </AntButton>
             )}
             {isStopped && (
-              <Button
-                variant="outline"
-                size="xs"
-                className="gap-1 text-xs text-accent-gold"
-                onClick={onRestart}
-              >
+              <AntButton size="small" onClick={onRestart}>
                 <RotateCcw className="h-3 w-3" /> 重新开始
-              </Button>
+              </AntButton>
             )}
           </div>
         </div>
@@ -610,7 +511,7 @@ function TaskDetailPanel({
               账户余额
             </span>
             <p className="font-num text-lg font-semibold text-text-primary">
-              {formatCurrency(task.balance)}
+              {formatCurrency(task.balance ?? 0)}
             </p>
             <span
               className={cn(
@@ -658,16 +559,13 @@ function TaskDetailPanel({
         {/* Position detail line (only when position is open) */}
         {hasPosition && (
           <div className="mt-2 pt-2 border-t border-border-default flex items-center gap-4 text-xs text-text-muted flex-wrap">
-            <span>开仓价 {formatCurrency(task.position_entry)}</span>
+            <span>开仓价 {formatCurrency(task.position_entry ?? 0)}</span>
             <span>
               数量 {task.position_quantity?.toFixed(6)}
             </span>
             <span>
-              保证金 {formatCurrency(task.position_margin)}
+              保证金 {formatCurrency(task.position_margin ?? 0)}
             </span>
-            {task.bars_held > 0 && (
-              <span>已持仓 {task.bars_held}根K线</span>
-            )}
           </div>
         )}
       </GlassCard>
@@ -695,8 +593,8 @@ function TaskDetailPanel({
           <div className="mt-2 pt-2 border-t border-border-default">
             <span className="text-xs text-text-secondary mb-1 block">权益曲线</span>
             <EquityCurve
-              data={equitySnapshots}
-              initialCash={task.initial_cash}
+              data={equitySnapshots.map((s) => ({ timestamp: s.timestamp, value: s.equity }))}
+              baseline={task.initial_cash}
               height={120}
             />
           </div>
@@ -714,33 +612,23 @@ function TaskDetailPanel({
           </div>
         ) : (
           <div className="rounded-lg border border-border-default overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-[#0f0f18] hover:bg-[#0f0f18]">
-                  <TableHead className="text-text-secondary">时间</TableHead>
-                  <TableHead className="text-text-secondary">方向</TableHead>
-                  <TableHead className="text-text-secondary">操作</TableHead>
-                  <TableHead className="text-text-secondary">价格</TableHead>
-                  <TableHead className="text-text-secondary">盈亏</TableHead>
-                  <TableHead className="text-text-secondary">原因</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayedTrades.map((trade) => (
-                  <TradeRow key={trade.id} trade={trade} />
-                ))}
-              </TableBody>
-            </Table>
+            <Table<PaperTrade>
+              rowKey="id"
+              columns={TRADE_COLUMNS}
+              dataSource={displayedTrades}
+              size="small"
+              pagination={false}
+            />
             {hasMore && (
               <div className="flex justify-center py-2 border-t border-border-default">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="text-xs text-text-muted"
+                <AntButton
+                  type="text"
+                  size="small"
+                  className="!text-xs !text-text-muted"
                   onClick={() => setVisibleTrades(trades.length)}
                 >
                   查看全部 (共{totalTrades}条)
-                </Button>
+                </AntButton>
               </div>
             )}
           </div>
@@ -778,58 +666,51 @@ const REASON_LABEL: Record<string, string> = {
   reduce_full: "减仓平仓",
 };
 
-function TradeRow({ trade }: { trade: PaperTrade }) {
-  const pnlTrend =
-    trade.pnl !== null
-      ? trade.pnl > 0
-        ? "up"
-        : trade.pnl < 0
-          ? "down"
-          : "neutral"
-      : "neutral";
-
-  return (
-    <TableRow>
-      <TableCell>
-        <span className="text-xs text-text-muted">
-          {trade.bar_time.slice(0, 19).replace("T", " ")}
+/** 交易明细列（TradeRow 迁移为声明式 columns——render 逻辑原样移植） */
+const TRADE_COLUMNS: TableProps<PaperTrade>["columns"] = [
+  {
+    title: "时间",
+    dataIndex: "bar_time",
+    render: (v: string) => (
+      <span className="text-xs text-text-muted">{v.slice(0, 19).replace("T", " ")}</span>
+    ),
+  },
+  {
+    title: "方向",
+    dataIndex: "side",
+    render: (v: string) => (
+      <span className={cn("text-sm", SIDE_COLOR[v] ?? "text-text-primary")}>
+        {SIDE_LABEL[v] ?? v}
+      </span>
+    ),
+  },
+  {
+    title: "操作",
+    dataIndex: "action",
+    render: (v: string) => <span className="text-sm text-text-primary">{ACTION_LABEL[v] ?? v}</span>,
+  },
+  {
+    title: "价格",
+    dataIndex: "price",
+    render: (v: number) => <span className="font-num text-sm text-text-primary">{formatCurrency(v)}</span>,
+  },
+  {
+    title: "盈亏",
+    dataIndex: "pnl",
+    render: (v: number | null) =>
+      v !== null ? (
+        <span className={cn("font-num text-sm font-medium", v > 0 && "text-profit", v < 0 && "text-loss")}>
+          {formatCurrency(v)}
         </span>
-      </TableCell>
-      <TableCell>
-        <span className={cn("text-sm", SIDE_COLOR[trade.side] ?? "text-text-primary")}>
-          {SIDE_LABEL[trade.side] ?? trade.side}
-        </span>
-      </TableCell>
-      <TableCell>
-        <span className="text-sm text-text-primary">
-          {ACTION_LABEL[trade.action] ?? trade.action}
-        </span>
-      </TableCell>
-      <TableCell>
-        <span className="font-num text-sm text-text-primary">
-          {formatCurrency(trade.price)}
-        </span>
-      </TableCell>
-      <TableCell>
-        {trade.pnl !== null ? (
-          <span
-            className={cn(
-              "font-num text-sm font-medium",
-              pnlTrend === "up" && "text-profit",
-              pnlTrend === "down" && "text-loss",
-            )}
-          >
-            {formatCurrency(trade.pnl)}
-          </span>
-        ) : (
-          <span className="text-text-muted">-</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className="text-xs text-text-muted">
-          {REASON_LABEL[trade.reason ?? ""] ?? trade.reason ?? "-"}
-        </span>
-      </TableCell>
-    </TableRow>
-  );
-}
+      ) : (
+        <span className="text-text-muted">-</span>
+      ),
+  },
+  {
+    title: "原因",
+    dataIndex: "reason",
+    render: (v: string | null) => (
+      <span className="text-xs text-text-muted">{REASON_LABEL[v ?? ""] ?? v ?? "-"}</span>
+    ),
+  },
+];

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { LoadingOutlined } from "@ant-design/icons";
 import {
   Database,
   Upload,
@@ -8,45 +9,28 @@ import {
   Trash2,
   TrendingUp,
   FileUp,
-  Loader2,
   X,
   FileSpreadsheet,
   CheckCircle2,
 } from "lucide-react";
+import {
+  App,
+  Button as AntButton,
+  Form,
+  Input,
+  Modal,
+  Progress,
+  Select,
+  Skeleton,
+  Table,
+  Tooltip,
+  type TableProps,
+} from "antd";
 import { GlassCard } from "@/components/GlassCard";
 import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useImportCsv, useImportCsvBatch, useDeleteDataset } from "@/hooks/useDatasets";
-import { cn, formatNumber } from "@/lib/utils";
-import { api } from "@/services/api";
+import { useImportCsv, useImportCsvBatch, useDeleteDataset, useDatasets } from "@/hooks/useDatasets";
+import { formatNumber } from "@/lib/utils";
 import type { Dataset } from "@/types/api";
 
 // ---------------------------------------------------------------------------
@@ -66,48 +50,39 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ---------------------------------------------------------------------------
-// Quality indicator bar below each table row
-// ---------------------------------------------------------------------------
+/** 数据质量配置（状态非纯颜色载体：文案+数值伴随色条） */
+const QUALITY_CFG: Record<
+  Dataset["quality_status"],
+  { value: number; color: string; label: string }
+> = {
+  complete: { value: 100, color: "#00C853", label: "数据质量: 完整" },
+  warning: { value: 90, color: "#FBBF24", label: "有缺口 <5%" },
+  error: { value: 60, color: "#EF4444", label: "缺口 >5%" },
+  unknown: { value: 0, color: "#64748b", label: "未知" },
+};
+
 function QualityBar({ status }: { status: Dataset["quality_status"] }) {
-  const cfg: Record<
-    Dataset["quality_status"],
-    { value: number; color: string; label: string }
-  > = {
-    complete: { value: 100, color: "bg-green-500", label: "数据质量: 完整" },
-    warning: { value: 90, color: "bg-yellow-500", label: "有缺口 <5%" },
-    error: { value: 60, color: "bg-red-500", label: "缺口 >5%" },
-    unknown: { value: 0, color: "bg-gray-500", label: "未知" },
-  };
-
-  const { value, color, label } = cfg[status] ?? cfg.unknown;
-
+  const { value, color, label } = QUALITY_CFG[status] ?? QUALITY_CFG.unknown;
   return (
-    <div className="flex items-center gap-2 pt-1">
-      <Progress
-        value={value}
-        className={cn("h-1.5 flex-1", "[&>[data-slot=progress-indicator]]:" + color)}
-      />
+    <div className="flex items-center gap-2 pb-1">
+      <Progress percent={value} showInfo={false} size={{ height: 6 }} strokeColor={color} className="flex-1 !m-0" />
       <span className="text-[11px] text-text-muted">{label}</span>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Skeleton loader for the table
-// ---------------------------------------------------------------------------
 function TableSkeleton() {
   return (
     <div className="flex flex-col gap-2">
       {Array.from({ length: 5 }).map((_, i) => (
-        <Skeleton key={i} className="h-12 w-full rounded-lg" />
+        <Skeleton key={i} active paragraph={false} className="rounded-lg" />
       ))}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Upload Dialog (extracted to avoid duplication)
+// Upload Dialog（表单草稿以 AntD Form 为唯一持有者——ui-state spec）
 // ---------------------------------------------------------------------------
 function UploadDialog({
   open,
@@ -118,9 +93,8 @@ function UploadDialog({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [symbol, setSymbol] = useState("");
-  const [interval, setInterval] = useState("1h");
-  const [mode, setMode] = useState("merge");
+  // 表单草稿唯一持有者=AntD Form 实例（ui-state spec：symbol/周期/导入模式）
+  const [form] = Form.useForm<{ symbol: string; interval: string; mode: string }>();
 
   const importCsv = useImportCsv();
   const importCsvBatch = useImportCsvBatch();
@@ -138,8 +112,9 @@ function UploadDialog({
 
   const autoSymbol = detectedInfo?.symbol ?? "";
   const autoInterval = detectedInfo?.interval ?? "";
-  const effectiveSymbol = autoSymbol || symbol.trim().toUpperCase();
-  const effectiveInterval = autoInterval || interval;
+  const manualSymbol = Form.useWatch("symbol", form) ?? "";
+  const effectiveSymbol = autoSymbol || manualSymbol.trim().toUpperCase();
+  const effectiveInterval = autoInterval || form.getFieldValue("interval") || "1h";
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,7 +145,7 @@ function UploadDialog({
     }
     formData.append("symbol", effectiveSymbol);
     formData.append("interval", effectiveInterval);
-    formData.append("mode", mode);
+    formData.append("mode", form.getFieldValue("mode") || "merge");
 
     try {
       if (selectedFiles.length === 1) {
@@ -180,167 +155,126 @@ function UploadDialog({
       }
       onOpenChange(false);
       setSelectedFiles([]);
-      setSymbol("");
-      setInterval("1h");
-      setMode("merge");
+      form.resetFields();
     } catch {
       // error handled by mutation onError
     }
-  }, [selectedFiles, effectiveSymbol, effectiveInterval, mode, importCsv, importCsvBatch, onOpenChange]);
+  }, [selectedFiles, effectiveSymbol, effectiveInterval, form, importCsv, importCsvBatch, onOpenChange]);
 
   const isPending = importCsv.isPending || importCsvBatch.isPending;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>上传 CSV 文件</DialogTitle>
-          <DialogDescription>
-            支持多文件上传，自动从文件名识别 Symbol 和周期（如 BTCUSDT-30m-2026-03.csv）
-          </DialogDescription>
-        </DialogHeader>
+    <Modal
+      open={open}
+      onCancel={() => !isPending && onOpenChange(false)}
+      title="上传 CSV 文件"
+      width={560}
+      footer={[
+        <AntButton key="cancel" onClick={() => onOpenChange(false)} disabled={isPending}>
+          取消
+        </AntButton>,
+        <AntButton
+          key="upload"
+          type="primary"
+          onClick={handleUpload}
+          disabled={selectedFiles.length === 0 || !effectiveSymbol || isPending}
+          icon={isPending ? <LoadingOutlined /> : null}
+        >
+          上传 {selectedFiles.length > 1 ? `(${selectedFiles.length} 个文件)` : ""}
+        </AntButton>,
+      ]}
+    >
+      <p className="text-xs text-text-secondary mb-4">
+        支持多文件上传，自动从文件名识别 Symbol 和周期（如 BTCUSDT-30m-2026-03.csv）
+      </p>
 
-        <div className="flex flex-col gap-4 py-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            multiple
-            className="hidden"
-            onChange={handleFileChange}
-          />
+      <div className="flex flex-col gap-4 py-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv"
+          multiple
+          className="hidden"
+          onChange={handleFileChange}
+        />
 
-          <Button
-            variant="outline"
-            className="w-full justify-start gap-2 h-auto py-3"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <FileUp className="h-4 w-4 shrink-0" />
-            <span className="text-text-secondary">
-              点击选择 CSV 文件（支持多选）
-            </span>
-          </Button>
+        <AntButton block className="!justify-start !h-auto !py-3" onClick={() => fileInputRef.current?.click()}>
+          <FileUp />
+          <span className="text-text-secondary">点击选择 CSV 文件（支持多选）</span>
+        </AntButton>
 
-          {selectedFiles.length > 0 && (
-            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
-              {selectedFiles.map((file, idx) => {
-                const parsed = parseCsvFilename(file.name);
-                return (
-                  <div
-                    key={`${file.name}-${idx}`}
-                    className="flex items-center gap-2 rounded-md bg-bg-elevated px-3 py-2 text-xs"
+        {selectedFiles.length > 0 && (
+          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+            {selectedFiles.map((file, idx) => {
+              const parsed = parseCsvFilename(file.name);
+              return (
+                <div
+                  key={`${file.name}-${idx}`}
+                  className="flex items-center gap-2 rounded-md bg-bg-elevated px-3 py-2 text-xs"
+                >
+                  <FileSpreadsheet className="text-accent-gold" />
+                  <span className="flex-1 truncate text-text-primary">{file.name}</span>
+                  <span className="text-text-muted shrink-0">{formatFileSize(file.size)}</span>
+                  {parsed && (
+                    <span className="shrink-0 text-profit text-[10px]">
+                      <CheckCircle2 className="mr-0.5 align-middle" />
+                      {parsed.symbol} {parsed.interval}
+                    </span>
+                  )}
+                  <AntButton
+                    type="text"
+                    size="small"
+                    aria-label={`移除文件 ${file.name}`}
+                    onClick={() => removeFile(idx)}
                   >
-                    <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-accent-gold" />
-                    <span className="flex-1 truncate text-text-primary">
-                      {file.name}
-                    </span>
-                    <span className="text-text-muted shrink-0">
-                      {formatFileSize(file.size)}
-                    </span>
-                    {parsed && (
-                      <span className="shrink-0 text-profit text-[10px]">
-                        <CheckCircle2 className="h-3 w-3 inline mr-0.5" />
-                        {parsed.symbol} {parsed.interval}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeFile(idx)}
-                      className="shrink-0 text-text-muted hover:text-loss transition-colors"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
-              <span className="text-[11px] text-text-muted">
-                共 {selectedFiles.length} 个文件，{formatFileSize(selectedFiles.reduce((s, f) => s + f.size, 0))}
-              </span>
-            </div>
-          )}
+                    <X />
+                  </AntButton>
+                </div>
+              );
+            })}
+            <span className="text-[11px] text-text-muted">
+              共 {selectedFiles.length} 个文件，{formatFileSize(selectedFiles.reduce((s, f) => s + f.size, 0))}
+            </span>
+          </div>
+        )}
 
-          {detectedInfo && (
-            <div className="flex items-center gap-2 rounded-md bg-profit/10 px-3 py-2 text-xs text-profit">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span>
-                已自动识别: {detectedInfo.symbol} / {detectedInfo.interval}
-              </span>
-            </div>
-          )}
+        {detectedInfo && (
+          <div className="flex items-center gap-2 rounded-md px-3 py-2 text-xs" style={{ background: "rgba(0,200,83,0.1)", color: "#00C853" }}>
+            <CheckCircle2 />
+            <span>已自动识别: {detectedInfo.symbol} / {detectedInfo.interval}</span>
+          </div>
+        )}
 
+        <Form form={form} layout="vertical" initialValues={{ interval: "1h", mode: "merge" }} className="!mb-0">
           <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-text-secondary">
-                Symbol
-              </label>
-              <Input
-                placeholder="BTCUSDT"
-                value={autoSymbol || symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                disabled={!!autoSymbol}
-                className={cn(!!autoSymbol && "opacity-60")}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-text-secondary">
-                周期
-              </label>
+            <Form.Item
+              label="Symbol"
+              name="symbol"
+              rules={[{ required: !autoSymbol, message: "请输入交易对（如 BTCUSDT）" }]}
+              className="!mb-2"
+            >
+              <Input placeholder="BTCUSDT" disabled={!!autoSymbol} value={autoSymbol || undefined} />
+            </Form.Item>
+            <Form.Item label="周期" name="interval" className="!mb-2">
               <Select
-                value={autoInterval || interval}
-                onValueChange={setInterval}
                 disabled={!!autoInterval}
-              >
-                <SelectTrigger className={cn(!!autoInterval && "opacity-60")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="15m">15m</SelectItem>
-                  <SelectItem value="30m">30m</SelectItem>
-                  <SelectItem value="1h">1h</SelectItem>
-                  <SelectItem value="4h">4h</SelectItem>
-                  <SelectItem value="1d">1d</SelectItem>
-                  <SelectItem value="3d">3d</SelectItem>
-                  <SelectItem value="1w">1w</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                value={autoInterval || undefined}
+                options={["15m", "30m", "1h", "4h", "1d", "3d", "1w"].map((v) => ({ value: v, label: v }))}
+              />
+            </Form.Item>
           </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-text-secondary">
-              导入模式
-            </label>
-            <Select value={mode} onValueChange={setMode}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="merge">合并 (merge)</SelectItem>
-                <SelectItem value="replace">替换 (replace)</SelectItem>
-                <SelectItem value="new">新建 (new)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isPending}
-          >
-            取消
-          </Button>
-          <Button
-            onClick={handleUpload}
-            disabled={selectedFiles.length === 0 || !effectiveSymbol || isPending}
-          >
-            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            上传 {selectedFiles.length > 1 ? `(${selectedFiles.length} 个文件)` : ""}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <Form.Item label="导入模式" name="mode" className="!mb-0">
+            <Select
+              options={[
+                { value: "merge", label: "合并" },
+                { value: "replace", label: "替换" },
+                { value: "new", label: "新建" },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </div>
+    </Modal>
   );
 }
 
@@ -348,22 +282,15 @@ function UploadDialog({
 // Main component
 // ---------------------------------------------------------------------------
 export function DataManagement() {
-  // Search ------------------------------------------------------------------
+  const { modal } = App.useApp();
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
 
-  // Upload dialog -----------------------------------------------------------
   const [uploadOpen, setUploadOpen] = useState(false);
-
-  // Delete confirm ----------------------------------------------------------
-  const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
   const deleteDataset = useDeleteDataset();
 
-  // Data --------------------------------------------------------------------
-  const { data, isLoading } = useQuery({
-    queryKey: ["datasets"],
-    queryFn: () => api.get("/api/data/datasets").then((r) => r.data),
-  });
+  // 数据查询下沉既有 hook（G5 修正：原页面内联 queryFn 与 useDatasets 重复）
+  const { data, isLoading } = useQuery(useDatasets());
 
   const allDatasets: Dataset[] = data?.items ?? [];
 
@@ -375,18 +302,84 @@ export function DataManagement() {
       )
     : allDatasets;
 
-  // Handlers ----------------------------------------------------------------
-  const handleDelete = useCallback(async () => {
-    if (!deleteTarget) return;
-    try {
-      await deleteDataset.mutateAsync(deleteTarget.dataset_id);
-      setDeleteTarget(null);
-    } catch {
-      // error handled by mutation onError
-    }
-  }, [deleteTarget, deleteDataset]);
+  const handleDelete = useCallback(
+    (ds: Dataset) => {
+      // 确认交互单源=AntD modal 体系（ui-uniformity spec；删除结果经 mutation toast 反馈）
+      modal.confirm({
+        title: "删除数据集",
+        content: `确定要删除 ${ds.symbol} (${ds.interval}) 数据集吗？此操作不可撤销。`,
+        okText: "删除",
+        okButtonProps: { danger: true, loading: deleteDataset.isPending },
+        cancelText: "取消",
+        onOk: async () => {
+          await deleteDataset.mutateAsync(ds.dataset_id);
+        },
+      });
+    },
+    [modal, deleteDataset]
+  );
 
-  // Empty state -------------------------------------------------------------
+  const columns: TableProps<Dataset>["columns"] = [
+    {
+      title: "币种",
+      dataIndex: "symbol",
+      render: (v: string) => <span className="font-medium text-text-primary">{v}</span>,
+    },
+    { title: "名称", dataIndex: "symbol", className: "text-text-secondary" },
+    {
+      title: "周期",
+      dataIndex: "interval",
+      render: (v: string) => (
+        <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs text-text-secondary" style={{ background: "rgba(245,158,11,0.12)" }}>
+          {v}
+        </span>
+      ),
+    },
+    {
+      title: "日期范围",
+      key: "date_range",
+      render: (_, ds) =>
+        ds.time_start && ds.time_end
+          ? `${ds.time_start.slice(0, 10)} ~ ${ds.time_end.slice(0, 10)}`
+          : "-",
+      className: "text-text-secondary text-xs font-num",
+    },
+    {
+      title: "K线数量",
+      dataIndex: "row_count",
+      align: "right",
+      render: (v: number) => formatNumber(v, 0),
+      className: "font-num text-text-secondary",
+    },
+    {
+      title: "操作",
+      key: "actions",
+      align: "right",
+      render: (_, ds) => (
+        <div className="flex items-center justify-end gap-1">
+          {/* F0 遗留死操作 disabled 化：预览/在实验室打开尚未接线（原 void 空操作） */}
+          <Tooltip title="预览（未开放）">
+            <AntButton type="text" size="small" icon={<Eye />} disabled aria-label="预览数据集" />
+          </Tooltip>
+          <Tooltip title="在实验室打开（未开放）">
+            <AntButton type="text" size="small" icon={<TrendingUp />} disabled aria-label="在实验室打开" />
+          </Tooltip>
+          <Tooltip title="删除">
+            <AntButton
+              type="text"
+              size="small"
+              danger
+              icon={<Trash2 />}
+              aria-label={`删除数据集 ${ds.symbol} ${ds.interval}`}
+              onClick={() => handleDelete(ds)}
+            />
+          </Tooltip>
+        </div>
+      ),
+    },
+  ];
+
+  // 空态（非失败）：引导导入
   if (!isLoading && allDatasets.length === 0) {
     return (
       <PageTransition>
@@ -412,74 +405,54 @@ export function DataManagement() {
         {/* Toolbar */}
         <GlassCard className="p-4" hover={false}>
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              size="sm"
-              className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
+            <AntButton
+              size="small"
+              type="primary"
+              icon={<Upload />}
               onClick={() => setUploadOpen(true)}
             >
-              <Upload className="h-3.5 w-3.5" />
               上传 CSV 文件
-            </Button>
-            <Button size="sm" variant="outline" className="gap-1.5">
-              <FileUp className="h-3.5 w-3.5" />
-              从 Binance 导入
-            </Button>
+            </AntButton>
+            {/* F0 遗留死按钮 disabled 化：Binance 导入端点未提供 */}
+            <Tooltip title="Binance 导入端点未提供">
+              <AntButton size="small" icon={<FileUp />} disabled>
+                从 Binance 导入
+              </AntButton>
+            </Tooltip>
             <div className="relative ml-auto">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
               <Input
                 placeholder="搜索币种..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 w-56 pl-8 text-xs"
+                prefix={<Search className="text-text-muted" />}
+                className="w-56 text-xs"
+                allowClear
               />
             </div>
           </div>
         </GlassCard>
 
-        {/* Dataset Table */}
+        {/* Dataset Table（每行下方质量条：expandable 无缝嵌入） */}
         <GlassCard className="p-0 overflow-hidden" hover={false}>
           {isLoading ? (
             <div className="p-4">
               <TableSkeleton />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>币种</TableHead>
-                  <TableHead>名称</TableHead>
-                  <TableHead>周期</TableHead>
-                  <TableHead>日期范围</TableHead>
-                  <TableHead className="text-right">K线数量</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {datasets.map((ds) => (
-                  <DatasetRow
-                    key={ds.dataset_id}
-                    dataset={ds}
-                    onPreview={() => {
-                      void ds;
-                    }}
-                    onOpenInLab={() => {
-                      void ds;
-                    }}
-                    onDelete={() => setDeleteTarget(ds)}
-                  />
-                ))}
-                {datasets.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="h-24 text-center text-text-muted"
-                    >
-                      没有匹配的数据集
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            <Table<Dataset>
+              rowKey="dataset_id"
+              columns={columns}
+              dataSource={datasets}
+              size="middle"
+              pagination={false}
+              showHeader
+              expandable={{
+                showExpandColumn: false,
+                defaultExpandAllRows: true,
+                expandedRowRender: (ds) => <QualityBar status={ds.quality_status} />,
+              }}
+              locale={{ emptyText: "没有匹配的数据集" }}
+            />
           )}
         </GlassCard>
 
@@ -488,95 +461,8 @@ export function DataManagement() {
           建议至少准备6个月历史数据用于回测，支持 Binance Data Vision CSV
         </p>
 
-        {/* Upload Dialog */}
         <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
-
-        {/* Delete Confirm Dialog */}
-        <ConfirmDialog
-          open={!!deleteTarget}
-          onOpenChange={(open) => {
-            if (!open) setDeleteTarget(null);
-          }}
-          title="删除数据集"
-          description={`确定要删除 ${deleteTarget?.symbol ?? ""} (${deleteTarget?.interval ?? ""}) 数据集吗？此操作不可撤销。`}
-          confirmLabel="删除"
-          variant="destructive"
-          onConfirm={handleDelete}
-          loading={deleteDataset.isPending}
-        />
       </div>
     </PageTransition>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Single dataset row
-// ---------------------------------------------------------------------------
-interface DatasetRowProps {
-  dataset: Dataset;
-  onPreview: () => void;
-  onOpenInLab: () => void;
-  onDelete: () => void;
-}
-
-function DatasetRow({ dataset: ds, onPreview, onOpenInLab, onDelete }: DatasetRowProps) {
-  const dateRange =
-    ds.time_start && ds.time_end
-      ? `${ds.time_start.slice(0, 10)} ~ ${ds.time_end.slice(0, 10)}`
-      : "-";
-
-  return (
-    <>
-      <TableRow className="group">
-        <TableCell className="font-medium text-text-primary">
-          {ds.symbol}
-        </TableCell>
-        <TableCell className="text-text-secondary">{ds.symbol}</TableCell>
-        <TableCell>
-          <span className="inline-flex items-center rounded-md bg-accent/10 px-1.5 py-0.5 text-xs text-text-secondary">
-            {ds.interval}
-          </span>
-        </TableCell>
-        <TableCell className="text-text-secondary text-xs font-num">
-          {dateRange}
-        </TableCell>
-        <TableCell className="text-right font-num text-text-secondary">
-          {formatNumber(ds.row_count, 0)}
-        </TableCell>
-        <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              onClick={onPreview}
-              title="预览"
-            >
-              <Eye className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              onClick={onOpenInLab}
-              title="在实验室打开"
-            >
-              <TrendingUp className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              onClick={onDelete}
-              title="删除"
-            >
-              <Trash2 className="h-3.5 w-3.5 text-red-400" />
-            </Button>
-          </div>
-        </TableCell>
-      </TableRow>
-      <TableRow>
-        <TableCell colSpan={6} className="border-0 py-0 px-4 pb-2">
-          <QualityBar status={ds.quality_status} />
-        </TableCell>
-      </TableRow>
-    </>
   );
 }

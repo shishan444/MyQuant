@@ -8,7 +8,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "antd";
 
 import { SegmentedControl } from "@/components/evolution/SegmentedControl";
 import type { ExploreMode } from "@/components/evolution/SegmentedControl";
@@ -17,7 +17,6 @@ import { SeedConfigForm } from "@/components/evolution/SeedConfigForm";
 import { ProgressPanel } from "@/components/evolution/ProgressPanel";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import { StrategyList } from "@/components/evolution/StrategyList";
-import { AlgorithmLog } from "@/components/evolution/AlgorithmLog";
 import { HistoryTable } from "@/components/evolution/HistoryTable";
 import { QuickPresets } from "@/components/evolution/QuickPresets";
 import { TaskDetailDrawer } from "@/components/evolution/TaskDetailDrawer";
@@ -81,16 +80,6 @@ export function Evolution() {
 
   // --- Last active task ID (for chart data retention after task completes) ---
   const [lastActiveTaskId, setLastActiveTaskId] = useState<string>("");
-
-  // --- Mutation log ---
-  const [mutationLog, setMutationLog] = useState<
-    Array<{
-      generation: number;
-      scoreChange: number;
-      operation: string;
-      details: string;
-    }>
-  >([]);
 
   // --- Task detail drawer ---
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
@@ -219,7 +208,6 @@ export function Evolution() {
           requirements: config.requirements,
         });
         setConfigCollapsed(true);
-        setMutationLog([]);
       } catch {
         // handled by mutation onError
       }
@@ -255,7 +243,6 @@ export function Evolution() {
         });
         setConfigCollapsed(true);
         setSeedDna(null);
-        setMutationLog([]);
       } catch {
         // handled by mutation onError
       }
@@ -562,18 +549,6 @@ export function Evolution() {
               </div>
             </GlassCard>
           </div>
-        )}
-
-        {/* ================================================================== */}
-        {/* Area 4 - Algorithm Log                                             */}
-        {/* ================================================================== */}
-        {currentTask && (
-          <GlassCard className="p-5" hover={false}>
-            <AlgorithmLog
-              mutations={mutationLog}
-              diversity={undefined}
-            />
-          </GlassCard>
         )}
 
         {/* ================================================================== */}

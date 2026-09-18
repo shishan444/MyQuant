@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -38,13 +37,13 @@ vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: vi.fn(() => <div data-testid="kline-chart" />),
 }));
 
-// Mock EquityCurveChart to avoid recharts issues
-vi.mock("@/components/lab/EquityCurveChart", () => ({
-  EquityCurveChart: vi.fn(() => <div data-testid="equity-curve" />),
+// Mock EquityCurve to avoid echarts canvas issues in jsdom
+vi.mock("@/components/charts/EquityCurve", () => ({
+  EquityCurve: vi.fn(() => <div data-testid="equity-curve" />),
 }));
 
 // Mock StrategyDetail
-vi.mock("@/components/evolution/StrategyDetail", () => ({
+vi.mock("@/components/StrategyDetail", () => ({
   StrategyDetail: vi.fn(() => <div data-testid="strategy-detail" />),
 }));
 
@@ -207,7 +206,7 @@ describe("BacktestModePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("API timeout")).toBeInTheDocument();
-      expect(screen.getByText("重试")).toBeInTheDocument();
+      expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
     });
   });
 });

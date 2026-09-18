@@ -53,10 +53,10 @@ if [[ -d "$WEB_DIR" ]] && [[ -f "$WEB_DIR/package.json" ]]; then
 
     if [[ ! -d "node_modules" ]]; then
         warn "未找到 node_modules，正在安装依赖..."
-        npm install
+        pnpm install
     fi
 
-    npx vite --host > "$LOG_DIR/web.log" 2>&1 &
+    pnpm exec vite --host > "$LOG_DIR/web.log" 2>&1 &
     WEB_PID=$!
     info "Web 前端启动中 (PID: $WEB_PID)..."
 

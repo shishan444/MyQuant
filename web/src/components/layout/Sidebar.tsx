@@ -1,3 +1,4 @@
+import { Tooltip } from "antd";
 import { NavLink, useLocation } from "react-router";
 import {
   FlaskConical,
@@ -13,12 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+
 
 const NAV_ITEMS = [
   { to: "/lab", icon: FlaskConical, label: "策略实验室" },
@@ -51,7 +47,7 @@ export function Sidebar() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   return (
-    <TooltipProvider delayDuration={0}>
+    <>
       <aside
         className={cn(
           "flex h-screen flex-col border-r border-border-default bg-bg-surface backdrop-blur-md transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
@@ -71,9 +67,8 @@ export function Sidebar() {
         <nav className="flex-1 py-2">
           {NAV_ITEMS.map(({ to, icon: Icon, label }) =>
             collapsed ? (
-              <Tooltip key={to}>
-                <TooltipTrigger asChild>
-                  <NavLink
+              <Tooltip key={to} placement="right" mouseEnterDelay={0} title={label}>
+                <NavLink
                     to={to}
                     className={({ isActive }) =>
                       cn(
@@ -86,8 +81,6 @@ export function Sidebar() {
                   >
                     <Icon className="h-5 w-5" />
                   </NavLink>
-                </TooltipTrigger>
-                <TooltipContent side="right">{label}</TooltipContent>
               </Tooltip>
             ) : (
               <NavLink
@@ -128,7 +121,7 @@ export function Sidebar() {
           )}
         </div>
       </aside>
-    </TooltipProvider>
+    </>
   );
 }
 

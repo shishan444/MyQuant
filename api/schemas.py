@@ -458,7 +458,6 @@ class EvolutionTaskCreate(BaseModel):
     population_size: int = 15
     max_generations: int = 200
     elite_ratio: float = 0.5
-    n_workers: int = 6
     indicator_pool: Optional[List[str]] = None
     timeframe_pool: Optional[List[str]] = None
     mode: Optional[str] = None
@@ -486,7 +485,6 @@ class EvolutionTaskResponse(BaseModel):
     population_size: int = 15
     max_generations: int = 200
     elite_ratio: float = 0.5
-    n_workers: int = 6
     current_generation: int = 0
     created_at: str
     updated_at: str

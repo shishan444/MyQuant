@@ -18,12 +18,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.evolution.engine import EvolutionEngine
-from core.evolution.diversity import compute_diversity, compute_phenotype_diversity
+from core.evolution.diversity import compute_phenotype_diversity
 from core.evolution.champion import ChampionTracker
 from core.evolution import evaluation
 from core.strategy.dna import StrategyDNA
 from core.persistence.db import (
-    connect,
     save_history,
     save_snapshot,
     update_task,
@@ -32,9 +31,6 @@ from core.persistence.db import (
 from core.logging import get_logger
 
 logger = get_logger("RUNNER")
-
-# Global reference to the FastAPI app's asyncio loop for WS push
-_ws_push_fn: Optional[Callable] = None
 
 # Active task controllers: task_id -> TaskController
 _active_controllers: Dict[str, "TaskController"] = {}
@@ -48,100 +44,32 @@ def get_active_controllers() -> Dict[str, "TaskController"]:
 # TaskController: direct stop signal via threading.Event
 # ---------------------------------------------------------------------------
 
-class TaskStopRequested(Exception):
-    """Raised when a task stop is requested via TaskController."""
-    pass
-
-
-class TaskController:
-    """Thread-safe task controller for cooperative cancellation."""
-
-    def __init__(self) -> None:
-        self._stop_event = threading.Event()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def check_stop(self) -> None:
-        if self._stop_event.is_set():
-            raise TaskStopRequested()
+from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
 
 
 # ---------------------------------------------------------------------------
 # Progress & heartbeat helpers
 # ---------------------------------------------------------------------------
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def update_heartbeat(db_path: Path, task_id: str) -> None:
-    """Update heartbeat_at timestamp for a running task."""
-    from core.persistence.db import _connect
-    try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET heartbeat_at = ? WHERE task_id = ?",
-                (_now_iso(), task_id),
-            )
-            conn.commit()
-    except Exception:
-        logger.warning("heartbeat update failed for %s", task_id, exc_info=True)
-
-
-def update_phase(db_path: Path, task_id: str, phase: str) -> None:
-    """Update current_phase for a task and push WS notification."""
-    from core.persistence.db import _connect
-    try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET current_phase = ?, updated_at = ? WHERE task_id = ?",
-                (phase, _now_iso(), task_id),
-            )
-            conn.commit()
-    except Exception:
-        logger.warning("phase update failed for %s", task_id, exc_info=True)
-    _push_ws(task_id, {
-        "type": "phase_changed",
-        "task_id": task_id,
-        "phase": phase,
-    })
-
-
-def update_progress(db_path: Path, task_id: str, progress: dict) -> None:
-    """Write structured progress JSON to DB."""
-    from core.persistence.db import _connect
-    try:
-        with _connect(db_path) as conn:
-            conn.execute(
-                "UPDATE evolution_task SET progress_json = ?, updated_at = ? WHERE task_id = ?",
-                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
-            )
-            conn.commit()
-    except Exception:
-        logger.warning("progress update failed for %s", task_id, exc_info=True)
+from api.runner_progress import (  # B5.2 拆分
+    _push_ws, set_ws_push_fn, update_heartbeat, update_phase, update_progress,
+)
 
 
 def recover_stale_tasks(db_path: Path) -> None:
     """Mark all running tasks as stopped (crash recovery).
 
     Called once at app startup to clean up after unclean shutdowns.
+
+    batch1 D3 语义注记: 恢复类写入是「残留态清理」（WHERE status='running'
+    的条件更新即其前态语义），不走 update_task 的动作前态守护——pending
+    任务不受影响（创建即 pending 后不会被误清，spec 场景「崩溃恢复不误清
+    未接手任务」）。
     """
-    from core.persistence.db import _connect
-    with _connect(db_path) as conn:
-        result = conn.execute(
-            "UPDATE evolution_task SET status = 'stopped', "
-            "stop_reason = 'crash_recovery', updated_at = ? "
-            "WHERE status = 'running'",
-            (_now_iso(),),
-        )
-        conn.commit()
-        if result.rowcount > 0:
-            logger.info("Recovered %d stale tasks on startup", result.rowcount)
+    from core.persistence.repository import evolution as repo
+    recovered = repo.recover_stale_tasks(db_path)
+    if recovered > 0:
+        logger.info("Recovered %d stale tasks on startup", recovered)
 
 
 def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
@@ -154,72 +82,14 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
 
     Called at app startup after recover_stale_tasks. NOTE: this re-runs evolution from
     initial_dna (same config), NOT individual-level resume — EvolutionEngine.evolve has
-    no initial_population param, and checkpoint.resume_evolution is currently unwired
+    no initial_population param (checkpoint resume 已按裁决 6 移除)
     (dead code). Crashed-but-incomplete tasks get a bounded retry instead of silent loss.
     """
-    from core.persistence.db import _connect
-    restarted = 0
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT task_id, progress_json FROM evolution_task "
-            "WHERE status = 'stopped' "
-            "AND stop_reason IN ('crash_recovery', 'heartbeat_timeout') "
-            "AND (champion_dna IS NULL OR champion_dna = '')",
-        ).fetchall()
-        for row in rows:
-            task_id = row["task_id"]
-            try:
-                progress = json.loads(row["progress_json"]) if row["progress_json"] else {}
-            except Exception:
-                progress = {}
-            restart_count = int(progress.get("restart_count", 0))
-            if restart_count >= max_restarts:
-                continue
-            progress["restart_count"] = restart_count + 1
-            conn.execute(
-                "UPDATE evolution_task SET status = 'pending', progress_json = ?, "
-                "stop_reason = NULL, updated_at = ? WHERE task_id = ?",
-                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
-            )
-            restarted += 1
-        conn.commit()
+    from core.persistence.repository import evolution as repo
+    restarted = repo.restart_crashed_tasks(db_path, max_restarts)
     if restarted > 0:
         logger.info("Restarted %d crashed tasks (max %d retries each)", restarted, max_restarts)
     return restarted
-
-
-def check_stale_heartbeats(db_path: Path, timeout_minutes: int = 5) -> None:
-    """Detect tasks with expired heartbeat and mark them stopped."""
-    from core.persistence.db import _connect
-    threshold = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=timeout_minutes)).isoformat()
-    with _connect(db_path) as conn:
-        result = conn.execute(
-            "UPDATE evolution_task SET status = 'stopped', "
-            "stop_reason = 'heartbeat_timeout', updated_at = ? "
-            "WHERE status = 'running' AND heartbeat_at IS NOT NULL AND heartbeat_at < ?",
-            (_now_iso(), threshold),
-        )
-        conn.commit()
-        if result.rowcount > 0:
-            logger.warning("Heartbeat timeout: %d tasks marked stopped", result.rowcount)
-
-
-def set_ws_push_fn(fn: Callable) -> None:
-    """Register a function that the runner can call to push WS messages.
-
-    Called once during app startup.
-    """
-    global _ws_push_fn
-    _ws_push_fn = fn
-
-
-def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
-    """Fire-and-forget WS push (non-blocking) with observability."""
-    if _ws_push_fn is not None:
-        try:
-            _ws_push_fn(task_id, payload)
-        except Exception:
-            logger.warning("ws push failed for task %s", task_id, exc_info=True)
 
 
 def _split_train_test(
@@ -321,12 +191,8 @@ class EvolutionRunner(threading.Thread):
     # ------------------------------------------------------------------
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        conn = connect(self.db_path)
-        row = conn.execute(
-            "SELECT * FROM evolution_task WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        from core.persistence.repository import evolution as repo
+        return repo.find_pending_task(self.db_path)
 
     def _run_task(self, task_row: Dict[str, Any]) -> None:
         """Exception boundary for task execution.
@@ -346,9 +212,9 @@ class EvolutionRunner(threading.Thread):
             self._execute_task(task_row, task_id, controller)
         except TaskStopRequested:
             logger.info("Task %s stopped via TaskController", task_id)
+            # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
+            # 前态必然 running（单线程执行流内），不接动作前态守护
             update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
-        except _StopEvolution as e:
-            logger.info("Task %s stopped: %s", task_id, e)
         except Exception:
             logger.error("Task %s failed", task_id, exc_info=True)
             update_task(self.db_path, task_id, status="stopped", stop_reason="error")
@@ -508,13 +374,8 @@ class EvolutionRunner(threading.Thread):
 
             # Update current_generation in DB (use global offset for continuous mode)
             global_gen = gen + global_gen_offset
-            conn = connect(self.db_path)
-            conn.execute(
-                "UPDATE evolution_task SET current_generation = ?, updated_at = ? WHERE task_id = ?",
-                (global_gen, datetime.now(timezone.utc).isoformat(), task_id),
-            )
-            conn.commit()
-            conn.close()
+            from core.persistence.repository import evolution as _repo
+            _repo.update_current_generation(self.db_path, task_id, global_gen)
 
             # Compute generation-level diagnostics from population
             gen_diag = {}
@@ -550,7 +411,13 @@ class EvolutionRunner(threading.Thread):
                         mutation_log=json.dumps(gen_diag) if gen_diag else None,
                     )
                 except Exception:
-                    pass
+                    # B1.2: 快照为非关键路径数据，写失败降级为本代快照缺失 +
+                    # error 日志（含原因链），不吞掉也不中断进化
+                    logger.error(
+                        "save_snapshot failed for task %s gen %d — 本代快照缺失，进化继续",
+                        task_id, global_gen,
+                        exc_info=True,
+                    )
 
             # Update champion atomically via ChampionTracker
             if best_score > 0 and hasattr(engine, '_population') and engine._population:
@@ -566,31 +433,19 @@ class EvolutionRunner(threading.Thread):
                     )
 
                     if updated:
+                        from core.persistence.repository import evolution as _repo
                         champion_rec = champion_tracker.get_champion()
-                        conn2 = connect(self.db_path)
-                        conn2.execute(
-                            "UPDATE evolution_task SET best_score = ?, best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                            (
-                                champion_rec.score,
-                                champion_rec.score,
-                                json.dumps(champion_rec.metrics),
-                                json.dumps(champion_rec.dimension_scores),
-                                task_id,
-                            ),
+                        _repo.update_champion_full(
+                            self.db_path, task_id, best_score=champion_rec.score,
+                            champion_metrics=json.dumps(champion_rec.metrics),
+                            champion_dimension_scores=json.dumps(champion_rec.dimension_scores),
                         )
-                        conn2.commit()
-                        conn2.close()
                 elif best_score > 0:
                     # No diagnostics but score is positive - update best_score only
                     updated = champion_tracker.update(score=best_score, generation=global_gen)
                     if updated:
-                        conn2 = connect(self.db_path)
-                        conn2.execute(
-                            "UPDATE evolution_task SET best_score = ?, best_fitness = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
-                            (best_score, best_score, task_id, best_score),
-                        )
-                        conn2.commit()
-                        conn2.close()
+                        from core.persistence.repository import evolution as _repo
+                        _repo.update_best_score_if_higher(self.db_path, task_id, best_score)
 
             # Auto-extract high-scoring strategies to strategy table
             if hasattr(engine, '_population') and engine._population:
@@ -738,26 +593,26 @@ class EvolutionRunner(threading.Thread):
 
         # Save champion
         if champion is not None:
+            # batch1 D3: completed 前态守护 {running}——与路由 stop 写入的竞态中
+            # 先到者胜（先 completed 则 stop 被 409 拒绝；先 stopped 则本写不生效）
             update_task(
                 self.db_path, task_id,
                 status="completed",
                 champion_dna=champion,
                 stop_reason=stop_reason,
+                expected_statuses=("running",),
             )
 
             # Save final champion metrics from tracker (consistent snapshot)
             champion_rec = champion_tracker.get_champion()
             if champion_rec and champion_rec.metrics:
-                conn = connect(self.db_path)
-                conn.execute(
-                    "UPDATE evolution_task SET best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                    (champion_rec.score,
-                     json.dumps(champion_rec.metrics),
-                     json.dumps(champion_rec.dimension_scores),
-                     task_id),
+                from core.persistence.repository import evolution as _repo
+                _repo.update_champion_metrics(
+                    self.db_path, task_id,
+                    best_fitness=champion_rec.score,
+                    champion_metrics=json.dumps(champion_rec.metrics),
+                    champion_dimension_scores=json.dumps(champion_rec.dimension_scores),
                 )
-                conn.commit()
-                conn.close()
 
             # Out-of-sample validation on test split
             if _test_df is not None and len(_test_df) >= 50:
@@ -776,19 +631,19 @@ class EvolutionRunner(threading.Thread):
                 )
 
                 # Persist OOS results
-                conn = connect(self.db_path)
-                conn.execute(
-                    "UPDATE evolution_task SET oos_fitness = ?, oos_qualified = ?, oos_metrics = ? WHERE task_id = ?",
-                    (oos_fitness, int(oos_qualified), json.dumps(oos_metrics), task_id),
+                from core.persistence.repository import evolution as _repo
+                _repo.update_oos_results(
+                    self.db_path, task_id,
+                    oos_fitness=oos_fitness, oos_qualified=int(oos_qualified),
+                    oos_metrics=json.dumps(oos_metrics),
                 )
-                conn.commit()
-                conn.close()
 
         else:
             update_task(
                 self.db_path, task_id,
                 status="completed",
                 stop_reason=stop_reason,
+                expected_statuses=("running",),
             )
 
         # Final WS push
@@ -840,6 +695,3 @@ class EvolutionRunner(threading.Thread):
         return find_parquet(self.data_dir, safe_symbol, timeframe)
 
 
-class _StopEvolution(Exception):
-    """Signal to break out of the evolution loop."""
-    pass

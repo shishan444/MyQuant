@@ -34,7 +34,7 @@ describe("evolution service", () => {
   // --- getEvolutionTasks ---
   it("getEvolutionTasks calls correct endpoint with params", async () => {
     const mockResponse = { items: [], total: 0 };
-    mockedGet.mockResolvedValueOnce({ data: mockResponse });
+    mockedGet.mockResolvedValueOnce(mockResponse);
 
     const result = await getEvolutionTasks({ status: "running", page: 1 });
     expect(mockedGet).toHaveBeenCalledWith("/api/evolution/tasks", {
@@ -46,7 +46,7 @@ describe("evolution service", () => {
   // --- getEvolutionTask ---
   it("getEvolutionTask calls correct endpoint", async () => {
     const mockTask = { task_id: "t1", status: "running" };
-    mockedGet.mockResolvedValueOnce({ data: mockTask });
+    mockedGet.mockResolvedValueOnce(mockTask);
 
     const result = await getEvolutionTask("t1");
     expect(mockedGet).toHaveBeenCalledWith("/api/evolution/tasks/t1");
@@ -62,28 +62,28 @@ describe("evolution service", () => {
       population_size: 20,
       max_generations: 50,
     };
-    mockedPost.mockResolvedValueOnce({ data: mockTask });
+    mockedPost.mockResolvedValueOnce(mockTask);
 
     const result = await createEvolutionTask(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/evolution/tasks", payload);
+    expect(mockedPost).toHaveBeenCalledWith("/api/evolution/tasks", { json: payload });
     expect(result.task_id).toBe("t2");
   });
 
   // --- pause/stop/resume ---
   it("pauseEvolutionTask calls correct endpoint", async () => {
-    mockedPost.mockResolvedValueOnce({ data: { task_id: "t1", status: "paused" } });
+    mockedPost.mockResolvedValueOnce({ task_id: "t1", status: "paused" });
     await pauseEvolutionTask("t1");
     expect(mockedPost).toHaveBeenCalledWith("/api/evolution/tasks/t1/pause");
   });
 
   it("stopEvolutionTask calls correct endpoint", async () => {
-    mockedPost.mockResolvedValueOnce({ data: { task_id: "t1", status: "stopped" } });
+    mockedPost.mockResolvedValueOnce({ task_id: "t1", status: "stopped" });
     await stopEvolutionTask("t1");
     expect(mockedPost).toHaveBeenCalledWith("/api/evolution/tasks/t1/stop");
   });
 
   it("resumeEvolutionTask calls correct endpoint", async () => {
-    mockedPost.mockResolvedValueOnce({ data: { task_id: "t1", status: "running" } });
+    mockedPost.mockResolvedValueOnce({ task_id: "t1", status: "running" });
     await resumeEvolutionTask("t1");
     expect(mockedPost).toHaveBeenCalledWith("/api/evolution/tasks/t1/resume");
   });
@@ -94,7 +94,7 @@ describe("evolution service", () => {
       { generation: 1, best_score: 50, avg_score: 40, best_fitness: 0.45, avg_fitness: 0.35, created_at: "2024-01-01" },
       { generation: 2, best_score: 55, avg_score: 45, best_fitness: 0.52, avg_fitness: 0.40, created_at: "2024-01-02" },
     ];
-    mockedGet.mockResolvedValueOnce({ data: { task_id: "t1", generations } });
+    mockedGet.mockResolvedValueOnce({ task_id: "t1", generations });
 
     const result = await getEvolutionHistory("t1");
     expect(result.records).toHaveLength(2);
@@ -103,7 +103,7 @@ describe("evolution service", () => {
   });
 
   it("getEvolutionHistory handles empty generations", async () => {
-    mockedGet.mockResolvedValueOnce({ data: { task_id: "t1", generations: [] } });
+    mockedGet.mockResolvedValueOnce({ task_id: "t1", generations: [] });
 
     const result = await getEvolutionHistory("t1");
     expect(result.records).toHaveLength(0);

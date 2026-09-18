@@ -25,6 +25,11 @@ def build_requirements(task_row: Dict[str, Any]):
 
     Prefers requirements_json (full config from frontend).
     Falls back to legacy min_annual_return/max_drawdown_limit columns.
+
+    B1.1: requirements_json 解析失败必须显式报错——静默回退会用默认
+    objective (sharpe) 偷换用户的进化优化目标，任务朝错误目标进化且无
+    感知，属数据正确性失败。runner 路径冒泡至 _run_task 兜底标
+    stopped/error；评估路径由 evaluate_dna 兜底记 0 分 + error 标记。
     """
     from core.scoring.scorer import RequirementsConfig
 
@@ -40,8 +45,16 @@ def build_requirements(task_row: Dict[str, Any]):
                 min_total_trades=data.get("min_total_trades", 10),
                 min_profit_factor=data.get("min_profit_factor", 1.2),
             )
-        except (json.JSONDecodeError, Exception):
-            pass
+        except Exception as e:
+            logger.error(
+                "requirements_json 解析失败，拒绝静默回退默认 objective "
+                "(task_id=%s, raw=%.200r)",
+                task_row.get("task_id"), requirements_json,
+                exc_info=True,
+            )
+            raise ValueError(
+                f"requirements_json 解析失败，进化优化目标无法确定: {e!r}"
+            ) from e
 
     return RequirementsConfig(
         objective="sharpe",

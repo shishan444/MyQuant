@@ -18,6 +18,8 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "myquant-app",
+      version: 1,
+      // 单布尔字段，无历史形态，不需要 migrate（G17.1 持久化审计落档）
       partialize: (s) => ({ sidebarCollapsed: s.sidebarCollapsed }),
     }
   )

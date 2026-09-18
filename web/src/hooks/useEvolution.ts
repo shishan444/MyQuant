@@ -6,7 +6,9 @@ import {
 } from "@tanstack/react-query";
 import * as api from "@/services/evolution";
 import { toast } from "sonner";
-import type { EvolutionTask, EvolutionHistoryRecord, GenerationUpdate } from "@/types/api";
+import type { EvolutionTask, EvolutionHistoryRecord } from "@/types/api";
+import { validateEvolutionMessage } from "@/realtime/schemas";
+import { createRealtimeConnection, type RealtimeConnection } from "@/realtime/connection";
 import { isActiveStatus } from "@/lib/constants";
 
 export const evolutionKeys = {
@@ -122,19 +124,12 @@ export function useResumeEvolutionTask() {
 
 export function useEvolutionWebSocket(taskId: string | null) {
   const qc = useQueryClient();
-  const wsRef = useRef<WebSocket | null>(null);
+  const connRef = useRef<RealtimeConnection | null>(null);
 
   useEffect(() => {
     if (!taskId) return;
 
     const currentTaskId = taskId;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = import.meta.env.VITE_WS_URL
-      ? new URL(import.meta.env.VITE_WS_URL).host
-      : window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/evolution/${currentTaskId}`;
-
-    let reconnectTimer: ReturnType<typeof setTimeout>;
     let invalidateTimer: ReturnType<typeof setTimeout> | null = null;
     let mounted = true;
 
@@ -149,72 +144,68 @@ export function useEvolutionWebSocket(taskId: string | null) {
       }, 2000);
     }
 
-    function connect() {
-      if (!mounted) return;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    // 连接管理（含协议消息消化/心跳/重连）归适配层，本 hook 只做事件分发
+    const conn = createRealtimeConnection({ channel: "evolution", taskId: currentTaskId });
+    connRef.current = conn;
 
-      ws.onmessage = (event) => {
-        try {
-          const update: GenerationUpdate = JSON.parse(event.data);
+    conn.onMessage((raw) => {
+        // 契约校验（src/realtime/contract.md）：协议消息归连接层、非法消息丢弃留痕
+        const result = validateEvolutionMessage(raw);
+        if (result.kind !== "event") return;
+        const update = result.event;
 
+        switch (update.type) {
           // Handle task_started: runner has begun execution
-          if (update.type === "task_started") {
+          case "task_started": {
             qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
             qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
-            return;
+            break;
           }
 
           // Handle task_snapshot: progress recovery on WS reconnect
-          if (update.type === "task_snapshot") {
-            qc.setQueryData(
-              evolutionKeys.task(currentTaskId),
-              (old: unknown) => {
-                if (!old) {
-                  qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
-                  return old;
-                }
-                const prev = old as Record<string, unknown>;
-                return {
-                  ...prev,
-                  ...(update.current_generation != null ? { current_generation: update.current_generation } : {}),
-                  ...(update.best_score != null ? { best_score: update.best_score } : {}),
-                  ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
-                  ...(update.qualified_count != null ? { qualified_count: update.qualified_count } : {}),
-                  ...(update.current_phase != null ? { current_phase: update.current_phase } : {}),
-                  status: update.status ?? prev.status,
-                };
+          case "task_snapshot": {
+            qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
+              if (!old) {
+                qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
+                return old;
               }
-            );
-            return;
+              const prev = old as Record<string, unknown>;
+              return {
+                ...prev,
+                ...(update.current_generation != null ? { current_generation: update.current_generation } : {}),
+                ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                status: update.status ?? prev.status,
+                ...(update.target_score != null ? { target_score: update.target_score } : {}),
+                ...(update.max_generations != null ? { max_generations: update.max_generations } : {}),
+                ...(update.current_phase != null ? { current_phase: update.current_phase } : {}),
+              };
+            });
+            break;
           }
 
           // Handle phase_changed: runner phase transition
-          if (update.type === "phase_changed") {
-            qc.setQueryData(
-              evolutionKeys.task(currentTaskId),
-              (old: unknown) => {
-                if (!old) return old;
-                const prev = old as Record<string, unknown>;
-                return { ...prev, current_phase: update.phase };
-              }
-            );
-            return;
+          case "phase_changed": {
+            qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
+              if (!old) return old;
+              const prev = old as Record<string, unknown>;
+              return { ...prev, current_phase: update.phase };
+            });
+            break;
           }
 
-          if (update.type === "population_started") {
-            qc.setQueryData(
-              evolutionKeys.task(currentTaskId),
-              (old: unknown) => {
-                if (!old) return old;
-                const prev = old as Record<string, unknown>;
-                return {
-                  ...prev,
-                  population_count: update.population_count,
-                };
-              }
-            );
-          } else if (update.type === "strategy_discovered") {
+          case "population_started": {
+            qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
+              if (!old) return old;
+              const prev = old as Record<string, unknown>;
+              return {
+                ...prev,
+                population_count: update.population_count,
+              };
+            });
+            break;
+          }
+
+          case "strategy_discovered": {
             // Invalidate per-task discovered strategies
             qc.invalidateQueries({
               queryKey: evolutionKeys.discovered(currentTaskId),
@@ -222,91 +213,66 @@ export function useEvolutionWebSocket(taskId: string | null) {
             qc.invalidateQueries({
               queryKey: ["evolution", "tasks"],
             });
-          } else if (
-            update.type === "generation_complete" ||
-            update.type === "evolution_complete"
-          ) {
-            qc.setQueryData(
-              evolutionKeys.task(currentTaskId),
-              (old: unknown) => {
-                if (!old) {
-                  // Cache not ready yet -- trigger refetch as fallback
-                  qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
-                  return old;
-                }
-                const prev = old as Record<string, unknown>;
-                return {
-                  ...prev,
-                  ...(update.generation != null ? { current_generation: update.generation } : {}),
-                  ...(update.best_score != null ? { best_score: update.best_score } : {}),
-                  ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
-                  ...(update.qualified_count != null ? { qualified_count: update.qualified_count } : {}),
-                  champion_dna: update.champion_dna ?? prev.champion_dna,
-                  status:
-                    update.type === "evolution_complete"
-                      ? "completed"
-                      : prev.status,
-                  ...(update.target_score != null ? { target_score: update.target_score } : {}),
-                  ...(update.max_generations != null ? { max_generations: update.max_generations } : {}),
-                };
-              }
-            );
-
-            // Directly merge history record into cache for instant chart update
-            if (update.type === "generation_complete" && update.generation != null) {
-              qc.setQueryData(
-                evolutionKeys.history(currentTaskId),
-                (old: unknown) => {
-                  if (!old) return old;
-                  const prev = old as { records: EvolutionHistoryRecord[] };
-                  const newRecord: EvolutionHistoryRecord = {
-                    generation: update.generation,
-                    best_score: update.best_score ?? 0,
-                    avg_score: update.avg_score ?? 0,
-                    ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
-                    created_at: new Date().toISOString(),
-                  };
-                  const records = prev.records ?? [];
-                  // Avoid duplicate if this generation already exists
-                  if (records.some((r) => r.generation === newRecord.generation)) return old;
-                  return { ...prev, records: [...records, newRecord] };
-                }
-              );
-            }
-          } else {
-            qc.setQueryData(
-              evolutionKeys.task(currentTaskId),
-              (old: unknown) => {
-                if (!old) return old;
-                return { ...(old as Record<string, unknown>), ...update };
-              }
-            );
+            break;
           }
 
-          scheduleInvalidation();
-        } catch {
-          // ignore parse errors
+          case "generation_complete":
+          case "evolution_complete": {
+            const gen = update.type === "generation_complete" ? update : null;
+            qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
+              if (!old) {
+                // Cache not ready yet -- trigger refetch as fallback
+                qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
+                return old;
+              }
+              const prev = old as Record<string, unknown>;
+              return {
+                ...prev,
+                ...(update.generation != null ? { current_generation: update.generation } : {}),
+                ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
+                ...(gen?.qualified_count != null ? { qualified_count: gen.qualified_count } : {}),
+                champion_dna: gen?.champion_dna ?? prev.champion_dna,
+                status:
+                  update.type === "evolution_complete"
+                    ? "completed"
+                    : prev.status,
+                ...(update.target_score != null ? { target_score: update.target_score } : {}),
+                ...(update.max_generations != null ? { max_generations: update.max_generations } : {}),
+              };
+            });
+
+            // Directly merge history record into cache for instant chart update
+            if (update.type === "generation_complete") {
+              qc.setQueryData(evolutionKeys.history(currentTaskId), (old: unknown) => {
+                if (!old) return old;
+                const prev = old as { records: EvolutionHistoryRecord[] };
+                const newRecord: EvolutionHistoryRecord = {
+                  generation: update.generation,
+                  best_score: update.best_score ?? 0,
+                  avg_score: update.avg_score ?? 0,
+                  ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
+                  created_at: new Date().toISOString(),
+                };
+                const records = prev.records ?? [];
+                // Avoid duplicate if this generation already exists
+                if (records.some((r) => r.generation === newRecord.generation)) return old;
+                return { ...prev, records: [...records, newRecord] };
+              });
+            }
+            break;
+          }
+          // 契约外事件：校验层已拒绝（switch 穷尽判别联合，无兜底合并分支）
         }
-      };
 
-      ws.onclose = () => {
-        if (!mounted) return;
-        reconnectTimer = setTimeout(connect, 3000);
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    connect();
+        scheduleInvalidation();
+    });
 
     return () => {
       mounted = false;
-      clearTimeout(reconnectTimer);
       if (invalidateTimer) clearTimeout(invalidateTimer);
-      wsRef.current?.close();
-      wsRef.current = null;
+      connRef.current?.close();
+      connRef.current = null;
     };
   }, [taskId, qc]);
 }

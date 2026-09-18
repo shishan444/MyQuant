@@ -17,14 +17,7 @@ from api.schemas import (
     LiveTradingTaskResponse,
     LiveTradingTaskUpdate,
 )
-from core.live_trading.persistence import (
-    delete_live_trading_task,
-    get_live_trading_task,
-    init_live_trading_tables,
-    list_live_trading_tasks,
-    save_live_trading_task,
-    update_live_trading_task,
-)
+from core.persistence.repository import live_trading as repo
 
 router = APIRouter(prefix="/api/live-trading", tags=["live-trading"])
 
@@ -32,24 +25,23 @@ router = APIRouter(prefix="/api/live-trading", tags=["live-trading"])
 @router.post("/tasks", response_model=LiveTradingTaskResponse, status_code=201)
 def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
     """创建实盘任务（存 DNA + 方向 + 风控配置）。"""
-    init_live_trading_tables(db_path)
     task_id = f"lt_{uuid.uuid4().hex[:12]}"
-    save_live_trading_task(
+    repo.save_live_trading_task(
         db_path, task_id, req.symbol, req.timeframe, req.dna_json,
         req.direction, req.config_json,
     )
-    return get_live_trading_task(db_path, task_id)
+    return repo.get_live_trading_task(db_path, task_id)
 
 
 @router.get("/tasks", response_model=LiveTradingTaskListResponse)
 def list_tasks(status: Optional[str] = None, db_path=Depends(get_db_path)):
-    tasks = list_live_trading_tasks(db_path, status)
+    tasks = repo.list_live_trading_tasks(db_path, status)
     return {"tasks": tasks, "total": len(tasks)}
 
 
 @router.get("/tasks/{task_id}", response_model=LiveTradingTaskResponse)
 def get_task(task_id: str, db_path=Depends(get_db_path)):
-    t = get_live_trading_task(db_path, task_id)
+    t = repo.get_live_trading_task(db_path, task_id)
     if not t:
         raise HTTPException(404, detail="live trading task not found")
     return t
@@ -57,16 +49,16 @@ def get_task(task_id: str, db_path=Depends(get_db_path)):
 
 @router.patch("/tasks/{task_id}", response_model=LiveTradingTaskResponse)
 def update_task(task_id: str, req: LiveTradingTaskUpdate, db_path=Depends(get_db_path)):
-    if not get_live_trading_task(db_path, task_id):
+    if not repo.get_live_trading_task(db_path, task_id):
         raise HTTPException(404, detail="live trading task not found")
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if updates:
-        update_live_trading_task(db_path, task_id, **updates)
-    return get_live_trading_task(db_path, task_id)
+        repo.update_live_trading_task(db_path, task_id, **updates)
+    return repo.get_live_trading_task(db_path, task_id)
 
 
 @router.delete("/tasks/{task_id}")
 def remove_task(task_id: str, db_path=Depends(get_db_path)):
-    if not delete_live_trading_task(db_path, task_id):
+    if not repo.delete_live_trading_task(db_path, task_id):
         raise HTTPException(404, detail="live trading task not found")
     return {"deleted": True, "task_id": task_id}

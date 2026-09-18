@@ -42,8 +42,9 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-// Mock framer-motion
-vi.mock("framer-motion", () => ({
+// Mock motion/react
+vi.mock("motion/react", () => ({
+  useReducedMotion: () => false,
   motion: new Proxy({}, {
     get: (_, tag) => {
       return ({ children, ...props }: any) => {
@@ -91,10 +92,6 @@ vi.mock("@/components/evolution/StrategyList", () => ({
   StrategyList: () => <div data-testid="strategy-list">Strategies</div>,
 }));
 
-vi.mock("@/components/evolution/AlgorithmLog", () => ({
-  AlgorithmLog: () => <div data-testid="algorithm-log">Log</div>,
-}));
-
 vi.mock("@/components/evolution/HistoryTable", () => ({
   HistoryTable: () => <div data-testid="history-table">History</div>,
 }));
@@ -129,6 +126,7 @@ vi.mock("@/components/ui/skeleton", () => ({
 
 import { Evolution } from "@/pages/Evolution";
 import { getEvolutionTasks } from "@/services/evolution";
+import type { EvolutionTask } from "@/types/api";
 
 const mockGetEvolutionTasks = vi.mocked(getEvolutionTasks);
 
@@ -151,7 +149,7 @@ describe("Evolution page", () => {
     mockGetEvolutionTasks.mockReturnValue(new Promise(() => {}));
 
     render(<Evolution />, { wrapper: createWrapper() });
-    const skeletons = screen.getAllByTestId("skeleton");
+    const skeletons = document.querySelectorAll(".ant-skeleton"); // AntD Skeleton（断言语义保持：加载占位存在）
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -192,7 +190,7 @@ describe("Evolution page", () => {
 
   // --- With completed tasks ---
   it("renders history section with completed tasks", async () => {
-    const tasks = [
+    const tasks: EvolutionTask[] = [
       {
         task_id: "e1",
         status: "completed",
@@ -200,12 +198,24 @@ describe("Evolution page", () => {
         timeframe: "4h",
         mode: "auto",
         score_template: "explorer",
+        target_score: 80,
+        population_size: 30,
+        leverage: 1,
+        direction: "long",
         current_generation: 10,
         max_generations: 10,
+        elite_ratio: 0.5,
+        continuous: true,
+        strategy_threshold: 80,
+        strategy_count: 0,
+        exploration_efficiency: 0,
+        min_annual_return: 0.1,
+        data_row_count: 0,
         best_score: 85,
         best_fitness: 0.82,
         qualified_count: 3,
         created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
       },
     ];
     mockGetEvolutionTasks.mockResolvedValue({ items: tasks, total: 1 });

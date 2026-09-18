@@ -11,22 +11,14 @@ import {
   Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation } from "react-router";
 
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { ChartToolbar } from "@/components/charts/ChartToolbar";
-import { Button } from "@/components/ui/Button";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button as AntButton, Select as AntSelect, Skeleton } from "antd";
 
 import {
   RuleConditionGroup,
@@ -103,7 +95,6 @@ function getDefaultDates(): { start: string; end: string } {
 export function Lab() {
   // -- Router state (DNA from Evolution) --
   const location = useLocation();
-  const navigate = useNavigate();
   const routeState = location.state as {
     dna?: DNA;
     symbol?: string;
@@ -127,7 +118,7 @@ export function Lab() {
     end: routeState?.dataEnd ?? "",
   });
   const [btLeverage, setBtLeverage] = useState(1);
-  const [btDirection, setBtDirection] = useState<string>("long");
+  const [btDirection, setBtDirection] = useState<"long" | "short" | "mixed">("long");
   const [btStopLoss, setBtStopLoss] = useState(0.05);
   const [btTakeProfit, setBtTakeProfit] = useState(0.1);
   const [btPositionSize, setBtPositionSize] = useState(0.3);
@@ -157,7 +148,7 @@ export function Lab() {
   // -- Result state --
   const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [hypoSubChartType, setHypoSubChartType] = useState<SubChartType>("volume");
+  const [hypoSubChartType] = useState<SubChartType>("volume");
   const [hypoFetchEnabled, setHypoFetchEnabled] = useState(false);
 
   // -- Refs --
@@ -378,34 +369,6 @@ export function Lab() {
     setHypoFetchEnabled(false);
   }, []);
 
-  const handlePreset = useCallback((idx: number) => {
-    const presets = [
-      {
-        entry: [
-          { logic: "IF" as const, timeframe: "4h", subject: "ema", action: "cross_above", target: "bb_upper" },
-        ],
-        exit: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
-        ],
-      },
-      {
-        entry: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "lt", target: "30" },
-          { logic: "AND" as const, timeframe: "15m", subject: "kdj", action: "cross_above", target: "" },
-        ],
-        exit: [
-          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
-        ],
-      },
-    ];
-    const preset = presets[idx];
-    if (preset) {
-      setEntryConditions([...preset.entry]);
-      setExitConditions([...preset.exit]);
-      setRuleResult(null);
-    }
-  }, []);
-
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
     if (!ruleResult) return;
     try {
@@ -541,14 +504,10 @@ export function Lab() {
                       </>
                     )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => setBtConfigCollapsed(false)}
-                  >
+                  <AntButton type="text" size="small" onClick={() => setBtConfigCollapsed(false)}>
                     <ChevronDown className="h-3.5 w-3.5" />
                     配置
-                  </Button>
+                  </AntButton>
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
@@ -557,24 +516,21 @@ export function Lab() {
                     <span className="mb-1.5 block text-xs font-medium text-text-muted">
                       策略选择
                     </span>
-                    <Select
+                    <AntSelect
+                      size="small"
                       value={selectedStrategyId}
-                      onValueChange={(v) => {
+                      onChange={(v) => {
                         const s = allStrategies.find((st) => st.strategy_id === v);
                         if (s) handleSelectStrategy(s);
                       }}
-                    >
-                      <SelectTrigger className="h-8 w-full text-xs">
-                        <SelectValue placeholder={allStrategies.length === 0 ? "策略库为空，请先从进化中心保存策略" : "从策略库选择..."} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allStrategies.map((s) => (
-                          <SelectItem key={s.strategy_id} value={s.strategy_id}>
-                            {s.name || s.strategy_id.slice(0, 8)} | {s.symbol} {s.timeframe} {s.source === "evolution" ? "(进化)" : "(手动)"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder={allStrategies.length === 0 ? "策略库为空，请先从进化中心保存策略" : "从策略库选择..."}
+                      className="!w-full !text-xs"
+                      aria-label="从策略库选择"
+                      options={allStrategies.map((s) => ({
+                        value: s.strategy_id,
+                        label: `${s.name || s.strategy_id.slice(0, 8)} | ${s.symbol} ${s.timeframe} ${s.source === "evolution" ? "(进化)" : "(手动)"}`,
+                      }))}
+                    />
                   </div>
 
                   {/* Data source row */}
@@ -583,25 +539,23 @@ export function Lab() {
                       数据源
                     </span>
                     <div className="flex flex-wrap items-center gap-3">
-                      <Select value={backtestSymbol} onValueChange={setBacktestSymbol}>
-                        <SelectTrigger className="h-8 w-36 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {dynamicSymbolOptions.map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <AntSelect
+                        size="small"
+                        value={backtestSymbol}
+                        onChange={setBacktestSymbol}
+                        className="!w-36 !text-xs"
+                        aria-label="回测交易对"
+                        options={[...dynamicSymbolOptions]}
+                      />
 
-                      <Select value={backtestTimeframe} onValueChange={setBacktestTimeframe}>
-                        <SelectTrigger className="h-8 w-24 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(sourcesData?.sources?.filter((s) => s.symbol === backtestSymbol).length ?? 0) > 0
+                      <AntSelect
+                        size="small"
+                        value={backtestTimeframe}
+                        onChange={setBacktestTimeframe}
+                        className="!w-24 !text-xs"
+                        aria-label="回测周期"
+                        options={
+                          (sourcesData?.sources?.filter((s) => s.symbol === backtestSymbol).length ?? 0) > 0
                             ? sourcesData!.sources
                                 .filter((s) => s.symbol === backtestSymbol)
                                 .reduce<{ value: string; label: string }[]>((acc, s) => {
@@ -610,18 +564,9 @@ export function Lab() {
                                   }
                                   return acc;
                                 }, [])
-                                .map((o) => (
-                                  <SelectItem key={o.value} value={o.value}>
-                                    {o.label}
-                                  </SelectItem>
-                                ))
-                            : TIMEFRAME_SELECT_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value}>
-                                  {o.label}
-                                </SelectItem>
-                              ))}
-                        </SelectContent>
-                      </Select>
+                            : [...TIMEFRAME_SELECT_OPTIONS]
+                        }
+                      />
 
                       <input
                         type="date"
@@ -675,39 +620,25 @@ export function Lab() {
                       <div className="mt-2 flex flex-wrap items-center gap-4">
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-text-muted">方向</span>
-                          <Select
+                          <AntSelect
+                            size="small"
                             value={btDirection}
-                            onValueChange={(v) => setBtDirection(v)}
-                          >
-                            <SelectTrigger className="h-7 w-20 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {DIRECTION_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value}>
-                                  {o.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            onChange={(v) => setBtDirection(v as "long" | "short" | "mixed")}
+                            className="!w-20 !text-xs"
+                            aria-label="回测方向"
+                            options={DIRECTION_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                          />
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-text-muted">杠杆</span>
-                          <Select
+                          <AntSelect
+                            size="small"
                             value={String(btLeverage)}
-                            onValueChange={(v) => setBtLeverage(Number(v))}
-                          >
-                            <SelectTrigger className="h-7 w-16 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {LEVERAGE_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={String(o.value)}>
-                                  {o.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            onChange={(v) => setBtLeverage(Number(v))}
+                            className="!w-16 !text-xs"
+                            aria-label="回测杠杆"
+                            options={LEVERAGE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
+                          />
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-text-muted">手续费</span>
@@ -787,25 +718,19 @@ export function Lab() {
                   {/* Action row */}
                   <div className="flex items-center gap-2">
                     {backtestDna && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="text-slate-500"
-                        onClick={() => setBtConfigCollapsed(true)}
-                      >
+                      <AntButton type="text" size="small" className="!text-slate-500" onClick={() => setBtConfigCollapsed(true)}>
                         收起配置
-                      </Button>
+                      </AntButton>
                     )}
                     <div className="flex-1" />
-                    <Button
-                      className="gap-2"
-                      size="sm"
+                    <AntButton
+                      type="primary"
                       disabled={!backtestDna}
                       onClick={() => backtestPanelRef.current?.runBacktest()}
                     >
                       <Play className="h-4 w-4" />
                       运行回测
-                    </Button>
+                    </AntButton>
                   </div>
                 </div>
               )}
@@ -896,31 +821,23 @@ export function Lab() {
                   数据源
                 </span>
                 <div className="flex flex-wrap items-center gap-3">
-                  <Select value={pair} onValueChange={setPair}>
-                    <SelectTrigger className="h-8 w-36 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {dynamicSymbolOptions.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <AntSelect
+                    size="small"
+                    value={pair}
+                    onChange={setPair}
+                    className="!w-36 !text-xs"
+                    aria-label="验证交易对"
+                    options={[...dynamicSymbolOptions]}
+                  />
 
-                  <Select value={timeframe} onValueChange={setTimeframe}>
-                    <SelectTrigger className="h-8 w-24 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {dynamicTimeframeOptions.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <AntSelect
+                    size="small"
+                    value={timeframe}
+                    onChange={setTimeframe}
+                    className="!w-24 !text-xs"
+                    aria-label="验证周期"
+                    options={[...dynamicTimeframeOptions]}
+                  />
 
                   <input
                     type="date"
@@ -985,27 +902,23 @@ export function Lab() {
                 </button>
 
                 <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
+                  <AntButton
+                    type="primary"
                     onClick={handleValidate}
                     disabled={isLoading || !hasConditions}
-                    className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
                   >
                     <Play className="h-3.5 w-3.5" />
                     {isLoading ? "验证中..." : "验证策略"}
-                  </Button>
+                  </AntButton>
 
                   {hasResult && ruleResult && ruleResult.total_trades > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
+                    <AntButton
                       onClick={() => setSaveDialogOpen(true)}
                       disabled={createStrategyMutation.isPending}
-                      className="gap-1.5 border-accent-gold/30 text-accent-gold hover:bg-accent-gold/10"
                     >
                       <Save className="h-3.5 w-3.5" />
                       保存为策略
-                    </Button>
+                    </AntButton>
                   )}
                 </div>
               </div>
@@ -1082,12 +995,12 @@ export function Lab() {
                 <div className="flex flex-col items-center gap-3 text-center">
                   <p className="text-sm text-text-muted">未找到符合条件的交易信号</p>
                   <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={handleClearAll}>
+                    <AntButton size="small" onClick={handleClearAll}>
                       调整条件
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickDate(0)}>
+                    </AntButton>
+                    <AntButton size="small" onClick={() => handleQuickDate(0)}>
                       扩大时间范围
-                    </Button>
+                    </AntButton>
                   </div>
                 </div>
               </GlassCard>

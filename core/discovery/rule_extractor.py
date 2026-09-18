@@ -13,6 +13,23 @@ import numpy as np
 from sklearn.tree import DecisionTreeClassifier
 
 
+from core.discovery.stat_validator import wilson_confidence
+
+
+def rule_sort_key(r: "RuleItem") -> float:
+    """B2.3: 规则排序键 = Wilson 置信下界（95%）。
+
+    旧键（confidence × samples 点估计乘积）在乘积相近时按噪声排序——
+    小样本高纯度规则会被大样本点估计险胜反超。Wilson 下界对样本量
+    收缩，同点估计下样本多者排前。confidence 字段（点估计）保留展示
+    语义，排序不修改 RuleItem。
+    """
+    if r.samples <= 0:
+        return 0.0
+    successes = min(int(round(r.confidence * r.samples)), r.samples)
+    return wilson_confidence(successes, r.samples)[0]
+
+
 @dataclass
 class RuleItem:
     """A single trading rule extracted from the decision tree."""
@@ -95,7 +112,7 @@ def extract_rules(
 
     _traverse(0, [])
 
-    # Sort by confidence * samples (descending)
-    rules.sort(key=lambda r: r.confidence * r.samples, reverse=True)
+    # B2.3: Sort by Wilson lower bound (descending) — 点估计保留在 confidence 字段展示
+    rules.sort(key=rule_sort_key, reverse=True)
 
     return rules[:max_rules]

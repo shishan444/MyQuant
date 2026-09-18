@@ -682,7 +682,7 @@ def init_population(
                 timeframe_pool=timeframe_pool,
                 indicator_pool=indicator_pool,
             )
-            sig = _sig(candidate)
+            sig = candidate.gene_signature
             if sig not in exclude_signatures and sig not in seen:
                 deduped.append(candidate)
                 seen.add(sig)

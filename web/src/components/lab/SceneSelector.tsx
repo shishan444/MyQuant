@@ -1,26 +1,7 @@
 /** Scene template selector with multi-select checkboxes and parameter controls. */
 import { useMemo } from "react";
-import {
-  TrendingUp,
-  BarChart3,
-  RotateCcw,
-  Zap,
-  Layers,
-  Clock,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SceneTypeInfo } from "@/types/scene";
-
-const ICON_MAP: Record<string, React.ElementType> = {
-  double_top: TrendingUp,
-  head_shoulders_top: TrendingUp,
-  triple_top: TrendingUp,
-  volume_spike: BarChart3,
-  mean_reversion: RotateCcw,
-  volume_breakout: Zap,
-  support_resistance: Layers,
-  cross_timeframe: Clock,
-};
 
 /** Parameter schemas for each scene type. */
 const SCENE_PARAM_SCHEMAS: Record<string, Array<{

@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button } from "antd";
 
 interface Props {
   children: ReactNode;
@@ -41,7 +41,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <p className="text-xs text-text-muted max-w-md">
             {this.state.error?.message}
           </p>
-          <Button variant="outline" size="xs" onClick={this.handleRetry}>
+          <Button size="small" onClick={this.handleRetry}>
             Retry
           </Button>
         </div>

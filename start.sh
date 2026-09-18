@@ -29,7 +29,7 @@ log_info "START" "Backend API started" "pid=$API_PID port=8000"
 
 # 启动前端 dev server (端口 8080)
 log_info "START" "Starting Frontend dev server on port 8080..."
-(cd web && npx vite --host 0.0.0.0 --port 8080) >> logs/start/web_$(date +%Y%m%d).log 2>&1 &
+(cd web && pnpm exec vite --host 0.0.0.0 --port 8080) >> logs/start/web_$(date +%Y%m%d).log 2>&1 &
 WEB_PID=$!
 echo $WEB_PID > .myquant_web.pid
 log_info "START" "Frontend dev server started" "pid=$WEB_PID port=8080"

@@ -23,7 +23,7 @@ describe("MetricsDashboard", () => {
   });
 
   it("renders positive PnL with up trend", () => {
-    const { container } = render(
+    render(
       <MetricsDashboard metrics={{ ...mockTradingMetrics, total_pnl: 500 }} initialCash={100000} />,
     );
     const pnlValue = screen.getByText("$500");

@@ -1,0 +1,71 @@
+Unused exports (37)
+getActionLabel               function  src/components/lab/ActionDropdown.tsx:94:17 
+SubjectDropdown                        src/components/lab/index.ts:1:10            
+getSubjectLabel                        src/components/lab/index.ts:1:27            
+ActionDropdown                         src/components/lab/index.ts:2:10            
+getActionLabel                         src/components/lab/index.ts:2:26            
+TargetInput                            src/components/lab/index.ts:3:10            
+getTargetLabel                         src/components/lab/index.ts:3:23            
+SceneSelector                          src/components/lab/index.ts:9:10            
+SceneResult                            src/components/lab/index.ts:10:10           
+RuleConditionRow                       src/components/lab/index.ts:11:10           
+getSubjectLabel              function  src/components/lab/SubjectDropdown.tsx:59:17
+getTargetLabel               function  src/components/lab/TargetInput.tsx:33:17    
+getPageTitle                 function  src/components/layout/Sidebar.tsx:45:17     
+chartKeys                              src/hooks/queries/chartQueries.ts:8:14      
+datasetsKeys                           src/hooks/useDatasets.ts:5:14               
+useDatasets                  function  src/hooks/useDatasets.ts:15:17              
+useDataset                   function  src/hooks/useDatasets.ts:22:17              
+useOhlcv                     function  src/hooks/useDatasets.ts:30:17              
+strategiesKeys                         src/hooks/useStrategies.ts:6:14             
+useStrategy                  function  src/hooks/useStrategies.ts:27:17            
+useRunBacktest               function  src/hooks/useStrategies.ts:35:17            
+useVerifyStrategies          function  src/hooks/useStrategies.ts:80:17            
+useVerifyHistory             function  src/hooks/useStrategies.ts:124:17           
+tradingTasksOptions          function  src/hooks/useTrading.ts:37:17               
+tradingTaskOptions           function  src/hooks/useTrading.ts:51:17               
+tradingTradesOptions         function  src/hooks/useTrading.ts:63:17               
+tradingEquityOptions         function  src/hooks/useTrading.ts:71:17               
+tradingMetricsOptions        function  src/hooks/useTrading.ts:79:17               
+runnerStatusOptions          function  src/hooks/useTrading.ts:87:17               
+useTradingTask               function  src/hooks/useTrading.ts:101:17              
+useValidateHypothesis        function  src/hooks/useValidation.ts:5:17             
+TF_DURATION                            src/lib/constants.ts:55:14                  
+CONDITION_TYPE_SYMBOLS                 src/lib/constants.ts:186:14                 
+MTF_TIMEFRAME_COLORS                   src/lib/constants.ts:283:14                 
+PATTERN_ACTIONS                        src/lib/constants.ts:300:14                 
+getDatasetPreview       api  function  src/services/datasets.ts:59:23              
+mockPaperTrade                         src/test/fixtures.ts:211:14                 
+Unused exported types (32)
+KlineChartProps       type       src/components/charts/KlineChart.tsx:951:15
+CandleData            type       src/components/charts/KlineChart.tsx:951:32
+TriggerMarker         type       src/components/charts/KlineChart.tsx:951:71
+ConfirmDialogProps    type       src/components/ConfirmDialog.tsx:67:15     
+EmptyStateProps       type       src/components/EmptyState.tsx:42:15        
+EmptyStateAction      type       src/components/EmptyState.tsx:42:32        
+GlassCardProps        type       src/components/GlassCard.tsx:47:15         
+OptionItem            interface  src/components/lab/OptionDropdown.tsx:6:18 
+PageTransitionProps   type       src/components/PageTransition.tsx:20:15    
+StatCardProps         type       src/components/StatCard.tsx:34:15          
+StreamCallbacks       interface  src/hooks/createStreamHook.ts:18:18        
+EquitySnapshot        type       src/services/trading.ts:17:3               
+SignalGeneCondition   interface  src/types/api.ts:26:18                     
+LogicGenes            type       src/types/api.ts:39:13                     
+ExecutionGenes        type       src/types/api.ts:50:13                     
+RiskGenes             type       src/types/api.ts:53:13                     
+PaginatedResponse     interface  src/types/api.ts:192:18                    
+StrategyMetrics       type       src/types/api.ts:275:13                    
+MutationRecord        interface  src/types/api.ts:310:18                    
+TriggerRecord         type       src/types/api.ts:349:13                    
+DistributionBucket    interface  src/types/api.ts:352:18                    
+VerifyDateRange       type       src/types/api.ts:424:13                    
+VerifyRequest         type       src/types/api.ts:427:13                    
+VerifyResultItem      type       src/types/api.ts:430:13                    
+VerifyHistoryItem     type       src/types/api.ts:442:13                    
+VerifySession         type       src/types/api.ts:448:13                    
+BatchBacktestRequest  type       src/types/api.ts:458:13                    
+EquitySnapshot        type       src/types/api.ts:557:13                    
+OhlcvDataPoint        interface  src/types/chart.ts:1:18                    
+ChartThemeConfig      interface  src/types/chart.ts:10:18                   
+EquitySeries          interface  src/types/chart.ts:24:18                   
+HorizonSummary        interface  src/types/scene.ts:21:18                   

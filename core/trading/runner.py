@@ -41,31 +41,10 @@ def get_trading_controllers() -> Dict[str, "TaskController"]:
     return _active_controllers
 
 
-class TaskStopRequested(Exception):
-    pass
+from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
 
 
-class TaskController:
-    def __init__(self) -> None:
-        self._stop_event = threading.Event()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def check_stop(self) -> None:
-        if self._stop_event.is_set():
-            raise TaskStopRequested()
-
-    def wait(self, timeout: float) -> None:
-        self._stop_event.wait(timeout)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from core.persistence.timestamps import utc_now_iso as _now_iso  # B4.1 归一
 
 
 def _push_ws(task_id: str, payload: dict) -> None:
@@ -78,23 +57,13 @@ def _push_ws(task_id: str, payload: dict) -> None:
 
 def recover_stale_trading_tasks(db_path: Path) -> None:
     """Mark running paper trading tasks as stopped (crash recovery)."""
-    from core.persistence.db import connect
-    with connect(db_path) as conn:
-        result = conn.execute(
-            "UPDATE paper_trading_task SET status = 'stopped', "
-            "stop_reason = 'crash_recovery', updated_at = ? "
-            "WHERE status = 'running'",
-            (_now_iso(),),
-        )
-        conn.commit()
-        if result.rowcount > 0:
-            logger.info("Recovered %d stale trading tasks", result.rowcount)
+    from core.persistence.repository import paper_trading as repo
+    recovered = repo.recover_stale_trading_tasks(db_path)
+    if recovered > 0:
+        logger.info("Recovered %d stale trading tasks", recovered)
 
 
-_BAR_SECONDS = {
-    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "3d": 259200,
-}
+from core.data.timeframes import TF_SECONDS as _BAR_SECONDS  # B4.1 归一
 
 
 class TradingRunner(threading.Thread):
@@ -144,23 +113,12 @@ class TradingRunner(threading.Thread):
             self._run_task(task)
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        from core.persistence.db import connect
-        with connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM paper_trading_task "
-                "WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-            ).fetchone()
-            return dict(row) if row else None
+        from core.persistence.repository import paper_trading as repo
+        return repo.find_pending_trading_task(self.db_path)
 
     def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        from core.persistence.db import connect
-        with connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
-            ).fetchone()
-            return dict(row) if row else None
+        from core.persistence.repository import paper_trading as repo
+        return repo.get_paper_trading_task(self.db_path, task_id)
 
     def _run_task(self, task_row: Dict[str, Any]) -> None:
         task_id = task_row["task_id"]
@@ -402,6 +360,11 @@ class TradingRunner(threading.Thread):
                             save_paper_trade, task_id, ts.isoformat(), pipe_result.events,
                         )
                         pending_decision = pipe_result.pending_decision
+                        # B1.3: 事件落库成功即推进游标——中途异常被外层兜底后，
+                        # 下一轮 poll 从断点继续，只重试未完成 bar，不重放已
+                        # 落库 bar（消除重复 paper_trade 事件；range 已固化，
+                        # 循环内改 df 不影响本轮迭代）
+                        df = new_df.iloc[:i + 1]
 
                     df = new_df
             except Exception:

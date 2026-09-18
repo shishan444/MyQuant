@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/Button";
+import { Button } from "antd";
 
 interface EmptyStateAction {
   label: string;
@@ -26,7 +26,7 @@ function EmptyState({ icon: Icon, title, description, actions }: EmptyStateProps
           {actions.map((action) => (
             <Button
               key={action.label}
-              variant={action.variant ?? "default"}
+              type={action.variant === "outline" ? "default" : "primary"}
               onClick={action.onClick}
             >
               {action.label}

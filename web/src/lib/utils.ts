@@ -66,3 +66,15 @@ export function formatDateTime(t: string): string {
     return t;
   }
 }
+
+/** N 个月前的 ISO 日期（YYYY-MM-DD）——验证/批量回测日期预设共用（G7 归位 lib） */
+export function monthsAgo(m: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - m);
+  return d.toISOString().slice(0, 10);
+}
+
+/** 今日 ISO 日期（YYYY-MM-DD） */
+export function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}

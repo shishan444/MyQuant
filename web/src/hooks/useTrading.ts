@@ -6,13 +6,13 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { toast } from "sonner";
+import { validateTradingMessage } from "@/realtime/schemas";
+import { createRealtimeConnection, type RealtimeConnection } from "@/realtime/connection";
 import {
   listTradingTasks,
   getTradingTask,
   createTradingTask,
   stopTradingTask,
-  pauseTradingTask,
-  resumeTradingTask,
   restartTradingTask,
   getTradingTrades,
   getTradingRunnerStatus,
@@ -20,7 +20,6 @@ import {
   getTradingMetrics,
   deleteTradingTask,
   type CreateTradingTaskParams,
-  type TradingTask,
 } from "@/services/trading";
 
 // -- Query key factory --
@@ -150,36 +149,6 @@ export function useStopTradingTask() {
   });
 }
 
-export function usePauseTradingTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (taskId: string) => pauseTradingTask(taskId),
-    onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
-      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
-      toast.success("Task paused");
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to pause: ${err.message}`);
-    },
-  });
-}
-
-export function useResumeTradingTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (taskId: string) => resumeTradingTask(taskId),
-    onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
-      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
-      toast.success("Task resumed");
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to resume: ${err.message}`);
-    },
-  });
-}
-
 export function useRestartTradingTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -212,13 +181,14 @@ export function useDeleteTradingTask() {
 
 export function useTradingWebSocket(taskId: string | null) {
   const qc = useQueryClient();
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  // 定时器职责分离（ws-message-consumption 契约）：重连归适配层、业务防抖失效在本 hook
+  const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const connRef = useRef<RealtimeConnection | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   const scheduleInvalidation = useCallback(() => {
-    clearTimeout(reconnectTimer.current);
-    reconnectTimer.current = setTimeout(() => {
+    clearTimeout(invalidationTimerRef.current);
+    invalidationTimerRef.current = setTimeout(() => {
       qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
       if (taskId) {
         qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
@@ -235,48 +205,24 @@ export function useTradingWebSocket(taskId: string | null) {
       return;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = import.meta.env.VITE_WS_URL
-      ? new URL(import.meta.env.VITE_WS_URL).host
-      : window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/trading/${taskId}`;
+    // 连接管理（含协议消息消化/心跳/重连）归适配层，本 hook 只做事件分发
+    const conn = createRealtimeConnection({ channel: "trading", taskId });
+    connRef.current = conn;
 
-    const connect = () => {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setIsConnected(true);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "position_update" || msg.type === "task_started") {
-            scheduleInvalidation();
-          }
-        } catch {
-          // ignore
-        }
-      };
-
-      ws.onclose = () => {
-        wsRef.current = null;
-        setIsConnected(false);
-        reconnectTimer.current = setTimeout(connect, 3000);
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    };
-
-    connect();
+    conn.onStatus(setIsConnected);
+    conn.onMessage((raw) => {
+      // 契约校验（src/realtime/contract.md）：协议消息归连接层、非法消息丢弃留痕
+      const result = validateTradingMessage(raw);
+      if (result.kind !== "event") return;
+      if (result.event.type === "position_update" || result.event.type === "task_started") {
+        scheduleInvalidation();
+      }
+    });
 
     return () => {
-      wsRef.current?.close();
-      wsRef.current = null;
-      clearTimeout(reconnectTimer.current);
+      connRef.current?.close();
+      connRef.current = null;
+      clearTimeout(invalidationTimerRef.current);
       setIsConnected(false);
     };
   }, [taskId, scheduleInvalidation]);

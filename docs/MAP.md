@@ -8,12 +8,18 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | 类别 | 技术 |
 |------|------|
 | 后端语言 | Python 3.12+ |
-| 后端框架 | FastAPI 0.100+ / Uvicorn |
+| 后端框架 | FastAPI 0.137 / Uvicorn |
+| ORM/迁移 | SQLAlchemy 2.0（repository 层，表访问唯一入口）/ Alembic（schema 演进唯一轨） |
+| 实时通道 | python-socketio（四通道：evolution/trading/streams+streams 流式；native WS/SSE 已退役） |
 | 前端语言 | TypeScript 6.0 |
 | 前端框架 | React 19 / Vite 8 |
-| 构建/包管理 | setuptools (后端) / npm (前端) |
+| 构建/包管理 | setuptools (后端) / pnpm (前端) |
 | 数据库/存储 | SQLite (WAL) / Parquet 文件 |
 | 核心计算库 | vectorbt 0.28.5 / pandas-ta / numba / sklearn |
+
+不引入（显式裁决）：structlog/uv（单用户本地工具，标准 logging 已承担）、
+异步 ORM（SQLite 单写者无收益）、config.json 文件加密（本地单用户威胁
+模型，见 docs/security）。
 
 ## 架构风格
 单体应用，前后端分离。后端采用分层架构（API 层 -> 核心领域层 -> 数据/基础设施层），核心领域层按业务能力拆分为独立模块。前端采用页面-服务-Hook 三层架构，使用 Zustand 管理 UI 状态，TanStack React Query 管理服务端数据。
@@ -39,8 +45,8 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | validation | 假设验证引擎 | WHEN/THEN 规则验证、场景检测（6 种场景）、前瞻统计 | `core/validation/` | 声明式 |
 | prediction | 价格区间预测 | GARCH(1,1) 在线波动率、8 市场因子、动态 K 值、离线进化优化预测公式 | `core/prediction/` | 声明式 |
 | trading | 模拟纸盘交易与决策管线 | DecisionPipeline 决策管线、订单生成/管理、虚拟账户、历史回放、后台运行器 | `core/trading/` | 声明式 |
-| persistence | 数据持久化层 | SQLite 表管理、进化快照存储、断点恢复 | `core/persistence/` | 声明式 |
-| visualization | 图表可视化 | K 线图、权益曲线、代际趋势图生成（Plotly） | `core/visualization/` | 声明式 |
+| live_trading | 实盘网关与执行（执行放行关闭） | 币安网关/OMS/风控/执行器；与模拟盘共享**纯计算边界**（core.trading.judgment 的 evaluate 纯函数 + types 数据类，零状态共享） | `core/live_trading/` | 声明式 |
+| persistence | 数据持久化层 | SQLite 表管理、进化快照存储 | `core/persistence/` | 声明式 |
 | logging | 日志配置 | 按模块和日期组织日志文件路径 | `core/logging/` | 声明式 |
 | api | FastAPI HTTP/WS 接口层 | 路由定义、请求校验、WebSocket 推送、后台任务调度 | `api/` | 声明式 |
 
@@ -73,7 +79,6 @@ graph TD
         pred[价格预测]
         trade[模拟交易]
         persist[持久化]
-        vis[可视化]
         logg[日志]
     end
 
@@ -113,9 +118,6 @@ graph TD
     disc --> feat
     disc --> data
 
-    vis --> bt
-    vis --> strat
-
     data --> logg
     persist --> strat
 ```
@@ -153,7 +155,7 @@ graph TD
 - 部署环境：本地开发环境，API 端口 8000，前端开发代理至后端
 - 数据源：币安公共 API（无需 API Key 获取 K 线），期货数据需环境变量
 - 存储约束：SQLite 单文件数据库 + Parquet 文件，不支持分布式
-- 计算约束：回测使用 vectorbt + numba JIT 加速，进化支持多进程并行（n_workers 配置）
+- 计算约束：回测使用 vectorbt + numba JIT 加速，进化为单进程（并行由 vectorbt 向量化承担）
 - API Key 安全：通过环境变量 `${BINANCE_API_KEY}` / `${ANTHROPIC_API_KEY}` 引用，禁止硬编码
 - 预测模块自包含：prediction/ 不 import core/ 下其他模块，通过 DataFrame 列名约定与 features/ 松耦合
 

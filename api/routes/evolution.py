@@ -111,7 +111,6 @@ def _task_row_to_response(
         population_size=row.get("population_size", 15),
         max_generations=row.get("max_generations", 200),
         elite_ratio=row.get("elite_ratio", 0.5),
-        n_workers=row.get("n_workers", 6),
         current_generation=row.get("current_generation", 0),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -305,36 +304,25 @@ def create_task(
     if payload.requirements:
         requirements_json = json.dumps(payload.requirements.model_dump())
 
-    conn = _get_connection(db_path)
-    conn.execute(
-        """UPDATE evolution_task
-           SET population_size = ?, max_generations = ?,
-               elite_ratio = ?, n_workers = ?, status = 'pending',
-               leverage = ?, direction = ?,
-               data_start = ?, data_end = ?,
-               data_time_start = ?, data_time_end = ?, data_row_count = ?,
-               indicator_pool = ?, timeframe_pool = ?, mode = ?,
-               continuous = ?,
-               strategy_threshold = ?,
-               min_annual_return = ?, max_drawdown_limit = ?,
-               requirements_json = ?
-           WHERE task_id = ?""",
-        (payload.population_size, payload.max_generations,
-         payload.elite_ratio, payload.n_workers,
-         payload.leverage, payload.direction,
-         payload.data_start, payload.data_end,
-         data_time_start, data_time_end, data_row_count,
-         json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
-         json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
-         payload.mode,
-         1 if payload.continuous else 0,
-         payload.strategy_threshold,
-         payload.min_annual_return, payload.max_drawdown_limit,
-         requirements_json,
-         task_id),
+    from core.persistence.repository import evolution as _repo
+    _repo.update_task_config(
+        db_path, task_id,
+        population_size=payload.population_size,
+        max_generations=payload.max_generations,
+        elite_ratio=payload.elite_ratio,
+        leverage=payload.leverage, direction=payload.direction,
+        data_start=payload.data_start, data_end=payload.data_end,
+        data_time_start=data_time_start, data_time_end=data_time_end,
+        data_row_count=data_row_count,
+        indicator_pool=json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
+        timeframe_pool=json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
+        mode=payload.mode,
+        continuous=1 if payload.continuous else 0,
+        strategy_threshold=payload.strategy_threshold,
+        min_annual_return=payload.min_annual_return,
+        max_drawdown_limit=payload.max_drawdown_limit,
+        requirements_json=requirements_json,
     )
-    conn.commit()
-    conn.close()
 
     row = get_task(db_path, task_id)
     if row is None:
@@ -414,13 +402,15 @@ def pause_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Pause an evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    # B6.2 路由薄化：判定与前态守护在 service 用例（batch1 D3 语义不变）
+    from core.services import evolution_service
+    try:
+        result = evolution_service.pause_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    update_task(db_path, task_id, status="paused")
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.post("/tasks/{task_id}/stop")
@@ -429,20 +419,14 @@ def stop_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Stop an evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    from core.services import evolution_service
+    try:
+        result = evolution_service.stop_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    # Direct signal via TaskController (instant response, no DB polling delay)
-    from api.runner import get_active_controllers
-    controllers = get_active_controllers()
-    controller = controllers.get(task_id)
-    if controller is not None:
-        controller.request_stop()
-
-    update_task(db_path, task_id, status="stopped", stop_reason="user_stop")
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.post("/tasks/{task_id}/resume")
@@ -451,16 +435,14 @@ def resume_task(
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
     """Resume a paused evolution task."""
-    row = get_task(db_path, task_id)
-    if row is None:
+    from core.services import evolution_service
+    try:
+        result = evolution_service.resume_task(db_path, task_id)
+    except evolution_service.TaskNotFound:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    if row["status"] != "paused":
-        raise HTTPException(status_code=400, detail="Task is not paused")
-
-    update_task(db_path, task_id, status="pending")
-    row = get_task(db_path, task_id)
-    return _task_row_to_response(row)
+    except evolution_service.IllegalTransition as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _task_row_to_response(result.task_row)
 
 
 @router.get("/tasks/{task_id}/strategies")
@@ -492,14 +474,8 @@ def get_task_strategies(
             pass
 
     # Snapshot-based strategies
-    from core.persistence.db import _connect
-    conn = _connect(db_path)
-    snapshots = conn.execute(
-        """SELECT generation, best_score, best_dna FROM generation_snapshot
-           WHERE task_id = ? ORDER BY best_score DESC LIMIT 10""",
-        (task_id,),
-    ).fetchall()
-    conn.close()
+    from core.persistence.repository import evolution as _repo
+    snapshots = _repo.list_top_snapshots(db_path, task_id, limit=10)
 
     for snap in snapshots:
         try:
@@ -573,23 +549,13 @@ def get_discovered_strategies(
     return result
 
 
-def _get_connection(db_path: Path):
-    """Get a SQLite connection (delegates to core.persistence.db.connect)."""
-    from core.persistence.db import connect
-    return connect(db_path)
-
-
 # ── Timeframe utilities ──
 
-_TF_DURATION_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
-    "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
-}
+from core.data.timeframes import TF_SECONDS as _TF_SECONDS  # B4.1 归一
 
 
 def sort_timeframes(tfs: List[str]) -> List[str]:
     """Sort timeframes by duration, longest first."""
     def _key(tf: str) -> int:
-        return _TF_DURATION_MINUTES.get(tf, 0)
+        return _TF_SECONDS.get(tf, 0)
     return sorted(tfs, key=_key, reverse=True)

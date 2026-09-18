@@ -7,7 +7,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Component that throws on render
-function ThrowError({ error }: { error: string }) {
+function ThrowError({ error }: { error: string }): never {
   throw new Error(error);
 }
 

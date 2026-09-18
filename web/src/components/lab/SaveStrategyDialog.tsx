@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/input";
+import { Button, Input } from "antd";
 
 interface SaveStrategyDialogProps {
   open: boolean;
@@ -79,8 +78,9 @@ export function SaveStrategyDialog({
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-8 text-xs"
+              className="!text-xs"
               placeholder="输入策略名称"
+              aria-label="策略名称"
             />
           </div>
 
@@ -90,8 +90,9 @@ export function SaveStrategyDialog({
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="h-8 text-xs"
+              className="!text-xs"
               placeholder="策略描述 (可选)"
+              aria-label="策略描述"
             />
           </div>
 
@@ -101,21 +102,22 @@ export function SaveStrategyDialog({
             <Input
               value={tags}
               onChange={(e) => setTags(e.target.value)}
-              className="h-8 text-xs"
+              className="!text-xs"
               placeholder="用逗号分隔"
+              aria-label="标签"
             />
           </div>
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-2 pt-2">
-            <Button size="sm" variant="outline" onClick={onClose}>
+            <Button size="small" onClick={onClose}>
               取消
             </Button>
             <Button
-              size="sm"
+              type="primary"
+              size="small"
               onClick={handleSave}
               disabled={!name.trim() || saving}
-              className="bg-accent-gold text-black hover:bg-accent-gold/90"
             >
               {saving ? "保存中..." : "确认保存"}
             </Button>

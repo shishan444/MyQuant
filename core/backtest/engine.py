@@ -19,6 +19,11 @@ from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_sign
 
 logger = logging.getLogger(__name__)
 
+# B7.1：清算口径移交 core/market_model（币安 USDT-M 分层 mmr，权益<
+# 仓位名义×档位 mmr 触发）——本模块不再持有维持率字面量（单一权威源）。
+from core.market_model import maintenance_threshold as _mm_threshold
+from core.market_model.liquidation import tier_arrays as _mm_tier_arrays
+
 
 @dataclass
 class BacktestResult:
@@ -34,6 +39,9 @@ class BacktestResult:
     liquidated: bool = False
     data_bars: int = 0
     trade_win_rate: float | None = None
+    # 胜率三态（batch1 D2）：None+win_rate_failed=False=无交易（合法缺失）；
+    # 数值=计算成功；None+win_rate_failed=True=计算失败（显式失败，禁止按缺失降级）
+    win_rate_failed: bool = False
     trade_returns: np.ndarray | None = None
     bars_per_year: int = 2190
     add_count: int = 0
@@ -207,7 +215,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, fee, slippage,
-                  high_arr, low_arr, direction_signal):
+                  high_arr, low_arr, direction_signal,
+                  mmr_tier_max, mmr_tier_rate):
     """Per-bar order callback with real-time SL/TP and liquidation.
 
     Args via lifecycle chain:
@@ -261,8 +270,16 @@ def order_func_nb(c, entry_price, is_liquidated,
     current_price = c.close[i, col]
 
     # Liquidation check BEFORE SL/TP (for leveraged positions)
+    # B7.1 口径（架构约束修订）：等效换算形态 init_cash×(1−(1−mmr)/L)，
+    # mmr 按等效名义 init_cash×L 选档（内联，与 market_model 同源）
     if leverage > 1.0 and c.position_now != 0.0:
-        maintenance = c.init_cash[0] * (1.0 - 0.9 / (leverage * leverage))
+        notional_eq = c.init_cash[0] * leverage
+        mmr = mmr_tier_rate[len(mmr_tier_rate) - 1]
+        for t in range(len(mmr_tier_rate)):
+            if notional_eq <= mmr_tier_max[t]:
+                mmr = mmr_tier_rate[t]
+                break
+        maintenance = c.init_cash[0] * (1.0 - (1.0 - mmr) / leverage)
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
@@ -470,6 +487,8 @@ class BacktestEngine:
             high_2d,
             low_2d,
             direction_signal_2d,
+            _mm_tier_arrays()[0],
+            _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,
@@ -518,7 +537,7 @@ class BacktestEngine:
         # Check if liquidation occurred (on amplified curve)
         liquidated = False
         if leverage > 1 and len(equity_curve) > 0:
-            maintenance = self.init_cash * (1 - 0.9 / leverage)
+            maintenance = _mm_threshold(self.init_cash, leverage)
             if (equity_curve < maintenance).any():
                 liquidated = True
 
@@ -543,6 +562,7 @@ class BacktestEngine:
 
         trade_win_rate = None
         trade_returns = None
+        win_rate_failed = False
         if total_trades_val > 0:
             try:
                 trade_pnl = portfolio.trades.pnl
@@ -556,7 +576,12 @@ class BacktestEngine:
                     trade_win_rate = winning / len(pnl_arr)
                     trade_returns = pnl_arr / self.init_cash
             except Exception:
-                pass
+                # 三态（D2）：计算失败不得静默降级为「无胜率」——记录原因链并显式标记
+                win_rate_failed = True
+                logger.error(
+                    "win_rate computation failed: total_trades=%s", total_trades_val,
+                    exc_info=True,
+                )
 
         metrics = compute_metrics(
             equity_curve, total_trades=total_trades_val,
@@ -589,6 +614,7 @@ class BacktestEngine:
             liquidated=liquidated,
             data_bars=len(enhanced_df),
             trade_win_rate=trade_win_rate,
+            win_rate_failed=win_rate_failed,
             trade_returns=trade_returns,
             bars_per_year=bars_per_year,
             add_count=add_count,
@@ -768,6 +794,8 @@ class BacktestEngine:
             high_2d,
             low_2d,
             direction_signal_matrix,
+            _mm_tier_arrays()[0],
+            _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,

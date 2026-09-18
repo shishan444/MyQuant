@@ -4,7 +4,6 @@ export { TargetInput, getTargetLabel } from "./TargetInput";
 export { SaveStrategyDialog } from "./SaveStrategyDialog";
 export { BacktestModePanel } from "./BacktestModePanel";
 export { BacktestMetricsPanel } from "./BacktestMetricsPanel";
-export { EquityCurveChart } from "./EquityCurveChart";
 export { SceneModePanel } from "./SceneModePanel";
 export { SceneSelector } from "./SceneSelector";
 export { SceneResult } from "./SceneResult";

@@ -6,14 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 
 import { GlassCard } from "@/components/GlassCard";
-import { Button } from "@/components/ui/Button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Button as AntButton, Select as AntSelect } from "antd";
 import { EmptyState } from "@/components/EmptyState";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { AnnotationLayer } from "@/components/charts/AnnotationLayer";
@@ -275,30 +268,22 @@ export function SceneModePanel({
       {/* Data source row */}
       <div className="flex items-center gap-3">
         <span className="w-14 shrink-0 text-xs text-slate-400">数据源</span>
-        <Select value={symbol} onValueChange={(v) => { setSymbol(v); setResult(null); }}>
-          <SelectTrigger className="h-7 w-28 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {dynamicSymbols.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={timeframe} onValueChange={(v) => { setTimeframe(v); setResult(null); }}>
-          <SelectTrigger className="h-7 w-20 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TIMEFRAME_SELECT_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <AntSelect
+          size="small"
+          value={symbol}
+          onChange={(v) => { setSymbol(v); setResult(null); }}
+          className="!w-28 !text-xs"
+          aria-label="场景数据源"
+          options={[...dynamicSymbols]}
+        />
+        <AntSelect
+          size="small"
+          value={timeframe}
+          onChange={(v) => { setTimeframe(v); setResult(null); }}
+          className="!w-20 !text-xs"
+          aria-label="场景周期"
+          options={TIMEFRAME_SELECT_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+        />
         <input
           type="date"
           value={dataStart}
@@ -437,15 +422,15 @@ export function SceneModePanel({
       )}
 
       {/* Submit */}
-      <Button
-        size="sm"
-        className="w-full gap-1.5 bg-amber-400 text-black hover:bg-amber-400/90"
+      <AntButton
+        type="primary"
+        block
         disabled={!hasSelection || isValidating}
         onClick={handleSubmit}
       >
         {activeTool ? <Eye className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
         {isValidating ? "验证中..." : `验证场景 (${selectedTypes.size})`}
-      </Button>
+      </AntButton>
 
       {/* Result */}
       {result ? (

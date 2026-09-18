@@ -1,15 +1,6 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { TrendingUp } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { Button, Form, InputNumber, Modal, Switch } from "antd";
 
 const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
 
@@ -31,6 +22,13 @@ interface CreateTaskDialogProps {
   onConfirm: (params: { initialCash: number; leverage: number; direction: string; confidenceSizingEnabled: boolean }) => void;
 }
 
+interface CreateFormValues {
+  initialCash: number;
+  leverage: number;
+  direction: string;
+  confidenceSizing: boolean;
+}
+
 export function CreateTaskDialog({
   open,
   onOpenChange,
@@ -42,126 +40,162 @@ export function CreateTaskDialog({
   direction: defaultDirection,
   onConfirm,
 }: CreateTaskDialogProps) {
-  const [cash, setCash] = useState(defaultCash);
-  const [leverage, setLeverage] = useState(defaultLeverage);
-  const [direction, setDirection] = useState(defaultDirection);
-  const [confidenceSizing, setConfidenceSizing] = useState(false);
+  // 表单草稿唯一持有者=AntD Form（ui-state spec）；弹层开启时同步外部默认值
+  const [form] = Form.useForm<CreateFormValues>();
 
-  // Sync when dialog opens with new defaults
-  const [prevCash, setPrevCash] = useState(defaultCash);
-  const [prevLeverage, setPrevLeverage] = useState(defaultLeverage);
-  const [prevDirection, setPrevDirection] = useState(defaultDirection);
-  if (defaultCash !== prevCash) { setPrevCash(defaultCash); setCash(defaultCash); }
-  if (defaultLeverage !== prevLeverage) { setPrevLeverage(defaultLeverage); setLeverage(defaultLeverage); }
-  if (defaultDirection !== prevDirection) { setPrevDirection(defaultDirection); setDirection(defaultDirection); }
+  useEffect(() => {
+    if (open) {
+      form.setFieldsValue({
+        initialCash: defaultCash,
+        leverage: defaultLeverage,
+        direction: defaultDirection,
+        confidenceSizing: false,
+      });
+    }
+  }, [open, defaultCash, defaultLeverage, defaultDirection, form]);
+
+  const handleConfirm = async () => {
+    const values = await form.validateFields();
+    onConfirm({
+      initialCash: values.initialCash,
+      leverage: values.leverage,
+      direction: values.direction,
+      confidenceSizingEnabled: values.confidenceSizing,
+    });
+  };
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-accent-gold" />
-            创建模拟交易任务
-          </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-3 text-sm text-text-secondary">
-              <p>
-                使用该策略启动模拟交易。运行引擎将先处理历史数据，然后切换至实时模式。
-              </p>
-              <div className="grid grid-cols-2 gap-2 rounded-lg border border-border-default p-3">
-                <div>
-                  <span className="text-xs text-text-muted">策略</span>
-                  <p className="font-medium text-text-primary">
-                    {strategyName || "未命名策略"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-text-muted">交易对</span>
-                  <p className="font-medium text-text-primary">
-                    {symbol} / {timeframe}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-text-muted">初始资金</span>
-                  <input
-                    type="number"
-                    min={100}
-                    step={10000}
-                    value={cash}
-                    onChange={(e) => setCash(Number(e.target.value) || 10000)}
-                    className="w-full rounded border border-border-default bg-transparent px-2 py-1 font-num text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-gold"
-                  />
-                </div>
-                <div>
-                  <span className="text-xs text-text-muted">杠杆倍数</span>
-                  <div className="flex gap-1 mt-0.5">
-                    {LEVERAGE_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => setLeverage(opt)}
-                        className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                          leverage === opt
-                            ? "bg-accent-gold/20 text-accent-gold border border-accent-gold/40"
-                            : "border border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
-                        }`}
-                      >
-                        {opt}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-xs text-text-muted">交易方向</span>
-                  <div className="flex gap-1 mt-0.5">
-                    {DIRECTION_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setDirection(opt.value)}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          direction === opt.value
-                            ? "bg-accent-gold/20 text-accent-gold border border-accent-gold/40"
-                            : "border border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="col-span-2 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs text-text-muted">置信度仓位缩放</span>
-                    <p className="text-xs text-text-muted/60">根据信号置信度动态调整入场仓位大小</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setConfidenceSizing(!confidenceSizing)}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors ${
-                      confidenceSizing
-                        ? "bg-accent-gold border-accent-gold"
-                        : "bg-bg-secondary border-border-default"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                        confidenceSizing ? "translate-x-4" : "translate-x-0"
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
+    <Modal
+      open={open}
+      onCancel={() => onOpenChange(false)}
+      title={
+        <span className="flex items-center gap-2">
+          <TrendingUp className="h-5 w-5" style={{ color: "#F59E0B" }} />
+          创建模拟交易任务
+        </span>
+      }
+      width={480}
+      footer={[
+        <Button key="cancel" onClick={() => onOpenChange(false)}>
+          取消
+        </Button>,
+        <Button key="confirm" type="primary" onClick={handleConfirm}>
+          创建任务
+        </Button>,
+      ]}
+    >
+      <p className="text-sm text-text-secondary mb-4">
+        使用该策略启动模拟交易。运行引擎将先处理历史数据，然后切换至实时模式。
+      </p>
+
+      <Form form={form} layout="vertical" className="!mb-0">
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border-default p-3">
+          <div>
+            <span className="text-xs text-text-muted">策略</span>
+            <p className="font-medium text-text-primary">{strategyName || "未命名策略"}</p>
+          </div>
+          <div>
+            <span className="text-xs text-text-muted">交易对</span>
+            <p className="font-medium text-text-primary">
+              {symbol} / {timeframe}
+            </p>
+          </div>
+
+          <Form.Item
+            label="初始资金"
+            name="initialCash"
+            className="!mb-2"
+            rules={[{ type: "number", min: 100, message: "初始资金须 ≥100" }]}
+          >
+            <InputNumber min={100} step={10000} className="w-full font-num" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item label="杠杆倍数" name="leverage" className="!mb-2">
+            <div className="flex gap-1" role="radiogroup" aria-label="杠杆倍数">
+              {LEVERAGE_OPTIONS.map((opt) => (
+                <Form.Item key={opt} name="leverage" noStyle>
+                  <LeverageOption option={opt} />
+                </Form.Item>
+              ))}
             </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction onClick={() => onConfirm({ initialCash: cash, leverage, direction, confidenceSizingEnabled: confidenceSizing })}>
-            创建任务
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+          </Form.Item>
+
+          <Form.Item label="交易方向" name="direction" className="!mb-0 col-span-2">
+            <div className="flex gap-1" role="radiogroup" aria-label="交易方向">
+              {DIRECTION_OPTIONS.map((opt) => (
+                <Form.Item key={opt.value} name="direction" noStyle>
+                  <DirectionOption option={opt} />
+                </Form.Item>
+              ))}
+            </div>
+          </Form.Item>
+
+          <div className="col-span-2 flex items-center justify-between">
+            <div>
+              <span className="text-xs text-text-muted">置信度仓位缩放</span>
+              <p className="text-xs text-text-muted/60">根据信号置信度动态调整入场仓位大小</p>
+            </div>
+            <Form.Item name="confidenceSizing" valuePropName="checked" className="!mb-0" noStyle>
+              <Switch aria-label="置信度仓位缩放" />
+            </Form.Item>
+          </div>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
+
+/** 杠杆/方向选项以受控小按钮呈现（Form.Item 包裹取值，点击写回表单） */
+function OptionButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`px-2 py-1 rounded text-xs font-medium transition-colors border ${
+        active
+          ? "text-accent-gold border-accent-gold/40"
+          : "border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
+      }`}
+      style={active ? { background: "rgba(245,158,11,0.2)" } : undefined}
+    >
+      {label}
+    </button>
+  );
+}
+
+function LeverageOption({ option, value, onChange }: {
+  option: number;
+  value?: number;
+  onChange?: (v: number) => void;
+}) {
+  return (
+    <OptionButton
+      label={`${option}x`}
+      active={value === option}
+      onClick={() => onChange?.(option)}
+    />
+  );
+}
+
+function DirectionOption({ option, value, onChange }: {
+  option: { value: string; label: string };
+  value?: string;
+  onChange?: (v: string) => void;
+}) {
+  return (
+    <OptionButton
+      label={option.label}
+      active={value === option.value}
+      onClick={() => onChange?.(option.value)}
+    />
   );
 }

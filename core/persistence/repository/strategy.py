@@ -1,0 +1,272 @@
+"""strategy repository（B3b.1 迁移，B3b.0 冻结映射）。
+
+行为等价锚点：save 的 gene_signature 去重语义（同签名存在时高分者
+保留，UPDATE 原行整体替换含 strategy_id；ORM 版经单事务原子化）；
+list/count 过滤形制（tags LIKE、qualified 布尔）；list 排序列白名单
+校验（ValueError 与旧轨一致）。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import delete, func, insert, select, update
+
+from core.persistence.orm.models import Strategy
+from core.persistence.repository.dataset_meta import _engine_for, _now
+
+_SORT_ALLOWED_COLUMNS = {
+    "created_at", "updated_at", "best_score", "best_fitness",
+    "name", "symbol", "timeframe", "source", "generation",
+}
+_SORT_ALLOWED_ORDERS = {"asc", "desc"}
+
+_ALLOWED_UPDATE_FIELDS = frozenset({
+    "name", "dna_json", "source", "source_task_id", "symbol", "timeframe",
+    "best_score", "generation", "parent_ids", "tags", "notes", "metrics_json",
+    "verify_count", "verify_avg_score", "verify_best_score", "last_verified_at", "verify_star",
+})
+
+
+def save_strategy(
+    db_path: Path,
+    *,
+    strategy_id: str,
+    dna_json: str,
+    symbol: str,
+    timeframe: str,
+    name: Optional[str] = None,
+    source: str = "manual",
+    source_task_id: Optional[str] = None,
+    best_score: Optional[float] = None,
+    generation: int = 0,
+    parent_ids: Optional[str] = None,
+    tags: Optional[str] = None,
+    notes: Optional[str] = None,
+    metrics_json: Optional[str] = None,
+    gene_signature: Optional[str] = None,
+) -> None:
+    """Insert a new strategy record. Deduplicates by gene_signature.
+
+    If a strategy with the same gene_signature already exists, keeps the one
+    with the higher best_score（单事务原子，语义同旧轨）。
+    """
+    if gene_signature is None:
+        try:
+            from core.strategy.dna import StrategyDNA
+            dna = StrategyDNA.from_json(dna_json)
+            gene_signature = dna.gene_signature
+        except Exception:
+            gene_signature = None
+
+    now = _now()
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        if gene_signature:
+            existing = conn.execute(
+                select(Strategy.strategy_id, Strategy.best_score)
+                .where(Strategy.gene_signature == gene_signature)
+                .limit(1)
+            ).first()
+            if existing:
+                existing_id, existing_score = existing[0], existing[1]
+                new_is_better = (
+                    best_score is not None
+                    and (existing_score is None or best_score > existing_score)
+                )
+                if new_is_better:
+                    conn.execute(
+                        update(Strategy)
+                        .where(Strategy.strategy_id == existing_id)
+                        .values(
+                            strategy_id=strategy_id, name=name, dna_json=dna_json,
+                            source=source, source_task_id=source_task_id,
+                            symbol=symbol, timeframe=timeframe, best_score=best_score,
+                            generation=generation, parent_ids=parent_ids, tags=tags,
+                            notes=notes, metrics_json=metrics_json,
+                            gene_signature=gene_signature, updated_at=now,
+                        )
+                    )
+                return
+
+        conn.execute(insert(Strategy).values(
+            strategy_id=strategy_id, name=name, dna_json=dna_json, source=source,
+            source_task_id=source_task_id, symbol=symbol, timeframe=timeframe,
+            best_score=best_score, generation=generation, parent_ids=parent_ids,
+            tags=tags, notes=notes, metrics_json=metrics_json,
+            gene_signature=gene_signature, created_at=now, updated_at=now,
+        ))
+
+
+def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a single strategy by ID, or None if not found."""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(Strategy).where(Strategy.strategy_id == strategy_id)
+        ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def count_strategies_by_tasks(
+    db_path: Path,
+    task_ids: List[str],
+    min_score: float = 0,
+) -> Dict[str, int]:
+    """Batch count strategies per task_id（GROUP BY + 缺失补 0，同旧轨）。"""
+    if not task_ids:
+        return {}
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(Strategy.source_task_id, func.count())
+            .where(
+                Strategy.source_task_id.in_(task_ids),
+                Strategy.source == "evolution",
+                Strategy.best_score >= min_score,
+            )
+            .group_by(Strategy.source_task_id)
+        ).all()
+    result: Dict[str, int] = {tid: 0 for tid in task_ids}
+    for source_task_id, cnt in rows:
+        result[source_task_id] = cnt
+    return result
+
+
+def _strategy_filters(
+    stmt,
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    tags: Optional[str] = None,
+    qualified: Optional[bool] = None,
+):
+    if symbol is not None:
+        stmt = stmt.where(Strategy.symbol == symbol)
+    if source is not None:
+        stmt = stmt.where(Strategy.source == source)
+    if source_task_id is not None:
+        stmt = stmt.where(Strategy.source_task_id == source_task_id)
+    if tags is not None:
+        stmt = stmt.where(Strategy.tags.like(f"%{tags}%"))
+    if qualified is not None:
+        stmt = stmt.where(Strategy.qualified == (1 if qualified else 0))
+    return stmt
+
+
+def count_strategies(
+    db_path: Path,
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    tags: Optional[str] = None,
+    qualified: Optional[bool] = None,
+) -> int:
+    stmt = _strategy_filters(
+        select(func.count()).select_from(Strategy),
+        symbol=symbol, source=source, source_task_id=source_task_id,
+        tags=tags, qualified=qualified,
+    )
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
+
+
+def list_strategies(
+    db_path: Path,
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    tags: Optional[str] = None,
+    qualified: Optional[bool] = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 100,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """List strategies with optional filtering, sorting, and pagination."""
+    if sort_by not in _SORT_ALLOWED_COLUMNS:
+        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
+    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
+        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
+
+    col = getattr(Strategy, sort_by)
+    order_col = col.desc() if sort_order.lower() == "desc" else col.asc()
+    stmt = _strategy_filters(
+        select(Strategy), symbol=symbol, source=source,
+        source_task_id=source_task_id, tags=tags, qualified=qualified,
+    ).order_by(order_col).limit(limit).offset(offset)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def update_strategy(
+    db_path: Path,
+    *,
+    strategy_id: str,
+    **fields: Any,
+) -> None:
+    """Update one or more fields on an existing strategy（白名单不变）。"""
+    values = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
+    if not values:
+        return
+    values["updated_at"] = _now()
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(Strategy)
+            .where(Strategy.strategy_id == strategy_id)
+            .values(**values)
+        )
+
+
+def delete_strategy(db_path: Path, strategy_id: str) -> None:
+    """Delete a strategy by ID. No error if not found."""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(delete(Strategy).where(Strategy.strategy_id == strategy_id))
+
+
+def update_strategy_verify_stats(
+    db_path: Path,
+    strategy_id: str,
+    *,
+    new_score: float,
+    verify_star: int,
+    verified_at: str,
+) -> None:
+    """verify 滚动统计（COALESCE/MAX 增量语义原样保真，单事务）。"""
+    from sqlalchemy import case, func
+
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            update(Strategy)
+            .where(Strategy.strategy_id == strategy_id)
+            .values(
+                verify_count=func.coalesce(Strategy.verify_count, 0) + 1,
+                verify_avg_score=func.round_(
+                    case(
+                        (Strategy.verify_avg_score.is_(None), new_score),
+                        else_=(Strategy.verify_avg_score * func.coalesce(Strategy.verify_count, 0) + new_score)
+                        / (func.coalesce(Strategy.verify_count, 0) + 1),
+                    ),
+                    4,
+                ),
+                verify_best_score=func.round_(
+                    case(
+                        (Strategy.verify_best_score.is_(None), new_score),
+                        else_=func.max(Strategy.verify_best_score, new_score),
+                    ),
+                    4,
+                ),
+                last_verified_at=verified_at,
+                verify_star=verify_star,
+                updated_at=verified_at,
+            )
+        )

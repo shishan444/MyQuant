@@ -143,6 +143,9 @@ export const useChartSettings = create<ChartSettingsState>()(
     }),
     {
       name: "chart-indicator-settings",
+      version: 1,
+      // 状态形态自 G4 冻结后未变；后续增删字段时在此按 version 写 migrate
+      // （G17.1 持久化审计落档）
     },
   ),
 );

@@ -1,647 +1,19 @@
-"""Extended database operations for v0.8 schema.
+"""db_ext：对外兼容委托层（B5.2 起）。
 
-Adds 3 new tables (strategy, backtest_result, dataset_meta),
-extends evolution_task with 6 columns, and provides a
-version-managed migration runner on top of core.persistence.db.
-
-Public API:
-    init_db_ext           -- run migrations to create/upgrade schema
-    save_strategy / get_strategy / list_strategies / update_strategy / delete_strategy
-    save_backtest_result / list_backtest_results / get_backtest_result
-    save_dataset_meta / list_datasets / get_dataset / update_dataset_stats / delete_dataset
+历史职责分三层迁移终态：init/ALTER 链→core.persistence.legacy_init；
+repository 访问→core.persistence.repository.*；本模块保留同名函数
+一行委托（调用方零改动）。测试用的 _connect 由 legacy_init re-export。
 """
 from __future__ import annotations
 
-import logging
-import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.persistence.db import _connect, init_db
-from core.scoring import trading_metrics
-
-logger = logging.getLogger(__name__)
-
-# Located at core/persistence/db_ext.py — resolve up to the repo root (which
-# holds the migrations/ directory). parents[0]=persistence, [1]=core, [2]=root.
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
-
-# ---------------------------------------------------------------------------
-
-# -- helpers --
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-# -- migration runner --
-
-def _get_applied_versions(conn: sqlite3.Connection) -> set[int]:
-    """Return the set of already-applied migration version numbers."""
-    try:
-        rows = conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchall()
-        return {r[0] for r in rows}
-    except sqlite3.OperationalError:
-        # table does not exist yet -- first run
-        return set()
-
-
-def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
-    """Create the schema_version table if absent."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version     INTEGER PRIMARY KEY,
-            applied_at  TEXT NOT NULL
-        )
-    """)
-
-
-_ALTER_COLUMNS = [
-    ("champion_strategy_id", "TEXT"),
-    ("population_size",      "INTEGER DEFAULT 15"),
-    ("max_generations",      "INTEGER DEFAULT 200"),
-    ("elite_ratio",          "REAL DEFAULT 0.5"),
-    ("n_workers",            "INTEGER DEFAULT 6"),
-    ("current_generation",   "INTEGER DEFAULT 0"),
-]
-
-
-def _apply_alter_evolution_task(conn: sqlite3.Connection) -> None:
-    """Add extended columns to evolution_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _ALTER_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-_MTF_COLUMNS = [
-    ("indicator_pool", "TEXT"),
-    ("timeframe_pool", "TEXT"),
-    ("mode", "TEXT"),
-]
-
-_STRATEGY_EXT_COLUMNS = [
-    ("metrics_json", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, ...}
-]
-
-_CONSTRAINT_COLUMNS = [
-    ("leverage", "INTEGER DEFAULT 1"),
-    ("direction", "TEXT DEFAULT 'long'"),
-    ("data_start", "TEXT"),
-    ("data_end", "TEXT"),
-    ("data_time_start", "TEXT"),
-    ("data_time_end", "TEXT"),
-    ("data_row_count", "INTEGER DEFAULT 0"),
-    ("best_score", "REAL"),
-    ("indicator_pool", "TEXT"),
-    ("timeframe_pool", "TEXT"),
-    ("mode", "TEXT"),
-    ("champion_metrics", "TEXT"),
-    ("champion_dimension_scores", "TEXT"),
-    ("walk_forward_enabled", "INTEGER DEFAULT 0"),
-    ("continuous", "INTEGER DEFAULT 1"),
-]
-
-_PROGRESS_COLUMNS = [
-    ("current_phase", "TEXT DEFAULT 'idle'"),
-    ("progress_json", "TEXT"),
-    ("heartbeat_at", "TEXT"),
-]
-
-_SCORING_CONSTRAINT_COLUMNS = [
-    ("min_annual_return", "REAL DEFAULT 0.10"),
-    ("max_drawdown_limit", "REAL DEFAULT 0.10"),
-]
-
-# -- Fitness scoring columns (migration 021) --
-
-_FITNESS_EVOLUTION_TASK_COLUMNS = [
-    ("best_fitness",          "REAL"),
-    ("champion_satisfaction",  "TEXT"),
-    ("requirements_json",      "TEXT"),
-    ("qualified_count",        "INTEGER DEFAULT 0"),
-    ("target_fitness",         "REAL DEFAULT 1.0"),
-]
-
-_FITNESS_STRATEGY_COLUMNS = [
-    ("best_fitness", "REAL"),
-    ("qualified",    "INTEGER DEFAULT NULL"),
-]
-
-_FITNESS_BACKTEST_RESULT_COLUMNS = [
-    ("fitness",          "REAL DEFAULT 0.0"),
-    ("qualified",        "INTEGER DEFAULT 0"),
-    ("satisfaction_json", "TEXT"),
-]
-
-_OOS_VALIDATION_COLUMNS = [
-    ("oos_fitness",   "REAL"),
-    ("oos_qualified", "INTEGER DEFAULT 0"),
-    ("oos_metrics",   "TEXT"),
-]
-
-_VERIFY_STRATEGY_COLUMNS = [
-    ("verify_count",      "INTEGER DEFAULT 0"),
-    ("verify_avg_score",  "REAL"),
-    ("verify_best_score", "REAL"),
-    ("last_verified_at",  "TEXT"),
-    ("verify_star",       "INTEGER DEFAULT NULL"),
-]
-
-
-def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
-    """Add leverage/direction and data range columns to evolution_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _CONSTRAINT_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
-    """Add MTF-related columns to evolution_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _MTF_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_progress_columns(conn: sqlite3.Connection) -> None:
-    """Add progress tracking columns to evolution_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _PROGRESS_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_scoring_constraint_columns(conn: sqlite3.Connection) -> None:
-    """Add min_annual_return and max_drawdown_limit to evolution_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _SCORING_CONSTRAINT_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_strategy_ext_columns(conn: sqlite3.Connection) -> None:
-    """Add metrics_json column to strategy table (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(strategy)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-
-    for col_name, col_def in _STRATEGY_EXT_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE strategy ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_fitness_columns(conn: sqlite3.Connection) -> None:
-    """Add fitness scoring columns to evolution_task, strategy, and backtest_result (idempotent).
-
-    Migration 021: new fitness-based scoring replaces score_strategy (0-100 weighted sum)
-    with compute_fitness (satisfaction ratio product + qualified boolean gate).
-    Old columns are kept for backward compatibility.
-    """
-    tables_columns = [
-        ("evolution_task", _FITNESS_EVOLUTION_TASK_COLUMNS),
-        ("strategy", _FITNESS_STRATEGY_COLUMNS),
-        ("backtest_result", _FITNESS_BACKTEST_RESULT_COLUMNS),
-    ]
-    for table_name, columns in tables_columns:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(f"PRAGMA table_info({table_name})")
-        existing = {row[1] for row in cursor.fetchall()}
-        conn.row_factory = None
-        for col_name, col_def in columns:
-            if col_name not in existing:
-                conn.execute(
-                    f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"
-                )
-
-
-def _apply_oos_validation_columns(conn: sqlite3.Connection) -> None:
-    """Add OOS validation columns to evolution_task (idempotent).
-
-    Migration 022: out-of-sample validation columns for champion strategies.
-    """
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(evolution_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    for col_name, col_def in _OOS_VALIDATION_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
-            )
-
-
-# -- Verify session columns (migration 023) --
-
-_VERIFY_SESSION_BT_COLUMNS = [
-    ("session_id", "TEXT"),
-]
-
-
-def _create_verify_session_table(conn: sqlite3.Connection) -> None:
-    """Create verify_session table (idempotent)."""
-    conn.execute("""CREATE TABLE IF NOT EXISTS verify_session (
-        session_id       TEXT PRIMARY KEY,
-        status           TEXT NOT NULL DEFAULT 'running',
-        strategy_ids     TEXT NOT NULL,
-        data_ranges      TEXT NOT NULL,
-        init_cash        REAL NOT NULL DEFAULT 100000,
-        fee              REAL NOT NULL DEFAULT 0.001,
-        slippage         REAL NOT NULL DEFAULT 0.0005,
-        summary_json     TEXT,
-        total_results    INTEGER DEFAULT 0,
-        total_strategies INTEGER DEFAULT 0,
-        error_message    TEXT,
-        created_at       TEXT NOT NULL,
-        completed_at     TEXT
-    )""")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_verify_session_created "
-        "ON verify_session(created_at DESC)"
-    )
-
-
-def _apply_verify_session_columns(conn: sqlite3.Connection) -> None:
-    """Add session_id column to backtest_result (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(backtest_result)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    for col_name, col_def in _VERIFY_SESSION_BT_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE backtest_result ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _apply_verify_strategy_columns(conn: sqlite3.Connection) -> None:
-    """Add verification summary columns to strategy (idempotent).
-
-    Migration 024: track how many times a strategy has been verified,
-    its average and best comprehensive scores, and last verification time.
-    """
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(strategy)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    for col_name, col_def in _VERIFY_STRATEGY_COLUMNS:
-        if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE strategy ADD COLUMN {col_name} {col_def}"
-            )
-
-
-def _record_version(conn: sqlite3.Connection, version: int) -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)",
-        (version, _now()),
-    )
-
-
-# -- public init --
-
-def init_db_ext(db_path: Path) -> None:
-    """Initialize the extended schema.
-
-    Calls core ``init_db`` first, then runs any pending SQL migrations
-    from the *migrations/* directory, plus the ALTER TABLE for extended
-    evolution_task columns.
-
-    Safe to call multiple times (idempotent).
-    """
-    # 1. Ensure core tables exist
-    init_db(db_path)
-
-    conn = _connect(db_path)
-    try:
-        _ensure_schema_version_table(conn)
-        applied = _get_applied_versions(conn)
-
-        # 2. Run numbered SQL migrations
-        if _MIGRATIONS_DIR.is_dir():
-            sql_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
-            for sql_file in sql_files:
-                # extract leading digits as version number
-                version_str = ""
-                for ch in sql_file.name:
-                    if ch.isdigit():
-                        version_str += ch
-                    else:
-                        break
-                if not version_str:
-                    continue
-                version = int(version_str)
-                if version in applied:
-                    continue
-                sql_text = sql_file.read_text(encoding="utf-8")
-                # Skip migration 005/006 — handled separately via ALTER
-                if version in (5, 6):
-                    continue
-                conn.executescript(sql_text)
-                _record_version(conn, version)
-                logger.info("Applied migration %s", sql_file.name)
-
-        # 3. Always ensure schema_version table is recorded
-        if 1 not in applied:
-            _record_version(conn, 1)
-
-        # 4. Data-driven ALTER/data migrations (versions 5-25).
-        # Defined inline (after all _apply_*/_create_* helpers are in scope)
-        # so we iterate a table instead of 24 hard-coded sequential steps.
-        # Runners are idempotent (PRAGMA table_info guards).
-        def _step_23(c: sqlite3.Connection) -> None:
-            _create_verify_session_table(c)
-            _apply_verify_session_columns(c)
-
-        migrations = [
-            (5, _apply_alter_evolution_task),
-            (6, _apply_mtf_columns),
-            (7, _apply_constraint_columns),
-            (8, _apply_strategy_ext_columns),
-            (9, _apply_progress_columns),
-            (10, _create_paper_trading_tables),
-            (11, _create_equity_snapshot_table),
-            (12, _apply_scoring_constraint_columns),
-            (13, _apply_execution_model_column),
-            (14, _apply_bars_held_column),
-            (15, _apply_position_open_cost_column),
-            (16, _apply_pending_decision_column),
-            (17, _apply_confidence_sizing_column),
-            (18, _apply_prediction_dna_column),
-            (19, _dedup_strategies),
-            (20, _recompute_strategy_names),
-            (21, _apply_fitness_columns),
-            (22, _apply_oos_validation_columns),
-            (23, _step_23),
-            (24, _apply_verify_strategy_columns),
-            (25, _apply_verify_strategy_columns),
-        ]
-        for version, runner in migrations:
-            runner(conn)
-            if version not in applied:
-                _record_version(conn, version)
-
-        conn.commit()
-    finally:
-        conn.close()
-
+from core.persistence.legacy_init import _connect, init_db_ext  # noqa: F401  re-export
 
 # ===================================================================
-# Strategy dedup cleanup (migration 019)
+# Paper / Live Trading 委托
 # ===================================================================
-
-def _dedup_strategies(conn: sqlite3.Connection) -> None:
-    """Remove duplicate strategies, keeping the one with the highest best_score per gene_signature."""
-    try:
-        # Find duplicates: gene_signature appears more than once
-        dup_sigs = conn.execute(
-            """SELECT gene_signature FROM strategy
-               WHERE gene_signature IS NOT NULL
-               GROUP BY gene_signature
-               HAVING COUNT(*) > 1"""
-        ).fetchall()
-        if not dup_sigs:
-            return
-
-        for (sig,) in dup_sigs:
-            # Get all rows with this signature, ordered by best_score DESC (NULLs last)
-            rows = conn.execute(
-                """SELECT strategy_id, best_score FROM strategy
-                   WHERE gene_signature = ?
-                   ORDER BY CASE WHEN best_score IS NULL THEN 1 ELSE 0 END, best_score DESC""",
-                (sig,),
-            ).fetchall()
-            # Keep the first (highest score), delete the rest
-            keep_id = rows[0][0]
-            delete_ids = [r[0] for r in rows[1:]]
-            if delete_ids:
-                placeholders = ",".join("?" * len(delete_ids))
-                conn.execute(
-                    f"DELETE FROM strategy WHERE strategy_id IN ({placeholders})",
-                    delete_ids,
-                )
-        logger.info("Deduped %d strategy signatures", len(dup_sigs))
-    except Exception:
-        logger.warning("Strategy dedup failed", exc_info=True)
-
-
-def _recompute_strategy_names(conn: sqlite3.Connection) -> None:
-    """Recompute all strategy names to include MTF layer data in the hash."""
-    try:
-        from core.strategy.dna import StrategyDNA, generate_strategy_name
-
-        rows = conn.execute(
-            "SELECT strategy_id, dna_json FROM strategy WHERE dna_json IS NOT NULL"
-        ).fetchall()
-        updated = 0
-        for strategy_id, dna_json in rows:
-            try:
-                dna = StrategyDNA.from_json(dna_json)
-                new_name = generate_strategy_name(dna)
-                conn.execute(
-                    "UPDATE strategy SET name = ? WHERE strategy_id = ?",
-                    (new_name, strategy_id),
-                )
-                updated += 1
-            except Exception:
-                continue
-        if updated:
-            logger.info("Recomputed %d strategy names", updated)
-    except Exception:
-        logger.warning("Strategy name recomputation failed", exc_info=True)
-# ===================================================================
-
-def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
-    """Create paper_trading_task and paper_trade tables (idempotent)."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS paper_trading_task (
-            task_id          TEXT PRIMARY KEY,
-            status           TEXT NOT NULL DEFAULT 'pending',
-            strategy_name    TEXT,
-            symbol           TEXT NOT NULL DEFAULT 'BTCUSDT',
-            timeframe        TEXT NOT NULL DEFAULT '4h',
-            initial_cash     REAL NOT NULL DEFAULT 100000,
-            fee              REAL NOT NULL DEFAULT 0.001,
-            leverage         INTEGER NOT NULL DEFAULT 1,
-            direction        TEXT NOT NULL DEFAULT 'long',
-            dna_json         TEXT NOT NULL,
-            score_template   TEXT DEFAULT 'explorer',
-            created_at       TEXT NOT NULL,
-            updated_at       TEXT NOT NULL,
-            started_at       TEXT,
-            stopped_at       TEXT,
-            stop_reason      TEXT,
-            -- Position state (for recovery)
-            position_side     TEXT,
-            position_entry    REAL,
-            position_quantity REAL,
-            position_margin   REAL,
-            position_funding  REAL DEFAULT 0,
-            -- Account state
-            balance          REAL,
-            unrealized_pnl   REAL DEFAULT 0,
-            -- Stats
-            total_trades     INTEGER DEFAULT 0,
-            total_pnl        REAL DEFAULT 0,
-            win_count        INTEGER DEFAULT 0,
-            loss_count       INTEGER DEFAULT 0,
-            -- Last processed bar
-            last_bar_time    TEXT,
-            last_bar_close   REAL,
-            -- Heartbeat
-            heartbeat_at     TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS paper_trade (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id     TEXT NOT NULL,
-            bar_time    TEXT NOT NULL,
-            side        TEXT NOT NULL,
-            action      TEXT NOT NULL,
-            price       REAL NOT NULL,
-            quantity    REAL NOT NULL,
-            pnl         REAL,
-            fee_paid    REAL DEFAULT 0,
-            reason      TEXT,
-            FOREIGN KEY (task_id) REFERENCES paper_trading_task(task_id)
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_paper_trade_task
-        ON paper_trade(task_id, bar_time)
-    """)
-
-
-def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
-    """Add execution_model column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "execution_model" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN execution_model TEXT DEFAULT 'v1'"
-        )
-
-
-def _apply_bars_held_column(conn: sqlite3.Connection) -> None:
-    """Add bars_held column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "bars_held" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN bars_held INTEGER DEFAULT 0"
-        )
-
-
-def _apply_position_open_cost_column(conn: sqlite3.Connection) -> None:
-    """Add position_open_cost column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "position_open_cost" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN position_open_cost REAL DEFAULT 0"
-        )
-
-
-def _apply_pending_decision_column(conn: sqlite3.Connection) -> None:
-    """Add pending_decision_json column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "pending_decision_json" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN pending_decision_json TEXT"
-        )
-
-
-def _apply_confidence_sizing_column(conn: sqlite3.Connection) -> None:
-    """Add confidence_sizing_enabled column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "confidence_sizing_enabled" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN confidence_sizing_enabled INTEGER DEFAULT 0"
-        )
-
-
-def _apply_prediction_dna_column(conn: sqlite3.Connection) -> None:
-    """Add prediction_dna_json column to paper_trading_task (idempotent)."""
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
-    existing = {row[1] for row in cursor.fetchall()}
-    conn.row_factory = None
-    if "prediction_dna_json" not in existing:
-        conn.execute(
-            "ALTER TABLE paper_trading_task ADD COLUMN prediction_dna_json TEXT"
-        )
-
-
-def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
-    """Create paper_equity_snapshot table (idempotent)."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS paper_equity_snapshot (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id         TEXT NOT NULL,
-            timestamp       TEXT NOT NULL,
-            equity          REAL NOT NULL,
-            balance         REAL NOT NULL,
-            unrealized_pnl  REAL DEFAULT 0,
-            position_side   TEXT DEFAULT 'flat'
-        )
-    """)
-    conn.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_equity_task_time
-        ON paper_equity_snapshot(task_id, timestamp)
-    """)
-
-
-# -- Paper Trading Task CRUD --
 
 def save_paper_trading_task(
     db_path: Path,
@@ -659,93 +31,44 @@ def save_paper_trading_task(
     confidence_sizing_enabled: bool = False,
     prediction_dna_json: Optional[str] = None,
 ) -> None:
-    now = _now()
-    with _connect(db_path) as conn:
-        conn.execute(
-            """INSERT INTO paper_trading_task
-               (task_id, status, strategy_name, symbol, timeframe,
-                initial_cash, fee, leverage, direction, dna_json,
-                score_template, created_at, updated_at, balance,
-                execution_model, confidence_sizing_enabled, prediction_dna_json)
-               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?)""",
-            (task_id, strategy_name, symbol, timeframe,
-             initial_cash, fee, leverage, direction, dna_json,
-             score_template, now, now, initial_cash,
-             int(confidence_sizing_enabled), prediction_dna_json),
-        )
-        conn.commit()
+    """Insert a paper trading task（B3c.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_paper_trading_task(
+        db_path, task_id=task_id, dna_json=dna_json, symbol=symbol,
+        timeframe=timeframe, initial_cash=initial_cash, fee=fee,
+        leverage=leverage, direction=direction, score_template=score_template,
+        strategy_name=strategy_name,
+        confidence_sizing_enabled=confidence_sizing_enabled,
+        prediction_dna_json=prediction_dna_json,
+    )
 
 
 def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-
-_ALLOWED_COLUMNS = frozenset({
-    "status", "started_at", "stopped_at", "stop_reason", "heartbeat_at",
-    "position_side", "position_entry", "position_quantity", "position_margin",
-    "position_funding", "position_open_cost", "balance", "unrealized_pnl",
-    "total_trades", "total_pnl", "win_count", "loss_count", "bars_held",
-    "last_bar_time", "last_bar_close", "execution_model", "pending_decision_json",
-    "prediction_dna_json", "updated_at",
-})
+    """Retrieve a paper trading task（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.get_paper_trading_task(db_path, task_id)
 
 
 def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
-    if not kwargs:
-        return
-    # Filter to allowed columns only
-    filtered = {k: v for k, v in kwargs.items() if k in _ALLOWED_COLUMNS}
-    if not filtered:
-        return
-    filtered["updated_at"] = _now()
-    sets = ", ".join(f"{k} = ?" for k in filtered)
-    vals = list(filtered.values()) + [task_id]
-    with _connect(db_path) as conn:
-        conn.execute(
-            f"UPDATE paper_trading_task SET {sets} WHERE task_id = ?", vals
-        )
-        conn.commit()
+    """Update task fields（委托 repository，白名单不变）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.update_paper_trading_task(db_path, task_id, **kwargs)
 
 
 def list_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50, offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM paper_trading_task WHERE status = ? "
-                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM paper_trading_task ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    """List paper trading tasks（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_paper_trading_tasks(db_path, status=status, limit=limit, offset=offset)
 
 
 def count_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None,
 ) -> int:
-    """Return total count of paper trading tasks, optionally filtered by status."""
-    with _connect(db_path) as conn:
-        if status:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM paper_trading_task WHERE status = ?",
-                (status,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM paper_trading_task"
-            ).fetchone()
-        return row[0]
+    """Count paper trading tasks（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.count_paper_trading_tasks(db_path, status=status)
 
 
 def save_paper_trade(
@@ -761,133 +84,56 @@ def save_paper_trade(
     fee_paid: float = 0.0,
     reason: Optional[str] = None,
 ) -> None:
-    with _connect(db_path) as conn:
-        conn.execute(
-            """INSERT INTO paper_trade
-               (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason),
-        )
-        conn.commit()
+    """Insert a paper trade（委托 repository；INSERT OR IGNORE 幂等，B1.3）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_paper_trade(
+        db_path, task_id=task_id, bar_time=bar_time, side=side, action=action,
+        price=price, quantity=quantity, pnl=pnl, fee_paid=fee_paid, reason=reason,
+    )
 
 
 def list_paper_trades(
     db_path: Path, task_id: str, limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM paper_trade WHERE task_id = ? "
-            "ORDER BY bar_time DESC LIMIT ?",
-            (task_id, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    """List paper trades（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_paper_trades(db_path, task_id, limit=limit)
 
 
 def count_paper_trades(db_path: Path, task_id: str) -> int:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM paper_trade WHERE task_id = ?",
-            (task_id,),
-        ).fetchone()
-        return row[0]
+    """Count paper trades（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.count_paper_trades(db_path, task_id)
 
-
-# -- Paper Equity Snapshot CRUD --
 
 def save_equity_snapshots(
     db_path: Path, task_id: str, snapshots: list[dict],
 ) -> None:
-    """Batch insert equity snapshots for a task."""
-    if not snapshots:
-        return
-    with _connect(db_path) as conn:
-        conn.executemany(
-            """INSERT OR IGNORE INTO paper_equity_snapshot
-               (task_id, timestamp, equity, balance, unrealized_pnl, position_side)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [
-                (task_id, s["timestamp"], s["equity"], s["balance"],
-                 s.get("unrealized_pnl", 0.0), s.get("position_side", "flat"))
-                for s in snapshots
-            ],
-        )
-        conn.commit()
+    """Batch insert equity snapshots（委托 repository，OR IGNORE 幂等）。"""
+    from core.persistence.repository import paper_trading as repo
+    repo.save_equity_snapshots(db_path, task_id, snapshots)
 
 
 def list_equity_snapshots(
     db_path: Path, task_id: str,
 ) -> List[Dict[str, Any]]:
-    """Return all equity snapshots for a task in chronological order."""
-    with _connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM paper_equity_snapshot WHERE task_id = ? "
-            "ORDER BY timestamp ASC",
-            (task_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+    """List equity snapshots（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.list_equity_snapshots(db_path, task_id)
 
 
 def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
-    """Delete a paper trading task and all associated data."""
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT task_id FROM paper_trading_task WHERE task_id = ?",
-            (task_id,),
-        ).fetchone()
-        if row is None:
-            return False
-        conn.execute("DELETE FROM paper_equity_snapshot WHERE task_id = ?", (task_id,))
-        conn.execute("DELETE FROM paper_trade WHERE task_id = ?", (task_id,))
-        conn.execute("DELETE FROM paper_trading_task WHERE task_id = ?", (task_id,))
-        conn.commit()
-        return True
+    """Delete a paper trading task and all associated data（委托 repository）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.delete_paper_trading_task(db_path, task_id)
 
 
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Compute performance metrics for a paper trading task.
-
-    Reads task/trades/snapshots from DB and delegates the math to
-    core.scoring.trading_metrics (single source of truth for the formulas).
-    """
-    task = get_paper_trading_task(db_path, task_id)
-    if task is None:
-        return None
-
-    initial_cash = task["initial_cash"]
-    balance = task.get("balance") if task.get("balance") is not None else initial_cash
-
-    with _connect(db_path) as conn:
-        close_rows = conn.execute(
-            "SELECT pnl FROM paper_trade WHERE task_id = ? AND pnl IS NOT NULL AND action = 'close'",
-            (task_id,),
-        ).fetchall()
-        eq_rows = conn.execute(
-            "SELECT equity FROM paper_equity_snapshot WHERE task_id = ? ORDER BY timestamp ASC",
-            (task_id,),
-        ).fetchall()
-
-    metrics = trading_metrics.compute_trading_metrics(
-        trading_metrics.TradingMetricsInput(
-            initial_cash=initial_cash,
-            balance=balance,
-            total_trades=task.get("total_trades", 0),
-            win_count=task.get("win_count", 0),
-            loss_count=task.get("loss_count", 0),
-            realized_pnl=task.get("total_pnl", 0.0) or 0.0,
-            unrealized_pnl=task.get("unrealized_pnl", 0.0) or 0.0,
-            position_side=task.get("position_side"),
-            position_margin=task.get("position_margin") or 0.0,
-            close_pnls=[r[0] for r in close_rows],
-            equity_snapshots=[r[0] for r in eq_rows],
-        )
-    )
-    metrics["task_id"] = task_id
-    return metrics
+    """Compute performance metrics（委托 repository；公式单源 core.scoring）。"""
+    from core.persistence.repository import paper_trading as repo
+    return repo.compute_trading_metrics(db_path, task_id)
 
 
-# ===================================================================
 # Strategy CRUD
 # ===================================================================
 
@@ -909,75 +155,21 @@ def save_strategy(
     metrics_json: Optional[str] = None,
     gene_signature: Optional[str] = None,
 ) -> None:
-    """Insert a new strategy record. Deduplicates by gene_signature.
-
-    If a strategy with the same gene_signature already exists, keeps the one
-    with the higher best_score.
-    """
-    # Compute gene_signature from DNA if not provided
-    if gene_signature is None:
-        try:
-            from core.strategy.dna import StrategyDNA
-            dna = StrategyDNA.from_json(dna_json)
-            gene_signature = dna.gene_signature
-        except Exception:
-            gene_signature = None
-
-    now = _now()
-    conn = _connect(db_path)
-
-    # Dedup by gene_signature: keep the higher-scoring version.
-    if gene_signature:
-        existing = conn.execute(
-            "SELECT strategy_id, best_score FROM strategy WHERE gene_signature = ? LIMIT 1",
-            (gene_signature,),
-        ).fetchone()
-        if existing:
-            existing_id, existing_score = existing[0], existing[1]
-            new_is_better = (
-                best_score is not None
-                and (existing_score is None or best_score > existing_score)
-            )
-            if new_is_better:
-                # New strategy is better: replace the old one
-                conn.execute(
-                    """UPDATE strategy SET
-                       strategy_id=?, name=?, dna_json=?, source=?, source_task_id=?,
-                       symbol=?, timeframe=?, best_score=?, generation=?, parent_ids=?,
-                       tags=?, notes=?, metrics_json=?, gene_signature=?, updated_at=?
-                       WHERE strategy_id=?""",
-                    (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-                     best_score, generation, parent_ids, tags, notes, metrics_json,
-                     gene_signature, now, existing_id),
-                )
-                conn.commit()
-            conn.close()
-            return
-
-    conn.execute(
-        """INSERT INTO strategy
-           (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-            best_score, generation, parent_ids, tags, notes, metrics_json,
-            gene_signature, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-         best_score, generation, parent_ids, tags, notes, metrics_json,
-         gene_signature, now, now),
+    """Insert a new strategy record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import strategy as repo
+    repo.save_strategy(
+        db_path, strategy_id=strategy_id, dna_json=dna_json, symbol=symbol,
+        timeframe=timeframe, name=name, source=source,
+        source_task_id=source_task_id, best_score=best_score,
+        generation=generation, parent_ids=parent_ids, tags=tags, notes=notes,
+        metrics_json=metrics_json, gene_signature=gene_signature,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single strategy by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM strategy WHERE strategy_id = ?", (strategy_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single strategy by ID（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.get_strategy(db_path, strategy_id)
 
 
 def count_strategies_by_tasks(
@@ -985,66 +177,9 @@ def count_strategies_by_tasks(
     task_ids: List[str],
     min_score: float = 0,
 ) -> Dict[str, int]:
-    """Batch count strategies per task_id.
-
-    Returns {task_id: count} for strategies with best_score >= min_score.
-    """
-    if not task_ids:
-        return {}
-    conn = _connect(db_path)
-    placeholders = ",".join("?" for _ in task_ids)
-    rows = conn.execute(
-        f"""SELECT source_task_id, COUNT(*) as cnt
-           FROM strategy
-           WHERE source_task_id IN ({placeholders})
-             AND source = 'evolution'
-             AND best_score >= ?
-           GROUP BY source_task_id""",
-        (*task_ids, min_score),
-    ).fetchall()
-    conn.close()
-    result: Dict[str, int] = {tid: 0 for tid in task_ids}
-    for r in rows:
-        result[r["source_task_id"]] = r["cnt"]
-    return result
-
-
-_SORT_ALLOWED_COLUMNS = {
-    "created_at", "updated_at", "best_score", "best_fitness",
-    "name", "symbol", "timeframe", "source", "generation",
-}
-_SORT_ALLOWED_ORDERS = {"asc", "desc"}
-
-
-def _build_strategy_where(
-    *,
-    symbol: Optional[str] = None,
-    source: Optional[str] = None,
-    source_task_id: Optional[str] = None,
-    tags: Optional[str] = None,
-    qualified: Optional[bool] = None,
-) -> tuple[str, list[Any]]:
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if source is not None:
-        conditions.append("source = ?")
-        params.append(source)
-    if source_task_id is not None:
-        conditions.append("source_task_id = ?")
-        params.append(source_task_id)
-    if tags is not None:
-        conditions.append("tags LIKE ?")
-        params.append(f"%{tags}%")
-    if qualified is not None:
-        conditions.append("qualified = ?")
-        params.append(1 if qualified else 0)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    return where, params
+    """Batch count strategies per task_id（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.count_strategies_by_tasks(db_path, task_ids, min_score)
 
 
 def count_strategies(
@@ -1056,14 +191,12 @@ def count_strategies(
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
 ) -> int:
-    where, params = _build_strategy_where(
-        symbol=symbol, source=source, source_task_id=source_task_id,
+    """Count strategies with optional filtering（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.count_strategies(
+        db_path, symbol=symbol, source=source, source_task_id=source_task_id,
         tags=tags, qualified=qualified,
     )
-    conn = _connect(db_path)
-    row = conn.execute(f"SELECT COUNT(*) FROM strategy{where}", params).fetchone()
-    conn.close()
-    return row[0]
 
 
 def list_strategies(
@@ -1079,24 +212,13 @@ def list_strategies(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List strategies with optional filtering, sorting, and pagination."""
-    if sort_by not in _SORT_ALLOWED_COLUMNS:
-        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
-    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
-        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
-
-    where, params = _build_strategy_where(
-        symbol=symbol, source=source, source_task_id=source_task_id,
-        tags=tags, qualified=qualified,
+    """List strategies with filtering, sorting, pagination（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    return repo.list_strategies(
+        db_path, symbol=symbol, source=source, source_task_id=source_task_id,
+        tags=tags, qualified=qualified, sort_by=sort_by, sort_order=sort_order,
+        limit=limit, offset=offset,
     )
-    order = f" ORDER BY {sort_by} {sort_order.upper()}"
-    query = f"SELECT * FROM strategy{where}{order} LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 def update_strategy(
@@ -1105,48 +227,17 @@ def update_strategy(
     strategy_id: str,
     **fields: Any,
 ) -> None:
-    """Update one or more fields on an existing strategy.
-
-    Automatically refreshes ``updated_at``.
-    """
-    allowed = {
-        "name", "dna_json", "source", "source_task_id", "symbol", "timeframe",
-        "best_score", "generation", "parent_ids", "tags", "notes", "metrics_json",
-        "verify_count", "verify_avg_score", "verify_best_score", "last_verified_at", "verify_star",
-    }
-    updates: list[str] = []
-    params: list[Any] = []
-
-    for key, value in fields.items():
-        if key in allowed:
-            updates.append(f"{key} = ?")
-            params.append(value)
-
-    if not updates:
-        return
-
-    updates.append("updated_at = ?")
-    params.append(_now())
-    params.append(strategy_id)
-
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE strategy SET {', '.join(updates)} WHERE strategy_id = ?",
-        params,
-    )
-    conn.commit()
-    conn.close()
+    """Update one or more fields on an existing strategy（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    repo.update_strategy(db_path, strategy_id=strategy_id, **fields)
 
 
 def delete_strategy(db_path: Path, strategy_id: str) -> None:
-    """Delete a strategy by ID. No error if not found."""
-    conn = _connect(db_path)
-    conn.execute("DELETE FROM strategy WHERE strategy_id = ?", (strategy_id,))
-    conn.commit()
-    conn.close()
+    """Delete a strategy by ID（委托 repository）。"""
+    from core.persistence.repository import strategy as repo
+    repo.delete_strategy(db_path, strategy_id)
 
 
-# ===================================================================
 # Backtest Result
 # ===================================================================
 
@@ -1178,38 +269,26 @@ def save_backtest_result(
     satisfaction_json: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Insert a backtest result record."""
-    now = _now()
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO backtest_result
-           (result_id, strategy_id, symbol, timeframe, data_start, data_end,
-            init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
-            win_rate, total_trades, total_score, template_name, dimension_scores,
-            equity_curve, trades_json, run_source, created_at,
-            fitness, qualified, satisfaction_json, session_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                   ?, ?, ?, ?)""",
-        (result_id, strategy_id, symbol, timeframe, data_start, data_end,
-         init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
-         win_rate, total_trades, total_score, template_name, dimension_scores,
-         equity_curve, trades_json, run_source, now,
-         fitness, qualified, satisfaction_json, session_id),
+    """Insert a backtest result record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import backtest_result as repo
+    repo.save_backtest_result(
+        db_path, result_id=result_id, strategy_id=strategy_id, symbol=symbol,
+        timeframe=timeframe, data_start=data_start, data_end=data_end,
+        init_cash=init_cash, fee=fee, slippage=slippage,
+        total_return=total_return, sharpe_ratio=sharpe_ratio,
+        max_drawdown=max_drawdown, win_rate=win_rate, total_trades=total_trades,
+        total_score=total_score, template_name=template_name,
+        dimension_scores=dimension_scores, equity_curve=equity_curve,
+        trades_json=trades_json, run_source=run_source, fitness=fitness,
+        qualified=qualified, satisfaction_json=satisfaction_json,
+        session_id=session_id,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_backtest_result(db_path: Path, result_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single backtest result by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM backtest_result WHERE result_id = ?", (result_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single backtest result by ID（委托 repository）。"""
+    from core.persistence.repository import backtest_result as repo
+    return repo.get_backtest_result(db_path, result_id)
 
 
 def list_backtest_results(
@@ -1222,32 +301,14 @@ def list_backtest_results(
     sort_order: str = "desc",
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List backtest results with optional filtering and sorting."""
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if strategy_id is not None:
-        conditions.append("strategy_id = ?")
-        params.append(strategy_id)
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if run_source is not None:
-        conditions.append("run_source = ?")
-        params.append(run_source)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    order = f" ORDER BY {sort_by} {sort_order.upper()}"
-    query = f"SELECT * FROM backtest_result{where}{order} LIMIT ?"
-    params.append(limit)
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List backtest results with optional filtering（委托 repository）。"""
+    from core.persistence.repository import backtest_result as repo
+    return repo.list_backtest_results(
+        db_path, strategy_id=strategy_id, symbol=symbol, run_source=run_source,
+        sort_by=sort_by, sort_order=sort_order, limit=limit,
+    )
 
 
-# ===================================================================
 # Verify Session CRUD
 # ===================================================================
 
@@ -1262,26 +323,19 @@ def save_verify_session(
     slippage: float = 0.0005,
     status: str = "running",
 ) -> None:
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO verify_session
-           (session_id, status, strategy_ids, data_ranges,
-            init_cash, fee, slippage, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (session_id, status, strategy_ids, data_ranges,
-         init_cash, fee, slippage, _now()),
+    """Insert a verify session record（B3b.1 起委托 repository，签名不变）。"""
+    from core.persistence.repository import verify_session as repo
+    repo.save_verify_session(
+        db_path, session_id=session_id, strategy_ids=strategy_ids,
+        data_ranges=data_ranges, init_cash=init_cash, fee=fee,
+        slippage=slippage, status=status,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_verify_session(db_path: Path, session_id: str) -> Optional[Dict[str, Any]]:
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM verify_session WHERE session_id = ?", (session_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    """Retrieve a verify session by ID（委托 repository）。"""
+    from core.persistence.repository import verify_session as repo
+    return repo.get_verify_session(db_path, session_id)
 
 
 def update_verify_session(
@@ -1295,46 +349,26 @@ def update_verify_session(
     error_message: Optional[str] = None,
     completed_at: Optional[str] = None,
 ) -> None:
-    fields: Dict[str, Any] = {}
-    if status is not None:
-        fields["status"] = status
-    if summary_json is not None:
-        fields["summary_json"] = summary_json
-    if total_results is not None:
-        fields["total_results"] = total_results
-    if total_strategies is not None:
-        fields["total_strategies"] = total_strategies
-    if error_message is not None:
-        fields["error_message"] = error_message
-    if completed_at is not None:
-        fields["completed_at"] = completed_at
-    if not fields:
-        return
-    sets = ", ".join(f"{k} = ?" for k in fields)
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE verify_session SET {sets} WHERE session_id = ?",
-        (*fields.values(), session_id),
+    """Update verify session fields（委托 repository，非 None 字段语义不变）。"""
+    from core.persistence.repository import verify_session as repo
+    repo.update_verify_session(
+        db_path, session_id, status=status, summary_json=summary_json,
+        total_results=total_results, total_strategies=total_strategies,
+        error_message=error_message, completed_at=completed_at,
     )
-    conn.commit()
-    conn.close()
 
 
 def list_verify_sessions(
     db_path: Path,
     limit: int = 20,
 ) -> List[Dict[str, Any]]:
-    conn = _connect(db_path)
-    rows = conn.execute(
-        "SELECT * FROM verify_session ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List verify sessions（委托 repository）。"""
+    from core.persistence.repository import verify_session as repo
+    return repo.list_verify_sessions(db_path, limit)
 
 
 # ===================================================================
-# Dataset Metadata CRUD
+# Dataset Metadata 委托
 # ===================================================================
 
 def save_dataset_meta(
@@ -1357,35 +391,23 @@ def save_dataset_meta(
     quality_notes: Optional[str] = None,
     import_batch_id: Optional[str] = None,
 ) -> None:
-    """Insert a dataset metadata record."""
-    now = _now()
-    conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO dataset_meta
-           (dataset_id, symbol, interval, parquet_path, row_count, time_start,
-            time_end, file_size_bytes, source, format_detected, timestamp_precision,
-            ohlcv_stats, gap_count, quality_status, quality_notes, import_batch_id,
-            last_import_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (dataset_id, symbol, interval, parquet_path, row_count, time_start,
-         time_end, file_size_bytes, source, format_detected, timestamp_precision,
-         ohlcv_stats, gap_count, quality_status, quality_notes, import_batch_id,
-         now, now, now),
+    """Insert a dataset metadata record（B3a.3 起委托 repository，签名不变）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.save_dataset_meta(
+        db_path, dataset_id=dataset_id, symbol=symbol, interval=interval,
+        parquet_path=parquet_path, row_count=row_count, time_start=time_start,
+        time_end=time_end, file_size_bytes=file_size_bytes, source=source,
+        format_detected=format_detected,
+        timestamp_precision=timestamp_precision, ohlcv_stats=ohlcv_stats,
+        gap_count=gap_count, quality_status=quality_status,
+        quality_notes=quality_notes, import_batch_id=import_batch_id,
     )
-    conn.commit()
-    conn.close()
 
 
 def get_dataset(db_path: Path, dataset_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single dataset by ID, or None if not found."""
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT * FROM dataset_meta WHERE dataset_id = ?", (dataset_id,)
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return dict(row)
+    """Retrieve a single dataset by ID, or None if not found（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    return repo.get_dataset(db_path, dataset_id)
 
 
 def list_datasets(
@@ -1395,25 +417,11 @@ def list_datasets(
     interval: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List datasets with optional filtering."""
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if symbol is not None:
-        conditions.append("symbol = ?")
-        params.append(symbol)
-    if interval is not None:
-        conditions.append("interval = ?")
-        params.append(interval)
-
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM dataset_meta{where} ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
-
-    conn = _connect(db_path)
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """List datasets with optional filtering（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    return repo.list_datasets(
+        db_path, symbol=symbol, interval=interval, limit=limit,
+    )
 
 
 def update_dataset_stats(
@@ -1422,40 +430,12 @@ def update_dataset_stats(
     dataset_id: str,
     **fields: Any,
 ) -> None:
-    """Update fields on a dataset record. Refreshes ``updated_at``."""
-    allowed = {
-        "row_count", "time_start", "time_end", "file_size_bytes",
-        "format_detected", "timestamp_precision", "ohlcv_stats",
-        "gap_count", "quality_status", "quality_notes", "import_batch_id",
-        "last_import_at", "parquet_path",
-    }
-    updates: list[str] = []
-    params: list[Any] = []
-
-    for key, value in fields.items():
-        if key in allowed:
-            updates.append(f"{key} = ?")
-            params.append(value)
-
-    if not updates:
-        return
-
-    updates.append("updated_at = ?")
-    params.append(_now())
-    params.append(dataset_id)
-
-    conn = _connect(db_path)
-    conn.execute(
-        f"UPDATE dataset_meta SET {', '.join(updates)} WHERE dataset_id = ?",
-        params,
-    )
-    conn.commit()
-    conn.close()
+    """Update fields on a dataset record（委托 repository，白名单不变）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.update_dataset_stats(db_path, dataset_id=dataset_id, **fields)
 
 
 def delete_dataset(db_path: Path, dataset_id: str) -> None:
-    """Delete a dataset by ID. No error if not found."""
-    conn = _connect(db_path)
-    conn.execute("DELETE FROM dataset_meta WHERE dataset_id = ?", (dataset_id,))
-    conn.commit()
-    conn.close()
+    """Delete a dataset by ID（委托 repository）。"""
+    from core.persistence.repository import dataset_meta as repo
+    repo.delete_dataset(db_path, dataset_id)

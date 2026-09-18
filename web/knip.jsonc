@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@6.35.1/schema.json",
+  "ignore": [
+    "src/components/evolution/BacktestDrawer.tsx",
+    "src/hooks/useScene.ts",
+    "src/types/strategy.ts",
+    "src/types/generated/**"
+  ],
+  "ignoreDependencies": [
+  ],
+  "ignoreBinaries": ["perl"]
+}

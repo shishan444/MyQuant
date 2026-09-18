@@ -11,6 +11,19 @@ from api.deps import get_db_path
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
+# B9.2 S1：凭证键集合（GET masked 回显 + PUT 哨兵识别——前端零改动）
+_CREDENTIAL_KEYS = ("binance_api_key", "binance_secret_key")
+_MASK = "***"
+
+
+def _mask(value: str) -> str:
+    """前 4 后 4 中间 ***；未配置回 ""；短值全掩不泄露。"""
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return _MASK
+    return f"{value[:4]}{_MASK}{value[-4:]}"
+
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "language": "zh-CN",
     "timezone": "UTC+8",
@@ -51,7 +64,12 @@ def _write_config(db_path: Path, config: Dict[str, Any]) -> None:
 
 @router.get("")
 def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
-    return _read_config(db_path)
+    cfg = _read_config(db_path)
+    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
+    return {
+        **cfg,
+        **{k: _mask(str(cfg[k])) for k in _CREDENTIAL_KEYS if k in cfg},
+    }
 
 
 @router.put("")
@@ -62,6 +80,10 @@ def update_config(
     current = _read_config(db_path)
     for key, value in payload.items():
         if key in _DEFAULT_CONFIG:
+            # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
+            if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
+                continue
             current[key] = value
     _write_config(db_path, current)
-    return current
+    # 响应同样 masked（与 GET 一致）
+    return {**current, **{k: _mask(str(current[k])) for k in _CREDENTIAL_KEYS if k in current}}

@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-// Mock framer-motion to avoid animation issues in tests
-vi.mock("framer-motion", () => ({
+// Mock motion/react to avoid animation issues in tests
+vi.mock("motion/react", () => ({
+  useReducedMotion: () => false,
   motion: {
     div: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
       <div {...props}>{children}</div>,
@@ -12,7 +13,7 @@ vi.mock("framer-motion", () => ({
   AnimatePresence: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
-import { StrategyDetail } from "@/components/evolution/StrategyDetail";
+import { StrategyDetail } from "@/components/StrategyDetail";
 import type { DNA } from "@/types/api";
 
 function makeDna(overrides: Partial<DNA> = {}): DNA {

@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { X, Loader2, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Button as AntButton } from "antd";
 import { cn, formatNumber, getFitnessColor } from "@/lib/utils";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, CandleData, SignalData } from "@/components/charts/KlineChart";
+import { EquityCurve } from "@/components/charts/EquityCurve";
 import { runBacktest } from "@/services/strategies";
 import { getOhlcvBySymbol } from "@/services/datasets";
 import type { DNA, BacktestResult, TradeSignal } from "@/types/api";
@@ -123,9 +124,9 @@ export function BacktestDrawer({
               {symbol} / {timeframe}
             </span>
           </div>
-          <Button variant="ghost" size="icon-xs" onClick={onClose}>
+          <AntButton type="text" size="small" onClick={onClose} aria-label="关闭">
             <X className="h-4 w-4" />
-          </Button>
+          </AntButton>
         </div>
 
         {/* Content */}
@@ -141,9 +142,9 @@ export function BacktestDrawer({
             <div className="flex flex-col items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-8">
               <AlertTriangle className="h-8 w-8 text-red-400" />
               <p className="text-sm text-red-400">{error}</p>
-              <Button variant="outline" size="sm" onClick={onClose}>
+              <AntButton size="small" onClick={onClose}>
                 关闭
-              </Button>
+              </AntButton>
             </div>
           )}
 
@@ -183,7 +184,7 @@ export function BacktestDrawer({
                     资金曲线
                   </h4>
                   <div className="rounded-lg border border-slate-700/30 bg-slate-950/50 p-3">
-                    <EquityCurve data={equityPoints} />
+                    <EquityCurve data={equityPoints} height={180} />
                   </div>
                   <div className="mt-1.5 flex items-center gap-4 text-[10px] text-slate-500">
                     <span>初始: {formatNumber(equityPoints[0]?.value ?? 100000)}</span>
@@ -203,65 +204,6 @@ export function BacktestDrawer({
       </div>
     </>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Equity curve (lightweight line chart)
-// ---------------------------------------------------------------------------
-
-function EquityCurve({ data }: { data: Array<{ timestamp: string; value: number }> }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || data.length < 2) return;
-
-    let chart: import("lightweight-charts").IChartApi | null = null;
-
-    import("lightweight-charts").then(({ createChart, LineSeries, ColorType }) => {
-      if (!containerRef.current) return;
-
-      const { width } = containerRef.current.getBoundingClientRect();
-      chart = createChart(containerRef.current, {
-        width,
-        height: 180,
-        layout: {
-          background: { type: ColorType.Solid, color: "transparent" },
-          textColor: "#94a3b8",
-          fontSize: 10,
-        },
-        grid: {
-          vertLines: { color: "rgba(51,65,85,0.2)" },
-          horzLines: { color: "rgba(51,65,85,0.2)" },
-        },
-        rightPriceScale: { borderColor: "rgba(51,65,85,0.3)" },
-        timeScale: { borderColor: "rgba(51,65,85,0.3)", timeVisible: true },
-        crosshair: { mode: 0 },
-      });
-
-      const lineSeries = chart.addSeries(LineSeries, {
-        color: "#f59e0b",
-        lineWidth: 1.5,
-        priceLineVisible: false,
-        lastValueVisible: true,
-      });
-
-      const sortedData = [...data]
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-        .map((d) => ({
-          time: d.timestamp.slice(0, 19) as import("lightweight-charts").Time,
-          value: d.value,
-        }));
-
-      lineSeries.setData(sortedData);
-      chart.timeScale().fitContent();
-    });
-
-    return () => {
-      chart?.remove();
-    };
-  }, [data]);
-
-  return <div ref={containerRef} />;
 }
 
 // ---------------------------------------------------------------------------
