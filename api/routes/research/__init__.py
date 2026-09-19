@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import analysis, hypotheses, log, registry, validation
+from . import analysis, hypotheses, log, plugins, registry, validation
 
 router = APIRouter()
-for _sub in (hypotheses, validation, analysis, registry, log):
+for _sub in (hypotheses, validation, analysis, plugins, registry, log):
     router.include_router(_sub.router, prefix="/api/research", tags=["research"])

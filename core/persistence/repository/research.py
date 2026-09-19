@@ -12,6 +12,7 @@ core/analysis/DESIGN.md（随 7.3 建立），本文件只落存储语义：
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -407,3 +408,35 @@ def list_stale_running_tasks(
             )
         ).mappings()
         return [dict(r) for r in rows]
+
+
+def register_existing_plugin_signal(
+    db_path: Path,
+    *,
+    source: str,
+    plugin_id: str,
+    name: str,
+    version: int,
+    column_name: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """为已存在的插件行（如 pending→valid 的模型插件）补注册信号列。
+
+    与 save_plugin_with_registry 的区别：不写插件表（行已存在），只做
+    signal_registry 注册 + research_log 追加（同一事务）。
+    """
+    entry_id = _new_id()
+    engine = _engine_for(db_path)
+    now = _now()
+    with engine.begin() as conn:
+        conn.execute(insert(SignalRegistryEntry).values(
+            entry_id=entry_id, source=source, plugin_id=plugin_id,
+            column_name=column_name, version=version,
+            strategy_visible=1, created_at=now))
+        conn.execute(insert(ResearchLog).values(
+            log_id=_new_id(), hypothesis_id=None, entry_type="plugin",
+            ref_id=plugin_id,
+            summary=f"{source} plugin {name} v{version}: valid"
+                    + (f" ({json.dumps(extra, ensure_ascii=False)[:120]}" if extra else ""),
+            created_at=now))
+    return entry_id
