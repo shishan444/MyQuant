@@ -58,6 +58,8 @@ def test_stdio_full_chain(live_api):
     env = {
         "MYQUANT_MCP_PROFILE": "research",
         "MYQUANT_API_URL": live_api,
+        # 默认 transport 已切 streamable-http——stdio 为备选形态，显式声明
+        "MYQUANT_MCP_TRANSPORT": "stdio",
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
     }
     params = StdioServerParameters(

@@ -65,6 +65,10 @@ class EndpointNotAllowed(Exception):
     """端点不在当前档位白名单。"""
 
 
+class ApiUnreachable(Exception):
+    """API 不可达（结构化可达性错误——宿主与日志可读的排查指引）。"""
+
+
 def _match(path: str, endpoints: frozenset) -> bool:
     """路径匹配：字面量或 {param} 模板。"""
     if path in endpoints:
@@ -123,7 +127,12 @@ class QuantApiClient:
         self.check_allowed("GET", path)
         self.call_log.append({"method": "GET", "path": path})
         with httpx.Client(timeout=self.read_timeout, trust_env=False) as client:
-            resp = client.get(f"{self.base_url}{path}", params=params)
+            try:
+                resp = client.get(f"{self.base_url}{path}", params=params)
+            except httpx.ConnectError as exc:
+                raise ApiUnreachable(
+                    f"API 不可达（{self.base_url}）：请确认应用已启动"
+                    f"（python run.py）——{exc}") from exc
             resp.raise_for_status()
             return resp.json()
 
@@ -132,7 +141,12 @@ class QuantApiClient:
         self.check_allowed("POST", path)
         self.call_log.append({"method": "POST", "path": path})
         with httpx.Client(timeout=self.write_timeout, trust_env=False) as client:
-            resp = client.post(f"{self.base_url}{path}", json=json_body)
+            try:
+                resp = client.post(f"{self.base_url}{path}", json=json_body)
+            except httpx.ConnectError as exc:
+                raise ApiUnreachable(
+                    f"API 不可达（{self.base_url}）：请确认应用已启动"
+                    f"（python run.py）——{exc}") from exc
             resp.raise_for_status()
             if resp.status_code == 204 or not resp.content:
                 return None
