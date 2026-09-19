@@ -130,6 +130,9 @@ class DNAModel(BaseModel):
     mtf_mode: Optional[str] = None
     confluence_threshold: float = 0.3
     proximity_mult: float = 1.5
+    # == v2 超集（add-ai-research-mcp 6.1）：承载 signal_sources 与 composition ==
+    signal_sources: Optional[List[Dict[str, Any]]] = None
+    composition: Optional[Dict[str, Any]] = None
 
 
 class TimeframeLayerModel(BaseModel):

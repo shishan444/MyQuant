@@ -166,13 +166,32 @@ def run_isolated_backtest(
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 
+    # 组合策略加严门之一（6.5）：分量证据前置检查（先于回测执行——
+    # 缺证据不浪费计算；模型分量 walk-forward 由组装器强制）
+    plugin_sources = [s for s in (dna.signal_sources or [])
+                      if s.get("type") in ("formula", "model")]
+    components_json = None
+    effective_profile = threshold_profile
+    if plugin_sources:
+        missing = _missing_component_evidence(db_path, plugin_sources)
+        if missing:
+            raise ResearchError(
+                "RESEARCH_COMPONENT_EVIDENCE_MISSING",
+                "多信号源策略缺分量级证据（每分量须独立验证记录）",
+                status=409,
+                detail={"missing": missing})
+        from core.analysis.thresholds import tighten_profile
+        effective_profile = threshold_profile or tighten_profile()
+        components_json = json.dumps(
+            [s["ref"] for s in plugin_sources], ensure_ascii=False)
+
     # 回测（warmup 前扩装载）
     metrics, actual_warmup, bars_used = _run_backtest_on_range(
         data_dir, dna, symbol, timeframe,
         request_range["start"], request_range["end"], warmup_bars)
 
-    # 门槛机械判定
-    verdict, details = judge(metrics, threshold_profile)
+    # 门槛机械判定（组合用收紧 profile）
+    verdict, details = judge(metrics, effective_profile)
 
     # 双落（原子）
     record_id = f"rec_{uuid.uuid4().hex[:12]}"
@@ -187,12 +206,13 @@ def run_isolated_backtest(
     }, ensure_ascii=False)
     params_json = json.dumps({
         "request_range": request_range, "range_hash": rh,
-        "threshold_profile": (threshold_profile or DEFAULT_PROFILE)["name"],
+        "threshold_profile": (effective_profile or DEFAULT_PROFILE)["name"],
     }, ensure_ascii=False)
     rr.save_validation_with_log(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id,
         strategy_id=strategy_id, level="isolated_backtest",
-        params=params_json, result=result_json, verdict=verdict, range_hash=rh)
+        params=params_json, result=result_json, verdict=verdict, range_hash=rh,
+        components=components_json)
 
     return {
         "record_id": record_id,
@@ -300,3 +320,21 @@ def random_window_test(
 
     return {"record_id": record_id, "seed": seed,
             "windows": windows, "summary": summary}
+
+
+def _missing_component_evidence(
+    db_path: Path, plugin_sources: List[Dict[str, Any]],
+) -> List[str]:
+    """缺独立分量验证记录（level=component、params.column 匹配）的源清单。"""
+    component_records = [
+        r for r in rr.list_validation_records(db_path, limit=200)
+        if r["level"] == "component"
+    ]
+    evidenced = set()
+    for r in component_records:
+        try:
+            params = json.loads(r["params"])
+            evidenced.add(params.get("column"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return [s["ref"] for s in plugin_sources if s["ref"] not in evidenced]

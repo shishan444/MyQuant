@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from api.deps import get_data_dir, get_db_path
 from api.schemas import IsolatedBacktestRequest, RandomWindowRequest
@@ -120,3 +121,25 @@ def validation_report(
             ),
         })
     return lines
+
+
+class TranslateRequest(BaseModel):
+    strategy_symbol: str = "BTCUSDT"
+    strategy_timeframe: str = "4h"
+
+
+@router.post("/translate/{hypothesis_id}")
+def translate_hypothesis(
+    hypothesis_id: str,
+    payload: TranslateRequest | None = None,
+    db_path: Path = Depends(get_db_path),
+) -> Dict[str, Any]:
+    """假设→策略转化器：conditions 为唯一翻译源；不可表达显式拒绝。"""
+    from core.analysis.hypothesis_to_strategy import translate_hypothesis as _t
+    from pydantic import BaseModel as _BM  # noqa: F401
+
+    try:
+        kw = payload.model_dump() if payload else {}
+        return _t(db_path, hypothesis_id=hypothesis_id, **kw)
+    except ResearchError as exc:
+        raise research_error_to_http(exc) from exc

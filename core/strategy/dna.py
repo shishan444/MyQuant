@@ -228,6 +228,11 @@ class StrategyDNA:
     mtf_mode: Optional[str] = None  # "direction" | "confluence" | "direction+confluence" | None
     confluence_threshold: float = 0.3
     proximity_mult: float = 1.5
+    # == v2 超集（add-ai-research-mcp 6.1）：缺省 None = 退化形态（零迁移）==
+    # 信号源引用：[{type: rule|formula|model, ref, weight?}]（rule 源即 signal_genes）
+    signal_sources: Optional[List[Dict[str, Any]]] = None
+    # 组合决策层：{mode: weighted_vote|gate|logic, weights?, threshold?, op?}
+    composition: Optional[Dict[str, Any]] = None
     _layers_explicit: bool = field(default=False, repr=False, init=False)
 
     def __post_init__(self):
@@ -298,6 +303,11 @@ class StrategyDNA:
             "confluence_threshold": self.confluence_threshold,
             "proximity_mult": self.proximity_mult,
         }
+        # v2 超集（非 None 才写——退化形态序列化逐位不变）
+        if self.signal_sources is not None:
+            result["signal_sources"] = self.signal_sources
+        if self.composition is not None:
+            result["composition"] = self.composition
         if self.layers:
             result["layers"] = [layer.to_dict() for layer in self.layers]
         return result
@@ -347,7 +357,21 @@ class StrategyDNA:
         if not data.get("strategy_id"):
             data["strategy_id"] = str(uuid.uuid4())
 
+        # v2 字段（add-ai-research-mcp 6.1）
+        signal_sources = data.pop("signal_sources", None)
+        composition = data.pop("composition", None)
+
+        # 白名单过滤未知键：旧读者遇新键不再 TypeError（回退安全）；
+        # 存量 DNA 无未知键，行为逐位不变
+        _known = {
+            "signal_genes", "logic_genes", "execution_genes", "risk_genes",
+            "strategy_id", "generation", "parent_ids", "mutation_ops",
+        }
+        data = {k: v for k, v in data.items() if k in _known}
+
         instance = cls(**data)
+        instance.signal_sources = signal_sources
+        instance.composition = composition
         instance.layers = layers
         instance.cross_layer_logic = cross_layer_logic
         instance.mtf_mode = mtf_mode

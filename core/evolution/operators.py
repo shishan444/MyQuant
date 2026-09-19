@@ -786,3 +786,39 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         proximity_mult=random.choice([parent_a.proximity_mult, parent_b.proximity_mult]),
     )
     return child
+
+
+def mutate_composition(dna: StrategyDNA) -> StrategyDNA:
+    """组合基因变异（add-ai-research-mcp 6.3）。
+
+    作用面：signal_sources 权重 / composition 阈值与逻辑。无组合基因
+    （退化形态）时 no-op 返回原 dna——纯退化种群行为零改变。
+    子代合法性：变异仅在合法值域内扰动（权重 clip 到 [0,2]、阈值
+    [0,1]、logic op ∈ {AND, OR}、mode 不变）。
+    """
+    data = dna.to_dict()
+    sources = data.get("signal_sources")
+    comp = data.get("composition")
+    if not sources and not comp:
+        return dna
+
+    choice = random.random()
+    if comp and choice < 0.5:
+        # 阈值扰动
+        if comp.get("mode") == "logic":
+            comp["op"] = "OR" if comp.get("op", "AND") == "AND" else "AND"
+        else:
+            t = float(comp.get("threshold", 0.5))
+            comp["threshold"] = round(min(1.0, max(0.0, t + random.uniform(-0.1, 0.1))), 4)
+    else:
+        # 权重扰动（有 sources 时）
+        for s in sources or []:
+            if random.random() < 0.5:
+                w = float(s.get("weight", 1.0))
+                s["weight"] = round(min(2.0, max(0.0, w + random.uniform(-0.3, 0.3))), 4)
+
+    if sources:
+        data["signal_sources"] = sources
+    if comp:
+        data["composition"] = comp
+    return StrategyDNA.from_dict(data)

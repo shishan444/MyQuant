@@ -13,6 +13,7 @@ from core.evolution.operators import (
     mutate_add_signal, mutate_remove_signal,
     mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe,
     mutate_mtf_mode, mutate_confluence_threshold, mutate_proximity_mult,
+    mutate_composition,
 )
 from core.evolution.population import init_population, create_random_dna
 from core.evolution.diversity import (
@@ -348,6 +349,8 @@ class EvolutionEngine:
             mutation_pool = [
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
+                # 组合基因变异（add-ai-research-mcp 6.3）：退化形态 no-op
+                mutate_composition,
             ]
             # MTF-specific mutations: add/remove/modify layers
             if len(self.timeframe_pool) > 1:
