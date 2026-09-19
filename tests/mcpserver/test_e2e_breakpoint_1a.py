@@ -1,0 +1,150 @@
+"""断点 1a 端到端验收（add-ai-research-mcp 4.6）。
+
+经 MCP client（模拟 AI 调用方式）完成研究全链路：
+登记假设 → 分析 → 干净区间隔离验证 → 随机窗口 → 验证档案 → 状态迁移。
+验收即测试：全绿 = 断点 1a 达成。
+"""
+
+import asyncio
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+import uvicorn
+
+pytestmark = [pytest.mark.integration]
+
+from api.app import create_app
+from mcpserver.api_client import QuantApiClient
+from mcpserver.server import build_server
+
+
+@pytest.fixture(scope="module")
+def live_api(tmp_path_factory):
+    db = tmp_path_factory.mktemp("b1a") / "quant.db"
+    data_dir = tmp_path_factory.mktemp("b1a_data")
+    n = 600
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC", name="timestamp")
+    rng = np.random.default_rng(21)
+    close = 60000 + np.cumsum(rng.normal(0, 130, n))
+    pd.DataFrame({"open": close, "high": close + 70, "low": close - 70,
+                  "close": close, "volume": rng.uniform(100, 900, n),
+                  "trades": 50}, index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+
+    # 预置一个可回测策略（RSI 入场）
+    from core.persistence.db_ext import init_db_ext, save_strategy
+    from core.strategy.dna import (
+        ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
+    init_db_ext(db)
+    dna = StrategyDNA(
+        signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                                 "rsi_14", {"type": "lt", "threshold": 35})],
+        logic_genes=LogicGenes(),
+        execution_genes=ExecutionGenes(timeframe="4h"),
+        risk_genes=RiskGenes())
+    save_strategy(db, strategy_id="st_e2e", dna_json=dna.to_json(),
+                  symbol="BTCUSDT", timeframe="4h", name="e2e")
+
+    app = create_app(db_path=db, data_dir=data_dir)
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if server.started:
+            break
+        time.sleep(0.1)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    yield f"http://127.0.0.1:{port}", db
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+def test_breakpoint_1a_full_research_loop(live_api):
+    """全链路：登记→分析→隔离验证→随机窗口→档案→迁移。"""
+    base, db = live_api
+    # 研究档装配（与宿主一致的全链路路径）
+    mcp, api = build_server(profile="research", base_url=base)
+    tool_names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert "register_hypothesis" in tool_names
+
+    # 1) 读能力自述（AI 第一步：知道自己能做什么、边界在哪）
+    res = asyncio.run(mcp.read_resource("quant://capabilities"))
+    text = res[0].content if isinstance(res, list) else str(res)
+    assert "隔离纪律" in text
+
+    # 2) 查可用信号列（subject 校验前置）
+    signals = api.get("/api/research/signals")
+    assert any(s["column_key"] == "RSI" for s in signals)
+
+    # 3) 登记假设（声明 1 月区间）
+    reg = api.post("/api/research/hypotheses", {
+        "conditions": {
+            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        },
+        "statement": "RSI 超卖后价格倾向修复",
+        "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                         "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}],
+    })
+    assert reg["duplicated"] is False
+    hid = reg["hypothesis_id"]
+
+    # 4) 分析（同假设关联：2 月区间——登记区间外）
+    analysis = api.post("/api/research/analysis", {
+        "template": "condition_stats",
+        "params": {"indicator": "RSI", "params": {"period": 14},
+                   "condition": {"subject": "rsi_14", "action": "lt", "target": 35}},
+        "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                       "start": "2024-02-01T00:00:00Z", "end": "2024-03-01T00:00:00Z"},
+        "hypothesis_id": hid,
+    })
+    assert analysis["sample_size"] >= 30
+
+    # 5) 隔离验证：2 月区间已被分析日志占用 → 必须被拒（漏报拦截语义验证）
+    rejected = None
+    try:
+        api.post("/api/research/validate-backtest", {
+            "hypothesis_id": hid, "strategy_id": "st_e2e",
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-02-10T00:00:00Z", "end": "2024-02-25T00:00:00Z"}})
+    except Exception as exc:  # noqa: BLE001 —— httpx 4xx
+        rejected = exc
+    assert rejected is not None, "与已分析区间重叠的验证必须被拒"
+
+    # 6) 干净区间隔离验证（3 月起，warmup 足够）
+    validation = api.post("/api/research/validate-backtest", {
+        "hypothesis_id": hid, "strategy_id": "st_e2e",
+        "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-03-01T00:00:00Z", "end": "2024-03-25T00:00:00Z"}})
+    assert validation["verdict"] in ("pass", "fail")
+    assert validation["warmup"]["bars"] >= 200
+    rec_id = validation["record_id"]
+
+    # 7) 随机窗口抽查（4 月池）
+    rw = api.post("/api/research/random-window-test", {
+        "strategy_id": "st_e2e", "symbol": "BTCUSDT", "timeframe": "4h",
+        "data_start": "2024-03-25T00:00:00Z", "data_end": "2024-04-05T00:00:00Z",
+        "window_bars": 15, "n_windows": 3, "seed": 11, "hypothesis_id": hid})
+    assert rw["summary"]["n_windows"] == 3
+
+    # 8) 验证档案（人话摘要）
+    report = api.get("/api/research/validation/st_e2e/report")
+    assert report["total_records"] >= 2
+    assert any("收益" in e["人话"] for e in report["isolated_backtests"])
+
+    # 9) 状态迁移（引用隔离验证记录）
+    transition = api.post(f"/api/research/hypotheses/{hid}/transition", {
+        "target_status": "refuted" if validation["verdict"] == "fail" else "supported",
+        "evidence_ref": rec_id})
+    assert transition["status"] in ("supported", "refuted")
+
+    # 10) 研究日志全链路可审计
+    logs = api.get("/api/research/log", params={"hypothesis_id": hid})
+    types = [e["entry_type"] for e in logs["items"]]
+    for expected in ("register", "analysis", "validate", "transition"):
+        assert expected in types, f"日志链路缺 {expected}: {types}"
