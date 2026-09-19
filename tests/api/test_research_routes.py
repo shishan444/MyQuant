@@ -161,7 +161,7 @@ class TestIsolatedBacktest:
             "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                               "start": start, "end": end}})
 
-    def test_overlap_rejected_with_judged_ranges(self, api_client, research_env, monkeypatch):
+    def test_overlap_rejected_with_judged_ranges(self, api_client, research_env):
         """请求区间与登记区间重叠 → 409 + judged_ranges 明细。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
@@ -174,7 +174,7 @@ class TestIsolatedBacktest:
         assert detail["detail"]["judged_ranges"], "须附判定并集明细"
         assert detail["detail"]["overlaps"], "须附重叠段"
 
-    def test_unreported_range_intercepted_by_log(self, api_client, research_env, monkeypatch):
+    def test_unreported_range_intercepted_by_log(self, api_client, research_env):
         """漏报拦截：声明区间 A，日志另有区间 B → 请求 B 被拒。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
@@ -193,7 +193,7 @@ class TestIsolatedBacktest:
         assert resp.status_code == 409
         assert resp.json()["detail"]["code"] == "RESEARCH_RANGE_OVERLAP"
 
-    def test_clean_range_runs_with_warmup(self, api_client, research_env, monkeypatch):
+    def test_clean_range_runs_with_warmup(self, api_client, research_env):
         """干净区间放行：warmup 声明 + 门槛判定 + 双落。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
@@ -214,7 +214,7 @@ class TestIsolatedBacktest:
         logs = rr.list_research_log(dbp, hypothesis_id=hid)
         assert any(e["entry_type"] == "validate" for e in logs)
 
-    def test_warmup_memory_enables_head_signals(self, api_client, research_env, monkeypatch):
+    def test_warmup_memory_enables_head_signals(self, api_client, research_env):
         """M1 隔离语义行为级证明：warmup 历史记忆使请求区间头部的有记忆指标正确。
 
         构造：warmup 段（bar 0-299）价格恒 62000，请求段（bar 300 起）恒 60000；
@@ -263,7 +263,7 @@ class TestIsolatedBacktest:
         assert body["metrics"]["total_trades"] >= 1, (
             f"warmup 记忆未进入请求区间头部: {body['metrics']}")
 
-    def test_warmup_insufficient_rejected(self, api_client, research_env, monkeypatch):
+    def test_warmup_insufficient_rejected(self, api_client, research_env):
         """请求区间起点太近数据头部 → warmup 不足 422。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
@@ -278,7 +278,7 @@ class TestIsolatedBacktest:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "RESEARCH_WARMUP_INSUFFICIENT"
 
-    def test_duplicate_request_idempotent(self, api_client, research_env, monkeypatch):
+    def test_duplicate_request_idempotent(self, api_client, research_env):
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
         hid = self._register_hyp(api_client)
@@ -288,7 +288,7 @@ class TestIsolatedBacktest:
         assert r2["duplicated"] is True
         assert r2["record_id"] == r1["record_id"]
 
-    def test_terminal_hypothesis_rejected(self, api_client, research_env, monkeypatch):
+    def test_terminal_hypothesis_rejected(self, api_client, research_env):
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
         hid = self._register_hyp(api_client)
@@ -306,7 +306,7 @@ class TestIsolatedBacktest:
 
 
 class TestRandomWindow:
-    def test_same_seed_same_result(self, api_client, research_env, monkeypatch):
+    def test_same_seed_same_result(self, api_client, research_env):
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
         payload = {
@@ -328,7 +328,7 @@ class TestRandomWindow:
 
 
 class TestAnalysisAndReport:
-    def test_analysis_logs_chain(self, api_client, research_env, monkeypatch):
+    def test_analysis_logs_chain(self, api_client, research_env):
         """分析执行后日志含 analysis 记录（含区间）。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
@@ -349,7 +349,7 @@ class TestAnalysisAndReport:
         assert any(e["entry_type"] == "analysis" and e.get("data_ranges")
                    for e in logs)
 
-    def test_validation_report_fields(self, api_client, research_env, monkeypatch):
+    def test_validation_report_fields(self, api_client, research_env):
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
         hid = _register(api_client).json()["hypothesis_id"]
@@ -472,3 +472,131 @@ class TestConcurrencyAndIdempotence:
         r2 = _register(api_client, conditions=conds, ranges=ranges).json()
         assert (r2["hypothesis_id"] == r1["hypothesis_id"]) == same
         assert r2["duplicated"] == same
+
+
+class TestSupersededChain:
+    """3.1 superseded 接力链：旧假设终态拒验 + 新假设可验证 + 日志完整。"""
+
+    def test_superseded_handover_full_chain(self, api_client, research_env):
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        dbp = Path(api_client.app.state.db_path)
+
+        # 假设 A：登记 + 验证记录
+        hid_a = _register(api_client, statement="旧想法").json()["hypothesis_id"]
+        rr.save_validation_with_log(
+            dbp, record_id="rec_sup_a", hypothesis_id=hid_a, strategy_id="st_test",
+            level="isolated_backtest", params="{}", result=None,
+            verdict="pass", range_hash="rh_sup_a")
+
+        # 假设 B（接替者）：修正后的条件
+        conds_b = {
+            "when_conditions": [{"subject": "volume", "action": "gt", "target": 0}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        }
+        ranges_b = [{
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-05-01T00:00:00Z", "end": "2024-06-01T00:00:00Z"}]
+        hid_b = _register(api_client, conditions=conds_b, ranges=ranges_b,
+                          statement="修正后的新想法").json()["hypothesis_id"]
+
+        # A → superseded（ref=B）
+        resp = api_client.post(f"/api/research/hypotheses/{hid_a}/transition",
+                               json={"target_status": "superseded",
+                                     "evidence_ref": hid_b})
+        assert resp.status_code == 200
+        a = rr.get_hypothesis(dbp, hid_a)
+        assert a["status"] == "superseded" and a["superseded_by"] == hid_b
+
+        # A 终态拒验
+        resp2 = api_client.post("/api/research/validate-backtest", json={
+            "hypothesis_id": hid_a, "strategy_id": "st_test",
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-06-01T00:00:00Z", "end": "2024-06-20T00:00:00Z"}})
+        assert resp2.status_code == 409
+        assert resp2.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_TERMINAL"
+
+        # B 可验证（干净区间）——接力成立
+        resp3 = api_client.post("/api/research/validate-backtest", json={
+            "hypothesis_id": hid_b, "strategy_id": "st_test",
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-06-01T00:00:00Z", "end": "2024-06-20T00:00:00Z"}})
+        # 500 bar 到 2024-03-31——6 月无数据，预期 DATA_INSUFFICIENT（B 未被
+        # 终态拒绝即证明接力语义；数据不足与终态拒是不同错误）
+        assert resp3.status_code in (200, 422), resp3.text
+        if resp3.status_code == 422:
+            assert resp3.json()["detail"]["code"] != "RESEARCH_HYPOTHESIS_TERMINAL"
+
+        # 日志链：A 的链含 register→transition（superseded）
+        types = [e["entry_type"] for e in rr.list_research_log(dbp, hypothesis_id=hid_a)]
+        assert "register" in types and "transition" in types
+
+
+class TestFallbackSafetyIntegration:
+    """3.2 回退安全集成态：v2 策略入库后存量读路径不炸。"""
+
+    def test_v2_strategy_readable_by_legacy_paths(self, api_client, research_env):
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        dbp = Path(api_client.app.state.db_path)
+        # v2 策略入库（基因与夹具策略差异化——save 按 gene_signature
+        # 去重且签名只含条件类型不含阈值：period 20 才使签名不同）
+        dna = StrategyDNA(
+            signal_genes=[SignalGene("RSI", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                                     "rsi_20", {"type": "lt", "threshold": 30})],
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            signal_sources=[{"type": "rule"}, {"type": "formula", "ref": "fx_any"}],
+            composition={"mode": "gate"})
+        save_strategy(dbp, strategy_id="st_v2ro", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="v2-readonly")
+
+        # 存量读路径：策略列表（前端路径）不炸且含该策略
+        resp = api_client.get("/api/strategies")
+        assert resp.status_code == 200, resp.text
+        ids = [s.get("strategy_id") for s in resp.json().get("items", resp.json())] \
+            if isinstance(resp.json(), (list, dict)) else []
+        assert "st_v2ro" in str(resp.json()), "v2 策略须出现在存量列表"
+
+        # 单策略详情（退化解析路径）
+        detail = api_client.get("/api/strategies/st_v2ro")
+        assert detail.status_code == 200, detail.text
+
+
+class TestWatchdogRaceViaApi:
+    """3.3 守护竞争终局经 API 轮询口：超时标记后迟到回调不覆盖。"""
+
+    def test_late_success_does_not_override_timeout(self, api_client, research_env):
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        dbp = Path(api_client.app.state.db_path)
+        import time as _t
+        import core.analysis.executor as exec_mod
+
+        old = exec_mod._EXECUTOR
+        exec_mod._EXECUTOR = None
+        ex = exec_mod.init_executor(dbp, default_timeout_s=0.3)
+        try:
+            def _slow(stop_check):
+                # 窗口须覆盖守护首扫（固定 1.0s 间隔）：deadline 0.3 <
+                # 首扫 1.0 < 完成 2.0，消除临界竞争
+                _t.sleep(2.0)
+                return "late-success"
+            out = ex.submit("analysis:slow", _slow, estimated_cost_s=10.0)
+            # 轮询到终态
+            deadline = _t.time() + 10
+            while _t.time() < deadline:
+                t = rr.get_analysis_task(dbp, out["task_id"])
+                if t["status"] in ("succeeded", "failed"):
+                    break
+                _t.sleep(0.1)
+            # 经 repository 观察终态（API 轮询口同源）
+            assert t["status"] == "failed" and t["reason"] == "timeout"
+            # 等迟到的成功回调跑完
+            _t.sleep(2.5)
+            t2 = rr.get_analysis_task(dbp, out["task_id"])
+            assert t2["status"] == "failed" and t2["reason"] == "timeout", (
+                "迟到成功不得覆盖超时终态（先到者胜）")
+        finally:
+            if exec_mod._EXECUTOR is not None:
+                exec_mod._EXECUTOR.shutdown()
+            exec_mod._EXECUTOR = old
