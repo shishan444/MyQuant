@@ -16,6 +16,21 @@ import uvicorn
 
 pytestmark = [pytest.mark.integration]
 
+
+def run_async(coro):
+    """asyncio.run 的环境兼容版。
+
+    playwright e2e fixture 会在进程内泄漏运行中的事件循环，此后
+    asyncio.run 抛 RuntimeError——检测到活动 loop 时改在新线程跑。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
 from api.app import create_app
 from mcpserver.api_client import EndpointNotAllowed, QuantApiClient
 from mcpserver.server import build_server
@@ -58,14 +73,14 @@ def live_api(tmp_path_factory):
 class TestServerAssembly:
     def test_research_profile_tools(self) -> None:
         mcp, _ = build_server(profile="research")
-        names = {t.name for t in asyncio.run(mcp.list_tools())}
+        names = {t.name for t in run_async(mcp.list_tools())}
         assert TOOL_TIERS["readonly"] <= names
         assert TOOL_TIERS["research"] <= names
-        assert len(names) == 19
+        assert len(names) == 22
 
     def test_readonly_profile_tools(self) -> None:
         mcp, _ = build_server(profile="readonly")
-        names = {t.name for t in asyncio.run(mcp.list_tools())}
+        names = {t.name for t in run_async(mcp.list_tools())}
         assert names == TOOL_TIERS["readonly"]
         # 研究档工具不可见
         assert "register_hypothesis" not in names
@@ -75,7 +90,7 @@ class TestServerAssembly:
         """触金隔离：枚举全部注册工具，断言无下单/调仓/风控修改类。"""
         for profile in ("readonly", "research"):
             mcp, _ = build_server(profile=profile)
-            names = {t.name for t in asyncio.run(mcp.list_tools())}
+            names = {t.name for t in run_async(mcp.list_tools())}
             forbidden_substrings = ("order", "trade_open", "close_position",
                                     "risk", "live", "liquidate", "leverage")
             for n in names:
@@ -85,7 +100,7 @@ class TestServerAssembly:
     def test_capability_resource_four_parts(self) -> None:
         """能力自述含四部分内容。"""
         mcp, _ = build_server(profile="research")
-        res = asyncio.run(mcp.read_resource("quant://capabilities"))
+        res = run_async(mcp.read_resource("quant://capabilities"))
         text = res[0].content if isinstance(res, list) else str(res)
         for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
             assert part in text, f"自述缺部分: {part}"

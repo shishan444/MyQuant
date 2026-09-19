@@ -38,6 +38,8 @@ READONLY_ENDPOINTS = frozenset({
     "/api/research/validation/{strategy_id}/report",
     "/api/research/analysis/tasks/{task_id}",
     "/api/research/feature-requests",
+    "/api/research/plugins/formula",
+    "/api/research/plugins/model",
 })
 
 # 研究执行档 POST 允许集（登记/验证/分析/需求单/进化触发）
@@ -48,6 +50,9 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/research/random-window-test",                     # 随机窗口
     "/api/research/analysis",                               # 分析模板
     "/api/research/feature-requests",                       # 需求单
+    "/api/research/plugins/formula",                        # 公式插件注册
+    "/api/research/plugins/model",                          # 模型插件配置
+    "/api/research/translate/{hypothesis_id}",              # 假设→策略转化
     "/api/evolution/tasks",                                 # 触发进化
 })
 

@@ -49,6 +49,9 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | persistence | 数据持久化层 | SQLite 表管理、进化快照存储 | `core/persistence/` | 声明式 |
 | logging | 日志配置 | 按模块和日期组织日志文件路径 | `core/logging/` | 声明式 |
 | api | FastAPI HTTP/WS 接口层 | 路由定义、请求校验、WebSocket 推送、后台任务调度 | `api/` | 声明式 |
+| analysis | 研究编排域（add-ai-research-mcp） | 五类分析模板、假设登记/迁移用例、隔离回测编排、插件注册编排、假设→策略转化器、线程池执行器；**护栏：任何 core 模块不得反向依赖 core/analysis** | `core/analysis/` | 声明式 |
+| signals | 信号求值内核（add-ai-research-mcp） | 受限公式 DSL（白名单函数+静态校验三关）、模型 walk-forward 管道；纯计算、无研究语义、无 HTTP | `core/signals/` | 声明式 |
+| mcpserver | MCP server（AI 研究通道，add-ai-research-mcp） | 独立常驻进程（stdio transport）；经 REST 单调用面访问工程；两档权限（readonly/research）+ 端点白名单（方法维度）；触金工具不存在；能力自述 resource。**命名注记：原定 `mcp/` 与 SDK 包名冲突更名** | `mcpserver/` | 声明式 |
 
 ### 前端模块
 | 模块名 | 职责简述 | 边界 | 源码路径 | 发现方式 |
@@ -150,6 +153,39 @@ graph TD
 
     stores --> types
 ```
+
+## 研究域结构（add-ai-research-mcp）
+
+### 路由组织
+`api/routes/research/` 子包（照 strategies/ 先例）：hypotheses / validation /
+analysis / plugins / registry / log 分文件，`/api/research` 前缀聚合（15 端点）。
+
+### StrategyDNA v2（超集兼容）
+- 新增可选字段 `signal_sources`（三类信号源引用：rule / formula / model）与
+  `composition`（组合决策层：weighted_vote / gate / logic）；
+- 缺省 None = 退化形态（存量策略零迁移，序列化不出现新键）；
+- `from_dict` 白名单过滤未知键（v2 字段写库后旧解析回退安全）；
+- 信号消费：插件源由 core/analysis/signal_assembly 求值组装为 SignalSet，
+  经引擎现成 `signal_set=` 注入点传入——**core/backtest 零新增依赖**
+  （静态断言钉死）；插件产 t 原始值，防前视平移由引擎独占（统一 shift(1)）。
+
+### 依赖方向（D13 总图）
+```
+mcpserver/ -> api/routes/research/ -> core/analysis -> core/signals
+                                       |      ^              ^
+                                       |      (禁:core不得   |
+                                       v       反向依赖)     |
+                                 features/discovery/        |
+                                 validation/strategy         |
+                                       ^                     |
+                                       └── strategy ────────┘ (类型引用)
+```
+
+### 研究域数据表（Alembic 增量轨 f2a8c1d94b07）
+research_hypotheses（WHEN/THEN 条件必填+幂等部分唯一索引）/
+research_log（追加不可变，漏报拦截数据源）/ analysis_tasks /
+formula_plugins / model_plugins / signal_registry（仅插件行）/
+feature_requests / validation_records。
 
 ## 关键约束
 - 部署环境：本地开发环境，API 端口 8000，前端开发代理至后端

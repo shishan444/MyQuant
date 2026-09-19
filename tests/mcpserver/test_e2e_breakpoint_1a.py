@@ -17,6 +17,21 @@ import uvicorn
 
 pytestmark = [pytest.mark.integration]
 
+
+def run_async(coro):
+    """asyncio.run 的环境兼容版。
+
+    playwright e2e fixture 会在进程内泄漏运行中的事件循环，此后
+    asyncio.run 抛 RuntimeError——检测到活动 loop 时改在新线程跑。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
 from api.app import create_app
 from mcpserver.api_client import QuantApiClient
 from mcpserver.server import build_server
@@ -69,11 +84,11 @@ def test_breakpoint_1a_full_research_loop(live_api):
     base, db = live_api
     # 研究档装配（与宿主一致的全链路路径）
     mcp, api = build_server(profile="research", base_url=base)
-    tool_names = {t.name for t in asyncio.run(mcp.list_tools())}
+    tool_names = {t.name for t in run_async(mcp.list_tools())}
     assert "register_hypothesis" in tool_names
 
     # 1) 读能力自述（AI 第一步：知道自己能做什么、边界在哪）
-    res = asyncio.run(mcp.read_resource("quant://capabilities"))
+    res = run_async(mcp.read_resource("quant://capabilities"))
     text = res[0].content if isinstance(res, list) else str(res)
     assert "隔离纪律" in text
 

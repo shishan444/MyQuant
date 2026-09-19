@@ -349,8 +349,6 @@ class EvolutionEngine:
             mutation_pool = [
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
-                # 组合基因变异（add-ai-research-mcp 6.3）：退化形态 no-op
-                mutate_composition,
             ]
             # MTF-specific mutations: add/remove/modify layers
             if len(self.timeframe_pool) > 1:
@@ -384,6 +382,12 @@ class EvolutionEngine:
                     for _ in range(n_mutations):
                         mut = random.choices(mutation_pool, weights=mut_weights)[0]
                         child = mut(child)
+                    # 组合基因变异（add-ai-research-mcp 6.3）：不占既有
+                    # 权重名额（否则稀释有效变异密度）；仅有组合基因的
+                    # 个体追加，退化形态零改变
+                    if getattr(child, "signal_sources", None) or getattr(child, "composition", None):
+                        if random.random() < 0.3:
+                            child = mutate_composition(child)
                     children.append(child)
                 except Exception:
                     children.append(create_random_dna(

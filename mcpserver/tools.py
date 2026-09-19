@@ -152,6 +152,40 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         return api.post("/api/research/random-window-test", body)
 
     @mcp.tool()
+    def register_formula_plugin(name: str, expression: str) -> Dict[str, Any]:
+        """注册公式插件（受限 DSL：白名单函数、禁前视、静态校验三关；
+        同名同表达式幂等返回既有版本；同名新表达式版本递增）。"""
+        return api.post("/api/research/plugins/formula",
+                        {"name": name, "expression": expression})
+
+    @mcp.tool()
+    def register_model_plugin(name: str, features: list, data_start: str,
+                              data_end: str, symbol: str = "BTCUSDT",
+                              timeframe: str = "4h",
+                              template: str = "rolling_logistic",
+                              window: int = 0, step: int = 20,
+                              target_horizon: int = 4) -> Dict[str, Any]:
+        """配置模型插件（walk-forward 滚动回归；异步训练 202+task_id，
+        轮询 get_analysis_task；失败产生 rejected 记录可查）。"""
+        return api.post("/api/research/plugins/model", {
+            "name": name, "features": features, "template": template,
+            "params": {"window": window, "step": step},
+            "target": {"type": "return_sign", "horizon": target_horizon},
+            "symbol": symbol, "timeframe": timeframe,
+            "data_start": data_start, "data_end": data_end})
+
+    @mcp.tool()
+    def translate_hypothesis_to_strategy(
+            hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
+            strategy_timeframe: str = "4h") -> Dict[str, Any]:
+        """把已验证假设转化为策略（conditions 为唯一翻译源；不可表达
+        显式拒绝；须先有 pass 验证记录）。"""
+        return api.post(
+            f"/api/research/translate/{hypothesis_id}",
+            {"strategy_symbol": strategy_symbol,
+             "strategy_timeframe": strategy_timeframe})
+
+    @mcp.tool()
     def submit_feature_request(title: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """慢通道功能需求单（只持久化与可查，不会自动实现）。"""
         return api.post("/api/research/feature-requests",
@@ -172,5 +206,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (run_analysis, register_hypothesis, transition_hypothesis,
                run_isolated_validation, run_random_window_test,
+               register_formula_plugin, register_model_plugin,
+               translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution, poll_evolution_task):
         TOOL_TIERS["research"].add(fn.__name__)
