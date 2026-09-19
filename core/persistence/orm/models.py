@@ -308,3 +308,168 @@ class LiveTradingTask(Base):
     config_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+# == research 域（8 表，add-ai-research-mcp 1.2）==
+# 字段级权威源：openspec 变更 design.md 附.1；时间戳列沿用工程 TEXT ISO 形制；
+# JSON 列以 Text 存 JSON 字符串（strategy.dna_json 先例）；
+# 布尔以 Integer 0/1 表达（SQLite 惯例，无原生 BOOLEAN）。
+
+
+class ResearchHypothesis(Base):
+    """研究假设：conditions（WHEN/THEN 结构化 JSON）是验证判定的唯一机器来源。"""
+
+    __tablename__ = "research_hypotheses"
+    __table_args__ = (
+        # 幂等键：同条件集+同区间集且 active 视为同一假设（附.5 卡1）
+        Index(
+            "ux_hypotheses_active_identity",
+            "conditions_hash", "ranges_hash",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+    hypothesis_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    conditions: Mapped[str] = mapped_column(Text, nullable=False)
+    conditions_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    data_ranges: Mapped[str] = mapped_column(Text, nullable=False)
+    ranges_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # active -> supported | refuted | superseded（迁移必引证据，终态拒新验证）
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    terminal_ref: Mapped[Optional[str]] = mapped_column(Text)
+    superseded_by: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ResearchLog(Base):
+    """研究日志（追加不可变）：强制自动记录分析区间，拦截漏报（spec 隔离判定）。"""
+
+    __tablename__ = "research_log"
+    __table_args__ = (
+        Index("ix_research_log_hypothesis", "hypothesis_id", "created_at"),
+    )
+    log_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    hypothesis_id: Mapped[Optional[str]] = mapped_column(Text)
+    # register | analysis | validate | transition | plugin
+    entry_type: Mapped[str] = mapped_column(Text, nullable=False)
+    ref_id: Mapped[Optional[str]] = mapped_column(Text)
+    data_ranges: Mapped[Optional[str]] = mapped_column(Text)
+    summary: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class AnalysisTask(Base):
+    """研究长任务句柄（线程池执行器产物，D3/D11 轮询语义）。"""
+
+    __tablename__ = "analysis_tasks"
+    __table_args__ = (
+        Index("ix_analysis_tasks_status", "status", "created_at"),
+    )
+    task_id: Mapped[str] = mapped_column(Text, primary_key=True)  # ant_ 前缀
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    params: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+    # pending | running | succeeded | failed（timeout/interrupted 为 failed 的 reason）
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    result_ref: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    finished_at: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class FormulaPlugin(Base):
+    """公式插件（受限 DSL 原文 + 版本化）。"""
+
+    __tablename__ = "formula_plugins"
+    __table_args__ = (
+        Index("ux_formula_plugins_name_version", "name", "version", unique=True),
+    )
+    plugin_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    expression: Mapped[str] = mapped_column(Text, nullable=False)
+    output_columns: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+    # valid | rejected（rejected 只留记录不注册）
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'valid'"))
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    strategy_visible: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ModelPlugin(Base):
+    """模型插件（参数化模板配置 + 样本外摘要缓存；卡5 状态机 pending→valid|rejected）。"""
+
+    __tablename__ = "model_plugins"
+    __table_args__ = (
+        Index("ux_model_plugins_name_version", "name", "version", unique=True),
+    )
+    plugin_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON{features,template,params,target,horizon}
+    signal_column: Mapped[str] = mapped_column(Text, nullable=False)
+    # pending | valid | rejected（异步训练：failed 训练/超时 → rejected+reason，卡5）
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    oos_summary: Mapped[Optional[str]] = mapped_column(Text)  # JSON 缓存（权威在 validation_records）
+    strategy_visible: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SignalRegistryEntry(Base):
+    """信号注册表（仅插件行；内置指标不落库——运行时与 INDICATOR_REGISTRY 合并，D4 单源纪律）。"""
+
+    __tablename__ = "signal_registry"
+    __table_args__ = (
+        Index("ux_signal_registry_column_version", "column_name", "version", unique=True),
+    )
+    entry_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    # formula | model
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    plugin_id: Mapped[str] = mapped_column(Text, nullable=False)
+    column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    strategy_visible: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class FeatureRequest(Base):
+    """慢通道功能需求单：只保证持久化与可查，不自动实现（能力自述预期管理）。"""
+
+    __tablename__ = "feature_requests"
+    __table_args__ = (
+        Index("ix_feature_requests_status", "status", "created_at"),
+    )
+    request_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'open'"))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ValidationRecord(Base):
+    """验证证据记录（含组合策略分量证据清单）。"""
+
+    __tablename__ = "validation_records"
+    __table_args__ = (
+        # 幂等键（附.5 卡3）：同假设+同策略+同区间重复请求返回既有
+        Index(
+            "ux_validation_idem",
+            "hypothesis_id", "strategy_id", "range_hash",
+            unique=True,
+        ),
+        Index("ix_validation_hypothesis", "hypothesis_id", "created_at"),
+    )
+    record_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    hypothesis_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("research_hypotheses.hypothesis_id"))
+    strategy_id: Mapped[Optional[str]] = mapped_column(Text)
+    # isolated_backtest | random_window | composite | component
+    level: Mapped[str] = mapped_column(Text, nullable=False)
+    params: Mapped[str] = mapped_column(Text, nullable=False)  # JSON（含 warmup、seed）
+    result: Mapped[Optional[str]] = mapped_column(Text)  # JSON
+    # pass | fail（预定义门槛表机械判定）
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    range_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    components: Mapped[Optional[str]] = mapped_column(Text)  # JSON 分量证据 record_id 清单
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
