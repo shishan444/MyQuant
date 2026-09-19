@@ -52,7 +52,7 @@ def _mock_session(kline_rows: list[list]) -> MagicMock:
 class TestFetchKlinesReturnsDataframe:
     """fetch_klines returns a properly structured DataFrame."""
 
-    @patch("core.data.fetcher._build_session")
+    @patch("core.data.fetcher._direct_session")
     def test_returns_dataframe(self, mock_build: MagicMock) -> None:
         mock_build.return_value = _mock_session(_make_kline_rows(3))
 
@@ -62,7 +62,7 @@ class TestFetchKlinesReturnsDataframe:
         expected_cols = ["open", "high", "low", "close", "volume", "trades"]
         assert list(df.columns) == expected_cols
 
-    @patch("core.data.fetcher._build_session")
+    @patch("core.data.fetcher._direct_session")
     def test_column_types(self, mock_build: MagicMock) -> None:
         mock_build.return_value = _mock_session(_make_kline_rows(2))
 
@@ -72,7 +72,7 @@ class TestFetchKlinesReturnsDataframe:
             assert df[col].dtype == float
         assert df["trades"].dtype == int
 
-    @patch("core.data.fetcher._build_session")
+    @patch("core.data.fetcher._direct_session")
     def test_session_called_with_correct_params(self, mock_build: MagicMock) -> None:
         mock_session = _mock_session(_make_kline_rows(1))
         mock_build.return_value = mock_session
@@ -92,7 +92,7 @@ class TestFetchKlinesReturnsDataframe:
 class TestFetchKlinesRemovesDuplicates:
     """Duplicate timestamps are deduplicated (keep=first)."""
 
-    @patch("core.data.fetcher._build_session")
+    @patch("core.data.fetcher._direct_session")
     def test_removes_duplicates(self, mock_build: MagicMock) -> None:
         rows = _make_kline_rows(3)
         dup_row = rows[1].copy()
@@ -110,7 +110,7 @@ class TestFetchKlinesRemovesDuplicates:
 class TestFetchKlinesDatetimeIndex:
     """The DataFrame index is a timezone-aware DatetimeIndex."""
 
-    @patch("core.data.fetcher._build_session")
+    @patch("core.data.fetcher._direct_session")
     def test_creates_datetime_index(self, mock_build: MagicMock) -> None:
         mock_build.return_value = _mock_session(_make_kline_rows(2))
 
