@@ -23,6 +23,10 @@ from core.analysis.hypothesis_service import (
 )
 from core.persistence.repository import research as rr
 
+# 模型训练任务超时上限（测试缝：测试经 monkeypatch 注入短超时验证链路；
+# 生产默认 900s）
+MODEL_TRAIN_TIMEOUT_S = 900.0
+
 
 def _hash_str(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -121,42 +125,77 @@ def enrich_with_plugin_columns(
 ) -> Any:
     """把公式插件列求值附加到 df（按需：仅被引用的列）。
 
-    支持插件引用插件（叠层）：按依赖序迭代求值（简化为两轮——
-    注册时列集已含既有插件，公式不可引用未注册列，拓扑天然无环）。
+    支持插件引用插件（叠层）：先从表达式解析被引用的插件列并
+    递归加入求值集（依赖列不在 needed 时也要求值——否则叠层引用
+    静默缺失；此前两轮迭代假设依赖同在 needed，实测不成立）。
     """
     from core.signals.formula import FormulaError, evaluate_formula
 
     if not needed_columns:
         return df
     entries = {e["column_name"]: e for e in rr.list_signal_registry_entries(db_path)}
+
+    def _expression_of(col: str) -> Optional[str]:
+        entry = entries.get(col)
+        if entry is None or entry["source"] != "formula":
+            return None
+        from sqlalchemy import select
+        from core.persistence.orm.models import FormulaPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db_path).connect() as conn:
+            row = conn.execute(
+                select(FormulaPlugin)
+                .where(FormulaPlugin.plugin_id == entry["plugin_id"])
+            ).mappings().first()
+        if row is None or row["status"] != "valid":
+            return None
+        return row["expression"]
+
+    def _referenced_plugin_cols(expr: str) -> set:
+        import ast as _ast
+        try:
+            tree = _ast.parse(expr, mode="eval")
+        except SyntaxError:
+            return set()
+        names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
+        return {n for n in names if n in entries
+                and entries[n]["source"] == "formula"}
+
+    # 递归展开依赖闭包（叠层：fx_b 引用 fx_a → fx_a 一并求值）
+    queue = list(needed_columns)
+    pending = set()
+    exprs: Dict[str, str] = {}
+    while queue:
+        col = queue.pop(0)
+        if col in pending or col not in entries:
+            continue
+        expr = _expression_of(col)
+        if expr is None:
+            continue
+        pending.add(col)
+        exprs[col] = expr
+        queue.extend(_referenced_plugin_cols(expr) - pending)
+
     env: Dict[str, Any] = {}
     work = df.copy()
-    pending = set(needed_columns)
-    for _round in range(2):  # 两轮覆盖一层插件间引用
-        still = set(pending)
-        for col in still:
-            entry = entries.get(col)
-            if entry is None or entry["source"] != "formula":
-                continue
-            # 取该列当前版本的表达式（插件表最新 valid 行）
-            from sqlalchemy import select
-            from core.persistence.orm.models import FormulaPlugin
-            from core.persistence.repository.dataset_meta import _engine_for
-            with _engine_for(db_path).connect() as conn:
-                row = conn.execute(
-                    select(FormulaPlugin)
-                    .where(FormulaPlugin.plugin_id == entry["plugin_id"])
-                ).mappings().first()
-            if row is None or row["status"] != "valid":
-                continue
+    # 按依赖序（被依赖者先）：拓扑序迭代至收敛（无环由注册约束保证）
+    remaining = dict(exprs)
+    while remaining:
+        progressed = False
+        for col, expr in list(remaining.items()):
+            deps = _referenced_plugin_cols(expr) & set(remaining)
+            if deps:
+                continue  # 依赖未求值，下一轮
             try:
-                series = evaluate_formula(
-                    row["expression"], df, extra_columns=env)
+                series = evaluate_formula(expr, df, extra_columns=env)
             except FormulaError:
                 continue
             env[col] = series
             work[col] = series
-            pending.discard(col)
+            del remaining[col]
+            progressed = True
+        if not progressed:
+            break  # 环或不满足——保持缺失（消费端显式拒绝兜底）
     return work
 
 
@@ -282,7 +321,7 @@ def register_model_plugin(
                 status="rejected", reject_reason=reason[:200]))
 
     handle = get_executor().submit(
-        f"model_train:{name}", _train, timeout_s=900.0,
+        f"model_train:{name}", _train, timeout_s=MODEL_TRAIN_TIMEOUT_S,
         params_json=cfg_json, estimated_cost_s=10.0)
     task_id = handle.get("task_id")
     if handle["fast_path"]:

@@ -176,3 +176,65 @@ class TestCallSemantics:
         # 日志链路
         logs = api.get("/api/research/log")
         assert any(e["entry_type"] == "analysis" for e in logs["items"])
+
+
+class TestPollContract:
+    """2.5 轮询契约：退避序列 + 失败保留最后已知状态。"""
+
+    def test_backoff_sequence_respected(self, monkeypatch):
+        """退避 5s×1.5 上限 60s 的序列形状（注入 sleep 记录）。"""
+        import mcpserver.api_client as ac_mod
+        sleeps = []
+        monkeypatch.setattr(ac_mod.time, "sleep", lambda s: sleeps.append(s))
+
+        # 端点持续返回非终态 5 次后终态
+        seq = iter(["running"] * 5 + ["succeeded"])
+        class FakeResp:
+            status_code = 200
+            def json(self):
+                return {"status": next(seq)}
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(ac_mod.httpx, "Client", lambda **kw: _FakeCtx(FakeResp()))
+
+        api = QuantApiClient(base_url="http://x", profile="research")
+        out = api.poll_until_terminal("/api/research/analysis/tasks/ant_1",
+                                      initial_delay=5.0, backoff=1.5,
+                                      max_delay=60.0, total_timeout=120.0)
+        assert out["status"] == "succeeded"
+        assert sleeps == [5.0, 7.5, 11.25, 16.875, 25.3125], sleeps
+
+    def test_failure_keeps_last_known_state(self, monkeypatch):
+        """端点失败：保留最后已知状态 + 标注来源时刻（D2）。"""
+        import mcpserver.api_client as ac_mod
+        import httpx as _hx
+
+        call_count = {"n": 0}
+        class FlakyResp:
+            status_code = 200
+            def json(self):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    return {"status": "running", "task_id": "ant_x"}
+                raise _hx.ReadTimeout("boom")
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(ac_mod.time, "sleep", lambda s: None)
+        monkeypatch.setattr(ac_mod.httpx, "Client", lambda **kw: _FakeCtx(FlakyResp()))
+
+        api = QuantApiClient(base_url="http://x", profile="research")
+        out = api.poll_until_terminal("/api/research/analysis/tasks/ant_x",
+                                      initial_delay=0.01, total_timeout=0.2)
+        # 第二轮失败 → 保留第一轮的 running 状态并带来源时刻
+        assert out["status"] == "running" and out.get("_polled_at")
+
+
+class _FakeCtx:
+    def __init__(self, resp):
+        self._resp = resp
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def get(self, url, params=None):
+        return self._resp

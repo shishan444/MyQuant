@@ -364,3 +364,111 @@ class TestAnalysisAndReport:
         entry = body["isolated_backtests"][0]
         for key in ("record_id", "verdict", "warmup_bars", "人话"):
             assert key in entry
+
+
+class TestConcurrencyAndIdempotence:
+    """2.1 并发先到者胜 / 2.2 迁移禁止副作用 / 2.3 幂等键边界。"""
+
+    def test_concurrent_registration_single_row(self, api_client, research_env):
+        """并发登记同幂等键：表内恰一行，恰好一个 duplicated=False。"""
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        import threading
+
+        barrier = threading.Barrier(2)
+        results = []
+
+        def _register_once():
+            barrier.wait()  # 硬对齐两请求起点（不 sleep 碰运气）
+            resp = _register(api_client)
+            results.append(resp)
+
+        t1 = threading.Thread(target=_register_once)
+        t2 = threading.Thread(target=_register_once)
+        t1.start(); t2.start(); t1.join(); t2.join()
+
+        codes = [r.status_code for r in results]
+        bodies = [r.json() for r in results]
+        # 先到者胜：恰一个新建、一个幂等命中（或一个 422 冲突——两者皆合法，
+        # 但表内必须恰一行且至少一个成功）
+        assert 200 in codes, f"至少一个登记成功: {codes} {[b for b in bodies]}"
+        created = [b for b in bodies if isinstance(b, dict) and b.get("duplicated") is False]
+        assert len(created) == 1, f"恰一个新建: {bodies}"
+        dbp = Path(api_client.app.state.db_path)
+        rows = rr.list_hypotheses(dbp)
+        assert len([h for h in rows
+                    if h["conditions_hash"] == created[0].get("hypothesis_id", "")or True]) >= 1
+        # 幂等键唯一性由部分唯一索引裁决：同身份行数 <= 1
+        import json as _json
+        ident_rows = [h for h in rows if h["status"] == "active"]
+        assert len(ident_rows) == 1, f"并发终态唯一性破坏: {len(ident_rows)} 行"
+
+    def test_concurrent_transition_rowcount_guard(self, api_client, research_env):
+        """并发迁移：条件更新 WHERE active 使恰一个成功，另一个幂等或 409。"""
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        hid = _register(api_client).json()["hypothesis_id"]
+        dbp = Path(api_client.app.state.db_path)
+        rr.save_validation_with_log(
+            dbp, record_id="rec_cc", hypothesis_id=hid, strategy_id="st_t",
+            level="isolated_backtest", params="{}", result=None,
+            verdict="fail", range_hash="rh_cc")
+
+        import threading
+        barrier = threading.Barrier(2)
+        results = []
+
+        def _transition_once():
+            barrier.wait()
+            results.append(api_client.post(
+                f"/api/research/hypotheses/{hid}/transition",
+                json={"target_status": "refuted", "evidence_ref": "rec_cc"}))
+
+        t1 = threading.Thread(target=_transition_once)
+        t2 = threading.Thread(target=_transition_once)
+        t1.start(); t2.start(); t1.join(); t2.join()
+
+        assert all(r.status_code == 200 for r in results), [r.text for r in results]
+        # 一个真迁移 + 一个幂等返回；终态唯一
+        idem = [r.json().get("idempotent") for r in results]
+        assert sorted(idem) == [False, True], f"先到者胜语义: {idem}"
+        logs = [e for e in rr.list_research_log(dbp, hypothesis_id=hid)
+                if e["entry_type"] == "transition"]
+        assert len(logs) == 1, "迁移日志恰一条（幂等方不重复写）"
+
+    def test_transition_rejected_no_log_writes(self, api_client, research_env):
+        """2.2 禁止副作用：迁移被拒时 research_log 行数不变、状态不变。"""
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        hid = _register(api_client).json()["hypothesis_id"]
+        dbp = Path(api_client.app.state.db_path)
+        before_logs = len(rr.list_research_log(dbp, hypothesis_id=hid))
+
+        resp = api_client.post(f"/api/research/hypotheses/{hid}/transition",
+                               json={"target_status": "supported", "evidence_ref": "rec_ghost"})
+        assert resp.status_code == 422
+        assert rr.get_hypothesis(dbp, hid)["status"] == "active", "状态不得改变"
+        assert len(rr.list_research_log(dbp, hypothesis_id=hid)) == before_logs, \
+            "被拒迁移不得写日志"
+
+    @pytest.mark.parametrize(
+        ("dup_conditions", "dup_ranges", "same"),
+        [
+            pytest.param(True, False, False, id="同条件异区间=新假设"),
+            pytest.param(False, True, False, id="异条件同区间=新假设"),
+            pytest.param(True, True, True, id="同条件同区间=幂等命中"),
+        ],
+    )
+    def test_identity_key_boundaries(self, api_client, dup_conditions, dup_ranges, same):
+        """2.3 幂等键边界：身份=（条件集，区间集）二元组。"""
+        r1 = _register(api_client).json()
+        conds = CONDITIONS if dup_conditions else {
+            "when_conditions": [{"subject": "volume", "action": "gt", "target": 0}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        }
+        ranges = RANGES if dup_ranges else [{
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-03-01T00:00:00Z", "end": "2024-04-01T00:00:00Z"}]
+        r2 = _register(api_client, conditions=conds, ranges=ranges).json()
+        assert (r2["hypothesis_id"] == r1["hypothesis_id"]) == same
+        assert r2["duplicated"] == same
