@@ -210,36 +210,34 @@ class TestTranslator:
         with pytest.raises(ResearchError, match="action 不可表达"):
             translate_hypothesis(db, hypothesis_id=hid)
 
-    def test_translation_field_fidelity(self, db):
-        """M2 翻译保真：产物基因的条件值与登记 conditions 逐字段一致。"""
-        hid = self._register_and_pass(db, self._expressible_conditions(),
-                                      self._ranges())
-        out = translate_hypothesis(db, hypothesis_id=hid)
-        from core.persistence.db_ext import get_strategy
-        row = get_strategy(db, out["strategy_id"])
-        genes = StrategyDNA.from_json(row["dna_json"]).signal_genes
-        # 逐字段：rsi_14 lt 35 → EMA/RSI 基因条件与原条件一致
-        rsi_gene = next(g for g in genes if g.indicator == "RSI")
-        assert rsi_gene.condition == {"type": "lt", "threshold": 35.0}
-        assert rsi_gene.params == {"period": 14}
-        assert rsi_gene.field_name == "rsi_14"
-        ema_gene = next(g for g in genes if g.indicator == "EMA")
-        assert ema_gene.condition == {"type": "cross_above", "threshold": 60000.0}
-        assert ema_gene.params == {"period": 50}
-        assert ema_gene.field_name == "ema_50"
-        # action 映射核对：breakout → cross_above（映射表语义）
-        conds2 = {
-            "when_conditions": [{"subject": "close", "action": "breakout",
-                                 "target": 60000}],
+    @pytest.mark.parametrize(
+        ("action", "expected_condition"),
+        [
+            pytest.param("gt", {"type": "gt", "threshold": 35.0}, id="gt 动作保真"),
+            pytest.param("lt", {"type": "lt", "threshold": 35.0}, id="lt 动作保真"),
+            pytest.param("ge", {"type": "ge", "threshold": 35.0}, id="ge 动作保真"),
+            pytest.param("le", {"type": "le", "threshold": 35.0}, id="le 动作保真"),
+            pytest.param("cross_above", {"type": "cross_above", "threshold": 35.0}, id="cross_above 动作保真"),
+            pytest.param("cross_below", {"type": "cross_below", "threshold": 35.0}, id="cross_below 动作保真"),
+            pytest.param("breakout", {"type": "cross_above", "threshold": 35.0}, id="breakout 映射 cross_above"),
+            pytest.param("breakdown", {"type": "cross_below", "threshold": 35.0}, id="breakdown 映射 cross_below"),
+        ],
+    )
+    def test_translation_field_fidelity(self, db, action, expected_condition):
+        """M2/1.6 翻译保真（8 动作全覆盖）：产物基因的条件值与登记
+        conditions 逐字段一致——篡改任一映射时对应行红。"""
+        conds = {
+            "when_conditions": [{"subject": "rsi_14", "action": action, "target": 35}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         }
-        # close 是基础列——不可表达，换 rsi subject 验证 breakout 映射
-        conds2["when_conditions"][0]["subject"] = "rsi_14"
-        hid2 = self._register_and_pass(db, conds2, self._ranges())
-        out2 = translate_hypothesis(db, hypothesis_id=hid2)
-        genes2 = StrategyDNA.from_json(
-            get_strategy(db, out2["strategy_id"])["dna_json"]).signal_genes
-        assert genes2[0].condition["type"] == "cross_above"
+        hid = self._register_and_pass(db, conds, self._ranges())
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.db_ext import get_strategy
+        genes = StrategyDNA.from_json(get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
+        assert len(genes) == 1
+        assert genes[0].condition == expected_condition
+        assert genes[0].params == {"period": 14}
+        assert genes[0].field_name == "rsi_14"
 
     def test_statement_wording_does_not_change_product(self, db):
         """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""
