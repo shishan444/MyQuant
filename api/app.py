@@ -66,6 +66,18 @@ def create_app(
 
         recover_stale_trading_tasks(db_path)
 
+        # Research executor（add-ai-research-mcp 1.4）：研究域表自愈 →
+        # 中断任务回收 → 线程池执行器单例（SIGTERM 时随进程释放）
+        from core.analysis.executor import (
+            ensure_research_tables,
+            init_executor,
+            recover_stale_analysis_tasks,
+        )
+
+        ensure_research_tables(db_path)
+        recover_stale_analysis_tasks(db_path)
+        app.state.research_executor = init_executor(db_path)
+
         # Store paths on app state for dependency injection
         app.state.db_path = db_path
         app.state.data_dir = data_dir
@@ -115,6 +127,13 @@ def create_app(
         trading_runner.stop()
         runner.join(timeout=5.0)
         trading_runner.join(timeout=5.0)
+
+        # 研究执行器停止（守护扫描停、不等待在途计算）；重置单例供测试复用
+        from core.analysis import executor as _research_exec
+        if _research_exec._EXECUTOR is not None:
+            _research_exec._EXECUTOR.shutdown()
+            with _research_exec._EXECUTOR_LOCK:
+                _research_exec._EXECUTOR = None
 
     app = FastAPI(
         title="MyQuant API",
