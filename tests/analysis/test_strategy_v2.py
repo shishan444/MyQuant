@@ -210,6 +210,47 @@ class TestTranslator:
         with pytest.raises(ResearchError, match="action 不可表达"):
             translate_hypothesis(db, hypothesis_id=hid)
 
+    def test_translation_field_fidelity(self, db):
+        """M2 翻译保真：产物基因的条件值与登记 conditions 逐字段一致。"""
+        hid = self._register_and_pass(db, self._expressible_conditions(),
+                                      self._ranges())
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.db_ext import get_strategy
+        row = get_strategy(db, out["strategy_id"])
+        genes = StrategyDNA.from_json(row["dna_json"]).signal_genes
+        # 逐字段：rsi_14 lt 35 → EMA/RSI 基因条件与原条件一致
+        rsi_gene = next(g for g in genes if g.indicator == "RSI")
+        assert rsi_gene.condition == {"type": "lt", "threshold": 35.0}
+        assert rsi_gene.params == {"period": 14}
+        assert rsi_gene.field_name == "rsi_14"
+        ema_gene = next(g for g in genes if g.indicator == "EMA")
+        assert ema_gene.condition == {"type": "cross_above", "threshold": 60000.0}
+        assert ema_gene.params == {"period": 50}
+        assert ema_gene.field_name == "ema_50"
+        # action 映射核对：breakout → cross_above（映射表语义）
+        conds2 = {
+            "when_conditions": [{"subject": "close", "action": "breakout",
+                                 "target": 60000}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        }
+        # close 是基础列——不可表达，换 rsi subject 验证 breakout 映射
+        conds2["when_conditions"][0]["subject"] = "rsi_14"
+        hid2 = self._register_and_pass(db, conds2, self._ranges())
+        out2 = translate_hypothesis(db, hypothesis_id=hid2)
+        genes2 = StrategyDNA.from_json(
+            get_strategy(db, out2["strategy_id"])["dna_json"]).signal_genes
+        assert genes2[0].condition["type"] == "cross_above"
+
+    def test_statement_wording_does_not_change_product(self, db):
+        """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""
+        conds = self._expressible_conditions()
+        hid1 = register_hypothesis(db, conditions=conds, statement="措辞甲",
+                                   data_ranges=self._ranges())["hypothesis_id"]
+        # 同 conditions 同 ranges → 幂等命中同一假设（statement 不参与身份）
+        hid2 = register_hypothesis(db, conditions=conds, statement="完全不同的措辞乙",
+                                   data_ranges=self._ranges())["hypothesis_id"]
+        assert hid2 == hid1, "statement 措辞不得改变假设身份（幂等键不含措辞）"
+
     def test_idempotent_and_statement_ignored(self, db):
         """同假设重复转化返回既有（幂等）；statement 措辞差异不影响产物。"""
         conds = self._expressible_conditions()

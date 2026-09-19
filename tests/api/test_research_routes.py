@@ -214,6 +214,55 @@ class TestIsolatedBacktest:
         logs = rr.list_research_log(dbp, hypothesis_id=hid)
         assert any(e["entry_type"] == "validate" for e in logs)
 
+    def test_warmup_memory_enables_head_signals(self, api_client, research_env, monkeypatch):
+        """M1 隔离语义行为级证明：warmup 历史记忆使请求区间头部的有记忆指标正确。
+
+        构造：warmup 段（bar 0-299）价格恒 62000，请求段（bar 300 起）恒 60000；
+        策略 EMA(50) > 61500 触发。有 warmup 时请求首 bar 的 ema 携带历史记忆
+        （约 62000）→ 头部即触发交易；无 warmup（截断计算）时 ema 从 60000
+        起算 → 永不触发。total_trades >= 1 即证明记忆真实进入了请求区间。
+        """
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        import numpy as np
+        import pandas as pd
+        n = 1000
+        idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC", name="timestamp")
+        close = np.concatenate([
+            np.full(700, 62000.0),   # warmup 段（700 bar > 600 推导值）：高位平台
+            np.full(300, 60000.0),   # 请求段：低位平台
+        ])
+        pd.DataFrame({
+            "open": close, "high": close + 10, "low": close - 10,
+            "close": close, "volume": np.full(n, 100.0), "trades": 10,
+        }, index=idx).to_parquet(research_env["data_dir"] / "BTCUSDT_4h.parquet")
+
+        from core.persistence.db_ext import save_strategy
+        gene = SignalGene(
+            indicator="EMA", params={"period": 50}, role=SignalRole.ENTRY_TRIGGER,
+            field_name="ema_50", condition={"type": "gt", "threshold": 61500})
+        dna = StrategyDNA(
+            signal_genes=[gene], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(research_env["db"], strategy_id="st_emamem", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="ema-mem")
+
+        hid = _register(api_client, ranges=[{
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-01-01T00:00:00Z", "end": "2024-01-05T00:00:00Z"}]).json()["hypothesis_id"]
+        resp = api_client.post("/api/research/validate-backtest", json={
+            "hypothesis_id": hid, "strategy_id": "st_emamem",
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-04-26T00:00:00Z", "end": "2024-06-05T00:00:00Z"}})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["warmup"]["bars"] >= 200
+        # 行为断言：请求区间头部 ema 携带历史记忆（62000 段）→ 触发交易；
+        # 若 warmup 前扩失效（截断计算），ema 从 60000 起算永不触发 → 此处红
+        assert body["metrics"]["total_trades"] >= 1, (
+            f"warmup 记忆未进入请求区间头部: {body['metrics']}")
+
     def test_warmup_insufficient_rejected(self, api_client, research_env, monkeypatch):
         """请求区间起点太近数据头部 → warmup 不足 422。"""
         api_client.app.state.db_path = research_env["db"]
