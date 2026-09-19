@@ -161,6 +161,11 @@ def create_app(
     app.include_router(scene_route.router)
     app.include_router(discovery_route.router)
 
+    # 研究域路由（add-ai-research-mcp）
+    from api.routes import research as research_route
+
+    app.include_router(research_route.router)
+
     # Health check endpoint
     @app.get("/api/health", response_model=HealthResponse)
     def health_check() -> HealthResponse:
