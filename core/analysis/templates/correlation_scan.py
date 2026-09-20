@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.templates.column_guard import require_column
 
 
 def correlation_scan(
@@ -35,11 +36,10 @@ def correlation_scan(
         max_lag: 扫描的最大滞后（0..max_lag）。
 
     Raises:
-        KeyError: 信号列缺失。
+        ResearchError: 信号列不可用（附可用列清单）。
         ValueError: 小样本。
     """
-    if signal_column not in df.columns:
-        raise KeyError(f"信号列缺失: {signal_column}")
+    require_column(df, signal_column, template="correlation_scan")
 
     sig = df[signal_column].astype(float)
     fwd_return = df["close"].pct_change(horizon).shift(-horizon)  # t+horizon 前向收益

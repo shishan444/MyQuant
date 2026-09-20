@@ -6,6 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import build_result
 from core.analysis.templates import condition_stats
 
@@ -86,11 +87,12 @@ class TestConditionStats:
 
     def test_unknown_indicator_rejected(self) -> None:
         df = _make_df(100)
-        with pytest.raises(KeyError, match="未知指标"):
+        with pytest.raises(ResearchError) as ei:
             condition_stats(
                 df, indicator="NOPE", params={},
                 condition={"subject": "close", "action": "gt", "target": 1},
                 data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_INDICATOR_UNKNOWN"
 
     def test_small_sample_rejected(self) -> None:
         df = _make_df(20)  # 少于默认 30

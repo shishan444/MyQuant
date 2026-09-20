@@ -35,6 +35,21 @@ def _range_hash(request_range: Dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(request_range, sort_keys=True).encode()).hexdigest()
 
 
+def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
+    """时间参数入口归一：naive 按 UTC 解释（语义对齐 isolation._parse_ts，
+    不引入第三种 tz 语义——date-only 输入不再与 tz-aware 索引比较崩溃）。"""
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
+def _collect_needed_tfs(dna, exec_tf: str) -> set:
+    """收集 DNA 声明的全部时间层 ∪ 执行周期（is_mtf 即装载语义）。"""
+    if not (getattr(dna, "is_mtf", False) and dna.layers):
+        return set()
+    return {layer.timeframe for layer in dna.layers} | {exec_tf}
+
+
 def _dna_indicator_names(dna) -> List[str]:
     """提取 DNA 实际用到的指标名（signal_genes + 各 MTF layer）。"""
     names = set()
@@ -70,11 +85,11 @@ def _run_backtest_on_range(
         (metrics, actual_warmup_bars, bars_used)
     """
     from core.backtest import engine as bt_engine_mod
-    from core.data.mtf_loader import load_and_prepare_df
+    from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     tf_minutes = _TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
-    start_ts = pd.Timestamp(start)
+    start_ts = _to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
 
     enhanced = load_and_prepare_df(
@@ -94,8 +109,18 @@ def _run_backtest_on_range(
 
     bt_df = enhanced[enhanced.index >= start_ts]  # 切回请求区间（指标列带记忆）
 
+    # MTF：is_mtf 即装载（不用 len>1 守卫——那会让单层同 tf 策略复现
+    # REST 路径的既有 500；load_mtf_data 内建 {exec_tf: enhanced_df}，
+    # 单层同 tf 时零额外 IO 退化，恰好满足 executor 的装载要求）
+    dfs_by_timeframe = None
+    needed_tfs = _collect_needed_tfs(dna, timeframe)
+    if needed_tfs:
+        dfs_by_timeframe = load_mtf_data(
+            data_dir, symbol, timeframe, enhanced, needed_tfs,
+            load_start, end)
+
     engine = bt_engine_mod.BacktestEngine(init_cash=init_cash)
-    result = engine.run(dna, bt_df)
+    result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
     metrics = {
         "total_return": float(result.total_return),
         "sharpe_ratio": float(result.sharpe_ratio),
@@ -255,8 +280,8 @@ def random_window_test(
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
     # 可抽窗的候选区间：[data_start, data_end - window]
-    ds = pd.Timestamp(data_start)
-    de = pd.Timestamp(data_end)
+    ds = _to_utc(pd.Timestamp(data_start))
+    de = _to_utc(pd.Timestamp(data_end))
     span_bars = int((de - ds) / bar_delta)
     usable = span_bars - window_bars
     if usable < n_windows:
