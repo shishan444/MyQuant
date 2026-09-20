@@ -326,12 +326,17 @@ class TestDatasetMetaRepository:
         repo_rows = repo.list_datasets(db)
         assert len(legacy_rows) == len(repo_rows)
         assert {r["dataset_id"] for r in repo_rows} == {r["dataset_id"] for r in legacy_rows}
-        # 业务 schema 不动
+        # 业务 schema 不动（预期演进例外：strategy.status 是
+        # improve-mcp-agent-loop M4 列补齐轨的加列——带默认值，存量行为无影响）
         after = _read_schema(db)
         for t in before:
             if t == "alembic_version":
                 continue
-            assert before[t] == after.get(t), f"{t} 被 adopt 改动"
+            expected = before[t]
+            if t == "strategy":
+                expected = {**before[t],
+                            "status": ("TEXT", 1, "'active'", 0)}
+            assert after.get(t) == expected, f"{t} 被 adopt 改动"
 
 
 class TestStrategyRepositoryEquivalence:

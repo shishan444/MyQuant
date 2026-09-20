@@ -165,12 +165,13 @@ class TestTranslator:
         return hid
 
     def _expressible_conditions(self):
+        # THEN 参与翻译（M4：预期兑现即离场）——须同为指标列形制
         return {
             "when_conditions": [
                 {"subject": "rsi_14", "action": "lt", "target": 35},
                 {"subject": "ema_50", "action": "cross_above", "target": 60000},
             ],
-            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
         }
 
     def _ranges(self, symbol="BTCUSDT"):
@@ -182,17 +183,75 @@ class TestTranslator:
                                       self._ranges())
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert out["duplicated"] is False
-        assert len(out["genes"]) == 2
+        assert out["status"] == "draft"
+        assert out["risk_genes"] == "platform_default"
         from core.persistence.db_ext import get_strategy
         row = get_strategy(db, out["strategy_id"])
+        assert row["status"] == "draft"
         dna = StrategyDNA.from_json(row["dna_json"])
         assert hid in dna.parent_ids, "谱系回链"
 
-    def test_unvalidated_rejected(self, db):
+    def test_unvalidated_translates_to_draft(self, db):
+        """M4 语义反转：无 pass 记录也可转化（构建权与出货权拆开——
+        pass 前置由转正门承载，转化即验证资格）。"""
         hid = register_hypothesis(db, conditions=self._expressible_conditions(),
                                   statement="s", data_ranges=self._ranges())["hypothesis_id"]
-        with pytest.raises(ResearchError, match="未验证"):
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        assert out["duplicated"] is False and out["status"] == "draft"
+
+    def test_terminal_hypothesis_rejected(self, db):
+        """终态假设的转化被拒（提示登记新假设）。"""
+        hid = self._register_and_pass(db, self._expressible_conditions(),
+                                      self._ranges())
+        from core.analysis.hypothesis_service import transition_hypothesis
+        transition_hypothesis(db, hid, target_status="supported",
+                              evidence_ref=f"rec_{hid[:8]}")
+        with pytest.raises(ResearchError, match="已终态"):
             translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_then_translated_to_exit_trigger(self, db):
+        """THEN 条件翻译为出场信号（预期兑现即离场）。"""
+        hid = self._register_and_pass(db, self._expressible_conditions(),
+                                      self._ranges())
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.db_ext import get_strategy
+        from core.strategy.dna import SignalRole
+        genes = StrategyDNA.from_json(
+            get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
+        exits = [g for g in genes if g.role == SignalRole.EXIT_TRIGGER]
+        assert len(exits) == 1
+        assert exits[0].field_name == "rsi_70"
+
+    def test_then_inexpressible_rejected(self, db):
+        """THEN 不可表达显式拒绝（不静默丢弃 THEN 语义）。"""
+        conds = {
+            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        }
+        hid = self._register_and_pass(db, conds, self._ranges())
+        with pytest.raises(ResearchError, match="then_conditions"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_same_signature_active_split(self, db):
+        """转化产物与既有 active 策略同签名：显式返回既有 id 并标注，
+        不静默不落库（防幽灵 id）。"""
+        from core.persistence.db_ext import (
+            delete_strategy, get_strategy, save_strategy)
+        # 先转化取 DNA，清掉 draft 后以同 DNA 存 active（模拟已出货）
+        conds = self._expressible_conditions()
+        hid1 = self._register_and_pass(db, conds, self._ranges())
+        out1 = translate_hypothesis(db, hypothesis_id=hid1)
+        dna_json = get_strategy(db, out1["strategy_id"])["dna_json"]
+        delete_strategy(db, out1["strategy_id"])
+        save_strategy(db, strategy_id="st_active_same",
+                      dna_json=dna_json, symbol="BTCUSDT", timeframe="4h")
+        # 另一假设同 conditions → 同签名 → 分流返回既有 active
+        ranges2 = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                    "start": "2024-03-01T00:00:00Z", "end": "2024-04-01T00:00:00Z"}]
+        hid2 = self._register_and_pass(db, self._expressible_conditions(), ranges2)
+        out2 = translate_hypothesis(db, hypothesis_id=hid2)
+        assert out2["same_dna_existing"] is True
+        assert out2["strategy_id"] == "st_active_same"
 
     def test_cross_symbol_rejected(self, db):
         ranges = self._ranges() + self._ranges(symbol="ETHUSDT")
@@ -204,7 +263,7 @@ class TestTranslator:
         conds = {
             "when_conditions": [{"subject": "rsi_14", "action": "divergence_top",
                                  "target": 0}],
-            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
         }
         hid = self._register_and_pass(db, conds, self._ranges())
         with pytest.raises(ResearchError, match="action 不可表达"):
@@ -228,16 +287,18 @@ class TestTranslator:
         conditions 逐字段一致——篡改任一映射时对应行红。"""
         conds = {
             "when_conditions": [{"subject": "rsi_14", "action": action, "target": 35}],
-            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
         }
         hid = self._register_and_pass(db, conds, self._ranges())
         out = translate_hypothesis(db, hypothesis_id=hid)
         from core.persistence.db_ext import get_strategy
+        from core.strategy.dna import SignalRole
         genes = StrategyDNA.from_json(get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
-        assert len(genes) == 1
-        assert genes[0].condition == expected_condition
-        assert genes[0].params == {"period": 14}
-        assert genes[0].field_name == "rsi_14"
+        entries = [g for g in genes if g.role == SignalRole.ENTRY_TRIGGER]
+        assert len(entries) == 1
+        assert entries[0].condition == expected_condition
+        assert entries[0].params == {"period": 14}
+        assert entries[0].field_name == "rsi_14"
 
     def test_statement_wording_does_not_change_product(self, db):
         """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""

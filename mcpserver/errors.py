@@ -51,6 +51,9 @@ HINTS: Dict[str, str] = {
     "RESEARCH_COMPONENT_EVIDENCE_MISSING":
         "组合假设缺组件证据：对每个组件条件分别取得验证记录后再组合",
     # ---- 转化与表达
+    "RESEARCH_DRAFT_IMMUTABLE":
+        "草稿策略受保护字段不可改：修改假设条件后重新转化（translate）"
+        "产出新草稿；转正走 transition(supported) 原子路径",
     "RESEARCH_NOT_EXPRESSIBLE":
         "条件超出策略表达边界：查看 detail 的不可表达位置；拆解为可表达"
         "子集重登记，或用 submit_feature_request 走慢通道",

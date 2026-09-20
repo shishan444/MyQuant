@@ -111,6 +111,7 @@ def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
         source=row.get("source", "manual"),
         source_task_id=row.get("source_task_id"),
         gene_signature=_gene_signature_or_derive(row),
+        status=row.get("status") or "active",
         best_score=row.get("best_score"),
         best_fitness=row.get("best_fitness"),
         qualified=bool(row.get("qualified", 0)) if row.get("qualified") is not None else None,
@@ -163,13 +164,17 @@ def list_strategies_endpoint(
     source: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = 100,
     offset: int = 0,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyListResponse:
-    """List strategies with filtering, sorting, and pagination."""
+    """List strategies with filtering, sorting, and pagination.
+
+    status=None 默认视图排除 draft；显式 status=draft 可查草稿。
+    """
     try:
         rows = list_strategies(
             db_path,
@@ -177,6 +182,7 @@ def list_strategies_endpoint(
             source=source,
             tags=tags,
             qualified=qualified,
+            status=status,
             sort_by=sort_by,
             sort_order=sort_order,
             limit=limit,
@@ -187,6 +193,7 @@ def list_strategies_endpoint(
 
     total = count_strategies(
         db_path, symbol=symbol, source=source, tags=tags, qualified=qualified,
+        status=status,
     )
     items = [_strategy_row_to_response(r) for r in rows]
     return StrategyListResponse(items=items, total=total)
@@ -214,6 +221,19 @@ def update_strategy_endpoint(
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
+
+    # draft 写锁（M4）：受保护字段（dna；status/parent_ids/source 不在
+    # update schema 内天然锁死）对 PUT 不可写——"验证的就是出货的"由
+    # 机制保证而非约定；改 DNA 只能修改假设条件后重新 translate
+    if existing.get("status") == "draft" and payload.dna is not None:
+        raise HTTPException(status_code=409, detail={
+            "code": "RESEARCH_DRAFT_IMMUTABLE",
+            "message": "草稿策略的 DNA 不可直接修改",
+            "detail": {
+                "strategy_id": strategy_id,
+                "note": "修改假设条件后重新转化（translate）产出新草稿；"
+                        "name/tags/notes 等元数据仍可更新"},
+        })
 
     fields: Dict[str, Any] = {}
     if payload.name is not None:

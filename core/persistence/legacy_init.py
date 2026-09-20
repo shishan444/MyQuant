@@ -99,6 +99,8 @@ _MTF_COLUMNS = [
 
 _STRATEGY_EXT_COLUMNS = [
     ("metrics_json", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, ...}
+    # 生命周期状态（improve-mcp-agent-loop M4；PRAGMA guard 幂等补列）
+    ("status", "TEXT NOT NULL DEFAULT 'active'"),  # draft | active | archived
 ]
 
 _CONSTRAINT_COLUMNS = [

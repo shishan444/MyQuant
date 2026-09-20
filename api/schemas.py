@@ -182,6 +182,7 @@ class StrategyResponse(BaseModel):
     source: str = "manual"
     source_task_id: Optional[str] = None
     gene_signature: Optional[str] = None
+    status: Optional[str] = None  # draft | active | archived
     best_score: Optional[float] = None
     best_fitness: Optional[float] = None
     qualified: Optional[bool] = None
@@ -814,8 +815,8 @@ class HypothesisCreate(BaseModel):
 
 
 class HypothesisTransitionRequest(BaseModel):
-    target_status: str  # supported | refuted | superseded
-    evidence_ref: str
+    target_status: str  # supported | refuted | superseded | abandoned
+    evidence_ref: str  # 验证 record_id / 接替假设 id / abandoned 时为放弃说明
 
 
 class HypothesisResponse(BaseModel):

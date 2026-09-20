@@ -201,8 +201,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def transition_hypothesis(hypothesis_id: str, target_status: str,
                               evidence_ref: str) -> Dict[str, Any]:
-        """假设状态迁移：active→supported|refuted（证据=验证 record_id）
-        或→superseded（证据=接替假设 id）。终态不可再迁移。"""
+        """假设状态迁移：active→supported|refuted（证据=验证 record_id，
+        verdict 须匹配：supported 须 pass、refuted 须 fail）、→superseded
+        （证据=接替假设 id）或→abandoned（免证据，evidence_ref 填放弃说明）。
+        supported 时谱系 draft 若有自身 pass 记录则同事务转正（draft→active）。"""
         return api.post(
             f"/api/research/hypotheses/{hypothesis_id}/transition",
             {"target_status": target_status, "evidence_ref": evidence_ref})
@@ -265,8 +267,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     def translate_hypothesis_to_strategy(
             hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
             strategy_timeframe: str = "4h") -> Dict[str, Any]:
-        """把已验证假设转化为策略（conditions 为唯一翻译源；不可表达
-        显式拒绝；须先有 pass 验证记录）。"""
+        """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
+        pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
+        （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
+        转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
         return api.post(
             f"/api/research/translate/{hypothesis_id}",
             {"strategy_symbol": strategy_symbol,
