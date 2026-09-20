@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import re
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Set
@@ -22,6 +23,19 @@ from mcpserver import tools as tools_mod
 from mcpserver.api_client import READONLY_ENDPOINTS, RESEARCH_POST_ENDPOINTS
 
 pytestmark = [pytest.mark.integration]
+
+
+def run_async(coro):
+    """asyncio.run 的环境兼容版（同 test_server 形制——playwright e2e
+    fixture 会在进程内泄漏运行中的事件循环，全量顺序下 asyncio.run
+    抛 RuntimeError；检测到活动 loop 时改在新线程跑）。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
 
 
 def _norm(path: str) -> str:
@@ -223,7 +237,7 @@ class TestSchemaParity:
 
         mcp, _ = build_server(profile="research")
         by_name = {t.name: t.input_schema.get("properties", {})
-                   for t in asyncio.run(mcp.list_tools())}
+                   for t in run_async(mcp.list_tools())}
         props = by_name["register_hypothesis"]
         for param in ("when_conditions", "then_conditions", "data_ranges"):
             assert props[param]["type"] == "array", param
@@ -296,8 +310,8 @@ class TestListFolding:
         assert len(direct["items"]) == 5
 
         # 工具经 call_tool 走全链路：折叠后条目无 dna、有 gene_signature
-        result = asyncio.run(mcp.call_tool("list_strategies",
-                                           {"limit": 20, "offset": 0}))
+        result = run_async(mcp.call_tool("list_strategies",
+                                         {"limit": 20, "offset": 0}))
         payload = json.loads(result.content[0].text) if hasattr(
             result.content[0], "text") else result
         assert payload["total"] == 20

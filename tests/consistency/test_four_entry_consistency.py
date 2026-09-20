@@ -167,16 +167,17 @@ def test_batch_replay_semantics_locked(seeded_client):
     )
 
 
-def test_d4_sentinel_strategy_id_backtest_broken(seeded_client):
-    """D-4 哨兵：strategy_id 路径当前 500（to_json/from_json 环变性——
-    auto-wrap layers 被序列化，读回判为显式 MTF）。
+def test_d4_sentinel_strategy_id_backtest_fixed(seeded_client):
+    """D-4 已修复（improve-mcp-agent-loop M3：backtest.py 守卫同修为
+    is_mtf 即装载）——strategy_id 路径不再 500，回测可执行。
 
-    修复日此哨兵翻红 → 更新 findings 清单 D-4 状态与四入口测试注记
-    （backtest 基准入口换回 strategy_id 真实路径）。
+    哨兵退役注记：原哨兵断言该路径 500（to_json/from_json 环变性使
+    显式 MTF DNA 缺 dfs_by_timeframe）；守卫放宽后单层/多层均可装载
+    执行。findings 清单 D-4 状态应更新为已修复。
     """
     client, sid, _, _, _, _ = seeded_client
-    with pytest.raises(ValueError, match="MTF DNA requires"):
-        client.post("/api/strategies/backtest", json={
-            "strategy_id": sid, "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-        })
+    resp = client.post("/api/strategies/backtest", json={
+        "strategy_id": sid, "dataset_id": "BTCUSDT_4h",
+        "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
+    })
+    assert resp.status_code == 200, resp.text

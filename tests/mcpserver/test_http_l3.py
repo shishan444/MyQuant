@@ -16,6 +16,18 @@ import uvicorn
 
 pytestmark = [pytest.mark.integration]
 
+
+def _run_async_compat(coro):
+    """asyncio.run 的环境兼容版（同 test_server 形制——playwright e2e
+    泄漏活动 loop 时全量顺序下 asyncio.run 抛 RuntimeError）。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
 from api.app import create_app
 
 
@@ -123,7 +135,7 @@ def test_http_transport_full_chain(mcp_http_server):
                 # 接入形态说明（本变更新增）
                 assert "streamable HTTP" in text
 
-    asyncio.run(asyncio.wait_for(_run(), timeout=60))
+    _run_async_compat(asyncio.wait_for(_run(), timeout=60))
 
 
 def test_api_unreachable_structured_error(tmp_path):
