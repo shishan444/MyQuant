@@ -210,6 +210,45 @@ class TestTranslator:
         with pytest.raises(ResearchError, match="action 不可表达"):
             translate_hypothesis(db, hypothesis_id=hid)
 
+    @pytest.mark.parametrize(
+        ("action", "expected_condition"),
+        [
+            pytest.param("gt", {"type": "gt", "threshold": 35.0}, id="gt 动作保真"),
+            pytest.param("lt", {"type": "lt", "threshold": 35.0}, id="lt 动作保真"),
+            pytest.param("ge", {"type": "ge", "threshold": 35.0}, id="ge 动作保真"),
+            pytest.param("le", {"type": "le", "threshold": 35.0}, id="le 动作保真"),
+            pytest.param("cross_above", {"type": "cross_above", "threshold": 35.0}, id="cross_above 动作保真"),
+            pytest.param("cross_below", {"type": "cross_below", "threshold": 35.0}, id="cross_below 动作保真"),
+            pytest.param("breakout", {"type": "cross_above", "threshold": 35.0}, id="breakout 映射 cross_above"),
+            pytest.param("breakdown", {"type": "cross_below", "threshold": 35.0}, id="breakdown 映射 cross_below"),
+        ],
+    )
+    def test_translation_field_fidelity(self, db, action, expected_condition):
+        """M2/1.6 翻译保真（8 动作全覆盖）：产物基因的条件值与登记
+        conditions 逐字段一致——篡改任一映射时对应行红。"""
+        conds = {
+            "when_conditions": [{"subject": "rsi_14", "action": action, "target": 35}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+        }
+        hid = self._register_and_pass(db, conds, self._ranges())
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.db_ext import get_strategy
+        genes = StrategyDNA.from_json(get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
+        assert len(genes) == 1
+        assert genes[0].condition == expected_condition
+        assert genes[0].params == {"period": 14}
+        assert genes[0].field_name == "rsi_14"
+
+    def test_statement_wording_does_not_change_product(self, db):
+        """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""
+        conds = self._expressible_conditions()
+        hid1 = register_hypothesis(db, conditions=conds, statement="措辞甲",
+                                   data_ranges=self._ranges())["hypothesis_id"]
+        # 同 conditions 同 ranges → 幂等命中同一假设（statement 不参与身份）
+        hid2 = register_hypothesis(db, conditions=conds, statement="完全不同的措辞乙",
+                                   data_ranges=self._ranges())["hypothesis_id"]
+        assert hid2 == hid1, "statement 措辞不得改变假设身份（幂等键不含措辞）"
+
     def test_idempotent_and_statement_ignored(self, db):
         """同假设重复转化返回既有（幂等）；statement 措辞差异不影响产物。"""
         conds = self._expressible_conditions()

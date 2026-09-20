@@ -107,7 +107,16 @@ def run_analysis(
         heavy = payload.template == "pattern_mining" or len(df) > _HEAVY_ROWS
 
         if not heavy:
-            result = _run_template(payload, data_dir, db_path)
+            # 快路径失败语义与 executor 快路径对齐：模板异常转 failed 终态
+            # （reason 携带），不裸穿 500——失败必须可见且可审计
+            try:
+                result = _run_template(payload, data_dir, db_path)
+            except ResearchError:
+                raise
+            except Exception as exc:  # noqa: BLE001 —— 模板执行失败
+                logger.warning("分析快路径失败 %s: %s", payload.template, exc)
+                return {"task_id": f"fast_{payload.template}", "status": "failed",
+                        "reason": str(exc)[:300], "result": None, "fast_path": True}
             _log_analysis(db_path, payload)
             return result
 

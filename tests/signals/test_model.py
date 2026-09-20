@@ -92,3 +92,17 @@ class TestWalkForward:
         with pytest.raises(ModelPipelineError, match="horizon"):
             ModelPluginConfig(name="x", features=["a"],
                               target={"type": "return", "horizon": 0}).validate()
+
+
+class TestCopyOnWriteReproduction:
+    """3.5 CoW 复现：chained assignment 在 copy-on-write 下不写回——
+    本缺陷曾致模型信号全 NaN（"无样本外评估样本"）。"""
+
+    def test_signal_written_under_cow(self):
+        """CoW 开启下信号写入生效（非全 NaN）——复现锚。"""
+        import pandas as pd
+        with pd.option_context("mode.copy_on_write", True):
+            df = _df()
+            res = fit_predict_walk_forward(df, ModelPluginConfig(**CFG))
+            n_valid = res.signal.notna().sum()
+            assert n_valid > 100, f"CoW 下信号写入失效（全 NaN 形态复现）: {n_valid}"
