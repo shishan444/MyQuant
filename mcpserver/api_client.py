@@ -69,6 +69,41 @@ class ApiUnreachable(Exception):
     """API 不可达（结构化可达性错误——宿主与日志可读的排查指引）。"""
 
 
+class ApiError(Exception):
+    """服务端拒绝/失败：透传结构化错误契约 {code, message, detail}。
+
+    body 含工程码族（RESEARCH_*）时原样透传；无结构化 code 的失败
+    （如 pydantic 422、5xx 无 body）降级为 API_INTERNAL_ERROR 形制，
+    原始响应信息保留在 detail。
+    """
+
+    def __init__(self, status: int, code: str, message: str,
+                 detail: Any = None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+        self.detail = detail
+
+
+def _raise_api_error(resp: httpx.Response) -> None:
+    """非 2xx：读 body 透传结构化错误，替代 raise_for_status() 丢 body 的坍缩。"""
+    body: Any = None
+    try:
+        body = resp.json()
+    except ValueError:
+        pass
+    d = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(d, dict) and isinstance(d.get("code"), str):
+        raise ApiError(resp.status_code, d["code"],
+                       str(d.get("message") or resp.reason_phrase),
+                       d.get("detail"))
+    raw = d if d is not None else (resp.text or None)
+    raise ApiError(resp.status_code, "API_INTERNAL_ERROR",
+                   f"HTTP {resp.status_code} {resp.reason_phrase}",
+                   detail=raw)
+
+
 def _match(path: str, endpoints: frozenset) -> bool:
     """路径匹配：字面量或 {param} 模板。"""
     if path in endpoints:
@@ -133,7 +168,8 @@ class QuantApiClient:
                 raise ApiUnreachable(
                     f"API 不可达（{self.base_url}）：请确认应用已启动"
                     f"（python run.py）——{exc}") from exc
-            resp.raise_for_status()
+            if resp.is_error:
+                _raise_api_error(resp)
             return resp.json()
 
     def post(self, path: str, json_body: Dict[str, Any] | None = None) -> Any:
@@ -147,7 +183,8 @@ class QuantApiClient:
                 raise ApiUnreachable(
                     f"API 不可达（{self.base_url}）：请确认应用已启动"
                     f"（python run.py）——{exc}") from exc
-            resp.raise_for_status()
+            if resp.is_error:
+                _raise_api_error(resp)
             if resp.status_code == 204 or not resp.content:
                 return None
             return resp.json()
@@ -179,8 +216,8 @@ class QuantApiClient:
                 last["_polled_at"] = time.time()
                 if last.get(status_field) in terminal:
                     return last
-            except (httpx.HTTPError, KeyError):
-                # 任务端点瞬时失败：保留最后已知状态继续轮询
+            except (ApiError, httpx.HTTPError, KeyError):
+                # 任务端点瞬时失败（含非 2xx 透传错误）：保留最后已知状态继续轮询
                 pass
             time.sleep(delay)
             delay = min(delay * backoff, max_delay)

@@ -120,20 +120,17 @@ def test_breakpoint_1a_full_research_loop(live_api):
     })
     assert analysis["sample_size"] >= 30
 
-    # 5) 隔离验证：2 月区间已被分析日志占用 → 必须被拒（M4：错误码级断言防假绿）
-    import httpx
+    # 5) 隔离验证：2 月区间已被分析日志占用 → 必须被拒（错误码级断言防假绿）
+    from mcpserver.api_client import ApiError
     try:
         api.post("/api/research/validate-backtest", {
             "hypothesis_id": hid, "strategy_id": "st_e2e",
             "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                               "start": "2024-02-10T00:00:00Z", "end": "2024-02-25T00:00:00Z"}})
         raise AssertionError("与已分析区间重叠的验证必须被拒")
-    except AssertionError:
-        raise
-    except httpx.HTTPStatusError as exc:
-        resp = exc.response
-        assert resp.status_code == 409, f"须为重叠拒绝，实得 {resp.status_code}: {resp.text}"
-        assert resp.json()["detail"]["code"] == "RESEARCH_RANGE_OVERLAP"
+    except ApiError as exc:
+        assert exc.status == 409, f"须为重叠拒绝，实得 {exc.status}: {exc.message}"
+        assert exc.code == "RESEARCH_RANGE_OVERLAP"
 
     # 6) 干净区间隔离验证（3 月起，warmup 足够）
     validation = api.post("/api/research/validate-backtest", {

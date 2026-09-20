@@ -32,7 +32,7 @@ def run_async(coro):
         return ex.submit(asyncio.run, coro).result()
 
 from api.app import create_app
-from mcpserver.api_client import EndpointNotAllowed, QuantApiClient
+from mcpserver.api_client import ApiError, EndpointNotAllowed, QuantApiClient
 from mcpserver.server import build_server
 from mcpserver.tools import TOOL_TIERS
 
@@ -76,7 +76,7 @@ class TestServerAssembly:
         names = {t.name for t in run_async(mcp.list_tools())}
         assert TOOL_TIERS["readonly"] <= names
         assert TOOL_TIERS["research"] <= names
-        assert len(names) == 22
+        assert len(names) == 23
 
     def test_readonly_profile_tools(self) -> None:
         mcp, _ = build_server(profile="readonly")
@@ -140,9 +140,12 @@ class TestCallSemantics:
         """写操作失败不自动重试（幂等性未知；失败语义原样返回）。"""
         base, db = live_api
         api = QuantApiClient(base_url=base, profile="research")
-        # 非法 payload（结构化条件缺失）→ 422，客户端抛 HTTPStatusError
-        with pytest.raises(httpx.HTTPStatusError):
+        # 非法 payload（结构化条件缺失）→ 422 pydantic 校验失败（无工程码）
+        # → 降级 API_INTERNAL_ERROR 形式（detail 保留原始校验信息）
+        with pytest.raises(ApiError) as ei:
             api.post("/api/research/hypotheses", {"bad": 1})
+        assert ei.value.status == 422
+        assert ei.value.code == "API_INTERNAL_ERROR"
         # 仅一次 POST，无重试
         posts = [c for c in api.call_log if c["method"] == "POST"]
         assert len(posts) == 1
@@ -191,6 +194,7 @@ class TestPollContract:
         seq = iter(["running"] * 5 + ["succeeded"])
         class FakeResp:
             status_code = 200
+            is_error = False
             def json(self):
                 return {"status": next(seq)}
             def raise_for_status(self):
@@ -212,6 +216,7 @@ class TestPollContract:
         call_count = {"n": 0}
         class FlakyResp:
             status_code = 200
+            is_error = False
             def json(self):
                 call_count["n"] += 1
                 if call_count["n"] == 1:
