@@ -181,6 +181,7 @@ class StrategyResponse(BaseModel):
     timeframe: str
     source: str = "manual"
     source_task_id: Optional[str] = None
+    gene_signature: Optional[str] = None
     best_score: Optional[float] = None
     best_fitness: Optional[float] = None
     qualified: Optional[bool] = None

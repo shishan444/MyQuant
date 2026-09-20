@@ -73,6 +73,18 @@ def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
     return StrategyDNA.from_dict(data)
 
 
+def _gene_signature_or_derive(row: Dict[str, Any]) -> Optional[str]:
+    """行内 gene_signature 为空时从 dna_json 现算兜底（形制同 save_strategy 内建 fallback）。"""
+    sig = row.get("gene_signature")
+    if sig:
+        return sig
+    try:
+        from core.strategy.dna import StrategyDNA
+        return StrategyDNA.from_json(row.get("dna_json")).gene_signature
+    except Exception:
+        return None
+
+
 def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
     """Convert a DB row dict to StrategyResponse."""
     dna = None
@@ -98,6 +110,7 @@ def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
         timeframe=row["timeframe"],
         source=row.get("source", "manual"),
         source_task_id=row.get("source_task_id"),
+        gene_signature=_gene_signature_or_derive(row),
         best_score=row.get("best_score"),
         best_fitness=row.get("best_fitness"),
         qualified=bool(row.get("qualified", 0)) if row.get("qualified") is not None else None,
