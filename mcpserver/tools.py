@@ -105,7 +105,11 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_signal_columns() -> Any:
-        """可用信号列（内置 ∪ 插件，标注来源）——假设条件 subject 合法引用集。"""
+        """可用信号列（内置 ∪ 插件，标注来源与 scopes 可引用域）——假设
+        条件 subject 合法引用集。scopes 三域含义：hypothesis=可作假设条件
+        subject；analysis=可作分析模板的列引用（原始列模板——指标分析走
+        condition_stats 的 indicator 参数，指标列此项为 false）；strategy=
+        可作策略信号源。"""
         return api.get("/api/research/signals")
 
     @mcp.tool()

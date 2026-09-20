@@ -230,7 +230,11 @@ class BacktestRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    score_template: str = "explorer"
+    # DEPRECATED（improve-mcp-agent-loop M5）：评分模板残骸，仅兼容保留，
+    # 不影响回测结果；勿在新调用方依赖
+    score_template: str = Field(
+        "explorer", description="DEPRECATED: 评分模板残骸，仅兼容保留，"
+        "不影响回测结果；勿在新调用方依赖")
     data_start: Optional[str] = None
     data_end: Optional[str] = None
     timeframe_pool: Optional[List[str]] = None
