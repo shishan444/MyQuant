@@ -13,11 +13,11 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestModelMetadata:
-    """模型全量声明：11 表 + 7 二级索引，导入无误。"""
+    """模型全量声明：11 legacy 表 + 8 研究域表（add-ai-research-mcp 1.2），导入无误。"""
 
     def test_table_count(self):
         from core.persistence.orm import Base
-        assert len(Base.metadata.tables) == 11
+        assert len(Base.metadata.tables) == 19
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
@@ -26,6 +26,10 @@ class TestModelMetadata:
             "evolution_task", "generation_snapshot", "live_trading_task",
             "paper_equity_snapshot", "paper_trade", "paper_trading_task",
             "strategy", "verify_session",
+            # 研究域（add-ai-research-mcp）
+            "research_hypotheses", "research_log", "analysis_tasks",
+            "formula_plugins", "model_plugins", "signal_registry",
+            "feature_requests", "validation_records",
         }
         assert expected == set(Base.metadata.tables)
 
@@ -41,6 +45,16 @@ class TestModelMetadata:
             ("strategy", "idx_strategy_source"),
             ("strategy", "idx_strategy_source_task_id"),
             ("verify_session", "idx_verify_session_created"),
+            # 研究域（add-ai-research-mcp 1.2；幂等键见 core/analysis/DESIGN.md 设计卡）
+            ("research_hypotheses", "ux_hypotheses_active_identity"),
+            ("research_log", "ix_research_log_hypothesis"),
+            ("analysis_tasks", "ix_analysis_tasks_status"),
+            ("formula_plugins", "ux_formula_plugins_name_version"),
+            ("model_plugins", "ux_model_plugins_name_version"),
+            ("signal_registry", "ux_signal_registry_column_version"),
+            ("feature_requests", "ix_feature_requests_status"),
+            ("validation_records", "ux_validation_idem"),
+            ("validation_records", "ix_validation_hypothesis"),
         }
         assert expected == idx
 

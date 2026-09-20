@@ -1,0 +1,110 @@
+"""指标元数据外化与信号列双源合并（add-ai-research-mcp 1.3）。
+
+两个职责：
+- ``indicator_metadata``：内置 INDICATOR_REGISTRY 只读外化，逐指标附
+  lookback（周期类参数的注册表上限之和——warmup 推导
+  ``max(200, 用到指标最大周期 × 3)`` 的依据，D5）。
+- ``available_signal_columns``：内置注册表与插件表（signal_registry，
+  仅插件行）运行时合并，条目标注来源——单一事实源纪律：内置指标
+  权威在 core/features，禁止复制入库（D4），合并只在查询时刻发生。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List
+
+from core.features.registry import INDICATOR_REGISTRY
+
+# 周期类参数名（bar 数语义）：其注册表 max 参与 lookback 推导。
+# 非周期类（std/multiplier/step/max_step/bins 等）不参与。
+_PERIOD_LIKE_PARAMS = frozenset({
+    "period", "fast", "slow", "signal", "k_period", "d_period",
+    "ema_period", "atr_period", "lookback",
+})
+
+
+def _indicator_lookback(defn: Any) -> int:
+    """指标 lookback：周期类参数的注册表上限之和（保守取向，宁可多预热）。"""
+    total = 0
+    for key, param in defn.params.items():
+        if key in _PERIOD_LIKE_PARAMS:
+            total += int(param.max)
+    return total
+
+
+def indicator_metadata() -> List[Dict[str, Any]]:
+    """内置 47 指标元数据只读外化（含 lookback 与参数空间）。"""
+    out: List[Dict[str, Any]] = []
+    for name, defn in INDICATOR_REGISTRY.items():
+        out.append({
+            "name": name,
+            "category": defn.category,
+            "params": {
+                key: {
+                    "type": p.type,
+                    "min": p.min,
+                    "max": p.max,
+                    "default": p.default,
+                    "step": p.step,
+                }
+                for key, p in defn.params.items()
+            },
+            "output_fields": list(defn.output_fields),
+            "supported_conditions": list(defn.supported_conditions),
+            "lookback": _indicator_lookback(defn),
+            "source": "builtin",
+        })
+    return out
+
+
+def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
+    """warmup 推导式：max(200, 用到指标最大周期 × 3)。
+
+    Args:
+        indicator_names: 本次实际用到的指标名（INDICATOR_REGISTRY 键）。
+        default_floor: 下限保底（默认 200，D5）。
+
+    Raises:
+        KeyError: 引用不存在的指标（显式拒绝，禁止静默跳过）。
+    """
+    if not indicator_names:
+        return default_floor
+    max_period = 0
+    for name in indicator_names:
+        defn = INDICATOR_REGISTRY.get(name)
+        if defn is None:
+            raise KeyError(f"未知指标: {name}")
+        max_period = max(max_period, _indicator_lookback(defn))
+    return max(default_floor, max_period * 3)
+
+
+def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
+    """可用信号列：内置指标输出 + 插件注册列，运行时合并（双源不漂移）。
+
+    内置条目 source=builtin（指标级）；插件条目 source=formula|model（列级）。
+    插件域查询走 repository（signal_registry 仅插件行——内置不落库）。
+    """
+    from core.persistence.repository.research import list_signal_registry_entries
+
+    columns: List[Dict[str, Any]] = []
+    for meta in indicator_metadata():
+        columns.append({
+            "column_key": meta["name"],  # 内置以指标名为引用键（条件 subject 引用形制）
+            "output_fields": meta["output_fields"],
+            "source": "builtin",
+            "category": meta["category"],
+            "lookback": meta["lookback"],
+            "strategy_visible": True,
+            "version": None,
+        })
+    for entry in list_signal_registry_entries(db_path, only_visible=True):
+        columns.append({
+            "column_key": entry["column_name"],
+            "output_fields": [entry["column_name"]],
+            "source": entry["source"],
+            "category": "plugin",
+            "lookback": None,  # 插件 lookback 由表达式/模板自证（求值时声明）
+            "strategy_visible": bool(entry["strategy_visible"]),
+            "version": entry["version"],
+        })
+    return columns

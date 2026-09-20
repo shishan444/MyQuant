@@ -6,11 +6,17 @@ from restricted regions via proxy, unlike the standard API endpoints.
 
 from __future__ import annotations
 
+import io
+import logging
 import os
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pandas as pd
 import requests
+
+logger = logging.getLogger(__name__)
 
 # Default proxy for Binance API access (override via BINANCE_PROXY env var)
 _DEFAULT_PROXY = os.environ.get("BINANCE_PROXY", "http://172.20.112.1:10809")
@@ -18,8 +24,15 @@ _DEFAULT_PROXY = os.environ.get("BINANCE_PROXY", "http://172.20.112.1:10809")
 # Public data API - accessible from all regions
 _BASE_URL = os.environ.get("BINANCE_DATA_API_URL", "https://data-api.binance.vision")
 
+# Public S3 archive for historical derivatives data (funding / open interest),
+# same "vision" family: reachable from restricted regions without a key.
+_S3_ARCHIVE_URL = "https://data.binance.vision/data/futures/um"
+
 # Maximum rows per request (Binance limit)
 _PAGE_LIMIT = 1000
+
+# Concurrent downloads for daily-metric archives (small files, static bucket)
+_ARCHIVE_WORKERS = 8
 
 
 def _parse_start_ts(start_str: str) -> int:
@@ -78,6 +91,26 @@ def _build_session() -> requests.Session:
     return session
 
 
+def _direct_session() -> requests.Session:
+    """直连 session：显式忽略环境代理。"""
+    return requests.Session()
+
+
+def _http_get(url: str, params: dict | None = None, timeout: int = 30) -> requests.Response:
+    """直连优先、代理回退的 GET。
+
+    现实依据：vision/S3 系域名在受限地区可直连（这正是 vision 域名的设计目的）；
+    代理仅在直连失败且 BINANCE_PROXY 有配置时作为回退通道。
+    """
+    try:
+        return _direct_session().get(url, params=params, timeout=timeout)
+    except requests.RequestException as exc:
+        if not _DEFAULT_PROXY:
+            raise
+        logger.debug("直连失败（%s），回退代理", exc)
+        return _build_session().get(url, params=params, timeout=timeout)
+
+
 def fetch_klines(
     symbol: str = "BTCUSDT",
     interval: str = "4h",
@@ -107,7 +140,6 @@ def fetch_klines(
         else _parse_start_ts(end_str)
     )
 
-    session = _build_session()
     all_klines: list[list] = []
 
     # Paginate through the data
@@ -120,7 +152,7 @@ def fetch_klines(
             "endTime": end_ms,
             "limit": _PAGE_LIMIT,
         }
-        resp = session.get(f"{_BASE_URL}/api/v3/klines", params=params, timeout=30)
+        resp = _http_get(f"{_BASE_URL}/api/v3/klines", params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
@@ -162,3 +194,141 @@ def fetch_klines(
     df = df[~df.index.duplicated(keep="first")]
 
     return df
+
+
+def _download_archive_csv(archive_dir: str, symbol: str, stem: str) -> pd.DataFrame | None:
+    """从 data.binance.vision S3 归档下载单个 zip 并解析为 DataFrame。
+
+    404（归档尚未生成/超出范围）或网络失败返回 None，由调用方跳过。
+    """
+    url = f"{_S3_ARCHIVE_URL}/{archive_dir}/{symbol}/{stem}.zip"
+    try:
+        resp = _http_get(url, timeout=30)
+    except requests.RequestException as exc:
+        logger.warning("归档下载失败 %s: %s", stem, exc)
+        return None
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    try:
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            csv_name = zf.namelist()[0]
+            with zf.open(csv_name) as f:
+                return pd.read_csv(f)
+    except (zipfile.BadZipFile, IndexError, pd.errors.ParserError) as exc:
+        logger.warning("归档解析失败 %s: %s", stem, exc)
+        return None
+
+
+def _month_starts(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
+    """列出 [start, end] 覆盖的全部月份首日。"""
+    months = []
+    cur = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    while cur <= end:
+        months.append(cur)
+        cur = (cur + pd.offsets.MonthBegin(1)).to_pydatetime()
+        cur = pd.Timestamp(cur)
+    return months
+
+
+def _day_starts(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
+    """列出 [start, end] 覆盖的全部自然日零点。"""
+    days = pd.date_range(start.normalize(), end.normalize(), freq="D", tz="UTC")
+    return list(days)
+
+
+def fetch_funding_history(
+    symbol: str = "BTCUSDT",
+    start: str = "2024-01-01",
+    end: str | None = None,
+) -> pd.DataFrame:
+    """拉取资金费率历史（月度归档拼接）。
+
+    数据源：data.binance.vision 月度 fundingRate 归档（2020-01 起，直连可达）。
+    原计划经 fapi.binance.com/fapi/v1/fundingRate 拉取，实测该域名受地域
+    限制且代理通道不可用，故改走 S3 归档（同数据域、历史更长）。
+
+    Args:
+        symbol: 合约交易对（如 "BTCUSDT"）。
+        start: 起始日期（含），ISO 格式。
+        end: 结束日期（不含），None = 当前时间。
+
+    Returns:
+        DataFrame，列 funding_rate，DatetimeIndex（UTC，8h 结算点）。
+    """
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts = pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.now(tz="UTC")
+
+    months = _month_starts(start_ts, end_ts)
+    frames = []
+    for m in months:
+        stem = f"{symbol}-fundingRate-{m:%Y-%m}"
+        df = _download_archive_csv("monthly/fundingRate", symbol, stem)
+        if df is None or df.empty:
+            logger.debug("跳过无数据月份 %s", stem)
+            continue
+        idx = pd.to_datetime(df["calc_time"], unit="ms", utc=True)
+        frame = pd.DataFrame(
+            {"funding_rate": df["last_funding_rate"].astype(float).to_numpy()},
+            index=pd.DatetimeIndex(idx, name="timestamp"),
+        )
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(columns=["funding_rate"])
+
+    out = pd.concat(frames)
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    out = out[(out.index >= start_ts) & (out.index < end_ts)]
+    return out
+
+
+def fetch_open_interest_history(
+    symbol: str = "BTCUSDT",
+    start: str = "2024-01-01",
+    end: str | None = None,
+) -> pd.DataFrame:
+    """拉取持仓量（OI）历史（日度 metrics 归档拼接，5m 原生粒度）。
+
+    数据源：data.binance.vision 日度 metrics 归档（sum_open_interest 列，
+    2020-09 起；归档约有 T-5 延迟）。原计划经 fapi openInterestHist 端点
+    拉取，该端点仅保留 30 天且地域受限，故改走 S3 归档。
+
+    Args:
+        symbol: 合约交易对（如 "BTCUSDT"）。
+        start: 起始日期（含），ISO 格式。
+        end: 结束日期（不含），None = 当前时间。
+
+    Returns:
+        DataFrame，列 open_interest，DatetimeIndex（UTC，5m 粒度）。
+    """
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts = pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.now(tz="UTC")
+
+    days = _day_starts(start_ts, end_ts)
+
+    def _fetch_one(day: pd.Timestamp) -> pd.DataFrame | None:
+        stem = f"{symbol}-metrics-{day:%Y-%m-%d}"
+        df = _download_archive_csv("daily/metrics", symbol, stem)
+        if df is None or df.empty:
+            return None
+        idx = pd.to_datetime(df["create_time"], utc=True, format="mixed")
+        return pd.DataFrame(
+            {"open_interest": df["sum_open_interest"].astype(float).to_numpy()},
+            index=pd.DatetimeIndex(idx, name="timestamp"),
+        )
+
+    with ThreadPoolExecutor(max_workers=_ARCHIVE_WORKERS) as pool:
+        results = list(pool.map(_fetch_one, days))
+
+    frames = [f for f in results if f is not None and not f.empty]
+    done = len(frames)
+    logger.info("OI 归档下载完成：%d/%d 天有数据（%s）", done, len(days), symbol)
+
+    if not frames:
+        return pd.DataFrame(columns=["open_interest"])
+
+    out = pd.concat(frames)
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    out = out[(out.index >= start_ts) & (out.index < end_ts)]
+    return out

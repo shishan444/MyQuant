@@ -13,6 +13,7 @@ from core.evolution.operators import (
     mutate_add_signal, mutate_remove_signal,
     mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe,
     mutate_mtf_mode, mutate_confluence_threshold, mutate_proximity_mult,
+    mutate_composition,
 )
 from core.evolution.population import init_population, create_random_dna
 from core.evolution.diversity import (
@@ -381,6 +382,12 @@ class EvolutionEngine:
                     for _ in range(n_mutations):
                         mut = random.choices(mutation_pool, weights=mut_weights)[0]
                         child = mut(child)
+                    # 组合基因变异（add-ai-research-mcp 6.3）：不占既有
+                    # 权重名额（否则稀释有效变异密度）；仅有组合基因的
+                    # 个体追加，退化形态零改变
+                    if getattr(child, "signal_sources", None) or getattr(child, "composition", None):
+                        if random.random() < 0.3:
+                            child = mutate_composition(child)
                     children.append(child)
                 except Exception:
                     children.append(create_random_dna(

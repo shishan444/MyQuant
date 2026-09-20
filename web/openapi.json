@@ -509,7 +509,7 @@
           "strategies"
         ],
         "summary": "Verify Strategies Stream",
-        "description": "SSE streaming variant of /verify. Yields progress events per group×range step.",
+        "description": "B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。\n\n断线语义（B8.0 ②）：任务跑完并落库（verify_session 持久化在），\n重连恢复面=GET /verify/sessions/{session_id}/results。\n取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。",
         "operationId": "verify_strategies_stream_api_strategies_verify_stream_post",
         "requestBody": {
           "content": {
@@ -696,7 +696,7 @@
           "strategies"
         ],
         "summary": "Batch Backtest Stream",
-        "description": "SSE streaming endpoint for batch backtesting multiple strategies across date ranges.",
+        "description": "B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。\n\nbatch 无持久 session（SSE 时代逐请求）——session_id 为本请求生成的\nroom 键；取消/断线语义同 verify（B8.0 ①②）。",
         "operationId": "batch_backtest_stream_api_strategies_batch_backtest_stream_post",
         "requestBody": {
           "content": {
@@ -3092,6 +3092,914 @@
         }
       }
     },
+    "/api/research/hypotheses": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Register Hypothesis",
+        "description": "登记假设：结构化 WHEN/THEN 条件 + 人话陈述 + 数据区间。",
+        "operationId": "register_hypothesis_api_research_hypotheses_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HypothesisCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypothesisResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "List Hypotheses",
+        "operationId": "list_hypotheses_api_research_hypotheses_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HypothesisListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/hypotheses/{hypothesis_id}": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Get Hypothesis",
+        "operationId": "get_hypothesis_api_research_hypotheses__hypothesis_id__get",
+        "parameters": [
+          {
+            "name": "hypothesis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Hypothesis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Hypothesis Api Research Hypotheses  Hypothesis Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/hypotheses/{hypothesis_id}/transition": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Transition Hypothesis",
+        "description": "状态迁移：active -> supported|refuted|superseded（必引证据）。",
+        "operationId": "transition_hypothesis_api_research_hypotheses__hypothesis_id__transition_post",
+        "parameters": [
+          {
+            "name": "hypothesis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Hypothesis Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HypothesisTransitionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Transition Hypothesis Api Research Hypotheses  Hypothesis Id  Transition Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/validate-backtest": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Validate Backtest",
+        "description": "隔离回测：判定并集拒绝 + warmup 推导前扩 + 门槛机械判定。",
+        "operationId": "validate_backtest_api_research_validate_backtest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IsolatedBacktestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Validate Backtest Api Research Validate Backtest Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/random-window-test": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Random Window Test",
+        "description": "随机窗口抽查（种子记录于验证记录，可复现）。",
+        "operationId": "random_window_test_api_research_random_window_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RandomWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Random Window Test Api Research Random Window Test Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/validation/{strategy_id}/report": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Validation Report",
+        "description": "验证档案：人话关键数字摘要（普通人可读，最差情况与样本量）。",
+        "operationId": "validation_report_api_research_validation__strategy_id__report_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Strategy Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Validation Report Api Research Validation  Strategy Id  Report Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/translate/{hypothesis_id}": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Translate Hypothesis",
+        "description": "假设→策略转化器：conditions 为唯一翻译源；不可表达显式拒绝。",
+        "operationId": "translate_hypothesis_api_research_translate__hypothesis_id__post",
+        "parameters": [
+          {
+            "name": "hypothesis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Hypothesis Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TranslateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Translate Hypothesis Api Research Translate  Hypothesis Id  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/analysis": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Analysis",
+        "operationId": "run_analysis_api_research_analysis_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/analysis/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Get Analysis Task",
+        "description": "长任务轮询：status ∈ pending|running|succeeded|failed。",
+        "operationId": "get_analysis_task_api_research_analysis_tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Analysis Task Api Research Analysis Tasks  Task Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/plugins/formula": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Create Formula Plugin",
+        "description": "公式插件注册：静态校验三关 → 版本化 → signal_registry（原子）。",
+        "operationId": "create_formula_plugin_api_research_plugins_formula_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FormulaPluginCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Formula Plugin Api Research Plugins Formula Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "List Formula Plugins",
+        "description": "公式插件版本审计（历史版本可查，5.5）。",
+        "operationId": "list_formula_plugins_api_research_plugins_formula_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Formula Plugins Api Research Plugins Formula Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/plugins/model": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Create Model Plugin",
+        "description": "模型插件配置：同步校验 + 异步训练（202 + 句柄轮询）。",
+        "operationId": "create_model_plugin_api_research_plugins_model_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelPluginCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "List Model Plugins",
+        "description": "模型插件版本审计（含 rejected 记录与原因，卡5）。",
+        "operationId": "list_model_plugins_api_research_plugins_model_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Model Plugins Api Research Plugins Model Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/indicators": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Indicators",
+        "description": "内置指标元数据（47 项，含 lookback——warmup 推导依据）。",
+        "operationId": "indicators_api_research_indicators_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Indicators Api Research Indicators Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/signals": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Signals",
+        "description": "可用信号列：内置 ∪ 插件，运行时合并（条目标注来源）。",
+        "operationId": "signals_api_research_signals_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Signals Api Research Signals Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/log": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Research Log",
+        "description": "研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。",
+        "operationId": "research_log_api_research_log_get",
+        "parameters": [
+          {
+            "name": "hypothesis_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hypothesis Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Research Log Api Research Log Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/feature-requests": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Create Feature Request",
+        "description": "慢通道功能需求单：只保证持久化与可查，不自动实现。",
+        "operationId": "create_feature_request_api_research_feature_requests_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureRequestCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureRequestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "List Feature Requests",
+        "operationId": "list_feature_requests_api_research_feature_requests_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Feature Requests Api Research Feature Requests Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health Check",
@@ -3113,6 +4021,41 @@
   },
   "components": {
     "schemas": {
+      "AnalysisRunRequest": {
+        "properties": {
+          "template": {
+            "type": "string",
+            "title": "Template"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "data_range": {
+            "$ref": "#/components/schemas/DataRangeItem"
+          },
+          "hypothesis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hypothesis Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "template",
+          "params",
+          "data_range"
+        ],
+        "title": "AnalysisRunRequest",
+        "description": "五类模板统一入口（附.4）。"
+      },
       "AvailableSource": {
         "properties": {
           "symbol": {
@@ -3815,6 +4758,37 @@
         ],
         "title": "ConditionInput"
       },
+      "ConditionItem": {
+        "properties": {
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "subject",
+          "action",
+          "target"
+        ],
+        "title": "ConditionItem",
+        "description": "假设条件（与假设验证引擎 {subject, action, target} 同源形制）。"
+      },
       "DNAModel-Input": {
         "properties": {
           "signal_genes": {
@@ -3903,6 +4877,33 @@
             "type": "number",
             "title": "Proximity Mult",
             "default": 1.5
+          },
+          "signal_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Sources"
+          },
+          "composition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composition"
           }
         },
         "additionalProperties": false,
@@ -3998,6 +4999,33 @@
             "type": "number",
             "title": "Proximity Mult",
             "default": 1.5
+          },
+          "signal_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Sources"
+          },
+          "composition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composition"
           }
         },
         "additionalProperties": false,
@@ -4061,6 +5089,35 @@
           "timestamp_precision"
         ],
         "title": "DataImportResponse"
+      },
+      "DataRangeItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "timeframe",
+          "start",
+          "end"
+        ],
+        "title": "DataRangeItem",
+        "description": "半开区间 [start, end)，UTC ISO8601。"
       },
       "DatasetListResponse": {
         "properties": {
@@ -4971,6 +6028,82 @@
         "type": "object",
         "title": "ExecutionGenesModel"
       },
+      "FeatureRequestCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "FeatureRequestCreate"
+      },
+      "FeatureRequestResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "title",
+          "status",
+          "created_at"
+        ],
+        "title": "FeatureRequestResponse"
+      },
+      "FormulaPluginCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "expression": {
+            "type": "string",
+            "title": "Expression"
+          },
+          "output_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Column"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "expression"
+        ],
+        "title": "FormulaPluginCreate"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -5071,6 +6204,163 @@
           "avg_bars_to_peak"
         ],
         "title": "HorizonSummary"
+      },
+      "HypothesisConditions": {
+        "properties": {
+          "when_conditions": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionItem"
+            },
+            "type": "array",
+            "title": "When Conditions"
+          },
+          "then_conditions": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionItem"
+            },
+            "type": "array",
+            "title": "Then Conditions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "when_conditions",
+          "then_conditions"
+        ],
+        "title": "HypothesisConditions",
+        "description": "WHEN/THEN 结构化条件（机器判定唯一来源；陈述仅展示）。"
+      },
+      "HypothesisCreate": {
+        "properties": {
+          "conditions": {
+            "$ref": "#/components/schemas/HypothesisConditions"
+          },
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "data_ranges": {
+            "items": {
+              "$ref": "#/components/schemas/DataRangeItem"
+            },
+            "type": "array",
+            "title": "Data Ranges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conditions",
+          "statement",
+          "data_ranges"
+        ],
+        "title": "HypothesisCreate"
+      },
+      "HypothesisListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "default": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size",
+            "default": 50
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "HypothesisListResponse"
+      },
+      "HypothesisResponse": {
+        "properties": {
+          "hypothesis_id": {
+            "type": "string",
+            "title": "Hypothesis Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          },
+          "duplicated": {
+            "type": "boolean",
+            "title": "Duplicated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "hypothesis_id"
+        ],
+        "title": "HypothesisResponse"
+      },
+      "HypothesisTransitionRequest": {
+        "properties": {
+          "target_status": {
+            "type": "string",
+            "title": "Target Status"
+          },
+          "evidence_ref": {
+            "type": "string",
+            "title": "Evidence Ref"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_status",
+          "evidence_ref"
+        ],
+        "title": "HypothesisTransitionRequest"
+      },
+      "IsolatedBacktestRequest": {
+        "properties": {
+          "hypothesis_id": {
+            "type": "string",
+            "title": "Hypothesis Id"
+          },
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "request_range": {
+            "$ref": "#/components/schemas/DataRangeItem"
+          },
+          "threshold_profile": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold Profile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hypothesis_id",
+          "strategy_id",
+          "request_range"
+        ],
+        "title": "IsolatedBacktestRequest"
       },
       "LiveTradingTaskCreate": {
         "properties": {
@@ -5313,6 +6603,68 @@
         "additionalProperties": false,
         "type": "object",
         "title": "LogicGenesModel"
+      },
+      "ModelPluginCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "features": {
+            "items": {},
+            "type": "array",
+            "title": "Features"
+          },
+          "template": {
+            "type": "string",
+            "title": "Template",
+            "default": "rolling_logistic"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "default": {
+              "window": 0,
+              "step": 20
+            }
+          },
+          "target": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Target",
+            "default": {
+              "type": "return_sign",
+              "horizon": 4
+            }
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol",
+            "default": "BTCUSDT"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe",
+            "default": "4h"
+          },
+          "data_start": {
+            "type": "string",
+            "title": "Data Start"
+          },
+          "data_end": {
+            "type": "string",
+            "title": "Data End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "features",
+          "data_start",
+          "data_end"
+        ],
+        "title": "ModelPluginCreate"
       },
       "OhlcvResponse": {
         "properties": {
@@ -5845,6 +7197,65 @@
         },
         "type": "object",
         "title": "PredictRequest"
+      },
+      "RandomWindowRequest": {
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "data_start": {
+            "type": "string",
+            "title": "Data Start"
+          },
+          "data_end": {
+            "type": "string",
+            "title": "Data End"
+          },
+          "window_bars": {
+            "type": "integer",
+            "title": "Window Bars",
+            "default": 200
+          },
+          "n_windows": {
+            "type": "integer",
+            "title": "N Windows",
+            "default": 8
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 42
+          },
+          "hypothesis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hypothesis Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "symbol",
+          "timeframe",
+          "data_start",
+          "data_end"
+        ],
+        "title": "RandomWindowRequest"
       },
       "RequirementsConfigModel": {
         "properties": {
@@ -6971,6 +8382,22 @@
           "task_id"
         ],
         "title": "TradingMetricsResponse"
+      },
+      "TranslateRequest": {
+        "properties": {
+          "strategy_symbol": {
+            "type": "string",
+            "title": "Strategy Symbol",
+            "default": "BTCUSDT"
+          },
+          "strategy_timeframe": {
+            "type": "string",
+            "title": "Strategy Timeframe",
+            "default": "4h"
+          }
+        },
+        "type": "object",
+        "title": "TranslateRequest"
       },
       "TriggerDetail": {
         "properties": {

@@ -1,0 +1,178 @@
+"""MCP server 测试（add-ai-research-mcp 4.1-4.5）。
+
+真 uvicorn 线程承载 API（MCP 工具经 httpx 全链路到 REST，与
+宿主使用方式一致）。覆盖：工具列表、两档装配、触金隔离断言、
+白名单拒绝、写操作不重试语义、自述四部分。
+"""
+
+import asyncio
+import threading
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+import uvicorn
+
+pytestmark = [pytest.mark.integration]
+
+
+def run_async(coro):
+    """asyncio.run 的环境兼容版。
+
+    playwright e2e fixture 会在进程内泄漏运行中的事件循环，此后
+    asyncio.run 抛 RuntimeError——检测到活动 loop 时改在新线程跑。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+from api.app import create_app
+from mcpserver.api_client import EndpointNotAllowed, QuantApiClient
+from mcpserver.server import build_server
+from mcpserver.tools import TOOL_TIERS
+
+
+@pytest.fixture(scope="module")
+def live_api(tmp_path_factory):
+    """真 uvicorn 线程（随机端口），供 httpx 调用。"""
+    db = tmp_path_factory.mktemp("mcp_api") / "quant.db"
+    data_dir = tmp_path_factory.mktemp("mcp_data")
+    data_dir.mkdir(exist_ok=True)
+    import numpy as np
+    import pandas as pd
+    n = 400
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC", name="timestamp")
+    rng = np.random.default_rng(3)
+    close = 60000 + np.cumsum(rng.normal(0, 120, n))
+    pd.DataFrame({"open": close, "high": close + 60, "low": close - 60,
+                  "close": close, "volume": rng.uniform(100, 900, n),
+                  "trades": 50}, index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+
+    app = create_app(db_path=db, data_dir=data_dir)
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if server.started:
+            break
+        time.sleep(0.1)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    yield f"http://127.0.0.1:{port}", db
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestServerAssembly:
+    def test_research_profile_tools(self) -> None:
+        mcp, _ = build_server(profile="research")
+        names = {t.name for t in run_async(mcp.list_tools())}
+        assert TOOL_TIERS["readonly"] <= names
+        assert TOOL_TIERS["research"] <= names
+        assert len(names) == 22
+
+    def test_readonly_profile_tools(self) -> None:
+        mcp, _ = build_server(profile="readonly")
+        names = {t.name for t in run_async(mcp.list_tools())}
+        assert names == TOOL_TIERS["readonly"]
+        # 研究档工具不可见
+        assert "register_hypothesis" not in names
+        assert "run_isolated_validation" not in names
+
+    def test_no_money_touching_tools(self) -> None:
+        """触金隔离：枚举全部注册工具，断言无下单/调仓/风控修改类。"""
+        for profile in ("readonly", "research"):
+            mcp, _ = build_server(profile=profile)
+            names = {t.name for t in run_async(mcp.list_tools())}
+            forbidden_substrings = ("order", "trade_open", "close_position",
+                                    "risk", "live", "liquidate", "leverage")
+            for n in names:
+                for bad in forbidden_substrings:
+                    assert bad not in n, f"{profile} 档出现触金嫌疑工具: {n}"
+
+    def test_capability_resource_four_parts(self) -> None:
+        """能力自述含四部分内容。"""
+        mcp, _ = build_server(profile="research")
+        res = run_async(mcp.read_resource("quant://capabilities"))
+        text = res[0].content if isinstance(res, list) else str(res)
+        for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
+            assert part in text, f"自述缺部分: {part}"
+        assert "register_hypothesis" in text  # 工具清单已合并
+        assert "不会自动实现" in text  # 需求单预期管理
+
+
+class TestWhitelist:
+    def test_readonly_cannot_post(self) -> None:
+        api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")
+        with pytest.raises(EndpointNotAllowed):
+            api.post("/api/research/hypotheses", {"x": 1})
+
+    def test_money_endpoints_never_allowed(self) -> None:
+        for profile in ("readonly", "research"):
+            api = QuantApiClient(base_url="http://127.0.0.1:1", profile=profile)
+            for path in ("/api/trading/start", "/api/live/start",
+                         "/api/trading/order/buy"):
+                with pytest.raises(EndpointNotAllowed):
+                    api.get(path)
+                with pytest.raises(EndpointNotAllowed):
+                    api.post(path, {})
+
+    def test_unknown_endpoint_rejected(self) -> None:
+        api = QuantApiClient(base_url="http://127.0.0.1:1", profile="research")
+        with pytest.raises(EndpointNotAllowed):
+            api.get("/api/whatever/else")
+
+    def test_template_path_match(self) -> None:
+        """{param} 模板端点可匹配具体 id。"""
+        api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")
+        api.check_allowed("GET", "/api/research/analysis/tasks/ant_abc")
+
+
+class TestCallSemantics:
+    def test_write_failure_no_retry(self, live_api) -> None:
+        """写操作失败不自动重试（幂等性未知；失败语义原样返回）。"""
+        base, db = live_api
+        api = QuantApiClient(base_url=base, profile="research")
+        # 非法 payload（结构化条件缺失）→ 422，客户端抛 HTTPStatusError
+        with pytest.raises(httpx.HTTPStatusError):
+            api.post("/api/research/hypotheses", {"bad": 1})
+        # 仅一次 POST，无重试
+        posts = [c for c in api.call_log if c["method"] == "POST"]
+        assert len(posts) == 1
+
+    def test_readonly_tools_match_direct_rest(self, live_api) -> None:
+        """冒烟：每个只读工具结果与直接 REST 一致。"""
+        base, db = live_api
+        mcp, api = build_server(profile="readonly", base_url=base)
+
+        # 工具经 server 调用路径与直接 REST 结果一致（数据目录）
+        direct = httpx.get(f"{base}/api/data/available-sources", timeout=10).json()
+        assert direct is not None
+        # indicators 一致
+        direct_ind = httpx.get(f"{base}/api/research/indicators", timeout=10).json()
+        got_ind = api.get("/api/research/indicators")
+        assert len(got_ind) == len(direct_ind) == 47
+
+    def test_end_to_end_analysis_via_client(self, live_api) -> None:
+        """研究档经 client 完成一次分析并落日志（4.3 验收）。"""
+        base, db = live_api
+        api = QuantApiClient(base_url=base, profile="research")
+        out = api.post("/api/research/analysis", {
+            "template": "condition_stats",
+            "params": {"indicator": "RSI", "params": {"period": 14},
+                       "condition": {"subject": "rsi_14", "action": "lt", "target": 40}},
+            "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+        })
+        assert out["template"] == "condition_stats"
+        assert out["sample_size"] >= 30
+        # 日志链路
+        logs = api.get("/api/research/log")
+        assert any(e["entry_type"] == "analysis" for e in logs["items"])

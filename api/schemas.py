@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -130,6 +130,9 @@ class DNAModel(BaseModel):
     mtf_mode: Optional[str] = None
     confluence_threshold: float = 0.3
     proximity_mult: float = 1.5
+    # == v2 超集（add-ai-research-mcp 6.1）：承载 signal_sources 与 composition ==
+    signal_sources: Optional[List[Dict[str, Any]]] = None
+    composition: Optional[Dict[str, Any]] = None
 
 
 class TimeframeLayerModel(BaseModel):
@@ -774,3 +777,94 @@ class LiveTradingTaskResponse(BaseModel):
 class LiveTradingTaskListResponse(BaseModel):
     tasks: List[LiveTradingTaskResponse]
     total: int
+
+
+# == research 域（add-ai-research-mcp 3.x）==
+
+
+class ConditionItem(BaseModel):
+    """假设条件（与假设验证引擎 {subject, action, target} 同源形制）。"""
+
+    subject: str
+    action: str
+    target: Union[float, str]
+
+
+class HypothesisConditions(BaseModel):
+    """WHEN/THEN 结构化条件（机器判定唯一来源；陈述仅展示）。"""
+
+    when_conditions: List[ConditionItem]
+    then_conditions: List[ConditionItem]
+
+
+class DataRangeItem(BaseModel):
+    """半开区间 [start, end)，UTC ISO8601。"""
+
+    symbol: str
+    timeframe: str
+    start: str
+    end: str
+
+
+class HypothesisCreate(BaseModel):
+    conditions: HypothesisConditions
+    statement: str
+    data_ranges: List[DataRangeItem]
+
+
+class HypothesisTransitionRequest(BaseModel):
+    target_status: str  # supported | refuted | superseded
+    evidence_ref: str
+
+
+class HypothesisResponse(BaseModel):
+    hypothesis_id: str
+    status: str = "active"
+    duplicated: bool = False
+
+
+class HypothesisListResponse(BaseModel):
+    items: List[Dict[str, Any]]
+    total: int
+    page: int = 1
+    page_size: int = 50
+
+
+class IsolatedBacktestRequest(BaseModel):
+    hypothesis_id: str
+    strategy_id: str
+    request_range: DataRangeItem
+    threshold_profile: Optional[Dict[str, Any]] = None
+
+
+class RandomWindowRequest(BaseModel):
+    strategy_id: str
+    symbol: str
+    timeframe: str
+    data_start: str
+    data_end: str
+    window_bars: int = 200
+    n_windows: int = 8
+    seed: int = 42
+    hypothesis_id: Optional[str] = None
+
+
+class AnalysisRunRequest(BaseModel):
+    """五类模板统一入口（附.4）。"""
+
+    template: str  # condition_stats|distribution_compare|correlation_scan|event_study|pattern_mining
+    params: Dict[str, Any]
+    data_range: DataRangeItem
+    hypothesis_id: Optional[str] = None
+
+
+class FeatureRequestCreate(BaseModel):
+    title: str
+    payload: Dict[str, Any] = {}
+
+
+class FeatureRequestResponse(BaseModel):
+    request_id: str
+    title: str
+    status: str
+    created_at: str
