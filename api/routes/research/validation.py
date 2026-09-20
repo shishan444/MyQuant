@@ -10,7 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.deps import get_data_dir, get_db_path
-from api.schemas import IsolatedBacktestRequest, RandomWindowRequest
+from api.schemas import (
+    IsolatedBacktestRequest,
+    RandomWindowRequest,
+    SandboxBacktestRequest,
+)
 from core.analysis import validation_service as vs
 from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
@@ -36,6 +40,27 @@ def validate_backtest(
             request_range=payload.request_range.model_dump(),
             threshold_profile=payload.threshold_profile,
         )
+    except ResearchError as exc:
+        raise research_error_to_http(exc) from exc
+
+
+@router.post("/backtest-sandbox")
+def backtest_sandbox(
+    payload: SandboxBacktestRequest,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
+    不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。"""
+    try:
+        return vs.run_sandbox_backtest(
+            db_path, data_dir,
+            strategy_id=payload.strategy_id,
+            symbol=payload.symbol, timeframe=payload.timeframe,
+            start=payload.start, end=payload.end,
+            fee=payload.fee, slippage=payload.slippage,
+            init_cash=payload.init_cash,
+            hypothesis_id=payload.hypothesis_id)
     except ResearchError as exc:
         raise research_error_to_http(exc) from exc
 

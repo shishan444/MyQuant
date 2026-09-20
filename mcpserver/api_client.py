@@ -48,6 +48,7 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/research/hypotheses/{hypothesis_id}/transition",  # 状态迁移
     "/api/research/validate-backtest",                      # 隔离回测
     "/api/research/random-window-test",                     # 随机窗口
+    "/api/research/backtest-sandbox",                       # 沙盒回测（M6 快速试错）
     "/api/research/analysis",                               # 分析模板
     "/api/research/feature-requests",                       # 需求单
     "/api/research/plugins/formula",                        # 公式插件注册

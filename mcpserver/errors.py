@@ -76,6 +76,10 @@ HINTS: Dict[str, str] = {
         "可引用域）",
     "RESEARCH_COMPOSITION_INVALID":
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
+    # ---- 沙盒回测
+    "RESEARCH_SANDBOX_LIMIT":
+        "沙盒区间超 bar 上限：走隔离验证协议（run_isolated_validation "
+        "支持大区间分区间验证）",
     # ---- MCP 客户端侧
     "MCP_ENDPOINT_NOT_ALLOWED":
         "端点不在当前档位白名单：readonly 档只读；研究执行需 research 档"

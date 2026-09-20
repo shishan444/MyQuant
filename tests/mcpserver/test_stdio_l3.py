@@ -73,7 +73,7 @@ def test_stdio_full_chain(live_api):
                 # 1) 工具列表（research 档 22 个）
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
-                assert len(names) == 23, f"研究档工具数: {len(names)}"
+                assert len(names) == 24, f"研究档工具数: {len(names)}"
                 assert "register_hypothesis" in names
                 assert "translate_hypothesis_to_strategy" in names
 

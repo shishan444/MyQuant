@@ -243,6 +243,24 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def run_backtest(strategy_id: str, symbol: str, timeframe: str,
+                     start: str, end: str, fee: float = 0.001,
+                     slippage: float = 0.0005, init_cash: float = 100000.0,
+                     hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
+        """沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
+        不判门槛、不构成验证证据）。纪律：挂 hypothesis_id 时该区间计入
+        判定并集（此后同区间的隔离验证会被拒——先偷看不获利）；超 bar
+        上限被拒，走隔离验证。"""
+        body: Dict[str, Any] = {"strategy_id": strategy_id, "symbol": symbol,
+                                "timeframe": timeframe, "start": start,
+                                "end": end, "fee": fee,
+                                "slippage": slippage, "init_cash": init_cash}
+        if hypothesis_id:
+            body["hypothesis_id"] = hypothesis_id
+        return api.post("/api/research/backtest-sandbox", body)
+
+    @mcp.tool()
+    @tool_safe
     def register_formula_plugin(name: str, expression: str) -> Dict[str, Any]:
         """注册公式插件（受限 DSL：白名单函数、禁前视、静态校验三关；
         同名同表达式幂等返回既有版本；同名新表达式版本递增）。"""
@@ -303,7 +321,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             total_timeout=total_timeout)
 
     for fn in (run_analysis, register_hypothesis, transition_hypothesis,
-               run_isolated_validation, run_random_window_test,
+               run_isolated_validation, run_random_window_test, run_backtest,
                register_formula_plugin, register_model_plugin,
                translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution, poll_evolution_task):
