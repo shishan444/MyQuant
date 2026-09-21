@@ -30,9 +30,28 @@ _TF_MINUTES = {
     "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440, "3d": 4320,
 }
 
+# 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
+# 留足余量；50k 为默认起点，按回测速度实施校准）
+SANDBOX_MAX_BARS = 50_000
+
 
 def _range_hash(request_range: Dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(request_range, sort_keys=True).encode()).hexdigest()
+
+
+def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
+    """时间参数入口归一：naive 按 UTC 解释（语义对齐 isolation._parse_ts，
+    不引入第三种 tz 语义——date-only 输入不再与 tz-aware 索引比较崩溃）。"""
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
+def _collect_needed_tfs(dna, exec_tf: str) -> set:
+    """收集 DNA 声明的全部时间层 ∪ 执行周期（is_mtf 即装载语义）。"""
+    if not (getattr(dna, "is_mtf", False) and dna.layers):
+        return set()
+    return {layer.timeframe for layer in dna.layers} | {exec_tf}
 
 
 def _dna_indicator_names(dna) -> List[str]:
@@ -63,6 +82,7 @@ def _run_backtest_on_range(
     data_dir: Path, dna, symbol: str, timeframe: str,
     start: str, end: str, warmup_bars: int,
     *, init_cash: float = 100000.0,
+    fee: float = 0.001, slippage: float = 0.0005,
 ) -> Tuple[Dict[str, Any], int, int]:
     """[start-warmup, end) 装载算指标 → 切回 [start,end) 回测。
 
@@ -70,11 +90,11 @@ def _run_backtest_on_range(
         (metrics, actual_warmup_bars, bars_used)
     """
     from core.backtest import engine as bt_engine_mod
-    from core.data.mtf_loader import load_and_prepare_df
+    from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     tf_minutes = _TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
-    start_ts = pd.Timestamp(start)
+    start_ts = _to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
 
     enhanced = load_and_prepare_df(
@@ -94,8 +114,19 @@ def _run_backtest_on_range(
 
     bt_df = enhanced[enhanced.index >= start_ts]  # 切回请求区间（指标列带记忆）
 
-    engine = bt_engine_mod.BacktestEngine(init_cash=init_cash)
-    result = engine.run(dna, bt_df)
+    # MTF：is_mtf 即装载（不用 len>1 守卫——那会让单层同 tf 策略复现
+    # REST 路径的既有 500；load_mtf_data 内建 {exec_tf: enhanced_df}，
+    # 单层同 tf 时零额外 IO 退化，恰好满足 executor 的装载要求）
+    dfs_by_timeframe = None
+    needed_tfs = _collect_needed_tfs(dna, timeframe)
+    if needed_tfs:
+        dfs_by_timeframe = load_mtf_data(
+            data_dir, symbol, timeframe, enhanced, needed_tfs,
+            load_start, end)
+
+    engine = bt_engine_mod.BacktestEngine(
+        init_cash=init_cash, fee=fee, slippage=slippage)
+    result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
     metrics = {
         "total_return": float(result.total_return),
         "sharpe_ratio": float(result.sharpe_ratio),
@@ -255,8 +286,8 @@ def random_window_test(
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
     # 可抽窗的候选区间：[data_start, data_end - window]
-    ds = pd.Timestamp(data_start)
-    de = pd.Timestamp(data_end)
+    ds = _to_utc(pd.Timestamp(data_start))
+    de = _to_utc(pd.Timestamp(data_end))
     span_bars = int((de - ds) / bar_delta)
     usable = span_bars - window_bars
     if usable < n_windows:
@@ -320,6 +351,74 @@ def random_window_test(
 
     return {"record_id": record_id, "seed": seed,
             "windows": windows, "summary": summary}
+
+
+def run_sandbox_backtest(
+    db_path: Path,
+    data_dir: Path,
+    *,
+    strategy_id: str,
+    symbol: str,
+    timeframe: str,
+    start: str,
+    end: str,
+    fee: float = 0.001,
+    slippage: float = 0.0005,
+    init_cash: float = 100000.0,
+    hypothesis_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """沙盒回测（improve-mcp-agent-loop M6）：快速试错，不判门槛、不入验证记录。
+
+    纪律内嵌：每次沙盒强制落研究日志——挂 hypothesis_id 时区间进判定
+    并集（封堵"先偷看后验证"），不挂时以 adhoc 日志留痕。
+    区间 bar 数超上限拒绝（防爆超时，引导走隔离验证协议）。
+
+    Returns:
+        {"strategy_id", "symbol", "timeframe", "metrics", "bars_used",
+         "hypothesis_id", "sandbox": True}
+    """
+    # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
+    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    start_ts = _to_utc(pd.Timestamp(start))
+    end_ts = _to_utc(pd.Timestamp(end))
+    bars = int((end_ts - start_ts).total_seconds() / 60 / tf_minutes)
+    if bars > SANDBOX_MAX_BARS:
+        raise ResearchError(
+            "RESEARCH_SANDBOX_LIMIT",
+            f"沙盒区间 {bars} bar 超上限 {SANDBOX_MAX_BARS}——隔离验证"
+            "协议支持任意区间（分区间验证）",
+            status=422,
+            detail={"bars": bars, "max": SANDBOX_MAX_BARS,
+                    "slow_path": "run_isolated_validation 支持大区间"})
+
+    dna, strat_row = _load_strategy_dna(db_path, strategy_id)
+    symbol = symbol or strat_row.get("symbol", "BTCUSDT")
+    timeframe = timeframe or strat_row.get("timeframe", "4h")
+    indicator_names = _dna_indicator_names(dna)
+    warmup_bars = derive_warmup(indicator_names)
+
+    metrics, actual_warmup, bars_used = _run_backtest_on_range(
+        data_dir, dna, symbol, timeframe, start, end, warmup_bars,
+        init_cash=init_cash, fee=fee, slippage=slippage)
+
+    # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
+    # 取该假设全部日志条目 data_ranges，现成无需改动）
+    range_entry = {"symbol": symbol, "timeframe": timeframe,
+                   "start": start, "end": end}
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=hypothesis_id,  # None → adhoc 留痕
+        entry_type="sandbox_backtest",
+        ref_id=strategy_id,
+        data_ranges=json.dumps([range_entry], ensure_ascii=False),
+        summary=f"sandbox backtest {symbol} {timeframe} [{start},{end}) "
+                f"fee={fee} slippage={slippage}")
+
+    return {"strategy_id": strategy_id, "symbol": symbol, "timeframe": timeframe,
+            "metrics": metrics, "bars_used": bars_used,
+            "warmup_bars": actual_warmup,
+            "hypothesis_id": hypothesis_id, "sandbox": True,
+            "note": "沙盒结果不构成验证证据；关联假设的区间已计入判定并集"}
 
 
 def _missing_component_evidence(

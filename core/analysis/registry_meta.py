@@ -78,11 +78,27 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
     return max(default_floor, max_period * 3)
 
 
+def _scopes_for(source: str, strategy_visible: bool) -> Dict[str, bool]:
+    """域标注（improve-mcp-agent-loop M5）：列在三个引用域的可用性。
+
+    - hypothesis：假设条件 subject（指标输出列形制如 rsi_14 / 插件列均可）
+    - analysis：分析模板的**列引用**（correlation_scan/distribution_compare
+      /event_study——模板 df 为原始 OHLCV+衍生品列；内置指标分析不走列
+      引用而走 condition_stats 的 indicator 参数）
+    - strategy：策略信号源（SignalGene indicator / 插件 strategy_visible）
+    """
+    if source == "builtin":
+        return {"hypothesis": True, "analysis": False, "strategy": True}
+    return {"hypothesis": True, "analysis": False, "strategy": strategy_visible}
+
+
 def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
     """可用信号列：内置指标输出 + 插件注册列，运行时合并（双源不漂移）。
 
     内置条目 source=builtin（指标级）；插件条目 source=formula|model（列级）。
     插件域查询走 repository（signal_registry 仅插件行——内置不落库）。
+    每条目带 scopes 域标注（hypothesis/analysis/strategy 三域可用性——
+    消除"一个清单看似全域通用"的暗坑）。
     """
     from core.persistence.repository.research import list_signal_registry_entries
 
@@ -96,6 +112,7 @@ def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
             "lookback": meta["lookback"],
             "strategy_visible": True,
             "version": None,
+            "scopes": _scopes_for("builtin", True),
         })
     for entry in list_signal_registry_entries(db_path, only_visible=True):
         columns.append({
@@ -106,5 +123,6 @@ def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
             "lookback": None,  # 插件 lookback 由表达式/模板自证（求值时声明）
             "strategy_visible": bool(entry["strategy_visible"]),
             "version": entry["version"],
+            "scopes": _scopes_for(entry["source"], bool(entry["strategy_visible"])),
         })
     return columns

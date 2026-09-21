@@ -156,6 +156,107 @@ def transition_hypothesis(
         return result.rowcount
 
 
+def transition_hypothesis_with_promotion(
+    db_path: Path,
+    hypothesis_id: str,
+    *,
+    target_status: str,
+    terminal_ref: str,
+    superseded_by: Optional[str] = None,
+    promote: bool = False,
+    log_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """条件迁移 + 迁移日志 +（promote 时）谱系 draft 原子转正，同一事务。
+
+    promote 独立证据条件（improve-mcp-agent-loop M4）：仅当存在挂
+    (hypothesis_id, 该 draft) 的 verdict=pass 记录才转正——防"用别的
+    策略的 pass 定证、转正未验证的 draft"的调包；无自身 pass 时假设
+    照常定证、draft 保持 draft（日志记因）。draft 已被人工删除则跳过
+    转正并落日志（显式清理不阻塞假设定案）。
+
+    Returns:
+        {"rows": 0|1, "promoted": bool, "promoted_strategy_id": Optional[str],
+         "promotion_note": Optional[str]}
+    """
+    from core.persistence.orm.models import Strategy
+
+    engine = _engine_for(db_path)
+    now = _now()
+    out: Dict[str, Any] = {"rows": 0, "promoted": False,
+                           "promoted_strategy_id": None, "promotion_note": None}
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(ResearchHypothesis)
+            .where(ResearchHypothesis.hypothesis_id == hypothesis_id,
+                   ResearchHypothesis.status == "active")
+            .values(
+                status=target_status,
+                terminal_ref=terminal_ref,
+                superseded_by=superseded_by,
+                updated_at=now,
+            )
+        )
+        if result.rowcount == 0:
+            return out
+        out["rows"] = 1
+        conn.execute(insert(ResearchLog).values(
+            log_id=log_id or _new_id(),
+            hypothesis_id=hypothesis_id,
+            entry_type="transition",
+            ref_id=terminal_ref,
+            summary=f"active -> {target_status} (ref={terminal_ref})",
+            created_at=now,
+        ))
+
+        if not promote:
+            return out
+
+        drafts = conn.execute(
+            select(Strategy.strategy_id)
+            .where(Strategy.parent_ids == hypothesis_id,
+                   Strategy.status == "draft")
+        ).scalars().all()
+        if not drafts:
+            out["promotion_note"] = "谱系无 draft（已删除或未转化），跳过转正"
+            conn.execute(insert(ResearchLog).values(
+                log_id=_new_id(), hypothesis_id=hypothesis_id,
+                entry_type="promotion", ref_id=terminal_ref,
+                summary="promotion skipped: no draft in lineage",
+                created_at=now))
+            return out
+
+        for draft_id in drafts:
+            has_own_pass = conn.execute(
+                select(ValidationRecord.record_id)
+                .where(ValidationRecord.hypothesis_id == hypothesis_id,
+                       ValidationRecord.strategy_id == draft_id,
+                       ValidationRecord.verdict == "pass")
+                .limit(1)
+            ).first()
+            if has_own_pass is None:
+                out["promotion_note"] = (
+                    f"draft {draft_id} 无自身 pass 记录，保持 draft（证据绑定未满足）")
+                conn.execute(insert(ResearchLog).values(
+                    log_id=_new_id(), hypothesis_id=hypothesis_id,
+                    entry_type="promotion", ref_id=draft_id,
+                    summary="promotion skipped: draft has no own pass record",
+                    created_at=now))
+                continue
+            conn.execute(
+                update(Strategy)
+                .where(Strategy.strategy_id == draft_id)
+                .values(status="active", updated_at=now)
+            )
+            out["promoted"] = True
+            out["promoted_strategy_id"] = draft_id
+            conn.execute(insert(ResearchLog).values(
+                log_id=_new_id(), hypothesis_id=hypothesis_id,
+                entry_type="promotion", ref_id=draft_id,
+                summary=f"draft promoted -> active (evidence-bound pass {has_own_pass[0]})",
+                created_at=now))
+        return out
+
+
 # ============================================================ 研究日志
 
 def append_research_log(

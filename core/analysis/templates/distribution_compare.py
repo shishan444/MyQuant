@@ -17,6 +17,7 @@ import pandas as pd
 from scipy import stats as sps
 
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.templates.column_guard import require_column
 
 
 def distribution_compare(
@@ -39,11 +40,10 @@ def distribution_compare(
         group_a / group_b: 两组的半开时间窗。
 
     Raises:
-        KeyError: 列缺失。
+        ResearchError: 列不可用（附可用列清单）。
         ValueError: 区间空数据 / 小样本。
     """
-    if column not in df.columns:
-        raise KeyError(f"列缺失: {column}（可用列: {list(df.columns)[:20]}）")
+    require_column(df, column, template="distribution_compare")
 
     if transform == "returns":
         series = df[column].pct_change().dropna()

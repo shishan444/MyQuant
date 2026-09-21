@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 
 from core.persistence.orm.models import Strategy
 from core.persistence.repository.dataset_meta import _engine_for, _now
@@ -45,11 +45,16 @@ def save_strategy(
     notes: Optional[str] = None,
     metrics_json: Optional[str] = None,
     gene_signature: Optional[str] = None,
+    status: str = "active",
 ) -> None:
     """Insert a new strategy record. Deduplicates by gene_signature.
 
     If a strategy with the same gene_signature already exists, keeps the one
     with the higher best_score（单事务原子，语义同旧轨）。
+
+    status="draft" 免去重（improve-mcp-agent-loop M4）：草稿无绩效，
+    "保留更优"语义错位且会静默吞掉插入（translate 幽灵 id）——草稿
+    一律纯 insert，同签名分流由调用方（translate）显式处理。
     """
     if gene_signature is None:
         try:
@@ -62,7 +67,7 @@ def save_strategy(
     now = _now()
     engine = _engine_for(db_path)
     with engine.begin() as conn:
-        if gene_signature:
+        if gene_signature and status != "draft":
             existing = conn.execute(
                 select(Strategy.strategy_id, Strategy.best_score)
                 .where(Strategy.gene_signature == gene_signature)
@@ -94,7 +99,8 @@ def save_strategy(
             source_task_id=source_task_id, symbol=symbol, timeframe=timeframe,
             best_score=best_score, generation=generation, parent_ids=parent_ids,
             tags=tags, notes=notes, metrics_json=metrics_json,
-            gene_signature=gene_signature, created_at=now, updated_at=now,
+            gene_signature=gene_signature, status=status,
+            created_at=now, updated_at=now,
         ))
 
 
@@ -106,6 +112,18 @@ def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
             select(Strategy).where(Strategy.strategy_id == strategy_id)
         ).mappings().first()
     return dict(row) if row is not None else None
+
+
+def find_by_gene_signature(
+    db_path: Path, gene_signature: str,
+) -> List[Dict[str, Any]]:
+    """按基因签名查全部同签名策略（含 status；translate 同签名分流用）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(Strategy).where(Strategy.gene_signature == gene_signature)
+        ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 def count_strategies_by_tasks(
@@ -141,6 +159,7 @@ def _strategy_filters(
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
 ):
     if symbol is not None:
         stmt = stmt.where(Strategy.symbol == symbol)
@@ -152,6 +171,12 @@ def _strategy_filters(
         stmt = stmt.where(Strategy.tags.like(f"%{tags}%"))
     if qualified is not None:
         stmt = stmt.where(Strategy.qualified == (1 if qualified else 0))
+    # 状态过滤（M4）：None=默认视图排除 draft；显式值=精确匹配（draft 可查）
+    if status is None:
+        stmt = stmt.where(or_(Strategy.status.is_(None),
+                              Strategy.status != "draft"))
+    else:
+        stmt = stmt.where(Strategy.status == status)
     return stmt
 
 
@@ -163,11 +188,12 @@ def count_strategies(
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
 ) -> int:
     stmt = _strategy_filters(
         select(func.count()).select_from(Strategy),
         symbol=symbol, source=source, source_task_id=source_task_id,
-        tags=tags, qualified=qualified,
+        tags=tags, qualified=qualified, status=status,
     )
     engine = _engine_for(db_path)
     with engine.connect() as conn:
@@ -182,12 +208,17 @@ def list_strategies(
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List strategies with optional filtering, sorting, and pagination."""
+    """List strategies with optional filtering, sorting, and pagination.
+
+    status=None 默认视图排除 draft；显式 status（draft/active/archived）
+    精确匹配（草稿可见性走显式查询）。
+    """
     if sort_by not in _SORT_ALLOWED_COLUMNS:
         raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
     if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
@@ -198,6 +229,7 @@ def list_strategies(
     stmt = _strategy_filters(
         select(Strategy), symbol=symbol, source=source,
         source_task_id=source_task_id, tags=tags, qualified=qualified,
+        status=status,
     ).order_by(order_col).limit(limit).offset(offset)
     engine = _engine_for(db_path)
     with engine.connect() as conn:

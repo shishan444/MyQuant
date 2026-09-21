@@ -181,6 +181,8 @@ class StrategyResponse(BaseModel):
     timeframe: str
     source: str = "manual"
     source_task_id: Optional[str] = None
+    gene_signature: Optional[str] = None
+    status: Optional[str] = None  # draft | active | archived
     best_score: Optional[float] = None
     best_fitness: Optional[float] = None
     qualified: Optional[bool] = None
@@ -228,7 +230,11 @@ class BacktestRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    score_template: str = "explorer"
+    # DEPRECATED（improve-mcp-agent-loop M5）：评分模板残骸，仅兼容保留，
+    # 不影响回测结果；勿在新调用方依赖
+    score_template: str = Field(
+        "explorer", description="DEPRECATED: 评分模板残骸，仅兼容保留，"
+        "不影响回测结果；勿在新调用方依赖")
     data_start: Optional[str] = None
     data_end: Optional[str] = None
     timeframe_pool: Optional[List[str]] = None
@@ -813,8 +819,8 @@ class HypothesisCreate(BaseModel):
 
 
 class HypothesisTransitionRequest(BaseModel):
-    target_status: str  # supported | refuted | superseded
-    evidence_ref: str
+    target_status: str  # supported | refuted | superseded | abandoned
+    evidence_ref: str  # 验证 record_id / 接替假设 id / abandoned 时为放弃说明
 
 
 class HypothesisResponse(BaseModel):
@@ -835,6 +841,21 @@ class IsolatedBacktestRequest(BaseModel):
     strategy_id: str
     request_range: DataRangeItem
     threshold_profile: Optional[Dict[str, Any]] = None
+
+
+class SandboxBacktestRequest(BaseModel):
+    """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
+    不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"""
+
+    strategy_id: str
+    symbol: str = "BTCUSDT"
+    timeframe: str = "4h"
+    start: str
+    end: str
+    fee: float = 0.001
+    slippage: float = 0.0005
+    init_cash: float = 100000.0
+    hypothesis_id: Optional[str] = None
 
 
 class RandomWindowRequest(BaseModel):

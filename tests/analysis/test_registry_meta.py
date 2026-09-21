@@ -86,3 +86,19 @@ class TestAvailableSignalColumns:
         """strategy_visible=0 的插件列不进合并清单（list 过滤在 repository）。"""
         cols = available_signal_columns(db_path)
         assert all(c["strategy_visible"] for c in cols)
+
+    def test_scopes_annotation_present_and_consistent(self, db_path: Path) -> None:
+        """M5 域标注：每条目带三域标注，且与模板实际可用性一致——
+        指标列可作假设 subject 与策略信号源，但不可直接用于列引用类
+        模板（correlation_scan 的 df 为原始列，指标分析走 condition_stats
+        的 indicator 参数）。"""
+        cols = available_signal_columns(db_path)
+        assert cols
+        for c in cols:
+            assert set(c["scopes"]) == {"hypothesis", "analysis", "strategy"}
+            assert c["scopes"]["hypothesis"] is True
+            assert c["scopes"]["strategy"] is c["strategy_visible"]
+            if c["source"] == "builtin":
+                assert c["scopes"]["analysis"] is False, (
+                    "内置指标列不可直接用于列引用模板（rsi_14 引用即"
+                    "RESEARCH_COLUMN_NOT_AVAILABLE——错误即文档）")

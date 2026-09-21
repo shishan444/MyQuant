@@ -154,6 +154,7 @@ def save_strategy(
     notes: Optional[str] = None,
     metrics_json: Optional[str] = None,
     gene_signature: Optional[str] = None,
+    status: str = "active",
 ) -> None:
     """Insert a new strategy record（B3b.1 起委托 repository，签名不变）。"""
     from core.persistence.repository import strategy as repo
@@ -163,6 +164,7 @@ def save_strategy(
         source_task_id=source_task_id, best_score=best_score,
         generation=generation, parent_ids=parent_ids, tags=tags, notes=notes,
         metrics_json=metrics_json, gene_signature=gene_signature,
+        status=status,
     )
 
 
@@ -190,12 +192,13 @@ def count_strategies(
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
 ) -> int:
     """Count strategies with optional filtering（委托 repository）。"""
     from core.persistence.repository import strategy as repo
     return repo.count_strategies(
         db_path, symbol=symbol, source=source, source_task_id=source_task_id,
-        tags=tags, qualified=qualified,
+        tags=tags, qualified=qualified, status=status,
     )
 
 
@@ -207,6 +210,7 @@ def list_strategies(
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
+    status: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = 100,
@@ -216,7 +220,8 @@ def list_strategies(
     from core.persistence.repository import strategy as repo
     return repo.list_strategies(
         db_path, symbol=symbol, source=source, source_task_id=source_task_id,
-        tags=tags, qualified=qualified, sort_by=sort_by, sort_order=sort_order,
+        tags=tags, qualified=qualified, status=status,
+        sort_by=sort_by, sort_order=sort_order,
         limit=limit, offset=offset,
     )
 

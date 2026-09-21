@@ -16,6 +16,18 @@ import uvicorn
 
 pytestmark = [pytest.mark.integration]
 
+
+def _run_async_compat(coro):
+    """asyncio.run 的环境兼容版（同 test_server 形制——playwright e2e
+    泄漏活动 loop 时全量顺序下 asyncio.run 抛 RuntimeError）。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
 from api.app import create_app
 
 
@@ -73,7 +85,7 @@ def test_stdio_full_chain(live_api):
                 # 1) 工具列表（research 档 22 个）
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
-                assert len(names) == 22, f"研究档工具数: {len(names)}"
+                assert len(names) == 24, f"研究档工具数: {len(names)}"
                 assert "register_hypothesis" in names
                 assert "translate_hypothesis_to_strategy" in names
 
@@ -105,4 +117,4 @@ def test_stdio_full_chain(live_api):
                 for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
                     assert part in text
 
-    asyncio.run(asyncio.wait_for(_run(), timeout=60))
+    _run_async_compat(asyncio.wait_for(_run(), timeout=60))

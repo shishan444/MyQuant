@@ -52,15 +52,15 @@ def condition_stats(
             （命名形如 ema_50）或基础列（close/volume/open_interest...）。
 
     Raises:
-        KeyError: 指标不在注册表。
+        ResearchError: 未知指标（附注册表清单）。
         ValueError: 条件列缺失 / 小样本拒绝（经 build_result）。
     """
     from core.features.indicators import _compute_indicator
     from core.features.registry import INDICATOR_REGISTRY
     from core.validation.engine import _evaluate_single_condition
 
-    if indicator not in INDICATOR_REGISTRY:
-        raise KeyError(f"未知指标: {indicator}（不在 INDICATOR_REGISTRY）")
+    from core.analysis.templates.column_guard import require_indicator
+    require_indicator(indicator, INDICATOR_REGISTRY)
 
     # 指标计算（不改输入 df；新建工作帧合并新列）
     new_cols = _compute_indicator(df, indicator, dict(params))

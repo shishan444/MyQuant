@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.templates.column_guard import require_column
 
 
 def event_study(
@@ -37,6 +38,11 @@ def event_study(
         ValueError: 事件数不足（小样本拒绝）。
     """
     from core.validation.engine import _evaluate_single_condition
+
+    # 列前置检查：subject 不可用先结构化拒绝（否则 mask 全 False 会以
+    # 误导性的"事件数不足"小样本拒绝收场）
+    require_column(df, str(condition.get("subject", "")),
+                   template="event_study")
 
     mask = _evaluate_single_condition(df, condition)
     mask = mask.fillna(False).astype(bool)

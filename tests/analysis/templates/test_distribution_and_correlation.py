@@ -6,6 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.correlation_scan import correlation_scan
 from core.analysis.templates.distribution_compare import distribution_compare
 
@@ -62,9 +63,10 @@ class TestDistributionCompare:
     def test_missing_column_rejected(self) -> None:
         df = _make_df(100)
         a, b = self._windows(df)
-        with pytest.raises(KeyError, match="列缺失"):
+        with pytest.raises(ResearchError) as ei:
             distribution_compare(df, column="nope", group_a=a, group_b=b,
                                  data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
 
     def test_empty_window_rejected(self) -> None:
         df = _make_df(100)
@@ -103,8 +105,9 @@ class TestCorrelationScan:
 
     def test_missing_signal_column(self) -> None:
         df = _make_df(100)
-        with pytest.raises(KeyError, match="信号列缺失"):
+        with pytest.raises(ResearchError) as ei:
             correlation_scan(df, signal_column="nope", data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
 
     def test_result_carries_three_elements(self) -> None:
         df = _make_df(300)

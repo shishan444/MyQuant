@@ -1,0 +1,192 @@
+"""M1 错误通道测试（improve-mcp-agent-loop 1.1/1.2/1.3）。
+
+覆盖三件：ApiError 解析（409 结构化透传 / 500 无 body 降级 / 连接失败）、
+hint 注册表与服务端实际抛出码对拍（漂移即红）、tool_safe 装饰器失败
+注入（code+hint 齐备）与成功路径形制不变。
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import httpx
+import pytest
+
+from mcpserver.api_client import (
+    ApiError,
+    ApiUnreachable,
+    EndpointNotAllowed,
+    QuantApiClient,
+)
+from mcpserver.errors import HINTS, error_payload, hint_for, payload_from
+from mcpserver.tools import tool_safe
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _FakeResp:
+    def __init__(self, status_code: int, body=None, text: str = ""):
+        self.status_code = status_code
+        self.is_error = status_code >= 400
+        self.reason_phrase = "Fake"
+        self._body = body
+        self.text = text
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no body")
+        return self._body
+
+
+class _FakeCtx:
+    def __init__(self, resp):
+        self._resp = resp
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, params=None):
+        return self._resp
+
+    def post(self, url, json=None):
+        return self._resp
+
+
+def _client_with(monkeypatch, resp) -> QuantApiClient:
+    import mcpserver.api_client as ac
+    monkeypatch.setattr(ac.httpx, "Client", lambda **kw: _FakeCtx(resp))
+    return QuantApiClient(base_url="http://x", profile="research")
+
+
+class TestApiErrorParsing:
+    """1.1 三类失败：结构化透传 / 降级 / 不可达。"""
+
+    def test_409_structured_body_passthrough(self, monkeypatch) -> None:
+        """4xx 带 code 的结构化 body → 透传工程码族。"""
+        resp = _FakeResp(409, body={
+            "detail": {"code": "RESEARCH_RANGE_OVERLAP",
+                       "message": "区间重叠",
+                       "detail": {"judged_ranges": [], "overlaps": ["R"]}}})
+        api = _client_with(monkeypatch, resp)
+        with pytest.raises(ApiError) as ei:
+            api.post("/api/research/validate-backtest", {})
+        assert ei.value.status == 409
+        assert ei.value.code == "RESEARCH_RANGE_OVERLAP"
+        assert ei.value.message == "区间重叠"
+        assert ei.value.detail == {"judged_ranges": [], "overlaps": ["R"]}
+
+    def test_500_no_body_degrades(self, monkeypatch) -> None:
+        """5xx 无结构化 body → 降级 API_INTERNAL_ERROR 形式（message 状态行）。"""
+        api = _client_with(monkeypatch, _FakeResp(500))
+        with pytest.raises(ApiError) as ei:
+            api.get("/api/research/hypotheses")
+        assert ei.value.code == "API_INTERNAL_ERROR"
+        assert "500" in ei.value.message
+
+    def test_422_pydantic_detail_preserved(self, monkeypatch) -> None:
+        """422 pydantic 校验失败（detail 为 list 无 code）→ 降级但保留原始校验信息。"""
+        resp = _FakeResp(422, body={"detail": [{"loc": ["body", "conditions"],
+                                                 "msg": "Field required"}]})
+        api = _client_with(monkeypatch, resp)
+        with pytest.raises(ApiError) as ei:
+            api.post("/api/research/hypotheses", {"bad": 1})
+        assert ei.value.code == "API_INTERNAL_ERROR"
+        assert isinstance(ei.value.detail, list)
+
+    def test_connect_error_unreachable(self) -> None:
+        """连接失败 → ApiUnreachable（不变：不误判为服务端拒绝）。"""
+        api = QuantApiClient(base_url="http://127.0.0.1:1", profile="research")
+        with pytest.raises(ApiUnreachable):
+            api.get("/api/research/hypotheses")
+
+
+class TestHintRegistry:
+    """1.2 注册表对拍：覆盖服务端实际抛出的全部 ResearchError 码。"""
+
+    def test_registry_covers_all_raised_codes(self) -> None:
+        """静态扫描 core/analysis + api/routes 的 raise ResearchError 码，注册表须全覆盖。"""
+        raised: set[str] = set()
+        for src_dir in ("core/analysis", "api/routes"):
+            for path in (REPO_ROOT / src_dir).rglob("*.py"):
+                text = path.read_text(encoding="utf-8")
+                raised.update(re.findall(r'ResearchError\(\s*"([A-Z_]+)"', text))
+        assert raised, "扫描结果为空——源码路径或提取模式失效"
+        missing = raised - HINTS.keys()
+        assert not missing, f"注册表缺码（hint 不可行动）: {sorted(missing)}"
+
+    def test_mcp_layer_codes_registered(self) -> None:
+        """MCP 客户端侧与降级码也须有 hint。"""
+        for code in ("MCP_ENDPOINT_NOT_ALLOWED", "API_UNREACHABLE",
+                     "API_INTERNAL_ERROR"):
+            assert code in HINTS
+
+    def test_unknown_code_falls_back(self) -> None:
+        """未注册码回退通用指引（不空、不抛）。"""
+        hint = hint_for("RESEARCH_NEVER_SEEN_BEFORE")
+        assert hint and hint != ""
+
+
+class TestToolSafeDecorator:
+    """1.3 装饰器：失败转 {"error": {...}}；成功形制不变。"""
+
+    def test_api_error_becomes_payload(self) -> None:
+        @tool_safe
+        def probe():
+            raise ApiError(409, "RESEARCH_RANGE_OVERLAP", "区间重叠",
+                           {"overlaps": ["R"]})
+
+        out = probe()
+        err = out["error"]
+        assert set(err) == {"code", "message", "detail", "hint"}
+        assert err["code"] == "RESEARCH_RANGE_OVERLAP"
+        assert "并集" in err["hint"]  # hint 可行动（指明换区间）
+
+    @pytest.mark.parametrize("code", [
+        "RESEARCH_HYPOTHESIS_TERMINAL",
+        "RESEARCH_EVIDENCE_NOT_FOUND",
+        "RESEARCH_TRANSITION_INVALID",
+        "RESEARCH_DATA_INSUFFICIENT",
+        "RESEARCH_WARMUP_INSUFFICIENT",
+        "RESEARCH_NOT_EXPRESSIBLE",
+        "RESEARCH_CONDITION_INVALID",
+        "API_INTERNAL_ERROR",
+    ])
+    def test_eight_failure_codes_carry_hint(self, code) -> None:
+        """≥8 类典型失败：code+hint 齐备（hint 是注册值而非回退值）。"""
+
+        @tool_safe
+        def probe():
+            raise ApiError(422, code, "x", None)
+
+        err = probe()["error"]
+        assert err["code"] == code
+        assert err["hint"] == HINTS[code]
+
+    def test_endpoint_not_allowed(self) -> None:
+        @tool_safe
+        def probe():
+            raise EndpointNotAllowed("POST 端点 /x 不在白名单")
+
+        err = probe()["error"]
+        assert err["code"] == "MCP_ENDPOINT_NOT_ALLOWED"
+        assert "档" in err["hint"]
+
+    def test_unreachable(self) -> None:
+        @tool_safe
+        def probe():
+            raise ApiUnreachable("API 不可达")
+
+        err = probe()["error"]
+        assert err["code"] == "API_UNREACHABLE"
+
+    def test_success_path_unchanged(self) -> None:
+        """成功路径零改变：原样返回，无包裹层。"""
+
+        @tool_safe
+        def probe():
+            return {"items": [1, 2], "total": 2}
+
+        assert probe() == {"items": [1, 2], "total": 2}

@@ -170,8 +170,12 @@ def register_hypothesis(
 
 # ---------------------------------------------------------------- 迁移
 
-_TERMINAL = ("supported", "refuted", "superseded")
+# abandoned 为免证据的主动放弃终态（区别于被证据驳倒的 refuted）
+_TERMINAL = ("supported", "refuted", "superseded", "abandoned")
 _VALID_TARGETS = _TERMINAL
+
+# 证据 verdict 匹配：supported 须 pass、refuted 须 fail（M4 协议修复）
+_REQUIRED_VERDICT = {"supported": "pass", "refuted": "fail"}
 
 
 def transition_hypothesis(
@@ -181,10 +185,15 @@ def transition_hypothesis(
     target_status: str,
     evidence_ref: str,
 ) -> Dict[str, Any]:
-    """状态迁移：证据/接替引用校验 + 条件更新 + 幂等语义。
+    """状态迁移：证据/verdict/接替引用校验 + 条件更新 + 幂等 + 原子转正。
+
+    supported 时谱系 draft 满足独立证据条件（自身有挂
+    (hypothesis_id, draft) 的 pass 记录）则同事务转正。
 
     Returns:
-        {"hypothesis_id", "status", "idempotent": bool}
+        {"hypothesis_id", "status", "idempotent": bool,
+         "promoted": bool, "promoted_strategy_id": Optional[str],
+         "promotion_note": Optional[str]}
     """
     if target_status not in _VALID_TARGETS:
         raise ResearchError("RESEARCH_TRANSITION_INVALID",
@@ -197,38 +206,58 @@ def transition_hypothesis(
         raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND", f"假设不存在: {hypothesis_id}",
                             status=404)
 
-    # 证据引用真实性：superseded 指接替假设；supported/refuted 指验证记录
-    if target_status == "superseded":
-        if rr.get_hypothesis(db_path, evidence_ref) is None:
-            raise ResearchError("RESEARCH_EVIDENCE_NOT_FOUND",
-                                f"接替假设不存在: {evidence_ref}")
-    else:
-        records = rr.list_validation_records(
-            db_path, hypothesis_id=hypothesis_id, limit=200)
-        if not any(r["record_id"] == evidence_ref for r in records):
-            raise ResearchError(
-                "RESEARCH_EVIDENCE_NOT_FOUND",
-                f"证据验证记录不存在或不属于该假设: {evidence_ref}")
-
+    # 终态检查先于证据校验：终态假设立即拒绝（幂等判断同块），
+    # 不被"证据记录不存在"的 404 掩盖终态事实
     if hyp["status"] in _TERMINAL:
         if hyp["status"] == target_status and hyp["terminal_ref"] == evidence_ref:
-            return {"hypothesis_id": hypothesis_id, "status": target_status, "idempotent": True}
+            return {"hypothesis_id": hypothesis_id, "status": target_status,
+                    "idempotent": True, "promoted": False,
+                    "promoted_strategy_id": None, "promotion_note": None}
         raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
                             f"假设已终态（{hyp['status']}），不可再迁移",
                             status=409)
 
-    n = rr.transition_hypothesis(
+    # 证据引用真实性：superseded 指接替假设；supported/refuted 指验证记录
+    # （verdict 必须与目标态匹配——fail 记录不得迁 supported）；
+    # abandoned 免证据（evidence_ref 为放弃说明文本，落日志）
+    if target_status == "superseded":
+        if rr.get_hypothesis(db_path, evidence_ref) is None:
+            raise ResearchError("RESEARCH_EVIDENCE_NOT_FOUND",
+                                f"接替假设不存在: {evidence_ref}")
+    elif target_status in _REQUIRED_VERDICT:
+        records = rr.list_validation_records(
+            db_path, hypothesis_id=hypothesis_id, limit=200)
+        rec = next((r for r in records if r["record_id"] == evidence_ref), None)
+        if rec is None:
+            raise ResearchError(
+                "RESEARCH_EVIDENCE_NOT_FOUND",
+                f"证据验证记录不存在或不属于该假设: {evidence_ref}")
+        need = _REQUIRED_VERDICT[target_status]
+        if rec["verdict"] != need:
+            raise ResearchError(
+                "RESEARCH_TRANSITION_INVALID",
+                f"verdict 不匹配：{target_status} 须引用 verdict={need} 的记录，"
+                f"而 {evidence_ref} 为 {rec['verdict']}")
+
+    result = rr.transition_hypothesis_with_promotion(
         db_path, hypothesis_id,
         target_status=target_status,
         terminal_ref=evidence_ref,
         superseded_by=evidence_ref if target_status == "superseded" else None,
+        promote=(target_status == "supported"),
     )
-    if n == 0:
+    if result["rows"] == 0:
         # 并发竞争：另一请求先迁移——重查判读
         fresh = rr.get_hypothesis(db_path, hypothesis_id)
         if fresh is not None and fresh["status"] == target_status:
-            return {"hypothesis_id": hypothesis_id, "status": target_status, "idempotent": True}
+            return {"hypothesis_id": hypothesis_id, "status": target_status,
+                    "idempotent": True, "promoted": False,
+                    "promoted_strategy_id": None, "promotion_note": None}
         raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
                             f"并发迁移冲突：假设现为 {fresh['status'] if fresh else '缺失'}",
                             status=409)
-    return {"hypothesis_id": hypothesis_id, "status": target_status, "idempotent": False}
+    return {"hypothesis_id": hypothesis_id, "status": target_status,
+            "idempotent": False,
+            "promoted": result["promoted"],
+            "promoted_strategy_id": result["promoted_strategy_id"],
+            "promotion_note": result["promotion_note"]}

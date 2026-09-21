@@ -239,6 +239,10 @@ class Strategy(Base):
     strategy_id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[Optional[str]] = mapped_column(Text)
     dna_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # 生命周期状态（improve-mcp-agent-loop M4）：draft=假设转化草稿
+    # （验证对象、不可直接消费）；active=可消费；archived=归档
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'"))
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'manual'"))
     source_task_id: Mapped[Optional[str]] = mapped_column(Text)
     symbol: Mapped[str] = mapped_column(Text, nullable=False)
