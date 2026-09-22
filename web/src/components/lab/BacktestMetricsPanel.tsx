@@ -32,6 +32,36 @@ export function BacktestMetricsPanel({ result }: BacktestMetricsPanelProps) {
       value: String(result.total_trades),
       color: result.total_trades > 10 ? "text-slate-200" : "text-amber-400",
     },
+    // 基准对照（improve-backtest-benchmark-disclosure 4.2）：Optional 字段
+    // 值非 null/undefined 才入 items（旧后端形制无新键 → 三卡均不渲染）。
+    // 基准=零费买入持有（中性色）；超额/年化超额正绿负红对齐总收益形制。
+    ...(result.benchmark_return != null
+      ? [
+          {
+            label: "基准收益",
+            value: `${(result.benchmark_return * 100).toFixed(2)}%`,
+            color: "text-slate-200",
+          },
+        ]
+      : []),
+    ...(result.excess_return != null
+      ? [
+          {
+            label: "超额收益",
+            value: `${(result.excess_return * 100).toFixed(2)}%`,
+            color: result.excess_return > 0 ? "text-emerald-400" : "text-red-400",
+          },
+        ]
+      : []),
+    ...(result.alpha != null
+      ? [
+          {
+            label: "年化超额",
+            value: `${(result.alpha * 100).toFixed(2)}%`,
+            color: result.alpha > 0 ? "text-emerald-400" : "text-red-400",
+          },
+        ]
+      : []),
   ];
 
   return (

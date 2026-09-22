@@ -117,7 +117,7 @@
           "strategies"
         ],
         "summary": "List Strategies Endpoint",
-        "description": "List strategies with filtering, sorting, and pagination.",
+        "description": "List strategies with filtering, sorting, and pagination.\n\nstatus=None 默认视图排除 draft；显式 status=draft 可查草稿。",
         "operationId": "list_strategies_endpoint_api_strategies_get",
         "parameters": [
           {
@@ -182,6 +182,22 @@
                 }
               ],
               "title": "Qualified"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           },
           {
@@ -3344,6 +3360,50 @@
         }
       }
     },
+    "/api/research/backtest-sandbox": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Backtest Sandbox",
+        "description": "沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；\n不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。",
+        "operationId": "backtest_sandbox_api_research_backtest_sandbox_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxBacktestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Backtest Sandbox Api Research Backtest Sandbox Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/random-window-test": {
       "post": {
         "tags": [
@@ -4179,6 +4239,7 @@
           "score_template": {
             "type": "string",
             "title": "Score Template",
+            "description": "DEPRECATED: 评分模板残骸，仅兼容保留，不影响回测结果；勿在新调用方依赖",
             "default": "explorer"
           },
           "data_start": {
@@ -4393,6 +4454,61 @@
             "type": "boolean",
             "title": "Liquidated",
             "default": false
+          },
+          "benchmark_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Return"
+          },
+          "excess_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excess Return"
+          },
+          "alpha": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha"
+          },
+          "market_annual_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Annual Return"
+          },
+          "profit_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Factor"
           }
         },
         "type": "object",
@@ -7528,6 +7644,66 @@
         "type": "object",
         "title": "RuleValidateResponse"
       },
+      "SandboxBacktestRequest": {
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol",
+            "default": "BTCUSDT"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe",
+            "default": "4h"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee",
+            "default": 0.001
+          },
+          "slippage": {
+            "type": "number",
+            "title": "Slippage",
+            "default": 0.0005
+          },
+          "init_cash": {
+            "type": "number",
+            "title": "Init Cash",
+            "default": 100000.0
+          },
+          "hypothesis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hypothesis Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "start",
+          "end"
+        ],
+        "title": "SandboxBacktestRequest",
+        "description": "沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、\n不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"
+      },
       "SceneRequest": {
         "properties": {
           "symbol": {
@@ -8028,6 +8204,28 @@
               }
             ],
             "title": "Source Task Id"
+          },
+          "gene_signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gene Signature"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           },
           "best_score": {
             "anyOf": [

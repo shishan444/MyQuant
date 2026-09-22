@@ -33,6 +33,8 @@ export interface paths {
         /**
          * List Strategies Endpoint
          * @description List strategies with filtering, sorting, and pagination.
+         *
+         *     status=None 默认视图排除 draft；显式 status=draft 可查草稿。
          */
         get: operations["list_strategies_endpoint_api_strategies_get"];
         put?: never;
@@ -154,7 +156,11 @@ export interface paths {
         put?: never;
         /**
          * Verify Strategies Stream
-         * @description SSE streaming variant of /verify. Yields progress events per group×range step.
+         * @description B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。
+         *
+         *     断线语义（B8.0 ②）：任务跑完并落库（verify_session 持久化在），
+         *     重连恢复面=GET /verify/sessions/{session_id}/results。
+         *     取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。
          */
         post: operations["verify_strategies_stream_api_strategies_verify_stream_post"];
         delete?: never;
@@ -234,7 +240,10 @@ export interface paths {
         put?: never;
         /**
          * Batch Backtest Stream
-         * @description SSE streaming endpoint for batch backtesting multiple strategies across date ranges.
+         * @description B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。
+         *
+         *     batch 无持久 session（SSE 时代逐请求）——session_id 为本请求生成的
+         *     room 键；取消/断线语义同 verify（B8.0 ①②）。
          */
         post: operations["batch_backtest_stream_api_strategies_batch_backtest_stream_post"];
         delete?: never;
@@ -1001,6 +1010,331 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/hypotheses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Hypotheses */
+        get: operations["list_hypotheses_api_research_hypotheses_get"];
+        put?: never;
+        /**
+         * Register Hypothesis
+         * @description 登记假设：结构化 WHEN/THEN 条件 + 人话陈述 + 数据区间。
+         */
+        post: operations["register_hypothesis_api_research_hypotheses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/hypotheses/{hypothesis_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Hypothesis */
+        get: operations["get_hypothesis_api_research_hypotheses__hypothesis_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/hypotheses/{hypothesis_id}/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transition Hypothesis
+         * @description 状态迁移：active -> supported|refuted|superseded（必引证据）。
+         */
+        post: operations["transition_hypothesis_api_research_hypotheses__hypothesis_id__transition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/validate-backtest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Backtest
+         * @description 隔离回测：判定并集拒绝 + warmup 推导前扩 + 门槛机械判定。
+         */
+        post: operations["validate_backtest_api_research_validate_backtest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/backtest-sandbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Backtest Sandbox
+         * @description 沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
+         *     不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。
+         */
+        post: operations["backtest_sandbox_api_research_backtest_sandbox_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/random-window-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Random Window Test
+         * @description 随机窗口抽查（种子记录于验证记录，可复现）。
+         */
+        post: operations["random_window_test_api_research_random_window_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/validation/{strategy_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Validation Report
+         * @description 验证档案：人话关键数字摘要（普通人可读，最差情况与样本量）。
+         */
+        get: operations["validation_report_api_research_validation__strategy_id__report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/translate/{hypothesis_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Translate Hypothesis
+         * @description 假设→策略转化器：conditions 为唯一翻译源；不可表达显式拒绝。
+         */
+        post: operations["translate_hypothesis_api_research_translate__hypothesis_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Analysis */
+        post: operations["run_analysis_api_research_analysis_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/analysis/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Analysis Task
+         * @description 长任务轮询：status ∈ pending|running|succeeded|failed。
+         */
+        get: operations["get_analysis_task_api_research_analysis_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/plugins/formula": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Formula Plugins
+         * @description 公式插件版本审计（历史版本可查，5.5）。
+         */
+        get: operations["list_formula_plugins_api_research_plugins_formula_get"];
+        put?: never;
+        /**
+         * Create Formula Plugin
+         * @description 公式插件注册：静态校验三关 → 版本化 → signal_registry（原子）。
+         */
+        post: operations["create_formula_plugin_api_research_plugins_formula_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/plugins/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Model Plugins
+         * @description 模型插件版本审计（含 rejected 记录与原因，卡5）。
+         */
+        get: operations["list_model_plugins_api_research_plugins_model_get"];
+        put?: never;
+        /**
+         * Create Model Plugin
+         * @description 模型插件配置：同步校验 + 异步训练（202 + 句柄轮询）。
+         */
+        post: operations["create_model_plugin_api_research_plugins_model_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/indicators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Indicators
+         * @description 内置指标元数据（47 项，含 lookback——warmup 推导依据）。
+         */
+        get: operations["indicators_api_research_indicators_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Signals
+         * @description 可用信号列：内置 ∪ 插件，运行时合并（条目标注来源）。
+         */
+        get: operations["signals_api_research_signals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Research Log
+         * @description 研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。
+         */
+        get: operations["research_log_api_research_log_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/feature-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Feature Requests */
+        get: operations["list_feature_requests_api_research_feature_requests_get"];
+        put?: never;
+        /**
+         * Create Feature Request
+         * @description 慢通道功能需求单：只保证持久化与可查，不自动实现。
+         */
+        post: operations["create_feature_request_api_research_feature_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1022,6 +1356,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisRunRequest
+         * @description 五类模板统一入口（附.4）。
+         */
+        AnalysisRunRequest: {
+            /** Template */
+            template: string;
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+            data_range: components["schemas"]["DataRangeItem"];
+            /** Hypothesis Id */
+            hypothesis_id?: string | null;
+        };
         /** AvailableSource */
         AvailableSource: {
             /** Symbol */
@@ -1066,6 +1415,7 @@ export interface components {
             slippage: number;
             /**
              * Score Template
+             * @description DEPRECATED: 评分模板残骸，仅兼容保留，不影响回测结果；勿在新调用方依赖
              * @default explorer
              */
             score_template: string;
@@ -1181,6 +1531,16 @@ export interface components {
              * @default false
              */
             liquidated: boolean;
+            /** Benchmark Return */
+            benchmark_return?: number | null;
+            /** Excess Return */
+            excess_return?: number | null;
+            /** Alpha */
+            alpha?: number | null;
+            /** Market Annual Return */
+            market_annual_return?: number | null;
+            /** Profit Factor */
+            profit_factor?: number | null;
         };
         /** BatchBacktestRequest */
         BatchBacktestRequest: {
@@ -1347,6 +1707,18 @@ export interface components {
             timeframe?: string | null;
         };
         /**
+         * ConditionItem
+         * @description 假设条件（与假设验证引擎 {subject, action, target} 同源形制）。
+         */
+        ConditionItem: {
+            /** Subject */
+            subject: string;
+            /** Action */
+            action: string;
+            /** Target */
+            target: number | string;
+        };
+        /**
          * DNAModel
          * @description Full StrategyDNA as a Pydantic model for API serialization.
          */
@@ -1388,6 +1760,14 @@ export interface components {
              * @default 1.5
              */
             proximity_mult: number;
+            /** Signal Sources */
+            signal_sources?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Composition */
+            composition?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * DNAModel
@@ -1431,6 +1811,14 @@ export interface components {
              * @default 1.5
              */
             proximity_mult: number;
+            /** Signal Sources */
+            signal_sources?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Composition */
+            composition?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** DataImportResponse */
         DataImportResponse: {
@@ -1453,6 +1841,20 @@ export interface components {
             files_processed: number;
             /** Time Range */
             time_range?: string[] | null;
+        };
+        /**
+         * DataRangeItem
+         * @description 半开区间 [start, end)，UTC ISO8601。
+         */
+        DataRangeItem: {
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
         };
         /** DatasetListResponse */
         DatasetListResponse: {
@@ -1837,6 +2239,38 @@ export interface components {
              */
             symbol: string;
         };
+        /** FeatureRequestCreate */
+        FeatureRequestCreate: {
+            /** Title */
+            title: string;
+            /**
+             * Payload
+             * @default {}
+             */
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        /** FeatureRequestResponse */
+        FeatureRequestResponse: {
+            /** Request Id */
+            request_id: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** FormulaPluginCreate */
+        FormulaPluginCreate: {
+            /** Name */
+            name: string;
+            /** Expression */
+            expression: string;
+            /** Output Column */
+            output_column?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1889,6 +2323,77 @@ export interface components {
             percentiles: {
                 [key: string]: number;
             };
+        };
+        /**
+         * HypothesisConditions
+         * @description WHEN/THEN 结构化条件（机器判定唯一来源；陈述仅展示）。
+         */
+        HypothesisConditions: {
+            /** When Conditions */
+            when_conditions: components["schemas"]["ConditionItem"][];
+            /** Then Conditions */
+            then_conditions: components["schemas"]["ConditionItem"][];
+        };
+        /** HypothesisCreate */
+        HypothesisCreate: {
+            conditions: components["schemas"]["HypothesisConditions"];
+            /** Statement */
+            statement: string;
+            /** Data Ranges */
+            data_ranges: components["schemas"]["DataRangeItem"][];
+        };
+        /** HypothesisListResponse */
+        HypothesisListResponse: {
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[];
+            /** Total */
+            total: number;
+            /**
+             * Page
+             * @default 1
+             */
+            page: number;
+            /**
+             * Page Size
+             * @default 50
+             */
+            page_size: number;
+        };
+        /** HypothesisResponse */
+        HypothesisResponse: {
+            /** Hypothesis Id */
+            hypothesis_id: string;
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /**
+             * Duplicated
+             * @default false
+             */
+            duplicated: boolean;
+        };
+        /** HypothesisTransitionRequest */
+        HypothesisTransitionRequest: {
+            /** Target Status */
+            target_status: string;
+            /** Evidence Ref */
+            evidence_ref: string;
+        };
+        /** IsolatedBacktestRequest */
+        IsolatedBacktestRequest: {
+            /** Hypothesis Id */
+            hypothesis_id: string;
+            /** Strategy Id */
+            strategy_id: string;
+            request_range: components["schemas"]["DataRangeItem"];
+            /** Threshold Profile */
+            threshold_profile?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** LiveTradingTaskCreate */
         LiveTradingTaskCreate: {
@@ -2010,6 +2515,52 @@ export interface components {
              * @default AND
              */
             reduce_logic: string;
+        };
+        /** ModelPluginCreate */
+        ModelPluginCreate: {
+            /** Name */
+            name: string;
+            /** Features */
+            features: unknown[];
+            /**
+             * Template
+             * @default rolling_logistic
+             */
+            template: string;
+            /**
+             * Params
+             * @default {
+             *       "window": 0,
+             *       "step": 20
+             *     }
+             */
+            params: {
+                [key: string]: unknown;
+            };
+            /**
+             * Target
+             * @default {
+             *       "type": "return_sign",
+             *       "horizon": 4
+             *     }
+             */
+            target: {
+                [key: string]: unknown;
+            };
+            /**
+             * Symbol
+             * @default BTCUSDT
+             */
+            symbol: string;
+            /**
+             * Timeframe
+             * @default 4h
+             */
+            timeframe: string;
+            /** Data Start */
+            data_start: string;
+            /** Data End */
+            data_end: string;
         };
         /** OhlcvResponse */
         OhlcvResponse: {
@@ -2238,6 +2789,36 @@ export interface components {
             /** Data End */
             data_end?: string | null;
         };
+        /** RandomWindowRequest */
+        RandomWindowRequest: {
+            /** Strategy Id */
+            strategy_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Data Start */
+            data_start: string;
+            /** Data End */
+            data_end: string;
+            /**
+             * Window Bars
+             * @default 200
+             */
+            window_bars: number;
+            /**
+             * N Windows
+             * @default 8
+             */
+            n_windows: number;
+            /**
+             * Seed
+             * @default 42
+             */
+            seed: number;
+            /** Hypothesis Id */
+            hypothesis_id?: string | null;
+        };
         /**
          * RequirementsConfigModel
          * @description User-configurable requirements for strategy qualification.
@@ -2410,6 +2991,46 @@ export interface components {
              * @default []
              */
             warnings: string[];
+        };
+        /**
+         * SandboxBacktestRequest
+         * @description 沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
+         *     不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。
+         */
+        SandboxBacktestRequest: {
+            /** Strategy Id */
+            strategy_id: string;
+            /**
+             * Symbol
+             * @default BTCUSDT
+             */
+            symbol: string;
+            /**
+             * Timeframe
+             * @default 4h
+             */
+            timeframe: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /**
+             * Fee
+             * @default 0.001
+             */
+            fee: number;
+            /**
+             * Slippage
+             * @default 0.0005
+             */
+            slippage: number;
+            /**
+             * Init Cash
+             * @default 100000
+             */
+            init_cash: number;
+            /** Hypothesis Id */
+            hypothesis_id?: string | null;
         };
         /** SceneRequest */
         SceneRequest: {
@@ -2625,6 +3246,10 @@ export interface components {
             source: string;
             /** Source Task Id */
             source_task_id?: string | null;
+            /** Gene Signature */
+            gene_signature?: string | null;
+            /** Status */
+            status?: string | null;
             /** Best Score */
             best_score?: number | null;
             /** Best Fitness */
@@ -2758,6 +3383,19 @@ export interface components {
              * @default 0
              */
             loss_count: number;
+        };
+        /** TranslateRequest */
+        TranslateRequest: {
+            /**
+             * Strategy Symbol
+             * @default BTCUSDT
+             */
+            strategy_symbol: string;
+            /**
+             * Strategy Timeframe
+             * @default 4h
+             */
+            strategy_timeframe: string;
         };
         /** TriggerDetail */
         TriggerDetail: {
@@ -3230,6 +3868,7 @@ export interface operations {
                 source?: string | null;
                 tags?: string | null;
                 qualified?: boolean | null;
+                status?: string | null;
                 sort_by?: string;
                 sort_order?: string;
                 limit?: number;
@@ -5082,6 +5721,664 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_hypotheses_api_research_hypotheses_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HypothesisListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_hypothesis_api_research_hypotheses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HypothesisCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HypothesisResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_hypothesis_api_research_hypotheses__hypothesis_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hypothesis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_hypothesis_api_research_hypotheses__hypothesis_id__transition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hypothesis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HypothesisTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_backtest_api_research_validate_backtest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IsolatedBacktestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    backtest_sandbox_api_research_backtest_sandbox_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SandboxBacktestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    random_window_test_api_research_random_window_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RandomWindowRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validation_report_api_research_validation__strategy_id__report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    translate_hypothesis_api_research_translate__hypothesis_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hypothesis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TranslateRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_analysis_api_research_analysis_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalysisRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_analysis_task_api_research_analysis_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_formula_plugins_api_research_plugins_formula_get: {
+        parameters: {
+            query?: {
+                name?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_formula_plugin_api_research_plugins_formula_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FormulaPluginCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_model_plugins_api_research_plugins_model_get: {
+        parameters: {
+            query?: {
+                name?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_model_plugin_api_research_plugins_model_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelPluginCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    indicators_api_research_indicators_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    signals_api_research_signals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    research_log_api_research_log_get: {
+        parameters: {
+            query?: {
+                hypothesis_id?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_feature_requests_api_research_feature_requests_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_feature_request_api_research_feature_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeatureRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureRequestResponse"];
                 };
             };
             /** @description Validation Error */

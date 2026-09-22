@@ -176,6 +176,11 @@ export const mockBacktestResult: BacktestResult = {
   run_source: "lab",
   total_funding_cost: 0,
   liquidated: false,
+  // 基准对照（improve-backtest-benchmark-disclosure 4.2）：excess 自洽 =
+  // total_return - benchmark_return；负超额示例对齐强牛段成色叙事
+  benchmark_return: 0.42,
+  excess_return: -0.165,
+  alpha: -0.21,
   signals: [
     { type: "buy" as const, timestamp: "2025-01-05T08:00:00Z", price: 100, reason: "entry" },
     { type: "sell" as const, timestamp: "2025-01-10T12:00:00Z", price: 110, reason: "exit" },
