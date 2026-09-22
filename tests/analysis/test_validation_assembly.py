@@ -3,7 +3,8 @@
 验收实质化（对照法）：以「同一 DNA 去除插件源」为对照版本，断言
 entries/交易数不同——不需要构造期望信号值，直接杀死静默跳过类缺陷。
 覆盖：对照矩阵（恒真门=单位元/恒假门=清零）、失效源显式拒绝、
-插件窗口扩展 warmup（不足 422 / 前扩后成功）、退化 DNA 零变化。
+插件窗口扩展 warmup（不足 422 / 前扩后成功）、退化 DNA 零变化、
+翻译产物（translate draft）直喂沙盒的 4.1 端到端贯穿对照断言。
 """
 
 import json
@@ -196,3 +197,88 @@ class TestDegenerateUnchanged:
         out = _sandbox(db, data_dir, "st_plain")
         assert out["metrics"]["total_trades"] > 0
         assert out["warmup_bars"] == 200
+
+
+class TestTranslatedDraftAffectsSignals:
+    """4.1 端到端贯穿验收：翻译产物（非手工构造 DNA）→ 沙盒回测对照断言。
+
+    既有覆盖分两段（登记→翻译 / 手工 DNA→沙盒对照），本类接起中间断点：
+    draft strategy_id 直接喂沙盒。链路：注册公式插件 → 登记混合假设
+    （经登记域）→ translate 产出含 formula 源 draft → 以该 draft DNA 为
+    底版做门矩阵（仅改 formula threshold，rule/出场/执行/风险基因全部
+    来自翻译产物），对照版为「同假设条件去除插件列后重译」的产物。
+    恒真门 = AND 单位元（== 对照版），恒假门 = 清零（静默跳过时会等于
+    对照版，断言必红）；真实 threshold 的 draft 直接跑通即「全链路无
+    拒绝」证据。
+    """
+
+    def test_translated_draft_gate_matrix(self, db, data_dir):
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.persistence.db_ext import get_strategy
+
+        register_formula_plugin(db, name="mom", expression="zscore(close, 20)")
+        from core.analysis.registry_meta import available_signal_columns
+        col = next(c["column_key"] for c in available_signal_columns(db)
+                   if c["source"] == "formula")
+
+        # 登记域登记混合假设（插件列 subject 合法性在登记层生效）
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                   "start": "2023-11-01T00:00:00Z",
+                   "end": "2023-12-01T00:00:00Z"}]
+        hid = register_hypothesis(db, conditions={
+            "when_conditions": [
+                {"subject": "rsi_14", "action": "lt", "target": 35},
+                {"subject": col, "action": "gt", "target": 0.5}],
+            "then_conditions": [
+                {"subject": "rsi_70", "action": "gt", "target": 60}]},
+            statement="s", data_ranges=ranges)["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        assert out["status"] == "draft", "插件列假设翻译不得被拒"
+        draft_sid = out["strategy_id"]
+
+        # 翻译产物含 formula 源（贯穿前提：沙盒消费的就是这路源）
+        draft = json.loads(get_strategy(db, draft_sid)["dna_json"])
+        assert [s for s in draft["signal_sources"]
+                if s["type"] == "formula"] == [
+            {"type": "formula", "ref": col, "threshold": 0.5,
+             "operator": ">"}]
+        assert draft["composition"] == {"mode": "logic", "op": "and"}
+
+        # 对照版：同假设条件去除插件列后重译（纯 rule 退化形态）
+        hid_ctl = register_hypothesis(db, conditions={
+            "when_conditions": [
+                {"subject": "rsi_14", "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": "rsi_70", "action": "gt", "target": 60}]},
+            statement="s", data_ranges=ranges)["hypothesis_id"]
+        ctl_sid = translate_hypothesis(
+            db, hypothesis_id=hid_ctl)["strategy_id"]
+
+        # 门变体：draft DNA 仅改 formula threshold（其余逐位不变）
+        def _gate_variant(sid, threshold):
+            variant = json.loads(json.dumps(draft))
+            next(s for s in variant["signal_sources"]
+                 if s["type"] == "formula")["threshold"] = threshold
+            save_strategy(db, strategy_id=sid, dna_json=json.dumps(variant),
+                          symbol="BTCUSDT", timeframe="4h")
+
+        _gate_variant("st_draft_gate_true", -1e9)   # 恒真门（> -1e9）
+        _gate_variant("st_draft_gate_false", 1e9)   # 恒假门
+
+        base = _sandbox(db, data_dir, ctl_sid)
+        assert base["metrics"]["total_trades"] > 0, "对照版须有交易（矩阵前提）"
+
+        gate_true = _sandbox(db, data_dir, "st_draft_gate_true")
+        gate_false = _sandbox(db, data_dir, "st_draft_gate_false")
+        real = _sandbox(db, data_dir, draft_sid)  # 真实 threshold 草稿
+
+        # 恒真门 = AND 单位元：与「去除插件源」的同构对照版一致
+        assert gate_true["metrics"]["total_trades"] == \
+            base["metrics"]["total_trades"]
+        # 恒假门 = 清零：插件源真实参与（静默跳过时将等于对照版）
+        assert gate_false["metrics"]["total_trades"] == 0
+        assert gate_false["metrics"]["total_trades"] != \
+            base["metrics"]["total_trades"]
+        # 真实 draft 跑通：登记→翻译→沙盒回测全链路无拒绝
+        assert real["metrics"]["total_trades"] >= 0
+        assert real["warmup_bars"] >= 200
