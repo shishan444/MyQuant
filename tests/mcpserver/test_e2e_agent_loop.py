@@ -94,12 +94,14 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
     assert reg.get("hypothesis_id"), reg
     hid = reg["hypothesis_id"]
 
-    # 3) 分析（2 月区间，挂假设）
+    # 3) 分析（2 月区间，挂假设）。阈值 45：前向收益口径下 sample_size 为
+    # 有效前向信号数（非区间 bar 数），RSI<35 命中仅 22 < 30 触发小样本拒绝
+    # （fix-condition-stats-forward-return 口径变化，实测 45 → 52 有效）
     analysis = _call(mcp, "run_analysis",
                      template="condition_stats",
                      params={"indicator": "RSI", "params": {"period": 14},
                              "condition": {"subject": "rsi_14", "action": "lt",
-                                           "target": 35}},
+                                           "target": 45}},
                      symbol="BTCUSDT", timeframe="4h",
                      start="2023-02-01T00:00:00Z",
                      end="2023-03-01T00:00:00Z",
