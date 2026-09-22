@@ -203,6 +203,9 @@ def backtest_strategy(
     if result.trades_df is not None and len(result.trades_df) > 0:
         signals_data = backtest_service.build_signals_from_trades_df(result.trades_df)
 
+    # 基准对照五键从 metrics_dict 取（dataclass 无 profit_factor 字段，
+    # 统一单源）；None=无基准/未计算（None 安全）
+    md = result.metrics_dict or {}
     return BacktestResponse(
         result_id=result_id,
         strategy_id=strategy_id,
@@ -229,4 +232,9 @@ def backtest_strategy(
         signals=signals_data,
         total_funding_cost=result.total_funding_cost,
         liquidated=result.liquidated,
+        benchmark_return=md.get("benchmark_return"),
+        excess_return=md.get("excess_return"),
+        alpha=md.get("alpha"),
+        market_annual_return=md.get("market_annual_return"),
+        profit_factor=md.get("profit_factor"),
     )

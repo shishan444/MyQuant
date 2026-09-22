@@ -367,6 +367,40 @@ class TestAnalysisAndReport:
         for key in ("record_id", "verdict", "warmup_bars", "人话"):
             assert key in entry
 
+    def test_report_benchmark_disclosure(self, api_client, research_env):
+        """3.1：新记录人话含对照句；旧形式记录（无键）容缺标「无对照数据」。"""
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        dbp = Path(api_client.app.state.db_path)
+        # 新形式：含 benchmark_return/excess_return
+        rr.save_validation_with_log(
+            dbp, record_id="rec_bm_new", hypothesis_id="adhoc",
+            strategy_id="st_test", level="isolated_backtest",
+            params=json.dumps({"request_range": RANGES[0]}),
+            result=json.dumps({
+                "metrics": {"total_return": 0.12, "max_drawdown": -0.08,
+                            "total_trades": 15,
+                            "benchmark_return": 0.345,
+                            "excess_return": -0.225},
+                "warmup": {"bars": 200}}, ensure_ascii=False),
+            verdict="pass", range_hash="rh_bm_new")
+        # 旧形式：验证记录无对照键（0.2.3 之前落库的 result_json）
+        rr.save_validation_with_log(
+            dbp, record_id="rec_bm_old", hypothesis_id="adhoc",
+            strategy_id="st_test", level="isolated_backtest",
+            params=json.dumps({"request_range": RANGES[0]}),
+            result=json.dumps({
+                "metrics": {"total_return": 0.10, "max_drawdown": -0.05,
+                            "total_trades": 8},
+                "warmup": {"bars": 200}}, ensure_ascii=False),
+            verdict="fail", range_hash="rh_bm_old")
+        body = api_client.get("/api/research/validation/st_test/report").json()
+        talks = {e["record_id"]: e["人话"]
+                 for e in body["isolated_backtests"]}
+        assert "同期买入持有 34.5%" in talks["rec_bm_new"]
+        assert "超额 -22.5%" in talks["rec_bm_new"]
+        assert "无对照数据" in talks["rec_bm_old"]
+
 
 class TestConcurrencyAndIdempotence:
     """2.1 并发先到者胜 / 2.2 迁移禁止副作用 / 2.3 幂等键边界。"""

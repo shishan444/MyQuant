@@ -55,6 +55,7 @@ from api.schemas import (
     VerifySessionListResponse,
 )
 from core.backtest import engine as _bt_engine_mod
+from core.scoring.metrics import BARS_PER_YEAR, DEFAULT_BARS_PER_YEAR
 from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
@@ -147,9 +148,9 @@ class _BatchBacktestProcessor:
         return backtest_service.build_signals_from_events(events_log)
 
     def _bars_per_year(self, timeframe: str) -> int:
-        mapping = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520,
-                   "1h": 8760, "2h": 4380, "4h": 2190, "1d": 365}
-        return mapping.get(timeframe, 2190)
+        # 公共单一权威源（metrics.py，与回测引擎同源）；补全 3d 档，
+        # 缺省 2190（=4h 档）不变
+        return BARS_PER_YEAR.get(timeframe, DEFAULT_BARS_PER_YEAR)
 
     def process_step(self, step_index: int) -> Dict:
         """Process one group x range step using DecisionPipeline."""
@@ -535,4 +536,11 @@ def get_batch_backtest_detail(
         signals=signals_data,
         total_funding_cost=row.get("total_funding_cost", 0.0),
         liquidated=row.get("liquidated", False),
+        # 基准对照五键：存库行不含新列（本次无 DB 迁移）→ 恒 None；
+        # 键显式带出保证响应形制与 lab 端点一致（None 安全，向后兼容）
+        benchmark_return=row.get("benchmark_return"),
+        excess_return=row.get("excess_return"),
+        alpha=row.get("alpha"),
+        market_annual_return=row.get("market_annual_return"),
+        profit_factor=row.get("profit_factor"),
     )

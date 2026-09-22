@@ -116,6 +116,17 @@ def validation_report(
     for r in isolated:
         res = _parse(r)
         m = res.get("metrics", {})
+        # 基准对照句（improve-backtest-benchmark-disclosure 3.1）：
+        # benchmark_return 存在 → 追加「同期买入持有 X%，超额 Y%」；
+        # 旧记录无键/None → 标「无对照数据」（容缺不炸，判定门槛不读新键）
+        bm = m.get("benchmark_return")
+        if bm is not None:
+            excess = m.get("excess_return")
+            excess_txt = (f"，超额 {excess*100:+.1f}%"
+                          if excess is not None else "")
+            compare = f"，同期买入持有 {bm*100:.1f}%{excess_txt}"
+        else:
+            compare = "，无对照数据"
         lines["isolated_backtests"].append({
             "record_id": r["record_id"],
             "verdict": r["verdict"],
@@ -124,7 +135,7 @@ def validation_report(
             "人话": (
                 f"区间总收益 {m.get('total_return', 0)*100:.1f}%，"
                 f"最大回撤 {m.get('max_drawdown', 0)*100:.1f}%，"
-                f"交易 {m.get('total_trades', 0)} 笔，"
+                f"交易 {m.get('total_trades', 0)} 笔{compare}，"
                 f"判定：{'通过' if r['verdict']=='pass' else '未通过'}"
                 f"（预热 {res.get('warmup', {}).get('bars', '?')} bar）"
             ),
@@ -134,6 +145,11 @@ def validation_report(
         s = res.get("summary", {})
         worst = s.get("worst_window", {})
         wm = worst.get("metrics", {})
+        # worst_window 顺带对照（实现裁量）：2.1 起 metrics 自动携带对照键，
+        # 抽查摘要与隔离行披露一致；旧记录无键/None 不追加任何文字
+        wm_bm = wm.get("benchmark_return")
+        wm_compare = (f"（同期买入持有 {wm_bm*100:.1f}%）"
+                      if wm_bm is not None else "")
         lines["random_window_summaries"].append({
             "record_id": r["record_id"],
             "n_windows": s.get("n_windows"),
@@ -142,7 +158,7 @@ def validation_report(
                 f"{s.get('n_windows', '?')} 个随机窗口全部达标："
                 f"{'是' if s.get('all_pass') else '否'}；"
                 f"最差窗口收益 {wm.get('total_return', 0)*100:.1f}%、"
-                f"回撤 {wm.get('max_drawdown', 0)*100:.1f}%"
+                f"回撤 {wm.get('max_drawdown', 0)*100:.1f}%{wm_compare}"
             ),
         })
     return lines

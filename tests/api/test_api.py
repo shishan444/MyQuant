@@ -283,6 +283,15 @@ class TestStrategyBacktest:
         mock_result.total_trades = 150
         mock_result.equity_curve = MagicMock()
         mock_result.trades_df = None
+        mock_result.total_funding_cost = 0.0
+        mock_result.liquidated = False
+        # 基准对照五键（improve-backtest-benchmark-disclosure 2.2）：
+        # 显式配 dict，防 MagicMock 属性被 __float__ 静默强转成假值
+        mock_result.metrics_dict = {
+            "benchmark_return": 0.15, "excess_return": 0.10,
+            "alpha": 0.05, "market_annual_return": 0.20,
+            "profit_factor": 1.6,
+        }
         mock_bt_mod.BacktestEngine.return_value.run.return_value = mock_result
 
         mock_score.return_value = {
@@ -308,6 +317,12 @@ class TestStrategyBacktest:
         assert data["total_return"] == 0.25
         assert data["sharpe_ratio"] == 1.8
         assert data["result_id"] is not None
+        # 基准对照五键透出（metrics_dict → BacktestResponse）
+        assert data["benchmark_return"] == 0.15
+        assert data["excess_return"] == 0.10
+        assert data["alpha"] == 0.05
+        assert data["market_annual_return"] == 0.20
+        assert data["profit_factor"] == 1.6
 
     def test_backtest_strategy_not_found(self, client: TestClient) -> None:
         """POST /api/strategies/backtest with invalid strategy should return 404."""
