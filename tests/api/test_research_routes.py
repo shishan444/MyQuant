@@ -332,12 +332,14 @@ class TestAnalysisAndReport:
         """分析执行后日志含 analysis 记录（含区间）。"""
         api_client.app.state.db_path = research_env["db"]
         api_client.app.state.data_dir = research_env["data_dir"]
+        # U3 起路由接入 warmup 前扩：起点须让出 RSI 的 200-bar warmup 段
+        #（数据 2024-01-01 起 500 bar；start=2024-02-10 即 bar 240 > 200）
         resp = api_client.post("/api/research/analysis", json={
             "template": "condition_stats",
             "params": {"indicator": "RSI", "params": {"period": 14},
                        "condition": {"subject": "rsi_14", "action": "lt", "target": 40}},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2024-01-01T00:00:00Z", "end": "2024-02-10T00:00:00Z"},
+                           "start": "2024-02-10T00:00:00Z", "end": "2024-03-25T00:00:00Z"},
         })
         assert resp.status_code == 200, resp.text
         body = resp.json()
