@@ -175,7 +175,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining（重组走 202+task_id 轮询，
-        响应含 poll 提示）。区间半开 [start,end) UTC。"""
+        响应含 poll 提示）。区间半开 [start,end) UTC。condition_stats 支持
+        params.forward_bars（前向持有期 bar 数，默认 24）与
+        params.min_samples（小样本下限，默认 30）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

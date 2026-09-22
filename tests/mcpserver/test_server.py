@@ -167,12 +167,14 @@ class TestCallSemantics:
         """研究档经 client 完成一次分析并落日志（4.3 验收）。"""
         base, db = live_api
         api = QuantApiClient(base_url=base, profile="research")
+        # U3 起路由接入 warmup 前扩：起点让出 RSI 的 200-bar warmup 段
+        #（400-bar 数据 2024-01-01 起；start=2024-02-05 即 bar 210 > 200）
         out = api.post("/api/research/analysis", {
             "template": "condition_stats",
             "params": {"indicator": "RSI", "params": {"period": 14},
                        "condition": {"subject": "rsi_14", "action": "lt", "target": 40}},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+                           "start": "2024-02-05T00:00:00Z", "end": "2024-03-08T00:00:00Z"},
         })
         assert out["template"] == "condition_stats"
         assert out["sample_size"] >= 30

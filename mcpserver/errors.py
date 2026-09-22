@@ -67,6 +67,9 @@ HINTS: Dict[str, str] = {
     "RESEARCH_INDICATOR_UNKNOWN":
         "指标不在注册表：查看 detail.available_indicators 清单"
         "（元数据经 list_indicators 查询）",
+    "RESEARCH_PARAM_INVALID":
+        "模板参数非法：查看 detail 的 param/legal_range"
+        "（condition_stats 的 forward_bars 须为 1..数据长度-1 的整数）",
     # ---- 插件
     "RESEARCH_FORMULA_INVALID":
         "插件配置非法：检查 name/expression 必填、DSL 白名单函数与禁前视"

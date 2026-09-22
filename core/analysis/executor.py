@@ -11,6 +11,10 @@ failed(reason=timeout)（先到者胜：之后跑完的回调不覆盖终态）�
 中断回收：进程重启后 analysis_tasks 里的 running 行是孤儿，
 recover_stale_analysis_tasks 在 API 启动时置 failed(reason=interrupted)
 （照 recover_stale_trading_tasks 先例）。
+
+结构化拒绝：模板/装载层抛的 ResearchError 在无 422 通道的路径（线程池
+heavy、快路径竞态）落 failed 时，reason 前缀 "[code] "——轮询方可解析
+错误码，与快路径 422 的结构化语义对齐。
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
+from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
@@ -91,6 +96,12 @@ class ResearchExecutor:
                 result = fn(_no_stop)
                 return {"task_id": task_id, "status": "succeeded",
                         "result": result, "fast_path": True}
+            except ResearchError as exc:
+                logger.warning("快路径执行拒绝 %s: [%s] %s",
+                               template, exc.code, exc.message)
+                return {"task_id": task_id, "status": "failed",
+                        "reason": f"[{exc.code}] {exc.message}"[:200],
+                        "result": None, "fast_path": True}
             except Exception as exc:  # noqa: BLE001 —— 快路径失败语义同异步 failed
                 logger.warning("快路径执行失败 %s: %s", template, exc)
                 return {"task_id": task_id, "status": "failed",
@@ -133,6 +144,15 @@ class ResearchExecutor:
             result = fn(_stop_if_expired)
         except _TaskTimedOut:
             self._finalize(task_id, "failed", reason="timeout", result_ref=None)
+            return None
+        except ResearchError as exc:
+            # 结构化拒绝：ResearchError 的 str() 只有 message，code 显式
+            # 前缀进 reason——heavy 路径无 422 通道，轮询方靠它拿错误码
+            logger.warning("研究任务拒绝 %s: [%s] %s",
+                           task_id, exc.code, exc.message)
+            self._finalize(task_id, "failed",
+                           reason=f"[{exc.code}] {exc.message}"[:200],
+                           result_ref=None)
             return None
         except Exception as exc:  # noqa: BLE001 —— 单任务失败不拖垮池
             logger.warning("研究任务失败 %s: %s", task_id, exc)

@@ -109,13 +109,15 @@ def test_breakpoint_1a_full_research_loop(live_api):
     assert reg["duplicated"] is False
     hid = reg["hypothesis_id"]
 
-    # 4) 分析（同假设关联：2 月区间——登记区间外）
+    # 4) 分析（同假设关联：2 月区间——登记区间外；U3 起起点让出 RSI 的
+    #    200-bar warmup 段=2024-02-05（bar 210），end 保持 03-01 不变——
+    #    不得侵入步骤 6 的 3 月干净验证区间）
     analysis = api.post("/api/research/analysis", {
         "template": "condition_stats",
         "params": {"indicator": "RSI", "params": {"period": 14},
                    "condition": {"subject": "rsi_14", "action": "lt", "target": 35}},
         "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                       "start": "2024-02-01T00:00:00Z", "end": "2024-03-01T00:00:00Z"},
+                       "start": "2024-02-05T00:00:00Z", "end": "2024-03-01T00:00:00Z"},
         "hypothesis_id": hid,
     })
     assert analysis["sample_size"] >= 30

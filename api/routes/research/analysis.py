@@ -50,16 +50,31 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         condition_stats, correlation_scan, distribution_compare,
         event_study, similar_at_time,
     )
+    from core.analysis.warmup_loader import load_with_warmup
 
     rng = payload.data_range.model_dump()
-    df = _load_df(data_dir, rng)
     p = dict(payload.params)
     ranges = [rng]
 
     if payload.template == "condition_stats":
+        # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
+        # 不算」（request_start 切回请求区间）；前扩落点在本分支，heavy
+        # 判定装载（run_analysis 入口）不扩（design Decision 3）。
+        # forward_bars/min_samples 自由 Dict 可选透传（默认 24/30）。
+        # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
+        # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
+        # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
+        df, request_start = load_with_warmup(
+            data_dir, rng["symbol"], rng["timeframe"],
+            rng["start"], rng["end"], [p["indicator"]])
         return condition_stats(df, indicator=p["indicator"], params=p["params"],
                                condition=p["condition"], data_ranges=ranges,
+                               request_start=request_start,
+                               forward_bars=p.get("forward_bars", 24),
+                               min_samples=p.get("min_samples", 30),
                                hypothesis_id=payload.hypothesis_id).to_dict()
+
+    df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
         return distribution_compare(df, column=p["column"], transform=p.get("transform", "returns"),
                                      group_a=p["group_a"], group_b=p["group_b"],
