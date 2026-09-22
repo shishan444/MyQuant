@@ -1,7 +1,8 @@
 """研究计算线程池执行器单测（add-ai-research-mcp 1.4）。
 
 覆盖：快路径同步返回、异步句柄轮询至终态、协作式超时、守护超时标记
-（先到者胜）、中断回收、执行器运行期间调用线程不被阻塞。
+（先到者胜）、中断回收、执行器运行期间调用线程不被阻塞、ResearchError
+结构化收尾（failed reason 前缀 [code]）。
 """
 
 import subprocess
@@ -17,6 +18,7 @@ from core.analysis.executor import (
     ResearchExecutor,
     recover_stale_analysis_tasks,
 )
+from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
 
 
@@ -124,6 +126,40 @@ class TestAsyncPath:
         finally:
             ex.shutdown()
 
+
+class TestResearchErrorStructured:
+    """ResearchError 结构化收尾：failed reason 前缀 [code]——heavy 路径
+    无 HTTP 422 通道，轮询方靠 reason 解析错误码（与快路径 422 对齐）。"""
+
+    def test_heavy_research_error_reason_carries_code(
+            self, db_path: Path) -> None:
+        ex = ResearchExecutor(db_path)
+        try:
+            def reject(stop):
+                raise ResearchError(
+                    "RESEARCH_WARMUP_INSUFFICIENT",
+                    "warmup 不足：需要 200 bar，实际 100 bar")
+            out = ex.submit("heavy", reject, estimated_cost_s=5.0)
+            t = _wait_terminal(db_path, out["task_id"])
+            assert t["status"] == "failed"
+            assert t["reason"].startswith("[RESEARCH_WARMUP_INSUFFICIENT]")
+            assert "warmup 不足" in t["reason"]
+        finally:
+            ex.shutdown()
+
+    def test_fast_path_research_error_reason_carries_code(
+            self, db_path: Path) -> None:
+        ex = ResearchExecutor(db_path)
+        try:
+            def reject(stop):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID", "forward_bars 须为正整数")
+            out = ex.submit("light", reject, estimated_cost_s=0.1)
+            assert out["status"] == "failed"
+            assert out["reason"].startswith("[RESEARCH_PARAM_INVALID]")
+            assert "forward_bars" in out["reason"]
+        finally:
+            ex.shutdown()
 
 class TestTimeout:
     def test_cooperative_timeout_via_stop_check(self, db_path: Path) -> None:

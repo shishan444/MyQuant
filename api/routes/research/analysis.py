@@ -62,8 +62,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 判定装载（run_analysis 入口）不扩（design Decision 3）。
         # forward_bars/min_samples 自由 Dict 可选透传（默认 24/30）。
         # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
-        # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）按
-        # 既有 executor 语义落 failed 终态（reason 携带 message）。
+        # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
+        # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], [p["indicator"]])

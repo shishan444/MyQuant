@@ -4,9 +4,9 @@ forward-return U3 / tasks 2.1）。
 覆盖：warmup 生效（前缀只用不算、sample_size 只计请求区间信号）、起点
 不足结构化拒绝（422 RESEARCH_WARMUP_INSUFFICIENT）、forward_bars 非法值
 422 RESEARCH_PARAM_INVALID、合法透传产出 forward_return_{N}b 键，以及重组
-（heavy）路径下 warmup 不足的既有语义——202 + 轮询 failed（reason 携带
-message）：executor 线程池无 ResearchError→422 通道，422 语义仅在快路径
-保留，此测试锁定现状供后续裁决（design 未授权改 executor）。
+（heavy）路径下 warmup 不足的结构化错误码——202 + 轮询 failed，reason
+前缀 [RESEARCH_WARMUP_INSUFFICIENT] 且携带 message（executor 对
+ResearchError 结构化收尾，闭合 422 语义在常用区间的缺口）。
 """
 
 import time
@@ -113,11 +113,12 @@ class TestConditionStatsWarmupRoute:
         assert "forward_return_24b" not in payload
         assert payload["forward_bars"] == 6
 
-    def test_heavy_path_warmup_insufficient_lands_failed_task(
+    def test_heavy_path_warmup_insufficient_reason_carries_code(
             self, api_client, tmp_path):
-        """重组路径现状锁定：>10000 bar → 202；warmup 不足在 _job 内抛
-        ResearchError → executor 落 failed 终态（reason=message，无 422 通道
-        ——executor 既有语义，不改执行器，422 语义仅快路径保留）。"""
+        """重组路径结构化错误码：>10000 bar → 202；warmup 不足在 _job 内抛
+        ResearchError → executor 落 failed 终态，reason 前缀
+        [RESEARCH_WARMUP_INSUFFICIENT] 并携带 message（AI 轮询可解析
+        错误码，与快路径 422 语义对齐）。"""
         data_dir = tmp_path / "market"
         data_dir.mkdir()
         df = make_ohlcv(n=10500, freq="4h", start="2020-01-01", seed=3)
@@ -144,6 +145,7 @@ class TestConditionStatsWarmupRoute:
                     break
                 time.sleep(0.1)
             assert task is not None and task["status"] == "failed"
+            assert task["reason"].startswith("[RESEARCH_WARMUP_INSUFFICIENT]")
             assert "warmup 不足" in task["reason"]
         finally:
             if exec_mod._EXECUTOR is not None:
