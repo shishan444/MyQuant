@@ -36,6 +36,26 @@ _ACTION_MAP = {
     "breakdown": lambda t: {"type": "cross_below", "threshold": float(t)},
 }
 
+# 插件列条件 → formula/model 信号源的比较算子（仅数值比较可表达；
+# cross/break 类穿越语义不适用于插件连续值源，显式拒绝——见
+# _translate_conditions 的插件分支）
+_PLUGIN_ACTION_OPERATOR = {
+    "gt": ">", "lt": "<", "ge": ">=", "le": "<=",
+}
+
+
+def _plugin_signal_columns(db_path: Path) -> Dict[str, str]:
+    """注册表插件列 → source 类型（formula|model）；与登记域同源
+    （allowed_subject_columns 的插件部分即 list_signal_registry_entries
+    only_visible——同一查询，不复制第二份列清单）。
+
+    插件列名为完整精确名（fx_xxx / fx_xxx_v2），无 ``_数字`` 参数后缀。
+    """
+    return {
+        e["column_name"]: e["source"]
+        for e in rr.list_signal_registry_entries(db_path, only_visible=True)
+    }
+
 
 def _parse_indicator_column(subject: str) -> Optional[tuple[str, str, float]]:
     """subject 为内置指标输出列形制 → (indicator, field_prefix, param)。
@@ -99,18 +119,32 @@ def translate_hypothesis(
                     "slow_path": "提交 feature-requests 描述跨品种需求"})
 
     from core.strategy.dna import SignalRole
-    when_genes = _translate_conditions(
+    when_genes, when_sources = _translate_conditions(
         conditions.get("when_conditions", []), db_path=db_path,
         label="when_conditions", role=SignalRole.ENTRY_TRIGGER)
-    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝）
-    then_genes = _translate_conditions(
+    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝；
+    # 插件列出场源当前不可表达——组装器只组合入场，出场插件源会被
+    # 静默丢弃，故显式拒绝而非误译为入场门控）
+    then_genes, then_sources = _translate_conditions(
         conditions.get("then_conditions", []), db_path=db_path,
         label="then_conditions", role=SignalRole.EXIT_TRIGGER)
     genes = when_genes + then_genes
+    plugin_sources = when_sources + then_sources
 
-    # 组装 DNA（v2：signal_sources 显式声明规则源；插件绑定留给策略编辑）
+    # 组装 DNA（v2）：纯内置条件 = 退化形态零迁移（单 rule 源）；
+    # 含插件条件 = rule 源（承载全部内置基因，有内置条件时）+ 各插件源，
+    # composition 固定 logic AND（假设条件本就是合取清单，翻译器不发明
+    # 优先级）；纯插件条件（无内置基因）不设 rule 源——组装器以插件源为
+    # 全部条件（无规则源 = AND 单位元基线，见 signal_assembly._combine）
     from core.strategy.dna import (
         ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
+
+    if plugin_sources:
+        signal_sources = ([{"type": "rule"}] if genes else []) + plugin_sources
+        composition = {"mode": "logic", "op": "and"}
+    else:
+        signal_sources = [{"type": "rule"}]
+        composition = None
 
     dna = StrategyDNA(
         signal_genes=genes,
@@ -119,7 +153,8 @@ def translate_hypothesis(
             symbol=strategy_symbol, timeframe=strategy_timeframe),
         risk_genes=RiskGenes(),  # 平台默认（返回中声明）
         parent_ids=[hypothesis_id],  # 谱系回链
-        signal_sources=[{"type": "rule"}],
+        signal_sources=signal_sources,
+        composition=composition,
     )
 
     # 同签名显式分流（MUST NOT 静默不落库）。签名用往返规范化后的对象算
@@ -164,25 +199,69 @@ def translate_hypothesis(
 
 def _translate_conditions(
     conditions: List[Dict[str, Any]], *, db_path: Path, label: str, role,
-):
-    """条件 → SignalGene 列表（不可表达即拒；WHEN/THEN 同规则）。"""
-    from core.strategy.dna import SignalGene
+) -> tuple[List, List[Dict[str, Any]]]:
+    """条件 → (内置 SignalGene 列表, 插件信号源列表)。
+
+    插件列条件不进入 rule 基因（signal_genes 只收内置条件），按条件
+    阈值翻译为 formula/model 源；不可表达即拒（WHEN/THEN 同规则）。
+    """
+    from core.strategy.dna import SignalGene, SignalRole
     from core.analysis.hypothesis_service import allowed_subject_columns
 
     genes = []
+    plugin_sources: List[Dict[str, Any]] = []
+    plugin_columns = _plugin_signal_columns(db_path)
     for i, cond in enumerate(conditions):
         subject = cond.get("subject", "")
         action = cond.get("action", "")
         target = cond.get("target")
 
+        # 插件列（注册表精确名）：翻译为 formula/model 信号源
+        if subject in plugin_columns:
+            source_type = plugin_columns[subject]
+            if role != SignalRole.ENTRY_TRIGGER:
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] 不可表达: 插件列（{subject}）暂不支持"
+                    "出场信号源（THEN 须为内置指标列；出场组合待后续版本）",
+                    detail={"condition": cond,
+                            "slow_path": "THEN 改用内置指标列 subject，"
+                            "或提交 feature-requests 描述插件出场需求"})
+            operator = _PLUGIN_ACTION_OPERATOR.get(action)
+            if operator is None:
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] 不可表达: 插件列暂不支持该 action"
+                    f"（需数值比较: {sorted(_PLUGIN_ACTION_OPERATOR)}）",
+                    detail={"condition": cond,
+                            "slow_path": "插件列条件改用数值比较 action"
+                            "（gt/lt/ge/le）"})
+            if not isinstance(target, (int, float)) or isinstance(target, bool):
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] 不可表达: 插件列条件 target 须为数值",
+                    detail={"condition": cond})
+            plugin_sources.append({
+                "type": source_type,
+                "ref": subject,
+                "threshold": float(target),
+                "operator": operator,
+            })
+            continue
+
         parsed = _parse_indicator_column(subject)
         if parsed is None:
-            # 区分拒绝原因（附慢通道建议；基础列诊断需查插件注册表）
+            # 三类拒绝原因（附慢通道建议）：内置基础列不可表达 /
+            # 插件列失效（注册表曾有判定路径但列已不存在）/ 完全未知列
             allowed, _ = allowed_subject_columns(db_path)
-            reason = (
-                f"基础列 subject（{subject}）不可表达为指标信号源"
-                if subject in allowed
-                else f"插件/未知列 subject（{subject}）须显式绑定信号源")
+            if subject in allowed:
+                reason = (f"内置基础列 subject（{subject}）不可表达为"
+                          "指标信号源（须为参数化指标列如 rsi_14）")
+            elif subject.startswith(("fx_", "model_")):
+                reason = (f"插件列 subject（{subject}）已失效"
+                          "（信号注册表无此列——插件被删除或未注册）")
+            else:
+                reason = f"未知列 subject（{subject}）不在可用信号列集"
             raise ResearchError(
                 "RESEARCH_NOT_EXPRESSIBLE",
                 f"{label}[{i}] 不可表达: {reason}",
@@ -213,9 +292,12 @@ def _translate_conditions(
             field_name=f"{field}_{int(param)}",
             condition=_ACTION_MAP[action](target),
         ))
-    if not genes:
+    # WHEN 组至少一个可表达条件（无入场条件的策略无意义）；THEN 组空
+    # = 无显式出场（出场基因可为零，不拒——此前空 then 被"无可表达条件"
+    # 连坐拒绝，纯插件列假设的最小形态 when=[插件条件]/then=[] 需放行）
+    if label == "when_conditions" and not genes and not plugin_sources:
         raise ResearchError("RESEARCH_NOT_EXPRESSIBLE", "无可表达条件")
-    return genes
+    return genes, plugin_sources
 
 
 def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:

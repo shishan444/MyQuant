@@ -1,0 +1,308 @@
+"""插件列假设翻译与公式 lookback 推导测试（fix-plugin-column-translation 1.x/2.1）。
+
+覆盖：插件列条件→formula 信号源（四比较 operator 保真）、混合条件
+logic AND 组合、纯插件退化形态、三类拒绝文案区分、组装器 operator
+向后兼容与无规则源中性基线、gene_signature 覆盖 signal_sources、
+公式表达式 lookback 静态推导（含依赖闭包递归）。
+"""
+
+import json
+import uuid
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+pytestmark = [pytest.mark.integration]
+
+from core.analysis.hypothesis_service import (
+    ResearchError, register_hypothesis)
+from core.analysis.hypothesis_to_strategy import translate_hypothesis
+from core.analysis.plugin_service import register_formula_plugin
+from core.analysis.signal_assembly import assemble_signal_set
+from core.persistence.db_ext import get_strategy, init_db_ext
+from core.persistence.repository import research as rr
+from core.strategy.dna import (
+    ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
+from core.strategy.executor import dna_to_signal_set
+
+
+def _df(n=400, seed=6):
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC", name="timestamp")
+    close = 60000 + np.cumsum(rng.normal(0, 110, n))
+    return pd.DataFrame({
+        "open": close, "high": close + 60, "low": close - 60,
+        "close": close, "volume": rng.uniform(100, 800, n), "trades": 40,
+    }, index=idx)
+
+
+def _ranges(symbol="BTCUSDT"):
+    return [{"symbol": symbol, "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}]
+
+
+@pytest.fixture()
+def db(tmp_path: Path) -> Path:
+    d = tmp_path / "q.db"
+    init_db_ext(d)
+    from core.analysis.executor import ensure_research_tables
+    ensure_research_tables(d)
+    return d
+
+
+def _plugin(db, name="mom", expression="zscore(close, 20)") -> str:
+    """注册测试公式插件，返回其信号列名。"""
+    return register_formula_plugin(
+        db, name=name, expression=expression)["column"]
+
+
+def _hyp(db, when, then=None) -> str:
+    """经登记域登记假设（subject 校验生效——合法列用例走这里）。"""
+    conditions = {"when_conditions": when, "then_conditions": then or []}
+    return register_hypothesis(db, conditions=conditions, statement="s",
+                               data_ranges=_ranges())["hypothesis_id"]
+
+
+def _raw_hyp(db, when, then=None) -> str:
+    """绕过登记校验直落假设行（失效插件列/未知列等登记不可能的形态）。"""
+    hid = f"hyp_{uuid.uuid4().hex[:12]}"
+    conds = {"when_conditions": when, "then_conditions": then or []}
+    rr.save_hypothesis_with_log(
+        db, hypothesis_id=hid,
+        conditions=json.dumps(conds, ensure_ascii=False),
+        conditions_hash=uuid.uuid4().hex, statement="s",
+        data_ranges=json.dumps(_ranges(), ensure_ascii=False),
+        ranges_hash=uuid.uuid4().hex)
+    return hid
+
+
+def _dna_of(db, strategy_id) -> StrategyDNA:
+    return StrategyDNA.from_json(get_strategy(db, strategy_id)["dna_json"])
+
+
+class TestPluginTranslation:
+    def test_plugin_condition_translates_to_formula_source(self, db):
+        """纯插件列假设：条件翻译为 formula 源（ref/threshold/operator），
+        不产 rule 基因，组合层 logic and（插件源即全部条件）。"""
+        col = _plugin(db)
+        # 登记域强制 then 非空，纯插件最小形态（when=[插件]/then=[]）
+        # 经直落假设行构造——翻译器输入契约是库内假设行
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt", "target": 0.5}])
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        assert out["status"] == "draft"
+        dna = _dna_of(db, out["strategy_id"])
+        assert dna.signal_genes == []
+        assert dna.signal_sources == [
+            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">"}]
+        assert dna.composition == {"mode": "logic", "op": "and"}
+        assert hid in dna.parent_ids, "谱系回链"
+
+    def test_mixed_conditions_compose_and(self, db):
+        """混合假设：内置条件照旧进 rule 基因，插件条件成 formula 源，
+        composition logic AND（合取语义，不发明优先级）。"""
+        col = _plugin(db)
+        hid = _hyp(db, when=[
+            {"subject": "rsi_14", "action": "lt", "target": 35},
+            {"subject": col, "action": "gt", "target": 0.5},
+        ], then=[{"subject": "rsi_70", "action": "gt", "target": 60}])
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        dna = _dna_of(db, out["strategy_id"])
+        # 内置条件全部进基因（when 入场 + then 出场，语义不变）
+        assert [g.field_name for g in dna.signal_genes] == ["rsi_14", "rsi_70"]
+        assert dna.signal_sources == [
+            {"type": "rule"},
+            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">"}]
+        assert dna.composition == {"mode": "logic", "op": "and"}
+
+    @pytest.mark.parametrize(
+        ("action", "operator"),
+        [("gt", ">"), ("lt", "<"), ("ge", ">="), ("le", "<=")],
+    )
+    def test_operator_mapping_four_actions(self, db, action, operator):
+        """四种数值比较 action 的 operator 映射保真（lt/le 不被吞成 >）。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[
+            {"subject": col, "action": action, "target": 1.25}])
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        src = _dna_of(db, out["strategy_id"]).signal_sources[0]
+        assert src == {"type": "formula", "ref": col,
+                       "threshold": 1.25, "operator": operator}
+
+    def test_plugin_cross_above_rejected(self, db):
+        """穿越类 action 作用于插件列：显式拒绝并指明需数值比较。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[
+            {"subject": col, "action": "cross_above", "target": 0.5}])
+        with pytest.raises(ResearchError, match="插件列暂不支持该 action"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_plugin_non_numeric_target_rejected(self, db):
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": "ema_50"}])
+        with pytest.raises(ResearchError, match="target 须为数值"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_then_plugin_condition_rejected(self, db):
+        """THEN 插件列显式拒绝（出场组合待后续版本；不静默误译为
+        入场门控——出场语义颠倒比拒绝更糟）。"""
+        col = _plugin(db)
+        hid = _hyp(db, when=[{"subject": "rsi_14", "action": "lt",
+                              "target": 35}],
+                   then=[{"subject": "rsi_70", "action": "gt", "target": 60}])
+        # THEN 插件列假设（then=插件列）经直落构造
+        hid = _raw_hyp(db, when=[{"subject": "rsi_14", "action": "lt",
+                                  "target": 35}],
+                       then=[{"subject": col, "action": "gt", "target": 0.5}])
+        with pytest.raises(ResearchError, match="then_conditions.*暂不支持出场"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_stale_plugin_column_rejected(self, db):
+        """失效插件列（注册表曾有判定路径但列不存在）：拒绝且文案
+        含「插件」与「失效」，区别于基础列/未知列。"""
+        hid = _raw_hyp(db, when=[{"subject": "fx_ghost", "action": "gt",
+                                  "target": 0.5}])
+        with pytest.raises(ResearchError, match="插件列 subject（fx_ghost）已失效"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_base_column_message_distinct(self, db):
+        """三类文案区分：内置基础列（close 仍拒绝——e2e_breakpoint_1a
+        前提）/ 失效插件列 / 完全未知列。"""
+        hid = _raw_hyp(db, when=[{"subject": "close", "action": "gt",
+                                  "target": 60000}])
+        with pytest.raises(ResearchError, match="内置基础列"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+        hid2 = _raw_hyp(db, when=[{"subject": "definitely_not_a_column",
+                                   "action": "gt", "target": 1}])
+        with pytest.raises(ResearchError, match="未知列"):
+            translate_hypothesis(db, hypothesis_id=hid2)
+
+    def test_bare_indicator_prefix_rejected_as_builtin(self, db):
+        """指标前缀本身（rsi 无参数后缀）非参数化形制：仍拒绝。"""
+        hid = _raw_hyp(db, when=[{"subject": "rsi", "action": "gt",
+                                  "target": 50}])
+        with pytest.raises(ResearchError, match="不可表达"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+
+class TestAssemblyOperatorCompat:
+    """组装器配套：operator 可选比较（默认 ">" 向后兼容）与无规则源
+    中性基线。"""
+
+    def _rule_genes(self):
+        return [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           "rsi_14", {"type": "lt", "threshold": 35})]
+
+    def test_default_operator_backward_compatible(self, db):
+        """无 operator 字段的源行为不变（">"，既有 weighted_vote 用例
+        语义不变）。"""
+        col = _plugin(db)
+        df = _df()
+        dna = StrategyDNA(
+            signal_genes=self._rule_genes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            signal_sources=[{"type": "rule"},
+                            {"type": "formula", "ref": col, "threshold": 0.5}],
+            composition={"mode": "logic", "op": "and"})
+        from core.analysis.plugin_service import enrich_with_plugin_columns
+        series = enrich_with_plugin_columns(db, df, {col})[col]
+        base = dna_to_signal_set(dna, df)
+        sig = assemble_signal_set(db, dna, df)
+        expected = base.entries.fillna(False) & (
+            series.astype(float) > 0.5).fillna(False)
+        assert sig.entries.equals(expected.astype(bool))
+
+    @pytest.mark.parametrize(
+        ("operator", "threshold"),
+        [(">", 0.5), ("<", -0.5), (">=", 0.25), ("<=", 2.0)],
+    )
+    def test_operator_compare_fidelity(self, db, operator, threshold):
+        """四比较算子在组装器保真（布尔化按源 operator 比较）。"""
+        col = _plugin(db)
+        df = _df()
+        dna = StrategyDNA(
+            signal_genes=self._rule_genes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            signal_sources=[{"type": "rule"},
+                            {"type": "formula", "ref": col,
+                             "threshold": threshold, "operator": operator}],
+            composition={"mode": "logic", "op": "and"})
+        from core.analysis.plugin_service import enrich_with_plugin_columns
+        series = enrich_with_plugin_columns(db, df, {col})[col]
+        base = dna_to_signal_set(dna, df)
+        sig = assemble_signal_set(db, dna, df)
+        import operator as pyop
+        cmp_fn = {">": pyop.gt, "<": pyop.lt,
+                  ">=": pyop.ge, "<=": pyop.le}[operator]
+        expected = base.entries.fillna(False) & cmp_fn(
+            series.astype(float), threshold).fillna(False)
+        assert sig.entries.equals(expected.astype(bool))
+
+    def test_pure_plugin_neutral_baseline(self, db):
+        """无规则源（纯插件条件策略）：AND 单位元基线——entries 即
+        插件布尔本身，不被空 rule 基因的全 False 静默作废。"""
+        col = _plugin(db)
+        df = _df()
+        dna = StrategyDNA(
+            signal_genes=[],
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            signal_sources=[{"type": "formula", "ref": col,
+                             "threshold": 0.5, "operator": ">"}],
+            composition={"mode": "logic", "op": "and"})
+        from core.analysis.plugin_service import enrich_with_plugin_columns
+        series = enrich_with_plugin_columns(db, df, {col})[col]
+        sig = assemble_signal_set(db, dna, df)
+        expected = (series.astype(float) > 0.5).fillna(False)
+        assert sig.entries.equals(expected.astype(bool))
+        assert bool(sig.entries.any()), "纯插件策略不得被静默作废成永不入场"
+
+
+class TestGeneSignatureCoversSources:
+    """签名修复：signal_sources/composition 必须进签名——否则混合产物
+    与同基因纯 rule 策略同签名（translate 同签名分流/库去重失真）。"""
+
+    def _dna(self, **kw):
+        genes = [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                            "rsi_14", {"type": "lt", "threshold": 35})]
+        base = dict(
+            signal_genes=genes, logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        base.update(kw)
+        return StrategyDNA(**base)
+
+    def test_plugin_source_changes_signature(self):
+        rule_only = self._dna(signal_sources=[{"type": "rule"}])
+        legacy = self._dna()  # 无 signal_sources 字段（存量形制）
+        mixed = self._dna(
+            signal_sources=[{"type": "rule"},
+                            {"type": "formula", "ref": "fx_a",
+                             "threshold": 0.5, "operator": ">"}],
+            composition={"mode": "logic", "op": "and"})
+        assert rule_only.gene_signature == legacy.gene_signature, \
+            "退化形态签名零迁移（无插件源不追加任何部分）"
+        assert mixed.gene_signature != rule_only.gene_signature, \
+            "同内置基因 + 插件源 ≠ 纯 rule 策略（防同签名分流误判）"
+
+    def test_source_details_change_signature(self):
+        kwargs = dict(signal_sources=[{"type": "rule"},
+                                      {"type": "formula", "ref": "fx_a",
+                                       "threshold": 0.5, "operator": ">"}],
+                      composition={"mode": "logic", "op": "and"})
+        a = self._dna(**kwargs)
+        other_ref = self._dna(signal_sources=[
+            {"type": "rule"},
+            {"type": "formula", "ref": "fx_b",
+             "threshold": 0.5, "operator": ">"}],
+            composition={"mode": "logic", "op": "and"})
+        other_op = self._dna(signal_sources=[
+            {"type": "rule"},
+            {"type": "formula", "ref": "fx_a",
+             "threshold": 0.5, "operator": "<="}],
+            composition={"mode": "logic", "op": "and"})
+        assert len({a.gene_signature, other_ref.gene_signature,
+                    other_op.gene_signature}) == 3, \
+            "ref/threshold/operator 任一不同即不同基因型"
