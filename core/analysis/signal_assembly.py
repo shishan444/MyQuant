@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import operator as _operator
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -59,7 +60,7 @@ def assemble_signal_set(
         if formula_cols:
             work = enrich_with_plugin_columns(db_path, enhanced_df, formula_cols)
 
-    # 组合（composition 缺省 = AND 组合全部源）
+    # 组合（composition.mode 缺省 = weighted_vote，threshold 0.5 交集语义）
     mode = (dna.composition or {}).get("mode", "weighted_vote")
     combined = _combine(base, dna, plugin_cols, work, mode)
 
@@ -141,11 +142,20 @@ def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
     return res.signal
 
 
+#: 信号源比较算子（formula/model 源可选 operator 字段；缺省 ">" =
+#: 既有行为，向后兼容——翻译器产物四比较保真用）
+_SOURCE_COMPARE_OPS = {
+    ">": _operator.gt, "<": _operator.lt,
+    ">=": _operator.ge, "<=": _operator.le,
+}
+
+
 def _combine(
     base, dna, plugin_cols: Dict[str, pd.Series],
     work: pd.DataFrame, mode: str,
 ) -> Dict[str, pd.Series]:
-    """组合决策层三模式（插件源转布尔：值 > 源阈值，缺省 0）。"""
+    """组合决策层三模式（插件源转布尔：按源 operator 与阈值比较，
+    缺省 ">" 对 0 阈值——既有行为）。"""
     idx = base.entries.index
     plugin_bools = {}
     for src in (dna.signal_sources or []):
@@ -157,11 +167,25 @@ def _combine(
             continue
         series = series.reindex(idx) if hasattr(series, "reindex") else series
         threshold = float(src.get("threshold", 0.0))
-        plugin_bools[col] = (series.astype(float) > threshold).fillna(False)
+        compare = _SOURCE_COMPARE_OPS.get(
+            str(src.get("operator", ">")), _operator.gt)
+        plugin_bools[col] = compare(
+            series.astype(float), threshold).fillna(False)
 
     entries = base.entries.fillna(False).astype(bool)
     if not plugin_bools:
         return {"entries": entries}
+
+    # 无规则源（纯插件条件策略，如翻译器纯插件列假设产物）：规则侧基线
+    # 取组合语义单位元——AND 系（logic and / gate / weighted_vote 交集
+    # 语义）恒真、logic OR 恒假——否则空 rule 基因的全 False entries 会
+    # 把纯插件策略静默作废成永不入场
+    has_rule_source = any(
+        s.get("type") == "rule" for s in (dna.signal_sources or []))
+    if not has_rule_source:
+        is_or = (mode == "logic"
+                 and str((dna.composition or {}).get("op", "")).upper() == "OR")
+        entries = pd.Series(not is_or, index=idx)
 
     comp = dna.composition or {}
     if mode == "weighted_vote":

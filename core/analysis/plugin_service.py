@@ -120,6 +120,82 @@ def rejected_formula_record(
     return plugin_id
 
 
+def _formula_registry_entries(db_path: Path) -> Dict[str, Any]:
+    """注册表条目按列名索引（插件列解析共享底座——求值闭包与
+    lookback 闭包同源，防两套解析漂移）。"""
+    return {e["column_name"]: e for e in rr.list_signal_registry_entries(db_path)}
+
+
+def _formula_expression_of(
+    db_path: Path, entries: Dict[str, Any], col: str,
+) -> Optional[str]:
+    """列 → valid 公式插件的 expression（非公式列 / 无 valid 版本 → None）。"""
+    entry = entries.get(col)
+    if entry is None or entry["source"] != "formula":
+        return None
+    from sqlalchemy import select
+    from core.persistence.orm.models import FormulaPlugin
+    from core.persistence.repository.dataset_meta import _engine_for
+    with _engine_for(db_path).connect() as conn:
+        row = conn.execute(
+            select(FormulaPlugin)
+            .where(FormulaPlugin.plugin_id == entry["plugin_id"])
+        ).mappings().first()
+    if row is None or row["status"] != "valid":
+        return None
+    return row["expression"]
+
+
+def _referenced_formula_columns(expr: str, entries: Dict[str, Any]) -> set:
+    """表达式 AST 中引用的公式插件列（叠层引用解析）。"""
+    import ast as _ast
+    try:
+        tree = _ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return set()
+    names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
+    return {n for n in names if n in entries
+            and entries[n]["source"] == "formula"}
+
+
+def _formula_dependency_closure(
+    db_path: Path, needed_columns: set,
+) -> Dict[str, str]:
+    """依赖闭包：col → expression（叠层递归展开；被引用列不在
+    needed 时也展开——否则叠层引用静默缺失）。"""
+    entries = _formula_registry_entries(db_path)
+    queue = list(needed_columns)
+    pending = set()
+    exprs: Dict[str, str] = {}
+    while queue:
+        col = queue.pop(0)
+        if col in pending or col not in entries:
+            continue
+        expr = _formula_expression_of(db_path, entries, col)
+        if expr is None:
+            continue
+        pending.add(col)
+        exprs[col] = expr
+        queue.extend(_referenced_formula_columns(expr, entries) - pending)
+    return exprs
+
+
+def plugin_columns_lookback(db_path: Path, columns: set) -> int:
+    """插件列（含依赖闭包）回看窗口静态推导最大值——验证回测 warmup
+    扩展输入（与内置 derive_warmup 取大、floor 200 兜底在调用处）。
+
+    依赖闭包递归与 enrich_with_plugin_columns 共享解析（warmup 覆盖面
+    = 求值面）；列不存在 / 非公式 / 已失效 → 跳过（求值端显式拒绝
+    兜底，此处只算窗口）。无窗口项表达式贡献 0。
+    """
+    from core.signals.formula import formula_lookback
+
+    lookback = 0
+    for expr in _formula_dependency_closure(db_path, columns).values():
+        lookback = max(lookback, formula_lookback(expr))
+    return lookback
+
+
 def enrich_with_plugin_columns(
     db_path: Path, df, needed_columns: set,
 ) -> Any:
@@ -133,48 +209,11 @@ def enrich_with_plugin_columns(
 
     if not needed_columns:
         return df
-    entries = {e["column_name"]: e for e in rr.list_signal_registry_entries(db_path)}
 
-    def _expression_of(col: str) -> Optional[str]:
-        entry = entries.get(col)
-        if entry is None or entry["source"] != "formula":
-            return None
-        from sqlalchemy import select
-        from core.persistence.orm.models import FormulaPlugin
-        from core.persistence.repository.dataset_meta import _engine_for
-        with _engine_for(db_path).connect() as conn:
-            row = conn.execute(
-                select(FormulaPlugin)
-                .where(FormulaPlugin.plugin_id == entry["plugin_id"])
-            ).mappings().first()
-        if row is None or row["status"] != "valid":
-            return None
-        return row["expression"]
-
-    def _referenced_plugin_cols(expr: str) -> set:
-        import ast as _ast
-        try:
-            tree = _ast.parse(expr, mode="eval")
-        except SyntaxError:
-            return set()
-        names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
-        return {n for n in names if n in entries
-                and entries[n]["source"] == "formula"}
-
-    # 递归展开依赖闭包（叠层：fx_b 引用 fx_a → fx_a 一并求值）
-    queue = list(needed_columns)
-    pending = set()
-    exprs: Dict[str, str] = {}
-    while queue:
-        col = queue.pop(0)
-        if col in pending or col not in entries:
-            continue
-        expr = _expression_of(col)
-        if expr is None:
-            continue
-        pending.add(col)
-        exprs[col] = expr
-        queue.extend(_referenced_plugin_cols(expr) - pending)
+    # 依赖闭包（叠层：fx_b 引用 fx_a → fx_a 一并求值）——与
+    # plugin_columns_lookback 共享解析（warmup 覆盖面 = 求值面）
+    exprs = _formula_dependency_closure(db_path, needed_columns)
+    entries = _formula_registry_entries(db_path)
 
     env: Dict[str, Any] = {}
     work = df.copy()
@@ -183,7 +222,7 @@ def enrich_with_plugin_columns(
     while remaining:
         progressed = False
         for col, expr in list(remaining.items()):
-            deps = _referenced_plugin_cols(expr) & set(remaining)
+            deps = _referenced_formula_columns(expr, entries) & set(remaining)
             if deps:
                 continue  # 依赖未求值，下一轮
             try:

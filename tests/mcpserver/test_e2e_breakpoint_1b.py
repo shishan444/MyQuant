@@ -144,6 +144,37 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
                           "start": "2024-02-01T00:00:00Z", "end": "2024-02-20T00:00:00Z"}})
     assert body["verdict"] in ("pass", "fail")
     assert body["warmup"]["bars"] >= 200
+    assert isinstance(body["metrics"]["total_trades"], int)
+
+    # 7b) 隔离/沙盒回测真实消费公式源（对照法）：rule-only 对照版有交易；
+    # 同 formula 插件配恒假门（threshold 极大）AND 后清零——静默跳过时
+    # 恒假门也等于对照版交易数，断言必红。交易数是聚合量，组合版与
+    # 对照版可能巧合同数，故对照用确定性的恒假门版本。
+    from core.strategy.dna import RiskGenes
+    rule_only = StrategyDNA(
+        signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                                 "rsi_14", {"type": "lt", "threshold": 35})],
+        execution_genes=ExecutionGenes(timeframe="4h"),
+        risk_genes=RiskGenes())
+    save_strategy(db, strategy_id="st_rule_only", dna_json=rule_only.to_json(),
+                  symbol="BTCUSDT", timeframe="4h", name="rule only")
+    hard_gate = StrategyDNA(
+        signal_genes=rule_only.signal_genes,
+        execution_genes=ExecutionGenes(timeframe="4h"),
+        risk_genes=RiskGenes(),
+        signal_sources=[{"type": "rule"}, {"type": "formula", "ref": fx_col,
+                                           "threshold": 1e9}],
+        composition={"mode": "logic", "op": "AND"})
+    save_strategy(db, strategy_id="st_hard_gate", dna_json=hard_gate.to_json(),
+                  symbol="BTCUSDT", timeframe="4h", name="hard gate")
+    rng_kw = {"symbol": "BTCUSDT", "timeframe": "4h",
+              "start": "2024-02-01T00:00:00Z", "end": "2024-02-20T00:00:00Z"}
+    rule_sb = api.post("/api/research/backtest-sandbox",
+                       {"strategy_id": "st_rule_only", **rng_kw})
+    gate_sb = api.post("/api/research/backtest-sandbox",
+                       {"strategy_id": "st_hard_gate", **rng_kw})
+    assert rule_sb["metrics"]["total_trades"] > 0, "对照版须有交易"
+    assert gate_sb["metrics"]["total_trades"] == 0, "插件源须影响 entries"
 
     # 8) 验证档案含分量证据
     report = api.get("/api/research/validation/st_composite/report")

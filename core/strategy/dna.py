@@ -280,6 +280,23 @@ class StrategyDNA:
                     g_cond = g.condition.get("type", "?") if g.condition else "?"
                     layer_parts.append(f"{g.indicator}:{g_cond}")
                 parts.append(",".join(layer_parts))
+        # v2 插件信号源与组合层（fix-plugin-column-translation）：混合产物
+        # 的 signal_genes 与纯 rule 策略可相同，签名若不含 signal_sources
+        # 会把不同基因型误判同签名（translate 同签名分流、库去重、进化
+        # exclude-set 全部失真）。退化形态（无插件源）签名逐位不变（零迁移）。
+        plugin_sources = [
+            s for s in (self.signal_sources or [])
+            if isinstance(s, dict) and s.get("type") in ("formula", "model")
+        ]
+        if plugin_sources:
+            parts.append("src:" + ";".join(sorted(
+                f"{s.get('type')}:{s.get('ref')}:"
+                f"{s.get('threshold', 0.0)}:{s.get('operator', '>')}"
+                for s in plugin_sources)))
+            if self.composition:
+                comp = self.composition if isinstance(self.composition, dict) else {}
+                parts.append("comp:" + json.dumps(
+                    comp, sort_keys=True, ensure_ascii=False, default=str))
         return "|".join(parts)
 
     def _resolve_signal_genes(self) -> List[SignalGene]:

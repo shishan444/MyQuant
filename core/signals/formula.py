@@ -81,6 +81,17 @@ _FORMULA_ARITY = {
 # 负向 shift 静态拦截的函数（第 2 参须为 >= 0 常量）
 _SHIFT_LIKE = {"shift", "diff"}
 
+#: 各白名单函数的回看窗口参数位置（0 起；abs 无窗口项不在此表）。
+#: rolling(n) 头部 NaN 需 n-1 根前置、shift/diff(n) 需 n 根、ema(span=n)
+#: 指数衰减近似 n、zscore/corr 同 rolling——warmup 推导取参数值本身
+#: （保守取向，宁可多预热）。
+_WINDOW_PARAM_INDEX = {
+    "shift": 1, "diff": 1,
+    "rolling_mean": 1, "rolling_std": 1, "rolling_max": 1,
+    "rolling_min": 1, "rolling_sum": 1,
+    "zscore": 1, "ema": 1, "corr": 2,
+}
+
 # ---------------------------------------------------------------- 静态校验
 
 _ALLOWED_NODES = (
@@ -98,6 +109,31 @@ def _const_value(node: ast.AST) -> tuple[bool, float]:
             and isinstance(node.operand.value, (int, float))):
         return True, -float(node.operand.value)
     return False, 0.0
+
+
+def formula_lookback(expression: str) -> int:
+    """表达式回看窗口静态推导：全部窗口参数字面量取 max，无窗口项 0。
+
+    供验证回测 warmup 扩展（与内置 derive_warmup 取大、floor 兜底在
+    调用处）。嵌套调用经 ast.walk 全树覆盖——
+    rolling_mean(rolling_std(close, 30), 60) 取 60。语法错误返回 0
+    （非法表达式到不了求值层，注册静态校验先行拦截）。
+    """
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return 0
+    lookback = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        param_idx = _WINDOW_PARAM_INDEX.get(node.func.id)
+        if param_idx is None or len(node.args) <= param_idx:
+            continue
+        ok, val = _const_value(node.args[param_idx])
+        if ok:
+            lookback = max(lookback, int(val))
+    return lookback
 
 
 def validate_formula(expr: str, allowed_columns: set) -> List[str]:
