@@ -60,7 +60,7 @@ def assemble_signal_set(
         if formula_cols:
             work = enrich_with_plugin_columns(db_path, enhanced_df, formula_cols)
 
-    # 组合（composition 缺省 = AND 组合全部源）
+    # 组合（composition.mode 缺省 = weighted_vote，threshold 0.5 交集语义）
     mode = (dna.composition or {}).get("mode", "weighted_vote")
     combined = _combine(base, dna, plugin_cols, work, mode)
 

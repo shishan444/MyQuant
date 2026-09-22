@@ -368,6 +368,13 @@ class TestCompositeGate:
             composition={"mode": "gate"})
         save_strategy(db, strategy_id="st_v2", dna_json=dna.to_json(),
                       symbol="BTCUSDT", timeframe="4h")
+        # 对照版：同 rule 基因、去除插件源（对照法断言用）
+        rule_only = StrategyDNA(
+            signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                                     "rsi_14", {"type": "lt", "threshold": 35})],
+            execution_genes=ExecutionGenes(timeframe="4h"))
+        save_strategy(db, strategy_id="st_rule_only", dna_json=rule_only.to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
         return hid, data_dir, col
 
     def test_missing_component_evidence_rejected(self, db, tmp_path):
@@ -394,3 +401,14 @@ class TestCompositeGate:
         rec = next(r for r in records if r["record_id"] == out["record_id"])
         assert json.loads(rec["params"])["threshold_profile"].startswith("default_tightened")
         assert json.loads(rec["components"]) == [col]
+        # 对照法（验收实质化，3.2）：同区间「去除插件源的同构策略」交易数
+        # 须不同——插件源真实参与信号；静默跳过时两数相等
+        from core.analysis.validation_service import run_sandbox_backtest
+        rng_kw = dict(symbol="BTCUSDT", timeframe="4h",
+                      start="2024-02-01T00:00:00Z", end="2024-02-20T00:00:00Z")
+        mixed = run_sandbox_backtest(db, data_dir, strategy_id="st_v2", **rng_kw)
+        rule_only = run_sandbox_backtest(db, data_dir,
+                                         strategy_id="st_rule_only", **rng_kw)
+        assert rule_only["metrics"]["total_trades"] > 0, "对照版须有交易"
+        assert (mixed["metrics"]["total_trades"]
+                != rule_only["metrics"]["total_trades"]), "插件源须影响 entries"

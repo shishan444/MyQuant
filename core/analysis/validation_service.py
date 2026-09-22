@@ -2,9 +2,9 @@
 
 隔离回测判定流（附.3）：
 终态拒验 → 幂等查询 → 判定并集求交（重叠 409 附 judged_ranges）→
-warmup 推导（max(200, 用到指标最大周期×3)）→ 数据起点不足 422 →
-[warmup 起点装载算指标 → 切回请求区间回测]（指标记忆保留、结果只统计
-请求区间）→ 门槛表机械判定 → validation_records+research_log 原子双落。
+warmup 推导（max(200, 用到指标最大周期×3, 插件公式 lookback)）→
+数据起点不足 422 → [warmup 起点装载算指标/组装插件信号 → 切回请求
+区间回测]（指标与插件列记忆保留、结果只统计请求区间）→ 门槛表机械判定 → validation_records+research_log 原子双落。
 
 随机窗口（3.3）：同种子可复现（seed 进 params 持久化）；每窗独立
 warmup 前扩（与隔离回测同语义）。
@@ -78,13 +78,56 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
     return StrategyDNA.from_json(row["dna_json"]), row
 
 
+def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
+    """DNA warmup 推导：max(derive_warmup(内置), 插件公式 lookback, 200)。
+
+    插件 lookback 按依赖闭包递归取 max（fx_b 引用 fx_a → 两窗口都
+    计入）；model 源 walk-forward 训练窗在求值端自理，不占 warmup。
+    插件列不存在时贡献 0（求值端显式拒绝兜底）。仅含插件源时
+    derive_warmup([]) 的 floor 200 保底。
+
+    Raises:
+        KeyError: 内置指标未知（透传给调用方决定拒绝语义）。
+    """
+    indicator_names = _dna_indicator_names(dna)
+    warmup = derive_warmup(indicator_names)  # 自带 floor 200
+    formula_refs = {s["ref"] for s in (dna.signal_sources or [])
+                    if s.get("type") == "formula" and s.get("ref")}
+    if formula_refs:
+        from core.analysis.plugin_service import plugin_columns_lookback
+        warmup = max(warmup, plugin_columns_lookback(db_path, formula_refs))
+    return warmup, indicator_names
+
+
+def _slice_signal_set(sig_set, index: pd.Index):
+    """SignalSet 序列字段按请求区间索引切回（enhanced ⊇ 请求区间，
+    reindex 不产生缺失行）；非序列字段（degraded_layers/
+    mtf_diagnostics）原样保留。引擎按 .values 取信号数组，切回后
+    序列与 bt_df 严格等长对齐。"""
+    from core.strategy.executor import SignalSet
+
+    def _cut(s):
+        return s.reindex(index) if s is not None else None
+
+    return SignalSet(
+        entries=_cut(sig_set.entries),
+        exits=_cut(sig_set.exits),
+        adds=_cut(sig_set.adds),
+        reduces=_cut(sig_set.reduces),
+        degraded_layers=sig_set.degraded_layers,
+        entry_direction=_cut(sig_set.entry_direction),
+        mtf_diagnostics=sig_set.mtf_diagnostics,
+        confidence=_cut(sig_set.confidence),
+    )
+
+
 def _run_backtest_on_range(
-    data_dir: Path, dna, symbol: str, timeframe: str,
+    db_path: Path, data_dir: Path, dna, symbol: str, timeframe: str,
     start: str, end: str, warmup_bars: int,
     *, init_cash: float = 100000.0,
     fee: float = 0.001, slippage: float = 0.0005,
 ) -> Tuple[Dict[str, Any], int, int]:
-    """[start-warmup, end) 装载算指标 → 切回 [start,end) 回测。
+    """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
 
     Returns:
         (metrics, actual_warmup_bars, bars_used)
@@ -124,9 +167,23 @@ def _run_backtest_on_range(
             data_dir, symbol, timeframe, enhanced, needed_tfs,
             load_start, end)
 
+    # 组装注入（断点 B）：DNA 声明 formula/model 源时，在 enhanced
+    # 全段（含 warmup 前缀）上求值组装——公式/模型列带前缀计算保证
+    # 请求区间头部收敛；组装结果按请求区间索引切回后注入引擎
+    # （引擎统一 shift(1)，组装层不平移）。退化 DNA（无插件源）
+    # signal_set=None 走引擎原路径，行为零变化。
+    signal_set = None
+    if any(s.get("type") in ("formula", "model")
+           for s in (dna.signal_sources or [])):
+        from core.analysis.signal_assembly import assemble_signal_set
+        assembled = assemble_signal_set(
+            db_path, dna, enhanced, dfs_by_timeframe=dfs_by_timeframe)
+        signal_set = _slice_signal_set(assembled, bt_df.index)
+
     engine = bt_engine_mod.BacktestEngine(
         init_cash=init_cash, fee=fee, slippage=slippage)
-    result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
+    result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe,
+                        signal_set=signal_set)
     metrics = {
         "total_return": float(result.total_return),
         "sharpe_ratio": float(result.sharpe_ratio),
@@ -190,10 +247,9 @@ def run_isolated_backtest(
     symbol = request_range.get("symbol") or strat_row.get("symbol", "BTCUSDT")
     timeframe = request_range.get("timeframe") or strat_row.get("timeframe", "4h")
 
-    # warmup 推导
-    indicator_names = _dna_indicator_names(dna)
+    # warmup 推导（内置 ×3 与插件公式 lookback 取大，floor 200）
     try:
-        warmup_bars = derive_warmup(indicator_names)
+        warmup_bars, indicator_names = _derive_dna_warmup(db_path, dna)
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 
@@ -218,7 +274,7 @@ def run_isolated_backtest(
 
     # 回测（warmup 前扩装载）
     metrics, actual_warmup, bars_used = _run_backtest_on_range(
-        data_dir, dna, symbol, timeframe,
+        db_path, data_dir, dna, symbol, timeframe,
         request_range["start"], request_range["end"], warmup_bars)
 
     # 门槛机械判定（组合用收紧 profile）
@@ -230,7 +286,7 @@ def run_isolated_backtest(
         "metrics": metrics,
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
-                   "basis": "max(200, max_indicator_period*3)",
+                   "basis": "max(200, max_indicator_period*3, plugin_formula_lookback)",
                    "indicators": indicator_names},
         "bars_used": bars_used,
         "symbol": symbol, "timeframe": timeframe,
@@ -252,7 +308,7 @@ def run_isolated_backtest(
         "metrics": metrics,
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
-                   "basis": "max(200, max_indicator_period*3)"},
+                   "basis": "max(200, max_indicator_period*3, plugin_formula_lookback)"},
         "judged_ranges": judged,
     }
 
@@ -280,8 +336,7 @@ def random_window_test(
     import numpy as np
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
-    indicator_names = _dna_indicator_names(dna)
-    warmup_bars = derive_warmup(indicator_names)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
     tf_minutes = _TF_MINUTES.get(timeframe, 240)
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
@@ -314,7 +369,7 @@ def random_window_test(
         w_start = ds + off * bar_delta
         w_end = w_start + window_bars * bar_delta
         metrics, actual_warmup, bars = _run_backtest_on_range(
-            data_dir, dna, symbol, timeframe,
+            db_path, data_dir, dna, symbol, timeframe,
             str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars)
         verdict, details = judge(metrics, threshold_profile)
         windows.append({
@@ -394,11 +449,10 @@ def run_sandbox_backtest(
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     symbol = symbol or strat_row.get("symbol", "BTCUSDT")
     timeframe = timeframe or strat_row.get("timeframe", "4h")
-    indicator_names = _dna_indicator_names(dna)
-    warmup_bars = derive_warmup(indicator_names)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
 
     metrics, actual_warmup, bars_used = _run_backtest_on_range(
-        data_dir, dna, symbol, timeframe, start, end, warmup_bars,
+        db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
         init_cash=init_cash, fee=fee, slippage=slippage)
 
     # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
