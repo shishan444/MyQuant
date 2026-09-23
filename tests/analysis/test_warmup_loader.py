@@ -94,3 +94,40 @@ def test_data_insufficient_rejected(tmp_path):
         load_with_warmup(data_dir, SYMBOL, "1h", "2024-01-01T00:00:00Z",
                          "2024-02-01T00:00:00Z", ["RSI"])
     assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+
+def test_min_warmup_bars_expands_prefix(tmp_path):
+    """叠加路径：min_warmup_bars 高于推导值（RSI=200 < 500）→ 前扩取
+    max(derive_warmup, min_warmup_bars)=500；不足 500 根同样走拒绝。"""
+    df = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=7)
+    data_dir = _write_parquet(tmp_path, df, "1h")
+    start = df.index[800].isoformat()
+
+    out, _ = load_with_warmup(data_dir, SYMBOL, "1h", start,
+                              df.index[899].isoformat(), ["RSI"],
+                              min_warmup_bars=500)
+
+    assert int((out.index < pd.Timestamp(start)).sum()) == 500
+
+    with pytest.raises(ResearchError) as ei:
+        load_with_warmup(data_dir, SYMBOL, "1h", df.index[300].isoformat(),
+                         df.index[500].isoformat(), ["RSI"],
+                         min_warmup_bars=500)
+    assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+    assert "500" in ei.value.message
+
+
+def test_min_warmup_bars_default_unchanged(tmp_path):
+    """回归路径：缺省（不传或显式 0）时 warmup 仍由 derive_warmup 主导，
+    行为与扩展前完全一致。"""
+    df = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=7)
+    data_dir = _write_parquet(tmp_path, df, "1h")
+    start = df.index[800].isoformat()
+    end = df.index[899].isoformat()
+
+    out_default, _ = load_with_warmup(data_dir, SYMBOL, "1h", start, end,
+                                      ["RSI"])
+    out_zero, _ = load_with_warmup(data_dir, SYMBOL, "1h", start, end,
+                                   ["RSI"], min_warmup_bars=0)
+    assert int((out_default.index < pd.Timestamp(start)).sum()) == 200
+    assert int((out_zero.index < pd.Timestamp(start)).sum()) == 200

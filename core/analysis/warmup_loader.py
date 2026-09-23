@@ -43,6 +43,7 @@ def load_with_warmup(
     start: str,
     end: str,
     indicator_names: list[str],
+    min_warmup_bars: int = 0,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """[start-warmup, end] 前扩装载：返回含 warmup 前缀的 df 与请求起点。
 
@@ -54,6 +55,9 @@ def load_with_warmup(
         end: 请求区间终点（沿用 load_and_prepare_df 的闭端过滤）。
         indicator_names: 本次实际用到的指标名（derive_warmup 输入，
             INDICATOR_REGISTRY 键）。
+        min_warmup_bars: warmup 下限叠加（derive_warmup 已含 200 floor，
+            此处取 max(derive_warmup, min_warmup_bars)；缺省 0 行为不变）。
+            消费者如 market_snapshot 需要前缀额外覆盖 90 日分位窗口。
 
     Returns:
         (df, start_ts)：df 含 warmup 前缀（compute_indicators=False），
@@ -66,7 +70,7 @@ def load_with_warmup(
     """
     from core.data.mtf_loader import load_and_prepare_df
 
-    warmup_bars = derive_warmup(indicator_names)
+    warmup_bars = max(derive_warmup(indicator_names), min_warmup_bars)
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
     start_ts = _to_utc(pd.Timestamp(start))
