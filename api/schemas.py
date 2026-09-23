@@ -268,6 +268,16 @@ class BacktestResponse(BaseModel):
     signals: Optional[List[Dict[str, Any]]] = None
     total_funding_cost: float = 0.0
     liquidated: bool = False
+    # 基准对照（improve-backtest-benchmark-disclosure 2.2）：None=未计算/
+    # 无基准（旧存库行不含 → None，向后兼容）。零费基准口径：基准为请求
+    # 区间 close 的无杠杆买入持有，不扣资金费/交易费（基准从严）。
+    # excess_return 为区间口径（total_return - benchmark_return，短样本
+    # 不年化外推）；alpha 仍为年化口径（annual_return - market_annual_return）
+    benchmark_return: Optional[float] = None
+    excess_return: Optional[float] = None
+    alpha: Optional[float] = None
+    market_annual_return: Optional[float] = None
+    profit_factor: Optional[float] = None
 
 
 class CompareRequest(BaseModel):

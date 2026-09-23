@@ -9,6 +9,8 @@
  * 另锁定 NaN/Infinity 为非法 JSON（JSON.parse 抛错）——指标层泄漏 NaN 即
  * 前端整响应解析崩溃（对应 findings D-2b 风险面）。
  */
+/// <reference types="node" />
+
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

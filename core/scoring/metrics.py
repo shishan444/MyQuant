@@ -4,6 +4,23 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# bars_per_year 全档映射（公共单一权威源）：数字币 7×24 市场的分钟→年换算。
+# 回测引擎与 REST 批量回测同源引用，杜绝两套映射漂移（原 engine 缺
+# 1m/5m/2h 档、batch 缺 3d 档，各自缺省档位为政）。
+BARS_PER_YEAR: dict[str, int] = {
+    "1m": 525600,   # 365*24*60
+    "5m": 105120,   # 365*24*12
+    "15m": 35040,   # 365*24*4
+    "30m": 17520,   # 365*24*2
+    "1h": 8760,     # 365*24
+    "2h": 4380,     # 365*12
+    "4h": 2190,     # 365*6
+    "1d": 365,
+    "3d": 365 // 3,  # 121
+}
+# 未知 timeframe 的缺省档（= 4h 档，既有两处缺省行为的并集）
+DEFAULT_BARS_PER_YEAR: int = 2190
+
 
 def compute_metrics(
     equity_curve: pd.Series,
@@ -25,11 +42,14 @@ def compute_metrics(
         trade_win_rate: Win rate from closed trades (0-1). None if unavailable.
         trade_returns: Array of per-trade returns (PnL / init_cash). None if unavailable.
         benchmark_close: Benchmark close prices (unleveraged buy-and-hold baseline).
-            Must cover the same date range as equity_curve.
+            Must cover the same date range as equity_curve. 零费口径：基准不扣
+            资金费/交易费（方向从严——基准更强、超额更难达成）。
 
     Returns:
         Dict with annual_return, sharpe_ratio, max_drawdown, win_rate,
-        calmar_ratio, total_trades, alpha, market_annual_return, backtest_years.
+        calmar_ratio, total_trades, alpha, market_annual_return, backtest_years,
+        benchmark_return (区间基准收益，None=无基准), excess_return
+        (区间超额=total_return-benchmark_return，None=无基准).
     """
     if len(equity_curve) < 2 or total_trades == 0:
         return {
@@ -48,6 +68,8 @@ def compute_metrics(
             "market_annual_return": 0.0,
             "alpha": 0.0,
             "backtest_years": 0.0,
+            "benchmark_return": None,
+            "excess_return": None,
         }
 
     # Annual return (from equity curve - standard)
@@ -154,10 +176,18 @@ def compute_metrics(
     # Alpha: excess return over unleveraged buy-and-hold benchmark
     market_annual_return = 0.0
     alpha = 0.0
+    benchmark_return = None
+    excess_return = None
     if benchmark_close is not None and len(benchmark_close) >= 2:
+        benchmark_return = float(
+            benchmark_close.iloc[-1] / benchmark_close.iloc[0] - 1)
         bm_total_return = (benchmark_close.iloc[-1] / benchmark_close.iloc[0]) - 1
         market_annual_return = (1 + bm_total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
         alpha = annual_return - market_annual_return
+        # 区间口径超额（improve-backtest-benchmark-disclosure Decision 1）：
+        # total_return - benchmark_return，短样本不做年化外推；与年化口径
+        # alpha（annual_return - market_annual_return）并存，各表各义
+        excess_return = float(total_return - benchmark_return)
 
     return {
         "annual_return": float(annual_return),
@@ -175,4 +205,6 @@ def compute_metrics(
         "market_annual_return": float(market_annual_return),
         "alpha": float(alpha),
         "backtest_years": float(years),
+        "benchmark_return": benchmark_return,
+        "excess_return": excess_return,
     }

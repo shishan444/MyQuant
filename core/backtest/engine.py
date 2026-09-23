@@ -50,6 +50,11 @@ class BacktestResult:
     degraded_layers: int = 0
     market_annual_return: float = 0.0
     alpha: float = 0.0
+    # 基准对照（improve-backtest-benchmark-disclosure）：区间口径。
+    # None=无基准数据（早退/无基准序列），不与 0.0 混同——0.0 是
+    # 「基准区间持平」的真实值；零费基准（不扣资金费/交易费，从严）
+    benchmark_return: Optional[float] = None
+    excess_return: Optional[float] = None
 
 
 @njit
@@ -555,10 +560,12 @@ class BacktestEngine:
             total_trades_val = int(total_trades_val.sum())
         total_trades_val = int(total_trades_val) if not pd.isna(total_trades_val) else 0
 
-        from core.scoring.metrics import compute_metrics
-        bars_per_year_map = {"15m": 365 * 96, "30m": 365 * 48, "1h": 365 * 24,
-                             "4h": 365 * 6, "1d": 365, "3d": 365 // 3}
-        bars_per_year = bars_per_year_map.get(timeframe, 365 * 6)
+        # bars_per_year 公共单一权威源（metrics.py，REST batch 同源引用）。
+        # 缺省 2190（=4h 档）不变；补全 1m/5m/2h 档——原缺省落错档属修正
+        # 非回归（见 improve-backtest-benchmark-disclosure Decision 6）
+        from core.scoring.metrics import (
+            BARS_PER_YEAR, DEFAULT_BARS_PER_YEAR, compute_metrics)
+        bars_per_year = BARS_PER_YEAR.get(timeframe, DEFAULT_BARS_PER_YEAR)
 
         trade_win_rate = None
         trade_returns = None
@@ -623,6 +630,8 @@ class BacktestEngine:
             degraded_layers=degraded,
             market_annual_return=metrics.get("market_annual_return", 0.0),
             alpha=metrics.get("alpha", 0.0),
+            benchmark_return=metrics.get("benchmark_return"),
+            excess_return=metrics.get("excess_return"),
         )
 
     def run(

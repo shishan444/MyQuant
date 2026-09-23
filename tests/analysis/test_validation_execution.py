@@ -158,6 +158,47 @@ class TestMtfLoading:
         assert resp.total_trades >= 0
 
 
+class TestBenchmarkDisclosure:
+    """2.1：隔离回测与随机窗口 metrics 携带基准对照四键（6→10 键）。"""
+
+    _KEYS = ("alpha", "market_annual_return", "benchmark_return", "excess_return")
+
+    def test_isolated_metrics_and_stored_record_carry_keys(
+            self, db, data_dir, hypothesis_id):
+        from core.persistence.repository import research as rr
+
+        save_strategy(db, strategy_id="st_bm", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id, strategy_id="st_bm",
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01T00:00:00Z",
+                           "end": "2023-03-20T00:00:00Z"})
+        m = out["metrics"]
+        for key in self._KEYS:
+            assert key in m, f"metrics 缺对照键 {key}"
+        # 引擎恒传 benchmark（请求区间 close）→ 有交易时对照可算且自洽
+        if m["total_trades"] > 0:
+            assert m["benchmark_return"] is not None
+            assert m["excess_return"] == pytest.approx(
+                m["total_return"] - m["benchmark_return"])
+        # 落库 record 的 result_json.metrics 同形（自动携带）
+        rec = rr.list_validation_records(db, strategy_id="st_bm", limit=1)[0]
+        stored = json.loads(rec["result"])["metrics"]
+        assert set(self._KEYS) <= set(stored)
+
+    def test_random_window_worst_window_carries_keys(self, db, data_dir):
+        save_strategy(db, strategy_id="st_bm", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = random_window_test(
+            db, data_dir, strategy_id="st_bm", symbol="BTCUSDT",
+            timeframe="4h", data_start="2023-03-20", data_end="2023-05-01",
+            window_bars=30, n_windows=3, seed=5)
+        wm = out["summary"]["worst_window"]["metrics"]
+        for key in self._KEYS:
+            assert key in wm, f"worst_window.metrics 缺对照键 {key}"
+
+
 class TestColumnRejection:
     """3.3：列不可用结构化拒绝（附可用列清单）——错误即文档。"""
 

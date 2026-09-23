@@ -191,6 +191,15 @@ def _run_backtest_on_range(
         "win_rate": float(result.win_rate) if result.win_rate is not None else None,
         "total_trades": int(result.total_trades),
         "liquidated": bool(result.liquidated),
+        # 基准对照四键（improve-backtest-benchmark-disclosure 2.1，6→10 键）：
+        # engine 已算（dataclass 字段），None=无基准（容缺；门槛判定不读新键，
+        # 行为零变化）。result_json 随 metrics 形制自动携带，随机窗口同。
+        "alpha": float(result.alpha),
+        "market_annual_return": float(result.market_annual_return),
+        "benchmark_return": (float(result.benchmark_return)
+                             if result.benchmark_return is not None else None),
+        "excess_return": (float(result.excess_return)
+                          if result.excess_return is not None else None),
     }
     return metrics, actual_warmup_bars, len(bt_df)
 
