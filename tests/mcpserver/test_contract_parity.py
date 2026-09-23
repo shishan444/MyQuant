@@ -198,6 +198,27 @@ class TestWhitelistParity:
                     f"{tool} 端点 {c.path} 不在 {c.method} 白名单"
 
 
+class TestSnapshotToolParity:
+    """add-market-snapshot 2.2：get_market_snapshot 三处同步对拍——
+    工具定义存在 + tier 归属 + 白名单字面量匹配。"""
+
+    def test_snapshot_tool_registered_and_whitelisted(self) -> None:
+        from mcpserver.tools import TOOL_TIERS
+
+        calls = _extract_tool_calls()
+        assert "get_market_snapshot" in calls, \
+            "tools.py 须定义 get_market_snapshot 工具"
+        # 装配后 tier 归属（TOOL_TIERS 注册时填充，直读为空集）
+        from mcpserver.server import build_server
+        run_async(build_server(profile="readonly")[0].list_tools())
+        assert "get_market_snapshot" in TOOL_TIERS["readonly"]
+        entries = calls["get_market_snapshot"]
+        assert entries and all(c.method == "GET" for c in entries)
+        for c in entries:
+            assert _norm(c.path) == "/api/research/market-snapshot"
+        assert "/api/research/market-snapshot" in READONLY_ENDPOINTS
+
+
 class TestPaginationParity:
     """对拍 2：工具查询参数键 ⊆ 服务端端点签名。"""
 

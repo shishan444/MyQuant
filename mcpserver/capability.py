@@ -32,6 +32,11 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
 - **沙盒回测纪律**：run_backtest 是快速试错通道（可调手续费/滑点，
   直返指标、不构成验证证据）；挂 hypothesis_id 的沙盒区间**计入判定
   并集**——此后同区间的隔离验证会被拒（先偷看不获利）。
+- **时点行情快照**：get_market_snapshot 返回 as_of 时点多周期五维
+  行情卡（trend/momentum/volatility/volume/derivatives——读数+90 日
+  分位+三态判读；六步研究第①步固定入口）。读数与分位闭端截至
+  as_of（防前视）；衍生品维无数据时如实标 no_data；每次调用落
+  research_log 留痕（adhoc，不进判定并集）。
 
 ## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
