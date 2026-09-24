@@ -145,11 +145,17 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def get_research_log(hypothesis_id: Optional[str] = None, page: int = 1) -> Dict[str, Any]:
-        """研究日志（假设→分析→证据→结论全链路；续接研究前先读）。"""
-        params = {"page": page}
+    def get_research_log(hypothesis_id: Optional[str] = None,
+                         entry_type: Optional[str] = None,
+                         page: int = 1) -> Dict[str, Any]:
+        """研究日志（假设→分析→证据→结论全链路；续接研究前先读）。
+        entry_type 可按类型过滤（screen=全局扫描留痕：历史扫描区间与
+        top 候选指纹清单——登记引用候选前自查，避免踩入已扫描数据）。"""
+        params: Dict[str, Any] = {"page": page}
         if hypothesis_id:
             params["hypothesis_id"] = hypothesis_id
+        if entry_type:
+            params["entry_type"] = entry_type
         return api.get("/api/research/log", params=params)
 
     @mcp.tool()
@@ -191,10 +197,16 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      symbol: str, timeframe: str, start: str, end: str,
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
-        correlation_scan|event_study|pattern_mining（重组走 202+task_id 轮询，
-        响应含 poll 提示）。区间半开 [start,end) UTC。condition_stats 支持
-        params.forward_bars（前向持有期 bar 数，默认 24）与
-        params.min_samples（小样本下限，默认 30）。"""
+        correlation_scan|event_study|pattern_mining|screen_patterns（重组走
+        202+task_id 轮询，响应含 poll 提示）。区间半开 [start,end) UTC。
+        condition_stats 支持 params.forward_bars（前向持有期 bar 数，默认
+        24）与 params.min_samples（小样本下限，默认 30）。screen_patterns
+        全谱扫描（恒异步，长耗时注意 executor 并发占用）：params.features
+        （"all" 或指标名子集）、params.horizons（默认 [4,12,24,48,72]）、
+        params.top_n（默认 20）、params.min_samples（默认 30）——输出按
+        FDR 校正 q 值排序的候选清单（含候选指纹，登记引用时经
+        register_hypothesis.provenance 回链；其余候选用 condition_stats
+        逐条独立复核）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,
@@ -210,15 +222,22 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             when_conditions: list[dict[str, Any]],
             then_conditions: list[dict[str, Any]],
             statement: str,
-            data_ranges: list[dict[str, Any]]) -> Dict[str, Any]:
+            data_ranges: list[dict[str, Any]],
+            provenance: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 须经 list_signal_columns 校验；data_ranges 为
         {symbol,timeframe,start,end} 对象列表（半开区间）。同条件集+区间集
-        重复登记返回既有 id（duplicated=true）。"""
-        return api.post("/api/research/hypotheses", {
+        重复登记返回既有 id（duplicated=true）。provenance={task_id,
+        candidate_fingerprint} 可选——引用扫描候选来源（screen_patterns
+        输出的候选指纹），登记后该扫描区间自动进入判定并集（同区间
+        验证会被拒）；不改变假设身份。"""
+        body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
-            "statement": statement, "data_ranges": data_ranges})
+            "statement": statement, "data_ranges": data_ranges}
+        if provenance:
+            body["provenance"] = provenance
+        return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()
     @tool_safe

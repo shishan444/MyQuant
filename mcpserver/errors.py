@@ -40,6 +40,11 @@ HINTS: Dict[str, str] = {
     "RESEARCH_RANGE_OVERLAP":
         "验证区间与判定并集重叠：查看 detail 的 judged_ranges/overlaps 明细，"
         "换到并集之外的区间（通常把 start 推移到已判定区间之后）",
+    "SCREEN_CANDIDATE_REUSE":
+        "条件精确复用已扫描区间的候选（该区间数据已被扫描看过）：查看 "
+        "detail 的 screen_task_id，实质修改条件（改阈值/参数）登记新假设，"
+        "或换到未扫描区间验证；历史扫描可用 get_research_log("
+        "entry_type=\"screen\") 自查",
     "RESEARCH_STRATEGY_NOT_FOUND":
         "策略不存在：检查 strategy_id，或用 list_strategies 查询",
     "RESEARCH_DATA_INSUFFICIENT":
