@@ -62,7 +62,7 @@ def compute_fitness(
     actual_drawdown = abs(metrics.get("max_drawdown", 0.0))
     actual_trades = metrics.get("total_trades", 0)
     actual_pf = metrics.get("profit_factor", 0.0)
-    actual_winrate = metrics.get("win_rate", 0.0)
+    actual_winrate = metrics.get("win_rate")
 
     constraint_failures = []
 
@@ -146,15 +146,21 @@ def _compute_satisfaction(
         actual_drawdown <= req.max_drawdown, is_percent=True, inverted=True,
     )
 
-    # Win rate ratio
-    if req.min_win_rate > 0:
-        wr_ratio = actual_winrate / req.min_win_rate
+    # Win rate ratio；零交易缺失语义不参与评分维度（spec：无交易缺省）
+    if actual_winrate is None:
+        satisfaction["win_rate"] = {
+            "actual": None, "required": req.min_win_rate, "ratio": None,
+            "met": False, "is_percent": True, "inverted": False, "missing": True,
+        }
     else:
-        wr_ratio = 1.0 if actual_winrate > 0 else 0.0
-    satisfaction["win_rate"] = _dim_detail(
-        actual_winrate, req.min_win_rate, wr_ratio,
-        actual_winrate >= req.min_win_rate, is_percent=True,
-    )
+        if req.min_win_rate > 0:
+            wr_ratio = actual_winrate / req.min_win_rate
+        else:
+            wr_ratio = 1.0 if actual_winrate > 0 else 0.0
+        satisfaction["win_rate"] = _dim_detail(
+            actual_winrate, req.min_win_rate, wr_ratio,
+            actual_winrate >= req.min_win_rate, is_percent=True,
+        )
 
     # Trade count ratio
     if req.min_total_trades > 0:
@@ -287,9 +293,12 @@ def score_strategy(
     result["total_score"] = round(legacy_score, 2)
     result["template_name"] = resolved_name
     result["threshold"] = 60.0
+    # 缺失维度（如零交易 win_rate 的 ratio=None）不参与评分：保留
+    # satisfaction 明细（含 missing 标记），dimension_scores 仅含有值维度
     result["dimension_scores"] = {
         k: round(v["ratio"] * 100, 1)
         for k, v in result.get("satisfaction", {}).items()
+        if v.get("ratio") is not None
     }
 
     return result

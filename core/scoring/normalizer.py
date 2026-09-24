@@ -60,6 +60,8 @@ def normalize(metric_name: str, value: float) -> float:
     elif metric_name == "monthly_consistency":
         score = value * 100
     elif metric_name == "win_rate":
+        if value is None:
+            return 0.0
         score = (value - 0.3) / 0.4 * 100
     elif metric_name == "calmar_ratio":
         score = min(value / 5.0, 1.0) * 100

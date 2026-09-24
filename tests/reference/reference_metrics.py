@@ -43,7 +43,8 @@ def reference_metrics(
     if n < 2 or total_trades == 0:
         return {
             "total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0,
-            "win_rate": 0.0, "total_trades": 0, "annual_return": 0.0,
+            # 无交易：win_rate 缺失语义（None），与注释 :36 及 spec 对齐
+            "win_rate": None, "total_trades": 0, "annual_return": 0.0,
         }
 
     total_return = float(equity[-1] / equity[0]) - 1.0

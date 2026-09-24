@@ -31,7 +31,7 @@ class BacktestResult:
     total_return: float
     sharpe_ratio: float
     max_drawdown: float
-    win_rate: float
+    win_rate: float | None  # None=零交易合法缺失（三态语义，见 win_rate_failed 注释）
     total_trades: int
     equity_curve: pd.Series
     trades_df: pd.DataFrame | None = None
@@ -613,7 +613,7 @@ class BacktestEngine:
             total_return=raw_return,
             sharpe_ratio=float(sharpe),
             max_drawdown=float(max_dd),
-            win_rate=float(win_rate),
+            win_rate=None if win_rate is None else float(win_rate),
             total_trades=total_trades_val,
             equity_curve=equity_curve,
             trades_df=trades,

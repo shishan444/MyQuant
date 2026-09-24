@@ -209,7 +209,8 @@ def run_rule_validation(
         total_trades=result.total_trades,
         win_trades=result.win_trades,
         loss_trades=result.loss_trades,
-        win_rate=result.win_rate,
+        # API 契约保持百分比口径（Lab 页直接拼 % 展示）；内部计算层为小数
+        win_rate=(result.win_rate * 100) if result.win_rate is not None else None,
         total_return_pct=result.total_return_pct,
         avg_return_pct=result.avg_return_pct,
         warnings=result.warnings,

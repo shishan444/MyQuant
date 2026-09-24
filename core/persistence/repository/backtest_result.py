@@ -30,7 +30,7 @@ def save_backtest_result(
     total_return: float = 0.0,
     sharpe_ratio: float = 0.0,
     max_drawdown: float = 0.0,
-    win_rate: float = 0.0,
+    win_rate: Optional[float] = None,  # None=零交易缺失；DB 列 NOT NULL 入库归一 0.0
     total_trades: int = 0,
     total_score: float = 0.0,
     template_name: str = "explorer",
@@ -51,7 +51,9 @@ def save_backtest_result(
             timeframe=timeframe, data_start=data_start, data_end=data_end,
             init_cash=init_cash, fee=fee, slippage=slippage,
             total_return=total_return, sharpe_ratio=sharpe_ratio,
-            max_drawdown=max_drawdown, win_rate=win_rate,
+            max_drawdown=max_drawdown,
+            # DB 列 NOT NULL：缺失语义入库归一 0.0，读侧以 total_trades==0 识别
+            win_rate=win_rate if win_rate is not None else 0.0,
             total_trades=total_trades, total_score=total_score,
             template_name=template_name, dimension_scores=dimension_scores,
             equity_curve=equity_curve, trades_json=trades_json,

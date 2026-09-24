@@ -235,7 +235,7 @@ class _BatchBacktestProcessor:
                     else:
                         metrics = {
                             "annual_return": 0.0, "sharpe_ratio": 0.0,
-                            "max_drawdown": 0.0, "win_rate": 0.0,
+                            "max_drawdown": 0.0, "win_rate": None,
                             "profit_factor": 0.0,
                         }
 
@@ -271,7 +271,7 @@ class _BatchBacktestProcessor:
                         total_return=result.total_return,
                         sharpe_ratio=metrics.get("sharpe_ratio", 0.0),
                         max_drawdown=metrics.get("max_drawdown", 0.0),
-                        win_rate=metrics.get("win_rate", 0.0),
+                        win_rate=metrics.get("win_rate"),
                         total_trades=total_trades,
                         total_score=score_result.get("total_score", 0.0),
                         template_name="explorer",
@@ -292,7 +292,7 @@ class _BatchBacktestProcessor:
                         total_return=result.total_return,
                         sharpe_ratio=metrics.get("sharpe_ratio", 0.0),
                         max_drawdown=metrics.get("max_drawdown", 0.0),
-                        win_rate=metrics.get("win_rate", 0.0),
+                        win_rate=metrics.get("win_rate"),
                         total_trades=total_trades,
                         profit_factor=metrics.get("profit_factor", 0.0),
                         fitness=fitness, qualified=qualified,

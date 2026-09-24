@@ -129,8 +129,9 @@ def signal_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
         comparisons += 1
 
     # Win rate similarity
-    wr_a = raw_a.get("win_rate", 0.0)
-    wr_b = raw_b.get("win_rate", 0.0)
+    # win_rate 缺失语义（零交易 None）按 0 参与距离比较
+    wr_a = raw_a.get("win_rate") or 0.0
+    wr_b = raw_b.get("win_rate") or 0.0
     distance += abs(wr_a - wr_b)
     comparisons += 1
 

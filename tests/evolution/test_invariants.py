@@ -85,8 +85,8 @@ class TestLeverageInvariants:
         result_1x = engine.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_3x = engine.run(make_dna(leverage=3, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_1x.total_trades == 0 or result_3x.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_1x.total_trades > 0 and result_3x.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         # 3x should have larger absolute return than 1x
         assert abs(result_3x.total_return) > abs(result_1x.total_return), \
@@ -101,8 +101,8 @@ class TestLeverageInvariants:
         result_1x = engine.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_3x = engine.run(make_dna(leverage=3, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_1x.total_trades == 0 or result_3x.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_1x.total_trades > 0 and result_3x.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         # Both should be negative, 3x more so
         assert result_1x.total_return < 0, "1x should be negative in downtrend"
@@ -118,8 +118,8 @@ class TestLeverageInvariants:
         result_1x = engine.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_3x = engine.run(make_dna(leverage=3, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_1x.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_1x.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert not np.allclose(result_1x.equity_curve, result_3x.equity_curve, atol=1), \
             "Equity curves must differ between 1x and 3x leverage"
@@ -142,8 +142,8 @@ class TestLeverageInvariants:
         result_2x = engine.run(make_dna(leverage=2, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_5x = engine.run(make_dna(leverage=5, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_2x.total_trades == 0 or result_5x.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_2x.total_trades > 0 and result_5x.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result_5x.total_funding_cost > result_2x.total_funding_cost, \
             f"5x funding ({result_5x.total_funding_cost:.2f}) > 2x ({result_2x.total_funding_cost:.2f})"
@@ -165,8 +165,8 @@ class TestFeeSlippageInvariants:
         result_free = engine_free.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_paid = engine_paid.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_free.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_free.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result_paid.equity_curve.iloc[-1] < result_free.equity_curve.iloc[-1], \
             f"With fee: {result_paid.equity_curve.iloc[-1]:.2f} should < no fee: {result_free.equity_curve.iloc[-1]:.2f}"
@@ -182,8 +182,8 @@ class TestFeeSlippageInvariants:
         result_no = engine_no_slip.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_slip = engine_slip.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_no.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_no.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result_slip.equity_curve.iloc[-1] < result_no.equity_curve.iloc[-1], \
             f"With slippage: {result_slip.equity_curve.iloc[-1]:.2f} < no slippage: {result_no.equity_curve.iloc[-1]:.2f}"
@@ -199,8 +199,8 @@ class TestFeeSlippageInvariants:
         result_low = engine_low.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         result_high = engine_high.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
 
-        if result_low.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_low.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result_high.equity_curve.iloc[-1] < result_low.equity_curve.iloc[-1]
 
@@ -230,8 +230,8 @@ class TestDirectionInvariants:
         result_long = engine.run(make_dna(direction="long", stop_loss=0.0, take_profit=0.0), df, signal_set=sig_long)
         result_short = engine.run(make_dna(direction="short", stop_loss=0.0, take_profit=0.0), df, signal_set=sig_short)
 
-        if result_long.total_trades == 0 or result_short.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result_long.total_trades > 0 and result_short.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result_long.total_return > 0, f"Long in uptrend should profit, got {result_long.total_return:.4f}"
         assert result_short.total_return < 0, f"Short in uptrend should lose, got {result_short.total_return:.4f}"
@@ -252,8 +252,8 @@ class TestDirectionInvariants:
         engine = make_engine()
         result = engine.run(make_dna(direction="short", stop_loss=0.0, take_profit=0.0), df, signal_set=sig)
 
-        if result.total_trades == 0:
-            pytest.skip("No trades generated")
+        assert result.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         assert result.total_return > 0, f"Short in downtrend should profit, got {result.total_return:.4f}"
 
@@ -312,8 +312,8 @@ class TestConsistencyInvariants:
         engine = make_engine()
         result = engine.run(make_dna(stop_loss=0.0, take_profit=0.0), df)
 
-        if result.total_trades == 0:
-            pytest.skip("No trades")
+        assert result.total_trades > 0, \
+            "信号构造失效：强制进出场未产生交易（原为静默 skip，自毁守护）"
 
         curve_return = result.equity_curve.iloc[-1] / result.equity_curve.iloc[0] - 1
         assert abs(curve_return - result.total_return) < 0.001, \
