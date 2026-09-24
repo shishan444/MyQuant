@@ -19,23 +19,12 @@ def wilson_confidence(successes: int, total: int,
                       z: float = 1.96) -> Tuple[float, float]:
     """Wilson score confidence interval for a proportion.
 
-    Args:
-        successes: Number of successes.
-        total: Total number of trials.
-        z: Z-score for confidence level (1.96 = 95%).
-
-    Returns:
-        (lower, upper) bounds of the confidence interval.
+    委托 scoring 权威实现（core.scoring.statistics.wilson_interval），
+    保持原签名与返回，formula 收口不再内联。
     """
-    if total == 0:
-        return 0.0, 0.0
+    from core.scoring.statistics import wilson_interval
 
-    p_hat = successes / total
-    denominator = 1 + z ** 2 / total
-    center = (p_hat + z ** 2 / (2 * total)) / denominator
-    spread = z * np.sqrt((p_hat * (1 - p_hat) + z ** 2 / (4 * total)) / total) / denominator
-
-    return max(0.0, center - spread), min(1.0, center + spread)
+    return wilson_interval(successes, total, z)
 
 
 def discretize_indicator(series: pd.Series, name: str) -> pd.Series:

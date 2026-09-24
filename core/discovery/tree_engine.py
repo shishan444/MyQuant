@@ -54,8 +54,10 @@ class PatternDiscoveryEngine:
         # 1. Generate labels
         labels = generate_labels(df, horizon=self.horizon)
 
-        # 2. Encode features
-        features = self.encoder.fit_transform(df)
+        # 2. Encode features（时序防前视：scaler 仅前段 fit，外推 transform）
+        fit_end = max(int(len(df) * 0.5), 2)
+        self.encoder.fit(df.iloc[:fit_end])
+        features = self.encoder.transform(df)
 
         # 3. Filter valid rows (no NaN in labels)
         valid_mask = labels[target].notna() & ~np.isnan(features).all(axis=1)

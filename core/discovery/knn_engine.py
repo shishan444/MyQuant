@@ -64,7 +64,11 @@ class SimilarCaseEngine:
             df: Enhanced DataFrame with OHLCV + indicator columns.
         """
         self._df = df.copy()
-        self._features = self.encoder.fit_transform(df)
+        # 时序防前视：scaler 仅用前段 fit（min/max 不含未来数据），
+        # 后段以外推方式 transform
+        fit_end = max(int(len(df) * 0.5), 2)
+        self.encoder.fit(df.iloc[:fit_end])
+        self._features = self.encoder.transform(df)
 
         close = df["close"].values
         high = df["high"].values
