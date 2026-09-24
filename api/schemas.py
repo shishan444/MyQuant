@@ -255,7 +255,7 @@ class BacktestResponse(BaseModel):
     total_return: float = 0.0
     sharpe_ratio: float = 0.0
     max_drawdown: float = 0.0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     total_trades: int = 0
     total_score: float = 0.0
     fitness: float = 0.0
@@ -299,7 +299,7 @@ class CompareResultItem(BaseModel):
     total_return: float = 0.0
     sharpe_ratio: float = 0.0
     max_drawdown: float = 0.0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     total_trades: int = 0
     total_score: float = 0.0
     fitness: float = 0.0
@@ -338,7 +338,7 @@ class VerifyResultItem(BaseModel):
     total_return: float = 0.0
     sharpe_ratio: float = 0.0
     max_drawdown: float = 0.0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     total_trades: int = 0
     profit_factor: float = 0.0
     fitness: float = 0.0
@@ -396,7 +396,7 @@ class BatchBacktestResultItem(BaseModel):
     total_return: float = 0.0
     sharpe_ratio: float = 0.0
     max_drawdown: float = 0.0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     total_trades: int = 0
     profit_factor: float = 0.0
     fitness: float = 0.0
@@ -737,7 +737,7 @@ class TradingMetricsResponse(BaseModel):
     task_id: str
     total_return: float = 0.0
     total_return_pct: float = 0.0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     profit_factor: Optional[float] = None
     max_drawdown: float = 0.0
     max_drawdown_pct: float = 0.0

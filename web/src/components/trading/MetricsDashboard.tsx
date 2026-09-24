@@ -37,8 +37,12 @@ export function MetricsDashboard({ metrics }: MetricsDashboardProps) {
     },
     {
       label: "胜率",
-      value: `${(metrics.win_rate * 100).toFixed(1)}%`,
-      trend: metrics.win_rate >= 0.5 ? ("up" as const) : ("down" as const),
+      // 零交易为缺失语义（后端 win_rate=null），展示 "-" 不展示 0.0%
+      value: metrics.win_rate == null ? "-" : `${(metrics.win_rate * 100).toFixed(1)}%`,
+      trend:
+        metrics.win_rate != null && metrics.win_rate >= 0.5
+          ? ("up" as const)
+          : ("down" as const),
     },
     {
       label: "盈亏比",

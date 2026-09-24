@@ -37,6 +37,8 @@
    max_dd=min((eq-cummax)/cummax)；sharpe 优先逐笔
    (mean/std_ddof1)*sqrt(trades/max(years,0.01))，trade_returns=pnl/init_cash，
    单笔/不足5笔时 fallback 链（单笔=0.0）；win_rate=(pnl>0)/count。
+   零交易 win_rate=None（缺失语义，2026-09-24 fix-indicator-output-mapping
+   阶段1收口：计算层统一小数+零交易缺失，百分比仅限展示边界）。
 
 ## bars_per_year（公开事实： timeframe→年 bar 数，4h=365*6 等）
 bars_per_year 与 mmr 档位为交易所公开事实，参照实现内联（非共享被测常量）。

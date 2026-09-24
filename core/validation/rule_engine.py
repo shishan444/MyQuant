@@ -46,7 +46,7 @@ class RuleResult:
     total_trades: int = 0
     win_trades: int = 0
     loss_trades: int = 0
-    win_rate: float = 0.0
+    win_rate: Optional[float] = None
     total_return_pct: float = 0.0
     avg_return_pct: float = 0.0
     warnings: List[str] = field(default_factory=list)
@@ -178,7 +178,8 @@ def evaluate_rules(
     total_trades = len(trades)
     win_trades = sum(1 for t in trades if t.is_win)
     loss_trades = total_trades - win_trades
-    win_rate = round(win_trades / total_trades * 100, 2) if total_trades > 0 else 0.0
+    # 计算层统一小数口径；零交易为缺失语义（None）
+    win_rate = round(win_trades / total_trades, 4) if total_trades > 0 else None
 
     total_return_pct = round(sum(t.return_pct for t in trades), 2)
     avg_return_pct = round(total_return_pct / total_trades, 2) if total_trades > 0 else 0.0

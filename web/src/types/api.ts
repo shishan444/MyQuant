@@ -151,7 +151,7 @@ export type EvolutionTask = Omit<
     annual_return: number;
     sharpe_ratio: number;
     max_drawdown: number;
-    win_rate: number;
+    win_rate: number | null; // 零交易缺失语义
     calmar_ratio: number;
     total_trades: number;
   };
@@ -250,7 +250,7 @@ export type StrategyMetrics = Omit<
   annual_return: number;
   sharpe_ratio: number;
   max_drawdown: number;
-  win_rate: number;
+    win_rate: number | null; // 零交易缺失语义
   total_trades: number;
   profit_factor: number;
   calmar_ratio?: number;
@@ -440,7 +440,7 @@ export interface BatchBacktestResultItem {
   total_return: number;
   sharpe_ratio: number;
   max_drawdown: number;
-  win_rate: number;
+    win_rate: number | null; // 零交易缺失语义
   total_trades: number;
   profit_factor: number;
   fitness: number;

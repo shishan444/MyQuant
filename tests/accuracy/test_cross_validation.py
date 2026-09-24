@@ -135,7 +135,9 @@ def _assert_ranges(metrics: dict, equity_blown: bool = False) -> None:
         assert metrics["max_drawdown"] <= 0.0, "穿零场景 drawdown 应非正（D-3 登记中）"
     else:
         assert -1.0 <= metrics["max_drawdown"] <= 0.0
-    assert 0.0 <= metrics["win_rate"] <= 1.0
+    # 零交易缺失语义：win_rate 可为 None，跳过值域断言
+    if metrics["win_rate"] is not None:
+        assert 0.0 <= metrics["win_rate"] <= 1.0
 
 
 # ──────────────────────────────────────────────────────────────

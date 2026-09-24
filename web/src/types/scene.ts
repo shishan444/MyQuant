@@ -22,6 +22,7 @@ export interface HorizonSummary {
   horizon: number;
   total_triggers: number;
   win_rate: number;
+  win_rate_ci?: [number, number]; // Wilson 95% CI（百分比域）
   avg_return_pct: number;
   median_return_pct: number;
   avg_max_gain_pct: number;

@@ -230,7 +230,8 @@ class TestBacktestEngine:
         result = engine.run(valid_dna, sample_ohlcv)
         assert result.sharpe_ratio is not None
         assert result.max_drawdown is not None
-        assert result.win_rate is not None
+        # 零交易合法缺失：win_rate 为 None 当且仅当 total_trades==0
+        assert (result.win_rate is None) == (result.total_trades == 0)
 
     def test_equity_curve_starts_at_init_cash(self, valid_dna, sample_ohlcv):
         engine = BacktestEngine()

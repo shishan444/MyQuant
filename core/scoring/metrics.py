@@ -52,11 +52,12 @@ def compute_metrics(
         (区间超额=total_return-benchmark_return，None=无基准).
     """
     if len(equity_curve) < 2 or total_trades == 0:
+        # 零交易：win_rate 为缺失语义（None），不参与评分维度
         return {
             "annual_return": 0.0,
             "sharpe_ratio": 0.0,
             "max_drawdown": 0.0,
-            "win_rate": 0.0,
+            "win_rate": None,
             "calmar_ratio": 0.0,
             "total_trades": 0,
             "sortino_ratio": 0.0,
@@ -106,12 +107,12 @@ def compute_metrics(
     if trade_win_rate is not None:
         win_rate = trade_win_rate
     else:
-        # Fallback: bar-level (less accurate)
+        # Fallback: bar-level (less accurate)；零收益样本同样归缺失
         returns = equity_curve.pct_change().dropna()
         if len(returns) > 0:
             win_rate = float((returns > 0).sum() / len(returns))
         else:
-            win_rate = 0.0
+            win_rate = None
 
     # Calmar ratio
     if abs(max_drawdown) > 0.001:
@@ -193,7 +194,7 @@ def compute_metrics(
         "annual_return": float(annual_return),
         "sharpe_ratio": float(sharpe_ratio),
         "max_drawdown": float(max_drawdown),
-        "win_rate": float(win_rate),
+        "win_rate": None if win_rate is None else float(win_rate),
         "calmar_ratio": float(calmar_ratio),
         "total_trades": total_trades,
         "sortino_ratio": float(sortino_ratio),

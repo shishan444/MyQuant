@@ -968,8 +968,8 @@ export function Lab() {
                   交易次数: <span className="font-medium text-text-primary">{ruleResult.total_trades}</span>
                 </span>
                 <span className="text-text-secondary">
-                  胜率: <span className={`font-medium ${ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
-                    {ruleResult.win_rate}%
+                  胜率: <span className={`font-medium ${ruleResult.win_rate != null && ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
+                    {ruleResult.win_rate != null ? `${ruleResult.win_rate}%` : "-"}
                   </span>
                 </span>
                 <span className="text-text-secondary">

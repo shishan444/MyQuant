@@ -87,6 +87,37 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
 # Computation engine
 # ---------------------------------------------------------------------------
 
+def _extract_outputs(
+    result_df: pd.DataFrame, prefix_map: Dict[str, str]
+) -> Dict[str, pd.Series]:
+    """按列名前缀提取多输出指标的语义分量。
+
+    指标库返回的列序是实现细节（随版本漂移），列名首段（如
+    BBU_/BBM_/BBL_）才是稳定语义标识，因此取列按前缀匹配而非位置；
+    预期分量缺失立即抛错，不静默取到错位列。
+
+    Args:
+        result_df: 指标库返回的多列 DataFrame。
+        prefix_map: 语义分量名 -> 列名前缀，如 {"upper": "BBU_"}。
+
+    Returns:
+        语义分量名 -> 对应 Series 的映射。
+
+    Raises:
+        ValueError: 任一预期分量的前缀在 result_df 列中无匹配。
+    """
+    outputs: Dict[str, pd.Series] = {}
+    for field, prefix in prefix_map.items():
+        matched = [c for c in result_df.columns if str(c).startswith(prefix)]
+        if not matched:
+            raise ValueError(
+                f"indicator output field '{field}' (prefix '{prefix}') "
+                f"not found in columns: {list(result_df.columns)}"
+            )
+        outputs[field] = result_df[matched[0]]
+    return outputs
+
+
 def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> Dict[str, pd.Series]:
     """Compute a single indicator and return new columns as a dict.
 
@@ -108,17 +139,21 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         fast, slow, signal = int(params["fast"]), int(params["slow"]), int(params["signal"])
         macd_df = ta.macd(df["close"], fast=fast, slow=slow, signal=signal)
         if macd_df is not None:
-            new_cols[f"macd_{fast}_{slow}_{signal}"] = macd_df.iloc[:, 0]
-            new_cols[f"macd_signal_{fast}_{slow}_{signal}"] = macd_df.iloc[:, 1]
-            new_cols[f"macd_histogram_{fast}_{slow}_{signal}"] = macd_df.iloc[:, 2]
+            macd = _extract_outputs(
+                macd_df, {"macd": "MACD_", "hist": "MACDh_", "signal": "MACDs_"}
+            )
+            new_cols[f"macd_{fast}_{slow}_{signal}"] = macd["macd"]
+            new_cols[f"macd_signal_{fast}_{slow}_{signal}"] = macd["signal"]
+            new_cols[f"macd_histogram_{fast}_{slow}_{signal}"] = macd["hist"]
     elif name == "BB":
         period, std = int(params["period"]), float(params["std"])
         std_str = str(std).replace(".0", "")  # align with executor.py naming
         bb_df = ta.bbands(df["close"], length=period, std=std)
         if bb_df is not None:
-            new_cols[f"bb_upper_{period}_{std_str}"] = bb_df.iloc[:, 0]
-            new_cols[f"bb_middle_{period}_{std_str}"] = bb_df.iloc[:, 1]
-            new_cols[f"bb_lower_{period}_{std_str}"] = bb_df.iloc[:, 2]
+            bb = _extract_outputs(bb_df, {"upper": "BBU_", "middle": "BBM_", "lower": "BBL_"})
+            new_cols[f"bb_upper_{period}_{std_str}"] = bb["upper"]
+            new_cols[f"bb_middle_{period}_{std_str}"] = bb["middle"]
+            new_cols[f"bb_lower_{period}_{std_str}"] = bb["lower"]
     elif name == "ATR":
         period = int(params["period"])
         new_cols[f"atr_{period}"] = ta.atr(df["high"], df["low"], df["close"], length=period)
@@ -159,16 +194,22 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         kc_df = ta.kc(df["high"], df["low"], df["close"],
                        length=ema_p, atr_length=atr_p, mamode="ema")
         if kc_df is not None:
-            new_cols[f"{kc_name}_upper"] = kc_df.iloc[:, 0]
-            new_cols[f"{kc_name}_middle"] = kc_df.iloc[:, 1]
-            new_cols[f"{kc_name}_lower"] = kc_df.iloc[:, 2]
+            kc = _extract_outputs(
+                kc_df, {"lower": "KCLe_", "basis": "KCBe_", "upper": "KCUe_"}
+            )
+            new_cols[f"{kc_name}_upper"] = kc["upper"]
+            new_cols[f"{kc_name}_middle"] = kc["basis"]
+            new_cols[f"{kc_name}_lower"] = kc["lower"]
     elif name == "Donchian":
         period = int(params["period"])
         dc_df = ta.donchian(df["high"], df["low"], lower_length=period, upper_length=period)
         if dc_df is not None:
-            new_cols[f"dc_upper_{period}"] = dc_df.iloc[:, 0]
-            new_cols[f"dc_middle_{period}"] = (dc_df.iloc[:, 0] + dc_df.iloc[:, 1]) / 2
-            new_cols[f"dc_lower_{period}"] = dc_df.iloc[:, 1]
+            dc = _extract_outputs(
+                dc_df, {"lower": "DCL_", "middle": "DCM_", "upper": "DCU_"}
+            )
+            new_cols[f"dc_upper_{period}"] = dc["upper"]
+            new_cols[f"dc_middle_{period}"] = dc["middle"]
+            new_cols[f"dc_lower_{period}"] = dc["lower"]
     elif name == "OBV":
         new_cols["obv"] = ta.obv(df["close"], df["volume"])
     elif name == "CMF":
@@ -206,9 +247,12 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         period = int(params["period"])
         aroon_df = ta.aroon(df["high"], df["low"], length=period)
         if aroon_df is not None:
-            new_cols[f"aroon_up_{period}"] = aroon_df.iloc[:, 0]
-            new_cols[f"aroon_down_{period}"] = aroon_df.iloc[:, 1]
-            new_cols[f"aroon_osc_{period}"] = aroon_df.iloc[:, 2]
+            ar = _extract_outputs(
+                aroon_df, {"down": "AROOND_", "up": "AROONU_", "osc": "AROONOSC_"}
+            )
+            new_cols[f"aroon_up_{period}"] = ar["up"]
+            new_cols[f"aroon_down_{period}"] = ar["down"]
+            new_cols[f"aroon_osc_{period}"] = ar["osc"]
     elif name == "CMO":
         period = int(params["period"])
         new_cols[f"cmo_{period}"] = ta.cmo(df["close"], length=period)
@@ -438,7 +482,9 @@ def compute_all_indicators(
                         result[col] = values
             except (KeyError, ValueError, AttributeError, TypeError) as e:
                 logger = logging.getLogger(__name__)
-                logger.debug("Skipping indicator %s: %s", name, e)
+                logger.warning(
+                    "跳过指标计算 %s（参数 %s）：%s", name, params, e
+                )
                 continue
 
     return result

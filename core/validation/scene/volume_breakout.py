@@ -83,24 +83,26 @@ class VolumeBreakoutDetector(SceneDetector):
 
 
 def _resolve_level_column(level_type: str, columns: pd.Index) -> str | None:
-    """Find the indicator column matching the requested level type."""
-    mapping = {
-        "bb_upper": ["bb_upper_20_2.0", "bbu_20_2.0"],
-        "bb_lower": ["bb_lower_20_2.0", "bbl_20_2.0"],
-        "dc_upper": ["dc_upper_20", "donchian_upper_20"],
-        "dc_lower": ["dc_lower_20", "donchian_lower_20"],
-        "keltner_upper": ["keltner_upper", "kc_upper"],
-        "keltner_lower": ["keltner_lower", "kc_lower"],
+    """Find the indicator column matching the requested level type.
+
+    候选（前缀, 后缀）与生成方 core.features.indicators 的列名规则对齐：
+    bb/dc 的语义段在列首（bb_upper_20_2），keltner 的语义段在列尾
+    （kc_20_10_2.0_upper）。兜底按候选完整语义前缀/后缀匹配，不再
+    按首词宽匹配撞到同前缀的其他语义列；无命中返回 None，由调用方
+    跳过该 level 要素。
+    """
+    mapping: Dict[str, List[tuple]] = {
+        "bb_upper": [("bb_upper_20_2", ""), ("bbu_20_2", ""), ("bb_upper_", "")],
+        "bb_lower": [("bb_lower_20_2", ""), ("bbl_20_2", ""), ("bb_lower_", "")],
+        "dc_upper": [("dc_upper_20", ""), ("donchian_upper_", "")],
+        "dc_lower": [("dc_lower_20", ""), ("donchian_lower_", "")],
+        "keltner_upper": [("kc_upper", ""), ("kc_", "_upper")],
+        "keltner_lower": [("kc_lower", ""), ("kc_", "_lower")],
     }
 
-    candidates = mapping.get(level_type, [level_type])
-    for c in candidates:
-        if c in columns:
-            return c
-
-    # Fuzzy: try prefix match
-    for col in columns:
-        for prefix in candidates:
-            if col.startswith(prefix.split("_")[0]):
+    candidates = mapping.get(level_type, [(level_type, "")])
+    for prefix, suffix in candidates:
+        for col in columns:
+            if col.startswith(prefix) and col.endswith(suffix):
                 return col
     return None

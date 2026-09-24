@@ -57,7 +57,8 @@ def compute_trading_metrics(data: TradingMetricsInput) -> Dict[str, Any]:
         data.balance, data.position_side, data.position_margin, data.unrealized_pnl
     )
     total_pnl = equity - data.initial_cash
-    win_rate = data.win_count / max(data.total_trades, 1)
+    # 零交易 win_rate 为缺失语义（None），不得折叠为 0
+    win_rate = None if data.total_trades == 0 else data.win_count / data.total_trades
 
     # Gross profit / loss from closed-trade pnls
     gross_profit = sum(p for p in data.close_pnls if p > 0)
@@ -85,7 +86,7 @@ def compute_trading_metrics(data: TradingMetricsInput) -> Dict[str, Any]:
     return {
         "total_return": round(total_return, 6),
         "total_return_pct": round(total_return * 100, 2),
-        "win_rate": round(win_rate, 4),
+        "win_rate": None if win_rate is None else round(win_rate, 4),
         "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else None,
         "max_drawdown": round(max_drawdown, 2),
         "max_drawdown_pct": round(max_drawdown_pct * 100, 2),
