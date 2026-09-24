@@ -4357,9 +4357,15 @@
             "default": 0.0
           },
           "win_rate": {
-            "type": "number",
-            "title": "Win Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           },
           "total_trades": {
             "type": "integer",
@@ -4763,9 +4769,15 @@
             "default": 0.0
           },
           "win_rate": {
-            "type": "number",
-            "title": "Win Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           },
           "total_trades": {
             "type": "integer",
@@ -8514,9 +8526,15 @@
             "default": 0.0
           },
           "win_rate": {
-            "type": "number",
-            "title": "Win Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           },
           "profit_factor": {
             "anyOf": [
@@ -9140,9 +9158,15 @@
             "default": 0.0
           },
           "win_rate": {
-            "type": "number",
-            "title": "Win Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           },
           "total_trades": {
             "type": "integer",

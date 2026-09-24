@@ -242,9 +242,10 @@ export function StrategyDetail({
             />
             <MetricItem
               label="胜率"
-              value={`${(metrics.win_rate * 100).toFixed(1)}%`}
+              // 零交易为缺失语义（后端 win_rate=null），展示 "-" 不展示 0.0%
+              value={metrics.win_rate == null ? "-" : `${(metrics.win_rate * 100).toFixed(1)}%`}
               score={dimScores?.win_rate}
-              positive={metrics.win_rate > 0.5}
+              positive={metrics.win_rate != null && metrics.win_rate > 0.5}
             />
             <MetricItem
               label="Calmar比率"

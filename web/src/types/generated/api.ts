@@ -1470,11 +1470,8 @@ export interface components {
              * @default 0
              */
             max_drawdown: number;
-            /**
-             * Win Rate
-             * @default 0
-             */
-            win_rate: number;
+            /** Win Rate */
+            win_rate?: number | null;
             /**
              * Total Trades
              * @default 0
@@ -1654,11 +1651,8 @@ export interface components {
              * @default 0
              */
             max_drawdown: number;
-            /**
-             * Win Rate
-             * @default 0
-             */
-            win_rate: number;
+            /** Win Rate */
+            win_rate?: number | null;
             /**
              * Total Trades
              * @default 0
@@ -3331,11 +3325,8 @@ export interface components {
              * @default 0
              */
             total_return_pct: number;
-            /**
-             * Win Rate
-             * @default 0
-             */
-            win_rate: number;
+            /** Win Rate */
+            win_rate?: number | null;
             /** Profit Factor */
             profit_factor?: number | null;
             /**
@@ -3691,11 +3682,8 @@ export interface components {
              * @default 0
              */
             max_drawdown: number;
-            /**
-             * Win Rate
-             * @default 0
-             */
-            win_rate: number;
+            /** Win Rate */
+            win_rate?: number | null;
             /**
              * Total Trades
              * @default 0
