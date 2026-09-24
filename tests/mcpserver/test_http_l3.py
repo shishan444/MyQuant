@@ -109,7 +109,7 @@ def test_http_transport_full_chain(mcp_http_server):
 
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
-                assert len(names) == 24, f"研究档工具数: {len(names)}"
+                assert len(names) == 25, f"研究档工具数: {len(names)}"
 
                 res = await session.call_tool("list_indicators", {})
                 payload = [json.loads(c.text) for c in res.content]

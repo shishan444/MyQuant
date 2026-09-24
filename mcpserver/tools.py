@@ -114,6 +114,22 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def get_market_snapshot(symbol: str, timeframes: Optional[str] = None,
+                            as_of: Optional[str] = None) -> Dict[str, Any]:
+        """时点行情快照（六步研究第①步固定入口）：多周期五维行情卡——
+        trend/momentum/volatility/volume/derivatives 各含 as_of 时点读数、
+        90 日分位与三态判读。symbol 交易对（如 BTCUSDT）；timeframes 逗号
+        分隔周期子集（缺省 3d/1d/4h/1h）；as_of 读数时点（缺省=最新一根
+        bar，闭端截至防前视）。"""
+        params: Dict[str, Any] = {"symbol": symbol}
+        if timeframes is not None:
+            params["timeframes"] = timeframes
+        if as_of is not None:
+            params["as_of"] = as_of
+        return api.get("/api/research/market-snapshot", params=params)
+
+    @mcp.tool()
+    @tool_safe
     def list_hypotheses(status: Optional[str] = None, page: int = 1) -> Dict[str, Any]:
         """研究假设列表（含状态与区间）。"""
         params = {"page": page}
@@ -160,6 +176,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
+               get_market_snapshot,
                list_hypotheses, get_hypothesis, get_research_log,
                get_analysis_task, get_validation_report, list_feature_requests):
         TOOL_TIERS["readonly"].add(fn.__name__)
