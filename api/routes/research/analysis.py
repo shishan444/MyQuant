@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
-              "event_study", "pattern_mining")
-# 数据行数超过此值或模板为 pattern_mining → 重组路径
+              "event_study", "pattern_mining", "screen_patterns")
+# 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
+# （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
 
 
@@ -48,13 +49,31 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
         condition_stats, correlation_scan, distribution_compare,
-        event_study, similar_at_time,
+        event_study, screen_patterns, similar_at_time,
     )
+    from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
 
     rng = payload.data_range.model_dump()
     p = dict(payload.params)
     ranges = [rng]
+
+    if payload.template == "screen_patterns":
+        # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 取最大周期×3），
+        # 统计段切回请求区间；features 校验前置（未知指标在此结构化拒绝，
+        # 不让装载层 KeyError 裸穿）
+        feature_names = resolve_feature_names(p.get("features", "all"))
+        df, request_start = load_with_warmup(
+            data_dir, rng["symbol"], rng["timeframe"],
+            rng["start"], rng["end"], feature_names)
+        return screen_patterns(
+            df, data_ranges=ranges, timeframe=rng["timeframe"],
+            features=p.get("features", "all"),
+            horizons=p.get("horizons"),
+            top_n=p.get("top_n", 20),
+            min_samples=p.get("min_samples", 30),
+            request_start=request_start,
+            hypothesis_id=payload.hypothesis_id).to_dict()
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
@@ -106,6 +125,35 @@ def _log_analysis(db_path: Path, payload: AnalysisRunRequest) -> None:
     )
 
 
+def _log_screen(
+    db_path: Path, payload: AnalysisRunRequest,
+    task_id: str, result: Dict[str, Any],
+) -> None:
+    """扫描留痕（add-screen-patterns D3）：计算完成即写，与任务终态解耦。
+
+    entry_type="screen" 不挂假设（不进任何假设判定并集——隔离走
+    screen_use 回链与反向核查两条路）；summary 携带 top 候选指纹清单
+    与族口径（反向核查比对物 + 事后审计依据）。screen 模板不另写
+    analysis 日志（本条已含区间登记语义，双写为重复记录）。
+    """
+    p = (result or {}).get("payload", {})
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="screen",
+        ref_id=task_id,
+        data_ranges=json.dumps(
+            [payload.data_range.model_dump()], ensure_ascii=False),
+        summary=json.dumps({
+            "scanned": p.get("scanned"),
+            "family": p.get("family"),
+            "timeframe": p.get("timeframe"),
+            "top_fingerprints": [c.get("fingerprint")
+                                 for c in p.get("candidates", [])],
+        }, ensure_ascii=False, default=str),
+    )
+
+
 @router.post("/analysis")
 def run_analysis(
     payload: AnalysisRunRequest,
@@ -119,7 +167,38 @@ def run_analysis(
             "detail": None})
     try:
         df = _load_df(data_dir, payload.data_range.model_dump())
-        heavy = payload.template == "pattern_mining" or len(df) > _HEAVY_ROWS
+        heavy = (payload.template in ("pattern_mining", "screen_patterns")
+                 or len(df) > _HEAVY_ROWS)
+
+        if payload.template == "screen_patterns":
+            # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；
+            # 计算完成后写 screen 留痕（在 stop_check 覆盖范围内——
+            # 超时中断不产生留痕，计算完成的窄竞态窗口宁多留不漏拦）
+            import uuid as _uuid
+
+            screen_task_id = f"ant_{_uuid.uuid4().hex[:12]}"
+
+            def _screen_job(stop_check):
+                out = _run_template(payload, data_dir, db_path)
+                _log_screen(db_path, payload, screen_task_id, out)
+                return json.dumps(out, ensure_ascii=False, default=str)
+
+            ex = get_executor()
+            handle = ex.submit(
+                f"analysis:{payload.template}", _screen_job,
+                task_id=screen_task_id,
+                timeout_s=600.0,
+                params_json=json.dumps(
+                    {"template": payload.template,
+                     "data_range": payload.data_range.model_dump()},
+                    ensure_ascii=False),
+                estimated_cost_s=_HEAVY_ROWS / 1000.0,
+            )
+            if handle["fast_path"]:  # 阈值边缘竞态：结果即终态
+                return handle
+            return JSONResponse(status_code=202, content={
+                "task_id": handle["task_id"], "status": "pending",
+                "poll": f"/api/research/analysis/tasks/{handle['task_id']}"})
 
         if not heavy:
             # 快路径失败语义与 executor 快路径对齐：模板异常转 failed 终态

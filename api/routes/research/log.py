@@ -18,17 +18,22 @@ router = APIRouter()
 @router.get("/log")
 def research_log(
     hypothesis_id: Optional[str] = None,
+    entry_type: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
-    """研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。"""
+    """研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。
+
+    entry_type 过滤：按日志类型检索（如 screen=全局扫描留痕，
+    供研究方自查历史扫描区间与候选指纹——add-screen-patterns G6）。
+    """
     if page < 1:
         page = 1
     if page_size < 1 or page_size > 200:
         page_size = 50
     items = rr.list_research_log(
-        db_path, hypothesis_id=hypothesis_id,
+        db_path, hypothesis_id=hypothesis_id, entry_type=entry_type,
         offset=(page - 1) * page_size, limit=page_size)
     out = []
     for e in items:

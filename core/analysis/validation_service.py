@@ -39,6 +39,88 @@ def _range_hash(request_range: Dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(request_range, sort_keys=True).encode()).hexdigest()
 
 
+def _screen_reuse_check(
+    db_path: Path, hypothesis_id: str, request_range: Dict[str, str],
+) -> None:
+    """扫描候选精确复用反向核查（add-screen-patterns 四件套之④）。
+
+    在既有判定并集拦截未命中后执行（screen_use 谱系已被并集拦下，
+    本步只覆盖不挂假设的 screen 日志）：全局 screen 留痕中「同品种
+    同周期且时间重叠」的任务，其候选指纹清单与假设条件指纹集求交，
+    交非空即 409 拒绝——不依赖任何声明，只拦精确复用；实质修改条件
+    后指纹不同，天然放行。
+
+    解析容错（D8/G4）：单条日志 summary 损坏跳过并记 warning
+    （可用性优先，不因单条坏记录挡住全部验证）；指纹按请求 timeframe
+    现算（timeframe 参与指纹——跨周期复用不算精确复用，D4）。
+    """
+    import logging
+
+    from core.analysis.condition_identity import canonical_condition_hash
+    from core.analysis.isolation import _parse_ts
+
+    logger = logging.getLogger(__name__)
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is None:
+        return
+    try:
+        conditions = json.loads(hyp["conditions"])
+    except (json.JSONDecodeError, TypeError):
+        return  # 结构异常由后续验证流程自然失败，本步不越权拒绝
+
+    tf = str(request_range.get("timeframe", ""))
+    cond_fps: set = set()
+    for group in ("when_conditions", "then_conditions"):
+        for c in conditions.get(group, []) if isinstance(conditions, dict) else []:
+            try:
+                cond_fps.add(canonical_condition_hash(c, tf))
+            except (ValueError, TypeError):
+                continue
+    if not cond_fps:
+        return
+
+    rs = _parse_ts(request_range["start"])
+    re_ = _parse_ts(request_range["end"])
+    for entry in rr.list_research_log(db_path, entry_type="screen", limit=500):
+        try:
+            entry_ranges = json.loads(entry.get("data_ranges") or "[]")
+            summary = json.loads(entry.get("summary") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("screen 日志解析失败，反向核查跳过该条: %s",
+                           entry.get("log_id"))
+            continue
+        if not isinstance(summary, dict):
+            continue
+        # 同品种同周期 + 时间重叠（半开区间相交）
+        overlap = False
+        for r in entry_ranges if isinstance(entry_ranges, list) else []:
+            if not isinstance(r, dict):
+                continue
+            if (r.get("symbol") != request_range.get("symbol")
+                    or str(r.get("timeframe")) != tf):
+                continue
+            try:
+                s, e = _parse_ts(r["start"]), _parse_ts(r["end"])
+            except (KeyError, ValueError):
+                continue
+            if max(rs, s) < min(re_, e):
+                overlap = True
+                break
+        if not overlap:
+            continue
+        task_fps = set(summary.get("top_fingerprints") or [])
+        hits = sorted(cond_fps & task_fps)
+        if hits:
+            raise ResearchError(
+                "SCREEN_CANDIDATE_REUSE",
+                "验证区间与已扫描区间重叠且条件精确复用扫描候选"
+                "（该区间数据已被扫描任务看过）",
+                status=409,
+                detail={"screen_task_id": entry.get("ref_id"),
+                        "hit_fingerprints": hits,
+                        "hint": "实质修改条件后登记新假设，或换未扫描区间验证"})
+
+
 def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
     """时间参数入口归一：naive 按 UTC 解释（语义对齐 isolation._parse_ts，
     不引入第三种 tz 语义——date-only 输入不再与 tz-aware 索引比较崩溃）。"""
@@ -250,6 +332,9 @@ def run_isolated_backtest(
             "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
             status=409,
             detail={"judged_ranges": judged, "overlaps": overlaps})
+
+    # 扫描候选精确复用反向核查（并集未命中时执行——见 _screen_reuse_check）
+    _screen_reuse_check(db_path, hypothesis_id, request_range)
 
     # 策略与 DNA
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
