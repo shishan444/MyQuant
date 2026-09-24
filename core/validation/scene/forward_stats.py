@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import numpy as np
+
+from core.scoring.statistics import wilson_interval
 import pandas as pd
 
 from .base import AggregateStats, HorizonStats
@@ -96,7 +98,11 @@ def aggregate_by_horizon(
         losses = [s.max_loss_pct for s in stats_list]
         peaks = [s.bars_to_peak for s in stats_list]
 
-        win_rate = sum(1 for r in returns if r > 0) / n * 100 if n > 0 else 0
+        wins = sum(1 for r in returns if r > 0)
+        win_rate = wins / n * 100 if n > 0 else 0
+        # Wilson 95% CI（小数域）随 win_rate 换算到百分比域
+        ci_lo, ci_hi = wilson_interval(wins, n)
+        win_rate_ci = [round(ci_lo * 100, 1), round(ci_hi * 100, 1)]
         arr = np.array(returns)
 
         percentiles: Dict[str, float] = {}
@@ -117,6 +123,7 @@ def aggregate_by_horizon(
             horizon=horizon,
             total_triggers=n,
             win_rate=round(win_rate, 1),
+            win_rate_ci=win_rate_ci,
             avg_return_pct=round(float(np.mean(returns)), 4) if returns else 0,
             median_return_pct=round(float(np.median(returns)), 4) if returns else 0,
             avg_max_gain_pct=round(float(np.mean(gains)), 4) if gains else 0,

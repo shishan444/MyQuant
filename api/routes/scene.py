@@ -32,9 +32,11 @@ class SceneRequest(BaseModel):
 
 
 class HorizonSummary(BaseModel):
+    # win_rate_ci: Wilson 95% 置信区间（百分比域，与 win_rate 同口径）
     horizon: int
     total_triggers: int
     win_rate: float
+    win_rate_ci: Optional[List[float]] = None
     avg_return_pct: float
     median_return_pct: float
     avg_max_gain_pct: float
@@ -120,6 +122,7 @@ def run_scene(
                 horizon=s.horizon,
                 total_triggers=s.total_triggers,
                 win_rate=s.win_rate,
+                win_rate_ci=s.win_rate_ci,
                 avg_return_pct=s.avg_return_pct,
                 median_return_pct=s.median_return_pct,
                 avg_max_gain_pct=s.avg_max_gain_pct,

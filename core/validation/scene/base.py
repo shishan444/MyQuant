@@ -45,6 +45,9 @@ class AggregateStats:
     avg_bars_to_peak: float
     distribution: List[Dict[str, Any]] = field(default_factory=list)
     percentiles: Dict[str, float] = field(default_factory=dict)
+    # Wilson 95% 置信区间（百分比域，与 win_rate 同口径；小样本胜率的
+    # 可信度证据，消费方展示时随 win_rate 一并透出）
+    win_rate_ci: List[float] = field(default_factory=lambda: [0.0, 0.0])
 
 
 @dataclass

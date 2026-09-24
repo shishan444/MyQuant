@@ -37,14 +37,10 @@ from core.analysis.result import AnalysisResult, build_result
 
 
 def _wilson_interval(successes: int, n: int, z: float = 1.96) -> list[float]:
-    """Wilson 置信区间（小样本比正态近似稳健，实现成本相同）。"""
-    if n == 0:
-        return [0.0, 0.0]
-    p = successes / n
-    denom = 1 + z * z / n
-    center = (p + z * z / (2 * n)) / denom
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
-    return [max(0.0, center - half), min(1.0, center + half)]
+    """Wilson 置信区间（委托 scoring 权威实现，返回 list 保持调用方兼容）。"""
+    from core.scoring.statistics import wilson_interval
+
+    return list(wilson_interval(successes, n, z))
 
 
 def _series_stats(s: pd.Series) -> Dict[str, float]:
