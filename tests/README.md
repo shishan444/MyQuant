@@ -6,7 +6,8 @@
 
 ## 执行说明
 
-- 全量：`./venv/bin/python -m pytest --ignore=tests/e2e`（e2e 批次需前后端服务 + chromium）
+- 全量基线（唯一生成 `coverage.json` 的入口）：`./venv/bin/python -m pytest --ignore=tests/e2e --cov-report=json:coverage.json`（e2e 批次需前后端服务 + chromium）
+- 局部跑：不带 `--cov-report=json` 即可——终端仍有 term-missing 输出，但**不生成** JSON 档案（JSON 档案=全量专用产物，防被局部调用污染）
 - marker 形制：`unit` / `integration` / `slow` / `e2e`，按文件 `pytestmark` 声明
 
 ## 层级语义映射（声明，不重标 marker）
