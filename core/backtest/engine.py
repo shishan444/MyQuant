@@ -438,10 +438,12 @@ class BacktestEngine:
             sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
         # Delay all signals by 1 bar to prevent look-ahead bias
-        entries = sig_set.entries.shift(1).fillna(False).astype(bool)
-        exits = sig_set.exits.shift(1).fillna(False).astype(bool)
-        adds = sig_set.adds.shift(1).fillna(False).astype(bool)
-        reduces = sig_set.reduces.shift(1).fillna(False).astype(bool)
+        # （fill_value 内联进 shift：首行直接填 False，列全程 bool，
+        #   不走 object downcast 弃用路径——cross-entry-consistency spec）
+        entries = sig_set.entries.shift(1, fill_value=False).astype(bool)
+        exits = sig_set.exits.shift(1, fill_value=False).astype(bool)
+        adds = sig_set.adds.shift(1, fill_value=False).astype(bool)
+        reduces = sig_set.reduces.shift(1, fill_value=False).astype(bool)
 
         close = enhanced_df["close"]
         high = enhanced_df["high"]
@@ -720,16 +722,16 @@ class BacktestEngine:
 
         for ss in sig_sets:
             entries_parts.append(
-                ss.entries.shift(1).fillna(False).astype(float).values
+                ss.entries.shift(1, fill_value=False).astype(float).values
             )
             exits_parts.append(
-                ss.exits.shift(1).fillna(False).astype(float).values
+                ss.exits.shift(1, fill_value=False).astype(float).values
             )
             adds_parts.append(
-                ss.adds.shift(1).fillna(False).astype(float).values
+                ss.adds.shift(1, fill_value=False).astype(float).values
             )
             reduces_parts.append(
-                ss.reduces.shift(1).fillna(False).astype(float).values
+                ss.reduces.shift(1, fill_value=False).astype(float).values
             )
             add_counts.append(int(ss.adds.sum()))
             reduce_counts.append(int(ss.reduces.sum()))
