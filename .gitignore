@@ -12,6 +12,7 @@ venv/
 
 # Data files
 data/market/*.parquet
+data/market_backup*/
 data/evolution.db
 data/quant.db
 data/config.json
