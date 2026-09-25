@@ -197,16 +197,26 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      symbol: str, timeframe: str, start: str, end: str,
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
-        correlation_scan|event_study|pattern_mining|screen_patterns（重组走
-        202+task_id 轮询，响应含 poll 提示）。区间半开 [start,end) UTC。
-        condition_stats 支持 params.forward_bars（前向持有期 bar 数，默认
-        24）与 params.min_samples（小样本下限，默认 30）。screen_patterns
-        全谱扫描（恒异步，长耗时注意 executor 并发占用）：params.features
-        （"all" 或指标名子集）、params.horizons（默认 [4,12,24,48,72]）、
-        params.top_n（默认 20）、params.min_samples（默认 30）——输出按
-        FDR 校正 q 值排序的候选清单（含候选指纹，登记引用时经
+        correlation_scan|event_study|pattern_mining|screen_patterns|
+        param_sweep（重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
+        [start,end) UTC。condition_stats 支持 params.forward_bars（前向持有期
+        bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        screen_patterns 全谱扫描（恒异步，长耗时注意 executor 并发占用）：
+        params.features（"all" 或指标名子集）、params.horizons（默认
+        [4,12,24,48,72]）、params.top_n（默认 20）、params.min_samples（默认
+        30）——输出按 FDR 校正 q 值排序的候选清单（含候选指纹，登记引用时经
         register_hypothesis.provenance 回链；其余候选用 condition_stats
-        逐条独立复核）。"""
+        逐条独立复核）。param_sweep 参数稳健性检查（第③步检查①，快路径
+        同步直返）：params.indicator（指标名）+ params.condition（结构化
+        {subject, action, target}——扫描候选同形制直接喂入，subject 为列名
+        且须属于该指标输出列）+ params.sweep（{axis:"target", values:"auto"
+        或数值列表——auto 取与扫描同源的共享刻度）+ params.forward_bars。
+        三道门内建不可调（资格门样本≥30/真伪门 BH 后 q<0.05 且方向与中心
+        一致/连续门相邻有效点≥2），结论 plateau|spike|indeterminate|
+        unsupported 附稳健区间（unsupported=该区间无任何显著正证据——
+        丢弃或彻底换条件，换阈值复查无意义）；输出逐点披露原始统计量与
+        判定所用参数（gates）——判定标尺内建，改网格/持有期/区间是正当
+        复查方式，判定参数不可传。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,
