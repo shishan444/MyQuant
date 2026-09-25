@@ -31,38 +31,8 @@ from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 
-# ---------------------------------------------------------------------------
-# 阈值字典（D7 延迟决策：模板内私有常量；第二个消费者出现时提升注册表）
-# 形制：指标名 -> 列选择器（None=单输出主列；str=列名包含片段）-> 动作 -> 刻度
-# ---------------------------------------------------------------------------
-
-_VALUE_GRIDS: Dict[str, Dict[Optional[str], Dict[str, List[float]]]] = {
-    # momentum / 有界振荡类
-    "RSI": {None: {"lt": [20, 25, 30, 35], "gt": [65, 70, 75, 80]}},
-    "MFI": {None: {"lt": [20, 25, 30], "gt": [70, 75, 80]}},
-    "Williams %R": {None: {"lt": [-90, -80], "gt": [-20, -10]}},
-    "CMO": {None: {"lt": [-40, -25], "gt": [25, 40]}},
-    "CCI": {None: {"lt": [-150, -100], "gt": [100, 150]}},
-    # trend strength / 方向
-    "ADX": {None: {"gt": [20, 25, 30], "lt": [15, 20]}},
-    "Aroon": {"aroon_up": {"gt": [70, 80]},
-              "aroon_down": {"gt": [70, 80]},
-              "aroon_osc": {"gt": [50, 70], "lt": [-70, -50]}},
-    "ROC": {None: {"lt": [-5, -3], "gt": [3, 5]}},
-    "TRIX": {None: {"lt": [0], "gt": [0]}},
-    "MACD": {"macd_histogram": {"lt": [0], "gt": [0]}},
-    "Stochastic": {"stoch_k": {"lt": [20, 25], "gt": [75, 80]},
-                   "stoch_d": {"lt": [20, 25], "gt": [75, 80]}},
-    # volume / 量能
-    "RVOL": {None: {"gt": [1.5, 2.0, 3.0], "lt": [0.5, 0.8]}},
-    "VROC": {None: {"gt": [50, 100], "lt": [-50, -100]}},
-    "CMF": {None: {"gt": [0.1, 0.2], "lt": [-0.1, -0.2]}},
-    # derivatives（数据缺列时整指标跳过并声明）
-    "OI_ZScore": {None: {"lt": [-2.0], "gt": [2.0]}},
-    "FundingZScore": {None: {"lt": [-2.0], "gt": [2.0]}},
-    "OI_ChangeRate": {None: {"lt": [-10, -5], "gt": [5, 10]}},
-    "OIPriceDivergence": {None: {"lt": [-0.3, -0.2], "gt": [0.2, 0.3]}},
-}
+# 阈值刻度已提升分析域共享（add-param-sweep 兑现 D7；扫描与检查两域网格同源）
+from core.analysis.threshold_grids import VALUE_GRIDS as _VALUE_GRIDS
 
 # 价格相对 / 交叉类：指标名 -> 参与动作清单（每根输出列 × 动作，subject=close）
 _PRICE_REL_ACTIONS: Dict[str, List[str]] = {
