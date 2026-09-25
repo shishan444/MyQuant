@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
-import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -19,37 +17,13 @@ from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.screen_patterns import screen_patterns
+from tests.helpers.regime_factory import (
+    make_directional_composite as _trending_with_dips,
+    make_random_walk_ohlcv as _random_walk,
+)
 
 _RANGES = [{"symbol": "TESTUSDT", "timeframe": "1h",
             "start": "2026-01-01", "end": "2026-01-26"}]
-
-
-def _random_walk(seed: int, n: int = 600) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2026-01-01", periods=n, freq="h")
-    close = pd.Series(100 + np.cumsum(rng.normal(0, 1, n)), index=idx)
-    spread = np.abs(rng.normal(1, 0.3, n)) + 0.01
-    return pd.DataFrame({
-        "open": close, "high": close + spread, "low": close - spread,
-        "close": close, "volume": pd.Series(rng.random(n) * 1000 + 100, index=idx),
-    }, index=idx)
-
-
-def _trending_with_dips(seed: int = 7, n: int = 900) -> pd.DataFrame:
-    """平趋势 + 深周期回调：谷底反弹使「RSI 低位」类条件有真信号、
-    峰顶回落使「RSI 高位」类条件有负信号（方向锚定的数据结构）。"""
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2026-01-01", periods=n, freq="h")
-    t = np.arange(n)
-    trend = 100 + t * 0.03          # 平趋势：12 bar 贡献 +0.36
-    dip = -12 * np.sin(t / 40 * np.pi)  # 深回调：谷后 12 bar 反弹 ≈ +11
-    noise = rng.normal(0, 0.5, n)
-    close = pd.Series(trend + dip + noise, index=idx)
-    spread = np.abs(rng.normal(1, 0.25, n)) + 0.01
-    return pd.DataFrame({
-        "open": close, "high": close + spread, "low": close - spread,
-        "close": close, "volume": pd.Series(rng.random(n) * 1000 + 100, index=idx),
-    }, index=idx)
 
 
 class TestScreenPatternsBasics:
