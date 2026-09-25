@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
-              "event_study", "pattern_mining", "screen_patterns")
+              "event_study", "pattern_mining", "screen_patterns", "param_sweep")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -49,7 +49,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
         condition_stats, correlation_scan, distribution_compare,
-        event_study, screen_patterns, similar_at_time,
+        event_study, param_sweep, screen_patterns, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -72,6 +72,31 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             horizons=p.get("horizons"),
             top_n=p.get("top_n", 20),
             min_samples=p.get("min_samples", 30),
+            request_start=request_start,
+            hypothesis_id=payload.hypothesis_id).to_dict()
+
+    if payload.template == "param_sweep":
+        # 参数稳健性检查（add-param-sweep）：warmup 前扩装载同 condition_stats
+        # U3 形制（指标矩阵默认参数集）；indicator+condition 双件（指标名供
+        # warmup 与矩阵，列名 subject 供求值——两层名字不同）。indicator
+        # 前置校验（未知指标不让装载层 KeyError 裸穿，screen 同款纪律）
+        from core.features.registry import INDICATOR_REGISTRY
+        if p.get("indicator") not in INDICATOR_REGISTRY:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"indicator 未知: {p.get('indicator')!r}",
+                detail={"param": "indicator",
+                        "legal_range": "注册表指标名（list_indicators 查询）"})
+        s = p.get("sweep", {})
+        df, request_start = load_with_warmup(
+            data_dir, rng["symbol"], rng["timeframe"],
+            rng["start"], rng["end"], [p["indicator"]])
+        return param_sweep(
+            df, indicator=p["indicator"], condition=p["condition"],
+            sweep={"axis": s.get("axis", "target"),
+                   "values": s.get("values", "auto")},
+            forward_bars=p.get("forward_bars", 24),
+            data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
             hypothesis_id=payload.hypothesis_id).to_dict()
 
@@ -154,6 +179,34 @@ def _log_screen(
     )
 
 
+def _log_sweep(
+    db_path: Path, payload: AnalysisRunRequest,
+    result: Dict[str, Any],
+) -> None:
+    """稳健性检查留痕（add-param-sweep）：同构 _log_screen 先例。
+
+    entry_type="sweep" 不挂假设（不进判定并集、不触发反向核查——检查
+    不消耗验证数据区间，第 3 步与第 5 步职责边界）；ref_id=中心条件指纹
+    （与 0.2.5 扫描候选可对链的事后审计依据）。param_sweep 模板不另写
+    analysis 日志（本条已含区间登记语义，双写为重复记录）。
+    """
+    p = (result or {}).get("payload", {})
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="sweep",
+        ref_id=(p.get("condition", {}) or {}).get("fingerprint"),
+        data_ranges=json.dumps(
+            [payload.data_range.model_dump()], ensure_ascii=False),
+        summary=json.dumps({
+            "verdict": p.get("verdict"),
+            "robust_range": p.get("robust_range"),
+            "family": (p.get("method", {}) or {}).get("family_size"),
+            "grid_size": len((p.get("sweep", {}) or {}).get("values", [])),
+        }, ensure_ascii=False, default=str),
+    )
+
+
 @router.post("/analysis")
 def run_analysis(
     payload: AnalysisRunRequest,
@@ -211,13 +264,19 @@ def run_analysis(
                 logger.warning("分析快路径失败 %s: %s", payload.template, exc)
                 return {"task_id": f"fast_{payload.template}", "status": "failed",
                         "reason": str(exc)[:300], "result": None, "fast_path": True}
-            _log_analysis(db_path, payload)
+            if payload.template == "param_sweep":
+                _log_sweep(db_path, payload, result)
+            else:
+                _log_analysis(db_path, payload)
             return result
 
         # 重组路径：202 + 句柄（线程池执行器；完成回调内落日志）
         def _job(stop_check):
             out = _run_template(payload, data_dir, db_path)
-            _log_analysis(db_path, payload)
+            if payload.template == "param_sweep":
+                _log_sweep(db_path, payload, out)
+            else:
+                _log_analysis(db_path, payload)
             return json.dumps(out, ensure_ascii=False, default=str)
 
         ex = get_executor()
