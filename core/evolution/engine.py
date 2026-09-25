@@ -123,6 +123,32 @@ class _AdaptiveMutationController:
         return 1.0
 
 
+def validate_offspring(dna: StrategyDNA) -> None:
+    """变异/交叉产物结构校验（fix-executor-batch-health 校验最小集）。
+
+    只覆盖两个实证非法形态（发现新形态时增量扩，不做全字段 schema）：
+    1. 条件 threshold 显式为 None（求值层数值 vs None 比较失败）；
+    2. 基因签名不可哈希（条件含 dict/list 值——去重与组装的 hash 失败）。
+
+    Raises:
+        ValueError: 产物含结构非法基因（消息带 indicator 与原因）。
+    """
+    from core.strategy.executor import _gene_signature
+
+    for gene in getattr(dna, "signal_genes", []):
+        cond = gene.condition or {}
+        if isinstance(cond, dict) and cond.get("threshold", 0) is None \
+                and "threshold" in cond:
+            raise ValueError(
+                f"非法变异产物：{gene.indicator} 条件 target(threshold) 为 None")
+        try:
+            hash(_gene_signature(gene))
+        except TypeError:
+            raise ValueError(
+                f"非法变异产物：{gene.indicator} 基因签名不可哈希"
+                f"（condition={cond!r}）") from None
+
+
 def _tournament_select(
     scored: List[Tuple[StrategyDNA, float]],
     k: int,
@@ -388,6 +414,12 @@ class EvolutionEngine:
                     if getattr(child, "signal_sources", None) or getattr(child, "composition", None):
                         if random.random() < 0.3:
                             child = mutate_composition(child)
+                    # 源头校验（fix-executor-batch-health）：变异产物结构
+                    # 合法性在入种群前拦截——非法（条件 target 为 None、
+                    # 条件含不可哈希值）抛 ValueError 被下方既有 except
+                    # 捕获→换随机个体（与变异失败同构处置，零新控制流；
+                    # 既有兜底管不住「合法返回的非法结构」，此为缺口本质）
+                    validate_offspring(child)
                     children.append(child)
                 except Exception:
                     children.append(create_random_dna(
