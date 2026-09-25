@@ -339,8 +339,15 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         from core.features.indicators import _compute_indicator
         new_cols = _compute_indicator(df, indicator, params)
         if new_cols:
-            for name, series in new_cols.items():
-                df[name] = series
+            # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
+            # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
+            # 成本线性上升——攒齐 new_cols 整块赋值，列集合与值不变；
+            # 极短数据下部分输出列可能为 None（原逐列写回同样容忍），
+            # 以 None 列写入保持列集合不变
+            df[list(new_cols.keys())] = pd.DataFrame(
+                {name: (series if series is not None else None)
+                 for name, series in new_cols.items()},
+                index=df.index)
             # Retry lookup after writing computed columns
             if col in df.columns:
                 result = df[col]
@@ -804,6 +811,7 @@ def batch_signal_sets(
 
     # Step 1: Evaluate all unique gene conditions
     gene_results: dict[tuple, pd.Series] = {}
+    skipped_genes = 0  # fix-executor-batch-health：签名非法跳过计数（可观测）
 
     for dna in individuals:
         # MTF individuals use the full dna_to_signal_set path
@@ -811,8 +819,19 @@ def batch_signal_sets(
             continue
 
         for gene in dna.signal_genes:
-            sig = _gene_signature(gene)
-            if sig in gene_results:
+            # 签名构造/去重查询纳入保护：结构非法（条件含 dict 值等
+            # 不可哈希形态）在 hash 时抛 TypeError——不入去重表 + 计数，
+            # 不上炸整批（组装段 .get 默认全 False 天然回退）
+            try:
+                sig = _gene_signature(gene)
+                if sig in gene_results:
+                    continue
+            except TypeError:
+                skipped_genes += 1
+                logger.warning(
+                    "batch_signal_sets 跳过签名非法基因（不可哈希）: "
+                    "indicator=%s condition=%r",
+                    gene.indicator, gene.condition)
                 continue
 
             try:
@@ -822,8 +841,15 @@ def batch_signal_sets(
                     df=enhanced_df,
                 )
                 gene_results[sig] = signal.fillna(False)
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
+                # TypeError 兜条件 target 为 None 等形态的求值失败
+                # （numpy 数值 vs None 比较）——与既有白名单同走全 False
+                # 降级，单基因失败不炸整批
                 gene_results[sig] = pd.Series(False, index=enhanced_df.index)
+
+    if skipped_genes:
+        logger.warning(
+            "batch_signal_sets 本批共跳过 %d 个签名非法基因", skipped_genes)
 
     # Step 2: Assemble per-individual SignalSets
     results: list[SignalSet] = []
@@ -843,9 +869,15 @@ def batch_signal_sets(
         reduce_triggers, reduce_guards = [], []
         direction_genes = []
 
+        _default_off = pd.Series(False, index=enhanced_df.index)
         for gene in dna.signal_genes:
-            sig = _gene_signature(gene)
-            signal = gene_results.get(sig, pd.Series(False, index=enhanced_df.index))
+            # 签名非法（不可哈希——Step 1 已跳过未入表）在组装层同样
+            # 降级全 False，不炸整批
+            try:
+                sig = _gene_signature(gene)
+                signal = gene_results.get(sig, _default_off)
+            except TypeError:
+                signal = _default_off
 
             if gene.role == SignalRole.ENTRY_TRIGGER:
                 entry_triggers.append(signal)
