@@ -93,12 +93,18 @@ def register_hypothesis(
     statement: str,
     data_ranges: List[Dict[str, str]],
     hypothesis_id: Optional[str] = None,
+    provenance: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """登记假设（校验链 + 幂等 + 原子双写）。
+    """登记假设（校验链 + 幂等 + 原子写）。
+
+    provenance（add-screen-patterns D5）：{task_id, candidate_fingerprint}
+    扫描谱系引用——task 须存在于任务表（screen_use 区间一律取自任务
+    记录的 data_range，声明不供数）；不参与幂等键；不校验指纹归属
+    （伪造指纹只会把无效区间拦进自己的判定并集，无作弊收益）。
 
     Returns:
         {"hypothesis_id", "duplicated": bool}——duplicated=True 表示命中
-        幂等键返回既有假设。
+        幂等键返回既有假设（provenance 不改变假设身份，幂等命中不补写）。
     """
     # 1. conditions 结构
     when = conditions.get("when_conditions")
@@ -153,7 +159,39 @@ def register_hypothesis(
     if existing is not None:
         return {"hypothesis_id": existing["hypothesis_id"], "duplicated": True}
 
-    # 5. 原子双写
+    # 4.5 谱系引用校验（区间事实取自任务记录——D5）
+    screen_use: Optional[Dict[str, str]] = None
+    if provenance is not None:
+        if not (isinstance(provenance, dict)
+                and provenance.get("task_id")
+                and provenance.get("candidate_fingerprint")):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "provenance 须含 task_id 与 candidate_fingerprint",
+                detail={"field": "provenance"})
+        task = rr.get_analysis_task(db_path, str(provenance["task_id"]))
+        if task is None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"provenance 引用的扫描任务不存在: {provenance['task_id']}",
+                detail={"field": "provenance.task_id",
+                        "task_id": str(provenance["task_id"])})
+        try:
+            task_params = json.loads(task["params"]) if task.get("params") else {}
+        except (json.JSONDecodeError, TypeError):
+            task_params = {}
+        task_range = task_params.get("data_range")
+        if not task_range or "start" not in task_range or "end" not in task_range:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"扫描任务记录缺区间事实: {provenance['task_id']}",
+                detail={"field": "provenance.task_id"})
+        screen_use = {
+            "ref_id": str(provenance["task_id"]),
+            "data_ranges": json.dumps([task_range], ensure_ascii=False),
+        }
+
+    # 5. 原子写（provenance 存在时同事务追加 screen_use 日志）
     import uuid
     hid = hypothesis_id or f"hyp_{uuid.uuid4().hex[:12]}"
     rr.save_hypothesis_with_log(
@@ -164,6 +202,7 @@ def register_hypothesis(
         statement=statement,
         data_ranges=json.dumps(data_ranges, ensure_ascii=False),
         ranges_hash=ranges_hash,
+        screen_use=screen_use,
     )
     return {"hypothesis_id": hid, "duplicated": False}
 

@@ -822,10 +822,22 @@ class DataRangeItem(BaseModel):
     end: str
 
 
+class ScreenProvenance(BaseModel):
+    """扫描谱系引用（add-screen-patterns D5）：声明候选来源。
+
+    只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；
+    不参与假设幂等键（同条件同区间重复登记命中同一假设）。
+    """
+
+    task_id: str
+    candidate_fingerprint: str
+
+
 class HypothesisCreate(BaseModel):
     conditions: HypothesisConditions
     statement: str
     data_ranges: List[DataRangeItem]
+    provenance: Optional[ScreenProvenance] = None
 
 
 class HypothesisTransitionRequest(BaseModel):

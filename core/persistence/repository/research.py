@@ -48,10 +48,14 @@ def save_hypothesis_with_log(
     data_ranges: str,
     ranges_hash: str,
     log_id: Optional[str] = None,
+    screen_use: Optional[Dict[str, str]] = None,
 ) -> None:
-    """原子双写：research_hypotheses + research_log(register)。
+    """原子写：research_hypotheses + research_log(register) [+ screen_use]。
 
-    log_id 可注入（测试原子性用）；第二条 insert 失败时假设行一并回滚。
+    log_id 可注入（测试原子性用）；任一后续 insert 失败时假设行一并
+    回滚。screen_use（add-screen-patterns）：{ref_id, data_ranges}——
+    登记引用扫描候选时同事务追加谱系日志（区间经判定并集机制自动
+    纳入隔离，isolation.py 零改动）。
     """
     engine = _engine_for(db_path)
     now = _now()
@@ -73,6 +77,16 @@ def save_hypothesis_with_log(
             summary=statement,
             created_at=now,
         ))
+        if screen_use is not None:
+            conn.execute(insert(ResearchLog).values(
+                log_id=_new_id(),
+                hypothesis_id=hypothesis_id,
+                entry_type="screen_use",
+                ref_id=screen_use["ref_id"],
+                data_ranges=screen_use["data_ranges"],
+                summary="scan candidate referenced at registration",
+                created_at=now,
+            ))
 
 
 def get_hypothesis(db_path: Path, hypothesis_id: str) -> Optional[Dict[str, Any]]:
@@ -287,15 +301,22 @@ def append_research_log(
 def list_research_log(
     db_path: Path, *,
     hypothesis_id: Optional[str] = None,
+    entry_type: Optional[str] = None,
     offset: int = 0, limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """按 hypothesis_id 过滤的日志列表（created_at+id 双键稳定排序）。"""
+    """按 hypothesis_id / entry_type 过滤的日志列表（稳定排序）。
+
+    entry_type 过滤供反向核查（全局 screen 留痕）与审计查询通道
+    （add-screen-patterns G6）使用；两参数均缺省时行为与既往一致。
+    """
     engine = _engine_for(db_path)
     stmt = select(ResearchLog).order_by(
         ResearchLog.created_at, ResearchLog.log_id
     ).offset(offset).limit(limit)
     if hypothesis_id is not None:
         stmt = stmt.where(ResearchLog.hypothesis_id == hypothesis_id)
+    if entry_type is not None:
+        stmt = stmt.where(ResearchLog.entry_type == entry_type)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
 
