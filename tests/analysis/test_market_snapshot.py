@@ -4,9 +4,9 @@
 core.data.mtf_loader.find_parquet；衍生品 {symbol}_oi_{tf} 与
 {symbol}_funding 对齐 _try_merge_derivatives）。
 
-确定性分段构造器（design 决策 7，make_ohlcv 为随机游走无分段能力）：
-趋势段=定向漂移+小噪声（ADX 收敛 >25）；震荡段=均值回归振荡
-（ADX 回落 <20）。单数据集两段，as_of 各取一段内时点做区分验收。
+确定性分段数据取自 tests/helpers/regime_factory.py（趋势段=定向漂移
++小噪声，ADX 收敛 >25；震荡段=均值回归振荡，ADX 回落 <20）。
+单数据集两段，as_of 各取一段内时点做区分验收。
 """
 
 import json
@@ -22,71 +22,13 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.market_snapshot import get_market_snapshot
 from core.persistence.repository import research as rr
+from tests.helpers.regime_factory import (
+    make_range_ohlcv,
+    make_trend_ohlcv,
+    make_two_regime_df,
+)
 
 SYMBOL = "BTCUSDT"
-BASE = 40000.0
-
-
-# ---------------------------------------------------------------------------
-# 确定性分段构造器
-# ---------------------------------------------------------------------------
-
-def make_regime_ohlcv(
-    n: int,
-    *,
-    mode: str,
-    seed: int,
-    start: str = "2024-01-01",
-    freq: str = "1D",
-    base: float = BASE,
-) -> pd.DataFrame:
-    """确定性 OHLCV：mode="trend" 定向漂移+小噪声；mode="range" 均值回归振荡。"""
-    idx = pd.date_range(start, periods=n, freq=freq, tz="UTC", name="timestamp")
-    rng = np.random.default_rng(seed)
-    closes = np.empty(n)
-    c = base * 0.5
-    for i in range(n):
-        if mode == "trend":
-            c *= 1.0 + 0.006 + rng.normal(0, 0.001)
-        else:
-            c += (base - c) * 0.15
-            c *= 1.0 + rng.normal(0, 0.004)
-        closes[i] = c
-    wiggle = np.abs(rng.normal(0, 0.002, n))
-    df = pd.DataFrame({
-        "open": closes * (1 + rng.normal(0, 0.001, n)),
-        "high": closes * (1 + wiggle),
-        "low": closes * (1 - wiggle),
-        "close": closes,
-        "volume": rng.integers(800, 1200, n).astype(float),
-    }, index=idx)
-    return df
-
-
-def make_two_regime_df(n_trend: int = 330, n_range: int = 260,
-                       seed: int = 11) -> pd.DataFrame:
-    """单数据集两段：前 n_trend 根趋势、后 n_range 根震荡（同构复现 3.1 场景）。"""
-    n = n_trend + n_range
-    idx = pd.date_range("2024-01-01", periods=n, freq="1D",
-                        tz="UTC", name="timestamp")
-    rng = np.random.default_rng(seed)
-    closes = np.empty(n)
-    c = BASE * 0.5  # 趋势段自低位定向爬升，远离震荡中枢
-    for i in range(n):
-        if i < n_trend:
-            c *= 1.0 + 0.006 + rng.normal(0, 0.001)
-        else:
-            c += (BASE - c) * 0.15
-            c *= 1.0 + rng.normal(0, 0.004)
-        closes[i] = c
-    wiggle = np.abs(rng.normal(0, 0.002, n))
-    return pd.DataFrame({
-        "open": closes * (1 + rng.normal(0, 0.001, n)),
-        "high": closes * (1 + wiggle),
-        "low": closes * (1 - wiggle),
-        "close": closes,
-        "volume": rng.integers(800, 1200, n).astype(float),
-    }, index=idx)
 
 
 def write_parquet(data_dir: Path, df: pd.DataFrame, timeframe: str) -> None:
@@ -164,7 +106,7 @@ def test_two_regime_distinction(db_path, data_dir):
 
 def test_as_of_default_latest_bar(db_path, data_dir):
     """as_of 缺省 = 最新一根 bar（周期卡 as_of 即末根时间戳）。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=3)
+    df = make_trend_ohlcv(400, seed=3)
     write_parquet(data_dir, df, "1d")
 
     out = get_market_snapshot(db_path, data_dir, symbol=SYMBOL,
@@ -211,7 +153,7 @@ def test_as_of_no_lookahead(db_path, data_dir):
 
 def test_derivatives_no_file(db_path, data_dir):
     """无 OI/funding parquet → derivatives 两子维标无数据，其余四维正常。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=7)
+    df = make_trend_ohlcv(400, seed=7)
     write_parquet(data_dir, df, "1d")
 
     out = get_market_snapshot(db_path, data_dir, symbol=SYMBOL,
@@ -226,7 +168,7 @@ def test_derivatives_no_file(db_path, data_dir):
 def test_derivatives_head_gap(db_path, data_dir):
     """funding parquet 从第 300 根起（ffill 头部缺口）→ 头部时点窗内全 NaN
     标无数据（不冒充假 0）；覆盖后时点正常读数。"""
-    df = make_regime_ohlcv(700, mode="range", seed=9)
+    df = make_range_ohlcv(700, seed=9)
     write_parquet(data_dir, df, "1d")
     write_derivatives(data_dir, df, "1d", funding_from=400)  # oi 仍无文件
 
@@ -247,7 +189,7 @@ def test_derivatives_head_gap(db_path, data_dir):
 
 def test_derivatives_full_coverage(db_path, data_dir):
     """funding+OI 自始覆盖 → 两子维正常读数（含分位与有效 bar 数）。"""
-    df = make_regime_ohlcv(700, mode="range", seed=13)
+    df = make_range_ohlcv(700, seed=13)
     write_parquet(data_dir, df, "1d")
     write_derivatives(data_dir, df, "1d", funding_from=0, oi=True)
 
@@ -270,7 +212,7 @@ def test_bb_bandwidth_and_atr_pct_formula(db_path, data_dir):
     """BB 带宽=(upper-lower)/middle、ATR%=ATR(14)/close*100 口径（对照 pandas_ta 直算）。"""
     import pandas_ta as ta
 
-    df = make_regime_ohlcv(400, mode="trend", seed=17)
+    df = make_trend_ohlcv(400, seed=17)
     write_parquet(data_dir, df, "1d")
     out = get_market_snapshot(db_path, data_dir, symbol=SYMBOL,
                               timeframes=["1d"], as_of=df.index[-1])
@@ -289,9 +231,9 @@ def test_bb_bandwidth_and_atr_pct_formula(db_path, data_dir):
 
 def test_window_bars_declared_per_timeframe(db_path, data_dir):
     """window_bars 如实声明实际窗口：1d=90（足额）；3d=30（90 日仅 30 bar）。"""
-    df_1d = make_regime_ohlcv(400, mode="trend", seed=19, start="2024-01-01")
+    df_1d = make_trend_ohlcv(400, seed=19, start="2024-01-01")
     write_parquet(data_dir, df_1d, "1d")
-    df_3d = make_regime_ohlcv(400, mode="trend", seed=19, start="2024-01-01",
+    df_3d = make_trend_ohlcv(400, seed=19, start="2024-01-01",
                               freq="3D")
     write_parquet(data_dir, df_3d, "3d")
 
@@ -308,7 +250,7 @@ def test_window_bars_declared_per_timeframe(db_path, data_dir):
 
 def test_timeframes_contract(db_path, data_dir):
     """子集在册可用、重复去重；空集与非法周期结构化拒绝。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=23)
+    df = make_trend_ohlcv(400, seed=23)
     write_parquet(data_dir, df, "1d")
 
     out = get_market_snapshot(db_path, data_dir, symbol=SYMBOL,
@@ -328,7 +270,7 @@ def test_timeframes_contract(db_path, data_dir):
 
 def test_symbol_or_timeframe_not_found(db_path, data_dir):
     """symbol/timeframe 无 parquet → RESEARCH_SYMBOL_NOT_FOUND。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=25)
+    df = make_trend_ohlcv(400, seed=25)
     write_parquet(data_dir, df, "1d")
 
     with pytest.raises(ResearchError) as ei:
@@ -343,7 +285,7 @@ def test_symbol_or_timeframe_not_found(db_path, data_dir):
 
 def test_as_of_before_data_start_rejected(db_path, data_dir):
     """as_of 早于数据起点 → RESEARCH 数据类拒绝。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=27, start="2024-06-01")
+    df = make_trend_ohlcv(400, seed=27, start="2024-06-01")
     write_parquet(data_dir, df, "1d")
 
     with pytest.raises(ResearchError) as ei:
@@ -354,7 +296,7 @@ def test_as_of_before_data_start_rejected(db_path, data_dir):
 
 def test_warmup_insufficient_passthrough(db_path, data_dir):
     """warmup 不足（数据起点前实际 bar 少于推导）→ 透传 RESEARCH_WARMUP_INSUFFICIENT。"""
-    df = make_regime_ohlcv(150, mode="trend", seed=29)  # 1d floor 200
+    df = make_trend_ohlcv(150, seed=29)  # 1d floor 200
     write_parquet(data_dir, df, "1d")
 
     with pytest.raises(ResearchError) as ei:
@@ -367,7 +309,7 @@ def test_size_guard_rejects_oversize(db_path, data_dir, monkeypatch):
     """体积护栏：序列化超限结构化拒绝（monkeypatch 压低阈值测护栏逻辑本体）。"""
     from core.analysis import market_snapshot as ms
 
-    df = make_regime_ohlcv(400, mode="trend", seed=31)
+    df = make_trend_ohlcv(400, seed=31)
     write_parquet(data_dir, df, "1d")
     monkeypatch.setattr(ms, "_MAX_SERIALIZED_BYTES", 50)
 
@@ -387,7 +329,7 @@ def test_four_timeframe_size_budget(db_path, data_dir):
     specs = {"3d": (400, "3D"), "1d": (400, "1D"),
              "4h": (600, "4h"), "1h": (2200, "1h")}
     for tf, (n, freq) in specs.items():
-        df = make_regime_ohlcv(n, mode="trend", seed=41 + n % 7, freq=freq)
+        df = make_trend_ohlcv(n, seed=41 + n % 7, freq=freq)
         write_parquet(data_dir, df, tf)
         write_derivatives(data_dir, df, tf, funding_from=0, oi=True)
 
@@ -402,7 +344,7 @@ def test_four_timeframe_size_budget(db_path, data_dir):
 
 def test_research_log_entry_written(db_path, data_dir):
     """每次调用落 research_log adhoc 条目（含 symbol/timeframes/as_of）。"""
-    df = make_regime_ohlcv(400, mode="trend", seed=43)
+    df = make_trend_ohlcv(400, seed=43)
     write_parquet(data_dir, df, "1d")
 
     get_market_snapshot(db_path, data_dir, symbol=SYMBOL,
