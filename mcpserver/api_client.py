@@ -51,6 +51,7 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/research/random-window-test",                     # 随机窗口
     "/api/research/backtest-sandbox",                       # 沙盒回测（M6 快速试错）
     "/api/research/analysis",                               # 分析模板
+    "/api/research/inspect-cases",                          # 案例抽查（0.2.8 检查③）
     "/api/research/feature-requests",                       # 需求单
     "/api/research/plugins/formula",                        # 公式插件注册
     "/api/research/plugins/model",                          # 模型插件配置

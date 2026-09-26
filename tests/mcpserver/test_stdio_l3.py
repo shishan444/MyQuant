@@ -82,10 +82,10 @@ def test_stdio_full_chain(live_api):
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
-                # 1) 工具列表（research 档 22 个）
+                # 1) 工具列表（research 档 26 个——0.2.8 +inspect_cases）
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
-                assert len(names) == 25, f"研究档工具数: {len(names)}"
+                assert len(names) == 26, f"研究档工具数: {len(names)}"
                 assert "register_hypothesis" in names
                 assert "translate_hypothesis_to_strategy" in names
 
