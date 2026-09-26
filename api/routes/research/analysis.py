@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
-              "event_study", "pattern_mining", "screen_patterns", "param_sweep")
+              "event_study", "pattern_mining", "screen_patterns", "param_sweep",
+              "regime_split")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -49,7 +50,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
         condition_stats, correlation_scan, distribution_compare,
-        event_study, param_sweep, screen_patterns, similar_at_time,
+        event_study, param_sweep, regime_split, screen_patterns,
+        similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -95,6 +97,30 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             df, indicator=p["indicator"], condition=p["condition"],
             sweep={"axis": s.get("axis", "target"),
                    "values": s.get("values", "auto")},
+            forward_bars=p.get("forward_bars", 24),
+            data_ranges=ranges, timeframe=rng["timeframe"],
+            request_start=request_start,
+            hypothesis_id=payload.hypothesis_id).to_dict()
+
+    if payload.template == "regime_split":
+        # 行情分段（add-regime-split）：warmup 覆盖判读指标（ADX/ATR）；
+        # condition 存在时其归属指标并入 warmup 清单（矩阵模板内计算）
+        from core.features.registry import INDICATOR_REGISTRY
+        warm_names = ["ADX", "ATR"]
+        if p.get("indicator"):
+            if p["indicator"] not in INDICATOR_REGISTRY:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"indicator 未知: {p['indicator']!r}",
+                    detail={"param": "indicator",
+                            "legal_range": "注册表指标名（list_indicators 查询）"})
+            warm_names.append(p["indicator"])
+        df, request_start = load_with_warmup(
+            data_dir, rng["symbol"], rng["timeframe"],
+            rng["start"], rng["end"], warm_names)
+        return regime_split(
+            df, segmentation=p.get("segmentation", "auto"),
+            indicator=p.get("indicator"), condition=p.get("condition"),
             forward_bars=p.get("forward_bars", 24),
             data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
