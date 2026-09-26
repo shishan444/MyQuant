@@ -901,6 +901,23 @@ class AnalysisRunRequest(BaseModel):
     hypothesis_id: Optional[str] = None
 
 
+class InspectCasesRequest(BaseModel):
+    """案例抽查入口（add-inspect-cases；独立通道，不走模板族）。
+
+    selector 两形态互斥（恰含 condition 或 timestamps 之一），服务层
+    深度校验（结构化 422）。
+    """
+
+    symbol: str
+    timeframe: str
+    selector: Dict[str, Any]  # {condition:{subject,action,target}} 或 {timestamps:[...]}
+    limit: int = 3
+    context_bars: int = 8
+    start: Optional[str] = None
+    end: Optional[str] = None
+    indicator: Optional[str] = None
+
+
 class FeatureRequestCreate(BaseModel):
     title: str
     payload: Dict[str, Any] = {}
