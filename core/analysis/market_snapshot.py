@@ -38,6 +38,8 @@ from typing import Any, Optional, Union
 import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
+# 三态判读已提升分段权威模块（add-regime-split；快照与分段同一把尺）
+from core.analysis.regime_segments import adx_state as _adx_state
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
 
 # 缺省四周期（决策 10：取值为 TF_MINUTES 在册周期的任意子集）
@@ -110,18 +112,6 @@ def _window_percentile(
     if len(s) < 2:
         return None
     return round(float(s.rank().iloc[-1] / len(s)), 2)
-
-
-def _adx_state(adx: Optional[float]) -> Optional[str]:
-    """三态机械判读（代码规则可复现，刻意不做智能判读）：
-    <20 震荡 / >25 趋势 / 之间过渡。"""
-    if adx is None:
-        return None
-    if adx < 20:
-        return "震荡"
-    if adx > 25:
-        return "趋势"
-    return "过渡"
 
 
 def _derivatives_leg(

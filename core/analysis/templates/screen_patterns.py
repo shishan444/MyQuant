@@ -132,41 +132,8 @@ def _validate_params(
     return names, [int(h) for h in horizons], int(top_n), int(min_samples)
 
 
-def _mask_for(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
-    """单条件掩码（复用验证引擎语义；列缺失返回全 False 安全降级）。"""
-    from core.validation.engine import _evaluate_single_condition
-
-    mask = _evaluate_single_condition(work, {
-        "subject": condition["subject"],
-        "action": condition["action"],
-        "target": condition["target"],
-    })
-    return mask.fillna(False).astype(bool)
-
-
-def _p_value_for(
-    fwd: pd.Series, stat_mask: np.ndarray, horizon: int,
-    baseline_mean: Optional[float],
-) -> tuple[Optional[float], int]:
-    """去重叠子集上的单样本 t 检验 p 值（0.2.1 condition_stats 同口径）。
-
-    Returns:
-        (p_value, n_valid)——p 为 None 表示不可检（样本<2/零方差/无基线）。
-    """
-    if baseline_mean is None:
-        return None, 0
-    locs = np.where(stat_mask)[0]
-    picked: List[int] = []
-    for loc in locs:
-        if not picked or loc - picked[-1] >= horizon:
-            picked.append(loc)
-    subset = fwd.iloc[picked].dropna() if picked else fwd.iloc[0:0]
-    if len(subset) < 2 or float(np.std(subset.to_numpy(), ddof=1)) <= 0:
-        return None, int(len(subset))
-    from scipy import stats  # 形制同 condition_stats：函数内按需导入
-
-    _, p = stats.ttest_1samp(subset.to_numpy(), baseline_mean)
-    return float(p), int(len(subset))
+# 条件统计内核已提升共享（add-regime-split 兑现 0.2.6 D4 钩子；三消费者）
+from core.analysis.condition_kernel import _mask_for, _p_value_for
 
 
 def screen_patterns(

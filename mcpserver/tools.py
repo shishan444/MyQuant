@@ -216,7 +216,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         unsupported 附稳健区间（unsupported=该区间无任何显著正证据——
         丢弃或彻底换条件，换阈值复查无意义）；输出逐点披露原始统计量与
         判定所用参数（gates）——判定标尺内建，改网格/持有期/区间是正当
-        复查方式，判定参数不可传。"""
+        复查方式，判定参数不可传。regime_split 行情分段（第③步检查②，
+        快路径）：params.segmentation（"auto" 或显式段列表
+        [{start,end,type?}]）、可选 params.indicator+params.condition+
+        params.forward_bars（携带则逐段统计前向收益——段样本<30 标
+        insufficient_sample）。状态序列直切与行情快照同一套机械判读
+        （高波动覆盖态优先于趋势/震荡三态），判读参数内建不可调、gates
+        披露；段清单供「候选规律在各行情段是否一致」检查与后续分段
+        验证（0.2.10）共用段定义。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

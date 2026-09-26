@@ -34,7 +34,7 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.templates.screen_patterns import _mask_for, _p_value_for
+from core.analysis.condition_kernel import _mask_for, _p_value_for
 from core.analysis.threshold_grids import VALUE_GRIDS
 
 # 三道门常量（design Decision 3：模块内固定，输出 gates 披露；

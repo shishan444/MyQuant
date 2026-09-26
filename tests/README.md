@@ -52,6 +52,8 @@
 | 参数稳健性检查模板（0.2.6） | 三道门三态×四值（受控构造：n=2000 邻域有效=plateau / n=900 孤立点=spike，同一构造器双形态）；纯噪声结构性质（仅 spike/unsupported 两合法落点，绝不 plateau）；unsupported 第四格（样本充分全无效）；资格门临界 29/30 两侧；auto 网格∪中心点；双件校验拒绝面；逐字节一致；gates 披露 | `analysis/templates/test_param_sweep.py` | — |
 | 稳健性检查路由与留痕（0.2.6） | 快路径 200 四值结论；未知指标 422 结构化拒绝；entry_type="sweep" 留痕（ref_id=中心条件指纹、不挂假设、不写 analysis 条）；形态断言不入判定并集收集集 | `api/test_research_sweep_api.py` | — |
 | 判定期望独立依据（0.2.6） | 与 condition_stats 同条件同持有期逐字段独立复核一致（mean/baseline/p_value/触发数四线） | `analysis/templates/test_param_sweep.py` CrossCheck 类 | — |
+| 行情分段核心（0.2.7） | 切段正确（两段构造类型与意图一致）、分位双实现互钉（向量化 vs 快照单点）、高波动覆盖优先、快照同源、确定性、短段吸收与上限合并守恒、gates 披露 | `analysis/test_regime_segments.py` | — |
+| 行情分段模板与路由（0.2.7） | auto/explicit、逐段统计与 condition_stats 独立复核一致（U3 warmup 前缀口径）、短段 insufficient、参数拒绝面、通用 analysis 留痕 | `analysis/templates/test_regime_split.py`、`api/test_research_regime_split_api.py` | — |
 
 ## 四区 · 共享机制守护（改动须按表回归，不只跑直接调用方）
 
@@ -64,6 +66,8 @@
 | canonical_condition_hash（条件身份） | `analysis/test_condition_identity.py` | screen 候选、provenance 登记、反向核查、param_sweep 中心指纹；规划中 0.2.13 列命名统一 |
 | 审计日志通道（research_log entry_type 族） | `analysis/test_screen_lineage.py`、`api/test_research_sweep_api.py`、`persistence/test_research_repository.py` | screen 留痕/screen_use/sweep 留痕/审计查询；规划中 0.2.11 |
 | threshold_grids（条件阈值刻度表，0.2.6 自 screen_patterns 私有常量提升） | `analysis/templates/test_screen_patterns.py`（搬家等价性——既有回归绿即证明）+ `analysis/templates/test_param_sweep.py`（auto 网格用例） | screen_patterns、param_sweep（两域网格同源，改动须回归两消费者） |
+| condition_kernel（掩码求值+去重叠 t 检验，0.2.7 自 screen_patterns 提升——0.2.6 D4 钩子兑现） | `analysis/templates/` 三模板既有测试（搬家等价性=回归绿） | screen_patterns、param_sweep、regime_split（改动须回归三消费者） |
+| 行情判读规则（adx_state，0.2.7 自 market_snapshot 提升；快照与分段同一把尺） | `analysis/test_market_snapshot.py`（快照回归绿证提升零变化）+ `analysis/test_regime_segments.py`（同源与分位互钉） | market_snapshot、regime_segments/regime_split（0.2.10 分段考试预留） |
 
 ## 验证受限清单（显式声明，不得默认为已覆盖）
 
@@ -72,6 +76,7 @@
 | 0.2.3 前端 BacktestMetricsPanel 对照区 | 需前后端服务 + chromium | 随 e2e 批次（`tests/e2e/`）补验 |
 | 0.2.4 真实行情两时点区分 | 依赖外部数据集状态（会随回补漂移） | 一次性人工验收已过；可自动化证伪部分由 regime_factory 确定性数据承接 |
 | 0.2.5 BTC 2024-01~09 扫描可复现 | 同上 | 一次性人工验收已过；逐字节一致 + 复核一致由合成数据测试承接 |
+| 0.2.7 BTC 1d 全量段级自洽（三断言） | 真实数据随回补漂移 | 一次性验收已过（快照 2026-09-25，993 行）：段标签=段内众数（9 段机检）/末尾 30 根独立 ADX 40.9=全年 1.49 倍的强趋势结构被切为独立趋势段/bar 守恒 993=993；合成侧由 make_two_regime_df 承接 |
 
 ## 数据构造器（单一来源，不平行实现）
 

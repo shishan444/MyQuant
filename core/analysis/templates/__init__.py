@@ -10,6 +10,7 @@ from core.analysis.templates.distribution_compare import distribution_compare
 from core.analysis.templates.event_study import event_study
 from core.analysis.templates.pattern_mining import similar_at_time
 from core.analysis.templates.param_sweep import param_sweep
+from core.analysis.templates.regime_split import regime_split
 from core.analysis.templates.screen_patterns import screen_patterns
 
 __all__ = [
