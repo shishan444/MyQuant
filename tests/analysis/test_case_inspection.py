@@ -256,6 +256,9 @@ class TestSamplingAndWindows:
 
         期望独立证明：窗口末端 bar ts > end 即证外扩生效（缺失则实现
         退化为一传 end 不外扩、半窗被截断披露义务掩盖）。
+
+        注：本区间外扩区 (290,298] 恰零命中——对求值域上界缺陷不敏感
+        （守护该语义的是下方 test_end_domain_excludes_expansion_zone）。
         """
         df = env["df"]
         hits, _ = _expected_hits(df)  # [262, 287, 288, 289, ...]
@@ -270,6 +273,26 @@ class TestSamplingAndWindows:
             assert case["bars_after"] == 8  # 外扩后窗口完整（不因 end 截断）
             if 290 - p <= 8:  # 距 end ≤ context_bars 的命中：窗口跨过 end 边界
                 assert case["window"][-1][0] > end.isoformat()
+
+    def test_end_domain_excludes_expansion_zone(self, env):
+        """求值域上界=end 的敏感锚（fix-inspect-cases-end-domain 1.1）。
+
+        区间 [715,722]：区间内命中 722 一处、外扩区 (722,730] 含
+        725/726/727 三处——无上界实现 n_matched=4 必红（外扩区混入），
+        正确实现 n_matched=1。期望独立推导对照，不用被测路径生成。
+        """
+        df = env["df"]
+        hits, _ = _expected_hits(df)
+        start, end = df.index[715], df.index[722]
+        in_range = [p for p in hits if 715 <= p <= 722]
+        expansion = [p for p in hits if 722 < p <= 730]
+        assert len(in_range) == 1 and in_range[0] == 722  # 构造前提自检
+        assert len(expansion) == 3  # 外扩区含命中——敏感性前提
+        out = _call(env, start=start.isoformat(), end=end.isoformat(),
+                    limit=5)
+        assert out["n_matched"] == 1  # 无上界实现此处为 4
+        assert len(out["cases"]) == 1
+        assert out["cases"][0]["trigger_ts"] == df.index[722].isoformat()
 
     def test_determinism_byte_identical(self, env):
         a = _call(env, limit=3)
