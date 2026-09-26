@@ -76,7 +76,7 @@ class TestServerAssembly:
         names = {t.name for t in run_async(mcp.list_tools())}
         assert TOOL_TIERS["readonly"] <= names
         assert TOOL_TIERS["research"] <= names
-        assert len(names) == 25
+        assert len(names) == 26
 
     def test_readonly_profile_tools(self) -> None:
         mcp, _ = build_server(profile="readonly")

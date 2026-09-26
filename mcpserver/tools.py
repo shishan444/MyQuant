@@ -235,6 +235,35 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def inspect_cases(
+            symbol: str, timeframe: str,
+            selector: Dict[str, Any],
+            limit: int = 3, context_bars: int = 8,
+            start: Optional[str] = None, end: Optional[str] = None,
+            indicator: Optional[str] = None) -> Dict[str, Any]:
+        """案例抽查（第③步检查③——眼见为实）：候选条件或点名时间戳的
+        真实触发案例窗口，全流程唯一让原始 K 线进入上下文的通道。selector
+        两形态互斥：{condition:{subject,action,target}}（扫描候选同形制
+        直喂，indicator 必填供 warmup 推导）或 {timestamps:[...]}（点名
+        ≤5，自带定位不传 start/end）。硬上限：limit ≤5（缺省 3，命中
+        超限等距取样首尾保底，n_matched 披露命中总数）、context_bars
+        ≤20（缺省 8，触发点前后各取）。start 缺省=全量数据集+effective_start
+        披露有效域；end 显式时装载终点自动外扩 context_bars 根（尾部窗口
+        完整）。用法：检查①②统计判定通过后，抽查真实案例辨数据质量
+        （K 线缺口/异常值/指标失真——统计量会把坏数据平均掉）。"""
+        body: Dict[str, Any] = {
+            "symbol": symbol, "timeframe": timeframe, "selector": selector,
+            "limit": limit, "context_bars": context_bars}
+        if start:
+            body["start"] = start
+        if end:
+            body["end"] = end
+        if indicator:
+            body["indicator"] = indicator
+        return api.post("/api/research/inspect-cases", body)
+
+    @mcp.tool()
+    @tool_safe
     def register_hypothesis(
             when_conditions: list[dict[str, Any]],
             then_conditions: list[dict[str, Any]],
