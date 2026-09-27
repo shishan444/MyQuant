@@ -36,6 +36,8 @@ from mcpserver.api_client import ApiError, EndpointNotAllowed, QuantApiClient
 from mcpserver.server import build_server
 from mcpserver.tools import TOOL_TIERS
 
+from _expected_tools import EXPECTED_RESEARCH_TOOLS  # 同目录（pytest prepend）
+
 
 @pytest.fixture(scope="module")
 def live_api(tmp_path_factory):
@@ -76,7 +78,8 @@ class TestServerAssembly:
         names = {t.name for t in run_async(mcp.list_tools())}
         assert TOOL_TIERS["readonly"] <= names
         assert TOOL_TIERS["research"] <= names
-        assert len(names) == 26
+        # 精确集合对照（不多不少）：期望单处权威 _expected_tools
+        assert names == EXPECTED_RESEARCH_TOOLS
 
     def test_readonly_profile_tools(self) -> None:
         mcp, _ = build_server(profile="readonly")

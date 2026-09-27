@@ -30,6 +30,8 @@ def _run_async_compat(coro):
 
 from api.app import create_app
 
+from _expected_tools import EXPECTED_RESEARCH_TOOLS  # 同目录（pytest prepend）
+
 
 @pytest.fixture(scope="module")
 def live_api(tmp_path_factory):
@@ -82,10 +84,13 @@ def test_stdio_full_chain(live_api):
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
-                # 1) 工具列表（research 档 26 个——0.2.8 +inspect_cases）
+                # 1) 工具列表（精确集合对照——期望单处权威 _expected_tools）
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
-                assert len(names) == 26, f"研究档工具数: {len(names)}"
+                assert names == EXPECTED_RESEARCH_TOOLS, (
+                    f"研究档工具集失联: 缺 "
+                    f"{sorted(EXPECTED_RESEARCH_TOOLS - names)} / "
+                    f"多 {sorted(names - EXPECTED_RESEARCH_TOOLS)}")
                 assert "register_hypothesis" in names
                 assert "translate_hypothesis_to_strategy" in names
 
