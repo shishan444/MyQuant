@@ -123,6 +123,25 @@ class TestHintRegistry:
                      "API_INTERNAL_ERROR"):
             assert code in HINTS
 
+    def test_template_hint_matches_authority(self) -> None:
+        """hint 模板清单与 _TEMPLATES 权威源集合对拍（fix-hint-template-list 1.2）。
+
+        hint 文案是静态抄录（字符串字面量无法引用元组），本断言让任何
+        模板扩容自动逼同步——清单漂移即红（0.2.5/0.2.6/0.2.7 三轮扩容
+        均漏同步的根因修复）。
+        """
+        from api.routes.research.analysis import _TEMPLATES
+
+        hint = HINTS["RESEARCH_TEMPLATE_UNKNOWN"]
+        m = re.search(r"template\s*∈\s*([A-Za-z_|]+)", hint)
+        assert m, f"hint 文案缺 'template ∈ ' 管道清单锚点: {hint!r}"
+        listed = set(m.group(1).split("|"))
+        assert listed == set(_TEMPLATES), (
+            f"hint 模板清单与 _TEMPLATES 失联: "
+            f"hint 多出 {sorted(listed - set(_TEMPLATES))} / "
+            f"漏掉 {sorted(set(_TEMPLATES) - listed)}"
+        )
+
     def test_unknown_code_falls_back(self) -> None:
         """未注册码回退通用指引（不空、不抛）。"""
         hint = hint_for("RESEARCH_NEVER_SEEN_BEFORE")

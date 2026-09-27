@@ -63,9 +63,13 @@ HINTS: Dict[str, str] = {
         "条件超出策略表达边界：查看 detail 的不可表达位置；拆解为可表达"
         "子集重登记，或用 submit_feature_request 走慢通道",
     # ---- 分析模板
+    # 清单静态抄录自 api/routes/research/analysis.py 的 _TEMPLATES（权威源，
+    # 同 _SUPPORTED_ACTIONS 锚定 engine 惯例）；漂移防线在
+    # tests/mcpserver/test_errors.py 的集合对拍断言（不一致即红）
     "RESEARCH_TEMPLATE_UNKNOWN":
-        "模板名不在五类之列：template ∈ condition_stats|distribution_compare|"
-        "correlation_scan|event_study|pattern_mining",
+        "模板名不在八类之列：template ∈ condition_stats|distribution_compare|"
+        "correlation_scan|event_study|pattern_mining|screen_patterns|"
+        "param_sweep|regime_split",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
