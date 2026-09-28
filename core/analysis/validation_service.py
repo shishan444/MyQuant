@@ -13,14 +13,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
-from core.analysis.isolation import judged_ranges_union, overlaps_with_request
+from core.analysis.isolation import (
+    _parse_ts,
+    judged_ranges_union,
+    overlaps_with_request,
+)
 from core.analysis.registry_meta import derive_warmup
 from core.analysis.thresholds import DEFAULT_PROFILE, judge
 from core.persistence.repository import research as rr
@@ -585,3 +591,348 @@ def _missing_component_evidence(
         except (json.JSONDecodeError, TypeError):
             continue
     return [s["ref"] for s in plugin_sources if s["ref"] not in evidenced]
+
+
+# ---------------------------------------------------------------- 分段验证
+# （add-staged-validation；MCP 0.2.10「考试完整」开门件）
+#
+# 时段稳健性证据第二形态：与 random_window_test（盲切抽查）互补——
+# 分段按市场状态归因（哪类行情不行）。九步编排全部复用既有权威：
+# build_segments 切段（第二消费者）/ _run_backtest_on_range 逐段回测
+# （每段独立装载=零状态渗透）/ judge 段级门槛（同一把尺量每类行情）。
+#
+# 关键裁决（七环节评估链冻结）：
+# - Q1 可引用·叠加：挂假设且全段达标产生 level="staged_validation" 的
+#   pass 记录（transition 沿用 record_id+verdict 引用语义，无 level 过滤
+#   ——hypothesis_service 查证）；与隔离回测并列不替代。
+# - Q2 段级门槛：judge 前置预判 total_trades<5 → insufficient_sample
+#   （judge 是通用规则引擎无 insufficient 语义，不预判短段会被误判
+#   fail——thresholds.py 查证）；「标注不是第三 verdict」不动全局两态。
+# - Q3 双模互斥：auto（机械判读 gates 内建）与 segments 同传拒。
+# - 写入双路径：挂假设 → save_validation_with_log 一体（记录+日志+
+#   入并集）；adhoc → append_research_log 纯日志（validation_records.
+#   hypothesis_id NOT NULL+FK——无挂靠物理不产生记录，verdict 照报、
+#   record_id=None 无可引用凭据）。
+# - 字段映射：build_segments 输出的段类型键 type 映射统一 label
+#   （explicit 段天然 label——输出单键结构稳定）；判读统计三键随
+#   auto 段透传，explicit 段天然无。
+
+_SEGMENTATION_MODES = frozenset({"auto", "explicit"})
+_REGIME_HELPER_NAMES = ("ADX", "ATR")
+
+
+def _validate_explicit_segments(
+    segments: List[Dict[str, Any]],
+    req_start: str, req_end: str,
+) -> List[Dict[str, Any]]:
+    """显式段列表校验（恰好切分语义：段在请求区间内、并集恰覆盖、
+    相邻相接不重叠、时间升序；三键齐备）——违反拒第一违规段。
+    """
+    if not segments:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "explicit 模式 segments 不能为空",
+            detail={"param": "segments"})
+    rs, re_ = _parse_ts(req_start), _parse_ts(req_end)
+    prev_end: Optional[datetime] = None
+    out: List[Dict[str, Any]] = []
+    for i, seg in enumerate(segments):
+        missing = [k for k in ("label", "start", "end") if not seg.get(k)]
+        if missing:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} 缺键: {missing}（须三键 {{label, start, end}}）",
+                detail={"param": f"segments[{i}]", "missing": missing})
+        try:
+            s, e = _parse_ts(seg["start"]), _parse_ts(seg["end"])
+        except Exception as exc:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} 时间不可解析: {seg['start']}..{seg['end']}",
+                detail={"param": f"segments[{i}]"}) from exc
+        if not s < e:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} 起点不早于终点",
+                detail={"param": f"segments[{i}]", "start": seg["start"],
+                        "end": seg["end"]})
+        if prev_end is not None and s < prev_end:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} 与前段重叠或乱序（本段起点早于前段终点）",
+                detail={"param": f"segments[{i}]",
+                        "prev_end": prev_end.isoformat(),
+                        "start": seg["start"]})
+        out.append({"label": str(seg["label"]), "start": s, "end": e})
+        prev_end = e
+    # 恰好覆盖：首段起于请求起点、末段止于请求终点、相邻相接（缝隙
+    # 表现为某段起点晚于前段终点——上面重叠检查放行 s >= prev_end，
+    # 缝隙在此汇总核：并集须恰等于请求区间）
+    if out[0]["start"] > rs or out[-1]["end"] < re_:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "段列表未完整覆盖请求区间（首段起点/末段终点越界）",
+            detail={"param": "segments",
+                    "request": [req_start, req_end],
+                    "covered": [out[0]["start"].isoformat(),
+                                out[-1]["end"].isoformat()]})
+    for i in range(1, len(out)):
+        if out[i]["start"] > out[i - 1]["end"]:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} 与前段之间存在缝隙",
+                detail={"param": f"segments[{i}]",
+                        "gap": [out[i - 1]["end"].isoformat(),
+                                out[i]["start"].isoformat()]})
+    return out
+
+
+def _auto_segments(
+    data_dir: Path, symbol: str, timeframe: str,
+    start: str, end: str,
+) -> List[Dict[str, Any]]:
+    """auto 切段：装载请求区间 → ADX/ATR default 现算 → build_segments
+    → type→label 映射（判读统计三键透传；bar 数由位置差重算）。"""
+    from core.analysis.regime_segments import build_segments
+    from core.analysis.registry_meta import default_params_for
+    from core.data.mtf_loader import find_parquet, load_and_prepare_df
+
+    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
+    if find_parquet(data_dir, safe_symbol, timeframe) is None:
+        raise ResearchError(
+            "RESEARCH_SYMBOL_NOT_FOUND",
+            f"无数据: {symbol} {timeframe}",
+            detail={"symbol": symbol, "timeframe": timeframe})
+    df = load_and_prepare_df(
+        data_dir, symbol, timeframe,
+        data_start=start, data_end=end, compute_indicators=False)
+    if df is None or df.empty:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"区间数据不足: {symbol} {timeframe} [{start}, {end})")
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    from core.features.indicators import _compute_indicator
+    for helper in _REGIME_HELPER_NAMES:
+        for col, series in _compute_indicator(
+                df, helper, default_params_for(helper)).items():
+            df[col] = series
+    adx_col = next(c for c in df.columns if c.startswith("adx_"))
+    atr_col = next(c for c in df.columns if c.startswith("atr_"))
+    raw = build_segments(df, adx_col, atr_col)
+    if not raw:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            "区间太短切不出段（机械判读未产出任何段）",
+            detail={"symbol": symbol, "timeframe": timeframe})
+    return [{"label": seg["type"], "start": seg["start"], "end": seg["end"],
+             "bars": int(seg["bars"]),
+             "adx_mean": seg.get("adx_mean"),
+             "atr_pct_mean": seg.get("atr_pct_mean"),
+             "atr_pct_pct_mean": seg.get("atr_pct_pct_mean")}
+            for seg in raw]
+
+
+def run_staged_validation(
+    db_path: Path,
+    data_dir: Path,
+    *,
+    strategy_id: str,
+    hypothesis_id: Optional[str] = None,
+    symbol: str,
+    timeframe: str,
+    start: str,
+    end: str,
+    segmentation: str = "auto",
+    segments: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """分段验证（检查⑤的分题型成绩单）。
+
+    Args:
+        strategy_id: 策略（不在册拒 STRATEGY_NOT_FOUND）。
+        hypothesis_id: 可缺省——挂假设走完整证据路径（终态拒验/幂等/
+            并集/扫描复用 + verdict 记录）；缺省 adhoc 纯日志留痕。
+        symbol / timeframe / start / end: 请求区间（半开 UTC）。
+        segmentation: "auto"（机械判读）或 "explicit"；与 segments
+            同传拒（双模互斥）。
+        segments: explicit 段列表 [{label, start, end}]（恰好覆盖请求
+            区间、相接不重叠、升序）。
+
+    Returns:
+        {record_id, verdict, segments[], summary{worst_segment,
+        spread, all_pass}, segmentation, judged_ranges}——verdict 永远
+        陈述本次判定结果；record_id 仅挂假设且有 verdict 时存在
+        （可引用凭据）。
+
+    Raises:
+        ResearchError: RESEARCH_STRATEGY_NOT_FOUND /
+        RESEARCH_HYPOTHESIS_NOT_FOUND / RESEARCH_HYPOTHESIS_TERMINAL /
+        RESEARCH_RANGE_OVERLAP / SCREEN_CANDIDATE_REUSE /
+        RESEARCH_PARAM_INVALID（段列表非法/双模互斥/枚举）/
+        RESEARCH_DATA_INSUFFICIENT（数据不足/切不出段）。
+    """
+    # ---- 校验链（固定顺序：枚举/互斥 → 挂假设前置 → 策略 → 段） ----
+    if segmentation not in _SEGMENTATION_MODES:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"segmentation 须为 auto 或 explicit: {segmentation!r}",
+            detail={"param": "segmentation", "value": segmentation,
+                    "legal_values": sorted(_SEGMENTATION_MODES)})
+    if segments is not None and segmentation == "auto":
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "双模互斥：auto 模式（或缺省）不得同时传 segments",
+            detail={"param": "segments",
+                    "hint": "显式分段须 segmentation='explicit'"})
+
+    request_range = {"symbol": symbol, "timeframe": timeframe,
+                     "start": start, "end": end}
+    rh = _range_hash(request_range)
+
+    if hypothesis_id is not None:
+        # 终态拒验（isolated 同款）
+        hyp = rr.get_hypothesis(db_path, hypothesis_id)
+        if hyp is None:
+            raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
+                                f"假设不存在: {hypothesis_id}", status=404)
+        if hyp["status"] != "active":
+            raise ResearchError(
+                "RESEARCH_HYPOTHESIS_TERMINAL",
+                f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
+                status=409)
+        # 幂等（isolated 同款——验证族纪律）
+        existing = rr.find_validation_by_identity(
+            db_path, hypothesis_id, strategy_id, rh)
+        if existing is not None:
+            return {
+                "record_id": existing["record_id"],
+                "verdict": existing["verdict"],
+                "duplicated": True,
+                "result": json.loads(existing["result"])
+                if existing["result"] else None,
+            }
+        # 判定并集 + 扫描复用（isolated 同款）
+        judged = judged_ranges_union(db_path, hypothesis_id)
+        overlaps = overlaps_with_request(judged, start, end)
+        if overlaps:
+            raise ResearchError(
+                "RESEARCH_RANGE_OVERLAP",
+                "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被"
+                "日志拦截）",
+                status=409,
+                detail={"judged_ranges": judged, "overlaps": overlaps})
+        _screen_reuse_check(db_path, hypothesis_id, request_range)
+    else:
+        judged = []
+
+    # ---- 策略与 warmup ----
+    dna, strat_row = _load_strategy_dna(db_path, strategy_id)
+    try:
+        warmup_bars, _indicator_names = _derive_dna_warmup(db_path, dna)
+    except KeyError as exc:
+        raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
+
+    # ---- 段清单（双模统一结构） ----
+    if segmentation == "explicit":
+        seg_list = _validate_explicit_segments(
+            segments, start, end)
+    else:
+        seg_list = _auto_segments(data_dir, symbol, timeframe, start, end)
+
+    # ---- 逐段回测与段级门槛 ----
+    seg_results: List[Dict[str, Any]] = []
+    for seg in seg_list:
+        seg_start = seg["start"].isoformat()
+        seg_end = seg["end"].isoformat()
+        entry: Dict[str, Any] = {
+            "label": seg["label"], "start": seg_start, "end": seg_end,
+            "bars": seg.get("bars"),
+        }
+        for stat_key in ("adx_mean", "atr_pct_mean", "atr_pct_pct_mean"):
+            if seg.get(stat_key) is not None:
+                entry[stat_key] = seg[stat_key]
+        # 段回测可行性由 warmup 前扩自然判定（前缀不足=请求区间整体
+        # 前缀不足，第一段即暴露——isolated 同款语义）；段极短由
+        # total_trades<5 前置预判兜底（B3 修订：warmup 是取段前历史
+        # 收敛指标而非要求段自身长度，原「段长≤warmup 跳过」基准错误）
+        metrics, _actual_warmup, bars_used = _run_backtest_on_range(
+            db_path, data_dir, dna, symbol, timeframe,
+            seg_start, seg_end, warmup_bars)
+        entry["metrics"] = metrics
+        entry["bars_used"] = int(bars_used)
+        if metrics.get("total_trades", 0) < 5:
+            # judge 前置预判（judge 无 insufficient 语义——不预判短段
+            # 会被判 fail 而非 insufficient，违背 Q2 裁决）
+            entry["segment_verdict"] = "insufficient_sample"
+        else:
+            seg_verdict, seg_details = judge(metrics)
+            entry["segment_verdict"] = seg_verdict
+            entry["threshold_details"] = seg_details
+        seg_results.append(entry)
+
+    # ---- 汇总与 verdict 映射 ----
+    valid = [r for r in seg_results
+             if r["segment_verdict"] != "insufficient_sample"]
+    if valid:
+        worst = min(valid, key=lambda r: r["metrics"]["total_return"])
+        best = max(valid, key=lambda r: r["metrics"]["total_return"])
+        all_pass = all(r["segment_verdict"] == "pass" for r in valid)
+        summary = {
+            "worst_segment": {"label": worst["label"],
+                               "total_return": worst["metrics"]["total_return"]},
+            "spread": best["metrics"]["total_return"]
+            - worst["metrics"]["total_return"],
+            "all_pass": all_pass,
+        }
+        verdict: Optional[str] = "pass" if all_pass else "fail"
+    else:
+        summary = {"worst_segment": None, "spread": None,
+                   "all_pass": None, "note": "无有效段（全部 insufficient_sample）"}
+        verdict = None
+
+    # ---- 写入双路径 ----
+    record_id: Optional[str] = None
+    if hypothesis_id is not None and verdict is not None:
+        record_id = f"rec_{uuid.uuid4().hex[:12]}"
+        rr.save_validation_with_log(
+            db_path, record_id=record_id, hypothesis_id=hypothesis_id,
+            strategy_id=strategy_id, level="staged_validation",
+            params=json.dumps({
+                "request_range": request_range, "range_hash": rh,
+                "segmentation": segmentation, "segments": [
+                    {"label": seg["label"],
+                     "start": seg["start"].isoformat()
+                     if hasattr(seg["start"], "isoformat") else seg["start"],
+                     "end": seg["end"].isoformat()
+                     if hasattr(seg["end"], "isoformat") else seg["end"]}
+                    for seg in seg_list]},
+                ensure_ascii=False),
+            result=json.dumps({"segments": seg_results, "summary": summary},
+                              ensure_ascii=False),
+            verdict=verdict, range_hash=rh)
+    else:
+        # adhoc（或无 verdict）纯日志留痕——验证记录 hypothesis_id 为
+        # 非空外键，无挂靠物理不产生记录；verdict 照报、record_id=None
+        rr.append_research_log(
+            db_path, hypothesis_id=hypothesis_id,
+            entry_type="staged_validation",
+            data_ranges=json.dumps(request_range, ensure_ascii=False),
+            summary=json.dumps({"segments": [
+                {"label": r["label"], "verdict": r["segment_verdict"]}
+                for r in seg_results], "summary": summary},
+                ensure_ascii=False))
+    if hypothesis_id is not None:
+        judged = judged_ranges_union(db_path, hypothesis_id)
+
+    return {
+        "record_id": record_id,
+        "verdict": verdict,
+        "strategy_id": strategy_id,
+        "hypothesis_id": hypothesis_id,
+        "segmentation": segmentation,
+        "request_range": request_range,
+        "warmup_bars": int(warmup_bars),
+        "segments": seg_results,
+        "summary": summary,
+        "judged_ranges": judged,
+    }

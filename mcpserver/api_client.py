@@ -53,6 +53,7 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/research/analysis",                               # 分析模板
     "/api/research/inspect-cases",                          # 案例抽查（0.2.8 检查③）
     "/api/research/query-indicator",                        # 指标读数（0.2.9 检查④）
+    "/api/research/staged-validation",                     # 分段验证（0.2.10 考试完整）
     "/api/research/feature-requests",                       # 需求单
     "/api/research/plugins/formula",                        # 公式插件注册
     "/api/research/plugins/model",                          # 模型插件配置

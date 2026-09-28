@@ -55,6 +55,7 @@
 | 行情分段核心（0.2.7） | 切段正确（两段构造类型与意图一致）、分位双实现互钉（向量化 vs 快照单点）、高波动覆盖优先、快照同源、确定性、短段吸收与上限合并守恒、gates 披露 | `analysis/test_regime_segments.py` | — |
 | 行情分段模板与路由（0.2.7） | auto/explicit、逐段统计与 condition_stats 独立复核一致（U3 warmup 前缀口径）、短段 insufficient、参数拒绝面、通用 analysis 留痕 | `analysis/templates/test_regime_split.py`、`api/test_research_regime_split_api.py` | — |
 | 案例抽查（0.2.8） | 取数正确性三断言（位置独立推导/口径独立对照/bar 守恒）、等距取样首尾保底、双路径有效域、留痕指纹、拒绝零副作用 | `analysis/test_case_inspection.py`、`api/test_research_inspect_cases_api.py` | — |
+| 分段验证（0.2.10） | 双模切段（auto 机械/explicit 四类非法+互斥）、段级门槛三态（pass/fail/insufficient——judge 前置预判锚：短段不误判 fail）、汇总与 verdict 三态、写入双路径（挂假设三件齐/adhoc 仅日志）、同区间幂等（isolated 同族——验证区间不入并集，实施期修正）、T1 跨工具互钉（explicit 单段 vs isolated 一致）、TEMA 验收锚（恒真 entry 确定性构造——最差段=震荡失效归因）、T5 字段映射（type→label） | `analysis/test_staged_validation.py`、`api/test_research_staged_validation_api.py` | — |
 | 指标读数（0.2.9） | pandas_ta/numpy 独立直算对照（latest/quantiles/slope/参数敏感性 38 vs 14）、warmup 段排除敏感构造（含冷启动差非零）、regime 四态分组 count、多余参数键拒绝（防内核静默忽略）、多输出列独立归约与 null 键保留（B 裁决）、体积 2048、零留痕（调用前后 log 计数不变） | `analysis/test_indicator_query.py`、`api/test_research_query_indicator_api.py` | — |
 
 ## 四区 · 共享机制守护（改动须按表回归，不只跑直接调用方）
@@ -70,6 +71,7 @@
 | threshold_grids（条件阈值刻度表，0.2.6 自 screen_patterns 私有常量提升） | `analysis/templates/test_screen_patterns.py`（搬家等价性——既有回归绿即证明）+ `analysis/templates/test_param_sweep.py`（auto 网格用例） | screen_patterns、param_sweep（两域网格同源，改动须回归两消费者） |
 | condition_kernel（掩码求值+去重叠 t 检验，0.2.7 自 screen_patterns 提升——0.2.6 D4 钩子兑现） | `analysis/templates/` 三模板既有测试（搬家等价性=回归绿） | screen_patterns、param_sweep、regime_split、inspect_cases（改动须回归四消费者） |
 | 行情判读规则（adx_state，0.2.7 自 market_snapshot 提升；快照与分段同一把尺） | `analysis/test_market_snapshot.py`（快照回归绿证提升零变化）+ `analysis/test_regime_segments.py`（同源与分位互钉） | market_snapshot、regime_segments/regime_split（0.2.10 分段考试预留） |
+| 逐段回测原语（_run_backtest_on_range，0.2.10 第二消费者 run_staged_validation） | `analysis/test_validation_execution.py`（isolated 回归绿证零变化）+ `analysis/test_staged_validation.py`（T1 互钉） | run_isolated_backtest、run_staged_validation（改动须回归两消费者） |
 | 指标现算内核（_compute_indicator，0.2.9 第五消费者 query_indicator） | `features/` 既有指标输出契约测试 + `analysis/test_indicator_query.py`（独立直算对照） | condition_kernel、case_inspection、模板族、indicator_query（改动须回归全消费者） |
 | default_params_for（注册表默认参数，0.2.9 自 case_inspection 私有提升——0.2.8 预留边界兑现） | `analysis/test_case_inspection.py`（45 用例回归绿证提升零变化） | inspect_cases、indicator_query |
 | MCP 研究档工具清单锚（_expected_tools 单处常量，fix-hint-template-list 治理） | `mcpserver/test_server.py`、`mcpserver/test_stdio_l3.py`、`mcpserver/test_http_l3.py` 三处集合相等断言（缺/多明细直显） | 增减研究档工具只改常量一处；漏同步三测必红 |
@@ -83,6 +85,7 @@
 | 0.2.5 BTC 2024-01~09 扫描可复现 | 同上 | 一次性人工验收已过；逐字节一致 + 复核一致由合成数据测试承接 |
 | 0.2.7 BTC 1d 全量段级自洽（三断言） | 真实数据随回补漂移 | 一次性验收已过（快照 2026-09-25，993 行）：段标签=段内众数（9 段机检）/末尾 30 根独立 ADX 40.9=全年 1.49 倍的强趋势结构被切为独立趋势段/bar 守恒 993=993；合成侧由 make_two_regime_df 承接 |
 | 0.2.8 BTC 1d 条件抽查（口径独立对照） | 真实数据随回补漂移 | 一次性验收已过（数据快照同 0.2.7，993 行）：RSI<30 有效域命中 27 处等距取样 3 案例（2024-08-05/2026-02-02/2026-06-10，覆盖首中尾）；触发点 indicator_values 与独立计算路径逐字段一致（26.65/29.21/23.86）+ 位置独立推导 27=27 + bar 守恒 + 体积 4813 字节 |
+| 0.2.10 TEMA 分段验证（构造数据验收锚） | 验收锚为确定性构造（恒真 entry 使交易频繁——趋势段涨幅覆盖费用、震荡段费用致亏），不依赖真实数据漂移 | 一次性验收已过（make_two_regime_df n_trend=2200/n_range=1100/seed=7，TEMA threshold 恒真，warmup 600 前缀 700）：auto 切段多态段产出，恒真 entry 下最差段归因可见；T1 互钉（explicit 单段 vs isolated 同区间 total_return/max_drawdown/total_trades 三键一致）；judge 预判锚（trades<5 段标 insufficient 非 fail）；幂等（同区间 duplicated） |
 | 0.2.9 BTC 1d 指标读数（口径独立对照） | 真实数据随回补漂移 | 一次性验收已过（数据快照同 0.2.8，993 行 2024-01-01→2026-09-19）：RSI(38) 与 RSI(14) latest 分别 60.83/64.02（@2026-09-19）、p01 分别 35.3/23.13（短周期下探更深的参数敏感性实证）、p50 分别 50.2/50.8；双参数 p50/latest 与 pandas_ta 独立直算逐字段一致（域内 793=993-200）；四归约全开 839 字节；regime 四态真实分布 趋势 235/过渡 129/震荡 233/高波动 196 |
 
 ## 数据构造器（单一来源，不平行实现）
