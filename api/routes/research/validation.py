@@ -14,6 +14,7 @@ from api.schemas import (
     IsolatedBacktestRequest,
     RandomWindowRequest,
     SandboxBacktestRequest,
+    StagedValidationRequest,
 )
 from core.analysis import validation_service as vs
 from core.analysis.hypothesis_service import ResearchError
@@ -39,6 +40,30 @@ def validate_backtest(
             strategy_id=payload.strategy_id,
             request_range=payload.request_range.model_dump(),
             threshold_profile=payload.threshold_profile,
+        )
+    except ResearchError as exc:
+        raise research_error_to_http(exc) from exc
+
+
+@router.post("/staged-validation")
+def staged_validation(
+    payload: StagedValidationRequest,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """分段验证（检查⑤分题型成绩单）：按市场状态切段逐段回测，
+    段级门槛三态 + 全段汇总 verdict（挂假设时可被 transition 引用）；
+    双模互斥（auto 机械判读 / explicit 段列表）；写入双路径（挂假设
+    一体记录 / adhoc 纯日志）。"""
+    try:
+        return vs.run_staged_validation(
+            db_path, data_dir,
+            strategy_id=payload.strategy_id,
+            hypothesis_id=payload.hypothesis_id,
+            symbol=payload.symbol, timeframe=payload.timeframe,
+            start=payload.start, end=payload.end,
+            segmentation=payload.segmentation,
+            segments=payload.segments,
         )
     except ResearchError as exc:
         raise research_error_to_http(exc) from exc

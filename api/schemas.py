@@ -865,6 +865,24 @@ class IsolatedBacktestRequest(BaseModel):
     threshold_profile: Optional[Dict[str, Any]] = None
 
 
+class StagedValidationRequest(BaseModel):
+    """分段验证（add-staged-validation；检查⑤的分题型成绩单）。
+
+    平铺形制（B1——SandboxBacktestRequest 先例）；hypothesis_id 可缺省
+    （adhoc 纯日志留痕，verdict 照报 record_id=None）；segmentation 与
+    segments 双模互斥（auto 缺省）。
+    """
+
+    strategy_id: str
+    hypothesis_id: Optional[str] = None
+    symbol: str = "BTCUSDT"
+    timeframe: str = "4h"
+    start: str
+    end: str
+    segmentation: str = "auto"
+    segments: Optional[List[Dict[str, Any]]] = None
+
+
 class SandboxBacktestRequest(BaseModel):
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
     不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"""

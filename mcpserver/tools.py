@@ -360,6 +360,34 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def run_staged_validation(strategy_id: str, symbol: str, timeframe: str,
+                              start: str, end: str,
+                              segmentation: str = "auto",
+                              segments: Optional[list[dict[str, Any]]] = None,
+                              hypothesis_id: Optional[str] = None,
+                              ) -> Dict[str, Any]:
+        """分段验证（第⑤步考试的分题型成绩单——策略在什么行情下失效的
+        正式度量）：按市场状态切段（趋势/过渡/震荡/高波动）逐段独立
+        回测，段级门槛三态（pass/fail/insufficient_sample——短段样本
+        不足标注非证伪）+ 汇总三键（最差段/段间差异/是否全段达标）。
+        双模互斥：segmentation="auto"（机械判读，gates 内建）或缺省；
+        explicit 传 segments=[{label,start,end}]（恰好覆盖请求区间、
+        相接不重叠、升序）。挂假设且全段达标产生可被 transition引用
+        的 pass 记录（与隔离验证叠加不替代）；不挂假设 adhoc 纯日志
+        （verdict 照报、record_id=None）。区间计入判定并集（看数据
+        即消耗）。与随机窗口抽查互补：抽查答「任意时段都行吗」，
+        分段答「哪类行情不行」。"""
+        body = {"strategy_id": strategy_id, "symbol": symbol,
+                "timeframe": timeframe, "start": start, "end": end,
+                "segmentation": segmentation}
+        if segments is not None:
+            body["segments"] = segments
+        if hypothesis_id:
+            body["hypothesis_id"] = hypothesis_id
+        return api.post("/api/research/staged-validation", body)
+
+    @mcp.tool()
+    @tool_safe
     def run_backtest(strategy_id: str, symbol: str, timeframe: str,
                      start: str, end: str, fee: float = 0.001,
                      slippage: float = 0.0005, init_cash: float = 100000.0,

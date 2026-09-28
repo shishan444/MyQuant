@@ -55,6 +55,15 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   未完成该列为 null（键保留）。求值域 [effective_start, end]（end
   缺省=数据末端），warmup 段不入归约；序列不外发（报表压缩
   ≤2048 字节）；零写入零留痕（读数与元数据查询同级）。
+- **分段验证**：run_staged_validation 按市场状态切段逐段独立回测
+  （检查⑤分题型成绩单——「哪类行情不行」的正式度量，与随机窗口抽查
+  互补：抽查答任意时段、分段答状态归因）。双模互斥：auto（0.2.7
+  机械判读 gates 内建）/explicit 段列表（恰好覆盖、相接不重叠）。
+  段级门槛沿用既有三段闸门逐段适用，短段标 insufficient_sample
+  （证据不足非证伪）；汇总三键（最差段/段间差异/全段达标）。挂假设
+  且全段达标产生可被 transition 引用的 pass 记录（与隔离验证叠加
+  不替代）；不挂假设 adhoc 纯日志（verdict 照报、record_id=None）。
+  区间计入判定并集（看数据即消耗）。
 
 ## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
