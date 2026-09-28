@@ -22,6 +22,24 @@ BARS_PER_YEAR: dict[str, int] = {
 DEFAULT_BARS_PER_YEAR: int = 2190
 
 
+def _safe_mean(arr: "np.ndarray") -> "float | None":
+    """样本不足出口闸门（0.2.11 D5）：n=0 → None（无答案，不产 NaN）。"""
+    if arr is None or len(arr) == 0:
+        return None
+    return float(np.mean(arr))
+
+
+def _safe_std(arr: "np.ndarray") -> "float | None":
+    """样本不足出口闸门（0.2.11 D5）：n<2 → None（ddof=1 无定义）。
+
+    单元素 np.std(ddof=1) 会发 degrees-of-freedom RuntimeWarning 后产
+    NaN——闸门前置不产毒数据（981 条警告收敛的出口侧收口）。
+    """
+    if arr is None or len(arr) < 2:
+        return None
+    return float(np.std(arr, ddof=1))
+
+
 def compute_metrics(
     equity_curve: pd.Series,
     total_trades: int = 0,
@@ -88,10 +106,11 @@ def compute_metrics(
 
     # Sharpe ratio: prefer trade-level, fallback to bar-level
     sharpe_ratio = 0.0
-    if trade_returns is not None and len(trade_returns) > 1:
-        trade_mean = np.mean(trade_returns)
-        trade_std = np.std(trade_returns, ddof=1)
-        if trade_std > 0 and not np.isnan(trade_std):
+    if trade_returns is not None and len(trade_returns) > 0:
+        # 0.2.11 出口闸门：n<2 时 std=None（不产 NaN/不发警告）
+        trade_mean = _safe_mean(trade_returns)
+        trade_std = _safe_std(trade_returns)
+        if trade_std is not None and trade_std > 0:
             trades_per_year = total_trades / max(years, 0.01)
             sharpe_ratio = (trade_mean / trade_std) * np.sqrt(trades_per_year)
     elif total_trades >= 5:
@@ -125,10 +144,12 @@ def compute_metrics(
     if trade_returns is not None and len(trade_returns) > 1:
         downside = trade_returns[trade_returns < 0]
         if len(downside) > 0:
-            downside_std = np.std(downside, ddof=1)
-            if downside_std > 0 and not np.isnan(downside_std):
+            # 0.2.11 出口闸门（生产真警告点）：多笔但仅 1 笔负收益时
+            # downside 单元素 np.std(ddof=1) 发 dof<=0 警告——闸门前置
+            downside_std = _safe_std(downside)
+            if downside_std is not None and downside_std > 0:
                 trades_per_year = total_trades / max(years, 0.01)
-                sortino_ratio = (np.mean(trade_returns) / downside_std) * np.sqrt(trades_per_year)
+                sortino_ratio = (_safe_mean(trade_returns) / downside_std) * np.sqrt(trades_per_year)
 
     # Profit factor: gross profit / gross loss
     profit_factor = 0.0

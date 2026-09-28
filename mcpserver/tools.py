@@ -325,6 +325,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """假设状态迁移：active→supported|refuted（证据=验证 record_id，
         verdict 须匹配：supported 须 pass、refuted 须 fail）、→superseded
         （证据=接替假设 id）或→abandoned（免证据，evidence_ref 填放弃说明）。
+        inconclusive 记录不可作迁移证据（证据不足不可定论——样本不足的
+        验证不能否定假设；假设保持 active 可换区间再验证）。
         supported 时谱系 draft 若有自身 pass 记录则同事务转正（draft→active）。"""
         return api.post(
             f"/api/research/hypotheses/{hypothesis_id}/transition",
@@ -336,7 +338,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                                 symbol: str, timeframe: str,
                                 start: str, end: str) -> Dict[str, Any]:
         """隔离回测（与判定并集重叠会被拒并列明细；结果含 warmup 声明
-        与门槛判定明细；同键重复幂等返回既有）。"""
+        与门槛判定明细；同键重复幂等返回既有）。verdict 三态：
+        pass/fail/inconclusive——inconclusive=证据不足非证伪（样本不足
+        或每笔收益均值 95% 置信区间跨零——方向不可区分于噪声），假设
+        保持 active 可换区间再验证、不可作迁移证据。"""
         return api.post("/api/research/validate-backtest", {
             "hypothesis_id": hypothesis_id, "strategy_id": strategy_id,
             "request_range": {"symbol": symbol, "timeframe": timeframe,
@@ -349,7 +354,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                                window_bars: int = 200, n_windows: int = 8,
                                seed: int = 42,
                                hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
-        """随机窗口抽查（同种子同参数结果一致；返回最差窗口与分位摘要）。"""
+        """随机窗口抽查（同种子同参数结果一致；返回最差窗口与分位摘要）。
+        每窗按三段闸门判定，总判定最差聚合三态：任一窗 fail→fail；
+        无 fail 有 inconclusive 窗→inconclusive；全 pass→pass。"""
         body = {"strategy_id": strategy_id, "symbol": symbol,
                 "timeframe": timeframe, "data_start": data_start,
                 "data_end": data_end, "window_bars": window_bars,
@@ -368,15 +375,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                               ) -> Dict[str, Any]:
         """分段验证（第⑤步考试的分题型成绩单——策略在什么行情下失效的
         正式度量）：按市场状态切段（趋势/过渡/震荡/高波动）逐段独立
-        回测，段级门槛三态（pass/fail/insufficient_sample——短段样本
-        不足标注非证伪）+ 汇总三键（最差段/段间差异/是否全段达标）。
-        双模互斥：segmentation="auto"（机械判读，gates 内建）或缺省；
-        explicit 传 segments=[{label,start,end}]（恰好覆盖请求区间、
-        相接不重叠、升序）。挂假设且全段达标产生可被 transition引用
-        的 pass 记录（与隔离验证叠加不替代）；不挂假设 adhoc 纯日志
-        （verdict 照报、record_id=None）。区间计入判定并集（看数据
-        即消耗）。与随机窗口抽查互补：抽查答「任意时段都行吗」，
-        分段答「哪类行情不行」。"""
+        回测，段级门槛三态（pass/fail/inconclusive——短段样本不足/
+        方向不可区分判 inconclusive，证据不足非证伪）+ 汇总三键（最差
+        段/段间差异/是否全段达标）。双模互斥：segmentation="auto"（机械
+        判读，gates 内建）或缺省；explicit 传 segments=[{label,start,end}]
+        （恰好覆盖请求区间、相接不重叠、升序）。总判定最差聚合三态
+        （任一段 fail→fail；无 fail 有 inconclusive 段→inconclusive；
+        全段 pass→pass）。挂假设且全段 pass 产生可被 transition引用
+        的 pass 记录（与隔离验证叠加不替代）；inconclusive/fail 同样
+        落对应 verdict 记录（inconclusive 不可引用——证据不足不可定论，
+        假设保持 active）；不挂假设 adhoc 纯日志（verdict 照报、
+        record_id=None）。验证区间不入判定并集（防同区间重复靠幂等
+        ——与隔离回测同语义）。与随机窗口抽查互补：抽查答「任意时段
+        都行吗」，分段答「哪类行情不行」。"""
         body = {"strategy_id": strategy_id, "symbol": symbol,
                 "timeframe": timeframe, "start": start, "end": end,
                 "segmentation": segmentation}

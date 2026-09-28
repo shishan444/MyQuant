@@ -96,7 +96,8 @@ class TestStagedValidationRoute:
         for seg in body["segments"]:
             assert "label" in seg and "segment_verdict" in seg
         assert set(body["summary"]) >= {"worst_segment", "spread", "all_pass"}
-        assert body["verdict"] in ("pass", "fail", None)
+        # 0.2.11 三态（None 特例退役——verdict 恒三态之一）
+        assert body["verdict"] in ("pass", "fail", "inconclusive")
         assert isinstance(body["judged_ranges"], list)
 
     def test_422_family(self, api_client, s_env):

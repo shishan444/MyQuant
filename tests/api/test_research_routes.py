@@ -205,7 +205,7 @@ class TestIsolatedBacktest:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["duplicated"] is False
-        assert body["verdict"] in ("pass", "fail")
+        assert body["verdict"] in ("pass", "fail", "inconclusive")  # 0.2.11 三态
         assert body["warmup"]["bars"] >= 200
         assert "max(200" in body["warmup"]["basis"]
         assert "total_return" in body["metrics"]
@@ -398,8 +398,44 @@ class TestAnalysisAndReport:
         talks = {e["record_id"]: e["人话"]
                  for e in body["isolated_backtests"]}
         assert "同期买入持有 34.5%" in talks["rec_bm_new"]
+
         assert "超额 -22.5%" in talks["rec_bm_new"]
         assert "无对照数据" in talks["rec_bm_old"]
+
+    def test_report_inconclusive_three_state_wording(self, api_client, research_env):
+        """0.2.11：inconclusive 人话档=证据不足（样本不足未定论）——
+        不呈现为「未通过」（错义）；random 摘要行含总判定。"""
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+        dbp = Path(api_client.app.state.db_path)
+        for i, verdict in enumerate(("pass", "fail", "inconclusive")):
+            rr.save_validation_with_log(
+                dbp, record_id=f"rec_3st_{verdict}", hypothesis_id="adhoc",
+                strategy_id="st_test", level="isolated_backtest",
+                params=json.dumps({"request_range": RANGES[0]}),
+                result=json.dumps({
+                    "metrics": {"total_return": 0.05, "max_drawdown": -0.05,
+                                "total_trades": 4},
+                    "warmup": {"bars": 200}}, ensure_ascii=False),
+                verdict=verdict, range_hash=f"rh_3st_{i}")
+        rr.save_validation_with_log(
+            dbp, record_id="rec_3st_rw", hypothesis_id="adhoc",
+            strategy_id="st_test", level="random_window",
+            params="{}",
+            result=json.dumps({"windows": [], "summary": {
+                "n_windows": 8, "all_pass": False, "worst_window": {
+                    "metrics": {"total_return": -0.02, "max_drawdown": -0.1}}}},
+                ensure_ascii=False),
+            verdict="inconclusive", range_hash="rh_3st_rw")
+        body = api_client.get("/api/research/validation/st_test/report").json()
+        talks = {e["record_id"]: e["人话"]
+                 for e in body["isolated_backtests"]}
+        assert "判定：通过" in talks["rec_3st_pass"]
+        assert "判定：未通过" in talks["rec_3st_fail"]
+        assert "证据不足" in talks["rec_3st_inconclusive"], \
+            "inconclusive 不得呈现为未通过"
+        rw_talk = body["random_window_summaries"][-1]["人话"]
+        assert "总判定：证据不足" in rw_talk
 
 
 class TestConcurrencyAndIdempotence:

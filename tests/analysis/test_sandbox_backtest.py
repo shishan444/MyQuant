@@ -81,6 +81,10 @@ class TestSandboxBacktest:
                                        "max_drawdown", "total_trades"}
         # 不产生验证记录（快速试错不是证据）
         assert rr.list_validation_records(db) == []
+        # 0.2.11 四元组改造冒烟：trade_returns 是判定通道不进沙盒响应
+        # （沙盒不判门槛不披露 CI——评估差异 1 回归锚）
+        assert "trade_returns" not in out
+        assert "trade_returns" not in out["metrics"]
 
     def test_hypothesis_linked_sandbox_enters_union(
             self, data_dir, strategy_id_module):
