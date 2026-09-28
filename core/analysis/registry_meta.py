@@ -78,6 +78,15 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
     return max(default_floor, max_period * 3)
 
 
+def default_params_for(indicator: str) -> Dict[str, Any]:
+    """注册表默认参数单组（add-query-indicator 自 case_inspection 私有
+    ``_default_params_for`` 提升——0.2.8 预留的「任意参数现算属 0.2.9
+    边界」兑现；两消费者 inspect_cases/query_indicator 共用单一事实源）。
+    """
+    defn = INDICATOR_REGISTRY[indicator]
+    return {key: p.default for key, p in defn.params.items()}
+
+
 def _scopes_for(source: str, strategy_visible: bool) -> Dict[str, bool]:
     """域标注（improve-mcp-agent-loop M5）：列在三个引用域的可用性。
 
