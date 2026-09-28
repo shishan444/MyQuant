@@ -61,7 +61,7 @@ import pandas as pd
 
 from core.analysis.condition_kernel import _mask_for
 from core.analysis.hypothesis_service import ResearchError
-from core.analysis.registry_meta import derive_warmup
+from core.analysis.registry_meta import default_params_for, derive_warmup
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
 from core.features.registry import INDICATOR_REGISTRY
 
@@ -248,12 +248,6 @@ def _validate_target(target: Any, available_cols: pd.Index) -> None:
         detail={"param": "condition.target"})
 
 
-def _default_params_for(indicator: str) -> Dict[str, Any]:
-    """INDICATOR_REGISTRY 默认参数（单组；任意参数现算属 0.2.9 边界）。"""
-    defn = INDICATOR_REGISTRY[indicator]
-    return {key: p.default for key, p in defn.params.items()}
-
-
 def _sample_positions(hits: np.ndarray, limit: int) -> List[int]:
     """等距取样（D4 + H4）：limit=1 中位；limit ≥2 首尾保底。"""
     n = len(hits)
@@ -420,7 +414,7 @@ def inspect_cases(
     if indicator is not None:
         from core.features.indicators import _compute_indicator
 
-        ind_cols = _compute_indicator(work, indicator, _default_params_for(indicator))
+        ind_cols = _compute_indicator(work, indicator, default_params_for(indicator))
         for col, series in ind_cols.items():
             work[col] = series
 

@@ -918,6 +918,22 @@ class InspectCasesRequest(BaseModel):
     indicator: Optional[str] = None
 
 
+class QueryIndicatorRequest(BaseModel):
+    """指标读数入口（add-query-indicator；独立通道，检查④）。
+
+    params 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases
+    的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。
+    """
+
+    symbol: str
+    timeframe: str
+    indicator: str
+    params: Optional[Dict[str, Any]] = None  # 缺省拼注册表 default（Q1 裁决）
+    reductions: Optional[List[str]] = None  # 缺省 ["latest","quantiles"]
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
 class FeatureRequestCreate(BaseModel):
     title: str
     payload: Dict[str, Any] = {}

@@ -264,6 +264,39 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def query_indicator(
+            symbol: str, timeframe: str,
+            indicator: str,
+            params: Optional[Dict[str, Any]] = None,
+            reductions: Optional[list[str]] = None,
+            start: Optional[str] = None, end: Optional[str] = None,
+            ) -> Dict[str, Any]:
+        """指标读数（第③步检查④——参数是策略的一部分）：单指标任意
+        参数现算，归约摘要直答「该参数下指标在这段数据上什么样子」。
+        reductions 封闭枚举多选：latest（末端有效值）/quantiles（固定
+        七点分位 p01..p99）/regime_means（按趋势/过渡/震荡/高波动分组
+        均值+count）/trend_slope（最小二乘斜率），缺省 [latest,
+        quantiles]。params 缺省=注册表 default（echo 披露实际生效值）；
+        键值越界或多余键结构化拒绝。多输出指标（BB/MACD 等）全部输出
+        列独立归约；个别列冷启动未完成时该列归约为 null（键保留）。
+        求值域 [effective_start, end]（end 缺省=数据末端），warmup 段
+        不入归约。用法：登记假设前读数定阈值——RSI(38) 与 RSI(14)
+        的分布形态不同，阈值不该凭常识硬编码。"""
+        body: Dict[str, Any] = {
+            "symbol": symbol, "timeframe": timeframe,
+            "indicator": indicator}
+        if params is not None:
+            body["params"] = params
+        if reductions is not None:
+            body["reductions"] = reductions
+        if start:
+            body["start"] = start
+        if end:
+            body["end"] = end
+        return api.post("/api/research/query-indicator", body)
+
+    @mcp.tool()
+    @tool_safe
     def register_hypothesis(
             when_conditions: list[dict[str, Any]],
             then_conditions: list[dict[str, Any]],

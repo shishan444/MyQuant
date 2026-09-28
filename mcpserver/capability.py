@@ -45,6 +45,16 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   保底、n_matched 披露命中总数）；start 缺省=全量+effective_start
   有效域披露；ref_id 用条件指纹与 param_sweep 留痕同键（检查①③
   可对链）；拒绝路径零持久副作用。
+- **指标读数**：query_indicator 单指标任意参数现算，归约摘要直答
+  「该参数下指标在这段数据上什么样子」（六步研究第③步检查④——
+  检查链①清单②信号列③案例④读数闭环，「参数是策略的一部分」的
+  读数落地）。reductions 四选多：latest/quantiles（七点分位）/
+  regime_means（四态分组均值+count）/trend_slope（斜率），缺省前
+  两者；params 缺省=注册表 default（echo 披露实际生效值），键值
+  越界/多余键结构化拒绝；多输出指标全列独立归约，个别列冷启动
+  未完成该列为 null（键保留）。求值域 [effective_start, end]（end
+  缺省=数据末端），warmup 段不入归约；序列不外发（报表压缩
+  ≤2048 字节）；零写入零留痕（读数与元数据查询同级）。
 
 ## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
