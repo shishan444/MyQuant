@@ -59,11 +59,13 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   （检查⑤分题型成绩单——「哪类行情不行」的正式度量，与随机窗口抽查
   互补：抽查答任意时段、分段答状态归因）。双模互斥：auto（0.2.7
   机械判读 gates 内建）/explicit 段列表（恰好覆盖、相接不重叠）。
-  段级门槛沿用既有三段闸门逐段适用，短段标 insufficient_sample
-  （证据不足非证伪）；汇总三键（最差段/段间差异/全段达标）。挂假设
-  且全段达标产生可被 transition 引用的 pass 记录（与隔离验证叠加
-  不替代）；不挂假设 adhoc 纯日志（verdict 照报、record_id=None）。
-  区间计入判定并集（看数据即消耗）。
+  段级门槛沿用既有三段闸门逐段适用，段级 verdict 三态 {pass, fail,
+  inconclusive}（短段样本不足/方向不可区分判 inconclusive——证据
+  不足非证伪）；汇总三键（最差段/段间差异/全段达标），总判定最差
+  聚合三态。挂假设且全段 pass 产生可被 transition 引用的 pass 记录
+  （与隔离验证叠加不替代），inconclusive/fail 同样落记录但不可引用；
+  不挂假设 adhoc 纯日志（verdict 照报、record_id=None）。验证区间
+  不入判定并集（防同区间重复靠幂等——与隔离回测同语义）。
 
 ## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
@@ -98,6 +100,12 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   ├─(证据 record_id，verdict=fail)→ refuted（谱系 draft 永久保持 draft）
   ├─(新假设 hypothesis_id)────────→ superseded
   └─(放弃说明，免证据)───────────→ abandoned
+
+inconclusive 记录（0.2.11 证据闸门：样本不足/每笔收益均值 95% CI 跨零）
+  → 不触发任何迁移边（supported/refuted 须 pass/fail 严格匹配；draft
+    转正须 pass；组合分量证据须 pass——四不通路全堵），假设保持 active，
+    可换未消耗区间继续验证。inconclusive 是证据记录的属性，不是假设
+    的状态（状态机零改动——一次样本不足的验证不能否定假设）。
 终态（supported/refuted/superseded/abandoned）：拒绝转化、新验证与
 再迁移；被证伪或放弃的想法请登记新假设（可在 conditions 里引用旧
 想法的修正）。

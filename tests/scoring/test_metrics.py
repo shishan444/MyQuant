@@ -12,6 +12,8 @@ import pytest
 from core.scoring.metrics import (
     BARS_PER_YEAR,
     DEFAULT_BARS_PER_YEAR,
+    _safe_mean,
+    _safe_std,
     compute_metrics,
 )
 
@@ -93,3 +95,37 @@ class TestBarsPerYearUnification:
         result = engine.run(dna, enhanced)
         assert result.bars_per_year == BARS_PER_YEAR["1m"]
         assert result.bars_per_year == 525600
+
+class TestSafeStatsGate:
+    """0.2.11 出口闸门：样本不足返回缺失语义（None），不产 NaN 不发警告。"""
+
+    def test_safe_mean_empty_none(self):
+        assert _safe_mean(np.array([])) is None
+        assert _safe_mean(None) is None
+
+    def test_safe_std_single_none(self):
+        assert _safe_std(np.array([0.1])) is None
+        assert _safe_std(None) is None
+
+    def test_safe_values_exact(self):
+        assert _safe_mean(np.array([1.0, 2.0])) == pytest.approx(1.5)
+        assert _safe_std(np.array([1.0, 2.0])) == pytest.approx(0.70710678, rel=1e-6)
+
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_sortino_single_downside_no_warning(self):
+        """B3 生产真警告点：多笔仅 1 笔负收益——dof<=0 警告即失败。"""
+        idx = pd.date_range("2024-01-01", periods=100, freq="4h")
+        eq = pd.Series(np.linspace(100000, 120000, 100), index=idx)
+        m = compute_metrics(
+            eq, total_trades=6,
+            trade_returns=np.array([0.05, 0.03, 0.04, -0.02, 0.05, 0.03]))
+        assert m["sortino_ratio"] == 0.0  # 单负收益 std 无定义 → 缺省
+
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_single_trade_sharpe_no_warning(self):
+        idx = pd.date_range("2024-01-01", periods=50, freq="4h")
+        eq = pd.Series(np.linspace(100000, 110000, 50), index=idx)
+        m = compute_metrics(eq, total_trades=1,
+                            trade_returns=np.array([0.05]))
+        assert m["sharpe_ratio"] == 0.0  # n<2 闸门 → None → 0.0 缺省
+

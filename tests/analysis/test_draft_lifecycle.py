@@ -67,6 +67,30 @@ class TestVerdictEnforcement:
                                   evidence_ref=f"rec_{hid[:8]}_pass")
         assert ei.value.code == "RESEARCH_TRANSITION_INVALID"
 
+    def test_inconclusive_record_cannot_support_or_refute(self, db):
+        """0.2.11 验收②：inconclusive 证据不可定论——任一迁移方向均 422
+        （_REQUIRED_VERDICT 严格相等天然拒，零改动回归锚）。"""
+        hid = _hyp(db)
+        _record(db, hid, "st_x", "inconclusive")
+        for target in ("supported", "refuted"):
+            with pytest.raises(ResearchError) as ei:
+                transition_hypothesis(db, hid, target_status=target,
+                                      evidence_ref=f"rec_{hid[:8]}_inconclusive")
+            assert ei.value.code == "RESEARCH_TRANSITION_INVALID"
+            assert "inconclusive" in ei.value.message
+        # 0.2.11 验收③前半：被拒后假设保持 active（可换区间继续验证）
+        assert rr.get_hypothesis(db, hid)["status"] == "active"
+
+    def test_idempotent_replay_returns_stored_verdict(self, db):
+        """R5 零重判：同 range_hash 重放幂等返回存量 verdict 原样
+        （历史不重写——两态时代记录不受三态化影响）。"""
+        hid = _hyp(db)
+        _record(db, hid, "st_x", "pass")  # 模拟两态时代存量记录
+        existing = rr.find_validation_by_identity(
+            db, hid, "st_x", f"rh_{hid[:6]}_pass")
+        assert existing is not None
+        assert existing["verdict"] == "pass"
+
 
 class TestAbandoned:
     def test_abandoned_terminal_without_evidence_record(self, db):

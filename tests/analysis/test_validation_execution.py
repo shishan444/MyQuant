@@ -24,6 +24,7 @@ from core.analysis.validation_service import (
     run_isolated_backtest,
 )
 from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
     StrategyDNA, TimeframeLayer,
@@ -99,7 +100,45 @@ class TestTimezoneNormalization:
             request_range={"symbol": "BTCUSDT", "timeframe": "4h",
                            "start": "2023-03-01", "end": "2023-03-20"})
         # 修复前：naive start_ts 与 tz-aware 索引比较 → TypeError（500）
-        assert out["verdict"] in ("pass", "fail")
+        assert out["verdict"] in ("pass", "fail", "inconclusive")
+        # 0.2.11 三态：小样本区间判 inconclusive（证据不足非证伪）——
+        # 本测试意图是"不再 500"，verdict 三态皆合法
+
+class TestInconclusiveVerdict:
+    """0.2.11 三态：样本不足场景判 inconclusive（规划验收①——证据
+    不足非证伪，误杀通路封堵）。"""
+
+    def test_isolated_small_sample_inconclusive(self, db, data_dir, hypothesis_id):
+        save_strategy(db, strategy_id="st_inc", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        # 极短区间（12 bar）：RSI<35 触发不足证据闸门线 5
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id, strategy_id="st_inc",
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01", "end": "2023-03-03"})
+        assert out["verdict"] == "inconclusive"
+        # 判定明细含规则条目但不失败于证伪（证据闸门出口）
+        assert out["record_id"]
+        recs = rr.list_validation_records(db, hypothesis_id=hypothesis_id)
+        assert any(r["verdict"] == "inconclusive" for r in recs)
+
+    def test_random_window_small_window_aggregates_inconclusive(self, db, data_dir):
+        """T2 漂移行为锚：短窗（12 bar）窗内交易不足 → 窗级 inconclusive
+        → 总判 inconclusive（原两态聚合会判 fail）。"""
+        save_strategy(db, strategy_id="st_inc", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = random_window_test(
+            db, data_dir, strategy_id="st_inc", symbol="BTCUSDT",
+            timeframe="4h", data_start="2023-03-20", data_end="2023-05-01",
+            window_bars=12, n_windows=3, seed=5)
+        verdicts = [w["verdict"] for w in out["windows"]]
+        assert set(verdicts) <= {"pass", "fail", "inconclusive"}
+        if "fail" not in verdicts and "inconclusive" in verdicts:
+            assert out["summary"]["all_pass"] is False  # A1 严格语义
+        # 总判定与最差聚合一致
+        from core.analysis.thresholds import _aggregate_verdicts
+        assert (not out["summary"]["all_pass"]) == (
+            _aggregate_verdicts(verdicts) != "pass")
 
     def test_date_only_random_window(self, db, data_dir):
         save_strategy(db, strategy_id="st_tz", dna_json=_mtf_dna([]).to_json(),
@@ -142,7 +181,9 @@ class TestMtfLoading:
                       symbol="BTCUSDT", timeframe="4h")
         out = self._isolated(db, data_dir, hypothesis_id, sid)
         # 修复前：is_mtf 且无 dfs_by_timeframe → executor ValueError（500）
-        assert out["verdict"] in ("pass", "fail")
+        assert out["verdict"] in ("pass", "fail", "inconclusive")
+        # 0.2.11 三态：小样本区间判 inconclusive（证据不足非证伪）——
+        # 本测试意图是"不再 500"，verdict 三态皆合法
 
     @pytest.mark.parametrize("tfs, sid", [
         (["4h"], "st_mtf_same"),

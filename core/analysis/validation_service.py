@@ -28,7 +28,11 @@ from core.analysis.isolation import (
     overlaps_with_request,
 )
 from core.analysis.registry_meta import derive_warmup
-from core.analysis.thresholds import DEFAULT_PROFILE, judge
+from core.analysis.thresholds import (
+    DEFAULT_PROFILE,
+    _aggregate_verdicts,
+    judge,
+)
 from core.persistence.repository import research as rr
 
 # 时间频率换算（warmup bar 数 → 时间差）
@@ -218,7 +222,9 @@ def _run_backtest_on_range(
     """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
 
     Returns:
-        (metrics, actual_warmup_bars, bars_used)
+        (metrics, trade_returns, actual_warmup_bars, bars_used)——
+        trade_returns 为每笔收益序列（judge 证据闸门 CI 判定输入；
+        内存传递不落库，metrics 保持纯可序列化）。
     """
     from core.backtest import engine as bt_engine_mod
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
@@ -289,7 +295,7 @@ def _run_backtest_on_range(
         "excess_return": (float(result.excess_return)
                           if result.excess_return is not None else None),
     }
-    return metrics, actual_warmup_bars, len(bt_df)
+    return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)
 
 
 def run_isolated_backtest(
@@ -373,12 +379,13 @@ def run_isolated_backtest(
             [s["ref"] for s in plugin_sources], ensure_ascii=False)
 
     # 回测（warmup 前扩装载）
-    metrics, actual_warmup, bars_used = _run_backtest_on_range(
+    metrics, trade_returns, actual_warmup, bars_used = _run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe,
         request_range["start"], request_range["end"], warmup_bars)
 
-    # 门槛机械判定（组合用收紧 profile）
-    verdict, details = judge(metrics, effective_profile)
+    # 门槛机械判定（组合用收紧 profile；三段闸门含证据闸门/CI）
+    verdict, details = judge(metrics, effective_profile,
+                             trade_returns=trade_returns)
 
     # 双落（原子）
     record_id = f"rec_{uuid.uuid4().hex[:12]}"
@@ -468,10 +475,11 @@ def random_window_test(
     for off in offsets:
         w_start = ds + off * bar_delta
         w_end = w_start + window_bars * bar_delta
-        metrics, actual_warmup, bars = _run_backtest_on_range(
+        metrics, w_returns, actual_warmup, bars = _run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
             str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars)
-        verdict, details = judge(metrics, threshold_profile)
+        verdict, details = judge(metrics, threshold_profile,
+                                 trade_returns=w_returns)
         windows.append({
             "start": w_start.isoformat(), "end": w_end.isoformat(),
             "metrics": metrics, "verdict": verdict,
@@ -481,6 +489,10 @@ def random_window_test(
     import numpy as _np
     worst = min(windows, key=lambda w: w["metrics"]["total_return"])
 
+    # 总判定最差聚合（0.2.11 三态）：任一 fail → fail；无 fail 有
+    # inconclusive → inconclusive；全 pass → pass（保守性不低于原两态
+    # 聚合）；all_pass 收紧为严格全 pass（A1）
+    agg = _aggregate_verdicts(w["verdict"] for w in windows)
     summary = {
         "n_windows": n_windows,
         "window_bars": window_bars,
@@ -488,7 +500,7 @@ def random_window_test(
         "returns_median": float(_np.quantile(returns, 0.50)),
         "returns_q75": float(_np.quantile(returns, 0.75)),
         "worst_window": worst,
-        "all_pass": all(w["verdict"] == "pass" for w in windows),
+        "all_pass": agg == "pass",
     }
 
     # 落验证记录（level=random_window；种子在 params 中持久化 → 可复现审计）
@@ -502,7 +514,7 @@ def random_window_test(
                            "timeframe": timeframe}, ensure_ascii=False),
         result=json.dumps({"windows": windows, "summary": summary},
                           ensure_ascii=False),
-        verdict="pass" if summary["all_pass"] else "fail", range_hash=rh)
+        verdict=agg, range_hash=rh)
 
     return {"record_id": record_id, "seed": seed,
             "windows": windows, "summary": summary}
@@ -551,7 +563,8 @@ def run_sandbox_backtest(
     timeframe = timeframe or strat_row.get("timeframe", "4h")
     warmup_bars, _ = _derive_dna_warmup(db_path, dna)
 
-    metrics, actual_warmup, bars_used = _run_backtest_on_range(
+    # trade_returns 不进沙盒响应（不判门槛不披露 CI——_ 占位解包）
+    metrics, _trade_returns, actual_warmup, bars_used = _run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
         init_cash=init_cash, fee=fee, slippage=slippage)
 
@@ -578,10 +591,15 @@ def run_sandbox_backtest(
 def _missing_component_evidence(
     db_path: Path, plugin_sources: List[Dict[str, Any]],
 ) -> List[str]:
-    """缺独立分量验证记录（level=component、params.column 匹配）的源清单。"""
+    """缺独立分量验证记录（level=component、params.column 匹配）的源清单。
+
+    分量证据须 verdict=pass（0.2.11 D3 收紧——fail/inconclusive 的分量
+    记录不算有效证据，组合加严门不开后门；当前无 component 级写入点，
+    收紧落在查询语义上、零行为差异）。
+    """
     component_records = [
         r for r in rr.list_validation_records(db_path, limit=200)
-        if r["level"] == "component"
+        if r["level"] == "component" and r["verdict"] == "pass"
     ]
     evidenced = set()
     for r in component_records:
@@ -760,9 +778,10 @@ def run_staged_validation(
 
     Returns:
         {record_id, verdict, segments[], summary{worst_segment,
-        spread, all_pass}, segmentation, judged_ranges}——verdict 永远
-        陈述本次判定结果；record_id 仅挂假设且有 verdict 时存在
-        （可引用凭据）。
+        spread, all_pass}, segmentation, judged_ranges}——verdict 三态
+        {pass, fail, inconclusive}（最差聚合；全段样本不足=inconclusive，
+        None 特例已退役）；record_id 挂假设时存在（inconclusive 记录
+        record_id 照常但不可被 transition 引用——证据不足不可定论）。
 
     Raises:
         ResearchError: RESEARCH_STRATEGY_NOT_FOUND /
@@ -852,47 +871,38 @@ def run_staged_validation(
             if seg.get(stat_key) is not None:
                 entry[stat_key] = seg[stat_key]
         # 段回测可行性由 warmup 前扩自然判定（前缀不足=请求区间整体
-        # 前缀不足，第一段即暴露——isolated 同款语义）；段极短由
-        # total_trades<5 前置预判兜底（B3 修订：warmup 是取段前历史
-        # 收敛指标而非要求段自身长度，原「段长≤warmup 跳过」基准错误）
-        metrics, _actual_warmup, bars_used = _run_backtest_on_range(
+        # 前缀不足，第一段即暴露——isolated 同款语义）；段级判定统一
+        # 走 judge 三段闸门（0.2.11 Q1a：样本不足段判 inconclusive，
+        # 原前置预判与闸门同条件重叠已删；threshold_details 恒带——
+        # 三态都有明细供归因）
+        metrics, seg_returns, _actual_warmup, bars_used = _run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
             seg_start, seg_end, warmup_bars)
         entry["metrics"] = metrics
         entry["bars_used"] = int(bars_used)
-        if metrics.get("total_trades", 0) < 5:
-            # judge 前置预判（judge 无 insufficient 语义——不预判短段
-            # 会被判 fail 而非 insufficient，违背 Q2 裁决）
-            entry["segment_verdict"] = "insufficient_sample"
-        else:
-            seg_verdict, seg_details = judge(metrics)
-            entry["segment_verdict"] = seg_verdict
-            entry["threshold_details"] = seg_details
+        seg_verdict, seg_details = judge(metrics,
+                                         trade_returns=seg_returns)
+        entry["segment_verdict"] = seg_verdict
+        entry["threshold_details"] = seg_details
         seg_results.append(entry)
 
-    # ---- 汇总与 verdict 映射 ----
-    valid = [r for r in seg_results
-             if r["segment_verdict"] != "insufficient_sample"]
-    if valid:
-        worst = min(valid, key=lambda r: r["metrics"]["total_return"])
-        best = max(valid, key=lambda r: r["metrics"]["total_return"])
-        all_pass = all(r["segment_verdict"] == "pass" for r in valid)
-        summary = {
-            "worst_segment": {"label": worst["label"],
-                               "total_return": worst["metrics"]["total_return"]},
-            "spread": best["metrics"]["total_return"]
-            - worst["metrics"]["total_return"],
-            "all_pass": all_pass,
-        }
-        verdict: Optional[str] = "pass" if all_pass else "fail"
-    else:
-        summary = {"worst_segment": None, "spread": None,
-                   "all_pass": None, "note": "无有效段（全部 insufficient_sample）"}
-        verdict = None
+    # ---- 汇总与 verdict 映射（最差聚合三态，与随机窗口同族） ----
+    # worst/spread=描述统计（全部段含 inconclusive 段按 total_return 取）；
+    # all_pass=判定统计（严格全 pass）——两口径并存各有其义，无 None 特例
+    verdict = _aggregate_verdicts(r["segment_verdict"] for r in seg_results)
+    worst = min(seg_results, key=lambda r: r["metrics"]["total_return"])
+    best = max(seg_results, key=lambda r: r["metrics"]["total_return"])
+    summary = {
+        "worst_segment": {"label": worst["label"],
+                          "total_return": worst["metrics"]["total_return"]},
+        "spread": best["metrics"]["total_return"]
+        - worst["metrics"]["total_return"],
+        "all_pass": verdict == "pass",
+    }
 
     # ---- 写入双路径 ----
     record_id: Optional[str] = None
-    if hypothesis_id is not None and verdict is not None:
+    if hypothesis_id is not None:
         record_id = f"rec_{uuid.uuid4().hex[:12]}"
         rr.save_validation_with_log(
             db_path, record_id=record_id, hypothesis_id=hypothesis_id,

@@ -197,13 +197,14 @@ class TestSegments:
                     m2["total_return"], rel=1e-9)
 
     def test_t2_judge_precheck_anchor(self, env):
-        """T2 judge 预判锚：total_trades<5 段标 insufficient 而非 fail
-        （删前置预判则被判 fail——敏感构造）。"""
+        """T2 证据闸门锚（0.2.11 升级）：total_trades<5 段判 inconclusive
+        而非 fail（judge 三段闸门内建——原 insufficient_sample 标注形态
+        随三态化退役，判定入口仍是 judge）。"""
         out = _call(env)
         low = [s for s in out["segments"]
                if s.get("metrics", {}).get("total_trades", 0) < 5]
         for seg in low:
-            assert seg["segment_verdict"] == "insufficient_sample"
+            assert seg["segment_verdict"] == "inconclusive"
 
     def test_segment_pass_fail_semantics(self, env):
         out = _call(env)
@@ -225,7 +226,7 @@ class TestSegments:
                      segments=[{"label": "微段", "start": s, "end": e}])
         seg = tiny["segments"][0]
         assert "metrics" in seg  # 微段也真实回测（B3 修订后）
-        assert seg["segment_verdict"] in ("insufficient_sample", "pass", "fail")
+        assert seg["segment_verdict"] in ("inconclusive", "pass", "fail")
 
     def test_warmup_prefix_requirement(self, env):
         """请求区间整体前缀不足（isolated 同款语义）。"""
@@ -243,41 +244,63 @@ class TestSummary:
         assert set(out["summary"]) >= {"worst_segment", "spread", "all_pass"}
 
     def test_worst_segment_is_min_return(self, env):
+        # 0.2.11 汇总口径：worst=描述统计（全部段含 inconclusive 段取
+        # total_return 最小）——有效段排除逻辑已随 Q1a 退役
         out = _call(env)
-        valid = [s for s in out["segments"]
-                 if s["segment_verdict"] != "insufficient_sample"]
-        if valid:
-            worst = min(valid,
-                        key=lambda s: s["metrics"]["total_return"])
-            assert out["summary"]["worst_segment"]["label"] == worst["label"]
+        worst = min(out["segments"],
+                    key=lambda s: s["metrics"]["total_return"])
+        assert out["summary"]["worst_segment"]["label"] == worst["label"]
 
     def test_verdict_mapping_consistent(self, env):
+        # 0.2.11 最差聚合三态（None 特例退役——verdict 恒三态之一）
         out = _call(env)
-        valid = [s for s in out["segments"]
-                 if s["segment_verdict"] != "insufficient_sample"]
-        if not valid:
-            assert out["verdict"] is None
-            assert out["summary"]["all_pass"] is None
-        elif all(s["segment_verdict"] == "pass" for s in valid):
-            assert out["verdict"] == "pass"
-        else:
+        verdicts = [s["segment_verdict"] for s in out["segments"]]
+        if any(v == "fail" for v in verdicts):
             assert out["verdict"] == "fail"
+        elif any(v == "inconclusive" for v in verdicts):
+            assert out["verdict"] == "inconclusive"
+        else:
+            assert out["verdict"] == "pass"
+        assert out["summary"]["all_pass"] == (out["verdict"] == "pass")
 
     def test_tema_acceptance_anchor(self, env):
         """规划验收锚：TEMA 趋势策略分段验证明确指出震荡段失效
         （恒真 entry 确定性构造：趋势段涨幅覆盖费用、震荡段费用致亏）。"""
         out = _call(env)
-        valid = [s for s in out["segments"]
-                 if s["segment_verdict"] != "insufficient_sample"]
-        assert valid, "构造应产出有效段"
-        trend = [s for s in valid if s["label"] == "趋势"]
+        segs = out["segments"]
+        assert segs, "构造应产出段"
+        trend = [s for s in segs if s["label"] == "趋势"]
         worst = out["summary"]["worst_segment"]
         if trend and worst:
-            # 震荡段（若为有效最差段）收益劣于趋势段——失效归因可见
-            range_segs = [s for s in valid if s["label"] == "震荡"]
+            # 震荡段（若为最差段）收益劣于趋势段——失效归因可见
+            # （worst 为全段口径，TEMA 构造下趋势/震荡段交易充足）
+            range_segs = [s for s in segs if s["label"] == "震荡"]
             if range_segs and worst["label"] == "震荡":
                 assert worst["total_return"] < max(
                     s["metrics"]["total_return"] for s in trend)
+
+
+class TestAllInconclusiveRecord:
+    """0.2.11 None 特例退役：全段 inconclusive → verdict=inconclusive
+    且挂假设落对应记录（record_id 照常、不可引用）。"""
+
+    def test_all_inconclusive_produces_record(self, env):
+        df = env["df"]
+        hyp = _register_hyp(env)
+        # explicit 单微段（4 bar）——total_trades<5 恒成立
+        s, e = df.index[700].isoformat(), df.index[704].isoformat()
+        out = _call(env, start=s, end=e, segmentation="explicit",
+                    segments=[{"label": "微段", "start": s, "end": e}],
+                    hypothesis_id=hyp)
+        assert out["verdict"] == "inconclusive"
+        assert out["record_id"], "None 特例退役——挂假设必落记录"
+        recs = rr.list_validation_records(env["db"], hypothesis_id=hyp)
+        rec = next(r for r in recs if r["record_id"] == out["record_id"])
+        assert rec["verdict"] == "inconclusive"
+        assert rec["level"] == "staged_validation"
+        # 汇总三键无 None 特例（worst 取描述性最差）
+        assert out["summary"]["worst_segment"] is not None
+        assert out["summary"]["all_pass"] is False
 
 
 class TestDualPath:
@@ -286,17 +309,17 @@ class TestDualPath:
     def test_attached_full_path(self, env):
         hyp = _register_hyp(env)
         out = _call(env, hypothesis_id=hyp)
-        if out["verdict"] is not None:
-            assert out["record_id"]
-            recs = rr.list_validation_records(env["db"], hypothesis_id=hyp)
-            rec = next((r for r in recs
-                        if r["record_id"] == out["record_id"]), None)
-            assert rec is not None and rec["level"] == "staged_validation"
-            # 留痕三件齐之二：日志条目可查（entry_type=validate，ref_id 指向记录）
-            logs = rr.list_research_log(env["db"], hypothesis_id=hyp)
-            assert any(l.get("ref_id") == out["record_id"] for l in logs)
-        else:
-            assert out["record_id"] is None
+        # 0.2.11：verdict 恒三态之一（None 特例退役）——挂假设必落记录
+        assert out["verdict"] in ("pass", "fail", "inconclusive")
+        assert out["record_id"]
+        recs = rr.list_validation_records(env["db"], hypothesis_id=hyp)
+        rec = next((r for r in recs
+                    if r["record_id"] == out["record_id"]), None)
+        assert rec is not None and rec["level"] == "staged_validation"
+        assert rec["verdict"] == out["verdict"]  # 记录 verdict 与响应一致
+        # 留痕三件齐之二：日志条目可查（entry_type=validate，ref_id 指向记录）
+        logs = rr.list_research_log(env["db"], hypothesis_id=hyp)
+        assert any(l.get("ref_id") == out["record_id"] for l in logs)
 
     def test_transition_can_reference(self, env):
         """三件齐之三：staged pass 记录可被 transition(supported) 引用。"""

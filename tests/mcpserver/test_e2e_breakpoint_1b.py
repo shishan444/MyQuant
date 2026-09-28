@@ -142,7 +142,7 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
         "hypothesis_id": hid, "strategy_id": "st_composite",
         "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-02-01T00:00:00Z", "end": "2024-02-20T00:00:00Z"}})
-    assert body["verdict"] in ("pass", "fail")
+    assert body["verdict"] in ("pass", "fail", "inconclusive")  # 0.2.11 三态
     assert body["warmup"]["bars"] >= 200
     assert isinstance(body["metrics"]["total_trades"], int)
 

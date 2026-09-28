@@ -139,7 +139,7 @@ def test_breakpoint_1a_full_research_loop(live_api):
         "hypothesis_id": hid, "strategy_id": "st_e2e",
         "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-03-01T00:00:00Z", "end": "2024-03-25T00:00:00Z"}})
-    assert validation["verdict"] in ("pass", "fail")
+    assert validation["verdict"] in ("pass", "fail", "inconclusive")  # 0.2.11 三态
     assert validation["warmup"]["bars"] >= 200
     rec_id = validation["record_id"]
 
@@ -155,14 +155,29 @@ def test_breakpoint_1a_full_research_loop(live_api):
     assert report["total_records"] >= 2
     assert any("收益" in e["人话"] for e in report["isolated_backtests"])
 
-    # 9) 状态迁移（引用隔离验证记录）
-    transition = api.post(f"/api/research/hypotheses/{hid}/transition", {
-        "target_status": "refuted" if validation["verdict"] == "fail" else "supported",
-        "evidence_ref": rec_id})
-    assert transition["status"] in ("supported", "refuted")
+    # 9) 状态迁移（引用隔离验证记录——0.2.11 三态：inconclusive 证据
+    #    不可定论须被 422 拒且假设保持 active；pass/fail 照常迁移）
+    if validation["verdict"] == "inconclusive":
+        try:
+            api.post(f"/api/research/hypotheses/{hid}/transition", {
+                "target_status": "supported", "evidence_ref": rec_id})
+            raise AssertionError("inconclusive 证据必须被拒（证据不足不可定论）")
+        except ApiError as exc:
+            assert exc.status == 422, f"须 422，实得 {exc.status}: {exc.message}"
+        # 假设保持 active（0.2.11 验收③——可换区间继续验证）
+        hyp_after = api.get(f"/api/research/hypotheses/{hid}")
+        assert hyp_after["status"] == "active"
+    else:
+        transition = api.post(f"/api/research/hypotheses/{hid}/transition", {
+            "target_status": "refuted" if validation["verdict"] == "fail" else "supported",
+            "evidence_ref": rec_id})
+        assert transition["status"] in ("supported", "refuted")
 
-    # 10) 研究日志全链路可审计
+    # 10) 研究日志全链路可审计（inconclusive 分支无迁移故无 transition 条）
     logs = api.get("/api/research/log", params={"hypothesis_id": hid})
     types = [e["entry_type"] for e in logs["items"]]
-    for expected in ("register", "analysis", "validate", "transition"):
+    expected_chain = (["register", "analysis", "validate", "transition"]
+                      if validation["verdict"] != "inconclusive"
+                      else ["register", "analysis", "validate"])
+    for expected in expected_chain:
         assert expected in types, f"日志链路缺 {expected}: {types}"

@@ -120,7 +120,7 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
                        symbol="BTCUSDT", timeframe="4h",
                        start="2023-03-05T00:00:00Z",
                        end="2023-03-25T00:00:00Z")
-    assert validation["verdict"] in ("pass", "fail"), validation
+    assert validation["verdict"] in ("pass", "fail", "inconclusive")  # 0.2.11 三态, validation
     rec_id = validation["record_id"]
 
     # 6) 随机窗口（验证池尾段）
@@ -131,31 +131,45 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
                window_bars=20, n_windows=3, seed=7, hypothesis_id=hid)
     assert rw["summary"]["n_windows"] == 3
 
-    # 7) 定案：pass→supported（draft 同事务转正）；fail→refuted（draft 留存）
-    target = "supported" if validation["verdict"] == "pass" else "refuted"
-    transition = _call(mcp, "transition_hypothesis",
-                       hypothesis_id=hid, target_status=target,
-                       evidence_ref=rec_id)
-    assert transition["status"] == target
-    if target == "supported":
-        assert transition["promoted"] is True, "draft 有自身 pass 须同事务转正"
-        assert transition["promoted_strategy_id"] == sid
+    # 7) 定案：pass→supported（draft 同事务转正）；fail→refuted（draft 留存）；
+    #    inconclusive→不可定论（0.2.11：证据不足 422 拒 + 假设保持 active）
+    if validation["verdict"] == "inconclusive":
+        rejected = _call(mcp, "transition_hypothesis",
+                         hypothesis_id=hid, target_status="supported",
+                         evidence_ref=rec_id)
+        assert "error" in rejected and rejected["error"]["code"] == \
+            "RESEARCH_TRANSITION_INVALID"
+        hyp_after = _call(mcp, "get_hypothesis", hypothesis_id=hid)
+        assert hyp_after["status"] == "active"
     else:
-        assert transition["promoted"] is False
+        target = "supported" if validation["verdict"] == "pass" else "refuted"
+        transition = _call(mcp, "transition_hypothesis",
+                           hypothesis_id=hid, target_status=target,
+                           evidence_ref=rec_id)
+        assert transition["status"] == target
+        if target == "supported":
+            assert transition["promoted"] is True, "draft 有自身 pass 须同事务转正"
+            assert transition["promoted_strategy_id"] == sid
+        else:
+            assert transition["promoted"] is False
 
-    # 8) 终态假设再发起验证 → 结构化错误（code + hint 齐备）
-    err = _call(mcp, "run_isolated_validation",
-                hypothesis_id=hid, strategy_id=sid,
-                symbol="BTCUSDT", timeframe="4h",
-                start="2023-05-01T00:00:00Z",
-                end="2023-05-15T00:00:00Z")
-    assert "error" in err, err
-    e = err["error"]
-    assert e["code"] == "RESEARCH_HYPOTHESIS_TERMINAL"
-    assert e["hint"] and "终态" in e["hint"] or "新假设" in e["hint"]
+        # 8) 终态假设再发起验证 → 结构化错误（code + hint 齐备；
+        #    inconclusive 分支假设保持 active，此演示不适用）
+        err = _call(mcp, "run_isolated_validation",
+                    hypothesis_id=hid, strategy_id=sid,
+                    symbol="BTCUSDT", timeframe="4h",
+                    start="2023-05-01T00:00:00Z",
+                    end="2023-05-15T00:00:00Z")
+        assert "error" in err, err
+        e = err["error"]
+        assert e["code"] == "RESEARCH_HYPOTHESIS_TERMINAL"
+        assert e["hint"] and "终态" in e["hint"] or "新假设" in e["hint"]
 
-    # 9) 研究日志全链路可审计（register→analysis→validate→transition→promotion）
+    # 9) 研究日志全链路可审计（inconclusive 分支无 transition 条）
     logs = _call(mcp, "get_research_log", hypothesis_id=hid)
     types = [entry["entry_type"] for entry in logs["items"]]
-    for expected in ("register", "analysis", "validate", "transition"):
+    expected_chain = (["register", "analysis", "validate", "transition"]
+                      if validation["verdict"] != "inconclusive"
+                      else ["register", "analysis", "validate"])
+    for expected in expected_chain:
         assert expected in types, f"日志链路缺 {expected}: {types}"

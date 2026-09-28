@@ -282,3 +282,30 @@ class TestTranslatedDraftAffectsSignals:
         # 真实 draft 跑通：登记→翻译→沙盒回测全链路无拒绝
         assert real["metrics"]["total_trades"] >= 0
         assert real["warmup_bars"] >= 200
+
+
+class TestComponentEvidenceTightened:
+    """0.2.11 D3：分量证据须 verdict=pass——fail/inconclusive 不算数
+    （组合加严门不开后门；直测查询语义，链路层由既有用例覆盖）。"""
+
+    def test_non_pass_component_not_counted(self, db):
+        from core.analysis.validation_service import _missing_component_evidence
+        for verdict in ("fail", "inconclusive"):
+            rr.save_validation_with_log(
+                db, record_id=f"rec_comp_{verdict}", hypothesis_id="adhoc",
+                strategy_id=None, level="component",
+                params=json.dumps({"column": "fx_comp"}),
+                result=None, verdict=verdict, range_hash=f"rh_c_{verdict}")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "fx_comp"}]) == ["fx_comp"], \
+            "非 pass 分量记录不算有效证据"
+
+    def test_pass_component_counted(self, db):
+        from core.analysis.validation_service import _missing_component_evidence
+        rr.save_validation_with_log(
+            db, record_id="rec_comp_ok", hypothesis_id="adhoc",
+            strategy_id=None, level="component",
+            params=json.dumps({"column": "fx_ok"}),
+            result=None, verdict="pass", range_hash="rh_c_ok")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "fx_ok"}]) == []
