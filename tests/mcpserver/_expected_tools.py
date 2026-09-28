@@ -27,6 +27,7 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "list_signal_columns",
     "list_strategies",
     "poll_evolution_task",
+    "query_indicator",
     "register_formula_plugin",
     "register_hypothesis",
     "register_model_plugin",
