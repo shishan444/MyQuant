@@ -79,7 +79,7 @@ def hypothesis_id(db) -> str:
     return register_hypothesis(
         db,
         conditions={
-            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         },
         statement="s",

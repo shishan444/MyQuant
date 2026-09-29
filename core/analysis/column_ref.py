@@ -58,6 +58,19 @@ class ColumnDef:
     field: Optional[str] = None
     column_name: Optional[str] = None   # indicator 类惰性填充；base/plugin 即引用名
 
+    def ref_dict(self) -> Any:
+        """canonical 形引用（登记入口归一化与迁移产出的同源基础）。
+
+        指标类：params 数值归一（整数值 float→int——14.0 与 14 同 hash）、
+        field 恒注入；base/plugin：字符串原样。
+        """
+        if self.kind != "indicator":
+            return self.column_name
+        params = {k: (int(v) if isinstance(v, float) and v.is_integer() else v)
+                  for k, v in self.params.items()}
+        return {"indicator": self.indicator, "params": params,
+                "field": self.field}
+
     def encoded_name(self) -> str:
         if self.kind != "indicator":
             return str(self.column_name)
@@ -339,6 +352,12 @@ def decode_column_ref(col_name: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- canonical
+
+def canonicalize_ref(ref: Any, db_path: Optional[Path] = None) -> Any:
+    """引用 canonical 化（resolve + ref_dict 的便捷组合）——登记与迁移
+    共用（幂等连续：同函数无第二实现）。"""
+    return resolve_column_ref(ref, db_path).ref_dict()
+
 
 def _norm_number(val: Any) -> str:
     """数值归一（与 condition_identity._normalize_target 同语义：

@@ -21,8 +21,8 @@ from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
 
 _CONDS = {
-    "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
-    "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
+    "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
+    "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
 }
 
 

@@ -416,11 +416,22 @@ def screen_patterns(
     )
 
 
+def _structured_ref(col: str) -> Any:
+    """编码列名 → 结构化引用（0.2.13 候选直出）；不可解码保持字符串。"""
+    from core.analysis.column_ref import decode_column_ref
+    return decode_column_ref(col) or col
+
+
 def _emit_conditions_for(
     work: pd.DataFrame, name: str, produced: List[str],
     probes: List[Dict[str, Any]],
 ) -> bool:
-    """按阈值字典为单指标展开条件（返回是否覆盖到任何动作）。"""
+    """按阈值字典为单指标展开条件（返回是否覆盖到任何动作）。
+
+    0.2.13：候选 subject 结构化直出（decode 还原 {indicator, params,
+    field}——与假设登记/param_sweep/inspect_cases 同形制直喂，零转换）；
+    target 通道不动（列名 target 走精确命中，跨周期语法属 0.2.14）。
+    """
     covered = False
     for selector, actions in _VALUE_GRIDS.get(name, {}).items():
         cols = ([c for c in produced if selector in c]
@@ -429,7 +440,8 @@ def _emit_conditions_for(
             for action, targets in actions.items():
                 for t in targets:
                     probes.append({
-                        "subject": col, "action": action, "target": t,
+                        "subject": _structured_ref(col),
+                        "action": action, "target": t,
                         "indicator": name})
                     covered = True
     for action in _PRICE_REL_ACTIONS.get(name, []):
@@ -448,13 +460,15 @@ def _emit_conditions_for(
             (c for c in produced if c == f"{name.lower()}_{slow}"), None)
         if fast_col and slow_col and fast_col != slow_col:
             probes.append({
-                "subject": fast_col, "action": "cross_above",
+                "subject": _structured_ref(fast_col),
+                "action": "cross_above",
                 "target": slow_col, "indicator": name})
             covered = True
     for col in produced:
         if col.startswith(_PATTERN_PREFIX):
             probes.append({
-                "subject": col, "action": "gt", "target": 0.5,
+                "subject": _structured_ref(col),
+                "action": "gt", "target": 0.5,
                 "indicator": name})
             covered = True
     return covered

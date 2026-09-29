@@ -82,7 +82,7 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
     # 3) 登记假设（登记区间占数据头部）
     reg = api.post("/api/research/hypotheses", {
         "conditions": {
-            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "when_conditions": [{{"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         },
         "statement": "超卖与动量共振时倾向修复",

@@ -17,11 +17,27 @@ import pandas as pd
 
 
 def _mask_for(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
-    """单条件掩码（复用验证引擎语义；列缺失返回全 False 安全降级）。"""
-    from core.validation.engine import _evaluate_single_condition
+    """单条件掩码（0.2.13 两段式内聚——四消费者共用：
+    screen/param_sweep/regime_split/inspect_cases）。
 
+    结构化 subject：resolve → 按 params 现算指标列（encode 得精确列名）
+    → 精确列名求值（condition_stats 现行两段式成为全域标准形）；
+    字符串 subject：精确列名命中。列缺失返回全 False 安全降级（既有契约）。
+    """
+    subject = condition["subject"]
+    col = subject
+    if isinstance(subject, dict):
+        from core.analysis.column_ref import resolve_column_ref
+        cdef = resolve_column_ref(subject)      # 校验前置（入口已过）
+        col = cdef.encoded_name()
+        if col not in work.columns:
+            from core.features.indicators import _compute_indicator
+            for cname, series in _compute_indicator(
+                    work, cdef.indicator, dict(cdef.params)).items():
+                work[cname] = series
+    from core.validation.engine import _evaluate_single_condition
     mask = _evaluate_single_condition(work, {
-        "subject": condition["subject"],
+        "subject": col,
         "action": condition["action"],
         "target": condition["target"],
     })

@@ -160,10 +160,27 @@ def _parse_selector(
                 "RESEARCH_PARAM_INVALID",
                 "condition 形态须恰含三键 {subject, action, target}",
                 detail={"param": "selector.condition"})
-        if not isinstance(cond["subject"], str) or not isinstance(cond["action"], str):
+        # 0.2.13：subject 混合形制——参数化指标结构化对象（resolve 校验
+        # 即解析）或基础列/插件列字符串；action 恒字符串
+        if not isinstance(cond["action"], str):
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                "condition.subject/action 须为字符串",
+                "condition.action 须为字符串",
+                detail={"param": "selector.condition"})
+        if isinstance(cond["subject"], (str, dict)):
+            from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+            try:
+                resolve_column_ref(cond["subject"])
+            except ColumnRefError as exc:
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    f"selector.condition.subject 非法: {exc.message}",
+                    detail={"param": "selector.condition",
+                            "code": exc.code, **exc.detail}) from exc
+        else:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "condition.subject 须为字符串或结构化指标对象",
                 detail={"param": "selector.condition"})
         return "condition", cond
 
@@ -420,13 +437,28 @@ def inspect_cases(
 
     if kind == "condition":
         available = list(ind_cols.keys())
-        if payload["subject"] not in available:
+        # 0.2.13：结构化 subject 经 encode 归一为精确列名后比对（默认
+        # 参数边界不变——非默认参数列仍不支持，任意参数现算属后续版本）
+        subject = payload["subject"]
+        subject_col = subject
+        if isinstance(subject, dict):
+            from core.analysis.column_ref import (ColumnRefError,
+                                                  resolve_column_ref)
+            try:
+                subject_col = resolve_column_ref(subject).encoded_name()
+            except ColumnRefError as exc:
+                raise ResearchError(
+                    "RESEARCH_COLUMN_NOT_AVAILABLE",
+                    f"subject 引用非法: {exc.message}",
+                    detail={"param": "condition.subject",
+                            "code": exc.code, **exc.detail}) from exc
+        if subject_col not in available:
             raise ResearchError(
                 "RESEARCH_COLUMN_NOT_AVAILABLE",
-                f"subject 列 {payload['subject']!r} 不属于 {indicator} "
+                f"subject 列 {subject_col!r} 不属于 {indicator} "
                 "默认参数输出列（非默认参数列不支持；任意参数现算属后续版本）",
                 detail={"param": "condition.subject",
-                        "column": payload["subject"],
+                        "column": subject_col,
                         "legal_range": sorted(available)})
         _validate_target(payload["target"], work.columns)
 

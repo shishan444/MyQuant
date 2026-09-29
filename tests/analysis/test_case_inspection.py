@@ -84,7 +84,7 @@ def _call(env, **kwargs):
     """缺省 condition 形态调用（rsi_14 lt 30 / indicator=RSI）。"""
     params = dict(
         symbol=SYMBOL, timeframe="1d",
-        selector={"condition": {"subject": "rsi_14",
+        selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                 "action": "lt", "target": 30.0}},
         indicator="RSI")
     params.update(kwargs)
@@ -133,7 +133,7 @@ class TestSelectorAndLimits:
 
     def test_selector_dual_keys_rejected(self, env):
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": "rsi_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                "action": "lt", "target": 30.0},
                                  "timestamps": ["2024-01-01T00:00:00+00:00"]})
         assert _err(ei).code == "RESEARCH_PARAM_INVALID"
@@ -148,7 +148,7 @@ class TestSelectorAndLimits:
 
     def test_condition_missing_key_rejected(self, env):
         with pytest.raises(ResearchError):
-            _call(env, selector={"condition": {"subject": "rsi_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                "action": "lt"}})
 
     def test_timestamps_overrun_rejected(self, env):
@@ -170,7 +170,7 @@ class TestSelectorAndLimits:
         """防降级锚：未知 action 必须拒绝（engine 静默全 False 是降级路径，
         不前置拦截会把调用错误伪装成无命中）。"""
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": "rsi_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                "action": "frobnicate",
                                                "target": 30.0}})
         assert _err(ei).code == "RESEARCH_PARAM_INVALID"
@@ -178,7 +178,7 @@ class TestSelectorAndLimits:
 
     def test_subject_not_in_output_columns(self, env):
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": "adx_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "ADX", "params": {"period": 14}},
                                                "action": "lt", "target": 30.0}})
         assert _err(ei).code == "RESEARCH_COLUMN_NOT_AVAILABLE"
         assert "rsi_14" in ei.value.detail["legal_range"]
@@ -224,7 +224,7 @@ class TestSamplingAndWindows:
         """命中不足限额全返（RSI<25 独立推导恰 1 处）。"""
         hits, _ = _expected_hits(env["df"], target=25.0)
         assert len(hits) == 1
-        out = _call(env, selector={"condition": {"subject": "rsi_14",
+        out = _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                  "action": "lt",
                                                  "target": 25.0}},
                     limit=3)
@@ -354,7 +354,7 @@ class TestDisciplineAndAudit:
 
     def test_audit_trail_fingerprint(self, env):
         df = env["df"]
-        cond = {"subject": "rsi_14", "action": "lt", "target": 30.0}
+        cond = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 30.0}
         out = _call(env, selector={"condition": cond})
         rows = [r for r in rr.list_research_log(env["db"])
                 if r["entry_type"] == "inspect_cases"]
@@ -373,7 +373,7 @@ class TestDisciplineAndAudit:
         with pytest.raises(ResearchError):  # 结构校验（装载前）
             _call(env, limit=8)
         with pytest.raises(ResearchError):  # 列校验（装载现算后）
-            _call(env, selector={"condition": {"subject": "adx_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "ADX", "params": {"period": 14}},
                                                "action": "lt", "target": 30.0}})
         with pytest.raises(ResearchError):  # timestamps 超发
             _call(env, selector={"timestamps": [
@@ -382,7 +382,7 @@ class TestDisciplineAndAudit:
 
     def test_payload_size_budget_and_guard(self, env, monkeypatch):
         """F1 体积两断言：极限组合真实序列化 ≤24576；超限分支契约。"""
-        out = _call(env, selector={"condition": {"subject": "rsi_14",
+        out = _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                  "action": "gt",
                                                  "target": 40.0}},
                     limit=5, context_bars=20)
@@ -396,7 +396,7 @@ class TestDisciplineAndAudit:
         with pytest.raises(ResearchError) as ei:
             ci.inspect_cases(env["db"], env["data_dir"], symbol=SYMBOL,
                              timeframe="1d",
-                             selector={"condition": {"subject": "rsi_14",
+                             selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                      "action": "gt",
                                                      "target": 40.0}},
                              limit=5, context_bars=20, indicator="RSI")
@@ -406,7 +406,7 @@ class TestDisciplineAndAudit:
     def test_pattern_action_rejected_with_reason(self, env):
         """F2：pattern 族动作拒绝 detail 分层说明。"""
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": "rsi_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                "action": "divergence_top",
                                                "target": 30.0}})
         assert _err(ei).code == "RESEARCH_PARAM_INVALID"
@@ -420,7 +420,7 @@ class TestDisciplineAndAudit:
         """14 键内非数值动作可正常命中（不被校验层误拒/降级）。"""
         hits, _ = _expected_hits(env["df"], action=action, target=target)
         assert len(hits) == expect_hits
-        out = _call(env, selector={"condition": {"subject": "rsi_14",
+        out = _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                  "action": action,
                                                  "target": target}},
                     limit=3)
@@ -428,7 +428,7 @@ class TestDisciplineAndAudit:
 
     def test_target_column_missing_rejected(self, env):
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": "rsi_14",
+            _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                "action": "cross_above",
                                                "target": "no_such_col"}})
         assert _err(ei).code == "RESEARCH_COLUMN_NOT_AVAILABLE"
@@ -436,7 +436,7 @@ class TestDisciplineAndAudit:
     def test_numeric_string_target_passes(self, env):
         """数值 target 不受列校验（"25" 可解析直过）。"""
         hits, _ = _expected_hits(env["df"], target=25.0)
-        out = _call(env, selector={"condition": {"subject": "rsi_14",
+        out = _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                  "action": "lt",
                                                  "target": "25"}})
         assert out["n_matched"] == len(hits) == 1
@@ -444,7 +444,7 @@ class TestDisciplineAndAudit:
     def test_zero_hits_valid_empty_result(self, env):
         """F4：命中 0 → 200 空清单 + 留痕照落（合法检查产出）。"""
         base = len(rr.list_research_log(env["db"]))
-        out = _call(env, selector={"condition": {"subject": "rsi_14",
+        out = _call(env, selector={"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                                  "action": "lt",
                                                  "target": 18.0}})
         assert out["n_matched"] == 0

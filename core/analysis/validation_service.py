@@ -86,6 +86,15 @@ def _screen_reuse_check(
                 cond_fps.add(canonical_condition_hash(c, tf))
             except (ValueError, TypeError):
                 continue
+            # F1 影子（0.2.13）：结构化指标 subject 追加旧算法影子指纹——
+            # 存量 screen 留痕（旧算法指纹快照）× 迁移后假设的命中保全。
+            # 迁移一次性原子切无混合态，单向补影即完备；比对与 409 零改动。
+            if isinstance(c.get("subject"), dict):
+                try:
+                    from core.analysis.condition_identity import legacy_compatible_hash
+                    cond_fps.add(legacy_compatible_hash(c, tf))
+                except (ValueError, TypeError):
+                    continue
     if not cond_fps:
         return
 

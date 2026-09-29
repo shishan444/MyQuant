@@ -24,7 +24,7 @@ from tests.helpers.regime_factory import (
 
 _RANGES = [{"symbol": "TESTUSDT", "timeframe": "1d",
             "start": "2024-01-01", "end": "2025-09-01"}]
-_RSI_COND = {"subject": "rsi_14", "action": "lt", "target": 40.0}
+_RSI_COND = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 40.0}
 
 
 def _split(df, **kw):
@@ -60,7 +60,7 @@ class TestRegimeSplitBasics:
             {"segmentation": [{"start": "2024-01-01"}]},   # 缺 end
             {"segmentation": 42},
             {"forward_bars": 0},
-            {"condition": {"subject": "rsi_14"}},           # 三键缺失
+            {"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}}},           # 三键缺失
         ]
         for bad in cases:
             with pytest.raises(ResearchError) as ei:
@@ -125,7 +125,7 @@ class TestConditionBySegment:
         df = _two_regime()
         # 极苛刻条件：全数据命中极少 → 各段均不足
         r = _split(df, indicator="RSI",
-                   condition={"subject": "rsi_14", "action": "lt",
+                   condition={"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                               "target": 1.0})
         by = r["payload"]["condition_by_segment"]
         assert all(row["state"] == "insufficient_sample" for row in by)

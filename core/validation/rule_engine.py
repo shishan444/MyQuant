@@ -223,8 +223,11 @@ def _evaluate_rule_conditions(
 
     result: Optional[pd.Series] = None
 
+    from core.analysis.condition_kernel import _mask_for
     for i, cond in enumerate(conditions):
-        mask = _evaluate_single_condition(df, cond, warnings)
+        # 0.2.13：两段式（结构化 subject 先按 params 现算再精确列名求值；
+        # 列缺失全 False 降级与 _evaluate_single_condition 语义一致）
+        mask = _mask_for(df, cond)
         logic = cond.get("logic", "AND") if i > 0 else None
 
         if result is None:

@@ -143,7 +143,13 @@ def regime_split(
             for c, s in _compute_indicator(df, indicator, dict(params)).items():
                 if c not in df.columns:
                     df[c] = s
-        if condition["subject"] not in df.columns:
+        # 0.2.13：结构化 subject 经 encode 归一精确列名（同 param_sweep）
+        _subject_col = condition["subject"]
+        if isinstance(_subject_col, dict):
+            from core.analysis.column_ref import resolve_column_ref
+            _subject_col = resolve_column_ref(_subject_col).encoded_name()
+            condition = dict(condition, subject=_subject_col)
+        if _subject_col not in df.columns:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"subject 列 {condition['subject']!r} 不属于 {indicator} 输出列",

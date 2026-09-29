@@ -175,7 +175,7 @@ class TestCallSemantics:
         out = api.post("/api/research/analysis", {
             "template": "condition_stats",
             "params": {"indicator": "RSI", "params": {"period": 14},
-                       "condition": {"subject": "rsi_14", "action": "lt", "target": 40}},
+                       "condition": {{"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 40}},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                            "start": "2024-02-05T00:00:00Z", "end": "2024-03-08T00:00:00Z"},
         })

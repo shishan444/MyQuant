@@ -26,7 +26,7 @@ from tests.helpers.regime_factory import (
 
 _RANGES = [{"symbol": "TESTUSDT", "timeframe": "1h",
             "start": "2026-01-01", "end": "2026-01-26"}]
-_RSI_COND = {"subject": "rsi_14", "action": "lt", "target": 25.0}
+_RSI_COND = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 25.0}
 
 
 def _sweep(df, *, condition=_RSI_COND, indicator="RSI", values="auto",
@@ -55,10 +55,10 @@ class TestParamSweepBasics:
         df = _random_walk(1)
         cases = [
             {"indicator": "NOPE", "condition": _RSI_COND},
-            {"condition": {"subject": "rsi_14", "action": "le", "target": 25}},
-            {"condition": {"subject": "rsi_14", "action": "lt", "target": "rsi_21"}},
+            {"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "le", "target": 25}},
+            {"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": "rsi_21"}},
             {"condition": {"subject": "nope_col", "action": "lt", "target": 25}},
-            {"condition": {"subject": "rsi_14"}},  # 三键结构缺失
+            {"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}}},  # 三键结构缺失
             {"values": []},
             {"values": [25.0]},  # 与中心重合，去重后不足 2 点
             {"values": "sometimes"},
@@ -160,7 +160,7 @@ class TestCrossCheckWithConditionStats:
         for pt in p["points"]:
             cs = condition_stats(
                 df, indicator="RSI", params={"period": 14},
-                condition={"subject": "rsi_14", "action": "lt",
+                condition={"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                            "target": pt["value"]},
                 forward_bars=24, data_ranges=_RANGES).to_dict()
             cp = cs["payload"]

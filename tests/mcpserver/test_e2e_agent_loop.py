@@ -83,9 +83,9 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
 
     # 2) 登记（1 月区间）
     reg = _call(mcp, "register_hypothesis",
-                when_conditions=[{"subject": "rsi_14", "action": "lt",
+                when_conditions=[{{"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                   "target": 35}],
-                then_conditions=[{"subject": "rsi_70", "action": "gt",
+                then_conditions=[{{"indicator": "RSI", "params": {"period": 30}}, "action": "gt",
                                   "target": 60}],
                 statement="RSI 超卖修复",
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
@@ -100,7 +100,7 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
     analysis = _call(mcp, "run_analysis",
                      template="condition_stats",
                      params={"indicator": "RSI", "params": {"period": 14},
-                             "condition": {"subject": "rsi_14", "action": "lt",
+                             "condition": {{"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                            "target": 45}},
                      symbol="BTCUSDT", timeframe="4h",
                      start="2023-02-01T00:00:00Z",

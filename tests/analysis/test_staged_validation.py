@@ -81,7 +81,7 @@ def _register_hyp(env) -> str:
     out = register_hypothesis(
         env["db"],
         conditions={"when_conditions": [
-                        {"subject": "rsi_14", "action": "lt", "target": 35}],
+                        {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
                     "then_conditions": [
                         {"subject": "close", "action": "gt", "target": 0}]},
         statement="分段验证测试假设",

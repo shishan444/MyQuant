@@ -275,7 +275,8 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: Lis
     logic = "AND"
     for cond in conditions:
         logic = cond.get("logic", "AND")
-        mask = _evaluate_single_condition(df, cond, warnings)
+        from core.analysis.condition_kernel import _mask_for
+        mask = _mask_for(df, cond)   # 0.2.13 两段式（同 rule_engine）
         masks.append(mask)
 
     if not masks:
@@ -360,11 +361,10 @@ def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
         col = subject_map[subject]
         return df[col] if col in df.columns else None
 
-    # Try to find indicator column
-    matches = [c for c in df.columns if subject.lower().replace("_", "") in c.lower().replace("_", "")]
-    if matches:
-        return df[matches[0]]
-
+    # 0.2.13：模糊子串兜底退役（结构化引用+校验前置后失联即工程错误）；
+    # 精确列名命中，未命中返回 None（消费方全 False 安全降级契约不变）
+    if subject in df.columns:
+        return df[subject]
     return None
 
 

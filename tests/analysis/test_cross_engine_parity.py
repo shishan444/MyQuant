@@ -129,7 +129,7 @@ class TestCrossEngineParity:
         """ema_50 > close：指标条件双侧同源（同一 ta.ema(period=50) 实现，
         引擎经 _DEFAULT_PARAMS 默认集、模板经 _compute_indicator）——
         触发点/逐点/均值一致证明指标列解析与数值无第二套。"""
-        cond = {"subject": "ema_50", "action": "gt", "target": "close"}
+        cond = {"subject": {"indicator": "EMA", "params": {"period": 50}}, "action": "gt", "target": "close"}
         df_s, engine, tpl = _both_sides(parity_env, cond)
 
         assert engine.total_count > 0

@@ -33,9 +33,13 @@ def _hash_str(s: str) -> str:
 
 
 def _plugin_allowed_columns(db_path: Path) -> set:
-    """公式列引用集：基础列 ∪ 指标输出列前缀 ∪ 既有插件列（可叠层引用）。"""
-    cols, builtin_prefixes = allowed_subject_columns(db_path)
-    return cols | builtin_prefixes  # 前缀以精确名形式进入（指标参数化列形制）
+    """公式列引用集：基础列 ∪ 既有插件列（可叠层引用）。
+
+    0.2.13：内置指标前缀名移除——DSL 求值上下文是原始 df（无指标列），
+    前缀名放行即求值失败（R6 死代码退役）；指标在表达式内用白名单函数
+    自算（0.2.12 正道）。"""
+    cols, _builtin_prefixes = allowed_subject_columns(db_path)
+    return cols
 
 
 def _next_version(db_path: Path, table: str, name: str) -> int:
@@ -238,6 +242,36 @@ def enrich_with_plugin_columns(
     return work
 
 
+def _enrich_feature_columns(db_path: Path, df, feature_defs):
+    """训练特征统一装载（校验即解析的运行半边——两域同源）。
+
+    插件列走既有 enrich_with_plugin_columns（叠层求值）；指标列按
+    params 现算注入；基础列已在 df。ColumnDef 惰性 encoded_name 同源。
+    """
+    plugin_cols = {d.column_name for d in feature_defs if d.kind == "plugin"}
+    if plugin_cols:
+        df = enrich_with_plugin_columns(db_path, df, plugin_cols)
+    for d in feature_defs:
+        if d.kind != "indicator":
+            continue
+        col = d.encoded_name()
+        if col in df.columns:
+            continue
+        from core.features.indicators import _compute_indicator
+        for cname, series in _compute_indicator(
+                df, d.indicator, dict(d.params)).items():
+            df[cname] = series
+    return df
+
+
+def _copy_config_with_columns(config, feature_defs):
+    """config 副本：features 替换为解析出的精确列名（管线按列名取数）。"""
+    import copy as _copy
+    run_cfg = _copy.copy(config)
+    run_cfg.features = [d.encoded_name() for d in feature_defs]
+    return run_cfg
+
+
 # ---------------------------------------------------------------- 模型
 
 def register_model_plugin(
@@ -269,14 +303,25 @@ def register_model_plugin(
     except ModelPipelineError as exc:
         raise ResearchError("RESEARCH_FORMULA_INVALID", f"模型配置非法: {exc}")
 
-    # 特征列存在性
-    allowed = _plugin_allowed_columns(db_path)
-    missing = [f for f in features if f not in allowed]
-    if missing:
+    # 特征引用校验即解析（0.2.13：混合形制——参数化指标结构化对象 +
+    # 基础列/插件列字符串；前缀名语义退役——校验放行即运行可取，两域同源）
+    from core.analysis.column_ref import (ColumnDef, ColumnRefError,
+                                          resolve_column_ref)
+    feature_defs: list = []
+    bad: list = []
+    for f in features:
+        try:
+            feature_defs.append(resolve_column_ref(f, db_path))
+        except ColumnRefError as exc:
+            bad.append(f"{f!r}: {exc.message}")
+    if bad:
         raise ResearchError(
             "RESEARCH_CONDITION_INVALID",
-            f"特征列不可用: {missing}",
-            detail={"hint": "GET /api/research/signals 查询可用列"})
+            f"特征引用不可用: {bad}",
+            detail={"hint": "基础列/插件列用字符串精确名，参数化指标用"
+                            "{indicator, params, field}；可用列经 "
+                            "GET /api/research/signals 查询"})
+    features = [d.ref_dict() for d in feature_defs]   # canonical 化落 config
 
     # 幂等：(name, config_hash) 相同且 valid → 返回既有
     config_hash = _hash_json({
@@ -331,9 +376,12 @@ def register_model_plugin(
                 compute_indicators=False)
             if df is None:
                 raise RuntimeError(f"区间数据不足: {symbol} {timeframe}")
-            # 特征可能是插件列——先求值附加
-            df = enrich_with_plugin_columns(db_path, df, set(features))
-            res = fit_predict_walk_forward(df, config)
+            # 特征装载（0.2.13 统一入口）：插件列求值附加 + 指标对象按
+            # params 现算 + 基础列直取；训练管线按解析出的精确列名取数
+            # （config.features 替换为列名列表——model 管线零改动）
+            df = _enrich_feature_columns(db_path, df, feature_defs)
+            run_cfg = _copy_config_with_columns(config, feature_defs)
+            res = fit_predict_walk_forward(df, run_cfg)
         except Exception as exc:  # noqa: BLE001 —— 训练失败自落 rejected（不静默丢失）
             _fail(str(exc))
             raise

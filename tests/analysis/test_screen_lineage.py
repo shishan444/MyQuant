@@ -28,7 +28,7 @@ SCAN_RANGE = {"symbol": "BTCUSDT", "timeframe": "1h",
               "start": "2026-01-01T00:00:00Z", "end": "2026-04-01T00:00:00Z"}
 OTHER_RANGE = {"symbol": "BTCUSDT", "timeframe": "1h",
                "start": "2026-05-01T00:00:00Z", "end": "2026-06-01T00:00:00Z"}
-CANDIDATE_COND = {"subject": "rsi_14", "action": "lt", "target": 25}
+CANDIDATE_COND = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 25}
 
 
 def _db(tmp_path: Path) -> Path:

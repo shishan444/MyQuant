@@ -104,13 +104,13 @@ class TestPluginTranslation:
         composition logic AND（合取语义，不发明优先级）。"""
         col = _plugin(db)
         hid = _hyp(db, when=[
-            {"subject": "rsi_14", "action": "lt", "target": 35},
+            {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35},
             {"subject": col, "action": "gt", "target": 0.5},
-        ], then=[{"subject": "rsi_70", "action": "gt", "target": 60}])
+        ], then=[{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}])
         out = translate_hypothesis(db, hypothesis_id=hid)
         dna = _dna_of(db, out["strategy_id"])
         # 内置条件全部进基因（when 入场 + then 出场，语义不变）
-        assert [g.field_name for g in dna.signal_genes] == ["rsi_14", "rsi_70"]
+        assert [g.field_name for g in dna.signal_genes] == ["rsi", "rsi"]  # N4 语义名
         assert dna.signal_sources == [
             {"type": "rule"},
             {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">"}]
@@ -149,11 +149,11 @@ class TestPluginTranslation:
         """THEN 插件列显式拒绝（出场组合待后续版本；不静默误译为
         入场门控——出场语义颠倒比拒绝更糟）。"""
         col = _plugin(db)
-        hid = _hyp(db, when=[{"subject": "rsi_14", "action": "lt",
+        hid = _hyp(db, when=[{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                               "target": 35}],
-                   then=[{"subject": "rsi_70", "action": "gt", "target": 60}])
+                   then=[{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}])
         # THEN 插件列假设（then=插件列）经直落构造
-        hid = _raw_hyp(db, when=[{"subject": "rsi_14", "action": "lt",
+        hid = _raw_hyp(db, when=[{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                   "target": 35}],
                        then=[{"subject": col, "action": "gt", "target": 0.5}])
         with pytest.raises(ResearchError, match="then_conditions.*暂不支持出场"):
@@ -177,7 +177,7 @@ class TestPluginTranslation:
 
         hid2 = _raw_hyp(db, when=[{"subject": "definitely_not_a_column",
                                    "action": "gt", "target": 1}])
-        with pytest.raises(ResearchError, match="未知列"):
+        with pytest.raises(ResearchError, match="字符串 subject.*definitely_not_a_column"):
             translate_hypothesis(db, hypothesis_id=hid2)
 
     def test_bare_indicator_prefix_rejected_as_builtin(self, db):

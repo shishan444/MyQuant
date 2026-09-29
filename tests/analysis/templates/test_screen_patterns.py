@@ -99,10 +99,12 @@ class TestScreenPatternsDiscipline:
         assert cands, "趋势+回调数据应有候选产出"
         single = [c for c in cands if not c["is_combination"]]
         lows = [c for c in single
-                if c["condition"]["subject"].startswith("rsi")
+                if isinstance(c["condition"]["subject"], dict)
+                and c["condition"]["subject"]["indicator"] == "RSI"
                 and c["condition"]["action"] == "lt"]
         highs = [c for c in single
-                 if c["condition"]["subject"].startswith("rsi")
+                 if isinstance(c["condition"]["subject"], dict)
+                 and c["condition"]["subject"]["indicator"] == "RSI"
                  and c["condition"]["action"] == "gt"]
         assert lows and highs, "RSI 高低位条件都应出现在候选中"
         assert all(c["mean"] < 0 for c in lows), (
@@ -174,7 +176,7 @@ class TestCrossCheckWithConditionStats:
         h = c["best_horizon"]
         ref = condition_stats(
             df, indicator="RSI",
-            params={"period": int(c["condition"]["subject"].split("_")[1])},
+            params={"period": c["condition"]["subject"]["params"]["period"]},
             condition=c["condition"], data_ranges=_RANGES,
             forward_bars=h, request_start=None).to_dict()
         fwd_key = f"forward_return_{h}b"

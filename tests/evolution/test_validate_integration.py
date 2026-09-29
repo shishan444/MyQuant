@@ -43,7 +43,7 @@ class TestValidateAPI:
             "timeframe": "4h",
             "start": "2024-01-01",
             "end": "2024-06-01",
-            "when": [{"subject": "rsi_14", "action": "cross_above", "target": "70", "logic": "AND"}],
+            "when": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "cross_above", "target": "70", "logic": "AND"}],
             "then": [{"subject": "close", "action": "drops_pct", "target": "2", "logic": "AND"}],
         })
         assert resp.status_code == 200

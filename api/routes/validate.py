@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,8 +15,15 @@ from core.validation.rule_engine import evaluate_rules
 router = APIRouter(prefix="/api", tags=["validation"])
 
 
+from pydantic import BaseModel
+
+from api.schemas import IndicatorRef
+
+
 class ConditionInput(BaseModel):
-    subject: str
+    """0.2.13 混合形制（与 ConditionItem 同语义）：参数化指标结构化
+    IndicatorRef / 基础列字符串精确名。"""
+    subject: Union[str, "IndicatorRef"]
     action: str
     target: str = ""
     window: Optional[int] = None
