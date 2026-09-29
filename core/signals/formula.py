@@ -56,7 +56,40 @@ def _f_corr(a: pd.Series, b: pd.Series, n: int) -> pd.Series:
     return a.rolling(int(n), min_periods=2).corr(b)
 
 
-#: 白名单函数库（全部只看过去；shift/diff 的负参被动态拦截，静态先拦）
+# ------------------------------------------------ 0.2.12 时序结构与逐元素族
+
+def _shift1(x):
+    """时序结构词的内部滞后（首元素 NaN 参与比较产 False——保守不触发）。
+
+    常量参数滞后不变（crossover(close, 10) 的阈值线无时序——上穿固定
+    阈值是常用结构，两参对称支持常量与 max/gt 的广播语义一致）。"""
+    if not isinstance(x, pd.Series):
+        return x
+    return x.shift(1)
+
+
+def _f_crossover(a, b) -> pd.Series:
+    """a 上穿 b：当前 a>b 且前一根 a<=b（布尔直出）。"""
+    return (a > b) & (_shift1(a) <= _shift1(b))
+
+
+def _f_crossunder(a, b) -> pd.Series:
+    """a 下穿 b：当前 a<b 且前一根 a>=b（对称词）。"""
+    return (a < b) & (_shift1(a) >= _shift1(b))
+
+
+def _to_bool(x) -> pd.Series:
+    """统一布尔化（R5）：fillna(False) 前置——astype(bool) 会把 NaN 变
+    True，破坏「缺口保守不触发」语义。数值输入按非零为真。"""
+    if isinstance(x, pd.Series):
+        return x.fillna(False).astype(bool)
+    return bool(x)
+
+
+#: 白名单函数库（全部只看过去；shift/diff 的负参被动态拦截，静态先拦）。
+#: 0.2.12 扩至 21：时序结构族 crossover/crossunder（穿越时点布尔直出）
+#: 与逐元素族 max/min/gt/lt/eq/logical_and/logical_or/logical_not
+#: （比较与逻辑产布尔列，与数值混算按 0/1 参与）。
 FORMULA_FUNCTIONS: Dict[str, Callable[..., pd.Series]] = {
     "shift": _f_shift,
     "diff": _f_diff,
@@ -69,6 +102,18 @@ FORMULA_FUNCTIONS: Dict[str, Callable[..., pd.Series]] = {
     "ema": _f_ema,
     "corr": _f_corr,
     "abs": lambda s: s.abs(),
+    # ---- 0.2.12 时序结构族（布尔直出）----
+    "crossover": _f_crossover,
+    "crossunder": _f_crossunder,
+    # ---- 0.2.12 逐元素族（max/min 广播产数值；比较/逻辑布尔直出）----
+    "max": np.maximum,
+    "min": np.minimum,
+    "gt": lambda a, b: a > b,
+    "lt": lambda a, b: a < b,
+    "eq": lambda a, b: a == b,
+    "logical_and": lambda a, b: _to_bool(a) & _to_bool(b),
+    "logical_or": lambda a, b: _to_bool(a) | _to_bool(b),
+    "logical_not": lambda a: ~_to_bool(a),
 }
 
 #: 各函数的参数个数（静态校验用）
@@ -76,6 +121,16 @@ _FORMULA_ARITY = {
     "shift": 2, "diff": 2, "rolling_mean": 2, "rolling_std": 2,
     "rolling_max": 2, "rolling_min": 2, "rolling_sum": 2,
     "zscore": 2, "ema": 2, "corr": 3, "abs": 1,
+    "crossover": 2, "crossunder": 2,
+    "max": 2, "min": 2, "gt": 2, "lt": 2, "eq": 2,
+    "logical_and": 2, "logical_or": 2, "logical_not": 1,
+}
+
+#: 结构固有回看贡献（0.2.12 R2——无参数位的时序结构词；与
+#: _WINDOW_PARAM_INDEX 参数位贡献取 max）
+_FIXED_LOOKBACK = {
+    "crossover": 1,
+    "crossunder": 1,
 }
 
 # 负向 shift 静态拦截的函数（第 2 参须为 >= 0 常量）
@@ -127,6 +182,10 @@ def formula_lookback(expression: str) -> int:
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
             continue
+        # 结构固有回看（crossover/crossunder 恒 1——0.2.12 R2）
+        fixed = _FIXED_LOOKBACK.get(node.func.id)
+        if fixed is not None:
+            lookback = max(lookback, fixed)
         param_idx = _WINDOW_PARAM_INDEX.get(node.func.id)
         if param_idx is None or len(node.args) <= param_idx:
             continue
@@ -184,8 +243,10 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                         errors.append(f"{fname} 第二参数必须是常量（静态可校验）")
                     elif val < 0:
                         errors.append(f"{fname} 负向平移被禁止（看向未来）: {val}")
-                elif _FORMULA_ARITY[fname] == 2:
-                    # 窗口类函数第二参同样须 >= 1 常量
+                elif _WINDOW_PARAM_INDEX.get(fname) == 1:
+                    # 窗口位在 1 的函数第二参须 >= 1 常量（0.2.12 R1 修正：
+                    # 原 arity==2 笼统推定会误拒逐元素族第二参常量 <1——
+                    # gt(a, 0.5)/max(a, 0) 合法阈值用法）
                     if ok and val < 1:
                         errors.append(f"{fname} 窗口须 >= 1")
 

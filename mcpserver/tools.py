@@ -418,8 +418,16 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def register_formula_plugin(name: str, expression: str) -> Dict[str, Any]:
-        """注册公式插件（受限 DSL：白名单函数、禁前视、静态校验三关；
-        同名同表达式幂等返回既有版本；同名新表达式版本递增）。"""
+        """注册公式插件（受限 DSL：白名单函数 21 词、禁前视、静态校验
+        三关；同名同表达式幂等返回既有版本；同名新表达式版本递增）。
+        白名单三族——时序变换（shift/diff/rolling_mean|std|max|min|sum/
+        zscore/ema/corr/abs）；时序结构 crossover(a,b) 上穿/crossunder
+        下穿（当前 a>b 且前一根 a≤b——金叉死叉可表达）；逐元素
+        max/min（两序列或序列与常量逐 bar 取大取小，非窗口聚合）、
+        gt/lt/eq、logical_and/logical_or/logical_not（比较与逻辑产布尔
+        列，与数值混算按 0/1 参与——运算符写法 a>b / a and b 仍非法，
+        须函数形）。布尔列作假设条件 subject 推荐 target 域：gt 0.5 /
+        ge 1 / eq 1（True=1.0，gt 1 恒 False 勿踩）。"""
         return api.post("/api/research/plugins/formula",
                         {"name": name, "expression": expression})
 
