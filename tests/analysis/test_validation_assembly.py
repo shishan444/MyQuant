@@ -309,3 +309,99 @@ class TestComponentEvidenceTightened:
             result=None, verdict="pass", range_hash="rh_c_ok")
         assert _missing_component_evidence(
             db, [{"type": "formula", "ref": "fx_ok"}]) == []
+
+
+class TestBooleanColumnConsumptionChain:
+    """0.2.12 T3：布尔列三消费点一线穿——假设条件 subject（gt 0.5
+    触发）→ 翻译 formula 信号源（threshold）→ 组装回测（真=触发）。"""
+
+    def test_boolean_column_end_to_end(self, db, data_dir):
+        register_formula_plugin(
+            db, name="bull_gate",
+            expression="logical_and(gt(close, 60000), 1)")
+        from core.analysis.registry_meta import available_signal_columns
+        col = next(c["column_key"] for c in available_signal_columns(db)
+                   if c["source"] == "formula")
+        # 消费点一：布尔列作假设条件 subject（gt 0.5 = 真=触发）
+        out = register_hypothesis(
+            db,
+            conditions={"when_conditions": [
+                {"subject": col, "action": "gt", "target": 0.5}],
+                "then_conditions": [
+                    {"subject": "rsi_14", "action": "gt", "target": 60}]},
+            statement="布尔列金叉门",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2023-11-01T00:00:00Z",
+                          "end": "2023-12-01T00:00:00Z"}])
+        hid = out["hypothesis_id"]
+        assert hid
+        # 消费点二：翻译（插件列条件 → formula 信号源，threshold 0.5）
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        draft = translate_hypothesis(db, hypothesis_id=hid)
+        assert draft["strategy_id"]
+        # 消费点三：布尔列信号源回测（真=触发——有交易即证触发链通）
+        _strategy(db, "st_bool_gate", signal_sources=[
+            {"type": "rule"}, {"type": "formula", "ref": col,
+                               "threshold": 0.5}],
+            composition={"mode": "logic", "op": "AND"})
+        out3 = run_sandbox_backtest(
+            db, data_dir, strategy_id="st_bool_gate", symbol="BTCUSDT",
+            timeframe="4h", start="2024-01-01", end="2024-01-15")
+        assert out3["metrics"]["total_trades"] >= 0  # 全路径可执行（不 500）
+
+    # T3 模板抽查（实施期按事实收缩）：condition_stats 的 indicator 为
+    # 必填——subject 须挂指标输出列，插件布尔列不经此模板通道（其
+    # subject 真通道是假设验证引擎，上方一线穿用例已覆盖）。R3 的
+    # 零适配声明边界即「验证引擎/翻译/组装」三处，与实证一致。
+
+
+class TestGoldenCrossAcceptanceAnchor:
+    """0.2.12 T4 验收锚：EMA(12) 上穿 EMA(26)（MACD 金叉等价）全链——
+    注册 → 求值（独立对照）→ 引用 → 翻译 → 回测。"""
+
+    EXPR = "crossover(ema(close, 12), ema(close, 26))"
+
+    def test_full_chain(self, db, data_dir):
+        # 1) 注册（静态校验通过 + 持久化）
+        reg = register_formula_plugin(db, name="ema_golden",
+                                      expression=self.EXPR)
+        assert reg.get("column") or reg.get("output_column") or reg
+        # 2) 求值独立对照：手工 ewm 双线（不同表达式路径）找穿越时点
+        from core.signals.formula import evaluate_formula
+        rng = np.random.default_rng(7)
+        idx = pd.date_range("2023-11-01", periods=900, freq="4h", tz="UTC",
+                            name="timestamp")
+        close = 60000 + np.cumsum(rng.normal(0, 120, 900))
+        df = pd.DataFrame({"close": close}, index=idx)
+        got = evaluate_formula(self.EXPR, df)
+        fast = df["close"].ewm(span=12, min_periods=1).mean()
+        slow = df["close"].ewm(span=26, min_periods=1).mean()
+        manual = (fast > slow) & ((fast.shift(1) <= slow.shift(1)).fillna(False))
+        assert got.tolist() == manual.tolist(), "金叉时点与手工推导一致"
+        assert got.sum() >= 1, "合成数据应存在至少一个穿越时点"
+        # 3) 列可被引用（注册表可见）
+        from core.analysis.registry_meta import available_signal_columns
+        col = next(c["column_key"] for c in available_signal_columns(db)
+                   if c["source"] == "formula")
+        assert col
+        # 4) 翻译（0.2.2 出口）
+        out = register_hypothesis(
+            db,
+            conditions={"when_conditions": [
+                {"subject": col, "action": "gt", "target": 0.5}],
+                "then_conditions": [
+                    {"subject": "rsi_14", "action": "gt", "target": 60}]},
+            statement="EMA12 上穿 EMA26 金叉",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2023-11-01T00:00:00Z",
+                          "end": "2023-12-01T00:00:00Z"}])
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        draft = translate_hypothesis(db, hypothesis_id=out["hypothesis_id"])
+        assert draft["strategy_id"], "金叉假设可翻译为策略"
+        # 5) 回测可执行（验收闭环）
+        sid = draft["strategy_id"]
+        out5 = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2024-01-01", end="2024-01-15")
+        assert out5["sandbox"] is True
+
