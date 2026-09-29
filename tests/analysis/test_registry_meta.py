@@ -102,3 +102,14 @@ class TestAvailableSignalColumns:
                 assert c["scopes"]["analysis"] is False, (
                     "内置指标列不可直接用于列引用模板（rsi_14 引用即"
                     "RESEARCH_COLUMN_NOT_AVAILABLE——错误即文档）")
+
+
+def test_signal_columns_carry_reference_form(db_path):
+    """T5：条目附引用形制（指标=结构化构造依据；插件=字符串精确名）。"""
+    cols = available_signal_columns(db_path)
+    builtin = next(c for c in cols if c["source"] == "builtin")
+    assert builtin["reference_form"]["kind"] == "structured"
+    assert "params_space" in builtin["reference_form"]
+    plugin = [c for c in cols if c["source"] in ("formula", "model")]
+    if plugin:
+        assert plugin[0]["reference_form"]["kind"] == "string"

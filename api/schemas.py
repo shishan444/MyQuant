@@ -798,10 +798,20 @@ class LiveTradingTaskListResponse(BaseModel):
 # == research 域（add-ai-research-mcp 3.x）==
 
 
-class ConditionItem(BaseModel):
-    """假设条件（与假设验证引擎 {subject, action, target} 同源形制）。"""
+class IndicatorRef(BaseModel):
+    """参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。"""
+    indicator: str
+    params: Dict[str, Any] = {}
+    field: Optional[str] = None
 
-    subject: str
+
+class ConditionItem(BaseModel):
+    """假设条件（与假设验证引擎 {subject, action, target} 同源形制）。
+
+    subject 混合形制：参数化指标用结构化 IndicatorRef，基础列/插件列用
+    字符串精确名（业务校验在 service 层 resolve_column_ref）。"""
+
+    subject: Union[str, IndicatorRef]
     action: str
     target: Union[float, str]
 

@@ -168,10 +168,10 @@ class TestTranslator:
         # THEN 参与翻译（M4：预期兑现即离场）——须同为指标列形制
         return {
             "when_conditions": [
-                {"subject": "rsi_14", "action": "lt", "target": 35},
-                {"subject": "ema_50", "action": "cross_above", "target": 60000},
+                {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35},
+                {"subject": {"indicator": "EMA", "params": {"period": 50}}, "action": "cross_above", "target": 60000},
             ],
-            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
+            "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
         }
 
     def _ranges(self, symbol="BTCUSDT"):
@@ -220,12 +220,12 @@ class TestTranslator:
             get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
         exits = [g for g in genes if g.role == SignalRole.EXIT_TRIGGER]
         assert len(exits) == 1
-        assert exits[0].field_name == "rsi_70"
+        assert exits[0].field_name == "rsi"   # N4: 语义名（非编码前缀形）
 
     def test_then_inexpressible_rejected(self, db):
         """THEN 不可表达显式拒绝（不静默丢弃 THEN 语义）。"""
         conds = {
-            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         }
         hid = self._register_and_pass(db, conds, self._ranges())
@@ -261,9 +261,9 @@ class TestTranslator:
 
     def test_inexpressible_action_rejected(self, db):
         conds = {
-            "when_conditions": [{"subject": "rsi_14", "action": "divergence_top",
+            "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "divergence_top",
                                  "target": 0}],
-            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
+            "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
         }
         hid = self._register_and_pass(db, conds, self._ranges())
         with pytest.raises(ResearchError, match="action 不可表达"):
@@ -286,8 +286,8 @@ class TestTranslator:
         """M2/1.6 翻译保真（8 动作全覆盖）：产物基因的条件值与登记
         conditions 逐字段一致——篡改任一映射时对应行红。"""
         conds = {
-            "when_conditions": [{"subject": "rsi_14", "action": action, "target": 35}],
-            "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
+            "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": action, "target": 35}],
+            "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
         }
         hid = self._register_and_pass(db, conds, self._ranges())
         out = translate_hypothesis(db, hypothesis_id=hid)
@@ -298,7 +298,7 @@ class TestTranslator:
         assert len(entries) == 1
         assert entries[0].condition == expected_condition
         assert entries[0].params == {"period": 14}
-        assert entries[0].field_name == "rsi_14"
+        assert entries[0].field_name == "rsi"   # N4: 语义名（非编码前缀形）
 
     def test_statement_wording_does_not_change_product(self, db):
         """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""
@@ -352,7 +352,7 @@ class TestCompositeGate:
         hid = register_hypothesis(
             db,
             conditions={
-                "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+                "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
                 "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
             },
             statement="s", data_ranges=[

@@ -219,13 +219,27 @@ def param_sweep(
             if col not in work.columns:
                 work[col] = series
             produced.append(col)
-    if condition["subject"] not in work.columns:
+    # 0.2.13：结构化 subject 经 encode 归一精确列名（默认参数矩阵边界
+    # 不变）；字符串 subject 保持精确命中
+    subject_col = condition["subject"]
+    if isinstance(subject_col, dict):
+        from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+        try:
+            subject_col = resolve_column_ref(subject_col).encoded_name()
+        except ColumnRefError as exc:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"subject 引用非法: {exc.message}",
+                detail={"param": "condition.subject",
+                        "code": exc.code, **exc.detail}) from exc
+    if subject_col not in work.columns:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"subject 列 {condition['subject']!r} 不属于 {indicator} 输出列"
+            f"subject 列 {subject_col!r} 不属于 {indicator} 输出列"
             "（本模板以默认参数矩阵求值，非默认参数列不支持）",
             detail={"param": "condition.subject",
                     "legal_range": sorted(set(produced))})
+    condition = dict(condition, subject=subject_col)   # 求值/网格按精确列名
 
     grid = _resolve_grid(indicator, condition["subject"], condition["action"],
                          center, sweep)

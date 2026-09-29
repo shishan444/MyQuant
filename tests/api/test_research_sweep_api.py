@@ -38,7 +38,7 @@ def sweep_env(tmp_path: Path):
 def _payload(df, indicator="RSI", **extra):
     p = {
         "indicator": indicator,
-        "condition": {"subject": "rsi_14", "action": "lt", "target": 65},
+        "condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 65},
         "sweep": {"axis": "target", "values": [60, 65, 70]},
         "forward_bars": 12,
     }

@@ -80,7 +80,7 @@ class TestZeroTradeMissingSemantics:
         df = make_ohlcv(n=120, freq="1h", base_price=40_000.0, seed=7)
         df.to_parquet(tmp_path / "BTCUSDT_1h.parquet")
         # 恒假条件：rsi_14 < -1 永不成立 -> 零交易（{subject, action, target} 形制）
-        impossible = {"subject": "rsi_14", "action": "lt", "target": -1.0}
+        impossible = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": -1.0}
         result = evaluate_rules(
             symbol="BTCUSDT",
             timeframe="1h",
@@ -107,8 +107,8 @@ class TestDecimalScaleUniformity:
         df.to_parquet(tmp_path / "BTCUSDT_1h.parquet")
         # 恒真条件（{subject, action, target} 形制）：rsi_14 < 101 与
         # rsi_14 > -1 恒成立 -> 每根 bar 产生进出场信号
-        always_true_lt = {"subject": "rsi_14", "action": "lt", "target": 101.0}
-        always_true_gt = {"subject": "rsi_14", "action": "gt", "target": -1.0}
+        always_true_lt = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 101.0}
+        always_true_gt = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "gt", "target": -1.0}
         result = evaluate_rules(
             symbol="BTCUSDT",
             timeframe="1h",

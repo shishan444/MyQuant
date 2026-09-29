@@ -57,21 +57,6 @@ def _plugin_signal_columns(db_path: Path) -> Dict[str, str]:
     }
 
 
-def _parse_indicator_column(subject: str) -> Optional[tuple[str, str, float]]:
-    """subject 为内置指标输出列形制 → (indicator, field_prefix, param)。
-
-    匹配注册表输出列前缀 + _数字（如 ema_50、rsi_14）。
-    """
-    from core.features.registry import INDICATOR_REGISTRY
-
-    for name, defn in INDICATOR_REGISTRY.items():
-        for field in defn.output_fields:
-            m = re.fullmatch(rf"{re.escape(field)}_(\d+)", subject)
-            if m:
-                return name, field, float(m.group(1))
-    return None
-
-
 def translate_hypothesis(
     db_path: Path,
     *,
@@ -206,7 +191,7 @@ def _translate_conditions(
     阈值翻译为 formula/model 源；不可表达即拒（WHEN/THEN 同规则）。
     """
     from core.strategy.dna import SignalGene, SignalRole
-    from core.analysis.hypothesis_service import allowed_subject_columns
+    from core.analysis.column_ref import BASE_SUBJECT_COLUMNS
 
     genes = []
     plugin_sources: List[Dict[str, Any]] = []
@@ -215,6 +200,40 @@ def _translate_conditions(
         subject = cond.get("subject", "")
         action = cond.get("action", "")
         target = cond.get("target")
+
+        # 结构化指标引用（0.2.13）：ColumnDef 直映射 SignalGene——
+        # indicator/params 原样传递（多参指标天然支持），field 传语义名
+        # （N4：executor 侧 resolve 的 field 值域是语义名 upper/signal/k…，
+        # 编码前缀形在多输出指标非默认 field 会静默兜底取错列）
+        if isinstance(subject, dict):
+            from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+            try:
+                cdef = resolve_column_ref(subject, db_path)
+            except ColumnRefError as exc:
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    f"{label}[{i}] subject 非法: {exc.message}",
+                    detail={"condition": cond, "code": exc.code,
+                            **exc.detail}) from exc
+            if action not in _ACTION_MAP:
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] action 不可表达: {action}"
+                    f"（可表达: {sorted(_ACTION_MAP)}）",
+                    detail={"condition": cond})
+            if not isinstance(target, (int, float)):
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] target 须为数值（列名 target 不可表达）",
+                    detail={"condition": cond})
+            genes.append(SignalGene(
+                indicator=cdef.indicator,
+                params=dict(cdef.params),
+                role=role,
+                field_name=cdef.field,
+                condition=_ACTION_MAP[action](target),
+            ))
+            continue
 
         # 插件列（注册表精确名）：翻译为 formula/model 信号源
         if subject in plugin_columns:
@@ -249,49 +268,23 @@ def _translate_conditions(
             })
             continue
 
-        parsed = _parse_indicator_column(subject)
-        if parsed is None:
-            # 三类拒绝原因（附慢通道建议）：内置基础列不可表达 /
-            # 插件列失效（注册表曾有判定路径但列已不存在）/ 完全未知列
-            allowed, _ = allowed_subject_columns(db_path)
-            if subject in allowed:
-                reason = (f"内置基础列 subject（{subject}）不可表达为"
-                          "指标信号源（须为参数化指标列如 rsi_14）")
-            elif subject.startswith(("fx_", "model_")):
-                reason = (f"插件列 subject（{subject}）已失效"
-                          "（信号注册表无此列——插件被删除或未注册）")
-            else:
-                reason = f"未知列 subject（{subject}）不在可用信号列集"
-            raise ResearchError(
-                "RESEARCH_NOT_EXPRESSIBLE",
-                f"{label}[{i}] 不可表达: {reason}",
-                detail={"condition": cond,
-                        "slow_path": "提交 feature-requests 或改用指标列 subject"})
-        indicator, field, param = parsed
-        if action not in _ACTION_MAP:
-            raise ResearchError(
-                "RESEARCH_NOT_EXPRESSIBLE",
-                f"{label}[{i}] action 不可表达: {action}"
-                f"（可表达: {sorted(_ACTION_MAP)}）",
-                detail={"condition": cond})
-        if not isinstance(target, (int, float)):
-            raise ResearchError(
-                "RESEARCH_NOT_EXPRESSIBLE",
-                f"{label}[{i}] target 须为数值（列名 target 不可表达）",
-                detail={"condition": cond})
-
-        # 指标参数名推断：单周期参数的指标用 period，其余用主参数名
-        from core.features.registry import INDICATOR_REGISTRY
-        defn = INDICATOR_REGISTRY[indicator]
-        param_key = next(iter(defn.params)) if defn.params else "period"
-
-        genes.append(SignalGene(
-            indicator=indicator,
-            params={param_key: int(param)},
-            role=role,
-            field_name=f"{field}_{int(param)}",
-            condition=_ACTION_MAP[action](target),
-        ))
+        # 字符串 subject（0.2.13 起）：参数化指标编码形已退役（入口关闭+
+        # 存量迁移）——只可能是基础列 / 插件失效列 / 未知列，全部不可表达
+        if subject in BASE_SUBJECT_COLUMNS:
+            reason = (f"内置基础列 subject（{subject}）不可表达为"
+                      "指标信号源（参数化指标请用结构化引用 "
+                      "{indicator, params, field}）")
+        elif subject.startswith(("fx_", "model_")):
+            reason = (f"插件列 subject（{subject}）已失效"
+                      "（信号注册表无此列——插件被删除或未注册）")
+        else:
+            reason = (f"字符串 subject（{subject}）不可表达——参数化指标"
+                      "统一结构化引用 {indicator, params, field}")
+        raise ResearchError(
+            "RESEARCH_NOT_EXPRESSIBLE",
+            f"{label}[{i}] 不可表达: {reason}",
+            detail={"condition": cond,
+                    "slow_path": "提交 feature-requests 或改用结构化指标引用"})
     # WHEN 组至少一个可表达条件（无入场条件的策略无意义）；THEN 组空
     # = 无显式出场（出场基因可为零，不拒——此前空 then 被"无可表达条件"
     # 连坐拒绝，纯插件列假设的最小形态 when=[插件条件]/then=[] 需放行）

@@ -126,7 +126,7 @@ class TestDanglingSourceRejected:
         hid = register_hypothesis(
             db, conditions={
                 "when_conditions": [
-                    {"subject": "rsi_14", "action": "lt", "target": 35}],
+                    {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
                 "then_conditions": [
                     {"subject": "close", "action": "gt", "target": 0}]},
             # 登记区间避开请求区间（登记区间计入判定并集，重叠即 409）
@@ -227,10 +227,10 @@ class TestTranslatedDraftAffectsSignals:
                    "end": "2023-12-01T00:00:00Z"}]
         hid = register_hypothesis(db, conditions={
             "when_conditions": [
-                {"subject": "rsi_14", "action": "lt", "target": 35},
+                {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35},
                 {"subject": col, "action": "gt", "target": 0.5}],
             "then_conditions": [
-                {"subject": "rsi_70", "action": "gt", "target": 60}]},
+                {"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}]},
             statement="s", data_ranges=ranges)["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert out["status"] == "draft", "插件列假设翻译不得被拒"
@@ -247,9 +247,9 @@ class TestTranslatedDraftAffectsSignals:
         # 对照版：同假设条件去除插件列后重译（纯 rule 退化形态）
         hid_ctl = register_hypothesis(db, conditions={
             "when_conditions": [
-                {"subject": "rsi_14", "action": "lt", "target": 35}],
+                {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [
-                {"subject": "rsi_70", "action": "gt", "target": 60}]},
+                {"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}]},
             statement="s", data_ranges=ranges)["hypothesis_id"]
         ctl_sid = translate_hypothesis(
             db, hypothesis_id=hid_ctl)["strategy_id"]
@@ -328,7 +328,7 @@ class TestBooleanColumnConsumptionChain:
             conditions={"when_conditions": [
                 {"subject": col, "action": "gt", "target": 0.5}],
                 "then_conditions": [
-                    {"subject": "rsi_14", "action": "gt", "target": 60}]},
+                    {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "gt", "target": 60}]},
             statement="布尔列金叉门",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-11-01T00:00:00Z",
@@ -390,7 +390,7 @@ class TestGoldenCrossAcceptanceAnchor:
             conditions={"when_conditions": [
                 {"subject": col, "action": "gt", "target": 0.5}],
                 "then_conditions": [
-                    {"subject": "rsi_14", "action": "gt", "target": 60}]},
+                    {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "gt", "target": 60}]},
             statement="EMA12 上穿 EMA26 金叉",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-11-01T00:00:00Z",

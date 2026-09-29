@@ -37,7 +37,7 @@ def cases_env(tmp_path: Path):
 def _payload(**extra):
     p = {
         "symbol": SYMBOL, "timeframe": "1d",
-        "selector": {"condition": {"subject": "rsi_14",
+        "selector": {"condition": {"subject": {"indicator": "RSI", "params": {"period": 14}},
                                    "action": "lt", "target": 30.0}},
         "indicator": "RSI",
     }
@@ -82,7 +82,7 @@ class TestInspectCasesRoute:
     def test_audit_trail_queryable(self, api_client, cases_env):
         api_client.app.state.db_path = cases_env["db"]
         api_client.app.state.data_dir = cases_env["data_dir"]
-        cond = {"subject": "rsi_14", "action": "lt", "target": 30.0}
+        cond = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 30.0}
         resp = api_client.post("/api/research/inspect-cases",
                                json=_payload(selector={"condition": cond}))
         assert resp.status_code == 200

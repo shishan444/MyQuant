@@ -46,19 +46,16 @@ def _hash_json(obj: Any) -> str:
 
 # ---------------------------------------------------------------- 信号集
 
-# 条件 subject 可引用的基础列（假设引擎 _resolve_subject 的列语义）
-_BASE_SUBJECT_COLUMNS = frozenset({
-    "open", "high", "low", "close", "volume", "trades",
-    "open_interest", "funding_rate",
-})
+# 基础列清单权威在 column_ref（0.2.13 移入——单一事实源）
+from core.analysis.column_ref import BASE_SUBJECT_COLUMNS as _BASE_SUBJECT_COLUMNS
 
 
 def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
     """subject 可引用列：(精确列全集, 内置指标输出列前缀集)。
 
-    内置指标输出列是参数化形制（如 ema_50）——不枚举全部参数组合，
-    以前缀集合 + 「前缀_数字」正则判定。插件列来自 signal_registry
-    （精确名，入精确列全集）。
+    0.2.13 起主体校验走 column_ref.resolve_column_ref（结构化混合形制）；
+    本函数保留供翻译器拒绝分支的清单查询与插件域（前缀集的校验消费
+    已随 R6 退役）。插件列来自 signal_registry（精确名）。
     """
     from core.features.registry import INDICATOR_REGISTRY
 
@@ -67,21 +64,10 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
     for defn in INDICATOR_REGISTRY.values():
         for f in defn.output_fields:
             builtin_prefixes.add(f)
-    cols.update(builtin_prefixes)
 
     for entry in rr.list_signal_registry_entries(db_path, only_visible=True):
         cols.add(entry["column_name"])
     return cols, builtin_prefixes
-
-
-def _subject_exists(subject: str, allowed: set[str], builtin_prefixes: set[str]) -> bool:
-    """subject 合法性：精确命中，或「内置前缀_数字」形制（指标输出列）。"""
-    if subject in allowed:
-        return True
-    for prefix in builtin_prefixes:
-        if re.fullmatch(rf"{re.escape(prefix)}_\d+", subject):
-            return True
-    return False
 
 
 # ---------------------------------------------------------------- 登记
@@ -124,18 +110,21 @@ def register_hypothesis(
                     f"{field_name} 须含 subject/action/target",
                     detail={"field": field_name})
 
-    # 2. subject 引用
-    allowed, builtin_prefixes = allowed_subject_columns(db_path)
+    # 2. subject 引用（0.2.13：混合形制统一校验 + canonical 化归一——
+    #    数值形制与 field 缺省在入口统一，conditions_hash 对 canonical 形计算）
+    from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     for group, conds in (("when", when), ("then", then)):
         for i, c in enumerate(conds):
             field_name = f"{group}_conditions[{i}].subject"
-            if not _subject_exists(c["subject"], allowed, builtin_prefixes):
+            try:
+                c["subject"] = resolve_column_ref(
+                    c["subject"], db_path).ref_dict()
+            except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
-                    f"{field_name} 引用不存在的信号列: {c['subject']}",
-                    detail={"field": field_name,
-                            "subject": c["subject"],
-                            "hint": "可用列经 GET /api/research/signals 查询"})
+                    f"{field_name} {exc.message}",
+                    detail={"field": field_name, "code": exc.code,
+                            **exc.detail}) from exc
 
     # 3. 区间
     if not isinstance(data_ranges, list) or not data_ranges:

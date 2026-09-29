@@ -68,7 +68,7 @@ def _hyp(api_client, s_env) -> str:
     out = register_hypothesis(
         s_env["db"],
         conditions={"when_conditions": [
-            {"subject": "rsi_14", "action": "lt", "target": 35}],
+            {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [
                 {"subject": "close", "action": "gt", "target": 0}]},
         statement="api 分段验证测试",

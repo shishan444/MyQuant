@@ -19,9 +19,9 @@ from core.persistence.repository import research as rr
 
 _CONDS = {
     "when_conditions": [
-        {"subject": "rsi_14", "action": "lt", "target": 35},
-        {"subject": "ema_50", "action": "cross_above", "target": 60000}],
-    "then_conditions": [{"subject": "rsi_70", "action": "gt", "target": 60}],
+        {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35},
+        {"subject": {"indicator": "EMA", "params": {"period": 50}}, "action": "cross_above", "target": 60000}],
+    "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
 }
 _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}]

@@ -5,7 +5,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.condition_identity import canonical_condition_hash
+from core.analysis.condition_identity import canonical_condition_hash, legacy_compatible_hash
 
 
 class TestCanonicalConditionHash:
@@ -69,3 +69,29 @@ class TestCanonicalConditionHash:
         """同输入跨调用稳定（可落审计清单比对）。"""
         c = {"subject": "adx_14", "action": "gt", "target": 25}
         assert canonical_condition_hash(c, "1d") == canonical_condition_hash(c, "1d")
+
+
+# ---------------------------------------------------------------- 0.2.13 演进锚
+
+class TestLegacyCompatibleHash:
+    """F1 影子：字符串逐字节=旧算法；结构化经 encode 还原=旧算法。"""
+
+    def test_string_subject_identical_to_legacy_algorithm(self):
+        cond = {"subject": "rsi_14", "action": "lt", "target": 30}
+        # 旧算法直算（subject str 原样）与 legacy_compatible_hash 逐字节一致
+        import hashlib
+        from core.analysis.condition_identity import _SEP, _normalize_target
+        parts = ["rsi_14", "lt", _normalize_target(30), "4h"]
+        manual = hashlib.sha256(_SEP.join(parts).encode()).hexdigest()[:16]
+        assert legacy_compatible_hash(cond, "4h") == manual
+        assert canonical_condition_hash(cond, "4h") == manual  # 字符串两算法同指纹
+
+    def test_structured_subject_shadow_equals_legacy_on_encoded_form(self):
+        legacy = {"subject": "rsi_14", "action": "lt", "target": 30}
+        structured = {"subject": {"indicator": "RSI",
+                                  "params": {"period": 14}, "field": "rsi"},
+                      "action": "lt", "target": 30}
+        assert (legacy_compatible_hash(structured, "4h")
+                == legacy_compatible_hash(legacy, "4h"))
+        assert (canonical_condition_hash(structured, "4h")
+                != canonical_condition_hash(legacy, "4h"))  # 新算法区分形制

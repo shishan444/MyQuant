@@ -112,8 +112,10 @@ def condition_stats(
     for col, series in new_cols.items():
         work[col] = series
 
-    mask = _evaluate_single_condition(work, condition)
-    mask = mask.fillna(False).astype(bool)
+    # 0.2.13：求值走 condition_kernel._mask_for（两段式内聚——结构化
+    # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
+    from core.analysis.condition_kernel import _mask_for
+    mask = _mask_for(work, condition)
 
     # 统计段：request_start 之前的 warmup 前缀只用不算
     req_ts: pd.Timestamp | None = None

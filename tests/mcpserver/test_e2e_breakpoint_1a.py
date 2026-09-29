@@ -99,7 +99,7 @@ def test_breakpoint_1a_full_research_loop(live_api):
     # 3) 登记假设（声明 1 月区间）
     reg = api.post("/api/research/hypotheses", {
         "conditions": {
-            "when_conditions": [{"subject": "rsi_14", "action": "lt", "target": 35}],
+            "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         },
         "statement": "RSI 超卖后价格倾向修复",
@@ -115,7 +115,7 @@ def test_breakpoint_1a_full_research_loop(live_api):
     analysis = api.post("/api/research/analysis", {
         "template": "condition_stats",
         "params": {"indicator": "RSI", "params": {"period": 14},
-                   "condition": {"subject": "rsi_14", "action": "lt", "target": 35}},
+                   "condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}},
         "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                        "start": "2024-02-05T00:00:00Z", "end": "2024-03-01T00:00:00Z"},
         "hypothesis_id": hid,

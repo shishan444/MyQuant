@@ -275,7 +275,8 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: Lis
     logic = "AND"
     for cond in conditions:
         logic = cond.get("logic", "AND")
-        mask = _evaluate_single_condition(df, cond, warnings)
+        from core.analysis.condition_kernel import _mask_for
+        mask = _mask_for(df, cond)   # 0.2.13 两段式（同 rule_engine）
         masks.append(mask)
 
     if not masks:
@@ -360,11 +361,22 @@ def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
         col = subject_map[subject]
         return df[col] if col in df.columns else None
 
-    # Try to find indicator column
-    matches = [c for c in df.columns if subject.lower().replace("_", "") in c.lower().replace("_", "")]
-    if matches:
-        return df[matches[0]]
-
+    # 0.2.13：模糊子串兜底退役（结构化引用+校验前置后失联即工程错误）；
+    # 注册表前缀名（Lab 老通道公开形制）做确定性归一——前缀精确匹配
+    # output_fields 后经 resolve 还原默认参数列（精确翻译，非模糊猜测）；
+    # 其余未命中返回 None（消费方全 False 安全降级契约不变）
+    if subject in df.columns:
+        return df[subject]
+    from core.features.registry import INDICATOR_REGISTRY
+    for name, defn in INDICATOR_REGISTRY.items():
+        if subject in defn.output_fields:
+            from core.analysis.registry_meta import default_params_for
+            from core.features.registry import resolve_indicator_column
+            col = resolve_indicator_column(
+                name, default_params_for(name), defn.output_fields[0])
+            if col in df.columns:
+                return df[col]
+            return None
     return None
 
 

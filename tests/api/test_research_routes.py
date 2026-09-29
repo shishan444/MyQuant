@@ -112,7 +112,7 @@ class TestHypothesisRegistration:
     def test_indicator_column_form_accepted(self, api_client):
         """subject 引用指标输出列形制（ema_50）合法。"""
         good = {
-            "when_conditions": [{"subject": "ema_50", "action": "cross_above", "target": "close"}],
+            "when_conditions": [{"subject": {"indicator": "EMA", "params": {"period": 50}}, "action": "cross_above", "target": "close"}],
             "then_conditions": [{"subject": "close", "action": "gt", "target": 0}],
         }
         resp = _register(api_client, conditions=good)
@@ -337,7 +337,7 @@ class TestAnalysisAndReport:
         resp = api_client.post("/api/research/analysis", json={
             "template": "condition_stats",
             "params": {"indicator": "RSI", "params": {"period": 14},
-                       "condition": {"subject": "rsi_14", "action": "lt", "target": 40}},
+                       "condition": {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 40}},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                            "start": "2024-02-10T00:00:00Z", "end": "2024-03-25T00:00:00Z"},
         })

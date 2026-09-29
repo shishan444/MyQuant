@@ -105,9 +105,13 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_signal_columns() -> Any:
-        """可用信号列（内置 ∪ 插件，标注来源与 scopes 可引用域）——假设
-        条件 subject 合法引用集。scopes 三域含义：hypothesis=可作假设条件
-        subject；analysis=可作分析模板的列引用（原始列模板——指标分析走
+        """可用信号列（内置 ∪ 插件，标注来源与 scopes 可引用域和
+        reference_form 引用形制）——假设条件 subject 合法引用集。引用
+        形制（0.2.13 统一）：参数化指标为结构化 {indicator, params,
+        field}（条目 reference_form.params_space 为参数空间、多输出
+        指标 field 从 output_fields 选一必填）；基础列/插件列为字符串
+        精确名。scopes 三域含义：hypothesis=可作假设条件 subject；
+        analysis=可作分析模板的列引用（原始列模板——指标分析走
         condition_stats 的 indicator 参数，指标列此项为 false）；strategy=
         可作策略信号源。"""
         return api.get("/api/research/signals")
@@ -131,7 +135,9 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_hypotheses(status: Optional[str] = None, page: int = 1) -> Dict[str, Any]:
-        """研究假设列表（含状态与区间）。"""
+        """研究假设列表（含状态与区间；conditions 为结构化混合形制——
+        0.2.13 起参数化指标 subject 为 {indicator, params, field} 对象，
+        历史留痕可能仍含字符串编码形）。"""
         params = {"page": page}
         if status:
             params["status"] = status
@@ -140,7 +146,8 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def get_hypothesis(hypothesis_id: str) -> Dict[str, Any]:
-        """单个假设详情（结构化条件、状态、区间）。"""
+        """单个假设详情（结构化条件、状态、区间；subject 混合形制——
+        结构化指标对象或字符串精确名）。"""
         return api.get(f"/api/research/hypotheses/{hypothesis_id}")
 
     @mcp.tool()
@@ -208,8 +215,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         register_hypothesis.provenance 回链；其余候选用 condition_stats
         逐条独立复核）。param_sweep 参数稳健性检查（第③步检查①，快路径
         同步直返）：params.indicator（指标名）+ params.condition（结构化
-        {subject, action, target}——扫描候选同形制直接喂入，subject 为列名
-        且须属于该指标输出列）+ params.sweep（{axis:"target", values:"auto"
+        {subject, action, target}——subject 混合形制：参数化指标
+        {indicator, params, field} 结构化对象或字符串精确名（扫描候选
+        同形制直接喂入，解析出的列须属于该指标输出列）+ params.sweep（{axis:"target", values:"auto"
         或数值列表——auto 取与扫描同源的共享刻度）+ params.forward_bars。
         三道门内建不可调（资格门样本≥30/真伪门 BH 后 q<0.05 且方向与中心
         一致/连续门相邻有效点≥2），结论 plateau|spike|indeterminate|
@@ -243,8 +251,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             indicator: Optional[str] = None) -> Dict[str, Any]:
         """案例抽查（第③步检查③——眼见为实）：候选条件或点名时间戳的
         真实触发案例窗口，全流程唯一让原始 K 线进入上下文的通道。selector
-        两形态互斥：{condition:{subject,action,target}}（扫描候选同形制
-        直喂，indicator 必填供 warmup 推导）或 {timestamps:[...]}（点名
+        两形态互斥：{condition:{subject,action,target}}（subject 混合形制：
+        参数化指标 {indicator, params, field} 结构化或字符串精确名——
+        扫描候选同形制直喂，indicator 必填供 warmup 推导）或 {timestamps:[...]}（点名
         ≤5，自带定位不传 start/end）。硬上限：limit ≤5（缺省 3，命中
         超限等距取样首尾保底，n_matched 披露命中总数）、context_bars
         ≤20（缺省 8，触发点前后各取）。start 缺省=全量数据集+effective_start
@@ -304,8 +313,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             data_ranges: list[dict[str, Any]],
             provenance: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
-        对象列表；subject 须经 list_signal_columns 校验；data_ranges 为
-        {symbol,timeframe,start,end} 对象列表（半开区间）。同条件集+区间集
+        对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
+        {indicator, params, field}（多输出指标 field 必填，参数空间经
+        list_indicators 查询）、基础列/插件列用字符串精确名（经
+        list_signal_columns 校验）；字符串编码形（如 rsi_14）已关闭。
+        data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间）。同条件集+区间集
         重复登记返回既有 id（duplicated=true）。provenance={task_id,
         candidate_fingerprint} 可选——引用扫描候选来源（screen_patterns
         输出的候选指纹），登记后该扫描区间自动进入判定并集（同区间
@@ -440,7 +452,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                               window: int = 0, step: int = 20,
                               target_horizon: int = 4) -> Dict[str, Any]:
         """配置模型插件（walk-forward 滚动回归；异步训练 202+task_id，
-        轮询 get_analysis_task；失败产生 rejected 记录可查）。"""
+        轮询 get_analysis_task；失败产生 rejected 记录可查）。features
+        混合形制（0.2.13）：参数化指标 {indicator, params, field} 结构化
+        对象 + 基础列/插件列字符串精确名（校验即解析，训练按同参数现算）。"""
         return api.post("/api/research/plugins/model", {
             "name": name, "features": features, "template": template,
             "params": {"window": window, "step": step},
