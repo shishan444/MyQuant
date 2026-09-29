@@ -121,7 +121,7 @@ def test_http_transport_full_chain(mcp_http_server):
                 assert len(payload) == 47
 
                 reg = await session.call_tool("register_hypothesis", {
-                    "when_conditions": [{{"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
+                    "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                          "target": 35}],
                     "then_conditions": [{"subject": "close", "action": "gt",
                                          "target": 0}],

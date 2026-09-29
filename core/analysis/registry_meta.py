@@ -114,7 +114,7 @@ def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
     columns: List[Dict[str, Any]] = []
     for meta in indicator_metadata():
         columns.append({
-            "column_key": meta["name"],  # 内置以指标名为引用键（条件 subject 引用形制）
+            "column_key": meta["name"],
             "output_fields": meta["output_fields"],
             "source": "builtin",
             "category": meta["category"],
@@ -122,6 +122,13 @@ def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
             "strategy_visible": True,
             "version": None,
             "scopes": _scopes_for("builtin", True),
+            # 0.2.13 引用形制直出：结构化 {indicator, params, field} 的构造
+            # 依据（参数空间 + 输出列清单）；多输出指标 field 必填
+            "reference_form": {
+                "kind": "structured",
+                "params_space": meta["params"],
+                "note": "引用形制 {indicator, params, field}；"
+                        "多输出指标 field 必填（output_fields 选一）"},
         })
     for entry in list_signal_registry_entries(db_path, only_visible=True):
         columns.append({
@@ -133,5 +140,8 @@ def available_signal_columns(db_path: Path) -> List[Dict[str, Any]]:
             "strategy_visible": bool(entry["strategy_visible"]),
             "version": entry["version"],
             "scopes": _scopes_for(entry["source"], bool(entry["strategy_visible"])),
+            "reference_form": {
+                "kind": "string",
+                "note": "插件列以注册列名（字符串精确名）引用"},
         })
     return columns

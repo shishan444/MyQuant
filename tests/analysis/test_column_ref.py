@@ -219,3 +219,57 @@ def test_base_columns_registry_intact():
     """基础列清单自 hypothesis_service 移入后内容不变（迁移完整性）。"""
     assert {"open", "high", "low", "close", "volume", "trades",
             "open_interest", "funding_rate"} <= BASE_SUBJECT_COLUMNS
+
+
+# ---------------------------------------------------------------- 五域集成锚
+
+class TestFiveDomainIntegration:
+    """T3 五域关键锚（登记→翻译→取列 N4 全链）。"""
+
+    def test_macd_three_param_register_translate_and_column(self, db_path):
+        from core.analysis.executor import ensure_research_tables
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.persistence.db_ext import init_db_ext
+        init_db_ext(db_path)
+        ensure_research_tables(db_path)
+        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2024-01-01", "end": "2024-02-01"}]
+        hid = register_hypothesis(db_path, conditions={
+            "when_conditions": [{"subject": {"indicator": "MACD",
+                                             "params": {"fast": 12, "slow": 26,
+                                                        "signal": 9},
+                                             "field": "signal"},
+                                 "action": "lt", "target": 0}],
+            "then_conditions": [{"subject": {"indicator": "RSI",
+                                             "params": {"period": 14}},
+                                 "action": "gt", "target": 50}]},
+            statement="macd", data_ranges=rng)["hypothesis_id"]
+        res = translate_hypothesis(db_path, hypothesis_id=hid)
+        assert res["genes"][0] == "MACD(signal)"
+        # N4 取列锚：field 语义名 → executor resolve 精确取 macd_signal 列
+        from core.persistence.db_ext import get_strategy
+        import json as _json
+        strat = get_strategy(db_path, res["strategy_id"])
+        dna = _json.loads(strat["dna_json"] if "dna_json" in strat.keys()
+                          else strat["dna"])
+        gene = dna["signal_genes"][0]
+        assert gene["field"] == "signal"
+        assert gene["params"] == {"fast": 12, "slow": 26, "signal": 9}
+        assert encode_column_ref("MACD", gene["params"], gene["field"]) == \
+            "macd_signal_12_26_9"
+
+    def test_encoded_string_rejected_at_registration(self, db_path):
+        from core.analysis.executor import ensure_research_tables
+        from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+        ensure_research_tables(db_path)
+        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2024-01-01", "end": "2024-02-01"}]
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(db_path, conditions={
+                "when_conditions": [{"subject": "rsi_14",
+                                     "action": "lt", "target": 30}],
+                "then_conditions": [{"subject": "close",
+                                     "action": "gt", "target": 0}]},
+                statement="s", data_ranges=rng)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"

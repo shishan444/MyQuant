@@ -116,8 +116,12 @@ inconclusive 记录（0.2.11 证据闸门：样本不足/每笔收益均值 95% 
 ```
 - 条件是机器判定的唯一来源：你登记的 when/then 结构化条件会被
   翻译与验证，statement 措辞只作展示。
-- subject 必须引用可用信号列（GET list_signal_columns 查询；
-  内置指标列形如 ema_50、rsi_14，插件列精确名；条目标注可引用域）。
+- subject 混合形制（0.2.13 统一）：参数化指标用结构化
+  {indicator, params, field}（GET list_indicators 查参数空间；多输出
+  指标 field 必填）；基础列与插件列用字符串精确名（GET
+  list_signal_columns 查询，条目附 reference_form 引用形制与可引用域）。
+  字符串编码形（如 rsi_14）入口已关闭——同列同写法在假设、模型特征、
+  分析模板三域通用。
 """
 
 
