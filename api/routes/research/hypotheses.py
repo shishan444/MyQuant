@@ -40,9 +40,12 @@ def register_hypothesis(
     """登记假设：结构化 WHEN/THEN 条件 + 人话陈述 + 数据区间。"""
     try:
         # symbol/timeframe 在数据目录可达（422 RESEARCH_SYMBOL_NOT_FOUND）
-        from core.data.mtf_loader import find_parquet
+        from core.data.mtf_loader import find_parquet, safe_symbol
         for i, r in enumerate(payload.data_ranges):
-            if find_parquet(data_dir, r.symbol, r.timeframe) is None:
+            # F-1：探测统一走 safe_symbol 清洗（与下方 timeframe 探测
+            # 同函数一致——原始 symbol 直传在符号含分隔符时会变成
+            # 存在性 oracle，纯收紧）
+            if find_parquet(data_dir, safe_symbol(r.symbol), r.timeframe) is None:
                 raise ResearchError(
                     "RESEARCH_SYMBOL_NOT_FOUND",
                     f"data_ranges[{i}] 无数据: {r.symbol} {r.timeframe}",
@@ -62,8 +65,7 @@ def register_hypothesis(
                     and tf_key != payload.data_ranges[0].timeframe):
                 _required_tfs.append(tf_key)
         if _required_tfs:
-            import re as _re
-            safe = _re.sub(r"[^A-Za-z0-9]", "", payload.data_ranges[0].symbol)
+            safe = safe_symbol(payload.data_ranges[0].symbol)
             _available = [tf for tf in TF_SECONDS
                           if find_parquet(data_dir, safe, tf) is not None]
             for tf_key in _required_tfs:

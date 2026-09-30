@@ -256,11 +256,8 @@ def _validate_target(target: Any, available_cols: pd.Index) -> None:
         if target not in available_cols:
             # 0.2.14 放宽：编码形指标列名（decode 可解析）放行——
             # 求值走 _mask_for 任意参数现算路径（D-r3）
-            from core.analysis.column_ref import ColumnRefError, decode_column_ref
-            try:
-                decoded = decode_column_ref(target)
-            except ColumnRefError:
-                decoded = None
+            from core.analysis.column_ref import try_decode_column_ref
+            decoded = try_decode_column_ref(target)
             if decoded is None:
                 raise ResearchError(
                     "RESEARCH_COLUMN_NOT_AVAILABLE",
@@ -405,14 +402,17 @@ def inspect_cases(
                     detail={"param": "timeframe",
                             "timeframe": timeframe,
                             "legal_range": sorted(TF_SECONDS)})
-            if TF_SECONDS[_tf_key] < TF_SECONDS[timeframe]:
+            # 方向判定走权威 assert_higher_tf（design B1「登记侧与求值侧
+            # 共用判定」——message 随之统一，含聚合歧义说明）
+            from core.data.mtf_alignment import assert_higher_tf
+            try:
+                assert_higher_tf(_tf_key, timeframe)
+            except ValueError as exc:
                 raise ResearchError(
-                    "TIMEFRAME_NOT_HIGHER",
-                    f"timeframe {_tf_key} 低于基准周期 {timeframe}——"
-                    "低周期条件请降基准表达（基准降为该低周期、"
-                    "其余条件挂高周期）",
+                    "TIMEFRAME_NOT_HIGHER", str(exc),
                     detail={"param": "condition.timeframe",
-                            "timeframe": _tf_key, "base_timeframe": timeframe})
+                            "timeframe": _tf_key,
+                            "base_timeframe": timeframe}) from exc
         if indicator is None:
             # 0.2.14：结构化 subject 自带指标名（indicator 参数可省——
             # 假设 when 条件无需转写直接喂入）

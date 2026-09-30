@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,11 +56,10 @@ class MtfEvalContext:
         if tf in self._raw:
             return self._raw[tf]
         from core.analysis.hypothesis_service import ResearchError
-        from core.data.mtf_loader import find_parquet
+        from core.data.mtf_loader import find_parquet, safe_symbol
         from core.data.storage import load_parquet
 
-        safe_symbol = re.sub(r"[^A-Za-z0-9]", "", self.symbol)
-        path = find_parquet(Path(self.data_dir), safe_symbol, tf)
+        path = find_parquet(Path(self.data_dir), safe_symbol(self.symbol), tf)
         if path is None:
             raise ResearchError(
                 "RESEARCH_SYMBOL_NOT_FOUND",
@@ -164,7 +162,7 @@ def _mask_higher(
 ) -> pd.Series:
     """掩码投影路径：整条件高周期轴求值 → asof_completed 布尔投影。"""
     from core.analysis.column_ref import (
-        ColumnRefError, decode_column_ref, resolve_column_ref,
+        resolve_column_ref, try_decode_column_ref,
     )
     from core.data.mtf_alignment import (
         TF_SECONDS, high_tf_warmup_span, project_completed_bool,
@@ -180,6 +178,7 @@ def _mask_higher(
     subject = condition["subject"]
     refs: List[tuple] = []
     cdef = None
+    subject_decoded = None   # 编码列名宽容解码（refs 与求值两段共用一次）
     if isinstance(subject, dict):
         cdef = resolve_column_ref(subject)
         refs.append((cdef.indicator, dict(cdef.params)))
@@ -188,20 +187,17 @@ def _mask_higher(
         # （param_sweep/regime_split），高周期轴无矩阵列——decode 对称
         # target：可解析即并入 warmup 收敛需求（decode 边界已实测：
         # close/ema_20_4h 不可解析、rsi_14 往返一致）
-        try:
-            decoded_s = decode_column_ref(subject)
-        except ColumnRefError:
-            decoded_s = None
-        if decoded_s is not None:
-            refs.append((decoded_s["indicator"], decoded_s.get("params") or {}))
+        subject_decoded = try_decode_column_ref(subject)
+        if subject_decoded is not None:
+            refs.append((subject_decoded["indicator"],
+                         subject_decoded.get("params") or {}))
     target = condition.get("target")
+    target_decoded = None
     if isinstance(target, str):
-        try:
-            decoded = decode_column_ref(target)
-        except ColumnRefError:
-            decoded = None
-        if decoded is not None:
-            refs.append((decoded["indicator"], decoded.get("params") or {}))
+        target_decoded = try_decode_column_ref(target)
+        if target_decoded is not None:
+            refs.append((target_decoded["indicator"],
+                         target_decoded.get("params") or {}))
 
     # 惰性装载高周期 raw（warmup 检查基准=求值域起点 eval_start——
     # 无则 work.index[0] 装载域起点，保守方向：更早的基准只会更严）
@@ -226,22 +222,14 @@ def _mask_higher(
     col = subject
     if cdef is not None:
         col = _compute_into(eval_df, cdef)
-    elif isinstance(subject, str) and subject not in eval_df.columns:
+    elif (isinstance(subject, str) and subject not in eval_df.columns
+          and subject_decoded is not None):
         # P-5：与 target 对称——编码列名高周期轴 decode 现算；
         # 不可解析保持列缺失全 False 契约（基准路径同款）
-        try:
-            decoded_s = decode_column_ref(subject)
-        except ColumnRefError:
-            decoded_s = None
-        if decoded_s is not None:
-            col = _compute_into(eval_df, resolve_column_ref(decoded_s))
-    if isinstance(target, str) and target not in eval_df.columns:
-        try:
-            decoded = decode_column_ref(target)
-        except ColumnRefError:
-            decoded = None
-        if decoded is not None:
-            _compute_into(eval_df, resolve_column_ref(decoded))
+        col = _compute_into(eval_df, resolve_column_ref(subject_decoded))
+    if (isinstance(target, str) and target not in eval_df.columns
+            and target_decoded is not None):
+        _compute_into(eval_df, resolve_column_ref(target_decoded))
     eval_cond = dict(condition)
     eval_cond["subject"] = col
     from core.validation.engine import _evaluate_single_condition

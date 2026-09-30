@@ -351,6 +351,19 @@ def decode_column_ref(col_name: str) -> Optional[Dict[str, Any]]:
     return hits[0]
 
 
+def try_decode_column_ref(col_name: str) -> Optional[Dict[str, Any]]:
+    """编码列名宽容解码：无匹配或歧义均返回 None。
+
+    「可解析才并入/现算」分派语义的统一入口（_mask_higher 的
+    subject/target 高周期现算、case_inspection 的 target 放行）——
+    歧义与无匹配同归不可解析（歧义列名属迁移阻塞清单事务，不猜测）。
+    """
+    try:
+        return decode_column_ref(col_name)
+    except ColumnRefError:
+        return None
+
+
 # ---------------------------------------------------------------- canonical
 
 def canonicalize_ref(ref: Any, db_path: Optional[Path] = None) -> Any:

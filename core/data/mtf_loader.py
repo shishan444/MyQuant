@@ -25,6 +25,15 @@ _TF_ALIASES: dict[str, list[str]] = {
 }
 
 
+def safe_symbol(symbol: str) -> str:
+    """symbol → 数据目录文件名段（find_parquet 的 safe_symbol 契约单一实现）。
+
+    剥离非字母数字字符（"BTC-USDT" 与 "BTCUSDT" 定位同一文件）——
+    消费方不各自内联正则（条件级高周期装载/登记可达探测等同族入口）。
+    """
+    return re.sub(r"[^A-Za-z0-9]", "", symbol)
+
+
 def find_parquet(data_dir: Path, safe_symbol: str, timeframe: str) -> Optional[Path]:
     """Find parquet file for symbol+timeframe, trying known aliases."""
     primary = data_dir / f"{safe_symbol}_{timeframe}.parquet"
