@@ -78,6 +78,27 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
     return max(default_floor, max_period * 3)
 
 
+def indicator_convergence(indicator: str, params: Dict[str, Any]) -> int:
+    """指标真实收敛需求（条件实际参数粒度——0.2.14 N1）。
+
+    周期类参数（bar 数语义）的**实际取值**之和；params 缺键补注册表
+    default。与 ``_indicator_lookback``（注册表 max 保守取向）区分：
+    高周期轴 warmup（high_tf_warmup_span）用本函数——机械沿用 max
+    会把 RSI(14) 当 RSI(50) 预热（3d 轴多吃 108 bar）。
+
+    Raises:
+        KeyError: 引用不存在的指标。
+    """
+    defn = INDICATOR_REGISTRY.get(indicator)
+    if defn is None:
+        raise KeyError(f"未知指标: {indicator}")
+    total = 0
+    for key in _PERIOD_LIKE_PARAMS:
+        if key in defn.params:
+            total += int(params.get(key, defn.params[key].default))
+    return total
+
+
 def default_params_for(indicator: str) -> Dict[str, Any]:
     """注册表默认参数单组（add-query-indicator 自 case_inspection 私有
     ``_default_params_for`` 提升——0.2.8 预留的「任意参数现算属 0.2.9

@@ -177,11 +177,18 @@ class TestSelectorAndLimits:
         assert "legal_range" in ei.value.detail
 
     def test_subject_not_in_output_columns(self, env):
+        """字符串 subject 越列仍拒（字符串不携带参数——默认边界即语义）；
+        结构化 subject（异指标）0.2.14 起放行走任意参数现算（D-r3）。"""
         with pytest.raises(ResearchError) as ei:
-            _call(env, selector={"condition": {"subject": {"indicator": "ADX", "params": {"period": 14}},
+            _call(env, selector={"condition": {"subject": "funding_rate",
                                                "action": "lt", "target": 30.0}})
         assert _err(ei).code == "RESEARCH_COLUMN_NOT_AVAILABLE"
         assert "rsi_14" in ei.value.detail["legal_range"]
+        # 结构化异指标：resolve 校验即放行（非默认参数条件直接喂入）
+        out = _call(env, selector={"condition": {
+            "subject": {"indicator": "ADX", "params": {"period": 14}},
+            "action": "lt", "target": 30.0}})
+        assert out["n_matched"] >= 0   # 成功执行（命中数由数据决定）
 
     def test_scan_candidate_direct_feed(self, env):
         """扫描候选三键直喂零翻译：n_matched 与独立推导一致。"""
@@ -372,8 +379,8 @@ class TestDisciplineAndAudit:
         base = len(rr.list_research_log(env["db"]))
         with pytest.raises(ResearchError):  # 结构校验（装载前）
             _call(env, limit=8)
-        with pytest.raises(ResearchError):  # 列校验（装载现算后）
-            _call(env, selector={"condition": {"subject": {"indicator": "ADX", "params": {"period": 14}},
+        with pytest.raises(ResearchError):  # 列校验（装载现算后——字符串越列）
+            _call(env, selector={"condition": {"subject": "funding_rate",
                                                "action": "lt", "target": 30.0}})
         with pytest.raises(ResearchError):  # timestamps 超发
             _call(env, selector={"timestamps": [

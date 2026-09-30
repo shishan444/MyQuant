@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.condition_kernel import _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.regime_segments import GATES, build_segments
 from core.analysis.result import AnalysisResult, build_result
@@ -96,6 +96,7 @@ def regime_split(
     timeframe: str = "1h",
     request_start: str | pd.Timestamp | None = None,
     hypothesis_id: str | None = None,
+    mtf: "MtfEvalContext | None" = None,
 ) -> AnalysisResult:
     """行情分段（状态序列直切）+ 可选逐段条件统计。
 
@@ -193,7 +194,7 @@ def regime_split(
     by_segment: Optional[List[Dict[str, Any]]] = None
     if condition is not None:
         fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
-        stat_mask_all = _mask_for(df, condition)
+        stat_mask_all = _mask_for(df, condition, mtf=mtf)
         by_segment = []
         for i, s in enumerate(segments):
             in_seg = pd.Series(False, index=df.index)

@@ -120,6 +120,13 @@ def run_validation(
     data_dir: Path = Depends(get_data_dir),
 ) -> ValidateResponse:
     """Validate a WHEN->THEN hypothesis against historical data."""
+    # 0.2.14：Lab 链掩码投影——路由层构建多周期求值上下文（F2：
+    # base_tf=effective_base，与 referenced_tfs 收集同基准）
+    from core.analysis.condition_kernel import MtfEvalContext
+
+    mtf_ctx = MtfEvalContext(
+        data_dir=data_dir, symbol=payload.pair,
+        base_tf=payload.base_timeframe or payload.timeframe)
     result = validate_hypothesis(
         pair=payload.pair,
         timeframe=payload.timeframe,
@@ -130,6 +137,7 @@ def run_validation(
         indicator_params=payload.indicator_params,
         data_dir=str(data_dir),
         base_timeframe=payload.base_timeframe,
+        mtf=mtf_ctx,
     )
 
     return ValidateResponse(
@@ -183,6 +191,11 @@ def run_rule_validation(
     data_dir: Path = Depends(get_data_dir),
 ) -> RuleValidateResponse:
     """Evaluate entry/exit rule conditions and return paired trades."""
+    # 0.2.14：Lab 规则链掩码投影（执行周期=最短周期即基准）
+    from core.analysis.condition_kernel import MtfEvalContext
+
+    mtf_ctx = MtfEvalContext(
+        data_dir=data_dir, symbol=payload.pair, base_tf=payload.timeframe)
     result = evaluate_rules(
         symbol=payload.pair,
         timeframe=payload.timeframe,
@@ -191,6 +204,7 @@ def run_rule_validation(
         entry_conditions=[c.model_dump() for c in payload.entry_conditions],
         exit_conditions=[c.model_dump() for c in payload.exit_conditions],
         data_dir=str(data_dir),
+        mtf=mtf_ctx,
     )
 
     return RuleValidateResponse(

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -12,6 +12,9 @@ from core.data.storage import load_parquet
 from core.features.indicators import compute_all_indicators
 from core.validation.engine import _evaluate_single_condition, _resolve_subject, _resolve_target
 from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
+
+if TYPE_CHECKING:
+    from core.analysis.condition_kernel import MtfEvalContext
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +67,7 @@ def evaluate_rules(
     entry_conditions: List[Dict[str, Any]],
     exit_conditions: List[Dict[str, Any]],
     data_dir: Optional[str] = None,
+    mtf: Optional["MtfEvalContext"] = None,
 ) -> RuleResult:
     """Evaluate entry/exit rule conditions and generate paired trades.
 
@@ -144,8 +148,8 @@ def evaluate_rules(
     # ------------------------------------------------------------------
     # 4. Evaluate entry and exit conditions
     # ------------------------------------------------------------------
-    entry_mask = _evaluate_rule_conditions(enhanced_df, entry_conditions, warnings)
-    exit_mask = _evaluate_rule_conditions(enhanced_df, exit_conditions, warnings)
+    entry_mask = _evaluate_rule_conditions(enhanced_df, entry_conditions, warnings, mtf=mtf)
+    exit_mask = _evaluate_rule_conditions(enhanced_df, exit_conditions, warnings, mtf=mtf)
 
     # ------------------------------------------------------------------
     # 5. Generate signals
@@ -206,6 +210,7 @@ def _evaluate_rule_conditions(
     df: pd.DataFrame,
     conditions: List[Dict[str, Any]],
     warnings: List[str],
+    mtf: "MtfEvalContext | None" = None,
 ) -> pd.Series:
     """Evaluate a list of conditions with per-condition logic operators.
 
@@ -227,7 +232,7 @@ def _evaluate_rule_conditions(
     for i, cond in enumerate(conditions):
         # 0.2.13：两段式（结构化 subject 先按 params 现算再精确列名求值；
         # 列缺失全 False 降级与 _evaluate_single_condition 语义一致）
-        mask = _mask_for(df, cond)
+        mask = _mask_for(df, cond, mtf=mtf)
         logic = cond.get("logic", "AND") if i > 0 else None
 
         if result is None:

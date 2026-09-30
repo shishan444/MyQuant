@@ -12,7 +12,9 @@ column_ref.canonical_ref 规范化；字符串 strip 后原样与历史指纹逐
 - action：注册表枚举原文原样（近义词不合并——语义不同即不同身份）；
 - target：数值归一（int/float 同值同指纹，25 与 25.0 同指纹；整数
   值去掉浮点尾巴），字符串（列名）strip 原样；
-- timeframe：参与指纹（同名列跨周期不算精确复用——数据不同）。
+- timeframe：**有效周期**参与（0.2.14 归一——condition 自带
+  timeframe 键时以其为准，否则以调用方传入的任务周期为准；显式写
+  基准周期与缺省天然同指纹。同名列跨周期不算精确复用——数据不同）。
 
 分隔符 \\x1f（单元分隔符）防字段拼接歧义；sha256 取前 16 hex。
 """
@@ -48,6 +50,13 @@ def _normalize_target(target: Any) -> str:
         return f"s:{s}"
 
 
+def _effective_timeframe(condition: Dict[str, Any], timeframe: str) -> str:
+    """有效周期归一（0.2.14 B4）：condition 自带 timeframe 键优先，
+    否则用任务周期——显式写基准周期与缺省天然同指纹（函数内归一，
+    五调用方传任务周期实参即可，无需感知条件键）。"""
+    return str(condition.get("timeframe") or timeframe).strip()
+
+
 def canonical_condition_hash(
     condition: Dict[str, Any], timeframe: str
 ) -> str:
@@ -55,8 +64,9 @@ def canonical_condition_hash(
 
     Args:
         condition: {subject, action, target} 单条件（假设 when/then
-            条目与扫描候选同形制）。
-        timeframe: bar 周期键（如 "1h"）——参与指纹。
+            条目与扫描候选同形制；MAY 携带 timeframe 键）。
+        timeframe: 任务周期键（如 "1h"）——condition 无 timeframe 键
+            时作为有效周期参与指纹。
 
     Returns:
         16 hex 摘要；同语义条件（仅数值类型差异）同指纹。
@@ -74,7 +84,7 @@ def canonical_condition_hash(
         canonical_ref(condition["subject"]),
         str(condition["action"]).strip(),
         _normalize_target(condition["target"]),
-        str(timeframe).strip(),
+        _effective_timeframe(condition, timeframe),
     ]
     digest = hashlib.sha256(_SEP.join(parts).encode("utf-8")).hexdigest()
     return digest[:16]
@@ -89,6 +99,7 @@ def legacy_compatible_hash(condition: Dict[str, Any], timeframe: str) -> str:
 
     迁移是一次性原子切（无混合态）：旧留痕 × 迁移后假设靠本函数影子
     命中，新留痕与新假设走 canonical_condition_hash——单向补影即完备。
+    有效周期归一同构（0.2.14 B4：condition 自带 timeframe 键优先）。
     """
     from core.analysis.column_ref import decode_column_ref, encode_column_ref
     subject = condition["subject"]
@@ -100,7 +111,7 @@ def legacy_compatible_hash(condition: Dict[str, Any], timeframe: str) -> str:
         str(subject).strip(),
         str(condition["action"]).strip(),
         _normalize_target(condition["target"]),
-        str(timeframe).strip(),
+        _effective_timeframe(condition, timeframe),
     ]
     digest = hashlib.sha256(_SEP.join(parts).encode("utf-8")).hexdigest()
     return digest[:16]

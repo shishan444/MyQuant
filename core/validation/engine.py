@@ -4,7 +4,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
+from typing import TYPE_CHECKING
+
 from core.features.indicators import compute_all_indicators
+
+if TYPE_CHECKING:
+    from core.analysis.condition_kernel import MtfEvalContext
 from core.data.storage import load_parquet
 
 
@@ -56,6 +61,7 @@ def validate_hypothesis(
     then_window: int = 8,
     data_dir: Optional[str] = None,
     base_timeframe: Optional[str] = None,
+    mtf: Optional["MtfEvalContext"] = None,
 ) -> ValidationResult:
     """Validate a WHEN->THEN hypothesis against historical data.
 
@@ -136,8 +142,8 @@ def validate_hypothesis(
         except Exception as exc:
             warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
 
-    # Evaluate WHEN conditions
-    when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings)
+    # Evaluate WHEN conditions（mtf 上下文透传——Lab 链高周期条件掩码投影）
+    when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings, mtf=mtf)
 
     # Find trigger indices
     trigger_indices = enhanced_df.index[when_mask].tolist()
@@ -266,7 +272,11 @@ def validate_hypothesis(
     )
 
 
-def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: List[str] | None = None) -> pd.Series:
+def _evaluate_conditions(
+    df: pd.DataFrame, conditions: List[Dict],
+    warnings: List[str] | None = None,
+    mtf: "MtfEvalContext | None" = None,
+) -> pd.Series:
     """Evaluate a list of conditions against a DataFrame."""
     if not conditions:
         return pd.Series(False, index=df.index)
@@ -276,7 +286,7 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: Lis
     for cond in conditions:
         logic = cond.get("logic", "AND")
         from core.analysis.condition_kernel import _mask_for
-        mask = _mask_for(df, cond)   # 0.2.13 两段式（同 rule_engine）
+        mask = _mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
         masks.append(mask)
 
     if not masks:

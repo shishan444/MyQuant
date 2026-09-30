@@ -95,3 +95,40 @@ class TestLegacyCompatibleHash:
                 == legacy_compatible_hash(legacy, "4h"))
         assert (canonical_condition_hash(structured, "4h")
                 != canonical_condition_hash(legacy, "4h"))  # 新算法区分形制
+
+
+class TestEffectiveTimeframe:
+    """0.2.14 有效周期归一（B4）：condition 自带 timeframe 键优先，
+    否则任务周期——显式基准=缺省同指纹；无键条件与 0.2.13 逐字节连续。"""
+
+    def test_无timeframe键_指纹与0213逐字节连续(self):
+        """冻结值字面量锚（0.2.13 终态指纹——函数内归一对无键条件零影响）。"""
+        assert canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25}, "1h"
+        ) == "caa63f6430826b34"
+
+    def test_显式基准周期_与缺省同指纹(self):
+        a = canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25}, "1h")
+        b = canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25,
+             "timeframe": "1h"}, "1h")
+        assert a == b
+
+    def test_高周期键_指纹以键为准而非任务周期(self):
+        a = canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25,
+             "timeframe": "4h"}, "1h")
+        b = canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25}, "4h")
+        assert a == b          # 同有效周期同指纹（跨入口一致）
+        c = canonical_condition_hash(
+            {"subject": "rsi_14", "action": "lt", "target": 25}, "1h")
+        assert a != c          # 高周期≠基准（同名列跨周期不算精确复用）
+
+    def test_字符串subject两算法一致保持(self):
+        cond = {"subject": "rsi_14", "action": "lt", "target": 25,
+                "timeframe": "4h"}
+        assert (legacy_compatible_hash(cond, "1h")
+                == legacy_compatible_hash(
+                    {"subject": "rsi_14", "action": "lt", "target": 25}, "4h"))
