@@ -19,7 +19,6 @@ from core.strategy.executor import (
     SignalSet,
     dna_to_signal_set,
     resample_signals,
-    _resample_pulse,
     evaluate_layer,
 )
 from core.strategy.validator import validate_dna
@@ -78,7 +77,11 @@ def test_role_none_serialization():
     assert restored.role is None
 
 def test_trend_signal_ffilled():
-    """Trend layer signals should be forward-filled (state signals)."""
+    """Trend layer signals: asof_completed 状态投影（0.2.14 收口）。
+
+    Day3 的 1d bar（00:00 开盘）收盘于 Day4 00:00——其 True 信号从
+    Day4 首 4h bar（index 24）起可见；Day3 内的 4h bar（18-23）处于
+    该 1d bar 形成期，不可见（旧开盘即见 ffill 为前视窗口）。"""
     high_tf_index = pd.date_range('2024-01-01', periods=10, freq='1D', tz='UTC')
     signal = pd.Series(False, index=high_tf_index)
     # Day 3 and onward: True (trend established)
@@ -88,11 +91,10 @@ def test_trend_signal_ffilled():
 
     result = resample_signals(signal, target_index)
 
-    # Day 3 starts at index 18 (3 days * 6 bars/day)
-    assert result.iloc[18] == True  # Day 3, first 4h bar
-    assert result.iloc[23] == True  # Day 3, last 4h bar
-    assert result.iloc[24] == True  # Day 4, first 4h bar (ffilled)
-    assert result.iloc[30] == True  # Day 5 (ffilled)
+    assert result.iloc[18] == False  # Day3 首 4h bar——1d bar 形成期不可见
+    assert result.iloc[23] == False  # Day3 末 4h bar——同上
+    assert result.iloc[24] == True   # Day4 首 4h bar——Day3 1d 收盘可见
+    assert result.iloc[30] == True   # Day5（状态延续）
 
 def test_execution_signal_not_ffilled():
     """Execution layer signals should NOT be forward-filled (pulse signals)."""
@@ -102,13 +104,14 @@ def test_execution_signal_not_ffilled():
 
     target_index = pd.date_range('2024-01-01', periods=40, freq='4h', tz='UTC')
 
-    result = _resample_pulse(signal, target_index)
+    from core.data.mtf_alignment import pulse_completed
+    result = pulse_completed(signal, target_index, pd.Timedelta(days=1))
 
-    # Only the exact matching bars should be True
-    # Day 3 starts at target_index[12] (each day has 6 four-hour bars)
+    # 脉冲 +tf 落位（0.2.14）：Day3 00:00 的脉冲收盘于 Day4 00:00——
+    # 落在 Day4 首 4h bar（index 24）；单 bar 脉冲非 ffill
     true_bars = result[result].index
-    # Pulse should only be True on bars that exactly match the source timestamp
-    assert len(true_bars) <= 1  # At most one matching timestamp
+    assert len(true_bars) == 1
+    assert true_bars[0] == target_index[24]
 
 def test_no_role_defaults_execution():
     """Layers without role should be treated as execution (no ffill)."""

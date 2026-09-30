@@ -327,16 +327,20 @@ def resample_values(
     series: pd.Series,
     target_index: pd.DatetimeIndex,
 ) -> pd.Series:
-    """Forward-fill numeric series to target index without bool conversion.
+    """数值上下文投影（0.2.14 asof_completed 收口——第四投影形态）。
 
-    Unlike resample_signals() which converts to bool, this preserves
-    float values for price levels and momentum data.
+    direction/price_levels/momentum 上下文同受纪律约束：高周期 bar T
+    的数值在 T+tf（收盘）后可见（现行开盘即见为前视窗口）。薄委托
+    mtf_alignment.project_completed（四链同一权威实现）；不做 bool
+    转换，首段 NaN 语义与既有形制一致。
     """
+    from core.data.mtf_alignment import infer_tf_delta, project_completed
+
     if series.empty or len(target_index) == 0:
         return pd.Series(np.nan, index=target_index)
 
-    reindexed = series.reindex(target_index, method="ffill")
-    return reindexed
+    return project_completed(
+        series, target_index, infer_tf_delta(series.index))
 
 
 def evaluate_layer_with_context(

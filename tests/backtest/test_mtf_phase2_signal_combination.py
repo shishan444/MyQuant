@@ -22,9 +22,9 @@ from core.strategy.dna import (
     StrategyDNA,
     TimeframeLayer,
 )
+from core.data.mtf_alignment import pulse_completed
 from core.strategy.executor import (
     dna_to_signal_set,
-    _resample_pulse,
     resample_signals,
 )
 
@@ -251,7 +251,9 @@ def test_resample_pulse_preserves_signals_within_window():
 
     source_signal = pd.Series(signal_values, index=source_dates)
 
-    result = _resample_pulse(source_signal, target_dates)
+    # 0.2.14 asof_completed：1h bar 09:00 收盘于 10:00——落在含 10:00
+    # 的 4h bar（08:00）上（+tf 落位替代窗口聚合）
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=1))
 
     assert isinstance(result, pd.Series)
     assert len(result) == len(target_dates)
@@ -266,7 +268,7 @@ def test_resample_pulse_no_false_positives():
     # All False signal
     source_signal = pd.Series(False, index=source_dates)
 
-    result = _resample_pulse(source_signal, target_dates)
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=1))
 
     assert not result.any(), "All-False source should produce all-False target"
 
@@ -282,11 +284,10 @@ def test_resample_pulse_multiple_signals_in_window():
 
     source_signal = pd.Series(signal_values, index=source_dates)
 
-    result = _resample_pulse(source_signal, target_dates)
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=1))
 
-    # Should have True at the 08:00 4h bar (index 2)
+    # 08:00/10:00 的收盘（09:00/11:00）都落在 08:00 4h bar——单 bar 承接
     assert result.iloc[2]
-    # Should NOT double-count
     assert result.sum() >= 1
 
 def test_resample_pulse_exact_match_still_works():
@@ -298,16 +299,18 @@ def test_resample_pulse_exact_match_still_works():
     signal_values = np.array([False, True, False, False, False, False])
     source_signal = pd.Series(signal_values, index=source_dates)
 
-    result = _resample_pulse(source_signal, target_dates)
+    # 同 grid 形制：bar1（04:00）脉冲收盘于 08:00——落 iloc[2]（含
+    # 08:00 的 bar）；开盘即落位的旧窗口聚合为前视形制
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=4))
 
-    assert result.iloc[1], "Exact timestamp match should be preserved"
+    assert result.iloc[2], "Pulse at 04:00 completes at 08:00 -> bar index 2"
 
 def test_resample_pulse_empty_source():
     """Empty source signal should return all-False."""
     target_dates = pd.date_range("2024-01-01", periods=6, freq="4h", tz="UTC")
     source_signal = pd.Series(dtype=bool)
 
-    result = _resample_pulse(source_signal, target_dates)
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=1))
 
     assert len(result) == len(target_dates)
     assert not result.any()
@@ -322,21 +325,20 @@ def test_resample_pulse_preserves_all_signals():
     source_count = source_signal.sum()
 
     target_dates = pd.date_range("2024-01-01", periods=6, freq="4h", tz="UTC")
-    result = _resample_pulse(source_signal, target_dates)
+    result = pulse_completed(source_signal, target_dates, pd.Timedelta(hours=1))
 
-    # Every source signal should map to some target bar
-    # Result count should be >= source_count grouped by windows
-    # More precisely: each target bar that has at least one source True should be True
+    # 0.2.14 +tf 落位：1h bar s 的脉冲收盘于 s+1h——落含 s+1h 的 4h bar
+    # （target t 捕获 s ⟺ s+1h ∈ [t, t+4h)，即 s ∈ [t-1h, t+3h)——
+    # 旧窗口聚合把 s=t+3h（收盘触界）错算进当前 bar，为前视形制）
     for i, target_ts in enumerate(target_dates):
-        # Find source bars in this window
+        close_ts = source_dates + pd.Timedelta(hours=1)
         if i + 1 < len(target_dates):
-            window_mask = (source_dates >= target_ts) & (source_dates < target_dates[i + 1])
+            capture = (close_ts >= target_ts) & (close_ts < target_dates[i + 1])
         else:
-            window_mask = source_dates >= target_ts
-        window_signals = source_signal[window_mask]
-        if window_signals.any():
+            capture = close_ts >= target_ts
+        if source_signal[capture].any():
             assert result.iloc[i], \
-                f"Target bar {target_ts} should be True (has {window_signals.sum()} source signals)"
+                f"Target bar {target_ts} should capture pulses closing inside it"
 
 # ── Integration: MTF signal set with fixed combination ──
 
@@ -370,7 +372,9 @@ def test_mtf_signal_set_no_roles_backward_compat():
     assert len(sig_set.entries) == len(enhanced_df)
 
 def test_resample_signals_still_forward_fills():
-    """resample_signals (trend layers) should still forward-fill correctly."""
+    """resample_signals (trend layers) 状态延续语义（0.2.14 asof_completed）：
+    04:00 的 4h 信号收盘于 08:00——08:00 起 True 状态窗延续至下次高周期
+    收盘（08:00 bar False 掩码于 12:00 起接管）。"""
     source_dates = pd.date_range("2024-01-01", periods=6, freq="4h", tz="UTC")
     target_dates = pd.date_range("2024-01-01", periods=24, freq="1h", tz="UTC")
 
@@ -380,9 +384,12 @@ def test_resample_signals_still_forward_fills():
 
     result = resample_signals(source_signal, target_dates)
 
-    # ffill from 04:00: bars 04:00 through 07:00 should be True
-    # (since next 4h bar at 08:00 is False, ffill stops there)
-    assert not result.iloc[3]   # 03:00 should be False
-    assert result.iloc[4]       # 04:00 should be True (signal origin)
-    assert result.iloc[7]       # 07:00 should be True (forward-filled from 04:00)
-    assert not result.iloc[8]   # 08:00 should be False (new 4h bar, signal was False)
+    # 04:00-07:00 处于 4h bar（04:00 开盘）形成期——不可见
+    assert not result.iloc[3]   # 03:00: 前一 4h bar False 掩码
+    assert not result.iloc[4]   # 04:00: 信号 bar 形成期（旧开盘即见为前视）
+    assert not result.iloc[7]   # 07:00: 形成期
+    # 08:00-11:00: 04:00 bar 收盘可见——状态窗 True
+    assert result.iloc[8]
+    assert result.iloc[11]
+    # 12:00 起: 08:00 4h bar（False）收盘——掩码回 False
+    assert not result.iloc[12]

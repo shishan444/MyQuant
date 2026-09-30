@@ -74,7 +74,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], feature_names)
-        mtf_ctx.eval_start = start_ts
+        mtf_ctx.eval_start = request_start
         return screen_patterns(
             df, data_ranges=ranges, timeframe=rng["timeframe"],
             features=p.get("features", "all"),
@@ -101,7 +101,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], [p["indicator"]])
-        mtf_ctx.eval_start = start_ts
+        mtf_ctx.eval_start = request_start
         return param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
             sweep={"axis": s.get("axis", "target"),
@@ -128,7 +128,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], warm_names)
-        mtf_ctx.eval_start = start_ts
+        mtf_ctx.eval_start = request_start
         return regime_split(
             df, segmentation=p.get("segmentation", "auto"),
             indicator=p.get("indicator"), condition=p.get("condition"),
@@ -149,7 +149,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], [p["indicator"]])
-        mtf_ctx.eval_start = start_ts
+        mtf_ctx.eval_start = request_start
         return condition_stats(df, indicator=p["indicator"], params=p["params"],
                                condition=p["condition"], data_ranges=ranges,
                                request_start=request_start,

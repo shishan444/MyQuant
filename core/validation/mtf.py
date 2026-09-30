@@ -86,15 +86,23 @@ def merge_to_base(
     base_tf_minutes: int,
     info_tf_minutes_map: Optional[Dict[str, int]] = None,
 ) -> pd.DataFrame:
-    """Merge higher-timeframe indicator columns into base DataFrame.
+    """Merge higher-timeframe columns into base DataFrame（0.2.14 收口）.
 
-    Uses forward-fill via pd.merge_asof with time alignment.
-    High-timeframe timestamps are shifted forward by one base_tf unit
-    to prevent look-ahead bias.
+    每列经 ``mtf_alignment.project_completed`` 值投影（asof_completed：
+    高周期 bar T 的值挂载到收盘时刻 T+tf 后 backward 对齐）——旧
+    「+1 基准 bar 位移」在非整除对齐下存在前视窗口（开盘后第 1 根
+    基准 bar 即可见），退役；OHLCV 排除清单移除（``close_3d`` 等高
+    周期基础列同样投影——「3d close > 3d EMA50」类条件真生效前提）。
 
-    Column naming: ema_20 -> ema_20_4h, bb_upper_20_2.0 -> bb_upper_4h
+    Column naming: ema_20 -> ema_20_4h（后缀列名与列序不变）。
+
+    条件级 timeframe 键不再消费 merged 列（求值走 condition_kernel
+    掩码投影路径）；本函数降格为 target 列引用投影器——服务
+    ``"4h:ema_20"`` 冒号形制与显式后缀列名引用（Lab 前端零适配）。
     """
-    result = base_df.copy()
+    from core.data.mtf_alignment import project_completed
+
+    result = base_df.copy().sort_index()
 
     for tf, info_df in info_dfs.items():
         if info_df.empty:
@@ -110,35 +118,16 @@ def merge_to_base(
         if tf_minutes <= base_tf_minutes:
             continue
 
-        # Keep only indicator columns (not OHLCV)
-        ohlcv_cols = {"open", "high", "low", "close", "volume"}
-        indicator_cols = [c for c in info_df.columns if c not in ohlcv_cols]
-        if not indicator_cols:
-            continue
-
-        info_subset = info_df[indicator_cols].copy()
+        # 全列投影（OHLCV 排除清单移除——高周期基础列同样对齐）
+        cols = list(info_df.columns)
+        subset = info_df[cols].copy()
 
         # Rename columns with timeframe suffix
-        rename_map = {col: f"{col}_{tf}" for col in indicator_cols}
-        info_subset = info_subset.rename(columns=rename_map)
+        rename_map = {col: f"{col}_{tf}" for col in cols}
+        subset = subset.rename(columns=rename_map)
 
-        # Shift timestamps forward by one base_tf unit to prevent look-ahead bias
-        shift_delta = pd.Timedelta(minutes=base_tf_minutes)
-        info_subset.index = info_subset.index + shift_delta
-
-        # Forward fill within the info timeframe
-        info_subset = info_subset.ffill()
-
-        # Merge using asof (forward fill by time alignment)
-        result = result.sort_index()
-        info_subset = info_subset.sort_index()
-
-        result = pd.merge_asof(
-            result,
-            info_subset,
-            left_index=True,
-            right_index=True,
-            direction="backward",
-        )
+        projected = project_completed(
+            subset, result.index, pd.Timedelta(minutes=tf_minutes))
+        result = pd.concat([result, projected], axis=1)
 
     return result

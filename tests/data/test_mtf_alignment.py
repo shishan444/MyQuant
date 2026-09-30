@@ -229,9 +229,11 @@ class TestPulseCompleted:
 # ---------------------------------------------------------------- warmup 与方向判定
 
 class TestWarmupAndAssert:
-    def test_warmup_空指标清单_floor20bar(self):
-        span = high_tf_warmup_span([], "4h")
-        assert span == pd.Timedelta(seconds=20 * TF_SECONDS["4h"])
+    def test_warmup_空指标清单_零前扩(self):
+        """纯基础列条件（无指标收敛需求）→ 0 bar——floor 约束的是指标
+        收敛下限，不以 floor 拒绝语义上可求值的请求（首段投影 False
+        自然处理）。"""
+        assert high_tf_warmup_span([], "4h") == pd.Timedelta(0)
 
     def test_warmup_条件实际参数粒度_RSI14收敛42bar(self):
         """真实收敛按条件实际参数推导（indicator_convergence）——

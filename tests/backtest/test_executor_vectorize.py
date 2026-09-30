@@ -1,4 +1,9 @@
-"""Phase 2 tests: vectorized _resample_pulse and lookback conditions."""
+"""Phase 2 tests: vectorized lookback conditions.
+
+0.2.14：_resample_pulse 退役（asof_completed 收口替换为
+mtf_alignment.pulse_completed——+tf 落位语义，权威锚在
+tests/data/test_mtf_alignment.py::TestPulseCompleted）；本文件的
+「与原始循环对照」测试族随被测函数一并退役。"""
 
 import numpy as np
 import pandas as pd
@@ -6,93 +11,8 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.strategy.executor import _resample_pulse, evaluate_condition, _empty_signal_set
+from core.strategy.executor import evaluate_condition, _empty_signal_set
 from tests.helpers.data_factory import make_ohlcv, make_enhanced_df
-
-
-def _original_resample_pulse(signal: pd.Series, target_index: pd.DatetimeIndex) -> pd.Series:
-    """Original per-bar loop implementation for comparison."""
-    if signal.empty or len(target_index) == 0:
-        return pd.Series(False, index=target_index)
-
-    result = pd.Series(False, index=target_index)
-    for i in range(len(target_index)):
-        bar_start = target_index[i]
-        bar_end = target_index[i + 1] if i + 1 < len(target_index) else bar_start + pd.Timedelta(days=1)
-        mask = (signal.index >= bar_start) & (signal.index < bar_end)
-        if signal[mask].any():
-            result.iloc[i] = True
-    return result.astype(bool)
-
-
-class TestResamplePulseMatchesOriginal:
-    """Vectorized _resample_pulse produces same results as original loop."""
-
-    def test_known_true_timestamps_15m_to_4h(self):
-        """Generate known True timestamps in 15m, resample to 4h."""
-        dates_15m = pd.date_range("2024-01-01", periods=16 * 10, freq="15min", tz="UTC")  # 10 hours
-        signal = pd.Series(False, index=dates_15m)
-        # Set True at specific positions
-        signal.iloc[2] = True   # within first 4h bar
-        signal.iloc[17] = True  # within second 4h bar (16 bars per 4h)
-        signal.iloc[33] = True  # within third 4h bar
-
-        dates_4h = pd.date_range("2024-01-01", periods=3, freq="4h", tz="UTC")
-        result = _resample_pulse(signal, dates_4h)
-
-        assert result.iloc[0] == True
-        assert result.iloc[1] == True
-        assert result.iloc[2] == True
-
-    def test_empty_signal(self):
-        dates = pd.date_range("2024-01-01", periods=10, freq="4h", tz="UTC")
-        signal = pd.Series(False, index=pd.date_range("2024-01-01", periods=40, freq="15min", tz="UTC"))
-        result = _resample_pulse(signal, dates)
-        assert result.sum() == 0
-
-    def test_all_false_signal(self):
-        dates_src = pd.date_range("2024-01-01", periods=100, freq="15min", tz="UTC")
-        signal = pd.Series(False, index=dates_src)
-        dates_tgt = pd.date_range("2024-01-01", periods=5, freq="4h", tz="UTC")
-        result = _resample_pulse(signal, dates_tgt)
-        assert result.sum() == 0
-        assert len(result) == 5
-
-    def test_stress_comparison(self):
-        """Stress test: 2000 target bars, 500 true source bars."""
-        rng = np.random.default_rng(123)
-        n_src = 8000
-        n_tgt = 2000
-
-        dates_src = pd.date_range("2024-01-01", periods=n_src, freq="15min", tz="UTC")
-        signal = pd.Series(False, index=dates_src)
-        true_indices = rng.choice(n_src, size=500, replace=False)
-        signal.iloc[true_indices] = True
-
-        dates_tgt = pd.date_range("2024-01-01", periods=n_tgt, freq="1h", tz="UTC")
-
-        new_result = _resample_pulse(signal, dates_tgt)
-        old_result = _original_resample_pulse(signal, dates_tgt)
-
-        pd.testing.assert_series_equal(new_result, old_result, check_names=False)
-
-    def test_matches_original_random(self):
-        """Random test with multiple data sizes."""
-        rng = np.random.default_rng(42)
-        for n_src, n_tgt, freq_src, freq_tgt in [
-            (100, 20, "15min", "4h"),
-            (500, 50, "5min", "1h"),
-            (200, 40, "1h", "1d"),
-        ]:
-            dates_src = pd.date_range("2024-01-01", periods=n_src, freq=freq_src, tz="UTC")
-            signal = pd.Series(rng.random(n_src) > 0.9, index=dates_src)
-
-            dates_tgt = pd.date_range("2024-01-01", periods=n_tgt, freq=freq_tgt, tz="UTC")
-
-            new_result = _resample_pulse(signal, dates_tgt)
-            old_result = _original_resample_pulse(signal, dates_tgt)
-
-            pd.testing.assert_series_equal(new_result, old_result, check_names=False)
 
 
 class TestLookbackAnyMatchesOriginal:

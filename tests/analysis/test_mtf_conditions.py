@@ -457,3 +457,68 @@ class TestRegistrationReachability:
         assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
         avail = body["detail"]["available_timeframes"]
         assert "1h" in avail and "4h" in avail and "1w" not in avail
+
+
+# ---------------------------------------------------------------- 四链一致锚（task 4.4）
+
+class TestCrossChainConsistency:
+    """同一高周期条件同数据在研究/Lab/策略/实盘四链投影逐点一致。
+
+    - 研究链 vs Lab 链：engine._evaluate_conditions 与 condition_kernel
+      _mask_for 同掩码（Lab 入口形制）；
+    - 研究链 vs 策略链：掩码投影（tf 键）与 resample_signals（索引
+      推断 delta）逐点一致——跨族等价核心；
+    - 策略链 vs 实盘链：_filter_forming_bar 时序可见性（每个评估时刻
+      丢形成中 bar）与投影值逐点一致（实盘不变性——收口后实盘结果
+      不变，回测对齐实盘）。
+    """
+
+    def test_研究链与Lab链_同掩码(self, env):
+        from core.validation.engine import _evaluate_conditions
+
+        ctx = _ctx(env)
+        work = env["base"].copy()
+        threshold = float(env["high"]["close"].median())
+        cond = {"subject": "close", "action": "gt", "target": threshold,
+                "timeframe": "4h"}
+        m_research = _mask_for(work.copy(), cond, mtf=ctx)
+        m_lab = _evaluate_conditions(
+            work, [cond], mtf=ctx).fillna(False).astype(bool)
+        pd.testing.assert_series_equal(m_research, m_lab, check_names=False)
+
+    def test_研究链与策略链_投影逐点一致(self, env):
+        """掩码投影（tf 键走 mtf_alignment）与 executor.resample_signals
+        （推断 delta 薄委托同一权威）——四链一致核心锚。"""
+        from core.strategy.executor import resample_signals
+
+        ctx = _ctx(env)
+        work = env["base"].copy()
+        threshold = float(env["high"]["close"].median())
+        cond = {"subject": "close", "action": "gt", "target": threshold,
+                "timeframe": "4h"}
+        m_research = _mask_for(work, cond, mtf=ctx)
+        s_high = env["high"]["close"] > threshold   # 高周期轴布尔（策略链层模型）
+        m_strategy = resample_signals(
+            s_high.astype(bool), work.index)
+        pd.testing.assert_series_equal(m_research, m_strategy,
+                                       check_names=False)
+
+    def test_策略链与实盘时序_逐点一致(self, env):
+        """实盘不变性锚：模拟逐基准 bar 的评估时刻 now=基准 bar 开盘
+        时刻——_filter_forming_bar 语义下可见的 4h close（收盘<=now 的
+        末根）与 project_completed 投影值逐点一致。"""
+        from core.data.mtf_alignment import project_completed
+        from core.data.timeframes import TF_SECONDS
+
+        base_index = env["base"].index
+        close_4h = env["high"]["close"]
+        projected = project_completed(close_4h, base_index, "4h")
+        for i, now in enumerate(base_index):
+            # _filter_forming_bar 语义：丢弃开盘+4h > now 的形成中 bar
+            closed = close_4h[
+                close_4h.index + pd.Timedelta(seconds=TF_SECONDS["4h"]) <= now]
+            if len(closed) == 0:
+                assert pd.isna(projected.iloc[i])
+            else:
+                assert projected.iloc[i] == pytest.approx(
+                    float(closed.iloc[-1]))

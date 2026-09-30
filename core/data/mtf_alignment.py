@@ -15,11 +15,16 @@ warmup 尺度（N1 修正）：max(指标真实收敛×3, 20 bar) × TF_SECONDS�
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Union
 
+import numpy as np
 import pandas as pd
 
 from core.data.timeframes import TF_SECONDS
+
+#: 投影函数的周期参数：TF_SECONDS 键（登记/研究链）或直接时长
+#: （策略链经索引推断——共享实现不重复挂载逻辑）
+TfLike = Union[str, pd.Timedelta]
 
 #: 高周期轴 warmup 下限（工程参数 A-new；锚测试内可微调）
 WARMUP_FLOOR_BARS = 20
@@ -32,6 +37,27 @@ def _tf_seconds(tf: str) -> int:
         raise ValueError(
             f"未知周期: {tf!r}（合法键集: {sorted(TF_SECONDS)}）")
     return sec
+
+
+def _tf_delta(tf: TfLike) -> pd.Timedelta:
+    """周期参数 → 时长（键查表或 Timedelta 直通）。"""
+    if isinstance(tf, str):
+        return pd.Timedelta(seconds=_tf_seconds(tf))
+    return pd.Timedelta(tf)
+
+
+def infer_tf_delta(index: pd.DatetimeIndex) -> pd.Timedelta:
+    """高周期索引的标称 bar 时长（相邻差分中位数——对缺口鲁棒）。
+
+    策略/进化链的信号与数值上下文投影无 tf 键入参（签名不变约束），
+    由信号自身索引推断；中位数在缺口索引下取标称间隔（挂载法在缺口
+    上保守方向无前视）。单元素索引无「下一根」概念，按零时长退化
+    （T 自身可见——与现行 reindex ffill 单 bar 行为一致）。
+    """
+    if len(index) < 2:
+        return pd.Timedelta(0)
+    diffs = np.diff(index.asi8)
+    return pd.Timedelta(int(np.median(diffs)), unit="ns")
 
 
 def assert_higher_tf(tf: str, base_tf: str) -> None:
@@ -50,16 +76,16 @@ def assert_higher_tf(tf: str, base_tf: str) -> None:
             f"（聚合歧义 any/all/末值不可自证，不引入低周期语义）")
 
 
-def _completed_index(values: pd.Series, tf: str) -> pd.Series:
+def _completed_index(values, tf: TfLike):
     """值挂载到收盘时刻（开盘 T → 收盘 T+tf）后的已完结序列。"""
     completed = values.copy()
-    completed.index = completed.index + pd.Timedelta(seconds=_tf_seconds(tf))
+    completed.index = completed.index + _tf_delta(tf)
     return completed.sort_index()
 
 
 def project_completed(
-    values: pd.Series, base_index: pd.Index, tf: str,
-) -> pd.Series:
+    values, base_index: pd.Index, tf: TfLike,
+):
     """值投影：基准索引上可见的已完结高周期值。
 
     高周期 bar T 的值挂载到收盘时刻 T+tf，再对基准索引 backward
@@ -71,7 +97,7 @@ def project_completed(
 
 
 def project_completed_bool(
-    mask: pd.Series, base_index: pd.Index, tf: str,
+    mask: pd.Series, base_index: pd.Index, tf: TfLike,
 ) -> pd.Series:
     """布尔投影（研究链与 Lab 链掩码求值唯一通道）。
 
@@ -84,7 +110,7 @@ def project_completed_bool(
 
 
 def pulse_completed(
-    signal: pd.Series, base_index: pd.Index, tf: str,
+    signal: pd.Series, base_index: pd.Index, tf: TfLike,
 ) -> pd.Series:
     """脉冲投影（策略链 execution 层）：穿越当根收盘落位到所在基准 bar。
 
@@ -94,9 +120,11 @@ def pulse_completed(
     （不可见；末 bar 窗口=+tf 时长，替换既有硬编码 1 天兜底）。
     """
     fires = signal.fillna(False).astype(bool)
-    close_ts = fires.index + pd.Timedelta(seconds=_tf_seconds(tf))
-    close_ts = close_ts[fires.to_numpy()]
     out = pd.Series(False, index=base_index)
+    if signal.empty or not isinstance(fires.index, pd.DatetimeIndex):
+        return out
+    close_ts = fires.index + _tf_delta(tf)
+    close_ts = close_ts[fires.to_numpy()]
     if len(close_ts) == 0:
         return out
     pos = base_index.searchsorted(close_ts, side="right") - 1
@@ -114,10 +142,13 @@ def high_tf_warmup_span(indicator_refs: List[tuple], tf: str) -> pd.Timedelta:
     × TF_SECONDS 换算为时长。与隔离回测 derive_warmup 的 200 floor
     显式分离（依据见模块 docstring）。
 
+    纯基础列条件（如 close@4h，无指标收敛需求）→ 0 bar：floor 20
+    约束的是指标收敛下限，无指标时首段投影 False 自然处理，不以
+    floor 拒绝语义上完全可求值的请求。
+
     Args:
         indicator_refs: 条件实际引用的 (indicator, params) 清单；
             params 为 resolve 后全键形（缺键由收敛推导补 default）。
-            空清单=floor 20 bar（无指标收敛需求）。
 
     Raises:
         ValueError: 引用不存在的指标。
@@ -125,7 +156,8 @@ def high_tf_warmup_span(indicator_refs: List[tuple], tf: str) -> pd.Timedelta:
     # 函数内导入：registry_meta 属分析域元数据，core.data 模块级不反向依赖
     from core.analysis.registry_meta import indicator_convergence
 
-    bars = WARMUP_FLOOR_BARS
+    bars = 0
     for name, params in indicator_refs:
-        bars = max(bars, indicator_convergence(name, params or {}) * 3)
+        bars = max(bars, indicator_convergence(name, params or {}) * 3,
+                   WARMUP_FLOOR_BARS)
     return pd.Timedelta(seconds=bars * _tf_seconds(tf))
