@@ -108,3 +108,43 @@ class TestSimilarAtTime:
         with pytest.raises(ValueError, match="历史不足"):
             similar_at_time(df, as_of=str(df.index[-5]), n_neighbors=50,
                             horizon=12, data_ranges=RANGES)
+
+
+class TestEventStudyTimeframeKey:
+    """0.2.14 第七求值点收口：event_study 条件携带 timeframe 键经
+    _mask_for 掩码投影；无 ctx 带键=显式接线错误拒。"""
+
+    @staticmethod
+    def _mtf_env(tmp_path):
+        from core.analysis.condition_kernel import MtfEvalContext
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        return base, high, MtfEvalContext(data_dir, "BTCUSDT", "1h")
+
+    def test_高周期键条件_掩码投影求值成功(self, tmp_path):
+        """阈值取 4h close 最小值-1 → 4h 轴全 True；投影后首窗（首根
+        4h 收盘前）False——1h 600 根中前 4 根 False，尾部丢窗=8，
+        手算 n_events = 596 - 8 = 588。"""
+        base, high, ctx = self._mtf_env(tmp_path)
+        cond = {"subject": "close", "action": "gt",
+                "target": float(high["close"].min()) - 1.0,
+                "timeframe": "4h"}
+        res = event_study(base, condition=cond, window=8,
+                          data_ranges=RANGES, min_events=10, mtf=ctx)
+        assert res.payload["n_events"] == 588
+
+    def test_无ctx带高周期键_显式接线错误拒(self, tmp_path):
+        from core.analysis.hypothesis_service import ResearchError
+
+        base, _, _ = self._mtf_env(tmp_path)
+        with pytest.raises(ResearchError) as ei:
+            event_study(base, condition={"subject": "close", "action": "gt",
+                                         "target": 0.0, "timeframe": "4h"},
+                        window=8, data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_MTF_CONTEXT_MISSING"

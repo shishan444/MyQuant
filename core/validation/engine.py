@@ -4,7 +4,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
+from typing import TYPE_CHECKING
+
 from core.features.indicators import compute_all_indicators
+
+if TYPE_CHECKING:
+    from core.analysis.condition_kernel import MtfEvalContext
 from core.data.storage import load_parquet
 
 
@@ -56,6 +61,7 @@ def validate_hypothesis(
     then_window: int = 8,
     data_dir: Optional[str] = None,
     base_timeframe: Optional[str] = None,
+    mtf: Optional["MtfEvalContext"] = None,
 ) -> ValidationResult:
     """Validate a WHEN->THEN hypothesis against historical data.
 
@@ -136,8 +142,8 @@ def validate_hypothesis(
         except Exception as exc:
             warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
 
-    # Evaluate WHEN conditions
-    when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings)
+    # Evaluate WHEN conditions（mtf 上下文透传——Lab 链高周期条件掩码投影）
+    when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings, mtf=mtf)
 
     # Find trigger indices
     trigger_indices = enhanced_df.index[when_mask].tolist()
@@ -266,7 +272,11 @@ def validate_hypothesis(
     )
 
 
-def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: List[str] | None = None) -> pd.Series:
+def _evaluate_conditions(
+    df: pd.DataFrame, conditions: List[Dict],
+    warnings: List[str] | None = None,
+    mtf: "MtfEvalContext | None" = None,
+) -> pd.Series:
     """Evaluate a list of conditions against a DataFrame."""
     if not conditions:
         return pd.Series(False, index=df.index)
@@ -276,7 +286,7 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: Lis
     for cond in conditions:
         logic = cond.get("logic", "AND")
         from core.analysis.condition_kernel import _mask_for
-        mask = _mask_for(df, cond)   # 0.2.13 两段式（同 rule_engine）
+        mask = _mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
         masks.append(mask)
 
     if not masks:
@@ -529,6 +539,27 @@ def _lookback_condition(
         return inner_signal.rolling(window=window, min_periods=1).apply(all, raw=False).fillna(False).astype(bool)
 
 
+def _cond_number(cond: Dict, key: str, default, cast=float):
+    """动作数值键取值（F-2：坏值结构化拒绝而非裸 float()/int() 穿 500）。
+
+    弱类型入口（run_analysis 的 condition 为任意 dict）下 SNR 动作的
+    proximity_pct 等键可为不可解析值——ResearchError 经 Lab/分析路由
+    既有的 research_error_to_http 兜底转 422。cast 保留原类型语义
+    （lookback 的 int 对 "10.5" 依旧拒绝，不隐式截断）。
+    """
+    from core.analysis.hypothesis_service import ResearchError
+
+    raw = cond.get(key, default)
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.{key} 须为数值: {raw!r}",
+            detail={"param": f"condition.{key}", "value": raw,
+                    "legal_range": "数值"}) from None
+
+
 def _resolve_snr_pattern(
     df: pd.DataFrame,
     pattern: str,
@@ -547,12 +578,12 @@ def _resolve_snr_pattern(
 
     if pattern == "touch_bounce":
         direction = cond.get("direction", "support")
-        proximity_pct = float(cond.get("proximity_pct", 0.01))
-        bounce_pct = float(cond.get("bounce_pct", 0.005))
+        proximity_pct = _cond_number(cond, "proximity_pct", 0.01)
+        bounce_pct = _cond_number(cond, "bounce_pct", 0.005)
         return detect_touch_bounce(df, subject_col, direction, proximity_pct, bounce_pct)
     elif pattern == "role_reversal":
         role = cond.get("role", "resistance")
-        lookback = int(cond.get("lookback", 10))
+        lookback = _cond_number(cond, "lookback", 10, cast=int)
         return detect_role_reversal(df, subject_col, role, lookback)
 
     return pd.Series(False, index=df.index)

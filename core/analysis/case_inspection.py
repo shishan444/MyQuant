@@ -59,7 +59,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from core.analysis.condition_kernel import _mask_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
@@ -154,11 +154,13 @@ def _parse_selector(
 
     if has_cond:
         cond = selector["condition"]
+        # 0.2.14：三键必备、额外键允许（可选 timeframe 键=高周期条件
+        # 掩码投影；动作额外键随条件全量透传）
         if (not isinstance(cond, dict)
-                or set(cond.keys()) != {"subject", "action", "target"}):
+                or not {"subject", "action", "target"} <= set(cond.keys())):
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                "condition 形态须恰含三键 {subject, action, target}",
+                "condition 形态须含三键 {subject, action, target}",
                 detail={"param": "selector.condition"})
         # 0.2.13：subject 混合形制——参数化指标结构化对象（resolve 校验
         # 即解析）或基础列/插件列字符串；action 恒字符串
@@ -252,12 +254,17 @@ def _validate_target(target: Any, available_cols: pd.Index) -> None:
         except ValueError:
             pass
         if target not in available_cols:
-            raise ResearchError(
-                "RESEARCH_COLUMN_NOT_AVAILABLE",
-                f"target 列 {target!r} 不在可用列集合（数值可解析直过；"
-                "列名态须为在册列）",
-                detail={"param": "condition.target", "column": target,
-                        "legal_range": sorted(available_cols)})
+            # 0.2.14 放宽：编码形指标列名（decode 可解析）放行——
+            # 求值走 _mask_for 任意参数现算路径（D-r3）
+            from core.analysis.column_ref import try_decode_column_ref
+            decoded = try_decode_column_ref(target)
+            if decoded is None:
+                raise ResearchError(
+                    "RESEARCH_COLUMN_NOT_AVAILABLE",
+                    f"target 列 {target!r} 不在可用列集合（数值可解析直过；"
+                    "列名态须为在册列）",
+                    detail={"param": "condition.target", "column": target,
+                            "legal_range": sorted(available_cols)})
         return
     raise ResearchError(
         "RESEARCH_PARAM_INVALID",
@@ -377,11 +384,46 @@ def inspect_cases(
 
     if kind == "condition":
         _validate_action(payload["action"])
+        # timeframe 键前置校验（值域+方向——低周期/未知周期装载前拒绝）
+        _tf_key = payload.get("timeframe")
+        if _tf_key is not None:
+            from core.data.timeframes import TF_SECONDS
+            if _tf_key not in TF_SECONDS:
+                raise ResearchError(
+                    "TIMEFRAME_UNKNOWN",
+                    f"未知周期: {_tf_key!r}",
+                    detail={"param": "condition.timeframe",
+                            "timeframe": _tf_key,
+                            "legal_range": sorted(TF_SECONDS)})
+            if timeframe not in TF_SECONDS:
+                raise ResearchError(
+                    "TIMEFRAME_UNKNOWN",
+                    f"未知基准周期: {timeframe!r}",
+                    detail={"param": "timeframe",
+                            "timeframe": timeframe,
+                            "legal_range": sorted(TF_SECONDS)})
+            # 方向判定走权威 assert_higher_tf（design B1「登记侧与求值侧
+            # 共用判定」——message 随之统一，含聚合歧义说明）
+            from core.data.mtf_alignment import assert_higher_tf
+            try:
+                assert_higher_tf(_tf_key, timeframe)
+            except ValueError as exc:
+                raise ResearchError(
+                    "TIMEFRAME_NOT_HIGHER", str(exc),
+                    detail={"param": "condition.timeframe",
+                            "timeframe": _tf_key,
+                            "base_timeframe": timeframe}) from exc
         if indicator is None:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                "condition 形态 indicator 必填（供 warmup 推导与指标计算）",
-                detail={"param": "indicator"})
+            # 0.2.14：结构化 subject 自带指标名（indicator 参数可省——
+            # 假设 when 条件无需转写直接喂入）
+            if isinstance(payload["subject"], dict):
+                indicator = payload["subject"].get("indicator")
+            if indicator is None:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "condition 形态 indicator 必填（供 warmup 推导与"
+                    "指标计算；结构化 subject 条件可省——自带指标名）",
+                    detail={"param": "indicator"})
     if indicator is not None and indicator not in INDICATOR_REGISTRY:
         raise ResearchError(
             "RESEARCH_INDICATOR_UNKNOWN",
@@ -437,28 +479,18 @@ def inspect_cases(
 
     if kind == "condition":
         available = list(ind_cols.keys())
-        # 0.2.13：结构化 subject 经 encode 归一为精确列名后比对（默认
-        # 参数边界不变——非默认参数列仍不支持，任意参数现算属后续版本）
+        # 0.2.14（D-r3）：结构化 subject 经 resolve 校验即放行——求值走
+        # _mask_for 任意参数现算路径（非默认参数条件不再被默认参数
+        # 边界拒绝，spec「直接喂入」承诺由实现成立）；字符串 subject
+        # 保持默认参数输出列边界（字符串不携带参数，默认边界即其语义）
         subject = payload["subject"]
-        subject_col = subject
-        if isinstance(subject, dict):
-            from core.analysis.column_ref import (ColumnRefError,
-                                                  resolve_column_ref)
-            try:
-                subject_col = resolve_column_ref(subject).encoded_name()
-            except ColumnRefError as exc:
-                raise ResearchError(
-                    "RESEARCH_COLUMN_NOT_AVAILABLE",
-                    f"subject 引用非法: {exc.message}",
-                    detail={"param": "condition.subject",
-                            "code": exc.code, **exc.detail}) from exc
-        if subject_col not in available:
+        if isinstance(subject, str) and subject not in available:
             raise ResearchError(
                 "RESEARCH_COLUMN_NOT_AVAILABLE",
-                f"subject 列 {subject_col!r} 不属于 {indicator} "
-                "默认参数输出列（非默认参数列不支持；任意参数现算属后续版本）",
+                f"subject 列 {subject!r} 不属于 {indicator} "
+                "默认参数输出列（非默认参数请用结构化 subject 引用）",
                 detail={"param": "condition.subject",
-                        "column": subject_col,
+                        "column": subject,
                         "legal_range": sorted(available)})
         _validate_target(payload["target"], work.columns)
 
@@ -481,7 +513,13 @@ def inspect_cases(
         if end is not None:
             end_ts = _to_utc(pd.Timestamp(end))
             in_domain = in_domain & pd.Series(work.index <= end_ts, index=work.index)
-        mask = _mask_for(work, payload) & in_domain
+        # 0.2.14：自建多周期求值上下文（签名零变化——三元组本就在
+        # 手）；高周期条件（timeframe 键）走掩码投影，indicator 参数
+        # 分工=展示+低周期 warmup（高周期 warmup 由内核另算——TD-4）
+        mtf_ctx = MtfEvalContext(
+            data_dir=data_dir, symbol=symbol, base_tf=timeframe,
+            eval_start=effective_start_ts)
+        mask = _mask_for(work, payload, mtf=mtf_ctx) & in_domain
         hits = np.where(mask.values)[0]  # 升序
         n_matched = int(len(hits))
         positions = _sample_positions(hits, limit)

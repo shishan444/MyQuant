@@ -526,15 +526,21 @@ class TestResampleValues:
     """resample_values correctly forward-fills numeric series without bool conversion."""
 
     def test_resample_values_forward_fill(self):
+        """0.2.14 asof_completed：4h bar k 的值在收盘时刻（+4h）起可见——
+        数值上下文（direction/price_levels/momentum）形成期不可见。"""
         from core.strategy.mtf_engine import resample_values
         idx_4h = pd.date_range("2024-01-01", periods=3, freq="4h")
         idx_15m = pd.date_range("2024-01-01", periods=48, freq="15min")
         series = pd.Series([60000.0, 60500.0, 61000.0], index=idx_4h)
         result = resample_values(series, idx_15m)
         assert len(result) == 48
-        # First 16 15-min bars should have value 60000.0
-        assert result.iloc[0] == 60000.0
-        assert result.iloc[15] == 60000.0
+        # 首 4h 形成期（00:00-03:45，16 根）：NaN（旧开盘即见为前视）
+        assert result.iloc[:16].isna().all()
+        # 04:00-07:45：bar0 收盘可见=60000.0
+        assert result.iloc[16] == 60000.0
+        assert result.iloc[31] == 60000.0
+        # 08:00 起：bar1 收盘可见=60500.0
+        assert result.iloc[32] == 60500.0
 
     def test_resample_values_preserves_float(self):
         from core.strategy.mtf_engine import resample_values
@@ -1280,3 +1286,17 @@ class TestM2DirectionZeroMixedMode:
         )
         result = apply_decision_gate(ss, synthesis, dna)
         assert result.entries.iloc[0] == True
+
+    def test_resample_values_forming_period_invisible(self):
+        """0.2.14 上下文投影差分锚：高周期形成中 bar 的数值改掉，
+        其收盘前的投影输出不变（price_levels/momentum 形成期不可见）。"""
+        from core.strategy.mtf_engine import resample_values
+        idx_4h = pd.date_range("2024-01-01", periods=3, freq="4h")
+        idx_15m = pd.date_range("2024-01-01", periods=32, freq="15min")
+        a = pd.Series([60000.0, 60500.0, 61000.0], index=idx_4h)
+        b = a.copy()
+        b.iloc[-1] = 99999.0   # 末 bar（10:00 开盘）形成中——收盘 14:00
+        out_a = resample_values(a, idx_15m)
+        out_b = resample_values(b, idx_15m)
+        # 投影域止于末 bar 收盘前（32 根 15min 到 07:45 < 14:00）
+        pd.testing.assert_series_equal(out_a, out_b, check_names=False)

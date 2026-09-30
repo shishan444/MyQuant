@@ -112,3 +112,14 @@
 - field 语义名全链：结构化 ref.field → SignalGene.field_name → executor resolve（值域 upper/signal/k…——编码前缀形在多输出指标会静默取错列，N4 锚 tests/analysis/test_column_ref.py::TestFiveDomainIntegration）
 - 迁移两阶段原子（scripts/migrate_column_refs.py：预检零写入、有阻塞整体退出；tests/analysis/test_migration_column_refs.py 全锚含 F1 影子命中）
 - 幂等连续同函数：登记 canonical 化与迁移重算共用 canonicalize/ref_dict 与 _hash_json——改其一必须同步另一（legacy_compatible_hash 仅供 _screen_reuse_check 影子消费）
+
+
+### 0.2.14 multi-timeframe-conditions 守护行
+- **asof 四形态铁律**：值投影（merge_to_base/resample_values）、布尔投影（研究链/Lab 链掩码）、脉冲投影（pulse_completed——+tf 落位）、掩码投影语义（整条件高周期轴求值→布尔投影）——四形态唯一权威在 `core/data/mtf_alignment.py`，任何链路不得自建挂载/位移逻辑（tests/data/test_mtf_alignment.py 全锚：+tf 挂载缺口保守、形成中 bar 差分不变量、cross 状态窗、spike 自洽、gt-lt 等价、末 bar 窗口=+tf）
+- 时间语义数据索引=bar 开盘时刻（值挂载点=索引+tf）；位置 shift(1) 在缺口索引上错位挂载，一律 +tf 挂载推导
+- warmup 尺度 N1：`high_tf_warmup_span` 按条件实际参数粒度（indicator_convergence——RSI(14) 收敛 14 非注册表 max）×3、有指标收敛需求时 floor 20、纯基础列零前扩——与隔离回测 derive_warmup 的 200 floor 分离（docstring 披露依据）
+- 指纹有效周期归一在函数内（`condition.get("timeframe") or timeframe`）——五调用方传任务周期即可，无键条件与 0.2.13 逐字节连续（冻结字面量锚 caa63f6430826b34）
+- 四链一致锚：同一高周期条件在研究/Lab/策略/实盘投影逐点一致（tests/analysis/test_mtf_conditions.py::TestCrossChainConsistency——实盘腿=_filter_forming_bar 时序可见性逐点对照，收口后实盘结果不变、回测对齐实盘）
+- 转化拒绝：when 条件带 timeframe 键显式 RESEARCH_NOT_EXPRESSIBLE（不静默降级单周期）；登记/求值/案例检查不受影响锚同文件
+- 新错误码四枚（TIMEFRAME_ON_THEN/TIMEFRAME_UNKNOWN/TIMEFRAME_NOT_HIGHER/RESEARCH_MTF_CONTEXT_MISSING）——hint 注册表漂移即红（tests/mcpserver/test_errors.py）
+- **30 文件 MTF 测试基线分拣结论（先跑后判存档）**：按新纪律重建 15 处断言——test_mtf.py merge_to_base 4（OHLCV 投影翻转/+1 位移退役真前视锚/差分锚）、test_mtf_engine resample_values 2、test_mtf_phase2 pulse 族 7（+tf 落位替换窗口聚合）、test_phase4_mtf_roles 2（ffill 开盘即见→收盘可见）、test_validate_integration 1（timeframe 键静默忽略→结构化拒绝）；test_executor_vectorize 对照组随 _resample_pulse 退役（权威锚在 tests/data）；其余 MTF 消费测试零漂移通过（含 test_mtf_data_alignment 进化 timeframe_pool 语义、scene 38、trading 不变性）；全量 2955 passed / coverage 87.28%（0.2.13 基线 2897/87.03%，+58 全为新锚）

@@ -103,6 +103,28 @@ def translate_hypothesis(
             detail={"symbols": sorted(symbols),
                     "slow_path": "提交 feature-requests 描述跨品种需求"})
 
+    # 多周期假设拒绝（0.2.14 Q3=a）：timeframe 修饰整条件（掩码投影
+    # 求值语义），TimeframeLayer 层映射的 role 归属与跨层组装语义待
+    # 独立版本产品决策——显式拒绝，不产出静默降级为单周期的草稿。
+    # 假设的登记、条件求值类分析与案例检查不受此边界影响；研究考试链
+    # （隔离回测/随机窗口/分段）在翻译支持前不可用于混合周期假设。
+    for group, key in (("when", "when_conditions"),
+                       ("then", "then_conditions")):
+        for i, c in enumerate(conditions.get(key, [])):
+            if isinstance(c, dict) and c.get("timeframe") is not None:
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{group}_conditions[{i}] 携带 timeframe 键——"
+                    "多周期假设翻译暂不支持（TimeframeLayer 层映射语义"
+                    "留独立版本决策）；假设的登记、条件求值类分析与案例"
+                    "检查不受影响",
+                    detail={
+                        "field": f"{group}_conditions[{i}].timeframe",
+                        "timeframe": c.get("timeframe"),
+                        "slow_path": "多周期假设翻译支持前，此类假设"
+                                     "生命周期上限为 active"
+                                     "（仅可经 abandoned/superseded 退出）"})
+
     from core.strategy.dna import SignalRole
     when_genes, when_sources = _translate_conditions(
         conditions.get("when_conditions", []), db_path=db_path,

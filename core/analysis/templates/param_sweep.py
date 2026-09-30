@@ -34,7 +34,7 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.condition_kernel import _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
 from core.analysis.threshold_grids import VALUE_GRIDS
 
 # 三道门常量（design Decision 3：模块内固定，输出 gates 披露；
@@ -74,12 +74,16 @@ def _validate_inputs(
             "RESEARCH_PARAM_INVALID", f"indicator 未知: {indicator!r}",
             detail={"param": "indicator", "unknown": str(indicator),
                     "legal_range": "注册表指标名（list_indicators 查询）"})
-    if not isinstance(condition, dict) or set(condition) != {"subject", "action", "target"}:
+    if not isinstance(condition, dict) or not {
+            "subject", "action", "target"} <= set(condition):
+        # 0.2.14：三键必备、额外键允许（可选 timeframe 键=高周期中心
+        # 条件经掩码投影求值；动作额外键随条件全量透传）
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"condition 须为 {{subject, action, target}} 三键结构: {condition!r}",
+            f"condition 须含 subject/action/target 三键: {condition!r}",
             detail={"param": "condition",
-                    "legal_range": "与扫描候选/假设登记同形式的单条件"})
+                    "legal_range": "与扫描候选/假设登记同形式的单条件"
+                                   "（MAY 携带 timeframe 键）"})
     if condition["action"] not in _SUPPORTED_ACTIONS:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
@@ -184,6 +188,7 @@ def param_sweep(
     timeframe: str = "1h",
     request_start: str | pd.Timestamp | None = None,
     hypothesis_id: str | None = None,
+    mtf: "MtfEvalContext | None" = None,
 ) -> AnalysisResult:
     """参数稳健性检查：阈值邻域逐点重算 + 三道门判定 + 三值结论。
 
@@ -263,9 +268,10 @@ def param_sweep(
     # 同语义）；去重叠数另行披露（t 检验样本）
     raw: List[Dict[str, Any]] = []
     for value in grid:
-        cond_v = {"subject": condition["subject"],
-                  "action": condition["action"], "target": value}
-        stat_mask = _mask_for(work, cond_v) & in_stat
+        # 0.2.14：网格点条件全量继承中心条件（含 timeframe 键与其余
+        # 额外键——高周期中心条件整条件在高周期轴求值，掩码投影）
+        cond_v = {**condition, "target": value}
+        stat_mask = _mask_for(work, cond_v, mtf=mtf) & in_stat
         p_value, n_valid = _p_value_for(
             fwd, stat_mask.values, forward_bars, baseline_mean)
         hit = fwd[stat_mask].dropna()

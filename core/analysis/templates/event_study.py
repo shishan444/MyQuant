@@ -15,6 +15,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
+from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.templates.column_guard import require_column
 
@@ -27,24 +28,40 @@ def event_study(
     data_ranges: list[dict[str, str]],
     min_events: int = 30,
     hypothesis_id: str | None = None,
+    mtf: "MtfEvalContext | None" = None,
 ) -> AnalysisResult:
     """事件窗对齐的路径统计。
 
     Args:
-        condition: {subject, action, target}（假设引擎同源形制）。
+        condition: {subject, action, target}（假设引擎同源形制；MAY
+            携带 timeframe 键——高周期条件经掩码投影求值）。0.2.14
+            改道 condition_kernel._mask_for（第七求值点收口）——额外
+            动作键全量透传生效、结构化 subject 支持获得（现算路径）。
         window: 事件后观察窗（bar 数）。
 
     Raises:
         ValueError: 事件数不足（小样本拒绝）。
     """
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+    from core.analysis.condition_kernel import MtfEvalContext, _mask_for
 
     # 列前置检查：subject 不可用先结构化拒绝（否则 mask 全 False 会以
-    # 误导性的"事件数不足"小样本拒绝收场）
-    require_column(df, str(condition.get("subject", "")),
-                   template="event_study")
+    # 误导性的"事件数不足"小样本拒绝收场）。结构化 subject 经 resolve
+    # 校验即放行（_mask_for 两段式现算）；字符串 subject 保持原始列检查。
+    subject = condition.get("subject", "")
+    if isinstance(subject, dict):
+        try:
+            resolve_column_ref(subject)
+        except ColumnRefError as exc:
+            raise ResearchError(
+                "RESEARCH_COLUMN_NOT_AVAILABLE",
+                f"condition.subject 引用非法: {exc.message}",
+                detail={"param": "condition.subject",
+                        "code": exc.code, **exc.detail}) from exc
+    else:
+        require_column(df, str(subject), template="event_study")
 
-    mask = _evaluate_single_condition(df, condition)
+    mask = _mask_for(df, condition, mtf=mtf)
     mask = mask.fillna(False).astype(bool)
     event_idx = np.where(mask.values)[0]
 

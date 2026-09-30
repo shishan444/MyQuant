@@ -133,7 +133,7 @@ def _validate_params(
 
 
 # 条件统计内核已提升共享（add-regime-split 兑现 0.2.6 D4 钩子；三消费者）
-from core.analysis.condition_kernel import _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
 
 
 def screen_patterns(
@@ -148,6 +148,7 @@ def screen_patterns(
     request_start: str | pd.Timestamp | None = None,
     stop_check: Optional[Callable[[], None]] = None,
     hypothesis_id: Optional[str] = None,
+    mtf: "MtfEvalContext | None" = None,
 ) -> AnalysisResult:
     """全谱扫描：声明空间穷举 + FDR 校正 + 候选清单。
 
@@ -237,7 +238,7 @@ def screen_patterns(
     for cond in probes:
         if stop_check is not None:
             stop_check()
-        mask = _mask_for(work, cond)
+        mask = _mask_for(work, cond, mtf=mtf)
         stat_mask = (mask.values & stat_pos)
         n_hit = int(stat_mask.sum())
         if n_hit < min_samples:

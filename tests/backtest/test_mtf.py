@@ -80,43 +80,57 @@ class TestMergeToBase:
         result = merge_to_base(base, {"4h": info}, base_tf_minutes=15)
         assert "ema_20_4h" in result.columns
 
-    def test_ohlcv_columns_not_merged(self):
-        """OHLCV columns from info_df should be excluded."""
-        base = _make_ohlcv_df("2024-01-01", 10, "15min")
+    def test_ohlcv_columns_now_merged(self):
+        """0.2.14：OHLCV 排除清单移除——close_3d 等高周期基础列同样投影
+        （「3d close > 3d EMA50」类条件真生效前提）。"""
+        base = _make_ohlcv_df("2024-01-01", 40, "15min")
         info = _make_ohlcv_df("2024-01-01", 5, "4h")
         info["ema_20"] = 50.0
 
         result = merge_to_base(base, {"4h": info}, base_tf_minutes=15)
-        for col in ["open_4h", "high_4h", "low_4h", "close_4h", "volume_4h"]:
-            assert col not in result.columns
+        for col in ["open_4h", "high_4h", "low_4h", "close_4h", "volume_4h",
+                    "ema_20_4h"]:
+            assert col in result.columns
 
     def test_forward_fill_behavior(self):
-        """Values from higher TF should be forward-filled into base bars."""
-        base = _make_ohlcv_df("2024-01-01", 16, "15min")
+        """0.2.14 asof_completed：4h bar k 的值在其收盘时刻（开盘+4h）
+        起 backward 对齐可见——逐段确定。"""
+        base = _make_ohlcv_df("2024-01-01", 33, "15min")   # 覆盖到 08:00
         # 4h TF: 4 candles covering the same period
         info = _make_ohlcv_df("2024-01-01", 4, "4h")
         info["ema_20"] = [10.0, 20.0, 30.0, 40.0]
 
         result = merge_to_base(base, {"4h": info}, base_tf_minutes=15)
-
-        # All base rows should have a value (forward filled)
-        assert result["ema_20_4h"].notna().sum() > 0
+        col = result["ema_20_4h"]
+        # 00:00-03:45（16 根）：首根 4h 形成期——NaN
+        assert col.iloc[:16].isna().all()
+        # 04:00-07:45（16 根）：bar0 收盘可见=10
+        assert (col.iloc[16:32] == 10.0).all()
+        # 08:00 起：bar1 收盘可见=20
+        assert col.iloc[32] == 20.0
 
     def test_no_look_ahead_bias(self):
-        """Timestamps shifted forward: first base bar after info bar gets value."""
-        base = _make_ohlcv_df("2024-01-01", 4, "15min")
+        """0.2.14 真前视锚（替换旧 +1 基准 bar 位移的宽松断言）：
+        4h bar（00:00 开盘、04:00 收盘）的值在 04:00 前不可见（NaN），
+        04:00 起可见；改掉形成中 bar 的值不影响其收盘前输出（差分）。"""
+        base = _make_ohlcv_df("2024-01-01", 33, "15min")   # 00:00..08:00
         info = _make_ohlcv_df("2024-01-01", 1, "4h")
         info["ema_20"] = [99.0]
 
         result = merge_to_base(base, {"4h": info}, base_tf_minutes=15)
+        col = result["ema_20_4h"]
+        # 形成期（00:00-03:45）不可见
+        assert col.iloc[:16].isna().all()
+        # 收盘后（04:00 起）可见
+        assert (col.iloc[16:] == 99.0).all()
 
-        # The first 15min bar should NOT see the 4h value (look-ahead prevention)
-        # because info timestamps are shifted by +15min
-        first_val = result["ema_20_4h"].iloc[0]
-        # first_val should be NaN since the shifted info timestamp hasn't arrived yet
-        # OR it could be filled depending on exact alignment
-        # The key test: values should not appear BEFORE the info candle actually closed
-        assert result["ema_20_4h"].notna().any()
+        # 差分锚：形成中 bar 值改掉，收盘前输出不变
+        info2 = info.copy()
+        info2["ema_20"] = [-999.0]
+        result2 = merge_to_base(base, {"4h": info2}, base_tf_minutes=15)
+        pd.testing.assert_series_equal(
+            result["ema_20_4h"].iloc[:16],
+            result2["ema_20_4h"].iloc[:16], check_names=False)
 
     def test_multiple_timeframes(self):
         """Multiple higher TFs should all be merged."""
@@ -143,10 +157,12 @@ class TestMergeToBase:
         assert "ema_20_4h" not in result.columns
 
     def test_info_with_no_indicator_columns(self):
-        """Info DF with only OHLCV columns should be skipped."""
+        """0.2.14：纯 OHLCV info 不再跳过——高周期基础列同样投影
+        （旧排除清单移除）。"""
         base = _make_ohlcv_df("2024-01-01", 5, "15min")
         info = _make_ohlcv_df("2024-01-01", 2, "4h")
 
         result = merge_to_base(base, {"4h": info}, base_tf_minutes=15)
-        # No extra columns beyond base OHLCV
-        assert len(result.columns) == len(base.columns)
+        # OHLCV 后缀列全量投影（5 基础 + 5 后缀）
+        assert len(result.columns) == len(base.columns) + 5
+        assert "close_4h" in result.columns

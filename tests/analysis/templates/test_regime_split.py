@@ -143,3 +143,124 @@ class TestDiscipline:
         g = p["gates"]
         assert g["vol_pct"] == 0.80 and g["percentile_window"] == 90
         assert "method" in p and p["method"]["regime"] == "adx_state_x_vol_override"
+
+
+class TestMtfContextPassthrough:
+    """0.2.14 mtf 形制：P-4 修复（c82ec46 三键必备超集校验）后带
+    timeframe 键条件走掩码投影；无键 condition 传 ctx 仍零影响
+    （ctx 只在高周期分派被消费）。"""
+
+    def test_无timeframe键condition_mtf上下文不被消费(self):
+        from pathlib import Path
+
+        from core.analysis.condition_kernel import MtfEvalContext
+
+        df = _two_regime()
+        ctx = MtfEvalContext(Path("/nonexistent"), "TESTUSDT", "1d")
+        with_ctx = _split(df, indicator="RSI", condition=_RSI_COND,
+                          forward_bars=4, mtf=ctx)
+        without = _split(df, indicator="RSI", condition=_RSI_COND,
+                         forward_bars=4)
+        assert with_ctx == without   # ctx 零影响
+
+    def test_条件携带timeframe键_掩码投影求值与condition_stats对照一致(
+            self, tmp_path):
+        """P-4 修复回归（c82ec46）：带 4h 键条件不再被前置校验拒，
+        经 _mask_for 掩码投影求值——与 condition_stats 同数据同条件
+        逐数对照（期望由 4h 收盘挂载手工推导，不调被测投影函数）。"""
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.analysis.templates.condition_stats import condition_stats
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h",
+                             eval_start=pd.Timestamp("2024-01-02", tz="UTC"))
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "1h",
+                   "start": "2024-01-02", "end": "2024-01-25"}]
+        cond = {"subject": "close", "action": "gt",
+                "target": float(high["close"].median()), "timeframe": "4h"}
+
+        rs = _split(base, segmentation="auto", indicator="RSI",
+                    condition=cond, forward_bars=12, mtf=ctx)
+        rs_total = sum(s["samples"]
+                       for s in rs["payload"]["condition_by_segment"])
+        cs = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 10},
+            condition=cond, data_ranges=ranges, forward_bars=12,
+            mtf=ctx).to_dict()
+
+        # 独立手算：4h 收盘挂载（+4h 索引平移）backward 对齐 + 尾部
+        # 丢窗（命中位置 + forward_bars 超出末端不计）
+        closed = high.index + pd.Timedelta(hours=4)
+        visible = pd.Series(high["close"].values, index=closed).reindex(
+            base.index, method="ffill")
+        hit_mask = (visible > cond["target"]).fillna(False)
+        locs = [i for i, v in enumerate(hit_mask) if v]
+        n_valid = sum(1 for i in locs if i + 12 < len(base))
+        assert cs["payload"]["hit_count"] == int(hit_mask.sum())
+        assert cs["sample_size"] == n_valid == rs_total
+
+        # 轴分离：同阈值去键（1h 轴求值）样本数不同——掩码投影生效
+        cs_base = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 10},
+            condition={"subject": "close", "action": "gt",
+                       "target": cond["target"]},
+            data_ranges=ranges, forward_bars=12, mtf=ctx).to_dict()
+        assert cs_base["sample_size"] != cs["sample_size"]
+
+    def test_带timeframe键低周期_结构化拒绝(self, tmp_path):
+        from pathlib import Path
+
+        from core.analysis.condition_kernel import MtfEvalContext
+
+        # base_tf=1d（_RANGES 请求周期路由形制），1h < 1d → 低周期拒
+        ctx = MtfEvalContext(Path("/nonexistent"), "TESTUSDT", "1d")
+        with pytest.raises(ResearchError) as ei:
+            _split(_two_regime(), indicator="RSI",
+                   condition={**_RSI_COND, "timeframe": "1h"},
+                   forward_bars=4, mtf=ctx)
+        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
+
+
+    def test_结构化subject高周期键_掩码投影与内核直调一致(self, tmp_path):
+        """P-4/P-5 回归（c82ec46+3b33c4f）：结构化 subject+timeframe 不再
+        被三键校验拒、模板层字符串化后高周期轴 decode 现算——regime_split
+        逐段 samples 总和 == condition_stats sample_size == 内核 _mask_for
+        直调掩码统计（三方逐数一致；修复前该形态静默全 0）。"""
+        from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+        from core.analysis.templates.condition_stats import condition_stats
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        # eval_start 距 4h 起点 84 bar ≥ EMA(20) 需求 60（收敛×3）
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h",
+                             eval_start=pd.Timestamp("2024-01-15", tz="UTC"))
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "1h",
+                   "start": "2024-01-15", "end": "2024-01-25"}]
+        cond = {"subject": {"indicator": "EMA", "params": {"period": 20}},
+                "action": "gt", "target": float(high["close"].median()),
+                "timeframe": "4h"}
+
+        rs = _split(base, segmentation="auto", indicator="EMA",
+                    condition=cond, forward_bars=12, mtf=ctx)
+        rs_total = sum(s["samples"]
+                       for s in rs["payload"]["condition_by_segment"])
+        cs = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 20},
+            condition=cond, data_ranges=ranges, forward_bars=12,
+            mtf=ctx).to_dict()
+        mask = _mask_for(base.copy(), cond, ctx)
+        locs = [i for i, v in enumerate(mask) if v]
+        direct_valid = sum(1 for i in locs if i + 12 < len(base))
+        assert rs_total > 0                       # 修复前全 0（静默）
+        assert rs_total == cs["sample_size"] == direct_valid

@@ -59,6 +59,12 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     rng = payload.data_range.model_dump()
     p = dict(payload.params)
     ranges = [rng]
+    # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
+    # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
+    # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
+    from core.analysis.condition_kernel import MtfEvalContext
+    mtf_ctx = MtfEvalContext(
+        data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
     if payload.template == "screen_patterns":
         # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 取最大周期×3），
@@ -68,6 +74,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], feature_names)
+        mtf_ctx.eval_start = request_start
         return screen_patterns(
             df, data_ranges=ranges, timeframe=rng["timeframe"],
             features=p.get("features", "all"),
@@ -75,7 +82,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             top_n=p.get("top_n", 20),
             min_samples=p.get("min_samples", 30),
             request_start=request_start,
-            hypothesis_id=payload.hypothesis_id).to_dict()
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict()
 
     if payload.template == "param_sweep":
         # 参数稳健性检查（add-param-sweep）：warmup 前扩装载同 condition_stats
@@ -93,6 +101,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], [p["indicator"]])
+        mtf_ctx.eval_start = request_start
         return param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
             sweep={"axis": s.get("axis", "target"),
@@ -100,7 +109,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             forward_bars=p.get("forward_bars", 24),
             data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
-            hypothesis_id=payload.hypothesis_id).to_dict()
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict()
 
     if payload.template == "regime_split":
         # 行情分段（add-regime-split）：warmup 覆盖判读指标（ADX/ATR）；
@@ -118,13 +128,15 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], warm_names)
+        mtf_ctx.eval_start = request_start
         return regime_split(
             df, segmentation=p.get("segmentation", "auto"),
             indicator=p.get("indicator"), condition=p.get("condition"),
             forward_bars=p.get("forward_bars", 24),
             data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
-            hypothesis_id=payload.hypothesis_id).to_dict()
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict()
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
@@ -137,12 +149,14 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], [p["indicator"]])
+        mtf_ctx.eval_start = request_start
         return condition_stats(df, indicator=p["indicator"], params=p["params"],
                                condition=p["condition"], data_ranges=ranges,
                                request_start=request_start,
                                forward_bars=p.get("forward_bars", 24),
                                min_samples=p.get("min_samples", 30),
-                               hypothesis_id=payload.hypothesis_id).to_dict()
+                               hypothesis_id=payload.hypothesis_id,
+                               mtf=mtf_ctx).to_dict()
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
@@ -156,7 +170,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     if payload.template == "event_study":
         return event_study(df, condition=p["condition"], window=p.get("window", 12),
                            data_ranges=ranges, min_events=p.get("min_events", 30),
-                           hypothesis_id=payload.hypothesis_id).to_dict()
+                           hypothesis_id=payload.hypothesis_id,
+                           mtf=mtf_ctx).to_dict()
     if payload.template == "pattern_mining":
         return similar_at_time(df, as_of=p["as_of"], n_neighbors=p.get("n_neighbors", 50),
                                horizon=p.get("horizon", 12), data_ranges=ranges,

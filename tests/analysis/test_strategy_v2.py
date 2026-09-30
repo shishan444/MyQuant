@@ -254,10 +254,12 @@ class TestTranslator:
         assert out2["strategy_id"] == "st_active_same"
 
     def test_cross_symbol_rejected(self, db):
+        """0.2.14 收紧：跨 symbol 区间在登记入口即拒（data_ranges 单
+        symbol 单 timeframe——基准周期唯一）；转化器「跨币种」防线
+        成为不可达的防御纵深（存量实测零跨 symbol 假设，零迁移面）。"""
         ranges = self._ranges() + self._ranges(symbol="ETHUSDT")
-        hid = self._register_and_pass(db, self._expressible_conditions(), ranges)
-        with pytest.raises(ResearchError, match="跨币种"):
-            translate_hypothesis(db, hypothesis_id=hid)
+        with pytest.raises(ResearchError, match="基准周期唯一"):
+            self._register_and_pass(db, self._expressible_conditions(), ranges)
 
     def test_inexpressible_action_rejected(self, db):
         conds = {

@@ -253,7 +253,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         真实触发案例窗口，全流程唯一让原始 K 线进入上下文的通道。selector
         两形态互斥：{condition:{subject,action,target}}（subject 混合形制：
         参数化指标 {indicator, params, field} 结构化或字符串精确名——
-        扫描候选同形制直喂，indicator 必填供 warmup 推导）或 {timestamps:[...]}（点名
+        扫描候选同形制直喂；0.2.14 起 MAY 携带 timeframe 键=高周期条件
+        掩码投影（>= 请求基准周期、结构化 subject 任意参数现算、
+        indicator 参数可省——注意穿越类动作挂高周期为状态窗语义：
+        一次穿越持续 True 至下次高周期收盘）或 {timestamps:[...]}（点名
         ≤5，自带定位不传 start/end）。硬上限：limit ≤5（缺省 3，命中
         超限等距取样首尾保底，n_matched 披露命中总数）、context_bars
         ≤20（缺省 8，触发点前后各取）。start 缺省=全量数据集+effective_start
@@ -317,7 +320,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         {indicator, params, field}（多输出指标 field 必填，参数空间经
         list_indicators 查询）、基础列/插件列用字符串精确名（经
         list_signal_columns 校验）；字符串编码形（如 rsi_14）已关闭。
-        data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间）。同条件集+区间集
+        when 条目 MAY 携带可选 timeframe 键（0.2.14）：仅 >= 基准周期
+        （data_ranges 统一周期）的高周期——timeframe 修饰整条件（掩码
+        投影：subject/action/target 在高周期轴求值、布尔掩码按
+        asof_completed 投影回基准索引——仅已收盘高周期 K 线可见）；
+        低周期/未知周期/then 携带键结构化拒绝；显式写基准周期=缺省
+        同身份；高周期须数据目录可达（登记时校验）。
+        data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间，
+        0.2.14 起须全条目同 symbol 同 timeframe——该周期即基准周期）。
+        同条件集+区间集
         重复登记返回既有 id（duplicated=true）。provenance={task_id,
         candidate_fingerprint} 可选——引用扫描候选来源（screen_patterns
         输出的候选指纹），登记后该扫描区间自动进入判定并集（同区间

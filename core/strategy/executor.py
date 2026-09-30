@@ -453,50 +453,26 @@ def resample_signals(
     high_tf_signals: pd.Series,
     target_index: pd.DatetimeIndex,
 ) -> pd.Series:
-    """Forward-fill higher timeframe signals to match execution timeframe index."""
+    """高周期信号投影到执行周期索引（0.2.14 asof_completed 收口）。
+
+    高周期 bar T 的信号在 T+tf（收盘时刻）后才对基准可见——现行
+    开盘即见 ffill 为前视窗口（bar T 开盘即见 T 收盘才知道的信号）。
+    薄委托 mtf_alignment.project_completed_bool（四链同一权威实现）；
+    tf 由信号索引差分中位数推断（infer_tf_delta——对缺口鲁棒，缺口
+    上保守方向无前视）。收口 = 回测对齐实盘 ``_filter_forming_bar``
+    的时间语义（实盘每时刻丢形成中 bar，shift(1) 与现行 ffill 在实盘
+    时序下同值——实盘/模拟盘结果不变）。
+    """
+    from core.data.mtf_alignment import (
+        infer_tf_delta, project_completed_bool,
+    )
+
     if high_tf_signals.empty or len(target_index) == 0:
         return pd.Series(False, index=target_index)
 
-    reindexed = high_tf_signals.reindex(target_index, method="ffill")
-    return reindexed.fillna(False).astype(bool)
-
-
-def _resample_pulse(
-    signal: pd.Series,
-    target_index: pd.DatetimeIndex,
-) -> pd.Series:
-    """Resample pulse signal to target index using time-window aggregation.
-
-    Vectorized implementation using np.searchsorted. For each target bar,
-    if any source bar within its time window is True, the target bar is True.
-    """
-    if signal.empty or len(target_index) == 0:
-        return pd.Series(False, index=target_index)
-
-    true_timestamps = signal.index[signal.values.astype(bool)]
-    if len(true_timestamps) == 0:
-        return pd.Series(False, index=target_index)
-
-    n = len(target_index)
-    bar_starts = target_index.values.astype("int64")
-    bar_ends = np.empty(n, dtype="int64")
-    bar_ends[:-1] = bar_starts[1:]
-    bar_ends[-1] = bar_starts[-1] + int(86400e9)  # 1 day in nanoseconds
-
-    ts_vals = true_timestamps.values.astype("int64")
-
-    # searchsorted gives insertion point; subtract 1 to get bar index
-    indices = np.searchsorted(bar_starts, ts_vals, side="right") - 1
-
-    valid = (indices >= 0) & (indices < n)
-    result = np.zeros(n, dtype=bool)
-    if valid.any():
-        valid_idx = indices[valid]
-        valid_ts = ts_vals[valid]
-        within_bar = valid_ts < bar_ends[valid_idx]
-        result[valid_idx[within_bar]] = True
-
-    return pd.Series(result, index=target_index)
+    return project_completed_bool(
+        high_tf_signals, target_index,
+        infer_tf_delta(high_tf_signals.index))
 
 
 def dna_to_signals(
@@ -571,10 +547,15 @@ def dna_to_signal_set(
                 resampled_adds = resample_signals(sig.adds, enhanced_df.index)
                 resampled_reduces = resample_signals(sig.reduces, enhanced_df.index)
 
-                pulse_entries = _resample_pulse(sig.entries, enhanced_df.index)
-                pulse_exits = _resample_pulse(sig.exits, enhanced_df.index)
-                pulse_adds = _resample_pulse(sig.adds, enhanced_df.index)
-                pulse_reduces = _resample_pulse(sig.reduces, enhanced_df.index)
+                # 0.2.14：脉冲投影收口 pulse_completed（触发时间戳 +tf
+                # 平移——落在收盘时刻所在基准 bar；_resample_pulse 退役，
+                # 末 bar 硬编码 1 天窗口缺陷一并消除）
+                from core.data.mtf_alignment import infer_tf_delta, pulse_completed
+                _layer_delta = infer_tf_delta(layer_df.index)
+                pulse_entries = pulse_completed(sig.entries, enhanced_df.index, _layer_delta)
+                pulse_exits = pulse_completed(sig.exits, enhanced_df.index, _layer_delta)
+                pulse_adds = pulse_completed(sig.adds, enhanced_df.index, _layer_delta)
+                pulse_reduces = pulse_completed(sig.reduces, enhanced_df.index, _layer_delta)
             else:
                 resampled_entries = sig.entries.reindex(enhanced_df.index, fill_value=False)
                 resampled_exits = sig.exits.reindex(enhanced_df.index, fill_value=False)
