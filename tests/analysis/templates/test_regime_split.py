@@ -225,3 +225,42 @@ class TestMtfContextPassthrough:
                    condition={**_RSI_COND, "timeframe": "1h"},
                    forward_bars=4, mtf=ctx)
         assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
+
+
+    def test_结构化subject高周期键_掩码投影与内核直调一致(self, tmp_path):
+        """P-4/P-5 回归（c82ec46+3b33c4f）：结构化 subject+timeframe 不再
+        被三键校验拒、模板层字符串化后高周期轴 decode 现算——regime_split
+        逐段 samples 总和 == condition_stats sample_size == 内核 _mask_for
+        直调掩码统计（三方逐数一致；修复前该形态静默全 0）。"""
+        from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+        from core.analysis.templates.condition_stats import condition_stats
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        # eval_start 距 4h 起点 84 bar ≥ EMA(20) 需求 60（收敛×3）
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h",
+                             eval_start=pd.Timestamp("2024-01-15", tz="UTC"))
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "1h",
+                   "start": "2024-01-15", "end": "2024-01-25"}]
+        cond = {"subject": {"indicator": "EMA", "params": {"period": 20}},
+                "action": "gt", "target": float(high["close"].median()),
+                "timeframe": "4h"}
+
+        rs = _split(base, segmentation="auto", indicator="EMA",
+                    condition=cond, forward_bars=12, mtf=ctx)
+        rs_total = sum(s["samples"]
+                       for s in rs["payload"]["condition_by_segment"])
+        cs = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 20},
+            condition=cond, data_ranges=ranges, forward_bars=12,
+            mtf=ctx).to_dict()
+        mask = _mask_for(base.copy(), cond, ctx)
+        locs = [i for i, v in enumerate(mask) if v]
+        direct_valid = sum(1 for i in locs if i + 12 < len(base))
+        assert rs_total > 0                       # 修复前全 0（静默）
+        assert rs_total == cs["sample_size"] == direct_valid

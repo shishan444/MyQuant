@@ -581,3 +581,113 @@ class TestReachabilityIndependent:
         body = resp.json()["detail"]
         assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
         assert body["detail"]["available_timeframes"] == ["1h"]
+
+
+# ---------------------------------------------------------------- P-5 字符串 subject decode（3b33c4f 回归）
+
+class TestP5StringSubjectDecode:
+    """P-5（design R2 subject/target 对称）：模板层字符串化 subject 与
+    用户直传编码列名形在高周期轴 decode 现算；不可解析保持列缺失全
+    False 契约；decode 可解析即并入 warmup 收敛需求（静默全 False 的
+    组合转显式拒绝——行为变化披露项）。"""
+
+    def _env(self, tmp_path, base_bars=600, base_start="2024-01-01"):
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=base_bars, freq="1h", start=base_start, seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        _write_parquet(data_dir, "1h", base)
+        _write_parquet(data_dir, "4h", high)
+        return data_dir, base, high
+
+    def test_字符串编码subject_与结构化subject_同掩码(self, tmp_path):
+        """「rsi_14」与 {"indicator":"RSI","params":{"period":14}} 两形
+        同条件同掩码（decode 现算与结构化路径等价）。"""
+        data_dir, base, _ = self._env(tmp_path)
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h",
+                             eval_start=pd.Timestamp("2024-01-15", tz="UTC"))
+        shared = {"action": "lt", "target": 30.0, "timeframe": "4h"}
+        via_str = _mask_for(base.copy(), dict(shared, subject="rsi_14"), ctx)
+        via_dict = _mask_for(base.copy(), dict(
+            shared, subject={"indicator": "RSI", "params": {"period": 14}}), ctx)
+        pd.testing.assert_series_equal(via_str, via_dict)
+
+    def test_结构化EMA掩码_与手算递推EMA投影逐点一致(self, tmp_path):
+        """硬锚：EMA=递推（seed=前 20 根 SMA、前 19 NaN、alpha=2/(p+1)）
+        ——手算递推 EMA 于 4h close、gt 掩码、+4h 挂载投影，与 _mask_for
+        结构化路径逐点一致。"""
+        data_dir, base, high = self._env(tmp_path)
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h",
+                             eval_start=pd.Timestamp("2024-01-15", tz="UTC"))
+        mid = float(high["close"].median())
+        cond = {"subject": {"indicator": "EMA", "params": {"period": 20}},
+                "action": "gt", "target": mid, "timeframe": "4h"}
+        got = _mask_for(base.copy(), cond, ctx)
+
+        # 手算递推 EMA（TA 惯例：seed=SMA(20)，前 19 NaN）
+        c = high["close"].to_numpy()
+        alpha = 2.0 / (20 + 1)
+        ema = [float("nan")] * 19 + [float(c[:20].mean())]
+        for x in c[20:]:
+            ema.append(alpha * x + (1 - alpha) * ema[-1])
+        high_mask = pd.Series(ema, index=high.index) > mid
+        # +4h 挂载投影（手工 reindex ffill——不调被测投影函数）
+        closed_idx = high.index + pd.Timedelta(hours=4)
+        visible = pd.Series(high_mask.astype(float).to_numpy(),
+                            index=closed_idx).reindex(base.index, method="ffill")
+        expected = visible.fillna(0.0).astype(bool)
+        pd.testing.assert_series_equal(got, expected, check_names=False)
+
+    def test_decode可解析subject_并入warmup_不足显式拒_基础列不拒(self, tmp_path):
+        """行为变化披露项：rsi_14@4h 在高周期起点不足 RSI(14) 收敛×3
+        （42 bar）时显式拒绝（detail 附需求 vs 可得）；同数据纯基础列
+        close@4h 正常求值（零前扩契约保持——不以 floor 拒可求值请求）。"""
+        import numpy as np
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        # 4h 37 根起点 T0；1h 基准起点 T0+39×4h（=2024-01-07 12:00）
+        high = make_ohlcv(n=37, freq="4h", start="2024-01-01", seed=7)
+        base = make_ohlcv(n=100, freq="1h", start="2024-01-07 12:00", seed=7)
+        _write_parquet(data_dir, "4h", high)
+        _write_parquet(data_dir, "1h", base)
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h", eval_start=base.index[0])
+
+        with pytest.raises(ResearchError) as ei:
+            _mask_for(base.copy(), {"subject": "rsi_14", "action": "lt",
+                                    "target": 30.0, "timeframe": "4h"}, ctx)
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+        detail = ei.value.detail or {}
+        assert detail["warmup_bars"] == 42       # RSI(14) 收敛 14 × 3
+        assert detail["available_bars"] == 39    # 距 4h 起点 39 bar
+        # 同数据 close（decode 不可解析、无指标收敛需求）正常求值
+        mask = _mask_for(base.copy(), {"subject": "close", "action": "gt",
+                                       "target": 0.0, "timeframe": "4h"}, ctx)
+        assert len(mask) == len(base) and bool(mask.any())
+
+    def test_后缀列名subject_decode失败_全False降级_基础列raw直用(self, tmp_path):
+        """结构性不碰撞：ema_20_4h（Lab 后缀列名）decode 失败 → 高周期
+        raw 无此列 → 全 False 安全降级（契约保持）；close 同样不可 decode
+        但 raw 直用命中（「decode 失败」≠「不可用」双证）。"""
+        from core.analysis.column_ref import decode_column_ref
+
+        data_dir, base, high = self._env(tmp_path)
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h")
+        # decode 不可解析契约=返回 None（rsi_14/ema_20 可解析、
+        # close/ema_20_4h 不可——实测边界）
+        assert decode_column_ref("ema_20_4h") is None
+        assert decode_column_ref("close") is None
+        assert decode_column_ref("rsi_14") is not None
+        mask = _mask_for(base.copy(), {"subject": "ema_20_4h",
+                                       "action": "gt", "target": 0.0,
+                                       "timeframe": "4h"}, ctx)
+        assert not mask.any()
+        # close 直用 4h raw 列：掩码与手算挂载投影命中一致（296）
+        mid = float(high["close"].median())
+        via_close = _mask_for(base.copy(), {"subject": "close", "action": "gt",
+                                            "target": mid, "timeframe": "4h"}, ctx)
+        closed_idx = high.index + pd.Timedelta(hours=4)
+        visible = pd.Series(high["close"].to_numpy(),
+                            index=closed_idx).reindex(base.index, method="ffill")
+        expected = (visible > mid).fillna(False)
+        pd.testing.assert_series_equal(via_close, expected, check_names=False)

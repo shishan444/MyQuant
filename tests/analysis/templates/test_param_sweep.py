@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -231,3 +232,44 @@ class TestTimeframeKey:
             self._sweep(base, {"subject": "close", "action": "gt",
                                "target": 100.0, "timeframe": "1w"}, ctx)
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+
+    def test_结构化subject高周期键_中心条件掩码投影生效(self, tmp_path):
+        """P-5 回归（3b33c4f）：结构化 subject 模板层字符串化（ema_20）
+        在高周期轴 decode 现算——带键中心点样本与内核直调一致，且与
+        去键（1h 轴）分离（修复前带键静默全 0）。"""
+        from core.analysis.condition_kernel import _mask_for
+
+        base, high, ctx = self._mtf_env(tmp_path)
+        ctx.eval_start = pd.Timestamp("2024-01-15", tz="UTC")  # 84 bar ≥ 60
+        ranges = [{"symbol": "TESTUSDT", "timeframe": "1h",
+                   "start": "2024-01-15", "end": "2024-01-25"}]
+        cond = {"subject": {"indicator": "EMA", "params": {"period": 20}},
+                "action": "gt", "target": float(high["close"].median()),
+                "timeframe": "4h"}
+        p = param_sweep(
+            base.copy(), indicator="EMA", condition=cond,
+            sweep={"axis": "target", "values": [cond["target"] - 10.0,
+                                                cond["target"],
+                                                cond["target"] + 10.0]},
+            forward_bars=12, data_ranges=ranges, timeframe="1h",
+            mtf=ctx).to_dict()["payload"]
+        with_key = next(x for x in p["points"] if x["value"] == cond["target"])
+        assert with_key["samples"] > 0
+        # 与内核直调一致（尾部丢窗口径）
+        mask = _mask_for(base.copy(), cond, ctx)
+        locs = [i for i, v in enumerate(mask) if v]
+        direct = sum(1 for i in locs if i + 12 < len(base))
+        assert with_key["samples"] == direct
+        # 去键（1h 轴 EMA20）分离
+        p2 = param_sweep(
+            base.copy(), indicator="EMA",
+            condition={"subject": {"indicator": "EMA", "params": {"period": 20}},
+                       "action": "gt", "target": cond["target"]},
+            sweep={"axis": "target", "values": [cond["target"] - 10.0,
+                                                cond["target"],
+                                                cond["target"] + 10.0]},
+            forward_bars=12, data_ranges=ranges, timeframe="1h",
+            mtf=ctx).to_dict()["payload"]
+        without = next(x for x in p2["points"] if x["value"] == cond["target"])
+        assert without["samples"] != with_key["samples"]
