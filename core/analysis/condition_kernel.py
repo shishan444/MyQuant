@@ -183,6 +183,17 @@ def _mask_higher(
     if isinstance(subject, dict):
         cdef = resolve_column_ref(subject)
         refs.append((cdef.indicator, dict(cdef.params)))
+    elif isinstance(subject, str):
+        # P-5：模板层 0.2.13 已把结构化 subject encode 成列名传入
+        # （param_sweep/regime_split），高周期轴无矩阵列——decode 对称
+        # target：可解析即并入 warmup 收敛需求（decode 边界已实测：
+        # close/ema_20_4h 不可解析、rsi_14 往返一致）
+        try:
+            decoded_s = decode_column_ref(subject)
+        except ColumnRefError:
+            decoded_s = None
+        if decoded_s is not None:
+            refs.append((decoded_s["indicator"], decoded_s.get("params") or {}))
     target = condition.get("target")
     if isinstance(target, str):
         try:
@@ -215,6 +226,15 @@ def _mask_higher(
     col = subject
     if cdef is not None:
         col = _compute_into(eval_df, cdef)
+    elif isinstance(subject, str) and subject not in eval_df.columns:
+        # P-5：与 target 对称——编码列名高周期轴 decode 现算；
+        # 不可解析保持列缺失全 False 契约（基准路径同款）
+        try:
+            decoded_s = decode_column_ref(subject)
+        except ColumnRefError:
+            decoded_s = None
+        if decoded_s is not None:
+            col = _compute_into(eval_df, resolve_column_ref(decoded_s))
     if isinstance(target, str) and target not in eval_df.columns:
         try:
             decoded = decode_column_ref(target)
