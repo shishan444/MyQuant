@@ -232,3 +232,38 @@ class TestConditionStats:
         assert sig["method"] == "t_test_vs_baseline"
         assert sig["p_value"] is not None and 0.0 <= sig["p_value"] <= 1.0
         assert res.payload["dropped_tail_signals"] == 10
+
+
+class TestTimeframeKey:
+    """0.2.14 timeframe 键透传：condition 携带高周期键经 _mask_for
+    掩码投影求值（spec research-validation-protocol「混合周期假设条件
+    求值端到端成功」的条件统计族模板面）。"""
+
+    def test_高周期键条件_掩码投影轴分离生效(self, tmp_path):
+        """阈值超出 4h close 全域：带键（4h 轴）hit_count=0；同阈值
+        去键（1h 轴，固定种子存在越界 bar）hit_count>0。"""
+        from core.analysis.condition_kernel import MtfEvalContext
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h")
+        beyond = float(high["close"].max()) + 1.0
+
+        def hit(cond):
+            return condition_stats(
+                base.copy(), indicator="EMA", params={"period": 10},
+                condition=cond, data_ranges=RANGES, forward_bars=8,
+                mtf=ctx).to_dict()["payload"]["hit_count"]
+
+        # 带键：4h 轴全 False → 0 命中 → 小样本拒绝（投影路径生效）
+        with pytest.raises(ValueError, match="小样本"):
+            hit({"subject": "close", "action": "gt",
+                 "target": beyond, "timeframe": "4h"})
+        # 同阈值去键：1h 轴存在越界 bar → 命中 >0（两轴分离）
+        assert hit({"subject": "close", "action": "gt",
+                    "target": beyond}) > 0

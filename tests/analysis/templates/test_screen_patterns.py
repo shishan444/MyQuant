@@ -185,3 +185,23 @@ class TestCrossCheckWithConditionStats:
             round(ref["payload"][fwd_key]["mean"], 6), abs=1e-6)
         assert c["win_rate"] == pytest.approx(
             round(ref["payload"]["win_rate"], 4), abs=1e-4)
+
+
+class TestMtfContextPassthrough:
+    """0.2.14 P-walk2：screen 分支统一接收 mtf ctx（形制一致降低分支
+    遗漏），但候选生成恒基准周期形制——ctx 不被消费：传入 ctx 不改变
+    扫描结果，候选条件不含 timeframe 键。"""
+
+    def test_候选恒基准形制_mtf上下文不被消费(self):
+        from pathlib import Path
+
+        from core.analysis.condition_kernel import MtfEvalContext
+
+        df = _random_walk(1)
+        ctx = MtfEvalContext(Path("/nonexistent"), "TESTUSDT", "1h")
+        kw = dict(data_ranges=_RANGES, timeframe="1h",
+                  features=["RSI"], horizons=[4, 12], top_n=5)
+        with_ctx = screen_patterns(df, mtf=ctx, **kw).to_dict()["payload"]
+        without = screen_patterns(df, **kw).to_dict()["payload"]
+        assert with_ctx["candidates"] == without["candidates"]  # ctx 零影响
+        assert all("timeframe" not in c["condition"] for c in with_ctx["candidates"])

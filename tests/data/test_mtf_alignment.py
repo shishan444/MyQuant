@@ -212,9 +212,12 @@ class TestPulseCompleted:
         assert out.sum() == 0
 
     def test_脉冲_末bar窗口为tf时长_对照旧硬编码1天(self):
-        """末 bar 窗口=+tf（替换旧硬编码 1 天）——1w 周期末 bar 脉冲
-        收盘于开盘+7d，恰在基准末端上仍可落位；旧 1 天窗口会把
-        超出 1 天的收盘误判为不可落位。"""
+        """末 bar 窗口=+tf 挂载（替换旧硬编码 1 天）——1w 周期 bar0
+        脉冲收盘于开盘+7d，恰等于基准末端时刻、闭边界上仍可落位。
+        旧实现差异实证（tester 修正注）：旧 _resample_pulse 无 +tf
+        平移，信号按开盘时刻落位（本用例旧版落 T0 而非 T0+7d——
+        落错 bar 即前视）；末 bar 硬编码 1 天兜底窗为另一缺陷，由
+        +tf 挂载机制整体替换（close 超出基准末端一律不可见）。"""
         week = 7 * 24 * 3600
         signal = _bars([True, False], _T0, "1w")           # bar0 收盘 T0+7d
         base = _base_grid(_T0, 8, "1d")                    # 末端恰为 T0+7d

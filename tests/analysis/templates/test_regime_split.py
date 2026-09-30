@@ -143,3 +143,32 @@ class TestDiscipline:
         g = p["gates"]
         assert g["vol_pct"] == 0.80 and g["percentile_window"] == 90
         assert "method" in p and p["method"]["regime"] == "adx_state_x_vol_override"
+
+
+class TestMtfContextPassthrough:
+    """0.2.14 mtf 形制统一：regime_split 签名接收 mtf ctx，但前置
+    校验要求 condition 恰为三键（0.2.13 既有契约，timeframe 键在
+    param 层被拒）——ctx 对现行 condition 形制不被消费：传入 ctx
+    不改变分段与逐段统计结果（对质记录见 tester 阶段二报告）。"""
+
+    def test_无timeframe键condition_mtf上下文不被消费(self):
+        from pathlib import Path
+
+        from core.analysis.condition_kernel import MtfEvalContext
+
+        df = _two_regime()
+        ctx = MtfEvalContext(Path("/nonexistent"), "TESTUSDT", "1d")
+        with_ctx = _split(df, indicator="RSI", condition=_RSI_COND,
+                          forward_bars=4, mtf=ctx)
+        without = _split(df, indicator="RSI", condition=_RSI_COND,
+                         forward_bars=4)
+        assert with_ctx == without   # ctx 零影响
+
+    def test_条件携带timeframe键_前置三键校验拒绝(self):
+        """当前行为锚（契约含糊点钉住——是否放开三键校验待裁决；
+        裁决放开后本锚应随契约更新为掩码投影求值断言）。"""
+        with pytest.raises(ResearchError) as ei:
+            _split(_two_regime(), indicator="RSI",
+                   condition={**_RSI_COND, "timeframe": "4h"},
+                   forward_bars=4)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"

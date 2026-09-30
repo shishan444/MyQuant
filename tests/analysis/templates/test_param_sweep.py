@@ -173,3 +173,61 @@ class TestCrossCheckWithConditionStats:
             assert pt["p_value"] == pytest.approx(sig["p_value"], nan_ok=True)
             # 资格门口径对齐：原始有效触发数 == condition_stats 的 count
             assert pt["samples"] == fwd_stats["count"], pt["value"]
+
+
+class TestTimeframeKey:
+    """0.2.14 timeframe 键透传（design 场景矩阵⑬ / spec ai-research-tools
+    「高周期中心条件经投影求值」）：带键中心条件整条件在高周期轴求值、
+    布尔掩码投影到基准索引；低周期或不可达周期结构化拒绝。"""
+
+    @staticmethod
+    def _mtf_env(tmp_path):
+        from core.analysis.condition_kernel import MtfEvalContext
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "TESTUSDT_1h.parquet")
+        high.to_parquet(data_dir / "TESTUSDT_4h.parquet")
+        return base, high, MtfEvalContext(data_dir, "TESTUSDT", "1h")
+
+    @classmethod
+    def _sweep(cls, base, cond, ctx):
+        t = float(cond["target"])
+        payload = param_sweep(
+            base.copy(), indicator="RSI", condition=cond,
+            sweep={"axis": "target", "values": [t - 10.0, t, t + 10.0]},
+            forward_bars=12, data_ranges=_RANGES, timeframe="1h",
+            mtf=ctx).to_dict()["payload"]
+        return next(p for p in payload["points"] if p["value"] == t)
+
+    def test_高周期键中心条件_掩码投影轴分离生效(self, tmp_path):
+        """阈值超出 4h close 全域：带键（4h 轴求值）掩码全 False →
+        资格门 insufficient_sample；同阈值去键（1h 轴求值，固定种子下
+        存在越界 bar）样本 >0——两轴结果分离证明投影路径接通。"""
+        base, high, ctx = self._mtf_env(tmp_path)
+        beyond = float(high["close"].max()) + 1.0
+        with_key = self._sweep(
+            base, {"subject": "close", "action": "gt",
+                   "target": beyond, "timeframe": "4h"}, ctx)
+        assert with_key["samples"] == 0
+        assert with_key["state"] == "insufficient_sample"
+        without_key = self._sweep(
+            base, {"subject": "close", "action": "gt", "target": beyond}, ctx)
+        assert without_key["samples"] > 0
+
+    def test_低周期timeframe_结构化拒绝(self, tmp_path):
+        base, _, ctx = self._mtf_env(tmp_path)
+        with pytest.raises(ResearchError) as ei:
+            self._sweep(base, {"subject": "close", "action": "gt",
+                               "target": 100.0, "timeframe": "15m"}, ctx)
+        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
+
+    def test_不可达周期_结构化拒绝(self, tmp_path):
+        base, _, ctx = self._mtf_env(tmp_path)
+        with pytest.raises(ResearchError) as ei:
+            self._sweep(base, {"subject": "close", "action": "gt",
+                               "target": 100.0, "timeframe": "1w"}, ctx)
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
