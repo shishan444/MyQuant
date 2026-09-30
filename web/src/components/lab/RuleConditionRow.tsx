@@ -75,7 +75,10 @@ export function RuleConditionRow({
       </div>
 
       {/* Timeframe selector */}
+      {/* 0.2.14：timeframe 键真实生效（掩码投影——仅已收盘高周期 K 线可见）；
+          穿越类动作挂高周期为状态窗语义（一次穿越持续至下次高周期收盘） */}
       <select
+        title="周期修饰整条件：在高周期上求值后按已收盘可见性投影回基准轴；穿越类动作为状态窗（持续至下次高周期收盘）"
         value={condition.timeframe}
         onChange={(e) => handleTimeframeChange(e.target.value)}
         className={cn(

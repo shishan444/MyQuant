@@ -522,3 +522,44 @@ class TestCrossChainConsistency:
             else:
                 assert projected.iloc[i] == pytest.approx(
                     float(closed.iloc[-1]))
+
+
+# ---------------------------------------------------------------- 转化拒绝（task 5.1）
+
+class TestTranslationReject:
+    """混合周期假设转化显式拒绝（Q3=a）：登记/分析/案例检查不受影响，
+    转化拒绝且无静默降级；考试链不可用为边界声明（无策略可跑，不可
+    构造考试链「不受影响」断言——TD-1）。"""
+
+    def test_when带timeframe_转化拒绝(self, env):
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.hypothesis_service import register_hypothesis
+
+        out = register_hypothesis(
+            env["db"],
+            conditions={"when_conditions": [
+                {"subject": "close", "action": "gt", "target": 0.0,
+                 "timeframe": "4h"}],
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0}]},
+            statement="转化拒绝测试",
+            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
+                          "start": "2023-06-01T00:00:00Z",
+                          "end": "2023-07-01T00:00:00Z"}])
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(env["db"],
+                                 hypothesis_id=out["hypothesis_id"])
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "多周期假设翻译暂不支持" in ei.value.message
+        # 慢通道披露：生命周期上限语义
+        assert "active" in (ei.value.detail or {}).get("slow_path", "")
+
+    def test_带键假设_求值与案例检查不受影响(self, env):
+        """拒绝边界只限转化：同假设条件在求值链（掩码投影）与案例
+        检查通道正常工作（登记侧已锚，此处锚求值侧同一条件可求值）。"""
+        ctx = _ctx(env)
+        cond = {"subject": "close", "action": "gt",
+                "target": float(env["high"]["close"].min()) - 1,
+                "timeframe": "4h"}
+        m = _mask_for(env["base"].copy(), cond, mtf=ctx)
+        assert m.any()          # 求值正常（高周期键生效）

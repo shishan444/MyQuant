@@ -53,6 +53,21 @@ HINTS: Dict[str, str] = {
     "RESEARCH_WARMUP_INSUFFICIENT":
         "warmup 不足：把 start 前移补足指标回看期（参数范围见 "
         "list_indicators），或换 lookback 更短的指标",
+    # ---- 多周期条件（0.2.14）
+    "TIMEFRAME_ON_THEN":
+        "THEN 条件不接受 timeframe 键（前向收益对照以基准 bar 计，"
+        "跨周期归属未定义）——去掉 then 条目的 timeframe，跨周期方向"
+        "表达放 when 条件",
+    "TIMEFRAME_UNKNOWN":
+        "周期键非法：用合法键集内的周期（detail.legal_range）；高周期"
+        "数据可达性以 list_data_sources 实际清单为准",
+    "TIMEFRAME_NOT_HIGHER":
+        "低周期条件请降基准表达：基准周期（data_ranges 统一周期）降为"
+        "该低周期、其余条件挂高周期——聚合歧义不可自证",
+    "RESEARCH_MTF_CONTEXT_MISSING":
+        "求值入口未构建多周期上下文（调用方接线缺陷非输入错误）："
+        "经 run_analysis/inspect_cases//api/validate 正规入口重试；"
+        "持续出现属工程缺陷，附 detail 提交问题报告",
     "RESEARCH_COMPONENT_EVIDENCE_MISSING":
         "组合假设缺组件证据：对每个组件条件分别取得验证记录后再组合",
     # ---- 转化与表达
