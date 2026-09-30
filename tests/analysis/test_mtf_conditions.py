@@ -336,3 +336,124 @@ class TestInspectCasesMtf:
         logs = rr.list_research_log(env["db"])
         last = [l for l in logs if l["entry_type"] == "inspect_cases"][-1]
         assert last["ref_id"] == canonical_condition_hash(cond, "1h")
+
+
+# ---------------------------------------------------------------- 登记链（task 2.1/2.2）
+
+class TestRegistrationTimeframe:
+    """拒绝五类 + 成功登记 + 显式基准剥离幂等连续（B3 校验序）。"""
+
+    def _register(self, env, when, then=None, ranges=None):
+        from core.analysis.hypothesis_service import register_hypothesis
+
+        return register_hypothesis(
+            env["db"],
+            conditions={"when_conditions": when,
+                        "then_conditions": then or [
+                            {"subject": "close", "action": "gt", "target": 0}]},
+            statement="mtf 登记测试",
+            data_ranges=ranges or [
+                {"symbol": SYMBOL, "timeframe": "1h",
+                 "start": "2023-06-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}])
+
+    def _when(self, **extra):
+        cond = {"subject": "close", "action": "gt", "target": 0.0}
+        cond.update(extra)
+        return [cond]
+
+    def test_THEN携带timeframe_拒绝(self, env):
+        with pytest.raises(ResearchError) as ei:
+            self._register(env, self._when(),
+                           then=[{"subject": "close", "action": "gt",
+                                  "target": 0, "timeframe": "4h"}])
+        assert ei.value.code == "TIMEFRAME_ON_THEN"
+        assert "前向收益对照" in ei.value.message
+
+    def test_未知周期_拒绝附合法清单(self, env):
+        with pytest.raises(ResearchError) as ei:
+            self._register(env, self._when(timeframe="2d"))
+        assert ei.value.code == "TIMEFRAME_UNKNOWN"
+        assert "4h" in (ei.value.detail or {}).get("legal_range", [])
+
+    def test_低周期_拒绝附降基准指引(self, env):
+        with pytest.raises(ResearchError) as ei:
+            self._register(env, self._when(timeframe="1m"))
+        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
+        assert "降基准" in ei.value.message
+
+    def test_区间周期不一致_拒绝(self, env):
+        ranges = [
+            {"symbol": SYMBOL, "timeframe": "1h",
+             "start": "2023-06-01T00:00:00Z", "end": "2023-06-15T00:00:00Z"},
+            {"symbol": SYMBOL, "timeframe": "4h",
+             "start": "2023-06-15T00:00:00Z", "end": "2023-07-01T00:00:00Z"}]
+        with pytest.raises(ResearchError) as ei:
+            self._register(env, self._when(), ranges=ranges)
+        assert ei.value.code == "RESEARCH_RANGE_INVALID"
+        assert "基准周期" in ei.value.message
+
+    def test_成功登记_timeframe键原样保留_显式基准剥离(self, env):
+        out = self._register(env, [
+            {"subject": "close", "action": "gt", "target": 0.0,
+             "timeframe": "4h"},
+            {"subject": "close", "action": "gt", "target": 0.0,
+             "timeframe": "1h"},   # 显式基准——剥离
+            {"subject": "close", "action": "gt", "target": 0.0},  # 缺省
+        ])
+        assert out["duplicated"] is False
+        from core.persistence.repository import research as rr
+        import json as _json
+        hyp = rr.get_hypothesis(env["db"], out["hypothesis_id"])
+        conds = _json.loads(hyp["conditions"])
+        whens = conds["when_conditions"]
+        assert whens[0].get("timeframe") == "4h"   # 高周期键原样保留
+        assert "timeframe" not in whens[1]          # 显式基准剥离
+        assert "timeframe" not in whens[2]          # 缺省无键
+
+    def test_幂等键字面连续_显式基准命中缺省假设(self, env):
+        a = self._register(env, self._when())
+        b = self._register(env, self._when(timeframe="1h"))  # 显式基准
+        assert b["duplicated"] is True
+        assert b["hypothesis_id"] == a["hypothesis_id"]
+
+    def test_高周期条件登记_不同身份不命中(self, env):
+        a = self._register(env, self._when())
+        b = self._register(env, self._when(timeframe="4h"))
+        assert b["duplicated"] is False
+        assert b["hypothesis_id"] != a["hypothesis_id"]
+
+
+class TestRegistrationReachability:
+    """路由级高周期可达校验（N2：附实际可得周期清单——「周期非法」
+    与「周期无数据」语义区分；1w 无数据用例）。"""
+
+    def _post(self, api_client, env, timeframe):
+        api_client.app.state.db_path = env["db"]
+        api_client.app.state.data_dir = env["data_dir"]
+        resp = api_client.post("/api/research/hypotheses", json={
+            "statement": "mtf 可达测试",
+            "conditions": {
+                "when_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0.0,
+                     "timeframe": timeframe}],
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0}]},
+            "data_ranges": [{"symbol": SYMBOL, "timeframe": "1h",
+                             "start": "2023-06-10T00:00:00Z",
+                             "end": "2023-06-20T00:00:00Z"}]})
+        return resp
+
+    def test_高周期可达_登记成功(self, api_client, env):
+        resp = self._post(api_client, env, "4h")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["duplicated"] is False
+
+    def test_1w无数据_拒绝附可得周期清单(self, api_client, env):
+        """实测数据面：值域含 1w 但数据目录无 1w 文件——可达性拒绝
+        附 find_parquet 探测的实际可得清单。"""
+        resp = self._post(api_client, env, "1w")
+        assert resp.status_code == 422
+        body = resp.json()["detail"]
+        assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
+        avail = body["detail"]["available_timeframes"]
+        assert "1h" in avail and "4h" in avail and "1w" not in avail

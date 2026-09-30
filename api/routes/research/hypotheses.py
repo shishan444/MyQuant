@@ -49,6 +49,35 @@ def register_hypothesis(
                     detail={"field": f"data_ranges[{i}]",
                             "symbol": r.symbol, "timeframe": r.timeframe})
 
+        # 0.2.14：when 条件 timeframe 键去重逐周期可达校验（与
+        # data_ranges 可达同族同层早失败）；N2：拒绝 detail 附
+        # find_parquet 探测的实际可得周期清单——「周期非法」与
+        # 「周期无数据」语义区分
+        from core.data.timeframes import TF_SECONDS
+        _cond = payload.conditions.model_dump()
+        _required_tfs = []
+        for c in _cond["when_conditions"]:
+            tf_key = c.get("timeframe")
+            if (tf_key and tf_key not in _required_tfs
+                    and tf_key != payload.data_ranges[0].timeframe):
+                _required_tfs.append(tf_key)
+        if _required_tfs:
+            import re as _re
+            safe = _re.sub(r"[^A-Za-z0-9]", "", payload.data_ranges[0].symbol)
+            _available = [tf for tf in TF_SECONDS
+                          if find_parquet(data_dir, safe, tf) is not None]
+            for tf_key in _required_tfs:
+                if tf_key in _available:
+                    continue
+                raise ResearchError(
+                    "RESEARCH_SYMBOL_NOT_FOUND",
+                    f"when 条件 timeframe={tf_key} 无数据: "
+                    f"{payload.data_ranges[0].symbol} {tf_key}",
+                    detail={"field": "when_conditions.timeframe",
+                            "symbol": payload.data_ranges[0].symbol,
+                            "timeframe": tf_key,
+                            "available_timeframes": _available})
+
         out = hs.register_hypothesis(
             db_path,
             conditions=payload.conditions.model_dump(),

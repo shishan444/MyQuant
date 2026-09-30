@@ -809,11 +809,14 @@ class ConditionItem(BaseModel):
     """假设条件（与假设验证引擎 {subject, action, target} 同源形制）。
 
     subject 混合形制：参数化指标用结构化 IndicatorRef，基础列/插件列用
-    字符串精确名（业务校验在 service 层 resolve_column_ref）。"""
+    字符串精确名（业务校验在 service 层 resolve_column_ref）。
+    0.2.14：可选 timeframe 键——仅 when 条件、>= 基准周期的高周期
+    （timeframe 修饰整条件，掩码投影求值；then 条件携带即拒）。"""
 
     subject: Union[str, IndicatorRef]
     action: str
     target: Union[float, str]
+    timeframe: Optional[str] = None
 
 
 class HypothesisConditions(BaseModel):

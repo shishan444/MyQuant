@@ -110,8 +110,72 @@ def register_hypothesis(
                     f"{field_name} 须含 subject/action/target",
                     detail={"field": field_name})
 
-    # 2. subject 引用（0.2.13：混合形制统一校验 + canonical 化归一——
-    #    数值形制与 field 缺省在入口统一，conditions_hash 对 canonical 形计算）
+    # 2. 区间（0.2.14：单周期收紧——全部条目同 symbol 同 timeframe，
+    #    该周期即基准周期；timeframe 键的方向校验以它为基准）
+    if not isinstance(data_ranges, list) or not data_ranges:
+        raise ResearchError("RESEARCH_RANGE_INVALID", "data_ranges 须为非空列表")
+    for i, r in enumerate(data_ranges):
+        field_name = f"data_ranges[{i}]"
+        if not isinstance(r, dict) or not all(k in r for k in ("symbol", "timeframe", "start", "end")):
+            raise ResearchError("RESEARCH_RANGE_INVALID",
+                                f"{field_name} 须含 symbol/timeframe/start/end",
+                                detail={"field": field_name})
+        if not (r["start"] < r["end"]):
+            raise ResearchError("RESEARCH_RANGE_INVALID",
+                                f"{field_name} 非半开区间（start >= end）",
+                                detail={"field": field_name})
+    _symbols = {r["symbol"] for r in data_ranges}
+    _tfs = {r["timeframe"] for r in data_ranges}
+    if len(_symbols) > 1 or len(_tfs) > 1:
+        raise ResearchError(
+            "RESEARCH_RANGE_INVALID",
+            "data_ranges 须同 symbol 同 timeframe（基准周期唯一——"
+            "混合周期区间在单周期求值语义下不可一致消费）",
+            detail={"field": "data_ranges",
+                    "symbols": sorted(_symbols), "timeframes": sorted(_tfs)})
+    base_tf = data_ranges[0]["timeframe"]
+    # 数据目录可达性在路由层校验（需 data_dir；此处只做结构）——见路由
+
+    # 2.5 timeframe 键校验序（0.2.14 B3：THEN 拒 → 值域 → 方向）
+    from core.data.timeframes import TF_SECONDS
+    for group, conds in (("when", when), ("then", then)):
+        for i, c in enumerate(conds):
+            tf_key = c.get("timeframe")
+            if tf_key is None:
+                continue
+            field_name = f"{group}_conditions[{i}].timeframe"
+            if group == "then":
+                raise ResearchError(
+                    "TIMEFRAME_ON_THEN",
+                    "THEN 条件为前向收益对照语义（forward_bars 以基准 bar "
+                    "计），跨周期前向窗口归属未定义——不接受 timeframe 键",
+                    detail={"field": field_name, "timeframe": tf_key})
+            if tf_key not in TF_SECONDS:
+                raise ResearchError(
+                    "TIMEFRAME_UNKNOWN",
+                    f"未知周期: {tf_key!r}",
+                    detail={"field": field_name, "timeframe": tf_key,
+                            "legal_range": sorted(TF_SECONDS)})
+            if base_tf not in TF_SECONDS:
+                raise ResearchError(
+                    "TIMEFRAME_UNKNOWN",
+                    f"未知基准周期: {base_tf!r}",
+                    detail={"field": "data_ranges[0].timeframe",
+                            "timeframe": base_tf,
+                            "legal_range": sorted(TF_SECONDS)})
+            from core.data.mtf_alignment import assert_higher_tf
+            try:
+                assert_higher_tf(tf_key, base_tf)
+            except ValueError as exc:
+                raise ResearchError(
+                    "TIMEFRAME_NOT_HIGHER", str(exc),
+                    detail={"field": field_name, "timeframe": tf_key,
+                            "base_timeframe": base_tf}) from exc
+
+    # 3. subject 引用（0.2.13：混合形制统一校验 + canonical 化归一——
+    #    数值形制与 field 缺省在入口统一，conditions_hash 对 canonical 形计算）；
+    #    显式基准周期在此剥离（0.2.14：timeframe==base_tf 删键——显式
+    #    基准与缺省同语义同指纹，幂等键字面连续的必要条件）
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     for group, conds in (("when", when), ("then", then)):
         for i, c in enumerate(conds):
@@ -125,21 +189,8 @@ def register_hypothesis(
                     f"{field_name} {exc.message}",
                     detail={"field": field_name, "code": exc.code,
                             **exc.detail}) from exc
-
-    # 3. 区间
-    if not isinstance(data_ranges, list) or not data_ranges:
-        raise ResearchError("RESEARCH_RANGE_INVALID", "data_ranges 须为非空列表")
-    for i, r in enumerate(data_ranges):
-        field_name = f"data_ranges[{i}]"
-        if not isinstance(r, dict) or not all(k in r for k in ("symbol", "timeframe", "start", "end")):
-            raise ResearchError("RESEARCH_RANGE_INVALID",
-                                f"{field_name} 须含 symbol/timeframe/start/end",
-                                detail={"field": field_name})
-        if not (r["start"] < r["end"]):
-            raise ResearchError("RESEARCH_RANGE_INVALID",
-                                f"{field_name} 非半开区间（start >= end）",
-                                detail={"field": field_name})
-    # 数据目录可达性在路由层校验（需 data_dir；此处只做结构）——见路由
+            if c.get("timeframe") == base_tf:
+                del c["timeframe"]
 
     # 4. 幂等
     conditions_hash = _hash_json(conditions)
