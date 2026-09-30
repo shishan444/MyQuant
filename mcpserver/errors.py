@@ -66,7 +66,7 @@ HINTS: Dict[str, str] = {
         "该低周期、其余条件挂高周期——聚合歧义不可自证",
     "RESEARCH_MTF_CONTEXT_MISSING":
         "求值入口未构建多周期上下文（调用方接线缺陷非输入错误）："
-        "经 run_analysis/inspect_cases//api/validate 正规入口重试；"
+        "经 run_analysis/inspect_cases/api/validate 正规入口重试；"
         "持续出现属工程缺陷，附 detail 提交问题报告",
     "RESEARCH_COMPONENT_EVIDENCE_MISSING":
         "组合假设缺组件证据：对每个组件条件分别取得验证记录后再组合",
