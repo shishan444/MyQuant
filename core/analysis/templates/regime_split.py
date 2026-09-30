@@ -62,12 +62,15 @@ def _validate_segments_input(
             detail={"param": "forward_bars", "legal_range": f"1..{n_df - 1}"})
     if condition is not None and (
             not isinstance(condition, dict)
-            or set(condition) != {"subject", "action", "target"}):
+            or not {"subject", "action", "target"} <= set(condition)):
+        # 0.2.14：三键必备、额外键允许（可选 timeframe 键=高周期中心
+        # 条件经掩码投影求值；动作额外键随条件全量透传——对齐 param_sweep）
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"condition 须为 {{subject, action, target}} 三键结构: {condition!r}",
+            f"condition 须含 subject/action/target 三键: {condition!r}",
             detail={"param": "condition",
-                    "legal_range": "与扫描候选/假设登记同形式的单条件（可选）"})
+                    "legal_range": "与扫描候选/假设登记同形式的单条件"
+                                   "（MAY 携带 timeframe 键）"})
     if condition is not None and not isinstance(indicator, str):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
