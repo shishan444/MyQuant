@@ -146,10 +146,9 @@ class TestDiscipline:
 
 
 class TestMtfContextPassthrough:
-    """0.2.14 mtf 形制统一：regime_split 签名接收 mtf ctx，但前置
-    校验要求 condition 恰为三键（0.2.13 既有契约，timeframe 键在
-    param 层被拒）——ctx 对现行 condition 形制不被消费：传入 ctx
-    不改变分段与逐段统计结果（对质记录见 tester 阶段二报告）。"""
+    """0.2.14 mtf 形制：P-4 修复（c82ec46 三键必备超集校验）后带
+    timeframe 键条件走掩码投影；无键 condition 传 ctx 仍零影响
+    （ctx 只在高周期分派被消费）。"""
 
     def test_无timeframe键condition_mtf上下文不被消费(self):
         from pathlib import Path
@@ -164,11 +163,65 @@ class TestMtfContextPassthrough:
                          forward_bars=4)
         assert with_ctx == without   # ctx 零影响
 
-    def test_条件携带timeframe键_前置三键校验拒绝(self):
-        """当前行为锚（契约含糊点钉住——是否放开三键校验待裁决；
-        裁决放开后本锚应随契约更新为掩码投影求值断言）。"""
+    def test_条件携带timeframe键_掩码投影求值与condition_stats对照一致(
+            self, tmp_path):
+        """P-4 修复回归（c82ec46）：带 4h 键条件不再被前置校验拒，
+        经 _mask_for 掩码投影求值——与 condition_stats 同数据同条件
+        逐数对照（期望由 4h 收盘挂载手工推导，不调被测投影函数）。"""
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.analysis.templates.condition_stats import condition_stats
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h",
+                             eval_start=pd.Timestamp("2024-01-02", tz="UTC"))
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "1h",
+                   "start": "2024-01-02", "end": "2024-01-25"}]
+        cond = {"subject": "close", "action": "gt",
+                "target": float(high["close"].median()), "timeframe": "4h"}
+
+        rs = _split(base, segmentation="auto", indicator="RSI",
+                    condition=cond, forward_bars=12, mtf=ctx)
+        rs_total = sum(s["samples"]
+                       for s in rs["payload"]["condition_by_segment"])
+        cs = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 10},
+            condition=cond, data_ranges=ranges, forward_bars=12,
+            mtf=ctx).to_dict()
+
+        # 独立手算：4h 收盘挂载（+4h 索引平移）backward 对齐 + 尾部
+        # 丢窗（命中位置 + forward_bars 超出末端不计）
+        closed = high.index + pd.Timedelta(hours=4)
+        visible = pd.Series(high["close"].values, index=closed).reindex(
+            base.index, method="ffill")
+        hit_mask = (visible > cond["target"]).fillna(False)
+        locs = [i for i, v in enumerate(hit_mask) if v]
+        n_valid = sum(1 for i in locs if i + 12 < len(base))
+        assert cs["payload"]["hit_count"] == int(hit_mask.sum())
+        assert cs["sample_size"] == n_valid == rs_total
+
+        # 轴分离：同阈值去键（1h 轴求值）样本数不同——掩码投影生效
+        cs_base = condition_stats(
+            base.copy(), indicator="EMA", params={"period": 10},
+            condition={"subject": "close", "action": "gt",
+                       "target": cond["target"]},
+            data_ranges=ranges, forward_bars=12, mtf=ctx).to_dict()
+        assert cs_base["sample_size"] != cs["sample_size"]
+
+    def test_带timeframe键低周期_结构化拒绝(self, tmp_path):
+        from pathlib import Path
+
+        from core.analysis.condition_kernel import MtfEvalContext
+
+        # base_tf=1d（_RANGES 请求周期路由形制），1h < 1d → 低周期拒
+        ctx = MtfEvalContext(Path("/nonexistent"), "TESTUSDT", "1d")
         with pytest.raises(ResearchError) as ei:
             _split(_two_regime(), indicator="RSI",
-                   condition={**_RSI_COND, "timeframe": "4h"},
-                   forward_bars=4)
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+                   condition={**_RSI_COND, "timeframe": "1h"},
+                   forward_bars=4, mtf=ctx)
+        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
