@@ -13,6 +13,8 @@ import pandas as pd
 
 from core.data.validation import validate_known_interval
 
+logger = logging.getLogger(__name__)
+
 
 # Timeframe aliases for parquet file lookup
 _TF_ALIASES: dict[str, list[str]] = {
@@ -103,6 +105,7 @@ def load_mtf_data(
     needed_tfs: Set[str],
     data_start: Optional[str] = None,
     data_end: Optional[str] = None,
+    min_bars: int = 50,
     stop_check: Optional[Callable[[], None]] = None,
     compute_indicators: bool = True,
 ) -> Optional[Dict[str, pd.DataFrame]]:
@@ -127,13 +130,13 @@ def load_mtf_data(
             continue
         try:
             tf_df = load_parquet(path)
-            if tf_df is None or len(tf_df) < 50:
+            if tf_df is None or len(tf_df) < min_bars:
                 continue
             if data_start:
                 tf_df = tf_df[tf_df.index >= data_start]
             if data_end:
                 tf_df = tf_df[tf_df.index <= data_end]
-            if len(tf_df) < 50:
+            if len(tf_df) < min_bars:
                 continue
             tf_df = _try_merge_derivatives(data_dir, safe_symbol, tf, tf_df)
             dfs_by_timeframe[tf] = (
@@ -141,7 +144,6 @@ def load_mtf_data(
                 if compute_indicators else tf_df
             )
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.warning("Failed to load MTF data for %s: %s", tf, e)
             continue
 
