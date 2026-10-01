@@ -111,6 +111,38 @@ class TestServerAssembly:
         assert "不会自动实现" in text  # 需求单预期管理
 
 
+class TestTierMarkupParity:
+    """CARD-01 修复资产：档位标记与注册面/能力自述三方对拍。
+
+    根因防线：注册尾循环漏 add 时 mcp.list_tools 仍完整（既有子集断言
+    `TOOL_TIERS <= names` 不红），而能力自述 doc 的工具清单取 TOOL_TIERS
+    并集——档标记失联即 doc 漏报（AI 宿主按 doc 认知工具面）。等式
+    断言使任何一侧漂移必红。
+    """
+
+    def test_research_tier_equals_expected_minus_readonly(self) -> None:
+        """research 档标记 == 期望全集 - readonly 档（等式，非子集）。"""
+        assert TOOL_TIERS["research"] == (
+            EXPECTED_RESEARCH_TOOLS - TOOL_TIERS["readonly"])
+
+    def test_capability_doc_lists_all_registered_tools(self) -> None:
+        """能力自述工具清单 ⊇ 实际注册面（research 档逐名在 doc）。"""
+        mcp, _ = build_server(profile="research")
+        names = {t.name for t in run_async(mcp.list_tools())}
+        res = run_async(mcp.read_resource("quant://capabilities"))
+        text = res[0].content if isinstance(res, list) else str(res)
+        missing = sorted(n for n in names if f"- {n}" not in text)
+        assert not missing, f"能力自述工具清单漏报: {missing}"
+
+    def test_capability_doc_contains_historically_missing_three(self) -> None:
+        """回归锚：三名历史漏报工具显式断言（0.2.8/0.2.9/0.2.10 漏同步）。"""
+        mcp, _ = build_server(profile="research")
+        res = run_async(mcp.read_resource("quant://capabilities"))
+        text = res[0].content if isinstance(res, list) else str(res)
+        for n in ("inspect_cases", "query_indicator", "run_staged_validation"):
+            assert f"- {n}" in text, f"能力自述缺工具 {n}"
+
+
 class TestWhitelist:
     def test_readonly_cannot_post(self) -> None:
         api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")
