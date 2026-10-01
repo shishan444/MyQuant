@@ -385,6 +385,38 @@ class TestFetchOpenInterestHistoryNoData:
         assert list(df.columns) == ["open_interest"]
 
 
+class TestFetcherBranchGaps:
+    """阶段四②分支消解：代理默认空配置 / 整页自然退出。"""
+
+    def test_build_session_without_proxy_leaves_defaults(self) -> None:
+        """BINANCE_PROXY 为空：session 不设显式 proxies（保持 requests 默认）。"""
+        from core.data.fetcher import _build_session
+
+        with patch("core.data.fetcher._DEFAULT_PROXY", ""):
+            session = _build_session()
+        assert session.proxies == {}
+
+    def test_full_page_exits_via_while_condition(self) -> None:
+        """末页恰满 1000 根：起点推进越过 end 后由 while 条件自然退出。"""
+        rows = [
+            _kline_row(1700000000000 + i * 3600_000) for i in range(1000)
+        ]
+        last_ts = rows[-1][0]
+        session = MagicMock()
+        session.get.return_value = _resp_with(rows)
+
+        with patch(
+            "core.data.fetcher._session_for", side_effect=lambda kind: session
+        ):
+            df = fetch_klines(
+                symbol="BTCUSDT", interval="1h",
+                start_str="1700000000000", end_str=str(last_ts),
+            )
+
+        assert len(df) == 1000
+        session.get.assert_called_once()  # while 条件退出，无第二次请求
+
+
 class TestMonthStarts:
     """月首序列生成（CARD-16 往返冗余删除的等价性锚）。"""
 
@@ -422,6 +454,24 @@ class TestMonthStarts:
         )
         assert len(months) == 1
         assert months[0] == pd.Timestamp("2024-03-01", tz="UTC")
+
+    def test_month_starts_invariants(self) -> None:
+        """不变量（④属性补强）：序列严格递增、每项皆月首零点、含端递推。"""
+        from core.data.fetcher import _month_starts
+
+        months = _month_starts(
+            pd.Timestamp("2023-11-30 23:59", tz="UTC"),
+            pd.Timestamp("2025-02-10", tz="UTC"),
+        )
+        assert len(months) >= 15
+        assert all(m.day == 1 for m in months)
+        assert all(
+            m.hour == m.minute == m.second == m.microsecond == 0 for m in months
+        )
+        assert all(b > a for a, b in zip(months, months[1:]))
+        # 相邻项恰差一个自然月（13/14 边界跨年无 31 日歧义——项已归一为月首）
+        for a, b in zip(months, months[1:]):
+            assert (b.year * 12 + b.month) - (a.year * 12 + a.month) == 1
 
 
 class TestArchiveDownloadGuards:

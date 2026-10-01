@@ -149,6 +149,50 @@ class TestUpdateOpenInterestIncrementalStart:
         )
 
 
+class TestDefaultDataDir:
+    """data_dir=None 默认路径（阶段四②盲区消解：相对 cwd 的 data/market）。
+
+    chdir 到临时目录后默认路径落点在沙箱内，不污染仓库工作区。
+    """
+
+    @patch("core.data.updater.fetch_klines")
+    def test_market_data_default_dir(self, mock_fetch, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        df = make_ohlcv(60)
+        mock_fetch.return_value = df
+
+        out = update_market_data("BTCUSDT", "4h")
+
+        assert (tmp_path / "data" / "market" / "BTCUSDT_4h.parquet").exists()
+        assert len(out) == 60
+
+    @patch("core.data.updater.fetch_funding_history")
+    def test_funding_default_dir(self, mock_fetch, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=5, freq="8h", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
+        )
+
+        out = update_funding_data("BTCUSDT")
+
+        assert (tmp_path / "data" / "market" / "BTCUSDT_funding.parquet").exists()
+        assert len(out) == 5
+
+    @patch("core.data.updater.fetch_open_interest_history")
+    def test_open_interest_default_dir(self, mock_fetch, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
+        )
+
+        out = update_open_interest_data("BTCUSDT", timeframes=["5m"])
+
+        assert (tmp_path / "data" / "market" / "BTCUSDT_oi_5m.parquet").exists()
+        assert len(out["5m"]) == 288
+
+
 class TestMergeParquetReturnValue:
     """merge_parquet 返回值契约（CARD-07：None → pd.DataFrame）。
 
@@ -181,6 +225,22 @@ class TestMergeParquetReturnValue:
         out = merge_parquet(new_df, tmp_path / "fresh.parquet")
         pd.testing.assert_frame_equal(out, new_df, check_freq=False)
         assert (tmp_path / "fresh.parquet").exists()
+
+    def test_merge_idempotent(self, tmp_path) -> None:
+        """不变量（④属性补强）：同一数据重复 merge 结果不变（增量幂等）。"""
+        from core.data.storage import merge_parquet
+
+        path = tmp_path / "idem.parquet"
+        save_parquet(self._funding(10), path)
+        new_part = self._funding(5, start="2024-01-03 16:00")
+
+        first = merge_parquet(new_part, path)
+        second = merge_parquet(new_part, path)  # 重放同一段增量
+
+        pd.testing.assert_frame_equal(first, second, check_freq=False)
+        pd.testing.assert_frame_equal(
+            second, load_parquet(path), check_freq=False
+        )
 
     @patch("core.data.updater.fetch_funding_history")
     def test_update_funding_returns_merge_result(self, mock_fetch, tmp_path) -> None:

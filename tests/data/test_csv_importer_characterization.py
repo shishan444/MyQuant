@@ -239,6 +239,26 @@ class TestGetFirstTimestampRawFallbacks:
         assert _get_first_timestamp_raw(p, ImportFormat.GENERIC_OHLCV) == 1735689600000
 
 
+class TestDetectFormatBranchGaps:
+    """阶段四②分支消解：int 首列非 12 列 / GENERIC 未知列名。"""
+
+    def test_int_first_column_short_line_routes_generic(self, tmp_path) -> None:
+        # 首列是 int 但非 12 列：int 检查通过、12 列检查不过 → GENERIC
+        p = _write(tmp_path, "x.csv", "123,foo\n1,2\n")
+        assert detect_format(p) is ImportFormat.GENERIC_OHLCV
+
+    def test_generic_unknown_column_skipped_in_rename(self, tmp_path) -> None:
+        # GENERIC 表头含映射外列名（extra）：rename 跳过该列、OHLCV 正常提取
+        p = _write(
+            tmp_path, "x.csv",
+            "timestamp,open,high,low,close,volume,extra\n"
+            "2024-01-01 00:00:00,42000.0,42580.0,41850.0,42310.0,312.5,99\n",
+        )
+        df = read_csv(p)
+        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert len(df) == 1
+
+
 class TestGenericPrecisionNone:
     """GENERIC 导入 precision=None 语义（CARD-13：不可探测不再伪报毫秒）。
 

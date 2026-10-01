@@ -89,6 +89,53 @@ class TestImportEndpointValidation:
         assert body["format_detected"] == "generic_ohlcv"
 
 
+class TestImportEndpointModeFallback:
+    """触碰端点分支消解：非法 mode 字符串回退 MERGE / batch 空 files 400。"""
+
+    def test_invalid_mode_falls_back_to_merge(self, api_client: TestClient) -> None:
+        """mode 非法字符串不报错：ImportMode 解析失败回退 MERGE 语义。"""
+        # 预置同名数据集两行（同时间戳不同值）：MERGE 取新值、REPLACE 覆盖
+        first = (
+            "1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,1735693199999,13120000,450,250.0,10550000,0\n"
+        ).encode()
+        resp = api_client.post(
+            "/api/data/import",
+            files={"file": ("BTCUSDT-4h-2025-01.csv", first, "text/csv")},
+            data={"mode": "replace", "symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert resp.status_code == 200
+        # mode="bogus" 回退 MERGE：与既有行合并去重（仍 1 行）
+        resp2 = api_client.post(
+            "/api/data/import",
+            files={"file": ("BTCUSDT-4h-2025-01.csv", first, "text/csv")},
+            data={"mode": "bogus", "symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["rows_imported"] == 1
+
+    def test_batch_empty_files_rejected_422(self, api_client: TestClient) -> None:
+        """空 files：FastAPI 请求校验先行拦 422（装载层责任）——
+        端点内 `if not files: 400` 为防御分支，真实路由不可达。"""
+        resp = api_client.post("/api/data/import-batch", files=[])
+        assert resp.status_code == 422
+
+    def test_batch_invalid_mode_falls_back_to_merge(
+        self, api_client: TestClient
+    ) -> None:
+        # 独立 dataset 避开 fixture 预置的 naive 索引 dummy（系统导入
+        # 恒产 tz-aware，naive 存量仅存在于测试 fixture，合并会 tz 冲突）
+        csv = (
+            "1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,1735693199999,13120000,450,250.0,10550000,0\n"
+        ).encode()
+        resp = api_client.post(
+            "/api/data/import-batch",
+            files=[("files", ("ETHUSDT-4h-2025-01.csv", csv, "text/csv"))],
+            data={"symbol": "ETHUSDT", "interval": "4h", "mode": "bogus"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["rows_imported"] == 1
+
+
 class TestImportBatchEndpointValidation:
     """POST /api/data/import-batch：非法参数 400 + 无落盘。"""
 

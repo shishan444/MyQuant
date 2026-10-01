@@ -59,6 +59,15 @@ class TestSafeSymbol:
     def test_strips_non_alphanumeric(self, raw: str, expected: str) -> None:
         assert safe_symbol(raw) == expected
 
+    @pytest.mark.parametrize(
+        "raw",
+        ["BTC-USDT", "BTC/USDT:USDT", "a b-c_d", "BTCUSDT", "x" * 20],
+    )
+    def test_idempotent(self, raw: str) -> None:
+        """不变量（④属性补强）：剥离一次后再无可剥离字符。"""
+        once = safe_symbol(raw)
+        assert safe_symbol(once) == once
+
 
 class TestFindParquet:
     """find_parquet：主名优先、周期别名回退、未命中 None。"""

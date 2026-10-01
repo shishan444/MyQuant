@@ -64,6 +64,19 @@ class TestZscoreZeroStd:
         out = evaluate_formula("zscore(close, 5)", df)
         assert np.allclose(out.to_numpy(), 0.0)
 
+    def test_zscore_shift_invariance(self) -> None:
+        """不变量（④属性补强）：整体加常数 c 后 zscore 不变（平移不变）。"""
+        idx = pd.date_range("2024-01-01", periods=40, freq="1h", tz="UTC")
+        rng = np.random.default_rng(7)
+        base = pd.Series(100.0 + rng.normal(0, 5, 40), index=idx, name="close")
+        df_a = pd.DataFrame({"close": base})
+        df_b = pd.DataFrame({"close": base + 12345.0})
+
+        out_a = evaluate_formula("zscore(close, 10)", df_a)
+        out_b = evaluate_formula("zscore(close, 10)", df_b)
+
+        np.testing.assert_allclose(out_a.to_numpy(), out_b.to_numpy(), atol=1e-9)
+
 
 class TestEvalLayerGuards:
     """求值层守卫（evaluate_formula 不做静态校验，直接执行）。"""
