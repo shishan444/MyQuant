@@ -22,6 +22,13 @@ def _metrics(**overrides):
 
 
 class TestObjectiveFallback:
+    """core 层直调的宽容回退（分层保留，非冗余）。
+
+    API 边界已由 schema Literal 收紧做 422 拒绝（见
+    test_schema_contract.py）；本层回退是 core 公共入口对内部直调
+    的防线——两层各司其职，勿以一层简化另一层。
+    """
+
     def test_invalid_objective_falls_back_to_sharpe(self):
         req = RequirementsConfig(objective="bogus")
         result = compute_fitness(_metrics(), requirements=req)
