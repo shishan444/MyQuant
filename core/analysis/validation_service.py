@@ -34,12 +34,8 @@ from core.analysis.thresholds import (
     judge,
     tighten_profile,
 )
+from core.analysis.warmup_loader import TF_MINUTES
 from core.persistence.repository import research as rr
-
-# 时间频率换算（warmup bar 数 → 时间差）
-_TF_MINUTES = {
-    "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440, "3d": 4320,
-}
 
 # 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
 # 留足余量；50k 为默认起点，按回测速度实施校准）
@@ -244,7 +240,7 @@ def _run_backtest_on_range(
     from core.backtest import engine as bt_engine_mod
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
     start_ts = _to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
@@ -498,7 +494,7 @@ def random_window_test(
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
     warmup_bars, _ = _derive_dna_warmup(db_path, dna)
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
     # 可抽窗的候选区间：[data_start, data_end - window]
@@ -599,7 +595,7 @@ def run_sandbox_backtest(
          "hypothesis_id", "sandbox": True}
     """
     # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
     start_ts = _to_utc(pd.Timestamp(start))
     end_ts = _to_utc(pd.Timestamp(end))
     bars = int((end_ts - start_ts).total_seconds() / 60 / tf_minutes)

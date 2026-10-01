@@ -7,10 +7,11 @@
 start_ts 为归一 UTC 的请求起点，调用方以 work.index >= start_ts
 切回请求区间统计（warmup「只用不算」）。
 
-时间频率映射自 validation_service._TF_MINUTES 提升为公共常量并扩展
-1m/5m 两档——分析模板可作用于 1m/5m 数据集，原映射缺省兜底 240 分钟
-会把 1m 的 200-bar warmup 前扩成约 33 天。缺省兜底 240（4h）与既有
-行为一致。validation_service 的迁移为独立后续任务（推导权威已共享）。
+时间频率映射 TF_MINUTES 自 TF_SECONDS（14 档权威表）派生——单一
+事实源（CARD-04 收敛；validation_service 六档私有表已删，三消费点
+改引本表）。历史：原自 validation_service._TF_MINUTES 提升并扩展
+1m/5m 两档；3m/2h/6h/8h/12h/1w 此前走缺省兜底 240 分钟（1m/5m
+场景过量前扩 48-240 倍，六档为同性质浪费修正）。
 """
 from __future__ import annotations
 
@@ -20,12 +21,11 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import derive_warmup
+from core.data.timeframes import TF_SECONDS
 
-# 时间频率换算（bar → 分钟）：validation_service._TF_MINUTES 全量 + 1m/5m
-TF_MINUTES = {
-    "1m": 1, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "4h": 240, "1d": 1440, "3d": 4320,
-}
+# 时间频率换算（bar → 分钟）：TF_SECONDS 派生（core/validation/mtf
+# 同式），档位与秒表一致
+TF_MINUTES = {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
 
 
 def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
