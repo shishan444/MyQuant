@@ -178,47 +178,6 @@ def count_hypotheses(
         return conn.execute(stmt).scalar_one()
 
 
-def transition_hypothesis(
-    db_path: Path,
-    hypothesis_id: str,
-    *,
-    target_status: str,
-    terminal_ref: str,
-    superseded_by: Optional[str] = None,
-    log_id: Optional[str] = None,
-) -> int:
-    """条件迁移（WHERE status='active'）+ 迁移日志，同一事务。
-
-    Returns:
-        影响行数：1=迁移成功；0=非 active（调用方重查判读幂等/终态冲突）。
-    """
-    engine = _engine_for(db_path)
-    now = _now()
-    with engine.begin() as conn:
-        result = conn.execute(
-            update(ResearchHypothesis)
-            .where(ResearchHypothesis.hypothesis_id == hypothesis_id,
-                   ResearchHypothesis.status == "active")
-            .values(
-                status=target_status,
-                terminal_ref=terminal_ref,
-                superseded_by=superseded_by,
-                updated_at=now,
-            )
-        )
-        if result.rowcount == 0:
-            return 0
-        conn.execute(insert(ResearchLog).values(
-            log_id=log_id or _new_id(),
-            hypothesis_id=hypothesis_id,
-            entry_type="transition",
-            ref_id=terminal_ref,
-            summary=f"active -> {target_status} (ref={terminal_ref})",
-            created_at=now,
-        ))
-        return result.rowcount
-
-
 def transition_hypothesis_with_promotion(
     db_path: Path,
     hypothesis_id: str,
