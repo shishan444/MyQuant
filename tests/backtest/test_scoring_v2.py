@@ -9,8 +9,6 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.scoring.metrics import compute_metrics
-from core.scoring.normalizer import normalize, piecewise_normalize
-from core.scoring.templates import get_template, SCORING_TEMPLATES, ScoringTemplate, list_template_names
 from core.scoring.scorer import score_strategy
 
 def _make_equity_curve(n=200, start=10000, drift=0.001) -> pd.Series:
@@ -91,117 +89,6 @@ class TestNewMetrics:
         metrics = compute_metrics(eq, total_trades=50, trade_returns=np.array([0.01] * 50))
         assert metrics["r_squared"] > 0.99
 
-# -- Piecewise normalizer tests --
-
-class TestPiecewiseNormalizer:
-    def test_annual_return_breakpoints(self):
-        assert normalize("annual_return", -1.0) == pytest.approx(0.0)
-        assert normalize("annual_return", 0.0) == pytest.approx(10.0)
-        assert normalize("annual_return", 0.10) == pytest.approx(30.0)
-        assert normalize("annual_return", 0.30) == pytest.approx(60.0)
-        assert normalize("annual_return", 0.50) == pytest.approx(80.0)
-        assert normalize("annual_return", 1.0) == pytest.approx(95.0)
-        assert normalize("annual_return", 3.0) == pytest.approx(100.0)
-
-    def test_annual_return_interpolation(self):
-        # Between breakpoints: 0.0->10, 0.10->30, midpoint 0.05 should be 20
-        score = normalize("annual_return", 0.05)
-        assert score == pytest.approx(20.0)
-
-    def test_annual_return_clamp_below(self):
-        assert normalize("annual_return", -2.0) == 0.0
-
-    def test_annual_return_clamp_above(self):
-        assert normalize("annual_return", 5.0) == 100.0
-
-    def test_annual_return_monotonic(self):
-        values = [-1.0, -0.5, 0.0, 0.10, 0.30, 0.50, 1.0, 2.0, 3.0]
-        scores = [normalize("annual_return", v) for v in values]
-        for i in range(len(scores) - 1):
-            assert scores[i] <= scores[i + 1], f"Non-monotonic at {values[i]}->{values[i+1]}"
-
-    def test_sharpe_breakpoints(self):
-        assert normalize("sharpe_ratio", 1.0) == pytest.approx(50.0)
-        assert normalize("sharpe_ratio", 3.0) == pytest.approx(100.0)
-
-    def test_drawdown_breakpoints(self):
-        assert normalize("max_drawdown", 0.0) == pytest.approx(100.0)
-        assert normalize("max_drawdown", -0.10) == pytest.approx(80.0)
-        assert normalize("max_drawdown", -0.30) == pytest.approx(40.0)
-        assert normalize("max_drawdown", -0.80) == pytest.approx(0.0)
-
-    def test_profit_factor_breakpoints(self):
-        assert normalize("profit_factor", 0.0) == pytest.approx(0.0)
-        assert normalize("profit_factor", 1.0) == pytest.approx(30.0)
-        assert normalize("profit_factor", 2.0) == pytest.approx(80.0)
-        assert normalize("profit_factor", 3.0) == pytest.approx(100.0)
-
-# -- Legacy normalizer tests (backward compat) --
-
-class TestLegacyNormalizers:
-    def test_sortino_normalization(self):
-        assert normalize("sortino_ratio", 2.0) == pytest.approx(50.0, abs=1)
-        assert normalize("sortino_ratio", 4.0) == pytest.approx(100.0, abs=1)
-
-    def test_max_consecutive_losses_normalization(self):
-        assert normalize("max_consecutive_losses", 0) == 100.0
-        assert normalize("max_consecutive_losses", 5) == 50.0
-        assert normalize("max_consecutive_losses", 10) == 0.0
-
-    def test_monthly_consistency_normalization(self):
-        assert normalize("monthly_consistency", 0.0) == 0.0
-        assert normalize("monthly_consistency", 0.5) == pytest.approx(50.0)
-        assert normalize("monthly_consistency", 1.0) == pytest.approx(100.0)
-
-    def test_r_squared_normalization(self):
-        assert normalize("r_squared", 0.0) == 0.0
-        assert normalize("r_squared", 0.5) == pytest.approx(50.0)
-
-    def test_unknown_metric_defaults(self):
-        assert normalize("unknown_metric", 0.0) == 50.0
-
-# -- Template tests --
-
-class TestNewTemplates:
-    def test_all_templates_weight_sum_to_one(self):
-        for name, template in SCORING_TEMPLATES.items():
-            total_weight = sum(template.weights.values())
-            assert total_weight == pytest.approx(1.0, abs=0.01), (
-                f"Template '{name}' weights sum to {total_weight}"
-            )
-
-    def test_core_templates_exist(self):
-        for name in ["explorer", "optimizer", "max_return"]:
-            t = get_template(name)
-            assert isinstance(t, ScoringTemplate)
-
-    def test_legacy_templates_still_work(self):
-        for name in ["profit_first", "steady", "risk_first", "custom",
-                      "balanced", "aggressive", "conservative"]:
-            t = get_template(name)
-            assert isinstance(t, ScoringTemplate)
-
-    def test_explorer_higher_return_weight_than_optimizer(self):
-        exp = get_template("explorer")
-        opt = get_template("optimizer")
-        assert exp.weights["annual_return"] > opt.weights["annual_return"]
-
-    def test_optimizer_has_hard_constraints(self):
-        opt = get_template("optimizer")
-        assert opt.hard_constraints is not None
-
-    def test_unknown_template_raises(self):
-        with pytest.raises(ValueError, match="Unknown template"):
-            get_template("nonexistent")
-
-    def test_list_template_names_includes_core_and_legacy(self):
-        names = list_template_names()
-        assert "explorer" in names
-        assert "optimizer" in names
-        assert "max_return" in names
-        assert "profit_first" in names
-        assert "steady" in names
-
 # -- Sigmoid penalty tests --
 
 class TestSigmoidPenalty:
@@ -239,10 +126,13 @@ class TestFullScoringPipeline:
         assert 0 <= result["total_score"] <= 100
 
     def test_all_templates_produce_scores(self):
+        # templates.py shim 已删（CARD-10）：清单改字面枚举
         eq = _make_equity_curve(200)
         returns = _make_trade_returns(50)
         metrics = compute_metrics(eq, total_trades=50, trade_win_rate=0.6, trade_returns=returns)
-        for name in list_template_names():
+        for name in ["explorer", "optimizer", "max_return",
+                     "balanced", "steady", "custom",
+                     "aggressive", "profit_first", "conservative", "risk_first"]:
             result = score_strategy(metrics, name)
             assert 0 <= result["total_score"] <= 100, (
                 f"Template '{name}' score {result['total_score']} out of range"
@@ -379,22 +269,6 @@ class TestAlphaDimension:
         metrics = compute_metrics(eq, total_trades=50, benchmark_close=bm_close)
         assert metrics["alpha"] < 0
 
-    def test_alpha_normalization_breakpoints(self):
-        """Verify alpha normalization key breakpoints."""
-        assert normalize("alpha", -0.50) == pytest.approx(0.0)
-        assert normalize("alpha", 0.00) == pytest.approx(40.0)
-        assert normalize("alpha", 0.20) == pytest.approx(60.0)
-        assert normalize("alpha", 0.50) == pytest.approx(80.0)
-        assert normalize("alpha", 1.00) == pytest.approx(95.0)
-        assert normalize("alpha", 3.00) == pytest.approx(100.0)
-
-    def test_alpha_normalization_monotonic(self):
-        """Alpha normalization should be monotonically increasing."""
-        values = [-0.50, -0.20, 0.0, 0.20, 0.50, 1.0, 3.0]
-        scores = [normalize("alpha", v) for v in values]
-        for i in range(len(scores) - 1):
-            assert scores[i] <= scores[i + 1]
-
     def test_alpha_in_scorer_raw_metrics(self):
         """Alpha should appear in scorer raw_metrics when provided."""
         metrics = {
@@ -419,9 +293,3 @@ class TestAlphaDimension:
         r_low = score_strategy(m_low, "explorer")
         r_high = score_strategy(m_high, "explorer")
         assert r_high["raw_metrics"]["alpha"] > r_low["raw_metrics"]["alpha"]
-
-    def test_template_weights_include_alpha(self):
-        """All 3 core templates should include alpha in their weights."""
-        for name in ["explorer", "optimizer", "max_return"]:
-            t = get_template(name)
-            assert "alpha" in t.weights, f"Template '{name}' missing alpha weight"

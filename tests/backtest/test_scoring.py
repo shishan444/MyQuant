@@ -7,8 +7,6 @@ import pandas as pd
 import numpy as np
 
 from MyQuant.core.scoring.metrics import compute_metrics
-from MyQuant.core.scoring.normalizer import normalize, piecewise_normalize
-from MyQuant.core.scoring.templates import get_template, SCORING_TEMPLATES, list_template_names
 from MyQuant.core.scoring.scorer import score_strategy, compute_fitness, RequirementsConfig
 
 @pytest.fixture
@@ -62,138 +60,6 @@ class TestComputeMetrics:
         short = pd.Series([100000, 101000, 99500, 102000])
         m = compute_metrics(short, total_trades=5)
         assert isinstance(m["annual_return"], float)
-
-class TestPiecewiseNormalize:
-    def test_below_range_clamps(self):
-        score = piecewise_normalize(-2.0, [(-1.0, 0.0), (1.0, 100.0)])
-        assert score == 0.0
-
-    def test_above_range_clamps(self):
-        score = piecewise_normalize(5.0, [(0.0, 0.0), (3.0, 100.0)])
-        assert score == 100.0
-
-    def test_linear_interpolation(self):
-        score = piecewise_normalize(0.5, [(0.0, 0.0), (1.0, 100.0)])
-        assert score == pytest.approx(50.0)
-
-    def test_monotonic(self):
-        breakpoints = [(0, 0), (1, 30), (3, 70), (5, 100)]
-        scores = [piecewise_normalize(v, breakpoints) for v in range(6)]
-        for i in range(len(scores) - 1):
-            assert scores[i] <= scores[i + 1]
-
-class TestNormalize:
-    def test_annual_return_zero_is_low(self):
-        score = normalize("annual_return", 0.0)
-        assert 0 < score < 30  # 10 by breakpoints
-
-    def test_annual_return_high_is_high(self):
-        score = normalize("annual_return", 1.0)
-        assert score >= 90  # 95 by breakpoints
-
-    def test_annual_return_negative(self):
-        score = normalize("annual_return", -0.50)
-        assert score < 15
-
-    def test_sharpe_zero(self):
-        score = normalize("sharpe_ratio", 0.0)
-        assert score == pytest.approx(5.0)
-
-    def test_sharpe_high(self):
-        score = normalize("sharpe_ratio", 2.0)
-        assert score == pytest.approx(90.0)
-
-    def test_max_drawdown_zero_is_best(self):
-        score = normalize("max_drawdown", 0.0)
-        assert score == 100
-
-    def test_max_drawdown_linear(self):
-        score = normalize("max_drawdown", -0.20)
-        assert score == pytest.approx(60.0)
-
-    def test_max_drawdown_large_is_worst(self):
-        score = normalize("max_drawdown", -0.60)  # 60% drawdown
-        assert 0 < score < 15  # Between 50% (15) and 80% (0)
-
-    def test_profit_factor_poor(self):
-        score = normalize("profit_factor", 0.5)
-        assert score == pytest.approx(10.0)
-
-    def test_profit_factor_good(self):
-        score = normalize("profit_factor", 2.0)
-        assert score == pytest.approx(80.0)
-
-    def test_monthly_consistency(self):
-        score = normalize("monthly_consistency", 0.7)
-        assert score == pytest.approx(70.0)
-
-    def test_scores_in_0_100(self):
-        for metric_name in ["annual_return", "sharpe_ratio", "max_drawdown",
-                            "profit_factor", "monthly_consistency"]:
-            for val in [-1.0, 0.0, 0.5, 1.0, 5.0]:
-                score = normalize(metric_name, val)
-                assert 0 <= score <= 100, f"{metric_name}({val}) = {score}"
-
-    # Legacy dimensions still work
-    def test_win_rate_range(self):
-        score_40 = normalize("win_rate", 0.40)
-        score_70 = normalize("win_rate", 0.70)
-        assert score_40 < score_70
-
-    def test_calmar_ratio(self):
-        score = normalize("calmar_ratio", 3.0)
-        assert score > 50
-
-    def test_unknown_metric_defaults(self):
-        assert normalize("unknown_metric", 0.0) == 50.0
-
-class TestTemplates:
-    def test_all_3_core_templates_exist(self):
-        for name in ["explorer", "optimizer", "max_return"]:
-            t = get_template(name)
-            assert t.name == name
-
-    def test_legacy_aliases_resolve(self):
-        assert get_template("profit_first").name == "explorer"
-        assert get_template("steady").name == "optimizer"
-        assert get_template("risk_first").name == "optimizer"
-        assert get_template("custom").name == "optimizer"
-        assert get_template("balanced").name == "optimizer"
-        assert get_template("aggressive").name == "explorer"
-        assert get_template("conservative").name == "optimizer"
-
-    def test_template_weights_sum_to_1(self):
-        for name, t in SCORING_TEMPLATES.items():
-            total = sum(t.weights.values())
-            assert abs(total - 1.0) < 0.01, f"{name} weights sum to {total}"
-
-    def test_template_has_threshold(self):
-        for name in SCORING_TEMPLATES:
-            t = get_template(name)
-            assert t.threshold > 0
-
-    def test_optimizer_has_hard_constraints(self):
-        t = get_template("optimizer")
-        assert t.hard_constraints is not None
-        assert "annual_return" in t.hard_constraints
-        assert "max_drawdown" in t.hard_constraints
-
-    def test_explorer_no_hard_constraints(self):
-        t = get_template("explorer")
-        assert t.hard_constraints is None
-
-    def test_max_return_no_drawdown_dimension(self):
-        t = get_template("max_return")
-        assert "max_drawdown" not in t.weights
-
-    def test_unknown_template_raises(self):
-        with pytest.raises(ValueError, match="Unknown template"):
-            get_template("nonexistent")
-
-    def test_list_template_names(self):
-        names = list_template_names()
-        assert "explorer" in names
-        assert "profit_first" in names
 
 class TestScorer:
     def test_score_returns_total_and_dimensions(self, equity_curve):
@@ -299,8 +165,12 @@ class TestScorer:
         assert result["template_name"] == "explorer"
 
     def test_all_templates_produce_scores(self, equity_curve):
+        # templates.py shim 已删（CARD-10）：清单改字面枚举，
+        # 覆盖 score_strategy 的 3 个分支名 + 7 个别名
         metrics = compute_metrics(equity_curve, total_trades=50)
-        for name in list_template_names():
+        for name in ["explorer", "optimizer", "max_return",
+                     "balanced", "steady", "custom",
+                     "aggressive", "profit_first", "conservative", "risk_first"]:
             result = score_strategy(metrics, name)
             assert 0 <= result["total_score"] <= 100, (
                 f"Template '{name}' score {result['total_score']} out of range"
