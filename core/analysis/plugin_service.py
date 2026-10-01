@@ -59,6 +59,22 @@ def _next_version(db_path: Path, table: str, name: str) -> int:
 
 # ---------------------------------------------------------------- 公式
 
+def _assert_column_not_taken(db_path: Path, column_name: str) -> None:
+    """插件列注册表全量撞名校验（formula/model 共享底座）：撞名 422。
+
+    面取全量（与 _formula_registry_entries 求值闭包同面，非仅
+    visible——隐藏列撞名同样污染叠层解析与引用判定）。
+    """
+    taken = {e["column_name"] for e in rr.list_signal_registry_entries(db_path)}
+    if column_name in taken:
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"列名不可用: {column_name}（与既有插件列冲突——同名插件列"
+            "求值互写覆盖，引用解析无法区分来源）",
+            detail={"column": column_name, "conflict": "既有插件列",
+                    "hint": "改用其他名称注册"})
+
+
 def _assert_output_column_free(
     db_path: Path, out_col: str, column_name: str,
 ) -> None:
@@ -72,18 +88,12 @@ def _assert_output_column_free(
 
     分面（版本化语义不误杀）：out_col 裸名拦基础列/编码形（语义关，
     全版本——显式指定 close/rsi_14 形一律拒）；既有插件列只拦真正
-    写 df 的 column_name——version>1 时注册列名带 _v{N} 后缀，裸名
-    与 v1 同名是同名升版的正常形态。注册表取全量（与
-    _formula_registry_entries 求值闭包同面，非仅 visible——隐藏列
-    撞名同样污染叠层解析）。
+    写 df 的 column_name（委托 _assert_column_not_taken）——version>1
+    时注册列名带 _v{N} 后缀，裸名与 v1 同名是同名升版的正常形态。
     """
-    taken = {e["column_name"] for e in rr.list_signal_registry_entries(db_path)}
-    checks = [(out_col, False), (column_name, True)]
-    for col, include_taken in checks:
+    for col in (out_col, column_name):
         if col in BASE_SUBJECT_COLUMNS:
             conflict = "基础数据列"
-        elif include_taken and col in taken:
-            conflict = "既有插件列"
         elif _looks_like_encoded(col):
             conflict = "参数化指标编码形列名"
         else:
@@ -94,6 +104,7 @@ def _assert_output_column_free(
             "直写同名 DataFrame 列，将覆盖既有数据）",
             detail={"output_column": col, "conflict": conflict,
                     "hint": "改用其他列名；缺省 fx_ 前缀天然避开保留字"})
+    _assert_column_not_taken(db_path, column_name)
 
 
 def register_formula_plugin(
@@ -407,6 +418,10 @@ def register_model_plugin(
     version = _next_version(db_path, "model", name)
     plugin_id = f"mpl_{hashlib.sha256(f'{name}{version}'.encode()).hexdigest()[:10]}"
     signal_column = f"model_{name}" if version == 1 else f"model_{name}_v{version}"
+    # 撞既有插件列 422（model_ 前缀强制撞不了基础列/编码形，只查 taken
+    # ——不同 name 组合可产生同名列，如 name="x" v2 与 name="x_v2" v1
+    # 都产生 model_x_v2）
+    _assert_column_not_taken(db_path, signal_column)
     cfg_json = json.dumps({**config.__dict__, "_config_hash": config_hash},
                           ensure_ascii=False, default=str)
 
