@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -48,6 +48,19 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
             "RESEARCH_DATA_INSUFFICIENT",
             f"区间数据不足: {r['symbol']} {r['timeframe']} [{r['start']}, {r['end']})")
     return df
+
+
+def _require_known_indicator(name: str) -> None:
+    """indicator 注册表值域前置校验（param_sweep/regime_split 共用）：
+    未知即 422——不让装载层 KeyError 裸穿（screen 同款纪律）。"""
+    from core.features.registry import INDICATOR_REGISTRY
+
+    if name not in INDICATOR_REGISTRY:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"indicator 未知: {name!r}",
+            detail={"param": "indicator",
+                    "legal_range": "注册表指标名（list_indicators 查询）"})
 
 
 def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) -> Dict[str, Any]:
@@ -94,13 +107,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # U3 形制（指标矩阵默认参数集）；indicator+condition 双件（指标名供
         # warmup 与矩阵，列名 subject 供求值——两层名字不同）。indicator
         # 前置校验（未知指标不让装载层 KeyError 裸穿，screen 同款纪律）
-        from core.features.registry import INDICATOR_REGISTRY
-        if p.get("indicator") not in INDICATOR_REGISTRY:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"indicator 未知: {p.get('indicator')!r}",
-                detail={"param": "indicator",
-                        "legal_range": "注册表指标名（list_indicators 查询）"})
+        _require_known_indicator(p.get("indicator"))
         s = p.get("sweep", {})
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
@@ -119,15 +126,9 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     if payload.template == "regime_split":
         # 行情分段（add-regime-split）：warmup 覆盖判读指标（ADX/ATR）；
         # condition 存在时其归属指标并入 warmup 清单（矩阵模板内计算）
-        from core.features.registry import INDICATOR_REGISTRY
         warm_names = ["ADX", "ATR"]
         if p.get("indicator"):
-            if p["indicator"] not in INDICATOR_REGISTRY:
-                raise ResearchError(
-                    "RESEARCH_PARAM_INVALID",
-                    f"indicator 未知: {p['indicator']!r}",
-                    detail={"param": "indicator",
-                            "legal_range": "注册表指标名（list_indicators 查询）"})
+            _require_known_indicator(p["indicator"])
             warm_names.append(p["indicator"])
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
@@ -252,6 +253,38 @@ def _log_sweep(
     )
 
 
+def _submit_analysis(
+    payload: AnalysisRunRequest, job: Callable, *,
+    task_id: Optional[str] = None,
+):
+    """重组提交路径收敛（screen 专属/通用两段共用）：executor submit +
+    fast_path 竞态处理 + 202 句柄。
+
+    task_id 可注入（screen 专属语义：留痕 ref_id 需闭包引用，预生成
+    后计算完成即写 screen 留痕）；缺省由 executor 生成。
+    estimated_cost_s 强制 > 快路径阈值；fast_path（阈值边缘竞态被
+    快路径吃掉）结果即终态直返。
+    """
+    ex = get_executor()
+    submit_kwargs: Dict[str, Any] = dict(
+        timeout_s=600.0,
+        params_json=json.dumps(
+            {"template": payload.template,
+             "data_range": payload.data_range.model_dump()},
+            ensure_ascii=False),
+        estimated_cost_s=_HEAVY_ROWS / 1000.0,  # 强制 > 快路径阈值
+    )
+    if task_id is not None:
+        submit_kwargs["task_id"] = task_id
+    handle = ex.submit(f"analysis:{payload.template}", job, **submit_kwargs)
+    if handle["fast_path"]:
+        # 竞态：阈值边缘被快路径吃掉——结果即终态
+        return handle
+    return JSONResponse(status_code=202, content={
+        "task_id": handle["task_id"], "status": "pending",
+        "poll": f"/api/research/analysis/tasks/{handle['task_id']}"})
+
+
 @router.post("/analysis")
 def run_analysis(
     payload: AnalysisRunRequest,
@@ -285,22 +318,8 @@ def run_analysis(
                 _log_screen(db_path, payload, screen_task_id, out)
                 return json.dumps(out, ensure_ascii=False, default=str)
 
-            ex = get_executor()
-            handle = ex.submit(
-                f"analysis:{payload.template}", _screen_job,
-                task_id=screen_task_id,
-                timeout_s=600.0,
-                params_json=json.dumps(
-                    {"template": payload.template,
-                     "data_range": payload.data_range.model_dump()},
-                    ensure_ascii=False),
-                estimated_cost_s=_HEAVY_ROWS / 1000.0,
-            )
-            if handle["fast_path"]:  # 阈值边缘竞态：结果即终态
-                return handle
-            return JSONResponse(status_code=202, content={
-                "task_id": handle["task_id"], "status": "pending",
-                "poll": f"/api/research/analysis/tasks/{handle['task_id']}"})
+            return _submit_analysis(
+                payload, _screen_job, task_id=screen_task_id)
 
         if not heavy:
             # 快路径失败语义与 executor 快路径对齐：模板异常转 failed 终态
@@ -328,21 +347,7 @@ def run_analysis(
                 _log_analysis(db_path, payload)
             return json.dumps(out, ensure_ascii=False, default=str)
 
-        ex = get_executor()
-        handle = ex.submit(
-            f"analysis:{payload.template}", _job,
-            timeout_s=600.0,
-            params_json=json.dumps({"template": payload.template,
-                                    "data_range": payload.data_range.model_dump()},
-                                   ensure_ascii=False),
-            estimated_cost_s=_HEAVY_ROWS / 1000.0,  # 强制 > 快路径阈值
-        )
-        if handle["fast_path"]:
-            # 竞态：阈值边缘被快路径吃掉——结果即终态
-            return handle
-        return JSONResponse(status_code=202, content={
-            "task_id": handle["task_id"], "status": "pending",
-            "poll": f"/api/research/analysis/tasks/{handle['task_id']}"})
+        return _submit_analysis(payload, _job)
     except ResearchError as exc:
         raise research_error_to_http(exc) from exc
 
