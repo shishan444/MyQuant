@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import quote
 
 from mcpserver import errors
 from mcpserver.api_client import (
@@ -85,7 +86,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def get_strategy(strategy_id: str) -> Dict[str, Any]:
         """单个策略详情（DNA、指标、回测记录）。"""
-        return api.get(f"/api/strategies/{strategy_id}")
+        return api.get(f"/api/strategies/{quote(strategy_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
@@ -152,7 +153,8 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     def get_hypothesis(hypothesis_id: str) -> Dict[str, Any]:
         """单个假设详情（结构化条件、状态、区间；subject 混合形制——
         结构化指标对象或字符串精确名）。"""
-        return api.get(f"/api/research/hypotheses/{hypothesis_id}")
+        return api.get(
+            f"/api/research/hypotheses/{quote(hypothesis_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
@@ -178,13 +180,15 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def get_analysis_task(task_id: str) -> Dict[str, Any]:
         """分析长任务轮询（status: pending|running|succeeded|failed）。"""
-        return api.get(f"/api/research/analysis/tasks/{task_id}")
+        return api.get(
+            f"/api/research/analysis/tasks/{quote(task_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
     def get_validation_report(strategy_id: str) -> Dict[str, Any]:
         """验证证据档案（人话关键数字：最差情况与样本量）。"""
-        return api.get(f"/api/research/validation/{strategy_id}/report")
+        return api.get(
+            f"/api/research/validation/{quote(strategy_id, safe='')}/report")
 
     @mcp.tool()
     @tool_safe
@@ -364,7 +368,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         验证不能否定假设；假设保持 active 可换区间再验证）。
         supported 时谱系 draft 若有自身 pass 记录则同事务转正（draft→active）。"""
         return api.post(
-            f"/api/research/hypotheses/{hypothesis_id}/transition",
+            f"/api/research/hypotheses/"
+            f"{quote(hypothesis_id, safe='')}/transition",
             {"target_status": target_status, "evidence_ref": evidence_ref})
 
     @mcp.tool()
@@ -495,7 +500,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
         转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
         return api.post(
-            f"/api/research/translate/{hypothesis_id}",
+            f"/api/research/translate/{quote(hypothesis_id, safe='')}",
             {"strategy_symbol": strategy_symbol,
              "strategy_timeframe": strategy_timeframe})
 
@@ -517,7 +522,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     def poll_evolution_task(task_id: str, total_timeout: float = 600.0) -> Dict[str, Any]:
         """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态）。"""
         return api.poll_until_terminal(
-            f"/api/evolution/tasks/{task_id}",
+            f"/api/evolution/tasks/{quote(task_id, safe='')}",
             terminal=("completed", "failed", "stopped", "cancelled"),
             total_timeout=total_timeout)
 
