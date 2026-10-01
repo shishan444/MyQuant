@@ -359,3 +359,22 @@ def test_research_log_entry_written(db_path, data_dir):
     ranges = json.loads(entry["data_ranges"])
     assert ranges == {"symbol": SYMBOL, "timeframes": ["1d"],
                       "as_of": df.index[-1].isoformat()}
+
+
+def test_timeframes_whitelist_extended_fourteen(db_path, data_dir):
+    """CARD-04 收敛后白名单随 TF_MINUTES 扩至 14 档：六新档
+    （3m/2h/6h/8h/12h/1w）放行；真非法周期仍拒。直测归一化——
+    白名单判定先于数据探测（无该档 parquet 亦可判在册）。"""
+    from core.analysis.market_snapshot import _normalize_timeframes
+
+    six = ["3m", "2h", "6h", "8h", "12h", "1w"]
+    assert _normalize_timeframes(six) == six
+
+    for illegal in ("7m", "2d"):
+        with pytest.raises(ResearchError) as ei:
+            _normalize_timeframes(["1d", illegal])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert illegal in ei.value.detail["illegal"]
+        assert sorted(ei.value.detail["legal"]) == sorted(
+            ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h",
+             "6h", "8h", "12h", "1d", "3d", "1w"])

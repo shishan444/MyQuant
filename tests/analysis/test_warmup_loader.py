@@ -70,8 +70,11 @@ def test_minute_timeframe_mapping(tmp_path):
         data_dir, SYMBOL, "1m", start, df.index[599].isoformat(), ["RSI"])
 
     assert out.index[0] == start_ts - pd.Timedelta(minutes=200)
-    assert TF_MINUTES == {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
-                          "1h": 60, "4h": 240, "1d": 1440, "3d": 4320}
+    # CARD-04 收敛：TF_MINUTES 自 TF_SECONDS（14 档权威表）派生——
+    # 派生一致断言防两表再漂移（字面断言已随收敛退役）
+    from core.data.timeframes import TF_SECONDS
+    assert TF_MINUTES == {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
+    assert len(TF_MINUTES) == len(TF_SECONDS) == 14
 
 
 def test_warmup_insufficient_rejected(tmp_path):

@@ -221,3 +221,22 @@ class TestRandomWindowStatsInvariance:
         assert trs == RANDOM_1H_FROZEN["total_returns"]
         assert [w["verdict"] for w in rw["windows"]] \
             == RANDOM_1H_FROZEN["verdicts"]
+
+    @pytest.mark.parametrize("tf,minutes", [("1m", 1), ("5m", 5)])
+    def test_window_geometry_corrected(self, env, strategy, tf, minutes):
+        """CARD-04 修复后几何断言：窗宽 == window_bars × 真实周期。
+
+        修复前 240 兜底下 window_bars=200 的实际窗宽为 48000 分钟
+        （几何错乱——本文件 docstring 记录的修复前形态）；修复后
+        1m/5m 窗宽须为 200/1000 分钟。"""
+        db, d, _ = env
+        sid, _, idx, n = strategy(tf, "geo")
+        rw = random_window_test(
+            db, d, strategy_id=sid, symbol="BTCUSDT", timeframe=tf,
+            data_start=idx[500].isoformat(), data_end=idx[n - 1].isoformat(),
+            window_bars=200, n_windows=3, seed=5)
+        assert rw["summary"]["n_windows"] == 3
+        expected_span = pd.Timedelta(minutes=200 * minutes)
+        for w in rw["windows"]:
+            span = (pd.Timestamp(w["end"]) - pd.Timestamp(w["start"]))
+            assert span == expected_span, f"{tf} 窗宽 {span} != {expected_span}"
