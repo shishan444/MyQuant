@@ -110,6 +110,39 @@ class TestValidateMore:
         assert any("不支持关键字参数" in e for e in errs)
 
 
+class TestValidateCorrWindow:
+    """corr 窗口位（第 3 参）校验（CARD-06）。
+
+    修复前硬编码 args[1] 漏检 corr：corr(x, y, 0) 静态放行、注册成功、
+    求值才炸 FormulaError（min_periods 2 must be <= window 0）；修复后
+    注册时拒绝，经 plugin_service → ResearchError → API 422。
+    """
+
+    COLS = {"close", "vol"}
+
+    @pytest.mark.parametrize(
+        ("expr", "fragment"),
+        [
+            pytest.param("corr(close, vol, 0)", "corr 窗口须 >= 1", id="零窗口拒绝"),
+            pytest.param("corr(close, vol, -2)", "corr 窗口须 >= 1", id="负窗口拒绝"),
+        ],
+    )
+    def test_bad_cor_window_rejected(self, expr: str, fragment: str) -> None:
+        errs = validate_formula(expr, self.COLS)
+        assert any(fragment in e for e in errs)
+
+    def test_valid_cor_window_passes(self) -> None:
+        assert validate_formula("corr(close, vol, 10)", self.COLS) == []
+
+    def test_non_constant_cor_window_static_pass(self) -> None:
+        """窗口位非常量：静态层放行（只拦常量 <1，动态语义由求值层承担）。"""
+        assert validate_formula("corr(close, vol, close)", self.COLS) == []
+
+    def test_crossover_threshold_constant_not_hurt(self) -> None:
+        """结构族无窗口位：阈值常量 10（>1 亦无碍）不触发窗口校验。"""
+        assert validate_formula("crossover(close, 10)", self.COLS) == []
+
+
 class TestLookbackEdges:
     """回看推导边界：语法错误 0 / 非常量窗口不取。"""
 
