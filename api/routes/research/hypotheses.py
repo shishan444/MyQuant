@@ -32,6 +32,14 @@ from api.routes.research.common import (
 )
 
 
+def _loads_or_keep(raw: str) -> Any:
+    """JSON 列 loads 兜底：损坏/类型不符保留原字符串（审计可读，不 500）。"""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+
 @router.post("/hypotheses", response_model=HypothesisResponse)
 def register_hypothesis(
     payload: HypothesisCreate,
@@ -118,8 +126,8 @@ def list_hypotheses(
         offset=0 if cur is not None else (page - 1) * page_size,
         limit=page_size, cursor=cur, order="desc")
     out = [
-        {**h, "conditions": json.loads(h["conditions"]),
-         "data_ranges": json.loads(h["data_ranges"])}
+        {**h, "conditions": _loads_or_keep(h["conditions"]),
+         "data_ranges": _loads_or_keep(h["data_ranges"])}
         for h in items
     ]
     return HypothesisListResponse(
@@ -142,8 +150,8 @@ def get_hypothesis(
             "code": "RESEARCH_HYPOTHESIS_NOT_FOUND",
             "message": f"假设不存在: {hypothesis_id}", "detail": None})
     return {**hyp,
-            "conditions": json.loads(hyp["conditions"]),
-            "data_ranges": json.loads(hyp["data_ranges"])}
+            "conditions": _loads_or_keep(hyp["conditions"]),
+            "data_ranges": _loads_or_keep(hyp["data_ranges"])}
 
 
 @router.post("/hypotheses/{hypothesis_id}/transition")

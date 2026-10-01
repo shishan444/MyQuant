@@ -90,7 +90,11 @@ def list_formula_plugins(
     """公式插件版本审计（历史版本可查，5.5）。"""
     rows = rr.list_plugins(db_path, source="formula", name=name)
     for r in rows:
-        r["output_columns"] = json.loads(r["output_columns"]) if r["output_columns"] else []
+        if r["output_columns"]:
+            try:
+                r["output_columns"] = json.loads(r["output_columns"])
+            except (json.JSONDecodeError, TypeError):
+                pass
     return {"items": rows, "total": len(rows)}
 
 

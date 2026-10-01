@@ -100,7 +100,10 @@ def list_feature_requests(
         offset=0 if cur is not None else (page - 1) * page_size,
         limit=page_size, cursor=cur, order="desc")
     for r in rows:
-        r["payload"] = json.loads(r["payload"])
+        try:
+            r["payload"] = json.loads(r["payload"])
+        except (json.JSONDecodeError, TypeError):
+            pass
     return {"items": rows,
             "total": rr.count_feature_requests(db_path, status=status),
             "page": page, "page_size": page_size,

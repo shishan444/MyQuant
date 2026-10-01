@@ -141,6 +141,13 @@ def validation_report(
         except json.JSONDecodeError:
             return {}
 
+    def _parse_params(r):
+        # params 列兜底同 _parse 形制（损坏→{}，range 取值 None）
+        try:
+            return json.loads(r["params"]) if r["params"] else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
     lines: Dict[str, Any] = {
         "strategy_id": strategy_id,
         "total_records": len(records),
@@ -168,7 +175,7 @@ def validation_report(
         lines["isolated_backtests"].append({
             "record_id": r["record_id"],
             "verdict": r["verdict"],
-            "range": json.loads(r["params"]).get("request_range") if r["params"] else None,
+            "range": _parse_params(r).get("request_range"),
             "warmup_bars": res.get("warmup", {}).get("bars"),
             "人话": (
                 f"区间总收益 {m.get('total_return', 0)*100:.1f}%，"
