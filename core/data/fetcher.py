@@ -17,12 +17,16 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
+from core.data.validation import validate_symbol
+
 logger = logging.getLogger(__name__)
 
 # Default proxy for Binance API access (override via BINANCE_PROXY env var)
 _DEFAULT_PROXY = os.environ.get("BINANCE_PROXY", "http://172.20.112.1:10809")
 
 # Public data API - accessible from all regions
+# （知悉：域名可经 BINANCE_DATA_API_URL 环境变量覆写——测试替身/网关
+# 场景使用；覆写后所有 K 线请求走该地址，归档域名 _S3_ARCHIVE_URL 不受影响）
 _BASE_URL = os.environ.get("BINANCE_DATA_API_URL", "https://data-api.binance.vision")
 
 # Public S3 archive for historical derivatives data (funding / open interest),
@@ -34,6 +38,11 @@ _PAGE_LIMIT = 1000
 
 # Concurrent downloads for daily-metric archives (small files, static bucket)
 _ARCHIVE_WORKERS = 8
+
+# 归档下载体积上限：压缩包 50MB / 解压后 500MB（实际归档为 KB~百 KB 级，
+# 余量三个数量级——纯防解压炸弹，不约束正常文件）
+_MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 
 
 def _years_ago_ms(n: int) -> int:
@@ -242,8 +251,11 @@ def fetch_klines(
 def _download_archive_csv(archive_dir: str, symbol: str, stem: str) -> pd.DataFrame | None:
     """从 data.binance.vision S3 归档下载单个 zip 并解析为 DataFrame。
 
-    404（归档尚未生成/超出范围）或网络失败返回 None，由调用方跳过。
+    404（归档尚未生成/超出范围）、网络失败或体积超限返回 None，由调用方跳过。
+    symbol 直拼出站 URL，入口经命名白名单拒绝（与写入路径同契约点，
+    防 URL 路径段注入）。
     """
+    validate_symbol(symbol)
     url = f"{_S3_ARCHIVE_URL}/{archive_dir}/{symbol}/{stem}.zip"
     try:
         resp = _http_get(url, timeout=30)
@@ -253,9 +265,27 @@ def _download_archive_csv(archive_dir: str, symbol: str, stem: str) -> pd.DataFr
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
+    # 体积关：Content-Length 声明超限即拒（不解压——requests 非流式
+    # 已下载完整 body，声明关不省流量）；实际大小兜底（无声明/声明
+    # 失实）——日度/月度归档实为 KB~百 KB 级，上限余量三个数量级，
+    # 纯防解压炸弹不伤正常文件
+    declared = resp.headers.get("Content-Length")
+    if declared is not None and int(declared) > _MAX_ARCHIVE_BYTES:
+        logger.warning("归档体积超限 %s: 声明 %s 字节（上限 %d）",
+                       stem, declared, _MAX_ARCHIVE_BYTES)
+        return None
+    if len(resp.content) > _MAX_ARCHIVE_BYTES:
+        logger.warning("归档体积超限 %s: 实际 %d 字节（上限 %d）",
+                       stem, len(resp.content), _MAX_ARCHIVE_BYTES)
+        return None
     try:
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
             csv_name = zf.namelist()[0]
+            info = zf.getinfo(csv_name)
+            if info.file_size > _MAX_EXTRACTED_BYTES:
+                logger.warning("归档解压体积超限 %s: %d 字节（上限 %d）",
+                               stem, info.file_size, _MAX_EXTRACTED_BYTES)
+                return None
             with zf.open(csv_name) as f:
                 return pd.read_csv(f)
     except (zipfile.BadZipFile, IndexError, pd.errors.ParserError) as exc:
