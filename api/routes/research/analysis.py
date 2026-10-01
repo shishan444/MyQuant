@@ -15,7 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.common import research_error_to_http
+from api.routes.research.common import (
+    require_known_timeframe,
+    research_error_to_http,
+)
 from api.schemas import AnalysisRunRequest
 from core.analysis.executor import get_executor
 from core.analysis.hypothesis_service import ResearchError
@@ -261,6 +264,10 @@ def run_analysis(
             "message": f"未知模板: {payload.template}（可用: {_TEMPLATES}）",
             "detail": None})
     try:
+        # P0 错误通道：非法周期前置 422——否则装载层 validate_known_interval
+        # 抛裸 ValueError 落 500
+        require_known_timeframe(
+            payload.data_range.timeframe, "data_range.timeframe")
         df = _load_df(data_dir, payload.data_range.model_dump())
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
                  or len(df) > _HEAVY_ROWS)

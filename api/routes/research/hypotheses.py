@@ -24,7 +24,10 @@ router = APIRouter()
 
 # research_error_to_http 已迁 common（子包共享底座）；此处 import 兼容
 # 范围外 api/routes/validate.py 的既有引用，新代码请直用 common
-from api.routes.research.common import research_error_to_http  # noqa: E402
+from api.routes.research.common import (
+    require_known_timeframe,
+    research_error_to_http,  # noqa: F401 —— 兼容 validate.py 既有引用
+)
 
 
 @router.post("/hypotheses", response_model=HypothesisResponse)
@@ -38,6 +41,9 @@ def register_hypothesis(
         # symbol/timeframe 在数据目录可达（422 RESEARCH_SYMBOL_NOT_FOUND）
         from core.data.mtf_loader import find_parquet, safe_symbol
         for i, r in enumerate(payload.data_ranges):
+            # P0 错误通道：非法周期前置 422——否则 find_parquet 内
+            # validate_known_interval 抛裸 ValueError 落 500
+            require_known_timeframe(r.timeframe, f"data_ranges[{i}].timeframe")
             # F-1：探测统一走 safe_symbol 清洗（与下方 timeframe 探测
             # 同函数一致——原始 symbol 直传在符号含分隔符时会变成
             # 存在性 oracle，纯收紧）
