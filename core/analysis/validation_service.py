@@ -334,6 +334,46 @@ def _resolve_threshold_profile(
     return DEFAULT_PROFILE
 
 
+def _hypothesis_precheck(
+    db_path: Path, hypothesis_id: str, strategy_id: str,
+    rh: str, request_range: Dict[str, str],
+) -> Optional[Dict[str, Any]]:
+    """验证族前置检查四步（isolated/staged 同构提取）。
+
+    终态拒验（404/409）→ 幂等查询 → 判定并集求交（重叠 409 附
+    judged_ranges）→ 扫描候选精确复用反向核查。幂等命中返回既有
+    记录 payload（duplicated=True），干净返回 None（调用方继续
+    验证主流程）；Raises 语义与提取前逐字一致。
+    """
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is None:
+        raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
+                            f"假设不存在: {hypothesis_id}", status=404)
+    if hyp["status"] != "active":
+        raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
+                            f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
+                            status=409)
+    existing = rr.find_validation_by_identity(db_path, hypothesis_id, strategy_id, rh)
+    if existing is not None:
+        return {
+            "record_id": existing["record_id"],
+            "verdict": existing["verdict"],
+            "duplicated": True,
+            "result": json.loads(existing["result"]) if existing["result"] else None,
+        }
+    judged = judged_ranges_union(db_path, hypothesis_id)
+    overlaps = overlaps_with_request(
+        judged, request_range["start"], request_range["end"])
+    if overlaps:
+        raise ResearchError(
+            "RESEARCH_RANGE_OVERLAP",
+            "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
+            status=409,
+            detail={"judged_ranges": judged, "overlaps": overlaps})
+    _screen_reuse_check(db_path, hypothesis_id, request_range)
+    return None
+
+
 def run_isolated_backtest(
     db_path: Path,
     data_dir: Path,
@@ -353,39 +393,16 @@ def run_isolated_backtest(
     # threshold_profile 按名解析（结构校验前置——先于终态/幂等）
     threshold_profile = _resolve_threshold_profile(threshold_profile)
 
-    # 终态拒验
-    hyp = rr.get_hypothesis(db_path, hypothesis_id)
-    if hyp is None:
-        raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
-                            f"假设不存在: {hypothesis_id}", status=404)
-    if hyp["status"] != "active":
-        raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
-                            f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
-                            status=409)
-
-    # 幂等
+    # 验证族前置检查四步（终态/幂等/并集求交/扫描复用——同构提取，
+    # 幂等命中即返）
     rh = _range_hash(request_range)
-    existing = rr.find_validation_by_identity(db_path, hypothesis_id, strategy_id, rh)
-    if existing is not None:
-        return {
-            "record_id": existing["record_id"],
-            "verdict": existing["verdict"],
-            "duplicated": True,
-            "result": json.loads(existing["result"]) if existing["result"] else None,
-        }
-
-    # 判定并集求交
+    dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
+                               request_range)
+    if dup is not None:
+        return dup
+    # payload 的并集快照：写库前时点（不含本次写入——原前置查询的
+    # 值语义；与 precheck 内查询间无写操作，等价）
     judged = judged_ranges_union(db_path, hypothesis_id)
-    overlaps = overlaps_with_request(judged, request_range["start"], request_range["end"])
-    if overlaps:
-        raise ResearchError(
-            "RESEARCH_RANGE_OVERLAP",
-            "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
-            status=409,
-            detail={"judged_ranges": judged, "overlaps": overlaps})
-
-    # 扫描候选精确复用反向核查（并集未命中时执行——见 _screen_reuse_check）
-    _screen_reuse_check(db_path, hypothesis_id, request_range)
 
     # 策略与 DNA
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
@@ -852,41 +869,13 @@ def run_staged_validation(
                      "start": start, "end": end}
     rh = _range_hash(request_range)
 
+    judged: List[Dict[str, str]] = []
     if hypothesis_id is not None:
-        # 终态拒验（isolated 同款）
-        hyp = rr.get_hypothesis(db_path, hypothesis_id)
-        if hyp is None:
-            raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
-                                f"假设不存在: {hypothesis_id}", status=404)
-        if hyp["status"] != "active":
-            raise ResearchError(
-                "RESEARCH_HYPOTHESIS_TERMINAL",
-                f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
-                status=409)
-        # 幂等（isolated 同款——验证族纪律）
-        existing = rr.find_validation_by_identity(
-            db_path, hypothesis_id, strategy_id, rh)
-        if existing is not None:
-            return {
-                "record_id": existing["record_id"],
-                "verdict": existing["verdict"],
-                "duplicated": True,
-                "result": json.loads(existing["result"])
-                if existing["result"] else None,
-            }
-        # 判定并集 + 扫描复用（isolated 同款）
-        judged = judged_ranges_union(db_path, hypothesis_id)
-        overlaps = overlaps_with_request(judged, start, end)
-        if overlaps:
-            raise ResearchError(
-                "RESEARCH_RANGE_OVERLAP",
-                "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被"
-                "日志拦截）",
-                status=409,
-                detail={"judged_ranges": judged, "overlaps": overlaps})
-        _screen_reuse_check(db_path, hypothesis_id, request_range)
-    else:
-        judged = []
+        # 验证族前置检查四步（isolated 同款——同构提取，幂等命中即返）
+        dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
+                                   request_range)
+        if dup is not None:
+            return dup
 
     # ---- 策略与 warmup ----
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
