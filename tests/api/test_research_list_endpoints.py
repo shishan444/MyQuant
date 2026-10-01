@@ -296,6 +296,65 @@ class TestKeysetCursorPagination:
         assert len(log1["items"]) == 2 and log1["next_cursor"]
 
 
+class TestCorruptedJsonPassthrough:
+    """CARD-12 修复资产：库存 JSON 列损坏时端点不 500。
+
+    四端点兜底语义：hypotheses/log/plugins 损坏保留原字符串（审计
+    可读）；validation report 的 params 损坏归 {}（range=None——原始
+    串不泄入人话摘要，同文件 _parse 先例形制）。
+    """
+
+    def test_hypotheses_list_and_detail_keep_raw(self, api_client, db_path):
+        rr.save_hypothesis_with_log(
+            db_path, hypothesis_id="hyp_dirty", conditions="{corrupted",
+            conditions_hash="cd", statement="脏数据",
+            data_ranges="not-json", ranges_hash="rd")
+        listed = api_client.get("/api/research/hypotheses").json()
+        dirty = next(h for h in listed["items"]
+                     if h["hypothesis_id"] == "hyp_dirty")
+        assert dirty["conditions"] == "{corrupted", "列表损坏列保留原串"
+        assert dirty["data_ranges"] == "not-json"
+
+        detail = api_client.get("/api/research/hypotheses/hyp_dirty").json()
+        assert detail["conditions"] == "{corrupted"
+        assert detail["data_ranges"] == "not-json"
+
+    def test_feature_request_payload_keeps_raw(self, api_client, db_path):
+        rr.save_feature_request(db_path, request_id="fr_dirty", title="t",
+                                payload="{corrupted", status="open",
+                                created_at="2026-10-01T00:00:00")
+        listed = api_client.get("/api/research/feature-requests").json()
+        dirty = next(r for r in listed["items"] if r["request_id"] == "fr_dirty")
+        assert dirty["payload"] == "{corrupted"
+
+    def test_formula_output_columns_keeps_raw(self, api_client, db_path):
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_dirty", name="dirty",
+            version=1, expression="zscore(close, 20)",
+            output_columns="{corrupted", entry_id="e_dirty",
+            column_name="dirty_col")
+        listed = api_client.get("/api/research/plugins/formula").json()
+        dirty = next(r for r in listed["items"] if r["plugin_id"] == "p_dirty")
+        assert dirty["output_columns"] == "{corrupted"
+
+    def test_validation_report_params_corrupt_range_none(
+            self, api_client, db_path):
+        """params 损坏归 {}：report 200、range=None（原始串不入人话摘要）。"""
+        rr.save_hypothesis_with_log(db_path, **dict(
+            hypothesis_id="hyp_v", conditions="{}", conditions_hash="cv",
+            statement="v", data_ranges="[]", ranges_hash="rv"))
+        rr.save_validation_with_log(
+            db_path, record_id="rec_dirty", hypothesis_id="hyp_v",
+            strategy_id="st_dirty", level="isolated_backtest",
+            params="{corrupted", result=None, verdict="pass",
+            range_hash="rkv")
+        resp = api_client.get("/api/research/validation/st_dirty/report")
+        assert resp.status_code == 200, "损坏 params 不应 500"
+        iso = resp.json()["isolated_backtests"][0]
+        assert iso["record_id"] == "rec_dirty"
+        assert iso["range"] is None, "params 损坏→{}，range 取值 None"
+
+
 class TestNotFoundChannels:
     """三处 404 错误通道的结构化 code。"""
 
