@@ -112,3 +112,41 @@ class TestTransitionSuperseded:
                                   evidence_ref="说明文本")
         assert ei.value.code == "RESEARCH_HYPOTHESIS_TERMINAL"
         assert ei.value.status == 409
+
+    def test_超页证据记录末尾pass_可定证迁移(self, db: Path) -> None:
+        """CARD-01 链路 D：迁移证据核验分页取全量（原 limit=200 单页截断）。
+
+        引用记录置于升序第 201 位（旧单页之外）：截断则证据不可达
+        （RESEARCH_EVIDENCE_NOT_FOUND），全量则定证成功。次序用直插
+        created_at 严格递增控制。"""
+        import json as _json
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ValidationRecord
+        from core.persistence.repository.dataset_meta import _engine_for
+
+        hid = _register(db, statement="超页证据")
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        far_id = "rec_pg_0200"  # 第 201 条：升序末尾，旧 limit=200 之外
+
+        def _row(i: int) -> dict:
+            hit = i == 200
+            return dict(
+                record_id=f"rec_pg_{i:04d}", hypothesis_id=hid,
+                strategy_id=None,
+                level="isolated",
+                params=_json.dumps({"warmup": 200, "seed": i}),
+                result=None,
+                verdict="pass" if hit else "fail",
+                range_hash=f"rh_pg_{i:04d}",
+                components=None,
+                created_at=(base + timedelta(seconds=i)).isoformat())
+
+        with _engine_for(db).begin() as conn:
+            for i in range(201):
+                conn.execute(insert(ValidationRecord).values(**_row(i)))
+
+        out = transition_hypothesis(db, hid, target_status="supported",
+                                    evidence_ref=far_id)
+        assert out["status"] == "supported"
+        assert out["idempotent"] is False

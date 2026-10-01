@@ -258,3 +258,47 @@ class TestReverseCheck:
         assert overlaps_with_request(
             union, SCAN_RANGE["start"], SCAN_RANGE["end"])
         # 并集命中即 409 RANGE_OVERLAP（既有机制），无需到达反向核查
+
+
+class TestScreenReusePagination:
+    """CARD-01 链路 B：反向核查 screen 留痕分页取全量（原 limit=500 单页截断）。
+
+    命中条目置于升序第 503 位（旧单页之外）：截断则查不到该条不 409，
+    全量则 409——超页可见性锚。次序用直插 created_at 严格递增控制
+    （append_research_log 的 _now() 无法指定位次）。
+    """
+
+    def test_超页screen日志末尾命中_仍409(self, tmp_path):
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ResearchLog
+        from core.persistence.repository.dataset_meta import _engine_for
+
+        db = _db(tmp_path)
+        fp = canonical_condition_hash(CANDIDATE_COND, SCAN_RANGE["timeframe"])
+        noise_range = {"symbol": "ETHUSDT", "timeframe": "1h",
+                       "start": "2026-01-01T00:00:00Z",
+                       "end": "2026-04-01T00:00:00Z"}
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+        def _row(i: int) -> dict:
+            hit = i == 502  # 第 503 条：升序末尾，旧 limit=500 之外
+            return dict(
+                log_id=f"log_{i:04d}", hypothesis_id=None,
+                entry_type="screen", ref_id=f"ant_pg_{i:04d}",
+                data_ranges=json.dumps([SCAN_RANGE if hit else noise_range]),
+                summary=json.dumps({"top_fingerprints": [fp] if hit else []}),
+                created_at=(base + timedelta(seconds=i)).isoformat())
+
+        with _engine_for(db).begin() as conn:
+            for i in range(503):
+                conn.execute(insert(ResearchLog).values(**_row(i)))
+
+        hid = register_hypothesis(
+            db, conditions=_conditions(), statement="超页核查",
+            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+        with pytest.raises(ResearchError) as ei:
+            _screen_reuse_check(db, hid, SCAN_RANGE)
+        assert ei.value.code == "SCREEN_CANDIDATE_REUSE"
+        assert ei.value.status == 409
+        assert ei.value.detail["screen_task_id"] == "ant_pg_0502"
