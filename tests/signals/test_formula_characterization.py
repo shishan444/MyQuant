@@ -185,12 +185,34 @@ class TestResourceLimits:
         assert any("表达式超长" in e for e in errs)
 
     def test_deep_nesting_within_limit_eval_translated(self) -> None:
-        """10KB 内深嵌套：注册过、求值 _ev 递归超限干净转译（不裸炸）。"""
-        expr = "-" * 2000 + "close"  # 左深 UnaryOp 链，<10KB
+        """10KB 内深嵌套：注册过、求值 _ev 递归超限干净转译（不裸炸）。
+
+        自隔离设计（全量运行教训）：2000 层锚在全量运行时 parse 层先于
+        _ev 触顶（转译为「解析递归超限」），match 失配——栈敏感、顺序
+        相关。改为探测当前真实栈深并显式压低递归上限，嵌套仅 60 层
+        （parse C 级零压力，_ev 必超），与进程运行状态无关。
+        """
+        import sys
+
+        expr = "-" * 60 + "close"  # 左深 UnaryOp 链，<10KB
         assert validate_formula(expr, self.COLS) == []
+
+        frames = 0
+        frame = sys._getframe()
+        while frame is not None:
+            frames += 1
+            frame = frame.f_back
+
         df = pd.DataFrame({"close": [1.0, 2.0, 3.0]})
-        with pytest.raises(FormulaError, match="求值递归超限"):
-            evaluate_formula(expr, df)
+        old_limit = sys.getrecursionlimit()
+        try:
+            # 余量校准：前置调用链 ≈ frames+3 须不触发；60 层 _ev 递归
+            # 最深 ≈ frames+64 须触发——取 frames+50 两侧皆有安全边距
+            sys.setrecursionlimit(frames + 50)
+            with pytest.raises(FormulaError, match="求值递归超限"):
+                evaluate_formula(expr, df)
+        finally:
+            sys.setrecursionlimit(old_limit)
 
     def test_parse_recursionerror_translated_in_validate(self) -> None:
         """白盒锚（不依赖真实阈值，跨版本稳定）：parse 抛
