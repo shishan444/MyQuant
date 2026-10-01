@@ -309,9 +309,12 @@ class TestThresholdProfileWhitelist:
             {"name": "default", "rules": {"min_trades": 0}},   # 名+rules 混合注入
             "default",                                          # 裸字符串
             {"name": "loose"},                                  # 未知名
-            {"name": None},                                     # 名值非字符串
+            {"name": None},                                     # 名值 None
+            {"name": True},                                     # 名值布尔
+            {"name": ["default"]},                              # 名值列表
         ],
-        ids=["全量rules", "名rules混合", "裸字符串", "未知名", "名值None"])
+        ids=["全量rules", "名rules混合", "裸字符串", "未知名", "名值None",
+             "名值True", "名值list"])
     def test_非法形制_422附合法名清单(self, bad) -> None:
         from core.analysis.validation_service import _resolve_threshold_profile
         with pytest.raises(ResearchError) as ei:
