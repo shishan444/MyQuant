@@ -545,7 +545,6 @@ def random_window_test(
         })
 
     returns = sorted(w["metrics"]["total_return"] for w in windows)
-    import numpy as _np
     worst = min(windows, key=lambda w: w["metrics"]["total_return"])
 
     # 总判定最差聚合（0.2.11 三态）：任一 fail → fail；无 fail 有
@@ -555,9 +554,9 @@ def random_window_test(
     summary = {
         "n_windows": n_windows,
         "window_bars": window_bars,
-        "returns_q25": float(_np.quantile(returns, 0.25)),
-        "returns_median": float(_np.quantile(returns, 0.50)),
-        "returns_q75": float(_np.quantile(returns, 0.75)),
+        "returns_q25": float(np.quantile(returns, 0.25)),
+        "returns_median": float(np.quantile(returns, 0.50)),
+        "returns_q75": float(np.quantile(returns, 0.75)),
         "worst_window": worst,
         "all_pass": agg == "pass",
     }
