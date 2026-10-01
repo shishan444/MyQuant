@@ -204,3 +204,102 @@ class TestRegistryMissingIntegrity:
             register_formula_plugin(db, name="alpha", expression=EXPR)
         assert ei.value.code == "RESEARCH_FORMULA_REGISTRY_MISSING"
         assert ei.value.status == 500
+
+
+class TestModelColumnReserved:
+    """CARD-23：model 注册撞既有插件列 422（原同名列互写覆盖）。
+
+    model signal_column 强制 model_ 前缀（撞不了 BASE/编码形），只查
+    注册表 taken——拦不同 name 组合的同名列（name="x" v2 与
+    name="x_v2" v1 都产生 model_x_v2）。训练经假 executor 吸收
+    （锚定注册校验，不依赖异步训练完成）。
+    """
+
+    MODEL_KW = dict(
+        features=["close"], template="rolling_logistic",
+        params={"window": 0, "step": 20},
+        target={"type": "return_sign", "horizon": 4},
+        symbol="BTCUSDT", timeframe="4h",
+        data_start="2024-01-01", data_end="2024-03-01")
+
+    @pytest.fixture(autouse=True)
+    def _fake_executor(self, monkeypatch):
+        class _Handle(dict):
+            pass
+
+        class _Exec:
+            def submit(self, name, fn, **kw):
+                return _Handle(task_id="task_fake", fast_path=False)
+
+        import core.analysis.executor as exec_mod
+        monkeypatch.setattr(exec_mod, "get_executor", lambda: _Exec())
+
+    @staticmethod
+    def _occupy(db: Path, name: str, version: int, column: str) -> None:
+        """直插 valid 模型行 + 注册表占位（训练成功路径的等效落库态）。"""
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ModelPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).begin() as conn:
+            conn.execute(insert(ModelPlugin).values(
+                plugin_id=f"mpl_{name}_v{version}", name=name,
+                version=version, config="{}", signal_column=column,
+                status="valid", strategy_visible=1,
+                created_at="2026-09-19T00:00:00"))
+        rr.register_existing_plugin_signal(
+            db, source="model", plugin_id=f"mpl_{name}_v{version}",
+            name=name, version=version, column_name=column)
+
+    def test_占位列后升版撞名_422(self, db: Path, tmp_path: Path) -> None:
+        from core.analysis.plugin_service import register_model_plugin
+        self._occupy(db, "x_v2", 1, "model_x_v2")
+
+        # v1 正常：model_x 不撞
+        out1 = register_model_plugin(db, tmp_path, name="x", **self.MODEL_KW)
+        assert out1["status"] == "pending"
+        assert out1["signal_column"] == "model_x"
+
+        # v2 撞占位列（修复核心）：model_x_v2 ∈ taken → 422
+        with pytest.raises(ResearchError) as ei:
+            register_model_plugin(db, tmp_path, name="x",
+                                  **dict(self.MODEL_KW,
+                                         features=["volume"]))
+        assert ei.value.code == "RESEARCH_FORMULA_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["conflict"] == "既有插件列"
+        assert ei.value.detail["column"] == "model_x_v2"
+        # 零副作用：name=x 仍只有 v1 一行
+        from sqlalchemy import select
+        from core.persistence.orm.models import ModelPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).connect() as conn:
+            rows = conn.execute(select(ModelPlugin).where(
+                ModelPlugin.name == "x")).mappings().all()
+        assert [r["version"] for r in rows] == [1]
+
+    def test_formula撞model占位列_422(self, db: Path) -> None:
+        """formula/model 共享撞名面（helper 化后双向不变）。"""
+        self._occupy(db, "x_v2", 1, "model_x_v2")
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(db, name="beta", expression=EXPR,
+                                    output_column="model_x_v2")
+        assert ei.value.detail["conflict"] == "既有插件列"
+
+    def test_model撞formula占位列_422(self, db: Path, tmp_path: Path) -> None:
+        """双向另一半：formula 先占 model_x，model name=x v1 撞 422。"""
+        from core.analysis.plugin_service import register_model_plugin
+        register_formula_plugin(db, name="alpha", expression=EXPR,
+                                output_column="model_x")
+        with pytest.raises(ResearchError) as ei:
+            register_model_plugin(db, tmp_path, name="x", **self.MODEL_KW)
+        assert ei.value.detail["conflict"] == "既有插件列"
+
+    def test_升版不撞_两版均正常pending(self, db: Path, tmp_path: Path) -> None:
+        from core.analysis.plugin_service import register_model_plugin
+        out1 = register_model_plugin(db, tmp_path, name="y", **self.MODEL_KW)
+        out2 = register_model_plugin(db, tmp_path, name="y",
+                                     **dict(self.MODEL_KW,
+                                            features=["volume"]))
+        assert out1["signal_column"] == "model_y"
+        assert out2["signal_column"] == "model_y_v2"
+        assert out1["status"] == out2["status"] == "pending"
