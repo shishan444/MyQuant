@@ -90,6 +90,17 @@ class TestFindParquet:
         alias.write_bytes(b"")
         assert find_parquet(tmp_path, "BTCUSDT", "1d") == primary
 
+    def test_load_and_prepare_df_sanitizes_symbol_via_safe_symbol(
+        self, tmp_path
+    ) -> None:
+        """内联 re.sub 收敛为 safe_symbol 调用后的链路锚（CARD-11）：
+        带分隔符 symbol 定位到剥离后命名的文件。"""
+        save_parquet(make_ohlcv(60), tmp_path / "BTCUSDT_1h.parquet")
+        out = load_and_prepare_df(
+            tmp_path, "BTC-USDT", "1h", compute_indicators=False
+        )
+        assert out is not None and len(out) == 60
+
     def test_missing_returns_none(self, tmp_path) -> None:
         # 2h 无别名条目：主名不存在即 None
         assert find_parquet(tmp_path, "BTCUSDT", "2h") is None
