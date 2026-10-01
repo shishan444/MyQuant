@@ -21,6 +21,12 @@ class FormulaError(ValueError):
     """公式静态校验/求值错误（附位置信息）。"""
 
 
+#: 表达式长度上限（资源限制关，10KB）：超长链使 ast.parse 与求值器
+#: 递归深度随长度线性增长（深嵌套可在 10KB 内触顶，由 RecursionError
+#: 转译兜底）；形制对齐 plugin_service 注册关的上限拦截口径
+_MAX_EXPRESSION_CHARS = 10 * 1024
+
+
 # ---------------------------------------------------------------- 白名单函数
 
 def _f_shift(s: pd.Series, n: int) -> pd.Series:
@@ -204,10 +210,15 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
     3. 禁负向 shift：shift/diff 第二参数必须是 >= 0 的整常量。
     """
     errors: List[str] = []
+    if len(expr) > _MAX_EXPRESSION_CHARS:
+        return [f"表达式超长: {len(expr)} 字符（上限 {_MAX_EXPRESSION_CHARS}）"]
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as exc:
         return [f"语法错误（位置 {exc.lineno}:{exc.offset}）: {exc.msg}"]
+    except (RecursionError, MemoryError):
+        # MemoryError：CPython C 级解析器栈溢出（"source too complex"）
+        return ["表达式嵌套过深（解析递归超限，上限 10KB 内请减少嵌套）"]
 
     for node in ast.walk(tree):
         if not isinstance(node, _ALLOWED_NODES):
@@ -243,12 +254,17 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                         errors.append(f"{fname} 第二参数必须是常量（静态可校验）")
                     elif val < 0:
                         errors.append(f"{fname} 负向平移被禁止（看向未来）: {val}")
-                elif _WINDOW_PARAM_INDEX.get(fname) == 1:
-                    # 窗口位在 1 的函数第二参须 >= 1 常量（0.2.12 R1 修正：
-                    # 原 arity==2 笼统推定会误拒逐元素族第二参常量 <1——
-                    # gt(a, 0.5)/max(a, 0) 合法阈值用法）
-                    if ok and val < 1:
-                        errors.append(f"{fname} 窗口须 >= 1")
+                else:
+                    # 窗口按 _WINDOW_PARAM_INDEX 实际参数位取参（对齐
+                    # formula_lookback 既有写法；0.2.12 R1 边界保留——逐元素族
+                    # 无窗口位不校验，gt(a, 0.5)/max(a, 0) 合法阈值用法）。
+                    # 此前硬编码 args[1] 漏检 corr（窗口位 2）零窗口：
+                    # corr(x, y, 0) 静态放行、注册成功、求值才炸。
+                    param_idx = _WINDOW_PARAM_INDEX.get(fname)
+                    if param_idx is not None and len(node.args) > param_idx:
+                        ok, val = _const_value(node.args[param_idx])
+                        if ok and val < 1:
+                            errors.append(f"{fname} 窗口须 >= 1")
 
     # 列引用（非函数名的 Name）
     called_funcs = {
@@ -271,7 +287,11 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
     Args:
         extra_columns: 求值上下文附加列（如既有公式插件的输出列）。
     """
-    tree = ast.parse(expr, mode="eval")
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except (RecursionError, MemoryError) as exc:
+        # MemoryError：CPython C 级解析器栈溢出（"source too complex"）
+        raise FormulaError("表达式嵌套过深（解析递归超限）") from exc
     env = dict(extra_columns or {})
 
     def _ev(node: ast.AST) -> Any:
@@ -307,7 +327,10 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
                 raise FormulaError(f"{fname} 求值失败: {exc}") from exc
         raise FormulaError(f"不允许的节点 {type(node).__name__}")
 
-    result = _ev(tree)
+    try:
+        result = _ev(tree)
+    except RecursionError as exc:
+        raise FormulaError("表达式嵌套过深（求值递归超限）") from exc
     if not isinstance(result, pd.Series):
         result = pd.Series(float(result), index=df.index)
     return result

@@ -107,12 +107,18 @@ def test_fetch_open_interest_history_partial_days() -> None:
 
 class TestHttpGetFallback:
     def test_direct_first(self) -> None:
-        """直连成功时不走代理。"""
+        """直连成功时不走代理。
+
+        锚点为 _session_for（CARD-10 后 _http_get 的协作者——thread-local
+        缓存使工厂 patch 在同线程先行用例后失效），按通道分流 mock。
+        """
         direct = MagicMock()
         direct.get.return_value = MagicMock(status_code=200)
         proxy = MagicMock()
-        with patch("core.data.fetcher._direct_session", return_value=direct), \
-             patch("core.data.fetcher._build_session", return_value=proxy):
+        with patch(
+            "core.data.fetcher._session_for",
+            side_effect=lambda kind: direct if kind == "direct" else proxy,
+        ):
             resp = _http_get("https://example.com")
         assert resp is direct.get.return_value
         proxy.get.assert_not_called()
@@ -126,8 +132,10 @@ class TestHttpGetFallback:
         proxy = MagicMock()
         proxy_resp = MagicMock(status_code=200)
         proxy.get.return_value = proxy_resp
-        with patch("core.data.fetcher._direct_session", return_value=direct), \
-             patch("core.data.fetcher._build_session", return_value=proxy):
+        with patch(
+            "core.data.fetcher._session_for",
+            side_effect=lambda kind: direct if kind == "direct" else proxy,
+        ):
             resp = _http_get("https://example.com")
         assert resp is proxy_resp
         proxy.get.assert_called_once()

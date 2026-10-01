@@ -87,15 +87,15 @@ def fit_predict_walk_forward(
 
     n = len(df)
     min_train = 200
-    if n < min_train + int(config.params.get("step", 20)) + 5:
-        raise ModelPipelineError(f"数据不足（{n} bar；需 >= {min_train + 25}）")
+    step = int(config.params.get("step", 20))
+    if n < min_train + step + 5:
+        raise ModelPipelineError(f"数据不足（{n} bar；需 >= {min_train + step + 5}）")
 
     X_raw = df[config.features].astype(float)
     X = X_raw.shift(1)  # 特征只用 t-1 及以前（防前视第一道）
     y = _make_target(df, config.target)
 
     window = int(config.params.get("window", 0))  # 0=expanding，>0=滑动窗
-    step = int(config.params.get("step", 20))
 
     signal = pd.Series(np.nan, index=df.index, name=f"model_{config.name}")
     n_refits = 0
