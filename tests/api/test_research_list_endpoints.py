@@ -282,6 +282,41 @@ class TestKeysetCursorPagination:
             assert detail["code"] == "RESEARCH_PARAM_INVALID"
             assert detail["detail"]["legal_form"] == "created_at|id"
 
+    @pytest.mark.parametrize(("endpoint", "setup"), [
+        pytest.param("/api/research/feature-requests",
+                     lambda c: [c.post("/api/research/feature-requests",
+                                       json={"title": f"t{i}", "payload": {}})
+                                for i in range(5)], id="需求单"),
+        pytest.param("/api/research/hypotheses",
+                     lambda c: [_register(c, f"2024-01-0{i + 1}T00:00:00Z")
+                                for i in range(5)], id="假设"),
+        pytest.param("/api/research/log",
+                     lambda c: [_register(c, f"2024-01-0{i + 1}T00:00:00Z")
+                                for i in range(5)], id="日志"),
+    ])
+    def test_cursor_walk_property_all_endpoints(self, api_client, endpoint,
+                                                setup):
+        """闸门④属性补强：cursor 翻页无重无漏性质三端点同持
+        （_apply_keyset 共用，端点层 encode/decode/组装各自实现——
+        性质须逐端点独立成立，不能由共用推定）。"""
+        setup(api_client)
+
+        seen = []
+        cursor = None
+        for _ in range(7):
+            params = {"page_size": 2}
+            if cursor is not None:
+                params["cursor"] = cursor
+            body = api_client.get(endpoint, params=params).json()
+            assert body["total"] == 5, "total 恒为真总数"
+            seen.extend((r.get("request_id") or r.get("hypothesis_id")
+                         or r.get("log_id")) for r in body["items"])
+            cursor = body["next_cursor"]
+            if not body["items"]:
+                break
+        assert body["items"] == [] and cursor is None
+        assert len(seen) == len(set(seen)) == 5, "翻页无重无漏"
+
     def test_hypotheses_and_log_same_contract(self, api_client):
         """契约同款抽查：desc 首页 + cursor 续页 + total 真总数。"""
         for i in range(3):
