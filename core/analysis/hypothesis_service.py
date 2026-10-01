@@ -39,7 +39,12 @@ class ResearchError(Exception):
         self.detail = detail
 
 
-def _hash_json(obj: Any) -> str:
+def hash_json(obj: Any) -> str:
+    """对象 → 稳定 sha256 指纹（json 键序归一 + 非 ASCII 保真）。
+
+    幂等身份键的统一底座（假设 conditions/ranges_hash、模型插件
+    config_hash 共用）——同对象恒同指纹，跨进程可复现。
+    """
     return hashlib.sha256(
         json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -194,8 +199,8 @@ def register_hypothesis(
                 del c["timeframe"]
 
     # 4. 幂等
-    conditions_hash = _hash_json(conditions)
-    ranges_hash = _hash_json(data_ranges)
+    conditions_hash = hash_json(conditions)
+    ranges_hash = hash_json(data_ranges)
     existing = rr.find_active_hypothesis_by_identity(db_path, conditions_hash, ranges_hash)
     if existing is not None:
         return {"hypothesis_id": existing["hypothesis_id"], "duplicated": True}

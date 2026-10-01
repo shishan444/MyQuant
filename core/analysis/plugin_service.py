@@ -21,6 +21,7 @@ from core.analysis.column_ref import BASE_SUBJECT_COLUMNS, _looks_like_encoded
 from core.analysis.hypothesis_service import (
     ResearchError,
     allowed_subject_columns,
+    hash_json,
 )
 from core.features.registry import INDICATOR_REGISTRY
 from core.persistence.repository import research as rr
@@ -428,7 +429,7 @@ def register_model_plugin(
     features = [d.ref_dict() for d in feature_defs]   # canonical 化落 config
 
     # 幂等：(name, config_hash) 相同且 valid → 返回既有
-    config_hash = _hash_json({
+    config_hash = hash_json({
         "name": name, "features": features, "template": template,
         "params": params, "target": target,
         "symbol": symbol, "timeframe": timeframe,
@@ -531,8 +532,3 @@ def register_model_plugin(
             "signal_column": signal_column, "duplicated": False,
             "poll": f"/api/research/analysis/tasks/{task_id}"}
 
-
-def _hash_json(obj) -> str:
-    return hashlib.sha256(
-        json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
