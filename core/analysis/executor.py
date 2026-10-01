@@ -56,7 +56,7 @@ class ResearchExecutor:
         self._pool = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="research")
         self._default_timeout_s = default_timeout_s
-        # task_id -> (future, deadline_ts, sync_done)
+        # task_id -> (future, deadline)——在途句柄与超时线（完成即遗忘）
         self._running: Dict[str, tuple] = {}
         self._lock = threading.Lock()
         self._watch_stop = threading.Event()
@@ -118,7 +118,8 @@ class ResearchExecutor:
                 "result": None, "fast_path": False}
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """轮询入口：优先内存态（刚完成的瞬时结果），回落库表。"""
+        """任务轮询入口：直查 analysis_tasks 库表（快路径结果经提交
+        响应直返不落句柄，轮询语义只覆盖异步路径）。"""
         return rr.get_analysis_task(self._db_path, task_id)
 
     def shutdown(self, wait: bool = False) -> None:
