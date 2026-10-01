@@ -185,6 +185,61 @@ class TestToolPaginationClamp:
                                       "status": "open"}
 
 
+class TestPathSegmentEncoding:
+    """CARD-11 修复资产：URL 路径段 quote 编码（防段逃逸/查询注入）。
+
+    id 含 / .. ? 空格等字符时编码为单段（%2F/%3F/%20）——不改变
+    端点语义与路径段数（白名单 {param} 模板匹配兼容）；合法 hex id
+    编码零变化。原 f-string 直拼下 "a/b" 会多一段路径改变端点语义。
+    """
+
+    def test_get_single_segment_encoded(self, monkeypatch) -> None:
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        captured: dict = {}
+        api.get = lambda path, params=None: (
+            captured.update(path=path) or {"items": []})
+
+        run_async(mcp.call_tool("get_strategy",
+                                {"strategy_id": "a/b c"}))
+        assert captured["path"] == "/api/strategies/a%2Fb%20c", \
+            "注入形 id 编码为单段，不逃逸不多段"
+
+    def test_post_two_segment_transition_encoded(self, monkeypatch) -> None:
+        mcp, api = build_server(profile="research", base_url="http://x")
+        captured: dict = {}
+        api.post = lambda path, json_body=None: (
+            captured.update(path=path) or {})
+
+        run_async(mcp.call_tool("transition_hypothesis", {
+            "hypothesis_id": "hyp/../evil", "target_status": "refuted",
+            "evidence_ref": "rec_1"}))
+        assert captured["path"] == (
+            "/api/research/hypotheses/hyp%2F..%2Fevil/transition")
+
+    def test_poll_path_encoded(self, monkeypatch) -> None:
+        """poll_until_terminal 路径同编码（内部走 get——白名单语义）。"""
+        mcp, api = build_server(profile="research", base_url="http://x")
+        captured: dict = {}
+        api.poll_until_terminal = lambda path, **kw: (
+            captured.update(path=path) or {"status": "completed"})
+
+        run_async(mcp.call_tool("poll_evolution_task",
+                                {"task_id": "x?y=1", "total_timeout": 0.01}))
+        assert captured["path"] == "/api/evolution/tasks/x%3Fy%3D1", \
+            "查询注入形 id 不产生查询串"
+
+    def test_legal_hex_id_passthrough(self, monkeypatch) -> None:
+        """合法 hex/kebab id 编码零变化（常规路径零漂移）。"""
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        captured: dict = {}
+        api.get = lambda path, params=None: (
+            captured.update(path=path) or {})
+
+        run_async(mcp.call_tool("get_analysis_task",
+                                {"task_id": "ant_abc123-def456"}))
+        assert captured["path"] == "/api/research/analysis/tasks/ant_abc123-def456"
+
+
 class TestWhitelist:
     def test_readonly_cannot_post(self) -> None:
         api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")
