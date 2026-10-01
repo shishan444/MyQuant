@@ -205,3 +205,66 @@ class TestMtfContextPassthrough:
         without = screen_patterns(df, **kw).to_dict()["payload"]
         assert with_ctx["candidates"] == without["candidates"]  # ctx 零影响
         assert all("timeframe" not in c["condition"] for c in with_ctx["candidates"])
+
+
+class TestGapClosureScreen:
+    """阶段四盲区消解：扫描循环容错与边界分支。
+
+    不可达判定（记录，调用图依据）：①pattern 前缀列 probes 发射
+    （_emit_conditions_for 的 _PATTERN_PREFIX 分支）——pattern 族指标
+    不在 _DEFAULT_PARAMS，主循环永不产出 pattern_ 列，分支为将来
+    接入预留；②_co_occurrence 的 mask None continue——内存态 ranked
+    的单条件记录恒带 _stat_mask（仅结果 JSON 反序列化缺，不经此路径）。
+    """
+
+    def test_无默认参数集指标_声明跳过(self):
+        """VWAP 在注册表但不在 _DEFAULT_PARAMS → skipped 声明。"""
+        r = screen_patterns(
+            _random_walk(1), data_ranges=_RANGES, timeframe="1h",
+            features=["VWAP"], horizons=[4]).to_dict()
+        assert "VWAP" in r["payload"]["skipped_indicators"]
+
+    def test_compute异常容错_声明跳过(self, monkeypatch):
+        import core.features.indicators as fi
+        real = fi._compute_indicator
+
+        def boom(df, name, params):
+            if name == "RSI":
+                raise RuntimeError("compute failed")
+            return real(df, name, params)
+
+        monkeypatch.setattr(fi, "_compute_indicator", boom)
+        r = screen_patterns(
+            _random_walk(1), data_ranges=_RANGES, timeframe="1h",
+            features=["RSI"], horizons=[4]).to_dict()
+        assert "RSI" in r["payload"]["skipped_indicators"]
+
+    def test_stop_check_主循环与组合循环两调用点(self):
+        """stop_check 覆盖主循环（逐指标）与组合循环（逐配对）——
+        计数式不抛，断言组合段也被走到（调用次数超指标数）。"""
+        calls = {"n": 0}
+
+        def _tick():
+            calls["n"] += 1
+
+        screen_patterns(
+            _trending_with_dips(1200), data_ranges=_RANGES, timeframe="1h",
+            features=["RSI", "EMA"], horizons=[4], stop_check=_tick)
+        # 指标循环（2 指标）+ 条件循环（多条件）+ 组合循环（≥1 配对）
+        assert calls["n"] > 4, "组合循环的 stop_check 未被走到"
+
+    def test_零方差前向收益_p为None不入族(self):
+        """恒定 close → pct_change 全 0 → 零方差 p None → 无候选
+        （BH 约定：无效检验不混入）。"""
+        import numpy as np
+        import pandas as pd
+        n = 300
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": [100.0] * n, "high": [101.0] * n, "low": [99.0] * n,
+            "close": [100.0] * n, "volume": [10.0] * n}, index=idx)
+        r = screen_patterns(
+            df, data_ranges=_RANGES, timeframe="1h", features=["RSI"],
+            horizons=[4], min_samples=30).to_dict()
+        assert r["payload"]["candidates"] == []

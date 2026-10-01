@@ -273,3 +273,64 @@ class TestTimeframeKey:
             mtf=ctx).to_dict()["payload"]
         without = next(x for x in p2["points"] if x["value"] == cond["target"])
         assert without["samples"] != with_key["samples"]
+
+
+class TestGapClosureSweep:
+    """阶段四盲区消解：参数拒绝族、网格解析分支、subject 转译。"""
+
+    def test_condition缺键_target数值先拒(self) -> None:
+        """校验顺序：target 数值检查先于三键完备（缺键即缺 target）。"""
+        df = _random_walk(7, 2000)
+        with pytest.raises(ResearchError, match="须为数值"):
+            _sweep(df, condition={"subject": "close", "action": "gt"})
+
+    def test_sweep轴非法_422(self) -> None:
+        df = _random_walk(7, 2000)
+        from core.analysis.templates.param_sweep import param_sweep
+        with pytest.raises(ResearchError, match="sweep.axis"):
+            param_sweep(df, indicator="RSI",
+                        condition={"subject": {"indicator": "RSI",
+                                               "params": {"period": 14}},
+                                   "action": "lt", "target": 35.0},
+                        sweep={"axis": "params", "values": [1, 2]},
+                        forward_bars=24, data_ranges=_RANGES, timeframe="1h")
+
+    def test_多输出指标列选择器网格(self) -> None:
+        """Aroon 多输出：subject 含 aroon_up 时选 gt [70,80] 网格
+        （selector in subject 匹配分支）。"""
+        df = _random_walk(7, 2000)
+        res = _sweep(
+            df, indicator="MACD",
+            condition={"subject": {"indicator": "MACD",
+                                   "params": {"fast": 12, "slow": 26,
+                                               "signal": 9},
+                                   "field": "histogram"},
+                       "action": "gt", "target": 5.0})
+        assert res["payload"]["gates"] is not None
+
+    def test_无网格指标auto_422(self) -> None:
+        """indicator 不在 VALUE_GRIDS（如 EMA）且 values=auto → 空刻度拒。"""
+        df = _random_walk(7, 2000)
+        with pytest.raises(ResearchError, match="刻度"):
+            _sweep(df, indicator="EMA",
+                   condition={"subject": {"indicator": "EMA",
+                                          "params": {"period": 10}},
+                              "action": "gt", "target": 100.0})
+
+    def test_values含非数值_422(self) -> None:
+        df = _random_walk(7, 2000)
+        from core.analysis.templates.param_sweep import param_sweep
+        with pytest.raises(ResearchError, match="非数值"):
+            param_sweep(df, indicator="RSI",
+                        condition={"subject": {"indicator": "RSI",
+                                               "params": {"period": 14}},
+                                   "action": "lt", "target": 35.0},
+                        sweep={"axis": "target", "values": [30, "abc"]},
+                        forward_bars=24, data_ranges=_RANGES, timeframe="1h")
+
+    def test_subject引用非法_转译(self) -> None:
+        df = _random_walk(7, 2000)
+        with pytest.raises(ResearchError) as ei:
+            _sweep(df, condition={"subject": {"indicator": "GHOST"},
+                                  "action": "lt", "target": 30.0})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"

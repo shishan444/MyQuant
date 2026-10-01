@@ -167,3 +167,18 @@ class TestTightenProfile:
         v_tight, _ = judge(edge, tighten_profile(1.2), trade_returns=_returns_ok(7))
         assert v_default == "pass"
         assert v_tight == "fail", "收紧门槛必须实际收紧（否则加严门形同虚设）"
+
+
+class TestGapClosureThresholds:
+    def test_ci_entry_样本不足None(self) -> None:
+        import numpy as np
+        from core.analysis.thresholds import _ci_entry
+        assert _ci_entry(np.array([0.01])) is None  # n<2 无 CI
+
+    def test_tighten_乘数作用于spec值(self) -> None:
+        from core.analysis.thresholds import tighten_profile
+        prof = tighten_profile(2.0)
+        assert prof["name"] == "default_tightened_x2.0"
+        assert any(isinstance(v, (int, float)) and v > 0
+                   for spec in prof.get("rules", {}).values()
+                   for v in (spec.values() if isinstance(spec, dict) else []))

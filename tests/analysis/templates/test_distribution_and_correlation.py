@@ -117,3 +117,50 @@ class TestCorrelationScan:
         assert res.sample_size >= 30
         assert "p_value" in res.confidence
         assert len(res.data_ranges) == 1
+
+
+class TestGapClosureVariants:
+    """阶段四盲区消解：transform 变体、滞后族容错、配对不足拒。"""
+
+    @staticmethod
+    def _win(df):
+        mid = df.index[len(df) // 2]
+        a = {"start": str(df.index[0]), "end": str(mid)}
+        b = {"start": str(mid), "end": str(df.index[-1])}
+        return a, b
+
+    def test_log_returns变体(self) -> None:
+        df = _make_df(600, seed=7)
+        a, b = self._win(df)
+        res = distribution_compare(df, column="close", group_a=a, group_b=b,
+                                   data_ranges=RANGES, transform="log_returns")
+        assert res.payload["significant"] is False
+
+    def test_原始值变体_else分支(self) -> None:
+        df = _make_df(600, seed=7)
+        a, b = self._win(df)
+        res = distribution_compare(df, column="close", group_a=a, group_b=b,
+                                   data_ranges=RANGES, transform="raw")
+        # 原始值形制：随机游走两半水平差异显著（与 returns 形成
+        # 行为对照——变体分支的语义证据）
+        assert res.confidence["ks_p_value"] < 0.05
+        assert res.payload["significant"] is True
+
+    def test_小样本双窗_拒绝(self) -> None:
+        df = _make_df(600, seed=7)
+        a, b = self._win(df)
+        with pytest.raises(ValueError, match="小样本"):
+            distribution_compare(df, column="close", group_a=a, group_b=b,
+                                 data_ranges=RANGES, min_samples=590)
+
+    def test_相关滞后族_短样本与NaN跳过(self) -> None:
+        """max_lag 大于可用样本差 → 多数 lag 不足 min_samples 跳过，
+        仍有合法 lag 产出；全族不足 → ValueError。"""
+        df = _make_df(300, seed=7)
+        res = correlation_scan(df, signal_column="close", data_ranges=RANGES,
+                               horizon=4, max_lag=200, min_samples=50)
+        assert "peak_lag" in res.payload  # 合法 lag 族产出
+        # 全族不足：样本需求超出数据量
+        with pytest.raises(ValueError, match="可用配对不足"):
+            correlation_scan(df, signal_column="close", data_ranges=RANGES,
+                             horizon=4, max_lag=4, min_samples=299)

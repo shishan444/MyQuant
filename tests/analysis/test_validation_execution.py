@@ -403,3 +403,61 @@ class TestPrecheckSharedByBothEntries:
         assert callers == {"run_isolated_backtest": True,
                            "run_staged_validation": True}, (
             "验证入口未共用 _hypothesis_precheck——前置块内联回潮")
+
+
+class TestGapClosureValidation:
+    """阶段四盲区消解：random_window 边界与 warmup 推导转译。"""
+
+    def test_区间不容窗_DATA_INSUFFICIENT(self, db, data_dir):
+        save_strategy(db, strategy_id="st_rw_short", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, data_dir, strategy_id="st_rw_short", symbol="BTCUSDT",
+                timeframe="4h", data_start="2023-03-20",
+                data_end="2023-04-01",  # 12 天 4h ≈ 72 bar，窗 200 容不下
+                window_bars=200, n_windows=3, seed=5)
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_同参数二次请求_幂等命中(self, db, data_dir):
+        save_strategy(db, strategy_id="st_rw_idem",
+                      dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature="sig_rw_idem")
+        kw = dict(strategy_id="st_rw_idem", symbol="BTCUSDT",
+                  timeframe="4h", data_start="2023-03-20",
+                  data_end="2023-05-01", window_bars=30, n_windows=3, seed=5)
+        first = random_window_test(db, data_dir, **kw)
+        replay = random_window_test(db, data_dir, **kw)
+        assert replay["duplicated"] is True
+        assert replay["record_id"] == first["record_id"]
+
+    @pytest.mark.parametrize("runner", ["isolated", "staged"], ids=["隔离", "分段"])
+    def test_warmup推导KeyError_转译INVALID(self, db, data_dir, hypothesis_id,
+                                             runner):
+        """DNA 带注册表外指标 → _derive_dna_warmup KeyError → 422
+        （两入口同转译）。"""
+        bad_gene = SignalGene("GHOST_IND", {"period": 14},
+                              SignalRole.ENTRY_TRIGGER, "ghost_14",
+                              {"type": "lt", "threshold": 35})
+        bad_dna = StrategyDNA(
+            signal_genes=[bad_gene], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        sid = f"st_bad_{runner}"
+        save_strategy(db, strategy_id=sid, dna_json=bad_dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature=f"sig_bad_{runner}")
+        from core.analysis.validation_service import run_staged_validation
+        with pytest.raises(ResearchError) as ei:
+            if runner == "isolated":
+                run_isolated_backtest(
+                    db, data_dir, hypothesis_id=hypothesis_id,
+                    strategy_id=sid,
+                    request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                                   "start": "2023-03-01", "end": "2023-03-20"})
+            else:
+                run_staged_validation(
+                    db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+                    timeframe="4h", start="2023-03-01", end="2023-03-20")
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"

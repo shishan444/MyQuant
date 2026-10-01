@@ -414,3 +414,50 @@ class TestCompositeGate:
         assert rule_only["metrics"]["total_trades"] > 0, "对照版须有交易"
         assert (mixed["metrics"]["total_trades"]
                 != rule_only["metrics"]["total_trades"]), "插件源须影响 entries"
+
+
+class TestGapClosureTranslator:
+    """阶段四盲区消解：翻译器拒绝面与 draft 命中分支。"""
+
+    def test_假设不存在_404(self, db) -> None:
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id="hyp_ghost")
+        assert ei.value.code == "RESEARCH_HYPOTHESIS_NOT_FOUND"
+        assert ei.value.status == 404
+
+    def test_无可表达条件_NOT_EXPRESSIBLE(self, db) -> None:
+        """全部条件不可表达（action 族外）→ 314 拒。"""
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+                "then_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+            },
+            statement="全不可表达",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+
+    def test_when带不可表达action_拒(self, db) -> None:
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0}],
+            },
+            statement="when 不可表达",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+        with pytest.raises(ResearchError, match="不可表达"):
+            translate_hypothesis(db, hypothesis_id=hid)

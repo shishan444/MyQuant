@@ -24,6 +24,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+import core.analysis.case_inspection as ci
 from core.analysis.case_inspection import (
     _MAX_SERIALIZED_BYTES,
     inspect_cases,
@@ -483,3 +484,82 @@ class TestDisciplineAndAudit:
         assert case["indicator_values"]["rsi_14"] is None
         assert case["bars_before"] == 0
         assert len(case["window"]) == 9
+
+
+class TestGapClosureValidation:
+    """阶段四盲区消解：selector/target 校验族与容错分支直测
+    （_parse_selector 装载前校验，无数据依赖）。"""
+
+    def test_selector非对象_拒(self) -> None:
+        with pytest.raises(ResearchError, match="selector"):
+            ci._parse_selector("not-a-dict", None, None)
+
+    def test_双形态同传_拒(self) -> None:
+        with pytest.raises(ResearchError):
+            ci._parse_selector(
+                {"condition": {"subject": "close", "action": "gt",
+                               "target": 1},
+                 "timestamps": ["2024-01-01"]}, None, None)
+
+    def test_condition缺键_拒(self) -> None:
+        with pytest.raises(ResearchError, match="三键"):
+            ci._parse_selector({"condition": {"subject": "close"}}, None, None)
+
+    def test_action非字符串_拒(self) -> None:
+        with pytest.raises(ResearchError, match="action"):
+            ci._parse_selector(
+                {"condition": {"subject": "close", "action": 1,
+                               "target": 1}}, None, None)
+
+    def test_subject非法_结构化拒绝(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            ci._parse_selector(
+                {"condition": {"subject": {"indicator": "GHOST"},
+                               "action": "gt", "target": 1}}, None, None)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_subject类型错_拒(self) -> None:
+        with pytest.raises(ResearchError, match="subject"):
+            ci._parse_selector(
+                {"condition": {"subject": 123, "action": "gt",
+                               "target": 1}}, None, None)
+
+    def test_timestamps空_拒(self) -> None:
+        with pytest.raises(ResearchError, match="非空"):
+            ci._parse_selector({"timestamps": []}, None, None)
+
+    def test_timestamps超发_拒(self) -> None:
+        with pytest.raises(ResearchError):
+            ci._parse_selector(
+                {"timestamps": ["2024-01-01"] * (ci._MAX_TIMESTAMPS + 1)},
+                None, None)
+
+    def test_timestamps坏项_拒(self) -> None:
+        with pytest.raises(ResearchError, match="不可解析"):
+            ci._parse_selector({"timestamps": ["2024-01-01", "not-a-ts"]},
+                               None, None)
+
+    def test_timestamps形态带区间参数_拒(self) -> None:
+        with pytest.raises(ResearchError, match="区间参数"):
+            ci._parse_selector({"timestamps": ["2024-01-01"]},
+                               "2024-01-01", "2024-02-01")
+
+    def test_target_bool_放行(self) -> None:
+        ci._validate_target(True, pd.Index(["close"]))  # 比较标志语义
+
+    def test_target数值与可解析串_放行(self) -> None:
+        ci._validate_target(100, pd.Index([]))
+        ci._validate_target(100.5, pd.Index([]))
+        ci._validate_target("100.5", pd.Index([]))  # 可解析串直过
+
+    def test_target列名不在册且不可解码_拒(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            ci._validate_target("ghost_col", pd.Index(["close"]))
+        assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
+
+    def test_target编码形列名_放行(self) -> None:
+        ci._validate_target("rsi_14", pd.Index(["close"]))  # decode 放行
+
+    def test_target类型非法_拒(self) -> None:
+        with pytest.raises(ResearchError, match="类型非法"):
+            ci._validate_target([1, 2], pd.Index(["close"]))

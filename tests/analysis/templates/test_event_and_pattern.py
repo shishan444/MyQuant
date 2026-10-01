@@ -6,6 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.event_study import event_study
 from core.analysis.templates.pattern_mining import similar_at_time
 
@@ -168,3 +169,21 @@ class TestAsOfTimezoneEquivalence:
                                   horizon=12, data_ranges=RANGES)
 
         assert r_aware.payload == r_utc.payload
+
+
+class TestGapClosureEventPattern:
+    """阶段四盲区消解：event_study subject 转译、pattern_mining
+    as_of 边界。"""
+
+    def test_event_study_结构化subject非法_转译(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            event_study(_make_df(300),
+                        condition={"subject": {"indicator": "GHOST"},
+                                   "action": "gt", "target": 1},
+                        data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
+
+    def test_pattern_mining_as_of早于起点_拒(self) -> None:
+        with pytest.raises(ValueError, match="早于数据起点"):
+            similar_at_time(_make_df(300), as_of="2020-01-01",
+                            n_neighbors=30, data_ranges=RANGES)

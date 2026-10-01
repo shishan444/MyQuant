@@ -302,3 +302,84 @@ class TestScreenReusePagination:
         assert ei.value.code == "SCREEN_CANDIDATE_REUSE"
         assert ei.value.status == 409
         assert ei.value.detail["screen_task_id"] == "ant_pg_0502"
+
+
+class TestScreenReuseTolerance:
+    """阶段四盲区消解：反向核查循环的解析容错族（坏 JSON/坏区间形/
+    非法条目逐条跳过不拖垮核查——可用性优先语义）。"""
+
+    @pytest.mark.parametrize(
+        ("data_ranges", "summary"),
+        [
+            ("{bad json", '{"top_fingerprints": ["fp"]}'),   # data_ranges 坏 JSON
+            ('["plain-string"]', '{"top_fingerprints": ["fp"]}'),  # 非列表
+            ('[123]', '{"top_fingerprints": ["fp"]}'),        # 非 dict 条目
+            ('[{"start": "2026-01-01T00:00:00Z"}]',           # 缺 end 键
+             '{"top_fingerprints": ["fp"]}'),
+            ('[{"symbol": "BTCUSDT", "timeframe": "1h", '
+             '"start": "bad-ts", "end": "2026-04-01T00:00:00Z"}]',  # 坏时间戳
+             '{"top_fingerprints": ["fp"]}'),
+            (json.dumps([SCAN_RANGE]), "not-a-json{"),       # summary 坏 JSON
+            (json.dumps([SCAN_RANGE]), '["list-summary"]'),   # summary 非 dict
+        ],
+        ids=["ranges坏JSON", "ranges非列表", "条目非dict", "条目缺键",
+             "坏时间戳", "summary坏JSON", "summary非dict"])
+    def test_坏形日志逐条跳过_核查不炸(self, tmp_path, data_ranges, summary):
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ResearchLog
+        from core.persistence.repository.dataset_meta import _engine_for
+        from datetime import datetime, timedelta, timezone
+
+        db = _db(tmp_path)
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        with _engine_for(db).begin() as conn:
+            for i in range(3):
+                conn.execute(insert(ResearchLog).values(
+                    log_id=f"log_tol_{i}", hypothesis_id=None,
+                    entry_type="screen", ref_id=f"ant_tol_{i}",
+                    data_ranges=data_ranges, summary=summary,
+                    created_at=(base + timedelta(seconds=i)).isoformat()))
+        hid = register_hypothesis(
+            db, conditions=_conditions(), statement="容错核查",
+            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+        _screen_reuse_check(db, hid, SCAN_RANGE)  # 坏形全跳过，不抛
+
+
+class TestScreenReusePrecheckTolerance:
+    """阶段四盲区消解：反向核查前置段（假设级容错）。
+
+    不可达判定（记录）：指纹计算与影子指纹的 except 分支不可达——
+    登记校验已保证条件经 canonical 化（合法形），canonical/legacy
+    两算法对合法条件不抛；分支为防御性兜底。"""
+
+    def test_假设不存在_静默返回(self, tmp_path):
+        db = _db(tmp_path)
+        _screen_reuse_check(db, "hyp_ghost", SCAN_RANGE)  # 不炸即过
+
+    def test_conditions坏JSON_静默返回(self, tmp_path):
+        db = _db(tmp_path)
+        hid = register_hypothesis(
+            db, conditions=_conditions(), statement="坏JSON",
+            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+        from sqlalchemy import update
+        from core.persistence.orm.models import ResearchHypothesis
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).begin() as conn:
+            conn.execute(update(ResearchHypothesis).where(
+                ResearchHypothesis.hypothesis_id == hid).values(
+                conditions="{bad json"))
+        _screen_reuse_check(db, hid, SCAN_RANGE)  # 坏 JSON 静默返回
+
+    def test_条件组全空_指纹集空静默返回(self, tmp_path):
+        db = _db(tmp_path)
+        hid = register_hypothesis(
+            db, conditions=_conditions(), statement="空组",
+            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+        from sqlalchemy import update
+        from core.persistence.orm.models import ResearchHypothesis
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).begin() as conn:
+            conn.execute(update(ResearchHypothesis).where(
+                ResearchHypothesis.hypothesis_id == hid).values(
+                conditions='{"when_conditions": [], "then_conditions": []}'))
+        _screen_reuse_check(db, hid, SCAN_RANGE)  # 指纹集空返回

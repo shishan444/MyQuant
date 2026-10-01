@@ -391,3 +391,49 @@ class TestReject:
         with pytest.raises(ResearchError) as ei:
             _call(env, hypothesis_id="hyp_missing")
         assert ei.value.code == "RESEARCH_HYPOTHESIS_NOT_FOUND"
+
+
+class TestGapClosureSegments:
+    """阶段四盲区消解：auto 切段三拒、naive 索引装载、explicit 段
+    时间形两拒。"""
+
+    def test_auto无该档数据_SYMBOL_NOT_FOUND(self, env):
+        with pytest.raises(ResearchError) as ei:
+            _call(env, timeframe="5m")  # env 仅含 1d parquet
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+    def test_auto区间无数据_DATA_INSUFFICIENT(self, env):
+        with pytest.raises(ResearchError) as ei:
+            _call(env, start="2020-01-01", end="2020-01-15")
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_auto极短区间_主流程warmup前置拦截(self, env):
+        """极短请求区间且起点前无 warmup 数据——主流程装载先于
+        auto 切段拒（DATA_INSUFFICIENT 的另一触发形）。
+
+        不可达判定（记录）：「区间太短切不出段」分支经公开入口
+        不可达——build_segments 对非空 state 恒产段（短段吸收合并
+        到单一邻居），空 state 需空 df 已被装载检查前置拦截。"""
+        df = env["df"]
+        with pytest.raises(ResearchError) as ei:
+            _call(env, start=str(df.index[100].date()),
+                  end=str(df.index[105].date()))
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    # 不可达判定（记录）：_auto_segments 的 naive 索引 tz_localize
+    # 分支（L792）经公开入口不可达——load_and_prepare_df 以 tz-aware
+    # start/end 过滤 naive 索引先抛 InvalidComparison（装载层无 naive
+    # 归一），生产 parquet 均为 tz-aware 落盘。
+
+    @pytest.mark.parametrize(
+        ("segs", "match"),
+        [
+            ([{"label": "a", "start": "not-a-date",
+               "end": "2024-02-01"}], "时间不可解析"),
+            ([{"label": "a", "start": "2024-02-01",
+               "end": "2024-01-01"}], "起点不早于终点"),
+        ],
+        ids=["时间不可解析", "起点不晚于终点"])
+    def test_explicit段时间形两拒(self, env, segs, match):
+        with pytest.raises(ResearchError, match=match):
+            _call(env, segmentation="explicit", segments=segs)

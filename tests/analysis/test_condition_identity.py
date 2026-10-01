@@ -132,3 +132,10 @@ class TestEffectiveTimeframe:
         assert (legacy_compatible_hash(cond, "1h")
                 == legacy_compatible_hash(
                     {"subject": "rsi_14", "action": "lt", "target": 25}, "4h"))
+
+
+class TestGapClosureIdentity:
+    def test_bool_target_归一为b标记(self) -> None:
+        from core.analysis.condition_identity import _normalize_target
+        assert _normalize_target(True) == "b:1"
+        assert _normalize_target(False) == "b:0"

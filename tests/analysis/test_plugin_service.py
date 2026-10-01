@@ -423,3 +423,143 @@ class TestLookbackUpperBound:
             db, name="idem", expression="zscore(close, 10000)")
         assert replay["duplicated"] is True
         assert replay["plugin_id"] == first["plugin_id"]
+
+
+class TestGapClosureInternal:
+    """阶段四盲区消解：plugin_service 内部分支直测（此前经公开入口
+    不可达或未触达的容错/装载路径）。"""
+
+    def test_name与expression必填_422(self, db: Path) -> None:
+        with pytest.raises(ResearchError, match="必填"):
+            register_formula_plugin(db, name="", expression=EXPR)
+        with pytest.raises(ResearchError, match="必填"):
+            register_formula_plugin(db, name="x", expression="")
+
+    def test_模型配置非法_422(self, db: Path, tmp_path: Path) -> None:
+        from core.analysis.plugin_service import register_model_plugin
+        with pytest.raises(ResearchError, match="模型配置非法"):
+            register_model_plugin(
+                db, tmp_path, name="bad", features=["close"],
+                template="rolling_unknown",
+                params={"window": 0, "step": 20},
+                target={"type": "return_sign", "horizon": 4},
+                symbol="BTCUSDT", timeframe="4h",
+                data_start="2024-01-01", data_end="2024-03-01")
+
+    def test_公式表达式查询_非公式列与无valid版本返回None(
+            self, db: Path) -> None:
+        from core.analysis.plugin_service import (
+            _formula_expression_of, _formula_registry_entries)
+        entries = _formula_registry_entries(db)
+        # 空注册表：entry None
+        assert _formula_expression_of(db, entries, "close") is None
+        register_formula_plugin(db, name="alpha", expression=EXPR)
+        entries = _formula_registry_entries(db)
+        # formula 列正常返回表达式
+        assert _formula_expression_of(db, entries, "fx_alpha") == EXPR
+        # 非 formula 源列（model 注册列）→ None
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ModelPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).begin() as conn:
+            conn.execute(insert(ModelPlugin).values(
+                plugin_id="mpl_m1", name="m", version=1, config="{}",
+                signal_column="model_m", status="valid",
+                strategy_visible=1, created_at="2026-09-19T00:00:00"))
+        from core.persistence.repository import research as rr2
+        rr2.register_existing_plugin_signal(
+            db, source="model", plugin_id="mpl_m1", name="m", version=1,
+            column_name="model_m")
+        entries = _formula_registry_entries(db)
+        assert _formula_expression_of(db, entries, "model_m") is None
+        # 无 valid 版本（rejected 行）→ None
+        out = register_formula_plugin(db, name="beta", expression=EXPR)
+        from sqlalchemy import update
+        from core.persistence.orm.models import FormulaPlugin
+        with _engine_for(db).begin() as conn:
+            conn.execute(update(FormulaPlugin).where(
+                FormulaPlugin.plugin_id == out["plugin_id"]).values(
+                status="rejected"))
+        assert _formula_expression_of(db, entries, out["column"]) is None
+
+    def test_表达式语法错误_引用集空集(self, db: Path) -> None:
+        from core.analysis.plugin_service import _referenced_formula_columns
+        assert _referenced_formula_columns("not a (formula", {}) == set()
+
+    def test_依赖闭包_未知列与无效列跳过(self, db: Path) -> None:
+        from core.analysis.plugin_service import _formula_dependency_closure
+        # 未知列（不在注册表）→ continue 跳过
+        assert _formula_dependency_closure(db, {"nope_col"}) == {}
+
+    def test_求值容错_运行时缺列跳过与环中断(self, db: Path) -> None:
+        """enrich 求值循环两容错：①引用列注册时合法（BASE 列）但 df
+        缺失 → FormulaError continue（列不产出不中断）；②依赖不满足
+        收敛 → break（保持缺失，消费端显式拒绝兜底）。"""
+        from core.analysis.plugin_service import enrich_with_plugin_columns
+        # 注册静态合法（open_interest ∈ BASE），求值时 df 无该列
+        register_formula_plugin(db, name="bad_ref",
+                                expression="zscore(open_interest, 20)")
+        import pandas as pd
+        idx = pd.date_range("2024-01-01", periods=50, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({"close": range(50)}, index=idx)
+        out = enrich_with_plugin_columns(db, df, {"fx_bad_ref"})
+        assert "fx_bad_ref" not in out.columns  # 失败列不产出
+
+    def test_特征装载_混合形三路(self, db: Path) -> None:
+        """_enrich_feature_columns：plugin 列走 enrich、indicator 列
+        现算注入、基础列已在 df（model 训练特征装载三路）。"""
+        from core.analysis.plugin_service import _enrich_feature_columns
+        from core.analysis.column_ref import resolve_column_ref
+        register_formula_plugin(db, name="feat_fx",
+                                expression="zscore(close, 20)")
+        import pandas as pd
+        idx = pd.date_range("2024-01-01", periods=60, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": range(60), "close": [i + 0.5 for i in range(60)],
+            "high": range(60), "low": range(60),
+            "volume": [10.0] * 60, "trades": 5}, index=idx)
+        defs = [
+            resolve_column_ref("close", db),
+            resolve_column_ref("fx_feat_fx", db),
+            resolve_column_ref({"indicator": "RSI",
+                                "params": {"period": 14}}, db),
+        ]
+        out = _enrich_feature_columns(db, df, defs)
+        assert "fx_feat_fx" in out.columns   # plugin 路经 enrich
+        assert "rsi_14" in out.columns       # indicator 现算注入
+        assert "close" in out.columns        # 基础列原位
+
+    def test_幂等查询_坏config行容错(self, db: Path) -> None:
+        """register_model_plugin 幂等扫描遇坏 JSON config 行跳过。"""
+        from sqlalchemy import insert
+        from core.analysis.plugin_service import register_model_plugin
+        from core.persistence.orm.models import ModelPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        with _engine_for(db).begin() as conn:
+            conn.execute(insert(ModelPlugin).values(
+                plugin_id="mpl_bad", name="gamma", version=1,
+                config="{not json", signal_column="model_g",
+                status="valid", strategy_visible=1,
+                created_at="2026-09-19T00:00:00"))
+        # 坏行跳过后不幂等命中（would-be 同名但 config 不可比对），
+        # 走正常注册路径（假 executor 吸收训练）
+        class _Exec:
+            def submit(self, name, fn, **kw):
+                return {"task_id": "t", "fast_path": False}
+
+        import core.analysis.executor as exec_mod
+        orig = exec_mod.get_executor
+        exec_mod.get_executor = lambda: _Exec()
+        try:
+            out = register_model_plugin(
+                db, db.parent, name="gamma", features=["close"],
+                template="rolling_logistic",
+                params={"window": 0, "step": 20},
+                target={"type": "return_sign", "horizon": 4},
+                symbol="BTCUSDT", timeframe="4h",
+                data_start="2024-01-01", data_end="2024-03-01")
+        finally:
+            exec_mod.get_executor = orig
+        assert out["status"] == "pending"
