@@ -35,6 +35,20 @@ _PAGE_LIMIT = 1000
 _ARCHIVE_WORKERS = 8
 
 
+def _years_ago_ms(n: int) -> int:
+    """N 年前的毫秒时间戳；闰日 2/29 落入非闰年时回退 2/28。
+
+    仅当当前日期为 2/29 且目标年份非闰年时 dt.replace 抛
+    ValueError——年度起点取近似下界即可，回退不引入前视。
+    """
+    dt = datetime.now(timezone.utc)
+    try:
+        dt = dt.replace(year=dt.year - n)
+    except ValueError:
+        dt = dt.replace(year=dt.year - n, month=2, day=28)
+    return int(dt.timestamp() * 1000)
+
+
 def _parse_start_ts(start_str: str) -> int:
     """Convert a human-readable start string to milliseconds timestamp."""
     mapping = {
@@ -50,9 +64,7 @@ def _parse_start_ts(start_str: str) -> int:
         if f"{unit} ago" in lower:
             parts = lower.split()
             n = int(parts[0])
-            dt = datetime.now(timezone.utc)
-            dt = dt.replace(year=dt.year - n)
-            return int(dt.timestamp() * 1000)
+            return _years_ago_ms(n)
 
     # Handle "N day(s) ago" pattern
     for unit in ["day", "days"]:
@@ -75,9 +87,7 @@ def _parse_start_ts(start_str: str) -> int:
         pass
 
     # Fallback: 2 years ago
-    dt = datetime.now(timezone.utc)
-    dt = dt.replace(year=dt.year - 2)
-    return int(dt.timestamp() * 1000)
+    return _years_ago_ms(2)
 
 
 def _build_session() -> requests.Session:
