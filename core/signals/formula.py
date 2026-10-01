@@ -243,12 +243,17 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                         errors.append(f"{fname} 第二参数必须是常量（静态可校验）")
                     elif val < 0:
                         errors.append(f"{fname} 负向平移被禁止（看向未来）: {val}")
-                elif _WINDOW_PARAM_INDEX.get(fname) == 1:
-                    # 窗口位在 1 的函数第二参须 >= 1 常量（0.2.12 R1 修正：
-                    # 原 arity==2 笼统推定会误拒逐元素族第二参常量 <1——
-                    # gt(a, 0.5)/max(a, 0) 合法阈值用法）
-                    if ok and val < 1:
-                        errors.append(f"{fname} 窗口须 >= 1")
+                else:
+                    # 窗口按 _WINDOW_PARAM_INDEX 实际参数位取参（对齐
+                    # formula_lookback 既有写法；0.2.12 R1 边界保留——逐元素族
+                    # 无窗口位不校验，gt(a, 0.5)/max(a, 0) 合法阈值用法）。
+                    # 此前硬编码 args[1] 漏检 corr（窗口位 2）零窗口：
+                    # corr(x, y, 0) 静态放行、注册成功、求值才炸。
+                    param_idx = _WINDOW_PARAM_INDEX.get(fname)
+                    if param_idx is not None and len(node.args) > param_idx:
+                        ok, val = _const_value(node.args[param_idx])
+                        if ok and val < 1:
+                            errors.append(f"{fname} 窗口须 >= 1")
 
     # 列引用（非函数名的 Name）
     called_funcs = {
