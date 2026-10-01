@@ -108,13 +108,14 @@ def test_import_bad_csv_rejected(api_client):
         "timestamp,open,high,low,close,volume\n"
         "2024-01-01 00:00:00,100,101,102,100.5,10\n"
     ).encode()
-    # D-8（已登记）：endpoint 未捕 ValueError——坏 CSV 当前表现为
-    # 未处理异常（500/冒泡）而非 400；数据未落盘（防线下键）
+    # D-8 已由 CARD-01/02/03 修复消解：endpoint 捕 ValueError 转 400
+    # （此前为未处理异常冒泡）；数据仍未落盘（防线下键保持）
     import pathlib
-    with pytest.raises(ValueError, match="OHLCV validation failed"):
-        client.post(
-            "/api/data/import",
-            files={"file": ("BAD_4h.csv", bad, "text/csv")},
-            data={"mode": "replace", "symbol": "BAD", "interval": "4h"},
-        )
+    resp = client.post(
+        "/api/data/import",
+        files={"file": ("BAD_4h.csv", bad, "text/csv")},
+        data={"mode": "replace", "symbol": "BAD", "interval": "4h"},
+    )
+    assert resp.status_code == 400
+    assert "OHLCV validation failed" in resp.json()["detail"]
     assert not (pathlib.Path(client.app.state.data_dir) / "BAD_4h.parquet").exists()
