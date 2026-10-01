@@ -368,30 +368,36 @@ class TestLookbackUpperBound:
 
     窗口参数无上限时 bar 数 × 周期秒数换算 pd.Timedelta 溢出
     （OutOfBoundsTimedelta，消费路径 500）。注册处静态拦截：
-    formula_lookback（全树窗口字面量取 max）> 100_000 → 422。
+    formula_lookback（全树窗口字面量取 max）> 10_000 → 422。
+    上限依据（lead 打回方案 a，security 实测）：Timedelta 上限
+    ~9.2e9s（106751 天）；换算值域 TF_MINUTES 最大 3d，1w 等高周期
+    走 high_tf_warmup_span 不涉插件 lookback；10_000 对最苛刻 1w
+    防御边界（约 15_250 bar）留 34% 裕度。
     """
 
     def test_上限常量冻结(self) -> None:
         from core.analysis.plugin_service import MAX_PLUGIN_LOOKBACK_BARS
-        # 100_000 bar × 最大周期 1w（604_800s）= 6.05e10s，
-        # 低于 Timedelta 上限 ~9.2e11s 15 倍裕度（溢出核算锚）
-        assert MAX_PLUGIN_LOOKBACK_BARS == 100_000
+        # 溢出核算锚：Timedelta.max 秒数 / 1w 周期秒数 ≈ 15_250 bar
+        # 防御边界，10_000 留 34% 裕度（3d/1d 边界更宽）
+        assert MAX_PLUGIN_LOOKBACK_BARS == 10_000
 
     def test_窗口恰上限_放行(self, db: Path) -> None:
         out = register_formula_plugin(
-            db, name="edge_ok", expression="zscore(close, 100000)")
+            db, name="edge_ok", expression="zscore(close, 10000)")
         assert out["column"] == "fx_edge_ok"
 
     @pytest.mark.parametrize(
         ("expression", "lookback"),
         [
-            ("zscore(close, 100001)", 100001),
+            ("zscore(close, 10001)", 10001),
+            ("zscore(close, 100000)", 100000),
             ("zscore(close, 1000000000)", 1000000000),
             ("shift(close, 200000)", 200000),
             ("ema(close, 500000)", 500000),
             ("rolling_mean(rolling_std(close, 30), 999999)", 999999),
         ],
-        ids=["zscore超一", "zscore十亿", "shift位", "ema位", "嵌套取max"])
+        ids=["zscore超一", "zscore原边界值", "zscore十亿", "shift位",
+             "ema位", "嵌套取max"])
     def test_超上限_拒绝(self, db: Path, expression: str,
                          lookback: int) -> None:
         with pytest.raises(ResearchError) as ei:
@@ -399,7 +405,7 @@ class TestLookbackUpperBound:
         assert ei.value.code == "RESEARCH_FORMULA_INVALID"
         assert ei.value.status == 422
         assert ei.value.detail["lookback"] == lookback
-        assert ei.value.detail["max"] == 100_000
+        assert ei.value.detail["max"] == 10_000
         # 零副作用
         assert rr.list_signal_registry_entries(db) == []
 
@@ -412,8 +418,8 @@ class TestLookbackUpperBound:
         """校验落点在幂等之后（CARD-02/23 先例同形）——合法注册的
         重放仍命中幂等。"""
         first = register_formula_plugin(
-            db, name="idem", expression="zscore(close, 100000)")
+            db, name="idem", expression="zscore(close, 10000)")
         replay = register_formula_plugin(
-            db, name="idem", expression="zscore(close, 100000)")
+            db, name="idem", expression="zscore(close, 10000)")
         assert replay["duplicated"] is True
         assert replay["plugin_id"] == first["plugin_id"]
