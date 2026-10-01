@@ -509,8 +509,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             terminal=("completed", "failed", "stopped", "cancelled"),
             total_timeout=total_timeout)
 
-    for fn in (run_analysis, register_hypothesis, transition_hypothesis,
-               run_isolated_validation, run_random_window_test, run_backtest,
+    for fn in (run_analysis, inspect_cases, query_indicator,
+               register_hypothesis, transition_hypothesis,
+               run_isolated_validation, run_random_window_test,
+               run_staged_validation, run_backtest,
                register_formula_plugin, register_model_plugin,
                translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution, poll_evolution_task):
