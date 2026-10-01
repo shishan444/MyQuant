@@ -148,3 +148,23 @@ class TestEventStudyTimeframeKey:
                                          "target": 0.0, "timeframe": "4h"},
                         window=8, data_ranges=RANGES)
         assert ei.value.code == "RESEARCH_MTF_CONTEXT_MISSING"
+
+
+class TestAsOfTimezoneEquivalence:
+    """CARD-06 半变体统一等价锚：aware 非 UTC as_of 与 UTC 形输入
+    输出一致（to_utc 统一后 aware 显式转 UTC 再比较——pandas 按绝对
+    时刻比较，语义等价；统一前 aware 非 UTC 走"不转直接比较"路径）。"""
+
+    def test_aware非UTC_as_of_与UTC形_逐字段一致(self) -> None:
+        df = _make_df(300)
+        utc = str(df.index[-60])
+        # 同一绝对时刻的 +08:00 表达（aware 非 UTC）
+        aware = (pd.Timestamp(utc).tz_convert("Asia/Shanghai")
+                 .isoformat())
+
+        r_utc = similar_at_time(df, as_of=utc, n_neighbors=30,
+                                horizon=12, data_ranges=RANGES)
+        r_aware = similar_at_time(df, as_of=aware, n_neighbors=30,
+                                  horizon=12, data_ranges=RANGES)
+
+        assert r_aware.payload == r_utc.payload
