@@ -11,6 +11,8 @@ from typing import Callable, Dict, Optional, Set
 
 import pandas as pd
 
+from core.data.validation import validate_known_interval
+
 
 # Timeframe aliases for parquet file lookup
 _TF_ALIASES: dict[str, list[str]] = {
@@ -36,6 +38,9 @@ def safe_symbol(symbol: str) -> str:
 
 def find_parquet(data_dir: Path, safe_symbol: str, timeframe: str) -> Optional[Path]:
     """Find parquet file for symbol+timeframe, trying known aliases."""
+    # 读取路径周期须已知（TF_SECONDS 键集窄口径；与 csv_importer 导入侧
+    # 宽口径 [0-9]+[mhdw] 的差异见 core/data/validation.py 契约注释）
+    validate_known_interval(timeframe)
     primary = data_dir / f"{safe_symbol}_{timeframe}.parquet"
     if primary.exists():
         return primary
