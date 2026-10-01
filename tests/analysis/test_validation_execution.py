@@ -377,3 +377,29 @@ class TestThresholdProfileWhitelist:
             if r["record_id"] == out["record_id"])
         assert json.loads(rec["params"])["threshold_profile"] \
             == "default_tightened_x1.2"
+
+
+class TestPrecheckSharedByBothEntries:
+    """CARD-09 防漂移锚：验证族前置四步（终态/幂等/并集/扫描复用）
+    提取为 _hypothesis_precheck 后，isolated 与 staged 两入口必须
+    共用同一实现——入口再内联前置块即红（对齐 to_utc/safe_symbol/
+    stat_window_mask 收敛锚形制）。四步行为面由既有锚覆盖（终态/
+    幂等/并集/screen 复用/staged 双路径）。"""
+
+    def test_两入口均调用共享precheck(self) -> None:
+        import ast
+        import core.analysis.validation_service as vs
+
+        tree = ast.parse(Path(vs.__file__).read_text(encoding="utf-8"))
+        callers = {
+            n.name: any(
+                isinstance(x, ast.Call)
+                and isinstance(x.func, ast.Name)
+                and x.func.id == "_hypothesis_precheck"
+                for x in ast.walk(n))
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef)
+            and n.name in ("run_isolated_backtest", "run_staged_validation")}
+        assert callers == {"run_isolated_backtest": True,
+                           "run_staged_validation": True}, (
+            "验证入口未共用 _hypothesis_precheck——前置块内联回潮")
