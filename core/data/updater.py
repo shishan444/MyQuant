@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.data.fetcher import fetch_klines
+from core.data.fetcher import fetch_funding_history, fetch_klines, fetch_open_interest_history
 from core.data.storage import save_parquet, load_parquet, get_latest_timestamp, merge_parquet
 from core.data.validation import validate_known_interval, validate_symbol
 
@@ -75,14 +75,8 @@ def update_market_data(
         existing = load_parquet(path)
         return existing
 
-    # Merge: concat, remove duplicates, sort
-    existing = load_parquet(path)
-    combined = pd.concat([existing, new_df])
-    combined = combined[~combined.index.duplicated(keep="last")]
-    combined = combined.sort_index()
-
-    save_parquet(combined, path)
-    return combined
+    # Merge: concat, remove duplicates, sort（merge_parquet 同逻辑单一实现）
+    return merge_parquet(new_df, path)
 
 
 # 衍生品 OI 数据的原始粒度（S3 metrics 归档原生 5m）与需落盘的周期
@@ -106,8 +100,6 @@ def update_funding_data(
     数据源为 S3 月度归档（见 fetch_funding_history）；已有数据按最新时间戳
     增量补齐，首跑按 history_start 全量拉取。
     """
-    from core.data.fetcher import fetch_funding_history
-
     if data_dir is None:
         data_dir = Path("data/market")
     data_dir = Path(data_dir)
@@ -121,8 +113,7 @@ def update_funding_data(
     if new_df.empty:
         return load_parquet(path) if path.exists() else new_df
 
-    merge_parquet(new_df, path)
-    return load_parquet(path)
+    return merge_parquet(new_df, path)
 
 
 def update_open_interest_data(
@@ -136,8 +127,6 @@ def update_open_interest_data(
     维护 5m 原生粒度主文件，再重采样（last）生成各周期文件。
     归档侧有约 T-5 延迟，增量终点即当前最新可得归档。
     """
-    from core.data.fetcher import fetch_open_interest_history
-
     if data_dir is None:
         data_dir = Path("data/market")
     data_dir = Path(data_dir)

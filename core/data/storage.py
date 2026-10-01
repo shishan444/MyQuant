@@ -28,7 +28,7 @@ def get_latest_timestamp(path: Path) -> pd.Timestamp | None:
     return df.index.max()
 
 
-def merge_parquet(new_df: pd.DataFrame, path: Path) -> None:
+def merge_parquet(new_df: pd.DataFrame, path: Path) -> pd.DataFrame:
     """Merge new data into existing Parquet file.
 
     Deduplicates by index (keeps newer values).
@@ -36,10 +36,11 @@ def merge_parquet(new_df: pd.DataFrame, path: Path) -> None:
     """
     if not path.exists():
         save_parquet(new_df, path)
-        return
+        return new_df
 
     existing = load_parquet(path)
     merged = pd.concat([existing, new_df])
     merged = merged[~merged.index.duplicated(keep="last")]
     merged = merged.sort_index()
     save_parquet(merged, path)
+    return merged
