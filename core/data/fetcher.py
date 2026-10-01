@@ -61,16 +61,11 @@ def _years_ago_ms(n: int) -> int:
 
 def _parse_start_ts(start_str: str) -> int:
     """Convert a human-readable start string to milliseconds timestamp."""
-    mapping = {
-        "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
-        "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600,
-        "8h": 28800, "12h": 43200, "1d": 86400, "3d": 259200, "1w": 604800,
-    }
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
     # Handle "N year(s) ago UTC" pattern
     lower = start_str.lower().strip()
-    for unit, label in [("year", "year"), ("years", "year")]:
+    for unit in ("year", "years"):
         if f"{unit} ago" in lower:
             parts = lower.split()
             n = int(parts[0])
@@ -299,8 +294,7 @@ def _month_starts(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
     cur = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     while cur <= end:
         months.append(cur)
-        cur = (cur + pd.offsets.MonthBegin(1)).to_pydatetime()
-        cur = pd.Timestamp(cur)
+        cur = cur + pd.offsets.MonthBegin(1)
     return months
 
 
