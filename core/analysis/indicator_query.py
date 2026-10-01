@@ -83,11 +83,12 @@ def _validate_indicator(indicator: str) -> None:
                     "available_hint": "经 list_indicators 查询注册表"})
 
 
-def _validate_params(indicator: str, params: Dict[str, Any]) -> None:
+def validate_params(indicator: str, params: Dict[str, Any]) -> None:
     """参数前置校验（D7）：键集合 ⊆ 注册表键、类型可解析、值在 [min,max]。
 
     内核取参 int(params[...])——缺键抛 KeyError（500 化）、多余键静默
-    忽略（假象成功）；本拦截让两类调用错误都成为结构化拒绝。
+    忽略（假象成功）；本拦截让两类调用错误都成为结构化拒绝。读数通道
+    与 condition_stats 模板共用（共享导出——参数空间的校验权威）。
     """
     defn = INDICATOR_REGISTRY[indicator]
     extra = set(params) - set(defn.params)
@@ -217,7 +218,7 @@ def query_indicator(
     if params is None:
         effective_params = default_params_for(indicator)
     else:
-        _validate_params(indicator, params)
+        validate_params(indicator, params)
         effective_params = dict(params)
     selected = _validate_reductions(reductions)
 

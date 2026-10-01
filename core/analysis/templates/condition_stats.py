@@ -96,6 +96,10 @@ def condition_stats(
 
     from core.analysis.templates.column_guard import require_indicator
     require_indicator(indicator, INDICATOR_REGISTRY)
+    # 参数前置守卫（坏 params 从模板内 KeyError→failed 任务变 422——
+    # 复用读数通道的 D7 校验权威）
+    from core.analysis.indicator_query import validate_params
+    validate_params(indicator, params)
 
     # 持有期校验：非 int（bool 排除）/ 非正 / 超数据长度 → 结构化拒绝
     # （模板内 ValueError 会被路由快路径吞成 failed 任务，不符 spec 的
