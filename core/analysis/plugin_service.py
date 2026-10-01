@@ -29,6 +29,15 @@ from core.persistence.repository import research as rr
 # 生产默认 900s）
 MODEL_TRAIN_TIMEOUT_S = 900.0
 
+# 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
+# 无上限时 formula_lookback 可达任意大，bar 数 × 周期秒数换算
+# pd.Timedelta 超上限（~9.2e9s，即 106751 天）即抛 OutOfBoundsTimedelta
+# （未捕获）。换算值域为 TF_MINUTES 周期表（最大 3d），1w 等高周期
+# 走 high_tf_warmup_span 不涉插件 lookback；10_000 对最苛刻的 1w
+# 防御边界（约 15_250 bar）留 34% 裕度，3d/1d 边界（35_584/106_752
+# bar）更宽，且远超实际指标窗口需求
+MAX_PLUGIN_LOOKBACK_BARS = 10_000
+
 
 def _hash_str(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -182,6 +191,17 @@ def register_formula_plugin(
     version = _next_version(db_path, "formula", name)
     column_name = out_col if version == 1 else f"{out_col}_v{version}"
     _assert_output_column_free(db_path, out_col, column_name)
+    # 回看窗口上限（安全关）：超限公式的 warmup 换算会 Timedelta 溢出
+    from core.signals.formula import formula_lookback
+    lookback = formula_lookback(expression)
+    if lookback > MAX_PLUGIN_LOOKBACK_BARS:
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"公式回看窗口超上限: {lookback} bar（上限 {MAX_PLUGIN_LOOKBACK_BARS}"
+            "——换算 warmup 时长将溢出时间表示）",
+            detail={"lookback": lookback,
+                    "max": MAX_PLUGIN_LOOKBACK_BARS,
+                    "hint": "缩小窗口参数（rolling/shift/zscore 等）"})
     plugin_id = f"fpl_{hashlib.sha256(f'{name}{version}'.encode()).hexdigest()[:10]}"
     import uuid
     entry_id = f"ent_{uuid.uuid4().hex[:12]}"
