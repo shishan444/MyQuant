@@ -123,6 +123,7 @@ def compute_metrics(
         if trade_std is not None and trade_std > 0:
             trades_per_year = total_trades / max(years, 0.01)
             sharpe_ratio = (trade_mean / trade_std) * np.sqrt(trades_per_year)
+    # 门槛 5 笔：交易数不足时不启用 bar 级 Sharpe 回退（回退口径需足够交易样本）
     elif total_trades >= 5:
         # Fallback: bar-level Sharpe from equity curve (only when enough trades)
         returns = equity_curve.pct_change().dropna()
@@ -144,6 +145,7 @@ def compute_metrics(
             win_rate = None
 
     # Calmar ratio
+    # 除零保护：回撤近零（<0.001）时 calmar 无意义，置 0 不除近零数
     if abs(max_drawdown) > 0.001:
         calmar_ratio = abs(annual_return / max_drawdown)
     else:
@@ -184,6 +186,7 @@ def compute_metrics(
 
     # Monthly consistency: fraction of profitable months (0-1)
     monthly_consistency = 0.0
+    # 最小样本 30 bar：月度 resample 需足够时间跨度，不足则一致性置 0
     if len(equity_curve) > 30:
         try:
             monthly_returns = equity_curve.resample('ME').last().pct_change().dropna()
@@ -194,6 +197,7 @@ def compute_metrics(
 
     # R-squared: equity curve linearity (1.0 = perfect linear growth)
     r_squared = 0.0
+    # 最小样本 10 bar：样本过少时线性拟合残差无统计意义，置 0
     if len(equity_curve) > 10:
         x = np.arange(len(equity_curve))
         y = equity_curve.values
