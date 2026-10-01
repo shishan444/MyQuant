@@ -52,7 +52,6 @@ parquet 只读不构成副作用）。
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -449,10 +448,10 @@ def inspect_cases(
             start=start, end=end_expanded, indicator_names=[indicator])
     else:
         # 缺省全量（或 timestamps 形态）：全量直装，effective_start 披露
-        from core.data.mtf_loader import find_parquet, load_and_prepare_df
+        from core.data.mtf_loader import (
+            find_parquet, load_and_prepare_df, safe_symbol)
 
-        safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-        if find_parquet(data_dir, safe_symbol, timeframe) is None:
+        if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
             raise ResearchError(
                 "RESEARCH_SYMBOL_NOT_FOUND",
                 f"无数据: {symbol} {timeframe}",

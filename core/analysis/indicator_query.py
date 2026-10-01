@@ -49,7 +49,6 @@ np.nanpercentile 对全 NaN 列返回 NaN 数组的行为（伴随 RuntimeWarnin
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -240,10 +239,10 @@ def query_indicator(
             data_dir, symbol, timeframe,
             start=start, end=end, indicator_names=indicator_names)
     else:
-        from core.data.mtf_loader import find_parquet, load_and_prepare_df
+        from core.data.mtf_loader import (
+            find_parquet, load_and_prepare_df, safe_symbol)
 
-        safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-        if find_parquet(data_dir, safe_symbol, timeframe) is None:
+        if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
             raise ResearchError(
                 "RESEARCH_SYMBOL_NOT_FOUND",
                 f"无数据: {symbol} {timeframe}",

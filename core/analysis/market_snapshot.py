@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -201,11 +200,10 @@ def _snapshot_one(
     as_of: Union[str, pd.Timestamp, None],
 ) -> dict[str, Any]:
     """单周期快照：边界探测 → as_of 解析 → 闭端前扩装载 → 指标现算 → 卡片。"""
-    from core.data.mtf_loader import find_parquet
+    from core.data.mtf_loader import find_parquet, safe_symbol
     from core.data.storage import load_parquet
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    path = find_parquet(data_dir, safe_symbol, tf)
+    path = find_parquet(data_dir, safe_symbol(symbol), tf)
     if path is None:
         raise ResearchError(
             "RESEARCH_SYMBOL_NOT_FOUND",

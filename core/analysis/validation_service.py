@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -730,10 +729,10 @@ def _auto_segments(
     → type→label 映射（判读统计三键透传；bar 数由位置差重算）。"""
     from core.analysis.regime_segments import build_segments
     from core.analysis.registry_meta import default_params_for
-    from core.data.mtf_loader import find_parquet, load_and_prepare_df
+    from core.data.mtf_loader import (
+        find_parquet, load_and_prepare_df, safe_symbol)
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    if find_parquet(data_dir, safe_symbol, timeframe) is None:
+    if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
         raise ResearchError(
             "RESEARCH_SYMBOL_NOT_FOUND",
             f"无数据: {symbol} {timeframe}",
