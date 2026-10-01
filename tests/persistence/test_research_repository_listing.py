@@ -75,8 +75,8 @@ class TestTransitionWithPromotion:
     def test_non_active_returns_zero_and_promotes_nothing(self, db_path: Path) -> None:
         """非 active（rows=0）时 promote 分支整体短路——无 promotion 日志。"""
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        rr.transition_hypothesis(db_path, "hyp_1",
-                                 target_status="refuted", terminal_ref="rec_1")
+        rr.transition_hypothesis_with_promotion(
+            db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
 
         out = rr.transition_hypothesis_with_promotion(
             db_path, "hyp_1", target_status="supported",
@@ -192,8 +192,8 @@ class TestListHypotheses:
         for i in range(3):
             rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(
                 hypothesis_id=f"hyp_{i}", rhash=f"rh_{i}"))
-        rr.transition_hypothesis(db_path, "hyp_2",
-                                 target_status="refuted", terminal_ref="rec_x")
+        rr.transition_hypothesis_with_promotion(
+            db_path, "hyp_2", target_status="refuted", terminal_ref="rec_x")
 
     def test_status_filter(self, db_path: Path) -> None:
         active = rr.list_hypotheses(db_path, status="active")
@@ -492,8 +492,8 @@ class TestKeysetPaginationRepository:
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r1"))
         rr.save_hypothesis_with_log(
             db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r2"))
-        rr.transition_hypothesis(db_path, "hyp_2",
-                                 target_status="refuted", terminal_ref="rec_x")
+        rr.transition_hypothesis_with_promotion(
+            db_path, "hyp_2", target_status="refuted", terminal_ref="rec_x")
         rr.append_research_log(db_path, hypothesis_id="hyp_1",
                                entry_type="adhoc", summary="x")
         rr.save_validation_with_log(
