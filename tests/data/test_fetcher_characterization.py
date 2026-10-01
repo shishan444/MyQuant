@@ -90,6 +90,66 @@ class TestParseStartTs:
         assert lo <= ts <= hi
 
 
+class TestYearsAgoLeapDay:
+    """闰日 2/29 年度回退（CARD-04）：目标年无 2/29 时取 2/28。
+
+    修复前 dt.replace(year=y-n) 在闰日抛 ValueError，从 _parse_start_ts
+    逃逸导致全量首拉静默失败；修复后回退 2/28（年度起点近似下界，
+    不引入前视）。期望值独立于实现手工核算。
+    """
+
+    @staticmethod
+    def _frozen(moment):
+        class _Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return moment
+
+        return _Frozen
+
+    @pytest.mark.parametrize(
+        ("frozen", "expr", "expected"),
+        [
+            pytest.param(
+                datetime(2024, 2, 29, 12, 0, tzinfo=timezone.utc),
+                "2 year ago UTC",
+                datetime(2022, 2, 28, 12, 0, tzinfo=timezone.utc),
+                id="闰日退 2 年→非闰年回退 2/28",
+            ),
+            pytest.param(
+                datetime(2024, 2, 29, 0, 0, tzinfo=timezone.utc),
+                "1 year ago",
+                datetime(2023, 2, 28, 0, 0, tzinfo=timezone.utc),
+                id="闰日退 1 年→非闰年回退 2/28",
+            ),
+            pytest.param(
+                datetime(2023, 3, 15, 8, 30, tzinfo=timezone.utc),
+                "1 year ago UTC",
+                datetime(2022, 3, 15, 8, 30, tzinfo=timezone.utc),
+                id="非闰日直通不变",
+            ),
+            pytest.param(
+                datetime(2025, 3, 1, 0, 0, tzinfo=timezone.utc),
+                "4 years ago",
+                datetime(2021, 3, 1, 0, 0, tzinfo=timezone.utc),
+                id="退 4 年直通",
+            ),
+        ],
+    )
+    def test_year_rollback(self, frozen, expr, expected) -> None:
+        with patch("core.data.fetcher.datetime", self._frozen(frozen)):
+            ts = _parse_start_ts(expr)
+        assert ts == int(expected.timestamp() * 1000)
+
+    def test_fallback_two_years_leap_day(self) -> None:
+        """非法串 fallback 2 年前同样走闰日回退。"""
+        frozen = datetime(2024, 2, 29, 23, 59, 59, tzinfo=timezone.utc)
+        with patch("core.data.fetcher.datetime", self._frozen(frozen)):
+            ts = _parse_start_ts("not a date")
+        expected = datetime(2022, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
+        assert ts == int(expected.timestamp() * 1000)
+
+
 class TestFetchKlinesPagination:
     """分页累积、翻页起点推进与停滞保护。"""
 
