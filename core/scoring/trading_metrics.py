@@ -1,12 +1,14 @@
 """Trading performance metrics computed from raw task/trade/snapshot data.
 
-Pure functions — no DB access. DB reads stay in api/db_ext.py; this module
-holds the math (equity, win rate, profit factor, max drawdown) as the single
-source of truth, avoiding the previous drift where the same formulas lived
-only inside api/db_ext.py.
+Pure functions — no DB access. DB reads stay in
+core/persistence/repository/paper_trading.py; this module holds the math
+(equity, win rate, profit factor, max drawdown) as the single source of
+truth, avoiding the previous drift where the same formulas lived only
+inside the historical api/db_ext.py (since migrated to core/persistence).
 
 Invariant: formulas are moved verbatim from the previous api/db_ext.py
-implementation — no math changes (equity, profit_factor, drawdown unchanged).
+implementation (since migrated to core/persistence) — no math changes
+(equity, profit_factor, drawdown unchanged).
 """
 from __future__ import annotations
 
@@ -51,7 +53,8 @@ def compute_trading_metrics(data: TradingMetricsInput) -> Dict[str, Any]:
     """Compute performance metrics from raw data (no DB access).
 
     Returns total_return / win_rate / profit_factor / max_drawdown / etc.
-    Math moved verbatim from the previous api/db_ext.py implementation.
+    Math moved verbatim from the previous api/db_ext.py implementation
+    (now core/persistence/repository/paper_trading.py).
     """
     equity = compute_equity(
         data.balance, data.position_side, data.position_margin, data.unrealized_pnl
