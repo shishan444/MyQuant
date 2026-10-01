@@ -118,7 +118,7 @@ def load_mtf_data(
     min_bars: int = 50,
     stop_check: Optional[Callable[[], None]] = None,
     compute_indicators: bool = True,
-) -> Optional[Dict[str, pd.DataFrame]]:
+) -> Dict[str, pd.DataFrame]:
     """装载附加周期 DataFrame，可选计算指标（多周期策略数据装配）。
 
     返回 timeframe → DataFrame 的映射，内含 exec_timeframe（调用方
