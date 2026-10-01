@@ -21,6 +21,7 @@ from api.routes.research.common import (
 )
 from api.schemas import QueryIndicatorRequest
 from core.analysis import indicator_query as iq
+from core.analysis.hypothesis_service import ResearchError
 
 router = APIRouter()
 
@@ -38,13 +39,13 @@ def query_indicator(
     前扩，缺省全量直装 + effective_start 披露）。
     """
     try:
-        # P0 错误通道：非法周期前置 422——否则裸 ValueError 落
-        # except Exception 后 research_error_to_http 取不到结构化字段仍 500
+        # P0 错误通道：非法周期前置 422——否则装载层裸 ValueError
+        # 穿透为 500（except 只捕 ResearchError）
         require_known_timeframe(req.timeframe, "timeframe")
         return iq.query_indicator(
             data_dir,
             symbol=req.symbol, timeframe=req.timeframe,
             indicator=req.indicator, params=req.params,
             start=req.start, end=req.end, reductions=req.reductions)
-    except Exception as exc:
+    except ResearchError as exc:
         raise research_error_to_http(exc) from exc
