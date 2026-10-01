@@ -382,3 +382,67 @@ class TestFetchOpenInterestHistoryNoData:
         )
         assert df.empty
         assert list(df.columns) == ["open_interest"]
+
+
+class TestArchiveDownloadGuards:
+    """出站三项守卫（CARD-15·涉安）：symbol 出站前拒绝 + 体积双上限。
+
+    超限与 404/网络失败同语义（warning + None，调用方跳过）。
+    """
+
+    @patch("core.data.fetcher._http_get")
+    def test_invalid_symbol_rejected_before_request(self, mock_get: MagicMock) -> None:
+        """symbol 直拼出站 URL：非法命名在请求发出前拒绝。"""
+        with pytest.raises(ValueError, match="symbol 非法"):
+            _download_archive_csv("daily/metrics", "../evil", "stem")
+        mock_get.assert_not_called()
+
+    def _resp(self, content: bytes, content_length: str | None) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = content
+        resp.headers = {} if content_length is None else {
+            "Content-Length": content_length
+        }
+        return resp
+
+    @patch("core.data.fetcher._http_get")
+    def test_declared_length_over_limit_rejected(self, mock_get: MagicMock) -> None:
+        limit = 50 * 1024 * 1024
+        mock_get.return_value = self._resp(b"small", str(limit + 1))
+        assert _download_archive_csv("daily/metrics", "BTCUSDT", "stem") is None
+
+    @patch("core.data.fetcher._http_get")
+    def test_declared_length_exactly_limit_passes(self, mock_get: MagicMock) -> None:
+        """声明恰上限不拒（严格 > 语义）：小实体照常解析。"""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("d.csv", "calc_time,last_funding_rate\n1704067200000,0.0001\n")
+        mock_get.return_value = self._resp(buf.getvalue(), str(50 * 1024 * 1024))
+        df = _download_archive_csv("monthly/fundingRate", "BTCUSDT", "stem")
+        assert df is not None and len(df) == 1
+
+    @patch("core.data.fetcher._http_get")
+    def test_actual_size_fallback_over_limit(self, mock_get: MagicMock) -> None:
+        """无 Content-Length 声明：实际大小兜底拒。"""
+        mock_get.return_value = self._resp(b"x" * (50 * 1024 * 1024 + 1), None)
+        assert _download_archive_csv("daily/metrics", "BTCUSDT", "stem") is None
+
+    @patch("core.data.fetcher._http_get")
+    def test_declared_smaller_than_actual_fallback(self, mock_get: MagicMock) -> None:
+        """声明失实（声明小、实际超限）：兜底关拒。"""
+        mock_get.return_value = self._resp(
+            b"x" * (50 * 1024 * 1024 + 1), "1000"
+        )
+        assert _download_archive_csv("daily/metrics", "BTCUSDT", "stem") is None
+
+    @patch("core.data.fetcher._http_get")
+    def test_zip_bomb_extracted_over_limit(self, mock_get: MagicMock) -> None:
+        """解压体积关：压缩后极小、解压后超限的炸弹形态在解压前拒。"""
+        limit = 500 * 1024 * 1024
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("bomb.csv", b"\0" * (limit + 1))  # 零数据压缩比极高
+        assert len(buf.getvalue()) < 50 * 1024 * 1024  # 压缩包本体远小于上限
+        mock_get.return_value = self._resp(buf.getvalue(), None)
+        assert _download_archive_csv("daily/metrics", "BTCUSDT", "stem") is None
