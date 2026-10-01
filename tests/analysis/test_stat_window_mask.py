@@ -172,3 +172,47 @@ class TestPValueForBehavior:
         p, n = _p_value_for(fwd, mask, 4, 0.5)
         # n = 去重叠子集大小：全 True 掩码贪心选 0/4/8/...（horizon 4）
         assert p is None and n == 25
+
+
+class TestCoreInvariants:
+    """阶段四属性补强：核心计算面不变量（一类输入应保持的关系）。"""
+
+    def test_hash_json_注入区分与规模无关(self) -> None:
+        """属性：不同输入不同指纹（区分性）；嵌套深度不影响稳定性。"""
+        from core.analysis.hypothesis_service import hash_json
+        base = hash_json({"a": 1})
+        assert hash_json({"a": 2}) != base
+        assert hash_json({"b": 1}) != base
+        assert hash_json({"a": {"deep": {"deeper": [1, 2]}}}) != base
+
+    def test_stat_window_mask_起点单调收缩(self) -> None:
+        """属性：更晚的起点，掩码是更早起点的子集（统计域单调收缩）。"""
+        idx = pd.date_range("2024-01-01", periods=100, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({"close": range(100)}, index=idx)
+        m_early = stat_window_mask(df, "2024-01-02T00:00:00Z")
+        m_late = stat_window_mask(df, "2024-01-03T00:00:00Z")
+        assert not (m_late & ~m_early).any()
+
+    def test_p_value_值域与样本上界(self) -> None:
+        """属性：p ∈ [0,1]；去重叠样本数 ≤ 掩码命中数。"""
+        from core.analysis.condition_kernel import _p_value_for
+        rng = np.random.default_rng(5)
+        mask = np.zeros(500, dtype=bool)
+        mask[::7] = True  # 71 命中，间隔 7 ≥ horizon 4 全入选
+        fwd = pd.Series(rng.normal(0, 0.01, 500),
+                        index=pd.date_range("2024-01-01", periods=500,
+                                            freq="1h", tz="UTC"))
+        p, n = _p_value_for(fwd, mask, 4, 0.0)
+        assert 0.0 <= p <= 1.0
+        assert n <= int(mask.sum())
+
+    def test_validate_params_注册表默认参数恒放行(self) -> None:
+        """属性：注册表每个指标的默认参数集均通过值域校验（默认值
+        与注册表声明自洽——漂移即红）。"""
+        from core.analysis.indicator_query import validate_params
+        from core.analysis.registry_meta import indicator_metadata
+        for meta in indicator_metadata():
+            defaults = {k: spec["default"]
+                        for k, spec in meta["params"].items()}
+            validate_params(meta["name"], defaults)
