@@ -129,8 +129,11 @@ class TestConditionStats:
             "volume": [100.0] * 10,
         }, index=idx)
         # median=100；命中位置（close>100）：1,2,3,9；fwd2 尾 2 根 NaN → 9 丢弃
+        # period=5：EMA 值域内（CARD-20 前置校验接入后，原 period=3
+        # 低于 min=5 被正确拦截——断言只依赖 close 序列，值域内任意
+        # period 零影响）
         res = condition_stats(
-            df, indicator="EMA", params={"period": 3},
+            df, indicator="EMA", params={"period": 5},
             condition={"subject": "close", "action": "gt", "target": 100.0},
             data_ranges=RANGES, forward_bars=2, min_samples=3)
 
@@ -268,3 +271,32 @@ class TestTimeframeKey:
         assert hit({"subject": "close", "action": "gt",
                     "target": beyond}) > 0
 
+
+
+class TestParamsPrecheck:
+    """CARD-20：坏 params 前置校验——422 结构化拒绝（原模板内
+    KeyError→路由快路径吞成 failed 任务）。共享校验权威
+    indicator_query.validate_params（读数通道 D7 同款）。"""
+
+    def test_正常参数_放行(self) -> None:
+        df = _make_df(300)
+        kw = _gt_median_kwargs(df)
+        res = condition_stats(df, **kw)
+        assert res.payload["hit_count"] >= 0  # 正常求值返回（构造即放行证）
+
+    @pytest.mark.parametrize(
+        ("params", "kind"),
+        [
+            ({"peroid": 14}, "拼错键"),
+            ({"period": 99999}, "越界值"),
+            ({"period": "abc"}, "坏类型"),
+            ({"period": 3}, "EMA 低于值域下限 5"),
+        ],
+        ids=["拼错键", "越界值", "坏类型", "低于值域下限"])
+    def test_坏参数_422结构化拒绝(self, params, kind) -> None:
+        df = _make_df(300)
+        kw = _gt_median_kwargs(df)
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, **dict(kw, params=params))
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.status == 422
