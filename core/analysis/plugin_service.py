@@ -40,10 +40,6 @@ MODEL_TRAIN_TIMEOUT_S = 900.0
 MAX_PLUGIN_LOOKBACK_BARS = 10_000
 
 
-def _hash_str(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
 def _plugin_allowed_columns(db_path: Path) -> set:
     """公式列引用集：基础列 ∪ 既有插件列（可叠层引用）。
 
@@ -465,11 +461,10 @@ def register_model_plugin(
     cfg_json = json.dumps({**config.__dict__, "_config_hash": config_hash},
                           ensure_ascii=False, default=str)
 
-    from core.persistence.repository.dataset_meta import _engine_for as _eng
+    from core.persistence.repository.dataset_meta import _engine_for
     from sqlalchemy import insert as _insert
-    now = None
     from core.persistence.timestamps import utc_now_iso
-    with _eng(db_path).begin() as conn:
+    with _engine_for(db_path).begin() as conn:
         conn.execute(_insert(ModelPlugin).values(
             plugin_id=plugin_id, name=name, version=version,
             config=cfg_json, signal_column=signal_column,
@@ -496,7 +491,7 @@ def register_model_plugin(
             raise
         # valid 落库（插件行已存在，只更新状态）+ 注册信号列
         from sqlalchemy import update as _update
-        with _eng(db_path).begin() as conn:
+        with _engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="valid",
@@ -511,7 +506,7 @@ def register_model_plugin(
 
     def _fail(reason: str):
         from sqlalchemy import update as _update
-        with _eng(db_path).begin() as conn:
+        with _engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="rejected", reject_reason=reason[:200]))
