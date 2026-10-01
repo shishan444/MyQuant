@@ -24,10 +24,25 @@ def wilson_interval(
 
     Returns:
         (lower, upper)，均截断在 [0, 1]。
+
+    Raises:
+        ValueError: successes 不在 [0, total]，或 z 非正/非有限——
+            计数矛盾与非法置信水平须显式拒绝，优于裸 math domain
+            error 或静默产倒置/NaN 区间（生产调用方计数天然合法，
+            此处为防御一致性，风格对齐 benjamini_hochberg）。
     """
+    if not (0 <= successes <= total):
+        raise ValueError(
+            f"successes={successes!r} 不在 [0, total={total!r}]——计数矛盾，须在入参前保证"
+        )
+    import math
+
+    if not (0 < z < math.inf):
+        raise ValueError(
+            f"z={z!r} 须为正的有限置信水平 Z 值（如 1.96）——非正/非有限值无区间意义"
+        )
     if total == 0:
         return (0.0, 0.0)
-    import math
 
     p = successes / total
     denom = 1 + z * z / total

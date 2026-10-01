@@ -221,8 +221,10 @@ class TestPageContent:
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        indicator_tab = page.locator("button:has-text('指标参数')")
-        assert indicator_tab.count() > 0, "指标参数 tab 按钮未找到"
+        # antd Tabs 的 tab 节点渲染为 role="tab"（div.ant-tabs-tab +
+        # .ant-tabs-tab-btn），非 button 元素——旧 button 定位器恒 0 匹配
+        indicator_tab = page.get_by_role("tab", name="指标参数")
+        assert indicator_tab.count() > 0, "指标参数 tab 未找到"
         indicator_tab.click()
         page.wait_for_timeout(500)
         # tab 切换后页面仍有内容

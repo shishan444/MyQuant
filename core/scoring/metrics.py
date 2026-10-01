@@ -40,6 +40,16 @@ def _safe_std(arr: "np.ndarray") -> "float | None":
     return float(np.std(arr, ddof=1))
 
 
+def _annualize(total_return: float, years: float) -> float:
+    """区间收益年化（模块内共用）：annual_return 与 market_annual_return
+    两处同公式的单一权威。
+
+    years>0 判空与 max 下限 0.01 是有意的双防御行为锚点——极短样本
+    （years→0）防指数爆开，原样保留不合并。
+    """
+    return (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+
+
 def compute_metrics(
     equity_curve: pd.Series,
     total_trades: int = 0,
@@ -95,7 +105,7 @@ def compute_metrics(
     total_return = (equity_curve.iloc[-1] / equity_curve.iloc[0]) - 1
     n_bars = len(equity_curve)
     years = n_bars / bars_per_year
-    annual_return = (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+    annual_return = _annualize(total_return, years)
 
     # Max drawdown (from equity curve - standard)
     cummax = equity_curve.cummax()
@@ -113,9 +123,10 @@ def compute_metrics(
         if trade_std is not None and trade_std > 0:
             trades_per_year = total_trades / max(years, 0.01)
             sharpe_ratio = (trade_mean / trade_std) * np.sqrt(trades_per_year)
+    # 门槛 5 笔：交易数不足时不启用 bar 级 Sharpe 回退（回退口径需足够交易样本）
     elif total_trades >= 5:
         # Fallback: bar-level Sharpe from equity curve (only when enough trades)
-        returns = equity_curve.pct_change().dropna()
+        returns = equity_curve.pct_change(fill_method=None).dropna()
         if len(returns) > 0:
             mean_ret = returns.mean()
             std_ret = returns.std()
@@ -127,13 +138,14 @@ def compute_metrics(
         win_rate = trade_win_rate
     else:
         # Fallback: bar-level (less accurate)；零收益样本同样归缺失
-        returns = equity_curve.pct_change().dropna()
+        returns = equity_curve.pct_change(fill_method=None).dropna()
         if len(returns) > 0:
             win_rate = float((returns > 0).sum() / len(returns))
         else:
             win_rate = None
 
     # Calmar ratio
+    # 除零保护：回撤近零（<0.001）时 calmar 无意义，置 0 不除近零数
     if abs(max_drawdown) > 0.001:
         calmar_ratio = abs(annual_return / max_drawdown)
     else:
@@ -174,9 +186,10 @@ def compute_metrics(
 
     # Monthly consistency: fraction of profitable months (0-1)
     monthly_consistency = 0.0
+    # 最小样本 30 bar：月度 resample 需足够时间跨度，不足则一致性置 0
     if len(equity_curve) > 30:
         try:
-            monthly_returns = equity_curve.resample('ME').last().pct_change().dropna()
+            monthly_returns = equity_curve.resample('ME').last().pct_change(fill_method=None).dropna()
             if len(monthly_returns) > 0:
                 monthly_consistency = float((monthly_returns > 0).sum() / len(monthly_returns))
         except Exception:
@@ -184,10 +197,13 @@ def compute_metrics(
 
     # R-squared: equity curve linearity (1.0 = perfect linear growth)
     r_squared = 0.0
+    # 最小样本 10 bar：样本过少时线性拟合残差无统计意义，置 0
     if len(equity_curve) > 10:
         x = np.arange(len(equity_curve))
         y = equity_curve.values
-        slope = np.cov(x, y)[0, 1] / max(np.var(x), 1e-10)
+        # var 须与 cov 同为 ddof=1 配对（自由度约掉）——混用 ddof=0 会使
+        # 斜率高估 n/(n-1) 倍、完美线性曲线的 r² 系统性低于 1
+        slope = np.cov(x, y)[0, 1] / max(np.var(x, ddof=1), 1e-10)
         intercept = np.mean(y) - slope * np.mean(x)
         y_pred = slope * x + intercept
         ss_res = np.sum((y - y_pred) ** 2)
@@ -203,8 +219,7 @@ def compute_metrics(
     if benchmark_close is not None and len(benchmark_close) >= 2:
         benchmark_return = float(
             benchmark_close.iloc[-1] / benchmark_close.iloc[0] - 1)
-        bm_total_return = (benchmark_close.iloc[-1] / benchmark_close.iloc[0]) - 1
-        market_annual_return = (1 + bm_total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+        market_annual_return = _annualize(benchmark_return, years)
         alpha = annual_return - market_annual_return
         # 区间口径超额（improve-backtest-benchmark-disclosure Decision 1）：
         # total_return - benchmark_return，短样本不做年化外推；与年化口径

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -50,20 +50,23 @@ class SignalRole(str, Enum):
     DIRECTION = "direction"
 
 
-class ScoreTemplate(str, Enum):
-    EXPLORER = "explorer"
-    OPTIMIZER = "optimizer"
-    MAX_RETURN = "max_return"
-    # Legacy aliases (auto-mapped in templates.py)
-    PROFIT_FIRST = "profit_first"
-    STEADY = "steady"
-    RISK_FIRST = "risk_first"
-    CUSTOM = "custom"
+# 评分 objective 合法值域（schema 收紧）：权威源为 core/scoring/scorer.py
+# 的 _VALID_OBJECTIVES，此处为字面量镜像（Literal 须静态字面量，传输层
+# 不跨层引用 core 私有名），漂移由特征测试锚定
+ScoringObjective = Literal["sharpe", "calmar", "annual_return"]
+
+# 评分模板名合法值域：权威源为 scorer.py score_strategy 的核心名
+# （explorer/optimizer/max_return）+ _ALIASES 别名键集，非法值 422 拒绝
+ScoreTemplateName = Literal[
+    "explorer", "optimizer", "max_return",
+    "balanced", "steady", "custom",
+    "aggressive", "profit_first", "conservative", "risk_first",
+]
 
 
 class RequirementsConfigModel(BaseModel):
     """User-configurable requirements for strategy qualification."""
-    objective: str = Field(default="sharpe", description="Objective function: sharpe, calmar, or annual_return")
+    objective: ScoringObjective = Field(default="sharpe", description="Objective function: sharpe, calmar, or annual_return")
     min_annual_return: float = Field(default=0.0, ge=0.0, description="Minimum annual return constraint (0 = disabled)")
     max_drawdown: float = Field(default=0.30, ge=0.05, le=0.99, description="Maximum drawdown (0.30 = 30%)")
     min_win_rate: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum win rate (0 = disabled)")
@@ -230,11 +233,12 @@ class BacktestRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    # DEPRECATED（improve-mcp-agent-loop M5）：评分模板残骸，仅兼容保留，
-    # 不影响回测结果；勿在新调用方依赖
-    score_template: str = Field(
-        "explorer", description="DEPRECATED: 评分模板残骸，仅兼容保留，"
-        "不影响回测结果；勿在新调用方依赖")
+    # DEPRECATED（improve-mcp-agent-loop M5）：评分模板残骸，仅兼容保留；
+    # 决定评分语义（objective/硬约束→total_score），不影响收益曲线本身；
+    # 非法值 422 拒绝；勿在新调用方依赖
+    score_template: ScoreTemplateName = Field(
+        "explorer", description="DEPRECATED: 评分模板残骸，仅兼容保留；"
+        "决定评分语义（影响 total_score），不影响收益曲线本身；非法值 422 拒绝")
     data_start: Optional[str] = None
     data_end: Optional[str] = None
     timeframe_pool: Optional[List[str]] = None
@@ -288,7 +292,7 @@ class CompareRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    score_template: str = "explorer"
+    score_template: ScoreTemplateName = "explorer"
     data_start: Optional[str] = None
     data_end: Optional[str] = None
 
@@ -472,7 +476,7 @@ class EvolutionTaskCreate(BaseModel):
     symbol: str
     timeframe: str
     target_score: float = 1.0
-    score_template: str = "explorer"
+    score_template: ScoreTemplateName = "explorer"
     requirements: Optional[RequirementsConfigModel] = None
     population_size: int = 15
     max_generations: int = 200
@@ -647,7 +651,7 @@ class PaperTradingTaskCreate(BaseModel):
     fee: float = Field(default=0.001, ge=0)
     leverage: int = Field(default=1, ge=1, le=10)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
-    score_template: str = Field(default="explorer")
+    score_template: ScoreTemplateName = Field(default="explorer")
     strategy_name: Optional[str] = None
     strategy_id: Optional[str] = Field(default=None, description="Optional strategy ID for qualified check")
     confidence_sizing_enabled: bool = False

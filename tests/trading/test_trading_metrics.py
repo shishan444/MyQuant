@@ -1,6 +1,7 @@
 """Tests for core.scoring.trading_metrics pure functions.
 
-These formulas were moved verbatim from api/db_ext.py; the tests pin the math
+These formulas were moved verbatim from the previous api/db_ext.py
+implementation (since migrated to core/persistence); the tests pin the math
 so future refactors cannot silently change equity / profit_factor / drawdown.
 """
 import pytest

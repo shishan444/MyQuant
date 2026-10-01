@@ -1,15 +1,18 @@
 """Trading performance metrics computed from raw task/trade/snapshot data.
 
-Pure functions — no DB access. DB reads stay in api/db_ext.py; this module
-holds the math (equity, win rate, profit factor, max drawdown) as the single
-source of truth, avoiding the previous drift where the same formulas lived
-only inside api/db_ext.py.
+Pure functions — no DB access. DB reads stay in
+core/persistence/repository/paper_trading.py; this module holds the math
+(equity, win rate, profit factor, max drawdown) as the single source of
+truth, avoiding the previous drift where the same formulas lived only
+inside the historical api/db_ext.py (since migrated to core/persistence).
 
 Invariant: formulas are moved verbatim from the previous api/db_ext.py
-implementation — no math changes (equity, profit_factor, drawdown unchanged).
+implementation (since migrated to core/persistence) — no math changes
+(equity, profit_factor, drawdown unchanged).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Sequence
 
@@ -51,14 +54,20 @@ def compute_trading_metrics(data: TradingMetricsInput) -> Dict[str, Any]:
     """Compute performance metrics from raw data (no DB access).
 
     Returns total_return / win_rate / profit_factor / max_drawdown / etc.
-    Math moved verbatim from the previous api/db_ext.py implementation.
+    Math moved verbatim from the previous api/db_ext.py implementation
+    (now core/persistence/repository/paper_trading.py).
     """
     equity = compute_equity(
         data.balance, data.position_side, data.position_margin, data.unrealized_pnl
     )
     total_pnl = equity - data.initial_cash
     # 零交易 win_rate 为缺失语义（None），不得折叠为 0
-    win_rate = None if data.total_trades == 0 else data.win_count / data.total_trades
+    # 计数一致性防御：win_count 不在 [0, total_trades] 时同为 None——
+    # 计数矛盾产 >1/<0 的"形似正常"胜率是毒数据，透传计数字段不动
+    if 0 <= data.win_count <= data.total_trades:
+        win_rate = None if data.total_trades == 0 else data.win_count / data.total_trades
+    else:
+        win_rate = None
 
     # Gross profit / loss from closed-trade pnls
     gross_profit = sum(p for p in data.close_pnls if p > 0)
@@ -68,11 +77,17 @@ def compute_trading_metrics(data: TradingMetricsInput) -> Dict[str, Any]:
     )
 
     # Max drawdown from equity snapshots
+    # 坏数据防御（聚合层跳点、不抛错，与统计工具层显式拒绝是有意分层）：
+    # 非有限快照（NaN/inf）不参与峰谷计算——首位 NaN 会使比较链永假、
+    # peak 卡死而静默丢掉全部回撤；全坏点时与空序列同语义（回撤 0.0）
     max_drawdown = 0.0
     max_drawdown_pct = 0.0
-    if data.equity_snapshots:
-        peak = data.equity_snapshots[0]
-        for eq in data.equity_snapshots:
+    finite_snapshots = [
+        eq for eq in data.equity_snapshots if math.isfinite(eq)
+    ]
+    if finite_snapshots:
+        peak = finite_snapshots[0]
+        for eq in finite_snapshots:
             if eq > peak:
                 peak = eq
             dd = peak - eq
