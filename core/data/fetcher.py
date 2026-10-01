@@ -102,8 +102,15 @@ def _build_session() -> requests.Session:
 
 
 def _direct_session() -> requests.Session:
-    """直连 session：显式忽略环境代理。"""
-    return requests.Session()
+    """直连 session：显式忽略环境代理。
+
+    trust_env=False 阻断 requests 默认读取 HTTP(S)_PROXY/NO_PROXY
+    环境变量（先例 mcpserver/api_client.py）；_build_session 的显式
+    proxies 回退通道不受 trust_env 影响，两通道语义独立。
+    """
+    session = requests.Session()
+    session.trust_env = False
+    return session
 
 
 def _http_get(url: str, params: dict | None = None, timeout: int = 30) -> requests.Response:
