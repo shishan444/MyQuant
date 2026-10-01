@@ -365,3 +365,74 @@ class TestAnalysisTaskNoopAndBoundary:
             db_path, created_before="2026-08-01T00:00:00")
         assert {t["task_id"] for t in stale2} == {"ant_eq", "ant_after"}, \
             "仅早于阈值的 running 行回收，failed 终态不重复回收"
+
+
+class TestFeatureRequestRepository:
+    """CARD-06 收口资产：功能需求单 repository 三函数（路由层内联 SQL 迁入）。"""
+
+    def _save(self, db_path: Path, rid: str, status: str = "open",
+              created: str = "2026-10-01T00:00:00") -> None:
+        rr.save_feature_request(db_path, request_id=rid, title=f"t-{rid}",
+                                payload='{"k": 1}', status=status,
+                                created_at=created)
+
+    def test_save_list_count_roundtrip(self, db_path: Path) -> None:
+        self._save(db_path, "fr_1")
+        self._save(db_path, "fr_2", created="2026-10-01T01:00:00")
+
+        rows = rr.list_feature_requests(db_path)
+        assert [r["request_id"] for r in rows] == ["fr_1", "fr_2"], \
+            "created_at 升序稳定排序"
+        assert rows[0]["payload"] == '{"k": 1}' and rows[0]["status"] == "open"
+        assert rr.count_feature_requests(db_path) == 2
+        assert rr.count_feature_requests(db_path, status="closed") == 0
+
+    def test_status_filter_and_pagination(self, db_path: Path) -> None:
+        self._save(db_path, "fr_1", status="open", created="2026-10-01T00:00:00")
+        self._save(db_path, "fr_2", status="closed", created="2026-10-01T01:00:00")
+        self._save(db_path, "fr_3", status="open", created="2026-10-01T02:00:00")
+
+        open_rows = rr.list_feature_requests(db_path, status="open")
+        assert {r["request_id"] for r in open_rows} == {"fr_1", "fr_3"}
+        assert rr.count_feature_requests(db_path, status="open") == 2, \
+            "count 过滤口径与 list 一致"
+        assert len(rr.list_feature_requests(db_path, limit=2)) == 2
+        rest = rr.list_feature_requests(db_path, offset=2, limit=5)
+        assert [r["request_id"] for r in rest] == ["fr_3"]
+        assert rr.list_feature_requests(db_path, offset=99) == []
+
+
+class TestListPluginsRepository:
+    """CARD-06 收口资产：插件审计清单同构查询（source 分派 + name 过滤）。"""
+
+    def test_source_dispatch_and_name_filter(self, db_path: Path) -> None:
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="pf_1", name="oi_mom",
+            version=1, expression="zscore(close, 20)",
+            output_columns='["oi_mom"]', entry_id="e_f", column_name="oi_mom")
+        rr.save_plugin_with_registry(
+            db_path, source="model", plugin_id="pm_1", name="roll_model",
+            version=1, config="{}", signal_column="model_col",
+            entry_id="e_m", column_name="model_col")
+
+        formulas = rr.list_plugins(db_path, source="formula")
+        assert {r["plugin_id"] for r in formulas} == {"pf_1"}
+        assert formulas[0]["name"] == "oi_mom"
+        models = rr.list_plugins(db_path, source="model")
+        assert {r["plugin_id"] for r in models} == {"pm_1"}
+        # name 精确过滤：命中同名族、未命中空集
+        assert {r["plugin_id"]
+                for r in rr.list_plugins(db_path, source="formula",
+                                         name="oi_mom")} == {"pf_1"}
+        assert rr.list_plugins(db_path, source="formula", name="nope") == []
+
+    def test_version_audit_order(self, db_path: Path) -> None:
+        """同名多版本按 version 升序（审计读序）。"""
+        for v in (1, 2):
+            rr.save_plugin_with_registry(
+                db_path, source="formula", plugin_id=f"pf_v{v}", name="same",
+                version=v, expression="zscore(close, 20)",
+                output_columns='["same"]', entry_id=f"e_v{v}",
+                column_name=f"same_v{v}")
+        rows = rr.list_plugins(db_path, source="formula", name="same")
+        assert [r["version"] for r in rows] == [1, 2]
