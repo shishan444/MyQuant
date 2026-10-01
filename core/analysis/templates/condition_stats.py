@@ -117,16 +117,13 @@ def condition_stats(
     # 0.2.13：求值走 condition_kernel._mask_for（两段式内聚——结构化
     # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
     # 0.2.14：mtf 上下文透传——高周期条件（timeframe 键）走掩码投影
-    from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+    from core.analysis.condition_kernel import MtfEvalContext, _mask_for, stat_window_mask
     mask = _mask_for(work, condition, mtf=mtf)
 
-    # 统计段：request_start 之前的 warmup 前缀只用不算
-    req_ts: pd.Timestamp | None = None
-    if request_start is None:
-        in_stat = pd.Series(True, index=work.index)
-    else:
-        req_ts = to_utc(pd.Timestamp(request_start))
-        in_stat = pd.Series(work.index >= req_ts, index=work.index)
+    # 统计段：request_start 之前的 warmup 前缀只用不算（共享掩码
+    # 样板；req_ts 留供 warmup_bars 披露）
+    in_stat = stat_window_mask(work, request_start)
+    req_ts = to_utc(pd.Timestamp(request_start)) if request_start is not None else None
 
     stat_mask = mask & in_stat
     n_total = int(in_stat.sum())  # 统计段 bar 数（hit_rate 分母）

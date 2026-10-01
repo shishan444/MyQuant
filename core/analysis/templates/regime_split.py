@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 from core.analysis.warmup_loader import to_utc
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.regime_segments import GATES, build_segments
@@ -129,12 +129,9 @@ def regime_split(
         df[c] = s
 
     # 统计段切分（warmup 前缀只用不算——判读指标在全 df 收敛；
-    # 置于指标计算后：布尔切片为副本，先切则不含新算指标列）
-    if request_start is None:
-        stat = df
-    else:
-        req = _ts_utc(request_start)
-        stat = df[df.index >= req]
+    # 置于指标计算后：布尔切片为副本，先切则不含新算指标列。None
+    # 分支统一经掩码直切为副本——stat 后续只读判读列，与原引用等价）
+    stat = df[stat_window_mask(df, request_start)]
     if condition is not None:
         from core.features.registry import INDICATOR_REGISTRY
         if indicator not in INDICATOR_REGISTRY:

@@ -24,6 +24,24 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from core.analysis.warmup_loader import to_utc
+
+
+def stat_window_mask(
+    df: pd.DataFrame,
+    request_start: "str | pd.Timestamp | None",
+) -> pd.Series:
+    """统计段掩码（warmup 前缀只用不算——四分析模板共用切回样板）。
+
+    request_start 之前的前缀排除（warmup 装载只为指标收敛，统计只算
+    请求区间）；None → 全 True（全 df 皆统计段）。返回布尔 Series
+    （index 对齐 df），消费方掩码求值/直切两形制通用。
+    """
+    if request_start is None:
+        return pd.Series(True, index=df.index)
+    req = to_utc(pd.Timestamp(request_start))
+    return pd.Series(df.index >= req, index=df.index)
+
 
 @dataclass
 class MtfEvalContext:

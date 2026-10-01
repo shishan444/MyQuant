@@ -30,7 +30,6 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.warmup_loader import to_utc
 
 # 阈值刻度已提升分析域共享（add-param-sweep 兑现 D7；扫描与检查两域网格同源）
 from core.analysis.threshold_grids import VALUE_GRIDS as _VALUE_GRIDS
@@ -134,7 +133,7 @@ def _validate_params(
 
 
 # 条件统计内核已提升共享（add-regime-split 兑现 0.2.6 D4 钩子；三消费者）
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 
 
 def screen_patterns(
@@ -182,12 +181,8 @@ def screen_patterns(
                 detail={"param": "horizons",
                         "legal_range": f"1..{len(df) - 1}"})
 
-    # 统计段（warmup 只用不算）
-    if request_start is None:
-        in_stat = pd.Series(True, index=df.index)
-    else:
-        req_ts = to_utc(pd.Timestamp(request_start))
-        in_stat = pd.Series(df.index >= req_ts, index=df.index)
+    # 统计段（warmup 只用不算——共享掩码样板）
+    in_stat = stat_window_mask(df, request_start)
     stat_pos = in_stat.values
     n_total = int(in_stat.sum())
 
