@@ -126,7 +126,7 @@ def compute_metrics(
     # 门槛 5 笔：交易数不足时不启用 bar 级 Sharpe 回退（回退口径需足够交易样本）
     elif total_trades >= 5:
         # Fallback: bar-level Sharpe from equity curve (only when enough trades)
-        returns = equity_curve.pct_change().dropna()
+        returns = equity_curve.pct_change(fill_method=None).dropna()
         if len(returns) > 0:
             mean_ret = returns.mean()
             std_ret = returns.std()
@@ -138,7 +138,7 @@ def compute_metrics(
         win_rate = trade_win_rate
     else:
         # Fallback: bar-level (less accurate)；零收益样本同样归缺失
-        returns = equity_curve.pct_change().dropna()
+        returns = equity_curve.pct_change(fill_method=None).dropna()
         if len(returns) > 0:
             win_rate = float((returns > 0).sum() / len(returns))
         else:
@@ -189,7 +189,7 @@ def compute_metrics(
     # 最小样本 30 bar：月度 resample 需足够时间跨度，不足则一致性置 0
     if len(equity_curve) > 30:
         try:
-            monthly_returns = equity_curve.resample('ME').last().pct_change().dropna()
+            monthly_returns = equity_curve.resample('ME').last().pct_change(fill_method=None).dropna()
             if len(monthly_returns) > 0:
                 monthly_consistency = float((monthly_returns > 0).sum() / len(monthly_returns))
         except Exception:
