@@ -143,6 +143,48 @@ class TestTierMarkupParity:
             assert f"- {n}" in text, f"能力自述缺工具 {n}"
 
 
+class TestToolPaginationClamp:
+    """CARD-05 修复资产：MCP 工具层分页 clamp（发出的查询参数先钳制）。
+
+    clamp 形制照 list_evolution_tasks 先例：page=max(1,page)、
+    page_size=max(1,min(ps,50))——与 HTTP 侧越界归 50 缺省不同值
+    （下限抬 1），分层裁量分别钉。
+    """
+
+    def _captured_get(self, api, captured):
+        def _fake_get(path, params=None):
+            captured["path"] = path
+            captured["params"] = params
+            return {"items": [], "total": 0}
+        api.get = _fake_get
+
+    def test_list_feature_requests_params_clamped(self, monkeypatch) -> None:
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        captured: dict = {}
+        self._captured_get(api, captured)
+
+        run_async(mcp.call_tool("list_feature_requests",
+                                {"page": 0, "page_size": 999}))
+        assert captured["params"]["page"] == 1
+        assert captured["params"]["page_size"] == 50, "超 _PAGE_MAX 收 50"
+
+        run_async(mcp.call_tool("list_feature_requests",
+                                {"page": -3, "page_size": 0}))
+        assert captured["params"]["page"] == 1
+        assert captured["params"]["page_size"] == 1, "下限抬 1（非 HTTP 侧的 50 缺省）"
+
+    def test_list_feature_requests_legal_params_passthrough(self, monkeypatch) -> None:
+        """合法参数原样透传（clamp 不改写有效值）。"""
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        captured: dict = {}
+        self._captured_get(api, captured)
+
+        run_async(mcp.call_tool("list_feature_requests",
+                                {"page": 3, "page_size": 20, "status": "open"}))
+        assert captured["params"] == {"page": 3, "page_size": 20,
+                                      "status": "open"}
+
+
 class TestWhitelist:
     def test_readonly_cannot_post(self) -> None:
         api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")

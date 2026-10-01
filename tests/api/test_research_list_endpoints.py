@@ -1,10 +1,9 @@
 """研究域列表端点特征网（fix/mcp-research-upstream-review）。
 
-修复期临时安全网（现状记录语义）：钉住 GET /hypotheses、/log、
-/feature-requests 三端点的分页钳制、total=当前页长度语义、过滤组合、
-404 错误通道与 translate 无 body 分支的现状行为。已知形制差异
-（/feature-requests 无 page/page_size 钳制）按现状记录，上游裁决
-统一钳制后同步改写对应用例。
+修复期临时安全网：钉住 GET /hypotheses、/log、/feature-requests
+三端点的分页钳制、total=当前页长度语义、过滤组合、404 错误通道与
+translate 无 body 分支。/feature-requests 原无钳制的现状用例已在
+CARD-05（分页统一 clamp）后改写为钳制行为。
 """
 
 import pytest
@@ -132,7 +131,8 @@ class TestResearchLogEndpoint:
 
 
 class TestFeatureRequestsEndpoint:
-    """现状记录：无 page/page_size 钳制（与 hypotheses/log 形制不一致）。"""
+    """分页钳制与 /hypotheses、/log 同款（CARD-05 后统一）：
+    page<1→1；page_size 出 [1,200]→50；total=当前页长度。"""
 
     def test_create_and_list_roundtrip(self, api_client):
         for i in range(2):
@@ -159,32 +159,31 @@ class TestFeatureRequestsEndpoint:
         assert closed["items"] == []
 
     @pytest.mark.parametrize("page", [0, -1])
-    def test_non_positive_page_returns_first_page_data(self, api_client, page):
-        """现状：page<=0 无钳制，负 OFFSET 被 SQLite 视为 0——回第一页数据
-        且 echo 原值（数据页与回显页码不一致）。裁决统一钳制后改写本用例。"""
+    def test_non_positive_page_clamped_to_one(self, api_client, page):
+        """page<=0 钳制为 1：回第一页数据且 echo page=1（CARD-05 前为
+        负 OFFSET 回首页 + echo 原值的不一致形制）。"""
         api_client.post("/api/research/feature-requests", json={
             "title": "t", "payload": {}})
         body = api_client.get("/api/research/feature-requests",
                               params={"page": page}).json()
         assert len(body["items"]) == 1 and body["total"] == 1
-        assert body["page"] == page
+        assert body["page"] == 1
 
-    def test_page_size_zero_returns_empty_page(self, api_client):
-        """现状：page_size=0 无钳制——LIMIT 0 空页、total=0（假空页语义）。
-        裁决统一钳制后改写本用例。"""
+    def test_page_size_zero_clamped_to_default(self, api_client):
+        """page_size=0 钳制为 50 缺省（CARD-05 前为 LIMIT 0 假空页）。"""
         api_client.post("/api/research/feature-requests", json={
             "title": "t", "payload": {}})
         body = api_client.get("/api/research/feature-requests",
                               params={"page_size": 0}).json()
-        assert body["items"] == [] and body["total"] == 0
+        assert body["page_size"] == 50 and len(body["items"]) == 1
 
-    def test_page_size_over_cap_passthrough(self, api_client):
-        """现状：page_size 超上限不钳制（echo 原值，行为不受 200 上限约束）。"""
+    def test_page_size_over_cap_clamped_to_default(self, api_client):
+        """page_size 超上限 200 钳制为 50 缺省（CARD-05 前原值透传）。"""
         api_client.post("/api/research/feature-requests", json={
             "title": "t", "payload": {}})
         body = api_client.get("/api/research/feature-requests",
                               params={"page_size": 201}).json()
-        assert body["page_size"] == 201 and len(body["items"]) == 1
+        assert body["page_size"] == 50 and len(body["items"]) == 1
 
     def test_beyond_last_page_empty(self, api_client):
         api_client.post("/api/research/feature-requests", json={
