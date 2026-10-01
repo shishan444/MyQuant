@@ -92,6 +92,27 @@ class TestFormulaPlugin:
         cols = api_client.get("/api/research/signals").json()
         assert not any("cheat" in c["column_key"] for c in cols)
 
+    def test_rejected_record_failure_does_not_mask_rejection(
+            self, api_client, plugin_env, monkeypatch):
+        """留档失败不影响拒绝语义（闸门终验消解：防御分支补测）。
+
+        调用图：路由 except ResearchError 分支内 try
+        ps.rejected_formula_record——校验失败与留档异常同现才可达，
+        monkeypatch 注入留档异常构造双错同现。
+        """
+        from core.analysis import plugin_service as ps
+
+        _wire(api_client, plugin_env)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("留档通道故障")
+        monkeypatch.setattr(ps, "rejected_formula_record", _boom)
+
+        resp = api_client.post("/api/research/plugins/formula", json={
+            "name": "cheat2", "expression": "hack()"})
+        assert resp.status_code == 422, "留档失败不得掩盖拒绝语义"
+        assert resp.json()["detail"]["code"] == "RESEARCH_FORMULA_INVALID"
+
     def test_enrich_evaluates_plugin_column(self, api_client, plugin_env):
         """enrich_with_plugin_columns：公式列在 df 上可求值（分析可引用）。"""
         db = _wire(api_client, plugin_env)

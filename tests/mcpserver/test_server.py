@@ -263,6 +263,325 @@ class TestPathSegmentEncoding:
         assert captured["path"] == "/api/research/analysis/tasks/ant_abc123-def456"
 
 
+class TestToolBodyInvocation:
+    """闸门终验消解：28 工具体逐个经 call_tool 实调（对拍测试断言注册面，
+    此处钉「工具→端点」映射的行为面——工具体参数组装 + method/path）。
+
+    L3（stdio/http 真进程）覆盖真实链路；本类补进程内工具体触达与
+    映射锚：method + 归一化路径（{param} 段）逐工具断言。
+    """
+
+    # (工具名, 最小参数, 期望 method, 期望归一路径)
+    CASES = [
+        ("list_data_sources", {}, "GET", "/api/data/available-sources"),
+        ("list_strategies", {"limit": 5, "offset": 0}, "GET", "/api/strategies"),
+        ("get_strategy", {"strategy_id": "st_1"}, "GET", "/api/strategies/{param}"),
+        ("list_evolution_tasks", {"page": 1, "page_size": 10}, "GET", "/api/evolution/tasks"),
+        ("list_indicators", {}, "GET", "/api/research/indicators"),
+        ("list_signal_columns", {}, "GET", "/api/research/signals"),
+        ("get_market_snapshot", {"symbol": "BTCUSDT", "timeframes": "1d,4h",
+                             "as_of": "2024-06-01T00:00:00Z"},
+         "GET", "/api/research/market-snapshot"),
+        ("list_hypotheses", {"page": 1, "status": "active",
+                          "cursor": "2026-01-01T00:00:00|h1"},
+         "GET", "/api/research/hypotheses"),
+        ("get_hypothesis", {"hypothesis_id": "hyp_1"}, "GET", "/api/research/hypotheses/{param}"),
+        ("get_research_log", {"page": 1, "hypothesis_id": "h1",
+                           "entry_type": "register",
+                           "cursor": "2026-01-01T00:00:00|l1"},
+         "GET", "/api/research/log"),
+        ("get_analysis_task", {"task_id": "ant_1"}, "GET", "/api/research/analysis/tasks/{param}"),
+        ("get_validation_report", {"strategy_id": "st_1"}, "GET", "/api/research/validation/{param}/report"),
+        ("list_feature_requests", {"page": 1, "status": "open"},
+         "GET", "/api/research/feature-requests"),
+        ("run_analysis", {"template": "condition_stats", "params": {},
+                          "symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01",
+                          "hypothesis_id": "h1"},
+         "POST", "/api/research/analysis"),
+        ("inspect_cases", {"symbol": "BTCUSDT", "timeframe": "4h",
+                           "selector": {"condition": {"subject": "close", "action": "gt", "target": 1}},
+                           "start": "2024-01-01", "end": "2024-02-01",
+                           "indicator": "RSI"},
+         "POST", "/api/research/inspect-cases"),
+        ("query_indicator", {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "indicator": "RSI", "params": {"period": 21},
+                              "reductions": ["latest"], "start": "2024-01-01",
+                              "end": "2024-02-01"},
+         "POST", "/api/research/query-indicator"),
+        ("register_hypothesis", {"when_conditions": [{"subject": "close", "action": "gt", "target": 0}],
+                                 "then_conditions": [{"subject": "close", "action": "gt", "target": -1}],
+                                 "statement": "s",
+                                 "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                                                  "start": "2024-01-01", "end": "2024-02-01"}],
+                                 "provenance": {"task_id": "ant_1",
+                                                "candidate_fingerprint": "fp"}},
+         "POST", "/api/research/hypotheses"),
+        ("transition_hypothesis", {"hypothesis_id": "hyp_1", "target_status": "refuted",
+                                   "evidence_ref": "rec_1"},
+         "POST", "/api/research/hypotheses/{param}/transition"),
+        ("run_isolated_validation", {"hypothesis_id": "hyp_1", "strategy_id": "st_1",
+                                     "symbol": "BTCUSDT", "timeframe": "4h",
+                                     "start": "2024-01-01", "end": "2024-02-01"},
+         "POST", "/api/research/validate-backtest"),
+        ("run_random_window_test", {"strategy_id": "st_1", "symbol": "BTCUSDT",
+                                    "timeframe": "4h", "data_start": "2024-01-01",
+                                    "data_end": "2024-03-01",
+                                    "hypothesis_id": "h1"},
+         "POST", "/api/research/random-window-test"),
+        ("run_staged_validation", {"strategy_id": "st_1", "symbol": "BTCUSDT",
+                                   "timeframe": "4h", "start": "2024-01-01",
+                                   "end": "2024-02-01",
+                                   "segments": [{"label": "a", "start": "2024-01-01",
+                                                 "end": "2024-02-01"}],
+                                   "hypothesis_id": "h1"},
+         "POST", "/api/research/staged-validation"),
+        ("run_backtest", {"strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01",
+                          "hypothesis_id": "h1"},
+         "POST", "/api/research/backtest-sandbox"),
+        ("register_formula_plugin", {"name": "n", "expression": "zscore(close, 20)"},
+         "POST", "/api/research/plugins/formula"),
+        ("register_model_plugin", {"name": "m", "features": ["close"],
+                                   "data_start": "2024-01-01", "data_end": "2024-02-01"},
+         "POST", "/api/research/plugins/model"),
+        ("translate_hypothesis_to_strategy", {"hypothesis_id": "hyp_1",
+                                              "strategy_symbol": "BTCUSDT",
+                                              "strategy_timeframe": "4h"},
+         "POST", "/api/research/translate/{param}"),
+        ("submit_feature_request", {"title": "t", "payload": {}},
+         "POST", "/api/research/feature-requests"),
+        ("trigger_evolution", {"config": {}}, "POST", "/api/evolution/tasks"),
+        ("poll_evolution_task", {"task_id": "evo_1"},
+         "POLL", "/api/evolution/tasks/{param}"),
+    ]
+
+    # 全工具均安全的可选键（缺省轮剔除走 false 侧；hypothesis_id/
+    # start/end/indicator/params 在部分工具必填，由专项用例覆盖）
+    SAFE_OPTIONAL_KEYS = frozenset({
+        "timeframes", "as_of", "status", "cursor", "reductions",
+        "provenance", "segments", "strategy_symbol", "strategy_timeframe",
+    })
+
+    def test_every_tool_invokes_expected_endpoint(self) -> None:
+        import re
+
+        mcp, api = build_server(profile="research", base_url="http://x")
+        calls: list = []
+        api.get = lambda path, params=None: (calls.append(("GET", path)) or {})
+        api.post = lambda path, json_body=None: (calls.append(("POST", path)) or {})
+        api.poll_until_terminal = lambda path, **kw: (
+            calls.append(("POLL", path)) or {"status": "completed"})
+
+        for tool, args, method, expected in self.CASES:
+            # 双轮：满参（true 侧）+ 缺省（false 侧）——可选携带分支双向走
+            for call_args in (args,
+                              {k: v for k, v in args.items()
+                               if k not in self.SAFE_OPTIONAL_KEYS}):
+                calls.clear()
+                out = run_async(mcp.call_tool(tool, call_args))
+                assert "error" not in out, f"{tool} 意外失败: {out}"
+                assert calls and calls[0][0] == method, \
+                    f"{tool} method 不符: {calls}"
+                got = calls[0][1]
+                exp_re = re.escape(expected).replace(
+                    re.escape("{param}"), r"[^/]+")
+                assert re.fullmatch(exp_re, got), \
+                    f"{tool} 端点 {got} 不符期望 {expected}"
+
+    def test_optional_only_args_omitted_paths(self) -> None:
+        """部分工具必填的可选键（hypothesis_id/start/end/indicator/
+        params）在其可选场合的缺省调用（false 侧专项）。"""
+        mcp, api = build_server(profile="research", base_url="http://x")
+        posts: list = []
+        api.post = lambda path, json_body=None: (posts.append(path) or {})
+        api.get = lambda path, params=None: {}
+
+        run_async(mcp.call_tool("run_backtest", {
+            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2024-02-01"}))
+        run_async(mcp.call_tool("run_analysis", {
+            "template": "condition_stats", "params": {},
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2024-02-01"}))
+        run_async(mcp.call_tool("run_random_window_test", {
+            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
+            "data_start": "2024-01-01", "data_end": "2024-03-01"}))
+        run_async(mcp.call_tool("run_staged_validation", {
+            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2024-02-01"}))
+        run_async(mcp.call_tool("inspect_cases", {
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "selector": {"condition": {"subject": "close", "action": "gt",
+                                       "target": 1}}}))
+        run_async(mcp.call_tool("query_indicator", {
+            "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI"}))
+        run_async(mcp.call_tool("get_research_log", {"page": 1}))
+        assert len(posts) == 6, "六个 POST 可选场合缺省调用均到达"
+
+
+class TestServerEntryGaps:
+    """闸门终验消解：server.py 装配校验/自检/main dispatch 的进程内触达。
+
+    main() 的真链路由 L3 承担（test_stdio_l3 真子进程 -m mcpserver.server
+    + env stdio；test_http_l3 真子进程 streamable-http——含
+    _check_api_reachable 真实执行）；此类补进程内分支语义与覆盖率。
+    """
+
+    def test_unknown_profile_rejected(self) -> None:
+        with pytest.raises(ValueError, match="未知档位"):
+            build_server(profile="bogus")
+
+    def test_check_api_reachable_ok_logs_info(self, monkeypatch, caplog) -> None:
+        import httpx
+
+        import mcpserver.server as srv
+
+        class _Resp:
+            status_code = 200
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: _Resp())
+        with caplog.at_level("INFO"):
+            srv._check_api_reachable()
+        assert any("自检通过" in r.message for r in caplog.records)
+
+    def test_check_api_reachable_down_logs_warning_not_raise(
+            self, monkeypatch, caplog) -> None:
+        import httpx
+
+        import mcpserver.server as srv
+
+        def _boom(*a, **kw):
+            raise httpx.ConnectError("refused")
+        monkeypatch.setattr(httpx, "get", _boom)
+        with caplog.at_level("WARNING"):
+            srv._check_api_reachable()  # 不可达：记 warning 后继续（不抛）
+        assert any("不可达" in r.message for r in caplog.records)
+
+    def test_check_api_reachable_non_200_logs_warning(
+            self, monkeypatch, caplog) -> None:
+        import httpx
+
+        import mcpserver.server as srv
+
+        class _Resp:
+            status_code = 503
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: _Resp())
+        with caplog.at_level("WARNING"):
+            srv._check_api_reachable()
+        assert any("自检异常" in r.message for r in caplog.records)
+
+    def test_unsupported_method_rejected(self) -> None:
+        """check_allowed 只收 GET/POST（闸门终验消解：else 分支）。"""
+        api = QuantApiClient(base_url="http://127.0.0.1:1", profile="research")
+        with pytest.raises(EndpointNotAllowed, match="不受支持"):
+            api.check_allowed("DELETE", "/api/research/hypotheses")
+
+    def test_poll_passes_get_params(self, monkeypatch) -> None:
+        """poll_until_terminal 的 get_params 透传（闸门终验消解）。"""
+        captured: dict = {}
+
+        def _fake_get(path, params=None):
+            captured["params"] = params
+            return {"status": "completed"}
+        api = QuantApiClient(base_url="http://x", profile="research")
+        api.get = _fake_get
+        out = api.poll_until_terminal(
+            "/api/research/analysis/tasks/ant_1", get_params={"x": 1},
+            initial_delay=0.01, total_timeout=1.0)
+        assert captured["params"] == {"x": 1}
+        assert out["status"] == "completed"
+
+    def test_poll_falsy_get_falls_back_empty(self, monkeypatch) -> None:
+        """poll 的 `self.get(...) or {}` 兜底：GET 返回 falsy 不炸（终验消解）。"""
+        api = QuantApiClient(base_url="http://x", profile="research")
+        api.get = lambda path, params=None: None
+        out = api.poll_until_terminal(
+            "/api/research/analysis/tasks/ant_1",
+            initial_delay=0.01, total_timeout=0.05)
+        assert out["_poll_timeout"] is True  # None 状态不炸，超时正常标注
+
+    def test_post_204_returns_none(self, monkeypatch) -> None:
+        """post 的 204/空 body → None 分支（终验消解）。"""
+        api = QuantApiClient(base_url="http://x", profile="research")
+
+        class _Resp:
+            status_code = 204
+            content = b""
+        monkeypatch.setattr(
+            api, "_request", lambda *a, **kw: _Resp())
+        assert api.post("/api/evolution/tasks", {"x": 1}) is None
+
+    def test_request_explicit_timeout_branch(self, monkeypatch) -> None:
+        """_request 显式 timeout 直达（终验消解：timeout 非 None 分支——
+        当前 get/post 薄壳均不传，预留参数分支白盒直调）。"""
+        import httpx
+
+        class _Resp:
+            status_code = 200
+            is_error = False
+
+            def json(self):
+                return {"ok": 1}
+
+        class _Ctx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, url, params=None):
+                return _Resp()
+
+        captured: dict = {}
+        orig_client = httpx.Client
+
+        def _spy_client(**kw):
+            captured.update(kw)
+            return _Ctx()
+        monkeypatch.setattr(httpx, "Client", _spy_client)
+        try:
+            api = QuantApiClient(base_url="http://x", profile="research")
+            api._request("GET", "/api/research/hypotheses", timeout=5.0)
+        finally:
+            monkeypatch.setattr(httpx, "Client", orig_client)
+        assert captured["timeout"] == 5.0, "显式 timeout 不被缺省取档改写"
+
+    @pytest.mark.parametrize("transport", ["stdio", "streamable-http"])
+    def test_main_dispatches_transport(self, monkeypatch, transport) -> None:
+        """main() 按 MYQUANT_MCP_TRANSPORT 分派 mcp.run（进程内 stub——
+        真链路 L3 已证；此处钉 dispatch 语义与端口显式传）。"""
+        import mcpserver.server as srv
+
+        runs: list = []
+        monkeypatch.setenv("MYQUANT_MCP_TRANSPORT", transport)
+        monkeypatch.setenv("MYQUANT_MCP_PORT", "8899")
+
+        class _FakeMcp:
+            def run(self, *a, **kw):
+                runs.append(dict(kw, _args=a))
+        monkeypatch.setattr(srv, "build_server",
+                            lambda profile=None, base_url=None: (_FakeMcp(), None))
+        monkeypatch.setattr(srv, "_check_api_reachable", lambda: None)
+
+        srv.main()
+        assert runs and runs[0]["transport"] == transport
+        if transport == "streamable-http":
+            assert runs[0]["host"] == "127.0.0.1" and runs[0]["port"] == 8899, \
+                "端口必须显式传（SDK 默认 8000 与 API 冲突）"
+        else:
+            assert runs[0]["_args"] == (), "stdio 形态无额外位置参数"
+
+    def test_main_unknown_transport_rejected(self, monkeypatch) -> None:
+        import mcpserver.server as srv
+
+        monkeypatch.setenv("MYQUANT_MCP_TRANSPORT", "grpc")
+        monkeypatch.setattr(srv, "build_server",
+                            lambda profile=None, base_url=None: (object(), None))
+        with pytest.raises(ValueError, match="未知 transport"):
+            srv.main()
+
+
 class TestWhitelist:
     def test_readonly_cannot_post(self) -> None:
         api = QuantApiClient(base_url="http://127.0.0.1:1", profile="readonly")
