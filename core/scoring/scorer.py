@@ -269,7 +269,7 @@ def score_strategy(
     # Build requirements — lenient defaults for backward compatibility
     req = RequirementsConfig(
         objective=objective,
-        min_annual_return=max(0.0, hc_return) if hc_return and hc_return > 0 else 0.0,
+        min_annual_return=hc_return if hc_return > 0 else 0.0,
         max_drawdown=hc_drawdown,
         min_win_rate=0.0,
         min_total_trades=0,
