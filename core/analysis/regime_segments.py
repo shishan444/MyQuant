@@ -80,6 +80,18 @@ def classify_series(
     return state
 
 
+def _merge_into_neighbor(
+    segs: List[Dict[str, Any]], i: int, tgt: int,
+) -> None:
+    """相邻段合并原语：i 段并入 tgt 段（区间取并、类型承 tgt、bar 数
+    累加，被并一侧移除）——短段吸收与段数上限合并共用同构实现。"""
+    lo, hi = min(i, tgt), max(i, tgt)
+    segs[lo] = {"start": segs[lo]["start"], "end": segs[hi]["end"],
+                "type": segs[tgt]["type"], "bars": sum(
+                    x["bars"] for x in segs[lo:hi + 1])}
+    del segs[lo + 1:hi + 1]
+
+
 def _absorb_short(segs: List[Dict[str, Any]], min_bars: int) -> List[Dict[str, Any]]:
     """短段吸收：短于 min_bars 的段迭代并入相邻较长段（保边界清晰）。"""
     segs = [dict(s) for s in segs]
@@ -96,11 +108,7 @@ def _absorb_short(segs: List[Dict[str, Any]], min_bars: int) -> List[Dict[str, A
                 tgt = i - 1
             else:
                 tgt = i - 1 if segs[i - 1]["bars"] >= segs[i + 1]["bars"] else i + 1
-            lo, hi = min(i, tgt), max(i, tgt)
-            segs[lo] = {"start": segs[lo]["start"], "end": segs[hi]["end"],
-                        "type": segs[tgt]["type"], "bars": sum(
-                            x["bars"] for x in segs[lo:hi + 1])}
-            del segs[lo + 1:hi + 1]
+            _merge_into_neighbor(segs, i, tgt)
             changed = True
             break
     return segs
@@ -145,11 +153,7 @@ def build_segments(
         else:
             tgt = (smallest - 1 if segs[smallest - 1]["bars"] >= segs[smallest + 1]["bars"]
                    else smallest + 1)
-        lo, hi = min(smallest, tgt), max(smallest, tgt)
-        segs[lo] = {"start": segs[lo]["start"], "end": segs[hi]["end"],
-                    "type": segs[tgt]["type"], "bars": sum(
-                        x["bars"] for x in segs[lo:hi + 1])}
-        del segs[lo + 1:hi + 1]
+        _merge_into_neighbor(segs, smallest, tgt)
 
     # 合并可能产生相邻同类型段（吸收后类型一致）——收尾再合并一次
     merged: List[Dict[str, Any]] = []
