@@ -38,17 +38,17 @@ def safe_symbol(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", symbol)
 
 
-def find_parquet(data_dir: Path, safe_symbol: str, timeframe: str) -> Optional[Path]:
+def find_parquet(data_dir: Path, symbol_: str, timeframe: str) -> Optional[Path]:
     """Find parquet file for symbol+timeframe, trying known aliases."""
     # 读取路径周期须已知（TF_SECONDS 键集窄口径；与 csv_importer 导入侧
     # 宽口径 [0-9]+[mhdw] 的差异见 core/data/validation.py 契约注释）
     validate_known_interval(timeframe)
-    primary = data_dir / f"{safe_symbol}_{timeframe}.parquet"
+    primary = data_dir / f"{symbol_}_{timeframe}.parquet"
     if primary.exists():
         return primary
 
     for alias in _TF_ALIASES.get(timeframe, [timeframe]):
-        alt = data_dir / f"{safe_symbol}_{alias}.parquet"
+        alt = data_dir / f"{symbol_}_{alias}.parquet"
         if alt.exists():
             return alt
     return None
@@ -74,8 +74,8 @@ def load_and_prepare_df(
     """
     from core.data.storage import load_parquet
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    parquet_path = find_parquet(data_dir, safe_symbol, timeframe)
+    symbol_ = safe_symbol(symbol)
+    parquet_path = find_parquet(data_dir, symbol_, timeframe)
     if parquet_path is None:
         return None
 
@@ -90,7 +90,7 @@ def load_and_prepare_df(
     if len(df) < min_bars:
         return None
 
-    df = _try_merge_derivatives(data_dir, safe_symbol, timeframe, df)
+    df = _try_merge_derivatives(data_dir, symbol_, timeframe, df)
     if compute_indicators:
         from core.features.indicators import compute_all_indicators
         return compute_all_indicators(df, stop_check=stop_check)
@@ -119,13 +119,13 @@ def load_mtf_data(
     if compute_indicators:
         from core.features.indicators import compute_all_indicators
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
+    symbol_ = safe_symbol(symbol)
     dfs_by_timeframe: Dict[str, pd.DataFrame] = {exec_timeframe: enhanced_df}
 
     for tf in needed_tfs:
         if tf == exec_timeframe:
             continue
-        path = find_parquet(data_dir, safe_symbol, tf)
+        path = find_parquet(data_dir, symbol_, tf)
         if path is None:
             continue
         try:
@@ -138,7 +138,7 @@ def load_mtf_data(
                 tf_df = tf_df[tf_df.index <= data_end]
             if len(tf_df) < min_bars:
                 continue
-            tf_df = _try_merge_derivatives(data_dir, safe_symbol, tf, tf_df)
+            tf_df = _try_merge_derivatives(data_dir, symbol_, tf, tf_df)
             dfs_by_timeframe[tf] = (
                 compute_all_indicators(tf_df, stop_check=stop_check)
                 if compute_indicators else tf_df
