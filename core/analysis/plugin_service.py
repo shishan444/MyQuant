@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.analysis.column_ref import BASE_SUBJECT_COLUMNS, _looks_like_encoded
 from core.analysis.hypothesis_service import (
     ResearchError,
     allowed_subject_columns,
@@ -58,6 +59,43 @@ def _next_version(db_path: Path, table: str, name: str) -> int:
 
 # ---------------------------------------------------------------- 公式
 
+def _assert_output_column_free(
+    db_path: Path, out_col: str, column_name: str,
+) -> None:
+    """公式插件输出列保留字校验（安全关）：撞名即 422 拒绝注册。
+
+    危害链：插件求值把输出列直写 DataFrame（enrich_with_plugin_columns
+    的 work[col]，写的是注册表列名 column_name）——撞基础列（OHLCV +
+    open_interest/funding_rate 衍生合并列，即 BASE_SUBJECT_COLUMNS
+    全集）覆盖价格数据；撞既有插件列产生同名列冲突；编码形（如
+    rsi_14）冒充指标编码列混淆字符串引用判定。
+
+    分面（版本化语义不误杀）：out_col 裸名拦基础列/编码形（语义关，
+    全版本——显式指定 close/rsi_14 形一律拒）；既有插件列只拦真正
+    写 df 的 column_name——version>1 时注册列名带 _v{N} 后缀，裸名
+    与 v1 同名是同名升版的正常形态。注册表取全量（与
+    _formula_registry_entries 求值闭包同面，非仅 visible——隐藏列
+    撞名同样污染叠层解析）。
+    """
+    taken = {e["column_name"] for e in rr.list_signal_registry_entries(db_path)}
+    checks = [(out_col, False), (column_name, True)]
+    for col, include_taken in checks:
+        if col in BASE_SUBJECT_COLUMNS:
+            conflict = "基础数据列"
+        elif include_taken and col in taken:
+            conflict = "既有插件列"
+        elif _looks_like_encoded(col):
+            conflict = "参数化指标编码形列名"
+        else:
+            continue
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"output_column 不可用: {col}（与{conflict}冲突——插件求值"
+            "直写同名 DataFrame 列，将覆盖既有数据）",
+            detail={"output_column": col, "conflict": conflict,
+                    "hint": "改用其他列名；缺省 fx_ 前缀天然避开保留字"})
+
+
 def register_formula_plugin(
     db_path: Path,
     *,
@@ -95,9 +133,11 @@ def register_formula_plugin(
                     "version": row["version"], "column": row["output_columns"],
                     "duplicated": True}
 
-    # 版本递增 + 原子注册
+    # 版本递增 + 原子注册（输出列保留字校验先行——撞名 422 拒绝）
     out_col = output_column or f"fx_{name}"
     version = _next_version(db_path, "formula", name)
+    column_name = out_col if version == 1 else f"{out_col}_v{version}"
+    _assert_output_column_free(db_path, out_col, column_name)
     plugin_id = f"fpl_{hashlib.sha256(f'{name}{version}'.encode()).hexdigest()[:10]}"
     import uuid
     entry_id = f"ent_{uuid.uuid4().hex[:12]}"
@@ -105,10 +145,10 @@ def register_formula_plugin(
         db_path, source="formula", plugin_id=plugin_id, name=name,
         version=version, expression=expression,
         output_columns=json.dumps([out_col]),
-        entry_id=entry_id, column_name=out_col if version == 1 else f"{out_col}_v{version}",
+        entry_id=entry_id, column_name=column_name,
     )
     return {"plugin_id": plugin_id, "name": name, "version": version,
-            "column": out_col if version == 1 else f"{out_col}_v{version}",
+            "column": column_name,
             "duplicated": False}
 
 
