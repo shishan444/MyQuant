@@ -40,6 +40,16 @@ def _safe_std(arr: "np.ndarray") -> "float | None":
     return float(np.std(arr, ddof=1))
 
 
+def _annualize(total_return: float, years: float) -> float:
+    """区间收益年化（模块内共用）：annual_return 与 market_annual_return
+    两处同公式的单一权威。
+
+    years>0 判空与 max 下限 0.01 是有意的双防御行为锚点——极短样本
+    （years→0）防指数爆开，原样保留不合并。
+    """
+    return (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+
+
 def compute_metrics(
     equity_curve: pd.Series,
     total_trades: int = 0,
@@ -95,7 +105,7 @@ def compute_metrics(
     total_return = (equity_curve.iloc[-1] / equity_curve.iloc[0]) - 1
     n_bars = len(equity_curve)
     years = n_bars / bars_per_year
-    annual_return = (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+    annual_return = _annualize(total_return, years)
 
     # Max drawdown (from equity curve - standard)
     cummax = equity_curve.cummax()
@@ -205,8 +215,7 @@ def compute_metrics(
     if benchmark_close is not None and len(benchmark_close) >= 2:
         benchmark_return = float(
             benchmark_close.iloc[-1] / benchmark_close.iloc[0] - 1)
-        bm_total_return = (benchmark_close.iloc[-1] / benchmark_close.iloc[0]) - 1
-        market_annual_return = (1 + bm_total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+        market_annual_return = _annualize(benchmark_return, years)
         alpha = annual_return - market_annual_return
         # 区间口径超额（improve-backtest-benchmark-disclosure Decision 1）：
         # total_return - benchmark_return，短样本不做年化外推；与年化口径
