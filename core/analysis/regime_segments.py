@@ -56,16 +56,11 @@ def rolling_percentile(
     return series.rolling(window, min_periods=2).rank(pct=True)
 
 
-def classify_series(
+def _state_and_volp(
     df: pd.DataFrame, adx_col: str, atr_col: str,
-) -> pd.Series:
-    """逐 bar 判读状态序列（「高波动」覆盖态优先于方向三态）。
-
-    Args:
-        df: 含 ADX/ATR 指标列与 close 的 DataFrame（warmup 前缀由调用
-            方以统计段切分后传入，或本层全序列判读由模板负责切回）。
-        adx_col / atr_col: 指标列名。
-    """
+) -> tuple:
+    """判读三件套：状态序列 + atr_pct + 波动分位（classify_series 与
+    build_segments 共用底座——段描述字段需要后两者，提取消除双算）。"""
     atr_pct = df[atr_col] / df["close"] * 100.0
     vol_p = rolling_percentile(atr_pct)
     adx = df[adx_col]
@@ -77,7 +72,20 @@ def classify_series(
     state[(vol_p >= GATES["vol_pct"]).fillna(False)] = "高波动"
     # 指标未就绪段（warmup NaN）判读为过渡——与 ADX None 语义一致
     state[adx.isna()] = "过渡"
-    return state
+    return state, atr_pct, vol_p
+
+
+def classify_series(
+    df: pd.DataFrame, adx_col: str, atr_col: str,
+) -> pd.Series:
+    """逐 bar 判读状态序列（「高波动」覆盖态优先于方向三态）。
+
+    Args:
+        df: 含 ADX/ATR 指标列与 close 的 DataFrame（warmup 前缀由调用
+            方以统计段切分后传入，或本层全序列判读由模板负责切回）。
+        adx_col / atr_col: 指标列名。
+    """
+    return _state_and_volp(df, adx_col, atr_col)[0]
 
 
 def _merge_into_neighbor(
@@ -123,9 +131,7 @@ def build_segments(
     并入（合并不截断）→ 段描述字段（bars / adx_mean / atr_pct_mean /
     atr_pct_pct_mean）。
     """
-    state = classify_series(df, adx_col, atr_col)
-    atr_pct = df[atr_col] / df["close"] * 100.0
-    vol_p = rolling_percentile(atr_pct)
+    state, atr_pct, vol_p = _state_and_volp(df, adx_col, atr_col)
 
     # 位置驱动切段（无索引均匀性假设；bar 计数=位置差）
     idx = state.index.to_numpy()
