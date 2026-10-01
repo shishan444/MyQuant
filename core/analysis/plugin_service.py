@@ -22,6 +22,7 @@ from core.analysis.hypothesis_service import (
     ResearchError,
     allowed_subject_columns,
 )
+from core.features.registry import INDICATOR_REGISTRY
 from core.persistence.repository import research as rr
 
 # 模型训练任务超时上限（测试缝：测试经 monkeypatch 注入短超时验证链路；
@@ -75,6 +76,19 @@ def _assert_column_not_taken(db_path: Path, column_name: str) -> None:
                     "hint": "改用其他名称注册"})
 
 
+def _no_param_indicator_columns() -> frozenset:
+    """无参指标输出列全集（INDICATOR_REGISTRY 动态派生，不硬编码）。
+
+    危害面：插件 output_column 冒充无参指标现算列——指标计算幂等
+    （col 不在 df 才算），插件值先写即顶替指标值。有参指标列名带
+    参数段（如 macd_histogram_12_26_9）已被编码形分面覆盖；无参列
+    （obv/vwap/pattern_* 族）列名无参数段，需显式集合拦截。
+    """
+    return frozenset(
+        f for defn in INDICATOR_REGISTRY.values() if not defn.params
+        for f in defn.output_fields)
+
+
 def _assert_output_column_free(
     db_path: Path, out_col: str, column_name: str,
 ) -> None:
@@ -83,17 +97,22 @@ def _assert_output_column_free(
     危害链：插件求值把输出列直写 DataFrame（enrich_with_plugin_columns
     的 work[col]，写的是注册表列名 column_name）——撞基础列（OHLCV +
     open_interest/funding_rate 衍生合并列，即 BASE_SUBJECT_COLUMNS
-    全集）覆盖价格数据；撞既有插件列产生同名列冲突；编码形（如
-    rsi_14）冒充指标编码列混淆字符串引用判定。
+    全集）覆盖价格数据；撞既有插件列产生同名列冲突；撞无参指标输出列
+    顶替指标现算值（计算幂等跳过）；编码形（如 rsi_14）冒充指标编码
+    列混淆字符串引用判定。
 
-    分面（版本化语义不误杀）：out_col 裸名拦基础列/编码形（语义关，
-    全版本——显式指定 close/rsi_14 形一律拒）；既有插件列只拦真正
-    写 df 的 column_name（委托 _assert_column_not_taken）——version>1
-    时注册列名带 _v{N} 后缀，裸名与 v1 同名是同名升版的正常形态。
+    分面（版本化语义不误杀）：out_col 裸名拦基础列/无参指标列/编码形
+    （语义关，全版本——显式指定 close/obv/rsi_14 形一律拒）；既有
+    插件列只拦真正写 df 的 column_name（委托 _assert_column_not_taken）
+    ——version>1 时注册列名带 _v{N} 后缀，裸名与 v1 同名是同名升版
+    的正常形态。
     """
+    fixed_cols = _no_param_indicator_columns()
     for col in (out_col, column_name):
         if col in BASE_SUBJECT_COLUMNS:
             conflict = "基础数据列"
+        elif col in fixed_cols:
+            conflict = "无参指标输出列"
         elif _looks_like_encoded(col):
             conflict = "参数化指标编码形列名"
         else:
