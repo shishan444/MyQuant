@@ -69,6 +69,24 @@ class TestImportEndpointValidation:
         )
         assert resp.status_code == 200
         assert resp.json()["dataset_id"] == "BTCUSDT_4h"
+        assert resp.json()["timestamp_precision"] == "ms"  # BINANCE 探测面
+
+    def test_generic_import_precision_null(self, api_client: TestClient) -> None:
+        """GENERIC 导入响应 precision 为 null（CARD-13：不可探测不入伪值）。"""
+        generic_csv = (
+            "timestamp,open,high,low,close,volume\n"
+            "2024-01-01 00:00:00,42000.0,42580.0,41850.0,42310.0,312.5\n"
+            "2024-01-01 04:00:00,42310.0,43120.0,42100.0,42850.0,289.3\n"
+        ).encode()
+        resp = api_client.post(
+            "/api/data/import",
+            files={"file": ("GEN-4h.csv", generic_csv, "text/csv")},
+            data={"mode": "replace", "symbol": "GEN", "interval": "4h"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["timestamp_precision"] is None
+        assert body["format_detected"] == "generic_ohlcv"
 
 
 class TestImportBatchEndpointValidation:

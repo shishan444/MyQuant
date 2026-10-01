@@ -233,8 +233,50 @@ class TestGetFirstTimestampRawFallbacks:
 
     def test_generic_assumes_epoch_2025(self, tmp_path) -> None:
         p = _write(tmp_path, "x.csv", "date,open\n2024-01-01,1.0\n")
-        # GENERIC 路径不解析表头，固定返回 2025-01-01 毫秒值
+        # GENERIC 路径不解析表头，固定返回 2025-01-01 毫秒值。
+        # 注意（CARD-13 后）：_read_csv_with_meta 的 GENERIC 分支已不再
+        # 调用本函数（precision 直接 None），此锚钉函数自身的保留行为
         assert _get_first_timestamp_raw(p, ImportFormat.GENERIC_OHLCV) == 1735689600000
+
+
+class TestGenericPrecisionNone:
+    """GENERIC 导入 precision=None 语义（CARD-13：不可探测不再伪报毫秒）。
+
+    GENERIC 经 pd.to_datetime 解析，无整数位可探测 ms/us——修复前
+    经 _get_first_timestamp_raw 伪值恒报 ms；batch 尾部 or 兜底还会
+    把 None 塞回伪 ms。
+    """
+
+    GENERIC_CSV = (
+        "timestamp,open,high,low,close,volume\n"
+        "2024-01-01 00:00:00,42000.0,42580.0,41850.0,42310.0,312.5\n"
+        "2024-01-01 04:00:00,42310.0,43120.0,42100.0,42850.0,289.3\n"
+    )
+
+    def test_import_csv_generic_precision_none(self, tmp_path, tmp_data_dir) -> None:
+        csv = _write(tmp_path, "GEN-4h.csv", self.GENERIC_CSV)
+        result = import_csv(csv, tmp_data_dir, symbol="GEN", interval="4h")
+        assert result.format_detected is ImportFormat.GENERIC_OHLCV
+        assert result.timestamp_precision is None
+
+    def test_import_csv_batch_generic_precision_none(
+        self, tmp_path, tmp_data_dir
+    ) -> None:
+        csv = _write(tmp_path, "GEN-4h.csv", self.GENERIC_CSV)
+        result = import_csv_batch([csv], tmp_data_dir, symbol="GEN", interval="4h")
+        assert result.timestamp_precision is None  # or 兜底已删，None 透传
+
+    def test_import_csv_binance_us_precision_microsecond(
+        self, tmp_path, tmp_data_dir
+    ) -> None:
+        """BINANCE us 结果面（ms 面既有 test_result_fields 已锚）。"""
+        csv = _write(
+            tmp_path,
+            "BTCUSDT-4h-2025-01.csv",
+            "1735689600010866,42000.0,42580.0,41850.0,42310.0,312.5,1735693200108666,13120000,450,250.0,10550000,0\n",
+        )
+        result = import_csv(csv, tmp_data_dir)
+        assert result.timestamp_precision is TimestampPrecision.MICROSECOND
 
 
 class TestBomFileRejectedAtPrecisionProbe:
