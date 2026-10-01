@@ -117,7 +117,8 @@ def condition_stats(
     # 0.2.13：求值走 condition_kernel._mask_for（两段式内聚——结构化
     # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
     # 0.2.14：mtf 上下文透传——高周期条件（timeframe 键）走掩码投影
-    from core.analysis.condition_kernel import MtfEvalContext, _mask_for, stat_window_mask
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, _mask_for, _p_value_for, stat_window_mask)
     mask = _mask_for(work, condition, mtf=mtf)
 
     # 统计段：request_start 之前的 warmup 前缀只用不算（共享掩码
@@ -139,28 +140,19 @@ def condition_stats(
     bas_fwd = fwd[in_stat].dropna()
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None
 
-    # 去重叠（仅用于 p 值样本）：统计段命中位置按时间序贪心，
-    # 前一入选信号后间隔 >= forward_bars 才入选下一个
-    locs = np.where(stat_mask.values)[0]
-    picked: list[int] = []
-    for loc in locs:
-        if not picked or loc - picked[-1] >= forward_bars:
-            picked.append(loc)
-    subset = fwd.iloc[picked].dropna() if picked else fwd.iloc[0:0]
-
+    # 去重叠 t 检验（0.2.1 同口径——第四消费方收敛至 condition_kernel
+    # _p_value_for 共享实现，消除双实现漂移面；返回 (p, n_overlapped)，
+    # baseline None / 样本<2 / 零方差时 p 为 None）
+    p_value, n_overlapped = _p_value_for(
+        fwd, stat_mask.values, forward_bars, baseline_mean)
     forward_significance: Dict[str, Any] = {
         "method": "t_test_vs_baseline",
-        "p_value": None,
+        "p_value": p_value,
         "for": "forward_return_mean_vs_baseline",
-        "n_overlapped": int(len(subset)),
+        "n_overlapped": int(n_overlapped),
         "n_total_signals": int(len(valid)),
         "baseline_mean": baseline_mean,
     }
-    if (baseline_mean is not None and len(subset) >= 2
-            and float(np.std(subset.to_numpy(), ddof=1)) > 0):
-        from scipy import stats  # 形制同 event_study：函数内按需导入
-        _, p_value = stats.ttest_1samp(subset.to_numpy(), baseline_mean)
-        forward_significance["p_value"] = float(p_value)
 
     rate_interval = _wilson_interval(n_hit, n_total)
     confidence = {
