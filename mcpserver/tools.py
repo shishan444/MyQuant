@@ -27,6 +27,9 @@ TOOL_TIERS: Dict[str, set] = {"readonly": set(), "research": set()}
 # 分页上限（M2：默认 20、上限 50——工具层统一 clamp）
 _PAGE_MAX = 50
 
+# 轮询总时长钳制域 [1, 3600]s（防误传 0/负值立即超时、超长值挂死会话）
+_TOTAL_TIMEOUT_MAX = 3600.0
+
 # 列表折叠保留字段（M2/D8：条目 DNA 折叠为 gene_signature 摘要，
 # 全量 DNA 经 get_strategy 获取；默认响应体积受控）
 _STRATEGY_LIST_FIELDS = ("strategy_id", "name", "symbol", "timeframe", "source",
@@ -520,7 +523,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def poll_evolution_task(task_id: str, total_timeout: float = 600.0) -> Dict[str, Any]:
-        """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态）。"""
+        """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态；
+        total_timeout 钳制 [1,3600]s）。"""
+        total_timeout = max(1.0, min(total_timeout, _TOTAL_TIMEOUT_MAX))
         return api.poll_until_terminal(
             f"/api/evolution/tasks/{quote(task_id, safe='')}",
             terminal=("completed", "failed", "stopped", "cancelled"),

@@ -1,11 +1,12 @@
 """Pydantic V2 request/response models for the API layer."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Enums ──
@@ -971,8 +972,18 @@ class QueryIndicatorRequest(BaseModel):
 
 
 class FeatureRequestCreate(BaseModel):
-    title: str
-    payload: Dict[str, Any] = {}
+    """慢通道需求单：title 上限 200 字符；payload 序列化上限 64KB
+    （慢通道只保证持久化与可查——超大结构直入 DB 前置拒绝）。"""
+
+    title: str = Field(max_length=200)
+    payload: Dict[str, Any] = Field(default={})
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_size_cap(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > 64 * 1024:
+            raise ValueError("payload 序列化超 64KB 上限")
+        return v
 
 
 class FeatureRequestResponse(BaseModel):
