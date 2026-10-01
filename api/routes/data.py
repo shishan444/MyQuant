@@ -176,6 +176,9 @@ def import_csv_endpoint(
             files_processed=result.files_processed,
             time_range=list(result.time_range) if result.time_range else None,
         )
+    except ValueError as exc:
+        # 非法参数（命名白名单/元数据不可探测/OHLCV 校验失败）→ 400
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         # Clean up temp file
         tmp_path.unlink(missing_ok=True)
@@ -265,6 +268,9 @@ def import_csv_batch_endpoint(
             files_processed=result.files_processed,
             time_range=list(result.time_range) if result.time_range else None,
         )
+    except ValueError as exc:
+        # 非法参数（命名白名单/元数据不可探测/OHLCV 校验失败）→ 400
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         for p in tmp_paths:
             p.unlink(missing_ok=True)

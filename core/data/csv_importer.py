@@ -20,6 +20,12 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from core.data.validation import (
+    ensure_path_within,
+    validate_import_interval,
+    validate_symbol,
+)
+
 
 # ── Enums ─────────────────────────────────────────────────────
 
@@ -279,6 +285,10 @@ def import_csv(
     if not symbol or not interval:
         raise ValueError(f"Cannot determine symbol/interval for {path}. Please specify explicitly.")
 
+    # 命名白名单拒绝式校验（dataset_id 直拼写入路径，防路径穿越）
+    validate_symbol(symbol)
+    validate_import_interval(interval)
+
     # Read and validate
     df = read_csv(path)
     errors = validate_ohlcv(df)
@@ -287,6 +297,8 @@ def import_csv(
 
     dataset_id = f"{symbol}_{interval}"
     parquet_path = data_dir / f"{dataset_id}.parquet"
+    # 纵深防御：写入路径不得越出 data_dir
+    ensure_path_within(parquet_path, data_dir)
 
     # Determine format/precision for result
     fmt = detect_format(path)
@@ -362,6 +374,10 @@ def import_csv_batch(
     if not detected_symbol or not detected_interval:
         raise ValueError("Cannot determine symbol/interval from files")
 
+    # 命名白名单拒绝式校验（dataset_id 直拼写入路径，防路径穿越）
+    validate_symbol(detected_symbol)
+    validate_import_interval(detected_interval)
+
     # Concatenate all
     merged = pd.concat(all_dfs)
     merged = merged[~merged.index.duplicated(keep="first")]
@@ -369,6 +385,8 @@ def import_csv_batch(
 
     dataset_id = f"{detected_symbol}_{detected_interval}"
     parquet_path = data_dir / f"{dataset_id}.parquet"
+    # 纵深防御：写入路径不得越出 data_dir
+    ensure_path_within(parquet_path, data_dir)
 
     from core.data.storage import save_parquet, merge_parquet
 
