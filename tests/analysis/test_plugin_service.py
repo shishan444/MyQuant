@@ -303,3 +303,61 @@ class TestModelColumnReserved:
         assert out1["signal_column"] == "model_y"
         assert out2["signal_column"] == "model_y_v2"
         assert out1["status"] == out2["status"] == "pending"
+
+
+class TestNoParamIndicatorColumnReserved:
+    """CARD-24：output_column 撞无参指标输出列 422（第四分面）。
+
+    危害链：指标计算幂等（col 不在 df 才算），插件值先写即顶替指标
+    现算值。派生面 = INDICATOR_REGISTRY 中 params 为空指标的全部
+    output_fields（动态派生不硬编码）；有参指标真列名带参数段
+    （macd_histogram_12_26_9 形），由编码形分面覆盖。
+    """
+
+    def test_派生集与注册表独立推导一致(self) -> None:
+        """单一事实源锚：派生集 == 无参指标 output_fields 拍平。"""
+        from core.analysis.plugin_service import _no_param_indicator_columns
+        from core.features.registry import INDICATOR_REGISTRY
+        expected = frozenset(
+            f for d in INDICATOR_REGISTRY.values() if not d.params
+            for f in d.output_fields)
+        assert _no_param_indicator_columns() == expected
+        # 代表成员在场（防派生意外缩空）
+        for must in ("obv", "vwap", "ad", "cvd", "pattern_morning_star"):
+            assert must in _no_param_indicator_columns()
+
+    @pytest.mark.parametrize("reserved", [
+        "obv", "vwap", "ad", "cvd",
+        "pattern_morning_star", "pattern_3blackcrows",
+    ], ids=lambda v: v)
+    def test_撞无参指标列_拒绝(self, db: Path, reserved: str) -> None:
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(db, name="np_hit", expression=EXPR,
+                                    output_column=reserved)
+        assert ei.value.code == "RESEARCH_FORMULA_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["conflict"] == "无参指标输出列"
+        assert ei.value.detail["output_column"] == reserved
+        assert rr.list_signal_registry_entries(db) == []
+
+    def test_升版显式无参指标列_仍拒(self, db: Path) -> None:
+        """第四分面在 out_col 检查位——语义关全版本。"""
+        register_formula_plugin(db, name="alpha", expression=EXPR)
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(db, name="alpha",
+                                    expression="zscore(close, 40)",
+                                    output_column="obv")
+        assert ei.value.detail["conflict"] == "无参指标输出列"
+
+    def test_fx前缀无参指标名_放行(self, db: Path) -> None:
+        """fx_obv 形似无参指标列但缺省前缀天然避开（不误杀）。"""
+        out = register_formula_plugin(db, name="obv", expression=EXPR)
+        assert out["column"] == "fx_obv"
+
+    def test_有参指标真列名_编码形分面仍拦(self, db: Path) -> None:
+        """有参指标实际列名带参数段——由编码形分面覆盖（分面互补、
+        不重复拦截的边界锚）。"""
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(db, name="enc_hit", expression=EXPR,
+                                    output_column="macd_histogram_12_26_9")
+        assert ei.value.detail["conflict"] == "参数化指标编码形列名"
