@@ -98,6 +98,35 @@ class TestMakeTarget:
         assert out.iloc[0] == -1.0
 
 
+class TestDataInsufficiencyMessage:
+    """数据量门槛动态化（CARD-12）：文案与判断条件同源 min_train+step+5。
+
+    修复前文案硬编码 225——非默认 step 时误报（step=50 实需 255）。
+    """
+
+    def test_default_step_message_225(self) -> None:
+        df = make_df(220)  # < 200+20+5
+        df["f1"] = 1.0
+        cfg = ModelPluginConfig(name="m", features=["f1"])
+        with pytest.raises(ModelPipelineError, match=r"需 >= 225"):
+            fit_predict_walk_forward(df, cfg)
+
+    def test_custom_step_message_reflects_step(self) -> None:
+        df = make_df(230)  # < 200+50+5=255（默认门槛下反而够）
+        df["f1"] = 1.0
+        cfg = ModelPluginConfig(name="m", features=["f1"], params={"step": 50})
+        with pytest.raises(ModelPipelineError, match=r"需 >= 255"):
+            fit_predict_walk_forward(df, cfg)
+
+    def test_custom_step_threshold_boundary(self) -> None:
+        """n=255（恰过 step=50 门槛）不再报数据不足——落入后续校验。"""
+        df = make_df(255)
+        df["f1"] = np.nan  # 走到"无样本外"而非数据不足
+        cfg = ModelPluginConfig(name="m", features=["f1"], params={"step": 50})
+        with pytest.raises(ModelPipelineError, match="无样本外评估样本"):
+            fit_predict_walk_forward(df, cfg)
+
+
 class TestWalkForwardEdges:
     """walk-forward 边界：未知目标类型 / inf 训练失败 / NaN 特征两条路径。"""
 
