@@ -278,3 +278,99 @@ class TestColumnRejection:
                             data_ranges=[])
         assert ei.value.code == "RESEARCH_INDICATOR_UNKNOWN"
         assert "RSI" in ei.value.detail["available_indicators"]
+
+
+class TestThresholdProfileWhitelist:
+    """CARD-03（S-3 方向 B）：threshold_profile 按名白名单解析。
+
+    全量 rules dict 透传等于调用方操纵判定门槛——只认
+    {"name": "default"|"tightened"} 与 None；未知名/全量形制/混合
+    注入/裸字符串一律 422。解析先于终态/幂等（结构校验前置）。
+    """
+
+    def test_解析_None透传(self) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        assert _resolve_threshold_profile(None) is None
+
+    def test_解析_default_返回缺省档(self) -> None:
+        from core.analysis.thresholds import DEFAULT_PROFILE
+        from core.analysis.validation_service import _resolve_threshold_profile
+        assert _resolve_threshold_profile({"name": "default"}) is DEFAULT_PROFILE
+
+    def test_解析_tightened_返回加严档(self) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        prof = _resolve_threshold_profile({"name": "tightened"})
+        assert prof["name"] == "default_tightened_x1.2"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"rules": {"min_trades": 0}},                      # 全量 rules 形制
+            {"name": "default", "rules": {"min_trades": 0}},   # 名+rules 混合注入
+            "default",                                          # 裸字符串
+            {"name": "loose"},                                  # 未知名
+            {"name": None},                                     # 名值非字符串
+        ],
+        ids=["全量rules", "名rules混合", "裸字符串", "未知名", "名值None"])
+    def test_非法形制_422附合法名清单(self, bad) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        with pytest.raises(ResearchError) as ei:
+            _resolve_threshold_profile(bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["legal_names"] == ["default", "tightened"]
+        assert ei.value.detail["param"] == "threshold_profile"
+
+    def test_入口接线_校验先于假设不存在(self, db, data_dir) -> None:
+        """结构校验前置锚：坏形制 + 不存在假设 → PARAM_INVALID 而非
+        HYPOTHESIS_NOT_FOUND（解析在函数体最前）。"""
+        bad = {"rules": {"min_trades": 0}}
+        with pytest.raises(ResearchError) as ei:
+            run_isolated_backtest(
+                db, data_dir, hypothesis_id="hyp_ghost",
+                strategy_id="st_ghost",
+                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                               "start": "2023-03-01", "end": "2023-03-20"},
+                threshold_profile=bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, data_dir, strategy_id="st_ghost", symbol="BTCUSDT",
+                timeframe="4h", data_start="2023-03-20",
+                data_end="2023-05-01", threshold_profile=bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+    def test_缺省与default档_判定同结果(self, db, data_dir, hypothesis_id) -> None:
+        """None（judge 侧落 DEFAULT_PROFILE）与显式 default 判定等价。"""
+        save_strategy(db, strategy_id="st_tp_a", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        save_strategy(db, strategy_id="st_tp_b", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature="sig_tp_b")
+        kwargs = dict(
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01", "end": "2023-03-20"})
+        out_none = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_tp_a", **kwargs)
+        out_default = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_tp_b", threshold_profile={"name": "default"},
+            **kwargs)
+        assert out_default["verdict"] == out_none["verdict"]
+        assert out_default["metrics"] == out_none["metrics"]
+
+    def test_tightened档_落档名带乘数(self, db, data_dir, hypothesis_id) -> None:
+        save_strategy(db, strategy_id="st_tp_t", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id, strategy_id="st_tp_t",
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01", "end": "2023-03-20"},
+            threshold_profile={"name": "tightened"})
+        rec = next(r for r in rr.list_validation_records(
+            db, hypothesis_id=hypothesis_id)
+            if r["record_id"] == out["record_id"])
+        assert json.loads(rec["params"])["threshold_profile"] \
+            == "default_tightened_x1.2"
