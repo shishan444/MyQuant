@@ -17,6 +17,8 @@ import requests
 pytestmark = [pytest.mark.unit]
 
 from core.data.fetcher import (
+    _build_session,
+    _direct_session,
     _download_archive_csv,
     _http_get,
     _parse_start_ts,
@@ -217,6 +219,56 @@ class TestHttpGetNoProxy:
         with pytest.raises(requests.RequestException):
             _http_get("https://example.test")
         mock_build.assert_not_called()
+
+
+class TestDirectSessionTrustEnv:
+    """_direct_session 显式 distrust 环境（CARD-05 双行为面）。
+
+    受限地区部署机常带全局 HTTP(S)_PROXY——直连通道若合并环境代理，
+    vision 域名的直连会被环境代理劫持。语义先例：
+    mcpserver/api_client.py 的 httpx trust_env=False。
+    """
+
+    ENV = {
+        "http_proxy": "http://envproxy:1",
+        "https_proxy": "http://envproxy:1",
+        "HTTP_PROXY": "http://envproxy:1",
+        "HTTPS_PROXY": "http://envproxy:1",
+        "no_proxy": "",
+    }
+
+    def test_direct_session_ignores_env_proxies(self) -> None:
+        """行为面 1：环境代理注入后合并设置为空（直连不被劫持）。"""
+        import os
+
+        with patch.dict(os.environ, self.ENV):
+            session = _direct_session()
+            settings = session.merge_environment_settings(
+                "https://data-api.binance.vision", {}, None, None, None
+            )
+            assert settings["proxies"] == {}
+
+    def test_plain_session_would_merge_env_proxies(self) -> None:
+        """断言有效性对照：原生 Session（trust_env 默认开）确实合并环境代理——
+        证明上一断言非恒真，能识别 trust_env 回退丢失。"""
+        import os
+
+        with patch.dict(os.environ, self.ENV):
+            session = requests.Session()
+            settings = session.merge_environment_settings(
+                "https://data-api.binance.vision", {}, None, None, None
+            )
+            assert "envproxy" in str(settings["proxies"])
+
+    def test_proxy_fallback_pins_explicit_proxies(self) -> None:
+        """行为面 2：_build_session 显式 proxies 不受环境/ trust_env 影响。"""
+        import os
+
+        pinned = "http://pinned-proxy:1080"
+        with patch.dict(os.environ, self.ENV):
+            with patch("core.data.fetcher._DEFAULT_PROXY", pinned):
+                session = _build_session()
+        assert session.proxies == {"http": pinned, "https": pinned}
 
 
 class TestDownloadArchiveCsv:
