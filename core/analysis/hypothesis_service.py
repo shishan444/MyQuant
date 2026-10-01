@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.analysis.isolation import iter_all_pages
 from core.persistence.repository import research as rr
 from core.persistence.timestamps import utc_now_iso
 
@@ -304,8 +305,10 @@ def transition_hypothesis(
             raise ResearchError("RESEARCH_EVIDENCE_NOT_FOUND",
                                 f"接替假设不存在: {evidence_ref}")
     elif target_status in _REQUIRED_VERDICT:
-        records = rr.list_validation_records(
-            db_path, hypothesis_id=hypothesis_id, limit=200)
+        # 记录分页取全量：单页 200 截断会让早期记录缺席证据核验（CARD-01）
+        records = list(iter_all_pages(
+            lambda off, lim: rr.list_validation_records(
+                db_path, hypothesis_id=hypothesis_id, offset=off, limit=lim)))
         rec = next((r for r in records if r["record_id"] == evidence_ref), None)
         if rec is None:
             raise ResearchError(

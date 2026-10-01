@@ -24,6 +24,7 @@ import pandas as pd
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.isolation import (
     _parse_ts,
+    iter_all_pages,
     judged_ranges_union,
     overlaps_with_request,
 )
@@ -100,7 +101,12 @@ def _screen_reuse_check(
 
     rs = _parse_ts(request_range["start"])
     re_ = _parse_ts(request_range["end"])
-    for entry in rr.list_research_log(db_path, entry_type="screen", limit=500):
+    # screen 留痕分页取全量：单页 500 截断会漏更早的扫描任务（CARD-01）
+    for entry in iter_all_pages(
+        lambda off, lim: rr.list_research_log(
+            db_path, entry_type="screen", offset=off, limit=lim),
+        page_size=500,
+    ):
         try:
             entry_ranges = json.loads(entry.get("data_ranges") or "[]")
             summary = json.loads(entry.get("summary") or "{}")
@@ -607,7 +613,9 @@ def _missing_component_evidence(
     收紧落在查询语义上、零行为差异）。
     """
     component_records = [
-        r for r in rr.list_validation_records(db_path, limit=200)
+        r for r in iter_all_pages(
+            lambda off, lim: rr.list_validation_records(
+                db_path, offset=off, limit=lim))
         if r["level"] == "component" and r["verdict"] == "pass"
     ]
     evidenced = set()
