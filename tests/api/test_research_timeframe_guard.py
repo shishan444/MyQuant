@@ -98,3 +98,37 @@ class TestUnknownTimeframeRejected:
             "conditions": CONDITIONS, "statement": "守卫",
             "data_ranges": [{**_RANGE, "timeframe": "4h"}]})
         assert resp.status_code == 200, resp.text
+
+
+class TestSandboxEconomicParamBounds:
+    """CARD-14 修复资产：沙盒经济参数值域前置 422（负成本/零本金
+    不再入服务层参与金额计算）。"""
+
+    _BODY = {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}
+
+    @pytest.mark.parametrize(("field", "value"), [
+        pytest.param("fee", -0.1, id="负手续费"),
+        pytest.param("slippage", -1e-9, id="负滑点"),
+        pytest.param("init_cash", 0, id="零本金"),
+    ])
+    def test_out_of_range_rejected_with_loc(self, api_client, field, value):
+        resp = api_client.post("/api/research/backtest-sandbox",
+                               json={**self._BODY, field: value})
+        assert resp.status_code == 422
+        assert any(e["loc"] == ["body", field]
+                   for e in resp.json()["detail"]), \
+            f"{field}={value} 应被 pydantic 值域拒绝并 loc 定位"
+
+    def test_boundary_values_pass_schema_layer(self, api_client):
+        """边界恰合法（ge 含等号）：fee=0/slippage=0/init_cash=1 过
+        schema 层——后续拒绝是结构化 code（dict detail），不再是
+        pydantic 校验失败（list detail）。"""
+        resp = api_client.post("/api/research/backtest-sandbox", json={
+            **self._BODY, "strategy_id": "st_nope",
+            "fee": 0, "slippage": 0, "init_cash": 1})
+        assert resp.status_code in (200, 404, 422)
+        detail = resp.json()["detail"]
+        assert isinstance(detail, dict) and "code" in detail, \
+            "边界值过了 schema 层——拒绝只能来自服务层结构化语义" \
+            "（如 404 RESEARCH_STRATEGY_NOT_FOUND），非 pydantic list"
