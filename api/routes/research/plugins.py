@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from api.deps import get_data_dir, get_db_path
 from core.analysis import plugin_service as ps
 from core.analysis.hypothesis_service import ResearchError
+from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,27 +82,13 @@ def create_model_plugin(
         raise research_error_to_http(exc) from exc
 
 
-def _list_plugins(db_path: Path, table: str, name: Optional[str]):
-    from sqlalchemy import select
-    from core.persistence.orm.models import FormulaPlugin, ModelPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
-
-    model = FormulaPlugin if table == "formula" else ModelPlugin
-    stmt = select(model).order_by(model.name, model.version)
-    if name:
-        stmt = stmt.where(model.name == name)
-    with _engine_for(db_path).connect() as conn:
-        rows = [dict(r) for r in conn.execute(stmt).mappings()]
-    return rows
-
-
 @router.get("/plugins/formula")
 def list_formula_plugins(
     name: Optional[str] = None,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     """公式插件版本审计（历史版本可查，5.5）。"""
-    rows = _list_plugins(db_path, "formula", name)
+    rows = rr.list_plugins(db_path, source="formula", name=name)
     for r in rows:
         r["output_columns"] = json.loads(r["output_columns"]) if r["output_columns"] else []
     return {"items": rows, "total": len(rows)}
@@ -113,7 +100,7 @@ def list_model_plugins(
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     """模型插件版本审计（含 rejected 记录与原因，卡5）。"""
-    rows = _list_plugins(db_path, "model", name)
+    rows = rr.list_plugins(db_path, source="model", name=name)
     for r in rows:
         if r.get("oos_summary"):
             try:

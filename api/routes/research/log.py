@@ -55,18 +55,14 @@ def create_feature_request(
     """慢通道功能需求单：只保证持久化与可查，不自动实现。"""
     rid = f"fr_{uuid.uuid4().hex[:12]}"
     from core.persistence.timestamps import utc_now_iso
-    from core.persistence.repository.dataset_meta import _engine_for
-    from sqlalchemy import insert
-    from core.persistence.orm.models import FeatureRequest
 
-    with _engine_for(db_path).begin() as conn:
-        conn.execute(insert(FeatureRequest).values(
-            request_id=rid, title=payload.title,
-            payload=json.dumps(payload.payload, ensure_ascii=False),
-            status="open", created_at=utc_now_iso()))
+    now = utc_now_iso()
+    rr.save_feature_request(
+        db_path, request_id=rid, title=payload.title,
+        payload=json.dumps(payload.payload, ensure_ascii=False),
+        status="open", created_at=now)
     return FeatureRequestResponse(
-        request_id=rid, title=payload.title, status="open",
-        created_at=utc_now_iso())
+        request_id=rid, title=payload.title, status="open", created_at=now)
 
 
 @router.get("/feature-requests")
@@ -82,17 +78,9 @@ def list_feature_requests(
         page = 1
     if page_size < 1 or page_size > 200:
         page_size = 50
-    from sqlalchemy import select
-    from core.persistence.orm.models import FeatureRequest
-    from core.persistence.repository.dataset_meta import _engine_for
-
-    stmt = select(FeatureRequest).order_by(
-        FeatureRequest.created_at, FeatureRequest.request_id
-    ).offset((page - 1) * page_size).limit(page_size)
-    if status is not None:
-        stmt = stmt.where(FeatureRequest.status == status)
-    with _engine_for(db_path).connect() as conn:
-        rows = [dict(r) for r in conn.execute(stmt).mappings()]
+    rows = rr.list_feature_requests(
+        db_path, status=status,
+        offset=(page - 1) * page_size, limit=page_size)
     for r in rows:
         r["payload"] = json.loads(r["payload"])
     return {"items": rows, "total": len(rows), "page": page, "page_size": page_size}

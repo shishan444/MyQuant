@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 
 from core.persistence.orm.models import (
     AnalysisTask,
+    FeatureRequest,
     FormulaPlugin,
     ModelPlugin,
     ResearchHypothesis,
@@ -472,6 +473,25 @@ def list_signal_registry_entries(
         return [dict(r) for r in conn.execute(stmt).mappings()]
 
 
+def list_plugins(
+    db_path: Path, *, source: str, name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """插件版本审计清单（formula/model 两表同构查询）。
+
+    source="formula" 查 FormulaPlugin，否则 ModelPlugin（与
+    save_plugin_with_registry 的 source 口径一致）；name 精确过滤
+    同名版本族。排序 name+version（版本递增审计读序，原路由层
+    内联 SQL 语义原样迁入）。
+    """
+    model = FormulaPlugin if source == "formula" else ModelPlugin
+    engine = _engine_for(db_path)
+    stmt = select(model).order_by(model.name, model.version)
+    if name:
+        stmt = stmt.where(model.name == name)
+    with engine.connect() as conn:
+        return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
 # ============================================================ 分析任务句柄
 
 def save_analysis_task(
@@ -562,3 +582,51 @@ def register_existing_plugin_signal(
                     + (f" ({json.dumps(extra, ensure_ascii=False)[:120]}" if extra else ""),
             created_at=now))
     return entry_id
+
+
+# ============================================================ 功能需求单
+
+def save_feature_request(
+    db_path: Path,
+    *,
+    request_id: str,
+    title: str,
+    payload: str,
+    status: str,
+    created_at: str,
+) -> None:
+    """功能需求单落库（慢通道——只保证持久化与可查，不自动实现）。"""
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(insert(FeatureRequest).values(
+            request_id=request_id, title=title, payload=payload,
+            status=status, created_at=created_at))
+
+
+def list_feature_requests(
+    db_path: Path, *, status: Optional[str] = None,
+    offset: int = 0, limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """功能需求单列表（status 精确过滤；created_at+request_id 稳定排序，
+    原路由层内联 SQL 语义原样迁入）。"""
+    engine = _engine_for(db_path)
+    stmt = select(FeatureRequest).order_by(
+        FeatureRequest.created_at, FeatureRequest.request_id
+    ).offset(offset).limit(limit)
+    if status is not None:
+        stmt = stmt.where(FeatureRequest.status == status)
+    with engine.connect() as conn:
+        return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
+def count_feature_requests(
+    db_path: Path, *, status: Optional[str] = None,
+) -> int:
+    """功能需求单真总数（过滤口径与 list_feature_requests 一致；
+    HTTP 层 total=真总数消费，形制照 strategy.count_strategies）。"""
+    stmt = select(func.count()).select_from(FeatureRequest)
+    if status is not None:
+        stmt = stmt.where(FeatureRequest.status == status)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
