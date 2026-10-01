@@ -405,3 +405,50 @@ class TestGoldenCrossAcceptanceAnchor:
             timeframe="4h", start="2024-01-01", end="2024-01-15")
         assert out5["sandbox"] is True
 
+
+
+class TestComponentEvidencePagination:
+    """CARD-01 链路 C：分量证据核验分页取全量（原 limit=200 单页截断）。
+
+    有效分量记录置于升序第 201 位（旧单页之外）：截断则该列仍判
+    missing，全量则认可——超页可见性锚。次序用直插 created_at 严格
+    递增控制（save_validation_with_log 的 _now() 无法指定位次）。
+    """
+
+    def test_超页component记录末尾pass_仍被认可(self, db):
+        import json as _json
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import insert
+        from core.persistence.orm.models import ValidationRecord
+        from core.persistence.repository.dataset_meta import _engine_for
+        from core.analysis.validation_service import _missing_component_evidence
+
+        # 记录表 hypothesis_id 为 NOT NULL+FK：借既有 adhoc 假设挂靠
+        #（TestComponentEvidenceTightened 同款形制）
+        hid = "adhoc"
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+        def _row(i: int) -> dict:
+            hit = i == 200  # 第 201 条：升序末尾，旧 limit=200 之外
+            return dict(
+                record_id=f"rec_pg_{i:04d}", hypothesis_id=hid,
+                strategy_id=None,
+                level="component" if hit else "isolated",
+                params=_json.dumps(
+                    {"column": "fx_far" if hit else "fx_noise"}),
+                result=None,
+                verdict="pass",
+                range_hash=f"rh_pg_{i:04d}",
+                components=None,
+                created_at=(base + timedelta(seconds=i)).isoformat())
+
+        with _engine_for(db).begin() as conn:
+            for i in range(201):
+                conn.execute(insert(ValidationRecord).values(**_row(i)))
+
+        # 超页分量证据被认可（截断则返回 ["fx_far"]）
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "fx_far"}]) == []
+        # 未取证列仍判 missing（防全通假象的对照锚）
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "fx_none"}]) == ["fx_none"]

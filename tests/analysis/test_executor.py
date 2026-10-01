@@ -211,3 +211,18 @@ class TestRecovery:
 
         # 幂等：再次回收无新行
         assert recover_stale_analysis_tasks(db_path) == 0
+
+
+class TestGapClosureExecutor:
+    """阶段四盲区消解：单点分支直测。"""
+
+    def test_get_task_直查库表_未知任务None(self, db_path: Path) -> None:
+        from core.analysis.executor import ResearchExecutor
+        ex = ResearchExecutor(db_path, max_workers=1)
+        assert ex.get_task("no_such_task") is None
+
+    def test_get_executor未初始化_RuntimeError(self, monkeypatch) -> None:
+        from core.analysis import executor as exec_mod
+        monkeypatch.setattr(exec_mod, "_EXECUTOR", None)
+        with pytest.raises(RuntimeError, match="未初始化"):
+            exec_mod.get_executor()

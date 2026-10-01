@@ -1,4 +1,4 @@
-"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：六类参数化模板。
+"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：八类参数化模板。
 
 模板是纯计算（DataFrame 输入 → AnalysisResult 输出），不做 IO、
 不感知 HTTP；数据装载由调用方（路由/编排层）完成。全部出口经
@@ -19,5 +19,7 @@ __all__ = [
     "distribution_compare",
     "event_study",
     "similar_at_time",
+    "param_sweep",
+    "regime_split",
     "screen_patterns",
 ]

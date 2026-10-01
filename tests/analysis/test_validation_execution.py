@@ -278,3 +278,186 @@ class TestColumnRejection:
                             data_ranges=[])
         assert ei.value.code == "RESEARCH_INDICATOR_UNKNOWN"
         assert "RSI" in ei.value.detail["available_indicators"]
+
+
+class TestThresholdProfileWhitelist:
+    """CARD-03（S-3 方向 B）：threshold_profile 按名白名单解析。
+
+    全量 rules dict 透传等于调用方操纵判定门槛——只认
+    {"name": "default"|"tightened"} 与 None；未知名/全量形制/混合
+    注入/裸字符串一律 422。解析先于终态/幂等（结构校验前置）。
+    """
+
+    def test_解析_None透传(self) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        assert _resolve_threshold_profile(None) is None
+
+    def test_解析_default_返回缺省档(self) -> None:
+        from core.analysis.thresholds import DEFAULT_PROFILE
+        from core.analysis.validation_service import _resolve_threshold_profile
+        assert _resolve_threshold_profile({"name": "default"}) is DEFAULT_PROFILE
+
+    def test_解析_tightened_返回加严档(self) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        prof = _resolve_threshold_profile({"name": "tightened"})
+        assert prof["name"] == "default_tightened_x1.2"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"rules": {"min_trades": 0}},                      # 全量 rules 形制
+            {"name": "default", "rules": {"min_trades": 0}},   # 名+rules 混合注入
+            "default",                                          # 裸字符串
+            {"name": "loose"},                                  # 未知名
+            {"name": None},                                     # 名值 None
+            {"name": True},                                     # 名值布尔
+            {"name": ["default"]},                              # 名值列表
+        ],
+        ids=["全量rules", "名rules混合", "裸字符串", "未知名", "名值None",
+             "名值True", "名值list"])
+    def test_非法形制_422附合法名清单(self, bad) -> None:
+        from core.analysis.validation_service import _resolve_threshold_profile
+        with pytest.raises(ResearchError) as ei:
+            _resolve_threshold_profile(bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["legal_names"] == ["default", "tightened"]
+        assert ei.value.detail["param"] == "threshold_profile"
+
+    def test_入口接线_校验先于假设不存在(self, db, data_dir) -> None:
+        """结构校验前置锚：坏形制 + 不存在假设 → PARAM_INVALID 而非
+        HYPOTHESIS_NOT_FOUND（解析在函数体最前）。"""
+        bad = {"rules": {"min_trades": 0}}
+        with pytest.raises(ResearchError) as ei:
+            run_isolated_backtest(
+                db, data_dir, hypothesis_id="hyp_ghost",
+                strategy_id="st_ghost",
+                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                               "start": "2023-03-01", "end": "2023-03-20"},
+                threshold_profile=bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, data_dir, strategy_id="st_ghost", symbol="BTCUSDT",
+                timeframe="4h", data_start="2023-03-20",
+                data_end="2023-05-01", threshold_profile=bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+    def test_缺省与default档_判定同结果(self, db, data_dir, hypothesis_id) -> None:
+        """None（judge 侧落 DEFAULT_PROFILE）与显式 default 判定等价。"""
+        save_strategy(db, strategy_id="st_tp_a", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        save_strategy(db, strategy_id="st_tp_b", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature="sig_tp_b")
+        kwargs = dict(
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01", "end": "2023-03-20"})
+        out_none = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_tp_a", **kwargs)
+        out_default = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_tp_b", threshold_profile={"name": "default"},
+            **kwargs)
+        assert out_default["verdict"] == out_none["verdict"]
+        assert out_default["metrics"] == out_none["metrics"]
+
+    def test_tightened档_落档名带乘数(self, db, data_dir, hypothesis_id) -> None:
+        save_strategy(db, strategy_id="st_tp_t", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id, strategy_id="st_tp_t",
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01", "end": "2023-03-20"},
+            threshold_profile={"name": "tightened"})
+        rec = next(r for r in rr.list_validation_records(
+            db, hypothesis_id=hypothesis_id)
+            if r["record_id"] == out["record_id"])
+        assert json.loads(rec["params"])["threshold_profile"] \
+            == "default_tightened_x1.2"
+
+
+class TestPrecheckSharedByBothEntries:
+    """CARD-09 防漂移锚：验证族前置四步（终态/幂等/并集/扫描复用）
+    提取为 _hypothesis_precheck 后，isolated 与 staged 两入口必须
+    共用同一实现——入口再内联前置块即红（对齐 to_utc/safe_symbol/
+    stat_window_mask 收敛锚形制）。四步行为面由既有锚覆盖（终态/
+    幂等/并集/screen 复用/staged 双路径）。"""
+
+    def test_两入口均调用共享precheck(self) -> None:
+        import ast
+        import core.analysis.validation_service as vs
+
+        tree = ast.parse(Path(vs.__file__).read_text(encoding="utf-8"))
+        callers = {
+            n.name: any(
+                isinstance(x, ast.Call)
+                and isinstance(x.func, ast.Name)
+                and x.func.id == "_hypothesis_precheck"
+                for x in ast.walk(n))
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef)
+            and n.name in ("run_isolated_backtest", "run_staged_validation")}
+        assert callers == {"run_isolated_backtest": True,
+                           "run_staged_validation": True}, (
+            "验证入口未共用 _hypothesis_precheck——前置块内联回潮")
+
+
+class TestGapClosureValidation:
+    """阶段四盲区消解：random_window 边界与 warmup 推导转译。"""
+
+    def test_区间不容窗_DATA_INSUFFICIENT(self, db, data_dir):
+        save_strategy(db, strategy_id="st_rw_short", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, data_dir, strategy_id="st_rw_short", symbol="BTCUSDT",
+                timeframe="4h", data_start="2023-03-20",
+                data_end="2023-04-01",  # 12 天 4h ≈ 72 bar，窗 200 容不下
+                window_bars=200, n_windows=3, seed=5)
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_同参数二次请求_幂等命中(self, db, data_dir):
+        save_strategy(db, strategy_id="st_rw_idem",
+                      dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature="sig_rw_idem")
+        kw = dict(strategy_id="st_rw_idem", symbol="BTCUSDT",
+                  timeframe="4h", data_start="2023-03-20",
+                  data_end="2023-05-01", window_bars=30, n_windows=3, seed=5)
+        first = random_window_test(db, data_dir, **kw)
+        replay = random_window_test(db, data_dir, **kw)
+        assert replay["duplicated"] is True
+        assert replay["record_id"] == first["record_id"]
+
+    @pytest.mark.parametrize("runner", ["isolated", "staged"], ids=["隔离", "分段"])
+    def test_warmup推导KeyError_转译INVALID(self, db, data_dir, hypothesis_id,
+                                             runner):
+        """DNA 带注册表外指标 → _derive_dna_warmup KeyError → 422
+        （两入口同转译）。"""
+        bad_gene = SignalGene("GHOST_IND", {"period": 14},
+                              SignalRole.ENTRY_TRIGGER, "ghost_14",
+                              {"type": "lt", "threshold": 35})
+        bad_dna = StrategyDNA(
+            signal_genes=[bad_gene], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        sid = f"st_bad_{runner}"
+        save_strategy(db, strategy_id=sid, dna_json=bad_dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature=f"sig_bad_{runner}")
+        from core.analysis.validation_service import run_staged_validation
+        with pytest.raises(ResearchError) as ei:
+            if runner == "isolated":
+                run_isolated_backtest(
+                    db, data_dir, hypothesis_id=hypothesis_id,
+                    strategy_id=sid,
+                    request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                                   "start": "2023-03-01", "end": "2023-03-20"})
+            else:
+                run_staged_validation(
+                    db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+                    timeframe="4h", start="2023-03-01", end="2023-03-20")
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"

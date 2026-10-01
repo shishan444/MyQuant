@@ -121,3 +121,10 @@ class TestClassification:
             adx = df.at[ts, adx_col]
             if pd.notna(adx) and bool(vol.loc[ts]):
                 assert state.loc[ts] == _adx_state(float(adx)), ts
+
+
+class TestGapClosureStates:
+    def test_adx_state_None两形(self) -> None:
+        from core.analysis.regime_segments import adx_state
+        assert adx_state(None) is None      # 指标不可得
+        assert adx_state(22.0) == "过渡"   # 20-25 之间过渡

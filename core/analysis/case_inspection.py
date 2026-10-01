@@ -52,7 +52,6 @@ parquet 只读不构成副作用）。
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -62,7 +61,7 @@ import pandas as pd
 from core.analysis.condition_kernel import MtfEvalContext, _mask_for
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
-from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
+from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
 from core.features.registry import INDICATOR_REGISTRY
 
 # 硬上限（上限即预算——spec 契约参数）
@@ -92,13 +91,6 @@ _PATTERN_ACTIONS: frozenset[str] = frozenset({
     "consecutive_up", "consecutive_down",
     "touch_bounce", "role_reversal",
 })
-
-
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数归一（语义对齐 warmup_loader._to_utc：naive 按 UTC 解释）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
 
 
 def _validate_range_param(name: str, value: int, lo: int, hi: int) -> None:
@@ -209,7 +201,7 @@ def _parse_selector(
                     "legal_range": "timestamps 形态不传区间参数"
                                    "（点名自带定位；区间抽查走 condition 形态）"})
     try:
-        normalized = [_to_utc(pd.Timestamp(t)) for t in raw]
+        normalized = [to_utc(pd.Timestamp(t)) for t in raw]
     except (ValueError, TypeError) as exc:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
@@ -437,7 +429,7 @@ def inspect_cases(
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     end_expanded: Optional[str] = None
     if end is not None:
-        end_expanded = (_to_utc(pd.Timestamp(end))
+        end_expanded = (to_utc(pd.Timestamp(end))
                         + pd.Timedelta(minutes=tf_minutes * context_bars)
                         ).isoformat()
 
@@ -449,10 +441,10 @@ def inspect_cases(
             start=start, end=end_expanded, indicator_names=[indicator])
     else:
         # 缺省全量（或 timestamps 形态）：全量直装，effective_start 披露
-        from core.data.mtf_loader import find_parquet, load_and_prepare_df
+        from core.data.mtf_loader import (
+            find_parquet, load_and_prepare_df, safe_symbol)
 
-        safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-        if find_parquet(data_dir, safe_symbol, timeframe) is None:
+        if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
             raise ResearchError(
                 "RESEARCH_SYMBOL_NOT_FOUND",
                 f"无数据: {symbol} {timeframe}",
@@ -511,7 +503,7 @@ def inspect_cases(
         # 只用于窗口取数，命中不落请求区间之外（end 缺省=数据末端自然边界）
         in_domain = pd.Series(work.index >= effective_start_ts, index=work.index)
         if end is not None:
-            end_ts = _to_utc(pd.Timestamp(end))
+            end_ts = to_utc(pd.Timestamp(end))
             in_domain = in_domain & pd.Series(work.index <= end_ts, index=work.index)
         # 0.2.14：自建多周期求值上下文（签名零变化——三元组本就在
         # 手）；高周期条件（timeframe 键）走掩码投影，indicator 参数

@@ -34,6 +34,7 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.warmup_loader import to_utc
 
 
 def _wilson_interval(successes: int, n: int, z: float = 1.96) -> list[float]:
@@ -95,6 +96,10 @@ def condition_stats(
 
     from core.analysis.templates.column_guard import require_indicator
     require_indicator(indicator, INDICATOR_REGISTRY)
+    # 参数前置守卫（坏 params 从模板内 KeyError→failed 任务变 422——
+    # 复用读数通道的 D7 校验权威）
+    from core.analysis.indicator_query import validate_params
+    validate_params(indicator, params)
 
     # 持有期校验：非 int（bool 排除）/ 非正 / 超数据长度 → 结构化拒绝
     # （模板内 ValueError 会被路由快路径吞成 failed 任务，不符 spec 的
@@ -116,20 +121,14 @@ def condition_stats(
     # 0.2.13：求值走 condition_kernel._mask_for（两段式内聚——结构化
     # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
     # 0.2.14：mtf 上下文透传——高周期条件（timeframe 键）走掩码投影
-    from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, _mask_for, _p_value_for, stat_window_mask)
     mask = _mask_for(work, condition, mtf=mtf)
 
-    # 统计段：request_start 之前的 warmup 前缀只用不算
-    req_ts: pd.Timestamp | None = None
-    if request_start is None:
-        in_stat = pd.Series(True, index=work.index)
-    else:
-        req_ts = pd.Timestamp(request_start)
-        if req_ts.tzinfo is None:
-            req_ts = req_ts.tz_localize("UTC")
-        else:
-            req_ts = req_ts.tz_convert("UTC")
-        in_stat = pd.Series(work.index >= req_ts, index=work.index)
+    # 统计段：request_start 之前的 warmup 前缀只用不算（共享掩码
+    # 样板；req_ts 留供 warmup_bars 披露）
+    in_stat = stat_window_mask(work, request_start)
+    req_ts = to_utc(pd.Timestamp(request_start)) if request_start is not None else None
 
     stat_mask = mask & in_stat
     n_total = int(in_stat.sum())  # 统计段 bar 数（hit_rate 分母）
@@ -145,28 +144,19 @@ def condition_stats(
     bas_fwd = fwd[in_stat].dropna()
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None
 
-    # 去重叠（仅用于 p 值样本）：统计段命中位置按时间序贪心，
-    # 前一入选信号后间隔 >= forward_bars 才入选下一个
-    locs = np.where(stat_mask.values)[0]
-    picked: list[int] = []
-    for loc in locs:
-        if not picked or loc - picked[-1] >= forward_bars:
-            picked.append(loc)
-    subset = fwd.iloc[picked].dropna() if picked else fwd.iloc[0:0]
-
+    # 去重叠 t 检验（0.2.1 同口径——第四消费方收敛至 condition_kernel
+    # _p_value_for 共享实现，消除双实现漂移面；返回 (p, n_overlapped)，
+    # baseline None / 样本<2 / 零方差时 p 为 None）
+    p_value, n_overlapped = _p_value_for(
+        fwd, stat_mask.values, forward_bars, baseline_mean)
     forward_significance: Dict[str, Any] = {
         "method": "t_test_vs_baseline",
-        "p_value": None,
+        "p_value": p_value,
         "for": "forward_return_mean_vs_baseline",
-        "n_overlapped": int(len(subset)),
+        "n_overlapped": int(n_overlapped),
         "n_total_signals": int(len(valid)),
         "baseline_mean": baseline_mean,
     }
-    if (baseline_mean is not None and len(subset) >= 2
-            and float(np.std(subset.to_numpy(), ddof=1)) > 0):
-        from scipy import stats  # 形制同 event_study：函数内按需导入
-        _, p_value = stats.ttest_1samp(subset.to_numpy(), baseline_mean)
-        forward_significance["p_value"] = float(p_value)
 
     rate_interval = _wilson_interval(n_hit, n_total)
     confidence = {

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import operator as _operator
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -47,22 +47,42 @@ def assemble_signal_set(
 
     base = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-    # 插件源求值（引用失败显式拒绝）
-    work = enhanced_df
+    # 插件源求值（引用失败显式拒绝）。注册表一次查询建索引（column →
+    # source）——逐源全表扫与 formula 过滤二次查统一为单次；formula 列
+    # 一次整体 enrich 统一求值取列（叠层依赖闭包共享，不再逐列重复求值）
+    from core.persistence.repository import research as rr
+    source_types = {e["column_name"]: e["source"]
+                    for e in rr.list_signal_registry_entries(db_path)}
     plugin_cols: Dict[str, pd.Series] = {}
+    formula_cols: List[str] = []  # 声明序保序（失效报告序确定）
     for src in plugin_sources:
         col = src["ref"]
-        plugin_cols[col] = _resolve_plugin_column(db_path, src, work)
-    if plugin_cols:
+        source_type = source_types.get(col)
+        if source_type is None:
+            raise ResearchError(
+                "RESEARCH_SIGNAL_SOURCE_INVALID",
+                f"信号源引用失效（插件不存在或未注册）: {col}",
+                detail={"ref": col})
+        if source_type == "model":
+            plugin_cols[col] = _model_column(db_path, col, enhanced_df)
+        else:
+            if col not in formula_cols:
+                formula_cols.append(col)
+    work = enhanced_df
+    if formula_cols:
         from core.analysis.plugin_service import enrich_with_plugin_columns
-        formula_cols = {c for c in plugin_cols
-                        if _source_type_of(db_path, c) == "formula"}
-        if formula_cols:
-            work = enrich_with_plugin_columns(db_path, enhanced_df, formula_cols)
+        work = enrich_with_plugin_columns(db_path, enhanced_df, set(formula_cols))
+        for col in formula_cols:
+            if col not in work.columns:
+                raise ResearchError(
+                    "RESEARCH_SIGNAL_SOURCE_INVALID",
+                    f"公式信号源求值失败: {col}",
+                    detail={"ref": col})
+            plugin_cols[col] = work[col]
 
     # 组合（composition.mode 缺省 = weighted_vote，threshold 0.5 交集语义）
     mode = (dna.composition or {}).get("mode", "weighted_vote")
-    combined = _combine(base, dna, plugin_cols, work, mode)
+    combined = _combine(base, dna, plugin_cols, mode)
 
     return SignalSet(
         entries=combined["entries"],
@@ -74,38 +94,6 @@ def assemble_signal_set(
         mtf_diagnostics=base.mtf_diagnostics,
         confidence=base.confidence,
     )
-
-
-def _source_type_of(db_path: Path, column: str) -> Optional[str]:
-    from core.persistence.repository import research as rr
-    for e in rr.list_signal_registry_entries(db_path):
-        if e["column_name"] == column:
-            return e["source"]
-    return None
-
-
-def _resolve_plugin_column(
-    db_path: Path, src: Dict[str, Any], df: pd.DataFrame,
-) -> pd.Series:
-    """求值一个插件源列（formula 现算 / model walk-forward 现算）。"""
-    col = src["ref"]
-    source_type = _source_type_of(db_path, col)
-    if source_type is None:
-        raise ResearchError(
-            "RESEARCH_SIGNAL_SOURCE_INVALID",
-            f"信号源引用失效（插件不存在或未注册）: {col}",
-            detail={"ref": col})
-    if source_type == "model":
-        return _model_column(db_path, col, df)
-    # formula 列由上层 enrich 统一求值；此处仅校验存在性
-    from core.analysis.plugin_service import enrich_with_plugin_columns
-    enriched = enrich_with_plugin_columns(db_path, df, {col})
-    if col not in enriched.columns:
-        raise ResearchError(
-            "RESEARCH_SIGNAL_SOURCE_INVALID",
-            f"公式信号源求值失败: {col}",
-            detail={"ref": col})
-    return enriched[col]
 
 
 def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
@@ -151,8 +139,7 @@ _SOURCE_COMPARE_OPS = {
 
 
 def _combine(
-    base, dna, plugin_cols: Dict[str, pd.Series],
-    work: pd.DataFrame, mode: str,
+    base, dna, plugin_cols: Dict[str, pd.Series], mode: str,
 ) -> Dict[str, pd.Series]:
     """组合决策层三模式（插件源转布尔：按源 operator 与阈值比较，
     缺省 ">" 对 0 阈值——既有行为）。"""

@@ -414,3 +414,82 @@ class TestCompositeGate:
         assert rule_only["metrics"]["total_trades"] > 0, "对照版须有交易"
         assert (mixed["metrics"]["total_trades"]
                 != rule_only["metrics"]["total_trades"]), "插件源须影响 entries"
+
+
+class TestGapClosureTranslator:
+    """阶段四盲区消解：翻译器拒绝面与 draft 命中分支。"""
+
+    def test_假设不存在_404(self, db) -> None:
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id="hyp_ghost")
+        assert ei.value.code == "RESEARCH_HYPOTHESIS_NOT_FOUND"
+        assert ei.value.status == 404
+
+    def test_无可表达条件_NOT_EXPRESSIBLE(self, db) -> None:
+        """全部条件不可表达（action 族外）→ 314 拒。"""
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+                "then_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+            },
+            statement="全不可表达",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+
+    def test_when带不可表达action_拒(self, db) -> None:
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": "close", "action": "within_pct",
+                     "target": 5}],
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0}],
+            },
+            statement="when 不可表达",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+        with pytest.raises(ResearchError, match="不可表达"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+
+class TestGapClosureDraftHit:
+    """第三批：同 DNA 已有 draft 的命中返回分支。"""
+
+    def test_同DNA不同区间_第二次翻译命中既有draft(self, db) -> None:
+        cond = {"when_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 45}],
+            "then_conditions": [
+                {"subject": {"indicator": "EMA", "params": {"period": 10}},
+                 "action": "gt", "target": 0}]}
+        hid_a = register_hypothesis(
+            db, conditions=cond, statement="A",
+            data_ranges=[_R(1, 15)])["hypothesis_id"]
+        first = translate_hypothesis(db, hypothesis_id=hid_a)
+        assert first["status"] == "draft"
+        # 同条件不同区间 → 新假设 B（DNA 相同）
+        hid_b = register_hypothesis(
+            db, conditions=cond, statement="B",
+            data_ranges=[_R(20, 28)])["hypothesis_id"]
+        assert hid_b != hid_a
+        second = translate_hypothesis(db, hypothesis_id=hid_b)
+        assert second["status"] == "draft"
+        assert second["duplicated"] is True
+        assert second["strategy_id"] == first["strategy_id"]
+
+
+def _R(d1, d2):
+    return {"symbol": "BTCUSDT", "timeframe": "4h",
+            "start": f"2024-01-{d1:02d}T00:00:00Z",
+            "end": f"2024-01-{d2:02d}T00:00:00Z"}

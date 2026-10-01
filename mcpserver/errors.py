@@ -101,6 +101,9 @@ HINTS: Dict[str, str] = {
     "RESEARCH_SIGNAL_SOURCE_INVALID":
         "信号源非法：subject 须在 list_signal_columns 清单内（标注来源与"
         "可引用域）",
+    "RESEARCH_FORMULA_REGISTRY_MISSING":
+        "valid 插件的注册表条目缺失（原子双写断裂的数据完整性异常）："
+        "核对 signal_registry 与插件表是否被外部改动，必要时重建注册条目",
     "RESEARCH_COMPOSITION_INVALID":
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
     # ---- 沙盒回测

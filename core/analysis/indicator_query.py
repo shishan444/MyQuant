@@ -49,7 +49,6 @@ np.nanpercentile 对全 NaN 列返回 NaN 数组的行为（伴随 RuntimeWarnin
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -58,7 +57,7 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
-from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
+from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
 from core.features.registry import INDICATOR_REGISTRY
 
 # 归约封闭枚举（spec 契约；未知值结构化拒绝）
@@ -74,13 +73,6 @@ _MAX_SERIALIZED_BYTES = 2048  # 归约摘要字节上限（形制退化兜底）
 _REGIME_HELPERS = ("ADX", "ATR")
 
 
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数归一（就近复制惯例：naive 按 UTC 解释）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
-
-
 def _validate_indicator(indicator: str) -> None:
     """在册校验（校验链第 1 环；detail 附可用清单指引）。"""
     if indicator not in INDICATOR_REGISTRY:
@@ -91,11 +83,12 @@ def _validate_indicator(indicator: str) -> None:
                     "available_hint": "经 list_indicators 查询注册表"})
 
 
-def _validate_params(indicator: str, params: Dict[str, Any]) -> None:
+def validate_params(indicator: str, params: Dict[str, Any]) -> None:
     """参数前置校验（D7）：键集合 ⊆ 注册表键、类型可解析、值在 [min,max]。
 
     内核取参 int(params[...])——缺键抛 KeyError（500 化）、多余键静默
-    忽略（假象成功）；本拦截让两类调用错误都成为结构化拒绝。
+    忽略（假象成功）；本拦截让两类调用错误都成为结构化拒绝。读数通道
+    与 condition_stats 模板共用（共享导出——参数空间的校验权威）。
     """
     defn = INDICATOR_REGISTRY[indicator]
     extra = set(params) - set(defn.params)
@@ -225,7 +218,7 @@ def query_indicator(
     if params is None:
         effective_params = default_params_for(indicator)
     else:
-        _validate_params(indicator, params)
+        validate_params(indicator, params)
         effective_params = dict(params)
     selected = _validate_reductions(reductions)
 
@@ -240,10 +233,10 @@ def query_indicator(
             data_dir, symbol, timeframe,
             start=start, end=end, indicator_names=indicator_names)
     else:
-        from core.data.mtf_loader import find_parquet, load_and_prepare_df
+        from core.data.mtf_loader import (
+            find_parquet, load_and_prepare_df, safe_symbol)
 
-        safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-        if find_parquet(data_dir, safe_symbol, timeframe) is None:
+        if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
             raise ResearchError(
                 "RESEARCH_SYMBOL_NOT_FOUND",
                 f"无数据: {symbol} {timeframe}",
@@ -282,7 +275,7 @@ def query_indicator(
     domain_mask = pd.Series(work.index >= effective_start_ts, index=work.index)
     effective_end_ts: Optional[pd.Timestamp] = None
     if end is not None:
-        effective_end_ts = _to_utc(pd.Timestamp(end))
+        effective_end_ts = to_utc(pd.Timestamp(end))
         domain_mask = domain_mask & pd.Series(
             work.index <= effective_end_ts, index=work.index)
     domain = work.loc[domain_mask]

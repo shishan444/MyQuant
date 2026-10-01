@@ -276,3 +276,28 @@ class TestVolume:
             _call(env)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["limit"] == 16
+
+
+class TestGapClosureQuery3:
+    """第三批：装载与求值域边界。"""
+
+    # 不可达判定（第三批，装载层责任）：①load 返回 None 分支——
+    # load_parquet 对损坏/空文件抛底层 ArrowInvalid 而非返回 None，
+    # df is None 无触发路径；②求值域空分支——end 早于数据时
+    # load_and_prepare_df 装载检查前置拒（区间数据不足）。
+
+    def test_数据不足有效域_拒(self, tmp_path, db_path):
+        import numpy as np
+        import pandas as pd
+        data_dir = tmp_path / "m"
+        data_dir.mkdir()
+        idx = pd.date_range("2024-01-01", periods=150, tz="UTC",
+                            name="timestamp")
+        close = np.full(150, 100.0)
+        pd.DataFrame({"open": close, "high": close, "low": close,
+                      "close": close,
+                      "volume": np.full(150, 10.0)},
+                     index=idx).to_parquet(data_dir / "BTCUSDT_1d.parquet")
+        with pytest.raises(ResearchError, match="有效域"):
+            query_indicator(data_dir, symbol="BTCUSDT", timeframe="1d",
+                            indicator="RSI", params={"period": 14})

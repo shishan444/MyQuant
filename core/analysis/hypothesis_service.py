@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.analysis.isolation import iter_all_pages
 from core.persistence.repository import research as rr
 from core.persistence.timestamps import utc_now_iso
 
@@ -38,7 +39,12 @@ class ResearchError(Exception):
         self.detail = detail
 
 
-def _hash_json(obj: Any) -> str:
+def hash_json(obj: Any) -> str:
+    """对象 → 稳定 sha256 指纹（json 键序归一 + 非 ASCII 保真）。
+
+    幂等身份键的统一底座（假设 conditions/ranges_hash、模型插件
+    config_hash 共用）——同对象恒同指纹，跨进程可复现。
+    """
     return hashlib.sha256(
         json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -193,8 +199,8 @@ def register_hypothesis(
                 del c["timeframe"]
 
     # 4. 幂等
-    conditions_hash = _hash_json(conditions)
-    ranges_hash = _hash_json(data_ranges)
+    conditions_hash = hash_json(conditions)
+    ranges_hash = hash_json(data_ranges)
     existing = rr.find_active_hypothesis_by_identity(db_path, conditions_hash, ranges_hash)
     if existing is not None:
         return {"hypothesis_id": existing["hypothesis_id"], "duplicated": True}
@@ -304,8 +310,10 @@ def transition_hypothesis(
             raise ResearchError("RESEARCH_EVIDENCE_NOT_FOUND",
                                 f"接替假设不存在: {evidence_ref}")
     elif target_status in _REQUIRED_VERDICT:
-        records = rr.list_validation_records(
-            db_path, hypothesis_id=hypothesis_id, limit=200)
+        # 记录分页取全量：单页 200 截断会让早期记录缺席证据核验（CARD-01）
+        records = list(iter_all_pages(
+            lambda off, lim: rr.list_validation_records(
+                db_path, hypothesis_id=hypothesis_id, offset=off, limit=lim)))
         rec = next((r for r in records if r["record_id"] == evidence_ref), None)
         if rec is None:
             raise ResearchError(

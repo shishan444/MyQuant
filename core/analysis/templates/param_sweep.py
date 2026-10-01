@@ -34,7 +34,7 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 from core.analysis.threshold_grids import VALUE_GRIDS
 
 # 三道门常量（design Decision 3：模块内固定，输出 gates 披露；
@@ -249,16 +249,8 @@ def param_sweep(
     grid = _resolve_grid(indicator, condition["subject"], condition["action"],
                          center, sweep)
 
-    # 统计段切分与 baseline（0.2.1 condition_stats 同口径）
-    if request_start is None:
-        in_stat = pd.Series(True, index=work.index)
-    else:
-        req_ts = pd.Timestamp(request_start)
-        if req_ts.tzinfo is None:
-            req_ts = req_ts.tz_localize("UTC")
-        else:
-            req_ts = req_ts.tz_convert("UTC")
-        in_stat = pd.Series(work.index >= req_ts, index=work.index)
+    # 统计段切分与 baseline（0.2.1 condition_stats 同口径——共享掩码样板）
+    in_stat = stat_window_mask(work, request_start)
     fwd = work["close"].pct_change(forward_bars).shift(-forward_bars)
     bas_fwd = fwd[in_stat].dropna()
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None

@@ -4,15 +4,39 @@
 .data_ranges（并集）——强制自动记录的日志拦截漏报，宁可多拒不可
 漏拦（spec research-validation-protocol）。请求区间与判定并集求交，
 非空即拒并列重叠段。
+
+附 ``iter_all_pages``：research repository 分页拉全量的共享迭代器
+（本域判定/核验类消费方共用，见函数 docstring）。
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 from core.persistence.repository import research as rr
+
+
+def iter_all_pages(
+    fetch_page: Callable[[int, int], List[Dict[str, Any]]],
+    *, page_size: int = 200,
+) -> Iterator[Dict[str, Any]]:
+    """分页迭代取全量：offset 递增翻页，不足一页即止。
+
+    repository 查询是升序 + limit 截断的首屏语义，单次调用只见最早
+    N 条；判定并集、证据核验等场景须全量，以此翻页补齐。前置条件
+    与边界：fetch_page(offset, limit) 须保持稳定排序（repository
+    各 list_* 以 created_at+主键 tie-break 满足）；翻页期间并发写入
+    可能使后页偏移漏一条，判定类读场景容忍此窗口。
+    """
+    offset = 0
+    while True:
+        rows = fetch_page(offset, page_size)
+        yield from rows
+        if len(rows) < page_size:
+            return
+        offset += page_size
 
 
 def _parse_ts(ts: str) -> datetime:
@@ -46,7 +70,10 @@ def judged_ranges_union(db_path: Path, hypothesis_id: str) -> List[Dict[str, str
     hyp = rr.get_hypothesis(db_path, hypothesis_id)
     if hyp is not None:
         merged.extend(_iter_ranges(hyp["data_ranges"]))
-    for entry in rr.list_research_log(db_path, hypothesis_id=hypothesis_id, limit=200):
+    for entry in iter_all_pages(
+        lambda off, lim: rr.list_research_log(
+            db_path, hypothesis_id=hypothesis_id, offset=off, limit=lim),
+    ):
         merged.extend(_iter_ranges(entry.get("data_ranges")))
     # 稳定排序去重
     seen = set()

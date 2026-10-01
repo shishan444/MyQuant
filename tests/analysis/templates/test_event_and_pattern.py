@@ -6,6 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.event_study import event_study
 from core.analysis.templates.pattern_mining import similar_at_time
 
@@ -148,3 +149,41 @@ class TestEventStudyTimeframeKey:
                                          "target": 0.0, "timeframe": "4h"},
                         window=8, data_ranges=RANGES)
         assert ei.value.code == "RESEARCH_MTF_CONTEXT_MISSING"
+
+
+class TestAsOfTimezoneEquivalence:
+    """CARD-06 半变体统一等价锚：aware 非 UTC as_of 与 UTC 形输入
+    输出一致（to_utc 统一后 aware 显式转 UTC 再比较——pandas 按绝对
+    时刻比较，语义等价；统一前 aware 非 UTC 走"不转直接比较"路径）。"""
+
+    def test_aware非UTC_as_of_与UTC形_逐字段一致(self) -> None:
+        df = _make_df(300)
+        utc = str(df.index[-60])
+        # 同一绝对时刻的 +08:00 表达（aware 非 UTC）
+        aware = (pd.Timestamp(utc).tz_convert("Asia/Shanghai")
+                 .isoformat())
+
+        r_utc = similar_at_time(df, as_of=utc, n_neighbors=30,
+                                horizon=12, data_ranges=RANGES)
+        r_aware = similar_at_time(df, as_of=aware, n_neighbors=30,
+                                  horizon=12, data_ranges=RANGES)
+
+        assert r_aware.payload == r_utc.payload
+
+
+class TestGapClosureEventPattern:
+    """阶段四盲区消解：event_study subject 转译、pattern_mining
+    as_of 边界。"""
+
+    def test_event_study_结构化subject非法_转译(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            event_study(_make_df(300),
+                        condition={"subject": {"indicator": "GHOST"},
+                                   "action": "gt", "target": 1},
+                        data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
+
+    def test_pattern_mining_as_of早于起点_拒(self) -> None:
+        with pytest.raises(ValueError, match="早于数据起点"):
+            similar_at_time(_make_df(300), as_of="2020-01-01",
+                            n_neighbors=30, data_ranges=RANGES)

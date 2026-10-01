@@ -133,7 +133,7 @@ def _validate_params(
 
 
 # 条件统计内核已提升共享（add-regime-split 兑现 0.2.6 D4 钩子；三消费者）
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 
 
 def screen_patterns(
@@ -181,16 +181,8 @@ def screen_patterns(
                 detail={"param": "horizons",
                         "legal_range": f"1..{len(df) - 1}"})
 
-    # 统计段（warmup 只用不算）
-    if request_start is None:
-        in_stat = pd.Series(True, index=df.index)
-    else:
-        req_ts = pd.Timestamp(request_start)
-        if req_ts.tzinfo is None:
-            req_ts = req_ts.tz_localize("UTC")
-        else:
-            req_ts = req_ts.tz_convert("UTC")
-        in_stat = pd.Series(df.index >= req_ts, index=df.index)
+    # 统计段（warmup 只用不算——共享掩码样板）
+    in_stat = stat_window_mask(df, request_start)
     stat_pos = in_stat.values
     n_total = int(in_stat.sum())
 
@@ -227,11 +219,10 @@ def screen_patterns(
 
     # 前向收益（每持有期一次全序列，全候选共享）
     fwd_by_h = {h: work["close"].pct_change(h).shift(-h) for h in horizon_list}
-    baseline_mean = {
-        h: (float(fwd_by_h[h][stat_pos].dropna().mean())
-            if len(fwd_by_h[h][stat_pos].dropna()) else None)
-        for h in horizon_list
-    }
+    baseline_mean: Dict[float, Optional[float]] = {}
+    for h in horizon_list:
+        bas = fwd_by_h[h][stat_pos].dropna()
+        baseline_mean[h] = float(bas.mean()) if len(bas) else None
 
     # 逐条件掩码（一次求值，全部持有期复用）+ 逐 (条件,持有期) 检验
     records: List[Dict[str, Any]] = []

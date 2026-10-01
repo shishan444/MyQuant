@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
+from core.analysis.warmup_loader import to_utc
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.regime_segments import GATES, build_segments
 from core.analysis.result import AnalysisResult, build_result
@@ -82,10 +83,9 @@ def _validate_segments_input(
 
 
 def _ts_utc(v: Any) -> pd.Timestamp:
-    ts = pd.Timestamp(v)
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
+    """时间参数归一薄壳：to_utc + 任意值构造 pd.Timestamp（五处调用
+    传 str/datetime 混合形）。"""
+    return to_utc(pd.Timestamp(v))
 
 
 def regime_split(
@@ -121,6 +121,9 @@ def regime_split(
 
     _validate_segments_input(segmentation, condition, indicator, forward_bars, len(df))
 
+    # 入口副本：判读/条件指标列不写入调用方 df（模板纯计算契约，
+    # 同族三模板 copy 形制——condition_stats/screen_patterns/param_sweep）
+    df = df.copy()
     adx_col = resolve_indicator_column("ADX", {"period": 14})
     atr_col = resolve_indicator_column("ATR", {"period": 14})
     for c, s in _compute_indicator(df, "ADX", {"period": 14}).items():
@@ -128,13 +131,9 @@ def regime_split(
     for c, s in _compute_indicator(df, "ATR", {"period": 14}).items():
         df[c] = s
 
-    # 统计段切分（warmup 前缀只用不算——判读指标在全 df 收敛；
+    # 统计段切分（warmup 前缀只用不算——判读指标在副本全量收敛；
     # 置于指标计算后：布尔切片为副本，先切则不含新算指标列）
-    if request_start is None:
-        stat = df
-    else:
-        req = _ts_utc(request_start)
-        stat = df[df.index >= req]
+    stat = df[stat_window_mask(df, request_start)]
     if condition is not None:
         from core.features.registry import INDICATOR_REGISTRY
         if indicator not in INDICATOR_REGISTRY:

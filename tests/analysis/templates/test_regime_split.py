@@ -264,3 +264,24 @@ class TestMtfContextPassthrough:
         direct_valid = sum(1 for i in locs if i + 12 < len(base))
         assert rs_total > 0                       # 修复前全 0（静默）
         assert rs_total == cs["sample_size"] == direct_valid
+
+
+class TestGapClosureSplit3:
+    """第三批：condition 形制三拒。"""
+
+    def test_condition带而indicator非字符串_拒(self):
+        df = _two_regime()
+        with pytest.raises(ResearchError, match="indicator 必填"):
+            _split(df, condition=_RSI_COND, indicator=123)
+
+    def test_indicator未知_拒(self):
+        df = _two_regime()
+        with pytest.raises(ResearchError, match="indicator 未知"):
+            _split(df, condition=_RSI_COND, indicator="GHOST")
+
+    def test_subject不属于指标输出列_拒(self):
+        df = _two_regime()
+        bad = dict(_RSI_COND, subject={"indicator": "RSI",
+                                       "params": {"period": 38}})  # 非默认参数列
+        with pytest.raises(ResearchError, match="不属于"):
+            _split(df, condition=bad, indicator="RSI")

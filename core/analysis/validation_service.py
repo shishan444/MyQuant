@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +23,7 @@ import pandas as pd
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.isolation import (
     _parse_ts,
+    iter_all_pages,
     judged_ranges_union,
     overlaps_with_request,
 )
@@ -32,13 +32,10 @@ from core.analysis.thresholds import (
     DEFAULT_PROFILE,
     _aggregate_verdicts,
     judge,
+    tighten_profile,
 )
+from core.analysis.warmup_loader import TF_MINUTES, to_utc
 from core.persistence.repository import research as rr
-
-# 时间频率换算（warmup bar 数 → 时间差）
-_TF_MINUTES = {
-    "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440, "3d": 4320,
-}
 
 # 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
 # 留足余量；50k 为默认起点，按回测速度实施校准）
@@ -100,7 +97,12 @@ def _screen_reuse_check(
 
     rs = _parse_ts(request_range["start"])
     re_ = _parse_ts(request_range["end"])
-    for entry in rr.list_research_log(db_path, entry_type="screen", limit=500):
+    # screen 留痕分页取全量：单页 500 截断会漏更早的扫描任务（CARD-01）
+    for entry in iter_all_pages(
+        lambda off, lim: rr.list_research_log(
+            db_path, entry_type="screen", offset=off, limit=lim),
+        page_size=500,
+    ):
         try:
             entry_ranges = json.loads(entry.get("data_ranges") or "[]")
             summary = json.loads(entry.get("summary") or "{}")
@@ -138,14 +140,6 @@ def _screen_reuse_check(
                 detail={"screen_task_id": entry.get("ref_id"),
                         "hit_fingerprints": hits,
                         "hint": "实质修改条件后登记新假设，或换未扫描区间验证"})
-
-
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数入口归一：naive 按 UTC 解释（语义对齐 isolation._parse_ts，
-    不引入第三种 tz 语义——date-only 输入不再与 tz-aware 索引比较崩溃）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
 
 
 def _collect_needed_tfs(dna, exec_tf: str) -> set:
@@ -238,9 +232,9 @@ def _run_backtest_on_range(
     from core.backtest import engine as bt_engine_mod
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
-    start_ts = _to_utc(pd.Timestamp(start))
+    start_ts = to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
 
     enhanced = load_and_prepare_df(
@@ -307,6 +301,79 @@ def _run_backtest_on_range(
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)
 
 
+# threshold_profile 按名白名单（安全关 S-3，方向 B）：预定义名 → 实际
+# profile 的解析入口——门槛规则由本域定义，全量 rules dict 透传等于
+# 调用方操纵判定门槛
+_THRESHOLD_PROFILE_NAMES: tuple[str, ...] = ("default", "tightened")
+
+
+def _resolve_threshold_profile(
+    threshold_profile: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """threshold_profile 按名白名单解析（两验证入口共用）。
+
+    {"name": "default"} → DEFAULT_PROFILE；{"name": "tightened"} →
+    tighten_profile()（组合加严档）；None → None（judge 侧落
+    DEFAULT_PROFILE）。未知名 / 含 rules 等全量形制 / 非法结构一律
+    422——判定门槛不可由调用方注入。
+    """
+    if threshold_profile is None:
+        return None
+    if (not isinstance(threshold_profile, dict)
+            or set(threshold_profile) != {"name"}
+            or threshold_profile["name"] not in _THRESHOLD_PROFILE_NAMES):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "threshold_profile 只认按名形制 "
+            '{"name": "default"|"tightened"}（门槛规则由本域预定义，'
+            "不接受全量透传）",
+            detail={"param": "threshold_profile",
+                    "legal_names": list(_THRESHOLD_PROFILE_NAMES)})
+    if threshold_profile["name"] == "tightened":
+        return tighten_profile()
+    return DEFAULT_PROFILE
+
+
+def _hypothesis_precheck(
+    db_path: Path, hypothesis_id: str, strategy_id: str,
+    rh: str, request_range: Dict[str, str],
+) -> Optional[Dict[str, Any]]:
+    """验证族前置检查四步（isolated/staged 同构提取）。
+
+    终态拒验（404/409）→ 幂等查询 → 判定并集求交（重叠 409 附
+    judged_ranges）→ 扫描候选精确复用反向核查。幂等命中返回既有
+    记录 payload（duplicated=True），干净返回 None（调用方继续
+    验证主流程）；Raises 语义与提取前逐字一致。
+    """
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is None:
+        raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
+                            f"假设不存在: {hypothesis_id}", status=404)
+    if hyp["status"] != "active":
+        raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
+                            f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
+                            status=409)
+    existing = rr.find_validation_by_identity(db_path, hypothesis_id, strategy_id, rh)
+    if existing is not None:
+        return {
+            "record_id": existing["record_id"],
+            "verdict": existing["verdict"],
+            "duplicated": True,
+            "result": json.loads(existing["result"]) if existing["result"] else None,
+        }
+    judged = judged_ranges_union(db_path, hypothesis_id)
+    overlaps = overlaps_with_request(
+        judged, request_range["start"], request_range["end"])
+    if overlaps:
+        raise ResearchError(
+            "RESEARCH_RANGE_OVERLAP",
+            "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
+            status=409,
+            detail={"judged_ranges": judged, "overlaps": overlaps})
+    _screen_reuse_check(db_path, hypothesis_id, request_range)
+    return None
+
+
 def run_isolated_backtest(
     db_path: Path,
     data_dir: Path,
@@ -323,39 +390,19 @@ def run_isolated_backtest(
         {record_id, verdict, metrics, threshold_details, warmup,
          duplicated, judged_ranges}
     """
-    # 终态拒验
-    hyp = rr.get_hypothesis(db_path, hypothesis_id)
-    if hyp is None:
-        raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
-                            f"假设不存在: {hypothesis_id}", status=404)
-    if hyp["status"] != "active":
-        raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
-                            f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
-                            status=409)
+    # threshold_profile 按名解析（结构校验前置——先于终态/幂等）
+    threshold_profile = _resolve_threshold_profile(threshold_profile)
 
-    # 幂等
+    # 验证族前置检查四步（终态/幂等/并集求交/扫描复用——同构提取，
+    # 幂等命中即返）
     rh = _range_hash(request_range)
-    existing = rr.find_validation_by_identity(db_path, hypothesis_id, strategy_id, rh)
-    if existing is not None:
-        return {
-            "record_id": existing["record_id"],
-            "verdict": existing["verdict"],
-            "duplicated": True,
-            "result": json.loads(existing["result"]) if existing["result"] else None,
-        }
-
-    # 判定并集求交
+    dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
+                               request_range)
+    if dup is not None:
+        return dup
+    # payload 的并集快照：写库前时点（不含本次写入——原前置查询的
+    # 值语义；与 precheck 内查询间无写操作，等价）
     judged = judged_ranges_union(db_path, hypothesis_id)
-    overlaps = overlaps_with_request(judged, request_range["start"], request_range["end"])
-    if overlaps:
-        raise ResearchError(
-            "RESEARCH_RANGE_OVERLAP",
-            "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
-            status=409,
-            detail={"judged_ranges": judged, "overlaps": overlaps})
-
-    # 扫描候选精确复用反向核查（并集未命中时执行——见 _screen_reuse_check）
-    _screen_reuse_check(db_path, hypothesis_id, request_range)
 
     # 策略与 DNA
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
@@ -449,16 +496,19 @@ def random_window_test(
     每窗独立 warmup 前扩（与隔离回测同语义）；窗口在
     [data_start, data_end] 内随机抽样（同 rng 种子 → 同窗口集）。
     """
+    # threshold_profile 按名解析（结构校验前置；每窗 judge 消费）
+    threshold_profile = _resolve_threshold_profile(threshold_profile)
+
     import numpy as np
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
     warmup_bars, _ = _derive_dna_warmup(db_path, dna)
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
     # 可抽窗的候选区间：[data_start, data_end - window]
-    ds = _to_utc(pd.Timestamp(data_start))
-    de = _to_utc(pd.Timestamp(data_end))
+    ds = to_utc(pd.Timestamp(data_start))
+    de = to_utc(pd.Timestamp(data_end))
     span_bars = int((de - ds) / bar_delta)
     usable = span_bars - window_bars
     if usable < n_windows:
@@ -495,7 +545,6 @@ def random_window_test(
         })
 
     returns = sorted(w["metrics"]["total_return"] for w in windows)
-    import numpy as _np
     worst = min(windows, key=lambda w: w["metrics"]["total_return"])
 
     # 总判定最差聚合（0.2.11 三态）：任一 fail → fail；无 fail 有
@@ -505,9 +554,9 @@ def random_window_test(
     summary = {
         "n_windows": n_windows,
         "window_bars": window_bars,
-        "returns_q25": float(_np.quantile(returns, 0.25)),
-        "returns_median": float(_np.quantile(returns, 0.50)),
-        "returns_q75": float(_np.quantile(returns, 0.75)),
+        "returns_q25": float(np.quantile(returns, 0.25)),
+        "returns_median": float(np.quantile(returns, 0.50)),
+        "returns_q75": float(np.quantile(returns, 0.75)),
         "worst_window": worst,
         "all_pass": agg == "pass",
     }
@@ -554,9 +603,9 @@ def run_sandbox_backtest(
          "hypothesis_id", "sandbox": True}
     """
     # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
-    tf_minutes = _TF_MINUTES.get(timeframe, 240)
-    start_ts = _to_utc(pd.Timestamp(start))
-    end_ts = _to_utc(pd.Timestamp(end))
+    tf_minutes = TF_MINUTES.get(timeframe, 240)
+    start_ts = to_utc(pd.Timestamp(start))
+    end_ts = to_utc(pd.Timestamp(end))
     bars = int((end_ts - start_ts).total_seconds() / 60 / tf_minutes)
     if bars > SANDBOX_MAX_BARS:
         raise ResearchError(
@@ -607,7 +656,9 @@ def _missing_component_evidence(
     收紧落在查询语义上、零行为差异）。
     """
     component_records = [
-        r for r in rr.list_validation_records(db_path, limit=200)
+        r for r in iter_all_pages(
+            lambda off, lim: rr.list_validation_records(
+                db_path, offset=off, limit=lim))
         if r["level"] == "component" and r["verdict"] == "pass"
     ]
     evidenced = set()
@@ -722,10 +773,10 @@ def _auto_segments(
     → type→label 映射（判读统计三键透传；bar 数由位置差重算）。"""
     from core.analysis.regime_segments import build_segments
     from core.analysis.registry_meta import default_params_for
-    from core.data.mtf_loader import find_parquet, load_and_prepare_df
+    from core.data.mtf_loader import (
+        find_parquet, load_and_prepare_df, safe_symbol)
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    if find_parquet(data_dir, safe_symbol, timeframe) is None:
+    if find_parquet(data_dir, safe_symbol(symbol), timeframe) is None:
         raise ResearchError(
             "RESEARCH_SYMBOL_NOT_FOUND",
             f"无数据: {symbol} {timeframe}",
@@ -817,41 +868,13 @@ def run_staged_validation(
                      "start": start, "end": end}
     rh = _range_hash(request_range)
 
+    judged: List[Dict[str, str]] = []
     if hypothesis_id is not None:
-        # 终态拒验（isolated 同款）
-        hyp = rr.get_hypothesis(db_path, hypothesis_id)
-        if hyp is None:
-            raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
-                                f"假设不存在: {hypothesis_id}", status=404)
-        if hyp["status"] != "active":
-            raise ResearchError(
-                "RESEARCH_HYPOTHESIS_TERMINAL",
-                f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
-                status=409)
-        # 幂等（isolated 同款——验证族纪律）
-        existing = rr.find_validation_by_identity(
-            db_path, hypothesis_id, strategy_id, rh)
-        if existing is not None:
-            return {
-                "record_id": existing["record_id"],
-                "verdict": existing["verdict"],
-                "duplicated": True,
-                "result": json.loads(existing["result"])
-                if existing["result"] else None,
-            }
-        # 判定并集 + 扫描复用（isolated 同款）
-        judged = judged_ranges_union(db_path, hypothesis_id)
-        overlaps = overlaps_with_request(judged, start, end)
-        if overlaps:
-            raise ResearchError(
-                "RESEARCH_RANGE_OVERLAP",
-                "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被"
-                "日志拦截）",
-                status=409,
-                detail={"judged_ranges": judged, "overlaps": overlaps})
-        _screen_reuse_check(db_path, hypothesis_id, request_range)
-    else:
-        judged = []
+        # 验证族前置检查四步（isolated 同款——同构提取，幂等命中即返）
+        dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
+                                   request_range)
+        if dup is not None:
+            return dup
 
     # ---- 策略与 warmup ----
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)

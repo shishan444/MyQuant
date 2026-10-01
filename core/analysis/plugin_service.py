@@ -17,19 +17,27 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.analysis.column_ref import BASE_SUBJECT_COLUMNS, _looks_like_encoded
 from core.analysis.hypothesis_service import (
     ResearchError,
     allowed_subject_columns,
+    hash_json,
 )
+from core.features.registry import INDICATOR_REGISTRY
 from core.persistence.repository import research as rr
 
 # 模型训练任务超时上限（测试缝：测试经 monkeypatch 注入短超时验证链路；
 # 生产默认 900s）
 MODEL_TRAIN_TIMEOUT_S = 900.0
 
-
-def _hash_str(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+# 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
+# 无上限时 formula_lookback 可达任意大，bar 数 × 周期秒数换算
+# pd.Timedelta 超上限（~9.2e9s，即 106751 天）即抛 OutOfBoundsTimedelta
+# （未捕获）。换算值域为 TF_MINUTES 周期表（最大 3d），1w 等高周期
+# 走 high_tf_warmup_span 不涉插件 lookback；10_000 对最苛刻的 1w
+# 防御边界（约 15_250 bar）留 34% 裕度，3d/1d 边界（35_584/106_752
+# bar）更宽，且远超实际指标窗口需求
+MAX_PLUGIN_LOOKBACK_BARS = 10_000
 
 
 def _plugin_allowed_columns(db_path: Path) -> set:
@@ -58,6 +66,72 @@ def _next_version(db_path: Path, table: str, name: str) -> int:
 
 # ---------------------------------------------------------------- 公式
 
+def _assert_column_not_taken(db_path: Path, column_name: str) -> None:
+    """插件列注册表全量撞名校验（formula/model 共享底座）：撞名 422。
+
+    面取全量（与 _formula_registry_entries 求值闭包同面，非仅
+    visible——隐藏列撞名同样污染叠层解析与引用判定）。
+    """
+    taken = {e["column_name"] for e in rr.list_signal_registry_entries(db_path)}
+    if column_name in taken:
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"列名不可用: {column_name}（与既有插件列冲突——同名插件列"
+            "求值互写覆盖，引用解析无法区分来源）",
+            detail={"column": column_name, "conflict": "既有插件列",
+                    "hint": "改用其他名称注册"})
+
+
+def _no_param_indicator_columns() -> frozenset:
+    """无参指标输出列全集（INDICATOR_REGISTRY 动态派生，不硬编码）。
+
+    危害面：插件 output_column 冒充无参指标现算列——指标计算幂等
+    （col 不在 df 才算），插件值先写即顶替指标值。有参指标列名带
+    参数段（如 macd_histogram_12_26_9）已被编码形分面覆盖；无参列
+    （obv/vwap/pattern_* 族）列名无参数段，需显式集合拦截。
+    """
+    return frozenset(
+        f for defn in INDICATOR_REGISTRY.values() if not defn.params
+        for f in defn.output_fields)
+
+
+def _assert_output_column_free(
+    db_path: Path, out_col: str, column_name: str,
+) -> None:
+    """公式插件输出列保留字校验（安全关）：撞名即 422 拒绝注册。
+
+    危害链：插件求值把输出列直写 DataFrame（enrich_with_plugin_columns
+    的 work[col]，写的是注册表列名 column_name）——撞基础列（OHLCV +
+    open_interest/funding_rate 衍生合并列，即 BASE_SUBJECT_COLUMNS
+    全集）覆盖价格数据；撞既有插件列产生同名列冲突；撞无参指标输出列
+    顶替指标现算值（计算幂等跳过）；编码形（如 rsi_14）冒充指标编码
+    列混淆字符串引用判定。
+
+    分面（版本化语义不误杀）：out_col 裸名拦基础列/无参指标列/编码形
+    （语义关，全版本——显式指定 close/obv/rsi_14 形一律拒）；既有
+    插件列只拦真正写 df 的 column_name（委托 _assert_column_not_taken）
+    ——version>1 时注册列名带 _v{N} 后缀，裸名与 v1 同名是同名升版
+    的正常形态。
+    """
+    fixed_cols = _no_param_indicator_columns()
+    for col in (out_col, column_name):
+        if col in BASE_SUBJECT_COLUMNS:
+            conflict = "基础数据列"
+        elif col in fixed_cols:
+            conflict = "无参指标输出列"
+        elif _looks_like_encoded(col):
+            conflict = "参数化指标编码形列名"
+        else:
+            continue
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"output_column 不可用: {col}（与{conflict}冲突——插件求值"
+            "直写同名 DataFrame 列，将覆盖既有数据）",
+            detail={"output_column": col, "conflict": conflict,
+                    "hint": "改用其他列名；缺省 fx_ 前缀天然避开保留字"})
+    _assert_column_not_taken(db_path, column_name)
+
+
 def register_formula_plugin(
     db_path: Path,
     *,
@@ -81,7 +155,9 @@ def register_formula_plugin(
             f"公式静态校验未通过（{len(errors)} 项）",
             detail={"errors": errors})
 
-    # 幂等：同名同表达式且 valid → 返回既有
+    # 幂等：同名同表达式且 valid → 返回既有（column 取 signal_registry
+    # 注册列名——单一事实源：output_columns 是 JSON 留档且不带版本后缀，
+    # version≥2 时回传它会把 AI 引用指向不存在的裸列名）
     from sqlalchemy import select
     from core.persistence.orm.models import FormulaPlugin
     from core.persistence.repository.dataset_meta import _engine_for
@@ -89,15 +165,40 @@ def register_formula_plugin(
         rows = conn.execute(
             select(FormulaPlugin).where(FormulaPlugin.name == name)
         ).mappings().all()
+    registry_column = {
+        e["plugin_id"]: e["column_name"]
+        for e in rr.list_signal_registry_entries(db_path)}
     for row in rows:
         if row["expression"] == expression and row["status"] == "valid":
-            return {"plugin_id": row["plugin_id"], "name": name,
-                    "version": row["version"], "column": row["output_columns"],
+            plugin_id = row["plugin_id"]
+            column = registry_column.get(plugin_id)
+            if column is None:
+                # valid 插件与注册条目原子双写，缺失即数据完整性异常——
+                # 显式失败优于回传坏引用（AI 拿 null/错名都会引用断链）
+                raise ResearchError(
+                    "RESEARCH_FORMULA_REGISTRY_MISSING",
+                    f"插件注册表条目缺失: {plugin_id}",
+                    status=500)
+            return {"plugin_id": plugin_id, "name": name,
+                    "version": row["version"], "column": column,
                     "duplicated": True}
 
-    # 版本递增 + 原子注册
+    # 版本递增 + 原子注册（输出列保留字校验先行——撞名 422 拒绝）
     out_col = output_column or f"fx_{name}"
     version = _next_version(db_path, "formula", name)
+    column_name = out_col if version == 1 else f"{out_col}_v{version}"
+    _assert_output_column_free(db_path, out_col, column_name)
+    # 回看窗口上限（安全关）：超限公式的 warmup 换算会 Timedelta 溢出
+    from core.signals.formula import formula_lookback
+    lookback = formula_lookback(expression)
+    if lookback > MAX_PLUGIN_LOOKBACK_BARS:
+        raise ResearchError(
+            "RESEARCH_FORMULA_INVALID",
+            f"公式回看窗口超上限: {lookback} bar（上限 {MAX_PLUGIN_LOOKBACK_BARS}"
+            "——换算 warmup 时长将溢出时间表示）",
+            detail={"lookback": lookback,
+                    "max": MAX_PLUGIN_LOOKBACK_BARS,
+                    "hint": "缩小窗口参数（rolling/shift/zscore 等）"})
     plugin_id = f"fpl_{hashlib.sha256(f'{name}{version}'.encode()).hexdigest()[:10]}"
     import uuid
     entry_id = f"ent_{uuid.uuid4().hex[:12]}"
@@ -105,10 +206,10 @@ def register_formula_plugin(
         db_path, source="formula", plugin_id=plugin_id, name=name,
         version=version, expression=expression,
         output_columns=json.dumps([out_col]),
-        entry_id=entry_id, column_name=out_col if version == 1 else f"{out_col}_v{version}",
+        entry_id=entry_id, column_name=column_name,
     )
     return {"plugin_id": plugin_id, "name": name, "version": version,
-            "column": out_col if version == 1 else f"{out_col}_v{version}",
+            "column": column_name,
             "duplicated": False}
 
 
@@ -324,7 +425,7 @@ def register_model_plugin(
     features = [d.ref_dict() for d in feature_defs]   # canonical 化落 config
 
     # 幂等：(name, config_hash) 相同且 valid → 返回既有
-    config_hash = _hash_json({
+    config_hash = hash_json({
         "name": name, "features": features, "template": template,
         "params": params, "target": target,
         "symbol": symbol, "timeframe": timeframe,
@@ -353,14 +454,17 @@ def register_model_plugin(
     version = _next_version(db_path, "model", name)
     plugin_id = f"mpl_{hashlib.sha256(f'{name}{version}'.encode()).hexdigest()[:10]}"
     signal_column = f"model_{name}" if version == 1 else f"model_{name}_v{version}"
+    # 撞既有插件列 422（model_ 前缀强制撞不了基础列/编码形，只查 taken
+    # ——不同 name 组合可产生同名列，如 name="x" v2 与 name="x_v2" v1
+    # 都产生 model_x_v2）
+    _assert_column_not_taken(db_path, signal_column)
     cfg_json = json.dumps({**config.__dict__, "_config_hash": config_hash},
                           ensure_ascii=False, default=str)
 
-    from core.persistence.repository.dataset_meta import _engine_for as _eng
+    from core.persistence.repository.dataset_meta import _engine_for
     from sqlalchemy import insert as _insert
-    now = None
     from core.persistence.timestamps import utc_now_iso
-    with _eng(db_path).begin() as conn:
+    with _engine_for(db_path).begin() as conn:
         conn.execute(_insert(ModelPlugin).values(
             plugin_id=plugin_id, name=name, version=version,
             config=cfg_json, signal_column=signal_column,
@@ -387,7 +491,7 @@ def register_model_plugin(
             raise
         # valid 落库（插件行已存在，只更新状态）+ 注册信号列
         from sqlalchemy import update as _update
-        with _eng(db_path).begin() as conn:
+        with _engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="valid",
@@ -402,7 +506,7 @@ def register_model_plugin(
 
     def _fail(reason: str):
         from sqlalchemy import update as _update
-        with _eng(db_path).begin() as conn:
+        with _engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="rejected", reject_reason=reason[:200]))
@@ -423,8 +527,3 @@ def register_model_plugin(
             "signal_column": signal_column, "duplicated": False,
             "poll": f"/api/research/analysis/tasks/{task_id}"}
 
-
-def _hash_json(obj) -> str:
-    return hashlib.sha256(
-        json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()

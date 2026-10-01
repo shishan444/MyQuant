@@ -113,3 +113,10 @@ def test_signal_columns_carry_reference_form(db_path):
     plugin = [c for c in cols if c["source"] in ("formula", "model")]
     if plugin:
         assert plugin[0]["reference_form"]["kind"] == "string"
+
+
+class TestGapClosureMeta:
+    def test_indicator_convergence未知指标_KeyError(self) -> None:
+        from core.analysis.registry_meta import indicator_convergence
+        with pytest.raises(KeyError, match="未知指标"):
+            indicator_convergence("GHOST_IND", {})
