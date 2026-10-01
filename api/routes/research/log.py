@@ -76,6 +76,12 @@ def list_feature_requests(
     page_size: int = 50,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
+    # 分页 clamp 与 /log、/hypotheses 同款（此前形制缺口：负 OFFSET
+    # 回首页、LIMIT 0 假空页、超上限不收）
+    if page < 1:
+        page = 1
+    if page_size < 1 or page_size > 200:
+        page_size = 50
     from sqlalchemy import select
     from core.persistence.orm.models import FeatureRequest
     from core.persistence.repository.dataset_meta import _engine_for

@@ -181,7 +181,10 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def list_feature_requests(status: Optional[str] = None, page: int = 1,
                               page_size: int = 50) -> Dict[str, Any]:
-        """慢通道功能需求单列表（只持久化与可查，不会自动实现）。"""
+        """慢通道功能需求单列表（只持久化与可查，不会自动实现；
+        分页 page/page_size≤50）。"""
+        page = max(1, page)
+        page_size = max(1, min(page_size, _PAGE_MAX))
         params: Dict[str, Any] = {"page": page, "page_size": page_size}
         if status:
             params["status"] = status
