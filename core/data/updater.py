@@ -13,6 +13,7 @@ import pandas as pd
 
 from core.data.fetcher import fetch_klines
 from core.data.storage import save_parquet, load_parquet, get_latest_timestamp, merge_parquet
+from core.data.validation import validate_known_interval, validate_symbol
 
 
 def update_market_data(
@@ -39,6 +40,10 @@ def update_market_data(
     if data_dir is None:
         data_dir = Path("data/market")
     data_dir = Path(data_dir)
+
+    # 命名白名单拒绝式校验（path 直拼写入路径，防路径穿越）
+    validate_symbol(symbol)
+    validate_known_interval(interval)
 
     path = data_dir / f"{symbol}_{interval}.parquet"
 
@@ -106,6 +111,7 @@ def update_funding_data(
     if data_dir is None:
         data_dir = Path("data/market")
     data_dir = Path(data_dir)
+    validate_symbol(symbol)  # 命名白名单（path 直拼写入路径）
     path = data_dir / f"{symbol}_funding.parquet"
 
     latest_ts = get_latest_timestamp(path)
@@ -137,6 +143,11 @@ def update_open_interest_data(
     data_dir = Path(data_dir)
     if timeframes is None:
         timeframes = list(_OI_TIMEFRAMES)
+
+    # 命名白名单（symbol 与各 tf 均直拼写入路径）
+    validate_symbol(symbol)
+    for tf in timeframes:
+        validate_known_interval(tf)
 
     raw_path = data_dir / f"{symbol}_oi_{_OI_RAW_TIMEFRAME}.parquet"
     latest_ts = get_latest_timestamp(raw_path)
