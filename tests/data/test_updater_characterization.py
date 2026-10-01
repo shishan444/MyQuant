@@ -67,7 +67,7 @@ class TestUpdateMarketDataNoNew:
 class TestUpdateFundingNoNew:
     """funding 增量为空：有存量返回存量，无存量返回空帧。"""
 
-    @patch("core.data.fetcher.fetch_funding_history")
+    @patch("core.data.updater.fetch_funding_history")
     def test_empty_no_existing_returns_empty(
         self, mock_fetch, tmp_path
     ) -> None:
@@ -75,7 +75,7 @@ class TestUpdateFundingNoNew:
         out = update_funding_data("BTCUSDT", data_dir=tmp_path)
         assert out.empty
 
-    @patch("core.data.fetcher.fetch_funding_history")
+    @patch("core.data.updater.fetch_funding_history")
     def test_empty_with_existing_returns_existing(
         self, mock_fetch, tmp_path
     ) -> None:
@@ -94,7 +94,7 @@ class TestUpdateFundingNoNew:
 class TestUpdateFundingIncrementalStart:
     """增量起点 = 本地最新 - 8h（重叠一个结算期，merge 幂等去重）。"""
 
-    @patch("core.data.fetcher.fetch_funding_history")
+    @patch("core.data.updater.fetch_funding_history")
     def test_incremental_start_backtracks_8h(self, mock_fetch, tmp_path) -> None:
         idx = pd.date_range("2024-01-01", periods=50, freq="8h", tz="UTC")
         existing = pd.DataFrame(
@@ -112,13 +112,13 @@ class TestUpdateFundingIncrementalStart:
 class TestUpdateOpenInterestNoData:
     """OI 增量为空：无原始文件 / 原始文件为空均返回空 dict。"""
 
-    @patch("core.data.fetcher.fetch_open_interest_history")
+    @patch("core.data.updater.fetch_open_interest_history")
     def test_empty_no_raw_returns_empty_dict(self, mock_fetch, tmp_path) -> None:
         mock_fetch.return_value = pd.DataFrame(columns=["open_interest"])
         out = update_open_interest_data("BTCUSDT", data_dir=tmp_path)
         assert out == {}
 
-    @patch("core.data.fetcher.fetch_open_interest_history")
+    @patch("core.data.updater.fetch_open_interest_history")
     def test_empty_raw_file_returns_empty_dict(self, mock_fetch, tmp_path) -> None:
         empty_raw = pd.DataFrame({"open_interest": pd.Series(dtype=float)})
         save_parquet(empty_raw, tmp_path / "BTCUSDT_oi_5m.parquet")
@@ -132,7 +132,7 @@ class TestUpdateOpenInterestNoData:
 class TestUpdateOpenInterestIncrementalStart:
     """增量起点 = 本地最新 - 10min（5m 原生粒度重叠两个点）。"""
 
-    @patch("core.data.fetcher.fetch_open_interest_history")
+    @patch("core.data.updater.fetch_open_interest_history")
     def test_incremental_start_backtracks_10min(self, mock_fetch, tmp_path) -> None:
         idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
         raw = pd.DataFrame(
@@ -147,3 +147,49 @@ class TestUpdateOpenInterestIncrementalStart:
         assert pd.Timestamp(start_arg, tz="UTC") == idx[-1] - pd.Timedelta(
             minutes=10
         )
+
+
+class TestMergeParquetReturnValue:
+    """merge_parquet 返回值契约（CARD-07：None → pd.DataFrame）。
+
+    双分支：文件已存在返回合并结果（与磁盘一致）、新建返回 new_df。
+    消费方 updater 两处已改为直接 return（省重复读盘）。
+    """
+
+    def _funding(self, n: int, start: str = "2024-01-01"):
+        idx = pd.date_range(start, periods=n, freq="8h", tz="UTC")
+        return pd.DataFrame(
+            {"funding_rate": np.linspace(0.0001, 0.0002, n)}, index=idx
+        )
+
+    def test_existing_file_returns_merged(self, tmp_path) -> None:
+        path = tmp_path / "merged.parquet"
+        save_parquet(self._funding(10), path)
+        new_part = self._funding(5, start="2024-01-03 16:00")  # 与存量重叠
+
+        from core.data.storage import merge_parquet
+
+        out = merge_parquet(new_part, path)
+
+        pd.testing.assert_frame_equal(out, load_parquet(path), check_freq=False)
+        assert len(out) == len(pd.concat([self._funding(10), new_part]).index.unique())
+
+    def test_new_file_returns_new_df(self, tmp_path) -> None:
+        from core.data.storage import merge_parquet
+
+        new_df = self._funding(5)
+        out = merge_parquet(new_df, tmp_path / "fresh.parquet")
+        pd.testing.assert_frame_equal(out, new_df, check_freq=False)
+        assert (tmp_path / "fresh.parquet").exists()
+
+    @patch("core.data.updater.fetch_funding_history")
+    def test_update_funding_returns_merge_result(self, mock_fetch, tmp_path) -> None:
+        """update_funding_data 正常增量：直接返回 merge_parquet 结果。"""
+        save_parquet(self._funding(10), tmp_path / "BTCUSDT_funding.parquet")
+        new_part = self._funding(5, start="2024-01-03 16:00")
+        mock_fetch.return_value = new_part
+
+        out = update_funding_data("BTCUSDT", data_dir=tmp_path)
+
+        assert len(out) > 10  # 合并了新数据
+        pd.testing.assert_frame_equal(out, load_parquet(tmp_path / "BTCUSDT_funding.parquet"), check_freq=False)
