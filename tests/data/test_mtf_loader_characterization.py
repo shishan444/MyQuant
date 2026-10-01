@@ -301,6 +301,44 @@ class TestLoadMtfData:
             )
         assert set(out.keys()) == {"1h"}
 
+    def test_load_exception_logs_warning_with_tf(self, tmp_path, caplog) -> None:
+        """异常路径经模块级 logger 发 warning，消息含周期名（CARD-09）。"""
+        save_parquet(make_ohlcv(60), tmp_path / "BTCUSDT_4h.parquet")
+        enhanced = make_ohlcv(60)
+        with patch(
+            "core.data.storage.load_parquet", side_effect=RuntimeError("boom")
+        ):
+            with caplog.at_level("WARNING", logger="core.data.mtf_loader"):
+                load_mtf_data(
+                    tmp_path, "BTCUSDT", "1h", enhanced, {"4h"},
+                    compute_indicators=False,
+                )
+        assert any("4h" in r.message for r in caplog.records)
+
+    def test_min_bars_param_raises_threshold(self, tmp_path) -> None:
+        """min_bars 可调（CARD-09）：同 60 根数据，默认 50 通过、100 跳过。"""
+        save_parquet(make_ohlcv(60), tmp_path / "BTCUSDT_4h.parquet")
+        enhanced = make_ohlcv(60)
+        out_default = load_mtf_data(
+            tmp_path, "BTCUSDT", "1h", enhanced, {"4h"}, compute_indicators=False
+        )
+        out_strict = load_mtf_data(
+            tmp_path, "BTCUSDT", "1h", enhanced, {"4h"},
+            min_bars=100, compute_indicators=False,
+        )
+        assert len(out_default["4h"]) == 60
+        assert set(out_strict.keys()) == {"1h"}  # 60 < 100 被跳过
+
+    def test_min_bars_lower_admits_short_tf(self, tmp_path) -> None:
+        """低门槛接纳短数据：30 根 + min_bars=30 通过（默认 50 会跳过）。"""
+        save_parquet(make_ohlcv(30), tmp_path / "BTCUSDT_4h.parquet")
+        enhanced = make_ohlcv(60)
+        out = load_mtf_data(
+            tmp_path, "BTCUSDT", "1h", enhanced, {"4h"},
+            min_bars=30, compute_indicators=False,
+        )
+        assert len(out["4h"]) == 30
+
     def test_indicator_compute_branch(self, tmp_path) -> None:
         save_parquet(make_ohlcv(60), tmp_path / "BTCUSDT_4h.parquet")
         enhanced = make_ohlcv(60)
