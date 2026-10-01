@@ -187,7 +187,9 @@ def compute_metrics(
     if len(equity_curve) > 10:
         x = np.arange(len(equity_curve))
         y = equity_curve.values
-        slope = np.cov(x, y)[0, 1] / max(np.var(x), 1e-10)
+        # var 须与 cov 同为 ddof=1 配对（自由度约掉）——混用 ddof=0 会使
+        # 斜率高估 n/(n-1) 倍、完美线性曲线的 r² 系统性低于 1
+        slope = np.cov(x, y)[0, 1] / max(np.var(x, ddof=1), 1e-10)
         intercept = np.mean(y) - slope * np.mean(x)
         y_pred = slope * x + intercept
         ss_res = np.sum((y - y_pred) ** 2)

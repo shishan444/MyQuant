@@ -224,13 +224,12 @@ class TestRSquared:
         assert m["r_squared"] == 0.0
 
     def test_eleven_bars_linear_anchored(self):
-        # 11 bar 恰过守卫。现状口径：slope=cov(ddof=1)/var(ddof=0) 混用
-        # → 斜率高估 n/(n-1)，完美线性曲线也有系统残差：手算
-        # ss_res=1.1、ss_tot=110 → r²=0.99（非 1.0；修复 ddof 口径须同步改锚点）
+        # 11 bar 恰过守卫。CARD-01 修复后：var 与 cov 同为 ddof=1 配对，
+        # slope=Sxy/Sxx，完美线性 ss_res=0、ss_tot=110 → r²=1.0 精确
         m = compute_metrics(
             _series([100.0 + i for i in range(11)]), total_trades=2,
             trade_returns=np.array([0.05, -0.02]))
-        assert m["r_squared"] == pytest.approx(0.99)
+        assert m["r_squared"] == pytest.approx(1.0)
 
     def test_flat_curve_ss_tot_zero(self):
         # 平曲线 ss_tot=0 分支 → 0.0
