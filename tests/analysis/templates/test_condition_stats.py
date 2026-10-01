@@ -267,3 +267,4 @@ class TestTimeframeKey:
         # 同阈值去键：1h 轴存在越界 bar → 命中 >0（两轴分离）
         assert hit({"subject": "close", "action": "gt",
                     "target": beyond}) > 0
+
