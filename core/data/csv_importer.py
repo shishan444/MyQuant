@@ -20,6 +20,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from core.data.storage import merge_parquet, save_parquet
 from core.data.validation import (
     ensure_path_within,
     validate_import_interval,
@@ -208,22 +209,23 @@ def validate_ohlcv(df: pd.DataFrame) -> list[str]:
 
 # ── CSV Reading ───────────────────────────────────────────────
 
-def read_csv(path: Path) -> pd.DataFrame:
-    """Read CSV file and return standardized OHLCV DataFrame.
+def _read_csv_with_meta(
+    path: Path,
+) -> tuple[pd.DataFrame, ImportFormat, TimestampPrecision]:
+    """读 CSV 并一并返回格式与时间戳精度（导入链路的单一读取实现）。
 
-    Auto-detects format (Binance official or generic).
-    Handles ms/us timestamp precision automatically.
-    Returns DataFrame with DatetimeIndex (UTC) and columns:
-    open, high, low, close, volume.
+    元信息（fmt/precision）随首次读取探测返回，消除导入路径上
+    detect_format/_get_first_timestamp_raw 的重复首行读；结果字段
+    的 precision 与文本首行原始值同源（含 BOM 等边缘文件行为）。
     """
     fmt = detect_format(path)
 
     if fmt == ImportFormat.BINANCE_OFFICIAL:
         df = pd.read_csv(path, header=None, names=BINANCE_COLUMNS)
         ts_col = df["open_time"].iloc[0]
-        precision = detect_timestamp_precision(int(ts_col))
+        unit_precision = detect_timestamp_precision(int(ts_col))
 
-        if precision == TimestampPrecision.MICROSECOND:
+        if unit_precision == TimestampPrecision.MICROSECOND:
             df["timestamp"] = pd.to_datetime(df["open_time"], unit="us", utc=True)
         else:
             df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
@@ -254,7 +256,35 @@ def read_csv(path: Path) -> pd.DataFrame:
     df = df[~df.index.duplicated(keep="first")]
     df = df.sort_index()
 
+    # 结果字段精度：与文本首行原始值同源（read_csv 内部用于选 unit
+    # 的解析值仅作解析用途，结果语义以原始值探测为准）
+    precision = detect_timestamp_precision(_get_first_timestamp_raw(path, fmt))
+    return df, fmt, precision
+
+
+def read_csv(path: Path) -> pd.DataFrame:
+    """Read CSV file and return standardized OHLCV DataFrame.
+
+    Auto-detects format (Binance official or generic).
+    Handles ms/us timestamp precision automatically.
+    Returns DataFrame with DatetimeIndex (UTC) and columns:
+    open, high, low, close, volume.
+    """
+    df, _, _ = _read_csv_with_meta(path)
     return df
+
+
+def _write_dataset(df: pd.DataFrame, parquet_path: Path, mode: ImportMode) -> None:
+    """按导入模式落盘（mode → 写策略单一实现）。
+
+    MERGE 为增量合并（存在即合并去重）；REPLACE 与 NEW 均为覆盖写
+    （NEW 的差异化语义未定，维持与 REPLACE 同行为的现状——C3 已
+    登记技术债务）。
+    """
+    if mode == ImportMode.MERGE and parquet_path.exists():
+        merge_parquet(df, parquet_path)
+    else:
+        save_parquet(df, parquet_path)
 
 
 # ── Single File Import ────────────────────────────────────────
@@ -289,8 +319,8 @@ def import_csv(
     validate_symbol(symbol)
     validate_import_interval(interval)
 
-    # Read and validate
-    df = read_csv(path)
+    # Read and validate（元信息随读取一并返回，不再重复探测）
+    df, fmt, precision = _read_csv_with_meta(path)
     errors = validate_ohlcv(df)
     if errors:
         raise ValueError(f"OHLCV validation failed: {'; '.join(errors)}")
@@ -300,21 +330,7 @@ def import_csv(
     # 纵深防御：写入路径不得越出 data_dir
     ensure_path_within(parquet_path, data_dir)
 
-    # Determine format/precision for result
-    fmt = detect_format(path)
-    ts_col_raw = _get_first_timestamp_raw(path, fmt)
-    precision = detect_timestamp_precision(ts_col_raw)
-
-    # Write based on mode
-    if mode == ImportMode.REPLACE or not parquet_path.exists():
-        from core.data.storage import save_parquet
-        save_parquet(df, parquet_path)
-    elif mode == ImportMode.MERGE:
-        from core.data.storage import merge_parquet
-        merge_parquet(df, parquet_path)
-    else:  # NEW
-        from core.data.storage import save_parquet
-        save_parquet(df, parquet_path)
+    _write_dataset(df, parquet_path, mode)
 
     time_start = str(df.index.min())
     time_end = str(df.index.max())
@@ -353,7 +369,8 @@ def import_csv_batch(
     detected_precision = None
 
     for p in paths:
-        df = read_csv(p)
+        # 元信息随读取一并返回（首文件探测不再重复读首行）
+        df, fmt, precision = _read_csv_with_meta(p)
         errors = validate_ohlcv(df)
         if errors:
             raise ValueError(f"OHLCV validation failed for {p.name}: {'; '.join(errors)}")
@@ -367,9 +384,8 @@ def import_csv_batch(
             detected_interval = detected_interval or iv
 
         if detected_fmt is None:
-            detected_fmt = detect_format(p)
-            ts_raw = _get_first_timestamp_raw(p, detected_fmt)
-            detected_precision = detect_timestamp_precision(ts_raw)
+            detected_fmt = fmt
+            detected_precision = precision
 
     if not detected_symbol or not detected_interval:
         raise ValueError("Cannot determine symbol/interval from files")
@@ -388,14 +404,7 @@ def import_csv_batch(
     # 纵深防御：写入路径不得越出 data_dir
     ensure_path_within(parquet_path, data_dir)
 
-    from core.data.storage import save_parquet, merge_parquet
-
-    if mode == ImportMode.REPLACE or not parquet_path.exists():
-        save_parquet(merged, parquet_path)
-    elif mode == ImportMode.MERGE:
-        merge_parquet(merged, parquet_path)
-    else:
-        save_parquet(merged, parquet_path)
+    _write_dataset(merged, parquet_path, mode)
 
     time_start = str(merged.index.min())
     time_end = str(merged.index.max())
