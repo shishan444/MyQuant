@@ -904,16 +904,18 @@ class StagedValidationRequest(BaseModel):
 
 class SandboxBacktestRequest(BaseModel):
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
-    不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"""
+    不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。
+    经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1
+    （负成本/零本金在下单金额计算中产生无意义或发散结果）。"""
 
     strategy_id: str
     symbol: str = "BTCUSDT"
     timeframe: str = "4h"
     start: str
     end: str
-    fee: float = 0.001
-    slippage: float = 0.0005
-    init_cash: float = 100000.0
+    fee: float = Field(default=0.001, ge=0)
+    slippage: float = Field(default=0.0005, ge=0)
+    init_cash: float = Field(default=100000.0, ge=1)
     hypothesis_id: Optional[str] = None
 
 
