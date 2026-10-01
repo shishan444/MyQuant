@@ -121,6 +121,9 @@ def regime_split(
 
     _validate_segments_input(segmentation, condition, indicator, forward_bars, len(df))
 
+    # 入口副本：判读/条件指标列不写入调用方 df（模板纯计算契约，
+    # 同族三模板 copy 形制——condition_stats/screen_patterns/param_sweep）
+    df = df.copy()
     adx_col = resolve_indicator_column("ADX", {"period": 14})
     atr_col = resolve_indicator_column("ATR", {"period": 14})
     for c, s in _compute_indicator(df, "ADX", {"period": 14}).items():
@@ -128,9 +131,8 @@ def regime_split(
     for c, s in _compute_indicator(df, "ATR", {"period": 14}).items():
         df[c] = s
 
-    # 统计段切分（warmup 前缀只用不算——判读指标在全 df 收敛；
-    # 置于指标计算后：布尔切片为副本，先切则不含新算指标列。None
-    # 分支统一经掩码直切为副本——stat 后续只读判读列，与原引用等价）
+    # 统计段切分（warmup 前缀只用不算——判读指标在副本全量收敛；
+    # 置于指标计算后：布尔切片为副本，先切则不含新算指标列）
     stat = df[stat_window_mask(df, request_start)]
     if condition is not None:
         from core.features.registry import INDICATOR_REGISTRY
