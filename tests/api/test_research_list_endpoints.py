@@ -116,6 +116,14 @@ class TestResearchLogEndpoint:
             "hypothesis_id": "hyp_none", "entry_type": "register"}).json()
         assert empty["items"] == []
 
+    @pytest.mark.parametrize("page_size", [0, 201])
+    def test_page_size_out_of_range_clamped(self, api_client, page_size):
+        """/log 的 page_size 越界钳 50（闸门②补强：此前只测 page 维度）。"""
+        _register(api_client, "2024-01-01T00:00:00Z")
+        body = api_client.get("/api/research/log",
+                              params={"page_size": page_size}).json()
+        assert body["page_size"] == 50 and len(body["items"]) == 1
+
     def test_page_clamped_and_beyond_tail(self, api_client):
         """CARD-07 后：超尾页 items 空、total=过滤口径真总数、cursor None。"""
         _register(api_client, "2024-01-01T00:00:00Z")

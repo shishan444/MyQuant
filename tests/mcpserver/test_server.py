@@ -389,6 +389,8 @@ class TestPollContract:
                                       initial_delay=0.01, total_timeout=0.2)
         # 第二轮失败 → 保留第一轮的 running 状态并带来源时刻
         assert out["status"] == "running" and out.get("_polled_at")
+        # 闸门②补强：超时到期显式标注（客户端可区分「完成」与「超时截断」）
+        assert out.get("_poll_timeout") is True
 
 
 class _FakeCtx:
