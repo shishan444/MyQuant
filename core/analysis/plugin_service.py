@@ -119,7 +119,9 @@ def register_formula_plugin(
             f"公式静态校验未通过（{len(errors)} 项）",
             detail={"errors": errors})
 
-    # 幂等：同名同表达式且 valid → 返回既有
+    # 幂等：同名同表达式且 valid → 返回既有（column 取 signal_registry
+    # 注册列名——单一事实源：output_columns 是 JSON 留档且不带版本后缀，
+    # version≥2 时回传它会把 AI 引用指向不存在的裸列名）
     from sqlalchemy import select
     from core.persistence.orm.models import FormulaPlugin
     from core.persistence.repository.dataset_meta import _engine_for
@@ -127,10 +129,22 @@ def register_formula_plugin(
         rows = conn.execute(
             select(FormulaPlugin).where(FormulaPlugin.name == name)
         ).mappings().all()
+    registry_column = {
+        e["plugin_id"]: e["column_name"]
+        for e in rr.list_signal_registry_entries(db_path)}
     for row in rows:
         if row["expression"] == expression and row["status"] == "valid":
-            return {"plugin_id": row["plugin_id"], "name": name,
-                    "version": row["version"], "column": row["output_columns"],
+            plugin_id = row["plugin_id"]
+            column = registry_column.get(plugin_id)
+            if column is None:
+                # valid 插件与注册条目原子双写，缺失即数据完整性异常——
+                # 显式失败优于回传坏引用（AI 拿 null/错名都会引用断链）
+                raise ResearchError(
+                    "RESEARCH_FORMULA_REGISTRY_MISSING",
+                    f"插件注册表条目缺失: {plugin_id}",
+                    status=500)
+            return {"plugin_id": plugin_id, "name": name,
+                    "version": row["version"], "column": column,
                     "duplicated": True}
 
     # 版本递增 + 原子注册（输出列保留字校验先行——撞名 422 拒绝）
