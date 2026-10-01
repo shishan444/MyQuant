@@ -236,3 +236,42 @@ class TestCombineBranches:
         ss = assemble_signal_set(db, dna, df)
 
         assert list(ss.entries) == list(base.entries & (fx > 0.0))
+
+
+class TestGapClosureAssemble3:
+    """第三批：纯 rule 源 + composition 的空插件早退。"""
+
+    def test_纯rule源带组合_空插件早退(self, db: Path) -> None:
+        """signal_sources 全为 rule 型 + composition 非空 → plugin_sources
+        空 → _combine 的空 bools 早退（entries=规则基线原样）。"""
+        df = _df()
+        rule_only = StrategyDNA(
+            signal_genes=_rule_genes(), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        with_comp = StrategyDNA(
+            signal_genes=_rule_genes(), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[{"type": "rule"}],
+            composition={"mode": "gate"})
+
+        base = assemble_signal_set(db, rule_only, df)
+        out = assemble_signal_set(db, with_comp, df)
+        assert list(out.entries) == list(base.entries)  # 空插件 = 基线原样
+
+
+class TestGapClosureFormulaFail:
+    """第三批：formula 源运行时缺列——求值失败显式拒绝。"""
+
+    def test_formula源运行时缺列_拒绝(self, db: Path) -> None:
+        register_formula_plugin(db, name="need_oi",
+                                expression="zscore(open_interest, 20)")
+        from core.analysis.registry_meta import available_signal_columns
+        col = next(c["column_key"] for c in available_signal_columns(db)
+                   if c["source"] == "formula")
+        dna = _dna([{"type": "formula", "ref": col}])
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())  # _df 无 open_interest 列
+        assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
+        assert "求值失败" in ei.value.message

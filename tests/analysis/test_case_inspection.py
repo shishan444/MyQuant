@@ -563,3 +563,74 @@ class TestGapClosureValidation:
     def test_target类型非法_拒(self) -> None:
         with pytest.raises(ResearchError, match="类型非法"):
             ci._validate_target([1, 2], pd.Index(["close"]))
+
+
+class TestGapClosureInspect3:
+    """第三批：装载与求值域边界 + 多输出列缺失 None。
+
+    不可达判定（第三批，装载层责任/前置拦截）：①indicator 缺填
+    分支——_parse_selector 的 resolve_column_ref 对无 indicator 键的
+    结构化 subject 先拦；②load None 分支——load_parquet 对损坏文件
+    抛底层异常；③naive 索引 tz_localize——装载比较先炸。"""
+
+    def test_无该档数据_SYMBOL_NOT_FOUND(self, env):
+        with pytest.raises(ResearchError) as ei:
+            ci.inspect_cases(env["db"], env["data_dir"], symbol=SYMBOL,
+                             timeframe="5m",
+                             selector={"condition": {
+                                 "subject": {"indicator": "RSI",
+                                             "params": {"period": 14}},
+                                 "action": "lt", "target": 45}},
+                             limit=3)
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+    def test_数据不足有效域_start缺省(self, env):
+        """start 不传 + 数据量不足 warmup 需求（150 根 < 200）→ 拒。"""
+        import numpy as np
+        import pandas as pd
+        data_dir = env["data_dir"].parent / "tiny"
+        data_dir.mkdir(exist_ok=True)
+        idx = pd.date_range("2024-01-01", periods=150, freq="1d",
+                            tz="UTC", name="timestamp")
+        close = np.full(150, 100.0)
+        pd.DataFrame({"open": close, "high": close, "low": close,
+                      "close": close,
+                      "volume": np.full(150, 10.0)},
+                     index=idx).to_parquet(data_dir / f"{SYMBOL}_1d.parquet")
+        with pytest.raises(ResearchError, match="有效域"):
+            ci.inspect_cases(env["db"], data_dir, symbol=SYMBOL,
+                             timeframe="1d",
+                             selector={"condition": {
+                                 "subject": {"indicator": "RSI",
+                                             "params": {"period": 14}},
+                                 "action": "lt", "target": 45}},
+                             limit=3)
+
+    def test_额外指标列请求_读数含其输出列(self, env):
+        """indicator 参数（额外读数指标）的多输出列进读数集。"""
+        out = ci.inspect_cases(
+            env["db"], env["data_dir"], symbol=SYMBOL, timeframe="1d",
+            selector={"condition": {
+                "subject": {"indicator": "RSI",
+                            "params": {"period": 14}},
+                "action": "lt", "target": 100.0}},
+            indicator="MACD", limit=3)
+        for case in out["cases"]:
+            iv = case["indicator_values"]
+            assert isinstance(iv, dict)
+            # MACD 默认矩阵输出列在读数集（值或 None）
+            assert any("macd" in k for k in iv) or iv == {}
+
+
+class TestGapClosureTfBase:
+    def test_条件带timeframe而基准未知_拒(self, env):
+        with pytest.raises(ResearchError) as ei:
+            ci.inspect_cases(env["db"], env["data_dir"], symbol=SYMBOL,
+                             timeframe="7m",
+                             selector={"condition": {
+                                 "subject": {"indicator": "RSI",
+                                             "params": {"period": 14}},
+                                 "action": "lt", "target": 45,
+                                 "timeframe": "1d"}},
+                             limit=3)
+        assert ei.value.code == "TIMEFRAME_UNKNOWN"

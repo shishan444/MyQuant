@@ -563,3 +563,53 @@ class TestGapClosureInternal:
         finally:
             exec_mod.get_executor = orig
         assert out["status"] == "pending"
+
+
+class TestGapClosurePlugin3:
+    """第三批：闭包查询与特征装载剩余分支。"""
+
+    def test_注册表在而插件行缺_表达式None(self, db: Path) -> None:
+        from sqlalchemy import delete
+        from core.analysis.plugin_service import (
+            _formula_expression_of, _formula_registry_entries)
+        from core.persistence.orm.models import FormulaPlugin
+        from core.persistence.repository.dataset_meta import _engine_for
+        out = register_formula_plugin(db, name="alpha", expression=EXPR)
+        with _engine_for(db).begin() as conn:
+            conn.execute(delete(FormulaPlugin).where(
+                FormulaPlugin.plugin_id == out["plugin_id"]))
+        entries = _formula_registry_entries(db)
+        assert _formula_expression_of(db, entries, out["column"]) is None
+
+    def test_特征装载_纯indicator无plugin直返(self, db: Path) -> None:
+        from core.analysis.plugin_service import _enrich_feature_columns
+        from core.analysis.column_ref import resolve_column_ref
+        import pandas as pd
+        idx = pd.date_range("2024-01-01", periods=60, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": range(60), "close": [i + 0.5 for i in range(60)],
+            "high": range(60), "low": range(60),
+            "volume": [10.0] * 60, "trades": 5}, index=idx)
+        defs = [resolve_column_ref("close", db),
+                resolve_column_ref({"indicator": "RSI",
+                                    "params": {"period": 14}}, db)]
+        out = _enrich_feature_columns(db, df, defs)
+        assert "rsi_14" in out.columns
+        assert "fx_" not in "".join(out.columns)
+
+    def test_特征装载_已存在指标列跳过现算(self, db: Path) -> None:
+        from core.analysis.plugin_service import _enrich_feature_columns
+        from core.analysis.column_ref import resolve_column_ref
+        import pandas as pd
+        idx = pd.date_range("2024-01-01", periods=60, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": range(60), "close": [i + 0.5 for i in range(60)],
+            "high": range(60), "low": range(60),
+            "volume": [10.0] * 60, "trades": 5,
+            "rsi_14": [50.0] * 60}, index=idx)  # 已含指标列
+        defs = [resolve_column_ref({"indicator": "RSI",
+                                    "params": {"period": 14}}, db)]
+        out = _enrich_feature_columns(db, df, defs)
+        assert (out["rsi_14"] == 50.0).all()  # 未被现算覆盖

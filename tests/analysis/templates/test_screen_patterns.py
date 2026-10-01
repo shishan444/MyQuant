@@ -268,3 +268,55 @@ class TestGapClosureScreen:
             df, data_ranges=_RANGES, timeframe="1h", features=["RSI"],
             horizons=[4], min_samples=30).to_dict()
         assert r["payload"]["candidates"] == []
+
+
+class TestGapClosureScreen3:
+    """第三批：horizon 超长拒与衍生品真实缺列路径。"""
+
+    def test_horizon超数据长度_422(self):
+        with pytest.raises(ResearchError, match="超数据长度"):
+            screen_patterns(_random_walk(1, 50), data_ranges=_RANGES,
+                            timeframe="1h", features=["RSI"], horizons=[50])
+
+    def test_衍生品真实缺列_compute产空路径(self):
+        """OI_ZScore 有默认参数集但 df 缺 oi 列——compute 产空/
+        抛错的 produced 空路径（skipped 声明）。"""
+        r = screen_patterns(
+            _random_walk(1, 300), data_ranges=_RANGES, timeframe="1h",
+            features=["OI_ZScore", "RSI"], horizons=[4]).to_dict()
+        assert "OI_ZScore" in r["payload"]["skipped_indicators"]
+        assert "RSI" not in r["payload"]["skipped_indicators"]
+
+
+class TestGapClosureComboSkip:
+    """第三批：组合循环同 subject 跳过分支（构造双尾数据使 RSI 的
+    lt/gt 两条件同入 singles top——同 subject 配对必触发跳过）。"""
+
+    def test_同subject双条件入top_组合跳过不炸(self):
+        import numpy as np
+        import pandas as pd
+        n = 3000
+        rng = np.random.default_rng(21)
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        # 大幅振荡：RSI 频繁触双尾（lt 30 与 gt 70 命中都过 min_samples）
+        swing = np.sin(np.arange(n) / 18.0) * 400
+        close = 60000 + swing + rng.normal(0, 40, n)
+        df = pd.DataFrame({
+            "open": close, "high": close + 60, "low": close - 60,
+            "close": close, "volume": rng.uniform(100, 800, n)}, index=idx)
+        r = screen_patterns(
+            df, data_ranges=_RANGES, timeframe="1h", features=["RSI"],
+            horizons=[4, 12], min_samples=30).to_dict()
+        p = r["payload"]
+        singles = [c["condition"]["subject"]
+                   for c in p["candidates"] if not c.get("parts")]
+        subjects = [list(s.values())[0] if isinstance(s, dict) else s
+                    for s in singles]
+        # 构造意图：rsi 列至少两个条件入 singles（lt/gt 双尾）
+        assert len(singles) >= 2, "构造未达同 subject 双条件入 top"
+        # 组合输出中不存在同 subject 对（同 subject 跳过的结果面）
+        for c in p["candidates"]:
+            if c.get("parts"):
+                parts = c["parts"]
+                assert len({str(x.get("subject")) for x in parts}) == len(parts)

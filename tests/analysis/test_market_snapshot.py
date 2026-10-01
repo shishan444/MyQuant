@@ -378,3 +378,21 @@ def test_timeframes_whitelist_extended_fourteen(db_path, data_dir):
         assert sorted(ei.value.detail["legal"]) == sorted(
             ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h",
              "6h", "8h", "12h", "1d", "3d", "1w"])
+
+
+class TestGapClosureSnapshot3:
+    """第三批：装载与 as_of 边界。
+
+    不可达判定（装载层责任/前置拦截）：probe 空/损坏文件分支——
+    load_parquet 对空文件抛底层 ArrowInvalid 而非返回 None/空；
+    naive 索引 tz_localize——装载比较先炸；as_of pos<0 分支——
+    「as_of 早于数据起点」前置检查拦截同形态（既有用例覆盖）。"""
+
+    def test_窗口有效值不足_分位None(self, db_path, tmp_path):
+        """_window_percentile 窗口有效值 <2 → None（NaN 序列头部分位
+        缺失语义）。"""
+        from core.analysis.market_snapshot import _window_percentile
+        s = pd.Series([np.nan] * 30 + [1.0])
+        assert _window_percentile(s, pos=30, window_bars=20) is None
+        s2 = pd.Series([1.0, 2.0, 3.0])
+        assert _window_percentile(s2, pos=2, window_bars=3) == 1.0
