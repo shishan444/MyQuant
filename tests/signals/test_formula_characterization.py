@@ -155,3 +155,82 @@ class TestLookbackEdges:
 
     def test_window_literal_still_taken(self) -> None:
         assert formula_lookback("rolling_mean(close, 30)") == 30
+
+
+class TestResourceLimits:
+    """表达式资源限制双件套（CARD-14·涉安）。
+
+    长度上限 10KB（入口前置，注册关拦截口径）；递归超限三处转译
+    FormulaError/错误清单——设计目标是「不裸炸」：10KB 内病态扁平
+    长链注册可过、求值被干净转译是契约行为（非「10KB 内全部可求值」）。
+    """
+
+    COLS = {"close", "vol"}
+
+    def test_over_limit_rejected_with_actual_length(self) -> None:
+        expr = "close" + "+close" * 12000  # ~72KB
+        errs = validate_formula(expr, self.COLS)
+        assert len(errs) == 1
+        assert "表达式超长" in errs[0]
+        assert str(len(expr)) in errs[0]  # 文案如实报实际字符数
+
+    def test_boundary_exact_limit_passes(self) -> None:
+        expr = "close" + " " * (10 * 1024 - len("close"))  # 恰 10240
+        assert len(expr) == 10 * 1024
+        assert validate_formula(expr, self.COLS) == []
+
+    def test_boundary_one_char_over_rejected(self) -> None:
+        expr = "close" + " " * (10 * 1024 - len("close") + 1)  # 10241
+        errs = validate_formula(expr, self.COLS)
+        assert any("表达式超长" in e for e in errs)
+
+    def test_deep_nesting_within_limit_eval_translated(self) -> None:
+        """10KB 内深嵌套：注册过、求值 _ev 递归超限干净转译（不裸炸）。"""
+        expr = "-" * 2000 + "close"  # 左深 UnaryOp 链，<10KB
+        assert validate_formula(expr, self.COLS) == []
+        df = pd.DataFrame({"close": [1.0, 2.0, 3.0]})
+        with pytest.raises(FormulaError, match="求值递归超限"):
+            evaluate_formula(expr, df)
+
+    def test_parse_recursionerror_translated_in_validate(self) -> None:
+        """白盒锚（不依赖真实阈值，跨版本稳定）：parse 抛
+        RecursionError 时 validate_formula 返回清单不外泄。"""
+        from unittest.mock import patch as _patch
+
+        with _patch(
+            "core.signals.formula.ast.parse", side_effect=RecursionError
+        ):
+            errs = validate_formula("close", self.COLS)
+        assert any("嵌套过深" in e for e in errs)
+
+    def test_parse_memoryerror_translated_both_layers(self) -> None:
+        """白盒锚：CPython C 级解析器栈溢出（MemoryError）双层转译。"""
+        from unittest.mock import patch as _patch
+
+        df = pd.DataFrame({"close": [1.0, 2.0, 3.0]})
+        with _patch(
+            "core.signals.formula.ast.parse",
+            side_effect=MemoryError("Parser stack overflowed"),
+        ):
+            errs = validate_formula("close", self.COLS)
+            assert any("嵌套过深" in e for e in errs)
+        with _patch(
+            "core.signals.formula.ast.parse",
+            side_effect=MemoryError("Parser stack overflowed"),
+        ):
+            with pytest.raises(FormulaError, match="解析递归超限"):
+                evaluate_formula("close", df)
+
+    def test_normal_expression_within_limit_unharmed(self) -> None:
+        """防误伤：常规组合形态（<10KB）注册与求值均正常。"""
+        expr = "rolling_mean(zscore(close, 30), 20) + corr(close, vol, 10)"
+        assert validate_formula(expr, self.COLS) == []
+        idx = pd.date_range("2024-01-01", periods=60, freq="1h", tz="UTC")
+        df = pd.DataFrame(
+            {"close": np.arange(1.0, 61.0), "vol": np.arange(2.0, 122.0, 2.0)},
+            index=idx,
+        )
+        out = evaluate_formula(expr, df)
+        assert isinstance(out, pd.Series)
+        assert len(out) == 60
+        assert out.iloc[40:].notna().all()  # 窗口收敛后无 NaN
