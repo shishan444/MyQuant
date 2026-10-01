@@ -321,6 +321,23 @@ class TestFeatureRequestSizeCaps:
             "title": "正" * 200, "payload": {"blob": "y" * 60000}})
         assert resp.status_code == 200, resp.text
 
+    @pytest.mark.parametrize(("target", "expect_422"), [
+        (65536, False), (65537, True),
+    ])
+    def test_payload_exact_byte_boundary(self, api_client, target, expect_422):
+        """精确字节边界：序列化恰 65536B 通过（> 判定不含等号）、65537B 拒。"""
+        import json as _json
+
+        base = len(_json.dumps({"blob": ""},
+                               ensure_ascii=False).encode("utf-8"))
+        payload = {"blob": "x" * (target - base)}
+        assert len(_json.dumps(payload, ensure_ascii=False)
+                   .encode("utf-8")) == target, "构造自校验"
+
+        resp = api_client.post("/api/research/feature-requests", json={
+            "title": "t", "payload": payload})
+        assert (resp.status_code == 422) is expect_422
+
 
 class TestCorruptedJsonPassthrough:
     """CARD-12 修复资产：库存 JSON 列损坏时端点不 500。
