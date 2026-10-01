@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pandas as pd
 import requests
 
 pytestmark = [pytest.mark.unit]
@@ -382,6 +383,45 @@ class TestFetchOpenInterestHistoryNoData:
         )
         assert df.empty
         assert list(df.columns) == ["open_interest"]
+
+
+class TestMonthStarts:
+    """月首序列生成（CARD-16 往返冗余删除的等价性锚）。"""
+
+    def test_month_starts_from_month_end_boundary(self) -> None:
+        """1/31 月末起点：首日本归一、推进逐月首日（无往返转换后语义不变）。"""
+        from core.data.fetcher import _month_starts
+
+        start = pd.Timestamp("2024-01-31 15:30", tz="UTC")
+        end = pd.Timestamp("2024-04-10", tz="UTC")
+        months = _month_starts(start, end)
+        expected = [
+            pd.Timestamp("2024-01-01", tz="UTC"),
+            pd.Timestamp("2024-02-01", tz="UTC"),
+            pd.Timestamp("2024-03-01", tz="UTC"),
+            pd.Timestamp("2024-04-01", tz="UTC"),
+        ]
+        assert months == expected
+
+    def test_month_starts_exact_end_inclusive(self) -> None:
+        """end 恰为某月首日：含端（cur <= end）。"""
+        from core.data.fetcher import _month_starts
+
+        months = _month_starts(
+            pd.Timestamp("2024-02-01", tz="UTC"),
+            pd.Timestamp("2024-04-01", tz="UTC"),
+        )
+        assert [m.month for m in months] == [2, 3, 4]
+
+    def test_month_starts_same_month_only(self) -> None:
+        from core.data.fetcher import _month_starts
+
+        months = _month_starts(
+            pd.Timestamp("2024-03-15", tz="UTC"),
+            pd.Timestamp("2024-03-20", tz="UTC"),
+        )
+        assert len(months) == 1
+        assert months[0] == pd.Timestamp("2024-03-01", tz="UTC")
 
 
 class TestArchiveDownloadGuards:
