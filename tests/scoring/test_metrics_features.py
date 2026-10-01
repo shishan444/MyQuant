@@ -136,6 +136,18 @@ class TestSharpeAnchors:
             _series([100.0, 110.0, 104.5]), total_trades=4, bars_per_year=4)
         assert m["sharpe_ratio"] == 0.0
 
+    def test_bar_level_fallback_empty_returns_guarded(self):
+        # 回退路径 pct 后为空（2 bar 尾 NaN）→ len 守卫假臂，sharpe 缺省 0；
+        # win_rate 回退同空 → None 缺失语义
+        m = compute_metrics(_series([100.0, float("nan")]), total_trades=5)
+        assert m["sharpe_ratio"] == 0.0
+        assert m["win_rate"] is None
+
+    def test_bar_level_fallback_flat_std_zero_guarded(self):
+        # 平曲线 pct 全 0 → std=0 守卫假臂 → sharpe 缺省 0
+        m = compute_metrics(_series([100.0] * 4), total_trades=5)
+        assert m["sharpe_ratio"] == 0.0
+
 
 class TestWinRateAnchors:
     def test_trade_win_rate_zero_passes_through(self):

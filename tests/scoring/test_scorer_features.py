@@ -51,6 +51,14 @@ class TestQualifiedGate:
         assert result["fitness"] == 0.0
         assert result["qualified"] is False
 
+    def test_profit_factor_constraint_failure_recorded(self):
+        # pf < min_profit_factor → 失败清单记录且 fitness 归零（四类硬门之一）
+        req = RequirementsConfig(min_profit_factor=2.0)
+        result = compute_fitness(_metrics(profit_factor=1.5), requirements=req)
+        assert "profit_factor" in result["constraint_failures"]
+        assert result["fitness"] == 0.0
+        assert result["qualified"] is False
+
 
 class TestSatisfactionRatios:
     """各维度 ratio 的手算锚定（默认 req：min_annual_return=0 → min_ar=0.15）。"""
@@ -103,6 +111,15 @@ class TestSatisfactionRatios:
     def test_win_rate_positive_with_zero_requirement(self):
         result = compute_fitness(_metrics(win_rate=0.4))
         assert result["satisfaction"]["win_rate"]["ratio"] == 1.0
+
+    def test_positive_min_win_rate_ratio_divides(self):
+        # min_win_rate>0 → ratio = actual/required 除法分支（0.45/0.3=1.5）
+        req = RequirementsConfig(min_win_rate=0.3)
+        result = compute_fitness(_metrics(win_rate=0.45), requirements=req)
+        dim = result["satisfaction"]["win_rate"]
+        assert dim["required"] == pytest.approx(0.3)
+        assert dim["ratio"] == pytest.approx(1.5)
+        assert dim["met"] is True
 
     def test_trades_ratio(self):
         req = RequirementsConfig(min_total_trades=10)
