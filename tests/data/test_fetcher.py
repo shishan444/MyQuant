@@ -49,39 +49,46 @@ def _mock_session(kline_rows: list[list]) -> MagicMock:
     return session
 
 
+def _patch_session_for(session: MagicMock):
+    """Patch _session_for（CARD-10 后 _http_get 的真实协作者）恒返同一 session。
+
+    旧锚点 patch _direct_session/_build_session 工厂在 thread-local 缓存
+    下失效：同线程先行用例已缓存 session 后工厂不再被触达（产生红与
+    假绿）。side_effect 闭包保证翻页多次取用拿到同一实例。
+    """
+    return patch(
+        "core.data.fetcher._session_for", side_effect=lambda kind: session
+    )
+
+
 class TestFetchKlinesReturnsDataframe:
     """fetch_klines returns a properly structured DataFrame."""
 
-    @patch("core.data.fetcher._direct_session")
-    def test_returns_dataframe(self, mock_build: MagicMock) -> None:
-        mock_build.return_value = _mock_session(_make_kline_rows(3))
-
-        df = fetch_klines(symbol="BTCUSDT", interval="4h")
+    def test_returns_dataframe(self) -> None:
+        with _patch_session_for(_mock_session(_make_kline_rows(3))):
+            df = fetch_klines(symbol="BTCUSDT", interval="4h")
 
         assert isinstance(df, pd.DataFrame)
         expected_cols = ["open", "high", "low", "close", "volume", "trades"]
         assert list(df.columns) == expected_cols
 
-    @patch("core.data.fetcher._direct_session")
-    def test_column_types(self, mock_build: MagicMock) -> None:
-        mock_build.return_value = _mock_session(_make_kline_rows(2))
-
-        df = fetch_klines()
+    def test_column_types(self) -> None:
+        with _patch_session_for(_mock_session(_make_kline_rows(2))):
+            df = fetch_klines()
 
         for col in ["open", "high", "low", "close", "volume"]:
             assert df[col].dtype == float
         assert df["trades"].dtype == int
 
-    @patch("core.data.fetcher._direct_session")
-    def test_session_called_with_correct_params(self, mock_build: MagicMock) -> None:
+    def test_session_called_with_correct_params(self) -> None:
         mock_session = _mock_session(_make_kline_rows(1))
-        mock_build.return_value = mock_session
 
-        fetch_klines(
-            symbol="ETHUSDT",
-            interval="1d",
-            start_str="1 year ago UTC",
-        )
+        with _patch_session_for(mock_session):
+            fetch_klines(
+                symbol="ETHUSDT",
+                interval="1d",
+                start_str="1 year ago UTC",
+            )
 
         mock_session.get.assert_called_once()
         call_kwargs = mock_session.get.call_args
@@ -92,16 +99,14 @@ class TestFetchKlinesReturnsDataframe:
 class TestFetchKlinesRemovesDuplicates:
     """Duplicate timestamps are deduplicated (keep=first)."""
 
-    @patch("core.data.fetcher._direct_session")
-    def test_removes_duplicates(self, mock_build: MagicMock) -> None:
+    def test_removes_duplicates(self) -> None:
         rows = _make_kline_rows(3)
         dup_row = rows[1].copy()
         dup_row[4] = "99999.0"
         rows_with_dup = rows[:2] + [dup_row] + rows[2:]
 
-        mock_build.return_value = _mock_session(rows_with_dup)
-
-        df = fetch_klines()
+        with _patch_session_for(_mock_session(rows_with_dup)):
+            df = fetch_klines()
 
         assert len(df) == 3
         assert df.iloc[1]["close"] == float(rows[1][4])
@@ -110,11 +115,9 @@ class TestFetchKlinesRemovesDuplicates:
 class TestFetchKlinesDatetimeIndex:
     """The DataFrame index is a timezone-aware DatetimeIndex."""
 
-    @patch("core.data.fetcher._direct_session")
-    def test_creates_datetime_index(self, mock_build: MagicMock) -> None:
-        mock_build.return_value = _mock_session(_make_kline_rows(2))
-
-        df = fetch_klines()
+    def test_creates_datetime_index(self) -> None:
+        with _patch_session_for(_mock_session(_make_kline_rows(2))):
+            df = fetch_klines()
 
         assert isinstance(df.index, pd.DatetimeIndex)
         assert df.index.tz is not None

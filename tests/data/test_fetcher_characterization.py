@@ -152,22 +152,30 @@ class TestYearsAgoLeapDay:
         assert ts == int(expected.timestamp() * 1000)
 
 
+def _patch_session_for(session):
+    """Patch _session_for 恒返同一 session（CARD-10 后 _http_get 的协作者）。
+
+    工厂 patch 在 thread-local 缓存下失效（同线程先行用例已缓存 session
+    则工厂不再被触达）；side_effect 闭包保证翻页多次取用同一实例。
+    """
+    return patch("core.data.fetcher._session_for", side_effect=lambda kind: session)
+
+
 class TestFetchKlinesPagination:
     """分页累积、翻页起点推进与停滞保护。"""
 
-    @patch("core.data.fetcher._direct_session")
-    def test_multi_page_accumulates(self, mock_direct: MagicMock) -> None:
+    def test_multi_page_accumulates(self) -> None:
         page1 = [_kline_row(1700000000000 + i * 3600_000) for i in range(1000)]
         last_ts = page1[-1][0]
         page2 = [_kline_row(last_ts + 1 + i * 3600_000) for i in range(10)]
         session = MagicMock()
         session.get.side_effect = [_resp_with(page1), _resp_with(page2)]
-        mock_direct.return_value = session
 
-        df = fetch_klines(
-            symbol="BTCUSDT", interval="1h",
-            start_str="1700000000000", end_str="9999999999999",
-        )
+        with _patch_session_for(session):
+            df = fetch_klines(
+                symbol="BTCUSDT", interval="1h",
+                start_str="1700000000000", end_str="9999999999999",
+            )
 
         assert len(df) == 1010
         # 翻页起点 = 上页最后一根 open_time + 1
@@ -175,30 +183,28 @@ class TestFetchKlinesPagination:
         assert second_params["startTime"] == last_ts + 1
         assert df.index.is_monotonic_increasing
 
-    @patch("core.data.fetcher._direct_session")
-    def test_empty_response_returns_empty_frame(self, mock_direct: MagicMock) -> None:
+    def test_empty_response_returns_empty_frame(self) -> None:
         session = MagicMock()
         session.get.return_value = _resp_with([])
-        mock_direct.return_value = session
 
-        df = fetch_klines(
-            symbol="BTCUSDT", interval="1h", start_str="1700000000000"
-        )
+        with _patch_session_for(session):
+            df = fetch_klines(
+                symbol="BTCUSDT", interval="1h", start_str="1700000000000"
+            )
 
         assert df.empty
         assert list(df.columns) == ["open", "high", "low", "close", "volume", "trades"]
 
-    @patch("core.data.fetcher._direct_session")
-    def test_non_advancing_response_stops(self, mock_direct: MagicMock) -> None:
+    def test_non_advancing_response_stops(self) -> None:
         """响应最后一根 open_time 未前进时立即停止（停滞保护）。"""
         stale = [_kline_row(1704067200000)]  # 2024-01-01，早于请求起点
         session = MagicMock()
         session.get.return_value = _resp_with(stale)
-        mock_direct.return_value = session
 
-        df = fetch_klines(
-            symbol="BTCUSDT", interval="1h", start_str="1704163200000"
-        )
+        with _patch_session_for(session):
+            df = fetch_klines(
+                symbol="BTCUSDT", interval="1h", start_str="1704163200000"
+            )
 
         session.get.assert_called_once()  # 未停滞循环
         assert len(df) == 1  # 停滞行仍被收进结果（现状记录）
@@ -207,18 +213,70 @@ class TestFetchKlinesPagination:
 class TestHttpGetNoProxy:
     """直连失败且未配置代理时异常直抛，不回退。"""
 
-    @patch("core.data.fetcher._build_session")
-    @patch("core.data.fetcher._direct_session")
     @patch("core.data.fetcher._DEFAULT_PROXY", "")
-    def test_direct_failure_without_proxy_raises(
-        self, mock_direct: MagicMock, mock_build: MagicMock
-    ) -> None:
-        mock_direct.return_value.get.side_effect = requests.RequestException(
-            "unreachable"
+    def test_direct_failure_without_proxy_raises(self) -> None:
+        direct = MagicMock()
+        direct.get.side_effect = requests.RequestException("unreachable")
+        requested_kinds = []
+
+        def _fake_session_for(kind):
+            requested_kinds.append(kind)
+            return direct
+
+        with patch("core.data.fetcher._session_for", side_effect=_fake_session_for):
+            with pytest.raises(requests.RequestException):
+                _http_get("https://example.test")
+        # 仅触达直连通道，代理通道未被取用
+        assert requested_kinds == ["direct"]
+
+
+class TestSessionForThreadLocal:
+    """_session_for thread-local 语义锚（CARD-10）。
+
+    requests.Session 非线程安全且双通道配置互斥（trust_env=False vs
+    显式 proxies）——每线程每通道各持一个实例复用连接池。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_thread_local(self):
+        from core.data.fetcher import _thread_local
+
+        yield
+        if hasattr(_thread_local, "sessions"):
+            del _thread_local.sessions
+
+    def test_same_thread_same_kind_reuses_instance(self) -> None:
+        from core.data.fetcher import _session_for
+
+        a = _session_for("direct")
+        b = _session_for("direct")
+        assert a is b  # 同线程同通道复用（连接池热复用）
+        assert isinstance(a, requests.Session)
+
+    def test_direct_and_proxy_channels_independent(self) -> None:
+        from core.data.fetcher import _session_for
+
+        with patch("core.data.fetcher._DEFAULT_PROXY", "http://pinned:1"):
+            direct = _session_for("direct")
+            proxy = _session_for("proxy")
+        assert direct is not proxy  # 双通道实例独立
+        assert direct.trust_env is False  # 直连通道 distrust 环境
+        assert proxy.proxies == {"http": "http://pinned:1", "https": "http://pinned:1"}
+
+    def test_cross_thread_isolated(self) -> None:
+        """跨线程不共享：子线程取用得到独立实例。"""
+        import threading as _threading
+
+        from core.data.fetcher import _session_for
+
+        main_session = _session_for("direct")
+        other = []
+        t = _threading.Thread(
+            target=lambda: other.append(_session_for("direct"))
         )
-        with pytest.raises(requests.RequestException):
-            _http_get("https://example.test")
-        mock_build.assert_not_called()
+        t.start()
+        t.join()
+        assert other[0] is not main_session
 
 
 class TestDirectSessionTrustEnv:
