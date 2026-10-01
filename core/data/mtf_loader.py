@@ -1,6 +1,10 @@
-"""Multi-timeframe data loading utilities.
+"""多周期数据装载底座（研究/回测/模拟盘共用）。
 
-Stateless functions shared by the evolution runner and the backtest API.
+无状态函数集，从 Parquet 数据目录按 symbol+timeframe 装载 OHLCV
+（含衍生列合并与指标计算）。全库最广消费：core/analysis 七模块、
+core/evolution/evaluation、core/trading/runner、core/validation/mtf、
+api/runner 与 api/routes（discovery/research/strategies）、scripts。
+只读不写（数据保新归 core/data/updater）。
 """
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from core.data.validation import validate_known_interval
 logger = logging.getLogger(__name__)
 
 
-# Timeframe aliases for parquet file lookup
+# Parquet 文件查找的周期别名表（历史文件命名变体，如 1h/60m、1d/1D）
 _TF_ALIASES: dict[str, list[str]] = {
     "1h": ["1h", "60m"],
     "4h": ["4h"],
@@ -39,7 +43,14 @@ def safe_symbol(symbol: str) -> str:
 
 
 def find_parquet(data_dir: Path, symbol_: str, timeframe: str) -> Optional[Path]:
-    """Find parquet file for symbol+timeframe, trying known aliases."""
+    """查找 symbol+timeframe 的 Parquet 文件，主名未命中时尝试已知别名。
+
+    Returns:
+        命中路径；主名与别名均不存在时 None。
+
+    Raises:
+        ValueError: timeframe 不在 TF_SECONDS 键集（读取路径周期须已知）。
+    """
     # 读取路径周期须已知（TF_SECONDS 键集窄口径；与 csv_importer 导入侧
     # 宽口径 [0-9]+[mhdw] 的差异见 core/data/validation.py 契约注释）
     validate_known_interval(timeframe)
@@ -64,13 +75,12 @@ def load_and_prepare_df(
     stop_check: Optional[Callable[[], None]] = None,
     compute_indicators: bool = True,
 ) -> Optional[pd.DataFrame]:
-    """Load a single-timeframe parquet, slice by date, optionally compute indicators.
+    """装载单周期 Parquet，按日期切片，可选计算指标。
 
-    Returns None if data is unavailable or insufficient.
-    When compute_indicators=False, returns raw OHLCV (+ derivatives) without
-    feature columns — callers that need indicators must compute them themselves.
-    This decouples core.data from core.features (data is the lower layer);
-    default True preserves existing behaviour.
+    数据不可得或切片后不足 min_bars 时返回 None。compute_indicators=False
+    时返回原始 OHLCV（含衍生列）不带特征列——需要指标的调用方自行计算；
+    这让 core.data 不依赖 core.features（数据是更底层），默认 True 保持
+    既有行为。
     """
     from core.data.storage import load_parquet
 
@@ -109,11 +119,12 @@ def load_mtf_data(
     stop_check: Optional[Callable[[], None]] = None,
     compute_indicators: bool = True,
 ) -> Optional[Dict[str, pd.DataFrame]]:
-    """Load DataFrames for additional timeframes, optionally compute indicators.
+    """装载附加周期 DataFrame，可选计算指标（多周期策略数据装配）。
 
-    Returns a dict mapping timeframe -> DataFrame (including exec_timeframe).
-    Returns None if no additional timeframes could be loaded.
-    When compute_indicators=False, returns raw OHLCV frames without features.
+    返回 timeframe → DataFrame 的映射，内含 exec_timeframe（调用方
+    传入的 enhanced_df 原样入表）。附加周期不可得或不足 min_bars 时
+    跳过该周期不报错（多周期策略按可得子集降级）；compute_indicators=
+    False 时各帧为原始 OHLCV 不带特征列。
     """
     from core.data.storage import load_parquet
     if compute_indicators:
@@ -156,9 +167,9 @@ def _try_merge_derivatives(
     timeframe: str,
     df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Try to load and merge OI/Funding Rate parquet into OHLCV DataFrame.
+    """尝试装载并合并 OI/Funding Rate Parquet 进 OHLCV（衍生列装配）。
 
-    Graceful no-op if derivative data files are absent.
+    衍生数据文件缺失时优雅直通（返回原 df，不阻塞装载）。
     """
     from core.data.storage import load_parquet
     from core.data.derivatives_merger import merge_derivatives_into_ohlcv
