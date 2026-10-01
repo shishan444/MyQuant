@@ -189,3 +189,22 @@ class TestLiquidatedPassthrough:
 # max_return→annual_return，7 别名全落这三个核心名），calmar legacy 映射
 # 分支（elif objective == "calmar"）无模板入口，调用图不可达——保留实现
 # 作为 compute_fitness 全 objective 域的对称表达，不为覆盖而强造入口。
+
+
+class TestLegacyScoreBoundProperty:
+    """不变量与属性（V3 方法）：任意 fitness 输入下总分有界。"""
+
+    @pytest.mark.parametrize(
+        ("template", "sharpe", "annual_return"),
+        [
+            (t, s, a)
+            for t in ["explorer", "optimizer", "max_return"]
+            for s in [-1.0, 0.0, 0.7, 3.2, 8.0]
+            for a in [-0.5, 0.0, 0.4, 2.0, 11.0]
+        ],
+    )
+    def test_total_score_bounded_0_100(self, template, sharpe, annual_return):
+        # 属性：min/max 夹逼下 total_score ∈ [0,100]（含 hard fail 的 0）
+        metrics = _metrics(sharpe_ratio=sharpe, annual_return=annual_return)
+        result = score_strategy(metrics, template)
+        assert 0.0 <= result["total_score"] <= 100.0

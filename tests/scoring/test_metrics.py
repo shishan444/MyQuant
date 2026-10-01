@@ -369,3 +369,26 @@ class TestSortinoRatio:
             _series([100.0, 105.0, 102.0, 107.0]), total_trades=4,
             bars_per_year=4, trade_returns=tr)
         assert m["sortino_ratio"] == pytest.approx(expected, rel=1e-9)
+
+
+class TestMetricProperties:
+    """不变量与属性（V3 方法）：成立条件随用例注明，固定种子可复现。"""
+
+    @pytest.mark.parametrize(
+        "total_return", [-0.5, -0.1, 0.0, 0.21, 1.5, 9.0])
+    def test_annualization_one_year_identity(self, total_return):
+        # 属性：years=1 时年化恒等区间收益，(1+r)^1 - 1 = r
+        eq = _series([100.0, 100.0 * (1 + total_return)])
+        m = compute_metrics(eq, total_trades=1, bars_per_year=2,
+                            trade_returns=np.array([0.01]))
+        assert m["backtest_years"] == 1.0
+        assert m["annual_return"] == pytest.approx(total_return, abs=1e-9)
+
+    @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+    def test_max_drawdown_within_unit_interval(self, seed):
+        # 属性（权益恒正前提）：相对回撤非正且不低于 -100%
+        rng = np.random.default_rng(seed)
+        eq = _series(10000 * np.cumprod(1 + rng.normal(0.001, 0.03, 200)))
+        m = compute_metrics(eq, total_trades=10,
+                            trade_returns=rng.normal(0.02, 0.05, 10))
+        assert -1.0 <= m["max_drawdown"] <= 0.0

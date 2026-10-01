@@ -6,6 +6,7 @@ test_trading_metrics_reference.py 锚定参照实现一致性；本文件锚定
 边界分支与 CARD-07 坏数据防御（非有限快照跳点）。期望值独立手算。
 未裁决的容忍行为（全坏点=空序列同输出）见 test_known_behaviors.py。
 """
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -113,3 +114,16 @@ class TestRoundingAnchors:
             total_trades=7, win_count=3, loss_count=4,
             close_pnls=[100.0, -50.0, 80.0, -30.0, -20.0, 60.0, -10.0]))
         assert m["win_rate"] == 0.4286
+
+
+class TestDrawdownProperty:
+    """不变量与属性（V3 方法）：固定种子可复现。"""
+
+    @pytest.mark.parametrize("seed", [1, 2, 3])
+    def test_max_drawdown_bounded_by_equity_range(self, seed):
+        # 属性：绝对额回撤为峰谷差，非负且不超过全程极差
+        # （出口 round(2) 半界 0.005 → 余量 0.01）
+        rng = np.random.default_rng(seed)
+        snaps = list(10000 + np.cumsum(rng.normal(0.0, 200.0, 150)))
+        m = compute_trading_metrics(_data(equity_snapshots=snaps))
+        assert 0.0 <= m["max_drawdown"] <= max(snaps) - min(snaps) + 0.01

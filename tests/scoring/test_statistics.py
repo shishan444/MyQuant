@@ -134,3 +134,22 @@ class TestBenjaminiHochbergValidation:
     def test_out_of_range_p_rejected(self, p_values, case_id):
         with pytest.raises(ValueError, match="不在 \[0,1\]"):
             benjamini_hochberg(p_values)
+
+
+class TestWilsonProperty:
+    """不变量与属性（V3 方法）：区间覆盖点估计且界在 [0,1]。"""
+
+    @pytest.mark.parametrize(
+        ("successes", "total", "z"),
+        [(k, 100, 1.96) for k in range(0, 101, 10)]
+        + [(7, 23, 2.576), (1, 2, 1.0), (99, 100, 0.5)],
+    )
+    def test_interval_contains_point_estimate_in_unit(self, successes, total, z):
+        lower, upper = wilson_interval(successes, total, z=z)
+        p = successes / total
+        # 界由 max/min 钳制恒成立；包含性在出口浮点余量（1e-12）内成立
+        # （s=n 时 center+half 可为 0.999...9 < p=1.0）
+        assert 0.0 <= lower
+        assert lower <= p + 1e-12
+        assert p <= upper + 1e-12
+        assert upper <= 1.0
