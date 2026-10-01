@@ -30,6 +30,7 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.warmup_loader import to_utc
 
 # 阈值刻度已提升分析域共享（add-param-sweep 兑现 D7；扫描与检查两域网格同源）
 from core.analysis.threshold_grids import VALUE_GRIDS as _VALUE_GRIDS
@@ -185,11 +186,7 @@ def screen_patterns(
     if request_start is None:
         in_stat = pd.Series(True, index=df.index)
     else:
-        req_ts = pd.Timestamp(request_start)
-        if req_ts.tzinfo is None:
-            req_ts = req_ts.tz_localize("UTC")
-        else:
-            req_ts = req_ts.tz_convert("UTC")
+        req_ts = to_utc(pd.Timestamp(request_start))
         in_stat = pd.Series(df.index >= req_ts, index=df.index)
     stat_pos = in_stat.values
     n_total = int(in_stat.sum())

@@ -57,7 +57,7 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
-from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
+from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
 from core.features.registry import INDICATOR_REGISTRY
 
 # 归约封闭枚举（spec 契约；未知值结构化拒绝）
@@ -71,13 +71,6 @@ _MAX_SERIALIZED_BYTES = 2048  # 归约摘要字节上限（形制退化兜底）
 # close；注册表 default 参数现算——键名 adx_14/atr_14 由内核拼接惯例
 # 决定，实施锚定见 tests）
 _REGIME_HELPERS = ("ADX", "ATR")
-
-
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数归一（就近复制惯例：naive 按 UTC 解释）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
 
 
 def _validate_indicator(indicator: str) -> None:
@@ -281,7 +274,7 @@ def query_indicator(
     domain_mask = pd.Series(work.index >= effective_start_ts, index=work.index)
     effective_end_ts: Optional[pd.Timestamp] = None
     if end is not None:
-        effective_end_ts = _to_utc(pd.Timestamp(end))
+        effective_end_ts = to_utc(pd.Timestamp(end))
         domain_mask = domain_mask & pd.Series(
             work.index <= effective_end_ts, index=work.index)
     domain = work.loc[domain_mask]

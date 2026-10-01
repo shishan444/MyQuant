@@ -34,6 +34,7 @@ import pandas as pd
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.warmup_loader import to_utc
 from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
 from core.analysis.threshold_grids import VALUE_GRIDS
 
@@ -253,11 +254,7 @@ def param_sweep(
     if request_start is None:
         in_stat = pd.Series(True, index=work.index)
     else:
-        req_ts = pd.Timestamp(request_start)
-        if req_ts.tzinfo is None:
-            req_ts = req_ts.tz_localize("UTC")
-        else:
-            req_ts = req_ts.tz_convert("UTC")
+        req_ts = to_utc(pd.Timestamp(request_start))
         in_stat = pd.Series(work.index >= req_ts, index=work.index)
     fwd = work["close"].pct_change(forward_bars).shift(-forward_bars)
     bas_fwd = fwd[in_stat].dropna()

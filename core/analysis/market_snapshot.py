@@ -39,7 +39,7 @@ import pandas as pd
 from core.analysis.hypothesis_service import ResearchError
 # 三态判读已提升分段权威模块（add-regime-split；快照与分段同一把尺）
 from core.analysis.regime_segments import adx_state as _adx_state
-from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
+from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
 
 # 缺省四周期（决策 10：取值为 TF_MINUTES 在册周期的任意子集）
 DEFAULT_TIMEFRAMES: tuple[str, ...] = ("3d", "1d", "4h", "1h")
@@ -58,13 +58,6 @@ _INDICATOR_SPECS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("OI_ChangeRate", {"period": 14}),
 )
 _INDICATOR_NAMES = [name for name, _ in _INDICATOR_SPECS]
-
-
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数归一（语义对齐 warmup_loader._to_utc：naive 按 UTC 解释）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
 
 
 def _normalize_timeframes(timeframes: Optional[list[str]]) -> list[str]:
@@ -219,7 +212,7 @@ def _snapshot_one(
         probe.index = probe.index.tz_localize("UTC")
 
     # as_of 缺省 = 最新一根 bar（探测边界，避免全量装载后再截尾）
-    as_of_ts = probe.index[-1] if as_of is None else _to_utc(pd.Timestamp(as_of))
+    as_of_ts = probe.index[-1] if as_of is None else to_utc(pd.Timestamp(as_of))
     if as_of_ts < probe.index[0]:
         raise ResearchError(
             "RESEARCH_DATA_INSUFFICIENT",
@@ -288,7 +281,7 @@ def get_market_snapshot(
     out: dict[str, Any] = {
         "symbol": symbol,
         "as_of": ("latest" if as_of is None
-                  else _to_utc(pd.Timestamp(as_of)).isoformat()),
+                  else to_utc(pd.Timestamp(as_of)).isoformat()),
         "window_days": _WINDOW_DAYS,
         "notes": {
             "atr_pct": "ATR(14)/close*100",

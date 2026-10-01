@@ -34,7 +34,7 @@ from core.analysis.thresholds import (
     judge,
     tighten_profile,
 )
-from core.analysis.warmup_loader import TF_MINUTES
+from core.analysis.warmup_loader import TF_MINUTES, to_utc
 from core.persistence.repository import research as rr
 
 # 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
@@ -142,14 +142,6 @@ def _screen_reuse_check(
                         "hint": "实质修改条件后登记新假设，或换未扫描区间验证"})
 
 
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数入口归一：naive 按 UTC 解释（语义对齐 isolation._parse_ts，
-    不引入第三种 tz 语义——date-only 输入不再与 tz-aware 索引比较崩溃）。"""
-    if ts.tzinfo is None:
-        return ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
-
-
 def _collect_needed_tfs(dna, exec_tf: str) -> set:
     """收集 DNA 声明的全部时间层 ∪ 执行周期（is_mtf 即装载语义）。"""
     if not (getattr(dna, "is_mtf", False) and dna.layers):
@@ -242,7 +234,7 @@ def _run_backtest_on_range(
 
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
-    start_ts = _to_utc(pd.Timestamp(start))
+    start_ts = to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
 
     enhanced = load_and_prepare_df(
@@ -498,8 +490,8 @@ def random_window_test(
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
     # 可抽窗的候选区间：[data_start, data_end - window]
-    ds = _to_utc(pd.Timestamp(data_start))
-    de = _to_utc(pd.Timestamp(data_end))
+    ds = to_utc(pd.Timestamp(data_start))
+    de = to_utc(pd.Timestamp(data_end))
     span_bars = int((de - ds) / bar_delta)
     usable = span_bars - window_bars
     if usable < n_windows:
@@ -596,8 +588,8 @@ def run_sandbox_backtest(
     """
     # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
     tf_minutes = TF_MINUTES.get(timeframe, 240)
-    start_ts = _to_utc(pd.Timestamp(start))
-    end_ts = _to_utc(pd.Timestamp(end))
+    start_ts = to_utc(pd.Timestamp(start))
+    end_ts = to_utc(pd.Timestamp(end))
     bars = int((end_ts - start_ts).total_seconds() / 60 / tf_minutes)
     if bars > SANDBOX_MAX_BARS:
         raise ResearchError(

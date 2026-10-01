@@ -28,9 +28,10 @@ from core.data.timeframes import TF_SECONDS
 TF_MINUTES = {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
 
 
-def _to_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    """时间参数入口归一：naive 按 UTC 解释（语义对齐
-    validation_service._to_utc，不引入第三种 tz 语义）。"""
+def to_utc(ts: pd.Timestamp) -> pd.Timestamp:
+    """时间参数归一（analysis 域单一实现，CARD-06 收敛点）：naive 按
+    UTC 解释、aware 统一转 UTC——naive 补 UTC 后与 tz-aware 索引可比
+    （date-only 输入不再崩溃的语义来源）。"""
     if ts.tzinfo is None:
         return ts.tz_localize("UTC")
     return ts.tz_convert("UTC")
@@ -73,7 +74,7 @@ def load_with_warmup(
     warmup_bars = max(derive_warmup(indicator_names), min_warmup_bars)
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)
-    start_ts = _to_utc(pd.Timestamp(start))
+    start_ts = to_utc(pd.Timestamp(start))
     load_start = (start_ts - warmup_delta).isoformat()
 
     df = load_and_prepare_df(

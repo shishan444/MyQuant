@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.warmup_loader import to_utc
 
 
 def similar_at_time(
@@ -43,9 +44,9 @@ def similar_at_time(
     """
     from core.discovery.knn_engine import SimilarCaseEngine
 
-    as_of_ts = pd.Timestamp(as_of)
-    if as_of_ts.tzinfo is None:
-        as_of_ts = as_of_ts.tz_localize("UTC")
+    # to_utc 统一（多 tz_convert 一步——aware 输入显式转 UTC，
+    # 与 df.index 比较语义等价：pandas 按绝对时刻比较）
+    as_of_ts = to_utc(pd.Timestamp(as_of))
     row_mask = df.index <= as_of_ts
     if not row_mask.any():
         raise ValueError(f"as_of 时点无数据（早于数据起点）: {as_of}")

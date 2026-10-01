@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for
+from core.analysis.warmup_loader import to_utc
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.regime_segments import GATES, build_segments
 from core.analysis.result import AnalysisResult, build_result
@@ -82,10 +83,9 @@ def _validate_segments_input(
 
 
 def _ts_utc(v: Any) -> pd.Timestamp:
-    ts = pd.Timestamp(v)
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    return ts.tz_convert("UTC")
+    """时间参数归一薄壳：to_utc + 任意值构造 pd.Timestamp（五处调用
+    传 str/datetime 混合形）。"""
+    return to_utc(pd.Timestamp(v))
 
 
 def regime_split(
