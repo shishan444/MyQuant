@@ -55,7 +55,9 @@ class CsvImportResult:
     interval: str
     rows_imported: int
     format_detected: ImportFormat
-    timestamp_precision: TimestampPrecision
+    # GENERIC 格式经 pd.to_datetime 解析、无整数位可探测 → None
+    # （不可探测）；BINANCE 官方为 ms/us 探测结果
+    timestamp_precision: TimestampPrecision | None
     files_processed: int = 1
     time_range: tuple[str, str] | None = None
 
@@ -211,12 +213,14 @@ def validate_ohlcv(df: pd.DataFrame) -> list[str]:
 
 def _read_csv_with_meta(
     path: Path,
-) -> tuple[pd.DataFrame, ImportFormat, TimestampPrecision]:
+) -> tuple[pd.DataFrame, ImportFormat, TimestampPrecision | None]:
     """读 CSV 并一并返回格式与时间戳精度（导入链路的单一读取实现）。
 
     元信息（fmt/precision）随首次读取探测返回，消除导入路径上
-    detect_format/_get_first_timestamp_raw 的重复首行读；结果字段
-    的 precision 与文本首行原始值同源（含 BOM 等边缘文件行为）。
+    detect_format/_get_first_timestamp_raw 的重复首行读；BINANCE
+    官方的 precision 与文本首行原始值同源（含 BOM 等边缘文件
+    行为），GENERIC 经 pd.to_datetime 解析、无整数位可探测 →
+    None（不可探测，不再假报毫秒）。
     """
     fmt = detect_format(path)
 
@@ -256,9 +260,13 @@ def _read_csv_with_meta(
     df = df[~df.index.duplicated(keep="first")]
     df = df.sort_index()
 
-    # 结果字段精度：与文本首行原始值同源（read_csv 内部用于选 unit
-    # 的解析值仅作解析用途，结果语义以原始值探测为准）
-    precision = detect_timestamp_precision(_get_first_timestamp_raw(path, fmt))
+    # 结果字段精度：BINANCE 官方与文本首行原始值同源（read_csv 内部
+    # 用于选 unit 的解析值仅作解析用途，结果语义以原始值探测为准）；
+    # GENERIC 无整数位可探测 → None
+    if fmt == ImportFormat.BINANCE_OFFICIAL:
+        precision = detect_timestamp_precision(_get_first_timestamp_raw(path, fmt))
+    else:
+        precision = None
     return df, fmt, precision
 
 
@@ -415,7 +423,8 @@ def import_csv_batch(
         interval=detected_interval,
         rows_imported=len(merged),
         format_detected=detected_fmt or ImportFormat.BINANCE_OFFICIAL,
-        timestamp_precision=detected_precision or TimestampPrecision.MILLISECOND,
+        # GENERIC 不可探测如实返回 None（原 or 兜底 MILLISECOND 是伪值来源）
+        timestamp_precision=detected_precision,
         files_processed=len(paths),
         time_range=(time_start, time_end),
     )

@@ -135,6 +135,10 @@ def import_csv_endpoint(
         parquet_path = data_dir / f"{result.dataset_id}.parquet"
         row_count = result.rows_imported
         file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
+        # GENERIC 无整数位可探测 → None（不入库伪值）
+        precision_str = (
+            result.timestamp_precision.value if result.timestamp_precision else None
+        )
 
         # Upsert dataset metadata
         existing = get_dataset(db_path, result.dataset_id)
@@ -151,7 +155,7 @@ def import_csv_endpoint(
                 file_size_bytes=file_size,
                 source="csv_import",
                 format_detected=result.format_detected.value,
-                timestamp_precision=result.timestamp_precision.value,
+                timestamp_precision=precision_str,
             )
         else:
             from core.persistence.db_ext import update_dataset_stats
@@ -163,7 +167,7 @@ def import_csv_endpoint(
                 time_end=result.time_range[1] if result.time_range else None,
                 file_size_bytes=file_size,
                 format_detected=result.format_detected.value,
-                timestamp_precision=result.timestamp_precision.value,
+                timestamp_precision=precision_str,
             )
 
         return DataImportResponse(
@@ -172,7 +176,7 @@ def import_csv_endpoint(
             interval=result.interval,
             rows_imported=result.rows_imported,
             format_detected=result.format_detected.value,
-            timestamp_precision=result.timestamp_precision.value,
+            timestamp_precision=precision_str,
             files_processed=result.files_processed,
             time_range=list(result.time_range) if result.time_range else None,
         )
@@ -228,6 +232,10 @@ def import_csv_batch_endpoint(
         parquet_path = data_dir / f"{result.dataset_id}.parquet"
         row_count = result.rows_imported
         file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
+        # GENERIC 无整数位可探测 → None（不入库伪值）
+        precision_str = (
+            result.timestamp_precision.value if result.timestamp_precision else None
+        )
 
         existing = get_dataset(db_path, result.dataset_id)
         if existing is None:
@@ -243,7 +251,7 @@ def import_csv_batch_endpoint(
                 file_size_bytes=file_size,
                 source="csv_import",
                 format_detected=result.format_detected.value,
-                timestamp_precision=result.timestamp_precision.value,
+                timestamp_precision=precision_str,
             )
         else:
             from core.persistence.db_ext import update_dataset_stats
@@ -255,7 +263,7 @@ def import_csv_batch_endpoint(
                 time_end=result.time_range[1] if result.time_range else None,
                 file_size_bytes=file_size,
                 format_detected=result.format_detected.value,
-                timestamp_precision=result.timestamp_precision.value,
+                timestamp_precision=precision_str,
             )
 
         return DataImportResponse(
@@ -264,7 +272,7 @@ def import_csv_batch_endpoint(
             interval=result.interval,
             rows_imported=result.rows_imported,
             format_detected=result.format_detected.value,
-            timestamp_precision=result.timestamp_precision.value,
+            timestamp_precision=precision_str,
             files_processed=result.files_processed,
             time_range=list(result.time_range) if result.time_range else None,
         )

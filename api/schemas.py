@@ -570,7 +570,7 @@ class DataImportResponse(BaseModel):
     interval: str
     rows_imported: int
     format_detected: str
-    timestamp_precision: str
+    timestamp_precision: Optional[str] = None  # GENERIC 不可探测 → None
     files_processed: int = 1
     time_range: Optional[List[str]] = None
 
