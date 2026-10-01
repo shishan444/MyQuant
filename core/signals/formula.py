@@ -21,6 +21,12 @@ class FormulaError(ValueError):
     """公式静态校验/求值错误（附位置信息）。"""
 
 
+#: 表达式长度上限（资源限制关，10KB）：超长链使 ast.parse 与求值器
+#: 递归深度随长度线性增长（深嵌套可在 10KB 内触顶，由 RecursionError
+#: 转译兜底）；形制对齐 plugin_service 注册关的上限拦截口径
+_MAX_EXPRESSION_CHARS = 10 * 1024
+
+
 # ---------------------------------------------------------------- 白名单函数
 
 def _f_shift(s: pd.Series, n: int) -> pd.Series:
@@ -204,10 +210,15 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
     3. 禁负向 shift：shift/diff 第二参数必须是 >= 0 的整常量。
     """
     errors: List[str] = []
+    if len(expr) > _MAX_EXPRESSION_CHARS:
+        return [f"表达式超长: {len(expr)} 字符（上限 {_MAX_EXPRESSION_CHARS}）"]
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as exc:
         return [f"语法错误（位置 {exc.lineno}:{exc.offset}）: {exc.msg}"]
+    except (RecursionError, MemoryError):
+        # MemoryError：CPython C 级解析器栈溢出（"source too complex"）
+        return ["表达式嵌套过深（解析递归超限，上限 10KB 内请减少嵌套）"]
 
     for node in ast.walk(tree):
         if not isinstance(node, _ALLOWED_NODES):
@@ -276,7 +287,11 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
     Args:
         extra_columns: 求值上下文附加列（如既有公式插件的输出列）。
     """
-    tree = ast.parse(expr, mode="eval")
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except (RecursionError, MemoryError) as exc:
+        # MemoryError：CPython C 级解析器栈溢出（"source too complex"）
+        raise FormulaError("表达式嵌套过深（解析递归超限）") from exc
     env = dict(extra_columns or {})
 
     def _ev(node: ast.AST) -> Any:
@@ -312,7 +327,10 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
                 raise FormulaError(f"{fname} 求值失败: {exc}") from exc
         raise FormulaError(f"不允许的节点 {type(node).__name__}")
 
-    result = _ev(tree)
+    try:
+        result = _ev(tree)
+    except RecursionError as exc:
+        raise FormulaError("表达式嵌套过深（求值递归超限）") from exc
     if not isinstance(result, pd.Series):
         result = pd.Series(float(result), index=df.index)
     return result
