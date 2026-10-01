@@ -235,3 +235,24 @@ class TestGetFirstTimestampRawFallbacks:
         p = _write(tmp_path, "x.csv", "date,open\n2024-01-01,1.0\n")
         # GENERIC 路径不解析表头，固定返回 2025-01-01 毫秒值
         assert _get_first_timestamp_raw(p, ImportFormat.GENERIC_OHLCV) == 1735689600000
+
+
+class TestBomFileRejectedAtPrecisionProbe:
+    """带 BOM 的 BINANCE CSV：格式判定成功、精度探测拒绝（CARD-08 语义锚）。
+
+    precision 来源钉在文本首行原始值（open(path,"r") 不剥 BOM →
+    int 解析失败 → 0 → detect_timestamp_precision 拒绝）。pandas 侧
+    ts_col 数值本身可正常解析，但结果精度语义以原始值探测为准——
+    此锚防止 precision 来源改回解析值导致 BOM 文件静默由拒转收。
+    """
+
+    def test_bom_binance_rejected(self, tmp_path) -> None:
+        p = tmp_path / "bom.csv"
+        p.write_bytes(
+            b"\xef\xbb\xbf"
+            b"1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,"
+            b"1735693199999,13120000,450,250.0,10550000,0\n"
+        )
+        assert detect_format(p) is ImportFormat.BINANCE_OFFICIAL
+        with pytest.raises(ValueError, match="Value too small"):
+            import_csv(p, tmp_path / "out", symbol="BTCUSDT", interval="4h")
