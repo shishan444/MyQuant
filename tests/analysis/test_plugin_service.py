@@ -132,3 +132,75 @@ class TestOutputColumnFree:
         replay = register_formula_plugin(db, name="alpha", expression=EXPR)
         assert replay["duplicated"] is True
         assert replay["plugin_id"] == first["plugin_id"]
+
+
+class TestIdempotentColumnReturn:
+    """CARD-22：幂等分支 column 取注册表列名（单一事实源）。
+
+    修复前返回 row["output_columns"]（JSON 数组串留档、不带版本
+    后缀）——v1 回传 '["fx_a"]' 形制不一致，v2 回传错值致 AI 引用
+    断链。修复后幂等与首注册/升版返回形制一致（column 同为裸列名）。
+    """
+
+    def test_v1幂等_返回裸列名(self, db: Path) -> None:
+        first = register_formula_plugin(db, name="alpha", expression=EXPR)
+        replay = register_formula_plugin(db, name="alpha", expression=EXPR)
+        assert replay["column"] == "fx_alpha"
+        # 形制一致锚：与首注册返回同列名同形制（裸 str，非 JSON 串）
+        assert replay["column"] == first["column"]
+        assert isinstance(replay["column"], str)
+        assert not replay["column"].startswith("[")
+
+    def test_v2幂等_返回带后缀列名(self, db: Path) -> None:
+        """修复核心：version≥2 幂等命中回传 fx_alpha_v2（原错值
+        '["fx_alpha"]' 指向不存在的裸列名）。"""
+        register_formula_plugin(db, name="alpha", expression=EXPR)
+        second = register_formula_plugin(
+            db, name="alpha", expression="zscore(close, 40)")
+        replay = register_formula_plugin(
+            db, name="alpha", expression="zscore(close, 40)")
+        assert replay["version"] == 2
+        assert replay["column"] == "fx_alpha_v2"
+        assert replay["column"] == second["column"]
+
+    def test_多版本并存_各表达式重放返回各自列名(self, db: Path) -> None:
+        expr_v1, expr_v2 = EXPR, "zscore(close, 40)"
+        register_formula_plugin(db, name="alpha", expression=expr_v1)
+        register_formula_plugin(db, name="alpha", expression=expr_v2)
+
+        assert register_formula_plugin(
+            db, name="alpha", expression=expr_v1)["column"] == "fx_alpha"
+        assert register_formula_plugin(
+            db, name="alpha", expression=expr_v2)["column"] == "fx_alpha_v2"
+
+    def test_自定义列名幂等_返回自定义名(self, db: Path) -> None:
+        kwargs = dict(name="gamma", expression=EXPR,
+                      output_column="my_gamma")
+        first = register_formula_plugin(db, **kwargs)
+        replay = register_formula_plugin(db, **kwargs)
+        assert replay["duplicated"] is True
+        assert replay["column"] == "my_gamma"
+        assert replay["column"] == first["column"]
+
+
+class TestRegistryMissingIntegrity:
+    """CARD-22 防御分支：valid 插件的注册表条目缺失 → 显式 500。
+
+    双写原子性被破坏属服务端数据完整性异常（客户端无法经请求修正）；
+    静默回传坏引用会重新制造 AI 引用断链且更难排查。
+    """
+
+    def test_注册条目缺失_500显式失败(self, db: Path) -> None:
+        from sqlalchemy import delete
+        from core.persistence.orm.models import SignalRegistryEntry
+        from core.persistence.repository.dataset_meta import _engine_for
+
+        out = register_formula_plugin(db, name="alpha", expression=EXPR)
+        with _engine_for(db).begin() as conn:
+            conn.execute(delete(SignalRegistryEntry).where(
+                SignalRegistryEntry.plugin_id == out["plugin_id"]))
+
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(db, name="alpha", expression=EXPR)
+        assert ei.value.code == "RESEARCH_FORMULA_REGISTRY_MISSING"
+        assert ei.value.status == 500
