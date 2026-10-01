@@ -32,6 +32,7 @@ from core.analysis.thresholds import (
     DEFAULT_PROFILE,
     _aggregate_verdicts,
     judge,
+    tighten_profile,
 )
 from core.persistence.repository import research as rr
 
@@ -312,6 +313,39 @@ def _run_backtest_on_range(
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)
 
 
+# threshold_profile 按名白名单（安全关 S-3，方向 B）：预定义名 → 实际
+# profile 的解析入口——门槛规则由本域定义，全量 rules dict 透传等于
+# 调用方操纵判定门槛
+_THRESHOLD_PROFILE_NAMES: tuple[str, ...] = ("default", "tightened")
+
+
+def _resolve_threshold_profile(
+    threshold_profile: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """threshold_profile 按名白名单解析（两验证入口共用）。
+
+    {"name": "default"} → DEFAULT_PROFILE；{"name": "tightened"} →
+    tighten_profile()（组合加严档）；None → None（judge 侧落
+    DEFAULT_PROFILE）。未知名 / 含 rules 等全量形制 / 非法结构一律
+    422——判定门槛不可由调用方注入。
+    """
+    if threshold_profile is None:
+        return None
+    if (not isinstance(threshold_profile, dict)
+            or set(threshold_profile) != {"name"}
+            or threshold_profile["name"] not in _THRESHOLD_PROFILE_NAMES):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "threshold_profile 只认按名形制 "
+            '{"name": "default"|"tightened"}（门槛规则由本域预定义，'
+            "不接受全量透传）",
+            detail={"param": "threshold_profile",
+                    "legal_names": list(_THRESHOLD_PROFILE_NAMES)})
+    if threshold_profile["name"] == "tightened":
+        return tighten_profile()
+    return DEFAULT_PROFILE
+
+
 def run_isolated_backtest(
     db_path: Path,
     data_dir: Path,
@@ -328,6 +362,9 @@ def run_isolated_backtest(
         {record_id, verdict, metrics, threshold_details, warmup,
          duplicated, judged_ranges}
     """
+    # threshold_profile 按名解析（结构校验前置——先于终态/幂等）
+    threshold_profile = _resolve_threshold_profile(threshold_profile)
+
     # 终态拒验
     hyp = rr.get_hypothesis(db_path, hypothesis_id)
     if hyp is None:
@@ -454,6 +491,9 @@ def random_window_test(
     每窗独立 warmup 前扩（与隔离回测同语义）；窗口在
     [data_start, data_end] 内随机抽样（同 rng 种子 → 同窗口集）。
     """
+    # threshold_profile 按名解析（结构校验前置；每窗 judge 消费）
+    threshold_profile = _resolve_threshold_profile(threshold_profile)
+
     import numpy as np
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
