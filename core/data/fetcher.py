@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -113,6 +114,31 @@ def _direct_session() -> requests.Session:
     return session
 
 
+# thread-local session 双通道：requests.Session 非线程安全（并发面为
+# _download_archive_csv 的 8 workers 线程池），且直连/代理两通道配置
+# 互斥（trust_env=False vs 显式 proxies）——每线程每通道各持一个
+# session 复用连接池，跨线程不共享
+_thread_local = threading.local()
+
+
+def _session_for(kind: str) -> requests.Session:
+    """取当前线程在指定通道（"direct"/"proxy"）复用的 Session。
+
+    首次取用时经 _direct_session/_build_session 创建并缓存于线程
+    local；同线程同通道后续复用同一实例（连接池热复用），线程结束
+    随 local 回收。
+    """
+    sessions: dict = getattr(_thread_local, "sessions", None)
+    if sessions is None:
+        sessions = {}
+        _thread_local.sessions = sessions
+    session = sessions.get(kind)
+    if session is None:
+        session = _direct_session() if kind == "direct" else _build_session()
+        sessions[kind] = session
+    return session
+
+
 def _http_get(url: str, params: dict | None = None, timeout: int = 30) -> requests.Response:
     """直连优先、代理回退的 GET。
 
@@ -120,12 +146,12 @@ def _http_get(url: str, params: dict | None = None, timeout: int = 30) -> reques
     代理仅在直连失败且 BINANCE_PROXY 有配置时作为回退通道。
     """
     try:
-        return _direct_session().get(url, params=params, timeout=timeout)
+        return _session_for("direct").get(url, params=params, timeout=timeout)
     except requests.RequestException as exc:
         if not _DEFAULT_PROXY:
             raise
         logger.debug("直连失败（%s），回退代理", exc)
-        return _build_session().get(url, params=params, timeout=timeout)
+        return _session_for("proxy").get(url, params=params, timeout=timeout)
 
 
 def fetch_klines(
