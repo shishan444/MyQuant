@@ -25,6 +25,8 @@ router = APIRouter()
 # research_error_to_http 已迁 common（子包共享底座）；此处 import 兼容
 # 范围外 api/routes/validate.py 的既有引用，新代码请直用 common
 from api.routes.research.common import (
+    decode_cursor,
+    encode_cursor,
     require_known_timeframe,
     research_error_to_http,  # noqa: F401 —— 兼容 validate.py 既有引用
 )
@@ -100,22 +102,33 @@ def list_hypotheses(
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    cursor: Optional[str] = None,
     db_path: Path = Depends(get_db_path),
 ) -> HypothesisListResponse:
+    """假设列表。分页契约与 /log 同款：缺省最新在前（desc）；cursor
+    续页（上一响应 next_cursor 回传，提供时 page 被忽略）；total 为
+    过滤口径真总数（非当页数）。"""
     if page < 1:
         page = 1
     if page_size < 1 or page_size > 200:
         page_size = 50
+    cur = decode_cursor(cursor)
     items = rr.list_hypotheses(
         db_path, status=status,
-        offset=(page - 1) * page_size, limit=page_size)
+        offset=0 if cur is not None else (page - 1) * page_size,
+        limit=page_size, cursor=cur, order="desc")
+    out = [
+        {**h, "conditions": json.loads(h["conditions"]),
+         "data_ranges": json.loads(h["data_ranges"])}
+        for h in items
+    ]
     return HypothesisListResponse(
-        items=[
-            {**h, "conditions": json.loads(h["conditions"]),
-             "data_ranges": json.loads(h["data_ranges"])}
-            for h in items
-        ],
-        total=len(items), page=page, page_size=page_size)
+        items=out,
+        total=rr.count_hypotheses(db_path, status=status),
+        page=page, page_size=page_size,
+        next_cursor=encode_cursor(
+            items[-1]["created_at"], items[-1]["hypothesis_id"])
+        if items else None)
 
 
 @router.get("/hypotheses/{hypothesis_id}")

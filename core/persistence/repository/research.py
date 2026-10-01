@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import and_, func, insert, or_, select, update
 
 from core.persistence.orm.models import (
     AnalysisTask,
@@ -35,6 +35,35 @@ from core.persistence.repository.dataset_meta import _engine_for, _now
 def _new_id() -> str:
     """研究域行 id：uuid4 hex（日志 id 生成内聚于此，调用方不关心）。"""
     return uuid4().hex
+
+
+def _apply_keyset(
+    stmt: Any,
+    created_at_col: Any,
+    pk_col: Any,
+    cursor: Optional[Tuple[str, str]],
+    order: str,
+) -> Any:
+    """研究域列表的 keyset 过滤与稳定排序（四表同构收口）。
+
+    cursor=(created_at, 主键) 按字典序严格比较（>cursor / <cursor 的
+    and_/or_ 展开形，不依赖 SQLite 行值支持）；order 缺省 asc——
+    offset/limit 翻页消费方（iter_all_pages）零改动，HTTP 列表端点
+    传 desc（最新在前）并经 cursor 续页（深翻页漂移免疫）。
+    """
+    if cursor is not None:
+        c, k = cursor
+        if order == "desc":
+            stmt = stmt.where(or_(
+                created_at_col < c,
+                and_(created_at_col == c, pk_col < k)))
+        else:
+            stmt = stmt.where(or_(
+                created_at_col > c,
+                and_(created_at_col == c, pk_col > k)))
+    if order == "desc":
+        return stmt.order_by(created_at_col.desc(), pk_col.desc())
+    return stmt.order_by(created_at_col, pk_col)
 
 
 # ============================================================ 假设（双写组合）
@@ -119,15 +148,34 @@ def find_active_hypothesis_by_identity(
 def list_hypotheses(
     db_path: Path, *, status: Optional[str] = None,
     offset: int = 0, limit: int = 50,
+    cursor: Optional[Tuple[str, str]] = None,
+    order: str = "asc",
 ) -> List[Dict[str, Any]]:
+    """假设列表（分页双轨：offset/limit 原样；cursor=(created_at,
+    hypothesis_id) keyset 严格比较——HTTP 列表端点 desc+cursor 续页）。
+    count 配套 count_hypotheses。"""
     engine = _engine_for(db_path)
-    stmt = select(ResearchHypothesis).order_by(
-        ResearchHypothesis.created_at, ResearchHypothesis.hypothesis_id
+    stmt = _apply_keyset(
+        select(ResearchHypothesis),
+        ResearchHypothesis.created_at, ResearchHypothesis.hypothesis_id,
+        cursor, order,
     ).offset(offset).limit(limit)
     if status is not None:
         stmt = stmt.where(ResearchHypothesis.status == status)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
+def count_hypotheses(
+    db_path: Path, *, status: Optional[str] = None,
+) -> int:
+    """假设真总数（过滤口径与 list_hypotheses 一致）。"""
+    stmt = select(func.count()).select_from(ResearchHypothesis)
+    if status is not None:
+        stmt = stmt.where(ResearchHypothesis.status == status)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
 
 
 def transition_hypothesis(
@@ -304,15 +352,23 @@ def list_research_log(
     hypothesis_id: Optional[str] = None,
     entry_type: Optional[str] = None,
     offset: int = 0, limit: int = 50,
+    cursor: Optional[Tuple[str, str]] = None,
+    order: str = "asc",
 ) -> List[Dict[str, Any]]:
     """按 hypothesis_id / entry_type 过滤的日志列表（稳定排序）。
 
     entry_type 过滤供反向核查（全局 screen 留痕）与审计查询通道
-    （add-screen-patterns G6）使用；两参数均缺省时行为与既往一致。
+    （add-screen-patterns G6）使用；两参数均缺省时行为与既往一致
+    （iter_all_pages 的 fetch_page(offset,limit) 契约不动）。分页
+    双轨：cursor=(created_at, log_id) keyset 严格比较，order 缺省
+    asc，HTTP 列表端点传 desc+cursor 续页。count 配套
+    count_research_log。
     """
     engine = _engine_for(db_path)
-    stmt = select(ResearchLog).order_by(
-        ResearchLog.created_at, ResearchLog.log_id
+    stmt = _apply_keyset(
+        select(ResearchLog),
+        ResearchLog.created_at, ResearchLog.log_id,
+        cursor, order,
     ).offset(offset).limit(limit)
     if hypothesis_id is not None:
         stmt = stmt.where(ResearchLog.hypothesis_id == hypothesis_id)
@@ -320,6 +376,22 @@ def list_research_log(
         stmt = stmt.where(ResearchLog.entry_type == entry_type)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
+def count_research_log(
+    db_path: Path, *,
+    hypothesis_id: Optional[str] = None,
+    entry_type: Optional[str] = None,
+) -> int:
+    """日志真总数（过滤口径与 list_research_log 一致）。"""
+    stmt = select(func.count()).select_from(ResearchLog)
+    if hypothesis_id is not None:
+        stmt = stmt.where(ResearchLog.hypothesis_id == hypothesis_id)
+    if entry_type is not None:
+        stmt = stmt.where(ResearchLog.entry_type == entry_type)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
 
 
 # ============================================================ 验证记录（双写组合）
@@ -385,10 +457,17 @@ def list_validation_records(
     hypothesis_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
     offset: int = 0, limit: int = 50,
+    cursor: Optional[Tuple[str, str]] = None,
+    order: str = "asc",
 ) -> List[Dict[str, Any]]:
+    """验证记录列表（分页双轨：offset/limit 原样——iter_all_pages 的
+    fetch_page 契约不动；cursor=(created_at, record_id) keyset 严格
+    比较，order 缺省 asc）。count 配套 count_validation_records。"""
     engine = _engine_for(db_path)
-    stmt = select(ValidationRecord).order_by(
-        ValidationRecord.created_at, ValidationRecord.record_id
+    stmt = _apply_keyset(
+        select(ValidationRecord),
+        ValidationRecord.created_at, ValidationRecord.record_id,
+        cursor, order,
     ).offset(offset).limit(limit)
     if hypothesis_id is not None:
         stmt = stmt.where(ValidationRecord.hypothesis_id == hypothesis_id)
@@ -396,6 +475,22 @@ def list_validation_records(
         stmt = stmt.where(ValidationRecord.strategy_id == strategy_id)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
+def count_validation_records(
+    db_path: Path, *,
+    hypothesis_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+) -> int:
+    """验证记录真总数（过滤口径与 list_validation_records 一致）。"""
+    stmt = select(func.count()).select_from(ValidationRecord)
+    if hypothesis_id is not None:
+        stmt = stmt.where(ValidationRecord.hypothesis_id == hypothesis_id)
+    if strategy_id is not None:
+        stmt = stmt.where(ValidationRecord.strategy_id == strategy_id)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
 
 
 # ============================================================ 插件（双写组合）
@@ -606,12 +701,17 @@ def save_feature_request(
 def list_feature_requests(
     db_path: Path, *, status: Optional[str] = None,
     offset: int = 0, limit: int = 50,
+    cursor: Optional[Tuple[str, str]] = None,
+    order: str = "asc",
 ) -> List[Dict[str, Any]]:
-    """功能需求单列表（status 精确过滤；created_at+request_id 稳定排序，
-    原路由层内联 SQL 语义原样迁入）。"""
+    """功能需求单列表（分页双轨：offset/limit 原样；cursor=
+    (created_at, request_id) keyset 严格比较——HTTP 列表端点 desc+
+    cursor 续页；status 精确过滤）。count 配套 count_feature_requests。"""
     engine = _engine_for(db_path)
-    stmt = select(FeatureRequest).order_by(
-        FeatureRequest.created_at, FeatureRequest.request_id
+    stmt = _apply_keyset(
+        select(FeatureRequest),
+        FeatureRequest.created_at, FeatureRequest.request_id,
+        cursor, order,
     ).offset(offset).limit(limit)
     if status is not None:
         stmt = stmt.where(FeatureRequest.status == status)

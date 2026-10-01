@@ -9,6 +9,8 @@ HTTPException 转换契约单点维护，路由层 except 形制统一。
 """
 from __future__ import annotations
 
+from typing import Optional, Tuple
+
 from fastapi import HTTPException
 
 from core.analysis.hypothesis_service import ResearchError
@@ -40,3 +42,30 @@ def require_known_timeframe(timeframe: str, field: str) -> None:
             f"未知周期: {timeframe!r}",
             detail={"field": field, "timeframe": timeframe,
                     "legal_range": sorted(TF_SECONDS)})
+
+
+def encode_cursor(created_at: str, pk: str) -> str:
+    """keyset 游标编码：(created_at, 主键) -> "created_at|pk"。
+
+    两字段（ISO 时间串 / 研究域 hex id）均不含 "|"，拼接无歧义、
+    客户端可原样回传 decode_cursor 续页。
+    """
+    return f"{created_at}|{pk}"
+
+
+def decode_cursor(raw: Optional[str]) -> Optional[Tuple[str, str]]:
+    """keyset 游标解码：None 直通；非 "created_at|pk" 双段形即 422。
+
+    错误语义：RESEARCH_PARAM_INVALID 结构化拒绝（detail 披露期望
+    形制）——坏游标静默回首页会伪装成「没有更多数据」，宁可显式拒。
+    """
+    if raw is None:
+        return None
+    parts = raw.split("|", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise HTTPException(status_code=422, detail={
+            "code": "RESEARCH_PARAM_INVALID",
+            "message": f"cursor 形制非法（期望 created_at|id 双段）: {raw!r}",
+            "detail": {"field": "cursor",
+                       "legal_form": "created_at|id"}})
+    return parts[0], parts[1]

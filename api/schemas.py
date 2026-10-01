@@ -873,6 +873,7 @@ class HypothesisListResponse(BaseModel):
     total: int
     page: int = 1
     page_size: int = 50
+    next_cursor: Optional[str] = None  # keyset 续页游标（末条 created_at|id）
 
 
 class IsolatedBacktestRequest(BaseModel):

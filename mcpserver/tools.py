@@ -134,13 +134,17 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def list_hypotheses(status: Optional[str] = None, page: int = 1) -> Dict[str, Any]:
+    def list_hypotheses(status: Optional[str] = None, page: int = 1,
+                        cursor: Optional[str] = None) -> Dict[str, Any]:
         """研究假设列表（含状态与区间；conditions 为结构化混合形制——
         0.2.13 起参数化指标 subject 为 {indicator, params, field} 对象，
-        历史留痕可能仍含字符串编码形）。"""
-        params = {"page": page}
+        历史留痕可能仍含字符串编码形）。缺省最新在前；total 为真总数；
+        cursor=上一响应 next_cursor 续页（keyset 深翻页无漂移）。"""
+        params: Dict[str, Any] = {"page": page}
         if status:
             params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
         return api.get("/api/research/hypotheses", params=params)
 
     @mcp.tool()
@@ -154,15 +158,20 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def get_research_log(hypothesis_id: Optional[str] = None,
                          entry_type: Optional[str] = None,
-                         page: int = 1) -> Dict[str, Any]:
+                         page: int = 1,
+                         cursor: Optional[str] = None) -> Dict[str, Any]:
         """研究日志（假设→分析→证据→结论全链路；续接研究前先读）。
         entry_type 可按类型过滤（screen=全局扫描留痕：历史扫描区间与
-        top 候选指纹清单——登记引用候选前自查，避免踩入已扫描数据）。"""
+        top 候选指纹清单——登记引用候选前自查，避免踩入已扫描数据）。
+        缺省最新在前；total 为真总数；cursor=上一响应 next_cursor 续页
+        （keyset 深翻页无漂移）。"""
         params: Dict[str, Any] = {"page": page}
         if hypothesis_id:
             params["hypothesis_id"] = hypothesis_id
         if entry_type:
             params["entry_type"] = entry_type
+        if cursor is not None:
+            params["cursor"] = cursor
         return api.get("/api/research/log", params=params)
 
     @mcp.tool()
