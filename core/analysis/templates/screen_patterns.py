@@ -219,11 +219,10 @@ def screen_patterns(
 
     # 前向收益（每持有期一次全序列，全候选共享）
     fwd_by_h = {h: work["close"].pct_change(h).shift(-h) for h in horizon_list}
-    baseline_mean = {
-        h: (float(fwd_by_h[h][stat_pos].dropna().mean())
-            if len(fwd_by_h[h][stat_pos].dropna()) else None)
-        for h in horizon_list
-    }
+    baseline_mean: Dict[float, Optional[float]] = {}
+    for h in horizon_list:
+        bas = fwd_by_h[h][stat_pos].dropna()
+        baseline_mean[h] = float(bas.mean()) if len(bas) else None
 
     # 逐条件掩码（一次求值，全部持有期复用）+ 逐 (条件,持有期) 检验
     records: List[Dict[str, Any]] = []
