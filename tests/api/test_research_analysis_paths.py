@@ -169,3 +169,73 @@ class TestCorruptedJsonTails:
         row = next(r for r in resp.json()["items"]
                    if r["plugin_id"] == "pm_c")
         assert row["oos_summary"] == "{corrupt"
+
+
+class TestHeavyPathAndFastPath:
+    """通用重组路径与 fast_path 竞态分支（终验消解）。"""
+
+    def test_generic_heavy_success_chain(self, api_client, tmp_path):
+        """通用 heavy（>10000 bar 非 screen/sweep/pattern）：202 → 轮询
+        succeeded → analysis 日志落库（_job 体全链）。
+
+        db 保持 fixture（executor 单例绑它——照 test_analysis_warmup_route
+        :126 形制；只覆盖 data_dir）。
+        """
+        import time
+
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        make_ohlcv(n=10500, freq="4h", start="2020-01-01",
+                   seed=5).to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        api_client.app.state.data_dir = data_dir
+        db = Path(api_client.app.state.db_path)
+
+        resp = api_client.post("/api/research/analysis", json={
+            "template": "condition_stats",
+            "params": {"indicator": "RSI", "params": {"period": 14},
+                       "condition": {"subject": {"indicator": "RSI",
+                                                 "params": {"period": 14}},
+                                     "action": "lt", "target": 40}},
+            "data_range": {"symbol": SYMBOL, "timeframe": "4h",
+                           "start": "2020-02-05T00:00:00Z",
+                           "end": "2024-11-01T00:00:00Z"}})
+        assert resp.status_code == 202, resp.text
+        task_id = resp.json()["task_id"]
+
+        t: dict = {}
+        for _ in range(60):  # 轮询到终态（404 为入库竞态窗口，重试）
+            poll = api_client.get(
+                f"/api/research/analysis/tasks/{task_id}")
+            if poll.status_code == 200:
+                t = poll.json()
+                if t["status"] in ("succeeded", "failed"):
+                    break
+            time.sleep(0.5)
+        assert t.get("status") == "succeeded", t.get("reason")
+        logs = rr.list_research_log(db, entry_type="analysis")
+        assert any(e["ref_id"] == "condition_stats" for e in logs), \
+            "通用 heavy 成功后 analysis 日志落库"
+
+    def test_fast_path_race_returns_handle_directly(
+            self, api_client, paths_env, monkeypatch):
+        """fast_path 竞态分支：executor 快路径吃掉请求——结果即终态
+        直返 handle（screen 段与通用段两调用点）。"""
+        import api.routes.research.analysis as ana
+
+        _wire(api_client, paths_env)
+
+        class _FakeExecutor:
+            def submit(self, name, job, **kw):
+                return {"fast_path": True, "task_id": "ant_fast",
+                        "status": "succeeded", "result": None}
+        monkeypatch.setattr(ana, "get_executor", lambda: _FakeExecutor())
+
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "screen_patterns", {"features": "all"}))
+        assert resp.status_code == 200, "screen fast_path 直返 handle"
+
+        resp2 = api_client.post("/api/research/analysis", json=_body(
+            "pattern_mining", {"as_of": "2024-02-15T00:00:00Z"}))
+        assert resp2.status_code == 200, "通用段 fast_path 直返 handle（pattern 恒 heavy）"

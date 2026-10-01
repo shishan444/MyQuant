@@ -423,6 +423,18 @@ class TestCorruptedJsonPassthrough:
         dirty = next(r for r in listed["items"] if r["plugin_id"] == "p_dirty")
         assert dirty["output_columns"] == "{corrupted"
 
+    def test_formula_output_columns_empty_string_kept(self, api_client, db_path):
+        """output_columns 空串（终验消解）：falsy 不进解析、原样保留。
+        None 形态被 NOT NULL 约束排除（不可达），空串是唯一 falsy 形态。"""
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_nocol", name="nocol",
+            version=1, expression="zscore(close, 20)",
+            output_columns="", entry_id="e_nocol", column_name="nocol_col")
+        listed = api_client.get("/api/research/plugins/formula").json()
+        row = next(r for r in listed["items"]
+                   if r["plugin_id"] == "p_nocol")
+        assert row["output_columns"] == ""
+
     def test_validation_report_params_corrupt_range_none(
             self, api_client, db_path):
         """params 损坏归 {}：report 200、range=None（原始串不入人话摘要）。"""
