@@ -296,6 +296,32 @@ class TestKeysetCursorPagination:
         assert len(log1["items"]) == 2 and log1["next_cursor"]
 
 
+class TestFeatureRequestSizeCaps:
+    """CARD-13 修复资产：title/payload 大小前置限（超大结构直入 DB
+    前拒绝）。基准：title 字符数 200；payload json.dumps(ensure_ascii=
+    False) UTF-8 字节数 64KB。"""
+
+    def test_title_over_200_rejected(self, api_client):
+        resp = api_client.post("/api/research/feature-requests", json={
+            "title": "超" * 201, "payload": {}})
+        assert resp.status_code == 422
+        assert any(e["loc"] == ["body", "title"]
+                   for e in resp.json()["detail"])
+
+    def test_payload_over_64kb_rejected(self, api_client):
+        resp = api_client.post("/api/research/feature-requests", json={
+            "title": "t", "payload": {"blob": "x" * 70000}})
+        assert resp.status_code == 422
+        assert any(e["loc"] == ["body", "payload"]
+                   for e in resp.json()["detail"])
+
+    def test_boundary_within_caps_accepted(self, api_client):
+        """边界内通过：title 恰 200 字符、payload 恰在 64KB 限内。"""
+        resp = api_client.post("/api/research/feature-requests", json={
+            "title": "正" * 200, "payload": {"blob": "y" * 60000}})
+        assert resp.status_code == 200, resp.text
+
+
 class TestCorruptedJsonPassthrough:
     """CARD-12 修复资产：库存 JSON 列损坏时端点不 500。
 

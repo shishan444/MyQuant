@@ -185,6 +185,29 @@ class TestToolPaginationClamp:
                                       "status": "open"}
 
 
+class TestPollTimeoutClamp:
+    """CARD-13 修复资产：poll_evolution_task 的 total_timeout 钳制
+    [1, 3600]s（防误传 0/负值立即超时、超长值挂死会话）。"""
+
+    def test_timeout_clamped_into_domain(self, monkeypatch) -> None:
+        import json as _json
+
+        mcp, api = build_server(profile="research", base_url="http://x")
+        captured: dict = {}
+
+        def _fake_poll(path, **kw):
+            captured.update(total_timeout=kw.get("total_timeout"))
+            return {"status": "completed"}
+
+        api.poll_until_terminal = _fake_poll
+
+        for raw, expect in [(0, 1.0), (-5, 1.0), (99999, 3600.0), (300, 300.0)]:
+            run_async(mcp.call_tool("poll_evolution_task",
+                                    {"task_id": "t", "total_timeout": raw}))
+            assert captured["total_timeout"] == expect, \
+                f"total_timeout={raw} 应钳制为 {expect}"
+
+
 class TestPathSegmentEncoding:
     """CARD-11 修复资产：URL 路径段 quote 编码（防段逃逸/查询注入）。
 
