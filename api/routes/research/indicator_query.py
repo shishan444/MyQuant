@@ -15,7 +15,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import research_error_to_http
 from api.schemas import QueryIndicatorRequest
 from core.analysis import indicator_query as iq
 

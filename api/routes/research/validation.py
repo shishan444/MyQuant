@@ -23,7 +23,7 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import research_error_to_http
 
 
 @router.post("/validate-backtest")

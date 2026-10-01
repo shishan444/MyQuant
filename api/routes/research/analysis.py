@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from api.deps import get_data_dir, get_db_path
+from api.routes.research.common import research_error_to_http
 from api.schemas import AnalysisRunRequest
 from core.analysis.executor import get_executor
 from core.analysis.hypothesis_service import ResearchError
@@ -336,7 +337,6 @@ def run_analysis(
             "task_id": handle["task_id"], "status": "pending",
             "poll": f"/api/research/analysis/tasks/{handle['task_id']}"})
     except ResearchError as exc:
-        from api.routes.research.hypotheses import research_error_to_http
         raise research_error_to_http(exc) from exc
 
 

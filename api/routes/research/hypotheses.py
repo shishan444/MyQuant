@@ -22,13 +22,9 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-def research_error_to_http(exc: ResearchError) -> HTTPException:
-    """ResearchError -> HTTPException（detail 含 code/message/detail 三段）。"""
-    return HTTPException(
-        status_code=exc.status,
-        detail={"code": exc.code, "message": exc.message, "detail": exc.detail},
-    )
+# research_error_to_http 已迁 common（子包共享底座）；此处 import 兼容
+# 范围外 api/routes/validate.py 的既有引用，新代码请直用 common
+from api.routes.research.common import research_error_to_http  # noqa: E402
 
 
 @router.post("/hypotheses", response_model=HypothesisResponse)

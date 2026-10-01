@@ -14,7 +14,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import research_error_to_http
 from api.schemas import InspectCasesRequest
 from core.analysis import case_inspection as ci
 from core.analysis.hypothesis_service import ResearchError

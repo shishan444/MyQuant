@@ -17,7 +17,7 @@ from core.analysis.hypothesis_service import ResearchError
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import research_error_to_http
 
 
 class FormulaPluginCreate(BaseModel):
