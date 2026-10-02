@@ -91,7 +91,6 @@ def compare_strategies(
             detail=f"Dataset {payload.dataset_id} not found",
         )
 
-    from core.data.storage import load_parquet
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     engine = _bt_engine_mod.BacktestEngine(
@@ -100,8 +99,9 @@ def compare_strategies(
         slippage=payload.slippage,
     )
 
-    # Load raw data first to get symbol/timeframe info
-    df = load_parquet(parquet_path)
+    # 延迟装载：df 仅为 load_and_prepare_df 未命中时的回退底座，
+    # 主路径（enhanced 命中）不再无条件全量读 parquet
+    df = None
     results: List[CompareResultItem] = []
 
     for sid in payload.strategy_ids:
@@ -118,13 +118,17 @@ def compare_strategies(
             symbol = dna.execution_genes.symbol
             timeframe = dna.execution_genes.timeframe
 
-            # Use enhanced data with indicators (same as backtest endpoint)
+            # Use enhanced data with indicators (fallback differs from
+            # backtest endpoint: bare df without per-gene indicators)
             enhanced_df = load_and_prepare_df(
                 data_dir, symbol, timeframe,
                 data_start=payload.data_start,
                 data_end=payload.data_end,
             )
             if enhanced_df is None:
+                if df is None:
+                    from core.data.storage import load_parquet
+                    df = load_parquet(parquet_path)
                 enhanced_df = df
 
             # Load MTF data if strategy uses multiple timeframes
@@ -149,14 +153,29 @@ def compare_strategies(
             )
 
             result_id = str(uuid.uuid4())
+            # 落库统计单列读（与延迟装载解耦：主路径 enhanced 命中时 df 不装载）
+            import pyarrow.parquet as _pq
+            _pf = _pq.ParquetFile(parquet_path)
+            _names = _pf.schema_arrow.names
+            _ts = next(
+                (c for c in ("timestamp", "date", "__index_level_0__")
+                 if c in _names), None,
+            )
+            if _ts is not None and _pf.metadata.num_rows > 0:
+                _col = _pf.read(columns=[_ts]).column(0).to_pandas()
+                data_start_str = str(_col.min())
+                data_end_str = str(_col.max())
+            else:
+                data_start_str = ""
+                data_end_str = ""
             save_backtest_result(
                 db_path,
                 result_id=result_id,
                 strategy_id=sid,
                 symbol=row["symbol"],
                 timeframe=row["timeframe"],
-                data_start=str(df.index.min()) if len(df) > 0 else "",
-                data_end=str(df.index.max()) if len(df) > 0 else "",
+                data_start=data_start_str,
+                data_end=data_end_str,
                 init_cash=payload.init_cash,
                 fee=payload.fee,
                 slippage=payload.slippage,
