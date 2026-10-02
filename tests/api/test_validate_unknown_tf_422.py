@@ -226,16 +226,11 @@ class TestValidateMainPathIntegration:
     """阶段五层级补全：/api/validate 正常数据主路径的集成锚
     （此前 API 锚只有错误路径与空结果路径）。
 
-    已知缺陷（已退 developer，与 CARD-32 同族的响应层类型缺陷）：
-    _check_then_conditions 默认分支返回 numpy.bool → matched 序列化 500。
-    xfail(strict=True) 为缺陷登记形制——修复后本锚 xpass 报警，
-    移除标记即为该路径的常驻回归锚。
+    曾以 xfail(strict) 登记缺陷（_check_then_conditions 默认分支
+    numpy.bool 泄漏 → matched 序列化 500），CARD-33 修复（bool() 包装）
+    后 XPASS 移除标记——现为该路径常驻回归锚。
     """
 
-    @pytest.mark.xfail(
-        reason="已知缺陷：_check_then_conditions 默认分支 numpy.bool 序列化 500（已退卡）",
-        strict=True,
-    )
     def test_validate_with_data_returns_statistics(self, api_client, tmp_data_dir):
         import numpy as np
         import pandas as pd
