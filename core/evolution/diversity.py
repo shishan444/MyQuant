@@ -111,7 +111,6 @@ def signal_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
         return genotype_distance(dna_a, dna_b)
 
     # Compare key behavioral metrics
-    metrics_to_compare = ["total_trades", "win_rate"]
     raw_a = diag_a.get("raw_metrics", {})
     raw_b = diag_b.get("raw_metrics", {})
 

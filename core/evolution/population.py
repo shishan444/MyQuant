@@ -626,12 +626,11 @@ def init_population(
 
     mutation_funcs = [mutate_params, mutate_indicator, mutate_logic, mutate_risk]
 
-    # Template mutations: pick a strategy template, mutate from a parent
+    # Template mutations: pick a strategy template, mutate the template seed
     for _ in range(n_template):
         if len(population) < size:
             template = random.choice(STRATEGY_TEMPLATES)
             seed = _dna_from_template(template, timeframe, symbol, leverage, direction, timeframe_pool)
-            parent = random.choice(population[:min(len(population), 3)])
             mut_func = random.choice(mutation_funcs)
             try:
                 child = mut_func(seed)
