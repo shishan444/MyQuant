@@ -185,7 +185,7 @@ class TestTemplateMutationBias:
     def test_aggressive_template_higher_params_bias(self):
         """Aggressive template should produce more params mutations."""
         engine = EvolutionEngine(
-            target_score=100, max_generations=5, template_name="aggressive",
+            target_score=100, max_generations=5,
         )
         ancestor = _make_simple_dna()
         call_count = {"total": 0}
@@ -200,7 +200,7 @@ class TestTemplateMutationBias:
     def test_conservative_template_higher_risk_bias(self):
         """Conservative template should produce more risk mutations."""
         engine = EvolutionEngine(
-            target_score=100, max_generations=5, template_name="conservative",
+            target_score=100, max_generations=5,
         )
         ancestor = _make_simple_dna()
 
