@@ -1055,18 +1055,6 @@ class TestPatternMatchHelpersFeature:
         assert _validate_pivot_anchor(PivotPoint(index=0, price=99.0, pivot_type="peak"), df) == False  # noqa: E712
         assert _validate_pivot_anchor(PivotPoint(index=0, price=99.0, pivot_type="trough"), df) == True  # noqa: E712
 
-    def test_pct_diff_zero_average_returns_zero(self):
-        """现状记录：_pct_diff 当前无调用方（遗留函数），钉住其零均值行为。"""
-        from core.validation.scene.pattern_match import _pct_diff
-        assert _pct_diff(0.0, 0.0) == 0.0
-        assert _pct_diff(100.0, 90.0) == pytest.approx(10.0 / 95.0 * 100)
-
-    def test_height_pct_zero_trough_returns_zero(self):
-        """现状记录：_height_pct 当前无调用方（遗留函数），钉住其零谷值行为。"""
-        from core.validation.scene.pattern_match import _height_pct
-        assert _height_pct(100.0, 0.0) == 0.0
-        assert _height_pct(110.0, 100.0) == pytest.approx(10.0)
-
 
 # ===========================================================================
 # 8. scene_engine.run_scene_verification（基线 39%，主流程 L130-227 从未执行）
@@ -1439,8 +1427,6 @@ class TestDetectorParamRangeFeature:
             pytest.param("volume_spike", "multiplier", -2.5, id="multiplier负"),
             pytest.param("mean_reversion", "deviation_pct", 0, id="deviation_pct零"),
             pytest.param("support_resistance", "proximity_pct", 0, id="proximity_pct零"),
-            pytest.param("top_pattern", "pattern_tolerance", -0.1, id="pattern_tolerance负"),
-            pytest.param("top_pattern", "pattern_min_height_pct", 0, id="pattern_min_height_pct零"),
             pytest.param("volume_breakout", "volume_multiplier", -1, id="volume_multiplier负"),
         ],
     )
@@ -1486,13 +1472,6 @@ class TestDetectorParamRangeFeature:
         )
         # multiplier=0.001 极宽松 + min_spacing=1：连续触发逐根记录
         assert len(triggers) >= 1
-
-    def test_top_pattern_tolerance_non_numeric_rejected(self):
-        """增量①接入锚：top_pattern 两键换 _param_number 后坏值 422 语义。"""
-        from core.analysis.hypothesis_service import ResearchError
-        from core.validation.scene.top_pattern import TopPatternDetector
-        with pytest.raises(ResearchError, match="pattern_tolerance 须为数值"):
-            TopPatternDetector().detect(self._df(), {"pattern_tolerance": "abc"})
 
 
 # ===========================================================================
