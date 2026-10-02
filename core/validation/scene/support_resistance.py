@@ -55,7 +55,9 @@ class SupportResistanceDetector(SceneDetector):
             touched_level = None
             proximity_dist = 0.0
             for side, level_vals in side_levels.items():
-                if np.isnan(level_vals[i]):
+                # ==0 与 NaN 同拒：dist 计算除以 level（与 volume_breakout
+                # 的 breakout_pct 守卫同款）
+                if np.isnan(level_vals[i]) or level_vals[i] == 0:
                     continue
                 price = lows[i] if side == "support" else highs[i]
                 dist = abs(price - level_vals[i]) / level_vals[i] * 100

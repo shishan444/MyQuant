@@ -53,8 +53,9 @@ class VolumeBreakoutDetector(SceneDetector):
             if rvol < vol_mult:
                 continue
 
-            # Price breakout condition
-            if np.isnan(level_vals[i]):
+            # Price breakout condition（==0 与 NaN 同拒：breakout_pct 除以
+            # level 会外泄 inf）
+            if np.isnan(level_vals[i]) or level_vals[i] == 0:
                 continue
             if closes[i] <= level_vals[i]:
                 continue
