@@ -530,11 +530,12 @@ def _lookback_condition(
 
     try:
         window = int(window)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError：window=inf 经 int() 转换裸穿（与 _param_number 同款收口）
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"condition.window 须为整数: {window!r}",
-            detail={"param": "condition.window", "value": window,
+            detail={"param": "condition.window", "value": str(window),
                     "legal_range": ">=1 整数"},
         ) from None
     if window < 1:

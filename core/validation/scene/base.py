@@ -92,23 +92,35 @@ def _param_number(params: Dict[str, Any], key: str, cast=float, min_value=None,
 
     params 为 default_params 与请求合并后的 dict（key 必在）。坏值
     raise ResearchError 经 scene 路由兜底转 422。cast 保留原类型语义
-    （int 对 "10.5" 依旧拒绝，不隐式截断）；min_value 提供时校验值域
-    （period/window/spacing 类键 >=1，与 engine._lookback_condition 的
-    window>=1 拒绝同款；正值语义键 exclusive=True 走 > 下界，0 值
-    恒触发/静默无结果同拒），不传保持现行为。
+    （int 对 "10.5" 依旧拒绝，不隐式截断）；非有限数拒绝——json.loads
+    接受 NaN/Infinity 字面量，NaN 比较恒 False 漏过值域、inf 恒触发/
+    静默无结果、经 int() 转换还 OverflowError 裸穿；min_value 提供时
+    校验值域（period/window/spacing 类键 >=1，与 engine.
+    _lookback_condition 的 window>=1 拒绝同款；正值语义键
+    exclusive=True 走 > 下界，0 值恒触发/静默无结果同拒），不传保持
+    现行为。
     """
+    import math
+
     from core.analysis.hypothesis_service import ResearchError
 
     raw = params[key]
     try:
         val = cast(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"params.{key} 须为数值: {raw!r}",
             detail={"param": f"params.{key}", "value": raw,
                     "legal_range": "数值"},
         ) from None
+    if not math.isfinite(val):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"params.{key} 须为有限数: {raw!r}",
+            detail={"param": f"params.{key}", "value": str(raw),
+                    "legal_range": "有限数值"},
+        )
     if min_value is not None:
         bound = f"> {min_value}" if exclusive else f">= {min_value}"
         if (exclusive and val <= min_value) or (not exclusive and val < min_value):
