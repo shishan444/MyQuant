@@ -1,4 +1,10 @@
-"""Evolution task management routes."""
+"""进化任务生命周期入口（/api/evolution/*）。
+
+职能：进化任务的创建/查询/暂停/停止/恢复、代际历史与发现策略查询，
+以及 runner 健康状态。服务对象：web 进化页与 EvolutionRunner
+（任务表即两者的交接面）。
+职责边界：任务表读写与校验，进化执行在 runner 线程。
+"""
 from __future__ import annotations
 
 import json
@@ -32,7 +38,7 @@ router = APIRouter(prefix="/api/evolution", tags=["evolution"])
 
 @router.get("/runner-status")
 def runner_status(request: Request) -> dict:
-    """Return EvolutionRunner health status."""
+    """返回 EvolutionRunner 健康状态。"""
     runner = getattr(request.app.state, "evolution_runner", None)
     if runner is None:
         return {"is_alive": False, "error": "runner not initialized"}
@@ -40,7 +46,7 @@ def runner_status(request: Request) -> dict:
 
 
 def _parse_json_list(raw: Optional[str]) -> Optional[List[str]]:
-    """Parse a JSON-encoded list from a DB text column."""
+    """解析 DB 文本列的 JSON list（空/非法/类型不符回 None）。"""
     if not raw:
         return None
     try:
@@ -51,7 +57,7 @@ def _parse_json_list(raw: Optional[str]) -> Optional[List[str]]:
 
 
 def _parse_json_dict(raw: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Parse a JSON-encoded dict from a DB text column."""
+    """解析 DB 文本列的 JSON dict（空/非法/类型不符回 None）。"""
     if not raw:
         return None
     try:
@@ -65,7 +71,7 @@ def _task_row_to_response(
     row: Dict[str, Any],
     strategy_count: int = 0,
 ) -> EvolutionTaskResponse:
-    """Convert a DB row dict to EvolutionTaskResponse."""
+    """DB 行 dict 转 EvolutionTaskResponse（附策略计数）。"""
     initial_dna = None
     if row.get("initial_dna"):
         try:
@@ -82,7 +88,7 @@ def _task_row_to_response(
         except Exception:
             champion_dna = None
 
-    # Parse requirements from JSON column
+    # requirements 自 JSON 列解析（非法回 None）
     requirements = None
     req_raw = row.get("requirements_json")
     if req_raw:
@@ -184,7 +190,7 @@ def list_all_discovered_strategies(
     limit: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
-    """List all evolution-discovered strategies across all tasks."""
+    """跨任务列出全部进化发现的策略（source=evolution）。"""
     from core.persistence.db_ext import list_strategies
     strategies = list_strategies(
         db_path, source="evolution", sort_by="best_score",
@@ -199,18 +205,18 @@ def create_task(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> EvolutionTaskResponse:
-    """Create a new evolution task."""
+    """创建进化任务（runner 轮询 pending 表接手执行）。"""
     task_id = str(uuid.uuid4())
 
-    # --- Auto-derive execution timeframe from timeframe_pool ---
-    # Sort pool by duration (longest first), execution TF = shortest
+    # --- 由 timeframe_pool 自动推导执行周期 ---
+    # 池按时长降序排，执行周期取最短者
     tf_pool = payload.timeframe_pool
     if tf_pool and len(tf_pool) > 1:
         tf_pool = sort_timeframes(tf_pool)
-        # Override timeframe with the shortest in pool
+        # timeframe 覆写为池内最短
         payload.timeframe = tf_pool[-1]
 
-    # Build initial DNA: use provided or generate a default
+    # 初始 DNA：用传入值或生成缺省
     if payload.initial_dna:
         dna = payload.initial_dna.to_dna()
     else:
@@ -221,7 +227,7 @@ def create_task(
         ]
         base_logic = LogicGenes(entry_logic="AND", exit_logic="AND")
 
-        # For MTF tasks, build multi-layer DNA directly in constructor
+        # MTF 任务在构造时直接建多层 DNA
         mtf_layers = None
         if tf_pool and len(tf_pool) > 1:
             exec_tf = payload.timeframe
@@ -245,11 +251,11 @@ def create_task(
             layers=mtf_layers,
         )
 
-    # Force override leverage/direction on seed DNA with task-level constraints
+    # 任务级杠杆/方向约束强制覆写到种子 DNA
     dna.risk_genes.leverage = payload.leverage
     dna.risk_genes.direction = payload.direction
 
-    # Validate data availability（find_parquet 内含周期白名单与 core 别名表，杜绝旁路拼接）
+    # 数据可用性校验（find_parquet 内含周期白名单与 core 别名表，杜绝旁路拼接）
     from core.data.mtf_loader import find_parquet, safe_symbol
 
     try:
@@ -267,7 +273,7 @@ def create_task(
             detail=f"无 {payload.symbol}/{payload.timeframe} 的K线数据"
         )
 
-    # Read parquet time range（仅取行数与首尾时间戳，不全量装载——
+    # 读取 parquet 时间范围（仅取行数与首尾时间戳，不全量装载——
     # 1m 数据集数十万行，read_parquet 全读仅为 len/min/max 属白读）
     try:
         import pyarrow.parquet as pq
@@ -299,7 +305,7 @@ def create_task(
         initial_dna=dna,
     )
 
-    # Update extended columns (including leverage/direction constraints and data info)
+    # 扩展列更新（杠杆/方向约束与数据探测信息）
     requirements_json = None
     if payload.requirements:
         requirements_json = json.dumps(payload.requirements.model_dump())
@@ -337,12 +343,12 @@ def list_tasks(
     page_size: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskListResponse:
-    """List evolution tasks with optional status filter and pagination."""
+    """分页列出进化任务（可按 status 过滤）。"""
     offset = (page - 1) * page_size
     total = count_all_tasks(db_path, status=status)
     rows = list_all_tasks(db_path, status=status, limit=page_size, offset=offset)
 
-    # Batch query strategy counts for all tasks on this page
+    # 本页任务的策略计数批量查询
     from core.persistence.db_ext import count_strategies_by_tasks
     task_ids = [r["task_id"] for r in rows]
     strategy_counts = count_strategies_by_tasks(db_path, task_ids) if task_ids else {}
@@ -359,7 +365,7 @@ def get_task_endpoint(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
-    """Get evolution task details."""
+    """取进化任务详情。"""
     row = get_task(db_path, task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -371,7 +377,7 @@ def get_task_history(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionHistoryResponse:
-    """Get generation history for an evolution task."""
+    """取任务代际历史。"""
     row = get_task(db_path, task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -401,7 +407,7 @@ def pause_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
-    """Pause an evolution task."""
+    """暂停进化任务。"""
     # B6.2 路由薄化：判定与前态守护在 service 用例（batch1 D3 语义不变）
     from core.services import evolution_service
     try:
@@ -418,7 +424,7 @@ def stop_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
-    """Stop an evolution task."""
+    """停止进化任务。"""
     from core.services import evolution_service
     try:
         result = evolution_service.stop_task(db_path, task_id)
@@ -434,7 +440,7 @@ def resume_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskResponse:
-    """Resume a paused evolution task."""
+    """恢复已暂停的进化任务。"""
     from core.services import evolution_service
     try:
         result = evolution_service.resume_task(db_path, task_id)
@@ -450,17 +456,14 @@ def get_task_strategies(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> dict:
-    """Return effective strategies discovered by this evolution task.
-
-    Returns champion and any snapshot strategies with score > 0.
-    """
+    """返回本任务实际生效的策略集（冠军与代际 top-N 快照策略，已收录冠军去重）。"""
     row = get_task(db_path, task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
     strategies = []
 
-    # Champion strategy
+    # 冠军策略
     if row.get("champion_dna"):
         try:
             champion = json.loads(row["champion_dna"])
@@ -473,7 +476,7 @@ def get_task_strategies(
         except Exception:
             pass
 
-    # Snapshot-based strategies
+    # 快照策略集
     from core.persistence.repository import evolution as _repo
     snapshots = _repo.list_top_snapshots(db_path, task_id, limit=10)
 
@@ -481,7 +484,7 @@ def get_task_strategies(
         try:
             snap_dna = json.loads(snap["best_dna"])
             sid = snap_dna.get("strategy_id", "")
-            # Skip if already included as champion
+            # 已作为冠军收录的跳过
             if any(s["strategy_id"] == sid for s in strategies):
                 continue
             strategies.append({
@@ -504,7 +507,7 @@ def get_discovered_strategies(
     limit: int = Query(50, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
-    """Get auto-extracted strategies for a task from the strategy table."""
+    """取任务自动入库的策略（strategy 表按 source_task_id 过滤）。"""
     from core.persistence.db_ext import list_strategies
     strategies = list_strategies(
         db_path,
@@ -523,7 +526,7 @@ from core.data.timeframes import TF_SECONDS as _TF_SECONDS  # B4.1 归一
 
 
 def sort_timeframes(tfs: List[str]) -> List[str]:
-    """Sort timeframes by duration, longest first."""
+    """周期按时长降序排序。"""
     def _key(tf: str) -> int:
         return _TF_SECONDS.get(tf, 0)
     return sorted(tfs, key=_key, reverse=True)
