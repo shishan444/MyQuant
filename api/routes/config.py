@@ -17,12 +17,10 @@ _MASK = "***"
 
 
 def _mask(value: str) -> str:
-    """前 4 后 4 中间 ***；未配置回 ""；短值全掩不泄露。"""
+    """全掩码回显（不泄露任何片段）；未配置回 ""。"""
     if not value:
         return ""
-    if len(value) <= 8:
-        return _MASK
-    return f"{value[:4]}{_MASK}{value[-4:]}"
+    return _MASK
 
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "language": "zh-CN",
@@ -62,14 +60,19 @@ def _write_config(db_path: Path, config: Dict[str, Any]) -> None:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
 
-@router.get("")
-def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
-    cfg = _read_config(db_path)
-    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
+def _masked_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """凭证键 masked 后的完整回显视图（GET 与 PUT 响应共用）。"""
     return {
         **cfg,
         **{k: _mask(str(cfg[k])) for k in _CREDENTIAL_KEYS if k in cfg},
     }
+
+
+@router.get("")
+def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
+    cfg = _read_config(db_path)
+    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
+    return _masked_view(cfg)
 
 
 @router.put("")
@@ -86,4 +89,4 @@ def update_config(
             current[key] = value
     _write_config(db_path, current)
     # 响应同样 masked（与 GET 一致）
-    return {**current, **{k: _mask(str(current[k])) for k in _CREDENTIAL_KEYS if k in current}}
+    return _masked_view(current)
