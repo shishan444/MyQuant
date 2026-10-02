@@ -79,6 +79,7 @@ def list_backtest_results(
     strategy_id: Optional[str] = None,
     symbol: Optional[str] = None,
     run_source: Optional[str] = None,
+    session_id: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = 100,
@@ -91,6 +92,8 @@ def list_backtest_results(
         stmt = stmt.where(BacktestResult.symbol == symbol)
     if run_source is not None:
         stmt = stmt.where(BacktestResult.run_source == run_source)
+    if session_id is not None:
+        stmt = stmt.where(BacktestResult.session_id == session_id)
 
     col = getattr(BacktestResult, sort_by)
     stmt = stmt.order_by(col.desc() if sort_order.lower() == "desc" else col.asc()).limit(limit)

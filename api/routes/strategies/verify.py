@@ -702,19 +702,10 @@ async def verify_strategies_stream(
     return {"session_id": session_id}
 
 
-@router.get("/verify/history", response_model=VerifyHistoryResponse)
-def get_verify_history(
-    strategy_id: Optional[str] = None,
-    limit: int = 100,
-    db_path: Path = Depends(get_db_path),
-) -> VerifyHistoryResponse:
-    """Return past verify results from backtest_result (run_source='verify')."""
-    results = list_backtest_results(
-        db_path,
-        strategy_id=strategy_id,
-        run_source="verify",
-        limit=limit,
-    )
+def _history_items(
+    db_path: Path, results: List[Dict[str, Any]],
+) -> List[VerifyHistoryItem]:
+    """Convert backtest_result rows to history items, caching strategy names."""
     strategy_names: Dict[str, str] = {}
     items = []
     for row in results:
@@ -737,6 +728,23 @@ def get_verify_history(
             qualified=row.get("qualified", 0),
             created_at=row["created_at"],
         ))
+    return items
+
+
+@router.get("/verify/history", response_model=VerifyHistoryResponse)
+def get_verify_history(
+    strategy_id: Optional[str] = None,
+    limit: int = 100,
+    db_path: Path = Depends(get_db_path),
+) -> VerifyHistoryResponse:
+    """Return past verify results from backtest_result (run_source='verify')."""
+    results = list_backtest_results(
+        db_path,
+        strategy_id=strategy_id,
+        run_source="verify",
+        limit=limit,
+    )
+    items = _history_items(db_path, results)
     return VerifyHistoryResponse(items=items, total=len(items))
 
 
@@ -766,31 +774,10 @@ def get_session_results(
     results = list_backtest_results(
         db_path,
         run_source="verify",
+        session_id=session_id,
         limit=500,
     )
-    results = [r for r in results if r.get("session_id") == session_id]
-    strategy_names: Dict[str, str] = {}
-    items = []
-    for row in results:
-        sid = row["strategy_id"]
-        if sid not in strategy_names:
-            strat = get_strategy(db_path, sid)
-            strategy_names[sid] = strat["name"] if strat else None
-        items.append(VerifyHistoryItem(
-            result_id=row["result_id"],
-            strategy_id=sid,
-            strategy_name=strategy_names[sid],
-            symbol=row["symbol"],
-            timeframe=row["timeframe"],
-            data_start=row["data_start"],
-            data_end=row["data_end"],
-            total_return=row.get("total_return", 0.0),
-            sharpe_ratio=row.get("sharpe_ratio", 0.0),
-            max_drawdown=row.get("max_drawdown", 0.0),
-            fitness=row.get("fitness", 0.0),
-            qualified=row.get("qualified", 0),
-            created_at=row["created_at"],
-        ))
+    items = _history_items(db_path, results)
     return VerifyHistoryResponse(items=items, total=len(items))
 
 

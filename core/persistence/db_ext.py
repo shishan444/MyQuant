@@ -302,6 +302,7 @@ def list_backtest_results(
     strategy_id: Optional[str] = None,
     symbol: Optional[str] = None,
     run_source: Optional[str] = None,
+    session_id: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = 100,
@@ -310,7 +311,7 @@ def list_backtest_results(
     from core.persistence.repository import backtest_result as repo
     return repo.list_backtest_results(
         db_path, strategy_id=strategy_id, symbol=symbol, run_source=run_source,
-        sort_by=sort_by, sort_order=sort_order, limit=limit,
+        session_id=session_id, sort_by=sort_by, sort_order=sort_order, limit=limit,
     )
 
 
