@@ -122,6 +122,60 @@ def get_dataset_endpoint(
     )
 
 
+def _persist_import_result(
+    db_path: Path, data_dir: Path, result,
+) -> DataImportResponse:
+    """导入结果落库 dataset 元数据并组装响应（单/批两端点共用）。"""
+    parquet_path = data_dir / f"{result.dataset_id}.parquet"
+    row_count = result.rows_imported
+    file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
+    # GENERIC 无整数位可探测 → None（不入库伪值）
+    precision_str = (
+        result.timestamp_precision.value if result.timestamp_precision else None
+    )
+
+    # Upsert dataset metadata
+    existing = get_dataset(db_path, result.dataset_id)
+    if existing is None:
+        save_dataset_meta(
+            db_path,
+            dataset_id=result.dataset_id,
+            symbol=result.symbol,
+            interval=result.interval,
+            parquet_path=str(parquet_path),
+            row_count=row_count,
+            time_start=result.time_range[0] if result.time_range else None,
+            time_end=result.time_range[1] if result.time_range else None,
+            file_size_bytes=file_size,
+            source="csv_import",
+            format_detected=result.format_detected.value,
+            timestamp_precision=precision_str,
+        )
+    else:
+        from core.persistence.db_ext import update_dataset_stats
+        update_dataset_stats(
+            db_path,
+            dataset_id=result.dataset_id,
+            row_count=row_count,
+            time_start=result.time_range[0] if result.time_range else None,
+            time_end=result.time_range[1] if result.time_range else None,
+            file_size_bytes=file_size,
+            format_detected=result.format_detected.value,
+            timestamp_precision=precision_str,
+        )
+
+    return DataImportResponse(
+        dataset_id=result.dataset_id,
+        symbol=result.symbol,
+        interval=result.interval,
+        rows_imported=result.rows_imported,
+        format_detected=result.format_detected.value,
+        timestamp_precision=precision_str,
+        files_processed=result.files_processed,
+        time_range=list(result.time_range) if result.time_range else None,
+    )
+
+
 @router.post("/import")
 def import_csv_endpoint(
     file: UploadFile = File(...),
@@ -160,55 +214,7 @@ def import_csv_endpoint(
             mode=import_mode,
         )
 
-        # Save dataset metadata
-        parquet_path = data_dir / f"{result.dataset_id}.parquet"
-        row_count = result.rows_imported
-        file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
-        # GENERIC 无整数位可探测 → None（不入库伪值）
-        precision_str = (
-            result.timestamp_precision.value if result.timestamp_precision else None
-        )
-
-        # Upsert dataset metadata
-        existing = get_dataset(db_path, result.dataset_id)
-        if existing is None:
-            save_dataset_meta(
-                db_path,
-                dataset_id=result.dataset_id,
-                symbol=result.symbol,
-                interval=result.interval,
-                parquet_path=str(parquet_path),
-                row_count=row_count,
-                time_start=result.time_range[0] if result.time_range else None,
-                time_end=result.time_range[1] if result.time_range else None,
-                file_size_bytes=file_size,
-                source="csv_import",
-                format_detected=result.format_detected.value,
-                timestamp_precision=precision_str,
-            )
-        else:
-            from core.persistence.db_ext import update_dataset_stats
-            update_dataset_stats(
-                db_path,
-                dataset_id=result.dataset_id,
-                row_count=row_count,
-                time_start=result.time_range[0] if result.time_range else None,
-                time_end=result.time_range[1] if result.time_range else None,
-                file_size_bytes=file_size,
-                format_detected=result.format_detected.value,
-                timestamp_precision=precision_str,
-            )
-
-        return DataImportResponse(
-            dataset_id=result.dataset_id,
-            symbol=result.symbol,
-            interval=result.interval,
-            rows_imported=result.rows_imported,
-            format_detected=result.format_detected.value,
-            timestamp_precision=precision_str,
-            files_processed=result.files_processed,
-            time_range=list(result.time_range) if result.time_range else None,
-        )
+        return _persist_import_result(db_path, data_dir, result)
     except ValueError as exc:
         # 非法参数（命名白名单/元数据不可探测/OHLCV 校验失败）→ 400
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -268,53 +274,7 @@ def import_csv_batch_endpoint(
             mode=import_mode,
         )
 
-        parquet_path = data_dir / f"{result.dataset_id}.parquet"
-        row_count = result.rows_imported
-        file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
-        # GENERIC 无整数位可探测 → None（不入库伪值）
-        precision_str = (
-            result.timestamp_precision.value if result.timestamp_precision else None
-        )
-
-        existing = get_dataset(db_path, result.dataset_id)
-        if existing is None:
-            save_dataset_meta(
-                db_path,
-                dataset_id=result.dataset_id,
-                symbol=result.symbol,
-                interval=result.interval,
-                parquet_path=str(parquet_path),
-                row_count=row_count,
-                time_start=result.time_range[0] if result.time_range else None,
-                time_end=result.time_range[1] if result.time_range else None,
-                file_size_bytes=file_size,
-                source="csv_import",
-                format_detected=result.format_detected.value,
-                timestamp_precision=precision_str,
-            )
-        else:
-            from core.persistence.db_ext import update_dataset_stats
-            update_dataset_stats(
-                db_path,
-                dataset_id=result.dataset_id,
-                row_count=row_count,
-                time_start=result.time_range[0] if result.time_range else None,
-                time_end=result.time_range[1] if result.time_range else None,
-                file_size_bytes=file_size,
-                format_detected=result.format_detected.value,
-                timestamp_precision=precision_str,
-            )
-
-        return DataImportResponse(
-            dataset_id=result.dataset_id,
-            symbol=result.symbol,
-            interval=result.interval,
-            rows_imported=result.rows_imported,
-            format_detected=result.format_detected.value,
-            timestamp_precision=precision_str,
-            files_processed=result.files_processed,
-            time_range=list(result.time_range) if result.time_range else None,
-        )
+        return _persist_import_result(db_path, data_dir, result)
     except ValueError as exc:
         # 非法参数（命名白名单/元数据不可探测/OHLCV 校验失败）→ 400
         raise HTTPException(status_code=400, detail=str(exc)) from exc
