@@ -258,10 +258,22 @@ def _read_csv_with_meta(
                 rename_map[col] = GENERIC_COLUMN_MAP[lower]
         raw = raw.rename(columns=rename_map)
 
+        # 缺列预检（拒绝式：缺失即 ValueError → API 层 400，非 KeyError
+        # 裸穿 500；timestamp 同为必需——set_index 无条件依赖）
+        missing = [c for c in REQUIRED_OHLCV if c not in raw.columns]
+        if missing:
+            raise ValueError(
+                f"CSV missing required columns: {', '.join(missing)}"
+                f" (expected: {', '.join(REQUIRED_OHLCV)})"
+            )
+        if "timestamp" not in raw.columns:
+            raise ValueError(
+                "CSV missing required column: timestamp (needed as index)"
+            )
+
         # 解析时间戳列（utc=True：统一 tz-aware UTC）
         df = raw[REQUIRED_OHLCV].copy()
-        if "timestamp" in raw.columns:
-            df["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
+        df["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
 
     df = df.set_index("timestamp")
     df = df[REQUIRED_OHLCV]
