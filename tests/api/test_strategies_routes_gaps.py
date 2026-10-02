@@ -127,6 +127,44 @@ class TestCompareGaps:
         assert by_id["bad-dna"].get("error"), "坏 DNA 条目应记 error"
         assert not by_id["ok-dna"].get("error"), "正常条目不应有 error"
 
+    def test_main_path_no_full_parquet_load(
+        self, seeded_client: TestClient,
+    ) -> None:
+        """CARD-26 后行为锚定：主路径 compare 自身零全量 load_parquet。
+
+        计数口径：单策略请求恰 1 次——core load_and_prepare_df 内部的
+        必需装载（spy 覆盖 core.data.storage.load_parquet，mtf_loader
+        函数内 import 同一入口）；旧实现为 2 次/策略（compare 无条件
+        预读 + core 内部），白读减半消除即断言 1。
+        """
+        from core.persistence.db_ext import save_strategy
+        db_path = seeded_client.app.state.db_path
+        save_strategy(
+            db_path, strategy_id="cmp-1", dna_json=make_dna().to_json(),
+            symbol="BTCUSDT", timeframe="4h", name="CmpOne",
+        )
+        from unittest.mock import patch
+        from core.data import storage
+        with patch.object(
+            storage, "load_parquet", wraps=storage.load_parquet,
+        ) as load_spy:
+            response = seeded_client.post(
+                "/api/strategies/compare",
+                json={"strategy_ids": ["cmp-1"], "dataset_id": "BTCUSDT_4h"},
+            )
+        assert response.status_code == 200
+        assert not response.json()["results"][0].get("error")
+        # compare 端点自身的全量预读已消除（旧 2 次 → 现 1 次 core 必需）
+        assert load_spy.call_count == 1, (
+            f"单策略主路径应仅剩 core 内部 1 次装载，实调 {load_spy.call_count} 次"
+        )
+        # 落库统计仍正确（单列读路径与延迟装载解耦）
+        from core.persistence.db_ext import list_backtest_results
+        rows = list_backtest_results(
+            db_path, strategy_id="cmp-1", run_source="lab", limit=1,
+        )
+        assert rows and rows[0]["data_start"]
+
 
 class TestCrudGaps:
     def test_list_invalid_sort_by_400(self, api_client: TestClient) -> None:
