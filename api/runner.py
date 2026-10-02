@@ -161,7 +161,7 @@ class EvolutionRunner(threading.Thread):
         logger.info("EvolutionRunner stopped")
 
     def get_status(self) -> dict:
-        """线程健康快照（/api/evolution/runner/status 消费，线程安全读取）。"""
+        """线程健康快照（/api/evolution/runner-status 消费，线程安全读取）。"""
         age = time.monotonic() - self._last_tick_time if self._last_tick_time else None
         return {
             "is_alive": self.is_alive(),
@@ -517,7 +517,7 @@ class EvolutionRunner(threading.Thread):
         champion = result["champion"]
         stop_reason = result["stop_reason"]
 
-        # 连续进化循环：种群收敛/达标后自动开新种群扩域搜索，
+        # 连续进化循环：种群收敛/达标/代数跑满后自动开新种群扩域搜索，
         # 直到用户手动停止或出错
         continuous = bool(task_row.get("continuous", 1))
 
