@@ -172,3 +172,59 @@ class TestBatchImportLimits:
         assert response.status_code not in (400, 413) or \
             "Too many files" not in str(response.json().get("detail", "")) \
             and "too large" not in str(response.json().get("detail", "")).lower()
+
+
+class TestCopyMidstream413Cleanup:
+    """size 缺失走 _copy_limited 累计超限（纵深路径）的中途 413 清理。
+
+    security 修补锚定：临时文件段并入主 try（先记路径再写），copy
+    中途拒绝时 finally 清理——批量场景第 N 个文件超限时，前 N-1 个
+    已写临时文件同样被清。经函数级直调构造 size=None 的 UploadFile
+    （HTTP multipart 下解析器恒记录 size，预检先行拦截）。
+    """
+
+    @staticmethod
+    def _upload(content: bytes):
+        import tempfile as _tf
+        from starlette.datastructures import UploadFile
+        spool = _tf.SpooledTemporaryFile()
+        spool.write(content)
+        spool.seek(0)
+        return UploadFile(file=spool, size=None, filename="mid.csv")
+
+    def test_single_copy_midstream_413_no_temp_leak(
+        self, tmp_path: Path, tiny_limit,
+    ) -> None:
+        db_path = tmp_path / "t.db"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        mod = _endpoint_data_module()
+        with pytest.raises(HTTPException) as exc:
+            mod.import_csv_endpoint(
+                file=self._upload(b"x" * 4096), symbol=None, interval=None,
+                mode="merge", db_path=db_path, data_dir=data_dir,
+            )
+        assert exc.value.status_code == 413
+        leaked = [p.name for p in data_dir.iterdir() if p.suffix == ".csv"]
+        assert leaked == [], f"copy 中途 413 泄漏临时文件: {leaked}"
+
+    def test_batch_copy_midstream_413_cleans_prior_temps(
+        self, tmp_path: Path, tiny_limit,
+    ) -> None:
+        """批量第 2 个文件 copy 中途超限：第 1 个已写临时文件同被清理。"""
+        db_path = tmp_path / "t2.db"
+        data_dir = tmp_path / "data2"
+        data_dir.mkdir()
+        mod = _endpoint_data_module()
+        files = [
+            self._upload(_SMALL_CSV.encode()),  # 先成功落盘临时文件
+            self._upload(b"x" * 4096),          # 中途超限触发 finally
+        ]
+        with pytest.raises(HTTPException) as exc:
+            mod.import_csv_batch_endpoint(
+                files=files, symbol=None, interval=None,
+                mode="merge", db_path=db_path, data_dir=data_dir,
+            )
+        assert exc.value.status_code == 413
+        leaked = [p.name for p in data_dir.iterdir() if p.suffix == ".csv"]
+        assert leaked == [], f"copy 中途 413 泄漏临时文件: {leaked}"
