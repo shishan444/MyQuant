@@ -52,6 +52,24 @@ def _make_task_row(db_path: Path, task_id: str, status: str = "pending") -> None
 
 
 class TestCreateTaskDataValidation:
+    def test_create_reports_data_range_metadata(
+        self, api_client: TestClient,
+    ) -> None:
+        """CARD-24 后等价锚定：行数与时间范围仍从 parquet 元数据回显。
+
+        conftest 数据集为有名 timestamp DatetimeIndex 单行——
+        走候选序首列，num_rows 零解码 + 单列 min/max。
+        """
+        response = api_client.post(
+            "/api/evolution/tasks", json=_create_payload(),
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["data_row_count"] == 1
+        assert data["data_time_start"] is not None
+        assert data["data_time_end"] is not None
+        assert "2024-01-01" in data["data_time_start"]
+
     def test_missing_kline_data_400(self, api_client: TestClient) -> None:
         """无该 symbol/timeframe 的 K 线数据 → 400（中文 detail）。"""
         response = api_client.post(
