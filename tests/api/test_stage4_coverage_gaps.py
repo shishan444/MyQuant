@@ -753,3 +753,106 @@ class TestBacktestLegacyExceptUnreachable:
 
     def test_judgement_documented(self) -> None:
         assert True
+
+
+class TestNonameStrategyRegression:
+    """CARD-31（TD-G1）修复锚定：无名策略 verify/列表不再 500。
+
+    根因：row.get("name", sid[:8]) 的 default 仅键缺失生效——save 层
+    name=None 落库后键存在值 None → strategy_name=None 炸
+    VerifySummaryItem 校验。修复后 None 也回退短 id。save 层对显式
+    缺省有内建名生成，None name 行经 ORM 直构（复现真实缺口路径）。
+    """
+
+    @staticmethod
+    def _seed_noname(db_path, sid: str) -> None:
+        from sqlalchemy import insert as sa_insert
+        from core.persistence.orm.models import Strategy
+        from core.persistence.repository.dataset_meta import _engine_for
+        engine = _engine_for(db_path)
+        from tests.helpers.data_factory import make_dna as _mk
+        with engine.begin() as conn:
+            conn.execute(sa_insert(Strategy).values(
+                strategy_id=sid, name=None, dna_json=_mk().to_json(),
+                source="manual", symbol="BTCUSDT", timeframe="4h",
+                created_at="2026-10-02T00:00:00Z",
+                updated_at="2026-10-02T00:00:00Z",
+            ))
+
+    def test_verify_noname_strategy_200_with_fallback_name(
+        self, api_client: TestClient,
+    ) -> None:
+        """None name 行走 verify：200 且 strategy_name=sid 前 8 位。"""
+        from types import SimpleNamespace
+        self._seed_noname(api_client.app.state.db_path, "noname-strat-1")
+        engine_fake = SimpleNamespace(
+            batch_run=lambda dnas, df, **kw: [SimpleNamespace(
+                total_return=0.1, sharpe_ratio=1.0, max_drawdown=0.05,
+                win_rate=0.6, total_trades=5, liquidated=False,
+                metrics_dict={"sharpe_ratio": 1.0},
+            ) for _ in dnas])
+        with patch.object(_verify_route_module(), "_bt_engine_mod",
+                          SimpleNamespace(BacktestEngine=lambda **kw: engine_fake)), \
+             patch("core.data.mtf_loader.load_and_prepare_df",
+                   return_value=make_ohlcv(50, "4h")), \
+             patch("core.scoring.scorer.compute_fitness",
+                   return_value={"fitness": 7.0, "qualified": True,
+                                 "total_score": 8.0}):
+            response = api_client.post(
+                "/api/strategies/verify",
+                json={"strategy_ids": ["noname-strat-1"],
+                      "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
+            )
+        assert response.status_code == 200, (
+            f"无名策略 verify 不应 500（TD-G1 修复面）: {response.text[:200]}"
+        )
+        summary = response.json()["summary"][0]
+        assert summary["strategy_name"] == "noname-s"  # sid[:8]
+
+    def test_evolution_list_noname_fallback(self, api_client: TestClient) -> None:
+        """evolution 策略列表：None name → strategy_id 前 8 位。"""
+        from sqlalchemy import insert as sa_insert, update as sa_update
+        from core.persistence.orm.models import Strategy
+        from core.persistence.repository.dataset_meta import _engine_for
+        db_path = api_client.app.state.db_path
+        from tests.helpers.data_factory import make_dna as _mk
+        engine = _engine_for(db_path)
+        with engine.begin() as conn:
+            conn.execute(sa_insert(Strategy).values(
+                strategy_id="evo-noname-x", name=None,
+                dna_json=_mk().to_json(), source="evolution",
+                source_task_id="t-x", symbol="BTCUSDT", timeframe="4h",
+                created_at="2026-10-02T00:00:00Z",
+                updated_at="2026-10-02T00:00:00Z",
+            ))
+        response = api_client.get("/api/evolution/strategies")
+        items = {i["strategy_id"]: i for i in response.json()}
+        assert items["evo-noname-x"]["name"] == "evo-nona"  # sid[:8]
+
+    def test_batch_processor_noname_fallback(self, tmp_path: Path) -> None:
+        """batch processor：None name → 短 id 回退（源头同修复）。"""
+        from core.persistence.db_ext import init_db_ext
+        from api.routes.strategies.batch import _BatchBacktestProcessor
+        from api.schemas import BatchBacktestRequest, VerifyDateRange
+        from sqlalchemy import insert as sa_insert
+        from core.persistence.orm.models import Strategy
+        from core.persistence.repository.dataset_meta import _engine_for
+        from tests.helpers.data_factory import make_dna as _mk
+        db_path = tmp_path / "nn.db"
+        init_db_ext(db_path)
+        engine = _engine_for(db_path)
+        with engine.begin() as conn:
+            conn.execute(sa_insert(Strategy).values(
+                strategy_id="batch-noname", name=None,
+                dna_json=_mk().to_json(), source="manual",
+                symbol="BTCUSDT", timeframe="4h",
+                created_at="2026-10-02T00:00:00Z",
+                updated_at="2026-10-02T00:00:00Z",
+            ))
+        payload = BatchBacktestRequest(
+            strategy_ids=["batch-noname"],
+            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+        )
+        processor = _BatchBacktestProcessor(payload, db_path, tmp_path)
+        processor.init()
+        assert processor.strategy_names["batch-noname"] == "batch-no"
