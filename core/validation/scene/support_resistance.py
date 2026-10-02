@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -29,8 +29,8 @@ class SupportResistanceDetector(SceneDetector):
         p = {**self.default_params, **params}
         level_source = str(p["level_source"])
         direction = str(p["direction"])
-        proximity = float(p["proximity_pct"])
-        min_spacing = int(p["min_spacing"])
+        proximity = _param_number(p, "proximity_pct", min_value=0, exclusive=True)
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
         # both 时分别解析 support/resistance 两列，单方向只解析自身列
         sides = ("support", "resistance") if direction == "both" else (direction,)

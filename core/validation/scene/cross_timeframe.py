@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -30,9 +30,9 @@ class CrossTimeframeDetector(SceneDetector):
         p = {**self.default_params, **params}
         higher_tf = str(p["higher_tf"])
         signal_type = str(p["signal_type"])
-        fast_period = int(p["fast_period"])
-        slow_period = int(p["slow_period"])
-        min_spacing = int(p["min_spacing"])
+        fast_period = _param_number(p, "fast_period", cast=int, min_value=1)
+        slow_period = _param_number(p, "slow_period", cast=int, min_value=1)
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
         # Resolve higher-TF indicator columns (must be pre-merged by scene_engine)
         fast_col = f"{signal_type.split('_')[0]}_{fast_period}_{higher_tf}"

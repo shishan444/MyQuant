@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .pivot import detect_pivots
 from .pattern_match import match_patterns
 
@@ -32,21 +32,21 @@ class TopPatternDetector(SceneDetector):
 
     def detect(self, df: pd.DataFrame, params: Dict[str, Any]) -> List[TriggerPoint]:
         p = {**self.default_params, **params}
-        min_spacing = int(p["min_spacing"])
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
         # Step 1: Detect pivot points
         pivots = detect_pivots(
             df,
-            bars_left=int(p["pivot_bars_left"]),
-            bars_right=int(p["pivot_bars_right"]),
+            bars_left=_param_number(p, "pivot_bars_left", cast=int, min_value=1),
+            bars_right=_param_number(p, "pivot_bars_right", cast=int, min_value=1),
         )
 
         # Step 2: Match chart patterns on pivot sequence
         atr_series = df["atr_14"] if "atr_14" in df.columns else None
         patterns = match_patterns(
             pivots,
-            tolerance=float(p["pattern_tolerance"]),
-            min_height_pct=float(p["pattern_min_height_pct"]),
+            tolerance=_param_number(p, "pattern_tolerance", min_value=0, exclusive=True),
+            min_height_pct=_param_number(p, "pattern_min_height_pct", min_value=0, exclusive=True),
             df=df,
             atr_series=atr_series,
         )

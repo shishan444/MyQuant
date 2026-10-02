@@ -525,6 +525,26 @@ def _lookback_condition(
 ) -> pd.Series:
     """Lookback window: check if inner condition is met within window bars."""
     window = cond.get("window", 5)
+    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
+    from core.analysis.hypothesis_service import ResearchError
+
+    try:
+        window = int(window)
+    except (TypeError, ValueError):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为整数: {window!r}",
+            detail={"param": "condition.window", "value": window,
+                    "legal_range": ">=1 整数"},
+        ) from None
+    if window < 1:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为 >=1: {window!r}",
+            detail={"param": "condition.window", "value": window,
+                    "legal_range": ">=1 整数"},
+        )
+
     inner_action = cond.get("inner_action", "price_above")
     target_val = cond.get("target", 0)
 

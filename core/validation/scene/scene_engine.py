@@ -109,6 +109,16 @@ def run_scene_verification(
 
     if horizons is None:
         horizons = [6, 12, 24, 48]
+    if not horizons:
+        # 空列表无统计意义（forward_stats 的 max(horizons) 直接 ValueError 穿 500）
+        from core.analysis.hypothesis_service import ResearchError
+
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"horizons 不能为空: {horizons!r}",
+            detail={"param": "horizons", "value": horizons,
+                    "legal_range": "非空正整数列表"},
+        )
     if params is None:
         params = {}
 

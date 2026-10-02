@@ -29,7 +29,6 @@ def compute_forward_stats(
         Dict mapping horizon -> HorizonStats.
     """
     result: Dict[int, HorizonStats] = {}
-    max_offset = max(horizons)
 
     for h in horizons:
         start = trigger_bar + 1

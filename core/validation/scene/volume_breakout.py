@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -27,10 +27,10 @@ class VolumeBreakoutDetector(SceneDetector):
 
     def detect(self, df: pd.DataFrame, params: Dict[str, Any]) -> List[TriggerPoint]:
         p = {**self.default_params, **params}
-        vol_mult = float(p["volume_multiplier"])
-        vol_period = int(p["volume_avg_period"])
+        vol_mult = _param_number(p, "volume_multiplier", min_value=0, exclusive=True)
+        vol_period = _param_number(p, "volume_avg_period", cast=int, min_value=1)
         level_type = str(p["level_type"])
-        min_spacing = int(p["min_spacing"])
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
         volume = df["volume"].values
         closes = df["close"].values
