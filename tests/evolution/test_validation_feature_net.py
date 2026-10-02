@@ -836,11 +836,14 @@ class TestEvaluateRulesFeature:
 
 
 # ===========================================================================
-# 9. rule_engine._evaluate_rule_conditions（逐条组合语义）
+# 9. _evaluate_conditions 共享组合实现（CARD-01 后 rule_engine 退役私有副本）
 # ===========================================================================
 
-class TestEvaluateRuleConditionsFeature:
-    """rule_engine.py 组合特征锚：每条件自带 logic 逐条累积。"""
+class TestEvaluateConditionsSharedFeature:
+    """engine._evaluate_conditions 共享实现特征锚：每条件自带 logic 逐条
+    累积、首条件 logic 忽略、IF≡AND。CARD-01 前这些锚指向
+    rule_engine._evaluate_rule_conditions（已退役删除），锚定语义原样
+    迁移到共享实现。"""
 
     @staticmethod
     def _df():
@@ -850,36 +853,82 @@ class TestEvaluateRuleConditionsFeature:
         )
 
     def test_empty_conditions_all_false(self):
-        from core.validation.rule_engine import _evaluate_rule_conditions
-        mask = _evaluate_rule_conditions(self._df(), [], [])
+        from core.validation.engine import _evaluate_conditions
+        mask = _evaluate_conditions(self._df(), [])
         assert mask.tolist() == [False] * 4
 
     def test_or_unions_masks(self):
-        from core.validation.rule_engine import _evaluate_rule_conditions
+        from core.validation.engine import _evaluate_conditions
         conds = [
             {"subject": "close", "action": "lt", "target": 92},
             {"subject": "close", "action": "gt", "target": 105, "logic": "OR"},
         ]
-        mask = _evaluate_rule_conditions(self._df(), conds, [])
+        mask = _evaluate_conditions(self._df(), conds)
         assert mask.tolist() == [False, True, True, False]
 
     def test_if_treated_as_and(self):
         """现状记录：IF 与 AND 在布尔层等价。"""
-        from core.validation.rule_engine import _evaluate_rule_conditions
+        from core.validation.engine import _evaluate_conditions
         conds = [
             {"subject": "close", "action": "lt", "target": 105},
             {"subject": "close", "action": "gt", "target": 92, "logic": "IF"},
         ]
-        mask = _evaluate_rule_conditions(self._df(), conds, [])
+        mask = _evaluate_conditions(self._df(), conds)
         assert mask.tolist() == [True, False, False, True]
 
     def test_first_condition_logic_ignored(self):
         """现状记录：首条件的 logic 字段无组合对象，被忽略。"""
-        from core.validation.rule_engine import _evaluate_rule_conditions
+        from core.validation.engine import _evaluate_conditions
         conds = [
             {"subject": "close", "action": "lt", "target": 105, "logic": "OR"},
             {"subject": "close", "action": "gt", "target": 92, "logic": "OR"},
         ]
-        mask = _evaluate_rule_conditions(self._df(), conds, [])
+        mask = _evaluate_conditions(self._df(), conds)
         # lt105=[T,T,F,T] OR gt92=[T,F,T,T] → [T,T,T,T]
         assert mask.tolist() == [True, True, True, True]
+
+    @staticmethod
+    def _mixed_df():
+        # bar2(106) 为缺陷点锚：A真 B假 C假
+        return pd.DataFrame(
+            {"close": [100.0, 90.0, 106.0, 95.0]},
+            index=pd.date_range("2024-01-01", periods=4, freq="4h"),
+        )
+
+    def test_three_conditions_and_and_or_semantics(self):
+        """CARD-01 锚：三条件 [A, B(AND), C(OR)] = A&B|C。
+
+        bar2=106：A(>92)=T、B(<105)=F、C(>108)=F——旧实现（组合只用
+        最后条件 logic）在此 bar 错为 True，逐条件语义正确为 False。
+        """
+        from core.validation.engine import _evaluate_conditions
+        df = self._mixed_df()
+        conds = [
+            {"subject": "close", "action": "gt", "target": 92},          # A
+            {"subject": "close", "action": "lt", "target": 105, "logic": "AND"},  # B
+            {"subject": "close", "action": "gt", "target": 108, "logic": "OR"},   # C
+        ]
+        mask = _evaluate_conditions(df, conds)
+        # A=[T,F,T,T] B=[T,T,F,T] C=[F,F,F,F] → A&B|C = [T,F,F,T]
+        assert mask.tolist() == [True, False, False, True]
+
+    def test_three_conditions_if_equivalent_in_mixed_logic(self):
+        """CARD-01 锚：三条件混合中 IF 仍与 AND 等价（A & B(IF) | C）。"""
+        from core.validation.engine import _evaluate_conditions
+        df = self._mixed_df()
+        conds = [
+            {"subject": "close", "action": "gt", "target": 92},          # A
+            {"subject": "close", "action": "lt", "target": 105, "logic": "IF"},   # B
+            {"subject": "close", "action": "gt", "target": 108, "logic": "OR"},   # C
+        ]
+        mask = _evaluate_conditions(df, conds)
+        assert mask.tolist() == [True, False, False, True]
+
+    def test_rule_engine_and_engine_share_combination_semantics(self):
+        """CARD-01 结构锚：rule_engine 进出场求值走共享 _evaluate_conditions。"""
+        import core.validation.rule_engine as rule_engine_mod
+        used = {
+            rule_engine_mod._evaluate_conditions is not None,
+        }
+        assert all(used)
+        assert not hasattr(rule_engine_mod, "_evaluate_rule_conditions")
