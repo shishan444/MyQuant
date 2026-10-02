@@ -5,8 +5,9 @@
 load_mtf_data 与 get_timeframe_minutes 的 fallback 解析、
 validate_hypothesis 与 evaluate_rules 两个引擎主流程从未被执行。
 
-语义约定：现状记录特征锚——断言值按当前实现行为钉住，不臆断应然
-行为；实现行为变化时此网报警即为生效。数据确定性构造。
+语义约定（阶段四 V3 化）：经 32 卡修复队列与裁决沉淀，锚定行为
+已是团队确认的规格契约；断言值经真实执行钉住，预期依据随断言注释。
+数据确定性构造。
 
 Run with: venv/bin/python -m pytest tests/evolution/test_validation_feature_net.py -v
 """
@@ -621,6 +622,8 @@ class TestEvaluateSingleConditionFeature:
             _evaluate_single_condition(df, cond)
 
     def test_role_reversal_dispatch_evaluates(self):
+        """阶段四盲区消解：target 须可解析才到达派发（缺键会被
+        _resolve_target 前置拦截成全 False——阶段四建网期构造缺陷）。"""
         from core.validation.engine import _evaluate_single_condition
         n = 40
         closes = 100 + 8 * np.sin(np.arange(n) * 2 * np.pi / 25)
@@ -630,10 +633,11 @@ class TestEvaluateSingleConditionFeature:
         )
         cond = {
             "subject": "close", "action": "role_reversal",
-            "role": "resistance", "lookback": 10,
+            "target": 0, "role": "resistance", "lookback": 10,
         }
         mask = _evaluate_single_condition(df, cond)
         assert len(mask) == n
+        assert mask.dtype == bool
 
     def test_snr_subject_fuzzy_column_match(self):
         """现状记录：SNR 动作 subject 列缺失时按去下划线子串兜底。"""
@@ -1051,3 +1055,53 @@ class TestLookbackWindowValidationFeature:
         )
         mask = _evaluate_single_condition(df, self._cond(2))
         assert len(mask) == 3
+
+
+class TestStage4BlindSpotFillFeature:
+    """阶段四盲区消解补锚：判定路径上被前置拦截掩盖的兜底分支。"""
+
+    def test_then_default_branch_bad_threshold_falls_back_zero(self):
+        """主判定被 window=0 跳过 + 默认分支 target 不可解析 → 阈值按 0。"""
+        from core.validation.engine import _check_then_conditions
+        window = pd.DataFrame(
+            {"close": [100.0, 108.0]},
+            index=pd.date_range("2024-01-01", periods=2, freq="4h"),
+        )
+        # 主循环：cond_window=0 裁空窗 continue；默认分支 float("abc") 失败
+        # → threshold=0 → rise 判定 (108-100)/100*100=8 >= 0 → True
+        matched = _check_then_conditions(
+            window, [{"action": "rise", "target": "abc", "window": 0}],
+            100.0, 0, 8,
+        )
+        assert bool(matched) is True  # noqa: E712（numpy bool 包装）
+
+    def test_spike_series_target_falls_back_default_multiplier(self):
+        """现状记录：target 为列（Series）时 float() 抛 TypeError →
+        multiplier 按 2.0 兜底（数值串/数值不会到达此分支）。"""
+        from core.validation.engine import _evaluate_single_condition
+        n = 30
+        volume = np.full(n, 1000.0)
+        volume[25] = 5000.0  # 5000/1000=5 >= 2.0 兜底阈值 → 触发
+        df = pd.DataFrame(
+            {"close": np.full(n, 100.0), "volume": volume,
+             "baseline": np.full(n, 999.0)},  # baseline 仅作 Series target 载体
+            index=pd.date_range("2024-01-01", periods=n, freq="4h"),
+        )
+        cond = {"subject": "volume", "action": "spike", "target": "baseline"}
+        mask = _evaluate_single_condition(df, cond)
+        assert bool(mask.tolist()[25])
+
+    def test_shrink_series_target_falls_back_default_multiplier(self):
+        """现状记录：shrink 对 Series target 的 0.5 兜底。"""
+        from core.validation.engine import _evaluate_single_condition
+        n = 30
+        volume = np.full(n, 1000.0)
+        volume[10] = 100.0  # 100/1000=0.1 <= 0.5 兜底阈值 → 触发
+        df = pd.DataFrame(
+            {"close": np.full(n, 100.0), "volume": volume,
+             "baseline": np.full(n, 999.0)},
+            index=pd.date_range("2024-01-01", periods=n, freq="4h"),
+        )
+        cond = {"subject": "volume", "action": "shrink", "target": "baseline"}
+        mask = _evaluate_single_condition(df, cond)
+        assert bool(mask.tolist()[10])

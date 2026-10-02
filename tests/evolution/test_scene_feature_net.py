@@ -4,9 +4,10 @@
 tests/evolution/ 基线 586 用例下 scene/ 各模块行覆盖 38%-100%，
 cross_timeframe / scene_engine / pattern_match 的主路径从未被执行。
 
-语义约定：本文件为「现状记录」特征锚——断言值按当前实现行为钉住，
-不臆断应然行为；实现行为变化时此网报警即为生效。阶段四将按协议
-升级为规格测试。数据全部确定性构造（无随机或固定种子），保证可复现。
+语义约定（阶段四 V3 化）：本文件经 32 卡修复队列与裁决沉淀，
+锚定行为已是团队确认的规格契约——断言值经真实执行钉住、预期依据
+随断言注释（确定样例/边界/结构化拒绝三类）。行为变化时此网报警
+即为规格回归。数据全部确定性构造（无随机或固定种子），保证可复现。
 
 Run with: venv/bin/python -m pytest tests/evolution/test_scene_feature_net.py -v
 """
@@ -1597,3 +1598,75 @@ class TestParamNonFiniteFeature:
             self._df(), {"avg_period": "20", "multiplier": "2.5"},
         )
         assert [tp.bar_index for tp in triggers] == [30]
+
+
+# ===========================================================================
+# 14. 阶段四属性补强：不变量锚（一类输入应保持的关系）
+# ===========================================================================
+
+class TestInvariantsFeature:
+    """阶段四属性锚：分布守恒 / 有序性 / 边界关系等跨输入不变量。"""
+
+    def test_distribution_buckets_partition_all_changes(self):
+        """不变量：直方图各桶计数之和 == 触发总数（含端点闭合）。"""
+        from core.validation.scene.forward_stats import _build_distribution
+        changes = [-5.0, -2.2, -1.1, 0.0, 0.3, 1.7, 2.9, 4.4, 6.6, 9.9, 12.3]
+        buckets = _build_distribution(changes)
+        assert sum(b["count"] for b in buckets) == len(changes)
+        # 桶边界连续且单调
+        for b1, b2 in zip(buckets, buckets[1:]):
+            assert b1["range"][1] == pytest.approx(b2["range"][0])
+
+    def test_forward_stats_partial_iff_insufficient_bars(self):
+        """不变量：is_partial 与「前瞻可用 bar 数 < horizon」互为充要。"""
+        from core.validation.scene.forward_stats import compute_forward_stats
+        df = make_ohlcv(n=50, freq="4h")
+        for trigger_bar in (0, 10, 43, 47, 49):
+            result = compute_forward_stats(
+                df, trigger_bar=trigger_bar,
+                trigger_price=float(df["close"].iloc[trigger_bar]),
+                horizons=[6, 12],
+            )
+            available = len(df) - (trigger_bar + 1)
+            for h, s in result.items():
+                assert s.is_partial == (available < h), (trigger_bar, h)
+
+    def test_match_patterns_output_ordered_and_anchored(self):
+        """不变量：任一形态数据下输出按 completion_bar 严格递增，且
+        key_points 价格与 df 对应行的 high/low 精确一致（锚定校验）。"""
+        from core.validation.scene.pattern_match import match_patterns
+        from core.validation.scene.pivot import detect_pivots
+        peaks = [(15, 110.0, 1000.0), (55, 110.0, 900.0),
+                 (75, 120.0, 1000.0), (115, 120.0, 900.0)]
+        troughs = [(35, 90.0), (95, 95.0)]
+        df = _make_pattern_df(peaks, troughs, n=140, decline_from=122,
+                              decline_to=85.0)
+        pivots = detect_pivots(df, bars_left=6, bars_right=6)
+        results = match_patterns(pivots, df=df)
+        bars = [m.completion_bar for m in results]
+        assert bars == sorted(bars)
+        assert len(set(bars)) == len(bars)
+        for m in results:
+            for kp in m.key_points:
+                row = df.iloc[kp["index"]]
+                expected = row["high"] if "peak" in kp["label"] or \
+                    "shoulder" in kp["label"] or kp["label"] == "head" else row["low"]
+                assert kp["price"] == pytest.approx(expected)
+
+    def test_aggregate_stats_bucket_conservation(self):
+        """不变量：aggregate_by_horizon 的 win+loss 语义守恒
+        （total_triggers == len(stats_list)，win_rate 与正收益计数一致）。"""
+        from core.validation.scene.forward_stats import aggregate_by_horizon, HorizonStats
+        stats = [
+            HorizonStats(horizon=6, close_pct=1.5, max_gain_pct=2.0,
+                         max_loss_pct=-1.0, bars_to_peak=2, bars_to_trough=1),
+            HorizonStats(horizon=6, close_pct=-0.7, max_gain_pct=0.5,
+                         max_loss_pct=-2.0, bars_to_peak=1, bars_to_trough=3),
+            HorizonStats(horizon=6, close_pct=3.2, max_gain_pct=4.0,
+                         max_loss_pct=-0.5, bars_to_peak=3, bars_to_trough=1),
+        ]
+        result = aggregate_by_horizon({6: stats})
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.total_triggers == 3
+        assert agg.win_rate == pytest.approx(round(2 / 3 * 100, 1))

@@ -5,8 +5,9 @@ tests/evolution/ 基线下 diversity 66% / evaluation 65%：
 compute_phenotype_diversity 与 maintain_diversity 主体、build_requirements
 的 requirements_json 路径、evaluate_dna 的按需加载与零分兜底从未执行。
 
-语义约定：现状记录特征锚——断言值按当前实现行为钉住，不臆断应然
-行为；实现行为变化时此网报警即为生效。
+语义约定（阶段四 V3 化）：经 32 卡修复队列与裁决沉淀，锚定行为
+已是团队确认的规格契约；断言值经真实执行钉住，预期依据随断言注释。
+统计命题锚大样本分布（元判例：不锚轨迹或子集抽样）。
 
 Run with: venv/bin/python -m pytest tests/evolution/test_evolution_feature_net.py -v
 """
@@ -347,3 +348,34 @@ class TestEvaluatePopulationFeature:
         # 批量路径把诊断挂到 individual（消费方依赖 _eval_diagnostics）
         assert all(hasattr(ind, "_eval_diagnostics") for ind in pop)
         assert pop[0]._eval_diagnostics["used_real_data"] is True
+
+
+class TestStage4BlindSpotFillFeature:
+    """阶段四盲区消解补锚：降级路径与大种群采样分支。"""
+
+    def test_evaluate_population_outer_fallback_on_bad_requirements(self, tmp_path):
+        """阶段四锚：批量段 build_requirements 抛错 → 外层 except 回退
+        逐个体评估（内部同样兜底 0 分 + error）。"""
+        from core.evolution.evaluation import evaluate_population
+        from tests.helpers.data_factory import make_enhanced_df
+        pop = [make_dna() for _ in range(2)]
+        df = make_enhanced_df(n=200)
+        scores = evaluate_population(
+            pop,
+            {"symbol": "TESTUSDT", "timeframe": "4h",
+             "requirements_json": "{not-json"},
+            tmp_path, enhanced_df=df,
+        )
+        assert scores == [0.0, 0.0]
+
+    def test_phenotype_diversity_large_population_sampled_pairs(self):
+        """阶段四锚：种群 >45 对时走随机采样分支（结果仍为三键结构）。"""
+        from core.evolution.diversity import compute_phenotype_diversity
+        indicators = ["RSI", "MACD", "EMA", "SMA", "WMA", "DEMA", "TEMA",
+                      "VWAP", "CMF", "ATR", "BOLL"]
+        pop = [make_dna(indicator=i) for i in indicators]  # 11 个体 55 对
+        result = compute_phenotype_diversity(pop)
+        assert set(result.keys()) == {"genotype", "signal", "score"}
+        assert result["genotype"] == 1.0  # 全唯一签名
+        assert isinstance(result["signal"], float)
+        assert isinstance(result["score"], float)
