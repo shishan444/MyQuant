@@ -1,4 +1,9 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""单策略回测入口（POST /api/strategies/backtest）。
+
+职能：按 strategy_id 或内联 DNA 装载数据执行单次回测并落库。
+服务对象：web 策略页（单策略回测面板）。职责边界：传输与引擎装配，
+回测执行在 core.backtest。
+"""
 from __future__ import annotations
 
 import json
@@ -67,13 +72,10 @@ def backtest_strategy(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> BacktestResponse:
-    """Run a backtest for a strategy.
-
-    Supports two modes:
-    - strategy_id: Load DNA from saved strategy
-    - dna + symbol + timeframe: Use DNA directly (for Lab page)
+    """单策略回测。两种模式：strategy_id 自库取 DNA；
+    或 dna+symbol+timeframe 直传 DNA（Lab 页用）。
     """
-    # Resolve DNA and metadata
+    # 解析 DNA 与策略元数据
     if payload.strategy_id:
         row = get_strategy(db_path, payload.strategy_id)
         if row is None:
@@ -93,7 +95,7 @@ def backtest_strategy(
             detail="Must provide either strategy_id or dna",
         )
 
-    # Try to load the dataset
+    # 装载数据集（白名单校验后直拼路径）
     # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
     from core.data.validation import validate_import_interval, validate_symbol
 
@@ -123,7 +125,7 @@ def backtest_strategy(
         slippage=payload.slippage,
     )
 
-    # Use mtf_loader for enhanced data loading (full indicators + date slicing)
+    # mtf_loader 增强数据装载（含全量指标与日期切片）
     enhanced_df = load_and_prepare_df(
         data_dir, symbol, timeframe,
         data_start=payload.data_start,
@@ -148,7 +150,7 @@ def backtest_strategy(
                 continue
         enhanced_df = df
 
-    # Load multi-timeframe data if DNA has layers or timeframe_pool provided
+    # MTF 装载：DNA 含 layers 或请求带 timeframe_pool 时
     dfs_by_timeframe = None
     needed_tfs = backtest_service.compute_needed_tfs([dna], timeframe)
     if needed_tfs:
@@ -173,7 +175,7 @@ def backtest_strategy(
         liquidated=result.liquidated,
     )
 
-    # Save result
+    # 结果落库
     result_id = str(uuid.uuid4())
     if payload.strategy_id:
         save_backtest_result(
@@ -198,7 +200,7 @@ def backtest_strategy(
             run_source="lab",
         )
 
-    # Build equity curve
+    # 构建净值曲线
     equity_data = None
     if result.equity_curve is not None and len(result.equity_curve) > 0:
         eq = result.equity_curve
@@ -207,7 +209,7 @@ def backtest_strategy(
             for idx, val in eq.items()
         ]
 
-    # Build signals from trades (direction-aware: short entry = sell, short exit = buy)
+    # 由成交构建信号（方向感知：做空开仓=卖、做空平仓=买）
     signals_data = None
     if result.trades_df is not None and len(result.trades_df) > 0:
         signals_data = backtest_service.build_signals_from_trades_df(result.trades_df)

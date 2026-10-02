@@ -1,4 +1,8 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""策略库管理（/api/strategies CRUD）。
+
+职能：策略的创建/查询/更新/删除与列表分页。服务对象：web 策略页
+（策略库面板）。职责边界：策略表读写，回测/验证在兄弟模块。
+"""
 from __future__ import annotations
 
 import json
@@ -73,7 +77,7 @@ def _gene_signature_or_derive(row: Dict[str, Any]) -> Optional[str]:
 
 
 def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
-    """Convert a DB row dict to StrategyResponse."""
+    """DB 行 dict 转 StrategyResponse。"""
     dna = None
     if row.get("dna_json"):
         try:
@@ -122,7 +126,7 @@ def create_strategy(
     payload: StrategyCreate,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Create a new strategy."""
+    """创建策略。"""
     strategy_id = str(uuid.uuid4())
     dna = payload.dna.to_dna()
 
@@ -158,9 +162,8 @@ def list_strategies_endpoint(
     offset: int = Query(0, ge=0),
     db_path: Path = Depends(get_db_path),
 ) -> StrategyListResponse:
-    """List strategies with filtering, sorting, and pagination.
-
-    status=None 默认视图排除 draft；显式 status=draft 可查草稿。
+    """策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
+    显式 status=draft 可查草稿。
     """
     try:
         rows = list_strategies(
@@ -191,7 +194,7 @@ def get_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Get strategy details by ID."""
+    """按 ID 取策略详情。"""
     row = get_strategy(db_path, strategy_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -204,7 +207,7 @@ def update_strategy_endpoint(
     payload: StrategyUpdate,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Update an existing strategy."""
+    """更新策略。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -247,7 +250,7 @@ def delete_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> None:
-    """Delete a strategy by ID."""
+    """按 ID 删除策略。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")

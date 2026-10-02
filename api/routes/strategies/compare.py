@@ -1,4 +1,9 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""多策略对比入口（POST /api/strategies/compare）。
+
+职能：多策略同数据集回测对比，逐策略返回指标与失败隔离。
+服务对象：web 策略页（对比面板）。职责边界：传输与循环编排，
+单策略回测语义与 backtest 模块一致（回退路径不同：裸 df 无指标）。
+"""
 from __future__ import annotations
 
 import json
@@ -69,7 +74,7 @@ def compare_strategies(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> CompareResponse:
-    """Compare multiple strategies by running backtests."""
+    """多策略回测对比（逐策略执行，失败条目隔离不拖累整体）。"""
     # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
     from core.data.validation import validate_import_interval, validate_symbol
 
@@ -118,8 +123,8 @@ def compare_strategies(
             symbol = dna.execution_genes.symbol
             timeframe = dna.execution_genes.timeframe
 
-            # Use enhanced data with indicators (fallback differs from
-            # backtest endpoint: bare df without per-gene indicators)
+            # 增强数据（含指标）——回退与 backtest 端点不同：裸 df
+            # 不做逐基因指标计算
             enhanced_df = load_and_prepare_df(
                 data_dir, symbol, timeframe,
                 data_start=payload.data_start,
@@ -131,7 +136,7 @@ def compare_strategies(
                     df = load_parquet(parquet_path)
                 enhanced_df = df
 
-            # Load MTF data if strategy uses multiple timeframes
+            # MTF 策略装载多周期数据
             dfs_by_timeframe = None
             if dna.is_mtf:
                 needed_tfs = backtest_service.compute_needed_tfs([dna], timeframe)

@@ -1,4 +1,11 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""多周期验证入口（/api/strategies/verify*）。
+
+职能：策略在多日期区间逐段回测，聚合综合评分与星级；含同步端点
+与流式端点（经 socket.io /streams 推进度）及历史/会话查询。
+服务对象：web 验证页（Verify.tsx）；策略页仅消费 verify_star 字段。
+职责边界：区间编排与聚合，单段回测语义与 backtest 一致
+（执行体收口 _VerifyProcessor）。
+"""
 from __future__ import annotations
 
 import json
@@ -69,10 +76,9 @@ router = APIRouter()
 
 
 def compute_verify_star(avg_fitness: float, qualified_count: int, total_periods: int) -> int:
-    """Compute 1-5 star rating from verification results.
+    """由验证结果计算 1-5 星评级。
 
-    Returns 0 (no star) if not all periods qualified.
-    Thresholds calibrated for evolved-strategy backtest Sharpe distribution.
+    非全区间达标回 0（无星）；阈值按进化策略的回测 Sharpe 分布标定。
     """
     if total_periods == 0 or qualified_count != total_periods:
         return 0
@@ -90,7 +96,7 @@ def compute_verify_star(avg_fitness: float, qualified_count: int, total_periods:
 
 
 def _update_strategy_verify_fields(db_path: Path, summary) -> None:
-    """Update strategy verification summary fields（B3d.2 收口 repository）。"""
+    """更新策略验证摘要字段（B3d.2 收口 repository）。"""
     from core.persistence.repository import strategy as repo
     try:
         for item in summary:
@@ -112,11 +118,11 @@ def verify_strategies(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> VerifyResponse:
-    """Verify strategies across multiple user-defined date ranges.
+    """多日期区间验证策略。
 
-    For each (strategy, date_range) pair, runs a backtest and computes
-    fitness. Then aggregates per-strategy results into a comprehensive
-    score: avg_fitness * qualified_ratio * consistency_bonus.
+    逐 (strategy, date_range) 对回测并计算 fitness；按策略聚合综合
+    评分 = avg_fitness × qualified_ratio × consistency_bonus。
+    执行体收口 _VerifyProcessor（与流式端点共用）。
     """
     if not payload.data_ranges:
         raise HTTPException(status_code=400, detail="data_ranges cannot be empty")
@@ -136,7 +142,7 @@ def verify_strategies(
 
 
 class _VerifyProcessor:
-    """Encapsulates verify logic for SSE streaming. Each process_step() call handles one group×range."""
+    """验证执行体（同步/流式两入口共用）。每次 process_step() 处理一个 group×range 步。"""
 
     def __init__(self, payload: VerifyRequest, db_path: Path, data_dir: Path):
         from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
@@ -200,7 +206,7 @@ class _VerifyProcessor:
             slippage=self.payload.slippage,
         )
 
-        # Pre-compute step list: (group_key, group_strategies, date_range)
+        # 预生成步进清单：(group_key, group_strategies, date_range)
         self.steps = [
             (gk, gs, dr)
             for gk, gs in strategies_by_group.items()
@@ -208,12 +214,12 @@ class _VerifyProcessor:
         ]
 
     def process_step(self, step_index: int) -> Dict:
-        """Process one group×range step. Returns progress data."""
+        """处理一个 group×range 步，返回进度帧数据。"""
         group_key, group_strategies, dr = self.steps[step_index]
         symbol = group_strategies[0]["symbol"]
         timeframe = group_strategies[0]["timeframe"]
         dnas = [s["dna"] for s in group_strategies]
-        # Override leverage if specified (deep copy to avoid mutating cached objects)
+        # 指定杠杆时覆写（深拷贝防污染缓存对象）
         if self.payload.leverage != 1:
             import copy
             dnas = [copy.deepcopy(d) for d in dnas]
@@ -373,7 +379,7 @@ class _VerifyProcessor:
             completed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
-        # Update strategy verification summary fields
+        # 更新策略验证摘要字段
         _update_strategy_verify_fields(self.db_path, summary)
 
         return {
@@ -451,7 +457,7 @@ async def verify_strategies_stream(
 def _history_items(
     db_path: Path, results: List[Dict[str, Any]],
 ) -> List[VerifyHistoryItem]:
-    """Convert backtest_result rows to history items, caching strategy names."""
+    """backtest_result 行转历史条目（策略名逐行缓存）。"""
     strategy_names: Dict[str, str] = {}
     items = []
     for row in results:
@@ -483,7 +489,7 @@ def get_verify_history(
     limit: int = Query(100, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> VerifyHistoryResponse:
-    """Return past verify results from backtest_result (run_source='verify')."""
+    """历史验证结果（backtest_result 按 run_source='verify' 过滤）。"""
     results = list_backtest_results(
         db_path,
         strategy_id=strategy_id,
@@ -499,7 +505,7 @@ def list_sessions(
     limit: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> VerifySessionListResponse:
-    """Return verification sessions ordered by creation time."""
+    """验证会话列表（按创建时间序）。"""
     sessions = list_verify_sessions(db_path, limit=limit)
     items = [
         VerifySessionResponse(**{k: s[k] for k in VerifySessionResponse.model_fields})
@@ -513,7 +519,7 @@ def get_session_results(
     session_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> VerifyHistoryResponse:
-    """Return backtest results for a specific verify session."""
+    """指定验证会话的回测结果。"""
     session = get_verify_session(db_path, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
