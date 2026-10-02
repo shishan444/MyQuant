@@ -681,9 +681,3 @@ class EvolutionRunner(threading.Thread):
         )
 
 
-    def _find_parquet(self, safe_symbol: str, timeframe: str):
-        """Find parquet file for a symbol+timeframe, trying aliases."""
-        from core.data.mtf_loader import find_parquet
-        return find_parquet(self.data_dir, safe_symbol, timeframe)
-
-

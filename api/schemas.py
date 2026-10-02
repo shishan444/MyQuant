@@ -633,13 +633,6 @@ class AvailableSourcesResponse(BaseModel):
     sources: List[AvailableSource]
 
 
-class ConfigResponse(BaseModel):
-    symbols: List[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframes: List[str] = Field(default_factory=lambda: ["1h", "4h", "1d"])
-    backtest: Dict[str, Any] = Field(default_factory=dict)
-    evolution: Dict[str, Any] = Field(default_factory=dict)
-
-
 class HealthResponse(BaseModel):
     status: str
     version: str = "0.9.0"
