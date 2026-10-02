@@ -695,10 +695,10 @@ def _check_then_conditions(
 
         if action in ("drop",):
             change = ((window_df["close"].min() - trigger_price) / trigger_price) * 100
-            return change <= threshold
+            return bool(change <= threshold)
         elif action in ("rise",):
             change = ((window_df["close"].max() - trigger_price) / trigger_price) * 100
-            return change >= threshold
+            return bool(change >= threshold)
 
     return False
 
