@@ -307,3 +307,84 @@ class TestVerifyHistoryAndSessions:
         assert data["total"] == 1
         assert data["items"][0]["strategy_id"] == "strat-v1"
         assert data["items"][0]["strategy_name"] == "VerifyMe"
+
+    @staticmethod
+    def _save_verify_result(db_path, result_id: str, session_id: str) -> None:
+        from core.persistence.db_ext import save_backtest_result
+        save_backtest_result(
+            db_path, result_id=result_id, strategy_id="strat-v1",
+            symbol="BTCUSDT", timeframe="4h",
+            data_start="2024-01-01", data_end="2024-06-01",
+            init_cash=100000, fee=0.001, slippage=0.0005,
+            total_return=0.1, sharpe_ratio=1.0, max_drawdown=0.05,
+            win_rate=0.5, total_trades=5, total_score=3.0,
+            template_name="explorer", run_source="verify",
+            session_id=session_id,
+        )
+
+    def test_submerged_session_results_fully_retrievable(
+        self, verify_client: TestClient,
+    ) -> None:
+        """CARD-03 修复锚定：session 结果被 500 窗口挤出后仍完整取回。
+
+        受害场景：victim session 3 条先写，flood session 501 条后写——
+        旧实现（拉最新 500 条后内存过滤）返回 0 条静默丢失；
+        DB 层过滤（session_id where）应返回 victim 全部 3 条。
+        """
+        from core.persistence.db_ext import save_verify_session
+        db_path = verify_client.app.state.db_path
+        save_verify_session(
+            db_path, session_id="sess-victim",
+            strategy_ids='["strat-v1"]', data_ranges="[]",
+            init_cash=100000, fee=0.001, slippage=0.0005,
+        )
+        for i in range(3):
+            self._save_verify_result(db_path, f"res-victim-{i}", "sess-victim")
+        for i in range(501):
+            self._save_verify_result(db_path, f"res-flood-{i}", "sess-flood")
+
+        response = verify_client.get(
+            "/api/strategies/verify/sessions/sess-victim/results",
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert {i["result_id"] for i in data["items"]} == {
+            "res-victim-0", "res-victim-1", "res-victim-2",
+        }
+        # 所有条目带策略名回填（转换路径正常）
+        assert all(i["strategy_name"] == "VerifyMe" for i in data["items"])
+
+    def test_session_results_limit_500_cap_preserved(
+        self, verify_client: TestClient,
+    ) -> None:
+        """limit=500 防护上限保留：单 session 超 500 条时截断不炸。"""
+        from core.persistence.db_ext import save_verify_session
+        db_path = verify_client.app.state.db_path
+        save_verify_session(
+            db_path, session_id="sess-big",
+            strategy_ids='["strat-v1"]', data_ranges="[]",
+            init_cash=100000, fee=0.001, slippage=0.0005,
+        )
+        for i in range(505):
+            self._save_verify_result(db_path, f"res-big-{i}", "sess-big")
+        response = verify_client.get(
+            "/api/strategies/verify/sessions/sess-big/results",
+        )
+        assert response.status_code == 200
+        assert response.json()["total"] == 500
+
+    def test_history_unfiltered_by_session_change(
+        self, verify_client: TestClient,
+    ) -> None:
+        """不传 session_id 的 history 调用行为不变（无 session 过滤全量返回）。"""
+        db_path = verify_client.app.state.db_path
+        for i in range(3):
+            self._save_verify_result(db_path, f"res-hist-{i}", "sess-hist-x")
+        response = verify_client.get(
+            "/api/strategies/verify/history",
+            params={"strategy_id": "strat-v1", "limit": 100},
+        )
+        assert response.status_code == 200
+        ids = {i["result_id"] for i in response.json()["items"]}
+        assert {"res-hist-0", "res-hist-1", "res-hist-2"} <= ids
