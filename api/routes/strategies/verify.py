@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 from pathlib import Path
@@ -100,7 +100,7 @@ def _update_strategy_verify_fields(db_path: Path, summary) -> None:
                 db_path, item.strategy_id,
                 new_score=item.comprehensive_score,
                 verify_star=star,
-                verified_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                verified_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
     except Exception:
         logger.warning("Failed to update verify fields for strategies", exc_info=True)
@@ -374,7 +374,7 @@ def verify_strategies(
         summary_json=json.dumps([s.model_dump() for s in summary]),
         total_results=len(all_results),
         total_strategies=len(strategy_period_data),
-        completed_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        completed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
     # Update strategy verification summary fields
@@ -618,7 +618,7 @@ class _VerifyProcessor:
             summary_json=json.dumps([s.model_dump() for s in summary]),
             total_results=len(self.all_results),
             total_strategies=len(self.strategy_period_data),
-            completed_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            completed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
         # Update strategy verification summary fields
