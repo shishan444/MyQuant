@@ -377,20 +377,9 @@ def get_ohlcv(
     # Apply limit
     df = df.head(limit)
 
-    ohlcv_data = []
-    for idx, row_data in df.iterrows():
-        ohlcv_data.append({
-            "timestamp": str(idx),
-            "open": float(row_data.get("open", 0)),
-            "high": float(row_data.get("high", 0)),
-            "low": float(row_data.get("low", 0)),
-            "close": float(row_data.get("close", 0)),
-            "volume": float(row_data.get("volume", 0)),
-        })
-
     return OhlcvResponse(
         dataset_id=dataset_id,
-        data=ohlcv_data,
+        data=_df_to_ohlcv_rows(df),
     )
 
 
@@ -458,6 +447,21 @@ def _apply_date_filter(df, start: Optional[str], end: Optional[str]):
     return df
 
 
+def _df_to_ohlcv_rows(df) -> List[Dict[str, Any]]:
+    """DataFrame 转 OHLCV 行列表（dataset/symbol 两端点共用，缺列归 0）。"""
+    return [
+        {
+            "timestamp": str(idx),
+            "open": float(row_data.get("open", 0)),
+            "high": float(row_data.get("high", 0)),
+            "low": float(row_data.get("low", 0)),
+            "close": float(row_data.get("close", 0)),
+            "volume": float(row_data.get("volume", 0)),
+        }
+        for idx, row_data in df.iterrows()
+    ]
+
+
 @router.get("/ohlcv/{symbol}/{timeframe}")
 def get_ohlcv_by_symbol(
     symbol: str,
@@ -486,20 +490,9 @@ def get_ohlcv_by_symbol(
     df = df.sort_index()
     df = df.head(limit)
 
-    ohlcv_data = []
-    for idx, row_data in df.iterrows():
-        ohlcv_data.append({
-            "timestamp": str(idx),
-            "open": float(row_data.get("open", 0)),
-            "high": float(row_data.get("high", 0)),
-            "low": float(row_data.get("low", 0)),
-            "close": float(row_data.get("close", 0)),
-            "volume": float(row_data.get("volume", 0)),
-        })
-
     return OhlcvResponse(
         dataset_id=f"{symbol_}_{timeframe}",
-        data=ohlcv_data,
+        data=_df_to_ohlcv_rows(df),
     )
 
 
