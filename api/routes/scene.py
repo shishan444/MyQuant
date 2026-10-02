@@ -97,16 +97,24 @@ def run_scene(
     data_dir: Path = Depends(get_data_dir),
 ) -> SceneResponse:
     """Run scene verification against historical data."""
-    result = run_scene_verification(
-        symbol=payload.symbol,
-        timeframe=payload.timeframe,
-        scene_type=payload.scene_type,
-        params=payload.params,
-        horizons=payload.horizons,
-        data_start=payload.data_start,
-        data_end=payload.data_end,
-        data_dir=str(data_dir),
-    )
+    from core.analysis.hypothesis_service import ResearchError
+    from api.routes.research.common import research_error_to_http
+
+    try:
+        result = run_scene_verification(
+            symbol=payload.symbol,
+            timeframe=payload.timeframe,
+            scene_type=payload.scene_type,
+            params=payload.params,
+            horizons=payload.horizons,
+            data_start=payload.data_start,
+            data_end=payload.data_end,
+            data_dir=str(data_dir),
+        )
+    except ResearchError as exc:
+        # 坏参数/未知 timeframe 结构化拒绝（与 validate.py 两端点同款兜底），
+        # 不裸穿 500
+        raise research_error_to_http(exc) from exc
 
     meta = SCENE_META.get(payload.scene_type, {})
     if not meta:

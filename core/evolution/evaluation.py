@@ -1,12 +1,13 @@
-"""Evolution evaluation: score StrategyDNA individuals via backtest + fitness.
+"""进化评估：StrategyDNA 个体经回测 + fitness 打分。
 
-Moved verbatim from api/runner.py so the evolution core owns its evaluation
-logic — EvolutionEngine.evolve() already accepts evaluate_fn/evaluate_population
-callbacks (core/evolution/engine.py), so the default implementation belongs in
-core, not the API runner. Pure of runner state: takes data_dir/task_row as
-parameters, making it reusable from CLI/tests, not just the runner thread.
+服务对象：api/runner.py 进化任务线程（以 evaluate_fn/
+evaluate_population 回调注入 EvolutionEngine.evolve）与
+tests/evolution 契约测试。从 api/runner.py 原样迁入使进化核心
+自持评估逻辑——引擎只认回调签名，默认实现归 core 不归 API runner。
+无 runner 状态：data_dir/task_row 走参数，CLI/测试可直调。
 
-Invariant: formulas and control flow moved verbatim — no behavior change.
+迁移不变量：公式与控制流原样搬——行为零变化（后续 B1.1 报错化
+与 tf_pool 收敛为独立变更，各有验证）。
 """
 from __future__ import annotations
 
@@ -21,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 def build_requirements(task_row: Dict[str, Any]):
-    """Build RequirementsConfig from task config.
+    """从任务配置构造 RequirementsConfig。
 
-    Prefers requirements_json (full config from frontend).
-    Falls back to legacy min_annual_return/max_drawdown_limit columns.
+    优先 requirements_json（前端完整配置）；回退 legacy
+    min_annual_return/max_drawdown_limit 列。
 
     B1.1: requirements_json 解析失败必须显式报错——静默回退会用默认
     objective (sharpe) 偷换用户的进化优化目标，任务朝错误目标进化且无
@@ -63,6 +64,33 @@ def build_requirements(task_row: Dict[str, Any]):
     )
 
 
+def parse_timeframe_pool(task_row: Dict[str, Any]) -> List[str]:
+    """task_row.timeframe_pool → 周期列表（evaluation 与 api/runner 共用）。
+
+    B1.1 形制：解析失败或形制非 List[str] 时显式报错——静默置 None 会
+    退化单周期，进化在错误数据面上无感知跑完，属数据正确性失败。
+    runner 路径冒泡至 _run_task 兜底标 stopped/error；评估路径由
+    evaluate_dna 兜底记 0 分 + error 标记。
+
+    接受 JSON 字符串（如 '["4h","1d"]'，DB 列形制）或已解 list；空值
+    返回空列表（无多周期配置为合法状态）。
+    """
+    raw = task_row.get("timeframe_pool")
+    if not raw:
+        return []
+    try:
+        pool = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(pool, list) or not all(isinstance(tf, str) for tf in pool):
+            raise ValueError(f"形制须为 List[str]: {raw!r}")
+    except Exception as e:
+        logger.error(
+            "timeframe_pool 解析失败，拒绝静默退化单周期 (task_id=%s, raw=%.200r)",
+            task_row.get("task_id"), raw, exc_info=True,
+        )
+        raise ValueError(f"timeframe_pool 解析失败: {e!r}") from e
+    return pool
+
+
 def evaluate_dna(
     individual: StrategyDNA,
     task_row: Dict[str, Any],
@@ -72,12 +100,17 @@ def evaluate_dna(
     enhanced_df=None,
     dfs_by_timeframe=None,
 ) -> dict:
-    """Score a DNA using backtesting against the dataset.
+    """对单个 DNA 以数据集回测打分。
 
-    Returns a dict with score and diagnostics.
-    Accepts pre-loaded data to avoid redundant I/O per individual.
+    Returns:
+        dict：score + 诊断字段（used_real_data/data_bars/
+        total_trades/fallback/liquidated 等；异常路径 0 分 +
+        error=True，不返回随机噪声）。
+
+    接受预载数据（enhanced_df/dfs_by_timeframe）避免逐个体重复
+    I/O；预载缺失时按需装载（兼容独立调用）。
     """
-    # Force override task-level constraints before backtesting
+    # 回测前强制覆盖任务级约束
     individual.risk_genes.leverage = leverage
     individual.risk_genes.direction = direction
 
@@ -94,7 +127,7 @@ def evaluate_dna(
         from core.strategy.executor import dna_to_signal_set
         from core.scoring.scorer import compute_fitness
 
-        # Load data on demand if not pre-loaded (backward compatibility)
+        # 数据未预载时按需装载（向后兼容独立调用）
         if enhanced_df is None:
             from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
@@ -110,16 +143,10 @@ def evaluate_dna(
                 diagnostics["score"] = 0.0
                 return diagnostics
 
-            # Load multi-timeframe data if task has timeframe_pool
-            tf_pool_raw = task_row.get("timeframe_pool")
-            tf_pool = None
-            if tf_pool_raw:
-                try:
-                    tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
-                except (json.JSONDecodeError, Exception):
-                    tf_pool = None
+            # 任务带 timeframe_pool 时装载多周期数据
+            tf_pool = parse_timeframe_pool(task_row)
 
-            if tf_pool and len(tf_pool) > 1:
+            if len(tf_pool) > 1:
                 dfs_by_timeframe = load_mtf_data(
                     data_dir, symbol, timeframe, enhanced_df,
                     set(tf_pool), data_start, data_end,
@@ -128,7 +155,7 @@ def evaluate_dna(
         diagnostics["used_real_data"] = True
         diagnostics["data_bars"] = len(enhanced_df)
 
-        # Compute signals once, pass to BacktestEngine to avoid double computation
+        # 信号只算一次传给 BacktestEngine（避免引擎内重复计算）
         sig_set = dna_to_signal_set(individual, enhanced_df,
                                      dfs_by_timeframe=dfs_by_timeframe)
 
@@ -144,10 +171,10 @@ def evaluate_dna(
                            dfs_by_timeframe=dfs_by_timeframe,
                            signal_set=sig_set)
 
-        # Use pre-computed metrics from BacktestEngine (avoids double computation)
+        # 直接用 BacktestEngine 预计算的 metrics（避免双算）
         metrics = bt_result.metrics_dict
 
-        # Build requirements from task config (prefer requirements_json over legacy columns)
+        # 从任务配置构造 requirements（requirements_json 优先于 legacy 列）
         req = build_requirements(task_row)
         fitness_result = compute_fitness(
             metrics, requirements=req,
@@ -171,7 +198,7 @@ def evaluate_dna(
         return diagnostics
 
     except Exception:
-        # Fallback: zero score (not random noise)
+        # 兜底：0 分（不返回随机噪声）
         logger.warning(
             "evaluate_dna failed for %s",
             getattr(individual, 'strategy_id', 'unknown'),
@@ -191,10 +218,11 @@ def evaluate_population(
     enhanced_df=None,
     dfs_by_timeframe=None,
 ) -> List[float]:
-    """Batch-evaluate a population using BacktestEngine.batch_run.
+    """以 BacktestEngine.batch_run 批量评估种群。
 
-    Returns scores in the same order as the input population.
-    Falls back to per-individual evaluation on batch failure.
+    Returns:
+        分数列表（与输入种群同序）。批量失败或无预载数据时回退
+        逐个体 evaluate_dna。
     """
     try:
         from core.backtest.engine import BacktestEngine
@@ -202,7 +230,7 @@ def evaluate_population(
         from core.scoring.scorer import compute_fitness
 
         if enhanced_df is None:
-            # Cannot batch without data -- fallback to individual evaluation
+            # 无预载数据不可批量——回退逐个体评估
             return [
                 evaluate_dna(
                     ind, task_row, data_dir, leverage, direction,
@@ -211,15 +239,15 @@ def evaluate_population(
                 for ind in population
             ]
 
-        # Enforce constraints on all individuals before evaluation
+        # 评估前对全种群强制任务级约束
         for ind in population:
             ind.risk_genes.leverage = leverage
             ind.risk_genes.direction = direction
 
-        # Clear indicator cache at start of each generation
+        # 每代开始清一次指标缓存
         clear_indicator_cache()
 
-        # Batch backtest with built-in signal computation
+        # 批量回测（内置信号计算）
         bt = BacktestEngine()
         try:
             bt_results = bt.batch_run(
@@ -236,7 +264,7 @@ def evaluate_population(
                 for ind in population
             ]
 
-        # Build requirements from task config (prefer requirements_json over legacy columns)
+        # requirements_json 优先于 legacy 列
         req = build_requirements(task_row)
 
         scores = []
@@ -246,7 +274,7 @@ def evaluate_population(
                 metrics, requirements=req,
                 liquidated=bt_result.liquidated,
             )
-            # Store diagnostics on individual (same as evaluate_fn)
+            # 诊断挂到个体（与逐个体路径同构，供多样性度量消费）
             ind._eval_diagnostics = {
                 "score": fitness_result["fitness"],
                 "fitness": fitness_result["fitness"],
@@ -268,7 +296,7 @@ def evaluate_population(
         return scores
 
     except Exception:
-        # Fallback to per-individual evaluation
+        # 回退逐个体评估
         logger.warning("evaluate_population unexpected error, falling back", exc_info=True)
         return [
             evaluate_dna(

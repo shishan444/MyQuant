@@ -1,4 +1,10 @@
-"""Forward-looking statistics computation for scene verification."""
+"""场景验证的前向统计计算。
+
+服务对象：scene_engine 的逐触发点前向统计与分 horizon 聚合；
+tests/consistency 的指标一致性契约与 tests/evolution 特征锚
+直调（含 _build_distribution）。职责边界：纯统计计算，win_rate
+置信区间委托 core.scoring.statistics 的 wilson_interval。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -17,19 +23,19 @@ def compute_forward_stats(
     trigger_price: float,
     horizons: List[int],
 ) -> Dict[int, HorizonStats]:
-    """Compute forward-looking metrics for one trigger across multiple horizons.
+    """计算单触发点跨多个 horizon 的前向指标。
 
     Args:
-        df: Full indicator-enhanced DataFrame (DatetimeIndex).
-        trigger_bar: Integer position of the trigger bar.
-        trigger_price: Close price at the trigger bar.
-        horizons: List of bar counts to look forward.
+        df: 完整的指标增强 DataFrame（DatetimeIndex）。
+        trigger_bar: 触发 bar 的整数位置。
+        trigger_price: 触发 bar 的 close 价。
+        horizons: 前向 bar 数列表。
 
     Returns:
-        Dict mapping horizon -> HorizonStats.
+        horizon → HorizonStats 的映射；可用 bar 不足 horizon 时
+        is_partial=True（无可用 bar 时各项置 0）。
     """
     result: Dict[int, HorizonStats] = {}
-    max_offset = max(horizons)
 
     for h in horizons:
         start = trigger_bar + 1
@@ -57,7 +63,7 @@ def compute_forward_stats(
         max_gain_pct = (high_max - trigger_price) / trigger_price * 100
         max_loss_pct = (low_min - trigger_price) / trigger_price * 100
 
-        # Find offset of peak/trough within the window
+        # 求峰/谷在窗口内的偏移
         bars_to_peak = int(window["high"].values.argmax()) + 1
         bars_to_trough = int(window["low"].values.argmin()) + 1
 
@@ -77,13 +83,14 @@ def compute_forward_stats(
 def aggregate_by_horizon(
     all_stats: Dict[int, List[HorizonStats]],
 ) -> List[AggregateStats]:
-    """Aggregate per-trigger stats into summary statistics per horizon.
+    """把逐触发点统计聚合为分 horizon 的汇总统计。
 
     Args:
-        all_stats: Dict mapping horizon -> list of HorizonStats for each trigger.
+        all_stats: horizon → 各触发点 HorizonStats 列表的映射。
 
     Returns:
-        List of AggregateStats, one per horizon.
+        AggregateStats 列表，每个 horizon 一条（空列表的
+        horizon 跳过）。
     """
     results: List[AggregateStats] = []
 
@@ -137,7 +144,7 @@ def aggregate_by_horizon(
 
 
 def _build_distribution(returns: List[float]) -> List[Dict[str, Any]]:
-    """Build histogram buckets from return percentages."""
+    """由收益率百分比构建直方图分桶。"""
     if not returns:
         return []
 

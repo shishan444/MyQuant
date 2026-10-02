@@ -1,4 +1,11 @@
-"""Cross-timeframe detector: higher timeframe signal confirmed by lower timeframe entry."""
+"""跨周期检测器：高周期信号由低周期入场确认。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"cross_timeframe"
+键）；高周期列由 scene_engine 预合并进基准 DataFrame，本检测器
+不自行装载 MTF 数据。职责边界：只消费已合并的高周期指标列与
+基准周期列做信号判定，触发点快照复用 top_pattern._extract_
+snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -6,7 +13,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -30,15 +37,15 @@ class CrossTimeframeDetector(SceneDetector):
         p = {**self.default_params, **params}
         higher_tf = str(p["higher_tf"])
         signal_type = str(p["signal_type"])
-        fast_period = int(p["fast_period"])
-        slow_period = int(p["slow_period"])
-        min_spacing = int(p["min_spacing"])
+        fast_period = _param_number(p, "fast_period", cast=int, min_value=1)
+        slow_period = _param_number(p, "slow_period", cast=int, min_value=1)
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
-        # Resolve higher-TF indicator columns (must be pre-merged by scene_engine)
+        # 解析高周期指标列（须由 scene_engine 预先合并）
         fast_col = f"{signal_type.split('_')[0]}_{fast_period}_{higher_tf}"
         slow_col = f"{signal_type.split('_')[0]}_{slow_period}_{higher_tf}"
 
-        # Try alternate naming conventions
+        # 尝试交替命名形制
         if fast_col not in df.columns:
             fast_col = f"ema_{fast_period}_{higher_tf}"
         if slow_col not in df.columns:
@@ -51,7 +58,7 @@ class CrossTimeframeDetector(SceneDetector):
         slow_vals = df[slow_col].values
         closes = df["close"].values
 
-        # Resolve base-TF fast EMA for entry confirmation
+        # 解析基准周期 fast EMA，用于入场确认
         base_fast = f"ema_{fast_period}"
         if base_fast not in df.columns:
             base_fast = f"sma_{fast_period}"
@@ -65,13 +72,13 @@ class CrossTimeframeDetector(SceneDetector):
             if np.isnan(fast_vals[i - 1]) or np.isnan(slow_vals[i - 1]):
                 continue
 
-            # Golden cross: fast crosses above slow on higher TF
+            # 金叉：高周期 fast 上穿 slow
             prev_diff = fast_vals[i - 1] - slow_vals[i - 1]
             curr_diff = fast_vals[i] - slow_vals[i]
             if not (prev_diff <= 0 and curr_diff > 0):
                 continue
 
-            # Entry confirmation: base TF close above base fast MA
+            # 入场确认：基准周期 close 站上基准 fast MA
             if base_fast in df.columns:
                 base_fast_val = df[base_fast].values[i]
                 if not np.isnan(base_fast_val) and closes[i] < base_fast_val:

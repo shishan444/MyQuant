@@ -153,6 +153,16 @@ _WINDOW_PARAM_INDEX = {
     "zscore": 1, "ema": 1, "corr": 2,
 }
 
+#: 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
+#: 无上限时 formula_lookback 可达任意大，bar 数 × 周期秒数换算
+#: pd.Timedelta 超上限（~9.2e9s，即 106751 天）即抛 OutOfBoundsTimedelta
+#: （未捕获）。换算值域为 TF_MINUTES 周期表（最大 3d），1w 等高周期
+#: 走 high_tf_warmup_span 不涉插件 lookback；10_000 对最苛刻的 1w
+#: 防御边界（约 15_250 bar）留 34% 裕度，3d/1d 边界（35_584/106_752
+#: bar）更宽，且远超实际指标窗口需求。plugin_service 注册关与
+#: validate_formula 静态关共用此单一常量（F3 下沉）。
+MAX_PLUGIN_LOOKBACK_BARS = 10_000
+
 # ---------------------------------------------------------------- 静态校验
 
 _ALLOWED_NODES = (
@@ -265,6 +275,11 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                         ok, val = _const_value(node.args[param_idx])
                         if ok and val < 1:
                             errors.append(f"{fname} 窗口须 >= 1")
+                        elif ok and val > MAX_PLUGIN_LOOKBACK_BARS:
+                            errors.append(
+                                f"{fname} 窗口超上限: {val:g} bar"
+                                f"（上限 {MAX_PLUGIN_LOOKBACK_BARS}"
+                                "——换算 warmup 时长将溢出时间表示）")
 
     # 列引用（非函数名的 Name）
     called_funcs = {

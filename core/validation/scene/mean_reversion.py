@@ -1,4 +1,10 @@
-"""Mean reversion detector: price deviates N% from a moving average."""
+"""均值回归检测器：价格偏离均线 N% 触发。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"mean_reversion"
+键）；tests/evolution 特征锚直调。职责边界：单一偏离条件的
+触发点扫描，MA 列缺失时按 ma_type 就地计算兜底，指标快照
+复用 top_pattern._extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -6,7 +12,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -29,15 +35,15 @@ class MeanReversionDetector(SceneDetector):
     def detect(self, df: pd.DataFrame, params: Dict[str, Any]) -> List[TriggerPoint]:
         p = {**self.default_params, **params}
         ma_type = str(p["ma_type"]).lower()
-        ma_period = int(p["ma_period"])
-        threshold = float(p["deviation_pct"])
+        ma_period = _param_number(p, "ma_period", cast=int, min_value=1)
+        threshold = _param_number(p, "deviation_pct", min_value=0, exclusive=True)
         direction = str(p["direction"]).lower()
-        min_spacing = int(p["min_spacing"])
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
-        # Resolve MA column
+        # 解析 MA 列
         ma_col = f"{ma_type}_{ma_period}"
         if ma_col not in df.columns:
-            # Fallback: try to compute it
+            # 兜底：就地计算
             if ma_type == "ema":
                 df[ma_col] = df["close"].ewm(span=ma_period, adjust=False).mean()
             else:

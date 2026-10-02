@@ -1,7 +1,13 @@
-"""Entry/exit rule evaluation engine for signal generation and trade pairing."""
+"""进出场规则求值引擎：信号生成与交易配对。
+
+服务对象：/api/validate/rules 端点（前端规则验证页经此调
+evaluate_rules）与 tests/consistency 等契约测试直调。职责边界：
+entry/exit 条件掩码（复用 validation.engine 的 _evaluate_conditions
+共用实现）→ 买卖信号 → 顺序配对成交易 → 统计；条件求值语义
+不在本模块自持。
+"""
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -10,7 +16,12 @@ import pandas as pd
 
 from core.data.storage import load_parquet
 from core.features.indicators import compute_all_indicators
-from core.validation.engine import _evaluate_single_condition, _resolve_subject, _resolve_target
+from core.validation.engine import (
+    _evaluate_conditions,
+    _evaluate_single_condition,
+    _resolve_subject,
+    _resolve_target,
+)
 from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
 if TYPE_CHECKING:
@@ -18,20 +29,20 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Data structures
+# 数据结构
 # ---------------------------------------------------------------------------
 
 @dataclass
 class RuleSignal:
-    """A single entry or exit signal."""
+    """单个进/出场信号（时间/价格/方向）。"""
     time: str
     price: float
-    type: str  # "buy" or "sell"
+    type: str  # "buy" 或 "sell"
 
 
 @dataclass
 class TradeRecord:
-    """A completed trade with entry and exit."""
+    """一笔已完结交易（进出场时间价格与收益率）。"""
     entry_time: str
     entry_price: float
     exit_time: str
@@ -42,7 +53,7 @@ class TradeRecord:
 
 @dataclass
 class RuleResult:
-    """Complete rule evaluation output."""
+    """规则求值完整输出（信号/配对交易/统计）。"""
     buy_signals: List[RuleSignal] = field(default_factory=list)
     sell_signals: List[RuleSignal] = field(default_factory=list)
     trades: List[TradeRecord] = field(default_factory=list)
@@ -56,7 +67,7 @@ class RuleResult:
 
 
 # ---------------------------------------------------------------------------
-# Core evaluation
+# 核心求值
 # ---------------------------------------------------------------------------
 
 def evaluate_rules(
@@ -69,19 +80,19 @@ def evaluate_rules(
     data_dir: Optional[str] = None,
     mtf: Optional["MtfEvalContext"] = None,
 ) -> RuleResult:
-    """Evaluate entry/exit rule conditions and generate paired trades.
+    """求值进出场规则条件并生成配对交易。
 
     Args:
-        symbol: Trading pair like "BTCUSDT".
-        timeframe: Base (execution) timeframe like "4h".
-        start: Start date "2024-01-01".
-        end: End date "2024-12-31".
-        entry_conditions: List of entry condition dicts.
-        exit_conditions: List of exit condition dicts.
-        data_dir: Optional path to market data directory.
+        symbol: 交易对如 "BTCUSDT"。
+        timeframe: 基准（执行）周期如 "4h"。
+        start: 起始日 "2024-01-01"。
+        end: 截止日 "2024-12-31"。
+        entry_conditions: 进场条件 dict 列表。
+        exit_conditions: 出场条件 dict 列表。
+        data_dir: 可选行情数据目录。
 
     Returns:
-        RuleResult with signals, trades, and statistics.
+        RuleResult：信号、配对交易与统计。
     """
     warnings: List[str] = []
 
@@ -89,13 +100,25 @@ def evaluate_rules(
         data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
 
     # ------------------------------------------------------------------
-    # 1. Load base timeframe data
+    # 1. 装载基准周期数据
     # ------------------------------------------------------------------
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；未知 timeframe
+    # 结构化拒绝而非静默空结果
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
 
-    if not parquet_path.exists():
-        warnings.append(f"Data file not found: {parquet_path.name}")
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(symbol), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
+
+    if parquet_path is None:
+        warnings.append(f"Data file not found: {safe_symbol(symbol)}_{timeframe}.parquet")
         return RuleResult(warnings=warnings)
 
     df = load_parquet(parquet_path)
@@ -103,7 +126,7 @@ def evaluate_rules(
         warnings.append("Loaded data is empty")
         return RuleResult(warnings=warnings)
 
-    # Filter by date range
+    # 日期区间过滤
     if start:
         df = df[df.index >= start]
     if end:
@@ -114,12 +137,12 @@ def evaluate_rules(
         return RuleResult(warnings=warnings)
 
     # ------------------------------------------------------------------
-    # 2. Compute indicators for base timeframe
+    # 2. 基准周期指标计算
     # ------------------------------------------------------------------
     enhanced_df = compute_all_indicators(df)
 
     # ------------------------------------------------------------------
-    # 3. MTF: discover referenced timeframes and merge higher-TF data
+    # 3. MTF：发现条件引用的高周期并合并其数据
     # ------------------------------------------------------------------
     all_conditions = list(entry_conditions) + list(exit_conditions)
     referenced_tfs: set[str] = set()
@@ -146,13 +169,13 @@ def evaluate_rules(
             warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
 
     # ------------------------------------------------------------------
-    # 4. Evaluate entry and exit conditions
+    # 4. 进出场条件求值
     # ------------------------------------------------------------------
-    entry_mask = _evaluate_rule_conditions(enhanced_df, entry_conditions, warnings, mtf=mtf)
-    exit_mask = _evaluate_rule_conditions(enhanced_df, exit_conditions, warnings, mtf=mtf)
+    entry_mask = _evaluate_conditions(enhanced_df, entry_conditions, warnings, mtf=mtf)
+    exit_mask = _evaluate_conditions(enhanced_df, exit_conditions, warnings, mtf=mtf)
 
     # ------------------------------------------------------------------
-    # 5. Generate signals
+    # 5. 生成信号
     # ------------------------------------------------------------------
     buy_signals: List[RuleSignal] = []
     sell_signals: List[RuleSignal] = []
@@ -172,12 +195,12 @@ def evaluate_rules(
         ))
 
     # ------------------------------------------------------------------
-    # 6. Pair entry -> exit into trades
+    # 6. 进场→出场配对成交易
     # ------------------------------------------------------------------
     trades = _pair_trades(enhanced_df, entry_mask, exit_mask)
 
     # ------------------------------------------------------------------
-    # 7. Compute statistics
+    # 7. 统计计算
     # ------------------------------------------------------------------
     total_trades = len(trades)
     win_trades = sum(1 for t in trades if t.is_win)
@@ -203,54 +226,7 @@ def evaluate_rules(
 
 
 # ---------------------------------------------------------------------------
-# Condition evaluation (fixed AND/OR logic)
-# ---------------------------------------------------------------------------
-
-def _evaluate_rule_conditions(
-    df: pd.DataFrame,
-    conditions: List[Dict[str, Any]],
-    warnings: List[str],
-    mtf: "MtfEvalContext | None" = None,
-) -> pd.Series:
-    """Evaluate a list of conditions with per-condition logic operators.
-
-    Unlike the legacy _evaluate_conditions in engine.py which uses the
-    *last* condition's logic for all subsequent masks, this implementation
-    applies each condition's own ``logic`` field to combine with the
-    accumulated result.
-
-    The first condition's logic field is ignored (nothing to combine with).
-
-    IF and AND are treated equivalently at the boolean level.
-    """
-    if not conditions:
-        return pd.Series(False, index=df.index)
-
-    result: Optional[pd.Series] = None
-
-    from core.analysis.condition_kernel import _mask_for
-    for i, cond in enumerate(conditions):
-        # 0.2.13：两段式（结构化 subject 先按 params 现算再精确列名求值；
-        # 列缺失全 False 降级与 _evaluate_single_condition 语义一致）
-        mask = _mask_for(df, cond, mtf=mtf)
-        logic = cond.get("logic", "AND") if i > 0 else None
-
-        if result is None:
-            result = mask
-        elif logic == "OR":
-            result = result | mask
-        else:
-            # AND or IF -- equivalent at boolean level
-            result = result & mask
-
-    if result is not None:
-        return result.fillna(False)
-
-    return pd.Series(False, index=df.index)
-
-
-# ---------------------------------------------------------------------------
-# Trade pairing
+# 交易配对
 # ---------------------------------------------------------------------------
 
 def _pair_trades(
@@ -258,14 +234,13 @@ def _pair_trades(
     entry_mask: pd.Series,
     exit_mask: pd.Series,
 ) -> List[TradeRecord]:
-    """Pair entry and exit signals into sequential trades.
+    """进出场信号顺序配对成交易。
 
-    Logic:
-    1. Find the first entry signal after the current position.
-    2. Find the first exit signal *after* that entry.
-    3. When both entry and exit fire at the same timestamp, exit takes
-       priority (so we close any open position before opening a new one).
-    4. Record the trade and resume searching from the bar *after* the exit.
+    逻辑：
+    1. 从当前扫描位起找第一个进场信号。
+    2. 在该进场之后（严格后向）找第一个出场信号。
+    3. 进出场同 bar 触发时出场优先（先平旧仓再开新仓）。
+    4. 记录该笔交易，从出场后一根起继续搜索。
     """
     trades: List[TradeRecord] = []
 
@@ -275,10 +250,10 @@ def _pair_trades(
     all_index = df.index
     n = len(all_index)
 
-    pos = 0  # current scan position as integer index
+    pos = 0  # 当前扫描位（整数下标）
 
     while pos < n:
-        # Phase 1: find next entry signal
+        # 阶段 1：找下一个进场信号
         entry_loc = None
         for i in range(pos, n):
             if all_index[i] in entry_indices:
@@ -291,7 +266,7 @@ def _pair_trades(
         entry_time = all_index[entry_loc]
         entry_price = float(df.loc[entry_time, "close"])
 
-        # Phase 2: find next exit signal strictly after entry
+        # 阶段 2：找进场之后（严格后向）的下一个出场信号
         exit_loc = None
         for i in range(entry_loc + 1, n):
             if all_index[i] in exit_indices:
@@ -299,7 +274,7 @@ def _pair_trades(
                 break
 
         if exit_loc is None:
-            # No exit found -- trade remains open, skip it
+            # 无出场信号——持仓未平，跳过不记
             break
 
         exit_time = all_index[exit_loc]
@@ -317,7 +292,7 @@ def _pair_trades(
             is_win=is_win,
         ))
 
-        # Resume scanning from the bar after the exit
+        # 从出场后一根起继续扫描
         pos = exit_loc + 1
 
     return trades

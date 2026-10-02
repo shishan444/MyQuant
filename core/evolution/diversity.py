@@ -1,4 +1,10 @@
-"""Diversity protection: genotype and phenotype diversity measurement + fitness sharing."""
+"""多样性保护：基因型/表型多样性度量 + 新鲜血液注入。
+
+服务对象：EvolutionEngine 的换血（inject_fresh_blood）与多样性
+维护（check_and_maintain_diversity）每代调用，runner 的
+compute_phenotype_diversity 指标上报。职责边界：多样性测度与
+种群修补；不负责评估（距离度量消费评估挂载的 _eval_diagnostics）。
+"""
 from __future__ import annotations
 
 import math
@@ -10,34 +16,32 @@ from core.evolution.population import create_random_dna
 
 
 # ---------------------------------------------------------------------------
-# Genotype signature (delegates to StrategyDNA.gene_signature)
+# 基因型签名（委托 StrategyDNA.gene_signature）
 # ---------------------------------------------------------------------------
 
 def _gene_signature(dna: StrategyDNA) -> str:
-    """Backward-compatible wrapper around ``StrategyDNA.gene_signature``.
+    """``StrategyDNA.gene_signature`` 的向后兼容包装。
 
-    The genotype-signature logic now lives on StrategyDNA itself (it is an
-    intrinsic property of the DNA, used for diversity measurement, strategy
-    dedup, and the evolution exclude-set). This function is kept so existing
-    callers and tests importing it keep working; new code should use
-    ``dna.gene_signature`` directly.
+    基因型签名逻辑已内聚到 StrategyDNA 自身（DNA 的内在属性，
+    供多样性度量、策略去重与进化排除集使用）。保留本函数使既有
+    调用方与测试不改；新代码直接用 ``dna.gene_signature``。
     """
     return dna.gene_signature
 
 
 # ---------------------------------------------------------------------------
-# Phenotype distance metrics
+# 表型距离度量
 # ---------------------------------------------------------------------------
 
 def genotype_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
-    """Compute structural distance between two strategy genotypes.
+    """两个策略基因型的结构距离。
 
-    Returns 0.0 if identical, up to 1.0 for maximally different.
+    相同 0.0，最大差异 1.0。
     """
     components = 0.0
     max_components = 0.0
 
-    # Compare signal genes by role buckets
+    # 信号基因按 role 桶配对比较
     def _by_role(genes):
         groups = {}
         for g in genes:
@@ -58,7 +62,7 @@ def genotype_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
             max_components += 3
             if ga[i].indicator != gb[i].indicator:
                 components += 1.0
-            # Parameter similarity
+            # 参数相似度
             shared_keys = set(ga[i].params) & set(gb[i].params)
             if shared_keys:
                 param_diff = 0.0
@@ -72,7 +76,7 @@ def genotype_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
                 components += min(1.0, param_diff / 50.0)
             else:
                 components += 0.5
-            # Condition similarity
+            # 条件相似度
             ca = ga[i].condition or {}
             cb = gb[i].condition or {}
             if ca.get("type") != cb.get("type"):
@@ -81,7 +85,7 @@ def genotype_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
         max_components += extra * 1.5
         components += extra * 1.0
 
-    # Risk gene comparison
+    # 风险基因比较
     max_components += 3
     components += abs(dna_a.risk_genes.stop_loss - dna_b.risk_genes.stop_loss) / 0.2
     components += 0 if dna_a.risk_genes.direction == dna_b.risk_genes.direction else 1.0
@@ -91,27 +95,25 @@ def genotype_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
 
 
 def _get_diagnostics(dna: StrategyDNA) -> Optional[dict]:
-    """Safely get evaluation diagnostics from a DNA individual."""
+    """安全取个体上的评估诊断（未评估过返回 None）。"""
     return getattr(dna, '_eval_diagnostics', None)
 
 
 def signal_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
-    """Compute phenotype distance based on trade signal similarity.
+    """基于交易信号相似度的表型距离。
 
-    Uses the actual equity curves or trade returns from backtesting
-    to measure behavioral difference.
+    用回测产出的实际净值曲线/交易回报度量行为差异。
 
-    Returns 0.0 if identical behavior, 1.0 if completely different.
+    行为相同 0.0，完全不同 1.0；诊断缺失时回退基因型距离。
     """
     diag_a = _get_diagnostics(dna_a)
     diag_b = _get_diagnostics(dna_b)
 
-    # If either lacks diagnostics, fall back to genotype distance
+    # 任一方缺诊断（未评估）回退基因型距离
     if not diag_a or not diag_b:
         return genotype_distance(dna_a, dna_b)
 
-    # Compare key behavioral metrics
-    metrics_to_compare = ["total_trades", "win_rate"]
+    # 关键行为指标逐项比较
     raw_a = diag_a.get("raw_metrics", {})
     raw_b = diag_b.get("raw_metrics", {})
 
@@ -121,27 +123,27 @@ def signal_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
     distance = 0.0
     comparisons = 0
 
-    # Trade count similarity
+    # 交易笔数相似度
     trades_a = raw_a.get("total_trades", 0)
     trades_b = raw_b.get("total_trades", 0)
     if trades_a + trades_b > 0:
         distance += abs(trades_a - trades_b) / max(trades_a, trades_b, 1)
         comparisons += 1
 
-    # Win rate similarity
+    # 胜率相似度
     # win_rate 缺失语义（零交易 None）按 0 参与距离比较
     wr_a = raw_a.get("win_rate") or 0.0
     wr_b = raw_b.get("win_rate") or 0.0
     distance += abs(wr_a - wr_b)
     comparisons += 1
 
-    # Annual return similarity
+    # 年化收益相似度
     ar_a = raw_a.get("annual_return", 0.0)
     ar_b = raw_b.get("annual_return", 0.0)
     distance += min(1.0, abs(ar_a - ar_b) / max(abs(ar_a), abs(ar_b), 0.01))
     comparisons += 1
 
-    # Max drawdown similarity
+    # 最大回撤相似度
     dd_a = abs(raw_a.get("max_drawdown", 0.0))
     dd_b = abs(raw_b.get("max_drawdown", 0.0))
     distance += min(1.0, abs(dd_a - dd_b) / max(dd_a, dd_b, 0.01))
@@ -151,11 +153,10 @@ def signal_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
 
 
 def equity_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
-    """Compute distance based on score and dimension_scores.
+    """基于 score 与 dimension_scores 的距离。
 
-    Uses the scoring dimensions to measure behavioral similarity.
-
-    Returns 0.0 if same behavior, 1.0 if completely different.
+    用评分维度度量行为相似度。行为相同 0.0，完全不同 1.0；
+    诊断或维度缺失时回退 signal_distance。
     """
     diag_a = _get_diagnostics(dna_a)
     diag_b = _get_diagnostics(dna_b)
@@ -177,20 +178,20 @@ def equity_distance(dna_a: StrategyDNA, dna_b: StrategyDNA) -> float:
     for dim in all_dims:
         va = ds_a.get(dim, 0.0)
         vb = ds_b.get(dim, 0.0)
-        total_diff += abs(va - vb) / 100.0  # normalize to 0-1
+        total_diff += abs(va - vb) / 100.0  # 归一到 0-1
 
     return min(1.0, total_diff / len(all_dims))
 
 
 # ---------------------------------------------------------------------------
-# Population diversity metrics
+# 种群多样性指标
 # ---------------------------------------------------------------------------
 
 def compute_diversity(population: List[StrategyDNA]) -> float:
-    """Compute population diversity as ratio of unique gene signatures.
+    """种群多样性 = 唯一基因签名占比。
 
     Returns:
-        Float 0-1 where 1 = all individuals unique, 0 = all identical.
+        0-1 浮点：1 = 全体唯一，0 = 全体相同。
     """
     if len(population) <= 1:
         return 0.0
@@ -201,22 +202,22 @@ def compute_diversity(population: List[StrategyDNA]) -> float:
 
 
 def compute_phenotype_diversity(population: List[StrategyDNA]) -> Dict[str, float]:
-    """Compute multi-level diversity metrics for a population.
+    """种群多层多样性指标。
 
-    Returns dict with:
-        genotype: unique gene signature ratio (existing metric)
-        signal: average pairwise signal distance
-        score: average pairwise equity/score distance
+    Returns:
+        dict：
+        - genotype：唯一基因签名占比（快指标）
+        - signal：成对 signal_distance 均值
+        - score：成对 equity_distance 均值
     """
     n = len(population)
     if n <= 1:
         return {"genotype": 0.0, "signal": 0.0, "score": 0.0}
 
-    # Genotype diversity (fast, existing metric)
+    # 基因型多样性（快指标）
     genotype_div = compute_diversity(population)
 
-    # Phenotype diversity (sample pairwise for efficiency)
-    # Use at most 30 pairs for large populations
+    # 表型多样性成对采样（大种群限至多 45 对控计算量）
     max_pairs = min(45, n * (n - 1) // 2)
     pairs: List[Tuple[int, int]] = []
     if n * (n - 1) // 2 <= max_pairs:
@@ -246,7 +247,7 @@ def compute_phenotype_diversity(population: List[StrategyDNA]) -> Dict[str, floa
 
 
 # ---------------------------------------------------------------------------
-# Fresh blood injection (existing, unchanged)
+# 新鲜血液注入
 # ---------------------------------------------------------------------------
 
 def inject_fresh_blood(
@@ -256,17 +257,17 @@ def inject_fresh_blood(
     direction: str = "long",
     timeframe_pool: Optional[List[str]] = None,
 ) -> List[StrategyDNA]:
-    """Add n random individuals to the population for diversity.
+    """向种群追加 n 个随机个体以保多样性。
 
     Args:
-        population: Current population.
-        n: Number of fresh individuals to add.
-        leverage: Task-level leverage constraint.
-        direction: Task-level direction constraint.
-        timeframe_pool: Available timeframes for MTF layer generation.
+        population: 当前种群。
+        n: 追加个体数。
+        leverage: 任务级杠杆约束。
+        direction: 任务级方向约束。
+        timeframe_pool: MTF 层生成的可用周期集。
 
     Returns:
-        Population with fresh individuals appended.
+        追加新鲜个体后的种群（原地追加）。
     """
     for _ in range(n):
         fresh = create_random_dna(
@@ -287,28 +288,30 @@ def check_and_maintain_diversity(
     direction: str = "long",
     timeframe_pool: Optional[List[str]] = None,
 ) -> List[StrategyDNA]:
-    """If diversity is below threshold, replace similar individuals.
+    """多样性低于阈值时以新鲜个体替换重复个体。
 
     Args:
-        population: Current population.
-        threshold: Minimum acceptable diversity ratio.
-        leverage: Task-level leverage constraint.
-        direction: Task-level direction constraint.
-        timeframe_pool: Available timeframes for MTF layer generation.
+        population: 当前种群。
+        threshold: 可接受的最小多样性占比。
+        leverage: 任务级杠杆约束。
+        direction: 任务级方向约束。
+        timeframe_pool: MTF 层生成的可用周期集。
 
     Returns:
-        Population with diversity maintained.
+        多样性维护后的种群——替换仅在双重条件成立时发生：
+        多样性 < threshold 且最高频签名占比 > 30%（此时其后
+        重复个体替换为随机新鲜个体，首个保留）；否则原样返回。
     """
     diversity = compute_diversity(population)
     if diversity < threshold:
-        # Replace the most common individuals
+        # 定位最高频签名
         signatures = [ind.gene_signature for ind in population]
         from collections import Counter
         counts = Counter(signatures)
         most_common_sig, most_common_count = counts.most_common(1)[0]
 
         if most_common_count > len(population) * 0.3:
-            # Replace duplicates with fresh individuals
+            # 重复签名个体替换为随机新鲜个体（首个保留）
             seen = set()
             new_pop = []
             for ind in population:

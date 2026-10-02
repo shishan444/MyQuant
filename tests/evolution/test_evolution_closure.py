@@ -44,7 +44,6 @@ def _stub_evaluate(dna: StrategyDNA) -> float:
 def _make_engine(max_generations=3, population_size=4):
     return EvolutionEngine(
         target_score=1000.0,        # unreachable -> runs all generations
-        template_name="balanced",
         population_size=population_size,
         max_generations=max_generations,
         leverage=1,

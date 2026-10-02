@@ -109,7 +109,8 @@ class RuleValidateResponse(BaseModel):
     total_trades: int = 0
     win_trades: int = 0
     loss_trades: int = 0
-    win_rate: float = 0.0
+    # 零交易为缺失语义（None，46339bc 裁决不折叠为 0）
+    win_rate: Optional[float] = None
     total_return_pct: float = 0.0
     avg_return_pct: float = 0.0
     warnings: List[str] = []

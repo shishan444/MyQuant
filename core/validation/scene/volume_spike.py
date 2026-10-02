@@ -1,4 +1,9 @@
-"""Volume spike detector: bars where volume exceeds N times the rolling average."""
+"""量能异动检测器：量能超出滚动均量 N 倍的 bar 触发。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"volume_spike"
+键）；tests/evolution 特征锚直调。职责边界：单一量能条件的
+触发点扫描，指标快照复用 top_pattern._extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -6,7 +11,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -26,9 +31,9 @@ class VolumeSpikeDetector(SceneDetector):
 
     def detect(self, df: pd.DataFrame, params: Dict[str, Any]) -> List[TriggerPoint]:
         p = {**self.default_params, **params}
-        multiplier = float(p["multiplier"])
-        avg_period = int(p["avg_period"])
-        min_spacing = int(p["min_spacing"])
+        multiplier = _param_number(p, "multiplier", min_value=0, exclusive=True)
+        avg_period = _param_number(p, "avg_period", cast=int, min_value=1)
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
         volume = df["volume"].values
         closes = df["close"].values

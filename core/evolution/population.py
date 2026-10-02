@@ -1,4 +1,12 @@
-"""Population initialization and random DNA generation."""
+"""种群初始化与随机 StrategyDNA 生成。
+
+服务对象：EvolutionEngine.evolve 的 init_population 调用（engine
+的种群起点）、engine 变异/交叉失败兜底与 operators.mutate_add_layer
+新层生成的 create_random_dna（换/造随机个体）、diversity 换血与
+多样性维护的高频造新路径、tests/evolution 契约测试。职责边界：
+代际循环前的种群构成——祖先/模板/画像引导/自由探索四路来源与
+签名去重；不负责评估与选择（归 engine）。
+"""
 from __future__ import annotations
 
 import random
@@ -16,11 +24,11 @@ from core.evolution.operators import mutate_params, mutate_indicator, mutate_log
 
 
 # ---------------------------------------------------------------------------
-# Classic strategy templates (7 patterns from trading research)
+# 经典策略模板（交易研究 7 形态）
 # ---------------------------------------------------------------------------
 
 STRATEGY_TEMPLATES = [
-    {   # trend_ema: EMA trend following with MACD confirmation
+    {   # trend_ema：EMA 趋势跟随 + MACD 确认
         "name": "trend_ema",
         "genes": [
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
@@ -38,7 +46,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # momentum: RSI + MACD momentum trading
+    {   # momentum：RSI + MACD 动量交易
         "name": "momentum",
         "genes": [
             {"indicator": "RSI", "params": {"period": 14},
@@ -56,7 +64,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # mean_reversion: BB lower/upper band + RSI
+    {   # mean_reversion：BB 下/上轨 + RSI 均值回归
         "name": "mean_reversion",
         "genes": [
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
@@ -71,7 +79,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # trend_breakout: low ADX (consolidation) + MACD breakout
+    {   # trend_breakout：低 ADX 盘整 + MACD 突破
         "name": "trend_breakout",
         "genes": [
             {"indicator": "ADX", "params": {"period": 14},
@@ -89,7 +97,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # dual_ma_cross: EMA(10) crosses above/below EMA(20)
+    {   # dual_ma_cross：EMA(10) 上/下穿 EMA(20)
         "name": "dual_ma_cross",
         "genes": [
             {"indicator": "EMA", "params": {"period": 10},
@@ -107,7 +115,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # multi_tf_trend: EMA trend + ADX strength confirmation
+    {   # multi_tf_trend：EMA 趋势 + ADX 强度确认
         "name": "multi_tf_trend",
         "genes": [
             {"indicator": "EMA", "params": {"period": 50},
@@ -125,7 +133,7 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # volatility: low ADX (consolidation) + MACD breakout
+    {   # volatility：低 ADX 盘整 + MACD 突破（波动率突破）
         "name": "volatility",
         "genes": [
             {"indicator": "ADX", "params": {"period": 14},
@@ -146,14 +154,14 @@ STRATEGY_TEMPLATES = [
 ]
 
 
-# Trend indicators: use price_above (True = close > indicator = bullish)
+# trend 类指标：用 price_above（True = close > 指标 = 看多）
 _DIRECTION_TREND_INDICATORS = ["EMA", "SMA", "WMA", "DEMA", "TEMA", "VWMA"]
 
-# Band indicators: use price_above on specific field
+# band 类指标：在特定 field 上用 price_above
 _DIRECTION_BAND_INDICATORS = ["BB", "Keltner", "Donchian"]
 
-# Momentum indicators: use gt with directional threshold (True = bullish)
-# Each config: (indicator_name, field_name, threshold, threshold_range)
+# momentum 类指标：用 gt 带方向性阈值（True = 看多）
+# 每条配置：(指标名, field 名, 默认阈值, 阈值抖动区间)
 _DIRECTION_MOMENTUM_CONFIGS = [
     ("RSI", None, 50, (30, 70)),
     ("MACD", "histogram", 0, (-5, 5)),
@@ -169,11 +177,12 @@ _DIRECTION_MOMENTUM_CONFIGS = [
 
 
 def _create_direction_gene() -> SignalGene:
-    """Create a DIRECTION gene with trend or momentum indicator.
+    """以 trend/band/momentum 指标构造 DIRECTION 基因。
 
-    Two categories with "True = bullish" semantics:
-    - Trend indicators: price_above condition (close > indicator = bullish)
-    - Momentum indicators: gt condition (indicator > threshold = bullish)
+    三类统一「True = 看多」语义：
+    - trend 类：price_above 条件（close > 指标 = 看多）
+    - momentum 类：gt 条件（指标 > 阈值 = 看多）
+    - band 类：在 field 上 price_above
     """
     kind = random.choices(
         ["trend", "band", "momentum"],
@@ -189,7 +198,7 @@ def _create_direction_gene() -> SignalGene:
 
 
 def _create_trend_direction_gene() -> SignalGene:
-    """Create a DIRECTION gene using a trend indicator with price_above."""
+    """trend 类指标 + price_above 的 DIRECTION 基因。"""
     indicator_name = random.choice(_DIRECTION_TREND_INDICATORS)
     reg = INDICATOR_REGISTRY.get(indicator_name)
     profile = PROFILES.get(indicator_name)
@@ -205,7 +214,7 @@ def _create_trend_direction_gene() -> SignalGene:
 
 
 def _create_band_direction_gene() -> SignalGene:
-    """Create a DIRECTION gene using a band indicator with price_above."""
+    """band 类指标 + price_above 的 DIRECTION 基因（多输出域随机取 field）。"""
     indicator_name = random.choice(_DIRECTION_BAND_INDICATORS)
     reg = INDICATOR_REGISTRY.get(indicator_name)
     profile = PROFILES.get(indicator_name)
@@ -226,7 +235,7 @@ def _create_band_direction_gene() -> SignalGene:
 
 
 def _create_momentum_direction_gene() -> SignalGene:
-    """Create a DIRECTION gene using a momentum indicator with gt threshold."""
+    """momentum 类指标 + gt 阈值的 DIRECTION 基因。"""
     indicator_name, field_name, threshold, (lo, hi) = random.choice(
         _DIRECTION_MOMENTUM_CONFIGS
     )
@@ -234,7 +243,7 @@ def _create_momentum_direction_gene() -> SignalGene:
     profile = PROFILES.get(indicator_name)
 
     params = _build_params(reg, profile)
-    # Allow threshold to vary around the default
+    # 阈值在默认值附近抖动（不固定用配置默认）
     jittered_threshold = round(random.uniform(lo, hi), 2)
 
     return SignalGene(
@@ -247,7 +256,7 @@ def _create_momentum_direction_gene() -> SignalGene:
 
 
 def _build_params(reg, profile) -> dict:
-    """Build indicator params using profile guidance when available."""
+    """构造指标参数（画像引导优先，无画像时值域内随机）。"""
     if profile and profile.recommended_params and random.random() < profile.follow_probability:
         params = {}
         for pname, pdef in reg.params.items():
@@ -273,7 +282,7 @@ def _dna_from_template(
     direction: str = "long",
     timeframe_pool: list | None = None,
 ) -> StrategyDNA:
-    """Create a StrategyDNA from a classic strategy template."""
+    """从经典策略模板构造 StrategyDNA。"""
     actual_direction = direction
     signals = []
     for g in template["genes"]:
@@ -285,13 +294,13 @@ def _dna_from_template(
             condition=dict(g["condition"]),
         ))
 
-    # Auto-add a DIRECTION gene for mixed strategies
+    # mixed 策略自动补一个 DIRECTION 基因
     if actual_direction == "mixed":
         signals.append(_create_direction_gene())
 
     logic = template["logic"]
 
-    # Build MTF layers if timeframe_pool has multiple timeframes
+    # timeframe_pool 多周期时构造 MTF 层（执行层 + 至多 2 个其他周期层）
     mtf_layers = None
     if timeframe_pool and len(timeframe_pool) > 1:
         other_tfs = [tf for tf in timeframe_pool if tf != timeframe][:2]
@@ -319,7 +328,7 @@ def _dna_from_template(
 
 
 def _make_signal_profiled(role: SignalRole, pool: list) -> SignalGene:
-    """Create a signal gene using indicator profile when available."""
+    """画像可用时按画像引导构造信号基因（否则回退自由探索）。"""
     if not pool:
         pool[:] = [name for name in INDICATOR_REGISTRY.keys()
                     if not INDICATOR_REGISTRY[name].guard_only]
@@ -328,7 +337,7 @@ def _make_signal_profiled(role: SignalRole, pool: list) -> SignalGene:
     profile = PROFILES.get(indicator_name)
 
     if profile and random.random() < profile.follow_probability:
-        # Follow recommended usage
+        # 跟随画像推荐用法
         params = {}
         for pname, candidates in profile.recommended_params.items():
             if candidates:
@@ -339,7 +348,7 @@ def _make_signal_profiled(role: SignalRole, pool: list) -> SignalGene:
                 pdef = reg.params[pname]
                 params[pname] = int(pdef.default) if pdef.type == "int" else float(pdef.default)
 
-        # If profile has no params but registry does, use defaults
+        # 画像无推荐参数但注册表有参数时，用注册表默认值
         if not profile.recommended_params and reg.params:
             for pname, pdef in reg.params.items():
                 params[pname] = int(pdef.default) if pdef.type == "int" else float(pdef.default)
@@ -353,7 +362,7 @@ def _make_signal_profiled(role: SignalRole, pool: list) -> SignalGene:
         if field_name is None and len(reg.output_fields) > 1:
             field_name = random.choice(reg.output_fields)
     else:
-        # Free exploration (original logic)
+        # 自由探索（原始逻辑：候选值或值域随机）
         params = {}
         for pname, pdef in reg.params.items():
             if pdef.candidates:
@@ -387,19 +396,21 @@ def create_random_dna(
     indicator_pool: Optional[List[str]] = None,
     profiled: bool = True,
 ) -> StrategyDNA:
-    """Generate a completely random but valid StrategyDNA.
+    """生成完全随机但合法的 StrategyDNA。
 
     Args:
-        profiled: If True, use indicator profiles for guided generation.
-                  If False, generate completely random signals (free exploration).
+        profiled: True 时用指标画像引导生成；False 时全随机信号
+            （自由探索）。
+
+    非法产出回退到 RSI 双基因保底形态（validate_dna 不通过时）。
     """
-    # "mixed" is preserved; DIRECTION gene handles long/short decisions
+    # "mixed" 原样保留；多空决策由 DIRECTION 基因承载
     actual_direction = direction
 
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
-    # Filter out indicators that cannot be computed during evolution:
-    # - compute_mode="lazy" indicators are skipped by compute_all_indicators(skip_lazy=True)
-    # - VWAP has no compute implementation in _compute_indicator
+    # 剔除进化中不可计算的指标：
+    # - compute_mode="lazy" 的指标被 compute_all_indicators(skip_lazy=True) 跳过
+    # - VWAP 在 _compute_indicator 无计算实现
     _NO_COMPUTE = {"VWAP", "FractalEntropy", "MultifactorOsc", "VolumeProfile"}
     available_indicators = [n for n in available_indicators if n not in _NO_COMPUTE]
     trigger_indicators = [
@@ -411,7 +422,7 @@ def create_random_dna(
     def _make_signal(role: SignalRole, pool: list) -> SignalGene:
         if profiled:
             return _make_signal_profiled(role, pool)
-        # Free exploration: 100% random, no profile guidance
+        # 自由探索：全随机、无画像引导
         if not pool:
             pool[:] = [name for name in INDICATOR_REGISTRY.keys()
                         if not (role.value.endswith("guard") and INDICATOR_REGISTRY.get(name, type('', (), {})()).guard_only)]
@@ -430,7 +441,7 @@ def create_random_dna(
             condition=condition,
         )
 
-    # Build signal genes: at least 1 entry trigger + 1 exit trigger
+    # 信号基因构成：至少 1 个 entry trigger + 1 个 exit trigger
     signals = []
     signals.append(_make_signal(SignalRole.ENTRY_TRIGGER, trigger_indicators))
 
@@ -442,7 +453,7 @@ def create_random_dna(
     if random.random() < 0.4:
         signals.append(_make_signal(SignalRole.EXIT_GUARD, all_indicators))
 
-    # Auto-add a DIRECTION gene for mixed strategies
+    # mixed 策略自动补一个 DIRECTION 基因
     if actual_direction == "mixed":
         signals.append(_create_direction_gene())
 
@@ -462,7 +473,7 @@ def create_random_dna(
                              direction=actual_direction),
     )
 
-    # Validate and retry if needed
+    # 校验失败回退保底形态（RSI 双基因，不重试）
     result = validate_dna(dna)
     if not result.is_valid:
         fallback_signals = [
@@ -484,7 +495,7 @@ def create_random_dna(
             execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         )
 
-    # Generate MTF layers: include execution TF layer + all other TFs
+    # MTF 层生成：执行周期层 + 其余周期各一层（至多 2 个）
     if timeframe_pool and len(timeframe_pool) > 1:
         other_tfs = [tf for tf in timeframe_pool if tf != timeframe][:2]
         if other_tfs:
@@ -509,7 +520,11 @@ def create_random_mtf_layer(
     timeframe: str,
     symbol: str = "BTCUSDT",
 ) -> TimeframeLayer:
-    """Generate a single random TimeframeLayer for MTF strategies."""
+    """为 MTF 策略生成附加周期层的单个随机 TimeframeLayer。
+
+    timeframe 参数取执行周期以外的周期（周期位置为非执行位），
+    但 role 字段按周期推导（60%）或标 "execution"（40%）。
+    """
     trigger_indicators = [
         name for name, defn in INDICATOR_REGISTRY.items()
         if not defn.guard_only
@@ -554,7 +569,7 @@ def create_random_mtf_layer(
 
 
 def _random_params(indicator_name: str) -> dict:
-    """Generate random params for a given indicator."""
+    """为指标生成值域内随机参数（步长对齐）。"""
     reg = INDICATOR_REGISTRY.get(indicator_name)
     if not reg:
         return {}
@@ -567,7 +582,7 @@ def _random_params(indicator_name: str) -> dict:
 
 
 def _random_condition(indicator_name: str) -> dict:
-    """Generate a random condition for a given indicator."""
+    """为指标生成随机条件（委托 operators.generate_random_condition）。"""
     return generate_random_condition(indicator_name)
 
 
@@ -583,27 +598,27 @@ def init_population(
     indicator_pool: Optional[List[str]] = None,
     exclude_signatures: Optional[set] = None,
 ) -> List[StrategyDNA]:
-    """Initialize population by mutating an ancestor.
+    """初始化种群（祖先保位 + 模板/画像/自由探索按 40/40/20 配比）。
 
     Args:
-        size: Population size.
-        ancestor: Initial strategy (first individual).
-        extra_ancestors: Additional ancestors for multi-start (e.g. top 3).
-        timeframe: K-line timeframe.
-        symbol: Trading pair.
-        leverage: Task-level leverage constraint.
-        direction: Task-level direction constraint.
-        timeframe_pool: Available timeframes for MTF layer generation.
-        indicator_pool: Available indicators to restrict mutations.
-        exclude_signatures: Set of gene signature hashes to avoid (for new populations).
+        size: 种群规模。
+        ancestor: 起始祖先（首个个体，None 时用随机模板种子）。
+        extra_ancestors: 多起点附加祖先（如 top 3）。
+        timeframe: K 线周期。
+        symbol: 交易对。
+        leverage: 任务级杠杆约束。
+        direction: 任务级方向约束。
+        timeframe_pool: MTF 层生成的可用周期集。
+        indicator_pool: 限定变异面的可用指标集。
+        exclude_signatures: 排除的基因签名集（新种群避免与历史撞签）。
     """
     population = []
 
-    # First individual is the ancestor itself
+    # 首个个体是祖先本身
     if ancestor is not None:
         population.append(ancestor)
     elif STRATEGY_TEMPLATES:
-        # Use a random classic template as seed
+        # 无祖先时以随机经典模板为种子
         template = random.choice(STRATEGY_TEMPLATES)
         population.append(_dna_from_template(template, timeframe, symbol, leverage, direction, timeframe_pool))
     else:
@@ -612,26 +627,25 @@ def init_population(
                                             timeframe_pool=timeframe_pool,
                                             indicator_pool=indicator_pool))
 
-    # Add extra ancestors (for multi-start continuous evolution)
+    # 多起点附加祖先（连续进化场景）
     if extra_ancestors:
         for a in extra_ancestors:
             if a not in population:
                 population.append(a)
 
-    # Generate remaining individuals by 40/40/20 ratio
+    # 其余个体按 40/40/20 配比生成
     remaining = size - len(population)
-    n_template = max(1, int(remaining * 0.4))   # 40% from template mutations
-    n_profiled = max(1, int(remaining * 0.4))   # 40% profile-aware random
-    n_random = remaining - n_template - n_profiled  # 20% free exploration
+    n_template = max(1, int(remaining * 0.4))   # 40% 模板变异
+    n_profiled = max(1, int(remaining * 0.4))   # 40% 画像引导随机
+    n_random = remaining - n_template - n_profiled  # 20% 自由探索
 
     mutation_funcs = [mutate_params, mutate_indicator, mutate_logic, mutate_risk]
 
-    # Template mutations: pick a strategy template, mutate from a parent
+    # 模板变异：随机经典模板构造种子后做一次变异
     for _ in range(n_template):
         if len(population) < size:
             template = random.choice(STRATEGY_TEMPLATES)
             seed = _dna_from_template(template, timeframe, symbol, leverage, direction, timeframe_pool)
-            parent = random.choice(population[:min(len(population), 3)])
             mut_func = random.choice(mutation_funcs)
             try:
                 child = mut_func(seed)
@@ -643,7 +657,7 @@ def init_population(
             except Exception:
                 population.append(seed)
 
-    # Profile-aware random DNA
+    # 画像引导随机 DNA
     for _ in range(n_profiled):
         if len(population) < size:
             population.append(create_random_dna(
@@ -653,7 +667,7 @@ def init_population(
                 indicator_pool=indicator_pool,
             ))
 
-    # Free exploration: random DNA without profile guidance
+    # 自由探索：无画像引导的随机 DNA
     for _ in range(n_random):
         if len(population) < size:
             population.append(create_random_dna(
@@ -664,7 +678,7 @@ def init_population(
                 profiled=False,
             ))
 
-    # Dedup: filter out individuals whose signatures are in exclude_signatures
+    # 签名去重：剔除命中 exclude_signatures 或种群内重复签名的个体
     if exclude_signatures:
         deduped = []
         seen = set()
@@ -673,7 +687,7 @@ def init_population(
             if sig not in exclude_signatures and sig not in seen:
                 deduped.append(ind)
                 seen.add(sig)
-        # Backfill with random individuals if dedup removed too many
+        # 去重削员过多时以随机个体回填（限 3 倍尝试）
         attempts = 0
         while len(deduped) < size and attempts < size * 3:
             candidate = create_random_dna(

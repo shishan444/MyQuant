@@ -1,4 +1,13 @@
-"""WHEN/THEN hypothesis validation engine."""
+"""WHEN/THEN 假设验证引擎。
+
+服务对象：/api/validate 端点（前端验证页经此调 validate_hypothesis）、
+rule_engine（进出场配对共用 _evaluate_conditions）、condition_kernel
+与 analysis/templates/condition_stats（_evaluate_single_condition 为
+二者的兜底求值路径）、tests/analysis 对比基准链。职责边界：WHEN
+触发识别 → THEN 前瞻窗口核验 → 统计聚合（分布/分位/集中度/信号
+频率/极值）；条件求值原语委托 condition_kernel._mask_for，本模块
+不自持掩码语义。
+"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -15,7 +24,7 @@ from core.data.storage import load_parquet
 
 @dataclass
 class TriggerRecord:
-    """A single trigger event."""
+    """单次触发事件（时间/价格/THEN 达成/触发时指标值快照）。"""
     id: int
     time: str
     trigger_price: float
@@ -26,7 +35,7 @@ class TriggerRecord:
 
 @dataclass
 class DistributionBucket:
-    """A histogram bucket."""
+    """涨幅分布直方图单桶（达成/未达成计数）。"""
     range_start: float
     range_end: float
     match_count: int
@@ -36,7 +45,7 @@ class DistributionBucket:
 
 @dataclass
 class ValidationResult:
-    """Complete validation output."""
+    """完整验证输出（命中率 + 触发明细 + 五组统计）。"""
     match_rate: float
     total_count: int
     match_count: int
@@ -63,45 +72,54 @@ def validate_hypothesis(
     base_timeframe: Optional[str] = None,
     mtf: Optional["MtfEvalContext"] = None,
 ) -> ValidationResult:
-    """Validate a WHEN->THEN hypothesis against historical data.
+    """对历史数据验证 WHEN→THEN 假设。
 
     Args:
-        pair: Trading pair like "BTCUSDT"
-        timeframe: K-line interval like "4h"
-        start: Start date "2024-01-01"
-        end: End date "2024-12-31"
-        when_conditions: List of WHEN condition dicts
-        then_conditions: List of THEN condition dicts
-        indicator_params: Optional indicator parameter overrides
-        then_window: Number of bars to check for THEN fulfillment
-        data_dir: Optional path to market data directory
-        base_timeframe: Optional base timeframe for MTF validation
+        pair: 交易对如 "BTCUSDT"
+        timeframe: K 线周期如 "4h"
+        start: 起始日 "2024-01-01"
+        end: 截止日 "2024-12-31"
+        when_conditions: WHEN 条件 dict 列表
+        then_conditions: THEN 条件 dict 列表
+        indicator_params: 可选指标参数覆盖
+        then_window: THEN 核验的前瞻 bar 数
+        data_dir: 可选行情数据目录
+        base_timeframe: MTF 验证的基准周期（可选）
 
     Returns:
-        ValidationResult with all statistics
+        ValidationResult 全量统计
     """
     from pathlib import Path
-    import re
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
     from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
 
-    # Determine effective base timeframe
+    # 生效基准周期（base_timeframe 优先）
     effective_base = base_timeframe or timeframe
 
-    # Load data
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', pair)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # 数据装载（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
+    # 未知 timeframe 结构化拒绝而非静默空结果）
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(pair), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
 
-    if not parquet_path.exists():
+    if parquet_path is None:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
 
     df = load_parquet(parquet_path)
     if df is None or len(df) == 0:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
 
-    # Filter by date range
+    # 日期区间过滤
     if start:
         df = df[df.index >= start]
     if end:
@@ -110,10 +128,10 @@ def validate_hypothesis(
     if len(df) == 0:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
 
-    # Compute indicators for base timeframe
+    # 基准周期指标计算
     enhanced_df = compute_all_indicators(df)
 
-    # MTF: collect referenced timeframes and merge higher-TF indicators
+    # MTF：收集条件引用的高周期并合并其指标列
     all_conditions = when_conditions + then_conditions
     referenced_tfs = set()
     for cond in all_conditions:
@@ -121,14 +139,14 @@ def validate_hypothesis(
         if cond_tf and cond_tf != effective_base:
             referenced_tfs.add(cond_tf)
 
-    # Collect warnings during evaluation
+    # 求值期收集警告
     warnings: List[str] = []
 
     if referenced_tfs:
         try:
             mtf_data = load_mtf_data(pair, list(referenced_tfs), start, end, data_dir)
             if mtf_data:
-                # Compute indicators on each higher-TF DataFrame
+                # 各高周期 DataFrame 分别算指标
                 mtf_with_indicators = {}
                 for tf, tf_df in mtf_data.items():
                     mtf_with_indicators[tf] = compute_all_indicators(tf_df)
@@ -145,41 +163,41 @@ def validate_hypothesis(
     # Evaluate WHEN conditions（mtf 上下文透传——Lab 链高周期条件掩码投影）
     when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings, mtf=mtf)
 
-    # Find trigger indices
+    # 触发点定位
     trigger_indices = enhanced_df.index[when_mask].tolist()
 
     if not trigger_indices:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0, warnings=warnings)
 
-    # Determine max THEN window across all THEN conditions
+    # THEN 窗口取全条件最大值
     max_then_window = then_window
     for cond in then_conditions:
         cond_window = cond.get("window")
         if cond_window is not None:
             max_then_window = max(max_then_window, cond_window)
 
-    # Evaluate THEN conditions for each trigger
+    # 逐触发点核验 THEN 条件
     triggers = []
     changes = []
     for i, trigger_idx in enumerate(trigger_indices):
         trigger_loc = enhanced_df.index.get_loc(trigger_idx)
         trigger_price = enhanced_df.loc[trigger_idx, "close"]
 
-        # Look ahead for THEN window (use max window across conditions)
+        # THEN 前瞻窗口（取全条件最大窗口切窗）
         end_loc = min(trigger_loc + max_then_window + 1, len(enhanced_df))
         window_df = enhanced_df.iloc[trigger_loc + 1:end_loc]
 
         if len(window_df) == 0:
             continue
 
-        # Check THEN conditions (each condition uses its own window)
+        # THEN 核验（各条件在自窗内判定）
         then_matched = _check_then_conditions(window_df, then_conditions, trigger_price, trigger_loc, max_then_window)
 
-        # Calculate change
+        # 窗末涨跌幅
         final_price = window_df.iloc[-1]["close"]
         change_pct = ((final_price - trigger_price) / trigger_price) * 100
 
-        # Record indicator values at trigger time
+        # 记录触发时刻的指标值快照
         trigger_row = enhanced_df.loc[trigger_idx]
         ind_values = {}
         for col in enhanced_df.columns:
@@ -208,10 +226,10 @@ def validate_hypothesis(
     total_count = len(triggers)
     match_rate = round(match_count / total_count * 100, 1) if total_count > 0 else 0
 
-    # Build distribution
+    # 涨幅分布
     distribution = _build_distribution(changes, [t.matched for t in triggers])
 
-    # Compute percentiles
+    # 分位数
     percentiles = {}
     if changes:
         arr = np.array(changes)
@@ -225,7 +243,7 @@ def validate_hypothesis(
             "max": round(float(np.max(arr)), 2),
         }
 
-    # Concentration
+    # 集中度区间
     concentration = {}
     if changes:
         arr = np.array(changes)
@@ -234,7 +252,7 @@ def validate_hypothesis(
             "p90_range": [round(float(np.percentile(arr, 5)), 2), round(float(np.percentile(arr, 95)), 2)],
         }
 
-    # Signal frequency
+    # 信号频率（月/周口径）
     signal_frequency = {}
     if total_count > 0 and len(df) > 0:
         days_covered = (df.index[-1] - df.index[0]).days
@@ -246,7 +264,7 @@ def validate_hypothesis(
                 "total_months": round(months, 0),
             }
 
-    # Extremes
+    # 极值（最差触发）
     extremes = []
     if changes:
         sorted_triggers = sorted(triggers, key=lambda t: t.change_pct)
@@ -277,45 +295,50 @@ def _evaluate_conditions(
     warnings: List[str] | None = None,
     mtf: "MtfEvalContext | None" = None,
 ) -> pd.Series:
-    """Evaluate a list of conditions against a DataFrame."""
+    """逐条件 logic 组合求值：engine（WHEN/THEN）与 rule_engine（进出场配对）共用实现。
+
+    每个条件自身的 ``logic`` 字段决定它与累积结果的组合方式（AND/OR），
+    首条件无累积对象其 logic 忽略，IF 与 AND 在布尔级等价。
+    """
     if not conditions:
         return pd.Series(False, index=df.index)
 
-    masks = []
-    logic = "AND"
-    for cond in conditions:
-        logic = cond.get("logic", "AND")
-        from core.analysis.condition_kernel import _mask_for
+    result: Optional[pd.Series] = None
+    from core.analysis.condition_kernel import _mask_for
+
+    for i, cond in enumerate(conditions):
         mask = _mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
-        masks.append(mask)
+        # 逐条件语义：每个条件自身的 logic 与累积结果组合；
+        # 首条件无累积对象，其 logic 忽略；IF 与 AND 布尔级等价
+        logic = cond.get("logic", "AND") if i > 0 else None
 
-    if not masks:
-        return pd.Series(False, index=df.index)
-
-    result = masks[0]
-    for m in masks[1:]:
-        if logic == "AND":
-            result = result & m
+        if result is None:
+            result = mask
+        elif logic == "OR":
+            result = result | mask
         else:
-            result = result | m
+            result = result & mask
 
-    return result.fillna(False)
+    if result is not None:
+        return result.fillna(False)
+
+    return pd.Series(False, index=df.index)
 
 
 def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str] | None = None) -> pd.Series:
-    """Evaluate a single condition."""
+    """单条件求值（subject × action × target → 布尔掩码）。"""
     subject = cond.get("subject", "")
     action = cond.get("action", "")
     target = cond.get("target", "")
 
-    # Get subject series
+    # 解析 subject 序列
     subject_series = _resolve_subject(df, subject)
     if subject_series is None:
         if warnings is not None:
             warnings.append(f"Subject '{subject}' not found in data columns")
         return pd.Series(False, index=df.index)
 
-    # Get target value/series using new resolver
+    # 解析 target（数值或列序列）
     target_val = _resolve_target(df, target)
 
     if target_val is None:
@@ -323,7 +346,7 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
             warnings.append(f"Target '{target}' could not be resolved to a numeric value or data column")
         return pd.Series(False, index=df.index)
 
-    # Apply action
+    # 动作分派
     action_map = {
         "touch": lambda s, t: _touch_condition(s, t),
         "cross_above": lambda s, t: _cross_above(s, t),
@@ -340,11 +363,11 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "divergence_bottom": lambda s, t: _resolve_pattern(df, "divergence_bottom", s.name if hasattr(s, "name") else subject),
         "consecutive_up": lambda s, t: _resolve_pattern(df, "consecutive_up", s.name if hasattr(s, "name") else subject, t),
         "consecutive_down": lambda s, t: _resolve_pattern(df, "consecutive_down", s.name if hasattr(s, "name") else subject, t),
-        # Phase 2: dynamic context actions
+        # 动态上下文动作（Phase 2）
         "cross_above_series": lambda s, t: _cross_above_series_condition(df, cond, s),
         "cross_below_series": lambda s, t: _cross_below_series_condition(df, cond, s),
         "lookback_any": lambda s, t: _lookback_condition(df, cond, s, "any"),
-        # Phase 4: support/resistance actions
+        # 支撑/阻力动作（Phase 4）
         "touch_bounce": lambda s, t: _resolve_snr_pattern(df, "touch_bounce", s.name if hasattr(s, "name") else subject, cond),
         "role_reversal": lambda s, t: _resolve_snr_pattern(df, "role_reversal", s.name if hasattr(s, "name") else subject, cond),
     }
@@ -359,7 +382,8 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
 
 
 def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
-    """Resolve a subject name to a DataFrame column."""
+    """把 subject 名解析为 DataFrame 列（未命中返回 None，消费方
+    全 False 降级）。"""
     subject_map = {
         "close": "close", "price": "close",
         "open": "open", "high": "high", "low": "low",
@@ -391,14 +415,14 @@ def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
 
 
 def _resolve_target(df: pd.DataFrame, target):
-    """Resolve a target to a numeric value or a DataFrame column series.
+    """把 target 解析为数值或 DataFrame 列序列。
 
-    Resolution order:
-    1. If target is already numeric, return as float.
-    2. Try to parse target string as float.
-    3. Try cross-timeframe format "tf:indicator" (e.g. "4h:ema_20").
-    4. Try exact column name match in DataFrame.
-    5. Try fuzzy column name match (same logic as _resolve_subject).
+    解析顺序：
+    1. 已是数值直接转 float。
+    2. 字符串尝试 float 解析。
+    3. 跨周期形制 "tf:indicator"（如 "4h:ema_20" → 查 "ema_20_4h" 列）。
+    4. DataFrame 精确列名匹配。
+    5. 模糊列名匹配（去下划线小写后子串，与 _resolve_subject 同逻辑）。
     """
     if isinstance(target, (int, float)):
         return float(target)
@@ -406,32 +430,32 @@ def _resolve_target(df: pd.DataFrame, target):
     if not isinstance(target, str) or not target:
         return None
 
-    # Try numeric parse
+    # 数值解析
     try:
         return float(target)
     except (ValueError, TypeError):
         pass
 
-    # Cross-timeframe reference: "4h:ema_20" -> look for "ema_20_4h" column
+    # 跨周期引用："4h:ema_20" → 查 "ema_20_4h" 列
     if ":" in target:
         parts = target.split(":", 1)
         if len(parts) == 2:
             tf_suffix, indicator = parts[0], parts[1]
-            # Try direct suffixed column name
+            # 带周期后缀的精确列名
             suffixed = f"{indicator}_{tf_suffix}"
             if suffixed in df.columns:
                 return df[suffixed]
-            # Fuzzy match on suffixed name
+            # 后缀名模糊匹配
             suffixed_normalized = suffixed.lower().replace("_", "")
             matches = [c for c in df.columns if suffixed_normalized in c.lower().replace("_", "")]
             if matches:
                 return df[matches[0]]
 
-    # Exact column match
+    # 精确列名
     if target in df.columns:
         return df[target]
 
-    # Fuzzy column match: strip underscores + lowercase, then substring match
+    # 模糊列名：去下划线小写后子串匹配
     target_normalized = target.lower().replace("_", "")
     matches = [c for c in df.columns if target_normalized in c.lower().replace("_", "")]
     if matches:
@@ -446,7 +470,7 @@ def _resolve_pattern(
     subject_col: str,
     target=None,
 ) -> pd.Series:
-    """Resolve pattern-type actions using patterns module."""
+    """形态类动作求值（委托 patterns 模块）。"""
     from core.validation.patterns import (
         detect_divergence_top,
         detect_divergence_bottom,
@@ -454,9 +478,9 @@ def _resolve_pattern(
         detect_consecutive_down,
     )
 
-    # Resolve the actual column name
+    # 实际列名解析（含模糊兜底）
     if subject_col not in df.columns:
-        # Try fuzzy match
+        # 模糊匹配
         matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
         if not matches:
             return pd.Series(False, index=df.index)
@@ -489,7 +513,7 @@ def _resolve_pattern(
 def _cross_above_series_condition(
     df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
 ) -> pd.Series:
-    """Cross above another indicator series."""
+    """上穿另一指标序列。"""
     target_series = _resolve_subject(df, cond.get("target", ""))
     if target_series is None:
         return pd.Series(False, index=df.index)
@@ -499,7 +523,7 @@ def _cross_above_series_condition(
 def _cross_below_series_condition(
     df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
 ) -> pd.Series:
-    """Cross below another indicator series."""
+    """下穿另一指标序列。"""
     target_series = _resolve_subject(df, cond.get("target", ""))
     if target_series is None:
         return pd.Series(False, index=df.index)
@@ -509,8 +533,29 @@ def _cross_below_series_condition(
 def _lookback_condition(
     df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
 ) -> pd.Series:
-    """Lookback window: check if inner condition is met within window bars."""
+    """前瞻核验：window bar 内内层条件是否达成（any/all 两模式）。"""
     window = cond.get("window", 5)
+    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
+    from core.analysis.hypothesis_service import ResearchError
+
+    try:
+        window = int(window)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError：window=inf 经 int() 转换裸穿（与 _param_number 同款收口）
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为整数: {window!r}",
+            detail={"param": "condition.window", "value": str(window),
+                    "legal_range": ">=1 整数"},
+        ) from None
+    if window < 1:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为 >=1: {window!r}",
+            detail={"param": "condition.window", "value": window,
+                    "legal_range": ">=1 整数"},
+        )
+
     inner_action = cond.get("inner_action", "price_above")
     target_val = cond.get("target", 0)
 
@@ -530,7 +575,7 @@ def _lookback_condition(
         else:
             inner_signal = subject_series <= threshold
     else:
-        # Default: price_above
+        # 默认内层动作：price_above
         inner_signal = df["close"] > subject_series
 
     if mode == "any":
@@ -566,10 +611,10 @@ def _resolve_snr_pattern(
     subject_col: str,
     cond: Dict,
 ) -> pd.Series:
-    """Resolve support/resistance pattern actions using patterns module."""
+    """支撑/阻力形态动作求值（委托 patterns 模块）。"""
     from core.validation.patterns import detect_touch_bounce, detect_role_reversal
 
-    # Resolve the actual column name
+    # 实际列名解析（模糊兜底）
     if subject_col not in df.columns:
         matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
         if not matches:
@@ -596,16 +641,16 @@ def _check_then_conditions(
     trigger_loc: int = 0,
     max_window: int = 8,
 ) -> bool:
-    """Check if THEN conditions are met in the forward window.
+    """前瞻窗口内 THEN 条件是否达成。
 
-    Each condition can have its own ``window`` field; if present, the
-    window_df is trimmed to that condition's window before evaluation.
+    各条件可带自身 ``window`` 字段——存在时 window_df 先截到该条件
+    的窗口再判定。
     """
     for cond in conditions:
         action = cond.get("action", "")
         target_val = cond.get("target", 0)
 
-        # Per-condition window: trim the window_df if condition specifies its own window
+        # 逐条件窗口：条件自带更小窗口时截窗判定
         cond_window = cond.get("window")
         if cond_window is not None and cond_window < max_window:
             cond_df = window_df.iloc[:cond_window]
@@ -639,7 +684,7 @@ def _check_then_conditions(
             if action == "ge" and change >= threshold:
                 return True
 
-    # Default: check if any price moved by target threshold
+    # 兜底：任一条件按 target 阈值核验价格变动
     if conditions:
         cond = conditions[0]
         action = cond.get("action", "drop")
@@ -650,34 +695,30 @@ def _check_then_conditions(
 
         if action in ("drop",):
             change = ((window_df["close"].min() - trigger_price) / trigger_price) * 100
-            return change <= threshold
+            return bool(change <= threshold)
         elif action in ("rise",):
             change = ((window_df["close"].max() - trigger_price) / trigger_price) * 100
-            return change >= threshold
+            return bool(change >= threshold)
 
     return False
 
 
 def _touch_condition(series: pd.Series, target) -> pd.Series:
-    """Check if series touches target (within 0.5% tolerance)."""
+    """触及判定（0.5% 容差或序列标准差 10% 取宽者）。"""
     tolerance = abs(target) * 0.005 if isinstance(target, (int, float)) else 0
     return abs(series - target) <= max(tolerance, series.std() * 0.1)
 
 
 def _cross_above(series: pd.Series, target) -> pd.Series:
-    if isinstance(target, (int, float)):
-        return (series.shift(1) < target) & (series >= target)
     return (series.shift(1) < target) & (series >= target)
 
 
 def _cross_below(series: pd.Series, target) -> pd.Series:
-    if isinstance(target, (int, float)):
-        return (series.shift(1) > target) & (series <= target)
     return (series.shift(1) > target) & (series <= target)
 
 
 def _spike_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
-    """Volume spike: current > N * rolling average."""
+    """放量：当前值 > N × 滚动均值（N 默认 2.0）。"""
     try:
         multiplier = float(target) if isinstance(target, (int, float, str)) else 2.0
     except (ValueError, TypeError):
@@ -687,7 +728,7 @@ def _spike_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
 
 
 def _shrink_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
-    """Volume shrink: current < N * rolling average."""
+    """缩量：当前值 < N × 滚动均值（N 默认 0.5）。"""
     try:
         multiplier = float(target) if isinstance(target, (int, float, str)) else 0.5
     except (ValueError, TypeError):
@@ -697,7 +738,7 @@ def _shrink_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
 
 
 def _build_distribution(changes: List[float], matches: List[bool]) -> List[DistributionBucket]:
-    """Build histogram buckets from change percentages."""
+    """涨幅百分比的直方图分桶（末桶闭区间，其余左闭右开）。"""
     if not changes:
         return []
 
@@ -705,7 +746,7 @@ def _build_distribution(changes: List[float], matches: List[bool]) -> List[Distr
     min_val = float(np.min(arr))
     max_val = float(np.max(arr))
 
-    # Create buckets
+    # 分桶（5-10 桶，按样本量取）
     num_buckets = min(10, max(5, len(changes) // 5))
     bucket_width = (max_val - min_val) / num_buckets if max_val != min_val else 2
 

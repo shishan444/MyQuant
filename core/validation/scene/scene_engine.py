@@ -1,8 +1,15 @@
-"""Scene verification orchestrator: loads data, dispatches detector, computes statistics."""
+"""场景验证编排器：装载数据 → 分派检测器 → 计算前向统计。
+
+服务对象：api/routes/scene.py 的场景验证端点（run_scene_
+verification 直调）与 tests/evolution 场景特征网；DETECTORS
+注册表是 scene/ 六检测器的统一装配点，scene/__init__.py 的
+包出口 re-export 本模块入口。职责边界：只做编排与分派——
+检测逻辑归各 detector，前向统计归 forward_stats，指标计算归
+core.features.indicators，数据装载归 core.data.mtf_loader。
+"""
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,7 +31,7 @@ from .cross_timeframe import CrossTimeframeDetector
 logger = logging.getLogger("scene_engine")
 
 # ---------------------------------------------------------------------------
-# Detector registry
+# 检测器注册表
 # ---------------------------------------------------------------------------
 
 DETECTORS: Dict[str, SceneDetector] = {
@@ -38,16 +45,16 @@ DETECTORS: Dict[str, SceneDetector] = {
 
 SCENE_TYPES = list(DETECTORS.keys())
 
-# Scene display metadata (used by frontend for labels/icons)
+# 场景展示元数据（前端用作标签/图标）
 SCENE_META: Dict[str, Dict[str, str]] = {
-    # -- Sub-patterns of top_pattern (parent field indicates proxy) --
+    # -- top_pattern 的子模式（parent 字段标示代理归属）--
     "double_top":         {"label": "双顶",   "description": "M形态，两峰相近",
                            "parent": "top_pattern", "group": "顶部形态"},
     "head_shoulders_top": {"label": "头肩顶", "description": "左肩-头-右肩反转",
                            "parent": "top_pattern", "group": "顶部形态"},
     "triple_top":         {"label": "三重顶", "description": "三峰相近的顶部反转",
                            "parent": "top_pattern", "group": "顶部形态"},
-    # -- Independent scene types --
+    # -- 独立场景类型 --
     "volume_spike":       {"label": "成交量异动", "description": "成交量突破N倍均量",
                            "group": "独立场景"},
     "mean_reversion":     {"label": "均值回归",   "description": "价格偏离均线后回归",
@@ -60,14 +67,14 @@ SCENE_META: Dict[str, Dict[str, str]] = {
                            "group": "独立场景"},
 }
 
-# Map sub-pattern scene_type to the actual detector key
+# 子模式 scene_type → 实际检测器键的映射
 SUB_PATTERN_PARENT: Dict[str, str] = {
     k: v["parent"] for k, v in SCENE_META.items() if "parent" in v
 }
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# 主入口
 # ---------------------------------------------------------------------------
 
 def run_scene_verification(
@@ -80,28 +87,28 @@ def run_scene_verification(
     data_end: Optional[str] = None,
     data_dir: Optional[str] = None,
 ) -> SceneVerificationResult:
-    """Run scene verification: detect patterns, compute forward statistics.
+    """执行场景验证：检测形态出现点，计算前向统计。
 
     Args:
-        symbol: Trading pair like "BTCUSDT".
-        timeframe: K-line interval like "4h".
-        scene_type: One of SCENE_TYPES.
-        params: Detector-specific parameters (merged with defaults).
-        horizons: Forward-looking bar counts. Defaults to [6, 12, 24, 48].
-        data_start: Optional start date filter.
-        data_end: Optional end date filter.
-        data_dir: Optional path to market data directory.
+        symbol: 交易对，如 "BTCUSDT"。
+        timeframe: K 线周期，如 "4h"。
+        scene_type: SCENE_TYPES 之一，或 top_pattern 的子模式名。
+        params: 检测器参数（与各检测器默认参数合并）。
+        horizons: 前向统计的 bar 数列表。默认 [6, 12, 24, 48]。
+        data_start: 可选的起始日期过滤。
+        data_end: 可选的结束日期过滤。
+        data_dir: 可选的行情数据目录路径。
 
     Returns:
-        SceneVerificationResult with triggers and aggregated statistics.
+        SceneVerificationResult（触发点明细 + 分 horizon 聚合统计）。
     """
     warnings: List[str] = []
 
-    # Resolve sub-pattern to parent detector, or use directly
+    # 子模式归并到父检测器；非子模式则直接使用
     detector_key = SUB_PATTERN_PARENT.get(scene_type, scene_type)
     sub_filter = scene_type if scene_type in SUB_PATTERN_PARENT else None
 
-    # Validate scene_type
+    # 校验 scene_type
     if detector_key not in DETECTORS and scene_type not in SCENE_META:
         return SceneVerificationResult(
             scene_type=scene_type, total_triggers=0,
@@ -110,18 +117,39 @@ def run_scene_verification(
 
     if horizons is None:
         horizons = [6, 12, 24, 48]
+    if not horizons:
+        # 空列表无统计意义（forward_stats 的 max(horizons) 直接 ValueError 穿 500）
+        from core.analysis.hypothesis_service import ResearchError
+
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"horizons 不能为空: {horizons!r}",
+            detail={"param": "horizons", "value": horizons,
+                    "legal_range": "非空正整数列表"},
+        )
     if params is None:
         params = {}
 
-    # Resolve data directory
+    # 解析数据目录
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "data" / "market")
 
-    # Load data
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # 数据装载（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
+    # 未知 timeframe 结构化拒绝而非静默空结果）
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
 
-    if not parquet_path.exists():
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(symbol), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
+
+    if parquet_path is None:
         return SceneVerificationResult(
             scene_type=scene_type, total_triggers=0,
             warnings=[f"No data found for {symbol}_{timeframe}"],
@@ -134,7 +162,7 @@ def run_scene_verification(
             warnings=[f"Empty dataset for {symbol}_{timeframe}"],
         )
 
-    # Filter by date range
+    # 按日期区间过滤
     if data_start:
         df = df[df.index >= data_start]
     if data_end:
@@ -146,10 +174,10 @@ def run_scene_verification(
             warnings=[f"No data in range {data_start} ~ {data_end}"],
         )
 
-    # Compute indicators
+    # 计算指标
     enhanced_df = compute_all_indicators(df)
 
-    # MTF: if cross_timeframe, load and merge higher-TF data
+    # MTF：cross_timeframe 时装载并合并高周期数据
     if detector_key == "cross_timeframe":
         higher_tf = params.get("higher_tf", "1d")
         try:
@@ -174,12 +202,12 @@ def run_scene_verification(
                 warnings=warnings,
             )
 
-    # Run detector
+    # 运行检测器
     detector = DETECTORS[detector_key]
     merged_params = {**detector.default_params, **params}
     trigger_points = detector.detect(enhanced_df, merged_params)
 
-    # Filter by sub-pattern if requested
+    # 按子模式过滤（指定子模式时）
     if sub_filter:
         trigger_points = [tp for tp in trigger_points if tp.pattern_subtype == sub_filter]
 
@@ -189,7 +217,7 @@ def run_scene_verification(
             warnings=["No scene occurrences detected in the data."],
         )
 
-    # Compute forward stats for each trigger
+    # 逐触发点计算前向统计
     all_horizon_stats: Dict[int, List] = {h: [] for h in horizons}
     trigger_details: List[Dict[str, Any]] = []
 
@@ -221,7 +249,7 @@ def run_scene_verification(
             if h in all_horizon_stats:
                 all_horizon_stats[h].append(stats)
 
-    # Aggregate
+    # 聚合
     aggregated = aggregate_by_horizon(all_horizon_stats)
 
     return SceneVerificationResult(

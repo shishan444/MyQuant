@@ -196,8 +196,9 @@ class TestMinSpacing:
         assert triggers[0].bar_index == 20
         assert triggers[1].bar_index == 35
 
-    def test_min_spacing_zero(self, detector):
-        """With min_spacing=0, all crosses should trigger."""
+    def test_min_spacing_minimum_one_all_crosses_trigger(self, detector):
+        """CARD-05 增量后：min_spacing 最小合法值为 1（无实际抑制，
+        全部金叉触发——原 min_spacing=0 用例的行为面由 1 承载）。"""
         n = 100
         dates = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
         closes = np.full(n, 60000.0)
@@ -219,5 +220,26 @@ class TestMinSpacing:
 
         triggers = detector.detect(df, {"higher_tf": "1d", "signal_type": "ema_cross",
                                         "fast_period": 20, "slow_period": 50,
-                                        "min_spacing": 0})
+                                        "min_spacing": 1})
         assert len(triggers) == 4
+
+    def test_min_spacing_zero_rejected(self, detector):
+        """CARD-05 增量契约：min_spacing=0 结构化拒绝（旧行为全触发已退役）。"""
+        import pytest as _pytest
+        from core.analysis.hypothesis_service import ResearchError
+        n = 100
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
+        closes = np.full(n, 60000.0)
+        df = pd.DataFrame(
+            {"open": closes, "high": closes, "low": closes,
+             "close": closes, "volume": [100] * n},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df["ema_20_1d"] = 59900.0
+        df["ema_50_1d"] = 60100.0
+
+        with _pytest.raises(ResearchError, match="min_spacing 须为 >= 1"):
+            detector.detect(df, {"higher_tf": "1d", "signal_type": "ema_cross",
+                                 "fast_period": 20, "slow_period": 50,
+                                 "min_spacing": 0})

@@ -1,4 +1,13 @@
-"""Multi-timeframe data loading and merging."""
+"""多周期数据装载与合并。
+
+服务对象：三引擎的高周期装载——validation.engine/rule_engine/
+scene_engine 的 MTF 条件合并；tests/analysis 独立合并链与
+tests/backtest/test_mtf 特征测试的 merge_to_base 直调。
+委托方向：load_mtf_data 单向委托 core.data.mtf_loader（引
+find_parquet/safe_symbol 共享路径发现，反向无依赖）。
+职责边界：装载/合并；周期分钟换算的周期表在 core.data.timeframes
+（B4.1 单一来源）。
+"""
 from __future__ import annotations
 
 import re
@@ -15,12 +24,12 @@ _TF_MINUTES: Dict[str, int] = {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
 
 
 def get_timeframe_minutes(tf: str) -> int:
-    """Convert timeframe string to minutes."""
+    """周期字符串转分钟数（未知周期 raise ValueError）。"""
     tf_lower = tf.lower().strip()
     if tf_lower in _TF_MINUTES:
         return _TF_MINUTES[tf_lower]
 
-    # Fallback: try parsing "Nh", "Nm", "Nd", "Nw"
+    # 兜底：解析 "Nh"/"Nm"/"Nd"/"Nw" 形式
     match = re.match(r"(\d+)\s*(m|h|d|w)", tf_lower)
     if match:
         amount = int(match.group(1))
@@ -32,7 +41,7 @@ def get_timeframe_minutes(tf: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# 数据装载
 # ---------------------------------------------------------------------------
 
 def load_mtf_data(
@@ -42,21 +51,21 @@ def load_mtf_data(
     end: Optional[str] = None,
     data_dir: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame]:
-    """Load parquet data for multiple timeframes.
+    """装载多周期 Parquet 数据（主名+别名兜底，缺文件周期跳过）。
 
     Returns:
-        Dict mapping timeframe string to its DataFrame.
+        周期字符串 → DataFrame 的映射。
     """
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", pair)
+    from core.data.mtf_loader import find_parquet, safe_symbol  # B4.1：共享路径发现（含别名兜底）
+
+    symbol_ = safe_symbol(pair)
     result: Dict[str, pd.DataFrame] = {}
 
-    from core.data.mtf_loader import find_parquet  # B4.1：共享路径发现（含别名兜底）
-
     for tf in timeframes:
-        path = find_parquet(Path(data_dir), safe_symbol, tf)
+        path = find_parquet(Path(data_dir), symbol_, tf)
         if path is None:
             continue
 
@@ -64,7 +73,7 @@ def load_mtf_data(
         if df is None or len(df) == 0:
             continue
 
-        # Filter by date range
+        # 日期区间过滤
         if start:
             df = df[df.index >= start]
         if end:
@@ -77,7 +86,7 @@ def load_mtf_data(
 
 
 # ---------------------------------------------------------------------------
-# Merge to base timeframe
+# 合并到基准周期
 # ---------------------------------------------------------------------------
 
 def merge_to_base(
@@ -86,7 +95,7 @@ def merge_to_base(
     base_tf_minutes: int,
     info_tf_minutes_map: Optional[Dict[str, int]] = None,
 ) -> pd.DataFrame:
-    """Merge higher-timeframe columns into base DataFrame（0.2.14 收口）.
+    """高周期列合并进基准 DataFrame（0.2.14 收口）。
 
     每列经 ``mtf_alignment.project_completed`` 值投影（asof_completed：
     高周期 bar T 的值挂载到收盘时刻 T+tf 后 backward 对齐）——旧
@@ -114,7 +123,7 @@ def merge_to_base(
             else get_timeframe_minutes(tf)
         )
 
-        # Skip if info timeframe is not higher than base
+        # 非高周期（等于或低于基准）跳过
         if tf_minutes <= base_tf_minutes:
             continue
 
@@ -122,7 +131,7 @@ def merge_to_base(
         cols = list(info_df.columns)
         subset = info_df[cols].copy()
 
-        # Rename columns with timeframe suffix
+        # 列名加周期后缀
         rename_map = {col: f"{col}_{tf}" for col in cols}
         subset = subset.rename(columns=rename_map)
 

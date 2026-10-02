@@ -1,4 +1,12 @@
-"""Support/resistance detector: price touches computed support or resistance levels."""
+"""支撑/阻力检测器：价格触及计算出的支撑或阻力位。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"support_
+resistance" 键）；_resolve_sr_column 另有 tests 直调锚
+（test_scene_feature_net.py:573）。职责边界：邻近触发单条件
+扫描（both 时双列任一侧邻近即触发），支撑/阻力列按 source +
+direction 关键词匹配解析，指标快照复用 top_pattern._
+extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -6,7 +14,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from .base import SceneDetector, TriggerPoint
+from .base import SceneDetector, TriggerPoint, _param_number
 from .top_pattern import _extract_snapshot
 
 
@@ -29,14 +37,18 @@ class SupportResistanceDetector(SceneDetector):
         p = {**self.default_params, **params}
         level_source = str(p["level_source"])
         direction = str(p["direction"])
-        proximity = float(p["proximity_pct"])
-        min_spacing = int(p["min_spacing"])
+        proximity = _param_number(p, "proximity_pct", min_value=0, exclusive=True)
+        min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
-        # Resolve level columns
-        level_col = _resolve_sr_column(level_source, direction, df.columns)
-        if level_col is None:
+        # both 时分别解析 support/resistance 两列，单方向只解析自身列
+        sides = ("support", "resistance") if direction == "both" else (direction,)
+        side_levels = {}
+        for side in sides:
+            col = _resolve_sr_column(level_source, side, df.columns)
+            if col is not None:
+                side_levels[side] = df[col].values
+        if not side_levels:
             return []
-        level_vals = df[level_col].values
 
         highs = df["high"].values
         lows = df["low"].values
@@ -46,30 +58,31 @@ class SupportResistanceDetector(SceneDetector):
         last_bar = -min_spacing - 1
 
         for i in range(1, len(df)):
-            if np.isnan(level_vals[i]):
-                continue
+            # 逐侧检查：support 配 lows（下探支撑）、resistance 配 highs
+            # （上冲阻力），任一侧邻近即触发，level 值取触发侧
+            touched_level = None
+            proximity_dist = 0.0
+            for side, level_vals in side_levels.items():
+                # ==0 与 NaN 同拒：dist 计算除以 level（与 volume_breakout
+                # 的 breakout_pct 守卫同款）
+                if np.isnan(level_vals[i]) or level_vals[i] == 0:
+                    continue
+                price = lows[i] if side == "support" else highs[i]
+                dist = abs(price - level_vals[i]) / level_vals[i] * 100
+                if dist <= proximity:
+                    touched_level = level_vals[i]
+                    proximity_dist = dist
+                    break
 
-            touched = False
-            if direction in ("support", "both"):
-                # Price low touches or dips below support, then proximity check
-                proximity_dist = abs(lows[i] - level_vals[i]) / level_vals[i] * 100
-                if proximity_dist <= proximity:
-                    touched = True
-
-            if direction == "resistance" and not touched:
-                proximity_dist = abs(highs[i] - level_vals[i]) / level_vals[i] * 100
-                if proximity_dist <= proximity:
-                    touched = True
-
-            if not touched:
+            if touched_level is None:
                 continue
             if i - last_bar < min_spacing:
                 continue
 
             trigger_row = df.iloc[i]
             snapshot = _extract_snapshot(trigger_row)
-            snapshot["level_value"] = round(float(level_vals[i]), 4)
-            snapshot["proximity_pct"] = round(proximity_dist, 2) if touched else 0
+            snapshot["level_value"] = round(float(touched_level), 4)
+            snapshot["proximity_pct"] = round(proximity_dist, 2)
 
             triggers.append(TriggerPoint(
                 id=len(triggers) + 1,
@@ -86,7 +99,7 @@ class SupportResistanceDetector(SceneDetector):
 def _resolve_sr_column(
     source: str, direction: str, columns: pd.Index,
 ) -> str | None:
-    """Find the indicator column for a support/resistance level."""
+    """查找支撑/阻力位对应的指标列。"""
     direction_map = {
         "support": ["lower", "l", "support"],
         "resistance": ["upper", "u", "resistance"],

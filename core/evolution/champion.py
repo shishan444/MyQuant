@@ -1,4 +1,9 @@
-"""Champion tracker: atomic score + metrics updates (Hall-of-Fame pattern)."""
+"""冠军追踪：分数 + 指标的原子快照更新（Hall-of-Fame 模式）。
+
+服务对象：api/runner.py 进化任务线程（runner 的 Hall-of-Fame
+原子快照——每代更新后写任务记录与 champion 落库）。职责边界：
+只管历史最优的判定与持有，不做评估（分数由评估层给出）。
+"""
 from __future__ import annotations
 
 import copy
@@ -11,7 +16,7 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class ChampionRecord:
-    """Immutable snapshot of the best individual at a point in time."""
+    """某时刻历史最优个体的不可变快照（score/metrics/代数/时间戳）。"""
     score: float
     metrics: Dict[str, Any] = field(default_factory=dict)
     dimension_scores: Dict[str, float] = field(default_factory=dict)
@@ -20,11 +25,10 @@ class ChampionRecord:
 
 
 class ChampionTracker:
-    """Tracks the all-time best individual across generations.
+    """跨代追踪历史最优个体。
 
-    Score and metrics are always updated as a single atomic unit,
-    eliminating the desynchronization bug where best_score could come
-    from a different individual than champion_metrics.
+    分数与指标恒作为一个原子单元更新——消除 best_score 与
+    champion_metrics 可能来自不同个体的失步缺陷。
     """
 
     def __init__(self) -> None:
@@ -38,9 +42,10 @@ class ChampionTracker:
         dimension_scores: Optional[Dict[str, float]] = None,
         generation: int = 0,
     ) -> bool:
-        """Atomically update champion if candidate is strictly better.
+        """候选严格更优时原子更新冠军。
 
-        Returns True if champion was updated, False otherwise.
+        Returns:
+            True 更新成功；False 未更新（分数非正或不优于现任）。
         """
         if score <= 0:
             return False
@@ -60,7 +65,7 @@ class ChampionTracker:
             return False
 
     def get_champion(self) -> Optional[ChampionRecord]:
-        """Return current champion snapshot (thread-safe copy)."""
+        """返回当前冠军快照（深拷贝，线程安全）。"""
         with self._lock:
             if self._champion is None:
                 return None
@@ -68,6 +73,6 @@ class ChampionTracker:
 
     @property
     def best_score(self) -> float:
-        """Return current best score, or -1.0 if no champion."""
+        """当前最优分；无冠军时 -1.0。"""
         with self._lock:
             return self._champion.score if self._champion else -1.0
