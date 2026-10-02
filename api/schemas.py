@@ -1,4 +1,11 @@
-"""Pydantic V2 request/response models for the API layer."""
+"""REST 契约的单一事实源（Pydantic V2 请求/响应模型层）。
+
+职能：定义 /api/* 端点的请求与响应形制——FastAPI 据此做传输校验；
+OpenAPI 生成类型外化至 web 前端（web/src/types/generated）；MCP
+服务经 httpx 运行时消费同一 REST 契约（非类型下游）。
+服务对象：全部路由模块（请求校验与响应序列化）+ OpenAPI 文档消费方。
+职责边界：只描述传输契约，不含业务逻辑与持久化形制（后者在 core 层）。
+"""
 from __future__ import annotations
 
 import json
@@ -66,7 +73,7 @@ ScoreTemplateName = Literal[
 
 
 class RequirementsConfigModel(BaseModel):
-    """User-configurable requirements for strategy qualification."""
+    """策略达标线的用户可配置项（合格判定的需求侧输入）。"""
     objective: ScoringObjective = Field(default="sharpe", description="Objective function: sharpe, calmar, or annual_return")
     min_annual_return: float = Field(default=0.0, ge=0.0, description="Minimum annual return constraint (0 = disabled)")
     max_drawdown: float = Field(default=0.30, ge=0.05, le=0.99, description="Maximum drawdown (0.30 = 30%)")
@@ -117,7 +124,7 @@ class RiskGenesModel(BaseModel):
 
 
 class DNAModel(BaseModel):
-    """Full StrategyDNA as a Pydantic model for API serialization."""
+    """核心 StrategyDNA 的传输层完整形制（含 to_dna() 领域转换入口）。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -146,7 +153,7 @@ class DNAModel(BaseModel):
 
 
 class TimeframeLayerModel(BaseModel):
-    """A single timeframe layer within an MTF strategy."""
+    """MTF 策略中的单周期层（层内信号与逻辑独立于执行周期评估）。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -669,7 +676,7 @@ class ConfigUpdate(BaseModel):
 
 
 class PaperTradingTaskCreate(BaseModel):
-    """Request to create a paper trading task."""
+    """创建模拟盘任务的请求体。"""
     dna_json: str = Field(..., description="StrategyDNA as JSON string")
     symbol: str = Field(default="BTCUSDT")
     timeframe: str = Field(default="4h")
@@ -700,28 +707,28 @@ class PaperTradingTaskResponse(BaseModel):
     started_at: Optional[str] = None
     stopped_at: Optional[str] = None
     stop_reason: Optional[str] = None
-    # Position
+    # 当前持仓
     position_side: Optional[str] = None
     position_entry: Optional[float] = None
     position_quantity: Optional[float] = None
     position_margin: Optional[float] = None
     position_funding: Optional[float] = None
-    # Account
+    # 账户
     balance: Optional[float] = None
     unrealized_pnl: float = 0.0
-    # Stats
+    # 交易统计
     total_trades: int = 0
     total_pnl: float = 0.0
     win_count: int = 0
     loss_count: int = 0
-    # Last bar
+    # 最新 K 线
     last_bar_time: Optional[str] = None
     last_bar_close: Optional[float] = None
-    # Execution model
+    # 执行模型
     execution_model: str = "v1"
     confidence_sizing_enabled: bool = False
     prediction_dna_json: Optional[str] = None
-    # Warnings
+    # 运行告警
     warnings: Optional[List[str]] = None
 
 
