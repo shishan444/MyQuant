@@ -183,7 +183,7 @@ class _VerifyProcessor:
                     "timeframe": dna.execution_genes.timeframe,
                     "row": row,
                 })
-                strategy_names[sid] = row.get("name", sid[:8])
+                strategy_names[sid] = row.get("name") or sid[:8]
             except Exception:
                 continue
 

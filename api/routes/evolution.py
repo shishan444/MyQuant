@@ -168,7 +168,7 @@ def _strategies_to_dicts(
                 pass
         result.append({
             "strategy_id": s["strategy_id"],
-            "name": s.get("name"),
+            "name": s.get("name") or s["strategy_id"][:8],
             "dna": dna_dict,
             "source": "evolution",
             "source_task_id": s.get("source_task_id"),
