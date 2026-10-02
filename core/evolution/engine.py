@@ -1,4 +1,12 @@
-"""Evolution engine: main loop with early stopping and parallel evaluation."""
+"""进化引擎：代际主循环（早停 + 批量/逐个评估）。
+
+服务对象：api/runner.py 进化任务线程（runner → EvolutionEngine.evolve
+→ evaluate_population → BacktestEngine + compute_fitness）与
+tests/evolution 契约测试。职责边界：种群初始化后的代际编排——评估、
+锦标赛选择、精英保留、交叉变异、新鲜血液注入与多样性维护、早停
+判定；数据装载与 fitness 公式由调用方以 evaluate_fn/
+evaluate_population 回调注入，引擎本身不持有。
+"""
 from __future__ import annotations
 
 import random
@@ -22,13 +30,11 @@ from core.evolution.diversity import (
 
 
 class EarlyStopChecker:
-    """Check early stopping conditions after each generation.
+    """代际早停判定（每代 check 一次，跨代持有计数状态）。
 
-    4 rules:
-    1. Target reached: best_fitness >= target
-    2. Stagnation: no improvement for patience generations
-    3. Decline: best_fitness declining for decline_limit generations
-    4. Max generations: reached max_generations
+    四规则：①达标——best_fitness >= target（须满 min_generations）；
+    ②停滞——连续 patience 代改善不足；③衰退——连续 decline_limit 代
+    最优回退；④代数上限 max_generations。
     """
 
     def __init__(
@@ -51,16 +57,17 @@ class EarlyStopChecker:
         self.decline_count = 0
 
     def check(self, current_best: float, generation: int) -> Tuple[str, str]:
-        """Check if evolution should stop.
+        """判定进化是否应停止。
 
         Returns:
-            (action, reason) where action is "continue" or "stop".
+            (action, reason)：action 为 "continue"/"stop"，reason 为
+            停因标识（target_reached/stagnation/decline/max_generations）。
         """
-        # Target reached: only stop after min_generations to avoid premature exit
+        # 达标停：须满 min_generations，防早期偶然高分致过早退出
         if current_best >= self.target_score and generation >= self.min_generations:
             return ("stop", "target_reached")
 
-        # Check improvement
+        # 停滞计数：改善不足 min_improvement 则累加
         improvement = current_best - self.best_score
         if improvement < self.min_improvement:
             self.no_improve_count += 1
@@ -70,7 +77,7 @@ class EarlyStopChecker:
         if self.no_improve_count >= self.patience:
             return ("stop", "stagnation")
 
-        # Check decline
+        # 衰退计数：最优回退则累加
         if current_best < self.best_score:
             self.decline_count += 1
         else:
@@ -79,11 +86,11 @@ class EarlyStopChecker:
         if self.decline_count >= self.decline_limit:
             return ("stop", "decline")
 
-        # Check max generations
+        # 代数上限
         if generation >= self.max_generations:
             return ("stop", "max_generations")
 
-        # Update best
+        # 未触发停判才更新历史最优（本代分数先参与全部判定）
         if current_best > self.best_score:
             self.best_score = current_best
 
@@ -91,7 +98,7 @@ class EarlyStopChecker:
 
 
 class _AdaptiveMutationController:
-    """1/5 success rule (Rechenberg) for adaptive mutation intensity."""
+    """1/5 成功规则（Rechenberg）自适应变异强度控制器。"""
 
     def __init__(self, window_size: int = 10):
         self._window_size = window_size
@@ -99,7 +106,7 @@ class _AdaptiveMutationController:
         self._prev_best = -float("inf")
 
     def record(self, current_best: float) -> None:
-        """Record whether this generation improved the best score."""
+        """记录本代最优是否改善（滑动窗口供 success_rate 统计）。"""
         improved = current_best > self._prev_best
         self._improvements.append(improved)
         if len(self._improvements) > self._window_size:
@@ -114,7 +121,7 @@ class _AdaptiveMutationController:
 
     @property
     def mutation_boost(self) -> float:
-        """Multiplier for mutation intensity: >1 when stuck, <1 when improving."""
+        """变异强度乘数：停滞时 >1（增强探索），改善中 <1（加速收敛）。"""
         rate = self.success_rate
         if rate > 0.3:
             return 0.85
@@ -154,11 +161,11 @@ def _tournament_select(
     k: int,
     tournsize: int = 3,
 ) -> List[StrategyDNA]:
-    """Select k individuals via tournament selection.
+    """锦标赛选择 k 个个体。
 
-    Each tournament picks tournsize random individuals and returns the best.
-    This preserves selection pressure while allowing weaker individuals
-    to occasionally reproduce, maintaining genetic diversity.
+    每场锦标赛随机取 tournsize 个参赛者、最优者胜出——保留选择
+    压力的同时让弱个体偶有繁殖机会，维持基因多样性（替代截断
+    选择的探索-利用平衡考量）。
     """
     selected = []
     pop_size = len(scored)
@@ -170,13 +177,13 @@ def _tournament_select(
 
 
 class EvolutionEngine:
-    """Main evolution loop.
+    """进化主循环编排。
 
-    Coordinates population management, evaluation, selection, crossover,
-    mutation, and early stopping. Designed for CLI/programmatic use.
+    种群管理、评估、选择、交叉、变异与早停的代际协调。面向编程
+    调用（runner 以回调注入评估函数与停止检查）。
 
-    Selection strategy: tournament selection (tournsize=3) replaces
-    truncation selection for better exploration-exploitation balance.
+    选择策略：锦标赛选择（tournsize=3）替代截断选择，换取更好的
+    探索-利用平衡。
     """
 
     def __init__(
@@ -211,23 +218,23 @@ class EvolutionEngine:
         stop_check: Optional[Callable[[], None]] = None,
         evaluate_population: Optional[Callable[[List[StrategyDNA]], List[float]]] = None,
     ) -> Dict:
-        """Run the full evolution loop.
+        """跑完整进化循环（代际：评估 → 早停判 → 选择 → 交叉变异 → 换血）。
 
         Args:
-            ancestor: Starting strategy.
-            evaluate_fn: Function that takes a StrategyDNA and returns a score (0-100).
-            on_generation: Optional callback(gen, best_score, avg_score) after each gen.
-            exclude_signatures: Set of gene signatures to avoid in population init.
-            stop_check: Optional callback that raises on stop request.
-                Called between individual evaluations.
-            evaluate_population: Optional batch version of evaluate_fn.
-                Takes a list of StrategyDNA, returns a list of scores.
-                When provided, used instead of per-individual evaluate_fn.
+            ancestor: 起始祖先策略。
+            evaluate_fn: 单体评估函数（StrategyDNA → 0-100 分）。
+            on_generation: 每代回调 (gen, best_score, avg_score)。
+            exclude_signatures: 种群初始化时排除的基因签名集。
+            stop_check: 停止请求回调（抛异常打断；逐个评估路径每
+                3 个体间调用，批量路径每代一次）。
+            evaluate_population: evaluate_fn 的批量版（种群 → 分数
+                列表）。提供时优先使用（如 BacktestEngine.batch_run）。
 
         Returns:
-            Dict with champion, history, stop_reason, total_generations.
+            Dict：champion/champion_score/history/stop_reason/
+            total_generations/target_reached。
         """
-        # Initialize population
+        # 种群初始化（祖先 + 多起点 extra_ancestors）
         population = init_population(
             self.population_size, ancestor,
             extra_ancestors=extra_ancestors,
@@ -250,21 +257,21 @@ class EvolutionEngine:
         adaptive_mut = _AdaptiveMutationController(window_size=10)
 
         for gen in range(1, self.max_generations + 1):
-            # Enforce task-level constraints on all individuals before evaluation
+            # 评估前强制任务级约束（leverage/direction 以任务配置为准）
             for ind in population:
                 ind.risk_genes.leverage = self.leverage
                 ind.risk_genes.direction = self.direction
 
-            # Evaluate all individuals
+            # 评估全种群（批量路径优先）
             evaluated = []
             if evaluate_population is not None:
-                # Batch evaluation: one call for the whole population
+                # 批量评估：整种群一次调用
                 if stop_check is not None:
                     stop_check()
                 fitnesses = evaluate_population(population)
                 evaluated = list(zip(population, fitnesses))
             else:
-                # Sequential per-individual evaluation (with stop checks)
+                # 逐个评估（每 3 个体穿插停止检查）
                 for idx, ind in enumerate(population):
                     if stop_check is not None and idx > 0 and idx % 3 == 0:
                         stop_check()
@@ -282,7 +289,7 @@ class EvolutionEngine:
                 "avg_fitness": avg_fitness,
             })
 
-            # Track champion and stagnation
+            # 冠军追踪与停滞计数
             if best_fitness > champion_fitness:
                 champion = evaluated[0][0]
                 champion_fitness = best_fitness
@@ -290,18 +297,18 @@ class EvolutionEngine:
             else:
                 stagnation_count += 1
 
-            # Record for adaptive mutation
+            # 供自适应变异 1/5 规则记录
             adaptive_mut.record(best_fitness)
 
-            # Expose evaluated population (sorted descending) so callbacks can
-            # reliably access the best individual via _population[0].
+            # 暴露按分降序的评估后种群——回调方可稳定经 _population[0]
+            # 取到当代最优个体
             self._population = [ind for ind, _ in evaluated]
 
-            # Callback
+            # 代际回调
             if on_generation:
                 on_generation(gen, best_fitness, avg_fitness)
 
-            # Early stop check
+            # 早停判定
             action, reason = stop_checker.check(best_fitness, gen)
             if action == "stop":
                 return {
@@ -314,42 +321,39 @@ class EvolutionEngine:
                     "target_reached": reason == "target_reached",
                 }
 
-            # --- Selection ---
+            # --- 选择 ---
 
-            # Elite: top elite_ratio (min 2) survive unchanged
+            # 精英：top elite_ratio（最少 2 个）原样存活
             elite_count = max(2, int(len(evaluated) * self.elite_ratio))
             elites = [ind for ind, _ in evaluated[:elite_count]]
 
-            # Parents for crossover: tournament selection from full population
-            n_children = self.population_size - elite_count - 3  # reserve 3 for fresh blood
+            # 交叉亲代：全种群锦标赛选择
+            n_children = self.population_size - elite_count - 3  # 预留 3 个新鲜血液名额
             parents = _tournament_select(evaluated, n_children * 2, tournsize=3)
 
-            # --- Mutation weights based on stagnation + adaptive controller ---
+            # --- 变异权重：停滞档位 + 自适应控制器 ---
             if stagnation_count > 8:
-                mut_weights = [15, 30, 10, 15, 20, 10]  # Heavy on indicator replacement
+                mut_weights = [15, 30, 10, 15, 20, 10]  # 重指标替换（深停滞强探索）
                 n_mutations_choices = [2, 3, 4]
                 n_mut_weights = [30, 45, 25]
             elif stagnation_count > 4:
-                mut_weights = [25, 20, 15, 20, 10, 10]  # Balanced
+                mut_weights = [25, 20, 15, 20, 10, 10]  # 均衡
                 n_mutations_choices = [1, 2, 3]
                 n_mut_weights = [25, 45, 30]
             else:
-                mut_weights = [35, 10, 10, 25, 10, 10]  # Heavy on params + risk (fine-tuning)
+                mut_weights = [35, 10, 10, 25, 10, 10]  # 重参数+risk 微调（正常收敛态）
                 n_mutations_choices = [1, 2, 3]
                 n_mut_weights = [50, 35, 15]
 
-            # Apply adaptive mutation boost (1/5 rule)
-            # When stuck (boost > 1), shift towards more mutations
-            # When improving (boost < 1), shift towards fewer mutations
             boost = adaptive_mut.mutation_boost
             if boost > 1.0:
-                # Shift weight towards higher mutation counts
+                # 权重移向更多次变异（几何衰减从高位起）
                 n_mut_weights = [
                     int(w * (0.5 ** i)) for i, w in enumerate(reversed(n_mut_weights))
                 ]
                 n_mut_weights.reverse()
             elif boost < 1.0:
-                # Shift weight towards lower mutation counts
+                # 权重移向更少次变异
                 n_mut_weights = [
                     int(w * (0.5 ** i)) for i, w in enumerate(n_mut_weights)
                 ]
@@ -361,7 +365,7 @@ class EvolutionEngine:
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
             ]
-            # MTF-specific mutations: add/remove/modify layers
+            # MTF 专属变异：层的增删改
             if len(self.timeframe_pool) > 1:
                 mutation_pool.append(partial(mutate_add_layer, candidate_timeframes=list(self.timeframe_pool)))
                 mut_weights.append(5)
@@ -378,7 +382,7 @@ class EvolutionEngine:
                 mutation_pool.append(mutate_proximity_mult)
                 mut_weights.append(3)
 
-            # --- Crossover + Mutation ---
+            # --- 交叉 + 变异 ---
             children = []
             tf_pool_arg = self.timeframe_pool if len(self.timeframe_pool) > 1 else None
 
@@ -414,14 +418,14 @@ class EvolutionEngine:
                 if len(children) >= n_children:
                     break
 
-            # Fill shortfall with random individuals
+            # 交叉产物不足额以随机个体补齐
             while len(children) < n_children:
                 children.append(create_random_dna(
                     leverage=self.leverage, direction=self.direction,
                     timeframe_pool=tf_pool_arg,
                 ))
 
-            # Fresh blood: 3-5 random individuals for diversity
+            # 新鲜血液：每代注入 3-5 个随机个体保多样性
             population = elites + children
             target_fresh = random.randint(3, 5)
             shortfall = max(target_fresh, self.population_size - len(population))
@@ -431,7 +435,7 @@ class EvolutionEngine:
                 timeframe_pool=tf_pool_arg,
             )
 
-            # Diversity maintenance: replace clones with fresh individuals
+            # 多样性维护：克隆个体替换为新鲜个体
             population = check_and_maintain_diversity(
                 population,
                 leverage=self.leverage, direction=self.direction,
@@ -440,7 +444,7 @@ class EvolutionEngine:
 
             self._population = population
 
-            # Trim to exact size
+            # 截齐规模
             population = population[:self.population_size]
 
         return {
