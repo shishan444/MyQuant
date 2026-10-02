@@ -1,4 +1,9 @@
-"""Volume spike detector: bars where volume exceeds N times the rolling average."""
+"""量能异动检测器：量能超出滚动均量 N 倍的 bar 触发。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"volume_spike"
+键）；tests/evolution 特征锚直调。职责边界：单一量能条件的
+触发点扫描，指标快照复用 top_pattern._extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List

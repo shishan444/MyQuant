@@ -1,4 +1,12 @@
-"""Volume breakout detector: volume surge combined with price breaking a key level."""
+"""放量突破检测器：量能放大与价格突破关键位的组合触发。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"volume_breakout"
+键）；_resolve_level_column 另有 tests 直调锚（test_scene_
+feature_net.py:432/438 与 tests/backtest/test_indicator_
+invariants.py:308）。职责边界：量能 + 突破双条件扫描，关键
+位列解析对齐 core.features.indicators 的列名规则，指标快照
+复用 top_pattern._extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -36,7 +44,7 @@ class VolumeBreakoutDetector(SceneDetector):
         closes = df["close"].values
         rolling_avg = pd.Series(volume).rolling(window=vol_period, min_periods=1).mean().values
 
-        # Resolve level column
+        # 解析关键位列
         level_col = _resolve_level_column(level_type, df.columns)
         if level_col is None:
             return []
@@ -46,14 +54,14 @@ class VolumeBreakoutDetector(SceneDetector):
         last_bar = -min_spacing - 1
 
         for i in range(vol_period, len(df)):
-            # Volume condition
+            # 量能条件
             if rolling_avg[i] == 0:
                 continue
             rvol = volume[i] / rolling_avg[i]
             if rvol < vol_mult:
                 continue
 
-            # Price breakout condition（==0 与 NaN 同拒：breakout_pct 除以
+            # 价格突破条件（==0 与 NaN 同拒：breakout_pct 除以
             # level 会外泄 inf）
             if np.isnan(level_vals[i]) or level_vals[i] == 0:
                 continue
@@ -84,7 +92,7 @@ class VolumeBreakoutDetector(SceneDetector):
 
 
 def _resolve_level_column(level_type: str, columns: pd.Index) -> str | None:
-    """Find the indicator column matching the requested level type.
+    """查找与请求 level 类型匹配的指标列。
 
     候选（前缀, 后缀）与生成方 core.features.indicators 的列名规则对齐：
     bb/dc 的语义段在列首（bb_upper_20_2），keltner 的语义段在列尾

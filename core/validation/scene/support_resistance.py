@@ -1,4 +1,12 @@
-"""Support/resistance detector: price touches computed support or resistance levels."""
+"""支撑/阻力检测器：价格触及计算出的支撑或阻力位。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"support_
+resistance" 键）；_resolve_sr_column 另有 tests 直调锚
+（test_scene_feature_net.py:573）。职责边界：邻近触发单条件
+扫描（both 时双列任一侧邻近即触发），支撑/阻力列按 source +
+direction 关键词匹配解析，指标快照复用 top_pattern._
+extract_snapshot。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -91,7 +99,7 @@ class SupportResistanceDetector(SceneDetector):
 def _resolve_sr_column(
     source: str, direction: str, columns: pd.Index,
 ) -> str | None:
-    """Find the indicator column for a support/resistance level."""
+    """查找支撑/阻力位对应的指标列。"""
     direction_map = {
         "support": ["lower", "l", "support"],
         "resistance": ["upper", "u", "resistance"],
