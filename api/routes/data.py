@@ -1,4 +1,9 @@
-"""Data management routes: datasets CRUD, CSV import, preview, OHLCV."""
+"""数据集管理入口（/api/data/*）。
+
+职能：数据集 CRUD/CSV 导入/预览/OHLCV 查询/图表指标计算与数据源
+探测。服务对象：web 数据页（导入与浏览）与图表组件（OHLCV/指标）。
+职责边界：传输校验与 parquet 装载编排，导入解析在 core.data。
+"""
 from __future__ import annotations
 
 import logging
@@ -67,7 +72,7 @@ def list_datasets_endpoint(
     limit: int = Query(100, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> DatasetListResponse:
-    """List datasets with optional filtering."""
+    """列出数据集（可按 symbol/interval 过滤）。"""
     rows = list_datasets(db_path, symbol=symbol, interval=interval, limit=limit)
     items = [
         DatasetResponse(
@@ -98,7 +103,7 @@ def get_dataset_endpoint(
     dataset_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> DatasetResponse:
-    """Get dataset details by ID."""
+    """按 ID 取数据集详情。"""
     row = get_dataset(db_path, dataset_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -134,7 +139,7 @@ def _persist_import_result(
         result.timestamp_precision.value if result.timestamp_precision else None
     )
 
-    # Upsert dataset metadata
+    # dataset 元数据 upsert（存在则更新统计）
     existing = get_dataset(db_path, result.dataset_id)
     if existing is None:
         save_dataset_meta(
@@ -185,8 +190,8 @@ def import_csv_endpoint(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> DataImportResponse:
-    """Import a CSV file into Parquet storage."""
-    # Save uploaded file to a temp location
+    """导入单个 CSV 到 Parquet 存储。"""
+    # 上传内容落临时文件再交导入器
     data_dir.mkdir(parents=True, exist_ok=True)
     _check_upload_size(file)
 
@@ -219,7 +224,7 @@ def import_csv_endpoint(
         # 非法参数（命名白名单/元数据不可探测/OHLCV 校验失败）→ 400
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        # Clean up temp file
+        # 清理临时文件
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
 
@@ -233,7 +238,7 @@ def import_csv_batch_endpoint(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> DataImportResponse:
-    """Import multiple CSV files into a single Parquet dataset."""
+    """多 CSV 批量导入合并为单一 Parquet 数据集。"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
     if len(files) > MAX_IMPORT_BATCH_FILES:
@@ -255,7 +260,7 @@ def import_csv_batch_endpoint(
     tmp_paths: list[Path] = []
     try:
         for f in files:
-            # Use original filename stem as prefix so parse_filename can detect symbol/interval
+            # 原文件名 stem 作前缀，供 parse_filename 探测 symbol/interval
             original_stem = Path(f.filename).stem if f.filename else None
             prefix = original_stem + "-" if original_stem else None
             tmp = tempfile.NamedTemporaryFile(
@@ -288,7 +293,7 @@ def delete_dataset_endpoint(
     dataset_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> None:
-    """Delete a dataset by ID."""
+    """按 ID 删除数据集。"""
     row = get_dataset(db_path, dataset_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -302,14 +307,14 @@ def preview_dataset(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> DatasetPreviewResponse:
-    """Preview the first N rows of a dataset."""
+    """预览数据集前 N 行。"""
     row = get_dataset(db_path, dataset_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     parquet_path = Path(row["parquet_path"])
     if not parquet_path.exists():
-        # Try data_dir fallback
+        # 回退：DB 记录的 parquet 失效时尝试 data_dir 直接定位
         parquet_path = data_dir / f"{dataset_id}.parquet"
 
     if not parquet_path.exists():
@@ -326,7 +331,7 @@ def preview_dataset(
         row_dict = {"timestamp": str(idx)}
         for col in row_data.index:
             val = row_data[col]
-            # Convert numpy types to native Python types
+            # numpy 类型转 Python 原生类型（可序列化）
             if hasattr(val, "item"):
                 val = val.item()
             row_dict[col] = val
@@ -348,7 +353,7 @@ def get_ohlcv(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
-    """Get OHLCV data for a dataset with optional time range filter."""
+    """按数据集取 OHLCV（可按时间范围过滤）。"""
     row = get_dataset(db_path, dataset_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -365,7 +370,7 @@ def get_ohlcv(
 
     df = load_parquet(parquet_path)
 
-    # Apply time range filter
+    # 时间范围过滤
     import pandas as pd
     if start is not None:
         start_ts = pd.Timestamp(start, tz="UTC") if df.index.tz else pd.Timestamp(start)
@@ -374,7 +379,7 @@ def get_ohlcv(
         end_ts = pd.Timestamp(end, tz="UTC") if df.index.tz else pd.Timestamp(end)
         df = df[df.index <= end_ts]
 
-    # Apply limit
+    # 截取 limit 行
     df = df.head(limit)
 
     return OhlcvResponse(
@@ -387,7 +392,7 @@ def get_ohlcv(
 def get_available_sources(
     data_dir: Path = Depends(get_data_dir),
 ) -> AvailableSourcesResponse:
-    """Scan parquet files and return available symbol/timeframe combinations."""
+    """扫描 parquet 文件返回可用 symbol/timeframe 组合。"""
     import re
 
     sources: list[AvailableSource] = []
@@ -395,7 +400,7 @@ def get_available_sources(
         return AvailableSourcesResponse(sources=sources)
 
     for pq_file in sorted(data_dir.glob("*.parquet")):
-        # Parse symbol and timeframe from filename: e.g. BTCUSDT_4h.parquet
+        # 从文件名解析 symbol/timeframe（如 BTCUSDT_4h.parquet）
         stem = pq_file.stem
         match = re.match(r"^([A-Za-z]+)_(\w+)$", stem)
         if not match:
@@ -435,7 +440,7 @@ def get_available_sources(
 
 
 def _safe_timestamp(date_str: Optional[str], tz_aware: bool):
-    """Parse a date string safely; return None on empty or invalid input."""
+    """安全解析日期串（空/非法回 None）。"""
     if not date_str:
         return None
     import pandas as pd
@@ -446,7 +451,7 @@ def _safe_timestamp(date_str: Optional[str], tz_aware: bool):
 
 
 def _apply_date_filter(df, start: Optional[str], end: Optional[str]):
-    """Filter DataFrame by date range, silently skipping invalid dates."""
+    """按日期范围过滤 DataFrame（非法日期静默跳过）。"""
     tz_aware = df.index.tz is not None
     start_ts = _safe_timestamp(start, tz_aware)
     end_ts = _safe_timestamp(end, tz_aware)
@@ -481,7 +486,7 @@ def get_ohlcv_by_symbol(
     limit: int = Query(50000, ge=1, le=50000),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
-    """Get OHLCV data by symbol+timeframe (resolves parquet file directly)."""
+    """按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。"""
     # 路径解析收口 core find_parquet：周期白名单 + 别名表，杜绝 timeframe 旁路拼接
     symbol_ = safe_symbol(symbol)
     try:
@@ -557,7 +562,7 @@ def get_chart_indicators(
     kdj_d_period: int = 3,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA, MACD, KDJ) for chart rendering."""
+    """计算图表指标（EMA/BOLL/RSI/RVOL/VWMA/MACD/KDJ，前端绘图用）。"""
     from core.features.indicators import _compute_indicator
 
     # 路径解析收口 core find_parquet：周期白名单 + 别名表，杜绝 timeframe 旁路拼接
@@ -582,7 +587,7 @@ def get_chart_indicators(
 
     result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None, "rvol": None, "vwma": None, "macd": None, "kdj": None}
 
-    # Compute EMA for requested periods
+    # 逐周期计算 EMA
     if ema_periods:
         periods = [int(p.strip()) for p in ema_periods.split(",") if p.strip()]
         for period in periods:
@@ -604,7 +609,7 @@ def get_chart_indicators(
                 )
                 continue
 
-    # Compute Bollinger Bands
+    # 计算 BOLL 布林带
     if boll_enabled:
         try:
             bb_cols = _compute_indicator(df, "BB", {"period": boll_period, "std": boll_std})
@@ -634,28 +639,28 @@ def get_chart_indicators(
                 exc_info=True,
             )
 
-    # Compute RSI
+    # 计算 RSI
     if rsi_enabled:
         result["rsi"] = _single_series_indicator(
             df, f"{symbol_}/{timeframe}", "RSI",
             {"period": rsi_period}, f"rsi_{rsi_period}",
         )
 
-    # Compute RVOL (Relative Volume)
+    # 计算 RVOL（相对成交量）
     if rvol_enabled:
         result["rvol"] = _single_series_indicator(
             df, f"{symbol_}/{timeframe}", "RVOL",
             {"period": rvol_period}, f"rvol_{rvol_period}",
         )
 
-    # Compute VWMA (Volume Weighted Moving Average)
+    # 计算 VWMA（成交量加权均线）
     if vwma_enabled:
         result["vwma"] = _single_series_indicator(
             df, f"{symbol_}/{timeframe}", "VWMA",
             {"period": vwma_period}, f"vwma_{vwma_period}",
         )
 
-    # Compute MACD
+    # 计算 MACD
     if macd_enabled:
         try:
             macd_cols = _compute_indicator(df, "MACD", {"fast": macd_fast, "slow": macd_slow, "signal": macd_signal})
@@ -684,7 +689,7 @@ def get_chart_indicators(
                 exc_info=True,
             )
 
-    # Compute KDJ
+    # 计算 KDJ
     if kdj_enabled:
         try:
             stoch_cols = _compute_indicator(df, "Stochastic", {"k_period": kdj_k_period, "d_period": kdj_d_period})
@@ -693,7 +698,7 @@ def get_chart_indicators(
             if all(col in stoch_cols for col in [k_col, d_col]):
                 k_series = stoch_cols[k_col].dropna()
                 d_series = stoch_cols[d_col].dropna()
-                # Align indices for J calculation
+                # 对齐索引以计算 J 值
                 common_idx = k_series.index.intersection(d_series.index)
                 k_aligned = k_series.loc[common_idx]
                 d_aligned = d_series.loc[common_idx]
