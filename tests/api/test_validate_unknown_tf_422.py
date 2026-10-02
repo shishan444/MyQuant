@@ -116,3 +116,33 @@ class TestValidateScene422:
         body = resp.json()
         assert body["total_triggers"] == 0
         assert any("No data found" in w for w in body["warnings"])
+
+
+class TestValidateSceneNonFiniteParam422:
+    """SEC-08 端到端：NaN/Infinity 字面量原始体（json.dumps 默认
+    allow_nan 写出、服务端 json.loads 接受）→ 422 须为有限数。"""
+
+    def test_nan_multiplier_returns_422(self, api_client):
+        """原始体走 content=（httpx json 序列化禁 NaN，须手写字面量）。"""
+        resp = api_client.post(
+            "/api/validate/scene",
+            content='{"symbol": "BTCUSDT", "timeframe": "4h", '
+                    '"scene_type": "volume_spike", '
+                    '"params": {"multiplier": NaN}}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+        assert "须为有限数" in body["detail"]["message"]
+
+    def test_infinity_multiplier_returns_422(self, api_client):
+        resp = api_client.post(
+            "/api/validate/scene",
+            content='{"symbol": "BTCUSDT", "timeframe": "4h", '
+                    '"scene_type": "volume_spike", '
+                    '"params": {"multiplier": Infinity}}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+        assert "须为有限数" in resp.json()["detail"]["message"]

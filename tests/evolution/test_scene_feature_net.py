@@ -1555,3 +1555,66 @@ class TestLevelZeroGuardFeature:
         for tp in triggers:
             assert np.isfinite(tp.indicator_snapshot["level_value"])
             assert np.isfinite(tp.indicator_snapshot["proximity_pct"])
+
+
+# ===========================================================================
+# 13. SEC-08：_param_number 非有限数拒绝（NaN 漏值域 / inf 恒触发 / int(inf) 裸穿）
+# ===========================================================================
+
+class TestParamNonFiniteFeature:
+    """SEC-08 锚：json.loads 接受 NaN/Infinity 字面量，端到端可达的
+    非有限参数值全部结构化拒绝。"""
+
+    @staticmethod
+    def _df(n=40):
+        volume = np.full(n, 1000.0)
+        volume[30] = 4000.0
+        return _base_frame({"volume": volume}, n)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param(float("nan"), id="float键NaN"),
+            pytest.param(float("inf"), id="float键inf"),
+            pytest.param(float("-inf"), id="float键负inf"),
+        ],
+    )
+    def test_float_key_non_finite_rejected(self, bad_value):
+        """NaN 比较恒 False 漏过值域、inf 恒触发/静默无结果，同拒。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        with pytest.raises(ResearchError, match="multiplier 须为有限数"):
+            VolumeSpikeDetector().detect(self._df(), {"multiplier": bad_value})
+
+    def test_int_key_infinity_rejected(self):
+        """int(inf) OverflowError 裸穿面收口：经 except 扩捕 → 须为数值。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        for bad in (float("inf"), float("-inf")):
+            with pytest.raises(ResearchError, match="avg_period 须为数值"):
+                VolumeSpikeDetector().detect(self._df(), {"avg_period": bad})
+
+    def test_json_nan_literal_end_to_end(self):
+        """端到端：json.loads 接受 NaN 字面量（API 原始体可达路径）。"""
+        import json
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        payload = json.loads('{"multiplier": NaN}')
+        with pytest.raises(ResearchError, match="multiplier 须为有限数"):
+            VolumeSpikeDetector().detect(self._df(), payload)
+
+    def test_json_infinity_literal_end_to_end(self):
+        import json
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        payload = json.loads('{"multiplier": Infinity}')
+        with pytest.raises(ResearchError, match="multiplier 须为有限数"):
+            VolumeSpikeDetector().detect(self._df(), payload)
+
+    def test_numeric_string_still_accepted(self):
+        """SEC-08 保持锚：字符串数字正常转换，合法检测不破坏。"""
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        triggers = VolumeSpikeDetector().detect(
+            self._df(), {"avg_period": "20", "multiplier": "2.5"},
+        )
+        assert [tp.bar_index for tp in triggers] == [30]
