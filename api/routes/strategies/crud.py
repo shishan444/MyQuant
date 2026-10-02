@@ -85,7 +85,7 @@ def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
         try:
             dna_dict = json.loads(row["dna_json"])
             dna = DNAModel.model_validate(dna_dict)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             dna = None
 
     metrics = None

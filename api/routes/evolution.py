@@ -46,7 +46,7 @@ def _parse_json_list(raw: Optional[str]) -> Optional[List[str]]:
     try:
         val = json.loads(raw)
         return val if isinstance(val, list) else None
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
 
@@ -57,7 +57,7 @@ def _parse_json_dict(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     try:
         val = json.loads(raw)
         return val if isinstance(val, dict) else None
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
 
@@ -71,7 +71,7 @@ def _task_row_to_response(
         try:
             dna_dict = json.loads(row["initial_dna"])
             initial_dna = DNAModel.model_validate(dna_dict)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             initial_dna = None
 
     champion_dna = None
@@ -79,7 +79,7 @@ def _task_row_to_response(
         try:
             dna_dict = json.loads(row["champion_dna"])
             champion_dna = DNAModel.model_validate(dna_dict)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             champion_dna = None
 
     # Parse requirements from JSON column
@@ -152,13 +152,13 @@ def _strategies_to_dicts(
         if s.get("dna_json"):
             try:
                 dna_dict = json.loads(s["dna_json"])
-            except (json.JSONDecodeError, Exception):
+            except Exception:
                 pass
         metrics = None
         if s.get("metrics_json"):
             try:
                 metrics = json.loads(s["metrics_json"])
-            except (json.JSONDecodeError, Exception):
+            except Exception:
                 pass
         result.append({
             "strategy_id": s["strategy_id"],
@@ -464,7 +464,7 @@ def get_task_strategies(
                 "source": "champion",
                 "score": row.get("champion_score", 0),
             })
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             pass
 
     # Snapshot-based strategies
@@ -485,7 +485,7 @@ def get_task_strategies(
                 "generation": snap["generation"],
                 "score": snap["best_score"],
             })
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             continue
 
     return {"task_id": task_id, "strategies": strategies}
