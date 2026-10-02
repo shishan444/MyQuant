@@ -106,6 +106,14 @@ class TestRegimeSplitWithIndicator:
 
 
 class TestNoDataErrorChannel:
+    def test_unknown_template_rejected(self, api_client, paths_env):
+        """未知模板名：路由白名单前置 422（终验收尾：:295 直测）。"""
+        _wire(api_client, paths_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "nope_template", {}))
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "RESEARCH_TEMPLATE_UNKNOWN"
+
     def test_range_outside_data_rejected(self, api_client, paths_env):
         """区间在数据域之外（2025 年）→ 422 RESEARCH_DATA_INSUFFICIENT。"""
         _wire(api_client, paths_env)
