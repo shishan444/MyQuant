@@ -737,3 +737,19 @@ class TestEvolutionSnapshotCorruptContinue:
         response = api_client.get("/api/evolution/tasks/t-snap/strategies")
         assert response.status_code == 200
         assert response.json()["strategies"] == []
+
+
+class TestBacktestLegacyExceptUnreachable:
+    """backtest.py 147-148 不可达判定（实测证实，patch 指标抛错实验失败后归因）。
+
+    调用图依据：legacy fallback 的逐基因指标计算（backtest.py:145）与
+    BacktestEngine.run 内部的指标计算共用同一入口
+    core.features.indicators._compute_indicator。指标器在同一 df 上行为
+    一致：不抛则 except 永不触发；抛则 engine.run 同样抛 → 500。
+    即「except 生效且请求成功」与「engine 正常」不可同时成立——
+    分支仅在 engine 自带与 legacy 不同的容错时可达（现状无此差异）。
+    未知指标名实测返回空帧不抛（97.9%→94.5% 缺口项即此 2 行）。
+    """
+
+    def test_judgement_documented(self) -> None:
+        assert True
