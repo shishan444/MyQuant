@@ -30,14 +30,9 @@ from core.persistence.repository import research as rr
 # 生产默认 900s）
 MODEL_TRAIN_TIMEOUT_S = 900.0
 
-# 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
-# 无上限时 formula_lookback 可达任意大，bar 数 × 周期秒数换算
-# pd.Timedelta 超上限（~9.2e9s，即 106751 天）即抛 OutOfBoundsTimedelta
-# （未捕获）。换算值域为 TF_MINUTES 周期表（最大 3d），1w 等高周期
-# 走 high_tf_warmup_span 不涉插件 lookback；10_000 对最苛刻的 1w
-# 防御边界（约 15_250 bar）留 34% 裕度，3d/1d 边界（35_584/106_752
-# bar）更宽，且远超实际指标窗口需求
-MAX_PLUGIN_LOOKBACK_BARS = 10_000
+# 回看窗口上限单一常量已下沉 core.signals.formula（F3：validate_formula
+# 静态关与本注册关共用，转出口保持本模块既有引用不破）
+from core.signals.formula import MAX_PLUGIN_LOOKBACK_BARS
 
 
 def _plugin_allowed_columns(db_path: Path) -> set:
