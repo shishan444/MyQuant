@@ -1,4 +1,9 @@
-"""Pivot point detection: identify local peaks and troughs in price data."""
+"""Pivot 点检测：识别价格序列的局部峰与谷。
+
+服务对象：top_pattern（detect_pivots）与 pattern_match
+（PivotPoint 结构）两模块，及 tests/evolution 特征锚直调。
+职责边界：纯滚动窗口极值判定，不做形态识别与事后校验。
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,12 +15,12 @@ import pandas as pd
 
 @dataclass
 class PivotPoint:
-    """A single pivot point (local peak or trough)."""
+    """单个 pivot 点（局部峰或谷）。"""
 
-    index: int          # bar position in DataFrame
-    price: float        # high for peak, low for trough
-    pivot_type: str     # "peak" or "trough"
-    volume: float = 0.0 # volume at this bar
+    index: int          # DataFrame 中的 bar 位置
+    price: float        # 峰取 high，谷取 low
+    pivot_type: str     # "peak" 或 "trough"
+    volume: float = 0.0 # 该 bar 的成交量
 
 
 def detect_pivots(
@@ -23,19 +28,20 @@ def detect_pivots(
     bars_left: int = 6,
     bars_right: int = 6,
 ) -> List[PivotPoint]:
-    """Detect pivot points using a rolling-window approach.
+    """以滚动窗口方式检测 pivot 点。
 
-    A bar is a *peak* if its high is the maximum in the surrounding window
-    [i - bars_left .. i + bars_right].  A bar is a *trough* if its low is
-    the minimum in the same window.
+    某 bar 是 *峰*：其 high 为邻域窗口 [i - bars_left ..
+    i + bars_right] 内的最大值；是 *谷*：其 low 为同窗口的
+    最小值。并列极值不取——窗口内极值出现多于一次时该 bar
+    不判为 pivot。
 
     Args:
-        df: DataFrame with at least ``high`` and ``low`` columns.
-        bars_left: Number of bars to the left of the candidate.
-        bars_right: Number of bars to the right of the candidate.
+        df: 至少含 ``high`` 与 ``low`` 列的 DataFrame。
+        bars_left: 候选 bar 左侧的 bar 数。
+        bars_right: 候选 bar 右侧的 bar 数。
 
     Returns:
-        Chronologically ordered list of PivotPoint instances.
+        按时间序排列的 PivotPoint 实例列表。
     """
     highs = df["high"].values.astype(np.float64)
     lows = df["low"].values.astype(np.float64)
@@ -52,7 +58,7 @@ def detect_pivots(
         left = i - bars_left
         right = i + bars_right + 1
 
-        # Peak: center high is the window maximum
+        # 峰：中心 bar 的 high 为窗口最大值
         h_window = highs[left:right]
         if highs[i] == np.max(h_window) and np.sum(h_window == highs[i]) == 1:
             pivots.append(PivotPoint(
@@ -60,7 +66,7 @@ def detect_pivots(
                 pivot_type="peak", volume=float(volumes[i]),
             ))
 
-        # Trough: center low is the window minimum
+        # 谷：中心 bar 的 low 为窗口最小值
         l_window = lows[left:right]
         if lows[i] == np.min(l_window) and np.sum(l_window == lows[i]) == 1:
             pivots.append(PivotPoint(
@@ -68,6 +74,6 @@ def detect_pivots(
                 pivot_type="trough", volume=float(volumes[i]),
             ))
 
-    # Sort chronologically
+    # 按时间序排序
     pivots.sort(key=lambda p: p.index)
     return pivots
