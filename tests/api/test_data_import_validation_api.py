@@ -89,6 +89,41 @@ class TestImportEndpointValidation:
         assert body["format_detected"] == "generic_ohlcv"
 
 
+class TestGenericMissingColumns422:
+    """CARD-28：GENERIC CSV 缺列从 KeyError 裸穿 500 收口为结构化 400。"""
+
+    def test_missing_ohlcv_columns_400_structured_detail(
+        self, api_client: TestClient,
+    ) -> None:
+        """缺 OHLCV 列 → 400，detail 含缺失列清单与期望列。"""
+        resp = api_client.post(
+            "/api/data/import",
+            files={"file": ("data.csv", (
+                "timestamp,open\n2024-01-01 00:00:00,100\n"
+            ).encode(), "text/csv")},
+            data={"mode": "merge", "symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "CSV missing required columns" in detail
+        assert "high" in detail and "volume" in detail  # 缺失列点名
+        assert "open" in detail  # 期望列清单含未缺列
+
+    def test_missing_timestamp_column_400(
+        self, api_client: TestClient,
+    ) -> None:
+        """缺 timestamp 列 → 400（原 set_index 无条件依赖的隐式必需显式化）。"""
+        resp = api_client.post(
+            "/api/data/import",
+            files={"file": ("data.csv", (
+                "open,high,low,close,volume\n100,101,99,100.5,10\n"
+            ).encode(), "text/csv")},
+            data={"mode": "merge", "symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert resp.status_code == 400
+        assert "timestamp" in resp.json()["detail"]
+
+
 class TestImportEndpointModeFallback:
     """触碰端点分支消解：非法 mode 字符串回退 MERGE / batch 空 files 400。"""
 
