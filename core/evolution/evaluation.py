@@ -63,6 +63,33 @@ def build_requirements(task_row: Dict[str, Any]):
     )
 
 
+def parse_timeframe_pool(task_row: Dict[str, Any]) -> List[str]:
+    """task_row.timeframe_pool → 周期列表（evaluation 与 api/runner 共用）。
+
+    B1.1 形制：解析失败或形制非 List[str] 时显式报错——静默置 None 会
+    退化单周期，进化在错误数据面上无感知跑完，属数据正确性失败。
+    runner 路径冒泡至 _run_task 兜底标 stopped/error；评估路径由
+    evaluate_dna 兜底记 0 分 + error 标记。
+
+    接受 JSON 字符串（如 '["4h","1d"]'，DB 列形制）或已解 list；空值
+    返回空列表（无多周期配置为合法状态）。
+    """
+    raw = task_row.get("timeframe_pool")
+    if not raw:
+        return []
+    try:
+        pool = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(pool, list) or not all(isinstance(tf, str) for tf in pool):
+            raise ValueError(f"形制须为 List[str]: {raw!r}")
+    except Exception as e:
+        logger.error(
+            "timeframe_pool 解析失败，拒绝静默退化单周期 (task_id=%s, raw=%.200r)",
+            task_row.get("task_id"), raw, exc_info=True,
+        )
+        raise ValueError(f"timeframe_pool 解析失败: {e!r}") from e
+    return pool
+
+
 def evaluate_dna(
     individual: StrategyDNA,
     task_row: Dict[str, Any],
@@ -111,15 +138,9 @@ def evaluate_dna(
                 return diagnostics
 
             # Load multi-timeframe data if task has timeframe_pool
-            tf_pool_raw = task_row.get("timeframe_pool")
-            tf_pool = None
-            if tf_pool_raw:
-                try:
-                    tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
-                except (json.JSONDecodeError, Exception):
-                    tf_pool = None
+            tf_pool = parse_timeframe_pool(task_row)
 
-            if tf_pool and len(tf_pool) > 1:
+            if len(tf_pool) > 1:
                 dfs_by_timeframe = load_mtf_data(
                     data_dir, symbol, timeframe, enhanced_df,
                     set(tf_pool), data_start, data_end,

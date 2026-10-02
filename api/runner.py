@@ -266,13 +266,7 @@ class EvolutionRunner(threading.Thread):
         direction = task_row.get("direction", "long")
 
         # Parse timeframe_pool from task config
-        tf_pool_raw = task_row.get("timeframe_pool")
-        tf_pool = None
-        if tf_pool_raw:
-            try:
-                tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
-            except (json.JSONDecodeError, Exception):
-                tf_pool = None
+        tf_pool = evaluation.parse_timeframe_pool(task_row)
 
         # Load market data first, then create engine with actually loaded TFs
         controller.check_stop()
@@ -308,7 +302,7 @@ class EvolutionRunner(threading.Thread):
         update_heartbeat(self.db_path, task_id)
 
         _dfs_by_timeframe = None
-        if tf_pool and len(tf_pool) > 1:
+        if len(tf_pool) > 1:
             _dfs_by_timeframe = load_mtf_data(
                 self.data_dir, _symbol, _timeframe, _enhanced_df,
                 set(tf_pool), _data_start, _data_end,
