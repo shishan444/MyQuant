@@ -1005,3 +1005,45 @@ class TestEvaluateConditionsSharedFeature:
         }
         assert all(used)
         assert not hasattr(rule_engine_mod, "_evaluate_rule_conditions")
+
+
+# ===========================================================================
+# 10. CARD-05：_lookback_condition window 坏值/零/负结构化拒绝
+# ===========================================================================
+
+class TestLookbackWindowValidationFeature:
+    """CARD-05 锚：window 裸穿 rolling(window=0) 的 500 改 ResearchError。"""
+
+    @staticmethod
+    def _cond(window):
+        return {
+            "subject": "close", "action": "lookback_any",
+            "inner_action": "gt", "target": 95, "window": window,
+        }
+
+    @pytest.mark.parametrize(
+        "bad_window",
+        [
+            pytest.param(0, id="零窗口"),
+            pytest.param(-1, id="负窗口"),
+            pytest.param("abc", id="非数值字符串"),
+        ],
+    )
+    def test_bad_window_rejected(self, bad_window):
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.engine import _evaluate_single_condition
+        df = pd.DataFrame(
+            {"close": [100.0, 90.0, 110.0]},
+            index=pd.date_range("2024-01-01", periods=3, freq="4h"),
+        )
+        with pytest.raises(ResearchError, match="condition.window"):
+            _evaluate_single_condition(df, self._cond(bad_window))
+
+    def test_valid_window_still_works(self):
+        from core.validation.engine import _evaluate_single_condition
+        df = pd.DataFrame(
+            {"close": [100.0, 90.0, 110.0]},
+            index=pd.date_range("2024-01-01", periods=3, freq="4h"),
+        )
+        mask = _evaluate_single_condition(df, self._cond(2))
+        assert len(mask) == 3

@@ -65,3 +65,54 @@ class TestValidateRulesUnknownTf422:
         body = resp.json()
         assert body["detail"]["code"] == "RESEARCH_PARAM_INVALID"
         assert "timeframe 未知" in body["detail"]["message"]
+
+
+class TestValidateScene422:
+    """CARD-05：/api/validate/scene 三类 422 与正常 200（ResearchError
+    兜底接入 scene 路由；CARD-03 时的 500 裸穿中间态已收口）。"""
+
+    def _payload(self, **overrides):
+        payload = {
+            "symbol": "TESTUSDT", "timeframe": "4h",
+            "scene_type": "volume_spike",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_unknown_timeframe_returns_422(self, api_client):
+        """CARD-03 遗留中间态收口锚：scene 端点未知 tf → 422（原 500）。"""
+        resp = api_client.post(
+            "/api/validate/scene", json=self._payload(timeframe="7h"),
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+        assert "timeframe 未知" in body["detail"]["message"]
+
+    def test_bad_detector_param_returns_422(self, api_client):
+        """坏参数需走到 detect：用 tmp_data_dir 自带的 BTCUSDT_4h 数据。"""
+        resp = api_client.post(
+            "/api/validate/scene",
+            json=self._payload(symbol="BTCUSDT", params={"multiplier": "abc"}),
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+        assert "multiplier 须为数值" in body["detail"]["message"]
+
+    def test_empty_horizons_returns_422(self, api_client):
+        resp = api_client.post(
+            "/api/validate/scene", json=self._payload(horizons=[]),
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+        assert "horizons 不能为空" in body["detail"]["message"]
+
+    def test_known_tf_missing_file_still_200(self, api_client):
+        """CARD-05 保持锚：合法请求缺数据文件 → 200 + No data found warning。"""
+        resp = api_client.post("/api/validate/scene", json=self._payload())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_triggers"] == 0
+        assert any("No data found" in w for w in body["warnings"])

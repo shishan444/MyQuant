@@ -1322,7 +1322,6 @@ class TestRunSceneVerificationFeature:
 # ===========================================================================
 # 9. forward_stats 补锚（基线 94%，空列表分支未执行）
 # ===========================================================================
-
 class TestForwardStatsFeature:
     """forward_stats.py 特征锚：空样本跳过、空分布。"""
 
@@ -1344,3 +1343,76 @@ class TestForwardStatsFeature:
         assert s.is_partial is True
         assert s.close_pct == 0.0 and s.max_gain_pct == 0.0 and s.max_loss_pct == 0.0
         assert s.bars_to_peak == 0 and s.bars_to_trough == 0
+
+
+# ===========================================================================
+# 10. CARD-05：detector 数值参数结构化拒绝与 horizons 空列表拒绝
+# ===========================================================================
+
+class TestDetectorParamValidationFeature:
+    """CARD-05 锚：detector 裸转换改共享 _param_number（F-2 形制），
+    坏值 ResearchError 而非 TypeError/ValueError 裸穿 500。"""
+
+    @staticmethod
+    def _df(n=40):
+        volume = np.full(n, 1000.0)
+        volume[30] = 4000.0
+        return _base_frame({"volume": volume}, n)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param("abc", id="非数值字符串"),
+            pytest.param(None, id="None"),
+            pytest.param([2.5], id="list"),
+        ],
+    )
+    def test_volume_spike_bad_multiplier_rejected(self, bad_value):
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        with pytest.raises(ResearchError, match="multiplier 须为数值"):
+            VolumeSpikeDetector().detect(self._df(), {"multiplier": bad_value})
+
+    def test_volume_spike_int_key_rejects_decimal_string(self):
+        """现状记录：int 键对 '10.5' 拒绝不截断（cast 保留类型语义）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        with pytest.raises(ResearchError, match="avg_period 须为数值"):
+            VolumeSpikeDetector().detect(self._df(), {"avg_period": "10.5"})
+
+    def test_volume_spike_valid_string_cast_accepted(self):
+        """现状记录：可转字符串正常通过（"2.5"→2.5），正常检测不破坏。"""
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        triggers = VolumeSpikeDetector().detect(
+            self._df(), {"multiplier": "2.5"},
+        )
+        assert len(triggers) == 1
+        assert triggers[0].bar_index == 30
+
+    def test_cross_timeframe_bad_period_rejected(self):
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.cross_timeframe import CrossTimeframeDetector
+        n = 60
+        df = _base_frame(
+            {"ema_20_1d": np.full(n, 101.0), "ema_50_1d": np.full(n, 100.0)}, n,
+        )
+        with pytest.raises(ResearchError, match="fast_period 须为数值"):
+            CrossTimeframeDetector().detect(df, {"fast_period": None})
+
+    def test_mean_reversion_bad_deviation_rejected(self):
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.mean_reversion import MeanReversionDetector
+        with pytest.raises(ResearchError, match="deviation_pct 须为数值"):
+            MeanReversionDetector().detect(
+                self._df(), {"deviation_pct": "abc"},
+            )
+
+    def test_run_scene_verification_empty_horizons_rejected(self, tmp_path):
+        """CARD-05 锚：horizons=[] 结构化拒绝（旧实现 max([]) 裸 ValueError）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.scene_engine import run_scene_verification
+        with pytest.raises(ResearchError, match="horizons 不能为空"):
+            run_scene_verification(
+                symbol="TESTUSDT", timeframe="4h", scene_type="volume_spike",
+                horizons=[], data_dir=str(tmp_path),
+            )
