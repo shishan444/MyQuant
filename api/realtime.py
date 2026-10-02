@@ -34,7 +34,7 @@ def capture_loop() -> None:
 def broadcast(namespace: str, room: str, event: str, payload: dict) -> None:
     """向 namespace 内 room 广播（任意线程可调；无 loop 时安全 no-op）。"""
     if _main_loop is None:
-        return  # socketio 未就绪（如单元测试上下文）——native WS 仍工作
+        return  # loop 未捕获（app 未 startup，如直连单元测试）——安全 no-op
     try:
         asyncio.run_coroutine_threadsafe(
             sio.emit(event, payload, namespace=namespace, room=room),

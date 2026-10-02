@@ -1,4 +1,11 @@
-"""进度/心跳/WS 推送工具群（B5.2 自 runner 拆分的内聚单元）。"""
+"""进度/心跳/推送工具群（B5.2 自 runner 拆分的内聚单元）。
+
+职能：EvolutionRunner 执行线程的进度落库（phase/progress）与心跳
+（heartbeat_at）维护，并经注册的推送函数把阶段变化送到实时通道。
+服务对象：api/runner.py 的 EvolutionRunner（evolution 任务唯一执行线程）。
+职责边界：只做落库与推送，不做任务调度与业务判定；全部操作失败
+仅记日志不中断进化主流程。
+"""
 from __future__ import annotations
 
 import json
@@ -8,21 +15,18 @@ from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Global reference to the FastAPI app's asyncio loop for WS push
+# 推送函数全局注册位（app startup 经 set_ws_push_fn 注入，shutdown 置 None）
 _ws_push_fn: Optional[Callable] = None
 
 
 def set_ws_push_fn(fn: Callable) -> None:
-    """Register a function that the runner can call to push WS messages.
-
-    Called once during app startup.
-    """
+    """注册/注销推送函数（app 启动注入一次，关停置 None 断链）。"""
     global _ws_push_fn
     _ws_push_fn = fn
 
 
 def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
-    """Fire-and-forget WS push (non-blocking) with observability."""
+    """尽力推送（非阻塞 fire-and-forget），失败留痕不外抛。"""
     if _ws_push_fn is not None:
         try:
             _ws_push_fn(task_id, payload)
@@ -31,7 +35,8 @@ def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
 
 
 def update_heartbeat(db_path: Path, task_id: str) -> None:
-    """Update heartbeat_at timestamp for a running task."""
+    """更新运行中任务的 heartbeat_at（存活信号；现行恢复按 status
+    残留清理，心跳超时判定已退役）。"""
     from core.persistence.repository import evolution as repo
     try:
         repo.update_heartbeat(db_path, task_id)
@@ -40,7 +45,7 @@ def update_heartbeat(db_path: Path, task_id: str) -> None:
 
 
 def update_phase(db_path: Path, task_id: str, phase: str) -> None:
-    """Update current_phase for a task and push WS notification."""
+    """更新任务 current_phase 并推送 phase_changed 事件。"""
     from core.persistence.repository import evolution as repo
     try:
         repo.update_phase(db_path, task_id, phase)
@@ -54,7 +59,7 @@ def update_phase(db_path: Path, task_id: str, phase: str) -> None:
 
 
 def update_progress(db_path: Path, task_id: str, progress: dict) -> None:
-    """Write structured progress JSON to DB."""
+    """把结构化进度 dict 序列化写入任务 progress_json 列。"""
     from core.persistence.repository import evolution as repo
     try:
         repo.update_progress(db_path, task_id, json.dumps(progress, ensure_ascii=False))
