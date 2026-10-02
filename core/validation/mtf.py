@@ -50,13 +50,13 @@ def load_mtf_data(
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
 
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", pair)
+    from core.data.mtf_loader import find_parquet, safe_symbol  # B4.1：共享路径发现（含别名兜底）
+
+    symbol_ = safe_symbol(pair)
     result: Dict[str, pd.DataFrame] = {}
 
-    from core.data.mtf_loader import find_parquet  # B4.1：共享路径发现（含别名兜底）
-
     for tf in timeframes:
-        path = find_parquet(Path(data_dir), safe_symbol, tf)
+        path = find_parquet(Path(data_dir), symbol_, tf)
         if path is None:
             continue
 

@@ -81,7 +81,8 @@ def validate_hypothesis(
         ValidationResult with all statistics
     """
     from pathlib import Path
-    import re
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
     from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
     if data_dir is None:
@@ -90,11 +91,19 @@ def validate_hypothesis(
     # Determine effective base timeframe
     effective_base = base_timeframe or timeframe
 
-    # Load data
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', pair)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # Load data（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
+    # 未知 timeframe 结构化拒绝而非静默空结果）
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(pair), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
 
-    if not parquet_path.exists():
+    if parquet_path is None:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
 
     df = load_parquet(parquet_path)

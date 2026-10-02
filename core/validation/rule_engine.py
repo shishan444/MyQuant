@@ -1,7 +1,6 @@
 """Entry/exit rule evaluation engine for signal generation and trade pairing."""
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -96,11 +95,23 @@ def evaluate_rules(
     # ------------------------------------------------------------------
     # 1. Load base timeframe data
     # ------------------------------------------------------------------
-    safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；未知 timeframe
+    # 结构化拒绝而非静默空结果
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
 
-    if not parquet_path.exists():
-        warnings.append(f"Data file not found: {parquet_path.name}")
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(symbol), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
+
+    if parquet_path is None:
+        warnings.append(f"Data file not found: {safe_symbol(symbol)}_{timeframe}.parquet")
         return RuleResult(warnings=warnings)
 
     df = load_parquet(parquet_path)

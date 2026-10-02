@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -117,11 +116,22 @@ def run_scene_verification(
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "data" / "market")
 
-    # Load data
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
-    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+    # Load data（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
+    # 未知 timeframe 结构化拒绝而非静默空结果）
+    from core.analysis.hypothesis_service import ResearchError
+    from core.data.mtf_loader import safe_symbol, find_parquet
 
-    if not parquet_path.exists():
+    try:
+        parquet_path = find_parquet(Path(data_dir), safe_symbol(symbol), timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"timeframe 未知: {timeframe!r}",
+            detail={"param": "timeframe", "value": timeframe,
+                    "legal_range": "TF_SECONDS 已知周期"},
+        ) from exc
+
+    if parquet_path is None:
         return SceneVerificationResult(
             scene_type=scene_type, total_triggers=0,
             warnings=[f"No data found for {symbol}_{timeframe}"],
