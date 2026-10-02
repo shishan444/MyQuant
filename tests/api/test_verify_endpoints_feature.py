@@ -31,6 +31,12 @@ def _fake_bt_result(
     return SimpleNamespace(
         total_return=total_return, sharpe_ratio=sharpe, max_drawdown=0.05,
         win_rate=0.6, total_trades=10, liquidated=False,
+        # fallback_metrics 直接读 metrics_dict（真值优先路径），
+        # 提供后不再触碰 equity_curve 等其余字段
+        metrics_dict={
+            "annual_return": 0.1, "sharpe_ratio": sharpe,
+            "max_drawdown": 0.05, "win_rate": 0.6, "profit_factor": 1.5,
+        },
     )
 
 
@@ -39,6 +45,21 @@ def _fake_fitness(**kw) -> dict:
         "fitness": 7.0, "qualified": True, "total_score": 8.0,
         "dimension_scores": {"d": 1}, "satisfaction": None,
     }
+
+
+def _verify_route_module():
+    """定位 conftest 装配 app 实际使用的 verify 路由模块对象。
+
+    双身份坑见 test_data_upload_limits.py::_endpoint_data_module：
+    patch 字符串目标 "api.routes.strategies.verify" 会导入与端点不同
+    身份的另一份模块（无效 patch）。首版三处 _bt_engine_mod patch
+    均落空（测试靠 core 层 mock 兜住输出），本修正使其真正生效。
+    """
+    import sys
+    mod = sys.modules.get("MyQuant.api.routes.strategies.verify")
+    if mod is None:
+        import api.routes.strategies.verify as mod
+    return mod
 
 
 @pytest.fixture
@@ -94,7 +115,7 @@ class TestVerifySyncEndpoint:
         策略 verify_star/new_score 滚动更新。"""
         from core.persistence.db_ext import get_strategy, get_verify_session
         db_path = verify_client.app.state.db_path
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
@@ -149,7 +170,7 @@ class TestVerifySyncEndpoint:
         """数据不足的周期记 error 结果（fitness 0、star 0）。"""
         from core.persistence.db_ext import get_strategy
         db_path = verify_client.app.state.db_path
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(5, "4h")):
             response = verify_client.post("/api/strategies/verify", json=_payload())
@@ -174,7 +195,7 @@ class TestVerifyStreamEndpoint:
         """stream 端点返回 session_id，后台执行完成后 session 状态 completed。"""
         from core.persistence.db_ext import get_verify_session
         db_path = verify_client.app.state.db_path
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
@@ -230,7 +251,7 @@ class TestVerifyHistoryAndSessions:
 
     def test_history_after_verify_run(self, verify_client: TestClient) -> None:
         """跑一次 verify 后 history 回溯 run_source=verify 的结果与策略名。"""
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
@@ -246,7 +267,7 @@ class TestVerifyHistoryAndSessions:
         assert item["fitness"] == 7.0
 
     def test_history_filter_by_strategy(self, verify_client: TestClient) -> None:
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
@@ -269,7 +290,7 @@ class TestVerifyHistoryAndSessions:
         assert response.json()["total"] == 0
 
     def test_sessions_after_run(self, verify_client: TestClient) -> None:
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
@@ -288,7 +309,7 @@ class TestVerifyHistoryAndSessions:
 
     def test_session_results_returns_items(self, verify_client: TestClient) -> None:
         """session 结果端点回该 session 的验证结果（按 session_id 过滤）。"""
-        with patch("api.routes.strategies.verify._bt_engine_mod", _mocked_engine()), \
+        with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")), \
              patch("core.scoring.scorer.compute_fitness",
