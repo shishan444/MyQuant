@@ -1416,3 +1416,80 @@ class TestDetectorParamValidationFeature:
                 symbol="TESTUSDT", timeframe="4h", scene_type="volume_spike",
                 horizons=[], data_dir=str(tmp_path),
             )
+
+
+# ===========================================================================
+# 11. CARD-05 增量：_param_number 值域校验（正值键 >0，period/spacing >=1）
+# ===========================================================================
+
+class TestDetectorParamRangeFeature:
+    """CARD-05 增量锚：六正值键 0/负拒绝、period/spacing 类 0/负拒绝、
+    边界合法值通过。"""
+
+    @staticmethod
+    def _df(n=40):
+        volume = np.full(n, 1000.0)
+        volume[30] = 4000.0
+        return _base_frame({"volume": volume}, n)
+
+    @pytest.mark.parametrize(
+        ("detector_name", "key", "bad_value"),
+        [
+            pytest.param("volume_spike", "multiplier", 0, id="multiplier零"),
+            pytest.param("volume_spike", "multiplier", -2.5, id="multiplier负"),
+            pytest.param("mean_reversion", "deviation_pct", 0, id="deviation_pct零"),
+            pytest.param("support_resistance", "proximity_pct", 0, id="proximity_pct零"),
+            pytest.param("top_pattern", "pattern_tolerance", -0.1, id="pattern_tolerance负"),
+            pytest.param("top_pattern", "pattern_min_height_pct", 0, id="pattern_min_height_pct零"),
+            pytest.param("volume_breakout", "volume_multiplier", -1, id="volume_multiplier负"),
+        ],
+    )
+    def test_positive_keys_reject_zero_and_negative(self, detector_name, key, bad_value):
+        """正值语义键：0 与负均拒绝（0 值恒触发/静默无结果同拒）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        import importlib
+        mod = importlib.import_module(f"core.validation.scene.{detector_name}")
+        cls = {
+            "volume_spike": "VolumeSpikeDetector",
+            "mean_reversion": "MeanReversionDetector",
+            "support_resistance": "SupportResistanceDetector",
+            "top_pattern": "TopPatternDetector",
+            "volume_breakout": "VolumeBreakoutDetector",
+        }[detector_name]
+        detector = getattr(mod, cls)()
+        with pytest.raises(ResearchError, match=f"{key} 须为 > 0"):
+            detector.detect(self._df(), {key: bad_value})
+
+    @pytest.mark.parametrize(
+        ("detector_name", "cls_name", "key", "bad_value"),
+        [
+            pytest.param("volume_spike", "VolumeSpikeDetector", "min_spacing", 0, id="min_spacing零"),
+            pytest.param("volume_spike", "VolumeSpikeDetector", "avg_period", -20, id="avg_period负"),
+            pytest.param("cross_timeframe", "CrossTimeframeDetector", "min_spacing", 0, id="ctf_min_spacing零"),
+            pytest.param("mean_reversion", "MeanReversionDetector", "ma_period", 0, id="ma_period零"),
+            pytest.param("top_pattern", "TopPatternDetector", "pivot_bars_left", 0, id="pivot_bars_left零"),
+        ],
+    )
+    def test_period_spacing_keys_reject_below_one(self, detector_name, cls_name, key, bad_value):
+        """period/window/spacing 类键：<1 拒绝（与 lookback window>=1 同款）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        import importlib
+        mod = importlib.import_module(f"core.validation.scene.{detector_name}")
+        with pytest.raises(ResearchError, match=f"{key} 须为 >= 1"):
+            getattr(mod, cls_name)().detect(self._df(), {key: bad_value})
+
+    def test_boundary_values_pass(self):
+        """边界合法值通过：min_spacing=1 与极小正 multiplier 不拒。"""
+        from core.validation.scene.volume_spike import VolumeSpikeDetector
+        triggers = VolumeSpikeDetector().detect(
+            self._df(), {"min_spacing": 1, "multiplier": 0.001},
+        )
+        # multiplier=0.001 极宽松 + min_spacing=1：连续触发逐根记录
+        assert len(triggers) >= 1
+
+    def test_top_pattern_tolerance_non_numeric_rejected(self):
+        """增量①接入锚：top_pattern 两键换 _param_number 后坏值 422 语义。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.top_pattern import TopPatternDetector
+        with pytest.raises(ResearchError, match="pattern_tolerance 须为数值"):
+            TopPatternDetector().detect(self._df(), {"pattern_tolerance": "abc"})
