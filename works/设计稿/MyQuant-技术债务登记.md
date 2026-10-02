@@ -15,10 +15,10 @@
 | A1 | repository 升序+limit 根因 → keyset 分页 | analysis 战 S-1 根因 | **已清账**（fix-mcp-1 CARD-07 keyset+真总数+next_cursor，iter_all_pages 四消费方零改动，2026-10-01 合并 c37c067） |
 | A2 | api/ 无认证 + CORS 通配 | scoring 战在案 | **实盘部署前置**（v2 升格——0.3.1 实施认证走 openspec change 正式流程，形制待 Q2） |
 | B1 | mtf_loader 自内联 safe_symbol ×2 | analysis 战专项 | **已清账**（第三战 CARD-11，2026-10-01 合并 ff425e3）；范围外 8 处内联另见 F 组 |
-| B2 | formula.py 窗口参数无上限（根治点） | analysis 战 S-6 | **部分清账**（第三战清长度/嵌套残余 CARD-14 + 窗口下界 CARD-06；窗口数值上界 DSL 化未做——见 F 组 F3） |
+| B2 | formula.py 窗口参数无上限（根治点） | analysis 战 S-6 | **已清账**（第三战清长度/嵌套/下界；fix-mcp-2 CARD-18 窗口数值上界 DSL 化（MAX_PLUGIN_LOOKBACK_BARS 下沉 formula.py+静态关前置）——2026-10-02 合并 89c72cd 全清） |
 | B3 | timeframe 无白名单/未净化 | analysis 战 S-5 | **已清账**（第三战 CARD-03 find_parquet 白名单；api 两端点经 security 复核为路由层天然阻断，一致性加固可选不另立项） |
 | B4 | kernel 私有名跨模块 import 公共化 | analysis 战 TD-2 | 建议顺手修 |
-| B5 | scoring 小件三件（死字段/NaN 静默/缺 warning） | scoring 战 | 建议顺手修 |
+| B5 | scoring 小件三件（死字段/NaN 静默/缺 warning） | scoring 战 | **件①②已清账**（fix-mcp-2：CARD-08 template_name 死字段/CARD-12 evaluation.py 吞异常报错化——2026-10-02 合并 89c72cd）；件③ knn_engine NaN 静默留 0.3.4 前置呈批（scoring 域外未随战） |
 | B6 | pct_change 弃用参数 ×12 | scoring 战 | 缓办（与依赖升级专项合并） |
 | C1 | 组合策略显式 default 语义 | analysis 战 TD-1 | 需裁口径 |
 | C2 | scoring D 类现状容忍 4 例 | scoring 战 | 需裁口径 |
@@ -138,11 +138,11 @@
 |---|---|---|---|
 | F1 | dev.sh 调用 start.sh 无执行位（git 100644，干净 checkout 必现 Permission denied） | 阶段四 e2e 双形态补测 | 一行修（调用改 `bash "$SCRIPT_DIR/start.sh"` 或三脚本补 x 位入库） |
 | F2 | 范围外内联 re.sub symbol 清洗 8 处（trading/evolution/validation/api 各域）未收敛 safe_symbol | architect 全库检索 | 与下次对应域审查合并做 |
-| F3 | formula 窗口**数值上界** DSL 化（validate_formula 加与 plugin_service 共享的上限常量）——B2 剩余面 | B2 口径更正 | 顺手修（注册面已有 10_000 单点承担，风险为未来直调方） |
+| F3 | formula 窗口**数值上界** DSL 化（validate_formula 加与 plugin_service 共享的上限常量）——B2 剩余面 | B2 口径更正 | **已清账**（fix-mcp-2 CARD-18，2026-10-02 合并 89c72cd） |
 | F4 | api/routes/data.py 非触碰端点存量 25 行未覆盖（数据集详情/预览/删除/来源/更新） | 阶段四覆盖闸门 | api 域审查时一并 |
 | F5 | api 非法 mode 静默回退 MERGE + api/core ImportMode 枚举双表定义 | reviewer/architect 报备 | 与 C3 裁决联动，api 域审查时一并 |
 | F6 | core/trading/runner.py:443 _load_data 读取拼接无校验（S-3 同族读取面） | architect 专项 | trading 域审查时一并 |
-| F7 | plugin_service.py:258 ast.parse 无 RecursionError 防护（DB 历史数据防御面，注册面已挡） | architect 专项 | 低危，可缓 |
+| F7 | plugin_service.py:258 ast.parse 无 RecursionError 防护（DB 历史数据防御面，注册面已挡） | architect 专项 | **已清账**（fix-mcp-2 CARD-19 补 (RecursionError, MemoryError)→set()，2026-10-02 合并 89c72cd） |
 | F8 | mtf_loader 两装载函数七步同构收敛 / formula 五表结构化收敛 | P2 不修记录 | 无实际漂移/回归面大，维持不动 |
 | F9 | mcpserver TOOL_TIERS 失联——research 档元组漏 inspect_cases/query_indicator/run_staged_validation 三工具名，能力自述（quant://capabilities）工具清单缺检查③④⑤工具且文档自相矛盾；四道测试网全漏拦（单向子集断言） | fix-mcp-1 战前链路分析（lead/reviewer/tester 三方互证） | **已清账**（CARD-01 元组补三名+tester 等式对拍断言，2026-10-01 合并 c37c067） |
 | F10 | 研究日志分页 total=当页条数（log.py 两端点+hypotheses）——agent 续读研究无终止信号；对照 strategies 域真总数语义并存两套 | fix-mcp-1 战前链路分析（reviewer Q3 扩面核实） | **已清账**（CARD-07 随 keyset 改造一并：三端点 total=真总数+next_cursor，2026-10-01 合并 c37c067） |
@@ -188,3 +188,4 @@
 | 2026-10-01 | C3（CARD-H1 NEW 语义）+ C4（fetcher 代理默认值） | 记录为技术债务，本次不做修复 | 已登记（本文档 C3/C4 节） |
 | 2026-10-01 | 第三战交付呈批（23 卡 / 覆盖率 100% / 全量 3679+e2e 四轮） | 批准合并 | 已合并 main ff425e3（--no-ff），B1/B3 清账、B2 部分清账（F 组新增 F1-F8） |
 | 2026-10-01 | fix-mcp-1 上游战交付呈批（14 卡 P0×1+P1×13 / mcpserver 4 文件 100% 行+分支 / 全量 3817+e2e 64） | 批准合并 | 已合并 main c37c067（--no-ff，30 笔提交），A1/F9/F10 清账，登记 F 组新增 F9/F10；fix-mcp-2（evolution+validation）待启动 |
+| 2026-10-02 | fix-mcp-2 下游战交付呈批（33 卡 P0×4+P1×17+注释组 12 / scene 覆盖 6-31%→96-100% / 全量 4082+e2e 64） | 批准合并 | 已合并 main 89c72cd（--no-ff，48 笔提交），B2 全清、B5 件①②、F3/F7 清账；**fix-mcp 系列全系列闭环**；C1/C2 口径呈批顺延（实施面不在本战域：C1 在 analysis、C2 在 scoring——随下战或单独裁）；新增观察项：cross_timeframe signal_type 名义参数、有效性测试同文件两处单轨迹锚（与已修的 20-seed 系同族） |
