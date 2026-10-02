@@ -1283,6 +1283,41 @@ class TestRunSceneVerificationFeature:
         assert result.total_triggers == 0
         assert any("No data found" in w for w in result.warnings)
 
+    def test_run_unknown_timeframe_raises_research_error(self, tmp_path):
+        """CARD-03 锚：未知 tf 结构化拒绝（旧实现静默空结果）。
+
+        注意：API 端点 /api/validate/scene 对该错误的兜底属 CARD-05，
+        此处只锚核心层行为。
+        """
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.scene.scene_engine import run_scene_verification
+        with pytest.raises(ResearchError) as exc_info:
+            run_scene_verification(
+                symbol="TESTUSDT", timeframe="7h",
+                scene_type="volume_spike", data_dir=str(tmp_path),
+            )
+        assert "timeframe 未知" in str(exc_info.value)
+
+    def test_run_alias_fallback_detects_on_60m_file(self, tmp_path):
+        """CARD-03 锚：只有 60m 文件时请求 1h 经别名兜底可检测。"""
+        from core.validation.scene.scene_engine import run_scene_verification
+        raw = make_ohlcv(n=200, freq="60min")
+        from core.data.storage import save_parquet
+        save_parquet(raw, tmp_path / "TESTUSDT_60m.parquet")
+        enhanced = raw.copy()
+        enhanced.iloc[50, enhanced.columns.get_loc("volume")] *= 100
+        enhanced["atr_14"] = 100.0
+
+        with patch(
+            "core.validation.scene.scene_engine.compute_all_indicators",
+            return_value=enhanced,
+        ):
+            result = run_scene_verification(
+                symbol="TESTUSDT", timeframe="1h",
+                scene_type="volume_spike", data_dir=str(tmp_path),
+            )
+        assert result.total_triggers >= 1
+
 
 # ===========================================================================
 # 9. forward_stats 补锚（基线 94%，空列表分支未执行）

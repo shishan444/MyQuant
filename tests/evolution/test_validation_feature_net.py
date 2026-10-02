@@ -138,6 +138,15 @@ class TestLoadMtfDataFeature:
         result = load_mtf_data("TE ST-USDT", ["4h"], data_dir=data_dir)
         assert set(result.keys()) == {"4h"}
 
+    def test_alias_fallback_hits_60m_file_for_1h_request(self, tmp_path):
+        """CARD-03 锚：只有 60m 文件时请求 1h 经别名兜底命中
+        （旧实现主名直拼 miss → 空结果）。"""
+        from core.validation.mtf import load_mtf_data
+        _write_parquet(tmp_path, "TESTUSDT_60m", make_ohlcv(n=100, freq="60min"))
+        result = load_mtf_data("TESTUSDT", ["1h"], data_dir=str(tmp_path))
+        assert set(result.keys()) == {"1h"}
+        assert len(result["1h"]) == 100
+
 
 # ===========================================================================
 # 3. engine.validate_hypothesis（主流程 L88-272 大块未执行）
@@ -354,6 +363,44 @@ class TestValidateHypothesisFeature:
             then_conditions=[{"action": "rise", "target": 1}],
         )
         assert result.total_count == 0
+
+    def test_unknown_timeframe_raises_research_error(self, tmp_path):
+        """CARD-03 锚：未知 tf 结构化拒绝（旧实现静默空结果）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.engine import validate_hypothesis
+        with pytest.raises(ResearchError) as exc_info:
+            validate_hypothesis(
+                "TESTUSDT", "7h", "2024-01-01", "2025-01-01",
+                when_conditions=[self._cond("close", "gt", 0)],
+                then_conditions=[{"action": "rise", "target": 1}],
+                data_dir=str(tmp_path),
+            )
+        assert "timeframe 未知" in str(exc_info.value)
+
+    def test_missing_file_semantics_unchanged(self, tmp_path):
+        """CARD-03 保持锚：合法 tf 缺文件 → 空 ValidationResult（非异常）。"""
+        from core.validation.engine import validate_hypothesis
+        result = validate_hypothesis(
+            "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+            when_conditions=[self._cond("close", "gt", 0)],
+            then_conditions=[{"action": "rise", "target": 1}],
+            data_dir=str(tmp_path),
+        )
+        assert result.total_count == 0
+        assert result.triggers == []
+
+    def test_alias_fallback_evaluates_on_60m_file(self, tmp_path):
+        """CARD-03 锚：只有 60m 文件时请求 1h 可完整评估
+        （旧实现主名 miss → 空结果）。"""
+        from core.validation.engine import validate_hypothesis
+        _write_parquet(tmp_path, "TESTUSDT_60m", _sine_ohlcv(n=200, freq="60min"))
+        result = validate_hypothesis(
+            "TESTUSDT", "1h", "2024-01-01", "2025-01-01",
+            when_conditions=[self._cond("close", "gt", 0)],
+            then_conditions=[{"action": "rise", "target": 1}],
+            data_dir=str(tmp_path),
+        )
+        assert result.total_count > 0
 
 
 # ===========================================================================
@@ -775,6 +822,32 @@ class TestEvaluateRulesFeature:
             data_dir=str(tmp_path),
         )
         assert any("No data in requested date range" in w for w in result.warnings)
+
+    def test_unknown_timeframe_raises_research_error(self, tmp_path):
+        """CARD-03 锚：未知 tf 结构化拒绝（旧实现静默空结果 + warning）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        from core.validation.rule_engine import evaluate_rules
+        with pytest.raises(ResearchError) as exc_info:
+            evaluate_rules(
+                "TESTUSDT", "7h", "2024-01-01", "2025-01-01",
+                entry_conditions=[{"subject": "close", "action": "lt", "target": 95}],
+                exit_conditions=[{"subject": "close", "action": "gt", "target": 105}],
+                data_dir=str(tmp_path),
+            )
+        assert "timeframe 未知" in str(exc_info.value)
+
+    def test_missing_file_warning_semantics_unchanged(self, tmp_path):
+        """CARD-03 保持锚：合法 tf 缺文件 → warning + 空结果（非异常）。"""
+        from core.validation.rule_engine import evaluate_rules
+        result = evaluate_rules(
+            "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+            entry_conditions=[{"subject": "close", "action": "lt", "target": 95}],
+            exit_conditions=[{"subject": "close", "action": "gt", "target": 105}],
+            data_dir=str(tmp_path),
+        )
+        assert any("Data file not found: TESTUSDT_4h.parquet" in w
+                   for w in result.warnings)
+        assert result.total_trades == 0
 
     def test_main_path_pairs_trades_and_stats(self, tmp_path):
         from core.validation.rule_engine import evaluate_rules
