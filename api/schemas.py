@@ -635,7 +635,7 @@ class AvailableSourcesResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    version: str = "0.9.0"
+    version: str
     timestamp: str = ""
 
 
