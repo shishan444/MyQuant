@@ -138,6 +138,12 @@ class DNAModel(BaseModel):
     signal_sources: Optional[List[Dict[str, Any]]] = None
     composition: Optional[Dict[str, Any]] = None
 
+    def to_dna(self):
+        """转换为核心 StrategyDNA（传输模型→领域对象的单一转换入口）。"""
+        from core.strategy.dna import StrategyDNA
+
+        return StrategyDNA.from_dict(self.model_dump())
+
 
 class TimeframeLayerModel(BaseModel):
     """A single timeframe layer within an MTF strategy."""

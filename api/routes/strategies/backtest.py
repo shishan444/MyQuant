@@ -87,7 +87,7 @@ def backtest_strategy(
         timeframe = row["timeframe"]
         strategy_id = payload.strategy_id
     elif payload.dna:
-        dna = StrategyDNA.from_json(payload.dna.model_dump_json())
+        dna = payload.dna.to_dna()
         symbol = payload.symbol or "UNKNOWN"
         timeframe = payload.timeframe or "1d"
         strategy_id = "inline"

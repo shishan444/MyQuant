@@ -39,12 +39,6 @@ def runner_status(request: Request) -> dict:
     return runner.get_status()
 
 
-def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
-    """Convert a Pydantic DNAModel to a core StrategyDNA."""
-    data = dna_model.model_dump()
-    return StrategyDNA.from_dict(data)
-
-
 def _parse_json_list(raw: Optional[str]) -> Optional[List[str]]:
     """Parse a JSON-encoded list from a DB text column."""
     if not raw:
@@ -218,7 +212,7 @@ def create_task(
 
     # Build initial DNA: use provided or generate a default
     if payload.initial_dna:
-        dna = _dna_model_to_dna(payload.initial_dna)
+        dna = payload.initial_dna.to_dna()
     else:
         from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes, TimeframeLayer
         base_signals = [

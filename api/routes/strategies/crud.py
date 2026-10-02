@@ -57,7 +57,6 @@ from api.schemas import (
 from core.backtest import engine as _bt_engine_mod
 from core.scoring.scorer import score_strategy
 from core.services import backtest_service
-from core.strategy.dna import StrategyDNA
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +64,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-
-
-def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
-    """Convert a Pydantic DNAModel to a core StrategyDNA."""
-    data = dna_model.model_dump()
-    return StrategyDNA.from_dict(data)
 
 
 def _gene_signature_or_derive(row: Dict[str, Any]) -> Optional[str]:
@@ -137,7 +130,7 @@ def create_strategy(
 ) -> StrategyResponse:
     """Create a new strategy."""
     strategy_id = str(uuid.uuid4())
-    dna = _dna_model_to_dna(payload.dna)
+    dna = payload.dna.to_dna()
 
     save_strategy(
         db_path,
@@ -245,7 +238,7 @@ def update_strategy_endpoint(
     if payload.best_score is not None:
         fields["best_score"] = payload.best_score
     if payload.dna is not None:
-        dna = _dna_model_to_dna(payload.dna)
+        dna = payload.dna.to_dna()
         fields["dna_json"] = dna.to_json()
 
     if fields:
