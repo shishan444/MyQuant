@@ -8,6 +8,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_db_path
+from api.schemas import ConfigUpdate
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -77,16 +78,16 @@ def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
 
 @router.put("")
 def update_config(
-    payload: Dict[str, Any],
+    payload: ConfigUpdate,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     current = _read_config(db_path)
-    for key, value in payload.items():
-        if key in _DEFAULT_CONFIG:
-            # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
-            if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
-                continue
-            current[key] = value
+    # 部分更新：仅显式传入的字段（exclude_unset 区分未传与显式传参）
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
+        if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
+            continue
+        current[key] = value
     _write_config(db_path, current)
     # 响应同样 masked（与 GET 一致）
     return _masked_view(current)

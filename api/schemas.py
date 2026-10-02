@@ -639,6 +639,32 @@ class HealthResponse(BaseModel):
     timestamp: str = ""
 
 
+class ConfigUpdate(BaseModel):
+    """PUT /api/config 请求体（部分更新：全字段 Optional，未知键忽略）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    notify_evolution: Optional[bool] = None
+    notify_signal: Optional[bool] = None
+    binance_api_key: Optional[str] = None
+    binance_secret_key: Optional[str] = None
+    binance_connected: Optional[bool] = None
+    init_cash: Optional[int] = None
+    maker_fee: Optional[float] = None
+    taker_fee: Optional[float] = None
+    max_positions: Optional[int] = None
+
+    @field_validator("init_cash", "max_positions", mode="before")
+    @classmethod
+    def _reject_bool_for_int(cls, v):
+        """int 字段拒 bool（Pydantic v2 lax 下 True→1 属隐式收窄，显式拒绝）。"""
+        if isinstance(v, bool):
+            raise ValueError("bool value not accepted for int field")
+        return v
+
+
 # ── Paper Trading Models ──
 
 
