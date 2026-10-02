@@ -26,6 +26,7 @@ from api.schemas import (
     OhlcvResponse,
 )
 from core.data.csv_importer import import_csv, import_csv_batch, parse_filename, ImportMode
+from core.data.mtf_loader import find_parquet, safe_symbol
 from core.data.storage import load_parquet
 
 logger = logging.getLogger(__name__)
@@ -507,12 +508,13 @@ def get_ohlcv_by_symbol(
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
     """Get OHLCV data by symbol+timeframe (resolves parquet file directly)."""
-    import re
-
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
-    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
-
-    if not parquet_path.exists():
+    # 路径解析收口 core find_parquet：周期白名单 + 别名表，杜绝 timeframe 旁路拼接
+    symbol_ = safe_symbol(symbol)
+    try:
+        parquet_path = find_parquet(data_dir, symbol_, timeframe)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if parquet_path is None:
         raise HTTPException(status_code=404, detail=f"No data for {symbol}/{timeframe}")
 
     df = load_parquet(parquet_path)
@@ -536,7 +538,7 @@ def get_ohlcv_by_symbol(
         })
 
     return OhlcvResponse(
-        dataset_id=f"{safe_symbol}_{timeframe}",
+        dataset_id=f"{symbol_}_{timeframe}",
         data=ohlcv_data,
     )
 
@@ -568,14 +570,15 @@ def get_chart_indicators(
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
     """Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA, MACD, KDJ) for chart rendering."""
-    import re
-
     from core.features.indicators import _compute_indicator
 
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
-    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
-
-    if not parquet_path.exists():
+    # 路径解析收口 core find_parquet：周期白名单 + 别名表，杜绝 timeframe 旁路拼接
+    symbol_ = safe_symbol(symbol)
+    try:
+        parquet_path = find_parquet(data_dir, symbol_, timeframe)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if parquet_path is None:
         raise HTTPException(status_code=404, detail=f"No data for {symbol}/{timeframe}")
 
     df = load_parquet(parquet_path)
@@ -608,7 +611,7 @@ def get_chart_indicators(
                 # B1.5: 图表层缺失必须可区分「未开启」与「计算失败」
                 logger.warning(
                     "chart-indicators %s/%s: EMA(%d) 计算失败，该层将缺失",
-                    safe_symbol, timeframe, period,
+                    symbol_, timeframe, period,
                     exc_info=True,
                 )
                 continue
@@ -639,7 +642,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: BOLL 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 
@@ -657,7 +660,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: RSI 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 
@@ -675,7 +678,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: RVOL 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 
@@ -693,7 +696,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: VWMA 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 
@@ -722,7 +725,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: MACD 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 
@@ -758,7 +761,7 @@ def get_chart_indicators(
         except Exception:
             logger.warning(
                 "chart-indicators %s/%s: KDJ 计算失败，该层将缺失",
-                safe_symbol, timeframe,
+                symbol_, timeframe,
                 exc_info=True,
             )
 

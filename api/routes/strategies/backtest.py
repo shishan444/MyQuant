@@ -98,6 +98,20 @@ def backtest_strategy(
         )
 
     # Try to load the dataset
+    # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
+    from core.data.validation import validate_import_interval, validate_symbol
+
+    try:
+        parts = payload.dataset_id.rsplit("_", 1)
+        if len(parts) != 2:
+            raise ValueError(f"{payload.dataset_id!r}（须形如 SYMBOL_interval）")
+        validate_symbol(parts[0])
+        validate_import_interval(parts[1])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid dataset_id: {exc}",
+        ) from exc
     parquet_path = data_dir / f"{payload.dataset_id}.parquet"
     if not parquet_path.exists():
         raise HTTPException(

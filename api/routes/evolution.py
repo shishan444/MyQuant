@@ -248,26 +248,19 @@ def create_task(
     dna.risk_genes.leverage = payload.leverage
     dna.risk_genes.direction = payload.direction
 
-    # Validate data availability
-    import re
-    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', payload.symbol)
-    timeframe = payload.timeframe
+    # Validate data availability（find_parquet 内含周期白名单与 core 别名表，杜绝旁路拼接）
+    from core.data.mtf_loader import find_parquet, safe_symbol
 
-    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
-    # Try aliases
-    if not parquet_path.exists():
-        aliases = {"1h": ["1h", "60m"], "4h": ["4h"], "1d": ["1d", "1D"]}
-        for alias in aliases.get(timeframe, [timeframe]):
-            alt_path = data_dir / f"{safe_symbol}_{alias}.parquet"
-            if alt_path.exists():
-                parquet_path = alt_path
-                break
+    try:
+        parquet_path = find_parquet(data_dir, safe_symbol(payload.symbol), payload.timeframe)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     data_time_start = None
     data_time_end = None
     data_row_count = 0
 
-    if not parquet_path.exists():
+    if parquet_path is None:
         raise HTTPException(
             status_code=400,
             detail=f"无 {payload.symbol}/{payload.timeframe} 的K线数据"
