@@ -32,11 +32,15 @@ class SupportResistanceDetector(SceneDetector):
         proximity = float(p["proximity_pct"])
         min_spacing = int(p["min_spacing"])
 
-        # Resolve level columns
-        level_col = _resolve_sr_column(level_source, direction, df.columns)
-        if level_col is None:
+        # both 时分别解析 support/resistance 两列，单方向只解析自身列
+        sides = ("support", "resistance") if direction == "both" else (direction,)
+        side_levels = {}
+        for side in sides:
+            col = _resolve_sr_column(level_source, side, df.columns)
+            if col is not None:
+                side_levels[side] = df[col].values
+        if not side_levels:
             return []
-        level_vals = df[level_col].values
 
         highs = df["high"].values
         lows = df["low"].values
@@ -46,30 +50,29 @@ class SupportResistanceDetector(SceneDetector):
         last_bar = -min_spacing - 1
 
         for i in range(1, len(df)):
-            if np.isnan(level_vals[i]):
-                continue
+            # 逐侧检查：support 配 lows（下探支撑）、resistance 配 highs
+            # （上冲阻力），任一侧邻近即触发，level 值取触发侧
+            touched_level = None
+            proximity_dist = 0.0
+            for side, level_vals in side_levels.items():
+                if np.isnan(level_vals[i]):
+                    continue
+                price = lows[i] if side == "support" else highs[i]
+                dist = abs(price - level_vals[i]) / level_vals[i] * 100
+                if dist <= proximity:
+                    touched_level = level_vals[i]
+                    proximity_dist = dist
+                    break
 
-            touched = False
-            if direction in ("support", "both"):
-                # Price low touches or dips below support, then proximity check
-                proximity_dist = abs(lows[i] - level_vals[i]) / level_vals[i] * 100
-                if proximity_dist <= proximity:
-                    touched = True
-
-            if direction == "resistance" and not touched:
-                proximity_dist = abs(highs[i] - level_vals[i]) / level_vals[i] * 100
-                if proximity_dist <= proximity:
-                    touched = True
-
-            if not touched:
+            if touched_level is None:
                 continue
             if i - last_bar < min_spacing:
                 continue
 
             trigger_row = df.iloc[i]
             snapshot = _extract_snapshot(trigger_row)
-            snapshot["level_value"] = round(float(level_vals[i]), 4)
-            snapshot["proximity_pct"] = round(proximity_dist, 2) if touched else 0
+            snapshot["level_value"] = round(float(touched_level), 4)
+            snapshot["proximity_pct"] = round(proximity_dist, 2)
 
             triggers.append(TriggerPoint(
                 id=len(triggers) + 1,
