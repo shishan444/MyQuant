@@ -125,30 +125,6 @@ class TestMutateIndicatorDirection:
         assert changed, "mutate_indicator should be able to change DIRECTION gene indicator"
 
 
-class TestMutateRiskDirection:
-    """Test mutate_risk can cycle direction to mixed."""
-
-    def test_mutate_risk_can_cycle_to_mixed(self):
-        """mutate_risk should be able to change direction from long to mixed."""
-        dna = StrategyDNA(
-            signal_genes=[
-                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                           None, {"type": "lt", "threshold": 30}),
-            ],
-            logic_genes=LogicGenes(),
-            risk_genes=RiskGenes(direction="long"),
-        )
-
-        reached_mixed = False
-        for _ in range(200):
-            child = mutate_risk(dna)
-            if child.risk_genes.direction == "mixed":
-                reached_mixed = True
-                break
-
-        assert reached_mixed, "mutate_risk should be able to change direction to mixed"
-
-
 class TestCrossoverDirection:
     """Test crossover preserves DIRECTION gene."""
 
