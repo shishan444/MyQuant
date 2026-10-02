@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ._common import _safe_error_message
+
 from core.persistence.db_ext import (
     count_strategies,
     delete_strategy,
@@ -191,7 +193,7 @@ def compare_strategies(
         except Exception as exc:
             results.append(CompareResultItem(
                 strategy_id=sid,
-                error=str(exc),
+                error=_safe_error_message(exc),
             ))
 
     return CompareResponse(results=results)

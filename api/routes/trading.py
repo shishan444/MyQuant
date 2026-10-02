@@ -1,6 +1,7 @@
 """REST API routes for paper trading tasks."""
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,8 @@ from core.persistence.db_ext import (
     compute_trading_metrics,
 )
 from api.deps import get_db_path
+
+logger = logging.getLogger(__name__)
 from api.schemas import (
     PaperTradingTaskCreate,
     PaperTradingTaskResponse,
@@ -81,8 +84,10 @@ def create_task(
         StrategyDNA.from_json(body.dna_json)
     except Exception as e:
         # B6.1 status 正确性：dna_json 解析失败=业务拒绝（422 保留给 Pydantic
-        # 校验明细数组——G16.0 契约分层）
-        raise HTTPException(status_code=400, detail=f"Invalid dna_json: {e}")
+        # 校验明细数组——G16.0 契约分层）；异常文本形态不可控，detail 固定
+        # 文案、原文经日志保留
+        logger.warning("invalid dna_json on task create: %r", e, exc_info=e)
+        raise HTTPException(status_code=400, detail="Invalid dna_json format")
 
     task_id = uuid.uuid4().hex[:12]
     save_paper_trading_task(

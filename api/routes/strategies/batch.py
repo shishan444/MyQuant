@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ._common import _safe_error_message
+
 from core.persistence.db_ext import (
     count_strategies,
     delete_strategy,
@@ -316,7 +318,7 @@ class _BatchBacktestProcessor:
                         strategy_name=self.strategy_names.get(sid, ""),
                         symbol=symbol, timeframe=timeframe,
                         data_start=dr.start, data_end=dr.end,
-                        error=str(exc),
+                        error=_safe_error_message(exc),
                     ))
                     self.strategy_period_data[sid].append({
                         "data_start": dr.start, "data_end": dr.end,
@@ -324,7 +326,7 @@ class _BatchBacktestProcessor:
                         "total_return": 0.0, "sharpe_ratio": 0.0,
                         "max_drawdown": 0.0, "result_id": "",
                     })
-                    batch_results.append({"strategy_id": sid, "error": str(exc)})
+                    batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
         except Exception as exc:
             for sid in strategy_ids:
@@ -333,7 +335,7 @@ class _BatchBacktestProcessor:
                     strategy_name=self.strategy_names.get(sid, ""),
                     symbol=symbol, timeframe=timeframe,
                     data_start=dr.start, data_end=dr.end,
-                    error=str(exc),
+                    error=_safe_error_message(exc),
                 ))
                 self.strategy_period_data[sid].append({
                     "data_start": dr.start, "data_end": dr.end,
@@ -341,7 +343,7 @@ class _BatchBacktestProcessor:
                     "total_return": 0.0, "sharpe_ratio": 0.0,
                     "max_drawdown": 0.0, "result_id": "",
                 })
-                batch_results.append({"strategy_id": sid, "error": str(exc)})
+                batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
         return self._progress_payload(step_index, group_key, dr, batch_results)
 
@@ -459,8 +461,8 @@ async def batch_backtest_stream(
             realtime.broadcast("/streams", session_id, "complete", complete)
         except Exception as exc:
             if hasattr(processor, "mark_failed"):
-                await asyncio.to_thread(processor.mark_failed, str(exc))
-            realtime.broadcast("/streams", session_id, "error", {"message": str(exc)})
+                await asyncio.to_thread(processor.mark_failed, _safe_error_message(exc))
+            realtime.broadcast("/streams", session_id, "error", {"message": _safe_error_message(exc)})
         finally:
             stream_control.unregister(session_id)
 

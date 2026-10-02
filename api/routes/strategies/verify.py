@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ._common import _safe_error_message
+
 from core.persistence.db_ext import (
     count_strategies,
     delete_strategy,
@@ -299,7 +301,7 @@ def verify_strategies(
                             strategy_id=sid,
                             data_start=dr.start,
                             data_end=dr.end,
-                            error=str(exc),
+                            error=_safe_error_message(exc),
                         ))
                         strategy_period_data[sid].append({
                             "data_start": dr.start,
@@ -317,7 +319,7 @@ def verify_strategies(
                         strategy_id=sid,
                         data_start=dr.start,
                         data_end=dr.end,
-                        error=str(exc),
+                        error=_safe_error_message(exc),
                     ))
                     strategy_period_data[sid].append({
                         "data_start": dr.start,
@@ -556,27 +558,27 @@ class _VerifyProcessor:
                 except Exception as exc:
                     self.all_results.append(VerifyResultItem(
                         strategy_id=sid, data_start=dr.start, data_end=dr.end,
-                        error=str(exc),
+                        error=_safe_error_message(exc),
                     ))
                     self.strategy_period_data[sid].append({
                         "data_start": dr.start, "data_end": dr.end,
                         "fitness": 0.0, "qualified": False,
                         "total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0,
                     })
-                    batch_results.append({"strategy_id": sid, "error": str(exc)})
+                    batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
         except Exception as exc:
             for sid in strategy_ids:
                 self.all_results.append(VerifyResultItem(
                     strategy_id=sid, data_start=dr.start, data_end=dr.end,
-                    error=str(exc),
+                    error=_safe_error_message(exc),
                 ))
                 self.strategy_period_data[sid].append({
                     "data_start": dr.start, "data_end": dr.end,
                     "fitness": 0.0, "qualified": False,
                     "total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0,
                 })
-                batch_results.append({"strategy_id": sid, "error": str(exc)})
+                batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
         return self._progress_payload(step_index, group_key, dr, batch_results)
 
@@ -693,8 +695,8 @@ async def verify_strategies_stream(
             complete = await asyncio.to_thread(processor.finalize)
             realtime.broadcast("/streams", session_id, "complete", complete)
         except Exception as exc:
-            await asyncio.to_thread(processor.mark_failed, str(exc))
-            realtime.broadcast("/streams", session_id, "error", {"message": str(exc)})
+            await asyncio.to_thread(processor.mark_failed, _safe_error_message(exc))
+            realtime.broadcast("/streams", session_id, "error", {"message": _safe_error_message(exc)})
         finally:
             stream_control.unregister(session_id)
 
