@@ -177,7 +177,7 @@ def create_app(
     return app
 
 
-# Default app instance for uvicorn：FastAPI + socket.io ASGI 组合
+# uvicorn 缺省 app 实例：FastAPI + socket.io ASGI 组合
 # （socket.io 端点在 /socket.io 路径；namespace 经连接参数路由）
 _fastapi_app = create_app()
 
