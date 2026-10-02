@@ -628,3 +628,27 @@ class TestGapClosurePlugin3:
                                     "params": {"period": 14}}, db)]
         out = _enrich_feature_columns(db, df, defs)
         assert (out["rsi_14"] == 50.0).all()  # 未被现算覆盖
+
+
+class TestReferencedColumnsDeepNesting:
+    """CARD-19：超长链/深嵌套解析超限的结构化降级（原裸穿 RecursionError）。
+
+    可达性实证：链长 10000 的长二元 "+" 链此前在 ast.parse 递归超限
+    裸穿；现按无公式引用降级 set()（formula.py 校验关同款收口形制）。
+    """
+
+    def test_超长链_解析超限降级空集(self) -> None:
+        from core.analysis.plugin_service import _referenced_formula_columns
+        expr = "+".join(["close"] * 10000)
+        assert _referenced_formula_columns(expr, {}) == set()
+
+    def test_深嵌套_解析超限降级空集(self) -> None:
+        from core.analysis.plugin_service import _referenced_formula_columns
+        expr = "close" + "*(close" * 3000 + ")" * 3000
+        assert _referenced_formula_columns(expr, {}) == set()
+
+    def test_合法表达式_提取不受影响(self) -> None:
+        from core.analysis.plugin_service import _referenced_formula_columns
+        entries = {"fx_a": {"source": "formula"}}
+        assert _referenced_formula_columns("fx_a + close", entries) == {"fx_a"}
+        assert _referenced_formula_columns("close + open", entries) == set()
