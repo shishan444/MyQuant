@@ -154,12 +154,11 @@ def backtest_strategy(
 
     # Load multi-timeframe data if DNA has layers or timeframe_pool provided
     dfs_by_timeframe = None
-    if dna.is_mtf and dna.layers:
+    needed_tfs = backtest_service.compute_needed_tfs([dna], timeframe)
+    if needed_tfs:
         # is_mtf 即装载（不用 len>1 守卫：单层同 tf 策略曾在此必 500——
         # 守卫跳过装载而 executor 要求 is_mtf 必有 dfs_by_timeframe；
         # load_mtf_data 内建 exec tf 帧，单层同 tf 零额外 IO 退化）
-        needed_tfs: set[str] = {layer.timeframe for layer in dna.layers}
-        needed_tfs.add(timeframe)
         dfs_by_timeframe = load_mtf_data(
             data_dir, symbol, timeframe, enhanced_df,
             needed_tfs, payload.data_start, payload.data_end,
