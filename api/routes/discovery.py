@@ -1,4 +1,10 @@
-"""Discovery API routes: pattern discovery, similar cases, price prediction."""
+"""模式发现入口（/api/discovery/*：规则发现/相似案例/区间预测）。
+
+职能：暴露 core.discovery 的三个引擎（决策树规则发现、KNN 相似
+案例、KNN 区间预测）为 REST 端点。服务对象：暂无稳定前端消费方
+（历史入口，OpenAPI generated 类型仍在）。
+职责边界：传输与引擎装配，发现与预测算法在 core.discovery。
+"""
 
 from __future__ import annotations
 
@@ -42,7 +48,7 @@ class PredictRequest(BaseModel):
 
 def _load_enhanced_df(data_dir: Path, symbol: str, timeframe: str,
                       data_start: Optional[str], data_end: Optional[str]):
-    """Load and enhance market data for discovery."""
+    """装载并增强行情数据（发现族三端点共用的数据入口）。"""
     from core.data.mtf_loader import load_and_prepare_df
     return load_and_prepare_df(data_dir, symbol, timeframe, data_start, data_end)
 
@@ -52,10 +58,7 @@ def discover_patterns(
     req: DiscoveryRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Run pattern discovery using decision tree.
-
-    Returns top trading rules discovered from historical data.
-    """
+    """决策树模式发现：从历史数据挖掘 top 交易规则。"""
     df = _load_enhanced_df(data_dir, req.symbol, req.timeframe,
                            req.data_start, req.data_end)
     if df is None:
@@ -92,11 +95,7 @@ def find_similar(
     req: SimilarRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Find similar historical cases using KNN.
-
-    Returns the most similar historical market conditions
-    with their subsequent price movements.
-    """
+    """KNN 相似案例：最相似历史行情及其后续走势。"""
     df = _load_enhanced_df(data_dir, req.symbol, req.timeframe,
                            req.data_start, req.data_end)
     if df is None:
@@ -107,7 +106,7 @@ def find_similar(
     engine = SimilarCaseEngine(n_neighbors=req.n_neighbors, horizon=req.horizon)
     engine.fit(df)
 
-    # Use the last row as current state
+    # 末行即当前状态（对齐前端图表末端）
     encoder = engine.encoder
     current_features = encoder.transform(df.iloc[[-1]])[0]
 
@@ -134,10 +133,7 @@ def predict_range(
     req: PredictRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Predict price range from KNN neighbors.
-
-    Returns predicted direction, confidence, and price range.
-    """
+    """KNN 区间预测：方向/置信度与价格区间。"""
     df = _load_enhanced_df(data_dir, req.symbol, req.timeframe,
                            req.data_start, req.data_end)
     if df is None:
@@ -148,7 +144,7 @@ def predict_range(
     engine = SimilarCaseEngine(n_neighbors=req.n_neighbors, horizon=req.horizon)
     engine.fit(df)
 
-    # Use the last row as current state
+    # 末行即当前状态（对齐前端图表末端）
     current_features = engine.encoder.transform(df.iloc[[-1]])[0]
     prediction = engine.predict(current_features, req.n_neighbors)
 
