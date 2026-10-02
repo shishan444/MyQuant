@@ -145,7 +145,7 @@ def run_validation(
     except ResearchError as exc:
         # 0.2.14：高周期条件结构化拒绝（不可达/warmup 不足/低周期键）
         # 转结构化 422，不裸穿 500
-        from api.routes.research.hypotheses import research_error_to_http
+        from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
     return ValidateResponse(
@@ -216,7 +216,7 @@ def run_rule_validation(
             mtf=mtf_ctx,
         )
     except ResearchError as exc:
-        from api.routes.research.hypotheses import research_error_to_http
+        from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
     return RuleValidateResponse(

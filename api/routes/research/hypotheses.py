@@ -22,13 +22,12 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# research_error_to_http 已迁 common（子包共享底座）；此处 import 兼容
-# 范围外 api/routes/validate.py 的既有引用，新代码请直用 common
+# research_error_to_http 已迁 common（子包共享底座）；本模块自用直取
 from api.routes.research.common import (
     decode_cursor,
     encode_cursor,
     require_known_timeframe,
-    research_error_to_http,  # noqa: F401 —— 兼容 validate.py 既有引用
+    research_error_to_http,
 )
 
 
