@@ -387,24 +387,39 @@ class TestLookbackUpperBound:
         assert out["column"] == "fx_edge_ok"
 
     @pytest.mark.parametrize(
-        ("expression", "lookback"),
+        ("expression", "value_repr"),
         [
-            ("zscore(close, 10001)", 10001),
-            ("zscore(close, 100000)", 100000),
-            ("zscore(close, 1000000000)", 1000000000),
-            ("shift(close, 200000)", 200000),
-            ("ema(close, 500000)", 500000),
-            ("rolling_mean(rolling_std(close, 30), 999999)", 999999),
+            ("zscore(close, 10001)", "10001"),
+            ("zscore(close, 100000)", "100000"),
+            ("zscore(close, 1000000000)", "1e+09"),
+            ("ema(close, 500000)", "500000"),
+            ("rolling_mean(rolling_std(close, 30), 999999)", "999999"),
         ],
-        ids=["zscore超一", "zscore原边界值", "zscore十亿", "shift位",
+        ids=["zscore超一", "zscore原边界值", "zscore十亿",
              "ema位", "嵌套取max"])
-    def test_超上限_拒绝(self, db: Path, expression: str,
-                         lookback: int) -> None:
+    def test_超上限_拒绝_静态关(self, db: Path, expression: str,
+                                value_repr: str) -> None:
+        """CARD-18：有窗口位的超上限公式拒绝点前移到静态关
+        （validate_formula），detail 为 errors 列表形制。"""
         with pytest.raises(ResearchError) as ei:
             register_formula_plugin(db, name="lb_hit", expression=expression)
         assert ei.value.code == "RESEARCH_FORMULA_INVALID"
         assert ei.value.status == 422
-        assert ei.value.detail["lookback"] == lookback
+        errors = ei.value.detail["errors"]
+        assert any("窗口超上限" in e and value_repr in e for e in errors), errors
+        assert any("10000" in e for e in errors)  # 上限值随文案透出
+        # 零副作用
+        assert rr.list_signal_registry_entries(db) == []
+
+    def test_超上限_拒绝_注册关_shift位(self, db: Path) -> None:
+        """shift 无窗口位（静态放行）→ 仍走注册关 formula_lookback
+        原路径（detail 为 lookback/max 形制）。"""
+        with pytest.raises(ResearchError) as ei:
+            register_formula_plugin(
+                db, name="lb_shift", expression="shift(close, 200000)")
+        assert ei.value.code == "RESEARCH_FORMULA_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["lookback"] == 200000
         assert ei.value.detail["max"] == 10_000
         # 零副作用
         assert rr.list_signal_registry_entries(db) == []
