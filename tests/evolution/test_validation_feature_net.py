@@ -1027,6 +1027,10 @@ class TestLookbackWindowValidationFeature:
             pytest.param(0, id="零窗口"),
             pytest.param(-1, id="负窗口"),
             pytest.param("abc", id="非数值字符串"),
+            # SEC-08 增量：int(inf) OverflowError 裸穿收口；int(nan) ValueError
+            pytest.param(float("inf"), id="inf窗口"),
+            pytest.param(float("-inf"), id="负inf窗口"),
+            pytest.param(float("nan"), id="nan窗口"),
         ],
     )
     def test_bad_window_rejected(self, bad_window):
