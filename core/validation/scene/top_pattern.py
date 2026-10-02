@@ -26,8 +26,6 @@ class TopPatternDetector(SceneDetector):
             "min_spacing": 10,
             "pivot_bars_left": 6,
             "pivot_bars_right": 6,
-            "pattern_tolerance": 1.5,
-            "pattern_min_height_pct": 1.0,
         }
 
     def detect(self, df: pd.DataFrame, params: Dict[str, Any]) -> List[TriggerPoint]:
@@ -45,8 +43,6 @@ class TopPatternDetector(SceneDetector):
         atr_series = df["atr_14"] if "atr_14" in df.columns else None
         patterns = match_patterns(
             pivots,
-            tolerance=_param_number(p, "pattern_tolerance", min_value=0, exclusive=True),
-            min_height_pct=_param_number(p, "pattern_min_height_pct", min_value=0, exclusive=True),
             df=df,
             atr_series=atr_series,
         )

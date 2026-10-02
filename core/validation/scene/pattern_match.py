@@ -29,21 +29,6 @@ class PatternMatch:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _pct_diff(a: float, b: float) -> float:
-    """Return percentage difference relative to the average of a and b."""
-    avg = (a + b) / 2.0
-    if avg == 0:
-        return 0.0
-    return abs(a - b) / avg * 100.0
-
-
-def _height_pct(peak_price: float, trough_price: float) -> float:
-    """Return percentage height from trough to peak."""
-    if trough_price == 0:
-        return 0.0
-    return (peak_price - trough_price) / trough_price * 100.0
-
-
 def _build_key_points(*pairs: tuple) -> List[Dict[str, Any]]:
     """Build key_points list from (label, PivotPoint) pairs."""
     return [
@@ -106,8 +91,6 @@ def _check_level_intact(
         return True
     end = len(df) if check_bars == 0 else min(from_bar + 1 + check_bars, len(df))
     subsequent = df.iloc[from_bar + 1:end]
-    if len(subsequent) == 0:
-        return True
     if direction == "below":
         lowest = subsequent["low"].min()
         return lowest > level_price - avg_bar_length
@@ -501,8 +484,6 @@ def _find_triple_tops(
 
 def match_patterns(
     pivots: List[PivotPoint],
-    tolerance: float = 1.5,
-    min_height_pct: float = 1.0,
     df: Optional[pd.DataFrame] = None,
     atr_series: Optional[pd.Series] = None,
 ) -> List[PatternMatch]:
@@ -513,8 +494,6 @@ def match_patterns(
 
     Args:
         pivots: Chronologically ordered pivot points.
-        tolerance: Fallback tolerance when df/atr unavailable (kept for compat).
-        min_height_pct: Fallback min height when df/atr unavailable (kept for compat).
         df: DataFrame with high/low columns for avgBarLength and post-validation.
         atr_series: ATR values series for height constraints.
 
@@ -524,7 +503,6 @@ def match_patterns(
     if len(pivots) < 3:
         return []
 
-    # Fallback: if df not available, cannot run new algorithm
     if df is None:
         return []
 
