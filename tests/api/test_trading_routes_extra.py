@@ -106,6 +106,39 @@ class TestCreateTaskValidation:
         assert response.json()["warnings"] is None
 
 
+class TestLiveTradingDnaPrecheck:
+    """CARD-22 N1：live_trading 创建任务补 dna_json 预检（形制对齐 trading.py）。"""
+
+    def _live_payload(self, dna_json: str) -> dict:
+        return {
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "dna_json": dna_json, "direction": "long",
+        }
+
+    def test_invalid_dna_json_400_fixed_detail(
+        self, api_client: TestClient,
+    ) -> None:
+        """非法 dna_json → 400 固定文案（旧实现 201 落库）。"""
+        response = api_client.post(
+            "/api/live-trading/tasks", json=self._live_payload("not-a-json"),
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid dna_json format"
+
+    def test_valid_dna_json_creates_201(
+        self, api_client: TestClient,
+    ) -> None:
+        """合法 dna_json 正常创建（对照组）。"""
+        response = api_client.post(
+            "/api/live-trading/tasks",
+            json=self._live_payload(make_dna().to_json()),
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["task_id"].startswith("lt_")
+        assert data["symbol"] == "BTCUSDT"
+
+
 class TestStopRestartDelete:
     def test_stop_unknown_task_404(self, api_client: TestClient) -> None:
         response = api_client.post("/api/trading/tasks/no-such/stop")
