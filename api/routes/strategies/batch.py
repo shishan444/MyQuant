@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 import asyncio
+import threading
 from datetime import datetime
 
 import pandas as pd
@@ -424,10 +425,6 @@ async def batch_backtest_stream(
     batch 无持久 session（SSE 时代逐请求）——session_id 为本请求生成的
     room 键；取消/断线语义同 verify（B8.0 ①②）。
     """
-    import asyncio as _asyncio
-    import threading as _threading
-    import uuid as _uuid
-
     from api import realtime, stream_control
 
     processor = _BatchBacktestProcessor(payload, db_path, data_dir)
@@ -439,8 +436,8 @@ async def batch_backtest_stream(
     except BaseException:
         stream_control.release_stream_slot()
         raise
-    session_id = f"batch_{_uuid.uuid4().hex[:12]}"
-    cancel_event = _threading.Event()
+    session_id = f"batch_{uuid.uuid4().hex[:12]}"
+    cancel_event = threading.Event()
     stream_control.register(session_id, cancel_event.set)
 
     async def _run_stream() -> None:
@@ -463,7 +460,7 @@ async def batch_backtest_stream(
             stream_control.unregister(session_id)
             stream_control.release_stream_slot()
 
-    _asyncio.create_task(_run_stream())
+    asyncio.create_task(_run_stream())
     return {"session_id": session_id}
 
 

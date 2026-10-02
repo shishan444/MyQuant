@@ -71,9 +71,7 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
 
     快照读库为同步调用（SQLite 本地读，connect 一次性）——to_thread 卸载。
     """
-    import asyncio
     import os
-    from urllib.parse import parse_qs
     room = (parse_qs(environ.get("QUERY_STRING") or {}).get("task_id") or [None])[0]
     if not room:
         return

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Optional
 
@@ -19,12 +20,23 @@ from api.schemas import (
 )
 from core.persistence.repository import live_trading as repo
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/live-trading", tags=["live-trading"])
 
 
 @router.post("/tasks", response_model=LiveTradingTaskResponse, status_code=201)
 def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
     """创建实盘任务（存 DNA + 方向 + 风控配置）。"""
+    # dna_json 预检（形制对照 trading.py：异常文本形态不可控，detail
+    # 固定文案、原文经日志保留）
+    try:
+        from core.strategy.dna import StrategyDNA
+        StrategyDNA.from_json(req.dna_json)
+    except Exception as e:
+        logger.warning("invalid dna_json on live task create: %r", e, exc_info=e)
+        raise HTTPException(status_code=400, detail="Invalid dna_json format")
+
     task_id = f"lt_{uuid.uuid4().hex[:12]}"
     repo.save_live_trading_task(
         db_path, task_id, req.symbol, req.timeframe, req.dna_json,

@@ -16,8 +16,6 @@ from core.validation.rule_engine import evaluate_rules
 router = APIRouter(prefix="/api", tags=["validation"])
 
 
-from pydantic import BaseModel
-
 from api.schemas import IndicatorRef
 
 

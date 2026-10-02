@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 import asyncio
+import threading
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -412,9 +413,6 @@ async def verify_strategies_stream(
     重连恢复面=GET /verify/sessions/{session_id}/results。
     取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。
     """
-    import asyncio as _asyncio
-    import threading as _threading
-
     from api import realtime, stream_control
 
     processor = _VerifyProcessor(payload, db_path, data_dir)
@@ -427,7 +425,7 @@ async def verify_strategies_stream(
         stream_control.release_stream_slot()
         raise
     session_id = processor.session_id
-    cancel_event = _threading.Event()
+    cancel_event = threading.Event()
     stream_control.register(session_id, cancel_event.set)
 
     async def _run_stream() -> None:
@@ -448,7 +446,7 @@ async def verify_strategies_stream(
             stream_control.unregister(session_id)
             stream_control.release_stream_slot()
 
-    _asyncio.create_task(_run_stream())
+    asyncio.create_task(_run_stream())
     return {"session_id": session_id}
 
 
@@ -529,8 +527,3 @@ def get_session_results(
     )
     items = _history_items(db_path, results)
     return VerifyHistoryResponse(items=items, total=len(items))
-
-
-# ===================================================================
-# Batch Backtest
-# ===================================================================
