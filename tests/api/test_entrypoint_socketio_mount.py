@@ -87,11 +87,18 @@ class TestHandshakeReachability:
         assert '"sid"' in response.text
 
     def test_asgi_form_passes_through_rest_routes(self) -> None:
-        """组合实例下 REST 路径透传正常（不受 socket.io 前置分发影响）。"""
+        """组合实例下 REST 路径透传正常（不受 socket.io 前置分发影响）。
+
+        timestamp 断言锚定 HealthResponse 完整契约（CARD-29 增量：
+        类体字段曾被顶错致 health 丢 timestamp，归位后防再次回归）。
+        """
         from api.app import app as asgi_app
         response = TestClient(asgi_app).get("/api/health")
         assert response.status_code == 200
-        assert response.json()["status"] == "ok"
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["version"]
+        assert data["timestamp"]
 
 
 class TestLauncherFormPins:
