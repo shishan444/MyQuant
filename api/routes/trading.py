@@ -1,4 +1,10 @@
-"""REST API routes for paper trading tasks."""
+"""模拟盘任务 CRUD 与控制（/api/trading/*）。
+
+职能：paper trading 任务的创建/查询/启停/重启/删除与成交、净值快照
+查询。服务对象：web 交易页与 core.trading.runner（TradingRunner 经
+任务表驱动执行）。
+职责边界：任务生命周期入口，撮合与执行循环在 TradingRunner。
+"""
 from __future__ import annotations
 
 import logging
@@ -78,7 +84,7 @@ def create_task(
     body: PaperTradingTaskCreate,
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradingTaskResponse:
-    # Validate dna_json format
+    # dna_json 预检（解析失败=业务拒绝 400）
     try:
         from core.strategy.dna import StrategyDNA
         StrategyDNA.from_json(body.dna_json)
@@ -108,7 +114,7 @@ def create_task(
     row = get_paper_trading_task(db_path, task_id)
     response = _task_to_response(row)
 
-    # Qualified warning check: if strategy_id provided, look up qualified status
+    # 达标预警：带 strategy_id 创建时回查 qualified 状态
     warnings = []
     if body.strategy_id:
         from core.persistence.db_ext import get_strategy
@@ -162,13 +168,13 @@ def stop_task(
     if row["status"] not in ("running", "pending"):
         raise HTTPException(status_code=400, detail=f"Cannot stop task in status '{row['status']}'")
 
-    # Signal via controller (immediate)
+    # 控制器直达信号（即时停止执行循环）
     from core.trading.runner import get_trading_controllers
     controller = get_trading_controllers().get(task_id)
     if controller:
         controller.request_stop()
 
-    # Also set DB status (belt-and-suspenders)
+    # DB 状态同步落 stopped（双保险：runner 缺席也保证终态）
     update_paper_trading_task(db_path, task_id, status="stopped", stop_reason="user_stop")
     row = get_paper_trading_task(db_path, task_id)
     return _task_to_response(row)
@@ -179,7 +185,7 @@ def restart_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradingTaskResponse:
-    """Create a new task using the same strategy/params as an existing task."""
+    """按既有任务同策略/同参数克隆创建新任务。"""
     row = get_paper_trading_task(db_path, task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
