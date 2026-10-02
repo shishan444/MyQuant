@@ -94,3 +94,38 @@ class TestQueryIndicatorRoute:
                                json=_payload(params={"period": 99}))
         assert resp.status_code == 422
         assert len(rr.list_research_log(q_env["db"])) == before
+
+
+class TestNonResearchErrorPassthrough:
+    """CARD-03 修复资产：except 收窄为 ResearchError——服务层非
+    ResearchError 异常原样穿透（不再坍缩为 research_error_to_http 内
+    AttributeError 500，原始异常类型与栈可观测）。"""
+
+    def _bind_env(self, api_client, q_env):
+        api_client.app.state.db_path = q_env["db"]
+        api_client.app.state.data_dir = q_env["data_dir"]
+
+    def test_value_error_passthrough(self, api_client, q_env, monkeypatch):
+        from core.analysis import indicator_query as iq
+
+        def _boom(*args, **kwargs):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(iq, "query_indicator", _boom)
+        self._bind_env(api_client, q_env)
+        with pytest.raises(ValueError, match="boom"):
+            api_client.post("/api/research/query-indicator", json=_payload())
+
+    def test_research_error_channel_unchanged(self, api_client, q_env, monkeypatch):
+        """对照组：ResearchError 仍走结构化 422（收窄未放跑正主）。"""
+        from core.analysis import indicator_query as iq
+        from core.analysis.hypothesis_service import ResearchError
+
+        def _re(*args, **kwargs):
+            raise ResearchError("RESEARCH_PARAM_INVALID", "测试注入")
+
+        monkeypatch.setattr(iq, "query_indicator", _re)
+        self._bind_env(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_payload())
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"

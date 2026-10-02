@@ -103,11 +103,13 @@ class TestHypothesisDoubleWrite:
 
 
 class TestHypothesisTransition:
+    """迁移语义经 with_promotion 版验证（CARD-08 后唯一迁移函数）。"""
+
     def test_transition_writes_log_and_updates(self, db_path: Path) -> None:
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        n = rr.transition_hypothesis(
+        out = rr.transition_hypothesis_with_promotion(
             db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
-        assert n == 1
+        assert out["rows"] == 1
         hyp = rr.get_hypothesis(db_path, "hyp_1")
         assert hyp["status"] == "refuted" and hyp["terminal_ref"] == "rec_1"
         logs = [l for l in rr.list_research_log(db_path, hypothesis_id="hyp_1")
@@ -117,15 +119,15 @@ class TestHypothesisTransition:
     def test_terminal_rejects_transition(self, db_path: Path) -> None:
         """终态假设条件更新影响 0 行（调用方判读终态冲突）。"""
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        rr.transition_hypothesis(db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
-        n = rr.transition_hypothesis(db_path, "hyp_1", target_status="supported", terminal_ref="rec_2")
-        assert n == 0
+        rr.transition_hypothesis_with_promotion(db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
+        out = rr.transition_hypothesis_with_promotion(db_path, "hyp_1", target_status="supported", terminal_ref="rec_2")
+        assert out["rows"] == 0
         assert rr.get_hypothesis(db_path, "hyp_1")["status"] == "refuted"
 
     def test_same_key_after_terminal_allowed(self, db_path: Path) -> None:
         """终态后同幂等键可再登记（部分唯一索引只约束 active）。"""
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r"))
-        rr.transition_hypothesis(db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
+        rr.transition_hypothesis_with_promotion(db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
         # 同键新登记：不受部分唯一索引拦截
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r"))
         assert rr.get_hypothesis(db_path, "hyp_2")["status"] == "active"

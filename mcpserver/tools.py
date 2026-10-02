@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import quote
 
 from mcpserver import errors
 from mcpserver.api_client import (
@@ -25,6 +26,9 @@ TOOL_TIERS: Dict[str, set] = {"readonly": set(), "research": set()}
 
 # 分页上限（M2：默认 20、上限 50——工具层统一 clamp）
 _PAGE_MAX = 50
+
+# 轮询总时长钳制域 [1, 3600]s（防误传 0/负值立即超时、超长值挂死会话）
+_TOTAL_TIMEOUT_MAX = 3600.0
 
 # 列表折叠保留字段（M2/D8：条目 DNA 折叠为 gene_signature 摘要，
 # 全量 DNA 经 get_strategy 获取；默认响应体积受控）
@@ -85,7 +89,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def get_strategy(strategy_id: str) -> Dict[str, Any]:
         """单个策略详情（DNA、指标、回测记录）。"""
-        return api.get(f"/api/strategies/{strategy_id}")
+        return api.get(f"/api/strategies/{quote(strategy_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
@@ -134,13 +138,17 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def list_hypotheses(status: Optional[str] = None, page: int = 1) -> Dict[str, Any]:
+    def list_hypotheses(status: Optional[str] = None, page: int = 1,
+                        cursor: Optional[str] = None) -> Dict[str, Any]:
         """研究假设列表（含状态与区间；conditions 为结构化混合形制——
         0.2.13 起参数化指标 subject 为 {indicator, params, field} 对象，
-        历史留痕可能仍含字符串编码形）。"""
-        params = {"page": page}
+        历史留痕可能仍含字符串编码形）。缺省最新在前；total 为真总数；
+        cursor=上一响应 next_cursor 续页（keyset 深翻页无漂移）。"""
+        params: Dict[str, Any] = {"page": page}
         if status:
             params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
         return api.get("/api/research/hypotheses", params=params)
 
     @mcp.tool()
@@ -148,40 +156,51 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     def get_hypothesis(hypothesis_id: str) -> Dict[str, Any]:
         """单个假设详情（结构化条件、状态、区间；subject 混合形制——
         结构化指标对象或字符串精确名）。"""
-        return api.get(f"/api/research/hypotheses/{hypothesis_id}")
+        return api.get(
+            f"/api/research/hypotheses/{quote(hypothesis_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
     def get_research_log(hypothesis_id: Optional[str] = None,
                          entry_type: Optional[str] = None,
-                         page: int = 1) -> Dict[str, Any]:
+                         page: int = 1,
+                         cursor: Optional[str] = None) -> Dict[str, Any]:
         """研究日志（假设→分析→证据→结论全链路；续接研究前先读）。
         entry_type 可按类型过滤（screen=全局扫描留痕：历史扫描区间与
-        top 候选指纹清单——登记引用候选前自查，避免踩入已扫描数据）。"""
+        top 候选指纹清单——登记引用候选前自查，避免踩入已扫描数据）。
+        缺省最新在前；total 为真总数；cursor=上一响应 next_cursor 续页
+        （keyset 深翻页无漂移）。"""
         params: Dict[str, Any] = {"page": page}
         if hypothesis_id:
             params["hypothesis_id"] = hypothesis_id
         if entry_type:
             params["entry_type"] = entry_type
+        if cursor is not None:
+            params["cursor"] = cursor
         return api.get("/api/research/log", params=params)
 
     @mcp.tool()
     @tool_safe
     def get_analysis_task(task_id: str) -> Dict[str, Any]:
         """分析长任务轮询（status: pending|running|succeeded|failed）。"""
-        return api.get(f"/api/research/analysis/tasks/{task_id}")
+        return api.get(
+            f"/api/research/analysis/tasks/{quote(task_id, safe='')}")
 
     @mcp.tool()
     @tool_safe
     def get_validation_report(strategy_id: str) -> Dict[str, Any]:
         """验证证据档案（人话关键数字：最差情况与样本量）。"""
-        return api.get(f"/api/research/validation/{strategy_id}/report")
+        return api.get(
+            f"/api/research/validation/{quote(strategy_id, safe='')}/report")
 
     @mcp.tool()
     @tool_safe
     def list_feature_requests(status: Optional[str] = None, page: int = 1,
                               page_size: int = 50) -> Dict[str, Any]:
-        """慢通道功能需求单列表（只持久化与可查，不会自动实现）。"""
+        """慢通道功能需求单列表（只持久化与可查，不会自动实现；
+        分页 page/page_size≤50）。"""
+        page = max(1, page)
+        page_size = max(1, min(page_size, _PAGE_MAX))
         params: Dict[str, Any] = {"page": page, "page_size": page_size}
         if status:
             params["status"] = status
@@ -352,7 +371,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         验证不能否定假设；假设保持 active 可换区间再验证）。
         supported 时谱系 draft 若有自身 pass 记录则同事务转正（draft→active）。"""
         return api.post(
-            f"/api/research/hypotheses/{hypothesis_id}/transition",
+            f"/api/research/hypotheses/"
+            f"{quote(hypothesis_id, safe='')}/transition",
             {"target_status": target_status, "evidence_ref": evidence_ref})
 
     @mcp.tool()
@@ -483,7 +503,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
         转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
         return api.post(
-            f"/api/research/translate/{hypothesis_id}",
+            f"/api/research/translate/{quote(hypothesis_id, safe='')}",
             {"strategy_symbol": strategy_symbol,
              "strategy_timeframe": strategy_timeframe})
 
@@ -503,14 +523,18 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def poll_evolution_task(task_id: str, total_timeout: float = 600.0) -> Dict[str, Any]:
-        """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态）。"""
+        """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态；
+        total_timeout 钳制 [1,3600]s）。"""
+        total_timeout = max(1.0, min(total_timeout, _TOTAL_TIMEOUT_MAX))
         return api.poll_until_terminal(
-            f"/api/evolution/tasks/{task_id}",
+            f"/api/evolution/tasks/{quote(task_id, safe='')}",
             terminal=("completed", "failed", "stopped", "cancelled"),
             total_timeout=total_timeout)
 
-    for fn in (run_analysis, register_hypothesis, transition_hypothesis,
-               run_isolated_validation, run_random_window_test, run_backtest,
+    for fn in (run_analysis, inspect_cases, query_indicator,
+               register_hypothesis, transition_hypothesis,
+               run_isolated_validation, run_random_window_test,
+               run_staged_validation, run_backtest,
                register_formula_plugin, register_model_plugin,
                translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution, poll_evolution_task):

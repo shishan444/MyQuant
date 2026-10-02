@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from typing import Any, Dict, Optional
@@ -162,37 +161,50 @@ class QuantApiClient:
 
     # ------------------------------------------------------------ 调用
 
-    def get(self, path: str, params: Dict[str, Any] | None = None) -> Any:
-        """只读 GET：超时报错不重试。"""
-        self.check_allowed("GET", path)
-        self.call_log.append({"method": "GET", "path": path})
-        with httpx.Client(timeout=self.read_timeout, trust_env=False) as client:
+    def _request(
+        self, method: str, path: str, *,
+        params: Dict[str, Any] | None = None,
+        json_body: Dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
+        """统一请求通道（get/post 薄壳共用）：白名单检查 + call_log
+        留痕 + 可达性错误转译 + 非 2xx 结构化拒绝。
+
+        timeout 缺省按方法取档（GET read_timeout / POST write_timeout）。
+        """
+        self.check_allowed(method, path)
+        self.call_log.append({"method": method, "path": path})
+        if timeout is None:
+            timeout = (self.read_timeout if method == "GET"
+                       else self.write_timeout)
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            # 发送行按方法分派（保持 httpx.Client 的 get/post 方法面
+            # ——测试 mock 契约面不变；两方法在 httpx 内等价）
             try:
-                resp = client.get(f"{self.base_url}{path}", params=params)
+                if method == "GET":
+                    resp = client.get(
+                        f"{self.base_url}{path}", params=params)
+                else:
+                    resp = client.post(
+                        f"{self.base_url}{path}", json=json_body)
             except httpx.ConnectError as exc:
                 raise ApiUnreachable(
                     f"API 不可达（{self.base_url}）：请确认应用已启动"
                     f"（python run.py）——{exc}") from exc
             if resp.is_error:
                 _raise_api_error(resp)
-            return resp.json()
+            return resp
+
+    def get(self, path: str, params: Dict[str, Any] | None = None) -> Any:
+        """只读 GET：超时报错不重试。"""
+        return self._request("GET", path, params=params).json()
 
     def post(self, path: str, json_body: Dict[str, Any] | None = None) -> Any:
         """写 POST：失败不自动重试（幂等性未知；失败语义原样返回）。"""
-        self.check_allowed("POST", path)
-        self.call_log.append({"method": "POST", "path": path})
-        with httpx.Client(timeout=self.write_timeout, trust_env=False) as client:
-            try:
-                resp = client.post(f"{self.base_url}{path}", json=json_body)
-            except httpx.ConnectError as exc:
-                raise ApiUnreachable(
-                    f"API 不可达（{self.base_url}）：请确认应用已启动"
-                    f"（python run.py）——{exc}") from exc
-            if resp.is_error:
-                _raise_api_error(resp)
-            if resp.status_code == 204 or not resp.content:
-                return None
-            return resp.json()
+        resp = self._request("POST", path, json_body=json_body)
+        if resp.status_code == 204 or not resp.content:
+            return None
+        return resp.json()
 
     # ------------------------------------------------------------ 轮询
 

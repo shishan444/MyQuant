@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import research_error_to_http
 from core.analysis import market_snapshot as ms
 from core.analysis.hypothesis_service import ResearchError
 

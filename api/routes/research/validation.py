@@ -23,7 +23,10 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import (
+    require_known_timeframe,
+    research_error_to_http,
+)
 
 
 @router.post("/validate-backtest")
@@ -34,6 +37,9 @@ def validate_backtest(
 ) -> Dict[str, Any]:
     """隔离回测：判定并集拒绝 + warmup 推导前扩 + 门槛机械判定。"""
     try:
+        # P0 错误通道：非法周期前置 422——否则装载层裸 ValueError 落 500
+        require_known_timeframe(
+            payload.request_range.timeframe, "request_range.timeframe")
         return vs.run_isolated_backtest(
             db_path, data_dir,
             hypothesis_id=payload.hypothesis_id,
@@ -56,6 +62,7 @@ def staged_validation(
     双模互斥（auto 机械判读 / explicit 段列表）；写入双路径（挂假设
     一体记录 / adhoc 纯日志）。"""
     try:
+        require_known_timeframe(payload.timeframe, "timeframe")
         return vs.run_staged_validation(
             db_path, data_dir,
             strategy_id=payload.strategy_id,
@@ -78,6 +85,7 @@ def backtest_sandbox(
     """沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
     不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。"""
     try:
+        require_known_timeframe(payload.timeframe, "timeframe")
         return vs.run_sandbox_backtest(
             db_path, data_dir,
             strategy_id=payload.strategy_id,
@@ -98,6 +106,7 @@ def random_window_test(
 ) -> Dict[str, Any]:
     """随机窗口抽查（种子记录于验证记录，可复现）。"""
     try:
+        require_known_timeframe(payload.timeframe, "timeframe")
         return vs.random_window_test(
             db_path, data_dir,
             strategy_id=payload.strategy_id,
@@ -132,6 +141,13 @@ def validation_report(
         except json.JSONDecodeError:
             return {}
 
+    def _parse_params(r):
+        # params 列兜底同 _parse 形制（损坏→{}，range 取值 None）
+        try:
+            return json.loads(r["params"]) if r["params"] else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
     lines: Dict[str, Any] = {
         "strategy_id": strategy_id,
         "total_records": len(records),
@@ -159,7 +175,7 @@ def validation_report(
         lines["isolated_backtests"].append({
             "record_id": r["record_id"],
             "verdict": r["verdict"],
-            "range": json.loads(r["params"]).get("request_range") if r["params"] else None,
+            "range": _parse_params(r).get("request_range"),
             "warmup_bars": res.get("warmup", {}).get("bars"),
             "人话": (
                 f"区间总收益 {m.get('total_return', 0)*100:.1f}%，"

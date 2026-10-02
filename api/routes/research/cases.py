@@ -14,7 +14,10 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.hypotheses import research_error_to_http
+from api.routes.research.common import (
+    require_known_timeframe,
+    research_error_to_http,
+)
 from api.schemas import InspectCasesRequest
 from core.analysis import case_inspection as ci
 from core.analysis.hypothesis_service import ResearchError
@@ -36,6 +39,8 @@ def inspect_cases(
     ∈ 1..20（缺省 8）；超限结构化 422 拒绝（不静默截断）。
     """
     try:
+        # P0 错误通道：非法周期前置 422（入口早于装载——零装载零留痕）
+        require_known_timeframe(req.timeframe, "timeframe")
         return ci.inspect_cases(
             db_path, data_dir,
             symbol=req.symbol, timeframe=req.timeframe,

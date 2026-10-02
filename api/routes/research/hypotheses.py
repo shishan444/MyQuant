@@ -22,13 +22,22 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# research_error_to_http 已迁 common（子包共享底座）；此处 import 兼容
+# 范围外 api/routes/validate.py 的既有引用，新代码请直用 common
+from api.routes.research.common import (
+    decode_cursor,
+    encode_cursor,
+    require_known_timeframe,
+    research_error_to_http,  # noqa: F401 —— 兼容 validate.py 既有引用
+)
 
-def research_error_to_http(exc: ResearchError) -> HTTPException:
-    """ResearchError -> HTTPException（detail 含 code/message/detail 三段）。"""
-    return HTTPException(
-        status_code=exc.status,
-        detail={"code": exc.code, "message": exc.message, "detail": exc.detail},
-    )
+
+def _loads_or_keep(raw: str) -> Any:
+    """JSON 列 loads 兜底：损坏/类型不符保留原字符串（审计可读，不 500）。"""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 
 @router.post("/hypotheses", response_model=HypothesisResponse)
@@ -42,6 +51,9 @@ def register_hypothesis(
         # symbol/timeframe 在数据目录可达（422 RESEARCH_SYMBOL_NOT_FOUND）
         from core.data.mtf_loader import find_parquet, safe_symbol
         for i, r in enumerate(payload.data_ranges):
+            # P0 错误通道：非法周期前置 422——否则 find_parquet 内
+            # validate_known_interval 抛裸 ValueError 落 500
+            require_known_timeframe(r.timeframe, f"data_ranges[{i}].timeframe")
             # F-1：探测统一走 safe_symbol 清洗（与下方 timeframe 探测
             # 同函数一致——原始 symbol 直传在符号含分隔符时会变成
             # 存在性 oracle，纯收紧）
@@ -98,22 +110,33 @@ def list_hypotheses(
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    cursor: Optional[str] = None,
     db_path: Path = Depends(get_db_path),
 ) -> HypothesisListResponse:
+    """假设列表。分页契约与 /log 同款：缺省最新在前（desc）；cursor
+    续页（上一响应 next_cursor 回传，提供时 page 被忽略）；total 为
+    过滤口径真总数（非当页数）。"""
     if page < 1:
         page = 1
     if page_size < 1 or page_size > 200:
         page_size = 50
+    cur = decode_cursor(cursor)
     items = rr.list_hypotheses(
         db_path, status=status,
-        offset=(page - 1) * page_size, limit=page_size)
+        offset=0 if cur is not None else (page - 1) * page_size,
+        limit=page_size, cursor=cur, order="desc")
+    out = [
+        {**h, "conditions": _loads_or_keep(h["conditions"]),
+         "data_ranges": _loads_or_keep(h["data_ranges"])}
+        for h in items
+    ]
     return HypothesisListResponse(
-        items=[
-            {**h, "conditions": json.loads(h["conditions"]),
-             "data_ranges": json.loads(h["data_ranges"])}
-            for h in items
-        ],
-        total=len(items), page=page, page_size=page_size)
+        items=out,
+        total=rr.count_hypotheses(db_path, status=status),
+        page=page, page_size=page_size,
+        next_cursor=encode_cursor(
+            items[-1]["created_at"], items[-1]["hypothesis_id"])
+        if items else None)
 
 
 @router.get("/hypotheses/{hypothesis_id}")
@@ -127,8 +150,8 @@ def get_hypothesis(
             "code": "RESEARCH_HYPOTHESIS_NOT_FOUND",
             "message": f"假设不存在: {hypothesis_id}", "detail": None})
     return {**hyp,
-            "conditions": json.loads(hyp["conditions"]),
-            "data_ranges": json.loads(hyp["data_ranges"])}
+            "conditions": _loads_or_keep(hyp["conditions"]),
+            "data_ranges": _loads_or_keep(hyp["data_ranges"])}
 
 
 @router.post("/hypotheses/{hypothesis_id}/transition")

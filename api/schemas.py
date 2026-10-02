@@ -1,11 +1,12 @@
 """Pydantic V2 request/response models for the API layer."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Enums ──
@@ -873,6 +874,7 @@ class HypothesisListResponse(BaseModel):
     total: int
     page: int = 1
     page_size: int = 50
+    next_cursor: Optional[str] = None  # keyset 续页游标（末条 created_at|id）
 
 
 class IsolatedBacktestRequest(BaseModel):
@@ -902,16 +904,18 @@ class StagedValidationRequest(BaseModel):
 
 class SandboxBacktestRequest(BaseModel):
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
-    不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"""
+    不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。
+    经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1
+    （负成本/零本金在下单金额计算中产生无意义或发散结果）。"""
 
     strategy_id: str
     symbol: str = "BTCUSDT"
     timeframe: str = "4h"
     start: str
     end: str
-    fee: float = 0.001
-    slippage: float = 0.0005
-    init_cash: float = 100000.0
+    fee: float = Field(default=0.001, ge=0)
+    slippage: float = Field(default=0.0005, ge=0)
+    init_cash: float = Field(default=100000.0, ge=1)
     hypothesis_id: Optional[str] = None
 
 
@@ -970,8 +974,18 @@ class QueryIndicatorRequest(BaseModel):
 
 
 class FeatureRequestCreate(BaseModel):
-    title: str
-    payload: Dict[str, Any] = {}
+    """慢通道需求单：title 上限 200 字符；payload 序列化上限 64KB
+    （慢通道只保证持久化与可查——超大结构直入 DB 前置拒绝）。"""
+
+    title: str = Field(max_length=200)
+    payload: Dict[str, Any] = Field(default={})
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_size_cap(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if len(json.dumps(v, ensure_ascii=False).encode("utf-8")) > 64 * 1024:
+            raise ValueError("payload 序列化超 64KB 上限")
+        return v
 
 
 class FeatureRequestResponse(BaseModel):
