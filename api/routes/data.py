@@ -389,7 +389,6 @@ def get_available_sources(
 ) -> AvailableSourcesResponse:
     """Scan parquet files and return available symbol/timeframe combinations."""
     import re
-    import pandas as pd
 
     sources: list[AvailableSource] = []
     if not data_dir.exists():
@@ -404,12 +403,23 @@ def get_available_sources(
         symbol = match.group(1)
         timeframe = match.group(2)
 
+        # 逐文件单列读取首尾时间戳（32+ 文件全量 load 仅取 index 属白读）
+        time_start = None
+        time_end = None
         try:
-            df = load_parquet(pq_file)
-            if df is None or len(df) == 0:
+            import pyarrow.parquet as _pq
+            pf = _pq.ParquetFile(pq_file)
+            if pf.metadata.num_rows == 0:
                 continue
-            time_start = str(df.index[0]) if len(df.index) > 0 else None
-            time_end = str(df.index[-1]) if len(df.index) > 0 else None
+            names = pf.schema_arrow.names
+            ts_col = next(
+                (c for c in ("timestamp", "date", "__index_level_0__")
+                 if c in names), None,
+            )
+            if ts_col is not None:
+                col = pf.read(columns=[ts_col]).column(0).to_pandas()
+                time_start = str(col.min())
+                time_end = str(col.max())
         except Exception:
             time_start = None
             time_end = None
