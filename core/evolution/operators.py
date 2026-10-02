@@ -100,19 +100,8 @@ def generate_random_condition(
             condition["threshold"] = random.choice([25, 30, 35, 40, 60, 65, 70, 75])
         else:
             condition["threshold"] = round(random.uniform(-1, 1), 2)
-    elif cond_type == "cross_above_series":
+    elif cond_type in ("cross_above_series", "cross_below_series"):
         # Pick a target indicator from same category or trend category
-        target = _pick_series_target(indicator_name, reg)
-        condition["target_indicator"] = target
-        target_reg = INDICATOR_REGISTRY.get(target)
-        if target_reg and target_reg.params:
-            condition["target_params"] = {
-                k: int(v.default) if v.type == "int" else float(v.default)
-                for k, v in target_reg.params.items()
-            }
-        else:
-            condition["target_params"] = {}
-    elif cond_type == "cross_below_series":
         target = _pick_series_target(indicator_name, reg)
         condition["target_indicator"] = target
         target_reg = INDICATOR_REGISTRY.get(target)
