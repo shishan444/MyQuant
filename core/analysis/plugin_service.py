@@ -253,6 +253,10 @@ def _referenced_formula_columns(expr: str, entries: Dict[str, Any]) -> set:
         tree = _ast.parse(expr, mode="eval")
     except SyntaxError:
         return set()
+    except (RecursionError, MemoryError):
+        # 深嵌套/超长链致解析递归超限（与 formula.py 校验关同款收口），
+        # 按无公式引用降级——注册前的静态关已拦同类形制
+        return set()
     names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
     return {n for n in names if n in entries
             and entries[n]["source"] == "formula"}
