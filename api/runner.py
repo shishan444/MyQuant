@@ -259,7 +259,6 @@ class EvolutionRunner(threading.Thread):
         elif target_score == 1.0 and req.objective == "calmar":
             target_score = 2.0
 
-        template = task_row["score_template"]
         pop_size = task_row.get("population_size", 15)
         max_gens = task_row.get("max_generations", 200)
         leverage = task_row.get("leverage", 1)
@@ -314,7 +313,6 @@ class EvolutionRunner(threading.Thread):
 
         engine = EvolutionEngine(
             target_score=target_score,
-            template_name=template,
             population_size=pop_size,
             max_generations=max_gens,
             leverage=leverage,

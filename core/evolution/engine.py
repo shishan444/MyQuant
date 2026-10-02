@@ -186,7 +186,6 @@ class EvolutionEngine:
     def __init__(
         self,
         target_score: float = 1.0,
-        template_name: str = "explorer",
         population_size: int = 15,
         max_generations: int = 200,
         patience: int = 15,
@@ -197,7 +196,6 @@ class EvolutionEngine:
         timeframe_pool: Optional[list] = None,
     ):
         self.target_score = target_score
-        self.template_name = template_name
         self.population_size = population_size
         self.max_generations = max_generations
         self.patience = patience
