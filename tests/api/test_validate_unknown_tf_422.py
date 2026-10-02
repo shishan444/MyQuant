@@ -146,3 +146,77 @@ class TestValidateSceneNonFiniteParam422:
         )
         assert resp.status_code == 422
         assert "须为有限数" in resp.json()["detail"]["message"]
+
+
+class TestValidateRulesWinRateNone:
+    """CARD-32：零交易 win_rate 缺失语义（null）的 HTTP 序列化。
+
+    修复前 RuleValidateResponse.win_rate: float 撞核心层 None
+    （46339bc 缺失语义）→ pydantic 校验炸 500；修复后 Optional[float]，
+    零交易两路径 200 + null，正常路径数值保持。
+    """
+
+    @staticmethod
+    def _payload(**overrides):
+        payload = {
+            "pair": "TESTUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2025-01-01",
+            "entry_conditions": [
+                {"logic": "AND", "timeframe": "4h", "subject": "close",
+                 "action": "lt", "target": "95"},
+            ],
+            "exit_conditions": [
+                {"logic": "AND", "timeframe": "4h", "subject": "close",
+                 "action": "gt", "target": "105"},
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_missing_file_200_win_rate_null(self, api_client):
+        """缺数据路径：200 + warnings + win_rate null（修复前 500）。"""
+        resp = api_client.post("/api/validate/rules", json=self._payload())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_trades"] == 0
+        assert body["win_rate"] is None
+        assert any("Data file not found" in w for w in body["warnings"])
+
+    def test_no_paired_trades_200_win_rate_null(self, api_client):
+        """有数据无配对路径：entry 永假 → 零交易 win_rate null。"""
+        resp = api_client.post(
+            "/api/validate/rules",
+            json=self._payload(entry_conditions=[
+                {"logic": "AND", "timeframe": "4h", "subject": "close",
+                 "action": "lt", "target": "-1000000"},
+            ]),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_trades"] == 0
+        assert body["win_rate"] is None
+        assert body["trades"] == []
+
+    def test_normal_trades_win_rate_numeric(self, api_client, tmp_data_dir):
+        """正常交易路径：win_rate 数值（缺失语义不吞正常值）。"""
+        import numpy as np
+        import pandas as pd
+        from core.data.storage import save_parquet
+        n = 240
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
+        closes = 100.0 + 10.0 * np.sin(np.arange(n) * 2 * np.pi / 20)
+        df = pd.DataFrame(
+            {"open": closes, "high": closes + 1.0, "low": closes - 1.0,
+             "close": closes, "volume": np.full(n, 1000.0)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        save_parquet(df, tmp_data_dir / "TESTUSDT_4h.parquet")
+        resp = api_client.post("/api/validate/rules", json=self._payload())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_trades"] >= 1
+        assert body["win_rate"] is not None
+        assert isinstance(body["win_rate"], float)
+        # 现状口径：核心层小数、路由层 ×100 转百分比域
+        assert 0.0 <= body["win_rate"] <= 100.0
