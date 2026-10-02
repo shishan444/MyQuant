@@ -1,4 +1,12 @@
-"""Top pattern detector: pivot-based chart pattern recognition (double top, head & shoulders, triple top)."""
+"""顶部形态检测器：pivot 序列上的图表形态识别（双顶/头肩顶/三重顶）。
+
+服务对象：scene_engine 的 DETECTORS 注册表（"top_pattern" 键）；
+模块级 _extract_snapshot 是 scene/ 五检测器共享的指标快照
+helper（cross_timeframe/mean_reversion/support_resistance/
+volume_breakout/volume_spike 复用）。职责边界：pivot 检测与
+形态匹配分别委托 pivot.py 与 pattern_match.py，本模块只做
+参数编排与 TriggerPoint 构建。
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -32,14 +40,14 @@ class TopPatternDetector(SceneDetector):
         p = {**self.default_params, **params}
         min_spacing = _param_number(p, "min_spacing", cast=int, min_value=1)
 
-        # Step 1: Detect pivot points
+        # 第一步：检测 pivot 点
         pivots = detect_pivots(
             df,
             bars_left=_param_number(p, "pivot_bars_left", cast=int, min_value=1),
             bars_right=_param_number(p, "pivot_bars_right", cast=int, min_value=1),
         )
 
-        # Step 2: Match chart patterns on pivot sequence
+        # 第二步：在 pivot 序列上匹配图表形态
         atr_series = df["atr_14"] if "atr_14" in df.columns else None
         patterns = match_patterns(
             pivots,
@@ -47,25 +55,25 @@ class TopPatternDetector(SceneDetector):
             atr_series=atr_series,
         )
 
-        # Step 3: Build TriggerPoint for each detected pattern
+        # 第三步：为每个检出的形态构建 TriggerPoint
         triggers: List[TriggerPoint] = []
         last_bar = -min_spacing - 1
 
         for pat in patterns:
             completion_bar = pat.completion_bar
 
-            # Enforce minimum spacing between triggers
+            # 强制触发点之间的最小间距
             if completion_bar - last_bar < min_spacing:
                 continue
 
-            # Use the close price at the completion bar as trigger_price
+            # 以完成 bar 的 close 价作为 trigger_price
             trigger_price = float(df["close"].iloc[completion_bar])
 
-            # Extract indicator snapshot at completion bar
+            # 提取完成 bar 处的指标快照
             trigger_row = df.iloc[completion_bar]
             snapshot = _extract_snapshot(trigger_row)
 
-            # Build pattern metadata
+            # 构建形态元数据
             metadata = {
                 "pattern_type": pat.pattern_type,
                 "key_points": pat.key_points,
@@ -86,7 +94,7 @@ class TopPatternDetector(SceneDetector):
 
 
 def _extract_snapshot(row: pd.Series) -> Dict[str, float]:
-    """Extract key indicator values from a DataFrame row."""
+    """从 DataFrame 行提取关键指标值（优先列内非 NaN 值，round 4 位）。"""
     snapshot: Dict[str, float] = {}
     priority_cols = ["rsi_14", "macd_12_26_9", "bb_width_20_2.0", "atr_14",
                      "ema_20", "ema_50", "sma_20", "sma_50", "volume"]
