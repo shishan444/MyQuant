@@ -1,7 +1,6 @@
 """FastAPI application entry point with CORS, lifecycle, and route mounting."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -88,9 +87,6 @@ def create_app(
         trading_runner = TradingRunner(db_path=db_path, data_dir=data_dir)
         app.state.trading_runner = trading_runner
 
-        # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
-        event_loop = asyncio.get_event_loop()
-
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os
         from . import realtime
@@ -105,13 +101,6 @@ def create_app(
             return _push
         _ws_push_evolution = _make_push("/evolution")
         _ws_push_trading = _make_push("/trading")
-
-        def _on_ws_push_done(future: asyncio.Future) -> None:
-            """Log any exception from the WS push coroutine."""
-            try:
-                future.result()
-            except Exception:
-                logger.warning("WS push coroutine failed", exc_info=True)
 
         set_ws_push_fn(_ws_push_evolution)
         set_trading_ws_push_fn(_ws_push_trading)
