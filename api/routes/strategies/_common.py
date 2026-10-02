@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -20,3 +21,18 @@ def _safe_error_message(exc: BaseException) -> str:
         return "数据文件无权限访问"
     logger.warning("unhandled error in strategies route: %r", exc, exc_info=exc)
     return "内部错误"
+
+
+def _progress_payload(
+    steps: List, step_index: int, group_key: str,
+    dr, batch_results: list,
+) -> Dict[str, Any]:
+    """流式进度帧构造（verify/batch 两 processor 共用）。"""
+    return {
+        "current": step_index + 1,
+        "total": len(steps),
+        "group": group_key,
+        "range_start": dr.start,
+        "range_end": dr.end,
+        "batch_results": batch_results,
+    }

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ._common import _safe_error_message
+from ._common import _progress_payload, _safe_error_message
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -185,7 +185,7 @@ class _BatchBacktestProcessor:
                         "max_drawdown": 0.0, "result_id": "",
                     })
                     batch_results.append({"strategy_id": sid, "error": "Insufficient data"})
-                return self._progress_payload(step_index, group_key, dr, batch_results)
+                return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
             actual_start = str(enhanced_df.index.min())[:10]
             actual_end = str(enhanced_df.index.max())[:10]
@@ -345,7 +345,7 @@ class _BatchBacktestProcessor:
                 })
                 batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
-        return self._progress_payload(step_index, group_key, dr, batch_results)
+        return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
     def finalize(self) -> Dict:
         """Aggregate per-strategy summary across all periods."""
@@ -411,17 +411,6 @@ class _BatchBacktestProcessor:
     def mark_failed(self, error_message: str):
         """No session table to update for batch backtest."""
         pass
-
-    def _progress_payload(self, step_index: int, group_key: str,
-                          dr, batch_results: list) -> Dict:
-        return {
-            "current": step_index + 1,
-            "total": len(self.steps),
-            "group": group_key,
-            "range_start": dr.start,
-            "range_end": dr.end,
-            "batch_results": batch_results,
-        }
 
 
 @router.post("/batch-backtest/stream")

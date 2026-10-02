@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ._common import _safe_error_message
+from ._common import _progress_payload, _safe_error_message
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -241,7 +241,7 @@ class _VerifyProcessor:
                         "total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0,
                     })
                     batch_results.append({"strategy_id": sid, "error": "Insufficient data"})
-                return self._progress_payload(step_index, group_key, dr, batch_results)
+                return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
             dfs_by_timeframe = None
             needed_tfs = backtest_service.compute_needed_tfs(dnas, timeframe)
@@ -331,7 +331,7 @@ class _VerifyProcessor:
                 })
                 batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
-        return self._progress_payload(step_index, group_key, dr, batch_results)
+        return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
     def finalize(self) -> Dict:
         summary: List[VerifySummaryItem] = []
@@ -398,17 +398,6 @@ class _VerifyProcessor:
                 self.session_id, error_message,
                 exc_info=True,
             )
-
-    def _progress_payload(self, step_index: int, group_key: str,
-                          dr, batch_results: list) -> Dict:
-        return {
-            "current": step_index + 1,
-            "total": len(self.steps),
-            "group": group_key,
-            "range_start": dr.start,
-            "range_end": dr.end,
-            "batch_results": batch_results,
-        }
 
 
 @router.post("/verify/stream")
