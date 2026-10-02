@@ -118,6 +118,16 @@ class TestVerifySyncEndpoint:
         assert sessions[0]["status"] == "completed"
         assert sessions[0]["total_results"] == 1
 
+        # CARD-02 后正确行为：时间戳为真 UTC（naive 本地时间贴 Z 后缀会差 +8h）
+        from datetime import datetime, timezone
+        for raw_ts in (sessions[0]["completed_at"], ):
+            assert raw_ts, "completed_at 应已落库"
+            parsed = datetime.strptime(raw_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc,
+            )
+            delta = abs((datetime.now(timezone.utc) - parsed).total_seconds())
+            assert delta < 60, f"completed_at 应为真 UTC，偏差 {delta}s"
+
         # 策略 verify 字段滚动更新：star 5（fitness 7.0 >= 6.0 且全 qualified）、
         # comprehensive_score 8.4 进 verify_best/verify_avg
         strat = get_strategy(db_path, "strat-v1")
@@ -125,7 +135,13 @@ class TestVerifySyncEndpoint:
         assert strat["verify_count"] == 1
         assert strat["verify_best_score"] == 8.4
         assert strat["verify_avg_score"] == 8.4
+        # last_verified_at 同为真 UTC（CARD-02）
         assert strat["last_verified_at"] is not None
+        parsed_lv = datetime.strptime(
+            strat["last_verified_at"], "%Y-%m-%dT%H:%M:%SZ",
+        ).replace(tzinfo=timezone.utc)
+        delta_lv = abs((datetime.now(timezone.utc) - parsed_lv).total_seconds())
+        assert delta_lv < 60, f"last_verified_at 应为真 UTC，偏差 {delta_lv}s"
 
     def test_verify_with_insufficient_data_records_error(
         self, verify_client: TestClient,
@@ -178,6 +194,13 @@ class TestVerifyStreamEndpoint:
             time.sleep(0.05)
         assert session is not None and session["status"] == "completed"
         assert session["total_results"] == 1
+        # CARD-02 后正确行为：_VerifyProcessor.finalize 的 completed_at 为真 UTC
+        from datetime import datetime, timezone
+        parsed = datetime.strptime(
+            session["completed_at"], "%Y-%m-%dT%H:%M:%SZ",
+        ).replace(tzinfo=timezone.utc)
+        delta = abs((datetime.now(timezone.utc) - parsed).total_seconds())
+        assert delta < 60, f"stream 路径 completed_at 应为真 UTC，偏差 {delta}s"
 
     def test_mark_failed_sets_session_failed(
         self, verify_client: TestClient, tmp_path: Path,
