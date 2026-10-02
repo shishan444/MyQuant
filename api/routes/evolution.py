@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.deps import get_db_path, get_data_dir
 from api.schemas import (
@@ -148,7 +148,7 @@ def _task_row_to_response(
 @router.get("/strategies")
 def list_all_discovered_strategies(
     min_score: Optional[float] = None,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """List all evolution-discovered strategies across all tasks."""
@@ -326,8 +326,8 @@ def create_task(
 @router.get("/tasks")
 def list_tasks(
     status: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskListResponse:
     """List evolution tasks with optional status filter and pagination."""
@@ -494,7 +494,7 @@ def get_task_strategies(
 def get_discovered_strategies(
     task_id: str,
     min_score: Optional[float] = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """Get auto-extracted strategies for a task from the strategy table."""

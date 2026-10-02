@@ -11,7 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ._common import _safe_error_message
 
@@ -744,7 +744,7 @@ def _history_items(
 @router.get("/verify/history", response_model=VerifyHistoryResponse)
 def get_verify_history(
     strategy_id: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> VerifyHistoryResponse:
     """Return past verify results from backtest_result (run_source='verify')."""
@@ -760,7 +760,7 @@ def get_verify_history(
 
 @router.get("/verify/sessions", response_model=VerifySessionListResponse)
 def list_sessions(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> VerifySessionListResponse:
     """Return verification sessions ordered by creation time."""

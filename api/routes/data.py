@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from core.persistence.db_ext import (
     delete_dataset as db_delete_dataset,
@@ -64,7 +64,7 @@ def _copy_limited(dest, src) -> None:
 def list_datasets_endpoint(
     symbol: Optional[str] = None,
     interval: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> DatasetListResponse:
     """List datasets with optional filtering."""
@@ -338,7 +338,7 @@ def delete_dataset_endpoint(
 @router.get("/datasets/{dataset_id}/preview")
 def preview_dataset(
     dataset_id: str,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> DatasetPreviewResponse:
@@ -384,7 +384,7 @@ def get_ohlcv(
     dataset_id: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = 1000,
+    limit: int = Query(1000, ge=1, le=50000),
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
@@ -504,7 +504,7 @@ def get_ohlcv_by_symbol(
     timeframe: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = 50000,
+    limit: int = Query(50000, ge=1, le=50000),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
     """Get OHLCV data by symbol+timeframe (resolves parquet file directly)."""
@@ -559,7 +559,7 @@ def get_chart_indicators(
     rvol_period: int = 20,
     vwma_enabled: bool = False,
     vwma_period: int = 20,
-    limit: int = 50000,
+    limit: int = Query(50000, ge=1, le=50000),
     macd_enabled: bool = False,
     macd_fast: int = 12,
     macd_slow: int = 26,

@@ -11,7 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -167,8 +167,8 @@ def list_strategies_endpoint(
     status: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db_path: Path = Depends(get_db_path),
 ) -> StrategyListResponse:
     """List strategies with filtering, sorting, and pagination.

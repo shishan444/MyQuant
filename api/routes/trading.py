@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core.persistence.db_ext import (
     save_paper_trading_task,
@@ -128,8 +128,8 @@ def create_task(
 @router.get("/tasks", response_model=PaperTradingTaskListResponse)
 def list_tasks(
     status: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradingTaskListResponse:
     tasks = list_paper_trading_tasks(db_path, status=status, limit=limit, offset=offset)
@@ -207,7 +207,7 @@ def restart_task(
 @router.get("/tasks/{task_id}/trades", response_model=PaperTradeListResponse)
 def get_trades(
     task_id: str,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradeListResponse:
     row = get_paper_trading_task(db_path, task_id)
