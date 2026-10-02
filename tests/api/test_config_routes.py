@@ -44,15 +44,15 @@ class TestConfigGet:
         assert data["binance_secret_key"] == ""
         assert data["binance_connected"] is False
 
-    def test_get_masks_long_credential(self, api_client: TestClient, db_path: Path) -> None:
-        """长凭证值回显为 前4+***+后4。"""
+    def test_get_masks_long_credential_fully(self, api_client: TestClient, db_path: Path) -> None:
+        """长凭证值全掩码回显（CARD-06 后不泄露首尾片段）。"""
         _write_config_file(db_path, {"binance_api_key": "abcdefghij"})
         response = api_client.get("/api/config")
         assert response.status_code == 200
-        assert response.json()["binance_api_key"] == "abcd***ghij"
+        assert response.json()["binance_api_key"] == "***"
 
     def test_get_masks_short_credential_fully(self, api_client: TestClient, db_path: Path) -> None:
-        """长度 <= 8 的凭证值整体掩码，不泄露任何片段。"""
+        """短凭证值整体掩码（CARD-06 后长值同形制，不泄露任何片段）。"""
         _write_config_file(db_path, {"binance_api_key": "ab"})
         response = api_client.get("/api/config")
         assert response.json()["binance_api_key"] == "***"
@@ -101,30 +101,32 @@ class TestConfigPut:
     ) -> None:
         """哨兵语义：PUT 含 *** 的凭证值 = 前端回显未修改，不覆盖已存值。
 
-        哨兵值掩码形制刻意与原值掩码不同，保证断言能区分
-        「未覆盖」与「哨兵被误写入」两种结果。
+        CARD-06 后回显恒 ***（无区分度），底层值是否被覆盖改从
+        落盘文件明文断言——比旧版回显推断更强。
         """
         _write_config_file(db_path, {"binance_api_key": "real-secret-key-123"})
         response = api_client.put("/api/config", json={"binance_api_key": "sentinel-***-value"})
         assert response.status_code == 200
-        # 已存值未被哨兵覆盖：回显仍为原值的掩码
-        assert response.json()["binance_api_key"] == "real***-123"
-        # 再次 GET 仍为原值掩码（哨兵未落盘）
-        assert api_client.get("/api/config").json()["binance_api_key"] == "real***-123"
+        assert response.json()["binance_api_key"] == "***"
+        # 落盘验证：底层原值未被哨兵覆盖（明文仍在文件）
+        saved = json.loads(_config_file(db_path).read_text(encoding="utf-8"))
+        assert saved["binance_api_key"] == "real-secret-key-123"
+        # 再次 GET 回显仍为全掩码
+        assert api_client.get("/api/config").json()["binance_api_key"] == "***"
 
     def test_put_credential_plain_value_overwrites(
         self, api_client: TestClient, db_path: Path,
     ) -> None:
-        """非哨兵的新凭证值正常覆盖旧值。"""
+        """非哨兵的新凭证值正常覆盖旧值（回显全掩码、落盘明文新值）。"""
         _write_config_file(db_path, {"binance_api_key": "old-secret-value-9"})
         response = api_client.put("/api/config", json={"binance_api_key": "new-plain-value-99"})
         assert response.status_code == 200
-        data = response.json()
-        # 新值落盘后按掩码规则回显（前4 new- + *** + 后4 e-99）
-        assert data["binance_api_key"] == "new-***e-99"
+        assert response.json()["binance_api_key"] == "***"
+        saved = json.loads(_config_file(db_path).read_text(encoding="utf-8"))
+        assert saved["binance_api_key"] == "new-plain-value-99"
 
     def test_put_response_is_masked_like_get(self, api_client: TestClient) -> None:
-        """PUT 响应与 GET 一致走 masked 回显。"""
+        """PUT 响应与 GET 一致走全掩码回显。"""
         response = api_client.put("/api/config", json={"binance_secret_key": "1234567890abc"})
         assert response.status_code == 200
-        assert response.json()["binance_secret_key"] == "1234***0abc"
+        assert response.json()["binance_secret_key"] == "***"
