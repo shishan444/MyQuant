@@ -52,7 +52,8 @@ class TestCreateTaskValidation:
             "/api/trading/tasks", json=_create_payload(dna_json="not-a-json"),
         )
         assert response.status_code == 400
-        assert response.json()["detail"].startswith("Invalid dna_json")
+        # CARD-07 后固定文案（原文经日志保留，不进响应）
+        assert response.json()["detail"] == "Invalid dna_json format"
 
     def test_valid_dna_json_creates_201(self, api_client: TestClient) -> None:
         """合法 dna_json 正常创建（对照组）。"""

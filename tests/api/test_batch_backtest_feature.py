@@ -185,7 +185,9 @@ class TestProcessorStep:
 
         errors = [r for r in processor.all_results if r.error]
         ok = [r for r in processor.all_results if not r.error]
-        assert len(errors) == 1 and "eval boom" in errors[0].error
+        # CARD-07 后未知异常脱敏为固定文案（原文仅入日志），
+        # 「异常被记录且策略级隔离」语义不变
+        assert len(errors) == 1 and errors[0].error == "内部错误"
         assert len(ok) == 1
 
     def test_group_level_exception_fails_all(
@@ -200,7 +202,8 @@ class TestProcessorStep:
         processor._load_df = _boom
         progress = processor.process_step(0)
         assert len(progress["batch_results"]) == 2
-        assert all("load boom" in r["error"] for r in progress["batch_results"])
+        # CARD-07 后未知异常脱敏为固定文案
+        assert all(r["error"] == "内部错误" for r in progress["batch_results"])
 
     def test_corrupt_dna_json_strategy_skipped(
         self, batch_db: Path, tmp_path: Path,
