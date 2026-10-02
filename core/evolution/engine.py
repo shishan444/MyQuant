@@ -169,10 +169,6 @@ def _tournament_select(
     return selected
 
 
-# Default mutation bias: balanced exploration (templates deprecated)
-_DEFAULT_MUTATION_BIAS = {"params": 1.0, "indicator": 1.0, "risk": 1.0}
-
-
 class EvolutionEngine:
     """Main evolution loop.
 
@@ -343,30 +339,21 @@ class EvolutionEngine:
                 n_mut_weights = [50, 35, 15]
 
             # Apply adaptive mutation boost (1/5 rule)
+            # When stuck (boost > 1), shift towards more mutations
+            # When improving (boost < 1), shift towards fewer mutations
             boost = adaptive_mut.mutation_boost
-            if boost != 1.0:
-                n_mut_weights_adjusted = []
-                for w in n_mut_weights:
-                    # When stuck (boost > 1), shift towards more mutations
-                    # When improving (boost < 1), shift towards fewer mutations
-                    n_mut_weights_adjusted.append(w)
-                if boost > 1.0:
-                    # Shift weight towards higher mutation counts
-                    n_mut_weights = [
-                        int(w * (0.5 ** i)) for i, w in enumerate(reversed(n_mut_weights_adjusted))
-                    ]
-                    n_mut_weights.reverse()
-                elif boost < 1.0:
-                    # Shift weight towards lower mutation counts
-                    n_mut_weights = [
-                        int(w * (0.5 ** i)) for i, w in enumerate(n_mut_weights_adjusted)
-                    ]
+            if boost > 1.0:
+                # Shift weight towards higher mutation counts
+                n_mut_weights = [
+                    int(w * (0.5 ** i)) for i, w in enumerate(reversed(n_mut_weights))
+                ]
+                n_mut_weights.reverse()
+            elif boost < 1.0:
+                # Shift weight towards lower mutation counts
+                n_mut_weights = [
+                    int(w * (0.5 ** i)) for i, w in enumerate(n_mut_weights)
+                ]
 
-            # Mutation bias (overlaid on stagnation weights)
-            bias = _DEFAULT_MUTATION_BIAS
-            mut_weights[0] *= bias.get("params", 1.0)
-            mut_weights[1] *= bias.get("indicator", 1.0)
-            mut_weights[3] *= bias.get("risk", 1.0)
             total_w = sum(mut_weights)
             mut_weights = [w / total_w * 100 for w in mut_weights]
 
