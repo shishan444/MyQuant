@@ -8,7 +8,6 @@ import asyncio
 import threading
 from datetime import datetime, timezone
 
-import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -58,7 +57,6 @@ from api.schemas import (
     VerifySessionListResponse,
 )
 from core.backtest import engine as _bt_engine_mod
-from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
 

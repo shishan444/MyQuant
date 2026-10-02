@@ -4,10 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-import asyncio
-from datetime import datetime
 
-import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,7 +25,7 @@ from core.persistence.db_ext import (
     update_strategy,
     update_verify_session,
 )
-from api.deps import get_data_dir, get_db_path
+from api.deps import get_db_path
 from api.schemas import (
     BacktestRequest,
     BacktestResponse,
@@ -54,9 +51,6 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
-from core.backtest import engine as _bt_engine_mod
-from core.scoring.scorer import score_strategy
-from core.services import backtest_service
 
 logger = logging.getLogger(__name__)
 

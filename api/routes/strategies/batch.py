@@ -6,11 +6,10 @@ import logging
 import uuid
 import asyncio
 import threading
-from datetime import datetime
 
 import pandas as pd
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -57,9 +56,7 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
-from core.backtest import engine as _bt_engine_mod
 from core.scoring.metrics import BARS_PER_YEAR, DEFAULT_BARS_PER_YEAR
-from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
 
