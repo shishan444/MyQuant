@@ -10,7 +10,12 @@ import pandas as pd
 
 from core.data.storage import load_parquet
 from core.features.indicators import compute_all_indicators
-from core.validation.engine import _evaluate_single_condition, _resolve_subject, _resolve_target
+from core.validation.engine import (
+    _evaluate_conditions,
+    _evaluate_single_condition,
+    _resolve_subject,
+    _resolve_target,
+)
 from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
 if TYPE_CHECKING:
@@ -148,8 +153,8 @@ def evaluate_rules(
     # ------------------------------------------------------------------
     # 4. Evaluate entry and exit conditions
     # ------------------------------------------------------------------
-    entry_mask = _evaluate_rule_conditions(enhanced_df, entry_conditions, warnings, mtf=mtf)
-    exit_mask = _evaluate_rule_conditions(enhanced_df, exit_conditions, warnings, mtf=mtf)
+    entry_mask = _evaluate_conditions(enhanced_df, entry_conditions, warnings, mtf=mtf)
+    exit_mask = _evaluate_conditions(enhanced_df, exit_conditions, warnings, mtf=mtf)
 
     # ------------------------------------------------------------------
     # 5. Generate signals
@@ -200,53 +205,6 @@ def evaluate_rules(
         avg_return_pct=avg_return_pct,
         warnings=warnings,
     )
-
-
-# ---------------------------------------------------------------------------
-# Condition evaluation (fixed AND/OR logic)
-# ---------------------------------------------------------------------------
-
-def _evaluate_rule_conditions(
-    df: pd.DataFrame,
-    conditions: List[Dict[str, Any]],
-    warnings: List[str],
-    mtf: "MtfEvalContext | None" = None,
-) -> pd.Series:
-    """Evaluate a list of conditions with per-condition logic operators.
-
-    Unlike the legacy _evaluate_conditions in engine.py which uses the
-    *last* condition's logic for all subsequent masks, this implementation
-    applies each condition's own ``logic`` field to combine with the
-    accumulated result.
-
-    The first condition's logic field is ignored (nothing to combine with).
-
-    IF and AND are treated equivalently at the boolean level.
-    """
-    if not conditions:
-        return pd.Series(False, index=df.index)
-
-    result: Optional[pd.Series] = None
-
-    from core.analysis.condition_kernel import _mask_for
-    for i, cond in enumerate(conditions):
-        # 0.2.13：两段式（结构化 subject 先按 params 现算再精确列名求值；
-        # 列缺失全 False 降级与 _evaluate_single_condition 语义一致）
-        mask = _mask_for(df, cond, mtf=mtf)
-        logic = cond.get("logic", "AND") if i > 0 else None
-
-        if result is None:
-            result = mask
-        elif logic == "OR":
-            result = result | mask
-        else:
-            # AND or IF -- equivalent at boolean level
-            result = result & mask
-
-    if result is not None:
-        return result.fillna(False)
-
-    return pd.Series(False, index=df.index)
 
 
 # ---------------------------------------------------------------------------

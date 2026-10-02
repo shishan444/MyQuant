@@ -277,29 +277,34 @@ def _evaluate_conditions(
     warnings: List[str] | None = None,
     mtf: "MtfEvalContext | None" = None,
 ) -> pd.Series:
-    """Evaluate a list of conditions against a DataFrame."""
+    """逐条件 logic 组合求值：engine（WHEN/THEN）与 rule_engine（进出场配对）共用实现。
+
+    每个条件自身的 ``logic`` 字段决定它与累积结果的组合方式（AND/OR），
+    首条件无累积对象其 logic 忽略，IF 与 AND 在布尔级等价。
+    """
     if not conditions:
         return pd.Series(False, index=df.index)
 
-    masks = []
-    logic = "AND"
-    for cond in conditions:
-        logic = cond.get("logic", "AND")
-        from core.analysis.condition_kernel import _mask_for
+    result: Optional[pd.Series] = None
+    from core.analysis.condition_kernel import _mask_for
+
+    for i, cond in enumerate(conditions):
         mask = _mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
-        masks.append(mask)
+        # 逐条件语义：每个条件自身的 logic 与累积结果组合；
+        # 首条件无累积对象，其 logic 忽略；IF 与 AND 布尔级等价
+        logic = cond.get("logic", "AND") if i > 0 else None
 
-    if not masks:
-        return pd.Series(False, index=df.index)
-
-    result = masks[0]
-    for m in masks[1:]:
-        if logic == "AND":
-            result = result & m
+        if result is None:
+            result = mask
+        elif logic == "OR":
+            result = result | mask
         else:
-            result = result | m
+            result = result & mask
 
-    return result.fillna(False)
+    if result is not None:
+        return result.fillna(False)
+
+    return pd.Series(False, index=df.index)
 
 
 def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str] | None = None) -> pd.Series:
