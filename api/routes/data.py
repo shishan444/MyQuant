@@ -503,6 +503,31 @@ def get_ohlcv_by_symbol(
     )
 
 
+def _single_series_indicator(
+    df, ctx: str, name: str, params: Dict[str, Any], col_name: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """单序列指标计算（RSI/RVOL/VWMA 同构）：命中列转 {time,value} 列表。
+
+    计算失败 warning 后返回 None（B1.5：该层缺失须可区分「未开启」）。
+    """
+    from core.features.indicators import _compute_indicator
+
+    try:
+        cols = _compute_indicator(df, name, params)
+        if col_name in cols:
+            series = cols[col_name].dropna()
+            return [
+                {"time": str(idx), "value": float(val)}
+                for idx, val in series.items()
+            ]
+    except Exception:
+        logger.warning(
+            "chart-indicators %s: %s 计算失败，该层将缺失", ctx, name,
+            exc_info=True,
+        )
+    return None
+
+
 @router.get("/chart-indicators/{symbol}/{timeframe}")
 def get_chart_indicators(
     symbol: str,
@@ -608,57 +633,24 @@ def get_chart_indicators(
 
     # Compute RSI
     if rsi_enabled:
-        try:
-            rsi_cols = _compute_indicator(df, "RSI", {"period": rsi_period})
-            col_name = f"rsi_{rsi_period}"
-            if col_name in rsi_cols:
-                series = rsi_cols[col_name].dropna()
-                result["rsi"] = [
-                    {"time": str(idx), "value": float(val)}
-                    for idx, val in series.items()
-                ]
-        except Exception:
-            logger.warning(
-                "chart-indicators %s/%s: RSI 计算失败，该层将缺失",
-                symbol_, timeframe,
-                exc_info=True,
-            )
+        result["rsi"] = _single_series_indicator(
+            df, f"{symbol_}/{timeframe}", "RSI",
+            {"period": rsi_period}, f"rsi_{rsi_period}",
+        )
 
     # Compute RVOL (Relative Volume)
     if rvol_enabled:
-        try:
-            rvol_cols = _compute_indicator(df, "RVOL", {"period": rvol_period})
-            col_name = f"rvol_{rvol_period}"
-            if col_name in rvol_cols:
-                series = rvol_cols[col_name].dropna()
-                result["rvol"] = [
-                    {"time": str(idx), "value": float(val)}
-                    for idx, val in series.items()
-                ]
-        except Exception:
-            logger.warning(
-                "chart-indicators %s/%s: RVOL 计算失败，该层将缺失",
-                symbol_, timeframe,
-                exc_info=True,
-            )
+        result["rvol"] = _single_series_indicator(
+            df, f"{symbol_}/{timeframe}", "RVOL",
+            {"period": rvol_period}, f"rvol_{rvol_period}",
+        )
 
     # Compute VWMA (Volume Weighted Moving Average)
     if vwma_enabled:
-        try:
-            vwma_cols = _compute_indicator(df, "VWMA", {"period": vwma_period})
-            col_name = f"vwma_{vwma_period}"
-            if col_name in vwma_cols:
-                series = vwma_cols[col_name].dropna()
-                result["vwma"] = [
-                    {"time": str(idx), "value": float(val)}
-                    for idx, val in series.items()
-                ]
-        except Exception:
-            logger.warning(
-                "chart-indicators %s/%s: VWMA 计算失败，该层将缺失",
-                symbol_, timeframe,
-                exc_info=True,
-            )
+        result["vwma"] = _single_series_indicator(
+            df, f"{symbol_}/{timeframe}", "VWMA",
+            {"period": vwma_period}, f"vwma_{vwma_period}",
+        )
 
     # Compute MACD
     if macd_enabled:
