@@ -1,9 +1,14 @@
-"""Chart pattern matching engine: extreme-first search with post-validation.
+"""图表形态匹配引擎：极值优先搜索 + 事后校验。
 
-Core algorithm transplanted from BennyThadikaran/stock-pattern (368 stars).
-Key difference from previous version: search starts from the most prominent
-peaks (highest price) and works outward, rather than scanning pivots
-sequentially. This ensures the "best" peak candidates are always tried first.
+核心算法移植自 BennyThadikaran/stock-pattern（368 stars）。与旧版
+关键差异：搜索从最显著的峰（最高价）开始向外扩展，而非按序扫描
+pivot——保证「最佳」峰候选总是最先被尝试。
+
+服务对象：top_pattern.py 形态场景检测器（经 scene_engine 的
+DETECTORS 注册表分派链）；tests/evolution 场景特征网对
+match_patterns 及内部 helper 的直调锚。职责边界：pivot 序列 →
+形态实例（PatternMatch），pivot 识别归 pivot.py，场景语义包装
+归调用方。
 """
 from __future__ import annotations
 
@@ -18,19 +23,19 @@ from .pivot import PivotPoint
 
 @dataclass
 class PatternMatch:
-    """A detected chart pattern."""
+    """一例检出的图表形态（类型 + 完成 bar + 关键点）。"""
 
     pattern_type: str                               # "double_top" | "head_shoulders_top" | "triple_top"
-    completion_bar: int                             # bar index where pattern completes
+    completion_bar: int                             # 形态完成的 bar 下标
     key_points: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# 内部辅助函数
 # ---------------------------------------------------------------------------
 
 def _build_key_points(*pairs: tuple) -> List[Dict[str, Any]]:
-    """Build key_points list from (label, PivotPoint) pairs."""
+    """从 (label, PivotPoint) 对构建 key_points 列表。"""
     return [
         {"label": label, "index": p.index, "price": p.price}
         for label, p in pairs
@@ -38,10 +43,12 @@ def _build_key_points(*pairs: tuple) -> List[Dict[str, Any]]:
 
 
 def _compute_avg_bar_length(bar_lengths: np.ndarray, start_idx: int, end_idx: int) -> float:
-    """Compute median bar length (high - low) in the given index range.
+    """取给定下标区间内 bar 长度（high - low）的中位数。
 
     Args:
-        bar_lengths: Pre-computed numpy array of (high - low) values.
+        bar_lengths: 预计算的 (high - low) numpy 数组。
+
+    区间裁剪到数组边界后为空（start >= end）时返回 0.0。
     """
     start = max(0, start_idx)
     end = min(len(bar_lengths), end_idx + 1)
@@ -51,11 +58,10 @@ def _compute_avg_bar_length(bar_lengths: np.ndarray, start_idx: int, end_idx: in
 
 
 def _validate_pivot_anchor(point: PivotPoint, df: pd.DataFrame) -> bool:
-    """Verify peak price equals bar High, trough price equals bar Low.
+    """校验 pivot 锚定：peak 价格须等于所在 bar 的 High，trough 须等于 Low。
 
-    Rejects pivots that are anchored to the wrong OHLC component.
-    For example, a peak pivot whose price comes from Low rather than High
-    indicates the pivot is incorrectly positioned.
+    拒收锚错 OHLC 分量的 pivot——例如 peak 的价格取自 Low 而非
+    High，说明该 pivot 定位错误。下标越界同样拒收。
     """
     if point.index < 0 or point.index >= len(df):
         return False
@@ -73,19 +79,19 @@ def _check_level_intact(
     avg_bar_length: float,
     check_bars: int = 0,
 ) -> bool:
-    """Check whether a key price level has NOT been breached after from_bar.
+    """检查关键价位自 from_bar 起是否未被有效击穿。
 
     Args:
-        level_price: The critical price level.
-        from_bar: Bar index from which to check.
-        df: DataFrame with high/low columns.
-        direction: "below" means level must not be broken downward,
-                   "above" means level must not be broken upward.
-        avg_bar_length: Breach tolerance (must exceed 1x avgBarLength to count).
-        check_bars: Number of bars to check. 0 means check all subsequent bars.
+        level_price: 关键价位。
+        from_bar: 起检 bar 下标。
+        df: 含 high/low 列的 DataFrame。
+        direction: "below" 指价位不得向下破位，
+                   "above" 指价位不得向上破位。
+        avg_bar_length: 破位容差（须超出 1x avgBarLength 才计入）。
+        check_bars: 检查的 bar 数，0 表示检查全部后续 bar。
 
     Returns:
-        True if the level is still intact (not meaningfully breached).
+        价位仍然完好（未被有效击穿）返回 True。
     """
     if from_bar + 1 >= len(df):
         return True
@@ -100,7 +106,7 @@ def _check_level_intact(
 
 
 def _get_atr(atr_series: pd.Series, bar_index: int) -> Optional[float]:
-    """Safely get ATR value at a bar index."""
+    """安全取指定 bar 下标处的 ATR 值（越界或 NaN 返回 None）。"""
     if atr_series is not None and 0 <= bar_index < len(atr_series):
         val = atr_series.iloc[bar_index]
         if not np.isnan(val):
@@ -109,11 +115,11 @@ def _get_atr(atr_series: pd.Series, bar_index: int) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Pattern finders: extreme-first search strategy
+# 形态探测器：极值优先搜索策略
 # ---------------------------------------------------------------------------
 
-# Max bar distance between first and last point of a pattern.
-# Prevents combining peaks that are far apart (noise) and limits search space.
+# 形态首尾点之间的最大 bar 距离。
+# 防止把相距过远的峰拼成形态（噪声），同时限制搜索空间。
 _MAX_PATTERN_SPAN = 200
 
 
@@ -123,14 +129,14 @@ def _find_double_tops(
     bar_lengths: np.ndarray,
     atr_series: Optional[pd.Series],
 ) -> List[PatternMatch]:
-    """Find all double top patterns using extreme-first search.
+    """极值优先搜索全部双顶形态。
 
-    Algorithm (from stock-pattern):
-    1. Sort peaks by price descending (most prominent first).
-    2. For each peak A, find the highest peak C after A (within span limit).
-    3. Find the lowest trough B between A and C.
-    4. Apply geometric constraints + post-validation.
-    5. On failure, skip to next A.
+    算法（源自 stock-pattern）：
+    1. 峰按价格降序排列（最显著者优先）。
+    2. 对每个峰 A，取 A 之后（span 限内）最高的峰 C。
+    3. 取 A 与 C 之间最低的谷 B。
+    4. 施加几何约束 + 事后校验。
+    5. 失败则跳到下一个 A。
     """
     peaks = [p for p in pivots if p.pivot_type == "peak"]
     if len(peaks) < 2:
@@ -138,7 +144,7 @@ def _find_double_tops(
 
     peaks_by_price = sorted(peaks, key=lambda p: p.price, reverse=True)
 
-    # Pre-sort peaks by index for fast range queries
+    # 峰按下标预排序，加速区间查询
     peaks_by_idx = sorted(peaks, key=lambda p: p.index)
 
     results: List[PatternMatch] = []
@@ -148,7 +154,7 @@ def _find_double_tops(
         if a.index in used_indices:
             continue
 
-        # Find peaks after A, within _MAX_PATTERN_SPAN bars, sorted by price desc
+        # 找 A 之后 _MAX_PATTERN_SPAN bar 内的峰，按价格降序
         c_candidates = sorted(
             [p for p in peaks_by_idx
              if a.index < p.index <= a.index + _MAX_PATTERN_SPAN
@@ -161,7 +167,7 @@ def _find_double_tops(
 
         found = False
         for c in c_candidates:
-            # Find lowest trough between A and C
+            # 取 A 与 C 之间最低的谷
             b_candidates = [
                 p for p in pivots
                 if p.pivot_type == "trough"
@@ -171,33 +177,33 @@ def _find_double_tops(
                 continue
             b = min(b_candidates, key=lambda p: p.price)
 
-            # --- Geometric constraints ---
+            # --- 几何约束 ---
             abl = _compute_avg_bar_length(bar_lengths, a.index, c.index)
             if abl <= 0:
                 continue
 
-            # Two peaks close: price diff <= 0.5 * avgBarLength
+            # 两峰接近：价差 <= 0.5 * avgBarLength
             if abs(a.price - c.price) > abl * 0.5:
                 continue
 
-            # Valley below both peaks
+            # 谷须低于两峰
             if b.price >= min(a.price, c.price):
                 continue
 
-            # ATR height constraint (8x upper bound for crypto volatility)
+            # ATR 高度约束（8x 上限，适配 crypto 波动率）
             atr_val = _get_atr(atr_series, c.index)
             height = c.price - b.price
             if atr_val and atr_val > 0:
                 if height > atr_val * 8 or height < atr_val * 0.5:
                     continue
 
-            # Volume confirmation (relaxed: reject only if 2nd peak volume
-            # exceeds 1.5x of 1st peak — avoids noise in crypto volume)
+            # 量能确认（放宽口径：仅当第 2 峰量能超第 1 峰 1.5x 才拒收
+            # —— 避免 crypto 量能噪声误杀）
             if a.volume > 0 and c.volume > 0:
                 if c.volume >= a.volume * 1.5:
                     continue
 
-            # --- Post-validation ---
+            # --- 事后校验 ---
             if not _validate_pivot_anchor(a, df):
                 continue
             if not _validate_pivot_anchor(b, df):
@@ -205,11 +211,11 @@ def _find_double_tops(
             if not _validate_pivot_anchor(c, df):
                 continue
 
-            # C level intact: only check next 10 bars (short-term confirmation)
+            # C 位完好：只查其后 10 根 bar（短期确认）
             if not _check_level_intact(c.price, c.index, df, "above", abl, check_bars=10):
                 continue
 
-            # Pattern confirmed
+            # 形态确认
             used_indices.update([a.index, b.index, c.index])
             results.append(PatternMatch(
                 pattern_type="double_top",
@@ -231,14 +237,14 @@ def _find_head_shoulders_tops(
     bar_lengths: np.ndarray,
     atr_series: Optional[pd.Series],
 ) -> List[PatternMatch]:
-    """Find all head-and-shoulders top patterns using extreme-first search.
+    """极值优先搜索全部头肩顶形态。
 
-    Algorithm (from stock-pattern):
-    1. Sort peaks by price descending (head candidates).
-    2. For each head C, search backward for left shoulder A (highest before C).
-    3. Search forward for right shoulder E (highest after C).
-    4. Find armpits B (lowest between A-C) and D (lowest between C-E).
-    5. Apply geometric constraints + post-validation.
+    算法（源自 stock-pattern）：
+    1. 峰按价格降序排列（头候选）。
+    2. 对每个头 C，向前搜左肩 A（C 前最高峰）。
+    3. 向后搜右肩 E（C 后最高峰）。
+    4. 取腋点 B（A-C 间最低谷）与 D（C-E 间最低谷）。
+    5. 施加几何约束 + 事后校验。
     """
     peaks = [p for p in pivots if p.pivot_type == "peak"]
     if len(peaks) < 3:
@@ -253,7 +259,7 @@ def _find_head_shoulders_tops(
         if head.index in used_indices:
             continue
 
-        # Left shoulder: highest peak BEFORE head (within span)
+        # 左肩：头之前（span 限内）的最高峰
         left_candidates = [
             p for p in peaks
             if head.index - _MAX_PATTERN_SPAN <= p.index < head.index
@@ -263,7 +269,7 @@ def _find_head_shoulders_tops(
             continue
         left_shoulder = max(left_candidates, key=lambda p: p.price)
 
-        # Right shoulder: highest peak AFTER head (within span)
+        # 右肩：头之后（span 限内）的最高峰
         right_candidates = [
             p for p in peaks
             if head.index < p.index <= head.index + _MAX_PATTERN_SPAN
@@ -273,7 +279,7 @@ def _find_head_shoulders_tops(
             continue
         right_shoulder = max(right_candidates, key=lambda p: p.price)
 
-        # Left armpit: lowest trough between left_shoulder and head
+        # 左腋点：左肩与头之间的最低谷
         armpit_left_cands = [
             p for p in pivots
             if p.pivot_type == "trough"
@@ -283,7 +289,7 @@ def _find_head_shoulders_tops(
             continue
         armpit_left = min(armpit_left_cands, key=lambda p: p.price)
 
-        # Right armpit: lowest trough between head and right_shoulder
+        # 右腋点：头与右肩之间的最低谷
         armpit_right_cands = [
             p for p in pivots
             if p.pivot_type == "trough"
@@ -293,33 +299,33 @@ def _find_head_shoulders_tops(
             continue
         armpit_right = min(armpit_right_cands, key=lambda p: p.price)
 
-        # --- Geometric constraints ---
+        # --- 几何约束 ---
         abl = _compute_avg_bar_length(bar_lengths, armpit_left.index, armpit_right.index)
         if abl <= 0:
             continue
 
-        # Head must be highest
+        # 头须为最高点
         if head.price <= left_shoulder.price or head.price <= right_shoulder.price:
             continue
 
-        # Both armpits below both shoulders
+        # 两腋点均须低于两肩
         if max(armpit_left.price, armpit_right.price) >= min(left_shoulder.price, right_shoulder.price):
             continue
 
-        # Shoulders approximately equal
+        # 两肩大致等高
         if abs(left_shoulder.price - right_shoulder.price) > abl * 0.5:
             continue
 
-        # Neckline (armpits) approximately level
+        # 颈线（两腋点）大致水平
         if abs(armpit_left.price - armpit_right.price) >= abl:
             continue
 
-        # Head-shoulder structure obvious: head protrudes >= 0.6 * avgBarLength
+        # 头肩结构须显著：头高出肩线 >= 0.6 * avgBarLength
         avg_shoulder = (left_shoulder.price + right_shoulder.price) / 2.0
         if head.price - avg_shoulder < abl * 0.6:
             continue
 
-        # ATR height constraint (8x upper bound for crypto volatility)
+        # ATR 高度约束（8x 上限，适配 crypto 波动率）
         atr_val = _get_atr(atr_series, right_shoulder.index)
         if atr_val and atr_val > 0:
             avg_neckline = (armpit_left.price + armpit_right.price) / 2.0
@@ -327,12 +333,12 @@ def _find_head_shoulders_tops(
             if h > atr_val * 8 or h < atr_val * 0.5:
                 continue
 
-        # --- Post-validation ---
+        # --- 事后校验 ---
         all_points = [left_shoulder, armpit_left, head, armpit_right, right_shoulder]
         if not all(_validate_pivot_anchor(p, df) for p in all_points):
             continue
 
-        # Neckline intact: only check next 10 bars (short-term confirmation)
+        # 颈线完好：只查其后 10 根 bar（短期确认）
         neckline_price = min(armpit_left.price, armpit_right.price)
         if not _check_level_intact(neckline_price, right_shoulder.index, df, "below", abl, check_bars=10):
             continue
@@ -358,14 +364,13 @@ def _find_triple_tops(
     bar_lengths: np.ndarray,
     atr_series: Optional[pd.Series],
 ) -> List[PatternMatch]:
-    """Find all triple top patterns using extreme-first search.
+    """极值优先搜索全部三重顶形态。
 
-    Algorithm:
-    1. Sort peaks by price descending.
-    2. For each peak P1, find the next two peaks P2, P3 that are
-       chronologically after P1 and close in price.
-    3. Find troughs between each pair.
-    4. Apply geometric constraints + post-validation.
+    算法：
+    1. 峰按价格降序排列。
+    2. 对每个峰 P1，取时间上在其后且价格接近的 P2、P3 两峰。
+    3. 取每对峰之间的谷。
+    4. 施加几何约束 + 事后校验。
     """
     peaks = [p for p in pivots if p.pivot_type == "peak"]
     if len(peaks) < 3:
@@ -380,7 +385,7 @@ def _find_triple_tops(
         if p1.index in used_indices:
             continue
 
-        # Find all peaks after P1 (within span), sorted by price descending
+        # 找 P1 之后（span 限内）的全部峰，按价格降序
         later_peaks = sorted(
             [p for p in peaks
              if p1.index < p.index <= p1.index + _MAX_PATTERN_SPAN
@@ -391,7 +396,7 @@ def _find_triple_tops(
         if len(later_peaks) < 2:
             continue
 
-        # Try pairs of later peaks as P2, P3
+        # 从后续峰中取 P2、P3 组合逐一尝试
         found = False
         for p2 in later_peaks:
             if found:
@@ -400,7 +405,7 @@ def _find_triple_tops(
                 if p3.index <= p2.index:
                     continue
 
-                # Trough between P1 and P2
+                # P1 与 P2 之间的谷
                 t1_cands = [
                     p for p in pivots
                     if p.pivot_type == "trough"
@@ -410,7 +415,7 @@ def _find_triple_tops(
                     continue
                 t1 = min(t1_cands, key=lambda p: p.price)
 
-                # Trough between P2 and P3
+                # P2 与 P3 之间的谷
                 t2_cands = [
                     p for p in pivots
                     if p.pivot_type == "trough"
@@ -420,12 +425,12 @@ def _find_triple_tops(
                     continue
                 t2 = min(t2_cands, key=lambda p: p.price)
 
-                # --- Geometric constraints ---
+                # --- 几何约束 ---
                 abl = _compute_avg_bar_length(bar_lengths, p1.index, p3.index)
                 if abl <= 0:
                     continue
 
-                # All three peaks close in price
+                # 三峰价格接近
                 threshold = abl * 0.5
                 if abs(p1.price - p2.price) > threshold:
                     continue
@@ -434,12 +439,12 @@ def _find_triple_tops(
                 if abs(p1.price - p3.price) > threshold:
                     continue
 
-                # Troughs below peaks
+                # 谷须低于峰
                 avg_peak = (p1.price + p2.price + p3.price) / 3.0
                 if t1.price >= avg_peak or t2.price >= avg_peak:
                     continue
 
-                # ATR height constraint (8x upper bound for crypto volatility)
+                # ATR 高度约束（8x 上限，适配 crypto 波动率）
                 atr_val = _get_atr(atr_series, p3.index)
                 avg_trough = (t1.price + t2.price) / 2.0
                 height = avg_peak - avg_trough
@@ -447,17 +452,17 @@ def _find_triple_tops(
                     if height > atr_val * 8 or height < atr_val * 0.5:
                         continue
 
-                # Volume: relaxed decreasing trend (p3 must not exceed 1.5x p1)
+                # 量能：放宽的递减口径（p3 不得超 p1 的 1.5x）
                 if p1.volume > 0 and p3.volume > 0:
                     if p3.volume >= p1.volume * 1.5:
                         continue
 
-                # --- Post-validation ---
+                # --- 事后校验 ---
                 all_pts = [p1, t1, p2, t2, p3]
                 if not all(_validate_pivot_anchor(pt, df) for pt in all_pts):
                     continue
 
-                # P3 level intact: only check next 10 bars
+                # P3 位完好：只查其后 10 根 bar
                 if not _check_level_intact(p3.price, p3.index, df, "above", abl, check_bars=10):
                     continue
 
@@ -479,7 +484,7 @@ def _find_triple_tops(
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# 公共 API
 # ---------------------------------------------------------------------------
 
 def match_patterns(
@@ -487,18 +492,18 @@ def match_patterns(
     df: Optional[pd.DataFrame] = None,
     atr_series: Optional[pd.Series] = None,
 ) -> List[PatternMatch]:
-    """Scan a pivot sequence for chart patterns using extreme-first search.
+    """在 pivot 序列上以极值优先搜索图表形态。
 
-    Each pattern type is searched independently with its own finder.
-    Results are deduplicated by key point indices.
+    各形态类型由独立探测器分别搜索；结果按 key point 下标去重。
 
     Args:
-        pivots: Chronologically ordered pivot points.
-        df: DataFrame with high/low columns for avgBarLength and post-validation.
-        atr_series: ATR values series for height constraints.
+        pivots: 按时间序排列的 pivot 点。
+        df: 含 high/low 列的 DataFrame（avgBarLength 与事后校验用）。
+        atr_series: ATR 值序列（高度约束用）。
 
     Returns:
-        List of PatternMatch instances, ordered by completion_bar.
+        PatternMatch 实例列表，按 completion_bar 排序；pivot 少于
+        3 个或 df 为 None 时返回空列表。
     """
     if len(pivots) < 3:
         return []
@@ -506,17 +511,17 @@ def match_patterns(
     if df is None:
         return []
 
-    # Pre-compute bar lengths as numpy array for fast median computation
+    # bar 长度预计算为 numpy 数组，加速中位数计算
     bar_lengths = (df["high"].values.astype(np.float64) - df["low"].values.astype(np.float64))
 
     all_results: List[PatternMatch] = []
 
-    # Run finders: H&S first (most specific), then triple, then double
+    # 探测顺序：头肩顶最优先（最特异），其次三重顶，最后双顶
     all_results.extend(_find_head_shoulders_tops(pivots, df, bar_lengths, atr_series))
     all_results.extend(_find_triple_tops(pivots, df, bar_lengths, atr_series))
     all_results.extend(_find_double_tops(pivots, df, bar_lengths, atr_series))
 
-    # Deduplicate by key point bar indices (same bars = same pattern)
+    # 按 key point 的 bar 下标去重（同 bar 组合 = 同一形态）
     seen: set = set()
     deduped: List[PatternMatch] = []
     for m in sorted(all_results, key=lambda m: m.completion_bar):
