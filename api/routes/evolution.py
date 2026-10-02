@@ -145,18 +145,10 @@ def _task_row_to_response(
     )
 
 
-@router.get("/strategies")
-def list_all_discovered_strategies(
-    min_score: Optional[float] = None,
-    limit: int = Query(20, ge=1, le=500),
-    db_path: Path = Depends(get_db_path),
+def _strategies_to_dicts(
+    strategies: List[Dict[str, Any]], min_score: Optional[float],
 ) -> List[Dict[str, Any]]:
-    """List all evolution-discovered strategies across all tasks."""
-    from core.persistence.db_ext import list_strategies
-    strategies = list_strategies(
-        db_path, source="evolution", sort_by="best_score",
-        sort_order="desc", limit=limit,
-    )
+    """策略行列表转 REST 响应 dict（min_score 过滤 + dna/metrics JSON 解析）。"""
     result: List[Dict[str, Any]] = []
     for s in strategies:
         score = s.get("best_score") or 0
@@ -190,6 +182,21 @@ def list_all_discovered_strategies(
             "metrics": metrics,
         })
     return result
+
+
+@router.get("/strategies")
+def list_all_discovered_strategies(
+    min_score: Optional[float] = None,
+    limit: int = Query(20, ge=1, le=500),
+    db_path: Path = Depends(get_db_path),
+) -> List[Dict[str, Any]]:
+    """List all evolution-discovered strategies across all tasks."""
+    from core.persistence.db_ext import list_strategies
+    strategies = list_strategies(
+        db_path, source="evolution", sort_by="best_score",
+        sort_order="desc", limit=limit,
+    )
+    return _strategies_to_dicts(strategies, min_score)
 
 
 @router.post("/tasks", status_code=201)
@@ -507,39 +514,7 @@ def get_discovered_strategies(
         sort_order="desc",
         limit=limit,
     )
-    result: List[Dict[str, Any]] = []
-    for s in strategies:
-        score = s.get("best_score") or 0
-        if min_score is not None and score < min_score:
-            continue
-        dna_dict = None
-        if s.get("dna_json"):
-            try:
-                dna_dict = json.loads(s["dna_json"])
-            except (json.JSONDecodeError, Exception):
-                pass
-        metrics = None
-        if s.get("metrics_json"):
-            try:
-                metrics = json.loads(s["metrics_json"])
-            except (json.JSONDecodeError, Exception):
-                pass
-        result.append({
-            "strategy_id": s["strategy_id"],
-            "name": s.get("name"),
-            "dna": dna_dict,
-            "source": "evolution",
-            "source_task_id": s.get("source_task_id"),
-            "score": score,
-            "fitness": s.get("best_fitness"),
-            "qualified": bool(s.get("qualified", 0)) if s.get("qualified") is not None else None,
-            "generation": s.get("generation", 0),
-            "created_at": s.get("created_at"),
-            "symbol": s.get("symbol", ""),
-            "timeframe": s.get("timeframe", ""),
-            "metrics": metrics,
-        })
-    return result
+    return _strategies_to_dicts(strategies, min_score)
 
 
 # ── Timeframe utilities ──
