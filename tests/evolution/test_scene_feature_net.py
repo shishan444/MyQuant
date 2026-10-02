@@ -1493,3 +1493,65 @@ class TestDetectorParamRangeFeature:
         from core.validation.scene.top_pattern import TopPatternDetector
         with pytest.raises(ResearchError, match="pattern_tolerance 须为数值"):
             TopPatternDetector().detect(self._df(), {"pattern_tolerance": "abc"})
+
+
+# ===========================================================================
+# 12. CARD-06：level 列 0 值守卫（==0 与 NaN 同拒，堵 inf 外泄）
+# ===========================================================================
+
+class TestLevelZeroGuardFeature:
+    """CARD-06 锚：level=0 的 bar 跳过（与 NaN 同语义），正常 bar 不受影响。
+
+    volume_breakout 为实证判别点：level=0 且 close>0 恒成立，无守卫时
+    (close-0)/0*100=inf 进 snapshot；support_resistance 为对称防御锚。
+    """
+
+    def test_volume_breakout_skips_zero_level_bar(self):
+        from core.validation.scene.volume_breakout import VolumeBreakoutDetector
+        n = 60
+        volume = np.full(n, 1000.0)
+        volume[30] = 4000.0
+        volume[42] = 4000.0  # 两根合格量能 spike，间隔 12 >= min_spacing 10
+        bb = np.full(n, 95.0)
+        bb[42] = 0.0  # 0 值 bar：无守卫时 close(100)>0 触发且 breakout_pct=inf
+        df = _base_frame({"volume": volume, "bb_upper_20_2.0": bb}, n)
+        triggers = VolumeBreakoutDetector().detect(df, {})
+        # 0 值 bar 被跳过，只余 bar 30
+        assert [tp.bar_index for tp in triggers] == [30]
+        snap = triggers[0].indicator_snapshot
+        assert np.isfinite(snap["breakout_pct"])
+        assert snap["breakout_pct"] == pytest.approx((100.0 - 95.0) / 95.0 * 100, abs=0.02)
+
+    def test_volume_breakout_all_triggers_finite_with_zero_mixed(self):
+        """末位混 0 场景：全部触发 snapshot 数值有限（inf 不外泄）。"""
+        from core.validation.scene.volume_breakout import VolumeBreakoutDetector
+        n = 60
+        volume = np.full(n, 1000.0)
+        volume[30] = 4000.0
+        volume[55] = 4000.0
+        bb = np.full(n, 95.0)
+        bb[55] = 0.0  # 末位 spike 撞 0 值 level
+        df = _base_frame({"volume": volume, "bb_upper_20_2.0": bb}, n)
+        triggers = VolumeBreakoutDetector().detect(df, {})
+        assert [tp.bar_index for tp in triggers] == [30]
+        for tp in triggers:
+            assert all(np.isfinite(v) for v in tp.indicator_snapshot.values())
+
+    def test_support_resistance_skips_zero_level_bar(self):
+        """对称防御锚：support 侧 level=0 的 bar 不触发，正常 bar 照常。"""
+        from core.validation.scene.support_resistance import SupportResistanceDetector
+        n = 50
+        low = np.full(n, 95.5)   # |95.5-95|/95 ≈ 0.53% <= 1 触发
+        level = np.full(n, 95.0)
+        level[31] = 0.0          # 0 值 bar 跳过
+        df = _base_frame(
+            {"low": low, "bb_lower_20_2.0": level}, n,
+        )
+        triggers = SupportResistanceDetector().detect(
+            df, {"level_source": "bb", "direction": "support", "min_spacing": 10},
+        )
+        # 1/11/21 照常，31 被跳过，下一个为 32（32-21=11>=10）再 42
+        assert [tp.bar_index for tp in triggers] == [1, 11, 21, 32, 42]
+        for tp in triggers:
+            assert np.isfinite(tp.indicator_snapshot["level_value"])
+            assert np.isfinite(tp.indicator_snapshot["proximity_pct"])
