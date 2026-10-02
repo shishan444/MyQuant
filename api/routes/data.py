@@ -32,6 +32,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
+# 上传防护上限：单文件 256MB（1m 级全量 CSV 约 100-200MB，留裕量）；批量文件数 20
+MAX_IMPORT_FILE_BYTES = 256 * 1024 * 1024
+MAX_IMPORT_BATCH_FILES = 20
+
+_COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def _check_upload_size(upload: UploadFile) -> None:
+    """读前按实际接收字节数拒绝超限上传（UploadFile.size 由解析器记录）。"""
+    if upload.size is not None and upload.size > MAX_IMPORT_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {upload.filename} exceeds "
+                   f"{MAX_IMPORT_FILE_BYTES // (1024 * 1024)}MB limit",
+        )
+
+
+def _copy_limited(dest, src) -> None:
+    """分块落盘上传内容，累计超限即拒（size 缺失时的纵深防线）。"""
+    total = 0
+    while chunk := src.read(_COPY_CHUNK_BYTES):
+        total += len(chunk)
+        if total > MAX_IMPORT_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="File too large")
+        dest.write(chunk)
+
 
 @router.get("/datasets")
 def list_datasets_endpoint(
@@ -107,22 +133,24 @@ def import_csv_endpoint(
     """Import a CSV file into Parquet storage."""
     # Save uploaded file to a temp location
     data_dir.mkdir(parents=True, exist_ok=True)
-
-    original_stem = Path(file.filename).stem if file.filename else None
-    prefix = original_stem + "-" if original_stem else None
-    with tempfile.NamedTemporaryFile(
-        suffix=".csv", prefix=prefix, delete=False, dir=data_dir
-    ) as tmp:
-        content = file.file.read()
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
+    _check_upload_size(file)
 
     try:
         import_mode = ImportMode(mode)
     except ValueError:
         import_mode = ImportMode.MERGE
 
+    original_stem = Path(file.filename).stem if file.filename else None
+    prefix = original_stem + "-" if original_stem else None
+    # 先记路径再写：copy 中途超限拒绝时 finally 仍可清理临时文件
+    tmp_path: Optional[Path] = None
     try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".csv", prefix=prefix, delete=False, dir=data_dir
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            _copy_limited(tmp, file.file)
+
         result = import_csv(
             path=tmp_path,
             data_dir=data_dir,
@@ -185,7 +213,8 @@ def import_csv_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         # Clean up temp file
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 @router.post("/import-batch")
@@ -200,27 +229,36 @@ def import_csv_batch_endpoint(
     """Import multiple CSV files into a single Parquet dataset."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+    if len(files) > MAX_IMPORT_BATCH_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files: max {MAX_IMPORT_BATCH_FILES}",
+        )
+    # 全部预检通过后再落盘，避免中途拒绝时泄漏已写临时文件
+    for f in files:
+        _check_upload_size(f)
 
     data_dir.mkdir(parents=True, exist_ok=True)
-
-    tmp_paths: list[Path] = []
-    for f in files:
-        # Use original filename stem as prefix so parse_filename can detect symbol/interval
-        original_stem = Path(f.filename).stem if f.filename else None
-        prefix = original_stem + "-" if original_stem else None
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".csv", prefix=prefix, delete=False, dir=data_dir
-        )
-        tmp.write(f.file.read())
-        tmp.close()
-        tmp_paths.append(Path(tmp.name))
 
     try:
         import_mode = ImportMode(mode)
     except ValueError:
         import_mode = ImportMode.MERGE
 
+    tmp_paths: list[Path] = []
     try:
+        for f in files:
+            # Use original filename stem as prefix so parse_filename can detect symbol/interval
+            original_stem = Path(f.filename).stem if f.filename else None
+            prefix = original_stem + "-" if original_stem else None
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".csv", prefix=prefix, delete=False, dir=data_dir
+            )
+            # 先记路径再写：copy 中途超限拒绝时 finally 仍可清理临时文件
+            tmp_paths.append(Path(tmp.name))
+            _copy_limited(tmp, f.file)
+            tmp.close()
+
         result = import_csv_batch(
             paths=tmp_paths,
             data_dir=data_dir,
