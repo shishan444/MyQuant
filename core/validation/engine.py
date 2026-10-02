@@ -700,14 +700,10 @@ def _touch_condition(series: pd.Series, target) -> pd.Series:
 
 
 def _cross_above(series: pd.Series, target) -> pd.Series:
-    if isinstance(target, (int, float)):
-        return (series.shift(1) < target) & (series >= target)
     return (series.shift(1) < target) & (series >= target)
 
 
 def _cross_below(series: pd.Series, target) -> pd.Series:
-    if isinstance(target, (int, float)):
-        return (series.shift(1) > target) & (series <= target)
     return (series.shift(1) > target) & (series <= target)
 
 
