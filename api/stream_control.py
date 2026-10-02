@@ -15,6 +15,24 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _cancel_callbacks: dict[str, Callable[[], None]] = {}
 
+# 流式任务并发槽位（verify/batch 两流式端点共用；本地单用户 + 浏览器
+# 多页并发留裕量，满载即拒绝新流而非无界 create_task）
+_STREAM_SLOTS = threading.BoundedSemaphore(4)
+
+
+def acquire_stream_slot() -> bool:
+    """占用一个流式任务并发槽位（非阻塞）。
+
+    Returns:
+        True=占用成功；False=并发已满（调用方应 429 拒绝）。
+    """
+    return _STREAM_SLOTS.acquire(blocking=False)
+
+
+def release_stream_slot() -> None:
+    """释放并发槽位（任务终止时；与 unregister 同点调用）。"""
+    _STREAM_SLOTS.release()
+
 
 def register(session_id: str, cancel_fn: Callable[[], None]) -> None:
     """注册流式任务的取消回调（任务启动时）。"""

@@ -442,7 +442,14 @@ async def batch_backtest_stream(
     from api import realtime, stream_control
 
     processor = _BatchBacktestProcessor(payload, db_path, data_dir)
-    await asyncio.to_thread(processor.init)
+    # 并发槽位满即拒绝（429）；init 抛 404 等异常时先归还槽位
+    if not stream_control.acquire_stream_slot():
+        raise HTTPException(status_code=429, detail="Too many concurrent streams")
+    try:
+        await asyncio.to_thread(processor.init)
+    except BaseException:
+        stream_control.release_stream_slot()
+        raise
     session_id = f"batch_{_uuid.uuid4().hex[:12]}"
     cancel_event = _threading.Event()
     stream_control.register(session_id, cancel_event.set)
@@ -465,6 +472,7 @@ async def batch_backtest_stream(
             realtime.broadcast("/streams", session_id, "error", {"message": _safe_error_message(exc)})
         finally:
             stream_control.unregister(session_id)
+            stream_control.release_stream_slot()
 
     _asyncio.create_task(_run_stream())
     return {"session_id": session_id}
