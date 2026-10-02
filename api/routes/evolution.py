@@ -267,19 +267,25 @@ def create_task(
             detail=f"无 {payload.symbol}/{payload.timeframe} 的K线数据"
         )
 
-    # Read parquet time range
+    # Read parquet time range（仅取行数与首尾时间戳，不全量装载——
+    # 1m 数据集数十万行，read_parquet 全读仅为 len/min/max 属白读）
     try:
-        import pandas as pd
-        df = pd.read_parquet(parquet_path)
-        data_row_count = len(df)
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(parquet_path)
+        data_row_count = pf.metadata.num_rows
         if data_row_count > 0:
-            if isinstance(df.index, pd.DatetimeIndex):
-                data_time_start = str(df.index.min())
-                data_time_end = str(df.index.max())
-            elif "timestamp" in df.columns or "date" in df.columns:
-                ts_col = "timestamp" if "timestamp" in df.columns else "date"
-                data_time_start = str(df[ts_col].min())
-                data_time_end = str(df[ts_col].max())
+            # 候选序覆盖原 pandas 三分支：有名 DatetimeIndex 落 timestamp 列
+            # （工程 index name=timestamp，实际数据集 schema 已核）、
+            # date 列存储、无名 index 的 __index_level_0__
+            names = pf.schema_arrow.names
+            ts_col = next(
+                (c for c in ("timestamp", "date", "__index_level_0__")
+                 if c in names), None,
+            )
+            if ts_col is not None:
+                col = pf.read(columns=[ts_col]).column(0).to_pandas()
+                data_time_start = str(col.min())
+                data_time_end = str(col.max())
     except Exception:
         pass
 
