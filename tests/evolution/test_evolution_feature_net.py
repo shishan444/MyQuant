@@ -193,6 +193,45 @@ class TestBuildRequirementsFeature:
         assert req.max_drawdown == 0.30
 
 
+class TestParseTimeframePoolFeature:
+    """CARD-04 锚：task_row.timeframe_pool 解析七形制（B1.1 显式报错，
+    旧实现坏值静默置 None 退化单周期）。"""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param(None, [], id="None空值"),
+            pytest.param("", [], id="空字符串"),
+            pytest.param('["4h","1d"]', ["4h", "1d"], id="JSON字符串"),
+            pytest.param(["4h", "1d"], ["4h", "1d"], id="已解list原样"),
+            pytest.param(["4h"], ["4h"], id="单周期list"),
+        ],
+    )
+    def test_valid_forms(self, raw, expected):
+        from core.evolution.evaluation import parse_timeframe_pool
+        assert parse_timeframe_pool({"timeframe_pool": raw}) == expected
+
+    def test_missing_key_returns_empty(self):
+        from core.evolution.evaluation import parse_timeframe_pool
+        assert parse_timeframe_pool({}) == []
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("{not-json", id="坏JSON"),
+            pytest.param('{"4h": 1, "1d": 2}', id="dict形制取keys"),
+            pytest.param("4h", id="裸字符串"),
+            pytest.param(["4h", 1], id="混合元素"),
+            pytest.param([["4h"]], id="嵌套list"),
+        ],
+    )
+    def test_invalid_forms_raise(self, raw):
+        """CARD-04 判别点：坏值显式 ValueError，不再静默退化单周期。"""
+        from core.evolution.evaluation import parse_timeframe_pool
+        with pytest.raises(ValueError, match="timeframe_pool 解析失败"):
+            parse_timeframe_pool({"timeframe_pool": raw, "task_id": "t1"})
+
+
 class TestEvaluateDnaFeature:
     """evaluation.py 特征锚：evaluate_dna 降级与主路径。"""
 
@@ -262,6 +301,26 @@ class TestEvaluateDnaFeature:
         )
         assert result["used_real_data"] is True
         assert result["data_bars"] == 200
+
+    def test_bad_tf_pool_zero_score_with_error_flag(self, tmp_path):
+        """CARD-04 锚：坏 timeframe_pool（裸字符串）→ evaluate_dna 兜底
+        0 分 + error=True + used_real_data=False（旧实现静默退化单周期跑完）。
+
+        精确路径：数据装载成功后才触发解析（需真实 parquet）。
+        """
+        from core.data.storage import save_parquet
+        from tests.helpers.data_factory import make_ohlcv
+        save_parquet(make_ohlcv(n=200, freq="4h"), tmp_path / "TESTUSDT_4h.parquet")
+        from core.evolution.evaluation import evaluate_dna
+        dna = make_dna()
+        result = evaluate_dna(
+            dna,
+            self._task_row(timeframe_pool="4h"),  # 裸字符串：旧 set("4h") 取字符
+            Path(tmp_path),
+        )
+        assert result["score"] == 0.0
+        assert result.get("error") is True
+        assert result["used_real_data"] is False
 
 
 class TestEvaluatePopulationFeature:
