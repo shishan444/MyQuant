@@ -1,4 +1,13 @@
-"""FastAPI application entry point with CORS, lifecycle, and route mounting."""
+"""FastAPI 应用装配点：生命周期、CORS、路由挂载与 socket.io 桥。
+
+职能：create_app 是全工程唯一的应用工厂——初始化 DB schema、装配
+evolution/trading 双 runner、research executor 与 socket.io 实时通道，
+挂载全部 REST 路由；模块尾把 FastAPI 与 socket.io 组合为单一 ASGI
+应用供 uvicorn 启动。
+服务对象：全部 /api/* 路由（经 app.state 注入依赖）与 web 前端
+（REST + /socket.io 实时推送）。
+职责边界：只做装配与生命周期编排，业务逻辑在各路由模块与 core 层。
+"""
 from __future__ import annotations
 
 import logging
@@ -32,13 +41,11 @@ def create_app(
     db_path: Path | None = None,
     data_dir: Path | None = None,
 ) -> FastAPI:
-    """Create and configure the FastAPI application.
+    """构造并配置 FastAPI 应用（全工程唯一应用工厂）。
 
     Args:
-        db_path: Path to the SQLite database file.
-                 Defaults to ``data/quant.db`` relative to project root.
-        data_dir: Path to the data directory for Parquet files.
-                  Defaults to ``data/market`` relative to project root.
+        db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
+        data_dir: Parquet 数据目录；缺省为项目根 data/market。
     """
     if db_path is None:
         project_root = Path(__file__).resolve().parent.parent
@@ -49,18 +56,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Startup: initialize database
+        # 启动段：初始化目录与 DB schema
         db_path.parent.mkdir(parents=True, exist_ok=True)
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
 
-        # Start EvolutionRunner background thread
+        # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
 
         recover_stale_tasks(db_path)
         restart_crashed_tasks(db_path)
 
-        # Start TradingRunner background thread
+        # 模拟盘域恢复：中断任务回收后起 TradingRunner
         from core.trading.runner import TradingRunner, set_trading_ws_push_fn, recover_stale_trading_tasks
 
         recover_stale_trading_tasks(db_path)
@@ -77,7 +84,7 @@ def create_app(
         recover_stale_analysis_tasks(db_path)
         app.state.research_executor = init_executor(db_path)
 
-        # Store paths on app state for dependency injection
+        # 路径挂 app.state：全部路由经 Depends(get_db_path/get_data_dir) 取用
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
@@ -94,8 +101,11 @@ def create_app(
         _os.environ["MYQUANT_DB_PATH"] = str(db_path)
 
         def _make_push(namespace: str):
-            """B8.2: native WS（manager.push，room 按 task_id）+ socket.io 定向
-            namespace emit 双发——切换验证后 native 侧退役（11.4）。"""
+            """构造指定 namespace 的任务进度推送函数（room 按 task_id 定向）。
+
+            B8.2/8.4：socket.io 单发实现（native WS 已退役）——runner 侧
+            回调 → realtime.broadcast 定向 emit。
+            """
             def _push(task_id: str, payload: dict) -> None:
                 realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
             return _push
@@ -109,7 +119,7 @@ def create_app(
 
         yield
 
-        # Shutdown: disconnect WS push first, then stop runners
+        # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停双 runner
         set_ws_push_fn(None)
         set_trading_ws_push_fn(None)
         runner.stop()
@@ -130,7 +140,7 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # CORS: allow all origins
+    # CORS 全放开：本地单用户部署形态（web 前端同机），无跨域收紧需求
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -139,7 +149,7 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Mount routers
+    # 挂载全部业务路由（研究域路由因包内延迟装配置于其后）
     app.include_router(config.router)
     app.include_router(strategies.router)
     app.include_router(evolution.router)
@@ -155,7 +165,7 @@ def create_app(
 
     app.include_router(research_route.router)
 
-    # Health check endpoint
+    # 健康检查端点（version 来自包元数据，timestamp 为 UTC isoformat）
     @app.get("/api/health", response_model=HealthResponse)
     def health_check() -> HealthResponse:
         return HealthResponse(
