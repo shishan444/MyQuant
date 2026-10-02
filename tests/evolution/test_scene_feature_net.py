@@ -464,7 +464,9 @@ class TestSupportResistanceFeature:
         assert triggers[0].indicator_snapshot["level_value"] == pytest.approx(105.0, abs=1e-4)
         assert triggers[0].indicator_snapshot["proximity_pct"] == pytest.approx(0.0, abs=1e-4)
 
-    def test_detect_both_direction_uses_support_check_first(self):
+    def test_detect_both_direction_checks_both_sides(self):
+        """CARD-02 后语义：both 时双侧各查（support 配 lows、resistance
+        配 highs），任一侧邻近即触发。本例只有 support 侧邻近。"""
         from core.validation.scene.support_resistance import SupportResistanceDetector
         n = 40
         df = _base_frame(
@@ -477,6 +479,80 @@ class TestSupportResistanceFeature:
         assert triggers[0].indicator_snapshot["proximity_pct"] == pytest.approx(
             0.5 / 95.0 * 100, abs=0.02,
         )
+
+    @staticmethod
+    def _make_both_sides_df(n=10):
+        """双侧数据：bar3/4/6 low 邻近支撑 95；bar5 high 邻近阻力 125。
+
+        bar5 的 low 远离支撑（80），确保 resistance 侧独立命中。
+        """
+        low = np.full(n, 80.0)
+        low[[3, 4, 6]] = 95.5          # |95.5-95|/95 ≈ 0.53%
+        high = np.full(n, 100.0)
+        high[5] = 126.0                # |126-125|/125 = 0.8%
+        return _base_frame(
+            {
+                "low": low, "high": high,
+                "bb_lower_20_2.0": np.full(n, 95.0),
+                "bb_upper_20_2.0": np.full(n, 125.0),
+            },
+            n,
+        )
+
+    def test_detect_both_triggers_each_side_independently(self):
+        """CARD-02 锚：both 下 resistance 侧独立触发（旧实现被
+        `direction == "resistance"` 挡死漏检 bar5）。"""
+        from core.validation.scene.support_resistance import SupportResistanceDetector
+        df = self._make_both_sides_df()
+        triggers = SupportResistanceDetector().detect(
+            df, {"level_source": "bb", "direction": "both",
+                 "proximity_pct": 2.0, "min_spacing": 1},
+        )
+        got = [(tp.bar_index, tp.indicator_snapshot["level_value"]) for tp in triggers]
+        assert got == [(3, 95.0), (4, 95.0), (5, 125.0), (6, 95.0)]
+        # bar5 为 resistance 侧命中：level_value 记触发侧列值
+        bar5 = next(tp for tp in triggers if tp.bar_index == 5)
+        assert bar5.indicator_snapshot["level_value"] == pytest.approx(125.0)
+        assert bar5.indicator_snapshot["proximity_pct"] == pytest.approx(0.8, abs=0.01)
+
+    def test_detect_single_side_on_both_sides_data(self):
+        """同数据单方向：support 只出支撑侧，resistance 只出阻力侧。"""
+        from core.validation.scene.support_resistance import SupportResistanceDetector
+        df = self._make_both_sides_df()
+        params = {"level_source": "bb", "proximity_pct": 2.0, "min_spacing": 1}
+        support_only = SupportResistanceDetector().detect(
+            df, {**params, "direction": "support"},
+        )
+        resistance_only = SupportResistanceDetector().detect(
+            df, {**params, "direction": "resistance"},
+        )
+        assert [tp.bar_index for tp in support_only] == [3, 4, 6]
+        assert [tp.bar_index for tp in resistance_only] == [5]
+
+    def test_detect_both_with_one_side_nan_still_triggers_other(self):
+        """现状记录：单侧列全 NaN 时另一侧仍可触发。"""
+        from core.validation.scene.support_resistance import SupportResistanceDetector
+        df = self._make_both_sides_df()
+        df["bb_lower_20_2.0"] = np.nan
+        triggers = SupportResistanceDetector().detect(
+            df, {"level_source": "bb", "direction": "both",
+                 "proximity_pct": 2.0, "min_spacing": 1},
+        )
+        assert [tp.bar_index for tp in triggers] == [5]
+
+    def test_detect_both_support_side_evaluated_first(self):
+        """现状记录：双侧同 bar 同时邻近时 support 侧先评估命中，
+        level_value 记 support 列值（side_levels 的字典顺序）。"""
+        from core.validation.scene.support_resistance import SupportResistanceDetector
+        df = self._make_both_sides_df()
+        # bar3 同时让 high 邻近阻力：high=125.8（0.64%）
+        df.iloc[3, df.columns.get_loc("high")] = 125.8
+        triggers = SupportResistanceDetector().detect(
+            df, {"level_source": "bb", "direction": "both",
+                 "proximity_pct": 2.0, "min_spacing": 1},
+        )
+        bar3 = next(tp for tp in triggers if tp.bar_index == 3)
+        assert bar3.indicator_snapshot["level_value"] == pytest.approx(95.0)
 
     def test_detect_unknown_source_returns_empty(self):
         from core.validation.scene.support_resistance import SupportResistanceDetector
