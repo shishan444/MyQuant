@@ -181,11 +181,13 @@ mcpserver/ -> api/routes/research/ -> core/analysis -> core/signals
                                        └── strategy ────────┘ (类型引用)
 ```
 
-### 应用总入口（run.py）
+### 统一启动入口（scripts/start.sh）
 
-`python run.py` 一键启动进程组：API(:8000) + MCP streamable-http(:8800)。
-端口预检（占用显式失败）、健康等待、SIGINT/SIGTERM 优雅同停。MCP 宿主
-接入：`claude mcp add --transport http myquant-research http://127.0.0.1:8800/mcp`
+`./scripts/start.sh` 一键启动进程组：API(:8000) + MCP streamable-http(:8800)
++ Web(:8080)，三服务默认一同启动（单一入口原则）；`--api`/`--mcp`/`--web`
+可分启，`MYQUANT_WEB_PORT=5173` 等环境变量覆盖端口。停止/重启：
+`./scripts/stop.sh`（逆序停：MCP→Web→API）/ `./scripts/restart.sh`。
+MCP 宿主接入：`claude mcp add --transport http myquant-research http://127.0.0.1:8800/mcp`
 （一次配置；stdio 备选经 `MYQUANT_MCP_TRANSPORT=stdio` 切回）。
 
 ### 研究域数据表（Alembic 增量轨 f2a8c1d94b07）
