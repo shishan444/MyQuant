@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# MyQuant 应用启动脚本
-# 启动 FastAPI 后端服务 + Web 前端
+# MyQuant 统一启动入口：API(:8000) + MCP(:8800) + Web 前端(:8080)
+# 三进程默认一同启动（单一入口原则——MCP 是应用组成部分，不游离在外）
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,6 +8,7 @@ APP_DIR="$(dirname "$SCRIPT_DIR")"
 WEB_DIR="$APP_DIR/web"
 VENV_PYTHON="$APP_DIR/venv/bin/python"
 API_PID_FILE="$APP_DIR/.myquant_api.pid"
+MCP_PID_FILE="$APP_DIR/.myquant_mcp.pid"
 WEB_PID_FILE="$APP_DIR/.myquant_web.pid"
 LOG_DIR="$APP_DIR/logs"
 
@@ -16,6 +17,7 @@ LOG_DIR="$APP_DIR/logs"
 API_HOST="${MYQUANT_API_HOST:-127.0.0.1}"
 export MYQUANT_API_HOST="$API_HOST"
 API_PORT="${MYQUANT_API_PORT:-8000}"
+MCP_PORT="${MYQUANT_MCP_PORT:-8800}"
 WEB_PORT="${MYQUANT_WEB_PORT:-8080}"
 
 # 颜色
@@ -34,17 +36,18 @@ check_venv() {
     fi
 }
 
-# 检查 API 是否已在运行
-check_api_running() {
-    if [[ -f "$API_PID_FILE" ]]; then
+# PID 文件通用检查：在运行返回 0（带 warn），残留清理返回 1
+_check_pid_running() {
+    local pid_file="$1" label="$2" port="$3"
+    if [[ -f "$pid_file" ]]; then
         local pid
-        pid=$(<"$API_PID_FILE")
+        pid=$(<"$pid_file")
         if kill -0 "$pid" 2>/dev/null; then
-            warn "API 服务已在运行 (PID: $pid, 端口: $API_PORT)"
+            warn "$label 已在运行 (PID: $pid, 端口: $port)"
             return 0
         else
-            warn "发现残留 API PID 文件，清理中..."
-            rm -f "$API_PID_FILE"
+            warn "发现残留 $label PID 文件，清理中..."
+            rm -f "$pid_file"
         fi
     fi
     return 1
@@ -55,9 +58,14 @@ ensure_dirs() {
     mkdir -p "$LOG_DIR"
 }
 
+# TCP 探活（MCP streamable-http 端点仅收 POST，TCP 层探活足够）
+tcp_probe() {
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
 # 启动 API 服务
 start_api() {
-    check_api_running && return 0
+    _check_pid_running "$API_PID_FILE" "API 服务" "$API_PORT" && return 0
     ensure_dirs
 
     local log_file="$LOG_DIR/api.log"
@@ -95,25 +103,48 @@ start_api() {
     fi
 }
 
-# 检查 Web 前端是否已在运行
-check_web_running() {
-    if [[ -f "$WEB_PID_FILE" ]]; then
-        local pid
-        pid=$(<"$WEB_PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            warn "Web 前端已在运行 (PID: $pid, 端口: $WEB_PORT)"
+# 启动 MCP server（streamable-http 常驻）
+start_mcp() {
+    _check_pid_running "$MCP_PID_FILE" "MCP 服务" "$MCP_PORT" && return 0
+    ensure_dirs
+
+    local log_file="$LOG_DIR/mcp.log"
+    info "启动 MCP server (streamable-http)..."
+    info "  端口: $MCP_PORT"
+    info "  日志: $log_file"
+
+    cd "$APP_DIR"
+    MYQUANT_MCP_PORT="$MCP_PORT" PYTHONPATH="$APP_DIR" \
+        nohup "$VENV_PYTHON" -m mcpserver.server \
+        >> "$log_file" 2>&1 &
+
+    local pid=$!
+    echo "$pid" > "$MCP_PID_FILE"
+
+    local retries=20
+    while ((retries-- > 0)); do
+        if tcp_probe "$MCP_PORT"; then
+            info "MCP 服务启动成功 (PID: $pid)"
+            info "MCP 端点: http://127.0.0.1:$MCP_PORT/mcp"
             return 0
-        else
-            warn "发现残留 Web PID 文件，清理中..."
-            rm -f "$WEB_PID_FILE"
         fi
+        sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        warn "MCP 进程已启动 (PID: $pid)，但端口探活未通过，请查看日志:"
+        warn "  tail -f $log_file"
+    else
+        error "MCP 启动失败，请查看日志:"
+        error "  cat $log_file"
+        rm -f "$MCP_PID_FILE"
+        exit 1
     fi
-    return 1
 }
 
 # 启动 Web 前端
 start_web() {
-    check_web_running && return 0
+    _check_pid_running "$WEB_PID_FILE" "Web 前端" "$WEB_PORT" && return 0
 
     if [[ ! -d "$WEB_DIR" ]] || [[ ! -f "$WEB_DIR/package.json" ]]; then
         warn "未找到 Web 前端目录: $WEB_DIR，跳过前端启动"
@@ -159,33 +190,37 @@ start_web() {
 # 显示帮助
 show_help() {
     cat << EOF
-MyQuant 启动脚本
+MyQuant 统一启动入口（API + MCP + Web 默认一同启动）
 
 用法: $0 [选项]
 
 选项:
     -a, --api         仅启动 API 服务
+    -m, --mcp         仅启动 MCP server
     -w, --web         仅启动 Web 前端
     -h, --help        显示此帮助信息
 
 环境变量:
-    MYQUANT_API_HOST  API 主机 (默认: 127.0.0.1)
+    MYQUANT_API_HOST  API 主机 (默认: 127.0.0.1；跨机访问显式开启)
     MYQUANT_API_PORT  API 端口 (默认: 8000)
-    MYQUANT_WEB_PORT  Web 端口 (默认: 8080)
+    MYQUANT_MCP_PORT  MCP 端口 (默认: 8800)
+    MYQUANT_WEB_PORT  Web 端口 (默认: 8080；如需 5173 开发端口:
+                      MYQUANT_WEB_PORT=5173 $0)
 
 示例:
-    $0                # 启动 API + Web
+    $0                # 启动 API + MCP + Web
     $0 --api          # 仅启动 API
-    $0 --web          # 仅启动 Web
+    $0 --mcp          # 仅启动 MCP
 EOF
 }
 
-# 主流程
+# 主流程（启动顺序 API → MCP → Web：MCP 消费 API，API 就绪后再起）
 main() {
     local mode="all"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -a|--api)  mode="api"; shift ;;
+            -m|--mcp)  mode="mcp"; shift ;;
             -w|--web)  mode="web"; shift ;;
             -h|--help) show_help; exit 0 ;;
             *)         error "未知选项: $1"; show_help; exit 1 ;;
@@ -195,6 +230,11 @@ main() {
     if [[ "$mode" == "all" || "$mode" == "api" ]]; then
         check_venv
         start_api
+    fi
+
+    if [[ "$mode" == "all" || "$mode" == "mcp" ]]; then
+        check_venv
+        start_mcp
     fi
 
     if [[ "$mode" == "all" || "$mode" == "web" ]]; then
@@ -207,11 +247,17 @@ main() {
     info "================================"
     info "API:    http://localhost:$API_PORT"
     info "文档:   http://localhost:$API_PORT/docs"
+    info "MCP:    http://127.0.0.1:$MCP_PORT/mcp"
     info "Web:    http://localhost:$WEB_PORT"
     info "================================"
     info ""
+    info "Agent 接入（一次性配置，任何 MCP 客户端）:"
+    info "  claude mcp add --transport http myquant-research \\"
+    info "      http://127.0.0.1:$MCP_PORT/mcp"
+    info ""
     info "查看日志:"
     info "  tail -f $LOG_DIR/api.log"
+    info "  tail -f $LOG_DIR/mcp.log"
     info "  tail -f $LOG_DIR/web.log"
     info ""
     info "停止服务:"

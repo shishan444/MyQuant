@@ -195,7 +195,7 @@ class QuantApiClient:
             except httpx.ConnectError as exc:
                 raise ApiUnreachable(
                     f"API 不可达（{self.base_url}）：请确认应用已启动"
-                    f"（python run.py）——{exc}") from exc
+                    f"（./scripts/start.sh）——{exc}") from exc
             if resp.is_error:
                 _raise_api_error(resp)
             return resp

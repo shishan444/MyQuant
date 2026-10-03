@@ -3,11 +3,11 @@
 修复前为 D 类现状容忍锚定（-m 形态纯 FastAPI 不可达 404）——CARD-01
 落地后 __main__ 消费模块级组合实例（from api.app import app），两形
 态统一，本文件随正确行为改写：
-- `python -m api` 形态（run.py 总入口 / scripts/start.sh）与
+- `python -m api` 形态（统一入口 scripts/start.sh）与
   `uvicorn api.app:app` 命令行形态同跑 ASGIApp(sio, other_asgi_app)
   组合实例，engine.io 握手 200 带 sid，REST 透传正常。
-- 启动器文本锚定保留（改启动形态须同步本网；uvicorn 薄壳启动器
-  start_api.sh/api_run.py 已随启动器收敛删除，文件锚随之收缩）。
+- 启动器文本锚定保留（改启动形态须同步本网；run.py 总入口与 uvicorn
+  薄壳启动器 start_api.sh/api_run.py 已随启动器统一删除，文件锚收缩）。
 """
 from __future__ import annotations
 
@@ -104,15 +104,15 @@ class TestHandshakeReachability:
 class TestLauncherFormPins:
     """启动器形态文本锚定：官方路径各自走哪种形态（改启动器须同步本网）。"""
 
-    def test_run_py_total_entry_uses_dash_m_form(self) -> None:
-        """docs/MAP.md 认定的应用总入口 run.py 以 `-m api` 拉起 API 子进程。"""
-        content = (PROJECT_ROOT / "run.py").read_text(encoding="utf-8")
-        assert '"-m", "api"' in content
-
     def test_scripts_start_sh_uses_dash_m_form(self) -> None:
-        """scripts/start.sh 以 `-m api` 拉起 API。"""
+        """统一入口 scripts/start.sh 以 `-m api` 拉起 API。"""
         content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
         assert "-m api" in content
+
+    def test_scripts_start_sh_launches_mcp(self) -> None:
+        """统一入口 scripts/start.sh 以 `-m mcpserver.server` 拉起 MCP。"""
+        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+        assert "-m mcpserver.server" in content
 
     def test_main_module_consumes_combo_app(self) -> None:
         """F3 修复核心锚定：__main__ 消费模块级组合实例（非自建裸 FastAPI）。"""
