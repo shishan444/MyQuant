@@ -2,7 +2,7 @@
 
 Covers 6 problem domains with integration tests:
 1. SQLite concurrency (busy_timeout, context manager)
-2. Stale task recovery (startup cleanup, heartbeat, watchdog)
+2. Stale task recovery (startup cleanup)
 3. TaskController direct stop signal (threading.Event, checkpoints)
 4. Sub-phase progress (current_phase, progress_json, WS push)
 5. Heartbeat + watchdog coroutine
@@ -123,7 +123,8 @@ class TestSQLiteConcurrency:
 # ===========================================================================
 
 class TestStaleTaskRecovery:
-    """Verify startup cleanup, heartbeat, and watchdog."""
+    """Verify startup cleanup（CARD-34 后心跳机制裁撤，heartbeat_at
+    列按卡留存——列存在锚定保留防误删列）。"""
 
     def test_recover_stale_running_tasks_on_startup(self, tmp_db: Path) -> None:
         """Startup should mark running tasks as stopped (crash_recovery)."""
@@ -179,19 +180,6 @@ class TestStaleTaskRecovery:
         conn.close()
         assert "heartbeat_at" in cols, f"heartbeat_at not found in columns: {cols}"
 
-    def test_update_heartbeat(self, tmp_db: Path) -> None:
-        """update_heartbeat should write current timestamp to heartbeat_at."""
-        from api.runner import update_heartbeat
-
-        _create_task(tmp_db, "hb-1")
-        update_task(tmp_db, "hb-1", status="running")
-
-        update_heartbeat(tmp_db, "hb-1")
-
-        task = get_task(tmp_db, "hb-1")
-        assert task["heartbeat_at"] is not None
-        # Should be a valid ISO timestamp
-        datetime.fromisoformat(task["heartbeat_at"])
 
 
 # ===========================================================================
@@ -348,22 +336,7 @@ class TestSubPhaseProgress:
 # Domain 5: Heartbeat + watchdog
 # ===========================================================================
 
-class TestHeartbeatWatchdog:
-    """Verify heartbeat updates and watchdog coroutine."""
 
-    def test_heartbeat_updates_during_execution(self, tmp_db: Path, tmp_data_dir: Path) -> None:
-        """Runner should update heartbeat_at during task execution."""
-        from api.runner import EvolutionRunner, update_heartbeat
-
-        _create_task(tmp_db, "hb-exec")
-        update_task(tmp_db, "hb-exec", status="running")
-
-        # Explicitly call update_heartbeat
-        t_before = get_task(tmp_db, "hb-exec").get("heartbeat_at")
-        update_heartbeat(tmp_db, "hb-exec")
-        t_after = get_task(tmp_db, "hb-exec")["heartbeat_at"]
-
-        assert t_after is not None
 
 # ===========================================================================
 # Domain 6: WS push reliability

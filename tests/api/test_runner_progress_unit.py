@@ -2,7 +2,7 @@
 
 覆盖 api/runner_progress.py 的异常吞掉与推送分支：
 - _push_ws：无注册 fn 时 no-op；fn 抛异常吞掉（warning 可观测）
-- update_heartbeat / update_phase / update_progress：repo 抛异常吞掉不传播；
+- update_phase / update_progress：repo 抛异常吞掉不传播；
   update_phase 失败后仍推 WS（进度通知与持久化解耦）
 """
 from __future__ import annotations
@@ -51,10 +51,6 @@ class TestDbUpdateResilience:
     def _boom_repo(*args, **kwargs):
         raise RuntimeError("repo down")
 
-    def test_heartbeat_failure_swallowed(self, tmp_path: Path) -> None:
-        with patch("core.persistence.repository.evolution.update_heartbeat",
-                   side_effect=RuntimeError("db down")):
-            runner_progress.update_heartbeat(tmp_path, "t1")  # 不应抛异常
 
     def test_phase_failure_still_pushes_ws(self, tmp_path: Path) -> None:
         """repo 写 phase 失败：异常吞掉，但 WS 推送照发（解耦现状）。"""
