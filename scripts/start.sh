@@ -17,6 +17,10 @@ LOG_DIR="$APP_DIR/logs"
 API_HOST="${MYQUANT_API_HOST:-127.0.0.1}"
 export MYQUANT_API_HOST="$API_HOST"
 API_PORT="${MYQUANT_API_PORT:-8000}"
+# MCP 档位默认 research（对齐 run.py 旧总入口语义——本机单用户研究形态，
+# 六步研究法的写入/执行工具须在默认面；最小权限 readonly 经 env 显式切换）
+MCP_PROFILE="${MYQUANT_MCP_PROFILE:-research}"
+export MYQUANT_MCP_PROFILE="$MCP_PROFILE"
 MCP_PORT="${MYQUANT_MCP_PORT:-8800}"
 WEB_PORT="${MYQUANT_WEB_PORT:-8080}"
 
@@ -114,7 +118,8 @@ start_mcp() {
     info "  日志: $log_file"
 
     cd "$APP_DIR"
-    MYQUANT_MCP_PORT="$MCP_PORT" PYTHONPATH="$APP_DIR" \
+    MYQUANT_MCP_PORT="$MCP_PORT" MYQUANT_MCP_PROFILE="$MCP_PROFILE" \
+        PYTHONPATH="$APP_DIR" \
         nohup "$VENV_PYTHON" -m mcpserver.server \
         >> "$log_file" 2>&1 &
 
@@ -201,11 +206,13 @@ MyQuant 统一启动入口（API + MCP + Web 默认一同启动）
     -h, --help        显示此帮助信息
 
 环境变量:
-    MYQUANT_API_HOST  API 主机 (默认: 127.0.0.1；跨机访问显式开启)
-    MYQUANT_API_PORT  API 端口 (默认: 8000)
-    MYQUANT_MCP_PORT  MCP 端口 (默认: 8800)
-    MYQUANT_WEB_PORT  Web 端口 (默认: 8080；如需 5173 开发端口:
-                      MYQUANT_WEB_PORT=5173 $0)
+    MYQUANT_API_HOST     API 主机 (默认: 127.0.0.1；跨机访问显式开启)
+    MYQUANT_API_PORT     API 端口 (默认: 8000)
+    MYQUANT_MCP_PROFILE  MCP 工具档位 (默认: research——六步研究法全量工具；
+                         readonly 最小权限档)
+    MYQUANT_MCP_PORT     MCP 端口 (默认: 8800)
+    MYQUANT_WEB_PORT     Web 端口 (默认: 8080；如需 5173 开发端口:
+                         MYQUANT_WEB_PORT=5173 $0)
 
 示例:
     $0                # 启动 API + MCP + Web
@@ -247,7 +254,7 @@ main() {
     info "================================"
     info "API:    http://localhost:$API_PORT"
     info "文档:   http://localhost:$API_PORT/docs"
-    info "MCP:    http://127.0.0.1:$MCP_PORT/mcp"
+    info "MCP:    http://127.0.0.1:$MCP_PORT/mcp   [档位: $MCP_PROFILE]"
     info "Web:    http://localhost:$WEB_PORT"
     info "================================"
     info ""
