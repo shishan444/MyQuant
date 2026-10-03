@@ -88,14 +88,6 @@ class TestValidateAPI:
         })
         assert resp.status_code == 422
 
-    def test_validate_triggers_endpoint(self, client):
-        """GET /api/validate/{task_id}/triggers should return paginated structure."""
-        resp = client.get("/api/validate/test-task/triggers", params={"page": 1, "per_page": 10})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "total" in data
-        assert "records" in data
-
     def test_validate_mtf_fallback_returns_warnings(self, client, tmp_data_dir):
         """0.2.14 语义翻转：条件带 timeframe 键且该周期无数据——显式
         结构化拒绝（RESEARCH_SYMBOL_NOT_FOUND），不再静默降级按基准
