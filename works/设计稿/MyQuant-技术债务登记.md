@@ -26,6 +26,7 @@
 | C4 | fetcher 硬编码内网代理默认值 | data/signals 战 CARD-15 拆出 | 已裁决登记（2026-10-01 本次不修，保留现状） |
 | D | team3.md 四条流程条文 | analysis 战实测 | 建议固化 |
 | E | macd 留白 / schemas Dict 保持 | analysis 战 | 无需行动（已含说明） |
+| G | MCP 六步法实战复盘 8 项（G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进） | 2026-10-03 首次全链实战 | G1 建议立项修；G2-G4 便宜同批；G5-G8 排期 |
 
 ---
 
@@ -149,7 +150,35 @@
 
 ---
 
-## D 组 · team3.md 四条流程条文（建议固化）
+## G 组 · MCP 六步法实战复盘（2026-10-03，首次全链研究实测）
+
+> 来源：第一次六步法量化研究全链实战（BTCUSDT 四周期矩阵扫描 2167 检验对 → 三维检查 → 假设 hyp_07979a1d7ad7 → 样本外三路考试，全程 18 类 MCP 调用）。实测肯定面在案：FDR/warmup/幂等/留痕纪律全部按设计工作、param_sweep 无效点信息完备、inspect_cases 数据质量良好。以下为实测缺陷与改进项。
+
+### G1 · condition_stats 快路径裸 KeyError + 伪 task_id 轮询陷阱（P1，建议立项修）
+
+1. **问题**：`api/routes/research/analysis.py:161` 的 `params=p["params"]` 无默认值下标且校验层未前置拒绝——params 键缺省时快路径抛 KeyError，`except ResearchError` 接不住，返回 `{task_id: "fast_condition_stats", status: "failed", reason: "'params'"}`——伪 task_id（DB 无此任务）+ 裸异常字符串 reason，违背结构化错误通道契约（RESEARCH_* 码+人话+hint）；MCP 客户端按 task_id 轮询即死循环到超时（实测 2×600s）。
+2. **方案**：params 必填校验前置（422 PARAM_INVALID + hint 指明必填键）或 `p.get("params")` 兜底；快路径异常收尾补 KeyError 通道（结构化转译）。
+3. **作用**：错误通道契约恢复完整；消除客户端轮询陷阱。
+4. **影响**：单点小修，修复面极小；行为变化=非法参数从伪任务失败变结构化 422（bug 修正性质）。
+
+### G2-G4 · 契约/文档失实（capability 自述与实际能力面偏差，便宜同批修）
+
+| # | 失实点 | 实证 | 建议 |
+|---|---|---|---|
+| G2 | get_market_snapshot warmup hint 引用不存在的参数（「把 start 前移」——快照参数面仅 symbol/timeframes/as_of，无 start），Agent 照 hint 执行必碰壁 | 默认参数首调实测（3d 撞 300 bar warmup） | hint 改为 timeframes 降周期指引（与参数面匹配） |
+| G3 | capability 声称扫描候选「经 condition_stats 逐条独立复核」——但 condition_stats 是单条件契约（condition 单数），组合候选（is_combination=true，top10 两两补扫产物）复核路径断裂 | 4h 组合候选复核实测撞墙（并触发 G1） | 二选一：capability 措辞收窄（组合候选不经此通道）或 condition_stats 支持多条件（能力建设，非文档修正） |
+| G4 | regime_split 标注「快路径同步直返」——15m 级数据量实际异步降级（202+task_id），阈值行为无文档 | 15m 分段实测走异步 | 工具描述补异步降级阈值说明 |
+
+### G5-G8 · 能力改进项（排期，非错误）
+
+| # | 项 | 实证 | 建议 |
+|---|---|---|---|
+| G5 | warmup 预算规则不透明：×3 安全系数（lookback 200→实际 600）未在任何文档披露，错误 hint 数值指引差 3 倍——研究者靠失败学预算（本轮 4 次 warmup 失败方摸清） | 四档扫描首轮全败 600 实测 | hint 修正 + capability/工具描述披露预算规则（×3 系数明示） |
+| G6 | 三路考试 verdict 输出位置不统一：隔离/分段在顶层，随机窗口藏在 summary.worst_window.verdict——AI 客户端消费不友好 | 三路考试实测 | 统一顶层 verdict 字段 |
+| G7 | 分段验证幂等键不含维度：同区间先隔离后分段 → duplicated=true 复用记录，「分题型成绩单」（段级明细）拿不到——与该工具「哪类行情不行的正式度量」定位冲突 | hyp_07979a1d7ad7 考试实测（仅整体 metrics 无段级 breakdown） | 幂等键加 segmentation 维度或段级明细独立记录 |
+| G8 | 扫描结果缺 n_significant 顶层汇总：FDR 全灭时需逐条看 q 才知全灭（本轮四档全 q≈1） | 四档扫描实测 | 补显著计数顶层字段（轻微） |
+
+
 
 四条均有实测偏差证据（各 1-2 次），符合条文准入标准（实测偏差证据）：
 
@@ -191,3 +220,4 @@
 | 2026-10-02 | fix-mcp-2 下游战交付呈批（33 卡 P0×4+P1×17+注释组 12 / scene 覆盖 6-31%→96-100% / 全量 4082+e2e 64） | 批准合并 | 已合并 main 89c72cd（--no-ff，48 笔提交），B2 全清、B5 件①②、F3/F7 清账；**fix-mcp 系列全系列闭环**；C1/C2 口径呈批顺延（实施面不在本战域：C1 在 analysis、C2 在 scoring——随下战或单独裁）；新增观察项：cross_timeframe signal_type 名义参数、有效性测试同文件两处单轨迹锚（与已修的 20-seed 系同族） |
 | 2026-10-03 | 0.3.1 api 硬化战交付呈批 + 复批（44 卡=主批 40+复批 4 / 终验 4387+e2e 64×3 / 覆盖率 18/25 文件 100%） | 批准合并（含 PB-1 认证四件套 key 未设 A 方案 / PB-2 死端点删除 B10+D6 / PB-3 心跳裁撤三项推荐方案全批） | 已合并 main a88420a（--no-ff，72 笔提交，60 文件 +5928/-1332），A2/F4 清账，S-1~S-8 全关闭；新增 TD 在案：pytest 双模块身份坑（conftest 统一留专项）、C3b 口径顺延、低危 4 项（进化 pending 无上限/discovery 数值参数/scene horizons 空列表/config.json 存量占位值）、专项 5 项（mcpserver :8800 认证面、core 侧公共入口×2、启动器治理、paper_trading 心跳同族观察）、P2/P3 记录 10 项；F3 双形态分裂随 CARD-01 修复、D6 discovery 死端点与 B10 占位端点随 CARD-33 删除、心跳死信号随 CARD-34 裁撤、三处文档失实修正 |
 | 2026-10-03 | scripts 目录清理 + 启动器统一（用户两轮裁决：B 组照清 / 单一入口 scripts 套、MCP 默认同起） | 批准执行 | 已合并 main 9ab2023（清理：-2183 行，verify_×4/migrate_column_refs/check_coverage_thresholds/根三件/api_run.py/logger.sh 删除，F1 执行位清账，start.sh 0.0.0.0 失实显示与 MYQUANT_API_HOST 传导断裂修正）+ main 5c61546（统一：start.sh 默认三服务同起 API+MCP+Web、stop.sh 逆序全停、run.py/dev.sh 删除、五处失实启动指引修正含 agent 可读能力自述、F3 锚定网与 MAP.md 同步）；**启动器治理专项闭环**；验证 694+1409 passed、统一入口实测起停一轮 |
+| 2026-10-03 | MCP 六步法实战复盘 8 项（首次全链研究 18 类调用实测：G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进） | 记入技术债务，暂不修代码 | 已登记（本文档 G 组 G1-G8）；修复建议：G1 立项修（一处校验前置）、G2-G4 便宜同批、G5-G8 排期；研究主记录 hyp_07979a1d7ad7（考试 inconclusive 留痕可查） |
