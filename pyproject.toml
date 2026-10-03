@@ -50,4 +50,3 @@ show_missing = true
 # Global fail_under is set in pytest via --cov-fail-under after the batch-1
 # branch-coverage baseline is measured (adding --cov-branch lowers the combined
 # percent, so the floor must be re-calibrated, not copied from the old 78%).
-# Per-module floors live in scripts/check_coverage_thresholds.py.

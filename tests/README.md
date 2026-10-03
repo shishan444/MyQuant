@@ -110,7 +110,7 @@
 - column_ref 三表（resolve/decode/canonical）是列引用单一事实源——改动须过 tests/analysis/test_column_ref.py 全锚（含往返一致性锁：resolve_indicator_column × _compute_indicator 全注册表采样，漂移即阻塞）
 - encode 一律委托 registry.resolve_indicator_column，不建第二实现（tests 往返锁钉死两处同源）
 - field 语义名全链：结构化 ref.field → SignalGene.field_name → executor resolve（值域 upper/signal/k…——编码前缀形在多输出指标会静默取错列，N4 锚 tests/analysis/test_column_ref.py::TestFiveDomainIntegration）
-- 迁移两阶段原子（scripts/migrate_column_refs.py：预检零写入、有阻塞整体退出；tests/analysis/test_migration_column_refs.py 全锚含 F1 影子命中）
+- 迁移两阶段原子（scripts/migrate_column_refs.py 及其契约测试 test_migration_column_refs.py 已随使命完成删除，2026-10-03；两阶段原子形制留档 git 历史）
 - 幂等连续同函数：登记 canonical 化与迁移重算共用 canonicalize/ref_dict 与 _hash_json——改其一必须同步另一（legacy_compatible_hash 仅供 _screen_reuse_check 影子消费）
 
 

@@ -4,10 +4,10 @@
 落地后 __main__ 消费模块级组合实例（from api.app import app），两形
 态统一，本文件随正确行为改写：
 - `python -m api` 形态（run.py 总入口 / scripts/start.sh）与
-  `uvicorn api.app:app` 形态（根 start.sh→start_api.sh /
-  scripts/api_run.py）同跑 ASGIApp(sio, other_asgi_app) 组合实例，
-  engine.io 握手 200 带 sid，REST 透传正常。
-- 启动器文本锚定保留（改启动形态须同步本网）。
+  `uvicorn api.app:app` 命令行形态同跑 ASGIApp(sio, other_asgi_app)
+  组合实例，engine.io 握手 200 带 sid，REST 透传正常。
+- 启动器文本锚定保留（改启动形态须同步本网；uvicorn 薄壳启动器
+  start_api.sh/api_run.py 已随启动器收敛删除，文件锚随之收缩）。
 """
 from __future__ import annotations
 
@@ -113,16 +113,6 @@ class TestLauncherFormPins:
         """scripts/start.sh 以 `-m api` 拉起 API。"""
         content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
         assert "-m api" in content
-
-    def test_root_start_api_sh_uses_uvicorn_app_form(self) -> None:
-        """根 start.sh → start_api.sh 以 `uvicorn api.app:app` 拉起 API。"""
-        content = (PROJECT_ROOT / "start_api.sh").read_text(encoding="utf-8")
-        assert "uvicorn api.app:app" in content
-
-    def test_scripts_api_run_py_uses_uvicorn_app_form(self) -> None:
-        """scripts/api_run.py 以 `uvicorn api.app:app` 拉起 API。"""
-        content = (PROJECT_ROOT / "scripts" / "api_run.py").read_text(encoding="utf-8")
-        assert '"api.app:app"' in content
 
     def test_main_module_consumes_combo_app(self) -> None:
         """F3 修复核心锚定：__main__ 消费模块级组合实例（非自建裸 FastAPI）。"""
