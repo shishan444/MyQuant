@@ -11,8 +11,10 @@ API_PID_FILE="$APP_DIR/.myquant_api.pid"
 WEB_PID_FILE="$APP_DIR/.myquant_web.pid"
 LOG_DIR="$APP_DIR/logs"
 
-# 默认配置
-API_HOST="${MYQUANT_API_HOST:-0.0.0.0}"
+# 默认配置（A2 收口：默认仅本机可达；显式跨机经 MYQUANT_API_HOST 开启——
+# 须 export 传导给 `-m api` 子进程，此前变量未导出、设置失效）
+API_HOST="${MYQUANT_API_HOST:-127.0.0.1}"
+export MYQUANT_API_HOST="$API_HOST"
 API_PORT="${MYQUANT_API_PORT:-8000}"
 WEB_PORT="${MYQUANT_WEB_PORT:-8080}"
 
@@ -167,7 +169,7 @@ MyQuant 启动脚本
     -h, --help        显示此帮助信息
 
 环境变量:
-    MYQUANT_API_HOST  API 主机 (默认: 0.0.0.0)
+    MYQUANT_API_HOST  API 主机 (默认: 127.0.0.1)
     MYQUANT_API_PORT  API 端口 (默认: 8000)
     MYQUANT_WEB_PORT  Web 端口 (默认: 8080)
 
