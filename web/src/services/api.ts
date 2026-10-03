@@ -78,6 +78,12 @@ function toNetworkApiError(method: string): ApiError {
 
 const kyInstance = ky.create({
   timeout: 30000,
+  headers: {
+    // A2：服务端启用 API key 时随请求携带（vite env 注入；未设不带，兼容放行态）
+    ...(import.meta.env.VITE_MYQUANT_API_KEY
+      ? { Authorization: `Bearer ${import.meta.env.VITE_MYQUANT_API_KEY}` }
+      : {}),
+  },
   hooks: {
     afterResponse: [
       // 非 2xx：读 body 后统一转 ApiError（ky 默认 HTTPError 不带解析后的业务信息）

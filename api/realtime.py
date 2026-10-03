@@ -17,9 +17,13 @@ from urllib.parse import parse_qs
 
 import socketio
 
+from .auth import check_socket_auth, get_cors_origins
+
 logger = logging.getLogger(__name__)
 
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+sio = socketio.AsyncServer(
+    async_mode="asgi", cors_allowed_origins=get_cors_origins(),
+)
 
 # 主 event loop 引用（app startup 捕获）——runner 线程跨线程 emit 用
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -55,13 +59,17 @@ def _join_by_query(sid: str, environ: dict, namespace: str) -> None:
 
 
 @sio.on("connect", namespace="/evolution")
-async def _connect_evolution(sid: str, environ: dict) -> None:
+async def _connect_evolution(sid: str, environ: dict) -> bool | None:
+    if not check_socket_auth(environ):
+        return False  # A2：设置 API key 时 connect 须带同值 token
     _join_by_query(sid, environ, "/evolution")
     await _emit_task_snapshot(sid, environ, "/evolution")
 
 
 @sio.on("connect", namespace="/trading")
-async def _connect_trading(sid: str, environ: dict) -> None:
+async def _connect_trading(sid: str, environ: dict) -> bool | None:
+    if not check_socket_auth(environ):
+        return False
     _join_by_query(sid, environ, "/trading")
     await _emit_task_snapshot(sid, environ, "/trading")
 
@@ -106,7 +114,9 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
 
 
 @sio.on("connect", namespace="/streams")
-async def _connect_streams(sid: str, environ: dict) -> None:
+async def _connect_streams(sid: str, environ: dict) -> bool | None:
+    if not check_socket_auth(environ):
+        return False
     _join_by_query(sid, environ, "/streams")
 
 
@@ -115,6 +125,8 @@ async def _cancel_stream(sid: str, data: dict) -> None:
     """B8.0 语义点①：C→S cancel（payload {session_id}，协作取消）。
 
     11.3 流式批接入时接流式任务注册表；端点先就位（无注册表时 no-op）。
+    连接级认证已在 connect 把关；session 归属校验在单用户本地形态下
+    无判据（S-7 第二面为记录项，待多用户化时补）。
     """
     from api import stream_control
     stream_control.request_cancel((data or {}).get("session_id"))

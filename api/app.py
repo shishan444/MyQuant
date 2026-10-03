@@ -19,6 +19,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import RestAuthMiddleware, get_cors_origins, warn_if_no_api_key
+
 logger = logging.getLogger("app")
 
 from core.persistence.db_ext import init_db_ext
@@ -60,6 +62,7 @@ def create_app(
         db_path.parent.mkdir(parents=True, exist_ok=True)
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
+        warn_if_no_api_key()
 
         # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
@@ -140,10 +143,16 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # CORS 全放开：本地单用户部署形态（web 前端同机），无跨域收紧需求
+    # A2 准入中间件：Host 白名单（防 DNS rebinding）+ API key（可选启用）。
+    # 注册顺序刻意先于 CORS——add_middleware 为 insert(0)，后注册者更外层，
+    # CORS 必须在最外层短路 preflight（OPTIONS 无 Authorization，若先过
+    # 认证层会 401 且 CORSMiddleware 收不到请求，浏览器判 preflight 失败）
+    app.add_middleware(RestAuthMiddleware)
+
+    # CORS 白名单：已知前端 origin（A2 收紧；MYQUANT_CORS_ORIGINS 可覆盖）
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=get_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
