@@ -26,7 +26,7 @@
 | C4 | fetcher 硬编码内网代理默认值 | data/signals 战 CARD-15 拆出 | 已裁决登记（2026-10-01 本次不修，保留现状） |
 | D | team3.md 四条流程条文 | analysis 战实测 | 建议固化 |
 | E | macd 留白 / schemas Dict 保持 | analysis 战 | 无需行动（已含说明） |
-| G | MCP 六步法实战复盘 8 项（G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进） | 2026-10-03 首次全链实战 | G1 建议立项修；G2-G4 便宜同批；G5-G8 排期 |
+| G | MCP 六步法实战复盘 12 项（G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进 + G9-G12 第二轮补入） | 2026-10-03 两轮全链实战（BTC 单品种四方向 + ETH 跨品种复制） | G1/G9/G10 建议立项修（错误通道家族）；G2-G4 便宜同批；G5-G8/G11/G12 排期 |
 
 ---
 
@@ -152,7 +152,7 @@
 
 ## G 组 · MCP 六步法实战复盘（2026-10-03，首次全链研究实测）
 
-> 来源：第一次六步法量化研究全链实战（BTCUSDT 四周期矩阵扫描 2167 检验对 → 三维检查 → 假设 hyp_07979a1d7ad7 → 样本外三路考试，全程 18 类 MCP 调用）。实测肯定面在案：FDR/warmup/幂等/留痕纪律全部按设计工作、param_sweep 无效点信息完备、inspect_cases 数据质量良好。以下为实测缺陷与改进项。
+> 来源：两轮全链实战——第一轮 BTCUSDT 四周期矩阵扫描（2167 检验对→三维检查→考试）；第二轮 ETHUSDT 跨品种复制 + 动量/衍生品/突破三方向 + 双假设登记送考（G9-G12 为第二轮新增）。实测肯定面在案：FDR/warmup/幂等/留痕纪律全部按设计工作、param_sweep 无效点信息完备、inspect_cases 数据质量良好。以下为实测缺陷与改进项。
 
 ### G1 · condition_stats 快路径裸 KeyError + 伪 task_id 轮询陷阱（P1，建议立项修）
 
@@ -177,6 +177,10 @@
 | G6 | 三路考试 verdict 输出位置不统一：隔离/分段在顶层，随机窗口藏在 summary.worst_window.verdict——AI 客户端消费不友好 | 三路考试实测 | 统一顶层 verdict 字段 |
 | G7 | 分段验证幂等键不含维度：同区间先隔离后分段 → duplicated=true 复用记录，「分题型成绩单」（段级明细）拿不到——与该工具「哪类行情不行的正式度量」定位冲突 | hyp_07979a1d7ad7 考试实测（仅整体 metrics 无段级 breakdown） | 幂等键加 segmentation 维度或段级明细独立记录 |
 | G8 | 扫描结果缺 n_significant 顶层汇总：FDR 全灭时需逐条看 q 才知全灭（本轮四档全 q≈1） | 四档扫描实测 | 补显著计数顶层字段（轻微） |
+| G9 | condition_stats 跨指标条件装载断裂：subject=指标A、target=另一列（sma_200/kc_upper 等 cross_above_series 族）时 target 列不在 warm_names 装载清单——条件恒 False、样本 0，与扫描器同条件结果直接打架（BTC 1h SMA50 上穿 sma_200：扫描 n=65 vs 定向 0） | 第二轮方向④金叉定向实测（1h/4h 双复现） | warm_names 解析 condition.target 列引用；或校验层显式拒绝跨指标条件（勿静默 0 样本） |
+| G10 | 快路径失败统一伪 task_id 形态：样本量不足等业务拒绝也返回 `{task_id:"fast_condition_stats", status:failed}`（DB 无此任务）——客户端按 task 轮询即死循环；G1 的 KeyError 是此形制的子集 | ETH funding 定向实测（样本不足分支）+ 金叉定向（0 样本分支） | 快路径失败改结构化错误直返（错误码+hint），消灭伪 task_id 家族 |
+| G11 | 组合假设缺「登记前触发频率预估」：本轮 ETH 双重过滤假设（ROC<-5 & CCI>100）送考后验证段 0 笔——一次考试机会浪费在可预见的空转上；组合条件无预检通道（G3）+ 无频率预估 = 盲登记 | ETH 假设 b 考试实测（0 trades，bench 同返 0） | register_hypothesis 或 translate 前置 warn：按分析段触发频率外推验证段预计笔数，<5 显式警示 |
+| G12 | 衍生品数据边界未在工具面披露：funding 数据止于 2026-08-31、oi 止于 09-20，而考试/分析可请求至 09-19——含 funding 特征的策略在尾部 19 天的数据缺失行为未披露（静默截断或报错未知，未实测） | list_data_sources 与考试区间对照 | 数据缺口与请求区间的交集披露（snapshot/skipped 同款声明形制） |
 
 
 
