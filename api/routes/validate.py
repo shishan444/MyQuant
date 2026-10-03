@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.deps import get_db_path, get_data_dir
@@ -183,18 +183,6 @@ def run_validation(
         extremes=result.extremes,
         warnings=result.warnings,
     )
-
-
-@router.get("/validate/{task_id}/triggers")
-def get_validation_triggers(
-    task_id: str,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    sort: str = Query("time", pattern="^(time|trigger_price|change_pct)$"),
-    order: str = Query("desc", pattern="^(asc|desc)$"),
-) -> Dict[str, Any]:
-    """取验证任务的触发记录（占位端点，未来接缓存后实现）。"""
-    return {"total": 0, "page": page, "per_page": per_page, "records": []}
 
 
 @router.post("/validate/rules", response_model=RuleValidateResponse)

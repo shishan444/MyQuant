@@ -27,7 +27,6 @@ from core.persistence.db_ext import init_db_ext
 from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
-from .routes import discovery as discovery_route
 from .routes import trading as trading_route
 from .routes import live_trading as live_trading_route
 from .schemas import HealthResponse
@@ -167,7 +166,6 @@ def create_app(
     app.include_router(live_trading_route.router)
     app.include_router(validate_route.router)
     app.include_router(scene_route.router)
-    app.include_router(discovery_route.router)
 
     # 研究域路由（add-ai-research-mcp）
     from api.routes import research as research_route

@@ -32,7 +32,6 @@
 | trading | /api/trading | POST /start, POST /stop | 实盘/模拟交易任务管理 |
 | chart_config | /api/chart-config | GET / | 图表配置接口 |
 | scene | /api/scene | GET /, POST / | 场景管理（多策略对比场景） |
-| discovery | /api/discovery | GET / | 策略发现结果查询 |
 
 ### 核心内部组件
 
@@ -105,4 +104,4 @@ API 层采用"应用工厂"模式（create_app），使得测试和配置注入�
 - [-> api/db_ext.py] init_db_ext / save_strategy：数据库扩展操作
 - [-> api/deps.py] 依赖注入配置
 - [-> api/schemas.py] Pydantic V2 请求/响应模型
-- [-> api/routes/] 10 个路由模块：config / data / evolution / strategies / ws / trading / validate / chart_config / scene / discovery
+- [-> api/routes/] 9 个路由模块：config / data / evolution / strategies / ws / trading / validate / chart_config / scene

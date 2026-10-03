@@ -13,7 +13,7 @@
 - UI 反馈（toast 提示由 hooks 层处理）
 - 请求状态的 loading/error 管理（由 React Query 管理）
 
-**边界**：services 层是前端与后端 API 之间的唯一通道。每个文件对应一个后端领域模块。函数签名只依赖 types 中的类型定义，不依赖任何 UI 框架。discovery.ts 是唯一的例外，它使用原生 fetch 而非 api.ts 的 Axios 实例。
+**边界**：services 层是前端与后端 API 之间的唯一通道。每个文件对应一个后端领域模块。函数签名只依赖 types 中的类型定义，不依赖任何 UI 框架。
 
 ## 接口与契约
 
@@ -53,9 +53,6 @@
 | `validateRules` | 命令 | `(payload) => Promise<RuleValidateResponse>` | 规则验证 |
 | `getSceneTypes` | 查询 | `() => Promise<{types}>` | 获取场景类型列表 |
 | `verifyScene` | 命令 | `(payload) => Promise<SceneVerifyResponse>` | 场景验证 |
-| `discoverPatterns` | 命令 | `(params) => Promise<DiscoveryResponse>` | 模式发现（使用原生 fetch） |
-| `findSimilar` | 命令 | `(params) => Promise<SimilarResponse>` | 相似案例查找（使用原生 fetch） |
-| `predictRange` | 命令 | `(params) => Promise<PredictResponse>` | 价格预测（使用原生 fetch） |
 | `getDatasets` | 查询 | `(params?) => Promise<DatasetListResponse>` | 数据集列表 |
 | `importCsv` | 命令 | `(formData) => Promise<{dataset_id,...}>` | 单文件 CSV 导入（120s 超时） |
 | `importCsvBatch` | 命令 | `(formData) => Promise<{...}>` | 批量 CSV 导入（300s 超时） |
@@ -81,7 +78,7 @@
 
 | 依赖模块 | 依赖原因 |
 |----------|----------|
-| api.ts (axios) | 除 discovery.ts 外所有服务模块的基础 HTTP 客户端 |
+| api.ts (axios) | 所有服务模块的基础 HTTP 客户端 |
 | types/api | 复用核心领域类型（Strategy、DNA、EvolutionTask、Dataset 等） |
 | types/scene | scene.ts 使用 SceneTypeInfo、SceneVerifyRequest、SceneVerifyResponse |
 
@@ -93,5 +90,4 @@
 - [-> web/src/services/trading.ts:1-173] 交易服务 -- 12 个函数覆盖全生命周期（create/stop/pause/resume/restart/delete）+ 数据查询（trades/equity/metrics），同时导出 7 个类型定义
 - [-> web/src/services/validation.ts:1-17] 验证服务 -- 2 个函数：validateHypothesis（假设验证）和 validateRules（规则验证）
 - [-> web/src/services/scene.ts:1-20] 场景服务 -- 2 个函数：getSceneTypes（获取类型列表）和 verifyScene（场景验证）
-- [-> web/src/services/discovery.ts:1-125] 发现服务 -- 3 个函数 + 5 个类型导出，使用硬编码 `/api/discovery` 基路径和原生 fetch
 - [-> web/src/services/datasets.ts:1-106] 数据集服务 -- 8 个函数覆盖数据集 CRUD + CSV 导入（单文件 120s / 批量 300s）+ OHLCV 数据 + 图表指标
