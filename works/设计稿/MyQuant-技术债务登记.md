@@ -13,7 +13,7 @@
 | # | 项 | 来源 | 推荐 |
 |---|---|---|---|
 | A1 | repository 升序+limit 根因 → keyset 分页 | analysis 战 S-1 根因 | **已清账**（fix-mcp-1 CARD-07 keyset+真总数+next_cursor，iter_all_pages 四消费方零改动，2026-10-01 合并 c37c067） |
-| A2 | api/ 无认证 + CORS 通配 | scoring 战在案 | **实盘部署前置**（v2 升格——0.3.1 实施认证走 openspec change 正式流程，形制待 Q2） |
+| A2 | api/ 无认证 + CORS 通配 | scoring 战在案 | **已清账**（0.3.1 api 硬化战 CARD-32 认证四件套：CORS 白名单/API key 中间件 A 方案/绑定收口/Host 校验 + socket.io 认证，2026-10-03 合并 a88420a；S-1~S-8 全关闭。台账硬条件：key 禁复用高价值凭据、**跨机启用前须改 auth payload + 上 TLS**） |
 | B1 | mtf_loader 自内联 safe_symbol ×2 | analysis 战专项 | **已清账**（第三战 CARD-11，2026-10-01 合并 ff425e3）；范围外 8 处内联另见 F 组 |
 | B2 | formula.py 窗口参数无上限（根治点） | analysis 战 S-6 | **已清账**（第三战清长度/嵌套/下界；fix-mcp-2 CARD-18 窗口数值上界 DSL 化（MAX_PLUGIN_LOOKBACK_BARS 下沉 formula.py+静态关前置）——2026-10-02 合并 89c72cd 全清） |
 | B3 | timeframe 无白名单/未净化 | analysis 战 S-5 | **已清账**（第三战 CARD-03 find_parquet 白名单；api 两端点经 security 复核为路由层天然阻断，一致性加固可选不另立项） |
@@ -139,7 +139,7 @@
 | F1 | dev.sh 调用 start.sh 无执行位（git 100644，干净 checkout 必现 Permission denied） | 阶段四 e2e 双形态补测 | 一行修（调用改 `bash "$SCRIPT_DIR/start.sh"` 或三脚本补 x 位入库） |
 | F2 | 范围外内联 re.sub symbol 清洗 8 处（trading/evolution/validation/api 各域）未收敛 safe_symbol | architect 全库检索 | 与下次对应域审查合并做 |
 | F3 | formula 窗口**数值上界** DSL 化（validate_formula 加与 plugin_service 共享的上限常量）——B2 剩余面 | B2 口径更正 | **已清账**（fix-mcp-2 CARD-18，2026-10-02 合并 89c72cd） |
-| F4 | api/routes/data.py 非触碰端点存量 25 行未覆盖（数据集详情/预览/删除/来源/更新） | 阶段四覆盖闸门 | api 域审查时一并 |
+| F4 | api/routes/data.py 非触碰端点存量 25 行未覆盖（数据集详情/预览/删除/来源/更新） | 阶段四覆盖闸门 | **已清账**（0.3.1 特征网 test_data_f4_gaps 12 用例全盖，2026-10-03 合并 a88420a） |
 | F5 | api 非法 mode 静默回退 MERGE + api/core ImportMode 枚举双表定义 | reviewer/architect 报备 | 与 C3 裁决联动，api 域审查时一并 |
 | F6 | core/trading/runner.py:443 _load_data 读取拼接无校验（S-3 同族读取面） | architect 专项 | trading 域审查时一并 |
 | F7 | plugin_service.py:258 ast.parse 无 RecursionError 防护（DB 历史数据防御面，注册面已挡） | architect 专项 | **已清账**（fix-mcp-2 CARD-19 补 (RecursionError, MemoryError)→set()，2026-10-02 合并 89c72cd） |
@@ -189,3 +189,4 @@
 | 2026-10-01 | 第三战交付呈批（23 卡 / 覆盖率 100% / 全量 3679+e2e 四轮） | 批准合并 | 已合并 main ff425e3（--no-ff），B1/B3 清账、B2 部分清账（F 组新增 F1-F8） |
 | 2026-10-01 | fix-mcp-1 上游战交付呈批（14 卡 P0×1+P1×13 / mcpserver 4 文件 100% 行+分支 / 全量 3817+e2e 64） | 批准合并 | 已合并 main c37c067（--no-ff，30 笔提交），A1/F9/F10 清账，登记 F 组新增 F9/F10；fix-mcp-2（evolution+validation）待启动 |
 | 2026-10-02 | fix-mcp-2 下游战交付呈批（33 卡 P0×4+P1×17+注释组 12 / scene 覆盖 6-31%→96-100% / 全量 4082+e2e 64） | 批准合并 | 已合并 main 89c72cd（--no-ff，48 笔提交），B2 全清、B5 件①②、F3/F7 清账；**fix-mcp 系列全系列闭环**；C1/C2 口径呈批顺延（实施面不在本战域：C1 在 analysis、C2 在 scoring——随下战或单独裁）；新增观察项：cross_timeframe signal_type 名义参数、有效性测试同文件两处单轨迹锚（与已修的 20-seed 系同族） |
+| 2026-10-03 | 0.3.1 api 硬化战交付呈批 + 复批（44 卡=主批 40+复批 4 / 终验 4387+e2e 64×3 / 覆盖率 18/25 文件 100%） | 批准合并（含 PB-1 认证四件套 key 未设 A 方案 / PB-2 死端点删除 B10+D6 / PB-3 心跳裁撤三项推荐方案全批） | 已合并 main a88420a（--no-ff，72 笔提交，60 文件 +5928/-1332），A2/F4 清账，S-1~S-8 全关闭；新增 TD 在案：pytest 双模块身份坑（conftest 统一留专项）、C3b 口径顺延、低危 4 项（进化 pending 无上限/discovery 数值参数/scene horizons 空列表/config.json 存量占位值）、专项 5 项（mcpserver :8800 认证面、core 侧公共入口×2、启动器治理、paper_trading 心跳同族观察）、P2/P3 记录 10 项；F3 双形态分裂随 CARD-01 修复、D6 discovery 死端点与 B10 占位端点随 CARD-33 删除、心跳死信号随 CARD-34 裁撤、三处文档失实修正 |
