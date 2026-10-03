@@ -1,17 +1,24 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""流式批回测入口（/api/strategies/batch-backtest*）。
+
+职能：多策略×多区间批回测，流式端点经 socket.io /streams 推送
+步级进度。服务对象：web 批量回测页（BatchBacktest.tsx）。
+职责边界：任务编排与进度帧，逐步回测在 _BatchBacktestProcessor。
+"""
 from __future__ import annotations
 
 import json
 import logging
 import uuid
 import asyncio
-from datetime import datetime
+import threading
 
 import pandas as pd
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+
+from ._common import _progress_payload, _safe_error_message
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -54,9 +61,7 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
-from core.backtest import engine as _bt_engine_mod
 from core.scoring.metrics import BARS_PER_YEAR, DEFAULT_BARS_PER_YEAR
-from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
 
@@ -67,10 +72,10 @@ router = APIRouter()
 
 
 class _BatchBacktestProcessor:
-    """Batch backtest using DecisionPipeline (realistic simulation engine).
+    """批回测处理器（DecisionPipeline 仿真引擎）。
 
-    Uses ReplayRunner for bar-by-bar execution with open-price fills,
-    limit orders, ATR stops, and real-time margin tracking.
+    经 ReplayRunner 逐 bar 执行：开盘价成交/限价单/ATR 止损与
+    实时保证金追踪。
     """
 
     def __init__(self, payload: BatchBacktestRequest, db_path: Path, data_dir: Path):
@@ -110,7 +115,7 @@ class _BatchBacktestProcessor:
                     "timeframe": dna.execution_genes.timeframe,
                     "row": row,
                 })
-                strategy_names[sid] = row.get("name", sid[:8])
+                strategy_names[sid] = row.get("name") or sid[:8]
             except Exception:
                 continue
 
@@ -124,7 +129,7 @@ class _BatchBacktestProcessor:
             for sid in [s["strategy_id"] for s in group]
         }
 
-        # Pre-compute step list: (group_key, group_strategies, date_range)
+        # 预生成步进清单：(group_key, group_strategies, date_range)
         self.steps = [
             (gk, gs, dr)
             for gk, gs in strategies_by_group.items()
@@ -134,7 +139,7 @@ class _BatchBacktestProcessor:
     def _build_equity_json_from_curve(
         self, equity_curve: list, df: pd.DataFrame, bars_processed: int,
     ) -> Optional[str]:
-        """Serialize equity curve + DataFrame timestamps to JSON."""
+        """净值曲线与 DataFrame 时间戳序列化为 JSON。"""
         if not equity_curve or bars_processed <= 0:
             return None
         timestamps = df.index[-bars_processed:]
@@ -144,7 +149,7 @@ class _BatchBacktestProcessor:
         ])
 
     def _build_signals_json_from_events(self, events_log: list) -> Optional[str]:
-        """Serialize position_closed events to JSON signals (delegates to backtest_service)."""
+        """position_closed 事件序列化为 JSON 信号（委托 backtest_service）。"""
         return backtest_service.build_signals_from_events(events_log)
 
     def _bars_per_year(self, timeframe: str) -> int:
@@ -153,7 +158,7 @@ class _BatchBacktestProcessor:
         return BARS_PER_YEAR.get(timeframe, DEFAULT_BARS_PER_YEAR)
 
     def process_step(self, step_index: int) -> Dict:
-        """Process one group x range step using DecisionPipeline."""
+        """处理一个 group×range 步（DecisionPipeline 执行）。"""
         from core.trading.replay import ReplayRunner
 
         group_key, group_strategies, dr = self.steps[step_index]
@@ -183,7 +188,7 @@ class _BatchBacktestProcessor:
                         "max_drawdown": 0.0, "result_id": "",
                     })
                     batch_results.append({"strategy_id": sid, "error": "Insufficient data"})
-                return self._progress_payload(step_index, group_key, dr, batch_results)
+                return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
             actual_start = str(enhanced_df.index.min())[:10]
             actual_end = str(enhanced_df.index.max())[:10]
@@ -197,7 +202,7 @@ class _BatchBacktestProcessor:
                     needed_tfs, data_start=dr.start, data_end=dr.end,
                 )
 
-            # Run each strategy through ReplayRunner (DecisionPipeline)
+            # 逐策略经 ReplayRunner 执行（DecisionPipeline 决策管线）
             for s_info in group_strategies:
                 sid = s_info["strategy_id"]
                 dna = s_info["dna"]
@@ -214,7 +219,7 @@ class _BatchBacktestProcessor:
                     )
                     result = runner.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-                    # Compute metrics from equity curve
+                    # 由净值曲线计算指标
                     eq_curve = result.equity_curve
                     total_trades = result.total_trades
                     if eq_curve and total_trades > 0:
@@ -239,7 +244,7 @@ class _BatchBacktestProcessor:
                             "profit_factor": 0.0,
                         }
 
-                    # Check for liquidation in events
+                    # 检查事件流中的清算标记
                     liquidated = any(
                         e.get("exit_reason") == "liquidation"
                         for e in result.events_log
@@ -316,7 +321,7 @@ class _BatchBacktestProcessor:
                         strategy_name=self.strategy_names.get(sid, ""),
                         symbol=symbol, timeframe=timeframe,
                         data_start=dr.start, data_end=dr.end,
-                        error=str(exc),
+                        error=_safe_error_message(exc),
                     ))
                     self.strategy_period_data[sid].append({
                         "data_start": dr.start, "data_end": dr.end,
@@ -324,7 +329,7 @@ class _BatchBacktestProcessor:
                         "total_return": 0.0, "sharpe_ratio": 0.0,
                         "max_drawdown": 0.0, "result_id": "",
                     })
-                    batch_results.append({"strategy_id": sid, "error": str(exc)})
+                    batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
         except Exception as exc:
             for sid in strategy_ids:
@@ -333,7 +338,7 @@ class _BatchBacktestProcessor:
                     strategy_name=self.strategy_names.get(sid, ""),
                     symbol=symbol, timeframe=timeframe,
                     data_start=dr.start, data_end=dr.end,
-                    error=str(exc),
+                    error=_safe_error_message(exc),
                 ))
                 self.strategy_period_data[sid].append({
                     "data_start": dr.start, "data_end": dr.end,
@@ -341,12 +346,12 @@ class _BatchBacktestProcessor:
                     "total_return": 0.0, "sharpe_ratio": 0.0,
                     "max_drawdown": 0.0, "result_id": "",
                 })
-                batch_results.append({"strategy_id": sid, "error": str(exc)})
+                batch_results.append({"strategy_id": sid, "error": _safe_error_message(exc)})
 
-        return self._progress_payload(step_index, group_key, dr, batch_results)
+        return _progress_payload(self.steps, step_index, group_key, dr, batch_results)
 
     def finalize(self) -> Dict:
-        """Aggregate per-strategy summary across all periods."""
+        """跨区间聚合逐策略摘要。"""
         summary: List[BatchBacktestSummaryItem] = []
         for sid, periods in self.strategy_period_data.items():
             if not periods:
@@ -378,7 +383,7 @@ class _BatchBacktestProcessor:
             fitnesses = [p["fitness"] for p in valid_periods]
             qualified_count = sum(1 for p in valid_periods if p["qualified"])
 
-            # Build per-period BatchBacktestResultItem list from all_results
+            # 由 all_results 组装逐区间结果条目
             period_result_ids = {p.get("result_id") for p in valid_periods}
             per_period_items = [
                 r for r in self.all_results
@@ -407,19 +412,8 @@ class _BatchBacktestProcessor:
         }
 
     def mark_failed(self, error_message: str):
-        """No session table to update for batch backtest."""
+        """批回测无 session 表可更新（no-op）。"""
         pass
-
-    def _progress_payload(self, step_index: int, group_key: str,
-                          dr, batch_results: list) -> Dict:
-        return {
-            "current": step_index + 1,
-            "total": len(self.steps),
-            "group": group_key,
-            "range_start": dr.start,
-            "range_end": dr.end,
-            "batch_results": batch_results,
-        }
 
 
 @router.post("/batch-backtest/stream")
@@ -433,16 +427,19 @@ async def batch_backtest_stream(
     batch 无持久 session（SSE 时代逐请求）——session_id 为本请求生成的
     room 键；取消/断线语义同 verify（B8.0 ①②）。
     """
-    import asyncio as _asyncio
-    import threading as _threading
-    import uuid as _uuid
-
     from api import realtime, stream_control
 
     processor = _BatchBacktestProcessor(payload, db_path, data_dir)
-    await asyncio.to_thread(processor.init)
-    session_id = f"batch_{_uuid.uuid4().hex[:12]}"
-    cancel_event = _threading.Event()
+    # 并发槽位满即拒绝（429）；init 抛 404 等异常时先归还槽位
+    if not stream_control.acquire_stream_slot():
+        raise HTTPException(status_code=429, detail="Too many concurrent streams")
+    try:
+        await asyncio.to_thread(processor.init)
+    except BaseException:
+        stream_control.release_stream_slot()
+        raise
+    session_id = f"batch_{uuid.uuid4().hex[:12]}"
+    cancel_event = threading.Event()
     stream_control.register(session_id, cancel_event.set)
 
     async def _run_stream() -> None:
@@ -459,12 +456,13 @@ async def batch_backtest_stream(
             realtime.broadcast("/streams", session_id, "complete", complete)
         except Exception as exc:
             if hasattr(processor, "mark_failed"):
-                await asyncio.to_thread(processor.mark_failed, str(exc))
-            realtime.broadcast("/streams", session_id, "error", {"message": str(exc)})
+                await asyncio.to_thread(processor.mark_failed, _safe_error_message(exc))
+            realtime.broadcast("/streams", session_id, "error", {"message": _safe_error_message(exc)})
         finally:
             stream_control.unregister(session_id)
+            stream_control.release_stream_slot()
 
-    _asyncio.create_task(_run_stream())
+    asyncio.create_task(_run_stream())
     return {"session_id": session_id}
 
 
@@ -473,12 +471,12 @@ def get_batch_backtest_detail(
     result_id: str,
     db_path: Path = Depends(get_db_path),
 ):
-    """Get full batch backtest result detail including equity curve and signals."""
+    """取批回测结果详情（含净值曲线与信号）。"""
     row = get_backtest_result(db_path, result_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Backtest result not found")
 
-    # Parse equity_curve from stored JSON
+    # 解析落库的 equity_curve JSON
     equity_data = None
     if row.get("equity_curve"):
         try:
@@ -486,7 +484,7 @@ def get_batch_backtest_detail(
         except (json.JSONDecodeError, TypeError):
             equity_data = None
 
-    # Parse signals from trades_json column
+    # 解析 trades_json 列的信号
     signals_data = None
     if row.get("trades_json"):
         try:
@@ -494,7 +492,7 @@ def get_batch_backtest_detail(
         except (json.JSONDecodeError, TypeError):
             signals_data = None
 
-    # Parse dimension_scores
+    # 解析 dimension_scores
     dimension_scores = None
     if row.get("dimension_scores"):
         try:
@@ -502,7 +500,7 @@ def get_batch_backtest_detail(
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Parse satisfaction
+    # 解析 satisfaction
     satisfaction = None
     if row.get("satisfaction_json"):
         try:

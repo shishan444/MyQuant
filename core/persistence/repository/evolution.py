@@ -178,16 +178,6 @@ def count_all_tasks(
 # B3d.2 收口：runner/路由原裸 SQL 的等价迁移
 # ---------------------------------------------------------------------------
 
-def update_heartbeat(db_path: Path, task_id: str) -> None:
-    """Update heartbeat_at timestamp for a running task."""
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(
-            update(EvolutionTask).where(EvolutionTask.task_id == task_id)
-            .values(heartbeat_at=_now())
-        )
-
-
 def update_phase(db_path: Path, task_id: str, phase: str) -> None:
     """Update current_phase for a task（WS 推送在调用方）。"""
     engine = _engine_for(db_path)
@@ -233,7 +223,7 @@ def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
         rows = conn.execute(
             select(EvolutionTask.task_id, EvolutionTask.progress_json).where(
                 EvolutionTask.status == "stopped",
-                EvolutionTask.stop_reason.in_(["crash_recovery", "heartbeat_timeout"]),
+                EvolutionTask.stop_reason.in_(["crash_recovery"]),
                 (EvolutionTask.champion_dna.is_(None)) | (EvolutionTask.champion_dna == ""),
             )
         ).all()

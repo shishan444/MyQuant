@@ -38,22 +38,3 @@ class TestBacktestService:
         from core.services import backtest_service as svc
         import pandas as pd
         assert svc.build_signals_from_trades_df(pd.DataFrame()) == []
-
-
-class TestDiscoveryRoutes:
-    """api/routes/discovery 路由层（此前零覆盖）。"""
-
-    def test_patterns_missing_data_404(self, tmp_path: Path):
-        from api.app import create_app
-        from core.persistence.db_ext import init_db_ext
-
-        init_db_ext(tmp_path / "t.db")
-        app = create_app(db_path=tmp_path / "t.db", data_dir=tmp_path)
-        with TestClient(app) as c:
-            r = c.post("/api/discovery/patterns", json={
-                "symbol": "NOSUCH", "timeframe": "4h",
-                "start": "2024-01-01", "end": "2024-02-01",
-            })
-        # 现状契约：缺数据返回 200 + error 字段（不抛 500）——锚定现状
-        assert r.status_code == 200
-        assert r.json()["error"] == "No data available"

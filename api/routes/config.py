@@ -8,6 +8,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_db_path
+from api.schemas import ConfigUpdate
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -17,12 +18,10 @@ _MASK = "***"
 
 
 def _mask(value: str) -> str:
-    """前 4 后 4 中间 ***；未配置回 ""；短值全掩不泄露。"""
+    """全掩码回显（不泄露任何片段）；未配置回 ""。"""
     if not value:
         return ""
-    if len(value) <= 8:
-        return _MASK
-    return f"{value[:4]}{_MASK}{value[-4:]}"
+    return _MASK
 
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "language": "zh-CN",
@@ -62,28 +61,33 @@ def _write_config(db_path: Path, config: Dict[str, Any]) -> None:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
 
-@router.get("")
-def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
-    cfg = _read_config(db_path)
-    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
+def _masked_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """凭证键 masked 后的完整回显视图（GET 与 PUT 响应共用）。"""
     return {
         **cfg,
         **{k: _mask(str(cfg[k])) for k in _CREDENTIAL_KEYS if k in cfg},
     }
 
 
+@router.get("")
+def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
+    cfg = _read_config(db_path)
+    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
+    return _masked_view(cfg)
+
+
 @router.put("")
 def update_config(
-    payload: Dict[str, Any],
+    payload: ConfigUpdate,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     current = _read_config(db_path)
-    for key, value in payload.items():
-        if key in _DEFAULT_CONFIG:
-            # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
-            if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
-                continue
-            current[key] = value
+    # 部分更新：仅显式传入的字段（exclude_unset 区分未传与显式传参）
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
+        if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
+            continue
+        current[key] = value
     _write_config(db_path, current)
     # 响应同样 masked（与 GET 一致）
-    return {**current, **{k: _mask(str(current[k])) for k in _CREDENTIAL_KEYS if k in current}}
+    return _masked_view(current)

@@ -177,7 +177,12 @@ class QuantApiClient:
         if timeout is None:
             timeout = (self.read_timeout if method == "GET"
                        else self.write_timeout)
-        with httpx.Client(timeout=timeout, trust_env=False) as client:
+        # A2：服务端启用 API key 时随请求携带（未设则不带，兼容放行态）
+        headers = {}
+        api_key = os.environ.get("MYQUANT_API_KEY")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        with httpx.Client(timeout=timeout, trust_env=False, headers=headers) as client:
             # 发送行按方法分派（保持 httpx.Client 的 get/post 方法面
             # ——测试 mock 契约面不变；两方法在 httpx 内等价）
             try:

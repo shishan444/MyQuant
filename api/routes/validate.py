@@ -1,10 +1,16 @@
-"""Validation API routes for WHEN/THEN hypothesis testing and rule evaluation."""
+"""假设/规则验证入口（/api/validate*）。
+
+职能：WHEN/THEN 假设验证与进出场规则评估的 REST 入口，路由层构建
+多周期求值上下文（MtfEvalContext）后委托 core.validation 执行。
+服务对象：web Lab 验证页。
+职责边界：传输校验与 ResearchError→HTTP 映射，判定逻辑在引擎层。
+"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.deps import get_db_path, get_data_dir
@@ -15,8 +21,6 @@ from core.validation.rule_engine import evaluate_rules
 
 router = APIRouter(prefix="/api", tags=["validation"])
 
-
-from pydantic import BaseModel
 
 from api.schemas import IndicatorRef
 
@@ -67,7 +71,7 @@ class ValidateResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Rule validation schemas
+# 规则验证模型
 # ---------------------------------------------------------------------------
 
 class RuleConditionInput(BaseModel):
@@ -80,7 +84,7 @@ class RuleConditionInput(BaseModel):
 
 class RuleValidateRequest(BaseModel):
     pair: str
-    timeframe: str  # execution timeframe (shortest)
+    timeframe: str  # 执行周期（池内最短者）
     start: str
     end: str
     entry_conditions: List[RuleConditionInput]
@@ -121,7 +125,7 @@ def run_validation(
     payload: ValidateRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> ValidateResponse:
-    """Validate a WHEN->THEN hypothesis against historical data."""
+    """对历史数据验证 WHEN->THEN 假设。"""
     # 0.2.14：Lab 链掩码投影——路由层构建多周期求值上下文（F2：
     # base_tf=effective_base，与 referenced_tfs 收集同基准）
     from core.analysis.condition_kernel import MtfEvalContext
@@ -145,7 +149,7 @@ def run_validation(
     except ResearchError as exc:
         # 0.2.14：高周期条件结构化拒绝（不可达/warmup 不足/低周期键）
         # 转结构化 422，不裸穿 500
-        from api.routes.research.hypotheses import research_error_to_http
+        from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
     return ValidateResponse(
@@ -181,24 +185,12 @@ def run_validation(
     )
 
 
-@router.get("/validate/{task_id}/triggers")
-def get_validation_triggers(
-    task_id: str,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    sort: str = Query("time", pattern="^(time|trigger_price|change_pct)$"),
-    order: str = Query("desc", pattern="^(asc|desc)$"),
-) -> Dict[str, Any]:
-    """Get trigger records for a validation task (placeholder for future caching)."""
-    return {"total": 0, "page": page, "per_page": per_page, "records": []}
-
-
 @router.post("/validate/rules", response_model=RuleValidateResponse)
 def run_rule_validation(
     payload: RuleValidateRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> RuleValidateResponse:
-    """Evaluate entry/exit rule conditions and return paired trades."""
+    """评估进出场规则条件，返回配对交易。"""
     # 0.2.14：Lab 规则链掩码投影（执行周期=最短周期即基准）
     from core.analysis.condition_kernel import MtfEvalContext
 
@@ -216,7 +208,7 @@ def run_rule_validation(
             mtf=mtf_ctx,
         )
     except ResearchError as exc:
-        from api.routes.research.hypotheses import research_error_to_http
+        from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
     return RuleValidateResponse(

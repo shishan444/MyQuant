@@ -1,4 +1,9 @@
-"""Scene verification API routes."""
+"""场景验证入口（/api/scene/types 与 /api/validate/scene）。
+
+职能：暴露 core.validation.scene 的场景探测器清单与历史数据回放
+验证（触发统计/前瞻收益分布）。服务对象：web Lab 场景页。
+职责边界：传输校验与 ResearchError→HTTP 映射，检测与统计在引擎层。
+"""
 from __future__ import annotations
 
 import json
@@ -18,7 +23,7 @@ router = APIRouter(prefix="/api", tags=["scene"])
 
 
 # ---------------------------------------------------------------------------
-# Request / Response models
+# 请求/响应模型
 # ---------------------------------------------------------------------------
 
 class SceneRequest(BaseModel):
@@ -67,17 +72,17 @@ class SceneResponse(BaseModel):
 
 
 class SceneTypesResponse(BaseModel):
-    """List of available scene types with metadata."""
+    """可用场景类型清单（含元数据）。"""
     types: List[Dict[str, str]]
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# 端点
 # ---------------------------------------------------------------------------
 
 @router.get("/scene/types", response_model=SceneTypesResponse)
 def list_scene_types() -> SceneTypesResponse:
-    """Return available scene types with labels and descriptions."""
+    """返回可用场景类型清单（标签/描述/分组，供前端选择器）。"""
     types = [
         {
             "id": key,
@@ -96,7 +101,7 @@ def run_scene(
     payload: SceneRequest,
     data_dir: Path = Depends(get_data_dir),
 ) -> SceneResponse:
-    """Run scene verification against historical data."""
+    """对历史数据跑场景验证（触发统计与前瞻收益分布）。"""
     from core.analysis.hypothesis_service import ResearchError
     from api.routes.research.common import research_error_to_http
 

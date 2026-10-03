@@ -1,17 +1,18 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""策略库管理（/api/strategies CRUD）。
+
+职能：策略的创建/查询/更新/删除与列表分页。服务对象：web 策略页
+（策略库面板）。职责边界：策略表读写，回测/验证在兄弟模块。
+"""
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-import asyncio
-from datetime import datetime
 
-import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -28,7 +29,7 @@ from core.persistence.db_ext import (
     update_strategy,
     update_verify_session,
 )
-from api.deps import get_data_dir, get_db_path
+from api.deps import get_db_path
 from api.schemas import (
     BacktestRequest,
     BacktestResponse,
@@ -54,10 +55,6 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
-from core.backtest import engine as _bt_engine_mod
-from core.scoring.scorer import score_strategy
-from core.services import backtest_service
-from core.strategy.dna import StrategyDNA
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +62,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-
-
-def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
-    """Convert a Pydantic DNAModel to a core StrategyDNA."""
-    data = dna_model.model_dump()
-    return StrategyDNA.from_dict(data)
 
 
 def _gene_signature_or_derive(row: Dict[str, Any]) -> Optional[str]:
@@ -86,13 +77,13 @@ def _gene_signature_or_derive(row: Dict[str, Any]) -> Optional[str]:
 
 
 def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
-    """Convert a DB row dict to StrategyResponse."""
+    """DB 行 dict 转 StrategyResponse。"""
     dna = None
     if row.get("dna_json"):
         try:
             dna_dict = json.loads(row["dna_json"])
             dna = DNAModel.model_validate(dna_dict)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             dna = None
 
     metrics = None
@@ -135,9 +126,9 @@ def create_strategy(
     payload: StrategyCreate,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Create a new strategy."""
+    """创建策略。"""
     strategy_id = str(uuid.uuid4())
-    dna = _dna_model_to_dna(payload.dna)
+    dna = payload.dna.to_dna()
 
     save_strategy(
         db_path,
@@ -167,13 +158,12 @@ def list_strategies_endpoint(
     status: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db_path: Path = Depends(get_db_path),
 ) -> StrategyListResponse:
-    """List strategies with filtering, sorting, and pagination.
-
-    status=None 默认视图排除 draft；显式 status=draft 可查草稿。
+    """策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
+    显式 status=draft 可查草稿。
     """
     try:
         rows = list_strategies(
@@ -204,7 +194,7 @@ def get_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Get strategy details by ID."""
+    """按 ID 取策略详情。"""
     row = get_strategy(db_path, strategy_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -217,7 +207,7 @@ def update_strategy_endpoint(
     payload: StrategyUpdate,
     db_path: Path = Depends(get_db_path),
 ) -> StrategyResponse:
-    """Update an existing strategy."""
+    """更新策略。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -245,7 +235,7 @@ def update_strategy_endpoint(
     if payload.best_score is not None:
         fields["best_score"] = payload.best_score
     if payload.dna is not None:
-        dna = _dna_model_to_dna(payload.dna)
+        dna = payload.dna.to_dna()
         fields["dna_json"] = dna.to_json()
 
     if fields:
@@ -260,7 +250,7 @@ def delete_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> None:
-    """Delete a strategy by ID."""
+    """按 ID 删除策略。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")

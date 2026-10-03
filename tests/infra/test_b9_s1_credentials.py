@@ -1,8 +1,8 @@
 """B9.2 S1 凭证回显修复——脱敏往返（design.md B9 节冻结方案）。
 
-GET 凭证键 masked（前 4 后 4 中间 ***，未配置回 ""）；PUT 含 *** 的
-凭证值=未修改回显（哨兵），不覆盖已存值。前端零改动（Settings 表单
-显示 masked 即「已配置」）。
+GET 凭证键全掩码 "***"（CARD-06 后不泄露首尾片段，未配置回 ""）；
+PUT 含 *** 的凭证值=未修改回显（哨兵），不覆盖已存值。前端零改动
+（Settings 表单显示 masked 即「已配置」）。
 """
 from __future__ import annotations
 
@@ -37,21 +37,21 @@ class TestCredentialMasking:
         })
         assert r.status_code == 200
 
-        # 2) GET masked（前 4 后 4 中间 ***）
+        # 2) GET 全掩码（CARD-06 后恒 ***，不泄露首尾片段）
         cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "AbCd***MnOp"
-        assert cfg["binance_secret_key"] == "SeCr***5678"
+        assert cfg["binance_api_key"] == "***"
+        assert cfg["binance_secret_key"] == "***"
 
-        # 3) PUT 哨兵（表单回显值原样提交）→ 不覆盖已存值
+        # 3) PUT 哨兵（表单回显值原样提交，含 ***）→ 不覆盖已存值
         r = client.put("/api/config", json={
-            "binance_api_key": "AbCd***MnOp",
-            "binance_secret_key": "SeCr***5678",
+            "binance_api_key": "***",
+            "binance_secret_key": "***",
         })
         assert r.status_code == 200
 
-        # 4) GET 仍 masked + 存储值未损（经底层文件直查）
+        # 4) GET 仍全掩码 + 存储值未损（经底层文件直查）
         cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "AbCd***MnOp"
+        assert cfg["binance_api_key"] == "***"
         import json as _json
         db_dir = client.app.state.db_path.parent
         stored = _json.loads((db_dir / "config.json").read_text())
@@ -71,11 +71,15 @@ class TestCredentialMasking:
         assert cfg["binance_api_key"]
 
     def test_new_plaintext_overrides(self, client):
-        """真实新值（不含 ***）正常覆盖。"""
+        """真实新值（不含 ***）正常覆盖（回显全掩码、落盘新值）。"""
+        import json as _json2
         client.put("/api/config", json={"binance_api_key": "AAAA1111BBBB"})
         client.put("/api/config", json={"binance_api_key": "ZZZZ9999YYYY"})
         cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "ZZZZ***YYYY"
+        assert cfg["binance_api_key"] == "***"
+        db_dir = client.app.state.db_path.parent
+        stored = _json2.loads((db_dir / "config.json").read_text())
+        assert stored["binance_api_key"] == "ZZZZ9999YYYY"
 
     def test_non_credentials_passthrough(self, client):
         """非凭证键不受掩码影响。"""

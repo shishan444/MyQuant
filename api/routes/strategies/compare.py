@@ -1,17 +1,20 @@
-"""Strategy CRUD + backtest + compare routes."""
+"""多策略对比入口（POST /api/strategies/compare）。
+
+职能：多策略同数据集回测对比，逐策略返回指标与失败隔离。
+服务对象：web 策略页（对比面板）。职责边界：传输与循环编排，
+单策略回测语义与 backtest 模块一致（回退路径不同：裸 df 无指标）。
+"""
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-import asyncio
-from datetime import datetime
 
-import pandas as pd
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+
+from ._common import _safe_error_message
 
 from core.persistence.db_ext import (
     count_strategies,
@@ -71,7 +74,21 @@ def compare_strategies(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> CompareResponse:
-    """Compare multiple strategies by running backtests."""
+    """多策略回测对比（逐策略执行，失败条目隔离不拖累整体）。"""
+    # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
+    from core.data.validation import validate_import_interval, validate_symbol
+
+    try:
+        parts = payload.dataset_id.rsplit("_", 1)
+        if len(parts) != 2:
+            raise ValueError(f"{payload.dataset_id!r}（须形如 SYMBOL_interval）")
+        validate_symbol(parts[0])
+        validate_import_interval(parts[1])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid dataset_id: {exc}",
+        ) from exc
     parquet_path = data_dir / f"{payload.dataset_id}.parquet"
     if not parquet_path.exists():
         raise HTTPException(
@@ -79,7 +96,6 @@ def compare_strategies(
             detail=f"Dataset {payload.dataset_id} not found",
         )
 
-    from core.data.storage import load_parquet
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     engine = _bt_engine_mod.BacktestEngine(
@@ -88,8 +104,9 @@ def compare_strategies(
         slippage=payload.slippage,
     )
 
-    # Load raw data first to get symbol/timeframe info
-    df = load_parquet(parquet_path)
+    # 延迟装载：df 仅为 load_and_prepare_df 未命中时的回退底座，
+    # 主路径（enhanced 命中）不再无条件全量读 parquet
+    df = None
     results: List[CompareResultItem] = []
 
     for sid in payload.strategy_ids:
@@ -106,16 +123,20 @@ def compare_strategies(
             symbol = dna.execution_genes.symbol
             timeframe = dna.execution_genes.timeframe
 
-            # Use enhanced data with indicators (same as backtest endpoint)
+            # 增强数据（含指标）——回退与 backtest 端点不同：裸 df
+            # 不做逐基因指标计算
             enhanced_df = load_and_prepare_df(
                 data_dir, symbol, timeframe,
                 data_start=payload.data_start,
                 data_end=payload.data_end,
             )
             if enhanced_df is None:
+                if df is None:
+                    from core.data.storage import load_parquet
+                    df = load_parquet(parquet_path)
                 enhanced_df = df
 
-            # Load MTF data if strategy uses multiple timeframes
+            # MTF 策略装载多周期数据
             dfs_by_timeframe = None
             if dna.is_mtf:
                 needed_tfs = backtest_service.compute_needed_tfs([dna], timeframe)
@@ -137,14 +158,29 @@ def compare_strategies(
             )
 
             result_id = str(uuid.uuid4())
+            # 落库统计单列读（与延迟装载解耦：主路径 enhanced 命中时 df 不装载）
+            import pyarrow.parquet as _pq
+            _pf = _pq.ParquetFile(parquet_path)
+            _names = _pf.schema_arrow.names
+            _ts = next(
+                (c for c in ("timestamp", "date", "__index_level_0__")
+                 if c in _names), None,
+            )
+            if _ts is not None and _pf.metadata.num_rows > 0:
+                _col = _pf.read(columns=[_ts]).column(0).to_pandas()
+                data_start_str = str(_col.min())
+                data_end_str = str(_col.max())
+            else:
+                data_start_str = ""
+                data_end_str = ""
             save_backtest_result(
                 db_path,
                 result_id=result_id,
                 strategy_id=sid,
                 symbol=row["symbol"],
                 timeframe=row["timeframe"],
-                data_start=str(df.index.min()) if len(df) > 0 else "",
-                data_end=str(df.index.max()) if len(df) > 0 else "",
+                data_start=data_start_str,
+                data_end=data_end_str,
                 init_cash=payload.init_cash,
                 fee=payload.fee,
                 slippage=payload.slippage,
@@ -177,7 +213,7 @@ def compare_strategies(
         except Exception as exc:
             results.append(CompareResultItem(
                 strategy_id=sid,
-                error=str(exc),
+                error=_safe_error_message(exc),
             ))
 
     return CompareResponse(results=results)

@@ -381,6 +381,8 @@ class TestChartIndicatorsPerLayerDegradation:
                 rsi_enabled=True,
                 macd_enabled=True,
                 data_dir=tmp_path,
+                # CARD-09 Query 化后直调须显式传参（裸调默认值为 Query 对象）
+                limit=50000,
             )
 
         # 失败层缺失（降级语义保持）

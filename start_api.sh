@@ -19,4 +19,5 @@ export LOG_LEVEL=${LOG_LEVEL:-1}  # 1=INFO
 log_start "Starting API Server" "port=8000"
 
 # 启动 uvicorn，同时输出到控制台和日志文件
-exec venv/bin/python -m uvicorn api.app:app --host 0.0.0.0 --port 8000
+# 绑定 127.0.0.1（A2 收口：默认仅本机可达；跨机访问经 MYQUANT_API_HOST 显式开启）
+exec venv/bin/python -m uvicorn api.app:app --host "${MYQUANT_API_HOST:-127.0.0.1}" --port 8000
