@@ -8,7 +8,7 @@
 
 CAPABILITY_DOC = """# MyQuant 研究通道能力自述
 
-> 接入形态：本服务以 streamable HTTP 提供（随应用总入口 `python run.py`
+> 接入形态：本服务以 streamable HTTP 提供（随统一入口 `./scripts/start.sh`
 > 启动，默认 http://127.0.0.1:8800/mcp）。宿主一次配置 URL 即用：
 > `claude mcp add --transport http myquant-research http://127.0.0.1:8800/mcp`
 

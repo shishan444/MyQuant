@@ -16,7 +16,7 @@ if __name__ == "__main__":
     # /socket.io 路径在该形态下不可达（F3 双形态分裂）
     from api.app import app
 
-    # 端口 env 化（run.py 总入口注入 MYQUANT_API_PORT；默认 8000 不变）；
+    # 端口 env 化（scripts/start.sh 统一入口注入 MYQUANT_API_PORT；默认 8000 不变）；
     # 绑定 127.0.0.1——本机单用户形态，无对外服务面
     port = int(os.environ.get("MYQUANT_API_PORT", "8000"))
     uvicorn.run(app, host="127.0.0.1", port=port)

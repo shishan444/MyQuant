@@ -115,7 +115,7 @@ HINTS: Dict[str, str] = {
         "端点不在当前档位白名单：readonly 档只读；研究执行需 research 档"
         "（触金类端点任何档位不可达）",
     "API_UNREACHABLE":
-        "工程 API 不可达：确认应用已启动（python run.py）且 "
+        "工程 API 不可达：确认应用已启动（./scripts/start.sh）且 "
         "MYQUANT_API_URL 正确",
     # ---- 未分类降级
     "API_INTERNAL_ERROR":

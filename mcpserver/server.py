@@ -1,7 +1,7 @@
 """MCP server 装配与入口（add-ai-research-mcp 4.1 / switch-mcp-http-transport）。
 
 默认以 streamable HTTP transport 常驻（127.0.0.1:8800/mcp——随应用
-总入口 run.py 启动，宿主一次配 URL 即用）；stdio 备选保留（宿主本地
+统一入口 scripts/start.sh 启动，宿主一次配 URL 即用）；stdio 备选保留（宿主本地
 spawn 形态）。经 QuantApiClient 走 REST（127.0.0.1:8000）。
 
 环境变量：
