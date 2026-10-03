@@ -1,7 +1,7 @@
-"""进度/心跳/推送工具群（B5.2 自 runner 拆分的内聚单元）。
+"""进度/推送工具群（B5.2 自 runner 拆分的内聚单元）。
 
-职能：EvolutionRunner 执行线程的进度落库（phase/progress）与心跳
-（heartbeat_at）维护，并经注册的推送函数把阶段变化送到实时通道。
+职能：EvolutionRunner 执行线程的进度落库（phase/progress）维护，
+并经注册的推送函数把阶段变化送到实时通道。
 服务对象：api/runner.py 的 EvolutionRunner（evolution 任务唯一执行线程）。
 职责边界：只做落库与推送，不做任务调度与业务判定；全部操作失败
 仅记日志不中断进化主流程。
@@ -32,16 +32,6 @@ def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
             _ws_push_fn(task_id, payload)
         except Exception:
             logger.warning("ws push failed for task %s", task_id, exc_info=True)
-
-
-def update_heartbeat(db_path: Path, task_id: str) -> None:
-    """更新运行中任务的 heartbeat_at（存活信号；现行恢复按 status
-    残留清理，心跳超时判定已退役）。"""
-    from core.persistence.repository import evolution as repo
-    try:
-        repo.update_heartbeat(db_path, task_id)
-    except Exception:
-        logger.warning("heartbeat update failed for %s", task_id, exc_info=True)
 
 
 def update_phase(db_path: Path, task_id: str, phase: str) -> None:

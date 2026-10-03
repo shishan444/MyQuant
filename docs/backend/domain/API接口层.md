@@ -62,18 +62,17 @@
 
 1. **任务状态机**：pending -> running -> completed / stopped（通过 SQLite 状态字段管理）
 2. **崩溃恢复**：启动时 recover_stale_tasks 将所有 running 状态重置为 stopped，防止任务假死
-3. **心跳检测**：运行中任务定期更新 heartbeat_at，超时 5 分钟未更新则标记为 stopped
-4. **协作式取消**：TaskController 使用 threading.Event，在进化循环的关键点（evaluate_fn / on_generation）检查停止请求
-5. **跨线程 WS 推送**：Runner 线程通过 asyncio.run_coroutine_threadsafe 将消息推送到 FastAPI 事件循环
-6. **连续进化**：任务完成后自动启动新种群（continuous=1），注入前代冠军 + 随机模板种子，跨种群累积代数偏移
-7. **策略自动提取**：进化过程中分数超过 strategy_threshold（默认 80）的策略自动保存到策略表
-8. **种群级批评估**：优先使用 BacktestEngine.batch_run 进行种群级评估，失败时回退到逐个评估
+3. **协作式取消**：TaskController 使用 threading.Event，在进化循环的关键点（evaluate_fn / on_generation）检查停止请求
+4. **跨线程 WS 推送**：Runner 线程通过 asyncio.run_coroutine_threadsafe 将消息推送到 FastAPI 事件循环
+5. **连续进化**：任务完成后自动启动新种群（continuous=1），注入前代冠军 + 随机模板种子，跨种群累积代数偏移
+6. **策略自动提取**：进化过程中分数超过 strategy_threshold（默认 80）的策略自动保存到策略表
+7. **种群级批评估**：优先使用 BacktestEngine.batch_run 进行种群级评估，失败时回退到逐个评估
 
 ## 设计意图
 
 API 层采用"应用工厂"模式（create_app），使得测试和配置注入更加灵活。EvolutionRunner 作为独立守护线程运行，与 FastAPI 主线程通过 threading.Event 和 asyncio.run_coroutine_threadsafe 进行跨线程通信。这种设计避免了阻塞 FastAPI 事件循环，同时保持了实时推送能力。
 
-任务控制器（TaskController）采用协作式取消而非强制中断：进化引擎在每代结束后检查停止标志，保证了数据一致性。心跳机制作为额外的安全保障，检测并处理因进程崩溃导致的任务假死。
+任务控制器（TaskController）采用协作式取消而非强制中断：进化引擎在每代结束后检查停止标志，保证了数据一致性。进程崩溃导致的任务假死由启动时的 running 残留态清理收口。
 
 ## 模块依赖
 
@@ -99,7 +98,7 @@ API 层采用"应用工厂"模式（create_app），使得测试和配置注入�
 
 - [-> api/app.py:26-148] create_app：应用工厂 + 生命周期管理 + 路由挂载
 - [-> api/runner.py:47-69] TaskController：协作式取消控制器
-- [-> api/runner.py:125-157] recover_stale_tasks / check_stale_heartbeats：崩溃恢复与心跳检测
+- [-> api/runner.py] recover_stale_tasks：启动时 running 残留态清理（崩溃恢复）
 - [-> api/runner.py:177-903] EvolutionRunner：守护线程主循环 + 任务执行 + 评估函数 + 连续进化
 - [-> api/db_ext.py] init_db_ext / save_strategy：数据库扩展操作
 - [-> api/deps.py] 依赖注入配置

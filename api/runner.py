@@ -55,7 +55,7 @@ from core.concurrency.task_control import TaskController, TaskStopRequested  # B
 # ---------------------------------------------------------------------------
 
 from api.runner_progress import (  # B5.2 拆分
-    _push_ws, set_ws_push_fn, update_heartbeat, update_phase, update_progress,
+    _push_ws, set_ws_push_fn, update_phase, update_progress,
 )
 
 
@@ -240,7 +240,6 @@ class EvolutionRunner(threading.Thread):
         })
 
         update_phase(self.db_path, task_id, "initializing")
-        update_heartbeat(self.db_path, task_id)
 
         # 解析 initial DNA（非法即终止任务）
         try:
@@ -300,7 +299,6 @@ class EvolutionRunner(threading.Thread):
 
         controller.check_stop()
         update_phase(self.db_path, task_id, "evolution_running")
-        update_heartbeat(self.db_path, task_id)
 
         _dfs_by_timeframe = None
         if len(tf_pool) > 1:
@@ -356,7 +354,6 @@ class EvolutionRunner(threading.Thread):
 
             # 快速协作取消检查（threading.Event 直达信号）
             controller.check_stop()
-            update_heartbeat(self.db_path, task_id)
 
             # 结构化进度落库
             update_progress(self.db_path, task_id, {
