@@ -197,3 +197,37 @@ class TestSocketTokenAuth:
                 "sid", {"QUERY_STRING": "task_id=t1&token=sk-1"}))
         assert result_no_token is False
         assert result_with is None  # 放行（handler 正常路径返回 None）
+
+
+class TestPreflightShortCircuit:
+    """CARD-32 增量（security P1）：CORS 最外层短路 preflight。
+
+    设 key 后 OPTIONS 预检不得被认证层 401（浏览器 CORS 流程会判
+    失败）；应 200 并带 ACAO/ACAH 头。真 IP peer + 假 Host 的 421
+    路径已由 TestHostAllowlist.test_evil_host_421 锚定
+    （peer=192.168.1.77 真实 IP 形式直调）。
+    """
+
+    def test_key_set_preflight_passes_with_cors_headers(
+        self, api_client: TestClient, monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("MYQUANT_API_KEY", "secret-key-1")
+        response = api_client.options(
+            "/api/strategies",
+            headers={
+                "Origin": "http://localhost:8080",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") == \
+            "http://localhost:8080"
+        assert "access-control-allow-headers" in response.headers
+
+    def test_key_set_normal_request_still_401(
+        self, api_client: TestClient, monkeypatch,
+    ) -> None:
+        """对照组：同 key 下普通 GET 仍 401（短路仅限 preflight 形态）。"""
+        monkeypatch.setenv("MYQUANT_API_KEY", "secret-key-1")
+        assert api_client.get("/api/strategies").status_code == 401
