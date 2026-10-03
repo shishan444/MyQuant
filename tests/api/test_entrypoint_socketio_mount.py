@@ -114,6 +114,12 @@ class TestLauncherFormPins:
         content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
         assert "-m mcpserver.server" in content
 
+    def test_scripts_start_sh_mcp_profile_default_research(self) -> None:
+        """统一入口默认 research 档（run.py 旧总入口语义继承——六步研究法
+        写入/执行工具须在默认面；readonly 经 MYQUANT_MCP_PROFILE 显式切换）。"""
+        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+        assert 'MYQUANT_MCP_PROFILE:-research' in content
+
     def test_main_module_consumes_combo_app(self) -> None:
         """F3 修复核心锚定：__main__ 消费模块级组合实例（非自建裸 FastAPI）。"""
         content = (PROJECT_ROOT / "api" / "__main__.py").read_text(encoding="utf-8")
