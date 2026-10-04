@@ -27,7 +27,7 @@
 
 | 项 | 内容 |
 |---|---|
-| **做什么** | ① **模板必填键校验族**（G1+C-α）：8 个模板的必填键统一前置校验（condition_stats×3 / distribution_compare×3 / correlation_scan×1 / event_study×1 / pattern_mining×1 / param_sweep 的 condition）——缺键结构化 422（RESEARCH_PARAM_INVALID + 缺失键名 + 合法形 hint），消灭裸下标族；② **G9 跨指标条件装载修复**：condition.target 列引用（如 sma_200/kc_upper 等 cross_above_series 族）并入 warm_names 装载推导，或校验层显式拒绝跨指标条件（禁止静默 0 样本——与扫描器同条件结果必须一致，金叉锚 n=65 对齐）；③ **G10+C-γ 快路径失败形制重构**：同步失败改结构化错误直返（错误码+hint），不穿伪 task_id 异步外衣——**保留「失败可见可审计」的设计意图**（:324-334 注释在案），只消灭 get_analysis_task 404 的轮询陷阱；④ **G2 快照 hint 修正**：warmup 错误 hint 按调用方参数面适配（快照无 start——改 timeframes 降周期指引） |
+| **做什么** | ① **模板必填键校验族**（G1+C-α）：_TEMPLATES 8 模板统一校验，**6 模板 11 必填键**（含 param_sweep.indicator 缺键语义修正；screen_patterns/regime_split 无必填键零成本通过）——缺键结构化 422（RESEARCH_PARAM_INVALID + 缺失键名 + 合法形 hint），消灭裸下标族；② **G9 跨指标条件双层修复**（D2=装载修复；分层契约 D20：一致性仅限有 warmup 前缀模板，事件模板限于显式拒绝非静默 0）：3a 预算层 + 3b 计算层（kernel._mask_base target decode-现算分支）+ 3c 模糊兜底禁用（D19 清单：_resolve_target 两段+_resolve_pattern 一段，subject 侧 0.2.13 已退役；影响面扩及 validation 域三锚随战改写）——kernel 层修复天然覆盖 event_study/regime_split（:199 已核证走 _mask_for）/case_inspection；param_sweep 列名 target 显式 422 保留；金叉锚 n=65 对齐；③ **G10+C-γ 快路径失败形制重构**：同步失败结构化直返（422 业务/500 内部新码）——「失败可见可审计」=响应+logger+研究日志持久留痕（D15/D17）；④ **G2 快照 hint 修正**：双层机制（通用文案去参数绑定+快照点局部特化——D4/A3）。**实施基准全量见 openspec change fix-mcp-error-channel（四工件，D1-D20+A1-A4 决策册）** |
 | **验真锚点** | analysis.py:156-158（三连裸下标）、:333（伪 task 设计意图）、:35（_HEAVY_ROWS）；tools.py:221（MCP 层 params 自由 Dict 零拦截）——修复须含 MCP 工具层描述的参数契约说明 |
 | **价值** | 直接止损「AI 研究可信度」：静默错误与死循环是研究中最高危的失效形态（实测实害：2×600s 死循环、扫描与定向结果打架） |
 | **验收** | 快路径全部失败路径返回结构化错误（无伪 task_id、无裸异常字符串）；8 模板缺必填键逐一 422 且错误信息含缺失键名；跨指标条件定向统计与扫描器同条件样本数一致（BTC 1h SMA50×sma_200 金叉 n=65 锚）；快照 warmup 报错 hint 与参数面匹配 |
@@ -91,7 +91,7 @@
 
 | 版本 | 内容摘要 | 分支 | 合并点 | 状态 |
 |---|---|---|---|---|
-| 0.3.2 | 错误通道修复：8 键校验族（C-α）+ 跨指标装载（G9）+ 快路径失败形制（G10+C-γ）+ 快照 hint（G2） | fix/mcp-error-channel（拟） | — | 待实施 |
+| 0.3.2 | 错误通道修复：11 键校验族（C-α）+ 跨指标双层装载（G9，3a/3b/3c）+ 快路径失败形制（G10+C-γ）+ 快照 hint（G2） | fix/mcp-error-channel（拟） | — | 待实施 |
 | 0.3.3 | 契约透明化：warmup 预算披露/verdict 统一/n_significant/数据边界/幂等键/双重装载（+可选认证） | chore/mcp-contract-transparency（拟） | — | 待实施 |
 | 0.3.4 | 假设预检器新模块：组合统计预检+频率外推+预算预检（G3+G11） | openspec change | — | 待实施（前置 0.3.2） |
 | 0.3.5 | 表达力升级：截面工具（G13）/事件驱动形制（G14） | openspec change | — | 待实施（前置 0.3.4 后评估） |
