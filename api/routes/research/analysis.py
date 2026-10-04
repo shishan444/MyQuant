@@ -237,17 +237,24 @@ def _log_analysis(
     D15/D17：failure 传入时为失败留痕（summary 携失败码，与 logger+
     响应构成「失败可见可审计」完整落点——entry_type 保持 analysis，
     研究日志消费方零适配；该区间试过什么败在哪属统计信用必需信息）。
+    留痕尽力而为（D15 裁决降级语义）：写入失败不反噬主通道——降级
+    logger.warning（template+failure 码），结构化响应照常返回。
     """
     summary = (f"模板 {payload.template} 执行失败 [{failure}]"
                if failure else f"模板 {payload.template} 执行")
-    rr.append_research_log(
-        db_path,
-        hypothesis_id=payload.hypothesis_id,
-        entry_type="analysis",
-        ref_id=payload.template,
-        data_ranges=json.dumps([payload.data_range.model_dump()], ensure_ascii=False),
-        summary=summary,
-    )
+    try:
+        rr.append_research_log(
+            db_path,
+            hypothesis_id=payload.hypothesis_id,
+            entry_type="analysis",
+            ref_id=payload.template,
+            data_ranges=json.dumps(
+                [payload.data_range.model_dump()], ensure_ascii=False),
+            summary=summary,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 留痕尽力而为，不反噬主通道
+        logger.warning("分析留痕写入失败 template=%s failure=%s: %s",
+                       payload.template, failure, exc)
 
 
 def _log_screen(
