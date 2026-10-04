@@ -40,7 +40,8 @@ def event_study(
         window: 事件后观察窗（bar 数）。
 
     Raises:
-        ValueError: 事件数不足（小样本拒绝）。
+        ResearchError: RESEARCH_PARAM_INVALID——事件数不足（小样本
+            拒绝，卡10 收编，原 ValueError 落 500 误导 Agent 盲重试）。
     """
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     from core.analysis.condition_kernel import MtfEvalContext, _mask_for
@@ -69,8 +70,14 @@ def event_study(
     event_idx = event_idx[event_idx + window < len(df)]
 
     if len(event_idx) < min_events:
-        raise ValueError(
-            f"事件数 {len(event_idx)} 不足 {min_events}（小样本拒绝）")
+        # 卡10 收编（distribution_compare 先例形制）：小样本属业务
+        # 拒绝 422 非内部错误
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"小样本拒绝: 事件数 {len(event_idx)} < {min_events}",
+            detail={"n_events": int(len(event_idx)),
+                    "min_events": min_events,
+                    "hint": "扩大事件区间或调低 min_events"})
 
     close = df["close"].values
     # 路径矩阵：行=事件，列=k=1..window
