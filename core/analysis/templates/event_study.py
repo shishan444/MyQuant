@@ -87,14 +87,24 @@ def event_study(
     q95 = np.quantile(paths, 0.95, axis=0)
 
     terminal = paths[:, -1]
-    # 终点收益的 t 检验（H0: 事件后终点收益均值为 0）
-    from scipy import stats as sps
-    t_stat, p_value = sps.ttest_1samp(terminal, 0.0)
+    # 终点收益的 t 检验（H0: 事件后终点收益均值为 0）。可检性 None
+    # 语义（先例=condition_kernel._p_value_for）：n<2 无自由度（std/
+    # t 检验产 NaN）、零方差（std(ddof=1)≤0）时 p_value 置 None、
+    # n<2 的 std 同置——NaN 进 payload 会在响应序列化 allow_nan=False
+    # 裸崩（S2 响应侧破口）；统计层防线与通道级 sanitize 切割
+    n_term = len(terminal)
+    std = float(terminal.std(ddof=1)) if n_term >= 2 else None
+    if n_term >= 2 and std > 0:
+        from scipy import stats as sps
+        _, p_value = sps.ttest_1samp(terminal, 0.0)
+        p_value = float(p_value)
+    else:
+        p_value = None
 
     confidence = {
         "method": "one_sample_t",
-        "p_value": float(p_value),
-        "n_events": int(len(event_idx)),
+        "p_value": p_value,
+        "n_events": int(n_term),
         "alpha": 0.05,
     }
     payload = {
@@ -112,7 +122,7 @@ def event_study(
         },
         "terminal_return": {
             "mean": float(terminal.mean()),
-            "std": float(terminal.std(ddof=1)),
+            "std": std,
             "min": float(terminal.min()),
             "max": float(terminal.max()),
             "positive_rate": float((terminal > 0).mean()),
