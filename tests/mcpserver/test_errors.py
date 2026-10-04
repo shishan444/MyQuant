@@ -209,3 +209,78 @@ class TestToolSafeDecorator:
             return {"items": [1, 2], "total": 2}
 
         assert probe() == {"items": [1, 2], "total": 2}
+
+
+class TestErrorChannelHints:
+    """fix-mcp-error-channel 卡6（0.3.2）：hint 参数面可执行性——
+    通用文案去参数绑定 + 新码条目语义 + 快照调用点特化覆写直测。"""
+
+    def test_warmup_hint_generalized_no_start_binding(self) -> None:
+        """specs「快照 warmup 报错指引与参数面匹配」静态面：
+        RESEARCH_WARMUP_INSUFFICIENT 文案不得含「start 前移」参数
+        绑定（快照参数面无 start），须含对一切调用方成立的通用
+        动作集（短 lookback / 降周期 / 扩数据前缀）。"""
+        hint = HINTS["RESEARCH_WARMUP_INSUFFICIENT"]
+        assert "start 前移" not in hint, \
+            f"warmup hint 仍绑定 start 参数（快照参数面无 start）: {hint!r}"
+        for action in ("lookback 更短", "降低请求周期"):
+            assert action in hint, f"warmup hint 缺通用动作 {action!r}: {hint!r}"
+
+    def test_internal_code_hint_directs_to_report(self) -> None:
+        """RESEARCH_TEMPLATE_INTERNAL 条目：指向附 detail 提交问题
+        报告 + 明示重试大概率无效（500 语义防盲重试，D3）。"""
+        hint = HINTS["RESEARCH_TEMPLATE_INTERNAL"]
+        assert "问题报告" in hint, f"新码 hint 须指向问题报告: {hint!r}"
+        assert "重试" in hint, f"新码 hint 须含重试无效语义: {hint!r}"
+
+
+class TestSnapshotHintOverride:
+    """卡6/A3 快照调用点特化覆写：get_market_snapshot 内局部
+    except ApiError 按码覆写 hint（不动 tool_safe 全局签名）。"""
+
+    @staticmethod
+    def _make_api_raising(code: str):
+        api_holder: dict = {}
+
+        def _raise(path, params=None):
+            raise ApiError(422, code, "x", {"probe": 1})
+
+        return api_holder, _raise
+
+    def test_warmup_failure_hint_specialized_to_snapshot_params(self) -> None:
+        """specs 场景锚：快照 warmup 失败 hint 仅涉及快照参数面实际
+        存在的参数（降 timeframes 子集），不引用通用文案的不可执行
+        指引（扩大数据前缀——快照参数面无该操作）。"""
+        import asyncio
+
+        from mcpserver.server import build_server
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        _, raiser = self._make_api_raising("RESEARCH_WARMUP_INSUFFICIENT")
+        api.get = raiser
+
+        out = asyncio.run(mcp.call_tool(
+            "get_market_snapshot",
+            {"symbol": "BTCUSDT", "timeframes": "1d,4h"}))
+        err = out.structured_content["result"]["error"]
+        assert err["code"] == "RESEARCH_WARMUP_INSUFFICIENT"
+        assert "降低 timeframes" in err["hint"], \
+            f"hint 须为快照特化文案: {err['hint']!r}"
+        assert "可得数据前缀" not in err["hint"], \
+            "通用文案的不可执行指引不得残留（快照参数面无该操作）"
+
+    def test_other_code_hint_not_specialized(self) -> None:
+        """非 warmup 码不进覆写分支：走 tool_safe 全局注册表 hint
+        （特化只对参数面失配的码成立）。"""
+        import asyncio
+
+        from mcpserver.server import build_server
+        mcp, api = build_server(profile="readonly", base_url="http://x")
+        _, raiser = self._make_api_raising("RESEARCH_CONDITION_INVALID")
+        api.get = raiser
+
+        out = asyncio.run(mcp.call_tool(
+            "get_market_snapshot", {"symbol": "BTCUSDT"}))
+        err = out.structured_content["result"]["error"]
+        assert err["code"] == "RESEARCH_CONDITION_INVALID"
+        assert err["hint"] == HINTS["RESEARCH_CONDITION_INVALID"], \
+            "非 warmup 码不得被特化覆写"
