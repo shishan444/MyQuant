@@ -57,13 +57,19 @@ class TestFastPath:
             ex.shutdown()
 
     def test_fast_path_failure(self, db_path: Path) -> None:
+        """0.3.2 卡5 后行为：快路径失败 raise 结构化 500（D9——原伪
+        task dict 断言随缺陷裁定改写：RESEARCH_TEMPLATE_INTERNAL 直传，
+        无 fast_* task_id、任务表查无）。"""
+        from core.analysis.hypothesis_service import ResearchError
         ex = ResearchExecutor(db_path)
         try:
             def boom(stop):
                 raise ValueError("x")
-            out = ex.submit("light", boom, estimated_cost_s=0.1)
-            assert out["status"] == "failed"
-            assert "x" in out["reason"]
+            with pytest.raises(ResearchError) as ei:
+                ex.submit("light", boom, estimated_cost_s=0.1)
+            assert ei.value.code == "RESEARCH_TEMPLATE_INTERNAL"
+            assert ei.value.status == 500
+            assert ei.value.detail["exception_type"] == "ValueError"
         finally:
             ex.shutdown()
 
@@ -149,15 +155,18 @@ class TestResearchErrorStructured:
 
     def test_fast_path_research_error_reason_carries_code(
             self, db_path: Path) -> None:
+        """0.3.2 卡5 后行为：快路径 ResearchError 原样 raise 透传
+        （码与消息经调用方既有 422 通道；原 [code] reason dict 断言随
+        伪 task 形制废除改写）。"""
         ex = ResearchExecutor(db_path)
         try:
             def reject(stop):
                 raise ResearchError(
                     "RESEARCH_PARAM_INVALID", "forward_bars 须为正整数")
-            out = ex.submit("light", reject, estimated_cost_s=0.1)
-            assert out["status"] == "failed"
-            assert out["reason"].startswith("[RESEARCH_PARAM_INVALID]")
-            assert "forward_bars" in out["reason"]
+            with pytest.raises(ResearchError) as ei:
+                ex.submit("light", reject, estimated_cost_s=0.1)
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert "forward_bars" in ei.value.message
         finally:
             ex.shutdown()
 
