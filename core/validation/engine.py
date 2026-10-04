@@ -602,12 +602,10 @@ def _resolve_snr_pattern(
     """支撑/阻力形态动作求值（委托 patterns 模块）。"""
     from core.validation.patterns import detect_touch_bounce, detect_role_reversal
 
-    # 实际列名解析（模糊兜底）
+    # 实际列名解析（卡3c：模糊兜底删除——列缺失统一 False 降级，
+    # 与 _resolve_pattern/subject/target 的精确解析语义一致）
     if subject_col not in df.columns:
-        matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
-        if not matches:
-            return pd.Series(False, index=df.index)
-        subject_col = matches[0]
+        return pd.Series(False, index=df.index)
 
     if pattern == "touch_bounce":
         direction = cond.get("direction", "support")
