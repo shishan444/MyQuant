@@ -13,7 +13,11 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.condition_kernel import _mask_base
+from core.analysis.condition_kernel import (
+    _classify_target_ref,
+    _ensure_target_column,
+    _mask_base,
+)
 from core.analysis.hypothesis_service import ResearchError
 
 
@@ -75,3 +79,30 @@ class TestMaskBaseTargetChain:
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
         assert ei.value.detail["param"] == "condition.target"
         assert ei.value.detail["value"] == "no_such_col_x"
+
+
+class TestClassifyTargetRef:
+    """CARD-09 五分类底座文档性单测（分类链单点化后三消费方共守）：
+    数值串经分类链不 decode 不 raise——阈值语义非列名，任何 strict
+    下均透传（_mask_higher 原内嵌链缺 float 前置的漂移防线）。"""
+
+    def test_five_kinds_classification(self):
+        """五分类对拍：非 str/数值串/decoded/基础列/未知列名。"""
+        assert _classify_target_ref(70) == ("non_str", None)
+        assert _classify_target_ref("70") == ("numeric", None)
+        kind, payload = _classify_target_ref("rsi_14")
+        assert kind == "decoded"
+        assert payload["indicator"] == "RSI"
+        assert _classify_target_ref("volume") == ("base_column", None)
+        assert _classify_target_ref("no_such_x") == ("unknown", None)
+
+    def test_numeric_string_never_decodes_or_raises(self):
+        """数值串透传锚：strict=True 下不 decode（不生列）、不 raise
+        （阈值语义）、零副作用（列集不变）。"""
+        w = _work()
+        n_cols = len(w.columns)
+        _ensure_target_column(w, "70", strict=True)
+        assert len(w.columns) == n_cols, "数值串不得触发 decode 现算"
+        # 非 str 同形：透传零副作用
+        _ensure_target_column(w, 70, strict=True)
+        assert len(w.columns) == n_cols

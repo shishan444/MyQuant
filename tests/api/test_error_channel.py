@@ -56,7 +56,7 @@ _MISSING_CASES = [
 
 @pytest.fixture()
 def error_env(tmp_path: Path):
-    """600 bar 4h 合成数据（含趋势段使金叉可触发）+ 独立 db。"""
+    """900 bar 4h 合成数据（含趋势段使金叉可触发）+ 独立 db。"""
     rng = np.random.default_rng(42)
     n = 900
     idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
@@ -84,7 +84,7 @@ def _wire(client, env):
 
 
 def _body(template, params, **range_extra):
-    # start 后移使金叉用例 sma_200 的 600 bar warmup 可达（数据 600 bar，
+    # start 后移使金叉用例 sma_200 的 600 bar warmup 可达（数据 900 bar，
     # 请求起点后移至序列中段以内即可由前缀覆盖）
     rng = {"symbol": SYMBOL, "timeframe": "4h",
            "start": "2024-04-11T00:00:00Z", "end": "2024-05-01T00:00:00Z"}
@@ -342,23 +342,37 @@ class TestCrossIndicatorLoading:
         assert detail["code"] == "RESEARCH_TEMPLATE_INTERNAL"
         assert detail["detail"]["exception_type"] == "TypeError"
 
-    def test_event_study_full_window_events_vs_hand_current(self, api_client,
-                                                            error_env):
-        """【缺陷现状记录·待修复改写】event_study 全区间跨指标：kernel
-        求值正确（mask 命中 == 手算，矩阵列收敛形态判定链幂等分支
-        正常），但响应 payload 含 NaN——starlette JSONResponse
-        allow_nan=False 序列化崩（发生在卡4 收编之外的响应阶段，
-        生产为裸 500）。修复后本用例须改写为 200 + 事件数手算对照
-        （对照限 warmup 收敛后区间段）。"""
+    def test_event_study_full_window_events_vs_hand(self, api_client,
+                                                    error_env):
+        """event_study 全区间跨指标（CARD-08 后行为）：200 + 事件数
+        与 pandas 手算独立对照（对照限 warmup 收敛后区间段——无
+        warmup 前缀装载下 sma_200 于区间内 bar 199 起收敛，NaN 段
+        交叉公式天然无命中，A4 既有边界）；单事件时 std/p_value 为
+        可检性 None（CARD-08 防线——NaN 会在响应序列化 allow_nan=
+        False 裸崩，200 本身即无 NaN 出站证据）。"""
         _wire(api_client, error_env)
         cond = {"subject": {"indicator": "SMA", "params": {"period": 50},
                             "field": "sma"},
                 "action": "cross_above_series", "target": "sma_200"}
-        with pytest.raises(ValueError, match="nan"):
-            api_client.post("/api/research/analysis", json=_body(
-                "event_study", {"condition": cond, "min_events": 1,
-                                "window": 4},
-                start="2024-01-01T00:00:00Z", end="2024-06-01T00:00:00Z"))
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "event_study", {"condition": cond, "min_events": 1,
+                            "window": 4},
+            start="2024-01-01T00:00:00Z", end="2024-06-01T00:00:00Z"))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        n_events = body["payload"]["n_events"]
+        # 手算：合成数据全量 900 bar 上 sma50 上穿 sma_200（独立参考）
+        df = error_env["df"]
+        sma50 = df["close"].rolling(50).mean()
+        sma200 = df["close"].rolling(200).mean()
+        cross = (sma50.shift() < sma200.shift()) & (sma50 >= sma200)
+        expected = int(cross.sum())
+        assert n_events == expected
+        assert n_events > 0, "可解析 target 现算后事件数如实（非静默 0）"
+        # CARD-08 可检性 None 语义（单事件无自由度）
+        if n_events == 1:
+            assert body["confidence"]["p_value"] is None
+            assert body["payload"]["terminal_return"]["std"] is None
 
 
 class TestFailureDirectReturn:
@@ -428,6 +442,61 @@ class TestFailureDirectReturn:
             n_tasks = conn.execute(
                 "SELECT COUNT(*) FROM analysis_tasks").fetchone()[0]
         assert n_tasks == 0
+
+    def test_log_persistence_failure_never_breaks_success(self, api_client,
+                                                          error_env,
+                                                          monkeypatch,
+                                                          caplog):
+        """CARD-02 留痕防线（成功路径）：研究日志写入失败（如库锁）
+        降级 warning，不反噬主通道——结果照常 200 返回。"""
+        import logging
+        import sqlite3
+        import api.routes.research.analysis as ana
+
+        def _locked(*a, **kw):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(ana.rr, "append_research_log", _locked)
+        _wire(api_client, error_env)
+        with caplog.at_level(logging.WARNING, logger="api.routes.research.analysis"):
+            resp = api_client.post("/api/research/analysis", json=_body(
+                "condition_stats",
+                {"indicator": "RSI", "params": {"period": 14},
+                 "condition": {"subject": "rsi_14", "action": "gt",
+                               "target": 30}, "min_samples": 1}))
+        assert resp.status_code == 200, f"留痕失败不得反噬成功路径: {resp.text}"
+        assert resp.json()["sample_size"] >= 0
+        assert any("分析留痕写入失败" in r.message for r in caplog.records), \
+            "降级 warning 须留审计线索（template+failure 可见）"
+
+    def test_log_persistence_failure_never_breaks_error(self, api_client,
+                                                        error_env,
+                                                        monkeypatch):
+        """CARD-02 留痕防线（失败路径）：内部失败叠加上述留痕写库失败
+        ——结构化 500 三段照常出站，message 不被 sqlite 异常污染。"""
+        import sqlite3
+        import api.routes.research.analysis as ana
+
+        def _locked(*a, **kw):
+            raise sqlite3.OperationalError("database is locked")
+
+        def _boom(*a, **kw):
+            raise ValueError("内部炸点")
+
+        monkeypatch.setattr(ana.rr, "append_research_log", _locked)
+        monkeypatch.setattr(ana, "_run_template", _boom)
+        _wire(api_client, error_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "condition_stats",
+            {"indicator": "RSI", "params": {"period": 14},
+             "condition": {"subject": "rsi_14", "action": "gt",
+                           "target": 70}}))
+        assert resp.status_code == 500, f"留痕失败不得反噬错误通道: {resp.text}"
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_TEMPLATE_INTERNAL"
+        assert detail["detail"]["exception_type"] == "ValueError"
+        assert "database is locked" not in detail["message"], \
+            "message 通道保持干净（sqlite 降级细节不上浮）"
 
     def test_async_failure_real_heavy_path_pollable(self, api_client,
                                                     error_env):

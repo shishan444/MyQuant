@@ -641,8 +641,12 @@ class TestEvaluateSingleConditionFeature:
 
     def test_snr_subject_missing_column_false(self):
         """0.3.2 卡3c 后行为：SNR 动作 subject 列缺失 → 全 False 降级
-        （原模糊兜底已删——错配命中 my_close_price 属「合法」假证据，
-        锚随缺陷裁定改写，原锚 test_snr_subject_fuzzy_column_match）。"""
+        （锚随缺陷裁定改写，原锚 test_snr_subject_fuzzy_column_match）。
+        精确口径（CARD-01 探针复核）：本 cond 无 target 键 → target=""
+        经 _resolve_target None 拦截 + subject 缺列经 :336 前置拦截，
+        False 来自前置拦截路径（修复前后同形）；_resolve_snr_pattern
+        被删模糊段物理不可达（s.name 恒在列、s=None 到不了分派），
+        本锚钉的是「缺列绝不模糊命中」的行为面。"""
         from core.validation.engine import _evaluate_single_condition
         n = 30
         closes = 100 + 8 * np.sin(np.arange(n) * 2 * np.pi / 20)

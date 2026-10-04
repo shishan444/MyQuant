@@ -57,6 +57,51 @@ class TestEventStudy:
             event_study(df, condition={"subject": "close", "action": "gt",
                                        "target": 1e12}, window=5, data_ranges=RANGES)
 
+    def test_single_event_std_pvalue_none(self) -> None:
+        """CARD-08 防 NaN 分支（n<2）：单事件无自由度——std 与
+        p_value 均为可检性 None（NaN 会在响应序列化裸崩，先例
+        _p_value_for 的 None 语义）。"""
+        n = 60
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        marker = np.zeros(n)
+        marker[30] = 1
+        df = pd.DataFrame({
+            "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0,
+            "volume": 1.0, "marker": marker,
+        }, index=idx)
+        res = event_study(df, condition={"subject": "marker", "action": "gt",
+                                         "target": 0},
+                          window=4, data_ranges=RANGES, min_events=1)
+        assert res.payload["n_events"] == 1
+        assert res.payload["terminal_return"]["std"] is None
+        assert res.confidence["p_value"] is None
+
+    def test_zero_variance_std_kept_pvalue_none(self) -> None:
+        """CARD-08 防 NaN 分支（零方差）：n>=2 且 std(ddof=1)==0 →
+        p_value 置 None、std=0.0 为真实统计量保留。"""
+        n = 120
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        marker = np.zeros(n)
+        close = np.full(n, 100.0)
+        events = [10, 40, 70, 100]
+        for e in events:
+            marker[e] = 1
+            for k in range(1, 4):
+                close[e + k] = close[e] * (1 + 0.005 * k)
+        df = pd.DataFrame({
+            "open": close, "high": close, "low": close,
+            "close": close, "volume": 1.0, "marker": marker,
+        }, index=idx)
+        res = event_study(df, condition={"subject": "marker", "action": "gt",
+                                         "target": 0},
+                          window=3, data_ranges=RANGES, min_events=2)
+        assert res.payload["n_events"] == len(events)
+        std = res.payload["terminal_return"]["std"]
+        assert std == 0.0, "零方差 std=0.0 为真实统计量保留（非 None）"
+        assert res.confidence["p_value"] is None
+
     def test_three_elements(self) -> None:
         df = _make_df(400)
         res = event_study(df, condition={"subject": "close", "action": "gt",
