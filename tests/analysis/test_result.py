@@ -27,9 +27,11 @@ class TestBuildResultGates:
                          data_ranges=RANGES)
 
     def test_sample_size非整数_拒绝(self) -> None:
-        # isinstance(int) 检查：float / str 一律拒（防 100.0 静默放行）
+        # isinstance(int) 检查：float / str 一律拒（防 100.0 静默放行）。
+        # CARD-10 拆分：类型非法属编程错误保持 ValueError（match 锚
+        # 随收编改字——低于下限已转 422 走 ResearchError）
         for bad in (100.5, "100"):
-            with pytest.raises(ValueError, match="低于下限"):
+            with pytest.raises(ValueError, match="须为 int"):
                 build_result("t", sample_size=bad,
                              confidence={"method": "m", "interval": [0, 1]},
                              data_ranges=RANGES)
@@ -58,9 +60,12 @@ class TestBuildResultGates:
         # 下限放宽后 10 可构造
         assert build_result("t", sample_size=10, min_samples=5,
                             **kwargs).sample_size == 10
-        # 下限收紧后 100 不可构造
-        with pytest.raises(ValueError, match="小样本"):
+        # 下限收紧后 100 不可构造（CARD-10 收编：业务拒绝 422）
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="小样本") as ei:
             build_result("t", sample_size=100, min_samples=200, **kwargs)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["min_samples"] == 200
 
     def test_缺省下限为30(self) -> None:
         assert MIN_SAMPLES_DEFAULT == 30

@@ -53,9 +53,15 @@ class TestEventStudy:
     def test_insufficient_events_rejected(self) -> None:
         df = _make_df(200)
         # 罕见条件：close > 极大值 → 0 事件
-        with pytest.raises(ValueError, match="事件数"):
+        # CARD-10 收编：小样本属业务拒绝 422（detail 披露事件计数）
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="事件数") as ei:
             event_study(df, condition={"subject": "close", "action": "gt",
-                                       "target": 1e12}, window=5, data_ranges=RANGES)
+                                       "target": 1e12}, window=5,
+                       data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["n_events"] == 0
+        assert ei.value.detail["min_events"] == 30
 
     def test_single_event_std_pvalue_none(self) -> None:
         """CARD-08 防 NaN 分支（n<2）：单事件无自由度——std 与

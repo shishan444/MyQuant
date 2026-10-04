@@ -161,12 +161,15 @@ class TestGapClosureVariants:
 
     def test_相关滞后族_短样本与NaN跳过(self) -> None:
         """max_lag 大于可用样本差 → 多数 lag 不足 min_samples 跳过，
-        仍有合法 lag 产出；全族不足 → ValueError。"""
+        仍有合法 lag 产出；全族不足 → 422（CARD-10 收编业务拒绝）。"""
         df = _make_df(300, seed=7)
         res = correlation_scan(df, signal_column="close", data_ranges=RANGES,
                                horizon=4, max_lag=200, min_samples=50)
         assert "peak_lag" in res.payload  # 合法 lag 族产出
         # 全族不足：样本需求超出数据量
-        with pytest.raises(ValueError, match="可用配对不足"):
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="可用配对不足") as ei:
             correlation_scan(df, signal_column="close", data_ranges=RANGES,
                              horizon=4, max_lag=4, min_samples=299)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["min_samples"] == 299

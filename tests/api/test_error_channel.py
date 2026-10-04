@@ -322,14 +322,15 @@ class TestCrossIndicatorLoading:
         assert sum(s.get("samples", 0) for s in by_seg) > 0, \
             "跨指标 target 不得静默 0（同病随 3b 治愈）"
 
-    def test_event_study_short_window_none_column_current(self, api_client,
-                                                          error_env):
-        """【缺陷现状记录·待修复改写】event_study 短区间跨指标：请求
-        区间短于 target lookup 时，_load_df 矩阵的 sma_200 列为
-        object 全 None 填充，判定链「列在→幂等」截胡现算分支，
-        engine 拿 None 列比较炸 TypeError → 现状收编为 500 结构化。
-        应然（D20 分层契约）：可解析 → 现算后事件数如实（含 0）。
-        修复后本用例须改写为事件数对照。"""
+    def test_event_study_short_window_events_zero_422(self, api_client,
+                                                      error_env):
+        """event_study 短区间跨指标（缺陷闭环终态）：请求区间短于
+        target lookup 时 sma_200 全 None（CARD-07 收口 float 全 NaN，
+        比较安全全 False）→ 事件数 0 如实 → 小样本业务拒绝 422
+        （CARD-10 收编）——D20 分层契约「可解析性决定 422、区间
+        位置决定事件数」全链落地：非 TypeError 500、非 NaN 序列化
+        崩、非静默 0 样本。原现状钉（TypeError→500）随两级收编
+        改写消号。"""
         _wire(api_client, error_env)
         cond = {"subject": {"indicator": "SMA", "params": {"period": 50},
                             "field": "sma"},
@@ -337,10 +338,12 @@ class TestCrossIndicatorLoading:
         resp = api_client.post("/api/research/analysis", json=_body(
             "event_study", {"condition": cond, "min_events": 1,
                             "window": 4}))
-        assert resp.status_code == 500, resp.text
+        assert resp.status_code == 422, resp.text
         detail = resp.json()["detail"]
-        assert detail["code"] == "RESEARCH_TEMPLATE_INTERNAL"
-        assert detail["detail"]["exception_type"] == "TypeError"
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["n_events"] == 0, \
+            "事件数如实（区间未收敛 → 0，非静默假统计）"
+        assert detail["detail"]["min_events"] == 1
 
     def test_event_study_full_window_events_vs_hand(self, api_client,
                                                     error_env):
@@ -416,25 +419,22 @@ class TestFailureDirectReturn:
         assert any("RESEARCH_TEMPLATE_INTERNAL" in e["summary"]
                    for e in logs), "失败留痕进入研究日志"
 
-    def test_business_failure_direct_return_current(self, api_client,
-                                                    error_env):
-        """【偏差现状记录·待裁决】业务失败（min_samples 高于可触发量）
-        同步直返三段 + 零任务记录——specs S1「样本量不足」场景的
-        结构化直返字面成立；但现状码为 500 RESEARCH_TEMPLATE_INTERNAL
-        （condition_stats 小样本拒绝为裸 ValueError 存量形制，本次未
-        收编为 422），design 测试设计组预期「业务→422 既有码」——
-        分类偏差（422 诱导改参自愈 vs 500 诱导报告）已上报，裁决后
-        本用例随正确行为改写。"""
+    def test_business_failure_direct_return(self, api_client, error_env):
+        """业务失败（min_samples 高于可触发量）同步直返 422 三段 +
+        零任务记录（specs S1「样本量不足」场景——CARD-10 裁决方向 a
+        落地：小样本属业务拒绝，422 诱导改参自愈而非 500 诱导报告；
+        原现状钉 500 随收编改写消号）。"""
         _wire(api_client, error_env)
         resp = api_client.post("/api/research/analysis", json=_body(
             "condition_stats",
             {"indicator": "RSI", "params": {"period": 14},
              "condition": {"subject": "rsi_14", "action": "gt",
                            "target": 70}, "min_samples": 9999}))
-        assert resp.status_code == 500, resp.text
+        assert resp.status_code == 422, resp.text
         detail = resp.json()["detail"]
-        assert detail["code"] == "RESEARCH_TEMPLATE_INTERNAL"
-        assert "小样本" in detail["detail"]["summary"], "失败原因可见"
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert "小样本" in detail["message"], "失败原因可见"
+        assert detail["detail"]["min_samples"] == 9999
         assert "task_id" not in detail
         # 禁止副作用：任务表无记录（D11）
         import sqlite3
