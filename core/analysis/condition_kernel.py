@@ -240,13 +240,20 @@ def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
 
 
 def _compute_into(df: pd.DataFrame, cdef) -> str:
-    """结构化引用现算入 df（列已存在则幂等跳过），返回精确列名。"""
+    """结构化引用现算入 df（列已存在则幂等跳过），返回精确列名。
+
+    pandas_ta 数据不足（bar 数 < 指标 length）返回 None——收口为
+    float 全 NaN 列：engine 数值比较安全得全 False（subject/target
+    两侧同愈，本函数为条件现算唯一入口），不让 object 全 None 列
+    炸 TypeError→500。
+    """
     col = cdef.encoded_name()
     if col not in df.columns:
         from core.features.indicators import _compute_indicator
         for cname, series in _compute_indicator(
                 df, cdef.indicator, dict(cdef.params)).items():
-            df[cname] = series
+            df[cname] = (series if series is not None
+                         else pd.Series(np.nan, index=df.index))
     return col
 
 
