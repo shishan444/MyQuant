@@ -51,8 +51,9 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
 
 
 def _require_known_indicator(name: str) -> None:
-    """indicator 注册表值域前置校验（param_sweep/regime_split 共用）：
-    未知即 422——不让装载层 KeyError 裸穿（screen 同款纪律）。"""
+    """indicator 注册表值域前置校验（param_sweep/regime_split/
+    condition_stats 共用）：未知即 422——不让装载层 KeyError 裸穿
+    （screen 同款纪律）。"""
     from core.features.registry import INDICATOR_REGISTRY
 
     if name not in INDICATOR_REGISTRY:

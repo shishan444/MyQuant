@@ -13,8 +13,9 @@ recover_stale_analysis_tasks 在 API 启动时置 failed(reason=interrupted)
 （照 recover_stale_trading_tasks 先例）。
 
 结构化拒绝：模板/装载层抛的 ResearchError 在无 422 通道的路径（线程池
-heavy、快路径竞态）落 failed 时，reason 前缀 "[code] "——轮询方可解析
-错误码，与快路径 422 的结构化语义对齐。
+heavy）落 failed 时，reason 前缀 "[code] "——轮询方可解析错误码；快路径
+失败（卡5）raise 直传调用方既有结构化通道（ResearchError 原样/其余转
+RESEARCH_TEMPLATE_INTERNAL 500），不落伪 task。
 """
 from __future__ import annotations
 

@@ -422,7 +422,6 @@ def _resolve_target(df: pd.DataFrame, target):
     2. 字符串尝试 float 解析。
     3. 跨周期形制 "tf:indicator"（如 "4h:ema_20" → 查 "ema_20_4h" 列）。
     4. DataFrame 精确列名匹配。
-    5. 模糊列名匹配（去下划线小写后子串，与 _resolve_subject 同逻辑）。
     """
     if isinstance(target, (int, float)):
         return float(target)

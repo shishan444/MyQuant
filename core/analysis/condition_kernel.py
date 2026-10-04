@@ -105,8 +105,10 @@ def _mask_for(
 
     - 有效周期 = base 或无 timeframe 键 → 现行两段式（缺省零变化）：
       结构化 subject resolve → 按 params 现算指标列（encode 得精确
-      列名）→ 精确列名求值；字符串 subject 精确列名命中。列缺失返回
-      全 False 安全降级（既有契约）。
+      列名）→ 精确列名求值；字符串 subject 精确列名命中。列缺失降级
+      双侧分野（卡3b）：subject 侧缺列返回全 False 安全降级（既有
+      契约）；target 侧不可解码且非基础列结构化拒绝
+      RESEARCH_CONDITION_INVALID，基础列/数值 target 缺失仍全 False。
     - 有效周期 > base 且有 ctx → 掩码投影：整条件在高周期轴求值
       （subject 与列名类 target 高周期轴解析、action 高周期轴自洽），
       布尔掩码按 asof_completed 投影到基准索引，结果入 work 后缀列
