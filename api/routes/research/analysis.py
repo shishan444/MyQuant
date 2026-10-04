@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+import pandas as pd
 
 from api.deps import get_data_dir, get_db_path
 from api.routes.research.common import (
@@ -48,6 +49,29 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
             "RESEARCH_DATA_INSUFFICIENT",
             f"区间数据不足: {r['symbol']} {r['timeframe']} [{r['start']}, {r['end']})")
     return df
+
+
+def _load_with_condition_refs(
+    data_dir: Path, rng: Dict[str, str],
+    indicator: str, condition: Dict[str, Any],
+) -> tuple[pd.DataFrame, pd.Timestamp]:
+    """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
+    两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
+    计入前扩；strict=True 不可解析 target 结构化拒绝）后前扩装载，
+    统计段切回请求区间。
+
+    strict=True 单点化于此：未来新模板分支经本函数装载即不可能
+    遗漏「装载必须 strict」纪律。eval_start 接线留分支（接线样板
+    非判定逻辑，收进去职责糊化）。
+    """
+    from core.analysis.condition_kernel import collect_condition_refs
+    from core.analysis.warmup_loader import load_with_warmup
+
+    warm_names = [indicator] + [
+        ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    return load_with_warmup(
+        data_dir, rng["symbol"], rng["timeframe"],
+        rng["start"], rng["end"], warm_names)
 
 
 def _require_known_indicator(name: str) -> None:
@@ -108,9 +132,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
     # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
     # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
-    from core.analysis.condition_kernel import (
-        MtfEvalContext, collect_condition_refs,
-    )
+    from core.analysis.condition_kernel import MtfEvalContext
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
@@ -140,14 +162,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 前置校验（未知指标不让装载层 KeyError 裸穿，screen 同款纪律）
         _require_known_indicator(p.get("indicator"))
         s = p.get("sweep", {})
-        # 卡3a：warmup 预算并入条件双侧引用（target 指标 lookback 计入
-        # 前扩——strict=True 不可解析 target 在此结构化拒绝）
-        warm_names = [p["indicator"]] + [
-            ind for ind, _ in
-            collect_condition_refs(p["condition"], strict=True)]
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], warm_names)
+        # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
+        # 条件双侧引用——strict=True 不可解析 target 在此结构化拒绝
+        df, request_start = _load_with_condition_refs(
+            data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
         return param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
@@ -191,14 +209,11 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 补接：非法值经 derive_warmup 抛裸 KeyError 落 500，非缺键类
         # 参数错误应 422）
         _require_known_indicator(p["indicator"])
-        # 卡3a：warmup 预算并入条件双侧引用（金叉类跨指标条件的 target
-        # 指标 lookback 计入前扩——strict=True 不可解析 target 结构化拒绝）
-        warm_names = [p["indicator"]] + [
-            ind for ind, _ in
-            collect_condition_refs(p["condition"], strict=True)]
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], warm_names)
+        # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
+        # 条件双侧引用（金叉类跨指标条件 target lookback 计入前扩——
+        # strict=True 不可解析 target 结构化拒绝）
+        df, request_start = _load_with_condition_refs(
+            data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
         return condition_stats(df, indicator=p["indicator"], params=p["params"],
                                condition=p["condition"], data_ranges=ranges,
