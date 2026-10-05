@@ -99,6 +99,10 @@ class TestIdentityMigration:
                 == segmentation_identity("explicit", segs))
         assert mod._segmentation_identity_copy("auto", segs) == "auto"
         assert mod._segmentation_identity_copy("isolated", None) == ""
+        # 兜底分支双实现同步（服务层 return ""——非 auto/explicit 模式
+        # 的空串身份，隔离/随机窗五元第五维落此）：两实现同输出
+        assert (segmentation_identity("isolated", None)
+                == mod._segmentation_identity_copy("isolated", None) == "")
 
 
 class TestNonStagedBackfill:
