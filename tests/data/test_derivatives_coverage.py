@@ -206,3 +206,63 @@ class TestRouteWiring:
         result = run_analysis(self._payload(base), db_path=db,
                               data_dir=tmp_path)
         assert "derivatives_coverage" not in result
+
+
+class TestWarmupPrefixGapSemantics:
+    """CARD-02 锚：warmup 前扩装载下 gap 判定基准 = 用户请求区间。
+
+    主数据 2023-12-01 起 1500 根 1h；funding 仅覆盖 [2024-01-01,
+    2024-01-20]。走 load_with_warmup（RSI 前扩 200 bar 至 ~2023-12-27，
+    切片边界早于 funding 起点）——修复前 requested 取前扩切片边界，
+    前扩窗内衍生品起点被误报为请求段缺口；修复后 requested=用户区间。
+    """
+
+    @staticmethod
+    def _env(tmp_path: Path) -> pd.DataFrame:
+        base = make_ohlcv(n=1500, freq="1h", start="2023-12-01", seed=3)
+        _write(base, tmp_path / f"{SYMBOL}_{TF}.parquet")
+        funding = base.loc["2024-01-01":"2024-01-20"]
+        _write(funding, tmp_path / f"{SYMBOL}_funding.parquet")
+        return base
+
+    def test_prefix_window_no_false_gap(self, tmp_path):
+        """判别场景：请求段全落 funding 覆盖内 → gap=False（修复前
+        误报 True），requested_* = 用户区间而非前扩边界。"""
+        from core.analysis.warmup_loader import load_with_warmup
+
+        base = self._env(tmp_path)
+        df, _ = load_with_warmup(
+            tmp_path, SYMBOL, TF,
+            "2024-01-05T00:00:00", "2024-01-15T00:00:00", ["RSI"])
+        cov = df.attrs["derivatives_coverage"]["funding"]
+        assert cov["requested_start"] == pd.Timestamp(
+            "2024-01-05T00:00:00").tz_localize("UTC").isoformat()
+        assert cov["requested_end"] == pd.Timestamp(
+            "2024-01-15T00:00:00").tz_localize("UTC").isoformat()
+        assert cov["gap"] is False
+
+    def test_real_gap_still_reported(self, tmp_path):
+        """真缺口不漏报：请求 end 超出 funding 实际覆盖 → gap=True，
+        available_end 披露实际边界（缺口区间显式标注语义保持）。"""
+        from core.analysis.warmup_loader import load_with_warmup
+
+        base = self._env(tmp_path)
+        df, _ = load_with_warmup(
+            tmp_path, SYMBOL, TF,
+            "2024-01-05T00:00:00", "2024-01-31T00:00:00", ["RSI"])
+        cov = df.attrs["derivatives_coverage"]["funding"]
+        assert cov["gap"] is True
+        assert cov["available_end"] == base.loc[
+            "2024-01-01":"2024-01-20"].index[-1].isoformat()
+
+    def test_boundary_request_start_equals_coverage_start(self, tmp_path):
+        """边界临界：请求起点恰=funding 起点 → gap=False（严格比较
+        无边界误报）。"""
+        from core.analysis.warmup_loader import load_with_warmup
+
+        self._env(tmp_path)
+        df, _ = load_with_warmup(
+            tmp_path, SYMBOL, TF,
+            "2024-01-01T00:00:00", "2024-01-15T00:00:00", ["RSI"])
+        cov = df.attrs["derivatives_coverage"]["funding"]
+        assert cov["gap"] is False
