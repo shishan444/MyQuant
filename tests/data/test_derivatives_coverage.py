@@ -124,3 +124,22 @@ class TestConcurrentIsolation:
             m1, m2 = pool.submit(load, d1).result(), pool.submit(load, d2).result()
         assert m1.attrs["derivatives_coverage"]["funding"]["gap"] is True
         assert m2.attrs["derivatives_coverage"]["funding"]["gap"] is False
+
+
+class TestBoundaryDynamic:
+    def test_boundary_reflects_rebackfilled_data(self, tmp_path):
+        """边界动态锚：衍生品回补后（funding 覆盖延长）再装载，披露
+        边界反映回补后的实际覆盖——无硬编码日期残留（spec 场景
+        「边界随数据文件动态」的回归锚）。"""
+        base = _make_env(tmp_path, funding_bars=300, oi_bars=None)
+        first = _try_merge_derivatives(tmp_path, SYMBOL, TF, base)
+        assert first.attrs["derivatives_coverage"]["funding"][
+            "available_end"] == base.index[299].isoformat()
+
+        # 回补：funding 文件延长至 600 根后重载
+        full = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=3)
+        _write(full.iloc[:600], tmp_path / f"{SYMBOL}_funding.parquet")
+        second = _try_merge_derivatives(tmp_path, SYMBOL, TF, base)
+        cov = second.attrs["derivatives_coverage"]["funding"]
+        assert cov["available_end"] == base.index[599].isoformat()
+        assert cov["gap"] is True  # 仍短于请求区间，但边界已随文件变化
