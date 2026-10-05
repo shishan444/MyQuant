@@ -87,7 +87,8 @@ class TestVerdictEnforcement:
         hid = _hyp(db)
         _record(db, hid, "st_x", "pass")  # 模拟两态时代存量记录
         existing = rr.find_validation_by_identity(
-            db, hid, "st_x", f"rh_{hid[:6]}_pass")
+            db, hid, "st_x", f"rh_{hid[:6]}_pass",
+            level="isolated_backtest")
         assert existing is not None
         assert existing["verdict"] == "pass"
 

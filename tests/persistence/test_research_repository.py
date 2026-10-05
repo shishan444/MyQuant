@@ -140,7 +140,8 @@ class TestValidationDoubleWrite:
             db_path, record_id="rec_1", hypothesis_id="hyp_1", strategy_id="st_1",
             level="isolated_backtest", params='{"warmup": 200}', result='{}',
             verdict="pass", range_hash="rh_req")
-        found = rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rh_req")
+        found = rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rh_req",
+                                            level="isolated_backtest")
         assert found is not None and found["verdict"] == "pass"
         logs = [l for l in rr.list_research_log(db_path, hypothesis_id="hyp_1")
                 if l["entry_type"] == "validate"]
@@ -169,7 +170,8 @@ class TestValidationDoubleWrite:
                 db_path, record_id="rec_x", hypothesis_id="hyp_1", strategy_id="st_1",
                 level="isolated_backtest", params='{}', result=None,
                 verdict="pass", range_hash="rk", log_id="occupied")
-        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rk") is None
+        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rk",
+                                            level="isolated_backtest") is None
 
 
 class TestPluginDoubleWrite:

@@ -340,9 +340,48 @@ def _resolve_threshold_profile(
     return DEFAULT_PROFILE
 
 
+def segmentation_identity(mode: str, segments=None) -> str:
+    """0.3.3 G7：幂等身份第五维——分段身份（非模式串）。
+
+    auto → "auto"；explicit → 规范化段清单内容摘要（等价清单必同
+    摘要：段序按 (start,end,label) 显式排序、键序固定、非 ASCII label
+    稳定——不同段清单摘要不同，同区间分段方案对比各自独立）；其余
+    （隔离/随机窗）→ 空串。输入形制统一为与 params 落库同形的字符串化
+    段清单（Timestamp/str 双兼容——写入侧对象先同形转换，回填侧
+    params 字符串直取）。alembic 迁移内联同逻辑副本（自包含防重放
+    漂移）——改动须双向同步（test 断言两实现同输出）。
+    """
+    if mode == "auto":
+        return "auto"
+    if mode == "explicit":
+        norm = [
+            {"label": s["label"],
+             "start": s["start"].isoformat()
+             if hasattr(s["start"], "isoformat") else str(s["start"]),
+             "end": s["end"].isoformat()
+             if hasattr(s["end"], "isoformat") else str(s["end"])}
+            for s in (segments or [])]
+        canon = json.dumps(
+            sorted(norm, key=lambda s: (s["start"], s["end"], s["label"])),
+            sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+    return ""
+
+
+def _dup_payload(existing: Dict[str, Any]) -> Dict[str, Any]:
+    """幂等命中返回形（五元命中——隔离/分段/随机窗共用）。"""
+    return {
+        "record_id": existing["record_id"],
+        "verdict": existing["verdict"],
+        "duplicated": True,
+        "result": json.loads(existing["result"]) if existing["result"] else None,
+    }
+
+
 def _hypothesis_precheck(
     db_path: Path, hypothesis_id: str, strategy_id: str,
     rh: str, request_range: Dict[str, str],
+    *, idem_level: Optional[str] = None, idem_segmentation: str = "",
 ) -> Optional[Dict[str, Any]]:
     """验证族前置检查四步（isolated/staged 同构提取）。
 
@@ -350,6 +389,10 @@ def _hypothesis_precheck(
     judged_ranges）→ 扫描候选精确复用反向核查。幂等命中返回既有
     记录 payload（duplicated=True），干净返回 None（调用方继续
     验证主流程）；Raises 语义与提取前逐字一致。
+    0.3.3 G7：幂等查询按五元身份（level+segmentation 等值——类型
+    隔离）。idem_level=None 时跳过原位幂等（分段路径的 explicit 摘要
+    依赖构造后的段清单——幂等查询后置到段清单就绪处，precheck 只做
+    其余三步）。
     """
     hyp = rr.get_hypothesis(db_path, hypothesis_id)
     if hyp is None:
@@ -359,14 +402,12 @@ def _hypothesis_precheck(
         raise ResearchError("RESEARCH_HYPOTHESIS_TERMINAL",
                             f"假设已终态（{hyp['status']}），拒绝验证；请登记新假设",
                             status=409)
-    existing = rr.find_validation_by_identity(db_path, hypothesis_id, strategy_id, rh)
-    if existing is not None:
-        return {
-            "record_id": existing["record_id"],
-            "verdict": existing["verdict"],
-            "duplicated": True,
-            "result": json.loads(existing["result"]) if existing["result"] else None,
-        }
+    if idem_level is not None:
+        existing = rr.find_validation_by_identity(
+            db_path, hypothesis_id, strategy_id, rh,
+            level=idem_level, segmentation=idem_segmentation)
+        if existing is not None:
+            return _dup_payload(existing)
     judged = judged_ranges_union(db_path, hypothesis_id)
     overlaps = overlaps_with_request(
         judged, request_range["start"], request_range["end"])
@@ -403,7 +444,8 @@ def run_isolated_backtest(
     # 幂等命中即返）
     rh = _range_hash(request_range)
     dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
-                               request_range)
+                               request_range,
+                               idem_level="isolated_backtest")
     if dup is not None:
         return dup
     # payload 的并集快照：写库前时点（不含本次写入——原前置查询的
@@ -466,7 +508,7 @@ def run_isolated_backtest(
     }, ensure_ascii=False)
     rr.save_validation_with_log(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id,
-        strategy_id=strategy_id, level="isolated_backtest",
+        strategy_id=strategy_id, level="isolated_backtest", segmentation="",
         params=params_json, result=result_json, verdict=verdict, range_hash=rh,
         components=components_json)
 
@@ -525,8 +567,9 @@ def random_window_test(
     rh = _range_hash({"symbol": symbol, "timeframe": timeframe,
                       "start": data_start, "end": data_end,
                       "window_bars": window_bars, "n": n_windows, "seed": seed})
-    existing = rr.find_validation_by_identity(db_path, hypothesis_id or "adhoc",
-                                              strategy_id, rh)
+    existing = rr.find_validation_by_identity(
+        db_path, hypothesis_id or "adhoc", strategy_id, rh,
+        level="random_window")  # G7 五元：随机窗身份（segmentation 空串）
     if existing is not None:
         return {"record_id": existing["record_id"], "seed": seed,
                 "duplicated": True,
@@ -575,7 +618,7 @@ def random_window_test(
     record_id = f"rec_{uuid.uuid4().hex[:12]}"
     rr.save_validation_with_log(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id or "adhoc",
-        strategy_id=strategy_id, level="random_window",
+        strategy_id=strategy_id, level="random_window", segmentation="",
         params=json.dumps({"seed": seed, "window_bars": window_bars,
                            "n_windows": n_windows, "data_start": data_start,
                            "data_end": data_end, "symbol": symbol,
@@ -884,8 +927,10 @@ def run_staged_validation(
     judged: List[Dict[str, str]] = []
     if hypothesis_id is not None:
         # 验证族前置检查四步（isolated 同款——同构提取，幂等命中即返）
+        # G7 五元幂等：explicit 摘要依赖构造后的段清单——原位幂等
+        # 后置（idem_level=None 跳过），段清单就绪后按下述查询补做
         dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
-                                   request_range)
+                                   request_range, idem_level=None)
         if dup is not None:
             return dup
 
@@ -902,6 +947,16 @@ def run_staged_validation(
             segments, start, end)
     else:
         seg_list = _auto_segments(data_dir, symbol, timeframe, start, end)
+
+    # G7 五元幂等（后置补做）：段清单就绪后按分段身份查询——同区间
+    # 不同分段方案（auto / 不同 explicit 清单）各自独立命中
+    if hypothesis_id is not None:
+        existing = rr.find_validation_by_identity(
+            db_path, hypothesis_id, strategy_id, rh,
+            level="staged_validation",
+            segmentation=segmentation_identity(segmentation, seg_list))
+        if existing is not None:
+            return _dup_payload(existing)
 
     # ---- 逐段回测与段级门槛 ----
     seg_results: List[Dict[str, Any]] = []
@@ -952,6 +1007,7 @@ def run_staged_validation(
         rr.save_validation_with_log(
             db_path, record_id=record_id, hypothesis_id=hypothesis_id,
             strategy_id=strategy_id, level="staged_validation",
+            segmentation=segmentation_identity(segmentation, seg_list),
             params=json.dumps({
                 "request_range": request_range, "range_hash": rh,
                 "segmentation": segmentation, "segments": [

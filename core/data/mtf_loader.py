@@ -186,6 +186,30 @@ def _try_merge_derivatives(
         funding_df = load_parquet(funding_path)
 
     if oi_df is not None or funding_df is not None:
-        return merge_derivatives_into_ohlcv(df, oi_df, funding_df)
+        merged = merge_derivatives_into_ohlcv(df, oi_df, funding_df)
+        # 0.3.3 G12：旁路探测衍生品列实际边界与请求区间交集（gap 态
+        # 显式标注——「数据不存在」与「市场没信号」不再混淆）。通道走
+        # df.attrs（对象级传播——ThreadPoolExecutor 并发下天然隔离，
+        # 优于模块级全局）。探测失败降级 probe_failed 不阻断装载
+        # （架构 A1：披露是伴随物不是闸门）。文件缺失的 absent 态由
+        # 既有 skipped_indicators 声明通道承载（spec 场景集对齐）。
+        try:
+            req_lo, req_hi = df.index.min(), df.index.max()
+            coverage: dict = {}
+            for _name, _src in (("oi", oi_df), ("funding", funding_df)):
+                if _src is None:
+                    continue
+                _lo, _hi = _src.index.min(), _src.index.max()
+                coverage[_name] = {
+                    "available_start": _lo.isoformat(),
+                    "available_end": _hi.isoformat(),
+                    "requested_start": req_lo.isoformat(),
+                    "requested_end": req_hi.isoformat(),
+                    "gap": bool(_lo > req_lo or _hi < req_hi),
+                }
+            merged.attrs["derivatives_coverage"] = coverage
+        except Exception:  # noqa: BLE001 —— 探测失败降级（A1 不阻断）
+            merged.attrs["derivatives_coverage"] = {"status": "probe_failed"}
+        return merged
 
     return df

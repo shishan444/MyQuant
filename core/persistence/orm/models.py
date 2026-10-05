@@ -456,10 +456,15 @@ class ValidationRecord(Base):
 
     __tablename__ = "validation_records"
     __table_args__ = (
-        # 幂等键（附.5 卡3）：同假设+同策略+同区间重复请求返回既有
+        # 幂等键（0.3.3 G7 五元化）：三元组 + level（类型隔离——隔离/
+        # 分段/随机窗互不命中）+ segmentation（分段身份：auto 字面量 /
+        # explicit 段清单内容摘要 / 其余空串——同区间不同分段方案各自
+        # 独立；NOT NULL 空串判重——NULL 不判重会丢非分段记录的库级
+        # 幂等保护）
         Index(
             "ux_validation_idem",
             "hypothesis_id", "strategy_id", "range_hash",
+            "level", "segmentation",
             unique=True,
         ),
         Index("ix_validation_hypothesis", "hypothesis_id", "created_at"),
@@ -470,6 +475,9 @@ class ValidationRecord(Base):
     strategy_id: Mapped[Optional[str]] = mapped_column(Text)
     # isolated_backtest | random_window | composite | component
     level: Mapped[str] = mapped_column(Text, nullable=False)
+    # 分段身份（0.3.3 G7 幂等第五维——见 _segmentation_identity）
+    segmentation: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="")
     params: Mapped[str] = mapped_column(Text, nullable=False)  # JSON（含 warmup、seed）
     result: Mapped[Optional[str]] = mapped_column(Text)  # JSON
     # pass | fail（预定义门槛表机械判定）
