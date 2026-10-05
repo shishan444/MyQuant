@@ -530,6 +530,10 @@ def random_window_test(
     if existing is not None:
         return {"record_id": existing["record_id"], "seed": seed,
                 "duplicated": True,
+                # 0.3.3 G6：幂等重放与首次请求同形——顶层 verdict 取
+                # 记录 verdict 列（:360 先例同源；worst_window.verdict 是
+                # 收益最差窗的窗口判定，不等于三态聚合，禁作提取源）
+                "verdict": existing["verdict"],
                 "result": json.loads(existing["result"]) if existing["result"] else None}
 
     rng = np.random.default_rng(seed)
@@ -581,6 +585,9 @@ def random_window_test(
         verdict=agg, range_hash=rh)
 
     return {"record_id": record_id, "seed": seed,
+            # 0.3.3 G6：顶层 verdict（值=在场 agg 聚合判定）——与幂等
+            # 命中路径同形同值，程序化判定链单点取值
+            "verdict": agg,
             "windows": windows, "summary": summary}
 
 

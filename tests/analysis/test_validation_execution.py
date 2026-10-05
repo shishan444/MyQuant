@@ -461,3 +461,24 @@ class TestGapClosureValidation:
                     db, data_dir, strategy_id=sid, symbol="BTCUSDT",
                     timeframe="4h", start="2023-03-01", end="2023-03-20")
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_random_window_top_level_verdict_both_paths(self, db, data_dir):
+        """0.3.3 G6：随机窗顶层 verdict 双路径同形同值——首次请求与
+        幂等重放（duplicated=True）顶层 verdict 均在场且相等（提取源：
+        首次=在场 agg、重放=记录 verdict 列——两路径一致性锚）。"""
+        save_strategy(db, strategy_id="st_g6", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        kwargs = dict(
+            strategy_id="st_g6", symbol="BTCUSDT", timeframe="4h",
+            data_start="2023-03-20", data_end="2023-05-01",
+            window_bars=30, n_windows=3, seed=5)
+        first = random_window_test(db, data_dir, **kwargs)
+        replay = random_window_test(db, data_dir, **kwargs)
+
+        assert first.get("duplicated") is not True  # 正常路径无此键
+        assert replay["duplicated"] is True
+        # 双路径顶层 verdict 在场且同值
+        assert first["verdict"] in {"pass", "fail", "inconclusive"}
+        assert replay["verdict"] == first["verdict"]
+        # 与既有 summary 聚合一致（worst_window 兼容保留）
+        assert "worst_window" in first["summary"]
