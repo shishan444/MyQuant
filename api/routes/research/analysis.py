@@ -42,6 +42,7 @@ def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
     计数口径 = len(_load_df(...))（列同源等价，测试锚定）；timestamp
     列名缺失（数据集形制变体）时回退全量装载——正确性优先于轻量。
     """
+    from core.analysis.warmup_loader import to_utc
     from core.data.mtf_loader import find_parquet, safe_symbol
     from core.data.storage import load_parquet
 
@@ -50,8 +51,11 @@ def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
         if path is None:
             return 0
         ts = load_parquet(path, columns=["timestamp"])
-        lo = pd.Timestamp(r["start"])
-        hi = pd.Timestamp(r["end"])
+        # tz 归一（to_utc 单一实现）：naive 按 UTC 解释（capability 公开
+        # 承诺）；未归一时 naive 与 tz-aware 索引比较抛 TypeError 不在
+        # 下方回退捕获列表，会裸穿 500（CARD-01）
+        lo = to_utc(pd.Timestamp(r["start"]))
+        hi = to_utc(pd.Timestamp(r["end"]))
         return int(((ts.index >= lo) & (ts.index <= hi)).sum())
     except (KeyError, ValueError):
         df = _load_df(data_dir, r)
