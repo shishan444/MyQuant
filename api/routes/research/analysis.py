@@ -176,9 +176,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
     if payload.template == "screen_patterns":
-        # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 取最大周期×3），
-        # 统计段切回请求区间；features 校验前置（未知指标在此结构化拒绝，
-        # 不让装载层 KeyError 裸穿）
+        # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 主公式推导：
+        # 周期类参数上限之和 ×3、下限 200），统计段切回请求区间；
+        # features 校验前置（未知指标在此结构化拒绝，不让装载层
+        # KeyError 裸穿）
         feature_names = resolve_feature_names(p.get("features", "all"))
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
