@@ -392,3 +392,18 @@ class TestDisclosureParity:
         src = Path(vs.__file__).read_text(encoding="utf-8")
         assert "max_indicator_period" not in src, "basis 旧口径残留"
         assert src.count("WARMUP_RULE_TEXT") >= 2  # import + basis 落用
+
+    def test_high_tf_conversion_elements_across_three_faces(self):
+        """CARD-03 锚：高周期折算三要素（折算语义 / 42 bar=42 天具体例 /
+        下限分属两式）三披露面齐备一致——CAPABILITY_DOC 与 tools docstring
+        折算句跨行，原文 in 检查会被换行切断，须 squash 后断言。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        from mcpserver.capability import CAPABILITY_DOC
+        faces = {
+            "WARMUP_RULE_TEXT": self._squash(WARMUP_RULE_TEXT),
+            "CAPABILITY_DOC": self._squash(CAPABILITY_DOC),
+            "tools 源码": self._squash(self._TOOLS_SRC),
+        }
+        for face_name, face in faces.items():
+            for key in ("折算为前扩时长", "42bar=42天", "分属两式"):
+                assert key in face, f"{face_name} 缺高周期折算要素: {key}"

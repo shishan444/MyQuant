@@ -55,11 +55,11 @@ class TestDeriveWarmup:
         assert derive_warmup(["ATR"]) == 200
 
     def test_3x_when_period_exceeds_floor(self) -> None:
-        """最大周期×3 超过 200 时按推导值。"""
+        """单指标周期类参数上限之和×3 超过 200 时按推导值。"""
         assert derive_warmup(["EMA"]) == max(200, 200 * 3)  # 600
 
     def test_takes_max_across_indicators(self) -> None:
-        """多指标取最大周期。"""
+        """多指标取最大的（各指标周期类参数上限之和）。"""
         assert derive_warmup(["ATR", "EMA"]) == 600
 
     def test_empty_defaults_to_floor(self) -> None:
