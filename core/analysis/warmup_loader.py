@@ -79,6 +79,10 @@ def load_with_warmup(
 
     df = load_and_prepare_df(
         data_dir, symbol, timeframe, data_start=load_start, data_end=end,
+        # gap 判定用用户请求区间而非前扩切片边界（CARD-02：前扩窗内无
+        # 衍生品≠请求段缺口——1h 链请求起点落在衍生品起点后约 8 天内
+        # 即触发旧口径误报）
+        coverage_range=(start, end),
         compute_indicators=False,
     )
     if df is None:
