@@ -546,3 +546,46 @@ class TestIdempotencyFiveTuple:
                 strategy_id="st_tema", level="isolated_backtest",
                 segmentation="", params="{}", result=None,
                 verdict="fail", range_hash=rh)
+
+    def test_out_of_order_segments_rejected_before_encoding(self, env):
+        """特征网：段序乱序（时间倒序段清单）进不了摘要编码——前置
+        校验 422 RESEARCH_PARAM_INVALID（spec 等价清单场景的边界现状：
+        「构造顺序不同」对段内键序=同摘要幂等命中（既有锚），对段序
+        乱序=前置拒绝不进编码）。"""
+        hyp = _register_hyp(env)
+        idx = env["df"].index
+        chronological = [self._seg("h1", idx[700], idx[1600]),
+                         self._seg("h2", idx[1600], idx[-1])]
+        reversed_list = list(reversed(chronological))
+        with pytest.raises(ResearchError, match="乱序") as ei:
+            _call(env, hypothesis_id=hyp, segmentation="explicit",
+                  segments=reversed_list)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # 拒绝发生在落库前（不产生半成品记录）
+        recs = [r for r in rr.list_validation_records(
+            env["db"], hypothesis_id=hyp)
+            if r["level"] == "staged_validation"]
+        assert recs == []
+
+
+class TestStagedWarmupDetailDisclosure:
+    """特征网：分段链 warmup 不足报错 detail 四键（_run_backtest_on_range
+    本批新增——与 warmup_loader 同构但独立实现，两处各自锚定防单边丢失）。
+    """
+
+    def test_staged_warmup_detail_four_keys(self, env):
+        """前缀不足报错 detail 携带 warmup_bars/available_bars/data_start/
+        rule——rule 与 registry_meta.WARMUP_RULE_TEXT 同文（多披露面一致
+        的报错面）。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        df = env["df"]
+        with pytest.raises(ResearchError) as ei:
+            _call(env, start=df.index[100].isoformat())  # 前缀 100 < 600
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+        detail = ei.value.detail
+        assert set(detail) >= {"warmup_bars", "available_bars",
+                               "data_start", "rule"}
+        assert detail["warmup_bars"] == 600  # 现状：env 策略推导值
+        assert detail["available_bars"] == 100
+        assert detail["data_start"] == df.index[0].isoformat()
+        assert detail["rule"] == WARMUP_RULE_TEXT

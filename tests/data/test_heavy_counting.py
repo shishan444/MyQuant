@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from api.routes.research.analysis import (
     _HEAVY_ROWS, _count_rows_index_only, _load_df,
@@ -87,3 +88,36 @@ class TestIndexOnlyCounting:
         _count_rows_index_only(tmp_path, RNG)
         assert calls["col"] == 1
         assert calls["full"] == before_full  # 计数路径零全列装载
+
+
+class TestSmallSampleGuard:
+    """特征网：C-β 重构保留的小样本错误序——index-only 计数 < 50 时
+    经 _load_df 复现原 DATA_INSUFFICIENT 先抛通道（预载退役不改变
+    小样本请求的拒绝码）。锚定现状拒绝码与 HTTP 出站形制。"""
+
+    def test_rows_below_min_bars_keeps_data_insufficient(self, tmp_path):
+        from fastapi import HTTPException
+
+        from api.routes.research.analysis import run_analysis
+        from api.schemas import AnalysisRunRequest, DataRangeItem
+        from core.persistence.db_ext import init_db_ext
+
+        df = _env(tmp_path, n=900)
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        # 请求区间只含 49 根（< min_bars 50）
+        rng = {"symbol": "BTCUSDT", "timeframe": "1h",
+               "start": df.index[100].isoformat(),
+               "end": df.index[148].isoformat()}
+        assert rng["start"] < rng["end"]
+        payload = AnalysisRunRequest(
+            template="distribution_compare",
+            params={"column": "close", "group_a": "2024-01",
+                    "group_b": "2024-02"},
+            data_range=DataRangeItem(
+                symbol=rng["symbol"], timeframe=rng["timeframe"],
+                start=rng["start"], end=rng["end"]))
+        with pytest.raises(HTTPException) as ei:
+            run_analysis(payload, db_path=db, data_dir=tmp_path)
+        assert ei.value.status_code == 422
+        assert ei.value.detail["code"] == "RESEARCH_DATA_INSUFFICIENT"

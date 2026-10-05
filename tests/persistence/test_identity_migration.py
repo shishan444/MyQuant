@@ -99,3 +99,72 @@ class TestIdentityMigration:
                 == segmentation_identity("explicit", segs))
         assert mod._segmentation_identity_copy("auto", segs) == "auto"
         assert mod._segmentation_identity_copy("isolated", None) == ""
+
+
+class TestNonStagedBackfill:
+    """特征网：非分段记录（隔离/随机窗）迁移后半边——空串回填与
+    迁移索引判重（spec 场景「历史记录经迁移回填后照常可用」的隔离
+    记录部分：segmentation 为空串而非 NULL，库级幂等保护完整保留）。
+    """
+
+    @staticmethod
+    def _insert_record(db: Path, rec_id: str, level: str, rh: str) -> None:
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT OR IGNORE INTO research_hypotheses (hypothesis_id, status,"
+            " conditions, conditions_hash, statement, data_ranges,"
+            " ranges_hash, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("hyp_n", "active", "{}", "hash_n", "非分段迁移测试", "[]",
+             "rhash_n", "2026-10-05T00:00:00", "2026-10-05T00:00:00"))
+        conn.execute(
+            "INSERT INTO validation_records (record_id, hypothesis_id,"
+            " strategy_id, level, params, result, verdict, range_hash,"
+            " created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (rec_id, "hyp_n", "st_n", level,
+             json.dumps({"request_range": {}}), "{}",
+             "pass", rh, "2026-10-05T00:00:00"))
+        conn.commit()
+        conn.close()
+
+    def test_isolated_and_random_window_backfill_empty_string(self,
+                                                              legacy_db):
+        """非分段行迁移后 segmentation 为空串（server_default 生效），
+        非 NULL——空串判重才保库级幂等（NULL 不入唯一索引判重）。"""
+        import sqlite3
+        self._insert_record(legacy_db, "rec_iso", "isolated_backtest",
+                            "rh_iso")
+        self._insert_record(legacy_db, "rec_rw", "random_window", "rh_rw")
+
+        _alembic(legacy_db, "upgrade", "head")
+
+        conn = sqlite3.connect(legacy_db)
+        rows = dict(conn.execute(
+            "SELECT record_id, segmentation FROM validation_records"
+        ).fetchall())
+        n_null = conn.execute(
+            "SELECT COUNT(*) FROM validation_records"
+            " WHERE segmentation IS NULL").fetchone()[0]
+        conn.close()
+        assert rows["rec_iso"] == ""
+        assert rows["rec_rw"] == ""
+        assert n_null == 0  # 无 NULL 残留（nullable 保护缺口的直接断言）
+
+    def test_migrated_index_enforces_five_tuple_unique(self, legacy_db):
+        """迁移重建的 ux_validation_idem 真为五元唯一：同五元（空串
+        segmentation 含在内）二次直插被库级拦截。"""
+        import sqlite3
+        import pytest as _pytest
+        from sqlalchemy.exc import IntegrityError
+        self._insert_record(legacy_db, "rec_iso_a", "isolated_backtest",
+                            "rh_dup")
+        _alembic(legacy_db, "upgrade", "head")
+        conn = sqlite3.connect(legacy_db)
+        with _pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO validation_records (record_id, hypothesis_id,"
+                " strategy_id, level, segmentation, params, result, verdict,"
+                " range_hash, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("rec_iso_b", "hyp_n", "st_n", "isolated_backtest", "",
+                 "{}", "{}", "fail", "rh_dup", "2026-10-05T00:00:00"))
+        conn.close()

@@ -143,3 +143,66 @@ class TestBoundaryDynamic:
         cov = second.attrs["derivatives_coverage"]["funding"]
         assert cov["available_end"] == base.index[599].isoformat()
         assert cov["gap"] is True  # 仍短于请求区间，但边界已随文件变化
+
+
+class TestRouteWiring:
+    """特征网：装配接线——_with_derivatives_coverage 挂键经 run_analysis
+    路由真实到达模板结果（helper 本身有锚，此处锚「真实模板分支的
+    结果携带披露」——spec 场景「结果声明各衍生品列的实际边界」的
+    出站面）。distribution_compare 走 _load_df 直装载链
+    （load_and_prepare_df → _try_merge_derivatives → attrs → 装配挂键）。
+    """
+
+    @staticmethod
+    def _route_env(tmp_path: Path, funding_bars: int | None) -> pd.DataFrame:
+        """路由级环境：主文件落盘（完整装载链需要）+ 可选 funding。"""
+        base = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=3)
+        _write(base, tmp_path / f"{SYMBOL}_{TF}.parquet")
+        if funding_bars is not None:
+            _write(base.iloc[:funding_bars],
+                   tmp_path / f"{SYMBOL}_funding.parquet")
+        return base
+
+    @staticmethod
+    def _payload(base: pd.DataFrame) -> "AnalysisRunRequest":
+        from api.schemas import AnalysisRunRequest, DataRangeItem
+        return AnalysisRunRequest(
+            template="distribution_compare",
+            params={"column": "close",
+                    "group_a": {"start": base.index[0].isoformat(),
+                                "end": base.index[449].isoformat()},
+                    "group_b": {"start": base.index[450].isoformat(),
+                                "end": base.index[899].isoformat()}},
+            data_range=DataRangeItem(
+                symbol=SYMBOL, timeframe=TF,
+                start=base.index[0].isoformat(),
+                end=base.index[-1].isoformat()))
+
+    def test_run_analysis_result_carries_coverage(self, tmp_path):
+        from api.routes.research.analysis import run_analysis
+        from core.persistence.db_ext import init_db_ext
+
+        base = self._route_env(tmp_path, funding_bars=300)
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        result = run_analysis(self._payload(base), db_path=db,
+                              data_dir=tmp_path)
+        # 模板自身结果在场（装配不吞模板 payload）
+        assert "payload" in result
+        cov = result["derivatives_coverage"]
+        assert cov["funding"]["gap"] is True
+        assert cov["funding"]["available_end"] == base.index[299].isoformat()
+        assert cov["funding"]["requested_end"] == base.index[899].isoformat()
+
+    def test_run_analysis_no_derivatives_no_key(self, tmp_path):
+        """无衍生品文件时结果不挂 coverage 键（absent 形不产生空披露
+        ——通道语义与 helper 锚一致，此处锚路由级出站）。"""
+        from api.routes.research.analysis import run_analysis
+        from core.persistence.db_ext import init_db_ext
+
+        base = self._route_env(tmp_path, funding_bars=None)
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        result = run_analysis(self._payload(base), db_path=db,
+                              data_dir=tmp_path)
+        assert "derivatives_coverage" not in result

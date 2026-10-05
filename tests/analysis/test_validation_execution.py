@@ -482,3 +482,26 @@ class TestGapClosureValidation:
         assert replay["verdict"] == first["verdict"]
         # 与既有 summary 聚合一致（worst_window 兼容保留）
         assert "worst_window" in first["summary"]
+
+    def test_random_window_verdict_matches_worst_case_aggregation(self,
+                                                                  db, data_dir):
+        """特征网：顶层 verdict 提取源同源性——等于窗级 verdict 列表
+        经 _aggregate_verdicts（最差聚合三态唯一实现）的聚合值；禁作
+        提取源的 worst_window.verdict（收益最差窗的窗口判定，语义
+        不同于三态聚合）单列断言以防提取源漂移。"""
+        from core.analysis.thresholds import _aggregate_verdicts
+        save_strategy(db, strategy_id="st_g6b",
+                      dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = random_window_test(
+            db, data_dir, strategy_id="st_g6b", symbol="BTCUSDT",
+            timeframe="4h", data_start="2023-03-20",
+            data_end="2023-05-01", window_bars=30, n_windows=4, seed=9)
+        window_verdicts = [w["verdict"] for w in out["windows"]]
+        expected = _aggregate_verdicts(window_verdicts)
+        assert out["verdict"] == expected
+        # 落库 verdict 列与顶层同值（程序化判定链单点取值的持久化面）
+        recs = [r for r in rr.list_validation_records(
+            db, strategy_id="st_g6b") if r["record_id"] == out["record_id"]]
+        assert len(recs) == 1
+        assert recs[0]["verdict"] == out["verdict"]
