@@ -22,7 +22,6 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.hypothesis_service import ResearchError, register_hypothesis
 from core.analysis.validation_service import (
     run_isolated_backtest,
-    run_isolated_backtest,
     run_staged_validation,
 )
 from core.persistence.db_ext import init_db_ext, save_strategy

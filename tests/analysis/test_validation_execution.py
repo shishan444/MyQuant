@@ -483,6 +483,37 @@ class TestGapClosureValidation:
         # 与既有 summary 聚合一致（worst_window 兼容保留）
         assert "worst_window" in first["summary"]
 
+    def test_random_window_same_seed_computational_reproducibility(
+            self, tmp_path, data_dir):
+        """阶段四盲区消解：同种子计算级可复现（spec 场景「同种子可
+        复现」）——两个独立 db 各自首跑（不经幂等通道），同种子同参数
+        → 同窗口集逐窗一致（start/end/metrics/verdict）与同 summary。
+        幂等锚只证 record 级复现，此处证计算级。"""
+        dbs = []
+        for i in range(2):
+            d = tmp_path / f"q{i}.db"
+            init_db_ext(d)
+            from core.analysis.executor import ensure_research_tables
+            ensure_research_tables(d)
+            save_strategy(d, strategy_id="st_repro",
+                          dna_json=_mtf_dna([]).to_json(),
+                          symbol="BTCUSDT", timeframe="4h")
+            dbs.append(d)
+        kwargs = dict(strategy_id="st_repro", symbol="BTCUSDT",
+                      timeframe="4h", data_start="2023-03-20",
+                      data_end="2023-05-01", window_bars=30,
+                      n_windows=4, seed=13)
+        run_a = random_window_test(dbs[0], data_dir, **kwargs)
+        run_b = random_window_test(dbs[1], data_dir, **kwargs)
+        assert run_a.get("duplicated") is not True
+        assert run_b.get("duplicated") is not True  # 两库各自首跑
+        keys = ("start", "end", "metrics", "verdict")
+        assert [{k: w[k] for k in keys} for w in run_a["windows"]] == [
+            {k: w[k] for k in keys} for w in run_b["windows"]]
+        assert run_a["verdict"] == run_b["verdict"]
+        assert run_a["summary"]["returns_median"] == pytest.approx(
+            run_b["summary"]["returns_median"])
+
     def test_random_window_verdict_matches_worst_case_aggregation(self,
                                                                   db, data_dir):
         """特征网：顶层 verdict 提取源同源性——等于窗级 verdict 列表
