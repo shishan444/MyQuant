@@ -36,6 +36,28 @@ _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
 _HEAVY_ROWS = 10000
 
 
+def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
+    """0.3.3 C-β：index-only 轻量计数——只读 timestamp 列按区间过滤
+    计行（不装 OHLCV 全列），heavy 判定从全量 IO 降为单列索引扫描。
+    计数口径 = len(_load_df(...))（列同源等价，测试锚定）；timestamp
+    列名缺失（数据集形制变体）时回退全量装载——正确性优先于轻量。
+    """
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    from core.data.storage import load_parquet
+
+    try:
+        path = find_parquet(data_dir, safe_symbol(r["symbol"]), r["timeframe"])
+        if path is None:
+            return 0
+        ts = load_parquet(path, columns=["timestamp"])
+        lo = pd.Timestamp(r["start"])
+        hi = pd.Timestamp(r["end"])
+        return int(((ts.index >= lo) & (ts.index <= hi)).sum())
+    except (KeyError, ValueError):
+        df = _load_df(data_dir, r)
+        return int(len(df))
+
+
 def _load_df(data_dir: Path, r: Dict[str, str]):
     from core.data.mtf_loader import load_and_prepare_df
 
@@ -399,9 +421,18 @@ def run_analysis(
         # 卡1 接线：必填键存在性前置（校验先于装载——省无谓 IO；
         # 缺键 422 含键名，消灭裸 KeyError→伪 task 家族）
         _require_required_keys(payload.template, payload.params)
-        df = _load_df(data_dir, payload.data_range.model_dump())
+        # 0.3.3 C-β：heavy 判定改 index-only 计数——原全量预载（装载
+        # 后丢弃/与模板首装双倍 IO）退役；各分支模板保持各自首装
+        # （每请求每分支恰好一次真实装载）
+        rows = _count_rows_index_only(
+            data_dir, payload.data_range.model_dump())
+        if rows < 50:
+            # min_bars 语义对齐（load_and_prepare_df 缺省 50——切片后
+            # 不足即「数据不足」）：经 _load_df 复现原 DATA_INSUFFICIENT
+            # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
+            rows = len(_load_df(data_dir, payload.data_range.model_dump()))
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
-                 or len(df) > _HEAVY_ROWS)
+                 or rows > _HEAVY_ROWS)
 
         if payload.template == "screen_patterns":
             # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；
