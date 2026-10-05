@@ -345,3 +345,50 @@ class TestListFolding:
         folded_size = len(json.dumps(payload, ensure_ascii=False).encode())
         raw_size = len(json.dumps(direct, ensure_ascii=False).encode())
         assert folded_size < 20 * 1024, f"折叠后默认响应 {folded_size}B 超 20KB"
+
+
+class TestDisclosureParity:
+    """0.3.3 G4/G5 披露对拍：mcpserver 文本层与 core 权威源同口径。
+
+    生产代码经 REST 分层不跨层 import——一致性由本锚强制（文本含
+    WARMUP_RULE_TEXT 关键口径子串；阈值数值 == api 侧常量；旧口径清零）。
+    工具经 @mcp.tool() 闭包注册、模块级无函数属性——doc 断言走源码文本
+    （同本文件 AST 扫描的取材纪律）。
+    """
+
+    _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _squash(text: str) -> str:
+        """空白归一（docstring 换行不切断口径子串）。"""
+        return "".join(text.split())
+
+    def test_list_indicators_doc_carries_rule_essentials(self):
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        src = self._squash(self._TOOLS_SRC)
+        for key in ("周期类参数注册表上限之和", "条件实际参数×3,20",
+                    "plugin_formula_lookback"):
+            assert self._squash(key) in src, f"list_indicators 描述缺口径要素: {key}"
+            assert self._squash(key) in self._squash(WARMUP_RULE_TEXT)  # 要素确属权威文本
+
+    def test_capability_warmup_rule_faithful(self):
+        from mcpserver.capability import CAPABILITY_DOC
+        for key in ("周期类参数注册表上限之和", "plugin_formula_lookback",
+                    "条件实际参数 × 3, 20"):
+            assert key in CAPABILITY_DOC, f"能力自述缺口径要素: {key}"
+        # 旧口径清零（capability 曾写「最大周期×3」——Q3 裁决禁旧口径）
+        assert "最大周期×3" not in CAPABILITY_DOC
+        assert "max_indicator_period" not in CAPABILITY_DOC
+
+    def test_run_analysis_doc_heavy_threshold_matches_constant(self):
+        import re
+        from api.routes.research.analysis import _HEAVY_ROWS
+        m = re.search(r"超过 (\d+)", self._TOOLS_SRC)
+        assert m is not None, "run_analysis 描述未披露同步/异步阈值"
+        assert int(m.group(1)) == _HEAVY_ROWS
+
+    def test_warmup_basis_uses_authoritative_text(self):
+        from core.analysis import validation_service as vs
+        src = Path(vs.__file__).read_text(encoding="utf-8")
+        assert "max_indicator_period" not in src, "basis 旧口径残留"
+        assert src.count("WARMUP_RULE_TEXT") >= 2  # import + basis 落用

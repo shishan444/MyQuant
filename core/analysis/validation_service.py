@@ -2,7 +2,9 @@
 
 隔离回测判定流（附.3）：
 终态拒验 → 幂等查询 → 判定并集求交（重叠 409 附 judged_ranges）→
-warmup 推导（max(200, 用到指标最大周期×3, 插件公式 lookback)）→
+warmup 推导（max(200, 跨指标取最大的(周期类参数注册表上限之和×3))，
+含公式插件时取 max(内置推导, plugin_formula_lookback)——口径见
+registry_meta.WARMUP_RULE_TEXT）→
 数据起点不足 422 → [warmup 起点装载算指标/组装插件信号 → 切回请求
 区间回测]（指标与插件列记忆保留、结果只统计请求区间）→ 门槛表机械判定 → validation_records+research_log 原子双落。
 
@@ -27,7 +29,7 @@ from core.analysis.isolation import (
     judged_ranges_union,
     overlaps_with_request,
 )
-from core.analysis.registry_meta import derive_warmup
+from core.analysis.registry_meta import WARMUP_RULE_TEXT, derive_warmup
 from core.analysis.thresholds import (
     DEFAULT_PROFILE,
     _aggregate_verdicts,
@@ -250,7 +252,11 @@ def _run_backtest_on_range(
         raise ResearchError(
             "RESEARCH_WARMUP_INSUFFICIENT",
             f"warmup 不足：需要 {warmup_bars} bar，数据起点前实际可得 "
-            f"{actual_warmup_bars} bar（数据起点 {enhanced.index[0]}）")
+            f"{actual_warmup_bars} bar（数据起点 {enhanced.index[0]}）",
+            detail={"warmup_bars": warmup_bars,
+                    "available_bars": actual_warmup_bars,
+                    "data_start": enhanced.index[0].isoformat(),
+                    "rule": WARMUP_RULE_TEXT})
 
     bt_df = enhanced[enhanced.index >= start_ts]  # 切回请求区间（指标列带记忆）
 
@@ -449,7 +455,7 @@ def run_isolated_backtest(
         "metrics": metrics,
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
-                   "basis": "max(200, max_indicator_period*3, plugin_formula_lookback)",
+                   "basis": WARMUP_RULE_TEXT,
                    "indicators": indicator_names},
         "bars_used": bars_used,
         "symbol": symbol, "timeframe": timeframe,
@@ -471,7 +477,7 @@ def run_isolated_backtest(
         "metrics": metrics,
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
-                   "basis": "max(200, max_indicator_period*3, plugin_formula_lookback)"},
+                   "basis": WARMUP_RULE_TEXT},
         "judged_ranges": judged,
     }
 

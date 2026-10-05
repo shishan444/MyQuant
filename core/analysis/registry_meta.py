@@ -78,6 +78,19 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
     return max(default_floor, max_period * 3)
 
 
+# warmup 推导规则的唯一权威文本（0.3.3 G5：四披露面——错误 detail /
+# 能力自述 / list_indicators 元数据 / 隔离回测 warmup.basis——同口径；
+# mcpserver 文本层经 REST 分层不直接 import，由 test_contract_parity
+# 锚强制子串一致）。忠实实现口径：_indicator_lookback 为周期类参数
+# 上限**求和**（多周期参数指标与「最大周期×3」docstring 口径有差）。
+WARMUP_RULE_TEXT = (
+    "主公式 max(200, 跨指标取最大的(周期类参数注册表上限之和 × 3))"
+    "——单指标按其周期类参数上限求和(保守取向)；"
+    "高周期条件掩码链 max(条件实际参数 × 3, 20)；"
+    "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)"
+)
+
+
 def indicator_convergence(indicator: str, params: Dict[str, Any]) -> int:
     """指标真实收敛需求（条件实际参数粒度——0.2.14 N1）。
 

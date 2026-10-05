@@ -89,9 +89,14 @@ def load_with_warmup(
     # warmup 可得性：装载后起点必须真正早于 start（warmup 段有数据）
     actual_warmup_bars = int((df.index < start_ts).sum())
     if actual_warmup_bars < warmup_bars:
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
         raise ResearchError(
             "RESEARCH_WARMUP_INSUFFICIENT",
             f"warmup 不足：需要 {warmup_bars} bar，数据起点前实际可得 "
-            f"{actual_warmup_bars} bar（数据起点 {df.index[0]}）")
+            f"{actual_warmup_bars} bar（数据起点 {df.index[0]}）",
+            detail={"warmup_bars": warmup_bars,
+                    "available_bars": actual_warmup_bars,
+                    "data_start": df.index[0].isoformat(),
+                    "rule": WARMUP_RULE_TEXT})
 
     return df, start_ts
