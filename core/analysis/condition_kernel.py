@@ -105,8 +105,10 @@ def _mask_for(
 
     - 有效周期 = base 或无 timeframe 键 → 现行两段式（缺省零变化）：
       结构化 subject resolve → 按 params 现算指标列（encode 得精确
-      列名）→ 精确列名求值；字符串 subject 精确列名命中。列缺失返回
-      全 False 安全降级（既有契约）。
+      列名）→ 精确列名求值；字符串 subject 精确列名命中。列缺失降级
+      双侧分野（卡3b）：subject 侧缺列返回全 False 安全降级（既有
+      契约）；target 侧不可解码且非基础列结构化拒绝
+      RESEARCH_CONDITION_INVALID，基础列/数值 target 缺失仍全 False。
     - 有效周期 > base 且有 ctx → 掩码投影：整条件在高周期轴求值
       （subject 与列名类 target 高周期轴解析、action 高周期轴自洽），
       布尔掩码按 asof_completed 投影到基准索引，结果入 work 后缀列
@@ -148,14 +150,138 @@ def _mask_for(
     return _mask_higher(work, condition, mtf, tf_key)
 
 
+def _classify_target_ref(target) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """target 引用五分类（卡9：三处内嵌判定链的公共分类底座）。
+
+    纯函数无 df 依赖无副作用——分类语义单点化，消费方（refs 收集 /
+    基准现算 / 高周期现算）只分派不重复判定。BASE_SUBJECT_COLUMNS
+    判定收口于此（消除 raise 条件的第二因子散布）。
+
+    Returns:
+        ("non_str", None)——非字符串（数值阈值等），不进列判定链；
+        ("numeric", None)——数值串（float 可解析），语义为阈值非列名；
+        ("decoded", payload)——编码指标列名，payload 含 indicator/params；
+        ("base_column", None)——基础列名（BASE_SUBJECT_COLUMNS）；
+        ("unknown", None)——不可解码且非基础列。
+    """
+    from core.analysis.column_ref import (
+        BASE_SUBJECT_COLUMNS, try_decode_column_ref,
+    )
+    if not isinstance(target, str):
+        return "non_str", None
+    try:
+        float(target)
+    except ValueError:
+        pass
+    else:
+        return "numeric", None
+    decoded = try_decode_column_ref(target)
+    if decoded is not None:
+        return "decoded", decoded
+    if target in BASE_SUBJECT_COLUMNS:
+        return "base_column", None
+    return "unknown", None
+
+
+def _reject_unresolvable_target(target: str) -> None:
+    """RESEARCH_CONDITION_INVALID 单点构造（卡9：detail 形制先例逐字保持）。
+
+    Raises:
+        ResearchError: 不可解码且非基础列的 target（strict 消费方调用）。
+    """
+    from core.analysis.hypothesis_service import ResearchError
+
+    raise ResearchError(
+        "RESEARCH_CONDITION_INVALID",
+        f"condition.target 不可解析: {target!r}",
+        detail={"param": "condition.target", "value": target,
+                "legal_form": "编码指标列名或基础列"})
+
+
+def collect_condition_refs(
+    condition: Dict[str, Any], *, strict: bool = False,
+) -> List[tuple]:
+    """条件指标引用收集（warmup 推导与装载校验公共入口，卡2）。
+
+    subject（dict 结构化经 resolve_column_ref / str 编码列名宽容解码）
+    与 target（str 编码列名可解析即并入）两侧的 (indicator, params)
+    清单——掩码路径 warmup 推导输入（strict=False 保留历史宽容语义：
+    不可解析静默跳过）；路由装载路径 strict=True：target 不可解码且
+    非基础列即结构化拒绝（禁止静默 0 样本——与卡3 strict 合流）。
+
+    Args:
+        condition: {subject, action, target} 条件（subject 混合形制）。
+        strict: True 时 target 不可解析即 raise（装载/校验通道）；
+            False 保持掩码路径宽容（不可解析不并入）。
+
+    Returns:
+        [(indicator, params_dict)] 引用清单（可为空——纯数值条件）。
+
+    Raises:
+        ResearchError: RESEARCH_CONDITION_INVALID（strict=True 且
+            target 不可解码且非基础列）。
+    """
+    from core.analysis.column_ref import (
+        resolve_column_ref, try_decode_column_ref,
+    )
+
+    refs: List[tuple] = []
+    subject = condition.get("subject")
+    if isinstance(subject, dict):
+        cdef = resolve_column_ref(subject)
+        refs.append((cdef.indicator, dict(cdef.params)))
+    elif isinstance(subject, str):
+        decoded = try_decode_column_ref(subject)
+        if decoded is not None:
+            refs.append((decoded["indicator"], decoded.get("params") or {}))
+    # 卡9：target 判定链收敛到 _classify_target_ref 单点分类
+    target = condition.get("target")
+    kind, payload = _classify_target_ref(target)
+    if kind == "decoded":
+        refs.append((payload["indicator"], payload.get("params") or {}))
+    elif kind == "unknown" and strict:
+        _reject_unresolvable_target(target)
+    return refs
+
+
+def _ensure_target_column(
+    df: pd.DataFrame, target, *, strict: bool,
+) -> None:
+    """列名类 target 现算入 df（卡9：_mask_base/_mask_higher 消费收敛）。
+
+    幂等前置（列在前置先于一切——不重算已有列）→ 数值串/非 str 透传
+    （阈值语义非列名）→ decode 现算；strict 时未知列名结构化拒绝
+    （卡3b 语义），宽容路径静默跳过（列缺失全 False 降级归求值层）。
+
+    Args:
+        df: 就地富集目标（基准 work / 高周期 eval_df）。
+        target: 条件 target（str 列名 / 数值 / 数值串混合形制）。
+        strict: True=不可解码且非基础列 raise（基准路径卡3b）；
+            False=高周期轴宽容（历史语义）。
+    """
+    if not isinstance(target, str) or target in df.columns:
+        return
+    from core.analysis.column_ref import resolve_column_ref
+    kind, payload = _classify_target_ref(target)
+    if kind == "decoded":
+        _compute_into(df, resolve_column_ref(payload))
+    elif kind == "unknown" and strict:
+        _reject_unresolvable_target(target)
+
+
 def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
-    """基准周期两段式（0.2.13 形制 + 额外键全量透传修复）。"""
+    """基准周期两段式（0.2.13 形制 + 额外键全量透传修复 + 卡3b target 链）。"""
+    from core.analysis.column_ref import resolve_column_ref
     subject = condition["subject"]
     col = subject
     if isinstance(subject, dict):
-        from core.analysis.column_ref import resolve_column_ref
         cdef = resolve_column_ref(subject)      # 校验前置（入口已过）
         col = _compute_into(work, cdef)
+    # 卡3b target 四段判定链（卡9 收敛 _ensure_target_column 单点）：
+    # 列在幂等 / 数值透传 / decode 现算 / 不可解码且非基础列结构化拒绝
+    # （消灭「入口放行+求值不算」的静默 0 假象——case_inspection/
+    # condition_stats 等 _mask_for 全消费方统一获得该语义）
+    _ensure_target_column(work, condition.get("target"), strict=True)
     eval_cond = dict(condition)
     eval_cond["subject"] = col   # subject 解析替换；其余键全量透传（D-r2）
     from core.validation.engine import _evaluate_single_condition
@@ -164,13 +290,20 @@ def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
 
 
 def _compute_into(df: pd.DataFrame, cdef) -> str:
-    """结构化引用现算入 df（列已存在则幂等跳过），返回精确列名。"""
+    """结构化引用现算入 df（列已存在则幂等跳过），返回精确列名。
+
+    pandas_ta 数据不足（bar 数 < 指标 length）返回 None——收口为
+    float 全 NaN 列：engine 数值比较安全得全 False（subject/target
+    两侧同愈，本函数为条件现算唯一入口），不让 object 全 None 列
+    炸 TypeError→500。
+    """
     col = cdef.encoded_name()
     if col not in df.columns:
         from core.features.indicators import _compute_indicator
         for cname, series in _compute_indicator(
                 df, cdef.indicator, dict(cdef.params)).items():
-            df[cname] = series
+            df[cname] = (series if series is not None
+                         else pd.Series(np.nan, index=df.index))
     return col
 
 
@@ -192,30 +325,14 @@ def _mask_higher(
     if cache_col in work.columns:
         return work[cache_col].fillna(False).astype(bool)
 
-    # subject/target 指标引用收集（warmup 推导输入——条件实际参数粒度）
+    # subject/target 指标引用收集（warmup 推导输入——条件实际参数粒度；
+    # 卡2 提炼为 collect_condition_refs 公共入口，本路径 strict=False
+    # 宽容语义不变：不可解析不并入）
     subject = condition["subject"]
-    refs: List[tuple] = []
+    refs = collect_condition_refs(condition)
     cdef = None
-    subject_decoded = None   # 编码列名宽容解码（refs 与求值两段共用一次）
     if isinstance(subject, dict):
         cdef = resolve_column_ref(subject)
-        refs.append((cdef.indicator, dict(cdef.params)))
-    elif isinstance(subject, str):
-        # P-5：模板层 0.2.13 已把结构化 subject encode 成列名传入
-        # （param_sweep/regime_split），高周期轴无矩阵列——decode 对称
-        # target：可解析即并入 warmup 收敛需求（decode 边界已实测：
-        # close/ema_20_4h 不可解析、rsi_14 往返一致）
-        subject_decoded = try_decode_column_ref(subject)
-        if subject_decoded is not None:
-            refs.append((subject_decoded["indicator"],
-                         subject_decoded.get("params") or {}))
-    target = condition.get("target")
-    target_decoded = None
-    if isinstance(target, str):
-        target_decoded = try_decode_column_ref(target)
-        if target_decoded is not None:
-            refs.append((target_decoded["indicator"],
-                         target_decoded.get("params") or {}))
 
     # 惰性装载高周期 raw（warmup 检查基准=求值域起点 eval_start——
     # 无则 work.index[0] 装载域起点，保守方向：更早的基准只会更严）
@@ -235,19 +352,21 @@ def _mask_higher(
                     "available_bars": avail_bars,
                     "data_start": raw.index[0].isoformat()})
 
-    # 高周期轴求值（subject 现算 + 列名类 target 现算 + 额外键透传）
+    # 高周期轴求值（subject 现算 + 列名类 target 现算 + 额外键透传；
+    # decode 就地重取——纯函数幂等，与收集段解耦）
     eval_df = raw.copy()
     col = subject
     if cdef is not None:
         col = _compute_into(eval_df, cdef)
-    elif (isinstance(subject, str) and subject not in eval_df.columns
-          and subject_decoded is not None):
+    elif isinstance(subject, str) and subject not in eval_df.columns:
         # P-5：与 target 对称——编码列名高周期轴 decode 现算；
         # 不可解析保持列缺失全 False 契约（基准路径同款）
-        col = _compute_into(eval_df, resolve_column_ref(subject_decoded))
-    if (isinstance(target, str) and target not in eval_df.columns
-            and target_decoded is not None):
-        _compute_into(eval_df, resolve_column_ref(target_decoded))
+        decoded = try_decode_column_ref(subject)
+        if decoded is not None:
+            col = _compute_into(eval_df, resolve_column_ref(decoded))
+    # 卡9：target 段消费 _ensure_target_column（宽容语义；原内嵌链缺
+    # 数值串前置的漂移随单点化同愈——行为等价、形制收敛）
+    _ensure_target_column(eval_df, condition.get("target"), strict=False)
     eval_cond = dict(condition)
     eval_cond["subject"] = col
     from core.validation.engine import _evaluate_single_condition

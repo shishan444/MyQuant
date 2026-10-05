@@ -13,8 +13,9 @@ recover_stale_analysis_tasks 在 API 启动时置 failed(reason=interrupted)
 （照 recover_stale_trading_tasks 先例）。
 
 结构化拒绝：模板/装载层抛的 ResearchError 在无 422 通道的路径（线程池
-heavy、快路径竞态）落 failed 时，reason 前缀 "[code] "——轮询方可解析
-错误码，与快路径 422 的结构化语义对齐。
+heavy）落 failed 时，reason 前缀 "[code] "——轮询方可解析错误码；快路径
+失败（卡5）raise 直传调用方既有结构化通道（ResearchError 原样/其余转
+RESEARCH_TEMPLATE_INTERNAL 500），不落伪 task。
 """
 from __future__ import annotations
 
@@ -91,21 +92,27 @@ class ResearchExecutor:
         timeout = timeout_s or self._default_timeout_s
 
         if estimated_cost_s < FAST_PATH_THRESHOLD_S:
-            # 快路径：同步执行，不落句柄（轻量统计不值得一次库写+轮询）
+            # 快路径：同步执行，不落句柄（轻量统计不值得一次库写+轮询）。
+            # 卡5：失败改 raise 直传调用方既有结构化通道（ResearchError
+            # 原样/其余转 RESEARCH_TEMPLATE_INTERNAL 500）——原伪 task
+            # dict 不落库、轮询必 404；本分支生产恒不可达（两消费方
+            # 强制 10.0 > 阈值 1.0），形制对齐防未来阈值调整复活伪 task
             try:
                 result = fn(_no_stop)
                 return {"task_id": task_id, "status": "succeeded",
                         "result": result, "fast_path": True}
-            except ResearchError as exc:
-                logger.warning("快路径执行拒绝 %s: [%s] %s",
-                               template, exc.code, exc.message)
-                return {"task_id": task_id, "status": "failed",
-                        "reason": f"[{exc.code}] {exc.message}"[:200],
-                        "result": None, "fast_path": True}
-            except Exception as exc:  # noqa: BLE001 —— 快路径失败语义同异步 failed
+            except ResearchError:
+                logger.warning("快路径执行拒绝 %s", template)
+                raise
+            except Exception as exc:  # noqa: BLE001 —— 内部失败转结构化 500
                 logger.warning("快路径执行失败 %s: %s", template, exc)
-                return {"task_id": task_id, "status": "failed",
-                        "reason": str(exc)[:200], "result": None, "fast_path": True}
+                raise ResearchError(
+                    "RESEARCH_TEMPLATE_INTERNAL",
+                    f"快路径执行失败: {type(exc).__name__}",
+                    status=500,
+                    detail={"template": template,
+                            "exception_type": type(exc).__name__,
+                            "summary": str(exc)[:200]}) from exc
 
         rr.save_analysis_task(self._db_path, task_id=task_id,
                               template=template, params=params_json)

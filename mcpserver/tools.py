@@ -134,7 +134,21 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
             params["timeframes"] = timeframes
         if as_of is not None:
             params["as_of"] = as_of
-        return api.get("/api/research/market-snapshot", params=params)
+        try:
+            return api.get("/api/research/market-snapshot", params=params)
+        except ApiError as exc:
+            # 卡6/A3：快照参数面无 start（仅 symbol/timeframes/as_of）——
+            # 通用 warmup hint 的「扩大数据前缀」指引在此不可执行，
+            # 局部覆写为降 timeframes 子集特化文案（不动 tool_safe 全局）
+            if exc.code == "RESEARCH_WARMUP_INSUFFICIENT":
+                payload = errors.error_payload(
+                    exc.code, exc.message, exc.detail)
+                payload["hint"] = (
+                    "快照 warmup 不足：降低 timeframes 子集（如去掉 3d/"
+                    "1d 长周期档），或换 bar 数更充足的品种——快照参数面 "
+                    "无 start，无法前移起点")
+                return {"error": payload}
+            raise
 
     @mcp.tool()
     @tool_safe
@@ -225,7 +239,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep（重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
-        [start,end) UTC。condition_stats 支持 params.forward_bars（前向持有期
+        [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
+        condition_stats 须 indicator/params/condition；distribution_compare
+        须 column/group_a/group_b；correlation_scan 须 signal_column；
+        event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
+        indicator+condition；screen_patterns/regime_split 无必填键。
+        condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
         screen_patterns 全谱扫描（恒异步，长耗时注意 executor 并发占用）：
         params.features（"all" 或指标名子集）、params.horizons（默认

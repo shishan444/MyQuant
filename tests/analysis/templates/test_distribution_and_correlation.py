@@ -149,18 +149,27 @@ class TestGapClosureVariants:
     def test_小样本双窗_拒绝(self) -> None:
         df = _make_df(600, seed=7)
         a, b = self._win(df)
-        with pytest.raises(ValueError, match="小样本"):
+        # 0.3.2 卡4 分流：小样本属业务拒绝 422（RESEARCH_PARAM_INVALID，
+        # detail 披露组样本量）——原裸 ValueError 锚随缺陷裁定改写
+        with pytest.raises(ResearchError, match="小样本") as ei:
             distribution_compare(df, column="close", group_a=a, group_b=b,
                                  data_ranges=RANGES, min_samples=590)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["group_a_n"] == 299
+        assert ei.value.detail["group_b_n"] == 299
+        assert ei.value.detail["min_samples"] == 590
 
     def test_相关滞后族_短样本与NaN跳过(self) -> None:
         """max_lag 大于可用样本差 → 多数 lag 不足 min_samples 跳过，
-        仍有合法 lag 产出；全族不足 → ValueError。"""
+        仍有合法 lag 产出；全族不足 → 422（CARD-10 收编业务拒绝）。"""
         df = _make_df(300, seed=7)
         res = correlation_scan(df, signal_column="close", data_ranges=RANGES,
                                horizon=4, max_lag=200, min_samples=50)
         assert "peak_lag" in res.payload  # 合法 lag 族产出
         # 全族不足：样本需求超出数据量
-        with pytest.raises(ValueError, match="可用配对不足"):
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="可用配对不足") as ei:
             correlation_scan(df, signal_column="close", data_ranges=RANGES,
                              horizon=4, max_lag=4, min_samples=299)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["min_samples"] == 299

@@ -563,3 +563,56 @@ class TestTranslationReject:
                 "timeframe": "4h"}
         m = _mask_for(env["base"].copy(), cond, mtf=ctx)
         assert m.any()          # 求值正常（高周期键生效）
+
+
+class TestMtfEvalContextLoadingGuards:
+    """阶段四盲区消解：_load_tf 装载防御两分支（coverage 定向）。"""
+
+    def test_higher_tf_data_missing_structured_reject(self, tmp_path):
+        """高周期 parquet 缺失 → SYMBOL_NOT_FOUND 结构化拒绝（非裸
+        FileNotFoundError / 非静默全 False）。"""
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        base = make_ohlcv(n=300, freq="1h", start="2023-06-01", seed=7)
+        base.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")  # 无 4h
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h")
+        cond = {"subject": "close", "action": "gt", "target": 0.0,
+                "timeframe": "4h"}
+        with pytest.raises(ResearchError) as ei:
+            _mask_for(base.copy(), cond, mtf=ctx)
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+    def test_naive_tz_parquet_localizes_utc(self, tmp_path):
+        """高周期 parquet 无时区 → tz_localize("UTC") 兜底（装载不炸，
+        求值照常产出）。"""
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        base = make_ohlcv(n=300, freq="1h", start="2023-06-01", seed=7)
+        base.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        high_naive = make_ohlcv(n=100, freq="4h", start="2023-06-01", seed=7)
+        high_naive.index = high_naive.index.tz_localize(None)
+        high_naive.to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h")
+        cond = {"subject": "close", "action": "gt",
+                "target": float(high_naive["close"].min()) - 1,
+                "timeframe": "4h"}
+        m = _mask_for(base.copy(), cond, mtf=ctx)
+        assert len(m) == len(base)
+        assert bool(m.any())
+
+    def test_higher_tf_empty_parquet_structured_reject(self, tmp_path):
+        """高周期 parquet 存在但空（0 bar）→ 数据不可装载结构化拒绝
+        （与文件缺失的「周期不可达」分立两分支）。"""
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        base = make_ohlcv(n=300, freq="1h", start="2023-06-01", seed=7)
+        base.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        pd.DataFrame(columns=["open", "high", "low", "close", "volume"]
+                     ).to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        ctx = MtfEvalContext(data_dir, SYMBOL, "1h")
+        cond = {"subject": "close", "action": "gt", "target": 0.0,
+                "timeframe": "4h"}
+        with pytest.raises(ResearchError) as ei:
+            _mask_for(base.copy(), cond, mtf=ctx)
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+        assert "数据不可装载" in ei.value.message

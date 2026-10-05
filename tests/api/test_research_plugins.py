@@ -385,9 +385,10 @@ class TestFailureRecoveryChain:
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
                            "start": "2024-01-01T00:00:00Z", "end": "2024-04-25T00:00:00Z"},
         })
-        # 快路径：同步失败（终态返回，reason 携带；不静默）
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["status"] == "failed"
-        assert body.get("reason"), "失败原因必须可见"
-        assert "小样本" in body["reason"]
+        # 快路径：同步失败结构化直返（0.3.2 卡4——原伪 task dict 形态
+        # 随缺陷裁定改写：业务拒绝走 422 三段，失败可见可自愈不变）
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert "小样本" in detail["message"], "失败原因必须可见"
+        assert detail["detail"]["group_a_n"] == 6

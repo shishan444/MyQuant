@@ -62,8 +62,15 @@ def distribution_compare(
     b = _slice(group_b)
 
     if len(a) < min_samples or len(b) < min_samples:
-        raise ValueError(
-            f"小样本拒绝: group_a={len(a)}, group_b={len(b)} < {min_samples}")
+        # 0.3.2 卡4 分流实施补全：小样本属业务拒绝（422）非内部错误
+        # ——原裸 ValueError 经快路径收尾落 500，误导 Agent 盲重试
+        from core.analysis.hypothesis_service import ResearchError
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"小样本拒绝: group_a={len(a)}, group_b={len(b)} < {min_samples}",
+            detail={"group_a_n": len(a), "group_b_n": len(b),
+                    "min_samples": min_samples,
+                    "hint": "扩大分组窗口或调低 min_samples"})
 
     ks_stat, ks_p = sps.ks_2samp(a.values, b.values)
     t_stat, t_p = sps.ttest_ind(a.values, b.values, equal_var=False)

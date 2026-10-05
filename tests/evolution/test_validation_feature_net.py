@@ -639,8 +639,14 @@ class TestEvaluateSingleConditionFeature:
         assert len(mask) == n
         assert mask.dtype == bool
 
-    def test_snr_subject_fuzzy_column_match(self):
-        """现状记录：SNR 动作 subject 列缺失时按去下划线子串兜底。"""
+    def test_snr_subject_missing_column_false(self):
+        """0.3.2 卡3c 后行为：SNR 动作 subject 列缺失 → 全 False 降级
+        （锚随缺陷裁定改写，原锚 test_snr_subject_fuzzy_column_match）。
+        精确口径（CARD-01 探针复核）：本 cond 无 target 键 → target=""
+        经 _resolve_target None 拦截 + subject 缺列经 :336 前置拦截，
+        False 来自前置拦截路径（修复前后同形）；_resolve_snr_pattern
+        被删模糊段物理不可达（s.name 恒在列、s=None 到不了分派），
+        本锚钉的是「缺列绝不模糊命中」的行为面。"""
         from core.validation.engine import _evaluate_single_condition
         n = 30
         closes = 100 + 8 * np.sin(np.arange(n) * 2 * np.pi / 20)
@@ -652,8 +658,9 @@ class TestEvaluateSingleConditionFeature:
             "subject": "close", "action": "touch_bounce",
             "direction": "support", "proximity_pct": 0.01, "bounce_pct": 0.005,
         }
-        mask = _evaluate_single_condition(df, cond)  # close 模糊命中 my_close_price
+        mask = _evaluate_single_condition(df, cond)  # close 列缺失，无模糊
         assert len(mask) == n
+        assert not mask.any()
 
 
 # ===========================================================================
@@ -687,28 +694,33 @@ class TestResolveFeature:
         assert series is not None
         assert series.tolist() == [10.0, 20.0]
 
-    def test_resolve_target_cross_tf_fuzzy_suffix(self):
+    def test_resolve_target_cross_tf_exact_only(self):
+        """0.3.2 卡3c 后行为：跨周期形制仅精确列名命中（"4h:ema_20"
+        只查 ema_20_4h），后缀模糊兜底已删——非精确命名返回 None
+        （原锚 test_resolve_target_cross_tf_fuzzy_suffix 随缺陷裁定改写）。"""
         from core.validation.engine import _resolve_target
-        # 直接后缀列不存在时，归一化子串兜底命中（现状钉住）
         df = pd.DataFrame(
+            {"prefix_ema_20_4h": [10.0, 20.0],
+             "ema_20_4h": [1.0, 2.0]},
+            index=pd.date_range("2024-01-01", periods=2, freq="4h"),
+        )
+        assert _resolve_target(df, "4h:ema_20").tolist() == [1.0, 2.0]
+        df2 = pd.DataFrame(
             {"prefix_ema_20_4h": [10.0, 20.0]},
             index=pd.date_range("2024-01-01", periods=2, freq="4h"),
         )
-        series = _resolve_target(df, "4h:ema_20")
-        assert series is not None
-        assert series.tolist() == [10.0, 20.0]
+        assert _resolve_target(df2, "4h:ema_20") is None
 
     def test_resolve_target_exact_column(self):
         from core.validation.engine import _resolve_target
         series = _resolve_target(self._df(), "close")
         assert series.tolist() == [1.0, 2.0]
 
-    def test_resolve_target_fuzzy_column(self):
+    def test_resolve_target_unknown_column_none(self):
+        """0.3.2 卡3c 后行为：非精确列名 → None（归一化子串兜底已删，
+        原锚 test_resolve_target_fuzzy_column 随缺陷裁定改写）。"""
         from core.validation.engine import _resolve_target
-        # 无精确列名命中时，去下划线小写子串兜底命中 my_close_price
-        series = _resolve_target(self._df(), "closeprice")
-        assert series is not None
-        assert series.tolist() == [5.0, 6.0]
+        assert _resolve_target(self._df(), "closeprice") is None
 
     def test_resolve_subject_registry_prefix(self):
         """现状记录：subject 为注册表 output_field 名时还原默认参数列。"""

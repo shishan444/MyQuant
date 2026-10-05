@@ -422,7 +422,6 @@ def _resolve_target(df: pd.DataFrame, target):
     2. 字符串尝试 float 解析。
     3. 跨周期形制 "tf:indicator"（如 "4h:ema_20" → 查 "ema_20_4h" 列）。
     4. DataFrame 精确列名匹配。
-    5. 模糊列名匹配（去下划线小写后子串，与 _resolve_subject 同逻辑）。
     """
     if isinstance(target, (int, float)):
         return float(target)
@@ -441,25 +440,16 @@ def _resolve_target(df: pd.DataFrame, target):
         parts = target.split(":", 1)
         if len(parts) == 2:
             tf_suffix, indicator = parts[0], parts[1]
-            # 带周期后缀的精确列名
+            # 带周期后缀的精确列名（0.3.2 卡3c：后缀模糊兜底删除——
+            # 非精确命中的列名错配产出「合法」假证据，比静默 0 更高危）
             suffixed = f"{indicator}_{tf_suffix}"
             if suffixed in df.columns:
                 return df[suffixed]
-            # 后缀名模糊匹配
-            suffixed_normalized = suffixed.lower().replace("_", "")
-            matches = [c for c in df.columns if suffixed_normalized in c.lower().replace("_", "")]
-            if matches:
-                return df[matches[0]]
 
-    # 精确列名
+    # 精确列名（卡3c：归一化子串模糊兜底删除，解析链收敛为
+    # 数值/跨周期精确/精确列名/None——无任何归一化路径）
     if target in df.columns:
         return df[target]
-
-    # 模糊列名：去下划线小写后子串匹配
-    target_normalized = target.lower().replace("_", "")
-    matches = [c for c in df.columns if target_normalized in c.lower().replace("_", "")]
-    if matches:
-        return df[matches[0]]
 
     return None
 
@@ -478,13 +468,10 @@ def _resolve_pattern(
         detect_consecutive_down,
     )
 
-    # 实际列名解析（含模糊兜底）
+    # 实际列名解析（卡3c：模糊兜底删除——列缺失统一 False 降级，
+    # 与 subject/target 解析的精确语义一致）
     if subject_col not in df.columns:
-        # 模糊匹配
-        matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
-        if not matches:
-            return pd.Series(False, index=df.index)
-        subject_col = matches[0]
+        return pd.Series(False, index=df.index)
 
     if pattern == "divergence_top":
         return detect_divergence_top(df, subject_col)
@@ -614,12 +601,10 @@ def _resolve_snr_pattern(
     """支撑/阻力形态动作求值（委托 patterns 模块）。"""
     from core.validation.patterns import detect_touch_bounce, detect_role_reversal
 
-    # 实际列名解析（模糊兜底）
+    # 实际列名解析（卡3c：模糊兜底删除——列缺失统一 False 降级，
+    # 与 _resolve_pattern/subject/target 的精确解析语义一致）
     if subject_col not in df.columns:
-        matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
-        if not matches:
-            return pd.Series(False, index=df.index)
-        subject_col = matches[0]
+        return pd.Series(False, index=df.index)
 
     if pattern == "touch_bounce":
         direction = cond.get("direction", "support")

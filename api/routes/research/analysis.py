@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+import pandas as pd
 
 from api.deps import get_data_dir, get_db_path
 from api.routes.research.common import (
@@ -50,9 +51,33 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
     return df
 
 
+def _load_with_condition_refs(
+    data_dir: Path, rng: Dict[str, str],
+    indicator: str, condition: Dict[str, Any],
+) -> tuple[pd.DataFrame, pd.Timestamp]:
+    """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
+    两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
+    计入前扩；strict=True 不可解析 target 结构化拒绝）后前扩装载，
+    统计段切回请求区间。
+
+    strict=True 单点化于此：未来新模板分支经本函数装载即不可能
+    遗漏「装载必须 strict」纪律。eval_start 接线留分支（接线样板
+    非判定逻辑，收进去职责糊化）。
+    """
+    from core.analysis.condition_kernel import collect_condition_refs
+    from core.analysis.warmup_loader import load_with_warmup
+
+    warm_names = [indicator] + [
+        ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    return load_with_warmup(
+        data_dir, rng["symbol"], rng["timeframe"],
+        rng["start"], rng["end"], warm_names)
+
+
 def _require_known_indicator(name: str) -> None:
-    """indicator 注册表值域前置校验（param_sweep/regime_split 共用）：
-    未知即 422——不让装载层 KeyError 裸穿（screen 同款纪律）。"""
+    """indicator 注册表值域前置校验（param_sweep/regime_split/
+    condition_stats 共用）：未知即 422——不让装载层 KeyError 裸穿
+    （screen 同款纪律）。"""
     from core.features.registry import INDICATOR_REGISTRY
 
     if name not in INDICATOR_REGISTRY:
@@ -61,6 +86,34 @@ def _require_known_indicator(name: str) -> None:
             f"indicator 未知: {name!r}",
             detail={"param": "indicator",
                     "legal_range": "注册表指标名（list_indicators 查询）"})
+
+
+# 模板必填键声明表（卡1/D5 统一口径：_TEMPLATES 8 模板中 6 模板共 11
+# 必填键；screen_patterns/regime_split 无必填键零成本通过——模板签名
+# 变更须同步本表）。消灭 _run_template 分支内裸下标族（G1/C-α）：
+# 缺键结构化 422（detail 点名键+legal_form），不让 KeyError 裸穿。
+_TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
+    "condition_stats": ("indicator", "params", "condition"),
+    "distribution_compare": ("column", "group_a", "group_b"),
+    "correlation_scan": ("signal_column",),
+    "event_study": ("condition",),
+    "pattern_mining": ("as_of",),
+    "param_sweep": ("indicator", "condition"),
+}
+
+
+def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
+    """模板必填键存在性前置校验（卡1）：缺键即结构化拒绝——只判
+    键缺不缺，值合法性归既有值校验链（最小差异，D3）。"""
+    for key in _TEMPLATE_REQUIRED_KEYS.get(template, ()):
+        if key not in p:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"params 缺必填键: {key}",
+                detail={
+                    "param": key,
+                    "legal_form": f"{template} 必填 "
+                                  f"{_TEMPLATE_REQUIRED_KEYS[template]}"})
 
 
 def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) -> Dict[str, Any]:
@@ -109,9 +162,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 前置校验（未知指标不让装载层 KeyError 裸穿，screen 同款纪律）
         _require_known_indicator(p.get("indicator"))
         s = p.get("sweep", {})
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], [p["indicator"]])
+        # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
+        # 条件双侧引用——strict=True 不可解析 target 在此结构化拒绝
+        df, request_start = _load_with_condition_refs(
+            data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
         return param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
@@ -151,9 +205,15 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
         # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
         # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], [p["indicator"]])
+        # indicator 值域前置（param_sweep 同款纪律——特征网实施暴露的
+        # 补接：非法值经 derive_warmup 抛裸 KeyError 落 500，非缺键类
+        # 参数错误应 422）
+        _require_known_indicator(p["indicator"])
+        # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
+        # 条件双侧引用（金叉类跨指标条件 target lookback 计入前扩——
+        # strict=True 不可解析 target 结构化拒绝）
+        df, request_start = _load_with_condition_refs(
+            data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
         return condition_stats(df, indicator=p["indicator"], params=p["params"],
                                condition=p["condition"], data_ranges=ranges,
@@ -184,16 +244,33 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     raise ResearchError("RESEARCH_TEMPLATE_UNKNOWN", f"未知模板: {payload.template}")
 
 
-def _log_analysis(db_path: Path, payload: AnalysisRunRequest) -> None:
-    """分析执行强制自动落日志（区间不可伪造——漏报拦截数据源）。"""
-    rr.append_research_log(
-        db_path,
-        hypothesis_id=payload.hypothesis_id,
-        entry_type="analysis",
-        ref_id=payload.template,
-        data_ranges=json.dumps([payload.data_range.model_dump()], ensure_ascii=False),
-        summary=f"模板 {payload.template} 执行",
-    )
+def _log_analysis(
+    db_path: Path, payload: AnalysisRunRequest,
+    failure: Optional[str] = None,
+) -> None:
+    """分析执行强制自动落日志（区间不可伪造——漏报拦截数据源）。
+
+    D15/D17：failure 传入时为失败留痕（summary 携失败码，与 logger+
+    响应构成「失败可见可审计」完整落点——entry_type 保持 analysis，
+    研究日志消费方零适配；该区间试过什么败在哪属统计信用必需信息）。
+    留痕尽力而为（D15 裁决降级语义）：写入失败不反噬主通道——降级
+    logger.warning（template+failure 码），结构化响应照常返回。
+    """
+    summary = (f"模板 {payload.template} 执行失败 [{failure}]"
+               if failure else f"模板 {payload.template} 执行")
+    try:
+        rr.append_research_log(
+            db_path,
+            hypothesis_id=payload.hypothesis_id,
+            entry_type="analysis",
+            ref_id=payload.template,
+            data_ranges=json.dumps(
+                [payload.data_range.model_dump()], ensure_ascii=False),
+            summary=summary,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 留痕尽力而为，不反噬主通道
+        logger.warning("分析留痕写入失败 template=%s failure=%s: %s",
+                       payload.template, failure, exc)
 
 
 def _log_screen(
@@ -301,6 +378,9 @@ def run_analysis(
         # 抛裸 ValueError 落 500
         require_known_timeframe(
             payload.data_range.timeframe, "data_range.timeframe")
+        # 卡1 接线：必填键存在性前置（校验先于装载——省无谓 IO；
+        # 缺键 422 含键名，消灭裸 KeyError→伪 task 家族）
+        _require_required_keys(payload.template, payload.params)
         df = _load_df(data_dir, payload.data_range.model_dump())
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
                  or len(df) > _HEAVY_ROWS)
@@ -322,16 +402,25 @@ def run_analysis(
                 payload, _screen_job, task_id=screen_task_id)
 
         if not heavy:
-            # 快路径失败语义与 executor 快路径对齐：模板异常转 failed 终态
-            # （reason 携带），不裸穿 500——失败必须可见且可审计
+            # 卡4/D15：快路径失败结构化直返——ResearchError 冒泡 422
+            # （既有通道）；其余异常转 RESEARCH_TEMPLATE_INTERNAL 500
+            # （不穿伪 task_id 异步外衣）。失败可见可审计完整落点=
+            # 响应+logger+研究日志（raise 前落库，留痕不被异常吞掉）
             try:
                 result = _run_template(payload, data_dir, db_path)
             except ResearchError:
                 raise
-            except Exception as exc:  # noqa: BLE001 —— 模板执行失败
+            except Exception as exc:  # noqa: BLE001 —— 模板内部失败
                 logger.warning("分析快路径失败 %s: %s", payload.template, exc)
-                return {"task_id": f"fast_{payload.template}", "status": "failed",
-                        "reason": str(exc)[:300], "result": None, "fast_path": True}
+                _log_analysis(db_path, payload,
+                              failure="RESEARCH_TEMPLATE_INTERNAL")
+                raise ResearchError(
+                    "RESEARCH_TEMPLATE_INTERNAL",
+                    f"模板执行失败: {type(exc).__name__}",
+                    status=500,
+                    detail={"template": payload.template,
+                            "exception_type": type(exc).__name__,
+                            "summary": str(exc)[:200]}) from exc
             if payload.template == "param_sweep":
                 _log_sweep(db_path, payload, result)
             else:

@@ -51,8 +51,13 @@ HINTS: Dict[str, str] = {
         "区间数据不足：扩大区间，或换 list_data_sources 中 bar 数充足的"
         "品种/周期",
     "RESEARCH_WARMUP_INSUFFICIENT":
-        "warmup 不足：把 start 前移补足指标回看期（参数范围见 "
-        "list_indicators），或换 lookback 更短的指标",
+        "warmup 不足：换 lookback 更短的指标（参数范围见 "
+        "list_indicators）、降低请求周期，或扩大该品种的可得数据前缀"
+        "（参数面无 start 的调用方按前两者行动）",
+    "RESEARCH_TEMPLATE_INTERNAL":
+        "模板内部错误：附 detail 的 template/exception_type/summary "
+        "提交问题报告；同参数重试大概率无效（0.3.2 卡4/卡5——诊断字段 "
+        "保留异常文本，message 通道已保持干净）",
     # ---- 多周期条件（0.2.14）
     "TIMEFRAME_ON_THEN":
         "THEN 条件不接受 timeframe 键（前向收益对照以基准 bar 计，"

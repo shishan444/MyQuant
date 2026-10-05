@@ -36,8 +36,9 @@ def correlation_scan(
         max_lag: 扫描的最大滞后（0..max_lag）。
 
     Raises:
-        ResearchError: 信号列不可用（附可用列清单）。
-        ValueError: 小样本。
+        ResearchError: 信号列不可用（附可用列清单）；可用配对不足
+            （小样本拒绝，RESEARCH_PARAM_INVALID 422——卡10 收编，
+            原 ValueError 落 500 误导 Agent 盲重试）。
     """
     require_column(df, signal_column, template="correlation_scan")
 
@@ -58,7 +59,15 @@ def correlation_scan(
         corrs.append(corr)
 
     if not lags:
-        raise ValueError(f"可用配对不足（< {min_samples}）——无法扫描")
+        # 卡10 收编（distribution_compare 先例形制）：小样本属业务
+        # 拒绝 422 非内部错误
+        from core.analysis.hypothesis_service import ResearchError
+
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"小样本拒绝: 可用配对不足 < {min_samples}",
+            detail={"min_samples": min_samples,
+                    "hint": "扩大扫描区间或调低 min_samples"})
 
     peak_idx = int(np.argmax(np.abs(corrs)))
     peak_lag = lags[peak_idx]

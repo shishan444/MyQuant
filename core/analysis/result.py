@@ -54,14 +54,26 @@ def build_result(
     """构造三要素齐备的分析结果；任一要素缺失或不可信即拒绝。
 
     Raises:
-        ValueError: sample_size 非正/低于下限；confidence 缺关键字段；
-            data_ranges 为空或条目非半开 [start, end) 形。
+        ResearchError: RESEARCH_PARAM_INVALID——sample_size 低于下限
+            （小样本属业务拒绝 422 非内部错误，卡10 收编；原裸
+            ValueError 经快路径收尾落 500 误导 Agent 盲重试）。
+        ValueError: sample_size 类型非法；confidence 缺关键字段；
+            data_ranges 为空或条目非半开 [start, end) 形（模板实现者
+            的编程错误，保持裸异常语义）。
     """
     if not template:
         raise ValueError("template 必填")
-    if not isinstance(sample_size, int) or sample_size < min_samples:
+    if not isinstance(sample_size, int):
         raise ValueError(
-            f"样本量 {sample_size} 低于下限 {min_samples}（小样本拒绝——结果不可信）")
+            f"sample_size 须为 int（编程错误）: {type(sample_size).__name__}")
+    if sample_size < min_samples:
+        from core.analysis.hypothesis_service import ResearchError
+
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"小样本拒绝: sample_size={sample_size} < {min_samples}",
+            detail={"sample_size": sample_size, "min_samples": min_samples,
+                    "hint": "扩大数据区间或调低 min_samples"})
     if not confidence or "method" not in confidence:
         raise ValueError("confidence 必填且含 method（置信信息缺失）")
     if not ("interval" in confidence or "level" in confidence or "p_value" in confidence):

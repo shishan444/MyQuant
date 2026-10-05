@@ -59,10 +59,15 @@ class TestBuildResultThreeElements:
                          data_ranges=[{"start": "2024-01-01"}])
 
     def test_small_sample_rejected(self) -> None:
-        with pytest.raises(ValueError, match="小样本"):
+        # CARD-10 收编：小样本属业务拒绝 422（原裸 ValueError→500）
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="小样本") as ei:
             build_result("t", sample_size=10,
                          confidence={"method": "m", "interval": [0, 1]},
                          data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["sample_size"] == 10
+        assert ei.value.detail["min_samples"] == 30
 
 class TestConditionStats:
     def test_known_hit_rate(self) -> None:
@@ -111,11 +116,15 @@ class TestConditionStats:
         # （不显式传 forward_bars 时默认 24 > len-1=19，会先触发
         # RESEARCH_PARAM_INVALID，由 test_forward_bars_invalid_rejected 覆盖。）
         df = _make_df(20)
-        with pytest.raises(ValueError, match="小样本"):
+        # CARD-10 收编：模板级同款 422（detail 披露有效信号数口径）
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="小样本") as ei:
             condition_stats(
                 df, indicator="EMA", params={"period": 5},
                 condition={"subject": "close", "action": "gt", "target": 0},
                 data_ranges=RANGES, forward_bars=5)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["min_samples"] == 30
 
     def test_forward_return_known_values(self) -> None:
         """已知序列核对前向收益分布（close(t)→close(t+2)）、win_rate
@@ -263,10 +272,14 @@ class TestTimeframeKey:
                 condition=cond, data_ranges=RANGES, forward_bars=8,
                 mtf=ctx).to_dict()["payload"]["hit_count"]
 
-        # 带键：4h 轴全 False → 0 命中 → 小样本拒绝（投影路径生效）
-        with pytest.raises(ValueError, match="小样本"):
+        # 带键：4h 轴全 False → 0 命中 → 小样本拒绝（投影路径生效；
+        # CARD-10 收编后为 422，sample_size=0 经公共层 detail 披露）
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="小样本") as ei:
             hit({"subject": "close", "action": "gt",
                  "target": beyond, "timeframe": "4h"})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["sample_size"] == 0
         # 同阈值去键：1h 轴存在越界 bar → 命中 >0（两轴分离）
         assert hit({"subject": "close", "action": "gt",
                     "target": beyond}) > 0
