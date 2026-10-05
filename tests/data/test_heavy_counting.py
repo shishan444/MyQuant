@@ -46,6 +46,24 @@ class TestIndexOnlyCounting:
         assert _count_rows_index_only(tmp_path, RNG) == len(
             _load_df(tmp_path, RNG))
 
+    def test_naive_request_counts_same_as_z_suffix(self, tmp_path):
+        """CARD-01 锚：naive 时间请求（无 tz 后缀）计数 == 同物理区间
+        Z 后缀请求（to_utc 归一后可比——naive 按 UTC 解释），且与
+        全量装载口径一致；aware 偏移形制（+08:00 换算到同一物理时刻）
+        同计数。未归一时 naive 与 tz-aware 索引比较裸穿 TypeError。"""
+        _env(tmp_path)
+        naive = {"symbol": "BTCUSDT", "timeframe": "1h",
+                 "start": "2024-01-05T00:00:00",
+                 "end": "2024-01-20T00:00:00"}
+        offset = {"symbol": "BTCUSDT", "timeframe": "1h",
+                  "start": "2024-01-05T08:00:00+08:00",
+                  "end": "2024-01-20T08:00:00+08:00"}
+        count_naive = _count_rows_index_only(tmp_path, naive)
+        assert count_naive > 50  # 区间越过 min_bars 下限（361 bar 档）
+        assert count_naive == _count_rows_index_only(tmp_path, RNG)  # Z 后缀同物理区间
+        assert count_naive == len(_load_df(tmp_path, RNG))  # 与全量装载同口径
+        assert _count_rows_index_only(tmp_path, offset) == count_naive  # aware 偏移换算等价
+
     def test_threshold_semantics_unchanged(self, tmp_path):
         """heavy 判定语义不变：计数与 _HEAVY_ROWS 比较的阈值口径
         （900 行 < 10000 → 非 heavy 数值证据；helper 层断言数值，
