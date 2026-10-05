@@ -16,6 +16,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.condition_kernel import collect_condition_refs
+from core.analysis.hypothesis_service import ResearchError
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 
@@ -376,6 +377,130 @@ class TestCrossIndicatorLoading:
         if n_events == 1:
             assert body["confidence"]["p_value"] is None
             assert body["payload"]["terminal_return"]["std"] is None
+
+
+class TestValueDomainAndAsyncTerminal:
+    """阶段四盲区消解：值域拒绝与异步终态全链（coverage 定向补面）。"""
+
+    def test_unknown_template_422(self, api_client, error_env):
+        """未知模板结构化拒绝（路由 _TEMPLATES 白名单先行 422）。"""
+        _wire(api_client, error_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "no_such_template", {}))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["code"] == "RESEARCH_TEMPLATE_UNKNOWN"
+
+    def test_run_template_unknown_template_defensive(self, error_env):
+        """_run_template 的 RESEARCH_TEMPLATE_UNKNOWN 兜底分支直调
+        （路由白名单后不可达的防御锚——白名单与兜底集合一致性由
+        test_errors.py 的 hint 清单对拍另行锁定）。"""
+        from api.routes.research.analysis import _run_template
+        from api.schemas import AnalysisRunRequest, DataRangeItem
+        payload = AnalysisRunRequest(
+            template="nope", params={},
+            data_range=DataRangeItem(
+                symbol=SYMBOL, timeframe="4h",
+                start="2024-04-11T00:00:00Z", end="2024-05-01T00:00:00Z"))
+        with pytest.raises(ResearchError) as ei:
+            _run_template(payload, error_env["data_dir"], error_env["db"])
+        assert ei.value.code == "RESEARCH_TEMPLATE_UNKNOWN"
+
+    def test_unknown_indicator_422(self, api_client, error_env):
+        """indicator 值域前置拒绝（_require_known_indicator 三消费方
+        共用通道——缺键校验之外的值域防线）。"""
+        _wire(api_client, error_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "param_sweep",
+            {"indicator": "NOPE",
+             "condition": {"subject": "rsi_14", "action": "gt", "target": 70},
+             "sweep": {"period": [10]}}))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "indicator"
+        assert "NOPE" in detail["message"]
+
+    def test_param_sweep_success_logs_sweep(self, api_client, error_env):
+        """param_sweep 路由级成功 200 + 研究日志 sweep 留痕
+        （_log_sweep 路由通道——值阈值类条件走快路径）。"""
+        _wire(api_client, error_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "param_sweep",
+            {"indicator": "SMA",
+             "condition": {"subject": {"indicator": "SMA",
+                                       "params": {"period": 200},
+                                       "field": "sma"},
+                           "action": "gt", "target": 60000},
+             "sweep": {"values": [60000, 62000, 64000]}},
+            start="2024-04-11T00:00:00Z", end="2024-05-01T00:00:00Z"))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["template"] == "param_sweep"
+        # _log_sweep 形制：entry_type="sweep"+ref_id=条件指纹（不双写
+        # analysis 日志——第 3/5 步职责边界，_log_sweep docstring）
+        logs = rr.list_research_log(error_env["db"], entry_type="sweep")
+        assert logs, "sweep 成功留痕进入研究日志（entry_type=sweep）"
+
+    def test_screen_patterns_full_chain_succeeded(self, api_client,
+                                                  error_env):
+        """screen_patterns 恒 heavy 全链终态（job 体+完成回调留痕）：
+        202 → 轮询 succeeded（db 保持 fixture——executor 单例绑它，
+        照 test_research_analysis_paths:185 形制）。"""
+        import time
+        api_client.app.state.data_dir = error_env["data_dir"]
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "screen_patterns", {}))
+        assert resp.status_code == 202, resp.text
+        task_id = resp.json()["task_id"]
+        deadline = time.monotonic() + 30.0
+        terminal = None
+        while time.monotonic() < deadline:
+            t = api_client.get(f"/api/research/analysis/tasks/{task_id}")
+            if t.status_code == 200:
+                tb = t.json()
+                if tb["status"] in ("succeeded", "failed"):
+                    terminal = tb
+                    break
+            time.sleep(0.3)
+        assert terminal is not None, "30s 内未到终态"
+        assert terminal["status"] == "succeeded", terminal.get("reason")
+
+    def test_param_sweep_heavy_path_logs_sweep(self, api_client, tmp_path):
+        """param_sweep heavy 路径（>10000 bar）：202 → 终态 succeeded →
+        sweep 留痕经 job 完成回调落库（异步 _log_sweep 通道）。"""
+        import time
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        make_ohlcv(n=10500, freq="4h", start="2020-01-01",
+                   seed=5).to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        api_client.app.state.data_dir = data_dir
+        db = Path(api_client.app.state.db_path)
+        resp = api_client.post("/api/research/analysis", json={
+            "template": "param_sweep",
+            "params": {"indicator": "RSI",
+                       "condition": {"subject": "rsi_14", "action": "gt",
+                                     "target": 70},
+                       "sweep": {"values": [60, 70]}},
+            "data_range": {"symbol": SYMBOL, "timeframe": "4h",
+                           "start": "2020-02-15T00:00:00Z",
+                           "end": "2024-11-01T00:00:00Z"}})
+        assert resp.status_code == 202, resp.text
+        task_id = resp.json()["task_id"]
+        deadline = time.monotonic() + 60.0
+        terminal = None
+        while time.monotonic() < deadline:
+            t = api_client.get(f"/api/research/analysis/tasks/{task_id}")
+            if t.status_code == 200:
+                tb = t.json()
+                if tb["status"] in ("succeeded", "failed"):
+                    terminal = tb
+                    break
+            time.sleep(0.3)
+        assert terminal is not None, "60s 内未到终态"
+        assert terminal["status"] == "succeeded", terminal.get("reason")
+        logs = rr.list_research_log(db, entry_type="sweep")
+        assert logs, "异步 sweep 留痕进入研究日志"
 
 
 class TestFailureDirectReturn:
