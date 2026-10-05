@@ -384,10 +384,12 @@ def screen_patterns(
         "skipped_actions": _SKIPPED_ACTIONS,
         "min_samples": min_samples,
         "candidates": out_candidates,
-        # 0.3.3 G8：FDR 显著候选计数（候选清单装配后单点求和——含组合
-        # 候选；全灭时 =0 一眼可见，无需遍历候选确认）
+        # 0.3.3 G8：FDR 显著候选计数（含组合候选；全灭时 =0 一眼可见，
+        # 无需遍历候选确认）。按指纹去重后全族（by_fp）统计——统计先于
+        # top_n 截断，显著数不封顶（delta MUST「fdr_significant 命中的
+        # 候选计数」为全族口径）
         "n_significant": sum(
-            1 for c in out_candidates if c.get("fdr_significant")),
+            1 for r in by_fp.values() if r.get("fdr_significant")),
         "co_occurrence": co_occur,
         "review_hint": (
             "其余候选请以 condition_stats（同条件同持有期）逐条独立复核；"
