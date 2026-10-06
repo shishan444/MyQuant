@@ -4,6 +4,7 @@
 > 编号重构：2026-10-03 应用户裁决并入 0.3.x 统一版本线——原 MCP-2.1/2.2/2.3/2.4 重编为 **0.3.2/0.3.3/0.3.4/0.3.5**；债务清偿三战（trading+live_trading / persistence / evolution+validation）由原 0.3.2/0.3.3/0.3.4 顺延为 **0.3.6/0.3.7/0.3.8**（0.3.1 api 硬化已合并不变）。此后全工程单一版本序列，引用一律用 0.3.x 编号
 > **0.3.2 完成（2026-10-05）**：合并 main **0b3cf1f**（--no-ff，14 提交）+ team3 第七战审查增量（11 卡：P0×3 真缺陷+P1×8，含小样本族收编 422 用户裁决）+ openspec 归档（`archive/2026-10-04-fix-mcp-error-channel`）+ 主 spec `research-error-channel` 同步落库
 > **规划重构（2026-10-05）**：0.3.2 收口为战报档案、0.3.3 展开为当前焦点——openspec change **mcp-contract-transparency** 四工件定稿（三轮外部评估收口，四次裁决落痕见 0.3.3 节）
+> **0.3.3 完成（2026-10-05）**：合并 main **257c044**（--no-ff，18 提交=实施 5+team3 第八战 13）——team3 审查 5 卡 P1 全闭环（naive 时间裸 500 回归/衍生品 gap 前扩误报/warmup 折算口径/n_significant 封顶/非法时间串 422 化），终验全量 4478 passed+e2e 64+触碰面覆盖率 100% 行+分支；TD-1 死测试退役微分支 **0ff3aa0**；债务六笔落位后续债务区；openspec change 待归档
 > 来源：works/设计稿/MyQuant-技术债务登记.md G 组 14 项（两轮六步法全链实战产出）+ 验真连带 3 项
 > 验真基线：2026-10-03 验真审计逐项代码级核证；0.3.3 各锚点于 2026-10-04~05 经三轮外部评估独立复验修正后定稿（锚点表见 0.3.3 节）
 > 与姊妹篇关系：MyQuant-技术债务登记.md 记「有什么债」；本篇记 MCP 域「怎么修、怎么升」——**只做 MCP 相关能力**（mcpserver + api/routes/research + core/analysis 域），与债务清偿三战（0.3.6-0.3.8）分属两条能力线，并行不冲突
@@ -16,8 +17,8 @@
 ```
 0.3.2 错误通道修复战     0.3.3 契约透明化批        0.3.4 假设预检器         0.3.5 表达力升级
  G1+C-α/G9/G10+C-γ/G2  →   G4-G8/G12/C-β        →   G3+G11（新模块）     →   G13/G14（远期）
- 【已合并 0b3cf1f】          【当前焦点】              消灭盲登记浪费            突破简单规律表达域
- 修复 AI 研究可信度地基       预算/判定/边界三层可见
+ 【已合并 0b3cf1f】          【已合并 257c044】        【当前焦点】             突破简单规律表达域
+ 修复 AI 研究可信度地基       预算/判定/边界三层可见      消灭盲登记浪费
 ```
 
 **排序逻辑**（止损 → 透明 → 提效 → 升维）：两轮实战（~5000 检验对 + 3 假设 5 考试）的证据权重排序——静默错误比崩溃危险；伪 task_id 死循环直接侵蚀研究可信度；0 笔考试是真实浪费；表达力边界投入最重故置后。
@@ -26,7 +27,7 @@
 
 ---
 
-## 0.3.3 · 契约透明化批（G4-G8 + G12 + C-β）——当前焦点
+## 0.3.3 · 契约透明化批（G4-G8 + G12 + C-β）——战报档案
 
 **形制**：openspec change **`mcp-contract-transparency`**（四工件定稿、validate --strict 通过）；实施分支 `feature/mcp-contract-transparency`；tasks 17 项（核验 2 + 披露 4 + 判定 3 + 边界幂等 3 + 装载 3 + 收口 2）。
 
@@ -39,6 +40,8 @@
 | **价值** | 研究者的「预算/判定/边界」三层可见性补齐——全部为两轮实战高频摩擦点；G7 顺带还清隔离/分段互撞旧债 |
 | **验收** | 报错含预算数值与规则（四披露面口径一致）；三路考试 verdict 顶层直取（双路径同值）；扫描全灭 n_significant=0 可见；funding 缺口区间显式声明；同区间异分段（含两份 explicit 清单）各自独立+等价清单命中+类型隔离；heavy 请求每分支装载=1；幂等六断言+双附加锚全绿 |
 | **测试设计** | TESTING_V3 对账形制：specs 十二个新增 Scenario 逐条对账+产品六验收点+design 测试锚；约 32-37 例；回归面零改写红线（既有锚需改写即零破坏被突破信号，停卡上报） |
+| **team3 第八战增量** | 5 卡 P1 全闭环（13 提交=实现 5+判别锚 5+特征网/闸门 3，全部「修复→回归→抽核→提交」四步）：CARD-01 naive 时间计数裸 500（C-β 引入的回归——lo/hi 经 to_utc 归一）/ CARD-02 衍生品 gap 前扩误报（coverage_range 三层贯穿，判定基准改用户请求区间）/ CARD-03+06 warmup 高周期折算口径缺失+旧口径源内残留（三披露面同步）/ CARD-04 n_significant 被 top_n 截断封顶（改 by_fp 全族统计）/ CARD-05 非法时间串裸 500 存量洞（DataRangeItem 单点 422 化）；终验全量 4478 passed（2 存量红=TD-1 死测试，已另分支退役）+e2e 64+触碰面覆盖率 100% 行+分支 |
+| **合并点** | **257c044**（2026-10-05，--no-ff，18 提交；分支 feature/mcp-contract-transparency 与 fix/mcp-contract-review-033 已删）；TD-1 微分支 chore/test-run-entry-retirement（**0ff3aa0**）；openspec change **mcp-contract-transparency 待归档**（主 specs 5 delta 待同步） |
 
 ## 0.3.2 · 错误通道修复战（G1+C-α / G9 / G10+C-γ / G2）——战报档案
 
@@ -90,6 +93,8 @@
 |---|---|---|
 | 0.3.3 衍生 | **G12 衍生项：快照 stale 披露**——get_market_snapshot 衍生品维尾部陈旧（funding 停更后照报 status ok 陈旧读数），需独立披露设计 | 待排期（随衍生品月包回补或后续版本） |
 | team3 第七战 TD | flaky 时序敏感两例 / plugin_service 防御三行 / engine 存量动作族 26 行 27 分支 | 归 0.3.8 validation 域治理 |
+| team3 第八战 TD（0.3.3 审查增量，2026-10-05） | TD-1 run_entry 死测试退役（run.py 已删于 8da2857 而两用例未退役——全量恒 2 红信号污染）；TD-2 存量覆盖缺失（validation_service 10 行 6 分支 / screen_patterns 4 行 6 分支 / condition_kernel+repository 小项——触碰面外存量）；TD-3 迁移 d4e7f9a2c5b8 downgrade 注释失实（同三元多行时重建索引实抛 IntegrityError，注释自称保留可读）；TD-4 七件小债（warmup_loader import 冗余 / 魔数 50 耦合 min_bars / hint 三要素张力 / 幂等 409 边缘序 / coverage 三态不对称 / models.py 注释锚 / 0-bar 边界文案） | TD-1 **单独微型分支 `chore/test-run-entry-retirement`，0.3.3 合并后立即**（不排版本批次——粒度不匹配+信号债按天计息）；TD-2 归 0.3.8；TD-3 归 0.3.7；TD-4 随 0.3.4/0.3.5 触碰搭车 |
+| 跨机启用检查点增量（team3 第八战 S 组） | S-1 500 detail 透内部异常原文（str(exc)[:200]）/ S-2 验证族无区间 bar 上限（仅 sandbox 有 SANDBOX_MAX_BARS）/ S-4 分析任务 result_ref 无 TTL / S-3 socket.io token 经 URL query（api/auth.py） | 与 Q1 已裁同窗口：跨机启用日（auth payload 形制改造+TLS）一并清零，不进版本序列 |
 | 0.3.x 债务清偿序列 | 0.3.6 trading+live_trading（资金面，实盘前置）→ 0.3.7 persistence → 0.3.8 evolution+validation | 待实施（实盘路线主线，与本系列并行） |
 | 积压裁决 | C1 组合策略语义 / C2 scoring 四例 / C3b mode 口径 / Q3-team3.md 固化 / Q4-F1 | 待裁 |
 | 其他专项 | pytest 双模块 conftest 统一、TD 低危 4 项 + P2/P3 记录 10 项、B4/B5③/B6 | 按需 |
@@ -101,6 +106,7 @@
 | 版本 | 内容摘要 | 分支 | 合并点 | 状态 |
 |---|---|---|---|---|
 | 0.3.2 | 错误通道修复：11 键校验族+跨指标双层装载+快路径失败形制+快照 hint；team3 审查增量 11 卡 | fix/mcp-error-channel | 0b3cf1f（2026-10-05，--no-ff，14 提交） | 已合并+归档+主 spec 同步 |
-| 0.3.3 | 契约透明化：五元身份（段清单编码+迁移）/四面三维度忠实口径/verdict 双路径/df.attrs 边界/index-only 装载 | feature/mcp-contract-transparency | — | **待实施**（openspec change mcp-contract-transparency 四工件定稿，三轮评估收口） |
+| 0.3.3 | 契约透明化：五元身份（段清单编码+迁移）/四面三维度忠实口径/verdict 双路径/df.attrs 边界/index-only 装载；team3 第八战增量 5 卡（naive 时间回归/gap 前扩误报/折算口径/计数封顶/422 化） | feature/mcp-contract-transparency（+fix/mcp-contract-review-033） | 257c044（2026-10-05，--no-ff，18 提交） | 已合并（openspec 归档+主 spec 同步待执行） |
+| — | TD-1 死测试退役（run_entry 两用例——8da2857 遗留，全量 2 红信号污染） | chore/test-run-entry-retirement | 0ff3aa0 | 已合并（后续债务区登记销账） |
 | 0.3.4 | 假设预检器新模块：组合统计预检+频率外推+预算预检（G3+G11） | openspec change | — | 待实施（前置 0.3.3） |
 | 0.3.5 | 表达力升级：截面工具（G13）/事件驱动形制（G14） | openspec change | — | 待实施（前置 0.3.4 后评估） |
