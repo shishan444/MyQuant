@@ -141,3 +141,25 @@
 - `derivatives_coverage` 走 df.attrs 对象级传播（禁模块级全局——ThreadPoolExecutor 并发互染）；gap 判定基准：warmup 前扩装载必须传 coverage_range=(用户请求区间)，缺省以切片边界判定（既有消费方兼容）——改判定语义须回归 TestWarmupPrefixGapSemantics 与默认路径两族
 - 幂等身份五元查询必须带 level（`find_validation_by_identity` 新签名）——跨类型误命中是已修复缺陷，新调用方漏传 level 会复发；segmentation_identity 与 alembic 迁移内联副本双实现同输出（改动双向同步）
 - `_count_rows_index_only` 时间参数经 to_utc 归一（naive 按 UTC——capability 公开承诺）；列名形制变体回退全量装载的正确性优先语义不因轻量化放弃
+
+## 六区 · 0.3.4 add-hypothesis-precheck
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| 三态结论与比较规则 | 直接比较不取整（4.9 落 warn——保守方向）；`_MIN_TRADES_WARN=5` 模块级内建不可配；手工可核 AND 交集（构造即期望）；组合触发数 ≤ 任一单条件（交集不变量） | `analysis/test_precheck_hypothesis.py`（TestVerdictMapping/TestComputeProjected） | — |
+| 三假设回溯（proposal 硬验收） | 确定性尖峰场景三密度（3/0/13 笔）显式模板路径三态全命中（warn/reject_suggestion/pass）；量级命中口径（±5% 容差——闭端装载与外推基数边界差） | `analysis/test_precheck_hypothesis.py::TestThreeHypothesisRetrospect` | — |
+| 双锚与多区间最差锚 | projected（显式模板）/analysis_segment（登记挂接）两锚同阈值同映射；多区间逐区间触发数取最小值进锚+per_range 明细 | `analysis/test_precheck_hypothesis.py::TestComputeProjected::test_analysis_segment_anchor_multi_range_min`、`api/test_precheck_registration.py::test_multi_range_worst_anchor` | — |
+| warmup 两维同源 | derive_warmup_full 公共入口（纯内置/含插件/不可达静默 0 三态）；预检装载值与隔离回测 `_derive_dna_warmup`（translate 等价 DNA）同值——含插件列组；装载前缀 bar 数 ≥ 两维值（前扩注入正负双锚——负向 WARMUP_INSUFFICIENT 区分注入与不注入） | `analysis/test_registry_meta.py::TestDeriveWarmupFull`、`analysis/test_precheck_hypothesis.py`（TestWarmupSourceParity/TestLoader） | — |
+| 插件列四层连锁 | 前缀收集（subject/target 字符串形制）→ registry 可达 422（RESEARCH_PLUGIN_COLUMN_NOT_FOUND，禁静默降维）→ warmup 计入 → enrich 进 df（不 enrich 列缺失即崩） | `analysis/test_precheck_hypothesis.py::TestLoader` | — |
+| 路由契约与留痕 | 必填键 422 附键名；validate_range 异构/无数据 422；200 携 verdict+顶层三态；entry_type=precheck 不挂假设（judged_ranges_union 按 hypothesis_id 过滤的结构性证明——预检区间不进判定并集） | `api/test_precheck_routes.py` | — |
+| 202 异步同形制 | 行数超 _HEAVY_ROWS 照走 202+轮询；异步完成回调留痕仍为 precheck（双分派——仅接快路径会使异步主路径落 analysis） | `api/test_precheck_routes.py::TestPrecheckHeavySemantics` | — |
+| 登记挂接（Q1-A） | 服务内插桩（幂等命中零预检 spy/校验链先于预检——非法条件零调用）；降级（注入异常登记照常无警告键+持久化重查询）；provenance 程序化登记同样带警告段 | `api/test_precheck_registration.py` | — |
+| 组合互证（跨引擎 parity 扩展） | 组合 AND mask 与引擎 triggers 逐点一致（回归红即口径漂移——design D1 语义一致而非实现同源） | `analysis/test_cross_engine_parity.py::TestComboMaskParity` | — |
+| MCP 契约真实性 | 枚举串含 precheck_hypothesis 与 regime_split 补列；G3 旧指引（逐条独立复核）退役+组合复核新指引；阈值/双锚/口径差披露；register_hypothesis 提及 precheck_warnings | `mcpserver/test_precheck_mcp_contract.py` | — |
+
+### 0.3.4 守护行
+- `_MIN_TRADES_WARN=5` 与三态映射（直接比较不取整）是判定标尺内建常量——不进任何参数面；改阈值/取整规则属规格变更（specs R2 MUST），须同步 specs 与三假设回溯锚
+- `derive_warmup_full` 是预检与隔离回测 warmup 的同源单点（registry_meta）——改两维式须双向同步 `_derive_dna_warmup` 薄壳与 TestWarmupSourceParity；`plugin_columns_lookback` 对不可达列静默贡献 0，预检装载入口 MUST 前置可达性校验（422），删校验即预算系统性低估且 TestLoader 红线
+- `hypothesis_service` 对预检模块的引用必须函数内延迟 import（模块级 import 经 templates 聚合包成加载期环——design「五裁决连锁落地」环规避依据）；测试 patch 探针须取模块本体（`importlib.import_module`——聚合包 from-import 使包属性被同名函数遮蔽）
+- 留痕双分派（快路径+异步 _job 回调）成对存在——新增模板类型须两处同步接线，只接一处会使异步主路径落 entry_type=analysis（0.3.4 增量评估问题①复发）
+- `HypothesisResponse.precheck_warnings` 为纯增量可选键（None 恒序列化）——降级/幂等语义断言用 `is None`，不得断言键不存在

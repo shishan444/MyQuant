@@ -21,6 +21,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.hypothesis_service import ResearchError
+from core.analysis.registry_meta import derive_warmup_full
 from core.analysis.templates.precheck_hypothesis import (
     _load_precheck_df,
     _verdict_for,
@@ -382,3 +383,135 @@ class TestRegistrationPrecheck:
         assert warnings["analysis_segment_trades"] == min(
             x["n_triggers"] for x in warnings["per_range"])
         assert warnings["warmup_bars"] == 200
+
+
+# ---------------------------------------------------------------- 5.1 三假设回溯
+
+class TestThreeHypothesisRetrospect:
+    """三假设回溯锚（proposal 硬验收）——显式模板路径三态全命中。
+
+    对账口径：考试实测成交笔数 vs 预检触发密度外推存在已披露单向
+    口径差（空仓进场抑制，basis: trigger_density_upper_bound），三态
+    命中为量级命中（proposal 验收锚说明）。确定性构造：分析段与
+    拟验证段各 1000 bar，分析段内放 n 个单 bar 尖峰（close=200，
+    基底 100，阈值 150 切分）——密度外推预估笔数恰=n。
+    """
+
+    @staticmethod
+    def _spike_env(tmp_path, n_spikes):
+        import numpy as np
+        n_total = 2650
+        close = np.full(n_total, 100.0)
+        if n_spikes:
+            positions = np.linspace(0, 999, n_spikes,
+                                    endpoint=False).astype(int)
+            close[650 + positions] = 200.0
+        idx = pd.date_range("2024-01-01", periods=n_total, freq="1h",
+                            tz="UTC", name="timestamp")
+        df = pd.DataFrame({
+            "open": close, "high": close + 1.0, "low": close - 1.0,
+            "close": close, "volume": 100.0,
+        }, index=idx)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        return df, data_dir
+
+    _CASES = [
+        (3, "warn", "BTC 急跌假设——考试实测成交 ~3 笔"),
+        (0, "reject_suggestion", "ETH 双过滤假设——考试实测 0 笔"),
+        (13, "pass", "ETH 动量假设——考试实测 ~13 笔"),
+    ]
+
+    @pytest.mark.parametrize("n_spikes,expected,case", _CASES, ids=[
+        "btc_crash_3", "eth_dblfilter_0", "eth_momentum_13"])
+    def test_three_hypothesis_three_states(self, tmp_path, db_path,
+                                           n_spikes, expected, case):
+        df, data_dir = self._spike_env(tmp_path, n_spikes)
+        out = precheck_hypothesis(
+            db_path, data_dir,
+            {"symbol": SYMBOL, "timeframe": "1h",
+             "start": df.index[650].isoformat(),
+             "end": df.index[1650].isoformat()},
+            {"symbol": SYMBOL, "timeframe": "1h",
+             "start": df.index[1650].isoformat(),
+             "end": (df.index[-1] + pd.Timedelta(hours=1)).isoformat()},
+            [{"subject": "close", "action": "gt", "target": "150"}])
+        assert out["verdict"] == expected, case
+        # 量级命中口径（proposal 验收锚）：统计段含闭端装载与外推基数的
+        # ±1 bar 边界差，5% 容差内视为精确命中构造密度
+        assert out["payload"]["frequency_projection"][
+            "projected_trades"] == pytest.approx(
+                float(n_spikes), rel=0.05)
+
+
+# ---------------------------------------------------------------- 5.3 warmup 同源
+
+class TestWarmupSourceParity:
+    """同条件集两链路 warmup 同值：预检（collect refs →
+    derive_warmup_full）vs 隔离回测（translate 等价 DNA →
+    _derive_dna_warmup 薄壳）。同值的中间证明=两链路对同条件集产出
+    等价引用集（指标名+插件列），计算已收敛到同段代码。"""
+
+    def _register_and_translate(self, db_path, when):
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.persistence.db_ext import get_strategy
+        from core.strategy.dna import StrategyDNA
+
+        out = register_hypothesis(
+            db_path,
+            conditions={"when_conditions": when,
+                        "then_conditions": [
+                            {"subject": {"indicator": "RSI",
+                                         "params": {"period": 14},
+                                         "field": "rsi"},
+                             "action": "gt", "target": 0}]},
+            statement="warmup 同源测试假设",
+            data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00+00:00",
+                          "end": "2024-02-01T00:00:00+00:00"}])
+        tr = translate_hypothesis(db_path, hypothesis_id=out["hypothesis_id"])
+        row = get_strategy(db_path, tr["strategy_id"])
+        return StrategyDNA.from_json(row["dna_json"])
+
+    def test_builtin_condition_set_same_warmup(self, db_path) -> None:
+        from core.analysis.templates.precheck_hypothesis import (
+            _collect_precheck_refs,
+        )
+        from core.analysis.validation_service import _derive_dna_warmup
+
+        when = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "lt", "target": 30},
+                {"subject": {"indicator": "EMA", "params": {"period": 50},
+                             "field": "ema"},
+                 "action": "gt", "target": 0}]
+        dna = self._register_and_translate(db_path, when)
+        warmup_isolated, indicators = _derive_dna_warmup(db_path, dna)
+        names, plugins = _collect_precheck_refs(when)
+        warmup_precheck = derive_warmup_full(db_path, names, plugins)
+        assert warmup_precheck == warmup_isolated == 600   # EMA 上限 600
+        assert set(indicators) == set(names)
+
+    def test_plugin_condition_set_same_warmup(self, db_path) -> None:
+        from core.analysis.templates.precheck_hypothesis import (
+            _collect_precheck_refs,
+        )
+        from core.analysis.validation_service import _derive_dna_warmup
+
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_src", name="fx_src_col",
+            version=1, expression="rolling_mean(close, 900)",
+            output_columns='["fx_src_col"]', entry_id="e_src",
+            column_name="fx_src_col")
+        when = [{"subject": {"indicator": "ATR", "params": {"period": 14},
+                             "field": "atr"},
+                 "action": "gt", "target": 0},
+                {"subject": "fx_src_col", "action": "gt", "target": 0}]
+        dna = self._register_and_translate(db_path, when)
+        warmup_isolated, _ = _derive_dna_warmup(db_path, dna)
+        names, plugins = _collect_precheck_refs(when)
+        warmup_precheck = derive_warmup_full(db_path, names, plugins)
+        assert plugins == {"fx_src_col"}
+        assert warmup_precheck == warmup_isolated == 900   # 插件两维取大
