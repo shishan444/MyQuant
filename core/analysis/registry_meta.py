@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from core.features.registry import INDICATOR_REGISTRY
 
@@ -76,6 +76,40 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
             raise KeyError(f"未知指标: {name}")
         max_period = max(max_period, _indicator_lookback(defn))
     return max(default_floor, max_period * 3)
+
+
+def derive_warmup_full(
+    db_path: Path,
+    indicator_names: List[str],
+    plugin_columns: Optional[set] = None,
+) -> int:
+    """两维 warmup 推导式：max(内置指标推导, 插件公式 lookback, 200)。
+
+    预检（add-hypothesis-precheck）与隔离回测 ``_derive_dna_warmup``
+    的同源公共入口——两处共用同段代码即「预检 warmup 数值与隔离验证
+    warmup 声明同源同值」的字面保证（specs R3 MUST）。
+
+    插件维度按依赖闭包递归取 max（fx_b 引用 fx_a → 两窗口都计入）；
+    plugin_columns_lookback 对不存在/非公式/已失效列静默跳过贡献 0
+    （求值端显式拒绝兜底）——调用方 MUST 自行校验插件列 registry
+    可达性（不可达 422 结构化拒绝），禁止依赖本函数的静默跳过判定面。
+    仅含内置引用时与 derive_warmup 完全一致（floor 200 自带）。
+
+    Args:
+        db_path: 插件注册表所在库（插件列 lookback 需要）。
+        indicator_names: 内置指标名清单（INDICATOR_REGISTRY 键）。
+        plugin_columns: 插件列名集合（fx_*/model_* 精确名；空/None
+            时跳过插件维度）。
+
+    Raises:
+        KeyError: 内置指标未知（derive_warmup 透传）。
+    """
+    warmup = derive_warmup(indicator_names)  # 自带 floor 200
+    if plugin_columns:
+        # 延迟 import（环规避）：plugin_service 依赖链不进本模块加载期
+        from core.analysis.plugin_service import plugin_columns_lookback
+        warmup = max(warmup, plugin_columns_lookback(db_path, set(plugin_columns)))
+    return warmup
 
 
 # warmup 推导规则的唯一权威文本（0.3.3 G5：四披露面——错误 detail /
