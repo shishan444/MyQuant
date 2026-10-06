@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.analysis.isolation import iter_all_pages
 from core.persistence.repository import research as rr
 from core.persistence.timestamps import utc_now_iso
+
+logger = logging.getLogger(__name__)
 
 
 class ResearchError(Exception):
@@ -86,6 +89,7 @@ def register_hypothesis(
     data_ranges: List[Dict[str, str]],
     hypothesis_id: Optional[str] = None,
     provenance: Optional[Dict[str, Any]] = None,
+    precheck_data_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """登记假设（校验链 + 幂等 + 原子写）。
 
@@ -94,9 +98,17 @@ def register_hypothesis(
     记录的 data_range，声明不供数）；不参与幂等键；不校验指纹归属
     （伪造指纹只会把无效区间拦进自己的判定并集，无作弊收益）。
 
+    precheck_data_dir（add-hypothesis-precheck D6，Q1 裁 A）：非 None 时
+    登记自动预检（canonical 化后的 when 条件 + data_ranges 多区间最差
+    锚）；预检失败降级 logger.warning 不阻断登记，返回体不携带警告键；
+    幂等命中不执行（早于插桩点 return）。服务唯一生产调用方是路由
+    （MCP 经 HTTP 间接覆盖）；None 跳过——测试直调兼容。
+
     Returns:
-        {"hypothesis_id", "duplicated": bool}——duplicated=True 表示命中
-        幂等键返回既有假设（provenance 不改变假设身份，幂等命中不补写）。
+        {"hypothesis_id", "duplicated": bool, "precheck_warnings"?: dict}
+        ——duplicated=True 表示命中幂等键返回既有假设（provenance 不
+        改变假设身份，幂等命中不补写；该路径天然不携带警告键）；
+        precheck_warnings 仅预检成功时存在（纯增量键）。
     """
     # 1. conditions 结构
     when = conditions.get("when_conditions")
@@ -237,6 +249,25 @@ def register_hypothesis(
             "data_ranges": json.dumps([task_range], ensure_ascii=False),
         }
 
+    # 4.6 登记自动预检（add-hypothesis-precheck D6：Q1 裁 A——全登记路径
+    #     含谱系回链的程序化登记）。插桩位置=全部校验（1/2/2.5/3/4/4.5）
+    #     之后、原子写之前：校验链错误码序不被预检吞掉，canonical 条件
+    #     在手，幂等命中已在第 4 步早退（不跑预检）。只读（写事务外）
+    #     尽力而为：失败降级 logger.warning，登记照常。对预检模块的
+    #     引用必须函数内延迟 import——模块级 import 经 templates 聚合包
+    #     （condition_stats→condition_kernel→本模块延迟引用）形成加载
+    #     期环（design「五裁决连锁落地」节环规避依据）。
+    precheck_warnings = None
+    if precheck_data_dir is not None:
+        try:
+            from core.analysis.templates.precheck_hypothesis import (
+                run_registration_precheck,
+            )
+            precheck_warnings = run_registration_precheck(
+                db_path, precheck_data_dir, when, data_ranges)
+        except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
+            logger.warning("登记预检降级（登记照常）: %s", exc)
+
     # 5. 原子写（provenance 存在时同事务追加 screen_use 日志）
     import uuid
     hid = hypothesis_id or f"hyp_{uuid.uuid4().hex[:12]}"
@@ -250,7 +281,10 @@ def register_hypothesis(
         ranges_hash=ranges_hash,
         screen_use=screen_use,
     )
-    return {"hypothesis_id": hid, "duplicated": False}
+    out = {"hypothesis_id": hid, "duplicated": False}
+    if precheck_warnings is not None:
+        out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
+    return out
 
 
 # ---------------------------------------------------------------- 迁移
