@@ -36,6 +36,32 @@ _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
 _HEAVY_ROWS = 10000
 
 
+def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
+    """0.3.3 C-β：index-only 轻量计数——只读 timestamp 列按区间过滤
+    计行（不装 OHLCV 全列），heavy 判定从全量 IO 降为单列索引扫描。
+    计数口径 = len(_load_df(...))（列同源等价，测试锚定）；timestamp
+    列名缺失（数据集形制变体）时回退全量装载——正确性优先于轻量。
+    """
+    from core.analysis.warmup_loader import to_utc
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    from core.data.storage import load_parquet
+
+    try:
+        path = find_parquet(data_dir, safe_symbol(r["symbol"]), r["timeframe"])
+        if path is None:
+            return 0
+        ts = load_parquet(path, columns=["timestamp"])
+        # tz 归一（to_utc 单一实现）：naive 按 UTC 解释（capability 公开
+        # 承诺）；未归一时 naive 与 tz-aware 索引比较抛 TypeError 不在
+        # 下方回退捕获列表，会裸穿 500（CARD-01）
+        lo = to_utc(pd.Timestamp(r["start"]))
+        hi = to_utc(pd.Timestamp(r["end"]))
+        return int(((ts.index >= lo) & (ts.index <= hi)).sum())
+    except (KeyError, ValueError):
+        df = _load_df(data_dir, r)
+        return int(len(df))
+
+
 def _load_df(data_dir: Path, r: Dict[str, str]):
     from core.data.mtf_loader import load_and_prepare_df
 
@@ -116,6 +142,19 @@ def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
                                   f"{_TEMPLATE_REQUIRED_KEYS[template]}"})
 
 
+def _with_derivatives_coverage(result: Dict[str, Any],
+                               df: Optional[pd.DataFrame]) -> Dict[str, Any]:
+    """0.3.3 G12：衍生品边界声明随结果出站（df.attrs 通道——装载层
+    合并衍生品列时写入；未合并则 attrs 无键、结果不挂——「涉及」的
+    判定天然由装载层承载：合并即涉及）。三链共用装载点，trading 链
+    对 attrs 新键零感知。"""
+    cov = df.attrs.get("derivatives_coverage") if df is not None else None
+    if cov is not None:
+        result = dict(result)
+        result["derivatives_coverage"] = cov
+    return result
+
+
 def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) -> Dict[str, Any]:
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
@@ -137,15 +176,16 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
     if payload.template == "screen_patterns":
-        # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 取最大周期×3），
-        # 统计段切回请求区间；features 校验前置（未知指标在此结构化拒绝，
-        # 不让装载层 KeyError 裸穿）
+        # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 主公式推导：
+        # 周期类参数上限之和 ×3、下限 200），统计段切回请求区间；
+        # features 校验前置（未知指标在此结构化拒绝，不让装载层
+        # KeyError 裸穿）
         feature_names = resolve_feature_names(p.get("features", "all"))
         df, request_start = load_with_warmup(
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], feature_names)
         mtf_ctx.eval_start = request_start
-        return screen_patterns(
+        return _with_derivatives_coverage(screen_patterns(
             df, data_ranges=ranges, timeframe=rng["timeframe"],
             features=p.get("features", "all"),
             horizons=p.get("horizons"),
@@ -153,7 +193,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             min_samples=p.get("min_samples", 30),
             request_start=request_start,
             hypothesis_id=payload.hypothesis_id,
-            mtf=mtf_ctx).to_dict()
+            mtf=mtf_ctx).to_dict(), df)
 
     if payload.template == "param_sweep":
         # 参数稳健性检查（add-param-sweep）：warmup 前扩装载同 condition_stats
@@ -167,7 +207,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = _load_with_condition_refs(
             data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
-        return param_sweep(
+        return _with_derivatives_coverage(param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
             sweep={"axis": s.get("axis", "target"),
                    "values": s.get("values", "auto")},
@@ -175,7 +215,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
             hypothesis_id=payload.hypothesis_id,
-            mtf=mtf_ctx).to_dict()
+            mtf=mtf_ctx).to_dict(), df)
 
     if payload.template == "regime_split":
         # 行情分段（add-regime-split）：warmup 覆盖判读指标（ADX/ATR）；
@@ -188,14 +228,14 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             data_dir, rng["symbol"], rng["timeframe"],
             rng["start"], rng["end"], warm_names)
         mtf_ctx.eval_start = request_start
-        return regime_split(
+        return _with_derivatives_coverage(regime_split(
             df, segmentation=p.get("segmentation", "auto"),
             indicator=p.get("indicator"), condition=p.get("condition"),
             forward_bars=p.get("forward_bars", 24),
             data_ranges=ranges, timeframe=rng["timeframe"],
             request_start=request_start,
             hypothesis_id=payload.hypothesis_id,
-            mtf=mtf_ctx).to_dict()
+            mtf=mtf_ctx).to_dict(), df)
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
@@ -215,32 +255,37 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         df, request_start = _load_with_condition_refs(
             data_dir, rng, p["indicator"], p["condition"])
         mtf_ctx.eval_start = request_start
-        return condition_stats(df, indicator=p["indicator"], params=p["params"],
-                               condition=p["condition"], data_ranges=ranges,
-                               request_start=request_start,
-                               forward_bars=p.get("forward_bars", 24),
-                               min_samples=p.get("min_samples", 30),
-                               hypothesis_id=payload.hypothesis_id,
-                               mtf=mtf_ctx).to_dict()
+        return _with_derivatives_coverage(condition_stats(
+            df, indicator=p["indicator"], params=p["params"],
+            condition=p["condition"], data_ranges=ranges,
+            request_start=request_start,
+            forward_bars=p.get("forward_bars", 24),
+            min_samples=p.get("min_samples", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict(), df)
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
-        return distribution_compare(df, column=p["column"], transform=p.get("transform", "returns"),
-                                     group_a=p["group_a"], group_b=p["group_b"],
-                                     data_ranges=ranges, hypothesis_id=payload.hypothesis_id).to_dict()
+        return _with_derivatives_coverage(distribution_compare(
+            df, column=p["column"], transform=p.get("transform", "returns"),
+            group_a=p["group_a"], group_b=p["group_b"],
+            data_ranges=ranges, hypothesis_id=payload.hypothesis_id).to_dict(), df)
     if payload.template == "correlation_scan":
-        return correlation_scan(df, signal_column=p["signal_column"],
-                                horizon=p.get("horizon", 24), max_lag=p.get("max_lag", 12),
-                                data_ranges=ranges, hypothesis_id=payload.hypothesis_id).to_dict()
+        return _with_derivatives_coverage(correlation_scan(
+            df, signal_column=p["signal_column"],
+            horizon=p.get("horizon", 24), max_lag=p.get("max_lag", 12),
+            data_ranges=ranges, hypothesis_id=payload.hypothesis_id).to_dict(), df)
     if payload.template == "event_study":
-        return event_study(df, condition=p["condition"], window=p.get("window", 12),
-                           data_ranges=ranges, min_events=p.get("min_events", 30),
-                           hypothesis_id=payload.hypothesis_id,
-                           mtf=mtf_ctx).to_dict()
+        return _with_derivatives_coverage(event_study(
+            df, condition=p["condition"], window=p.get("window", 12),
+            data_ranges=ranges, min_events=p.get("min_events", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict(), df)
     if payload.template == "pattern_mining":
-        return similar_at_time(df, as_of=p["as_of"], n_neighbors=p.get("n_neighbors", 50),
-                               horizon=p.get("horizon", 12), data_ranges=ranges,
-                               hypothesis_id=payload.hypothesis_id).to_dict()
+        return _with_derivatives_coverage(similar_at_time(
+            df, as_of=p["as_of"], n_neighbors=p.get("n_neighbors", 50),
+            horizon=p.get("horizon", 12), data_ranges=ranges,
+            hypothesis_id=payload.hypothesis_id).to_dict(), df)
     raise ResearchError("RESEARCH_TEMPLATE_UNKNOWN", f"未知模板: {payload.template}")
 
 
@@ -381,9 +426,18 @@ def run_analysis(
         # 卡1 接线：必填键存在性前置（校验先于装载——省无谓 IO；
         # 缺键 422 含键名，消灭裸 KeyError→伪 task 家族）
         _require_required_keys(payload.template, payload.params)
-        df = _load_df(data_dir, payload.data_range.model_dump())
+        # 0.3.3 C-β：heavy 判定改 index-only 计数——原全量预载（装载
+        # 后丢弃/与模板首装双倍 IO）退役；各分支模板保持各自首装
+        # （每请求每分支恰好一次真实装载）
+        rows = _count_rows_index_only(
+            data_dir, payload.data_range.model_dump())
+        if rows < 50:
+            # min_bars 语义对齐（load_and_prepare_df 缺省 50——切片后
+            # 不足即「数据不足」）：经 _load_df 复现原 DATA_INSUFFICIENT
+            # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
+            rows = len(_load_df(data_dir, payload.data_range.model_dump()))
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
-                 or len(df) > _HEAVY_ROWS)
+                 or rows > _HEAVY_ROWS)
 
         if payload.template == "screen_patterns":
             # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；

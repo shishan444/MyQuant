@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from core.analysis.registry_meta import WARMUP_RULE_TEXT
 from core.analysis.warmup_loader import to_utc
 
 
@@ -350,7 +351,8 @@ def _mask_higher(
             f"数据起点前实际可得 {avail_bars} bar（数据起点 {raw.index[0]}）",
             detail={"timeframe": tf, "warmup_bars": need_bars,
                     "available_bars": avail_bars,
-                    "data_start": raw.index[0].isoformat()})
+                    "data_start": raw.index[0].isoformat(),
+                    "rule": WARMUP_RULE_TEXT})
 
     # 高周期轴求值（subject 现算 + 列名类 target 现算 + 额外键透传；
     # decode 就地重取——纯函数幂等，与收集段解耦）

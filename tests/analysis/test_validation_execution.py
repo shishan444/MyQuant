@@ -461,3 +461,78 @@ class TestGapClosureValidation:
                     db, data_dir, strategy_id=sid, symbol="BTCUSDT",
                     timeframe="4h", start="2023-03-01", end="2023-03-20")
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_random_window_top_level_verdict_both_paths(self, db, data_dir):
+        """0.3.3 G6：随机窗顶层 verdict 双路径同形同值——首次请求与
+        幂等重放（duplicated=True）顶层 verdict 均在场且相等（提取源：
+        首次=在场 agg、重放=记录 verdict 列——两路径一致性锚）。"""
+        save_strategy(db, strategy_id="st_g6", dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        kwargs = dict(
+            strategy_id="st_g6", symbol="BTCUSDT", timeframe="4h",
+            data_start="2023-03-20", data_end="2023-05-01",
+            window_bars=30, n_windows=3, seed=5)
+        first = random_window_test(db, data_dir, **kwargs)
+        replay = random_window_test(db, data_dir, **kwargs)
+
+        assert first.get("duplicated") is not True  # 正常路径无此键
+        assert replay["duplicated"] is True
+        # 双路径顶层 verdict 在场且同值
+        assert first["verdict"] in {"pass", "fail", "inconclusive"}
+        assert replay["verdict"] == first["verdict"]
+        # 与既有 summary 聚合一致（worst_window 兼容保留）
+        assert "worst_window" in first["summary"]
+
+    def test_random_window_same_seed_computational_reproducibility(
+            self, tmp_path, data_dir):
+        """阶段四盲区消解：同种子计算级可复现（spec 场景「同种子可
+        复现」）——两个独立 db 各自首跑（不经幂等通道），同种子同参数
+        → 同窗口集逐窗一致（start/end/metrics/verdict）与同 summary。
+        幂等锚只证 record 级复现，此处证计算级。"""
+        dbs = []
+        for i in range(2):
+            d = tmp_path / f"q{i}.db"
+            init_db_ext(d)
+            from core.analysis.executor import ensure_research_tables
+            ensure_research_tables(d)
+            save_strategy(d, strategy_id="st_repro",
+                          dna_json=_mtf_dna([]).to_json(),
+                          symbol="BTCUSDT", timeframe="4h")
+            dbs.append(d)
+        kwargs = dict(strategy_id="st_repro", symbol="BTCUSDT",
+                      timeframe="4h", data_start="2023-03-20",
+                      data_end="2023-05-01", window_bars=30,
+                      n_windows=4, seed=13)
+        run_a = random_window_test(dbs[0], data_dir, **kwargs)
+        run_b = random_window_test(dbs[1], data_dir, **kwargs)
+        assert run_a.get("duplicated") is not True
+        assert run_b.get("duplicated") is not True  # 两库各自首跑
+        keys = ("start", "end", "metrics", "verdict")
+        assert [{k: w[k] for k in keys} for w in run_a["windows"]] == [
+            {k: w[k] for k in keys} for w in run_b["windows"]]
+        assert run_a["verdict"] == run_b["verdict"]
+        assert run_a["summary"]["returns_median"] == pytest.approx(
+            run_b["summary"]["returns_median"])
+
+    def test_random_window_verdict_matches_worst_case_aggregation(self,
+                                                                  db, data_dir):
+        """特征网：顶层 verdict 提取源同源性——等于窗级 verdict 列表
+        经 _aggregate_verdicts（最差聚合三态唯一实现）的聚合值；禁作
+        提取源的 worst_window.verdict（收益最差窗的窗口判定，语义
+        不同于三态聚合）单列断言以防提取源漂移。"""
+        from core.analysis.thresholds import _aggregate_verdicts
+        save_strategy(db, strategy_id="st_g6b",
+                      dna_json=_mtf_dna([]).to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = random_window_test(
+            db, data_dir, strategy_id="st_g6b", symbol="BTCUSDT",
+            timeframe="4h", data_start="2023-03-20",
+            data_end="2023-05-01", window_bars=30, n_windows=4, seed=9)
+        window_verdicts = [w["verdict"] for w in out["windows"]]
+        expected = _aggregate_verdicts(window_verdicts)
+        assert out["verdict"] == expected
+        # 落库 verdict 列与顶层同值（程序化判定链单点取值的持久化面）
+        recs = [r for r in rr.list_validation_records(
+            db, strategy_id="st_g6b") if r["record_id"] == out["record_id"]]
+        assert len(recs) == 1
+        assert recs[0]["verdict"] == out["verdict"]

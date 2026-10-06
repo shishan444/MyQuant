@@ -11,6 +11,7 @@ fixture：make_two_regime_df（趋势+震荡构造器，T4）放大到 warmup 60
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -437,3 +438,153 @@ class TestGapClosureSegments:
     def test_explicit段时间形两拒(self, env, segs, match):
         with pytest.raises(ResearchError, match=match):
             _call(env, segmentation="explicit", segments=segs)
+
+
+class TestIdempotencyFiveTuple:
+    """0.3.3 G7 幂等身份五元化：六断言（含阻断修复锚与等价清单锚）。"""
+
+    @staticmethod
+    def _seg(label, s, e):
+        return {"label": label, "start": s.isoformat(), "end": e.isoformat()}
+
+    def test_auto_then_explicit_independent(self, env):
+        """同区间 auto 与 explicit 各自独立（五元可区分两模式）。"""
+        hyp = _register_hyp(env)
+        a = _call(env, hypothesis_id=hyp, segmentation="auto")
+        b = _call(env, hypothesis_id=hyp, segmentation="explicit", segments=[
+            self._seg("h1", env["df"].index[700], env["df"].index[1600]),
+            self._seg("h2", env["df"].index[1600], env["df"].index[-1]),
+        ])
+        assert a.get("duplicated") is not True and b.get("duplicated") is not True
+        assert a["record_id"] != b["record_id"]
+
+    def test_two_explicit_lists_independent(self, env):
+        """阻断修复锚：两份不同 explicit 段清单各自独立且身份摘要不同
+        ——G7 动机核心场景（同区间分段方案对比）。"""
+        hyp = _register_hyp(env)
+        idx = env["df"].index
+        two = [self._seg("h1", idx[700], idx[1600]),
+               self._seg("h2", idx[1600], idx[-1])]
+        three = [self._seg("t1", idx[700], idx[1300]),
+                 self._seg("t2", idx[1300], idx[1800]),
+                 self._seg("t3", idx[1800], idx[-1])]
+        first = _call(env, hypothesis_id=hyp,
+                      segmentation="explicit", segments=two)
+        second = _call(env, hypothesis_id=hyp,
+                       segmentation="explicit", segments=three)
+        assert first["record_id"] != second["record_id"]
+        recs = {r["record_id"]: r for r in
+                rr.list_validation_records(env["db"], hypothesis_id=hyp)}
+        id1 = recs[first["record_id"]]["segmentation"]
+        id2 = recs[second["record_id"]]["segmentation"]
+        assert id1 != id2 and id1 and id2  # 摘要不同且非空非默认
+
+    def test_equivalent_list_order_hits_idempotency(self, env):
+        """等价清单锚：同内容不同构造序 → 同摘要 → 幂等命中（防编码
+        把同一份清单误判为两份）。"""
+        hyp = _register_hyp(env)
+        idx = env["df"].index
+        segs = [self._seg("h1", idx[700], idx[1600]),
+                self._seg("h2", idx[1600], idx[-1])]
+        first = _call(env, hypothesis_id=hyp,
+                      segmentation="explicit", segments=segs)
+        # 等价=同段集合、段内键序不同（段列表序须升序——业务校验在
+        # _validate_explicit_segments，乱序输入被 422 正确拒绝不进编码）
+        reordered_keys = [{k: seg[k] for k in ("start", "end", "label")}
+                          for seg in segs]
+        shuffled = _call(env, hypothesis_id=hyp,
+                         segmentation="explicit", segments=reordered_keys)
+        assert shuffled["duplicated"] is True
+        assert shuffled["record_id"] == first["record_id"]
+
+    def test_same_params_replay_hits(self, env):
+        """同键幂等保持：完全同参二次请求命中既有记录。"""
+        hyp = _register_hyp(env)
+        first = _call(env, hypothesis_id=hyp, segmentation="auto")
+        replay = _call(env, hypothesis_id=hyp, segmentation="auto")
+        assert replay["duplicated"] is True
+        assert replay["record_id"] == first["record_id"]
+
+    def test_type_isolation_isolated_not_hit_by_staged(self, env):
+        """类型隔离锚（现状缺陷修复）：同区间已存在隔离记录，分段请求
+        不命中（跨类型误配修复——五元 level 等值过滤）。"""
+        hyp = _register_hyp(env)
+        rng = {"symbol": SYMBOL, "timeframe": "1d",
+               "start": env["start"], "end": env["end"]}
+        iso = run_isolated_backtest(
+            env["db"], env["data_dir"], hypothesis_id=hyp,
+            strategy_id="st_tema", request_range=rng)
+        assert iso["duplicated"] is not True  # 隔离首跑落库
+        staged = _call(env, hypothesis_id=hyp, segmentation="auto")
+        assert staged.get("duplicated") is not True  # 不命中隔离记录
+        assert staged["record_id"] != iso["record_id"]
+        # 反向：隔离重放也不命中分段记录（level 双向隔离）
+        iso2 = run_isolated_backtest(
+            env["db"], env["data_dir"], hypothesis_id=hyp,
+            strategy_id="st_tema", request_range=rng)
+        assert iso2["duplicated"] is True  # 命中隔离自己的记录
+        assert iso2["record_id"] == iso["record_id"]
+
+    def test_isolated_same_key_second_insert_blocked(self, env):
+        """附加锚：隔离记录同键二次直插被五元唯一索引拦截（空串判重
+        ——NULL 判重缺口修复的回归锚）。"""
+        import pytest as _pytest
+        from sqlalchemy.exc import IntegrityError
+        hyp = _register_hyp(env)
+        rng = {"symbol": SYMBOL, "timeframe": "1d",
+               "start": env["start"], "end": env["end"]}
+        rh = hashlib.sha256(json.dumps(rng, sort_keys=True).encode()).hexdigest()
+        rr.save_validation_with_log(
+            env["db"], record_id="rec_iso_1", hypothesis_id=hyp,
+            strategy_id="st_tema", level="isolated_backtest",
+            segmentation="", params="{}", result=None,
+            verdict="pass", range_hash=rh)
+        with _pytest.raises(IntegrityError):
+            rr.save_validation_with_log(
+                env["db"], record_id="rec_iso_2", hypothesis_id=hyp,
+                strategy_id="st_tema", level="isolated_backtest",
+                segmentation="", params="{}", result=None,
+                verdict="fail", range_hash=rh)
+
+    def test_out_of_order_segments_rejected_before_encoding(self, env):
+        """特征网：段序乱序（时间倒序段清单）进不了摘要编码——前置
+        校验 422 RESEARCH_PARAM_INVALID（spec 等价清单场景的边界现状：
+        「构造顺序不同」对段内键序=同摘要幂等命中（既有锚），对段序
+        乱序=前置拒绝不进编码）。"""
+        hyp = _register_hyp(env)
+        idx = env["df"].index
+        chronological = [self._seg("h1", idx[700], idx[1600]),
+                         self._seg("h2", idx[1600], idx[-1])]
+        reversed_list = list(reversed(chronological))
+        with pytest.raises(ResearchError, match="乱序") as ei:
+            _call(env, hypothesis_id=hyp, segmentation="explicit",
+                  segments=reversed_list)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # 拒绝发生在落库前（不产生半成品记录）
+        recs = [r for r in rr.list_validation_records(
+            env["db"], hypothesis_id=hyp)
+            if r["level"] == "staged_validation"]
+        assert recs == []
+
+
+class TestStagedWarmupDetailDisclosure:
+    """特征网：分段链 warmup 不足报错 detail 四键（_run_backtest_on_range
+    本批新增——与 warmup_loader 同构但独立实现，两处各自锚定防单边丢失）。
+    """
+
+    def test_staged_warmup_detail_four_keys(self, env):
+        """前缀不足报错 detail 携带 warmup_bars/available_bars/data_start/
+        rule——rule 与 registry_meta.WARMUP_RULE_TEXT 同文（多披露面一致
+        的报错面）。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        df = env["df"]
+        with pytest.raises(ResearchError) as ei:
+            _call(env, start=df.index[100].isoformat())  # 前缀 100 < 600
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+        detail = ei.value.detail
+        assert set(detail) >= {"warmup_bars", "available_bars",
+                               "data_start", "rule"}
+        assert detail["warmup_bars"] == 600  # 现状：env 策略推导值
+        assert detail["available_bars"] == 100
+        assert detail["data_start"] == df.index[0].isoformat()
+        assert detail["rule"] == WARMUP_RULE_TEXT

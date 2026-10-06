@@ -345,3 +345,65 @@ class TestListFolding:
         folded_size = len(json.dumps(payload, ensure_ascii=False).encode())
         raw_size = len(json.dumps(direct, ensure_ascii=False).encode())
         assert folded_size < 20 * 1024, f"折叠后默认响应 {folded_size}B 超 20KB"
+
+
+class TestDisclosureParity:
+    """0.3.3 G4/G5 披露对拍：mcpserver 文本层与 core 权威源同口径。
+
+    生产代码经 REST 分层不跨层 import——一致性由本锚强制（文本含
+    WARMUP_RULE_TEXT 关键口径子串；阈值数值 == api 侧常量；旧口径清零）。
+    工具经 @mcp.tool() 闭包注册、模块级无函数属性——doc 断言走源码文本
+    （同本文件 AST 扫描的取材纪律）。
+    """
+
+    _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _squash(text: str) -> str:
+        """空白归一（docstring 换行不切断口径子串）。"""
+        return "".join(text.split())
+
+    def test_list_indicators_doc_carries_rule_essentials(self):
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        src = self._squash(self._TOOLS_SRC)
+        for key in ("周期类参数注册表上限之和", "条件实际参数×3,20",
+                    "plugin_formula_lookback"):
+            assert self._squash(key) in src, f"list_indicators 描述缺口径要素: {key}"
+            assert self._squash(key) in self._squash(WARMUP_RULE_TEXT)  # 要素确属权威文本
+
+    def test_capability_warmup_rule_faithful(self):
+        from mcpserver.capability import CAPABILITY_DOC
+        for key in ("周期类参数注册表上限之和", "plugin_formula_lookback",
+                    "条件实际参数 × 3, 20"):
+            assert key in CAPABILITY_DOC, f"能力自述缺口径要素: {key}"
+        # 旧口径清零（capability 曾写「最大周期×3」——Q3 裁决禁旧口径）
+        assert "最大周期×3" not in CAPABILITY_DOC
+        assert "max_indicator_period" not in CAPABILITY_DOC
+
+    def test_run_analysis_doc_heavy_threshold_matches_constant(self):
+        import re
+        from api.routes.research.analysis import _HEAVY_ROWS
+        m = re.search(r"超过 (\d+)", self._TOOLS_SRC)
+        assert m is not None, "run_analysis 描述未披露同步/异步阈值"
+        assert int(m.group(1)) == _HEAVY_ROWS
+
+    def test_warmup_basis_uses_authoritative_text(self):
+        from core.analysis import validation_service as vs
+        src = Path(vs.__file__).read_text(encoding="utf-8")
+        assert "max_indicator_period" not in src, "basis 旧口径残留"
+        assert src.count("WARMUP_RULE_TEXT") >= 2  # import + basis 落用
+
+    def test_high_tf_conversion_elements_across_three_faces(self):
+        """CARD-03 锚：高周期折算三要素（折算语义 / 42 bar=42 天具体例 /
+        下限分属两式）三披露面齐备一致——CAPABILITY_DOC 与 tools docstring
+        折算句跨行，原文 in 检查会被换行切断，须 squash 后断言。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        from mcpserver.capability import CAPABILITY_DOC
+        faces = {
+            "WARMUP_RULE_TEXT": self._squash(WARMUP_RULE_TEXT),
+            "CAPABILITY_DOC": self._squash(CAPABILITY_DOC),
+            "tools 源码": self._squash(self._TOOLS_SRC),
+        }
+        for face_name, face in faces.items():
+            for key in ("折算为前扩时长", "42bar=42天", "分属两式"):
+                assert key in face, f"{face_name} 缺高周期折算要素: {key}"

@@ -320,3 +320,38 @@ class TestGapClosureComboSkip:
             if c.get("parts"):
                 parts = c["parts"]
                 assert len({str(x.get("subject")) for x in parts}) == len(parts)
+
+    def test_n_significant_toplevel_summary_key(self):
+        """0.3.3 G8：顶层 n_significant 汇总——与逐候选 fdr_significant
+        计数同源（装配点单点求和），纯噪声下 FDR 全灭一眼可见（=0）。"""
+        for seed in (11, 12):
+            r = screen_patterns(
+                _random_walk(seed), data_ranges=_RANGES, timeframe="1h",
+                features=["RSI", "ADX"], horizons=[4, 12],
+                top_n=50).to_dict()
+            payload = r["payload"]
+            manual = sum(1 for c in payload["candidates"]
+                         if c["fdr_significant"])
+            assert payload["n_significant"] == manual  # 同源一致性
+            assert payload["n_significant"] == 0  # 纯噪声全灭直读
+
+    def test_n_significant_not_capped_by_top_n(self):
+        """CARD-04 锚：n_significant 全族口径——统计先于 top_n 截断
+        （by_fp 指纹去重全量），显著数可超截断清单长度；两档 top_n
+        相等（截断无关性对拍，抗数据演化）；不截断档与候选清单逐条
+        计数一致（可核对性）。"""
+        df = _trending_with_dips(1)
+        common = dict(data_ranges=_RANGES, timeframe="1h",
+                      features=["RSI", "EMA"], horizons=[4, 12])
+        small = screen_patterns(df, top_n=3, **common).to_dict()["payload"]
+        large = screen_patterns(df, top_n=100, **common).to_dict()["payload"]
+        # 前置：小档截断确实发生（清单被截到 top_n，显著候选大量溢出）
+        assert len(small["candidates"]) == 3
+        # 封顶解除：全族显著数 > 截断清单长度（修复前此处被封在 3）
+        assert small["n_significant"] > 3
+        # 截断无关：两档同数据同参数显著数相等
+        assert small["n_significant"] == large["n_significant"]
+        # 可核对：不截断档（top_n 100 > 全族候选数）与清单逐条计数一致
+        assert len(large["candidates"]) <= 100
+        manual = sum(1 for c in large["candidates"] if c["fdr_significant"])
+        assert large["n_significant"] == manual

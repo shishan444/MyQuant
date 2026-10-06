@@ -79,6 +79,10 @@ def load_with_warmup(
 
     df = load_and_prepare_df(
         data_dir, symbol, timeframe, data_start=load_start, data_end=end,
+        # gap 判定用用户请求区间而非前扩切片边界（CARD-02：前扩窗内无
+        # 衍生品≠请求段缺口——1h 链请求起点落在衍生品起点后约 8 天内
+        # 即触发旧口径误报）
+        coverage_range=(start, end),
         compute_indicators=False,
     )
     if df is None:
@@ -89,9 +93,14 @@ def load_with_warmup(
     # warmup 可得性：装载后起点必须真正早于 start（warmup 段有数据）
     actual_warmup_bars = int((df.index < start_ts).sum())
     if actual_warmup_bars < warmup_bars:
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
         raise ResearchError(
             "RESEARCH_WARMUP_INSUFFICIENT",
             f"warmup 不足：需要 {warmup_bars} bar，数据起点前实际可得 "
-            f"{actual_warmup_bars} bar（数据起点 {df.index[0]}）")
+            f"{actual_warmup_bars} bar（数据起点 {df.index[0]}）",
+            detail={"warmup_bars": warmup_bars,
+                    "available_bars": actual_warmup_bars,
+                    "data_start": df.index[0].isoformat(),
+                    "rule": WARMUP_RULE_TEXT})
 
     return df, start_ts

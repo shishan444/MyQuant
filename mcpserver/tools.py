@@ -103,7 +103,13 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_indicators() -> Any:
-        """内置指标元数据（47 项：参数空间、输出列、lookback——warmup 推导依据）。"""
+        """内置指标元数据（47 项：参数空间、输出列、lookback——warmup 推导
+        依据；预算规则：主公式 max(200, 跨指标取最大的(周期类参数注册表
+        上限之和 × 3))，高周期条件掩码链 max(条件实际参数 × 3, 20)——bar
+        数按该轴周期折算为前扩时长（1d 轴 42 bar = 42 天；下限 20 与主
+        公式下限 200 分属两式），含公式插件时取 max(内置推导,
+        plugin_formula_lookback)；warmup 不足报错 detail 携带实算
+        warmup_bars 与 rule 全文）。"""
         return api.get("/api/research/indicators")
 
     @mcp.tool()
@@ -246,6 +252,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         indicator+condition；screen_patterns/regime_split 无必填键。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
+        task_id 轮询）；其余模板求值行数超过 10000（_HEAVY_ROWS，见
+        api/routes/research/analysis.py 常量）降级异步，低于阈值同步
+        直返。
         screen_patterns 全谱扫描（恒异步，长耗时注意 executor 并发占用）：
         params.features（"all" 或指标名子集）、params.horizons（默认
         [4,12,24,48,72]）、params.top_n（默认 20）、params.min_samples（默认

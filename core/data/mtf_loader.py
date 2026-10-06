@@ -74,6 +74,7 @@ def load_and_prepare_df(
     min_bars: int = 50,
     stop_check: Optional[Callable[[], None]] = None,
     compute_indicators: bool = True,
+    coverage_range: Optional[tuple[str, str]] = None,
 ) -> Optional[pd.DataFrame]:
     """装载单周期 Parquet，按日期切片，可选计算指标。
 
@@ -81,6 +82,11 @@ def load_and_prepare_df(
     时返回原始 OHLCV（含衍生列）不带特征列——需要指标的调用方自行计算；
     这让 core.data 不依赖 core.features（数据是更底层），默认 True 保持
     既有行为。
+
+    coverage_range：衍生品 gap 判定的请求区间 (start, end)——warmup
+    前扩装载（data_start 已前移）时切片边界含前扩前缀，须以此声明
+    真实请求区间，否则前扩窗内的衍生品起点会误报为请求段缺口
+    （CARD-02）；缺省 None 以切片后 df 边界判定（既有行为）。
     """
     from core.data.storage import load_parquet
 
@@ -100,7 +106,8 @@ def load_and_prepare_df(
     if len(df) < min_bars:
         return None
 
-    df = _try_merge_derivatives(data_dir, symbol_, timeframe, df)
+    df = _try_merge_derivatives(
+        data_dir, symbol_, timeframe, df, coverage_range=coverage_range)
     if compute_indicators:
         from core.features.indicators import compute_all_indicators
         return compute_all_indicators(df, stop_check=stop_check)
@@ -166,10 +173,13 @@ def _try_merge_derivatives(
     safe_symbol: str,
     timeframe: str,
     df: pd.DataFrame,
+    coverage_range: Optional[tuple[str, str]] = None,
 ) -> pd.DataFrame:
     """尝试装载并合并 OI/Funding Rate Parquet 进 OHLCV（衍生列装配）。
 
     衍生数据文件缺失时优雅直通（返回原 df，不阻塞装载）。
+    coverage_range 为 gap 判定的请求区间 (start, end)（缺省以切片后
+    df 边界判定——warmup 前扩装载须显式声明真实请求区间，CARD-02）。
     """
     from core.data.storage import load_parquet
     from core.data.derivatives_merger import merge_derivatives_into_ohlcv
@@ -186,6 +196,39 @@ def _try_merge_derivatives(
         funding_df = load_parquet(funding_path)
 
     if oi_df is not None or funding_df is not None:
-        return merge_derivatives_into_ohlcv(df, oi_df, funding_df)
+        merged = merge_derivatives_into_ohlcv(df, oi_df, funding_df)
+        # 0.3.3 G12：旁路探测衍生品列实际边界与请求区间交集（gap 态
+        # 显式标注——「数据不存在」与「市场没信号」不再混淆）。通道走
+        # df.attrs（对象级传播——ThreadPoolExecutor 并发下天然隔离，
+        # 优于模块级全局）。探测失败降级 probe_failed 不阻断装载
+        # （架构 A1：披露是伴随物不是闸门）。文件缺失的 absent 态由
+        # 既有 skipped_indicators 声明通道承载（spec 场景集对齐）。
+        # gap 判定基准（CARD-02）：coverage_range 声明的请求区间优先
+        # （tz 经 to_utc 归一——与 analysis 域同族纪律；函数内导入，
+        # core.data 模块级不反向依赖 core.analysis，同 mtf_alignment
+        # 先例）；缺省回退切片后 df 边界（既有行为）。
+        try:
+            if coverage_range is not None:
+                from core.analysis.warmup_loader import to_utc
+                req_lo = to_utc(pd.Timestamp(coverage_range[0]))
+                req_hi = to_utc(pd.Timestamp(coverage_range[1]))
+            else:
+                req_lo, req_hi = df.index.min(), df.index.max()
+            coverage: dict = {}
+            for _name, _src in (("oi", oi_df), ("funding", funding_df)):
+                if _src is None:
+                    continue
+                _lo, _hi = _src.index.min(), _src.index.max()
+                coverage[_name] = {
+                    "available_start": _lo.isoformat(),
+                    "available_end": _hi.isoformat(),
+                    "requested_start": req_lo.isoformat(),
+                    "requested_end": req_hi.isoformat(),
+                    "gap": bool(_lo > req_lo or _hi < req_hi),
+                }
+            merged.attrs["derivatives_coverage"] = coverage
+        except Exception:  # noqa: BLE001 —— 探测失败降级（A1 不阻断）
+            merged.attrs["derivatives_coverage"] = {"status": "probe_failed"}
+        return merged
 
     return df

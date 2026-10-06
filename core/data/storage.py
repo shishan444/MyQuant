@@ -21,9 +21,14 @@ def save_parquet(df: pd.DataFrame, path: Path) -> None:
     df.to_parquet(path, engine="pyarrow")
 
 
-def load_parquet(path: Path) -> pd.DataFrame:
-    """读 Parquet 文件为 DataFrame。"""
-    return pd.read_parquet(path, engine="pyarrow")
+def load_parquet(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
+    """读 Parquet 文件为 DataFrame。
+
+    columns（0.3.3 C-β）：列子集读取（None=全列）——重载判定等只读
+    行数/单列的场景免装全列 IO；index 列（如 timestamp）随 pandas
+    自动恢复，不进 columns 列表。
+    """
+    return pd.read_parquet(path, engine="pyarrow", columns=columns)
 
 
 def get_latest_timestamp(path: Path) -> pd.Timestamp | None:

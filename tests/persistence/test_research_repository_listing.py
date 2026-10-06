@@ -303,11 +303,13 @@ class TestFindValidationIdentityNone:
             strategy_id=None, level="random_window", params="{}",
             result=None, verdict="inconclusive", range_hash="rk_none")
 
-        found = rr.find_validation_by_identity(db_path, "hyp_1", None, "rk_none")
+        found = rr.find_validation_by_identity(db_path, "hyp_1", None, "rk_none",
+                                            level="random_window")
         assert found is not None and found["record_id"] == "rec_none"
         assert found["verdict"] == "inconclusive"
         # strategy_id 传值不命中 None 记录（幂等键三元组精确匹配）
-        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_a", "rk_none") is None
+        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_a", "rk_none",
+                                            level="random_window") is None
 
 
 class TestSignalRegistryVisibility:

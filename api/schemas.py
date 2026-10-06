@@ -864,12 +864,34 @@ class HypothesisConditions(BaseModel):
 
 
 class DataRangeItem(BaseModel):
-    """半开区间 [start, end)，UTC ISO8601。"""
+    """半开区间 [start, end)，UTC ISO8601。
+
+    start/end 可解析性前置校验（CARD-05）：非法串在此 422 拒绝——
+    落到装载层后 pd.Timestamp 的回退链对非法串会抛 TypeError 裸穿
+    500（存量洞）；校验与消费端同用 pd.Timestamp，杜绝「校验通过而
+    消费端解析失败」。naive 形制合法（消费端按 UTC 解释——capability
+    公开承诺）。
+    """
 
     symbol: str
     timeframe: str
     start: str
     end: str
+
+    @field_validator("start", "end")
+    @classmethod
+    def _require_parseable_timestamp(cls, v: str) -> str:
+        """时间串可解析性校验：解析失败 422（错误码+合法形 hint）。"""
+        import pandas as pd
+
+        try:
+            pd.Timestamp(v)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "RESEARCH_PARAM_INVALID: 时间参数须为可解析的 UTC "
+                "ISO8601 串（如 2024-01-01 或 2024-01-01T00:00:00Z），"
+                f"got {v!r}") from exc
+        return v
 
 
 class ScreenProvenance(BaseModel):

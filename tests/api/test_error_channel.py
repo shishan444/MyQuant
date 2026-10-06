@@ -677,3 +677,79 @@ class TestFailureDirectReturn:
         resp404 = api_client.get(
             "/api/research/analysis/tasks/fast_condition_stats")
         assert resp404.status_code == 404
+
+
+class TestDataRangeTimestampValidation:
+    """CARD-05 特征网：DataRangeItem 时间串可解析性前置校验——单点
+    收敛三个消费模型（analysis.data_range / hypotheses.data_ranges /
+    validate-backtest.request_range）。非法串在 schema 层 422（错误码
+    +合法形 hint），修复前直达装载层在 pandas 切片比较处抛 TypeError
+    裸穿 500。校验在业务前，不触达 db/data——无需 wire。
+    """
+
+    def _assert_param_invalid_422(self, resp):
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        # pydantic 校验拒绝形制：数组（业务 ResearchError 为 dict 三段）
+        assert isinstance(detail, list) and detail
+        msgs = " ".join(str(e.get("msg", "")) for e in detail)
+        assert "RESEARCH_PARAM_INVALID" in msgs, msgs
+        assert "ISO8601" in msgs and "2024-01-01" in msgs  # 合法形 hint 在场
+
+    def test_invalid_timestamp_three_endpoints(self, api_client):
+        """三消费端点参数化：任一 DataRangeItem 字段非法串 → 422 且
+        msg 含错误码与 hint。"""
+        cases = [
+            ("/api/research/analysis", {
+                "template": "correlation_scan",
+                "params": {"signal_column": "close"},
+                "data_range": {"symbol": "BTCUSDT", "timeframe": "1h",
+                               "start": "not-a-date",
+                               "end": "2024-01-20T00:00:00Z"}}),
+            ("/api/research/hypotheses", {
+                "conditions": {
+                    "when_conditions": [{"subject": "close", "action": "gt",
+                                         "target": 0}],
+                    "then_conditions": [{"subject": "close", "action": "gt",
+                                         "target": -1}]},
+                "statement": "非法时间串锚",
+                "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                                 "start": "2024-01-01T00:00:00Z",
+                                 "end": "2024-13-45T00:00:00Z"}]}),
+            ("/api/research/validate-backtest", {
+                "hypothesis_id": "hyp_any", "strategy_id": "st_any",
+                "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                                  "start": "2024-01-01",
+                                  "end": "不是时间"}}),
+        ]
+        for path, body in cases:
+            resp = api_client.post(path, json=body)
+            self._assert_param_invalid_422(resp)
+
+    def test_naive_form_passes_validation_to_business(self, api_client):
+        """合法 naive 形制不被误拒：hypotheses 端点 naive 日期直达
+        业务层成功创建（校验器放行 naive——消费端按 UTC 解释）。"""
+        resp = api_client.post("/api/research/hypotheses", json={
+            "conditions": {
+                "when_conditions": [{"subject": "close", "action": "gt",
+                                     "target": 0}],
+                "then_conditions": [{"subject": "close", "action": "gt",
+                                     "target": -1}]},
+            "statement": "naive 合法形制锚",
+            "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                             "start": "2024-01-01",
+                             "end": "2024-03-01"}]})
+        assert resp.status_code in (200, 201), resp.text
+        assert resp.json().get("hypothesis_id")
+
+    def test_analysis_naive_reaches_business_not_schema(self, api_client):
+        """analysis 端点 naive 形制过校验层：响应非 pydantic 数组
+        （业务层结果——dict 三段结构或正常 payload）。"""
+        resp = api_client.post("/api/research/analysis", json={
+            "template": "correlation_scan",
+            "params": {"signal_column": "close"},
+            "data_range": {"symbol": "BTCUSDT", "timeframe": "1h",
+                           "start": "2024-01-01",
+                           "end": "2024-01-20"}})
+        assert resp.status_code != 422 or not isinstance(
+            resp.json()["detail"], list), resp.text

@@ -123,3 +123,21 @@
 - 转化拒绝：when 条件带 timeframe 键显式 RESEARCH_NOT_EXPRESSIBLE（不静默降级单周期）；登记/求值/案例检查不受影响锚同文件
 - 新错误码四枚（TIMEFRAME_ON_THEN/TIMEFRAME_UNKNOWN/TIMEFRAME_NOT_HIGHER/RESEARCH_MTF_CONTEXT_MISSING）——hint 注册表漂移即红（tests/mcpserver/test_errors.py）
 - **30 文件 MTF 测试基线分拣结论（先跑后判存档）**：按新纪律重建 15 处断言——test_mtf.py merge_to_base 4（OHLCV 投影翻转/+1 位移退役真前视锚/差分锚）、test_mtf_engine resample_values 2、test_mtf_phase2 pulse 族 7（+tf 落位替换窗口聚合）、test_phase4_mtf_roles 2（ffill 开盘即见→收盘可见）、test_validate_integration 1（timeframe 键静默忽略→结构化拒绝）；test_executor_vectorize 对照组随 _resample_pulse 退役（权威锚在 tests/data）；其余 MTF 消费测试零漂移通过（含 test_mtf_data_alignment 进化 timeframe_pool 语义、scene 38、trading 不变性）；全量 2955 passed / coverage 87.28%（0.2.13 基线 2897/87.03%，+58 全为新锚）
+
+## 五区 · 0.3.3 mcp-contract-transparency
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| warmup 预算多披露面一致（G4/G5） | 错误 detail 四键（warmup_bars/available_bars/data_start/rule）双实现各自锚（warmup_loader 与 validation_service 两处同构独立实现）；WARMUP_RULE_TEXT 唯一权威文本，三面（能力自述/list_indicators/warmup.basis）要素对拍含高周期折算三要素（×3/下限 20/按周期折算=42 天例）与下限分属两式；旧口径（最大周期×3/max_indicator_period）清零 | `analysis/test_warmup_loader.py`、`analysis/test_staged_validation.py::TestStagedWarmupDetailDisclosure`、`mcpserver/test_contract_parity.py::TestDisclosureParity` | — |
+| 衍生品边界声明（G12/CARD-02） | df.attrs 通道三态（gap/probe_failed/absent）、存活链（compute_all_indicators 后非空）、装配 helper 与路由级出站（挂键/不挂两态）、并发对象级隔离、边界随数据文件动态；warmup 前扩装载 gap 判定基准=用户请求区间（前扩窗内不误报/真缺口不漏报/起点恰等临界） | `data/test_derivatives_coverage.py`（TestTryMergeCoverage/TestAttrsSurvival/TestResultAttachment/TestConcurrentIsolation/TestBoundaryDynamic/TestRouteWiring/TestWarmupPrefixGapSemantics） | — |
+| 全谱扫描 n_significant（G8/CARD-04） | 顶层汇总键同源一致与纯噪声全灭直读；全族口径不随 top_n 截断封顶（判别/截断无关/不截断档可核对三断言链） | `analysis/templates/test_screen_patterns.py` | — |
+| 随机窗顶层 verdict 三态（G6） | 双路径（首跑/幂等重放）同形同值；与 `_aggregate_verdicts` 窗级列表聚合同源（提取源漂移防护）；同种子计算级可复现（两独立 db 首跑逐窗一致——幂等只证 record 级，此处证计算级）；summary.worst_window 兼容保留 | `analysis/test_validation_execution.py` | — |
+| 分段记录幂等身份五元（G7） | 五元 (hypothesis/strategy/range_hash/level/segmentation) 六场景（auto vs explicit 独立/两 explicit 独立/等价键序命中/同键重放/类型双向隔离/空串库级判重）；乱序段清单前置 422 不进编码；迁移回填（explicit 现算摘要/auto 字面量/非分段空串非 NULL/行数对账/迁移索引五元判重）与双实现同输出 | `analysis/test_staged_validation.py::TestIdempotencyFiveTuple`、`persistence/test_identity_migration.py`、`persistence/test_research_repository.py`、`persistence/test_research_repository_listing.py` | — |
+| heavy 判定轻量化（C-β/CARD-01） | index-only 计数=全量装载口径；列子集读取；回退路径（timestamp 列缺失）；每分支恰一次真实装载（spy）；naive/Z/偏移三形制计数等价（to_utc 归一）；小样本 rows<50 错误序保留（DATA_INSUFFICIENT 422） | `data/test_heavy_counting.py`（TestStorageColumns/TestIndexOnlyCounting/TestSmallSampleGuard） | — |
+| schema 时间串校验（CARD-05） | DataRangeItem 可解析性前置 422 单点收敛三消费端点（analysis/hypotheses/validate-backtest）；msg 含错误码+ISO8601 hint；naive 合法形不误拒直达业务层 | `api/test_error_channel.py::TestDataRangeTimestampValidation` | — |
+
+### 0.3.3 守护行
+- WARMUP_RULE_TEXT 是 warmup 推导规则唯一权威文本（registry_meta）——错误 detail/能力自述/list_indicators/warmup.basis 四披露面改动须双向同步，parity 锚强制子串一致；mcpserver 文本层经 REST 分层不跨层 import（文本对拍由测试锚承载）
+- `derivatives_coverage` 走 df.attrs 对象级传播（禁模块级全局——ThreadPoolExecutor 并发互染）；gap 判定基准：warmup 前扩装载必须传 coverage_range=(用户请求区间)，缺省以切片边界判定（既有消费方兼容）——改判定语义须回归 TestWarmupPrefixGapSemantics 与默认路径两族
+- 幂等身份五元查询必须带 level（`find_validation_by_identity` 新签名）——跨类型误命中是已修复缺陷，新调用方漏传 level 会复发；segmentation_identity 与 alembic 迁移内联副本双实现同输出（改动双向同步）
+- `_count_rows_index_only` 时间参数经 to_utc 归一（naive 按 UTC——capability 公开承诺）；列名形制变体回退全量装载的正确性优先语义不因轻量化放弃

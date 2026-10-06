@@ -3,7 +3,7 @@
 两个职责：
 - ``indicator_metadata``：内置 INDICATOR_REGISTRY 只读外化，逐指标附
   lookback（周期类参数的注册表上限之和——warmup 推导
-  ``max(200, 用到指标最大周期 × 3)`` 的依据，D5）。
+  ``max(200, 跨指标最大的周期类参数上限之和 × 3)`` 的依据，D5）。
 - ``available_signal_columns``：内置注册表与插件表（signal_registry，
   仅插件行）运行时合并，条目标注来源——单一事实源纪律：内置指标
   权威在 core/features，禁止复制入库（D4），合并只在查询时刻发生。
@@ -58,7 +58,7 @@ def indicator_metadata() -> List[Dict[str, Any]]:
 
 
 def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
-    """warmup 推导式：max(200, 用到指标最大周期 × 3)。
+    """warmup 推导式：max(200, 跨指标最大的周期类参数注册表上限之和 × 3)。
 
     Args:
         indicator_names: 本次实际用到的指标名（INDICATOR_REGISTRY 键）。
@@ -76,6 +76,22 @@ def derive_warmup(indicator_names: List[str], default_floor: int = 200) -> int:
             raise KeyError(f"未知指标: {name}")
         max_period = max(max_period, _indicator_lookback(defn))
     return max(default_floor, max_period * 3)
+
+
+# warmup 推导规则的唯一权威文本（0.3.3 G5：四披露面——错误 detail /
+# 能力自述 / list_indicators 元数据 / 隔离回测 warmup.basis——同口径；
+# mcpserver 文本层经 REST 分层不直接 import，由 test_contract_parity
+# 锚强制子串一致）。忠实实现口径：_indicator_lookback 为周期类参数
+# 上限**求和**——多周期参数指标按各周期参数求和（保守取向），非只
+# 取最大单一周期参数。
+WARMUP_RULE_TEXT = (
+    "主公式 max(200, 跨指标取最大的(周期类参数注册表上限之和 × 3))"
+    "——单指标按其周期类参数上限求和(保守取向)；"
+    "高周期条件掩码链 max(条件实际参数 × 3, 20)，bar 数按该轴周期折算"
+    "为前扩时长（1d 轴 42 bar = 42 天，非 42 根基准 bar；下限 20 与"
+    "主公式下限 200 分属两式）；"
+    "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)"
+)
 
 
 def indicator_convergence(indicator: str, params: Dict[str, Any]) -> int:

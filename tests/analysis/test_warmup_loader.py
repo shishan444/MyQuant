@@ -134,3 +134,29 @@ def test_min_warmup_bars_default_unchanged(tmp_path):
                                    ["RSI"], min_warmup_bars=0)
     assert int((out_default.index < pd.Timestamp(start)).sum()) == 200
     assert int((out_zero.index < pd.Timestamp(start)).sum()) == 200
+
+
+def test_warmup_insufficient_detail_disclosure(tmp_path):
+    """0.3.3 G5：warmup 不足报错 detail 携带实算预算与规则全文。
+
+    四键断言——warmup_bars 与 derive_warmup(+min) 同源同参对照、
+    available_bars 为装载后实测、data_start 可定位、rule 与
+    registry_meta.WARMUP_RULE_TEXT 同文（四披露面一致的第一面）。
+    """
+    from core.analysis.registry_meta import WARMUP_RULE_TEXT, derive_warmup
+
+    df = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=7)
+    data_dir = _write_parquet(tmp_path, df, "1h")
+    start = df.index[100].isoformat()
+    end = df.index[500].isoformat()
+
+    with pytest.raises(ResearchError) as ei:
+        load_with_warmup(data_dir, SYMBOL, "1h", start, end, ["RSI"],
+                         min_warmup_bars=500)
+    detail = ei.value.detail
+    assert detail["warmup_bars"] == max(derive_warmup(["RSI"]), 500)
+    assert detail["available_bars"] == 100
+    assert detail["data_start"] == df.index[0].isoformat()
+    assert detail["rule"] == WARMUP_RULE_TEXT
+    # 忠实口径要素在 rule 全文中（参数求和语义——非「最大周期×3」旧口径）
+    assert "周期类参数注册表上限之和" in detail["rule"]

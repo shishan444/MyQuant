@@ -362,6 +362,7 @@ def save_validation_with_log(
     hypothesis_id: str,
     strategy_id: Optional[str],
     level: str,
+    segmentation: str = "",
     params: str,
     result: Optional[str],
     verdict: str,
@@ -369,7 +370,9 @@ def save_validation_with_log(
     components: Optional[str] = None,
     log_id: Optional[str] = None,
 ) -> None:
-    """原子双写：validation_records + research_log(validate)。"""
+    """原子双写：validation_records + research_log(validate)。
+    segmentation：0.3.3 G7 幂等第五维（分段身份——默认空串=非分段，
+    隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。"""
     engine = _engine_for(db_path)
     now = _now()
     with engine.begin() as conn:
@@ -378,6 +381,7 @@ def save_validation_with_log(
             hypothesis_id=hypothesis_id,
             strategy_id=strategy_id,
             level=level,
+            segmentation=segmentation,
             params=params,
             result=result,
             verdict=verdict,
@@ -396,9 +400,14 @@ def save_validation_with_log(
 
 
 def find_validation_by_identity(
-    db_path: Path, hypothesis_id: str, strategy_id: Optional[str], range_hash: str
+    db_path: Path, hypothesis_id: str, strategy_id: Optional[str],
+    range_hash: str, *, level: str, segmentation: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """幂等键查询：同 (hypothesis_id, strategy_id, range_hash) 的既有记录。"""
+    """幂等键查询（0.3.3 G7 五元）：同 (hypothesis_id, strategy_id,
+    range_hash, level, segmentation) 的既有记录——level 等值过滤使
+    幂等命中仅发生在同类记录间（隔离/分段/随机窗互不命中——跨类型
+    误命中的现状缺陷随之修复）。level 无默认值：调用方必须显式声明
+    查询的身份类型。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -406,6 +415,8 @@ def find_validation_by_identity(
                 ValidationRecord.hypothesis_id == hypothesis_id,
                 ValidationRecord.strategy_id == strategy_id,
                 ValidationRecord.range_hash == range_hash,
+                ValidationRecord.level == level,
+                ValidationRecord.segmentation == segmentation,
             ).order_by(ValidationRecord.created_at)
         ).mappings().first()
     return dict(row) if row is not None else None
