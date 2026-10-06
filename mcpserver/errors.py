@@ -87,9 +87,9 @@ HINTS: Dict[str, str] = {
     # 同 _SUPPORTED_ACTIONS 锚定 engine 惯例）；漂移防线在
     # tests/mcpserver/test_errors.py 的集合对拍断言（不一致即红）
     "RESEARCH_TEMPLATE_UNKNOWN":
-        "模板名不在八类之列：template ∈ condition_stats|distribution_compare|"
+        "模板名不在九类之列：template ∈ condition_stats|distribution_compare|"
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
-        "param_sweep|regime_split",
+        "param_sweep|regime_split|precheck_hypothesis",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
@@ -109,6 +109,9 @@ HINTS: Dict[str, str] = {
     "RESEARCH_FORMULA_REGISTRY_MISSING":
         "valid 插件的注册表条目缺失（原子双写断裂的数据完整性异常）："
         "核对 signal_registry 与插件表是否被外部改动，必要时重建注册条目",
+    "RESEARCH_PLUGIN_COLUMN_NOT_FOUND":
+        "条件引用的插件列不可达：用 list_signal_columns 查询当前可见插件"
+        "列（only_visible），更正列名或先 register_formula_plugin 注册",
     "RESEARCH_COMPOSITION_INVALID":
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
     # ---- 沙盒回测

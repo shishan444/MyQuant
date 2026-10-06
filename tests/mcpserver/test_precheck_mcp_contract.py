@@ -6,8 +6,6 @@ regime_split）、G3 旧指引（condition_stats 逐条独立复核）退役且�
 组合复核指引指向 precheck、阈值与双锚口径披露、register_hypothesis
 提及 precheck_warnings 返回键。
 """
-import asyncio
-
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -15,9 +13,10 @@ pytestmark = [pytest.mark.integration]
 
 def _tools_by_name():
     from mcpserver.server import build_server
+    from tests.mcpserver.test_contract_parity import run_async
 
     mcp, _ = build_server(profile="research")
-    tools = asyncio.run(mcp.list_tools())
+    tools = run_async(mcp.list_tools())   # e2e 泄漏 loop 兼容（run_async 形制）
     return {t.name: t for t in tools}
 
 
