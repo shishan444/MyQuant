@@ -362,6 +362,44 @@ class TestTemplateShell:
         assert d["rule"] == WARMUP_RULE_TEXT      # 推导规则同源披露
 
 
+# ---------------------------------------------------------------- 持有期
+
+class TestForwardBarsDomain:
+    """CARD-01：forward_bars 值域契约（condition_stats 同款形制与时序）。
+
+    env fixture 装载 df=450 行（前缀 200+统计段 250）——上界 449 基于
+    含 warmup 前缀的全 df（先例口径，非统计段 249）；修复前字符串/
+    float 形落 TypeError 500、True 按 1 静默接受、0/负值产出误导报告。
+    """
+
+    def _run(self, env, db_path, forward_bars):
+        df, data_dir = env
+        start, end = _tail_range(df)
+        rng = {"symbol": SYMBOL, "timeframe": "1h", "start": start, "end": end}
+        return precheck_hypothesis(
+            db_path, data_dir, rng, dict(rng),
+            [{"subject": "close", "action": "gt", "target": "0"}],
+            forward_bars=forward_bars)
+
+    @pytest.mark.parametrize(
+        "bad", ["24", 2.5, 0, -3, True, 500],
+        ids=["字符串形", "float形", "零", "负值", "bool形", "超上界"])
+    def test_illegal_forward_bars_422(self, env, db_path, bad):
+        with pytest.raises(ResearchError) as ei:
+            self._run(env, db_path, bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # legal_range 含前缀全 df 口径的精确锚（450 行 → 1..449）
+        assert ei.value.detail["legal_range"] == "1..449"
+
+    def test_upper_bound_edge_inclusive_runs(self, env, db_path) -> None:
+        """N=len(df)-1=449 恰在界内：尾段前向窗口全 NaN，收益 count=0
+        但报告照常产出——与 422 的分界锚。"""
+        out = self._run(env, db_path, 449)
+        cs = out["payload"]["combination_stats"]
+        assert cs["forward_returns"]["count"] == 0
+        assert out["verdict"] in ("pass", "warn", "reject_suggestion")
+
+
 # ---------------------------------------------------------------- 高周期
 
 class TestHtfConditionInCombo:
