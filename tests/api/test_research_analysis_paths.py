@@ -247,3 +247,32 @@ class TestHeavyPathAndFastPath:
         resp2 = api_client.post("/api/research/analysis", json=_body(
             "pattern_mining", {"as_of": "2024-02-15T00:00:00Z"}))
         assert resp2.status_code == 200, "通用段 fast_path 直返 handle（pattern 恒 heavy）"
+
+
+class TestParamGuardRouteSmoke:
+    """TD-2 路由级 422 冒烟（clear-analysis-tds 2.3——快路径同步通道）：
+    guard 在模板函数入口拦截，经 run_analysis 快路径冒泡为 422 附
+    legal_range（specs「数值参数非法结构化拒绝」场景的路由级锚）。"""
+
+    def test_correlation_scan_bad_horizon_422(self, api_client, paths_env):
+        _wire(api_client, paths_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "correlation_scan",
+            {"signal_column": "close", "horizon": "24"}))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "horizon" in resp.text
+
+    def test_distribution_compare_bad_transform_422(
+            self, api_client, paths_env):
+        _wire(api_client, paths_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "distribution_compare",
+            {"column": "close", "transform": "ret",
+             "group_a": {"start": "2024-02-10T00:00:00Z",
+                          "end": "2024-02-15T00:00:00Z"},
+             "group_b": {"start": "2024-02-15T00:00:00Z",
+                          "end": "2024-02-20T00:00:00Z"}}))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "returns" in resp.text          # legal_range 枚举清单附出

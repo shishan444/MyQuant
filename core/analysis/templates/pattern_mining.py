@@ -42,6 +42,14 @@ def similar_at_time(
     Raises:
         ValueError: as_of 不在数据内 / 历史不足以 fit。
     """
+    # TD-2 入参守卫（clear-analysis-tds）：数量类 1..无上界（0 邻居无
+    # 意义）；窗口类 1..len(df)-1。本模板恒异步（恒 heavy）——校验拒绝
+    # 落 failed 终态（reason 前缀 [RESEARCH_PARAM_INVALID]），无同步
+    # 422 通道（specs 两通道语义）
+    from core.analysis.templates.param_guard import _require_int_range
+    _require_int_range(n_neighbors, name="n_neighbors", lo=1)
+    _require_int_range(horizon, name="horizon", lo=1, hi=len(df) - 1)
+
     from core.discovery.knn_engine import SimilarCaseEngine
 
     # to_utc 统一（多 tz_convert 一步——aware 输入显式转 UTC，

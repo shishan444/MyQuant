@@ -43,6 +43,12 @@ def event_study(
         ResearchError: RESEARCH_PARAM_INVALID——事件数不足（小样本
             拒绝，卡10 收编，原 ValueError 落 500 误导 Agent 盲重试）。
     """
+    # TD-2 入参守卫（clear-analysis-tds）：窗口类 1..len(df)-1；阈值类
+    # 0..无上界（0=禁用事件数检查的既有合法语义）
+    from core.analysis.templates.param_guard import _require_int_range
+    _require_int_range(window, name="window", lo=1, hi=len(df) - 1)
+    _require_int_range(min_events, name="min_events", lo=0)
+
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     from core.analysis.condition_kernel import MtfEvalContext, _mask_for
 
