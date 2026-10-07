@@ -133,6 +133,38 @@ class TestPrecheckRouteContract:
                     precheck_env["db"], hypothesis_id=ghost))
 
 
+class TestValidateRangeTimestampContract:
+    """CARD-02：validate_range 时间串可解析性 422 前置。
+
+    契约依据：validate_range 声明形制为 UTC ISO8601 **串**（与
+    data_range 的 DataRangeItem 先例双层语义对齐——Pydantic 类型层
+    拒非 str 形 + field_validator 拒不可解析 str）。修复前非法串
+    裸穿落 500 RESEARCH_TEMPLATE_INTERNAL——本用例锚「输入形制错误
+    → 422 RESEARCH_PARAM_INVALID」而非 500。
+    """
+
+    @pytest.mark.parametrize("key", ["start", "end"])
+    @pytest.mark.parametrize(
+        "bad_value, form",
+        [("not-a-date", "非法串"),
+         ({"a": 1}, "非字符串 dict 形"),
+         (None, "None 形"),
+         (20240101, "int 形——pd.Timestamp 按 epoch 解释为 1970")],
+        ids=["非法串", "dict形", "None形", "int形"])
+    def test_unparseable_timestamp_422_not_500(
+            self, api_client, precheck_env, key, bad_value, form):
+        _wire(api_client, precheck_env)
+        vr = dict(_validate_range(precheck_env["df"]))
+        vr[key] = bad_value
+        resp = api_client.post("/api/research/analysis", json=_body(
+            {"when_conditions": _conds(), "validate_range": vr},
+            precheck_env["df"]))
+        assert resp.status_code == 422, (
+            f"{key}={bad_value!r}（{form}）须结构化拒绝，"
+            f"实际 {resp.status_code}: {resp.text[:200]}")
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+
+
 class TestPrecheckHeavySemantics:
     def test_over_10000_rows_goes_202_and_logs_precheck(
             self, api_client, db_path, tmp_path):
