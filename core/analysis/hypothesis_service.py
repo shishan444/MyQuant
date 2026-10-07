@@ -284,6 +284,29 @@ def register_hypothesis(
     out = {"hypothesis_id": hid, "duplicated": False}
     if precheck_warnings is not None:
         out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
+        # 挂接预检留痕（CARD-03，spec R4「预检执行 MUST 自动落研究日志」
+        # 的登记路径补齐）：entry_type=precheck 不挂假设（spec 明文——
+        # 预检时假设尚未存在，结构性不进判定并集）；ref_id 区分双锚来源
+        # （registration_precheck vs 显式路径 precheck_hypothesis）；
+        # summary 携判定锚与逐区间明细（design「返回体精简、详细留痕」
+        # 分工——审计走留痕）。留痕尽力而为（D15 降级先例）：写入失败
+        # 不反噬登记主通道。
+        try:
+            rr.append_research_log(
+                db_path,
+                hypothesis_id=None,
+                entry_type="precheck",
+                ref_id="registration_precheck",
+                data_ranges=json.dumps(data_ranges, ensure_ascii=False),
+                summary=json.dumps({
+                    "verdict": precheck_warnings.get("verdict"),
+                    "analysis_segment_trades":
+                        precheck_warnings.get("analysis_segment_trades"),
+                    "per_range": precheck_warnings.get("per_range"),
+                }, ensure_ascii=False, default=str),
+            )
+        except Exception as exc:  # noqa: BLE001 —— 留痕尽力而为，不反噬登记
+            logger.warning("登记预检留痕写入失败: %s", exc)
     return out
 
 
