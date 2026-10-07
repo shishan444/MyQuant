@@ -503,7 +503,14 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     policy = getattr(dna, "entry_trigger_policy", None)
     if policy is None:
         return entries
-    from core.analysis.event_policy import mask_to_events
+    from core.analysis.event_policy import mask_to_events, validate_policy
+    # CARD-01（event-triggers 批次三）：策略通道全程无校验的求值点单点
+    # 收口——归一（对归一形幂等；非法形在此 422 而非求值中途裸
+    # TypeError/KeyError）；显式 {"mode": "none"} 归一 None=等价无策略
+    # 原样返回（D4 归一形约定）
+    policy = validate_policy(policy)
+    if policy is None:
+        return entries
     if (policy.get("mode") == "suppress_bars"
             and policy["bars"] > len(entries) - 1):
         from core.analysis.hypothesis_service import ResearchError
