@@ -170,7 +170,8 @@ class TestRegistrationPrecheck:
 
     def test_multi_range_worst_anchor(self, api_client, reg_env, spy):
         """多区间最差锚：A 段 0 触发 → 锚=0 → reject_suggestion +
-        警告段披露逐区间明细。"""
+        警告段披露逐区间明细；留痕 per_range 同步披露明细（审计走留痕
+        ——design「返回体精简、详细留痕」分工）。"""
         _wire(api_client, reg_env)
         resp = api_client.post("/api/research/hypotheses", json=_payload(
             reg_env["df"],
@@ -181,6 +182,15 @@ class TestRegistrationPrecheck:
         assert [x["n_triggers"] for x in w["per_range"]] == [0, 149]
         assert w["analysis_segment_trades"] == 0    # 最小值进锚
         assert w["verdict"] == "reject_suggestion"
+        # 留痕携带逐区间明细（含最差锚——审计「预检结论 vs 实际考试」
+        # 对照依据）
+        entry = [e for e in rr.list_research_log(
+            reg_env["db"], hypothesis_id=None)
+            if e["entry_type"] == "precheck"][0]
+        summary = json.loads(entry["summary"])
+        assert summary["verdict"] == "reject_suggestion"
+        assert summary["analysis_segment_trades"] == 0
+        assert [x["n_triggers"] for x in summary["per_range"]] == [0, 149]
 
 
 class TestRegistrationRegression:

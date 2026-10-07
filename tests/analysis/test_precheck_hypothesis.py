@@ -177,6 +177,13 @@ class TestComputeProjected:
         assert [x["n_triggers"] for x in fp["per_range"]] == [3, 5]
         assert fp["analysis_segment_trades"] == 3      # 最小值进锚
         assert report["verdict"] == "warn"             # 3 ∈ (0, 5)
+        # 可加性不变量：不重叠区间逐段触发数之和 == 合并单区间求值
+        merged = compute_precheck_report(
+            df, cond, anchor="analysis_segment",
+            per_range=[{"start": r1["start"], "end": r2["end"]}],
+            warmup_bars=200)
+        assert merged["frequency_projection"]["per_range"][0]["n_triggers"] \
+            == 3 + 5
 
     def test_budget_check_carries_probe(self) -> None:
         df = _deterministic_df(self.PRICES)

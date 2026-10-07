@@ -111,6 +111,11 @@ class TestPrecheckRouteContract:
         assert summary["verdict"] == body["verdict"]
         assert summary["threshold"] == 5
         assert precheck[0]["hypothesis_id"] is None    # R4：不挂假设
+        assert precheck[0]["ref_id"] == "precheck_hypothesis"  # 显式路径来源
+        assert json.loads(precheck[0]["data_ranges"]) == [
+            {"symbol": SYMBOL, "timeframe": "4h",
+             "start": precheck_env["df"].index[650].isoformat(),
+             "end": precheck_env["df"].index[-1].isoformat()}]  # 区间原值回读
 
     def test_precheck_log_not_in_judged_union(self, api_client, precheck_env):
         """R4 场景：预检条目不进判定并集——按假设过滤的日志查询捞不到
