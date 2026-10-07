@@ -194,3 +194,14 @@ class TestTemplateEntry:
             similar_at_time(df, as_of="2024-01-02T00:00:00+00:00",
                             horizon=len(df), data_ranges=self.RANGES)
         assert ei.value.detail["legal_range"] == f"1..{len(df) - 1}"
+
+    @pytest.mark.parametrize("bad", ["50", 2.5, True, None])
+    def test_pattern_mining_non_int_forms(self, df, bad) -> None:
+        """恒 heavy 模板同拒非整数形/bool（specs 场景一形集在
+        pattern_mining 域的代表锚——越界形已由上两例锚定）。"""
+        from core.analysis.templates.pattern_mining import similar_at_time
+        with pytest.raises(ResearchError) as ei:
+            similar_at_time(df, as_of="2024-01-02T00:00:00+00:00",
+                            n_neighbors=bad, data_ranges=self.RANGES)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "n_neighbors"

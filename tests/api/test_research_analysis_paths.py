@@ -276,3 +276,39 @@ class TestParamGuardRouteSmoke:
         assert resp.status_code == 422, resp.text
         assert "RESEARCH_PARAM_INVALID" in resp.text
         assert "returns" in resp.text          # legal_range 枚举清单附出
+
+
+class TestParamGuardHeavyChannel:
+    """TD-2 两通道契约后半（specs「数值参数非法结构化拒绝」）：恒 heavy
+    模板（pattern_mining）校验拒绝无同步 422 通道——202 → 轮询 failed，
+    reason 前缀 [RESEARCH_PARAM_INVALID]（executor 对 ResearchError
+    结构化收尾，轮询方可解析错误码）。
+
+    db 保持 fixture 不覆写：executor 单例绑 lifespan 启动库，覆写
+    state.db_path 会使任务写入启动库而轮询查覆写库（404 分裂——照
+    test_generic_heavy_success_chain :188 形制，只覆盖 data_dir）。
+    """
+
+    def test_pattern_mining_bad_param_failed_reason_carries_code(
+            self, api_client, paths_env):
+        import time
+
+        api_client.app.state.data_dir = paths_env["data_dir"]
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "pattern_mining",
+            {"as_of": "2024-02-15T00:00:00Z", "n_neighbors": 0}))
+        assert resp.status_code == 202, resp.text    # 恒 heavy 不因校验变 422
+        task_id = resp.json()["task_id"]
+
+        t: dict = {}
+        for _ in range(60):  # 轮询到终态（404 为入库竞态窗口，重试）
+            poll = api_client.get(
+                f"/api/research/analysis/tasks/{task_id}")
+            if poll.status_code == 200:
+                t = poll.json()
+                if t["status"] in ("succeeded", "failed"):
+                    break
+            time.sleep(0.5)
+        assert t.get("status") == "failed", t
+        assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
+        assert "n_neighbors" in t["reason"]          # 参数名可解析（错误即文档）
