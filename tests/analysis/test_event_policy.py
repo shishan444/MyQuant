@@ -13,6 +13,8 @@ N 与 N±1 两侧）；③ 属性锚（确定性逐字节一致、严格升序�
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.analysis.event_policy import mask_to_events, validate_policy
 from core.analysis.hypothesis_service import ResearchError
 
@@ -297,3 +299,19 @@ class TestErrorEchoTruncation:
         with pytest.raises(ResearchError) as ei:
             validate_policy("not-a-dict")
         assert ei.value.message == f"{self._PREFIX}'not-a-dict'"
+
+    def test_apply_与mask_to_events_恒等性(self) -> None:
+        """回投不变量（阶段四属性补强）：apply_policy_to_series 输出的
+        True 位置序列恒等于 mask_to_events 直接产出——回投层与变换层
+        的一致性（三模式 × 随机掩码）。"""
+        import pandas as pd
+
+        from core.analysis.event_policy import apply_policy_to_series
+        for policy in ({"mode": "first_true"},
+                       {"mode": "suppress_bars", "bars": 4}):
+            rng = np.random.default_rng(2026)
+            mask = rng.random(600) > 0.4
+            out = apply_policy_to_series(pd.Series(mask), policy)
+            assert np.flatnonzero(out.values).tolist() == \
+                mask_to_events(mask, policy).tolist()
+            assert out.dtype == bool            # 回投产物为纯 bool
