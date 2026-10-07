@@ -51,20 +51,12 @@ def event_study(
     _require_int_range(min_events, name="min_events", lo=0)
 
     # trigger-policy 卡4（5.1）：形制归一 + bars 数据长度上界求值侧
-    # 校验（数据已加载——D12 与 forward_bars 同窗同位置）；缺省/显式
-    # none 归一 None=逐 bar 现状口径（存量回归锚）
-    from core.analysis.event_policy import validate_policy
+    # 校验（数据已加载——D12 与 forward_bars 同窗同位置；CARD-03 收敛
+    # require_bars_within 单点）；缺省/显式 none 归一 None=逐 bar
+    # 现状口径（存量回归锚）
+    from core.analysis.event_policy import require_bars_within, validate_policy
     policy_norm = validate_policy(trigger_policy)
-    if (policy_norm is not None
-            and policy_norm.get("mode") == "suppress_bars"
-            and policy_norm["bars"] > len(df) - 1):
-        from core.analysis.hypothesis_service import ResearchError as _RE
-        raise _RE(
-            "RESEARCH_PARAM_INVALID",
-            f"trigger_policy.bars 超求值数据长度上界: {policy_norm['bars']}",
-            detail={"param": "trigger_policy.bars",
-                    "value": policy_norm["bars"],
-                    "legal_range": f"1..{len(df) - 1}"})
+    require_bars_within(policy_norm, len(df), "trigger_policy")
 
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     from core.analysis.condition_kernel import MtfEvalContext, _mask_for

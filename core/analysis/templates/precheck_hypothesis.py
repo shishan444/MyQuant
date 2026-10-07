@@ -280,34 +280,25 @@ def compute_precheck_report(
     combo = _combo_mask(work, when_conditions, mtf)
 
     # trigger-policy 卡4（5.3）：归一（对登记路径传入的归一形幂等）+
-    # bars 上界求值侧校验（全 df 含 warmup 前缀——与 forward_bars 同窗）。
+    # bars 上界求值侧校验（全 df 含 warmup 前缀——与 forward_bars 同窗；
+    # CARD-03 收敛 require_bars_within 单点）。
     # 变换域=统计段过滤后的掩码（统计链 /api/validate 同域——specs
     # 消费面同源锚；warmup 前缀不参与段结构判定，跨链事件序列一致
     # 的前提），在两锚分支的 stat/seg 切段后经 _to_event_mask 施加；
     # 外推基数与登记锚 analysis_segment_trades=事件数。
     policy_norm = None
+    # import 置块外：_to_event_mask 闭包在 None 路径同样消费
+    # apply_policy_to_series（None 原样返回）——块内 import 会 NameError
+    from core.analysis.event_policy import (
+        apply_policy_to_series, require_bars_within, validate_policy)
     if trigger_policy is not None:
-        from core.analysis.event_policy import mask_to_events, validate_policy
         policy_norm = validate_policy(trigger_policy)
-        if (policy_norm is not None
-                and policy_norm.get("mode") == "suppress_bars"
-                and policy_norm["bars"] > len(work) - 1):
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"trigger_policy.bars 超求值数据长度上界: "
-                f"{policy_norm['bars']}",
-                detail={"param": "trigger_policy.bars",
-                        "value": policy_norm["bars"],
-                        "legal_range": f"1..{len(work) - 1}"})
+        require_bars_within(policy_norm, len(work), "trigger_policy")
 
     def _to_event_mask(hit: pd.Series) -> pd.Series:
-        """带策略时掩码→事件位置回投（无策略原样返回——缺省零变化）。"""
-        if policy_norm is None:
-            return hit
-        pos = mask_to_events(hit.values, policy_norm)
-        ev = pd.Series(False, index=hit.index)
-        ev.iloc[pos] = True
-        return ev
+        """带策略时掩码→事件位置回投（无策略原样返回——缺省零变化；
+        CARD-03 局部复用收敛 apply_policy_to_series 单点）。"""
+        return apply_policy_to_series(hit, policy_norm)
 
     basis = _EVENT_BASIS if policy_norm is not None else _PROJECTION_BASIS
     basis_note = _EVENT_NOTE if policy_norm is not None else _BASIS_NOTE

@@ -170,18 +170,11 @@ def validate_hypothesis(
     # trigger-policy 卡3：带策略时掩码经权威变换为事件位置（/api/validate
     # 统计链单点分支——无策略路径上面原语句逐字不动；归一形由调用侧
     # validate_policy 产出）。bars 上界为求值侧值域校验（D12——登记侧
-    # 仅形制，此处数据已加载，与 forward_bars 同窗同语义）。
+    # 仅形制，此处数据已加载，与 forward_bars 同窗同语义；CARD-03 收敛
+    # require_bars_within 单点，param 名保真统计链声明键）。
     if trigger_policy is not None:
-        if trigger_policy.get("mode") == "suppress_bars":
-            bars = trigger_policy["bars"]
-            if bars > len(df) - 1:
-                from core.analysis.hypothesis_service import ResearchError
-                raise ResearchError(
-                    "RESEARCH_PARAM_INVALID",
-                    f"trigger_policy.bars 超求值数据长度上界: {bars}",
-                    detail={"param": "trigger_policy.bars", "value": bars,
-                            "legal_range": f"1..{len(df) - 1}"})
-        from core.analysis.event_policy import mask_to_events
+        from core.analysis.event_policy import mask_to_events, require_bars_within
+        require_bars_within(trigger_policy, len(df), "trigger_policy")
         event_pos = mask_to_events(when_mask.values, trigger_policy)
         trigger_indices = enhanced_df.index[event_pos].tolist()
 

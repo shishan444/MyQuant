@@ -503,7 +503,7 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     policy = getattr(dna, "entry_trigger_policy", None)
     if policy is None:
         return entries
-    from core.analysis.event_policy import mask_to_events, validate_policy
+    from core.analysis.event_policy import apply_policy_to_series, validate_policy
     # CARD-01（event-triggers 批次三）：策略通道全程无校验的求值点单点
     # 收口——归一（对归一形幂等；非法形在此 422 而非求值中途裸
     # TypeError/KeyError）；显式 {"mode": "none"} 归一 None=等价无策略
@@ -511,21 +511,10 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     policy = validate_policy(policy)
     if policy is None:
         return entries
-    if (policy.get("mode") == "suppress_bars"
-            and policy["bars"] > len(entries) - 1):
-        from core.analysis.hypothesis_service import ResearchError
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"entry_trigger_policy.bars 超求值数据长度上界: "
-            f"{policy['bars']}",
-            detail={"param": "entry_trigger_policy.bars",
-                    "value": policy["bars"],
-                    "legal_range": f"1..{len(entries) - 1}"})
-    event_pos = mask_to_events(
-        entries.fillna(False).astype(bool).values, policy)
-    out = pd.Series(False, index=entries.index)
-    out.iloc[event_pos] = True
-    return out
+    # CARD-03：bars 校验+变换+回投收敛 apply_policy_to_series 单点
+    # （param 名保真策略链声明键 entry_trigger_policy）
+    return apply_policy_to_series(
+        entries, policy, param_name="entry_trigger_policy")
 
 
 def dna_to_signal_set(

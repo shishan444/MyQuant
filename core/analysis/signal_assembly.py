@@ -92,9 +92,14 @@ def assemble_signal_set(
 
     # 事件化单次施加（trigger-policy 卡5）：组合后的 combined entries
     # 经唯一实现变换（防二次变换——suppress_bars 不幂等，二次抑制窗
-    # 拉长 2N；base 已以掩码态取得）
-    from core.strategy.executor import _apply_entry_trigger_policy
-    combined_entries = _apply_entry_trigger_policy(dna, combined["entries"])
+    # 拉长 2N；base 已以掩码态取得）。CARD-03：改调 event_policy 公共
+    # 面（消 core.analysis→core.strategy 跨层私有 import——executor 内
+    # _apply_entry_trigger_policy 保留薄壳供回测/实盘/进化三链直调）
+    from core.analysis.event_policy import apply_policy_to_series, validate_policy
+    combined_entries = apply_policy_to_series(
+        combined["entries"],
+        validate_policy(getattr(dna, "entry_trigger_policy", None)),
+        param_name="entry_trigger_policy")
 
     return SignalSet(
         entries=combined_entries,
