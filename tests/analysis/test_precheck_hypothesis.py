@@ -334,6 +334,33 @@ class TestTemplateShell:
             self._run(env, db_path, [{"subject": "close", "action": "gt"}])
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
 
+    def test_analysis_prefix_insufficient_422(self, env, db_path) -> None:
+        """CARD-04 锚定（spec R3 场景「分析段装载不足结构化拒绝」）：
+        前缀 400 < warmup 600 → 422 四件套差值声明——结构化通道即
+        差值声明；不产出三态结论（未收敛数据上外推是误导）。
+
+        与「拟验证段不足进报告」（test_budget_check_carries_probe，
+        validate_margin 负值照报）为 R3 拆分后的两侧锚。
+        """
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+
+        df, data_dir = env
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df.index[400].isoformat(),
+               "end": df.index[-1].isoformat()}
+        conds = [{"subject": {"indicator": "EMA",
+                              "params": {"period": 50}, "field": "ema"},
+                  "action": "gt", "target": 0}]
+        with pytest.raises(ResearchError) as ei:
+            precheck_hypothesis(db_path, data_dir, rng, dict(rng), conds)
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+        assert ei.value.status == 422
+        d = ei.value.detail
+        assert d["warmup_bars"] == 600            # EMA 上限 200×3
+        assert d["available_bars"] == 400         # 数据起点前实际可得
+        assert d["data_start"] == df.index[0].isoformat()
+        assert d["rule"] == WARMUP_RULE_TEXT      # 推导规则同源披露
+
 
 # ---------------------------------------------------------------- 高周期
 
