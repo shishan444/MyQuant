@@ -427,6 +427,18 @@ def precheck_hypothesis(
     budget = _budget_probe(ts, rng["start"], validate_range["start"],
                            warmup_bars)
 
+    # 持有期校验（CARD-01，condition_stats 同款形制与时序——df 在手后
+    # 校验、上界基于全 df 含 warmup 前缀）：bool 排除/非 int/<1/超长
+    # → 422（params 自由 Dict 无类型约束，字符串/2.5 此前落 TypeError
+    # 500、0 全 NaN 误导、负值语义反转、True 按 1 静默接受）
+    if (isinstance(forward_bars, bool) or not isinstance(forward_bars, int)
+            or forward_bars < 1 or forward_bars > len(df) - 1):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"forward_bars 非法: {forward_bars!r}",
+            detail={"param": "forward_bars",
+                    "legal_range": f"1..{len(df) - 1}"})
+
     mtf = MtfEvalContext(data_dir=data_dir, symbol=rng["symbol"],
                          base_tf=rng["timeframe"], eval_start=request_start)
 
