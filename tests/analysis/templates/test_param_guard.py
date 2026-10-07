@@ -62,9 +62,72 @@ class TestGuardPure:
         assert "returns" in ei.value.detail["legal_range"]
 
 
+class TestTimeAndWindowGuards:
+    """TD-A 时间窗/时间形守卫（trigger-policy tasks 2.1/2.2 纯函数段）。
+
+    通道错置修正对账锚：三非法（非对象/缺键/值非时间串）现状分别以
+    TypeError/KeyError 落 500，守卫后统一 422 附合法形。
+    """
+
+    def test_time_window_legal_forms(self) -> None:
+        """合法形放行：带时区 ISO、naive 串（归一属调用侧）、date-only。"""
+        from core.analysis.templates.param_guard import _require_time_window
+        _require_time_window(
+            {"start": "2024-01-01T00:00:00+00:00",
+             "end": "2024-01-02T00:00:00+00:00"}, name="group_a")
+        _require_time_window({"start": "2024-01-01", "end": "2024-01-02"},
+                             name="group_a")
+
+    @pytest.mark.parametrize("bad", [
+        "2024-01-01/2024-01-02",       # 字符串形（非对象）
+        ["2024-01-01", "2024-01-02"],  # 列表形
+        48,                            # 数值形
+        {"start": "2024-01-01"},                    # 缺 end
+        {"end": "2024-01-02"},                       # 缺 start
+        {},                                          # 两键全缺
+        {"start": "2024-01-01", "end": "2024-01-02", "extra": 1},  # 多余键
+        {"start": "not-a-time", "end": "2024-01-02"},  # 值非时间串
+        {"start": "2024-01-01", "end": True},           # 值非字符串
+        {"start": None, "end": "2024-01-02"},           # 值 None（NaT 陷阱）
+    ])
+    def test_time_window_illegal_422(self, bad) -> None:
+        from core.analysis.templates.param_guard import _require_time_window
+        with pytest.raises(ResearchError) as ei:
+            _require_time_window(bad, name="group_a")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.status == 422
+        assert "start" in ei.value.detail["legal_form"]
+
+    def test_iso_datetime_legal_forms(self) -> None:
+        from core.analysis.templates.param_guard import _require_iso_datetime
+        _require_iso_datetime("2024-01-02T00:00:00+00:00", name="as_of")
+        _require_iso_datetime("2024-01-02T00:00:00", name="as_of")  # naive
+        _require_iso_datetime("2024-01-02", name="as_of")           # date-only
+        _require_iso_datetime("2024-01", name="as_of")  # 月份简写（pandas 可解析）
+
+    @pytest.mark.parametrize("bad", [
+        "not-a-time",        # 非时间语义串
+        "2024-13-45",        # 月日越界（pandas 不可解析）
+        "",                  # 空串（pd.Timestamp("") 静默 NaT——须显式排除）
+        None,                # NaT 陷阱（pd.Timestamp(None) 不抛）
+        True,                # bool 陷阱（pd.Timestamp(True) 语义怪异）
+        1704163200,          # 数值形（epoch 秒静默接受陷阱）
+        2.5,
+    ])
+    def test_iso_datetime_illegal_422(self, bad) -> None:
+        """不可解析时间串/非字符串形 → 422 附合法形（恒异步通道经
+        调用侧转 failed 前缀——函数级直调证 ResearchError 语义）。"""
+        from core.analysis.templates.param_guard import _require_iso_datetime
+        with pytest.raises(ResearchError) as ei:
+            _require_iso_datetime(bad, name="as_of")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "as_of"
+
+
 class TestGuardProperties:
     """param_guard 纯函数不变量（阶段四步骤 4 属性补强——恒等式/
     值域界/包含性，性质级而非逐例）。"""
+
 
     @pytest.mark.parametrize("lo,hi", [(0, 10), (1, 100), (-5, 5), (0, 0)])
     @pytest.mark.parametrize("v_offset", [-1, 0, 1])
@@ -304,3 +367,47 @@ class TestTemplateEntry:
         r = condition_stats(df, forward_bars=5, data_ranges=self.RANGES,
                             **self.CSI)
         assert r.sample_size > 0
+
+    # ---- TD-A 模板入口接入（trigger-policy tasks 2.3 通道错置修正锚）----
+
+    @pytest.mark.parametrize("bad", [
+        "2024-01-01/2024-01-02",                        # 非对象形：现状 TypeError 500
+        {"start": "2024-01-01"},                        # 缺键：现状 KeyError 500
+        {"start": "not-a-time", "end": "x"},            # 值非时间串：现状 TypeError 500
+    ])
+    def test_distribution_compare_time_window_422(self, df, bad) -> None:
+        """group_a/b 非法 → 入口 422 结构化拒绝（不再 TypeError/
+        KeyError 落 500）——specs「时间窗形参数非法拒绝」对账。"""
+        from core.analysis.templates.distribution_compare import (
+            distribution_compare,
+        )
+        with pytest.raises(ResearchError) as ei:
+            distribution_compare(df, column="close", group_a=bad,
+                                 group_b=self.GB, data_ranges=self.RANGES)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "group_a"
+
+    def test_distribution_compare_group_b_guarded(self, df) -> None:
+        from core.analysis.templates.distribution_compare import (
+            distribution_compare,
+        )
+        with pytest.raises(ResearchError) as ei:
+            distribution_compare(df, column="close", group_a=self.GA,
+                                 group_b=["2024-01-02"], data_ranges=self.RANGES)
+        assert ei.value.detail["param"] == "group_b"
+
+    def test_pattern_mining_as_of_422_before_engine(self, df) -> None:
+        """as_of 不可解析 → 入口 422（恒异步通道由调用侧转 failed
+        前缀；本直调证 ResearchError 先于 pd.Timestamp 裸 ValueError
+        与引擎 import——specs「时间形参数非法拒绝」对账）。"""
+        from core.analysis.templates.pattern_mining import similar_at_time
+        with pytest.raises(ResearchError) as ei:
+            similar_at_time(df, as_of="not-a-time", data_ranges=self.RANGES)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "as_of"
+
+    @pytest.mark.parametrize("bad", [None, True, 1704163200])
+    def test_pattern_mining_as_of_non_string_422(self, df, bad) -> None:
+        from core.analysis.templates.pattern_mining import similar_at_time
+        with pytest.raises(ResearchError):
+            similar_at_time(df, as_of=bad, data_ranges=self.RANGES)
