@@ -1,10 +1,10 @@
 """模板入参守卫测试（clear-analysis-tds tasks 2.1/2.2 验证锚）。
 
 两层分层（tasks 2.1 划界）：TestGuardPure=param_guard 纯函数单测；
-TestTemplateEntry=六模板函数入口契约（直调——422 在计算前拦截，合法
-含端跑通）。specs 两场景（数值参数非法结构化拒绝/枚举参数封闭拒绝）
-+评估补三例（min_samples=0 放行/transform 三枚举合法/无上界大值合法）
-的对账锚。
+TestTemplateEntry=五模板函数入口契约（四补齐+condition_stats——
+直调，422 在计算前拦截，合法含端跑通）。specs 两场景（数值参数非法
+结构化拒绝/枚举参数封闭拒绝）+评估补三例（min_samples=0 放行/
+transform 三枚举合法/无上界大值合法）的对账锚。
 """
 import pytest
 
@@ -63,7 +63,9 @@ class TestGuardPure:
 
 
 class TestTemplateEntry:
-    """2.2：六模板函数入口契约（422 计算前拦截+合法含端跑通）。"""
+    """模板函数入口契约（422 计算前拦截+合法含端跑通）——五段：
+    correlation_scan/event_study/distribution_compare/pattern_mining
+    （TD-2 四补齐）+condition_stats（CARD-01 min_samples 段）。"""
 
     @pytest.fixture()
     def df(self):
