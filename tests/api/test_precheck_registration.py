@@ -96,7 +96,9 @@ def spy(monkeypatch):
 
 class TestRegistrationPrecheck:
     def test_register_returns_warnings_analysis_anchor(self, api_client, reg_env, spy):
-        """正常登记：警告键 + 锚=分析段触发数（阶梯数据 B 段满密度）。"""
+        """正常登记：警告键 + 锚=分析段触发数（阶梯数据 B 段满密度）
+        + 挂接留痕（CARD-03，spec R4：entry_type=precheck 不挂假设、
+        ref_id 区分双锚来源、summary 携判定锚与逐区间明细）。"""
         _wire(api_client, reg_env)
         resp = api_client.post("/api/research/hypotheses",
                                json=_payload(reg_env["df"]))
@@ -110,9 +112,25 @@ class TestRegistrationPrecheck:
         assert w["per_range"][0]["n_triggers"] == 249
         assert len(spy) == 1                   # 触达证明
 
+        entries = [e for e in rr.list_research_log(
+            reg_env["db"], hypothesis_id=None)
+            if e["entry_type"] == "precheck"]
+        assert len(entries) == 1               # 挂接留痕恰一条
+        entry = entries[0]
+        assert entry["hypothesis_id"] is None  # 不挂假设（R4/S11 结构性）
+        assert entry["ref_id"] == "registration_precheck"   # 双锚来源区分
+        summary = json.loads(entry["summary"])
+        assert summary["verdict"] == "pass"
+        assert summary["analysis_segment_trades"] == 249
+        assert len(summary["per_range"]) == 1
+        assert summary["per_range"][0]["n_triggers"] == 249
+        # 区间原值回读（审计可对上登记 data_ranges）
+        assert json.loads(entry["data_ranges"]) == _ranges(reg_env["df"])
+
     def test_register_degrades_when_precheck_raises(
             self, api_client, reg_env, spy, monkeypatch):
-        """预检注入异常：登记照常+无警告键+spy 触达（降级非静默跳过）。"""
+        """预检注入异常：登记照常+无警告键+spy 触达（降级非静默跳过）
+        + 失败预检不留痕（spec 场景限定「成功执行」才落日志）。"""
         _wire(api_client, reg_env)
 
         def _boom(*a, **k):
@@ -127,9 +145,14 @@ class TestRegistrationPrecheck:
         # 假设已持久化（受保护状态重查询比对）
         hyp = rr.get_hypothesis(reg_env["db"], body["hypothesis_id"])
         assert hyp is not None and hyp["status"] == "active"
+        # 降级无痕：precheck 条目零新增
+        assert not any(e["entry_type"] == "precheck" for e in
+                       rr.list_research_log(reg_env["db"],
+                                            hypothesis_id=None))
 
     def test_idempotent_hit_skips_precheck(self, api_client, reg_env, spy):
-        """幂等命中：duplicated=true、无警告键、预检仅首次调用。"""
+        """幂等命中：duplicated=true、无警告键、预检仅首次调用
+        + 幂等路径不留新痕（首登留痕恰一条，重复登记不新增）。"""
         _wire(api_client, reg_env)
         first = api_client.post("/api/research/hypotheses",
                                 json=_payload(reg_env["df"])).json()
@@ -140,6 +163,10 @@ class TestRegistrationPrecheck:
         assert second["duplicated"] is True
         assert second["precheck_warnings"] is None  # 幂等：不携带警告
         assert len(spy) == 1                   # 幂等路径零预检
+        entries = [e for e in rr.list_research_log(
+            reg_env["db"], hypothesis_id=None)
+            if e["entry_type"] == "precheck"]
+        assert len(entries) == 1               # 仅首登留痕，幂等不新增
 
     def test_multi_range_worst_anchor(self, api_client, reg_env, spy):
         """多区间最差锚：A 段 0 触发 → 锚=0 → reject_suggestion +
