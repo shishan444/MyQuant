@@ -543,8 +543,18 @@ def dna_to_signal_set(
         # MTF 划界防御（trigger-policy D10/6.3）：带 policy DNA 与 MTF
         # 层间组合语义无定义——显式结构化拒绝，不静默直译（翻译产物
         # 恒单周期，该形态只能经进化变异产生；算子侧已跳过，此处为
-        # 引擎防御兜底）。batch 通道对该拒绝透传不吞。
-        if getattr(dna, "entry_trigger_policy", None) is not None:
+        # 引擎防御兜底）。单周期兼容形制放行：from_json 的 layers
+        # auto-wrap（单层=execution 周期、mtf_mode 缺省）在隔离验证等
+        # 传递 dfs_by_timeframe 的链上等同单周期（is_mtf 仅表示 layers
+        # 数据结构），不属划界拒绝域——事件化经下方 legacy 组合出口挂。
+        _policy = getattr(dna, "entry_trigger_policy", None)
+        _exec_tf = dna.execution_genes.timeframe
+        _single_compat = (
+            dna.mtf_mode is None
+            and (dna.layers is None
+                 or (len(dna.layers) == 1
+                     and dna.layers[0].timeframe == _exec_tf)))
+        if _policy is not None and not _single_compat:
             from core.analysis.hypothesis_service import ResearchError
             raise ResearchError(
                 "RESEARCH_NOT_EXPRESSIBLE",
@@ -696,6 +706,15 @@ def dna_to_signal_set(
             combined_exits = combine_signals(all_layer_exits, dna.cross_layer_logic)
             combined_adds = combine_signals(all_layer_adds, dna.cross_layer_logic)
             combined_reduces = combine_signals(all_layer_reduces, dna.cross_layer_logic)
+
+        # 事件化（trigger-policy 卡5）：单周期兼容形制（auto-wrap 单层）
+        # 传递 dfs_by_timeframe 的链经此出口——与单周期路径同款挂点
+        # （combine 后、entry∧exit 清洗前）；真 MTF 带 policy 已在上
+        # 方划界拒绝，此处仅兼容形制触达。legacy 空集分支（无 entries）
+        # 变换幂等 no-op，不另挂。
+        if apply_trigger_policy:
+            combined_entries = _apply_entry_trigger_policy(
+                dna, combined_entries)
 
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both
