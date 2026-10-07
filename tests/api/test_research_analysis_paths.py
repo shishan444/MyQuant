@@ -338,3 +338,162 @@ class TestHeavyCountVariantFallback:
             "correlation_scan", {"signal_column": "close"}))
         assert resp.status_code == 200, resp.text
         assert resp.json()["template"] == "correlation_scan"
+
+
+class TestTemplateTriggerPolicy:
+    """三模板事件口径（trigger-policy 卡4 / tasks 5.1-5.3 对账锚）。
+
+    独立对照法（event_study 事件位复算）+ 强区分关系锚（恒真条件下
+    first_true 事件=1 vs 缺省=统计段全体——变换域=统计段过滤后，与
+    统计链 /api/validate 同域）；报告声明生效策略；缺省与显式 none
+    一致；bars 超界结构化拒绝（快路径同步 422）。
+
+    自建 1400 bar 环境：EMA 周期类 warmup 需求 600 bar 前扩（注册表
+    参数上限保守取向），paths_env 的 500 bar 区间前扩不足；阈值取
+    区间段中位（随机游走漂移下全量中位会使段掩码全 False）。
+    """
+
+    SEG = ("2024-01-10T00:00:00Z", "2024-02-10T00:00:00Z")
+
+    @pytest.fixture()
+    def tp_env(self, tmp_path: Path):
+        from tests.helpers.data_factory import make_ohlcv
+        df = make_ohlcv(n=1400, freq="4h", start="2023-09-01", seed=21)
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        db = tmp_path / "tp.db"
+        init_db_ext(db)
+        return {"data_dir": data_dir, "db": db, "df": df}
+
+    def _cond(self, tp_env, target=None) -> dict:
+        if target is None:
+            seg = self._seg_df(tp_env)
+            target = float(seg["close"].median())
+        return {"subject": "close", "action": "gt", "target": repr(target)}
+
+    def _seg_df(self, tp_env) -> "pd.DataFrame":
+        df = tp_env["df"]
+        return df[(df.index >= pd.Timestamp(self.SEG[0]))
+                  & (df.index <= pd.Timestamp(self.SEG[1]))]
+
+    def _body(self, template, params):
+        return {"template": template, "params": params,
+                "data_range": {"symbol": SYMBOL, "timeframe": "4h",
+                               "start": self.SEG[0], "end": self.SEG[1]}}
+
+    # ---- event_study（5.1）----
+
+    def test_event_study_first_true_事件位独立复算(self, api_client, tp_env):
+        from core.analysis.event_policy import mask_to_events
+        _wire(api_client, tp_env)
+        seg = self._seg_df(tp_env)
+        th = float(seg["close"].median())
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {"condition": self._cond(tp_env),
+                            "min_events": 0, "window": 12,
+                            "trigger_policy": {"mode": "first_true"}}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        events = mask_to_events((seg["close"] > th).values,
+                                {"mode": "first_true"})
+        events = events[events + 12 < len(seg)]        # 尾部窗丢弃语义
+        assert payload["n_events"] == len(events)
+        assert payload["trigger_policy"] == {"mode": "first_true"}  # 声明
+
+    def test_event_study_显式none_与缺省_一致(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        base = {"condition": self._cond(tp_env), "min_events": 0}
+        r1 = api_client.post("/api/research/analysis",
+                             json=self._body("event_study", base)).json()
+        r2 = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {**base,
+                            "trigger_policy": {"mode": "none"}})).json()
+        assert r1["payload"] == r2["payload"]
+
+    def test_event_study_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {"condition": self._cond(tp_env),
+                            "min_events": 0,
+                            "trigger_policy": {"mode": "suppress_bars",
+                                               "bars": 100000}}))
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+
+    # ---- condition_stats（5.2）----
+
+    CSI = {"indicator": "EMA", "params": {"period": 50}}
+
+    def test_condition_stats_first_true_事件口径(self, api_client, tp_env):
+        """恒真条件（close>0）：缺省=统计段全体命中，first_true=1——
+        变换域=统计段（段首=统计段第一个 bar）的强区分锚。"""
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        base = {**self.CSI, "condition": cond, "min_samples": 0}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", base)).json()["payload"]
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**base,
+                                "trigger_policy": {"mode": "first_true"}}
+        )).json()["payload"]
+        assert r_plain["hit_count"] > 100            # 统计段全体（直译）
+        assert r_event["hit_count"] == 1             # 唯一段首（事件）
+        assert r_event["trigger_policy"] == {"mode": "first_true"}
+
+    def test_condition_stats_sample_size_随事件集(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        base = {**self.CSI, "condition": self._cond(tp_env),
+                "min_samples": 0}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", base)).json()
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**base,
+                                "trigger_policy": {"mode": "first_true"}}
+        )).json()
+        assert 0 < r_event["sample_size"] <= r_plain["sample_size"]  # 上界
+
+    def test_condition_stats_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**self.CSI,
+                                "condition": self._cond(tp_env),
+                                "trigger_policy": {"mode": "suppress_bars",
+                                                   "bars": 100000}}))
+        assert resp.status_code == 422
+
+    # ---- precheck_hypothesis（5.3）----
+
+    VR = {"symbol": SYMBOL, "timeframe": "4h",
+          "start": "2024-02-11T00:00:00Z", "end": "2024-02-25T00:00:00Z"}
+
+    def test_precheck_带策略_事件口径与basis切换(self, api_client, tp_env):
+        """恒真条件：first_true 事件=统计段段首 1 个——n_triggers=1、
+        basis 切 event_density（口径差分形态声明）。"""
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        base = {"when_conditions": [cond], "validate_range": self.VR}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", base)).json()
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", {**base,
+                                    "trigger_policy": {"mode": "first_true"}}
+        )).json()
+        fp_plain = r_plain["payload"]["frequency_projection"]
+        fp_event = r_event["payload"]["frequency_projection"]
+        assert fp_plain["basis"] == "trigger_density_upper_bound"
+        assert fp_event["basis"] == "event_density"
+        assert fp_event["trigger_policy"] == {"mode": "first_true"}
+        # 恒真：缺省 n_triggers=统计段全体，first_true=1
+        assert r_plain["payload"]["combination_stats"]["n_triggers"] > 100
+        assert r_event["payload"]["combination_stats"]["n_triggers"] == 1
+
+    def test_precheck_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", {
+                "when_conditions": [self._cond(tp_env)],
+                "validate_range": self.VR,
+                "trigger_policy": {"mode": "suppress_bars",
+                                   "bars": 100000}}))
+        assert resp.status_code == 422

@@ -65,6 +65,14 @@ _BASIS_NOTE = (
     "预估=触发密度外推上界：验证引擎空仓进场抑制未计入，"
     "预估单向偏大于实际成交笔数（方向保守——偏多警示而非漏报空转）"
 )
+# 带策略形态口径声明（trigger-policy 卡4 / D13：事件密度与统计链闭环）。
+_EVENT_BASIS = "event_density"
+_EVENT_NOTE = (
+    "预估=事件密度外推（AND 合并掩码经权威变换后的事件计数）：与"
+    "统计链（/api/validate 携带同策略）实跑触发计数同口径——事件数对"
+    "事件数严格闭环；考试链（隔离验证）一致性为信号层事件口径，成交"
+    "笔数另受空仓进场抑制影响，不作外推对照对象"
+)
 
 
 # ---------------------------------------------------------------- 校验
@@ -270,11 +278,44 @@ def compute_precheck_report(
         {verdict, combination_stats, frequency_projection, budget_check}。
     """
     combo = _combo_mask(work, when_conditions, mtf)
+
+    # trigger-policy 卡4（5.3）：归一（对登记路径传入的归一形幂等）+
+    # bars 上界求值侧校验（全 df 含 warmup 前缀——与 forward_bars 同窗）。
+    # 变换域=统计段过滤后的掩码（统计链 /api/validate 同域——specs
+    # 消费面同源锚；warmup 前缀不参与段结构判定，跨链事件序列一致
+    # 的前提），在两锚分支的 stat/seg 切段后经 _to_event_mask 施加；
+    # 外推基数与登记锚 analysis_segment_trades=事件数。
+    policy_norm = None
+    if trigger_policy is not None:
+        from core.analysis.event_policy import mask_to_events, validate_policy
+        policy_norm = validate_policy(trigger_policy)
+        if (policy_norm is not None
+                and policy_norm.get("mode") == "suppress_bars"
+                and policy_norm["bars"] > len(work) - 1):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"trigger_policy.bars 超求值数据长度上界: "
+                f"{policy_norm['bars']}",
+                detail={"param": "trigger_policy.bars",
+                        "value": policy_norm["bars"],
+                        "legal_range": f"1..{len(work) - 1}"})
+
+    def _to_event_mask(hit: pd.Series) -> pd.Series:
+        """带策略时掩码→事件位置回投（无策略原样返回——缺省零变化）。"""
+        if policy_norm is None:
+            return hit
+        pos = mask_to_events(hit.values, policy_norm)
+        ev = pd.Series(False, index=hit.index)
+        ev.iloc[pos] = True
+        return ev
+
+    basis = _EVENT_BASIS if policy_norm is not None else _PROJECTION_BASIS
+    basis_note = _EVENT_NOTE if policy_norm is not None else _BASIS_NOTE
     fwd = work["close"].pct_change(forward_bars).shift(-forward_bars)
 
     if anchor == "projected":
         stat = stat_window_mask(work, request_start)
-        n_triggers = int((combo & stat).sum())
+        n_triggers = int(_to_event_mask(combo & stat).sum())
         stat_bars = int(stat.sum())
         density = (n_triggers / stat_bars) if stat_bars else 0.0
         projected_trades = density * (validate_bars or 0)
@@ -302,11 +343,11 @@ def compute_precheck_report(
             parts.append(seg)
             per_range_out.append({
                 "start": r["start"], "end": r["end"],
-                "n_triggers": int((combo & seg).sum())})
+                "n_triggers": int(_to_event_mask(combo & seg).sum())})
         stat = parts[0].copy()
         for seg in parts[1:]:
             stat = stat | seg
-        n_triggers = int((combo & stat).sum())
+        n_triggers = int(_to_event_mask(combo & stat).sum())
         stat_bars = int(stat.sum())
         density = (n_triggers / stat_bars) if stat_bars else 0.0
         anchor_value = float(min(x["n_triggers"] for x in per_range_out))
@@ -323,17 +364,20 @@ def compute_precheck_report(
             "trigger_rate": density,
             "stat_bars": stat_bars,
             "forward_bars": forward_bars,
-            "forward_returns": _returns_summary(fwd[combo & stat]),
+            "forward_returns": _returns_summary(
+                fwd[_to_event_mask(combo & stat)]),
             "baseline": _returns_summary(fwd[stat]),
         },
         "frequency_projection": {
             "anchor": anchor,
-            "basis": _PROJECTION_BASIS,
-            "basis_note": _BASIS_NOTE,
+            "basis": basis,
+            "basis_note": basis_note,
             "threshold": _MIN_TRADES_WARN,
             "density": density,
             "stat_bars": stat_bars,
             "per_range": per_range_out,
+            **({"trigger_policy": policy_norm}
+               if policy_norm is not None else {}),   # 生效策略声明
             **anchor_payload,
         },
         "budget_check": {
@@ -355,6 +399,7 @@ def precheck_hypothesis(
     *,
     forward_bars: int = 24,
     hypothesis_id: Optional[str] = None,
+    trigger_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """显式模板路径（run_analysis 第九模板）——AnalysisResult 形式 +
     顶层 verdict（design payload 终态 schema）。
@@ -449,7 +494,7 @@ def precheck_hypothesis(
         df, when_conditions, anchor="projected",
         request_start=request_start, validate_bars=validate_bars,
         forward_bars=forward_bars, warmup_bars=warmup_bars,
-        budget=budget, mtf=mtf)
+        budget=budget, mtf=mtf, trigger_policy=trigger_policy)
 
     # 密度外推置信区间（Wilson——condition_stats 同源权威实现；
     # 零触发也给合理上界，正态近似在密度 0 退化）
@@ -463,7 +508,8 @@ def precheck_hypothesis(
         sample_size=stat_bars,   # 统计段 bar 数口径（三要素张力解法）
         confidence={
             "method": "trigger_density_projection",
-            "basis": _PROJECTION_BASIS,
+            # 口径差分形态（trigger-policy 卡4）：带策略=事件密度闭环
+            "basis": payload["frequency_projection"]["basis"],
             "interval": [lo * validate_bars, hi * validate_bars],
         },
         data_ranges=[rng],

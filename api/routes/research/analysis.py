@@ -263,7 +263,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             forward_bars=p.get("forward_bars", 24),
             min_samples=p.get("min_samples", 30),
             hypothesis_id=payload.hypothesis_id,
-            mtf=mtf_ctx).to_dict(), df)
+            mtf=mtf_ctx,
+            trigger_policy=p.get("trigger_policy")).to_dict(), df)
 
     if payload.template == "precheck_hypothesis":
         # 假设预检（add-hypothesis-precheck 2.1）：三层预检自装载（两维
@@ -276,7 +277,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         return precheck_hypothesis(
             db_path, data_dir, rng, p["validate_range"], p["when_conditions"],
             forward_bars=p.get("forward_bars", 24),
-            hypothesis_id=payload.hypothesis_id)
+            hypothesis_id=payload.hypothesis_id,
+            trigger_policy=p.get("trigger_policy"))
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
@@ -294,7 +296,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             df, condition=p["condition"], window=p.get("window", 12),
             data_ranges=ranges, min_events=p.get("min_events", 30),
             hypothesis_id=payload.hypothesis_id,
-            mtf=mtf_ctx).to_dict(), df)
+            mtf=mtf_ctx,
+            trigger_policy=p.get("trigger_policy")).to_dict(), df)
     if payload.template == "pattern_mining":
         return _with_derivatives_coverage(similar_at_time(
             df, as_of=p["as_of"], n_neighbors=p.get("n_neighbors", 50),
