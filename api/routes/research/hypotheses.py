@@ -98,6 +98,7 @@ def register_hypothesis(
             data_ranges=[r.model_dump() for r in payload.data_ranges],
             provenance=(payload.provenance.model_dump()
                         if payload.provenance else None),
+            precheck_data_dir=data_dir,   # 登记自动预检（D6，Q1 裁 A）
         )
         return HypothesisResponse(**out)
     except ResearchError as exc:

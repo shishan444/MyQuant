@@ -244,12 +244,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
-        param_sweep（重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
+        param_sweep|regime_split|precheck_hypothesis（重组走 202+task_id
+        轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
-        indicator+condition；screen_patterns/regime_split 无必填键。
+        indicator+condition；precheck_hypothesis 须 when_conditions+
+        validate_range；screen_patterns/regime_split 无必填键。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
@@ -260,8 +262,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         params.features（"all" 或指标名子集）、params.horizons（默认
         [4,12,24,48,72]）、params.top_n（默认 20）、params.min_samples（默认
         30）——输出按 FDR 校正 q 值排序的候选清单（含候选指纹，登记引用时经
-        register_hypothesis.provenance 回链；其余候选用 condition_stats
-        逐条独立复核）。param_sweep 参数稳健性检查（第③步检查①，快路径
+        register_hypothesis.provenance 回链；组合候选（is_combination
+        产物）经 precheck_hypothesis 获得组合复核——when 条件全集 AND
+        语义整体求值）。param_sweep 参数稳健性检查（第③步检查①，快路径
         同步直返）：params.indicator（指标名）+ params.condition（结构化
         {subject, action, target}——subject 混合形制：参数化指标
         {indicator, params, field} 结构化对象或字符串精确名（扫描候选
@@ -279,7 +282,25 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         insufficient_sample）。状态序列直切与行情快照同一套机械判读
         （高波动覆盖态优先于趋势/震荡三态），判读参数内建不可调、gates
         披露；段清单供「候选规律在各行情段是否一致」检查与后续分段
-        验证（0.2.10）共用段定义。"""
+        验证（0.2.10）共用段定义。precheck_hypothesis 假设预检（登记前
+        体检，G3 组合复核+G11 频率外推+G5 事前预算三合一）：params.
+        when_conditions（when 条件全集，登记同构混合形制含可选
+        timeframe 键）+ params.validate_range（拟验证区间 {symbol,
+        timeframe,start,end}——须与分析区间同 symbol 同 timeframe，外推
+        量纲前提）+ 可选 params.forward_bars（默认 24）；三层报告
+        （combination_stats 组合统计/frequency_projection 密度外推/
+        budget_check 两维 warmup 预算对照）+ 三态结论 verdict：
+        projected_trades ≥5 pass / >0 且 <5 warn / 分析段触发数 0
+        reject_suggestion——阈值 5 内建不可配，比较规则直接比较不取整
+        （4.9 落 warn，保守方向）。口径差披露：预估=触发密度外推上界
+        （basis: trigger_density_upper_bound）——引擎空仓进场抑制未
+        计入，单向偏大于实际成交笔数。双锚口径：本模板锚=拟验证区间
+        预估笔数 projected_trades；register_hypothesis 登记自动挂接的
+        锚=分析段实际触发数 analysis_segment_trades（多区间取最小值）
+        ——两锚共用阈值与映射。预算口径与隔离回测 warmup.basis 同源
+        同值（derive_warmup_full 两维式）；预算不足进报告不报错。预检
+        不进判定并集（entry_type=precheck 不挂假设——预检过的区间仍可
+        用于隔离验证）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,
@@ -380,7 +401,13 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         重复登记返回既有 id（duplicated=true）。provenance={task_id,
         candidate_fingerprint} 可选——引用扫描候选来源（screen_patterns
         输出的候选指纹），登记后该扫描区间自动进入判定并集（同区间
-        验证会被拒）；不改变假设身份。"""
+        验证会被拒）；不改变假设身份。登记时自动执行假设预检
+        （precheck_hypothesis 能力）：返回体附加可选 precheck_warnings
+        键（三态结论 verdict + 判定锚 analysis_segment_trades——data_ranges
+        多区间时取逐区间触发数最小值，附 per_range 逐区间明细；纯增量
+        键，预检失败降级或幂等命中时不携带该键）；预检不改变登记的
+        校验链、幂等键与假设身份，不阻断任何后续动作（裁决权在研究者
+        ——0 触发建议不送考，判定并集的机会成本可预见）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},

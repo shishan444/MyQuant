@@ -139,3 +139,38 @@ class TestCrossEngineParity:
         assert engine.total_count == (tpl.payload["hit_count"]
                                       - (tpl.payload["dropped_tail_signals"]
                                          - len(tail)))
+
+
+class TestComboMaskParity:
+    """组合 AND mask 与策略信号触发点互证（add-hypothesis-precheck 5.2）。
+
+    同条件集同区间两侧独立实现：预检侧 _combo_mask（condition_kernel
+    逐条件 → & 交集）vs 引擎侧 validate_hypothesis triggers——口径一致
+    由互证锚守护（design D1：语义一致而非实现同源，回归红即漂移）。
+    引擎 triggers 为 when 匹配点（无空仓抑制——与预检触发密度同语义面）。
+    """
+
+    def test_two_condition_combo_matches_engine_triggers(self, parity_env):
+        df, data_dir, start, end = parity_env
+        conds = [
+            {"subject": "close", "action": "gt", "target": "40000"},
+            {"subject": "close", "action": "lt", "target": "44000"},
+        ]
+        engine = validate_hypothesis(
+            SYMBOL, "4h", start, end,
+            when_conditions=conds, then_conditions=[],
+            then_window=N_FORWARD, data_dir=str(data_dir))
+        engine_locs = sorted(df.index.get_loc(pd.Timestamp(t.time))
+                             for t in engine.triggers)
+        assert 0 < len(engine_locs) < 400, "用例须为部分触发（非全量/全空）"
+
+        from core.analysis.templates.precheck_hypothesis import _combo_mask
+        df_s = load_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        df_s = df_s[(df_s.index >= pd.Timestamp(start))
+                    & (df_s.index <= pd.Timestamp(end))]
+        combo = _combo_mask(df_s, conds)
+        precheck_locs = sorted(np.where(combo.values)[0].tolist())
+
+        assert precheck_locs == engine_locs, (
+            f"组合 AND 交集与引擎触发点漂移：预检 {len(precheck_locs)} 处 "
+            f"vs 引擎 {len(engine_locs)} 处")

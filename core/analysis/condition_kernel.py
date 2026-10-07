@@ -245,6 +245,41 @@ def collect_condition_refs(
     return refs
 
 
+# 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。
+# 可达性权威判定在 signal_registry（column_ref._visible_plugin_columns），
+# 前缀匹配是保守宽面：收集结果须再经调用方可达性校验（预检装载入口）。
+_PLUGIN_COLUMN_PREFIXES = ("fx_", "model_")
+
+
+def collect_condition_plugin_columns(conditions) -> set:
+    """条件集插件列引用收集（预检 warmup 两维推导的插件维度输入）。
+
+    subject 混合形制（canonical 化前后均同）：指标→结构化 dict 不参与；
+    基础列与插件列→str 原样（ref_dict 对非 indicator 类返回 column_name，
+    插件列 str 是收集主入口）。target 不被 canonical 化，保持原始混合
+    形制（数值或字符串——_classify_target_ref 的 numeric 分支），仅
+    字符串形参与前缀匹配，数值形跳过。
+
+    前缀匹配为保守宽面（registry 不可达列也收进来）——可达性校验归
+    调用方（预检装载入口，不可达 422 结构化拒绝，禁止静默降维）。
+
+    Args:
+        conditions: 条件列表（{subject, action, target} 形制）。
+
+    Returns:
+        插件列名集合（可为空——纯指标/基础列/数值条件集）。
+    """
+    cols: set = set()
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            continue
+        for key in ("subject", "target"):
+            ref = condition.get(key)
+            if isinstance(ref, str) and ref.startswith(_PLUGIN_COLUMN_PREFIXES):
+                cols.add(ref)
+    return cols
+
+
 def _ensure_target_column(
     df: pd.DataFrame, target, *, strict: bool,
 ) -> None:

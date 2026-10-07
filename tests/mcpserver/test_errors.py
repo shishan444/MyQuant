@@ -258,7 +258,8 @@ class TestSnapshotHintOverride:
         _, raiser = self._make_api_raising("RESEARCH_WARMUP_INSUFFICIENT")
         api.get = raiser
 
-        out = asyncio.run(mcp.call_tool(
+        from tests.mcpserver.test_contract_parity import run_async
+        out = run_async(mcp.call_tool(
             "get_market_snapshot",
             {"symbol": "BTCUSDT", "timeframes": "1d,4h"}))
         err = out.structured_content["result"]["error"]
@@ -278,7 +279,8 @@ class TestSnapshotHintOverride:
         _, raiser = self._make_api_raising("RESEARCH_CONDITION_INVALID")
         api.get = raiser
 
-        out = asyncio.run(mcp.call_tool(
+        from tests.mcpserver.test_contract_parity import run_async
+        out = run_async(mcp.call_tool(
             "get_market_snapshot", {"symbol": "BTCUSDT"}))
         err = out.structured_content["result"]["error"]
         assert err["code"] == "RESEARCH_CONDITION_INVALID"

@@ -29,7 +29,7 @@ from core.analysis.isolation import (
     judged_ranges_union,
     overlaps_with_request,
 )
-from core.analysis.registry_meta import WARMUP_RULE_TEXT, derive_warmup
+from core.analysis.registry_meta import WARMUP_RULE_TEXT, derive_warmup_full
 from core.analysis.thresholds import (
     DEFAULT_PROFILE,
     _aggregate_verdicts,
@@ -176,23 +176,22 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
 
 
 def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
-    """DNA warmup 推导：max(derive_warmup(内置), 插件公式 lookback, 200)。
+    """DNA warmup 推导薄壳：提取引用 → derive_warmup_full 两维同式。
 
-    插件 lookback 按依赖闭包递归取 max（fx_b 引用 fx_a → 两窗口都
-    计入）；model 源 walk-forward 训练窗在求值端自理，不占 warmup。
-    插件列不存在时贡献 0（求值端显式拒绝兜底）。仅含插件源时
-    derive_warmup([]) 的 floor 200 保底。
+    双产出保持（(warmup, indicator_names)——后者被 warmup.indicators
+    披露字段消费）：只迁计算式不动产出面。插件 lookback 按依赖闭包
+    递归取 max（fx_b 引用 fx_a → 两窗口都计入）；model 源
+    walk-forward 训练窗在求值端自理，不占 warmup。插件列不存在时
+    贡献 0（求值端显式拒绝兜底）。仅含插件源时 derive_warmup([])
+    的 floor 200 保底。
 
     Raises:
         KeyError: 内置指标未知（透传给调用方决定拒绝语义）。
     """
     indicator_names = _dna_indicator_names(dna)
-    warmup = derive_warmup(indicator_names)  # 自带 floor 200
     formula_refs = {s["ref"] for s in (dna.signal_sources or [])
                     if s.get("type") == "formula" and s.get("ref")}
-    if formula_refs:
-        from core.analysis.plugin_service import plugin_columns_lookback
-        warmup = max(warmup, plugin_columns_lookback(db_path, formula_refs))
+    warmup = derive_warmup_full(db_path, indicator_names, formula_refs)
     return warmup, indicator_names
 
 

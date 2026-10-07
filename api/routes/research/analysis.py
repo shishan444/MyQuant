@@ -30,7 +30,7 @@ router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
-              "regime_split")
+              "regime_split", "precheck_hypothesis")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -125,6 +125,7 @@ _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
     "event_study": ("condition",),
     "pattern_mining": ("as_of",),
     "param_sweep": ("indicator", "condition"),
+    "precheck_hypothesis": ("when_conditions", "validate_range"),
 }
 
 
@@ -159,8 +160,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
         condition_stats, correlation_scan, distribution_compare,
-        event_study, param_sweep, regime_split, screen_patterns,
-        similar_at_time,
+        event_study, param_sweep, precheck_hypothesis, regime_split,
+        screen_patterns, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -263,6 +264,19 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             min_samples=p.get("min_samples", 30),
             hypothesis_id=payload.hypothesis_id,
             mtf=mtf_ctx).to_dict(), df)
+
+    if payload.template == "precheck_hypothesis":
+        # 假设预检（add-hypothesis-precheck 2.1）：三层预检自装载（两维
+        # 前扩注入+插件列 enrich 在模板壳内——与预算计算同源）；条件
+        # 结构/validate_range 一致性与可达性校验前置在模板壳（422 结构
+        # 化）。异步形制与七轻模板同款：不进 heavy 白名单，行数超
+        # _HEAVY_ROWS 照走 202（审查裁决 1——预检主战场大区间常态超阈
+        # 值，202 通道保护请求线程）；MtfEvalContext 由模板壳自建
+        # （eval_start=装载 request_start）。
+        return precheck_hypothesis(
+            db_path, data_dir, rng, p["validate_range"], p["when_conditions"],
+            forward_bars=p.get("forward_bars", 24),
+            hypothesis_id=payload.hypothesis_id)
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
@@ -375,6 +389,36 @@ def _log_sweep(
     )
 
 
+def _log_precheck(
+    db_path: Path, payload: AnalysisRunRequest,
+    result: Dict[str, Any],
+) -> None:
+    """预检留痕（add-hypothesis-precheck R4，_log_sweep 同构先例）。
+
+    entry_type="precheck" 不挂假设（预检时假设尚未诞生——结构性不进
+    判定并集：预检过的区间仍可原样用于隔离/分段验证）；summary 携
+    三态结论与判定锚数值（事后审计「预检结论 vs 实际考试结果」对照
+    依据）。precheck 模板不另写 analysis 日志（本条已含区间登记语义）。
+    """
+    p = (result or {}).get("payload", {})
+    fp = p.get("frequency_projection", {}) or {}
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="precheck",
+        ref_id="precheck_hypothesis",
+        data_ranges=json.dumps(
+            [payload.data_range.model_dump()], ensure_ascii=False),
+        summary=json.dumps({
+            "verdict": p.get("verdict"),
+            "projected_trades": fp.get("projected_trades"),
+            "analysis_segment_trades": fp.get("analysis_segment_trades"),
+            "n_triggers": (p.get("combination_stats", {}) or {}).get("n_triggers"),
+            "threshold": fp.get("threshold"),
+        }, ensure_ascii=False, default=str),
+    )
+
+
 def _submit_analysis(
     payload: AnalysisRunRequest, job: Callable, *,
     task_id: Optional[str] = None,
@@ -477,6 +521,8 @@ def run_analysis(
                             "summary": str(exc)[:200]}) from exc
             if payload.template == "param_sweep":
                 _log_sweep(db_path, payload, result)
+            elif payload.template == "precheck_hypothesis":
+                _log_precheck(db_path, payload, result)
             else:
                 _log_analysis(db_path, payload)
             return result
@@ -486,6 +532,8 @@ def run_analysis(
             out = _run_template(payload, data_dir, db_path)
             if payload.template == "param_sweep":
                 _log_sweep(db_path, payload, out)
+            elif payload.template == "precheck_hypothesis":
+                _log_precheck(db_path, payload, out)
             else:
                 _log_analysis(db_path, payload)
             return json.dumps(out, ensure_ascii=False, default=str)

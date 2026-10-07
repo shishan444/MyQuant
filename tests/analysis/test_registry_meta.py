@@ -10,6 +10,7 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.registry_meta import (
     available_signal_columns,
     derive_warmup,
+    derive_warmup_full,
     indicator_metadata,
 )
 from core.features.registry import INDICATOR_REGISTRY
@@ -64,6 +65,36 @@ class TestDeriveWarmup:
 
     def test_empty_defaults_to_floor(self) -> None:
         assert derive_warmup([]) == 200
+
+
+class TestDeriveWarmupFull:
+    """两维 warmup 公共入口（add-hypothesis-precheck 1.2——预检与
+    隔离回测 _derive_dna_warmup 薄壳共用的同源计算式单点）。"""
+
+    def test_builtin_only_equals_derive_warmup(self) -> None:
+        """纯内置组：与 derive_warmup 完全一致（floor 200 自带）。"""
+        assert derive_warmup_full(None, ["ATR"]) == derive_warmup(["ATR"]) == 200
+        assert derive_warmup_full(None, ["EMA"]) == derive_warmup(["EMA"]) == 600
+
+    def test_empty_plugin_set_keeps_builtin(self) -> None:
+        """空插件集跳过插件维度（None 与空 set 同语义）。"""
+        assert derive_warmup_full(None, [], None) == 200
+        assert derive_warmup_full(None, ["EMA"], set()) == 600
+
+    def test_plugin_dimension_takes_max(self, db_path: Path) -> None:
+        """含插件组：插件窗口 900 > 内置推导 → 两维取大 900。"""
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_full", name="fx_big_window",
+            version=1, expression="rolling_mean(close, 900)",
+            output_columns='["fx_big_window"]',
+            entry_id="e_full", column_name="fx_big_window")
+        assert derive_warmup_full(db_path, ["ATR"], {"fx_big_window"}) == 900
+        assert derive_warmup_full(db_path, ["EMA"], {"fx_big_window"}) == 900
+
+    def test_unreachable_plugin_silently_zero(self, db_path: Path) -> None:
+        """不可达列静默贡献 0（floor 保底）——锚定该行为正是预检
+        装载入口必须显式校验可达性的原因（specs R3：MUST NOT 静默降维）。"""
+        assert derive_warmup_full(db_path, [], {"fx_not_registered"}) == 200
 
 
 class TestAvailableSignalColumns:

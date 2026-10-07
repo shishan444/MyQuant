@@ -921,6 +921,10 @@ class HypothesisResponse(BaseModel):
     hypothesis_id: str
     status: str = "active"
     duplicated: bool = False
+    # 登记自动预检警告段（add-hypothesis-precheck D6）：预检成功时携带
+    # 三态结论与判定锚数值（锚=分析段实际触发数，多区间取最小值）；
+    # 纯增量可选键——既有消费方零适配；幂等命中/预检降级不携带。
+    precheck_warnings: Optional[Dict[str, Any]] = None
 
 
 class HypothesisListResponse(BaseModel):
