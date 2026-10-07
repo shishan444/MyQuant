@@ -54,7 +54,7 @@ def validate_policy(policy: Any) -> Optional[dict]:
     if not isinstance(policy, dict):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"trigger_policy 非法: {policy!r}",
+            f"trigger_policy 非法: {policy!r:.120}",
             detail={"param": "trigger_policy", "legal_form": _LEGAL_FORM})
     mode = policy.get("mode")
     if mode not in POLICY_MODES:
