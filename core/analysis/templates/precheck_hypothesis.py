@@ -155,8 +155,13 @@ def _probe_directory_ts(
     """数据目录 timestamp 列 index-only 探测（0.3.3 C-β 先例——单列
     扫描，预算对照与可达性校验的轻量通道）。
 
+    列名形制变体（index 名非 timestamp）回退全列装载取 index
+    （_count_rows_index_only 同款回退——正确性优先于轻量；C-β 实踩
+    过的变体，当时防御未随行到本探测点）。
+
     Returns:
-        timestamp 单列 df；目录无该品种/周期数据返回 None。
+        timestamp 单列 df（变体时为全列 df——消费方只用 .index）；
+        目录无该品种/周期数据返回 None。
     """
     from core.data.mtf_loader import find_parquet, safe_symbol
     from core.data.storage import load_parquet
@@ -164,7 +169,10 @@ def _probe_directory_ts(
     path = find_parquet(data_dir, safe_symbol(symbol), timeframe)
     if path is None:
         return None
-    return load_parquet(path, columns=["timestamp"])
+    try:
+        return load_parquet(path, columns=["timestamp"])
+    except (KeyError, ValueError):
+        return load_parquet(path)
 
 
 def _budget_probe(
@@ -364,6 +372,28 @@ def precheck_hypothesis(
             "validate_range 须含 symbol/timeframe/start/end",
             detail={"field": "validate_range",
                     "legal_form": "{symbol, timeframe, start, end}"})
+    # 时间串可解析性前置（CARD-02）：validate_range 为自由 Dict 值，
+    # 不经 DataRangeItem 的双层防护（pydantic 类型层 start: str +
+    # field_validator）——此处须双层同构：① 非 str 直接拒（int 形经
+    # epoch 纳秒解析成 1970 时间戳会静默 200 产出语义错误外推；
+    # None 形 pd.Timestamp 返回 NaT 落下游被 SYMBOL_NOT_FOUND 歪拦）；
+    # ② str 不可解析在目录探测后 pd.Timestamp 处裸穿 ValueError 落
+    # 500。文案对齐 schemas._require_parseable_timestamp 先例；
+    # start>=end 倒置全域一致不查（已裁定不修项）
+    for _ts_key in ("start", "end"):
+        _ts_val = validate_range[_ts_key]
+        try:
+            if not isinstance(_ts_val, str):
+                raise TypeError(f"实得 {type(_ts_val).__name__}")
+            pd.Timestamp(_ts_val)
+        except (ValueError, TypeError) as exc:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"validate_range.{_ts_key} 时间参数须为可解析的 UTC "
+                "ISO8601 串（如 2024-01-01 或 2024-01-01T00:00:00Z），"
+                f"got {_ts_val!r}",
+                detail={"field": f"validate_range.{_ts_key}",
+                        "value": _ts_val}) from exc
     # 同 symbol 同 timeframe（审查裁决 3：外推量纲前提——异品种对照
     # 属 G13 截面工具域，Non-Goals 排除）
     if (validate_range["symbol"] != rng["symbol"]
@@ -404,6 +434,18 @@ def precheck_hypothesis(
         rng["start"], rng["end"], when_conditions)
     budget = _budget_probe(ts, rng["start"], validate_range["start"],
                            warmup_bars)
+
+    # 持有期校验（CARD-01，condition_stats 同款形制与时序——df 在手后
+    # 校验、上界基于全 df 含 warmup 前缀）：bool 排除/非 int/<1/超长
+    # → 422（params 自由 Dict 无类型约束，字符串/2.5 此前落 TypeError
+    # 500、0 全 NaN 误导、负值语义反转、True 按 1 静默接受）
+    if (isinstance(forward_bars, bool) or not isinstance(forward_bars, int)
+            or forward_bars < 1 or forward_bars > len(df) - 1):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"forward_bars 非法: {forward_bars!r}",
+            detail={"param": "forward_bars",
+                    "legal_range": f"1..{len(df) - 1}"})
 
     mtf = MtfEvalContext(data_dir=data_dir, symbol=rng["symbol"],
                          base_tf=rng["timeframe"], eval_start=request_start)

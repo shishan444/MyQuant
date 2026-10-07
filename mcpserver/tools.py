@@ -405,7 +405,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （precheck_hypothesis 能力）：返回体附加可选 precheck_warnings
         键（三态结论 verdict + 判定锚 analysis_segment_trades——data_ranges
         多区间时取逐区间触发数最小值，附 per_range 逐区间明细；纯增量
-        键，预检失败降级或幂等命中时不携带 null）；预检不改变登记的
+        键，预检失败降级或幂等命中时不携带该键）；预检不改变登记的
         校验链、幂等键与假设身份，不阻断任何后续动作（裁决权在研究者
         ——0 触发建议不送考，判定并集的机会成本可预见）。"""
         body: Dict[str, Any] = {
