@@ -305,7 +305,7 @@ def mutate_mtf_mode(dna: StrategyDNA) -> StrategyDNA:
     """
     if not dna.is_mtf:
         return dna
-    if getattr(dna, "entry_trigger_policy", None) is not None:
+    if dna.entry_trigger_policy is not None:
         return dna
 
     modes = [None, "direction", "confluence", "direction+confluence"]
@@ -784,8 +784,8 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         # 取其一亲代（v2 字段 signal_sources/composition 既有丢失为
         # TD-E 存量缺陷，不搭车）
         entry_trigger_policy=random.choice([
-            getattr(parent_a, "entry_trigger_policy", None),
-            getattr(parent_b, "entry_trigger_policy", None)]),
+            parent_a.entry_trigger_policy,
+            parent_b.entry_trigger_policy]),
     )
     return child
 

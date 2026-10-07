@@ -500,7 +500,7 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     suppress_bars 非幂等（二次抑制窗 2N）——唯一挂点+assemble 显式
     跳过参数在结构上排除二次变换。
     """
-    policy = getattr(dna, "entry_trigger_policy", None)
+    policy = dna.entry_trigger_policy
     if policy is None:
         return entries
     from core.analysis.event_policy import apply_policy_to_series, validate_policy
@@ -543,13 +543,15 @@ def dna_to_signal_set(
         # auto-wrap（单层=execution 周期、mtf_mode 缺省）在隔离验证等
         # 传递 dfs_by_timeframe 的链上等同单周期（is_mtf 仅表示 layers
         # 数据结构），不属划界拒绝域——事件化经下方 legacy 组合出口挂。
-        _policy = getattr(dna, "entry_trigger_policy", None)
+        _policy = dna.entry_trigger_policy
         _exec_tf = dna.execution_genes.timeframe
+        # R6（event-triggers 批次三）：`dna.layers is None or` 左支在
+        # is_mtf 分支内恒 False（is_mtf 要求 layers 非 None 且 >=1）——
+        # 死分支删除后的等价简化
         _single_compat = (
             dna.mtf_mode is None
-            and (dna.layers is None
-                 or (len(dna.layers) == 1
-                     and dna.layers[0].timeframe == _exec_tf)))
+            and len(dna.layers) == 1
+            and dna.layers[0].timeframe == _exec_tf)
         if _policy is not None and not _single_compat:
             from core.analysis.hypothesis_service import ResearchError
             raise ResearchError(
@@ -707,7 +709,7 @@ def dna_to_signal_set(
         # 传递 dfs_by_timeframe 的链经此出口——与单周期路径同款挂点
         # （combine 后、entry∧exit 清洗前）；真 MTF 带 policy 已在上
         # 方划界拒绝，此处仅兼容形制触达。legacy 空集分支（无 entries）
-        # 变换幂等 no-op，不另挂。
+        # 空集输入下变换恒等（无 True 即无事件），不另挂。
         if apply_trigger_policy:
             combined_entries = _apply_entry_trigger_policy(
                 dna, combined_entries)
