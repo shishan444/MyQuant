@@ -62,6 +62,54 @@ class TestGuardPure:
         assert "returns" in ei.value.detail["legal_range"]
 
 
+class TestGuardProperties:
+    """param_guard 纯函数不变量（阶段四步骤 4 属性补强——恒等式/
+    值域界/包含性，性质级而非逐例）。"""
+
+    @pytest.mark.parametrize("lo,hi", [(0, 10), (1, 100), (-5, 5), (0, 0)])
+    @pytest.mark.parametrize("v_offset", [-1, 0, 1])
+    def test_int_range_boundary_inclusion(self, lo, hi, v_offset) -> None:
+        """值域包含性不变量：[lo,hi] 闭区间端点及其邻点判定正确——
+        界内（含端）放行、越出界外拒绝。"""
+        for edge in (lo, hi):
+            if v_offset == 0:
+                _require_int_range(edge, name="x", lo=lo, hi=hi)
+            else:
+                probe = edge + v_offset
+                in_range = lo <= probe <= hi
+                if in_range:
+                    _require_int_range(probe, name="x", lo=lo, hi=hi)
+                else:
+                    with pytest.raises(ResearchError):
+                        _require_int_range(probe, name="x", lo=lo, hi=hi)
+
+    @pytest.mark.parametrize("truthy", [True, False])
+    @pytest.mark.parametrize("lo,hi", [(0, 10), (1, 2), (0, 1)])
+    def test_bool_always_rejected_even_if_in_range(
+            self, truthy, lo, hi) -> None:
+        """bool 排除不变量：bool 是 int 子类且数值落在界内也恒拒
+        （True==1 在 [1,2] 内——静默陷阱的属性级证明）。"""
+        with pytest.raises(ResearchError) as ei:
+            _require_int_range(truthy, name="x", lo=lo, hi=hi)
+        assert ei.value.detail["legal_range"] == f"{lo}..{hi}"
+
+    def test_unbounded_sides_property(self) -> None:
+        """无界侧不变量：hi=None 任意大放行、lo=None 任意负放行
+        （None=该侧无界的双向性质）。"""
+        _require_int_range(2**62, name="x", lo=0)
+        _require_int_range(-(2**62), name="x", hi=0)
+
+    @pytest.mark.parametrize("member", ["returns", "log_returns", "raw"])
+    def test_enum_membership_closed(self, member) -> None:
+        """枚举包含性不变量：成员恒放行；等值异形（大小写/子串/
+        前缀缺失）恒拒——封闭值域不 做 模 糊 匹 配。"""
+        choices = ("returns", "log_returns", "raw")
+        _require_enum(member, name="transform", choices=choices)
+        for near in (member.upper(), member[: len(member) - 1]):
+            with pytest.raises(ResearchError):
+                _require_enum(near, name="transform", choices=choices)
+
+
 class TestTemplateEntry:
     """模板函数入口契约（422 计算前拦截+合法含端跑通）——五段：
     correlation_scan/event_study/distribution_compare/pattern_mining
