@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 #: 封闭枚举（AI 永不执行任意代码边界；扩充须经独立变更显式增补）
 POLICY_MODES = ("none", "first_true", "suppress_bars")

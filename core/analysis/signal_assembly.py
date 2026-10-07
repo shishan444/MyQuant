@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 
 def assemble_signal_set(

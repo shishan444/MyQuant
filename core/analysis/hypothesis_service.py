@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.analysis.errors import ResearchError   # re-export 兼容（见类原位注释）
 from core.analysis.isolation import iter_all_pages
 from core.persistence.repository import research as rr
 from core.persistence.timestamps import utc_now_iso
@@ -31,15 +32,12 @@ from core.persistence.timestamps import utc_now_iso
 logger = logging.getLogger(__name__)
 
 
-class ResearchError(Exception):
-    """研究域错误：code + http_status + message + detail（路由层转 HTTPException）。"""
-
-    def __init__(self, code: str, message: str, *, status: int = 422, detail: Any = None):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.status = status
-        self.detail = detail
+# ResearchError re-export 兼容声明（CARD-02 轻量化）：唯一权威定义在
+# core/analysis/errors.py（本模块顶层 import 链含 sqlalchemy/persistence，
+# 轻消费方 import ResearchError 被迫负重加载）；模块头 import 使
+# hypothesis_service.ResearchError 与 errors.ResearchError 为同一类对象
+# ——既有全域 ``from core.analysis.hypothesis_service import ResearchError``
+# 面（38+ 文件）零适配，isinstance/except 同身份。
 
 
 def hash_json(obj: Any) -> str:

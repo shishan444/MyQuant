@@ -37,7 +37,7 @@ from typing import Any, Iterable, Optional
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 
 def _require_int_range(
