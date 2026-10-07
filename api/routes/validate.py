@@ -45,6 +45,10 @@ class ValidateRequest(BaseModel):
     then: List[ConditionInput]
     indicator_params: Optional[Dict[str, Any]] = None
     base_timeframe: Optional[str] = None
+    # 条件集整体级触发策略（trigger-policy 卡3）：自由参数端点沿
+    # when/then 同构形制（端点无 hypothesis_id——不从假设记录取值，
+    # 评审发现 2）；弱形制对象键，权威校验 validate_policy 422
+    trigger_policy: Optional[Dict[str, Any]] = None
 
 
 class TriggerRecordResponse(BaseModel):
@@ -133,6 +137,14 @@ def run_validation(
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=payload.pair,
         base_tf=payload.base_timeframe or payload.timeframe)
+    # trigger-policy 卡3：登记侧同款形制校验与归一（显式 none=缺省），
+    # 归一形传引擎——bars 数据长度上界的求值侧校验在引擎内（数据已加载）
+    from core.analysis.event_policy import validate_policy
+    try:
+        normalized_policy = validate_policy(payload.trigger_policy)
+    except ResearchError as exc:
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
     try:
         result = validate_hypothesis(
             pair=payload.pair,
@@ -145,6 +157,7 @@ def run_validation(
             data_dir=str(data_dir),
             base_timeframe=payload.base_timeframe,
             mtf=mtf_ctx,
+            trigger_policy=normalized_policy,
         )
     except ResearchError as exc:
         # 0.2.14：高周期条件结构化拒绝（不可达/warmup 不足/低周期键）
