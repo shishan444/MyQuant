@@ -155,8 +155,13 @@ def _probe_directory_ts(
     """数据目录 timestamp 列 index-only 探测（0.3.3 C-β 先例——单列
     扫描，预算对照与可达性校验的轻量通道）。
 
+    列名形制变体（index 名非 timestamp）回退全列装载取 index
+    （_count_rows_index_only 同款回退——正确性优先于轻量；C-β 实踩
+    过的变体，当时防御未随行到本探测点）。
+
     Returns:
-        timestamp 单列 df；目录无该品种/周期数据返回 None。
+        timestamp 单列 df（变体时为全列 df——消费方只用 .index）；
+        目录无该品种/周期数据返回 None。
     """
     from core.data.mtf_loader import find_parquet, safe_symbol
     from core.data.storage import load_parquet
@@ -164,7 +169,10 @@ def _probe_directory_ts(
     path = find_parquet(data_dir, safe_symbol(symbol), timeframe)
     if path is None:
         return None
-    return load_parquet(path, columns=["timestamp"])
+    try:
+        return load_parquet(path, columns=["timestamp"])
+    except (KeyError, ValueError):
+        return load_parquet(path)
 
 
 def _budget_probe(
