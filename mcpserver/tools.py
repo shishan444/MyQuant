@@ -294,7 +294,17 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         reject_suggestion——阈值 5 内建不可配，比较规则直接比较不取整
         （4.9 落 warn，保守方向）。口径差披露：预估=触发密度外推上界
         （basis: trigger_density_upper_bound）——引擎空仓进场抑制未
-        计入，单向偏大于实际成交笔数。双锚口径：本模板锚=拟验证区间
+        计入，单向偏大于实际成交笔数。事件策略层：event_study/
+        condition_stats/precheck_hypothesis 的 params 可选
+        trigger_policy（条件集整体级，形制与 register_hypothesis.
+        trigger_policy 同构——三值封闭枚举 {none, first_true,
+        suppress_bars}）：携带时事件口径=合并掩码经权威变换后的事件流
+        （n_events/sample_size/触发数与外推基数均切事件数，报告声明
+        生效策略与 basis 切 event_density——事件数对事件数与统计链
+        /api/validate 闭环对照；不携带=逐 bar 现状口径逐字节不变）。
+        事件形制整理触发不创造触发：0 事件形态照常 reject_suggestion
+        ——suppress_bars 的 bars 上界在求值时点按数据长度校验（超界
+        422 附 legal_range）。双锚口径：本模板锚=拟验证区间
         预估笔数 projected_trades；register_hypothesis 登记自动挂接的
         锚=分析段实际触发数 analysis_segment_trades（多区间取最小值）
         ——两锚共用阈值与映射。预算口径与隔离回测 warmup.basis 同源
@@ -383,7 +393,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             then_conditions: list[dict[str, Any]],
             statement: str,
             data_ranges: list[dict[str, Any]],
-            provenance: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
+            provenance: Optional[dict[str, Any]] = None,
+            trigger_policy: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
         {indicator, params, field}（多输出指标 field 必填，参数空间经
@@ -407,13 +418,29 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         多区间时取逐区间触发数最小值，附 per_range 逐区间明细；纯增量
         键，预检失败降级或幂等命中时不携带该键）；预检不改变登记的
         校验链、幂等键与假设身份，不阻断任何后续动作（裁决权在研究者
-        ——0 触发建议不送考，判定并集的机会成本可预见）。"""
+        ——0 触发建议不送考，判定并集的机会成本可预见）。
+        trigger_policy 可选（事件策略层，条件集整体级——修饰 when
+        全集 AND 合并掩码如何变换为事件流，非单条件修饰）：封闭枚举
+        {"mode": "none"|"first_true"|"suppress_bars", "bars": <正整数>}
+        ——none=缺省等价（显式与缺省同身份）；first_true=每个极大连续
+        True 段仅首根计一次事件（连续段计一次）；suppress_bars 必带
+        bars=事件后 N bar 内的后续触发抑制（跨段生效，间隔恰 N 产生
+        新事件）。trigger_policy 参与假设指纹与幂等身份（同条件集+
+        同区间集+不同策略=不同假设——事件密度语义是研究主张的组成
+        部分）；带策略假设按事件流验证与外推（统计链与预检外推同为
+        事件数口径闭环），翻译为策略时直接映射进入场信号组装（信号
+        层同口径；实际成交笔数另受空仓进场抑制影响）。事件形制整理
+        触发不创造触发：0 事件形态照常 reject_suggestion。bars 数据
+        长度上界在求值时点校验（登记时点仅形制——短区间实跑超界即
+        422）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
             "statement": statement, "data_ranges": data_ranges}
         if provenance:
             body["provenance"] = provenance
+        if trigger_policy is not None:
+            body["trigger_policy"] = trigger_policy
         return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()
