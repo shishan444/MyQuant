@@ -164,8 +164,9 @@
 - `_MIN_TRADES_WARN=5` 与三态映射（直接比较不取整）是判定标尺内建常量——不进任何参数面；改阈值/取整规则属规格变更（specs R2 MUST），须同步 specs 与三假设回溯锚
 - `derive_warmup_full` 是预检与隔离回测 warmup 的同源单点（registry_meta）——改两维式须双向同步 `_derive_dna_warmup` 薄壳与 TestWarmupSourceParity；`plugin_columns_lookback` 对不可达列静默贡献 0，预检装载入口 MUST 前置可达性校验（422），删校验即预算系统性低估且 TestLoader 红线
 - `hypothesis_service` 对预检模块的引用必须函数内延迟 import（模块级 import 经 templates 聚合包成加载期环——design「五裁决连锁落地」环规避依据）；测试 patch 探针须取模块本体（`importlib.import_module`——聚合包 from-import 使包属性被同名函数遮蔽）
-- 留痕双分派（快路径+异步 _job 回调）成对存在——新增模板类型须两处同步接线，只接一处会使异步主路径落 entry_type=analysis（0.3.4 增量评估问题①复发）
+- 分析留痕分派已收敛 `_log_result` 单点（clear-analysis-tds TD-1）——新增模板在单点加一个分支即可，快路径与异步 _job 两处调用零触碰（分派行为由 4 文件约 20 处 entry_type 断言零改写锚定）
 - `HypothesisResponse.precheck_warnings` 为纯增量可选键（None 恒序列化）——降级/幂等语义断言用 `is None`，不得断言键不存在
+- 模板入参守卫唯一权威在 `templates/param_guard.py`（clear-analysis-tds TD-2）——新增模板的数值/枚举参数经 `_require_int_range`/`_require_enum` 守卫（bool 排除/lo=0 阈值语义/枚举封闭），不写内联 if 链（两式并存即回潮）；拒绝通道两通道：快路径同步 422、重组路径 failed reason 前缀（恒异步 pattern_mining 即该通道）
 - 模板参数自由 Dict 面的形制校验成对存在（CARD-01/02）：validate_range 时间串须双层（类型层拒非 str+解析层拒不可解析 str——对齐 DataRangeItem 先例，int 形 pd.Timestamp 按 epoch 静默解析是已堵坑）；forward_bars 值域上界基于含前缀全 df（len(df)-1 非 stat 段）——改口径须同步 TestForwardBarsDomain 的 legal_range 精确锚
 - 预检留痕双路径 ref_id 分野（CARD-03）：显式路径 `precheck_hypothesis` / 挂接路径 `registration_precheck`——双锚来源审计依据；挂接留痕 hypothesis_id 恒 None（挂 id 即把 data_ranges 拉进判定并集，破坏 R4/S11）
 - `_probe_directory_ts` 变体回退（CARD-05）：单列探测 KeyError/ValueError → 全列装载取 index——与 `_count_rows_index_only` 回退同构，删回退则变体 parquet 预检崩（TestProbeVariantFallback 红线）
