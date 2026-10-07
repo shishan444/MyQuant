@@ -28,6 +28,7 @@ from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import derive_warmup_full
 from core.analysis.templates.precheck_hypothesis import (
     _load_precheck_df,
+    _probe_directory_ts,
     _verdict_for,
     compute_precheck_report,
     precheck_hypothesis,
@@ -360,6 +361,50 @@ class TestTemplateShell:
         assert d["available_bars"] == 400         # 数据起点前实际可得
         assert d["data_start"] == df.index[0].isoformat()
         assert d["rule"] == WARMUP_RULE_TEXT      # 推导规则同源披露
+
+
+# ---------------------------------------------------------------- 探测变体
+
+class TestProbeVariantFallback:
+    """CARD-05：探测点列名形制变体回退（_count_rows_index_only 同款
+    ——0.3.3 C-β 实踩变体防御随行到预检探测点；正确性优先于轻量）。"""
+
+    @staticmethod
+    def _variant_env(tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df = make_ohlcv(n=900, freq="1h", start="2024-01-01", seed=21)
+        df.rename_axis("not_timestamp").to_parquet(
+            data_dir / f"{SYMBOL}_1h.parquet")
+        return df, data_dir
+
+    def test_variant_parquet_falls_back_to_full_load(
+            self, tmp_path) -> None:
+        """变体（index 名非 timestamp）→ 单列探测抛 KeyError/ValueError
+        → 回退全列装载：探测非 None、bar 数正确、全列形制（回退确实
+        发生的区分证据——标准形制为单列）。"""
+        df, data_dir = self._variant_env(tmp_path)
+        ts = _probe_directory_ts(data_dir, SYMBOL, "1h")
+        assert ts is not None
+        assert len(ts) == 900
+        assert len(ts.columns) == 5           # 全列回退非单列
+
+    def test_variant_full_shell_still_reports(
+            self, tmp_path, db_path) -> None:
+        """变体数据整壳照常：探测回退 → validate_bars 与预算对照
+        （消费 .index）不受影响 → 三层报告与 verdict 照常产出。"""
+        df, data_dir = self._variant_env(tmp_path)
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df.index[650].isoformat(),
+               "end": df.index[-1].isoformat()}
+        out = precheck_hypothesis(
+            db_path, data_dir, rng, dict(rng),
+            [{"subject": "close", "action": "gt", "target": "0"}])
+        assert out["verdict"] == "pass"       # close>0 恒真 → 密度满
+        bc = out["payload"]["budget_check"]
+        assert bc["data_start_actual"] == df.index[0].isoformat()
+        assert bc["analysis_margin"] == 450   # 前缀 650 - warmup 200
+        assert bc["validate_margin"] == 450   # 拟验证同起点
 
 
 # ---------------------------------------------------------------- 持有期
