@@ -3,9 +3,13 @@
 覆盖（design 测试用例设计节的 unit 子集——组 5 测试资产任务在此基础上
 终态化对账）：
 - 三态映射：直接比较不取整（4.9 warn / 5 pass / 0 reject_suggestion）；
-- 纯计算：确定性 df 手工可核 AND 交集（组合触发数=人工核算）；
+- 纯计算：确定性 df 手工可核 AND 交集（组合触发数=人工核算）+ 前向
+  收益分布/基准对照（specs R1 S1 THEN 项）+ 密度原始值（R2 MUST）；
+- 双锚同 fixture（D6：两锚共用阈值与映射，各自按锚判定）；
 - 零触发照常构造（min_samples=0——三要素张力解法）；
 - 模板壳：to_dict 全键 + validate_range 异构/无数据 422 + 条件结构 422；
+- 高周期条件进组合求值（specs R1 S1「含高周期条件」——掩码投影
+  相位灵敏确定值，独立核算非实现回抄）；
 - 装载：跨指标 target 进 warmup（G9）/不可解析 target 422/插件列
   enrich/装载前扩两维注入（前缀 bar 数断言）。
 
@@ -85,6 +89,15 @@ class TestVerdictMapping:
         assert _verdict_for(5) == "pass"
         assert _verdict_for(5.0) == "pass"
         assert _verdict_for(13) == "pass"
+
+    def test_threshold_not_parameterizable(self) -> None:
+        """specs R2 MUST：警示阈值内建不可由调用方配置——三个入口
+        签名均无阈值形参（阈值进参数面即规格违例）。"""
+        import inspect
+
+        for fn in (compute_precheck_report, precheck_hypothesis,
+                   run_registration_precheck):
+            assert "threshold" not in inspect.signature(fn).parameters, fn
 
 
 # ---------------------------------------------------------------- 纯计算
@@ -178,6 +191,77 @@ class TestComputeProjected:
         assert bc["validate_margin"] == -350
         assert "max(200" in bc["rule"]                  # WARMUP_RULE_TEXT 引用
 
+    def test_forward_returns_and_baseline_hand_counted(self) -> None:
+        """specs R1 S1 THEN「前向收益分布、基准对照」+ R2「密度原始值」。
+
+        前向收益口径 A1 冻结：fwd(i)=close[i+N]/close[i]-1（N=4）。
+        组合触发位 [2,3,4,9,10,12,13] 的 fwd 值与全统计段基准分别
+        人工核算（独立 numpy 直算，非实现回抄）。
+        """
+        df = _deterministic_df(self.PRICES)
+        report = compute_precheck_report(
+            df,
+            [{"subject": "close", "action": "gt", "target": "95"},
+             {"subject": "close", "action": "lt", "target": "110"}],
+            anchor="projected", request_start=None, validate_bars=20,
+            forward_bars=4, warmup_bars=200)
+        cs = report["combination_stats"]
+        fr = cs["forward_returns"]
+        assert fr["count"] == 7                    # 7 触发位 i+4 均在窗内
+        assert fr["mean"] == pytest.approx(-0.0842864658)
+        assert fr["median"] == pytest.approx(-0.1428571429)
+        assert fr["q25"] == pytest.approx(-0.1469002695)
+        assert fr["q75"] == pytest.approx(-0.0451923077)
+        assert fr["min"] == pytest.approx(-0.2129629630)
+        assert fr["max"] == pytest.approx(0.15)
+        # 基准对照=全统计段无条件前向收益（20 bar 中 i+4<20 的 16 个）
+        assert cs["baseline"]["count"] == 16
+        # 密度原始值披露（specs R2 MUST）
+        assert report["frequency_projection"]["density"] == pytest.approx(7 / 20)
+
+
+# ---------------------------------------------------------------- 双锚
+
+class TestDualAnchorSameFixture:
+    """D6 双锚（specs R2「两锚共用同一阈值与同一三态映射」）：同
+    fixture 同条件下两锚各自判定——分歧行为（projected=6 pass /
+    analysis_segment=3 warn）证明锚独立取值，零触发时两锚同收敛
+    reject_suggestion（同映射）。"""
+
+    COND = [{"subject": "close", "action": "gt", "target": "95"}]
+
+    @staticmethod
+    def _both(prices):
+        df = _deterministic_df(prices)
+        projected = compute_precheck_report(
+            df, TestDualAnchorSameFixture.COND,
+            anchor="projected", request_start=None, validate_bars=40,
+            warmup_bars=200)
+        end = (df.index[-1] + pd.Timedelta(hours=1)).isoformat()
+        segment = compute_precheck_report(
+            df, TestDualAnchorSameFixture.COND,
+            anchor="analysis_segment",
+            per_range=[{"start": df.index[0].isoformat(), "end": end}],
+            warmup_bars=200)
+        return projected, segment
+
+    def test_same_fixture_divergent_states_shared_threshold(self) -> None:
+        """触发 3：外推 (3/20)×40=6 → pass；分析段实际 3 → warn。"""
+        projected, segment = self._both([100] * 3 + [50.0] * 17)
+        assert projected["frequency_projection"]["projected_trades"] \
+            == pytest.approx(6.0)
+        assert projected["verdict"] == "pass"
+        assert segment["frequency_projection"]["analysis_segment_trades"] == 3
+        assert segment["verdict"] == "warn"
+        # 共用同一阈值（M2.8）
+        assert (projected["frequency_projection"]["threshold"]
+                == segment["frequency_projection"]["threshold"] == 5)
+
+    def test_same_fixture_zero_trigger_converges(self) -> None:
+        projected, segment = self._both([50.0] * 20)
+        assert projected["verdict"] == "reject_suggestion"
+        assert segment["verdict"] == "reject_suggestion"
+
 
 # ---------------------------------------------------------------- 模板壳
 
@@ -249,6 +333,80 @@ class TestTemplateShell:
         with pytest.raises(ResearchError) as ei:
             self._run(env, db_path, [{"subject": "close", "action": "gt"}])
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+
+# ---------------------------------------------------------------- 高周期
+
+class TestHtfConditionInCombo:
+    """specs R1 S1「多条件 when 形制（含高周期条件）」——timeframe 键
+    条件经掩码投影进组合 AND 求值。
+
+    构造（确定性双周期数据，期望独立核算）：1h 300 bar 恒 100（基准
+    条件 close>95 恒真）；4h bar k 仅 k∈[50,55) 为 350（close>300 为
+    True）。投影语义=1h bar h 取收盘时刻 4(k+1)≤h 的最近已完结 4h
+    bar——True 窗 [204h, 224h)。统计段 [210h, 300h)：
+
+    - 正确投影：触发 [210,224) = 14 bar（独立逐 bar 核算）；
+    - 相位偏 ±4h（对齐缺陷）分别为 18/10——14 为相位灵敏确定值；
+    - 对照：去掉高周期条件（仅 1h 恒真）触发 90——证明高周期条件
+      确实参与 AND 交集，非被静默丢弃。
+    """
+
+    @staticmethod
+    def _htf_env(tmp_path):
+        import numpy as np
+        idx1 = pd.date_range("2024-01-01", periods=300, freq="1h",
+                             tz="UTC", name="timestamp")
+        c1 = np.full(300, 100.0)
+        df1 = pd.DataFrame({"open": c1, "high": c1 + 1, "low": c1 - 1,
+                            "close": c1, "volume": 100.0}, index=idx1)
+        idx4 = pd.date_range("2024-01-01", periods=75, freq="4h",
+                             tz="UTC", name="timestamp")
+        k = np.arange(75)
+        c4 = np.where((k >= 50) & (k < 55), 350.0, 100.0)
+        df4 = pd.DataFrame({"open": c4, "high": c4 + 1, "low": c4 - 1,
+                            "close": c4, "volume": 100.0}, index=idx4)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df1.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        df4.to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        return df1, data_dir
+
+    def test_htf_condition_projects_into_combo(self, tmp_path, db_path) -> None:
+        df1, data_dir = self._htf_env(tmp_path)
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df1.index[210].isoformat(),
+               "end": df1.index[-1].isoformat()}
+        vr = {"symbol": SYMBOL, "timeframe": "1h",
+              "start": df1.index[250].isoformat(),
+              "end": (df1.index[-1] + pd.Timedelta(hours=1)).isoformat()}
+        out = precheck_hypothesis(
+            db_path, data_dir, rng, vr,
+            [{"subject": "close", "action": "gt", "target": "95"},
+             {"subject": "close", "action": "gt", "target": "300",
+              "timeframe": "4h"}])
+        cs = out["payload"]["combination_stats"]
+        assert cs["n_triggers"] == 14           # 相位灵敏独立核算值
+        assert cs["stat_bars"] == 90
+        assert cs["trigger_rate"] == pytest.approx(14 / 90)
+        # 外推链：密度 14/90 × 拟验证 50 bar ≈ 7.78 → pass
+        assert out["payload"]["frequency_projection"]["projected_trades"] \
+            == pytest.approx(14 / 90 * 50)
+        assert out["verdict"] == "pass"
+
+    def test_without_htf_condition_all_base_bars_trigger(
+            self, tmp_path, db_path) -> None:
+        """对照锚：同请求仅基准条件（恒真）→ 90 bar 全触发。"""
+        df1, data_dir = self._htf_env(tmp_path)
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df1.index[210].isoformat(),
+               "end": df1.index[-1].isoformat()}
+        vr = dict(rng, start=df1.index[250].isoformat(),
+                  end=(df1.index[-1] + pd.Timedelta(hours=1)).isoformat())
+        out = precheck_hypothesis(
+            db_path, data_dir, rng, vr,
+            [{"subject": "close", "action": "gt", "target": "95"}])
+        assert out["payload"]["combination_stats"]["n_triggers"] == 90
 
 
 # ---------------------------------------------------------------- 装载
