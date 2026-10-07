@@ -81,14 +81,17 @@ def _payload(df, when=None, ranges=None, provenance=None):
 @pytest.fixture()
 def spy(monkeypatch):
     """run_registration_precheck 探针（服务内延迟 import 取模块属性，
-    patch 模块级目标生效）——触达证明：不以静默通过冒充降级验证。"""
+    patch 模块级目标生效）——触达证明：不以静默通过冒充降级验证。
+    trigger_policy 透传（trigger-policy 卡2：登记挂接传参通道）。"""
     calls = []
     real = precheck_mod.run_registration_precheck   # 先存原函数（防自递归）
 
-    def _wrapper(db_path, data_dir, when, data_ranges):
+    def _wrapper(db_path, data_dir, when, data_ranges, trigger_policy=None):
         calls.append({"when": json.dumps(when, default=str),
-                      "n_ranges": len(data_ranges)})
-        return real(db_path, data_dir, when, data_ranges)
+                      "n_ranges": len(data_ranges),
+                      "trigger_policy": trigger_policy})
+        return real(db_path, data_dir, when, data_ranges,
+                    trigger_policy=trigger_policy)
 
     monkeypatch.setattr(precheck_mod, "run_registration_precheck", _wrapper)
     return calls
