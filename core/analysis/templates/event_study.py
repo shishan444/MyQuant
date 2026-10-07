@@ -18,6 +18,7 @@ import pandas as pd
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.templates.column_guard import require_column
+from core.analysis.templates.param_guard import _require_int_range
 
 
 def event_study(
@@ -45,7 +46,6 @@ def event_study(
     """
     # TD-2 入参守卫（clear-analysis-tds）：窗口类 1..len(df)-1；阈值类
     # 0..无上界（0=禁用事件数检查的既有合法语义）
-    from core.analysis.templates.param_guard import _require_int_range
     _require_int_range(window, name="window", lo=1, hi=len(df) - 1)
     _require_int_range(min_events, name="min_events", lo=0)
 
