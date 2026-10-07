@@ -368,6 +368,18 @@ class TestRegisterTriggerPolicy:
             stored = self._stored_conditions(db, out["hypothesis_id"])
             assert stored["trigger_policy"] == policy   # 归一形落库
 
+    def test_bars超界_登记时点放行(self, db: Path) -> None:
+        """D12 两段校验的登记半边（specs「bars 超界在求值侧拒绝」THEN：
+        登记时点不因长度拒绝——上界属求值侧值域校验）：登记不加载数据、
+        仅形制校验，超大 bars 形式合法即登记通过（求值侧拒绝锚见模板
+        三件 bars 超界 422 与策略链两用例）。
+        """
+        out = self._register(db, {"mode": "suppress_bars", "bars": 10**9})
+        assert out["duplicated"] is False
+        stored = self._stored_conditions(db, out["hypothesis_id"])
+        assert stored["trigger_policy"] == {"mode": "suppress_bars",
+                                            "bars": 10**9}
+
     def test_不同策略_不同假设身份(self, db: Path) -> None:
         a = self._register(db, {"mode": "first_true"})
         b = self._register(db, {"mode": "suppress_bars", "bars": 48})
