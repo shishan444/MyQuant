@@ -364,6 +364,28 @@ def precheck_hypothesis(
             "validate_range 须含 symbol/timeframe/start/end",
             detail={"field": "validate_range",
                     "legal_form": "{symbol, timeframe, start, end}"})
+    # 时间串可解析性前置（CARD-02）：validate_range 为自由 Dict 值，
+    # 不经 DataRangeItem 的双层防护（pydantic 类型层 start: str +
+    # field_validator）——此处须双层同构：① 非 str 直接拒（int 形经
+    # epoch 纳秒解析成 1970 时间戳会静默 200 产出语义错误外推；
+    # None 形 pd.Timestamp 返回 NaT 落下游被 SYMBOL_NOT_FOUND 歪拦）；
+    # ② str 不可解析在目录探测后 pd.Timestamp 处裸穿 ValueError 落
+    # 500。文案对齐 schemas._require_parseable_timestamp 先例；
+    # start>=end 倒置全域一致不查（已裁定不修项）
+    for _ts_key in ("start", "end"):
+        _ts_val = validate_range[_ts_key]
+        try:
+            if not isinstance(_ts_val, str):
+                raise TypeError(f"实得 {type(_ts_val).__name__}")
+            pd.Timestamp(_ts_val)
+        except (ValueError, TypeError) as exc:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"validate_range.{_ts_key} 时间参数须为可解析的 UTC "
+                "ISO8601 串（如 2024-01-01 或 2024-01-01T00:00:00Z），"
+                f"got {_ts_val!r}",
+                detail={"field": f"validate_range.{_ts_key}",
+                        "value": _ts_val}) from exc
     # 同 symbol 同 timeframe（审查裁决 3：外推量纲前提——异品种对照
     # 属 G13 截面工具域，Non-Goals 排除）
     if (validate_range["symbol"] != rng["symbol"]
