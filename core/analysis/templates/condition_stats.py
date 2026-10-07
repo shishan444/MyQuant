@@ -105,6 +105,10 @@ def condition_stats(
     # 持有期校验（TD-3.1 迁移 param_guard——输出形制与旧内联逐字节一致）
     _require_int_range(forward_bars, name="forward_bars",
                        lo=1, hi=len(df) - 1)
+    # 小样本阈值校验（clear-analysis-tds CARD-01：裸透传补守卫——
+    # 阈值类 lo=0 无上界，0=禁用小样本检查的既有合法语义，与
+    # correlation_scan/distribution_compare 同族一致）
+    _require_int_range(min_samples, name="min_samples", lo=0)
 
     # 指标计算（不改输入 df；全 df——含 warmup 前缀，保证指标收敛）
     new_cols = _compute_indicator(df, indicator, dict(params))
