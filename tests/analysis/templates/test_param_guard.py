@@ -205,3 +205,42 @@ class TestTemplateEntry:
                             n_neighbors=bad, data_ranges=self.RANGES)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["param"] == "n_neighbors"
+
+    # ---- condition_stats（CARD-01：min_samples 裸透传补守卫）----
+
+    CSI = {"indicator": "RSI", "params": {"period": 14},
+           "condition": {"subject": "close", "action": "gt",
+                         "target": "0"}}
+
+    @pytest.mark.parametrize("bad", ["30", 2.5, True, -1])
+    def test_condition_stats_min_samples_illegal(self, df, bad) -> None:
+        """阈值类四非法形（str/float/bool/负）→ 422 附 legal_range="0..inf"
+        精确锚（specs 阈值语义：lo=0 无上界）。"""
+        from core.analysis.templates.condition_stats import condition_stats
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, min_samples=bad, data_ranges=self.RANGES,
+                            **self.CSI)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "min_samples"
+        assert ei.value.detail["legal_range"] == "0..inf"
+
+    def test_condition_stats_min_samples_zero_disables_check(self, df) -> None:
+        """0=禁用小样本检查（specs 阈值类既有合法语义）——对照组证可红：
+        同一小样本输入（valid=4 < 30），0 放行出报告、默认档 30 拒。"""
+        from core.analysis.templates.condition_stats import condition_stats
+        rare = dict(self.CSI, condition={"subject": "close",
+                                         "action": "gt", "target": "150"})
+        r = condition_stats(df, min_samples=0, forward_bars=5,
+                            data_ranges=self.RANGES, **rare)
+        assert r.sample_size == 4            # 0 档照常出报告（有效前向信号 4）
+        with pytest.raises(ResearchError, match="小样本拒绝"):
+            # 默认档 30：同输入小样本拒绝（build_result 既有通道）
+            condition_stats(df, forward_bars=5,
+                            data_ranges=self.RANGES, **rare)
+
+    def test_condition_stats_min_samples_default_legal(self, df) -> None:
+        """默认档 30 合法（宽松条件全命中）——守卫不误伤既有默认调用。"""
+        from core.analysis.templates.condition_stats import condition_stats
+        r = condition_stats(df, forward_bars=5, data_ranges=self.RANGES,
+                            **self.CSI)
+        assert r.sample_size > 0
