@@ -1,7 +1,13 @@
-"""Strategy DNA data structures for BTC/ETH quantitative trading strategy evolution.
+"""策略 DNA 数据结构（策略遗传表示/序列化/进化的基因建筑块）。
 
-This module defines the core genetic building blocks used to represent, serialize,
-and evolve trading strategies within the evolutionary optimization framework.
+定义进化优化框架内表示、序列化与演化交易策略的核心基因构件：
+信号基因（指标条件×角色）、逻辑/执行/风控基因组、多周期层与
+StrategyDNA 主体（含基因型签名与往返序列化）。
+
+服务对象：进化引擎（选择/杂交/变异直接操作本结构）、策略库去重
+与进化 exclude-set（gene_signature 消费）、translate 分流（假设→
+策略转化按签名分流）、DNAModel 五 API 面（api/schemas 的传输层
+对应物经 to_dna() 进入本域）。
 """
 
 import hashlib
@@ -13,54 +19,53 @@ from typing import Any, Dict, List, Optional, Union
 
 
 # ---------------------------------------------------------------------------
-# Enums
+# 枚举（条件类型与信号角色）
 # ---------------------------------------------------------------------------
 
 class ConditionType(Enum):
-    """Comparison / relationship types used in signal conditions."""
+    """信号条件使用的比较/关系类型全集。"""
 
-    LT = "lt"                          # indicator < threshold
-    GT = "gt"                          # indicator > threshold
-    LE = "le"                          # indicator <= threshold
-    GE = "ge"                          # indicator >= threshold
-    CROSS_ABOVE = "cross_above"        # indicator crosses above threshold
-    CROSS_BELOW = "cross_below"        # indicator crosses below threshold
-    PRICE_ABOVE = "price_above"        # close price above indicator value
-    PRICE_BELOW = "price_below"        # close price below indicator value
-    # Phase 2: dynamic context conditions
-    CROSS_ABOVE_SERIES = "cross_above_series"  # indicator A crosses above indicator B
-    CROSS_BELOW_SERIES = "cross_below_series"  # indicator A crosses below indicator B
-    LOOKBACK_ANY = "lookback_any"              # any bar in lookback window satisfies inner
-    LOOKBACK_ALL = "lookback_all"              # all bars in lookback window satisfy inner
-    # Phase 4: support/resistance conditions
-    TOUCH_BOUNCE = "touch_bounce"      # price touches indicator line then bounces
-    ROLE_REVERSAL = "role_reversal"    # indicator line switches support/resistance role
-    WICK_TOUCH = "wick_touch"          # wick touches indicator line but close is other side
+    LT = "lt"                          # 指标 < 阈值
+    GT = "gt"                          # 指标 > 阈值
+    LE = "le"                          # 指标 <= 阈值
+    GE = "ge"                          # 指标 >= 阈值
+    CROSS_ABOVE = "cross_above"        # 指标自下向上穿越阈值
+    CROSS_BELOW = "cross_below"        # 指标自上向下穿越阈值
+    PRICE_ABOVE = "price_above"        # 收盘价高于指标值
+    PRICE_BELOW = "price_below"        # 收盘价低于指标值
+    # 动态上下文条件（序列对照类）
+    CROSS_ABOVE_SERIES = "cross_above_series"  # 指标 A 自下向上穿越指标 B
+    CROSS_BELOW_SERIES = "cross_below_series"  # 指标 A 自上向下穿越指标 B
+    LOOKBACK_ANY = "lookback_any"              # 回看窗内任一 bar 满足内层条件
+    LOOKBACK_ALL = "lookback_all"              # 回看窗内全部 bar 满足内层条件
+    # 支撑/阻力类条件
+    TOUCH_BOUNCE = "touch_bounce"      # 价格触碰指标线后反弹
+    ROLE_REVERSAL = "role_reversal"    # 指标线支撑/阻力角色互换
+    WICK_TOUCH = "wick_touch"          # 影线触线但收盘在线另一侧
 
 
 class SignalRole(Enum):
-    """Role a signal gene plays within a strategy."""
+    """信号基因在策略中承担的角色（触发/过滤 × 进出加减 × 方向）。"""
 
-    ENTRY_TRIGGER = "entry_trigger"   # directly triggers buy
-    ENTRY_GUARD = "entry_guard"       # filters entry conditions
-    EXIT_TRIGGER = "exit_trigger"     # directly triggers sell
-    EXIT_GUARD = "exit_guard"         # filters exit conditions
-    ADD_TRIGGER = "add_trigger"       # triggers position add
-    ADD_GUARD = "add_guard"           # filters add conditions
-    REDUCE_TRIGGER = "reduce_trigger" # triggers position reduce
-    REDUCE_GUARD = "reduce_guard"     # filters reduce conditions
-    DIRECTION = "direction"           # determines long/short direction for mixed strategies
+    ENTRY_TRIGGER = "entry_trigger"   # 直接触发买入
+    ENTRY_GUARD = "entry_guard"       # 过滤入场条件
+    EXIT_TRIGGER = "exit_trigger"     # 直接触发卖出
+    EXIT_GUARD = "exit_guard"         # 过滤出场条件
+    ADD_TRIGGER = "add_trigger"       # 触发加仓
+    ADD_GUARD = "add_guard"           # 过滤加仓条件
+    REDUCE_TRIGGER = "reduce_trigger" # 触发减仓
+    REDUCE_GUARD = "reduce_guard"     # 过滤减仓条件
+    DIRECTION = "direction"           # mixed 策略的多空方向判定
 
 
 def derive_role(timeframe: str) -> str:
-    """Derive layer role from timeframe string.
+    """由周期串推导层角色。
 
-    >= 1d -> 'structure'
-    >= 1h -> 'zone'
-    < 1h  -> 'execution'
+    >= 1d → 'structure'（结构层）；>= 1h → 'zone'（区间层）；
+    < 1h → 'execution'（执行层）——多周期层的默认角色分配规则。
     """
     tf = timeframe.strip().lower()
-    # Extract numeric value and unit
+    # 解析数值与单位
     if tf.endswith("d"):
         return "structure"
     if tf.endswith("h"):
@@ -70,21 +75,21 @@ def derive_role(timeframe: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Dataclasses
+# 数据类（基因构件与 DNA 主体）
 # ---------------------------------------------------------------------------
 
 @dataclass
 class SignalGene:
-    """A single signal condition derived from a technical indicator.
+    """单个信号条件（技术指标衍生的最小基因单元）。
 
     Attributes:
-        indicator: Name of the indicator (e.g. "RSI", "EMA", "MACD").
-        params: Indicator parameters (e.g. {"period": 14}).
-        role: The role this signal plays in the strategy.
-        field_name: For multi-output indicators, which output to use
-                    (e.g. "histogram" for MACD). ``None`` for single-output indicators.
-        condition: Structured condition dict, e.g. {"type": "lt", "threshold": 30}
-                   or {"type": "price_above"} (no threshold needed).
+        indicator: 指标名（如 "RSI"、"EMA"、"MACD"）。
+        params: 指标参数（如 {"period": 14}）。
+        role: 该信号在策略中的角色（SignalRole 枚举）。
+        field_name: 多输出指标的输出列选择（如 MACD 的 "histogram"）；
+                    单输出指标为 ``None``。
+        condition: 结构化条件字典，如 {"type": "lt", "threshold": 30}
+                   或 {"type": "price_above"}（无需阈值）。
     """
 
     indicator: str
@@ -104,10 +109,10 @@ class SignalGene:
 
     @classmethod
     def from_dict(cls, data: dict) -> "SignalGene":
-        data = dict(data)  # shallow copy
+        data = dict(data)  # 浅拷贝（不就地改入参）
         if isinstance(data.get("role"), str):
             data["role"] = SignalRole(data["role"])
-        # Map JSON "field" to Python attribute "field_name"
+        # JSON 键 "field" 映射到 Python 属性 "field_name"（序列化形制对齐）
         if "field" in data:
             data["field_name"] = data.pop("field")
         return cls(**{k: v for k, v in data.items() if k != "field"})
@@ -115,12 +120,12 @@ class SignalGene:
 
 @dataclass
 class LogicGenes:
-    """Logical operators that combine signal genes for entry / exit decisions."""
+    """逻辑基因组：信号基因组合为进/出场决策的与或算子。"""
 
-    entry_logic: str = "AND"  # "AND" or "OR"
-    exit_logic: str = "AND"   # "AND" or "OR"
-    add_logic: str = "AND"    # "AND" or "OR"
-    reduce_logic: str = "AND" # "AND" or "OR"
+    entry_logic: str = "AND"  # 入场组合："AND" 或 "OR"
+    exit_logic: str = "AND"   # 出场组合："AND" 或 "OR"
+    add_logic: str = "AND"    # 加仓组合："AND" 或 "OR"
+    reduce_logic: str = "AND" # 减仓组合："AND" 或 "OR"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -132,10 +137,10 @@ class LogicGenes:
 
 @dataclass
 class ExecutionGenes:
-    """Execution-level genes: timeframe and trading symbol."""
+    """执行基因组：交易周期与标的。"""
 
-    timeframe: str = "4h"        # "1h", "4h", "1d"
-    symbol: str = "BTCUSDT"     # "BTCUSDT" or "ETHUSDT"
+    timeframe: str = "4h"        # 周期（如 "1h"、"4h"、"1d"）
+    symbol: str = "BTCUSDT"     # 标的（如 "BTCUSDT"、"ETHUSDT"）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -147,15 +152,15 @@ class ExecutionGenes:
 
 @dataclass
 class RiskGenes:
-    """Risk management parameters."""
+    """风控基因组（止损止盈/仓位/杠杆/方向）。"""
 
-    stop_loss: float = 0.05               # pct mode: 0.05 (5%); atr mode: 2.0 (2xATR)
-    take_profit: Optional[float] = None   # pct mode: 0.10 (10%); atr mode: 4.0 (4xATR)
-    position_size: float = 0.3            # e.g. 0.3 (30%)
-    leverage: int = 1                     # 1-10x
-    direction: str = "long"               # "long" | "short"
-    sl_mode: str = "pct"                  # "pct" | "atr"
-    atr_period: int = 14                  # ATR lookback for sl_mode="atr"
+    stop_loss: float = 0.05               # pct 模式: 0.05（5%）；atr 模式: 2.0（2 倍 ATR）
+    take_profit: Optional[float] = None   # pct 模式: 0.10（10%）；atr 模式: 4.0（4 倍 ATR）
+    position_size: float = 0.3            # 仓位比例（如 0.3 = 30%）
+    leverage: int = 1                     # 杠杆 1-10 倍
+    direction: str = "long"               # 方向："long" | "short"
+    sl_mode: str = "pct"                  # 止损模式："pct" | "atr"
+    atr_period: int = 14                  # atr 模式的 ATR 回看周期
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -167,20 +172,19 @@ class RiskGenes:
 
 @dataclass
 class TimeframeLayer:
-    """A single timeframe layer within a multi-timeframe strategy.
+    """多周期策略中的单个周期层。
 
-    Each layer contains signal genes and logic genes evaluated
-    independently on its own timeframe's data.
+    每层含信号基因与逻辑基因，在自身周期的数据上独立求值。
 
-    role: "structure" (>=1d), "zone" (>=1h), or "execution" (<1h).
-          Legacy "trend" is mapped to "structure" on deserialization.
-          None defaults to "execution" for backward compatibility.
+    role: "structure"（>=1d）/ "zone"（>=1h）/ "execution"（<1h）。
+          反序列化时遗留 "trend" 映射为 "structure"；None 缺省
+          "execution"（向后兼容）。
     """
 
     timeframe: str
     signal_genes: List[SignalGene] = field(default_factory=list)
     logic_genes: LogicGenes = field(default_factory=LogicGenes)
-    role: Optional[str] = None  # "structure" | "zone" | "execution"
+    role: Optional[str] = None  # 层角色："structure" | "zone" | "execution"
 
     def to_dict(self) -> dict:
         return {
@@ -205,14 +209,11 @@ class TimeframeLayer:
 
 @dataclass
 class StrategyDNA:
-    """Complete genetic representation of a trading strategy.
+    """交易策略的完整基因表示（进化算法操作的基本单元）。
 
-    A StrategyDNA instance is the fundamental unit operated on by the
-    evolutionary algorithm: selection, crossover, and mutation all work on
-    this structure.
-
-    Supports multi-timeframe (MTF) via ``layers``. For backward compatibility,
-    ``signal_genes`` is available as a property proxying layers[0].
+    选择/杂交/变异全部直接作用于本结构。多周期（MTF）经 ``layers``
+    表达；向后兼容起见 ``signal_genes`` 属性代理 layers[0]（单周期
+    形制下两者同源）。
     """
 
     signal_genes: List[SignalGene] = field(default_factory=list)
@@ -240,33 +241,31 @@ class StrategyDNA:
     _layers_explicit: bool = field(default=False, repr=False, init=False)
 
     def __post_init__(self):
-        # Auto-detect explicit layers (passed via constructor, not auto-wrap)
+        # 自动标记显式层（构造传入——区别于 from_dict 的 auto-wrap 兼容层）
         if self.layers is not None:
             object.__setattr__(self, "_layers_explicit", True)
 
     @property
     def is_mtf(self) -> bool:
-        """Whether this DNA uses multi-timeframe layers."""
+        """是否为多周期层结构（layers 显式存在——auto-wrap 兼容层不计）。"""
         return self.layers is not None and len(self.layers) >= 1 and self._layers_explicit
 
     @property
     def timeframes(self) -> List[str]:
-        """List of timeframes used across all layers."""
+        """全部层涉及的周期清单（无 layers 时退化为执行周期）。"""
         if self.layers:
             return [layer.timeframe for layer in self.layers]
         return [self.execution_genes.timeframe]
 
     @property
     def gene_signature(self) -> str:
-        """Stable genotype signature string for similarity / dedup comparison.
+        """基因型签名（相似度/去重比较的稳定指纹串）。
 
-        Encodes, for each signal gene: indicator + ALL params (sorted) +
-        condition type + role, plus leverage/direction and (for MTF) the layer
-        structure, so that different parameter values yield different signatures.
-        This is an intrinsic property of the DNA (its genotype fingerprint),
-        used by diversity measurement, strategy-library dedup, and the
-        evolution exclude-set. Migrated verbatim from
-        ``core.evolution.diversity._gene_signature``.
+        每信号基因编码 indicator + 全部参数（排序）+ 条件类型 + 角色，
+        另含杠杆/方向与（MTF 的）层结构——不同参数值产出不同签名。
+        这是 DNA 的内在属性（基因型指纹），消费方：多样性度量、
+        策略库去重、进化 exclude-set（与 translate 同签名分流共用）。
+        自 ``core.evolution.diversity._gene_signature`` 逐字迁移。
         """
         parts = []
         for gene in sorted(self.signal_genes, key=lambda g: g.role.value):
@@ -276,7 +275,7 @@ class StrategyDNA:
             parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
         parts.append(f"lev:{self.risk_genes.leverage}")
         parts.append(f"dir:{self.risk_genes.direction}")
-        # Include MTF layer structure for diversity (M3 fix)
+        # 层结构计入签名（M3 修复：同基因不同分层配置不再同签名）
         if self.layers:
             for layer in self.layers:
                 layer_parts = [f"L:{layer.timeframe}:{layer.role or 'execution'}"]
@@ -311,7 +310,7 @@ class StrategyDNA:
         return "|".join(parts)
 
     def _resolve_signal_genes(self) -> List[SignalGene]:
-        """Resolve signal_genes from layers[0] if layers exist."""
+        """解析信号基因（layers 存在且 signal_genes 为空时取 layers[0]）。"""
         if self.layers and not self.signal_genes:
             return self.layers[0].signal_genes
         return self.signal_genes
@@ -344,9 +343,9 @@ class StrategyDNA:
 
     @classmethod
     def from_dict(cls, data: dict) -> "StrategyDNA":
-        data = dict(data)  # shallow copy
+        data = dict(data)  # 浅拷贝（不就地改入参）
 
-        # Parse layers if present (MTF format)
+        # 解析 layers（MTF 形制，存在时）
         layers = None
         if "layers" in data and isinstance(data["layers"], list):
             layers = [
@@ -355,15 +354,15 @@ class StrategyDNA:
             ]
         data.pop("layers", None)
 
-        # Parse cross_layer_logic
+        # 解析跨层逻辑（缺省 AND）
         cross_layer_logic = data.pop("cross_layer_logic", "AND")
 
-        # Parse new MTF control fields with defaults
+        # 解析 MTF 控制字段（带缺省）
         mtf_mode = data.pop("mtf_mode", None)
         confluence_threshold = data.pop("confluence_threshold", 0.3)
         proximity_mult = data.pop("proximity_mult", 1.5)
 
-        # Map legacy "trend" role -> "structure" in layers
+        # 遗留 "trend" 角色映射为 "structure"（序列化兼容）
         if layers:
             for layer in layers:
                 if layer.role == "trend":
@@ -409,10 +408,12 @@ class StrategyDNA:
         instance.mtf_mode = mtf_mode
         instance.confluence_threshold = confluence_threshold
         instance.proximity_mult = proximity_mult
-        # Mark layers as explicit only if they came from the data (not auto-wrap)
+        # 仅数据携带的 layers 标记为显式（auto-wrap 兼容层不标——
+        # is_mtf 语义据此区分数据结构与真多周期）
         instance._layers_explicit = layers is not None
 
-        # Auto-wrap: if no layers but has signal_genes, create a single layer
+        # auto-wrap：无 layers 但有 signal_genes 时包单层（执行周期）——
+        # 单周期 DNA 在层形接口上的兼容形态
         if instance.layers is None and instance.signal_genes:
             instance.layers = [
                 TimeframeLayer(
@@ -436,7 +437,7 @@ class StrategyDNA:
 
 
 # ---------------------------------------------------------------------------
-# Strategy naming utility
+# 策略命名工具
 # ---------------------------------------------------------------------------
 
 INDICATOR_TYPE_MAP: Dict[str, str] = {
@@ -452,11 +453,11 @@ _DIRECTION_LABEL = {"long": "做多", "short": "做空", "mixed": "混合"}
 
 
 def generate_strategy_name(dna: "StrategyDNA") -> str:
-    """Generate a human-readable strategy name from DNA.
+    """由 DNA 生成人类可读的策略名。
 
-    Format: "{indicator}{type} {direction} {timeframe}-{hash4}"
-    Example: "EMA趋势 做多 4H-A3F2"
-    Hash suffix distinguishes strategies that share the same entry trigger.
+    形制："{指标}{类型} {方向} {周期}-{hash4}"
+    示例："EMA趋势 做多 4H-A3F2"
+    哈希后缀区分同入场触发指标的不同策略（名称唯一性锚）。
     """
     genes = dna.layers[0].signal_genes if dna.layers else dna.signal_genes
     trigger = next((g for g in genes if g.role == SignalRole.ENTRY_TRIGGER), None)
@@ -465,13 +466,13 @@ def generate_strategy_name(dna: "StrategyDNA") -> str:
     dir_label = _DIRECTION_LABEL.get(dna.risk_genes.direction, "做多")
     tf = dna.execution_genes.timeframe.upper()
 
-    # Build a short hash from all distinguishing fields for uniqueness
+    # 全部区分性字段拼短哈希（同触发指标策略的唯一性来源）
     sig_parts = []
     for g in dna.signal_genes:
         sig_parts.append(f"{g.indicator}:{g.role.value}:{sorted(g.params.items())}")
     sig_parts.append(f"logic:{dna.logic_genes.entry_logic}/{dna.logic_genes.exit_logic}")
     sig_parts.append(f"risk:{dna.risk_genes.stop_loss}/{dna.risk_genes.take_profit}/{dna.risk_genes.position_size}")
-    # Include MTF layers to differentiate strategies with same base genes but different layer configs
+    # 层配置计入哈希（同基础基因不同分层的策略区分）
     if dna.layers:
         for i, layer in enumerate(dna.layers):
             for g in layer.signal_genes:

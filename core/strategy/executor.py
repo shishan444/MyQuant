@@ -170,8 +170,8 @@ def _eval_touch_bounce(
 ) -> pd.Series:
     """触碰反弹：价格触及指标线后向反方向反弹。
 
-    direction="support"：最低价近线 + 收盘在线上 + 次根收盘更高
-    direction="resistance"：最高价近线 + 收盘在线下 + 次根收盘更低
+    direction="support"：最低价近线 + 收盘在线上 + 当前根收盘较前一根更高
+    direction="resistance"：最高价近线 + 收盘在线下 + 当前根收盘较前一根更低
     """
     if df is None:
         return pd.Series(False, index=indicator_series.index)
