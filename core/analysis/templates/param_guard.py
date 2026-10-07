@@ -1,8 +1,10 @@
 """模板入参守卫（clear-analysis-tds TD-2）——数值与枚举参数的类型/值域
 前置校验唯一权威。
 
-九个分析模板函数入口的公共守卫（Q1 全量收敛：四既有内联校验迁移+
-六存量模板补齐）：bool 排除（bool 是 int 子类的静默接受陷阱）→ 非 int →
+八个模板函数入口的公共守卫（Q1 收敛：四既有内联校验迁移+四存量
+模板补齐）；screen_patterns 例外——自有校验体系（top_n/min_samples/
+horizons 422 附 legal_range），主 spec 有界语义锚定，不消费本守卫。
+守卫链：bool 排除（bool 是 int 子类的静默接受陷阱）→ 非 int →
 lo/hi 越界 → 422 RESEARCH_PARAM_INVALID 附 legal_range（错误即文档）；
 枚举型字符串封闭值域（枚举外拒——消灭静默落入兜底分支的结论污染，
 如 distribution_compare 的 transform 非法串被当 raw 语义）。
@@ -18,7 +20,8 @@ None 表示该侧无界（阈值类 min_samples/min_events 上界 None——阈�
 [RESEARCH_PARAM_INVALID]——轮询方可解析错误码）；恒异步模板
 （pattern_mining）的校验拒绝即走该通道。
 
-消费者：templates 包内九模板函数入口（包内共享，不反向依赖路由层）。
+消费者：templates 包内八模板函数入口（screen_patterns 例外，包内
+共享，不反向依赖路由层）。
 """
 from __future__ import annotations
 

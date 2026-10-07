@@ -88,8 +88,10 @@ def condition_stats(
             work.index >= request_start 的 bar（前缀只用不算）。
 
     Raises:
-        ResearchError: 未知指标；forward_bars 非法（附合法范围）。
-        ValueError: 条件列缺失 / 小样本拒绝（经 build_result）。
+        ResearchError: 未知指标；forward_bars/min_samples 非法（附
+            合法范围）；小样本拒绝（经 build_result——卡10 收编，原裸
+            ValueError 落 500 误导 Agent 盲重试）；target 不可解析
+            （卡3b）。subject 缺列不抛（0.2.13 契约：全 False 安全降级）。
     """
     from core.features.indicators import _compute_indicator
     from core.features.registry import INDICATOR_REGISTRY
