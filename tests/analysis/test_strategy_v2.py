@@ -493,3 +493,62 @@ def _R(d1, d2):
     return {"symbol": "BTCUSDT", "timeframe": "4h",
             "start": f"2024-01-{d1:02d}T00:00:00Z",
             "end": f"2024-01-{d2:02d}T00:00:00Z"}
+
+
+class TestTranslatorTriggerPolicy:
+    """带 policy 假设翻译（trigger-policy 卡5 / tasks 6.1 分流锚）。
+
+    同条件集异 policy = 不同基因型：各自落库互不命中同签名分流；
+    翻译产物携带归一 policy；无 policy 假设产物零变化（不写字段）。
+    """
+
+    def _conditions(self):
+        return {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 30}},
+                 "action": "gt", "target": 60}],
+        }
+
+    def _register(self, db, policy=None):
+        return register_hypothesis(
+            db, conditions=self._conditions(), statement="s",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}],
+            trigger_policy=policy)["hypothesis_id"]
+
+    def _translate_dna(self, db, hid):
+        from core.persistence.db_ext import get_strategy
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        row = get_strategy(db, out["strategy_id"])
+        return out, StrategyDNA.from_json(row["dna_json"])
+
+    def test_带policy假设_翻译产物携带policy(self, db):
+        hid = self._register(db, {"mode": "first_true"})
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy == {"mode": "first_true"}
+
+    def test_同条件异policy_各自落库互不混挂(self, db):
+        hid_a = self._register(db, {"mode": "first_true"})
+        hid_b = self._register(db, {"mode": "suppress_bars", "bars": 48})
+        out_a, dna_a = self._translate_dna(db, hid_a)
+        out_b, dna_b = self._translate_dna(db, hid_b)
+        assert out_a["strategy_id"] != out_b["strategy_id"]
+        assert dna_a.entry_trigger_policy == {"mode": "first_true"}
+        assert dna_b.entry_trigger_policy == {"mode": "suppress_bars",
+                                              "bars": 48}
+        assert dna_a.gene_signature != dna_b.gene_signature
+
+    def test_无policy假设_翻译产物零变化(self, db):
+        hid = self._register(db)                    # 缺省
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy is None
+        assert "entry_trigger_policy" not in dna.to_dict()
+
+    def test_显式none假设_翻译产物同缺省(self, db):
+        hid = self._register(db, {"mode": "none"})
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy is None

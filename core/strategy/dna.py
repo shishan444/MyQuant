@@ -233,6 +233,10 @@ class StrategyDNA:
     signal_sources: Optional[List[Dict[str, Any]]] = None
     # 组合决策层：{mode: weighted_vote|gate|logic, weights?, threshold?, op?}
     composition: Optional[Dict[str, Any]] = None
+    # 入场触发策略（trigger-policy 卡5）：{mode, bars?} 归一形（假设
+    # conditions_json 顶层 trigger_policy 键直接映射）；None=无策略=
+    # 掩码直译现状（既有策略形制零变化）
+    entry_trigger_policy: Optional[Dict[str, Any]] = None
     _layers_explicit: bool = field(default=False, repr=False, init=False)
 
     def __post_init__(self):
@@ -297,6 +301,13 @@ class StrategyDNA:
                 comp = self.composition if isinstance(self.composition, dict) else {}
                 parts.append("comp:" + json.dumps(
                     comp, sort_keys=True, ensure_ascii=False, default=str))
+        # 入场触发策略（trigger-policy 卡5）：同条件集异 policy = 不同
+        # 基因型（假设翻译同签名分流、库去重、进化 exclude-set 依据）；
+        # 无 policy 签名逐位不变（沿 signal_sources 零迁移先例）
+        if self.entry_trigger_policy is not None:
+            parts.append("etp:" + json.dumps(
+                self.entry_trigger_policy, sort_keys=True,
+                ensure_ascii=False, default=str))
         return "|".join(parts)
 
     def _resolve_signal_genes(self) -> List[SignalGene]:
@@ -325,6 +336,8 @@ class StrategyDNA:
             result["signal_sources"] = self.signal_sources
         if self.composition is not None:
             result["composition"] = self.composition
+        if self.entry_trigger_policy is not None:
+            result["entry_trigger_policy"] = self.entry_trigger_policy
         if self.layers:
             result["layers"] = [layer.to_dict() for layer in self.layers]
         return result
@@ -377,6 +390,7 @@ class StrategyDNA:
         # v2 字段（add-ai-research-mcp 6.1）
         signal_sources = data.pop("signal_sources", None)
         composition = data.pop("composition", None)
+        entry_trigger_policy = data.pop("entry_trigger_policy", None)
 
         # 白名单过滤未知键：旧读者遇新键不再 TypeError（回退安全）；
         # 存量 DNA 无未知键，行为逐位不变
@@ -389,6 +403,7 @@ class StrategyDNA:
         instance = cls(**data)
         instance.signal_sources = signal_sources
         instance.composition = composition
+        instance.entry_trigger_policy = entry_trigger_policy
         instance.layers = layers
         instance.cross_layer_logic = cross_layer_logic
         instance.mtf_mode = mtf_mode

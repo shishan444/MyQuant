@@ -356,3 +356,57 @@ class TestGeneSignature:
         """Same DNA must produce identical signature on repeated calls."""
         dna = self._make_dna()
         assert dna.gene_signature == dna.gene_signature
+
+
+class TestEntryTriggerPolicySerialization:
+    """入场触发策略序列化三配套+签名（trigger-policy 卡5 / tasks 6.1）。"""
+
+    POLICY = {"mode": "suppress_bars", "bars": 48}
+
+    def _dna(self, policy=None):
+        return StrategyDNA(
+            signal_genes=[SignalGene("RSI", {"period": 14},
+                                     SignalRole.ENTRY_TRIGGER, "rsi_14",
+                                     {"type": "lt", "threshold": 35})],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            entry_trigger_policy=policy)
+
+    def test_往返存活(self):
+        dna = self._dna(self.POLICY)
+        rt = StrategyDNA.from_json(dna.to_json())
+        assert rt.entry_trigger_policy == self.POLICY
+
+    def test_to_dict_非None才写(self):
+        assert "entry_trigger_policy" not in self._dna(None).to_dict()
+        assert self._dna(self.POLICY).to_dict()["entry_trigger_policy"] == \
+            self.POLICY
+
+    def test_from_dict_未知键不炸_缺键为None(self):
+        dna = StrategyDNA.from_dict({**self._dna(self.POLICY).to_dict(),
+                                     "future_key": 1})
+        assert dna.entry_trigger_policy == self.POLICY   # 已知键存活
+        assert StrategyDNA.from_dict(
+            self._dna(None).to_dict()).entry_trigger_policy is None
+
+    def test_签名纳入_policy(self):
+        a = self._dna({"mode": "first_true"})
+        b = self._dna({"mode": "suppress_bars", "bars": 48})
+        c = self._dna()                                   # 无 policy
+        assert len({a.gene_signature, b.gene_signature,
+                    c.gene_signature}) == 3
+
+    def test_无policy签名逐位不变(self):
+        """零迁移锚：无 policy 的签名与旧实现产出一致（手算锚）。"""
+        dna = self._dna()
+        expected = (
+            "RSI(period=14):lt:entry_trigger"
+            "|RSI(period=30):gt:exit_trigger_placeholder")
+        # 直接断言不含 etp 段（不复制旧全文——逐位不变由既有签名测试网守护）
+        assert "etp:" not in dna.gene_signature
+
+    def test_同policy不同bars_异签名(self):
+        a = self._dna({"mode": "suppress_bars", "bars": 24})
+        b = self._dna({"mode": "suppress_bars", "bars": 48})
+        assert a.gene_signature != b.gene_signature

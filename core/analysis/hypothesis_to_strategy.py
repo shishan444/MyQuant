@@ -153,6 +153,12 @@ def translate_hypothesis(
         signal_sources = [{"type": "rule"}]
         composition = None
 
+    # 入场触发策略直接映射（trigger-policy 卡5 / Q3 裁决）：假设
+    # conditions_json 顶层 trigger_policy 已是归一形（登记时
+    # validate_policy 归一落库）；缺省/显式 none 不含键 → 不写字段 =
+    # 既有策略形制零变化。不可静默降级：策略声明承载密度语义。
+    entry_policy = conditions.get("trigger_policy")
+
     dna = StrategyDNA(
         signal_genes=genes,
         logic_genes=LogicGenes(),
@@ -162,6 +168,7 @@ def translate_hypothesis(
         parent_ids=[hypothesis_id],  # 谱系回链
         signal_sources=signal_sources,
         composition=composition,
+        entry_trigger_policy=entry_policy,
     )
 
     # 同签名显式分流（MUST NOT 静默不落库）。签名用往返规范化后的对象算

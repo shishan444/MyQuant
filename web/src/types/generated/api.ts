@@ -32,15 +32,14 @@ export interface paths {
         };
         /**
          * List Strategies Endpoint
-         * @description List strategies with filtering, sorting, and pagination.
-         *
-         *     status=None 默认视图排除 draft；显式 status=draft 可查草稿。
+         * @description 策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
+         *     显式 status=draft 可查草稿。
          */
         get: operations["list_strategies_endpoint_api_strategies_get"];
         put?: never;
         /**
          * Create Strategy
-         * @description Create a new strategy.
+         * @description 创建策略。
          */
         post: operations["create_strategy_api_strategies_post"];
         delete?: never;
@@ -58,18 +57,18 @@ export interface paths {
         };
         /**
          * Get Strategy Endpoint
-         * @description Get strategy details by ID.
+         * @description 按 ID 取策略详情。
          */
         get: operations["get_strategy_endpoint_api_strategies__strategy_id__get"];
         /**
          * Update Strategy Endpoint
-         * @description Update an existing strategy.
+         * @description 更新策略。
          */
         put: operations["update_strategy_endpoint_api_strategies__strategy_id__put"];
         post?: never;
         /**
          * Delete Strategy Endpoint
-         * @description Delete a strategy by ID.
+         * @description 按 ID 删除策略。
          */
         delete: operations["delete_strategy_endpoint_api_strategies__strategy_id__delete"];
         options?: never;
@@ -88,11 +87,8 @@ export interface paths {
         put?: never;
         /**
          * Backtest Strategy
-         * @description Run a backtest for a strategy.
-         *
-         *     Supports two modes:
-         *     - strategy_id: Load DNA from saved strategy
-         *     - dna + symbol + timeframe: Use DNA directly (for Lab page)
+         * @description 单策略回测。两种模式：strategy_id 自库取 DNA；
+         *     或 dna+symbol+timeframe 直传 DNA（Lab 页用）。
          */
         post: operations["backtest_strategy_api_strategies_backtest_post"];
         delete?: never;
@@ -112,7 +108,7 @@ export interface paths {
         put?: never;
         /**
          * Compare Strategies
-         * @description Compare multiple strategies by running backtests.
+         * @description 多策略回测对比（逐策略执行，失败条目隔离不拖累整体）。
          */
         post: operations["compare_strategies_api_strategies_compare_post"];
         delete?: never;
@@ -132,11 +128,11 @@ export interface paths {
         put?: never;
         /**
          * Verify Strategies
-         * @description Verify strategies across multiple user-defined date ranges.
+         * @description 多日期区间验证策略。
          *
-         *     For each (strategy, date_range) pair, runs a backtest and computes
-         *     fitness. Then aggregates per-strategy results into a comprehensive
-         *     score: avg_fitness * qualified_ratio * consistency_bonus.
+         *     逐 (strategy, date_range) 对回测并计算 fitness；按策略聚合综合
+         *     评分 = avg_fitness × qualified_ratio × consistency_bonus。
+         *     执行体收口 _VerifyProcessor（与流式端点共用）。
          */
         post: operations["verify_strategies_api_strategies_verify_post"];
         delete?: never;
@@ -178,7 +174,7 @@ export interface paths {
         };
         /**
          * Get Verify History
-         * @description Return past verify results from backtest_result (run_source='verify').
+         * @description 历史验证结果（backtest_result 按 run_source='verify' 过滤）。
          */
         get: operations["get_verify_history_api_strategies_verify_history_get"];
         put?: never;
@@ -198,7 +194,7 @@ export interface paths {
         };
         /**
          * List Sessions
-         * @description Return verification sessions ordered by creation time.
+         * @description 验证会话列表（按创建时间序）。
          */
         get: operations["list_sessions_api_strategies_verify_sessions_get"];
         put?: never;
@@ -218,7 +214,7 @@ export interface paths {
         };
         /**
          * Get Session Results
-         * @description Return backtest results for a specific verify session.
+         * @description 指定验证会话的回测结果。
          */
         get: operations["get_session_results_api_strategies_verify_sessions__session_id__results_get"];
         put?: never;
@@ -261,7 +257,7 @@ export interface paths {
         };
         /**
          * Get Batch Backtest Detail
-         * @description Get full batch backtest result detail including equity curve and signals.
+         * @description 取批回测结果详情（含净值曲线与信号）。
          */
         get: operations["get_batch_backtest_detail_api_strategies_batch_backtest__result_id__get"];
         put?: never;
@@ -281,7 +277,7 @@ export interface paths {
         };
         /**
          * Runner Status
-         * @description Return EvolutionRunner health status.
+         * @description 返回 EvolutionRunner 健康状态。
          */
         get: operations["runner_status_api_evolution_runner_status_get"];
         put?: never;
@@ -301,7 +297,7 @@ export interface paths {
         };
         /**
          * List All Discovered Strategies
-         * @description List all evolution-discovered strategies across all tasks.
+         * @description 跨任务列出全部进化发现的策略（source=evolution）。
          */
         get: operations["list_all_discovered_strategies_api_evolution_strategies_get"];
         put?: never;
@@ -321,13 +317,13 @@ export interface paths {
         };
         /**
          * List Tasks
-         * @description List evolution tasks with optional status filter and pagination.
+         * @description 分页列出进化任务（可按 status 过滤）。
          */
         get: operations["list_tasks_api_evolution_tasks_get"];
         put?: never;
         /**
          * Create Task
-         * @description Create a new evolution task.
+         * @description 创建进化任务（runner 轮询 pending 表接手执行）。
          */
         post: operations["create_task_api_evolution_tasks_post"];
         delete?: never;
@@ -345,7 +341,7 @@ export interface paths {
         };
         /**
          * Get Task Endpoint
-         * @description Get evolution task details.
+         * @description 取进化任务详情。
          */
         get: operations["get_task_endpoint_api_evolution_tasks__task_id__get"];
         put?: never;
@@ -365,7 +361,7 @@ export interface paths {
         };
         /**
          * Get Task History
-         * @description Get generation history for an evolution task.
+         * @description 取任务代际历史。
          */
         get: operations["get_task_history_api_evolution_tasks__task_id__history_get"];
         put?: never;
@@ -387,7 +383,7 @@ export interface paths {
         put?: never;
         /**
          * Pause Task
-         * @description Pause an evolution task.
+         * @description 暂停进化任务。
          */
         post: operations["pause_task_api_evolution_tasks__task_id__pause_post"];
         delete?: never;
@@ -407,7 +403,7 @@ export interface paths {
         put?: never;
         /**
          * Stop Task
-         * @description Stop an evolution task.
+         * @description 停止进化任务。
          */
         post: operations["stop_task_api_evolution_tasks__task_id__stop_post"];
         delete?: never;
@@ -427,7 +423,7 @@ export interface paths {
         put?: never;
         /**
          * Resume Task
-         * @description Resume a paused evolution task.
+         * @description 恢复已暂停的进化任务。
          */
         post: operations["resume_task_api_evolution_tasks__task_id__resume_post"];
         delete?: never;
@@ -445,9 +441,7 @@ export interface paths {
         };
         /**
          * Get Task Strategies
-         * @description Return effective strategies discovered by this evolution task.
-         *
-         *     Returns champion and any snapshot strategies with score > 0.
+         * @description 返回本任务实际生效的策略集（冠军与代际 top-N 快照策略，已收录冠军去重）。
          */
         get: operations["get_task_strategies_api_evolution_tasks__task_id__strategies_get"];
         put?: never;
@@ -467,7 +461,7 @@ export interface paths {
         };
         /**
          * Get Discovered Strategies
-         * @description Get auto-extracted strategies for a task from the strategy table.
+         * @description 取任务自动入库的策略（strategy 表按 source_task_id 过滤）。
          */
         get: operations["get_discovered_strategies_api_evolution_tasks__task_id__discovered_strategies_get"];
         put?: never;
@@ -487,7 +481,7 @@ export interface paths {
         };
         /**
          * List Datasets Endpoint
-         * @description List datasets with optional filtering.
+         * @description 列出数据集（可按 symbol/interval 过滤）。
          */
         get: operations["list_datasets_endpoint_api_data_datasets_get"];
         put?: never;
@@ -507,14 +501,14 @@ export interface paths {
         };
         /**
          * Get Dataset Endpoint
-         * @description Get dataset details by ID.
+         * @description 按 ID 取数据集详情。
          */
         get: operations["get_dataset_endpoint_api_data_datasets__dataset_id__get"];
         put?: never;
         post?: never;
         /**
          * Delete Dataset Endpoint
-         * @description Delete a dataset by ID.
+         * @description 按 ID 删除数据集。
          */
         delete: operations["delete_dataset_endpoint_api_data_datasets__dataset_id__delete"];
         options?: never;
@@ -533,7 +527,7 @@ export interface paths {
         put?: never;
         /**
          * Import Csv Endpoint
-         * @description Import a CSV file into Parquet storage.
+         * @description 导入单个 CSV 到 Parquet 存储。
          */
         post: operations["import_csv_endpoint_api_data_import_post"];
         delete?: never;
@@ -553,7 +547,7 @@ export interface paths {
         put?: never;
         /**
          * Import Csv Batch Endpoint
-         * @description Import multiple CSV files into a single Parquet dataset.
+         * @description 多 CSV 批量导入合并为单一 Parquet 数据集。
          */
         post: operations["import_csv_batch_endpoint_api_data_import_batch_post"];
         delete?: never;
@@ -571,7 +565,7 @@ export interface paths {
         };
         /**
          * Preview Dataset
-         * @description Preview the first N rows of a dataset.
+         * @description 预览数据集前 N 行。
          */
         get: operations["preview_dataset_api_data_datasets__dataset_id__preview_get"];
         put?: never;
@@ -591,7 +585,7 @@ export interface paths {
         };
         /**
          * Get Ohlcv
-         * @description Get OHLCV data for a dataset with optional time range filter.
+         * @description 按数据集取 OHLCV（可按时间范围过滤）。
          */
         get: operations["get_ohlcv_api_data_datasets__dataset_id__ohlcv_get"];
         put?: never;
@@ -611,7 +605,7 @@ export interface paths {
         };
         /**
          * Get Available Sources
-         * @description Scan parquet files and return available symbol/timeframe combinations.
+         * @description 扫描 parquet 文件返回可用 symbol/timeframe 组合。
          */
         get: operations["get_available_sources_api_data_available_sources_get"];
         put?: never;
@@ -631,7 +625,7 @@ export interface paths {
         };
         /**
          * Get Ohlcv By Symbol
-         * @description Get OHLCV data by symbol+timeframe (resolves parquet file directly).
+         * @description 按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。
          */
         get: operations["get_ohlcv_by_symbol_api_data_ohlcv__symbol___timeframe__get"];
         put?: never;
@@ -651,7 +645,7 @@ export interface paths {
         };
         /**
          * Get Chart Indicators
-         * @description Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA, MACD, KDJ) for chart rendering.
+         * @description 计算图表指标（EMA/BOLL/RSI/RVOL/VWMA/MACD/KDJ，前端绘图用）。
          */
         get: operations["get_chart_indicators_api_data_chart_indicators__symbol___timeframe__get"];
         put?: never;
@@ -726,7 +720,7 @@ export interface paths {
         put?: never;
         /**
          * Restart Task
-         * @description Create a new task using the same strategy/params as an existing task.
+         * @description 按既有任务同策略/同参数克隆创建新任务。
          */
         post: operations["restart_task_api_trading_tasks__task_id__restart_post"];
         delete?: never;
@@ -854,29 +848,9 @@ export interface paths {
         put?: never;
         /**
          * Run Validation
-         * @description Validate a WHEN->THEN hypothesis against historical data.
+         * @description 对历史数据验证 WHEN->THEN 假设。
          */
         post: operations["run_validation_api_validate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/validate/{task_id}/triggers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Validation Triggers
-         * @description Get trigger records for a validation task (placeholder for future caching).
-         */
-        get: operations["get_validation_triggers_api_validate__task_id__triggers_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -894,7 +868,7 @@ export interface paths {
         put?: never;
         /**
          * Run Rule Validation
-         * @description Evaluate entry/exit rule conditions and return paired trades.
+         * @description 评估进出场规则条件，返回配对交易。
          */
         post: operations["run_rule_validation_api_validate_rules_post"];
         delete?: never;
@@ -912,7 +886,7 @@ export interface paths {
         };
         /**
          * List Scene Types
-         * @description Return available scene types with labels and descriptions.
+         * @description 返回可用场景类型清单（标签/描述/分组，供前端选择器）。
          */
         get: operations["list_scene_types_api_scene_types_get"];
         put?: never;
@@ -934,76 +908,9 @@ export interface paths {
         put?: never;
         /**
          * Run Scene
-         * @description Run scene verification against historical data.
+         * @description 对历史数据跑场景验证（触发统计与前瞻收益分布）。
          */
         post: operations["run_scene_api_validate_scene_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/discovery/patterns": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Discover Patterns
-         * @description Run pattern discovery using decision tree.
-         *
-         *     Returns top trading rules discovered from historical data.
-         */
-        post: operations["discover_patterns_api_discovery_patterns_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/discovery/similar": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Find Similar
-         * @description Find similar historical cases using KNN.
-         *
-         *     Returns the most similar historical market conditions
-         *     with their subsequent price movements.
-         */
-        post: operations["find_similar_api_discovery_similar_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/discovery/predict": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Predict Range
-         * @description Predict price range from KNN neighbors.
-         *
-         *     Returns predicted direction, confidence, and price range.
-         */
-        post: operations["predict_range_api_discovery_predict_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1017,7 +924,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Hypotheses */
+        /**
+         * List Hypotheses
+         * @description 假设列表。分页契约与 /log 同款：缺省最新在前（desc）；cursor
+         *     续页（上一响应 next_cursor 回传，提供时 page 被忽略）；total 为
+         *     过滤口径真总数（非当页数）。
+         */
         get: operations["list_hypotheses_api_research_hypotheses_get"];
         put?: never;
         /**
@@ -1082,6 +994,29 @@ export interface paths {
          * @description 隔离回测：判定并集拒绝 + warmup 推导前扩 + 门槛机械判定。
          */
         post: operations["validate_backtest_api_research_validate_backtest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/staged-validation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Staged Validation
+         * @description 分段验证（检查⑤分题型成绩单）：按市场状态切段逐段回测，
+         *     段级门槛三态 + 全段汇总 verdict（挂假设时可被 transition 引用）；
+         *     双模互斥（auto 机械判读 / explicit 段列表）；写入双路径（挂假设
+         *     一体记录 / adhoc 纯日志）。
+         */
+        post: operations["staged_validation_api_research_staged_validation_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1206,6 +1141,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/inspect-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inspect Cases
+         * @description 案例抽查：候选条件/点名时间戳的真实触发案例窗口（检查③）。
+         *
+         *     selector 两形态互斥：condition（{subject, action, target} 三键，
+         *     扫描候选同形制直喂；indicator 必填供 warmup 推导）或 timestamps
+         *     （点名 ≤5，不传区间参数）。limit ∈ 1..5（缺省 3）、context_bars
+         *     ∈ 1..20（缺省 8）；超限结构化 422 拒绝（不静默截断）。
+         */
+        post: operations["inspect_cases_api_research_inspect_cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/query-indicator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query Indicator
+         * @description 单指标任意参数现算读数（检查④）：归约摘要直返（≤2048 字节）。
+         *
+         *     reductions 封闭枚举多选（latest/quantiles/regime_means/
+         *     trend_slope，缺省前两者）；params 缺省拼注册表 default（echo 披露
+         *     实际生效值）；装载双路径复用 0.2.8 契约（显式 start 走 warmup
+         *     前扩，缺省全量直装 + effective_start 披露）。
+         */
+        post: operations["query_indicator_api_research_query_indicator_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/plugins/formula": {
         parameters: {
             query?: never;
@@ -1294,6 +1279,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/market-snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Market Snapshot
+         * @description 时点行情快照：多周期五维行情卡（读数+90 日分位+三态判读）。
+         *
+         *     timeframes 逗号分隔周期子集（如 "1d,4h"；缺省四档全量）；空集
+         *     或非法周期由服务层结构化拒绝（422）。as_of 读数时点（缺省=最新
+         *     一根 bar；闭端截至防前视）。
+         */
+        get: operations["read_market_snapshot_api_research_market_snapshot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/log": {
         parameters: {
             query?: never;
@@ -1304,6 +1313,12 @@ export interface paths {
         /**
          * Research Log
          * @description 研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。
+         *
+         *     entry_type 过滤：按日志类型检索（如 screen=全局扫描留痕，
+         *     供研究方自查历史扫描区间与候选指纹——add-screen-patterns G6）。
+         *     缺省最新在前（desc）；cursor 续页（上一响应 next_cursor 原样
+         *     回传，keyset 深翻页无漂移，提供时 page 被忽略）；total 为过滤
+         *     口径真总数（非当页数）。
          */
         get: operations["research_log_api_research_log_get"];
         put?: never;
@@ -1321,7 +1336,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Feature Requests */
+        /**
+         * List Feature Requests
+         * @description 慢通道需求单列表。分页契约与 /log 同款：缺省最新在前（desc）；
+         *     cursor 续页（上一响应 next_cursor 回传，提供时 page 被忽略）；
+         *     total 为过滤口径真总数。
+         */
         get: operations["list_feature_requests_api_research_feature_requests_get"];
         put?: never;
         /**
@@ -1415,10 +1435,11 @@ export interface components {
             slippage: number;
             /**
              * Score Template
-             * @description DEPRECATED: 评分模板残骸，仅兼容保留，不影响回测结果；勿在新调用方依赖
+             * @description DEPRECATED: 评分模板残骸，仅兼容保留；决定评分语义（影响 total_score），不影响收益曲线本身；非法值 422 拒绝
              * @default explorer
+             * @enum {string}
              */
-            score_template: string;
+            score_template: "explorer" | "optimizer" | "max_return" | "balanced" | "steady" | "custom" | "aggressive" | "profit_first" | "conservative" | "risk_first";
             /** Data Start */
             data_start?: string | null;
             /** Data End */
@@ -1618,8 +1639,9 @@ export interface components {
             /**
              * Score Template
              * @default explorer
+             * @enum {string}
              */
-            score_template: string;
+            score_template: "explorer" | "optimizer" | "max_return" | "balanced" | "steady" | "custom" | "aggressive" | "profit_first" | "conservative" | "risk_first";
             /** Data Start */
             data_start?: string | null;
             /** Data End */
@@ -1679,10 +1701,14 @@ export interface components {
             /** Error */
             error?: string | null;
         };
-        /** ConditionInput */
+        /**
+         * ConditionInput
+         * @description 0.2.13 混合形制（与 ConditionItem 同语义）：参数化指标结构化
+         *     IndicatorRef / 基础列字符串精确名。
+         */
         ConditionInput: {
             /** Subject */
-            subject: string;
+            subject: string | components["schemas"]["IndicatorRef"];
             /** Action */
             action: string;
             /**
@@ -1703,18 +1729,53 @@ export interface components {
         /**
          * ConditionItem
          * @description 假设条件（与假设验证引擎 {subject, action, target} 同源形制）。
+         *
+         *     subject 混合形制：参数化指标用结构化 IndicatorRef，基础列/插件列用
+         *     字符串精确名（业务校验在 service 层 resolve_column_ref）。
+         *     0.2.14：可选 timeframe 键——仅 when 条件、>= 基准周期的高周期
+         *     （timeframe 修饰整条件，掩码投影求值；then 条件携带即拒）。
          */
         ConditionItem: {
             /** Subject */
-            subject: string;
+            subject: string | components["schemas"]["IndicatorRef"];
             /** Action */
             action: string;
             /** Target */
             target: number | string;
+            /** Timeframe */
+            timeframe?: string | null;
+        };
+        /**
+         * ConfigUpdate
+         * @description PUT /api/config 请求体（部分更新：全字段 Optional，未知键忽略）。
+         */
+        ConfigUpdate: {
+            /** Language */
+            language?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Notify Evolution */
+            notify_evolution?: boolean | null;
+            /** Notify Signal */
+            notify_signal?: boolean | null;
+            /** Binance Api Key */
+            binance_api_key?: string | null;
+            /** Binance Secret Key */
+            binance_secret_key?: string | null;
+            /** Binance Connected */
+            binance_connected?: boolean | null;
+            /** Init Cash */
+            init_cash?: number | null;
+            /** Maker Fee */
+            maker_fee?: number | null;
+            /** Taker Fee */
+            taker_fee?: number | null;
+            /** Max Positions */
+            max_positions?: number | null;
         };
         /**
          * DNAModel
-         * @description Full StrategyDNA as a Pydantic model for API serialization.
+         * @description 核心 StrategyDNA 的传输层完整形制（含 to_dna() 领域转换入口）。
          */
         "DNAModel-Input": {
             /** Signal Genes */
@@ -1762,10 +1823,14 @@ export interface components {
             composition?: {
                 [key: string]: unknown;
             } | null;
+            /** Entry Trigger Policy */
+            entry_trigger_policy?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * DNAModel
-         * @description Full StrategyDNA as a Pydantic model for API serialization.
+         * @description 核心 StrategyDNA 的传输层完整形制（含 to_dna() 领域转换入口）。
          */
         "DNAModel-Output": {
             /** Signal Genes */
@@ -1813,6 +1878,10 @@ export interface components {
             composition?: {
                 [key: string]: unknown;
             } | null;
+            /** Entry Trigger Policy */
+            entry_trigger_policy?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** DataImportResponse */
         DataImportResponse: {
@@ -1827,7 +1896,7 @@ export interface components {
             /** Format Detected */
             format_detected: string;
             /** Timestamp Precision */
-            timestamp_precision: string;
+            timestamp_precision?: string | null;
             /**
              * Files Processed
              * @default 1
@@ -1839,6 +1908,12 @@ export interface components {
         /**
          * DataRangeItem
          * @description 半开区间 [start, end)，UTC ISO8601。
+         *
+         *     start/end 可解析性前置校验（CARD-05）：非法串在此 422 拒绝——
+         *     落到装载层后 pd.Timestamp 的回退链对非法串会抛 TypeError 裸穿
+         *     500（存量洞）；校验与消费端同用 pd.Timestamp，杜绝「校验通过而
+         *     消费端解析失败」。naive 形制合法（消费端按 UTC 解释——capability
+         *     公开承诺）。
          */
         DataRangeItem: {
             /** Symbol */
@@ -1918,33 +1993,6 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** DiscoveryRequest */
-        DiscoveryRequest: {
-            /**
-             * Symbol
-             * @default BTCUSDT
-             */
-            symbol: string;
-            /**
-             * Timeframe
-             * @default 4h
-             */
-            timeframe: string;
-            /**
-             * Horizon
-             * @default 12
-             */
-            horizon: number;
-            /**
-             * Max Depth
-             * @default 5
-             */
-            max_depth: number;
-            /** Data Start */
-            data_start?: string | null;
-            /** Data End */
-            data_end?: string | null;
-        };
         /** EquitySnapshotListResponse */
         EquitySnapshotListResponse: {
             /** Snapshots */
@@ -2014,8 +2062,9 @@ export interface components {
             /**
              * Score Template
              * @default explorer
+             * @enum {string}
              */
-            score_template: string;
+            score_template: "explorer" | "optimizer" | "max_return" | "balanced" | "steady" | "custom" | "aggressive" | "profit_first" | "conservative" | "risk_first";
             requirements?: components["schemas"]["RequirementsConfigModel"] | null;
             /**
              * Population Size
@@ -2233,7 +2282,11 @@ export interface components {
              */
             symbol: string;
         };
-        /** FeatureRequestCreate */
+        /**
+         * FeatureRequestCreate
+         * @description 慢通道需求单：title 上限 200 字符；payload 序列化上限 64KB
+         *     （慢通道只保证持久化与可查——超大结构直入 DB 前置拒绝）。
+         */
         FeatureRequestCreate: {
             /** Title */
             title: string;
@@ -2274,10 +2327,7 @@ export interface components {
         HealthResponse: {
             /** Status */
             status: string;
-            /**
-             * Version
-             * @default 0.9.0
-             */
+            /** Version */
             version: string;
             /**
              * Timestamp
@@ -2293,6 +2343,8 @@ export interface components {
             total_triggers: number;
             /** Win Rate */
             win_rate: number;
+            /** Win Rate Ci */
+            win_rate_ci?: number[] | null;
             /** Avg Return Pct */
             avg_return_pct: number;
             /** Median Return Pct */
@@ -2335,6 +2387,11 @@ export interface components {
             statement: string;
             /** Data Ranges */
             data_ranges: components["schemas"]["DataRangeItem"][];
+            provenance?: components["schemas"]["ScreenProvenance"] | null;
+            /** Trigger Policy */
+            trigger_policy?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** HypothesisListResponse */
         HypothesisListResponse: {
@@ -2354,6 +2411,8 @@ export interface components {
              * @default 50
              */
             page_size: number;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** HypothesisResponse */
         HypothesisResponse: {
@@ -2369,6 +2428,10 @@ export interface components {
              * @default false
              */
             duplicated: boolean;
+            /** Precheck Warnings */
+            precheck_warnings?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** HypothesisTransitionRequest */
         HypothesisTransitionRequest: {
@@ -2376,6 +2439,56 @@ export interface components {
             target_status: string;
             /** Evidence Ref */
             evidence_ref: string;
+        };
+        /**
+         * IndicatorRef
+         * @description 参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。
+         */
+        IndicatorRef: {
+            /** Indicator */
+            indicator: string;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
+            /** Field */
+            field?: string | null;
+        };
+        /**
+         * InspectCasesRequest
+         * @description 案例抽查入口（add-inspect-cases；独立通道，不走模板族）。
+         *
+         *     selector 两形态互斥（恰含 condition 或 timestamps 之一），服务层
+         *     深度校验（结构化 422）。
+         */
+        InspectCasesRequest: {
+            /** Symbol */
+            symbol: string;
+            /** Timeframe */
+            timeframe: string;
+            /** Selector */
+            selector: {
+                [key: string]: unknown;
+            };
+            /**
+             * Limit
+             * @default 3
+             */
+            limit: number;
+            /**
+             * Context Bars
+             * @default 8
+             */
+            context_bars: number;
+            /** Start */
+            start?: string | null;
+            /** End */
+            end?: string | null;
+            /** Indicator */
+            indicator?: string | null;
         };
         /** IsolatedBacktestRequest */
         IsolatedBacktestRequest: {
@@ -2600,7 +2713,7 @@ export interface components {
         };
         /**
          * PaperTradingTaskCreate
-         * @description Request to create a paper trading task.
+         * @description 创建模拟盘任务的请求体。
          */
         PaperTradingTaskCreate: {
             /**
@@ -2641,8 +2754,9 @@ export interface components {
             /**
              * Score Template
              * @default explorer
+             * @enum {string}
              */
-            score_template: string;
+            score_template: "explorer" | "optimizer" | "max_return" | "balanced" | "steady" | "custom" | "aggressive" | "profit_first" | "conservative" | "risk_first";
             /** Strategy Name */
             strategy_name?: string | null;
             /**
@@ -2756,32 +2870,30 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
-        /** PredictRequest */
-        PredictRequest: {
-            /**
-             * Symbol
-             * @default BTCUSDT
-             */
+        /**
+         * QueryIndicatorRequest
+         * @description 指标读数入口（add-query-indicator；独立通道，检查④）。
+         *
+         *     params 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases
+         *     的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。
+         */
+        QueryIndicatorRequest: {
+            /** Symbol */
             symbol: string;
-            /**
-             * Timeframe
-             * @default 4h
-             */
+            /** Timeframe */
             timeframe: string;
-            /**
-             * Horizon
-             * @default 12
-             */
-            horizon: number;
-            /**
-             * N Neighbors
-             * @default 50
-             */
-            n_neighbors: number;
-            /** Data Start */
-            data_start?: string | null;
-            /** Data End */
-            data_end?: string | null;
+            /** Indicator */
+            indicator: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Reductions */
+            reductions?: string[] | null;
+            /** Start */
+            start?: string | null;
+            /** End */
+            end?: string | null;
         };
         /** RandomWindowRequest */
         RandomWindowRequest: {
@@ -2815,15 +2927,16 @@ export interface components {
         };
         /**
          * RequirementsConfigModel
-         * @description User-configurable requirements for strategy qualification.
+         * @description 策略达标线的用户可配置项（合格判定的需求侧输入）。
          */
         RequirementsConfigModel: {
             /**
              * Objective
              * @description Objective function: sharpe, calmar, or annual_return
              * @default sharpe
+             * @enum {string}
              */
-            objective: string;
+            objective: "sharpe" | "calmar" | "annual_return";
             /**
              * Min Annual Return
              * @description Minimum annual return constraint (0 = disabled)
@@ -2965,11 +3078,8 @@ export interface components {
              * @default 0
              */
             loss_trades: number;
-            /**
-             * Win Rate
-             * @default 0
-             */
-            win_rate: number;
+            /** Win Rate */
+            win_rate?: number | null;
             /**
              * Total Return Pct
              * @default 0
@@ -2990,6 +3100,8 @@ export interface components {
          * SandboxBacktestRequest
          * @description 沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
          *     不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。
+         *     经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1
+         *     （负成本/零本金在下单金额计算中产生无意义或发散结果）。
          */
         SandboxBacktestRequest: {
             /** Strategy Id */
@@ -3107,13 +3219,26 @@ export interface components {
         };
         /**
          * SceneTypesResponse
-         * @description List of available scene types with metadata.
+         * @description 可用场景类型清单（含元数据）。
          */
         SceneTypesResponse: {
             /** Types */
             types: {
                 [key: string]: string;
             }[];
+        };
+        /**
+         * ScreenProvenance
+         * @description 扫描谱系引用（add-screen-patterns D5）：声明候选来源。
+         *
+         *     只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；
+         *     不参与假设幂等键（同条件同区间重复登记命中同一假设）。
+         */
+        ScreenProvenance: {
+            /** Task Id */
+            task_id: string;
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
         };
         /** SignalGeneModel */
         "SignalGeneModel-Input": {
@@ -3152,8 +3277,19 @@ export interface components {
          * @enum {string}
          */
         SignalRole: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard" | "add_trigger" | "add_guard" | "reduce_trigger" | "reduce_guard" | "direction";
-        /** SimilarRequest */
-        SimilarRequest: {
+        /**
+         * StagedValidationRequest
+         * @description 分段验证（add-staged-validation；检查⑤的分题型成绩单）。
+         *
+         *     平铺形制（B1——SandboxBacktestRequest 先例）；hypothesis_id 可缺省
+         *     （adhoc 纯日志留痕，verdict 照报 record_id=None）；segmentation 与
+         *     segments 双模互斥（auto 缺省）。
+         */
+        StagedValidationRequest: {
+            /** Strategy Id */
+            strategy_id: string;
+            /** Hypothesis Id */
+            hypothesis_id?: string | null;
             /**
              * Symbol
              * @default BTCUSDT
@@ -3164,20 +3300,19 @@ export interface components {
              * @default 4h
              */
             timeframe: string;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
             /**
-             * Horizon
-             * @default 12
+             * Segmentation
+             * @default auto
              */
-            horizon: number;
-            /**
-             * N Neighbors
-             * @default 50
-             */
-            n_neighbors: number;
-            /** Data Start */
-            data_start?: string | null;
-            /** Data End */
-            data_end?: string | null;
+            segmentation: string;
+            /** Segments */
+            segments?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** StrategyCreate */
         StrategyCreate: {
@@ -3465,6 +3600,10 @@ export interface components {
             } | null;
             /** Base Timeframe */
             base_timeframe?: string | null;
+            /** Trigger Policy */
+            trigger_policy?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ValidateResponse */
         ValidateResponse: {
@@ -3821,9 +3960,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["ConfigUpdate"];
             };
         };
         responses: {
@@ -5493,44 +5630,6 @@ export interface operations {
             };
         };
     };
-    get_validation_triggers_api_validate__task_id__triggers_get: {
-        parameters: {
-            query?: {
-                page?: number;
-                per_page?: number;
-                sort?: string;
-                order?: string;
-            };
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     run_rule_validation_api_validate_rules_post: {
         parameters: {
             query?: never;
@@ -5617,117 +5716,13 @@ export interface operations {
             };
         };
     };
-    discover_patterns_api_discovery_patterns_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DiscoveryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    find_similar_api_discovery_similar_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SimilarRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    predict_range_api_discovery_predict_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PredictRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_hypotheses_api_research_hypotheses_get: {
         parameters: {
             query?: {
                 status?: string | null;
                 page?: number;
                 page_size?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -5868,6 +5863,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["IsolatedBacktestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    staged_validation_api_research_staged_validation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StagedValidationRequest"];
             };
         };
         responses: {
@@ -6099,6 +6129,76 @@ export interface operations {
             };
         };
     };
+    inspect_cases_api_research_inspect_cases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InspectCasesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_indicator_api_research_query_indicator_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryIndicatorRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_formula_plugins_api_research_plugins_formula_get: {
         parameters: {
             query?: {
@@ -6277,12 +6377,49 @@ export interface operations {
             };
         };
     };
+    read_market_snapshot_api_research_market_snapshot_get: {
+        parameters: {
+            query: {
+                symbol: string;
+                timeframes?: string | null;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     research_log_api_research_log_get: {
         parameters: {
             query?: {
                 hypothesis_id?: string | null;
+                entry_type?: string | null;
                 page?: number;
                 page_size?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -6318,6 +6455,7 @@ export interface operations {
                 status?: string | null;
                 page?: number;
                 page_size?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;

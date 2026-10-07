@@ -144,6 +144,9 @@ class DNAModel(BaseModel):
     # == v2 超集（add-ai-research-mcp 6.1）：承载 signal_sources 与 composition ==
     signal_sources: Optional[List[Dict[str, Any]]] = None
     composition: Optional[Dict[str, Any]] = None
+    # 入场触发策略（trigger-policy 卡5 / D11）：五消费面（evolution
+    # initial/champion、策略创建读回、compare、batch、verify）传输键
+    entry_trigger_policy: Optional[Dict[str, Any]] = None
 
     def to_dna(self):
         """转换为核心 StrategyDNA（传输模型→领域对象的单一转换入口）。"""
