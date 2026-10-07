@@ -90,6 +90,7 @@ def register_hypothesis(
     hypothesis_id: Optional[str] = None,
     provenance: Optional[Dict[str, Any]] = None,
     precheck_data_dir: Optional[Path] = None,
+    trigger_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """登记假设（校验链 + 幂等 + 原子写）。
 
@@ -210,6 +211,19 @@ def register_hypothesis(
             if c.get("timeframe") == base_tf:
                 del c["timeframe"]
 
+    # 3.5 trigger_policy 形制校验与归一（trigger-policy 卡2，D12 登记侧
+    #     仅形制——bars 数据长度上界在求值时点）。归一非 None 时写入
+    #     conditions 顶层键：此后指纹输入（D4——有效策略时 hash 对象
+    #     含 trigger_policy 归一形）与 conditions_json 原子写（第 5 步
+    #     json.dumps(conditions)）零改动自然同源；缺省与显式 none 归一
+    #     为 None 不写键——与既有无策略假设同 hash 同身份（幂等键字面
+    #     连续）。延迟 import：event_policy 依赖本模块 ResearchError，
+    #     模块级互引成环（column_ref 同款函数内引用先例）。
+    from core.analysis.event_policy import validate_policy
+    normalized_policy = validate_policy(trigger_policy)
+    if normalized_policy is not None:
+        conditions["trigger_policy"] = normalized_policy
+
     # 4. 幂等
     conditions_hash = hash_json(conditions)
     ranges_hash = hash_json(data_ranges)
@@ -264,7 +278,8 @@ def register_hypothesis(
                 run_registration_precheck,
             )
             precheck_warnings = run_registration_precheck(
-                db_path, precheck_data_dir, when, data_ranges)
+                db_path, precheck_data_dir, when, data_ranges,
+                trigger_policy=normalized_policy)
         except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
             logger.warning("登记预检降级（登记照常）: %s", exc)
 

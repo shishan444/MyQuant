@@ -910,6 +910,10 @@ class HypothesisCreate(BaseModel):
     statement: str
     data_ranges: List[DataRangeItem]
     provenance: Optional[ScreenProvenance] = None
+    # 条件集整体级触发策略（trigger-policy 卡2）：弱形制对象键——
+    # mode 枚举/bars 参数的权威校验在服务层 validate_policy（422 附
+    # 合法枚举与参数要求，错误即文档；API 层只声明键存在与对象形）
+    trigger_policy: Optional[Dict[str, Any]] = None
 
 
 class HypothesisTransitionRequest(BaseModel):

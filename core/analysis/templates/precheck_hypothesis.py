@@ -246,6 +246,7 @@ def compute_precheck_report(
     warmup_bars: int = 200,
     budget: Optional[Dict[str, Any]] = None,
     mtf: Optional[MtfEvalContext] = None,
+    trigger_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """三层预检纯计算（design 详设：df + when 条件集 + 锚口径参数 →
     三层报告 dict）。
@@ -482,6 +483,7 @@ def run_registration_precheck(
     data_dir: Path,
     when_conditions: List[Dict[str, Any]],
     data_ranges: List[Dict[str, str]],
+    trigger_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """登记自动挂接预检（design D6）——多区间最差锚，返回警告段。
 
@@ -489,7 +491,10 @@ def run_registration_precheck(
     降级 logger.warning：本函数任何异常（数据不足/内部错误）都使
     登记照常、返回体不携带警告键。when_conditions 为服务 canonical
     化产物（结构已过第 1 步校验）；data_ranges 已过同质校验（同
-    symbol 同 timeframe——服务第 2 步）。
+    symbol 同 timeframe——服务第 2 步）。trigger_policy 为归一形
+    （validate_policy 产物；None=无策略——逐 bar 现状口径），登记
+    挂接的传参通道（trigger-policy 卡2），事件口径消费见
+    compute_precheck_report（任务 5.3）。
     """
     symbol = data_ranges[0]["symbol"]
     timeframe = data_ranges[0]["timeframe"]
@@ -506,7 +511,8 @@ def run_registration_precheck(
 
     payload = compute_precheck_report(
         df, when_conditions, anchor="analysis_segment",
-        per_range=data_ranges, warmup_bars=warmup_bars, mtf=mtf)
+        per_range=data_ranges, warmup_bars=warmup_bars, mtf=mtf,
+        trigger_policy=trigger_policy)
 
     return {
         "verdict": payload["verdict"],
