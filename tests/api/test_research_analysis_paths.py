@@ -312,3 +312,29 @@ class TestParamGuardHeavyChannel:
         assert t.get("status") == "failed", t
         assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
         assert "n_neighbors" in t["reason"]          # 参数名可解析（错误即文档）
+
+
+class TestHeavyCountVariantFallback:
+    """0.3.3 C-β heavy 计数的变体防御路由级锚：变体 parquet（index 名
+    非 timestamp）→ 单列计数探测 KeyError/ValueError → 回退全列装载
+    （正确性优先于轻量）。与 precheck 侧 TestProbeVariantFallback 同构
+    （CARD-05 随行防御）——此处锚路由 heavy 判定点。
+    """
+
+    def test_variant_parquet_counts_via_full_load(self, api_client, paths_env,
+                                                  tmp_path):
+        """500 bar 变体：回退全列装载计数正确 → 非 heavy 快路径 200
+        （探测不回退则裸穿 500——回退存在的区分证据）。"""
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market_variant"   # 避让 paths_env 的 market
+        data_dir.mkdir()
+        make_ohlcv(n=500, freq="4h", start="2024-01-01",
+                   seed=9).rename_axis("not_timestamp").to_parquet(
+                       data_dir / f"{SYMBOL}_4h.parquet")
+        api_client.app.state.db_path = paths_env["db"]
+        api_client.app.state.data_dir = data_dir
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "correlation_scan", {"signal_column": "close"}))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["template"] == "correlation_scan"

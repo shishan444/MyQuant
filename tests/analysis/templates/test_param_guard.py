@@ -116,6 +116,16 @@ class TestTemplateEntry:
                              data_ranges=self.RANGES)
         assert ei.value.detail.get("min_samples") == 10**9  # 守卫未拦的证据
 
+    def test_correlation_scan_zero_variance_signal(self, df) -> None:
+        """零方差信号列（volume 常数）：corr=NaN 逐 lag 跳过 → 空扫描
+        小样本拒绝。min_samples=1 且配对数远超之——构造保证唯一路径
+        是 NaN continue 而非小样本 continue。"""
+        from core.analysis.templates.correlation_scan import correlation_scan
+        with pytest.raises(ResearchError) as ei:
+            correlation_scan(df, signal_column="volume", min_samples=1,
+                             max_lag=2, data_ranges=self.RANGES)
+        assert ei.value.detail["min_samples"] == 1
+
     # ---- event_study ----
 
     COND = {"subject": "close", "action": "gt", "target": "0"}

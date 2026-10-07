@@ -78,6 +78,45 @@ class TestParamSweepBasics:
         with pytest.raises(ResearchError):
             _sweep(_random_walk(50), forward_bars=10_000)
 
+    def test_condition_missing_key_422(self):
+        """condition 缺三键（0.2.14 结构契约）→ 422 点名缺失键域。
+        缺 subject 构造（target 数值在场——数值校验先行的顺序下唯一
+        触达三键校验的形）。"""
+        with pytest.raises(ResearchError) as ei:
+            _sweep(_random_walk(50), condition={
+                "action": "lt", "target": 50.0})       # 缺 subject
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert "三键" in ei.value.message
+
+    def test_action_off_shared_grid_guided_to_explicit(self):
+        """action 无共享刻度（cross_above 支持域内而刻度表只有 lt/gt）
+        → 422 引导显式传值（auto 网格解析的封闭引导语义——网格
+        selector 不匹配即跳过）。"""
+        with pytest.raises(ResearchError) as ei:
+            _sweep(_random_walk(50), condition={
+                "subject": {"indicator": "RSI", "params": {"period": 14}},
+                "action": "cross_above", "target": 50.0})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert "共享刻度表" in ei.value.message
+
+    def test_multi_output_selector_grid_match(self):
+        """多输出指标列选择器匹配：Aroon 默认列 aroon_osc_25 的 gt 扫描
+        跳过 aroon_up/aroon_down selector、命中 aroon_osc 刻度 {50,70}∪
+        中心 50（去重）——列选择器机制的否定侧（不匹配跳过）与命中侧。"""
+        p = _sweep(_random_walk(60), indicator="Aroon",
+                   condition={"subject": "aroon_osc_25", "action": "gt",
+                              "target": 50.0})["payload"]
+        assert p["verdict"] in ("plateau", "spike", "indeterminate",
+                                "unsupported")
+        assert sorted(pt["value"] for pt in p["points"]) == [50.0, 70.0]
+
+    def test_preset_indicator_column_not_overwritten(self):
+        """df 预置同名列（rsi_14）时指标计算列跳过赋值（幂等分支）：
+        照常出报告、不重复覆写既有列。"""
+        df = _random_walk(60).assign(rsi_14=0.5)
+        p = _sweep(df)["payload"]
+        assert p["points"], "预置同名列不阻断报告产出"
+
     def test_two_runs_byte_identical(self):
         a = _sweep(_random_walk(7), values=[20, 25, 30])
         b = _sweep(_random_walk(7), values=[20, 25, 30])
