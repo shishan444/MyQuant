@@ -8,6 +8,7 @@
 
 - 全量基线（唯一生成 `coverage.json` 的入口）：`./venv/bin/python -m pytest --ignore=tests/e2e --cov-report=json:coverage.json`（e2e 批次需前后端服务 + chromium）
 - 局部跑：不带 `--cov-report=json` 即可——终端仍有 term-missing 输出，但**不生成** JSON 档案（JSON 档案=全量专用产物，防被局部调用污染）
+- 局部测覆盖率须压掉全局 addopts 并用路径形制目标：`-o addopts="" --cov=<目录路径> --cov-branch`。坑位：全局 `--cov=core --cov=api` 与命令行 `--cov=<带点包名>` 并存时 pytest-cov 对包名做 import 探测，numpy 二次导入致 scipy 收集崩溃（`int() argument ... '_NoValueType'`）；且 addopts 全局 cov 使局部跑也追踪全仓库、报告极慢
 - marker 形制：`unit` / `integration` / `slow` / `e2e`，按文件 `pytestmark` 声明
 
 ## 层级语义映射（声明，不重标 marker）

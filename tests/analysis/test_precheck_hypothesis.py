@@ -838,4 +838,11 @@ class TestUnreachableGuardNotes:
     依据：anchor 形参全库仅两处赋值点且均为内部字面量——:448
     anchor="projected"、:508 anchor="analysis_segment" 恒伴随 per_range
     实参；外部输入不触达该形参。删改两分支须先改此调用图事实。
+
+    终测复核（2026-10-07，阶段四步骤 1/2 留档）：完整覆盖域
+    = tests/analysis + tests/api + tests/data/test_derivatives_coverage.py，
+    1648 passed；clear-analysis-tds 审查域十生产文件覆盖——analysis.py
+    与 param_guard 及七模板 100%，本文件 98%（未覆盖即本锚 :293/:316）。
+    :293 不可达复核补强——:508 调用点上游 :494 直接取 data_ranges[0]，
+    空列表在到达本分支前已 IndexError，二点封闭成立。
     """
