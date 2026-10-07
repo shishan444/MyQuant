@@ -419,6 +419,23 @@ def _log_precheck(
     )
 
 
+def _log_result(
+    db_path: Path, payload: AnalysisRunRequest, result: Dict[str, Any],
+) -> None:
+    """分析执行留痕分派单点（TD-1 收敛——快路径与异步 _job 各自完成点一行调用）。
+
+    新增模板在此单点接线（tests/README 守护行同步语义）；screen 专属
+    路径（task_id 预生成闭包+「计算完成即写与任务终态解耦」）与 failure
+    路径（_log_analysis(failure=...)）语义异构不并入。
+    """
+    if payload.template == "param_sweep":
+        _log_sweep(db_path, payload, result)
+    elif payload.template == "precheck_hypothesis":
+        _log_precheck(db_path, payload, result)
+    else:
+        _log_analysis(db_path, payload)
+
+
 def _submit_analysis(
     payload: AnalysisRunRequest, job: Callable, *,
     task_id: Optional[str] = None,
@@ -519,23 +536,13 @@ def run_analysis(
                     detail={"template": payload.template,
                             "exception_type": type(exc).__name__,
                             "summary": str(exc)[:200]}) from exc
-            if payload.template == "param_sweep":
-                _log_sweep(db_path, payload, result)
-            elif payload.template == "precheck_hypothesis":
-                _log_precheck(db_path, payload, result)
-            else:
-                _log_analysis(db_path, payload)
+            _log_result(db_path, payload, result)
             return result
 
         # 重组路径：202 + 句柄（线程池执行器；完成回调内落日志）
         def _job(stop_check):
             out = _run_template(payload, data_dir, db_path)
-            if payload.template == "param_sweep":
-                _log_sweep(db_path, payload, out)
-            elif payload.template == "precheck_hypothesis":
-                _log_precheck(db_path, payload, out)
-            else:
-                _log_analysis(db_path, payload)
+            _log_result(db_path, payload, out)
             return json.dumps(out, ensure_ascii=False, default=str)
 
         return _submit_analysis(payload, _job)
