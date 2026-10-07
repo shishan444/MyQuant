@@ -489,12 +489,50 @@ def dna_to_signals(
     return sig_set.entries, sig_set.exits
 
 
+def _apply_entry_trigger_policy(dna: StrategyDNA,
+                               entries: pd.Series) -> pd.Series:
+    """入场信号事件化（trigger-policy 卡5 / D10 唯一实现）。
+
+    带 entry_trigger_policy 的 DNA：entries 掩码经权威变换为事件位置
+    回投（信号层密度=事件密度——与统计链同口径；空仓进场抑制照旧
+    消费事件脉冲）。无字段策略原样返回（既有路径逐字节不变——零
+    改写红线）。bars 上界求值侧校验（D12——请求区间数据同窗）。
+    suppress_bars 非幂等（二次抑制窗 2N）——唯一挂点+assemble 显式
+    跳过参数在结构上排除二次变换。
+    """
+    policy = getattr(dna, "entry_trigger_policy", None)
+    if policy is None:
+        return entries
+    from core.analysis.event_policy import mask_to_events
+    if (policy.get("mode") == "suppress_bars"
+            and policy["bars"] > len(entries) - 1):
+        from core.analysis.hypothesis_service import ResearchError
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"entry_trigger_policy.bars 超求值数据长度上界: "
+            f"{policy['bars']}",
+            detail={"param": "entry_trigger_policy.bars",
+                    "value": policy["bars"],
+                    "legal_range": f"1..{len(entries) - 1}"})
+    event_pos = mask_to_events(
+        entries.fillna(False).astype(bool).values, policy)
+    out = pd.Series(False, index=entries.index)
+    out.iloc[event_pos] = True
+    return out
+
+
 def dna_to_signal_set(
     dna: StrategyDNA,
     enhanced_df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
+    apply_trigger_policy: bool = True,
 ) -> SignalSet:
-    """Convert a StrategyDNA to a full SignalSet with adds/reduces."""
+    """Convert a StrategyDNA to a full SignalSet with adds/reduces.
+
+    apply_trigger_policy=False 供 assemble_signal_set 取掩码态 base
+    （插件组合在完整合并掩码上组合后统一变换——防二次变换；
+    trigger-policy 卡5）。
+    """
     # Clear the module-level indicator column cache at entry. It is keyed by
     # id(df) and never auto-cleared, so without this, leftover Series from a
     # previous call/test leak across invocations — and Python id reuse can make
@@ -502,6 +540,20 @@ def dna_to_signal_set(
     clear_indicator_cache()
     # MTF mode with role-aware signal combination
     if dna.is_mtf and dfs_by_timeframe is not None:
+        # MTF 划界防御（trigger-policy D10/6.3）：带 policy DNA 与 MTF
+        # 层间组合语义无定义——显式结构化拒绝，不静默直译（翻译产物
+        # 恒单周期，该形态只能经进化变异产生；算子侧已跳过，此处为
+        # 引擎防御兜底）。batch 通道对该拒绝透传不吞。
+        if getattr(dna, "entry_trigger_policy", None) is not None:
+            from core.analysis.hypothesis_service import ResearchError
+            raise ResearchError(
+                "RESEARCH_NOT_EXPRESSIBLE",
+                "多周期（MTF）形态暂不支持 entry_trigger_policy——层间"
+                "组合语义未定义（翻译产物恒单周期；进化算子对带 policy"
+                "个体跳过 mtf_mode 变异）",
+                detail={"field": "entry_trigger_policy",
+                        "mtf_mode": dna.mtf_mode,
+                        "slow_path": "MTF 事件策略语义留独立版本决策"})
         # New MTF engine path: activated when mtf_mode is set
         if dna.mtf_mode is not None:
             from core.strategy.mtf_engine import run_mtf_engine
@@ -725,6 +777,12 @@ def dna_to_signal_set(
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
 
+    # 事件化（trigger-policy 卡5）：when 全集 AND 合并掩码经权威变换
+    # （combine 之后、entry∧exit 清洗之前——与验证链 when 掩码同口径；
+    # 清洗后再段化会把被清洗连续段断裂产生伪段首）
+    if apply_trigger_policy:
+        entries = _apply_entry_trigger_policy(dna, entries)
+
     both = entries & exits
     entries = entries & ~both
 
@@ -790,6 +848,10 @@ def batch_signal_sets(
     if not individuals:
         return []
 
+    # 延迟 import（analysis→strategy 既有依赖方向为正向，此处按项目
+    # 延迟先例保持加载序稳定）：MTF 回退的防御拒绝透传判型用
+    from core.analysis.hypothesis_service import ResearchError
+
     # Step 1: Evaluate all unique gene conditions
     gene_results: dict[tuple, pd.Series] = {}
     skipped_genes = 0  # fix-executor-batch-health：签名非法跳过计数（可观测）
@@ -839,6 +901,10 @@ def batch_signal_sets(
         if dna.is_mtf and dfs_by_timeframe is not None:
             try:
                 results.append(dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe))
+            except ResearchError:
+                # 防御拒绝透传不吞（trigger-policy D10/6.3）：带 policy
+                # MTF DNA 的结构化拒绝不得被静默替换成「策略零信号」
+                raise
             except Exception:
                 results.append(_empty_signal_set(enhanced_df))
             continue
@@ -897,6 +963,11 @@ def batch_signal_sets(
 
         all_reduce = reduce_triggers + reduce_guards
         reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
+
+        # 事件化（trigger-policy 卡5）：缓存组装出口与 dna_to_signal_set
+        # 同一单实现（verify/进化评估经 batch_run 消费由此覆盖）；挂点
+        # 同款——combine 后、entry∧exit 清洗前
+        entries = _apply_entry_trigger_policy(dna, entries)
 
         both = entries & exits
         entries = entries & ~both
