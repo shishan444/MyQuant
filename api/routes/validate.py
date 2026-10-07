@@ -139,13 +139,12 @@ def run_validation(
         base_tf=payload.base_timeframe or payload.timeframe)
     # trigger-policy 卡3：登记侧同款形制校验与归一（显式 none=缺省），
     # 归一形传引擎——bars 数据长度上界的求值侧校验在引擎内（数据已加载）
+    # CARD-04：相邻同构 try/except 合并单 try（两个 ResearchError 源
+    # ——policy 形制与引擎求值——共用一次结构化转换；mtf_ctx 构建
+    # 留外，非 ResearchError 通道不进合并）
     from core.analysis.event_policy import validate_policy
     try:
         normalized_policy = validate_policy(payload.trigger_policy)
-    except ResearchError as exc:
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
-    try:
         result = validate_hypothesis(
             pair=payload.pair,
             timeframe=payload.timeframe,
@@ -161,7 +160,7 @@ def run_validation(
         )
     except ResearchError as exc:
         # 0.2.14：高周期条件结构化拒绝（不可达/warmup 不足/低周期键）
-        # 转结构化 422，不裸穿 500
+        # 与 trigger-policy 形制拒绝共用通道，转结构化 422 不裸穿 500
         from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
