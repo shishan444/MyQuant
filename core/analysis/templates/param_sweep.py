@@ -33,6 +33,7 @@ import pandas as pd
 
 from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
+from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 from core.analysis.threshold_grids import VALUE_GRIDS
@@ -90,12 +91,9 @@ def _validate_inputs(
             f"action 不支持: {condition['action']!r}",
             detail={"param": "condition.action",
                     "legal_range": f"{list(_SUPPORTED_ACTIONS)}（数值阈值动作族）"})
-    if isinstance(forward_bars, bool) or not isinstance(forward_bars, int) \
-            or forward_bars < 1 or forward_bars > n_df - 1:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID", f"forward_bars 非法: {forward_bars!r}",
-            detail={"param": "forward_bars",
-                    "legal_range": f"1..{n_df - 1}"})
+    # TD-3.1 迁移 param_guard（输出形制与旧内联逐字节一致）
+    _require_int_range(forward_bars, name="forward_bars",
+                       lo=1, hi=n_df - 1)
     if not isinstance(sweep, dict) or sweep.get("axis", "target") != "target":
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
