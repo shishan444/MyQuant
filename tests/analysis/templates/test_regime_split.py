@@ -68,6 +68,13 @@ class TestRegimeSplitBasics:
             assert ei.value.code == "RESEARCH_PARAM_INVALID", bad
             assert ei.value.detail.get("legal_range"), bad
 
+    def test_preset_indicator_column_not_overwritten(self):
+        """df 预置同名列（rsi_14）时指标装配列跳过赋值（幂等分支）：
+        分段照常产出、不覆写既有列。"""
+        df = _two_regime().assign(rsi_14=0.5)
+        p = _split(df, indicator="RSI", condition=_RSI_COND)
+        assert p["payload"]["segments"], "预置同名列不阻断分段产出"
+
     def test_explicit_range_outside_data_rejected(self):
         df = _two_regime()
         with pytest.raises(ResearchError):

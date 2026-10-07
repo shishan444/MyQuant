@@ -247,3 +247,94 @@ class TestHeavyPathAndFastPath:
         resp2 = api_client.post("/api/research/analysis", json=_body(
             "pattern_mining", {"as_of": "2024-02-15T00:00:00Z"}))
         assert resp2.status_code == 200, "通用段 fast_path 直返 handle（pattern 恒 heavy）"
+
+
+class TestParamGuardRouteSmoke:
+    """TD-2 路由级 422 冒烟（clear-analysis-tds 2.3——快路径同步通道）：
+    guard 在模板函数入口拦截，经 run_analysis 快路径冒泡为 422 附
+    legal_range（specs「数值参数非法结构化拒绝」场景的路由级锚）。"""
+
+    def test_correlation_scan_bad_horizon_422(self, api_client, paths_env):
+        _wire(api_client, paths_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "correlation_scan",
+            {"signal_column": "close", "horizon": "24"}))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "horizon" in resp.text
+
+    def test_distribution_compare_bad_transform_422(
+            self, api_client, paths_env):
+        _wire(api_client, paths_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "distribution_compare",
+            {"column": "close", "transform": "ret",
+             "group_a": {"start": "2024-02-10T00:00:00Z",
+                          "end": "2024-02-15T00:00:00Z"},
+             "group_b": {"start": "2024-02-15T00:00:00Z",
+                          "end": "2024-02-20T00:00:00Z"}}))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "returns" in resp.text          # legal_range 枚举清单附出
+
+
+class TestParamGuardHeavyChannel:
+    """TD-2 两通道契约后半（specs「数值参数非法结构化拒绝」）：恒 heavy
+    模板（pattern_mining）校验拒绝无同步 422 通道——202 → 轮询 failed，
+    reason 前缀 [RESEARCH_PARAM_INVALID]（executor 对 ResearchError
+    结构化收尾，轮询方可解析错误码）。
+
+    db 保持 fixture 不覆写：executor 单例绑 lifespan 启动库，覆写
+    state.db_path 会使任务写入启动库而轮询查覆写库（404 分裂——照
+    test_generic_heavy_success_chain :188 形制，只覆盖 data_dir）。
+    """
+
+    def test_pattern_mining_bad_param_failed_reason_carries_code(
+            self, api_client, paths_env):
+        import time
+
+        api_client.app.state.data_dir = paths_env["data_dir"]
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "pattern_mining",
+            {"as_of": "2024-02-15T00:00:00Z", "n_neighbors": 0}))
+        assert resp.status_code == 202, resp.text    # 恒 heavy 不因校验变 422
+        task_id = resp.json()["task_id"]
+
+        t: dict = {}
+        for _ in range(60):  # 轮询到终态（404 为入库竞态窗口，重试）
+            poll = api_client.get(
+                f"/api/research/analysis/tasks/{task_id}")
+            if poll.status_code == 200:
+                t = poll.json()
+                if t["status"] in ("succeeded", "failed"):
+                    break
+            time.sleep(0.5)
+        assert t.get("status") == "failed", t
+        assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
+        assert "n_neighbors" in t["reason"]          # 参数名可解析（错误即文档）
+
+
+class TestHeavyCountVariantFallback:
+    """0.3.3 C-β heavy 计数的变体防御路由级锚：变体 parquet（index 名
+    非 timestamp）→ 单列计数探测 KeyError/ValueError → 回退全列装载
+    （正确性优先于轻量）。与 precheck 侧 TestProbeVariantFallback 同构
+    （CARD-05 随行防御）——此处锚路由 heavy 判定点。
+    """
+
+    def test_variant_parquet_counts_via_full_load(self, api_client, paths_env,
+                                                  tmp_path):
+        """500 bar 变体：回退全列装载计数正确 → 非 heavy 快路径 200
+        （探测不回退则裸穿 500——回退存在的区分证据）。"""
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market_variant"   # 避让 paths_env 的 market
+        data_dir.mkdir()
+        make_ohlcv(n=500, freq="4h", start="2024-01-01",
+                   seed=9).rename_axis("not_timestamp").to_parquet(
+                       data_dir / f"{SYMBOL}_4h.parquet")
+        api_client.app.state.db_path = paths_env["db"]
+        api_client.app.state.data_dir = data_dir
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "correlation_scan", {"signal_column": "close"}))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["template"] == "correlation_scan"

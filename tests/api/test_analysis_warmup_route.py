@@ -102,6 +102,17 @@ class TestConditionStatsWarmupRoute:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
 
+    def test_min_samples_invalid_rejected_422(self, api_client, warmup_env):
+        """CARD-01 路由级双层验证：min_samples=0 以下非法形 → 422
+        RESEARCH_PARAM_INVALID 附 legal_range（与直调契约段互为双层）。"""
+        _mount(api_client, warmup_env)
+        resp = api_client.post("/api/research/analysis", json=_payload(
+            warmup_env["df"], 300, 599, min_samples=-1))
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["legal_range"] == "0..inf"
+
     def test_forward_bars_passthrough_output_key(self, api_client, warmup_env):
         """forward_bars=6 合法透传 → payload 含 forward_return_6b（无默认键）。"""
         _mount(api_client, warmup_env)

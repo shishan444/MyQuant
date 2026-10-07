@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
+from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.warmup_loader import to_utc
 
@@ -87,8 +88,10 @@ def condition_stats(
             work.index >= request_start 的 bar（前缀只用不算）。
 
     Raises:
-        ResearchError: 未知指标；forward_bars 非法（附合法范围）。
-        ValueError: 条件列缺失 / 小样本拒绝（经 build_result）。
+        ResearchError: 未知指标；forward_bars/min_samples 非法（附
+            合法范围）；小样本拒绝（经 build_result——卡10 收编，原裸
+            ValueError 落 500 误导 Agent 盲重试）；target 不可解析
+            （卡3b）。subject 缺列不抛（0.2.13 契约：全 False 安全降级）。
     """
     from core.features.indicators import _compute_indicator
     from core.features.registry import INDICATOR_REGISTRY
@@ -101,16 +104,13 @@ def condition_stats(
     from core.analysis.indicator_query import validate_params
     validate_params(indicator, params)
 
-    # 持有期校验：非 int（bool 排除）/ 非正 / 超数据长度 → 结构化拒绝
-    # （模板内 ValueError 会被路由快路径吞成 failed 任务，不符 spec 的
-    # 结构化拒绝场景，走 ResearchError 422）
-    if (isinstance(forward_bars, bool) or not isinstance(forward_bars, int)
-            or forward_bars < 1 or forward_bars > len(df) - 1):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"forward_bars 非法: {forward_bars!r}",
-            detail={"param": "forward_bars",
-                    "legal_range": f"1..{len(df) - 1}"})
+    # 持有期校验（TD-3.1 迁移 param_guard——输出形制与旧内联逐字节一致）
+    _require_int_range(forward_bars, name="forward_bars",
+                       lo=1, hi=len(df) - 1)
+    # 小样本阈值校验（clear-analysis-tds CARD-01：裸透传补守卫——
+    # 阈值类 lo=0 无上界，0=禁用小样本检查的既有合法语义，与
+    # correlation_scan/distribution_compare 同族一致）
+    _require_int_range(min_samples, name="min_samples", lo=0)
 
     # 指标计算（不改输入 df；全 df——含 warmup 前缀，保证指标收敛）
     new_cols = _compute_indicator(df, indicator, dict(params))

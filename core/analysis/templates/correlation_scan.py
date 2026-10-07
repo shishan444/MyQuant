@@ -16,6 +16,7 @@ import pandas as pd
 
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.templates.column_guard import require_column
+from core.analysis.templates.param_guard import _require_int_range
 
 
 def correlation_scan(
@@ -41,6 +42,12 @@ def correlation_scan(
             原 ValueError 落 500 误导 Agent 盲重试）。
     """
     require_column(df, signal_column, template="correlation_scan")
+
+    # TD-2 入参守卫（clear-analysis-tds）：窗口类 1..len(df)-1；阈值类
+    # 0..无上界（0=禁用小样本检查的既有合法语义）
+    _require_int_range(horizon, name="horizon", lo=1, hi=len(df) - 1)
+    _require_int_range(max_lag, name="max_lag", lo=1, hi=len(df) - 1)
+    _require_int_range(min_samples, name="min_samples", lo=0)
 
     sig = df[signal_column].astype(float)
     fwd_return = df["close"].pct_change(horizon).shift(-horizon)  # t+horizon 前向收益

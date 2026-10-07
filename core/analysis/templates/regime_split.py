@@ -20,6 +20,7 @@ import pandas as pd
 from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
 from core.analysis.warmup_loader import to_utc
 from core.analysis.hypothesis_service import ResearchError
+from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.regime_segments import GATES, build_segments
 from core.analysis.result import AnalysisResult, build_result
 
@@ -56,11 +57,9 @@ def _validate_segments_input(
             f"segmentation 类型非法: {type(segmentation).__name__}",
             detail={"param": "segmentation",
                     "legal_range": '"auto" 或显式段列表'})
-    if isinstance(forward_bars, bool) or not isinstance(forward_bars, int) \
-            or forward_bars < 1 or forward_bars > n_df - 1:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID", f"forward_bars 非法: {forward_bars!r}",
-            detail={"param": "forward_bars", "legal_range": f"1..{n_df - 1}"})
+    # TD-3.1 迁移 param_guard（输出形制与旧内联逐字节一致）
+    _require_int_range(forward_bars, name="forward_bars",
+                       lo=1, hi=n_df - 1)
     if condition is not None and (
             not isinstance(condition, dict)
             or not {"subject", "action", "target"} <= set(condition)):

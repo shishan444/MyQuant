@@ -790,3 +790,59 @@ class TestWarmupSourceParity:
         warmup_precheck = derive_warmup_full(db_path, names, plugins)
         assert plugins == {"fx_src_col"}
         assert warmup_precheck == warmup_isolated == 900   # 插件两维取大
+
+
+class TestShellStructureRejection:
+    """模板壳入参结构拒绝（盲区消解补锚——壳层三校验分支：
+    when 结构/validate_range 必备键/data_range 可达性）。"""
+
+    def _ranges(self, env):
+        df, _ = env
+        start, end = _tail_range(df)
+        rng = {"symbol": SYMBOL, "timeframe": "1h", "start": start, "end": end}
+        vr = {"symbol": SYMBOL, "timeframe": "1h",
+              "start": start, "end": end}
+        return rng, vr
+
+    @pytest.mark.parametrize("bad_conds", ["not-a-list", []],
+                             ids=["非列表形", "空列表"])
+    def test_when_conditions_structure_422(self, env, db_path, bad_conds):
+        rng, vr = self._ranges(env)
+        with pytest.raises(ResearchError) as ei:
+            precheck_hypothesis(db_path, env[1], rng, vr, bad_conds)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_validate_range_missing_key_422(self, env, db_path):
+        rng, vr = self._ranges(env)
+        vr.pop("symbol")                     # A2 冻结：四键必备
+        with pytest.raises(ResearchError) as ei:
+            precheck_hypothesis(db_path, env[1], rng, vr, [
+                {"subject": "close", "action": "gt", "target": "0"}])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+    def test_data_range_symbol_not_found_422(self, env, db_path):
+        rng, vr = self._ranges(env)
+        rng["symbol"] = vr["symbol"] = "NOPEUSDT"   # 同 symbol（过一致性
+        # 校验）且目录无该 parquet → 目录探测拒绝
+        with pytest.raises(ResearchError) as ei:
+            precheck_hypothesis(db_path, env[1], rng, vr, [
+                {"subject": "close", "action": "gt", "target": "0"}])
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+
+class TestUnreachableGuardNotes:
+    """不可达判定锚（阶段四步骤 2 盲区消解留档——非用例）。
+
+    precheck_hypothesis.py:293（analysis_segment 锚缺 per_range）与
+    :316（未知锚口径）为编程错误防御分支，对模板输入不可达——调用图
+    依据：anchor 形参全库仅两处赋值点且均为内部字面量——:448
+    anchor="projected"、:508 anchor="analysis_segment" 恒伴随 per_range
+    实参；外部输入不触达该形参。删改两分支须先改此调用图事实。
+
+    终测复核（2026-10-07，阶段四步骤 1/2 留档）：完整覆盖域
+    = tests/analysis + tests/api + tests/data/test_derivatives_coverage.py，
+    1648 passed；clear-analysis-tds 审查域十生产文件覆盖——analysis.py
+    与 param_guard 及七模板 100%，本文件 98%（未覆盖即本锚 :293/:316）。
+    :293 不可达复核补强——:508 调用点上游 :494 直接取 data_ranges[0]，
+    空列表在到达本分支前已 IndexError，二点封闭成立。
+    """
