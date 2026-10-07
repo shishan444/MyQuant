@@ -274,3 +274,26 @@ class TestPolicyConvergenceHelpers:
                 {"mode": "suppress_bars", "bars": 10},
                 param_name="entry_trigger_policy")
         assert ei.value.detail["param"] == "entry_trigger_policy.bars"
+
+
+class TestErrorEchoTruncation:
+    """非法值回显 120 截断（CARD-06 防刷屏形制）。
+
+    用户可控任意长输入的 repr 回显截 120 字符（含开引号无闭引号——
+    截断可见）；短值 repr 完整回显不受影响（既有断言兼容面）。
+    """
+
+    _PREFIX = "trigger_policy 非法: "
+
+    def test_长串回显_恰120字符_无闭引号(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            validate_policy("x" * 500)
+        msg = ei.value.message
+        assert len(msg) == len(self._PREFIX) + 120
+        assert msg.startswith(self._PREFIX + "'")
+        assert not msg.endswith("'")          # 截断可见（无闭引号）
+
+    def test_短值回显_完整repr不变(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            validate_policy("not-a-dict")
+        assert ei.value.message == f"{self._PREFIX}'not-a-dict'"
