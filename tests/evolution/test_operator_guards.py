@@ -226,6 +226,32 @@ class TestCrossoverLayerInheritance:
         assert child.layers[0].signal_genes == []
 
 
+class TestCrossoverPolicyInheritance:
+    """crossover 的 entry_trigger_policy 继承（trigger-policy D11/Q5：
+    子代是全新基因型，触发声明取其一亲代）。"""
+
+    def test_子代policy取自亲代之一(self):
+        pa = {"mode": "first_true"}
+        pb = {"mode": "suppress_bars", "bars": 48}
+        a = _dna(entry_trigger_policy=pa)
+        b = _dna(entry_trigger_policy=pb)
+        random.seed(7)
+        for _ in range(8):
+            child = crossover(a, b)
+            assert child.entry_trigger_policy in (pa, pb)
+
+    def test_单亲携带_policy可存活或丢失(self):
+        """与 signal_sources/composition 既有丢失行为（TD-E 存量缺陷）
+        无关的独立断言：policy 来自亲代集合——不凭空产生。"""
+        pa = {"mode": "first_true"}
+        a = _dna(entry_trigger_policy=pa)
+        b = _dna(entry_trigger_policy=None)
+        random.seed(7)
+        for _ in range(8):
+            child = crossover(a, b)
+            assert child.entry_trigger_policy in (pa, None)
+
+
 class TestMutateCompositionLogicFlip:
     """mutate_composition：logic 模式下 op AND/OR 翻转。"""
 
