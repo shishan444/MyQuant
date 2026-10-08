@@ -7,7 +7,7 @@
 > **0.3.3 完成（2026-10-05）**：合并 main **257c044**（--no-ff，18 提交=实施 5+team3 第八战 13）——team3 审查 5 卡 P1 全闭环（naive 时间裸 500 回归/衍生品 gap 前扩误报/warmup 折算口径/n_significant 封顶/非法时间串 422 化），终验全量 4478 passed+e2e 64+触碰面覆盖率 100% 行+分支；TD-1 死测试退役微分支 **0ff3aa0**；债务六笔落位后续债务区；openspec change 已归档（archive/2026-10-06，主 specs 已同步）
 > 来源：works/设计稿/MyQuant-技术债务登记.md G 组 14 项（两轮六步法全链实战产出）+ 验真连带 3 项
 > 验真基线：2026-10-03 验真审计逐项代码级核证；0.3.3 各锚点于 2026-10-04~05 经三轮外部评估独立复验修正后定稿（锚点表见 0.3.3 节）
-> 与姊妹篇关系：MyQuant-技术债务登记.md 记「有什么债」；本篇记 MCP 域「怎么修、怎么升」——**只做 MCP 相关能力**（mcpserver + api/routes/research + core/analysis 域），与债务清偿三战（0.3.6-0.3.8）分属两条能力线，并行不冲突
+> 与姊妹篇关系：MyQuant-技术债务登记.md 记「有什么债」；本篇记 MCP 域「怎么修、怎么升」——**只做 MCP 相关能力**（mcpserver + api/routes/research + core/analysis 域），与债务清偿序列（v3 两版：0.3.6/0.3.7——2026-10-08 压缩，原三战之 0.3.8 撤销）分属两条能力线，并行不冲突
 > 使用规则：每版实施完成合并后勾销；战后呈批项裁定后回填；新发现入登记文档续编并在此排期
 
 ---
@@ -16,14 +16,14 @@
 
 ```
 0.3.2 错误通道修复战     0.3.3 契约透明化批        0.3.4 假设预检器         0.3.5 表达力升级
- G1+C-α/G9/G10+C-γ/G2  →   G4-G8/G12/C-β        →   G3+G11（新模块）     →   G13/G14（远期）
- 【已合并 0b3cf1f】          【已合并 257c044】        【当前焦点】             突破简单规律表达域
- 修复 AI 研究可信度地基       预算/判定/边界三层可见      消灭盲登记浪费
+ G1+C-α/G9/G10+C-γ/G2  →   G4-G8/G12/C-β        →   G3+G11（新模块）     →   G14 事件驱动形制
+ 【已合并 0b3cf1f】          【已合并 257c044】        【已合并 8d6f8f2】        【已合并 28e7efc】
+ 修复 AI 研究可信度地基       预算/判定/边界三层可见      消灭盲登记浪费           （G13 截面未启动，随第三轮实证）
 ```
 
 **排序逻辑**（止损 → 透明 → 提效 → 升维）：两轮实战（~5000 检验对 + 3 假设 5 考试）的证据权重排序——静默错误比崩溃危险；伪 task_id 死循环直接侵蚀研究可信度；0 笔考试是真实浪费；表达力边界投入最重故置后。
 
-**依赖关系**：0.3.4 前置依赖 0.3.3（预检器消费的预算/判定/边界披露面须先就位；原「前置 0.3.2」已满足）；0.3.5 启动时点在 0.3.4 落地后按第三轮研究实证需求评估 G13/G14 谁先。
+**依赖关系**：0.3.4 前置依赖 0.3.3（预检器消费的预算/判定/边界披露面须先就位；原「前置 0.3.2」已满足）；0.3.5 已落地 G14（事件驱动）——G13（截面）随第三轮研究实证窗口再启（2026-10-08 验真更新）。
 
 ---
 
@@ -50,7 +50,7 @@
 | **做什么（摘要）** | 模板必填键校验族（8 模板 11 键）；G9 跨指标条件双层修复（3a 预算层+3b 计算层+3c 模糊兜底禁用）；G10+C-γ 快路径失败形制重构（结构化直返+研究日志留痕）；G2 快照 hint 双层机制 |
 | **team3 审查增量** | 11 卡全闭环：P0×3（留痕吞结构化响应/pandas_ta None 列 TypeError/单事件 NaN 序列化崩）+P1×8（小样本族收编 422 用户裁决方向 a/判定链单点化等） |
 | **合并点** | **0b3cf1f**（2026-10-05，--no-ff，14 提交，分支 fix/mcp-error-channel 已删）；全量 4493 passed+e2e 64；openspec 归档 `archive/2026-10-04-fix-mcp-error-channel`；主 spec `research-error-channel`（5 Requirement）已同步 |
-| **TD 去向** | flaky 时序两例/plugin_service 防御三行/engine 存量动作族 26 行 27 分支归 0.3.8——见后续债务区 |
+| **TD 去向** | flaky 时序两例/plugin_service 防御三行/engine 存量动作族 26 行 27 分支归 0.3.7 收尾战（v3 改号，原 0.3.8）——见后续债务区 |
 
 ## 0.3.4 · 假设预检器（G3 + G11 合成，新模块开发）
 
@@ -95,12 +95,12 @@
 | 类 | 项 | 状态 |
 |---|---|---|
 | 0.3.3 衍生 | **G12 衍生项：快照 stale 披露**——get_market_snapshot 衍生品维尾部陈旧（funding 停更后照报 status ok 陈旧读数），需独立披露设计 | 待排期（随衍生品月包回补或后续版本） |
-| team3 第七战 TD | flaky 时序敏感两例 / plugin_service 防御三行 / engine 存量动作族 26 行 27 分支 | 归 0.3.8 validation 域治理 |
-| team3 第八战 TD（0.3.3 审查增量，2026-10-05） | TD-1 run_entry 死测试退役（run.py 已删于 8da2857 而两用例未退役——全量恒 2 红信号污染）；TD-2 存量覆盖缺失（validation_service 10 行 6 分支 / screen_patterns 4 行 6 分支 / condition_kernel+repository 小项——触碰面外存量）；TD-3 迁移 d4e7f9a2c5b8 downgrade 注释失实（同三元多行时重建索引实抛 IntegrityError，注释自称保留可读）；TD-4 七件小债（warmup_loader import 冗余 / 魔数 50 耦合 min_bars / hint 三要素张力 / 幂等 409 边缘序 / coverage 三态不对称 / models.py 注释锚 / 0-bar 边界文案） | TD-1 **单独微型分支 `chore/test-run-entry-retirement`，0.3.3 合并后立即**（不排版本批次——粒度不匹配+信号债按天计息）；TD-2 归 0.3.8；TD-3 归 0.3.7；TD-4 随 0.3.4/0.3.5 触碰搭车 |
+| team3 第七战 TD | flaky 时序敏感两例 / plugin_service 防御三行 / engine 存量动作族 26 行 27 分支 | 归 0.3.7 收尾战 validation 域治理（v3 改号） |
+| team3 第八战 TD（0.3.3 审查增量，2026-10-05） | TD-1 run_entry 死测试退役（run.py 已删于 8da2857 而两用例未退役——全量恒 2 红信号污染）；TD-2 存量覆盖缺失（validation_service 10 行 6 分支 / screen_patterns 4 行 6 分支 / condition_kernel+repository 小项——触碰面外存量）；TD-3 迁移 d4e7f9a2c5b8 downgrade 注释失实（同三元多行时重建索引实抛 IntegrityError，注释自称保留可读）；TD-4 七件小债（warmup_loader import 冗余 / 魔数 50 耦合 min_bars / hint 三要素张力 / 幂等 409 边缘序 / coverage 三态不对称 / models.py 注释锚 / 0-bar 边界文案） | TD-1 **单独微型分支 `chore/test-run-entry-retirement`，0.3.3 合并后立即**（不排版本批次——粒度不匹配+信号债按天计息；已闭环 0ff3aa0）；TD-2 归 0.3.7 收尾战（v3 改号）；TD-3 归 0.3.7 收尾战 persistence 域；TD-4 随 0.3.4/0.3.5 触碰搭车 |
 | 跨机启用检查点增量（team3 第八战 S 组） | S-1 500 detail 透内部异常原文（str(exc)[:200]）/ S-2 验证族无区间 bar 上限（仅 sandbox 有 SANDBOX_MAX_BARS）/ S-4 分析任务 result_ref 无 TTL / S-3 socket.io token 经 URL query（api/auth.py） | 与 Q1 已裁同窗口：跨机启用日（auth payload 形制改造+TLS）一并清零，不进版本序列 |
-| team3 第九战 TD（clear-analysis-tds 审查增量，2026-10-07） | TD-A 复合结构/时间形参数通道错置（group_a/group_b 值形制、as_of 非时间串非法落 500/failed 而非 422——specs MUST 面仅数值/枚举，属设计裁剪）；TD-B 范围外未覆盖（screen_patterns 97% 6 处/api log.py 98% 48→53/registry.py 92%）；TD-C 存量他战「现状容忍」锚未按 V3 四分类隔离；security 备案四项（legal_range 行数披露/value 回显无截断/422 无留痕/500 路径理论泄漏——条件触发原则）；观察项：correlation_scan/distribution_compare 的 min_samples 路由未开透传通道（API 面恒默认 30） | TD-A 待裁窗口（可并入 0.3.5 表达力或独立 change——扩卡即扩 specs MUST 面，需用户裁决）；TD-B 归 0.3.8；TD-C 待 V3 口径裁决；备案项随跨机启用检查点 |
-| team3 第十一战 TD（0.3.5 审查增量，2026-10-08） | H 组 8 项已登记 MyQuant-技术债务登记.md：TD-D 空区间裸 500 / TD-E crossover 丢 v2 字段 / templates 包聚合断链 / DNAModel dict 静默降级面 / signal_assembly 坏值与静默缺省 / api 无全局 ResearchError handler / 存量 Feature 平行体系 / 英文 logger 消息 | 已登记 H1-H8（全部未实现，归宿与优先级见登记册 H 组；H4 静默降级面优先） |
-| 0.3.x 债务清偿序列 | 0.3.6 trading+live_trading（资金面，实盘前置）→ 0.3.7 persistence → 0.3.8 evolution+validation | 待实施（实盘路线主线，与本系列并行） |
+| team3 第九战 TD（clear-analysis-tds 审查增量，2026-10-07） | TD-A 复合结构/时间形参数通道错置（group_a/group_b 值形制、as_of 非时间串非法落 500/failed 而非 422——specs MUST 面仅数值/枚举，属设计裁剪）；TD-B 范围外未覆盖（screen_patterns 97% 6 处/api log.py 98% 48→53/registry.py 92%）；TD-C 存量他战「现状容忍」锚未按 V3 四分类隔离；security 备案四项（legal_range 行数披露/value 回显无截断/422 无留痕/500 路径理论泄漏——条件触发原则）；观察项：correlation_scan/distribution_compare 的 min_samples 路由未开透传通道（API 面恒默认 30） | TD-A 待裁窗口（可并入 0.3.5 表达力或独立 change——扩卡即扩 specs MUST 面，需用户裁决）；TD-B 归 0.3.7 收尾战（v3 改号）；TD-C 待 V3 口径裁决；备案项随跨机启用检查点 |
+| team3 第十一战 TD（0.3.5 审查增量，2026-10-08） | H 组 8 项已登记 MyQuant-技术债务登记.md——**0.3.5 实施在案 2 项（TD-D→H1 空区间裸 500 / TD-E→H2 crossover 丢 v2 字段）+第十一战审查 6 项（H3-H8：templates 包聚合断链 / DNAModel dict 静默降级面 / signal_assembly 坏值与静默缺省 / api 无全局 ResearchError handler / 存量 Feature 平行体系 / 英文 logger 消息）**——2+6 划分与登记册一致（2026-10-08 验真更正：原表把 8 项全列审查增量） | 已登记 H1-H8（全部未实现，归宿与优先级见登记册 H 组；H4 静默降级面优先） |
+| 0.3.x 债务清偿序列 | 0.3.6 trading+live_trading（资金面，实盘前置）→ 0.3.7 收尾战（persistence 首审+研究域散债聚批——**v3 两版压缩，原 0.3.7/0.3.8 合并、0.3.8 撤销，2026-10-08 用户裁决**）；H4 族与卫生批走版本外微战 | 待实施（实盘路线主线，与本系列并行） |
 | 积压裁决 | C1 组合策略语义 / C2 scoring 四例 / C3b mode 口径 / Q3-team3.md 固化 / Q4-F1 | 待裁 |
 | 其他专项 | pytest 双模块 conftest 统一、TD 低危 4 项 + P2/P3 记录 10 项、B4/B5③/B6 | 按需 |
 
@@ -115,4 +115,4 @@
 | — | TD-1 死测试退役（run_entry 两用例——8da2857 遗留，全量 2 红信号污染） | chore/test-run-entry-retirement | 0ff3aa0 | 已合并（后续债务区登记销账） |
 | 0.3.4 | 假设预检器新模块：组合统计预检+频率外推+预算预检（G3+G11）；team3 第七战审查增量 7 卡（forward_bars 值域/validate_range 双层 422/挂接留痕/R3 拆两场景用户裁 B/timestamp 变体回退等）+阶段四闸门 4614 全绿 | feature/hypothesis-precheck | 8d6f8f2（2026-10-06，双级 --no-ff：1851a31 审查战→8d6f8f2 主合并，17 实施提交） | 已合并+归档+主 spec 同步（archive/2026-10-07-add-hypothesis-precheck；新 spec hypothesis-precheck 4 Requirement） |
 | — | clear-analysis-tds 债务清偿（0.3.4 审查战呈批裁定的后续 change）：TD-1 留痕分派收敛 `_log_result` 单点+TD-2 模板入参值域守卫 `param_guard`（八模板域：四补齐+四迁移）；team3 第九战审查增量 4 卡（CARD-01 condition_stats min_samples 守卫缺口 P1——specs 全称量词全域扫描唯一漏网/02 import 形制/03 测试计数/04 docstring 对齐）+阶段四闸门（审查域十文件 9×100%+precheck 98%，全量 4640+e2e 64 零失败；tester 假死一次 tester2 接手，确诊 pytest.ini 全局 cov 陷阱） | fix/analysis-clear-tds | ff488dd（2026-10-07，--no-ff，13 提交） | 已合并+归档+主 spec 同步（archive/2026-10-07-clear-analysis-tds；同步时清理主 spec 五处历史 `## Requirement` 重复残留块） |
-| 0.3.5 | 表达力升级：截面工具（G13）/事件驱动形制（G14） | openspec change | — | 待实施（前置 0.3.4 后评估） |
+| 0.3.5 | 表达力升级：事件驱动形制 G14 落地（trigger_policy 三值枚举五链同源+TD-A 守卫+team3 第十一战 8 卡）；G13 截面未启动随第三轮实证；终验全量 4899+e2e 64 | feature/event-driven-triggers（+fix/event-triggers-review-hardening 审查战 fe0e406） | 28e7efc（2026-10-07，--no-ff，48 文件 +5856/−986） | 已合并+归档+主 spec 同步（archive/2026-10-08-add-event-driven-triggers；trigger-policy 主 spec 新建——2026-10-08 验真回填） |
