@@ -1,3 +1,4 @@
+
 """胜率三态语义测试（batch1 D2，任务 2.4）。
 
 三态: total_trades=0 → None+failed=False(合法缺失)；正常 → 数值+failed=False；
@@ -8,6 +9,9 @@ from __future__ import annotations
 from unittest import mock
 
 import numpy as np
+import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 
 import core.backtest.engine as engine_mod

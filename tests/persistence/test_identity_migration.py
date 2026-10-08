@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 
 def _alembic(db: Path, *args: str) -> None:
     subprocess.run(

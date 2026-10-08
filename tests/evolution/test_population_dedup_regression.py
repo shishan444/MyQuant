@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.evolution.population import init_population
 from core.strategy.dna import StrategyDNA
 
