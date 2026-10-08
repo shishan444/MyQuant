@@ -341,7 +341,9 @@ def update_task_config(db_path: Path, task_id: str, **values: Any) -> None:
     """任务创建后的扩展配置写入（列由调用方白名单化）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
+        # 覆盖式合并（paper_trading/live_trading 先例）：updated_at 为
+        # 仓储内部时间戳，调用方显式携带时以内部刷新为准
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
-            .values(**values, updated_at=_now())
+            .values(**{**values, "updated_at": _now()})
         )
