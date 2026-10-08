@@ -22,6 +22,10 @@ class Base(DeclarativeBase):
 
 
 class BacktestResult(Base):
+    """
+    回测结果记录：run_source 区分 lab/verify 等通道，fitness/qualified 为
+    021 评分制度列。
+    """
     __tablename__ = "backtest_result"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -54,6 +58,10 @@ class BacktestResult(Base):
     session_id: Mapped[Optional[str]] = mapped_column(Text)
 
 class DatasetMeta(Base):
+    """
+    数据集元数据与质量档案：行列/时间界/质量状态（quality_status），
+    数据检视与装载的登记面。
+    """
     __tablename__ = "dataset_meta"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -78,6 +86,9 @@ class DatasetMeta(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 class EvolutionHistory(Base):
+    """
+    代际轻量分数记录：UI 图表用（best/avg/top3），不带种群。
+    """
     __tablename__ = "evolution_history"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -89,6 +100,10 @@ class EvolutionHistory(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 class EvolutionTask(Base):
+    """
+    进化任务主记录：状态机（status/stop_reason/current_phase）+
+    champion 全套（dna/metrics/fitness）+OOS 验证+配置列群。
+    """
     __tablename__ = "evolution_task"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -139,6 +154,10 @@ class EvolutionTask(Base):
     oos_metrics: Mapped[Optional[str]] = mapped_column(Text)
 
 class GenerationSnapshot(Base):
+    """
+    全种群快照：checkpoint resume 载体（population_json 整代持久，
+    复合主键 task_id+generation 幂等）。
+    """
     __tablename__ = "generation_snapshot"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -153,6 +172,10 @@ class GenerationSnapshot(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 class PaperEquitySnapshot(Base):
+    """
+    权益快照：(task_id, timestamp) 唯一索引是 OR IGNORE 幂等键
+    （CARD-01 收口——models/legacy_init/Alembic 三轨同构唯一）。
+    """
     __tablename__ = "paper_equity_snapshot"
     __table_args__ = (
         # (task_id, timestamp) 唯一：save_equity_snapshots 的 OR IGNORE
@@ -170,6 +193,10 @@ class PaperEquitySnapshot(Base):
     position_side: Mapped[Optional[str]] = mapped_column(Text, server_default=text("'flat'"))
 
 class PaperTrade(Base):
+    """
+    模拟成交记录：B1.3 (task_id, bar_time, action) 唯一——bar 游标
+    重放不重复落库。
+    """
     __tablename__ = "paper_trade"
     __table_args__ = (
         Index("idx_paper_trade_task", "task_id", "bar_time"),
@@ -189,6 +216,10 @@ class PaperTrade(Base):
     reason: Mapped[Optional[str]] = mapped_column(Text)
 
 class PaperTradingTask(Base):
+    """
+    模拟盘任务：持仓/账户/统计三类运行状态+execution_model 执行
+    形制+resume 恢复列群。
+    """
     __tablename__ = "paper_trading_task"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -230,6 +261,10 @@ class PaperTradingTask(Base):
     prediction_dna_json: Mapped[Optional[str]] = mapped_column(Text)
 
 class Strategy(Base):
+    """
+    策略库：gene_signature 去重身份+draft/active/archived 生命周期
+    （M4）+verify 滚动统计五列。
+    """
     __tablename__ = "strategy"
     __table_args__ = (
         Index("idx_strategy_best_score", text("best_score DESC")),
@@ -267,6 +302,10 @@ class Strategy(Base):
     verify_star: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('NULL'))
 
 class VerifySession(Base):
+    """
+    验证会话句柄：批量验证的运行壳（status/summary/错误信息），
+    结果行在 backtest_result.session_id 关联。
+    """
     __tablename__ = "verify_session"
     __table_args__ = (
         Index("idx_verify_session_created", text("created_at DESC")),
@@ -287,6 +326,10 @@ class VerifySession(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(Text)
 
 class LiveTradingTask(Base):
+    """
+    实盘任务（demo mode）：持仓/余额/心跳运行状态，bar 轮询 runner
+    的持久化面（B3c.1 收编自 live 轨）。
+    """
     __tablename__ = "live_trading_task"
     __table_args__ = ()
     # 列结构权威源：data/quant.db PRAGMA（live 轨自建，B3c 收编）
@@ -482,7 +525,9 @@ class ValidationRecord(Base):
         Text, nullable=False, server_default="")
     params: Mapped[str] = mapped_column(Text, nullable=False)  # JSON（含 warmup、seed）
     result: Mapped[Optional[str]] = mapped_column(Text)  # JSON
-    # pass | fail（预定义门槛表机械判定）
+    # pass | fail | inconclusive（预定义门槛表三段闸门判定——spec
+    # research-validation-protocol；inconclusive=样本不足或 95% CI
+    # 跨零，证据不足非证伪——thresholds.py）
     verdict: Mapped[str] = mapped_column(Text, nullable=False)
     range_hash: Mapped[str] = mapped_column(Text, nullable=False)
     components: Mapped[Optional[str]] = mapped_column(Text)  # JSON 分量证据 record_id 清单
