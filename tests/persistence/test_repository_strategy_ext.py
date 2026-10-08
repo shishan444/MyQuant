@@ -8,6 +8,10 @@ test_orm_infra.py TestStrategyRepositoryEquivalence 已锚 active 去重
   与过滤/排序校验；
 - update 白名单与 delete 缺失静默；
 - update_strategy_verify_stats 滚动统计（COALESCE/MAX 增量公式）。
+
+锚点分类（V3 四分类）：B 类（行为契约锚）= draft 免去重/status
+语义/白名单/删除静默；C 类 = verify_stats 滚动增量公式手算锚；
+无 A/D 类。
 """
 
 import pytest

@@ -8,6 +8,10 @@ db_ext 同名函数，repository 轨为并行等价实现）：
   limit（无 offset）；
 - verify_session：save 默认 status=running；update 仅写显式非 None
   字段、全 None 为 no-op；list 按 created_at 倒序 + limit。
+
+锚点分类（V3 四分类）：B 类（行为契约锚）= 全部（win_rate 归一/
+逐字段更新/固定文案宣称）；C 类 = getattr 白名单注入面锚
+（CARD-04 后为白名单对拍）；无 A/D 类。
 """
 
 import pytest

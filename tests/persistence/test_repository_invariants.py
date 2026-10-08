@@ -6,6 +6,9 @@
   身份列 = 模型全列且两集不交（列漂移即红）；
 - 唯一索引幂等族：任意批量重放收敛到首写集（first-write-wins）；
 - updated_at 单调族：任意写序列 updated_at 不减且 >= created_at。
+
+锚点分类（V3 四分类）：C 类（对拍/不变量锚）= 全部（白名单划分
+闭包对拍、幂等收敛性质、updated_at 单调性）；无 A/B/D 类。
 """
 
 import random

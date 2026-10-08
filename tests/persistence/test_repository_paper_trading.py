@@ -12,6 +12,10 @@
 - compute_trading_metrics 委托 core.scoring（零交易 win_rate 缺失
   语义不折叠 0）；
 - 崩溃恢复与 runner 拾取序。
+
+锚点分类（V3 四分类）：B 类（行为契约锚）= 硬编码初值/白名单/
+级联/恢复/拾取；C 类（对拍锚）= compute_trading_metrics 委托
+scoring 的手算对照；无 A/D 类。
 """
 
 import pytest

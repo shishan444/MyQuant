@@ -9,6 +9,10 @@
   有 champion 不重启）；
 - update_best_score_if_higher 乐观锁（NULL 写/低不写/高覆盖）；
 - runner 拾取序与游标/冠军回写各单点。
+
+锚点分类（V3 四分类）：A 类（规格锚）= D3 条件更新三态
+（data-layer-ownership「守护测试全绿」验收线的 repository 轨锚）；
+B 类（行为契约锚）= 其余全部（模块 docstring 宣称行为）；无 C/D 类。
 """
 
 import json
