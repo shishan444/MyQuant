@@ -539,27 +539,13 @@ def _lookback_condition(
     df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
 ) -> pd.Series:
     """前瞻核验：window bar 内内层条件是否达成（any/all 两模式）。"""
-    window = cond.get("window", 5)
-    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
+    # inner_action 校验用（局部引用先例同 _cond_number——模块级互引
+    # 延迟加载，见 hypothesis_service 依赖方向）
     from core.analysis.hypothesis_service import ResearchError
 
-    try:
-        window = int(window)
-    except (TypeError, ValueError, OverflowError):
-        # OverflowError：window=inf 经 int() 转换裸穿（与 _param_number 同款收口）
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"condition.window 须为整数: {window!r}",
-            detail={"param": "condition.window", "value": str(window),
-                    "legal_range": ">=1 整数"},
-        ) from None
-    if window < 1:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"condition.window 须为 >=1: {window!r}",
-            detail={"param": "condition.window", "value": window,
-                    "legal_range": ">=1 整数"},
-        )
+    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
+    # （校验拆至 _cond_window，与 THEN 截窗共用同源）
+    window = _cond_window(cond)
 
     inner_action = cond.get("inner_action", "price_above")
     if inner_action not in _LOOKBACK_INNER_ACTIONS:
@@ -617,6 +603,36 @@ def _cond_number(cond: Dict, key: str, default, cast=float):
                     "legal_range": "数值"}) from None
 
 
+def _cond_window(cond: Dict) -> int:
+    """条件 window 键取值校验（F-2 同码族：坏值/零/负结构化拒绝）。
+
+    lookback 前瞻与 THEN 逐条件截窗共用（原 lookback 内联校验拆出）：
+    THEN 侧 window=0 曾静默截空跳过条件（iloc[:0] → continue）使
+    兜底块以坏 target 判定，负值从尾部截窗——均为失真路径，不静默。
+    """
+    from core.analysis.hypothesis_service import ResearchError
+
+    window = cond.get("window", 5)
+    try:
+        window = int(window)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError：window=inf 经 int() 转换裸穿（与 _param_number 同款收口）
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为整数: {window!r}",
+            detail={"param": "condition.window", "value": str(window),
+                    "legal_range": ">=1 整数"},
+        ) from None
+    if window < 1:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.window 须为 >=1: {window!r}",
+            detail={"param": "condition.window", "value": window,
+                    "legal_range": ">=1 整数"},
+        )
+    return window
+
+
 def _resolve_snr_pattern(
     df: pd.DataFrame,
     pattern: str,
@@ -659,12 +675,15 @@ def _check_then_conditions(
     for cond in conditions:
         action = cond.get("action", "")
 
-        # 逐条件窗口：条件自带更小窗口时截窗判定
+        # 逐条件窗口：条件自带更小窗口时截窗判定（window 坏值/零/负
+        # 经 _cond_window 同构拒绝——iloc[:0] 静默截空跳过条件使兜底块
+        # 以坏 target 判定、iloc[:负] 尾截均为失真路径，Q7 收口）
         cond_window = cond.get("window")
-        if cond_window is not None and cond_window < max_window:
-            cond_df = window_df.iloc[:cond_window]
-        else:
+        if cond_window is None:
             cond_df = window_df
+        else:
+            cond_window = _cond_window(cond)
+            cond_df = window_df.iloc[:cond_window] if cond_window < max_window else window_df
 
         if len(cond_df) == 0:
             continue
@@ -692,14 +711,13 @@ def _check_then_conditions(
             if action == "ge" and change >= threshold:
                 return True
 
-    # 兜底：任一条件按 target 阈值核验价格变动
+    # 兜底：任一条件按 target 阈值核验价格变动（TD-11 同构：坏 target
+    # 结构化拒绝——循环体空窗 continue 曾使坏值绕过 _cond_number 落到
+    # 此处静默归 0 判定，Q7 收口后两通道同一拒绝语义）
     if conditions:
         cond = conditions[0]
         action = cond.get("action", "drop")
-        try:
-            threshold = float(cond.get("target", 0))
-        except (ValueError, TypeError):
-            threshold = 0
+        threshold = _cond_number(cond, "target", 0)
 
         if action in ("drop",):
             change = ((window_df["close"].min() - trigger_price) / trigger_price) * 100

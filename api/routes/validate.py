@@ -31,7 +31,9 @@ class ConditionInput(BaseModel):
     subject: Union[str, "IndicatorRef"]
     action: str
     target: str = ""
-    window: Optional[int] = None
+    # window=0/负在求值侧静默截空或尾截（CARD-02：入口即拒，None=缺省
+    # 直通；求值侧 _cond_window 同构兜弱类型链）
+    window: Optional[int] = Field(None, ge=1)
     logic: str = "AND"
     timeframe: Optional[str] = None
 
