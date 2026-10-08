@@ -804,7 +804,10 @@ class LiveTradingTaskCreate(BaseModel):
 
 
 class LiveTradingTaskUpdate(BaseModel):
-    status: Optional[str] = None
+    # 状态机值域对齐 core/live_trading runner 全链（save 缺省 pending/
+    # runner 异常 error/paper_trading 同构先例 running/stopped）——
+    # 非法状态串原可入库（列表过滤与状态判定消费方失真），入站即拒
+    status: Optional[Literal["pending", "running", "stopped", "error"]] = None
     config_json: Optional[str] = None
     stop_reason: Optional[str] = None
 
