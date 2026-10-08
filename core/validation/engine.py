@@ -11,6 +11,7 @@ rule_engine（进出场配对共用 _evaluate_conditions）、condition_kernel
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import logging
 import numpy as np
 import pandas as pd
 from typing import TYPE_CHECKING
@@ -20,6 +21,8 @@ from core.features.indicators import compute_all_indicators
 if TYPE_CHECKING:
     from core.analysis.condition_kernel import MtfEvalContext
 from core.data.storage import load_parquet
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -159,7 +162,12 @@ def validate_hypothesis(
                     base_tf_minutes, tf_minutes_map,
                 )
         except Exception as exc:
-            warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
+            # 异常原文只进日志不回传（live_trading dna 预检同款取舍：
+            # 异常文本形态不可控，warnings 面向客户端固定分类文案）
+            logger.warning(
+                "MTF 数据装载失败，回退单周期求值: %r", exc, exc_info=exc)
+            warnings.append(
+                "MTF data loading failed, falling back to single timeframe")
 
     # Evaluate WHEN conditions（mtf 上下文透传——Lab 链高周期条件掩码投影）
     when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings, mtf=mtf)
