@@ -286,3 +286,39 @@ class TestCursorAndChampionWrites:
         row = repo.get_task(db, "t1")
         assert row["population_size"] == 30
         assert row["mode"] == "explore"
+
+    def test_五函数刷新updated_at_CARD06(self, db, dna):
+        """CARD-06 契约锚：冠军/OOS/配置写路径统一刷新 updated_at；
+        乐观锁未命中（低分）零行更新——updated_at 不动。"""
+        import time
+        ids = ("u1", "u2", "u3", "u4", "u5")  # 独立任务，避开 autouse _seed 的 t1
+        for tid in ids:
+            _task(db, tid, dna)
+            repo.update_task_config(db, tid, created_at="2020-01-01T00:00:00+00:00")
+        time.sleep(0.002)
+
+        writers = [
+            (lambda: repo.update_champion_metrics(
+                db, "u1", best_fitness=1.0, champion_metrics="{}",
+                champion_dimension_scores="{}"), "u1"),
+            (lambda: repo.update_oos_results(
+                db, "u2", oos_fitness=0.9, oos_qualified=1, oos_metrics="{}"), "u2"),
+            (lambda: repo.update_champion_full(
+                db, "u3", best_score=88.0, champion_metrics="{}",
+                champion_dimension_scores="{}"), "u3"),
+            (lambda: repo.update_best_score_if_higher(db, "u4", 50.0), "u4"),
+            (lambda: repo.update_task_config(db, "u5", population_size=30), "u5"),
+        ]
+        for write, tid in writers:
+            before = repo.get_task(db, tid)["updated_at"]
+            time.sleep(0.002)
+            write()
+            after = repo.get_task(db, tid)["updated_at"]
+            assert after > before, f"{tid} 写路径未刷新 updated_at"
+
+        # 乐观锁未命中：零行更新，updated_at 精确不动
+        snap = repo.get_task(db, "u4")["updated_at"]
+        time.sleep(0.002)
+        repo.update_best_score_if_higher(db, "u4", 30.0)
+        assert repo.get_task(db, "u4")["updated_at"] == snap, \
+            "未命中零行更新——updated_at 不得刷新"
