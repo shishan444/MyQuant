@@ -43,6 +43,8 @@ def save_paper_trading_task(
     confidence_sizing_enabled: bool = False,
     prediction_dna_json: Optional[str] = None,
 ) -> None:
+    """创建模拟盘任务（status 硬编码 pending、execution_model=v2、
+    balance=initial_cash 硬编码初值——行为等价锚点见模块 docstring）。"""
     now = _now()
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -58,6 +60,7 @@ def save_paper_trading_task(
 
 
 def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
+    """按 ID 取模拟盘任务（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -67,6 +70,7 @@ def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, An
 
 
 def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
+    """更新任务字段（白名单过滤+updated_at 刷新，空集 no-op）。"""
     if not kwargs:
         return
     filtered = {k: v for k, v in kwargs.items() if k in _ALLOWED_UPDATE_COLUMNS}
@@ -85,6 +89,7 @@ def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
 def list_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50, offset: int = 0,
 ) -> List[Dict[str, Any]]:
+    """列模拟盘任务（status 过滤+倒序+分页）。"""
     stmt = select(PaperTradingTask)
     if status:
         stmt = stmt.where(PaperTradingTask.status == status)
@@ -98,6 +103,7 @@ def list_paper_trading_tasks(
 def count_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None,
 ) -> int:
+    """计模拟盘任务数（可按 status 过滤）。"""
     stmt = select(func.count()).select_from(PaperTradingTask)
     if status:
         stmt = stmt.where(PaperTradingTask.status == status)
@@ -134,6 +140,7 @@ def save_paper_trade(
 def list_paper_trades(
     db_path: Path, task_id: str, limit: int = 100,
 ) -> List[Dict[str, Any]]:
+    """列模拟成交（bar_time 倒序+limit）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(
@@ -144,6 +151,7 @@ def list_paper_trades(
 
 
 def count_paper_trades(db_path: Path, task_id: str) -> int:
+    """计任务模拟成交笔数。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         return conn.execute(
@@ -154,7 +162,7 @@ def count_paper_trades(db_path: Path, task_id: str) -> int:
 def save_equity_snapshots(
     db_path: Path, task_id: str, snapshots: list[dict],
 ) -> None:
-    """Batch insert equity snapshots（executemany + OR IGNORE 幂等，同旧轨）。"""
+    """批量写权益快照（executemany + OR IGNORE 幂等，同旧轨）。"""
     if not snapshots:
         return
     engine = _engine_for(db_path)
@@ -187,7 +195,7 @@ def list_equity_snapshots(
 
 
 def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
-    """Delete a paper trading task and all associated data（三表级联单事务）。"""
+    """删除模拟盘任务及其全部关联数据（三表级联单事务）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         exists = conn.execute(
@@ -202,7 +210,7 @@ def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
 
 
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Compute performance metrics（公式委托 core.scoring 单源，读侧换 ORM）。"""
+    """计算绩效指标（公式委托 core.scoring 单源，读侧换 ORM）。"""
     from core.scoring import trading_metrics
 
     task = get_paper_trading_task(db_path, task_id)
@@ -251,7 +259,7 @@ def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, A
 # ---------------------------------------------------------------------------
 
 def recover_stale_trading_tasks(db_path: Path) -> int:
-    """Mark running paper trading tasks as stopped (crash recovery)——返回清理数。"""
+    """崩溃恢复：running 模拟盘任务标记为 stopped——返回清理数。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         result = conn.execute(

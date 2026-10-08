@@ -190,6 +190,7 @@ def count_strategies(
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
 ) -> int:
+    """计策略数（过滤形制同 list_strategies——status=None 默认排除 draft）。"""
     stmt = _strategy_filters(
         select(func.count()).select_from(Strategy),
         symbol=symbol, source=source, source_task_id=source_task_id,
