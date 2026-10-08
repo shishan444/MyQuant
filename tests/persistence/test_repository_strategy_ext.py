@@ -95,6 +95,22 @@ class TestListCountStatusSemantics:
         assert [r["best_score"] for r in rows] == [50.0, 70.0]
         assert len(repo.list_strategies(db, limit=1)) == 1
 
+    def test_空task_ids返回空dict(self, db):
+        assert repo.count_strategies_by_tasks(db, []) == {}
+
+    def test_qualified过滤(self, db):
+        # save_strategy 不写 qualified 列（021 评分制度列）——直写构造
+        import sqlite3
+        _strategy(db, "q1", signature="s-q1")
+        _strategy(db, "q0", signature="s-q0")
+        conn = sqlite3.connect(str(db))
+        conn.execute("UPDATE strategy SET qualified = 1 WHERE strategy_id = 'q1'")
+        conn.execute("UPDATE strategy SET qualified = 0 WHERE strategy_id = 'q0'")
+        conn.commit()
+        conn.close()
+        assert {r["strategy_id"] for r in repo.list_strategies(db, qualified=True)} == {"q1"}
+        assert repo.count_strategies(db, qualified=False) == 1
+
 
 class TestUpdateDelete:
     """update 白名单与 delete 缺失静默。"""

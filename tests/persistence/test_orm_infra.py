@@ -271,6 +271,9 @@ class TestDatasetMetaRepository:
         assert row["updated_at"] >= row["created_at"]
 
         assert repo.get_dataset(db, "nope") is None
+        # 全白名单外字段 no-op（不写库不刷 updated_at）
+        repo.update_dataset_stats(db, dataset_id="d1", evil_column="x")
+        assert repo.get_dataset(db, "d1")["row_count"] == 200, "白名单外更新零效果"
         repo.delete_dataset(db, "d1")
         assert repo.get_dataset(db, "d1") is None
         repo.delete_dataset(db, "d1"), "删除不存在无错误"

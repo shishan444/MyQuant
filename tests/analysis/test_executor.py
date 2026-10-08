@@ -230,6 +230,17 @@ class TestGapClosureExecutor:
         ex = ResearchExecutor(db_path, max_workers=1)
         assert ex.get_task("no_such_task") is None
 
+    def test_finalize_任务不存在_静默早退(self, db_path: Path) -> None:
+        """阶段四盲区消解：_finalize 对不存在任务 no-op（不炸不落库）。"""
+        from core.analysis.executor import ResearchExecutor
+        ex = ResearchExecutor(db_path, max_workers=1)
+        try:
+            ex._finalize("ghost-task", "failed", reason=None, result_ref=None)
+            assert rr.get_analysis_task(db_path, "ghost-task") is None, \
+                "早退不得落库"
+        finally:
+            ex.shutdown()
+
     def test_get_executor未初始化_RuntimeError(self, monkeypatch) -> None:
         from core.analysis import executor as exec_mod
         monkeypatch.setattr(exec_mod, "_EXECUTOR", None)

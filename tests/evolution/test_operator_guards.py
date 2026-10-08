@@ -305,6 +305,26 @@ class TestMutateParamsFallbackTiers:
         # 多项式变异同样有界（clamp 到注册表值域）
         assert reg.params["period"].min <= period <= reg.params["period"].max
 
+    def test_候选全越界_过滤后空落多项式(self, monkeypatch):
+        """阶段四盲区消解：candidates 非空但全部落在 [min,max] 外
+        → candidates_filtered 空 → 落到多项式有界变异（425->432 侧）。"""
+        import copy
+        from core.evolution import operators as ops
+        from core.features.registry import ParamDef, IndicatorDef
+
+        fake = copy.deepcopy(ops.INDICATOR_REGISTRY["RSI"])
+        fake.params = {"period": ParamDef(
+            type="int", min=2, max=50, default=14, step=1,
+            candidates=[999])}  # 候选全越界
+        monkeypatch.setattr(ops, "PROFILES", {})
+        monkeypatch.setattr(ops, "INDICATOR_REGISTRY", {"RSI": fake})
+        monkeypatch.setattr(ops.random, "random", lambda: 0.1)  # 命中候选分支
+
+        from core.evolution.operators import mutate_params
+        out = mutate_params(_dna())
+        period = out.signal_genes[0].params["period"]
+        assert 2 <= period <= 50, "越界候选不得写入——落多项式且结果有界"
+
 
 class TestMutateCompositionWritebackShapes:
     """mutate_composition 写回二形：comp-only（无 sources）与

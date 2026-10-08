@@ -381,6 +381,18 @@ class TestResolveTargetSplitGuardUnreachable:
 class TestThenTargetBoundary:
     """0.3.7 TD-11 THEN 侧同规：坏 target 与 WHEN 侧同一拒绝语义。"""
 
+    def test_空条件集_求值恒False(self, df):
+        """阶段四盲区消解：_evaluate_conditions 空 conditions 头部
+        早退（:323）→ 全 False 序列。尾部同名 return（:345）不可达：
+        conditions 非空时循环至少一次、result 必被赋值（result is
+        None → result = mask），循环出口 result is not None 恒真
+        ——防御冗余，无输入路径。"""
+        from core.validation.engine import _evaluate_conditions
+        out = _evaluate_conditions(df, [], None)
+        assert isinstance(out, pd.Series)
+        assert len(out) == len(df)
+        assert not out.any()
+
     def test_then_target坏str_同构拒绝(self, df):
         from core.validation.engine import _check_then_conditions
         with pytest.raises(ResearchError) as ei:
