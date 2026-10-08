@@ -31,7 +31,7 @@ def save_paper_trading_task(
     confidence_sizing_enabled: bool = False,
     prediction_dna_json: Optional[str] = None,
 ) -> None:
-    """Insert a paper trading task（B3c.1 起委托 repository，签名不变）。"""
+    """创建模拟盘任务（B3c.1 起委托 repository.paper_trading，签名不变）。"""
     from core.persistence.repository import paper_trading as repo
     repo.save_paper_trading_task(
         db_path, task_id=task_id, dna_json=dna_json, symbol=symbol,
@@ -44,13 +44,13 @@ def save_paper_trading_task(
 
 
 def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a paper trading task（委托 repository）。"""
+    """取模拟盘任务（委托 repository，不存在返回 None）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.get_paper_trading_task(db_path, task_id)
 
 
 def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
-    """Update task fields（委托 repository，白名单不变）。"""
+    """更新任务字段（委托 repository，白名单过滤语义不变）。"""
     from core.persistence.repository import paper_trading as repo
     repo.update_paper_trading_task(db_path, task_id, **kwargs)
 
@@ -58,7 +58,7 @@ def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
 def list_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50, offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List paper trading tasks（委托 repository）。"""
+    """列模拟盘任务（委托 repository，status 过滤+分页）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.list_paper_trading_tasks(db_path, status=status, limit=limit, offset=offset)
 
@@ -66,7 +66,7 @@ def list_paper_trading_tasks(
 def count_paper_trading_tasks(
     db_path: Path, status: Optional[str] = None,
 ) -> int:
-    """Count paper trading tasks（委托 repository）。"""
+    """计模拟盘任务数（委托 repository，可按 status 过滤）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.count_paper_trading_tasks(db_path, status=status)
 
@@ -84,7 +84,7 @@ def save_paper_trade(
     fee_paid: float = 0.0,
     reason: Optional[str] = None,
 ) -> None:
-    """Insert a paper trade（委托 repository；INSERT OR IGNORE 幂等，B1.3）。"""
+    """写入单笔模拟成交（委托 repository；INSERT OR IGNORE 幂等，B1.3 唯一键）。"""
     from core.persistence.repository import paper_trading as repo
     repo.save_paper_trade(
         db_path, task_id=task_id, bar_time=bar_time, side=side, action=action,
@@ -95,13 +95,13 @@ def save_paper_trade(
 def list_paper_trades(
     db_path: Path, task_id: str, limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List paper trades（委托 repository）。"""
+    """列模拟成交（委托 repository，bar_time 倒序+limit）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.list_paper_trades(db_path, task_id, limit=limit)
 
 
 def count_paper_trades(db_path: Path, task_id: str) -> int:
-    """Count paper trades（委托 repository）。"""
+    """计模拟成交笔数（委托 repository）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.count_paper_trades(db_path, task_id)
 
@@ -109,7 +109,7 @@ def count_paper_trades(db_path: Path, task_id: str) -> int:
 def save_equity_snapshots(
     db_path: Path, task_id: str, snapshots: list[dict],
 ) -> None:
-    """Batch insert equity snapshots（委托 repository，OR IGNORE 幂等）。"""
+    """批量写权益快照（委托 repository，OR IGNORE 幂等——同 (task_id, timestamp) 首写胜出）。"""
     from core.persistence.repository import paper_trading as repo
     repo.save_equity_snapshots(db_path, task_id, snapshots)
 
@@ -117,19 +117,19 @@ def save_equity_snapshots(
 def list_equity_snapshots(
     db_path: Path, task_id: str,
 ) -> List[Dict[str, Any]]:
-    """List equity snapshots（委托 repository）。"""
+    """列权益快照（委托 repository，时间正序）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.list_equity_snapshots(db_path, task_id)
 
 
 def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
-    """Delete a paper trading task and all associated data（委托 repository）。"""
+    """删除模拟盘任务及其关联数据（委托 repository，三表级联单事务）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.delete_paper_trading_task(db_path, task_id)
 
 
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Compute performance metrics（委托 repository；公式单源 core.scoring）。"""
+    """计算绩效指标（委托 repository；公式单源 core.scoring）。"""
     from core.persistence.repository import paper_trading as repo
     return repo.compute_trading_metrics(db_path, task_id)
 
@@ -156,7 +156,7 @@ def save_strategy(
     gene_signature: Optional[str] = None,
     status: str = "active",
 ) -> None:
-    """Insert a new strategy record（B3b.1 起委托 repository，签名不变）。"""
+    """新增策略记录（B3b.1 起委托 repository.strategy，签名不变）。"""
     from core.persistence.repository import strategy as repo
     repo.save_strategy(
         db_path, strategy_id=strategy_id, dna_json=dna_json, symbol=symbol,
@@ -169,7 +169,7 @@ def save_strategy(
 
 
 def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single strategy by ID（委托 repository）。"""
+    """按 ID 取单条策略（委托 repository，不存在返回 None）。"""
     from core.persistence.repository import strategy as repo
     return repo.get_strategy(db_path, strategy_id)
 
@@ -179,7 +179,7 @@ def count_strategies_by_tasks(
     task_ids: List[str],
     min_score: float = 0,
 ) -> Dict[str, int]:
-    """Batch count strategies per task_id（委托 repository）。"""
+    """按任务批量计策略数（委托 repository）。"""
     from core.persistence.repository import strategy as repo
     return repo.count_strategies_by_tasks(db_path, task_ids, min_score)
 
@@ -194,7 +194,7 @@ def count_strategies(
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
 ) -> int:
-    """Count strategies with optional filtering（委托 repository）。"""
+    """计策略数（委托 repository，可过滤）。"""
     from core.persistence.repository import strategy as repo
     return repo.count_strategies(
         db_path, symbol=symbol, source=source, source_task_id=source_task_id,
@@ -216,7 +216,7 @@ def list_strategies(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List strategies with filtering, sorting, pagination（委托 repository）。"""
+    """列策略（委托 repository，过滤+白名单排序+分页）。"""
     from core.persistence.repository import strategy as repo
     return repo.list_strategies(
         db_path, symbol=symbol, source=source, source_task_id=source_task_id,
@@ -232,13 +232,13 @@ def update_strategy(
     strategy_id: str,
     **fields: Any,
 ) -> None:
-    """Update one or more fields on an existing strategy（委托 repository）。"""
+    """更新策略字段（委托 repository，白名单不变）。"""
     from core.persistence.repository import strategy as repo
     repo.update_strategy(db_path, strategy_id=strategy_id, **fields)
 
 
 def delete_strategy(db_path: Path, strategy_id: str) -> None:
-    """Delete a strategy by ID（委托 repository）。"""
+    """按 ID 删策略（委托 repository）。"""
     from core.persistence.repository import strategy as repo
     repo.delete_strategy(db_path, strategy_id)
 
@@ -274,7 +274,7 @@ def save_backtest_result(
     satisfaction_json: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Insert a backtest result record（B3b.1 起委托 repository，签名不变）。"""
+    """写入回测结果记录（B3b.1 起委托 repository.backtest_result，签名不变）。"""
     from core.persistence.repository import backtest_result as repo
     repo.save_backtest_result(
         db_path, result_id=result_id, strategy_id=strategy_id, symbol=symbol,
@@ -291,7 +291,7 @@ def save_backtest_result(
 
 
 def get_backtest_result(db_path: Path, result_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single backtest result by ID（委托 repository）。"""
+    """按 ID 取单条回测结果（委托 repository，不存在返回 None）。"""
     from core.persistence.repository import backtest_result as repo
     return repo.get_backtest_result(db_path, result_id)
 
@@ -307,7 +307,7 @@ def list_backtest_results(
     sort_order: str = "desc",
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List backtest results with optional filtering（委托 repository）。"""
+    """列回测结果（委托 repository，过滤+白名单排序+limit）。"""
     from core.persistence.repository import backtest_result as repo
     return repo.list_backtest_results(
         db_path, strategy_id=strategy_id, symbol=symbol, run_source=run_source,
@@ -329,7 +329,7 @@ def save_verify_session(
     slippage: float = 0.0005,
     status: str = "running",
 ) -> None:
-    """Insert a verify session record（B3b.1 起委托 repository，签名不变）。"""
+    """写入验证会话记录（B3b.1 起委托 repository.verify_session，签名不变）。"""
     from core.persistence.repository import verify_session as repo
     repo.save_verify_session(
         db_path, session_id=session_id, strategy_ids=strategy_ids,
@@ -339,7 +339,7 @@ def save_verify_session(
 
 
 def get_verify_session(db_path: Path, session_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a verify session by ID（委托 repository）。"""
+    """按 ID 取验证会话（委托 repository，不存在返回 None）。"""
     from core.persistence.repository import verify_session as repo
     return repo.get_verify_session(db_path, session_id)
 
@@ -355,7 +355,7 @@ def update_verify_session(
     error_message: Optional[str] = None,
     completed_at: Optional[str] = None,
 ) -> None:
-    """Update verify session fields（委托 repository，非 None 字段语义不变）。"""
+    """更新验证会话字段（委托 repository，仅显式非 None 字段语义不变）。"""
     from core.persistence.repository import verify_session as repo
     repo.update_verify_session(
         db_path, session_id, status=status, summary_json=summary_json,
@@ -368,7 +368,7 @@ def list_verify_sessions(
     db_path: Path,
     limit: int = 20,
 ) -> List[Dict[str, Any]]:
-    """List verify sessions（委托 repository）。"""
+    """列验证会话（委托 repository，created_at 倒序）。"""
     from core.persistence.repository import verify_session as repo
     return repo.list_verify_sessions(db_path, limit)
 
@@ -397,7 +397,7 @@ def save_dataset_meta(
     quality_notes: Optional[str] = None,
     import_batch_id: Optional[str] = None,
 ) -> None:
-    """Insert a dataset metadata record（B3a.3 起委托 repository，签名不变）。"""
+    """写入数据集元数据记录（B3a.3 起委托 repository.dataset_meta，签名不变）。"""
     from core.persistence.repository import dataset_meta as repo
     repo.save_dataset_meta(
         db_path, dataset_id=dataset_id, symbol=symbol, interval=interval,
@@ -411,7 +411,7 @@ def save_dataset_meta(
 
 
 def get_dataset(db_path: Path, dataset_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single dataset by ID, or None if not found（委托 repository）。"""
+    """按 ID 取数据集（委托 repository，不存在返回 None）。"""
     from core.persistence.repository import dataset_meta as repo
     return repo.get_dataset(db_path, dataset_id)
 
@@ -423,7 +423,7 @@ def list_datasets(
     interval: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List datasets with optional filtering（委托 repository）。"""
+    """列数据集（委托 repository，可过滤）。"""
     from core.persistence.repository import dataset_meta as repo
     return repo.list_datasets(
         db_path, symbol=symbol, interval=interval, limit=limit,
@@ -436,12 +436,12 @@ def update_dataset_stats(
     dataset_id: str,
     **fields: Any,
 ) -> None:
-    """Update fields on a dataset record（委托 repository，白名单不变）。"""
+    """更新数据集字段（委托 repository，白名单+updated_at 刷新不变）。"""
     from core.persistence.repository import dataset_meta as repo
     repo.update_dataset_stats(db_path, dataset_id=dataset_id, **fields)
 
 
 def delete_dataset(db_path: Path, dataset_id: str) -> None:
-    """Delete a dataset by ID（委托 repository）。"""
+    """按 ID 删数据集（委托 repository，不存在时无错误）。"""
     from core.persistence.repository import dataset_meta as repo
     repo.delete_dataset(db_path, dataset_id)
