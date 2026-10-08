@@ -126,12 +126,12 @@ def condition_stats(
     for col, series in new_cols.items():
         work[col] = series
 
-    # 0.2.13：求值走 condition_kernel._mask_for（两段式内聚——结构化
+    # 0.2.13：求值走 condition_kernel.mask_for（两段式内聚——结构化
     # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
     # 0.2.14：mtf 上下文透传——高周期条件（timeframe 键）走掩码投影
     from core.analysis.condition_kernel import (
-        MtfEvalContext, _mask_for, _p_value_for, stat_window_mask)
-    mask = _mask_for(work, condition, mtf=mtf)
+        MtfEvalContext, mask_for, p_value_for, stat_window_mask)
+    mask = mask_for(work, condition, mtf=mtf)
 
     # 统计段：request_start 之前的 warmup 前缀只用不算（共享掩码
     # 样板；req_ts 留供 warmup_bars 披露）
@@ -143,7 +143,7 @@ def condition_stats(
     # 回投事件掩码（变换域=统计段过滤后——与统计链 /api/validate 同
     # 域，specs 消费面同源锚；warmup 前缀不参与段结构判定，跨链事件
     # 序列一致的前提）。上面掩码直译语句保留——无策略路径逐字节不变。
-    # 下游 fwd/ret/loc 布尔索引与 _p_value_for 全部天然切口径；
+    # 下游 fwd/ret/loc 布尔索引与 p_value_for 全部天然切口径；
     # n_hit/sample_size/dropped_tail 随事件集。
     if policy_norm is not None:
         from core.analysis.event_policy import apply_policy_to_series
@@ -162,9 +162,9 @@ def condition_stats(
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None
 
     # 去重叠 t 检验（0.2.1 同口径——第四消费方收敛至 condition_kernel
-    # _p_value_for 共享实现，消除双实现漂移面；返回 (p, n_overlapped)，
+    # p_value_for 共享实现，消除双实现漂移面；返回 (p, n_overlapped)，
     # baseline None / 样本<2 / 零方差时 p 为 None）
-    p_value, n_overlapped = _p_value_for(
+    p_value, n_overlapped = p_value_for(
         fwd, stat_mask.values, forward_bars, baseline_mean)
     forward_significance: Dict[str, Any] = {
         "method": "t_test_vs_baseline",

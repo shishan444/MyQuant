@@ -69,12 +69,31 @@ class TestDistributionCompare:
         assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
 
     def test_empty_window_rejected(self) -> None:
+        # 0.3.7 H1：空区间从裸 ValueError（500）改结构化拒绝——
+        # RESEARCH_DATA_EMPTY（数据空）与 RESEARCH_COLUMN_NOT_AVAILABLE
+        # /RESEARCH_PARAM_INVALID（请求错）两码族可区分
         df = _make_df(100)
         a, b = self._windows(df)
         b["start"] = "2030-01-01"  # 空窗
-        with pytest.raises(ValueError, match="区间无数据"):
+        with pytest.raises(ResearchError) as ei:
             distribution_compare(df, column="close", group_a=a, group_b=b,
                                  data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_DATA_EMPTY"
+        detail = ei.value.detail
+        assert detail["group"] == "group_b"
+        assert detail["window"] == b
+        assert detail["series_span"] is not None  # 可用数据范围披露
+
+    def test_empty_window_series_fully_empty_span_none(self) -> None:
+        # 边界：整个序列经 transform 后为空时 span=None（防御不越界）
+        df = _make_df(10)
+        df["close"] = np.nan
+        a, b = self._windows(df)
+        with pytest.raises(ResearchError) as ei:
+            distribution_compare(df, column="close", group_a=a, group_b=b,
+                                 data_ranges=RANGES)
+        assert ei.value.code == "RESEARCH_DATA_EMPTY"
+        assert ei.value.detail["series_span"] is None
 
 
 class TestCorrelationScan:

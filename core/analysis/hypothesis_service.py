@@ -155,6 +155,15 @@ def register_hypothesis(
 
     # 2.5 timeframe 键校验序（0.2.14 B3：THEN 拒 → 值域 → 方向）
     from core.data.timeframes import TF_SECONDS
+    # TD-8（0.3.7）：基准周期对整个假设唯一——单次判定上提循环外
+    # （原逐条件重复判；data_ranges 同 symbol/timeframe 已由 0.2.14 保证）
+    if base_tf not in TF_SECONDS:
+        raise ResearchError(
+            "TIMEFRAME_UNKNOWN",
+            f"未知基准周期: {base_tf!r}",
+            detail={"field": "data_ranges[0].timeframe",
+                    "timeframe": base_tf,
+                    "legal_range": sorted(TF_SECONDS)})
     for group, conds in (("when", when), ("then", then)):
         for i, c in enumerate(conds):
             tf_key = c.get("timeframe")
@@ -172,13 +181,6 @@ def register_hypothesis(
                     "TIMEFRAME_UNKNOWN",
                     f"未知周期: {tf_key!r}",
                     detail={"field": field_name, "timeframe": tf_key,
-                            "legal_range": sorted(TF_SECONDS)})
-            if base_tf not in TF_SECONDS:
-                raise ResearchError(
-                    "TIMEFRAME_UNKNOWN",
-                    f"未知基准周期: {base_tf!r}",
-                    detail={"field": "data_ranges[0].timeframe",
-                            "timeframe": base_tf,
                             "legal_range": sorted(TF_SECONDS)})
             from core.data.mtf_alignment import assert_higher_tf
             try:

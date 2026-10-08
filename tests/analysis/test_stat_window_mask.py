@@ -1,7 +1,7 @@
-"""condition_kernel 共享样板锚：stat_window_mask 与 _p_value_for。
+"""condition_kernel 共享样板锚：stat_window_mask 与 p_value_for。
 
 warmup 前缀「只用不算」的统计段切回样板自四分析模板提取至
-condition_kernel（与 _p_value_for 同居）。行为面由四模板既有特征网
+condition_kernel（与 p_value_for 同居）。行为面由四模板既有特征网
 覆盖（机械替换逐字等价）；本文件锚定：① 样板函数正牌行为；
 ② regime_split None 分支引用变副本的输出冻结（等价性论据的行为
 证据——段边界/类型/bars 与显式段判读值全经 stat 读出）；
@@ -115,7 +115,7 @@ class TestSingleSourceDrift:
 
 
 class TestPValueForBehavior:
-    """CARD-08 配套：_p_value_for 直测（四消费方共享——condition_
+    """CARD-08 配套：p_value_for 直测（四消费方共享——condition_
     stats/param_sweep/screen_patterns/regime_split；此前全域无直测，
     行为面仅靠消费方间接覆盖）。
 
@@ -133,43 +133,43 @@ class TestPValueForBehavior:
         return pd.Series(values, index=self._IDX)
 
     def test_baseline为None_返回None零(self) -> None:
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         mask = np.ones(100, dtype=bool)
-        p, n = _p_value_for(self._fwd(np.linspace(1, 2, 100)), mask,
+        p, n = p_value_for(self._fwd(np.linspace(1, 2, 100)), mask,
                             4, None)
         assert p is None and n == 0
 
     def test_正常形态_返回p值与去重叠样本数(self) -> None:
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         rng = np.random.default_rng(3)
         mask = np.zeros(100, dtype=bool)
         mask[::10] = True  # 10 个信号，间隔 10 >= horizon 4 全入选
         fwd = self._fwd(rng.normal(0.01, 0.02, 100))
-        p, n = _p_value_for(fwd, mask, 4, 0.0)
+        p, n = p_value_for(fwd, mask, 4, 0.0)
         assert 0.0 <= p <= 1.0
         assert n == 10
 
     def test_去重叠贪心_间隔不足horizon的信号跳过(self) -> None:
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         mask = np.zeros(100, dtype=bool)
         mask[[10, 11, 12, 40, 41]] = True  # 贪心选 10、40（间隔<4 跳过）
         fwd = self._fwd(np.linspace(1, 2, 100))
-        _, n = _p_value_for(fwd, mask, 4, 0.5)
+        _, n = p_value_for(fwd, mask, 4, 0.5)
         assert n == 2
 
     def test_样本不足两成_返回None带样本数(self) -> None:
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         mask = np.zeros(100, dtype=bool)
         mask[50] = True  # 单信号
         fwd = self._fwd(np.linspace(1, 2, 100))
-        p, n = _p_value_for(fwd, mask, 4, 0.5)
+        p, n = p_value_for(fwd, mask, 4, 0.5)
         assert p is None and n == 1
 
     def test_零方差_返回None带样本数(self) -> None:
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         mask = np.ones(100, dtype=bool)
         fwd = self._fwd(np.full(100, 1.0))  # 恒定值零方差
-        p, n = _p_value_for(fwd, mask, 4, 0.5)
+        p, n = p_value_for(fwd, mask, 4, 0.5)
         # n = 去重叠子集大小：全 True 掩码贪心选 0/4/8/...（horizon 4）
         assert p is None and n == 25
 
@@ -196,14 +196,14 @@ class TestCoreInvariants:
 
     def test_p_value_值域与样本上界(self) -> None:
         """属性：p ∈ [0,1]；去重叠样本数 ≤ 掩码命中数。"""
-        from core.analysis.condition_kernel import _p_value_for
+        from core.analysis.condition_kernel import p_value_for
         rng = np.random.default_rng(5)
         mask = np.zeros(500, dtype=bool)
         mask[::7] = True  # 71 命中，间隔 7 ≥ horizon 4 全入选
         fwd = pd.Series(rng.normal(0, 0.01, 500),
                         index=pd.date_range("2024-01-01", periods=500,
                                             freq="1h", tz="UTC"))
-        p, n = _p_value_for(fwd, mask, 4, 0.0)
+        p, n = p_value_for(fwd, mask, 4, 0.0)
         assert 0.0 <= p <= 1.0
         assert n <= int(mask.sum())
 

@@ -247,7 +247,7 @@ class TestConditionStats:
 
 
 class TestTimeframeKey:
-    """0.2.14 timeframe 键透传：condition 携带高周期键经 _mask_for
+    """0.2.14 timeframe 键透传：condition 携带高周期键经 mask_for
     掩码投影求值（spec research-validation-protocol「混合周期假设条件
     求值端到端成功」的条件统计族模板面）。"""
 

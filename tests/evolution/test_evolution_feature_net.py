@@ -5,6 +5,7 @@ tests/evolution/ 基线下 diversity 66% / evaluation 65%：
 compute_phenotype_diversity 与 maintain_diversity 主体、build_requirements
 的 requirements_json 路径、evaluate_dna 的按需加载与零分兜底从未执行。
 
+0.3.7 H7 归位：目录/类名已去平行批次后缀（*_Feature 消除）。
 语义约定（阶段四 V3 化）：经 32 卡修复队列与裁决沉淀，锚定行为
 已是团队确认的规格契约；断言值经真实执行钉住，预期依据随断言注释。
 统计命题锚大样本分布（元判例：不锚轨迹或子集抽样）。
@@ -26,7 +27,7 @@ from tests.helpers.data_factory import make_dna, make_enhanced_df
 # 1. diversity：表型距离与种群多样性（主体未执行）
 # ===========================================================================
 
-class TestPhenotypeDistanceFeature:
+class TestPhenotypeDistance:
     """diversity.py 特征锚：signal/equity 距离与回退链。"""
 
     @staticmethod
@@ -99,7 +100,7 @@ class TestPhenotypeDistanceFeature:
         assert equity_distance(a, b) == signal_distance(a, b)
 
 
-class TestPopulationDiversityFeature:
+class TestPopulationDiversity:
     """diversity.py 特征锚：compute_phenotype_diversity / maintain_diversity。"""
 
     def test_phenotype_diversity_single_individual_all_zero(self):
@@ -149,7 +150,7 @@ class TestPopulationDiversityFeature:
 # 2. evaluation：build_requirements / evaluate_dna / evaluate_population
 # ===========================================================================
 
-class TestBuildRequirementsFeature:
+class TestBuildRequirements:
     """evaluation.py 特征锚：requirements_json 优先与解析失败显式报错。"""
 
     def test_requirements_json_string_parsed(self):
@@ -194,7 +195,7 @@ class TestBuildRequirementsFeature:
         assert req.max_drawdown == 0.30
 
 
-class TestParseTimeframePoolFeature:
+class TestParseTimeframePool:
     """CARD-04 锚：task_row.timeframe_pool 解析七形制（B1.1 显式报错，
     旧实现坏值静默置 None 退化单周期）。"""
 
@@ -233,7 +234,7 @@ class TestParseTimeframePoolFeature:
             parse_timeframe_pool({"timeframe_pool": raw, "task_id": "t1"})
 
 
-class TestEvaluateDnaFeature:
+class TestEvaluateDna:
     """evaluation.py 特征锚：evaluate_dna 降级与主路径。"""
 
     @staticmethod
@@ -324,7 +325,7 @@ class TestEvaluateDnaFeature:
         assert result["used_real_data"] is False
 
 
-class TestEvaluatePopulationFeature:
+class TestEvaluatePopulation:
     """evaluation.py 特征锚：批量评估与回退。"""
 
     @staticmethod
@@ -350,7 +351,7 @@ class TestEvaluatePopulationFeature:
         assert pop[0]._eval_diagnostics["used_real_data"] is True
 
 
-class TestStage4BlindSpotFillFeature:
+class TestStage4BlindSpotFill:
     """阶段四盲区消解补锚：降级路径与大种群采样分支。"""
 
     def test_evaluate_population_outer_fallback_on_bad_requirements(self, tmp_path):

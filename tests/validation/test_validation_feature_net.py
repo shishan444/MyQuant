@@ -5,6 +5,7 @@
 load_mtf_data 与 get_timeframe_minutes 的 fallback 解析、
 validate_hypothesis 与 evaluate_rules 两个引擎主流程从未被执行。
 
+0.3.7 H7 归位：目录/类名已去平行批次后缀（*_Feature 消除）。
 语义约定（阶段四 V3 化）：经 32 卡修复队列与裁决沉淀，锚定行为
 已是团队确认的规格契约；断言值经真实执行钉住，预期依据随断言注释。
 数据确定性构造。
@@ -51,7 +52,7 @@ def _write_parquet(tmp_path, name: str, df: pd.DataFrame) -> str:
 # 1. mtf.get_timeframe_minutes（表外周期 fallback 解析未执行）
 # ===========================================================================
 
-class TestGetTimeframeMinutesFeature:
+class TestGetTimeframeMinutes:
     """mtf.py 特征锚：表内查表 / Nh·Nm·Nd·Nw fallback / 未知拒绝。"""
 
     @pytest.mark.parametrize(
@@ -80,7 +81,7 @@ class TestGetTimeframeMinutesFeature:
 # 2. mtf.load_mtf_data（整体未执行）
 # ===========================================================================
 
-class TestLoadMtfDataFeature:
+class TestLoadMtfData:
     """mtf.py 特征锚：多周期加载 / 缺失跳过 / 空数据跳过 / 日期过滤。"""
 
     @staticmethod
@@ -153,7 +154,7 @@ class TestLoadMtfDataFeature:
 # 3. engine.validate_hypothesis（主流程 L88-272 大块未执行）
 # ===========================================================================
 
-class TestValidateHypothesisFeature:
+class TestValidateHypothesis:
     """engine.py 特征锚：主流程 / 空数据 / MTF 引用 / THEN 窗口。"""
 
     @staticmethod
@@ -408,7 +409,7 @@ class TestValidateHypothesisFeature:
 # 4. engine._evaluate_conditions（空条件 / OR 组合）
 # ===========================================================================
 
-class TestEvaluateConditionsFeature:
+class TestEvaluateConditions:
     """engine.py 条件组合特征锚。"""
 
     @staticmethod
@@ -449,7 +450,7 @@ class TestEvaluateConditionsFeature:
 # 5. engine._evaluate_single_condition（解析三分支 + 动作派发）
 # ===========================================================================
 
-class TestEvaluateSingleConditionFeature:
+class TestEvaluateSingleCondition:
     """engine.py 单条件求值特征锚：解析失败降级与动作派发。"""
 
     @staticmethod
@@ -667,7 +668,7 @@ class TestEvaluateSingleConditionFeature:
 # 6. engine._resolve_target / _resolve_subject（跨周期与 registry 解析）
 # ===========================================================================
 
-class TestResolveFeature:
+class TestResolve:
     """engine.py 解析层特征锚。"""
 
     @staticmethod
@@ -754,7 +755,7 @@ class TestResolveFeature:
 # 7. engine._check_then_conditions 补锚（ge/le 精确边界）
 # ===========================================================================
 
-class TestCheckThenBoundaryFeature:
+class TestCheckThenBoundary:
     """engine.py THEN 条件边界补锚。"""
 
     @staticmethod
@@ -798,7 +799,7 @@ class TestCheckThenBoundaryFeature:
 # 8. rule_engine.evaluate_rules（主流程 L88-202 未执行）
 # ===========================================================================
 
-class TestEvaluateRulesFeature:
+class TestEvaluateRules:
     """rule_engine.py 特征锚：主流程 / 空数据 / MTF / 组合语义。"""
 
     def test_file_not_found_returns_warning(self, tmp_path):
@@ -928,7 +929,7 @@ class TestEvaluateRulesFeature:
 # 9. _evaluate_conditions 共享组合实现（CARD-01 后 rule_engine 退役私有副本）
 # ===========================================================================
 
-class TestEvaluateConditionsSharedFeature:
+class TestEvaluateConditionsShared:
     """engine._evaluate_conditions 共享实现特征锚：每条件自带 logic 逐条
     累积、首条件 logic 忽略、IF≡AND。CARD-01 前这些锚指向
     rule_engine._evaluate_rule_conditions（已退役删除），锚定语义原样
@@ -1027,7 +1028,7 @@ class TestEvaluateConditionsSharedFeature:
 # 10. CARD-05：_lookback_condition window 坏值/零/负结构化拒绝
 # ===========================================================================
 
-class TestLookbackWindowValidationFeature:
+class TestLookbackWindowValidation:
     """CARD-05 锚：window 裸穿 rolling(window=0) 的 500 改 ResearchError。"""
 
     @staticmethod
@@ -1069,7 +1070,7 @@ class TestLookbackWindowValidationFeature:
         assert len(mask) == 3
 
 
-class TestStage4BlindSpotFillFeature:
+class TestStage4BlindSpotFill:
     """阶段四盲区消解补锚：判定路径上被前置拦截掩盖的兜底分支。"""
 
     def test_then_default_branch_bad_threshold_falls_back_zero(self):

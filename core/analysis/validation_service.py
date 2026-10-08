@@ -477,7 +477,10 @@ def run_isolated_backtest(
                 status=409,
                 detail={"missing": missing})
         from core.analysis.thresholds import tighten_profile
-        effective_profile = threshold_profile or tighten_profile()
+        # 0.3.7 C1（Q1=A 已裁）：组合分支恒收紧——原 truthy 短路使显式
+        # default 档绕开收紧，与 R5「组合 MUST 加严」意图背离；上方
+        # :470 非组合行的 threshold_profile 直传语义不变
+        effective_profile = tighten_profile()
         components_json = json.dumps(
             [s["ref"] for s in plugin_sources], ensure_ascii=False)
 

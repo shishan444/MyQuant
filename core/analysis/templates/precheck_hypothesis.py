@@ -5,7 +5,7 @@
 配——判定标尺与 param_sweep 三道门同构，不接受调用方配置）：
 
 1. 组合统计：when 条件全集 AND 交集逐 bar 求值（condition_kernel.
-   ``_mask_for`` 逐条件 → ``&`` 交集；高周期条件经 MtfEvalContext
+   ``mask_for`` 逐条件 → ``&`` 交集；高周期条件经 MtfEvalContext
    掩码投影零改）——触发数/触发率/前向收益分布/基准对照（全统计段
    无条件前向收益）。口径一致性由 test_cross_engine_parity 互证锚
    守护（语义一致而非实现同源，design D1）。
@@ -45,7 +45,7 @@ import pandas as pd
 
 from core.analysis.condition_kernel import (
     MtfEvalContext,
-    _mask_for,
+    mask_for,
     collect_condition_plugin_columns,
     collect_condition_refs,
     stat_window_mask,
@@ -218,11 +218,11 @@ def _combo_mask(
     work: pd.DataFrame, when_conditions: List[Dict[str, Any]],
     mtf: Optional[MtfEvalContext] = None,
 ) -> pd.Series:
-    """组合 AND 交集（design D1：逐条件 _mask_for 后 & 累积——掩码
+    """组合 AND 交集（design D1：逐条件 mask_for 后 & 累积——掩码
     求值就地富集 work，指标现算/mtf 缓存列幂等）。"""
     combo = pd.Series(True, index=work.index)
     for cond in when_conditions:
-        combo = combo & _mask_for(work, cond, mtf)
+        combo = combo & mask_for(work, cond, mtf)
     return combo
 
 

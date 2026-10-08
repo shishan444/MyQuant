@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
+from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask
 from core.analysis.warmup_loader import to_utc
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
@@ -195,7 +195,7 @@ def regime_split(
     by_segment: Optional[List[Dict[str, Any]]] = None
     if condition is not None:
         fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
-        stat_mask_all = _mask_for(df, condition, mtf=mtf)
+        stat_mask_all = mask_for(df, condition, mtf=mtf)
         by_segment = []
         for i, s in enumerate(segments):
             in_seg = pd.Series(False, index=df.index)
@@ -204,7 +204,7 @@ def regime_split(
             hit = fwd_all[sm].dropna()
             baseline = fwd_all[in_seg].dropna()
             baseline_mean = float(baseline.mean()) if len(baseline) else None
-            p_value, n_valid = _p_value_for(
+            p_value, n_valid = p_value_for(
                 fwd_all, sm.values, forward_bars, baseline_mean)
             if len(hit) < _MIN_SEGMENT_SAMPLES:
                 state_v = "insufficient_sample"

@@ -66,7 +66,7 @@ class TestEventStudy:
     def test_single_event_std_pvalue_none(self) -> None:
         """CARD-08 防 NaN 分支（n<2）：单事件无自由度——std 与
         p_value 均为可检性 None（NaN 会在响应序列化裸崩，先例
-        _p_value_for 的 None 语义）。"""
+        p_value_for 的 None 语义）。"""
         n = 60
         idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
                             name="timestamp")
@@ -164,7 +164,7 @@ class TestSimilarAtTime:
 
 class TestEventStudyTimeframeKey:
     """0.2.14 第七求值点收口：event_study 条件携带 timeframe 键经
-    _mask_for 掩码投影；无 ctx 带键=显式接线错误拒。"""
+    mask_for 掩码投影；无 ctx 带键=显式接线错误拒。"""
 
     @staticmethod
     def _mtf_env(tmp_path):
@@ -238,3 +238,46 @@ class TestGapClosureEventPattern:
         with pytest.raises(ValueError, match="早于数据起点"):
             similar_at_time(_make_df(300), as_of="2020-01-01",
                             n_neighbors=30, data_ranges=RANGES)
+
+
+class TestSimilarCaseFutureWindowExplicit:
+    """0.3.7 B8（方向 a）：未来窗口缺失显式化——null 非置 0+边界披露。
+
+    事实修正（实施期亲核）：KNN 邻居池 fit 时已排除尾部 NaN 行
+    （valid_mask），find_similar 返回案例恒有完整未来窗口——None
+    分支为防御面。锚三件：非尾部数值语义不变 / 披露契约 / 防御
+    分支 None 语义（不可达判定锚——monkeypatch 强制触达）。"""
+
+    def test_非尾部案例_数值语义不变(self) -> None:
+        df = _make_df(300)
+        as_of = str(df.index[-60])
+        res = similar_at_time(df, as_of=as_of, n_neighbors=20, horizon=12,
+                              data_ranges=RANGES)
+        vals = [nb["future_return_pct"] for nb in res.payload["neighbors"]]
+        assert vals and all(isinstance(v, float) for v in vals)
+        # 显式化不改变可计算案例：数值仍在（对照手工口径可复算）
+
+    def test_数据边界披露契约(self) -> None:
+        df = _make_df(300)
+        res = similar_at_time(df, as_of=str(df.index[-60]),
+                              n_neighbors=20, horizon=12, data_ranges=RANGES)
+        # 披露=horizon（尾部 horizon bar 无未来窗口；N 与窗口独立核算）
+        assert res.payload["future_window_horizon"] == 12
+        assert res.payload["tail_bars_without_future"] == 12
+
+    def test_防御分支_尾部NaN行产出None不置0(self) -> None:
+        # 不可达判定锚：正常入口的案例池恒排除尾部行；强制把邻居池
+        # 指向尾部 NaN 行验证防御语义——None（无数据）而非 0（假收益）
+        from core.discovery.knn_engine import SimilarCaseEngine
+
+        df = _make_df(300)
+        engine = SimilarCaseEngine(n_neighbors=5, horizon=12).fit(df)
+        assert engine.nn is not None
+        # 强制邻居池指向最后一行（尾部 NaN 行——正常 valid_mask 不会）
+        engine._valid_indices = np.array([len(df) - 1])
+        feats = engine.encoder.transform(df.iloc[[0]]).reshape(-1)
+        cases = engine.find_similar(feats, n_neighbors=1)
+        assert len(cases) == 1
+        assert cases[0].future_return_pct is None
+        assert cases[0].future_high_pct is None
+        assert cases[0].future_low_pct is None

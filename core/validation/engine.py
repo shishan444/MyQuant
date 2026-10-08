@@ -5,7 +5,7 @@ rule_engine（进出场配对共用 _evaluate_conditions）、condition_kernel
 与 analysis/templates/condition_stats（_evaluate_single_condition 为
 二者的兜底求值路径）、tests/analysis 对比基准链。职责边界：WHEN
 触发识别 → THEN 前瞻窗口核验 → 统计聚合（分布/分位/集中度/信号
-频率/极值）；条件求值原语委托 condition_kernel._mask_for，本模块
+频率/极值）；条件求值原语委托 condition_kernel.mask_for，本模块
 不自持掩码语义。
 """
 from __future__ import annotations
@@ -316,10 +316,10 @@ def _evaluate_conditions(
         return pd.Series(False, index=df.index)
 
     result: Optional[pd.Series] = None
-    from core.analysis.condition_kernel import _mask_for
+    from core.analysis.condition_kernel import mask_for
 
     for i, cond in enumerate(conditions):
-        mask = _mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
+        mask = mask_for(df, cond, mtf=mtf)   # 0.2.14 三分派（mtf 透传）
         # 逐条件语义：每个条件自身的 logic 与累积结果组合；
         # 首条件无累积对象，其 logic 忽略；IF 与 AND 布尔级等价
         logic = cond.get("logic", "AND") if i > 0 else None
@@ -529,6 +529,12 @@ def _cross_below_series_condition(
     return (subject_series.shift(1) > target_series.shift(1)) & (subject_series <= target_series)
 
 
+# 0.3.7 TD-11：lookback 族内层动作合法集（与 _lookback_condition 求值
+# 分支同源防漂移——枚举对拍锚守护；缺省 price_above 是既有契约）
+_LOOKBACK_INNER_ACTIONS = frozenset(
+    {"gt", "lt", "ge", "le", "price_above"})
+
+
 def _lookback_condition(
     df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
 ) -> pd.Series:
@@ -556,15 +562,22 @@ def _lookback_condition(
         )
 
     inner_action = cond.get("inner_action", "price_above")
-    target_val = cond.get("target", 0)
+    if inner_action not in _LOOKBACK_INNER_ACTIONS:
+        # 0.3.7 TD-11：非法内层动作结构化拒绝——原静默走 else 分支
+        # （price_above 缺省）使意图错位且无提示；缺省本身仍是既有契约
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"condition.inner_action 未知: {inner_action!r}",
+            detail={"param": "condition.inner_action",
+                    "value": inner_action,
+                    "legal_values": sorted(_LOOKBACK_INNER_ACTIONS),
+                    "hint": "inner_action 须为合法动作集之一"})
 
     if inner_action in ("gt", "lt", "ge", "le"):
-        threshold = target_val
-        if isinstance(threshold, str):
-            try:
-                threshold = float(threshold)
-            except (ValueError, TypeError):
-                threshold = 0
+        # 0.3.7 TD-11：target 坏值结构化拒绝（原坏串静默归 0 变成
+        # threshold=0 的失真比较）——复用 _cond_number（window 键
+        # F-2 先例同码族），缺省 0 保留
+        threshold = _cond_number(cond, "target", 0)
         if inner_action == "gt":
             inner_signal = subject_series > threshold
         elif inner_action == "lt":
@@ -645,7 +658,6 @@ def _check_then_conditions(
     """
     for cond in conditions:
         action = cond.get("action", "")
-        target_val = cond.get("target", 0)
 
         # 逐条件窗口：条件自带更小窗口时截窗判定
         cond_window = cond.get("window")
@@ -657,10 +669,9 @@ def _check_then_conditions(
         if len(cond_df) == 0:
             continue
 
-        try:
-            threshold = float(target_val)
-        except (ValueError, TypeError):
-            threshold = 0
+        # 0.3.7 TD-11：THEN 侧 target 坏值同规收口（原静默归 0——
+        # WHEN/THEN 两通道同构，无静默侧）
+        threshold = _cond_number(cond, "target", 0)
 
         if action in ("drop", "lt", "le"):
             min_price = cond_df["close"].min()

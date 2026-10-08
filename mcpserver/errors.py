@@ -50,6 +50,10 @@ HINTS: Dict[str, str] = {
     "RESEARCH_DATA_INSUFFICIENT":
         "区间数据不足：扩大区间，或换 list_data_sources 中 bar 数充足的"
         "品种/周期",
+    "RESEARCH_DATA_EMPTY":
+        "区间无数据（数据空非请求错）：按 detail 的 series_span 调整"
+        "分组窗口至数据覆盖范围内，或先用 list_data_sources 确认该"
+        "品种/周期的数据区间",
     "RESEARCH_WARMUP_INSUFFICIENT":
         "warmup 不足：换 lookback 更短的指标（参数范围见 "
         "list_indicators）、降低请求周期，或扩大该品种的可得数据前缀"

@@ -308,7 +308,7 @@ class TestCrossIndicatorLoading:
 
     def test_regime_split_cross_indicator_covered(self, api_client,
                                                   error_env):
-        """D14 留档断言：regime_split 求值链经 _mask_for（3b 一处修复
+        """D14 留档断言：regime_split 求值链经 mask_for（3b 一处修复
         自动覆盖）——跨指标条件在分段统计中真实求值。"""
         _wire(api_client, error_env)
         cond = {"subject": {"indicator": "SMA", "params": {"period": 50},

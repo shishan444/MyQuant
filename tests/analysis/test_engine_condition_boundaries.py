@@ -94,16 +94,45 @@ class TestPatternActionBoundaries:
 
 
 class TestLookbackTargetBoundary:
-    """lookback_any 内层阈值坏 str → threshold=0 兜底（不炸不 500）。"""
+    """0.3.7 TD-11：lookback 内层 target/inner_action 坏值结构化拒绝。
 
-    def test_target列名形_threshold兜底0_照常产出掩码(self, df):
-        """target 为列名（cond 直取原值 str，float 解析失败兜底 0）——
-        close > 0 恒真 → 窗口 any → 窗口推进后全真。"""
+    原锚（F-2 期）：target 列名形坏 str → threshold=0 静默兜底——该
+    行为正是 TD-11 裁决消灭的静默变形（坏值变 threshold=0 的失真
+    比较），锚随规格改写为拒绝语义。"""
+
+    def test_target坏str_结构化拒绝不归零(self, df):
+        with pytest.raises(ResearchError) as ei:
+            _evaluate_single_condition(df, {
+                "subject": "close", "action": "lookback_any",
+                "inner_action": "gt", "target": "close", "window": 3})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.target"
+        assert (ei.value.detail or {})["value"] == "close"
+
+    def test_inner_action非法值_结构化拒绝不缺省(self, df):
+        with pytest.raises(ResearchError) as ei:
+            _evaluate_single_condition(df, {
+                "subject": "close", "action": "lookback_any",
+                "inner_action": "cross_above", "target": 100.0,
+                "window": 3})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["legal_values"] == [
+            "ge", "gt", "le", "lt", "price_above"]
+
+    def test_inner_action合法集对拍_防分支漂移(self):
+        # 枚举对拍锚：期望硬编 vs 实现 frozenset（求值分支增删时此锚红）
+        from core.validation.engine import _LOOKBACK_INNER_ACTIONS
+        assert set(_LOOKBACK_INNER_ACTIONS) == {
+            "gt", "lt", "ge", "le", "price_above"}
+
+    def test_缺省inner_action_price_above_既有契约保持(self, df):
+        # 红线①：缺省是既有契约——不传 inner_action 仍按 price_above
+        # （close > close 逐位 False → any 窗口仍全 False）
         out = _evaluate_single_condition(df, {
             "subject": "close", "action": "lookback_any",
-            "inner_action": "gt", "target": "close", "window": 3})
+            "target": 0, "window": 3})
         assert isinstance(out, pd.Series) and out.dtype == bool
-        assert bool(out.iloc[3:].all())
+        assert not bool(out.iloc[3:].any())
 
 
 class TestSpikeShrinkBoundaries:
@@ -347,3 +376,23 @@ class TestResolveTargetSplitGuardUnreachable:
     （maxsplit=1 下 len 只能为 2）——:453 ``len(parts) == 2`` 恒真，
     False 侧无输入路径（防御分支）。
     """
+
+
+class TestThenTargetBoundary:
+    """0.3.7 TD-11 THEN 侧同规：坏 target 与 WHEN 侧同一拒绝语义。"""
+
+    def test_then_target坏str_同构拒绝(self, df):
+        from core.validation.engine import _check_then_conditions
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(df, [
+                {"action": "drop", "target": "close", "window": 4}],
+                trigger_price=100.0)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.target"
+
+    def test_then_target缺省0_既有契约保持(self, df):
+        from core.validation.engine import _check_then_conditions
+        # 缺省 0：drop change <= 0 触发（跌即匹配）
+        out = _check_then_conditions(df, [{"action": "drop"}],
+                                     trigger_price=10**9)
+        assert isinstance(out, bool)
