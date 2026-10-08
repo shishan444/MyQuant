@@ -277,6 +277,34 @@ class TestParamGuardRouteSmoke:
         assert "RESEARCH_PARAM_INVALID" in resp.text
         assert "returns" in resp.text          # legal_range 枚举清单附出
 
+    @pytest.mark.parametrize("mutate", [
+        lambda p: p.update(group_a="2024-02-10/2024-02-15"),       # 字符串形
+        lambda p: p.update(group_a=["2024-02-10", "2024-02-15"]),  # 列表形
+        lambda p: p.update(group_a={"start": "2024-02-10T00:00:00Z"}),  # 缺 end
+        lambda p: p.update(group_b={"start": "not-a-time",
+                                    "end": "2024-02-20T00:00:00Z"}),  # 值非时间串
+    ], ids=["group_a字符串形", "group_a列表形", "group_a缺end键",
+            "group_b值非时间串"])
+    def test_distribution_compare_bad_time_window_422(
+            self, api_client, paths_env, mutate):
+        """TD-A 时间窗形路由级锚（specs「时间窗形参数非法拒绝」）：
+        非对象形/缺键/值非时间串经守卫统一 422 附合法形说明——不落入
+        TypeError / KeyError 的 500（通道错置修正在路由面的区分证据；
+        函数级全域参数化见 test_param_guard）。
+        """
+        _wire(api_client, paths_env)
+        params = {"column": "close", "transform": "returns",
+                  "group_a": {"start": "2024-02-10T00:00:00Z",
+                              "end": "2024-02-15T00:00:00Z"},
+                  "group_b": {"start": "2024-02-15T00:00:00Z",
+                              "end": "2024-02-20T00:00:00Z"}}
+        mutate(params)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "distribution_compare", params))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "start" in resp.text            # 合法形说明附出（错误即文档）
+
 
 class TestParamGuardHeavyChannel:
     """TD-2 两通道契约后半（specs「数值参数非法结构化拒绝」）：恒 heavy
@@ -313,6 +341,36 @@ class TestParamGuardHeavyChannel:
         assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
         assert "n_neighbors" in t["reason"]          # 参数名可解析（错误即文档）
 
+    def test_pattern_mining_bad_as_of_failed_reason_carries_code(
+            self, api_client, paths_env):
+        """TD-A 时间形恒异步通道锚（specs「时间形参数非法拒绝」）：
+        as_of 不可解析时间串经 202 重组通道落 failed 终态，reason 携带
+        [RESEARCH_PARAM_INVALID] 前缀与参数名——不落入无结构化错误码的
+        failed（函数级 ResearchError 语义见 test_param_guard，此处证
+        路由通道转换；n_neighbors 取合法值隔离单因素）。db 不覆写形制
+        同上——executor 单例绑 lifespan 启动库。
+        """
+        import time
+
+        api_client.app.state.data_dir = paths_env["data_dir"]
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "pattern_mining", {"as_of": "not-a-time", "n_neighbors": 3}))
+        assert resp.status_code == 202, resp.text    # 恒 heavy 不因校验变 422
+        task_id = resp.json()["task_id"]
+
+        t: dict = {}
+        for _ in range(60):  # 轮询到终态（404 为入库竞态窗口，重试）
+            poll = api_client.get(
+                f"/api/research/analysis/tasks/{task_id}")
+            if poll.status_code == 200:
+                t = poll.json()
+                if t["status"] in ("succeeded", "failed"):
+                    break
+            time.sleep(0.5)
+        assert t.get("status") == "failed", t
+        assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
+        assert "as_of" in t["reason"]                # 参数名与合法形可解析
+
 
 class TestHeavyCountVariantFallback:
     """0.3.3 C-β heavy 计数的变体防御路由级锚：变体 parquet（index 名
@@ -338,3 +396,189 @@ class TestHeavyCountVariantFallback:
             "correlation_scan", {"signal_column": "close"}))
         assert resp.status_code == 200, resp.text
         assert resp.json()["template"] == "correlation_scan"
+
+
+class TestTemplateTriggerPolicy:
+    """三模板事件口径（trigger-policy 卡4 / tasks 5.1-5.3 对账锚）。
+
+    独立对照法（event_study 事件位复算）+ 强区分关系锚（恒真条件下
+    first_true 事件=1 vs 缺省=统计段全体——变换域=统计段过滤后，与
+    统计链 /api/validate 同域）；报告声明生效策略；缺省与显式 none
+    一致；bars 超界结构化拒绝（快路径同步 422）。
+
+    自建 1400 bar 环境：EMA 周期类 warmup 需求 600 bar 前扩（注册表
+    参数上限保守取向），paths_env 的 500 bar 区间前扩不足；阈值取
+    区间段中位（随机游走漂移下全量中位会使段掩码全 False）。
+    """
+
+    SEG = ("2024-01-10T00:00:00Z", "2024-02-10T00:00:00Z")
+
+    @pytest.fixture()
+    def tp_env(self, tmp_path: Path):
+        from tests.helpers.data_factory import make_ohlcv
+        df = make_ohlcv(n=1400, freq="4h", start="2023-09-01", seed=21)
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / f"{SYMBOL}_4h.parquet")
+        db = tmp_path / "tp.db"
+        init_db_ext(db)
+        return {"data_dir": data_dir, "db": db, "df": df}
+
+    def _cond(self, tp_env, target=None) -> dict:
+        if target is None:
+            seg = self._seg_df(tp_env)
+            target = float(seg["close"].median())
+        return {"subject": "close", "action": "gt", "target": repr(target)}
+
+    def _seg_df(self, tp_env) -> "pd.DataFrame":
+        df = tp_env["df"]
+        return df[(df.index >= pd.Timestamp(self.SEG[0]))
+                  & (df.index <= pd.Timestamp(self.SEG[1]))]
+
+    def _body(self, template, params):
+        return {"template": template, "params": params,
+                "data_range": {"symbol": SYMBOL, "timeframe": "4h",
+                               "start": self.SEG[0], "end": self.SEG[1]}}
+
+    # ---- event_study（5.1）----
+
+    def test_event_study_first_true_事件位独立复算(self, api_client, tp_env):
+        from core.analysis.event_policy import mask_to_events
+        _wire(api_client, tp_env)
+        seg = self._seg_df(tp_env)
+        th = float(seg["close"].median())
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {"condition": self._cond(tp_env),
+                            "min_events": 0, "window": 12,
+                            "trigger_policy": {"mode": "first_true"}}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        events = mask_to_events((seg["close"] > th).values,
+                                {"mode": "first_true"})
+        events = events[events + 12 < len(seg)]        # 尾部窗丢弃语义
+        assert payload["n_events"] == len(events)
+        assert payload["trigger_policy"] == {"mode": "first_true"}  # 声明
+
+    def test_event_study_显式none_与缺省_一致(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        base = {"condition": self._cond(tp_env), "min_events": 0}
+        r1 = api_client.post("/api/research/analysis",
+                             json=self._body("event_study", base)).json()
+        r2 = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {**base,
+                            "trigger_policy": {"mode": "none"}})).json()
+        assert r1["payload"] == r2["payload"]
+
+    def test_event_study_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "event_study", {"condition": self._cond(tp_env),
+                            "min_events": 0,
+                            "trigger_policy": {"mode": "suppress_bars",
+                                               "bars": 100000}}))
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+
+    # ---- condition_stats（5.2）----
+
+    CSI = {"indicator": "EMA", "params": {"period": 50}}
+
+    def test_condition_stats_first_true_事件口径(self, api_client, tp_env):
+        """恒真条件（close>0）：缺省=统计段全体命中，first_true=1——
+        变换域=统计段（段首=统计段第一个 bar）的强区分锚。"""
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        base = {**self.CSI, "condition": cond, "min_samples": 0}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", base)).json()["payload"]
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**base,
+                                "trigger_policy": {"mode": "first_true"}}
+        )).json()["payload"]
+        assert r_plain["hit_count"] > 100            # 统计段全体（直译）
+        assert r_event["hit_count"] == 1             # 唯一段首（事件）
+        assert r_event["trigger_policy"] == {"mode": "first_true"}
+
+    def test_condition_stats_sample_size_随事件集(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        base = {**self.CSI, "condition": self._cond(tp_env),
+                "min_samples": 0}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", base)).json()
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**base,
+                                "trigger_policy": {"mode": "first_true"}}
+        )).json()
+        assert 0 < r_event["sample_size"] <= r_plain["sample_size"]  # 上界
+
+    def test_condition_stats_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "condition_stats", {**self.CSI,
+                                "condition": self._cond(tp_env),
+                                "trigger_policy": {"mode": "suppress_bars",
+                                                   "bars": 100000}}))
+        assert resp.status_code == 422
+
+    # ---- precheck_hypothesis（5.3）----
+
+    VR = {"symbol": SYMBOL, "timeframe": "4h",
+          "start": "2024-02-11T00:00:00Z", "end": "2024-02-25T00:00:00Z"}
+
+    def test_precheck_带策略_事件口径与basis切换(self, api_client, tp_env):
+        """恒真条件：first_true 事件=统计段段首 1 个——n_triggers=1、
+        basis 切 event_density（口径差分形态声明）。"""
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        base = {"when_conditions": [cond], "validate_range": self.VR}
+        r_plain = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", base)).json()
+        r_event = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", {**base,
+                                    "trigger_policy": {"mode": "first_true"}}
+        )).json()
+        fp_plain = r_plain["payload"]["frequency_projection"]
+        fp_event = r_event["payload"]["frequency_projection"]
+        assert fp_plain["basis"] == "trigger_density_upper_bound"
+        assert fp_event["basis"] == "event_density"
+        assert fp_event["trigger_policy"] == {"mode": "first_true"}
+        # 恒真：缺省 n_triggers=统计段全体，first_true=1
+        assert r_plain["payload"]["combination_stats"]["n_triggers"] > 100
+        assert r_event["payload"]["combination_stats"]["n_triggers"] == 1
+
+    def test_precheck_bars_超界_422(self, api_client, tp_env):
+        _wire(api_client, tp_env)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis", {
+                "when_conditions": [self._cond(tp_env)],
+                "validate_range": self.VR,
+                "trigger_policy": {"mode": "suppress_bars",
+                                   "bars": 100000}}))
+        assert resp.status_code == 422
+
+    def test_precheck_带策略外推数值独立复算(self, api_client, tp_env):
+        """外推数值闭环（specs「带策略外推事件密度一致」+ trigger-policy
+        「预估与实跑口径闭环」）：恒真 + first_true → 唯一事件=统计段
+        段首；density=事件数/统计段 bar 数、projected=density×拟验证段
+        bar 数——全部独立复算（stat 窗=[SEG0,∞)∩装载区间=统计段闭端、
+        validate 窗=目录级全量数据上半开 [VR0,VR1)）；三态阈值作用
+        对象=预估事件数 → warn。
+        """
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis",
+            {"when_conditions": [cond], "validate_range": self.VR,
+             "trigger_policy": {"mode": "first_true"}}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        fp = payload["frequency_projection"]
+        seg = self._seg_df(tp_env)               # 统计段（闭端，同 5.1 复算域）
+        vdf = tp_env["df"]
+        validate_bars = int(((vdf.index >= pd.Timestamp(self.VR["start"]))
+                             & (vdf.index < pd.Timestamp(self.VR["end"]))
+                             ).sum())
+        assert fp["density"] == pytest.approx(1 / len(seg))
+        assert fp["projected_trades"] == pytest.approx(validate_bars / len(seg))
+        assert fp["validate_bars"] == validate_bars
+        assert payload["verdict"] == "warn"      # 0 < 预估事件数 < 5

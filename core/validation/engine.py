@@ -71,6 +71,7 @@ def validate_hypothesis(
     data_dir: Optional[str] = None,
     base_timeframe: Optional[str] = None,
     mtf: Optional["MtfEvalContext"] = None,
+    trigger_policy: Optional[Dict[str, Any]] = None,
 ) -> ValidationResult:
     """对历史数据验证 WHEN→THEN 假设。
 
@@ -165,6 +166,17 @@ def validate_hypothesis(
 
     # 触发点定位
     trigger_indices = enhanced_df.index[when_mask].tolist()
+
+    # trigger-policy 卡3：带策略时掩码经权威变换为事件位置（/api/validate
+    # 统计链单点分支——无策略路径上面原语句逐字不动；归一形由调用侧
+    # validate_policy 产出）。bars 上界为求值侧值域校验（D12——登记侧
+    # 仅形制，此处数据已加载，与 forward_bars 同窗同语义；CARD-03 收敛
+    # require_bars_within 单点，param 名保真统计链声明键）。
+    if trigger_policy is not None:
+        from core.analysis.event_policy import mask_to_events, require_bars_within
+        require_bars_within(trigger_policy, len(df), "trigger_policy")
+        event_pos = mask_to_events(when_mask.values, trigger_policy)
+        trigger_indices = enhanced_df.index[event_pos].tolist()
 
     if not trigger_indices:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0, warnings=warnings)

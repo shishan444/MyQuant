@@ -18,7 +18,11 @@ from scipy import stats as sps
 
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.templates.column_guard import require_column
-from core.analysis.templates.param_guard import _require_enum, _require_int_range
+from core.analysis.templates.param_guard import (
+    _require_enum,
+    _require_int_range,
+    _require_time_window,
+)
 
 
 def distribution_compare(
@@ -48,9 +52,13 @@ def distribution_compare(
 
     # TD-2 入参守卫（clear-analysis-tds）：transform 枚举封闭（消灭非法
     # 串静默落 raw 语义的结论污染）；阈值类 0..无上界
+    # TD-A 时间窗守卫（trigger-policy 卡6）：非对象形/缺键/值非时间串
+    # 现状 TypeError/KeyError 落 500 的通道错置修正
     _require_enum(transform, name="transform",
                   choices=("returns", "log_returns", "raw"))
     _require_int_range(min_samples, name="min_samples", lo=0)
+    _require_time_window(group_a, name="group_a")
+    _require_time_window(group_b, name="group_b")
 
     if transform == "returns":
         series = df[column].pct_change().dropna()

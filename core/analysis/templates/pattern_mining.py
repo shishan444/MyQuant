@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.templates.param_guard import _require_int_range
+from core.analysis.templates.param_guard import (
+    _require_int_range,
+    _require_iso_datetime,
+)
 from core.analysis.warmup_loader import to_utc
 
 
@@ -47,8 +50,12 @@ def similar_at_time(
     # 意义）；窗口类 1..len(df)-1。本模板恒异步（恒 heavy）——校验拒绝
     # 落 failed 终态（reason 前缀 [RESEARCH_PARAM_INVALID]），无同步
     # 422 通道（specs 两通道语义）
+    # TD-A 时间形守卫（trigger-policy 卡6）：as_of 不可解析现状落裸
+    # ValueError（恒异步通道无结构化码）的通道错置修正；可解析但超
+    # 数据范围走既有数据范围语义不拦截
     _require_int_range(n_neighbors, name="n_neighbors", lo=1)
     _require_int_range(horizon, name="horizon", lo=1, hi=len(df) - 1)
+    _require_iso_datetime(as_of, name="as_of")
 
     from core.discovery.knn_engine import SimilarCaseEngine
 

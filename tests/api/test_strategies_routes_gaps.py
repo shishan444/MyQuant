@@ -238,3 +238,27 @@ class TestCrudGaps:
         assert _gene_signature_or_derive(
             {"gene_signature": None, "dna_json": "{corrupt"},
         ) is None
+
+
+class TestRowTransformCorruptDnaDegrades:
+    """crud 行转换坏 dna_json 容错：解析/校验失败 → dna=None 不炸。"""
+
+    def test_bad_dna_json_degrades_to_none(self):
+        from api.routes.strategies.crud import _strategy_row_to_response
+
+        row = {"strategy_id": "s_bad", "symbol": "BTCUSDT",
+               "timeframe": "4h", "created_at": "2024-01-01T00:00:00Z",
+               "updated_at": "2024-01-01T00:00:00Z",
+               "dna_json": "not-json-at-all"}
+        resp = _strategy_row_to_response(row)
+        assert resp.dna is None
+
+    def test_row_without_dna_json_key(self):
+        """row 无 dna_json 键 → 跳过解析块 dna=None 直通。"""
+        from api.routes.strategies.crud import _strategy_row_to_response
+
+        row = {"strategy_id": "s_nodna", "symbol": "BTCUSDT",
+               "timeframe": "4h", "created_at": "2024-01-01T00:00:00Z",
+               "updated_at": "2024-01-01T00:00:00Z"}
+        resp = _strategy_row_to_response(row)
+        assert resp.dna is None

@@ -182,3 +182,117 @@ class TestFailedGeneReturnsFalseSignal:
         # Should not crash, exits should be all False
         assert results[0].exits.sum() == 0
         clear_indicator_cache()
+
+
+_ALL_ROLES = [
+    SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD,
+    SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD,
+    SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD,
+    SignalRole.REDUCE_TRIGGER, SignalRole.REDUCE_GUARD,
+]
+
+
+class TestBatchAllRolesRouted:
+    """batch 单周期组装八角色分组完备面（与 dna_to_signal_set 同构接线）。"""
+
+    def test_all_roles_routed_to_channels(self):
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
+        )
+
+        clear_indicator_cache()
+        df = make_enhanced_df(n=120)
+        genes = [
+            make_signal_gene(
+                role=role,
+                condition_type=("lt" if role in (
+                    SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD,
+                    SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD) else "gt"),
+                condition_value=100,
+            )
+            for role in _ALL_ROLES
+        ]
+        dna = StrategyDNA(
+            signal_genes=genes,
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+        )
+        results = batch_signal_sets([dna], df)
+        assert len(results) == 1
+        sig = results[0]
+        # entry/add 基因恒真（rsi lt 100；前 14 根 rsi 为 NaN→False 的
+        # warmup 段除外）、exit/reduce 恒假——分组接线可判别
+        assert bool(sig.entries.iloc[20:].all())
+        assert not sig.exits.any()
+        assert bool(sig.adds.iloc[20:].all())
+        assert not sig.reduces.any()
+        clear_indicator_cache()
+
+
+class TestBatchMtfGenericErrorDegrades:
+    """batch MTF 个体非 ResearchError 异常 → 空集降级不炸批（单点兜底）；
+    ResearchError 透传另由 6.3 锚承载（不在此重复）。"""
+
+    def test_generic_exception_yields_empty_set(self, monkeypatch):
+        import core.strategy.executor as executor_mod
+
+        clear_indicator_cache()
+        df = make_enhanced_df(n=60)
+        mtf_dna = make_mtf_dna(timeframes=("1d", "4h"))
+        # 造 1d 对齐数据（batch MTF 需要 dfs_by_timeframe）
+        idx_1d = pd.date_range("2024-01-01", periods=8, freq="1D", tz="UTC")
+        df_1d = make_ohlcv(n=8)
+        df_1d.index = idx_1d
+        df_1d.index.name = "timestamp"
+
+        def _boom(dna, df_, dfs=None):
+            raise RuntimeError("engine exploded")
+
+        monkeypatch.setattr(executor_mod, "dna_to_signal_set", _boom)
+        results = batch_signal_sets(
+            [mtf_dna], df, dfs_by_timeframe={"1d": df_1d, "4h": df})
+        assert len(results) == 1
+        assert not results[0].entries.any()
+        assert not results[0].exits.any()
+        assert results[0].degraded_layers >= 0
+        clear_indicator_cache()
+
+
+class TestBatchDirectionGeneRouted:
+    """batch 单周期组装 DIRECTION 基因接线（mixed 方向取基因布尔；
+    非末位放置——处理完后回循环头继续组装其余基因）。"""
+
+    def test_direction_gene_routed(self):
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
+        )
+
+        clear_indicator_cache()
+        df = make_enhanced_df(n=120)
+        genes = [
+            make_signal_gene(role=SignalRole.DIRECTION,
+                             condition_type="lt", condition_value=100),
+            make_signal_gene(role=SignalRole.ENTRY_TRIGGER,
+                             condition_type="lt", condition_value=100),
+        ]
+        dna = StrategyDNA(
+            signal_genes=genes,
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        results = batch_signal_sets([dna], df)
+        sig = results[0]
+        assert bool(sig.entries.iloc[20:].all())
+        assert bool((sig.entry_direction.iloc[20:] == 1.0).all())
+
+
+class TestBatchRoleChainTailUnreachable:
+    """batch 组装角色链尾落空弧（executor.py [981,956]）不可达判定。
+
+    调用图依据：与 evaluate_layer/dna_to_signal_set 同构的九分支
+    elif 链（:965-986）对 SignalRole 九值全集完备——链尾 :981 的
+    False 侧（落空回循环头 :956）无合法基因形态（详见
+    test_phase4_mtf_roles.TestRoleDispatchChainTailUnreachable）。
+    """

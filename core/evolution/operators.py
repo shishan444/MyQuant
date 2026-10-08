@@ -297,8 +297,15 @@ def mutate_cross_logic(dna: StrategyDNA) -> StrategyDNA:
 
 
 def mutate_mtf_mode(dna: StrategyDNA) -> StrategyDNA:
-    """轮换 MTF mode 选项。"""
+    """轮换 MTF mode 选项。
+
+    带 entry_trigger_policy 的个体 no-op（trigger-policy D10/6.3 MTF
+    划界）：policy 与 MTF 层间组合语义无定义——不产生该形态子代
+    （引擎侧另有防御拒绝兜底）。
+    """
     if not dna.is_mtf:
+        return dna
+    if dna.entry_trigger_policy is not None:
         return dna
 
     modes = [None, "direction", "confluence", "direction+confluence"]
@@ -772,6 +779,13 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         mtf_mode=random.choice([parent_a.mtf_mode, parent_b.mtf_mode]),
         confluence_threshold=random.choice([parent_a.confluence_threshold, parent_b.confluence_threshold]),
         proximity_mult=random.choice([parent_a.proximity_mult, parent_b.proximity_mult]),
+        # 入场触发策略继承（trigger-policy D11 / Q5 裁决）：沿本函数
+        # 六处元字段 random.choice 先例——子代是全新基因型，触发声明
+        # 取其一亲代（v2 字段 signal_sources/composition 既有丢失为
+        # TD-E 存量缺陷，不搭车）
+        entry_trigger_policy=random.choice([
+            parent_a.entry_trigger_policy,
+            parent_b.entry_trigger_policy]),
     )
     return child
 

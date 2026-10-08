@@ -407,3 +407,48 @@ class TestDisclosureParity:
         for face_name, face in faces.items():
             for key in ("折算为前扩时长", "42bar=42天", "分属两式"):
                 assert key in face, f"{face_name} 缺高周期折算要素: {key}"
+
+
+class TestTriggerPolicyDisclosure:
+    """事件策略层披露面（trigger-policy tasks 7.1/7.2）。
+
+    三披露面（run_analysis/register_hypothesis 工具描述 + 能力自述）
+    MUST 携带三值枚举语义与「整理触发不创造触发」边界——工具经
+    @mcp.tool() 闭包注册无模块级属性，doc 断言走源码文本（同
+    TestDisclosureParity 取材纪律）；工具签名增 trigger_policy 后
+    schema 对拍（body 键 ⊆ Request 模型字段）由既有 TestSchemaParity
+    承载，本类跑通即对拍同步成立的证据。
+    """
+
+    _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _squash(text: str) -> str:
+        return "".join(text.split())
+
+    def test_register_hypothesis_doc_三枚举与边界(self) -> None:
+        src = self._squash(self._TOOLS_SRC)
+        for token in ('"none"|"first_true"|"suppress_bars"',
+                      "不创造触发", "幂等身份"):
+            assert token in src, f"register_hypothesis 描述缺要素: {token}"
+
+    def test_run_analysis_doc_事件口径与分形态(self) -> None:
+        src = self._squash(self._TOOLS_SRC)
+        for token in ("first_true", "suppress_bars", "event_density",
+                      "不创造触发", "逐字节不变"):
+            assert token in src, f"run_analysis 描述缺要素: {token}"
+
+    def test_capability_doc_事件策略层条目(self) -> None:
+        from mcpserver.capability import CAPABILITY_DOC
+        doc = self._squash(CAPABILITY_DOC)
+        for token in ("first_true", "suppress_bars", "同一权威变换",
+                      "不静默降级", "不创造触发"):
+            assert token in doc, f"能力自述缺要素: {token}"
+
+    def test_register_hypothesis_签名含_trigger_policy(self) -> None:
+        import re
+        m = re.search(
+            r"def register_hypothesis\((?:[^)]*\n)*?[^)]*"
+            r"trigger_policy: Optional\[dict\[str, Any\]\] = None",
+            self._TOOLS_SRC)
+        assert m is not None, "register_hypothesis 签名未增 trigger_policy"

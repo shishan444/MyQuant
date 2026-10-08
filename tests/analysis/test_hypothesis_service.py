@@ -325,3 +325,126 @@ class TestTransitionGaps:
                                   evidence_ref="rec_race")
         assert ei.value.code == "RESEARCH_HYPOTHESIS_TERMINAL"
         assert ei.value.status == 409
+
+
+class TestRegisterTriggerPolicy:
+    """登记链 trigger_policy（trigger-policy 卡2 / tasks 3.2 验证锚）。
+
+    D4 指纹语义的行为证据：归一非 None 时 conditions 顶层带
+    trigger_policy 键（hash 与存储同源）；缺省/显式 none 不写键——
+    与既有无策略假设同 hash 同身份（幂等键字面连续）。
+    """
+
+    RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-01-01T00:00:00Z",
+               "end": "2024-02-01T00:00:00Z"}]
+
+    def _conds(self) -> dict:
+        return {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": "close", "action": "gt", "target": 0}],
+        }
+
+    def _register(self, db, policy=None, ranges=None, **kw):
+        return register_hypothesis(
+            db, conditions=self._conds(), statement="s",
+            data_ranges=ranges or self.RANGES,
+            trigger_policy=policy, **kw)
+
+    def _stored_conditions(self, db, hid) -> dict:
+        import json as _json
+        from core.persistence.repository import research as rr
+        row = rr.get_hypothesis(db, hid)
+        return _json.loads(row["conditions"])
+
+    def test_合法策略_两种_登记通过(self, db: Path) -> None:
+        for policy in ({"mode": "first_true"},
+                       {"mode": "suppress_bars", "bars": 48}):
+            out = self._register(db, policy)
+            assert out["duplicated"] is False
+            stored = self._stored_conditions(db, out["hypothesis_id"])
+            assert stored["trigger_policy"] == policy   # 归一形落库
+
+    def test_bars超界_登记时点放行(self, db: Path) -> None:
+        """D12 两段校验的登记半边（specs「bars 超界在求值侧拒绝」THEN：
+        登记时点不因长度拒绝——上界属求值侧值域校验）：登记不加载数据、
+        仅形制校验，超大 bars 形式合法即登记通过（求值侧拒绝锚见模板
+        三件 bars 超界 422 与策略链两用例）。
+        """
+        out = self._register(db, {"mode": "suppress_bars", "bars": 10**9})
+        assert out["duplicated"] is False
+        stored = self._stored_conditions(db, out["hypothesis_id"])
+        assert stored["trigger_policy"] == {"mode": "suppress_bars",
+                                            "bars": 10**9}
+
+    def test_不同策略_不同假设身份(self, db: Path) -> None:
+        a = self._register(db, {"mode": "first_true"})
+        b = self._register(db, {"mode": "suppress_bars", "bars": 48})
+        assert a["hypothesis_id"] != b["hypothesis_id"]
+
+    def test_同策略重复登记_幂等命中(self, db: Path) -> None:
+        first = self._register(db, {"mode": "first_true"})
+        again = self._register(db, {"mode": "first_true"})
+        assert again["duplicated"] is True
+        assert again["hypothesis_id"] == first["hypothesis_id"]
+
+    def test_显式_none_与缺省_同身份(self, db: Path) -> None:
+        plain = self._register(db)                       # 缺省
+        explicit = self._register(db, {"mode": "none"})  # 显式 none
+        assert explicit["duplicated"] is True
+        assert explicit["hypothesis_id"] == plain["hypothesis_id"]
+        # 显式 none 归一为不写键——存储形与无策略逐字节同构
+        stored = self._stored_conditions(db, plain["hypothesis_id"])
+        assert "trigger_policy" not in stored
+
+    def test_无策略_与_带策略_不同身份(self, db: Path) -> None:
+        plain = self._register(db)
+        with_policy = self._register(db, {"mode": "first_true"})
+        assert plain["hypothesis_id"] != with_policy["hypothesis_id"]
+
+    def test_非法策略_422_不产生持久化(self, db: Path) -> None:
+        for bad in ({"mode": "cooldown"},
+                    {"mode": "suppress_bars"},           # 缺 bars
+                    {"mode": "suppress_bars", "bars": 0},
+                    {"mode": "first_true", "bars": 4},   # 多余键
+                    "first_true"):                        # 非对象形
+            with pytest.raises(ResearchError) as ei:
+                self._register(db, bad)
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # 全部非法登记未落任何假设行
+        from core.persistence.repository import research as rr
+        assert rr.count_hypotheses(db) == 0
+
+    def test_precheck挂接携带归一策略(self, db, tmp_path, monkeypatch) -> None:
+        """登记自动预检收到归一形（传参通道锚——事件口径消费属 5.3）。"""
+        import importlib
+        pk = importlib.import_module(
+            "core.analysis.templates.precheck_hypothesis")
+        captured: dict = {}
+
+        def spy(db_path, data_dir, when, ranges, trigger_policy=None):
+            captured["policy"] = trigger_policy
+            return {"verdict": "pass", "analysis_segment_trades": 9}
+
+        monkeypatch.setattr(pk, "run_registration_precheck", spy)
+        out = self._register(db, {"mode": "suppress_bars", "bars": 12},
+                             precheck_data_dir=tmp_path)
+        assert captured["policy"] == {"mode": "suppress_bars", "bars": 12}
+        assert out["precheck_warnings"]["analysis_segment_trades"] == 9
+
+    def test_显式_none_预检收到_None(self, db, tmp_path, monkeypatch) -> None:
+        import importlib
+        pk = importlib.import_module(
+            "core.analysis.templates.precheck_hypothesis")
+        captured: dict = {}
+
+        def spy(db_path, data_dir, when, ranges, trigger_policy=None):
+            captured["policy"] = trigger_policy
+            return {"verdict": "pass", "analysis_segment_trades": 9}
+
+        monkeypatch.setattr(pk, "run_registration_precheck", spy)
+        self._register(db, {"mode": "none"}, precheck_data_dir=tmp_path)
+        assert captured["policy"] is None        # 归一 None（缺省同）

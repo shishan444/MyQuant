@@ -37,9 +37,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "type": "object",
-                "title": "Payload"
+                "$ref": "#/components/schemas/ConfigUpdate"
               }
             }
           },
@@ -77,7 +75,7 @@
           "strategies"
         ],
         "summary": "Create Strategy",
-        "description": "Create a new strategy.",
+        "description": "创建策略。",
         "operationId": "create_strategy_api_strategies_post",
         "requestBody": {
           "required": true,
@@ -117,7 +115,7 @@
           "strategies"
         ],
         "summary": "List Strategies Endpoint",
-        "description": "List strategies with filtering, sorting, and pagination.\n\nstatus=None 默认视图排除 draft；显式 status=draft 可查草稿。",
+        "description": "策略列表（过滤/排序/分页）。status 缺省视图排除 draft；\n显式 status=draft 可查草稿。",
         "operationId": "list_strategies_endpoint_api_strategies_get",
         "parameters": [
           {
@@ -226,6 +224,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -236,6 +236,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -271,7 +272,7 @@
           "strategies"
         ],
         "summary": "Get Strategy Endpoint",
-        "description": "Get strategy details by ID.",
+        "description": "按 ID 取策略详情。",
         "operationId": "get_strategy_endpoint_api_strategies__strategy_id__get",
         "parameters": [
           {
@@ -312,7 +313,7 @@
           "strategies"
         ],
         "summary": "Update Strategy Endpoint",
-        "description": "Update an existing strategy.",
+        "description": "更新策略。",
         "operationId": "update_strategy_endpoint_api_strategies__strategy_id__put",
         "parameters": [
           {
@@ -363,7 +364,7 @@
           "strategies"
         ],
         "summary": "Delete Strategy Endpoint",
-        "description": "Delete a strategy by ID.",
+        "description": "按 ID 删除策略。",
         "operationId": "delete_strategy_endpoint_api_strategies__strategy_id__delete",
         "parameters": [
           {
@@ -399,7 +400,7 @@
           "strategies"
         ],
         "summary": "Backtest Strategy",
-        "description": "Run a backtest for a strategy.\n\nSupports two modes:\n- strategy_id: Load DNA from saved strategy\n- dna + symbol + timeframe: Use DNA directly (for Lab page)",
+        "description": "单策略回测。两种模式：strategy_id 自库取 DNA；\n或 dna+symbol+timeframe 直传 DNA（Lab 页用）。",
         "operationId": "backtest_strategy_api_strategies_backtest_post",
         "requestBody": {
           "content": {
@@ -441,7 +442,7 @@
           "strategies"
         ],
         "summary": "Compare Strategies",
-        "description": "Compare multiple strategies by running backtests.",
+        "description": "多策略回测对比（逐策略执行，失败条目隔离不拖累整体）。",
         "operationId": "compare_strategies_api_strategies_compare_post",
         "requestBody": {
           "content": {
@@ -483,7 +484,7 @@
           "strategies"
         ],
         "summary": "Verify Strategies",
-        "description": "Verify strategies across multiple user-defined date ranges.\n\nFor each (strategy, date_range) pair, runs a backtest and computes\nfitness. Then aggregates per-strategy results into a comprehensive\nscore: avg_fitness * qualified_ratio * consistency_bonus.",
+        "description": "多日期区间验证策略。\n\n逐 (strategy, date_range) 对回测并计算 fitness；按策略聚合综合\n评分 = avg_fitness × qualified_ratio × consistency_bonus。\n执行体收口 _VerifyProcessor（与流式端点共用）。",
         "operationId": "verify_strategies_api_strategies_verify_post",
         "requestBody": {
           "content": {
@@ -565,7 +566,7 @@
           "strategies"
         ],
         "summary": "Get Verify History",
-        "description": "Return past verify results from backtest_result (run_source='verify').",
+        "description": "历史验证结果（backtest_result 按 run_source='verify' 过滤）。",
         "operationId": "get_verify_history_api_strategies_verify_history_get",
         "parameters": [
           {
@@ -590,6 +591,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -625,7 +628,7 @@
           "strategies"
         ],
         "summary": "List Sessions",
-        "description": "Return verification sessions ordered by creation time.",
+        "description": "验证会话列表（按创建时间序）。",
         "operationId": "list_sessions_api_strategies_verify_sessions_get",
         "parameters": [
           {
@@ -634,6 +637,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 20,
               "title": "Limit"
             }
@@ -669,7 +674,7 @@
           "strategies"
         ],
         "summary": "Get Session Results",
-        "description": "Return backtest results for a specific verify session.",
+        "description": "指定验证会话的回测结果。",
         "operationId": "get_session_results_api_strategies_verify_sessions__session_id__results_get",
         "parameters": [
           {
@@ -752,7 +757,7 @@
           "strategies"
         ],
         "summary": "Get Batch Backtest Detail",
-        "description": "Get full batch backtest result detail including equity curve and signals.",
+        "description": "取批回测结果详情（含净值曲线与信号）。",
         "operationId": "get_batch_backtest_detail_api_strategies_batch_backtest__result_id__get",
         "parameters": [
           {
@@ -793,7 +798,7 @@
           "evolution"
         ],
         "summary": "Runner Status",
-        "description": "Return EvolutionRunner health status.",
+        "description": "返回 EvolutionRunner 健康状态。",
         "operationId": "runner_status_api_evolution_runner_status_get",
         "responses": {
           "200": {
@@ -817,7 +822,7 @@
           "evolution"
         ],
         "summary": "List All Discovered Strategies",
-        "description": "List all evolution-discovered strategies across all tasks.",
+        "description": "跨任务列出全部进化发现的策略（source=evolution）。",
         "operationId": "list_all_discovered_strategies_api_evolution_strategies_get",
         "parameters": [
           {
@@ -842,6 +847,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 20,
               "title": "Limit"
             }
@@ -882,7 +889,7 @@
           "evolution"
         ],
         "summary": "Create Task",
-        "description": "Create a new evolution task.",
+        "description": "创建进化任务（runner 轮询 pending 表接手执行）。",
         "operationId": "create_task_api_evolution_tasks_post",
         "requestBody": {
           "required": true,
@@ -922,7 +929,7 @@
           "evolution"
         ],
         "summary": "List Tasks",
-        "description": "List evolution tasks with optional status filter and pagination.",
+        "description": "分页列出进化任务（可按 status 过滤）。",
         "operationId": "list_tasks_api_evolution_tasks_get",
         "parameters": [
           {
@@ -947,6 +954,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 1,
               "default": 1,
               "title": "Page"
             }
@@ -957,6 +965,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 20,
               "title": "Page Size"
             }
@@ -992,7 +1002,7 @@
           "evolution"
         ],
         "summary": "Get Task Endpoint",
-        "description": "Get evolution task details.",
+        "description": "取进化任务详情。",
         "operationId": "get_task_endpoint_api_evolution_tasks__task_id__get",
         "parameters": [
           {
@@ -1035,7 +1045,7 @@
           "evolution"
         ],
         "summary": "Get Task History",
-        "description": "Get generation history for an evolution task.",
+        "description": "取任务代际历史。",
         "operationId": "get_task_history_api_evolution_tasks__task_id__history_get",
         "parameters": [
           {
@@ -1078,7 +1088,7 @@
           "evolution"
         ],
         "summary": "Pause Task",
-        "description": "Pause an evolution task.",
+        "description": "暂停进化任务。",
         "operationId": "pause_task_api_evolution_tasks__task_id__pause_post",
         "parameters": [
           {
@@ -1121,7 +1131,7 @@
           "evolution"
         ],
         "summary": "Stop Task",
-        "description": "Stop an evolution task.",
+        "description": "停止进化任务。",
         "operationId": "stop_task_api_evolution_tasks__task_id__stop_post",
         "parameters": [
           {
@@ -1164,7 +1174,7 @@
           "evolution"
         ],
         "summary": "Resume Task",
-        "description": "Resume a paused evolution task.",
+        "description": "恢复已暂停的进化任务。",
         "operationId": "resume_task_api_evolution_tasks__task_id__resume_post",
         "parameters": [
           {
@@ -1207,7 +1217,7 @@
           "evolution"
         ],
         "summary": "Get Task Strategies",
-        "description": "Return effective strategies discovered by this evolution task.\n\nReturns champion and any snapshot strategies with score > 0.",
+        "description": "返回本任务实际生效的策略集（冠军与代际 top-N 快照策略，已收录冠军去重）。",
         "operationId": "get_task_strategies_api_evolution_tasks__task_id__strategies_get",
         "parameters": [
           {
@@ -1252,7 +1262,7 @@
           "evolution"
         ],
         "summary": "Get Discovered Strategies",
-        "description": "Get auto-extracted strategies for a task from the strategy table.",
+        "description": "取任务自动入库的策略（strategy 表按 source_task_id 过滤）。",
         "operationId": "get_discovered_strategies_api_evolution_tasks__task_id__discovered_strategies_get",
         "parameters": [
           {
@@ -1286,6 +1296,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 50,
               "title": "Limit"
             }
@@ -1326,7 +1338,7 @@
           "data"
         ],
         "summary": "List Datasets Endpoint",
-        "description": "List datasets with optional filtering.",
+        "description": "列出数据集（可按 symbol/interval 过滤）。",
         "operationId": "list_datasets_endpoint_api_data_datasets_get",
         "parameters": [
           {
@@ -1367,6 +1379,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -1402,7 +1416,7 @@
           "data"
         ],
         "summary": "Get Dataset Endpoint",
-        "description": "Get dataset details by ID.",
+        "description": "按 ID 取数据集详情。",
         "operationId": "get_dataset_endpoint_api_data_datasets__dataset_id__get",
         "parameters": [
           {
@@ -1443,7 +1457,7 @@
           "data"
         ],
         "summary": "Delete Dataset Endpoint",
-        "description": "Delete a dataset by ID.",
+        "description": "按 ID 删除数据集。",
         "operationId": "delete_dataset_endpoint_api_data_datasets__dataset_id__delete",
         "parameters": [
           {
@@ -1479,7 +1493,7 @@
           "data"
         ],
         "summary": "Import Csv Endpoint",
-        "description": "Import a CSV file into Parquet storage.",
+        "description": "导入单个 CSV 到 Parquet 存储。",
         "operationId": "import_csv_endpoint_api_data_import_post",
         "requestBody": {
           "content": {
@@ -1521,7 +1535,7 @@
           "data"
         ],
         "summary": "Import Csv Batch Endpoint",
-        "description": "Import multiple CSV files into a single Parquet dataset.",
+        "description": "多 CSV 批量导入合并为单一 Parquet 数据集。",
         "operationId": "import_csv_batch_endpoint_api_data_import_batch_post",
         "requestBody": {
           "content": {
@@ -1563,7 +1577,7 @@
           "data"
         ],
         "summary": "Preview Dataset",
-        "description": "Preview the first N rows of a dataset.",
+        "description": "预览数据集前 N 行。",
         "operationId": "preview_dataset_api_data_datasets__dataset_id__preview_get",
         "parameters": [
           {
@@ -1581,6 +1595,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 20,
               "title": "Limit"
             }
@@ -1616,7 +1632,7 @@
           "data"
         ],
         "summary": "Get Ohlcv",
-        "description": "Get OHLCV data for a dataset with optional time range filter.",
+        "description": "按数据集取 OHLCV（可按时间范围过滤）。",
         "operationId": "get_ohlcv_api_data_datasets__dataset_id__ohlcv_get",
         "parameters": [
           {
@@ -1666,6 +1682,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 50000,
+              "minimum": 1,
               "default": 1000,
               "title": "Limit"
             }
@@ -1701,7 +1719,7 @@
           "data"
         ],
         "summary": "Get Available Sources",
-        "description": "Scan parquet files and return available symbol/timeframe combinations.",
+        "description": "扫描 parquet 文件返回可用 symbol/timeframe 组合。",
         "operationId": "get_available_sources_api_data_available_sources_get",
         "responses": {
           "200": {
@@ -1723,7 +1741,7 @@
           "data"
         ],
         "summary": "Get Ohlcv By Symbol",
-        "description": "Get OHLCV data by symbol+timeframe (resolves parquet file directly).",
+        "description": "按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。",
         "operationId": "get_ohlcv_by_symbol_api_data_ohlcv__symbol___timeframe__get",
         "parameters": [
           {
@@ -1782,6 +1800,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 50000,
+              "minimum": 1,
               "default": 50000,
               "title": "Limit"
             }
@@ -1817,7 +1837,7 @@
           "data"
         ],
         "summary": "Get Chart Indicators",
-        "description": "Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA, MACD, KDJ) for chart rendering.",
+        "description": "计算图表指标（EMA/BOLL/RSI/RVOL/VWMA/MACD/KDJ，前端绘图用）。",
         "operationId": "get_chart_indicators_api_data_chart_indicators__symbol___timeframe__get",
         "parameters": [
           {
@@ -1982,6 +2002,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 50000,
+              "minimum": 1,
               "default": 50000,
               "title": "Limit"
             }
@@ -2152,6 +2174,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 50,
               "title": "Limit"
             }
@@ -2162,6 +2186,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -2323,7 +2348,7 @@
           "trading"
         ],
         "summary": "Restart Task",
-        "description": "Create a new task using the same strategy/params as an existing task.",
+        "description": "按既有任务同策略/同参数克隆创建新任务。",
         "operationId": "restart_task_api_trading_tasks__task_id__restart_post",
         "parameters": [
           {
@@ -2383,6 +2408,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -2744,7 +2771,7 @@
           "validation"
         ],
         "summary": "Run Validation",
-        "description": "Validate a WHEN->THEN hypothesis against historical data.",
+        "description": "对历史数据验证 WHEN->THEN 假设。",
         "operationId": "run_validation_api_validate_post",
         "requestBody": {
           "content": {
@@ -2780,103 +2807,13 @@
         }
       }
     },
-    "/api/validate/{task_id}/triggers": {
-      "get": {
-        "tags": [
-          "validation"
-        ],
-        "summary": "Get Validation Triggers",
-        "description": "Get trigger records for a validation task (placeholder for future caching).",
-        "operationId": "get_validation_triggers_api_validate__task_id__triggers_get",
-        "parameters": [
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Task Id"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "per_page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Per Page"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^(time|trigger_price|change_pct)$",
-              "default": "time",
-              "title": "Sort"
-            }
-          },
-          {
-            "name": "order",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "pattern": "^(asc|desc)$",
-              "default": "desc",
-              "title": "Order"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Validation Triggers Api Validate  Task Id  Triggers Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/validate/rules": {
       "post": {
         "tags": [
           "validation"
         ],
         "summary": "Run Rule Validation",
-        "description": "Evaluate entry/exit rule conditions and return paired trades.",
+        "description": "评估进出场规则条件，返回配对交易。",
         "operationId": "run_rule_validation_api_validate_rules_post",
         "requestBody": {
           "content": {
@@ -2918,7 +2855,7 @@
           "scene"
         ],
         "summary": "List Scene Types",
-        "description": "Return available scene types with labels and descriptions.",
+        "description": "返回可用场景类型清单（标签/描述/分组，供前端选择器）。",
         "operationId": "list_scene_types_api_scene_types_get",
         "responses": {
           "200": {
@@ -2940,7 +2877,7 @@
           "scene"
         ],
         "summary": "Run Scene",
-        "description": "Run scene verification against historical data.",
+        "description": "对历史数据跑场景验证（触发统计与前瞻收益分布）。",
         "operationId": "run_scene_api_validate_scene_post",
         "requestBody": {
           "content": {
@@ -2959,138 +2896,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SceneResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/discovery/patterns": {
-      "post": {
-        "tags": [
-          "discovery"
-        ],
-        "summary": "Discover Patterns",
-        "description": "Run pattern discovery using decision tree.\n\nReturns top trading rules discovered from historical data.",
-        "operationId": "discover_patterns_api_discovery_patterns_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DiscoveryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Discover Patterns Api Discovery Patterns Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/discovery/similar": {
-      "post": {
-        "tags": [
-          "discovery"
-        ],
-        "summary": "Find Similar",
-        "description": "Find similar historical cases using KNN.\n\nReturns the most similar historical market conditions\nwith their subsequent price movements.",
-        "operationId": "find_similar_api_discovery_similar_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SimilarRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Find Similar Api Discovery Similar Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/discovery/predict": {
-      "post": {
-        "tags": [
-          "discovery"
-        ],
-        "summary": "Predict Range",
-        "description": "Predict price range from KNN neighbors.\n\nReturns predicted direction, confidence, and price range.",
-        "operationId": "predict_range_api_discovery_predict_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PredictRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Predict Range Api Discovery Predict Post"
                 }
               }
             }
@@ -3154,6 +2959,7 @@
           "research"
         ],
         "summary": "List Hypotheses",
+        "description": "假设列表。分页契约与 /log 同款：缺省最新在前（desc）；cursor\n续页（上一响应 next_cursor 回传，提供时 page 被忽略）；total 为\n过滤口径真总数（非当页数）。",
         "operationId": "list_hypotheses_api_research_hypotheses_get",
         "parameters": [
           {
@@ -3190,6 +2996,22 @@
               "type": "integer",
               "default": 50,
               "title": "Page Size"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3343,6 +3165,50 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Validate Backtest Api Research Validate Backtest Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/staged-validation": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Staged Validation",
+        "description": "分段验证（检查⑤分题型成绩单）：按市场状态切段逐段回测，\n段级门槛三态 + 全段汇总 verdict（挂假设时可被 transition 引用）；\n双模互斥（auto 机械判读 / explicit 段列表）；写入双路径（挂假设\n一体记录 / adhoc 纯日志）。",
+        "operationId": "staged_validation_api_research_staged_validation_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StagedValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Staged Validation Api Research Staged Validation Post"
                 }
               }
             }
@@ -3639,6 +3505,94 @@
         }
       }
     },
+    "/api/research/inspect-cases": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Inspect Cases",
+        "description": "案例抽查：候选条件/点名时间戳的真实触发案例窗口（检查③）。\n\nselector 两形态互斥：condition（{subject, action, target} 三键，\n扫描候选同形制直喂；indicator 必填供 warmup 推导）或 timestamps\n（点名 ≤5，不传区间参数）。limit ∈ 1..5（缺省 3）、context_bars\n∈ 1..20（缺省 8）；超限结构化 422 拒绝（不静默截断）。",
+        "operationId": "inspect_cases_api_research_inspect_cases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectCasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Inspect Cases Api Research Inspect Cases Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/query-indicator": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Query Indicator",
+        "description": "单指标任意参数现算读数（检查④）：归约摘要直返（≤2048 字节）。\n\nreductions 封闭枚举多选（latest/quantiles/regime_means/\ntrend_slope，缺省前两者）；params 缺省拼注册表 default（echo 披露\n实际生效值）；装载双路径复用 0.2.8 契约（显式 start 走 warmup\n前扩，缺省全量直装 + effective_start 披露）。",
+        "operationId": "query_indicator_api_research_query_indicator_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryIndicatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Query Indicator Api Research Query Indicator Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/plugins/formula": {
       "post": {
         "tags": [
@@ -3877,13 +3831,90 @@
         }
       }
     },
+    "/api/research/market-snapshot": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Read Market Snapshot",
+        "description": "时点行情快照：多周期五维行情卡（读数+90 日分位+三态判读）。\n\ntimeframes 逗号分隔周期子集（如 \"1d,4h\"；缺省四档全量）；空集\n或非法周期由服务层结构化拒绝（422）。as_of 读数时点（缺省=最新\n一根 bar；闭端截至防前视）。",
+        "operationId": "read_market_snapshot_api_research_market_snapshot_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "timeframes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Timeframes"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Read Market Snapshot Api Research Market Snapshot Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/log": {
       "get": {
         "tags": [
           "research"
         ],
         "summary": "Research Log",
-        "description": "研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。",
+        "description": "研究日志查询（假设 → 分析（含区间）→ 证据 → 结论全链路）。\n\nentry_type 过滤：按日志类型检索（如 screen=全局扫描留痕，\n供研究方自查历史扫描区间与候选指纹——add-screen-patterns G6）。\n缺省最新在前（desc）；cursor 续页（上一响应 next_cursor 原样\n回传，keyset 深翻页无漂移，提供时 page 被忽略）；total 为过滤\n口径真总数（非当页数）。",
         "operationId": "research_log_api_research_log_get",
         "parameters": [
           {
@@ -3900,6 +3931,22 @@
                 }
               ],
               "title": "Hypothesis Id"
+            }
+          },
+          {
+            "name": "entry_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entry Type"
             }
           },
           {
@@ -3920,6 +3967,22 @@
               "type": "integer",
               "default": 50,
               "title": "Page Size"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -3995,6 +4058,7 @@
           "research"
         ],
         "summary": "List Feature Requests",
+        "description": "慢通道需求单列表。分页契约与 /log 同款：缺省最新在前（desc）；\ncursor 续页（上一响应 next_cursor 回传，提供时 page 被忽略）；\ntotal 为过滤口径真总数。",
         "operationId": "list_feature_requests_api_research_feature_requests_get",
         "parameters": [
           {
@@ -4031,6 +4095,22 @@
               "type": "integer",
               "default": 50,
               "title": "Page Size"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -4238,8 +4318,20 @@
           },
           "score_template": {
             "type": "string",
+            "enum": [
+              "explorer",
+              "optimizer",
+              "max_return",
+              "balanced",
+              "steady",
+              "custom",
+              "aggressive",
+              "profit_first",
+              "conservative",
+              "risk_first"
+            ],
             "title": "Score Template",
-            "description": "DEPRECATED: 评分模板残骸，仅兼容保留，不影响回测结果；勿在新调用方依赖",
+            "description": "DEPRECATED: 评分模板残骸，仅兼容保留；决定评分语义（影响 total_score），不影响收益曲线本身；非法值 422 拒绝",
             "default": "explorer"
           },
           "data_start": {
@@ -4686,6 +4778,18 @@
           },
           "score_template": {
             "type": "string",
+            "enum": [
+              "explorer",
+              "optimizer",
+              "max_return",
+              "balanced",
+              "steady",
+              "custom",
+              "aggressive",
+              "profit_first",
+              "conservative",
+              "risk_first"
+            ],
             "title": "Score Template",
             "default": "explorer"
           },
@@ -4839,7 +4943,14 @@
       "ConditionInput": {
         "properties": {
           "subject": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/IndicatorRef"
+              }
+            ],
             "title": "Subject"
           },
           "action": {
@@ -4884,12 +4995,20 @@
           "subject",
           "action"
         ],
-        "title": "ConditionInput"
+        "title": "ConditionInput",
+        "description": "0.2.13 混合形制（与 ConditionItem 同语义）：参数化指标结构化\nIndicatorRef / 基础列字符串精确名。"
       },
       "ConditionItem": {
         "properties": {
           "subject": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/IndicatorRef"
+              }
+            ],
             "title": "Subject"
           },
           "action": {
@@ -4906,6 +5025,17 @@
               }
             ],
             "title": "Target"
+          },
+          "timeframe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeframe"
           }
         },
         "type": "object",
@@ -4915,7 +5045,135 @@
           "target"
         ],
         "title": "ConditionItem",
-        "description": "假设条件（与假设验证引擎 {subject, action, target} 同源形制）。"
+        "description": "假设条件（与假设验证引擎 {subject, action, target} 同源形制）。\n\nsubject 混合形制：参数化指标用结构化 IndicatorRef，基础列/插件列用\n字符串精确名（业务校验在 service 层 resolve_column_ref）。\n0.2.14：可选 timeframe 键——仅 when 条件、>= 基准周期的高周期\n（timeframe 修饰整条件，掩码投影求值；then 条件携带即拒）。"
+      },
+      "ConfigUpdate": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "notify_evolution": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Evolution"
+          },
+          "notify_signal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Signal"
+          },
+          "binance_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binance Api Key"
+          },
+          "binance_secret_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binance Secret Key"
+          },
+          "binance_connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binance Connected"
+          },
+          "init_cash": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Init Cash"
+          },
+          "maker_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maker Fee"
+          },
+          "taker_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taker Fee"
+          },
+          "max_positions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Positions"
+          }
+        },
+        "type": "object",
+        "title": "ConfigUpdate",
+        "description": "PUT /api/config 请求体（部分更新：全字段 Optional，未知键忽略）。"
       },
       "DNAModel-Input": {
         "properties": {
@@ -5032,12 +5290,24 @@
               }
             ],
             "title": "Composition"
+          },
+          "entry_trigger_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Trigger Policy"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "DNAModel",
-        "description": "Full StrategyDNA as a Pydantic model for API serialization."
+        "description": "核心 StrategyDNA 的传输层完整形制（含 to_dna() 领域转换入口）。"
       },
       "DNAModel-Output": {
         "properties": {
@@ -5154,12 +5424,24 @@
               }
             ],
             "title": "Composition"
+          },
+          "entry_trigger_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Trigger Policy"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "DNAModel",
-        "description": "Full StrategyDNA as a Pydantic model for API serialization."
+        "description": "核心 StrategyDNA 的传输层完整形制（含 to_dna() 领域转换入口）。"
       },
       "DataImportResponse": {
         "properties": {
@@ -5184,7 +5466,14 @@
             "title": "Format Detected"
           },
           "timestamp_precision": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Timestamp Precision"
           },
           "files_processed": {
@@ -5213,8 +5502,7 @@
           "symbol",
           "interval",
           "rows_imported",
-          "format_detected",
-          "timestamp_precision"
+          "format_detected"
         ],
         "title": "DataImportResponse"
       },
@@ -5245,7 +5533,7 @@
           "end"
         ],
         "title": "DataRangeItem",
-        "description": "半开区间 [start, end)，UTC ISO8601。"
+        "description": "半开区间 [start, end)，UTC ISO8601。\n\nstart/end 可解析性前置校验（CARD-05）：非法串在此 422 拒绝——\n落到装载层后 pd.Timestamp 的回退链对非法串会抛 TypeError 裸穿\n500（存量洞）；校验与消费端同用 pd.Timestamp，杜绝「校验通过而\n消费端解析失败」。naive 形制合法（消费端按 UTC 解释——capability\n公开承诺）。"
       },
       "DatasetListResponse": {
         "properties": {
@@ -5412,54 +5700,6 @@
           "updated_at"
         ],
         "title": "DatasetResponse"
-      },
-      "DiscoveryRequest": {
-        "properties": {
-          "symbol": {
-            "type": "string",
-            "title": "Symbol",
-            "default": "BTCUSDT"
-          },
-          "timeframe": {
-            "type": "string",
-            "title": "Timeframe",
-            "default": "4h"
-          },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon",
-            "default": 12
-          },
-          "max_depth": {
-            "type": "integer",
-            "title": "Max Depth",
-            "default": 5
-          },
-          "data_start": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data Start"
-          },
-          "data_end": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data End"
-          }
-        },
-        "type": "object",
-        "title": "DiscoveryRequest"
       },
       "EquitySnapshotListResponse": {
         "properties": {
@@ -5634,6 +5874,18 @@
           },
           "score_template": {
             "type": "string",
+            "enum": [
+              "explorer",
+              "optimizer",
+              "max_return",
+              "balanced",
+              "steady",
+              "custom",
+              "aggressive",
+              "profit_first",
+              "conservative",
+              "risk_first"
+            ],
             "title": "Score Template",
             "default": "explorer"
           },
@@ -6160,6 +6412,7 @@
         "properties": {
           "title": {
             "type": "string",
+            "maxLength": 200,
             "title": "Title"
           },
           "payload": {
@@ -6173,7 +6426,8 @@
         "required": [
           "title"
         ],
-        "title": "FeatureRequestCreate"
+        "title": "FeatureRequestCreate",
+        "description": "慢通道需求单：title 上限 200 字符；payload 序列化上限 64KB\n（慢通道只保证持久化与可查——超大结构直入 DB 前置拒绝）。"
       },
       "FeatureRequestResponse": {
         "properties": {
@@ -6253,8 +6507,7 @@
           },
           "version": {
             "type": "string",
-            "title": "Version",
-            "default": "0.9.0"
+            "title": "Version"
           },
           "timestamp": {
             "type": "string",
@@ -6264,7 +6517,8 @@
         },
         "type": "object",
         "required": [
-          "status"
+          "status",
+          "version"
         ],
         "title": "HealthResponse"
       },
@@ -6281,6 +6535,20 @@
           "win_rate": {
             "type": "number",
             "title": "Win Rate"
+          },
+          "win_rate_ci": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate Ci"
           },
           "avg_return_pct": {
             "type": "number",
@@ -6373,6 +6641,28 @@
             },
             "type": "array",
             "title": "Data Ranges"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScreenProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trigger_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Policy"
           }
         },
         "type": "object",
@@ -6406,6 +6696,17 @@
             "type": "integer",
             "title": "Page Size",
             "default": 50
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           }
         },
         "type": "object",
@@ -6430,6 +6731,18 @@
             "type": "boolean",
             "title": "Duplicated",
             "default": false
+          },
+          "precheck_warnings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Precheck Warnings"
           }
         },
         "type": "object",
@@ -6455,6 +6768,105 @@
           "evidence_ref"
         ],
         "title": "HypothesisTransitionRequest"
+      },
+      "IndicatorRef": {
+        "properties": {
+          "indicator": {
+            "type": "string",
+            "title": "Indicator"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "default": {}
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          }
+        },
+        "type": "object",
+        "required": [
+          "indicator"
+        ],
+        "title": "IndicatorRef",
+        "description": "参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。"
+      },
+      "InspectCasesRequest": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "selector": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Selector"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 3
+          },
+          "context_bars": {
+            "type": "integer",
+            "title": "Context Bars",
+            "default": 8
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "indicator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indicator"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "timeframe",
+          "selector"
+        ],
+        "title": "InspectCasesRequest",
+        "description": "案例抽查入口（add-inspect-cases；独立通道，不走模板族）。\n\nselector 两形态互斥（恰含 condition 或 timestamps 之一），服务层\n深度校验（结构化 422）。"
       },
       "IsolatedBacktestRequest": {
         "properties": {
@@ -6951,6 +7363,18 @@
           },
           "score_template": {
             "type": "string",
+            "enum": [
+              "explorer",
+              "optimizer",
+              "max_return",
+              "balanced",
+              "steady",
+              "custom",
+              "aggressive",
+              "profit_first",
+              "conservative",
+              "risk_first"
+            ],
             "title": "Score Template",
             "default": "explorer"
           },
@@ -7000,7 +7424,7 @@
           "dna_json"
         ],
         "title": "PaperTradingTaskCreate",
-        "description": "Request to create a paper trading task."
+        "description": "创建模拟盘任务的请求体。"
       },
       "PaperTradingTaskListResponse": {
         "properties": {
@@ -7278,29 +7702,47 @@
         ],
         "title": "PaperTradingTaskResponse"
       },
-      "PredictRequest": {
+      "QueryIndicatorRequest": {
         "properties": {
           "symbol": {
             "type": "string",
-            "title": "Symbol",
-            "default": "BTCUSDT"
+            "title": "Symbol"
           },
           "timeframe": {
             "type": "string",
-            "title": "Timeframe",
-            "default": "4h"
+            "title": "Timeframe"
           },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon",
-            "default": 12
+          "indicator": {
+            "type": "string",
+            "title": "Indicator"
           },
-          "n_neighbors": {
-            "type": "integer",
-            "title": "N Neighbors",
-            "default": 50
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
           },
-          "data_start": {
+          "reductions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reductions"
+          },
+          "start": {
             "anyOf": [
               {
                 "type": "string"
@@ -7309,9 +7751,9 @@
                 "type": "null"
               }
             ],
-            "title": "Data Start"
+            "title": "Start"
           },
-          "data_end": {
+          "end": {
             "anyOf": [
               {
                 "type": "string"
@@ -7320,11 +7762,17 @@
                 "type": "null"
               }
             ],
-            "title": "Data End"
+            "title": "End"
           }
         },
         "type": "object",
-        "title": "PredictRequest"
+        "required": [
+          "symbol",
+          "timeframe",
+          "indicator"
+        ],
+        "title": "QueryIndicatorRequest",
+        "description": "指标读数入口（add-query-indicator；独立通道，检查④）。\n\nparams 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases\n的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。"
       },
       "RandomWindowRequest": {
         "properties": {
@@ -7389,6 +7837,11 @@
         "properties": {
           "objective": {
             "type": "string",
+            "enum": [
+              "sharpe",
+              "calmar",
+              "annual_return"
+            ],
             "title": "Objective",
             "description": "Objective function: sharpe, calmar, or annual_return",
             "default": "sharpe"
@@ -7433,7 +7886,7 @@
         },
         "type": "object",
         "title": "RequirementsConfigModel",
-        "description": "User-configurable requirements for strategy qualification."
+        "description": "策略达标线的用户可配置项（合格判定的需求侧输入）。"
       },
       "RiskGenesModel": {
         "properties": {
@@ -7630,9 +8083,15 @@
             "default": 0
           },
           "win_rate": {
-            "type": "number",
-            "title": "Win Rate",
-            "default": 0.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
           },
           "total_return_pct": {
             "type": "number",
@@ -7682,16 +8141,19 @@
           },
           "fee": {
             "type": "number",
+            "minimum": 0.0,
             "title": "Fee",
             "default": 0.001
           },
           "slippage": {
             "type": "number",
+            "minimum": 0.0,
             "title": "Slippage",
             "default": 0.0005
           },
           "init_cash": {
             "type": "number",
+            "minimum": 1.0,
             "title": "Init Cash",
             "default": 100000.0
           },
@@ -7714,7 +8176,7 @@
           "end"
         ],
         "title": "SandboxBacktestRequest",
-        "description": "沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、\n不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。"
+        "description": "沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、\n不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。\n经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1\n（负成本/零本金在下单金额计算中产生无意义或发散结果）。"
       },
       "SceneRequest": {
         "properties": {
@@ -7856,7 +8318,26 @@
           "types"
         ],
         "title": "SceneTypesResponse",
-        "description": "List of available scene types with metadata."
+        "description": "可用场景类型清单（含元数据）。"
+      },
+      "ScreenProvenance": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "candidate_fingerprint": {
+            "type": "string",
+            "title": "Candidate Fingerprint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "candidate_fingerprint"
+        ],
+        "title": "ScreenProvenance",
+        "description": "扫描谱系引用（add-screen-patterns D5）：声明候选来源。\n\n只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；\n不参与假设幂等键（同条件同区间重复登记命中同一假设）。"
       },
       "SignalGeneModel-Input": {
         "properties": {
@@ -7953,8 +8434,23 @@
         ],
         "title": "SignalRole"
       },
-      "SimilarRequest": {
+      "StagedValidationRequest": {
         "properties": {
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "hypothesis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hypothesis Id"
+          },
           "symbol": {
             "type": "string",
             "title": "Symbol",
@@ -7965,41 +8461,43 @@
             "title": "Timeframe",
             "default": "4h"
           },
-          "horizon": {
-            "type": "integer",
-            "title": "Horizon",
-            "default": 12
+          "start": {
+            "type": "string",
+            "title": "Start"
           },
-          "n_neighbors": {
-            "type": "integer",
-            "title": "N Neighbors",
-            "default": 50
+          "end": {
+            "type": "string",
+            "title": "End"
           },
-          "data_start": {
+          "segmentation": {
+            "type": "string",
+            "title": "Segmentation",
+            "default": "auto"
+          },
+          "segments": {
             "anyOf": [
               {
-                "type": "string"
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Data Start"
-          },
-          "data_end": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data End"
+            "title": "Segments"
           }
         },
         "type": "object",
-        "title": "SimilarRequest"
+        "required": [
+          "strategy_id",
+          "start",
+          "end"
+        ],
+        "title": "StagedValidationRequest",
+        "description": "分段验证（add-staged-validation；检查⑤的分题型成绩单）。\n\n平铺形制（B1——SandboxBacktestRequest 先例）；hypothesis_id 可缺省\n（adhoc 纯日志留痕，verdict 照报 record_id=None）；segmentation 与\nsegments 双模互斥（auto 缺省）。"
       },
       "StrategyCreate": {
         "properties": {
@@ -8761,6 +9259,18 @@
               }
             ],
             "title": "Base Timeframe"
+          },
+          "trigger_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Policy"
           }
         },
         "type": "object",

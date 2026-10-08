@@ -30,6 +30,7 @@ def event_study(
     min_events: int = 30,
     hypothesis_id: str | None = None,
     mtf: "MtfEvalContext | None" = None,
+    trigger_policy: Dict[str, Any] | None = None,
 ) -> AnalysisResult:
     """事件窗对齐的路径统计。
 
@@ -48,6 +49,14 @@ def event_study(
     # 0..无上界（0=禁用事件数检查的既有合法语义）
     _require_int_range(window, name="window", lo=1, hi=len(df) - 1)
     _require_int_range(min_events, name="min_events", lo=0)
+
+    # trigger-policy 卡4（5.1）：形制归一 + bars 数据长度上界求值侧
+    # 校验（数据已加载——D12 与 forward_bars 同窗同位置；CARD-03 收敛
+    # require_bars_within 单点）；缺省/显式 none 归一 None=逐 bar
+    # 现状口径（存量回归锚）
+    from core.analysis.event_policy import require_bars_within, validate_policy
+    policy_norm = validate_policy(trigger_policy)
+    require_bars_within(policy_norm, len(df), "trigger_policy")
 
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
     from core.analysis.condition_kernel import MtfEvalContext, _mask_for
@@ -71,6 +80,13 @@ def event_study(
     mask = _mask_for(df, condition, mtf=mtf)
     mask = mask.fillna(False).astype(bool)
     event_idx = np.where(mask.values)[0]
+
+    # trigger-policy 卡4：带策略时事件位置取权威变换产出（上面掩码
+    # 直译语句保留——无策略路径逐字节不变；n_events/min_events 口径
+    # 随之切事件数）
+    if policy_norm is not None:
+        from core.analysis.event_policy import mask_to_events
+        event_idx = mask_to_events(mask.values, policy_norm)
 
     # 丢弃尾部不完整窗口的事件
     event_idx = event_idx[event_idx + window < len(df)]
@@ -143,6 +159,8 @@ def event_study(
         "first_event_time": str(df.index[event_idx[0]]),
         "last_event_time": str(df.index[event_idx[-1]]),
     }
+    if policy_norm is not None:
+        payload["trigger_policy"] = policy_norm   # 报告声明生效策略
 
     return build_result(
         "event_study",

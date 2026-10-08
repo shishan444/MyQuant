@@ -275,3 +275,54 @@ class TestGapClosureFormulaFail:
             assemble_signal_set(db, dna, _df())  # _df 无 open_interest 列
         assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
         assert "求值失败" in ei.value.message
+
+
+class TestCombineMissingPluginColumnSkips:
+    """_combine 对 signal_sources 引用列在 plugin_cols 缺失时跳过
+    （不炸不产半布尔列——悬空引用防御的组装层侧面）。"""
+
+    def test_missing_ref_skipped_to_empty_bools(self):
+        from core.analysis.signal_assembly import _combine
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=8, freq="4h")
+        base = SignalSet(
+            entries=pd.Series(False, index=idx),
+            exits=pd.Series(False, index=idx),
+            adds=pd.Series(False, index=idx),
+            reduces=pd.Series(False, index=idx))
+        dna = StrategyDNA(
+            signal_genes=[], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[
+                {"type": "formula", "ref": "missing_col",
+                 "threshold": 0.5, "operator": ">"}])
+        out = _combine(base, dna, {}, "logic")
+        # 无插件布尔 → entries 原样返回（缺失源被 continue 跳过）
+        assert list(out.keys()) == ["entries"]
+        assert not out["entries"].any()
+
+
+class TestDuplicateFormulaRefSkipsReappend:
+    """assemble_signal_set 声明序去重：两条 source 引用同一 formula
+    列 → 第二轮跳过重复 append（失效报告序确定性的去重侧）。"""
+
+    @pytest.fixture()
+    def formula_col(self, db: Path) -> str:
+        register_formula_plugin(db, name="dup_gfx",
+                                expression="zscore(close, 20)")
+        from core.analysis.registry_meta import available_signal_columns
+        return next(c["column_key"] for c in available_signal_columns(db)
+                    if c["source"] == "formula")
+
+    def test_duplicate_ref_registered_once(self, db, formula_col) -> None:
+        dna = _dna([{"type": "formula", "ref": formula_col},
+                    {"type": "formula", "ref": formula_col}],
+                   {"mode": "logic", "op": "OR"})
+        ss = assemble_signal_set(db, dna, _df())
+        # 双引用同一列不炸、entries 仍为该列布尔（去重后单列）
+        df = _df()
+        enriched = enrich_with_plugin_columns(db, df, {formula_col})
+        fx = enriched[formula_col].astype(float)
+        assert list(ss.entries) == list(fx > 0.0)

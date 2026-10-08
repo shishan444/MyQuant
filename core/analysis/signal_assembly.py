@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 
 def assemble_signal_set(
@@ -42,10 +42,16 @@ def assemble_signal_set(
         if s.get("type") in ("formula", "model")
     ]
     if not plugin_sources and not dna.composition:
-        # 退化形态：原路径原语义（行为逐位一致）
+        # 退化形态：原路径原语义（行为逐位一致；事件化缺省生效——
+        # dna_to_signal_set 内挂点承载）
         return dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-    base = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+    # 掩码态 base（apply_trigger_policy=False——trigger-policy 卡5：
+    # 插件组合在完整合并掩码上组合后统一变换；base 先变换再与插件
+    # 布尔组合不等价——合并掩码段首可能落在段中部插件条件成立处）
+    base = dna_to_signal_set(
+        dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+        apply_trigger_policy=False)
 
     # 插件源求值（引用失败显式拒绝）。注册表一次查询建索引（column →
     # source）——逐源全表扫与 formula 过滤二次查统一为单次；formula 列
@@ -84,8 +90,19 @@ def assemble_signal_set(
     mode = (dna.composition or {}).get("mode", "weighted_vote")
     combined = _combine(base, dna, plugin_cols, mode)
 
+    # 事件化单次施加（trigger-policy 卡5）：组合后的 combined entries
+    # 经唯一实现变换（防二次变换——suppress_bars 不幂等，二次抑制窗
+    # 拉长 2N；base 已以掩码态取得）。CARD-03：改调 event_policy 公共
+    # 面（消 core.analysis→core.strategy 跨层私有 import——executor 内
+    # _apply_entry_trigger_policy 保留薄壳供回测/实盘/进化三链直调）
+    from core.analysis.event_policy import apply_policy_to_series, validate_policy
+    combined_entries = apply_policy_to_series(
+        combined["entries"],
+        validate_policy(getattr(dna, "entry_trigger_policy", None)),
+        param_name="entry_trigger_policy")
+
     return SignalSet(
-        entries=combined["entries"],
+        entries=combined_entries,
         exits=base.exits,
         adds=base.adds,
         reduces=base.reduces,

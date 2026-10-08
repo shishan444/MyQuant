@@ -19,6 +19,7 @@ from core.persistence.db_ext import init_db_ext, save_strategy
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA,
+    TimeframeLayer,
 )
 
 
@@ -493,3 +494,285 @@ def _R(d1, d2):
     return {"symbol": "BTCUSDT", "timeframe": "4h",
             "start": f"2024-01-{d1:02d}T00:00:00Z",
             "end": f"2024-01-{d2:02d}T00:00:00Z"}
+
+
+class TestTranslatorTriggerPolicy:
+    """带 policy 假设翻译（trigger-policy 卡5 / tasks 6.1 分流锚）。
+
+    同条件集异 policy = 不同基因型：各自落库互不命中同签名分流；
+    翻译产物携带归一 policy；无 policy 假设产物零变化（不写字段）。
+    """
+
+    def _conditions(self):
+        return {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 30}},
+                 "action": "gt", "target": 60}],
+        }
+
+    def _register(self, db, policy=None):
+        return register_hypothesis(
+            db, conditions=self._conditions(), statement="s",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01T00:00:00Z",
+                          "end": "2024-02-01T00:00:00Z"}],
+            trigger_policy=policy)["hypothesis_id"]
+
+    def _translate_dna(self, db, hid):
+        from core.persistence.db_ext import get_strategy
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        row = get_strategy(db, out["strategy_id"])
+        return out, StrategyDNA.from_json(row["dna_json"])
+
+    def test_带policy假设_翻译产物携带policy(self, db):
+        hid = self._register(db, {"mode": "first_true"})
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy == {"mode": "first_true"}
+
+    def test_同条件异policy_各自落库互不混挂(self, db):
+        hid_a = self._register(db, {"mode": "first_true"})
+        hid_b = self._register(db, {"mode": "suppress_bars", "bars": 48})
+        out_a, dna_a = self._translate_dna(db, hid_a)
+        out_b, dna_b = self._translate_dna(db, hid_b)
+        assert out_a["strategy_id"] != out_b["strategy_id"]
+        assert dna_a.entry_trigger_policy == {"mode": "first_true"}
+        assert dna_b.entry_trigger_policy == {"mode": "suppress_bars",
+                                              "bars": 48}
+        assert dna_a.gene_signature != dna_b.gene_signature
+
+    def test_无policy假设_翻译产物零变化(self, db):
+        hid = self._register(db)                    # 缺省
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy is None
+        assert "entry_trigger_policy" not in dna.to_dict()
+
+    def test_显式none假设_翻译产物同缺省(self, db):
+        hid = self._register(db, {"mode": "none"})
+        out, dna = self._translate_dna(db, hid)
+        assert dna.entry_trigger_policy is None
+
+
+class TestTranslatorRejections:
+    """translate_hypothesis 四类结构化拒绝（跨币种/subject 非法/action
+    不可表达/when 无可表达条件）。"""
+
+    def test_跨币种假设_拒绝并附币种清单(self, db):
+        """跨币种在 register 入口已拒（data_ranges 同币种校验）；翻译侧
+        防御对 DB 直写的存量跨币种行生效（绕开入口的形态）。"""
+        ranges = [
+            {"symbol": "BTCUSDT", "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+            {"symbol": "ETHUSDT", "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+        ]
+        hid = "hyp_cross_symbol"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid, conditions=json.dumps(self._conds()),
+            conditions_hash="ch_cross", statement="s",
+            data_ranges=json.dumps(ranges), ranges_hash="rh_cross")
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert sorted((ei.value.detail or {})["symbols"]) == \
+            ["BTCUSDT", "ETHUSDT"]
+
+    def test_subject结构化引用非法_转译拒绝(self, db):
+        """未知指标在 register 预检已拒；翻译侧 ColumnRefError 转译
+        防御对 DB 直写行生效。"""
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "NOPE", "params": {}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": "close", "action": "gt", "target": 0}],
+        }
+        hid = "hyp_bad_subject"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid, conditions=json.dumps(conds),
+            conditions_hash="ch_bad", statement="s",
+            data_ranges=json.dumps(self._ranges()), ranges_hash="rh_bad")
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_action不可表达_拒绝附合法动作清单(self, db):
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "bogus_action", "target": 35},
+                {"subject": "close", "action": "gt", "target": 0}],
+            "then_conditions": [
+                {"subject": "close", "action": "gt", "target": 0}],
+        }
+        hid = register_hypothesis(
+            db, conditions=conds, statement="s",
+            data_ranges=self._ranges())["hypothesis_id"]
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "bogus_action" in str(ei.value)
+
+    def test_when无可表达条件_拒绝(self, db):
+        """when 组空（经 DB 直写绕开 register 非空校验——翻译器对
+        存量行形态的防御）→ 无入场条件拒绝。逐条件路径要么产基因/
+        插件源要么即抛，组级空集唯一来源即空列表。"""
+        hid = "hyp_empty_when"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid,
+            conditions=json.dumps({"when_conditions": [],
+                                   "then_conditions": []}),
+            conditions_hash="ch_empty", statement="s",
+            data_ranges=json.dumps(self._ranges()), ranges_hash="rh_empty")
+        with pytest.raises(ResearchError, match="无可表达条件"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    @staticmethod
+    def _conds():
+        return {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": "close", "action": "gt", "target": 0}],
+        }
+
+    @staticmethod
+    def _ranges():
+        return [{"symbol": "BTCUSDT", "timeframe": "4h",
+                 "start": "2024-01-01T00:00:00Z",
+                 "end": "2024-02-01T00:00:00Z"}]
+
+
+class TestDnaLayersFallbackDeadCode:
+    """dna.py `_resolve_signal_genes`（:312-316）不可达——死方法现状锚。
+
+    调用图依据：全库检索该方法名仅定义无调用点（dna.py:312 一处），
+    求值方（executor.py:768 等）直接迭代顶层 ``dna.signal_genes`` 字段，
+    不经任何回退解析——「layers 存在且顶层为空时取 layers[0]」的回退
+    行为未接线。现状行为锚：显式 layers 且顶层空 → signal_genes 保持
+    空（无回退）。已记 TD 台账（测试侧不为死代码写行为用例）。
+    """
+
+    def test_显式layers顶层空_signal_genes现状无回退(self):
+        layer = TimeframeLayer(
+            timeframe="1d",
+            signal_genes=[SignalGene("RSI", {"period": 14},
+                                     SignalRole.ENTRY_TRIGGER, "rsi_14",
+                                     {"type": "lt", "threshold": 30})],
+            logic_genes=LogicGenes())
+        dna = StrategyDNA(
+            signal_genes=[], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(), layers=[layer])
+        assert dna.signal_genes == []
+
+
+class TestFromDictTolerantShapes:
+    """dna.py from_dict 宽容形制：role 已是枚举、子结构已是对象时
+    直通不再重复转换（DB 往返/进程内对象的二形入参契约）。"""
+
+    def test_signal_gene_role已是枚举_直通(self):
+        raw = {"indicator": "RSI", "params": {"period": 14},
+               "role": SignalRole.ENTRY_TRIGGER,
+               "condition": {"type": "lt", "threshold": 30}}
+        sg = SignalGene.from_dict(raw)
+        assert sg.role is SignalRole.ENTRY_TRIGGER
+
+    def test_layer_signal_genes已是对象列表_元素直通(self):
+        genes = [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                            "rsi_14", {"type": "lt", "threshold": 30})]
+        layer = TimeframeLayer.from_dict({
+            "timeframe": "1d", "signal_genes": genes})
+        assert layer.signal_genes[0] is genes[0]
+
+    def test_layer_signal_genes键缺失_跳过转换走默认(self):
+        layer = TimeframeLayer.from_dict({"timeframe": "1d"})
+        assert layer.signal_genes == []
+
+    def test_layer_logic_genes已是对象_直通(self):
+        lg = LogicGenes()
+        layer = TimeframeLayer.from_dict({
+            "timeframe": "1d", "logic_genes": lg})
+        assert layer.logic_genes is lg
+
+
+class TestGeneSignatureCompositionSkip:
+    """gene_signature：有插件源但 composition 为空 → 跳过 comp 段
+    （src 段照常产出；无 policy 签名逐位不变原则的组成面）。"""
+
+    def test_有sources无composition_签名含src不含comp痕迹(self):
+        dna = StrategyDNA(
+            signal_genes=[SignalGene("RSI", {"period": 14},
+                                     SignalRole.ENTRY_TRIGGER, "rsi_14",
+                                     {"type": "lt", "threshold": 30})],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[{"type": "formula", "ref": "f1"}],
+            composition=None)
+        sig = dna.gene_signature
+        assert "src:formula:f1:0.0:>" in sig
+        assert "comp:" not in sig
+
+
+class TestTranslatorTargetColumnRejected:
+    """翻译器 target 列名形拒绝：action 合法但 target 非数值
+    （字符串列名不可表达）→ RESEARCH_NOT_EXPRESSIBLE。"""
+
+    def test_when_target列名_拒绝(self, db):
+        hid = "hyp_target_col"
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": "close"}],
+            "then_conditions": [
+                {"subject": "close", "action": "gt", "target": 0}],
+        }
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid, conditions=json.dumps(conds),
+            conditions_hash="ch_tgtcol", statement="s",
+            data_ranges=json.dumps([{"symbol": "BTCUSDT", "timeframe": "4h",
+                                     "start": "2024-01-01T00:00:00Z",
+                                     "end": "2024-02-01T00:00:00Z"}]),
+            ranges_hash="rh_tgtcol")
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "target 须为数值" in str(ei.value)
+
+
+class TestRegisterPrecheckLogFailureTolerated:
+    """登记预检留痕「尽力而为」：append_research_log 抛异常 →
+    warning 降级，登记主通道照常成功返回（不反噬）。"""
+
+    def test_留痕写入失败_登记照常成功(self, db, tmp_path, monkeypatch):
+        import core.persistence.repository.research as research_mod
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # 数据起点 2024-01-01；区间 start 留足 200 bar warmup 前缀
+        _df(500).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+
+        def _boom(*a, **kw):
+            raise RuntimeError("log sink down")
+
+        monkeypatch.setattr(research_mod, "append_research_log", _boom)
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "gt", "target": 50}],
+        }
+        out = register_hypothesis(
+            db, conditions=conds, statement="s",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-02-15T00:00:00Z",
+                          "end": "2024-03-20T00:00:00Z"}],
+            precheck_data_dir=data_dir)
+        assert out["hypothesis_id"]
+        assert out["duplicated"] is False

@@ -144,6 +144,9 @@ class DNAModel(BaseModel):
     # == v2 超集（add-ai-research-mcp 6.1）：承载 signal_sources 与 composition ==
     signal_sources: Optional[List[Dict[str, Any]]] = None
     composition: Optional[Dict[str, Any]] = None
+    # 入场触发策略（trigger-policy 卡5 / D11）：五消费面（evolution
+    # initial/champion、策略创建读回、compare、batch、verify）传输键
+    entry_trigger_policy: Optional[Dict[str, Any]] = None
 
     def to_dna(self):
         """转换为核心 StrategyDNA（传输模型→领域对象的单一转换入口）。"""
@@ -910,6 +913,10 @@ class HypothesisCreate(BaseModel):
     statement: str
     data_ranges: List[DataRangeItem]
     provenance: Optional[ScreenProvenance] = None
+    # 条件集整体级触发策略（trigger-policy 卡2）：弱形制对象键——
+    # mode 枚举/bars 参数的权威校验在服务层 validate_policy（422 附
+    # 合法枚举与参数要求，错误即文档；API 层只声明键存在与对象形）
+    trigger_policy: Optional[Dict[str, Any]] = None
 
 
 class HypothesisTransitionRequest(BaseModel):

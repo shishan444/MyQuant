@@ -846,3 +846,39 @@ class TestUnreachableGuardNotes:
     :293 不可达复核补强——:508 调用点上游 :494 直接取 data_ranges[0]，
     空列表在到达本分支前已 IndexError，二点封闭成立。
     """
+
+
+class TestComputePrecheckReportAnchorGuards:
+    """compute_precheck_report 锚口径编程错误防御：analysis_segment
+    缺 per_range / 未知锚 → ValueError（编程错误，非用户输入通道）。"""
+
+    @staticmethod
+    def _work() -> pd.DataFrame:
+        idx = pd.date_range("2024-01-01", periods=300, freq="4h")
+        close = 100 + (pd.Series(range(300)) * 0.1)
+        return pd.DataFrame({
+            "open": close, "high": close + 1, "low": close - 1,
+            "close": close, "volume": 100.0,
+        }, index=idx)
+
+    def test_analysis_segment_without_per_range_raises(self):
+        from core.analysis.templates.precheck_hypothesis import (
+            compute_precheck_report,
+        )
+
+        with pytest.raises(ValueError, match="analysis_segment 锚须提供"):
+            compute_precheck_report(
+                self._work(),
+                [{"subject": "close", "action": "gt", "target": 0}],
+                anchor="analysis_segment", per_range=None)
+
+    def test_unknown_anchor_raises(self):
+        from core.analysis.templates.precheck_hypothesis import (
+            compute_precheck_report,
+        )
+
+        with pytest.raises(ValueError, match="未知锚口径"):
+            compute_precheck_report(
+                self._work(),
+                [{"subject": "close", "action": "gt", "target": 0}],
+                anchor="bogus_anchor")
