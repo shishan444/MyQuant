@@ -287,6 +287,16 @@ class TestCursorAndChampionWrites:
         assert row["population_size"] == 30
         assert row["mode"] == "explore"
 
+    def test_update_task_config显式updated_at被内部刷新覆盖(self, db):
+        """CARD-06 边界锚（553e66f 覆盖式合并，paper_trading 先例）：
+        显式携带不 TypeError，updated_at 以仓储内部刷新为准。"""
+        repo.update_task_config(db, "t1", updated_at="1999-01-01T00:00:00+00:00",
+                                population_size=42)
+        row = repo.get_task(db, "t1")
+        assert row["updated_at"] != "1999-01-01T00:00:00+00:00", \
+            "内部时间戳须覆盖显式携带"
+        assert row["population_size"] == 42, "业务列须正常写入"
+
     def test_五函数刷新updated_at_CARD06(self, db, dna):
         """CARD-06 契约锚：冠军/OOS/配置写路径统一刷新 updated_at；
         乐观锁未命中（低分）零行更新——updated_at 不动。"""
