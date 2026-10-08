@@ -1,14 +1,17 @@
-"""Extended database operations for v0.8 schema.
+"""存量库幂等升级轨（legacy init/ALTER 链，B3d.1 收编自 db_ext）。
 
-Adds 3 new tables (strategy, backtest_result, dataset_meta),
-extends evolution_task with 6 columns, and provides a
-version-managed migration runner on top of core.persistence.db.
-
-Public API:
-    init_db_ext           -- run migrations to create/upgrade schema
-    save_strategy / get_strategy / list_strategies / update_strategy / delete_strategy
-    save_backtest_result / list_backtest_results / get_backtest_result
-    save_dataset_meta / list_datasets / get_dataset / update_dataset_stats / delete_dataset
+职能：把历史版本库零重建升级到当前 schema——建表权在 ORM 模型
+（init_db 以元数据 CREATE IF NOT EXISTS 抢先满足）、schema 演进权在
+Alembic 版本链，本模块只承载历史库的列补齐（PRAGMA guard 幂等
+ALTER）与两笔数据迁移（版本 19 去重 / 20 策略名重算）。
+价值：存量库无需重建即达终态列结构（ORM models 即以其终态库
+PRAGMA 实测为列级权威源）。
+服务对象：api/app.py 启动 lifespan（经 db_ext re-export 调
+init_db_ext，每次启动幂等跑一遍）；_connect 另经 db_ext re-export
+供测试库直连消费。
+职责边界：只动 schema_version 记账与本轨迁移；表访问 CRUD 一律在
+core.persistence.repository.*（db_ext 同名委托），本模块不持业务
+读写。
 """
 from __future__ import annotations
 
@@ -32,34 +35,38 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 logger = logging.getLogger(__name__)
 
-# Located at core/persistence/db_ext.py — resolve up to the repo root (which
-# holds the migrations/ directory). parents[0]=persistence, [1]=core, [2]=root.
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
-
 # ---------------------------------------------------------------------------
 
-# -- helpers --
-
 def _now() -> str:
+    """迁移链专用 UTC ISO 时间戳。
+
+    与公共源 core.persistence.timestamps.utc_now_iso 并存——该模块
+    docstring 裁明「db_ext legacy 链的 _now 随迁移工具链保留」，本轨
+    自持一份不改引公共名。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
-# -- migration runner --
+# -- 迁移版本记账 --
 
 def _get_applied_versions(conn: sqlite3.Connection) -> set[int]:
-    """Return the set of already-applied migration version numbers."""
+    """读 schema_version 已应用版本号集合。
+
+    缺失语义：表尚不存在（首次运行）返回空集而非报错——首跑即
+    全量执行各 runner（幂等无害）。
+    """
     try:
         rows = conn.execute(
             "SELECT version FROM schema_version"
         ).fetchall()
         return {r[0] for r in rows}
     except sqlite3.OperationalError:
-        # table does not exist yet -- first run
+        # 表不存在——首跑路径
         return set()
 
 
 def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
-    """Create the schema_version table if absent."""
+    """确保版本记账表存在（CREATE IF NOT EXISTS，幂等）。"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS schema_version (
             version     INTEGER PRIMARY KEY,
@@ -78,7 +85,12 @@ _ALTER_COLUMNS = [
 
 
 def _apply_alter_evolution_task(conn: sqlite3.Connection) -> None:
-    """Add extended columns to evolution_task (idempotent)."""
+    """evolution_task 补早期扩展列（_ALTER_COLUMNS 5 列，幂等）。
+
+    列补齐族通用契约：PRAGMA table_info 求现有列集合→缺失列逐个
+    ALTER ADD（带 DEFAULT 的立即生效于存量行）；列已存在 no-op；
+    ALTER 失败直接上抛（不吞）。
+    """
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -98,7 +110,8 @@ _MTF_COLUMNS = [
 ]
 
 _STRATEGY_EXT_COLUMNS = [
-    ("metrics_json", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, ...}
+    # 指标摘要 JSON：{annual_return, sharpe_ratio, max_drawdown, win_rate, ...}
+    ("metrics_json", "TEXT"),
     # 生命周期状态（improve-mcp-agent-loop M4；PRAGMA guard 幂等补列）
     ("status", "TEXT NOT NULL DEFAULT 'active'"),  # draft | active | archived
 ]
@@ -169,7 +182,7 @@ _VERIFY_STRATEGY_COLUMNS = [
 
 
 def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
-    """Add leverage/direction and data range columns to evolution_task (idempotent)."""
+    """evolution_task 补杠杆/方向约束与数据探测列（_CONSTRAINT_COLUMNS，幂等；契约同 _apply_alter_evolution_task）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -183,7 +196,7 @@ def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
-    """Add MTF-related columns to evolution_task (idempotent)."""
+    """evolution_task 补多周期池列（_MTF_COLUMNS：indicator_pool/timeframe_pool/mode，幂等；契约同族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -197,7 +210,7 @@ def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_progress_columns(conn: sqlite3.Connection) -> None:
-    """Add progress tracking columns to evolution_task (idempotent)."""
+    """evolution_task 补进度/心跳列（_PROGRESS_COLUMNS，幂等；契约同族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -211,7 +224,7 @@ def _apply_progress_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_scoring_constraint_columns(conn: sqlite3.Connection) -> None:
-    """Add min_annual_return and max_drawdown_limit to evolution_task (idempotent)."""
+    """evolution_task 补评分约束列（min_annual_return/max_drawdown_limit，幂等；契约同族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -225,7 +238,7 @@ def _apply_scoring_constraint_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_strategy_ext_columns(conn: sqlite3.Connection) -> None:
-    """Add metrics_json column to strategy table (idempotent)."""
+    """strategy 表补指标摘要与生命周期状态列（幂等；契约同族，目标表为 strategy）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(strategy)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -239,11 +252,11 @@ def _apply_strategy_ext_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_fitness_columns(conn: sqlite3.Connection) -> None:
-    """Add fitness scoring columns to evolution_task, strategy, and backtest_result (idempotent).
+    """三表补 fitness 评分列（migration 021，幂等）。
 
-    Migration 021: new fitness-based scoring replaces score_strategy (0-100 weighted sum)
-    with compute_fitness (satisfaction ratio product + qualified boolean gate).
-    Old columns are kept for backward compatibility.
+    语义：fitness 体系（满意度乘积 + qualified 布尔门）替代旧
+    score_strategy（0-100 加权和）；旧列保留兼容不删。契约同列补齐
+    族，差异点为按表分组循环（evolution_task/strategy/backtest_result）。
     """
     tables_columns = [
         ("evolution_task", _FITNESS_EVOLUTION_TASK_COLUMNS),
@@ -263,10 +276,7 @@ def _apply_fitness_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_oos_validation_columns(conn: sqlite3.Connection) -> None:
-    """Add OOS validation columns to evolution_task (idempotent).
-
-    Migration 022: out-of-sample validation columns for champion strategies.
-    """
+    """evolution_task 补样本外验证列（migration 022：冠军策略 OOS 结果，幂等；契约同族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(evolution_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -278,7 +288,7 @@ def _apply_oos_validation_columns(conn: sqlite3.Connection) -> None:
             )
 
 
-# -- Verify session columns (migration 023) --
+# -- 验证会话（migration 023） --
 
 _VERIFY_SESSION_BT_COLUMNS = [
     ("session_id", "TEXT"),
@@ -286,7 +296,11 @@ _VERIFY_SESSION_BT_COLUMNS = [
 
 
 def _create_verify_session_table(conn: sqlite3.Connection) -> None:
-    """Create verify_session table (idempotent)."""
+    """建 verify_session 表（CREATE IF NOT EXISTS + created_at 索引，幂等）。
+
+    与 ORM models.VerifySession 镜像：对历史库生效，新库被 ORM 元数据
+    建表抢先满足（no-op）。
+    """
     conn.execute("""CREATE TABLE IF NOT EXISTS verify_session (
         session_id       TEXT PRIMARY KEY,
         status           TEXT NOT NULL DEFAULT 'running',
@@ -309,7 +323,7 @@ def _create_verify_session_table(conn: sqlite3.Connection) -> None:
 
 
 def _apply_verify_session_columns(conn: sqlite3.Connection) -> None:
-    """Add session_id column to backtest_result (idempotent)."""
+    """backtest_result 补 session_id 关联列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(backtest_result)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -322,10 +336,14 @@ def _apply_verify_session_columns(conn: sqlite3.Connection) -> None:
 
 
 def _apply_verify_strategy_columns(conn: sqlite3.Connection) -> None:
-    """Add verification summary columns to strategy (idempotent).
+    """strategy 补验证摘要列（migration 024：验证次数/均分/最高分与
+    最近验证时刻，幂等；契约同族）。
 
-    Migration 024: track how many times a strategy has been verified,
-    its average and best comprehensive scores, and last verification time.
+    版本 24/25 双挂本函数（init_db_ext migrations 列表）：引入时即
+    同函数进入（9c34908），版本 25 从无独立迁移内容；幂等无害
+    （PRAGMA guard 二次执行 no-op）。版本号已随历史库持久化进
+    schema_version 不可回收——删 25 行会使已记账库重跑（仍无害但
+    记账漂移），故保留双挂。
     """
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(strategy)")
@@ -339,24 +357,24 @@ def _apply_verify_strategy_columns(conn: sqlite3.Connection) -> None:
 
 
 def _record_version(conn: sqlite3.Connection, version: int) -> None:
+    """版本号记账（INSERT OR IGNORE，幂等）——重跑不冲突，全轨幂等的记账基础。"""
     conn.execute(
         "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)",
         (version, _now()),
     )
 
 
-# -- public init --
+# -- 公共入口 --
 
 def init_db_ext(db_path: Path) -> None:
-    """Initialize the extended schema.
+    """存量库幂等升级编排器（唯一公共入口，重复调用安全）。
 
-    Calls core ``init_db`` first, then runs any pending SQL migrations
-    from the *migrations/* directory, plus the ALTER TABLE for extended
-    evolution_task columns.
-
-    Safe to call multiple times (idempotent).
+    编排序：init_db（ORM 元数据建表，抢先满足 CREATE IF NOT EXISTS）
+    → schema_version 记账 → 逐版本 runner 执行并记账。幂等由三重
+    机制保证：PRAGMA guard（列补齐）、IF NOT EXISTS（建表）、
+    OR IGNORE（版本记账）。
     """
-    # 1. Ensure core tables exist
+    # 1. 先确保核心表存在（ORM 元数据建表）
     init_db(db_path)
 
     conn = _connect(db_path)
@@ -370,14 +388,13 @@ def init_db_ext(db_path: Path) -> None:
         # 演进权归 Alembic 版本链、建表权归 ORM 模型。历史库的列补齐由
         # 下方 Python ALTER 轨（PRAGMA guard 幂等）继续承载。
 
-        # 3. Always ensure schema_version table is recorded
+        # 3. 版本 1（建表轨）恒记账
         if 1 not in applied:
             _record_version(conn, 1)
 
-        # 4. Data-driven ALTER/data migrations (versions 5-25).
-        # Defined inline (after all _apply_*/_create_* helpers are in scope)
-        # so we iterate a table instead of 24 hard-coded sequential steps.
-        # Runners are idempotent (PRAGMA table_info guards).
+        # 4. 数据驱动的 ALTER/数据迁移轨（版本 5-26）：表驱动替代硬编码
+        # 串行步骤——runner 在全部 helper 定义后内联成表，逐版本执行并
+        # 记账；各 runner 幂等（PRAGMA table_info guard）。
         def _step_23(c: sqlite3.Connection) -> None:
             _create_verify_session_table(c)
             _apply_verify_session_columns(c)
@@ -403,6 +420,8 @@ def init_db_ext(db_path: Path) -> None:
             (22, _apply_oos_validation_columns),
             (23, _step_23),
             (24, _apply_verify_strategy_columns),
+            # 24/25 双挂同函数（引入时即无 25 独立内容——见该函数
+            # docstring 的历史说明；25 已持久化进 schema_version 不可回收）
             (25, _apply_verify_strategy_columns),
             # B3c.1: live 表收编进 init 链（原 core/live_trading/persistence.py）
             (26, _create_live_trading_tables),
@@ -418,13 +437,18 @@ def init_db_ext(db_path: Path) -> None:
 
 
 # ===================================================================
-# Strategy dedup cleanup (migration 019)
+# 策略数据迁移（版本 19/20）——失败降级不阻塞升级是本族关键契约
 # ===================================================================
 
 def _dedup_strategies(conn: sqlite3.Connection) -> None:
-    """Remove duplicate strategies, keeping the one with the highest best_score per gene_signature."""
+    """migration 019：同 gene_signature 策略去重，保留最高分一条。
+
+    保留序：best_score 降序、NULL 分殿后（CASE 护位）。
+    错误语义：整体 try/except 降级 logger.warning（exc_info 留痕）
+    不中断迁移——数据迁移失败不阻塞升级。
+    """
     try:
-        # Find duplicates: gene_signature appears more than once
+        # 找重复：gene_signature 出现多于一次
         dup_sigs = conn.execute(
             """SELECT gene_signature FROM strategy
                WHERE gene_signature IS NOT NULL
@@ -435,14 +459,14 @@ def _dedup_strategies(conn: sqlite3.Connection) -> None:
             return
 
         for (sig,) in dup_sigs:
-            # Get all rows with this signature, ordered by best_score DESC (NULLs last)
+            # 该签名全部行，按 best_score 降序、NULL 分殿后
             rows = conn.execute(
                 """SELECT strategy_id, best_score FROM strategy
                    WHERE gene_signature = ?
                    ORDER BY CASE WHEN best_score IS NULL THEN 1 ELSE 0 END, best_score DESC""",
                 (sig,),
             ).fetchall()
-            # Keep the first (highest score), delete the rest
+            # 保留首行（最高分），其余删除
             keep_id = rows[0][0]
             delete_ids = [r[0] for r in rows[1:]]
             if delete_ids:
@@ -457,7 +481,11 @@ def _dedup_strategies(conn: sqlite3.Connection) -> None:
 
 
 def _recompute_strategy_names(conn: sqlite3.Connection) -> None:
-    """Recompute all strategy names to include MTF layer data in the hash."""
+    """migration 020：全量重算策略名（MTF 层数据纳入 hash）。
+
+    错误语义：整体降级 logger.warning 不中断；行级解析失败 continue
+    跳过该行（残留旧名，不阻塞其余行）。
+    """
     try:
         from core.strategy.dna import StrategyDNA, generate_strategy_name
 
@@ -475,6 +503,7 @@ def _recompute_strategy_names(conn: sqlite3.Connection) -> None:
                 )
                 updated += 1
             except Exception:
+                # 单行失败跳过——残留旧名不阻塞其余行
                 continue
         if updated:
             logger.info("Recomputed %d strategy names", updated)
@@ -483,7 +512,12 @@ def _recompute_strategy_names(conn: sqlite3.Connection) -> None:
 # ===================================================================
 
 def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
-    """Create paper_trading_task and paper_trade tables (idempotent)."""
+    """建 paper_trading_task 与 paper_trade 双表+索引（幂等）。
+
+    含 B1.3 幂等迁移：paper_trade 同 (task_id, bar_time, action) 唯一
+    索引（存量重复先去重保留最早一条——见函数体内中文注释）。新库
+    同样被 ORM 抢先满足，本函数对历史库生效。
+    """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS paper_trading_task (
             task_id          TEXT PRIMARY KEY,
@@ -502,24 +536,24 @@ def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
             started_at       TEXT,
             stopped_at       TEXT,
             stop_reason      TEXT,
-            -- Position state (for recovery)
+            -- 持仓状态（恢复用）
             position_side     TEXT,
             position_entry    REAL,
             position_quantity REAL,
             position_margin   REAL,
             position_funding  REAL DEFAULT 0,
-            -- Account state
+            -- 账户状态
             balance          REAL,
             unrealized_pnl   REAL DEFAULT 0,
-            -- Stats
+            -- 交易统计
             total_trades     INTEGER DEFAULT 0,
             total_pnl        REAL DEFAULT 0,
             win_count        INTEGER DEFAULT 0,
             loss_count       INTEGER DEFAULT 0,
-            -- Last processed bar
+            -- 最近处理 bar
             last_bar_time    TEXT,
             last_bar_close   REAL,
-            -- Heartbeat
+            -- 心跳
             heartbeat_at     TEXT
         )
     """)
@@ -558,7 +592,7 @@ def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
 
 
 def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
-    """Add execution_model column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 execution_model 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -570,7 +604,7 @@ def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
 
 
 def _apply_bars_held_column(conn: sqlite3.Connection) -> None:
-    """Add bars_held column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 bars_held 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -582,7 +616,7 @@ def _apply_bars_held_column(conn: sqlite3.Connection) -> None:
 
 
 def _apply_position_open_cost_column(conn: sqlite3.Connection) -> None:
-    """Add position_open_cost column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 position_open_cost 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -594,7 +628,7 @@ def _apply_position_open_cost_column(conn: sqlite3.Connection) -> None:
 
 
 def _apply_pending_decision_column(conn: sqlite3.Connection) -> None:
-    """Add pending_decision_json column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 pending_decision_json 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -606,7 +640,7 @@ def _apply_pending_decision_column(conn: sqlite3.Connection) -> None:
 
 
 def _apply_confidence_sizing_column(conn: sqlite3.Connection) -> None:
-    """Add confidence_sizing_enabled column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 confidence_sizing_enabled 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -618,7 +652,7 @@ def _apply_confidence_sizing_column(conn: sqlite3.Connection) -> None:
 
 
 def _apply_prediction_dna_column(conn: sqlite3.Connection) -> None:
-    """Add prediction_dna_json column to paper_trading_task (idempotent)."""
+    """paper_trading_task 补 prediction_dna_json 列（幂等；契约同列补齐族）。"""
     conn.row_factory = sqlite3.Row
     cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
     existing = {row[1] for row in cursor.fetchall()}
@@ -630,7 +664,12 @@ def _apply_prediction_dna_column(conn: sqlite3.Connection) -> None:
 
 
 def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
-    """Create paper_equity_snapshot table (idempotent)."""
+    """建 paper_equity_snapshot 表+唯一索引（幂等）。
+
+    idx_equity_task_time 为 (task_id, timestamp) 唯一约束——
+    save_equity_snapshots 的 OR IGNORE 幂等依赖（CARD-01 收口后
+    ORM models 与 Alembic 轨同构唯一；新库被 ORM 抢先满足）。
+    """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS paper_equity_snapshot (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -648,14 +687,14 @@ def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
     """)
 
 
-# -- Paper Trading Task CRUD --
+# -- 模拟交易任务 CRUD（迁 repository/paper_trading.py）--
 
 # ===================================================================
 # Live Trading Task（B3c.1 收编：原 core/live_trading/persistence.py）
 # ===================================================================
 
 def _create_live_trading_tables(conn: sqlite3.Connection) -> None:
-    """Create live_trading_task table (idempotent，收编自 live 轨)。"""
+    """建 live_trading_task 表（CREATE IF NOT EXISTS，幂等，收编自 live 轨）。"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS live_trading_task (
             task_id       TEXT PRIMARY KEY,
