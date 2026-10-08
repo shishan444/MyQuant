@@ -1,8 +1,8 @@
 """backtest_result repository（B3b.1 迁移）。
 
 行为等价锚点：save 裸 INSERT；list 过滤（strategy_id/symbol/run_source）
-+ 排序（getattr 限定列名——旧轨动态拼列名，合法输入行为等价且消除了
-非法输入的 SQL 注入面）+ limit（无 offset，同旧轨）。
++ 排序（白名单+ValueError 拒绝，形制同 strategy.py——旧轨动态拼列名
+的注入面与 getattr 探测面双收口）+ limit（无 offset，同旧轨）。
 """
 from __future__ import annotations
 
@@ -13,6 +13,14 @@ from sqlalchemy import insert, select
 
 from core.persistence.orm.models import BacktestResult
 from core.persistence.repository.dataset_meta import _engine_for, _now
+
+# 排序白名单（调用方实际列集：created_at/total_score + 评分指标列；
+# 形制对齐 strategy.py _SORT_ALLOWED_COLUMNS）
+_SORT_ALLOWED_COLUMNS = {
+    "created_at", "total_score", "total_return", "sharpe_ratio",
+    "max_drawdown", "win_rate", "fitness", "wf_score",
+}
+_SORT_ALLOWED_ORDERS = {"asc", "desc"}
 
 
 def save_backtest_result(
@@ -94,6 +102,11 @@ def list_backtest_results(
         stmt = stmt.where(BacktestResult.run_source == run_source)
     if session_id is not None:
         stmt = stmt.where(BacktestResult.session_id == session_id)
+
+    if sort_by not in _SORT_ALLOWED_COLUMNS:
+        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
+    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
+        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
 
     col = getattr(BacktestResult, sort_by)
     stmt = stmt.order_by(col.desc() if sort_order.lower() == "desc" else col.asc()).limit(limit)
