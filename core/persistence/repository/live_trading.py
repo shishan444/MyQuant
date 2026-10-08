@@ -51,6 +51,7 @@ def save_live_trading_task(
 
 
 def get_live_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
+    """按 ID 取实盘任务（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -79,6 +80,7 @@ def update_live_trading_task(db_path: Path, task_id: str, **kwargs: Any) -> None
 def list_live_trading_tasks(
     db_path: Path, status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """列实盘任务（可按 status 过滤，created_at 倒序）。"""
     stmt = select(LiveTradingTask)
     if status:
         stmt = stmt.where(LiveTradingTask.status == status)
@@ -90,6 +92,7 @@ def list_live_trading_tasks(
 
 
 def delete_live_trading_task(db_path: Path, task_id: str) -> bool:
+    """按 ID 删实盘任务（返回是否删除到行）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         result = conn.execute(

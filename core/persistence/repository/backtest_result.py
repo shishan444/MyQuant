@@ -52,7 +52,7 @@ def save_backtest_result(
     satisfaction_json: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Insert a backtest result record."""
+    """写入回测结果记录（裸 INSERT）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(insert(BacktestResult).values(
@@ -73,7 +73,7 @@ def save_backtest_result(
 
 
 def get_backtest_result(db_path: Path, result_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single backtest result by ID, or None if not found."""
+    """按 ID 取单条回测结果（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -93,7 +93,7 @@ def list_backtest_results(
     sort_order: str = "desc",
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List backtest results with optional filtering and sorting."""
+    """列回测结果（strategy_id/symbol/run_source/session_id 过滤+白名单排序+limit）。"""
     stmt = select(BacktestResult)
     if strategy_id is not None:
         stmt = stmt.where(BacktestResult.strategy_id == strategy_id)

@@ -48,10 +48,9 @@ def save_strategy(
     gene_signature: Optional[str] = None,
     status: str = "active",
 ) -> None:
-    """Insert a new strategy record. Deduplicates by gene_signature.
+    """新增策略记录，按 gene_signature 去重。
 
-    If a strategy with the same gene_signature already exists, keeps the one
-    with the higher best_score（单事务原子，语义同旧轨）。
+    同签名已存在时保留 best_score 更高者（单事务原子，语义同旧轨）。
 
     status="draft" 免去重（improve-mcp-agent-loop M4）：草稿无绩效，
     "保留更优"语义错位且会静默吞掉插入（translate 幽灵 id）——草稿
@@ -106,7 +105,7 @@ def save_strategy(
 
 
 def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single strategy by ID, or None if not found."""
+    """按 ID 取单条策略（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -132,7 +131,7 @@ def count_strategies_by_tasks(
     task_ids: List[str],
     min_score: float = 0,
 ) -> Dict[str, int]:
-    """Batch count strategies per task_id（GROUP BY + 缺失补 0，同旧轨）。"""
+    """按 task_id 批量计策略数（GROUP BY + 缺失补 0，同旧轨）。"""
     if not task_ids:
         return {}
     engine = _engine_for(db_path)
@@ -215,7 +214,7 @@ def list_strategies(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List strategies with optional filtering, sorting, and pagination.
+    """列策略（过滤+白名单排序+分页）。
 
     status=None 默认视图排除 draft；显式 status（draft/active/archived）
     精确匹配（草稿可见性走显式查询）。
@@ -244,7 +243,7 @@ def update_strategy(
     strategy_id: str,
     **fields: Any,
 ) -> None:
-    """Update one or more fields on an existing strategy（白名单不变）。"""
+    """更新既有策略的一个或多个字段（白名单不变）。"""
     values = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
     if not values:
         return
@@ -259,7 +258,7 @@ def update_strategy(
 
 
 def delete_strategy(db_path: Path, strategy_id: str) -> None:
-    """Delete a strategy by ID. No error if not found."""
+    """按 ID 删策略（不存在时无错误）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(delete(Strategy).where(Strategy.strategy_id == strategy_id))

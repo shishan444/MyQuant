@@ -176,7 +176,7 @@ def save_equity_snapshots(
 def list_equity_snapshots(
     db_path: Path, task_id: str,
 ) -> List[Dict[str, Any]]:
-    """Return all equity snapshots for a task in chronological order."""
+    """取任务全部权益快照（时间正序）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(
