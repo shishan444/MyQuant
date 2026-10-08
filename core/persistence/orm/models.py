@@ -155,7 +155,9 @@ class GenerationSnapshot(Base):
 class PaperEquitySnapshot(Base):
     __tablename__ = "paper_equity_snapshot"
     __table_args__ = (
-        Index("idx_equity_task_time", "task_id", "timestamp"),
+        # (task_id, timestamp) 唯一：save_equity_snapshots 的 OR IGNORE
+        # 幂等依赖此约束（legacy_init._create_equity_snapshot_table 同规）
+        Index("idx_equity_task_time", "task_id", "timestamp", unique=True),
         {"sqlite_autoincrement": True},
     )
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
