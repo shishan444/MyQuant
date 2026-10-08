@@ -397,25 +397,14 @@ class TestThenTargetBoundary:
                                      trigger_price=10**9)
         assert isinstance(out, bool)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="契约偏差待定级（Q7）：TD-11 收口宣称「WHEN/THEN 两通道"
-               "同构，无静默侧」（engine.py:672-673），但兜底块"
-               " :699-702 仍为旧形制 float()+except 静默归 0。可达路径"
-               "（探针实证）：then 条件 window=0 时 cond_df=iloc[:0] 截空"
-               "→ 循环 continue 跳过 _cond_number → 兜底块以坏串 target"
-               " 静默归 0 判定。window 键登记侧无下界校验"
-               "（ConditionInput.window 仅 int 类型校验），window=0 为"
-               "合法 API 输入。同坏 target 对照：window=4 走循环体"
-               "结构化拒绝（上一用例）。修复后此锚 XPASS 提醒移除标记",
-    )
     def test_then_target坏str_window0截空_兜底块应同构拒绝(self, df):
-        """按 TD-11 宣称契约断言（同构拒绝）；当前实现静默归 0 判定
-        ——探针实证返回 bool（下跌数据下 change<=0 → True），无异常。"""
+        """CARD-02 转正：window=0 经 _cond_window 在循环体结构化拒绝
+        （F-2 同码族，param=condition.window 先于 target 校验触发），
+        不再静默截空落兜底块。REST 入站侧同步 ge=1 早拒。"""
         from core.validation.engine import _check_then_conditions
         with pytest.raises(ResearchError) as ei:
             _check_then_conditions(df, [
                 {"action": "drop", "target": "close", "window": 0}],
                 trigger_price=100.0)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert (ei.value.detail or {})["param"] == "condition.target"
+        assert (ei.value.detail or {})["param"] == "condition.window"

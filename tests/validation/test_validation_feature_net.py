@@ -783,16 +783,19 @@ class TestCheckThenBoundary:
         matched = _check_then_conditions(window, [{"action": "gt", "target": 5}], 100.0)
         assert matched is False
 
-    def test_cond_window_zero_skips_condition(self):
-        """现状记录：cond.window=0 裁出空窗 → continue，落到默认分支判定。"""
+    def test_cond_window_zero_structurally_rejected(self):
+        """CARD-02 转正：cond.window=0 经 _cond_window 结构化拒绝
+        （原行为：裁空窗 → continue 落默认分支，静默跳过条件）。"""
         from core.validation.engine import _check_then_conditions
+        from core.analysis.hypothesis_service import ResearchError
         window = self._window([100.0, 108.0])
-        matched = _check_then_conditions(
-            window, [{"action": "gt", "target": 5, "window": 0}],
-            100.0, 0, 8,
-        )
-        # 主判定被跳过；默认分支 action=gt 不在 drop/rise → False
-        assert matched is False
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(
+                window, [{"action": "gt", "target": 5, "window": 0}],
+                100.0, 0, 8,
+            )
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.window"
 
 
 # ===========================================================================
@@ -1073,20 +1076,23 @@ class TestLookbackWindowValidation:
 class TestStage4BlindSpotFill:
     """阶段四盲区消解补锚：判定路径上被前置拦截掩盖的兜底分支。"""
 
-    def test_then_default_branch_bad_threshold_falls_back_zero(self):
-        """主判定被 window=0 跳过 + 默认分支 target 不可解析 → 阈值按 0。"""
+    def test_then_window_zero_rise_form_rejected(self):
+        """CARD-02 转正：window=0 + 坏 target（rise 形）→ _cond_window
+        结构化拒绝（原行为：裁空窗跳主判定，默认分支 float 失败静默
+        归 0 → rise 8% >= 0 判 True 的失真匹配）。"""
         from core.validation.engine import _check_then_conditions
+        from core.analysis.hypothesis_service import ResearchError
         window = pd.DataFrame(
             {"close": [100.0, 108.0]},
             index=pd.date_range("2024-01-01", periods=2, freq="4h"),
         )
-        # 主循环：cond_window=0 裁空窗 continue；默认分支 float("abc") 失败
-        # → threshold=0 → rise 判定 (108-100)/100*100=8 >= 0 → True
-        matched = _check_then_conditions(
-            window, [{"action": "rise", "target": "abc", "window": 0}],
-            100.0, 0, 8,
-        )
-        assert bool(matched) is True  # noqa: E712（numpy bool 包装）
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(
+                window, [{"action": "rise", "target": "abc", "window": 0}],
+                100.0, 0, 8,
+            )
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.window"
 
     def test_spike_series_target_falls_back_default_multiplier(self):
         """现状记录：target 为列（Series）时 float() 抛 TypeError →
