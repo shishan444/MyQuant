@@ -177,17 +177,10 @@ class TestEquitySnapshots:
         assert rows[0]["position_side"] == "flat", "缺省补 flat"
         assert rows[1]["position_side"] == "long"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="契约偏差待修复：save_equity_snapshots 注释宣称 OR IGNORE 幂等，"
-               "但 (task_id, timestamp) 唯一索引实际不存在——ORM 模型声明"
-               "（models.py idx_equity_task_time 未带 unique=True）先建非唯一"
-               "索引，legacy_init 的 CREATE UNIQUE INDEX IF NOT EXISTS 被架空，"
-               "Alembic baseline 同为 unique=False。重放实际产生重复行。"
-               "修复后此锚 XPASS 提醒移除标记",
-    )
     def test_同timestamp重放_不增行(self, db):
-        """按宣称契约断言（幂等）；当前实现重放产生重复行——见 xfail 说明。"""
+        """OR IGNORE 幂等（CARD-01 修复转正）：(task_id, timestamp) 唯一
+        索引三处声明已收敛 UNIQUE（ORM models + Alembic 04b595687d2f +
+        legacy_init 同规），重放被约束拦截、首写胜出。"""
         _task(db, "t1")
         batch = [{"timestamp": "2026-01-01T00:00", "equity": 100.0, "balance": 100.0}]
         repo.save_equity_snapshots(db, "t1", batch)
