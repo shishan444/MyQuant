@@ -49,10 +49,10 @@ def _next_version(db_path: Path, table: str, name: str) -> int:
     """取 (name,version) 下一可用版本号。"""
     from sqlalchemy import func, select
     from core.persistence.orm.models import FormulaPlugin, ModelPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
+    from core.persistence.orm.engine import engine_for
 
     model = FormulaPlugin if table == "formula" else ModelPlugin
-    with _engine_for(db_path).connect() as conn:
+    with engine_for(db_path).connect() as conn:
         current = conn.execute(
             select(func.max(model.version)).where(model.name == name)
         ).scalar()
@@ -155,8 +155,8 @@ def register_formula_plugin(
     # version≥2 时回传它会把 AI 引用指向不存在的裸列名）
     from sqlalchemy import select
     from core.persistence.orm.models import FormulaPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
-    with _engine_for(db_path).connect() as conn:
+    from core.persistence.orm.engine import engine_for
+    with engine_for(db_path).connect() as conn:
         rows = conn.execute(
             select(FormulaPlugin).where(FormulaPlugin.name == name)
         ).mappings().all()
@@ -235,8 +235,8 @@ def _formula_expression_of(
         return None
     from sqlalchemy import select
     from core.persistence.orm.models import FormulaPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
-    with _engine_for(db_path).connect() as conn:
+    from core.persistence.orm.engine import engine_for
+    with engine_for(db_path).connect() as conn:
         row = conn.execute(
             select(FormulaPlugin)
             .where(FormulaPlugin.plugin_id == entry["plugin_id"])
@@ -432,8 +432,8 @@ def register_model_plugin(
     })
     from sqlalchemy import select
     from core.persistence.orm.models import ModelPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
-    with _engine_for(db_path).connect() as conn:
+    from core.persistence.orm.engine import engine_for
+    with engine_for(db_path).connect() as conn:
         rows = conn.execute(
             select(ModelPlugin).where(ModelPlugin.name == name)
         ).mappings().all()
@@ -460,10 +460,10 @@ def register_model_plugin(
     cfg_json = json.dumps({**config.__dict__, "_config_hash": config_hash},
                           ensure_ascii=False, default=str)
 
-    from core.persistence.repository.dataset_meta import _engine_for
+    from core.persistence.orm.engine import engine_for
     from sqlalchemy import insert as _insert
     from core.persistence.timestamps import utc_now_iso
-    with _engine_for(db_path).begin() as conn:
+    with engine_for(db_path).begin() as conn:
         conn.execute(_insert(ModelPlugin).values(
             plugin_id=plugin_id, name=name, version=version,
             config=cfg_json, signal_column=signal_column,
@@ -490,7 +490,7 @@ def register_model_plugin(
             raise
         # valid 落库（插件行已存在，只更新状态）+ 注册信号列
         from sqlalchemy import update as _update
-        with _engine_for(db_path).begin() as conn:
+        with engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="valid",
@@ -505,7 +505,7 @@ def register_model_plugin(
 
     def _fail(reason: str):
         from sqlalchemy import update as _update
-        with _engine_for(db_path).begin() as conn:
+        with engine_for(db_path).begin() as conn:
             conn.execute(_update(ModelPlugin).where(
                 ModelPlugin.plugin_id == plugin_id).values(
                 status="rejected", reject_reason=reason[:200]))

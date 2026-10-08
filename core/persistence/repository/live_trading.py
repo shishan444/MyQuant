@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, insert, select, update
 
 from core.persistence.orm.models import LiveTradingTask
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 # 可更新列（models.py LiveTradingTask 全列减身份列；updated_at 为内部
 # 刷新键）——runner 持仓/账户同步、异常落 status、心跳与 API PATCH

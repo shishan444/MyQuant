@@ -10,14 +10,12 @@
 """
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, insert, select, update
-from sqlalchemy.engine import Engine
 
-from core.persistence.orm.engine import create_db_engine
+from core.persistence.orm.engine import engine_for
 from core.persistence.orm.models import DatasetMeta
 
 _ALLOWED_UPDATE_FIELDS = frozenset({
@@ -28,11 +26,10 @@ _ALLOWED_UPDATE_FIELDS = frozenset({
 })
 
 
-@lru_cache(maxsize=32)
-def _engine_for(db_path: Path) -> Engine:
-    """按库路径缓存 engine（连接池复用；tmp 测试库淘汰由 LRU 兜底）。"""
-    return create_db_engine(Path(db_path))
-
+# CARD-07 公共化：_engine_for 上提至 orm/engine.engine_for，此处保留
+# re-export 过渡（tests/ 30+ 处 from ...dataset_meta import _engine_for
+# 依赖此名；生产消费方已切公共入口）
+_engine_for = engine_for
 
 from core.persistence.timestamps import utc_now_iso as _now  # B4.1 归一
 

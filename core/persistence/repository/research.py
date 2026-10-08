@@ -29,7 +29,8 @@ from core.persistence.orm.models import (
     SignalRegistryEntry,
     ValidationRecord,
 )
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 
 def _new_id() -> str:

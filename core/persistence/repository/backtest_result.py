@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import insert, select
 
 from core.persistence.orm.models import BacktestResult
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 # 排序白名单（调用方实际列集：created_at/total_score + 评分指标列；
 # 形制对齐 strategy.py _SORT_ALLOWED_COLUMNS）

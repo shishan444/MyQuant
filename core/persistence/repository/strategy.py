@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, insert, or_, select, update
 
 from core.persistence.orm.models import Strategy
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 _SORT_ALLOWED_COLUMNS = {
     "created_at", "updated_at", "best_score", "best_fitness",

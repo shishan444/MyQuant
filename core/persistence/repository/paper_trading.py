@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, insert, select, update
 
 from core.persistence.orm.models import PaperEquitySnapshot, PaperTrade, PaperTradingTask
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 _ALLOWED_UPDATE_COLUMNS = frozenset({
     "status", "started_at", "stopped_at", "stop_reason", "heartbeat_at",

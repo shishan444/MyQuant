@@ -121,10 +121,10 @@ def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
     """
     from sqlalchemy import select
     from core.persistence.orm.models import ModelPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
+    from core.persistence.orm.engine import engine_for
     from core.signals.model import ModelPluginConfig, ModelPipelineError, fit_predict_walk_forward
 
-    with _engine_for(db_path).connect() as conn:
+    with engine_for(db_path).connect() as conn:
         rows = conn.execute(
             select(ModelPlugin).where(ModelPlugin.signal_column == column)
             .order_by(ModelPlugin.version.desc())

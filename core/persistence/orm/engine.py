@@ -6,6 +6,7 @@ B3d 旧轨退役后本工厂是唯一连接入口）。SQLite 同步模式；单
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event
@@ -13,6 +14,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 # 与旧轨 _connect 的 busy_timeout 对齐（毫秒）
 BUSY_TIMEOUT_MS = 5000
+
+
+@lru_cache(maxsize=32)
+def engine_for(db_path: Path) -> Engine:
+    """按库路径缓存 engine（连接池复用；tmp 测试库淘汰由 LRU 兜底）。
+
+    公共入口（CARD-07 上提自 repository/dataset_meta._engine_for）：
+    repository 各域与 core/analysis 的库访问统一经此取 engine，不再
+    跨模块引用 repository 私有名。
+    """
+    return create_db_engine(Path(db_path))
 
 
 def create_db_engine(db_path: Path) -> Engine:
