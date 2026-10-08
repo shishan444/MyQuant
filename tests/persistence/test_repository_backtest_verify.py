@@ -96,11 +96,29 @@ class TestBacktestResultList:
         assert [r["total_score"] for r in asc] == [0.0, 0.0], \
             "未传 score 的默认 0.0 排最前"
 
-    def test_非法排序列_AttributeError(self, db):
-        """getattr 限定列名（旧轨动态拼列的注入面消除）：非法名以
-        AttributeError 结构化拒绝，不再进入 SQL。"""
-        with pytest.raises(AttributeError):
-            br.list_backtest_results(db, sort_by="1=1; DROP TABLE x")
+    @pytest.mark.parametrize("bad", ["1=1; DROP TABLE x", "metadata",
+                                     "query", "__table__"],
+                             ids=["注入串", "ORM内部属性", "ORM内部属性", "ORM内部属性"])
+    def test_非法排序列_ValueError(self, db, bad):
+        """CARD-04 转正：排序白名单+ValueError 拒绝（形制同 strategy.py）
+        ——旧 getattr 形制的注入面与 ORM 内部属性探测面双收口。"""
+        with pytest.raises(ValueError, match="sort_by"):
+            br.list_backtest_results(db, sort_by=bad)
+
+    def test_非法排序方向_ValueError(self, db):
+        """CARD-04 新收口：sort_order 非法值 ValueError（原静默按 asc）。"""
+        with pytest.raises(ValueError, match="sort_order"):
+            br.list_backtest_results(db, sort_order="sideways")
+
+    def test_白名单八列双向可排(self, db):
+        """白名单全集对拍（调用方实际列集+评分指标列，防增删漂移）。"""
+        from core.persistence.repository.backtest_result import _SORT_ALLOWED_COLUMNS
+        assert _SORT_ALLOWED_COLUMNS == {
+            "created_at", "total_score", "total_return", "sharpe_ratio",
+            "max_drawdown", "win_rate", "fitness", "wf_score"}
+        for col in _SORT_ALLOWED_COLUMNS:
+            rows = br.list_backtest_results(db, sort_by=col, sort_order="desc")
+            assert len(rows) == 4
 
 
 class TestVerifySession:
