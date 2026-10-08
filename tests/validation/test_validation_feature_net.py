@@ -278,6 +278,44 @@ class TestValidateHypothesis:
         assert not any("MTF data loading failed" in w for w in result.warnings)
         assert result.total_count > 0
 
+    def test_mtf_load_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+        """CARD-05：装载失败警告固定文案——异常原文只进日志不回传。
+
+        warnings 面向客户端固定分类文案（原文形态不可控/含内部路径
+        等敏感面）；logger.warning 携带原文与 exc_info 供排障。
+        """
+        import logging
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.validation.engine import validate_hypothesis
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        ctx = MtfEvalContext(
+            data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h",
+        )
+        secret = "boom /internal/secret/path.db"
+        with patch("core.validation.mtf.load_mtf_data",
+                   side_effect=RuntimeError(secret)), \
+             caplog.at_level(logging.WARNING, logger="core.validation.engine"):
+            result = validate_hypothesis(
+                "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+                when_conditions=[{"subject": "close", "action": "gt", "target": 0}],
+                then_conditions=[self._cond("close", "gt", 0, timeframe="1d")],
+                data_dir=str(tmp_path),
+                mtf=ctx,
+            )
+        assert result.warnings == \
+            ["MTF data loading failed, falling back to single timeframe"], \
+            "警告须为固定文案（CARD-05 收口）"
+        assert all(secret not in w for w in result.warnings), \
+            "异常原文不得回传客户端"
+        mtf_logs = [r for r in caplog.records
+                    if "MTF" in r.getMessage()]
+        assert mtf_logs and secret in mtf_logs[0].getMessage(), \
+            "日志须携带异常原文"
+        assert mtf_logs[0].exc_info, "日志须带堆栈"
+
     def test_mtf_condition_without_context_raises(self, tmp_path):
         """现状记录：带 timeframe 的条件在无 MtfEvalContext 时结构化拒绝。"""
         from core.analysis.hypothesis_service import ResearchError
