@@ -289,7 +289,8 @@ def update_champion_metrics(
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(best_fitness=best_fitness, champion_metrics=champion_metrics,
-                    champion_dimension_scores=champion_dimension_scores)
+                    champion_dimension_scores=champion_dimension_scores,
+                    updated_at=_now())
         )
 
 
@@ -303,7 +304,7 @@ def update_oos_results(
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(oos_fitness=oos_fitness, oos_qualified=oos_qualified,
-                    oos_metrics=oos_metrics)
+                    oos_metrics=oos_metrics, updated_at=_now())
         )
 
 
@@ -318,7 +319,8 @@ def update_champion_full(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(best_score=best_score, best_fitness=best_score,
                     champion_metrics=champion_metrics,
-                    champion_dimension_scores=champion_dimension_scores)
+                    champion_dimension_scores=champion_dimension_scores,
+                    updated_at=_now())
         )
 
 
@@ -330,7 +332,8 @@ def update_best_score_if_higher(db_path: Path, task_id: str, best_score: float) 
             update(EvolutionTask)
             .where(EvolutionTask.task_id == task_id,
                    (EvolutionTask.best_score.is_(None)) | (EvolutionTask.best_score < best_score))
-            .values(best_score=best_score, best_fitness=best_score)
+            .values(best_score=best_score, best_fitness=best_score,
+                    updated_at=_now())
         )
 
 
@@ -340,5 +343,5 @@ def update_task_config(db_path: Path, task_id: str, **values: Any) -> None:
     with engine.begin() as conn:
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
-            .values(**values)
+            .values(**values, updated_at=_now())
         )
