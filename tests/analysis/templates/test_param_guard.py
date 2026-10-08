@@ -411,3 +411,39 @@ class TestTemplateEntry:
         from core.analysis.templates.pattern_mining import similar_at_time
         with pytest.raises(ResearchError):
             similar_at_time(df, as_of=bad, data_ranges=self.RANGES)
+
+
+class TestErrorEchoTruncation:
+    """时间形守卫非法值回显 120 截断（CARD-06 防刷屏形制）。
+
+    两守卫的用户可控长串回显截 120 字符（含开引号无闭引号）；
+    短值完整 repr 不变。
+    """
+
+    def test_time_window_长串回显_恰120字符(self) -> None:
+        from core.analysis.templates.param_guard import _require_time_window
+        with pytest.raises(ResearchError) as ei:
+            _require_time_window("y" * 500, name="group_a")
+        msg = ei.value.message
+        assert len(msg) == len("group_a 非法: ") + 120
+        assert msg.startswith("group_a 非法: '")
+        assert not msg.endswith("'")
+
+    def test_iso_datetime_长串回显_恰120字符(self) -> None:
+        from core.analysis.templates.param_guard import _require_iso_datetime
+        with pytest.raises(ResearchError) as ei:
+            _require_iso_datetime("z" * 500, name="as_of")
+        msg = ei.value.message
+        assert len(msg) == len("as_of 非法: ") + 120
+        assert not msg.endswith("'")
+
+    def test_短值回显_完整repr不变(self) -> None:
+        from core.analysis.templates.param_guard import (
+            _require_iso_datetime, _require_time_window,
+        )
+        with pytest.raises(ResearchError) as ei:
+            _require_iso_datetime("not-a-time", name="as_of")
+        assert ei.value.message == "as_of 非法: 'not-a-time'"
+        with pytest.raises(ResearchError) as ei:
+            _require_time_window(["2024-01-01"], name="group_b")
+        assert ei.value.message == "group_b 非法: ['2024-01-01']"

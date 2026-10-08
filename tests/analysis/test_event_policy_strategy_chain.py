@@ -85,6 +85,26 @@ class TestAssembleEventPolicy:
             batch_signal_sets(
                 [_policy_dna({"mode": "suppress_bars", "bars": 10**6})], df)
 
+    def test_非法形_求值点单点收口_422(self, df) -> None:
+        """CARD-01：求值点收口——绕过登记通道直入 executor 的非法形
+        （进化变异产物/历史存量 DNA）在变换前归一校验，结构化 422
+        而非求值中途裸 TypeError/KeyError。
+        """
+        with pytest.raises(ResearchError) as ei:
+            dna_to_signal_set(_policy_dna({"mode": "bogus"}), df)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        with pytest.raises(ResearchError):    # 缺 bars 同点拒绝
+            dna_to_signal_set(_policy_dna({"mode": "suppress_bars"}), df)
+
+    def test_显式none_求值点归一_等价无策略(self, df) -> None:
+        """CARD-01：显式 {"mode":"none"} 归一 None=等价无策略（D4
+        约定）——API 通道可携显式 none 直入求值，entries 与无字段
+        策略逐元素一致（零改写红线的 none 面）。
+        """
+        explicit = dna_to_signal_set(_policy_dna({"mode": "none"}), df)
+        plain = dna_to_signal_set(_policy_dna(None), df)
+        assert np.array_equal(explicit.entries.values, plain.entries.values)
+
 
 class TestRealBacktestChain:
     """真实回测链事件化（非直调函数的假阳性锚）。"""

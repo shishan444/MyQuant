@@ -301,3 +301,123 @@ class TestSortTimeframes:
         """未知 timeframe 秒数为 0，排最后。"""
         from api.routes.evolution import sort_timeframes
         assert sort_timeframes(["4h", "weird"]) == ["4h", "weird"]
+
+
+class TestTaskPersistenceInconsistency:
+    """DB 写读不一致防御：创建后读取不到 → 500；历史查无任务 → 404。
+
+    注意 mock 身份：api_client fixture 经 MyQuant.api.app.create_app 装配，
+    路由闭包引用的是 MyQuant 前缀身份的模块属性——patch 裸 api.* 身份会
+    静默扑空（表现为 mock 不生效、真实路径照跑），必须 patch.object 到
+    sys.modules 中的同身份模块。
+    """
+
+    def test_create_task_row_missing_500(self, api_client, monkeypatch):
+        import sys
+
+        rte = sys.modules["MyQuant.api.routes.evolution"]
+        monkeypatch.setattr(rte, "get_task", lambda *a, **kw: None)
+        resp = api_client.post("/api/evolution/tasks", json=_create_payload())
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Failed to create task"
+
+    def test_history_unknown_task_404(self, api_client):
+        resp = api_client.get("/api/evolution/tasks/no-such-task/history")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Task not found"
+
+
+class TestRowTransformCorruptJsonDegrades:
+    """行转换层坏 JSON 容错：initial_dna / dna_json 解析失败 → None
+    降级不炸（存量脏行防御）。"""
+
+    def test_task_row_bad_initial_dna_degrades(self, db_path):
+        from api.routes.evolution import _task_row_to_response
+        from core.persistence.db import get_task, init_db
+
+        init_db(db_path)
+        _make_task_row(db_path, "t_bad_dna")
+        row = get_task(db_path, "t_bad_dna")
+        row["initial_dna"] = "{not valid json"
+        resp = _task_row_to_response(row)
+        assert resp.initial_dna is None
+
+    def test_strategies_to_dicts_bad_dna_json_degrades(self):
+        from api.routes.evolution import _strategies_to_dicts
+
+        rows = [{"strategy_id": "s_badjson", "best_score": 1.0,
+                 "dna_json": "not-json-at-all"}]
+        out = _strategies_to_dicts(rows, None)
+        assert len(out) == 1
+        assert out[0]["dna"] is None
+        assert out[0]["strategy_id"] == "s_badjson"
+
+
+class TestCreateTaskParquetTsProbeBoundaries:
+    """POST /tasks 数据探测边界：0 行 parquet 跳过时间探测回显、
+    无时间列 parquet 跳过时间探测（行数照常回显）。"""
+
+    @staticmethod
+    def _client_with_parquet(db_path, tmp_path, df):
+        import pandas as pd
+        from MyQuant.api.app import create_app
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        app = create_app(db_path=db_path, data_dir=data_dir)
+        return TestClient(app)
+
+    def test_zero_row_parquet_skips_ts_probe(self, db_path, tmp_path):
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "open": pd.Series([], dtype="float64"),
+            "high": pd.Series([], dtype="float64"),
+            "low": pd.Series([], dtype="float64"),
+            "close": pd.Series([], dtype="float64"),
+            "volume": pd.Series([], dtype="float64"),
+        })
+        with self._client_with_parquet(db_path, tmp_path, df) as c:
+            resp = c.post("/api/evolution/tasks", json=_create_payload())
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["data_row_count"] == 0
+        assert data["data_time_start"] is None
+        assert data["data_time_end"] is None
+
+    def test_no_ts_column_parquet_skips_ts_probe(self, db_path, tmp_path):
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "a": [1.0, 2.0, 3.0],
+            "b": [4.0, 5.0, 6.0],
+        })
+        with self._client_with_parquet(db_path, tmp_path, df) as c:
+            resp = c.post("/api/evolution/tasks", json=_create_payload())
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["data_row_count"] == 3
+        assert data["data_time_start"] is None
+        assert data["data_time_end"] is None
+
+
+    def test_task_row_without_initial_dna_key(self, db_path):
+        """row 无 initial_dna（键缺失）→ 跳过解析块直取 None。"""
+        from api.routes.evolution import _task_row_to_response
+        from core.persistence.db import get_task, init_db
+
+        init_db(db_path)
+        _make_task_row(db_path, "t_no_dna")
+        row = get_task(db_path, "t_no_dna")
+        row.pop("initial_dna", None)
+        resp = _task_row_to_response(row)
+        assert resp.initial_dna is None
+
+    def test_strategies_to_dicts_without_dna_json_key(self):
+        """策略行无 dna_json 键 → dna=None 直通（不进 try 块）。"""
+        from api.routes.evolution import _strategies_to_dicts
+
+        rows = [{"strategy_id": "s_nodna", "best_score": 1.0}]
+        out = _strategies_to_dicts(rows, None)
+        assert out[0]["dna"] is None

@@ -13,6 +13,8 @@ N 与 N±1 两侧）；③ 属性锚（确定性逐字节一致、严格升序�
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.analysis.event_policy import mask_to_events, validate_policy
 from core.analysis.hypothesis_service import ResearchError
 
@@ -213,3 +215,103 @@ class TestMaskToEvents属性锚:
         bars = 5
         events = mask_to_events(mask, {"mode": "suppress_bars", "bars": bars})
         assert np.all(np.diff(events) >= bars)
+
+
+class TestPolicyConvergenceHelpers:
+    """bars 校验与回投公共面（CARD-03 五现象同构收敛）。
+
+    require_bars_within / apply_policy_to_series 收敛五处内联（消息
+    detail 逐字复刻）；param_name 参数化保真两链声明键（统计链
+    trigger_policy / 策略链 entry_trigger_policy——CARD-01 记录点①
+    指代偏差的统一落点）；None 零预处理原样返回（缺省零变化契约）。
+    """
+
+    def test_require_bars_within_两链param名保真(self) -> None:
+        from core.analysis.event_policy import require_bars_within
+        for name in ("trigger_policy", "entry_trigger_policy"):
+            with pytest.raises(ResearchError) as ei:
+                require_bars_within(
+                    {"mode": "suppress_bars", "bars": 100}, 100, name)
+            assert ei.value.detail["param"] == f"{name}.bars"
+            assert ei.value.detail["legal_range"] == "1..99"
+
+    def test_require_bars_within_无策略与恰上界放行(self) -> None:
+        from core.analysis.event_policy import require_bars_within
+        require_bars_within(None, 100, "trigger_policy")      # 无策略过
+        require_bars_within({"mode": "suppress_bars", "bars": 99},
+                            100, "trigger_policy")             # 恰上界
+        require_bars_within({"mode": "first_true"}, 1, "trigger_policy")
+
+    def test_apply_None_同对象原样返回(self) -> None:
+        import pandas as pd
+        from core.analysis.event_policy import apply_policy_to_series
+        s = pd.Series([True, False, True])
+        assert apply_policy_to_series(s, None) is s   # 零预处理契约
+
+    def test_apply_NaN三形输入_等价无警告(self) -> None:
+        import warnings
+
+        import pandas as pd
+
+        from core.analysis.event_policy import apply_policy_to_series
+        policy = {"mode": "first_true"}
+        forms = (
+            pd.Series([True, None, True], dtype=object),   # object NaN
+            pd.Series([True, float("nan"), True]),          # float NaN
+            pd.Series([True, False, True]),                 # 纯 bool
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")   # FutureWarning 即红
+            for s in forms:
+                out = apply_policy_to_series(s, policy)
+                assert out.tolist() == [True, False, True]
+
+    def test_apply_内置bars校验_param名传导(self) -> None:
+        import pandas as pd
+
+        from core.analysis.event_policy import apply_policy_to_series
+        with pytest.raises(ResearchError) as ei:
+            apply_policy_to_series(
+                pd.Series([True] * 10),
+                {"mode": "suppress_bars", "bars": 10},
+                param_name="entry_trigger_policy")
+        assert ei.value.detail["param"] == "entry_trigger_policy.bars"
+
+
+class TestErrorEchoTruncation:
+    """非法值回显 120 截断（CARD-06 防刷屏形制）。
+
+    用户可控任意长输入的 repr 回显截 120 字符（含开引号无闭引号——
+    截断可见）；短值 repr 完整回显不受影响（既有断言兼容面）。
+    """
+
+    _PREFIX = "trigger_policy 非法: "
+
+    def test_长串回显_恰120字符_无闭引号(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            validate_policy("x" * 500)
+        msg = ei.value.message
+        assert len(msg) == len(self._PREFIX) + 120
+        assert msg.startswith(self._PREFIX + "'")
+        assert not msg.endswith("'")          # 截断可见（无闭引号）
+
+    def test_短值回显_完整repr不变(self) -> None:
+        with pytest.raises(ResearchError) as ei:
+            validate_policy("not-a-dict")
+        assert ei.value.message == f"{self._PREFIX}'not-a-dict'"
+
+    def test_apply_与mask_to_events_恒等性(self) -> None:
+        """回投不变量（阶段四属性补强）：apply_policy_to_series 输出的
+        True 位置序列恒等于 mask_to_events 直接产出——回投层与变换层
+        的一致性（三模式 × 随机掩码）。"""
+        import pandas as pd
+
+        from core.analysis.event_policy import apply_policy_to_series
+        for policy in ({"mode": "first_true"},
+                       {"mode": "suppress_bars", "bars": 4}):
+            rng = np.random.default_rng(2026)
+            mask = rng.random(600) > 0.4
+            out = apply_policy_to_series(pd.Series(mask), policy)
+            assert np.flatnonzero(out.values).tolist() == \
+                mask_to_events(mask, policy).tolist()
+            assert out.dtype == bool            # 回投产物为纯 bool

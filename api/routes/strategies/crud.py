@@ -128,7 +128,22 @@ def create_strategy(
 ) -> StrategyResponse:
     """创建策略。"""
     strategy_id = str(uuid.uuid4())
-    dna = payload.dna.to_dna()
+    # CARD-01（event-triggers 批次三）：entry_trigger_policy 登记点早拒绝
+    # ——策略通道此前全程无校验（裸奔入口），to_dna() 后经 validate_policy
+    # 形制校验（422 先于持久化）；不走 DNAModel field_validator——api 层
+    # 无全局 handler 会反落 500，走路由既有 ResearchError→HTTPException
+    # 形制（research_error_to_http 共享底座）
+    from core.analysis.hypothesis_service import ResearchError
+    try:
+        dna = payload.dna.to_dna()
+        from core.analysis.event_policy import validate_policy
+        # 回写归一形（security 观察项采纳）：显式 none 归一 None 落库=
+        # 与缺省同存储同签名（与假设侧 D4 幂等签名语义对齐）；非法形
+        # 在赋值前 422（validate 先抛，赋值不发生）
+        dna.entry_trigger_policy = validate_policy(dna.entry_trigger_policy)
+    except ResearchError as exc:
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
 
     save_strategy(
         db_path,
@@ -235,7 +250,16 @@ def update_strategy_endpoint(
     if payload.best_score is not None:
         fields["best_score"] = payload.best_score
     if payload.dna is not None:
-        dna = payload.dna.to_dna()
+        # CARD-01：update 通道同款早拒绝（与 create 同形制）
+        from core.analysis.hypothesis_service import ResearchError
+        try:
+            dna = payload.dna.to_dna()
+            from core.analysis.event_policy import validate_policy
+            dna.entry_trigger_policy = validate_policy(
+                dna.entry_trigger_policy)   # 回写归一形（同 create）
+        except ResearchError as exc:
+            from api.routes.research.common import research_error_to_http
+            raise research_error_to_http(exc) from exc
         fields["dna_json"] = dna.to_json()
 
     if fields:

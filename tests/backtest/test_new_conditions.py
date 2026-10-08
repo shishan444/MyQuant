@@ -264,3 +264,201 @@ class TestBackwardCompatibility:
         close = pd.Series([3, 3, 3, 3, 3])
         result = evaluate_condition(series, close, {"type": "cross_above", "threshold": 3})
         assert result.iloc[2] == True
+
+
+class TestCrossSeriesTargetUnresolvable:
+    """cross_*_series 目标侧不可解析时全 False 降级（不炸不误报）。"""
+
+    def test_cross_above_unknown_target_indicator_all_false(self):
+        df = _make_df(20)
+        condition = {
+            "type": "cross_above_series",
+            "target_indicator": "NOPE",
+            "target_params": {},
+        }
+        result = evaluate_condition(df["ema_10"], df["close"], condition, df=df)
+        assert len(result) == len(df)
+        assert not result.any()
+
+    def test_cross_below_unknown_target_indicator_all_false(self):
+        df = _make_df(20)
+        condition = {
+            "type": "cross_below_series",
+            "target_indicator": "NOPE",
+            "target_params": {},
+        }
+        result = evaluate_condition(df["ema_10"], df["close"], condition, df=df)
+        assert len(result) == len(df)
+        assert not result.any()
+
+    def test_cross_above_without_df_all_false(self):
+        series = pd.Series([1.0, 2.0, 3.0])
+        condition = {
+            "type": "cross_above_series",
+            "target_indicator": "EMA",
+            "target_params": {"period": 20},
+        }
+        result = evaluate_condition(series, series * 0.5, condition, df=None)
+        assert not result.any()
+
+
+class TestLookbackInnerConditionTypes:
+    """lookback_* 内层条件类型分支（le/ge/price_above/price_below/复杂委托）。"""
+
+    def test_inner_le_threshold_true(self):
+        df = _make_df(30)
+        df["rsi_14"] = 65.0  # 恒 <= 70
+        condition = {"type": "lookback_any", "window": 3,
+                     "inner": {"type": "le", "threshold": 70}}
+        result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
+        assert bool(result.all())
+
+    def test_inner_ge_threshold_false(self):
+        df = _make_df(30)
+        df["rsi_14"] = 65.0  # 恒不 >= 70
+        condition = {"type": "lookback_any", "window": 3,
+                     "inner": {"type": "ge", "threshold": 70}}
+        result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
+        assert not result.any()
+
+    def test_inner_price_above_true(self):
+        df = _make_df(30)
+        df["ema_10"] = df["close"] - 10  # close 恒在指标线上方
+        condition = {"type": "lookback_any", "window": 3,
+                     "inner": {"type": "price_above"}}
+        result = evaluate_condition(df["ema_10"], df["close"], condition, df=df)
+        assert bool(result.all())
+
+    def test_inner_price_below_true(self):
+        df = _make_df(30)
+        df["ema_10"] = df["close"] + 10  # close 恒在指标线下方
+        condition = {"type": "lookback_any", "window": 3,
+                     "inner": {"type": "price_below"}}
+        result = evaluate_condition(df["ema_10"], df["close"], condition, df=df)
+        assert bool(result.all())
+
+    def test_inner_complex_delegates_to_main_entry(self):
+        """复杂内层（cross_above_series）委托 evaluate_condition 主入口——
+        lookback_any 结果覆盖直调主入口的 True 位置（窗口 >= 1）。"""
+        df = _make_df(30)
+        ema_a = df["ema_10"].copy()
+        ema_b = df["ema_20"].copy()
+        ema_a.iloc[9] = ema_b.iloc[9] - 10
+        ema_a.iloc[10] = ema_b.iloc[10] + 10
+        df["ema_10"] = ema_a
+        inner = {"type": "cross_above_series",
+                 "target_indicator": "EMA", "target_params": {"period": 20}}
+        via_lookback = evaluate_condition(
+            df["ema_10"], df["close"],
+            {"type": "lookback_any", "window": 2, "inner": inner}, df=df)
+        direct = evaluate_condition(df["ema_10"], df["close"], inner, df=df)
+        assert bool(direct.iloc[10])
+        assert bool(via_lookback.iloc[10])
+        assert bool((via_lookback | direct).equals(via_lookback))
+
+
+class TestPatternConditionsWithoutDf:
+    """touch_bounce/role_reversal/wick_touch 在 df=None 时全 False 降级
+    （OHL 列依赖缺失不炸——逐 bar 求值层兜底语义）。"""
+
+    @pytest.mark.parametrize("cond_type", ["touch_bounce", "role_reversal", "wick_touch"])
+    def test_without_df_all_false(self, cond_type):
+        series = pd.Series([1.0, 2.0, 3.0, 2.0, 1.0])
+        close = pd.Series([2.0, 2.0, 2.0, 2.0, 2.0])
+        condition = {"type": cond_type, "direction": "support"}
+        result = evaluate_condition(series, close, condition, df=None)
+        assert len(result) == len(series)
+        assert not result.any()
+
+
+class TestComputedColumnExactHitAnchor:
+    """互含匹配分支（executor.py _get_indicator_column 374-378）不可达判定锚。
+
+    调用图依据：该分支要求「resolve_indicator_column 产出的请求列名不在
+    现算输出列中、但二者互含」。而 resolve_indicator_column
+    （core/features/registry.py:454）与 _compute_indicator
+    （core/features/indicators.py:121）对每个注册指标的输出列名同编码
+    硬编码（EMA→ema_{period}、SMA→sma_{period}、MACD→macd_{fast}_{slow}
+    _{signal} 族、BB→bb_{field}_{period}_{std} 族、Aroon→aroon_{field}
+    _{period} 族、VolumeProfile→vp_poc_{bins}_{lookback} 等——两侧逐指标
+    核对一致），正常调用图下现算输出必含精确名，369 行精确命中先行返回。
+    该分支仅在两侧命名漂移（回归错误形态）时可达，无法以合法输入构造。
+    本锚用例证明精确命中路径：请求未预算列 EMA(30) → 现算 → 精确命中。
+    """
+
+    def test_computed_column_exact_hit(self):
+        from core.strategy.executor import _SimpleGene, clear_indicator_cache
+
+        clear_indicator_cache()
+        df = _make_df(40)  # 无 ema_30 预算列
+        assert "ema_30" not in df.columns
+        gene = _SimpleGene("EMA", {"period": 30})
+        col = _get_indicator_column_for_test(df, gene)
+        assert col.name == "ema_30"
+        assert "ema_30" in df.columns  # 现算写回
+        clear_indicator_cache()
+
+
+def _get_indicator_column_for_test(df, gene):
+    from core.strategy.executor import _get_indicator_column
+    return _get_indicator_column(df, gene)
+
+
+class TestLookbackInnerUnknownType:
+    """lookback_* 内层类型完全未知（非阈值/价格族）→ 委托主入口
+    evaluate_condition 的 else 兜底 → 全 False（不炸不误报）。"""
+
+    def test_inner_unknown_type_all_false(self):
+        df = _make_df(30)
+        condition = {"type": "lookback_any", "window": 3,
+                     "inner": {"type": "totally_unknown_type"}}
+        result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
+        assert len(result) == len(df)
+        assert not result.any()
+
+
+class TestInnerConditionChainArcUnreachable:
+    """_evaluate_inner_condition elif 链弧 [155,162] 不可达判定
+    （coverage.py 字节码行归属伪迹）。
+
+    调用图依据：:147 ``inner_type in ("lt","gt","le","ge")`` 为元组
+    成员判断——CPython 编译为单次判断，False 时直跳 :157，不经过
+    :149-155 的 elif 子判断（le/ge 用例仅经 :153/:155 的 True 侧）。
+    源码语义下 :155（elif ge）False 的唯一后继是 :157；:155 → :162
+    无控制流路径。coverage.py 在 3.13 行表下把该链某跳转的 from 行
+    归属到 :155，产生语义上不存在的弧。既有用例组合（lt/gt/le/ge/
+    price_above/price_below/未知类型委托主入口——TestLookbackInner
+    ConditionTypes 与本文件 TestLookbackInnerUnknownType）已枚举
+    源码全部可枚举路径。
+    """
+
+
+class TestUnregisteredIndicatorColumnMissing:
+    """未注册指标且列不存在：前缀/子串匹配全落空 → 结构化 ValueError
+    （非法基因在列解析单点拒绝，不静默 False）。"""
+
+    def test_unregistered_no_column_raises(self):
+        from core.strategy.executor import _SimpleGene, _get_indicator_column
+
+        df = _make_df(20).drop(columns=["ema_10", "ema_20", "rsi_14"])
+        gene = _SimpleGene("NOPE_INDICATOR", {})
+        try:
+            _get_indicator_column(df, gene)
+            raised = False
+        except ValueError as exc:
+            raised = True
+            assert "NOPE_INDICATOR" in str(exc)
+        assert raised
+
+
+class TestComputedOnDemandUnregisteredUnreachable:
+    """_get_indicator_column 现算守卫弧（executor.py:355 False 侧 → :380）
+    不可达判定。
+
+    调用图依据：:328 ``reg = INDICATOR_REGISTRY.get(...)`` 为 None
+    （未注册指标）时，:335-339 前缀匹配二路——无匹配 :339 直接
+    raise ValueError（TestUnregisteredIndicatorColumnMissing 锚）；
+    有匹配则 col=:337 必来自 df.columns（:341 精确命中先行 return）。
+    两条路径均在 :355 之前终结——``reg is not None`` 在 :355 处恒真，
+    False 侧（跳现算直奔 :380 raise）无控制流路径（防御分支）。
+    """

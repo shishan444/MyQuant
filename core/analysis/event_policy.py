@@ -22,8 +22,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 #: 封闭枚举（AI 永不执行任意代码边界；扩充须经独立变更显式增补）
 POLICY_MODES = ("none", "first_true", "suppress_bars")
@@ -53,7 +54,7 @@ def validate_policy(policy: Any) -> Optional[dict]:
     if not isinstance(policy, dict):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"trigger_policy 非法: {policy!r}",
+            f"trigger_policy 非法: {policy!r:.120}",
             detail={"param": "trigger_policy", "legal_form": _LEGAL_FORM})
     mode = policy.get("mode")
     if mode not in POLICY_MODES:
@@ -116,3 +117,67 @@ def mask_to_events(mask: Any, policy: Optional[dict]) -> np.ndarray:
             events.append(int(pos))
             last_event = int(pos)
     return np.asarray(events, dtype=np.int64)
+
+
+def require_bars_within(
+    policy: Optional[dict], data_len: int, param_name: str,
+) -> None:
+    """bars 数据长度上界求值侧校验（D12 两段校验纪律的求值侧半段）。
+
+    五求值点（统计链四模板+引擎、策略链信号组装）的同构收敛单点
+    （CARD-03）——消息文本与 detail 结构逐字复刻既有五处内联（param
+    名经 ``param_name`` 参数化保真两链声明键：统计链 trigger_policy /
+    策略链 entry_trigger_policy）。
+
+    Args:
+        policy: validate_policy 产出的归一形（None=无策略，直接过）。
+        data_len: 求值数据长度（上界 len-1 的基数——含 warmup 前缀的
+            全 df / 请求区间序列，与 forward_bars 同窗）。
+        param_name: 错误锚定的参数名（不含 .bars 后缀——函数内拼）。
+
+    Raises:
+        ResearchError: RESEARCH_PARAM_INVALID（422）——suppress_bars 的
+            bars 超出 len(data)-1。
+    """
+    if (policy is not None
+            and policy.get("mode") == "suppress_bars"
+            and policy["bars"] > data_len - 1):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"{param_name}.bars 超求值数据长度上界: {policy['bars']}",
+            detail={"param": f"{param_name}.bars",
+                    "value": policy["bars"],
+                    "legal_range": f"1..{data_len - 1}"})
+
+
+def apply_policy_to_series(
+    series: pd.Series, policy: Optional[dict],
+    param_name: str = "trigger_policy",
+) -> pd.Series:
+    """掩码序列经策略变换并回投（变换+回投+预处理一体，CARD-03）。
+
+    policy=None 原样返回 series（缺省零变化契约——不经 fillna 等任何
+    预处理，与三既有回投点的「无策略原样」逐字节一致）；带策略路径
+    内置 bars 上界校验（require_bars_within 同参数化）+ fillna(False)
+    预处理 + 事件位置回投。消费者：executor 入场信号事件化薄壳、
+    signal_assembly 组合后单次施加、分析模板统计段掩码回投。
+
+    Args:
+        series: 布尔掩码 Series（index 对齐消费方数据）。
+        policy: validate_policy 产出的归一形。
+        param_name: bars 校验错误锚定的参数名（两链键名）。
+
+    Raises:
+        ResearchError: bars 超上界（经 require_bars_within）。
+    """
+    if policy is None:
+        return series
+    require_bars_within(policy, len(series), param_name)
+    # boolean 中转的 NaN→False 预处理：与原三处 fillna(False).astype(bool)
+    # 逐字节同果，且避开 object dtype 上 fillna 的 downcast FutureWarning
+    # （收敛单点后顺手稳化——语义显式三值→False→bool）
+    mask = series.astype("boolean").fillna(False).astype(bool)
+    event_pos = mask_to_events(mask.values, policy)
+    out = pd.Series(False, index=series.index)
+    out.iloc[event_pos] = True
+    return out

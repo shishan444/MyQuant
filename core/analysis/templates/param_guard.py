@@ -37,7 +37,7 @@ from typing import Any, Iterable, Optional
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
 
 
 def _require_int_range(
@@ -123,7 +123,7 @@ def _require_time_window(value: Any, *, name: str) -> None:
             or not _is_parseable_datetime(value["end"])):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"{name} 非法: {value!r}",
+            f"{name} 非法: {value!r:.120}",
             detail={"param": name,
                     "legal_form": _TIME_WINDOW_FORM})
 
@@ -143,6 +143,6 @@ def _require_iso_datetime(value: Any, *, name: str) -> None:
     if not _is_parseable_datetime(value):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"{name} 非法: {value!r}",
+            f"{name} 非法: {value!r:.120}",
             detail={"param": name,
                     "legal_form": "ISO 8601 时间串（未带时区按 UTC 解释）"})

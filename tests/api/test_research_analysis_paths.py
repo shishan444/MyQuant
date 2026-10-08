@@ -277,6 +277,34 @@ class TestParamGuardRouteSmoke:
         assert "RESEARCH_PARAM_INVALID" in resp.text
         assert "returns" in resp.text          # legal_range 枚举清单附出
 
+    @pytest.mark.parametrize("mutate", [
+        lambda p: p.update(group_a="2024-02-10/2024-02-15"),       # 字符串形
+        lambda p: p.update(group_a=["2024-02-10", "2024-02-15"]),  # 列表形
+        lambda p: p.update(group_a={"start": "2024-02-10T00:00:00Z"}),  # 缺 end
+        lambda p: p.update(group_b={"start": "not-a-time",
+                                    "end": "2024-02-20T00:00:00Z"}),  # 值非时间串
+    ], ids=["group_a字符串形", "group_a列表形", "group_a缺end键",
+            "group_b值非时间串"])
+    def test_distribution_compare_bad_time_window_422(
+            self, api_client, paths_env, mutate):
+        """TD-A 时间窗形路由级锚（specs「时间窗形参数非法拒绝」）：
+        非对象形/缺键/值非时间串经守卫统一 422 附合法形说明——不落入
+        TypeError / KeyError 的 500（通道错置修正在路由面的区分证据；
+        函数级全域参数化见 test_param_guard）。
+        """
+        _wire(api_client, paths_env)
+        params = {"column": "close", "transform": "returns",
+                  "group_a": {"start": "2024-02-10T00:00:00Z",
+                              "end": "2024-02-15T00:00:00Z"},
+                  "group_b": {"start": "2024-02-15T00:00:00Z",
+                              "end": "2024-02-20T00:00:00Z"}}
+        mutate(params)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "distribution_compare", params))
+        assert resp.status_code == 422, resp.text
+        assert "RESEARCH_PARAM_INVALID" in resp.text
+        assert "start" in resp.text            # 合法形说明附出（错误即文档）
+
 
 class TestParamGuardHeavyChannel:
     """TD-2 两通道契约后半（specs「数值参数非法结构化拒绝」）：恒 heavy
@@ -312,6 +340,36 @@ class TestParamGuardHeavyChannel:
         assert t.get("status") == "failed", t
         assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
         assert "n_neighbors" in t["reason"]          # 参数名可解析（错误即文档）
+
+    def test_pattern_mining_bad_as_of_failed_reason_carries_code(
+            self, api_client, paths_env):
+        """TD-A 时间形恒异步通道锚（specs「时间形参数非法拒绝」）：
+        as_of 不可解析时间串经 202 重组通道落 failed 终态，reason 携带
+        [RESEARCH_PARAM_INVALID] 前缀与参数名——不落入无结构化错误码的
+        failed（函数级 ResearchError 语义见 test_param_guard，此处证
+        路由通道转换；n_neighbors 取合法值隔离单因素）。db 不覆写形制
+        同上——executor 单例绑 lifespan 启动库。
+        """
+        import time
+
+        api_client.app.state.data_dir = paths_env["data_dir"]
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "pattern_mining", {"as_of": "not-a-time", "n_neighbors": 3}))
+        assert resp.status_code == 202, resp.text    # 恒 heavy 不因校验变 422
+        task_id = resp.json()["task_id"]
+
+        t: dict = {}
+        for _ in range(60):  # 轮询到终态（404 为入库竞态窗口，重试）
+            poll = api_client.get(
+                f"/api/research/analysis/tasks/{task_id}")
+            if poll.status_code == 200:
+                t = poll.json()
+                if t["status"] in ("succeeded", "failed"):
+                    break
+            time.sleep(0.5)
+        assert t.get("status") == "failed", t
+        assert t["reason"].startswith("[RESEARCH_PARAM_INVALID]"), t["reason"]
+        assert "as_of" in t["reason"]                # 参数名与合法形可解析
 
 
 class TestHeavyCountVariantFallback:
@@ -497,3 +555,30 @@ class TestTemplateTriggerPolicy:
                 "trigger_policy": {"mode": "suppress_bars",
                                    "bars": 100000}}))
         assert resp.status_code == 422
+
+    def test_precheck_带策略外推数值独立复算(self, api_client, tp_env):
+        """外推数值闭环（specs「带策略外推事件密度一致」+ trigger-policy
+        「预估与实跑口径闭环」）：恒真 + first_true → 唯一事件=统计段
+        段首；density=事件数/统计段 bar 数、projected=density×拟验证段
+        bar 数——全部独立复算（stat 窗=[SEG0,∞)∩装载区间=统计段闭端、
+        validate 窗=目录级全量数据上半开 [VR0,VR1)）；三态阈值作用
+        对象=预估事件数 → warn。
+        """
+        _wire(api_client, tp_env)
+        cond = self._cond(tp_env, target=0.0)
+        resp = api_client.post("/api/research/analysis", json=self._body(
+            "precheck_hypothesis",
+            {"when_conditions": [cond], "validate_range": self.VR,
+             "trigger_policy": {"mode": "first_true"}}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        fp = payload["frequency_projection"]
+        seg = self._seg_df(tp_env)               # 统计段（闭端，同 5.1 复算域）
+        vdf = tp_env["df"]
+        validate_bars = int(((vdf.index >= pd.Timestamp(self.VR["start"]))
+                             & (vdf.index < pd.Timestamp(self.VR["end"]))
+                             ).sum())
+        assert fp["density"] == pytest.approx(1 / len(seg))
+        assert fp["projected_trades"] == pytest.approx(validate_bars / len(seg))
+        assert fp["validate_bars"] == validate_bars
+        assert payload["verdict"] == "warn"      # 0 < 预估事件数 < 5

@@ -205,3 +205,197 @@ def test_validator_accepts_valid_roles():
     )
     result = validate_dna(dna)
     assert result.is_valid, f"Errors: {result.errors}"
+
+
+_ALL_ROLES = [
+    SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD,
+    SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD,
+    SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD,
+    SignalRole.REDUCE_TRIGGER, SignalRole.REDUCE_GUARD,
+]
+
+
+class TestEvaluateLayerAllRoles:
+    """evaluate_layer 八角色分组完备面（组装双出口事件化的角色接线）。"""
+
+    def test_all_roles_routed_to_channels(self):
+        df = _make_df(60)
+        df['rsi_14'] = 50.0  # lt 100 恒真；gt 100 恒假
+        layer = TimeframeLayer(
+            timeframe="4h",
+            signal_genes=[
+                SignalGene('RSI', {'period': 14}, role, 'rsi_14',
+                           {'type': ('lt' if role in (
+                               SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD,
+                               SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD)
+                               else 'gt'), 'threshold': 100})
+                for role in _ALL_ROLES
+            ],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+        )
+        sig = evaluate_layer(layer, df)
+        # entry/add 通道基因恒真 → 全真；exit/reduce 通道恒假
+        # （若任一角色误入他组，对应通道符号即翻转——分组接线可判别）
+        assert bool(sig.entries.all())
+        assert not sig.exits.any()
+        assert bool(sig.adds.all())
+        assert not sig.reduces.any()
+
+    def test_entry_guard_participates_in_and_logic(self):
+        """guard 参与 AND 组合：trigger True + guard False → entries False
+        （断言可识别 guard 未接线或被 OR 化的错误）。"""
+        df = _make_df(60)
+        df["rsi_14"] = 50.0  # lt 100 恒真；gt 100 恒假
+        layer = TimeframeLayer(
+            timeframe="4h",
+            signal_genes=[
+                SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_TRIGGER,
+                           'rsi_14', {'type': 'lt', 'threshold': 100}),
+                SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_GUARD,
+                           'rsi_14', {'type': 'gt', 'threshold': 100}),
+            ],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+        )
+        sig = evaluate_layer(layer, df)
+        assert not sig.entries.any()
+        # 出场通道不受入场 guard 影响
+        assert not sig.exits.any()
+
+
+class TestTrendLayerDirectionInference:
+    """trend 层条件类型 → entry_direction 符号推断（price_below 看空）。"""
+
+    def test_trend_layer_price_below_infers_short_direction(self):
+        dates_4h = pd.date_range('2024-01-01', periods=60, freq='4h', tz='UTC')
+        dates_1d = pd.date_range('2024-01-01', periods=12, freq='1D', tz='UTC')
+
+        df_4h = pd.DataFrame({
+            'open': 100.0, 'high': 101.0, 'low': 99.0,
+            'close': 100.0, 'volume': 1000.0,
+        }, index=dates_4h)
+        df_4h.index.name = 'timestamp'
+        df_4h['rsi_14'] = 20.0  # 执行层 entry 恒真
+
+        df_1d = pd.DataFrame({
+            'open': 100.0, 'high': 101.0, 'low': 99.0,
+            'close': 100.0, 'volume': 1000.0,
+        }, index=dates_1d)
+        df_1d.index.name = 'timestamp'
+        df_1d['ema_10'] = df_1d['close'] + 10.0  # close < ema → price_below 恒真
+
+        trend_layer = TimeframeLayer(
+            timeframe='1d', role='trend',
+            signal_genes=[SignalGene('EMA', {'period': 10},
+                                     SignalRole.ENTRY_TRIGGER, None,
+                                     {'type': 'price_below'})],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+        )
+        exec_layer = TimeframeLayer(
+            timeframe='4h', role='execution',
+            signal_genes=[SignalGene('RSI', {'period': 14},
+                                     SignalRole.ENTRY_TRIGGER, 'rsi_14',
+                                     {'type': 'lt', 'threshold': 30})],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+        )
+        dna = StrategyDNA(
+            signal_genes=[],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+            execution_genes=ExecutionGenes(timeframe='4h', symbol='BTCUSDT'),
+            risk_genes=RiskGenes(stop_loss=0.05, take_profit=0.10,
+                                 position_size=0.5, leverage=1, direction='long'),
+            layers=[trend_layer, exec_layer],
+            cross_layer_logic='AND',
+        )
+
+        from core.strategy.executor import clear_indicator_cache
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df_4h, dfs_by_timeframe={'4h': df_4h, '1d': df_1d})
+        clear_indicator_cache()
+
+        assert sig.entry_direction is not None
+        # 趋势层 entries 生效位置方向为 -1（看空），其余 +1
+        assert (sig.entry_direction[sig.entries] == -1.0).all()
+        assert (sig.entry_direction[~sig.entries] == 1.0).all()
+
+
+class TestDnaToSignalSetAllRoles:
+    """dna_to_signal_set 平面版（单周期路径）角色分组完备面——
+    与 evaluate_layer/batch 组装同构接线的第三出口。"""
+
+    def test_all_roles_routed_to_channels(self):
+        df = _make_df(60)
+        df['rsi_14'] = 50.0  # lt 100 恒真；gt 100 恒假
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene('RSI', {'period': 14}, role, 'rsi_14',
+                           {'type': ('gt' if role in (
+                               SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD,
+                               SignalRole.REDUCE_TRIGGER, SignalRole.REDUCE_GUARD)
+                               else 'lt'), 'threshold': 100})
+                for role in ([SignalRole.DIRECTION] + _ALL_ROLES)
+            ],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+            execution_genes=ExecutionGenes(timeframe='4h'),
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        sig = dna_to_signal_set(dna, df)
+        assert bool(sig.entries.all())
+        assert not sig.exits.any()
+        assert bool(sig.adds.all())
+        assert not sig.reduces.any()
+        # DIRECTION 基因恒真 → +1（多）；恒假基因不参与方向
+        assert bool((sig.entry_direction == 1.0).all())
+
+    def test_direction_false_gene_infers_short(self):
+        """DIRECTION 基因信号恒假 → -1（空方向）——方向接线可判别。"""
+        df = _make_df(60)
+        df['rsi_14'] = 50.0
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_TRIGGER,
+                           'rsi_14', {'type': 'lt', 'threshold': 100}),
+                SignalGene('RSI', {'period': 14}, SignalRole.DIRECTION,
+                           'rsi_14', {'type': 'gt', 'threshold': 100}),
+            ],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+            execution_genes=ExecutionGenes(timeframe='4h'),
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        sig = dna_to_signal_set(dna, df)
+        assert bool((sig.entry_direction == -1.0).all())
+
+
+class TestEvaluateLayerDirectionGene:
+    """evaluate_layer 的 DIRECTION 角色接线（八角色外的第九角色）。"""
+
+    def test_direction_gene_routed(self):
+        df = _make_df(60)
+        df['rsi_14'] = 50.0
+        layer = TimeframeLayer(
+            timeframe="4h",
+            signal_genes=[
+                SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_TRIGGER,
+                           'rsi_14', {'type': 'lt', 'threshold': 100}),
+                SignalGene('RSI', {'period': 14}, SignalRole.DIRECTION,
+                           'rsi_14', {'type': 'lt', 'threshold': 100}),
+            ],
+            logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
+        )
+        sig = evaluate_layer(layer, df)
+        assert bool(sig.entries.all())
+        assert bool((sig.entry_direction == 1.0).all())
+
+
+class TestRoleDispatchChainTailUnreachable:
+    """角色分派 elif 链尾落空弧（executor.py [430,408]/[790,768]）
+    不可达判定。
+
+    调用图依据：SignalRole 枚举恰九值（dna.py:50-58：八通道角色 +
+    DIRECTION），evaluate_layer（:414-435）与 dna_to_signal_set
+    （:774-796）的 elif 链对九值逐一匹配——任何合法基因必命中某一
+    分支，链尾 :430/:790 的 False 侧（落空回循环头）无合法基因形态。
+    仅绕过 Enum 构造注入非法 role 可达，而 SignalGene.from_dict 对
+    非法 role 字符串在 SignalRole(...) 转换处即抛 ValueError（构造
+    期拦截，求值层到不了）。八角色 + DIRECTION 分组完备面由
+    TestEvaluateLayerAllRoles / TestDnaToSignalSetAllRoles 承接。
+    """

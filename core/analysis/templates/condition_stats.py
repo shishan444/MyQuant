@@ -114,18 +114,11 @@ def condition_stats(
     _require_int_range(min_samples, name="min_samples", lo=0)
 
     # trigger-policy 卡4（5.2）：形制归一 + bars 上界求值侧校验（全 df
-    # 含 warmup 前缀——与 forward_bars 同窗；D12 数据已加载）
-    from core.analysis.event_policy import validate_policy
+    # 含 warmup 前缀——与 forward_bars 同窗；D12 数据已加载；CARD-03
+    # 收敛 require_bars_within 单点）
+    from core.analysis.event_policy import require_bars_within, validate_policy
     policy_norm = validate_policy(trigger_policy)
-    if (policy_norm is not None
-            and policy_norm.get("mode") == "suppress_bars"
-            and policy_norm["bars"] > len(df) - 1):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"trigger_policy.bars 超求值数据长度上界: {policy_norm['bars']}",
-            detail={"param": "trigger_policy.bars",
-                    "value": policy_norm["bars"],
-                    "legal_range": f"1..{len(df) - 1}"})
+    require_bars_within(policy_norm, len(df), "trigger_policy")
 
     # 指标计算（不改输入 df；全 df——含 warmup 前缀，保证指标收敛）
     new_cols = _compute_indicator(df, indicator, dict(params))
@@ -153,10 +146,8 @@ def condition_stats(
     # 下游 fwd/ret/loc 布尔索引与 _p_value_for 全部天然切口径；
     # n_hit/sample_size/dropped_tail 随事件集。
     if policy_norm is not None:
-        from core.analysis.event_policy import mask_to_events
-        event_pos = mask_to_events(stat_mask.values, policy_norm)
-        stat_mask = pd.Series(False, index=stat_mask.index)
-        stat_mask.iloc[event_pos] = True
+        from core.analysis.event_policy import apply_policy_to_series
+        stat_mask = apply_policy_to_series(stat_mask, policy_norm)
     n_total = int(in_stat.sum())  # 统计段 bar 数（hit_rate 分母）
 
     # 前向收益（全 df 计算；尾部不足 N 根为 NaN）

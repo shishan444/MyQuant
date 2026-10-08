@@ -1,4 +1,15 @@
-"""DNA to vectorbt signal conversion - the critical bridge module."""
+"""策略 DNA → 交易信号向量转换（回测/实盘/进化全策略执行链的信号
+生产桥接模块）。
+
+职责：把 StrategyDNA 的信号基因（指标条件 × 角色）求值为四类交易
+信号（entries/exits/adds/reduces），并组合层内/跨层逻辑产出
+SignalSet——vectorbt 回测引擎、实盘执行器与进化适应度评估共用的
+唯一信号生产实现（batch_signal_sets 为进化种群提供基因级去重的
+批量求值）。
+边界：只做信号生产与组合，不做仓位/风控计算（risk_genes 在
+回测引擎侧消费）；指标列来自 enhanced_df 既有列或按需现算，
+数据装载归上游调用方。
+"""
 
 from __future__ import annotations
 
@@ -16,16 +27,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SignalSet:
-    """Complete set of trading signals for a strategy."""
+    """单个策略的完整交易信号集（四类信号 + MTF 诊断元数据）。"""
 
-    entries: pd.Series     # open position signals
-    exits: pd.Series       # close position signals
-    adds: pd.Series        # add to position signals
-    reduces: pd.Series     # reduce position signals
-    degraded_layers: int = 0    # number of MTF layers skipped due to missing data
-    entry_direction: pd.Series | None = None  # +1 long, -1 short (for mixed direction)
-    mtf_diagnostics: dict | None = None  # MTF engine diagnostic scores
-    confidence: pd.Series | None = None  # MTF confidence [0.1, 1.0] per bar
+    entries: pd.Series     # 开仓信号
+    exits: pd.Series       # 平仓信号
+    adds: pd.Series        # 加仓信号
+    reduces: pd.Series     # 减仓信号
+    degraded_layers: int = 0    # 因数据缺失被跳过的 MTF 层数
+    entry_direction: pd.Series | None = None  # 入场方向：+1 多 / -1 空（mixed 方向模式用）
+    mtf_diagnostics: dict | None = None  # MTF 引擎诊断评分
+    confidence: pd.Series | None = None  # MTF 逐 bar 置信度（产出与值域权威在 mtf_engine._compute_confidence）
 
 
 def evaluate_condition(
@@ -34,17 +45,19 @@ def evaluate_condition(
     condition: dict,
     df: pd.DataFrame | None = None,
 ) -> pd.Series:
-    """Convert a structured condition dict to a boolean Series.
+    """结构化条件 dict → 布尔 Series（单基因条件求值的唯一入口）。
+
+    未知条件类型返回全 False（进化变异可产任意类型串，不炸链）。
 
     Args:
-        indicator_series: The indicator values.
-        close_series: The close price series.
-        condition: Dict with "type" and optional "threshold".
-        df: Full enhanced DataFrame (needed for cross_above_series,
-            lookback_any/all, touch_bounce, role_reversal, wick_touch).
+        indicator_series: 指标值序列（subject 侧）。
+        close_series: 收盘价序列（price_above/price_below 类的比较基准）。
+        condition: 含 "type" 与可选 "threshold" 的条件字典。
+        df: 完整 enhanced DataFrame（cross_above_series / lookback_any/
+            all / touch_bounce / role_reversal / wick_touch 类需要全列）。
 
     Returns:
-        Boolean Series with same index as input.
+        与输入同索引的布尔 Series。
     """
     cond_type = condition["type"]
 
@@ -75,7 +88,7 @@ def evaluate_condition(
         return close_series > indicator_series
     elif cond_type == "price_below":
         return close_series < indicator_series
-    # ── Phase 2: dynamic conditions ──
+    # ── 动态条件（序列对照类）──
     elif cond_type == "cross_above_series":
         target_series = _resolve_target_indicator_series(condition, df)
         if target_series is None:
@@ -96,7 +109,7 @@ def evaluate_condition(
         inner = condition.get("inner", {})
         inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
         return (inner_signal.astype(float).rolling(window=window, min_periods=window).sum() == window).fillna(False).astype(bool)
-    # ── Phase 4: support/resistance conditions ──
+    # ── 支撑/阻力类条件 ──
     elif cond_type == "touch_bounce":
         return _eval_touch_bounce(indicator_series, close_series, df, condition)
     elif cond_type == "role_reversal":
@@ -108,12 +121,14 @@ def evaluate_condition(
 
 
 def _resolve_target_indicator_series(condition: dict, df: pd.DataFrame | None) -> pd.Series | None:
-    """Resolve target_indicator + target_params to a Series from df."""
+    """把 target_indicator + target_params 解析为 df 中的目标序列。
+
+    序列对照类条件（cross_above_series 等）的 target 侧现算入口。"""
     if df is None:
         return None
     target_name = condition.get("target_indicator", "")
     target_params = condition.get("target_params", {})
-    # Build a minimal gene-like object to reuse _get_indicator_column
+    # 构造最小 gene 形对象复用 _get_indicator_column（列解析单点）
     gene = _SimpleGene(target_name, target_params)
     try:
         return _get_indicator_column(df, gene)
@@ -127,7 +142,7 @@ def _evaluate_inner_condition(
     inner: dict,
     df: pd.DataFrame | None,
 ) -> pd.Series:
-    """Evaluate an inner condition for lookback window types."""
+    """回看窗类条件的内层条件求值（阈值比较直算，复杂形委托主入口）。"""
     inner_type = inner.get("type", "")
     if inner_type in ("lt", "gt", "le", "ge"):
         threshold = inner.get("threshold", 0)
@@ -143,7 +158,7 @@ def _evaluate_inner_condition(
         return close_series > indicator_series
     elif inner_type == "price_below":
         return close_series < indicator_series
-    # For complex inner conditions, delegate to evaluate_condition
+    # 复杂内层条件委托 evaluate_condition 主入口（单点求值语义）
     return evaluate_condition(indicator_series, close_series, inner, df)
 
 
@@ -153,10 +168,10 @@ def _eval_touch_bounce(
     df: pd.DataFrame | None,
     condition: dict,
 ) -> pd.Series:
-    """Touch-bounce: price touches indicator line then bounces.
+    """触碰反弹：价格触及指标线后向反方向反弹。
 
-    direction="support": low near line + close above line + next close higher
-    direction="resistance": high near line + close below line + next close lower
+    direction="support"：最低价近线 + 收盘在线上 + 当前根收盘较前一根更高
+    direction="resistance"：最高价近线 + 收盘在线下 + 当前根收盘较前一根更低
     """
     if df is None:
         return pd.Series(False, index=indicator_series.index)
@@ -168,16 +183,16 @@ def _eval_touch_bounce(
     high = df["high"]
     line = indicator_series
 
-    # Proximity check using only past/current data (no shift(-1))
+    # 近线判定只用当前及历史数据（无 shift(-1)——不引入未来数据）
     if direction == "support":
         proximity = (low - line).abs() <= line.abs() * proximity_pct
         above_line = close_series > line
-        bounce_up = close_series > close_series.shift(1)  # current close > previous close
+        bounce_up = close_series > close_series.shift(1)  # 当前收盘 > 前一根收盘
         result = proximity & above_line & bounce_up
     else:
         proximity = (high - line).abs() <= line.abs() * proximity_pct
         below_line = close_series < line
-        bounce_down = close_series < close_series.shift(1)  # current close < previous close
+        bounce_down = close_series < close_series.shift(1)  # 当前收盘 < 前一根收盘
         result = proximity & below_line & bounce_down
 
     return result.fillna(False)
@@ -189,10 +204,10 @@ def _eval_role_reversal(
     df: pd.DataFrame | None,
     condition: dict,
 ) -> pd.Series:
-    """Role reversal: indicator line switches from support to resistance or vice versa.
+    """角色反转：指标线从支撑转阻力或从阻力转支撑。
 
-    role="support": recently crossed above + currently above
-    role="resistance": recently crossed below + currently below
+    role="support"：近期自下向上穿越 + 当前位于线上
+    role="resistance"：近期自上向下穿越 + 当前位于线下
     """
     if df is None:
         return pd.Series(False, index=indicator_series.index)
@@ -203,12 +218,12 @@ def _eval_role_reversal(
     line = indicator_series
 
     if role == "support":
-        # Line was resistance (price was below), now price is above
+        # 线此前为阻力（价格在线下），当前价格已上穿
         was_below = close_series.shift(lookback) < line.shift(lookback)
         now_above = close_series > line
         result = was_below & now_above
     else:
-        # Line was support (price was above), now price is below
+        # 线此前为支撑（价格在线上），当前价格已下破
         was_above = close_series.shift(lookback) > line.shift(lookback)
         now_below = close_series < line
         result = was_above & now_below
@@ -222,10 +237,10 @@ def _eval_wick_touch(
     df: pd.DataFrame | None,
     condition: dict,
 ) -> pd.Series:
-    """Wick touch: wick touches indicator line but close is on the other side.
+    """影线触碰：影线触及指标线但收盘价在线的另一侧。
 
-    direction="above": high near line + close below line
-    direction="below": low near line + close above line
+    direction="above"：最高价近线 + 收盘在线下
+    direction="below"：最低价近线 + 收盘在线上
     """
     if df is None:
         return pd.Series(False, index=indicator_series.index)
@@ -250,7 +265,7 @@ def _eval_wick_touch(
 
 
 class _SimpleGene:
-    """Minimal gene-like object for _get_indicator_column reuse."""
+    """最小 gene 形对象（_get_indicator_column 复用的鸭子类型适配）。"""
     __slots__ = ("indicator", "params", "field_name")
 
     def __init__(self, indicator: str, params: dict, field_name: str | None = None):
@@ -260,7 +275,7 @@ class _SimpleGene:
 
 
 def _empty_signal_set(df: pd.DataFrame) -> SignalSet:
-    """Return an all-False SignalSet matching the DataFrame index."""
+    """返回与 DataFrame 索引对齐的全 False SignalSet（降级空信号）。"""
     return SignalSet(
         entries=pd.Series(False, index=df.index),
         exits=pd.Series(False, index=df.index),
@@ -270,7 +285,7 @@ def _empty_signal_set(df: pd.DataFrame) -> SignalSet:
 
 
 def combine_signals(signal_list: list[pd.Series], logic: str) -> pd.Series:
-    """Combine multiple boolean Series with AND or OR logic."""
+    """多布尔 Series 的 AND/OR 组合（层内与跨层信号合并的共用件）。"""
     if not signal_list:
         return pd.Series(False, index=signal_list[0].index if signal_list else [])
 
@@ -292,10 +307,12 @@ _indicator_column_cache: dict = {}
 
 
 def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
-    """Resolve an indicator column from the enhanced DataFrame.
+    """从 enhanced DataFrame 解析指标列（基因级列查找单点）。
 
-    Tries exact name match first, then prefix-based search.
-    Results are cached for repeated lookups within the same generation.
+    查找序：注册表精确列名 → 列名前缀匹配 → 按需现算（变异产生
+    非默认参数时列未预计算）。结果按 (df 身份, 指标, 参数, 字段)
+    缓存——同代重复查找零重算；缓存生命周期由调用方显式清理
+    （clear_indicator_cache，dna_to_signal_set 入口调用）。
     """
     cache = _cache if _cache is not None else _indicator_column_cache
     cache_key = (id(df), gene.indicator,
@@ -307,14 +324,14 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     indicator = gene.indicator
     params = gene.params
 
-    # Resolve column name via registry
+    # 经注册表解析列名（编码命名权威）
     reg = INDICATOR_REGISTRY.get(indicator)
     if reg is not None:
         col = resolve_indicator_column(
             indicator, params, gene.field_name or "", reg.naming
         )
     else:
-        # Fallback for unknown indicators
+        # 未知指标兜底：按列名前缀匹配
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
         if matches:
             col = matches[0]
@@ -326,15 +343,15 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         cache[cache_key] = result
         return result
 
-    # Fallback: prefix match
+    # 兜底：列名子串匹配
     matches = [c for c in df.columns if col in c]
     if matches:
         result = df[matches[0]]
         cache[cache_key] = result
         return result
 
-    # On-demand compute: if the indicator is registered but the column was not
-    # pre-computed (e.g. mutation produced non-default params), compute it now.
+    # 按需现算：指标已注册但列未预计算（如变异产生非默认参数）——
+    # 现算并写回 df 供后续查找复用
     if reg is not None:
         from core.features.indicators import _compute_indicator
         new_cols = _compute_indicator(df, indicator, params)
@@ -348,12 +365,12 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
                 {name: (series if series is not None else None)
                  for name, series in new_cols.items()},
                 index=df.index)
-            # Retry lookup after writing computed columns
+            # 现算列写回后重试查找
             if col in df.columns:
                 result = df[col]
                 cache[cache_key] = result
                 return result
-            # Column name mismatch — try matching by output
+            # 列名不完全一致——按现算输出列名互含匹配
             for name in new_cols:
                 if col in name or name in col:
                     result = df[name]
@@ -364,9 +381,10 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
 
 
 def clear_indicator_cache() -> None:
-    """Clear the indicator column cache.
+    """清空指标列缓存。
 
-    Should be called at the start of each generation to avoid stale references.
+    每代求值入口调用——缓存以 id(df) 为键不自动失效，跨代/跨测试
+    残留会因 Python id 复用命中陈旧键返回错误列。
     """
     _indicator_column_cache.clear()
 
@@ -375,9 +393,10 @@ def evaluate_layer(
     layer,
     df: pd.DataFrame,
 ) -> SignalSet:
-    """Evaluate a single TimeframeLayer on a pre-computed DataFrame.
+    """在预计算 DataFrame 上求值单个 TimeframeLayer。
 
-    Returns SignalSet with entries, exits, adds, reduces.
+    返回含 entries/exits/adds/reduces 的 SignalSet（MTF 逐层求值
+    单元——层内按基因角色分组后经 logic_genes 组合）。
     """
     close = df["close"]
     entry_triggers, entry_guards = [], []
@@ -433,11 +452,11 @@ def evaluate_layer(
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=df.index)
 
-    # Prevent simultaneous entry+exit (favor exit)
+    # 同 bar 开平互斥（冲突时保留 exit）
     both = entries & exits
     entries = entries & ~both
 
-    # Build entry_direction from DIRECTION genes if present
+    # 由 DIRECTION 基因构建 entry_direction（存在时）
     entry_direction = direction_genes[0] if direction_genes else None
 
     return SignalSet(
@@ -480,10 +499,10 @@ def dna_to_signals(
     enhanced_df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
 ) -> tuple[pd.Series, pd.Series]:
-    """Convert a StrategyDNA to entry/exit boolean Series.
+    """StrategyDNA → 开平布尔 Series（向后兼容形）。
 
-    Returns (entries, exits) for backward compatibility.
-    Use dna_to_signal_set() for full SignalSet with adds/reduces.
+    返回 (entries, exits) 二元组；需 adds/reduces 的完整信号集
+    用 dna_to_signal_set()。
     """
     sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe)
     return sig_set.entries, sig_set.exits
@@ -500,25 +519,21 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     suppress_bars 非幂等（二次抑制窗 2N）——唯一挂点+assemble 显式
     跳过参数在结构上排除二次变换。
     """
-    policy = getattr(dna, "entry_trigger_policy", None)
+    policy = dna.entry_trigger_policy
     if policy is None:
         return entries
-    from core.analysis.event_policy import mask_to_events
-    if (policy.get("mode") == "suppress_bars"
-            and policy["bars"] > len(entries) - 1):
-        from core.analysis.hypothesis_service import ResearchError
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"entry_trigger_policy.bars 超求值数据长度上界: "
-            f"{policy['bars']}",
-            detail={"param": "entry_trigger_policy.bars",
-                    "value": policy["bars"],
-                    "legal_range": f"1..{len(entries) - 1}"})
-    event_pos = mask_to_events(
-        entries.fillna(False).astype(bool).values, policy)
-    out = pd.Series(False, index=entries.index)
-    out.iloc[event_pos] = True
-    return out
+    from core.analysis.event_policy import apply_policy_to_series, validate_policy
+    # CARD-01（event-triggers 批次三）：策略通道全程无校验的求值点单点
+    # 收口——归一（对归一形幂等；非法形在此 422 而非求值中途裸
+    # TypeError/KeyError）；显式 {"mode": "none"} 归一 None=等价无策略
+    # 原样返回（D4 归一形约定）
+    policy = validate_policy(policy)
+    if policy is None:
+        return entries
+    # CARD-03：bars 校验+变换+回投收敛 apply_policy_to_series 单点
+    # （param 名保真策略链声明键 entry_trigger_policy）
+    return apply_policy_to_series(
+        entries, policy, param_name="entry_trigger_policy")
 
 
 def dna_to_signal_set(
@@ -527,18 +542,17 @@ def dna_to_signal_set(
     dfs_by_timeframe: dict | None = None,
     apply_trigger_policy: bool = True,
 ) -> SignalSet:
-    """Convert a StrategyDNA to a full SignalSet with adds/reduces.
+    """StrategyDNA → 完整 SignalSet（含 adds/reduces 的信号生产主入口）。
 
     apply_trigger_policy=False 供 assemble_signal_set 取掩码态 base
     （插件组合在完整合并掩码上组合后统一变换——防二次变换；
     trigger-policy 卡5）。
     """
-    # Clear the module-level indicator column cache at entry. It is keyed by
-    # id(df) and never auto-cleared, so without this, leftover Series from a
-    # previous call/test leak across invocations — and Python id reuse can make
-    # a freshly-built df hit a stale key, returning wrong indicator columns.
+    # 入口清空模块级指标列缓存：缓存以 id(df) 为键且不自动清理，
+    # 不清则上次调用/测试的残留 Series 跨调用泄漏——Python id 复用
+    # 会让新建 df 命中陈旧键返回错误指标列
     clear_indicator_cache()
-    # MTF mode with role-aware signal combination
+    # MTF 模式（角色感知的跨层信号组合）
     if dna.is_mtf and dfs_by_timeframe is not None:
         # MTF 划界防御（trigger-policy D10/6.3）：带 policy DNA 与 MTF
         # 层间组合语义无定义——显式结构化拒绝，不静默直译（翻译产物
@@ -547,13 +561,15 @@ def dna_to_signal_set(
         # auto-wrap（单层=execution 周期、mtf_mode 缺省）在隔离验证等
         # 传递 dfs_by_timeframe 的链上等同单周期（is_mtf 仅表示 layers
         # 数据结构），不属划界拒绝域——事件化经下方 legacy 组合出口挂。
-        _policy = getattr(dna, "entry_trigger_policy", None)
+        _policy = dna.entry_trigger_policy
         _exec_tf = dna.execution_genes.timeframe
+        # R6（event-triggers 批次三）：`dna.layers is None or` 左支在
+        # is_mtf 分支内恒 False（is_mtf 要求 layers 非 None 且 >=1）——
+        # 死分支删除后的等价简化
         _single_compat = (
             dna.mtf_mode is None
-            and (dna.layers is None
-                 or (len(dna.layers) == 1
-                     and dna.layers[0].timeframe == _exec_tf)))
+            and len(dna.layers) == 1
+            and dna.layers[0].timeframe == _exec_tf)
         if _policy is not None and not _single_compat:
             from core.analysis.hypothesis_service import ResearchError
             raise ResearchError(
@@ -564,7 +580,7 @@ def dna_to_signal_set(
                 detail={"field": "entry_trigger_policy",
                         "mtf_mode": dna.mtf_mode,
                         "slow_path": "MTF 事件策略语义留独立版本决策"})
-        # New MTF engine path: activated when mtf_mode is set
+        # 新 MTF 引擎路径：mtf_mode 已设置时启用
         if dna.mtf_mode is not None:
             from core.strategy.mtf_engine import run_mtf_engine
             return run_mtf_engine(dna, dfs_by_timeframe, enhanced_df)
@@ -575,13 +591,13 @@ def dna_to_signal_set(
         exec_adds = []
         exec_reduces = []
 
-        # Legacy: also track all signals for non-role-aware combination
+        # legacy 通道：无角色定义时的全层信号直并（见下方 else 分支）
         all_layer_entries = []
         all_layer_exits = []
         all_layer_adds = []
         all_layer_reduces = []
 
-        # Track trend direction for mixed strategies
+        # mixed 方向策略的趋势方向序列收集
         trend_direction_series = []
 
         has_any_role = any(layer.role is not None for layer in dna.layers)
@@ -599,7 +615,7 @@ def dna_to_signal_set(
                 continue
 
             sig = evaluate_layer(layer, layer_df)
-            layer_role = layer.role  # None means "execution" default
+            layer_role = layer.role  # None 即缺省 "execution" 执行层
             exec_tf = dna.execution_genes.timeframe
             is_cross_tf = layer.timeframe != exec_tf
 
@@ -629,32 +645,32 @@ def dna_to_signal_set(
                 pulse_adds = resampled_adds
                 pulse_reduces = resampled_reduces
 
-            # Always add to legacy all_layer lists for backward compat
+            # 并入 legacy all_layer 清单（无角色组合的向后兼容通道）
             all_layer_entries.append(resampled_entries)
             all_layer_exits.append(resampled_exits)
             all_layer_adds.append(resampled_adds)
             all_layer_reduces.append(resampled_reduces)
 
             if layer_role in ("trend", "structure", "zone"):
-                # Trend/structure/zone layers: forward-filled state signals
+                # 趋势/结构/区间层：状态信号（重采样后持续生效的形制）
                 trend_entries.append(resampled_entries)
                 trend_exits.append(resampled_exits)
 
-                # Determine direction from trend layer's condition types
+                # 由趋势层的条件类型推断方向
                 entry_triggers = [g for g in layer.signal_genes
                                   if g.role == SignalRole.ENTRY_TRIGGER]
                 direction = pd.Series(1.0, index=enhanced_df.index)
                 for gene in entry_triggers:
                     cond_type = gene.condition.get("type", "")
                     if cond_type == "price_above":
-                        # price_above=True -> close > indicator -> bullish -> +1
+                        # price_above 为真（收盘 > 指标）→ 看多 → +1
                         direction = pd.Series(
                             np.where(resampled_entries, 1.0, -1.0),
                             index=enhanced_df.index,
                         )
                         break
                     elif cond_type == "price_below":
-                        # price_below=True -> close < indicator -> bearish -> -1
+                        # price_below 为真（收盘 < 指标）→ 看空 → -1
                         direction = pd.Series(
                             np.where(resampled_entries, -1.0, 1.0),
                             index=enhanced_df.index,
@@ -662,15 +678,15 @@ def dna_to_signal_set(
                         break
                 trend_direction_series.append(direction)
             else:
-                # Execution layers (default): pulse signals (no ffill)
+                # 执行层（缺省）：脉冲信号（不做 ffill——逐事件形制）
                 exec_entries.append(pulse_entries)
                 exec_exits.append(pulse_exits)
                 exec_adds.append(pulse_adds)
                 exec_reduces.append(pulse_reduces)
 
-        # Combine signals
+        # 跨层信号组合
         if has_any_role:
-            # Role-aware combination: respect cross_layer_logic
+            # 角色感知组合：尊重 cross_layer_logic 设定
             logic = dna.cross_layer_logic or "AND"
             if trend_entries and exec_entries:
                 trend_gate = combine_signals(trend_entries, "AND")
@@ -693,7 +709,7 @@ def dna_to_signal_set(
             combined_adds = combine_signals(exec_adds, "OR") if exec_adds else pd.Series(False, index=enhanced_df.index)
             combined_reduces = combine_signals(exec_reduces, "OR") if exec_reduces else pd.Series(False, index=enhanced_df.index)
         else:
-            # Legacy behavior: no roles defined, use cross_layer_logic on all
+            # legacy 行为：无角色定义，全部层按 cross_layer_logic 直并
             if not all_layer_entries:
                 return SignalSet(
                     entries=pd.Series(False, index=enhanced_df.index),
@@ -711,7 +727,7 @@ def dna_to_signal_set(
         # 传递 dfs_by_timeframe 的链经此出口——与单周期路径同款挂点
         # （combine 后、entry∧exit 清洗前）；真 MTF 带 policy 已在上
         # 方划界拒绝，此处仅兼容形制触达。legacy 空集分支（无 entries）
-        # 变换幂等 no-op，不另挂。
+        # 空集输入下变换恒等（无 True 即无事件），不另挂。
         if apply_trigger_policy:
             combined_entries = _apply_entry_trigger_policy(
                 dna, combined_entries)
@@ -719,10 +735,10 @@ def dna_to_signal_set(
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both
 
-        # Build entry_direction from trend layers (for mixed direction support)
+        # 由趋势层构建 entry_direction（mixed 方向支持）
         entry_direction = None
         if has_any_role and trend_direction_series:
-            # Combine trend directions: use first trend layer's direction
+            # 趋势方向组合：取首个趋势层的方向
             entry_direction = trend_direction_series[0]
 
         return SignalSet(
@@ -734,7 +750,7 @@ def dna_to_signal_set(
             entry_direction=entry_direction,
         )
 
-    # Single-timeframe mode
+    # 单周期模式
     if dna.is_mtf and dfs_by_timeframe is None:
         raise ValueError(
             f"MTF DNA requires dfs_by_timeframe but got None. "
@@ -772,7 +788,7 @@ def dna_to_signal_set(
             elif gene.role == SignalRole.REDUCE_GUARD:
                 reduce_guards.append(signal)
             elif gene.role == SignalRole.DIRECTION:
-                # DIRECTION gene: True -> +1 (long), False -> -1 (short)
+                # DIRECTION 基因：True → +1（多），False → -1（空）
                 gene_direction = pd.Series(
                     np.where(signal, 1.0, -1.0),
                     index=enhanced_df.index,
@@ -805,17 +821,17 @@ def dna_to_signal_set(
     both = entries & exits
     entries = entries & ~both
 
-    # Generate entry_direction for mixed mode
+    # 生成 entry_direction（mixed 模式）
     entry_direction = None
     dna_direction = getattr(dna.risk_genes, "direction", "long")
     if dna_direction == "mixed":
         if direction_genes:
             entry_direction = direction_genes[0]
         else:
-            # No DIRECTION gene: neutral direction (signals will not fire)
+            # 无 DIRECTION 基因：中性方向（信号不会触发）
             entry_direction = pd.Series(0.0, index=enhanced_df.index)
     else:
-        # For single-direction DNA, set explicit direction
+        # 单方向 DNA：显式设定方向
         entry_direction = pd.Series(
             1.0 if dna_direction == "long" else -1.0,
             index=enhanced_df.index,
@@ -831,7 +847,7 @@ def dna_to_signal_set(
 
 
 def _gene_signature(gene) -> tuple:
-    """Create a hashable signature for a signal gene for deduplication."""
+    """信号基因的可哈希签名（批量求值的基因级去重键）。"""
     return (
         gene.indicator,
         tuple(sorted(gene.params.items())),
@@ -846,23 +862,24 @@ def batch_signal_sets(
     enhanced_df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
 ) -> list[SignalSet]:
-    """Batch-compute signal sets for a population with gene-level deduplication.
+    """种群批量求值 SignalSet（基因级去重——进化适应度评估的批量通道）。
 
-    Instead of computing each individual's signals independently, this function:
-    1. Collects all unique gene signatures across the population
-    2. Evaluates each unique gene condition once
-    3. Assembles per-individual SignalSets from cached results
+    个体独立求值的替代：① 收集种群全部唯一基因签名；② 每个唯一
+    基因条件只求值一次；③ 从缓存结果逐个体组装 SignalSet。稳态种群（第
+    2 代起）结构性共享基因（精英保留/近亲繁殖）——去重的收益前提
+    （非正确性前提：首代全唯一签名时行为等价逐个体独立求值），
+    去重把重复求值压缩为组装查表。
 
-    MTF individuals fall back to dna_to_signal_set() since their signal
-    computation involves cross-layer synthesis.
+    MTF 个体回退 dna_to_signal_set() 全路径——其信号计算含跨层
+    合成，无法按基因独立拆分。
 
     Args:
-        individuals: List of StrategyDNA to evaluate.
-        enhanced_df: Enhanced DataFrame with indicators.
-        dfs_by_timeframe: Multi-timeframe data dict (optional).
+        individuals: 待求值的 StrategyDNA 列表。
+        enhanced_df: 含指标的 enhanced DataFrame。
+        dfs_by_timeframe: 多周期数据字典（可选）。
 
     Returns:
-        List[SignalSet] in the same order as individuals.
+        与 individuals 同序的 SignalSet 列表。
     """
     if not individuals:
         return []
@@ -871,12 +888,12 @@ def batch_signal_sets(
     # 延迟先例保持加载序稳定）：MTF 回退的防御拒绝透传判型用
     from core.analysis.hypothesis_service import ResearchError
 
-    # Step 1: Evaluate all unique gene conditions
+    # 第 1 步：求值全部唯一基因条件
     gene_results: dict[tuple, pd.Series] = {}
     skipped_genes = 0  # fix-executor-batch-health：签名非法跳过计数（可观测）
 
     for dna in individuals:
-        # MTF individuals use the full dna_to_signal_set path
+        # MTF 个体走 dna_to_signal_set 全路径（第 2 步统一处理）
         if dna.is_mtf and dfs_by_timeframe is not None:
             continue
 
@@ -913,10 +930,10 @@ def batch_signal_sets(
         logger.warning(
             "batch_signal_sets 本批共跳过 %d 个签名非法基因", skipped_genes)
 
-    # Step 2: Assemble per-individual SignalSets
+    # 第 2 步：逐个体组装 SignalSet
     results: list[SignalSet] = []
     for dna in individuals:
-        # MTF: use full path
+        # MTF：全路径
         if dna.is_mtf and dfs_by_timeframe is not None:
             try:
                 results.append(dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe))
@@ -928,7 +945,7 @@ def batch_signal_sets(
                 results.append(_empty_signal_set(enhanced_df))
             continue
 
-        # Single-TF: assemble from cached gene results
+        # 单周期：从缓存基因结果组装
         entry_triggers, entry_guards = [], []
         exit_triggers, exit_guards = [], []
         add_triggers, add_guards = [], []
@@ -991,13 +1008,13 @@ def batch_signal_sets(
         both = entries & exits
         entries = entries & ~both
 
-        # Generate entry_direction for mixed mode
+        # 生成 entry_direction（mixed 模式）
         entry_direction = None
         if getattr(dna.risk_genes, "direction", None) == "mixed":
             if direction_genes:
                 entry_direction = direction_genes[0]
             else:
-                # No DIRECTION gene: neutral direction
+                # 无 DIRECTION 基因：中性方向
                 entry_direction = pd.Series(0.0, index=enhanced_df.index)
 
         results.append(SignalSet(
