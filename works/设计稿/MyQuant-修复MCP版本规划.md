@@ -61,13 +61,16 @@
 | **验收** | 两轮三假设回溯预检验收锚：BTC 急跌（~3 笔→警示）/ETH 双过滤（~0 笔→拒绝送考）/ETH 动量（~13 笔→放行）——三个已知答案全部命中 |
 | **形制** | openspec change 完整流程；前置 0.3.3 |
 
-## 0.3.5 · 表达力升级（G13 + G14，远期排期）
+## 0.3.5 · 表达力升级（**完成 2026-10-08，合并 main 28e7efc**）
 
-| 项 | 内容 |
-|---|---|
-| G13 截面工具 | 多 symbol 同条件统计/扫描对照模板——尺度分层结构跨品种检验从手工变内置 |
-| G14 事件驱动形制 | 事件定义条件+密度可控参数——直击频率硬伤根源 |
-| 形制 | 各自独立 openspec change；启动时点在 0.3.4 落地后按第三轮研究实证评估 |
+> **G14 事件驱动形制已落地**（openspec change `add-event-driven-triggers`，已归档 `archive/2026-10-08-`）：trigger_policy 三值封闭枚举 {none, first_true, suppress_bars}——掩码→事件流权威单点变换五链同源（验证引擎/预检/event_study/condition_stats/策略组装，specs「消费面同源」锚守护）；登记入幂等键（显式 none=缺省同身份、无 policy 指纹逐字节不变）+翻译直接映射+进化 crossover random.choice 继承+MTF 划界（防御拒绝+算子跳过+batch 透传不吞）；TD-A 守卫族（时间窗/时间形 422 化）搭车；DNAModel 扩键+生成链派生物同步。实施期三项裁定：抑制窗语义=间隔差值 ≥ bars 放行、变换域=请求区间过滤后掩码（与统计链同域）、auto-wrap 接缝修复（from_json 单层形制 is_mtf=True 误伤隔离验证链）。
+>
+> **验证链**：openspec 20/20 任务+六环节用户走查；team3 第十一战审查（fix/event-triggers-review-hardening 8 卡——CARD-01 P0 策略通道 policy 无校验收口+七卡质量收敛，合并 fe0e406）；终验全量 **4899 passed 零失败**+e2e 64（重启实测）+审查范围 23 文件锚后行+分支 100%。审查增量债务已登记技术债务登记册 H 组（H1-H8）。
+>
+> | 项 | 内容 |
+> |---|---|
+> | G14 事件驱动形制 | **已落地**（上述）——事件定义条件+密度可控参数，直击频率硬伤根源 |
+> | G13 截面工具 | 未启动——随第三轮研究实证窗口再评估（登记册 G 组在案） |
 
 ---
 
@@ -95,6 +98,8 @@
 | team3 第七战 TD | flaky 时序敏感两例 / plugin_service 防御三行 / engine 存量动作族 26 行 27 分支 | 归 0.3.8 validation 域治理 |
 | team3 第八战 TD（0.3.3 审查增量，2026-10-05） | TD-1 run_entry 死测试退役（run.py 已删于 8da2857 而两用例未退役——全量恒 2 红信号污染）；TD-2 存量覆盖缺失（validation_service 10 行 6 分支 / screen_patterns 4 行 6 分支 / condition_kernel+repository 小项——触碰面外存量）；TD-3 迁移 d4e7f9a2c5b8 downgrade 注释失实（同三元多行时重建索引实抛 IntegrityError，注释自称保留可读）；TD-4 七件小债（warmup_loader import 冗余 / 魔数 50 耦合 min_bars / hint 三要素张力 / 幂等 409 边缘序 / coverage 三态不对称 / models.py 注释锚 / 0-bar 边界文案） | TD-1 **单独微型分支 `chore/test-run-entry-retirement`，0.3.3 合并后立即**（不排版本批次——粒度不匹配+信号债按天计息）；TD-2 归 0.3.8；TD-3 归 0.3.7；TD-4 随 0.3.4/0.3.5 触碰搭车 |
 | 跨机启用检查点增量（team3 第八战 S 组） | S-1 500 detail 透内部异常原文（str(exc)[:200]）/ S-2 验证族无区间 bar 上限（仅 sandbox 有 SANDBOX_MAX_BARS）/ S-4 分析任务 result_ref 无 TTL / S-3 socket.io token 经 URL query（api/auth.py） | 与 Q1 已裁同窗口：跨机启用日（auth payload 形制改造+TLS）一并清零，不进版本序列 |
+| team3 第九战 TD（clear-analysis-tds 审查增量，2026-10-07） | TD-A 复合结构/时间形参数通道错置（group_a/group_b 值形制、as_of 非时间串非法落 500/failed 而非 422——specs MUST 面仅数值/枚举，属设计裁剪）；TD-B 范围外未覆盖（screen_patterns 97% 6 处/api log.py 98% 48→53/registry.py 92%）；TD-C 存量他战「现状容忍」锚未按 V3 四分类隔离；security 备案四项（legal_range 行数披露/value 回显无截断/422 无留痕/500 路径理论泄漏——条件触发原则）；观察项：correlation_scan/distribution_compare 的 min_samples 路由未开透传通道（API 面恒默认 30） | TD-A 待裁窗口（可并入 0.3.5 表达力或独立 change——扩卡即扩 specs MUST 面，需用户裁决）；TD-B 归 0.3.8；TD-C 待 V3 口径裁决；备案项随跨机启用检查点 |
+| team3 第十一战 TD（0.3.5 审查增量，2026-10-08） | H 组 8 项已登记 MyQuant-技术债务登记.md：TD-D 空区间裸 500 / TD-E crossover 丢 v2 字段 / templates 包聚合断链 / DNAModel dict 静默降级面 / signal_assembly 坏值与静默缺省 / api 无全局 ResearchError handler / 存量 Feature 平行体系 / 英文 logger 消息 | 已登记 H1-H8（全部未实现，归宿与优先级见登记册 H 组；H4 静默降级面优先） |
 | 0.3.x 债务清偿序列 | 0.3.6 trading+live_trading（资金面，实盘前置）→ 0.3.7 persistence → 0.3.8 evolution+validation | 待实施（实盘路线主线，与本系列并行） |
 | 积压裁决 | C1 组合策略语义 / C2 scoring 四例 / C3b mode 口径 / Q3-team3.md 固化 / Q4-F1 | 待裁 |
 | 其他专项 | pytest 双模块 conftest 统一、TD 低危 4 项 + P2/P3 记录 10 项、B4/B5③/B6 | 按需 |
@@ -108,5 +113,6 @@
 | 0.3.2 | 错误通道修复：11 键校验族+跨指标双层装载+快路径失败形制+快照 hint；team3 审查增量 11 卡 | fix/mcp-error-channel | 0b3cf1f（2026-10-05，--no-ff，14 提交） | 已合并+归档+主 spec 同步 |
 | 0.3.3 | 契约透明化：五元身份（段清单编码+迁移）/四面三维度忠实口径/verdict 双路径/df.attrs 边界/index-only 装载；team3 第八战增量 5 卡（naive 时间回归/gap 前扩误报/折算口径/计数封顶/422 化） | feature/mcp-contract-transparency（+fix/mcp-contract-review-033） | 257c044（2026-10-05，--no-ff，18 提交） | 已合并+归档+主 spec 同步（archive/2026-10-06-mcp-contract-transparency） |
 | — | TD-1 死测试退役（run_entry 两用例——8da2857 遗留，全量 2 红信号污染） | chore/test-run-entry-retirement | 0ff3aa0 | 已合并（后续债务区登记销账） |
-| 0.3.4 | 假设预检器新模块：组合统计预检+频率外推+预算预检（G3+G11） | openspec change | — | 待实施（前置 0.3.3） |
+| 0.3.4 | 假设预检器新模块：组合统计预检+频率外推+预算预检（G3+G11）；team3 第七战审查增量 7 卡（forward_bars 值域/validate_range 双层 422/挂接留痕/R3 拆两场景用户裁 B/timestamp 变体回退等）+阶段四闸门 4614 全绿 | feature/hypothesis-precheck | 8d6f8f2（2026-10-06，双级 --no-ff：1851a31 审查战→8d6f8f2 主合并，17 实施提交） | 已合并+归档+主 spec 同步（archive/2026-10-07-add-hypothesis-precheck；新 spec hypothesis-precheck 4 Requirement） |
+| — | clear-analysis-tds 债务清偿（0.3.4 审查战呈批裁定的后续 change）：TD-1 留痕分派收敛 `_log_result` 单点+TD-2 模板入参值域守卫 `param_guard`（八模板域：四补齐+四迁移）；team3 第九战审查增量 4 卡（CARD-01 condition_stats min_samples 守卫缺口 P1——specs 全称量词全域扫描唯一漏网/02 import 形制/03 测试计数/04 docstring 对齐）+阶段四闸门（审查域十文件 9×100%+precheck 98%，全量 4640+e2e 64 零失败；tester 假死一次 tester2 接手，确诊 pytest.ini 全局 cov 陷阱） | fix/analysis-clear-tds | ff488dd（2026-10-07，--no-ff，13 提交） | 已合并+归档+主 spec 同步（archive/2026-10-07-clear-analysis-tds；同步时清理主 spec 五处历史 `## Requirement` 重复残留块） |
 | 0.3.5 | 表达力升级：截面工具（G13）/事件驱动形制（G14） | openspec change | — | 待实施（前置 0.3.4 后评估） |

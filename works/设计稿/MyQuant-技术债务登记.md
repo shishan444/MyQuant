@@ -26,7 +26,8 @@
 | C4 | fetcher 硬编码内网代理默认值 | data/signals 战 CARD-15 拆出 | 已裁决登记（2026-10-01 本次不修，保留现状） |
 | D | team3.md 四条流程条文 | analysis 战实测 | 建议固化 |
 | E | macd 留白 / schemas Dict 保持 | analysis 战 | 无需行动（已含说明） |
-| G | MCP 六步法实战复盘 14 项（G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进 + G9-G12 第二轮补入 + G13/G14 表达力升级远期） | 2026-10-03 两轮全链实战（BTC 单品种四方向 + ETH 跨品种复制，~5000 检验对+3 假设 5 考试） | G1/G9/G10 建议立项修（错误通道家族）；G2-G4 便宜同批；G5-G8/G12 排期；G11（假设预检器）/G13（截面）/G14（事件驱动）为表达力升级路线 |
+| G | MCP 六步法实战复盘 14 项（G1 P1 bug + G2-G4 契约失实 + G5-G8 能力改进 + G9-G12 第二轮补入 + G13/G14 表达力升级远期） | 2026-10-03 两轮全链实战（BTC 单品种四方向 + ETH 跨品种复制，~5000 检验对+3 假设 5 考试） | G1/G9/G10 建议立项修（错误通道家族）；G2-G4 便宜同批；G5-G8/G12 排期；G11（假设预检器）/G13（截面）/G14（事件驱动）为表达力升级路线（G11 已由 0.3.4 清账、G14 已由 0.3.5 清账；G13 随第三轮实证窗口再启） |
+| H | 0.3.5 实施与审查战增量 8 项（H1 空区间裸 500 / H2 crossover 丢 v2 字段 / H3 templates 包聚合断链不可达 / H4 DNAModel dict 字段静默降级面 / H5 signal_assembly 坏值与静默缺省 / H6 api 无全局 ResearchError handler / H7 存量 Feature 平行体系 / H8 英文 logger 消息） | 2026-10-08 add-event-driven-triggers 实施在案 2 项 + team3 第十一战（fix/event-triggers-review-hardening 8 卡+六步闸门）专项 6 项 | H4 优先级最高（静默降级比 500 隐蔽，与 H2 同域合并评估）；H1/H5 归 0.3.8 或独立小卡；H3/H6 低成本独立；H7/H8 搭车随手 |
 
 ---
 
@@ -196,6 +197,25 @@
 | ④ reviewer 对质后置阶段三（批次一 developer 未入队） | 批次一对质无处投递卡死风险一次（纠偏化解） |
 
 不固化则下次新会话重踩同类坑。
+
+---
+
+## H 组 · 0.3.5 实施与审查战增量（2026-10-08，add-event-driven-triggers + team3 第十一战）
+
+> 来源：0.3.5 change 在案债务 2 项（design.md 债务登记节，TD-D/TD-E）+ team3 审查战（fix/event-triggers-review-hardening，8 卡闭环+六步闸门 4899+e2e 64）architect 专项与阶段四记债 6 项。全部**未实现**（代码现状亲核在案），随本组登记归宿落定。
+
+| # | 项 | 代码现状（亲核） | 建议 |
+|---|---|---|---|
+| H1（原 TD-D） | distribution_compare「区间无数据」裸 `raise ValueError` → 500（templates/distribution_compare.py `_slice`）——数据语义（合法形制+空结果）非形制非法，research-error-channel 收编时漏 | 仍裸（0.3.5 只做时间窗守卫，未触空区间语义） | 422 结构化（RESEARCH_DATA_EMPTY 类），归 0.3.8 或独立小卡 |
+| H2（原 TD-E） | crossover 逐字段构造**静默丢 v2 字段** signal_sources/composition——带插件源的进化亲代子代降级为纯 rule（继承语义并集/交集/选择需独立设计，涉及插件求值成本） | 仍丢（operators.py 子代构造无此二字段，0.3.5 只补 entry_trigger_policy 继承） | 与 H4 同域合并评估（DNA 弱形制族） |
+| H3（TD-F1） | templates/__init__.py 无条件聚合九模板（precheck 自装载拖 sqlalchemy/persistence 全链）——包内轻模块（param_guard）import 断链结构性不可达（CARD-02 选 a 的根因，import 行已正确待发） | 仍全量聚合 | PEP 562 `__getattr__` 懒加载，低成本独立或搭车 |
+| H4（TD-F3b） | DNAModel 的 signal_sources/composition/layers 为 `Dict/List` 弱形制（extra=forbid 只挡多余键不挡值域）——坏值全程静默（executor except→空信号），比 500 更隐蔽的降级面 | 仍弱形制（0.3.5 只给 entry_trigger_policy 配了校验收口——CARD-01） | **优先级最高**：pydantic 强形制或消费点 validate 收口（沿 CARD-01 模式），与 H2 合并 |
+| H5（TD-F3a） | signal_assembly 组合参数坏值：`float(src["threshold"])` 坏串 500 + 未知 operator 静默缺省 ">"（signal_assembly.py:168-196，0.2.x 存量） | 仍现状（`src.get("operator", ">")` 兜底） | 422 化+operator 封闭枚举，归 0.3.8 或搭车 |
+| H6（TD-F3c） | api 层无全局 ResearchError exception_handler——14 处路由手动 try/except + research_error_to_http 重复（R5/CARD-04 的结构同族） | 仍手动形制 | FastAPI app 级 exception_handler 一次收口（测试面=既有 422 锚全回归），独立小战 |
+| H7（TD-F2） | 存量 `*Feature` 平行测试体系两文件（tests/evolution/test_evolution_feature_net.py / test_validation_feature_net.py）未按 TESTING_V3 四分类归位 | 仍在 | 下次触碰 evolution/validation 域时搭车 V3 化 |
+| H8 | core/strategy/executor.py :592 邻近英文 logger 消息（注释卡范围外，注释已中文化但日志文案未动） | 仍英文 | 无行为面，随手 |
+
+**关联说明**：G14（事件驱动形制）已由 0.3.5 清账、G11（假设预检器）已由 0.3.4 清账——G 组总览行已同步标记；G13（截面工具）与 cooldown_after_exit 扩枚举均绑第三轮研究实证窗口，非独立待办。
 
 ---
 
