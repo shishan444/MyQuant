@@ -188,7 +188,7 @@ def translate_hypothesis(
                 "risk_genes": "platform_default"}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
-    from core.persistence.db_ext import save_strategy
+    from core.persistence.repository.strategy import save_strategy
     save_strategy(
         db_path, strategy_id=strategy_id,
         dna_json=dna.to_json(),
@@ -324,7 +324,7 @@ def _translate_conditions(
 
 def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:
     """幂等查询：谱系 parent_ids 含该假设的 draft 产物。"""
-    from core.persistence.db_ext import list_strategies
+    from core.persistence.repository.strategy import list_strategies
 
     rows = list_strategies(db_path, status="draft", limit=500)
     for row in rows:

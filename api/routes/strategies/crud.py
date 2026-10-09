@@ -14,19 +14,23 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.persistence.db_ext import (
+from core.persistence.repository.backtest_result import (
+    get_backtest_result,
+    list_backtest_results,
+    save_backtest_result,
+)
+from core.persistence.repository.strategy import (
     count_strategies,
     delete_strategy,
-    get_backtest_result,
     get_strategy,
-    get_verify_session,
-    list_backtest_results,
     list_strategies,
-    list_verify_sessions,
-    save_backtest_result,
     save_strategy,
-    save_verify_session,
     update_strategy,
+)
+from core.persistence.repository.verify_session import (
+    get_verify_session,
+    list_verify_sessions,
+    save_verify_session,
     update_verify_session,
 )
 from api.deps import get_db_path

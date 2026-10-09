@@ -449,7 +449,7 @@ class EvolutionRunner(threading.Thread):
                         continue
                     discovered_signatures.add(sig)
                     try:
-                        from core.persistence.db_ext import save_strategy
+                        from core.persistence.repository.strategy import save_strategy
                         from core.strategy.dna import generate_strategy_name
                         name = generate_strategy_name(ind)
                         save_strategy(

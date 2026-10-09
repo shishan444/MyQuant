@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core.persistence.db_ext import (
+from core.persistence.repository.paper_trading import (
     save_paper_trading_task,
     get_paper_trading_task,
     update_paper_trading_task,
@@ -117,7 +117,7 @@ def create_task(
     # 达标预警：带 strategy_id 创建时回查 qualified 状态
     warnings = []
     if body.strategy_id:
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         strat = get_strategy(db_path, body.strategy_id)
         if strat is not None:
             qualified_val = strat.get("qualified")

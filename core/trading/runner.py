@@ -152,7 +152,7 @@ class TradingRunner(threading.Thread):
             _active_controllers.pop(task_id, None)
 
     def _update_status(self, task_id: str, status: str, reason: str = None) -> None:
-        from core.persistence.db_ext import update_paper_trading_task
+        from core.persistence.repository.paper_trading import update_paper_trading_task
         kwargs = {"status": status}
         if reason:
             kwargs["stop_reason"] = reason
@@ -166,7 +166,7 @@ class TradingRunner(threading.Thread):
         task_id: str,
         controller: TaskController,
     ) -> VirtualAccount:
-        from core.persistence.db_ext import (
+        from core.persistence.repository.paper_trading import (
             update_paper_trading_task, save_paper_trade,
         )
 
@@ -481,7 +481,7 @@ class TradingRunner(threading.Thread):
                             df=None, pending_decision: Optional[Decision] = None) -> None:
         """Persist VirtualAccount state to DB."""
         import json
-        from core.persistence.db_ext import update_paper_trading_task
+        from core.persistence.repository.paper_trading import update_paper_trading_task
         kwargs = {"balance": account.balance}
 
         # Serialize pending_decision if present
@@ -537,7 +537,7 @@ class TradingRunner(threading.Thread):
         update_paper_trading_task(self.db_path, task_id, **kwargs)
 
         if len(account.equity_snapshots) > 1:
-            from core.persistence.db_ext import save_equity_snapshots
+            from core.persistence.repository.paper_trading import save_equity_snapshots
             snap_dicts = [
                 {
                     "timestamp": s.timestamp,

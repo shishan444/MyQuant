@@ -165,7 +165,7 @@ def _dna_indicator_names(dna) -> List[str]:
 
 
 def _load_strategy_dna(db_path: Path, strategy_id: str):
-    from core.persistence.db_ext import get_strategy
+    from core.persistence.repository.strategy import get_strategy
     from core.strategy.dna import StrategyDNA
 
     row = get_strategy(db_path, strategy_id)
