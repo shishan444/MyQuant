@@ -174,12 +174,13 @@ class GenerationSnapshot(Base):
 class PaperEquitySnapshot(Base):
     """
     权益快照：(task_id, timestamp) 唯一索引是 OR IGNORE 幂等键
-    （CARD-01 收口——models/legacy_init/Alembic 三轨同构唯一）。
+    （CARD-01 收口——models 与 Alembic 两轨同构唯一，TD-10 换芯后
+    Alembic 链为版本演进唯一权威）。
     """
     __tablename__ = "paper_equity_snapshot"
     __table_args__ = (
         # (task_id, timestamp) 唯一：save_equity_snapshots 的 OR IGNORE
-        # 幂等依赖此约束（legacy_init._create_equity_snapshot_table 同规）
+        # 幂等依赖此约束（Alembic 04b595687d2f 同规收口）
         Index("idx_equity_task_time", "task_id", "timestamp", unique=True),
         {"sqlite_autoincrement": True},
     )
@@ -267,7 +268,10 @@ class Strategy(Base):
     """
     __tablename__ = "strategy"
     __table_args__ = (
-        Index("idx_strategy_best_score", text("best_score DESC")),
+        # 普通列索引（原 text("best_score DESC") 表达式形）：SQLite 反射
+        # 不解析索引方向、DESC 与 ASC 查询等价（方向仅存储声明），表达式
+        # 形在 autogenerate 对照下恒判漂移（baseline 遗漏本索引的根因）
+        Index("idx_strategy_best_score", "best_score"),
         Index("idx_strategy_gene_signature", "gene_signature"),
         Index("idx_strategy_source", "source"),
         Index("idx_strategy_source_task_id", "source_task_id"),
@@ -308,7 +312,8 @@ class VerifySession(Base):
     """
     __tablename__ = "verify_session"
     __table_args__ = (
-        Index("idx_verify_session_created", text("created_at DESC")),
+        # 同 Strategy.idx_strategy_best_score：普通列形（反射/autogenerate 一致）
+        Index("idx_verify_session_created", "created_at"),
     )
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
     session_id: Mapped[str] = mapped_column(Text, primary_key=True)
