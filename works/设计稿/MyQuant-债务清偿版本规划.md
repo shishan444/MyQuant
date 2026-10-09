@@ -105,4 +105,4 @@
 | 微战 | DNA 弱形制族：H4+H2+TD-14（dna.py 域一战，正确性风险先行） | fix/dna-strong-typing（拟） | — | 待实施（建议先于/并行 0.3.6） |
 | 微战 | 卫生小件批：TD-12/13+H3+H6+H8+D 固化 | fix/hygiene-batch（拟） | — | 待实施（随微窗口） |
 | 0.3.6 | trading+live_trading 战：首审+F6/F2 残余+F5+C3 联动（可选） | fix/trading-live-review（拟） | — | 待实施（优先启动——实盘前置） |
-| 0.3.7 | 收尾战（v3 合并版）：persistence 真未审面首审+evolution/validation 增量复核+散债聚批（H1/H5/H7/B5③/B4/TD-7/8/TD-11 残余）+C1 战前裁 | fix/persistence-research-closing（拟） | — | 待实施（C1 前置） |
+| 0.3.7 | 收尾战（v3 合并版）：openspec change persistence-research-closing（B 系列七卡）+team3 十三战（17 卡）+翻案批次（TD-10 三轨归一）+闸门两轮 | fix/persistence-research-closing | cc5df5b（--no-ff，2026-10-09，127 文件 +2887/-1768；openspec 归档 2026-10-09+主 specs 五 delta 同步——29/29） | **已合并**——终验全量 5099+e2e 64+覆盖率改动面全 ≥98%；TD-10 三轨归一（legacy_init 退役）；TD-09 研究关闭；J 组两条目落档 0.3.6 输入 |
