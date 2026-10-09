@@ -15,7 +15,8 @@ from core.analysis.hypothesis_service import (
     ResearchError, register_hypothesis)
 from core.analysis.validation_service import (
     SANDBOX_MAX_BARS, run_isolated_backtest, run_sandbox_backtest)
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)

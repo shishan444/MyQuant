@@ -1,8 +1,8 @@
 """backtest_result repository（B3b.1 迁移）。
 
 行为等价锚点：save 裸 INSERT；list 过滤（strategy_id/symbol/run_source）
-+ 排序（getattr 限定列名——旧轨动态拼列名，合法输入行为等价且消除了
-非法输入的 SQL 注入面）+ limit（无 offset，同旧轨）。
++ 排序（白名单+ValueError 拒绝，形制同 strategy.py——旧轨动态拼列名
+的注入面与 getattr 探测面双收口）+ limit（无 offset，同旧轨）。
 """
 from __future__ import annotations
 
@@ -12,7 +12,16 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import insert, select
 
 from core.persistence.orm.models import BacktestResult
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
+
+# 排序白名单（调用方实际列集：created_at/total_score + 评分指标列；
+# 形制对齐 strategy.py _SORT_ALLOWED_COLUMNS）
+_SORT_ALLOWED_COLUMNS = {
+    "created_at", "total_score", "total_return", "sharpe_ratio",
+    "max_drawdown", "win_rate", "fitness", "wf_score",
+}
+_SORT_ALLOWED_ORDERS = {"asc", "desc"}
 
 
 def save_backtest_result(
@@ -43,7 +52,7 @@ def save_backtest_result(
     satisfaction_json: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Insert a backtest result record."""
+    """写入回测结果记录（裸 INSERT）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(insert(BacktestResult).values(
@@ -64,7 +73,7 @@ def save_backtest_result(
 
 
 def get_backtest_result(db_path: Path, result_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single backtest result by ID, or None if not found."""
+    """按 ID 取单条回测结果（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -84,7 +93,7 @@ def list_backtest_results(
     sort_order: str = "desc",
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List backtest results with optional filtering and sorting."""
+    """列回测结果（strategy_id/symbol/run_source/session_id 过滤+白名单排序+limit）。"""
     stmt = select(BacktestResult)
     if strategy_id is not None:
         stmt = stmt.where(BacktestResult.strategy_id == strategy_id)
@@ -94,6 +103,11 @@ def list_backtest_results(
         stmt = stmt.where(BacktestResult.run_source == run_source)
     if session_id is not None:
         stmt = stmt.where(BacktestResult.session_id == session_id)
+
+    if sort_by not in _SORT_ALLOWED_COLUMNS:
+        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
+    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
+        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
 
     col = getattr(BacktestResult, sort_by)
     stmt = stmt.order_by(col.desc() if sort_order.lower() == "desc" else col.asc()).limit(limit)

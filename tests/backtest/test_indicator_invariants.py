@@ -27,6 +27,8 @@ import pandas as pd
 import pandas_ta as ta
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.features.indicators import _extract_outputs, compute_all_indicators
 
 

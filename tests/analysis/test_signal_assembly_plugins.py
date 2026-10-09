@@ -326,3 +326,57 @@ class TestDuplicateFormulaRefSkipsReappend:
         enriched = enrich_with_plugin_columns(db, df, {formula_col})
         fx = enriched[formula_col].astype(float)
         assert list(ss.entries) == list(fx > 0.0)
+
+
+class TestCombineParamValidation:
+    """0.3.7 H5：组合参数值域显式拒绝（组装器单点——验证链/回测链同源）。
+
+    键缺省（operator ">" / threshold 0.0 / weights 1.0）是既有契约，
+    由 TestCombineBranches.test_operator缺省_gt零阈值 等既有锚守护；
+    本类只锚显式坏值的结构化拒绝。"""
+
+    @pytest.fixture()
+    def formula_col(self, db: Path) -> str:
+        register_formula_plugin(db, name="gfx", expression="zscore(close, 20)")
+        from core.analysis.registry_meta import available_signal_columns
+        return next(c["column_key"] for c in available_signal_columns(db)
+                    if c["source"] == "formula")
+
+    def test_未知operator_结构化拒绝_合法集回显(self, db, formula_col) -> None:
+        dna = _dna([{"type": "formula", "ref": formula_col,
+                     "operator": "<>", "threshold": 0.0}])
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["legal_values"] == ["<", "<=", ">", ">="]
+        assert ei.value.detail["param"] == f"signal_sources[{formula_col}].operator"
+
+    def test_operator合法集对拍_防字典漂移(self) -> None:
+        # 枚举对拍锚：期望硬编 vs 实现字典键集（字典误改时此锚红——
+        # 0.2.8 工具数锚同款纪律，单一事实源防漂移）
+        from core.analysis.signal_assembly import _SOURCE_COMPARE_OPS
+        assert set(_SOURCE_COMPARE_OPS) == {">", "<", ">=", "<="}
+
+    def test_threshold坏串_422不裸穿500(self, db, formula_col) -> None:
+        dna = _dna([{"type": "formula", "ref": formula_col,
+                     "operator": ">", "threshold": "bad"}])
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["value"] == "bad"
+
+    def test_weighted_vote权重坏值_422含列名(self, db, formula_col) -> None:
+        dna = _dna([{"type": "formula", "ref": formula_col}],
+                   {"mode": "weighted_vote",
+                    "weights": {formula_col: "oops"}})
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == f"composition.weights[{formula_col}]"
+
+    def test_weighted_vote阈值坏串_422(self, db, formula_col) -> None:
+        dna = _dna([{"type": "formula", "ref": formula_col}],
+                   {"mode": "weighted_vote", "threshold": "bad"})
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"

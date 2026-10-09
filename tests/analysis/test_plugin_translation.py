@@ -21,7 +21,8 @@ from core.analysis.hypothesis_service import (
 from core.analysis.hypothesis_to_strategy import translate_hypothesis
 from core.analysis.plugin_service import register_formula_plugin
 from core.analysis.signal_assembly import assemble_signal_set
-from core.persistence.db_ext import get_strategy, init_db_ext
+from core.persistence.repository.strategy import get_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)

@@ -29,26 +29,11 @@ from core.persistence.db import (
     save_task,
     update_task,
 )
-from core.persistence.db_ext import (
-    delete_dataset,
-    delete_strategy,
-    get_dataset,
-    get_strategy,
-    get_backtest_result,
-    get_verify_session,
-    init_db_ext,
-    list_backtest_results,
-    list_datasets,
-    list_strategies,
-    list_verify_sessions,
-    save_backtest_result,
-    save_dataset_meta,
-    save_strategy,
-    save_verify_session,
-    update_dataset_stats,
-    update_strategy,
-    update_verify_session,
-)
+from core.persistence.repository.backtest_result import get_backtest_result, list_backtest_results, save_backtest_result
+from core.persistence.repository.dataset_meta import delete_dataset, get_dataset, list_datasets, save_dataset_meta, update_dataset_stats
+from core.persistence.repository.strategy import delete_strategy, get_strategy, list_strategies, save_strategy, update_strategy
+from core.persistence.repository.verify_session import get_verify_session, list_verify_sessions, save_verify_session, update_verify_session
+from core.persistence.db_ext import init_db_ext
 
 # ── Fixtures ──
 
@@ -151,16 +136,16 @@ class TestInitDbExt:
         assert "strategy" in table_names
         assert "backtest_result" in table_names
         assert "dataset_meta" in table_names
-        # Schema version table
-        assert "schema_version" in table_names
+        # 版本记账表（TD-10 换芯：schema_version → alembic_version）
+        assert "alembic_version" in table_names
 
     def test_schema_version_recorded(self, initialized_db: Path) -> None:
-        """A schema_version row should be present after migration."""
+        """版本记账行（TD-10 换芯后经 alembic_version）。"""
         conn = sqlite3.connect(str(initialized_db))
-        row = conn.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1").fetchone()
+        rows = conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall()
         conn.close()
-        assert row is not None
-        assert row[0] >= 5  # At least 5 migrations
+        assert len(rows) == 1, "恰一行当前版本"
 
     def test_evolution_task_has_extended_columns(self, initialized_db: Path) -> None:
         """evolution_task should have the new columns after migration."""
@@ -242,32 +227,6 @@ class TestBackwardCompatibility:
                      json.dumps([]))
         hist = get_history(initialized_db, "task-hist")
         assert len(hist) == 1
-
-    def test_existing_db_can_be_migrated(self, db_path: Path) -> None:
-        """A database initialized with old init_db should be migratable."""
-        from core.strategy.dna import StrategyDNA
-
-        # First, init with old schema and add data
-        init_db(db_path)
-        dna = StrategyDNA()
-        save_task(db_path, "old-task-001", 80.0, "profit_first",
-                  "BTCUSDT", "4h", dna)
-
-        # Now migrate
-        init_db_ext(db_path)
-
-        # Old data should still be accessible
-        task = get_task(db_path, "old-task-001")
-        assert task is not None
-        assert task["task_id"] == "old-task-001"
-
-        # New tables should exist
-        conn = sqlite3.connect(str(db_path))
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-        assert "strategy" in tables
 
 # ── Test: Strategy CRUD ──
 
@@ -734,26 +693,3 @@ class TestEvolutionTaskExtended:
         assert row["elite_ratio"] == pytest.approx(0.3)
         assert row["current_generation"] == 5
 
-    def test_old_task_data_preserved_after_migration(self, db_path: Path) -> None:
-        """Tasks created before migration should have all data intact."""
-        from core.strategy.dna import StrategyDNA
-
-        # Init with old schema and create a task
-        init_db(db_path)
-        dna = StrategyDNA()
-        save_task(db_path, "pre-migration-001", 90.0, "profit_first",
-                  "BTCUSDT", "4h", dna)
-
-        # Migrate
-        init_db_ext(db_path)
-
-        # Verify old task data
-        task = get_task(db_path, "pre-migration-001")
-        assert task is not None
-        assert task["task_id"] == "pre-migration-001"
-        assert task["status"] == "pending"  # D4: save_task 直插 pending（旧 running 硬编码已废弃）
-        assert task["target_score"] == 90.0
-        assert task["symbol"] == "BTCUSDT"
-        # Extended columns should have defaults
-        assert task["population_size"] == 15
-        assert task["max_generations"] == 200

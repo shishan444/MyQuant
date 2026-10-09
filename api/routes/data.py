@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
-from core.persistence.db_ext import (
+from core.persistence.repository.dataset_meta import (
     delete_dataset as db_delete_dataset,
     get_dataset,
     list_datasets,
@@ -157,7 +157,7 @@ def _persist_import_result(
             timestamp_precision=precision_str,
         )
     else:
-        from core.persistence.db_ext import update_dataset_stats
+        from core.persistence.repository.dataset_meta import update_dataset_stats
         update_dataset_stats(
             db_path,
             dataset_id=result.dataset_id,

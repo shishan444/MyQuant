@@ -67,7 +67,7 @@ class TestCreateTaskValidation:
         self, api_client: TestClient,
     ) -> None:
         """strategy_id 指向 qualified=False 策略时响应带 warnings。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="strat-unq", dna_json=make_dna().to_json(),
@@ -84,7 +84,7 @@ class TestCreateTaskValidation:
 
     def test_qualified_strategy_id_no_warning(self, api_client: TestClient) -> None:
         """strategy_id 指向 qualified=1 策略时无 warnings。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="strat-q", dna_json=make_dna().to_json(),

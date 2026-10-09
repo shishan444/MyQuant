@@ -5,6 +5,7 @@
 load_mtf_data 与 get_timeframe_minutes 的 fallback 解析、
 validate_hypothesis 与 evaluate_rules 两个引擎主流程从未被执行。
 
+0.3.7 H7 归位：目录/类名已去平行批次后缀（*_Feature 消除）。
 语义约定（阶段四 V3 化）：经 32 卡修复队列与裁决沉淀，锚定行为
 已是团队确认的规格契约；断言值经真实执行钉住，预期依据随断言注释。
 数据确定性构造。
@@ -51,7 +52,7 @@ def _write_parquet(tmp_path, name: str, df: pd.DataFrame) -> str:
 # 1. mtf.get_timeframe_minutes（表外周期 fallback 解析未执行）
 # ===========================================================================
 
-class TestGetTimeframeMinutesFeature:
+class TestGetTimeframeMinutes:
     """mtf.py 特征锚：表内查表 / Nh·Nm·Nd·Nw fallback / 未知拒绝。"""
 
     @pytest.mark.parametrize(
@@ -80,7 +81,7 @@ class TestGetTimeframeMinutesFeature:
 # 2. mtf.load_mtf_data（整体未执行）
 # ===========================================================================
 
-class TestLoadMtfDataFeature:
+class TestLoadMtfData:
     """mtf.py 特征锚：多周期加载 / 缺失跳过 / 空数据跳过 / 日期过滤。"""
 
     @staticmethod
@@ -153,7 +154,7 @@ class TestLoadMtfDataFeature:
 # 3. engine.validate_hypothesis（主流程 L88-272 大块未执行）
 # ===========================================================================
 
-class TestValidateHypothesisFeature:
+class TestValidateHypothesis:
     """engine.py 特征锚：主流程 / 空数据 / MTF 引用 / THEN 窗口。"""
 
     @staticmethod
@@ -276,6 +277,44 @@ class TestValidateHypothesisFeature:
         )
         assert not any("MTF data loading failed" in w for w in result.warnings)
         assert result.total_count > 0
+
+    def test_mtf_load_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+        """CARD-05：装载失败警告固定文案——异常原文只进日志不回传。
+
+        warnings 面向客户端固定分类文案（原文形态不可控/含内部路径
+        等敏感面）；logger.warning 携带原文与 exc_info 供排障。
+        """
+        import logging
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.validation.engine import validate_hypothesis
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        ctx = MtfEvalContext(
+            data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h",
+        )
+        secret = "boom /internal/secret/path.db"
+        with patch("core.validation.mtf.load_mtf_data",
+                   side_effect=RuntimeError(secret)), \
+             caplog.at_level(logging.WARNING, logger="core.validation.engine"):
+            result = validate_hypothesis(
+                "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+                when_conditions=[{"subject": "close", "action": "gt", "target": 0}],
+                then_conditions=[self._cond("close", "gt", 0, timeframe="1d")],
+                data_dir=str(tmp_path),
+                mtf=ctx,
+            )
+        assert result.warnings == \
+            ["MTF data loading failed, falling back to single timeframe"], \
+            "警告须为固定文案（CARD-05 收口）"
+        assert all(secret not in w for w in result.warnings), \
+            "异常原文不得回传客户端"
+        mtf_logs = [r for r in caplog.records
+                    if "MTF" in r.getMessage()]
+        assert mtf_logs and secret in mtf_logs[0].getMessage(), \
+            "日志须携带异常原文"
+        assert mtf_logs[0].exc_info, "日志须带堆栈"
 
     def test_mtf_condition_without_context_raises(self, tmp_path):
         """现状记录：带 timeframe 的条件在无 MtfEvalContext 时结构化拒绝。"""
@@ -408,7 +447,7 @@ class TestValidateHypothesisFeature:
 # 4. engine._evaluate_conditions（空条件 / OR 组合）
 # ===========================================================================
 
-class TestEvaluateConditionsFeature:
+class TestEvaluateConditions:
     """engine.py 条件组合特征锚。"""
 
     @staticmethod
@@ -449,7 +488,7 @@ class TestEvaluateConditionsFeature:
 # 5. engine._evaluate_single_condition（解析三分支 + 动作派发）
 # ===========================================================================
 
-class TestEvaluateSingleConditionFeature:
+class TestEvaluateSingleCondition:
     """engine.py 单条件求值特征锚：解析失败降级与动作派发。"""
 
     @staticmethod
@@ -667,7 +706,7 @@ class TestEvaluateSingleConditionFeature:
 # 6. engine._resolve_target / _resolve_subject（跨周期与 registry 解析）
 # ===========================================================================
 
-class TestResolveFeature:
+class TestResolve:
     """engine.py 解析层特征锚。"""
 
     @staticmethod
@@ -754,7 +793,7 @@ class TestResolveFeature:
 # 7. engine._check_then_conditions 补锚（ge/le 精确边界）
 # ===========================================================================
 
-class TestCheckThenBoundaryFeature:
+class TestCheckThenBoundary:
     """engine.py THEN 条件边界补锚。"""
 
     @staticmethod
@@ -782,23 +821,26 @@ class TestCheckThenBoundaryFeature:
         matched = _check_then_conditions(window, [{"action": "gt", "target": 5}], 100.0)
         assert matched is False
 
-    def test_cond_window_zero_skips_condition(self):
-        """现状记录：cond.window=0 裁出空窗 → continue，落到默认分支判定。"""
+    def test_cond_window_zero_structurally_rejected(self):
+        """CARD-02 转正：cond.window=0 经 _cond_window 结构化拒绝
+        （原行为：裁空窗 → continue 落默认分支，静默跳过条件）。"""
         from core.validation.engine import _check_then_conditions
+        from core.analysis.hypothesis_service import ResearchError
         window = self._window([100.0, 108.0])
-        matched = _check_then_conditions(
-            window, [{"action": "gt", "target": 5, "window": 0}],
-            100.0, 0, 8,
-        )
-        # 主判定被跳过；默认分支 action=gt 不在 drop/rise → False
-        assert matched is False
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(
+                window, [{"action": "gt", "target": 5, "window": 0}],
+                100.0, 0, 8,
+            )
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.window"
 
 
 # ===========================================================================
 # 8. rule_engine.evaluate_rules（主流程 L88-202 未执行）
 # ===========================================================================
 
-class TestEvaluateRulesFeature:
+class TestEvaluateRules:
     """rule_engine.py 特征锚：主流程 / 空数据 / MTF / 组合语义。"""
 
     def test_file_not_found_returns_warning(self, tmp_path):
@@ -812,6 +854,76 @@ class TestEvaluateRulesFeature:
         assert result.total_trades == 0
         assert any("Data file not found" in w for w in result.warnings)
         assert result.win_rate is None  # 零交易为缺失语义
+
+    def test_defaults_branches_data_dir_none_no_range_mtf_empty(self, tmp_path, monkeypatch):
+        """闸门重开盲区消解：三个缺省/空返分支——data_dir 缺省走
+        内置推导路径、start/end 缺省不过滤、load_mtf_data 空返回
+        跳过合并（160->182）。"""
+        from unittest.mock import patch
+        from core.validation import rule_engine as mod
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        monkeypatch.setattr(
+            mod, "__file__",
+            str(tmp_path / "x" / "y" / "fake_mod.py"))  # data_dir 缺省推导锚定 tmp
+        (tmp_path / "data" / "market").mkdir(parents=True, exist_ok=True)
+        import shutil
+        for f in ("TESTUSDT_4h.parquet", "TESTUSDT_1d.parquet"):
+            shutil.copy(tmp_path / f, tmp_path / "data" / "market" / f)
+        from core.analysis.condition_kernel import MtfEvalContext
+        ctx = MtfEvalContext(data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
+        with patch.object(mod, "load_mtf_data", return_value={}):
+            result = mod.evaluate_rules(
+                "TESTUSDT", "4h", None, None,   # start/end 缺省：不过滤
+                entry_conditions=[{"subject": "close", "action": "lt",
+                                   "target": 105, "timeframe": "1d"}],
+                exit_conditions=[{"subject": "close", "action": "gt",
+                                  "target": 100}],
+                data_dir=None,                  # 缺省分支
+                mtf=ctx,
+            )
+        assert isinstance(result.total_trades, int)
+        assert not any("MTF" in w for w in result.warnings), \
+            "mtf_data 空返回静默跳过合并（无警告）"
+
+    def test_mtf_load_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+        """专项① leak-free 锚：装载失败警告固定文案（engine.py CARD-05
+        同构）——异常原文只进日志不回传；rule_engine 失败后回退单周期
+        继续求值（「falling back」文案如实）。
+
+        patch 点为消费者模块名（rule_engine 模块级 from-import，与
+        engine.py 函数内延迟 import 的 patch 点不同）。
+        """
+        import logging
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.validation.rule_engine import evaluate_rules
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        ctx = MtfEvalContext(
+            data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h")
+        secret = "boom /internal/secret/rule.db"
+        with patch("core.validation.rule_engine.load_mtf_data",
+                   side_effect=RuntimeError(secret)), \
+             caplog.at_level(logging.WARNING):
+            result = evaluate_rules(
+                "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+                entry_conditions=[{"subject": "close", "action": "lt",
+                                   "target": 105, "timeframe": "1d"}],
+                exit_conditions=[{"subject": "close", "action": "gt",
+                                  "target": 100}],
+                data_dir=str(tmp_path), mtf=ctx,
+            )
+        assert "MTF data loading failed, falling back to single timeframe" \
+            in result.warnings, "固定分类文案（专项①）"
+        assert all(secret not in w for w in result.warnings), \
+            "异常原文不得回传客户端"
+        mtf_logs = [r for r in caplog.records
+                    if r.name.endswith("rule_engine") and "MTF" in r.getMessage()]
+        assert mtf_logs and secret in mtf_logs[0].getMessage(), \
+            "日志须携带异常原文"
+        assert mtf_logs[0].exc_info, "日志须带堆栈"
 
     def test_empty_parquet_returns_warning(self, tmp_path):
         from core.validation.rule_engine import evaluate_rules
@@ -928,7 +1040,7 @@ class TestEvaluateRulesFeature:
 # 9. _evaluate_conditions 共享组合实现（CARD-01 后 rule_engine 退役私有副本）
 # ===========================================================================
 
-class TestEvaluateConditionsSharedFeature:
+class TestEvaluateConditionsShared:
     """engine._evaluate_conditions 共享实现特征锚：每条件自带 logic 逐条
     累积、首条件 logic 忽略、IF≡AND。CARD-01 前这些锚指向
     rule_engine._evaluate_rule_conditions（已退役删除），锚定语义原样
@@ -1027,7 +1139,7 @@ class TestEvaluateConditionsSharedFeature:
 # 10. CARD-05：_lookback_condition window 坏值/零/负结构化拒绝
 # ===========================================================================
 
-class TestLookbackWindowValidationFeature:
+class TestLookbackWindowValidation:
     """CARD-05 锚：window 裸穿 rolling(window=0) 的 500 改 ResearchError。"""
 
     @staticmethod
@@ -1069,23 +1181,26 @@ class TestLookbackWindowValidationFeature:
         assert len(mask) == 3
 
 
-class TestStage4BlindSpotFillFeature:
+class TestStage4BlindSpotFill:
     """阶段四盲区消解补锚：判定路径上被前置拦截掩盖的兜底分支。"""
 
-    def test_then_default_branch_bad_threshold_falls_back_zero(self):
-        """主判定被 window=0 跳过 + 默认分支 target 不可解析 → 阈值按 0。"""
+    def test_then_window_zero_rise_form_rejected(self):
+        """CARD-02 转正：window=0 + 坏 target（rise 形）→ _cond_window
+        结构化拒绝（原行为：裁空窗跳主判定，默认分支 float 失败静默
+        归 0 → rise 8% >= 0 判 True 的失真匹配）。"""
         from core.validation.engine import _check_then_conditions
+        from core.analysis.hypothesis_service import ResearchError
         window = pd.DataFrame(
             {"close": [100.0, 108.0]},
             index=pd.date_range("2024-01-01", periods=2, freq="4h"),
         )
-        # 主循环：cond_window=0 裁空窗 continue；默认分支 float("abc") 失败
-        # → threshold=0 → rise 判定 (108-100)/100*100=8 >= 0 → True
-        matched = _check_then_conditions(
-            window, [{"action": "rise", "target": "abc", "window": 0}],
-            100.0, 0, 8,
-        )
-        assert bool(matched) is True  # noqa: E712（numpy bool 包装）
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(
+                window, [{"action": "rise", "target": "abc", "window": 0}],
+                100.0, 0, 8,
+            )
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert (ei.value.detail or {})["param"] == "condition.window"
 
     def test_spike_series_target_falls_back_default_multiplier(self):
         """现状记录：target 为列（Series）时 float() 抛 TypeError →

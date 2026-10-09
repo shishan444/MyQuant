@@ -277,7 +277,7 @@ class TestTimeframeKey:
         """P-5 回归（3b33c4f）：结构化 subject 模板层字符串化（ema_20）
         在高周期轴 decode 现算——带键中心点样本与内核直调一致，且与
         去键（1h 轴）分离（修复前带键静默全 0）。"""
-        from core.analysis.condition_kernel import _mask_for
+        from core.analysis.condition_kernel import mask_for
 
         base, high, ctx = self._mtf_env(tmp_path)
         ctx.eval_start = pd.Timestamp("2024-01-15", tz="UTC")  # 84 bar ≥ 60
@@ -296,7 +296,7 @@ class TestTimeframeKey:
         with_key = next(x for x in p["points"] if x["value"] == cond["target"])
         assert with_key["samples"] > 0
         # 与内核直调一致（尾部丢窗口径）
-        mask = _mask_for(base.copy(), cond, ctx)
+        mask = mask_for(base.copy(), cond, ctx)
         locs = [i for i, v in enumerate(mask) if v]
         direct = sum(1 for i in locs if i + 12 < len(base))
         assert with_key["samples"] == direct

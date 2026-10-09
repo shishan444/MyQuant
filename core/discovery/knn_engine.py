@@ -19,13 +19,19 @@ from core.discovery.feature_encoder import FeatureEncoder
 
 @dataclass
 class SimilarCase:
-    """A single historically similar case."""
+    """A single historically similar case.
+
+    三项未来统计字段（0.3.7 B8 方向 a）：案例落入尾部无未来窗口区时
+    为 None（无数据 ≠ 零收益）——当前 KNN 邻居池在 fit 时已排除尾部
+    NaN 行（valid_mask），此 None 分支为防御面（防未来重构撒谎），
+    类型面显式声明使 None 语义对消费者可见。
+    """
     index: int
     timestamp: str
     close_price: float
-    future_return_pct: float
-    future_high_pct: float
-    future_low_pct: float
+    future_return_pct: float | None
+    future_high_pct: float | None
+    future_low_pct: float | None
     distance: float
 
 
@@ -123,13 +129,22 @@ class SimilarCaseEngine:
         for dist, idx in zip(distances[0], indices[0]):
             real_idx = self._valid_indices[idx]
             ts = str(self._df.index[real_idx]) if hasattr(self._df.index, 'strftime') else str(real_idx)
+            # 0.3.7 B8：尾部 NaN → None（无数据显式化，原置 0 冒充
+            # 零收益）。当前邻居池已排除 NaN 行，本分支为防御面
+            # （Valid_mask 重构时的诚实降级，不再撒谎）
             cases.append(SimilarCase(
                 index=int(real_idx),
                 timestamp=ts,
                 close_price=float(self._df["close"].iloc[real_idx]),
-                future_return_pct=float(self._future_returns[real_idx]) if not np.isnan(self._future_returns[real_idx]) else 0.0,
-                future_high_pct=float(self._future_highs[real_idx]) if not np.isnan(self._future_highs[real_idx]) else 0.0,
-                future_low_pct=float(self._future_lows[real_idx]) if not np.isnan(self._future_lows[real_idx]) else 0.0,
+                future_return_pct=(float(self._future_returns[real_idx])
+                                   if not np.isnan(self._future_returns[real_idx])
+                                   else None),
+                future_high_pct=(float(self._future_highs[real_idx])
+                                 if not np.isnan(self._future_highs[real_idx])
+                                 else None),
+                future_low_pct=(float(self._future_lows[real_idx])
+                                if not np.isnan(self._future_lows[real_idx])
+                                else None),
                 distance=float(dist),
             ))
 
@@ -157,7 +172,10 @@ class SimilarCaseEngine:
                 accuracy=0.0, similar_cases=[],
             )
 
-        returns = np.array([c.future_return_pct for c in cases])
+        # 0.3.7 B8 适配：float | None 语义下过滤 None（防御面——当前
+        # 邻居池不产出 None；过滤后统计口径与非尾部队列一致）
+        returns = np.array([c.future_return_pct for c in cases
+                            if c.future_return_pct is not None])
         positive_pct = float((returns > 0).sum() / len(returns))
 
         # Direction based on majority

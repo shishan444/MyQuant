@@ -92,10 +92,15 @@ def similar_at_time(
         "as_of": str(df.index[t_pos]),
         "n_neighbors": len(cases),
         "feature_columns": list(engine.encoder.feature_columns),
+        # 0.3.7 B8 数据边界披露：尾部 horizon bar 无未来窗口（案例
+        # 三统计字段落入该区时为 null——非 0）；当前邻居池构造保证
+        # 返回案例不落尾部，此披露声明边界本身
+        "future_window_horizon": int(engine.horizon),
+        "tail_bars_without_future": int(engine.horizon),
         "neighbors": [
             {"timestamp": c.timestamp, "distance": float(c.distance),
-             "future_return_pct": float(c.future_return_pct)}
-            for c in cases[:20]  # 裁剪：MCP 返回不铺满
+             "future_return_pct": c.future_return_pct}
+            for c in cases[:20]  # 裁剪：MCP 返回不铺满；float|None 直出（null 序列化）
         ],
         "prediction": {
             "direction": prediction.predicted_direction,

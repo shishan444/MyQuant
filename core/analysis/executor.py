@@ -269,7 +269,7 @@ def ensure_research_tables(db_path: Path) -> None:
         SignalRegistryEntry,
         ValidationRecord,
     )
-    from core.persistence.repository.dataset_meta import _engine_for
+    from core.persistence.orm.engine import engine_for
 
     tables = [
         ResearchHypothesis.__table__, ResearchLog.__table__,
@@ -279,4 +279,4 @@ def ensure_research_tables(db_path: Path) -> None:
     ]
     from core.persistence.orm import Base
 
-    Base.metadata.create_all(_engine_for(db_path), tables=tables)
+    Base.metadata.create_all(engine_for(db_path), tables=tables)

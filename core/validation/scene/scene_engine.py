@@ -196,7 +196,12 @@ def run_scene_verification(
                     base_minutes, tf_minutes_map,
                 )
         except Exception as exc:
-            warnings.append(f"MTF loading failed: {exc}")
+            # 异常原文只进日志不回传（engine.py CARD-05 同款取舍）——
+            # 本处失败即返回空结果（无回退单周期路径），文案如实不含
+            # fallback 宣称
+            logger.warning(
+                "MTF 数据装载失败，场景验证返回空结果: %r", exc, exc_info=exc)
+            warnings.append("MTF loading failed")
             return SceneVerificationResult(
                 scene_type=scene_type, total_triggers=0,
                 warnings=warnings,

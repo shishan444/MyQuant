@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import insert, select, update
 
 from core.persistence.orm.models import VerifySession
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 
 def save_verify_session(
@@ -26,6 +27,7 @@ def save_verify_session(
     slippage: float = 0.0005,
     status: str = "running",
 ) -> None:
+    """写入验证会话记录（裸 INSERT，status 默认 running）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(insert(VerifySession).values(
@@ -36,6 +38,7 @@ def save_verify_session(
 
 
 def get_verify_session(db_path: Path, session_id: str) -> Optional[Dict[str, Any]]:
+    """按 ID 取验证会话（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -55,6 +58,7 @@ def update_verify_session(
     error_message: Optional[str] = None,
     completed_at: Optional[str] = None,
 ) -> None:
+    """更新验证会话字段（仅显式非 None 字段，空集 no-op）。"""
     fields: Dict[str, Any] = {}
     if status is not None:
         fields["status"] = status
@@ -83,6 +87,7 @@ def list_verify_sessions(
     db_path: Path,
     limit: int = 20,
 ) -> List[Dict[str, Any]]:
+    """列验证会话（created_at 倒序+limit）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(

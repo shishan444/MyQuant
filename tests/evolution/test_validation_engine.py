@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from core.analysis.hypothesis_service import ResearchError
+
 pytestmark = [pytest.mark.unit]
 
 from core.validation.engine import (  # noqa: E402
@@ -69,10 +71,14 @@ class TestCheckThenConditions:
         # default branch uses full window min (90) -> change -10 <= -5 -> True
         assert _check_then_conditions(window, cond, 100.0, max_window=8) == True
 
-    def test_non_numeric_target_falls_back_to_zero(self):
-        # target "abc" -> threshold 0; drop<=0 means any drop matches
+    def test_non_numeric_target_rejected(self):
+        # 0.3.7 TD-11（原锚：坏 target 兜底 0 → drop<=0 恒匹配）——
+        # 静默归零正是裁决消灭的失真比较，锚随规格改写为结构化拒绝
         window = _close_df([100, 99])
-        assert _check_then_conditions(window, [{"action": "drop", "target": "abc"}], 100.0) == True
+        with pytest.raises(ResearchError) as ei:
+            _check_then_conditions(window, [{"action": "drop",
+                                             "target": "abc"}], 100.0)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
 
 class TestBuildDistribution:

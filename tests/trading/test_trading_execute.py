@@ -27,7 +27,7 @@ def trading_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def trading_db_with_task(trading_db: Path) -> Path:
-    from core.persistence.db_ext import save_paper_trading_task
+    from core.persistence.repository.paper_trading import save_paper_trading_task
     dna = make_dna(direction="long", leverage=1)
     save_paper_trading_task(
         trading_db, task_id="task-001", dna_json=dna.to_json(),
@@ -64,7 +64,7 @@ class TestExecuteTaskMainLoop:
     def test_runs_one_iteration_and_returns_account(self, trading_db_with_task, tmp_path):
         from core.trading.runner import TradingRunner
         from core.trading.account import VirtualAccount
-        from core.persistence.db_ext import get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task
 
         runner = TradingRunner(db_path=trading_db_with_task, data_dir=tmp_path)
         task_row = get_paper_trading_task(trading_db_with_task, "task-001")
@@ -88,7 +88,7 @@ class TestExecuteTaskMainLoop:
     def test_no_data_marks_task_stopped(self, trading_db_with_task, tmp_path):
         """When _load_data returns None, task is stopped with reason 'no_data'."""
         from core.trading.runner import TradingRunner
-        from core.persistence.db_ext import get_paper_trading_task, get_paper_trading_task as _get
+        from core.persistence.repository.paper_trading import get_paper_trading_task, get_paper_trading_task as _get
 
         runner = TradingRunner(db_path=trading_db_with_task, data_dir=tmp_path)
         task_row = get_paper_trading_task(trading_db_with_task, "task-001")
@@ -107,9 +107,7 @@ class TestExecuteTaskMainLoop:
     def test_crash_recovery_marks_task_stopped(self, trading_db_with_task, tmp_path):
         """A pending task with last_bar_time set triggers crash_recovery stop."""
         from core.trading.runner import TradingRunner
-        from core.persistence.db_ext import (
-            get_paper_trading_task, update_paper_trading_task,
-        )
+        from core.persistence.repository.paper_trading import get_paper_trading_task, update_paper_trading_task
 
         runner = TradingRunner(db_path=trading_db_with_task, data_dir=tmp_path)
         # inject last_bar_time -> signals a crashed/resuming task
@@ -163,9 +161,8 @@ class TestExecuteTaskMtfPath:
 
     def test_mtf_data_missing_stops_task(self, tmp_path):
         from core.trading.runner import TradingRunner
-        from core.persistence.db_ext import (
-            init_db_ext, save_paper_trading_task, get_paper_trading_task,
-        )
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         from tests.helpers.data_factory import make_mtf_dna
 
         db = tmp_path / "mtf.db"

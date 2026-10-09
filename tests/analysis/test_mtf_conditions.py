@@ -16,7 +16,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+from core.analysis.condition_kernel import MtfEvalContext, mask_for
 from core.analysis.hypothesis_service import ResearchError
 from tests.helpers.data_factory import make_ohlcv
 
@@ -72,8 +72,8 @@ class TestMaskForDispatch:
         work = env["base"].copy()
         cond = {"subject": "close", "action": "gt", "target": 0.0}
         ctx = MtfEvalContext(env["data_dir"], SYMBOL, "1h")
-        a = _mask_for(work, cond)
-        b = _mask_for(work.copy(), cond, mtf=ctx)
+        a = mask_for(work, cond)
+        b = mask_for(work.copy(), cond, mtf=ctx)
         pd.testing.assert_series_equal(a, b)
 
     def test_显式基准等于缺省_同掩码(self, env):
@@ -83,15 +83,15 @@ class TestMaskForDispatch:
         explicit = {**plain, "timeframe": "1h"}
         ctx = MtfEvalContext(env["data_dir"], SYMBOL, "1h")
         pd.testing.assert_series_equal(
-            _mask_for(work, plain, mtf=ctx),
-            _mask_for(work.copy(), explicit, mtf=ctx))
+            mask_for(work, plain, mtf=ctx),
+            mask_for(work.copy(), explicit, mtf=ctx))
 
     def test_无ctx带高周期键_显式ResearchError(self, env):
         """D-final 兜底退役：工程接线错误显式拒绝（非静默回退值投影）。"""
         cond = {"subject": "close", "action": "gt", "target": 0.0,
                 "timeframe": "4h"}
         with pytest.raises(ResearchError) as ei:
-            _mask_for(env["base"].copy(), cond)
+            mask_for(env["base"].copy(), cond)
         assert ei.value.code == "RESEARCH_MTF_CONTEXT_MISSING"
 
     def test_低周期键_TIMEFRAME_NOT_HIGHER(self, env):
@@ -99,7 +99,7 @@ class TestMaskForDispatch:
                 "timeframe": "1m"}
         ctx = MtfEvalContext(env["data_dir"], SYMBOL, "1h")
         with pytest.raises(ResearchError) as ei:
-            _mask_for(env["base"].copy(), cond, mtf=ctx)
+            mask_for(env["base"].copy(), cond, mtf=ctx)
         assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
         assert "降基准" in ei.value.message
 
@@ -108,7 +108,7 @@ class TestMaskForDispatch:
                 "timeframe": "2d"}
         ctx = MtfEvalContext(env["data_dir"], SYMBOL, "1h")
         with pytest.raises(ResearchError) as ei:
-            _mask_for(env["base"].copy(), cond, mtf=ctx)
+            mask_for(env["base"].copy(), cond, mtf=ctx)
         assert ei.value.code == "TIMEFRAME_UNKNOWN"
         assert "1h" in (ei.value.detail or {}).get("legal_range", [])
 
@@ -119,7 +119,7 @@ class TestMaskForDispatch:
         work["ema_20_4h"] = 1.0           # 模拟 Lab merged 后缀列
         work.loc[work.index[10], "ema_20_4h"] = 100.0
         cond = {"subject": "ema_20_4h", "action": "gt", "target": 50.0}
-        mask = _mask_for(work, cond)
+        mask = mask_for(work, cond)
         assert bool(mask.iloc[10]) is True
         assert int(mask.sum()) == 1
 
@@ -139,8 +139,8 @@ class TestExtraKeyPassthrough:
                  "target": threshold, "inner_action": "gt", "window": 3}
         cond5 = {**cond3, "window": 5}
 
-        m3 = _mask_for(work.copy(), cond3)
-        m5 = _mask_for(work.copy(), cond5)
+        m3 = mask_for(work.copy(), cond3)
+        m5 = mask_for(work.copy(), cond5)
         # 独立推导：rolling(any) 窗 3
         inner = work["close"] > threshold
         expect3 = inner.rolling(window=3, min_periods=1).apply(
@@ -157,7 +157,7 @@ class TestExtraKeyPassthrough:
         cond = {"subject": "close", "action": "lookback_any",
                 "target": threshold, "inner_action": "gt", "window": 2,
                 "timeframe": "4h"}
-        m = _mask_for(work, cond, mtf=ctx)
+        m = mask_for(work, cond, mtf=ctx)
         # 独立对照：高周期轴 rolling any 2 → 投影（+tf 挂载手工推导）
         inner = env["high"]["close"] > threshold
         any2 = inner.rolling(window=2, min_periods=1).apply(
@@ -178,7 +178,7 @@ class TestHigherTfEvaluation:
         threshold = float(np.median(env["high"]["close"]))
         cond = {"subject": "close", "action": "gt", "target": threshold,
                 "timeframe": "4h"}
-        m = _mask_for(work, cond, mtf=ctx)
+        m = mask_for(work, cond, mtf=ctx)
         expect = _hand_projection(
             env["high"]["close"], work.index, "4h",
             lambda vis: bool(vis.iloc[-1] > threshold) if len(vis) else False)
@@ -199,10 +199,10 @@ class TestHigherTfEvaluation:
                 "timeframe": "4h"}
         # 投影域止于末根 4h 收盘前：基准轴去掉最后 4 根
         work_full = env["base"].iloc[:-4].copy()
-        m_a = _mask_for(work_full, cond,
+        m_a = mask_for(work_full, cond,
                         mtf=MtfEvalContext(env["data_dir"], SYMBOL, "1h",
                                            eval_start=env["base"].index[200]))
-        m_b = _mask_for(env["base"].iloc[:-4].copy(), cond,
+        m_b = mask_for(env["base"].iloc[:-4].copy(), cond,
                         mtf=MtfEvalContext(data_dir2, SYMBOL, "1h",
                                            eval_start=env["base"].index[200]))
         pd.testing.assert_series_equal(m_a, m_b)
@@ -217,7 +217,7 @@ class TestHigherTfEvaluation:
         cond = {"subject": {"indicator": "EMA", "params": {"period": 5},
                             "field": "ema"},
                 "action": "cross_above", "target": 0.0, "timeframe": "4h"}
-        m = _mask_for(work, cond, mtf=ctx)
+        m = mask_for(work, cond, mtf=ctx)
         # 独立对照（_compute_indicator 返回 {列名: series}）
         ema5 = _compute_indicator(env["high"].copy(), "EMA", {"period": 5})
         col = [c for c in ema5 if c.startswith("ema")][0]
@@ -227,7 +227,7 @@ class TestHigherTfEvaluation:
         cond2 = {"subject": "close",
                  "action": "cross_above",
                  "target": col, "timeframe": "4h"}
-        m2 = _mask_for(env["base"].copy(), cond2, mtf=ctx)
+        m2 = mask_for(env["base"].copy(), cond2, mtf=ctx)
         cross2 = (env["high"]["close"].shift(1) < ema5[col]) & \
                  (env["high"]["close"] >= ema5[col])
         expect = _hand_projection(
@@ -243,10 +243,10 @@ class TestHigherTfEvaluation:
         cond = {"subject": "close", "action": "gt",
                 "target": float(env["high"]["close"].median()),
                 "timeframe": "4h"}
-        m1 = _mask_for(work, cond, mtf=ctx)
+        m1 = mask_for(work, cond, mtf=ctx)
         cache_cols = [c for c in work.columns if c.startswith("__mtf_mask_")]
         assert len(cache_cols) == 1        # 幂等富集落列
-        m2 = _mask_for(work, cond, mtf=ctx)
+        m2 = mask_for(work, cond, mtf=ctx)
         # 第二次命中缓存列（name=缓存列名），值与第一次逐点一致
         pd.testing.assert_series_equal(m1, m2, check_names=False)
 
@@ -259,7 +259,7 @@ class TestHigherTfEvaluation:
         cond = {"subject": "close", "action": "gt", "target": 0.0,
                 "timeframe": "1w"}
         with pytest.raises(ResearchError) as ei:
-            _mask_for(env["base"].copy(), cond, mtf=ctx)
+            mask_for(env["base"].copy(), cond, mtf=ctx)
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
 
     def test_warmup不足_RESEARCH_WARMUP_INSUFFICIENT附需求可得(self, env,
@@ -276,7 +276,7 @@ class TestHigherTfEvaluation:
                             "field": "ema"},
                 "action": "gt", "target": 0.0, "timeframe": "4h"}
         with pytest.raises(ResearchError) as ei:
-            _mask_for(env["base"].copy(), cond, mtf=ctx)
+            mask_for(env["base"].copy(), cond, mtf=ctx)
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
         assert "warmup_bars" in (ei.value.detail or {})
 
@@ -465,7 +465,7 @@ class TestCrossChainConsistency:
     """同一高周期条件同数据在研究/Lab/策略/实盘四链投影逐点一致。
 
     - 研究链 vs Lab 链：engine._evaluate_conditions 与 condition_kernel
-      _mask_for 同掩码（Lab 入口形制）；
+      mask_for 同掩码（Lab 入口形制）；
     - 研究链 vs 策略链：掩码投影（tf 键）与 resample_signals（索引
       推断 delta）逐点一致——跨族等价核心；
     - 策略链 vs 实盘链：_filter_forming_bar 时序可见性（每个评估时刻
@@ -481,7 +481,7 @@ class TestCrossChainConsistency:
         threshold = float(env["high"]["close"].median())
         cond = {"subject": "close", "action": "gt", "target": threshold,
                 "timeframe": "4h"}
-        m_research = _mask_for(work.copy(), cond, mtf=ctx)
+        m_research = mask_for(work.copy(), cond, mtf=ctx)
         m_lab = _evaluate_conditions(
             work, [cond], mtf=ctx).fillna(False).astype(bool)
         pd.testing.assert_series_equal(m_research, m_lab, check_names=False)
@@ -496,7 +496,7 @@ class TestCrossChainConsistency:
         threshold = float(env["high"]["close"].median())
         cond = {"subject": "close", "action": "gt", "target": threshold,
                 "timeframe": "4h"}
-        m_research = _mask_for(work, cond, mtf=ctx)
+        m_research = mask_for(work, cond, mtf=ctx)
         s_high = env["high"]["close"] > threshold   # 高周期轴布尔（策略链层模型）
         m_strategy = resample_signals(
             s_high.astype(bool), work.index)
@@ -561,7 +561,7 @@ class TestTranslationReject:
         cond = {"subject": "close", "action": "gt",
                 "target": float(env["high"]["close"].min()) - 1,
                 "timeframe": "4h"}
-        m = _mask_for(env["base"].copy(), cond, mtf=ctx)
+        m = mask_for(env["base"].copy(), cond, mtf=ctx)
         assert m.any()          # 求值正常（高周期键生效）
 
 
@@ -579,7 +579,7 @@ class TestMtfEvalContextLoadingGuards:
         cond = {"subject": "close", "action": "gt", "target": 0.0,
                 "timeframe": "4h"}
         with pytest.raises(ResearchError) as ei:
-            _mask_for(base.copy(), cond, mtf=ctx)
+            mask_for(base.copy(), cond, mtf=ctx)
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
 
     def test_naive_tz_parquet_localizes_utc(self, tmp_path):
@@ -596,7 +596,7 @@ class TestMtfEvalContextLoadingGuards:
         cond = {"subject": "close", "action": "gt",
                 "target": float(high_naive["close"].min()) - 1,
                 "timeframe": "4h"}
-        m = _mask_for(base.copy(), cond, mtf=ctx)
+        m = mask_for(base.copy(), cond, mtf=ctx)
         assert len(m) == len(base)
         assert bool(m.any())
 
@@ -613,6 +613,6 @@ class TestMtfEvalContextLoadingGuards:
         cond = {"subject": "close", "action": "gt", "target": 0.0,
                 "timeframe": "4h"}
         with pytest.raises(ResearchError) as ei:
-            _mask_for(base.copy(), cond, mtf=ctx)
+            mask_for(base.copy(), cond, mtf=ctx)
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
         assert "数据不可装载" in ei.value.message

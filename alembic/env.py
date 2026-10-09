@@ -11,10 +11,16 @@ from core.persistence.orm import Base
 # access to the values within the .ini file in use.
 config = context.config
 
-# 数据库位置注入（B3a.2）：-x db_path=... 显式指定（测试库/副本库），
-# 否则环境变量 MYQUANT_DB_PATH，默认主库 data/quant.db
+# 数据库位置注入（B3a.2）：编程式调用 Config.attributes 优先（线程
+# 安全——每次调用独立 Config 实例，init_db_ext 换芯后走此通道），
+# 次 -x db_path=...（CLI/测试库），否则环境变量 MYQUANT_DB_PATH，
+# 默认主库 data/quant.db
 _x = context.get_x_argument(as_dictionary=True)
-db_path = _x.get("db_path") or __import__("os").environ.get("MYQUANT_DB_PATH", "data/quant.db")
+db_path = (
+    context.config.attributes.get("db_path")
+    or _x.get("db_path")
+    or __import__("os").environ.get("MYQUANT_DB_PATH", "data/quant.db")
+)
 config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
 
 # Interpret the config file for Python logging.

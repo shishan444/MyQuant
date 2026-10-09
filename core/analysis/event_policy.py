@@ -5,7 +5,7 @@ event_study / condition_stats 分析模板、策略翻译的入场信号组装
 （五链消费同一实现，多周期对齐 asof_completed 的单权威先例同构）。
 
 职责边界：只做「合并掩码 → 事件位置序列」的下游变换与策略形制
-校验；掩码生产归 condition_kernel（_mask_for 第七求值点），policy
+校验；掩码生产归 condition_kernel（mask_for 第七求值点），policy
 是掩码下游变换、不感知条件形制与求值轴（timeframe 键的条件级
 求值轴语义属另一层级）。两段校验纪律：validate_policy 仅做形制
 校验（登记时点数据未加载）；bars 的数据长度上界在求值时点由调用

@@ -87,8 +87,9 @@ def _load_with_condition_refs(
     统计段切回请求区间。
 
     strict=True 单点化于此：未来新模板分支经本函数装载即不可能
-    遗漏「装载必须 strict」纪律。eval_start 接线留分支（接线样板
-    非判定逻辑，收进去职责糊化）。
+    遗漏「装载必须 strict」纪律。eval_start 接线已随 TD-7（0.3.7）
+    收口至调用侧 _load_refs/_load_warm 助手（原「留分支」裁决由
+    TD-7 四处重复收口取代——接线与装载同点单化）。
     """
     from core.analysis.condition_kernel import collect_condition_refs
     from core.analysis.warmup_loader import load_with_warmup
@@ -176,16 +177,30 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
+    # TD-7 收口（0.3.7）：warmup 装载与 eval_start 接线单点——原四分支
+    # 各写一遍「装载后赋值」（request_start 是装载产物，时序后于 mtf_ctx
+    # 构造，不能走构造参数；漏写该接线的分支会使高周期 warmup 检查基准
+    # 退回装载域起点——方向保守但误拒）
+    def _load_warm(names):
+        df, request_start = load_with_warmup(
+            data_dir, rng["symbol"], rng["timeframe"],
+            rng["start"], rng["end"], names)
+        mtf_ctx.eval_start = request_start
+        return df, request_start
+
+    def _load_refs(indicator, condition):
+        df, request_start = _load_with_condition_refs(
+            data_dir, rng, indicator, condition)
+        mtf_ctx.eval_start = request_start
+        return df, request_start
+
     if payload.template == "screen_patterns":
         # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 主公式推导：
         # 周期类参数上限之和 ×3、下限 200），统计段切回请求区间；
         # features 校验前置（未知指标在此结构化拒绝，不让装载层
         # KeyError 裸穿）
         feature_names = resolve_feature_names(p.get("features", "all"))
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], feature_names)
-        mtf_ctx.eval_start = request_start
+        df, request_start = _load_warm(feature_names)
         return _with_derivatives_coverage(screen_patterns(
             df, data_ranges=ranges, timeframe=rng["timeframe"],
             features=p.get("features", "all"),
@@ -205,9 +220,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         s = p.get("sweep", {})
         # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
         # 条件双侧引用——strict=True 不可解析 target 在此结构化拒绝
-        df, request_start = _load_with_condition_refs(
-            data_dir, rng, p["indicator"], p["condition"])
-        mtf_ctx.eval_start = request_start
+        df, request_start = _load_refs(p["indicator"], p["condition"])
         return _with_derivatives_coverage(param_sweep(
             df, indicator=p["indicator"], condition=p["condition"],
             sweep={"axis": s.get("axis", "target"),
@@ -225,10 +238,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         if p.get("indicator"):
             _require_known_indicator(p["indicator"])
             warm_names.append(p["indicator"])
-        df, request_start = load_with_warmup(
-            data_dir, rng["symbol"], rng["timeframe"],
-            rng["start"], rng["end"], warm_names)
-        mtf_ctx.eval_start = request_start
+        df, request_start = _load_warm(warm_names)
         return _with_derivatives_coverage(regime_split(
             df, segmentation=p.get("segmentation", "auto"),
             indicator=p.get("indicator"), condition=p.get("condition"),
@@ -253,9 +263,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 卡3a（卡11 收敛 _load_with_condition_refs）：warmup 预算并入
         # 条件双侧引用（金叉类跨指标条件 target lookback 计入前扩——
         # strict=True 不可解析 target 结构化拒绝）
-        df, request_start = _load_with_condition_refs(
-            data_dir, rng, p["indicator"], p["condition"])
-        mtf_ctx.eval_start = request_start
+        df, request_start = _load_refs(p["indicator"], p["condition"])
         return _with_derivatives_coverage(condition_stats(
             df, indicator=p["indicator"], params=p["params"],
             condition=p["condition"], data_ranges=ranges,

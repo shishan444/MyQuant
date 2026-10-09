@@ -10,14 +10,12 @@
 """
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, insert, select, update
-from sqlalchemy.engine import Engine
 
-from core.persistence.orm.engine import create_db_engine
+from core.persistence.orm.engine import engine_for
 from core.persistence.orm.models import DatasetMeta
 
 _ALLOWED_UPDATE_FIELDS = frozenset({
@@ -28,11 +26,10 @@ _ALLOWED_UPDATE_FIELDS = frozenset({
 })
 
 
-@lru_cache(maxsize=32)
-def _engine_for(db_path: Path) -> Engine:
-    """按库路径缓存 engine（连接池复用；tmp 测试库淘汰由 LRU 兜底）。"""
-    return create_db_engine(Path(db_path))
-
+# CARD-07 公共化：_engine_for 上提至 orm/engine.engine_for，此处保留
+# re-export 过渡（tests/ 30+ 处 from ...dataset_meta import _engine_for
+# 依赖此名；生产消费方已切公共入口）
+_engine_for = engine_for
 
 from core.persistence.timestamps import utc_now_iso as _now  # B4.1 归一
 
@@ -57,7 +54,7 @@ def save_dataset_meta(
     quality_notes: Optional[str] = None,
     import_batch_id: Optional[str] = None,
 ) -> None:
-    """Insert a dataset metadata record（函数级事务）。"""
+    """写入数据集元数据记录（裸 INSERT，重复主键 IntegrityError；函数级事务）。"""
     now = _now()
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -76,7 +73,7 @@ def save_dataset_meta(
 
 
 def get_dataset(db_path: Path, dataset_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single dataset by ID, or None if not found."""
+    """按 ID 取单条数据集（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -92,7 +89,7 @@ def list_datasets(
     interval: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """List datasets with optional filtering（created_at 倒序，旧行为）。"""
+    """列数据集（可过滤，created_at 倒序，旧行为）。"""
     stmt = select(DatasetMeta)
     if symbol is not None:
         stmt = stmt.where(DatasetMeta.symbol == symbol)
@@ -111,7 +108,7 @@ def update_dataset_stats(
     dataset_id: str,
     **fields: Any,
 ) -> None:
-    """Update fields on a dataset record. Refreshes ``updated_at``（白名单不变）。"""
+    """更新数据集字段并刷新 ``updated_at``（字段白名单不变）。"""
     values = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
     if not values:
         return
@@ -126,7 +123,7 @@ def update_dataset_stats(
 
 
 def delete_dataset(db_path: Path, dataset_id: str) -> None:
-    """Delete a dataset by ID. No error if not found."""
+    """按 ID 删数据集（不存在时无错误）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(

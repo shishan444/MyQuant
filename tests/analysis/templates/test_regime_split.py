@@ -173,7 +173,7 @@ class TestMtfContextPassthrough:
     def test_条件携带timeframe键_掩码投影求值与condition_stats对照一致(
             self, tmp_path):
         """P-4 修复回归（c82ec46）：带 4h 键条件不再被前置校验拒，
-        经 _mask_for 掩码投影求值——与 condition_stats 同数据同条件
+        经 mask_for 掩码投影求值——与 condition_stats 同数据同条件
         逐数对照（期望由 4h 收盘挂载手工推导，不调被测投影函数）。"""
         from core.analysis.condition_kernel import MtfEvalContext
         from core.analysis.templates.condition_stats import condition_stats
@@ -237,9 +237,9 @@ class TestMtfContextPassthrough:
     def test_结构化subject高周期键_掩码投影与内核直调一致(self, tmp_path):
         """P-4/P-5 回归（c82ec46+3b33c4f）：结构化 subject+timeframe 不再
         被三键校验拒、模板层字符串化后高周期轴 decode 现算——regime_split
-        逐段 samples 总和 == condition_stats sample_size == 内核 _mask_for
+        逐段 samples 总和 == condition_stats sample_size == 内核 mask_for
         直调掩码统计（三方逐数一致；修复前该形态静默全 0）。"""
-        from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+        from core.analysis.condition_kernel import MtfEvalContext, mask_for
         from core.analysis.templates.condition_stats import condition_stats
         from tests.helpers.data_factory import make_ohlcv
 
@@ -266,7 +266,7 @@ class TestMtfContextPassthrough:
             base.copy(), indicator="EMA", params={"period": 20},
             condition=cond, data_ranges=ranges, forward_bars=12,
             mtf=ctx).to_dict()
-        mask = _mask_for(base.copy(), cond, ctx)
+        mask = mask_for(base.copy(), cond, ctx)
         locs = [i for i, v in enumerate(mask) if v]
         direct_valid = sum(1 for i in locs if i + 12 < len(base))
         assert rs_total > 0                       # 修复前全 0（静默）

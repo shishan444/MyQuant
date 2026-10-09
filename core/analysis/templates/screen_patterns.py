@@ -133,7 +133,7 @@ def _validate_params(
 
 
 # 条件统计内核已提升共享（add-regime-split 兑现 0.2.6 D4 钩子；三消费者）
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
+from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask
 
 
 def screen_patterns(
@@ -229,7 +229,7 @@ def screen_patterns(
     for cond in probes:
         if stop_check is not None:
             stop_check()
-        mask = _mask_for(work, cond, mtf=mtf)
+        mask = mask_for(work, cond, mtf=mtf)
         stat_mask = (mask.values & stat_pos)
         n_hit = int(stat_mask.sum())
         if n_hit < min_samples:
@@ -240,7 +240,7 @@ def screen_patterns(
             valid = valid.dropna()
             if len(valid) < min_samples:
                 continue
-            p, n_overlap = _p_value_for(fwd, stat_mask, h, baseline_mean[h])
+            p, n_overlap = p_value_for(fwd, stat_mask, h, baseline_mean[h])
             if p is None:
                 continue  # 无 p 值不入族（BH 约定：无效检验不混入）
             mean = float(valid.mean())
@@ -303,7 +303,7 @@ def screen_patterns(
                 valid = valid.dropna()
                 if len(valid) < min_samples:
                     continue
-                p, _ = _p_value_for(fwd, combo_mask, h, baseline_mean[h])
+                p, _ = p_value_for(fwd, combo_mask, h, baseline_mean[h])
                 if p is None:
                     continue
                 rec = {

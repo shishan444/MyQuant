@@ -1,0 +1,169 @@
+"""repository/strategy.py 特征测试网（增量锚）。
+
+test_orm_infra.py TestStrategyRepositoryEquivalence 已锚 active 去重
+（高分替换/低分跳过）与 count_by_tasks；本文件补其余行为面：
+- save 的 draft 免去重（M4：草稿无绩效，纯 insert，同签名不吞）；
+- find_by_gene_signature（translate 同签名分流依据）；
+- list/count 的 status 语义（None=默认视图排除 draft；显式值精确匹配）
+  与过滤/排序校验；
+- update 白名单与 delete 缺失静默；
+- update_strategy_verify_stats 滚动统计（COALESCE/MAX 增量公式）。
+
+锚点分类（V3 四分类）：B 类（行为契约锚）= draft 免去重/status
+语义/白名单/删除静默；C 类 = verify_stats 滚动增量公式手算锚；
+无 A/D 类。
+"""
+
+import pytest
+
+pytestmark = [pytest.mark.unit]
+
+from core.persistence.db_ext import init_db_ext
+from core.persistence.repository import strategy as repo
+
+
+@pytest.fixture
+def db(tmp_path):
+    path = tmp_path / "strategy.db"
+    init_db_ext(path)
+    return path
+
+
+def _strategy(db, sid, *, signature=None, status="active", score=None, **kw):
+    kw.setdefault("dna_json", '{"v": 1}')
+    kw.setdefault("symbol", "BTCUSDT")
+    kw.setdefault("timeframe", "4h")
+    kw.setdefault("source", "manual")
+    repo.save_strategy(db, strategy_id=sid, gene_signature=signature,
+                       status=status, best_score=score, **kw)
+
+
+class TestDraftExemptFromDedup:
+    """draft 免去重（improve-mcp-agent-loop M4）。"""
+
+    def test_同签名draft并存_不吞插入(self, db):
+        _strategy(db, "s-active", signature="sig-1", score=80.0)
+        _strategy(db, "s-draft", signature="sig-1", status="draft")
+        both = repo.find_by_gene_signature(db, "sig-1")
+        assert {r["strategy_id"] for r in both} == {"s-active", "s-draft"}, \
+            "草稿纯 insert——同签名不被去重吞掉"
+
+    def test_同签名active低分_仍被去重吞(self, db):
+        _strategy(db, "s-keep", signature="sig-2", score=80.0)
+        _strategy(db, "s-low", signature="sig-2", score=10.0)
+        rows = repo.find_by_gene_signature(db, "sig-2")
+        assert {r["strategy_id"] for r in rows} == {"s-keep"}, \
+            "active 低分插入被去重语义忽略"
+
+
+class TestFindByGeneSignature:
+    """find_by_gene_signature：含 status 的全量同签名行。"""
+
+    def test_命中多行与未命中(self, db):
+        _strategy(db, "a", signature="sig-1")
+        _strategy(db, "b", signature="sig-1", status="draft")
+        _strategy(db, "c", signature="sig-2")
+        assert [r["strategy_id"] for r in repo.find_by_gene_signature(db, "sig-1")] == \
+            ["a", "b"], "不过滤 status（translate 分流自判）"
+        assert repo.find_by_gene_signature(db, "nope") == []
+
+
+class TestListCountStatusSemantics:
+    """list/count：status=None 排除 draft；显式值精确匹配。"""
+
+    @pytest.fixture(autouse=True)
+    def _seed(self, db):
+        _strategy(db, "act1", signature="s-1", score=50.0)
+        _strategy(db, "act2", signature="s-2", score=70.0)
+        _strategy(db, "drf1", signature="s-3", status="draft")
+
+    def test_默认视图排除draft(self, db):
+        ids = {r["strategy_id"] for r in repo.list_strategies(db)}
+        assert ids == {"act1", "act2"}
+        assert repo.count_strategies(db) == 2
+
+    def test_显式status精确匹配(self, db):
+        assert {r["strategy_id"] for r in repo.list_strategies(db, status="draft")} == \
+            {"drf1"}
+        assert repo.count_strategies(db, status="draft") == 1
+
+    def test_过滤维度与排序校验(self, db):
+        assert repo.count_strategies(db, symbol="BTCUSDT") == 2
+        with pytest.raises(ValueError, match="sort_by"):
+            repo.list_strategies(db, sort_by="evil; drop")
+        with pytest.raises(ValueError, match="sort_order"):
+            repo.list_strategies(db, sort_order="sideways")
+
+    def test_score正序与limit(self, db):
+        rows = repo.list_strategies(db, sort_by="best_score", sort_order="asc")
+        assert [r["best_score"] for r in rows] == [50.0, 70.0]
+        assert len(repo.list_strategies(db, limit=1)) == 1
+
+    def test_空task_ids返回空dict(self, db):
+        assert repo.count_strategies_by_tasks(db, []) == {}
+
+    def test_qualified过滤(self, db):
+        # save_strategy 不写 qualified 列（021 评分制度列）——直写构造
+        import sqlite3
+        _strategy(db, "q1", signature="s-q1")
+        _strategy(db, "q0", signature="s-q0")
+        conn = sqlite3.connect(str(db))
+        conn.execute("UPDATE strategy SET qualified = 1 WHERE strategy_id = 'q1'")
+        conn.execute("UPDATE strategy SET qualified = 0 WHERE strategy_id = 'q0'")
+        conn.commit()
+        conn.close()
+        assert {r["strategy_id"] for r in repo.list_strategies(db, qualified=True)} == {"q1"}
+        assert repo.count_strategies(db, qualified=False) == 1
+
+
+class TestUpdateDelete:
+    """update 白名单与 delete 缺失静默。"""
+
+    def test_update白名单内生效(self, db):
+        _strategy(db, "s1", signature="sig-1")
+        repo.update_strategy(db, strategy_id="s1", name="renamed",
+                             notes="ok", evil_column="x")
+        row = repo.get_strategy(db, "s1")
+        assert row["name"] == "renamed"
+        assert row["notes"] == "ok"
+
+    def test_全白名单外_noop(self, db):
+        _strategy(db, "s1", signature="sig-1")
+        repo.update_strategy(db, strategy_id="s1", evil_column="x")
+        assert repo.get_strategy(db, "s1")["name"] is None
+
+    def test_删除不存在无错误(self, db):
+        repo.delete_strategy(db, "ghost")  # 不抛错即通过
+
+
+class TestVerifyStatsRolling:
+    """update_strategy_verify_stats：COALESCE/MAX 增量滚动。"""
+
+    def test_首轮None分支与次轮增量(self, db):
+        _strategy(db, "s1", signature="sig-1")
+        repo.update_strategy_verify_stats(
+            db, "s1", new_score=80.0, verify_star=1,
+            verified_at="2026-01-01T00:00:00+00:00")
+        row = repo.get_strategy(db, "s1")
+        assert row["verify_count"] == 1
+        assert row["verify_avg_score"] == 80.0, "首轮 avg=NULL 分支取新分"
+        assert row["verify_best_score"] == 80.0, "首轮 best=NULL 分支取新分"
+        assert row["verify_star"] == 1
+        assert row["last_verified_at"] == "2026-01-01T00:00:00+00:00"
+
+        repo.update_strategy_verify_stats(
+            db, "s1", new_score=60.0, verify_star=2,
+            verified_at="2026-01-02T00:00:00+00:00")
+        row = repo.get_strategy(db, "s1")
+        assert row["verify_count"] == 2
+        assert row["verify_avg_score"] == pytest.approx(70.0), "(80*1+60)/2"
+        assert row["verify_best_score"] == 80.0, "max(80, 60) 保持"
+        assert row["verify_star"] == 2, "star 直接覆写不滚动"
+
+    def test_高分刷新best(self, db):
+        _strategy(db, "s1", signature="sig-1")
+        for score in (50.0, 90.0):
+            repo.update_strategy_verify_stats(
+                db, "s1", new_score=score, verify_star=1,
+                verified_at="2026-01-01T00:00:00+00:00")
+        assert repo.get_strategy(db, "s1")["verify_best_score"] == 90.0

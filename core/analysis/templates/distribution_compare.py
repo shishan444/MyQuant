@@ -45,8 +45,9 @@ def distribution_compare(
         group_a / group_b: 两组的半开时间窗。
 
     Raises:
-        ResearchError: 列不可用（附可用列清单）。
-        ValueError: 区间空数据 / 小样本。
+        ResearchError: 列不可用（附可用列清单）；区间空数据
+            （RESEARCH_DATA_EMPTY，数据语义空结果非形制非法）；
+            小样本（RESEARCH_PARAM_INVALID）。
     """
     require_column(df, column, template="distribution_compare")
 
@@ -67,14 +68,26 @@ def distribution_compare(
     else:
         series = df[column].dropna()
 
-    def _slice(win: Dict[str, str]) -> pd.Series:
+    def _slice(win: Dict[str, str], name: str) -> pd.Series:
         sub = series[(series.index >= win["start"]) & (series.index < win["end"])]
         if sub.empty:
-            raise ValueError(f"区间无数据: {win}")
+            # 0.3.7 H1：数据语义空结果结构化拒绝（数据空 ≠ 请求错 ≠
+            # 服务器错误）——与形制非法（param_guard 422）和小样本
+            # （下方 422）可区分；异步降级路径经既有失败任务落库同构
+            from core.analysis.hypothesis_service import ResearchError
+            span = ([str(series.index[0]), str(series.index[-1])]
+                    if not series.empty else None)
+            raise ResearchError(
+                "RESEARCH_DATA_EMPTY",
+                f"{name} 区间无数据: {win}",
+                detail={
+                    "group": name, "window": win, "column": column,
+                    "series_span": span,
+                    "hint": "调整分组窗口至数据覆盖范围内，或确认数据集已覆盖该区间"})
         return sub
 
-    a = _slice(group_a)
-    b = _slice(group_b)
+    a = _slice(group_a, "group_a")
+    b = _slice(group_b, "group_b")
 
     if len(a) < min_samples or len(b) < min_samples:
         # 0.3.2 卡4 分流实施补全：小样本属业务拒绝（422）非内部错误

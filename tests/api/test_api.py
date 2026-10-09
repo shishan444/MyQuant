@@ -532,7 +532,7 @@ class TestDatasetList:
 
     def test_list_datasets_with_data(self, client: TestClient) -> None:
         """GET /api/data/datasets should list datasets."""
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -550,7 +550,7 @@ class TestDatasetList:
 
     def test_list_datasets_filter_by_symbol(self, client: TestClient) -> None:
         """GET /api/data/datasets?symbol=BTCUSDT should filter."""
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -575,7 +575,7 @@ class TestDatasetList:
 class TestDatasetGet:
     def test_get_dataset(self, client: TestClient) -> None:
         """GET /api/data/datasets/{id} should return dataset details."""
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -601,7 +601,7 @@ class TestDatasetGet:
 class TestDatasetDelete:
     def test_delete_dataset(self, client: TestClient) -> None:
         """DELETE /api/data/datasets/{id} should delete dataset."""
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -663,7 +663,7 @@ class TestDatasetPreview:
         """GET /api/data/datasets/{id}/preview should return first N rows."""
         import pandas as pd
 
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         data_dir = client.app.state.data_dir
@@ -703,7 +703,7 @@ class TestDatasetOhlcv:
         """GET /api/data/datasets/{id}/ohlcv should return OHLCV data."""
         import pandas as pd
 
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
 
         db_path = client.app.state.db_path
         data_dir = client.app.state.data_dir
@@ -785,7 +785,7 @@ class TestDataBatchImport:
     ) -> None:
         """POST /api/data/import-batch should update existing dataset metadata."""
         import pandas as pd
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
         from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
 
         db_path = client.app.state.db_path
@@ -824,7 +824,7 @@ class TestDataBatchImport:
     ) -> None:
         """POST /api/data/import should update existing dataset metadata."""
         import pandas as pd
-        from core.persistence.db_ext import save_dataset_meta
+        from core.persistence.repository.dataset_meta import save_dataset_meta
         from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
 
         db_path = client.app.state.db_path

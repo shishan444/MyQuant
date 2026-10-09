@@ -89,3 +89,33 @@ class TestNotFound:
     def test_delete_404(self, tmp_path):
         c = _client(tmp_path)
         assert c.delete("/api/live-trading/tasks/nope").status_code == 404
+
+
+class TestPatchStatusValueDomain:
+    """CARD-03 值域锚（入站层）：status 值域 Literal 四值——非法串原可
+    入库（列表过滤与状态判定消费方失真），入站即拒 422。"""
+
+    @pytest.mark.parametrize("status", ["pending", "running", "stopped", "error"])
+    def test_合法四值可写(self, tmp_path, status):
+        c = _client(tmp_path)
+        tid = _create(c)
+        r = c.patch(f"/api/live-trading/tasks/{tid}", json={"status": status})
+        assert r.status_code == 200
+        assert r.json()["status"] == status
+
+    @pytest.mark.parametrize("bad", ["hacked", "RUNNING", " stopped", ""])
+    def test_非法串422且任务不变(self, tmp_path, bad):
+        c = _client(tmp_path)
+        tid = _create(c)
+        r = c.patch(f"/api/live-trading/tasks/{tid}", json={"status": bad})
+        assert r.status_code == 422, f"{bad!r} 不得入站"
+        assert c.get(f"/api/live-trading/tasks/{tid}").json()["status"] == "pending", \
+            "被拒请求不得产生部分写入"
+
+    def test_不传status时其他键直通(self, tmp_path):
+        c = _client(tmp_path)
+        tid = _create(c)
+        r = c.patch(f"/api/live-trading/tasks/{tid}",
+                    json={"config_json": '{"k":1}', "stop_reason": "manual"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "pending", "缺省 None 直通不误伤 status"

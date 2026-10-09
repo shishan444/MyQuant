@@ -36,7 +36,8 @@ from core.analysis.validation_service import (
     run_isolated_backtest,
     run_staged_validation,
 )
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
     StrategyDNA, TimeframeLayer,

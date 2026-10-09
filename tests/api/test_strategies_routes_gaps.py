@@ -106,7 +106,7 @@ class TestCompareGaps:
         self, seeded_client: TestClient,
     ) -> None:
         """存量 dna_json 损坏：该条目记 error，其余正常（不 500）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = seeded_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="bad-dna", dna_json="{corrupt",
@@ -137,7 +137,7 @@ class TestCompareGaps:
         函数内 import 同一入口）；旧实现为 2 次/策略（compare 无条件
         预读 + core 内部），白读减半消除即断言 1。
         """
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = seeded_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="cmp-1", dna_json=make_dna().to_json(),
@@ -159,7 +159,7 @@ class TestCompareGaps:
             f"单策略主路径应仅剩 core 内部 1 次装载，实调 {load_spy.call_count} 次"
         )
         # 落库统计仍正确（单列读路径与延迟装载解耦）
-        from core.persistence.db_ext import list_backtest_results
+        from core.persistence.repository.backtest_result import list_backtest_results
         rows = list_backtest_results(
             db_path, strategy_id="cmp-1", run_source="lab", limit=1,
         )
@@ -176,7 +176,7 @@ class TestCrudGaps:
 
     def test_update_draft_dna_locked_409(self, api_client: TestClient) -> None:
         """M4 写锁：draft 状态策略 PUT dna → 409 RESEARCH_DRAFT_IMMUTABLE。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="draft-1", dna_json=make_dna().to_json(),
@@ -191,7 +191,7 @@ class TestCrudGaps:
 
     def test_update_draft_metadata_allowed(self, api_client: TestClient) -> None:
         """draft 状态仅锁 DNA：name/tags/notes 元数据仍可更新。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="draft-2", dna_json=make_dna().to_json(),
@@ -207,7 +207,7 @@ class TestCrudGaps:
         self, api_client: TestClient,
     ) -> None:
         """存量 dna_json 损坏：GET 返回 dna=None（不 500）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="bad-2", dna_json="{corrupt",

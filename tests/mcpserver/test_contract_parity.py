@@ -302,7 +302,8 @@ class TestListFolding:
         import asyncio
         import json
 
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from core.strategy.dna import (
             ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
             StrategyDNA)

@@ -320,7 +320,7 @@ class TestSeedDivergenceAndUpdateIdempotence:
         db = _wire(api_client, plugin_env)
         from core.strategy.dna import (
             ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(db, strategy_id="st_rw", dna_json=StrategyDNA(
             signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
                                      "rsi_14", {"type": "lt", "threshold": 35})],

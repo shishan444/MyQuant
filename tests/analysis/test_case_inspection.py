@@ -2,7 +2,7 @@
 
 验收匹配能力类型（0.2.7 原则）：数据检视工具验取数正确性——期望值
 独立于被测内核推导（测试内自调 _compute_indicator 现算 rsi_14 列做
-numpy 直接比较，不用 _mask_for 生成自身期望）。三测试类：
+numpy 直接比较，不用 mask_for 生成自身期望）。三测试类：
 
 - TestSelectorAndLimits：参数化拒绝面 + action 防降级锚（断言拒绝码
   而非 200+空清单——engine 对未知 action 静默全 False 是降级路径）

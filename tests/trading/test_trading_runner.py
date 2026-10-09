@@ -44,7 +44,7 @@ def trading_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def trading_db_with_task(trading_db: Path) -> Path:
-    from core.persistence.db_ext import save_paper_trading_task
+    from core.persistence.repository.paper_trading import save_paper_trading_task
     dna = make_dna(direction="long", leverage=1)
     save_paper_trading_task(
         trading_db,
@@ -102,7 +102,7 @@ class TestTaskController:
 class TestStaleTaskRecovery:
 
     def test_marks_running_tasks_as_stopped(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
         from core.trading.runner import recover_stale_trading_tasks
 
         dna = make_dna()
@@ -120,7 +120,7 @@ class TestStaleTaskRecovery:
         assert row2["status"] == "stopped"
 
     def test_does_not_affect_pending_tasks(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
         from core.trading.runner import recover_stale_trading_tasks
 
         dna = make_dna()
@@ -139,7 +139,7 @@ class TestStaleTaskRecovery:
     def test_recovery_only_affects_running(
         self, trading_db: Path, status: str, should_be_recovered: bool,
     ):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
         from core.trading.runner import recover_stale_trading_tasks
 
         dna = make_dna()
@@ -164,7 +164,7 @@ class TestStaleTaskRecovery:
 class TestRunnerStateSaveRestore:
 
     def test_save_flat_state(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
         from core.trading.runner import TradingRunner
 
         dna = make_dna()
@@ -182,7 +182,7 @@ class TestRunnerStateSaveRestore:
         assert row["total_trades"] == 0
 
     def test_save_position_state(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
         from core.trading.runner import TradingRunner
         from core.trading.types import Decision
 
@@ -207,7 +207,7 @@ class TestRunnerStateSaveRestore:
         assert row["position_entry"] == 100.0
 
     def test_restore_flat_state_restores_balance(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
         from core.trading.runner import TradingRunner
 
         dna = make_dna()
@@ -226,7 +226,7 @@ class TestRunnerStateSaveRestore:
         assert acc.position is None
 
     def test_restore_position_state(self, trading_db: Path):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
         from core.trading.runner import TradingRunner
 
         dna = make_dna()
@@ -306,7 +306,7 @@ class TestRunnerTaskExecution:
         assert row is None
 
     def test_execute_task_marks_running(self, trading_db_with_task: Path):
-        from core.persistence.db_ext import get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task
         from core.trading.runner import TradingRunner
 
         runner = TradingRunner(
@@ -343,7 +343,7 @@ class TestRunnerTaskExecution:
         assert "task-001" in _active_controllers
 
     def test_run_task_with_controller_stop(self, trading_db_with_task: Path):
-        from core.persistence.db_ext import get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task
         from core.trading.runner import TradingRunner, TaskStopRequested
 
         runner = TradingRunner(

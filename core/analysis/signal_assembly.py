@@ -121,10 +121,10 @@ def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
     """
     from sqlalchemy import select
     from core.persistence.orm.models import ModelPlugin
-    from core.persistence.repository.dataset_meta import _engine_for
+    from core.persistence.orm.engine import engine_for
     from core.signals.model import ModelPluginConfig, ModelPipelineError, fit_predict_walk_forward
 
-    with _engine_for(db_path).connect() as conn:
+    with engine_for(db_path).connect() as conn:
         rows = conn.execute(
             select(ModelPlugin).where(ModelPlugin.signal_column == column)
             .order_by(ModelPlugin.version.desc())
@@ -155,6 +155,23 @@ _SOURCE_COMPARE_OPS = {
 }
 
 
+def _to_float_or_reject(value, *, key: str):
+    """组合参数数值键取值（0.3.7 H5：坏值结构化拒绝而非裸 float() 穿 500）。
+
+    键缺省由调用方 ``get`` 的 default 承担（缺省是既有契约，本助手
+    不触碰）；只拒显式坏值——坏串/不可解析类型 422 并回显键路径与
+    原值（键路径带信号源列名，便于进化变异或手写 DNA 定位）。
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"组合参数 {key} 须为数值: {value!r}",
+            detail={"param": key, "value": value,
+                    "hint": "修正 DNA 组合段该键为数值"})
+
+
 def _combine(
     base, dna, plugin_cols: Dict[str, pd.Series], mode: str,
 ) -> Dict[str, pd.Series]:
@@ -170,9 +187,21 @@ def _combine(
         if series is None:
             continue
         series = series.reindex(idx) if hasattr(series, "reindex") else series
-        threshold = float(src.get("threshold", 0.0))
-        compare = _SOURCE_COMPARE_OPS.get(
-            str(src.get("operator", ">")), _operator.gt)
+        threshold = _to_float_or_reject(
+            src.get("threshold", 0.0), key=f"signal_sources[{col}].threshold")
+        # 0.3.7 H5：未知算子显式拒绝（合法集=_SOURCE_COMPARE_OPS 键集
+        # 单一事实源）——原 .get 兜底 ">" 会静默错比较方向且无提示；
+        # 键缺省 ">"（不传 operator）仍走既有契约
+        op = str(src.get("operator", ">"))
+        if op not in _SOURCE_COMPARE_OPS:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"组合参数 signal_sources[{col}].operator 未知: {op!r}",
+                detail={"param": f"signal_sources[{col}].operator",
+                        "value": op,
+                        "legal_values": sorted(_SOURCE_COMPARE_OPS),
+                        "hint": "operator 须为封闭枚举集之一"})
+        compare = _SOURCE_COMPARE_OPS[op]
         plugin_bools[col] = compare(
             series.astype(float), threshold).fillna(False)
 
@@ -194,11 +223,13 @@ def _combine(
     comp = dna.composition or {}
     if mode == "weighted_vote":
         weights = comp.get("weights", {})
-        threshold = float(comp.get("threshold", 0.5))
+        threshold = _to_float_or_reject(
+            comp.get("threshold", 0.5), key="composition.threshold")
         total = np.zeros(len(idx))
         w_sum = 0.0
         for col, b in plugin_bools.items():
-            w = float(weights.get(col, 1.0))
+            w = _to_float_or_reject(
+                weights.get(col, 1.0), key=f"composition.weights[{col}]")
             total += b.astype(float).values * w
             w_sum += w
         vote = pd.Series(total / max(w_sum, 1e-9), index=idx) >= threshold

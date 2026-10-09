@@ -20,6 +20,8 @@ import pandas as pd
 import pandas_ta as ta
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.indicator_query import query_indicator
 from tests.helpers.data_factory import make_ohlcv

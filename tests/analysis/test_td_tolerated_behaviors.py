@@ -21,7 +21,8 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.executor import ensure_research_tables
 from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.validation_service import run_isolated_backtest
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
     StrategyDNA,
@@ -43,13 +44,12 @@ def _df(n: int = 900, seed: int = 6):
 import pandas as pd  # noqa: E402
 
 
-class TestTDCombinationDefaultNotTightened:
-    """TD 现状锚：组合策略 + 显式 default 档 → 不强制收紧。
+class TestTDCombinationAlwaysTightened:
+    """0.3.7 C1 规格锚（Q1=A 已裁 2026-10-08）：组合验证门槛恒收紧。
 
-    现状语义：`threshold_profile or tighten_profile()` 中显式
-    DEFAULT_PROFILE 为 truthy → effective = DEFAULT（非 tightened）；
-    仅缺省 None 时组合分支收紧。若 TD 裁决改为「组合一律加严」，
-    本锚同步更新。"""
+    原现状锚：显式 default 档经 truthy 短路不收紧——TD 裁决为组合
+    分支无视传入档一律 tighten_profile()（显式 default 不豁免收紧）；
+    门槛档配置面保留给非组合策略（:470 直传语义不变）。"""
 
     @pytest.fixture()
     def env(self, tmp_path: Path):
@@ -107,17 +107,17 @@ class TestTDCombinationDefaultNotTightened:
                            "start": "2023-01-01", "end": "2023-02-01"},
             threshold_profile=profile)
 
-    def test_显式default_组合不收紧_与显式tightened判读可区分(self, env):
+    def test_显式default_组合仍恒收紧_落档名为tightened(self, env):
         db, d = env
         out_default = self._run(db, d, {"name": "default"}, "d")
         out_tight = self._run(db, d, {"name": "tightened"}, "t")
-        # 现状锚：两档各自落档名正确（default / default_tightened_x1.2）
+        # 规格锚：显式 default 的组合验证仍按收紧档判定——落档名即
+        # 证据（两请求均落 default_tightened_x1.2，裸 default 名不落）
         from core.persistence.repository import research as rr
         recs = rr.list_validation_records(db)
         names = [json.loads(r["params"]).get("threshold_profile")
-                 for r in recs]
-        assert "default" in names
-        assert "default_tightened_x1.2" in names
-        # 显式 default 的组合路径未二次收紧（effective=DEFAULT 而非
-        # tightened）——落档名即证据（若强制收紧应落 tightened 名）
+                 for r in recs if json.loads(r["params"]).get(
+                     "threshold_profile")]
+        assert "default" not in names
+        assert names.count("default_tightened_x1.2") >= 2
         assert out_default["record_id"] and out_tight["record_id"]

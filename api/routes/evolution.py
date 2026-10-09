@@ -191,7 +191,7 @@ def list_all_discovered_strategies(
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """跨任务列出全部进化发现的策略（source=evolution）。"""
-    from core.persistence.db_ext import list_strategies
+    from core.persistence.repository.strategy import list_strategies
     strategies = list_strategies(
         db_path, source="evolution", sort_by="best_score",
         sort_order="desc", limit=limit,
@@ -362,7 +362,7 @@ def list_tasks(
     rows = list_all_tasks(db_path, status=status, limit=page_size, offset=offset)
 
     # 本页任务的策略计数批量查询
-    from core.persistence.db_ext import count_strategies_by_tasks
+    from core.persistence.repository.strategy import count_strategies_by_tasks
     task_ids = [r["task_id"] for r in rows]
     strategy_counts = count_strategies_by_tasks(db_path, task_ids) if task_ids else {}
 
@@ -521,7 +521,7 @@ def get_discovered_strategies(
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """取任务自动入库的策略（strategy 表按 source_task_id 过滤）。"""
-    from core.persistence.db_ext import list_strategies
+    from core.persistence.repository.strategy import list_strategies
     strategies = list_strategies(
         db_path,
         source="evolution",

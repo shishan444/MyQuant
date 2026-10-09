@@ -50,7 +50,8 @@ def live_api(tmp_path_factory):
                   "trades": 50}, index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
 
     # 预置一个可回测策略（RSI 入场）
-    from core.persistence.db_ext import init_db_ext, save_strategy
+    from core.persistence.repository.strategy import save_strategy
+    from core.persistence.db_ext import init_db_ext
     from core.strategy.dna import (
         ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
     init_db_ext(db)

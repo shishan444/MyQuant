@@ -5,7 +5,7 @@ import 成为第二消费者（其 design D4 明文「第三个消费者出现�
 现在搬是为重排而重排」）——add-regime-split regime_split 即第三消费者，
 时机兑现，提升为分析域共享模块。内容自 screen_patterns 逐字保真。
 
-multi-timeframe-conditions（0.2.14）：``_mask_for`` 加 ``mtf`` 上下文
+multi-timeframe-conditions（0.2.14）：``mask_for`` 加 ``mtf`` 上下文
 参数与掩码投影三分派（高周期条件整条件在高周期轴求值、布尔掩码按
 asof_completed 投影）；额外键全量透传修复既有三键重建静默丢键缺陷。
 
@@ -98,11 +98,14 @@ class MtfEvalContext:
         return df
 
 
-def _mask_for(
+def mask_for(
     work: pd.DataFrame, condition: Dict[str, Any],
     mtf: Optional[MtfEvalContext] = None,
 ) -> pd.Series:
     """单条件掩码（0.2.14 三分派——七消费者共用）。
+
+    公共契约（0.3.7 B4 改名去私有前缀）：跨模块消费面稳定入口——
+    六模板/case_inspection/validation/validate 路由直接 import。
 
     - 有效周期 = base 或无 timeframe 键 → 现行两段式（缺省零变化）：
       结构化 subject resolve → 按 params 现算指标列（encode 得精确
@@ -316,7 +319,7 @@ def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
     # 卡3b target 四段判定链（卡9 收敛 _ensure_target_column 单点）：
     # 列在幂等 / 数值透传 / decode 现算 / 不可解码且非基础列结构化拒绝
     # （消灭「入口放行+求值不算」的静默 0 假象——case_inspection/
-    # condition_stats 等 _mask_for 全消费方统一获得该语义）
+    # condition_stats 等 mask_for 全消费方统一获得该语义）
     _ensure_target_column(work, condition.get("target"), strict=True)
     eval_cond = dict(condition)
     eval_cond["subject"] = col   # subject 解析替换；其余键全量透传（D-r2）
@@ -423,11 +426,13 @@ def _mtf_cache_column(condition: Dict[str, Any], tf: str) -> str:
     return f"__mtf_mask_{tf}_{digest}"
 
 
-def _p_value_for(
+def p_value_for(
     fwd: pd.Series, stat_mask: np.ndarray, horizon: int,
     baseline_mean: Optional[float],
 ) -> tuple[Optional[float], int]:
     """去重叠子集上的单样本 t 检验 p 值（0.2.1 condition_stats 同口径）。
+
+    公共契约（0.3.7 B4 改名去私有前缀）：统计模板与特征网共用。
 
     Returns:
         (p_value, n_valid)——p 为 None 表示不可检（样本<2/零方差/无基线）。

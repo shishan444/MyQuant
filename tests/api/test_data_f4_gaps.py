@@ -27,7 +27,7 @@ def _write_parquet(data_dir: Path, name: str, df=None) -> Path:
 
 
 def _seed_dataset(db_path: Path, dataset_id: str, parquet_path: str) -> None:
-    from core.persistence.db_ext import save_dataset_meta
+    from core.persistence.repository.dataset_meta import save_dataset_meta
     save_dataset_meta(
         db_path, dataset_id=dataset_id, symbol="BTCUSDT", interval="4h",
         parquet_path=parquet_path, row_count=30,

@@ -13,8 +13,8 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.hypothesis_service import (
     ResearchError, register_hypothesis, transition_hypothesis)
 from core.analysis.hypothesis_to_strategy import translate_hypothesis
-from core.persistence.db_ext import (
-    delete_strategy, get_strategy, init_db_ext, save_strategy, update_strategy)
+from core.persistence.repository.strategy import delete_strategy, get_strategy, save_strategy, update_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 
 _CONDS = {

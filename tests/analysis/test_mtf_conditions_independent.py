@@ -24,7 +24,7 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.condition_identity import (
     canonical_condition_hash, legacy_compatible_hash,
 )
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+from core.analysis.condition_kernel import MtfEvalContext, mask_for
 from core.analysis.hypothesis_service import ResearchError, register_hypothesis
 from core.data.mtf_alignment import project_completed, project_completed_bool
 from core.data.timeframes import TF_SECONDS
@@ -219,7 +219,7 @@ class TestMaskForDispatchIndependent:
     def test_无ctx带高周期键_显式ResearchError指明接线缺陷(self, rand_env):
         work = rand_env["base"].copy()
         with pytest.raises(ResearchError) as ei:
-            _mask_for(work, {"subject": "close", "action": "gt",
+            mask_for(work, {"subject": "close", "action": "gt",
                              "target": 0.0, "timeframe": "4h"})
         assert ei.value.code == "RESEARCH_MTF_CONTEXT_MISSING"
         assert "调用方" in ei.value.message   # 非用户输入错误的定位
@@ -228,11 +228,11 @@ class TestMaskForDispatchIndependent:
         """spec：显式写基准周期与缺省语义完全相同（同求值）。"""
         work = rand_env["base"].copy()
         threshold = float(rand_env["base"]["close"].median())
-        explicit = _mask_for(
+        explicit = mask_for(
             work, {"subject": "close", "action": "gt",
                    "target": threshold, "timeframe": "1h"},
             self._ctx(rand_env))
-        default = _mask_for(
+        default = mask_for(
             work, {"subject": "close", "action": "gt", "target": threshold},
             self._ctx(rand_env))
         pd.testing.assert_series_equal(explicit, default)
@@ -242,8 +242,8 @@ class TestMaskForDispatchIndependent:
         work = rand_env["base"].copy()
         threshold = float(rand_env["base"]["close"].median())
         cond = {"subject": "close", "action": "gt", "target": threshold}
-        with_ctx = _mask_for(work.copy(), cond, self._ctx(rand_env))
-        without = _mask_for(work.copy(), cond)
+        with_ctx = mask_for(work.copy(), cond, self._ctx(rand_env))
+        without = mask_for(work.copy(), cond)
         pd.testing.assert_series_equal(with_ctx, without)
 
 
@@ -268,7 +268,7 @@ class TestMaskProjectionIndependent:
         """
         high = _ohlcv([5, 12, 8, 30, 3, 3, 3, 3])
         base, ctx = self._env(tmp_path, high)
-        out = _mask_for(base.copy(), {"subject": "close",
+        out = mask_for(base.copy(), {"subject": "close",
                                       "action": "cross_above",
                                       "target": 10.0, "timeframe": "4h"}, ctx)
         expected = ([False] * 8 + [True] * 4 + [False] * 4
@@ -282,7 +282,7 @@ class TestMaskProjectionIndependent:
         """
         high = _ohlcv([100.0] * 20, volume=[50.0] * 19 + [400.0])
         base, ctx = self._env(tmp_path, high, base_bars=85)
-        out = _mask_for(base.copy(), {"subject": "volume",
+        out = mask_for(base.copy(), {"subject": "volume",
                                       "action": "spike",
                                       "target": 2.0, "timeframe": "4h"}, ctx)
         assert out.tolist() == [False] * 80 + [True] * 5
@@ -300,7 +300,7 @@ class TestMaskProjectionIndependent:
             high = _ohlcv([5, 12, 8, 30, 3, last])
             base, ctx = self._env(tmp_path / f"v{int(last)}", high,
                                   base_bars=22)
-            outs.append(_mask_for(
+            outs.append(mask_for(
                 base.copy(), {"subject": "close", "action": "cross_above",
                               "target": 10.0, "timeframe": "4h"}, ctx))
         pd.testing.assert_series_equal(outs[0], outs[1])
@@ -311,7 +311,7 @@ class TestMaskProjectionIndependent:
         """R2 论据表：gt/lt 状态族两语义逐 bar 等价（双路独立对照）。"""
         high = _ohlcv([10, 25, 5, 30, 30, 15])
         base, ctx = self._env(tmp_path, high)
-        via_mask = _mask_for(base.copy(), {"subject": "close",
+        via_mask = mask_for(base.copy(), {"subject": "close",
                                            "action": "gt",
                                            "target": 15.0,
                                            "timeframe": "4h"}, ctx)
@@ -327,8 +327,8 @@ class TestMaskProjectionIndependent:
         base, ctx = self._env(tmp_path, high, base_bars=32)
         cond = {"subject": "close", "action": "lookback_any",
                 "target": 50.0, "inner_action": "gt", "timeframe": "4h"}
-        w6 = _mask_for(base.copy(), dict(cond, window=6), ctx)
-        w_default = _mask_for(base.copy(), cond, ctx)
+        w6 = mask_for(base.copy(), dict(cond, window=6), ctx)
+        w_default = mask_for(base.copy(), cond, ctx)
         assert w6.iloc[28:].tolist() == [True] * 4      # bar6 状态窗
         assert w_default.iloc[28:].tolist() == [False] * 4
         assert w6.iloc[8:12].tolist() == w_default.iloc[8:12].tolist()
@@ -349,7 +349,7 @@ class TestWarmupRejectIndependent:
         ctx = MtfEvalContext(data_dir, SYMBOL, "1h",
                              eval_start=base.index[0])
         with pytest.raises(ResearchError) as ei:
-            _mask_for(base.copy(), {
+            mask_for(base.copy(), {
                 "subject": {"indicator": "EMA", "params": {"period": 20}},
                 "action": "gt", "target": 0.0, "timeframe": "4h"}, ctx)
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
@@ -454,7 +454,7 @@ class TestTranslationRejectIndependent:
         ctx = MtfEvalContext(
             rand_env["data_dir"], SYMBOL, "1h",
             eval_start=rand_env["base"].index[0])
-        mask = _mask_for(rand_env["base"].copy(),
+        mask = mask_for(rand_env["base"].copy(),
                          {"subject": "close", "action": "gt",
                           "target": 0.0, "timeframe": "4h"}, ctx)
         assert mask.dtype == bool and len(mask) == len(rand_env["base"])
@@ -607,14 +607,14 @@ class TestP5StringSubjectDecode:
         ctx = MtfEvalContext(data_dir, SYMBOL, "1h",
                              eval_start=pd.Timestamp("2024-01-15", tz="UTC"))
         shared = {"action": "lt", "target": 30.0, "timeframe": "4h"}
-        via_str = _mask_for(base.copy(), dict(shared, subject="rsi_14"), ctx)
-        via_dict = _mask_for(base.copy(), dict(
+        via_str = mask_for(base.copy(), dict(shared, subject="rsi_14"), ctx)
+        via_dict = mask_for(base.copy(), dict(
             shared, subject={"indicator": "RSI", "params": {"period": 14}}), ctx)
         pd.testing.assert_series_equal(via_str, via_dict)
 
     def test_结构化EMA掩码_与手算递推EMA投影逐点一致(self, tmp_path):
         """硬锚：EMA=递推（seed=前 20 根 SMA、前 19 NaN、alpha=2/(p+1)）
-        ——手算递推 EMA 于 4h close、gt 掩码、+4h 挂载投影，与 _mask_for
+        ——手算递推 EMA 于 4h close、gt 掩码、+4h 挂载投影，与 mask_for
         结构化路径逐点一致。"""
         data_dir, base, high = self._env(tmp_path)
         ctx = MtfEvalContext(data_dir, SYMBOL, "1h",
@@ -622,7 +622,7 @@ class TestP5StringSubjectDecode:
         mid = float(high["close"].median())
         cond = {"subject": {"indicator": "EMA", "params": {"period": 20}},
                 "action": "gt", "target": mid, "timeframe": "4h"}
-        got = _mask_for(base.copy(), cond, ctx)
+        got = mask_for(base.copy(), cond, ctx)
 
         # 手算递推 EMA（TA 惯例：seed=SMA(20)，前 19 NaN）
         c = high["close"].to_numpy()
@@ -654,14 +654,14 @@ class TestP5StringSubjectDecode:
         ctx = MtfEvalContext(data_dir, SYMBOL, "1h", eval_start=base.index[0])
 
         with pytest.raises(ResearchError) as ei:
-            _mask_for(base.copy(), {"subject": "rsi_14", "action": "lt",
+            mask_for(base.copy(), {"subject": "rsi_14", "action": "lt",
                                     "target": 30.0, "timeframe": "4h"}, ctx)
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
         detail = ei.value.detail or {}
         assert detail["warmup_bars"] == 42       # RSI(14) 收敛 14 × 3
         assert detail["available_bars"] == 39    # 距 4h 起点 39 bar
         # 同数据 close（decode 不可解析、无指标收敛需求）正常求值
-        mask = _mask_for(base.copy(), {"subject": "close", "action": "gt",
+        mask = mask_for(base.copy(), {"subject": "close", "action": "gt",
                                        "target": 0.0, "timeframe": "4h"}, ctx)
         assert len(mask) == len(base) and bool(mask.any())
 
@@ -678,13 +678,13 @@ class TestP5StringSubjectDecode:
         assert decode_column_ref("ema_20_4h") is None
         assert decode_column_ref("close") is None
         assert decode_column_ref("rsi_14") is not None
-        mask = _mask_for(base.copy(), {"subject": "ema_20_4h",
+        mask = mask_for(base.copy(), {"subject": "ema_20_4h",
                                        "action": "gt", "target": 0.0,
                                        "timeframe": "4h"}, ctx)
         assert not mask.any()
         # close 直用 4h raw 列：掩码与手算挂载投影命中一致（296）
         mid = float(high["close"].median())
-        via_close = _mask_for(base.copy(), {"subject": "close", "action": "gt",
+        via_close = mask_for(base.copy(), {"subject": "close", "action": "gt",
                                             "target": mid, "timeframe": "4h"}, ctx)
         closed_idx = high.index + pd.Timedelta(hours=4)
         visible = pd.Series(high["close"].to_numpy(),

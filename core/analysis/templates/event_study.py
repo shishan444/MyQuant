@@ -37,7 +37,7 @@ def event_study(
     Args:
         condition: {subject, action, target}（假设引擎同源形制；MAY
             携带 timeframe 键——高周期条件经掩码投影求值）。0.2.14
-            改道 condition_kernel._mask_for（第七求值点收口）——额外
+            改道 condition_kernel.mask_for（第七求值点收口）——额外
             动作键全量透传生效、结构化 subject 支持获得（现算路径）。
         window: 事件后观察窗（bar 数）。
 
@@ -59,11 +59,11 @@ def event_study(
     require_bars_within(policy_norm, len(df), "trigger_policy")
 
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-    from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+    from core.analysis.condition_kernel import MtfEvalContext, mask_for
 
     # 列前置检查：subject 不可用先结构化拒绝（否则 mask 全 False 会以
     # 误导性的"事件数不足"小样本拒绝收场）。结构化 subject 经 resolve
-    # 校验即放行（_mask_for 两段式现算）；字符串 subject 保持原始列检查。
+    # 校验即放行（mask_for 两段式现算）；字符串 subject 保持原始列检查。
     subject = condition.get("subject", "")
     if isinstance(subject, dict):
         try:
@@ -77,7 +77,7 @@ def event_study(
     else:
         require_column(df, str(subject), template="event_study")
 
-    mask = _mask_for(df, condition, mtf=mtf)
+    mask = mask_for(df, condition, mtf=mtf)
     mask = mask.fillna(False).astype(bool)
     event_idx = np.where(mask.values)[0]
 
@@ -117,7 +117,7 @@ def event_study(
 
     terminal = paths[:, -1]
     # 终点收益的 t 检验（H0: 事件后终点收益均值为 0）。可检性 None
-    # 语义（先例=condition_kernel._p_value_for）：n<2 无自由度（std/
+    # 语义（先例=condition_kernel.p_value_for）：n<2 无自由度（std/
     # t 检验产 NaN）、零方差（std(ddof=1)≤0）时 p_value 置 None、
     # n<2 的 std 同置——NaN 进 payload 会在响应序列化 allow_nan=False
     # 裸崩（S2 响应侧破口）；统计层防线与通道级 sanitize 切割

@@ -731,7 +731,7 @@ class TestWarmupSourceParity:
     def _register_and_translate(self, db_path, when):
         from core.analysis.hypothesis_service import register_hypothesis
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         from core.strategy.dna import StrategyDNA
 
         out = register_hypothesis(

@@ -35,7 +35,7 @@ from core.analysis.condition_identity import canonical_condition_hash
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for, _p_value_for, stat_window_mask
+from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask
 from core.analysis.threshold_grids import VALUE_GRIDS
 
 # 三道门常量（design Decision 3：模块内固定，输出 gates 披露；
@@ -261,8 +261,8 @@ def param_sweep(
         # 0.2.14：网格点条件全量继承中心条件（含 timeframe 键与其余
         # 额外键——高周期中心条件整条件在高周期轴求值，掩码投影）
         cond_v = {**condition, "target": value}
-        stat_mask = _mask_for(work, cond_v, mtf=mtf) & in_stat
-        p_value, n_valid = _p_value_for(
+        stat_mask = mask_for(work, cond_v, mtf=mtf) & in_stat
+        p_value, n_valid = p_value_for(
             fwd, stat_mask.values, forward_bars, baseline_mean)
         hit = fwd[stat_mask].dropna()
         mean = float(hit.mean()) if len(hit) else None

@@ -16,7 +16,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, insert, select, update
 
 from core.persistence.orm.models import EvolutionHistory, EvolutionTask, GenerationSnapshot
-from core.persistence.repository.dataset_meta import _engine_for, _now
+from core.persistence.orm.engine import engine_for as _engine_for
+from core.persistence.timestamps import utc_now_iso as _now
 
 
 def save_task(
@@ -29,7 +30,7 @@ def save_task(
     initial_dna,
     status: str = "pending",
 ) -> None:
-    """Create a new evolution task, atomically entering ``status``.
+    """创建进化任务，单次原子写入 ``status``。
 
     batch1 D4: 任务创建单次写入进入 pending（先 running 再改 pending 的
     双写序列已废弃）。
@@ -52,7 +53,7 @@ def update_task(
     stop_reason: Optional[str] = None,
     expected_statuses: Optional[tuple] = None,
 ) -> bool:
-    """Update task status, champion, or stop reason.
+    """更新任务状态、冠军或停止原因。
 
     batch1 D3 条件更新：提供 ``expected_statuses`` 且本次写入 status 时，
     UPDATE 仅在当前状态属于合法前态集合时生效——生效行数为 0 时返回
@@ -80,7 +81,7 @@ def update_task(
 
 
 def get_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Get a task by ID."""
+    """按 ID 取任务行（不存在返回 None）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         row = conn.execute(
@@ -100,7 +101,7 @@ def save_snapshot(
     mutation_log: Optional[str] = None,
     wf_months: Optional[str] = None,
 ) -> None:
-    """Save a generation snapshot（INSERT OR REPLACE，复合主键幂等）。"""
+    """保存代际全种群快照（INSERT OR REPLACE，复合主键幂等——resume 载体）。"""
     pop_json = json.dumps([ind.to_dict() for ind in population])
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -122,7 +123,7 @@ def save_history(
     avg_score: float,
     top3_summary: str,
 ) -> None:
-    """Save a lightweight history record（INSERT OR REPLACE）。"""
+    """保存代际轻量分数记录（INSERT OR REPLACE 幂等，UI 图表用）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(
@@ -134,7 +135,7 @@ def save_history(
 
 
 def get_history(db_path: Path, task_id: str) -> List[Dict[str, Any]]:
-    """Get all history records for a task, ordered by generation."""
+    """取任务全部历史记录（按代际升序）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(
@@ -150,7 +151,7 @@ def list_all_tasks(
     limit: int = 50,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List tasks, optionally filtered by status, ordered by creation time desc."""
+    """列任务（可按 status 过滤，created_at 倒序+分页）。"""
     stmt = select(EvolutionTask)
     if status is not None:
         stmt = stmt.where(EvolutionTask.status == status)
@@ -165,7 +166,7 @@ def count_all_tasks(
     db_path: Path,
     status: Optional[str] = None,
 ) -> int:
-    """Count total tasks, optionally filtered by status."""
+    """计任务总数（可按 status 过滤）。"""
     stmt = select(func.count()).select_from(EvolutionTask)
     if status is not None:
         stmt = stmt.where(EvolutionTask.status == status)
@@ -179,7 +180,7 @@ def count_all_tasks(
 # ---------------------------------------------------------------------------
 
 def update_phase(db_path: Path, task_id: str, phase: str) -> None:
-    """Update current_phase for a task（WS 推送在调用方）。"""
+    """更新任务 current_phase（WS 推送在调用方）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(
@@ -189,7 +190,7 @@ def update_phase(db_path: Path, task_id: str, phase: str) -> None:
 
 
 def update_progress(db_path: Path, task_id: str, progress_json: str) -> None:
-    """Write structured progress JSON to DB（序列化在调用方）。"""
+    """写结构化进度 JSON 入库（序列化在调用方）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(
@@ -199,7 +200,7 @@ def update_progress(db_path: Path, task_id: str, progress_json: str) -> None:
 
 
 def recover_stale_tasks(db_path: Path) -> int:
-    """Mark all running tasks as stopped (crash recovery)——返回清理数。
+    """崩溃恢复：全部 running 任务标记为 stopped——返回清理数。
 
     batch1 D3 语义注记: 恢复类写入是「残留态清理」（WHERE status='running'
     的条件更新即其前态语义），不走 update_task 的动作前态守护。
@@ -216,7 +217,7 @@ def recover_stale_tasks(db_path: Path) -> int:
 
 
 def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
-    """Restart crashed tasks without champion（bounded retry，语义同旧轨）。"""
+    """重启无冠军的崩溃任务（bounded retry，语义同旧轨）。"""
     engine = _engine_for(db_path)
     restarted = 0
     with engine.begin() as conn:
@@ -289,7 +290,8 @@ def update_champion_metrics(
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(best_fitness=best_fitness, champion_metrics=champion_metrics,
-                    champion_dimension_scores=champion_dimension_scores)
+                    champion_dimension_scores=champion_dimension_scores,
+                    updated_at=_now())
         )
 
 
@@ -303,7 +305,7 @@ def update_oos_results(
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(oos_fitness=oos_fitness, oos_qualified=oos_qualified,
-                    oos_metrics=oos_metrics)
+                    oos_metrics=oos_metrics, updated_at=_now())
         )
 
 
@@ -318,7 +320,8 @@ def update_champion_full(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(best_score=best_score, best_fitness=best_score,
                     champion_metrics=champion_metrics,
-                    champion_dimension_scores=champion_dimension_scores)
+                    champion_dimension_scores=champion_dimension_scores,
+                    updated_at=_now())
         )
 
 
@@ -330,7 +333,8 @@ def update_best_score_if_higher(db_path: Path, task_id: str, best_score: float) 
             update(EvolutionTask)
             .where(EvolutionTask.task_id == task_id,
                    (EvolutionTask.best_score.is_(None)) | (EvolutionTask.best_score < best_score))
-            .values(best_score=best_score, best_fitness=best_score)
+            .values(best_score=best_score, best_fitness=best_score,
+                    updated_at=_now())
         )
 
 
@@ -338,7 +342,9 @@ def update_task_config(db_path: Path, task_id: str, **values: Any) -> None:
     """任务创建后的扩展配置写入（列由调用方白名单化）。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
+        # 覆盖式合并（paper_trading/live_trading 先例）：updated_at 为
+        # 仓储内部时间戳，调用方显式携带时以内部刷新为准
         conn.execute(
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
-            .values(**values)
+            .values(**{**values, "updated_at": _now()})
         )

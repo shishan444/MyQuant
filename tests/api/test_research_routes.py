@@ -13,7 +13,7 @@ from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
 
-from core.persistence.db_ext import save_strategy
+from core.persistence.repository.strategy import save_strategy
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes,
@@ -237,7 +237,7 @@ class TestIsolatedBacktest:
             "close": close, "volume": np.full(n, 100.0), "trades": 10,
         }, index=idx).to_parquet(research_env["data_dir"] / "BTCUSDT_4h.parquet")
 
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         gene = SignalGene(
             indicator="EMA", params={"period": 50}, role=SignalRole.ENTRY_TRIGGER,
             field_name="ema_50", condition={"type": "gt", "threshold": 61500})

@@ -157,7 +157,7 @@ class TestRunnerStatus:
 
 class TestDiscoveredStrategies:
     def _seed_evolution_strategy(self, db_path: Path) -> None:
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             db_path, strategy_id="evo-s1",
             dna_json=make_dna().to_json(),

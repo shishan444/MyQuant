@@ -58,7 +58,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from core.analysis.condition_kernel import MtfEvalContext, _mask_for
+from core.analysis.condition_kernel import MtfEvalContext, mask_for
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
@@ -247,7 +247,7 @@ def _validate_target(target: Any, available_cols: pd.Index) -> None:
             pass
         if target not in available_cols:
             # 0.2.14 放宽：编码形指标列名（decode 可解析）放行——
-            # 求值走 _mask_for 任意参数现算路径（D-r3）
+            # 求值走 mask_for 任意参数现算路径（D-r3）
             from core.analysis.column_ref import try_decode_column_ref
             decoded = try_decode_column_ref(target)
             if decoded is None:
@@ -472,7 +472,7 @@ def inspect_cases(
     if kind == "condition":
         available = list(ind_cols.keys())
         # 0.2.14（D-r3）：结构化 subject 经 resolve 校验即放行——求值走
-        # _mask_for 任意参数现算路径（非默认参数条件不再被默认参数
+        # mask_for 任意参数现算路径（非默认参数条件不再被默认参数
         # 边界拒绝，spec「直接喂入」承诺由实现成立）；字符串 subject
         # 保持默认参数输出列边界（字符串不携带参数，默认边界即其语义）
         subject = payload["subject"]
@@ -511,7 +511,7 @@ def inspect_cases(
         mtf_ctx = MtfEvalContext(
             data_dir=data_dir, symbol=symbol, base_tf=timeframe,
             eval_start=effective_start_ts)
-        mask = _mask_for(work, payload, mtf=mtf_ctx) & in_domain
+        mask = mask_for(work, payload, mtf=mtf_ctx) & in_domain
         hits = np.where(mask.values)[0]  # 升序
         n_matched = int(len(hits))
         positions = _sample_positions(hits, limit)

@@ -226,6 +226,32 @@ class TestCrossoverLayerInheritance:
         assert child.layers[0].signal_genes == []
 
 
+class TestCrossoverPolicyInheritance:
+    """crossover 的 entry_trigger_policy 继承（trigger-policy D11/Q5：
+    子代是全新基因型，触发声明取其一亲代）。"""
+
+    def test_子代policy取自亲代之一(self):
+        pa = {"mode": "first_true"}
+        pb = {"mode": "suppress_bars", "bars": 48}
+        a = _dna(entry_trigger_policy=pa)
+        b = _dna(entry_trigger_policy=pb)
+        random.seed(7)
+        for _ in range(8):
+            child = crossover(a, b)
+            assert child.entry_trigger_policy in (pa, pb)
+
+    def test_单亲携带_policy可存活或丢失(self):
+        """与 signal_sources/composition 既有丢失行为（TD-E 存量缺陷）
+        无关的独立断言：policy 来自亲代集合——不凭空产生。"""
+        pa = {"mode": "first_true"}
+        a = _dna(entry_trigger_policy=pa)
+        b = _dna(entry_trigger_policy=None)
+        random.seed(7)
+        for _ in range(8):
+            child = crossover(a, b)
+            assert child.entry_trigger_policy in (pa, None)
+
+
 class TestMutateCompositionLogicFlip:
     """mutate_composition：logic 模式下 op AND/OR 翻转。"""
 
@@ -278,6 +304,26 @@ class TestMutateParamsFallbackTiers:
         reg = ops.INDICATOR_REGISTRY["RSI"]
         # 多项式变异同样有界（clamp 到注册表值域）
         assert reg.params["period"].min <= period <= reg.params["period"].max
+
+    def test_候选全越界_过滤后空落多项式(self, monkeypatch):
+        """阶段四盲区消解：candidates 非空但全部落在 [min,max] 外
+        → candidates_filtered 空 → 落到多项式有界变异（425->432 侧）。"""
+        import copy
+        from core.evolution import operators as ops
+        from core.features.registry import ParamDef, IndicatorDef
+
+        fake = copy.deepcopy(ops.INDICATOR_REGISTRY["RSI"])
+        fake.params = {"period": ParamDef(
+            type="int", min=2, max=50, default=14, step=1,
+            candidates=[999])}  # 候选全越界
+        monkeypatch.setattr(ops, "PROFILES", {})
+        monkeypatch.setattr(ops, "INDICATOR_REGISTRY", {"RSI": fake})
+        monkeypatch.setattr(ops.random, "random", lambda: 0.1)  # 命中候选分支
+
+        from core.evolution.operators import mutate_params
+        out = mutate_params(_dna())
+        period = out.signal_genes[0].params["period"]
+        assert 2 <= period <= 50, "越界候选不得写入——落多项式且结果有界"
 
 
 class TestMutateCompositionWritebackShapes:
