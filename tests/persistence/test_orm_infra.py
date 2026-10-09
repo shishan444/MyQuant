@@ -272,6 +272,57 @@ class TestAlembicBaseline:
         init_db_ext(db)   # 二次幂等
         assert get_task(db, "mix-001") is not None
 
+    def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):
+        """闸门重开步骤4 属性锚：换芯三分支终态不变量——任意初始形态
+        （空库全链 / legacy 终态形 stamp+upgrade / head 形短路）经
+        init_db_ext 后收敛同一终态：alembic_version 恰一行、业务表
+        schema 与干净 head 库全等（第一分支产 fresh 即基准）、二次
+        执行幂等。"""
+        from core.persistence.db import init_db
+        from core.persistence.db_ext import init_db_ext
+
+        def _stamp_row(path: Path) -> int:
+            conn = sqlite3.connect(str(path))
+            n = conn.execute("SELECT COUNT(*) FROM alembic_version").fetchone()[0]
+            conn.close()
+            return n
+
+        fresh = tmp_path / "b_fresh.db"
+        init_db_ext(fresh)                       # 分支①：新库 upgrade 全链
+
+        legacy = tmp_path / "b_legacy.db"
+        self._alembic("upgrade", "b7c4e9a2f1d3", db_path=legacy)
+        conn = sqlite3.connect(str(legacy))
+        conn.execute("DROP TABLE alembic_version")
+        conn.commit()
+        conn.close()
+        init_db_ext(legacy)                      # 分支②：stamp+upgrade 补链
+
+        head_shape = tmp_path / "b_head.db"
+        init_db(head_shape)                      # ORM 全列形、无版本表
+        init_db_ext(head_shape)                  # 分支③：head 形探测短路
+
+        for db in (fresh, legacy, head_shape):
+            assert _stamp_row(db) == 1, f"{db.name} 版本表恰一行"
+            self._assert_schema_only_vs(db, fresh)
+            init_db_ext(db)                      # 幂等：任意分支二次执行
+            assert _stamp_row(db) == 1
+
+    @staticmethod
+    def _assert_schema_only_vs(a: Path, b: Path) -> None:
+        """业务表 schema 全等（对照不含历史宽差豁免——三库均为链产物
+        或 ORM 产物，无生产历史宽列）。"""
+        def _tables(path: Path):
+            conn = sqlite3.connect(str(path))
+            r = sorted(t[0] for t in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' AND name NOT IN "
+                "('alembic_version', 'schema_version')"))
+            conn.close()
+            return r
+        assert _tables(a) == _tables(b), \
+            f"表集差异: {_tables(a) ^ _tables(b)}"
+
     def test_adopt_legacy_db_stamps_head(self, tmp_path: Path):
         """接管流程：legacy 库（无 alembic_version）→ stamp head，schema 不动。"""
         from core.persistence.db_ext import init_db_ext

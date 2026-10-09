@@ -855,6 +855,37 @@ class TestEvaluateRules:
         assert any("Data file not found" in w for w in result.warnings)
         assert result.win_rate is None  # 零交易为缺失语义
 
+    def test_defaults_branches_data_dir_none_no_range_mtf_empty(self, tmp_path, monkeypatch):
+        """闸门重开盲区消解：三个缺省/空返分支——data_dir 缺省走
+        内置推导路径、start/end 缺省不过滤、load_mtf_data 空返回
+        跳过合并（160->182）。"""
+        from unittest.mock import patch
+        from core.validation import rule_engine as mod
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        monkeypatch.setattr(
+            mod, "__file__",
+            str(tmp_path / "x" / "y" / "fake_mod.py"))  # data_dir 缺省推导锚定 tmp
+        (tmp_path / "data" / "market").mkdir(parents=True, exist_ok=True)
+        import shutil
+        for f in ("TESTUSDT_4h.parquet", "TESTUSDT_1d.parquet"):
+            shutil.copy(tmp_path / f, tmp_path / "data" / "market" / f)
+        from core.analysis.condition_kernel import MtfEvalContext
+        ctx = MtfEvalContext(data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
+        with patch.object(mod, "load_mtf_data", return_value={}):
+            result = mod.evaluate_rules(
+                "TESTUSDT", "4h", None, None,   # start/end 缺省：不过滤
+                entry_conditions=[{"subject": "close", "action": "lt",
+                                   "target": 105, "timeframe": "1d"}],
+                exit_conditions=[{"subject": "close", "action": "gt",
+                                  "target": 100}],
+                data_dir=None,                  # 缺省分支
+                mtf=ctx,
+            )
+        assert isinstance(result.total_trades, int)
+        assert not any("MTF" in w for w in result.warnings), \
+            "mtf_data 空返回静默跳过合并（无警告）"
+
     def test_mtf_load_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
         """专项① leak-free 锚：装载失败警告固定文案（engine.py CARD-05
         同构）——异常原文只进日志不回传；rule_engine 失败后回退单周期

@@ -1230,6 +1230,28 @@ class TestRunSceneVerificationFeature:
         assert result.total_triggers == 0
         assert any("MTF loading failed" in w for w in result.warnings)
 
+    def test_mtf_empty_return_skips_merge_silently(self, tmp_path):
+        """（附不可达判定：scene_engine 254->253 `if h in all_horizon_stats`
+        False 侧——fwd 键与 all_horizon_stats 预填集同源于同一 horizons
+        参数（compute_forward_stats(trigger, horizons)），恒真侧成立，
+        False 侧无输入路径——防御冗余。）"""
+        """闸门重开盲区消解（190->211）：load_mtf_data 空返回——
+        静默跳过合并继续单周期检测（无警告无异常，与装载失败分支
+        的显式警告相区分）。"""
+        from core.validation.scene.scene_engine import run_scene_verification
+        data_dir = self._write_parquet(tmp_path)
+        with patch("core.validation.mtf.load_mtf_data", return_value={}), \
+             patch(
+                 "core.validation.scene.scene_engine.compute_all_indicators",
+                 side_effect=lambda d: d,
+            ):
+            result = run_scene_verification(
+                symbol="TESTUSDT", timeframe="4h",
+                scene_type="cross_timeframe", data_dir=data_dir,
+            )
+        assert not any("MTF" in w for w in result.warnings), \
+            "空返回静默跳过——无 MTF 警告"
+
     def test_mtf_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
         """专项① leak-free 锚：警告固定文案「MTF loading failed」
         （无 fallback 宣称——scene_engine 失败即返回空结果，文案如实）
