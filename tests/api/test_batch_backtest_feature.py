@@ -46,7 +46,8 @@ def _fitness_result(fitness: float = 7.0, qualified: bool = True) -> dict:
 
 @pytest.fixture
 def batch_db(tmp_path: Path) -> Path:
-    from core.persistence.db_ext import init_db_ext, save_strategy
+    from core.persistence.repository.strategy import save_strategy
+    from core.persistence.db_ext import init_db_ext
     db_path = tmp_path / "batch.db"
     init_db_ext(db_path)
     save_strategy(
@@ -123,7 +124,7 @@ class TestProcessorStep:
 
     def test_normal_step_persists_result(self, batch_db: Path, tmp_path: Path) -> None:
         """正常步骤：结果落库（run_source=batch_backtest）并产出 item。"""
-        from core.persistence.db_ext import list_backtest_results
+        from core.persistence.repository.backtest_result import list_backtest_results
         processor = _make_processor(batch_db, tmp_path)
         processor.init()
         df = make_ohlcv(50, "4h")
@@ -209,7 +210,7 @@ class TestProcessorStep:
         self, batch_db: Path, tmp_path: Path,
     ) -> None:
         """存量 dna_json 解析失败时该策略被跳过（不 500 不 404）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             batch_db, strategy_id="s-corrupt", dna_json="{broken",
             symbol="BTCUSDT", timeframe="4h", name="Broken",
@@ -226,7 +227,7 @@ class TestProcessorStep:
     ) -> None:
         """有交易时 equity 曲线按 bars_processed 对齐时间戳序列化落库。"""
         import json as _json
-        from core.persistence.db_ext import get_backtest_result
+        from core.persistence.repository.backtest_result import get_backtest_result
         processor = _make_processor(batch_db, tmp_path, strategy_ids=["s-high"])
         processor.init()
         df = make_ohlcv(50, "4h")
@@ -265,7 +266,7 @@ class TestProcessorStep:
         self, batch_db: Path, tmp_path: Path,
     ) -> None:
         """DNA 带 layers（MTF）时按 compute_needed_tfs 装载多周期数据。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         from tests.helpers.data_factory import make_mtf_dna
         save_strategy(
             batch_db, strategy_id="s-mtf", dna_json=make_mtf_dna().to_json(),
@@ -344,7 +345,8 @@ class TestStreamEndpoint:
         self, api_client: TestClient,
     ) -> None:
         """POST 返回 batch_ 前缀 session_id，后台执行完成后结果落库。"""
-        from core.persistence.db_ext import list_backtest_results, save_strategy
+        from core.persistence.repository.backtest_result import list_backtest_results
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         data_dir = api_client.app.state.data_dir
         save_strategy(
@@ -391,7 +393,8 @@ class TestStreamEndpoint:
     ) -> None:
         """POST 后立即协作取消：任何 step 前取消则零结果落库。"""
         from api import stream_control
-        from core.persistence.db_ext import list_backtest_results, save_strategy
+        from core.persistence.repository.backtest_result import list_backtest_results
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="s-cancel", dna_json=make_dna().to_json(),
@@ -429,7 +432,8 @@ class TestStreamEndpoint:
     ) -> None:
         """后台装载抛异常：任务退出（unregister）且零结果落库。"""
         from api import stream_control
-        from core.persistence.db_ext import list_backtest_results, save_strategy
+        from core.persistence.repository.backtest_result import list_backtest_results
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(
             db_path, strategy_id="s-err", dna_json=make_dna().to_json(),
@@ -468,7 +472,7 @@ class TestDetailEndpoint:
 
     def test_detail_parses_stored_json_fields(self, api_client: TestClient) -> None:
         """equity_curve/trades_json/dimension_scores 正常解析回结构化字段。"""
-        from core.persistence.db_ext import save_backtest_result
+        from core.persistence.repository.backtest_result import save_backtest_result
         db_path = api_client.app.state.db_path
         save_backtest_result(
             db_path, result_id="res-ok", strategy_id="s1",
@@ -492,7 +496,7 @@ class TestDetailEndpoint:
 
     def test_detail_corrupt_json_fields_become_none(self, api_client: TestClient) -> None:
         """存量 JSON 字段损坏时对应字段回 None（容错不 500）。"""
-        from core.persistence.db_ext import save_backtest_result
+        from core.persistence.repository.backtest_result import save_backtest_result
         db_path = api_client.app.state.db_path
         save_backtest_result(
             db_path, result_id="res-bad", strategy_id="s1",

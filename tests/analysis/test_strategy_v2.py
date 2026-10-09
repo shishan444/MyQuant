@@ -15,7 +15,8 @@ from core.analysis.hypothesis_to_strategy import translate_hypothesis
 from core.analysis.signal_assembly import assemble_signal_set
 from core.analysis.validation_service import run_isolated_backtest
 from core.evolution.operators import mutate_composition
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA,
@@ -186,7 +187,7 @@ class TestTranslator:
         assert out["duplicated"] is False
         assert out["status"] == "draft"
         assert out["risk_genes"] == "platform_default"
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         row = get_strategy(db, out["strategy_id"])
         assert row["status"] == "draft"
         dna = StrategyDNA.from_json(row["dna_json"])
@@ -215,7 +216,7 @@ class TestTranslator:
         hid = self._register_and_pass(db, self._expressible_conditions(),
                                       self._ranges())
         out = translate_hypothesis(db, hypothesis_id=hid)
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         from core.strategy.dna import SignalRole
         genes = StrategyDNA.from_json(
             get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
@@ -236,8 +237,7 @@ class TestTranslator:
     def test_same_signature_active_split(self, db):
         """转化产物与既有 active 策略同签名：显式返回既有 id 并标注，
         不静默不落库（防幽灵 id）。"""
-        from core.persistence.db_ext import (
-            delete_strategy, get_strategy, save_strategy)
+        from core.persistence.repository.strategy import delete_strategy, get_strategy, save_strategy
         # 先转化取 DNA，清掉 draft 后以同 DNA 存 active（模拟已出货）
         conds = self._expressible_conditions()
         hid1 = self._register_and_pass(db, conds, self._ranges())
@@ -294,7 +294,7 @@ class TestTranslator:
         }
         hid = self._register_and_pass(db, conds, self._ranges())
         out = translate_hypothesis(db, hypothesis_id=hid)
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         from core.strategy.dna import SignalRole
         genes = StrategyDNA.from_json(get_strategy(db, out["strategy_id"])["dna_json"]).signal_genes
         entries = [g for g in genes if g.role == SignalRole.ENTRY_TRIGGER]
@@ -522,7 +522,7 @@ class TestTranslatorTriggerPolicy:
             trigger_policy=policy)["hypothesis_id"]
 
     def _translate_dna(self, db, hid):
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         out = translate_hypothesis(db, hypothesis_id=hid)
         row = get_strategy(db, out["strategy_id"])
         return out, StrategyDNA.from_json(row["dna_json"])

@@ -104,7 +104,8 @@ class TestBuildRequirementsMalformedVisible:
 @pytest.fixture
 def trading_db_with_task(tmp_path: Path) -> Path:
     """B1.3 场景：模拟盘任务库（含 task-001）。"""
-    from core.persistence.db_ext import init_db_ext, save_paper_trading_task
+    from core.persistence.repository.paper_trading import save_paper_trading_task
+    from core.persistence.db_ext import init_db_ext
     from tests.helpers.data_factory import make_dna
 
     db_path = tmp_path / "test_b1_trading.db"
@@ -206,7 +207,7 @@ class TestBarCursorReplayNoDuplicate:
         from unittest.mock import patch
 
         from core.trading.runner import TradingRunner
-        from core.persistence.db_ext import get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task
         from tests.helpers.data_factory import make_ohlcv
 
         runner = TradingRunner(db_path=trading_db_with_task, data_dir=tmp_path)
@@ -262,7 +263,7 @@ class TestSavePaperTradeIdempotent:
 
     def test_duplicate_insert_ignored(self, trading_db_with_task):
         """同一事件插入两次 → 表中恰一行（INSERT OR IGNORE + 唯一约束）。"""
-        from core.persistence.db_ext import save_paper_trade, count_paper_trades
+        from core.persistence.repository.paper_trading import count_paper_trades, save_paper_trade
 
         for _ in range(2):
             save_paper_trade(
@@ -275,7 +276,7 @@ class TestSavePaperTradeIdempotent:
 
     def test_same_bar_different_action_both_kept(self, trading_db_with_task):
         """同 bar 的 open 与 close 是不同事件，各自保留。"""
-        from core.persistence.db_ext import save_paper_trade, count_paper_trades
+        from core.persistence.repository.paper_trading import count_paper_trades, save_paper_trade
 
         save_paper_trade(
             trading_db_with_task,
@@ -326,7 +327,7 @@ class TestVerifyMarkFailedNotSwallowed:
     def test_mark_failed_success_path_unchanged(self, tmp_db):
         """写入成功路径行为不变（status=failed + error_message）。"""
         from api.routes.strategies import _VerifyProcessor
-        from core.persistence.db_ext import save_verify_session, get_verify_session
+        from core.persistence.repository.verify_session import get_verify_session, save_verify_session
 
         save_verify_session(
             tmp_db, session_id="b1-ok",

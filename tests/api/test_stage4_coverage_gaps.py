@@ -34,7 +34,7 @@ class TestVerifyToleranceBranches:
     """verify.py 容错分支（112-113/187-188/314-348/439-448）。"""
 
     def _seed_strategy(self, api_client: TestClient, sid: str = "s-v") -> None:
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         # name 必须显式传：save_strategy 无 name 时 row["name"]=None，而
         # verify/batch/evolution 的 row.get("name", sid[:8]) 对 None 值键
         # 不取默认 → VerifySummaryItem(strategy_name=None) 校验炸（500）。
@@ -74,7 +74,8 @@ class TestVerifyToleranceBranches:
 
     def test_processor_init_skips_corrupt_dna(self, tmp_path: Path) -> None:
         """processor.init 跳过坏 dna_json 策略（187-188）。"""
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.verify import _VerifyProcessor
         from api.schemas import VerifyRequest, VerifyDateRange
         db_path = tmp_path / "v.db"
@@ -94,7 +95,8 @@ class TestVerifyToleranceBranches:
 
     def test_processor_leverage_override_branch(self, tmp_path: Path) -> None:
         """process_step 的 leverage != 1 覆盖分支（224-228）。"""
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.verify import _VerifyProcessor
         from api.schemas import VerifyRequest, VerifyDateRange
         db_path = tmp_path / "v2.db"
@@ -130,7 +132,8 @@ class TestVerifyToleranceBranches:
 
     def test_processor_strategy_level_exception(self, tmp_path: Path) -> None:
         """process_step 单策略 except：该策略记「内部错误」其余正常。"""
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.verify import _VerifyProcessor
         from api.schemas import VerifyRequest, VerifyDateRange
         db_path = tmp_path / "v3.db"
@@ -171,7 +174,8 @@ class TestVerifyToleranceBranches:
 
     def test_processor_group_level_exception(self, tmp_path: Path) -> None:
         """process_step 组级 except：装载抛错全组记「内部错误」。"""
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.verify import _VerifyProcessor
         from api.schemas import VerifyRequest, VerifyDateRange
         db_path = tmp_path / "v4.db"
@@ -196,7 +200,7 @@ class TestVerifyToleranceBranches:
         self, api_client: TestClient,
     ) -> None:
         """verify stream cancel 分支（439-441）：零结果、session failed。"""
-        from core.persistence.db_ext import get_verify_session
+        from core.persistence.repository.verify_session import get_verify_session
         self._seed_strategy(api_client, "s-cc")
         with patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")):
@@ -221,7 +225,7 @@ class TestVerifyToleranceBranches:
         self, api_client: TestClient,
     ) -> None:
         """stream 外层 except（447-448）：finalize 抛 → mark_failed 落 failed。"""
-        from core.persistence.db_ext import get_verify_session
+        from core.persistence.repository.verify_session import get_verify_session
         self._seed_strategy(api_client, "s-err")
         mod = _verify_route_module()
         with patch("core.data.mtf_loader.load_and_prepare_df",
@@ -288,7 +292,7 @@ class TestEvolutionToleranceBranches:
 
     def test_strategies_list_corrupt_json_passes(self, api_client: TestClient) -> None:
         """/strategies 列表：坏 dna/metrics JSON 条目保留（None 字段）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(db_path, strategy_id="evo-bad", dna_json="{corrupt",
                       symbol="BTCUSDT", timeframe="4h", source="evolution",
@@ -343,7 +347,7 @@ class TestCrudToleranceBranches:
 
     def test_get_strategy_corrupt_metrics_json(self, api_client: TestClient) -> None:
         """GET 策略坏 metrics_json → metrics None（不 500）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         from sqlalchemy import update as sa_update
         from core.persistence.orm.models import Strategy
         from core.persistence.repository.dataset_meta import _engine_for
@@ -361,7 +365,7 @@ class TestCrudToleranceBranches:
 
     def test_put_updates_each_field_branch(self, api_client: TestClient) -> None:
         """PUT 各字段分支逐一覆盖（name/tags/notes/best_score/dna）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(db_path, strategy_id="s-put",
                       dna_json=make_dna().to_json(),
@@ -385,7 +389,7 @@ class TestCrudToleranceBranches:
 
     def test_put_no_fields_is_noop(self, api_client: TestClient) -> None:
         """PUT 空 body：零字段更新，原样返回。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         db_path = api_client.app.state.db_path
         save_strategy(db_path, strategy_id="s-noop",
                       dna_json=make_dna().to_json(),
@@ -455,7 +459,8 @@ class TestBatchGaps:
 
     def test_finalize_skips_empty_periods(self, tmp_path: Path) -> None:
         """init 后未跑任何 step 直接 finalize：periods 空 → summary 空。"""
-        from core.persistence.db_ext import init_db_ext, save_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.batch import _BatchBacktestProcessor
         from api.schemas import BatchBacktestRequest, VerifyDateRange
         db_path = tmp_path / "b.db"
@@ -477,7 +482,7 @@ class TestBatchGaps:
     ) -> None:
         """detail 端点 satisfaction_json 坏 JSON → None（508-509）。"""
         import json as _json
-        from core.persistence.db_ext import save_backtest_result
+        from core.persistence.repository.backtest_result import save_backtest_result
         db_path = api_client.app.state.db_path
         save_backtest_result(
             db_path, result_id="res-sat", strategy_id="s1",
@@ -502,7 +507,8 @@ class TestCompareGaps:
         import pandas as pd
         import pyarrow as pa
         import pyarrow.parquet as pq
-        from core.persistence.db_ext import save_strategy, list_backtest_results
+        from core.persistence.repository.backtest_result import list_backtest_results
+        from core.persistence.repository.strategy import save_strategy
         # 构造无 index 列的 parquet（RangeIndex + drop index）
         df = pd.DataFrame({
             "open": [100.0, 101.0], "high": [102.0, 103.0],

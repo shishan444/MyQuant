@@ -257,9 +257,8 @@ class TestEmitTaskSnapshot:
     ) -> None:
         """running 模拟交易任务在 /trading namespace 下发快照。"""
         from tests.helpers.data_factory import make_dna
-        from core.persistence.db_ext import (
-            init_db_ext, save_paper_trading_task, update_paper_trading_task,
-        )
+        from core.persistence.repository.paper_trading import save_paper_trading_task, update_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         db_path = tmp_path / "snap2.db"
         init_db_ext(db_path)
         dna_json = make_dna().to_json()

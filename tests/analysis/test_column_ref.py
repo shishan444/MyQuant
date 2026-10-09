@@ -248,7 +248,7 @@ class TestFiveDomainIntegration:
         res = translate_hypothesis(db_path, hypothesis_id=hid)
         assert res["genes"][0] == "MACD(signal)"
         # N4 取列锚：field 语义名 → executor resolve 精确取 macd_signal 列
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         import json as _json
         strat = get_strategy(db_path, res["strategy_id"])
         dna = _json.loads(strat["dna_json"] if "dna_json" in strat.keys()

@@ -10,7 +10,8 @@ class TestPredictionDNAPersistence:
 
     def test_save_and_retrieve_prediction_dna(self, db_path):
         """save_paper_trading_task should store prediction_dna_json."""
-        from core.persistence.db_ext import init_db_ext, save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         init_db_ext(db_path)
 
         dna_json = '{"signal_genes": []}'
@@ -28,7 +29,8 @@ class TestPredictionDNAPersistence:
 
     def test_save_without_prediction_dna(self, db_path):
         """Should work fine without prediction_dna_json (uses defaults in runner)."""
-        from core.persistence.db_ext import init_db_ext, save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         init_db_ext(db_path)
 
         save_paper_trading_task(
@@ -42,7 +44,8 @@ class TestPredictionDNAPersistence:
 
     def test_update_prediction_dna(self, db_path):
         """Should be able to update prediction_dna_json via update_paper_trading_task."""
-        from core.persistence.db_ext import init_db_ext, save_paper_trading_task, get_paper_trading_task, update_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         init_db_ext(db_path)
 
         save_paper_trading_task(

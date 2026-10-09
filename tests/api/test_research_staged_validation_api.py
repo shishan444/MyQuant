@@ -14,7 +14,8 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.hypothesis_service import register_hypothesis
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes,

@@ -26,9 +26,10 @@ from core.evolution.engine import EvolutionEngine  # noqa: E402
 from core.evolution.population import create_random_dna  # noqa: E402
 from core.backtest.engine import BacktestEngine  # noqa: E402
 from core.strategy.executor import dna_to_signal_set  # noqa: E402
-from core.persistence.db_ext import (  # noqa: E402
-    init_db_ext, save_paper_trading_task, get_paper_trading_task,
+from core.persistence.repository.paper_trading import (  # noqa: E402
+    get_paper_trading_task, save_paper_trading_task,
 )
+from core.persistence.db_ext import init_db_ext  # noqa: E402
 from tests.helpers.data_factory import make_ohlcv  # noqa: E402
 
 

@@ -29,26 +29,11 @@ from core.persistence.db import (
     save_task,
     update_task,
 )
-from core.persistence.db_ext import (
-    delete_dataset,
-    delete_strategy,
-    get_dataset,
-    get_strategy,
-    get_backtest_result,
-    get_verify_session,
-    init_db_ext,
-    list_backtest_results,
-    list_datasets,
-    list_strategies,
-    list_verify_sessions,
-    save_backtest_result,
-    save_dataset_meta,
-    save_strategy,
-    save_verify_session,
-    update_dataset_stats,
-    update_strategy,
-    update_verify_session,
-)
+from core.persistence.repository.backtest_result import get_backtest_result, list_backtest_results, save_backtest_result
+from core.persistence.repository.dataset_meta import delete_dataset, get_dataset, list_datasets, save_dataset_meta, update_dataset_stats
+from core.persistence.repository.strategy import delete_strategy, get_strategy, list_strategies, save_strategy, update_strategy
+from core.persistence.repository.verify_session import get_verify_session, list_verify_sessions, save_verify_session, update_verify_session
+from core.persistence.db_ext import init_db_ext
 
 # ── Fixtures ──
 

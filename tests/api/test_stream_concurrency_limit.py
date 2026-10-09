@@ -70,7 +70,7 @@ class TestSlotUnit:
 class TestStreamEndpoint429:
     def test_verify_stream_rejected_when_full(self, api_client: TestClient) -> None:
         """并发满：POST /verify/stream → 429 固定 detail。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             api_client.app.state.db_path, strategy_id="s-cc",
             dna_json=make_dna().to_json(), symbol="BTCUSDT", timeframe="4h",
@@ -86,7 +86,7 @@ class TestStreamEndpoint429:
         assert response.json()["detail"] == "Too many concurrent streams"
 
     def test_batch_stream_rejected_when_full(self, api_client: TestClient) -> None:
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             api_client.app.state.db_path, strategy_id="s-bc",
             dna_json=make_dna().to_json(), symbol="BTCUSDT", timeframe="4h",
@@ -105,7 +105,7 @@ class TestStreamEndpoint429:
         self, api_client: TestClient,
     ) -> None:
         """init 404 路径槽位先归还：紧随其后的请求可占用。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             api_client.app.state.db_path, strategy_id="s-ok",
             dna_json=make_dna().to_json(), symbol="BTCUSDT", timeframe="4h",

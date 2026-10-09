@@ -21,7 +21,8 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.executor import ensure_research_tables
 from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.validation_service import run_isolated_backtest
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
     StrategyDNA,

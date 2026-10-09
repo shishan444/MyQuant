@@ -18,7 +18,8 @@ from tests.helpers.data_factory import make_dna, make_ohlcv  # noqa: E402
 
 @pytest.fixture
 def verify_db(tmp_path: Path) -> Path:
-    from core.persistence.db_ext import init_db_ext, save_strategy
+    from core.persistence.repository.strategy import save_strategy
+    from core.persistence.db_ext import init_db_ext
     db_path = tmp_path / "test_verify.db"
     init_db_ext(db_path)
     dna = make_dna(direction="long", leverage=1)

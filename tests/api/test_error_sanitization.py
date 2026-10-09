@@ -62,7 +62,7 @@ class _FakeProcessorMixin:
     def _make_processor(db_path: Path, tmp_path: Path):
         from api.routes.strategies.batch import _BatchBacktestProcessor
         from api.schemas import BatchBacktestRequest, VerifyDateRange
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         save_strategy(
             db_path, strategy_id="s-1", dna_json=make_dna().to_json(),
             symbol="BTCUSDT", timeframe="4h", name="S1",
@@ -100,7 +100,7 @@ class TestCompareErrorSanitized:
         self, api_client: TestClient,
     ) -> None:
         """坏 DNA 条目 error 为脱敏文案，正常条目照常（隔离语义）。"""
-        from core.persistence.db_ext import save_strategy
+        from core.persistence.repository.strategy import save_strategy
         make_ohlcv(60, "4h").to_parquet(
             api_client.app.state.data_dir / "BTCUSDT_4h.parquet",
         )

@@ -21,10 +21,13 @@ from core.strategy.dna import (  # noqa: E402
     ExecutionGenes,
 )
 from core.strategy.executor import dna_to_signal_set  # noqa: E402
-from core.persistence.db_ext import (  # noqa: E402
-    init_db_ext, save_strategy, get_strategy,
-    save_paper_trading_task, get_paper_trading_task,
+from core.persistence.repository.paper_trading import (  # noqa: E402
+    get_paper_trading_task, save_paper_trading_task,
 )
+from core.persistence.repository.strategy import (  # noqa: E402
+    get_strategy, save_strategy,
+)
+from core.persistence.db_ext import init_db_ext  # noqa: E402
 from tests.helpers.data_factory import make_dna, make_mtf_dna, make_ohlcv  # noqa: E402
 
 

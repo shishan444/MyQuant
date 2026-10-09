@@ -65,7 +65,7 @@ class TestPaperTradingCRUD:
         init_db_ext(self.db_path)
 
     def test_save_and_get_task(self):
-        from core.persistence.db_ext import save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
         dna_json = _make_dna_json()
         save_paper_trading_task(
             self.db_path,
@@ -81,12 +81,12 @@ class TestPaperTradingCRUD:
         assert row["initial_cash"] == 100_000
 
     def test_get_nonexistent_task(self):
-        from core.persistence.db_ext import get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task
         row = get_paper_trading_task(self.db_path, "no-such-id")
         assert row is None
 
     def test_update_task(self):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
         save_paper_trading_task(
             self.db_path, task_id="t1", dna_json=_make_dna_json(),
         )
@@ -98,7 +98,7 @@ class TestPaperTradingCRUD:
         assert row["balance"] == 95000
 
     def test_list_tasks(self):
-        from core.persistence.db_ext import save_paper_trading_task, list_paper_trading_tasks
+        from core.persistence.repository.paper_trading import list_paper_trading_tasks, save_paper_trading_task
         for i in range(3):
             save_paper_trading_task(
                 self.db_path, task_id=f"t{i}", dna_json=_make_dna_json(),
@@ -107,7 +107,7 @@ class TestPaperTradingCRUD:
         assert len(tasks) == 3
 
     def test_list_tasks_by_status(self):
-        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task, list_paper_trading_tasks
+        from core.persistence.repository.paper_trading import list_paper_trading_tasks, save_paper_trading_task, update_paper_trading_task
         save_paper_trading_task(self.db_path, task_id="t1", dna_json=_make_dna_json())
         save_paper_trading_task(self.db_path, task_id="t2", dna_json=_make_dna_json())
         update_paper_trading_task(self.db_path, "t1", status="running")
@@ -116,7 +116,7 @@ class TestPaperTradingCRUD:
         assert pending[0]["task_id"] == "t2"
 
     def test_save_and_list_trades(self):
-        from core.persistence.db_ext import save_paper_trading_task, save_paper_trade, list_paper_trades
+        from core.persistence.repository.paper_trading import list_paper_trades, save_paper_trade, save_paper_trading_task
         save_paper_trading_task(
             self.db_path, task_id="t1", dna_json=_make_dna_json(),
         )
@@ -208,7 +208,8 @@ class TestRunnerStatePersistence:
 
     def test_save_and_restore_flat_state(self, tmp_path):
         """PM with no position saves and restores correctly."""
-        from core.persistence.db_ext import init_db_ext, save_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         from core.trading.runner import TradingRunner
 
         db_path = tmp_path / "test.db"
@@ -239,7 +240,8 @@ class TestRunnerStatePersistence:
 
     def test_save_and_restore_position_state(self, tmp_path):
         """PM with open position saves and restores correctly."""
-        from core.persistence.db_ext import init_db_ext, save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.persistence.repository.paper_trading import get_paper_trading_task, save_paper_trading_task, update_paper_trading_task
+        from core.persistence.db_ext import init_db_ext
         from core.trading.runner import TradingRunner
 
         db_path = tmp_path / "test.db"
@@ -321,7 +323,7 @@ class TestTradingAPIStateTransitions:
     ])
     def test_stop_invalid_status_returns_400(self, initial_status, expected_code):
         from fastapi.testclient import TestClient
-        from core.persistence.db_ext import update_paper_trading_task
+        from core.persistence.repository.paper_trading import update_paper_trading_task
         with TestClient(self.app) as client:
             task_id = self._create_task(client)
             update_paper_trading_task(self.db_path, task_id, status=initial_status)
@@ -340,7 +342,7 @@ class TestTradingAPIStateTransitions:
 
     def test_trades_with_records(self):
         from fastapi.testclient import TestClient
-        from core.persistence.db_ext import save_paper_trade
+        from core.persistence.repository.paper_trading import save_paper_trade
         with TestClient(self.app) as client:
             task_id = self._create_task(client)
 
@@ -364,7 +366,7 @@ class TestTradingAPIStateTransitions:
 
     def test_trades_limit_parameter(self):
         from fastapi.testclient import TestClient
-        from core.persistence.db_ext import save_paper_trade
+        from core.persistence.repository.paper_trading import save_paper_trade
         with TestClient(self.app) as client:
             task_id = self._create_task(client)
 

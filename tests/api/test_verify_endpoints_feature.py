@@ -65,7 +65,7 @@ def _verify_route_module():
 @pytest.fixture
 def verify_client(api_client: TestClient) -> TestClient:
     """预置一条策略供 verify 端点使用。"""
-    from core.persistence.db_ext import save_strategy
+    from core.persistence.repository.strategy import save_strategy
     db_path = api_client.app.state.db_path
     save_strategy(
         db_path, strategy_id="strat-v1",
@@ -113,7 +113,8 @@ class TestVerifySyncEndpoint:
     ) -> None:
         """同步 verify：结果与 summary 返回、session completed、
         策略 verify_star/new_score 滚动更新。"""
-        from core.persistence.db_ext import get_strategy, get_verify_session
+        from core.persistence.repository.strategy import get_strategy
+        from core.persistence.repository.verify_session import get_verify_session
         db_path = verify_client.app.state.db_path
         with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
@@ -133,7 +134,7 @@ class TestVerifySyncEndpoint:
         assert summary["qualified_count"] == 1
 
         # session 落库为 completed
-        from core.persistence.db_ext import list_verify_sessions
+        from core.persistence.repository.verify_session import list_verify_sessions
         sessions = list_verify_sessions(db_path, limit=5)
         assert len(sessions) == 1
         assert sessions[0]["status"] == "completed"
@@ -168,7 +169,7 @@ class TestVerifySyncEndpoint:
         self, verify_client: TestClient,
     ) -> None:
         """数据不足的周期记 error 结果（fitness 0、star 0）。"""
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
         db_path = verify_client.app.state.db_path
         with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
@@ -193,7 +194,7 @@ class TestVerifyStreamEndpoint:
         self, verify_client: TestClient,
     ) -> None:
         """stream 端点返回 session_id，后台执行完成后 session 状态 completed。"""
-        from core.persistence.db_ext import get_verify_session
+        from core.persistence.repository.verify_session import get_verify_session
         db_path = verify_client.app.state.db_path
         with patch.object(_verify_route_module(), "_bt_engine_mod", _mocked_engine()), \
              patch("core.data.mtf_loader.load_and_prepare_df",
@@ -227,7 +228,7 @@ class TestVerifyStreamEndpoint:
         self, verify_client: TestClient, tmp_path: Path,
     ) -> None:
         """mark_failed 将 session 置 failed（B8.0 ① 取消路径的落库语义）。"""
-        from core.persistence.db_ext import get_verify_session
+        from core.persistence.repository.verify_session import get_verify_session
         from api.routes.strategies.verify import _VerifyProcessor
         from api.schemas import VerifyRequest, VerifyDateRange
         db_path = verify_client.app.state.db_path
@@ -315,7 +316,7 @@ class TestVerifyHistoryAndSessions:
              patch("core.scoring.scorer.compute_fitness",
                    side_effect=lambda *a, **kw: _fake_fitness()):
             verify_client.post("/api/strategies/verify", json=_payload())
-        from core.persistence.db_ext import list_verify_sessions
+        from core.persistence.repository.verify_session import list_verify_sessions
         session_id = list_verify_sessions(
             verify_client.app.state.db_path, limit=1,
         )[0]["session_id"]
@@ -331,7 +332,7 @@ class TestVerifyHistoryAndSessions:
 
     @staticmethod
     def _save_verify_result(db_path, result_id: str, session_id: str) -> None:
-        from core.persistence.db_ext import save_backtest_result
+        from core.persistence.repository.backtest_result import save_backtest_result
         save_backtest_result(
             db_path, result_id=result_id, strategy_id="strat-v1",
             symbol="BTCUSDT", timeframe="4h",
@@ -352,7 +353,7 @@ class TestVerifyHistoryAndSessions:
         旧实现（拉最新 500 条后内存过滤）返回 0 条静默丢失；
         DB 层过滤（session_id where）应返回 victim 全部 3 条。
         """
-        from core.persistence.db_ext import save_verify_session
+        from core.persistence.repository.verify_session import save_verify_session
         db_path = verify_client.app.state.db_path
         save_verify_session(
             db_path, session_id="sess-victim",
@@ -380,7 +381,7 @@ class TestVerifyHistoryAndSessions:
         self, verify_client: TestClient,
     ) -> None:
         """limit=500 防护上限保留：单 session 超 500 条时截断不炸。"""
-        from core.persistence.db_ext import save_verify_session
+        from core.persistence.repository.verify_session import save_verify_session
         db_path = verify_client.app.state.db_path
         save_verify_session(
             db_path, session_id="sess-big",

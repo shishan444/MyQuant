@@ -18,7 +18,8 @@ from tests.helpers.data_factory import make_dna, make_ohlcv  # noqa: E402
 
 @pytest.fixture
 def batch_db(tmp_path: Path) -> Path:
-    from core.persistence.db_ext import init_db_ext, save_strategy
+    from core.persistence.repository.strategy import save_strategy
+    from core.persistence.db_ext import init_db_ext
     db_path = tmp_path / "test_batch.db"
     init_db_ext(db_path)
     dna = make_dna(direction="long", leverage=1)
@@ -114,7 +115,7 @@ class TestBatchBacktestProcessorProcessStep:
         # finalize returns session-style payload with results aggregated
         assert "results" in result
         # a backtest_result row was written via save_backtest_result
-        from core.persistence.db_ext import list_backtest_results
+        from core.persistence.repository.backtest_result import list_backtest_results
         rows = list_backtest_results(batch_db, strategy_id="strat-1")
         assert len(rows) >= 1
 

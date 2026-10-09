@@ -19,7 +19,8 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.hypothesis_service import ResearchError, register_hypothesis
 from core.analysis.plugin_service import register_formula_plugin
 from core.analysis.validation_service import run_sandbox_backtest
-from core.persistence.db_ext import init_db_ext, save_strategy
+from core.persistence.repository.strategy import save_strategy
+from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA,
@@ -214,7 +215,7 @@ class TestTranslatedDraftAffectsSignals:
 
     def test_translated_draft_gate_matrix(self, db, data_dir):
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.db_ext import get_strategy
+        from core.persistence.repository.strategy import get_strategy
 
         register_formula_plugin(db, name="mom", expression="zscore(close, 20)")
         from core.analysis.registry_meta import available_signal_columns

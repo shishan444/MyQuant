@@ -103,7 +103,7 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
 
     # 先给假设一条 pass 验证记录（干净区间；策略先经直接构造）
     from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, ExecutionGenes
-    from core.persistence.db_ext import save_strategy
+    from core.persistence.repository.strategy import save_strategy
     dna = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
                                  "rsi_14", {"type": "lt", "threshold": 35})],
