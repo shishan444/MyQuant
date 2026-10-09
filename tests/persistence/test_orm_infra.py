@@ -247,6 +247,31 @@ class TestAlembicBaseline:
         assert conn.execute("SELECT COUNT(*) FROM strategy").fetchone()[0] == row_before
         conn.close()
 
+    def test_init_db_product_mixed_init_db_ext_no_column_clash(self, tmp_path: Path):
+        """TD-10 边界①修复锚（d069c7d）：init_db（ORM create_all）产物
+        为 head 全列形但无 alembic_version——stamp 分支的 head 形探测
+        使其直接 stamp head 短路，不再撞 duplicate column；数据保全、
+        二次幂等。"""
+        from core.persistence.db import init_db, save_task, get_task
+        from core.persistence.db_ext import init_db_ext
+        from core.strategy.dna import StrategyDNA
+
+        db = tmp_path / "mixed.db"
+        init_db(db)   # ORM create_all：head 全列形、无 alembic_version
+        save_task(db, "mix-001", 80.0, "profit_first", "BTCUSDT", "4h",
+                  StrategyDNA())
+
+        init_db_ext(db)   # 修复前：stamp b7c4e9a2f1d3+upgrade 撞列
+
+        assert get_task(db, "mix-001") is not None, "混用路径数据保全"
+        conn = sqlite3.connect(str(db))
+        ver = conn.execute("SELECT version_num FROM alembic_version").fetchall()
+        conn.close()
+        assert len(ver) == 1
+
+        init_db_ext(db)   # 二次幂等
+        assert get_task(db, "mix-001") is not None
+
     def test_adopt_legacy_db_stamps_head(self, tmp_path: Path):
         """接管流程：legacy 库（无 alembic_version）→ stamp head，schema 不动。"""
         from core.persistence.db_ext import init_db_ext
@@ -421,8 +446,10 @@ class TestDatasetMetaRepository:
         # - PK-notnull 怪癖：legacy 产物 PRAGMA 显示 0、链库渲染 1
         #   （SQLite TEXT/INTEGER PRIMARY KEY——仅声明位差异）
         # - max_drawdown_limit default：legacy ALTER 产物无 DEFAULT、
-        #   链定义 '0.10'——行为差（接管库新行 NULL vs 链库 0.10）
-        #   已报 developer 定性
+        #   链定义 '0.10'——行为差（接管库新行 NULL vs 链库 0.10）。
+        #   已裁留档不修（TD-10 边界②）：消费方全链 NULL 容忍实证
+        #   （evaluation.py:63 `or 0.30` 缺省 / scorer.py:253/263/267
+        #   显式 None 分支）——改存量库 DDL 超本战役范围
         _DEFAULT_DIFF = {"evolution_task.max_drawdown_limit"}
         for t in sorted(sb):
             missing = set(sb[t]) - set(sa.get(t, {}))
