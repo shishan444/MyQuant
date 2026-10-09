@@ -76,7 +76,7 @@
 
 ### B4 · kernel 私有名公共化（analysis 战台账项）
 
-1. **问题**：`_p_value_for` / `_mask_for` / `MtfEvalContext` 等 condition_kernel 私有名被六模板+case_inspection 共七处跨模块 import（condition_stats.py:132 / precheck_hypothesis.py:46 / event_study.py:62 / param_sweep.py:38 / regime_split.py:20 / screen_patterns.py:136 / case_inspection.py:61——2026-10-08 验真复核，0.3.2-0.3.5 新模板各带一处，原记「四个模板」已滞后）——Python 反模式，已有固化先例（CARD-08 实施时按一致性接受）。
+1. **问题**：`_p_value_for` / `_mask_for` / `MtfEvalContext` 等 condition_kernel 私有名被六模板+case_inspection 共七处跨模块 import（2026-10-09 0.3.7 战实测最终为 19 文件 100+ 处——含 core/analysis 7 处与 tests 面；**已清账**：CARD-07 engine_for 公共化上提，8aa849f）——Python 反模式，已有固化先例（CARD-08 实施时按一致性接受）。
 2. **方案**：一次性公共化改名（私有名→公开名或提供公开别名），四消费方同步。
 3. **作用**：消除"跨模块引用私有名"的风格债，未来 kernel 演进不再受限。
 4. **影响**：纯改名重构零行为面，特征网护航。
@@ -333,6 +333,17 @@
 
 ---
 
+## J 组 · 0.3.7 战移交给 0.3.6 的在案线索（2026-10-09，security 专项②完整研究+用户裁决落档）
+
+> 来源：0.3.7 收尾战（persistence-research-closing）security S-1 审查转出观察，经用户裁决（2026-10-09「必须完整研究后添加到 0.3.6」）由 security 完成只读研究落档。前置定性：**run() 守护循环系未接线的生产壳**（全库无 LiveTradingRunner 实例化，api/routes/live_trading.py 头注释自认接线属集成层后续）——以下全部为「接线后即活」的潜伏缺陷，当前零运行时影响；约束背景 demo mode+单机（虚拟资金）。
+
+| # | 项 | 研究结论（security 报告 2026-10-09） | 处置 |
+|---|---|---|---|
+| J1 | live runner error 态守护循环（core/live_trading/runner.py:150-164） | `while True` 无退出条件、status 只写不读（error 粘性）；影响面按资金严重度：①风控熔断不停交易（RiskViolation 落 except Exception 写 error 后循环继续，daily_loss_limit「当日停止」语义未实现——executor.py:58 契约明文要求停止）②裸仓位窗口（_attach_sl_tp 失败无补救）③异常 bar 决策静默丢失（last_bar_time 赋值在 sync/execute 前，:118→:116 去重跳过）④heartbeat 无判活消费方（对照 evolution/paper 域均有 recover_stale_*）。**修复方向推荐组合（security）：D RiskViolation 专捕即停（最高优先）+B' 连续异常计数阈值停+C 恢复写回**（A DB 控制通道/B 单次即停已否决——理由在案）；E stop_event 接线属集成层正道，与 D/B'/C 不冲突 | 0.3.6 live_trading 首审必挖面（接线前必修级）；修复面=run() 单函数+接线时补循环测试 |
+| J2 | 平仓被日亏损熔断拦截（core/live_trading/risk_guard.py:91 邻近，J1 研究连带发现） | risk_guard 规则 1（日亏损）/2（频率）对所有 action 生效，仅规则 3/4 限开仓——日亏损熔断把止损平仓单一并拦掉，持仓挂着继续亏（:91 注释自述「平仓是降风险」但规则未豁免）——风控设计层缺陷 | 独立登记：check_order 规则 1/2 对 CLOSE action 豁免，修复面独立于 J1，随 0.3.6 一并 |
+
+---
+
 ## E 组 · 无需行动（说明在案）
 
 - **macd_histogram 裸名留白**：不可达名放行是设计留白（冒充不了真指标列——真列名恒带参数段或 pattern_ 前缀），刻意未锚死。
@@ -368,3 +379,5 @@
 | 2026-10-06 | 0.3.4 假设预检器交付呈批（含 clear-analysis-tds 审查战） | 批准合并 | 已合并 main 8d6f8f2；G3/G11 清账（预检器模块落地+登记自动挂接） |
 | 2026-10-07 | 0.3.5 事件驱动形制交付呈批（实施 20/20+第十一战 8 卡+六步闸门 4899+e2e 64） | 批准合并 | 已合并 main 28e7efc（--no-ff，含审查战 fe0e406；48 文件 +5856/−986）；G14 清账；H 组 8 项登记；openspec 归档+trigger-policy 主 spec 新建 |
 | 2026-10-08 | 债务登记唯一化（TD-N 原稿未偿项迁入 I 组+三件归档）与登记册真实性验真战（team3 十二战：60 项对拍——属实 42/部分属实 17/失实 1） | 批准执行（唯一化为用户指令；验真战用户指令） | 唯一化已提交 84e1bbc；验真修正本批落档（23 卡：G 组清账回填/TD-6 已偿还/TD-11 改性质/F2 残余 1 处/B4×7/B6×15/H6×21 等+姊妹篇四处同步） |
+| 2026-10-09 | 0.3.7 收尾战交付重呈批（含翻案五条：TD-10 直接迁移三轨归一/专项①泄露收口禁遗留/TD-09 研究/TD-08 随之消亡/专项② J 组落档 0.3.6） | 批准合并 | 已合并 main cc5df5b（--no-ff，127 文件 +2887/-1768）；TD-10 三轨归一（legacy_init 退役 1198 行+alembic 单轨+db_ext 95 行纯入口）；TD-09 研究关闭（uuid4 不可达实证）；J 组两条目落档；终验全量 5099+e2e 64+覆盖率改动面全 ≥98% |
+| 2026-10-09 | 0.3.6 前置线索：live runner error 态守护循环+平仓熔断豁免（专项②完整研究） | 登记为 0.3.6 必挖面 | 已登记（本文档 J 组 J1/J2——security 完整研究：未接线生产壳定性+D+B'+C 修复方向推荐） |
