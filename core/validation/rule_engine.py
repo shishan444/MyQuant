@@ -8,6 +8,7 @@ entry/exit 条件掩码（复用 validation.engine 的 _evaluate_conditions
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -23,6 +24,8 @@ from core.validation.engine import (
     _resolve_target,
 )
 from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from core.analysis.condition_kernel import MtfEvalContext
@@ -166,7 +169,12 @@ def evaluate_rules(
                     base_tf_minutes, tf_minutes_map,
                 )
         except Exception as exc:
-            warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
+            # 异常原文只进日志不回传（engine.py CARD-05 同款取舍：
+            # 异常文本形态不可控，warnings 面向客户端固定分类文案）
+            logger.warning(
+                "MTF 数据装载失败，回退单周期求值: %r", exc, exc_info=exc)
+            warnings.append(
+                "MTF data loading failed, falling back to single timeframe")
 
     # ------------------------------------------------------------------
     # 4. 进出场条件求值
