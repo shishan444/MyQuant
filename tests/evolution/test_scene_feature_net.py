@@ -1230,6 +1230,36 @@ class TestRunSceneVerificationFeature:
         assert result.total_triggers == 0
         assert any("MTF loading failed" in w for w in result.warnings)
 
+    def test_mtf_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+        """专项① leak-free 锚：警告固定文案「MTF loading failed」
+        （无 fallback 宣称——scene_engine 失败即返回空结果，文案如实）
+        +异常原文只进日志不回传。caplog 经 root 传播捕获（scene_engine
+        模块存在裸名加载身份，logger 名不恒定——不指定 logger 名）。
+        """
+        import logging
+        from core.validation.scene.scene_engine import run_scene_verification
+        data_dir = self._write_parquet(tmp_path)
+        secret = "boom /internal/secret/scene.db"
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError(secret)
+
+        with patch("core.validation.mtf.load_mtf_data", side_effect=_boom), \
+             patch(
+                 "core.validation.scene.scene_engine.compute_all_indicators",
+                 side_effect=lambda df: df,
+             ), caplog.at_level(logging.WARNING):
+            result = run_scene_verification(
+                symbol="TESTUSDT", timeframe="4h",
+                scene_type="cross_timeframe", data_dir=data_dir,
+            )
+        assert result.warnings == ["MTF loading failed"], "固定文案（无 fallback）"
+        assert result.total_triggers == 0, "失败即空结果如实"
+        assert all(secret not in w for w in result.warnings), "原文不得回传"
+        mtf_logs = [r for r in caplog.records
+                    if "MTF" in r.getMessage() and secret in r.getMessage()]
+        assert mtf_logs and mtf_logs[0].exc_info, "日志须带原文与堆栈"
+
     def test_run_cross_timeframe_mtf_merge_success(self, tmp_path):
         """现状记录：MTF 成功路径——高周期指标合并后交由检测器扫描。"""
         from core.validation.scene.scene_engine import run_scene_verification

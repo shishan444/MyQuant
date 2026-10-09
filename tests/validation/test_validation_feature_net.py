@@ -855,6 +855,45 @@ class TestEvaluateRules:
         assert any("Data file not found" in w for w in result.warnings)
         assert result.win_rate is None  # 零交易为缺失语义
 
+    def test_mtf_load_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+        """专项① leak-free 锚：装载失败警告固定文案（engine.py CARD-05
+        同构）——异常原文只进日志不回传；rule_engine 失败后回退单周期
+        继续求值（「falling back」文案如实）。
+
+        patch 点为消费者模块名（rule_engine 模块级 from-import，与
+        engine.py 函数内延迟 import 的 patch 点不同）。
+        """
+        import logging
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.analysis.condition_kernel import MtfEvalContext
+        from core.validation.rule_engine import evaluate_rules
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        ctx = MtfEvalContext(
+            data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h")
+        secret = "boom /internal/secret/rule.db"
+        with patch("core.validation.rule_engine.load_mtf_data",
+                   side_effect=RuntimeError(secret)), \
+             caplog.at_level(logging.WARNING):
+            result = evaluate_rules(
+                "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+                entry_conditions=[{"subject": "close", "action": "lt",
+                                   "target": 105, "timeframe": "1d"}],
+                exit_conditions=[{"subject": "close", "action": "gt",
+                                  "target": 100}],
+                data_dir=str(tmp_path), mtf=ctx,
+            )
+        assert "MTF data loading failed, falling back to single timeframe" \
+            in result.warnings, "固定分类文案（专项①）"
+        assert all(secret not in w for w in result.warnings), \
+            "异常原文不得回传客户端"
+        mtf_logs = [r for r in caplog.records
+                    if r.name.endswith("rule_engine") and "MTF" in r.getMessage()]
+        assert mtf_logs and secret in mtf_logs[0].getMessage(), \
+            "日志须携带异常原文"
+        assert mtf_logs[0].exc_info, "日志须带堆栈"
+
     def test_empty_parquet_returns_warning(self, tmp_path):
         from core.validation.rule_engine import evaluate_rules
         empty = pd.DataFrame(
