@@ -1,9 +1,9 @@
-"""db_ext：初始化入口 + CRUD 兼容 re-export 过渡一版（TD-10 终态）。
+"""db_ext：库初始化入口（TD-10 终态）。
 
 init_db_ext（保名换芯：alembic stamp/upgrade——版本演进唯一权威
 为 Alembic 版本链，legacy ALTER 轨已退役删除）与 _connect（测试库
-直连工具）为本模块实体职责。生产调用方已全部直连 repository.*；
-下方 CRUD re-export 仅供 tests/ 过渡（tests 域逐步切换后整块删除）。
+直连工具）为本模块全部实体职责。CRUD 访问一律直连
+core.persistence.repository.*（生产与 tests 均已切换完成）。
 """
 from __future__ import annotations
 
@@ -93,34 +93,3 @@ def init_db_ext(db_path: Path) -> None:
     command.upgrade(cfg, "head")
     if stamped:
         logger.info("存量库已升级至 alembic head（保数据零重建）")
-
-
-# ===================================================================
-# CRUD re-export 过渡一版（TD-10 步骤 3）：生产调用方已直连
-# repository.*（13 文件切换完成）；本块仅供 tests/ 存量 import
-# 兜底——tests 域切换完成后整块删除
-# ===================================================================
-
-from core.persistence.repository.backtest_result import (  # noqa: F401
-    get_backtest_result, list_backtest_results, save_backtest_result,
-)
-from core.persistence.repository.dataset_meta import (  # noqa: F401
-    delete_dataset, get_dataset, list_datasets, save_dataset_meta,
-    update_dataset_stats,
-)
-from core.persistence.repository.paper_trading import (  # noqa: F401
-    compute_trading_metrics, count_paper_trades, count_paper_trading_tasks,
-    delete_paper_trading_task, get_paper_trading_task,
-    list_equity_snapshots, list_paper_trades, list_paper_trading_tasks,
-    save_equity_snapshots, save_paper_trade, save_paper_trading_task,
-    update_paper_trading_task,
-)
-from core.persistence.repository.strategy import (  # noqa: F401
-    count_strategies, count_strategies_by_tasks, delete_strategy,
-    find_by_gene_signature, get_strategy, list_strategies, save_strategy,
-    update_strategy,
-)
-from core.persistence.repository.verify_session import (  # noqa: F401
-    get_verify_session, list_verify_sessions, save_verify_session,
-    update_verify_session,
-)
