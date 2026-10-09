@@ -73,10 +73,22 @@ def init_db_ext(db_path: Path) -> None:
         finally:
             conn.close()
         if has_business_tables and not on_alembic:
-            command.stamp(cfg, _LEGACY_TERMINAL_REVISION)
+            # stamp 目标探测：ORM create_all 形库（init_db 产物）为 head
+            # 全列形，直接 stamp head（upgrade 短路）；legacy 轨产物为
+            # b7c4e9a2f1d3 终态形，stamp 后由 upgrade 补链。不探测则对
+            # 全列库 ADD COLUMN 撞 duplicate column（混用形态防御——
+            # tests 的 init_db fixture 即此路径）
+            conn2 = _sqlite3.connect(str(db_path))
+            try:
+                is_head_shape = conn2.execute(
+                    "SELECT COUNT(*) FROM pragma_table_info('validation_records') "
+                    "WHERE name='segmentation'").fetchone()[0] > 0
+            finally:
+                conn2.close()
+            target = "head" if is_head_shape else _LEGACY_TERMINAL_REVISION
+            command.stamp(cfg, target)
             stamped = True
-            logger.info("legacy 轨存量库 stamp 至 %s（版本演进权归 Alembic）",
-                        _LEGACY_TERMINAL_REVISION)
+            logger.info("存量库 stamp 至 %s（版本演进权归 Alembic）", target)
 
     command.upgrade(cfg, "head")
     if stamped:
