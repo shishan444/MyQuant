@@ -370,10 +370,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def query_indicator(
             symbol: str, timeframe: str,
-            indicator: str,
+            indicator: Optional[str] = None,
             params: Optional[Dict[str, Any]] = None,
             reductions: Optional[list[str]] = None,
             start: Optional[str] = None, end: Optional[str] = None,
+            groups: Optional[list[dict[str, Any]]] = None,
             ) -> Dict[str, Any]:
         """指标读数（第③步检查④——参数是策略的一部分）：单指标任意
         参数现算，归约摘要直答「该参数下指标在这段数据上什么样子」。
@@ -385,10 +386,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         列独立归约；个别列冷启动未完成时该列归约为 null（键保留）。
         求值域 [effective_start, end]（end 缺省=数据末端），warmup 段
         不入归约。用法：登记假设前读数定阈值——RSI(38) 与 RSI(14)
-        的分布形态不同，阈值不该凭常识硬编码。"""
+        的分布形态不同，阈值不该凭常识硬编码。
+        批量形制（0.4.1）：groups=[{indicator, params?, reductions?,
+        start?, end?}] 与单组字段（indicator/params/reductions/start/
+        end）互斥（同传 422 指明互斥对）；组数 1..8；各组区间独立、
+        返回 {"groups":[…]}（数组序=请求序）；整批原子含执行期——
+        任一组失败整批 422 无部分结果（detail 以 groups[N] 指明组序）；
+        载荷分档：单组 2048 / 批量 16384 字节。"""
         body: Dict[str, Any] = {
-            "symbol": symbol, "timeframe": timeframe,
-            "indicator": indicator}
+            "symbol": symbol, "timeframe": timeframe}
+        if groups is not None:
+            body["groups"] = groups
+        else:
+            body["indicator"] = indicator
         if params is not None:
             body["params"] = params
         if reductions is not None:

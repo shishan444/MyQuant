@@ -129,3 +129,147 @@ class TestNonResearchErrorPassthrough:
         resp = api_client.post("/api/research/query-indicator", json=_payload())
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+
+
+def _batch_payload(groups, **extra):
+    """批量形制载荷（不含单组专属键——互斥契约）。"""
+    p = {"symbol": SYMBOL, "timeframe": "1d", "groups": groups}
+    p.update(extra)
+    return p
+
+
+class TestBatchQueryIndicator:
+    """批量读数（0.4.1 R1 任务 2.1-2.3，B1 用例组）。"""
+
+    @staticmethod
+    def _wire(client, env):
+        client.app.state.db_path = env["db"]
+        client.app.state.data_dir = env["data_dir"]
+
+    def test_batch_matches_single_requests_in_order(self, api_client, q_env):
+        """批量-单请求一致（≥3 组，请求序为键）+ 独立直算防双错
+        （抽一组经 _compute_indicator+numpy 独立核算 p50）。"""
+        self._wire(api_client, q_env)
+        batch = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI", "params": {"period": 38}},
+                    {"indicator": "EMA", "params": {"period": 50},
+                     "reductions": ["latest"]},
+                    {"indicator": "MACD", "reductions": ["quantiles"]}]))
+        assert batch.status_code == 200, batch.text
+        body = batch.json()
+        # groups 字段到达断言：返回数组形，不降级单组
+        assert list(body) == ["groups"]
+        assert len(body["groups"]) == 3
+
+        for i, g in enumerate(body["groups"]):
+            single = api_client.post("/api/research/query-indicator", json=_payload(
+                indicator=g["indicator"],
+                params=(g["params"] if g["indicator"] != "MACD" else None),
+                reductions=(["quantiles"] if g["indicator"] == "MACD"
+                            else (["latest"] if g["indicator"] == "EMA"
+                                  else None))))
+            assert single.status_code == 200, single.text
+            assert single.json() == g, f"组 {i} 与单请求不一致"
+
+        # 独立直算：RSI(38) 全量段 p50（不经被测服务）
+        import numpy as np
+        from core.features.indicators import _compute_indicator
+        df = q_env["df"]
+        cols = _compute_indicator(df, "RSI", {"period": 38})
+        # 求值域按时间轴切（effective_start=df.index[200]）后再 dropna——
+        # 与服务口径同（先切域后判空，非先 dropna 再切）
+        valid = cols["rsi_38"][df.index >= df.index[200]].dropna()
+        expected_p50 = float(np.percentile(valid.values, 50))
+        got = body["groups"][0]["reductions"]["rsi_38"]["quantiles"]["p50"]
+        assert got == pytest.approx(expected_p50, rel=1e-9)
+
+    def test_groups_and_single_fields_mutually_exclusive(self, api_client,
+                                                         q_env):
+        self._wire(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_payload(
+            indicator="RSI",
+            groups=[{"indicator": "RSI"}]))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "groups"
+        assert detail["detail"]["conflicting"] == ["indicator"]
+
+    @pytest.mark.parametrize(
+        ("groups", "kind"),
+        [([], "空数组"), ([{"indicator": "RSI"}] * 9, "9 组超限")],
+        ids=["空数组拒", "超上限拒"])
+    def test_group_count_domain(self, api_client, q_env, groups, kind):
+        self._wire(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=groups))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["legal_range"] == "1..8"
+
+    def test_atomic_reject_validation_phase(self, api_client, q_env):
+        """校验期整批原子：groups[1] 参数越界 → 整批 422 指明组序。"""
+        self._wire(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI"},
+                    {"indicator": "EMA", "params": {"period": 99999}}]))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["group"] == "groups[1]"
+
+    def test_atomic_reject_execution_phase(self, api_client, q_env):
+        """执行期整批原子：groups[1] start 早于数据起点 → warmup 不足
+        → 整批 422 无部分结果（组 0 不返回）。"""
+        self._wire(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI"},
+                    {"indicator": "RSI", "start": "2022-01-01"}]))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_WARMUP_INSUFFICIENT"
+        assert detail["detail"]["group"] == "groups[1]"
+        assert "groups" not in (resp.json() or {})
+
+    def test_per_group_ranges_independent(self, api_client, q_env):
+        """各组区间独立：同指标不同区间 → range.bars 不同。"""
+        self._wire(api_client, q_env)
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI",
+                     "start": "2024-01-01", "end": "2024-03-01"},
+                    {"indicator": "RSI",
+                     "start": "2024-01-01", "end": "2024-06-01"}]))
+        assert resp.status_code == 200, resp.text
+        bars = [g["range"]["bars"] for g in resp.json()["groups"]]
+        assert bars[0] < bars[1]
+
+    def test_payload_tier_mechanism(self, api_client, q_env, monkeypatch):
+        """载荷分档机制：monkeypatch 降阈触发拒绝（资源参数可调——
+        机制验证不依赖 16KB 构造）；两档常量值锚定 2048/16384。"""
+        from core.analysis import indicator_query as iq
+        assert iq._MAX_SERIALIZED_BYTES == 2048
+        assert iq._MAX_BATCH_SERIALIZED_BYTES == 16384
+        self._wire(api_client, q_env)
+        monkeypatch.setattr(iq, "_MAX_BATCH_SERIALIZED_BYTES", 200)
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI"}]))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["tier"] == "batch"
+        assert detail["detail"]["limit"] == 200
+
+    def test_zero_side_effect(self, api_client, q_env):
+        """零副作用：批量成功后 research_log 计数不变（Q2 同族）。"""
+        self._wire(api_client, q_env)
+        before = rr.count_research_log(q_env["db"]) \
+            if hasattr(rr, "count_research_log") else None
+        resp = api_client.post("/api/research/query-indicator", json=_batch_payload(
+            groups=[{"indicator": "RSI"}, {"indicator": "EMA",
+                                            "params": {"period": 50}}]))
+        assert resp.status_code == 200, resp.text
+        import sqlite3
+        with sqlite3.connect(q_env["db"]) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM research_log").fetchone()[0]
+        assert n == 0
