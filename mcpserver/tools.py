@@ -128,6 +128,23 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def union_balance(symbol: str, timeframe: str,
+                      hypothesis_id: str) -> Dict[str, Any]:
+        """判定并集余量查询（0.4.1 R4——本变更唯一新工具）：该假设的
+        已判区间清单、剩余可用区间与剩余可用时长。三参数必填（判定
+        并集是假设级账本）；假设不存在 404（前置存在性判定）；输出
+        {hypothesis_id, symbol, timeframe, judged[], remaining[],
+        remaining_bars}——remaining=数据目录实查范围（parquet 首尾 bar
+        完整时间戳直读，半开）−判定并集（先合并重叠/相邻再逐段差）；
+        remaining_bars=Σ floor(段时长/周期)（不足整 bar 残余丢弃——保守
+        计数）。零副作用只读；与隔离验证 RESEARCH_RANGE_OVERLAP 同一
+        账本两个出口——查询 remaining 段发起隔离验证不被重叠拒。"""
+        return api.get("/api/research/union-balance", params={
+            "symbol": symbol, "timeframe": timeframe,
+            "hypothesis_id": hypothesis_id})
+
+    @mcp.tool()
+    @tool_safe
     def get_market_snapshot(symbol: str, timeframes: Optional[str] = None,
                             as_of: Optional[str] = None) -> Dict[str, Any]:
         """时点行情快照（六步研究第①步固定入口）：多周期五维行情卡——
@@ -228,7 +245,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
-               get_market_snapshot,
+               get_market_snapshot, union_balance,
                list_hypotheses, get_hypothesis, get_research_log,
                get_analysis_task, get_validation_report, list_feature_requests):
         TOOL_TIERS["readonly"].add(fn.__name__)

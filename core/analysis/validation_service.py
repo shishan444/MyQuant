@@ -937,3 +937,93 @@ def run_staged_validation(
         "summary": summary,
         "judged_ranges": judged,
     }
+
+
+def query_union_balance(
+    db_path: Path, data_dir: Path, *,
+    symbol: str, timeframe: str, hypothesis_id: str,
+) -> Dict[str, Any]:
+    """判定并集余量只读查询（0.4.1 R4）——账本全貌/剩余区间/保守折算。
+
+    前置判定 ``get_hypothesis`` None → 404（judged_ranges_union 对不存在
+    假设静默返回空——查询方必须自判，不得以空清单伪装成功）。账本=
+    ``judged_ranges_union`` 直调（单一事实源，禁第二套汇总）。数据范围=
+    ``find_parquet`` 定位 + 首尾 bar 完整时间戳直读（不走 HTTP
+    available-sources——其时间边界日级 ``[:10]`` 截断精度不足以做区间
+    差集）；范围=``[首 bar, 尾 bar+1×TF)`` 半开与 judged 对齐。remaining=
+    数据范围−judged（先合并重叠/相邻再逐段差）；remaining_bars=Σ 每段
+    ``floor(段时长/TF_SECONDS)``（不足整 bar 残余丢弃——保守计数）。
+
+    零副作用：不落日志不写库（查询不是研究决策证据，与元数据查询
+    同级）；GET 语义天然幂等。两出口一致锚：查询 remaining 段发起隔离
+    验证不被 RESEARCH_RANGE_OVERLAP 拒（同一账本装配）。
+    """
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    from core.data.storage import load_parquet
+    from core.data.timeframes import TF_SECONDS
+
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is None:
+        raise ResearchError(
+            "RESEARCH_HYPOTHESIS_NOT_FOUND",
+            f"假设不存在: {hypothesis_id}",
+            status=404, detail={"hypothesis_id": hypothesis_id})
+    judged = judged_ranges_union(db_path, hypothesis_id)
+
+    path = find_parquet(data_dir, safe_symbol(symbol), timeframe)
+    if path is None:
+        raise ResearchError(
+            "RESEARCH_SYMBOL_NOT_FOUND",
+            f"无数据: {symbol} {timeframe}",
+            detail={"symbol": symbol, "timeframe": timeframe})
+    ts = load_parquet(path, columns=["timestamp"])
+    if ts is None or len(ts) == 0:
+        raise ResearchError(
+            "RESEARCH_SYMBOL_NOT_FOUND",
+            f"数据不可装载: {symbol} {timeframe}",
+            detail={"symbol": symbol, "timeframe": timeframe})
+    data_start, data_end = ts.index[0], ts.index[-1]
+
+    tf_seconds = TF_SECONDS[timeframe]
+    # 数据范围半开 [首 bar, 尾 bar+1×TF)——尾 bar 自身占一个完整周期
+    span_end = data_end + pd.Timedelta(seconds=tf_seconds)
+
+    def _parse(s: str) -> pd.Timestamp:
+        t = to_utc(pd.Timestamp(s))
+        return t.tz_localize("UTC") if t.tzinfo is None else t
+
+    # judged 并集（clamp 到数据范围后合并重叠/相邻，再逐段差集）
+    segs = sorted(
+        (max(_parse(r["start"]), data_start),
+         min(_parse(r["end"]), span_end))
+        for r in judged)
+    merged: list = []
+    for s, e in segs:
+        if e <= s:
+            continue  # 与数据范围无交（clamp 后空段）
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    remaining: list = []
+    cursor = data_start
+    for s, e in merged:
+        if s > cursor:
+            remaining.append((cursor, s))
+        cursor = max(cursor, e)
+    if cursor < span_end:
+        remaining.append((cursor, span_end))
+
+    remaining_bars = sum(
+        int((e - s).total_seconds() // tf_seconds)
+        for s, e in remaining)
+    return {
+        "hypothesis_id": hypothesis_id,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "judged": judged,
+        "remaining": [
+            {"start": s.isoformat(), "end": e.isoformat()}
+            for s, e in remaining],
+        "remaining_bars": remaining_bars,
+    }

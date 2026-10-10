@@ -119,6 +119,31 @@ def random_window_test(
         raise research_error_to_http(exc) from exc
 
 
+@router.get("/union-balance")
+def union_balance(
+    symbol: str,
+    timeframe: str,
+    hypothesis_id: str,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """判定并集余量查询（0.4.1 R4）：已判区间/剩余可用区间/保守折算。
+
+    三参数必填（账本为假设级）；只读零副作用（不落日志不写库——查询
+    不是研究决策证据）；假设不存在 404 前置判定（不以空清单伪装成功）；
+    数据范围按 parquet 首尾 bar 完整时间戳直读（半开 [首 bar, 尾
+    bar+1×TF)）。与隔离验证的重叠拦截同一账本两出口——查询 remaining
+    段发起隔离验证不被拒。
+    """
+    try:
+        require_known_timeframe(timeframe, "timeframe")
+        return vs.query_union_balance(
+            db_path, data_dir,
+            symbol=symbol, timeframe=timeframe, hypothesis_id=hypothesis_id)
+    except ResearchError as exc:
+        raise research_error_to_http(exc) from exc
+
+
 @router.get("/validation/{strategy_id}/report")
 def validation_report(
     strategy_id: str,
