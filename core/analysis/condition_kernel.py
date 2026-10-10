@@ -9,9 +9,14 @@ multi-timeframe-conditions（0.2.14）：``mask_for`` 加 ``mtf`` 上下文
 参数与掩码投影三分派（高周期条件整条件在高周期轴求值、布尔掩码按
 asof_completed 投影）；额外键全量透传修复既有三键重建静默丢键缺陷。
 
+add-research-analysis-tools（0.4.1）：``mask_for_all`` 条件数组交集
+（逐条 ``mask_for`` 后 AND）——三分析模板组合条件共用，高周期条目
+经 ``MtfEvalContext`` 缓存零重算。
+
 消费者：screen_patterns / param_sweep / regime_split / event_study /
 inspect_cases / validation engine / rule_engine（改动须按 tests/README
-守护清单回归全部消费者）。
+守护清单回归全部消费者）；mask_for_all 消费者=condition_stats /
+event_study / counter_profile（0.4.2 组合求值后续共用）。
 """
 from __future__ import annotations
 
@@ -152,6 +157,34 @@ def mask_for(
             detail={"timeframe": tf_key, "base_timeframe": mtf.base_tf}
         ) from exc
     return _mask_higher(work, condition, mtf, tf_key)
+
+
+def mask_for_all(
+    work: pd.DataFrame, conditions: List[Dict[str, Any]],
+    mtf: Optional[MtfEvalContext] = None,
+) -> pd.Series:
+    """条件数组交集掩码（0.4.1 R2 S1——逐条 mask_for 后按位 AND）。
+
+    公共契约：condition_stats / event_study / counter_profile 三模板
+    与 0.4.2 组合求值共用。带 timeframe 键条目各自走投影路径
+    （``MtfEvalContext`` 惰性缓存 + ``__mtf_mask_*`` 幂等列天然去重，
+    同请求多条件共用零重算）；AND 结果不缓存（每请求一次求值无重复
+    场景）。内核自洽锚：mask_for_all([c]) 与 mask_for(c) 逐位一致
+    （单条 AND 数学恒等，差异仅在装载路径——键形制判据 D9）。
+
+    长度 1 包装与条数校验（空/>5）不在内核——路由/模板入口与参数
+    校验层职责（空数组到达本函数属调用方接线缺陷，按内部不变量
+    ValueError 拒绝而非外部 422 语义）。
+    """
+    if not conditions:
+        raise ValueError(
+            "mask_for_all 收到空 conditions（条数校验归路由/校验层——"
+            "调用方接线缺陷）")
+    result: Optional[pd.Series] = None
+    for condition in conditions:
+        mask = mask_for(work, condition, mtf=mtf)
+        result = mask if result is None else (result & mask)
+    return result
 
 
 def _classify_target_ref(target) -> Tuple[str, Optional[Dict[str, Any]]]:

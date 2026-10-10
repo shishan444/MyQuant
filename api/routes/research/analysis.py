@@ -79,12 +79,19 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
 
 def _load_with_condition_refs(
     data_dir: Path, rng: Dict[str, str],
-    indicator: str, condition: Dict[str, Any],
+    indicator: Optional[str] = None,
+    condition: Optional[Dict[str, Any]] = None,
+    conditions: Optional[list] = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
     两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
     计入前扩；strict=True 不可解析 target 结构化拒绝）后前扩装载，
     统计段切回请求区间。
+
+    0.4.1 R2 S2 多条件形制：conditions 数组（含长度 1——键形制判据
+    D9，统一走前扩并集装载）时 warm_names=Σ 逐条 collect_condition_refs
+    (strict=True)；顶层 indicator 可选（有则并入——condition_stats
+    新形制下转可选）。单条件形制（indicator+condition）逐字节不变。
 
     strict=True 单点化于此：未来新模板分支经本函数装载即不可能
     遗漏「装载必须 strict」纪律。eval_start 接线已随 TD-7（0.3.7）
@@ -94,8 +101,13 @@ def _load_with_condition_refs(
     from core.analysis.condition_kernel import collect_condition_refs
     from core.analysis.warmup_loader import load_with_warmup
 
-    warm_names = [indicator] + [
-        ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    warm_names: list = [indicator] if indicator else []
+    if condition is not None:
+        warm_names += [
+            ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    for c in conditions or []:
+        warm_names += [
+            ind for ind, _ in collect_condition_refs(c, strict=True)]
     return load_with_warmup(
         data_dir, rng["symbol"], rng["timeframe"],
         rng["start"], rng["end"], warm_names)
@@ -115,33 +127,89 @@ def _require_known_indicator(name: str) -> None:
                     "legal_range": "注册表指标名（list_indicators 查询）"})
 
 
-# 模板必填键声明表（卡1/D5 统一口径：_TEMPLATES 8 模板中 6 模板共 11
-# 必填键；screen_patterns/regime_split 无必填键零成本通过——模板签名
-# 变更须同步本表）。消灭 _run_template 分支内裸下标族（G1/C-α）：
-# 缺键结构化 422（detail 点名键+legal_form），不让 KeyError 裸穿。
+# 模板必填键声明表（卡1/D5 统一口径；0.4.1 R2 键组扩展）：值=键组
+# 元组——单组模板恰好一组（组内键全必填，缺键 422 点名——形制与
+# 平铺时代逐字节一致）；多组模板（condition_stats/event_study）为
+# 二选一键组（旧组 condition(＋indicator＋params) ∥ 新组 conditions，
+# 任选其一、同传即拒——两形制装载语义不同，D9 键形制判据）。
+# screen_patterns/regime_split 无必填键零成本通过——模板签名变更
+# 须同步本表。消灭 _run_template 分支内裸下标族（G1/C-α）：缺键
+# 结构化 422（detail 点名键/组+legal_form），不让 KeyError 裸穿。
 _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
-    "condition_stats": ("indicator", "params", "condition"),
-    "distribution_compare": ("column", "group_a", "group_b"),
-    "correlation_scan": ("signal_column",),
-    "event_study": ("condition",),
-    "pattern_mining": ("as_of",),
-    "param_sweep": ("indicator", "condition"),
-    "precheck_hypothesis": ("when_conditions", "validate_range"),
+    "condition_stats": (("indicator", "params", "condition"), ("conditions",)),
+    "distribution_compare": (("column", "group_a", "group_b"),),
+    "correlation_scan": (("signal_column",),),
+    "event_study": (("condition",), ("conditions",)),
+    "pattern_mining": (("as_of",),),
+    "param_sweep": (("indicator", "condition"),),
+    "precheck_hypothesis": (("when_conditions", "validate_range"),),
 }
 
 
 def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
-    """模板必填键存在性前置校验（卡1）：缺键即结构化拒绝——只判
-    键缺不缺，值合法性归既有值校验链（最小差异，D3）。"""
-    for key in _TEMPLATE_REQUIRED_KEYS.get(template, ()):
-        if key not in p:
+    """模板必填键存在性前置校验（卡1；0.4.1 键组扩展）。
+
+    键组语义：单组模板组内缺键即结构化拒绝（只判键缺不缺，值合法
+    性归既有值校验链——最小差异 D3）；多组模板恰好一组完整——
+    多组同传 422 指明互斥、零组完整时若恰有一组被部分触及则按该组
+    点名缺键（形制与单组一致——调用意图可辨），否则 422 点名缺组。"""
+    groups = _TEMPLATE_REQUIRED_KEYS.get(template, ())
+    if not groups:
+        return
+    complete = [g for g in groups if all(k in p for k in g)]
+    if len(complete) > 1:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"params 键组互斥: {'+'.join(complete[0])} 与 "
+            f"{'+'.join(complete[1])} 不可同传（任选其一）",
+            detail={
+                "param": "+".join(complete[0]),
+                "legal_form": f"{template} 任选一组: {list(groups)}"})
+    if len(complete) == 1:
+        return
+    # 零完整组：恰有一组被部分触及 → 按该组点名缺键（单组同款形制）
+    touched = [g for g in groups if any(k in p for k in g)]
+    if len(groups) == 1 or len(touched) == 1:
+        group = touched[0] if len(touched) == 1 else groups[0]
+        for key in group:
+            if key not in p:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"params 缺必填键: {key}",
+                    detail={
+                        "param": key,
+                        "legal_form": f"{template} 必填 {group}"})
+    raise ResearchError(
+        "RESEARCH_PARAM_INVALID",
+        f"params 缺必填键组: {template} 须任选一组 {list(groups)}",
+        detail={
+            "param": "condition|conditions",
+            "legal_form": f"{template} 必填键组任选一: {list(groups)}"})
+
+
+def _validate_conditions_array(conditions: Any) -> None:
+    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
+    装载前）。
+
+    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
+    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
+    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
+    三键结构，hypothesis_service 登记链同款）。"""
+    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
+        actual = (len(conditions) if isinstance(conditions, list)
+                  else type(conditions).__name__)
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"conditions 条数须在 1..5（实际 {actual}）",
+            detail={"param": "conditions", "legal_range": "1..5"})
+    for i, c in enumerate(conditions):
+        if (not isinstance(c, dict)
+                or not all(k in c for k in ("subject", "action", "target"))):
             raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"params 缺必填键: {key}",
-                detail={
-                    "param": key,
-                    "legal_form": f"{template} 必填 "
-                                  f"{_TEMPLATE_REQUIRED_KEYS[template]}"})
+                "RESEARCH_CONDITION_INVALID",
+                f"conditions[{i}] 须含 subject/action/target",
+                detail={"param": f"conditions[{i}]",
+                        "legal_form": "{subject, action, target}"})
 
 
 def _with_derivatives_coverage(result: Dict[str, Any],
@@ -188,9 +256,9 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         mtf_ctx.eval_start = request_start
         return df, request_start
 
-    def _load_refs(indicator, condition):
+    def _load_refs(indicator, condition=None, conditions=None):
         df, request_start = _load_with_condition_refs(
-            data_dir, rng, indicator, condition)
+            data_dir, rng, indicator, condition, conditions)
         mtf_ctx.eval_start = request_start
         return df, request_start
 
@@ -256,6 +324,33 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
         # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
         # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
+        # 0.4.1 R2：conditions 键组分派（键形制判据 D9——旧组逐字节
+        # 冻结；conditions 含长度 1 统一走 S2 引用并集前扩装载 +
+        # mask_for_all 求值；顶层 indicator/params 转可选，有则并入
+        # warmup 预算与指标矩阵）
+        if "conditions" in p:
+            _validate_conditions_array(p["conditions"])
+            top_ind = p.get("indicator")
+            if top_ind is None:
+                if "params" in p:
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        "conditions 形制下 params 须与 indicator 同在或同缺",
+                        detail={"param": "params",
+                                "legal_form": "conditions[+indicator+params]"})
+            else:
+                _require_known_indicator(top_ind)
+            df, request_start = _load_refs(
+                top_ind, conditions=p["conditions"])
+            return _with_derivatives_coverage(condition_stats(
+                df, indicator=top_ind, params=p.get("params"),
+                conditions=p["conditions"], data_ranges=ranges,
+                request_start=request_start,
+                forward_bars=p.get("forward_bars", 24),
+                min_samples=p.get("min_samples", 30),
+                hypothesis_id=payload.hypothesis_id,
+                mtf=mtf_ctx,
+                trigger_policy=p.get("trigger_policy")).to_dict(), df)
         # indicator 值域前置（param_sweep 同款纪律——特征网实施暴露的
         # 补接：非法值经 derive_warmup 抛裸 KeyError 落 500，非缺键类
         # 参数错误应 422）
@@ -287,6 +382,21 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             forward_bars=p.get("forward_bars", 24),
             hypothesis_id=payload.hypothesis_id,
             trigger_policy=p.get("trigger_policy"))
+
+    if payload.template == "event_study" and "conditions" in p:
+        # 0.4.1 R2：event_study conditions 形式三件套（D9 键形制判据）——
+        # 前扩装载（S2 引用并集）+ request_start 切回 + warmup_bars 披露
+        # （披露键只在 conditions 形式 payload 存在；旧 condition 键走
+        # 下方 _load_df 普通装载——装载语义与 payload 键集冻结锚）
+        _validate_conditions_array(p["conditions"])
+        df, request_start = _load_refs(None, conditions=p["conditions"])
+        return _with_derivatives_coverage(event_study(
+            df, conditions=p["conditions"], window=p.get("window", 12),
+            data_ranges=ranges, min_events=p.get("min_events", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx,
+            trigger_policy=p.get("trigger_policy"),
+            request_start=request_start).to_dict(), df)
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":

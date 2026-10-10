@@ -63,9 +63,10 @@ def _series_stats(s: pd.Series) -> Dict[str, float]:
 def condition_stats(
     df: pd.DataFrame,
     *,
-    indicator: str,
-    params: Dict[str, Any],
-    condition: Dict[str, Any],
+    indicator: str | None = None,
+    params: Dict[str, Any] | None = None,
+    condition: Dict[str, Any] | None = None,
+    conditions: list[Dict[str, Any]] | None = None,
     data_ranges: list[dict[str, str]],
     forward_bars: int = 24,
     request_start: str | pd.Timestamp | None = None,
@@ -79,10 +80,17 @@ def condition_stats(
     Args:
         df: 含 OHLCV（及衍生品列，可选）的 DataFrame，DatetimeIndex UTC。
             路由路径下为 load_with_warmup 前扩装载结果（含 warmup 前缀）。
-        indicator: INDICATOR_REGISTRY 指标名（如 "EMA"）。
-        params: 指标参数（如 {"period": 50}）。
-        condition: {subject, action, target}；subject 可引用指标输出列
-            （命名形如 ema_50）或基础列（close/volume/open_interest...）。
+        indicator: INDICATOR_REGISTRY 指标名（如 "EMA"）。conditions 形制
+            下可选（有则并入 warmup 预算与指标矩阵；条内结构化 subject
+            自带指标现算）。
+        params: 指标参数（如 {"period": 50}）。conditions 形制下与
+            indicator 同在或同缺。
+        condition: {subject, action, target}（旧键形制——装载与求值
+            逐字节冻结锚，D9）；subject 可引用指标输出列（命名形如
+            ema_50）或基础列（close/volume/open_interest...）。
+        conditions: 条件数组（0.4.1 R2，AND 语义——求值走 mask_for_all，
+            装载走引用并集前扩；含长度 1 统一走本形制，键形制判据）。
+            与 condition 二选一。
         forward_bars: 前向持有期 N（bar 数），前向收益 = close(t+N)/close(t)-1。
         request_start: 请求区间起点。None 时统计段=全 df（向后兼容）；
             非 None 时 df 视为含 warmup 前缀的装载结果，统计段取
@@ -98,12 +106,19 @@ def condition_stats(
     from core.features.registry import INDICATOR_REGISTRY
     from core.validation.engine import _evaluate_single_condition
 
-    from core.analysis.templates.column_guard import require_indicator
-    require_indicator(indicator, INDICATOR_REGISTRY)
-    # 参数前置守卫（坏 params 从模板内 KeyError→failed 任务变 422——
-    # 复用读数通道的 D7 校验权威）
-    from core.analysis.indicator_query import validate_params
-    validate_params(indicator, params)
+    if (condition is None) == (conditions is None):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "condition 与 conditions 须二选一（键组分派在路由层——"
+            "直调方同样须遵守）",
+            detail={"param": "condition|conditions", "legal_form": "任选其一"})
+    if indicator is not None:
+        from core.analysis.templates.column_guard import require_indicator
+        require_indicator(indicator, INDICATOR_REGISTRY)
+        # 参数前置守卫（坏 params 从模板内 KeyError→failed 任务变 422——
+        # 复用读数通道的 D7 校验权威）
+        from core.analysis.indicator_query import validate_params
+        validate_params(indicator, params or {})
 
     # 持有期校验（TD-3.1 迁移 param_guard——输出形制与旧内联逐字节一致）
     _require_int_range(forward_bars, name="forward_bars",
@@ -120,8 +135,12 @@ def condition_stats(
     policy_norm = validate_policy(trigger_policy)
     require_bars_within(policy_norm, len(df), "trigger_policy")
 
-    # 指标计算（不改输入 df；全 df——含 warmup 前缀，保证指标收敛）
-    new_cols = _compute_indicator(df, indicator, dict(params))
+    # 指标计算（不改输入 df；全 df——含 warmup 前缀，保证指标收敛）；
+    # conditions 形制下顶层 indicator 可选（None 时条内结构化 subject
+    # 自带指标现算——mask_for 两段式）
+    new_cols = {}
+    if indicator is not None:
+        new_cols = _compute_indicator(df, indicator, dict(params or {}))
     work = df.copy()
     for col, series in new_cols.items():
         work[col] = series
@@ -129,9 +148,13 @@ def condition_stats(
     # 0.2.13：求值走 condition_kernel.mask_for（两段式内聚——结构化
     # subject 先 encode 精确列名再求值，字符串精确命中；fillna 降级同款）
     # 0.2.14：mtf 上下文透传——高周期条件（timeframe 键）走掩码投影
+    # 0.4.1 R2：conditions 形式走 mask_for_all 逐条 AND（统计链零改动）
     from core.analysis.condition_kernel import (
-        MtfEvalContext, mask_for, p_value_for, stat_window_mask)
-    mask = mask_for(work, condition, mtf=mtf)
+        MtfEvalContext, mask_for, mask_for_all, p_value_for, stat_window_mask)
+    if conditions is not None:
+        mask = mask_for_all(work, conditions, mtf=mtf)
+    else:
+        mask = mask_for(work, condition, mtf=mtf)
 
     # 统计段：request_start 之前的 warmup 前缀只用不算（共享掩码
     # 样板；req_ts 留供 warmup_bars 披露）
@@ -186,10 +209,22 @@ def condition_stats(
 
     # 当根收益（仅诊断用；非前向收益语义）
     ret = work["close"].pct_change()
+    # 0.4.1 R2：echo 形制随键组——旧键形制键序逐字节冻结；conditions
+    # 形式顶层 indicator/params 有则 echo（无则键不出现）
+    if conditions is not None:
+        echo: Dict[str, Any] = {}
+        if indicator is not None:
+            echo["indicator"] = indicator
+            echo["params"] = dict(params or {})
+        echo["conditions"] = [dict(c) for c in conditions]
+    else:
+        echo = {
+            "indicator": indicator,
+            "params": dict(params),
+            "condition": dict(condition),
+        }
     payload = {
-        "indicator": indicator,
-        "params": dict(params),
-        "condition": dict(condition),
+        **echo,
         "forward_bars": forward_bars,
         "hit_rate": (n_hit / n_total) if n_total else 0.0,
         "hit_count": n_hit,

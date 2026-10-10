@@ -252,6 +252,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split 无必填键。
+        condition_stats/event_study 支持 conditions 条件数组形制
+        （0.4.1）：与旧键组二选一（同传 422 指明互斥——condition_stats
+        旧组 indicator+params+condition ∥ 新组 conditions；event_study
+        旧组 condition ∥ 新组 conditions）；条数 1..5（AND 语义——全部
+        条件同时成立的时点才计入统计与事件流；空数组与超限 422 披露
+        条数域）；每条沿单条件混合形制（结构化指标对象/字符串列名，
+        含可选高周期 timeframe 键）。形制间边界差异：两形制在
+        condition_stats 上结果一致（存量本前扩装载）；在 event_study
+        上存在区间首段指标收敛性差异——旧键走普通装载（头部 bar 指标
+        为截断近似、payload 键集冻结无 warmup_bars 键），conditions
+        （含长度 1）统一走引用并集前扩装载（头部已收敛、payload 携带
+        warmup_bars>0 披露）；多条件 warmup 预算=全部条目指标引用的
+        并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
