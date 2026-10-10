@@ -91,9 +91,10 @@ HINTS: Dict[str, str] = {
     # 同 _SUPPORTED_ACTIONS 锚定 engine 惯例）；漂移防线在
     # tests/mcpserver/test_errors.py 的集合对拍断言（不一致即红）
     "RESEARCH_TEMPLATE_UNKNOWN":
-        "模板名不在九类之列：template ∈ condition_stats|distribution_compare|"
+        "模板名不在册：template ∈ condition_stats|distribution_compare|"
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
-        "param_sweep|regime_split|precheck_hypothesis",
+        "param_sweep|regime_split|precheck_hypothesis|segment_narrative|"
+        "counter_profile|exit_sweep",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",

@@ -73,6 +73,45 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   未完成该列为 null（键保留）。求值域 [effective_start, end]（end
   缺省=数据末端），warmup 段不入归约；序列不外发（报表压缩
   ≤2048 字节）；零写入零留痕（读数与元数据查询同级）。
+- **批量读数（0.4.1）**：query_indicator 可选 groups=[{indicator,
+  params?, reductions?, start?, end?}] 与单组字段互斥（同传 422）；
+  组数 1..8、各组区间独立、返回 {"groups":[…]}（请求序为键）；整批
+  原子含执行期（任一组失败整批 422 无部分结果，detail 以 groups[N]
+  指明组序）；载荷分档单组 2048 / 批量 16384 字节。
+- **组合条件（0.4.1）**：condition_stats/event_study 支持 conditions
+  条件数组（AND 语义，条数 1..5，每条混合形制含可选高周期
+  timeframe 键——掩码投影）。兼容锚=参数键形制：旧 condition 键
+  逐字节不变；conditions（含长度 1）统一走引用并集前扩装载
+  （warmup 预算=全部条目引用并集）；event_study 两形制存在首段
+  收敛性差异（旧键无 warmup_bars 披露键、conditions 有——详见
+  run_analysis 说明）。
+- **区间事件摘要（0.4.1 segment_narrative）**：输入区间输出时间线
+  事件清单（pattern_trigger/indicator_cross 封闭三对/band_position
+  三轨道进出/sustained_run 连续同向段）+结构统计；工程算事件 AI 读
+  事件——载荷无原始 OHLCV 行；双上限区间 ≤5000 bar、事件 ≤500 条；
+  默认事件源=注册表 trend/momentum/pattern 类+轨道族机械推导（不
+  入集类别披露，indicators 点名不受限）；留痕 analysis 型。
+- **判定并集余量查询（0.4.1 union_balance）**：只读查询某假设的
+  已判区间/剩余可用区间/保守折算剩余 bar 数（三参数必填；数据范围
+  按 parquet 首尾 bar 完整时间戳直读，半开）；与隔离验证重叠拦截
+  同一账本两出口——查询 remaining 段发起隔离验证不被拒；零副作用
+  不落日志；假设不存在 404。
+- **反例画像（0.4.1 counter_profile）**：条件触发自动分符合组
+  （窗口内任一时点实现方向预期——区间语义）/反例组，全指标特征
+  分布对比（八键；特征域=注册表默认参数全输出列减 guard_only/
+  lazy）按 Cohen's d 排序输出差异清单——工具只呈现差异不生成条件
+  （特征选择由 AI 做）；反例组 <30 标 insufficient 不拒、反例组 0
+  合法；总触发 <30 走既有小样本拒绝。
+- **退出参数扫描（0.4.1 exit_sweep）**：条件固定下按止损模式分组
+  扫退出参数网格（Σ≤50 组；模式合法集=引擎真实分派集引用式——
+  0.4.1={pct}），逐组独立回测（含费滑、与隔离验证同一执行链——
+  条件经翻译构造内存 DNA 不落库）输出五指标+三道门平台判定
+  （最差聚合全序 unsupported>spike>indeterminate>plateau，标尺内建
+  不可传；单轴长度 1 恒不成平台属判定语义）；校验期整批 422/执行
+  期单组容错（两期分野）；条件不支持 timeframe 键（翻译链防线
+  RESEARCH_NOT_EXPRESSIBLE——condition_stats/counter_profile 掩码
+  路径支持，能力域即此差异）；**本模板不挂假设**：留痕检查型不进
+  判定并集（检查不消耗验证区间）；组数 >10 走 202+轮询。
 - **分段验证**：run_staged_validation 按市场状态切段逐段独立回测
   （检查⑤分题型成绩单——「哪类行情不行」的正式度量，与随机窗口抽查
   互补：抽查答任意时段、分段答状态归因）。双模互斥：auto（0.2.7
