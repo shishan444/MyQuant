@@ -31,7 +31,7 @@ router = APIRouter()
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
               "regime_split", "precheck_hypothesis", "segment_narrative",
-              "counter_profile")
+              "counter_profile", "exit_sweep")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -147,6 +147,8 @@ _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
     "param_sweep": (("indicator", "condition"),),
     "precheck_hypothesis": (("when_conditions", "validate_range"),),
     "counter_profile": (("condition", "direction"), ("conditions", "direction")),
+    "exit_sweep": (("condition", "direction", "grid"),
+                   ("conditions", "direction", "grid")),
 }
 
 
@@ -191,6 +193,25 @@ def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
             "legal_form": f"{template} 必填键组任选一: {list(groups)}"})
 
 
+def _exit_sweep_group_count(params: Dict[str, Any]) -> int:
+    """exit_sweep 组数估计（heavy 判定输入——防御式：形制异常按 0，
+    参数合法性归模板校验确定序）。"""
+    try:
+        return sum(
+            len(e.get("stops") or []) * len(e.get("take_profits") or [])
+            for e in params.get("grid", {}).get("modes", []))
+    except (AttributeError, TypeError):
+        return 0
+
+
+def _exit_sweep_group_heavy(params: Dict[str, Any]) -> bool:
+    """组数维度 heavy 判定（0.4.1 6.6——组数 > 阈值走 202 句柄；阈值
+    资源参数可调，模板模块常量单点）。"""
+    from core.analysis.templates.exit_sweep import _EXIT_SWEEP_ASYNC_GROUPS
+
+    return _exit_sweep_group_count(params) > _EXIT_SWEEP_ASYNC_GROUPS
+
+
 def _validate_conditions_array(conditions: Any) -> None:
     """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
     装载前）。
@@ -233,8 +254,9 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
         condition_stats, counter_profile, correlation_scan,
-        distribution_compare, event_study, param_sweep, precheck_hypothesis,
-        regime_split, screen_patterns, segment_narrative, similar_at_time,
+        distribution_compare, event_study, exit_sweep, param_sweep,
+        precheck_hypothesis, regime_split, screen_patterns,
+        segment_narrative, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -367,6 +389,16 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             min_samples=p.get("min_samples", 30),
             hypothesis_id=payload.hypothesis_id,
             mtf=mtf_ctx).to_dict(), df)
+
+    if payload.template == "exit_sweep":
+        # 退出参数扫描（0.4.1 R6）：自装载模板壳（precheck 先例——
+        # 校验/回测/判定收敛在模板内）；heavy 判定的组数维度在
+        # run_analysis 入口（rows 维度天然继承）
+        return exit_sweep(
+            db_path, data_dir, rng,
+            condition=p.get("condition"), conditions=p.get("conditions"),
+            direction=p.get("direction"), grid=p.get("grid"),
+            hypothesis_id=payload.hypothesis_id)
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
@@ -592,6 +624,34 @@ def _log_precheck(
     )
 
 
+def _log_exit_sweep(
+    db_path: Path, payload: AnalysisRunRequest,
+    result: Dict[str, Any],
+) -> None:
+    """退出参数扫描留痕（0.4.1 R6——检查型，_log_sweep 同构先例）。
+
+    entry_type="exit_sweep" 不挂假设（hypothesis_id=None 不进判定并集
+    ——检查不消耗验证数据区间，param_sweep 先例同构）；ref_id 固定
+    "exit_sweep"；summary 携整体判定/稳健区间/网格规模/失败组清单。
+    exit_sweep 模板不另写 analysis 日志（本条已含区间登记语义）。
+    """
+    p = (result or {}).get("payload", {})
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="exit_sweep",
+        ref_id="exit_sweep",
+        data_ranges=json.dumps(
+            [payload.data_range.model_dump()], ensure_ascii=False),
+        summary=json.dumps({
+            "verdict": p.get("verdict"),
+            "robust_ranges": p.get("robust_ranges"),
+            "grid_groups": len(p.get("results", [])),
+            "failed_groups": len(p.get("failed_groups", [])),
+        }, ensure_ascii=False, default=str),
+    )
+
+
 def _log_result(
     db_path: Path, payload: AnalysisRunRequest, result: Dict[str, Any],
 ) -> None:
@@ -605,6 +665,8 @@ def _log_result(
         _log_sweep(db_path, payload, result)
     elif payload.template == "precheck_hypothesis":
         _log_precheck(db_path, payload, result)
+    elif payload.template == "exit_sweep":
+        _log_exit_sweep(db_path, payload, result)
     else:
         _log_analysis(db_path, payload)
 
@@ -671,7 +733,9 @@ def run_analysis(
             # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
             rows = len(_load_df(data_dir, payload.data_range.model_dump()))
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
-                 or rows > _HEAVY_ROWS)
+                 or rows > _HEAVY_ROWS
+                 or (payload.template == "exit_sweep"
+                     and _exit_sweep_group_heavy(payload.params)))
 
         if payload.template == "screen_patterns":
             # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；

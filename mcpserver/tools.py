@@ -262,7 +262,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile
+        counter_profile|exit_sweep
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
@@ -364,7 +364,30 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         skipped_features 披露）按判别力（Cohen's d）排序的差异清单
         ——工具只呈现差异不生成条件（特征选择由 AI 做；判别特征 ≤2
         属研究协议约束不写入工具）；反例组样本 <30 标 insufficient
-        不拒；反例组 0=全符合合法；总触发 <30 走既有小样本拒绝。"""
+        不拒；反例组 0=全符合合法；总触发 <30 走既有小样本拒绝。
+        exit_sweep 退出参数扫描（0.4.1 R6——本模板不挂假设：结果
+        三要素 hypothesis_id 被模板忽略，留痕检查型不进判定并集）：
+        params 必填 condition|conditions（二选一）+ direction（long/
+        short）+ grid={modes:[{mode, stops, take_profits}]}——网格按
+        止损模式分组（量纲随模式双关）；模式合法集=回测引擎真实分派
+        集引用式（0.4.1={pct}——atr/trail 422 披露「引擎未支持」；
+        0.4.2 扩分派后自动跟随）；stops 值域 pct 档 [0.005,0.20] 与
+        validator 现役域同源；止盈必填正值；跨模式 Σ(len(stops)×len
+        (take_profits)) ≤50；重复模式条目拒绝；校验期任何失败整批
+        422 无部分结果、执行期单组回测失败该组标注不阻塞（两期分野）；
+        不设 take_profit>stop_loss 约束（劣结构组按引擎真实行为回测
+        如实呈现、三道门自然判 ineffective）；条件 MUST NOT 携带
+        timeframe 键（翻译链防线 RESEARCH_NOT_EXPRESSIBLE——与
+        translate_hypothesis 同一公共入口；condition_stats/
+        counter_profile 掩码路径支持 timeframe，能力域差异即此）；
+        输出每组 {mode,stop_loss,take_profit,win_rate,profit_factor
+        （亏损笔数 0→null）,net_expectation（含费滑）,max_drawdown,
+        total_trades,status}+三道门整体判定（连续门直接复用
+        param_sweep 判定器；资格门交易数≥5/真伪门净期望>0；最差聚合
+        全序 unsupported>spike>indeterminate>plateau；判定标尺内建
+        不可传）；单轴长度 1 推论：固定止损只扫止盈时整体结论恒不超
+        过 spike（单点无法证明稳健——预期行为非可疑信号）；组数>10
+        或行数超阈值走 202+轮询。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

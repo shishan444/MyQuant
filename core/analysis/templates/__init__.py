@@ -1,4 +1,4 @@
-"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：参数化模板（0.4.1 增 segment_narrative/counter_profile）。
+"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：参数化模板（0.4.1 增 segment_narrative/counter_profile/exit_sweep）。
 
 模板是纯计算（DataFrame 输入 → AnalysisResult 输出），不做 IO、
 不感知 HTTP；数据装载由调用方（路由/编排层）完成。全部出口经
@@ -12,6 +12,7 @@ from core.analysis.templates.counter_profile import counter_profile
 from core.analysis.templates.correlation_scan import correlation_scan
 from core.analysis.templates.distribution_compare import distribution_compare
 from core.analysis.templates.event_study import event_study
+from core.analysis.templates.exit_sweep import exit_sweep
 from core.analysis.templates.pattern_mining import similar_at_time
 from core.analysis.templates.param_sweep import param_sweep
 from core.analysis.templates.precheck_hypothesis import precheck_hypothesis
@@ -25,6 +26,7 @@ __all__ = [
     "correlation_scan",
     "distribution_compare",
     "event_study",
+    "exit_sweep",
     "similar_at_time",
     "param_sweep",
     "precheck_hypothesis",

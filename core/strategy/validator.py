@@ -7,6 +7,11 @@ from typing import List
 
 from core.strategy.dna import StrategyDNA, SignalRole
 
+# 止损 pct 值域（0.4.1 R6 提升为模块级常量——exit_sweep 网格校验引用式
+# 消费，改域单点生效；原函数内字面等价替换，行为零变化）
+SL_PCT_MIN = 0.005
+SL_PCT_MAX = 0.20
+
 
 @dataclass
 class ValidationResult:
@@ -131,8 +136,8 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
 
     # Risk genes validation
     risk = dna.risk_genes
-    if not (0.005 <= risk.stop_loss <= 0.20):
-        errors.append(f"Stop loss {risk.stop_loss} out of range [0.005, 0.20]")
+    if not (SL_PCT_MIN <= risk.stop_loss <= SL_PCT_MAX):
+        errors.append(f"Stop loss {risk.stop_loss} out of range [{SL_PCT_MIN}, {SL_PCT_MAX}]")
 
     if risk.take_profit is not None and risk.take_profit <= risk.stop_loss:
         errors.append(f"Take profit ({risk.take_profit}) must be greater than stop loss ({risk.stop_loss})")
