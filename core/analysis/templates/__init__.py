@@ -1,4 +1,4 @@
-"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：九类参数化模板。
+"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：十类参数化模板（0.4.1 增 segment_narrative）。
 
 模板是纯计算（DataFrame 输入 → AnalysisResult 输出），不做 IO、
 不感知 HTTP；数据装载由调用方（路由/编排层）完成。全部出口经
@@ -16,6 +16,7 @@ from core.analysis.templates.param_sweep import param_sweep
 from core.analysis.templates.precheck_hypothesis import precheck_hypothesis
 from core.analysis.templates.regime_split import regime_split
 from core.analysis.templates.screen_patterns import screen_patterns
+from core.analysis.templates.segment_narrative import segment_narrative
 
 __all__ = [
     "condition_stats",
@@ -27,4 +28,5 @@ __all__ = [
     "precheck_hypothesis",
     "regime_split",
     "screen_patterns",
+    "segment_narrative",
 ]

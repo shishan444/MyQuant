@@ -244,8 +244,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
-        param_sweep|regime_split|precheck_hypothesis（重组走 202+task_id
-        轮询，响应含 poll 提示）。区间半开
+        param_sweep|regime_split|precheck_hypothesis|segment_narrative
+        （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
@@ -323,7 +323,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         ——两锚共用阈值与映射。预算口径与隔离回测 warmup.basis 同源
         同值（derive_warmup_full 两维式）；预算不足进报告不报错。预检
         不进判定并集（entry_type=precheck 不挂假设——预检过的区间仍可
-        用于隔离验证）。"""
+        用于隔离验证）。segment_narrative 区间事件摘要（0.4.1 R3，快
+        路径）：无必填键；可选 params.indicators 点名事件源指标清单
+        （任何在册指标——缺省走默认事件源=category∈{trend,momentum,
+        pattern} 全指标 default 参数+轨道族 {BB,Keltner,Donchian}，机械
+        推导；不入默认集类别 trend_strength/volume/structure/ml/
+        derivatives 在结果披露口径、显式点名不受限）——输出时间线
+        事件清单（四类：pattern_trigger 形态触发时点/indicator_cross
+        封闭交叉对 MACD(macd,signal)·Stochastic(k,d)·Aroon(up,down)
+        上/下穿/band_position close 进出轨道上下轨/sustained_run close
+        连续同向变动段）+结构统计（区间涨跌幅/波动区间/事件计数）；
+        载荷无原始 OHLCV 行；双上限：区间 ≤5000 bar（装载前）、事件
+        ≤500 条（提取后）；留痕 analysis 型（挂 hypothesis_id 则区间
+        进该假设判定并集，沿既有语义）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

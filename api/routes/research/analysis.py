@@ -30,7 +30,7 @@ router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
-              "regime_split", "precheck_hypothesis")
+              "regime_split", "precheck_hypothesis", "segment_narrative")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -230,7 +230,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     from core.analysis.templates import (
         condition_stats, correlation_scan, distribution_compare,
         event_study, param_sweep, precheck_hypothesis, regime_split,
-        screen_patterns, similar_at_time,
+        screen_patterns, segment_narrative, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -315,6 +315,31 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             request_start=request_start,
             hypothesis_id=payload.hypothesis_id,
             mtf=mtf_ctx).to_dict(), df)
+
+    if payload.template == "segment_narrative":
+        # 区间事件摘要（0.4.1 R3）：双上限之一在装载前——区间 bar ≤5000
+        # （index-only 计数既有设施）；warmup 覆盖事件源指标（默认集机械
+        # 推导或显式点名）；事件数 ≤500 上限在模板提取后组装前
+        from core.analysis.templates.segment_narrative import (
+            MAX_RANGE_BARS, default_source_names)
+        n_rows = _count_rows_index_only(data_dir, rng)
+        if n_rows > MAX_RANGE_BARS:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"区间 bar 数超上限: {n_rows} > "
+                f"{MAX_RANGE_BARS}（缩小区间）",
+                detail={"param": "data_range", "actual": n_rows,
+                        "limit": MAX_RANGE_BARS,
+                        "hint": "缩短区间或拆分为多次摘要"})
+        if p.get("indicators") is not None:
+            source_names = p["indicators"]
+        else:
+            source_names = default_source_names()
+        df, request_start = _load_warm(source_names)
+        return _with_derivatives_coverage(segment_narrative(
+            df, data_ranges=ranges, request_start=request_start,
+            indicators=p.get("indicators"),
+            hypothesis_id=payload.hypothesis_id).to_dict(), df)
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
