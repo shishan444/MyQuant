@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 from core.market_model import maintenance_threshold as _mm_threshold
 from core.market_model.liquidation import tier_arrays as _mm_tier_arrays
 
+# 0.4.1 Q1 裁决（add-research-analysis-tools）：引擎止损真实分派域。
+# 语义=引擎已实现的真实分派集（order_func_nb 恒按入场价 pct 语义执行
+# ——引擎不消费 sl_mode）；区别于 0.4.2（add-strategy-expressiveness）
+# 将建的声明域 SL_MODES。消费面纪律：exit_sweep 模式校验只 import
+# 此常量、禁引声明域常量；0.4.2 实施引擎分派（其 tasks 3.1/3.2）时
+# 同步扩展至 ("pct", "atr", "trail")。
+ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct",)
+
 
 @dataclass
 class BacktestResult:

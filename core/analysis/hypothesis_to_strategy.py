@@ -57,6 +57,60 @@ def _plugin_signal_columns(db_path: Path) -> Dict[str, str]:
     }
 
 
+def build_signal_genes(
+    when_conditions: List[Dict[str, Any]],
+    then_conditions: List[Dict[str, Any]],
+    db_path: Path,
+) -> tuple[List, List[Dict[str, Any]]]:
+    """不落库纯翻译入口（0.4.1 S4）——条件组 → (内置基因, 插件源)。
+
+    timeframe 防线与翻译能力同点权威单源：防线循环自 translate_
+    hypothesis 原形搬入（两组遍历、错误码/detail/field 命名逐字保持
+    ——消费侧自建校验被否：第二套防线漂移风险），再分别调
+    _translate_conditions（ENTRY_TRIGGER/EXIT_TRIGGER）。
+    translate_hypothesis（落库产 draft）与 exit_sweep（构造内存 DNA
+    不落库）为两消费方——禁止第二套条件→信号基因逻辑。
+
+    不落库、不查假设、不产 draft；THEN 空=空基因列表放行（离场全靠
+    risk_genes——translate_hypothesis 既有先例）；插件列条件自然
+    透传（不被新拒绝面拦）。
+    """
+    from core.strategy.dna import SignalRole
+
+    # 多周期假设拒绝（0.2.14 Q3=a）：timeframe 修饰整条件（掩码投影
+    # 求值语义），TimeframeLayer 层映射的 role 归属与跨层组装语义待
+    # 独立版本产品决策——显式拒绝，不产出静默降级为单周期的草稿。
+    # 假设的登记、条件求值类分析与案例检查不受此边界影响；研究考试链
+    # （隔离回测/随机窗口/分段）在翻译支持前不可用于混合周期假设。
+    for group, conds in (("when", when_conditions),
+                         ("then", then_conditions)):
+        for i, c in enumerate(conds):
+            if isinstance(c, dict) and c.get("timeframe") is not None:
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{group}_conditions[{i}] 携带 timeframe 键——"
+                    "多周期假设翻译暂不支持（TimeframeLayer 层映射语义"
+                    "留独立版本决策）；假设的登记、条件求值类分析与案例"
+                    "检查不受影响",
+                    detail={
+                        "field": f"{group}_conditions[{i}].timeframe",
+                        "timeframe": c.get("timeframe"),
+                        "slow_path": "多周期假设翻译支持前，此类假设"
+                                     "生命周期上限为 active"
+                                     "（仅可经 abandoned/superseded 退出）"})
+
+    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝；
+    # 插件列出场源当前不可表达——组装器只组合入场，出场插件源会被
+    # 静默丢弃，故显式拒绝而非误译为入场门控）
+    when_genes, when_sources = _translate_conditions(
+        when_conditions, db_path=db_path,
+        label="when_conditions", role=SignalRole.ENTRY_TRIGGER)
+    then_genes, then_sources = _translate_conditions(
+        then_conditions, db_path=db_path,
+        label="then_conditions", role=SignalRole.EXIT_TRIGGER)
+    return when_genes + then_genes, when_sources + then_sources
+
+
 def translate_hypothesis(
     db_path: Path,
     *,
@@ -103,40 +157,12 @@ def translate_hypothesis(
             detail={"symbols": sorted(symbols),
                     "slow_path": "提交 feature-requests 描述跨品种需求"})
 
-    # 多周期假设拒绝（0.2.14 Q3=a）：timeframe 修饰整条件（掩码投影
-    # 求值语义），TimeframeLayer 层映射的 role 归属与跨层组装语义待
-    # 独立版本产品决策——显式拒绝，不产出静默降级为单周期的草稿。
-    # 假设的登记、条件求值类分析与案例检查不受此边界影响；研究考试链
-    # （隔离回测/随机窗口/分段）在翻译支持前不可用于混合周期假设。
-    for group, key in (("when", "when_conditions"),
-                       ("then", "then_conditions")):
-        for i, c in enumerate(conditions.get(key, [])):
-            if isinstance(c, dict) and c.get("timeframe") is not None:
-                raise ResearchError(
-                    "RESEARCH_NOT_EXPRESSIBLE",
-                    f"{group}_conditions[{i}] 携带 timeframe 键——"
-                    "多周期假设翻译暂不支持（TimeframeLayer 层映射语义"
-                    "留独立版本决策）；假设的登记、条件求值类分析与案例"
-                    "检查不受影响",
-                    detail={
-                        "field": f"{group}_conditions[{i}].timeframe",
-                        "timeframe": c.get("timeframe"),
-                        "slow_path": "多周期假设翻译支持前，此类假设"
-                                     "生命周期上限为 active"
-                                     "（仅可经 abandoned/superseded 退出）"})
-
-    from core.strategy.dna import SignalRole
-    when_genes, when_sources = _translate_conditions(
-        conditions.get("when_conditions", []), db_path=db_path,
-        label="when_conditions", role=SignalRole.ENTRY_TRIGGER)
-    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝；
-    # 插件列出场源当前不可表达——组装器只组合入场，出场插件源会被
-    # 静默丢弃，故显式拒绝而非误译为入场门控）
-    then_genes, then_sources = _translate_conditions(
-        conditions.get("then_conditions", []), db_path=db_path,
-        label="then_conditions", role=SignalRole.EXIT_TRIGGER)
-    genes = when_genes + then_genes
-    plugin_sources = when_sources + then_sources
+    # 多周期防线与双组翻译经 S4 公共入口（0.4.1）：防线循环原形在
+    # build_signal_genes 内（与翻译能力同点权威单源）；跨币种防线
+    # 基于多区间 data_ranges 不适用单区间请求，留在本函数。
+    genes, plugin_sources = build_signal_genes(
+        conditions.get("when_conditions", []),
+        conditions.get("then_conditions", []), db_path)
 
     # 组装 DNA（v2）：纯内置条件 = 退化形态零迁移（单 rule 源）；
     # 含插件条件 = rule 源（承载全部内置基因，有内置条件时）+ 各插件源，
