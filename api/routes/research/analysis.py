@@ -30,7 +30,8 @@ router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
-              "regime_split", "precheck_hypothesis", "segment_narrative")
+              "regime_split", "precheck_hypothesis", "segment_narrative",
+              "counter_profile")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -82,6 +83,7 @@ def _load_with_condition_refs(
     indicator: Optional[str] = None,
     condition: Optional[Dict[str, Any]] = None,
     conditions: Optional[list] = None,
+    extra_names: Optional[list] = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
     两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
@@ -102,6 +104,7 @@ def _load_with_condition_refs(
     from core.analysis.warmup_loader import load_with_warmup
 
     warm_names: list = [indicator] if indicator else []
+    warm_names += list(extra_names or [])
     if condition is not None:
         warm_names += [
             ind for ind, _ in collect_condition_refs(condition, strict=True)]
@@ -143,6 +146,7 @@ _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
     "pattern_mining": (("as_of",),),
     "param_sweep": (("indicator", "condition"),),
     "precheck_hypothesis": (("when_conditions", "validate_range"),),
+    "counter_profile": (("condition", "direction"), ("conditions", "direction")),
 }
 
 
@@ -228,9 +232,9 @@ def _with_derivatives_coverage(result: Dict[str, Any],
 def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) -> Dict[str, Any]:
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
-        condition_stats, correlation_scan, distribution_compare,
-        event_study, param_sweep, precheck_hypothesis, regime_split,
-        screen_patterns, segment_narrative, similar_at_time,
+        condition_stats, counter_profile, correlation_scan,
+        distribution_compare, event_study, param_sweep, precheck_hypothesis,
+        regime_split, screen_patterns, segment_narrative, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -256,9 +260,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         mtf_ctx.eval_start = request_start
         return df, request_start
 
-    def _load_refs(indicator, condition=None, conditions=None):
+    def _load_refs(indicator, condition=None, conditions=None, *,
+                   extra_names=None):
         df, request_start = _load_with_condition_refs(
-            data_dir, rng, indicator, condition, conditions)
+            data_dir, rng, indicator, condition, conditions, extra_names)
         mtf_ctx.eval_start = request_start
         return df, request_start
 
@@ -340,6 +345,28 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             df, data_ranges=ranges, request_start=request_start,
             indicators=p.get("indicators"),
             hypothesis_id=payload.hypothesis_id).to_dict(), df)
+
+    if payload.template == "counter_profile":
+        # 反例画像（0.4.1 R5）：键组出生自带（condition|conditions ∥
+        # direction 两形制统一前扩+mask_for_all）；warmup=特征矩阵全集
+        # ∪ 条件引用并集（特征域 _DEFAULT_PARAMS 减 guard_only/lazy）
+        from core.analysis.templates.counter_profile import (
+            feature_matrix_names)
+        cond_list = (p["conditions"] if p.get("conditions") is not None
+                     else [p["condition"]])
+        _validate_conditions_array(cond_list)
+        df, request_start = _load_refs(
+            None, condition=p.get("condition"),
+            conditions=p.get("conditions"),
+            extra_names=feature_matrix_names())
+        return _with_derivatives_coverage(counter_profile(
+            df, condition=p.get("condition"), conditions=p.get("conditions"),
+            direction=p["direction"], data_ranges=ranges,
+            forward_bars=p.get("forward_bars", 24),
+            request_start=request_start,
+            min_samples=p.get("min_samples", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict(), df)
 
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用

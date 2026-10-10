@@ -261,7 +261,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
-        param_sweep|regime_split|precheck_hypothesis|segment_narrative
+        param_sweep|regime_split|precheck_hypothesis|segment_narrative|
+        counter_profile
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
@@ -352,7 +353,18 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         连续同向变动段）+结构统计（区间涨跌幅/波动区间/事件计数）；
         载荷无原始 OHLCV 行；双上限：区间 ≤5000 bar（装载前）、事件
         ≤500 条（提取后）；留痕 analysis 型（挂 hypothesis_id 则区间
-        进该假设判定并集，沿既有语义）。"""
+        进该假设判定并集，沿既有语义）。counter_profile 反例画像（0.4.1
+        R5，快路径）：params 必填 condition|conditions（二选一键组）
+        + direction（封闭枚举 long/short——mixed 是执行概念不属研究
+        主张）+ 可选 forward_bars（观察窗口，缺省 24）——把条件的历史
+        触发分为符合组（窗口内任一时点实现方向预期——区间语义，「触及
+        目标后回落」的盈利样本不误判；判定比较序列=close）/反例组，
+        输出两组在触发时点的全指标特征分布对比（特征域=注册表默认
+        参数全部输出列减 guard_only/lazy；八键分布参数；现算失败
+        skipped_features 披露）按判别力（Cohen's d）排序的差异清单
+        ——工具只呈现差异不生成条件（特征选择由 AI 做；判别特征 ≤2
+        属研究协议约束不写入工具）；反例组样本 <30 标 insufficient
+        不拒；反例组 0=全符合合法；总触发 <30 走既有小样本拒绝。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

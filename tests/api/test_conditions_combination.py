@@ -331,3 +331,45 @@ class TestLogTrail:
         assert len(rows) == 1
         assert rows[0][0] == "analysis"
         assert rows[0][2] is None  # 未挂假设
+
+
+class TestCounterProfileRoute:
+    """counter_profile 路由双入口可达（0.4.1 任务 5.3）。"""
+
+    def test_condition_form_reachable(self, api_client, combo_env):
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "counter_profile",
+            {"condition": GT_CLOSE, "direction": "long",
+             "min_samples": 5, "forward_bars": 12}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        assert payload["direction"] == "long"
+        assert payload["groups"]["conform"]["count"] > 0
+
+    def test_conditions_form_reachable(self, api_client, combo_env):
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "counter_profile",
+            {"conditions": [GT_CLOSE, ALWAYS_TRUE], "direction": "short",
+             "min_samples": 5, "forward_bars": 12}))
+        assert resp.status_code == 200, resp.text
+        assert "conditions" in resp.json()["payload"]
+
+    def test_direction_required_by_key_group(self, api_client, combo_env):
+        """键组：condition 与 direction 同组——缺 direction 按该组点名。"""
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "counter_profile", {"condition": GT_CLOSE}))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["detail"]["param"] == "direction"
+
+    def test_mixed_direction_rejected(self, api_client, combo_env):
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "counter_profile",
+            {"condition": GT_CLOSE, "direction": "mixed",
+             "min_samples": 5}))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["detail"]["legal_range"] == [
+            "long", "short"]
