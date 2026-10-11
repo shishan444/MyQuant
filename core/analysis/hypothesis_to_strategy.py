@@ -141,8 +141,12 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
         return RiskGenes()  # platform_default
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
             "leverage", "exit_fraction", "add_fraction", "max_exposure")
+    # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
+    # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
+    # （=手工 DNA 缺省语义），不穿透进 RiskGenes
     return RiskGenes(
-        **{k: declared[k] for k in keys if k in declared})
+        **{k: declared[k] for k in keys
+           if k in declared and declared[k] is not None})
 
 
 def _risk_genes_origin(risk_params: Tuple) -> str:

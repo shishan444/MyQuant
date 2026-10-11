@@ -133,6 +133,17 @@ def _validate_strategy_params(
             detail={"field": "strategy_params",
                     "legal_range": "键集 " + "/".join(sorted(_STRATEGY_PARAM_KEYS))})
 
+    # 显式 null 全链拒绝（review-042 CARD-01）：JSON null 与键缺失在
+    # 校验层同为「无值」（值域检查 is not None 跳过），但 null 会落库
+    # 穿透翻译层直写 RiskGenes——下游 falsy→0.0 止损静默禁用、live 链
+    # float(None)/比较 None 崩溃。不声明请移除键，两种语义唯一化。
+    null_keys = [k for k in params if params[k] is None]
+    if null_keys:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID", "显式 null 非法（不声明请移除键）",
+            detail={"field": f"strategy_params.{null_keys[0]}",
+                    "null_keys": null_keys})
+
     unknown = sorted(set(params) - _STRATEGY_PARAM_KEYS)
     if unknown:
         raise ResearchError(
