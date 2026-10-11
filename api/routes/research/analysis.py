@@ -158,10 +158,22 @@ def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
     键组语义：单组模板组内缺键即结构化拒绝（只判键缺不缺，值合法
     性归既有值校验链——最小差异 D3）；多组模板恰好一组完整——
     多组同传 422 指明互斥、零组完整时若恰有一组被部分触及则按该组
-    点名缺键（形制与单组一致——调用意图可辨），否则 422 点名缺组。"""
+    点名缺键（形制与单组一致——调用意图可辨），否则 422 点名缺组。
+    锚键互斥（CARD-04，spec R2「同传即拒」无条件限定）先于完整性
+    判定：condition 与 conditions 同在即拒——否则单键 conditions 组
+    完整即放行会使伴传的 condition 键被静默忽略。"""
     groups = _TEMPLATE_REQUIRED_KEYS.get(template, ())
     if not groups:
         return
+    if "condition" in p and "conditions" in p:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "params 键组互斥: condition（单条件形制：subject/action/"
+            "target）与 conditions（组合条件形制：条件数组 1..5）不可"
+            "同传（任选其一）",
+            detail={
+                "param": "condition|conditions",
+                "legal_form": "单条件 condition 或组合条件 conditions 二选一"})
     complete = [g for g in groups if all(k in p for k in g)]
     if len(complete) > 1:
         raise ResearchError(
