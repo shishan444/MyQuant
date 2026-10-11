@@ -149,6 +149,20 @@ def create_strategy(
         from api.routes.research.common import research_error_to_http
         raise research_error_to_http(exc) from exc
 
+    # 手工 DNA 值域校验（review-042 CARD-12）：validate_dna 此前在 api/
+    # 零调用——NaN/越域/bool 收窄（True→1.0）经 Pydantic 全过落库，引擎
+    # sl=ep×(1−1.0)=0 恒不触发（看似设了止损实为无止损）。errors 非空
+    # 422 结构化拒绝（沿本入口 validate_policy 的 422 先例；detail=dict
+    # 形制与 Pydantic 自动 422 的明细数组可判别）
+    from core.strategy.validator import validate_dna
+    _vr = validate_dna(dna)
+    if not _vr.is_valid:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DNA_VALIDATION_FAILED",
+                    "message": "DNA 值域/结构校验未通过",
+                    "errors": _vr.errors})
+
     save_strategy(
         db_path,
         strategy_id=strategy_id,

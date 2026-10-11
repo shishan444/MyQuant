@@ -32,10 +32,35 @@ def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
     # 固定文案、原文经日志保留）
     try:
         from core.strategy.dna import StrategyDNA
-        StrategyDNA.from_json(req.dna_json)
+        dna = StrategyDNA.from_json(req.dna_json)
     except Exception as e:
         logger.warning("invalid dna_json on live task create: %r", e, exc_info=e)
         raise HTTPException(status_code=400, detail="Invalid dna_json format")
+
+    # 手工 DNA 值域校验（review-042 CARD-12）：与 trading.py 任务创建点
+    # 同形收口——解析过而值域坏（NaN/越域/bool 收窄）不落库；live 链
+    # 无止损持仓暴露真实资金风险，值域防线在入口不在 Runner
+    from core.strategy.validator import validate_dna
+    _vr = validate_dna(dna)
+    if not _vr.is_valid:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DNA_VALIDATION_FAILED",
+                    "message": "DNA 值域/结构校验未通过",
+                    "errors": _vr.errors})
+
+    # live 交易链兼容性前移（装载即拒的入口化——CARD-12 早拒锚）：trail
+    # /分批等 live 链不支持的模式原本在 Runner 装载点才拒（任务已落库
+    # 才失败），创建点前移到落库前——与 LiveTradingExecutor.__post_init__
+    # 同一判据（validate_trading_compatibility 单源）
+    from core.strategy.validator import validate_trading_compatibility
+    _reasons = validate_trading_compatibility(dna, "live")
+    if _reasons:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DNA_TRADING_INCOMPATIBLE",
+                    "message": "live 链不支持该策略（装载即拒前移）",
+                    "errors": _reasons})
 
     task_id = f"lt_{uuid.uuid4().hex[:12]}"
     repo.save_live_trading_task(

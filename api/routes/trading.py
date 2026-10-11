@@ -87,13 +87,26 @@ def create_task(
     # dna_json 预检（解析失败=业务拒绝 400）
     try:
         from core.strategy.dna import StrategyDNA
-        StrategyDNA.from_json(body.dna_json)
+        dna = StrategyDNA.from_json(body.dna_json)
     except Exception as e:
         # B6.1 status 正确性：dna_json 解析失败=业务拒绝（422 保留给 Pydantic
         # 校验明细数组——G16.0 契约分层）；异常文本形态不可控，detail 固定
         # 文案、原文经日志保留
         logger.warning("invalid dna_json on task create: %r", e, exc_info=e)
         raise HTTPException(status_code=400, detail="Invalid dna_json format")
+
+    # 手工 DNA 值域校验（review-042 CARD-12）：与解析预检分立——解析过
+    # 而值域坏（NaN/越域/bool 收窄）此前静默落库，引擎 sl=ep×(1−1.0)=0
+    # 恒不触发。422+结构化 detail（dict 形制与 Pydantic 自动 422 的明细
+    # 数组可判别，非 G16.0 所指解析失败 400）
+    from core.strategy.validator import validate_dna
+    _vr = validate_dna(dna)
+    if not _vr.is_valid:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DNA_VALIDATION_FAILED",
+                    "message": "DNA 值域/结构校验未通过",
+                    "errors": _vr.errors})
 
     task_id = uuid.uuid4().hex[:12]
     save_paper_trading_task(

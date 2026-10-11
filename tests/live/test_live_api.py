@@ -9,6 +9,27 @@ from fastapi.testclient import TestClient
 from api.deps import get_db_path
 from api.routes.live_trading import router as live_router
 from core.persistence.db_ext import init_db_ext  # B3c.1：live 建表并入 init 链
+from core.strategy.dna import (
+    ExecutionGenes,
+    LogicGenes,
+    SignalGene,
+    SignalRole,
+    StrategyDNA,
+)
+
+# 最小合法 live DNA（review-042 CARD-12 适配）：创建点起经 validate_dna+
+# validate_trading_compatibility 校验，空 "{}" 不再可入——本文件焦点在
+# CRUD/状态机，DNA 用 pct 档 entry+exit 最小形（live 链兼容）
+_VALID_DNA_JSON = StrategyDNA(
+    signal_genes=[
+        SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                   condition={"type": "lt", "threshold": 30}),
+        SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                   condition={"type": "gt", "threshold": 70}),
+    ],
+    logic_genes=LogicGenes(),
+    execution_genes=ExecutionGenes(timeframe="1h"),
+).to_json()
 
 
 def _app(db_path):
@@ -27,7 +48,7 @@ def _client(tmp_path):
 def _create(client, symbol="BTCUSDT", direction="mixed"):
     r = client.post(
         "/api/live-trading/tasks",
-        json={"symbol": symbol, "timeframe": "1h", "dna_json": "{}", "direction": direction},
+        json={"symbol": symbol, "timeframe": "1h", "dna_json": _VALID_DNA_JSON, "direction": direction},
     )
     assert r.status_code == 201
     return r.json()["task_id"]
