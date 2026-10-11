@@ -168,6 +168,25 @@ def list_hypotheses_by_identity(
     return [dict(r) for r in rows]
 
 
+def parse_parent_ids(raw: Optional[str]) -> List[Any]:
+    """parent_ids 列值 → id 列表（双形制归一，review-042 CARD-06 单点）。
+
+    落库形制两种：JSON 数组（进化/手工来源，多父）与裸串（翻译器落库
+    为单 id 串非 JSON 数组）；raw 空/None 归一为空列表。JSON 解析出非
+    列表（单值形）包装为单元素列表。谱系查询（本文件）与验证档案
+    _build_lineage 共用——两处各自实现曾是同一解析的第二份漂移源。
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return [raw]  # 裸串形制——当单 id 处理
+    if not isinstance(parsed, list):
+        return [str(parsed)]  # 单值 JSON 形兼容
+    return parsed
+
+
 def list_strategies_by_parent_hypotheses(
     db_path: Path, hypothesis_ids: List[str]
 ) -> List[Dict[str, Any]]:
@@ -188,15 +207,7 @@ def list_strategies_by_parent_hypotheses(
         ).mappings().all()
     out = []
     for row in rows:
-        raw = row["parent_ids"]
-        try:
-            parents = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            # 裸串形制（翻译器落库为单 id 串非 JSON 数组）——当单 id
-            parents = [raw] if raw else []
-        if not isinstance(parents, list):
-            parents = [str(parents)]
-        if id_set.intersection(str(p) for p in parents):
+        if id_set.intersection(str(p) for p in parse_parent_ids(row["parent_ids"])):
             out.append(dict(row))
     return out
 
