@@ -444,15 +444,36 @@ class TestThreeGates:
                                              "indeterminate")
 
     def test_worst_order_parametrized(self):
-        """最差聚合全序参数化：plateau+spike→spike；indeterminate+
-        plateau→indeterminate；unsupported 恒最差（经两平面模式合成
-        不可行——0.4.1 单模式；以两轴合成验证全序传递性）。"""
-        # 轴序对照（spike 轴 × plateau 轴）→ spike 已由矩阵用例覆盖；
-        # indeterminate 平面（全失败组）单测：
-        orig_states = {}  # 全组无条目 → (0, []) → ineffective...
+        """整链 unsupported 场景（全组 trades=0 参评全无效——有参评点
+        → unsupported，与全组失败的 indeterminate 分野）；_worst 纯
+        函数两两全序见 TestWorstAggregationOrder（CARD-15）。"""
+        orig_states = {}  # 全组无条目 → (0, []) → ineffective
         # 全部 trades=0 且 rets=[] → ineffective → 有参评 → unsupported
         out = self._run(orig_states)
         assert out["payload"]["verdict"] == "unsupported"
+
+
+class TestWorstAggregationOrder:
+    """CARD-15：_worst 最差聚合全序纯函数参数化——四值两两 6 对
+    （_VERDICT_ORDER：plateau=0 < indeterminate=1 < spike=2 <
+    unsupported=3，取序值大者=更差者）双向断言；两两完备覆盖即全序
+    传递性证明（无序对全枚举）。"""
+
+    @pytest.mark.parametrize(
+        ("a", "b", "worst"),
+        [("plateau", "indeterminate", "indeterminate"),
+         ("plateau", "spike", "spike"),
+         ("plateau", "unsupported", "unsupported"),
+         ("indeterminate", "spike", "spike"),
+         ("indeterminate", "unsupported", "unsupported"),
+         ("spike", "unsupported", "unsupported")],
+        ids=["plateau+indeterminate", "plateau+spike",
+             "plateau+unsupported", "indeterminate+spike",
+             "indeterminate+unsupported", "spike+unsupported"])
+    def test_worst_pairwise_bidirectional(self, a, b, worst):
+        from core.analysis.templates.exit_sweep import _worst
+        assert _worst(a, b) == worst
+        assert _worst(b, a) == worst  # 交换律——聚合序与传入序无关
 
     def test_all_groups_failed_indeterminate(self, tmp_path, monkeypatch):
         """四值完备性补齐（indeterminate 此前无测试触达）：全组执行期
