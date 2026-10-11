@@ -278,6 +278,18 @@ def update_strategy_endpoint(
         except ResearchError as exc:
             from api.routes.research.common import research_error_to_http
             raise research_error_to_http(exc) from exc
+
+        # 手工 DNA 值域校验（review-042 CARD-15）：与 POST 段同款——
+        # PUT 此前仅 validate_policy，先建合法策略过 POST 再 PUT 换坏
+        # DNA 可绕过（stop_loss=1.0 经 PUT 200 落库=引擎假止损）
+        from core.strategy.validator import validate_dna
+        _vr = validate_dna(dna)
+        if not _vr.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "DNA_VALIDATION_FAILED",
+                        "message": "DNA 值域/结构校验未通过",
+                        "errors": _vr.errors})
         fields["dna_json"] = dna.to_json()
 
     if fields:

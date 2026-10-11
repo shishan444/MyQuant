@@ -163,3 +163,55 @@ class TestBehaviorTightening:
         assert r.status_code == 422
         assert any("exit" in e.lower()
                    for e in r.json()["detail"]["errors"])
+
+
+class TestPutBypassClosed:
+    """CARD-15 残留 1：PUT 绕过路径收口——先建合法策略过 POST，再
+    PUT 换坏 DNA（修复前 stop_loss=1.0 经 PUT 200 落库=引擎假止损）。"""
+
+    def test_put_bad_dna_rejected(self, api_client):
+        created = api_client.post("/api/strategies", json=_strategy_body())
+        assert created.status_code == 201, created.text
+        sid = created.json()["strategy_id"]
+
+        r = api_client.put(f"/api/strategies/{sid}",
+                           json={"dna": _dna_dict(stop_loss=1.0)})
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+
+        # 原值不动：读回仍为合法 DNA（校验先于写）
+        got = api_client.get(f"/api/strategies/{sid}")
+        risk = got.json()["dna"]["risk_genes"]
+        assert risk["stop_loss"] == 0.05
+
+    def test_put_valid_dna_still_works(self, api_client):
+        """对照锚：合法 DNA 经 PUT 照常更新（防线不误伤）。"""
+        created = api_client.post("/api/strategies", json=_strategy_body())
+        sid = created.json()["strategy_id"]
+        r = api_client.put(f"/api/strategies/{sid}",
+                           json={"dna": _dna_dict(stop_loss=0.08)})
+        assert r.status_code == 200, r.text
+        assert r.json()["dna"]["risk_genes"]["stop_loss"] == 0.08
+
+
+class TestEvolutionInitialDnaClosed:
+    """CARD-15 残留 2：进化 initial_dna 收口——坏值此前 201 落库，
+    population.init_population 祖先直接 append 无校验（随机个体/子代
+    有 validate_dna 唯祖先漏），坏基因扩散整代种群。"""
+
+    def test_evolution_bad_initial_dna_rejected(self, api_client):
+        r = api_client.post("/api/evolution/tasks", json={
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "initial_dna": _dna_dict(stop_loss=1.0)})
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+        assert any("stop loss" in e.lower() for e in detail["errors"])
+
+    def test_evolution_valid_initial_dna_passes(self, api_client):
+        """对照锚：合法 initial_dna 照常建任务。"""
+        r = api_client.post("/api/evolution/tasks", json={
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "initial_dna": _dna_dict()})
+        assert r.status_code == 201, r.text
