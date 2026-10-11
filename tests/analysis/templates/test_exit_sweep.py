@@ -179,6 +179,39 @@ class TestValidationOrder:
         assert exc.code == "RESEARCH_PARAM_INVALID"
         assert "results" not in (exc.detail or {})
 
+    def test_grid_structure_rejected(self):
+        """闸门盲区消解：校验序①原始面——grid 非 dict / modes 非
+        列表 / 条目缺三键，全部 422 结构化拒绝。"""
+        for bad in (["pct"],  # 非 dict
+                    {"modes": "pct"},  # modes 非列表
+                    {"modes": []},  # 空列表
+                    {"modes": [{"mode": "pct", "stops": [0.01]}]}):  # 缺 tp
+            exc = self._reject(bad, "")
+            assert exc.code == "RESEARCH_PARAM_INVALID", bad
+            assert exc.detail["param"] in ("grid", "grid.modes[0]")
+
+    def test_direct_call_direction_and_either_or_rejected(self):
+        """闸门盲区消解：模板直调层 direction 枚举与二选一拒绝面
+        （路由层键组先拦，直调防线独立存在——与 counter_profile
+        直调层同族）。"""
+        with pytest.raises(ResearchError) as ei:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
+                       direction="mixed", grid=_grid([0.01], [0.02]))
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "direction"
+        assert ei.value.detail["legal_range"] == ["long", "short"]
+
+        with pytest.raises(ResearchError) as ei2:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), direction="long",
+                       grid=_grid([0.01], [0.02]))  # 两键全缺
+        assert ei2.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei2.value.detail["param"] == "condition|conditions"
+        with pytest.raises(ResearchError) as ei3:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
+                       conditions=[_COND], direction="long",
+                       grid=_grid([0.01], [0.02]))  # 两键同传
+        assert ei3.value.detail["param"] == "condition|conditions"
+
 
 class TestConditionsDomainValidation:
     """CARD-05：exit_sweep 条件条数域+形制校验前置（共享层单点

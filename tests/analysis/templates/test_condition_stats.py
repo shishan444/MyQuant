@@ -313,3 +313,26 @@ class TestParamsPrecheck:
             condition_stats(df, **dict(kw, params=params))
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.status == 422
+
+
+class TestDirectCallCheckGroup:
+    """闸门盲区消解：模板直调层二选一拒绝面（路由层键组先拦——
+    直调防线独立存在，counter_profile/exit_sweep 同族对称）。"""
+
+    def test_condition_and_conditions_both_rejected(self) -> None:
+        df = _make_df(300)
+        kw = _gt_median_kwargs(df)
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, **dict(
+                kw, conditions=[kw["condition"]]))
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "condition|conditions"
+
+    def test_neither_key_rejected(self) -> None:
+        df = _make_df(300)
+        kw = _gt_median_kwargs(df)
+        for key in ("condition",):
+            kw.pop(key)
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, **kw)
+        assert ei.value.detail["param"] == "condition|conditions"

@@ -447,3 +447,14 @@ class TestQuantilesAndConfidence:
         z = 1.96
         n_bars = conf["n_bars"]
         assert hi == pytest.approx(z * z / (n_bars + z * z), rel=1e-9)
+
+    def test_empty_stat_segment_rejected(self):
+        """闸门盲区消解：request_start 晚于全部数据 → 统计段为空
+        → RESEARCH_DATA_INSUFFICIENT 结构化拒绝（非空指针/零除）。"""
+        df = _ramp_df()
+        with pytest.raises(ResearchError) as ei:
+            segment_narrative(
+                df, data_ranges=[{"start": "2024-01-01", "end": "2024-02-01"}],
+                request_start=df.index[-1] + pd.Timedelta(days=30))
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+        assert "统计段为空" in ei.value.message

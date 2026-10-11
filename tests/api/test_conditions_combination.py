@@ -288,6 +288,37 @@ class TestCombinationStatistics:
         assert with_sma == derive_warmup(["SMA"])
         assert with_sma > base_only
 
+    def test_conditions_with_indicator_echo(self, api_client, combo_env):
+        """闸门盲区消解：conditions+indicator+params 同传合法路径——
+        顶层指标并入装载预算与 echo（indicator/params 键出现；键组
+        互斥仅限 condition|conditions，indicator 是 conditions 组的
+        可选伴传）。"""
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "condition_stats",
+            {"indicator": "EMA", "params": {"period": 10},
+             "conditions": [GT_CLOSE], "min_samples": 1}))
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()["payload"]
+        assert payload["indicator"] == "EMA"
+        assert payload["params"] == {"period": 10}
+        assert payload["conditions"] == [GT_CLOSE]
+        assert "condition" not in payload
+
+    def test_conditions_with_stray_params_rejected(self, api_client,
+                                                   combo_env):
+        """conditions 形式下 params 无 indicator 同在 → 422 点名
+        （params 须与 indicator 同在或同缺）。"""
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "condition_stats",
+            {"params": {"period": 10}, "conditions": [GT_CLOSE],
+             "min_samples": 1}))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "params"
+
 
 class TestEventStudyForms:
     """event_study 两形式：旧键 _load_df 冻结 + payload 键集冻结 /

@@ -223,6 +223,31 @@ class TestBatchQueryIndicator:
         assert detail["code"] == "RESEARCH_PARAM_INVALID"
         assert detail["detail"]["legal_range"] == "1..8"
 
+    def test_group_structure_and_unknown_keys_rejected(self, api_client,
+                                                       q_env):
+        """闸门盲区消解：批量组结构三面——groups 非数组被 schema
+        防线 422（服务层 isinstance 检查的直调后备）；条目缺
+        indicator / 条目含未知键走服务层结构化点名。"""
+        self._wire(api_client, q_env)
+        # groups 非数组：pydantic List[Dict] 防线先拦（FastAPI 422）
+        resp = api_client.post("/api/research/query-indicator", json={
+            "symbol": SYMBOL, "timeframe": "1d", "groups": "RSI"})
+        assert resp.status_code == 422, "groups 非数组拒"
+
+        cases = [
+            ([{"params": {"period": 10}}], "groups[0]", "条目缺 indicator"),
+            ([{"indicator": "EMA", "bogus": 1}], "groups[0]",
+             "条目含未知键"),
+        ]
+        for groups, param, kind in cases:
+            body = {"symbol": SYMBOL, "timeframe": "1d", "groups": groups}
+            resp = api_client.post("/api/research/query-indicator",
+                                   json=body)
+            assert resp.status_code == 422, kind
+            detail = resp.json()["detail"]
+            assert detail["code"] == "RESEARCH_PARAM_INVALID", kind
+            assert detail["detail"]["param"] == param, kind
+
     def test_atomic_reject_validation_phase(self, api_client, q_env):
         """校验期整批原子：groups[1] 参数越界 → 整批 422 指明组序。"""
         self._wire(api_client, q_env)
@@ -288,3 +313,40 @@ class TestBatchQueryIndicator:
         with sqlite3.connect(q_env["db"]) as conn:
             n = conn.execute("SELECT COUNT(*) FROM research_log").fetchone()[0]
         assert n == 0
+
+
+class TestDataLoadEdgeCases:
+    """闸门盲区消解收尾：装载边界两面——无数据文件拒绝与 naive tz
+    数据形制回退（tz_localize 防御行）。"""
+
+    def test_symbol_without_data_rejected(self, api_client, tmp_path):
+        """空数据目录：start 缺省全量直装返回 None → 数据不可装载
+        结构化拒绝（非裸 500）。"""
+        data_dir = tmp_path / "empty_market"
+        data_dir.mkdir()
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        api_client.app.state.db_path = db
+        api_client.app.state.data_dir = data_dir
+        resp = api_client.post("/api/research/query-indicator", json=_payload())
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] in ("RESEARCH_DATA_INSUFFICIENT",
+                                  "RESEARCH_SYMBOL_NOT_FOUND")
+
+    def test_naive_tz_parquet_accepted(self, api_client, tmp_path):
+        """naive tz 数据形式：tz_localize 回退行触达（防御深度——
+        正常数据目录 tz-aware，变体不炸）。"""
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        df = make_ohlcv(n=800, freq="1d", start="2023-06-01", seed=13)
+        df.index = df.index.tz_localize(None)  # naive 变体
+        df.to_parquet(data_dir / f"{SYMBOL}_1d.parquet")
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        api_client.app.state.db_path = db
+        api_client.app.state.data_dir = data_dir
+        resp = api_client.post("/api/research/query-indicator",
+                               json=_payload())
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["indicator"] == "RSI"
