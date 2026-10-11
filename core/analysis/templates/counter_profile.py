@@ -175,13 +175,15 @@ def counter_profile(
                                  -abs(f["cohens_d"]) if f["cohens_d"] is not
                                  None else 0.0))
 
-    # 反例占比 Wilson 区间（两组规模不确定性的诚实表达）
+    # 反例占比 Wilson 区间（两组规模不确定性的诚实表达）+ 点估计披露
+    #（counter_rate 与区间同源：n_grouped=0 时无点估计——键保留 None）
     counter_rate = (n_counter / n_grouped) if n_grouped else None
     confidence: Dict[str, Any] = {
         "method": "wilson_interval",
         "interval": (list(_wilson(n_counter, n_grouped))
                      if n_grouped else [0.0, 0.0]),
         "for": "counter_rate",
+        "counter_rate": counter_rate,
         "n_grouped": n_grouped,
     }
 
