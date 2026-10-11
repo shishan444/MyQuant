@@ -989,8 +989,9 @@ def query_union_balance(
     span_end = data_end + pd.Timedelta(seconds=tf_seconds)
 
     def _parse(s: str) -> pd.Timestamp:
-        t = to_utc(pd.Timestamp(s))
-        return t.tz_localize("UTC") if t.tzinfo is None else t
+        # to_utc 恒返 aware（naive 补 UTC / aware 转 UTC）——原
+        # tz_localize 分支恒假，收敛单行
+        return to_utc(pd.Timestamp(s))
 
     # judged 并集（clamp 到数据范围后合并重叠/相邻，再逐段差集）
     segs = sorted(
