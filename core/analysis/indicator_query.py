@@ -427,6 +427,12 @@ def query_indicator_groups(
             f"groups 组数须在 1..{_MAX_GROUPS}（实际 {len(groups)}）",
             detail={"param": "groups", "legal_range": f"1..{_MAX_GROUPS}",
                     "actual": len(groups)})
+    # 组序包装（③④共用——错误以 groups[N] 指明组序，code/status 原样）
+    def _wrap_group_error(i: int, exc: ResearchError) -> ResearchError:
+        return ResearchError(
+            exc.code, f"groups[{i}]: {exc.message}", status=exc.status,
+            detail={"group": f"groups[{i}]", **(exc.detail or {})})
+
     # ③ 全组逐组校验（在册→参数→reductions；先于装载 IO——确定序）
     for i, g in enumerate(groups):
         try:
@@ -435,9 +441,7 @@ def query_indicator_groups(
                 validate_params(g["indicator"], g["params"])
             _validate_reductions(g.get("reductions"))
         except ResearchError as exc:
-            raise ResearchError(
-                exc.code, f"groups[{i}]: {exc.message}", status=exc.status,
-                detail={"group": f"groups[{i}]", **(exc.detail or {})}) from exc
+            raise _wrap_group_error(i, exc) from exc
     # ④ 逐组双路径装载现算（执行期整批原子——异常中止天然无部分结果）
     results: List[Dict[str, Any]] = []
     for i, g in enumerate(groups):
@@ -448,9 +452,7 @@ def query_indicator_groups(
                 start=g.get("start"), end=g.get("end"),
                 reductions=g.get("reductions")))
         except ResearchError as exc:
-            raise ResearchError(
-                exc.code, f"groups[{i}]: {exc.message}", status=exc.status,
-                detail={"group": f"groups[{i}]", **(exc.detail or {})}) from exc
+            raise _wrap_group_error(i, exc) from exc
     # ⑤ 请求序数组汇总 → ⑥ 批量档载荷自检
     result = {"groups": results}
     payload = json.dumps(result, ensure_ascii=False)

@@ -300,13 +300,12 @@ def exit_sweep(
                         "total_trades": metrics["total_trades"],
                         "status": "ok",
                     })
-                except ResearchError as exc:
-                    row.update({"status": "failed",
-                                "failure_code": exc.code})
-                    failed_groups.append({**row})
                 except Exception as exc:  # noqa: BLE001 —— 执行期单组容错
+                    # ResearchError 取 code、其余取类名（单 except 收敛：
+                    # 两分支仅 failure_code 取法不同）
                     row.update({"status": "failed",
-                                "failure_code": type(exc).__name__})
+                                "failure_code": (getattr(exc, "code", None)
+                                                 or type(exc).__name__)})
                     failed_groups.append({**row})
                 # 三道门 state 构造谓词（回测口径）
                 if row.get("status") == "ok":
