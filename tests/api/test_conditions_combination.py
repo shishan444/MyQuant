@@ -77,6 +77,49 @@ class TestKeyGroups:
         assert detail["code"] == "RESEARCH_PARAM_INVALID"
         assert "互斥" in detail["message"]
 
+    @pytest.mark.parametrize(
+        ("template", "params"),
+        [("condition_stats",
+          {"condition": GT_CLOSE, "conditions": [GT_CLOSE]}),
+         ("event_study",
+          {"condition": GT_CLOSE, "conditions": [GT_CLOSE]}),
+         ("counter_profile",
+          {"condition": GT_CLOSE, "conditions": [GT_CLOSE],
+           "direction": "long"}),
+         ("exit_sweep",
+          {"condition": GT_CLOSE, "conditions": [GT_CLOSE],
+           "direction": "long",
+           "grid": {"modes": [{"mode": "pct", "stops": [0.01],
+                               "take_profits": [0.02]}]}})],
+        ids=["condition_stats 锚键拒", "event_study 锚键拒",
+             "counter_profile 锚键拒", "exit_sweep 锚键拒"])
+    def test_anchor_key_mutex_four_templates(self, api_client, combo_env,
+                                             template, params):
+        """CARD-04：condition|conditions 锚键同传即拒（四模板统一）
+        ——conditions 组完整 + 伴传 condition 键原会被静默忽略/误报
+        缺键组，现无条件互斥（spec R2「同传即拒」）。"""
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis",
+                               json=_body(template, params))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert "互斥" in detail["message"]
+        assert "单条件形制" in detail["message"]
+        assert "组合条件形制" in detail["message"]
+        assert detail["detail"]["param"] == "condition|conditions"
+
+    def test_anchor_key_mutex_precedes_missing_keys(self, api_client,
+                                                    combo_env):
+        """判定序锚：同传 + 缺共有必填键（direction）→ 互斥先触发而非
+        「缺必填键组」（信息更准——两形制用法错误优先于键完整性）。"""
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "counter_profile",
+            {"condition": GT_CLOSE, "conditions": [GT_CLOSE]}))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["detail"]["param"] == "condition|conditions"
+
     def test_event_study_conditions_only_form_accepted(self, api_client,
                                                        combo_env):
         """新组独立成请求（event_study 仅 conditions）——合法路径。"""
