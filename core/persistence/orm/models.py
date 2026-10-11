@@ -394,6 +394,10 @@ class ResearchHypothesis(Base):
     superseded_by: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    # 策略层参数声明块（0.4.2 R1，JSON 串）：NULL=无声明（翻译走平台
+    # 默认）；不进 conditions/不进 conditions_hash（不参与身份指纹，
+    # 参数变体经终态后重登记产生——strategy-param-declaration 规格）
+    strategy_params: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class ResearchLog(Base):

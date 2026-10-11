@@ -484,7 +484,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             statement: str,
             data_ranges: list[dict[str, Any]],
             provenance: Optional[dict[str, Any]] = None,
-            trigger_policy: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
+            trigger_policy: Optional[dict[str, Any]] = None,
+            strategy_params: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
         {indicator, params, field}（多输出指标 field 必填，参数空间经
@@ -522,7 +523,21 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         层同口径；实际成交笔数另受空仓进场抑制影响）。事件形制整理
         触发不创造触发：0 事件形态照常 reject_suggestion。bars 数据
         长度上界在求值时点校验（登记时点仅形制——短区间实跑超界即
-        422）。"""
+        422）。
+        strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
+        正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
+        position_size/leverage（值域按 sl_mode 分叉：pct/trail 档
+        [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；sl_mode∈
+        {pct,atr,trail}；take_profit>stop_loss，trail 档豁免）；
+        翻译时逐参数映射进产物 risk_genes（返回体 risk_genes=
+        "declared"；无声明=平台默认 "platform_default"）。声明块
+        不进条件指纹与幂等身份（同条件集+同区间集=同一假设——参数
+        变体经终态后带新声明重登记产生）；幂等四分支：请求不带键
+        →duplicated 返回既有（附 existing_strategy_params 摘要键）；
+        带键（含显式空对象 {}=显式声明「无参数」）与既有声明全等
+        →duplicated、不等→422（防静默丢弃既有声明）；{} 与键缺失
+        语义不同。坏值 422 RESEARCH_PARAM_INVALID（detail 含
+        field/legal_range）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
@@ -531,6 +546,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["provenance"] = provenance
         if trigger_policy is not None:
             body["trigger_policy"] = trigger_policy
+        if strategy_params is not None:
+            body["strategy_params"] = strategy_params
         return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()

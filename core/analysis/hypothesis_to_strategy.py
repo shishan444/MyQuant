@@ -10,8 +10,10 @@
 - 幂等：谱系中 draft 产物存在即返回；同签名既有策略显式分流
   （active→same_dna_existing / draft→幂等），MUST NOT 静默不落库。
 
-其他翻译纪律不变：conditions JSON 为唯一翻译源；可表达子集与拒绝
-原因（跨币种/基础列/插件列/分布形态）；谱系回链 parent_ids。
+其他翻译纪律不变：conditions JSON + 策略层参数声明块为翻译源
+（0.4.2 起「conditions 为唯一翻译源」显式扩展——声明块映射产物
+risk_genes，NULL/空=平台默认逐位兼容）；可表达子集与拒绝原因
+（跨币种/基础列/插件列/分布形态）；谱系回链 parent_ids。
 """
 from __future__ import annotations
 
@@ -19,10 +21,20 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
+
+# 同签名分流的策略层参数比对集（D2/DC-9 九字段）：签名未编码的策略层
+# 参数异 ⇒ 不误返既有——atr_period 翻译产物恒 14、库内手工 DNA 可设
+# 异值，异值即建新实体防语义偷换；exit_fraction/add_fraction/max_exposure
+# 三键 4.3 前不入 RiskGenes（dict.get 缺键读 None，存量双方恒等——
+# 字段扩展后比对自动携带，连续）
+_D2_RISK_FIELDS = (
+    "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
+    "exit_fraction", "add_fraction", "max_exposure", "atr_period",
+)
 
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
 _ACTION_MAP = {
@@ -111,6 +123,37 @@ def build_signal_genes(
     return when_genes + then_genes, when_sources + then_sources
 
 
+def _risk_params_tuple(rg_dict: Dict[str, Any]) -> Tuple:
+    """risk_genes dict → 九字段可比对元组（缺键读 None——存量连续）。"""
+    return tuple(rg_dict.get(f) for f in _D2_RISK_FIELDS)
+
+
+def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
+    """声明块 → RiskGenes（R1 五参数映射；None/空 → 平台默认）。
+
+    0.4.2 R1：stop_loss/take_profit/sl_mode/position_size/leverage 五键
+    （三批键值经登记白名单不可达——4.2 随组键翻译接续）。值域已在登记
+    3.6 步校验，此处只做映射（字面值直写）。
+    """
+    from core.strategy.dna import RiskGenes
+
+    if not declared:
+        return RiskGenes()  # platform_default
+    return RiskGenes(
+        **{k: declared[k] for k in
+           ("stop_loss", "take_profit", "sl_mode", "position_size", "leverage")
+           if k in declared})
+
+
+def _risk_genes_origin(risk_params: Tuple) -> str:
+    """九字段元组 → 来源标注（与平台默认全等=platform_default）。"""
+    from core.strategy.dna import RiskGenes
+
+    if risk_params == _risk_params_tuple(RiskGenes().to_dict()):
+        return "platform_default"
+    return "declared"
+
+
 def translate_hypothesis(
     db_path: Path,
     *,
@@ -120,10 +163,15 @@ def translate_hypothesis(
 ) -> Dict[str, Any]:
     """把 active 假设转化为**草稿策略**（draft，验证对象；不要求 pass 前置）。
 
+    risk_genes 映射（0.4.2 R1）：假设声明块（strategy_params 列）非空
+    → 逐参数写入产物 risk_genes（"declared"）；NULL/空 → RiskGenes()
+    平台默认（"platform_default"，现行为逐位兼容）。同签名分流增强：
+    签名命中后还须九字段策略层参数全等才分流（参数异必建新实体）。
+
     Returns:
         {"strategy_id", "status": "draft", "duplicated": bool,
          "same_dna_existing": bool, "genes": [...],
-         "risk_genes": "platform_default"}。
+         "risk_genes": "platform_default" | "declared"}。
     """
     hyp = rr.get_hypothesis(db_path, hypothesis_id)
     if hyp is None:
@@ -137,12 +185,20 @@ def translate_hypothesis(
             f"假设已终态（{hyp['status']}），拒绝转化；请登记新假设"
             "（可在新假设中引用旧假设）", status=409)
 
+    # 声明块读入（0.4.2 R1）：NULL → None（平台默认路径逐位兼容）
+    raw_params = hyp.get("strategy_params")
+    try:
+        declared_params = json.loads(raw_params) if raw_params else None
+    except (json.JSONDecodeError, TypeError):
+        declared_params = None
+    risk_origin = "declared" if declared_params else "platform_default"
+
     # 幂等：谱系中 draft 产物存在即返回（转正后无 draft，可对新假设重译）
     existing_draft = _find_draft_by_parent(db_path, hypothesis_id)
     if existing_draft is not None:
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
-                "risk_genes": "platform_default"}
+                "risk_genes": risk_origin}
 
     conditions = json.loads(hyp["conditions"])
     data_ranges = json.loads(hyp["data_ranges"])
@@ -190,7 +246,7 @@ def translate_hypothesis(
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(
             symbol=strategy_symbol, timeframe=strategy_timeframe),
-        risk_genes=RiskGenes(),  # 平台默认（返回中声明）
+        risk_genes=_declared_risk_genes(declared_params),  # 声明块映射（0.4.2 R1）
         parent_ids=[hypothesis_id],  # 谱系回链
         signal_sources=signal_sources,
         composition=composition,
@@ -198,20 +254,31 @@ def translate_hypothesis(
     )
 
     # 同签名显式分流（MUST NOT 静默不落库）。签名用往返规范化后的对象算
-    # ——构造态与库内（from_json）的 layers auto-wrap 形制不同，直接比对必失配
+    # ——构造态与库内（from_json）的 layers auto-wrap 形制不同，直接比对必失配。
+    # 0.4.2 D2/DC-9 增强：签名命中后还须九字段策略层参数全等（经 dna_json
+    # 逐行解析比对——签名未编码的参数异 ⇒ 不误返既有，建新实体防语义偷换）
     dna = StrategyDNA.from_json(dna.to_json())
+    new_risk_params = _risk_params_tuple(dna.risk_genes.to_dict())
     same_dna = _find_by_signature(db_path, dna.gene_signature)
-    active_hit = next((r for r in same_dna if r.get("status") != "draft"), None)
+    active_hit = next(
+        (r for r in same_dna
+         if r.get("status") != "draft"
+         and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
+        None)
     if active_hit is not None:
         return {"strategy_id": active_hit["strategy_id"],
                 "status": active_hit.get("status") or "active",
                 "duplicated": False, "same_dna_existing": True,
-                "risk_genes": "platform_default"}
-    draft_hit = next((r for r in same_dna if r.get("status") == "draft"), None)
+                "risk_genes": _risk_genes_origin(new_risk_params)}
+    draft_hit = next(
+        (r for r in same_dna
+         if r.get("status") == "draft"
+         and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
+        None)
     if draft_hit is not None:
         return {"strategy_id": draft_hit["strategy_id"], "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
-                "risk_genes": "platform_default"}
+                "risk_genes": _risk_genes_origin(new_risk_params)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     from core.persistence.repository.strategy import save_strategy
@@ -234,7 +301,7 @@ def translate_hypothesis(
     return {"strategy_id": strategy_id, "status": "draft",
             "duplicated": False, "same_dna_existing": False,
             "genes": [f"{g.indicator}({g.field_name})" for g in genes],
-            "risk_genes": "platform_default"}
+            "risk_genes": risk_origin}
 
 
 def _translate_conditions(
@@ -364,3 +431,14 @@ def _find_by_signature(db_path: Path, gene_signature: str) -> List[Dict[str, Any
     from core.persistence.repository.strategy import find_by_gene_signature
 
     return find_by_gene_signature(db_path, gene_signature)
+
+
+def _risk_genes_of_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """策略行 dna_json → risk_genes dict（解析失败/缺段返回空 dict——
+    九字段比对读 None，不炸分流；畸形存量按「参数不可证全等」处理）。"""
+    try:
+        dna = json.loads(row.get("dna_json") or "{}")
+        rg = dna.get("risk_genes")
+        return rg if isinstance(rg, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}

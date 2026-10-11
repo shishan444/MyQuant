@@ -5,8 +5,10 @@
 
 价值与服务对象：策略 DNA 进引擎前的唯一合法性闸门——消费方为
 进化链 population（种群初始化）与 operators（变异子代校验），
-非法产出回退保底以此为据；SL_PCT_MIN/MAX 同时是 exit_sweep
-_pct_range 的引用式值域（扫描通道 pct 档单点权威，改域单点生效）。
+非法产出回退保底以此为据；SL_PCT_MIN/MAX 与 SL_ATR_MIN/MAX 同时是
+exit_sweep 网格校验的引用式值域（扫描通道各档单点权威，改域单点
+生效），MAX_LEVERAGE 为杠杆红线单源（api/schemas 三处 Field 同源
+引用——D4 家族）。
 
 职责边界：只判合法性与结构完整，不判策略优劣（表现评估归回测
 引擎与评估链）；不修改 DNA。
@@ -17,12 +19,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
-from core.strategy.dna import StrategyDNA, SignalRole
+from core.strategy.dna import StrategyDNA, SignalRole, SL_MODES
 
 # 止损 pct 值域（0.4.1 R6 提升为模块级常量——exit_sweep 网格校验引用式
 # 消费，改域单点生效；原函数内字面等价替换，行为零变化）
 SL_PCT_MIN = 0.005
 SL_PCT_MAX = 0.20
+# 止损 atr 倍数值域（0.4.2 DC-11 分叉域——量纲双关：atr 模式下
+# stop_loss/take_profit 为 ATR 倍数而非比例值；消费方：validator
+# risk 域、登记声明块校验（hypothesis_service）、exit_sweep atr 档）
+SL_ATR_MIN = 0.5
+SL_ATR_MAX = 5.0
+# 杠杆红线单源（D4/DC-5）：api/schemas.py 三处 Field(le=…)、validator
+# risk 域、登记声明块校验五处同源引用——改值代价=一处常量+边界用例
+MAX_LEVERAGE = 10
 
 
 @dataclass
@@ -39,9 +49,13 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     Checks:
     - 至少 1 个入场信号（trigger 或 guard）
     - 至少 1 个离场信号（trigger 或 guard）
-    - 止损在 [0.005, 0.20]（SL_PCT_MIN/MAX 单点）
+    - sl_mode 在 SL_MODES 内（单源取值域）
+    - 止损/止盈值域按 sl_mode 分叉：pct/trail 档 [SL_PCT_MIN, SL_PCT_MAX]
+      （比例值）、atr 档 [SL_ATR_MIN, SL_ATR_MAX]（ATR 倍数）——量纲双关
+    - 止盈 > 止损（设了止盈时；trail 档豁免——回撤比例与固定止盈
+      不构成盈亏比；atr 档保留——倍数盈亏比有意义）
     - 仓位在 [0.10, 1.0]
-    - 止盈 > 止损（设了止盈时）
+    - 杠杆在 [1, MAX_LEVERAGE]（红线单源）
     - 新条件类型的结构完整性
     - cross_layer_logic 须 AND 或 OR（MTF 策略）
     - mixed 方向带 layers 但无 trend 层时 warning（不拒）
@@ -146,19 +160,48 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 )
                 errors.extend(cond_errors)
 
-    # 风险基因值域校验
+    # 风险基因值域校验（sl_mode 感知——值域按模式分叉，DC-11/DC-12；
+    # trail/atr 是合法 DNA 形态，本处只判值域，交易链兼容性归
+    # validate_trading_compatibility 独立入口，严格分层）
     risk = dna.risk_genes
-    if not (SL_PCT_MIN <= risk.stop_loss <= SL_PCT_MAX):
-        errors.append(f"Stop loss {risk.stop_loss} out of range [{SL_PCT_MIN}, {SL_PCT_MAX}]")
 
-    if risk.take_profit is not None and risk.take_profit <= risk.stop_loss:
+    if risk.sl_mode not in SL_MODES:
+        errors.append(
+            f"sl_mode must be one of {SL_MODES}, got '{risk.sl_mode}'"
+        )
+
+    # 止损/止盈值域按模式分档取域（同值异判：1.5 在 pct 拒、atr 过）
+    if risk.sl_mode == "atr":
+        lo, hi = SL_ATR_MIN, SL_ATR_MAX
+        unit = "ATR multiples"
+    else:
+        lo, hi = SL_PCT_MIN, SL_PCT_MAX
+        unit = "ratio"
+    if not (lo <= risk.stop_loss <= hi):
+        errors.append(
+            f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
+            f"({unit}, sl_mode={risk.sl_mode})"
+        )
+    if risk.take_profit is not None and not (lo <= risk.take_profit <= hi):
+        errors.append(
+            f"Take profit {risk.take_profit} out of range [{lo}, {hi}] "
+            f"({unit}, sl_mode={risk.sl_mode})"
+        )
+
+    # 止盈>止损：trail 档豁免（回撤比例与固定止盈不构成盈亏比，A1）；
+    # atr 档保留（倍数盈亏比有意义）
+    if (
+        risk.take_profit is not None
+        and risk.sl_mode != "trail"
+        and risk.take_profit <= risk.stop_loss
+    ):
         errors.append(f"Take profit ({risk.take_profit}) must be greater than stop loss ({risk.stop_loss})")
 
     if not (0.10 <= risk.position_size <= 1.0):
         errors.append(f"Position size {risk.position_size} out of range [0.10, 1.0]")
 
-    if not (1 <= risk.leverage <= 10):
-        errors.append(f"Leverage {risk.leverage} out of range [1, 10]")
+    if not (1 <= risk.leverage <= MAX_LEVERAGE):
+        errors.append(f"Leverage {risk.leverage} out of range [1, {MAX_LEVERAGE}]")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")

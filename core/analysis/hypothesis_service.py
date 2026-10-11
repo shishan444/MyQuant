@@ -8,8 +8,16 @@
 3. data_ranges 非空且每条 {symbol, timeframe, start, end} 半开
    → 422 RESEARCH_RANGE_INVALID；symbol/timeframe 在数据目录
    → 422 RESEARCH_SYMBOL_NOT_FOUND
-4. 幂等键 (conditions_hash, ranges_hash) WHERE active：重复登记
-   返回既有 id（duplicated 标记，不重复写）
+3.5 trigger_policy 形式校验与归一（非 None 写 conditions 顶层键）
+3.6 strategy_params 声明块校验（0.4.2 R1：键白名单+值域按 sl_mode
+   分叉，先于幂等——归一形字面值参与四分支比对）
+   → 422 RESEARCH_PARAM_INVALID（detail 含 field/legal_range）
+4. 幂等键 (conditions_hash, ranges_hash) WHERE active：重复登记四分支
+   （键缺失/显式{}/带键全等→duplicated；带键不等→422 防静默丢弃
+   既有声明——strategy-param-declaration 规格）
+4.5 谱系引用校验（provenance）
+4.6 登记自动预检（失败降级不阻断）
+5. 原子写（含声明块列）
 
 迁移（transition）：active --证据/接替ref--> supported|refuted|superseded；
 终态拒绝（409 RESEARCH_HYPOTHESIS_TERMINAL）；条件更新先到者胜
@@ -79,6 +87,111 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 
 # ---------------------------------------------------------------- 登记
 
+# strategy_params 键集白名单（0.4.2 R1 阶段=风险五参数；R3 任务 4.1 扩至
+# 八键——exit_fraction/add_fraction/max_exposure 三键启用域校验与宿主组
+# 配对，届时扩展本常量即可，校验规则同点启用）
+_STRATEGY_PARAM_KEYS = frozenset({
+    "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
+})
+
+
+def _validate_strategy_params(
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """声明块校验（登记链 3.6 步核心；R1 口径=五参数白名单）。
+
+    值域与 validator 同源引用（SL_MODES/分叉域/MAX_LEVERAGE 单源——
+    DC-15 权威双点之一）；浮点值保持声明字面量原样返回（幂等四分支
+    的比对=归一形字面值比对，不做数值变换）。
+
+    Raises:
+        ResearchError: RESEARCH_PARAM_INVALID（detail 含 field/legal_range）
+    """
+    from core.strategy.dna import SL_MODES
+    from core.strategy.validator import (
+        MAX_LEVERAGE, SL_ATR_MAX, SL_ATR_MIN, SL_PCT_MAX, SL_PCT_MIN,
+    )
+
+    if not isinstance(params, dict):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID", "strategy_params 须为对象",
+            detail={"field": "strategy_params",
+                    "legal_range": "键集 " + "/".join(sorted(_STRATEGY_PARAM_KEYS))})
+
+    unknown = sorted(set(params) - _STRATEGY_PARAM_KEYS)
+    if unknown:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"strategy_params 含未知键: {', '.join(unknown)}",
+            detail={"field": f"strategy_params.{unknown[0]}",
+                    "unknown_keys": unknown,
+                    "legal_range": "键集 " + "/".join(sorted(_STRATEGY_PARAM_KEYS))})
+
+    sl_mode = params.get("sl_mode", "pct")
+    if sl_mode not in SL_MODES:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"sl_mode 须为 {SL_MODES} 之一: {sl_mode!r}",
+            detail={"field": "sl_mode", "legal_range": list(SL_MODES)})
+
+    # stop_loss/take_profit 值域按 sl_mode 分叉（量纲双关——同值异判）
+    if sl_mode == "atr":
+        lo, hi = SL_ATR_MIN, SL_ATR_MAX
+    else:
+        lo, hi = SL_PCT_MIN, SL_PCT_MAX
+
+    stop_loss = params.get("stop_loss")
+    if stop_loss is not None:
+        if not isinstance(stop_loss, (int, float)) or isinstance(stop_loss, bool) \
+                or not (lo <= stop_loss <= hi):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"stop_loss {stop_loss!r} 越出 sl_mode={sl_mode} 档值域 [{lo}, {hi}]",
+                detail={"field": "stop_loss", "legal_range": [lo, hi],
+                        "sl_mode": sl_mode})
+
+    take_profit = params.get("take_profit")
+    if take_profit is not None:
+        if not isinstance(take_profit, (int, float)) or isinstance(take_profit, bool) \
+                or not (lo <= take_profit <= hi):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"take_profit {take_profit!r} 越出 sl_mode={sl_mode} 档值域 [{lo}, {hi}]",
+                detail={"field": "take_profit", "legal_range": [lo, hi],
+                        "sl_mode": sl_mode})
+        # TP>SL：trail 档豁免（回撤比例与固定止盈不构成盈亏比，A1）；
+        # atr 档保留（倍数盈亏比有意义）
+        if stop_loss is not None and sl_mode != "trail" \
+                and take_profit <= stop_loss:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"take_profit ({take_profit}) 须大于 stop_loss ({stop_loss})"
+                f"（sl_mode={sl_mode} 档不豁免）",
+                detail={"field": "take_profit",
+                        "legal_range": "> stop_loss",
+                        "sl_mode": sl_mode})
+
+    position_size = params.get("position_size")
+    if position_size is not None:
+        if not isinstance(position_size, (int, float)) or isinstance(position_size, bool) \
+                or not (0.10 <= position_size <= 1.0):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"position_size {position_size!r} 越出值域 [0.10, 1.0]",
+                detail={"field": "position_size", "legal_range": [0.10, 1.0]})
+
+    leverage = params.get("leverage")
+    if leverage is not None:
+        if not isinstance(leverage, int) or isinstance(leverage, bool) \
+                or not (1 <= leverage <= MAX_LEVERAGE):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"leverage {leverage!r} 越出值域 [1, {MAX_LEVERAGE}]",
+                detail={"field": "leverage", "legal_range": [1, MAX_LEVERAGE]})
+
+    return params
+
+
 def register_hypothesis(
     db_path: Path,
     *,
@@ -89,6 +202,7 @@ def register_hypothesis(
     provenance: Optional[Dict[str, Any]] = None,
     precheck_data_dir: Optional[Path] = None,
     trigger_policy: Optional[Dict[str, Any]] = None,
+    strategy_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """登记假设（校验链 + 幂等 + 原子写）。
 
@@ -103,11 +217,19 @@ def register_hypothesis(
     幂等命中不执行（早于插桩点 return）。服务唯一生产调用方是路由
     （MCP 经 HTTP 间接覆盖）；None 跳过——测试直调兼容。
 
+    strategy_params（0.4.2 R1，strategy-param-declaration 规格）：策略层
+    参数声明块（可选对象；显式空对象 {}=显式声明「无参数」，与键缺失
+    语义不同）；不进 conditions/不进 conditions_hash（不参与身份指纹
+    ——参数变体经终态后重登记产生）；幂等四分支详见 3.6 步与第 4 步。
+
     Returns:
-        {"hypothesis_id", "duplicated": bool, "precheck_warnings"?: dict}
+        {"hypothesis_id", "duplicated": bool, "precheck_warnings"?: dict,
+         "existing_strategy_params"?: dict}
         ——duplicated=True 表示命中幂等键返回既有假设（provenance 不
         改变假设身份，幂等命中不补写；该路径天然不携带警告键）；
-        precheck_warnings 仅预检成功时存在（纯增量键）。
+        precheck_warnings 仅预检成功时存在（纯增量键）；
+        existing_strategy_params 仅 duplicated 路径携带（既有声明摘要，
+        纯增量键——NULL 声明以 {} 呈现）。
     """
     # 1. conditions 结构
     when = conditions.get("when_conditions")
@@ -224,12 +346,53 @@ def register_hypothesis(
     if normalized_policy is not None:
         conditions["trigger_policy"] = normalized_policy
 
-    # 4. 幂等
+    # 3.6 strategy_params 声明块校验（0.4.2 R1：先于幂等——归一形字面
+    #     值参与四分支比对；坏值 422 阻断登记。{} 与键缺失在此分流：
+    #     {} 进入全等比对（显式声明「无参数」），None 不参与比对）
+    if strategy_params is not None:
+        strategy_params = _validate_strategy_params(strategy_params)
+
+    # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)
     ranges_hash = hash_json(data_ranges)
     existing = rr.find_active_hypothesis_by_identity(db_path, conditions_hash, ranges_hash)
     if existing is not None:
-        return {"hypothesis_id": existing["hypothesis_id"], "duplicated": True}
+        # 既有声明块（列 NULL 视为 {}——与显式空对象全等）
+        raw = existing.get("strategy_params")
+        try:
+            existing_params = json.loads(raw) if raw else {}
+        except (json.JSONDecodeError, TypeError):
+            existing_params = {}
+        if strategy_params is None:
+            # 分支①：请求键缺失——不参与声明比对（旧调用方零适配）
+            return {
+                "hypothesis_id": existing["hypothesis_id"],
+                "duplicated": True,
+                "existing_strategy_params": existing_params,
+            }
+        # 分支②③：带键（含显式 {}）→ 归一形字面值全等比对
+        req_norm = json.dumps(strategy_params, sort_keys=True,
+                              ensure_ascii=False)
+        exist_norm = json.dumps(existing_params, sort_keys=True,
+                                ensure_ascii=False)
+        if req_norm == exist_norm:
+            return {
+                "hypothesis_id": existing["hypothesis_id"],
+                "duplicated": True,
+                "existing_strategy_params": existing_params,
+            }
+        # 不等：显式拒绝（防静默丢弃既有声明），detail 附既有摘要与
+        # 变体路径指引（参数变体经终态后重登记产生）
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "strategy_params 与既有假设声明块不等（防静默丢弃既有声明）",
+            detail={
+                "field": "strategy_params",
+                "existing_strategy_params": existing_params,
+                "slow_path": "假设终态后带新声明重登记产出参数变体"
+                             "（同条件集+同区间集=同一研究主张，参数"
+                             "变体是新假设实体）",
+            })
 
     # 4.5 谱系引用校验（区间事实取自任务记录——D5）
     screen_use: Optional[Dict[str, str]] = None
@@ -283,7 +446,8 @@ def register_hypothesis(
         except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
             logger.warning("登记预检降级（登记照常）: %s", exc)
 
-    # 5. 原子写（provenance 存在时同事务追加 screen_use 日志）
+    # 5. 原子写（provenance 存在时同事务追加 screen_use 日志；声明块
+    #    归一形 JSON 串入列——None=无声明列 NULL）
     import uuid
     hid = hypothesis_id or f"hyp_{uuid.uuid4().hex[:12]}"
     rr.save_hypothesis_with_log(
@@ -294,6 +458,9 @@ def register_hypothesis(
         statement=statement,
         data_ranges=json.dumps(data_ranges, ensure_ascii=False),
         ranges_hash=ranges_hash,
+        strategy_params=(
+            json.dumps(strategy_params, sort_keys=True, ensure_ascii=False)
+            if strategy_params is not None else None),
         screen_use=screen_use,
     )
     out = {"hypothesis_id": hid, "duplicated": False}

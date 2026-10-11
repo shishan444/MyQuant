@@ -74,6 +74,14 @@ def derive_role(timeframe: str) -> str:
     return "execution"
 
 
+# 止损模式取值域单一事实源（D4 家族/DC-4，0.4.2 策略表达力）：
+# 消费方——api/schemas.py sl_mode pattern（派生）、validator 域校验、
+# 登记声明块校验（hypothesis_service）；引擎真实分派集另立
+# ENGINE_SUPPORTED_SL_MODES（core/backtest/engine.py——声明域与
+# 分派集是两个概念，见 stop-loss-modes 规格「引用式约定边界」）
+SL_MODES = ("pct", "atr", "trail")
+
+
 # ---------------------------------------------------------------------------
 # 数据类（基因构件与 DNA 主体）
 # ---------------------------------------------------------------------------
@@ -154,12 +162,12 @@ class ExecutionGenes:
 class RiskGenes:
     """风控基因组（止损止盈/仓位/杠杆/方向）。"""
 
-    stop_loss: float = 0.05               # pct 模式: 0.05（5%）；atr 模式: 2.0（2 倍 ATR）
-    take_profit: Optional[float] = None   # pct 模式: 0.10（10%）；atr 模式: 4.0（4 倍 ATR）
+    stop_loss: float = 0.05               # pct/trail: 0.05（5%/回撤比例）；atr: 2.0（2 倍 ATR）
+    take_profit: Optional[float] = None   # pct/trail: 0.10（10%）；atr: 4.0（4 倍 ATR）
     position_size: float = 0.3            # 仓位比例（如 0.3 = 30%）
-    leverage: int = 1                     # 杠杆 1-10 倍
+    leverage: int = 1                     # 杠杆 1-MAX_LEVERAGE 倍（上限单源 validator.MAX_LEVERAGE）
     direction: str = "long"               # 方向："long" | "short"
-    sl_mode: str = "pct"                  # 止损模式："pct" | "atr"
+    sl_mode: str = "pct"                  # 止损模式（取值域单源 SL_MODES："pct" | "atr" | "trail"）
     atr_period: int = 14                  # atr 模式的 ATR 回看周期
 
     def to_dict(self) -> dict:

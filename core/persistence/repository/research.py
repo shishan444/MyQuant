@@ -78,6 +78,7 @@ def save_hypothesis_with_log(
     statement: str,
     data_ranges: str,
     ranges_hash: str,
+    strategy_params: Optional[str] = None,
     log_id: Optional[str] = None,
     screen_use: Optional[Dict[str, str]] = None,
 ) -> None:
@@ -86,7 +87,8 @@ def save_hypothesis_with_log(
     log_id 可注入（测试原子性用）；任一后续 insert 失败时假设行一并
     回滚。screen_use（add-screen-patterns）：{ref_id, data_ranges}——
     登记引用扫描候选时同事务追加谱系日志（区间经判定并集机制自动
-    纳入隔离，isolation.py 零改动）。
+    纳入隔离，isolation.py 零改动）。strategy_params（0.4.2 R1）：
+    声明块归一形 JSON 串；None=无声明（列 NULL，翻译走平台默认）。
     """
     engine = _engine_for(db_path)
     now = _now()
@@ -96,6 +98,7 @@ def save_hypothesis_with_log(
             conditions=conditions, conditions_hash=conditions_hash,
             statement=statement,
             data_ranges=data_ranges, ranges_hash=ranges_hash,
+            strategy_params=strategy_params,
             status="active",
             created_at=now, updated_at=now,
         ))
