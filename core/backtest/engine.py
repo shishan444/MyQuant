@@ -6,12 +6,14 @@
 
 价值与服务对象：全部回测指标（胜率/净期望/清算判定）的计算权威，
 「检查与考试同一量尺」的量尺本体——直接消费方为进化评估链
-（evolution/evaluation、evolution/engine）与策略验证链（api/runner、
-routes/strategies/verify、compare）；间接经 backtest_bridge.
-run_backtest_on_range 服务 validation_service 四路径（isolated/
-random_window/sandbox/staged）与 exit_sweep（0.4.1 R6）。S6 三道
-门判定数据亦源于此。ENGINE_SUPPORTED_SL_MODES 消费方=exit_sweep
-模式校验（0.4.2 待扩 (pct, atr, trail)）。
+（evolution/evaluation、evolution/engine）、策略验证链（api/runner、
+routes/strategies/verify、compare）与策略手动回测路由链
+（routes/strategies/backtest + services/backtest_service）；间接经
+backtest_bridge.run_backtest_on_range 服务 validation_service 四
+路径（isolated/random_window/sandbox/staged）与 exit_sweep
+（0.4.1 R6）。S6 三道门判定数据亦源于此。
+ENGINE_SUPPORTED_SL_MODES 消费方=exit_sweep 模式校验（0.4.2
+待扩 (pct, atr, trail)）。
 
 职责边界：执行与指标计算（费滑/杠杆放大/资金费/清算等效口径）；
 信号生成归 strategy 域（executor 产 SignalSet），清算维持率档位
@@ -261,10 +263,10 @@ def order_func_nb(c, entry_price, is_liquidated,
     （非收盘价——bar 内可达即触发）。信号在外层已 shift(1) 防
     look-ahead 前视。
 
-    Args via lifecycle chain:
+    Args（经 vbt 生命周期链传入）:
         entry_price, is_liquidated: pre_sim_func_nb 传入的可变状态。
 
-    Args via order_args:
+    Args（经 order_args 传入）:
         entries, exits, adds, reduces: 2D float64 信号矩阵。
         direction_vals, size_pcts, leverages, sl_stops, tp_stops:
             逐列参数（1D float64）。
