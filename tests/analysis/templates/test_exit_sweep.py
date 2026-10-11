@@ -180,6 +180,50 @@ class TestValidationOrder:
         assert "results" not in (exc.detail or {})
 
 
+class TestConditionsDomainValidation:
+    """CARD-05：exit_sweep 条件条数域+形制校验前置（共享层单点
+    validate_conditions_array——与 condition_stats/event_study/
+    counter_profile 路由同源）。三缺口修复锚：×6 条原 200 放行、
+    [] 原误导 NOT_EXPRESSIBLE、缺三键原走翻译链报 NOT_EXPRESSIBLE。"""
+
+    @pytest.fixture(autouse=True)
+    def _env(self, tmp_path):
+        self.d, self.db = _make_env(tmp_path)
+
+    def _run(self, **kw):
+        params: dict = {"direction": "long",
+                        "grid": _grid([0.01], [0.02])}
+        params.update(kw)
+        return exit_sweep(self.db, self.d, dict(RNG_DEF), **params)
+
+    @pytest.mark.parametrize(
+        ("conditions", "code"),
+        [([_COND] * 6, "RESEARCH_PARAM_INVALID"),
+         ([], "RESEARCH_PARAM_INVALID"),
+         ([{"subject": "close", "action": "gt"}],
+          "RESEARCH_CONDITION_INVALID")],
+        ids=["6 条超限拒", "空数组拒", "缺三键形制拒"])
+    def test_conditions_domain_and_form(self, conditions, code):
+        with pytest.raises(ResearchError) as ei:
+            self._run(conditions=conditions)
+        assert ei.value.code == code
+
+    def test_single_condition_form_checked_symmetrically(self):
+        """单条件包装 [condition] 同受校验（对称覆盖——缺三键 422
+        CONDITION_INVALID，原走翻译链）。"""
+        with pytest.raises(ResearchError) as ei:
+            self._run(condition={"subject": "close", "action": "gt"})
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_legal_conditions_and_single_unchanged(self):
+        """合法对照：指标类 conditions/单条件两形制照常执行（verdict
+        四值域——修复只收拒绝面不动合法路径）。"""
+        for kw in ({"conditions": [_COND]}, {"condition": _COND}):
+            out = self._run(**kw)
+            assert out["payload"]["verdict"] in (
+                "plateau", "indeterminate", "spike", "unsupported")
+
+
 class TestExecutionAndGates:
     """真实引擎轨道：网格完整性/费滑/两期分野执行侧/劣结构/纯噪声。"""
 
