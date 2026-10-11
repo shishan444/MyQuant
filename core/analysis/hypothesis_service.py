@@ -337,8 +337,7 @@ def register_hypothesis(
             group_conds[gk.replace("_conditions", "")] = gvals
     for group, conds in group_conds.items():
         for i, c in enumerate(conds):
-            field_name = f"{group}_conditions[{i}]" if group in ("when", "then") \
-                else f"{group}_conditions[{i}]"
+            field_name = f"{group}_conditions[{i}]"
             if not isinstance(c, dict) or not all(k in c for k in ("subject", "action", "target")):
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -388,7 +387,7 @@ def register_hypothesis(
             if tf_key is None:
                 continue
             field_name = f"{group}_conditions[{i}].timeframe"
-            if group == "then" or group not in ("when",):
+            if group != "when":
                 # THEN 与分批组条目同规则拒 timeframe（0.4.2 R3：分批组
                 # 为出场/加仓触发语义，跨周期掩码投影归属未定义）
                 raise ResearchError(
