@@ -373,3 +373,55 @@ class TestCounterProfileRoute:
         assert resp.status_code == 422, resp.text
         assert resp.json()["detail"]["detail"]["legal_range"] == [
             "long", "short"]
+
+
+_BAD_DICT_COND = {
+    "subject": {"indicator": "NOPE", "params": {"period": 14},
+                "field": "rsi"},
+    "action": "gt", "target": 55,
+}
+
+
+class TestSubjectDictInvalidTranslation:
+    """CARD-03：dict subject 未注册指标经 collect_condition_refs 转译
+    422 RESEARCH_CONDITION_INVALID（原 ColumnRefError(ValueError) 裸穿
+    500）——四路由链各锚一条（装载链 strict=True 传给 collect 的全部
+    调用点经路由面收敛）。"""
+
+    @pytest.mark.parametrize(
+        ("template", "params"),
+        [("condition_stats", {"conditions": [_BAD_DICT_COND],
+                              "min_samples": 1}),
+         ("event_study", {"conditions": [_BAD_DICT_COND], "min_events": 5}),
+         ("counter_profile", {"conditions": [_BAD_DICT_COND],
+                              "direction": "long", "min_samples": 5,
+                              "forward_bars": 12})],
+        ids=["condition_stats 拒", "event_study 拒", "counter_profile 拒"])
+    def test_three_templates_reject_structured(self, api_client, combo_env,
+                                               template, params):
+        _wire(api_client, combo_env)
+        resp = api_client.post("/api/research/analysis",
+                               json=_body(template, params))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_CONDITION_INVALID"
+        assert detail["message"].startswith("condition.subject 非法")
+
+    def test_precheck_route_rejects_structured(self, api_client, combo_env):
+        """precheck_hypothesis 模板壳同转译（第四链路）。"""
+        _wire(api_client, combo_env)
+        df = combo_env["df"]
+        resp = api_client.post("/api/research/analysis", json={
+            "template": "precheck_hypothesis",
+            "params": {"when_conditions": [_BAD_DICT_COND],
+                       "validate_range": {"symbol": SYMBOL,
+                                          "timeframe": "4h",
+                                          "start": df.index[650].isoformat(),
+                                          "end": df.index[-1].isoformat()}},
+            "data_range": {"symbol": SYMBOL, "timeframe": "4h",
+                           "start": df.index[650].isoformat(),
+                           "end": df.index[-1].isoformat()}})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_CONDITION_INVALID"
+        assert detail["message"].startswith("condition.subject 非法")
