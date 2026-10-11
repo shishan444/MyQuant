@@ -77,6 +77,9 @@
 | 逐段回测原语（run_backtest_on_range，0.4.1 S3 自 validation_service._run_backtest_on_range 提升至 backtest_bridge） | `analysis/test_validation_execution.py`（isolated 回归绿证零变化）+ `analysis/test_staged_validation.py`（T1 互钉）+ `analysis/templates/test_exit_sweep.py`（S3 搬家后四路径回归） | run_isolated_backtest、run_staged_validation、random_window、sandbox、exit_sweep（双消费方=validation_service 四路径+exit_sweep——改动须回归全消费者） |
 | build_signal_genes（S4 不落库纯翻译入口，0.4.1 自 translate_hypothesis 提取——timeframe 防线原形同点权威单源） | `analysis/test_draft_lifecycle.py`、`analysis/test_plugin_translation.py`（翻译链回归绿证零变化）+ `analysis/templates/test_exit_sweep.py`（timeframe 拒绝锚：field=when_conditions[i].timeframe 逐字） | translate_hypothesis、exit_sweep（两消费方同一防线同源同码——禁止第二套条件→信号基因逻辑） |
 | ENGINE_SUPPORTED_SL_MODES（S5 引擎真实分派域常量，0.4.1） | `analysis/templates/test_exit_sweep.py`（S5 双向守护：pct/atr 双注入逐位一致→引擎不消费 sl_mode→atr 必在合法集外；0.4.2 扩分派后语义自动翻转——同步遗漏必红） | exit_sweep（消费面纪律：只 import 此常量、禁引声明域 SL_MODES）；0.4.2 扩展注记见其 tasks 3.2 增补行 |
+| 策略层参数约束常量（0.4.2 责任面矩阵：SL_MODES/分叉域 SL_PCT_*/SL_ATR_*/MAX_LEVERAGE 单源） | `strategy/test_param_domain_matrix.py`（B1-33 字段×责任面双向守护：✔ 格拒越界不放宽+裸 float 格不得拒不越权+leverage 三面一致+同值异判锚 1.5；八字段全矩阵含 validator 三字段联动上界） | dna.py SL_MODES、validator 分叉域与 MAX_LEVERAGE、api/schemas 三处 Field、hypothesis_service 声明块校验、exit_sweep 各档取域（第四消费方）——改值单点生效，逐格断言必红 |
+| validate_trading_compatibility（0.4.2 交易链兼容独立入口——与 validate_dna 严格分层） | `trading/test_trading_link_compatibility.py`（双判据×三链矩阵+detail 危险形态+分层锚） | replay/paper/live 三插桩点（装载即拒——拒绝面扩容必配 atr×replay·paper 放行锚） |
+| order_func_nb 签名（0.4.2 增 sl_modes/atr_arr/exit_fractions/add_fractions/max_exposures） | `backtest/test_sl_modes.py`（三分派手工核算+batch 一致性）+`backtest/test_scaling_execution.py`（分批执行面）+`backtest/` 全量（pct 存量逐位特征网） | _build_portfolio 与 batch_run 两调用方同步装配（漏装=该列按缺省执行=与单路径静默分叉）；run/run_with_portfolio 经 _build_portfolio 零改动 |
 | _gates_verdict 双消费者（S6 连续门游程判定器，0.4.1 exit_sweep 直接复用——同包 import 零改动） | `analysis/templates/test_param_sweep.py`（存量回归：纯 import 零行为变化）+ `analysis/templates/test_exit_sweep.py`（四值+矩阵最差聚合+人工游程对照） | param_sweep、exit_sweep（第三消费者出现时再议符号提升——condition_kernel 演进先例） |
 | 指标现算内核（_compute_indicator，0.2.9 第五消费者 query_indicator；0.4.1 counter_profile 特征矩阵第六消费者） | `features/` 既有指标输出契约测试 + `analysis/test_indicator_query.py`（独立直算对照） | condition_kernel、case_inspection、模板族、indicator_query（改动须回归全消费者） |
 | default_params_for（注册表默认参数，0.2.9 自 case_inspection 私有提升——0.2.8 预留边界兑现） | `analysis/test_case_inspection.py`（45 用例回归绿证提升零变化） | inspect_cases、indicator_query |
@@ -194,3 +197,21 @@
 - 模板参数自由 Dict 面的形制校验成对存在（CARD-01/02）：validate_range 时间串须双层（类型层拒非 str+解析层拒不可解析 str——对齐 DataRangeItem 先例，int 形 pd.Timestamp 按 epoch 静默解析是已堵坑）；forward_bars 值域上界基于含前缀全 df（len(df)-1 非 stat 段）——改口径须同步 TestForwardBarsDomain 的 legal_range 精确锚
 - 预检留痕双路径 ref_id 分野（CARD-03）：显式路径 `precheck_hypothesis` / 挂接路径 `registration_precheck`——双锚来源审计依据；挂接留痕 hypothesis_id 恒 None（挂 id 即把 data_ranges 拉进判定并集，破坏 R4/S11）
 - `_probe_directory_ts` 变体回退（CARD-05）：单列探测 KeyError/ValueError → 全列装载取 index——与 `_count_rows_index_only` 回退同构，删回退则变体 parquet 预检崩（TestProbeVariantFallback 红线）
+
+## 八区 · 0.4.2 add-strategy-expressiveness（策略表达力）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| R1 声明块（B1/B2） | 值域按 sl_mode 分叉三维参数化（同值异判 1.5：pct 拒/atr 过）；幂等四分支+显式空对象三条（{} vs NULL→duplicated / {} vs 非空→422 / 键缺失→duplicated）；变体端到端（终态后异声明重登记→新假设→新实体）；分流两线（签名路径+九字段 D2 兜底含 atr_period=21 vs 14 异值锚）+连续性锚（存量 dna_json 无新键读 None）；API 全链到达 service+{} 传输保全+existing 摘要透传 | `strategy/test_param_domain_matrix.py`（B1-33 责任面矩阵）+`analysis/test_strategy_param_declaration.py`（B1+B2 全链 47 用例） | — |
+| R2 止损模式（B3/B7） | trail 手工核算（触发 bar 定位/多空对称/开仓重置跨仓/清算优先单事件/TP 并存）；atr 绝对价触发（倍数语义与 pct 同数据可区分/atr_period 动态取列/现算两路径/装载校验参数化四态/NaN bar 无 SL 约束）；pct 存量逐位（tests/backtest 全量特征网）；batch 一致性（三形态×两路径 trades/权益逐位+per-column atr_period）；exit_sweep 值域模式感知分档（atr 档 2.0 过/8.0 拒/0.05 拒/pct 2.0 拒/trail 同域）+S5 双断言翻转形态 | `backtest/test_sl_modes.py`+`trading/test_trading_link_compatibility.py`+`analysis/templates/test_exit_sweep.py`（S5 翻转+值域分档锚） | — |
+| R3 分批行为（B4/B5/L2） | 三角色映射四断言+插件列新组拒绝+组基因进签名；ADD_INHIBIT NOT 组合三入口一致（全/部分/无抑制+cross 类非取反形判定力锚）；引擎独立比例（串用修正 50% 非 30% 锚/加仓手工核算=权益×add_fraction/敞口超限跳过/缺省完备 0.5-0.1-1.0）；零触达+进化守护；组键配对四规则+有组无值归一化字面化；翻译生产路径三链拒（B3-17 双证据）；预检组级密度进 per_range；版本 DoD 端到端（组合入场+部分离场+trail+声明→登记→翻译→回测→双判据拒绝） | `analysis/test_scaled_position_actions.py`+`backtest/test_scaling_execution.py` | — |
+| R4 谱系披露（B6） | 身份族三查询（全状态含终态/parent 精确成员匹配兼容裸串与 JSON 两形制/SQL 聚合）；终态变体谱系互见（异声明重登记→D2 新实体，读 D1/D2 报告族全实体+is_current）；单假设单实体回归+异条件不进族+进化不误命中；聚合 230 条不截断；只读零写入；无 parent 容错；404 不变 | `analysis/test_validation_lineage.py`（9 用例） | — |
+| MCP 工具面（L3） | 新参数 schema 对拍（strategy_params 对象+组键三参数对象数组=HypothesisCreate 顶层键形制）；工具文档披露声明块与身份关系+分批组键语义；能力自述三新段（声明块/分批组/止损三分派+lineage） | `mcpserver/test_contract_parity.py`（新参数对拍+文档披露锚） | — |
+
+### 0.4.2 守护行
+- 「翻转原子交付」三处（先改/后改均留红窗口）：S5 双断言翻转与扩常量+分派同任务（test_exit_sweep）；2.5 三键未知键断言随 4.1 扩白名单同任务翻转为域校验（test_strategy_param_declaration）；B1-33 分两站（4.1 service 格翻格/4.3 validator 格收口）
+- 值域单源纪律：SL_PCT_MIN/MAX、SL_ATR_MIN/MAX、MAX_LEVERAGE、SL_MODES 五常量在 core/strategy（validator+dna），声明块校验/validator/schemas pattern/exit_sweep 各档全部引用式消费——任何消费方写字面副本即 B1-33 逐格断言红
+- max_exposure 上界联动（登记侧生效杠杆/DNA 侧 risk_genes.leverage 实际值）——B1-33 防拒因漂移锚：越界断言须显式构造 leverage（缺省 leverage=1 时同拒但拒因丧失联动判定力）
+- order_func_nb 参数序即装配契约：两调用方（_build_portfolio/batch_run）传参序与签名逐位对齐——新增参数漏装在 batch 路径=该列按缺省执行（与单路径静默分叉），B7 一致性锚红线
+- 翻译产物 parent_ids 为裸串形制（非 JSON 数组）——谱系查询兼容两形制（list_strategies_by_parent_hypotheses 与 _build_lineage 同款兜底）；单 id 字面子串不构成命中（精确成员判定）
+- 声明块归一化物化点：组存在而未带声明块键时字面化三键（幂等分支判定仍按请求带键原始标志——params_declared）——改动归一化位置须保证「幂等比对按字面值」与「键缺失不参与比对」两语义并存

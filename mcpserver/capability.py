@@ -128,6 +128,27 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
   WHEN 条件 → 入场信号，THEN 条件按「预期兑现即离场」→ 出场信号；
   两者均不可表达时显式拒绝。
+- **策略层参数声明块（0.4.2）**：register_hypothesis 可选
+  strategy_params（stop_loss/take_profit/sl_mode/position_size/
+  leverage/exit_fraction/add_fraction/max_exposure——值域按 sl_mode
+  分叉：pct/trail 档 [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；
+  sl_mode∈{pct,atr,trail}）。translate 映射进产物 risk_genes（返回体
+  risk_genes=declared；无声明=平台默认 platform_default）。**声明块与
+  假设身份正交**：不进条件指纹与幂等身份（同条件集+同区间集=同一
+  假设），参数变体经终态后带新声明重登记产生；幂等四分支详见工具
+  文档（{}=显式声明「无参数」≠键缺失）。
+- **分批条件组（0.4.2）**：exit_partial_conditions（部分离场→
+  REDUCE_TRIGGER）/add_trigger_conditions（加仓触发→ADD_TRIGGER）/
+  add_suppress_conditions（加仓抑制→ADD_INHIBIT——任一抑制条件成立
+  的 bar 不加仓）三可选组键，组内 {subject,action,target} 与 when/then
+  同构；**组键进条件指纹参与假设身份**（触发条件属研究主张）；分批
+  数值参数（exit_fraction 缺省 0.5/add_fraction 0.1/max_exposure 1.0）
+  经 strategy_params 声明块承载（有组无值自动归一化）。仅回测链执行
+  ——交易三链（回放/模拟/实盘）对分批角色与 trail 模式装载即拒。
+- **止损模式三分派（0.4.2）**：pct（入场价比例，存量语义）/atr
+  （止损=入场价∓倍数×ATR，按 DNA atr_period 动态取列，数据不足显式
+  拒）/trail（自最高价/最低价回撤达比例全部离场，多空对称）——回测
+  引擎真实分派；exit_sweep 网格按模式分档取值域（量纲双关）。
 - draft 即验证对象：对 draft 跑 run_isolated_validation——**验证的就是
   将来出货的确切 DNA**。draft 的 DNA 不可经 PUT 修改（改条件请重新
   translate）；draft 不出现在默认策略列表（显式 status=draft 可查）。
@@ -135,7 +156,13 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   转正（draft→active）；若 pass 挂在其他策略上而 draft 未验证，假设
   照常定证但 draft 不转正（不会调包出货未验证的 DNA）。
 - 与库中既有策略同基因签名时显式分流标注（same_dna_existing），
-  不会静默丢弃。
+  不会静默丢弃；签名命中还须策略层参数九字段全等（含 atr_period）
+  才分流——参数异必建新实体（参数变体不被吞并）。
+- get_validation_report 携带 **lineage 谱系段**（0.4.2，纯增量）：
+  报告实体回链 parent 假设→同身份族（同条件集+区间集的全部假设含
+  终态后重登记变体）的全部历史翻译实体（draft/active/archived）与
+  各自三级验证记录计数/verdict 分布、is_current 标注——重新翻译后
+  旧实体考试记录归属清晰可辨。
 
 ## 4. 策略可表达边界（假设→策略转化器的限制，显式拒绝优先）
 - 可表达：阈值比较（gt/lt）、穿越（cross_above/cross_below）、

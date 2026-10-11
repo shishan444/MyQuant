@@ -485,7 +485,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             data_ranges: list[dict[str, Any]],
             provenance: Optional[dict[str, Any]] = None,
             trigger_policy: Optional[dict[str, Any]] = None,
-            strategy_params: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
+            strategy_params: Optional[dict[str, Any]] = None,
+            exit_partial_conditions: Optional[list[dict[str, Any]]] = None,
+            add_trigger_conditions: Optional[list[dict[str, Any]]] = None,
+            add_suppress_conditions: Optional[list[dict[str, Any]]] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
         {indicator, params, field}（多输出指标 field 必填，参数空间经
@@ -537,7 +540,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         带键（含显式空对象 {}=显式声明「无参数」）与既有声明全等
         →duplicated、不等→422（防静默丢弃既有声明）；{} 与键缺失
         语义不同。坏值 422 RESEARCH_PARAM_INVALID（detail 含
-        field/legal_range）。"""
+        field/legal_range）。
+        exit_partial_conditions/add_trigger_conditions/add_suppress_conditions
+        可选（0.4.2 R3 分批条件组，对象数组——组内 {subject,action,target}
+        与 when/then 同构）：部分离场触发/加仓触发/加仓抑制三组，进
+        conditions 参与条件指纹与幂等身份（不同分批条件组=不同假设——
+        触发条件属研究主张）；组条目不带 timeframe 键；组存在须非空。
+        翻译映射 REDUCE_TRIGGER/ADD_TRIGGER/ADD_INHIBIT；分批数值参数
+        （exit_fraction 0.5/add_fraction 0.1/max_exposure 1.0 缺省）经
+        strategy_params 声明块承载（有组无值自动归一化字面值）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
@@ -548,6 +559,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["trigger_policy"] = trigger_policy
         if strategy_params is not None:
             body["strategy_params"] = strategy_params
+        if exit_partial_conditions is not None:
+            body["exit_partial_conditions"] = exit_partial_conditions
+        if add_trigger_conditions is not None:
+            body["add_trigger_conditions"] = add_trigger_conditions
+        if add_suppress_conditions is not None:
+            body["add_suppress_conditions"] = add_suppress_conditions
         return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()

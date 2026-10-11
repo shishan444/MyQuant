@@ -265,6 +265,53 @@ class TestSchemaParity:
             assert props[param].get("items", {}).get("type") == "object", \
                 f"register_hypothesis.{param} 须为对象数组（服务端为对象列表）"
 
+    def test_new_params_schema_parity(self) -> None:
+        """0.4.2 新参数对拍：strategy_params 对象+分批组键三参数对象数组
+        ——与 HypothesisCreate 顶层键形制对齐（组键与 trigger_policy 同款：
+        非 None 才进请求体顶层）。Optional 参数为 anyOf(t|null) 形。"""
+        import asyncio
+
+        from api.schemas import HypothesisCreate
+        from mcpserver.server import build_server
+
+        mcp, _ = build_server(profile="research")
+        by_name = {t.name: t.input_schema.get("properties", {})
+                   for t in run_async(mcp.list_tools())}
+        props = by_name["register_hypothesis"]
+
+        def _variants(schema: dict) -> list:
+            return schema.get("anyOf") or [schema]
+
+        # strategy_params：对象（服务端弱形制 Dict）
+        assert any(v.get("type") == "object"
+                   for v in _variants(props["strategy_params"]))
+        # 组键三参数：对象数组（服务端 List[ConditionItem]）
+        for param in ("exit_partial_conditions", "add_trigger_conditions",
+                      "add_suppress_conditions"):
+            is_array_of_obj = any(
+                v.get("type") == "array"
+                and v.get("items", {}).get("type") == "object"
+                for v in _variants(props[param]))
+            assert is_array_of_obj, \
+                f"register_hypothesis.{param} 须为对象数组"
+        # 服务端模型顶层键存在（对齐对象=HypothesisCreate 顶层键形制）
+        for key in ("strategy_params", "exit_partial_conditions",
+                    "add_trigger_conditions", "add_suppress_conditions"):
+            assert key in HypothesisCreate.model_fields, \
+                f"HypothesisCreate 缺顶层键 {key}（对拍断裂）"
+
+    def test_register_hypothesis_docs_disclose_scaling(self) -> None:
+        """工具描述披露声明块与身份关系+分批组键语义（沿 trigger_policy
+        工具文档先例——错误即文档纪律）。"""
+        import inspect
+
+        from mcpserver import tools as tools_mod
+        src = inspect.getsource(tools_mod)
+        for token in ("strategy_params", "幂等四分支", "终态后带新声明重登记",
+                      "exit_partial_conditions", "ADD_INHIBIT",
+                      "分批条件组"):
+            assert token in src, f"工具文档缺要素: {token}"
+
 
 class TestListFolding:
     """2.2 分页真实生效 + 列表折叠默认响应 <20KB（D8）。"""
