@@ -545,6 +545,20 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
         entries, policy, param_name="entry_trigger_policy")
 
 
+def _mixed_entry_direction(direction_genes, index: pd.Index) -> pd.Series:
+    """mixed 模式 entry_direction 生成（dna_to_signal_set 与批量求值
+    共享单源——review-042 CARD-13 双份收敛）。
+
+    有 DIRECTION 基因取首个基因序列（bar 级方向信号）；无基因中性
+    0.0（引擎方向分派 0 值不触发）——validate_dna 对 mixed 无
+    DIRECTION 基因为 errors 拒绝，此处中性兜底只服务绕过校验的
+    库内直调路径（不炸、不误触发）。
+    """
+    if direction_genes:
+        return direction_genes[0]
+    return pd.Series(0.0, index=index)
+
+
 def dna_to_signal_set(
     dna: StrategyDNA,
     enhanced_df: pd.DataFrame,
@@ -839,15 +853,11 @@ def dna_to_signal_set(
     both = entries & exits
     entries = entries & ~both
 
-    # 生成 entry_direction（mixed 模式）
+    # 生成 entry_direction（mixed 模式走共享单源；单方向显式设定）
     entry_direction = None
-    dna_direction = getattr(dna.risk_genes, "direction", "long")
+    dna_direction = dna.risk_genes.direction
     if dna_direction == "mixed":
-        if direction_genes:
-            entry_direction = direction_genes[0]
-        else:
-            # 无 DIRECTION 基因：中性方向（信号不会触发）
-            entry_direction = pd.Series(0.0, index=enhanced_df.index)
+        entry_direction = _mixed_entry_direction(direction_genes, enhanced_df.index)
     else:
         # 单方向 DNA：显式设定方向
         entry_direction = pd.Series(
@@ -1035,14 +1045,11 @@ def batch_signal_sets(
         both = entries & exits
         entries = entries & ~both
 
-        # 生成 entry_direction（mixed 模式）
+        # 生成 entry_direction（mixed 模式走共享单源；单方向保持 None——
+        # 批量路径既有形制，方向由 direction_vals 数组承载）
         entry_direction = None
-        if getattr(dna.risk_genes, "direction", None) == "mixed":
-            if direction_genes:
-                entry_direction = direction_genes[0]
-            else:
-                # 无 DIRECTION 基因：中性方向
-                entry_direction = pd.Series(0.0, index=enhanced_df.index)
+        if dna.risk_genes.direction == "mixed":
+            entry_direction = _mixed_entry_direction(direction_genes, enhanced_df.index)
 
         results.append(SignalSet(
             entries=entries,

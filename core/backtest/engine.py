@@ -62,9 +62,23 @@ _SL_MODE_CODE = {"pct": 0.0, "atr": 1.0, "trail": 2.0}
 
 
 def sl_mode_code(mode: str) -> float:
-    """sl_mode → 分派码（未知模式按 pct 兜底——值域校验在上游
-    validator/声明块，引擎装配层不重复校验）。"""
-    return _SL_MODE_CODE.get(mode, 0.0)
+    """sl_mode → 分派码（未知模式显式拒——review-042 CARD-13）。
+
+    上游 pattern/validator/声明块校验已拦正常路径的非法值；此处 raise
+    是库内脏数据防线：dna_json 被直改后 sl_mode 破损时，静默按 pct
+    兜底会让 atr/trail 止损语义无声丢失（回测失真不可察）——违反
+    「不静默退化」纪律。进化算子只产 pct/atr（SL_MODES 内，trail 不
+    在进化面），batch_run 装配层调用无新增拒绝面。
+
+    Raises:
+        ValueError: sl_mode 不在合法档位
+    """
+    try:
+        return _SL_MODE_CODE[mode]
+    except KeyError:
+        raise ValueError(
+            f"未知 sl_mode: {mode!r}（合法: {sorted(_SL_MODE_CODE)}）"
+            "——引擎装配层不静默按 pct 兜底") from None
 
 
 def _load_atr_column(enhanced_df: pd.DataFrame, atr_period: int) -> np.ndarray:
