@@ -398,14 +398,25 @@ class TestQuantilesAndConfidence:
         conf = res.to_dict()["confidence"]  # 三要素顶层位（非 payload）
         assert conf["method"] == "wilson_interval"
         assert conf["for"] == "event_rate"
+        events = res.payload["events"]
         n_events = conf["n_events"]
         n_bars = conf["n_bars"]
-        assert n_events == len(res.payload["events"])
+        assert n_events == len(events)
         assert n_bars == res.sample_size  # 样本量=区间 bar 数（同源）
 
+        # successes 口径=含至少一个事件的 bar 数（时点锚 timestamp、段锚
+        # start_timestamp 去重；单 bar 可产多事件，总事件数可超 n_bars——
+        # 直接以总事件数作 successes 会触发 wilson 计数矛盾）
+        expected_events_bars = len({
+            e.get("timestamp") or e["start_timestamp"] for e in events})
+        events_bars = conf["events_bars"]
+        assert events_bars == expected_events_bars
+        assert events_bars <= n_bars
+        assert events_bars <= n_events
+
         lo, hi = conf["interval"]
-        p = n_events / n_bars
-        assert lo <= p <= hi, "区间须覆盖点估计（事件率）"
+        p = events_bars / n_bars
+        assert lo <= p <= hi, "区间须覆盖点估计（事件 bar 率）"
         # 独立核算：z=1.96 Wilson 数学定义直写
         z = 1.96
         denom = 1 + z * z / n_bars
@@ -416,8 +427,8 @@ class TestQuantilesAndConfidence:
         assert hi == pytest.approx(center + half, abs=1e-12)
 
     def test_empty_events_confidence_degenerate(self):
-        """空事件退化形：n_events=0 → interval=[0.0, 0.0]（事件率 0 的
-        Wilson 下界恰 0——空事件合法结果的 confidence 不缺键）。"""
+        """空事件退化形：n_events=events_bars=0 → interval 下界恰 0
+        （Wilson p=0 截断——空事件合法结果的 confidence 不缺键）。"""
         flat = pd.DataFrame({
             "open": np.full(120, 100.0), "high": np.full(120, 100.5),
             "low": np.full(120, 99.5), "close": np.full(120, 100.0),
@@ -429,4 +440,10 @@ class TestQuantilesAndConfidence:
             indicators=["OBV"], request_start=flat.index[60])
         conf = res.to_dict()["confidence"]
         assert conf["n_events"] == 0
-        assert conf["interval"][0] == pytest.approx(0.0, abs=1e-12)
+        assert conf["events_bars"] == 0
+        lo, hi = conf["interval"]
+        assert lo == pytest.approx(0.0, abs=1e-12)
+        # p=0 的 Wilson 上界 z²/(n+z²)（>0——「零观察」不等于「确证为 0」）
+        z = 1.96
+        n_bars = conf["n_bars"]
+        assert hi == pytest.approx(z * z / (n_bars + z * z), rel=1e-9)
