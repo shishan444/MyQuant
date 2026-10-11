@@ -118,9 +118,12 @@ def counter_profile(
                        lo=1, hi=max(1, len(df) - 1))
     _require_int_range(min_samples, name="min_samples", lo=0)
 
-    # 触发集：掩码求值（两形制统一 mask_for_all）∩ 统计段
+    # 触发集：掩码求值（两形制统一 mask_for_all）∩ 统计段；copy 先行——
+    # 高周期条件的 __mtf_mask_* 幂等缓存列写副本不写穿入参 df（家族
+    # 「不改输入」纪律，condition_stats 同款先 copy 后求值）
+    work = df.copy()
     cond_list = conditions if conditions is not None else [condition]
-    mask = mask_for_all(df, cond_list, mtf=mtf)
+    mask = mask_for_all(work, cond_list, mtf=mtf)
     in_stat = stat_window_mask(df, request_start)
     stat_mask = (mask & in_stat).fillna(False).astype(bool)
     n_triggers = int(stat_mask.sum())
@@ -144,8 +147,7 @@ def counter_profile(
     n_grouped = n_conform + n_counter
 
     # 特征矩阵：全部参数组全部输出列（减 guard_only/lazy）触发时点值；
-    # 现算失败条目跳过并披露
-    work = df.copy()
+    # 现算失败条目跳过并披露（work 已于掩码求值前 copy——同副本续用）
     skipped_features: List[Dict[str, Any]] = []
     features: List[Dict[str, Any]] = []
     for name in feature_matrix_names():
