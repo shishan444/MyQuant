@@ -296,12 +296,19 @@ def segment_narrative(
     # 三要素（样本量=区间 bar 数；confidence=事件率的 Wilson 区间）
     n_bars = int(len(stat))
     n_events = len(events)
+    # successes 口径=含至少一个事件的 bar 数（时点事件锚 timestamp、段事件
+    # 锚 start_timestamp 去重）：单 bar 可产多事件（多指标同刻触发），直接以
+    # 总事件数作 successes 可超 total（wilson_interval 计数矛盾）；事件全部
+    # 落在统计段内，去重后恒 ≤n_bars
+    events_bars = len({
+        e.get("timestamp") or e["start_timestamp"] for e in events})
     from core.scoring.statistics import wilson_interval
     confidence = {
         "method": "wilson_interval",
-        "interval": list(wilson_interval(n_events, n_bars)),
+        "interval": list(wilson_interval(events_bars, n_bars)),
         "for": "event_rate",
         "n_events": n_events,
+        "events_bars": events_bars,
         "n_bars": n_bars,
     }
 
