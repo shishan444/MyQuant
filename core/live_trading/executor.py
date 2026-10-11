@@ -50,6 +50,18 @@ class LiveTradingExecutor:
     state: LiveAccountState
     default_entry_pct: float = 0.10  # decision.entry_size_pct 缺失时 fallback
 
+    def __post_init__(self) -> None:
+        """交易链兼容性插桩（0.4.2 R2/D3：装载即拒——在挂载 SL/TP 单
+        之前）。live 链 SL/TP v1 仅 pct：atr 倍数按 pct 挂单将产出
+        sl=entry×(1−stop_loss) 的负价无效止损单、trail 无峰值回撤实现
+        ——两者装载即拒；分批角色基因同拒（无执行能力）。
+        """
+        from core.strategy.validator import validate_trading_compatibility
+        reasons = validate_trading_compatibility(self.dna, "live")
+        if reasons:
+            raise ValueError(
+                "实盘链不支持该策略（DNA 装载即拒）: " + "; ".join(reasons))
+
     def execute_closed_bar(
         self, sig_set, bar_idx: int, close_price: float
     ) -> tuple[Optional[OrderAction], Optional[LiveOrder]]:

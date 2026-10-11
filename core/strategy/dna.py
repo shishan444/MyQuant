@@ -55,6 +55,12 @@ class SignalRole(Enum):
     ADD_GUARD = "add_guard"           # 过滤加仓条件
     REDUCE_TRIGGER = "reduce_trigger" # 触发减仓
     REDUCE_GUARD = "reduce_guard"     # 过滤减仓条件
+    # 加仓抑制（0.4.2 R3/DC-1）：抑制=「任一抑制条件成立的 bar 不加仓」，
+    # 组合 adds=(trigger AND guard) AND NOT(inhibitor 任一)。仅 ADD 侧设
+    # （不预建 REDUCE_INHIBIT）；取反映射对 cross 类必错故独立角色承载。
+    # 翻译映射（add_suppress_conditions→ADD_INHIBIT）与 executor 三处
+    # 分支随任务 4.2/4.4 落地。
+    ADD_INHIBIT = "add_inhibit"
     DIRECTION = "direction"           # mixed 策略的多空方向判定
 
 

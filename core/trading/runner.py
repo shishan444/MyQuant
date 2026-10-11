@@ -170,14 +170,23 @@ class TradingRunner(threading.Thread):
             update_paper_trading_task, save_paper_trade,
         )
 
+        # 交易链兼容性插桩（0.4.2 R2/D3：paper 任务装载点——trail/分批
+        # 基因在此显式拒绝，任务不静默按 pct 执行；插桩先于 running 标记
+        # ——载入即拒的任务不进入 running 状态）。atr 在 paper 链放行
+        # （DecisionPipeline 按 sl_mode 分派——既有能力）
+        dna = StrategyDNA.from_json(task_row["dna_json"])
+        from core.strategy.validator import validate_trading_compatibility
+        _reasons = validate_trading_compatibility(dna, "paper")
+        if _reasons:
+            raise ValueError(
+                "模拟盘链不支持该策略（DNA 载入即拒）: " + "; ".join(_reasons))
+
         # Mark running
         update_paper_trading_task(
             self.db_path, task_id, status="running", started_at=_now_iso(),
         )
         _push_ws(task_id, {"type": "task_started", "task_id": task_id})
 
-        # Parse DNA
-        dna = StrategyDNA.from_json(task_row["dna_json"])
         symbol = task_row["symbol"]
         timeframe = task_row["timeframe"]
         init_cash = task_row["initial_cash"]

@@ -220,6 +220,85 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     return ValidationResult(is_valid=len(errors) == 0, errors=errors, warnings=warnings)
 
 
+# 交易链兼容性判别角色集（0.4.2 DC-6 判据二）：含任一即三链拒绝——
+# 交易链对分批行为无执行能力（比例硬编码分叉/inhibitor 不被提取/
+# add 走 legacy tranches/live 链 add/reduce→None 静默不动作）
+_SCALING_ROLES = frozenset({
+    SignalRole.REDUCE_TRIGGER, SignalRole.REDUCE_GUARD,
+    SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD,
+    SignalRole.ADD_INHIBIT,
+})
+
+
+def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
+    """交易链兼容性校验（0.4.2 R2/D3 扩展——独立入口，与 validate_dna
+    严格分层：trail/分批是合法 DNA 形态，validate_dna 不因此报错，本
+    函数只在策略进入**交易链**（replay/paper/live）装载时判链路能力）。
+
+    判据一（模式×链路静态能力矩阵——评估问题 5 a1 收敛，Q2 裁决 a）：
+    - sl_mode="trail"：三链全拒（三链均无峰值回撤实现，仅回测支持）。
+    - sl_mode="atr" 且 link="live"：拒（live 链 SL/TP v1 仅 pct——
+      _attach_sl_tp 按 pct 挂单，atr 倍数按 pct 挂单将产出
+      sl=entry×(1−stop_loss) 的负价无效止损单）。
+    - sl_mode="atr" 且 link∈{replay, paper}：放行（DecisionPipeline.
+      _extract_atr 按 sl_mode 分派，ATR 列装载时按倍数正确执行——
+      既有正式能力）。已知边界（显式登记，不在本版本扩大）：ATR 列
+      缺失/NaN/≤0 时 account fallback pct 化=静默无止损，后续版本与
+      交易链 ATR 装载校验、live 链 atr 支持同批处理（需求单在册）。
+    - pct：全链。
+
+    判据二（分批角色基因存在性——DNA 层静态判别，含 layers 展开）：
+    signal_genes ∪ layers[*].signal_genes 任一 role ∈ 分批角色集 → 三链
+    一律拒绝（拒绝 detail 指明基因与角色）。
+
+    Args:
+        dna: 待装载的策略 DNA。
+        link: 交易链路标识（"replay" | "paper" | "live"——由三插桩点
+            各自传入，不猜测来源）。
+
+    Returns:
+        拒绝原因清单（空列表=兼容放行）。
+
+    Raises:
+        ValueError: link 非法（编程错误——三插桩点是唯一调用方）。
+    """
+    reasons: List[str] = []
+    if link not in ("replay", "paper", "live"):
+        raise ValueError(
+            f"link 须为 replay/paper/live 之一，got {link!r}")
+
+    sl_mode = dna.risk_genes.sl_mode
+
+    # 判据一：模式×链路
+    if sl_mode == "trail":
+        reasons.append(
+            "sl_mode='trail'（追踪止损）仅回测引擎支持——交易三链"
+            "（回放/模拟/实盘）均无峰值回撤实现，不支持装载")
+    elif sl_mode == "atr" and link == "live":
+        reasons.append(
+            "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
+            "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
+            "sl=entry×(1−stop_loss) 的负价无效止损单")
+
+    # 判据二：分批角色（signal_genes 与全部 layers 展开并集）
+    seen_roles = set()
+    for gene in dna.signal_genes:
+        seen_roles.add(gene.role)
+    for layer in (dna.layers or []):
+        for gene in layer.signal_genes:
+            seen_roles.add(gene.role)
+    hit_roles = sorted(
+        (r for r in seen_roles if r in _SCALING_ROLES),
+        key=lambda r: r.value)
+    if hit_roles:
+        role_names = "、".join(r.value for r in hit_roles)
+        reasons.append(
+            f"策略含分批仓位角色基因（{role_names}）——交易三链对部分"
+            "离场/条件加仓/抑制无执行能力（回测链专属行为），不支持装载")
+
+    return reasons
+
+
 def _validate_condition_structure(
     condition: dict, gene_idx: int, prefix: str = "",
 ) -> List[str]:

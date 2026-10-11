@@ -79,6 +79,15 @@ class ReplayRunner:
         if start_bar is None:
             start_bar = self.warmup_bars
 
+        # 交易链兼容性插桩（0.4.2 R2/D3：DNA 载入点——trail/分批/atr×live
+        # 在此显式拒绝，不静默退化按 pct 执行）。trading 域不引入
+        # ResearchError，ValueError 沿既有异常通道上层转结构化
+        from core.strategy.validator import validate_trading_compatibility
+        _reasons = validate_trading_compatibility(dna, "replay")
+        if _reasons:
+            raise ValueError(
+                "回放链不支持该策略（DNA 载入即拒）: " + "; ".join(_reasons))
+
         # Initialize signal set
         sig_set = dna_to_signal_set(dna, df, dfs_by_timeframe)
 

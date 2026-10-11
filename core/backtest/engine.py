@@ -36,6 +36,9 @@ from vectorbt.portfolio import nb as vbt_nb
 
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_signal_sets, clear_indicator_cache
+# ATR 装载校验显式拒绝用（轻量叶模块——错误码族与 research 域同源；
+# engine 不引入 analysis 聚合包，仅此单点）
+from core.analysis.errors import ResearchError
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +48,75 @@ from core.market_model import maintenance_threshold as _mm_threshold
 from core.market_model.liquidation import tier_arrays as _mm_tier_arrays
 
 # 0.4.1 Q1 裁决（add-research-analysis-tools）：引擎止损真实分派域。
-# 语义=引擎已实现的真实分派集（order_func_nb 恒按入场价 pct 语义执行
-# ——引擎不消费 sl_mode）；区别于 0.4.2（add-strategy-expressiveness）
-# 将建的声明域 SL_MODES。消费面纪律：exit_sweep 模式校验只 import
-# 此常量、禁引声明域常量；0.4.2 实施引擎分派（其 tasks 3.1/3.2）时
-# 同步扩展至 ("pct", "atr", "trail")。
-ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct",)
+# 语义=引擎已实现的真实分派集；区别于声明域 SL_MODES（core/strategy/
+# dna.py——取值域与分派集是两个概念）。消费面纪律：exit_sweep 模式
+# 校验只 import 此常量、禁引声明域常量。0.4.2（add-strategy-
+# expressiveness）实施 order_func_nb 三分派（tasks 3.1/3.2）后扩展
+# 至 ("pct", "atr", "trail")——本扩展与分派实现同任务原子交付（先扩
+# 常量后实现=引用式消费方立即放行未实现模式）。
+ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct", "atr", "trail")
+
+# sl_mode 字符串 → order_func_nb 数值分派码（numba 侧无字符串比较，
+# 装配层单源映射；0.4.2 R2）
+_SL_MODE_CODE = {"pct": 0.0, "atr": 1.0, "trail": 2.0}
+
+
+def sl_mode_code(mode: str) -> float:
+    """sl_mode → 分派码（未知模式按 pct 兜底——值域校验在上游
+    validator/声明块，引擎装配层不重复校验）。"""
+    return _SL_MODE_CODE.get(mode, 0.0)
+
+
+def _load_atr_column(enhanced_df: pd.DataFrame, atr_period: int) -> np.ndarray:
+    """ATR 取列链（0.4.2 R2，sl_mode="atr" 装载层）。
+
+    动态取列 ``atr_{atr_period}``（不写死 atr_14——pipeline._extract_atr
+    同构）；列缺时经 _compute_indicator 现算（validation_service 同款
+    先例）；现算不可得（数据不足）显式拒。数值校验（Q-D 装载校验）：
+    全 NaN 拒、首个非 NaN 之后无 NaN（中段数据洞拒）、值>0（≤0 拒）
+    ——头部预热 NaN（前 atr_period bar 周期性缺失）合法，引擎内 NaN
+    bar 该 bar 无 SL 约束（沿交易链 NaN guard 先例）。
+
+    Raises:
+        ResearchError: RESEARCH_DATA_INSUFFICIENT（ATR 数据不足族）
+    """
+    col = f"atr_{atr_period}"
+    if col in enhanced_df.columns:
+        series = enhanced_df[col]
+    else:
+        from core.features.indicators import _compute_indicator
+        computed = _compute_indicator(enhanced_df, "ATR", {"period": atr_period})
+        if col not in computed:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"ATR({atr_period}) 列缺失且现算不可得（数据不足——"
+                "区间短于周期或指标计算失败）",
+                detail={"field": f"atr_{atr_period}",
+                        "atr_period": atr_period})
+        series = computed[col]
+
+    arr = pd.Series(series).values.astype(np.float64)
+    valid = ~np.isnan(arr)
+    n_valid = int(valid.sum())
+    if n_valid == 0:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"ATR({atr_period}) 列全 NaN（区间短于周期或数据缺失）",
+            detail={"field": col, "atr_period": atr_period})
+    first_valid = int(np.argmax(valid))
+    tail = arr[first_valid:]
+    if np.isnan(tail).any():
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"ATR({atr_period}) 列首个有效值之后存在 NaN（中段数据洞"
+            "——止损保护不可静默中断）",
+            detail={"field": col, "atr_period": atr_period})
+    if (tail <= 0.0).any():
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"ATR({atr_period}) 列含非正值（≤0 的 ATR 值不可作止损锚）",
+            detail={"field": col, "atr_period": atr_period})
+    return arr
 
 
 @dataclass
@@ -237,39 +303,58 @@ def _apply_leverage_to_equity(
 
 @njit
 def pre_sim_func_nb(c):
-    """仿真前置状态初始化（每列 entry_price / is_liquidated 数组）。
+    """仿真前置状态初始化（每列 entry_price / is_liquidated / peak_price 数组）。
 
     经 vbt 生命周期链作为 order_func_nb 首组参数传入，供逐 bar 回调
-    就地读写（入场价记忆与清算标记——float 承载因 numba 状态数组
-    须数值型）。
+    就地读写（入场价记忆、清算标记与 trail 峰值——float 承载因 numba
+    状态数组须数值型）。peak_price（0.4.2 R2）：trail 模式持仓期峰值
+    （多=最高价/空=最低价），0.0=无持仓（开仓重置成交价、清仓清零）。
     """
     n_cols = c.target_shape[1]
     entry_price = np.full(n_cols, 0.0, dtype=np.float64)
     is_liquidated = np.full(n_cols, 0.0, dtype=np.float64)  # 0.0=False，1.0=True
-    return (entry_price, is_liquidated)
+    peak_price = np.full(n_cols, 0.0, dtype=np.float64)
+    return (entry_price, is_liquidated, peak_price)
 
 
 @njit
-def order_func_nb(c, entry_price, is_liquidated,
+def order_func_nb(c, entry_price, is_liquidated, peak_price,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
-                  sl_stops, tp_stops, fee, slippage,
+                  sl_stops, tp_stops, sl_modes, atr_arr,
+                  fee, slippage,
                   high_arr, low_arr, direction_signal,
                   mmr_tier_max, mmr_tier_rate):
-    """逐 bar 订单回调（实时 SL/TP 与清算判定）。
+    """逐 bar 订单回调（实时 SL/TP 与清算判定；SL 段按 sl_mode 三分派）。
 
     判定序（关键决策）：清算检查先于 SL/TP——杠杆仓权益击穿维持线
     即强平，优先级高于止盈止损；SL/TP 用 bar HIGH/LOW 触碰判定
     （非收盘价——bar 内可达即触发）。信号在外层已 shift(1) 防
-    look-ahead 前视。
+    look-ahead 前视。同 bar 清算线与 trail/SL 线双命中→清算优先单
+    事件（DC-10——清算检查在前，先命中先 return）。
+
+    SL 段三模式分派（0.4.2 R2，sl_modes 逐列分派码）：
+    - pct（0）：锚入场价比例（存量语义逐位不变——回归锚）。
+    - trail（2）：峰值先更新（含当 bar high/low）再判定——多单
+      peak=max(peak, bar_high)、sl_level=peak*(1−sl_stop)、bar_low
+      触碰全平；空单对称（min(peak, bar_low)、peak*(1+sl_stop)、
+      bar_high 触碰）。TP 沿 pct 语义锚入场价（SL 先 TP 后）。
+    - atr（1）：sl_level=entry∓sl_stop×ATR、tp_level=entry±tp_stop×ATR
+      （倍数语义——atr_arr 为该 bar ATR 值；NaN bar 该 bar 无 SL
+      约束，沿交易链 NaN guard 先例——预热期无止损保护）。
 
     Args（经 vbt 生命周期链传入）:
-        entry_price, is_liquidated: pre_sim_func_nb 传入的可变状态。
+        entry_price, is_liquidated, peak_price: pre_sim_func_nb 传入
+            的可变状态。
 
     Args（经 order_args 传入）:
         entries, exits, adds, reduces: 2D float64 信号矩阵。
         direction_vals, size_pcts, leverages, sl_stops, tp_stops:
             逐列参数（1D float64）。
+        sl_modes: 逐列分派码（1D float64：0=pct/1=atr/2=trail——
+            装配层经 sl_mode_code 单源映射）。
+        atr_arr: 2D ATR 值矩阵（atr 模式消费；装载层按
+            dna.risk_genes.atr_period 动态取列+装载校验）。
         fee, slippage: 标量费滑（基础费率——杠杆放大归
             _apply_leverage_to_equity 后处理）。
         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
@@ -284,6 +369,7 @@ def order_func_nb(c, entry_price, is_liquidated,
     leverage = leverages[col]
     sl_stop = sl_stops[col]
     tp_stop = tp_stops[col]
+    sl_mode = sl_modes[col]
     # 费滑按基础费率收——杠杆放大由 _apply_leverage_to_equity 后处理
     effective_fee = fee
     effective_slippage = slippage
@@ -291,6 +377,7 @@ def order_func_nb(c, entry_price, is_liquidated,
     # 已清算 → 强平余仓；仓位归零后资金充足时可再入场
     if is_liquidated[col] > 0.5:
         if c.position_now != 0.0:
+            peak_price[col] = 0.0
             return vbt_nb.order_nb(
                 size=np.float64(-c.position_now),
                 size_type=np.int64(0),
@@ -326,6 +413,7 @@ def order_func_nb(c, entry_price, is_liquidated,
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
+            peak_price[col] = 0.0
             return vbt_nb.order_nb(
                 size=np.float64(-c.position_now),
                 size_type=np.int64(0),
@@ -339,54 +427,163 @@ def order_func_nb(c, entry_price, is_liquidated,
         bar_low = low_arr[i, col]
         ep = entry_price[col]
 
-        if c.position_now > 0.0:
-            # 多头仓
-            sl_level = ep * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
-            tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
-            # SL：bar LOW 触碰止损线
-            if sl_stop > 0.0 and bar_low <= sl_level:
-                entry_price[col] = 0.0
-                return vbt_nb.order_nb(
-                    size=np.float64(-c.position_now),
-                    size_type=np.int64(0),
-                    fees=effective_fee,
-                    slippage=effective_slippage,
-                )
-            # TP：bar HIGH 触及止盈线
-            if tp_stop > 0.0 and bar_high >= tp_level:
-                entry_price[col] = 0.0
-                return vbt_nb.order_nb(
-                    size=np.float64(-c.position_now),
-                    size_type=np.int64(0),
-                    fees=effective_fee,
-                    slippage=effective_slippage,
-                )
+        if sl_mode < 0.5:
+            # ── pct 分支（存量语义逐位不变——回归锚）──
+            if c.position_now > 0.0:
+                # 多头仓
+                sl_level = ep * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
+                tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                # SL：bar LOW 触碰止损线
+                if sl_stop > 0.0 and bar_low <= sl_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+                # TP：bar HIGH 触及止盈线
+                if tp_stop > 0.0 and bar_high >= tp_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+            else:
+                # 空头仓
+                sl_level = ep * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
+                tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                # SL：bar HIGH 触碰止损线
+                if sl_stop > 0.0 and bar_high >= sl_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+                # TP：bar LOW 触及止盈线
+                if tp_stop > 0.0 and bar_low <= tp_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+        elif sl_mode > 1.5:
+            # ── trail 分支（峰值回撤锁利，0.4.2 R2/A1 当 bar 口径）──
+            # 峰值先更新（含当 bar）再以当 bar 对侧判定触发
+            if c.position_now > 0.0:
+                peak = peak_price[col]
+                if bar_high > peak:
+                    peak = bar_high
+                peak_price[col] = peak
+                sl_level = peak * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
+                # TP 沿 pct 语义锚入场价（trail 与 TP 并存，SL 先 TP 后）
+                tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                if sl_stop > 0.0 and bar_low <= sl_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+                if tp_stop > 0.0 and bar_high >= tp_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+            else:
+                peak = peak_price[col]
+                if peak <= 0.0 or bar_low < peak:
+                    peak = bar_low
+                peak_price[col] = peak
+                sl_level = peak * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
+                tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                if sl_stop > 0.0 and bar_high >= sl_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+                if tp_stop > 0.0 and bar_low <= tp_level:
+                    entry_price[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
         else:
-            # 空头仓
-            sl_level = ep * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
-            tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
-            # SL：bar HIGH 触碰止损线
-            if sl_stop > 0.0 and bar_high >= sl_level:
-                entry_price[col] = 0.0
-                return vbt_nb.order_nb(
-                    size=np.float64(-c.position_now),
-                    size_type=np.int64(0),
-                    fees=effective_fee,
-                    slippage=effective_slippage,
-                )
-            # TP：bar LOW 触及止盈线
-            if tp_stop > 0.0 and bar_low <= tp_level:
-                entry_price[col] = 0.0
-                return vbt_nb.order_nb(
-                    size=np.float64(-c.position_now),
-                    size_type=np.int64(0),
-                    fees=effective_fee,
-                    slippage=effective_slippage,
-                )
+            # ── atr 分支（ATR 倍数语义，0.4.2 R2——消除静默按 pct 误执行）──
+            atr_value = atr_arr[i, col]
+            if not (atr_value != atr_value):  # NaN guard：预热期该 bar 无 SL 约束
+                if c.position_now > 0.0:
+                    # 多头：止损=入场−倍数×ATR，止盈=入场+倍数×ATR
+                    sl_level = ep - sl_stop * atr_value if sl_stop > 0.0 else 0.0
+                    tp_level = ep + tp_stop * atr_value if tp_stop > 0.0 else 0.0
+                    if sl_stop > 0.0 and bar_low <= sl_level:
+                        entry_price[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
+                    if tp_stop > 0.0 and bar_high >= tp_level:
+                        entry_price[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
+                else:
+                    # 空头：止损=入场+倍数×ATR，止盈=入场−倍数×ATR
+                    sl_level = ep + sl_stop * atr_value if sl_stop > 0.0 else 0.0
+                    tp_level = ep - tp_stop * atr_value if tp_stop > 0.0 else 0.0
+                    if sl_stop > 0.0 and bar_high >= sl_level:
+                        entry_price[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
+                    if tp_stop > 0.0 and bar_low <= tp_level:
+                        entry_price[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
 
     # 离场信号
     if exits[i, col] > 0.5 and c.position_now != 0.0:
         entry_price[col] = 0.0
+        peak_price[col] = 0.0
         return vbt_nb.order_nb(
             size=np.float64(-c.position_now),
             size_type=np.int64(0),
@@ -397,6 +594,7 @@ def order_func_nb(c, entry_price, is_liquidated,
     # 入场信号
     if entries[i, col] > 0.5 and c.position_now == 0.0:
         entry_price[col] = current_price
+        peak_price[col] = current_price  # trail 峰值重置为成交价（开仓重锚）
         # mixed 模式：方向由 direction_signal 定交易侧
         dir_sign = direction_signal[i, col]
         if direction_val < 1.5:  # long(0)/short(1) 固定方向
@@ -493,6 +691,15 @@ class BacktestEngine:
         leverage = float(dna.risk_genes.leverage)
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
+        # SL 模式分派与 ATR 装载（0.4.2 R2）：sl_mode 经单源映射为分派码；
+        # atr 模式按 dna.atr_period 动态取列+装载校验（数据不足显式拒），
+        # 非 atr 模式占位数组（引擎不消费）
+        sl_mode_val = sl_mode_code(dna.risk_genes.sl_mode)
+        if dna.risk_genes.sl_mode == "atr":
+            atr_col = _load_atr_column(enhanced_df, int(dna.risk_genes.atr_period))
+        else:
+            atr_col = np.ones(len(enhanced_df), dtype=np.float64)
+        atr_2d = atr_col.reshape(-1, 1)
 
         # 信号转 2D numpy 数组（numba 兼容）
         entries_2d = entries.values.astype(np.float64).reshape(-1, 1)
@@ -527,6 +734,8 @@ class BacktestEngine:
             np.array([leverage], dtype=np.float64),
             np.array([sl_stop], dtype=np.float64),
             np.array([tp_stop], dtype=np.float64),
+            np.array([sl_mode_val], dtype=np.float64),
+            atr_2d,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
@@ -821,6 +1030,21 @@ class BacktestEngine:
              for dna in individuals],
             dtype=np.float64,
         )
+        # SL 模式分派与 ATR 装载（0.4.2 R2）：per-column 各取各 DNA 的
+        # sl_mode/atr_period——batch 路径与单路径（_build_portfolio）同一
+        # 装载语义（漏装=该列按缺省执行=与单路径静默分叉）
+        sl_mode_vals = np.array(
+            [sl_mode_code(dna.risk_genes.sl_mode) for dna in individuals],
+            dtype=np.float64,
+        )
+        atr_parts = []
+        for dna in individuals:
+            if dna.risk_genes.sl_mode == "atr":
+                atr_parts.append(
+                    _load_atr_column(enhanced_df, int(dna.risk_genes.atr_period)))
+            else:
+                atr_parts.append(np.ones(N, dtype=np.float64))
+        atr_matrix = np.column_stack(atr_parts).astype(np.float64)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -838,6 +1062,8 @@ class BacktestEngine:
             leverages,
             sl_stops,
             tp_stops,
+            sl_mode_vals,
+            atr_matrix,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
