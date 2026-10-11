@@ -459,17 +459,20 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         载荷分档：单组 2048 / 批量 16384 字节。"""
         body: Dict[str, Any] = {
             "symbol": symbol, "timeframe": timeframe}
+        # 单组字段无条件透传（is not None 形制——与 params/reductions 同）：
+        # indicator 与 groups 同传时交 API 单一事实源判互斥 422，工具层
+        # 不吞键（else 分支会使互斥判定对 indicator 键永不触发）
+        if indicator is not None:
+            body["indicator"] = indicator
         if groups is not None:
             body["groups"] = groups
-        else:
-            body["indicator"] = indicator
         if params is not None:
             body["params"] = params
         if reductions is not None:
             body["reductions"] = reductions
-        if start:
+        if start is not None:
             body["start"] = start
-        if end:
+        if end is not None:
             body["end"] = end
         return api.post("/api/research/query-indicator", body)
 
