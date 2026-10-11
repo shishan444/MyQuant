@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -301,3 +302,104 @@ class TestBoundaries:
             counter_profile(
                 df, condition=_CONDITION, conditions=[_CONDITION],
                 direction="long", data_ranges=RANGES)
+
+
+class TestConfidenceContract:
+    """三要素 confidence 特征网补齐（规格「confidence 为反例占比的
+    区间估计（Wilson 区间）」——B5 用例组未覆盖项）：期望按 Wilson
+    score interval 数学定义在测试内直写（与被测委托链
+    core.scoring.statistics 相互独立的推导路径，公式抄错必红）。"""
+
+    def test_confidence_wilson_independent_crosscheck(self):
+        df = _make_df(n_conform=10, n_counter=5)
+        res = _profile(df)
+        conf = res.to_dict()["confidence"]  # 三要素顶层位（非 payload）
+        assert conf["method"] == "wilson_interval"
+        assert conf["for"] == "counter_rate"
+        n_counter = res.payload["groups"]["counter"]["count"]
+        n_grouped = (n_counter
+                     + res.payload["groups"]["conform"]["count"])
+        assert conf["n_grouped"] == n_grouped
+
+        lo, hi = conf["interval"]
+        p = n_counter / n_grouped
+        assert conf["counter_rate"] == pytest.approx(p), \
+            "点估计键与区间同源（CARD-08 披露）"
+        assert lo <= p <= hi, "区间须覆盖点估计（反例占比）"
+        # 独立核算：z=1.96 Wilson 数学定义直写
+        z = 1.96
+        denom = 1 + z * z / n_grouped
+        center = (p + z * z / (2 * n_grouped)) / denom
+        half = (z / denom) * math.sqrt(
+            p * (1 - p) / n_grouped + z * z / (4 * n_grouped ** 2))
+        assert lo == pytest.approx(center - half, abs=1e-12)
+        assert hi == pytest.approx(center + half, abs=1e-12)
+
+    def test_confidence_no_grouped_degenerate(self):
+        """n_grouped=0 退化形（触发全在尾部不完整窗口）：counter_rate
+        键保留 None（无点估计的诚实缺值）、interval=[0.0, 0.0]。"""
+        df = _make_df(n_conform=6, n_counter=4)
+        # forward_bars=值域上界（len-1）：触发位置（>=220）的观察窗
+        # [i+1, i+len-1] 越出数据末端 → future 全 NaN → decidable=0
+        res = counter_profile(
+            df, condition=_CONDITION, direction="long",
+            data_ranges=RANGES, forward_bars=len(df) - 1,
+            min_samples=1, request_start=df.index[220])
+        conf = res.to_dict()["confidence"]
+        assert conf["n_grouped"] == 0
+        assert conf["counter_rate"] is None
+        assert conf["interval"] == [0.0, 0.0]
+
+    def test_mtf_cache_columns_not_written_through(self, tmp_path):
+        """CARD-14 写穿回归锚：高周期条件求值后入参 df 列集不变
+        （__mtf_mask_* 幂等缓存列写副本不写穿入参——家族「不改输入」
+        纪律，copy 先行修复的行为锚）。"""
+        from core.analysis.condition_kernel import MtfEvalContext
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        base = make_ohlcv(n=600, freq="1h", start="2024-01-01", seed=23)
+        high = make_ohlcv(n=150, freq="4h", start="2024-01-01", seed=23)
+        base.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        high.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        before_cols = list(base.columns)
+
+        ctx = MtfEvalContext(data_dir, "BTCUSDT", "1h")
+        res = counter_profile(
+            base, conditions=[{"subject": "close", "action": "gt",
+                               "target": 0.0, "timeframe": "4h"}],
+            direction="long",
+            data_ranges=[{"start": "2024-01-01", "end": "2024-02-01"}],
+            forward_bars=6, min_samples=1, mtf=ctx)
+        assert res.sample_size > 0  # 求值确实发生（416+ 触发）
+        assert list(base.columns) == before_cols, "入参列集不变"
+        assert not any(c.startswith("__mtf_mask_") for c in base.columns), \
+            "mtf 缓存列不得写穿入参 df"
+
+    def test_confidence_zero_counter_degenerate_interval(self):
+        """反例组 0 退化形：lo=0（截断）、hi>0（0 反例的 95% 上界——
+        「全符合」不等于「反例率为 0 的确证」，区间仍留上侧余量）；
+        n_grouped=符合数。"""
+        n = 400
+        arr = 100.0 + 0.6 * np.arange(n)  # 单调升：long 触发全符合
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": arr, "high": arr + 0.5, "low": arr - 0.5,
+            "close": arr, "volume": np.full(n, 100.0)}, index=idx)
+        res = counter_profile(
+            df, condition={"subject": "close", "action": "gt",
+                           "target": 105.0},
+            direction="long", data_ranges=RANGES, forward_bars=6,
+            min_samples=30, request_start=df.index[10])
+        conf = res.to_dict()["confidence"]
+        n_grouped = res.payload["groups"]["conform"]["count"]
+        assert res.payload["groups"]["counter"]["count"] == 0
+        assert conf["n_grouped"] == n_grouped
+        lo, hi = conf["interval"]
+        assert lo == 0.0
+        assert hi > 0.0
+        # 独立核算：p=0 时 Wilson 上界 z²/(n+z²)
+        z = 1.96
+        assert hi == pytest.approx(z * z / (n_grouped + z * z), rel=1e-9)

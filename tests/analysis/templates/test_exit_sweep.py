@@ -179,6 +179,83 @@ class TestValidationOrder:
         assert exc.code == "RESEARCH_PARAM_INVALID"
         assert "results" not in (exc.detail or {})
 
+    def test_grid_structure_rejected(self):
+        """闸门盲区消解：校验序①原始面——grid 非 dict / modes 非
+        列表 / 条目缺三键，全部 422 结构化拒绝。"""
+        for bad in (["pct"],  # 非 dict
+                    {"modes": "pct"},  # modes 非列表
+                    {"modes": []},  # 空列表
+                    {"modes": [{"mode": "pct", "stops": [0.01]}]}):  # 缺 tp
+            exc = self._reject(bad, "")
+            assert exc.code == "RESEARCH_PARAM_INVALID", bad
+            assert exc.detail["param"] in ("grid", "grid.modes[0]")
+
+    def test_direct_call_direction_and_either_or_rejected(self):
+        """闸门盲区消解：模板直调层 direction 枚举与二选一拒绝面
+        （路由层键组先拦，直调防线独立存在——与 counter_profile
+        直调层同族）。"""
+        with pytest.raises(ResearchError) as ei:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
+                       direction="mixed", grid=_grid([0.01], [0.02]))
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "direction"
+        assert ei.value.detail["legal_range"] == ["long", "short"]
+
+        with pytest.raises(ResearchError) as ei2:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), direction="long",
+                       grid=_grid([0.01], [0.02]))  # 两键全缺
+        assert ei2.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei2.value.detail["param"] == "condition|conditions"
+        with pytest.raises(ResearchError) as ei3:
+            exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
+                       conditions=[_COND], direction="long",
+                       grid=_grid([0.01], [0.02]))  # 两键同传
+        assert ei3.value.detail["param"] == "condition|conditions"
+
+
+class TestConditionsDomainValidation:
+    """CARD-05：exit_sweep 条件条数域+形制校验前置（共享层单点
+    validate_conditions_array——与 condition_stats/event_study/
+    counter_profile 路由同源）。三缺口修复锚：×6 条原 200 放行、
+    [] 原误导 NOT_EXPRESSIBLE、缺三键原走翻译链报 NOT_EXPRESSIBLE。"""
+
+    @pytest.fixture(autouse=True)
+    def _env(self, tmp_path):
+        self.d, self.db = _make_env(tmp_path)
+
+    def _run(self, **kw):
+        params: dict = {"direction": "long",
+                        "grid": _grid([0.01], [0.02])}
+        params.update(kw)
+        return exit_sweep(self.db, self.d, dict(RNG_DEF), **params)
+
+    @pytest.mark.parametrize(
+        ("conditions", "code"),
+        [([_COND] * 6, "RESEARCH_PARAM_INVALID"),
+         ([], "RESEARCH_PARAM_INVALID"),
+         ([{"subject": "close", "action": "gt"}],
+          "RESEARCH_CONDITION_INVALID")],
+        ids=["6 条超限拒", "空数组拒", "缺三键形制拒"])
+    def test_conditions_domain_and_form(self, conditions, code):
+        with pytest.raises(ResearchError) as ei:
+            self._run(conditions=conditions)
+        assert ei.value.code == code
+
+    def test_single_condition_form_checked_symmetrically(self):
+        """单条件包装 [condition] 同受校验（对称覆盖——缺三键 422
+        CONDITION_INVALID，原走翻译链）。"""
+        with pytest.raises(ResearchError) as ei:
+            self._run(condition={"subject": "close", "action": "gt"})
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_legal_conditions_and_single_unchanged(self):
+        """合法对照：指标类 conditions/单条件两形制照常执行（verdict
+        四值域——修复只收拒绝面不动合法路径）。"""
+        for kw in ({"conditions": [_COND]}, {"condition": _COND}):
+            out = self._run(**kw)
+            assert out["payload"]["verdict"] in (
+                "plateau", "indeterminate", "spike", "unsupported")
+
 
 class TestExecutionAndGates:
     """真实引擎轨道：网格完整性/费滑/两期分野执行侧/劣结构/纯噪声。"""
@@ -400,15 +477,62 @@ class TestThreeGates:
                                              "indeterminate")
 
     def test_worst_order_parametrized(self):
-        """最差聚合全序参数化：plateau+spike→spike；indeterminate+
-        plateau→indeterminate；unsupported 恒最差（经两平面模式合成
-        不可行——0.4.1 单模式；以两轴合成验证全序传递性）。"""
-        # 轴序对照（spike 轴 × plateau 轴）→ spike 已由矩阵用例覆盖；
-        # indeterminate 平面（全失败组）单测：
-        orig_states = {}  # 全组无条目 → (0, []) → ineffective...
+        """整链 unsupported 场景（全组 trades=0 参评全无效——有参评点
+        → unsupported，与全组失败的 indeterminate 分野）；_worst 纯
+        函数两两全序见 TestWorstAggregationOrder（CARD-15）。"""
+        orig_states = {}  # 全组无条目 → (0, []) → ineffective
         # 全部 trades=0 且 rets=[] → ineffective → 有参评 → unsupported
         out = self._run(orig_states)
         assert out["payload"]["verdict"] == "unsupported"
+
+
+class TestWorstAggregationOrder:
+    """CARD-15：_worst 最差聚合全序纯函数参数化——四值两两 6 对
+    （_VERDICT_ORDER：plateau=0 < indeterminate=1 < spike=2 <
+    unsupported=3，取序值大者=更差者）双向断言；两两完备覆盖即全序
+    传递性证明（无序对全枚举）。"""
+
+    @pytest.mark.parametrize(
+        ("a", "b", "worst"),
+        [("plateau", "indeterminate", "indeterminate"),
+         ("plateau", "spike", "spike"),
+         ("plateau", "unsupported", "unsupported"),
+         ("indeterminate", "spike", "spike"),
+         ("indeterminate", "unsupported", "unsupported"),
+         ("spike", "unsupported", "unsupported")],
+        ids=["plateau+indeterminate", "plateau+spike",
+             "plateau+unsupported", "indeterminate+spike",
+             "indeterminate+unsupported", "spike+unsupported"])
+    def test_worst_pairwise_bidirectional(self, a, b, worst):
+        from core.analysis.templates.exit_sweep import _worst
+        assert _worst(a, b) == worst
+        assert _worst(b, a) == worst  # 交换律——聚合序与传入序无关
+
+    def test_all_groups_failed_indeterminate(self, tmp_path, monkeypatch):
+        """四值完备性补齐（indeterminate 此前无测试触达）：全组执行期
+        失败 → 两轴 indeterminate、整体 indeterminate（证据不足非证伪
+        ——与 unsupported 的分野：后者有参评组全无效）；results 全
+        failed 如实呈现、failed_groups 完整、sample_size=0。"""
+        d, db = _make_env(tmp_path)
+
+        def _always_fail(*a, **kw):
+            raise ResearchError("RESEARCH_DATA_INSUFFICIENT", "构造全组失败")
+
+        monkeypatch.setattr(bb, "run_backtest_on_range", _always_fail)
+        out = exit_sweep(db, d, dict(RNG_DEF), condition=_COND,
+                         direction="long",
+                         grid=_grid([0.01, 0.02], [0.03, 0.06]))
+        assert out["payload"]["verdict"] == "indeterminate"
+        axes = out["payload"]["robust_ranges"]["pct"]["axes"]
+        assert axes["stop_loss"]["verdict"] == "indeterminate"
+        assert axes["take_profit"]["verdict"] == "indeterminate"
+        assert all(r["status"] == "failed" for r in out["payload"]["results"])
+        assert all(r["failure_code"] == "RESEARCH_DATA_INSUFFICIENT"
+                   for r in out["payload"]["results"])
+        assert len(out["payload"]["failed_groups"]) == 4
+        assert out["sample_size"] == 0
+        # confidence 三要素照常携带（gates_verdict 型——四值披露）
+        assert out["confidence"]["verdict"] == "indeterminate"
 
 
 class TestCapabilityDomainAndLog:

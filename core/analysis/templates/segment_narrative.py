@@ -82,6 +82,31 @@ def excluded_categories() -> List[str]:
     return sorted(all_cats - covered)
 
 
+def validate_indicators(indicators: Any) -> None:
+    """显式点名事件源校验（路由装载前与模板直调两用——单一事实源）。
+
+    输入语义：indicators 为请求参数原值。边界条件：None 不属本校验
+    （缺省走默认事件源，分支归调用方）；非列表、空列表、含未注册名
+    即结构化拒绝。错误语义：RESEARCH_PARAM_INVALID——先于 warmup
+    装载拦截，不让 derive_warmup KeyError 裸穿路由 500。
+    """
+    from core.features.registry import INDICATOR_REGISTRY
+
+    if not isinstance(indicators, list) or not indicators:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "indicators 须为非空指标名列表（缺省走默认事件源）",
+            detail={"param": "indicators",
+                    "legal_form": "指标名列表（list_indicators 查询）"})
+    for name in indicators:
+        if name not in INDICATOR_REGISTRY:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"indicators 含未知指标: {name!r}",
+                detail={"param": "indicators", "value": name,
+                        "available_hint": "经 list_indicators 查询注册表"})
+
+
 def _encoded_col(indicator: str, field: str) -> str:
     """默认参数下输出列精确名（resolve_column_ref 权威命名）。"""
     from core.analysis.column_ref import resolve_column_ref
@@ -229,23 +254,11 @@ def segment_narrative(
     """
     from core.analysis.condition_kernel import stat_window_mask
     from core.features.indicators import _compute_indicator
-    from core.features.registry import INDICATOR_REGISTRY
 
-    # 事件源解析：显式点名（在册校验——不让装载层 KeyError 裸穿）
+    # 事件源解析：显式点名（在册校验——不让装载层 KeyError 裸穿；
+    # 校验单点 validate_indicators，路由装载前同源调用）
     if indicators is not None:
-        if not isinstance(indicators, list) or not indicators:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                "indicators 须为非空指标名列表（缺省走默认事件源）",
-                detail={"param": "indicators",
-                        "legal_form": "指标名列表（list_indicators 查询）"})
-        for name in indicators:
-            if name not in INDICATOR_REGISTRY:
-                raise ResearchError(
-                    "RESEARCH_PARAM_INVALID",
-                    f"indicators 含未知指标: {name!r}",
-                    detail={"param": "indicators", "value": name,
-                            "available_hint": "经 list_indicators 查询注册表"})
+        validate_indicators(indicators)
         source_names = list(indicators)
         default_set = False
     else:
@@ -296,12 +309,19 @@ def segment_narrative(
     # 三要素（样本量=区间 bar 数；confidence=事件率的 Wilson 区间）
     n_bars = int(len(stat))
     n_events = len(events)
+    # successes 口径=含至少一个事件的 bar 数（时点事件锚 timestamp、段事件
+    # 锚 start_timestamp 去重）：单 bar 可产多事件（多指标同刻触发），直接以
+    # 总事件数作 successes 可超 total（wilson_interval 计数矛盾）；事件全部
+    # 落在统计段内，去重后恒 ≤n_bars
+    events_bars = len({
+        e.get("timestamp") or e["start_timestamp"] for e in events})
     from core.scoring.statistics import wilson_interval
     confidence = {
         "method": "wilson_interval",
-        "interval": list(wilson_interval(n_events, n_bars)),
+        "interval": list(wilson_interval(events_bars, n_bars)),
         "for": "event_rate",
         "n_events": n_events,
+        "events_bars": events_bars,
         "n_bars": n_bars,
     }
 

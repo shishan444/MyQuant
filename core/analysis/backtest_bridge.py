@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+import numpy as np
 import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
@@ -53,7 +54,7 @@ def run_backtest_on_range(
     start: str, end: str, warmup_bars: int,
     *, init_cash: float = 100000.0,
     fee: float = 0.001, slippage: float = 0.0005,
-) -> Tuple[Dict[str, Any], int, int]:
+) -> Tuple[Dict[str, Any], np.ndarray | None, int, int]:
     """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
 
     Returns:

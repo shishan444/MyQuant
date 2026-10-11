@@ -26,7 +26,6 @@ warmup「只用不算」：request_start 非 None 时，df 视为"warmup 前缀 
 """
 from __future__ import annotations
 
-import math
 from typing import Any, Dict
 
 import numpy as np

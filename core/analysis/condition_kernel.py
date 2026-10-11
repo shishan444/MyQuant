@@ -255,17 +255,29 @@ def collect_condition_refs(
         [(indicator, params_dict)] 引用清单（可为空——纯数值条件）。
 
     Raises:
-        ResearchError: RESEARCH_CONDITION_INVALID（strict=True 且
-            target 不可解码且非基础列）。
+        ResearchError: RESEARCH_CONDITION_INVALID——dict subject 经
+            resolve_column_ref 解析失败（ColumnRefError 转译，不限
+            strict）；或 strict=True 且 target 不可解码且非基础列。
     """
     from core.analysis.column_ref import (
-        resolve_column_ref, try_decode_column_ref,
+        ColumnRefError, resolve_column_ref, try_decode_column_ref,
     )
+    from core.analysis.hypothesis_service import ResearchError
 
     refs: List[tuple] = []
     subject = condition.get("subject")
     if isinstance(subject, dict):
-        cdef = resolve_column_ref(subject)
+        # ColumnRefError 转译（形制沿 hypothesis_to_strategy 翻译链先例）：
+        # 不转译则裸穿 ValueError → 路由 500；掩码路径（strict=False）的
+        # dict subject 解析失败同经此转译收敛为 422（宽容面仅 str subject
+        # 不可解码静默跳过与 target unknown 不并入——语义冻结不动）
+        try:
+            cdef = resolve_column_ref(subject)
+        except ColumnRefError as exc:
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"condition.subject 非法: {exc.message}",
+                detail={"code": exc.code, **exc.detail}) from exc
         refs.append((cdef.indicator, dict(cdef.params)))
     elif isinstance(subject, str):
         decoded = try_decode_column_ref(subject)
@@ -279,6 +291,34 @@ def collect_condition_refs(
     elif kind == "unknown" and strict:
         _reject_unresolvable_target(target)
     return refs
+
+
+def validate_conditions_array(conditions: Any) -> None:
+    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
+    装载前；CARD-05 自路由提升为条件域共享单点，第四消费者 exit_sweep
+    模板接入）。
+
+    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
+    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
+    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
+    三键结构，hypothesis_service 登记链同款）。"""
+    from core.analysis.hypothesis_service import ResearchError
+
+    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
+        actual = (len(conditions) if isinstance(conditions, list)
+                  else type(conditions).__name__)
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"conditions 条数须在 1..5（实际 {actual}）",
+            detail={"param": "conditions", "legal_range": "1..5"})
+    for i, c in enumerate(conditions):
+        if (not isinstance(c, dict)
+                or not all(k in c for k in ("subject", "action", "target"))):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"conditions[{i}] 须含 subject/action/target",
+                detail={"param": f"conditions[{i}]",
+                        "legal_form": "{subject, action, target}"})
 
 
 # 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。

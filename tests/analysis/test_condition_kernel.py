@@ -12,7 +12,9 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.condition_kernel import mask_for, mask_for_all
+from core.analysis.condition_kernel import (
+    collect_condition_refs, mask_for, mask_for_all)
+from core.analysis.hypothesis_service import ResearchError
 
 
 def _make_df(n: int = 300, seed: int = 42, start: str = "2024-01-01") -> pd.DataFrame:
@@ -121,3 +123,39 @@ class TestMaskForAll:
         got = mask_for_all(base.copy(), [base_cond, tf_cond], mtf=ctx)
         pd.testing.assert_series_equal(got, expected, check_names=False)
         assert int(got.sum()) == 4  # 投影窗恰覆盖 4 根 1h bar
+
+
+_BAD_DICT_SUBJECT = {
+    "subject": {"indicator": "NOPE", "params": {"period": 14},
+                "field": "rsi"},
+    "action": "gt", "target": 55,
+}
+
+
+class TestCollectRefsSubjectDictTranslation:
+    """CARD-03：dict subject 解析失败（ColumnRefError）转译
+    RESEARCH_CONDITION_INVALID（原裸穿 ValueError 500——六链路公共
+    底座在此单点锚）；strict=False 宽容面（str subject 不可解码静默
+    跳过、target unknown 不并入）语义冻结。"""
+
+    @pytest.mark.parametrize("strict", [True, False],
+                             ids=["装载链 strict", "掩码链宽容"])
+    def test_dict_subject_unknown_indicator_translated(self, strict):
+        with pytest.raises(ResearchError) as ei:
+            collect_condition_refs(_BAD_DICT_SUBJECT, strict=strict)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert ei.value.message.startswith("condition.subject 非法")
+        # ColumnRefError 原因透传：code 与 indicator 进 detail
+        assert ei.value.detail["code"] == "PARAM_INVALID"
+        assert ei.value.detail["indicator"] == "NOPE"
+        assert ei.value.__cause__ is not None  # 原因链保留
+
+    def test_lenient_face_frozen(self):
+        """宽容面冻结锚：str subject 不可解码静默跳过（refs 空）；
+        target unknown 在 strict=False 不并入（拒绝面归 strict=True）。"""
+        refs = collect_condition_refs(
+            {"subject": "no_such_column", "action": "gt", "target": "1"})
+        assert refs == []
+        refs2 = collect_condition_refs(
+            {"subject": "close", "action": "gt", "target": "zzz_unknown"})
+        assert refs2 == []

@@ -201,7 +201,8 @@ def exit_sweep(
         分析结果 dict（三要素经 build_result；sample_size=成功组数）。
     """
     from core.analysis.backtest_bridge import run_backtest_on_range
-    from core.analysis.condition_kernel import collect_condition_refs
+    from core.analysis.condition_kernel import (
+        collect_condition_refs, validate_conditions_array)
     from core.analysis.hypothesis_to_strategy import build_signal_genes
     from core.analysis.registry_meta import derive_warmup_full
     from core.strategy.dna import ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA
@@ -221,12 +222,17 @@ def exit_sweep(
             detail={"param": "condition|conditions",
                     "legal_form": "任选其一"})
 
+    # 条件条数域+形制校验（共享层单点 validate_conditions_array——与
+    # condition_stats/event_study/counter_profile 路由同源；先于翻译链：
+    # 缺三键垃圾条件原走翻译链报 NOT_EXPRESSIBLE/静默，错误码误导）
+    cond_list = conditions if conditions is not None else [condition]
+    validate_conditions_array(cond_list)
+
     # 网格校验（校验期①-⑥——任何失败整批 422 无部分结果）
     modes = _validate_grid(grid)
 
     # 条件组 → 内存 DNA（S4 不落库纯翻译入口——timeframe 防线同源同码；
     # THEN 空列表=离场全靠 risk_genes，与隔离验证同一执行链）
-    cond_list = conditions if conditions is not None else [condition]
     genes, plugin_sources = build_signal_genes(cond_list, [], db_path)
     # 信号源组装（镜像 translate_hypothesis 同段——rule 源承载内置基因、
     # 插件源各自成源、composition 固定 AND）
@@ -294,13 +300,12 @@ def exit_sweep(
                         "total_trades": metrics["total_trades"],
                         "status": "ok",
                     })
-                except ResearchError as exc:
-                    row.update({"status": "failed",
-                                "failure_code": exc.code})
-                    failed_groups.append({**row})
                 except Exception as exc:  # noqa: BLE001 —— 执行期单组容错
+                    # ResearchError 取 code、其余取类名（单 except 收敛：
+                    # 两分支仅 failure_code 取法不同）
                     row.update({"status": "failed",
-                                "failure_code": type(exc).__name__})
+                                "failure_code": (getattr(exc, "code", None)
+                                                 or type(exc).__name__)})
                     failed_groups.append({**row})
                 # 三道门 state 构造谓词（回测口径）
                 if row.get("status") == "ok":
@@ -336,9 +341,9 @@ def exit_sweep(
                 "verdict": plane_verdict, "axes": plane_info}
             overall = plane_verdict if overall is None else _worst(
                 overall, plane_verdict)
-    if overall is None:
-        # 全部组执行失败——整批证据缺失（执行期容错语义：结果如实呈现）
-        overall = "indeterminate"
+    # overall 无 None 兜底：modes 恒非空（grid 校验①拒空）且
+    # _gates_verdict 恒返非 None verdict——全组执行失败的 indeterminate
+    # 由 _gates_verdict 空输入语义承载（无参评点 → indeterminate）
 
     payload: Dict[str, Any] = {
         "direction": direction,

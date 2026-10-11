@@ -156,22 +156,27 @@ def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
     """模板必填键存在性前置校验（卡1；0.4.1 键组扩展）。
 
     键组语义：单组模板组内缺键即结构化拒绝（只判键缺不缺，值合法
-    性归既有值校验链——最小差异 D3）；多组模板恰好一组完整——
-    多组同传 422 指明互斥、零组完整时若恰有一组被部分触及则按该组
-    点名缺键（形制与单组一致——调用意图可辨），否则 422 点名缺组。"""
+    性归既有值校验链——最小差异 D3）；多组模板恰好一组完整、零组
+    完整时若恰有一组被部分触及则按该组点名缺键（形制与单组一致
+    ——调用意图可辨），否则 422 点名缺组。锚键互斥（CARD-04，
+    spec R2「同传即拒」无条件限定）先于完整性判定：condition 与
+    conditions 同在即拒——四条件模板的两组各含一锚键，两组完整
+    同传必先触发锚键互斥（原 complete>1 分支因此不可达，闸门期
+    清除；新增多组模板须同步审视本表与锚键面）。"""
     groups = _TEMPLATE_REQUIRED_KEYS.get(template, ())
     if not groups:
         return
-    complete = [g for g in groups if all(k in p for k in g)]
-    if len(complete) > 1:
+    if "condition" in p and "conditions" in p:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"params 键组互斥: {'+'.join(complete[0])} 与 "
-            f"{'+'.join(complete[1])} 不可同传（任选其一）",
+            "params 键组互斥: condition（单条件形制：subject/action/"
+            "target）与 conditions（组合条件形制：条件数组 1..5）不可"
+            "同传（任选其一）",
             detail={
-                "param": "+".join(complete[0]),
-                "legal_form": f"{template} 任选一组: {list(groups)}"})
-    if len(complete) == 1:
+                "param": "condition|conditions",
+                "legal_form": "单条件 condition 或组合条件 conditions 二选一"})
+    # 锚键互斥前置后 complete 至多一组（多组模板两组各含一锚键）
+    if any(all(k in p for k in g) for g in groups):
         return
     # 零完整组：恰有一组被部分触及 → 按该组点名缺键（单组同款形制）
     touched = [g for g in groups if any(k in p for k in g)]
@@ -212,31 +217,6 @@ def _exit_sweep_group_heavy(params: Dict[str, Any]) -> bool:
     return _exit_sweep_group_count(params) > _EXIT_SWEEP_ASYNC_GROUPS
 
 
-def _validate_conditions_array(conditions: Any) -> None:
-    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
-    装载前）。
-
-    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
-    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
-    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
-    三键结构，hypothesis_service 登记链同款）。"""
-    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
-        actual = (len(conditions) if isinstance(conditions, list)
-                  else type(conditions).__name__)
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"conditions 条数须在 1..5（实际 {actual}）",
-            detail={"param": "conditions", "legal_range": "1..5"})
-    for i, c in enumerate(conditions):
-        if (not isinstance(c, dict)
-                or not all(k in c for k in ("subject", "action", "target"))):
-            raise ResearchError(
-                "RESEARCH_CONDITION_INVALID",
-                f"conditions[{i}] 须含 subject/action/target",
-                detail={"param": f"conditions[{i}]",
-                        "legal_form": "{subject, action, target}"})
-
-
 def _with_derivatives_coverage(result: Dict[str, Any],
                                df: Optional[pd.DataFrame]) -> Dict[str, Any]:
     """0.3.3 G12：衍生品边界声明随结果出站（df.attrs 通道——装载层
@@ -267,7 +247,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
     # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
     # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
-    from core.analysis.condition_kernel import MtfEvalContext
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, validate_conditions_array)
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
@@ -348,7 +329,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # （index-only 计数既有设施）；warmup 覆盖事件源指标（默认集机械
         # 推导或显式点名）；事件数 ≤500 上限在模板提取后组装前
         from core.analysis.templates.segment_narrative import (
-            MAX_RANGE_BARS, default_source_names)
+            MAX_RANGE_BARS, default_source_names, validate_indicators)
         n_rows = _count_rows_index_only(data_dir, rng)
         if n_rows > MAX_RANGE_BARS:
             raise ResearchError(
@@ -359,6 +340,9 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
                         "limit": MAX_RANGE_BARS,
                         "hint": "缩短区间或拆分为多次摘要"})
         if p.get("indicators") is not None:
+            # 装载前校验（模板内校验同源——不让 derive_warmup 对未注册
+            # 指标 KeyError 裸穿 500）
+            validate_indicators(p["indicators"])
             source_names = p["indicators"]
         else:
             source_names = default_source_names()
@@ -376,7 +360,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             feature_matrix_names)
         cond_list = (p["conditions"] if p.get("conditions") is not None
                      else [p["condition"]])
-        _validate_conditions_array(cond_list)
+        validate_conditions_array(cond_list)
         df, request_start = _load_refs(
             None, condition=p.get("condition"),
             conditions=p.get("conditions"),
@@ -413,7 +397,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # mask_for_all 求值；顶层 indicator/params 转可选，有则并入
         # warmup 预算与指标矩阵）
         if "conditions" in p:
-            _validate_conditions_array(p["conditions"])
+            validate_conditions_array(p["conditions"])
             top_ind = p.get("indicator")
             if top_ind is None:
                 if "params" in p:
@@ -472,7 +456,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 前扩装载（S2 引用并集）+ request_start 切回 + warmup_bars 披露
         # （披露键只在 conditions 形式 payload 存在；旧 condition 键走
         # 下方 _load_df 普通装载——装载语义与 payload 键集冻结锚）
-        _validate_conditions_array(p["conditions"])
+        validate_conditions_array(p["conditions"])
         df, request_start = _load_refs(None, conditions=p["conditions"])
         return _with_derivatives_coverage(event_study(
             df, conditions=p["conditions"], window=p.get("window", 12),
