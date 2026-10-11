@@ -150,3 +150,31 @@ class TestSegmentNarrativeRoute:
         union = judged_ranges_union(sn_env["db"], hyp_id)
         assert any(r["start"] == pd.Timestamp(rng["start"]).isoformat()
                    for r in union), "挂假设区间进判定并集"
+
+
+class TestIndicatorsPrevalidation:
+    """CARD-02 特征测试：indicators 装载前校验——非法形制 422
+    RESEARCH_PARAM_INVALID（原 derive_warmup 对未注册名 KeyError
+    裸穿 500）；校验先于装载，与模板内同源同码（validate_indicators
+    单一事实源）。"""
+
+    @pytest.mark.parametrize(
+        "indicators",
+        [["NOPE"], [], "EMA"],
+        ids=["未注册名拒", "空列表拒", "字符串非列表拒"])
+    def test_invalid_indicators_rejected_before_load(self, api_client,
+                                                     sn_env, indicators):
+        _wire(api_client, sn_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "2023-02-01", "2023-03-01", indicators=indicators))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "indicators"
+
+    def test_valid_indicators_pass(self, api_client, sn_env):
+        """合法点名对照：在册指标装载前校验通过 → 200。"""
+        _wire(api_client, sn_env)
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "2023-02-01", "2023-03-01", indicators=["EMA"]))
+        assert resp.status_code == 200, resp.text
