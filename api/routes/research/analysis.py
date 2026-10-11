@@ -348,7 +348,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # （index-only 计数既有设施）；warmup 覆盖事件源指标（默认集机械
         # 推导或显式点名）；事件数 ≤500 上限在模板提取后组装前
         from core.analysis.templates.segment_narrative import (
-            MAX_RANGE_BARS, default_source_names)
+            MAX_RANGE_BARS, default_source_names, validate_indicators)
         n_rows = _count_rows_index_only(data_dir, rng)
         if n_rows > MAX_RANGE_BARS:
             raise ResearchError(
@@ -359,6 +359,9 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
                         "limit": MAX_RANGE_BARS,
                         "hint": "缩短区间或拆分为多次摘要"})
         if p.get("indicators") is not None:
+            # 装载前校验（模板内校验同源——不让 derive_warmup 对未注册
+            # 指标 KeyError 裸穿 500）
+            validate_indicators(p["indicators"])
             source_names = p["indicators"]
         else:
             source_names = default_source_names()
