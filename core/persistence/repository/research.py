@@ -27,6 +27,7 @@ from core.persistence.orm.models import (
     ResearchHypothesis,
     ResearchLog,
     SignalRegistryEntry,
+    Strategy,
     ValidationRecord,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -147,6 +148,95 @@ def find_active_hypothesis_by_identity(
             ).order_by(ResearchHypothesis.created_at)
         ).mappings().first()
     return dict(row) if row is not None else None
+
+
+def list_hypotheses_by_identity(
+    db_path: Path, conditions_hash: str, ranges_hash: str
+) -> List[Dict[str, Any]]:
+    """同身份全部假设实体（0.4.2 R4 身份族——全状态含终态，区别于
+    find_active_hypothesis_by_identity 的 active 限定；终态后重登记产
+    族内新实体，族=至多 1 active + 0..n 终态）。created_at 升序。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(ResearchHypothesis).where(
+                ResearchHypothesis.conditions_hash == conditions_hash,
+                ResearchHypothesis.ranges_hash == ranges_hash,
+            ).order_by(ResearchHypothesis.created_at,
+                       ResearchHypothesis.hypothesis_id)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def list_strategies_by_parent_hypotheses(
+    db_path: Path, hypothesis_ids: List[str]
+) -> List[Dict[str, Any]]:
+    """parent_ids JSON 数组成员精确匹配 id 集的策略（0.4.2 R4 谱系查询）。
+
+    精确成员判定非子串匹配（进化/手工来源策略的 JSON 数组不误命中）；
+    全量无 limit（谱系披露不截断）。created_at 升序。
+    """
+    if not hypothesis_ids:
+        return []
+    id_set = set(hypothesis_ids)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(Strategy).where(
+                Strategy.parent_ids.isnot(None),
+            ).order_by(Strategy.created_at, Strategy.strategy_id)
+        ).mappings().all()
+    out = []
+    for row in rows:
+        raw = row["parent_ids"]
+        try:
+            parents = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            # 裸串形制（翻译器落库为单 id 串非 JSON 数组）——当单 id
+            parents = [raw] if raw else []
+        if not isinstance(parents, list):
+            parents = [str(parents)]
+        if id_set.intersection(str(p) for p in parents):
+            out.append(dict(row))
+    return out
+
+
+def count_validation_records_by_strategy(
+    db_path: Path, strategy_ids: List[str]
+) -> Dict[str, Dict[str, Dict[str, int]]]:
+    """按 strategy_id 的 level×verdict 聚合计数（0.4.2 R4/DC-8——SQL
+    聚合不经列表截断；大谱系计数与记录实况一致）。
+
+    Returns:
+        {strategy_id: {level: {"count": n, "pass": n, "fail": n,
+                               "inconclusive": n}}}
+    """
+    if not strategy_ids:
+        return {}
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.verdict,
+                func.count().label("n"),
+            ).where(
+                ValidationRecord.strategy_id.in_(strategy_ids),
+            ).group_by(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.verdict,
+            )
+        ).all()
+    out: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for sid, level, verdict, n in rows:
+        bucket = out.setdefault(sid, {}).setdefault(
+            level, {"count": 0, "pass": 0, "fail": 0, "inconclusive": 0})
+        bucket["count"] += n
+        if verdict in bucket:
+            bucket[verdict] += n
+    return out
 
 
 def list_hypotheses(
