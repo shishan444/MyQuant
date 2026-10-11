@@ -42,3 +42,37 @@ tests/mcpserver/test_e2e_*（经 MCP 公开入口）。「MCP 工具 → 服务�
 由 schema 对拍（形制）+ tools_passthrough（body 组装行为）+ API 全链
 （服务端到达）三层锚定，判定 0.4.2 不新增 e2e（形制重、断言面已被
 三层承载）。
+
+## 步骤 3：测试资产 V3 化核对结论（0.4.2 全部 10 文件）
+
+核对对象：7 新测试文件 + 2 卡配套文件（null_params/failclose）+ 本阶段
+补齐用例。逐项对照 TESTING_V3 §二/§三：
+
+| 核对项 | 结论 |
+|---|---|
+| 组织落位（域目录+能力命名） | 合规——strategy/backtest/trading/analysis/mcpserver/persistence 各域 |
+| pytestmark 层级声明 | 合规——10/10 文件声明（unit 1/integration 9） |
+| 命名形制（行为命名） | 合规——test_<行为>_<场景>（_<预期>）全库抽查无违例 |
+| 参数化可读 id（中文） | 合规——同值异判/装载校验/模式×链路矩阵等 8 处 |
+| 直线结构（准备→执行→断言） | 合规——无分支堆叠测试 |
+| fixture 最近公共 | 合规——tmp_data_dir/api_client 在根 conftest；db 各文件自带给（域内既有惯例，tests/analysis 5+ 文件同形制，不做集中化重构——修复期不动既有形制） |
+| 断言形制 | 合规——浮点用 1e-6/1e-9 直接比较（域惯例优先于 pytest.approx 统一） |
+| 恒真断言 | 已清零——阶段一 2 处已修（提交 6b37de7） |
+| 期望值独立性 | 抽检合规——test_sl_modes 全手工核算（注释附推导）；卡配套 2 文件期望值独立（0.02=10000×0.1/50000 等人工核算）；未见期望值取自被测实现 |
+
+## 步骤 4：属性补强核对结论
+
+既有属性/不变量锚盘点：同值异判参数化（param_domain_matrix 8 例 +
+exit_sweep 9 例）、序列化往返不变量（roundtrip_zero_migration）、批量
+与单路径等价（batch 双锚）、三入口等价（test_three_entries_adds_
+consistent）、幂等族（登记/翻译/分流多处）、模式×链路 9 格矩阵。
+本阶段补强：parse_parent_ids 四分支（A-3）。结论：属性面充分，
+无新增属性补强项；A-2 重建了未知键拒绝直锚（退役断言回补）。
+
+## 步骤 5：层级补全核对结论
+
+层级分布数据见上文。补充判定：validator/pydantic 两面直测由唯一 unit
+文件承载（param_domain_matrix）——unit 面责任充分；integration 承载
+协作与全链（登记→翻译→回测→拒绝面 DoD 链）；e2e 不新增（判定依据
+见上）。结论：层级分布符合工程形制，无层级缺口。
+
