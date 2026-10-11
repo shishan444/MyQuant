@@ -119,6 +119,34 @@ def _load_atr_column(enhanced_df: pd.DataFrame, atr_period: int) -> np.ndarray:
     return arr
 
 
+def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
+    """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
+
+    返回 (sl_mode_val, atr_col_or_None, exit_fraction, add_fraction,
+    max_exposure)：
+    - sl_mode 经 sl_mode_code 映射分派码；atr 模式装载 ATR 列（装载
+      校验在 _load_atr_column），非 atr 模式返回 None——占位数组由
+      调用方决定（单路径全 1 向量、批量路径逐列堆叠）
+    - 分批三参数缺省物化（0.4.2 R3/A5）：None→0.5/0.1/1.0——「有
+      声明用声明、无声明用缺省」全路径统一，引擎内恒具体值
+
+    review-042 CARD-04：_build_portfolio 与 batch_run 原为双份实现
+    （批量处注释自证「漏装=该列按缺省执行=与单路径静默分叉」），装配
+    语义必须单源；risk_genes 为 RiskGenes dataclass，字段恒存在，
+    直接属性访问（原 getattr 防御永不生效反而误导读者）。
+    """
+    sl_mode_val = sl_mode_code(risk_genes.sl_mode)
+    atr_col = (_load_atr_column(enhanced_df, int(risk_genes.atr_period))
+               if risk_genes.sl_mode == "atr" else None)
+    exit_fraction = (float(risk_genes.exit_fraction)
+                     if risk_genes.exit_fraction is not None else 0.5)
+    add_fraction = (float(risk_genes.add_fraction)
+                    if risk_genes.add_fraction is not None else 0.1)
+    max_exposure = (float(risk_genes.max_exposure)
+                    if risk_genes.max_exposure is not None else 1.0)
+    return sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure
+
+
 @dataclass
 class BacktestResult:
     """单次回测运行的结构化结果（指标+权益曲线+逐笔记录）。"""
@@ -701,26 +729,14 @@ class BacktestEngine:
         leverage = float(dna.risk_genes.leverage)
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
-        # SL 模式分派与 ATR 装载（0.4.2 R2）：sl_mode 经单源映射为分派码；
-        # atr 模式按 dna.atr_period 动态取列+装载校验（数据不足显式拒），
-        # 非 atr 模式占位数组（引擎不消费）
-        sl_mode_val = sl_mode_code(dna.risk_genes.sl_mode)
-        if dna.risk_genes.sl_mode == "atr":
-            atr_col = _load_atr_column(enhanced_df, int(dna.risk_genes.atr_period))
-        else:
+        # SL 模式分派+ATR 装载+分批三参数（0.4.2 R2/R3）：per-DNA 装配
+        # 单源 _per_dna_risk_params（与 batch_run 共享——漏装即与批量
+        # 路径静默分叉）；非 atr 模式占位全 1 数组（引擎不消费）
+        sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure = \
+            _per_dna_risk_params(dna.risk_genes, enhanced_df)
+        if atr_col is None:
             atr_col = np.ones(len(enhanced_df), dtype=np.float64)
         atr_2d = atr_col.reshape(-1, 1)
-        # 分批三参数装配（0.4.2 R3/A5：缺省装配层物化——「有声明用声明、
-        # 无声明用缺省」全路径统一，引擎内恒具体值）
-        exit_fraction = (float(dna.risk_genes.exit_fraction)
-                         if getattr(dna.risk_genes, "exit_fraction", None)
-                         is not None else 0.5)
-        add_fraction = (float(dna.risk_genes.add_fraction)
-                        if getattr(dna.risk_genes, "add_fraction", None)
-                        is not None else 0.1)
-        max_exposure = (float(dna.risk_genes.max_exposure)
-                        if getattr(dna.risk_genes, "max_exposure", None)
-                        is not None else 1.0)
 
         # 信号转 2D numpy 数组（numba 兼容）
         entries_2d = entries.values.astype(np.float64).reshape(-1, 1)
@@ -1054,35 +1070,19 @@ class BacktestEngine:
              for dna in individuals],
             dtype=np.float64,
         )
-        # SL 模式分派与 ATR 装载（0.4.2 R2）：per-column 各取各 DNA 的
-        # sl_mode/atr_period——batch 路径与单路径（_build_portfolio）同一
-        # 装载语义（漏装=该列按缺省执行=与单路径静默分叉）
-        sl_mode_vals = np.array(
-            [sl_mode_code(dna.risk_genes.sl_mode) for dna in individuals],
-            dtype=np.float64,
-        )
-        atr_parts = []
-        for dna in individuals:
-            if dna.risk_genes.sl_mode == "atr":
-                atr_parts.append(
-                    _load_atr_column(enhanced_df, int(dna.risk_genes.atr_period)))
-            else:
-                atr_parts.append(np.ones(N, dtype=np.float64))
-        atr_matrix = np.column_stack(atr_parts).astype(np.float64)
-        # 分批三参数 per-column 装配（0.4.2 R3：缺省装配层物化——与
-        # _build_portfolio 同一装载语义，漏装=该列按缺省执行=静默分叉）
-        exit_fractions = np.array([
-            float(dna.risk_genes.exit_fraction)
-            if getattr(dna.risk_genes, "exit_fraction", None) is not None
-            else 0.5 for dna in individuals], dtype=np.float64)
-        add_fractions = np.array([
-            float(dna.risk_genes.add_fraction)
-            if getattr(dna.risk_genes, "add_fraction", None) is not None
-            else 0.1 for dna in individuals], dtype=np.float64)
-        max_exposures = np.array([
-            float(dna.risk_genes.max_exposure)
-            if getattr(dna.risk_genes, "max_exposure", None) is not None
-            else 1.0 for dna in individuals], dtype=np.float64)
+        # SL 模式分派+ATR 装载+分批三参数 per-column 装配（0.4.2 R2/R3）：
+        # per-DNA 装配单源 _per_dna_risk_params（与 _build_portfolio 共享
+        # ——漏装=该列按缺省执行=与单路径静默分叉）；非 atr 模式占位
+        # 全 1 列（引擎不消费）
+        per_dna = [_per_dna_risk_params(dna.risk_genes, enhanced_df)
+                   for dna in individuals]
+        sl_mode_vals = np.array([p[0] for p in per_dna], dtype=np.float64)
+        atr_matrix = np.column_stack([
+            p[1] if p[1] is not None else np.ones(N, dtype=np.float64)
+            for p in per_dna]).astype(np.float64)
+        exit_fractions = np.array([p[2] for p in per_dna], dtype=np.float64)
+        add_fractions = np.array([p[3] for p in per_dna], dtype=np.float64)
+        max_exposures = np.array([p[4] for p in per_dna], dtype=np.float64)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
