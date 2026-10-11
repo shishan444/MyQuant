@@ -342,9 +342,9 @@ def exit_sweep(
                 "verdict": plane_verdict, "axes": plane_info}
             overall = plane_verdict if overall is None else _worst(
                 overall, plane_verdict)
-    if overall is None:
-        # 全部组执行失败——整批证据缺失（执行期容错语义：结果如实呈现）
-        overall = "indeterminate"
+    # overall 无 None 兜底：modes 恒非空（grid 校验①拒空）且
+    # _gates_verdict 恒返非 None verdict——全组执行失败的 indeterminate
+    # 由 _gates_verdict 空输入语义承载（无参评点 → indeterminate）
 
     payload: Dict[str, Any] = {
         "direction": direction,
