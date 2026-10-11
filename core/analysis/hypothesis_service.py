@@ -467,15 +467,11 @@ def register_hypothesis(
         strategy_params = _validate_strategy_params(
             strategy_params, conditions)
     elif any(k in conditions for k in _SCALING_GROUP_KEYS):
-        strategy_params = {}
-        if "exit_partial_conditions" in conditions:
-            strategy_params["exit_fraction"] = \
-                _SCALING_DEFAULTS["exit_fraction"]
-        if "add_trigger_conditions" in conditions:
-            strategy_params["add_fraction"] = \
-                _SCALING_DEFAULTS["add_fraction"]
-            strategy_params["max_exposure"] = \
-                _SCALING_DEFAULTS["max_exposure"]
+        # 有组无值→字面化与 _validate_strategy_params 尾部归一化同源
+        # （review-042 CARD-05 双份收敛）：{} 无未知键/null 键、sl_mode
+        # 缺省过检，宿主组判据同 conditions——返回即物化形，与原内联
+        # 构造行为逐位等价
+        strategy_params = _validate_strategy_params({}, conditions)
 
     # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)
