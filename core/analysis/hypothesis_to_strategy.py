@@ -365,7 +365,10 @@ def _translate_conditions(
                     f"{label}[{i}] action 不可表达: {action}"
                     f"（可表达: {sorted(_ACTION_MAP)}）",
                     detail={"condition": cond})
-            if not isinstance(target, (int, float)):
+            if not isinstance(target, (int, float)) or isinstance(target, bool):
+                # bool 排除与插件分支对称（review-042 CARD-14：双入口
+                # pydantic 已拦，此处服务内部直调纵深——True/False 是
+                # 布尔断言非阈值）
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
                     f"{label}[{i}] target 须为数值（列名 target 不可表达）",

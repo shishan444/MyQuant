@@ -214,3 +214,33 @@ class TestOriginAnnotationConsistency:
         assert t["same_dna_existing"] is True   # 命中分流（修复目标场景）
         assert t["strategy_id"] == "st_card03"
         assert t["risk_genes"] == "declared"    # 修复前此处误标 platform_default
+
+
+# ── CARD-14：结构化分支 bool target 排除（与插件分支对称）──────────
+
+
+class TestBoolTargetRejected:
+    """结构化 subject 分支的 target=True/False 是布尔断言非阈值——
+    修复前 isinstance(True, (int, float)) 放行且 float(True)=1.0
+    静默收窄；HTTP/MCP 双入口 pydantic 已拦，此锚服务内部直调纵深
+    （build_signal_genes 公开入口直调）。"""
+
+    def test_bool_target_rejected(self, db):
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+
+        cond = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "gt", "target": True}]
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(cond, [], db)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+
+    def test_numeric_target_still_accepted(self, db):
+        """对照锚：数值 target 照常翻译（bool 排除不外溢）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+
+        cond = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "gt", "target": 70}]
+        genes, _ = build_signal_genes(cond, [], db)
+        assert len(genes) == 1

@@ -302,14 +302,15 @@ class TestSchemaParity:
 
     def test_register_hypothesis_docs_disclose_scaling(self) -> None:
         """工具描述披露声明块与身份关系+分批组键语义（沿 trigger_policy
-        工具文档先例——错误即文档纪律）。"""
+        工具文档先例——错误即文档纪律）。review-042 CARD-14 补 token：
+        八键键集与三键值域联动须披露（与 capability.py 八键版对齐）。"""
         import inspect
 
         from mcpserver import tools as tools_mod
         src = inspect.getsource(tools_mod)
         for token in ("strategy_params", "幂等四分支", "终态后带新声明重登记",
                       "exit_partial_conditions", "ADD_INHIBIT",
-                      "分批条件组"):
+                      "分批条件组", "exit_fraction", "生效杠杆"):
             assert token in src, f"工具文档缺要素: {token}"
 
 
