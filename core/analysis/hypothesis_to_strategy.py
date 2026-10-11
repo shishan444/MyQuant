@@ -149,15 +149,6 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
            if k in declared and declared[k] is not None})
 
 
-def _risk_genes_origin(risk_params: Tuple) -> str:
-    """九字段元组 → 来源标注（与平台默认全等=platform_default）。"""
-    from core.strategy.dna import RiskGenes
-
-    if risk_params == _risk_params_tuple(RiskGenes().to_dict()):
-        return "platform_default"
-    return "declared"
-
-
 def translate_hypothesis(
     db_path: Path,
     *,
@@ -294,10 +285,13 @@ def translate_hypothesis(
          and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
         None)
     if active_hit is not None:
+        # 来源标注统一用 risk_origin（declared_params 非空判据）——声明值
+        # 恰等于平台默认时仍须标 declared（「有声明→declared」，review-042
+        # CARD-03：按九字段与默认全等判会把同一声明标成 platform_default）
         return {"strategy_id": active_hit["strategy_id"],
                 "status": active_hit.get("status") or "active",
                 "duplicated": False, "same_dna_existing": True,
-                "risk_genes": _risk_genes_origin(new_risk_params)}
+                "risk_genes": risk_origin}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -306,7 +300,7 @@ def translate_hypothesis(
     if draft_hit is not None:
         return {"strategy_id": draft_hit["strategy_id"], "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
-                "risk_genes": _risk_genes_origin(new_risk_params)}
+                "risk_genes": risk_origin}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     from core.persistence.repository.strategy import save_strategy

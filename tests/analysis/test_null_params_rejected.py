@@ -171,3 +171,46 @@ class TestTranslationNullDefense:
         rg = _declared_risk_genes({"stop_loss": None, "leverage": 3})
         assert rg.stop_loss == RiskGenes().stop_loss  # null 键走默认
         assert rg.leverage == 3                        # 非 null 键照常写入
+
+
+# ── CARD-03：声明值=平台默认时来源标注一致性 ────────────────────────
+
+
+class TestOriginAnnotationConsistency:
+    """声明值恰等于平台默认（如 stop_loss=0.05）时，任何返回路径的
+    risk_genes 标注均须为 "declared"（「有声明→declared」）；修复前
+    分流命中路径按九字段与默认全等判误标 "platform_default"。"""
+
+    def test_declared_equal_to_default_annotates_declared(self, db):
+        """新建路径：登记 {"stop_loss": 0.05}（=RiskGenes 默认）→ declared。"""
+        h = _register(db, {"stop_loss": 0.05})
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["duplicated"] is False
+        assert t["risk_genes"] == "declared"
+
+    def test_diversion_hit_keeps_declared_annotation(self, db):
+        """分流命中路径：手工预插同签名同九字段（全等平台默认）既有
+        active 策略后翻译——命中 active_hit 分流仍标 declared。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, SignalGene, SignalRole, StrategyDNA,
+        )
+        from core.persistence.repository.strategy import save_strategy
+
+        genes = [
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       condition={"type": "lt", "threshold": 30}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       condition={"type": "gt", "threshold": 70}),
+        ]
+        manual = StrategyDNA(
+            signal_genes=genes, logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(),
+            risk_genes=RiskGenes())  # 九字段全等平台默认
+        save_strategy(db, strategy_id="st_card03", dna_json=manual.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="card03")
+
+        h = _register(db, {"stop_loss": 0.05})  # 声明值=默认，九字段全等
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is True   # 命中分流（修复目标场景）
+        assert t["strategy_id"] == "st_card03"
+        assert t["risk_genes"] == "declared"    # 修复前此处误标 platform_default
