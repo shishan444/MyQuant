@@ -4,7 +4,8 @@
 推演，产出收益/成交率/事件日志等评估指标；与 paper 模拟盘链共享
 同一决策与记账组件——回放验证的就是模拟盘将来执行的确切行为。
 
-服务对象：api/routes/trading.py 回放端点与测试（纯内存评估，不落
+服务对象：api/routes/strategies/batch.py 批量回测端点（逐策略经
+ReplayRunner 执行，见 batch.py:166/219）与测试（纯内存评估，不落
 任务表、不推送 WS）。
 
 用法：
