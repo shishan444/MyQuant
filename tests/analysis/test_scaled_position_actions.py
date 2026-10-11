@@ -206,6 +206,31 @@ class TestPrecheckGroupDisclosure:
         # 组不进三态载体键（锚仍 when 交集口径）
         assert "analysis_segment_trades" in w1
 
+    def test_group_not_in_anchor_same_when(self, db, data_dir):
+        """组不进锚（spec 场景逐字锚）：同 when 条件集+同区间集——
+        无组 vs 含组两个独立假设身份（组键进指纹），预检锚
+        （analysis_segment_trades）与三态结论完全一致（组不参与判定）。"""
+        base = {
+            "when_conditions": [_cond(45)],
+            "then_conditions": [_cond(75, "gt")],
+        }
+        r_without = register_hypothesis(
+            db, conditions=dict(base), statement="no-group",
+            data_ranges=_ranges(), precheck_data_dir=data_dir)
+        r_with = register_hypothesis(
+            db, conditions=dict(base, add_trigger_conditions=GROUP_RSI_LOW),
+            statement="with-group", data_ranges=_ranges(),
+            precheck_data_dir=data_dir)
+        # 组键参与身份：同条件集+同区间集仍两个独立假设
+        assert r_without["hypothesis_id"] != r_with["hypothesis_id"]
+        w0 = r_without.get("precheck_warnings") or {}
+        w1 = r_with.get("precheck_warnings") or {}
+        assert w0 and w1, "两侧预检均须成功执行"
+        # 锚与三态不含组：完全一致（若组进锚，含组侧触发数必变）
+        assert w1["analysis_segment_trades"] == \
+            w0["analysis_segment_trades"]
+        assert w1["verdict"] == w0["verdict"]
+
 
 class TestDoDEndToEnd:
     """示例策略形态端到端（版本 DoD）：组合入场+部分离场+trail 全离场

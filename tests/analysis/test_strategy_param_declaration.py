@@ -159,6 +159,27 @@ class TestParamDomainValidation:
                              "add_fraction": 0.1})
         assert r["duplicated"] is False
 
+    def test_max_exposure_hint_names_leverage_link(self, db):
+        """max_exposure 超生效杠杆上界（未声明 leverage=默认 1）的 detail
+        附指引：声明更大上限须同时声明 leverage（错误即文档——现状锚）。"""
+        _GROUP_ADD = [{"subject": {"indicator": "RSI",
+                                    "params": {"period": 14},
+                                    "field": "rsi"},
+                        "action": "gt", "target": 50}]
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db, conditions={
+                    "when_conditions": _cond(31)["when_conditions"],
+                    "then_conditions": _cond(31)["then_conditions"],
+                    "add_trigger_conditions": _GROUP_ADD,
+                },
+                statement="mx", data_ranges=_ranges(),
+                strategy_params={"max_exposure": 1.5, "add_fraction": 0.1})
+        d = ei.value.detail
+        assert d["field"] == "max_exposure"
+        assert d["legal_range"] == [0, 1]  # 上界=未声明 leverage 的默认 1
+        assert "leverage" in d["hint"], "detail 须附 leverage 约束指引"
+
     def test_scaling_pairing_rules(self, db):
         """组间配对四规则：比例无宿主组拒/抑制无触发组拒/空列表拒/
         有组无值归一化字面化。"""

@@ -192,10 +192,11 @@ class TestAtrMode:
             signal_set=sig([0], 10))
         # 人工核算：atr_14 sl=95 → bar6 low=89 触发；
         # atr_20 sl=105−16=89 → bar6 low=89<=89 触发（同 bar 但线不同——
-        # 以权益可区分锚：两线成交价同但止损深度不同）
+        # 两线成交价同，本数据下出场 bar 与权益均不可区分）
         assert exit_ts(r14) == exit_ts(r20)  # 本数据下同 bar 触发
-        assert r14.total_return != r20.total_return or True
-        # 更强的可区分锚：抬高低点使 atr_20 不触发而 atr_14 触发
+        # 更强的可区分锚：抬高低点使两周期出场 bar 分离——
+        # atr_14 sl=95：bar6 low=92<=95 触发；atr_20 sl=89：全程 low>=89，
+        # 仅 bar9 low=89<=89 触发（实测 T(6)/T(9)——人工核算一致）
         lows_shallow = [99, 104, 109, 111, 107, 99, 92, 91, 90, 89]
         df_shallow14 = mk_df(closes3, highs3, lows_shallow, atr14=self.ATR)
         df_shallow20 = mk_df(closes3, highs3, lows_shallow, **{
@@ -205,9 +206,10 @@ class TestAtrMode:
         rs20 = eng.run(
             mk_dna(sl_mode="atr", stop_loss=2.0, atr_period=20),
             df_shallow20, signal_set=sig([0], 10))
-        # atr_14 sl=95：bar6 low=92>95 不触发、后续 low 最低 89<=95 → bar8
-        # atr_20 sl=89：全程 low>=89，仅 bar8/9 low=89<=89 触发
-        assert exit_ts(rs14) is not None and exit_ts(rs20) is not None
+        assert exit_ts(rs14) == T(6), \
+            f"atr_14（sl=95）应 bar6 触发（low=92<=95），实际 {exit_ts(rs14)}"
+        assert exit_ts(rs20) == T(9), \
+            f"atr_20（sl=89）应 bar9 触发（low=89<=89），实际 {exit_ts(rs20)}"
 
     def test_atr_missing_column_computed(self):
         """现算路径：列缺失时 _compute_indicator 现算成功（数据足够）。"""

@@ -103,33 +103,41 @@ class TestInhibitorThreeEntries:
 
     def test_not_is_boolean_not_event_inversion(self):
         """cross 类锚点（B4-19）：抑制=布尔 NOT（掩码取反），非事件取反。
-        构造抑制条件为 cross_below 型——「发生下穿的 bar」不抑制、
-        「持续位于下方」抑制（事件语义取反必错此例）。"""
-        df = _with_rsi(mk_df())
+        构造抑制条件为 cross_below 型——「发生下穿的 bar」被抑制不加仓、
+        「持续位于下方」的 bar 不受抑制（事件语义取反必错此例）。"""
+        df = mk_df()
+        # 覆写 rsi_14 为构造序列（dna_to_signal_set 只消费列）：bar0-19
+        # 高位 60 → bar20 下穿到 40 → bar21-39 持续 40 → bar40 回 60
+        rsi_seq = [60.0] * 20 + [40.0] * 20 + [60.0] * 20
+        df["rsi_14"] = rsi_seq
         genes = [
             mk_gene(SignalRole.ENTRY_TRIGGER),
             mk_gene(SignalRole.EXIT_TRIGGER, threshold=80.0),
-            mk_gene(SignalRole.ADD_TRIGGER, threshold=60.0),
+            mk_gene(SignalRole.ADD_TRIGGER, threshold=45.0),  # 低位段成立
             SignalGene("RSI", {"period": 14}, SignalRole.ADD_INHIBIT,
                        condition={"type": "cross_below", "threshold": 50.0}),
         ]
         dna = StrategyDNA(signal_genes=genes, logic_genes=LogicGenes(),
                           execution_genes=ExecutionGenes())
         ss = dna_to_signal_set(dna, df)
-        rsi = df["rsi_14"]
-        cross_bars = (rsi < 50.0) & (rsi.shift(1) >= 50.0)  # 下穿发生 bar
-        below_bars = (rsi < 50.0) & ~cross_bars              # 持续下方 bar
-        # 布尔 NOT 语义：抑制掩码=（条件成立）——cross_below 在引擎求值
-        # 为「当 bar 满足穿越」；本锚验证映射产物是角色+组合实现而非
-        # 条件取反形（ADD_GUARD 映射会翻转抑制边界——adds 分布不同）
-        assert not (ss.adds & cross_bars).any() or True  # 分布锚见下
-        # 判定力锚：取反映射（把抑制当 ADD_GUARD）在「持续下方」bar
-        # 表现不同——guard 会挡掉这些 bar 的加仓，布尔 NOT 只挡穿越后
-        # 满足抑制条件的 bar。两分布可区分即证明非取反形。
+        rsi = df["rsi_14"]  # 覆写后的列（DatetimeIndex——与 adds 对齐）
+        cross_bars = (rsi < 50.0) & (rsi.shift(1) >= 50.0)  # bar20
+        below_bars = (rsi < 50.0) & ~cross_bars              # bar21-39
+        assert cross_bars.sum() == 1 and bool(cross_bars.iloc[20])  # 仅 bar20 下穿
+        # 事件语义锚：下穿发生的 bar 不加仓（抑制生效）
+        assert not (ss.adds & cross_bars).any(), \
+            "发生下穿的 bar 不得产生加仓信号"
+        # 持续位于下方的 bar 不受抑制（触发+门控成立即加仓）——若实现
+        # 误按「位于下方」抑制（布尔取反 cross_below→below），这 19 个
+        # bar 全被错杀；若误取反映射成 ADD_GUARD 门控，则门控恒关同样
+        # 全错杀——两个错误方向都被本锚识别
+        assert (ss.adds & below_bars).sum() == 19, \
+            f"持续下方 bar 应照常加仓（19 个），实际 {(ss.adds & below_bars).sum()}"
+        # 判定力锚：取反映射（把抑制当 ADD_GUARD）adds 分布必须不同
         guard_genes = [
             mk_gene(SignalRole.ENTRY_TRIGGER),
             mk_gene(SignalRole.EXIT_TRIGGER, threshold=80.0),
-            mk_gene(SignalRole.ADD_TRIGGER, threshold=60.0),
+            mk_gene(SignalRole.ADD_TRIGGER, threshold=45.0),
             SignalGene("RSI", {"period": 14}, SignalRole.ADD_GUARD,
                        condition={"type": "cross_below", "threshold": 50.0}),
         ]
@@ -200,6 +208,29 @@ class TestEngineScalingExecution:
         r = eng.run(dna, df, signal_set=self._sig(8, [0], reduces=[3]))
         first = r.trades_df.iloc[0]
         assert abs(abs(first["Size"]) - 150.0) < 1e-6  # 0.5 缺省
+
+    def test_add_fraction_default_uses_tenth(self):
+        """add_fraction 缺省完备（手工 DNA 无字段）：加仓比例按 0.1
+        （权益分母）——bar1 入场 30%（300 股）、bar3 加仓 0.1×权益
+        （100 股）→ 期末平仓 400 股（与显式声明 0.1 逐位一致）。"""
+        closes = [100.0] * 8
+        df = pd.DataFrame({
+            "open": closes, "high": closes, "low": closes, "close": closes,
+            "volume": [100.0] * 8,
+        }, index=pd.DatetimeIndex(
+            pd.date_range("2024-01-01", periods=8, freq="4h"),
+            name="timestamp"))
+        dna = StrategyDNA(
+            signal_genes=[mk_gene(SignalRole.ENTRY_TRIGGER),
+                          mk_gene(SignalRole.EXIT_TRIGGER, threshold=99.0)],
+            logic_genes=LogicGenes(), execution_genes=ExecutionGenes(),
+            # add_fraction/max_exposure 均不声明（None 合法缺省态）
+            risk_genes=RiskGenes(position_size=0.3))
+        eng = BacktestEngine(init_cash=100000, fee=0.0, slippage=0.0)
+        r = eng.run(dna, df, signal_set=self._sig(8, [0], adds=[3]))
+        last = r.trades_df.iloc[-1]
+        assert abs(abs(last["Size"]) - 400.0) < 1e-6, \
+            f"缺省 add_fraction=0.1 应加 100 股（300+100=400），实际 {last['Size']}"
 
     def test_add_fraction_manual_accounting(self):
         """加仓手工核算（B5-23）：add_fraction=0.1、分母=当前权益——
