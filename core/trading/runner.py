@@ -1,7 +1,17 @@
-"""Paper Trading Runner: background thread that executes paper trading tasks.
+"""Paper 模拟盘任务生命周期引擎（后台线程 TradingRunner）。
 
-V2 architecture: signal -> judgment -> pending_decision -> bar_open execution.
-Uses VirtualAccount instead of PositionManager.
+职能与架构：V2 决策链 signal -> judgment -> pending_decision ->
+bar_open 执行；持仓记账走 VirtualAccount（非 PositionManager）。
+
+服务对象：API 路由层（api/routes/trading.py 创建任务落 DB pending、
+停止/查询经 TaskController 与本模块全局控制器表）与前端模拟盘视图
+（WS 推送 task_started/position_update）。
+
+职责边界：任务串行执行（同一时刻至多一个 active 任务）；bar 轮询
+推进 + 增量落库（成交事件/权益快照/心跳）；崩溃恢复只做停机标记
+（crash 是 bug 不是可恢复状态——设计裁决，见 _execute_task 主循环
+前的 last_bar_time 检查）；不含实盘链（core/live_trading）与历史
+回放（core/trading/replay.py）。
 """
 from __future__ import annotations
 
@@ -56,7 +66,11 @@ def _push_ws(task_id: str, payload: dict) -> None:
 
 
 def recover_stale_trading_tasks(db_path: Path) -> None:
-    """Mark running paper trading tasks as stopped (crash recovery)."""
+    """崩溃恢复收尾：把遗留 running 的模拟盘任务标记为 stopped。
+
+    进程崩溃后启动期调用——遗留 running 状态已无执行线程，不标记
+    会永久卡死在 running（前端不可重启）。
+    """
     from core.persistence.repository import paper_trading as repo
     recovered = repo.recover_stale_trading_tasks(db_path)
     if recovered > 0:
@@ -67,7 +81,12 @@ from core.data.timeframes import TF_SECONDS as _BAR_SECONDS  # B4.1 归一
 
 
 class TradingRunner(threading.Thread):
-    """Daemon thread that picks up pending paper trading tasks and runs them."""
+    """模拟盘任务守护线程：轮询拾取 pending 任务并串行执行。
+
+    单任务模型：_active_task_id 非空即忙（不并发多任务，任务间无
+    资源竞争）；tick 异常兜底记日志不退出（线程存活优先——单 tick
+    失败不应停摆后续任务调度）；poll_interval 控空转节奏。
+    """
 
     def __init__(
         self,
@@ -142,7 +161,7 @@ class TradingRunner(threading.Thread):
             logger.error("Trading task %s failed", task_id, exc_info=True)
             self._update_status(task_id, "stopped", "error")
         finally:
-            # Save final state (preserves remaining equity snapshots)
+            # 终态落库兜底（未写盘的权益快照不随任务结束丢失）
             if account is not None:
                 try:
                     self._save_account_state(account, task_id, pending_decision=final_pending)
@@ -181,7 +200,7 @@ class TradingRunner(threading.Thread):
             raise ValueError(
                 "模拟盘链不支持该策略（DNA 载入即拒）: " + "; ".join(_reasons))
 
-        # Mark running
+        # 标记 running（装载校验已过——载入即拒的任务不进 running）
         update_paper_trading_task(
             self.db_path, task_id, status="running", started_at=_now_iso(),
         )
@@ -193,7 +212,8 @@ class TradingRunner(threading.Thread):
         fee = task_row["fee"]
         created_at = task_row.get("created_at")
 
-        # Create VirtualAccount (user config overrides DNA defaults)
+        # 构造 VirtualAccount（用户任务配置覆写 DNA 缺省——初始资金/
+        # 杠杆/方向以任务行为准）
         account = VirtualAccount(
             dna, init_cash=init_cash, fee=fee, slippage=0.0005,
             leverage=task_row.get("leverage"),
@@ -201,11 +221,11 @@ class TradingRunner(threading.Thread):
             timeframe=timeframe,
         )
 
-        # Restore state if resuming
+        # 恢复既有状态（任务重启：累计统计与余额/持仓快照续接）
         self._restore_account_state(account, task_row)
         self._restore_balance_and_position(account, task_row)
 
-        # Load data
+        # 装载行情数据
         controller.check_stop()
         df = self._load_data(symbol, timeframe)
         if df is None or df.empty:
@@ -219,13 +239,13 @@ class TradingRunner(threading.Thread):
         df = _try_merge_derivatives(self.data_dir, _safe_sym, timeframe, df)
         df = compute_all_indicators(df)
 
-        # Trim warmup rows where indicators produced NaN
+        # 截除指标预热 NaN 头部行
         df = self._trim_nan_rows(df)
 
-        # Filter forming bar
+        # 过滤未闭合 forming bar
         df = self._filter_forming_bar(df, timeframe)
 
-        # MTF: load all timeframe data if DNA is multi-timeframe
+        # MTF：DNA 多周期时装载全部所需周期数据
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None
         mtf_timeframes: List[str] = []
         if dna.is_mtf:
@@ -234,7 +254,7 @@ class TradingRunner(threading.Thread):
             dfs_by_timeframe = load_mtf_data(
                 self.data_dir, symbol, timeframe, df, needed_tfs,
             )
-            # Integrity check: all required timeframes must be present
+            # 完整性校验：DNA 所需周期数据必须齐备（缺任一即停机）
             if dfs_by_timeframe is None:
                 self._update_status(
                     task_id, "stopped",
@@ -249,7 +269,7 @@ class TradingRunner(threading.Thread):
                     f"mtf_data_missing: {','.join(sorted(missing))}",
                 )
                 return
-            # Trim warmup rows + filter forming bars for each timeframe independently
+            # 各周期独立截预热行+过滤 forming bar（口径与执行周期一致）
             for tf in list(dfs_by_timeframe.keys()):
                 dfs_by_timeframe[tf] = self._trim_nan_rows(dfs_by_timeframe[tf])
                 dfs_by_timeframe[tf] = self._filter_forming_bar(
@@ -260,7 +280,7 @@ class TradingRunner(threading.Thread):
                 task_id, sorted(dfs_by_timeframe.keys()),
             )
 
-        # Build judgment config from task settings
+        # 由任务设置组装判定配置（置信度仓位/限价单/定价参数）
         config = JudgmentConfig(
             confidence_sizing_enabled=bool(task_row.get("confidence_sizing_enabled", 0)),
             use_limit_orders=bool(task_row.get("use_limit_orders", 0)),
@@ -270,19 +290,19 @@ class TradingRunner(threading.Thread):
             order_max_wait_bars=int(task_row.get("order_max_wait_bars", 5)),
         )
 
-        # Initialize prediction system
+        # 初始化预测系统（失败降级 None——决策管线走无预测路径）
         predictor = self._init_predictor(df, task_row)
 
-        # Initialize decision pipeline
+        # 初始化决策管线（判定配置+DNA 风控基因注入）
         from core.trading.pipeline import DecisionPipeline
         pipeline = DecisionPipeline(config=config, dna_risk_genes=dna.risk_genes)
 
         pending_decision: Optional[Decision] = None
         last_bar_time = task_row.get("last_bar_time")
         if last_bar_time:
-            # Task has previous state -- crash recovery scenario.
-            # Per design: crash is a bug, not a state to recover from.
-            # Mark as error and stop so user can restart a fresh task.
+            # 任务携带前次状态（pending 却有 last_bar_time）= 崩溃残留。
+            # 设计裁决：crash 是 bug 而非可恢复状态——标记停机，
+            # 用户以新任务重启（不静默续跑来路不明的中间态）
             logger.error(
                 "Task %s has last_bar_time=%s but is pending -- "
                 "possible crash recovery. Marking as error.",
@@ -291,15 +311,15 @@ class TradingRunner(threading.Thread):
             self._update_status(task_id, "stopped", "crash_recovery")
             return
 
-        # Save state after replay
+        # 回放后状态落库（初始权益快照/持仓基线上屏）
         self._save_account_state(account, task_id, df, pending_decision)
         self._push_position_update(account, task_id)
 
-        # Main loop
+        # 主循环：轮询增量数据逐 bar 推进
         bar_interval = _BAR_SECONDS.get(timeframe, 86400)
         poll_wait = min(bar_interval, 60)
 
-        # MTF: track last refresh time per timeframe for throttled refresh
+        # MTF：按周期记录上次刷新时间（节流刷新的基准）
         now_utc = pd.Timestamp.now(tz="UTC")
         tf_last_refresh: Dict[str, pd.Timestamp] = {}
         if dfs_by_timeframe:
@@ -309,7 +329,8 @@ class TradingRunner(threading.Thread):
         while not controller.stop_requested:
             controller.check_stop()
             try:
-                # MTF: refresh each timeframe only when its bar interval has elapsed
+                # MTF：各周期仅在其 bar 间隔到期后才刷新（高频周期不
+                # 拖累低频周期的既有数据）
                 if dfs_by_timeframe is not None:
                     now_utc = pd.Timestamp.now(tz="UTC")
                     for tf in mtf_timeframes:
@@ -334,7 +355,8 @@ class TradingRunner(threading.Thread):
                     new_df = compute_all_indicators(new_df)
                     new_df = self._filter_forming_bar(new_df, timeframe)
 
-                    # Update execution TF in dfs_by_timeframe
+                    # 执行周期新数据同步进 dfs_by_timeframe（MTF 信号
+                    # 组装消费同一份最新帧）
                     if dfs_by_timeframe is not None:
                         dfs_by_timeframe[timeframe] = new_df
 
@@ -345,11 +367,13 @@ class TradingRunner(threading.Thread):
                         row = new_df.iloc[i]
                         ts = new_df.index[i]
 
-                        # Skip pre-creation bars for new tasks
+                        # 新任务跳过创建时刻之前的 bar（历史 bar 不
+                        # 补跑——任务从创建时点开始感知市场）
                         if last_bar_time is None and created_at and ts.isoformat() < created_at:
                             continue
 
-                        # Delegate all decision logic to pipeline
+                        # 全部决策逻辑委托管线（判定/挂单/成交/事件
+                        # 产出，本类只做编排与落库）
                         pipe_result = pipeline.process_bar(
                             bar_high=float(row["high"]),
                             bar_low=float(row["low"]),
@@ -389,11 +413,17 @@ class TradingRunner(threading.Thread):
         return account, pending_decision
 
     # ------------------------------------------------------------------
-    # Helpers
+    # 辅助方法
     # ------------------------------------------------------------------
 
     def _init_predictor(self, df, task_row: dict):
-        """Initialize PriceRangePredictor with stored or default DNA."""
+        """初始化价格区间预测器（PriceRangePredictor）。
+
+        职责契约：优先用任务行存储的 prediction_dna_json 构造，缺省
+        回落内置默认 DNA；warmup 以 min(100, len(df)//2) 根 bar 预热。
+        构造或 warmup 任一失败降级返回 None——决策管线对 None 走无
+        预测路径，任务不因预测系统失败而中止。
+        """
         import json as _json
         pred_dna_json = task_row.get("prediction_dna_json")
         try:
@@ -417,7 +447,12 @@ class TradingRunner(threading.Thread):
             return None
 
     def _filter_forming_bar(self, df, timeframe: str):
-        """Exclude incomplete (forming) bar."""
+        """剔除未闭合（forming）bar。
+
+        判据：末根 bar 时间 + 周期间隔仍晚于当前时刻 = 该 bar 尚在
+        形成（high/low 未定），截掉末行——决策只消费已闭合 bar，
+        防未完成 bar 触发信号。
+        """
         if df.empty:
             return df
         interval_seconds = _BAR_SECONDS.get(timeframe, 14400)
@@ -430,7 +465,8 @@ class TradingRunner(threading.Thread):
         return df
 
     def _trim_nan_rows(self, df):
-        """Drop leading rows where indicator columns are all NaN (warmup period)."""
+        """丢弃指标列全 NaN 的头部预热行（warmup 期间指标周期未满，
+        无有效信号可产——首个任一指标列非 NaN 的行之前全部截除）。"""
         if df.empty:
             return df
         ohlcv_cols = {"open", "high", "low", "close", "volume"}
@@ -440,7 +476,7 @@ class TradingRunner(threading.Thread):
         valid_mask = df[ind_cols].notna().any(axis=1)
         first_valid = valid_mask.idxmax()
         if not valid_mask.loc[first_valid]:
-            return df.iloc[0:0]  # all NaN
+            return df.iloc[0:0]  # 全 NaN（区间短于所有指标周期）
         first_idx = df.index.get_loc(first_valid)
         if first_idx == 0:
             return df
@@ -448,6 +484,8 @@ class TradingRunner(threading.Thread):
         return df.iloc[first_idx:]
 
     def _load_data(self, symbol: str, timeframe: str):
+        """从数据目录装载执行周期 parquet（文件不存在返回 None——
+        调用方按 no_data 停机）。"""
         from core.data.storage import load_parquet
         path = self.data_dir / f"{symbol}_{timeframe}.parquet"
         if not path.exists():
@@ -455,6 +493,8 @@ class TradingRunner(threading.Thread):
         return load_parquet(path)
 
     def _fetch_and_update(self, symbol: str, timeframe: str):
+        """拉取增量行情并更新本地 parquet（更新失败返回 None——主循环
+        按无新数据处理，轮询继续）。"""
         try:
             return update_market_data(
                 symbol=symbol, interval=timeframe, data_dir=self.data_dir,
@@ -463,14 +503,16 @@ class TradingRunner(threading.Thread):
             return None
 
     def _restore_account_state(self, account: VirtualAccount, task: dict) -> None:
-        """Restore VirtualAccount state from DB row."""
+        """从任务行恢复 VirtualAccount 累计统计基数（交易数/累计盈亏/
+        胜负计数）——total_trades 等聚合口径跨执行段连续。"""
         account._prior_trades = task.get("total_trades", 0)
         account._prior_pnl = task.get("total_pnl", 0.0)
         account._prior_wins = task.get("win_count", 0)
         account._prior_losses = task.get("loss_count", 0)
 
     def _restore_balance_and_position(self, account: VirtualAccount, task: dict) -> None:
-        """Restore balance and position from DB row."""
+        """从任务行恢复余额与持仓（balance 直覆写；position_side 非空
+        时按快照重建 Position——含保证金/累计资金费/开仓成本）。"""
         if task.get("balance") is not None:
             account.balance = task["balance"]
 
@@ -488,12 +530,17 @@ class TradingRunner(threading.Thread):
 
     def _save_account_state(self, account: VirtualAccount, task_id: str,
                             df=None, pending_decision: Optional[Decision] = None) -> None:
-        """Persist VirtualAccount state to DB."""
+        """VirtualAccount 状态回写任务行。
+
+        职责契约：余额/持仓快照/待执行决策（pending_decision）/
+        last_bar_time/累计统计一次写齐——任务中断重启的恢复依据；
+        权益快照增量落库（内存仅保留末条作下次写盘基线）。
+        """
         import json
         from core.persistence.repository.paper_trading import update_paper_trading_task
         kwargs = {"balance": account.balance}
 
-        # Serialize pending_decision if present
+        # pending_decision 存在则序列化（bar 开盘待执行动作）
         if pending_decision is not None:
             kwargs["pending_decision_json"] = json.dumps({
                 "action": pending_decision.action,
