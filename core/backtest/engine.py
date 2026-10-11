@@ -1,4 +1,22 @@
-"""vectorbt backtest engine wrapper using from_order_func for real-time risk management."""
+"""vectorbt 回测引擎（from_order_func 实时风险管理封装）。
+
+职能：把 StrategyDNA 信号在 OHLCV 数据上执行为 BacktestResult——
+单策略 run/run_with_portfolio 与全种群 batch_run（信号堆叠 (N, M)
+矩阵单次 vbt 调用、逐列即逐个体）两形制。
+
+价值与服务对象：全部回测指标（胜率/净期望/清算判定）的计算权威，
+「检查与考试同一量尺」的量尺本体——直接消费方为进化评估链
+（evolution/evaluation、evolution/engine）与策略验证链（api/runner、
+routes/strategies/verify、compare）；间接经 backtest_bridge.
+run_backtest_on_range 服务 validation_service 四路径（isolated/
+random_window/sandbox/staged）与 exit_sweep（0.4.1 R6）。S6 三道
+门判定数据亦源于此。ENGINE_SUPPORTED_SL_MODES 消费方=exit_sweep
+模式校验（0.4.2 待扩 (pct, atr, trail)）。
+
+职责边界：执行与指标计算（费滑/杠杆放大/资金费/清算等效口径）；
+信号生成归 strategy 域（executor 产 SignalSet），清算维持率档位
+归 core/market_model（B7.1 单一权威——本模块只引用不持有字面量）。
+"""
 
 from __future__ import annotations
 
@@ -35,7 +53,7 @@ ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct",)
 
 @dataclass
 class BacktestResult:
-    """Structured result from a backtest run."""
+    """单次回测运行的结构化结果（指标+权益曲线+逐笔记录）。"""
     total_return: float
     sharpe_ratio: float
     max_drawdown: float
@@ -69,17 +87,17 @@ class BacktestResult:
 def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
                            cost_rate: float,
                            position_values: np.ndarray | None = None) -> float:
-    """Numba-compiled inner loop for funding cost deduction.
+    """funding 资金费扣减内循环（numba njit——逐 bar 就地扣）。
 
     Args:
-        adjusted: Float64 equity values (modified in-place).
-        position_mask: Bool array, True when position is open.
-        cost_rate: Per-bar funding cost rate.
-        position_values: Float64 array of position values. If provided,
-            funding is based on position_value instead of total equity.
+        adjusted: 权益值 float64 数组（就地修改）。
+        position_mask: 持仓掩码（True=该 bar 持仓中）。
+        cost_rate: 单 bar 资金费率。
+        position_values: 逐 bar 仓位价值 float64 数组；提供时按
+            position_value（实际借入额）而非总权益计费。
 
     Returns:
-        Total funding cost deducted.
+        总扣费额。
     """
     total_cost = 0.0
     for i in range(1, len(adjusted)):
@@ -96,17 +114,20 @@ def _apply_funding_costs(
     trades_df: Optional[pd.DataFrame] = None,
     position_values: Optional[np.ndarray] = None,
 ) -> tuple[pd.Series, float]:
-    """Deduct leveraged funding costs only while position is open.
+    """杠杆资金费扣减——仅持仓时段收费。
+
+    费率口径：每 8 小时 0.1% 按 bar 周期比例折算（非 ceil——不足一期
+    的零头按比例收，避免多收）；计费基数=借入部分 (leverage-1)/
+    leverage。边界条件：leverage≤1 零费用直返。
 
     Args:
-        equity_curve: Portfolio equity over time.
-        leverage: Position leverage.
-        timeframe: Bar timeframe string.
-        trades_df: Trade records with 'Entry Timestamp' and 'Exit Timestamp'.
-                   If None, costs are deducted for all bars (legacy behavior).
-        position_values: Array of per-bar position values. If provided,
-            funding cost is based on position_value (actual borrowed amount)
-            instead of total equity.
+        equity_curve: 逐 bar 组合权益。
+        leverage: 杠杆倍数。
+        timeframe: bar 周期串（未知周期按 4h 折算）。
+        trades_df: 逐笔记录（Entry/Exit Timestamp）；None=全程按持仓
+            扣费（legacy 形制），空表=零费用（无持仓即无资金费）。
+        position_values: 逐 bar 仓位价值数组；提供时按仓位价值
+            （实际借入额）而非总权益计费。
     """
     if leverage <= 1:
         return equity_curve, 0.0
@@ -116,12 +137,12 @@ def _apply_funding_costs(
         "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
         "1h": 1, "4h": 4, "1d": 24, "3d": 72,
     }.get(timeframe, 4)
-    # Proportional periods instead of ceil to avoid overcharging
+    # 比例折算而非 ceil——不足一期按零头比例收，避免多收
     periods_per_bar = hours_per_bar / 8.0
     borrowed_ratio = (leverage - 1) / leverage
     cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
 
-    # Build position mask: True when position is open
+    # 持仓掩码：True=持仓中
     position_mask = np.zeros(len(equity_curve), dtype=np.bool_)
     if trades_df is not None and len(trades_df) > 0:
         for _, trade in trades_df.iterrows():
@@ -130,19 +151,19 @@ def _apply_funding_costs(
             if entry_ts is None:
                 continue
             if pd.isna(exit_ts) or exit_ts is None:
-                # Open trade: position open from entry to end
+                # 未平仓交易：从入场持有至序列末端
                 mask_slice = equity_curve.index >= entry_ts
             else:
                 mask_slice = (equity_curve.index >= entry_ts) & (equity_curve.index <= exit_ts)
             position_mask |= np.asarray(mask_slice).astype(np.bool_)
     elif trades_df is None:
-        # Legacy: no trades_df passed, deduct for all bars
+        # legacy 形制：未传 trades_df，全程按持仓扣费
         position_mask[:] = True
-    # else: trades_df provided but empty -> no funding costs (correct)
+    # （trades_df 给了但为空 → 零资金费——无持仓即无费用）
 
     adjusted = equity_curve.values.astype(np.float64).copy()
 
-    # Prepare position_values for funding calculation
+    # 资金费计费用的 position_values 备料
     pv_for_funding = None
     if position_values is not None:
         pv_for_funding = position_values.astype(np.float64)
@@ -157,10 +178,12 @@ def _apply_leverage_to_equity(
     leverage: float,
     init_cash: float,
 ) -> pd.Series:
-    """Amplify equity curve to reflect leverage effect.
+    """权益曲线杠杆放大（后处理）。
 
-    vbt runs with position_size only (no leverage). This function
-    post-processes the curve so gains/losses are amplified by leverage.
+    实现意图：vbt 以 position_size 无杠杆运行，本函数把逐笔持仓区间
+    的盈亏按杠杆倍数放大——持仓段 leveraged_base + leverage×(eq−
+    eq_entry)，持仓间隙的持平段保持 leveraged_base，基准在每笔结算
+    点滚动更新。边界：leverage≤1 或无交易时原样返回。
     """
     if leverage <= 1 or trades_df is None or len(trades_df) == 0:
         return equity_curve
@@ -168,7 +191,7 @@ def _apply_leverage_to_equity(
     eq_vals = equity_curve.values.astype(np.float64)
     result = np.empty(len(eq_vals), dtype=np.float64)
 
-    # Build sorted trade intervals (entry_idx, exit_idx)
+    # 交易区间排序（entry_idx, exit_idx）
     intervals = []
     for _, trade in trades_df.iterrows():
         entry_ts = trade.get("Entry Timestamp")
@@ -185,16 +208,16 @@ def _apply_leverage_to_equity(
 
     intervals.sort()
 
-    # Apply amplification per trade block
+    # 逐笔交易区间分段放大
     leveraged_base = float(init_cash)
     prev_end = 0
 
     for entry_idx, exit_idx in intervals:
-        # Flat region before this trade
+        # 该笔之前的空仓段（持平）
         if prev_end < entry_idx:
             result[prev_end:entry_idx] = leveraged_base
 
-        # Amplify during position
+        # 持仓段放大
         vbt_entry_eq = eq_vals[entry_idx]
         result[entry_idx:exit_idx + 1] = (
             leveraged_base + leverage * (eq_vals[entry_idx:exit_idx + 1] - vbt_entry_eq)
@@ -203,7 +226,7 @@ def _apply_leverage_to_equity(
         leveraged_base = float(result[exit_idx])
         prev_end = exit_idx + 1
 
-    # Fill remaining flat region
+    # 尾部剩余空仓段
     if prev_end < len(result):
         result[prev_end:] = leveraged_base
 
@@ -212,14 +235,15 @@ def _apply_leverage_to_equity(
 
 @njit
 def pre_sim_func_nb(c):
-    """Initialize mutable state arrays for the simulation.
+    """仿真前置状态初始化（每列 entry_price / is_liquidated 数组）。
 
-    Returns (entry_price, is_liquidated) arrays, one element per column.
-    These are passed as the first args to order_func_nb via the lifecycle chain.
+    经 vbt 生命周期链作为 order_func_nb 首组参数传入，供逐 bar 回调
+    就地读写（入场价记忆与清算标记——float 承载因 numba 状态数组
+    须数值型）。
     """
     n_cols = c.target_shape[1]
     entry_price = np.full(n_cols, 0.0, dtype=np.float64)
-    is_liquidated = np.full(n_cols, 0.0, dtype=np.float64)  # 0.0=False, 1.0=True
+    is_liquidated = np.full(n_cols, 0.0, dtype=np.float64)  # 0.0=False，1.0=True
     return (entry_price, is_liquidated)
 
 
@@ -230,34 +254,39 @@ def order_func_nb(c, entry_price, is_liquidated,
                   sl_stops, tp_stops, fee, slippage,
                   high_arr, low_arr, direction_signal,
                   mmr_tier_max, mmr_tier_rate):
-    """Per-bar order callback with real-time SL/TP and liquidation.
+    """逐 bar 订单回调（实时 SL/TP 与清算判定）。
+
+    判定序（关键决策）：清算检查先于 SL/TP——杠杆仓权益击穿维持线
+    即强平，优先级高于止盈止损；SL/TP 用 bar HIGH/LOW 触碰判定
+    （非收盘价——bar 内可达即触发）。信号在外层已 shift(1) 防
+    look-ahead 前视。
 
     Args via lifecycle chain:
-        entry_price, is_liquidated: mutable state from pre_sim_func_nb
+        entry_price, is_liquidated: pre_sim_func_nb 传入的可变状态。
 
     Args via order_args:
-        entries, exits, adds, reduces: 2D float64 arrays
+        entries, exits, adds, reduces: 2D float64 信号矩阵。
         direction_vals, size_pcts, leverages, sl_stops, tp_stops:
-            1D float64 arrays (one value per column)
-        fee, slippage: scalar float64
-        high_arr, low_arr: 2D float64 arrays for intrabar SL/TP
-        direction_signal: 2D float64 array, +1=long, -1=short (for mixed mode)
+            逐列参数（1D float64）。
+        fee, slippage: 标量费滑（基础费率——杠杆放大归
+            _apply_leverage_to_equity 后处理）。
+        high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
+        direction_signal: 2D 方向信号（+1=多，−1=空；mixed 模式用）。
     """
     i = c.i
     col = c.col
 
-    # Per-column parameter lookup
+    # 逐列参数查取
     direction_val = direction_vals[col]
     size_pct = size_pcts[col]
     leverage = leverages[col]
     sl_stop = sl_stops[col]
     tp_stop = tp_stops[col]
-    # Fee/slippage applied at base rate; leverage amplification is handled
-    # by _apply_leverage_to_equity in post-processing.
+    # 费滑按基础费率收——杠杆放大由 _apply_leverage_to_equity 后处理
     effective_fee = fee
     effective_slippage = slippage
 
-    # Already liquidated -> force close any remaining position, then allow re-entry if funds remain
+    # 已清算 → 强平余仓；仓位归零后资金充足时可再入场
     if is_liquidated[col] > 0.5:
         if c.position_now != 0.0:
             return vbt_nb.order_nb(
@@ -266,23 +295,22 @@ def order_func_nb(c, entry_price, is_liquidated,
                 fees=effective_fee,
                 slippage=effective_slippage,
             )
-        # Position closed after liquidation, check if we can re-enter
-        # If no entry signal, stay out; if entry signal, check funds below
+        # 清算后仓位已平：无入场信号保持空仓；有信号则先查资金
         if entries[i, col] < 0.5:
             return NoOrder
-        # Entry signal after liquidation: check if sufficient funds to open
+        # 清算后再入场：查资金是否够开仓
         current_price = c.close[i, col]
-        min_required = current_price * (1.0 + fee + slippage) * 0.01  # at least 1% of a share's cost
+        min_required = current_price * (1.0 + fee + slippage) * 0.01  # 单股成本 1% 的最低开仓门槛
         if c.value_now < min_required:
-            return NoOrder  # insufficient funds
-        # Reset liquidation flag and proceed to entry logic below
+            return NoOrder  # 资金不足
+        # 复位清算标记，落入下方入场逻辑
         is_liquidated[col] = 0.0
         entry_price[col] = 0.0
-        # Fall through to entry signal handling below
+        # 落入下方入场信号处理
 
     current_price = c.close[i, col]
 
-    # Liquidation check BEFORE SL/TP (for leveraged positions)
+    # 清算检查先于 SL/TP（杠杆仓——序见函数 docstring）
     # B7.1 口径（架构约束修订）：等效换算形态 init_cash×(1−(1−mmr)/L)，
     # mmr 按等效名义 init_cash×L 选档（内联，与 market_model 同源）
     if leverage > 1.0 and c.position_now != 0.0:
@@ -303,17 +331,17 @@ def order_func_nb(c, entry_price, is_liquidated,
                 slippage=effective_slippage,
             )
 
-    # Stop-Loss / Take-Profit check using HIGH/LOW
+    # SL/TP 判定用 bar HIGH/LOW（触碰即触发——非收盘价口径）
     if c.position_now != 0.0 and entry_price[col] > 0.0:
         bar_high = high_arr[i, col]
         bar_low = low_arr[i, col]
         ep = entry_price[col]
 
         if c.position_now > 0.0:
-            # Long position
+            # 多头仓
             sl_level = ep * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
             tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
-            # SL: bar's LOW touches SL level
+            # SL：bar LOW 触碰止损线
             if sl_stop > 0.0 and bar_low <= sl_level:
                 entry_price[col] = 0.0
                 return vbt_nb.order_nb(
@@ -322,7 +350,7 @@ def order_func_nb(c, entry_price, is_liquidated,
                     fees=effective_fee,
                     slippage=effective_slippage,
                 )
-            # TP: bar's HIGH touches TP level
+            # TP：bar HIGH 触及止盈线
             if tp_stop > 0.0 and bar_high >= tp_level:
                 entry_price[col] = 0.0
                 return vbt_nb.order_nb(
@@ -332,10 +360,10 @@ def order_func_nb(c, entry_price, is_liquidated,
                     slippage=effective_slippage,
                 )
         else:
-            # Short position
+            # 空头仓
             sl_level = ep * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
             tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
-            # SL: bar's HIGH touches SL level
+            # SL：bar HIGH 触碰止损线
             if sl_stop > 0.0 and bar_high >= sl_level:
                 entry_price[col] = 0.0
                 return vbt_nb.order_nb(
@@ -344,7 +372,7 @@ def order_func_nb(c, entry_price, is_liquidated,
                     fees=effective_fee,
                     slippage=effective_slippage,
                 )
-            # TP: bar's LOW touches TP level
+            # TP：bar LOW 触及止盈线
             if tp_stop > 0.0 and bar_low <= tp_level:
                 entry_price[col] = 0.0
                 return vbt_nb.order_nb(
@@ -354,7 +382,7 @@ def order_func_nb(c, entry_price, is_liquidated,
                     slippage=effective_slippage,
                 )
 
-    # Exit signal
+    # 离场信号
     if exits[i, col] > 0.5 and c.position_now != 0.0:
         entry_price[col] = 0.0
         return vbt_nb.order_nb(
@@ -364,29 +392,29 @@ def order_func_nb(c, entry_price, is_liquidated,
             slippage=effective_slippage,
         )
 
-    # Entry signal
+    # 入场信号
     if entries[i, col] > 0.5 and c.position_now == 0.0:
         entry_price[col] = current_price
-        # For mixed mode: use direction_signal to determine trade side
+        # mixed 模式：方向由 direction_signal 定交易侧
         dir_sign = direction_signal[i, col]
-        if direction_val < 1.5:  # long(0) or short(1) - fixed direction
-            dir_sign = 1.0  # size is always positive; direction_val controls side
+        if direction_val < 1.5:  # long(0)/short(1) 固定方向
+            dir_sign = 1.0  # size 恒正；多空侧由 direction_val 控制
             actual_direction = direction_val
-        else:  # mixed(2) - direction from signal
+        else:  # mixed(2)——方向来自信号
             if dir_sign > 0.0:
-                actual_direction = 0.0  # long
+                actual_direction = 0.0  # 多
             else:
-                actual_direction = 1.0  # short
-            dir_sign = 1.0  # size positive, direction controls side
+                actual_direction = 1.0  # 空
+            dir_sign = 1.0  # size 正、方向控制多空
         return vbt_nb.order_nb(
             size=np.float64(size_pct * dir_sign),
-            size_type=np.int64(2),  # Percent
+            size_type=np.int64(2),  # 百分比仓
             direction=np.int64(int(actual_direction)),
             fees=effective_fee,
             slippage=effective_slippage,
         )
 
-    # Reduce signal (partial exit) - reduce position by percentage
+    # 减仓信号（部分平仓）——按比例减
     if reduces[i, col] > 0.5 and c.position_now != 0.0:
         reduce_amount = c.position_now * size_pct
         return vbt_nb.order_nb(
@@ -396,25 +424,25 @@ def order_func_nb(c, entry_price, is_liquidated,
             slippage=effective_slippage,
         )
 
-    # Add signal (add to position)
+    # 加仓信号
     if adds[i, col] > 0.5 and c.position_now != 0.0:
         old_pos = abs(c.position_now)
         old_ep = entry_price[col]
-        # Estimate add shares based on current portfolio value and price
+        # 按当前组合价值与价格估算加仓股数
         add_value = c.value_now * size_pct
         add_shares = add_value / current_price
-        # Update entry_price to weighted average
+        # 入场价更新为加权均价（SL/TP 基准随加仓重锚）
         if old_pos + add_shares > 0.0:
             new_ep = (old_ep * old_pos + current_price * add_shares) / (old_pos + add_shares)
             entry_price[col] = new_ep
-        # Add direction must match current position direction
+        # 加仓方向须与现仓同向
         if c.position_now > 0.0:
-            add_dir = np.int64(0)   # Long (Buy more)
+            add_dir = np.int64(0)   # 多（加多）
         else:
-            add_dir = np.int64(1)   # Short (Sell more)
+            add_dir = np.int64(1)   # 空（加空）
         return vbt_nb.order_nb(
             size=np.float64(size_pct),
-            size_type=np.int64(2),  # Percent
+            size_type=np.int64(2),  # 百分比仓
             direction=add_dir,
             fees=effective_fee,
             slippage=effective_slippage,
@@ -424,7 +452,7 @@ def order_func_nb(c, entry_price, is_liquidated,
 
 
 class BacktestEngine:
-    """Backtest engine using vectorbt Portfolio.from_order_func."""
+    """vectorbt 回测引擎（Portfolio.from_order_func 形制）。"""
 
     def __init__(self, init_cash: float = 100000, fee: float = 0.001,
                  slippage: float = 0.0005):
@@ -439,13 +467,13 @@ class BacktestEngine:
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
         signal_set=None,
     ):
-        """Construct a vectorbt Portfolio from DNA signals using from_order_func."""
+        """由 DNA 信号构建 vectorbt Portfolio（from_order_func 形制）。"""
         if signal_set is not None:
             sig_set = signal_set
         else:
             sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-        # Delay all signals by 1 bar to prevent look-ahead bias
+        # 全信号 shift(1) 防 look-ahead 前视（信号 bar 的下一根才可执行）
         # （fill_value 内联进 shift：首行直接填 False，列全程 bool，
         #   不走 object downcast 弃用路径——cross-entry-consistency spec）
         entries = sig_set.entries.shift(1, fill_value=False).astype(bool)
@@ -464,7 +492,7 @@ class BacktestEngine:
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
 
-        # Convert signals to 2D numpy arrays for Numba compatibility
+        # 信号转 2D numpy 数组（numba 兼容）
         entries_2d = entries.values.astype(np.float64).reshape(-1, 1)
         exits_2d = exits.values.astype(np.float64).reshape(-1, 1)
         adds_2d = adds.values.astype(np.float64).reshape(-1, 1)
@@ -472,12 +500,12 @@ class BacktestEngine:
         high_2d = high.values.astype(np.float64).reshape(-1, 1)
         low_2d = low.values.astype(np.float64).reshape(-1, 1)
 
-        # Build direction signal for mixed mode (shifted by 1 bar to prevent look-ahead)
+        # mixed 模式方向信号（shift(1) 防 look-ahead——与信号同步延迟）
         if sig_set.entry_direction is not None:
             direction_shifted = sig_set.entry_direction.shift(1).fillna(1.0)
             direction_signal_2d = direction_shifted.values.astype(np.float64).reshape(-1, 1)
         else:
-            if direction_val >= 1.5:  # mixed but no direction signal
+            if direction_val >= 1.5:  # mixed 但无方向信号
                 logger.warning(
                     "direction='mixed' but no entry_direction signal; "
                     "defaulting to long. strategy_id=%s",
@@ -520,12 +548,12 @@ class BacktestEngine:
         reduce_count: int = 0,
         degraded: int = 0,
     ) -> BacktestResult:
-        """Build BacktestResult from an already-constructed portfolio."""
+        """从已构建的 portfolio 组装 BacktestResult（杠杆放大→清算判定→资金费→指标）。"""
         equity_curve = portfolio.value()
         if isinstance(equity_curve, pd.DataFrame):
             equity_curve = equity_curve.iloc[:, 0]
 
-        # Extract vbt raw cash to compute position_value = equity - cash
+        # 取 vbt 原始 cash 算 position_value = equity − cash（资金费计费基数）
         position_values_arr = None
         try:
             cash_curve = portfolio.cash()
@@ -538,25 +566,25 @@ class BacktestEngine:
         except Exception:
             pass
 
-        # Apply leverage amplification to equity curve
+        # 权益曲线杠杆放大
         leverage = float(dna.risk_genes.leverage)
         trades_for_leverage = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
         equity_curve = _apply_leverage_to_equity(
             equity_curve, trades_for_leverage, leverage, self.init_cash,
         )
 
-        # Amplify position_values to match leveraged equity
+        # position_values 同步放大对齐杠杆权益
         if position_values_arr is not None and leverage > 1:
             position_values_arr = position_values_arr * leverage
 
-        # Check if liquidation occurred (on amplified curve)
+        # 清算是否发生（在放大后曲线上判——口径与权益同基准）
         liquidated = False
         if leverage > 1 and len(equity_curve) > 0:
             maintenance = _mm_threshold(self.init_cash, leverage)
             if (equity_curve < maintenance).any():
                 liquidated = True
 
-        # Funding costs for leveraged positions (on amplified curve)
+        # 杠杆仓资金费（在放大后曲线上收）
         timeframe = dna.execution_genes.timeframe
         trades_for_funding = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
         equity_curve, total_funding_cost = _apply_funding_costs(
@@ -651,7 +679,7 @@ class BacktestEngine:
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
         signal_set=None,
     ) -> BacktestResult:
-        """Run backtest for a single strategy DNA."""
+        """单策略 DNA 回测（构建 portfolio → 组装结果）。"""
         build_result = self._build_portfolio(
             dna, enhanced_df,
             dfs_by_timeframe=dfs_by_timeframe,
@@ -673,7 +701,7 @@ class BacktestEngine:
         enhanced_df: pd.DataFrame,
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> Tuple["BacktestResult", object]:
-        """Run backtest and return (BacktestResult, vectorbt Portfolio) tuple."""
+        """回测并返回 (BacktestResult, vectorbt Portfolio) 二元组（消费方需底层组合时用）。"""
         build_result = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
         if isinstance(build_result, tuple):
             portfolio, add_count, reduce_count, degraded = build_result
@@ -692,33 +720,33 @@ class BacktestEngine:
         dfs_by_timeframe: dict | None = None,
         signal_sets: list | None = None,
     ) -> list[BacktestResult]:
-        """Batch-evaluate multiple individuals in a single vbt call.
+        """全种群批量评估（单次 vbt 调用）。
 
-        Instead of calling run() N times, stacks all signals into (N, M) matrices
-        and runs one Portfolio.from_order_func. Each column corresponds to one
-        individual, enabling vectorized evaluation across the whole population.
+        实现意图：不逐个 run() N 次，而是把全部个体信号堆叠为 (N, M)
+        矩阵跑一次 Portfolio.from_order_func——每列一个体，整个种群
+        向量化评估（进化评估链的性能底座）。
 
         Args:
-            individuals: List of StrategyDNA to evaluate.
-            enhanced_df: Market data with indicators.
-            dfs_by_timeframe: Multi-timeframe data dict (optional).
-            signal_sets: Pre-computed signal sets (optional, saves recomputation).
+            individuals: 待评估的 StrategyDNA 清单。
+            enhanced_df: 含指标的市场数据。
+            dfs_by_timeframe: 多周期数据 dict（可选）。
+            signal_sets: 预先算好的信号集（可选——免重算）。
 
         Returns:
-            List[BacktestResult] in the same order as individuals.
+            与 individuals 同序的 BacktestResult 清单。
         """
         M = len(individuals)
         if M == 0:
             return []
         N = len(enhanced_df)
 
-        # 1. Compute signal sets
+        # 1. 计算信号集
         if signal_sets is not None:
             sig_sets = signal_sets
         else:
             sig_sets = batch_signal_sets(individuals, enhanced_df, dfs_by_timeframe)
 
-        # 2. Stack signals into (N, M) matrices
+        # 2. 信号堆叠为 (N, M) 矩阵
         entries_parts = []
         exits_parts = []
         adds_parts = []
@@ -766,7 +794,7 @@ class BacktestEngine:
             enhanced_df["low"].values.astype(np.float64).reshape(-1, 1), (1, M)
         )
 
-        # 3. Build per-column parameter arrays
+        # 3. 逐列参数数组
         direction_map = {"long": 0, "short": 1, "mixed": 2}
         direction_vals = np.array(
             [direction_map.get(dna.risk_genes.direction, 0) for dna in individuals],
@@ -792,7 +820,7 @@ class BacktestEngine:
             dtype=np.float64,
         )
 
-        # 4. Single vbt call -- tile close to M columns to match signal matrices
+        # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
             close.values.astype(np.float64).reshape(-1, 1), (1, M)
         )
@@ -820,7 +848,7 @@ class BacktestEngine:
             freq=None,
         )
 
-        # 5. Extract per-column results
+        # 5. 逐列提取结果
         results = []
         for col_idx in range(M):
             col_pf = pf.iloc[col_idx]
