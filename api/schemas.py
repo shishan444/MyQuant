@@ -130,6 +130,11 @@ class RiskGenesModel(BaseModel):
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     sl_mode: str = Field(default="pct", pattern=_SL_MODE_PATTERN)
     atr_period: int = Field(default=14, ge=1)
+    # 分批数值参数（0.4.2 R3，DC-15）：pydantic 形态=裸 float Optional
+    # ——值域权威在 service 声明块/validator 双点，传输层不加 bound
+    exit_fraction: Optional[float] = None
+    add_fraction: Optional[float] = None
+    max_exposure: Optional[float] = None
 
 
 class DNAModel(BaseModel):
@@ -934,6 +939,13 @@ class HypothesisCreate(BaseModel):
     # 权威校验在服务层 3.6 步；显式空对象 {}=显式声明「无参数」（与
     # 键缺失语义不同，幂等四分支分流）；不进 conditions/不进 hash
     strategy_params: Optional[Dict[str, Any]] = None
+    # 分批条件组三顶层键（0.4.2 R3/DC-13，scaled-position-actions 规格）：
+    # 路由层非 None 时并入 conditions dict（「归一非 None 才写键」——
+    # 缺省不写键保 conditions_hash 连续，trigger_policy 先例；不走
+    # HypothesisConditions 嵌套扩展——避 pydantic None 键 hash 断裂陷阱）
+    exit_partial_conditions: Optional[List[ConditionItem]] = None
+    add_trigger_conditions: Optional[List[ConditionItem]] = None
+    add_suppress_conditions: Optional[List[ConditionItem]] = None
 
 
 class HypothesisTransitionRequest(BaseModel):

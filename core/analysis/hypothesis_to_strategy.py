@@ -129,20 +129,20 @@ def _risk_params_tuple(rg_dict: Dict[str, Any]) -> Tuple:
 
 
 def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
-    """声明块 → RiskGenes（R1 五参数映射；None/空 → 平台默认）。
+    """声明块 → RiskGenes（八键映射；None/空 → 平台默认）。
 
-    0.4.2 R1：stop_loss/take_profit/sl_mode/position_size/leverage 五键
-    （三批键值经登记白名单不可达——4.2 随组键翻译接续）。值域已在登记
-    3.6 步校验，此处只做映射（字面值直写）。
+    0.4.2 R1 五参数 + R3 分批三键（组存在时登记路径已归一化字面化——
+    恒具体值；None 键不写入=手工 DNA 缺省态语义）。值域已在登记 3.6
+    步校验，此处只做映射（字面值直写）。
     """
     from core.strategy.dna import RiskGenes
 
     if not declared:
         return RiskGenes()  # platform_default
+    keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
+            "leverage", "exit_fraction", "add_fraction", "max_exposure")
     return RiskGenes(
-        **{k: declared[k] for k in
-           ("stop_loss", "take_profit", "sl_mode", "position_size", "leverage")
-           if k in declared})
+        **{k: declared[k] for k in keys if k in declared})
 
 
 def _risk_genes_origin(risk_params: Tuple) -> str:
@@ -219,6 +219,30 @@ def translate_hypothesis(
     genes, plugin_sources = build_signal_genes(
         conditions.get("when_conditions", []),
         conditions.get("then_conditions", []), db_path)
+
+    # 分批三组翻译（0.4.2 R3，scaled-position-actions）：组内条目与
+    # when/then 同构同拒（插件列 subject 在新组=不可表达——组装器只
+    # 组合入场，插件源出场/加仓会被静默丢弃故显式拒绝）；组基因自然
+    # 进 gene_signature（信号基因全集参与签名计算）
+    from core.strategy.dna import SignalRole
+    _SCALING_ROLE_MAP = (
+        ("exit_partial_conditions", SignalRole.REDUCE_TRIGGER),
+        ("add_trigger_conditions", SignalRole.ADD_TRIGGER),
+        ("add_suppress_conditions", SignalRole.ADD_INHIBIT),
+    )
+    for group_key, group_role in _SCALING_ROLE_MAP:
+        group_conditions = conditions.get(group_key)
+        if not group_conditions:
+            continue
+        g_genes, g_sources = _translate_conditions(
+            group_conditions, db_path=db_path,
+            label=group_key, role=group_role)
+        if g_sources:  # 结构上不可达（插件列在非 ENTRY 角色已被拒），
+            raise ResearchError(   # 防御性收口——不静默丢弃插件源
+                "RESEARCH_NOT_EXPRESSIBLE",
+                f"{group_key} 插件列条件不可表达（插件源仅入场）",
+                detail={"field": group_key})
+        genes = genes + g_genes
 
     # 组装 DNA（v2）：纯内置条件 = 退化形态零迁移（单 rule 源）；
     # 含插件条件 = rule 源（承载全部内置基因，有内置条件时）+ 各插件源，
@@ -363,11 +387,13 @@ def _translate_conditions(
             if role != SignalRole.ENTRY_TRIGGER:
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
-                    f"{label}[{i}] 不可表达: 插件列（{subject}）暂不支持"
-                    "出场信号源（THEN 须为内置指标列；出场组合待后续版本）",
+                    f"{label}[{i}] 不可表达: 插件列（{subject}）仅支持"
+                    "入场信号源（THEN 与分批组须为内置指标列；出场/"
+                    "加仓组合待后续版本）",
                     detail={"condition": cond,
-                            "slow_path": "THEN 改用内置指标列 subject，"
-                            "或提交 feature-requests 描述插件出场需求"})
+                            "slow_path": "改用内置指标列 subject，"
+                            "或提交 feature-requests 描述插件出场/"
+                            "加仓需求"})
             operator = _PLUGIN_ACTION_OPERATOR.get(action)
             if operator is None:
                 raise ResearchError(

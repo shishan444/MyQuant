@@ -203,6 +203,21 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     if not (1 <= risk.leverage <= MAX_LEVERAGE):
         errors.append(f"Leverage {risk.leverage} out of range [1, {MAX_LEVERAGE}]")
 
+    # 分批数值三字段域校验（0.4.2 R3/DC-15 validator 格——手工 DNA 路径
+    # 的防护面；登记路径经声明块校验前置拦截）。None=合法缺省态（执行
+    # 按 0.5/0.1/1.0），不报错；max_exposure 上界取 DNA 实际 leverage
+    # （与登记侧生效杠杆同语义——联动上界而非固定值）
+    for frac_field in ("exit_fraction", "add_fraction"):
+        frac_val = getattr(risk, frac_field)
+        if frac_val is not None and not (0.0 < frac_val <= 1.0):
+            errors.append(
+                f"{frac_field} {frac_val} out of range (0, 1]")
+    me_val = risk.max_exposure
+    if me_val is not None and not (0.0 < me_val <= risk.leverage):
+        errors.append(
+            f"max_exposure {me_val} out of range (0, {risk.leverage}] "
+            f"(bounded by risk_genes.leverage)")
+
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
 

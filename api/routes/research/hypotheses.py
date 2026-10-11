@@ -91,9 +91,18 @@ def register_hypothesis(
                             "timeframe": tf_key,
                             "available_timeframes": _available})
 
+        # 分批组键并入 conditions（DC-13：非 None 才写键——缺省不写键
+        # 保 conditions_hash 连续；组键在 conditions 内自然进身份指纹）
+        conditions = payload.conditions.model_dump()
+        for gk in ("exit_partial_conditions", "add_trigger_conditions",
+                   "add_suppress_conditions"):
+            gvals = getattr(payload, gk)
+            if gvals is not None:
+                conditions[gk] = [c.model_dump() for c in gvals]
+
         out = hs.register_hypothesis(
             db_path,
-            conditions=payload.conditions.model_dump(),
+            conditions=conditions,
             statement=payload.statement,
             data_ranges=[r.model_dump() for r in payload.data_ranges],
             provenance=(payload.provenance.model_dump()

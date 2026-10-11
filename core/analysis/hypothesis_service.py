@@ -87,22 +87,37 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 
 # ---------------------------------------------------------------- 登记
 
-# strategy_params 键集白名单（0.4.2 R1 阶段=风险五参数；R3 任务 4.1 扩至
-# 八键——exit_fraction/add_fraction/max_exposure 三键启用域校验与宿主组
-# 配对，届时扩展本常量即可，校验规则同点启用）
+# strategy_params 键集白名单（0.4.2 R1=风险五参数；R3 任务 4.1 扩至
+# 八键——exit_fraction/add_fraction/max_exposure 启用域校验与宿主组
+# 配对，未知键状态退出）
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
+    "exit_fraction", "add_fraction", "max_exposure",
 })
+
+# 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
+_SCALING_GROUP_KEYS = ("exit_partial_conditions", "add_trigger_conditions",
+                       "add_suppress_conditions")
+
+# 有组无值的缺省归一化字面（A5/DC-3：幂等与翻译比对按字面值）
+_SCALING_DEFAULTS = {"exit_fraction": 0.5, "add_fraction": 0.1,
+                     "max_exposure": 1.0}
 
 
 def _validate_strategy_params(
     params: Dict[str, Any],
+    conditions: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """声明块校验（登记链 3.6 步核心；R1 口径=五参数白名单）。
+    """声明块校验（登记链 3.6 步核心；八键白名单+组间配对）。
 
     值域与 validator 同源引用（SL_MODES/分叉域/MAX_LEVERAGE 单源——
     DC-15 权威双点之一）；浮点值保持声明字面量原样返回（幂等四分支
     的比对=归一形字面值比对，不做数值变换）。
+
+    组间配对（R3，与值域同链同码 RESEARCH_PARAM_INVALID）：数值键须有
+    宿主组（exit_fraction←exit_partial_conditions；add_fraction/
+    max_exposure←add_trigger_conditions；add_suppress 组←add_trigger
+    组）；有组无值→归一化字面化写入（0.5/0.1/1.0——返回时补齐）。
 
     Raises:
         ResearchError: RESEARCH_PARAM_INVALID（detail 含 field/legal_range）
@@ -189,7 +204,65 @@ def _validate_strategy_params(
                 f"leverage {leverage!r} 越出值域 [1, {MAX_LEVERAGE}]",
                 detail={"field": "leverage", "legal_range": [1, MAX_LEVERAGE]})
 
-    return params
+    # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
+    #    纯组间规则在登记链主体——不依赖声明块携带）──
+    has_exit_group = isinstance(conditions, dict) and \
+        "exit_partial_conditions" in conditions
+    has_add_group = isinstance(conditions, dict) and \
+        "add_trigger_conditions" in conditions
+
+    for frac_key in ("exit_fraction", "add_fraction"):
+        v = params.get(frac_key)
+        if v is not None:
+            if not isinstance(v, (int, float)) or isinstance(v, bool) \
+                    or not (0.0 < v <= 1.0):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"{frac_key} {v!r} 越出值域 (0, 1]",
+                    detail={"field": frac_key, "legal_range": "(0, 1]"})
+
+    effective_leverage = params.get("leverage", 1)
+    max_exposure = params.get("max_exposure")
+    if max_exposure is not None:
+        if not isinstance(max_exposure, (int, float)) or isinstance(max_exposure, bool) \
+                or not (0.0 < max_exposure <= effective_leverage):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"max_exposure {max_exposure!r} 越出生效杠杆上界 "
+                f"(0, {effective_leverage}]",
+                detail={"field": "max_exposure",
+                        "legal_range": [0, effective_leverage],
+                        "hint": "上限受 leverage（默认 1）约束，声明更大"
+                                "上限须同时声明 leverage"})
+
+    # 组间配对：数值键须有宿主组（声明比例而无触发组=悬空参数）
+    if params.get("exit_fraction") is not None and not has_exit_group:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "exit_fraction 声明须伴随 exit_partial_conditions 组（比例"
+            "无宿主触发组=悬空参数）",
+            detail={"field": "exit_fraction",
+                    "legal_range": "须与 exit_partial_conditions 组同在"})
+    if (params.get("add_fraction") is not None or
+            params.get("max_exposure") is not None) and not has_add_group:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "add_fraction/max_exposure 声明须伴随 add_trigger_conditions 组"
+            "（比例/敞口无宿主触发组=悬空参数）",
+            detail={"field": "add_fraction",
+                    "legal_range": "须与 add_trigger_conditions 组同在"})
+
+    # 有组无值→归一化字面化（A5/DC-3：幂等与翻译比对按字面值——
+    # 缺省物化进声明块，与显式声明同形）
+    normalized = dict(params)
+    if has_exit_group and "exit_fraction" not in normalized:
+        normalized["exit_fraction"] = _SCALING_DEFAULTS["exit_fraction"]
+    if has_add_group:
+        if "add_fraction" not in normalized:
+            normalized["add_fraction"] = _SCALING_DEFAULTS["add_fraction"]
+        if "max_exposure" not in normalized:
+            normalized["max_exposure"] = _SCALING_DEFAULTS["max_exposure"]
+    return normalized
 
 
 def register_hypothesis(
@@ -231,7 +304,8 @@ def register_hypothesis(
         existing_strategy_params 仅 duplicated 路径携带（既有声明摘要，
         纯增量键——NULL 声明以 {} 呈现）。
     """
-    # 1. conditions 结构
+    # 1. conditions 结构（含分批组键同构校验——0.4.2 R3：组键可选，
+    #    存在须非空（显式空列表拒绝），组内条目与 when/then 同构）
     when = conditions.get("when_conditions")
     then = conditions.get("then_conditions")
     if not isinstance(when, list) or not when:
@@ -240,9 +314,20 @@ def register_hypothesis(
     if not isinstance(then, list) or not then:
         raise ResearchError("RESEARCH_CONDITION_INVALID", "then_conditions 须为非空列表",
                             detail={"field": "then_conditions"})
-    for group, conds in (("when", when), ("then", then)):
+    group_conds = {"when": when, "then": then}
+    for gk in _SCALING_GROUP_KEYS:
+        if gk in conditions:
+            gvals = conditions[gk]
+            if not isinstance(gvals, list) or not gvals:
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    f"{gk} 须为非空列表（组存在须非空——空组无语义）",
+                    detail={"field": gk})
+            group_conds[gk.replace("_conditions", "")] = gvals
+    for group, conds in group_conds.items():
         for i, c in enumerate(conds):
-            field_name = f"{group}_conditions[{i}]"
+            field_name = f"{group}_conditions[{i}]" if group in ("when", "then") \
+                else f"{group}_conditions[{i}]"
             if not isinstance(c, dict) or not all(k in c for k in ("subject", "action", "target")):
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -286,17 +371,20 @@ def register_hypothesis(
             detail={"field": "data_ranges[0].timeframe",
                     "timeframe": base_tf,
                     "legal_range": sorted(TF_SECONDS)})
-    for group, conds in (("when", when), ("then", then)):
+    for group, conds in group_conds.items():
         for i, c in enumerate(conds):
             tf_key = c.get("timeframe")
             if tf_key is None:
                 continue
             field_name = f"{group}_conditions[{i}].timeframe"
-            if group == "then":
+            if group == "then" or group not in ("when",):
+                # THEN 与分批组条目同规则拒 timeframe（0.4.2 R3：分批组
+                # 为出场/加仓触发语义，跨周期掩码投影归属未定义）
                 raise ResearchError(
                     "TIMEFRAME_ON_THEN",
                     "THEN 条件为前向收益对照语义（forward_bars 以基准 bar "
-                    "计），跨周期前向窗口归属未定义——不接受 timeframe 键",
+                    "计），跨周期前向窗口归属未定义——不接受 timeframe 键"
+                    "（分批组条目同规则）",
                     detail={"field": field_name, "timeframe": tf_key})
             if tf_key not in TF_SECONDS:
                 raise ResearchError(
@@ -318,7 +406,7 @@ def register_hypothesis(
     #    显式基准周期在此剥离（0.2.14：timeframe==base_tf 删键——显式
     #    基准与缺省同语义同指纹，幂等键字面连续的必要条件）
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-    for group, conds in (("when", when), ("then", then)):
+    for group, conds in group_conds.items():
         for i, c in enumerate(conds):
             field_name = f"{group}_conditions[{i}].subject"
             try:
@@ -346,11 +434,37 @@ def register_hypothesis(
     if normalized_policy is not None:
         conditions["trigger_policy"] = normalized_policy
 
-    # 3.6 strategy_params 声明块校验（0.4.2 R1：先于幂等——归一形字面
-    #     值参与四分支比对；坏值 422 阻断登记。{} 与键缺失在此分流：
-    #     {} 进入全等比对（显式声明「无参数」），None 不参与比对）
-    if strategy_params is not None:
-        strategy_params = _validate_strategy_params(strategy_params)
+    # 组间依赖（0.4.2 R3，纯组间规则——无论请求是否携带声明块键）：
+    # 抑制组语义依附加仓触发，有抑制无触发=抑制悬空
+    if "add_suppress_conditions" in conditions and \
+            "add_trigger_conditions" not in conditions:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "add_suppress_conditions 组须伴随 add_trigger_conditions 组"
+            "（抑制语义依附加仓触发）",
+            detail={"field": "add_suppress_conditions",
+                    "legal_range": "须与 add_trigger_conditions 组同在"})
+
+    # 3.6 strategy_params 声明块校验（0.4.2 R1/R3：先于幂等——归一形
+    #     字面值参与四分支比对（有组无值在此字面化补齐）；坏值 422
+    #     阻断登记。{} 与键缺失在此分流：{} 进入全等比对（显式声明
+    #     「无参数」），None 不参与比对。组存在而未带声明块键：分批
+    #     数值物化字面值（spec「有组无值缺省归一化」——落库与比对
+    #     按字面值；幂等分支判定仍按请求是否带键的原始标志）
+    params_declared = strategy_params is not None
+    if params_declared:
+        strategy_params = _validate_strategy_params(
+            strategy_params, conditions)
+    elif any(k in conditions for k in _SCALING_GROUP_KEYS):
+        strategy_params = {}
+        if "exit_partial_conditions" in conditions:
+            strategy_params["exit_fraction"] = \
+                _SCALING_DEFAULTS["exit_fraction"]
+        if "add_trigger_conditions" in conditions:
+            strategy_params["add_fraction"] = \
+                _SCALING_DEFAULTS["add_fraction"]
+            strategy_params["max_exposure"] = \
+                _SCALING_DEFAULTS["max_exposure"]
 
     # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)
@@ -363,8 +477,9 @@ def register_hypothesis(
             existing_params = json.loads(raw) if raw else {}
         except (json.JSONDecodeError, TypeError):
             existing_params = {}
-        if strategy_params is None:
-            # 分支①：请求键缺失——不参与声明比对（旧调用方零适配）
+        if not params_declared:
+            # 分支①：请求键缺失——不参与声明比对（旧调用方零适配；
+            # 组存在时的字面化物化值不改变「未带键」的比对豁免）
             return {
                 "hypothesis_id": existing["hypothesis_id"],
                 "duplicated": True,
@@ -440,9 +555,13 @@ def register_hypothesis(
             from core.analysis.templates.precheck_hypothesis import (
                 run_registration_precheck,
             )
+            # 分批组级密度披露（0.4.2 R3/A4：组进 per_range 新键，不进锚）
+            _scaling_groups = {k: conditions[k] for k in _SCALING_GROUP_KEYS
+                               if conditions.get(k)}
             precheck_warnings = run_registration_precheck(
                 db_path, precheck_data_dir, when, data_ranges,
-                trigger_policy=normalized_policy)
+                trigger_policy=normalized_policy,
+                scaling_groups=_scaling_groups or None)
         except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
             logger.warning("登记预检降级（登记照常）: %s", exc)
 

@@ -63,7 +63,12 @@ class FakeGateway:
 
 
 def _dna(sl=0.05, tp=0.10):
-    return SimpleNamespace(risk_genes=SimpleNamespace(stop_loss=sl, take_profit=tp))
+    # 装载校验（0.4.2 R2 插桩）访问 risk_genes.sl_mode 与 signal_genes/
+    # layers（判据二角色判别）——mock 补齐属性（pct+无分批基因=放行）
+    return SimpleNamespace(
+        risk_genes=SimpleNamespace(
+            stop_loss=sl, take_profit=tp, sl_mode="pct"),
+        signal_genes=[], layers=None)
 
 
 def _executor(action, state=None, entry_pct=0.1, risk=None):

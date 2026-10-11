@@ -322,6 +322,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, sl_modes, atr_arr,
+                  exit_fractions, add_fractions, max_exposures,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
                   mmr_tier_max, mmr_tier_rate):
@@ -355,6 +356,9 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
             装配层经 sl_mode_code 单源映射）。
         atr_arr: 2D ATR 值矩阵（atr 模式消费；装载层按
             dna.risk_genes.atr_period 动态取列+装载校验）。
+        exit_fractions, add_fractions, max_exposures: 分批逐列参数
+            （1D float64；装配层物化缺省 0.5/0.1/1.0——A5「有声明用
+            声明、无声明用缺省」全路径统一，引擎内不再判 None）。
         fee, slippage: 标量费滑（基础费率——杠杆放大归
             _apply_leverage_to_equity 后处理）。
         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
@@ -614,9 +618,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
             slippage=effective_slippage,
         )
 
-    # 减仓信号（部分平仓）——按比例减
+    # 减仓信号（部分平仓）——独立比例 exit_fraction（0.4.2 R3/A5：修正
+    # 现状复用 position_size 的参数串用——50% 非 30%）
     if reduces[i, col] > 0.5 and c.position_now != 0.0:
-        reduce_amount = c.position_now * size_pct
+        reduce_amount = c.position_now * exit_fractions[col]
         return vbt_nb.order_nb(
             size=np.float64(-reduce_amount),
             size_type=np.int64(0),
@@ -624,14 +629,19 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
             slippage=effective_slippage,
         )
 
-    # 加仓信号
+    # 加仓信号——独立比例 add_fraction（分母=当前权益）+ 总敞口上限恒检查
     if adds[i, col] > 0.5 and c.position_now != 0.0:
+        # 敞口上限（0.4.2 R3：阈值=声明值或缺省 1.0——None 装配层物化；
+        # 当前仓位名义+本次加仓名义 > 权益×max_exposure → 跳过不炸）
+        notional_now = abs(c.position_now) * current_price
+        add_value = c.value_now * add_fractions[col]
+        if notional_now + add_value > c.value_now * max_exposures[col]:
+            return NoOrder
         old_pos = abs(c.position_now)
         old_ep = entry_price[col]
-        # 按当前组合价值与价格估算加仓股数
-        add_value = c.value_now * size_pct
         add_shares = add_value / current_price
-        # 入场价更新为加权均价（SL/TP 基准随加仓重锚）
+        # 入场价更新为加权均价（SL/TP 基准随加仓重锚；trail 峰值保持
+        # 连续——持仓期语义，不随部分加仓重置）
         if old_pos + add_shares > 0.0:
             new_ep = (old_ep * old_pos + current_price * add_shares) / (old_pos + add_shares)
             entry_price[col] = new_ep
@@ -641,8 +651,8 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
         else:
             add_dir = np.int64(1)   # 空（加空）
         return vbt_nb.order_nb(
-            size=np.float64(size_pct),
-            size_type=np.int64(2),  # 百分比仓
+            size=np.float64(add_shares),
+            size_type=np.int64(0),  # 绝对股数（名义=权益×add_fraction 精确语义）
             direction=add_dir,
             fees=effective_fee,
             slippage=effective_slippage,
@@ -700,6 +710,17 @@ class BacktestEngine:
         else:
             atr_col = np.ones(len(enhanced_df), dtype=np.float64)
         atr_2d = atr_col.reshape(-1, 1)
+        # 分批三参数装配（0.4.2 R3/A5：缺省装配层物化——「有声明用声明、
+        # 无声明用缺省」全路径统一，引擎内恒具体值）
+        exit_fraction = (float(dna.risk_genes.exit_fraction)
+                         if getattr(dna.risk_genes, "exit_fraction", None)
+                         is not None else 0.5)
+        add_fraction = (float(dna.risk_genes.add_fraction)
+                        if getattr(dna.risk_genes, "add_fraction", None)
+                        is not None else 0.1)
+        max_exposure = (float(dna.risk_genes.max_exposure)
+                        if getattr(dna.risk_genes, "max_exposure", None)
+                        is not None else 1.0)
 
         # 信号转 2D numpy 数组（numba 兼容）
         entries_2d = entries.values.astype(np.float64).reshape(-1, 1)
@@ -736,6 +757,9 @@ class BacktestEngine:
             np.array([tp_stop], dtype=np.float64),
             np.array([sl_mode_val], dtype=np.float64),
             atr_2d,
+            np.array([exit_fraction], dtype=np.float64),
+            np.array([add_fraction], dtype=np.float64),
+            np.array([max_exposure], dtype=np.float64),
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
@@ -1045,6 +1069,20 @@ class BacktestEngine:
             else:
                 atr_parts.append(np.ones(N, dtype=np.float64))
         atr_matrix = np.column_stack(atr_parts).astype(np.float64)
+        # 分批三参数 per-column 装配（0.4.2 R3：缺省装配层物化——与
+        # _build_portfolio 同一装载语义，漏装=该列按缺省执行=静默分叉）
+        exit_fractions = np.array([
+            float(dna.risk_genes.exit_fraction)
+            if getattr(dna.risk_genes, "exit_fraction", None) is not None
+            else 0.5 for dna in individuals], dtype=np.float64)
+        add_fractions = np.array([
+            float(dna.risk_genes.add_fraction)
+            if getattr(dna.risk_genes, "add_fraction", None) is not None
+            else 0.1 for dna in individuals], dtype=np.float64)
+        max_exposures = np.array([
+            float(dna.risk_genes.max_exposure)
+            if getattr(dna.risk_genes, "max_exposure", None) is not None
+            else 1.0 for dna in individuals], dtype=np.float64)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -1064,6 +1102,9 @@ class BacktestEngine:
             tp_stops,
             sl_mode_vals,
             atr_matrix,
+            exit_fractions,
+            add_fractions,
+            max_exposures,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,

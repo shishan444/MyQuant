@@ -402,6 +402,7 @@ def evaluate_layer(
     entry_triggers, entry_guards = [], []
     exit_triggers, exit_guards = [], []
     add_triggers, add_guards = [], []
+    add_inhibitors = []  # 0.4.2 R3/DC-1：ADD_INHIBIT 抑制基因（任一成立不加仓）
     reduce_triggers, reduce_guards = [], []
     direction_genes = []
 
@@ -423,6 +424,8 @@ def evaluate_layer(
                 add_triggers.append(signal)
             elif gene.role == SignalRole.ADD_GUARD:
                 add_guards.append(signal)
+            elif gene.role == SignalRole.ADD_INHIBIT:
+                add_inhibitors.append(signal)
             elif gene.role == SignalRole.REDUCE_TRIGGER:
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
@@ -448,6 +451,12 @@ def evaluate_layer(
 
     all_add = add_triggers + add_guards
     adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=df.index)
+
+    # 抑制组合（DC-1）：adds=(trigger AND guard) AND NOT(inhibitor 任一
+    # 成立)——事件语义取反≠布尔取反，独立角色承载（cross 类锚点）
+    if add_inhibitors:
+        inhibited = pd.concat(add_inhibitors, axis=1).any(axis=1)
+        adds = adds & ~inhibited
 
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=df.index)
@@ -762,6 +771,7 @@ def dna_to_signal_set(
     entry_triggers, entry_guards = [], []
     exit_triggers, exit_guards = [], []
     add_triggers, add_guards = [], []
+    add_inhibitors = []  # 0.4.2 R3/DC-1：ADD_INHIBIT 抑制基因
     reduce_triggers, reduce_guards = [], []
     direction_genes = []
 
@@ -783,6 +793,8 @@ def dna_to_signal_set(
                 add_triggers.append(signal)
             elif gene.role == SignalRole.ADD_GUARD:
                 add_guards.append(signal)
+            elif gene.role == SignalRole.ADD_INHIBIT:
+                add_inhibitors.append(signal)
             elif gene.role == SignalRole.REDUCE_TRIGGER:
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
@@ -808,6 +820,12 @@ def dna_to_signal_set(
 
     all_add = add_triggers + add_guards
     adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=enhanced_df.index)
+
+    # 抑制组合（DC-1）：adds=(trigger AND guard) AND NOT(inhibitor 任一
+    # 成立)——独立角色承载布尔 NOT（不取反 action 映射，cross 类锚点）
+    if add_inhibitors:
+        inhibited = pd.concat(add_inhibitors, axis=1).any(axis=1)
+        adds = adds & ~inhibited
 
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
@@ -949,6 +967,7 @@ def batch_signal_sets(
         entry_triggers, entry_guards = [], []
         exit_triggers, exit_guards = [], []
         add_triggers, add_guards = [], []
+        add_inhibitors = []  # 0.4.2 R3/DC-1：ADD_INHIBIT 抑制基因
         reduce_triggers, reduce_guards = [], []
         direction_genes = []
 
@@ -974,6 +993,8 @@ def batch_signal_sets(
                 add_triggers.append(signal)
             elif gene.role == SignalRole.ADD_GUARD:
                 add_guards.append(signal)
+            elif gene.role == SignalRole.ADD_INHIBIT:
+                add_inhibitors.append(signal)
             elif gene.role == SignalRole.REDUCE_TRIGGER:
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
@@ -996,6 +1017,12 @@ def batch_signal_sets(
 
         all_add = add_triggers + add_guards
         adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=enhanced_df.index)
+
+        # 抑制组合（DC-1，批量路径守护不拆任务——漏分支=静默丢弃抑制剂）：
+        # adds=(trigger AND guard) AND NOT(inhibitor 任一成立)
+        if add_inhibitors:
+            inhibited = pd.concat(add_inhibitors, axis=1).any(axis=1)
+            adds = adds & ~inhibited
 
         all_reduce = reduce_triggers + reduce_guards
         reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)

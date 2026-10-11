@@ -125,12 +125,111 @@ class TestParamDomainValidation:
         rg = json.loads(get_strategy(db, t["strategy_id"])["dna_json"])["risk_genes"]
         assert rg["sl_mode"] == "atr" and rg["stop_loss"] == 2.0
 
-    def test_unknown_key_rejected(self, db):
-        """R1 阶段三键按未知键 422（4.1 扩白名单时本锚即时翻转退役）。"""
-        for key in ("exit_fraction", "add_fraction", "max_exposure"):
+    def test_scaling_keys_domain_validation(self, db):
+        """三键域校验（4.1 扩白名单后形态——原「未知键 422」断言已翻转
+        退役）：exit_fraction/add_fraction∈(0,1]、max_exposure∈(0,生效杠杆]。"""
+        _GROUP_ADD = [{"subject": {"indicator": "RSI",
+                                    "params": {"period": 14},
+                                    "field": "rsi"},
+                        "action": "gt", "target": 50}]
+        # 域校验拒（配对组在——拒因是值域不是配对）
+        for bad in ({"exit_fraction": 1.5}, {"exit_fraction": 0},
+                    {"add_fraction": 0}, {"max_exposure": 1.5}):
             with pytest.raises(ResearchError) as ei:
-                _register(db, {key: 0.5})
+                register_hypothesis(
+                    db, conditions={
+                        "when_conditions": _cond(33)["when_conditions"],
+                        "then_conditions": _cond(33)["then_conditions"],
+                        "add_trigger_conditions": _GROUP_ADD,
+                        "exit_partial_conditions": _GROUP_ADD,
+                    },
+                    statement="pair", data_ranges=_ranges(),
+                    strategy_params=bad)
             assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert "field" in (ei.value.detail or {})
+        # max_exposure 上界随声明 leverage 联动（1.5+leverage=2 过）
+        r = register_hypothesis(
+            db, conditions={
+                "when_conditions": _cond(34)["when_conditions"],
+                "then_conditions": _cond(34)["then_conditions"],
+                "add_trigger_conditions": _GROUP_ADD,
+            },
+            statement="pair-ok", data_ranges=_ranges(),
+            strategy_params={"max_exposure": 1.5, "leverage": 2,
+                             "add_fraction": 0.1})
+        assert r["duplicated"] is False
+
+    def test_scaling_pairing_rules(self, db):
+        """组间配对四规则：比例无宿主组拒/抑制无触发组拒/空列表拒/
+        有组无值归一化字面化。"""
+        base_cond = {"when_conditions": _cond(35)["when_conditions"],
+                     "then_conditions": _cond(35)["then_conditions"]}
+        # exit_fraction 无宿主组 → 422
+        with pytest.raises(ResearchError):
+            _register(db, {"exit_fraction": 0.5}, period=35)
+        # add_fraction 无宿主组 → 422
+        with pytest.raises(ResearchError):
+            _register(db, {"add_fraction": 0.1}, period=35)
+        # add_suppress 组无 add_trigger 组 → 422
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db, conditions=dict(
+                    base_cond,
+                    add_suppress_conditions=[{"subject": "close",
+                                              "action": "gt", "target": 0}]),
+                statement="sup", data_ranges=_ranges())
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # 组显式空列表 → 422
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db, conditions=dict(base_cond, add_trigger_conditions=[]),
+                statement="empty-group", data_ranges=_ranges())
+        assert "非空列表" in ei.value.message
+        # 组条目带 timeframe → 422（与 THEN 同规则）
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db, conditions=dict(
+                    base_cond,
+                    add_trigger_conditions=[{
+                        "subject": "close", "action": "gt", "target": 0,
+                        "timeframe": "1d"}]),
+                statement="tf", data_ranges=_ranges())
+        assert "timeframe" in str(ei.value.message) or \
+            ei.value.code == "TIMEFRAME_ON_THEN"
+
+    def test_group_without_value_normalized(self, db):
+        """有组无值→归一化字面化：组存在而未声明比例，落库声明块含
+        字面缺省（0.5/0.1/1.0——幂等与翻译比对按字面值）。"""
+        group = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                              "field": "rsi"},
+                  "action": "gt", "target": 50}]
+        r = register_hypothesis(
+            db, conditions={
+                "when_conditions": _cond(36)["when_conditions"],
+                "then_conditions": _cond(36)["then_conditions"],
+                "exit_partial_conditions": group,
+                "add_trigger_conditions": group,
+            },
+            statement="norm", data_ranges=_ranges())
+        assert r["duplicated"] is False
+        row = get_hypothesis(db, r["hypothesis_id"])
+        params = json.loads(row["strategy_params"])
+        assert params == {"exit_fraction": 0.5, "add_fraction": 0.1,
+                          "max_exposure": 1.0}
+
+    def test_group_keys_participate_identity(self, db):
+        """组键参与身份指纹：同条件集一个含组一个不含 → 两个独立假设。"""
+        group = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                              "field": "rsi"},
+                  "action": "gt", "target": 50}]
+        base_cond = {"when_conditions": _cond(37)["when_conditions"],
+                     "then_conditions": _cond(37)["then_conditions"]}
+        r1 = register_hypothesis(db, conditions=dict(base_cond),
+                                 statement="a", data_ranges=_ranges())
+        r2 = register_hypothesis(
+            db, conditions=dict(base_cond, exit_partial_conditions=group),
+            statement="b", data_ranges=_ranges())
+        assert r1["hypothesis_id"] != r2["hypothesis_id"]
 
     def test_error_detail_shape(self, db):
         """错误 detail 含 field 与 legal_range（错误即文档）。"""

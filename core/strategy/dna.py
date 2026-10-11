@@ -166,7 +166,7 @@ class ExecutionGenes:
 
 @dataclass
 class RiskGenes:
-    """风控基因组（止损止盈/仓位/杠杆/方向）。"""
+    """风控基因组（止损止盈/仓位/杠杆/方向 + 分批数值参数）。"""
 
     stop_loss: float = 0.05               # pct/trail: 0.05（5%/回撤比例）；atr: 2.0（2 倍 ATR）
     take_profit: Optional[float] = None   # pct/trail: 0.10（10%）；atr: 4.0（4 倍 ATR）
@@ -175,9 +175,32 @@ class RiskGenes:
     direction: str = "long"               # 方向："long" | "short"
     sl_mode: str = "pct"                  # 止损模式（取值域单源 SL_MODES："pct" | "atr" | "trail"）
     atr_period: int = 14                  # atr 模式的 ATR 回看周期
+    # 分批数值参数（0.4.2 R3）：None 仅手工 DNA 出现——登记路径「有组无
+    # 值→归一化字面化→翻译物化」恒具体值；执行侧缺省 0.5/0.1/1.0（A5）
+    exit_fraction: Optional[float] = None   # 部分离场比例（reduce 分支）
+    add_fraction: Optional[float] = None    # 加仓比例（add 分支，分母=当前权益）
+    max_exposure: Optional[float] = None    # 总敞口上限（名义/权益；None 引擎侧按 1.0）
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
+        # ——存量 DNA 序列化输出逐位不变（asdict 会强制携带 None 键，
+        # 故显式键序输出+三新键条件写入）
+        result = {
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "position_size": self.position_size,
+            "leverage": self.leverage,
+            "direction": self.direction,
+            "sl_mode": self.sl_mode,
+            "atr_period": self.atr_period,
+        }
+        if self.exit_fraction is not None:
+            result["exit_fraction"] = self.exit_fraction
+        if self.add_fraction is not None:
+            result["add_fraction"] = self.add_fraction
+        if self.max_exposure is not None:
+            result["max_exposure"] = self.max_exposure
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "RiskGenes":

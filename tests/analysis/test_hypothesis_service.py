@@ -425,7 +425,8 @@ class TestRegisterTriggerPolicy:
             "core.analysis.templates.precheck_hypothesis")
         captured: dict = {}
 
-        def spy(db_path, data_dir, when, ranges, trigger_policy=None):
+        def spy(db_path, data_dir, when, ranges, trigger_policy=None,
+                **kwargs):
             captured["policy"] = trigger_policy
             return {"verdict": "pass", "analysis_segment_trades": 9}
 
@@ -441,7 +442,8 @@ class TestRegisterTriggerPolicy:
             "core.analysis.templates.precheck_hypothesis")
         captured: dict = {}
 
-        def spy(db_path, data_dir, when, ranges, trigger_policy=None):
+        def spy(db_path, data_dir, when, ranges, trigger_policy=None,
+                **kwargs):
             captured["policy"] = trigger_policy
             return {"verdict": "pass", "analysis_segment_trades": 9}
 

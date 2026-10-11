@@ -162,6 +162,64 @@ class TestPydanticTransportGrid:
         RiskGenesModel(leverage=MAX_LEVERAGE)  # 边界 10 过
 
 
+# ── 分批三字段格（4.3 第二站：validator 格补齐后八字段全矩阵收口）──
+
+
+class TestScalingFieldsGrid:
+    """B1-33 第二站：validator 三字段格+pydantic 三键格+DNA 往返
+    （service 格三键已于 4.1 翻格——见 test_strategy_param_declaration）。"""
+
+    def test_validator_fraction_bounds(self):
+        assert _errors(exit_fraction=1.5) != []
+        assert _errors(exit_fraction=0) != []
+        assert _errors(add_fraction=0) != []
+        assert _errors(add_fraction=1.5) != []
+        assert _errors(exit_fraction=0.5) == []
+        assert _errors(add_fraction=1.0) == []
+
+    def test_validator_max_exposure_leverage_linkage(self):
+        """联动上界（防拒因漂移锚）：max_exposure=8 须显式 leverage=3
+        ——缺省 leverage=1 时 8 同拒但拒因为 8>1，锚丧失联动判定力。"""
+        assert _errors(max_exposure=8, leverage=3) != []   # 8>3 拒
+        assert _errors(max_exposure=8, leverage=10) == []  # 8≤10 过
+        assert _errors(max_exposure=1.5) != []             # 缺省杠杆 1 拒
+        assert _errors(max_exposure=1.5, leverage=2) == []  # 声明杠杆过
+
+    def test_validator_none_allowed(self):
+        """None=合法缺省态不报错（与执行侧缺省完备 0.5/0.1/1.0 衔接）。"""
+        assert _errors(exit_fraction=None, add_fraction=None,
+                       max_exposure=None) == []
+
+    def test_pydantic_scaling_keys_bare_float(self):
+        """pydantic 三键裸 float Optional：不加 bound（值域权威在
+        service/validator——擅自加 bound 即红）。"""
+        RiskGenesModel(exit_fraction=1.5)   # 放行为正确分层
+        RiskGenesModel(add_fraction=0)
+        RiskGenesModel(max_exposure=99)
+        m = RiskGenesModel(exit_fraction=0.5, add_fraction=0.1,
+                           max_exposure=1.0)
+        assert m.exit_fraction == 0.5
+
+    def test_risk_genes_roundtrip_zero_migration(self):
+        """DNA 往返零迁移：None 不写入序列化（存量逐位不变）、有值保真。"""
+        rg = RiskGenes()
+        assert "exit_fraction" not in rg.to_dict()
+        assert "add_fraction" not in rg.to_dict()
+        assert "max_exposure" not in rg.to_dict()
+        # 存量形（无新键）from_dict 读 None
+        legacy = RiskGenes.from_dict({
+            "stop_loss": 0.05, "take_profit": None, "position_size": 0.3,
+            "leverage": 1, "direction": "long", "sl_mode": "pct",
+            "atr_period": 14})
+        assert legacy.exit_fraction is None
+        # 有值保真往返
+        rg2 = RiskGenes(exit_fraction=0.5, add_fraction=0.1,
+                        max_exposure=1.0)
+        d = rg2.to_dict()
+        assert d["exit_fraction"] == 0.5 and d["max_exposure"] == 1.0
+        assert RiskGenes.from_dict(d) == rg2
+
+
 # ── 常量单源锚 ─────────────────────────────────────────────────────
 
 
