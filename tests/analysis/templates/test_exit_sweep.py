@@ -410,6 +410,32 @@ class TestThreeGates:
         out = self._run(orig_states)
         assert out["payload"]["verdict"] == "unsupported"
 
+    def test_all_groups_failed_indeterminate(self, tmp_path, monkeypatch):
+        """四值完备性补齐（indeterminate 此前无测试触达）：全组执行期
+        失败 → 两轴 indeterminate、整体 indeterminate（证据不足非证伪
+        ——与 unsupported 的分野：后者有参评组全无效）；results 全
+        failed 如实呈现、failed_groups 完整、sample_size=0。"""
+        d, db = _make_env(tmp_path)
+
+        def _always_fail(*a, **kw):
+            raise ResearchError("RESEARCH_DATA_INSUFFICIENT", "构造全组失败")
+
+        monkeypatch.setattr(bb, "run_backtest_on_range", _always_fail)
+        out = exit_sweep(db, d, dict(RNG_DEF), condition=_COND,
+                         direction="long",
+                         grid=_grid([0.01, 0.02], [0.03, 0.06]))
+        assert out["payload"]["verdict"] == "indeterminate"
+        axes = out["payload"]["robust_ranges"]["pct"]["axes"]
+        assert axes["stop_loss"]["verdict"] == "indeterminate"
+        assert axes["take_profit"]["verdict"] == "indeterminate"
+        assert all(r["status"] == "failed" for r in out["payload"]["results"])
+        assert all(r["failure_code"] == "RESEARCH_DATA_INSUFFICIENT"
+                   for r in out["payload"]["results"])
+        assert len(out["payload"]["failed_groups"]) == 4
+        assert out["sample_size"] == 0
+        # confidence 三要素照常携带（gates_verdict 型——四值披露）
+        assert out["confidence"]["verdict"] == "indeterminate"
+
 
 class TestCapabilityDomainAndLog:
     """timeframe 拒绝锚/能力域对照/S5 双向守护/留痕不进并集。"""

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -301,3 +302,60 @@ class TestBoundaries:
             counter_profile(
                 df, condition=_CONDITION, conditions=[_CONDITION],
                 direction="long", data_ranges=RANGES)
+
+
+class TestConfidenceContract:
+    """三要素 confidence 特征网补齐（规格「confidence 为反例占比的
+    区间估计（Wilson 区间）」——B5 用例组未覆盖项）：期望按 Wilson
+    score interval 数学定义在测试内直写（与被测委托链
+    core.scoring.statistics 相互独立的推导路径，公式抄错必红）。"""
+
+    def test_confidence_wilson_independent_crosscheck(self):
+        df = _make_df(n_conform=10, n_counter=5)
+        res = _profile(df)
+        conf = res.to_dict()["confidence"]  # 三要素顶层位（非 payload）
+        assert conf["method"] == "wilson_interval"
+        assert conf["for"] == "counter_rate"
+        n_counter = res.payload["groups"]["counter"]["count"]
+        n_grouped = (n_counter
+                     + res.payload["groups"]["conform"]["count"])
+        assert conf["n_grouped"] == n_grouped
+
+        lo, hi = conf["interval"]
+        p = n_counter / n_grouped
+        assert lo <= p <= hi, "区间须覆盖点估计（反例占比）"
+        # 独立核算：z=1.96 Wilson 数学定义直写
+        z = 1.96
+        denom = 1 + z * z / n_grouped
+        center = (p + z * z / (2 * n_grouped)) / denom
+        half = (z / denom) * math.sqrt(
+            p * (1 - p) / n_grouped + z * z / (4 * n_grouped ** 2))
+        assert lo == pytest.approx(center - half, abs=1e-12)
+        assert hi == pytest.approx(center + half, abs=1e-12)
+
+    def test_confidence_zero_counter_degenerate_interval(self):
+        """反例组 0 退化形：lo=0（截断）、hi>0（0 反例的 95% 上界——
+        「全符合」不等于「反例率为 0 的确证」，区间仍留上侧余量）；
+        n_grouped=符合数。"""
+        n = 400
+        arr = 100.0 + 0.6 * np.arange(n)  # 单调升：long 触发全符合
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        df = pd.DataFrame({
+            "open": arr, "high": arr + 0.5, "low": arr - 0.5,
+            "close": arr, "volume": np.full(n, 100.0)}, index=idx)
+        res = counter_profile(
+            df, condition={"subject": "close", "action": "gt",
+                           "target": 105.0},
+            direction="long", data_ranges=RANGES, forward_bars=6,
+            min_samples=30, request_start=df.index[10])
+        conf = res.to_dict()["confidence"]
+        n_grouped = res.payload["groups"]["conform"]["count"]
+        assert res.payload["groups"]["counter"]["count"] == 0
+        assert conf["n_grouped"] == n_grouped
+        lo, hi = conf["interval"]
+        assert lo == 0.0
+        assert hi > 0.0
+        # 独立核算：p=0 时 Wilson 上界 z²/(n+z²)
+        z = 1.96
+        assert hi == pytest.approx(z * z / (n_grouped + z * z), rel=1e-9)

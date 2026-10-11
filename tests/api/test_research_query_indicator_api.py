@@ -95,6 +95,21 @@ class TestQueryIndicatorRoute:
         assert resp.status_code == 422
         assert len(rr.list_research_log(q_env["db"])) == before
 
+    def test_single_group_response_has_no_groups_key(self, api_client,
+                                                     q_env):
+        """单组存量不变（规格「无 groups 键的请求零触达批量路径」——
+        响应形制锚）：不含 groups 键的请求返回单组形（顶层无 groups
+        键），批量响应形（顶层仅 groups 键）与之可辨。"""
+        api_client.app.state.db_path = q_env["db"]
+        api_client.app.state.data_dir = q_env["data_dir"]
+        resp = api_client.post("/api/research/query-indicator",
+                               json=_payload())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "groups" not in body
+        assert {"indicator", "params", "warmup_bars", "range",
+                "reductions"} <= set(body)
+
 
 class TestNonResearchErrorPassthrough:
     """CARD-03 修复资产：except 收窄为 ResearchError——服务层非
