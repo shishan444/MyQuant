@@ -198,10 +198,17 @@ def list_strategies_by_parent_hypotheses(
     if not hypothesis_ids:
         return []
     id_set = set(hypothesis_ids)
+    # 显式列裁剪（review-042 CARD-07）：消费方仅需四列——select(Strategy)
+    # 全表会把 dna_json（Text 大载荷）整体拖进内存；成员匹配保留在
+    # Python 侧（正确性优先——JSON 数组的 SQL LIKE 有子串误命中）。
+    # 行数上限/parent 关联表方案是 S-3 性能债（TD 登记），不在此卡
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(
-            select(Strategy).where(
+            select(
+                Strategy.strategy_id, Strategy.parent_ids,
+                Strategy.status, Strategy.created_at,
+            ).where(
                 Strategy.parent_ids.isnot(None),
             ).order_by(Strategy.created_at, Strategy.strategy_id)
         ).mappings().all()
