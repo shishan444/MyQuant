@@ -224,31 +224,6 @@ def _exit_sweep_group_heavy(params: Dict[str, Any]) -> bool:
     return _exit_sweep_group_count(params) > _EXIT_SWEEP_ASYNC_GROUPS
 
 
-def _validate_conditions_array(conditions: Any) -> None:
-    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
-    装载前）。
-
-    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
-    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
-    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
-    三键结构，hypothesis_service 登记链同款）。"""
-    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
-        actual = (len(conditions) if isinstance(conditions, list)
-                  else type(conditions).__name__)
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"conditions 条数须在 1..5（实际 {actual}）",
-            detail={"param": "conditions", "legal_range": "1..5"})
-    for i, c in enumerate(conditions):
-        if (not isinstance(c, dict)
-                or not all(k in c for k in ("subject", "action", "target"))):
-            raise ResearchError(
-                "RESEARCH_CONDITION_INVALID",
-                f"conditions[{i}] 须含 subject/action/target",
-                detail={"param": f"conditions[{i}]",
-                        "legal_form": "{subject, action, target}"})
-
-
 def _with_derivatives_coverage(result: Dict[str, Any],
                                df: Optional[pd.DataFrame]) -> Dict[str, Any]:
     """0.3.3 G12：衍生品边界声明随结果出站（df.attrs 通道——装载层
@@ -279,7 +254,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
     # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
     # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
-    from core.analysis.condition_kernel import MtfEvalContext
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, validate_conditions_array)
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
@@ -391,7 +367,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             feature_matrix_names)
         cond_list = (p["conditions"] if p.get("conditions") is not None
                      else [p["condition"]])
-        _validate_conditions_array(cond_list)
+        validate_conditions_array(cond_list)
         df, request_start = _load_refs(
             None, condition=p.get("condition"),
             conditions=p.get("conditions"),
@@ -428,7 +404,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # mask_for_all 求值；顶层 indicator/params 转可选，有则并入
         # warmup 预算与指标矩阵）
         if "conditions" in p:
-            _validate_conditions_array(p["conditions"])
+            validate_conditions_array(p["conditions"])
             top_ind = p.get("indicator")
             if top_ind is None:
                 if "params" in p:
@@ -487,7 +463,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 前扩装载（S2 引用并集）+ request_start 切回 + warmup_bars 披露
         # （披露键只在 conditions 形式 payload 存在；旧 condition 键走
         # 下方 _load_df 普通装载——装载语义与 payload 键集冻结锚）
-        _validate_conditions_array(p["conditions"])
+        validate_conditions_array(p["conditions"])
         df, request_start = _load_refs(None, conditions=p["conditions"])
         return _with_derivatives_coverage(event_study(
             df, conditions=p["conditions"], window=p.get("window", 12),

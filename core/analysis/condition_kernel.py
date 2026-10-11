@@ -293,6 +293,34 @@ def collect_condition_refs(
     return refs
 
 
+def validate_conditions_array(conditions: Any) -> None:
+    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
+    装载前；CARD-05 自路由提升为条件域共享单点，第四消费者 exit_sweep
+    模板接入）。
+
+    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
+    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
+    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
+    三键结构，hypothesis_service 登记链同款）。"""
+    from core.analysis.hypothesis_service import ResearchError
+
+    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
+        actual = (len(conditions) if isinstance(conditions, list)
+                  else type(conditions).__name__)
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"conditions 条数须在 1..5（实际 {actual}）",
+            detail={"param": "conditions", "legal_range": "1..5"})
+    for i, c in enumerate(conditions):
+        if (not isinstance(c, dict)
+                or not all(k in c for k in ("subject", "action", "target"))):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"conditions[{i}] 须含 subject/action/target",
+                detail={"param": f"conditions[{i}]",
+                        "legal_form": "{subject, action, target}"})
+
+
 # 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。
 # 可达性权威判定在 signal_registry（column_ref._visible_plugin_columns），
 # 前缀匹配是保守宽面：收集结果须再经调用方可达性校验（预检装载入口）。
