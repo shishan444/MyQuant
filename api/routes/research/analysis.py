@@ -30,7 +30,8 @@ router = APIRouter()
 
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
-              "regime_split", "precheck_hypothesis")
+              "regime_split", "precheck_hypothesis", "segment_narrative",
+              "counter_profile", "exit_sweep")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -79,12 +80,20 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
 
 def _load_with_condition_refs(
     data_dir: Path, rng: Dict[str, str],
-    indicator: str, condition: Dict[str, Any],
+    indicator: Optional[str] = None,
+    condition: Optional[Dict[str, Any]] = None,
+    conditions: Optional[list] = None,
+    extra_names: Optional[list] = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
     两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
     计入前扩；strict=True 不可解析 target 结构化拒绝）后前扩装载，
     统计段切回请求区间。
+
+    0.4.1 R2 S2 多条件形制：conditions 数组（含长度 1——键形制判据
+    D9，统一走前扩并集装载）时 warm_names=Σ 逐条 collect_condition_refs
+    (strict=True)；顶层 indicator 可选（有则并入——condition_stats
+    新形制下转可选）。单条件形制（indicator+condition）逐字节不变。
 
     strict=True 单点化于此：未来新模板分支经本函数装载即不可能
     遗漏「装载必须 strict」纪律。eval_start 接线已随 TD-7（0.3.7）
@@ -94,8 +103,14 @@ def _load_with_condition_refs(
     from core.analysis.condition_kernel import collect_condition_refs
     from core.analysis.warmup_loader import load_with_warmup
 
-    warm_names = [indicator] + [
-        ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    warm_names: list = [indicator] if indicator else []
+    warm_names += list(extra_names or [])
+    if condition is not None:
+        warm_names += [
+            ind for ind, _ in collect_condition_refs(condition, strict=True)]
+    for c in conditions or []:
+        warm_names += [
+            ind for ind, _ in collect_condition_refs(c, strict=True)]
     return load_with_warmup(
         data_dir, rng["symbol"], rng["timeframe"],
         rng["start"], rng["end"], warm_names)
@@ -115,33 +130,91 @@ def _require_known_indicator(name: str) -> None:
                     "legal_range": "注册表指标名（list_indicators 查询）"})
 
 
-# 模板必填键声明表（卡1/D5 统一口径：_TEMPLATES 8 模板中 6 模板共 11
-# 必填键；screen_patterns/regime_split 无必填键零成本通过——模板签名
-# 变更须同步本表）。消灭 _run_template 分支内裸下标族（G1/C-α）：
-# 缺键结构化 422（detail 点名键+legal_form），不让 KeyError 裸穿。
+# 模板必填键声明表（卡1/D5 统一口径；0.4.1 R2 键组扩展）：值=键组
+# 元组——单组模板恰好一组（组内键全必填，缺键 422 点名——形制与
+# 平铺时代逐字节一致）；多组模板（condition_stats/event_study）为
+# 二选一键组（旧组 condition(＋indicator＋params) ∥ 新组 conditions，
+# 任选其一、同传即拒——两形制装载语义不同，D9 键形制判据）。
+# screen_patterns/regime_split 无必填键零成本通过——模板签名变更
+# 须同步本表。消灭 _run_template 分支内裸下标族（G1/C-α）：缺键
+# 结构化 422（detail 点名键/组+legal_form），不让 KeyError 裸穿。
 _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
-    "condition_stats": ("indicator", "params", "condition"),
-    "distribution_compare": ("column", "group_a", "group_b"),
-    "correlation_scan": ("signal_column",),
-    "event_study": ("condition",),
-    "pattern_mining": ("as_of",),
-    "param_sweep": ("indicator", "condition"),
-    "precheck_hypothesis": ("when_conditions", "validate_range"),
+    "condition_stats": (("indicator", "params", "condition"), ("conditions",)),
+    "distribution_compare": (("column", "group_a", "group_b"),),
+    "correlation_scan": (("signal_column",),),
+    "event_study": (("condition",), ("conditions",)),
+    "pattern_mining": (("as_of",),),
+    "param_sweep": (("indicator", "condition"),),
+    "precheck_hypothesis": (("when_conditions", "validate_range"),),
+    "counter_profile": (("condition", "direction"), ("conditions", "direction")),
+    "exit_sweep": (("condition", "direction", "grid"),
+                   ("conditions", "direction", "grid")),
 }
 
 
 def _require_required_keys(template: str, p: Dict[str, Any]) -> None:
-    """模板必填键存在性前置校验（卡1）：缺键即结构化拒绝——只判
-    键缺不缺，值合法性归既有值校验链（最小差异，D3）。"""
-    for key in _TEMPLATE_REQUIRED_KEYS.get(template, ()):
-        if key not in p:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"params 缺必填键: {key}",
-                detail={
-                    "param": key,
-                    "legal_form": f"{template} 必填 "
-                                  f"{_TEMPLATE_REQUIRED_KEYS[template]}"})
+    """模板必填键存在性前置校验（卡1；0.4.1 键组扩展）。
+
+    键组语义：单组模板组内缺键即结构化拒绝（只判键缺不缺，值合法
+    性归既有值校验链——最小差异 D3）；多组模板恰好一组完整、零组
+    完整时若恰有一组被部分触及则按该组点名缺键（形制与单组一致
+    ——调用意图可辨），否则 422 点名缺组。锚键互斥（CARD-04，
+    spec R2「同传即拒」无条件限定）先于完整性判定：condition 与
+    conditions 同在即拒——四条件模板的两组各含一锚键，两组完整
+    同传必先触发锚键互斥（原 complete>1 分支因此不可达，闸门期
+    清除；新增多组模板须同步审视本表与锚键面）。"""
+    groups = _TEMPLATE_REQUIRED_KEYS.get(template, ())
+    if not groups:
+        return
+    if "condition" in p and "conditions" in p:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "params 键组互斥: condition（单条件形制：subject/action/"
+            "target）与 conditions（组合条件形制：条件数组 1..5）不可"
+            "同传（任选其一）",
+            detail={
+                "param": "condition|conditions",
+                "legal_form": "单条件 condition 或组合条件 conditions 二选一"})
+    # 锚键互斥前置后 complete 至多一组（多组模板两组各含一锚键）
+    if any(all(k in p for k in g) for g in groups):
+        return
+    # 零完整组：恰有一组被部分触及 → 按该组点名缺键（单组同款形制）
+    touched = [g for g in groups if any(k in p for k in g)]
+    if len(groups) == 1 or len(touched) == 1:
+        group = touched[0] if len(touched) == 1 else groups[0]
+        for key in group:
+            if key not in p:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"params 缺必填键: {key}",
+                    detail={
+                        "param": key,
+                        "legal_form": f"{template} 必填 {group}"})
+    raise ResearchError(
+        "RESEARCH_PARAM_INVALID",
+        f"params 缺必填键组: {template} 须任选一组 {list(groups)}",
+        detail={
+            "param": "condition|conditions",
+            "legal_form": f"{template} 必填键组任选一: {list(groups)}"})
+
+
+def _exit_sweep_group_count(params: Dict[str, Any]) -> int:
+    """exit_sweep 组数估计（heavy 判定输入——防御式：形制异常按 0，
+    参数合法性归模板校验确定序）。"""
+    try:
+        return sum(
+            len(e.get("stops") or []) * len(e.get("take_profits") or [])
+            for e in params.get("grid", {}).get("modes", []))
+    except (AttributeError, TypeError):
+        return 0
+
+
+def _exit_sweep_group_heavy(params: Dict[str, Any]) -> bool:
+    """组数维度 heavy 判定（0.4.1 6.6——组数 > 阈值走 202 句柄；阈值
+    资源参数可调，模板模块常量单点）。"""
+    from core.analysis.templates.exit_sweep import _EXIT_SWEEP_ASYNC_GROUPS
+
+    return _exit_sweep_group_count(params) > _EXIT_SWEEP_ASYNC_GROUPS
 
 
 def _with_derivatives_coverage(result: Dict[str, Any],
@@ -160,9 +233,10 @@ def _with_derivatives_coverage(result: Dict[str, Any],
 def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) -> Dict[str, Any]:
     """执行一次模板（快路径同步；重路径经线程池）。"""
     from core.analysis.templates import (
-        condition_stats, correlation_scan, distribution_compare,
-        event_study, param_sweep, precheck_hypothesis, regime_split,
-        screen_patterns, similar_at_time,
+        condition_stats, counter_profile, correlation_scan,
+        distribution_compare, event_study, exit_sweep, param_sweep,
+        precheck_hypothesis, regime_split, screen_patterns,
+        segment_narrative, similar_at_time,
     )
     from core.analysis.templates.screen_patterns import resolve_feature_names
     from core.analysis.warmup_loader import load_with_warmup
@@ -173,7 +247,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
     # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
     # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
-    from core.analysis.condition_kernel import MtfEvalContext
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, validate_conditions_array)
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=rng["symbol"], base_tf=rng["timeframe"])
 
@@ -188,9 +263,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         mtf_ctx.eval_start = request_start
         return df, request_start
 
-    def _load_refs(indicator, condition):
+    def _load_refs(indicator, condition=None, conditions=None, *,
+                   extra_names=None):
         df, request_start = _load_with_condition_refs(
-            data_dir, rng, indicator, condition)
+            data_dir, rng, indicator, condition, conditions, extra_names)
         mtf_ctx.eval_start = request_start
         return df, request_start
 
@@ -248,6 +324,66 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             hypothesis_id=payload.hypothesis_id,
             mtf=mtf_ctx).to_dict(), df)
 
+    if payload.template == "segment_narrative":
+        # 区间事件摘要（0.4.1 R3）：双上限之一在装载前——区间 bar ≤5000
+        # （index-only 计数既有设施）；warmup 覆盖事件源指标（默认集机械
+        # 推导或显式点名）；事件数 ≤500 上限在模板提取后组装前
+        from core.analysis.templates.segment_narrative import (
+            MAX_RANGE_BARS, default_source_names, validate_indicators)
+        n_rows = _count_rows_index_only(data_dir, rng)
+        if n_rows > MAX_RANGE_BARS:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"区间 bar 数超上限: {n_rows} > "
+                f"{MAX_RANGE_BARS}（缩小区间）",
+                detail={"param": "data_range", "actual": n_rows,
+                        "limit": MAX_RANGE_BARS,
+                        "hint": "缩短区间或拆分为多次摘要"})
+        if p.get("indicators") is not None:
+            # 装载前校验（模板内校验同源——不让 derive_warmup 对未注册
+            # 指标 KeyError 裸穿 500）
+            validate_indicators(p["indicators"])
+            source_names = p["indicators"]
+        else:
+            source_names = default_source_names()
+        df, request_start = _load_warm(source_names)
+        return _with_derivatives_coverage(segment_narrative(
+            df, data_ranges=ranges, request_start=request_start,
+            indicators=p.get("indicators"),
+            hypothesis_id=payload.hypothesis_id).to_dict(), df)
+
+    if payload.template == "counter_profile":
+        # 反例画像（0.4.1 R5）：键组出生自带（condition|conditions ∥
+        # direction 两形制统一前扩+mask_for_all）；warmup=特征矩阵全集
+        # ∪ 条件引用并集（特征域 _DEFAULT_PARAMS 减 guard_only/lazy）
+        from core.analysis.templates.counter_profile import (
+            feature_matrix_names)
+        cond_list = (p["conditions"] if p.get("conditions") is not None
+                     else [p["condition"]])
+        validate_conditions_array(cond_list)
+        df, request_start = _load_refs(
+            None, condition=p.get("condition"),
+            conditions=p.get("conditions"),
+            extra_names=feature_matrix_names())
+        return _with_derivatives_coverage(counter_profile(
+            df, condition=p.get("condition"), conditions=p.get("conditions"),
+            direction=p["direction"], data_ranges=ranges,
+            forward_bars=p.get("forward_bars", 24),
+            request_start=request_start,
+            min_samples=p.get("min_samples", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx).to_dict(), df)
+
+    if payload.template == "exit_sweep":
+        # 退出参数扫描（0.4.1 R6）：自装载模板壳（precheck 先例——
+        # 校验/回测/判定收敛在模板内）；heavy 判定的组数维度在
+        # run_analysis 入口（rows 维度天然继承）
+        return exit_sweep(
+            db_path, data_dir, rng,
+            condition=p.get("condition"), conditions=p.get("conditions"),
+            direction=p.get("direction"), grid=p.get("grid"),
+            hypothesis_id=payload.hypothesis_id)
+
     if payload.template == "condition_stats":
         # U3：condition_stats 走 warmup 前扩装载——指标 warmup 段「只用
         # 不算」（request_start 切回请求区间）；前扩落点在本分支，heavy
@@ -256,6 +392,33 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
         # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
         # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
+        # 0.4.1 R2：conditions 键组分派（键形制判据 D9——旧组逐字节
+        # 冻结；conditions 含长度 1 统一走 S2 引用并集前扩装载 +
+        # mask_for_all 求值；顶层 indicator/params 转可选，有则并入
+        # warmup 预算与指标矩阵）
+        if "conditions" in p:
+            validate_conditions_array(p["conditions"])
+            top_ind = p.get("indicator")
+            if top_ind is None:
+                if "params" in p:
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        "conditions 形制下 params 须与 indicator 同在或同缺",
+                        detail={"param": "params",
+                                "legal_form": "conditions[+indicator+params]"})
+            else:
+                _require_known_indicator(top_ind)
+            df, request_start = _load_refs(
+                top_ind, conditions=p["conditions"])
+            return _with_derivatives_coverage(condition_stats(
+                df, indicator=top_ind, params=p.get("params"),
+                conditions=p["conditions"], data_ranges=ranges,
+                request_start=request_start,
+                forward_bars=p.get("forward_bars", 24),
+                min_samples=p.get("min_samples", 30),
+                hypothesis_id=payload.hypothesis_id,
+                mtf=mtf_ctx,
+                trigger_policy=p.get("trigger_policy")).to_dict(), df)
         # indicator 值域前置（param_sweep 同款纪律——特征网实施暴露的
         # 补接：非法值经 derive_warmup 抛裸 KeyError 落 500，非缺键类
         # 参数错误应 422）
@@ -287,6 +450,21 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             forward_bars=p.get("forward_bars", 24),
             hypothesis_id=payload.hypothesis_id,
             trigger_policy=p.get("trigger_policy"))
+
+    if payload.template == "event_study" and "conditions" in p:
+        # 0.4.1 R2：event_study conditions 形式三件套（D9 键形制判据）——
+        # 前扩装载（S2 引用并集）+ request_start 切回 + warmup_bars 披露
+        # （披露键只在 conditions 形式 payload 存在；旧 condition 键走
+        # 下方 _load_df 普通装载——装载语义与 payload 键集冻结锚）
+        validate_conditions_array(p["conditions"])
+        df, request_start = _load_refs(None, conditions=p["conditions"])
+        return _with_derivatives_coverage(event_study(
+            df, conditions=p["conditions"], window=p.get("window", 12),
+            data_ranges=ranges, min_events=p.get("min_events", 30),
+            hypothesis_id=payload.hypothesis_id,
+            mtf=mtf_ctx,
+            trigger_policy=p.get("trigger_policy"),
+            request_start=request_start).to_dict(), df)
 
     df = _load_df(data_dir, rng)
     if payload.template == "distribution_compare":
@@ -430,6 +608,34 @@ def _log_precheck(
     )
 
 
+def _log_exit_sweep(
+    db_path: Path, payload: AnalysisRunRequest,
+    result: Dict[str, Any],
+) -> None:
+    """退出参数扫描留痕（0.4.1 R6——检查型，_log_sweep 同构先例）。
+
+    entry_type="exit_sweep" 不挂假设（hypothesis_id=None 不进判定并集
+    ——检查不消耗验证数据区间，param_sweep 先例同构）；ref_id 固定
+    "exit_sweep"；summary 携整体判定/稳健区间/网格规模/失败组清单。
+    exit_sweep 模板不另写 analysis 日志（本条已含区间登记语义）。
+    """
+    p = (result or {}).get("payload", {})
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="exit_sweep",
+        ref_id="exit_sweep",
+        data_ranges=json.dumps(
+            [payload.data_range.model_dump()], ensure_ascii=False),
+        summary=json.dumps({
+            "verdict": p.get("verdict"),
+            "robust_ranges": p.get("robust_ranges"),
+            "grid_groups": len(p.get("results", [])),
+            "failed_groups": len(p.get("failed_groups", [])),
+        }, ensure_ascii=False, default=str),
+    )
+
+
 def _log_result(
     db_path: Path, payload: AnalysisRunRequest, result: Dict[str, Any],
 ) -> None:
@@ -443,6 +649,8 @@ def _log_result(
         _log_sweep(db_path, payload, result)
     elif payload.template == "precheck_hypothesis":
         _log_precheck(db_path, payload, result)
+    elif payload.template == "exit_sweep":
+        _log_exit_sweep(db_path, payload, result)
     else:
         _log_analysis(db_path, payload)
 
@@ -509,7 +717,9 @@ def run_analysis(
             # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
             rows = len(_load_df(data_dir, payload.data_range.model_dump()))
         heavy = (payload.template in ("pattern_mining", "screen_patterns")
-                 or rows > _HEAVY_ROWS)
+                 or rows > _HEAVY_ROWS
+                 or (payload.template == "exit_sweep"
+                     and _exit_sweep_group_heavy(payload.params)))
 
         if payload.template == "screen_patterns":
             # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；

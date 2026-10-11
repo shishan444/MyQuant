@@ -128,6 +128,23 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
+    def union_balance(symbol: str, timeframe: str,
+                      hypothesis_id: str) -> Dict[str, Any]:
+        """判定并集余量查询（0.4.1 R4——本变更唯一新工具）：该假设的
+        已判区间清单、剩余可用区间与剩余可用时长。三参数必填（判定
+        并集是假设级账本）；假设不存在 404（前置存在性判定）；输出
+        {hypothesis_id, symbol, timeframe, judged[], remaining[],
+        remaining_bars}——remaining=数据目录实查范围（parquet 首尾 bar
+        完整时间戳直读，半开）−判定并集（先合并重叠/相邻再逐段差）；
+        remaining_bars=Σ floor(段时长/周期)（不足整 bar 残余丢弃——保守
+        计数）。零副作用只读；与隔离验证 RESEARCH_RANGE_OVERLAP 同一
+        账本两个出口——查询 remaining 段发起隔离验证不被重叠拒。"""
+        return api.get("/api/research/union-balance", params={
+            "symbol": symbol, "timeframe": timeframe,
+            "hypothesis_id": hypothesis_id})
+
+    @mcp.tool()
+    @tool_safe
     def get_market_snapshot(symbol: str, timeframes: Optional[str] = None,
                             as_of: Optional[str] = None) -> Dict[str, Any]:
         """时点行情快照（六步研究第①步固定入口）：多周期五维行情卡——
@@ -228,7 +245,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
-               get_market_snapshot,
+               get_market_snapshot, union_balance,
                list_hypotheses, get_hypothesis, get_research_log,
                get_analysis_task, get_validation_report, list_feature_requests):
         TOOL_TIERS["readonly"].add(fn.__name__)
@@ -244,14 +261,28 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
-        param_sweep|regime_split|precheck_hypothesis（重组走 202+task_id
-        轮询，响应含 poll 提示）。区间半开
+        param_sweep|regime_split|precheck_hypothesis|segment_narrative|
+        counter_profile|exit_sweep
+        （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split 无必填键。
+        condition_stats/event_study 支持 conditions 条件数组形制
+        （0.4.1）：与旧键组二选一（同传 422 指明互斥——condition_stats
+        旧组 indicator+params+condition ∥ 新组 conditions；event_study
+        旧组 condition ∥ 新组 conditions）；条数 1..5（AND 语义——全部
+        条件同时成立的时点才计入统计与事件流；空数组与超限 422 披露
+        条数域）；每条沿单条件混合形制（结构化指标对象/字符串列名，
+        含可选高周期 timeframe 键）。形制间边界差异：两形制在
+        condition_stats 上结果一致（存量本前扩装载）；在 event_study
+        上存在区间首段指标收敛性差异——旧键走普通装载（头部 bar 指标
+        为截断近似、payload 键集冻结无 warmup_bars 键），conditions
+        （含长度 1）统一走引用并集前扩装载（头部已收敛、payload 携带
+        warmup_bars>0 披露）；多条件 warmup 预算=全部条目指标引用的
+        并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
@@ -310,7 +341,53 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         ——两锚共用阈值与映射。预算口径与隔离回测 warmup.basis 同源
         同值（derive_warmup_full 两维式）；预算不足进报告不报错。预检
         不进判定并集（entry_type=precheck 不挂假设——预检过的区间仍可
-        用于隔离验证）。"""
+        用于隔离验证）。segment_narrative 区间事件摘要（0.4.1 R3，快
+        路径）：无必填键；可选 params.indicators 点名事件源指标清单
+        （任何在册指标——缺省走默认事件源=category∈{trend,momentum,
+        pattern} 全指标 default 参数+轨道族 {BB,Keltner,Donchian}，机械
+        推导；不入默认集类别 trend_strength/volume/structure/ml/
+        derivatives 在结果披露口径、显式点名不受限）——输出时间线
+        事件清单（四类：pattern_trigger 形态触发时点/indicator_cross
+        封闭交叉对 MACD(macd,signal)·Stochastic(k,d)·Aroon(up,down)
+        上/下穿/band_position close 进出轨道上下轨/sustained_run close
+        连续同向变动段）+结构统计（区间涨跌幅/波动区间/事件计数）；
+        载荷无原始 OHLCV 行；双上限：区间 ≤5000 bar（装载前）、事件
+        ≤500 条（提取后）；留痕 analysis 型（挂 hypothesis_id 则区间
+        进该假设判定并集，沿既有语义）。counter_profile 反例画像（0.4.1
+        R5，快路径）：params 必填 condition|conditions（二选一键组）
+        + direction（封闭枚举 long/short——mixed 是执行概念不属研究
+        主张）+ 可选 forward_bars（观察窗口，缺省 24）——把条件的历史
+        触发分为符合组（窗口内任一时点实现方向预期——区间语义，「触及
+        目标后回落」的盈利样本不误判；判定比较序列=close）/反例组，
+        输出两组在触发时点的全指标特征分布对比（特征域=注册表默认
+        参数全部输出列减 guard_only/lazy；八键分布参数；现算失败
+        skipped_features 披露）按判别力（Cohen's d）排序的差异清单
+        ——工具只呈现差异不生成条件（特征选择由 AI 做；判别特征 ≤2
+        属研究协议约束不写入工具）；反例组样本 <30 标 insufficient
+        不拒；反例组 0=全符合合法；总触发 <30 走既有小样本拒绝。
+        exit_sweep 退出参数扫描（0.4.1 R6——本模板不挂假设：结果
+        三要素 hypothesis_id 被模板忽略，留痕检查型不进判定并集）：
+        params 必填 condition|conditions（二选一）+ direction（long/
+        short）+ grid={modes:[{mode, stops, take_profits}]}——网格按
+        止损模式分组（量纲随模式双关）；模式合法集=回测引擎真实分派
+        集引用式（0.4.1={pct}——atr/trail 422 披露「引擎未支持」；
+        0.4.2 扩分派后自动跟随）；stops 值域 pct 档 [0.005,0.20] 与
+        validator 现役域同源；止盈必填正值；跨模式 Σ(len(stops)×len
+        (take_profits)) ≤50；重复模式条目拒绝；校验期任何失败整批
+        422 无部分结果、执行期单组回测失败该组标注不阻塞（两期分野）；
+        不设 take_profit>stop_loss 约束（劣结构组按引擎真实行为回测
+        如实呈现、三道门自然判 ineffective）；条件 MUST NOT 携带
+        timeframe 键（翻译链防线 RESEARCH_NOT_EXPRESSIBLE——与
+        translate_hypothesis 同一公共入口；condition_stats/
+        counter_profile 掩码路径支持 timeframe，能力域差异即此）；
+        输出每组 {mode,stop_loss,take_profit,win_rate,profit_factor
+        （亏损笔数 0→null）,net_expectation（含费滑）,max_drawdown,
+        total_trades,status}+三道门整体判定（连续门直接复用
+        param_sweep 判定器；资格门交易数≥5/真伪门净期望>0；最差聚合
+        全序 unsupported>spike>indeterminate>plateau；判定标尺内建
+        不可传）；单轴长度 1 推论：固定止损只扫止盈时整体结论恒不超
+        过 spike（单点无法证明稳健——预期行为非可疑信号）；组数>10
+        或行数超阈值走 202+轮询。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,
@@ -357,10 +434,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def query_indicator(
             symbol: str, timeframe: str,
-            indicator: str,
+            indicator: Optional[str] = None,
             params: Optional[Dict[str, Any]] = None,
             reductions: Optional[list[str]] = None,
             start: Optional[str] = None, end: Optional[str] = None,
+            groups: Optional[list[dict[str, Any]]] = None,
             ) -> Dict[str, Any]:
         """指标读数（第③步检查④——参数是策略的一部分）：单指标任意
         参数现算，归约摘要直答「该参数下指标在这段数据上什么样子」。
@@ -372,17 +450,29 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         列独立归约；个别列冷启动未完成时该列归约为 null（键保留）。
         求值域 [effective_start, end]（end 缺省=数据末端），warmup 段
         不入归约。用法：登记假设前读数定阈值——RSI(38) 与 RSI(14)
-        的分布形态不同，阈值不该凭常识硬编码。"""
+        的分布形态不同，阈值不该凭常识硬编码。
+        批量形制（0.4.1）：groups=[{indicator, params?, reductions?,
+        start?, end?}] 与单组字段（indicator/params/reductions/start/
+        end）互斥（同传 422 指明互斥对）；组数 1..8；各组区间独立、
+        返回 {"groups":[…]}（数组序=请求序）；整批原子含执行期——
+        任一组失败整批 422 无部分结果（detail 以 groups[N] 指明组序）；
+        载荷分档：单组 2048 / 批量 16384 字节。"""
         body: Dict[str, Any] = {
-            "symbol": symbol, "timeframe": timeframe,
-            "indicator": indicator}
+            "symbol": symbol, "timeframe": timeframe}
+        # 单组字段无条件透传（is not None 形制——与 params/reductions 同）：
+        # indicator 与 groups 同传时交 API 单一事实源判互斥 422，工具层
+        # 不吞键（else 分支会使互斥判定对 indicator 键永不触发）
+        if indicator is not None:
+            body["indicator"] = indicator
+        if groups is not None:
+            body["groups"] = groups
         if params is not None:
             body["params"] = params
         if reductions is not None:
             body["reductions"] = reductions
-        if start:
+        if start is not None:
             body["start"] = start
-        if end:
+        if end is not None:
             body["end"] = end
         return api.post("/api/research/query-indicator", body)
 

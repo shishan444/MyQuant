@@ -1,6 +1,6 @@
 # MyQuant 测试地图
 
-`ai-rules/python/TESTING_V2.md` 蓝图载体：测试需求 → 所属能力 → 证据与测试位置 →
+`ai-rules/python/TESTING_V3.md` 蓝图载体（0.4.1 起 V2→V3）：测试需求 → 所属能力 → 证据与测试位置 →
 未覆盖或未验证范围，四向可追溯。维护义务：研究域每个版本交付新能力时同步登记
 对应行；共享机制消费关系变化时更新守护清单（`research-test-evidence` spec 约束）。
 
@@ -72,10 +72,13 @@
 | canonical_condition_hash（条件身份） | `analysis/test_condition_identity.py` | screen 候选、provenance 登记、反向核查、param_sweep 中心指纹、inspect_cases 留痕；规划中 0.2.13 列命名统一 |
 | 审计日志通道（research_log entry_type 族） | `analysis/test_screen_lineage.py`、`api/test_research_sweep_api.py`、`persistence/test_research_repository.py` | screen 留痕/screen_use/sweep 留痕/审计查询；规划中 0.2.11 |
 | threshold_grids（条件阈值刻度表，0.2.6 自 screen_patterns 私有常量提升） | `analysis/templates/test_screen_patterns.py`（搬家等价性——既有回归绿即证明）+ `analysis/templates/test_param_sweep.py`（auto 网格用例） | screen_patterns、param_sweep（两域网格同源，改动须回归两消费者） |
-| condition_kernel（掩码求值+去重叠 t 检验，0.2.7 自 screen_patterns 提升——0.2.6 D4 钩子兑现） | `analysis/templates/` 三模板既有测试（搬家等价性=回归绿） | screen_patterns、param_sweep、regime_split、inspect_cases（改动须回归四消费者） |
+| condition_kernel（掩码求值 mask_for + mask_for_all 组合交集，0.4.1 R2） | `analysis/test_condition_kernel.py`（S1：交集独立对照/内核自洽锚/高周期混合）+ `analysis/templates/` 既有测试（搬家等价性=回归绿） | screen_patterns、param_sweep、regime_split、inspect_cases、condition_stats、event_study、counter_profile（mask_for_all 三模板消费者——改动须回归全消费者） |
 | 行情判读规则（adx_state，0.2.7 自 market_snapshot 提升；快照与分段同一把尺） | `analysis/test_market_snapshot.py`（快照回归绿证提升零变化）+ `analysis/test_regime_segments.py`（同源与分位互钉） | market_snapshot、regime_segments/regime_split（0.2.10 分段考试预留） |
-| 逐段回测原语（_run_backtest_on_range，0.2.10 第二消费者 run_staged_validation） | `analysis/test_validation_execution.py`（isolated 回归绿证零变化）+ `analysis/test_staged_validation.py`（T1 互钉） | run_isolated_backtest、run_staged_validation（改动须回归两消费者） |
-| 指标现算内核（_compute_indicator，0.2.9 第五消费者 query_indicator） | `features/` 既有指标输出契约测试 + `analysis/test_indicator_query.py`（独立直算对照） | condition_kernel、case_inspection、模板族、indicator_query（改动须回归全消费者） |
+| 逐段回测原语（run_backtest_on_range，0.4.1 S3 自 validation_service._run_backtest_on_range 提升至 backtest_bridge） | `analysis/test_validation_execution.py`（isolated 回归绿证零变化）+ `analysis/test_staged_validation.py`（T1 互钉）+ `analysis/templates/test_exit_sweep.py`（S3 搬家后四路径回归） | run_isolated_backtest、run_staged_validation、random_window、sandbox、exit_sweep（双消费方=validation_service 四路径+exit_sweep——改动须回归全消费者） |
+| build_signal_genes（S4 不落库纯翻译入口，0.4.1 自 translate_hypothesis 提取——timeframe 防线原形同点权威单源） | `analysis/test_draft_lifecycle.py`、`analysis/test_plugin_translation.py`（翻译链回归绿证零变化）+ `analysis/templates/test_exit_sweep.py`（timeframe 拒绝锚：field=when_conditions[i].timeframe 逐字） | translate_hypothesis、exit_sweep（两消费方同一防线同源同码——禁止第二套条件→信号基因逻辑） |
+| ENGINE_SUPPORTED_SL_MODES（S5 引擎真实分派域常量，0.4.1） | `analysis/templates/test_exit_sweep.py`（S5 双向守护：pct/atr 双注入逐位一致→引擎不消费 sl_mode→atr 必在合法集外；0.4.2 扩分派后语义自动翻转——同步遗漏必红） | exit_sweep（消费面纪律：只 import 此常量、禁引声明域 SL_MODES）；0.4.2 扩展注记见其 tasks 3.2 增补行 |
+| _gates_verdict 双消费者（S6 连续门游程判定器，0.4.1 exit_sweep 直接复用——同包 import 零改动） | `analysis/templates/test_param_sweep.py`（存量回归：纯 import 零行为变化）+ `analysis/templates/test_exit_sweep.py`（四值+矩阵最差聚合+人工游程对照） | param_sweep、exit_sweep（第三消费者出现时再议符号提升——condition_kernel 演进先例） |
+| 指标现算内核（_compute_indicator，0.2.9 第五消费者 query_indicator；0.4.1 counter_profile 特征矩阵第六消费者） | `features/` 既有指标输出契约测试 + `analysis/test_indicator_query.py`（独立直算对照） | condition_kernel、case_inspection、模板族、indicator_query（改动须回归全消费者） |
 | default_params_for（注册表默认参数，0.2.9 自 case_inspection 私有提升——0.2.8 预留边界兑现） | `analysis/test_case_inspection.py`（45 用例回归绿证提升零变化） | inspect_cases、indicator_query |
 | MCP 研究档工具清单锚（_expected_tools 单处常量，fix-hint-template-list 治理） | `mcpserver/test_server.py`、`mcpserver/test_stdio_l3.py`、`mcpserver/test_http_l3.py` 三处集合相等断言（缺/多明细直显） | 增减研究档工具只改常量一处；漏同步三测必红 |
 | evolution/validation 引擎特征网（0.3.7 H7 归位：目录/类名已去平行批次后缀） | `evolution/test_evolution_feature_net.py`、`validation/test_validation_feature_net.py`（规格契约锚——断言值真实执行钉住） | 两域主流程改动须回归（diversity/evaluation/mtf 装载/双引擎） |
@@ -125,6 +128,25 @@
 - 转化拒绝：when 条件带 timeframe 键显式 RESEARCH_NOT_EXPRESSIBLE（不静默降级单周期）；登记/求值/案例检查不受影响锚同文件
 - 新错误码四枚（TIMEFRAME_ON_THEN/TIMEFRAME_UNKNOWN/TIMEFRAME_NOT_HIGHER/RESEARCH_MTF_CONTEXT_MISSING）——hint 注册表漂移即红（tests/mcpserver/test_errors.py）
 - **30 文件 MTF 测试基线分拣结论（先跑后判存档）**：按新纪律重建 15 处断言——test_mtf.py merge_to_base 4（OHLCV 投影翻转/+1 位移退役真前视锚/差分锚）、test_mtf_engine resample_values 2、test_mtf_phase2 pulse 族 7（+tf 落位替换窗口聚合）、test_phase4_mtf_roles 2（ffill 开盘即见→收盘可见）、test_validate_integration 1（timeframe 键静默忽略→结构化拒绝）；test_executor_vectorize 对照组随 _resample_pulse 退役（权威锚在 tests/data）；其余 MTF 消费测试零漂移通过（含 test_mtf_data_alignment 进化 timeframe_pool 语义、scene 38、trading 不变性）；全量 2955 passed / coverage 87.28%（0.2.13 基线 2897/87.03%，+58 全为新锚）
+
+## 七区 · 0.4.1 add-research-analysis-tools（研究分析能力）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| R1 批量指标读数 | 批量-单请求一致（请求序键+独立直算防双错）；互斥同传拒；组数 1..8 两侧；整批原子两段（校验期 groups[N]+执行期装载失败）；载荷分档机制（2048/16384 常量锚+monkeypatch 降阈）；零副作用；存量单组逐字节+单组响应无 groups 键形制锚（零触达批量路径）；组结构三面（schema 防线/条目缺 indicator/未知键——修复战闸门补）；MCP 工具层 body 无条件透传三面锚（CARD-06） | `api/test_research_query_indicator_api.py::TestBatchQueryIndicator`、`mcpserver/test_server.py` | — |
+| R2 组合条件（S1/S2+B2） | mask_for_all 交集独立对照+内核自洽锚（[c]≡c）+高周期混合（asof_completed 人工推导）；旧键逐字节锚（两模板 payload 形制+event_study 键集冻结无 warmup_bars）；形制自洽（len=1 与 len=2 同前扩）；装载引用并集（warmup_bars=derive_warmup 权威对照）；互斥/条数域/形制非法/零样本/trigger_policy 合并掩码游程/TestClient 留痕；dict subject 转译六链路（单元 strict 两态+路由四链——CARD-03）；锚键互斥四模板+判定序（CARD-04）；conditions+indicator echo 与 params 孤键拒（修复战闸门补）；validate_conditions_array 四消费者单点（CARD-05 提升） | `analysis/test_condition_kernel.py`（S1/S2/转译）、`api/test_conditions_combination.py`（B2/键组/转译路由面）、`analysis/templates/test_condition_stats.py`（直调键组） | — |
+| R3 区间事件摘要 | 四类事件独立推导（指标权威现算+测试内自写翻转/游程语义；sustained_run 另有纯手工算术样例）；三对交叉对/三轨道进出双向全覆盖；统计段边界前态取自 warmup 前缀；默认集机械性+排除类别披露（volatility 经轨道族点名属默认集）；点名可达（PSAR）；双上限两侧（bar 4999/5000/5001+事件 500 机制）；warmup 拒四键族；空事件合法；载荷无原始行；close_quantiles 分位独立核算+事件率 Wilson 独立核算（events_bars 口径独立去重计数——CARD-01 同步）；indicators 装载前校验路由级三形+合法对照（CARD-02）；统计段空拒（修复战闸门补）；留痕两态（挂 id 进并集） | `analysis/templates/test_segment_narrative.py`（B3 模板级）、`api/test_segment_narrative_route.py`（路由级） | — |
+| R4 判定并集余量查询 | **两出口一致 system 用例（本变更最重要单条）**：查询 remaining 段隔离验证不被拒+已偷看区间双向闭环（同键幂等返回既有非拒——validate 型日志不进并集经实证澄清）；三来源账本；防日级截断锚（首 bar 08:00）；差集三形制+floor 折算（10h→2）；半开对齐；404/三参数必填/幂等零副作用/白名单静态锚 | `api/test_union_balance.py`（B4） | — |
+| R5 反例画像 | 分组区间语义核心正例（触及后回落 rolling max 判符合——终点口径必错）；short 对称单调两向；特征域锚（_DEFAULT_PARAMS 全列减 guard_only/lazy+负断言）；八键独立核算（键集与 _desc 对齐）；skipped_features 披露锚（monkeypatch 构造失败）；Cohen's d 手工公式+|d| 排序；反例组 29/30 两侧 insufficient、反例组 0 合法、总触发 <min_samples 小样本拒绝（两通道分层）；confidence Wilson 独立核算+counter_rate 点估计键（CARD-08）+p=0 上界与 n_grouped=0 退化形（键保留 None/interval=[0,0]）；mtf 写穿回归锚（高周期条件求值后入参列集不变——CARD-14）；direction 封闭枚举（mixed 拒）；输出无自动生成条件字段断言；两键形制 | `analysis/templates/test_counter_profile.py`（B5）、`api/test_conditions_combination.py::TestCounterProfileRoute` | — |
+| R6 退出参数扫描 | 校验确定序全序锚（②先于⑥）+拒绝面全集（grid 结构原始面/mode 唯一/非法模式披露合法集/空列表/值域引用式四点/止盈正值/Σ≤50 两侧/两期分野红锚）；条件条数域+形制三缺口（×6/[]/缺三键+单条件对称——CARD-05）；直调层 direction 枚举与二选一（修复战闸门补）；20 组网格完整含费滑重放对照；单组容错；deepcopy 独立+展开三层序；劣结构 tp<stop 如实呈现；纯噪声结构性质（绝不 plateau）；三道门四值（受控注入轨道：平坦/尖峰/矩阵最差聚合/资格门 4-5 两侧/恰 0 严格/全胜组 null 键保留/gates 五键+不可注入/人工游程对照/单轴长度 1 推论/全组失败 indeterminate）；_worst 最差聚合全序纯函数 6 对双向（CARD-15）；timeframe 拒绝锚+能力域对照（同条件 condition_stats 过 vs exit_sweep 拒）；S5 双向守护；留痕不进并集（summary 四键）；异步两侧（9 同步/11 走 202 轮询——executor 重绑既有形制） | `analysis/templates/test_exit_sweep.py`（B6 两轨+判定/校验/条件三轨） | — |
+| L3 版本 DoD 研究轮 | 四模板全链（segment_narrative→condition_stats(conditions)→counter_profile→exit_sweep）+R4 闭环（查询→remaining 段隔离验证不被拒）；留痕三型全貌；MCP 能力自述对拍（六项+不挂假设说明） | `api/test_research_round_l3.py` | — |
+
+### 0.4.1 守护行
+- 键组机制（_TEMPLATE_REQUIRED_KEYS 键组形制）：condition_stats/event_study/counter_profile/exit_sweep 四模板二选一——同传互斥/缺组点名/部分触及按组点名；模板签名变更须同步本表（`api/test_error_channel.py` 集合断言 + `mcpserver/test_errors.py` hint 清单对拍——静态抄录与 _TEMPLATES 失联必红）
+- exit_sweep 留痕检查型：entry_type="exit_sweep" 不挂假设不进判定并集（与 param_sweep「检查不消耗验证区间」同构）；_log_result 分派单点 TD-1 纪律
+- S2 装载纪律：conditions 形制（含长度 1）统一走 _load_with_condition_refs 前扩并集（strict=True 单点保持）；旧 condition 键在 condition_stats 走同一装载（存量语义）、在 event_study 走 _load_df 冻结（D9 键形制判据）
+- 值域单点权威：SL_PCT_MIN/MAX 提升 validator 模块级常量（exit_sweep 引用式消费——改域单点生效；原字面等价替换行为零变化）
+- trade_returns ndarray 真值坑：`or []` 对 ndarray 抛 ValueError——一律 `is not None` 判空（exit_sweep 实施期实证）
 
 ## 五区 · 0.3.3 mcp-contract-transparency
 

@@ -40,4 +40,5 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "transition_hypothesis",
     "translate_hypothesis_to_strategy",
     "trigger_evolution",
+    "union_balance",
 })

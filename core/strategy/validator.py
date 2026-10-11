@@ -1,4 +1,16 @@
-"""DNA validation - checks strategy legality before backtesting."""
+"""策略 DNA 合法性校验（回测前置闸门）。
+
+职能：validate_dna 对 StrategyDNA 做结构完整性与值域合法性检查，
+产出 ValidationResult（errors 拒绝面 / warnings 提示面）。
+
+价值与服务对象：策略 DNA 进引擎前的唯一合法性闸门——消费方为
+进化链 population（种群初始化）与 operators（变异子代校验），
+非法产出回退保底以此为据；SL_PCT_MIN/MAX 同时是 exit_sweep
+_pct_range 的引用式值域（扫描通道 pct 档单点权威，改域单点生效）。
+
+职责边界：只判合法性与结构完整，不判策略优劣（表现评估归回测
+引擎与评估链）；不修改 DNA。
+"""
 
 from __future__ import annotations
 
@@ -7,32 +19,37 @@ from typing import List
 
 from core.strategy.dna import StrategyDNA, SignalRole
 
+# 止损 pct 值域（0.4.1 R6 提升为模块级常量——exit_sweep 网格校验引用式
+# 消费，改域单点生效；原函数内字面等价替换，行为零变化）
+SL_PCT_MIN = 0.005
+SL_PCT_MAX = 0.20
+
 
 @dataclass
 class ValidationResult:
-    """Result of DNA validation."""
+    """DNA 校验结果（is_valid=errors 为空；warnings 不影响放行）。"""
     is_valid: bool = True
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
 
 def validate_dna(dna: StrategyDNA) -> ValidationResult:
-    """Validate a StrategyDNA for legality.
+    """校验 StrategyDNA 合法性（拒绝面清单）。
 
     Checks:
-    - At least 1 entry signal (trigger or guard)
-    - At least 1 exit signal (trigger or guard)
-    - Stop loss in [0.005, 0.20]
-    - Position size in [0.10, 1.0]
-    - Take profit > stop loss (if set)
-    - Condition structure validity for new condition types
-    - cross_layer_logic must be AND or OR (for MTF strategies)
-    - Warn if mixed direction with layers but no trend layer
+    - 至少 1 个入场信号（trigger 或 guard）
+    - 至少 1 个离场信号（trigger 或 guard）
+    - 止损在 [0.005, 0.20]（SL_PCT_MIN/MAX 单点）
+    - 仓位在 [0.10, 1.0]
+    - 止盈 > 止损（设了止盈时）
+    - 新条件类型的结构完整性
+    - cross_layer_logic 须 AND 或 OR（MTF 策略）
+    - mixed 方向带 layers 但无 trend 层时 warning（不拒）
     """
     errors: List[str] = []
     warnings: List[str] = []
 
-    # For non-MTF strategies, check top-level signal_genes
+    # 非 MTF 策略：查顶层 signal_genes
     if not dna.layers:
         entry_signals = [
             g for g in dna.signal_genes
@@ -48,7 +65,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         if not exit_signals:
             errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
 
-        # Mixed direction requires at least one DIRECTION gene
+        # mixed 方向须至少一个 DIRECTION 基因
         if dna.risk_genes.direction == "mixed":
             direction_genes = [
                 g for g in dna.signal_genes
@@ -59,7 +76,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                     "mixed direction requires at least one DIRECTION gene"
                 )
 
-    # Also check layers for MTF strategies
+    # MTF 策略：另查各 layer（结构面与顶层同规）
     if dna.layers:
         if len(dna.layers) > 3:
             errors.append(
@@ -89,7 +106,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         if not has_execution:
             errors.append("MTF strategy needs at least one execution layer")
 
-        # Mixed direction requires at least one DIRECTION gene across all layers
+        # mixed 方向须全部 layer 合计至少一个 DIRECTION 基因
         if dna.risk_genes.direction == "mixed":
             all_direction = [
                 g for layer in dna.layers
@@ -102,25 +119,25 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                     "across MTF layers"
                 )
 
-        # Validate cross_layer_logic
+        # cross_layer_logic 值域校验
         if dna.cross_layer_logic not in ("AND", "OR"):
             errors.append(
                 f"cross_layer_logic must be 'AND' or 'OR', got '{dna.cross_layer_logic}'"
             )
 
-        # Warn if mixed direction but no trend layer
+        # 提示面：mixed 方向但无 trend 层（方向信号可能无明确定义基准）
         if dna.risk_genes.direction == "mixed" and not has_trend:
             warnings.append(
                 "mixed direction with layers but no trend layer: "
                 "direction signal may not be well-defined"
             )
 
-    # Validate condition structures for top-level genes
+    # 顶层基因的条件结构校验
     for i, gene in enumerate(dna.signal_genes):
         cond_errors = _validate_condition_structure(gene.condition, i)
         errors.extend(cond_errors)
 
-    # Validate condition structures for layer genes
+    # 各 layer 基因的条件结构校验（prefix 点名层与序）
     if dna.layers:
         for layer in dna.layers:
             for i, gene in enumerate(layer.signal_genes):
@@ -129,10 +146,10 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 )
                 errors.extend(cond_errors)
 
-    # Risk genes validation
+    # 风险基因值域校验
     risk = dna.risk_genes
-    if not (0.005 <= risk.stop_loss <= 0.20):
-        errors.append(f"Stop loss {risk.stop_loss} out of range [0.005, 0.20]")
+    if not (SL_PCT_MIN <= risk.stop_loss <= SL_PCT_MAX):
+        errors.append(f"Stop loss {risk.stop_loss} out of range [{SL_PCT_MIN}, {SL_PCT_MAX}]")
 
     if risk.take_profit is not None and risk.take_profit <= risk.stop_loss:
         errors.append(f"Take profit ({risk.take_profit}) must be greater than stop loss ({risk.stop_loss})")
@@ -146,7 +163,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
 
-    # MTF control parameters validation
+    # MTF 控制参数值域校验
     valid_mtf_modes = (None, "direction", "confluence", "direction+confluence")
     if dna.mtf_mode not in valid_mtf_modes:
         errors.append(f"mtf_mode must be one of {valid_mtf_modes}, got '{dna.mtf_mode}'")
@@ -163,7 +180,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
 def _validate_condition_structure(
     condition: dict, gene_idx: int, prefix: str = "",
 ) -> List[str]:
-    """Validate structure of a condition dict for new condition types."""
+    """新条件类型的结构完整性校验（缺必需键即 error 点名条件类型与键）。"""
     errors: List[str] = []
     label = prefix if prefix else f"Gene {gene_idx}"
     cond_type = condition.get("type", "")

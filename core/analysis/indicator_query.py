@@ -45,6 +45,15 @@ np.nanpercentile 对全 NaN 列返回 NaN 数组的行为（伴随 RuntimeWarnin
 （inspect_cases 的 24576 是案例窗口预算——两个产品级约束不合并）；
 超限结构化拒绝不静默截断；自检定位=形制退化兜底，参数校验放行的
 调用不会被体积自检拒掉（0.2.8 先例哲学）。
+
+批量通道（add-research-analysis-tools 0.4.1 R1）：groups=[{indicator,
+params?, reductions?, start?, end?}] 一次多组「指标 × 参数 × 归约」
+读数，与单组专属字段（indicator/params/reductions/start/end）互斥
+（同传 422 指明互斥对）；组数 1..8（校验序①结构→②组数→③全组
+逐组校验→④逐组装载现算→⑤请求序汇总→⑥批量档体积自检）；各组
+区间独立、返回 {"groups": […]}（数组序=请求序）；整批原子含执行期
+——任一组失败（校验期或装载失败）整批结构化拒绝无部分结果，错误
+以 groups[N] 指明组序；载荷分档：单组 2048 / 批量 16384 字节。
 """
 from __future__ import annotations
 
@@ -65,7 +74,12 @@ _REDUCTIONS: frozenset[str] = frozenset(
     {"latest", "quantiles", "regime_means", "trend_slope"})
 _DEFAULT_REDUCTIONS: List[str] = ["latest", "quantiles"]
 _QUANTILE_POINTS = (1, 5, 25, 50, 75, 95, 99)  # 固定七点（覆盖尾部）
-_MAX_SERIALIZED_BYTES = 2048  # 归约摘要字节上限（形制退化兜底）
+_MAX_SERIALIZED_BYTES = 2048  # 归约摘要字节上限（形制退化兜底；单组档）
+# 批量档上限（0.4.1 R1 / A3 假设值：8 组上界外推——实战频繁触限则
+# 调档为契约参数修订而非结构变更）；组成员合法键（单组专属字段形制）
+_MAX_BATCH_SERIALIZED_BYTES = 16384
+_GROUP_KEYS = frozenset({"indicator", "params", "reductions", "start", "end"})
+_MAX_GROUPS = 8
 
 # regime 标注用辅助指标（classify_series 需要 df 上有 ADX/ATR 列与
 # close；注册表 default 参数现算——键名 adx_14/atr_14 由内核拼接惯例
@@ -174,7 +188,7 @@ _REDUCERS = {
 }
 
 
-def query_indicator(
+def _query_single(
     data_dir: Path,
     *,
     symbol: str,
@@ -185,33 +199,11 @@ def query_indicator(
     end: Optional[str] = None,
     reductions: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """单指标任意参数现算读数（检查④；归约摘要直返，零写入零留痕）。
+    """单组读数计算体（校验链→装载双路径→现算→逐列归约；无体积自检）。
 
-    Args:
-        data_dir: parquet 数据目录。
-        symbol: 交易对（如 BTCUSDT）。
-        timeframe: bar 周期（TF_MINUTES 键；未知周期按 240 分钟兜底）。
-        indicator: 指标名（INDICATOR_REGISTRY 键）。
-        params: 指标参数（缺省拼注册表 default——Q1 裁决；键值前置
-            校验，多余键/越界值结构化拒绝）。
-        start: 请求区间起点（显式走 load_with_warmup，前缀不足拒绝；
-            缺省全量直装 + effective_start 披露）。
-        end: 请求区间终点（缺省=数据末端，range 以 effective_end 披露）。
-        reductions: 归约多选（缺省 ["latest","quantiles"]）。
-
-    Returns:
-        读数摘要 dict（顶层 indicator/params 生效值/range/warmup_bars/
-        reductions——reductions 以输出列名为键，多输出列每列独立一组；
-        个别列无有效值时该列各归约为 null 键保留）。序列化后
-        <= 2048 字节。
-
-    Raises:
-        ResearchError: RESEARCH_INDICATOR_UNKNOWN（不在册）；
-        RESEARCH_PARAM_INVALID（参数/枚举非法/体积超限）；
-        RESEARCH_SYMBOL_NOT_FOUND（无数据）；
-        RESEARCH_DATA_INSUFFICIENT（不可装载/有效域为空/全部输出列
-        皆无有效值）；RESEARCH_WARMUP_INSUFFICIENT（显式 start 前缀
-        不足，透传自 load_with_warmup）。
+    0.4.1 R1 自 query_indicator 原体拆出（行为逐字保真）：单组形制的
+    体积自检（2048 档）留在 query_indicator 公共壳，批量形制在
+    query_indicator_groups 汇总后走批量档（16384）——两档分属两形制。
     """
     # ---------------- 校验链（固定顺序：在册→参数→枚举→品种→warmup） ----------------
     _validate_indicator(indicator)
@@ -341,17 +333,146 @@ def query_indicator(
         "warmup_bars": int(warmup_bars),
         "reductions": out_reductions,
     }
+    return result
 
-    # ---------------- 体积自检（超限拒绝不静默截断） ----------------
+
+def query_indicator(
+    data_dir: Path,
+    *,
+    symbol: str,
+    timeframe: str,
+    indicator: str,
+    params: Optional[Dict[str, Any]] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    reductions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """单指标任意参数现算读数（检查④；归约摘要直返，零写入零留痕）。
+
+    单组公共壳：_query_single 计算体 + 单组档体积自检（2048——存量
+    语义不变）。Args/Raises 语义见 _query_single 与模块 docstring。
+
+    Raises:
+        ResearchError: RESEARCH_INDICATOR_UNKNOWN（不在册）；
+        RESEARCH_PARAM_INVALID（参数/枚举非法/体积超限）；
+        RESEARCH_SYMBOL_NOT_FOUND（无数据）；
+        RESEARCH_DATA_INSUFFICIENT（不可装载/有效域为空/全部输出列
+        皆无有效值）；RESEARCH_WARMUP_INSUFFICIENT（显式 start 前缀
+        不足，透传自 load_with_warmup）。
+    """
+    result = _query_single(
+        data_dir, symbol=symbol, timeframe=timeframe, indicator=indicator,
+        params=params, start=start, end=end, reductions=reductions)
+
+    # ---------------- 体积自检（超限拒绝不静默截断；单组档 2048） ----------------
     payload = json.dumps(result, ensure_ascii=False)
     if len(payload.encode("utf-8")) > _MAX_SERIALIZED_BYTES:
+        first_col = next(iter(result["reductions"]))
+        selected = list(result["reductions"][first_col])
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"归约摘要超体积上限: {len(payload.encode('utf-8'))} 字节"
-            f"（上限 {_MAX_SERIALIZED_BYTES}——输出列数 {len(ind_cols)}，"
+            f"（上限 {_MAX_SERIALIZED_BYTES}——输出列数 {len(result['reductions'])}，"
             "可减少 reductions 项）",
             detail={"bytes": len(payload.encode("utf-8")),
                     "limit": _MAX_SERIALIZED_BYTES,
-                    "columns": len(ind_cols),
+                    "tier": "single",
+                    "columns": len(result["reductions"]),
                     "reductions": selected})
+    return result
+
+
+def query_indicator_groups(
+    data_dir: Path,
+    *,
+    symbol: str,
+    timeframe: str,
+    groups: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """批量指标读数（0.4.1 R1）——一次调用多组「指标 × 参数 × 归约」。
+
+    校验确定序全序固定（错误码稳定性）：①groups 结构（逐组成员为
+    dict、必含 indicator、成员键 ⊆ 单组专属键——未知键结构化拒绝，
+    防静默部分计算假象）→②组数 1..8（空数组=无意义请求非合法零
+    结果）→③全组逐组校验（沿单组链与序：在册→参数→reductions——
+    先于任何装载 IO）→④逐组双路径装载现算（各组区间独立）→⑤请求
+    序数组汇总→⑥载荷自检（批量档 16384）。
+
+    整批原子含执行期：任一组失败（校验期或执行期装载失败
+    SYMBOL_NOT_FOUND/WARMUP/DATA_INSUFFICIENT）整批结构化拒绝、无
+    部分结果（纯只读可安全重试）；错误 message/detail 以 groups[N]
+    指明组序。零写入零留痕同步直返（单组形制同族）。
+
+    Returns:
+        {"groups": [单组同形结果…]}（数组序=请求序）。
+    """
+    # ① groups 结构
+    if not isinstance(groups, list):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID", "groups 须为数组",
+            detail={"param": "groups",
+                    "legal_form": "[{indicator, params?, reductions?, "
+                                  "start?, end?}]"})
+    for i, g in enumerate(groups):
+        if (not isinstance(g, dict) or "indicator" not in g
+                or not isinstance(g["indicator"], str)):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"groups[{i}] 结构非法（须为含 indicator 的 dict）",
+                detail={"param": f"groups[{i}]",
+                        "legal_form": "{indicator, params?, reductions?, "
+                                      "start?, end?}"})
+        extra = sorted(set(g) - _GROUP_KEYS)
+        if extra:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"groups[{i}] 含未知键: {extra}",
+                detail={"param": f"groups[{i}]", "illegal_keys": extra,
+                        "legal_keys": sorted(_GROUP_KEYS)})
+    # ② 组数 1..8
+    if not 1 <= len(groups) <= _MAX_GROUPS:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"groups 组数须在 1..{_MAX_GROUPS}（实际 {len(groups)}）",
+            detail={"param": "groups", "legal_range": f"1..{_MAX_GROUPS}",
+                    "actual": len(groups)})
+    # 组序包装（③④共用——错误以 groups[N] 指明组序，code/status 原样）
+    def _wrap_group_error(i: int, exc: ResearchError) -> ResearchError:
+        return ResearchError(
+            exc.code, f"groups[{i}]: {exc.message}", status=exc.status,
+            detail={"group": f"groups[{i}]", **(exc.detail or {})})
+
+    # ③ 全组逐组校验（在册→参数→reductions；先于装载 IO——确定序）
+    for i, g in enumerate(groups):
+        try:
+            _validate_indicator(g["indicator"])
+            if g.get("params") is not None:
+                validate_params(g["indicator"], g["params"])
+            _validate_reductions(g.get("reductions"))
+        except ResearchError as exc:
+            raise _wrap_group_error(i, exc) from exc
+    # ④ 逐组双路径装载现算（执行期整批原子——异常中止天然无部分结果）
+    results: List[Dict[str, Any]] = []
+    for i, g in enumerate(groups):
+        try:
+            results.append(_query_single(
+                data_dir, symbol=symbol, timeframe=timeframe,
+                indicator=g["indicator"], params=g.get("params"),
+                start=g.get("start"), end=g.get("end"),
+                reductions=g.get("reductions")))
+        except ResearchError as exc:
+            raise _wrap_group_error(i, exc) from exc
+    # ⑤ 请求序数组汇总 → ⑥ 批量档载荷自检
+    result = {"groups": results}
+    payload = json.dumps(result, ensure_ascii=False)
+    if len(payload.encode("utf-8")) > _MAX_BATCH_SERIALIZED_BYTES:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"批量归约摘要超体积上限: {len(payload.encode('utf-8'))} 字节"
+            f"（批量档上限 {_MAX_BATCH_SERIALIZED_BYTES}，单组档 "
+            f"{_MAX_SERIALIZED_BYTES}）",
+            detail={"bytes": len(payload.encode("utf-8")),
+                    "limit": _MAX_BATCH_SERIALIZED_BYTES,
+                    "tier": "batch",
+                    "groups": len(results)})
     return result

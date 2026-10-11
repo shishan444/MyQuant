@@ -419,6 +419,39 @@ class TestToolBodyInvocation:
         run_async(mcp.call_tool("get_research_log", {"page": 1}))
         assert len(posts) == 6, "六个 POST 可选场合缺省调用均到达"
 
+    def test_query_indicator_body_passthrough_card06(self) -> None:
+        """CARD-06：query_indicator body 组装——单组字段无条件透传。
+
+        indicator+groups 同传两键均进 body（互斥归 API 单一事实源判
+        422——原 else 分支吞 indicator 使互斥对同传永不触发、静默走
+        批量路径）；start="" 空串透传交 API 判（原 truthy 吞掉）；
+        None 缺省不进 body（既有语义不变锚）。"""
+        mcp, api = build_server(profile="research", base_url="http://x")
+        bodies: list = []
+
+        def _capture(path, json_body=None):
+            bodies.append(json_body)
+            return {}
+
+        api.post = _capture
+        run_async(mcp.call_tool("query_indicator", {
+            "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI",
+            "groups": [{"indicator": "EMA"}]}))
+        body = bodies[0]
+        assert body["indicator"] == "RSI", "同传时 indicator 不被吞"
+        assert body["groups"] == [{"indicator": "EMA"}], "groups 照常透传"
+
+        run_async(mcp.call_tool("query_indicator", {
+            "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI",
+            "start": ""}))
+        assert bodies[1]["start"] == "", "空串 start 透传（API 侧判）"
+
+        run_async(mcp.call_tool("query_indicator", {
+            "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI"}))
+        bare = bodies[2]
+        for key in ("params", "reductions", "start", "end", "groups"):
+            assert key not in bare, f"None 缺省 {key} 不进 body"
+
 
 class TestServerEntryGaps:
     """闸门终验消解：server.py 装配校验/自检/main dispatch 的进程内触达。

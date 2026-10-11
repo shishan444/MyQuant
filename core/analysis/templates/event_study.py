@@ -24,13 +24,15 @@ from core.analysis.templates.param_guard import _require_int_range
 def event_study(
     df: pd.DataFrame,
     *,
-    condition: Dict[str, Any],
+    condition: Dict[str, Any] | None = None,
     window: int = 12,
     data_ranges: list[dict[str, str]],
     min_events: int = 30,
     hypothesis_id: str | None = None,
     mtf: "MtfEvalContext | None" = None,
     trigger_policy: Dict[str, Any] | None = None,
+    conditions: list[Dict[str, Any]] | None = None,
+    request_start: str | pd.Timestamp | None = None,
 ) -> AnalysisResult:
     """事件窗对齐的路径统计。
 
@@ -39,6 +41,15 @@ def event_study(
             携带 timeframe 键——高周期条件经掩码投影求值）。0.2.14
             改道 condition_kernel.mask_for（第七求值点收口）——额外
             动作键全量透传生效、结构化 subject 支持获得（现算路径）。
+            旧键形制——装载（路由 _load_df 普通装载）与 payload 键集
+            逐字节冻结锚（D9）。
+        conditions: 条件数组（0.4.1 R2，AND 语义）——求值走
+            mask_for_all；路由侧改走引用并集前扩装载（三件套：前扩+
+            request_start 切回+warmup_bars 披露——本形式 payload 独有
+            warmup_bars 键，旧键形制 payload 键集冻结无此键）。与
+            condition 二选一。
+        request_start: conditions 形式的请求区间起点（前扩装载产物）——
+            非 None 时事件集限制在统计段（warmup 前缀只用不算）。
         window: 事件后观察窗（bar 数）。
 
     Raises:
@@ -50,6 +61,14 @@ def event_study(
     _require_int_range(window, name="window", lo=1, hi=len(df) - 1)
     _require_int_range(min_events, name="min_events", lo=0)
 
+    if (condition is None) == (conditions is None):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "condition 与 conditions 须二选一（键组分派在路由层——"
+            "直调方同样须遵守）",
+            detail={"param": "condition|conditions",
+                    "legal_form": "任选其一"})
+
     # trigger-policy 卡4（5.1）：形制归一 + bars 数据长度上界求值侧
     # 校验（数据已加载——D12 与 forward_bars 同窗同位置；CARD-03 收敛
     # require_bars_within 单点）；缺省/显式 none 归一 None=逐 bar
@@ -59,25 +78,37 @@ def event_study(
     require_bars_within(policy_norm, len(df), "trigger_policy")
 
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-    from core.analysis.condition_kernel import MtfEvalContext, mask_for
+    from core.analysis.condition_kernel import (
+        MtfEvalContext, mask_for, mask_for_all, stat_window_mask)
 
     # 列前置检查：subject 不可用先结构化拒绝（否则 mask 全 False 会以
     # 误导性的"事件数不足"小样本拒绝收场）。结构化 subject 经 resolve
     # 校验即放行（mask_for 两段式现算）；字符串 subject 保持原始列检查。
-    subject = condition.get("subject", "")
-    if isinstance(subject, dict):
-        try:
-            resolve_column_ref(subject)
-        except ColumnRefError as exc:
-            raise ResearchError(
-                "RESEARCH_COLUMN_NOT_AVAILABLE",
-                f"condition.subject 引用非法: {exc.message}",
-                detail={"param": "condition.subject",
-                        "code": exc.code, **exc.detail}) from exc
-    else:
-        require_column(df, str(subject), template="event_study")
+    # 0.4.1 R2：conditions 形式逐条化（全条前置检查）。
+    conds = conditions if conditions is not None else [condition]
+    for i, c in enumerate(conds):
+        field_name = (f"conditions[{i}].subject" if conditions is not None
+                      else "condition.subject")
+        subject = c.get("subject", "")
+        if isinstance(subject, dict):
+            try:
+                resolve_column_ref(subject)
+            except ColumnRefError as exc:
+                raise ResearchError(
+                    "RESEARCH_COLUMN_NOT_AVAILABLE",
+                    f"{field_name} 引用非法: {exc.message}",
+                    detail={"param": field_name,
+                            "code": exc.code, **exc.detail}) from exc
+        else:
+            require_column(df, str(subject), template="event_study")
 
-    mask = mask_for(df, condition, mtf=mtf)
+    if conditions is not None:
+        # 三件套之 request_start 切回：前扩装载的前缀只用不算——事件
+        # 集限制在统计段（warmup 前缀 bar 不产事件）
+        mask = mask_for_all(df, conditions, mtf=mtf)
+        mask = mask & stat_window_mask(df, request_start)
+    else:
+        mask = mask_for(df, condition, mtf=mtf)
     mask = mask.fillna(False).astype(bool)
     event_idx = np.where(mask.values)[0]
 
@@ -137,7 +168,10 @@ def event_study(
         "alpha": 0.05,
     }
     payload = {
-        "condition": dict(condition),
+        # 0.4.1 R2：echo 形制随键组——旧键形制键集冻结；conditions 形式
+        # 独有 warmup_bars 披露键（三件套之三，尾缀附加）
+        **({"conditions": [dict(c) for c in conditions]}
+           if conditions is not None else {"condition": dict(condition)}),
         "window": window,
         "n_events": int(len(event_idx)),
         "path": {
@@ -159,6 +193,12 @@ def event_study(
         "first_event_time": str(df.index[event_idx[0]]),
         "last_event_time": str(df.index[event_idx[-1]]),
     }
+    if conditions is not None:
+        from core.analysis.warmup_loader import to_utc
+        req_ts = (to_utc(pd.Timestamp(request_start))
+                  if request_start is not None else None)
+        payload["warmup_bars"] = (int((df.index < req_ts).sum())
+                                  if req_ts is not None else 0)
     if policy_norm is not None:
         payload["trigger_policy"] = policy_norm   # 报告声明生效策略
 

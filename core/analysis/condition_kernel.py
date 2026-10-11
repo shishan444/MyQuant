@@ -9,9 +9,14 @@ multi-timeframe-conditions（0.2.14）：``mask_for`` 加 ``mtf`` 上下文
 参数与掩码投影三分派（高周期条件整条件在高周期轴求值、布尔掩码按
 asof_completed 投影）；额外键全量透传修复既有三键重建静默丢键缺陷。
 
+add-research-analysis-tools（0.4.1）：``mask_for_all`` 条件数组交集
+（逐条 ``mask_for`` 后 AND）——三分析模板组合条件共用，高周期条目
+经 ``MtfEvalContext`` 缓存零重算。
+
 消费者：screen_patterns / param_sweep / regime_split / event_study /
 inspect_cases / validation engine / rule_engine（改动须按 tests/README
-守护清单回归全部消费者）。
+守护清单回归全部消费者）；mask_for_all 消费者=condition_stats /
+event_study / counter_profile（0.4.2 组合求值后续共用）。
 """
 from __future__ import annotations
 
@@ -154,6 +159,34 @@ def mask_for(
     return _mask_higher(work, condition, mtf, tf_key)
 
 
+def mask_for_all(
+    work: pd.DataFrame, conditions: List[Dict[str, Any]],
+    mtf: Optional[MtfEvalContext] = None,
+) -> pd.Series:
+    """条件数组交集掩码（0.4.1 R2 S1——逐条 mask_for 后按位 AND）。
+
+    公共契约：condition_stats / event_study / counter_profile 三模板
+    与 0.4.2 组合求值共用。带 timeframe 键条目各自走投影路径
+    （``MtfEvalContext`` 惰性缓存 + ``__mtf_mask_*`` 幂等列天然去重，
+    同请求多条件共用零重算）；AND 结果不缓存（每请求一次求值无重复
+    场景）。内核自洽锚：mask_for_all([c]) 与 mask_for(c) 逐位一致
+    （单条 AND 数学恒等，差异仅在装载路径——键形制判据 D9）。
+
+    长度 1 包装与条数校验（空/>5）不在内核——路由/模板入口与参数
+    校验层职责（空数组到达本函数属调用方接线缺陷，按内部不变量
+    ValueError 拒绝而非外部 422 语义）。
+    """
+    if not conditions:
+        raise ValueError(
+            "mask_for_all 收到空 conditions（条数校验归路由/校验层——"
+            "调用方接线缺陷）")
+    result: Optional[pd.Series] = None
+    for condition in conditions:
+        mask = mask_for(work, condition, mtf=mtf)
+        result = mask if result is None else (result & mask)
+    return result
+
+
 def _classify_target_ref(target) -> Tuple[str, Optional[Dict[str, Any]]]:
     """target 引用五分类（卡9：三处内嵌判定链的公共分类底座）。
 
@@ -222,17 +255,29 @@ def collect_condition_refs(
         [(indicator, params_dict)] 引用清单（可为空——纯数值条件）。
 
     Raises:
-        ResearchError: RESEARCH_CONDITION_INVALID（strict=True 且
-            target 不可解码且非基础列）。
+        ResearchError: RESEARCH_CONDITION_INVALID——dict subject 经
+            resolve_column_ref 解析失败（ColumnRefError 转译，不限
+            strict）；或 strict=True 且 target 不可解码且非基础列。
     """
     from core.analysis.column_ref import (
-        resolve_column_ref, try_decode_column_ref,
+        ColumnRefError, resolve_column_ref, try_decode_column_ref,
     )
+    from core.analysis.hypothesis_service import ResearchError
 
     refs: List[tuple] = []
     subject = condition.get("subject")
     if isinstance(subject, dict):
-        cdef = resolve_column_ref(subject)
+        # ColumnRefError 转译（形制沿 hypothesis_to_strategy 翻译链先例）：
+        # 不转译则裸穿 ValueError → 路由 500；掩码路径（strict=False）的
+        # dict subject 解析失败同经此转译收敛为 422（宽容面仅 str subject
+        # 不可解码静默跳过与 target unknown 不并入——语义冻结不动）
+        try:
+            cdef = resolve_column_ref(subject)
+        except ColumnRefError as exc:
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"condition.subject 非法: {exc.message}",
+                detail={"code": exc.code, **exc.detail}) from exc
         refs.append((cdef.indicator, dict(cdef.params)))
     elif isinstance(subject, str):
         decoded = try_decode_column_ref(subject)
@@ -246,6 +291,34 @@ def collect_condition_refs(
     elif kind == "unknown" and strict:
         _reject_unresolvable_target(target)
     return refs
+
+
+def validate_conditions_array(conditions: Any) -> None:
+    """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
+    装载前；CARD-05 自路由提升为条件域共享单点，第四消费者 exit_sweep
+    模板接入）。
+
+    条数 1..5：空数组与超限均 422 披露条数域（空集合是无意义请求
+    而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
+    规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
+    三键结构，hypothesis_service 登记链同款）。"""
+    from core.analysis.hypothesis_service import ResearchError
+
+    if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
+        actual = (len(conditions) if isinstance(conditions, list)
+                  else type(conditions).__name__)
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"conditions 条数须在 1..5（实际 {actual}）",
+            detail={"param": "conditions", "legal_range": "1..5"})
+    for i, c in enumerate(conditions):
+        if (not isinstance(c, dict)
+                or not all(k in c for k in ("subject", "action", "target"))):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"conditions[{i}] 须含 subject/action/target",
+                detail={"param": f"conditions[{i}]",
+                        "legal_form": "{subject, action, target}"})
 
 
 # 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。

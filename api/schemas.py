@@ -1030,15 +1030,23 @@ class QueryIndicatorRequest(BaseModel):
 
     params 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases
     的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。
+
+    0.4.1 R1 批量形制：可选 groups 与单组专属字段（indicator/params/
+    reductions/start/end）互斥（同传 422 指明互斥对；symbol/timeframe
+    公共必填保留）。groups MUST 显式声明——本模型无 model_config，
+    pydantic 默认 ignore 会静默丢键使批量请求降级单组语义；indicator
+    随之转可选（单组形制缺 indicator 由服务层 422）。
     """
 
     symbol: str
     timeframe: str
-    indicator: str
+    indicator: Optional[str] = None
     params: Optional[Dict[str, Any]] = None  # 缺省拼注册表 default（Q1 裁决）
     reductions: Optional[List[str]] = None  # 缺省 ["latest","quantiles"]
     start: Optional[str] = None
     end: Optional[str] = None
+    # 批量形制（0.4.1）：[{indicator, params?, reductions?, start?, end?}]
+    groups: Optional[List[Dict[str, Any]]] = None
 
 
 class FeatureRequestCreate(BaseModel):

@@ -32,6 +32,7 @@ READONLY_ENDPOINTS = frozenset({
     "/api/research/indicators",
     "/api/research/signals",
     "/api/research/market-snapshot",
+    "/api/research/union-balance",  # 判定并集余量查询（0.4.1 R4）
     "/api/research/hypotheses",
     "/api/research/hypotheses/{hypothesis_id}",
     "/api/research/log",
