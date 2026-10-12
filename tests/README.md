@@ -202,11 +202,11 @@
 
 | 能力 | 验证责任摘要 | 证据位置 | 缺口 |
 |---|---|---|---|
-| R1 声明块（B1/B2） | 值域按 sl_mode 分叉三维参数化（同值异判 1.5：pct 拒/atr 过）；幂等四分支+显式空对象三条（{} vs NULL→duplicated / {} vs 非空→422 / 键缺失→duplicated）；变体端到端（终态后异声明重登记→新假设→新实体）；分流两线（签名路径+九字段 D2 兜底含 atr_period=21 vs 14 异值锚）+连续性锚（存量 dna_json 无新键读 None）；API 全链到达 service+{} 传输保全+existing 摘要透传 | `strategy/test_param_domain_matrix.py`（B1-33 责任面矩阵）+`analysis/test_strategy_param_declaration.py`（B1+B2 全链 47 用例） | — |
+| R1 声明块（B1/B2） | 值域按 sl_mode 分叉三维参数化（同值异判 1.5：pct 拒/atr 过）；幂等四分支+显式空对象三条（{} vs NULL→duplicated / {} vs 非空→422 / 键缺失→duplicated）；变体端到端（终态后异声明重登记→新假设→新实体）；分流两线（签名路径+九字段 D2 兜底含 atr_period=21 vs 14 异值锚）+连续性锚（存量 dna_json 无新键读 None）；API 全链到达 service+{} 传输保全+existing 摘要透传；max_exposure 越界 detail 附 leverage 指引锚；迁移 e5b9f3c7a1d4 可逆性（upgrade 加列存量 NULL/downgrade 往返/head 锚） | `strategy/test_param_domain_matrix.py`（B1-33 责任面矩阵）+`analysis/test_strategy_param_declaration.py`（B1+B2 全链 47 用例）+`persistence/test_strategy_params_migration.py` | — |
 | R2 止损模式（B3/B7） | trail 手工核算（触发 bar 定位/多空对称/开仓重置跨仓/清算优先单事件/TP 并存）；atr 绝对价触发（倍数语义与 pct 同数据可区分/atr_period 动态取列/现算两路径/装载校验参数化四态/NaN bar 无 SL 约束）；pct 存量逐位（tests/backtest 全量特征网）；batch 一致性（三形态×两路径 trades/权益逐位+per-column atr_period）；exit_sweep 值域模式感知分档（atr 档 2.0 过/8.0 拒/0.05 拒/pct 2.0 拒/trail 同域）+S5 双断言翻转形态 | `backtest/test_sl_modes.py`+`trading/test_trading_link_compatibility.py`+`analysis/templates/test_exit_sweep.py`（S5 翻转+值域分档锚） | — |
 | R3 分批行为（B4/B5/L2） | 三角色映射四断言+插件列新组拒绝+组基因进签名；ADD_INHIBIT NOT 组合三入口一致（全/部分/无抑制+cross 类非取反形判定力锚）；引擎独立比例（串用修正 50% 非 30% 锚/加仓手工核算=权益×add_fraction/敞口超限跳过/缺省完备 0.5-0.1-1.0）；零触达+进化守护；组键配对四规则+有组无值归一化字面化；翻译生产路径三链拒（B3-17 双证据）；预检组级密度进 per_range；版本 DoD 端到端（组合入场+部分离场+trail+声明→登记→翻译→回测→双判据拒绝） | `analysis/test_scaled_position_actions.py`+`backtest/test_scaling_execution.py` | — |
 | R4 谱系披露（B6） | 身份族三查询（全状态含终态/parent 精确成员匹配兼容裸串与 JSON 两形制/SQL 聚合）；终态变体谱系互见（异声明重登记→D2 新实体，读 D1/D2 报告族全实体+is_current）；单假设单实体回归+异条件不进族+进化不误命中；聚合 230 条不截断；只读零写入；无 parent 容错；404 不变 | `analysis/test_validation_lineage.py`（9 用例） | — |
-| MCP 工具面（L3） | 新参数 schema 对拍（strategy_params 对象+组键三参数对象数组=HypothesisCreate 顶层键形制）；工具文档披露声明块与身份关系+分批组键语义；能力自述三新段（声明块/分批组/止损三分派+lineage） | `mcpserver/test_contract_parity.py`（新参数对拍+文档披露锚） | — |
+| MCP 工具面（L3） | 新参数 schema 对拍（strategy_params 对象+组键三参数对象数组=HypothesisCreate 顶层键形制）；透传行为锚（4 参数带值进 body 顶层/None 省略——trigger_policy 同款）；工具文档披露声明块与身份关系+分批组键语义；能力自述三新段（声明块/分批组/止损三分派+lineage） | `mcpserver/test_contract_parity.py`（新参数对拍+文档披露锚）+`mcpserver/test_tools_passthrough.py`（body 组装行为） | — |
 
 ### 0.4.2 守护行
 - 「翻转原子交付」三处（先改/后改均留红窗口）：S5 双断言翻转与扩常量+分派同任务（test_exit_sweep）；2.5 三键未知键断言随 4.1 扩白名单同任务翻转为域校验（test_strategy_param_declaration）；B1-33 分两站（4.1 service 格翻格/4.3 validator 格收口）

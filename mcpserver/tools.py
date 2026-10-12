@@ -529,9 +529,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         422）。
         strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
         正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
-        position_size/leverage（值域按 sl_mode 分叉：pct/trail 档
-        [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；sl_mode∈
-        {pct,atr,trail}；take_profit>stop_loss，trail 档豁免）；
+        position_size/leverage/exit_fraction/add_fraction/max_exposure
+        （值域按 sl_mode 分叉：pct/trail 档 [0.005,0.20] 比例值、
+        atr 档 [0.5,5.0] ATR 倍数；sl_mode∈{pct,atr,trail}；
+        take_profit>stop_loss，trail 档豁免；position_size∈
+        [0.10,1.0]；leverage∈[1,10]；exit_fraction∈(0,1]/
+        add_fraction∈(0,1] 须伴随宿主组分批声明；max_exposure∈
+        (0,生效杠杆]（未声明 leverage 时上界 1——声明更大上限须同
+        时声明 leverage）；三键有组无值时登记归一化字面化 0.5/0.1/
+        1.0）；
         翻译时逐参数映射进产物 risk_genes（返回体 risk_genes=
         "declared"；无声明=平台默认 "platform_default"）。声明块
         不进条件指纹与幂等身份（同条件集+同区间集=同一假设——参数

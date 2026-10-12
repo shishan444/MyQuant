@@ -133,6 +133,17 @@ def _validate_strategy_params(
             detail={"field": "strategy_params",
                     "legal_range": "键集 " + "/".join(sorted(_STRATEGY_PARAM_KEYS))})
 
+    # 显式 null 全链拒绝（review-042 CARD-01）：JSON null 与键缺失在
+    # 校验层同为「无值」（值域检查 is not None 跳过），但 null 会落库
+    # 穿透翻译层直写 RiskGenes——下游 falsy→0.0 止损静默禁用、live 链
+    # float(None)/比较 None 崩溃。不声明请移除键，两种语义唯一化。
+    null_keys = [k for k in params if params[k] is None]
+    if null_keys:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID", "显式 null 非法（不声明请移除键）",
+            detail={"field": f"strategy_params.{null_keys[0]}",
+                    "null_keys": null_keys})
+
     unknown = sorted(set(params) - _STRATEGY_PARAM_KEYS)
     if unknown:
         raise ResearchError(
@@ -326,8 +337,7 @@ def register_hypothesis(
             group_conds[gk.replace("_conditions", "")] = gvals
     for group, conds in group_conds.items():
         for i, c in enumerate(conds):
-            field_name = f"{group}_conditions[{i}]" if group in ("when", "then") \
-                else f"{group}_conditions[{i}]"
+            field_name = f"{group}_conditions[{i}]"
             if not isinstance(c, dict) or not all(k in c for k in ("subject", "action", "target")):
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -377,7 +387,7 @@ def register_hypothesis(
             if tf_key is None:
                 continue
             field_name = f"{group}_conditions[{i}].timeframe"
-            if group == "then" or group not in ("when",):
+            if group != "when":
                 # THEN 与分批组条目同规则拒 timeframe（0.4.2 R3：分批组
                 # 为出场/加仓触发语义，跨周期掩码投影归属未定义）
                 raise ResearchError(
@@ -456,15 +466,11 @@ def register_hypothesis(
         strategy_params = _validate_strategy_params(
             strategy_params, conditions)
     elif any(k in conditions for k in _SCALING_GROUP_KEYS):
-        strategy_params = {}
-        if "exit_partial_conditions" in conditions:
-            strategy_params["exit_fraction"] = \
-                _SCALING_DEFAULTS["exit_fraction"]
-        if "add_trigger_conditions" in conditions:
-            strategy_params["add_fraction"] = \
-                _SCALING_DEFAULTS["add_fraction"]
-            strategy_params["max_exposure"] = \
-                _SCALING_DEFAULTS["max_exposure"]
+        # 有组无值→字面化与 _validate_strategy_params 尾部归一化同源
+        # （review-042 CARD-05 双份收敛）：{} 无未知键/null 键、sl_mode
+        # 缺省过检，宿主组判据同 conditions——返回即物化形，与原内联
+        # 构造行为逐位等价
+        strategy_params = _validate_strategy_params({}, conditions)
 
     # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)

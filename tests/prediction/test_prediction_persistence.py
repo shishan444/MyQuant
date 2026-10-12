@@ -65,13 +65,23 @@ class TestPredictionDNAAPI:
 
     def _make_dna_json(self):
         """Return a minimal valid StrategyDNA JSON."""
+        # review-042 CARD-12 适配补漏：task 创建点起经 validate_dna——
+        # 裸 DNA（无 exit 信号）被 422 拒。本文件焦点在 prediction_dna
+        # 持久化，策略 DNA 只是载体，补 exit 基因满足结构完整。
         from core.strategy.dna import StrategyDNA, RiskGenes, ExecutionGenes, SignalGene, SignalRole
         dna = StrategyDNA(
-            signal_genes=[SignalGene(
-                indicator="EMA", params={"period": 10},
-                role=SignalRole.ENTRY_TRIGGER,
-                condition={"type": "price_above"},
-            )],
+            signal_genes=[
+                SignalGene(
+                    indicator="EMA", params={"period": 10},
+                    role=SignalRole.ENTRY_TRIGGER,
+                    condition={"type": "price_above"},
+                ),
+                SignalGene(
+                    indicator="EMA", params={"period": 10},
+                    role=SignalRole.EXIT_TRIGGER,
+                    condition={"type": "price_below"},
+                ),
+            ],
             risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3, leverage=1, direction="long"),
             execution_genes=ExecutionGenes(timeframe="4h"),
         )

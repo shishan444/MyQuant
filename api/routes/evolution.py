@@ -232,6 +232,19 @@ def create_task(
         except ResearchError as exc:
             from api.routes.research.common import research_error_to_http
             raise research_error_to_http(exc) from exc
+
+        # 手工 DNA 值域校验（review-042 CARD-15）：与 strategies 路由
+        # 同款——initial_dna 此前仅 validate_policy，坏值 201 落库后
+        # population.init_population 祖先直接 append 无校验（随机个体/
+        # 子代有 validate_dna 唯祖先漏），坏基因扩散整代种群
+        from core.strategy.validator import validate_dna
+        _vr = validate_dna(dna)
+        if not _vr.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "DNA_VALIDATION_FAILED",
+                        "message": "DNA 值域/结构校验未通过",
+                        "errors": _vr.errors})
     else:
         from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes, TimeframeLayer
         base_signals = [

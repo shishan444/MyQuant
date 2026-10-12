@@ -253,14 +253,7 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
                               "is_current": True}]}
 
     parent_hypothesis_id: Optional[str] = None
-    raw_parents = current.get("parent_ids")
-    try:
-        parents = json.loads(raw_parents) if raw_parents else []
-        if not isinstance(parents, list):
-            parents = [str(parents)]  # 单值 JSON 形兼容
-    except (json.JSONDecodeError, TypeError):
-        # 裸串形制（翻译器落库为单 id 串非 JSON 数组）——当单 id 处理
-        parents = [raw_parents] if raw_parents else []
+    parents = rr.parse_parent_ids(current.get("parent_ids"))
     if parents:
         candidate = str(parents[0])
         if rr.get_hypothesis(db_path, candidate) is not None:
