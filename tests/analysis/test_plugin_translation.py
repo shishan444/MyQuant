@@ -157,7 +157,8 @@ class TestPluginTranslation:
         hid = _raw_hyp(db, when=[{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                   "target": 35}],
                        then=[{"subject": col, "action": "gt", "target": 0.5}])
-        with pytest.raises(ResearchError, match="then_conditions.*暂不支持出场"):
+        # 0.4.2 R3 文案泛化（覆盖分批组）："暂不支持出场"→"仅支持入场"
+        with pytest.raises(ResearchError, match="then_conditions.*仅支持\n?\s*入场信号源"):
             translate_hypothesis(db, hypothesis_id=hid)
 
     def test_stale_plugin_column_rejected(self, db):

@@ -513,3 +513,24 @@ class TestKeysetPaginationRepository:
             db_path, hypothesis_id="hyp_1") == 1
         assert rr.count_validation_records(
             db_path, hypothesis_id="hyp_1", strategy_id="st_b") == 0
+
+
+class TestParseParentIds:
+    """parse_parent_ids 双形制归一直测（review-042 CARD-06 单点化产物
+    ——此前仅经谱系查询/档案 lineage 两消费方间接锚定）。"""
+
+    def test_json_array_form(self) -> None:
+        assert rr.parse_parent_ids('["hyp_a", "hyp_b"]') == ["hyp_a", "hyp_b"]
+
+    def test_bare_string_form(self) -> None:
+        # 裸串（翻译器落库形制——单 id 串非 JSON 数组）当单 id 处理
+        assert rr.parse_parent_ids("hyp_a") == ["hyp_a"]
+
+    def test_empty_and_none_return_empty_list(self) -> None:
+        assert rr.parse_parent_ids(None) == []
+        assert rr.parse_parent_ids("") == []
+
+    def test_single_value_json_wrapped(self) -> None:
+        # 合法 JSON 非列表（单值形）包装为单元素列表
+        assert rr.parse_parent_ids("123") == ["123"]
+        assert rr.parse_parent_ids('["only"]') == ["only"]

@@ -60,3 +60,29 @@ class TestRegisterHypothesisTriggerPolicyPassthrough:
     def test_without_policy_omitted(self):
         _, (url, body) = _register_and_call()
         assert "trigger_policy" not in body
+
+
+class TestRegisterHypothesisParamsScalingPassthrough:
+    """0.4.2 新参数透传行为锚：strategy_params 与分批组键三参数
+    ——带值进请求体顶层、None 省略（与 trigger_policy 同款；
+    schema 对拍在 contract_parity，此处锚 body 组装行为）。"""
+
+    GROUP = [{"subject": "close", "action": "gt", "target": 0}]
+
+    @pytest.mark.parametrize("param,value", [
+        ("strategy_params", {"stop_loss": 0.05, "sl_mode": "pct"}),
+        ("exit_partial_conditions", GROUP),
+        ("add_trigger_conditions", GROUP),
+        ("add_suppress_conditions", GROUP),
+    ])
+    def test_with_value_in_body(self, param, value):
+        _, (url, body) = _register_and_call(**{param: value})
+        assert body[param] == value, f"{param} 带值须透传到请求体顶层"
+
+    @pytest.mark.parametrize("param", [
+        "strategy_params", "exit_partial_conditions",
+        "add_trigger_conditions", "add_suppress_conditions",
+    ])
+    def test_none_omitted(self, param):
+        _, (url, body) = _register_and_call()
+        assert param not in body, f"{param} 未传时须省略（不进 body 顶层）"

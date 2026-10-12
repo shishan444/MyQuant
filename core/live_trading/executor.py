@@ -8,6 +8,7 @@ SL/TP v1 用 **pct mode**（``stop_loss``/``take_profit`` 作百分比）；atr 
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -18,6 +19,8 @@ from .oms import LiveOMS
 from .pipeline import LivePipeline
 from .risk_guard import RiskGuard
 from .types import LiveAccountState, LiveOrder, OrderAction
+
+logger = logging.getLogger(__name__)
 
 
 def compute_sl_tp_pct(
@@ -50,6 +53,18 @@ class LiveTradingExecutor:
     state: LiveAccountState
     default_entry_pct: float = 0.10  # decision.entry_size_pct 缺失时 fallback
 
+    def __post_init__(self) -> None:
+        """交易链兼容性插桩（0.4.2 R2/D3：装载即拒——在挂载 SL/TP 单
+        之前）。live 链 SL/TP v1 仅 pct：atr 倍数按 pct 挂单将产出
+        sl=entry×(1−stop_loss) 的负价无效止损单、trail 无峰值回撤实现
+        ——两者装载即拒；分批角色基因同拒（无执行能力）。
+        """
+        from core.strategy.validator import validate_trading_compatibility
+        reasons = validate_trading_compatibility(self.dna, "live")
+        if reasons:
+            raise ValueError(
+                "实盘链不支持该策略（DNA 装载即拒）: " + "; ".join(reasons))
+
     def execute_closed_bar(
         self, sig_set, bar_idx: int, close_price: float
     ) -> tuple[Optional[OrderAction], Optional[LiveOrder]]:
@@ -75,9 +90,36 @@ class LiveTradingExecutor:
         self.risk.record_order()
         self.oms.track(order)
 
-        # 开仓挂托管 SL/TP
+        # 开仓挂托管 SL/TP（fail-close 安全底线，review-042 CARD-02）：
+        # 市价开仓已成交后挂保护单失败（含 gateway 拒单/网络错误/参数
+        # 异常）绝不留下无保护持仓——立即反向市价平仓兜底，再 re-raise
+        # 中断调用方（Runner 停止该策略）；若平仓也失败，仓位在交易所
+        # 侧裸露（无 SL、无平仓单），标 CRITICAL 供告警通道拾取，仍
+        # re-raise。partial 妥协（只记录不处理）在此不可接受：无 SL
+        # 持仓暴露在无界下行风险中
         if action in (OrderAction.OPEN_LONG, OrderAction.OPEN_SHORT):
-            self._attach_sl_tp(action, close_price)
+            try:
+                self._attach_sl_tp(action, close_price)
+            except Exception as exc:
+                close_action = (OrderAction.CLOSE_LONG
+                                if action == OrderAction.OPEN_LONG
+                                else OrderAction.CLOSE_SHORT)
+                logger.error(
+                    "开仓后挂 SL/TP 失败——立即反向平仓兜底: symbol=%s "
+                    "entry_order_id=%s qty=%s 挂单失败原因=%r",
+                    self.symbol, order.exchange_order_id, qty, exc)
+                try:
+                    close_order = self.gateway.place_market_order(
+                        self.symbol, close_action, qty)
+                    self.oms.track(close_order)
+                except Exception as close_exc:
+                    logger.critical(
+                        "裸仓告警：挂 SL/TP 失败且反向平仓亦失败——仓位"
+                        "无任何保护，须人工介入: symbol=%s entry_order_id"
+                        "=%s qty=%s 平仓失败原因=%r",
+                        self.symbol, order.exchange_order_id, qty,
+                        close_exc)
+                raise
 
         return action, order
 

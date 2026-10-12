@@ -44,7 +44,8 @@ class TestSignalRole:
     """SignalRole enum tests."""
 
     def test_all_roles_defined(self):
-        assert len(SignalRole) == 9
+        # 0.4.2 R3/DC-1：ADD_INHIBIT 加入（9+1）——计数锚随枚举扩展翻转
+        assert len(SignalRole) == 10
 
     def test_role_values(self):
         assert SignalRole.ENTRY_TRIGGER.value == "entry_trigger"

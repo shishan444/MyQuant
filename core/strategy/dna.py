@@ -55,6 +55,12 @@ class SignalRole(Enum):
     ADD_GUARD = "add_guard"           # 过滤加仓条件
     REDUCE_TRIGGER = "reduce_trigger" # 触发减仓
     REDUCE_GUARD = "reduce_guard"     # 过滤减仓条件
+    # 加仓抑制（0.4.2 R3/DC-1）：抑制=「任一抑制条件成立的 bar 不加仓」，
+    # 组合 adds=(trigger AND guard) AND NOT(inhibitor 任一)。仅 ADD 侧设
+    # （不预建 REDUCE_INHIBIT）；取反映射对 cross 类必错故独立角色承载。
+    # 翻译映射（add_suppress_conditions→ADD_INHIBIT）与 executor 三处
+    # 分支随任务 4.2/4.4 落地。
+    ADD_INHIBIT = "add_inhibit"
     DIRECTION = "direction"           # mixed 策略的多空方向判定
 
 
@@ -72,6 +78,14 @@ def derive_role(timeframe: str) -> str:
         hours = int(tf[:-1])
         return "structure" if hours >= 24 else "zone"
     return "execution"
+
+
+# 止损模式取值域单一事实源（D4 家族/DC-4，0.4.2 策略表达力）：
+# 消费方——api/schemas.py sl_mode pattern（派生）、validator 域校验、
+# 登记声明块校验（hypothesis_service）；引擎真实分派集另立
+# ENGINE_SUPPORTED_SL_MODES（core/backtest/engine.py——声明域与
+# 分派集是两个概念，见 stop-loss-modes 规格「引用式约定边界」）
+SL_MODES = ("pct", "atr", "trail")
 
 
 # ---------------------------------------------------------------------------
@@ -152,18 +166,41 @@ class ExecutionGenes:
 
 @dataclass
 class RiskGenes:
-    """风控基因组（止损止盈/仓位/杠杆/方向）。"""
+    """风控基因组（止损止盈/仓位/杠杆/方向 + 分批数值参数）。"""
 
-    stop_loss: float = 0.05               # pct 模式: 0.05（5%）；atr 模式: 2.0（2 倍 ATR）
-    take_profit: Optional[float] = None   # pct 模式: 0.10（10%）；atr 模式: 4.0（4 倍 ATR）
+    stop_loss: float = 0.05               # pct/trail: 0.05（5%/回撤比例）；atr: 2.0（2 倍 ATR）
+    take_profit: Optional[float] = None   # pct/trail: 0.10（10%）；atr: 4.0（4 倍 ATR）
     position_size: float = 0.3            # 仓位比例（如 0.3 = 30%）
-    leverage: int = 1                     # 杠杆 1-10 倍
+    leverage: int = 1                     # 杠杆 1-MAX_LEVERAGE 倍（上限单源 validator.MAX_LEVERAGE）
     direction: str = "long"               # 方向："long" | "short"
-    sl_mode: str = "pct"                  # 止损模式："pct" | "atr"
+    sl_mode: str = "pct"                  # 止损模式（取值域单源 SL_MODES："pct" | "atr" | "trail"）
     atr_period: int = 14                  # atr 模式的 ATR 回看周期
+    # 分批数值参数（0.4.2 R3）：None 仅手工 DNA 出现——登记路径「有组无
+    # 值→归一化字面化→翻译物化」恒具体值；执行侧缺省 0.5/0.1/1.0（A5）
+    exit_fraction: Optional[float] = None   # 部分离场比例（reduce 分支）
+    add_fraction: Optional[float] = None    # 加仓比例（add 分支，分母=当前权益）
+    max_exposure: Optional[float] = None    # 总敞口上限（名义/权益；None 引擎侧按 1.0）
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
+        # ——存量 DNA 序列化输出逐位不变（asdict 会强制携带 None 键，
+        # 故显式键序输出+三新键条件写入）
+        result = {
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "position_size": self.position_size,
+            "leverage": self.leverage,
+            "direction": self.direction,
+            "sl_mode": self.sl_mode,
+            "atr_period": self.atr_period,
+        }
+        if self.exit_fraction is not None:
+            result["exit_fraction"] = self.exit_fraction
+        if self.add_fraction is not None:
+            result["add_fraction"] = self.add_fraction
+        if self.max_exposure is not None:
+            result["max_exposure"] = self.max_exposure
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "RiskGenes":

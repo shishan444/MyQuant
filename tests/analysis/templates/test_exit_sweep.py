@@ -100,7 +100,8 @@ class TestValidationOrder:
     def test_order_reports_first_violation(self):
         """全序锚：同时违反②（非法模式）与⑥（超限）报②。"""
         exc = self._reject({"modes": [
-            {"mode": "atr", "stops": [0.01] * 10, "take_profits": [0.02] * 6},
+            {"mode": "trailing", "stops": [0.01] * 10,
+             "take_profits": [0.02] * 6},
         ]}, "模式")
         assert "引擎未支持" in exc.message  # ② 先于 ⑥
 
@@ -114,10 +115,11 @@ class TestValidationOrder:
         assert exc.detail["value"] == "pct"
 
     def test_unsupported_mode_rejected_with_legal_set(self):
-        """②非法模式（S5 联动）：atr/trail/未知 422 披露合法集（常量
-        引用值不写字面）。"""
+        """②非法模式（S5 联动）：未知/形变模式 422 披露合法集（常量
+        引用值不写字面）。0.4.2 扩分派后 atr/trail 已入合法集——本锚
+        的 bad 集合同任务翻转（原 atr/trail 用例退役）。"""
         from core.backtest.engine import ENGINE_SUPPORTED_SL_MODES
-        for bad in ("atr", "trail", "pct "):
+        for bad in ("trailing", "pct ", "ATR"):
             exc = self._reject(_grid([0.01], [0.02]) | {
                 "modes": [{"mode": bad, "stops": [0.01],
                            "take_profits": [0.02]}]}, "")
@@ -585,10 +587,12 @@ class TestCapabilityDomainAndLog:
         assert "results" not in detail  # 不产出任何扫描结果
 
     def test_engine_sl_mode_dispatch_double_guard(self):
-        """S5 双向守护：pct/atr 双注入（同数值 stop/tp）经共享符号回测
-        结果逐位一致 → 引擎不消费 sl_mode → atr 必在合法集外；拒绝
-        detail 披露合法集=常量引用值（0.4.2 扩分派后语义自动翻转——
-        同步遗漏必红）。"""
+        """S5 双向守护（0.4.2 分派实施后翻转形态）：pct/atr 双注入
+        （各自语义正确值——pct 比例 0.02/0.04、atr 倍数 2.0/4.0）经
+        共享符号回测结果**可区分** → 引擎消费 sl_mode（atr 按 ATR 倍数
+        执行，非按 pct 锚定误执行）；atr/trail 必在引擎分派集内（常量
+        回退必红）。0.4.1 原锚（逐位一致+在集外）随引擎分派实施同任务
+        原子翻转——先扩常量后改本锚=红窗口，反之亦然。"""
         import copy as _copy
 
         from core.analysis.hypothesis_to_strategy import build_signal_genes
@@ -601,18 +605,59 @@ class TestCapabilityDomainAndLog:
             execution_genes=ExecutionGenes(symbol=SYMBOL, timeframe="4h"),
             risk_genes=RiskGenes(), signal_sources=[{"type": "rule"}])
         outs = {}
-        for mode in ("pct", "atr"):
+        for mode, sl, tp in (("pct", 0.02, 0.04), ("atr", 2.0, 4.0)):
             dna = _copy.deepcopy(base)
-            dna.risk_genes.stop_loss = 0.02
-            dna.risk_genes.take_profit = 0.04
+            dna.risk_genes.stop_loss = sl
+            dna.risk_genes.take_profit = tp
             dna.risk_genes.sl_mode = mode
             m, rets, _, _ = bb.run_backtest_on_range(
                 self.db, self.d, dna, SYMBOL, "4h",
                 RNG_DEF["start"], RNG_DEF["end"], 200)
             outs[mode] = (m, list(rets))
-        assert outs["pct"][0] == outs["atr"][0]  # 逐位一致→不消费
-        assert outs["pct"][1] == outs["atr"][1]
-        assert "atr" not in ENGINE_SUPPORTED_SL_MODES  # 必在合法集外
+        # 可区分断言：atr 按 ATR 倍数执行（止损=入场∓2×ATR）与 pct
+        # 比例锚定（入场×0.98）在同一数据上结果不同——若引擎回退为不
+        # 消费 sl_mode（atr 按 pct 静默误执行）则逐位一致，本锚变红
+        assert outs["pct"][0] != outs["atr"][0] or \
+            outs["pct"][1] != outs["atr"][1]
+        # 分派集守护：atr/trail 在引擎真实分派集内（常量回退必红）
+        assert "atr" in ENGINE_SUPPORTED_SL_MODES
+        assert "trail" in ENGINE_SUPPORTED_SL_MODES
+
+    @pytest.mark.parametrize(
+        ("mode", "value", "ok"),
+        [("atr", 2.0, True), ("atr", 0.5, True), ("atr", 5.0, True),
+         ("atr", 8.0, False), ("atr", 0.05, False),
+         ("pct", 2.0, False), ("pct", 0.05, True),
+         ("trail", 0.05, True), ("trail", 2.0, False)],
+        ids=["atr 2.0 过", "atr 0.5 过", "atr 5.0 过", "atr 8.0 拒",
+             "atr 0.05 拒（误放防护）", "pct 2.0 拒", "pct 0.05 过",
+             "trail 0.05 过", "trail 2.0 拒"])
+    def test_mode_forked_value_domain(self, mode, value, ok):
+        """④值域模式感知分档（0.4.2 值域配套改造——量纲双关的值域义务
+        在消费方）：atr 档引 SL_ATR_MIN/MAX（倍数域），pct/trail 档引
+        SL_PCT_MIN/MAX（比例域，trail 回撤比例与 pct 同域）——同值异判
+        （2.0 在 atr 合法、在 pct/trail 非法；0.05 在 pct/trail 合法、
+        在 atr 非法）。"""
+        from core.strategy.validator import (
+            SL_ATR_MAX, SL_ATR_MIN, SL_PCT_MAX, SL_PCT_MIN,
+        )
+        assert (SL_ATR_MIN, SL_ATR_MAX) == (0.5, 5.0)  # 引用式锚（常量单源）
+        assert (SL_PCT_MIN, SL_PCT_MAX) == (0.005, 0.20)
+        grid = {"modes": [{"mode": mode, "stops": [value],
+                           "take_profits": [0.02] if mode != "atr"
+                           else [4.0]}]}
+        if ok:
+            out = exit_sweep(self.db, self.d, dict(RNG_DEF),
+                             condition=_COND, direction="long", grid=grid)
+            assert out["sample_size"] == 1
+        else:
+            with pytest.raises(ResearchError) as ei:
+                exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
+                           direction="long", grid=grid)
+            expect_lo, expect_hi = ((SL_ATR_MIN, SL_ATR_MAX)
+                                    if mode == "atr"
+                                    else (SL_PCT_MIN, SL_PCT_MAX))
+            assert ei.value.detail["legal_range"] == [expect_lo, expect_hi]
 
     def test_log_entry_not_in_judged_union(self, api_client):
         """留痕不进并集：成功执行后 judged_ranges_union 不含扫描区间；

@@ -1,6 +1,14 @@
-"""Replay runner: drives DecisionPipeline with historical data for rapid verification.
+"""策略历史回放评估器（ReplayRunner）——历史数据驱动决策管线快速验证。
 
-Usage:
+职能：把 DecisionPipeline + VirtualAccount 在给定历史 OHLCV 上逐 bar
+推演，产出收益/成交率/事件日志等评估指标；与 paper 模拟盘链共享
+同一决策与记账组件——回放验证的就是模拟盘将来执行的确切行为。
+
+服务对象：api/routes/strategies/batch.py 批量回测端点（逐策略经
+ReplayRunner 执行，见 batch.py:166/219）与测试（纯内存评估，不落
+任务表、不推送 WS）。
+
+用法：
     result = ReplayRunner(config).run(dna, df, dfs_by_timeframe)
     print(result.total_return, result.total_trades, result.fill_rate)
 """
@@ -22,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ReplayResult:
-    """Result of a replay run."""
+    """回放产出：收益/交易数/权益曲线/事件与订单日志/成交率等指标。"""
 
     total_return: float = 0.0
     total_trades: int = 0
@@ -30,8 +38,8 @@ class ReplayResult:
     events_log: list[dict] = field(default_factory=list)
     order_events_log: list[OrderEvent] = field(default_factory=list)
     bars_processed: int = 0
-    fill_rate: float = 0.0  # filled / total orders
-    avg_wait_bars: float = 0.0  # average bars from creation to fill
+    fill_rate: float = 0.0  # 成交订单数 / 总订单数
+    avg_wait_bars: float = 0.0  # 订单从创建到成交的平均等待 bar 数
 
     @property
     def final_equity(self) -> float:
@@ -39,7 +47,8 @@ class ReplayResult:
 
 
 class ReplayRunner:
-    """Run the decision pipeline over historical data for verification."""
+    """决策管线的历史数据回放验证器（纯内存评估，与 paper 链共享
+    DecisionPipeline/VirtualAccount——评估结论对模拟盘执行有效）。"""
 
     def __init__(
         self,
@@ -63,38 +72,48 @@ class ReplayRunner:
         start_bar: int | None = None,
         predictor_factory=None,
     ) -> ReplayResult:
-        """Run replay over historical data.
+        """历史数据回放：从 start_bar 起逐 bar 驱动决策管线。
 
         Args:
-            dna: Strategy DNA to evaluate.
-            df: Historical OHLCV DataFrame with indicators computed.
-            dfs_by_timeframe: Optional MTF DataFrames.
-            start_bar: Bar index to start from (default: warmup_bars).
-            predictor_factory: Callable(dna, df) -> PriceRangePredictor.
+            dna: 待评估的策略 DNA。
+            df: 已计算指标的历史 OHLCV DataFrame。
+            dfs_by_timeframe: 可选的 MTF 各周期 DataFrame。
+            start_bar: 起始 bar 下标（缺省 warmup_bars——跳过指标
+                预热期）。
+            predictor_factory: 可调用对象 (dna, df) -> PriceRangePredictor。
 
         Returns:
-            ReplayResult with metrics and event logs.
+            ReplayResult（收益/成交率等指标与事件日志）。
         """
-        # Ensure indicators are computed
+        # 指标须由调用方预先算好（起始 bar 缺省跳过 warmup 预热期）
         if start_bar is None:
             start_bar = self.warmup_bars
 
-        # Initialize signal set
+        # 交易链兼容性插桩（0.4.2 R2/D3：DNA 载入点——trail/分批/atr×live
+        # 在此显式拒绝，不静默退化按 pct 执行）。trading 域不引入
+        # ResearchError，ValueError 沿既有异常通道上层转结构化
+        from core.strategy.validator import validate_trading_compatibility
+        _reasons = validate_trading_compatibility(dna, "replay")
+        if _reasons:
+            raise ValueError(
+                "回放链不支持该策略（DNA 载入即拒）: " + "; ".join(_reasons))
+
+        # 组装信号集
         sig_set = dna_to_signal_set(dna, df, dfs_by_timeframe)
 
-        # Initialize account
+        # 构造账户（VirtualAccount——与 paper 链同款记账）
         account = VirtualAccount(
             dna, init_cash=self.init_cash, fee=self.fee, slippage=self.slippage,
         )
 
-        # Initialize predictor
+        # 初始化预测器（工厂可注入；具备 warmup 能力则预热）
         predictor = None
         if predictor_factory is not None:
             predictor = predictor_factory(dna, df)
             if predictor is not None and hasattr(predictor, "warmup"):
                 predictor.warmup(df, min(start_bar, len(df)))
 
-        # Initialize pipeline
+        # 构造决策管线（判定配置+DNA 风控基因注入）
         pipeline = DecisionPipeline(
             config=self.config,
             dna_risk_genes=dna.risk_genes,
@@ -129,7 +148,8 @@ class ReplayRunner:
                 stop_loss_pct=dna.risk_genes.stop_loss or 0.05,
             )
 
-            # Collect events
+            # 收集事件（持仓事件入 events_log；订单事件计数驱动
+            # fill_rate 统计）
             for ev in pipe_result.events:
                 result.events_log.append(ev)
 
@@ -142,7 +162,8 @@ class ReplayRunner:
 
             result.bars_processed += 1
 
-        # Collect final metrics
+        # 汇总终态指标（末根 bar 持仓未平则按市值计权益——回放不强制
+        # 期末平仓，敞口价值并入 final）
         if account.equity_snapshots:
             result.equity_curve = [s.equity for s in account.equity_snapshots]
 

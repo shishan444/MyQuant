@@ -15,6 +15,15 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
+# 值域单源引用（D4 家族/0.4.2 值域单源化）：sl_mode 取值域与杠杆红线
+# 的权威常量在 core 层，传输层只派生消费——改值单点生效，禁字面重复
+from core.strategy.dna import SL_MODES
+from core.strategy.validator import MAX_LEVERAGE
+
+# sl_mode pattern 由 SL_MODES 派生（封闭枚举单源——取值域扩展时
+# 此处自动跟随，无需改传输层）
+_SL_MODE_PATTERN = "^(" + "|".join(SL_MODES) + ")$"
+
 
 # ── Enums ──
 
@@ -117,10 +126,15 @@ class RiskGenesModel(BaseModel):
     stop_loss: float = 0.05
     take_profit: Optional[float] = None
     position_size: float = 0.3
-    leverage: int = Field(default=1, ge=1, le=10)
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
-    sl_mode: str = Field(default="pct", pattern="^(pct|atr)$")
+    sl_mode: str = Field(default="pct", pattern=_SL_MODE_PATTERN)
     atr_period: int = Field(default=14, ge=1)
+    # 分批数值参数（0.4.2 R3，DC-15）：pydantic 形态=裸 float Optional
+    # ——值域权威在 service 声明块/validator 双点，传输层不加 bound
+    exit_fraction: Optional[float] = None
+    add_fraction: Optional[float] = None
+    max_exposure: Optional[float] = None
 
 
 class DNAModel(BaseModel):
@@ -501,7 +515,7 @@ class EvolutionTaskCreate(BaseModel):
     indicator_pool: Optional[List[str]] = None
     timeframe_pool: Optional[List[str]] = None
     mode: Optional[str] = None
-    leverage: int = Field(default=1, ge=1, le=10)
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     data_start: Optional[str] = None
     data_end: Optional[str] = None
@@ -685,7 +699,7 @@ class PaperTradingTaskCreate(BaseModel):
     timeframe: str = Field(default="4h")
     initial_cash: float = Field(default=100_000, gt=0)
     fee: float = Field(default=0.001, ge=0)
-    leverage: int = Field(default=1, ge=1, le=10)
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     score_template: ScoreTemplateName = Field(default="explorer")
     strategy_name: Optional[str] = None
@@ -920,6 +934,18 @@ class HypothesisCreate(BaseModel):
     # mode 枚举/bars 参数的权威校验在服务层 validate_policy（422 附
     # 合法枚举与参数要求，错误即文档；API 层只声明键存在与对象形）
     trigger_policy: Optional[Dict[str, Any]] = None
+    # 策略层参数声明块（0.4.2 R1，strategy-param-declaration 规格）：
+    # 弱形制对象键（沿 trigger_policy 先例）——键白名单/值域分叉的
+    # 权威校验在服务层 3.6 步；显式空对象 {}=显式声明「无参数」（与
+    # 键缺失语义不同，幂等四分支分流）；不进 conditions/不进 hash
+    strategy_params: Optional[Dict[str, Any]] = None
+    # 分批条件组三顶层键（0.4.2 R3/DC-13，scaled-position-actions 规格）：
+    # 路由层非 None 时并入 conditions dict（「归一非 None 才写键」——
+    # 缺省不写键保 conditions_hash 连续，trigger_policy 先例；不走
+    # HypothesisConditions 嵌套扩展——避 pydantic None 键 hash 断裂陷阱）
+    exit_partial_conditions: Optional[List[ConditionItem]] = None
+    add_trigger_conditions: Optional[List[ConditionItem]] = None
+    add_suppress_conditions: Optional[List[ConditionItem]] = None
 
 
 class HypothesisTransitionRequest(BaseModel):
@@ -935,6 +961,10 @@ class HypothesisResponse(BaseModel):
     # 三态结论与判定锚数值（锚=分析段实际触发数，多区间取最小值）；
     # 纯增量可选键——既有消费方零适配；幂等命中/预检降级不携带。
     precheck_warnings: Optional[Dict[str, Any]] = None
+    # 既有声明块摘要（0.4.2 R1）：仅幂等 duplicated 路径携带（纯增量，
+    # 沿 precheck_warnings 先例）；NULL 声明以 {} 呈现——旧调用方据此
+    # 可知既有假设的声明内容而无需二次查询。
+    existing_strategy_params: Optional[Dict[str, Any]] = None
 
 
 class HypothesisListResponse(BaseModel):

@@ -48,8 +48,11 @@ def _make_dna_with_add():
         execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
         risk_genes=RiskGenes(
             stop_loss=0.05, take_profit=0.10,
-            position_size=0.5, leverage=1,
-            direction="long",
+            position_size=0.5, leverage=2,
+            direction="long", add_fraction=0.5,  # 0.4.2 A5 显式（原隐含串用）
+            # 0.4.2 A3：max_exposure 缺省 1.0 会保护性拦截 0.5+0.5 名义
+            # ——blended 验证意图需合法敞口（leverage=2 下 1.5）
+            max_exposure=1.5,
         ),
     )
 
@@ -124,8 +127,11 @@ def test_add_updates_entry_price():
         execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
         risk_genes=RiskGenes(
             stop_loss=0.02, take_profit=0.0,
-            position_size=0.5, leverage=1,
-            direction="long",
+            position_size=0.5, leverage=2,
+            direction="long", add_fraction=0.5,  # 0.4.2 A5 显式（原隐含串用）
+            # 0.4.2 A3：max_exposure 缺省 1.0 会保护性拦截 0.5+0.5 名义
+            # ——blended 验证意图需合法敞口（leverage=2 下 1.5）
+            max_exposure=1.5,
         ),
     )
 
@@ -190,8 +196,11 @@ def test_add_sl_uses_blended_price():
         execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
         risk_genes=RiskGenes(
             stop_loss=0.02, take_profit=0.0,
-            position_size=0.5, leverage=1,
-            direction="long",
+            position_size=0.5, leverage=2,
+            direction="long", add_fraction=0.5,  # 0.4.2 A5 显式（原隐含串用）
+            # 0.4.2 A3：max_exposure 缺省 1.0 会保护性拦截 0.5+0.5 名义
+            # ——blended 验证意图需合法敞口（leverage=2 下 1.5）
+            max_exposure=1.5,
         ),
     )
 

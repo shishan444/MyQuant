@@ -52,10 +52,19 @@ _VERDICT_ORDER = {"plateau": 0, "indeterminate": 1, "spike": 2,
 _DIRECTIONS = ("long", "short")
 
 
-def _pct_range() -> Tuple[float, float]:
-    """pct 档值域（引用式——validator 现役域单点权威，不写字面副本）。"""
-    from core.strategy.validator import SL_PCT_MAX, SL_PCT_MIN
+def _mode_range(mode: str) -> Tuple[float, float]:
+    """各档值域（模式感知分档——0.4.2 值域配套改造，评估问题 1）。
 
+    引用式单点权威，不写字面副本：pct/trail 档→SL_PCT_MIN/MAX（比例
+    值，trail 回撤比例与 pct 同域）；atr 档→SL_ATR_MIN/MAX（DC-11 分叉
+    域，ATR 倍数——第四消费方，与声明块/validator 域校验同源）。
+    """
+    from core.strategy.validator import (
+        SL_ATR_MAX, SL_ATR_MIN, SL_PCT_MAX, SL_PCT_MIN,
+    )
+
+    if mode == "atr":
+        return SL_ATR_MIN, SL_ATR_MAX
     return SL_PCT_MIN, SL_PCT_MAX
 
 
@@ -107,10 +116,14 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
                         "value": entry["mode"],
                         "legal_range": list(ENGINE_SUPPORTED_SL_MODES)})
     # ③ 非空 + ④ 值域模式感知 + ⑤ 止盈必填正值
-    lo, hi = _pct_range()
+    # （0.4.2 值域配套改造：取域移入模式循环按 entry["mode"] 分档——
+    #   循环外单点取 pct 域对全模式统一适用已被值域分叉取代：atr 档
+    #   合法倍数（如 2.0）曾按 [0.005,0.20] 被误拒、无意义小值（如
+    #   0.05 倍）被误放——量纲双关的值域义务在消费方，非自动跟随）
     total_groups = 0
     for entry in grid["modes"]:
         mode = entry["mode"]
+        lo, hi = _mode_range(mode)
         for key in ("stops", "take_profits"):
             values = entry[key]
             if not isinstance(values, list) or not values:

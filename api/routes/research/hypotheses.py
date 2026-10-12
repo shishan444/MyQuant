@@ -91,15 +91,25 @@ def register_hypothesis(
                             "timeframe": tf_key,
                             "available_timeframes": _available})
 
+        # 分批组键并入 conditions（DC-13：非 None 才写键——缺省不写键
+        # 保 conditions_hash 连续；组键在 conditions 内自然进身份指纹）
+        conditions = payload.conditions.model_dump()
+        for gk in ("exit_partial_conditions", "add_trigger_conditions",
+                   "add_suppress_conditions"):
+            gvals = getattr(payload, gk)
+            if gvals is not None:
+                conditions[gk] = [c.model_dump() for c in gvals]
+
         out = hs.register_hypothesis(
             db_path,
-            conditions=payload.conditions.model_dump(),
+            conditions=conditions,
             statement=payload.statement,
             data_ranges=[r.model_dump() for r in payload.data_ranges],
             provenance=(payload.provenance.model_dump()
                         if payload.provenance else None),
             precheck_data_dir=data_dir,   # 登记自动预检（D6，Q1 裁 A）
             trigger_policy=payload.trigger_policy,  # 整体级触发策略（卡2）
+            strategy_params=payload.strategy_params,  # 策略层参数声明块（0.4.2 R1）
         )
         return HypothesisResponse(**out)
     except ResearchError as exc:

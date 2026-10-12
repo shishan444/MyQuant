@@ -255,6 +255,7 @@ def compute_precheck_report(
     budget: Optional[Dict[str, Any]] = None,
     mtf: Optional[MtfEvalContext] = None,
     trigger_policy: Optional[Dict[str, Any]] = None,
+    scaling_groups: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """三层预检纯计算（design 详设：df + when 条件集 + 锚口径参数 →
     三层报告 dict）。
@@ -273,11 +274,22 @@ def compute_precheck_report(
         warmup_bars: 两维 warmup 值（调用方 derive_warmup_full 产物）。
         budget: 壳层预算探测四件套（data_start_actual/margins）。
         mtf: 高周期求值上下文（timeframe 键条件掩码投影）。
+        scaling_groups: 分批条件组（0.4.2 R3/A4——组级密度以纯增量键
+            进 per_range 明细，不进锚/不进三态/不进外推；组内 AND 合并
+            与信号组装同语义）。
 
     Returns:
         {verdict, combination_stats, frequency_projection, budget_check}。
     """
     combo = _combo_mask(work, when_conditions, mtf)
+
+    # 分批组级掩码（A4 可见性披露：组内 AND 合并，逐区间计数——与
+    # when 锚求值同链同 df，不参与任何判定）
+    group_masks: Dict[str, pd.Series] = {}
+    if scaling_groups:
+        for gname, gconds in scaling_groups.items():
+            if gconds:
+                group_masks[gname] = _combo_mask(work, gconds, mtf)
 
     # trigger-policy 卡4（5.3）：归一（对登记路径传入的归一形幂等）+
     # bars 上界求值侧校验（全 df 含 warmup 前缀——与 forward_bars 同窗；
@@ -332,9 +344,16 @@ def compute_precheck_report(
             seg = pd.Series((work.index >= lo) & (work.index < hi),
                             index=work.index)
             parts.append(seg)
-            per_range_out.append({
+            entry = {
                 "start": r["start"], "end": r["end"],
-                "n_triggers": int(_to_event_mask(combo & seg).sum())})
+                "n_triggers": int(_to_event_mask(combo & seg).sum())}
+            # 组级密度纯增量键（0.4.2 R3：逐区间计数——可见性披露，
+            # 事件口径与 when 锚一致但独立计数不进锚）
+            if group_masks:
+                entry["group_triggers"] = {
+                    gname: int(_to_event_mask(gmask & seg).sum())
+                    for gname, gmask in group_masks.items()}
+            per_range_out.append(entry)
         stat = parts[0].copy()
         for seg in parts[1:]:
             stat = stat | seg
@@ -521,6 +540,7 @@ def run_registration_precheck(
     when_conditions: List[Dict[str, Any]],
     data_ranges: List[Dict[str, str]],
     trigger_policy: Optional[Dict[str, Any]] = None,
+    scaling_groups: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """登记自动挂接预检（design D6）——多区间最差锚，返回警告段。
 
@@ -549,7 +569,7 @@ def run_registration_precheck(
     payload = compute_precheck_report(
         df, when_conditions, anchor="analysis_segment",
         per_range=data_ranges, warmup_bars=warmup_bars, mtf=mtf,
-        trigger_policy=trigger_policy)
+        trigger_policy=trigger_policy, scaling_groups=scaling_groups)
 
     return {
         "verdict": payload["verdict"],

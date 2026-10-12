@@ -27,6 +27,7 @@ from core.persistence.orm.models import (
     ResearchHypothesis,
     ResearchLog,
     SignalRegistryEntry,
+    Strategy,
     ValidationRecord,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -78,6 +79,7 @@ def save_hypothesis_with_log(
     statement: str,
     data_ranges: str,
     ranges_hash: str,
+    strategy_params: Optional[str] = None,
     log_id: Optional[str] = None,
     screen_use: Optional[Dict[str, str]] = None,
 ) -> None:
@@ -86,7 +88,8 @@ def save_hypothesis_with_log(
     log_id 可注入（测试原子性用）；任一后续 insert 失败时假设行一并
     回滚。screen_use（add-screen-patterns）：{ref_id, data_ranges}——
     登记引用扫描候选时同事务追加谱系日志（区间经判定并集机制自动
-    纳入隔离，isolation.py 零改动）。
+    纳入隔离，isolation.py 零改动）。strategy_params（0.4.2 R1）：
+    声明块归一形 JSON 串；None=无声明（列 NULL，翻译走平台默认）。
     """
     engine = _engine_for(db_path)
     now = _now()
@@ -96,6 +99,7 @@ def save_hypothesis_with_log(
             conditions=conditions, conditions_hash=conditions_hash,
             statement=statement,
             data_ranges=data_ranges, ranges_hash=ranges_hash,
+            strategy_params=strategy_params,
             status="active",
             created_at=now, updated_at=now,
         ))
@@ -144,6 +148,113 @@ def find_active_hypothesis_by_identity(
             ).order_by(ResearchHypothesis.created_at)
         ).mappings().first()
     return dict(row) if row is not None else None
+
+
+def list_hypotheses_by_identity(
+    db_path: Path, conditions_hash: str, ranges_hash: str
+) -> List[Dict[str, Any]]:
+    """同身份全部假设实体（0.4.2 R4 身份族——全状态含终态，区别于
+    find_active_hypothesis_by_identity 的 active 限定；终态后重登记产
+    族内新实体，族=至多 1 active + 0..n 终态）。created_at 升序。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(ResearchHypothesis).where(
+                ResearchHypothesis.conditions_hash == conditions_hash,
+                ResearchHypothesis.ranges_hash == ranges_hash,
+            ).order_by(ResearchHypothesis.created_at,
+                       ResearchHypothesis.hypothesis_id)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def parse_parent_ids(raw: Optional[str]) -> List[Any]:
+    """parent_ids 列值 → id 列表（双形制归一，review-042 CARD-06 单点）。
+
+    落库形制两种：JSON 数组（进化/手工来源，多父）与裸串（翻译器落库
+    为单 id 串非 JSON 数组）；raw 空/None 归一为空列表。JSON 解析出非
+    列表（单值形）包装为单元素列表。谱系查询（本文件）与验证档案
+    _build_lineage 共用——两处各自实现曾是同一解析的第二份漂移源。
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return [raw]  # 裸串形制——当单 id 处理
+    if not isinstance(parsed, list):
+        return [str(parsed)]  # 单值 JSON 形兼容
+    return parsed
+
+
+def list_strategies_by_parent_hypotheses(
+    db_path: Path, hypothesis_ids: List[str]
+) -> List[Dict[str, Any]]:
+    """parent_ids JSON 数组成员精确匹配 id 集的策略（0.4.2 R4 谱系查询）。
+
+    精确成员判定非子串匹配（进化/手工来源策略的 JSON 数组不误命中）；
+    全量无 limit（谱系披露不截断）。created_at 升序。
+    """
+    if not hypothesis_ids:
+        return []
+    id_set = set(hypothesis_ids)
+    # 显式列裁剪（review-042 CARD-07）：消费方仅需四列——select(Strategy)
+    # 全表会把 dna_json（Text 大载荷）整体拖进内存；成员匹配保留在
+    # Python 侧（正确性优先——JSON 数组的 SQL LIKE 有子串误命中）。
+    # 行数上限/parent 关联表方案是 S-3 性能债（TD 登记），不在此卡
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                Strategy.strategy_id, Strategy.parent_ids,
+                Strategy.status, Strategy.created_at,
+            ).where(
+                Strategy.parent_ids.isnot(None),
+            ).order_by(Strategy.created_at, Strategy.strategy_id)
+        ).mappings().all()
+    out = []
+    for row in rows:
+        if id_set.intersection(str(p) for p in parse_parent_ids(row["parent_ids"])):
+            out.append(dict(row))
+    return out
+
+
+def count_validation_records_by_strategy(
+    db_path: Path, strategy_ids: List[str]
+) -> Dict[str, Dict[str, Dict[str, int]]]:
+    """按 strategy_id 的 level×verdict 聚合计数（0.4.2 R4/DC-8——SQL
+    聚合不经列表截断；大谱系计数与记录实况一致）。
+
+    Returns:
+        {strategy_id: {level: {"count": n, "pass": n, "fail": n,
+                               "inconclusive": n}}}
+    """
+    if not strategy_ids:
+        return {}
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.verdict,
+                func.count().label("n"),
+            ).where(
+                ValidationRecord.strategy_id.in_(strategy_ids),
+            ).group_by(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.verdict,
+            )
+        ).all()
+    out: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for sid, level, verdict, n in rows:
+        bucket = out.setdefault(sid, {}).setdefault(
+            level, {"count": 0, "pass": 0, "fail": 0, "inconclusive": 0})
+        bucket["count"] += n
+        if verdict in bucket:
+            bucket[verdict] += n
+    return out
 
 
 def list_hypotheses(

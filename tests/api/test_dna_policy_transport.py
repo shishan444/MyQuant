@@ -14,8 +14,18 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 
+# 最小合法信号基因（review-042 CARD-12 适配）：validate_dna 起在策略
+# 创建通道拒绝无 entry/exit 的裸 DNA——本文件焦点在 policy 传输保真，
+# 基因补齐仅满足结构完整（值域走默认即合法）
+_MIN_GENES = [
+    {"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger",
+     "condition": {"type": "lt", "threshold": 30}},
+    {"indicator": "RSI", "params": {"period": 14}, "role": "exit_trigger",
+     "condition": {"type": "gt", "threshold": 70}},
+]
+
 _DNA_BODY = {
-    "signal_genes": [],
+    "signal_genes": _MIN_GENES,
     "execution_genes": {"timeframe": "4h"},
     "entry_trigger_policy": {"mode": "suppress_bars", "bars": 48},
 }
@@ -38,7 +48,7 @@ class TestDnaPolicyTransport:
 
     def test_无policy策略_响应不含键(self, api_client) -> None:
         resp = api_client.post("/api/strategies", json={
-            "dna": {"signal_genes": [],
+            "dna": {"signal_genes": _MIN_GENES,
                     "execution_genes": {"timeframe": "4h"}},
             "symbol": "BTCUSDT", "timeframe": "4h"})
         assert resp.status_code == 201, resp.text
@@ -58,7 +68,7 @@ class TestDnaPolicyTransport:
 
 
 _BAD_POLICY_DNA = {
-    "signal_genes": [],
+    "signal_genes": _MIN_GENES,
     "execution_genes": {"timeframe": "4h"},
     # dict 形非法：schema 层 Dict[str, Any] 放行（字符串形由 pydantic
     # 先拦属双闸另一层），到 to_dna() 后由登记点校验拦——CARD-01 锚
@@ -115,7 +125,7 @@ class TestPolicyNormalizationWriteback:
 
     def test_显式none_落库归一为缺省(self, api_client) -> None:
         resp = api_client.post("/api/strategies", json={
-            "dna": {"signal_genes": [],
+            "dna": {"signal_genes": _MIN_GENES,
                     "execution_genes": {"timeframe": "4h"},
                     "entry_trigger_policy": {"mode": "none"}},
             "symbol": "BTCUSDT", "timeframe": "4h",
@@ -129,7 +139,7 @@ class TestPolicyNormalizationWriteback:
 
     def test_first_true_落库归一形原样(self, api_client) -> None:
         resp = api_client.post("/api/strategies", json={
-            "dna": {"signal_genes": [],
+            "dna": {"signal_genes": _MIN_GENES,
                     "execution_genes": {"timeframe": "4h"},
                     "entry_trigger_policy": {"mode": "first_true"}},
             "symbol": "BTCUSDT", "timeframe": "4h",

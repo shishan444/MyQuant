@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -232,7 +232,60 @@ def validation_report(
                 f"总判定：{verdict_txt.get(r['verdict'], r['verdict'])}"
             ),
         })
+    # 谱系段 lineage（0.4.2 R4，纯增量只读披露）：报告实体回链 parent 假设
+    # → 同身份族（同 conditions_hash+ranges_hash 全部假设含终态变体）的
+    # 全部翻译实体与各自记录归属（SQL 聚合不经截断）；进化/手工来源
+    # parent_ids 非假设 → parent_hypothesis_id=null、entities 仅含自身
+    # （容错不炸）；当前实体无记录的 404 语义已在上方保持
+    lines["lineage"] = _build_lineage(db_path, strategy_id)
     return lines
+
+
+def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
+    """谱系段组装（research-validation-protocol 规格「验证证据档案」lineage）。"""
+    from core.persistence.repository.strategy import get_strategy
+
+    current = get_strategy(db_path, strategy_id)
+    if current is None:
+        return {"parent_hypothesis_id": None,
+                "entities": [{"strategy_id": strategy_id, "status": None,
+                              "created_at": None, "records": {},
+                              "is_current": True}]}
+
+    parent_hypothesis_id: Optional[str] = None
+    parents = rr.parse_parent_ids(current.get("parent_ids"))
+    if parents:
+        candidate = str(parents[0])
+        if rr.get_hypothesis(db_path, candidate) is not None:
+            parent_hypothesis_id = candidate
+
+    if parent_hypothesis_id is None:
+        # 进化/手工来源（parent_ids 非假设）：entities 仅含自身（容错）
+        counts = rr.count_validation_records_by_strategy(db_path, [strategy_id])
+        return {"parent_hypothesis_id": None,
+                "entities": [{"strategy_id": strategy_id,
+                              "status": current.get("status"),
+                              "created_at": current.get("created_at"),
+                              "records": counts.get(strategy_id, {}),
+                              "is_current": True}]}
+
+    parent_hyp = rr.get_hypothesis(db_path, parent_hypothesis_id)
+    family = rr.list_hypotheses_by_identity(
+        db_path, parent_hyp["conditions_hash"], parent_hyp["ranges_hash"])
+    family_ids = [h["hypothesis_id"] for h in family]
+    family_strategies = rr.list_strategies_by_parent_hypotheses(
+        db_path, family_ids)
+    counts = rr.count_validation_records_by_strategy(
+        db_path, [s["strategy_id"] for s in family_strategies])
+    entities = [{
+        "strategy_id": s["strategy_id"],
+        "status": s.get("status"),
+        "created_at": s.get("created_at"),
+        "records": counts.get(s["strategy_id"], {}),
+        "is_current": s["strategy_id"] == strategy_id,
+    } for s in family_strategies]  # created_at 升序（repository 排序）
+    return {"parent_hypothesis_id": parent_hypothesis_id,
+            "entities": entities}
 
 
 class TranslateRequest(BaseModel):
