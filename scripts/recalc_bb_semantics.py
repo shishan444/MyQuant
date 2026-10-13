@@ -31,12 +31,25 @@ sys.path.insert(0, str(REPO_ROOT))
 BB_GENE_RE = re.compile(r"bb_(upper|middle|lower)_(\d+)_([0-9.]+)")
 NUMERIC_COLS = ("total_return", "sharpe_ratio", "max_drawdown",
                 "win_rate", "total_trades", "total_score", "fitness")
-STATE_COLS = ("qualified", "run_source", "session_id", "created_at",
-              "strategy_id", "result_id", "template_name")
+# 回写白名单=NUMERIC_COLS（动态列集写法天然排除状态字段——R-8 清理
+# 未使用的 STATE_COLS 死常量）
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _write_protected(path: Path, text: str) -> None:
+    """R-2：处置记录类文件保护写——存在时旧文件改名保留（时间戳后缀）
+    后写入新内容（续跑不销毁首次产物；manifest/snapshot 同样适用）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        stamp = path.stat().st_mtime
+        import datetime as _dt
+        suffix = _dt.datetime.fromtimestamp(
+            stamp, tz=_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path.rename(path.with_name(f"{path.stem}.{suffix}{path.suffix}"))
+    path.write_text(text)
 
 
 def _connect(db: Path) -> sqlite3.Connection:
@@ -214,7 +227,10 @@ def audit(db: Path, out_dir: Path) -> dict:
         "evolution_task_affected": et_hits,
         "snapshot_rows_total": len(snap_rows),
         "snapshot_rows": snap_rows,
-        "champion_metrics_column": "查证无此项（表无 champion_metrics 列）"}
+        # R-4 勘误：原「表无 champion_metrics 列」与 PRAGMA 实测不符
+        # （表实有该列）——涉事 0 行（双通道枚举无命中）故无需回写
+        "champion_metrics": "涉事 0 行（champion_dna/initial_dna "
+                            "双通道枚举无命中）——无需回写"}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "manifest.json").write_text(
@@ -294,8 +310,10 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
         backup["strategies"].append(dict(r))
     conn.close()
     if not dry_run:
-        (out_dir / "backup_pre_recalc.json").write_text(
-            json.dumps(backup, ensure_ascii=False, indent=1))
+        # R-2 修复：备份文件存在即改名保留（时间戳后缀）——续跑覆盖会
+        # 销毁首次旧值明细（回滚链断裂，reviewer6 实证 run3 产物已失）
+        _write_protected(out_dir / "backup_pre_recalc.json",
+                         json.dumps(backup, ensure_ascii=False, indent=1))
 
     # 幂等：已有该策略 recalc_bb 条目即跳过
     conn = _connect(db)
@@ -319,8 +337,16 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
             try:
                 new = _recalc_backtest_row(db, data_dir, row)
             except Exception as exc:
-                if ("warmup" in str(exc).lower()
-                        or "数据不足" in str(exc)):
+                # R-7：code 优先（ResearchError 结构化码——0.3.x 错误通道
+                # 契约；ModelPipelineError「数据不足」是模型训练窗不足，
+                # 消息匹配会误归因）；消息子串仅兜底非 ResearchError 形
+                _code = str(getattr(exc, "code", "") or "")
+                _msg = str(exc)
+                if (_code in ("RESEARCH_WARMUP_INSUFFICIENT",
+                              "RESEARCH_DATA_INSUFFICIENT")
+                        or (not _code
+                            and ("warmup" in _msg.lower()
+                                 or "数据不足" in _msg))):
                     # 历史行产生时数据起点更早（2026-09-20 数据集重建后
                     # 起点后移）——现 warmup 纪律下不可重算：保留旧值，
                     # 记 skipped（环境差异如实披露，不猜测重放）。
@@ -417,8 +443,8 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
         print(f"[{'dry' if dry_run else 'ok'}] {sid[:12]} "
               f"{len(results)} 行 {sorted(lv)}")
 
-    (out_dir / "comparison_backtest.json").write_text(
-        json.dumps(cmp_rows, ensure_ascii=False, indent=1))
+    _write_protected(out_dir / "comparison_backtest.json",
+                     json.dumps(cmp_rows, ensure_ascii=False, indent=1))
 
     # 快照只对照：载体分流（明细文件+汇总条目）
     snaps = manifest["classes"]["evolution"]["snapshot_rows"]

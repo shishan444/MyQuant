@@ -65,11 +65,26 @@ class TestParityOneDeclaredVsImplemented:
         declared = set()
         for d in INDICATOR_REGISTRY.values():
             declared |= set(d.supported_conditions or [])
-        # 第二份清单：screen_patterns 的价格相对动作
+        # 第二份清单：screen_patterns 的价格相对动作（F-A 修复：正则
+        # 兼容类型注解形 `_NAME: Dict[str, List[str]] = {`；只取值列表
+        # 中的动作名——指标名键不进动作集；提取失败必须红，防死代码
+        # 静默跳过——reviewer7 实证原形制 MISS 而全绿是假绿）
         sp = (REPO_ROOT / "core/analysis/templates/screen_patterns.py").read_text()
-        m = re.search(r"_PRICE_REL_ACTIONS\s*=\s*(\{[^}]+\}|\([^)]+\))", sp)
-        if m:
-            declared |= set(re.findall(r"['\"](\w+)['\"]", m.group(1)))
+        m = re.search(r"_PRICE_REL_ACTIONS[^=]*=\s*\{", sp)
+        assert m, "第二份清单（_PRICE_REL_ACTIONS）提取失败——对拍①守卫面缺失"
+        body = sp[m.end():]
+        depth, end = 1, 0
+        for i, ch in enumerate(body):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        block = body[:end]
+        for vm in re.finditer(r":\s*\[([^]]*)\]", block):
+            declared |= set(re.findall(r"['\"](\w+)['\"]", vm.group(1)))
         # 第三份清单：registry_meta 透传层（supported_conditions 的
         # 出口透传——键集一致性由 registry 源头保证，此处并集收口）
         return declared
@@ -88,7 +103,7 @@ class TestParityOneDeclaredVsImplemented:
         """豁免集自身精确性：豁免键确实在对应差集中（防豁免集腐烂）。"""
         impl = _action_map_keys()
         declared = self._declared_union()
-        assert KNOWN_DECLARED_NOT_IMPLEMENTED <= (declared - impl) | {"eq"}
+        assert KNOWN_DECLARED_NOT_IMPLEMENTED <= (declared - impl)
         assert KNOWN_IMPLEMENTED_NOT_DECLARED <= impl
 
 
@@ -126,9 +141,10 @@ class TestParityTwoDslWhitelist:
         for expr in probes:
             s = evaluate_formula(expr, df, extra_columns={})
             assert s is not None, expr
-        # 白名单键集与探针函数名对齐（白名单扩了探针没跟=对拍红提示补）
+        # 白名单键集与探针精确等（F-C：<= 只防探针越界，防不了白名单
+        # 扩键无探针——改 == 双向锁：白名单新增函数必须补探针）
         used = {re.match(r"(\w+)\(", e).group(1) for e in probes}
-        assert used <= allowed
+        assert used == set(FORMULA_FUNCTIONS)
 
 
 class TestParityThreeDecodeRoundtrip:
@@ -157,16 +173,21 @@ class TestParityThreeDecodeRoundtrip:
 
     def test_three_consumer_paths_same_semantics(self, tmp_path):
         """统计（_classify/collect_condition_refs）、翻译（decode 分支）、
-        回测（_get_indicator_column 的 _SimpleGene 路径）对同一编码列名
-        产出同一 (indicator, params) 语义。"""
+        回测（_resolve_target_indicator_series 的 _SimpleGene 路径）对
+        同一编码列名产出同一 (indicator, params) 语义——三面同源显式
+        锚定（F-B：回测路径实际调用而非仅 import）。"""
         from core.analysis.condition_kernel import (
             _classify_target_ref, collect_condition_refs)
         from core.analysis.column_ref import decode_column_ref
         from core.strategy.executor import _resolve_target_indicator_series
         import pandas as pd
-        df = pd.DataFrame({"close": [1.0] * 30},
-                          index=pd.date_range("2024-01-01", periods=30,
-                                              freq="1h", tz="UTC"))
+        from core.features.indicators import _compute_indicator
+        n = 80  # MACD(12,26,9) 慢线 warmup 需 ~35 bar——30 bar 全 NaN
+        df = pd.DataFrame({
+            "open": 1.0, "high": 2.0, "low": 0.5,
+            "close": pd.Series(range(1, n + 1), dtype=float)},
+            index=pd.date_range("2024-01-01", periods=n,
+                                freq="1h", tz="UTC"))
         for col, ind, prm, fld in self.CASES:
             if ind is None:
                 continue
@@ -177,6 +198,19 @@ class TestParityThreeDecodeRoundtrip:
             assert (ind, prm) in refs
             d = decode_column_ref(col)
             assert d["indicator"] == ind and d["params"] == prm
+            # 回测路径：C6 序列形 condition（target_* 三键）经
+            # _resolve_target_indicator_series 现算取列——同源锚定
+            cond = {"type": "gt", "target_indicator": ind,
+                    "target_params": dict(prm), "target_field": fld}
+            work = df.copy()
+            enriched = _compute_indicator(df, ind, dict(prm))
+            for c, s in enriched.items():
+                work[c] = s
+            series = _resolve_target_indicator_series(cond, work)
+            assert series is not None, f"回测路径解析失败: {col}"
+            expected = enriched[list(enriched)[0]]
+            pd.testing.assert_series_equal(
+                series, expected, check_names=False)
 
 
 class TestParityFourParamDomains:
@@ -216,24 +250,47 @@ class TestParityFourParamDomains:
 
     def test_param_keys_declared_vs_consumed(self):
         """双向：声明未消费=吞参嫌疑；消费未声明=私参数。"""
+        silent = []
         for name, d in INDICATOR_REGISTRY.items():
             declared = set((d.params or {}).keys())
             try:
                 consumed = self._consumed_keys(name)
             except AssertionError:
-                continue  # 分支形制变体（guard_only/lazy）不在本对拍面
+                silent.append(name)  # 分支形制变体——收集后交叉验证
+                continue
             undeclared = consumed - declared
             unconsumed = declared - consumed
             assert not undeclared, f"{name}: 消费未声明 {undeclared}"
             assert not unconsumed, f"{name}: 声明未消费 {unconsumed}"
+        # F-E 交叉验证：静默名单 ⊆ P4b 差集∪豁免（「提取不到」与
+        # 「确无分支」可区分——静默面意外扩大即红）
+        from core.features.indicators import _compute_indicator
+        bnames = set(re.findall(
+            r'name == "([^"]+)"', inspect.getsource(_compute_indicator)))
+        rnames = set(INDICATOR_REGISTRY.keys())
+        exempt = self._no_compute_exempt_p4a()
+        assert set(silent) <= (rnames - bnames) | exempt, (
+            f"P4a 静默面意外扩大: "
+            f"{sorted(set(silent) - ((rnames - bnames) | exempt))}")
+
+    @staticmethod
+    def _no_compute_exempt_p4a() -> set:
+        import core.evolution.population as pop
+        m = re.search(r"_NO_COMPUTE\s*=\s*\{([^}]+)\}",
+                      inspect.getsource(pop))
+        return set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
 
     def test_mechanism_self_proof(self):
-        """机制自证：注入假守卫（对拍键集写死字面量）必红——防假守卫
-        （P4a 机制自证：若本测试与实现共享同一提取器且提取器失真，
-        该断言与上条同红）。"""
+        """机制自证（F-D 补强）：历史吞参负例写死字面量（提取器漏抓
+        即红）+ 真提取器非空反例（假守卫「返回声明键集」在缺陷态下
+        与真消费集可区分——防提取器与断言同源失真恒绿）。"""
         # BB 历史吞参负例：std 曾是「声明未消费」——修复后必消费
         assert "std" in self._consumed_keys("BB")
         assert "atr_period" in self._consumed_keys("Keltner")
+        # 假守卫反例：声明键集恒含 std（守卫面存在），而真消费集
+        # 非空且含 std——缺陷态（吞参）下消费集为空集，两者可区分
+        assert set(INDICATOR_REGISTRY["BB"].params.keys())
+        assert self._consumed_keys("BB") != set()
 
     def _no_compute_exempt(self) -> set:
         """豁免面程序派生：进化侧已知无计算实现的指标清单
