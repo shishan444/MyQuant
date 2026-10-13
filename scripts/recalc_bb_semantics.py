@@ -299,7 +299,10 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
 
     # 幂等：已有该策略 recalc_bb 条目即跳过
     conn = _connect(db)
-    done = {r["ref_id"] for r in conn.execute(
+    # 幂等键形制对齐：done 存裸 sid（剥 ref_id 的 "strategy:" 前缀——
+    # 与循环比较形制一致；原存全前缀形致恒不命中，断点续跑幂等失效
+    # 【tester6 6ae138b 锤出】）
+    done = {r["ref_id"].replace("strategy:", "", 1) for r in conn.execute(
         "SELECT ref_id FROM research_log WHERE entry_type='recalc_bb' "
         "AND ref_id LIKE 'strategy:%'").fetchall()}
     conn.close()

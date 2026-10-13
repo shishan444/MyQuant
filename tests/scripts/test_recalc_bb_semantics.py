@@ -122,14 +122,10 @@ class TestDualChannelEnumeration:
 class TestDisposalMechanics:
     """处置机制：幂等/事务/warmup 跳过/空集条目（tmp 库机制验证）。"""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="幂等键形制错位缺陷（2026-10-13 tester 补真实断言即锤出，"
-               "待 developer 修复后 XPASS 翻转）：recalc 脚本 done 集合存 "
-               "ref_id（'strategy:st_a' 带 prefix），循环以裸 sid "
-               "（'st_a'）作 in 比较——恒不命中，断点续跑幂等从未生效"
-               "（原测试无 assert 恒绿掩盖了该缺陷）")
     def test_idempotent_second_run_skips(self, db, tmp_path):
+        # 幂等键形制错位缺陷已修（done 集合剥 "strategy:" 前缀与循环
+        # 比较形制对齐）——原 xfail(strict) 锚 2026-10-13 XPASS 翻转转正
+
         """断点续跑幂等（C5.3 完成标准「同资产二次运行零重复回写」）：
         已有该资产 recalc_bb 条目即整体跳过——条目零新增且旧值保留。
 
@@ -169,6 +165,38 @@ class TestDisposalMechanics:
         assert n_entries == 1, \
             f"二次运行必须零新增条目（实际 {n_entries}）——幂等跳过失效"
         assert old_kept == 0.123, "旧值保留（未重放回写）"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="R-11+R-11b 待修（reviewer6 2026-10-13 复核发现 R-11b）："
+               "strategy 键形制错位 + 非 strategy 条目五处"
+               "（generation_snapshot:summary 与 4 条 enumeration:*）"
+               "无已存在判定无条件追加——单独修 strategy 形制本锚仍红，"
+               "两修齐备方 XPASS 翻转（防半修绿灯）")
+    def test_idempotent_covers_all_append_forms(self, db, tmp_path):
+        """幂等完备（C5.3 断点续跑幂等全量语义）：二次运行全部
+        recalc_bb 条目形制零新增——strategy:*/generation_snapshot:
+        summary/enumeration:*（当前实测缺陷态二次 +6：st_a 重放 1 +
+        非 strategy 重复 5）。"""
+        import sqlite3
+        empty_dir = tmp_path / "empty_market"
+        empty_dir.mkdir()
+        rc.recalc(db, empty_dir, tmp_path / "o1", dry_run=False)
+
+        def _count():
+            conn = sqlite3.connect(db)
+            n = conn.execute(
+                "SELECT COUNT(*) FROM research_log "
+                "WHERE entry_type='recalc_bb'").fetchone()[0]
+            conn.close()
+            return n
+
+        first = _count()
+        assert first > 0, "首次运行应写入条目（st_a+五条非 strategy）"
+        rc.recalc(db, empty_dir, tmp_path / "o2", dry_run=False)
+        second = _count()
+        assert second == first, \
+            f"二次运行全部条目形制零新增（{first} → {second}）——幂等不完备"
 
     def test_recalc_warmup_skip_records_level(self, db, tmp_path):
         """warmup 不足跳过路径：无数据目录时全部行记
