@@ -54,9 +54,12 @@ def _rule_genes() -> list:
                        "rsi_14", {"type": "lt", "threshold": 35})]
 
 
-def _dna(sources, composition=None) -> StrategyDNA:
+def _dna(sources, composition=None, genes=None) -> StrategyDNA:
+    """genes=None 缺省带规则进场基因（混合形制）；传 [] 为纯插件形制
+    （fix-research-c4 判定改基因实质后，两类形制的组合基线不同——
+    纯插件走单位元、混合走规则基线）。"""
     return StrategyDNA(
-        signal_genes=_rule_genes(),
+        signal_genes=_rule_genes() if genes is None else genes,
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(),
@@ -121,7 +124,10 @@ class TestModelSourceAssembly:
 
         monkeypatch.setattr(signals_model, "fit_predict_walk_forward", fake_wfw)
 
-        dna = _dna([{"type": "model", "ref": "model_m"}])
+        # fix-research-c4：纯插件形制（无进场基因）走单位元基线——
+        # 单源 weighted_vote 直接透传插件布尔（混合形制见
+        # test_signal_source_substance.py）
+        dna = _dna([{"type": "model", "ref": "model_m"}], genes=[])
         ss = assemble_signal_set(model_env, dna, df)
 
         # 版本选择：version=1 rejected 被跳过，version=2 valid 的
@@ -183,8 +189,11 @@ class TestCombineBranches:
         enriched = enrich_with_plugin_columns(db, df, {formula_col})
         fx = enriched[formula_col].astype(float)
 
+        # fix-research-c4：纯插件形制（无进场基因）——OR 单位元恒假
+        # 使 entries == 插件任意真（混合形制的 OR 并集语义见
+        # test_signal_source_substance.py）
         dna = _dna([{"type": "formula", "ref": formula_col}],
-                   {"mode": "logic", "op": "OR"})
+                   {"mode": "logic", "op": "OR"}, genes=[])
         ss = assemble_signal_set(db, dna, df)
 
         assert list(ss.entries) == list(fx > 0.0)
@@ -197,7 +206,7 @@ class TestCombineBranches:
         fx = enriched[formula_col].astype(float)
 
         dna = _dna([{"type": "formula", "ref": formula_col,
-                     "operator": "<", "threshold": 0.0}])
+                     "operator": "<", "threshold": 0.0}], genes=[])
         ss = assemble_signal_set(db, dna, df)
 
         assert list(ss.entries) == list(fx < 0.0)
@@ -207,7 +216,7 @@ class TestCombineBranches:
         enriched = enrich_with_plugin_columns(db, df, {formula_col})
         fx = enriched[formula_col].astype(float)
 
-        dna = _dna([{"type": "formula", "ref": formula_col}])
+        dna = _dna([{"type": "formula", "ref": formula_col}], genes=[])
         ss = assemble_signal_set(db, dna, df)
 
         assert list(ss.entries) == list(fx > 0.0)
@@ -319,7 +328,7 @@ class TestDuplicateFormulaRefSkipsReappend:
     def test_duplicate_ref_registered_once(self, db, formula_col) -> None:
         dna = _dna([{"type": "formula", "ref": formula_col},
                     {"type": "formula", "ref": formula_col}],
-                   {"mode": "logic", "op": "OR"})
+                   {"mode": "logic", "op": "OR"}, genes=[])
         ss = assemble_signal_set(db, dna, _df())
         # 双引用同一列不炸、entries 仍为该列布尔（去重后单列）
         df = _df()

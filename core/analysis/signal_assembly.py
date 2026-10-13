@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import operator as _operator
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,8 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
+
+logger = logging.getLogger(__name__)
 
 
 def assemble_signal_set(
@@ -89,6 +92,29 @@ def assemble_signal_set(
     # 组合（composition.mode 缺省 = weighted_vote，threshold 0.5 交集语义）
     mode = (dna.composition or {}).get("mode", "weighted_vote")
     combined = _combine(base, dna, plugin_cols, mode)
+
+    # 组合态可观测哨兵（fix-research-c4 C4.2）：有规则进场侧基因、
+    # 规则侧基线全 False、且插件源在场——entries 完全由插件侧决定。
+    # 该形态与历史缺陷五（规则基线静默作废纯插件进场）同形，固定
+    # 前缀留痕供排查；警告不入 SignalSet 返回体。真实零触发市况下
+    # 同样告警——按 spec 字面声明为正确行为契约（可观测优先，不改）。
+    from core.strategy.dna import SignalRole as _SR
+    _has_rule_entry = any(
+        g.role in (_SR.ENTRY_TRIGGER, _SR.ENTRY_GUARD)
+        for g in (dna.signal_genes or []))
+    _plugin_refs = sorted(
+        s.get("ref", "") for s in (dna.signal_sources or [])
+        if s.get("type") in ("formula", "model"))
+    if (_has_rule_entry and plugin_cols
+            and not bool(base.entries.fillna(False).astype(bool).any())):
+        logger.warning(
+            "[signal-assembly] 规则进场基线全 False 且插件源在场："
+            "entries 完全由插件侧决定（若非预期请核查规则基因条件）"
+            " plugin_refs=%s entry_genes=%s",
+            _plugin_refs,
+            [(g.indicator, getattr(g.role, "value", str(g.role)))
+             for g in (dna.signal_genes or [])
+             if g.role in (_SR.ENTRY_TRIGGER, _SR.ENTRY_GUARD)])
 
     # 事件化单次施加（trigger-policy 卡5）：组合后的 combined entries
     # 经唯一实现变换（防二次变换——suppress_bars 不幂等，二次抑制窗
@@ -213,9 +239,19 @@ def _combine(
     # 取组合语义单位元——AND 系（logic and / gate / weighted_vote 交集
     # 语义）恒真、logic OR 恒假——否则空 rule 基因的全 False entries 会
     # 把纯插件策略静默作废成永不入场
-    has_rule_source = any(
-        s.get("type") == "rule" for s in (dna.signal_sources or []))
-    if not has_rule_source:
+    #
+    # 判定域=进场角色实质（fix-research-c4，D-13 定稿/TC-2 用户确认）：
+    # 原「signal_sources 声明含 type=rule」与引擎进场构造域
+    # （executor.py all_entry=entry_triggers+entry_guards）脱钩——
+    # signal_genes 仅 exit_trigger+公式进场源的形制（st_f86b4295c58b）
+    # 被误判「有规则源」，全 False 基线把纯插件进场静默作废（缺陷五
+    # fr_1aee6a6e7e38）。现按基因角色实质判：任一 ENTRY_TRIGGER/
+    # ENTRY_GUARD 基因在场即有规则进场侧。
+    from core.strategy.dna import SignalRole
+    has_rule_entry = any(
+        g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
+        for g in (dna.signal_genes or []))
+    if not has_rule_entry:
         is_or = (mode == "logic"
                  and str((dna.composition or {}).get("op", "")).upper() == "OR")
         entries = pd.Series(not is_or, index=idx)

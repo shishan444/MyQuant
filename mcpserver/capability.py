@@ -96,6 +96,12 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   校验→两维 warmup→求值注入→存在性校验）；未注册列名与求值失败
   分别结构化拒绝（RESEARCH_PLUGIN_COLUMN_NOT_FOUND「名字写错」/
   RESEARCH_COLUMN_NOT_AVAILABLE「插件坏了」），不再静默 0 样本。
+- **纯公式进场形制（fix-research-c4 起）**：「公式插件进场+规则出场」
+  形制可用——组合层规则侧基线按进场角色基因实质判定（任一
+  ENTRY_TRIGGER/ENTRY_GUARD 基因在场即有规则进场侧，与引擎进场
+  构造域对齐），纯插件进场不再被静默作废（此前 0 笔交易无提示）；
+  组合态可疑形态（规则基线全 False+插件源在场）落 [signal-assembly]
+  前缀告警留痕（真实零触发同告警——可观测优先的既定契约）。
 - **组合条件（0.4.1）**：condition_stats/event_study 支持 conditions
   条件数组（AND 语义，条数 1..5，每条混合形制含可选高周期
   timeframe 键——掩码投影）。兼容锚=参数键形制：旧 condition 键
