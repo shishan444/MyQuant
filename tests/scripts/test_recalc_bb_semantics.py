@@ -122,14 +122,53 @@ class TestDualChannelEnumeration:
 class TestDisposalMechanics:
     """处置机制：幂等/事务/warmup 跳过/空集条目（tmp 库机制验证）。"""
 
-    def test_idempotent_second_run_skips(self, db):
-        """断点续跑幂等：已有 recalc_bb 条目即跳过（不重复回写）。"""
+    @pytest.mark.xfail(
+        strict=True,
+        reason="幂等键形制错位缺陷（2026-10-13 tester 补真实断言即锤出，"
+               "待 developer 修复后 XPASS 翻转）：recalc 脚本 done 集合存 "
+               "ref_id（'strategy:st_a' 带 prefix），循环以裸 sid "
+               "（'st_a'）作 in 比较——恒不命中，断点续跑幂等从未生效"
+               "（原测试无 assert 恒绿掩盖了该缺陷）")
+    def test_idempotent_second_run_skips(self, db, tmp_path):
+        """断点续跑幂等（C5.3 完成标准「同资产二次运行零重复回写」）：
+        已有该资产 recalc_bb 条目即整体跳过——条目零新增且旧值保留。
+
+        判别力：幂等命中跳过发生在任何写入之前；若幂等检查失效，
+        st_a 在空 market 目录下走 warmup-skip 路径仍会新增
+        strategy:st_a 条目（实测复现正是此路径——缺陷态条目数 2）。
+        条目是处置完成的留痕——不增 ⟹ 未重放处置 ⟹ 回写未重放
+        （回写在处置流程内、先于条目）。"""
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO backtest_result (result_id, strategy_id, symbol, "
+            "timeframe, data_start, data_end, init_cash, fee, slippage, "
+            "total_return, created_at) VALUES ('bt_1', 'st_a', 'BTCUSDT', "
+            "'4h', '2024-01-01', '2024-06-01', 100000, 0.001, 0.0005, "
+            "0.123, '2026-01-01T00:00:00Z')")
+        conn.commit()
+        conn.close()
+        # 第一次运行的产物以预置条目承载（机制面等价构造）
         from core.persistence.repository.research import append_research_log
         append_research_log(db, hypothesis_id=None, entry_type="recalc_bb",
                             ref_id="strategy:st_a", summary="{}")
-        # recalc 全量跑：st_a 应被跳过（无回测行也不炸）
-        rc.recalc(db, db.parent / "market", db.parent / "out2",
-                  dry_run=True)  # dry 不写库——机制面由下条真实小跑覆盖
+
+        empty_dir = tmp_path / "empty_market"
+        empty_dir.mkdir()
+        rc.recalc(db, empty_dir, tmp_path / "out2", dry_run=False)
+
+        conn = sqlite3.connect(db)
+        n_entries = conn.execute(
+            "SELECT COUNT(*) FROM research_log "
+            "WHERE entry_type='recalc_bb' AND ref_id='strategy:st_a'"
+        ).fetchone()[0]
+        old_kept = conn.execute(
+            "SELECT total_return FROM backtest_result "
+            "WHERE result_id='bt_1'").fetchone()[0]
+        conn.close()
+        assert n_entries == 1, \
+            f"二次运行必须零新增条目（实际 {n_entries}）——幂等跳过失效"
+        assert old_kept == 0.123, "旧值保留（未重放回写）"
 
     def test_recalc_warmup_skip_records_level(self, db, tmp_path):
         """warmup 不足跳过路径：无数据目录时全部行记
