@@ -166,14 +166,10 @@ class TestDisposalMechanics:
             f"二次运行必须零新增条目（实际 {n_entries}）——幂等跳过失效"
         assert old_kept == 0.123, "旧值保留（未重放回写）"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R-11+R-11b 待修（reviewer6 2026-10-13 复核发现 R-11b）："
-               "strategy 键形制错位 + 非 strategy 条目五处"
-               "（generation_snapshot:summary 与 4 条 enumeration:*）"
-               "无已存在判定无条件追加——单独修 strategy 形制本锚仍红，"
-               "两修齐备方 XPASS 翻转（防半修绿灯）")
     def test_idempotent_covers_all_append_forms(self, db, tmp_path):
+        # R-11+R-11b 两修齐备（strategy 键形制+五处非 strategy 条目
+        # _append_once 幂等）——原 xfail(strict) 锚 XPASS 翻转转正
+
         """幂等完备（C5.3 断点续跑幂等全量语义）：二次运行全部
         recalc_bb 条目形制零新增——strategy:*/generation_snapshot:
         summary/enumeration:*（当前实测缺陷态二次 +6：st_a 重放 1 +

@@ -223,6 +223,11 @@
 | 指标参数实际生效（C1） | BB std 维度防再犯（std3≠std2、通道宽单调含 2.5 非整数插入点、域两端、同参稳定）；KC atr_period 维度（S1 主断言/S2 解耦/S3 退化等值含 NaN 遮罩逐元素/S4 稳定）；mult 线性精确比 1.5 与 3.0（原 ta.kc 形 mult 从未传入恒用 2.0）；warmup/短数据边界特征网（ta.atr 需 n>length 而 ta.ema n==length 即出值的库门槛差异、退化形 n==length 被守卫拦成空 dict、三列遮罩由 max(ema_p,atr_p) 主导）；吞参排查交付物存在锚（27 调用点+两处修复记录+28 复跑无残留）；红测判别力 mock 复核（BB 吞参形 4 红/KC 吞参形 3 红，S3 与列名锚按设计不红） | `infra/test_indicator_params_effective.py`（21 用例） | — |
 | 研究链路回归锚（C1 基线） | 三锚锁「同一条件在同一真实数据触发计数跨变更不变」：A3=SMA5 lt sma_20 差分不变性 9026（启用）；A1=close lt bb_lower_20_2 期望 1119（启用，std=2 未失真路径）；A2 与 A1 双写法（skip 待 C2/C6 启用）；数据缺失模块级 skip 不假绿 | `analysis/test_research_regression_anchors.py` | A2/A1 双写法随 C2/C6 批次解禁 |
 
+### C5~C7 资产（地图补登——C7.5 完备性核对）
+- tests/scripts/test_recalc_bb_semantics.py——C5 构造层 15 条（双通道枚举/幂等转正/对照三档）
+- tests/scripts/test_recalc_c5_verification.py——C5 真实库 R1~R5 只读核验
+- tests/infra/test_contract_parity_family.py——C7 四处对拍 8 条（豁免集锚定+程序派生防漂移）
+
 ### fix-research 守护行
 - 退化等值锚（KC-S3）只在 atr_p==ema_p 且 mult=2 形成立——KC 存量债务全量特殊性下的唯一修复前对照点（真实数据 18941 行三列零差异基线载锚文件 docstring）；列名规则两指标不同形（BB std_str 仅整数形去尾 .0、KC mult 保留 2.0 形）——各自锚定，勿为表面一致性改任何一侧
 - KC 自算三列在 atr_p>ema_p 形下遮罩分裂（middle 首个有效 bar 早于带列）——序关系不变量锚现按 middle 遮罩断言（kc_20_10 形三列一致安全）；若对 atr_p>ema_p 形断言序关系，须改按三列共有有效区，否则 middle 遮罩内带列 NaN 段会误红；下游按行消费三列时中间段仅有 middle，对拍历史 KC 数字须知

@@ -99,13 +99,8 @@ def assemble_signal_set(
     # 前缀留痕供排查；警告不入 SignalSet 返回体。真实零触发市况下
     # 同样告警——按 spec 字面声明为正确行为契约（可观测优先，不改）。
     from core.strategy.dna import SignalRole as _SR
-    _has_rule_entry = any(
-        g.role in (_SR.ENTRY_TRIGGER, _SR.ENTRY_GUARD)
-        for g in (dna.signal_genes or []))
-    _plugin_refs = sorted(
-        s.get("ref", "") for s in (dna.signal_sources or [])
-        if s.get("type") in ("formula", "model"))
-    if (_has_rule_entry and plugin_cols
+    _plugin_refs = sorted(s.get("ref", "") for s in plugin_sources)
+    if (_has_rule_entry_side(dna) and plugin_cols
             and not bool(base.entries.fillna(False).astype(bool).any())):
         logger.warning(
             "[signal-assembly] 规则进场基线全 False 且插件源在场："
@@ -181,6 +176,19 @@ _SOURCE_COMPARE_OPS = {
 }
 
 
+def _has_rule_entry_side(dna) -> bool:
+    """规则进场侧基因在场判定（fix-research-c4 判定域·形态 B 提取——
+    基线单位元选择与组合态哨兵两处共用同一判定，防单侧改动分叉）。
+
+    判定域=引擎进场构造域（executor all_entry=entry_triggers+
+    entry_guards 对齐）：任一 ENTRY_TRIGGER/ENTRY_GUARD 基因在场即真。
+    """
+    from core.strategy.dna import SignalRole
+    return any(
+        g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
+        for g in (dna.signal_genes or []))
+
+
 def _to_float_or_reject(value, *, key: str):
     """组合参数数值键取值（0.3.7 H5：坏值结构化拒绝而非裸 float() 穿 500）。
 
@@ -247,11 +255,7 @@ def _combine(
     # 被误判「有规则源」，全 False 基线把纯插件进场静默作废（缺陷五
     # fr_1aee6a6e7e38）。现按基因角色实质判：任一 ENTRY_TRIGGER/
     # ENTRY_GUARD 基因在场即有规则进场侧。
-    from core.strategy.dna import SignalRole
-    has_rule_entry = any(
-        g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
-        for g in (dna.signal_genes or []))
-    if not has_rule_entry:
+    if not _has_rule_entry_side(dna):
         is_or = (mode == "logic"
                  and str((dna.composition or {}).get("op", "")).upper() == "OR")
         entries = pd.Series(not is_or, index=idx)

@@ -6,10 +6,10 @@
 锚与数据（真实数据 BTCUSDT，data/market 在库；缺失时模块级 skip
 不假绿——test_derivatives_contract 同款纪律）：
 - A1：1h 2024-02-01~2026-04-01，close lt bb_lower_20_2（BB std=2
-  未失真路径），期望 1119。双写法一致性断言（price_below 写法同得
-  1119）随 C2 批次启用。
+  未失真路径），期望 1119；双写法一致性断言（price_below 写法同得
+  1119）已随 C2 批次启用。
 - A2：4h 2024-05-01~2026-04-01，EMA5 gt ema_20 且 close lt ema_20
-  双条件 AND，期望 213（序列比较面）。随 C6 批次启用。
+  双条件 AND，期望 213（序列比较面）；已随 C6 批次启用。
 - A3：1h 2024-02-01~2026-04-01，SMA5 lt sma_20（subject=结构化
   SMA(5) 引用 + target=编码列名 sma_20 的序列对序列比较），期望
   9026——差分不变性断言（本变更启用）。

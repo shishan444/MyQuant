@@ -425,25 +425,44 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
     (out_dir / "snapshot_comparison.jsonl").write_text("\n".join(
         json.dumps(s, ensure_ascii=False) for s in snaps))
     if not dry_run:
-        append_research_log(
-            db, hypothesis_id=None, entry_type="recalc_bb",
-            ref_id="generation_snapshot:summary",
-            summary=json.dumps({
-                "rows_total": len(snaps), "disposition": "compare_only"},
-                ensure_ascii=False))
-        # 空集正式条目（pm 底线 1）
+        # 汇总/枚举条目幂等：已有同名 ref_id 即跳过（重跑不重复追加）
+        conn = _connect(db)
+        existing = {r["ref_id"] for r in conn.execute(
+            "SELECT ref_id FROM research_log "
+            "WHERE entry_type='recalc_bb'").fetchall()}
+        conn.close()
+
+        def _append_once(ref_id, summary):
+            if ref_id not in existing:
+                append_research_log(db, hypothesis_id=None,
+                                    entry_type="recalc_bb",
+                                    ref_id=ref_id, summary=summary)
+
+        _append_once(
+            "generation_snapshot:summary",
+            json.dumps({"rows_total": len(snaps),
+                        "disposition": "compare_only"},
+                       ensure_ascii=False))
+        # 空集正式条目（pm 底线 1）；②类命中行附两字段契约
         for cls, key in (("scan_archive", "②类扫描存档枚举"),
                          ("hypotheses", "③类历史假设枚举"),
                          ("draft_assets", "④类 draft 资产枚举")):
-            n = manifest["classes"][cls]["count"]
-            append_research_log(
-                db, hypothesis_id=None, entry_type="recalc_bb",
-                ref_id=f"enumeration:{key}",
-                summary=json.dumps({"count": n}, ensure_ascii=False))
-        append_research_log(
-            db, hypothesis_id=None, entry_type="recalc_bb",
-            ref_id="enumeration:evolution_task",
-            summary=json.dumps({
+            cls_data = manifest["classes"][cls]
+            summary = {"count": cls_data["count"]}
+            if cls == "scan_archive" and cls_data["analysis_tasks"]:
+                at = cls_data["analysis_tasks"][0]
+                summary["two_field_contract"] = {
+                    "task_id": at["task_id"],
+                    "result_ref_completeness": at["result_ref_completeness"],
+                    "old_value_source": "result_ref"
+                    if at["result_ref_completeness"] == "complete"
+                    else "none",
+                }
+            _append_once(f"enumeration:{key}",
+                         json.dumps(summary, ensure_ascii=False))
+        _append_once(
+            "enumeration:evolution_task",
+            json.dumps({
                 "count": len(manifest["classes"]["evolution"]
                              ["evolution_task_affected"])},
                 ensure_ascii=False))

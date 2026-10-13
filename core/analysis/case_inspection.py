@@ -467,7 +467,12 @@ def inspect_cases(
         # 显式 start：load_with_warmup（前缀不足报 WARMUP_INSUFFICIENT）
         df, start_ts = load_with_warmup(
             data_dir, symbol, timeframe,
-            start=start, end=end_expanded, indicator_names=[indicator],
+            start=start, end=end_expanded,
+            # P1 修复（reviewer3/tester3 双源确证）：插件列 subject 豁免
+            # 下 indicator 可为 None——裸传 [None] 使 derive_warmup 抛
+            # KeyError('未知指标: None') 裸穿 500；复用已归一的
+            # _warm_names（与 analysis.py:142 同款过滤）
+            indicator_names=_warm_names,
             min_warmup_bars=_min_warmup or 0)
     else:
         # 缺省全量（或 timestamps 形态）：全量直装，effective_start 披露
