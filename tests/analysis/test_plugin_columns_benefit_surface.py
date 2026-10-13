@@ -219,7 +219,6 @@ class TestTwoCodeDivisionChainLevel:
         """「插件坏了」码经完整装载链：outer 可达（静态过）但依赖列
         已删→enrich 静默缺列→⑤存在性校验结构化拒绝——五步顺序接线
         的链路证据（test_plugin_columns_loading 仅直调 verify）。"""
-        from core.persistence.repository import research as rr
         import sqlite3
         p = tmp_path / "bad.db"
         init_db_ext(p)

@@ -51,6 +51,10 @@ def db(tmp_path_factory):
     ensure_research_tables(p)
     register_formula_plugin(p, name="fx_dev20_pct",
                             expression="(close - shift(close, 20)) / shift(close, 20)")
+    # lookback 260 > derive_warmup 200 floor——插件维并入的判别锚用
+    # （20 形预算与 floor 同值 200，砍收集后在数值上不可区分）
+    register_formula_plugin(p, name="fx_dev260",
+                            expression="shift(close, 260)")
     return p
 
 
@@ -87,7 +91,12 @@ class TestEvalFailurePath:
         """构造法（静态校验拦不住的运行时失败）：fx_outer 依赖
         fx_inner（两者注册序保证静态校验通过），随后直删 fx_inner
         注册条目——fx_outer 求值时依赖列不可得 → enrich 静默
-        continue → 存在性校验结构化拒绝。"""
+        continue → 存在性校验结构化拒绝。
+
+        2026-10-13 tester 修正：原 hasattr(rr, "_connect") 运行时探测
+        私有函数再回退 sqlite3 的两分支（repository research 模块无
+        _connect，else 支为死代码）收敛为 sqlite3 直连——同 SQL 同
+        语义，消除私有 API 依赖（reviewer3 提示，tester 复核采纳）。"""
         p = tmp_path / "bad.db"
         init_db_ext(p)
         ensure_research_tables(p)
@@ -95,20 +104,12 @@ class TestEvalFailurePath:
                                 expression="shift(close, 1)")
         register_formula_plugin(p, name="outer",
                                 expression="fx_inner + 0")
-        from core.persistence.repository import research as rr
-        conn = rr._connect(p) if hasattr(rr, "_connect") else None
-        if conn is None:
-            import sqlite3
-            conn = sqlite3.connect(p)
-            conn.execute(
-                "DELETE FROM signal_registry WHERE column_name='fx_inner'")
-            conn.commit()
-            conn.close()
-        else:
-            conn.execute(
-                "DELETE FROM signal_registry WHERE column_name='fx_inner'")
-            conn.commit()
-            conn.close()
+        import sqlite3
+        conn = sqlite3.connect(p)
+        conn.execute(
+            "DELETE FROM signal_registry WHERE column_name='fx_inner'")
+        conn.commit()
+        conn.close()
         from tests.helpers.data_factory import make_ohlcv
         df = make_ohlcv(n=50, freq="4h", start="2024-01-01", seed=1)
         from core.analysis.plugin_service import enrich_with_plugin_columns
@@ -208,3 +209,110 @@ class TestRouteFullChain:
         assert resp.status_code == 422, resp.text[:300]
         body = resp.json()["detail"]
         assert body["code"] == "RESEARCH_PLUGIN_COLUMN_NOT_FOUND"
+
+
+class TestEvalFailureFullChain:
+    """求值失败全链（G3）：registry 可达但求值失败经路由面 422
+    「插件坏了」码——机制层锚之外的全链证据（design §6 双层验证）。"""
+
+    def test_broken_plugin_422_via_route(self, api_client, tmp_path):
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(MARKET_DIR / "BTCUSDT_4h.parquet",
+                    data_dir / "BTCUSDT_4h.parquet")
+        p = tmp_path / "bad.db"
+        init_db_ext(p)
+        ensure_research_tables(p)
+        register_formula_plugin(p, name="inner", expression="shift(close, 1)")
+        register_formula_plugin(p, name="outer", expression="fx_inner + 0")
+        import sqlite3
+        conn = sqlite3.connect(p)
+        conn.execute("DELETE FROM signal_registry WHERE column_name='fx_inner'")
+        conn.commit()
+        conn.close()
+        api_client.app.state.db_path = p
+        api_client.app.state.data_dir = data_dir
+        resp = api_client.post("/api/research/analysis", json={
+            "template": "condition_stats",
+            "params": {"conditions": [
+                {"subject": "fx_outer", "action": "lt", "target": 0}]},
+            "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2024-06-01", "end": "2026-04-01"}})
+        assert resp.status_code == 422, resp.text[:300]
+        assert resp.json()["detail"]["code"] == "RESEARCH_COLUMN_NOT_AVAILABLE"
+
+
+class TestTwoDimWarmup:
+    """两维 warmup（五步之③）：插件维与指标维并集前扩。
+
+    插件列 warmup 实测 200 bar（registry_meta 推导规则）；前缀不足
+    走结构化 RESEARCH_WARMUP_INSUFFICIENT（非 500/裸异常）。
+    """
+
+    def test_insufficient_prefix_structured(self, db):
+        """前缀不足走结构化 RESEARCH_WARMUP_INSUFFICIENT 且预算值含
+        插件维（lookback 260 形：start=2024-02-05 前扩 210 bar，夹在
+        200 floor 与 260 之间——若插件维收集被砍，预算回落 200 即
+        210 够用不抛，本断言即红；2026-10-13 mock 复核证据在案）。"""
+        cond = {"subject": "fx_fx_dev260", "action": "lt", "target": 1e12}
+        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-02-05", "end": "2026-04-01"}
+        with pytest.raises(ResearchError) as ei:
+            _load_with_condition_refs(
+                MARKET_DIR, rng, None, conditions=[cond], db_path=db)
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
+        assert ei.value.detail["warmup_bars"] == 260
+
+    def test_plugin_and_indicator_dims_union(self, db):
+        """subject=插件列 × target=指标列（cross_above ema_50）两维并集：
+        预算取两维 max（指标维 600 主导、插件维 200）；装载按预算前扩
+        （df 起点前扩 600 bar）且插件列已求值注入（指标列由模板内
+        计算，不在装载产物——warmup 预算「只用不算」契约）。"""
+        from core.analysis.registry_meta import derive_warmup_full
+        plugins = {"fx_fx_dev20_pct"}
+        dim_ind = derive_warmup_full(db, ["EMA"], set())
+        dim_plg = derive_warmup_full(db, [], plugins)
+        dim_both = derive_warmup_full(db, ["EMA"], plugins)
+        assert dim_both == max(dim_ind, dim_plg) == 600
+        assert dim_plg == 200, "插件维独立预算（fx 表达式 shift 20 推导）"
+
+        cond = {"subject": "fx_fx_dev20_pct",
+                "action": "cross_above", "target": "ema_50"}
+        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-06-01", "end": "2026-04-01"}
+        df, request_start = _load_with_condition_refs(
+            MARKET_DIR, rng, None, conditions=[cond], db_path=db)
+        assert "fx_fx_dev20_pct" in df.columns
+        assert df.index.get_loc(request_start) >= dim_both, \
+            "装载前扩须覆盖两维并集预算"
+
+
+class TestInspectCasesP1Regression:
+    """P1（reviewer3 通报，tester 已独立复现确证）：插件列 subject +
+    indicator 缺省 + 显式 start → case_inspection.py 显式 start 分支
+    load_with_warmup(indicator_names=[None]) → derive_warmup 裸
+    KeyError('未知指标: None')（500 路径）；start 缺省的全量直装分支
+    正常。
+
+    正常路径的 xfail(strict, raises=KeyError) 登记已在
+    test_plugin_columns_benefit_surface.py（同源缺陷，不再重复锚）；
+    此处只锚该文件未覆盖的结构化拒绝路径：豁免分支修复后，前缀不足
+    应走 RESEARCH_WARMUP_INSUFFICIENT 而非裸异常（修复落地后 XPASS
+    即红，翻转成正式断言——翻转原子交付纪律）。"""
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="P1 待修复：豁免+显式 start 分支 indicator_names=[None] "
+               "裸 KeyError 拦截在结构化检查之前（正常路径的 xfail "
+               "登记在 test_plugin_columns_benefit_surface.py）")
+    def test_explicit_start_insufficient_warmup_structured(self, db):
+        """显式 start 前缀不足（2024-01-20 起前扩 ~114 bar < 插件维
+        200）应结构化 RESEARCH_WARMUP_INSUFFICIENT，非裸 KeyError。"""
+        from core.analysis.case_inspection import inspect_cases
+        with pytest.raises(ResearchError) as ei:
+            inspect_cases(
+                db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
+                selector={"condition": COND}, limit=3, context_bars=4,
+                start="2024-01-20")
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
