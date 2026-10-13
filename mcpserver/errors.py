@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcpserver.api_client import ApiError
 
@@ -103,7 +103,7 @@ HINTS: Dict[str, str] = {
         "（元数据经 list_indicators 查询）",
     "RESEARCH_PARAM_INVALID":
         "模板参数非法：查看 detail 的 param/legal_range"
-        "（condition_stats 的 forward_bars 须为 1..数据长度-1 的整数）",
+        "（各参数面的合法形制以 detail 为准）",
     # ---- 插件
     "RESEARCH_FORMULA_INVALID":
         "插件配置非法：检查 name/expression 必填、DSL 白名单函数与禁前视"
@@ -145,12 +145,42 @@ def hint_for(code: str) -> str:
     return HINTS.get(code, DEFAULT_HINT)
 
 
+# RESEARCH_PARAM_INVALID 的场景分派层（fix-research-c2）：共用错误码下
+# 不同参数面共用一句 hint 会与实际错误场景错配（fr_ce325c609a8d）——
+# 按 detail.param 匹配场景文案，无命中回退注册表通用文案。注册表机制
+# 与静态守护不动（场景表是增量键，tests/mcpserver/test_errors.py 的
+# 覆盖面对拍不受影响）。
+_PARAM_HINT_SCENARIOS: Dict[str, str] = {
+    "forward_bars": "前向持有期 bar 数越界：forward_bars 须为 "
+                    "1..数据长度-1 的整数",
+    "min_samples": "小样本阈值非法：min_samples 须为 ≥0 的整数"
+                   "（0=禁用小样本检查）",
+    "condition.action": "比较动作未知：查看 detail.legal_values——"
+                        "动作分派表键集（gt/lt/price_above/"
+                        "price_below 等）",
+    "data_range": "区间参数非法：区间 bar 数超上限时缩小区间"
+                  "（detail 的 limit/actual 披露实际值）",
+    "condition|conditions": "condition 与 conditions 须二选一"
+                            "（键组分派，直调方同样须遵守）",
+}
+
+
+def _scenario_hint(code: str, detail: Any) -> Optional[str]:
+    """按 detail.param 场景分派的增量 hint 层；None=无场景命中。"""
+    if code == "RESEARCH_PARAM_INVALID" and isinstance(detail, dict):
+        return _PARAM_HINT_SCENARIOS.get(str(detail.get("param", "")))
+    return None
+
+
 # ---------------------------------------------------------------- 载荷形制
 
 def error_payload(code: str, message: str, detail: Any = None) -> Dict[str, Any]:
-    """统一错误载荷 {code, message, detail, hint}（spec: mcp-server 结构化错误透传）。"""
+    """统一错误载荷 {code, message, detail, hint}（spec: mcp-server 结构化错误透传）。
+
+    hint 两层：场景分派层（detail.param 命中时给参数面专属文案）→
+    注册表通用层（hint_for）。"""
     return {"code": code, "message": message, "detail": detail,
-            "hint": hint_for(code)}
+            "hint": _scenario_hint(code, detail) or hint_for(code)}
 
 
 def payload_from(exc: ApiError) -> Dict[str, Any]:

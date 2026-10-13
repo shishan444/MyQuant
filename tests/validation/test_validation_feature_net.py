@@ -520,15 +520,18 @@ class TestEvaluateSingleCondition:
         assert mask.tolist() == [False] * 4
         assert any("could not be resolved" in w for w in warnings)
 
-    def test_unknown_action_warns_and_all_false(self):
+    def test_unknown_action_structured_reject(self):
+        """fix-research-c2：未知 action 从 warnings+全 False 掩码改为
+        结构化拒绝（422 携 legal_values）——静默降级使研究者误读为
+        「条件从未发生」（缺陷三 fr_cfbcab214136）。"""
+        from core.analysis.errors import ResearchError
         from core.validation.engine import _evaluate_single_condition
-        warnings: list = []
-        mask = _evaluate_single_condition(
-            self._df(), {"subject": "close", "action": "teleport", "target": 100},
-            warnings,
-        )
-        assert mask.tolist() == [False] * 4
-        assert any("not a recognized action" in w for w in warnings)
+        with pytest.raises(ResearchError) as ei:
+            _evaluate_single_condition(
+                self._df(), {"subject": "close", "action": "teleport", "target": 100},
+                None,
+            )
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_cross_above_series_detects_cross(self):
         from core.validation.engine import _evaluate_single_condition
