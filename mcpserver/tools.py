@@ -465,13 +465,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         返回 {"groups":[…]}（数组序=请求序）；整批原子含执行期——
         任一组失败整批 422 无部分结果（detail 以 groups[N] 指明组序）；
         载荷分档：单组 2048 / 批量 16384 字节。
-        指标参数修复中间态（2026-10-13）：BB 的 std 与 Keltner 的
-        atr_period/multiplier 传参修复已生效——本工具与全链路新生成
-        的计算数值正确。历史存量数字仍为旧语义：BB 存量中 std≠2 的
-        数值实按 2.0 计算（存量重算由后续批次承载后撤下本条）；
-        Keltner 存量全部为吞参语义（atr_period 未生效；重算边界待
-        裁决，见 works/设计稿/技术债务-2026-10-13.md）。对照历史
-        研究档案数字时须知此差异。"""
+        指标参数修复（2026-10-13）：BB std 与 Keltner
+        atr_period/multiplier 传参修复已生效；BB 历史存量已全量重算
+        回写（对照旧档案数字以重算后为准）；Keltner 存量仍为吞参
+        语义（重算边界待裁决，见 works/设计稿/技术债务-2026-10-13.md
+        TD-2026-10-13-02）。"""
         body: Dict[str, Any] = {
             "symbol": symbol, "timeframe": timeframe}
         # 单组字段无条件透传（is not None 形制——与 params/reductions 同）：
