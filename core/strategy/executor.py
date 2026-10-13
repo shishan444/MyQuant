@@ -64,14 +64,28 @@ def evaluate_condition(
     if cond_type == "eq":
         threshold = condition.get("threshold", 1)
         return indicator_series == threshold
-    elif cond_type == "lt":
-        return indicator_series < condition["threshold"]
-    elif cond_type == "gt":
-        return indicator_series > condition["threshold"]
-    elif cond_type == "le":
-        return indicator_series <= condition["threshold"]
-    elif cond_type == "ge":
-        return indicator_series >= condition["threshold"]
+    elif cond_type in ("lt", "gt", "le", "ge"):
+        # fix-research-c6 存在性分派：threshold 非 None 走现状阈值比较
+        # （旧 DNA 逐字节不变）；threshold 缺失且带 target_indicator →
+        # 序列对照（逐元素比较，target 列经 _resolve_target_indicator_
+        # series 现算）；两者皆无 → 全 False（消灭原裸下标 KeyError 在
+        # 缺键时炸穿全链的潜伏隐患——现状因进化恒写 threshold 未触发）。
+        # 并存（进化变异恒写逻辑可产）→ threshold 优先、target_* 忽略
+        # ——退化行为确定不炸链。
+        threshold = condition.get("threshold")
+        if threshold is not None:
+            op = {"lt": lambda s, t: s < t, "gt": lambda s, t: s > t,
+                  "le": lambda s, t: s <= t, "ge": lambda s, t: s >= t}[cond_type]
+            return op(indicator_series, threshold)
+        if "target_indicator" in condition:
+            target_series = _resolve_target_indicator_series(
+                condition, df)
+            if target_series is None:
+                return pd.Series(False, index=indicator_series.index)
+            return {"lt": lambda s, t: s < t, "gt": lambda s, t: s > t,
+                    "le": lambda s, t: s <= t, "ge": lambda s, t: s >= t}[cond_type](
+                indicator_series, target_series)
+        return pd.Series(False, index=indicator_series.index)
     elif cond_type == "cross_above":
         threshold = condition.get("threshold")
         if threshold is not None:
@@ -128,8 +142,11 @@ def _resolve_target_indicator_series(condition: dict, df: pd.DataFrame | None) -
         return None
     target_name = condition.get("target_indicator", "")
     target_params = condition.get("target_params", {})
-    # 构造最小 gene 形对象复用 _get_indicator_column（列解析单点）
-    gene = _SimpleGene(target_name, target_params)
+    # fix-research-c6：target_field 透传 _SimpleGene 的 field_name 槽
+    # （多输出指标如 MACD 的列名 target 解码后 field 落正确列——无
+    # field 时 None=单输出指标缺省列，_get_indicator_column 既有语义）
+    gene = _SimpleGene(target_name, target_params,
+                       condition.get("target_field"))
     try:
         return _get_indicator_column(df, gene)
     except ValueError:

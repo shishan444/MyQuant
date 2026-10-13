@@ -189,8 +189,12 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   旧实体考试记录归属清晰可辨。
 
 ## 4. 策略可表达边界（假设→策略转化器的限制，显式拒绝优先）
-- 可表达：阈值比较（gt/lt）、穿越（cross_above/cross_below）、
-  回看类条件；插件信号（公式/模型）绑定为信号源。
+- 可表达：阈值比较（gt/lt/ge/le）、穿越（cross_above/cross_below）、
+  回看类条件；插件信号（公式/模型）绑定为信号源；价格对指标列比较
+  （price_above/price_below，fix-research-c2）；**列名 target 的序列
+  比较（fix-research-c6 起——可统计可登记的「指标列对指标列」条件
+  已可翻译送考：gt/lt/ge/le 与穿越族（含 breakout/breakdown 别名）
+  的编码列名 target 产出序列形基因，数值 target 语义不变）**。
 - 公式插件 DSL 白名单 21 词（0.2.12）：时序变换 11 + 时序结构
   crossover/crossunder + 逐元素 max/min/gt/lt/eq/logical_*——
   金叉死叉等穿越结构可在公式层一次表达，产出布尔列直通假设条件

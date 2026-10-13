@@ -60,6 +60,18 @@ _ACTION_MAP = {
 # target）。
 _PASSTHROUGH_ACTIONS = frozenset({"price_above", "price_below"})
 
+# 列名 target（编码指标列）→ 序列对照类型的映射（fix-research-c6，
+# D-14 八键）：数值比较四族同名 type；穿越族与 breakout/breakdown
+# 别名归一到 executor 既有序列类型（cross_above_series/
+# cross_below_series）；不在表内的 action+列名 target 维持不可表达。
+_SERIES_TYPE_MAP = {
+    "gt": "gt", "lt": "lt", "ge": "ge", "le": "le",
+    "cross_above": "cross_above_series",
+    "cross_below": "cross_below_series",
+    "breakout": "cross_above_series",
+    "breakdown": "cross_below_series",
+}
+
 # 插件列条件 → formula/model 信号源的比较算子（仅数值比较可表达；
 # cross/break 类穿越语义不适用于插件连续值源，显式拒绝——见
 # _translate_conditions 的插件分支）
@@ -377,24 +389,57 @@ def _translate_conditions(
                     f"{label}[{i}] action 不可表达: {action}"
                     f"（可表达: {sorted(_ACTION_MAP)}）",
                     detail={"condition": cond})
-            if (action not in _PASSTHROUGH_ACTIONS
-                    and (not isinstance(target, (int, float))
-                         or isinstance(target, bool))):
-                # bool 排除与插件分支对称（review-042 CARD-14：双入口
-                # pydantic 已拦，此处服务内部直调纵深——True/False 是
-                # 布尔断言非阈值）。price_above/price_below 豁免（TC-3：
-                # target 一律占位忽略不报错——与统计面占位契约对齐，
-                # 列名/数值/数值串同语义不进产物）
+            # fix-research-c6：target 分类复用 _classify_target_ref 单点
+            # ——数值/数值串→threshold 形（现状逐字节不变）；编码列名
+            # →序列形（target_* 三键，无 threshold）；基础列/unknown/
+            # 非法形→维持既有拒绝边界。price_above/price_below 豁免
+            # （TC-3：target 一律占位忽略不报错——与统计面占位契约对齐）
+            from core.analysis.condition_kernel import _classify_target_ref
+            t_kind, _ = _classify_target_ref(target)
+            if action in _PASSTHROUGH_ACTIONS:
+                condition = _ACTION_MAP[action](target)
+            elif t_kind in ("non_str", "numeric"):
+                if (not isinstance(target, (int, float, str))
+                        or isinstance(target, bool)):
+                    # bool 排除与插件分支对称（review-042 CARD-14）：
+                    # True/False 是布尔断言非阈值；list/None 等非法形
+                    # 维持既有拒绝
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] target 须为数值（列名 target 仅"
+                        "编码指标列可表达）",
+                        detail={"condition": cond})
+                condition = _ACTION_MAP[action](target)
+            elif t_kind == "decoded":
+                series_type = _SERIES_TYPE_MAP.get(action)
+                if series_type is None:
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] action 不可表达列名 target: {action}"
+                        f"（列名 target 可表达: {sorted(_SERIES_TYPE_MAP)}）",
+                        detail={"condition": cond})
+                from core.analysis.column_ref import decode_column_ref
+                t_ref = decode_column_ref(target)  # _classify 已判 decoded
+                condition = {
+                    "type": series_type,
+                    "target_indicator": t_ref["indicator"],
+                    "target_params": dict(t_ref["params"]),
+                    "target_field": t_ref["field"],
+                }
+            else:
+                # base_column（基础列无指标结构化形）与 unknown：
+                # 「真正不可表达」边界保留（D-14 范围外）
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
-                    f"{label}[{i}] target 须为数值（列名 target 不可表达）",
+                    f"{label}[{i}] target 须为数值或编码指标列名"
+                    f"（{t_kind} 形不可表达）",
                     detail={"condition": cond})
             genes.append(SignalGene(
                 indicator=cdef.indicator,
                 params=dict(cdef.params),
                 role=role,
                 field_name=cdef.field,
-                condition=_ACTION_MAP[action](target),
+                condition=condition,
             ))
             continue
 

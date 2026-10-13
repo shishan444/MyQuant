@@ -94,10 +94,23 @@ class TestA1BbLowerTouch:
 class TestA2EmaCrossClose:
     """A2：EMA5 gt ema_20 且 close lt ema_20 双条件 AND，期望 213。
 
-    序列比较形制（close 与指标列）随 C6 批次
-    fix-research-c6-dna-series-reference 落地启用。
+    fix-research-c6 启用（序列比较统计面锚——翻译面等价形制锚见
+    tests/analysis/test_dna_series_reference.py）。
     """
 
-    @pytest.mark.skip(reason="待 C6 序列比较翻译面落地后启用（期望 213）")
     def test_a2_hit_count(self):
         """EMA5 gt ema_20 ∧ close lt ema_20 == 213（4h 区间锚）。"""
+        conds = [
+            {"subject": {"indicator": "EMA", "params": {"period": 5},
+                         "field": "ema"},
+             "action": "gt", "target": "ema_20"},
+            {"subject": "close", "action": "lt", "target": "ema_20"},
+        ]
+        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-05-01", "end": "2026-04-01"}
+        df, request_start = _load_with_condition_refs(
+            MARKET_DIR, rng, None, conditions=conds)
+        d = condition_stats(
+            df, conditions=conds, data_ranges=[{**rng}], forward_bars=24,
+            request_start=request_start).to_dict()
+        assert d["payload"]["hit_count"] == 213
