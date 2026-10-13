@@ -90,6 +90,12 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   close，target 为占位值被忽略）在统计面与翻译面两侧均已可用；
   未识别比较动作结构化拒绝（422 附 legal_values=动作分派表键集，
   不再以全 False 掩码静默降级）。
+- **分析模板插件列条件（fix-research-c3 起）**：condition_stats/
+  event_study/inspect_cases/param_sweep/counter_profile 的条件引用
+  插件列（fx_*/model_* 注册表列）可用——装载链五步（收集→可达性
+  校验→两维 warmup→求值注入→存在性校验）；未注册列名与求值失败
+  分别结构化拒绝（RESEARCH_PLUGIN_COLUMN_NOT_FOUND「名字写错」/
+  RESEARCH_COLUMN_NOT_AVAILABLE「插件坏了」），不再静默 0 样本。
 - **组合条件（0.4.1）**：condition_stats/event_study 支持 conditions
   条件数组（AND 语义，条数 1..5，每条混合形制含可选高周期
   timeframe 键——掩码投影）。兼容锚=参数键形制：旧 condition 键

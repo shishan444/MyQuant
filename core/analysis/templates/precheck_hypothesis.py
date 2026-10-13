@@ -95,24 +95,7 @@ def _require_condition_structure(when_conditions: Any) -> None:
                         "legal_form": "{subject, action, target}"})
 
 
-def _assert_plugin_columns_reachable(
-    db_path: Path, plugin_columns: set,
-) -> None:
-    """插件列 registry 可达性校验（specs R3 MUST：不可达 422 结构化
-    拒绝，禁止静默降维——plugin_columns_lookback 对不可达列静默贡献
-    0，不校验即预算系统性低估）。"""
-    if not plugin_columns:
-        return
-    from core.analysis.hypothesis_service import allowed_subject_columns
 
-    cols, _ = allowed_subject_columns(db_path)
-    missing = set(plugin_columns) - cols
-    if missing:
-        raise ResearchError(
-            "RESEARCH_PLUGIN_COLUMN_NOT_FOUND",
-            f"条件引用的插件列不可达: {sorted(missing)}",
-            detail={"plugin_columns": sorted(missing),
-                    "hint": "可用列经 GET /api/research/signals 查询"})
 
 
 def _collect_precheck_refs(
@@ -146,10 +129,11 @@ def _load_precheck_df(
     Returns:
         (df, start_ts, warmup_bars)——df 含 warmup 前缀与插件列。
     """
-    from core.analysis.plugin_service import enrich_with_plugin_columns
+    from core.analysis.plugin_service import (
+        assert_plugin_columns_reachable, enrich_with_plugin_columns)
 
     indicator_names, plugin_columns = _collect_precheck_refs(when_conditions)
-    _assert_plugin_columns_reachable(db_path, plugin_columns)
+    assert_plugin_columns_reachable(db_path, plugin_columns)
     warmup_bars = derive_warmup_full(db_path, indicator_names, plugin_columns)
     df, start_ts = load_with_warmup(
         data_dir, symbol, timeframe, start, end,

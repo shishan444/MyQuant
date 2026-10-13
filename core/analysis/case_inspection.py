@@ -163,8 +163,14 @@ def _parse_selector(
                 detail={"param": "selector.condition"})
         if isinstance(cond["subject"], (str, dict)):
             from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+            # fix-research-c3：插件列 subject（fx_/model_ 前缀）放行——
+            # 列名解析不适用（非编码列名/基础列），合法性由主流程装载
+            # 段的 registry 可达性校验把关（两码分工同分析模板装载链）
+            _is_plugin = (isinstance(cond["subject"], str)
+                          and cond["subject"].startswith(("fx_", "model_")))
             try:
-                resolve_column_ref(cond["subject"])
+                if not _is_plugin:
+                    resolve_column_ref(cond["subject"])
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -407,15 +413,23 @@ def inspect_cases(
                             "base_timeframe": timeframe}) from exc
         if indicator is None:
             # 0.2.14：结构化 subject 自带指标名（indicator 参数可省——
-            # 假设 when 条件无需转写直接喂入）
+            # 假设 when 条件无需转写直接喂入）；fix-research-c3：插件列
+            # subject（fx_/model_ 字符串）同豁免——自带求值定义（注册表
+            # 表达式），warmup 由插件维度两维推导覆盖
             if isinstance(payload["subject"], dict):
                 indicator = payload["subject"].get("indicator")
             if indicator is None:
-                raise ResearchError(
-                    "RESEARCH_PARAM_INVALID",
-                    "condition 形态 indicator 必填（供 warmup 推导与"
-                    "指标计算；结构化 subject 条件可省——自带指标名）",
-                    detail={"param": "indicator"})
+                _subj = payload["subject"]
+                _subj_is_plugin = (
+                    isinstance(_subj, str)
+                    and _subj.startswith(("fx_", "model_")))
+                if not _subj_is_plugin:
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        "condition 形态 indicator 必填（供 warmup 推导与"
+                        "指标计算；结构化 subject 与插件列 subject 可省"
+                        "——自带指标名/求值定义）",
+                        detail={"param": "indicator"})
     if indicator is not None and indicator not in INDICATOR_REGISTRY:
         raise ResearchError(
             "RESEARCH_INDICATOR_UNKNOWN",
@@ -433,12 +447,28 @@ def inspect_cases(
                         + pd.Timedelta(minutes=tf_minutes * context_bars)
                         ).isoformat()
 
+    # fix-research-c3：插件列收集+可达性校验+warmup 两维（不走自然 NaN
+    # 路线——「眼见为实」语义下插件头部 NaN 窗口属缺陷一同族误导）
+    from core.analysis.condition_kernel import collect_condition_plugin_columns
+    from core.analysis.plugin_service import assert_plugin_columns_reachable
+    plugin_columns = (collect_condition_plugin_columns([payload])
+                      if kind == "condition" else set())
+    if plugin_columns:
+        assert_plugin_columns_reachable(db_path, plugin_columns)
+    _warm_names = [indicator] if indicator is not None else []
+    _min_warmup: Optional[int] = None
+    if plugin_columns:
+        from core.analysis.registry_meta import derive_warmup_full
+        _min_warmup = derive_warmup_full(
+            db_path, _warm_names, plugin_columns)
+
     start_ts: Optional[pd.Timestamp] = None
     if kind == "condition" and start is not None:
         # 显式 start：load_with_warmup（前缀不足报 WARMUP_INSUFFICIENT）
         df, start_ts = load_with_warmup(
             data_dir, symbol, timeframe,
-            start=start, end=end_expanded, indicator_names=[indicator])
+            start=start, end=end_expanded, indicator_names=[indicator],
+            min_warmup_bars=_min_warmup or 0)
     else:
         # 缺省全量（或 timestamps 形态）：全量直装，effective_start 披露
         from core.data.mtf_loader import (
@@ -459,6 +489,14 @@ def inspect_cases(
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC")
 
+    if plugin_columns:
+        # fix-research-c3 ④⑤：求值注入+存在性校验（求值失败=插件坏了，
+        # 与分析模板装载链同源助手——两码分工一致）
+        from core.analysis.plugin_service import (
+            enrich_with_plugin_columns, verify_plugin_columns_present)
+        df = enrich_with_plugin_columns(db_path, df, plugin_columns)
+        verify_plugin_columns_present(df, plugin_columns)
+
     # ---------------- 指标现算（默认参数单组）与列校验（零留痕） ----------------
     work = df.copy()
     ind_cols: Dict[str, pd.Series] = {}
@@ -468,6 +506,11 @@ def inspect_cases(
         ind_cols = _compute_indicator(work, indicator, default_params_for(indicator))
         for col, series in ind_cols.items():
             work[col] = series
+    # fix-research-c3：插件列并入展示集——enrich 已注入 df（列在
+    # work.columns），触发点值随 indicator_values 展示（「眼见为实」
+    # 语义下插件条件同样要看到列值）
+    for pc in sorted(plugin_columns):
+        ind_cols[pc] = work[pc]
 
     if kind == "condition":
         available = list(ind_cols.keys())
@@ -476,7 +519,10 @@ def inspect_cases(
         # 边界拒绝，spec「直接喂入」承诺由实现成立）；字符串 subject
         # 保持默认参数输出列边界（字符串不携带参数，默认边界即其语义）
         subject = payload["subject"]
-        if isinstance(subject, str) and subject not in available:
+        _subj_plugin = (isinstance(subject, str)
+                        and subject.startswith(("fx_", "model_")))
+        if (isinstance(subject, str) and not _subj_plugin
+                and subject not in available):
             raise ResearchError(
                 "RESEARCH_COLUMN_NOT_AVAILABLE",
                 f"subject 列 {subject!r} 不属于 {indicator} "
@@ -487,7 +533,14 @@ def inspect_cases(
         _validate_target(payload["target"], work.columns)
 
     # ---------------- 求值域与取样 ----------------
-    warmup_bars = derive_warmup([indicator]) if indicator is not None else 0
+    if plugin_columns:
+        from core.analysis.registry_meta import derive_warmup_full
+        warmup_bars = derive_warmup_full(
+            db_path, _warm_names, plugin_columns)
+    elif indicator is not None:
+        warmup_bars = derive_warmup([indicator])
+    else:
+        warmup_bars = 0
     if kind == "condition":
         if start_ts is not None:
             effective_start_ts = start_ts
