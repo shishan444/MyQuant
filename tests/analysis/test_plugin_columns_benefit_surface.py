@@ -384,17 +384,10 @@ class TestInspectCasesWiringExtra:
                           limit=2, context_bars=4, indicator="EMA")
         assert ei.value.code == "RESEARCH_COLUMN_NOT_AVAILABLE"
 
-    @pytest.mark.xfail(reason="缺陷证据（待 developer 修复）：插件列 subject "
-                              "豁免（indicator=None）+ 显式 start 时 "
-                              "case_inspection.py 装载分支传 "
-                              "indicator_names=[None] → derive_warmup "
-                              "裸 KeyError('未知指标: None')；契约 "
-                              "(design §3-② 豁免+显式 start 切换) 应正常"
-                              "装载出案例集",
-                       strict=True, raises=KeyError)
     def test_explicit_start_plugin_exempt_expected_ok(self, db):
-        """插件列 subject 豁免 + 显式 start：契约预期正常出案例集
-        （当前实现裸穿 KeyError——xfail(strict) 登记缺陷证据）。"""
+        """插件列 subject 豁免 + 显式 start：契约预期正常出案例集。
+        （P1 已修——fix/research-c7 装载分支复用 _warm_names 归一，
+        原 xfail(strict) 锚 XPASS 翻转转正）"""
         inspect_cases(db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                       selector={"condition": COND}, limit=2, context_bars=4,
                       start="2024-11-01", end="2025-02-01")

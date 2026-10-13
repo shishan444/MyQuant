@@ -9,7 +9,7 @@ FDR 校正后按可信度排序输出（不可关闭）。
 core.features.indicators._compute_indicator（0.2.1 授权的私有复用——
 同一指标定义源，列名以计算返回的真实列名为权威，不从命名规则推导）。
 
-注册表语义动作到可求值动作的翻译（action_map 顶层无 price_above）：
+注册表语义动作到可求值动作的翻译（action_map 顶层自 fix-research-c2 起已含 price_above/price_below；本模板等价改写独立存续用于扫描枚举）：
 - price_above(X) ≡ close gt X；price_below(X) ≡ close lt X
 - cross_above/below（价格穿越指标）≡ close cross_above/below X
 - cross_above_series ≡ 同族快慢参数列互穿

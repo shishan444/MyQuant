@@ -487,17 +487,11 @@ class TestR5StateZeroMigration:
 
 # ------------------------------------------------- ②类涉事行处置契约（偏差保留）
 
-@pytest.mark.xfail(
-    reason="C5-P1（契约偏差·已退回 developer）：②类执行时点出现 1 条涉事"
-           "（ant_2ae8425fb42d, condition_stats 模板, result_ref 引用"
-           "bb_lower_20_3 统计数字）——research_log 只有枚举计数条目，涉事行"
-           "无对照处置条目，result_ref_completeness/old_value_source 两字段"
-           "契约未承载；且实现枚举范围宽于 design §1 的模板限定，请 Team Lead"
-           "裁决口径", strict=True)
 class TestClass2DisposalContract:
     """spec「扫描存档处置条目完整性与来源联动」MUST 的契约保留测试。
 
-    strict xfail：修复后本测试转绿即报 XPASS，提示移除标记。
+    C5-P1 已修（fix/research-c7 补 scan: 处置条目+两字段契约+脚本
+    _append_once 幂等）——原类级 xfail(strict) 锚 XPASS 翻转转正。
     """
 
     def test_affected_scan_row_has_disposal_entry_with_two_fields(

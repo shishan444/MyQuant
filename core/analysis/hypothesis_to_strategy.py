@@ -395,7 +395,7 @@ def _translate_conditions(
             # 非法形→维持既有拒绝边界。price_above/price_below 豁免
             # （TC-3：target 一律占位忽略不报错——与统计面占位契约对齐）
             from core.analysis.condition_kernel import _classify_target_ref
-            t_kind, _ = _classify_target_ref(target)
+            t_kind, t_ref = _classify_target_ref(target)
             if action in _PASSTHROUGH_ACTIONS:
                 condition = _ACTION_MAP[action](target)
             elif t_kind in ("non_str", "numeric"):
@@ -413,13 +413,16 @@ def _translate_conditions(
             elif t_kind == "decoded":
                 series_type = _SERIES_TYPE_MAP.get(action)
                 if series_type is None:
+                    # 当前不可达（_ACTION_MAP−passthrough=恰 8 键=本表
+                    # 键集）——保留为 _ACTION_MAP 未来扩键的防御纵深
+                    # （扩键未同步本表时显式拒绝优于静默漏翻译）
                     raise ResearchError(
                         "RESEARCH_NOT_EXPRESSIBLE",
                         f"{label}[{i}] action 不可表达列名 target: {action}"
                         f"（列名 target 可表达: {sorted(_SERIES_TYPE_MAP)}）",
                         detail={"condition": cond})
-                from core.analysis.column_ref import decode_column_ref
-                t_ref = decode_column_ref(target)  # _classify 已判 decoded
+                # F3：直用 _classify 的 payload（其返回即 try_decode
+                # 产物，含 indicator/params/field——消同 target 二次解码）
                 condition = {
                     "type": series_type,
                     "target_indicator": t_ref["indicator"],

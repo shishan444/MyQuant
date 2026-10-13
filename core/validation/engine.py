@@ -407,7 +407,7 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         # 不写字面清单——与 signal_assembly H5 先例同形制）；经
         # ResearchError 冒泡为 422（mask_for/_mask_base 与
         # rule_engine 的 _evaluate_conditions 共用本函数自动获得）。
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError  # Z1：轻量定义点（errors.py 零依赖可安全模块级 import——与 param_guard 新代码先例一致；同文件 4 处历史遗留旧面导入留待全域迁移专项）
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"未识别的比较动作: {action!r}",

@@ -224,22 +224,16 @@ class TestSerializationRoundtrip:
     """序列化往返：to_dict/from_dict 新键透传。"""
 
     def test_roundtrip(self):
+        """to_dict/from_dict 直调（dna.py:115-132 实存——原 hasattr 探测
+        恒走第一分支，else 兜底为死代码且存在空转绿路径，F4 收敛）。"""
         gene = SignalGene(
             indicator="EMA", params={"period": 5},
             role=SignalRole.ENTRY_TRIGGER, field_name="ema",
             condition={"type": "cross_above_series", "target_indicator": "MACD",
                        "target_params": {"fast": 12, "slow": 26, "signal": 9},
                        "target_field": "histogram"})
-        d = gene.to_dict() if hasattr(gene, "to_dict") else None
-        if d is not None:
-            g2 = SignalGene.from_dict(d) if hasattr(SignalGene, "from_dict") else None
-            if g2 is not None:
-                assert g2.condition == gene.condition
-        else:
-            # dataclass asdict 路径兜底（形制探测——不假设入口名）
-            from dataclasses import asdict
-            d2 = asdict(gene)
-            assert d2["condition"]["target_indicator"] == "MACD"
+        g2 = SignalGene.from_dict(gene.to_dict())
+        assert g2.condition == gene.condition
 
 
 # ---------------------------------------------------------------------------

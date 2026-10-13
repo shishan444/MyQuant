@@ -13,6 +13,8 @@ SignalSet——vectorbt 回测引擎、实盘执行器与进化适应度评估�
 
 from __future__ import annotations
 
+import operator
+
 import logging
 from dataclasses import dataclass
 
@@ -37,6 +39,13 @@ class SignalSet:
     entry_direction: pd.Series | None = None  # 入场方向：+1 多 / -1 空（mixed 方向模式用）
     mtf_diagnostics: dict | None = None  # MTF 引擎诊断评分
     confidence: pd.Series | None = None  # MTF 逐 bar 置信度（产出与值域权威在 mtf_engine._compute_confidence）
+
+
+# 比较算子表（fix-research-c6-F2：热路径每次调用重建 4 个 lambda 的
+# 字面量字典×2 处收敛——core/analysis/signal_assembly._SOURCE_COMPARE_OPS
+# 同族先例，operator 标准库算子）
+_CMP_OPS = {"lt": operator.lt, "gt": operator.gt,
+            "le": operator.le, "ge": operator.ge}
 
 
 def evaluate_condition(
@@ -74,17 +83,13 @@ def evaluate_condition(
         # ——退化行为确定不炸链。
         threshold = condition.get("threshold")
         if threshold is not None:
-            op = {"lt": lambda s, t: s < t, "gt": lambda s, t: s > t,
-                  "le": lambda s, t: s <= t, "ge": lambda s, t: s >= t}[cond_type]
-            return op(indicator_series, threshold)
+            return _CMP_OPS[cond_type](indicator_series, threshold)
         if "target_indicator" in condition:
             target_series = _resolve_target_indicator_series(
                 condition, df)
             if target_series is None:
                 return pd.Series(False, index=indicator_series.index)
-            return {"lt": lambda s, t: s < t, "gt": lambda s, t: s > t,
-                    "le": lambda s, t: s <= t, "ge": lambda s, t: s >= t}[cond_type](
-                indicator_series, target_series)
+            return _CMP_OPS[cond_type](indicator_series, target_series)
         return pd.Series(False, index=indicator_series.index)
     elif cond_type == "cross_above":
         threshold = condition.get("threshold")

@@ -301,14 +301,11 @@ class TestInspectCasesP1Regression:
     应走 RESEARCH_WARMUP_INSUFFICIENT 而非裸异常（修复落地后 XPASS
     即红，翻转成正式断言——翻转原子交付纪律）。"""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="P1 待修复：豁免+显式 start 分支 indicator_names=[None] "
-               "裸 KeyError 拦截在结构化检查之前（正常路径的 xfail "
-               "登记在 test_plugin_columns_benefit_surface.py）")
     def test_explicit_start_insufficient_warmup_structured(self, db):
         """显式 start 前缀不足（2024-01-20 起前扩 ~114 bar < 插件维
-        200）应结构化 RESEARCH_WARMUP_INSUFFICIENT，非裸 KeyError。"""
+        200）应结构化 RESEARCH_WARMUP_INSUFFICIENT，非裸 KeyError。
+        （P1 已修——fix/research-c7 一行修 _warm_names 归一，原
+        xfail(strict) 锚 XPASS 翻转转正）"""
         from core.analysis.case_inspection import inspect_cases
         with pytest.raises(ResearchError) as ei:
             inspect_cases(
