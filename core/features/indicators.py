@@ -148,7 +148,12 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
     elif name == "BB":
         period, std = int(params["period"]), float(params["std"])
         std_str = str(std).replace(".0", "")  # align with executor.py naming
-        bb_df = ta.bbands(df["close"], length=period, std=std)
+        # 吞参修复（fix-research-c1）：本版本 bbands 签名无 std 形参
+        # （lower_std/upper_std），原 std=std 传入落入 **kwargs 被静默
+        # 丢弃、恒用默认 2.0，造成「列名标 std 倍数、数值按 2 倍算」。
+        # std=2 缺省路径与修复前逐元素一致（回归锚 A1 列值基础）。
+        bb_df = ta.bbands(df["close"], length=period,
+                          lower_std=std, upper_std=std)
         if bb_df is not None:
             bb = _extract_outputs(bb_df, {"upper": "BBU_", "middle": "BBM_", "lower": "BBL_"})
             new_cols[f"bb_upper_{period}_{std_str}"] = bb["upper"]
@@ -191,15 +196,21 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         atr_p = int(params["atr_period"])
         mult = float(params["multiplier"])
         kc_name = f"kc_{ema_p}_{atr_p}_{mult}"
-        kc_df = ta.kc(df["high"], df["low"], df["close"],
-                       length=ema_p, atr_length=atr_p, mamode="ema")
-        if kc_df is not None:
-            kc = _extract_outputs(
-                kc_df, {"lower": "KCLe_", "basis": "KCBe_", "upper": "KCUe_"}
-            )
-            new_cols[f"{kc_name}_upper"] = kc["upper"]
-            new_cols[f"{kc_name}_middle"] = kc["basis"]
-            new_cols[f"{kc_name}_lower"] = kc["lower"]
+        # 吞参修复（fix-research-c1）：本版本 ta.kc 无独立 ATR 周期概念
+        # （atr_length 传入被吞，band 与 basis 共用 length 平滑
+        # true_range），atr_period 从未生效。改自算：band 显式按 atr_p
+        # 平滑——ta.atr 的 mamode="ema" 与 ema(true_range, atr_p) 精确
+        # 等价（实测零差异）；缺省 rma 平滑是第二处语义偏移，显式
+        # ema 必须保留。退化等值锚 KC-S3：atr_p==ema_p 且 mult=2 时
+        # 与修复前 ta.kc 同参输出逐元素一致（KC 存量债务的唯一修复
+        # 前对照点，基线见 tests/infra/test_indicator_params_effective.py）。
+        basis = ta.ema(df["close"], length=ema_p)
+        band = ta.atr(df["high"], df["low"], df["close"],
+                      length=atr_p, mamode="ema")
+        if basis is not None and band is not None:
+            new_cols[f"{kc_name}_upper"] = basis + mult * band
+            new_cols[f"{kc_name}_middle"] = basis
+            new_cols[f"{kc_name}_lower"] = basis - mult * band
     elif name == "Donchian":
         period = int(params["period"])
         dc_df = ta.donchian(df["high"], df["low"], lower_length=period, upper_length=period)
