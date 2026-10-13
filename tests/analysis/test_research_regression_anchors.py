@@ -69,11 +69,7 @@ class TestA3SmaCrossSeries:
 
 
 class TestA1BbLowerTouch:
-    """A1：close lt bb_lower_20_2（std=2 未失真路径的锚基础）。
-
-    双写法一致性断言（price_below 写法同得 1119）随 C2 批次
-    fix-research-c2-price-actions 落地启用。
-    """
+    """A1：close lt bb_lower_20_2（std=2 未失真路径的锚基础）。"""
 
     def test_a1_hit_count_unchanged(self):
         cond = {"subject": "close", "action": "lt", "target": "bb_lower_20_2"}
@@ -81,10 +77,18 @@ class TestA1BbLowerTouch:
                          "1h", "2024-02-01", "2026-04-01")
         assert got == 1119
 
-    @pytest.mark.skip(reason="待 C2 price_above/price_below 落地后启用"
-                             "（双写法一致性：两写法同得 1119）")
     def test_a1_dual_writing_parity(self):
-        """price_below 写法（subject=BB 结构化）与 lt 写法同得 1119。"""
+        """双写法一致性（fix-research-c2 启用）：price_below 写法
+        （subject=BB 结构化 lower 引用，target 占位）与等价 lt 写法
+        （subject=close、target=编码列名）同得 1119——统计面动作语义
+        与回测面先例逐字对齐的直接证据。"""
+        cond = {"subject": {"indicator": "BB",
+                            "params": {"period": 20, "std": 2},
+                            "field": "lower"},
+                "action": "price_below", "target": 0}
+        got = _hit_count("BB", {"period": 20, "std": 2}, cond,
+                         "1h", "2024-02-01", "2026-04-01")
+        assert got == 1119
 
 
 class TestA2EmaCrossClose:

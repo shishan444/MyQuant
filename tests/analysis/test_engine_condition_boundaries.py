@@ -334,13 +334,15 @@ class TestEngineResolveHelperBoundaries:
         assert len(out) == len(df)
         assert out.dtype == bool
 
-    def test_single_condition_未知action且warnings为None_全False不炸(self, df):
-        """未知 action + warnings=None：跳过 warning 记录直接
-        全 False（warnings 可选形制）。"""
-        out = _evaluate_single_condition(
-            df, {"subject": "close", "action": "nope_action", "target": 1},
-            warnings=None)
-        assert not out.any()
+    def test_single_condition_未知action_结构化拒绝(self, df):
+        """fix-research-c2：未知 action 结构化拒绝（原全 False 静默
+        掩码已消灭——warnings 可选形制不再影响该路径）。"""
+        from core.analysis.errors import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            _evaluate_single_condition(
+                df, {"subject": "close", "action": "nope_action", "target": 1},
+                warnings=None)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_then_conditions_pattern类action_循环空转兜底False(self, df):
         """THEN 条件为 pattern 类 action（非 drop/lt/le/rise/gt/ge 系）

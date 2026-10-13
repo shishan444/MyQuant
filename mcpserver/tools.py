@@ -285,6 +285,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        当前可用比较动作全集（fix-research-c2 起，统计与翻译两侧
+        一致）：gt/lt/ge/le、cross_above/cross_below（含 breakout/
+        breakdown 别名）、price_above/price_below（价格对指标列比较
+        ——比较主体固定 close，target 为占位值被忽略）、touch/spike/
+        shrink/divergence_top/divergence_bottom/consecutive_up/
+        consecutive_down/cross_above_series/cross_below_series/
+        lookback_any/touch_bounce/role_reversal；未识别 action 结构化
+        拒绝（422 附 legal_values=动作分派表键集）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
         task_id 轮询）；其余模板求值行数超过 10000（_HEAVY_ROWS，见
         api/routes/research/analysis.py 常量）降级异步，低于阈值同步

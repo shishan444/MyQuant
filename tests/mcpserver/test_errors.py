@@ -286,3 +286,86 @@ class TestSnapshotHintOverride:
         assert err["code"] == "RESEARCH_CONDITION_INVALID"
         assert err["hint"] == HINTS["RESEARCH_CONDITION_INVALID"], \
             "非 warmup 码不得被特化覆写"
+
+
+class TestParamHintScenarioDispatch:
+    """fix-research-c2（fr_ce325c609a8d）：RESEARCH_PARAM_INVALID 按
+    detail.param 场景分派——specs「参数错误 hint 与场景对应」THEN 要求
+    各自 hint 指向对应参数面、不出现与该错误无关的其他模板参数文案；
+    场景表是注册表的增量层（并存断言：无场景命中回退注册表机制不动）。"""
+
+    # 场景键 → 该参数面的判别词（hint 须含自身、不含其他场景的）
+    _SCENE_MARKERS = {
+        "forward_bars": "forward_bars",
+        "min_samples": "min_samples",
+        "condition.action": "legal_values",
+        "data_range": "区间",
+        "condition|conditions": "二选一",
+    }
+
+    @pytest.mark.parametrize(
+        ("param", "marker"),
+        [
+            ("forward_bars", "forward_bars"),
+            ("min_samples", "min_samples"),
+            ("condition.action", "legal_values"),
+            ("data_range", "区间"),
+            ("condition|conditions", "二选一"),
+        ],
+        ids=["前向持有期", "小样本阈值", "比较动作", "区间参数", "键组分派"])
+    def test_each_scene_hint_excludes_other_scenes(self, param, marker):
+        """互不串面：场景 hint 含自身参数面判别词，且不含任何其他
+        场景的判别词（错配文案回归即红）。"""
+        p = error_payload("RESEARCH_PARAM_INVALID", "x", {"param": param})
+        others = [m for k, m in self._SCENE_MARKERS.items() if k != param]
+        assert marker in p["hint"], f"param={param} hint 未指向本参数面: {p['hint']!r}"
+        for m in others:
+            assert m not in p["hint"], (
+                f"param={param} hint 串入其他参数面判别词 {m!r}: {p['hint']!r}")
+
+    def test_no_scene_detail_falls_back_to_registry(self):
+        """并存断言：detail 无 param（或非 dict）→ 回退注册表通用文案
+        ——场景分派为增量层，注册表机制（hint_for）零改动。"""
+        p = error_payload("RESEARCH_PARAM_INVALID", "x", None)
+        assert p["hint"] == HINTS["RESEARCH_PARAM_INVALID"]
+        assert hint_for("RESEARCH_PARAM_INVALID") == \
+            HINTS["RESEARCH_PARAM_INVALID"]
+
+    def test_run_analysis_tool_error_carries_legal_values(self):
+        """A8 工具层透传：condition_stats 统计的未知 action 422 经
+        run_analysis 工具可观测——错误载荷 code/detail.legal_values
+        （price_above 在列）+ hint 为 condition.action 场景文案
+        （静默点证据打到 MCP 工具层）。"""
+        import asyncio
+
+        from mcpserver.api_client import ApiError
+        from mcpserver.server import build_server
+        from tests.mcpserver.test_contract_parity import run_async
+
+        legal = ["cross_above", "gt", "lt", "price_above", "price_below"]
+
+        def _raise(path, json=None):
+            raise ApiError(422, "RESEARCH_PARAM_INVALID",
+                           "未识别的比较动作: 'stays_above'",
+                           {"param": "condition.action",
+                            "value": "stays_above",
+                            "legal_values": legal})
+
+        mcp, api = build_server(profile="research", base_url="http://x")
+        api.post = _raise
+        out = run_async(mcp.call_tool(
+            "run_analysis",
+            {"template": "condition_stats",
+             "params": {"indicator": "EMA",
+                        "condition": {"subject": "close",
+                                      "action": "stays_above",
+                                      "target": 1}},
+             "symbol": "BTCUSDT", "timeframe": "1h",
+             "start": "2024-01-01", "end": "2024-02-01"}))
+        err = out.structured_content["result"]["error"]
+        assert err["code"] == "RESEARCH_PARAM_INVALID"
+        assert err["detail"]["param"] == "condition.action"
+        assert "price_above" in err["detail"]["legal_values"]
+        assert "legal_values" in err["hint"], \
+            f"hint 须为动作场景文案: {err['hint']!r}"
+        assert "forward_bars" not in err["hint"], "不得串入其他参数面文案"

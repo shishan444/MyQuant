@@ -46,7 +46,19 @@ _ACTION_MAP = {
     "cross_below": lambda t: {"type": "cross_below", "threshold": float(t)},
     "breakout": lambda t: {"type": "cross_above", "threshold": float(t)},
     "breakdown": lambda t: {"type": "cross_below", "threshold": float(t)},
+    # 价格对指标列比较（fix-research-c2 TC-3，用户裁决 C2 附带补）：
+    # 类型直通映射——回测面消费先例 executor.py evaluate_condition 的
+    # price_above/price_below 分支（close vs indicator_series）现成。
+    # target 为占位不进产物（与统计面占位契约对齐）、threshold 不参与。
+    "price_above": lambda t: {"type": "price_above"},
+    "price_below": lambda t: {"type": "price_below"},
 }
+
+# target 占位直通动作集：这两键的比较主体固定 close，target（数值/
+# 数值串/列名）一律占位忽略不报错——下方「target 须为数值」校验对
+# 其豁免（统计面同款占位契约；与 C6 序列形正交——price_* 不消费
+# target）。
+_PASSTHROUGH_ACTIONS = frozenset({"price_above", "price_below"})
 
 # 插件列条件 → formula/model 信号源的比较算子（仅数值比较可表达；
 # cross/break 类穿越语义不适用于插件连续值源，显式拒绝——见
@@ -365,10 +377,14 @@ def _translate_conditions(
                     f"{label}[{i}] action 不可表达: {action}"
                     f"（可表达: {sorted(_ACTION_MAP)}）",
                     detail={"condition": cond})
-            if not isinstance(target, (int, float)) or isinstance(target, bool):
+            if (action not in _PASSTHROUGH_ACTIONS
+                    and (not isinstance(target, (int, float))
+                         or isinstance(target, bool))):
                 # bool 排除与插件分支对称（review-042 CARD-14：双入口
                 # pydantic 已拦，此处服务内部直调纵深——True/False 是
-                # 布尔断言非阈值）
+                # 布尔断言非阈值）。price_above/price_below 豁免（TC-3：
+                # target 一律占位忽略不报错——与统计面占位契约对齐，
+                # 列名/数值/数值串同语义不进产物）
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
                     f"{label}[{i}] target 须为数值（列名 target 不可表达）",

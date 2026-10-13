@@ -377,6 +377,12 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "lt": lambda s, t: s < t,
         "ge": lambda s, t: s >= t,
         "le": lambda s, t: s <= t,
+        # 价格对指标列比较（fix-research-c2）：比较主体固定 close，语义
+        # 与回测面 executor.py evaluate_condition 先例逐字对齐（close >
+        # indicator_series）；target 为占位值被忽略（统计面占位契约——
+        # 与 screen_patterns 等价改写注释 price_above ≡ close gt X 一致）
+        "price_above": lambda s, t: df["close"] > s,
+        "price_below": lambda s, t: df["close"] < s,
         "spike": lambda s, t: _spike_condition(s, df, t),
         "shrink": lambda s, t: _shrink_condition(s, df, t),
         "divergence_top": lambda s, t: _resolve_pattern(df, "divergence_top", s.name if hasattr(s, "name") else subject),
@@ -394,10 +400,21 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
 
     fn = action_map.get(action)
     if fn is None:
-        if warnings is not None:
-            warnings.append(f"Action '{action}' is not a recognized action type")
-        return pd.Series(False, index=df.index)
-
+        # 未识别动作结构化拒绝（fix-research-c2）：原「warnings + 全
+        # False 掩码」静默降级——warnings 在同步调用结果里不可见，
+        # 研究者误读为「该条件从未发生」（缺陷三 fr_cfbcab214136）。
+        # legal_values 以 action_map 键集为单一事实源（运行时取，
+        # 不写字面清单——与 signal_assembly H5 先例同形制）；经
+        # ResearchError 冒泡为 422（mask_for/_mask_base 与
+        # rule_engine 的 _evaluate_conditions 共用本函数自动获得）。
+        from core.analysis.hypothesis_service import ResearchError
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"未识别的比较动作: {action!r}",
+            detail={"param": "condition.action",
+                    "value": action,
+                    "legal_values": sorted(action_map),
+                    "hint": "action 须为动作分派表键集之一"})
     return fn(subject_series, target_val)
 
 

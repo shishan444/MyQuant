@@ -85,6 +85,11 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   吞参语义（atr_period 从未生效；重算边界待需求侧裁决，见
   works/设计稿/技术债务-2026-10-13.md）。对照历史研究档案数字时
   须知此差异。
+- **比较动作全集（fix-research-c2 起）**：价格比较动作
+  price_above/price_below（价格在指标线上方/下方——比较主体固定
+  close，target 为占位值被忽略）在统计面与翻译面两侧均已可用；
+  未识别比较动作结构化拒绝（422 附 legal_values=动作分派表键集，
+  不再以全 False 掩码静默降级）。
 - **组合条件（0.4.1）**：condition_stats/event_study 支持 conditions
   条件数组（AND 语义，条数 1..5，每条混合形制含可选高周期
   timeframe 键——掩码投影）。兼容锚=参数键形制：旧 condition 键
