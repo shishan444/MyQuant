@@ -84,6 +84,7 @@ def _load_with_condition_refs(
     condition: Optional[Dict[str, Any]] = None,
     conditions: Optional[list] = None,
     extra_names: Optional[list] = None,
+    db_path: Optional[Path] = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """跨指标条件装载（卡11：param_sweep/condition_stats 卡3a 六行
     两分支收敛）——warmup 预算并入条件双侧引用（target 指标 lookback
@@ -95,25 +96,62 @@ def _load_with_condition_refs(
     (strict=True)；顶层 indicator 可选（有则并入——condition_stats
     新形制下转可选）。单条件形制（indicator+condition）逐字节不变。
 
+    fix-research-c3 插件维度接入（五步，与 precheck 装载同构——两入口
+    共用权威处理）：收集（collect_condition_plugin_columns）→ 可达性
+    校验（assert_plugin_columns_reachable——不可达 422
+    RESEARCH_PLUGIN_COLUMN_NOT_FOUND「名字写错」）→ 两维 warmup
+    （derive_warmup_full 注入 min_warmup_bars）→ 求值注入
+    （enrich_with_plugin_columns）→ 存在性校验（enrich 对求值失败
+    静默 continue，此处对 needed 集合校验列在 df——缺失 422
+    RESEARCH_COLUMN_NOT_AVAILABLE「插件坏了」；不校验则又落回
+    全 False 静默——缺陷一同族）。空插件列请求零行为变化
+    （min_warmup_bars=None 走原装载路径，逐字节冻结）。
+
     strict=True 单点化于此：未来新模板分支经本函数装载即不可能
     遗漏「装载必须 strict」纪律。eval_start 接线已随 TD-7（0.3.7）
-    收口至调用侧 _load_refs/_load_warm 助手（原「留分支」裁决由
+    收口至调用侧 _load_refs/_load_warm 助手（原「留分支」由
     TD-7 四处重复收口取代——接线与装载同点单化）。
     """
-    from core.analysis.condition_kernel import collect_condition_refs
+    from core.analysis.condition_kernel import (
+        collect_condition_plugin_columns, collect_condition_refs)
     from core.analysis.warmup_loader import load_with_warmup
 
     warm_names: list = [indicator] if indicator else []
     warm_names += list(extra_names or [])
-    if condition is not None:
-        warm_names += [
-            ind for ind, _ in collect_condition_refs(condition, strict=True)]
-    for c in conditions or []:
+    cond_list = ([condition] if condition is not None
+                 else list(conditions or []))
+    for c in cond_list:
         warm_names += [
             ind for ind, _ in collect_condition_refs(c, strict=True)]
-    return load_with_warmup(
+    # 五步之①：插件列引用收集（subject/target 两侧，前缀保守宽面）
+    plugin_columns: set = collect_condition_plugin_columns(cond_list)
+    min_warmup: Optional[int] = None
+    if plugin_columns:
+        if db_path is None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "插件列条件装载需要 db_path（接线缺失——内部不变量）",
+                detail={"param": "db_path",
+                        "plugin_columns": sorted(plugin_columns)})
+        # ②可达性校验（不可达=名字写错）③两维 warmup（含插件闭包）
+        from core.analysis.plugin_service import (
+            assert_plugin_columns_reachable)
+        from core.analysis.registry_meta import derive_warmup_full
+        assert_plugin_columns_reachable(db_path, plugin_columns)
+        min_warmup = derive_warmup_full(
+            db_path, [n for n in warm_names if n], plugin_columns)
+    df, request_start = load_with_warmup(
         data_dir, rng["symbol"], rng["timeframe"],
-        rng["start"], rng["end"], warm_names)
+        rng["start"], rng["end"], warm_names,
+        min_warmup_bars=min_warmup or 0)
+    if plugin_columns:
+        # ④求值注入 ⑤存在性校验（求值失败=插件坏了——两码分工；
+        # ⑤为共享助手，三处接线同源）
+        from core.analysis.plugin_service import (
+            enrich_with_plugin_columns, verify_plugin_columns_present)
+        df = enrich_with_plugin_columns(db_path, df, plugin_columns)
+        verify_plugin_columns_present(df, plugin_columns)
+    return df, request_start
 
 
 def _require_known_indicator(name: str) -> None:
@@ -266,7 +304,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     def _load_refs(indicator, condition=None, conditions=None, *,
                    extra_names=None):
         df, request_start = _load_with_condition_refs(
-            data_dir, rng, indicator, condition, conditions, extra_names)
+            data_dir, rng, indicator, condition, conditions, extra_names,
+            db_path=db_path)
         mtf_ctx.eval_start = request_start
         return df, request_start
 
@@ -478,6 +517,20 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             horizon=p.get("horizon", 24), max_lag=p.get("max_lag", 12),
             data_ranges=ranges, hypothesis_id=payload.hypothesis_id).to_dict(), df)
     if payload.template == "event_study":
+        # fix-research-c3 旧键形制插件列接线：普通装载（无 warmup 前扩
+        # =键形制冻结锚）后 enrich+存在性校验——插件列头部收敛不足
+        # 自然 NaN，与该形制下内置指标未收敛段同等待遇；可达性校验与
+        # 两码分工同 _load_with_condition_refs（同源助手）。
+        from core.analysis.condition_kernel import (
+            collect_condition_plugin_columns)
+        _plg = collect_condition_plugin_columns([p["condition"]])
+        if _plg:
+            from core.analysis.plugin_service import (
+                assert_plugin_columns_reachable,
+                enrich_with_plugin_columns, verify_plugin_columns_present)
+            assert_plugin_columns_reachable(db_path, _plg)
+            df = enrich_with_plugin_columns(db_path, df, _plg)
+            verify_plugin_columns_present(df, _plg)
         return _with_derivatives_coverage(event_study(
             df, condition=p["condition"], window=p.get("window", 12),
             data_ranges=ranges, min_events=p.get("min_events", 30),

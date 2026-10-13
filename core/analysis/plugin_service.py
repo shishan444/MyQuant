@@ -300,6 +300,57 @@ def plugin_columns_lookback(db_path: Path, columns: set) -> int:
     return lookback
 
 
+def assert_plugin_columns_reachable(
+    db_path: Path, plugin_columns: set,
+) -> None:
+    """插件列 registry 可达性校验（specs R3 MUST：不可达 422 结构化
+    拒绝，禁止静默降维——plugin_columns_lookback 对不可达列静默贡献
+    0，不校验即预算系统性低估）。
+
+    fix-research-c3 自 precheck_hypothesis._assert_plugin_columns_
+    reachable 提升（插件域内聚——分析模板装载链接入共用同源校验，
+    两入口「名字写错」判定面单一事实源）。
+    """
+    if not plugin_columns:
+        return
+
+    cols, _ = allowed_subject_columns(db_path)
+    missing = set(plugin_columns) - cols
+    if missing:
+        raise ResearchError(
+            "RESEARCH_PLUGIN_COLUMN_NOT_FOUND",
+            f"条件引用的插件列不可达: {sorted(missing)}",
+            detail={"plugin_columns": sorted(missing),
+                    "hint": "可用列经 GET /api/research/signals 查询"})
+
+
+def verify_plugin_columns_present(df, plugin_columns: set) -> None:
+    """插件列存在性校验（fix-research-c3 五步之⑤——enrich 静默缺列的
+    结构化拒绝落点）。
+
+    enrich_with_plugin_columns 对求值失败（FormulaError）静默 continue
+    不落列——不校验则条件求值落回「缺列 warnings+全 False」静默降级
+    （缺陷一同族）。enrich 后调用：needed 集合任一列不在 df 即
+    RESEARCH_COLUMN_NOT_AVAILABLE（可达但求值不出=「插件坏了」，与
+    RESEARCH_PLUGIN_COLUMN_NOT_FOUND「名字写错」两码分工）。三处装载
+    接线（_load_with_condition_refs/event_study 旧键/inspect_cases）
+    共用本函数。
+    """
+    if not plugin_columns:
+        return
+    missing = set(plugin_columns) - set(df.columns)
+    if missing:
+        raise ResearchError(
+            "RESEARCH_COLUMN_NOT_AVAILABLE",
+            f"插件列求值失败（registry 可达但求值不出列）: "
+            f"{sorted(missing)}",
+            detail={"missing_columns": sorted(missing),
+                    "reason": "plugin_eval_failed",
+                    "hint": "插件表达式求值失败——核对表达式引用列与"
+                            "数据装载（FormulaError 被求值层静默跳过，"
+                            "此处结构化拒绝）"})
+
+
 def enrich_with_plugin_columns(
     db_path: Path, df, needed_columns: set,
 ) -> Any:
