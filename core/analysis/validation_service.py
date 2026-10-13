@@ -151,15 +151,28 @@ def _screen_reuse_check(
 
 
 def _dna_indicator_names(dna) -> List[str]:
-    """提取 DNA 实际用到的指标名（signal_genes + 各 MTF layer）。"""
+    """提取 DNA 实际用到的指标名（signal_genes + 各 MTF layer +
+    序列形条件的 target_indicator——fix-research-c6 warmup 并集：
+    列名 target 指标的 lookback 不计入则 target 列前段 NaN，进场
+    信号前段缺失）。"""
     names = set()
-    for gene in dna.signal_genes or []:
+
+    def _collect_gene(gene) -> None:
         if getattr(gene, "indicator", None):
             names.add(gene.indicator)
+        # 序列形条件（gt/lt/ge/le/cross_*_series 带 target_indicator）：
+        # target 侧指标并入 warmup 并集
+        cond = getattr(gene, "condition", None)
+        if isinstance(cond, dict):
+            t_ind = cond.get("target_indicator")
+            if t_ind:
+                names.add(t_ind)
+
+    for gene in dna.signal_genes or []:
+        _collect_gene(gene)
     for layer in dna.layers or []:
         for gene in getattr(layer, "signal_genes", []) or []:
-            if getattr(gene, "indicator", None):
-                names.add(gene.indicator)
+            _collect_gene(gene)
     return sorted(names)
 
 

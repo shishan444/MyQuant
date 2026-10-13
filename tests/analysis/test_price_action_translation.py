@@ -113,13 +113,14 @@ class TestPassthroughProduct:
                       if g.role == SignalRole.EXIT_TRIGGER]
         assert [g.condition for g in exit_genes] == [{"type": "price_below"}]
 
-    def test_non_passthrough_column_target_still_rejected(self, db):
-        """豁免边界：非直通动作（gt）的列名 target 仍被拒——
-        豁免只及 price_above/price_below 两键（RESEARCH_NOT_EXPRESSIBLE）。"""
+    def test_non_series_action_column_target_still_rejected(self, db):
+        """豁免边界（fix-research-c6 后收窄）：列名 target 的可表达域
+        =直通两键（price_*）∪序列八键（gt/lt/ge/le/cross 族）——八键外
+        动作（touch）的列名 target 仍被拒（RESEARCH_NOT_EXPRESSIBLE）。"""
         from core.analysis.hypothesis_to_strategy import build_signal_genes
         with pytest.raises(ResearchError) as ei:
             build_signal_genes(
-                [{"subject": BB_UPPER, "action": "gt",
+                [{"subject": BB_UPPER, "action": "touch",
                   "target": "ema_20"}], [], db)
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
 
