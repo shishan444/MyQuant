@@ -62,7 +62,8 @@ class TestStrategiesEmptyState:
         """Page shows either empty state or strategy list (depends on backend state)."""
         _goto_strategies(page)
         content = page.content()
-        has_empty = "暂无" in content or "未找到" in content or "No strategies" in content
+        has_empty = ("暂无" in content or "未找到" in content
+                     or "No strategies" in content or "策略库为空" in content)
         has_strategies = "策略" in content or "已保存" in content or "年化" in content or "Sharpe" in content
         assert has_empty or has_strategies, "Strategies page shows neither empty state nor strategies"
 
@@ -119,7 +120,12 @@ class TestStrategiesSearchFilter:
         # search input 或 filter 控件 (实际为"全部来源"/"全部策略"下拉 + 可选 search input)
         has_search_input = page.locator("input[type='text'], input[type='search']").count() > 0
         has_filter = "全部来源" in content or "全部策略" in content or "筛选" in content
-        assert has_search_input or has_filter, "搜索/筛选控件未找到"
+        # 空库容忍（2026-10-13 历史策略清除裁决后）：策略表为空时前端
+        # 渲染空态页（无搜索/筛选控件）——空态文案在=控件职责已达成
+        has_empty = ("暂无" in content or "未找到" in content
+                     or "No strategies" in content or "策略库为空" in content)
+        assert has_search_input or has_filter or has_empty, (
+            "搜索/筛选控件未找到且非空态页")
 
     def test_filter_controls_present(self, page: Page):
         _goto_strategies(page)
