@@ -239,6 +239,58 @@ class TestDisposalMechanics:
         assert any("evolution_task" in (r or "") for r in refs)
 
 
+class TestSameTransactionAtomicity:
+    """R-8 契约：对照条目与回写同一事务——崩溃注入断言原子性。"""
+
+    def test_log_failure_rolls_back_write(self, db, tmp_path, monkeypatch):
+        """对照条目 INSERT 失败 → 回写同事务回滚（不出现「已回写无
+        对照」的中间态）。"""
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO strategy (strategy_id, name, dna_json, status, symbol, "
+            "timeframe, metrics_json, created_at, updated_at) VALUES "
+            "('st_tx', 't', ?, 'active', 'BTCUSDT', '4h', '{}', "
+            "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            (_dna_json((3.0,)),))
+        conn.execute(
+            "INSERT INTO backtest_result (result_id, strategy_id, symbol, "
+            "timeframe, data_start, data_end, init_cash, fee, slippage, "
+            "total_return, created_at) VALUES ('bt_tx', 'st_tx', 'BTCUSDT', "
+            "'4h', '2024-01-01', '2024-06-01', 100000, 0.001, 0.0005, "
+            "0.5, '2026-01-01T00:00:00Z')")
+        conn.commit()
+        conn.close()
+
+        import recalc_bb_semantics as rc_mod
+        # 构造可重算环境：真数据目录+可重算行（区间内有数据）
+        import numpy as np
+        import pandas as pd
+        from tests.helpers.data_factory import make_ohlcv
+        d = tmp_path / "market"
+        d.mkdir()
+        make_ohlcv(n=1000, freq="4h", start="2023-06-01", seed=3).to_parquet(
+            d / "BTCUSDT_4h.parquet")
+
+        def _boom(conn, ref_id, summary):
+            raise RuntimeError("模拟对照条目写入崩溃")
+
+        monkeypatch.setattr(rc_mod, "_insert_log_same_tx", _boom)
+        rc_mod.recalc(db, d, tmp_path / "out_tx", dry_run=False)
+        conn = sqlite3.connect(db)
+        got = conn.execute(
+            "SELECT total_return FROM backtest_result "
+            "WHERE result_id='bt_tx'").fetchone()[0]
+        n_log = conn.execute(
+            "SELECT COUNT(*) FROM research_log "
+            "WHERE entry_type='recalc_bb' AND ref_id LIKE 'strategy:%'"
+        ).fetchone()[0]
+        conn.close()
+        assert got == 0.5, "对照条目崩溃后回写未回滚（原子性破坏）"
+        assert n_log == 0
+        print("[tx-atomic] 回写与对照均未落——同事务原子性验证通过")
+
+
 class TestDiffLevel:
     """对照三档分级。"""
 

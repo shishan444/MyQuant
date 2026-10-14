@@ -39,6 +39,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _insert_log_same_tx(conn, ref_id: str, summary: str) -> None:
+    """R-8：资产对照条目与回写同一事务提交（契约「对照记录与回写同
+    事务」——原独立连接 append 在崩溃窗口下会出现「已回写无对照」；
+    复用 repository.research 的 id/时间形制保持日志行同源）。"""
+    from core.persistence.repository.research import _new_id, _now
+    conn.execute(
+        "INSERT INTO research_log (log_id, hypothesis_id, entry_type, "
+        "ref_id, data_ranges, summary, created_at) VALUES "
+        "(?, NULL, 'recalc_bb', ?, NULL, ?, ?)",
+        (_new_id(), ref_id, summary, _now()))
+
+
 def _write_protected(path: Path, text: str) -> None:
     """R-2：处置记录类文件保护写——存在时旧文件改名保留（时间戳后缀）
     后写入新内容（续跑不销毁首次产物；manifest/snapshot 同样适用）。"""
@@ -400,15 +412,16 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
                             f"UPDATE backtest_result SET "
                             f"{', '.join(sets)} WHERE result_id=?", vals)
                 if not recalcable:
-                    conn.execute("COMMIT")
-                    conn.close()
-                    append_research_log(
-                        db, hypothesis_id=None, entry_type="recalc_bb",
-                        ref_id=f"strategy:{sid}",
-                        summary=json.dumps({
+                    # R-8：全 skipped 也走同事务 INSERT（该路径无回写、
+                    # 仅对照条目——原空事务+独立 append）
+                    _insert_log_same_tx(
+                        conn, f"strategy:{sid}",
+                        json.dumps({
                             "backtest_rows": len(results),
                             "levels": sorted({r["level"] for r in results})},
                             ensure_ascii=False, default=list))
+                    conn.commit()
+                    conn.close()
                     cmp_rows.extend(results)
                     continue
                 # strategy 行：metrics_json 同名键同步最新可重算值
@@ -422,6 +435,13 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
                 conn.execute(
                     "UPDATE strategy SET metrics_json=? WHERE strategy_id=?",
                     (json.dumps(mj), sid))
+                # R-8：对照条目并入同一事务（回写+对照原子——契约兑现）
+                _insert_log_same_tx(
+                    conn, f"strategy:{sid}",
+                    json.dumps({
+                        "backtest_rows": len(results),
+                        "levels": sorted({r["level"] for r in results})},
+                        ensure_ascii=False, default=list))
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -429,13 +449,6 @@ def recalc(db: Path, data_dir: Path, out_dir: Path, dry_run: bool = False):
                 print(f"[tx-fail] {sid[:12]} 事务回滚")
                 continue
             conn.close()
-            append_research_log(
-                db, hypothesis_id=None, entry_type="recalc_bb",
-                ref_id=f"strategy:{sid}",
-                summary=json.dumps({
-                    "backtest_rows": len(results),
-                    "levels": sorted({r["level"] for r in results})},
-                    ensure_ascii=False))
         for r in results:
             cmp_rows.append({k: v for k, v in r.items()
                              if k != "_full_metrics"})
