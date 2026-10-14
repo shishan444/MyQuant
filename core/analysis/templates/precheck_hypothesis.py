@@ -130,7 +130,8 @@ def _load_precheck_df(
         (df, start_ts, warmup_bars)——df 含 warmup 前缀与插件列。
     """
     from core.analysis.plugin_service import (
-        assert_plugin_columns_reachable, enrich_with_plugin_columns)
+        assert_plugin_columns_reachable, enrich_with_plugin_columns,
+        verify_plugin_columns_present)
 
     indicator_names, plugin_columns = _collect_precheck_refs(when_conditions)
     assert_plugin_columns_reachable(db_path, plugin_columns)
@@ -139,6 +140,10 @@ def _load_precheck_df(
         data_dir, symbol, timeframe, start, end,
         indicator_names, min_warmup_bars=warmup_bars)
     df = enrich_with_plugin_columns(db_path, df, plugin_columns)
+    # 第五步存在性校验（用户裁决 2026-10-13 能力完整方向补齐）：原
+    # 缺省使求值失败静默 0 触发（缺陷一同族在预检面的存续）——与
+    # 分析面三处接线共用同源助手，两码分工一致
+    verify_plugin_columns_present(df, plugin_columns)
     return df, start_ts, warmup_bars
 
 

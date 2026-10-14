@@ -45,11 +45,9 @@ def _action_map_keys() -> set:
 
 # 已知历史暗差（豁免集——处置记录见变更文档 C7.5 差异清单；
 # 集合扩大即红：新增暗差必须显式登记处置去向）
-KNOWN_DECLARED_NOT_IMPLEMENTED = frozenset({
-    "eq",           # 10 个 pattern 指标声明；统计面无实现（回测面有）
-    "lookback_all", # BB/RVOL/VROC 声明；统计面无实现（回测面有）
-    "wick_touch",   # Keltner/BB/Donchian 声明；统计面无实现（TC-1 发现）
-})
+# 三键（eq/lookback_all/wick_touch）已补统计面实现（用户裁决 2026-10-13
+# 能力完整方向）——豁免集清空保留形制（未来新增声明未实现暗差仍红）
+KNOWN_DECLARED_NOT_IMPLEMENTED = frozenset()
 KNOWN_IMPLEMENTED_NOT_DECLARED = frozenset({
     "breakdown", "breakout", "consecutive_down", "consecutive_up",
     "divergence_bottom", "divergence_top", "shrink", "spike", "touch",

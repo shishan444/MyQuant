@@ -1,21 +1,10 @@
-"""C5 真实库重算核验（fix-research-c5-bb-legacy-recalc · R1~R5 只读断言）。
+"""C5 真实库重算核验（R1~R5+A9）——只读断言（真实库行缺时 skip 不假绿）。
 
-与构造层 test_recalc_bb_semantics.py 分工：构造层证机制就绪（tmp 库），
-本文件证真实库执行结果符合 design.md §3/§4/§7 与 tasks.md C5.5 契约
-——①类全量完备性（86 策略=枚举数=条目数、998 回测行、快照三方一致）、
-回写对账（库值 vs 备份 vs 对照记录三分向）、R2 可区分（std=3 与 std=2
-带宽数字可区分 + 分层抽样独立复算）、R3 对应关系表、R5/A9 状态零迁移
-（涉事行状态字段逐行不变 + 快照/②类/③类不回写负向）。
-
-只读纪律：全部 sqlite 连接 mode=ro，不触发任何回写；库/产物/数据缺失
-或重算未执行时 skip，不假绿。R4 三锚复跑由
-tests/analysis/test_research_regression_anchors.py 承载（唯一真相源，
-本文件不复制锚值）。
-
-基线时点：2026-10-13 run4 全量重算后核验（run3 曾因 set 序列化中断，
-幂等续跑后 86 策略 998 行零 tx-fail）。pre_c5_backup 为非 checkpoint
-拷贝，缺 2026-10-12 的部分已提交行（3 draft 策略/6 validation_records/
-4 假设/15 analysis_tasks）——以其「可见行」为对照面，缺失行不计违例。
+2026-10-13 用户终局裁决：历史策略产物已全部清除（purge_legacy_
+strategies.py——744 策略/3652 回测行清零，双备份在案）——本文件中
+依赖已清除行的核验断言转为「历史核验已完成」的清除后形制（库行
+缺失 skip）；产物文件（manifest/对照/映射）与 research_log 留痕
+断言持续有效（清除不触不可变日志与落盘产物）。
 """
 
 import hashlib
@@ -112,6 +101,16 @@ def bt_rows_now(affected):
 
 # ---------------------------------------------------------------- R1 完备性
 
+
+# 清除后形制守卫（用户裁决 2026-10-13）：策略表行数为零属预期状态
+import sqlite3 as _sq
+from pathlib import Path as _P
+def _legacy_purged() -> bool:
+    db = _P(__file__).resolve().parents[2] / "data/quant.db"
+    if not db.exists():
+        return False
+    return _sq.connect(db).execute(
+        "SELECT COUNT(*) FROM strategy").fetchone()[0] == 0
 class TestR1Completeness:
     """①类全量口径：三载体各自全量、三方一致、逐条旧值在。"""
 
@@ -203,6 +202,10 @@ class TestR1WritebackReconciliation:
 
     def test_numeric_columns_follow_writeback_rules(
             self, backup, comparison, bt_rows_now):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
         """数字列回写规则：不可重算→旧值保留；可重算→库=新值；
         新值缺失（动态列集不写 None）→旧值保留。"""
         cmp_of = {c["result_id"]: c for c in comparison}
@@ -222,7 +225,12 @@ class TestR1WritebackReconciliation:
                     assert lib_v == old_v, f"{rid}.{col} 应保留旧值"
 
     def test_changed_row_count_matches_baseline(
-            self, backup, bt_rows_now):
+self, backup, bt_rows_now):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
+
         """实际数字变化行数=640（lead 口径回写面对账固化）。"""
         changed = set()
         for b in backup["backtest_rows"]:
@@ -232,7 +240,12 @@ class TestR1WritebackReconciliation:
         assert len(changed) == BASELINE["changed_rows"]
 
     def test_non_numeric_columns_untouched(
-            self, backup, bt_rows_now):
+self, backup, bt_rows_now):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
+
         """非数字列（equity_curve/trades_json/参数列等）逐行不变。"""
         skip = set(NUMERIC_COLS)
         for b in backup["backtest_rows"]:
@@ -244,7 +257,12 @@ class TestR1WritebackReconciliation:
                     f"{b['result_id']}.{col} 非数字列被改"
 
     def test_strategy_metrics_json_synced_best_score_kept(
-            self, manifest, backup, comparison, affected):
+self, manifest, backup, comparison, affected):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
+
         """strategy 行：metrics_json 同名键同步最新可重算值、其余键与
         best_score 保留（重算通道不产 best_score 新值——口径待裁决，
         现状断言=不变，见核验报告偏差清单）。"""
@@ -311,7 +329,12 @@ class TestR2Distinguishability:
 
     @pytest.mark.parametrize("std_layer", [1.0, 1.5, 2.5, 3.0])
     def test_sampled_row_matches_independent_recalc(
-            self, manifest, comparison, std_layer):
+self, manifest, comparison, std_layer):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
+
         """分层抽样（std 1.0/1.5/2.5/3.0 各一行·有交易可重算行）：
         库中新值 == 独立调 run_backtest_on_range 同参复算值（手算对照
         ——证明回写值由修复后引擎按原 DNA 的 std≠2 语义产生）。"""
@@ -376,13 +399,22 @@ class TestR5StateZeroMigration:
     """R5/A9：重算不得触碰任何资产的生命周期状态字段（全量核验）。"""
 
     def test_backtest_qualified_unchanged_all_rows(
-            self, backup, bt_rows_now):
+self, backup, bt_rows_now):
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
+
         """A9-⑤：backtest_result.qualified 998 行逐行不变（vs 备份）。"""
         for b in backup["backtest_rows"]:
             assert bt_rows_now[b["result_id"]]["qualified"] == b["qualified"]
 
     def test_strategy_status_active_and_not_migrated(self, affected):
         """涉事 86 行 status 全 active（①类枚举前提），pre_c5 可见行零迁移。"""
+        # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
+        # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
+        if _legacy_purged():
+            pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
         conn = _ro(DB)
         now = {r[0]: r[1] for r in conn.execute(
             "SELECT strategy_id, status FROM strategy")}

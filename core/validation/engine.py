@@ -383,6 +383,12 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         # 与 screen_patterns 等价改写注释 price_above ≡ close gt X 一致）
         "price_above": lambda s, t: df["close"] > s,
         "price_below": lambda s, t: df["close"] < s,
+        # 三键补实现（用户裁决 2026-10-13 能力完整方向——声明域与执行
+        # 域一致，消灭对拍①豁免集）：eq/lookback_all/wick_touch 语义与
+        # 回测面 executor evaluate_condition 逐字对齐
+        "eq": lambda s, t: s == t,
+        "lookback_all": lambda s, t: _lookback_condition(df, cond, s, "all"),
+        "wick_touch": lambda s, t: _wick_touch_condition(df, cond, s),
         "spike": lambda s, t: _spike_condition(s, df, t),
         "shrink": lambda s, t: _shrink_condition(s, df, t),
         "divergence_top": lambda s, t: _resolve_pattern(df, "divergence_top", s.name if hasattr(s, "name") else subject),
@@ -416,6 +422,21 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
                     "legal_values": sorted(action_map),
                     "hint": "action 须为动作分派表键集之一"})
     return fn(subject_series, target_val)
+
+
+def _wick_touch_condition(df, cond, indicator_series):
+    """影线触碰（统计面——与回测面 executor._eval_wick_touch 语义对齐）：
+    direction="above"：最高价近线 + 收盘在线下；"below" 反向。
+    proximity_pct 缺省 0.01；附加键经 cond 透传（cross_above_series
+    同款通道）。"""
+    direction = cond.get("direction", "above")
+    proximity_pct = cond.get("proximity_pct", 0.01)
+    line = indicator_series
+    if direction == "above":
+        wick_near = (df["high"] - line).abs() <= line.abs() * proximity_pct
+        return wick_near & (df["close"] < line)
+    wick_near = (df["low"] - line).abs() <= line.abs() * proximity_pct
+    return wick_near & (df["close"] > line)
 
 
 def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
