@@ -210,39 +210,19 @@ def regime_split(
 
     # 可选逐段统计（condition_stats 同口径；资格门 <30 旁路）
     by_segment: Optional[List[Dict[str, Any]]] = None
+    # 逐段统计（condition_stats 同口径；资格门 <30 旁路）——掩码来源
+    # 前置分叉（变更三 7.2 + review 发现 2 重构：两形制共享单一循环体，
+    # 口径同构由结构保证而非复制粘贴维持——键集/资格门/统计量单点定义）
+    stat_mask_all = None
     if conditions is not None:
-        # 变更三 7.2：组合形式求值——掩码来源 mask_for_all（AND 语义），
-        # by_segment 口径与单条件形制逐字段同构（p_value_for 去重叠
-        # t 检验/资格门 _MIN_SEGMENT_SAMPLES/键集全保持）
         from core.analysis.condition_kernel import mask_for_all
-        fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
         stat_mask_all = mask_for_all(df, conditions, mtf=mtf)
-        by_segment = []
-        for i, s in enumerate(segments):
-            in_seg = pd.Series(False, index=df.index)
-            in_seg[(df.index >= s["start"]) & (df.index <= s["end"])] = True
-            sm = stat_mask_all & in_seg
-            hit = fwd_all[sm].dropna()
-            baseline = fwd_all[in_seg].dropna()
-            baseline_mean = float(baseline.mean()) if len(baseline) else None
-            p_value, n_valid = p_value_for(
-                fwd_all, sm.values, forward_bars, baseline_mean)
-            if len(hit) < _MIN_SEGMENT_SAMPLES:
-                state_v = "insufficient_sample"
-                mean_v = p_v = None
-            else:
-                state_v = "scored"
-                mean_v = float(hit.mean())
-                p_v = p_value
-            by_segment.append({
-                "segment": i, "type": s["type"], "samples": int(len(hit)),
-                "forward_return_mean": mean_v,
-                "baseline_mean": baseline_mean, "p_value": p_v,
-                "state": state_v,
-            })
     elif condition is not None:
-        fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
         stat_mask_all = mask_for(df, condition, mtf=mtf)
+
+    by_segment: Optional[List[Dict[str, Any]]] = None
+    if stat_mask_all is not None:
+        fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
         by_segment = []
         for i, s in enumerate(segments):
             in_seg = pd.Series(False, index=df.index)

@@ -375,3 +375,66 @@ class TestConditionsComboForm:
             assert r.status_code == 422, r.text
             assert r.json()["detail"]["detail"]["param"] == \
                 "condition|conditions"
+
+
+class TestConditionsPluginColumnRoute:
+    """P2-T02（reviewer 变更三批次发现 1 补齐）：插件列 subject ∈
+    conditions 经路由可用——spec Scenario「插件列条件可用」（MUST：
+    WHEN conditions 中含公式插件列 subject THEN 分段统计可用且触发
+    非零）的首个红锚；装载链回退（fx_ 列未入 df）即红。附带数值
+    对拍锚（tasks 7.2 完成标准①足额落地）：同数据同条件下
+    regime_split 各段 samples 总和与 condition_stats 掩码命中数
+    同量级一致（容差=forward_bars 尾部 NaN + 段界，可解释）。"""
+
+    def _setup(self, tmp_path):
+        import numpy as np
+        import pandas as pd
+        market = tmp_path / "market"
+        market.mkdir(exist_ok=True)
+        idx = pd.date_range("2023-12-01", periods=400, freq="1d",
+                            tz="UTC", name="timestamp")
+        rng_ = np.random.default_rng(9)
+        close = 100 + np.cumsum(rng_.normal(0, 2, 400))
+        pd.DataFrame({"open": close, "high": close + 1.5, "low": close - 1.5,
+                      "close": close, "volume": rng_.uniform(10, 90, 400),
+                      "trades": 5}, index=idx).to_parquet(
+            market / "BTCUSDT_1d.parquet")
+        db = tmp_path / "q.db"
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+        init_db_ext(db)
+        ensure_research_tables(db)
+        from core.analysis.plugin_service import register_formula_plugin
+        register_formula_plugin(db, name="above_ma",
+                                expression="gt(close, rolling_mean(close, 20))")
+        return db, market
+
+    def test_plugin_column_conditions_route_nonzero(self, tmp_path):
+        db, market = self._setup(tmp_path)
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        app = create_app(db_path=db, data_dir=market)
+        rng_ = {"symbol": "BTCUSDT", "timeframe": "1d",
+                "start": "2024-09-01", "end": "2024-12-20"}
+        conds = [{"subject": "fx_above_ma", "action": "gt",
+                  "target": 0.5}]
+        with TestClient(app) as c:
+            r = c.post("/api/research/analysis", json={
+                "template": "regime_split",
+                "params": {"conditions": conds},
+                "data_range": rng_})
+            assert r.status_code == 200, r.text
+            segs = r.json()["payload"]["condition_by_segment"]
+            total = sum(s["samples"] for s in segs)
+            assert total > 0, "插件列触发非零（装载链回退即红）"
+
+            # 数值对拍锚：同条件下 condition_stats 掩码命中数对照
+            r2 = c.post("/api/research/analysis", json={
+                "template": "condition_stats",
+                "params": {"conditions": conds},
+                "data_range": rng_})
+            assert r2.status_code == 200, r2.text
+            hit = r2.json()["payload"]["hit_count"]
+            # regime_split samples 含 fwd dropna（尾部 forward_bars 条）
+            # 与段界并集损耗——容差上界可解释
+            assert abs(total - hit) <= 24 + len(segs), (total, hit)
