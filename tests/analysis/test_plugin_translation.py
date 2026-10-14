@@ -169,13 +169,32 @@ class TestPluginTranslation:
         with pytest.raises(ResearchError, match="插件列 subject（fx_ghost）已失效"):
             translate_hypothesis(db, hypothesis_id=hid)
 
-    def test_base_column_message_distinct(self, db):
-        """三类文案区分：内置基础列（close 仍拒绝——e2e_breakpoint_1a
-        前提）/ 失效插件列 / 完全未知列。"""
+    @pytest.mark.parametrize("col", [
+        "open", "high", "low", "volume", "trades",
+        "open_interest", "funding_rate"])
+    def test_base_column_subject_rejected_unchanged(self, db, col):
+        """B1-T09 回归：其余 7 基础列 subject 维持不可表达、文案
+        逐字节不变（变更一 B1 起 close 的 lt/gt+编码列名 target 组合
+        已放行——close 移出本拒绝集，新路径覆盖在
+        test_price_action_translation.py 同域扩展）。"""
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "lt",
+                                  "target": "ema_20"}])
+        with pytest.raises(
+                ResearchError,
+                match=f"内置基础列 subject（{col}）不可表达为"):
+            translate_hypothesis(db, hypothesis_id=hid)
+
+    def test_close_numeric_target_new_message(self, db):
+        """B1-T07（三段格局第二段）：close+lt/gt+数值 target——
+        引导文案改写为「现仅支持编码列名 target」，与 ge/le 新文案
+        （T06）可辨；不再落笼统基础列拒绝文案。"""
         hid = _raw_hyp(db, when=[{"subject": "close", "action": "gt",
                                   "target": 60000}])
-        with pytest.raises(ResearchError, match="内置基础列"):
+        with pytest.raises(
+                ResearchError,
+                match="close 基础列主体现仅支持编码列名 target"):
             translate_hypothesis(db, hypothesis_id=hid)
+        assert "内置基础列" not in "close 基础列主体现仅支持编码列名 target"
 
         hid2 = _raw_hyp(db, when=[{"subject": "definitely_not_a_column",
                                    "action": "gt", "target": 1}])

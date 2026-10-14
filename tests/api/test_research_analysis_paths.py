@@ -146,6 +146,12 @@ class TestCorruptedJsonTails:
             paths_env["db"], hypothesis_id="hyp_c", conditions="{}",
             conditions_hash="cc", statement="c", data_ranges="[]",
             ranges_hash="rc")
+        # B2 两态判定序（变更一）：报告查询先判实体存在——补建策略
+        # 实体使本用例聚焦损坏 result 容错（实体缺失 404 有专测覆盖）
+        from core.persistence.repository.strategy import save_strategy
+        save_strategy(paths_env["db"], strategy_id="st_c", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h", name="c",
+                      source="manual")
         rr.save_validation_with_log(
             paths_env["db"], record_id="rec_c", hypothesis_id="hyp_c",
             strategy_id="st_c", level="isolated_backtest",

@@ -150,12 +150,33 @@ def validation_report(
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     """验证档案：人话关键数字摘要（普通人可读，最差情况与样本量）。"""
+    # 两态判定序（变更一 B2 切片 a，Q1 裁决 2026-10-14 采纳推荐）：
+    # 先实体后记录——①实体不存在→404 RESEARCH_STRATEGY_NOT_FOUND
+    # （errors.py 既有 hint 命中）；②实体存在+零记录→200 零记录骨架
+    # +lineage 正常组装（谱系可达是本需求目的——重新翻译后的新草稿
+    # 查报告能列出各代草稿与各自记录归属）；③有记录→现状组装逐字节
+    # 不变。RESEARCH_REPORT_NOT_FOUND 随本改造退役（唯一抛出点即此处，
+    # 全工程 grep 三处亲证：本抛出点+两测试断言，断言已按两态拆分改写）。
+    from core.persistence.repository.strategy import get_strategy
+
+    if get_strategy(db_path, strategy_id) is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "RESEARCH_STRATEGY_NOT_FOUND",
+            "message": f"策略不存在: {strategy_id}", "detail": None})
+
     records = rr.list_validation_records(
         db_path, strategy_id=strategy_id, limit=200)
     if not records:
-        raise HTTPException(status_code=404, detail={
-            "code": "RESEARCH_REPORT_NOT_FOUND",
-            "message": f"该策略无验证记录: {strategy_id}", "detail": None})
+        return {
+            "strategy_id": strategy_id,
+            "total_records": 0,
+            "isolated_backtests": [],
+            "random_window_summaries": [],
+            "lineage": _build_lineage(db_path, strategy_id),
+            "report_notice": (
+                "该策略自身无验证记录；lineage 段披露同假设身份族"
+                "的全部历史翻译实体与各自记录归属（含各代草稿）"),
+        }
 
     isolated = [r for r in records if r["level"] == "isolated_backtest"]
     windows = [r for r in records if r["level"] == "random_window"]
@@ -236,13 +257,18 @@ def validation_report(
     # → 同身份族（同 conditions_hash+ranges_hash 全部假设含终态变体）的
     # 全部翻译实体与各自记录归属（SQL 聚合不经截断）；进化/手工来源
     # parent_ids 非假设 → parent_hypothesis_id=null、entities 仅含自身
-    # （容错不炸）；当前实体无记录的 404 语义已在上方保持
+    # （容错不炸）；零记录实体的报告可达性由上方两态判定序保证（B2）
     lines["lineage"] = _build_lineage(db_path, strategy_id)
     return lines
 
 
 def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
-    """谱系段组装（research-validation-protocol 规格「验证证据档案」lineage）。"""
+    """谱系段组装（research-validation-protocol 规格「验证证据档案」lineage）。
+
+    entities[].record_ids（变更一 B2 切片 b）：各实体在既有 records 聚合
+    计数旁并列的三级编号明细（SQL 全量升序，不经 limit 200 截断——大谱系
+    明细与记录实况一致；同实体逐级 count==len(record_ids) 双通道互证）。
+    """
     from core.persistence.repository.strategy import get_strategy
 
     current = get_strategy(db_path, strategy_id)
@@ -250,6 +276,7 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
         return {"parent_hypothesis_id": None,
                 "entities": [{"strategy_id": strategy_id, "status": None,
                               "created_at": None, "records": {},
+                              "record_ids": {},
                               "is_current": True}]}
 
     parent_hypothesis_id: Optional[str] = None
@@ -262,11 +289,13 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
     if parent_hypothesis_id is None:
         # 进化/手工来源（parent_ids 非假设）：entities 仅含自身（容错）
         counts = rr.count_validation_records_by_strategy(db_path, [strategy_id])
+        ids = rr.list_validation_record_ids_by_strategy(db_path, [strategy_id])
         return {"parent_hypothesis_id": None,
                 "entities": [{"strategy_id": strategy_id,
                               "status": current.get("status"),
                               "created_at": current.get("created_at"),
                               "records": counts.get(strategy_id, {}),
+                              "record_ids": ids.get(strategy_id, {}),
                               "is_current": True}]}
 
     parent_hyp = rr.get_hypothesis(db_path, parent_hypothesis_id)
@@ -275,13 +304,15 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
     family_ids = [h["hypothesis_id"] for h in family]
     family_strategies = rr.list_strategies_by_parent_hypotheses(
         db_path, family_ids)
-    counts = rr.count_validation_records_by_strategy(
-        db_path, [s["strategy_id"] for s in family_strategies])
+    sid_list = [s["strategy_id"] for s in family_strategies]
+    counts = rr.count_validation_records_by_strategy(db_path, sid_list)
+    ids = rr.list_validation_record_ids_by_strategy(db_path, sid_list)
     entities = [{
         "strategy_id": s["strategy_id"],
         "status": s.get("status"),
         "created_at": s.get("created_at"),
         "records": counts.get(s["strategy_id"], {}),
+        "record_ids": ids.get(s["strategy_id"], {}),
         "is_current": s["strategy_id"] == strategy_id,
     } for s in family_strategies]  # created_at 升序（repository 排序）
     return {"parent_hypothesis_id": parent_hypothesis_id,

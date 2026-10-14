@@ -215,12 +215,109 @@ class TestAggregationAndReadOnly:
         assert len(lineage["entities"]) == 1
         assert lineage["entities"][0]["strategy_id"] == "st_manual_lg"
 
-    def test_no_records_404_unchanged(self, db, tmp_data_dir):
-        """当前实体无任何记录的 404 语义不变。"""
+    def test_no_records_200_skeleton_with_lineage(self, db, tmp_data_dir):
+        """B2-T02（Q1 裁决 2026-10-14 采纳推荐，期望固定）：实体存在+
+        零记录 → 200 零记录骨架——total_records=0/两数组空/lineage 正常
+        组装/report_notice 存在。以前：整报告 404、谱系跟着看不见；
+        现在：新草稿查报告能列出各代草稿与各自记录归属。"""
         h = register_hypothesis(db, conditions=_cond(period=35),
                                 statement="norec", data_ranges=_ranges())
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         with _client(db, tmp_data_dir) as c:
             resp = c.get(f"/api/research/validation/{t['strategy_id']}/report")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_records"] == 0
+        assert body["isolated_backtests"] == []
+        assert body["random_window_summaries"] == []
+        assert body["lineage"]["entities"], "谱系段须正常组装（可达性）"
+        assert body["report_notice"]
+
+    def test_entity_not_found_404_new_code(self, db, tmp_data_dir):
+        """B2-T01：实体不存在 → 404 RESEARCH_STRATEGY_NOT_FOUND
+        （两态判定序·先实体后记录；旧码 RESEARCH_REPORT_NOT_FOUND
+        随 B2 退役——全工程 grep 零残留）。"""
+        with _client(db, tmp_data_dir) as c:
+            resp = c.get("/api/research/validation/st_nope/report")
         assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "RESEARCH_REPORT_NOT_FOUND"
+        assert resp.json()["detail"]["code"] == "RESEARCH_STRATEGY_NOT_FOUND"
+
+
+class TestRecordIdsDisclosure:
+    """B2 切片 b（变更一）：entities[].record_ids 三级编号明细。
+
+    纯增量键——既有 records 聚合计数形制不变，旁并列
+    record_ids:{level:[record_id,...]}（SQL 全量升序，禁走 limit 200
+    截断路径——spec「MUST NOT 截断扫描」）。
+    """
+
+    def test_multi_generation_record_ids_exact(self, db, env, tmp_data_dir):
+        """B2-T03 验收锚：多代草稿（D1 带 2 记录→D2）查 D2 报告——
+        lineage.entities 含全部代+各自 record_ids 与直插记录精确一致
+        （升序全量）；聚合计数键回归不变。"""
+        with _client(db, tmp_data_dir) as c:
+            resp = c.get(f"/api/research/validation/{env['d2']}/report")
+        assert resp.status_code == 200
+        ents = {e["strategy_id"]: e
+                for e in resp.json()["lineage"]["entities"]}
+        assert set(ents) == {env["d1"], env["d2"]}
+        assert ents[env["d1"]]["record_ids"] == {
+            "isolated_backtest": ["rec_d1_a"],
+            "random_window": ["rec_d1_b"]}
+        assert ents[env["d2"]]["record_ids"] == {
+            "isolated_backtest": ["rec_d2_a"]}
+        # 聚合计数键义不变（回归）
+        assert ents[env["d1"]]["records"]["isolated_backtest"]["pass"] == 1
+        assert ents[env["d1"]]["records"]["random_window"]["fail"] == 1
+
+    def test_new_draft_sees_ancestor_records(self, db, env, tmp_data_dir):
+        """B2-T04（切片 a 验收）：重新翻译的新零记录草稿查报告 →
+        200 骨架+lineage 披露前代记录归属——「重新翻译后记录查不到」
+        断裂消除的验收锚。"""
+        # env 中 h2 仍 active——同身份重登记须先转终态（env 同款路径）
+        transition_hypothesis(db, env["h2"],
+                              target_status="abandoned", evidence_ref="v3")
+        h3 = register_hypothesis(db, conditions=_cond(),
+                                 statement="v3", data_ranges=_ranges(),
+                                 strategy_params={"stop_loss": 0.20})
+        d3 = translate_hypothesis(
+            db, hypothesis_id=h3["hypothesis_id"])["strategy_id"]
+        with _client(db, tmp_data_dir) as c:
+            resp = c.get(f"/api/research/validation/{d3}/report")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_records"] == 0 and body["report_notice"]
+        ents = {e["strategy_id"]: e for e in body["lineage"]["entities"]}
+        assert set(ents) == {env["d1"], env["d2"], d3}
+        assert ents[env["d1"]]["record_ids"]["isolated_backtest"] == \
+            ["rec_d1_a"], "新草稿报告须披露前代记录归属"
+        assert ents[d3]["record_ids"] == {}
+
+    def test_201_records_full_disclosure_no_truncation(
+            self, db, tmp_data_dir):
+        """B2-T05：直插 201 条记录 → record_ids 全量披露（不经
+        limit=200 列表截断路径——截断则恰差 1 条即红）。"""
+        h = register_hypothesis(db, conditions=_cond(period=21),
+                                statement="bulk", data_ranges=_ranges())
+        d = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])[
+            "strategy_id"]
+        for i in range(201):
+            _insert_record(db, f"rec_bulk_{i:03d}", d, h["hypothesis_id"],
+                           "pass")
+        with _client(db, tmp_data_dir) as c:
+            resp = c.get(f"/api/research/validation/{d}/report")
+        assert resp.status_code == 200
+        ent = resp.json()["lineage"]["entities"][0]
+        ids = ent["record_ids"]["isolated_backtest"]
+        assert len(ids) == 201, f"全量 201 条（截断则 {len(ids)}）"
+        assert ids == sorted(ids), "record_id 升序"
+        assert ids[0] == "rec_bulk_000" and ids[-1] == "rec_bulk_200"
+
+    def test_count_equals_len_record_ids(self, db, env, tmp_data_dir):
+        """B2-T06 双通道互证：同实体逐级 count==len(record_ids)。"""
+        with _client(db, tmp_data_dir) as c:
+            resp = c.get(f"/api/research/validation/{env['d1']}/report")
+        for ent in resp.json()["lineage"]["entities"]:
+            for level, bucket in ent["records"].items():
+                assert bucket["count"] == len(ent["record_ids"][level]), (
+                    ent["strategy_id"], level)

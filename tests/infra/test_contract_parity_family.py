@@ -315,3 +315,41 @@ class TestParityFourParamDomains:
             f"有名无分支（静默空返回）: {sorted(missing)}")
         assert not (branch_names - registry_names), (
             f"有分支无名（死分支）: {sorted(branch_names - registry_names)}")
+
+
+class TestParityCloseSubjectMask:
+    """对拍③扩展（变更一 B1-T15）：close-subject 消费路径掩码全等。
+
+    统计面 mask_for({subject:"close", action:"lt", target:"ema_20"})
+    与回测面 evaluate_condition(ema 序列, close, {"type":"price_below"})
+    在同一 df 上布尔全等——B1 翻译产物（挂目标指标的价格形态基因）
+    的求值语义=统计面 close 直比的单点锚定。对拍①八键不变式不受
+    本扩展扰动（不新增映射键——B1 分支独立于三表字面构造）。
+    """
+
+    def test_close_subject_mask_parity_stat_vs_backtest(self):
+        import numpy as np
+        import pandas as pd
+        from core.analysis.condition_kernel import mask_for
+        from core.features.indicators import _compute_indicator
+        from core.strategy.executor import evaluate_condition
+
+        n = 120
+        rng = np.random.default_rng(11)
+        close = 100 + np.cumsum(rng.normal(0, 1.5, n))
+        df = pd.DataFrame(
+            {"open": close, "high": close + 0.8, "low": close - 0.8,
+             "close": close, "volume": rng.uniform(10, 90, n),
+             "trades": 5},
+            index=pd.date_range("2024-01-01", periods=n, freq="1h",
+                                tz="UTC"))
+        for c, s in _compute_indicator(df, "EMA", {"period": 20}).items():
+            df[c] = s
+
+        stat = mask_for(
+            df, {"subject": "close", "action": "lt", "target": "ema_20"})
+        bt = evaluate_condition(df["ema_20"], df["close"],
+                                {"type": "price_below"}, df)
+        assert int(stat.sum()) > 0, "合成数据须有非零触发（否则全等空验）"
+        assert bool((stat.fillna(False) == bt.fillna(False)).all()), (
+            "close-subject 统计面掩码与 price_below 回测面掩码须逐位一致")
