@@ -1,4 +1,4 @@
-"""Tests for Iteration 2: ML indicators (FractalEntropy + MultifactorOsc).
+"""Tests for Iteration 2: ML indicators (FractalEntropy；MultifactorOsc 已随 Q3 摘牌 2026-10-14 退役，用例见 git 历史)。
 
 Validates: registry entries, computation, output ranges, lazy compute mode,
 NaN handling, and MTF context integration.
@@ -41,19 +41,19 @@ def _make_ohlcv(n: int = 500, seed: int = 42) -> pd.DataFrame:
 class TestMLRegistry:
     """Validate ML indicator registry entries."""
 
-    @pytest.mark.parametrize("name", ["FractalEntropy", "MultifactorOsc"])
+    @pytest.mark.parametrize("name", ["FractalEntropy"])
     def test_registry_entry_exists(self, name):
         assert name in INDICATOR_REGISTRY
 
-    @pytest.mark.parametrize("name", ["FractalEntropy", "MultifactorOsc"])
+    @pytest.mark.parametrize("name", ["FractalEntropy"])
     def test_category_is_ml(self, name):
         assert INDICATOR_REGISTRY[name].category == "ml"
 
-    @pytest.mark.parametrize("name", ["FractalEntropy", "MultifactorOsc"])
+    @pytest.mark.parametrize("name", ["FractalEntropy"])
     def test_compute_mode_is_lazy(self, name):
         assert INDICATOR_REGISTRY[name].compute_mode == "lazy"
 
-    @pytest.mark.parametrize("name", ["FractalEntropy", "MultifactorOsc"])
+    @pytest.mark.parametrize("name", ["FractalEntropy"])
     def test_naming_is_not_default(self, name):
         """ML indicators use special naming modes, not 'default'."""
         assert INDICATOR_REGISTRY[name].naming != "default"
@@ -61,16 +61,9 @@ class TestMLRegistry:
     def test_fractal_entropy_naming(self):
         assert INDICATOR_REGISTRY["FractalEntropy"].naming == "mfe"
 
-    def test_multifactor_osc_naming(self):
-        assert INDICATOR_REGISTRY["MultifactorOsc"].naming == "mf_osc"
-
     def test_fractal_entropy_params(self):
         reg = INDICATOR_REGISTRY["FractalEntropy"]
         assert "bins" in reg.params
-        assert "lookback" in reg.params
-
-    def test_multifactor_osc_params(self):
-        reg = INDICATOR_REGISTRY["MultifactorOsc"]
         assert "lookback" in reg.params
 
 
@@ -92,12 +85,6 @@ class TestMLColumnResolution:
             "FractalEntropy", {"bins": 20, "lookback": 50},
         )
         assert col == "mfe_score_20_50"
-
-    def test_multifactor_osc_column(self):
-        col = resolve_indicator_column(
-            "MultifactorOsc", {"lookback": 20},
-        )
-        assert col == "mf_osc_20"
 
 
 # ---------------------------------------------------------------------------
@@ -165,52 +152,6 @@ class TestFractalEntropyComputation:
 
 
 # ---------------------------------------------------------------------------
-# 4. MultifactorOsc computation
-# ---------------------------------------------------------------------------
-
-class TestMultifactorOscComputation:
-    """Validate MultifactorOsc indicator computation."""
-
-    def _make_df_with_indicators(self, n: int = 500) -> pd.DataFrame:
-        df = _make_ohlcv(n)
-        df = compute_all_indicators(df, skip_lazy=True)
-        return df
-
-    def test_output_column_name(self):
-        df = self._make_df_with_indicators()
-        new_cols = _compute_indicator(df, "MultifactorOsc", {"lookback": 20})
-        assert "mf_osc_20" in new_cols
-
-    def test_output_range(self):
-        df = self._make_df_with_indicators()
-        new_cols = _compute_indicator(df, "MultifactorOsc", {"lookback": 20})
-        series = new_cols["mf_osc_20"].dropna()
-        assert (series >= -1).all() and (series <= 1).all()
-
-    def test_requires_sub_indicators(self):
-        """Without sub-indicator columns, should return NaN."""
-        df = _make_ohlcv(200)  # No indicators computed
-        new_cols = _compute_indicator(df, "MultifactorOsc", {"lookback": 20})
-        series = new_cols.get("mf_osc_20")
-        if series is not None:
-            assert series.isna().all() or len(series.dropna()) < 10
-
-    def test_graceful_with_partial_indicators(self):
-        """Should still work if only some sub-indicators are present."""
-        df = _make_ohlcv(300)
-        # Only compute RSI and CCI (2 of 4 sub-indicators)
-        from core.features.indicators import _compute_indicator as _compute
-        for name, params in [("RSI", {"period": 14}), ("CCI", {"period": 20})]:
-            cols = _compute(df, name, params)
-            for col, vals in cols.items():
-                df[col] = vals
-        # MultifactorOsc should still produce output (using available indicators)
-        new_cols = _compute_indicator(df, "MultifactorOsc", {"lookback": 20})
-        assert "mf_osc_20" in new_cols
-        assert new_cols["mf_osc_20"].notna().any()
-
-
-# ---------------------------------------------------------------------------
 # 5. Lazy compute mode
 # ---------------------------------------------------------------------------
 
@@ -221,13 +162,11 @@ class TestLazyComputeMode:
         df = _make_ohlcv(300)
         result = compute_all_indicators(df, skip_lazy=True)
         assert "mfe_score_10_100" not in result.columns
-        assert "mf_osc_20" not in result.columns
 
     def test_skip_lazy_false_includes_ml(self):
         df = _make_ohlcv(300)
         result = compute_all_indicators(df, skip_lazy=False)
         assert "mfe_score_10_100" in result.columns
-        assert "mf_osc_20" in result.columns
 
     def test_skip_lazy_default_is_true(self):
         """Default behavior should skip lazy indicators."""

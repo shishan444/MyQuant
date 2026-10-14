@@ -34,7 +34,6 @@ class TestIndicatorRegistry:
         trend = {name for name, d in INDICATOR_REGISTRY.items() if d.category == "trend"}
         assert "EMA" in trend
         assert "SMA" in trend
-        assert "VWAP" in trend
 
     def test_momentum_indicators(self):
         mom = {name for name, d in INDICATOR_REGISTRY.items() if d.category == "momentum"}

@@ -2,7 +2,6 @@
 
 Validates that all 5 bug fixes are correctly implemented:
 - A: BB output_fields only contains computable fields
-- A2: VWAP marked guard_only=True
 - D: BB column names match between producer and consumer
 - B: Graded exception handling in compute_all_indicators
 - C: extract_context includes bounded volume/ADX as momentum
@@ -41,22 +40,6 @@ class TestBugABBOutputFields:
         assert "middle" in bb.output_fields
         assert "lower" in bb.output_fields
 
-
-# ---------------------------------------------------------------------------
-# Bug A2: VWAP should be guard_only
-# ---------------------------------------------------------------------------
-
-class TestBugA2VWAPGuardOnly:
-    """VWAP is registered but never computed/resolved; must be guard_only."""
-
-    def test_vwap_is_guard_only(self):
-        vwap = INDICATOR_REGISTRY["VWAP"]
-        assert vwap.guard_only is True
-
-
-# ---------------------------------------------------------------------------
-# Bug D: BB column names must match between producer and consumer
-# ---------------------------------------------------------------------------
 
 class TestBugDBBColumnNaming:
     """BB producer and consumer column names must match exactly."""

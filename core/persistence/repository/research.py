@@ -815,6 +815,60 @@ def save_feature_request(
             status=status, created_at=created_at))
 
 
+def get_feature_request(
+    db_path: Path, request_id: str,
+) -> Optional[Dict[str, Any]]:
+    """单张需求单查询（回销 PATCH 的存在性先判——404 判定依据）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(FeatureRequest).where(
+                FeatureRequest.request_id == request_id)
+        ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def update_feature_request(
+    db_path: Path,
+    *,
+    request_id: str,
+    status: str,
+    resolution: Optional[str] = None,
+    touch_resolution: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """需求单状态回销（变更二 4.2——部分更新语义的持久层投影）。
+
+    touch_resolution=False 表示请求未携带 resolution 键——保留现值
+    （部分更新规则①）；status→open 的联动清空由调用方以
+    touch_resolution=True + resolution=None 表达（规则②）。值域与
+    resolved 必填校验在路由层（本函数只承载写入）。
+
+    Returns:
+        更新后整行（dict）；request_id 不存在返回 None（404 由调用方
+        判定）。
+    """
+    from sqlalchemy import update as sa_update
+
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(FeatureRequest).where(
+                FeatureRequest.request_id == request_id)
+        ).mappings().first()
+        if row is None:
+            return None
+        values: Dict[str, Any] = {"status": status}
+        if touch_resolution:
+            values["resolution"] = resolution
+        conn.execute(sa_update(FeatureRequest).where(
+            FeatureRequest.request_id == request_id).values(**values))
+    out = dict(row)
+    out["status"] = status
+    if touch_resolution:
+        out["resolution"] = resolution
+    return out
+
+
 def list_feature_requests(
     db_path: Path, *, status: Optional[str] = None,
     offset: int = 0, limit: int = 50,

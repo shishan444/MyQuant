@@ -323,13 +323,13 @@ class TestNoParamIndicatorColumnReserved:
             for f in d.output_fields)
         assert _no_param_indicator_columns() == expected
         # 代表成员在场（防派生意外缩空）
-        for must in ("obv", "vwap", "ad", "cvd", "pattern_morning_star"):
+        for must in ("obv", "ad", "cvd", "pattern_morning_star"):
             assert must in _no_param_indicator_columns()
 
     @pytest.mark.parametrize("reserved", [
-        "obv", "vwap", "ad", "cvd",
+        "obv", "ad", "cvd",
         "pattern_morning_star", "pattern_3blackcrows",
-    ], ids=lambda v: v)
+    ], ids=lambda v: v)  # vwap 随 Q3 摘牌移出保留集（2026-10-14）
     def test_撞无参指标列_拒绝(self, db: Path, reserved: str) -> None:
         with pytest.raises(ResearchError) as ei:
             register_formula_plugin(db, name="np_hit", expression=EXPR,

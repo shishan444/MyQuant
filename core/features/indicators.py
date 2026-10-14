@@ -79,7 +79,6 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "FundingPressure": [{"period": 8}],
     # ML indicators (compute_mode="lazy", skipped by default)
     "FractalEntropy": [{"bins": 10, "lookback": 100}],
-    "MultifactorOsc": [{"lookback": 20}],
 }
 
 
@@ -374,13 +373,6 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         new_cols[f"mfe_score_{bins}_{lookback}"] = compute_fractal_entropy(
             df["close"], bins=bins, lookback=lookback,
         )
-    elif name == "MultifactorOsc":
-        from core.features.ml_indicators import compute_multifactor_osc
-        lookback = int(params["lookback"])
-        result = compute_multifactor_osc(df, lookback=lookback)
-        if result is not None:
-            new_cols[f"mf_osc_{lookback}"] = result
-
     return new_cols
 
 

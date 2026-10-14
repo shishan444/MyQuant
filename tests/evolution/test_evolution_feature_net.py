@@ -373,7 +373,7 @@ class TestStage4BlindSpotFill:
         """阶段四锚：种群 >45 对时走随机采样分支（结果仍为三键结构）。"""
         from core.evolution.diversity import compute_phenotype_diversity
         indicators = ["RSI", "MACD", "EMA", "SMA", "WMA", "DEMA", "TEMA",
-                      "VWAP", "CMF", "ATR", "BOLL"]
+                      "OBV", "CMF", "ATR", "BOLL"]
         pop = [make_dna(indicator=i) for i in indicators]  # 11 个体 55 对
         result = compute_phenotype_diversity(pop)
         assert set(result.keys()) == {"genotype", "signal", "score"}

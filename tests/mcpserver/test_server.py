@@ -668,7 +668,7 @@ class TestCallSemantics:
         # indicators 一致
         direct_ind = httpx.get(f"{base}/api/research/indicators", timeout=10).json()
         got_ind = api.get("/api/research/indicators")
-        assert len(got_ind) == len(direct_ind) == 47
+        assert len(got_ind) == len(direct_ind) == 45  # Q3 摘牌后
 
     def test_end_to_end_analysis_via_client(self, live_api) -> None:
         """研究档经 client 完成一次分析并落日志（4.3 验收）。"""

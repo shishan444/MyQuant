@@ -83,7 +83,7 @@ def _no_param_indicator_columns() -> frozenset:
     危害面：插件 output_column 冒充无参指标现算列——指标计算幂等
     （col 不在 df 才算），插件值先写即顶替指标值。有参指标列名带
     参数段（如 macd_histogram_12_26_9）已被编码形分面覆盖；无参列
-    （obv/vwap/pattern_* 族）列名无参数段，需显式集合拦截。
+    （obv/ad/pattern_* 族）列名无参数段，需显式集合拦截。
     """
     return frozenset(
         f for defn in INDICATOR_REGISTRY.values() if not defn.params

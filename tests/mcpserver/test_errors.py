@@ -369,3 +369,164 @@ class TestParamHintScenarioDispatch:
         assert "legal_values" in err["hint"], \
             f"hint 须为动作场景文案: {err['hint']!r}"
         assert "forward_bars" not in err["hint"], "不得串入其他参数面文案"
+
+
+# ---------------------------------------- 变更二 4.4 防漂移双向对拍
+
+def _scan_param_invalid_keys():
+    """AST 扫描全工程 RESEARCH_PARAM_INVALID 抛出面的 param/field 值集。
+
+    三形制并入：①ResearchError("RESEARCH_PARAM_INVALID", ..., detail=
+    {param/field: 字面量})；②HTTPException(422, detail={code:
+    RESEARCH_PARAM_INVALID, param/field: 字面量})；③param_guard 守卫
+    函数（_require_int_range/_require_enum）调用点的 name= 字面实参
+    （guard 内 detail={"param": name} 为变量形——调用点即值源）。
+    AST 提取非文本匹配（design 卡裁决）。
+
+    已知限制：JoinedStr 动态拼接形（如 "strategy_params."+key 的
+    32 处 f-string/detail 键）静态不可枚举——这类参数面在守护域外
+    （变更二批次 review 已核，固有限制而非沉默不收）。
+    """
+    import ast, os
+
+    found = set()
+    # guard 家族（reviewer 变更二批次发现 2 补全）：param_guard 守卫
+    # 三函数 name= 关键字实参 + case_inspection._validate_range_param
+    # 的首位位置实参（name 形参）——guard 内 detail={"param": name}
+    # 为变量形，调用点即值源
+    guard_funcs = {"_require_int_range", "_require_enum",
+                   "_require_time_window", "_require_iso_datetime",
+                   "_validate_range_param"}
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    for base in ("core", "api", "mcpserver"):
+        for root, _, files in os.walk(os.path.join(repo_root, base)):
+            if "__pycache__" in root:
+                continue
+            for fn in files:
+                if not fn.endswith(".py"):
+                    continue
+                p = os.path.join(root, fn)
+                try:
+                    tree = ast.parse(open(p).read())
+                except SyntaxError:
+                    continue
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    fname = (node.func.id if isinstance(node.func, ast.Name)
+                             else (node.func.attr
+                                   if isinstance(node.func, ast.Attribute)
+                                   else None))
+                    if fname == "ResearchError" and node.args and \
+                            isinstance(node.args[0], ast.Constant) and \
+                            node.args[0].value == "RESEARCH_PARAM_INVALID":
+                        for kw in node.keywords:
+                            if kw.arg == "detail" and \
+                                    isinstance(kw.value, ast.Dict):
+                                for k, v in zip(kw.value.keys,
+                                                kw.value.values):
+                                    if isinstance(k, ast.Constant) and \
+                                            k.value in ("param", "field") and \
+                                            isinstance(v, ast.Constant) and \
+                                            isinstance(v.value, str):
+                                        found.add(v.value)
+                    elif fname == "HTTPException":
+                        for kw in node.keywords:
+                            if kw.arg == "detail" and \
+                                    isinstance(kw.value, ast.Dict):
+                                if any(
+                                    isinstance(k, ast.Constant)
+                                    and k.value == "code"
+                                    and isinstance(v, ast.Constant)
+                                    and v.value == "RESEARCH_PARAM_INVALID"
+                                    for k, v in zip(kw.value.keys,
+                                                    kw.value.values)):
+                                    for k, v in zip(kw.value.keys,
+                                                    kw.value.values):
+                                        if isinstance(k, ast.Constant) and \
+                                                k.value in ("param", "field") and \
+                                                isinstance(v, ast.Constant) and \
+                                                isinstance(v.value, str):
+                                            found.add(v.value)
+                    elif fname in guard_funcs:
+                        for kw in node.keywords:
+                            if kw.arg == "name" and \
+                                    isinstance(kw.value, ast.Constant) and \
+                                    isinstance(kw.value.value, str):
+                                found.add(kw.value.value)
+                        # 位置参数形（_validate_range_param(name, ...)——
+                        # name 为首位形参）
+                        if fname == "_validate_range_param" and node.args and \
+                                isinstance(node.args[0], ast.Constant) and \
+                                isinstance(node.args[0].value, str):
+                            found.add(node.args[0].value)
+    return found
+
+
+# 已知豁免集（known-gaps 快照锚定——变更二 4.4 落地时点的差集）。
+# 语义：这些参数面存在但暂无场景专属 hint（走注册表通用文案）——
+# 有意为之的基线；新增参数面不在此集且不在场景表 → 反向断言红
+# （显式选择：补场景表或加豁免集）。
+_KNOWN_GAPS = frozenset({
+    "add_fraction", "add_suppress_conditions", "condition",
+    "condition.inner_action", "condition.subject", "condition.target",
+    "condition.window", "conditions", "db_path", "direction",
+    "exit_fraction", "features", "grid", "grid.modes[].mode",
+    "grid.modes[].stops", "grid.modes[].take_profits", "groups",
+    "horizon", "horizons", "indicator", "indicators", "leverage",
+    "max_exposure", "max_lag", "min_events", "n_neighbors", "params",
+    "position_size", "provenance", "provenance.task_id", "reductions",
+    "segmentation", "segments", "selector", "selector.condition",
+    "selector.timestamps", "sl_mode", "strategy_params", "sweep.axis",
+    "sweep.values", "take_profit", "threshold_profile", "timeframe",
+    "transform", "trigger_policy", "trigger_policy.bars",
+    "trigger_policy.mode", "validate_range", "window",
+    # guard 家族补收五键（2026-10-14 review 发现 2——无场景专属
+    # hint，走通用文案，有意豁免）
+    "group_a", "group_b", "as_of", "limit", "context_bars",
+})
+
+
+def _assert_bidirectional(scenarios: dict, known_gaps: frozenset) -> None:
+    """双向断言单点（供正常断言与红绿自证变异复用）。
+
+    正向：场景表每键 ∈ 全工程扫描集（防悬空键——场景表引用了不
+    存在的参数面）；反向：扫描集 − 场景表 ⊆ 豁免集（防漏登记——
+    新增参数面未同步场景表且未显式豁免）。
+    """
+    scanned = _scan_param_invalid_keys()
+    dangling = set(scenarios) - scanned
+    assert not dangling, f"场景表悬空键（全工程无此参数面）: {sorted(dangling)}"
+    unregistered = scanned - set(scenarios) - set(known_gaps)
+    assert not unregistered, (
+        f"扫描集存在未登记参数面（补场景表或显式加豁免集）: "
+        f"{sorted(unregistered)}")
+
+
+class TestParamHintScenariosParity:
+    """G4-T04/T05（变更二 4.4）：场景表键集双向防漂移对拍+红绿自证。"""
+
+    def test_bidirectional_parity(self):
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+        _assert_bidirectional(_PARAM_HINT_SCENARIOS, _KNOWN_GAPS)
+
+    def test_parity_self_evidence_remove_key_red(self):
+        """G4-T05 红绿自证①（隔离变异）：删场景表任一键 → 正向断言
+        不变红（键仍在扫描集）但反向断言红（键落入未登记差集）——
+        证明反向断言真拦得住漂移。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+        assert "stop_loss" in _PARAM_HINT_SCENARIOS
+        with pytest.raises(AssertionError, match="stop_loss"):
+            _assert_bidirectional(
+                {k: v for k, v in _PARAM_HINT_SCENARIOS.items()
+                 if k != "stop_loss"}, _KNOWN_GAPS)
+
+    def test_parity_self_evidence_inject_key_red(self):
+        """G4-T05 红绿自证②：注入未登记 param 键 → 正向断言红
+        （悬空键——证明正向真拦得住）。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+        injected = {**_PARAM_HINT_SCENARIOS,
+                    "no_such_param_face": "悬空键探针"}
+        with pytest.raises(AssertionError, match="no_such_param_face"):
+            _assert_bidirectional(injected, _KNOWN_GAPS)

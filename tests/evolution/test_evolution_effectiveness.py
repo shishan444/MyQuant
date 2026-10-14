@@ -102,7 +102,7 @@ class TestProfileParameterAlignment:
 
     def test_all_profile_params_in_default_params(self):
         # Indicators excluded from evolution have no precomputed columns
-        _excluded = {"VWAP", "FractalEntropy", "MultifactorOsc", "VolumeProfile"}
+        _excluded = {"FractalEntropy", "VolumeProfile"}
         mismatches = []
         for name, profile in PROFILES.items():
             if name in _excluded:
@@ -135,7 +135,7 @@ class TestProfileParameterAlignment:
 # S3: Invalid indicator filtering
 # ===========================================================================
 
-_NO_COMPUTE = {"VWAP", "FractalEntropy", "MultifactorOsc", "VolumeProfile"}
+_NO_COMPUTE = {"FractalEntropy", "VolumeProfile"}
 
 
 class TestInvalidIndicatorFiltering:

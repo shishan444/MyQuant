@@ -7,7 +7,7 @@
   采样对照（评估轮漂移 0 基线固化）；decode→encode 恒等
 - canonical_ref（数值同形/键序/field 缺省归一）
 
-VWAP/OBV/AD/CVD 为 0 参 default 指标（列名无后缀，_compute_indicator
+OBV/AD/CVD 为 0 参 default 指标（列名无后缀，_compute_indicator
 无实现或不产编码列）——往返锁声明跳过并注释（N1 无关发现，不本次修）。
 """
 from __future__ import annotations
@@ -27,8 +27,8 @@ from core.analysis.column_ref import (
 from core.features.indicators import _compute_indicator
 from core.features.registry import INDICATOR_REGISTRY
 
-# 0 参 default 指标：无编码列产出（VWAP 空产出为历史现状——N1 记录不改）
-_SKIP_NO_ENCODE = {"VWAP", "OBV", "AD", "CVD"}
+# 0 参 default 指标：无编码列产出（Q3 摘牌 2026-10-14 后 VWAP 不在册）
+_SKIP_NO_ENCODE = {"OBV", "AD", "CVD"}
 
 
 # ---------------------------------------------------------------- resolve
@@ -117,8 +117,6 @@ def test_reject_detail_carries_hint():
     pytest.param("aroon_up_14", "Aroon", {"period": 14}, "aroon_up", id="aroon"),
     pytest.param("mfe_score_10_100", "FractalEntropy",
                  {"bins": 10, "lookback": 100}, "mfe_score", id="mfe"),
-    pytest.param("mf_osc_20", "MultifactorOsc",
-                 {"lookback": 20}, "mf_osc", id="mf_osc"),
     pytest.param("psar", "PSAR",
                  {"step": 0.02, "max_step": 0.2}, "psar",
                  id="psar固定名-参数补default"),
@@ -166,7 +164,7 @@ def test_roundtrip_lock_encode_matches_compute_output(sample):
     drift, checked = [], 0
     for name, defn in INDICATOR_REGISTRY.items():
         if name in _SKIP_NO_ENCODE:
-            continue  # N1：VWAP 等空产出（历史现状，非本次引入）
+            continue  # N1：0 参指标空产出（历史现状，非本次引入）
         params = {k: (p.default if sample == "default" else p.min)
                   for k, p in defn.params.items()}
         cols = _compute_indicator(df, name, dict(params))

@@ -48,7 +48,7 @@ class IndicatorDef:
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
-    # == trend (6) ==
+    # == trend (5) ==
     "EMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5, candidates=[7, 15, 20, 30, 60, 90])},
@@ -84,14 +84,6 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
                               "cross_above_series", "cross_below_series"],
     ),
-    "VWAP": IndicatorDef(
-        category="trend",
-        params={},
-        output_fields=["vwap"],
-        supported_conditions=["price_above", "price_below"],
-        guard_only=True,
-    ),
-
     # == momentum (9) ==
     "RSI": IndicatorDef(
         category="momentum",
@@ -398,7 +390,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["gt", "lt"],
     ),
 
-    # == ml (2) ==
+    # == ml (1) ==
     "FractalEntropy": IndicatorDef(
         category="ml",
         params={
@@ -408,14 +400,6 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["mfe_score"],
         supported_conditions=["gt", "lt"],
         naming="mfe",
-        compute_mode="lazy",
-    ),
-    "MultifactorOsc": IndicatorDef(
-        category="ml",
-        params={"lookback": ParamDef("int", 10, 50, 20, 5)},
-        output_fields=["mf_osc"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
-        naming="mf_osc",
         compute_mode="lazy",
     ),
 }
@@ -542,10 +526,6 @@ def resolve_indicator_column(
         bins = int(params["bins"])
         lookback = int(params["lookback"])
         return f"mfe_score_{bins}_{lookback}"
-
-    if naming == "mf_osc":
-        lookback = int(params["lookback"])
-        return f"mf_osc_{lookback}"
 
     # Unknown naming mode fallback
     return name.lower()

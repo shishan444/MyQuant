@@ -52,8 +52,7 @@ class TestResolveColumnDefaultNaming:
         ("OBV", {}, "obv"),
         ("AD", {}, "ad"),
         ("CVD", {}, "cvd"),
-        # Guard-only trend (1)
-        ("VWAP", {}, "vwap"),
+        # Guard-only trend 原 VWAP 条目随 Q3 摘牌移除（2026-10-14）
     ])
     def test_default_naming(self, name, params, expected):
         result = resolve_indicator_column(name, params, naming="default")
@@ -272,12 +271,14 @@ class TestRegistryNamingField:
                 f"{name}.naming should be '{mode}'"
 
     def test_default_indicators_count(self):
-        """Exactly 27 indicators should use default naming (22 + 5 derivatives)."""
+        """Exactly 26 indicators use default naming（Q3 摘牌 2026-10-14：
+        VWAP 原 default naming 减一；MultifactorOsc 原 naming="mf_osc"
+        非 default 故不变）。"""
         default_count = sum(
             1 for d in INDICATOR_REGISTRY.values() if d.naming == "default"
         )
-        assert default_count == 27, \
-            f"Expected 27 default-naming indicators (22 + 5 derivatives), got {default_count}"
+        assert default_count == 26, \
+            f"Expected 26 default-naming indicators, got {default_count}"
 
 
 # ---------------------------------------------------------------------------

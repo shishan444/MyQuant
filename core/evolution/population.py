@@ -172,7 +172,6 @@ _DIRECTION_MOMENTUM_CONFIGS = [
     ("CMF", None, 0, (-0.5, 0.5)),
     ("MFI", None, 50, (30, 70)),
     ("Aroon", "aroon_osc", 0, (-50, 50)),
-    ("MultifactorOsc", None, 0, (-1, 1)),
 ]
 
 
@@ -408,10 +407,10 @@ def create_random_dna(
     actual_direction = direction
 
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
-    # 剔除进化中不可计算的指标：
+    # 剔除进化中不可计算的指标（lazy 豁免——实现存在但进化链批量装载
+    # 不覆盖；Q3 摘牌 2026-10-14 的两名已不在注册表）：
     # - compute_mode="lazy" 的指标被 compute_all_indicators(skip_lazy=True) 跳过
-    # - VWAP 在 _compute_indicator 无计算实现
-    _NO_COMPUTE = {"VWAP", "FractalEntropy", "MultifactorOsc", "VolumeProfile"}
+    _NO_COMPUTE = {"FractalEntropy", "VolumeProfile"}
     available_indicators = [n for n in available_indicators if n not in _NO_COMPUTE]
     trigger_indicators = [
         name for name in available_indicators

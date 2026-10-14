@@ -217,12 +217,15 @@ class TestGapClosureScreen:
     的单条件记录恒带 _stat_mask（仅结果 JSON 反序列化缺，不经此路径）。
     """
 
-    def test_无默认参数集指标_声明跳过(self):
-        """VWAP 在注册表但不在 _DEFAULT_PARAMS → skipped 声明。"""
-        r = screen_patterns(
-            _random_walk(1), data_ranges=_RANGES, timeframe="1h",
-            features=["VWAP"], horizons=[4]).to_dict()
-        assert "VWAP" in r["payload"]["skipped_indicators"]
+    def test_摘牌指标显式拒绝(self):
+        """Q3 摘牌（2026-10-14）后引用摘牌名 features=["VWAP"] →
+        RESEARCH_PARAM_INVALID 显式拒绝（不静默空结果——G5-T04 分入口
+        断言之显式 indicator 参数入口）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError, match="未知指标.*VWAP"):
+            screen_patterns(
+                _random_walk(1), data_ranges=_RANGES, timeframe="1h",
+                features=["VWAP"], horizons=[4]).to_dict()
 
     def test_compute异常容错_声明跳过(self, monkeypatch):
         import core.features.indicators as fi

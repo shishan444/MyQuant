@@ -286,11 +286,6 @@ def _build_decoders() -> List[Tuple[re.Pattern, str, Dict[str, Any]]]:
                 name, {"field": defn.output_fields[0],
                        "param_groups": {"1": "bins", "2": "lookback"},
                        "float_groups": set()}))
-        elif naming == "mf_osc":
-            rules.append((re.compile(
-                rf"^{re.escape(defn.output_fields[0])}_{pat_num}$"), name,
-                {"field": defn.output_fields[0],
-                 "param_groups": {"1": "lookback"}, "float_groups": set()}))
         elif naming == "psar":
             # 固定列名（参数不编码——decode 补注册表 default）
             rules.append((re.compile(rf"^{re.escape(defn.output_fields[0])}$"),

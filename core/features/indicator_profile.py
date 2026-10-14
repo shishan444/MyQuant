@@ -51,7 +51,7 @@ _EQ_1 = ConditionPreset("eq", [1])
 # ---------------------------------------------------------------------------
 
 PROFILES: Dict[str, IndicatorProfile] = {
-    # == trend (6) ==
+    # == trend (5) ==
     "EMA": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],
         recommended_params={"period": [10, 20, 50, 100, 200]},
@@ -82,13 +82,6 @@ PROFILES: Dict[str, IndicatorProfile] = {
         recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.60,
     ),
-    "VWAP": IndicatorProfile(
-        recommended_roles=["entry_guard", "exit_guard"],
-        recommended_params={},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW],
-        follow_probability=0.65,
-    ),
-
     # == momentum (9) ==
     "RSI": IndicatorProfile(
         recommended_roles=["entry_trigger", "exit_trigger"],
@@ -358,7 +351,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
         follow_probability=0.50,
     ),
 
-    # == ml (2) ==
+    # == ml (1) ==
     "FractalEntropy": IndicatorProfile(
         recommended_roles=["entry_guard"],
         recommended_params={"bins": [10], "lookback": [100]},
@@ -368,13 +361,6 @@ PROFILES: Dict[str, IndicatorProfile] = {
         ],
         follow_probability=0.45,
     ),
-    "MultifactorOsc": IndicatorProfile(
-        recommended_roles=["entry_trigger", "exit_trigger"],
-        recommended_params={"lookback": [20]},
-        recommended_conditions=[_GT, _LT, _CROSS_ABOVE, _CROSS_BELOW],
-        follow_probability=0.45,
-    ),
-
     # == structure (1) ==
     "VolumeProfile": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],

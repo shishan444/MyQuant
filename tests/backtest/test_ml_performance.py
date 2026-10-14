@@ -7,7 +7,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.features.ml_indicators import compute_fractal_entropy, compute_multifactor_osc
+from core.features.ml_indicators import compute_fractal_entropy
 
 
 def _make_ohlcv(n=10000):
@@ -47,22 +47,14 @@ class TestMLPerformance:
         )
         assert result.notna().sum() > 0
 
-    def test_multifactor_osc_performance(self):
-        df = _make_ohlcv()
-        start = time.perf_counter()
-        result = compute_multifactor_osc(df, lookback=20)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        assert elapsed_ms < self.BUDGET_MS, (
-            f"MultifactorOsc took {elapsed_ms:.1f}ms (budget: {self.BUDGET_MS}ms)"
-        )
-        assert result.notna().sum() > 0
-
-    def test_both_indicators_combined_performance(self):
+    def test_fractal_repeated_calls_performance(self):
+        """重复调用预算（原 combined 双指标用例随 Q3 摘牌退役——
+        2026-10-14，历史见 git）。"""
         df = _make_ohlcv()
         start = time.perf_counter()
         _ = compute_fractal_entropy(df["close"], bins=10, lookback=100)
-        _ = compute_multifactor_osc(df, lookback=20)
+        _ = compute_fractal_entropy(df["close"], bins=10, lookback=100)
         elapsed_ms = (time.perf_counter() - start) * 1000
         assert elapsed_ms < self.BUDGET_MS * 2, (
-            f"Both ML indicators took {elapsed_ms:.1f}ms (budget: {self.BUDGET_MS * 2}ms)"
+            f"Repeated ML indicator took {elapsed_ms:.1f}ms (budget: {self.BUDGET_MS * 2}ms)"
         )
