@@ -482,7 +482,7 @@ INDICATOR_TYPE_MAP: Dict[str, str] = {
     "RSI": "动量", "MACD": "动量", "CCI": "动量", "Stochastic": "动量",
     "BB": "波动", "ATR": "波动", "KC": "波动",
     "ADX": "趋势", "Ichimoku": "趋势",
-    "MFI": "量价", "OBV": "量价", "VWAP": "量价",
+    "MFI": "量价", "OBV": "量价",
     "SAR": "趋势", "TRIX": "动量", "ROC": "动量",
 }
 

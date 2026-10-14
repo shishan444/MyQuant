@@ -84,14 +84,6 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
                               "cross_above_series", "cross_below_series"],
     ),
-    "VWAP": IndicatorDef(
-        category="trend",
-        params={},
-        output_fields=["vwap"],
-        supported_conditions=["price_above", "price_below"],
-        guard_only=True,
-    ),
-
     # == momentum (9) ==
     "RSI": IndicatorDef(
         category="momentum",
@@ -408,14 +400,6 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["mfe_score"],
         supported_conditions=["gt", "lt"],
         naming="mfe",
-        compute_mode="lazy",
-    ),
-    "MultifactorOsc": IndicatorDef(
-        category="ml",
-        params={"lookback": ParamDef("int", 10, 50, 20, 5)},
-        output_fields=["mf_osc"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
-        naming="mf_osc",
         compute_mode="lazy",
     ),
 }

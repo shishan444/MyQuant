@@ -94,11 +94,12 @@ def test_stdio_full_chain(live_api):
                 assert "register_hypothesis" in names
                 assert "translate_hypothesis_to_strategy" in names
 
-                # 2) 工具调用（真调用真服务）：指标元数据 47 项
+                # 2) 工具调用（真调用真服务）：指标元数据 45 项
+                #    （Q3 摘牌 VWAP/MultifactorOsc 后 47→45，2026-10-14）
                 # （SDK 2.x 把 list 结果逐元素分段——每段一个对象）
                 res = await session.call_tool("list_indicators", {})
                 payload = [json.loads(c.text) for c in res.content]
-                assert len(payload) == 47
+                assert len(payload) == 45
                 assert payload[0]["name"]  # 元素结构完整
 
                 # 3) 写路径工具：登记假设（真落库）

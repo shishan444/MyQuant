@@ -9,7 +9,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.features.ml_indicators import compute_fractal_entropy, compute_multifactor_osc
+from core.features.ml_indicators import compute_fractal_entropy
 
 
 def _make_ohlcv(n=500):
@@ -73,26 +73,3 @@ class TestFractalEntropyLookahead:
             assert val == pytest.approx(expected, rel=1e-6)
 
 
-class TestMultifactorOscLookahead:
-    """Verify MultifactorOsc has no lookahead bias."""
-
-    def test_value_at_bar_i_unchanged_by_future_data(self):
-        df = _make_ohlcv(500)
-        result_full = compute_multifactor_osc(df, lookback=20)
-
-        df_modified = df.copy()
-        df_modified.iloc[400:, :] = 0
-        result_modified = compute_multifactor_osc(df_modified, lookback=20)
-
-        val_full = result_full.iloc[300]
-        val_modified = result_modified.iloc[300]
-        if not (np.isnan(val_full) or np.isnan(val_modified)):
-            assert val_full == pytest.approx(val_modified, rel=1e-10)
-
-    def test_output_within_range(self):
-        """Output should be bounded in [-1, 1]."""
-        df = _make_ohlcv(500)
-        result = compute_multifactor_osc(df, lookback=20)
-        valid = result.dropna()
-        assert valid.min() >= -1.0 - 1e-10
-        assert valid.max() <= 1.0 + 1e-10
