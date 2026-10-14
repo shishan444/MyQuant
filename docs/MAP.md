@@ -190,6 +190,10 @@ mcpserver/ -> api/routes/research/ -> core/analysis -> core/signals
 MCP 宿主接入：`claude mcp add --transport http myquant-research http://127.0.0.1:8800/mcp`
 （一次配置；stdio 备选经 `MYQUANT_MCP_TRANSPORT=stdio` 切回）。
 
+**重启纪律**：代码合入主干后必须执行 `./scripts/restart.sh` 重启服务，
+否则 API/MCP 运行的是合入前旧代码（修复合入不重启=修复未生效——
+常驻进程不感知磁盘上的代码变更）。
+
 ### 研究域数据表（Alembic 增量轨 f2a8c1d94b07）
 research_hypotheses（WHEN/THEN 条件必填+幂等部分唯一索引）/
 research_log（追加不可变，漏报拦截数据源）/ analysis_tasks /

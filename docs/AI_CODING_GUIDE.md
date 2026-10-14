@@ -304,6 +304,16 @@ python -m pytest tests
 
 范围较小时，优先运行对应测试文件或测试目录；涉及包导入、CLI、API 生命周期时，再扩大验证。
 
+两条闭环纪律（缺一即验证不完整）：
+
+- **合入主干后重启服务**：执行 `./scripts/restart.sh` 并确认三服务
+  起来——常驻进程不感知磁盘代码变更，不重启则后续验证与使用跑的
+  都是旧代码。
+- **合入后回销对应 feature_requests 单**：修复/交付合入主干后，由
+  实施方对覆盖该诉求的需求单 PATCH `status=resolved` 并附
+  `resolution.source`（对应 change 名/出处）；用户裁决不处理的单
+  PATCH `status=wont_fix`。
+
 ### 前端
 
 ```bash
