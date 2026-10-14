@@ -18,7 +18,9 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DELISTED = ("VWAP", "MultifactorOsc")
+# 含 naming 痕迹（mf_osc——reviewer 变更二批次发现 1 后扩展：
+# 指标名字面之外的第二守护面）
+DELISTED = ("VWAP", "MultifactorOsc", "mf_osc")
 
 
 def test_g5_t01_no_compute_exact_keys():

@@ -51,7 +51,7 @@ _EQ_1 = ConditionPreset("eq", [1])
 # ---------------------------------------------------------------------------
 
 PROFILES: Dict[str, IndicatorProfile] = {
-    # == trend (6) ==
+    # == trend (5) ==
     "EMA": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],
         recommended_params={"period": [10, 20, 50, 100, 200]},
@@ -351,7 +351,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
         follow_probability=0.50,
     ),
 
-    # == ml (2) ==
+    # == ml (1) ==
     "FractalEntropy": IndicatorProfile(
         recommended_roles=["entry_guard"],
         recommended_params={"bins": [10], "lookback": [100]},

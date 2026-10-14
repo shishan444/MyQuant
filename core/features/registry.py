@@ -48,7 +48,7 @@ class IndicatorDef:
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
-    # == trend (6) ==
+    # == trend (5) ==
     "EMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5, candidates=[7, 15, 20, 30, 60, 90])},
@@ -390,7 +390,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["gt", "lt"],
     ),
 
-    # == ml (2) ==
+    # == ml (1) ==
     "FractalEntropy": IndicatorDef(
         category="ml",
         params={
@@ -526,10 +526,6 @@ def resolve_indicator_column(
         bins = int(params["bins"])
         lookback = int(params["lookback"])
         return f"mfe_score_{bins}_{lookback}"
-
-    if naming == "mf_osc":
-        lookback = int(params["lookback"])
-        return f"mf_osc_{lookback}"
 
     # Unknown naming mode fallback
     return name.lower()

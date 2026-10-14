@@ -382,11 +382,21 @@ def _scan_param_invalid_keys():
     函数（_require_int_range/_require_enum）调用点的 name= 字面实参
     （guard 内 detail={"param": name} 为变量形——调用点即值源）。
     AST 提取非文本匹配（design 卡裁决）。
+
+    已知限制：JoinedStr 动态拼接形（如 "strategy_params."+key 的
+    32 处 f-string/detail 键）静态不可枚举——这类参数面在守护域外
+    （变更二批次 review 已核，固有限制而非沉默不收）。
     """
     import ast, os
 
     found = set()
-    guard_funcs = {"_require_int_range", "_require_enum"}
+    # guard 家族（reviewer 变更二批次发现 2 补全）：param_guard 守卫
+    # 三函数 name= 关键字实参 + case_inspection._validate_range_param
+    # 的首位位置实参（name 形参）——guard 内 detail={"param": name}
+    # 为变量形，调用点即值源
+    guard_funcs = {"_require_int_range", "_require_enum",
+                   "_require_time_window", "_require_iso_datetime",
+                   "_validate_range_param"}
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))))
     for base in ("core", "api", "mcpserver"):
@@ -445,6 +455,12 @@ def _scan_param_invalid_keys():
                                     isinstance(kw.value, ast.Constant) and \
                                     isinstance(kw.value.value, str):
                                 found.add(kw.value.value)
+                        # 位置参数形（_validate_range_param(name, ...)——
+                        # name 为首位形参）
+                        if fname == "_validate_range_param" and node.args and \
+                                isinstance(node.args[0], ast.Constant) and \
+                                isinstance(node.args[0].value, str):
+                            found.add(node.args[0].value)
     return found
 
 
@@ -466,6 +482,9 @@ _KNOWN_GAPS = frozenset({
     "sweep.values", "take_profit", "threshold_profile", "timeframe",
     "transform", "trigger_policy", "trigger_policy.bars",
     "trigger_policy.mode", "validate_range", "window",
+    # guard 家族补收五键（2026-10-14 review 发现 2——无场景专属
+    # hint，走通用文案，有意豁免）
+    "group_a", "group_b", "as_of", "limit", "context_bars",
 })
 
 
