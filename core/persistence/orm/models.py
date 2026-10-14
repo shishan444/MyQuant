@@ -502,6 +502,10 @@ class FeatureRequest(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'open'"))
+    # 回销出处载体（变更二 4.1）：结构化 JSON {source, note, at, by}——
+    # 工程侧写入域，与提单方 payload 分域（权威单源：两个写入者不共域）；
+    # 存量行 null=未回销，语义自洽无回填
+    resolution: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 

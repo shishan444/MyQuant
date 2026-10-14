@@ -123,6 +123,8 @@ HINTS: Dict[str, str] = {
     "RESEARCH_SANDBOX_LIMIT":
         "沙盒区间超 bar 上限：走隔离验证协议（run_isolated_validation "
         "支持大区间分区间验证）",
+    "FEATURE_REQUEST_NOT_FOUND":
+        "需求单不存在：核对 request_id 或用 list_feature_requests 查询",
     # ---- MCP 客户端侧
     "MCP_ENDPOINT_NOT_ALLOWED":
         "端点不在当前档位白名单：readonly 档只读；研究执行需 research 档"
@@ -162,13 +164,22 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                   "（detail 的 limit/actual 披露实际值）",
     "condition|conditions": "condition 与 conditions 须二选一"
                             "（键组分派，直调方同样须遵守）",
+    "stop_loss": "止损参数越域：值域随 sl_mode 分档（pct 档与 atr 档"
+                 "不同）——查看 detail.legal_range 与 sl_mode，按档修正",
+    "events": "事件数超上限：缩小区间或收窄 indicators 指标集"
+              "（detail 含 actual/limit）",
 }
 
 
 def _scenario_hint(code: str, detail: Any) -> Optional[str]:
     """按 detail.param 场景分派的增量 hint 层；None=无场景命中。"""
     if code == "RESEARCH_PARAM_INVALID" and isinstance(detail, dict):
-        return _PARAM_HINT_SCENARIOS.get(str(detail.get("param", "")))
+        # param 优先；无 param 时兼容 field 键（变更二 4.3——登记链
+        # strategy_params 校验族 detail 契约统一用 field 承载
+        # legal_range，改抛出点会动摇整族 detail 契约且消费方不止
+        # 本层，故在分派层单点扩展）
+        key = detail.get("param") or detail.get("field")
+        return _PARAM_HINT_SCENARIOS.get(str(key)) if key is not None else None
     return None
 
 
