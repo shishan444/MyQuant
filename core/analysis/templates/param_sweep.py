@@ -20,9 +20,11 @@ FDR 校正后按三道门判定，回答「参数邻域有效性是连成片（p
 
 指标矩阵与 0.2.5 全谱扫描同款（默认参数矩阵——扫描产出的候选列名
 天然可复现；非默认参数列的条件在列名校验处结构化拒绝并列出可用
-列）。阈值网格与扫描共享同一份刻度（threshold_grids；扫描域与检查
-域同源）。指标计算参数轴（period 类）不在本模板支持范围（输出
-skipped 声明）。
+列）。检查域网格按统计段实际分布取档（Q2 裁决 2026-10-13：发现域
+广覆盖/稳健性域邻域有效，两域语义分叉——扫描域 screen_patterns
+维持 threshold_grids 共享刻度表，检查域 auto=五分位∪中心点；可比
+性基础为候选中心点同源而非逐档同刻度）。指标计算参数轴（period 类）
+不在本模板支持范围（输出 skipped 声明）。
 """
 from __future__ import annotations
 
@@ -36,7 +38,6 @@ from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask
-from core.analysis.threshold_grids import VALUE_GRIDS
 
 # 三道门常量（design Decision 3：模块内固定，输出 gates 披露；
 # 修正走常量+规划文档+spec 版本化，不走运行时旋钮）
@@ -102,29 +103,45 @@ def _validate_inputs(
                     "skipped": _SKIPPED_AXES})
 
 
+# auto 网格分布取样的最小有效样本数（内建阈值——分布不可得判定依据；
+# 与三道门判定参数同款禁进参数面）
+_AUTO_MIN_SAMPLES = 10
+
+
 def _resolve_grid(
     indicator: str, subject: str, action: str,
     center: float, sweep: Dict[str, Any],
+    stat_series: "pd.Series | None" = None,
 ) -> List[float]:
-    """网格解析：auto=共享刻度表（列选择器匹配）∪ 中心点；显式=校验去重排序。"""
+    """网格解析（Q2 裁决 2026-10-13：检查域网格按统计段实际分布取档）。
+
+    auto = subject 侧列在统计段实际值的分位数五点 [q10,q25,q50,q75,q90]
+    ∪ 候选中心点，去重排序（同 df 同窗口就地取序列，无新查询通道）——
+    检查域网格须覆盖实际值域邻域（小值域指标如 OI_ChangeRate 的零样本
+    档缺陷源正是共享静态刻度）；分布不可得（全 NaN/有效样本 < 内建
+    阈值）显式拒绝，MUST NOT 静默回退静态刻度。显式 values 分支语义
+    逐字节不变（校验落界、去重、排序，优先序高于 auto）。
+
+    两域语义分叉（Q2）：稳健性检查=邻域有效（分布取档）、全谱扫描
+    =发现域广覆盖（screen_patterns 维持共享刻度表）——可比性基础为
+    候选中心点同源而非逐档同刻度。
+    """
     values = sweep.get("values", "auto")
     if values == "auto":
-        grids = VALUE_GRIDS.get(indicator, {})
-        scale: List[float] = []
-        for selector, actions in grids.items():
-            if action not in actions:
-                continue
-            if selector is None or selector in subject:
-                scale = [float(v) for v in actions[action]]
-                break
-        if not scale:
+        if stat_series is None:
+            raise ValueError(
+                "auto 网格须传入统计段序列（调用方接线缺失）")
+        s_valid = stat_series.dropna()
+        if len(s_valid) < _AUTO_MIN_SAMPLES:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"共享刻度表无 {indicator} 的 {action} 刻度（subject={subject!r}）",
+                f"subject 列 {subject!r} 统计段无有效分布（有效样本 "
+                f"{len(s_valid)} < {_AUTO_MIN_SAMPLES}）——auto 网格不可得",
                 detail={"param": "sweep.values",
-                        "legal_range": "显式传入数值列表，或换用刻度表覆盖的"
-                                       "指标/动作（screen_patterns 同源刻度）"})
-        grid = sorted(set(scale) | {float(center)})
+                        "legal_range": "显式传入数值列表（subject 列在"
+                                       "统计段无有效分布）"})
+        quantiles = s_valid.quantile([0.10, 0.25, 0.50, 0.75, 0.90])
+        grid = sorted({float(q) for q in quantiles} | {float(center)})
     else:
         if not isinstance(values, list) or not values:
             raise ResearchError(
@@ -244,11 +261,14 @@ def param_sweep(
                     "legal_range": sorted(set(produced))})
     condition = dict(condition, subject=subject_col)   # 求值/网格按精确列名
 
-    grid = _resolve_grid(indicator, condition["subject"], condition["action"],
-                         center, sweep)
-
-    # 统计段切分与 baseline（0.2.1 condition_stats 同口径——共享掩码样板）
+    # 统计段切分（0.2.1 condition_stats 同口径——共享掩码样板；前移供
+    # auto 网格的分布取样与 baseline 共用同一窗口）
     in_stat = stat_window_mask(work, request_start)
+    grid = _resolve_grid(
+        indicator, condition["subject"], condition["action"],
+        center, sweep,
+        stat_series=(work.loc[in_stat, condition["subject"]]
+                     if bool(in_stat.any()) else pd.Series(dtype=float)))
     fwd = work["close"].pct_change(forward_bars).shift(-forward_bars)
     bas_fwd = fwd[in_stat].dropna()
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None

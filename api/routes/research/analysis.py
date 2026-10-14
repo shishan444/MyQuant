@@ -364,7 +364,35 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
 
     if payload.template == "regime_split":
         # 行情分段（add-regime-split）：warmup 覆盖判读指标（ADX/ATR）；
-        # condition 存在时其归属指标并入 warmup 清单（矩阵模板内计算）
+        # 双键组分叉装载（变更三 7.2）——conditions 形式经 _load_refs
+        # 前扩装载（循 event_study 先例：条件引用 strict 并入 warmup+
+        # 插件列五步链），旧形制（condition+indicator）维持
+        # _load_warm 矩阵装载逐字节不变
+        if p.get("conditions") is not None:
+            # 同传互斥（spec MUST——与键组表同款 detail 形制；不进
+            # _TEMPLATE_REQUIRED_KEYS：该机制自带「至少一组完整」强制，
+            # 与 spec「可选携带条件」冲突——纯切段请求合法）
+            if p.get("condition") is not None:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "params 键组互斥: condition（单条件形制：subject/"
+                    "action/target）与 conditions（组合条件形制：条件"
+                    "数组 1..5）不可同传（任选其一）",
+                    detail={
+                        "param": "condition|conditions",
+                        "legal_form": "单条件 condition 或组合条件 "
+                                      "conditions 二选一"})
+            validate_conditions_array(p["conditions"])
+            df, request_start = _load_refs(None,
+                                           conditions=p["conditions"])
+            return _with_derivatives_coverage(regime_split(
+                df, segmentation=p.get("segmentation", "auto"),
+                conditions=p["conditions"],
+                forward_bars=p.get("forward_bars", 24),
+                data_ranges=ranges, timeframe=rng["timeframe"],
+                request_start=request_start,
+                hypothesis_id=payload.hypothesis_id,
+                mtf=mtf_ctx).to_dict(), df)
         warm_names = ["ADX", "ATR"]
         if p.get("indicator"):
             _require_known_indicator(p["indicator"])
@@ -852,9 +880,21 @@ def get_analysis_task(
             "code": "RESEARCH_TASK_NOT_FOUND",
             "message": f"任务不存在: {task_id}", "detail": None})
     out = dict(t)
+    # 变更三 8.3（TD-01 方案①）：截断/畸形两态诚实披露——
+    # 三键均条件出现（result_truncated 仅截断态、result_invalid 仅
+    # 畸形态、truncation_note 仅截断态），正常路径响应键集逐字节不变
+    truncated = bool(out.pop("result_truncated", 0))
     if out.get("result_ref"):
         try:
             out["result"] = json.loads(out["result_ref"])
         except (json.JSONDecodeError, TypeError):
-            pass
+            # 截断态：尽力而为失败——不静默（result_truncated+note 披露
+            # 完整结果不可得）；非截断畸形（存量损坏数据）：result_invalid
+            if not truncated:
+                out["result_invalid"] = True
+    if truncated:
+        out["result_truncated"] = True
+        out["truncation_note"] = (
+            "结果超 20 万字符上限被截断，完整结果不可经轮询获得——"
+            "缩小请求区间/范围后重试")
     return out
