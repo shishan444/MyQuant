@@ -125,6 +125,22 @@ def _load_with_condition_refs(
             ind for ind, _ in collect_condition_refs(c, strict=True)]
     # 五步之①：插件列引用收集（subject/target 两侧，前缀保守宽面）
     plugin_columns: set = collect_condition_plugin_columns(cond_list)
+    if plugin_columns:
+        # 高周期掩码投影+插件列组合显式拒绝（用户裁决 2026-10-13 能力
+        # 完整方向）：_mask_higher 在高周期轴求值、插件列只注入基准
+        # 周期 df——静默 0 命中属缺陷一同族，显式声明不支持优于静默
+        for c in cond_list:
+            if isinstance(c, dict) and c.get("timeframe") and any(
+                    str(c.get(k, "")).startswith(("fx_", "model_"))
+                    for k in ("subject", "target")):
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    "高周期条件（timeframe 键）暂不支持插件列引用——插件"
+                    "列只注入基准周期数据，高周期轴求值语义未定义",
+                    detail={"param": "condition.timeframe",
+                            "plugin_columns": sorted(plugin_columns),
+                            "hint": "移除 timeframe 键（基准周期求值）"
+                                    "或改用内置指标列引用"})
     min_warmup: Optional[int] = None
     if plugin_columns:
         if db_path is None:
