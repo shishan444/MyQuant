@@ -160,15 +160,14 @@ class TestDeclaredActionsCoverage:
             assert action in _ACTION_MAP, f"{action} 翻译面无映射"
 
     def test_declared_subset_of_execution_sentinel(self):
-        """哨兵：声明域 - 执行键集 恰为既有三键缺口 {eq, lookback_all,
-        wick_touch}（10 个 pattern 指标声明 eq；BB/RVOL/VROC 声明
-        lookback_all；BB/Keltner/Donchian 声明 wick_touch——回测面
-        executor 均有实现，统计面缺）。
+        """哨兵（2026-10-13 用户裁决能力完整方向后转全绿断言）：三键
+        （eq/lookback_all/wick_touch）已补统计面实现（engine action_map
+        对齐回测面语义）——声明域 ⊆ 执行键集恒成立，新增缺口即红。
 
-        本断言锁定缺口不扩大：新增缺口即红；任一键补齐实现后此断言
-        红——须同步改为全绿断言（缺口集合为空），不得删除本用例。
+        历史：本断言曾锁定三键缺口 {eq, lookback_all, wick_touch}
+        （补实现前），按设计「缺口收窄后改为空集断言」执行转正。
         """
         missing = self._declared_keys() - self._execution_keys()
-        assert missing == {"eq", "lookback_all", "wick_touch"}, (
-            f"声明域与执行键集的缺口集合发生变化: {sorted(missing)}——"
-            "缺口扩大须上报；缺口收窄（补实现）须把本哨兵改为空集断言")
+        assert missing == set(), (
+            f"声明域与执行键集出现新缺口: {sorted(missing)}——"
+            "声明了的动作必须有实现（对拍①同契约）")
