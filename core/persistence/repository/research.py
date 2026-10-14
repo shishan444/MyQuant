@@ -722,6 +722,7 @@ def update_analysis_task(
     status: Optional[str] = None,
     reason: Optional[str] = None,
     result_ref: Optional[str] = None,
+    result_truncated: Optional[int] = None,
 ) -> None:
     fields: Dict[str, Any] = {}
     if status is not None:
@@ -730,6 +731,8 @@ def update_analysis_task(
         fields["reason"] = reason
     if result_ref is not None:
         fields["result_ref"] = result_ref
+    if result_truncated is not None:
+        fields["result_truncated"] = result_truncated
     if status in ("succeeded", "failed"):
         fields["finished_at"] = _now()
     if not fields:

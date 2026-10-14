@@ -431,6 +431,11 @@ class AnalysisTask(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
     reason: Mapped[Optional[str]] = mapped_column(Text)
     result_ref: Mapped[Optional[str]] = mapped_column(Text)
+    # 截断标记（变更三 8.1）：1=结果超 20 万字符上限被截断（轮询侧
+    # 两态披露依据——截断 vs 畸形诚实区分）；0=未截断（存量行 server
+    # default 0 自动归位，语义自洽无回填）
+    result_truncated: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("'0'"))
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     finished_at: Mapped[Optional[str]] = mapped_column(Text)
 

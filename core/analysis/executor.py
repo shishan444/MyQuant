@@ -166,15 +166,24 @@ class ResearchExecutor:
             logger.warning("研究任务失败 %s: %s", task_id, exc)
             self._finalize(task_id, "failed", reason=str(exc)[:200], result_ref=None)
             return None
+        result_str = str(result)
+        # 变更三 8.2（TD-01 方案②）：严格大于判定（恰 200000 不截断）
         self._finalize(task_id, "succeeded", reason=None,
-                       result_ref=str(result)[:200000])
+                       result_ref=result_str[:200000],
+                       truncated=1 if len(result_str) > 200000 else 0)
         return result
 
     def _finalize(
         self, task_id: str, status: str,
         *, reason: Optional[str], result_ref: Optional[str],
+        truncated: int = 0,
     ) -> None:
-        """写终态（先到者胜：守护已置 failed(timeout) 时不覆盖）。"""
+        """写终态（先到者胜：守护已置 failed(timeout) 时不覆盖）。
+
+        truncated（变更三 8.2）：succeeded 且结果超 20 万字符上限时为 1
+        （轮询侧两态披露依据）；failed 路径恒 0（reason 截断非 result
+        截断——不置 1）。
+        """
         current = rr.get_analysis_task(self._db_path, task_id)
         if current is None:
             return
@@ -182,7 +191,8 @@ class ResearchExecutor:
             return  # 守护超时判定先行，本结果作废
         rr.update_analysis_task(
             self._db_path, task_id=task_id,
-            status=status, reason=reason, result_ref=result_ref)
+            status=status, reason=reason, result_ref=result_ref,
+            result_truncated=truncated)
 
     def _forget(self, task_id: str) -> None:
         with self._lock:

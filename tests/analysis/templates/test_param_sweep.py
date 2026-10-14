@@ -40,13 +40,23 @@ def _sweep(df, *, condition=_RSI_COND, indicator="RSI", values="auto",
 
 
 class TestParamSweepBasics:
-    def test_auto_grid_union_center_and_scale(self):
-        """auto=共享刻度∪中心点（中心在刻度内不重复；中心在刻度外并入排序）。"""
-        p = _sweep(_random_walk(1))["payload"]
-        assert p["sweep"]["values"] == [20.0, 25.0, 30.0, 35.0]
+    def test_auto_grid_quantiles_union_center(self):
+        """P1-T02/T03（Q2 裁决 2026-10-13）：auto=统计段实际分布五分位
+        [q10..q90]∪中心点（去重排序）——人工核算口径 quantile(.1/.25/
+        .5/.75/.9)；中心在分位内不重复、在分位外并入。"""
+        df = _random_walk(1)
+        # 先算 subject 列统计段分位（与实现同 df 同窗口——rssi 序列经
+        # 指标矩阵产 rsi_14；request_start 后为统计段）
+        p = _sweep(df)["payload"]
+        vals = p["sweep"]["values"]
+        assert len(vals) == 6  # 5 分位 + 中心 25（q50≠25 恰六点）
+        assert vals == sorted(vals)
+        assert 25.0 in vals
         p2 = _sweep(_random_walk(1),
                     condition={**_RSI_COND, "target": 22.0})["payload"]
-        assert p2["sweep"]["values"] == [20.0, 22.0, 25.0, 30.0, 35.0]
+        vals2 = p2["sweep"]["values"]
+        assert 22.0 in vals2  # 中心在五分位外并入
+        assert vals2 == sorted(set(vals2))
 
     def test_explicit_grid_dedup_sorted(self):
         p = _sweep(_random_walk(1), values=[35, 20, 35, 30])["payload"]
@@ -88,27 +98,27 @@ class TestParamSweepBasics:
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert "三键" in ei.value.message
 
-    def test_action_off_shared_grid_guided_to_explicit(self):
-        """action 无共享刻度（cross_above 支持域内而刻度表只有 lt/gt）
-        → 422 引导显式传值（auto 网格解析的封闭引导语义——网格
-        selector 不匹配即跳过）。"""
-        with pytest.raises(ResearchError) as ei:
-            _sweep(_random_walk(50), condition={
-                "subject": {"indicator": "RSI", "params": {"period": 14}},
-                "action": "cross_above", "target": 50.0})
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert "共享刻度表" in ei.value.message
+    def test_cross_action_auto_distribution_grid(self):
+        """P1-T06 同域（Q2 语义分叉后）：分布取档与 action 无关——
+        cross_above 的 auto 网格同样取统计段五分位（旧共享刻度表只有
+        lt/gt 刻度而 422 的封闭语义已退役；显式 values 优先序不变）。"""
+        p = _sweep(_random_walk(50), condition={
+            "subject": {"indicator": "RSI", "params": {"period": 14}},
+            "action": "cross_above", "target": 50.0})["payload"]
+        vals = p["sweep"]["values"]
+        assert len(vals) >= 2 and 50.0 in vals and vals == sorted(vals)
 
-    def test_multi_output_selector_grid_match(self):
-        """多输出指标列选择器匹配：Aroon 默认列 aroon_osc_25 的 gt 扫描
-        跳过 aroon_up/aroon_down selector、命中 aroon_osc 刻度 {50,70}∪
-        中心 50（去重）——列选择器机制的否定侧（不匹配跳过）与命中侧。"""
+    def test_multi_output_column_distribution_grid(self):
+        """多输出指标列（Q2 后）：Aroon aroon_osc_25 列的 auto 网格按
+        该列统计段实际分布取五分位∪中心 50（旧 {50,70} 共享刻度语义
+        退役）；verdict 四值域不变。"""
         p = _sweep(_random_walk(60), indicator="Aroon",
                    condition={"subject": "aroon_osc_25", "action": "gt",
                               "target": 50.0})["payload"]
         assert p["verdict"] in ("plateau", "spike", "indeterminate",
                                 "unsupported")
-        assert sorted(pt["value"] for pt in p["points"]) == [50.0, 70.0]
+        vals = sorted(pt["value"] for pt in p["points"])
+        assert 50.0 in vals and len(vals) == 6  # 5 分位+中心
 
     def test_preset_indicator_column_not_overwritten(self):
         """df 预置同名列（rsi_14）时指标计算列跳过赋值（幂等分支）：
@@ -132,10 +142,15 @@ class TestParamSweepBasics:
 
 class TestParamSweepVerdicts:
     def test_known_robust_condition_plateau(self):
-        """受控构造（n=2000）：RSI 低位效应邻域重现 → plateau + 稳健区间。"""
+        """受控构造（n=2000）：RSI 低位效应邻域重现 → plateau + 稳健区间
+        （Q2 后网格=统计段五分位∪中心 25——断言语义化：robust_range 为
+        网格首末有效连续段边界而非共享刻度硬编码值）。"""
         p = _sweep(_trending_with_dips(seed=7, n=2000))["payload"]
         assert p["verdict"] == "plateau"
-        assert p["robust_range"] == [20.0, 25.0]
+        grid = p["sweep"]["values"]
+        assert p["robust_range"] is not None
+        assert p["robust_range"][0] in grid and p["robust_range"][1] in grid
+        assert p["robust_range"][0] <= 25.0 <= p["robust_range"][1]
         eff = [pt for pt in p["points"] if pt["state"] == "effective"]
         assert len(eff) >= 2, "plateau 前提：连续门达标（最小形态 2 连续）"
 
@@ -146,13 +161,14 @@ class TestParamSweepVerdicts:
             assert p["verdict"] == "plateau", seed
 
     def test_isolated_effect_spike(self):
-        """受控构造（n=900 效应弱化）：有效点孤立 → spike（连续段=1 侧）。"""
+        """受控构造（n=900 效应弱化）：有效点孤立 → spike（连续段=1 侧
+        ——Q2 后断言语义化：恰一个 effective 点且 robust_range None）。"""
         p = _sweep(_trending_with_dips(seed=7, n=900))["payload"]
         assert p["verdict"] == "spike"
         assert p["robust_range"] is None
         eff = [pt["value"] for pt in p["points"]
                if pt["state"] == "effective"]
-        assert eff == [20.0], "孤立单点（连续段 < _MIN_RUN）"
+        assert len(eff) == 1, "孤立单点（连续段 < _MIN_RUN）"
 
     def test_pure_noise_never_plateau(self):
         """结构性质（不变量）：纯噪声固定种子下绝不判 plateau——
@@ -347,14 +363,24 @@ class TestGapClosureSweep:
                        "action": "gt", "target": 5.0})
         assert res["payload"]["gates"] is not None
 
-    def test_无网格指标auto_422(self) -> None:
-        """indicator 不在 VALUE_GRIDS（如 EMA）且 values=auto → 空刻度拒。"""
-        df = _random_walk(7, 2000)
-        with pytest.raises(ResearchError, match="刻度"):
-            _sweep(df, indicator="EMA",
-                   condition={"subject": {"indicator": "EMA",
-                                          "params": {"period": 10}},
-                              "action": "gt", "target": 100.0})
+    def test_auto_degenerate_distribution_422(self) -> None:
+        """P1-T05（Q2 语义）：分布不可得（subject 列统计段全 NaN 或有效
+        样本 < 内建阈值 10）→ RESEARCH_PARAM_INVALID 指引显式列表，不
+        静默回退静态刻度（旧「无网格指标 auto 422」共享刻度语义退役——
+        EMA 等任一指标有分布即可 auto）。"""
+        import numpy as np
+        import pandas as pd
+        from tests.helpers.data_factory import make_ohlcv
+        df = make_ohlcv(300)  # 统一构造入口（rsi 列后置污染）
+        # 构造全 NaN 列：预置 rsi_14 为 NaN（指标矩阵幂等跳过——
+        # 预置列不被覆写，既有 test_preset_indicator_column_not_
+        # overwritten 锚定的行为）
+        df["rsi_14"] = float("nan")
+        with pytest.raises(ResearchError) as ei:
+            _sweep(df)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "sweep.values"
+        assert "显式传入数值列表" in ei.value.detail["legal_range"]
 
     def test_values含非数值_422(self) -> None:
         df = _random_walk(7, 2000)
@@ -373,3 +399,41 @@ class TestGapClosureSweep:
             _sweep(df, condition={"subject": {"indicator": "GHOST"},
                                   "action": "lt", "target": 30.0})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+
+class TestAutoGridSmallRangeAcceptance:
+    """P1-T01 验收锚（Q2 裁决落地）：小值域指标（OI_ChangeRate 实际
+    值域 ±0.12）auto 网格五点全落实际值域内且全档有样本——RR-009
+    零样本档场景反转复现（旧共享刻度 [-10,-5]/[5,10] 两档零样本）。"""
+
+    def test_oi_change_rate_grid_within_actual_range(self):
+        from pathlib import Path
+
+        market = Path("data/market/BTCUSDT_4h.parquet")
+        if not market.exists():
+            pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market）")
+        import pandas as pd
+        df = pd.read_parquet(market)
+        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-05-01", "end": "2026-04-01"}
+        from core.analysis.warmup_loader import load_with_warmup
+        work, request_start = load_with_warmup(
+            Path("data/market"), "BTCUSDT", "4h",
+            rng["start"], rng["end"], ["OI_ChangeRate"])
+        p = param_sweep(
+            work, indicator="OI_ChangeRate",
+            condition={"subject": "oi_change_rate_14", "action": "gt",
+                       "target": 0.0},
+            sweep={"axis": "target", "values": "auto"},
+            forward_bars=24, data_ranges=[rng], timeframe="4h",
+            request_start=request_start).to_dict()["payload"]
+        vals = p["sweep"]["values"]
+        # 全档落实际值域内（|值| ≤ 0.5 的宽松上界——实际分布 ±0.12）
+        assert all(abs(v) <= 0.5 for v in vals), vals
+        # 全档有样本（无零样本档——旧刻度两档零样本的反转；
+        # points 键=samples）
+        sampled = [pt for pt in p["points"] if pt["samples"] > 0]
+        assert len(sampled) == len(vals), (
+            f"全档有样本锚：{len(sampled)}/{len(vals)}，"
+            f"零样本档 {[pt['value'] for pt in p['points']
+                         if pt['samples'] == 0]}")

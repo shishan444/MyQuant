@@ -74,14 +74,16 @@ class TestValueGridsShape:
 
 
 class TestSingleSourceOfTruth:
-    def test_两消费者引用同一对象(self) -> None:
-        # import 绑定同一 dict：扫描域与检查域刻度同源的最强锚
-        #（任何一侧改为拷贝/重建即破坏同源，此锚即红）。
+    def test_唯一消费者同源绑定(self) -> None:
+        # Q2 裁决（2026-10-13）后检查域（param_sweep）已按统计段分布
+        # 取档、脱离共享刻度——唯一消费者为扫描域 screen_patterns
+        #（import 绑定同一 dict 的最强同源锚：改为拷贝/重建即红）。
         # 注意 templates/__init__ 把 screen_patterns 名字绑定为模板
         # 函数（遮蔽模块属性），模块对象须经 sys.modules 取
-        import core.analysis.templates  # noqa: F401 触发包初始化载入两模块
+        import core.analysis.templates  # noqa: F401 触发包初始化载入模块
         import sys
         sp_mod = sys.modules["core.analysis.templates.screen_patterns"]
-        ps_mod = sys.modules["core.analysis.templates.param_sweep"]
         assert sp_mod._VALUE_GRIDS is VALUE_GRIDS
-        assert ps_mod.VALUE_GRIDS is VALUE_GRIDS
+        # param_sweep 不再引用共享刻度（分布取档——守护面分叉锚）
+        assert not hasattr(sys.modules["core.analysis.templates.param_sweep"],
+                           "VALUE_GRIDS")

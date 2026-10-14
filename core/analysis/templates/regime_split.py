@@ -30,6 +30,7 @@ _MIN_SEGMENT_SAMPLES = 30  # 逐段统计资格门（与 param_sweep 同口径�
 def _validate_segments_input(
     segmentation: Any, condition: Any, indicator: Any,
     forward_bars: int, n_df: int,
+    conditions: Any = None,
 ) -> None:
     if isinstance(segmentation, str):
         if segmentation != "auto":
@@ -78,6 +79,11 @@ def _validate_segments_input(
             "归属指标，双件形制同 param_sweep）",
             detail={"param": "indicator",
                     "legal_range": "注册表指标名（list_indicators 查询）"})
+    # 变更三 7.1：conditions 组合形制——条数与逐条三键校验复用共享
+    # 单点（condition_stats 同源；同传互斥由路由层键组规则覆盖）
+    if conditions is not None:
+        from core.analysis.condition_kernel import validate_conditions_array
+        validate_conditions_array(conditions)
 
 
 
@@ -93,6 +99,7 @@ def regime_split(
     segmentation: Any = "auto",
     indicator: Optional[str] = None,
     condition: Optional[Dict[str, Any]] = None,
+    conditions: Optional[List[Dict[str, Any]]] = None,
     forward_bars: int = 24,
     data_ranges: List[Dict[str, str]] | None = None,
     timeframe: str = "1h",
@@ -109,6 +116,10 @@ def regime_split(
         indicator: condition 的归属指标名（condition 存在时必填）。
         condition: 可选中心条件（subject 列名须属于 df 列——由路由层
             以指标矩阵装载，双件形制同 param_sweep）。
+        conditions: 可选组合条件数组（变更三 7.x——1..5 条 AND 语义，
+            形制与 condition_stats 一致：结构化/基础列/插件列 subject
+            与列名 target 均可；路由层经 _load_refs 前扩装载+插件列
+            enrich 已入 df，求值走 mask_for_all 共享内核）。
         forward_bars: 逐段统计的前向持有期 N。
         request_start: 请求区间起点（warmup 只用不算——切段统计段）。
 
@@ -118,7 +129,8 @@ def regime_split(
     from core.features.indicators import _compute_indicator
     from core.features.registry import resolve_indicator_column
 
-    _validate_segments_input(segmentation, condition, indicator, forward_bars, len(df))
+    _validate_segments_input(segmentation, condition, indicator,
+                             forward_bars, len(df), conditions=conditions)
 
     # 入口副本：判读/条件指标列不写入调用方 df（模板纯计算契约，
     # 同族三模板 copy 形制——condition_stats/screen_patterns/param_sweep）
@@ -133,7 +145,12 @@ def regime_split(
     # 统计段切分（warmup 前缀只用不算——判读指标在副本全量收敛；
     # 置于指标计算后：布尔切片为副本，先切则不含新算指标列）
     stat = df[stat_window_mask(df, request_start)]
-    if condition is not None:
+    if conditions is not None:
+        # 变更三 7.2：组合形式不预装载归属指标、不做 subject 归属校验
+        # ——列解析统一权威在 mask_for（结构化自算/_ensure_target_column
+        # 现算/插件列经路由层 enrich 已入 df），不在模板层复制第二套
+        pass
+    elif condition is not None:
         from core.features.registry import INDICATOR_REGISTRY
         if indicator not in INDICATOR_REGISTRY:
             raise ResearchError(
@@ -193,9 +210,19 @@ def regime_split(
 
     # 可选逐段统计（condition_stats 同口径；资格门 <30 旁路）
     by_segment: Optional[List[Dict[str, Any]]] = None
-    if condition is not None:
-        fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
+    # 逐段统计（condition_stats 同口径；资格门 <30 旁路）——掩码来源
+    # 前置分叉（变更三 7.2 + review 发现 2 重构：两形制共享单一循环体，
+    # 口径同构由结构保证而非复制粘贴维持——键集/资格门/统计量单点定义）
+    stat_mask_all = None
+    if conditions is not None:
+        from core.analysis.condition_kernel import mask_for_all
+        stat_mask_all = mask_for_all(df, conditions, mtf=mtf)
+    elif condition is not None:
         stat_mask_all = mask_for(df, condition, mtf=mtf)
+
+    by_segment: Optional[List[Dict[str, Any]]] = None
+    if stat_mask_all is not None:
+        fwd_all = df["close"].pct_change(forward_bars).shift(-forward_bars)
         by_segment = []
         for i, s in enumerate(segments):
             in_seg = pd.Series(False, index=df.index)
