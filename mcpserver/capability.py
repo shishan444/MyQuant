@@ -194,7 +194,12 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   （price_above/price_below，fix-research-c2）；**列名 target 的序列
   比较（fix-research-c6 起——可统计可登记的「指标列对指标列」条件
   已可翻译送考：gt/lt/ge/le 与穿越族（含 breakout/breakdown 别名）
-  的编码列名 target 产出序列形基因，数值 target 语义不变）**。
+  的编码列名 target 产出序列形基因，数值 target 语义不变）**；
+  **close 基础列 subject 的价格主体比较（变更一 B1 起——
+  {subject:"close"} × lt/gt × 编码列名 target 翻译为挂目标指标的
+  price_below/price_above 基因（收盘价对该指标线的严格比较），
+  WHEN/THEN/分批三组同规则；ge/le 含等号形态与 open 等其余基础列
+  主体仍显式拒绝——等号语义无对应严格形态，不作静默近似）**。
 - 公式插件 DSL 白名单 21 词（0.2.12）：时序变换 11 + 时序结构
   crossover/crossunder + 逐元素 max/min/gt/lt/eq/logical_*——
   金叉死叉等穿越结构可在公式层一次表达，产出布尔列直通假设条件

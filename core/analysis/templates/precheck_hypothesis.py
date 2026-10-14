@@ -59,6 +59,10 @@ from core.analysis.warmup_loader import load_with_warmup, to_utc
 # 三态警示阈值（笔数）：模块级内建，禁止进入任何参数面。
 _MIN_TRADES_WARN = 5
 
+# 聚集判定阈值（前后两半事件数比值，≥ 判聚集）：模块级内建，禁止进入
+# 任何参数面（与 _MIN_TRADES_WARN 同款惯例——变更一 B3）。
+_CLUSTER_RATIO = 3.0
+
 # 外推口径声明（specs R2 MUST：口径差披露的机器可读键）。
 _PROJECTION_BASIS = "trigger_density_upper_bound"
 _BASIS_NOTE = (
@@ -231,6 +235,53 @@ def _returns_summary(s: pd.Series) -> Dict[str, Any]:
     }
 
 
+def _cluster_disclosure(
+    combo_stat: pd.Series, stat: pd.Series, to_event_mask,
+) -> Dict[str, Any]:
+    """统计段前后对半聚集披露（变更一 B3——急跌类事件时间不均外偏高估
+    的可信度信号）。
+
+    口径：统计段（stat 掩码为 True 的位置，按 bar 序）对半切——奇数前
+    半 ⌈n/2⌉；事件位置先经 ``to_event_mask`` 全集变换（与 n_triggers
+    同口径——携带 trigger_policy 时为事件口径，先整体变换再按位置分段
+    计数，保证 halves 之和恒等 n_triggers），再按前/后半归属计数。
+    ratio=max/min；min==0 且 max>0 → ratio null 且 clustered=true（全
+    聚集一侧）；判定阈值 ≥ ``_CLUSTER_RATIO``（3.0）内建。note 仅
+    clustered=true 时存在（TC-2 定稿键缺失形）。纯披露——不进三态
+    判定、不进锚值。
+    """
+    events = to_event_mask(combo_stat)
+    ev_positions = set(events.index[events.to_numpy()])
+    stat_positions = stat.index[stat.to_numpy()]
+    half = (len(stat_positions) + 1) // 2
+    first_half = set(stat_positions[:half])
+    h1 = len(ev_positions & first_half)
+    h2 = len(ev_positions) - h1
+    lo, hi = min(h1, h2), max(h1, h2)
+    if hi == 0:
+        ratio: Optional[float] = None
+        clustered = False  # 两半均零事件——无聚集可言
+    elif lo == 0:
+        ratio = None
+        clustered = True  # 全聚集一侧
+    else:
+        ratio = hi / lo
+        clustered = ratio >= _CLUSTER_RATIO
+    out: Dict[str, Any] = {
+        "halves": [h1, h2],
+        "split_bars": [half, len(stat_positions) - half],
+        "ratio": ratio,
+        "clustered": clustered,
+    }
+    if clustered:
+        r_txt = f"{ratio:.1f}" if ratio is not None else "∞"
+        out["note"] = (
+            f"统计段前后两半事件数 {h1}:{h2}（比值 {r_txt}），事件在"
+            "时间上分布不均匀——密度外推的可信度低，验证段实际笔数"
+            "可能显著低于外推上界")
+    return out
+
+
 def compute_precheck_report(
     work: pd.DataFrame,
     when_conditions: List[Dict[str, Any]],
@@ -321,6 +372,10 @@ def compute_precheck_report(
         anchor_payload: Dict[str, Any] = {
             "projected_trades": projected_trades,
             "validate_bars": validate_bars,
+            # 聚集披露（变更一 B3）：仅 projected 锚——登记锚是实际计数
+            # 无外推可信度问题；纯增量键不进三态不进锚值
+            "clustering": _cluster_disclosure(
+                combo & stat, stat, _to_event_mask),
         }
     elif anchor == "analysis_segment":
         if not per_range:

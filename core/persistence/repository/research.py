@@ -257,6 +257,41 @@ def count_validation_records_by_strategy(
     return out
 
 
+def list_validation_record_ids_by_strategy(
+    db_path: Path, strategy_ids: List[str]
+) -> Dict[str, Dict[str, List[str]]]:
+    """按 strategy_id 的 level 分组 record_id 全量升序（变更一 B2 切片 b）。
+
+    SQL 全量查询不经列表截断（spec「MUST NOT 截断扫描」——直插 201 条
+    记录的实体编号明细须全量披露）；与 count_validation_records_by_strategy
+    同文件同域保持单源（两函数同 strategy_id 域消费，防漂移约束一并保持）。
+
+    Returns:
+        {strategy_id: {level: [record_id, ...]}}（record_id 升序）
+    """
+    if not strategy_ids:
+        return {}
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.record_id,
+            ).where(
+                ValidationRecord.strategy_id.in_(strategy_ids),
+            ).order_by(
+                ValidationRecord.strategy_id,
+                ValidationRecord.level,
+                ValidationRecord.record_id,
+            )
+        ).all()
+    out: Dict[str, Dict[str, List[str]]] = {}
+    for sid, level, record_id in rows:
+        out.setdefault(sid, {}).setdefault(level, []).append(record_id)
+    return out
+
+
 def list_hypotheses(
     db_path: Path, *, status: Optional[str] = None,
     offset: int = 0, limit: int = 50,

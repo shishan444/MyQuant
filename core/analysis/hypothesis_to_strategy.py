@@ -481,8 +481,61 @@ def _translate_conditions(
             })
             continue
 
+        # 价格主体表达力（变更一 B1）：close 基础列 subject × lt/gt ×
+        # 编码列名 target——target 解码为结构化引用（复用 C6 的
+        # _classify_target_ref 单点），以解码结果为基因主体产出既有
+        # 价格形态（lt→price_below / gt→price_above：收盘价对该指标
+        # 序列的严格比较，executor 既有求值分支零改动）。语义恒等式：
+        # close lt X ≡ price_below(X 基因) ≡ close < X。对 role 无特判
+        # （WHEN/THEN/分批三组同规则）；指标挂基因主体（非 condition 内
+        # target_* 键），warmup 经 _dna_indicator_names 主路径天然收集。
+        # ge/le 含等号无对应严格形态——显式拒绝（禁静默近似映射
+        # price_above，错误语义完整性优先于表面覆盖，完整四条理由见
+        # openspec 变更一 design.md 第 3 节）。
+        if subject == "close":
+            from core.analysis.condition_kernel import _classify_target_ref
+            t_kind, t_ref = _classify_target_ref(target)
+            if t_kind == "decoded":
+                if action in ("lt", "gt"):
+                    genes.append(SignalGene(
+                        indicator=t_ref["indicator"],
+                        params=dict(t_ref["params"]),
+                        role=role,
+                        field_name=t_ref["field"],
+                        condition={"type":
+                                   "price_below" if action == "lt"
+                                   else "price_above"},
+                    ))
+                    continue
+                if action in ("ge", "le"):
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] 不可表达: close 基础列 subject 支持"
+                        " lt/gt 与编码列名 target 组合（价格与指标线的"
+                        "严格比较）；ge/le 含等号形态暂不可表达",
+                        detail={"condition": cond,
+                                "slow_path": "改用 gt/lt 或提交 "
+                                             "feature-requests"})
+                # 其余动作（cross/breakout 族等）：穿下方既有基础列
+                # 拒绝段——price_* 无穿越形态为真边界，文案逐字节不变
+            elif action in ("lt", "gt"):
+                # lt/gt 但 target 非 decoded（数值/基础列/未知串）：
+                # close 主体仅支持编码列名 target——引导改写而非笼统拒绝
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] 不可表达: close 基础列主体现仅支持"
+                    "编码列名 target——数值 target 组合不在本能力"
+                    f"（target 分类: {t_kind}）",
+                    detail={"condition": cond,
+                            "slow_path": "target 改用编码指标列名"
+                                         "（如 ema_20），或提交 "
+                                         "feature-requests"})
+            # close+ge/le+非 decoded 及其余组合：穿既有基础列拒绝段
+            # （维持现状文案，与三段格局边界一致）
+
         # 字符串 subject（0.2.13 起）：参数化指标编码形已退役（入口关闭+
         # 存量迁移）——只可能是基础列 / 插件失效列 / 未知列，全部不可表达
+        # （close 的 lt/gt+decoded 组合已在上方分支放行，不会落到这里）
         if subject in BASE_SUBJECT_COLUMNS:
             reason = (f"内置基础列 subject（{subject}）不可表达为"
                       "指标信号源（参数化指标请用结构化引用 "

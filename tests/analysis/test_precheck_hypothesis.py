@@ -882,3 +882,128 @@ class TestComputePrecheckReportAnchorGuards:
                 self._work(),
                 [{"subject": "close", "action": "gt", "target": 0}],
                 anchor="bogus_anchor")
+
+
+# ------------------------------------------------- B3 聚集披露（变更一）
+
+class TestClusteringDisclosure:
+    """frequency_projection.clustering（变更一 B3）：统计段前后对半
+    事件聚集的可信度信号——纯增量键，不进三态不进锚值；阈值 3.0 内建。
+
+    全部期望人工核算（事件位置构造即期望，不来自实现回抄）。
+    """
+
+    def _report(self, prices, validate_bars=20, conds=None):
+        df = _deterministic_df(prices)
+        return compute_precheck_report(
+            df, conds or [{"subject": "close", "action": "gt",
+                           "target": "95"}],
+            anchor="projected", request_start=None,
+            validate_bars=validate_bars, warmup_bars=200)
+
+    def test_clustered_first_half_with_note(self) -> None:
+        """B3-T01/T03：事件全聚集前半——clustered=true+note 含 halves
+        比值；min==0 且 max>0 → ratio=None（全聚集一侧无有限比值）。"""
+        # 前 7 bar 价 100（事件），后 13 bar 价 90（无事件）
+        prices = [100.0] * 7 + [90.0] * 13
+        fp = self._report(prices)["frequency_projection"]
+        cl = fp["clustering"]
+        assert cl["halves"] == [7, 0]
+        assert cl["split_bars"] == [10, 10]
+        assert cl["ratio"] is None            # min==0 且 max>0
+        assert cl["clustered"] is True
+        assert "7:0" in cl["note"] and "分布不均匀" in cl["note"]
+        assert "外推上界" in cl["note"]
+
+    def test_uniform_not_flagged(self) -> None:
+        """B3-T02：均匀分布（前 5 后 5）→ clustered=false 且 note 键
+        不存在（TC-2 定稿键缺失形）——其余子键在。"""
+        prices = []
+        for _ in range(10):
+            prices += [100.0, 90.0]           # 20 bar 交替：前半/后半各 5
+        cl = self._report(prices)["frequency_projection"]["clustering"]
+        assert cl["halves"] == [5, 5]
+        assert cl["ratio"] == pytest.approx(1.0)
+        assert cl["clustered"] is False
+        assert "note" not in cl
+
+    def test_ratio_threshold_exact_and_below(self) -> None:
+        """B3-T04：比值恰 3.0 → true（≥ 含等号）；2.5 → false。"""
+        # 前半 3 事件（bar 0/2/4）、后半 1 事件（bar 12）→ 3:1=3.0 恰值
+        prices = [90.0] * 20
+        for i in (0, 2, 4, 12):
+            prices[i] = 100.0
+        cl = self._report(prices)["frequency_projection"]["clustering"]
+        assert cl["halves"] == [3, 1]
+        assert cl["ratio"] == pytest.approx(3.0)
+        assert cl["clustered"] is True        # 恰值含等号
+
+        # 前半 5（bar 0/2/4/6/8）、后半 2（bar 12/16）→ 2.5 < 3.0
+        prices = [90.0] * 20
+        for i in (0, 2, 4, 6, 8, 12, 16):
+            prices[i] = 100.0
+        cl = self._report(prices)["frequency_projection"]["clustering"]
+        assert cl["halves"] == [5, 2]
+        assert cl["ratio"] == pytest.approx(2.5)
+        assert cl["clustered"] is False
+
+    def test_odd_stat_bars_ceiling_split(self) -> None:
+        """B3-T05：奇数 stat_bars（21）→ 前半 ⌈21/2⌉=11、后半 10
+        （split_bars 与 halves 计数窗人工核算）。"""
+        # 21 bar：前 11 bar 窗内 2 事件（bar 0/5），后 10 bar 窗 1 事件
+        # （bar 15）→ halves=[2,1]、split_bars=[11,10]
+        prices = [90.0] * 21
+        for i in (0, 5, 15):
+            prices[i] = 100.0
+        cl = self._report(prices, validate_bars=21)[
+            "frequency_projection"]["clustering"]
+        assert cl["split_bars"] == [11, 10]   # ⌈21/2⌉ 前半
+        assert cl["halves"] == [2, 1]
+
+    def test_halves_sum_equals_n_triggers(self) -> None:
+        """B3-T06 不变式：halves[0]+halves[1]==n_triggers（事件位置先
+        整体变换再分段——同 _to_event_mask 口径恒等）。"""
+        import random
+        rng = random.Random(42)
+        for _ in range(8):
+            prices = [100.0 if rng.random() < 0.35 else 90.0
+                      for _ in range(rng.choice([15, 20, 23, 31]))]
+            report = self._report(prices, validate_bars=len(prices))
+            cl = report["frequency_projection"]["clustering"]
+            assert sum(cl["halves"]) == \
+                report["combination_stats"]["n_triggers"], prices
+
+    def test_analysis_segment_anchor_has_no_clustering(self) -> None:
+        """B3-T07 纯增量：非 projected 锚（analysis_segment——登记锚
+        口径）不携带 clustering 键（聚集披露服务于外推可信度判断，
+        实际计数锚无外推问题）。"""
+        df = _deterministic_df([100.0, 105.0, 90.0, 92.0, 100.0, 90.0])
+        conds = [{"subject": "close", "action": "gt", "target": "95"}]
+        report = compute_precheck_report(
+            df, conds, anchor="analysis_segment",
+            request_start=None, validate_bars=10, warmup_bars=200,
+            per_range=[{"start": "2024-01-01T00:00:00Z",
+                        "end": "2024-01-01T06:00:00Z"}])
+        fp = report["frequency_projection"]
+        assert "clustering" not in fp
+        assert fp["anchor"] == "analysis_segment"
+
+    def test_clustering_not_in_verdict_or_anchor(self) -> None:
+        """B3 纯增量边界：聚集键不改变三态/锚值——同事件总数（7）、
+        同密度的两种分布（全聚集前半 vs 分散），锚值与 verdict 全等
+        （聚集只披露不判定）。"""
+        clustered = self._report([100.0] * 7 + [90.0] * 13)
+        # 7 个事件分散在前 14 bar（4 前 3 后——ratio 1.33 不聚集）
+        spread = [100.0, 90.0] * 7 + [90.0] * 6
+        spread = spread[:20]
+        uniform = self._report(spread)
+        assert sum(uniform["frequency_projection"]["clustering"][
+            "halves"]) == 7
+        assert uniform["frequency_projection"]["clustering"][
+            "clustered"] is False
+        assert clustered["frequency_projection"]["clustering"][
+            "clustered"] is True
+        # 同密度同锚值同三态——聚集披露对判定零影响
+        assert clustered["verdict"] == uniform["verdict"] == "pass"
+        assert clustered["frequency_projection"]["projected_trades"] == \
+            pytest.approx(uniform["frequency_projection"]["projected_trades"])

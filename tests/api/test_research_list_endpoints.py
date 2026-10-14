@@ -441,6 +441,12 @@ class TestCorruptedJsonPassthrough:
         rr.save_hypothesis_with_log(db_path, **dict(
             hypothesis_id="hyp_v", conditions="{}", conditions_hash="cv",
             statement="v", data_ranges="[]", ranges_hash="rv"))
+        # B2 两态判定序（变更一）：补建策略实体使本用例聚焦损坏
+        # params 容错（实体缺失 404 有专测覆盖）
+        from core.persistence.repository.strategy import save_strategy
+        save_strategy(db_path, strategy_id="st_dirty", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h", name="dirty",
+                      source="manual")
         rr.save_validation_with_log(
             db_path, record_id="rec_dirty", hypothesis_id="hyp_v",
             strategy_id="st_dirty", level="isolated_backtest",
@@ -462,9 +468,12 @@ class TestNotFoundChannels:
         assert resp.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_NOT_FOUND"
 
     def test_validation_report_not_found(self, api_client):
+        """B2 两态判定序（变更一）：实体不存在 → 404
+        RESEARCH_STRATEGY_NOT_FOUND（旧码 RESEARCH_REPORT_NOT_FOUND
+        退役——按场景语义归位：本用例查的是不存在的策略实体）。"""
         resp = api_client.get("/api/research/validation/st_nope/report")
         assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "RESEARCH_REPORT_NOT_FOUND"
+        assert resp.json()["detail"]["code"] == "RESEARCH_STRATEGY_NOT_FOUND"
 
     def test_analysis_task_not_found(self, api_client):
         resp = api_client.get("/api/research/analysis/tasks/ant_nope")

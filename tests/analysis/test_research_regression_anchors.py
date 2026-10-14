@@ -26,6 +26,7 @@
   对照点，断言落 tests/infra/test_indicator_params_effective.py。
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -114,3 +115,200 @@ class TestA2EmaCrossClose:
             df, conditions=conds, data_ranges=[{**rng}], forward_bars=24,
             request_start=request_start).to_dict()
         assert d["payload"]["hit_count"] == 213
+
+
+# ---------------------------------------------------------------- B1 锚面
+# 变更一 extend-research-expression-and-lineage：原生假设翻译写法锚。
+# 以前 A1/A2 只有统计面写法与（A1）price_below 结构化写法；现在新增
+# 第三写法——「登记 → translate → draft DNA → evaluate_condition」全
+# 链路真跑（非 JSON 形状验证），锁「翻译产物的求值语义=统计面直比」。
+
+@pytest.fixture()
+def _db(tmp_path):
+    from core.persistence.db_ext import init_db_ext
+    from core.analysis.executor import ensure_research_tables
+    d = tmp_path / "q.db"
+    init_db_ext(d)
+    ensure_research_tables(d)
+    return d
+
+
+def _seg_from(df, request_start):
+    """warmup 前扩装载切回请求区间（condition_stats 同口径）。
+
+    load_with_warmup 为 compute_indicators=False（指标列由调用方在含
+    warmup 前缀的全 df 上现算——_compute_indicator 后再切区间，与
+    condition_stats 内部口径一致）。
+    """
+    import pandas as pd
+    ts = pd.Timestamp(request_start)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return df[df.index >= ts]
+
+
+def _enrich(df, names_params):
+    """在含 warmup 前缀的 df 上现算指标列（编码列名并入）。"""
+    from core.features.indicators import _compute_indicator
+    for name, params in names_params:
+        cols = _compute_indicator(df, name, dict(params))
+        for c, s in cols.items():
+            df[c] = s
+    return df
+
+
+class TestA1NativeTranslation:
+    """A1 第三写法（B1-T16）：close lt bb_lower_20_2 经原生假设翻译
+    产物求值——三写法同得 1119。"""
+
+    RANGE = {"symbol": "BTCUSDT", "timeframe": "1h",
+             "start": "2024-02-01", "end": "2026-04-01"}
+
+    def _translate_and_count(self, db):
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.executor import evaluate_condition
+
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": "close", "action": "lt",
+                     "target": "bb_lower_20_2"}],
+                "then_conditions": [
+                    {"subject": {"indicator": "EMA", "params": {"period": 20},
+                                 "field": "ema"},
+                     "action": "gt", "target": 0}]},
+            statement="A1 native translation anchor",
+            data_ranges=[dict(self.RANGE)])["hypothesis_id"]
+        sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
+        genes = json.loads(get_strategy(db, sid)["dna_json"])["signal_genes"]
+        entry = [g for g in genes if g["role"] == "entry_trigger"][0]
+        # B1 契约：close 主体基因挂目标指标+price_below
+        assert entry["indicator"] == "BB"
+        assert entry["params"] == {"period": 20, "std": 2}
+        assert entry["field"] == "lower"
+        assert entry["condition"] == {"type": "price_below"}
+
+        df, request_start = _load_with_condition_refs(
+            MARKET_DIR, dict(self.RANGE), None,
+            conditions=[{"subject": "close", "action": "lt",
+                         "target": "bb_lower_20_2"}])
+        _enrich(df, [("BB", {"period": 20, "std": 2})])
+        seg = _seg_from(df, request_start)
+        mask = evaluate_condition(seg["bb_lower_20_2"], seg["close"],
+                                  entry["condition"], seg)
+        return int(mask.fillna(False).sum())
+
+    def test_a1_three_writings_equal(self, _db):
+        """三写法一致性：统计 lt 写法（既有 1119）/ price_below 结构化
+        写法（既有 1119）/ 原生翻译写法（本用例）同得 1119。"""
+        assert self._translate_and_count(_db) == 1119
+
+
+class TestA2NativeTranslation:
+    """A2 翻译路径（B1-T17/T19）：RR-006 双条件（EMA5 gt ema_20 ∧
+    close lt ema_20）经原生翻译双基因 AND 求值==213；沙盒烟测非零笔；
+    隔离验证零闸门拒——整链无插件参与。"""
+
+    RANGE = {"symbol": "BTCUSDT", "timeframe": "4h",
+             "start": "2024-05-01", "end": "2026-04-01"}
+    CONDS = [
+        {"subject": {"indicator": "EMA", "params": {"period": 5},
+                     "field": "ema"},
+         "action": "gt", "target": "ema_20"},
+        {"subject": "close", "action": "lt", "target": "ema_20"},
+    ]
+
+    def _register_and_translate(self, db):
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        hid = register_hypothesis(
+            db,
+            conditions={"when_conditions": self.CONDS,
+                        "then_conditions": [
+                            {"subject": "close", "action": "gt",
+                             "target": "ema_20"}]},
+            statement="A2 native translation anchor",
+            data_ranges=[dict(self.RANGE)])["hypothesis_id"]
+        sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
+        return hid, sid
+
+    def test_a2_translated_genes_and_count(self, _db):
+        """双基因 AND 掩码计数==213（翻译产物逐基因求值后 AND）。"""
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.executor import evaluate_condition
+        _, sid = self._register_and_translate(_db)
+        genes = json.loads(get_strategy(_db, sid)["dna_json"])["signal_genes"]
+        entries = [g for g in genes if g["role"] == "entry_trigger"]
+        assert len(entries) == 2
+        # 复合键断言（team3 reviewer 发现 1 修正：双基因 indicator 同为
+        # EMA，单 indicator 键字典覆盖致 EMA5 基因断言落空——
+        # (indicator, period) 分键分别锁两形态）
+        by_key = {(g["indicator"], g["params"].get("period")):
+                  g["condition"] for g in entries}
+        # 基因一（C6 序列形）：EMA(5) vs ema_20
+        assert by_key[("EMA", 5)] == {
+            "type": "gt", "target_indicator": "EMA",
+            "target_params": {"period": 20}, "target_field": "ema"}
+        # 基因二（B1 价格形态）：close vs ema_20
+        assert by_key[("EMA", 20)] == {"type": "price_below"}
+
+        df, request_start = _load_with_condition_refs(
+            MARKET_DIR, dict(self.RANGE), None, conditions=self.CONDS)
+        _enrich(df, [("EMA", {"period": 5}), ("EMA", {"period": 20})])
+        seg = _seg_from(df, request_start)
+        masks = []
+        for g in entries:
+            col = "ema_5" if g["params"].get("period") == 5 else "ema_20"
+            masks.append(evaluate_condition(
+                seg[col], seg["close"], g["condition"], seg))
+        both = masks[0] & masks[1]
+        assert int(both.fillna(False).sum()) == 213
+
+    def test_a2_full_chain_sandbox_and_isolated(self, _db):
+        """B1-T19 全链路验收锚：翻译 draft 沙盒烟测 total_trades>0；
+        隔离验证正常返回（无组件证据闸门拒——纯内置基因不触发该门）。
+
+        区间设计：登记区间即判定并集（研究协议——先偷看不获利），
+        隔离验证须用登记区间外数据段；沙盒段（登记段 2024-05~11 双
+        条件交集 47 bar）与隔离段（2025-02~08 交集 73 bar）均实证
+        非零。出场条件用 B1 写法（close gt ema_20——回到均线上方
+        兑现离场），与入场 close lt ema_20 天然互斥，不经「同 bar
+        开平互斥保留 exit」规则吞掉全部入场。"""
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.validation_service import (
+            run_isolated_backtest, run_sandbox_backtest)
+
+        reg_range = {"symbol": "BTCUSDT", "timeframe": "4h",
+                     "start": "2024-05-01", "end": "2024-11-01"}
+        hid = register_hypothesis(
+            _db,
+            conditions={"when_conditions": self.CONDS,
+                        "then_conditions": [
+                            {"subject": "close", "action": "gt",
+                             "target": "ema_20"}]},
+            statement="A2 full-chain anchor",
+            data_ranges=[dict(reg_range)])["hypothesis_id"]
+        sid = translate_hypothesis(_db, hypothesis_id=hid)["strategy_id"]
+
+        sb = run_sandbox_backtest(
+            _db, MARKET_DIR, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2024-05-01", end="2024-11-01")
+        assert sb["metrics"]["total_trades"] > 0, "沙盒须产真实非零交易"
+
+        iv = run_isolated_backtest(
+            _db, MARKET_DIR, hypothesis_id=hid, strategy_id=sid,
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2025-02-01", "end": "2025-08-01"})
+        assert iv["record_id"], "隔离验证被闸门拒（未产记录）"
+        assert iv["verdict"] in ("pass", "fail", "inconclusive")
+        # warmup 零改动锚：披露面为 {bars, derived, basis}——derived=600
+        # 即 EMA 注册表上限 period=200×3（指标挂基因主体被主路径收集的
+        # 数值证据；close 主体基因若未挂指标会退化到 floor 200）
+        warm = iv.get("warmup") or {}
+        assert warm.get("derived") == 600, (
+            f"warmup 推导须含挂基因指标（derived 期望 600）: {warm}")
+        assert warm.get("basis")

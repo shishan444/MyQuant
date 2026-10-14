@@ -216,3 +216,197 @@ class TestTranslateFullChain:
         assert sb["metrics"]["total_trades"] <= stat_hits, (
             f"沙盒交易数 {sb['metrics']['total_trades']} 超过段内触发数 "
             f"{stat_hits}——触发密度与统计锚失联")
+
+
+class TestCloseSubjectTranslation:
+    """B1 价格主体表达力（变更一 extend-research-expression-and-lineage）。
+
+    close 基础列 subject × lt/gt × 编码列名 target——翻译为挂在目标
+    指标上的价格形态基因（price_below/price_above，executor 既有严格
+    比较分支零改动）。对拍 change delta Scenario「价格主体翻译成功 /
+    ge/le 含等号拒绝 / 其余基础列主体拒绝不变」推导。
+    """
+
+    def test_close_lt_product_exact(self, db):
+        """B1-T01 正向：close+lt+ema_20 产物逐字段——indicator=EMA/
+        params={period:20}/field=ema/condition={type:"price_below"}，
+        无 threshold 键。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.strategy.dna import SignalRole
+        genes, sources = build_signal_genes(
+            [{"subject": "close", "action": "lt", "target": "ema_20"}],
+            [], db)
+        assert sources == []
+        g = genes[0]
+        assert g.indicator == "EMA"
+        assert g.params == {"period": 20}
+        assert g.field_name == "ema"
+        assert g.condition == {"type": "price_below"}
+        assert "threshold" not in g.condition
+        assert g.role == SignalRole.ENTRY_TRIGGER
+
+    @pytest.mark.parametrize("action,ctype", [("lt", "price_below"),
+                                              ("gt", "price_above")],
+                             ids=["lt→below", "gt→above"])
+    @pytest.mark.parametrize("subject_target,ind,params,field", [
+        ("ema_20", "EMA", {"period": 20}, "ema"),
+        ("macd_histogram_12_26_9", "MACD",
+         {"fast": 12, "slow": 26, "signal": 9}, "histogram"),
+    ], ids=["单输出EMA", "多输出MACD直方图"])
+    def test_action_and_indicator_matrix(
+            self, db, action, ctype, subject_target, ind, params, field):
+        """B1-T02 正向边界：lt/gt × 指标代表性（EMA 单输出+MACD 多
+        输出——多输出列名 target 是 decoded payload field 正确性的
+        唯一压力点，field 须透传 histogram 而非静默兜底）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        genes, _ = build_signal_genes(
+            [{"subject": "close", "action": action,
+              "target": subject_target}], [], db)
+        g = genes[0]
+        assert g.indicator == ind
+        assert g.params == params
+        assert g.field_name == field
+        assert g.condition == {"type": ctype}
+
+    def test_then_and_scaling_groups_same_rule(self, db):
+        """B1-T03 正向：THEN 组与分批三组（exit_partial/add_trigger/
+        add_suppress）同规则——契约「role 无特判」的直接断言。"""
+        from core.analysis.hypothesis_to_strategy import (
+            build_signal_genes, translate_hypothesis)
+        from core.strategy.dna import SignalRole
+        # THEN 组（build_signal_genes 直调）
+        genes, _ = build_signal_genes(
+            [{"subject": EMA_20, "action": "gt", "target": 0}],
+            [{"subject": "close", "action": "lt", "target": "ema_20"}], db)
+        assert [(g.role, g.condition) for g in genes][-1] == \
+            (SignalRole.EXIT_TRIGGER, {"type": "price_below"})
+        # 分批三组（translate_hypothesis 登记链）
+        scaling = {
+            "exit_partial_conditions": [
+                {"subject": "close", "action": "lt", "target": "ema_20"}],
+            "add_trigger_conditions": [
+                {"subject": "close", "action": "gt", "target": "ema_50"}],
+            "add_suppress_conditions": [
+                {"subject": "close", "action": "lt",
+                 "target": "macd_histogram_12_26_9"}],
+        }
+        hid = register_hypothesis(
+            db,
+            conditions={"when_conditions": [
+                            {"subject": EMA_20, "action": "gt", "target": 0}],
+                        "then_conditions": [
+                            {"subject": EMA_20, "action": "lt",
+                             "target": 0}],
+                        **scaling},
+            statement="B1-T03", data_ranges=[
+                {"symbol": "BTCUSDT", "timeframe": "4h",
+                 "start": "2023-09-01T00:00:00Z",
+                 "end": "2023-12-01T00:00:00Z"}])["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.repository.strategy import get_strategy
+        stored = json.loads(get_strategy(db, out["strategy_id"])["dna_json"])
+        by_role = {g["role"]: g["condition"]
+                   for g in stored["signal_genes"]}
+        assert by_role[SignalRole.REDUCE_TRIGGER.value] == \
+            {"type": "price_below"}
+        assert by_role[SignalRole.ADD_TRIGGER.value] == \
+            {"type": "price_above"}
+        assert by_role[SignalRole.ADD_INHIBIT.value] == \
+            {"type": "price_below"}
+
+    def test_two_entries_same_product(self, db):
+        """B1-T04 正向：两入口（translate_hypothesis 登记链 vs
+        build_signal_genes 直调）产物一致。"""
+        from core.analysis.hypothesis_to_strategy import (
+            build_signal_genes, translate_hypothesis)
+        from core.persistence.repository.strategy import get_strategy
+        hid = _register(
+            db,
+            [{"subject": "close", "action": "lt", "target": "ema_20"}],
+            [{"subject": EMA_20, "action": "gt", "target": 0}],
+            TestTranslateFullChain.RANGES)
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        stored = json.loads(get_strategy(db, out["strategy_id"])["dna_json"])
+        direct, _ = build_signal_genes(
+            [{"subject": "close", "action": "lt", "target": "ema_20"}],
+            [{"subject": EMA_20, "action": "gt", "target": 0}], db)
+        assert [g["condition"] for g in stored["signal_genes"]] == \
+            [g.condition for g in direct]
+        assert [(g["indicator"], g["params"], g["field"])
+                for g in stored["signal_genes"]] == \
+            [(g.indicator, g.params, g.field_name) for g in direct]
+
+    def test_executor_strict_comparison_identity(self):
+        """B1-T05 执行层恒等式：合成数据人工核算
+        evaluate_condition(ema, close, price_below) == (close < ema)——
+        含相等点不触发（锁严格比较语义，防未来含等号偷换）。"""
+        from core.strategy.executor import evaluate_condition
+        idx = pd.date_range("2024-01-01", periods=6, freq="4h",
+                            tz="UTC", name="timestamp")
+        df = pd.DataFrame(
+            {"close": [10.0, 10.0, 12.0, 9.0, 11.0, 8.0]}, index=idx)
+        ema = pd.Series([9.0, 10.0, 11.0, 9.0, 11.0, 9.0], index=idx,
+                        name="ema_20")
+        got = evaluate_condition(ema, df["close"],
+                                 {"type": "price_below"}, df)
+        want = df["close"] < ema
+        # 人工核算逐 bar：close<ema → [10<9 F, 10<10 F, 12<11 F,
+        # 9<9 F, 11<11 F, 8<9 T]——相等点不触发（严格比较），恰一处真
+        assert list(got.fillna(False)) == list(want)
+        assert list(want) == [False, False, False, False, False, True]
+        assert int(want.sum()) == 1
+
+    @pytest.mark.parametrize("action", ["ge", "le"])
+    def test_close_ge_le_rejected_new_message(self, db, action):
+        """B1-T06 错误：close+ge/le+decoded → RESEARCH_NOT_EXPRESSIBLE
+        新文案（含 lt/gt 引导与「ge/le 含等号形态暂不可表达」）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                [{"subject": "close", "action": action,
+                  "target": "ema_20"}], [], db)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "ge/le 含等号形态暂不可表达" in ei.value.message
+        assert "lt/gt 与编码列名 target" in ei.value.message
+        assert ei.value.detail["condition"]["subject"] == "close"
+        assert "slow_path" in ei.value.detail
+
+    @pytest.mark.parametrize("target", [60000, "60000"],
+                             ids=["数值", "数值串"])
+    def test_close_numeric_target_guided_rejection(self, db, target):
+        """B1-T07 错误可辨性：close+lt/gt+数值(串) target——第二段
+        引导文案，与 T06 ge/le 文案可辨。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                [{"subject": "close", "action": "lt",
+                  "target": target}], [], db)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "现仅支持编码列名 target" in ei.value.message
+        assert "含等号形态" not in ei.value.message  # 与 T06 文案可辨
+
+    @pytest.mark.parametrize("target", ["volume", "not_a_column"],
+                             ids=["基础列target", "未知串target"])
+    def test_close_non_decoded_target_rejected(self, db, target):
+        """B1-T08 错误：close+lt/gt+基础列/未知串 target——非 decoded
+        全分类拒绝（第二段文案）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        with pytest.raises(ResearchError, match="现仅支持编码列名 target"):
+            build_signal_genes(
+                [{"subject": "close", "action": "gt",
+                  "target": target}], [], db)
+
+    @pytest.mark.parametrize("action",
+                             ["cross_above", "cross_below",
+                              "breakout", "breakdown"])
+    def test_close_cross_family_unchanged_rejection(self, db, action):
+        """B1-T11 双断言回归：cross/breakout 族+close 主体 ①仍拒
+        （RESEARCH_NOT_EXPRESSIBLE）②文案=既有基础列拒绝段原文
+        （match「内置基础列 subject」——close+cross 不产生新文案分支）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                [{"subject": "close", "action": action,
+                  "target": "ema_20"}], [], db)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "内置基础列 subject（close）不可表达为" in ei.value.message
