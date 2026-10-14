@@ -192,9 +192,11 @@ class TestPluginTranslation:
                                   "target": 60000}])
         with pytest.raises(
                 ResearchError,
-                match="close 基础列主体现仅支持编码列名 target"):
+                match="close 基础列主体现仅支持编码列名 target") as ei:
             translate_hypothesis(db, hypothesis_id=hid)
-        assert "内置基础列" not in "close 基础列主体现仅支持编码列名 target"
+        # team3 reviewer 发现 2 修正：断言对象=实际异常消息（原字面量
+        # 自断言恒真）——确认不落笼统基础列文案
+        assert "内置基础列" not in ei.value.message
 
         hid2 = _raw_hyp(db, when=[{"subject": "definitely_not_a_column",
                                    "action": "gt", "target": 1}])

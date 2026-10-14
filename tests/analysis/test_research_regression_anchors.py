@@ -243,13 +243,17 @@ class TestA2NativeTranslation:
         genes = json.loads(get_strategy(_db, sid)["dna_json"])["signal_genes"]
         entries = [g for g in genes if g["role"] == "entry_trigger"]
         assert len(entries) == 2
-        by_ind = {g["indicator"]: g["condition"] for g in entries}
-        # 基因一（C6 序列形）：EMA(5) vs ema_20；基因二（B1 价格形态）：
-        # close vs ema_20
-        assert by_ind["EMA"] in (
-            {"type": "gt", "target_indicator": "EMA",
-             "target_params": {"period": 20}, "target_field": "ema"},
-            {"type": "price_below"})
+        # 复合键断言（team3 reviewer 发现 1 修正：双基因 indicator 同为
+        # EMA，单 indicator 键字典覆盖致 EMA5 基因断言落空——
+        # (indicator, period) 分键分别锁两形态）
+        by_key = {(g["indicator"], g["params"].get("period")):
+                  g["condition"] for g in entries}
+        # 基因一（C6 序列形）：EMA(5) vs ema_20
+        assert by_key[("EMA", 5)] == {
+            "type": "gt", "target_indicator": "EMA",
+            "target_params": {"period": 20}, "target_field": "ema"}
+        # 基因二（B1 价格形态）：close vs ema_20
+        assert by_key[("EMA", 20)] == {"type": "price_below"}
 
         df, request_start = _load_with_condition_refs(
             MARKET_DIR, dict(self.RANGE), None, conditions=self.CONDS)
@@ -257,9 +261,7 @@ class TestA2NativeTranslation:
         seg = _seg_from(df, request_start)
         masks = []
         for g in entries:
-            col = "ema_5" if (g["params"].get("period") == 5
-                              and g["condition"].get("type") != "price_below"
-                              ) else "ema_20"
+            col = "ema_5" if g["params"].get("period") == 5 else "ema_20"
             masks.append(evaluate_condition(
                 seg[col], seg["close"], g["condition"], seg))
         both = masks[0] & masks[1]
