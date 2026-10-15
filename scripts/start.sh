@@ -67,9 +67,69 @@ tcp_probe() {
     (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
 }
 
+# 端口占用预检（fix-start-silent-failure B-1）：拉起进程前检查端口监听者
+# ——被占即显式失败（占用者线索逐 PID 附命令行；不自动杀进程——处置权
+# 归操作者）。lsof 形制带 -sTCP:LISTEN：只认监听者（不带过滤会把连向
+# 该端口的客户端连接也当占用——stop.sh 不带过滤是停止语义要抓全部
+# 持有者，两处语义不同）；|| true 沿 stop.sh 先例（无匹配退出码非零，
+# 不触 set -e）
+precheck_port() {
+    local port="$1" label="$2"
+    local pids
+    pids=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        error "$label 无法启动：端口 $port 已被以下进程监听"
+        print_pid_clues "占用进程" $pids
+        error "本脚本不自动杀占用进程（处置权在操作者）：确认后可用 scripts/stop.sh 清理或手工处置，然后重跑"
+        exit 1
+    fi
+}
+
+# 逐 PID 线索打印（三失败路径统一形制——reviewer3 F2 收敛：三处逐
+# PID 打印重复提取；ps 失败兜底「未知」——线索尽力而为，不因 ps
+# 失败阻断报错主语义）
+print_pid_clues() {
+    local label="$1"; shift
+    for p in "$@"; do
+        error "  ${label} PID $p: $(ps -p "$p" -o command= 2>/dev/null || echo '未知')"
+    done
+}
+
+# 应答者身份核验（fix-start-silent-failure B-2）：健康检查通过后核验
+# 「本次 $pid 存活且端口监听者恰为 $pid」——预检与绑定之间的竞态
+# 窗口兜底（curl 命中他人的假成功经典形态）。顺序铁律：健康通过 →
+# 核验 → 核验通过才允许打印成功。形态一（本次进程已死+他人应答）删
+# PID 文件（死值不残留）；形态二（活但非监听者）保留 PID 文件（stop.sh
+# 仍可管理它）——两种失败形态的清理时机不同。
+# 监听者判定=单成员严格相等（reviewer3 F1 修复：空格包围子串匹配在
+# lsof 多行输出〔多进程共存监听〕下对行尾成员永不匹配——误杀正常
+# 路径；且多进程共存时「应答者必须是本次进程」的不量本就要求唯一
+# 监听者——他人共存即失败，保守方向与不变量一致）
+verify_responder() {
+    local pid="$1" port="$2" label="$3" pid_file="$4"
+    if ! kill -0 "$pid" 2>/dev/null; then
+        local holders
+        holders=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
+        error "$label 启动失败：本次进程 (PID $pid) 已退出，但健康检查有应答——端口 $port 的实际应答者是既有进程"
+        print_pid_clues "应答进程" $holders
+        error "请处置应答进程后重跑；已启动的其他服务可用 scripts/stop.sh 统一清理"
+        rm -f "$pid_file"
+        exit 1
+    fi
+    local listeners
+    listeners=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
+    if [[ "$listeners" != "$pid" ]]; then
+        error "$label 启动失败：健康检查有应答，但端口 $port 的监听者不是本次进程 (PID $pid)"
+        print_pid_clues "监听进程" $listeners
+        error "本次进程仍在运行（可用 scripts/stop.sh 一并清理）；请处置监听进程后重跑"
+        exit 1
+    fi
+}
+
 # 启动 API 服务
 start_api() {
     _check_pid_running "$API_PID_FILE" "API 服务" "$API_PORT" && return 0
+    precheck_port "$API_PORT" "API 服务"
     ensure_dirs
 
     local log_file="$LOG_DIR/api.log"
@@ -88,6 +148,8 @@ start_api() {
     local retries=40
     while ((retries-- > 0)); do
         if curl -sf "http://localhost:$API_PORT/api/health" >/dev/null 2>&1; then
+            # 应答者身份核验（健康→核验→打印，顺序铁律）
+            verify_responder "$pid" "$API_PORT" "API 服务" "$API_PID_FILE"
             info "API 服务启动成功 (PID: $pid)"
             info "API 地址: http://localhost:$API_PORT"
             info "API 文档: http://localhost:$API_PORT/docs"
@@ -96,9 +158,12 @@ start_api() {
         sleep 1
     done
 
+    # 第三态收编（fix-start-silent-failure B-3）：进程仍活但健康检查
+    # 耗尽 → 非零退出（文案维持「已启动…未通过」不含成功字样）
     if kill -0 "$pid" 2>/dev/null; then
-        info "API 进程已启动 (PID: $pid)，但健康检查未通过，请查看日志:"
-        info "  tail -f $log_file"
+        warn "API 进程已启动 (PID: $pid)，但健康检查未通过，请查看日志:"
+        warn "  tail -f $log_file"
+        exit 1
     else
         error "API 启动失败，请查看日志:"
         error "  cat $log_file"
@@ -110,6 +175,7 @@ start_api() {
 # 启动 MCP server（streamable-http 常驻）
 start_mcp() {
     _check_pid_running "$MCP_PID_FILE" "MCP 服务" "$MCP_PORT" && return 0
+    precheck_port "$MCP_PORT" "MCP 服务"
     ensure_dirs
 
     local log_file="$LOG_DIR/mcp.log"
@@ -129,6 +195,8 @@ start_mcp() {
     local retries=20
     while ((retries-- > 0)); do
         if tcp_probe "$MCP_PORT"; then
+            # 应答者身份核验（探活→核验→打印，顺序铁律）
+            verify_responder "$pid" "$MCP_PORT" "MCP 服务" "$MCP_PID_FILE"
             info "MCP 服务启动成功 (PID: $pid)"
             info "MCP 端点: http://127.0.0.1:$MCP_PORT/mcp"
             return 0
@@ -136,9 +204,12 @@ start_mcp() {
         sleep 1
     done
 
+    # 第三态收编（fix-start-silent-failure B-3）：非零退出（文案维持
+    # 「已启动…未通过」不含成功字样）
     if kill -0 "$pid" 2>/dev/null; then
         warn "MCP 进程已启动 (PID: $pid)，但端口探活未通过，请查看日志:"
         warn "  tail -f $log_file"
+        exit 1
     else
         error "MCP 启动失败，请查看日志:"
         error "  cat $log_file"
