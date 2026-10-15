@@ -621,6 +621,48 @@ def register_hypothesis(
         except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
             logger.warning("登记预检降级（登记照常）: %s", exc)
 
+    # 4.7 阈值单位可疑警告（add-threshold-unit-warning C-2）：小数比率
+    #     语义列的 |target|>1 → 纯增量警告键（不阻断登记——个别指标
+    #     大阈值可能合法，误报即灾难取向的保守观察面）。只在新建路径
+    #     计算与携带（幂等命中已在第 4 步早退）；判定全程只读（不改
+    #     conditions/不进 hash）；异常按预检降级先例吞掉——警告通道
+    #     自身不得成为登记失败源。独立于 precheck_warnings（语义正交
+    #     ——静态参数检查 vs 数据预检三态，并入则预检降级吞掉静态警告）
+    threshold_unit_warnings = None
+    try:
+        from core.analysis.column_ref import encode_column_ref
+        from core.analysis.registry_meta import is_decimal_ratio_subject
+        _unit_warnings = []
+        for group, conds in group_conds.items():
+            for i, c in enumerate(conds):
+                subject = c.get("subject")
+                if not is_decimal_ratio_subject(subject):
+                    continue
+                if c.get("action") in ("price_above", "price_below"):
+                    continue  # target 为占位不进比较
+                try:
+                    target_val = float(c.get("target"))
+                except (TypeError, ValueError):
+                    continue  # 列名/序列引用形 target 豁免
+                if abs(target_val) > 1.0:
+                    column = (encode_column_ref(
+                        subject["indicator"], subject["params"],
+                        subject["field"]) if isinstance(subject, dict)
+                        else str(subject))
+                    _unit_warnings.append({
+                        "field": f"{group}_conditions[{i}]",
+                        "column": column,
+                        "target": target_val,
+                        "hint": "该列为小数比率语义（值域量级以 1 为界），"
+                                "阈值绝对值大于 1 疑似单位误写（如 -2.33 "
+                                "应为 -0.0233）；警告不阻断登记，请核对"
+                                "单位后自行决定是否重登",
+                    })
+        if _unit_warnings:
+            threshold_unit_warnings = _unit_warnings
+    except Exception as exc:  # noqa: BLE001 —— 降级语义：警告失败不阻断登记
+        logger.warning("阈值单位警告判定降级（登记照常）: %s", exc)
+
     # 5. 原子写（provenance 存在时同事务追加 screen_use 日志；声明块
     #    归一形 JSON 串入列——None=无声明列 NULL）
     import uuid
@@ -641,6 +683,8 @@ def register_hypothesis(
     out = {"hypothesis_id": hid, "duplicated": False,
            # 方向回显（归一形——None/显式 long 均回显 "long"）
            "direction": direction or "long"}
+    if threshold_unit_warnings is not None:
+        out["threshold_unit_warnings"] = threshold_unit_warnings
     if precheck_warnings is not None:
         out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
         # 挂接预检留痕（CARD-03，spec R4「预检执行 MUST 自动落研究日志」

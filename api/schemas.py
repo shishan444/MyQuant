@@ -978,6 +978,10 @@ class HypothesisResponse(BaseModel):
     # 沿 precheck_warnings 先例）；NULL 声明以 {} 呈现——旧调用方据此
     # 可知既有假设的声明内容而无需二次查询。
     existing_strategy_params: Optional[Dict[str, Any]] = None
+    # 阈值单位可疑警告（add-threshold-unit-warning C-3）：仅新建路径且
+    # 清单非空时携带（纯增量可选键——警告不阻断登记，语义独立于
+    # precheck_warnings 的数据预检三态）；幂等命中不携带
+    threshold_unit_warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class HypothesisListResponse(BaseModel):

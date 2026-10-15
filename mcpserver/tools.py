@@ -527,6 +527,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         键，预检失败降级或幂等命中时不携带该键）；预检不改变登记的
         校验链、幂等键与假设身份，不阻断任何后续动作（裁决权在研究者
         ——0 触发建议不送考，判定并集的机会成本可预见）。
+        登记返回体另附可选 threshold_unit_warnings 键（阈值单位可疑
+        警告——与 precheck_warnings 语义正交的纯观察面）：条件比较对象
+        属「小数比率语义」列（值域量级以 1 为界的无量纲量——CMF/
+        OI_ChangeRate/OIPriceDivergence/FundingPressure/funding_rate）
+        且阈值绝对值>1 时逐条目警示（field/column/target/hint 四要素
+        ——如 -2.33 应为 -0.0233 的百分数误写）。警告不阻断登记（个别
+        指标大阈值可能合法，自行核对）；五组条件（when/then/分批三组）
+        全覆盖；幂等命中不携带。
         trigger_policy 可选（事件策略层，条件集整体级——修饰 when
         全集 AND 合并掩码如何变换为事件流，非单条件修饰）：封闭枚举
         {"mode": "none"|"first_true"|"suppress_bars", "bars": <正整数>}

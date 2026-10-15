@@ -22,6 +22,32 @@ _PERIOD_LIKE_PARAMS = frozenset({
     "ema_period", "atr_period", "lookback",
 })
 
+# 小数比率语义列（add-threshold-unit-warning C-1）：值域量级以 1 为界的
+# 无量纲量——阈值按小数写（2.33% → 0.0233），|target|>1 疑似单位误写。
+# 明确不在此列的三族：百分数形制（ROC/VROC/TRIX，阈值以百分数计——
+# TRIX 经 venv pandas_ta/momentum/trix.py:53/:70 实证 scalar 默认 100，
+# indicators.py:269-272 调用不传 scalar，系 ×100 百分数形制）、
+# 0-100/-100~100 标度（RSI/MFI/Stochastic/Williams %R/CMO/ADX/Aroon）、
+# 无界统计量（OI_ZScore/FundingZScore 等 z 分数、CCI）；RVOL 为
+# 倍数语义（2.0=放量两倍）同理排除。插件列无值域元数据，保守豁免。
+_DECIMAL_RATIO_INDICATORS = frozenset({
+    "CMF", "OI_ChangeRate", "OIPriceDivergence", "FundingPressure",
+})
+_DECIMAL_RATIO_BASE_COLUMNS = frozenset({"funding_rate"})
+
+
+def is_decimal_ratio_subject(subject: Any) -> bool:
+    """canonical 条件 subject 是否小数比率语义列（登记单位警告判定面）。
+
+    输入为登记链第 3 步 canonical 形（ref_dict 产物）：指标类 dict
+    {indicator, params, field} / base·plugin 类裸字符串。插件列
+    （fx_*/model_*）不在 base 清单，天然落豁免——无需查
+    signal_registry，判定保持纯静态（与插桩点只读零阻断自洽）。
+    """
+    if isinstance(subject, dict):
+        return subject.get("indicator") in _DECIMAL_RATIO_INDICATORS
+    return subject in _DECIMAL_RATIO_BASE_COLUMNS
+
 
 def _indicator_lookback(defn: Any) -> int:
     """指标 lookback：周期类参数的注册表上限之和（保守取向，宁可多预热）。"""
