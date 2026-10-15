@@ -83,6 +83,24 @@ class TestIsDecimalRatioSubject:
         assert is_decimal_ratio_subject(None) is False
         assert is_decimal_ratio_subject(123) is False
 
+    def test_registry_full_checklist_matches_design_c1(self):
+        """design 卡 C-1 全量核对表固化（45 指标+8 基础列）：判定
+        True 集合恰为清单 4 指标+{funding_rate}——清单属元数据维护，
+        增删须以值域证据为准并同步核对表（spec 主条文末句）。"""
+        from core.features.registry import INDICATOR_REGISTRY
+        true_ind = sorted(
+            name for name in INDICATOR_REGISTRY
+            if is_decimal_ratio_subject({
+                "indicator": name, "params": {"period": 14},
+                "field": INDICATOR_REGISTRY[name].output_fields[0]
+                if INDICATOR_REGISTRY[name].output_fields else "x"}))
+        assert true_ind == ["CMF", "FundingPressure",
+                            "OIPriceDivergence", "OI_ChangeRate"]
+        from core.analysis.column_ref import BASE_SUBJECT_COLUMNS
+        true_base = sorted(c for c in BASE_SUBJECT_COLUMNS
+                           if is_decimal_ratio_subject(c))
+        assert true_base == ["funding_rate"]
+
 
 # ── C1~C8：登记链警告行为（服务层直调） ──────────────────────
 
@@ -146,9 +164,11 @@ class TestWarningBehavior:
         fields = sorted(e["field"] for e in w)
         assert fields == ["add_trigger_conditions[0]", "when_conditions[0]"]
 
-    def test_c6_price_above_below_exempt(self, db):
-        """C6：price_above/price_below 的 target 为占位——豁免。"""
-        r = _register(db, _oi_cond(target=99999, action="price_above"))
+    @pytest.mark.parametrize("action", ["price_above", "price_below"])
+    def test_c6_price_above_below_exempt(self, db, action):
+        """C6：price_above/price_below 的 target 为占位——豁免
+        （契约 action 枚举两值各一用例）。"""
+        r = _register(db, _oi_cond(target=99999, action=action))
         assert "threshold_unit_warnings" not in r
 
     def test_c7_column_name_target_exempt(self, db):
@@ -263,6 +283,54 @@ class TestRestFaceAndCoexistence:
         assert out["threshold_unit_warnings"][0]["column"] \
             == "oi_change_rate_14"
         assert "verdict" in out["precheck_warnings"]
+
+    def test_c12_warned_hypothesis_validate_backtest_isomorphic(self, env):
+        """C12（spec「零阻断全链」后半段）：带警告假设照常
+        validate-backtest——与无警告假设输出形制同构、警告键不渗入
+        验证面。登记区间与请求区间不重叠（隔离回测判定并集语义）。"""
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.validation_service import run_isolated_backtest
+
+        def _cond(target):
+            return {
+                "when_conditions": [
+                    {"subject": {"indicator": "OI_ChangeRate",
+                                 "params": {"period": 14},
+                                 "field": "oi_change_rate"},
+                     "action": "gt", "target": target}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14},
+                                 "field": "rsi"},
+                     "action": "gt", "target": 70}],
+            }
+
+        def _full(target):
+            r = register_hypothesis(
+                env["db"], conditions=_cond(target), statement="零阻断全链",
+                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-01-05T00:00:00Z",
+                              "end": "2024-02-10T00:00:00Z"}])
+            t = translate_hypothesis(env["db"], hypothesis_id=r["hypothesis_id"])
+            out = run_isolated_backtest(
+                env["db"], env["data_dir"], hypothesis_id=r["hypothesis_id"],
+                strategy_id=t["strategy_id"],
+                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                               "start": "2024-02-20T00:00:00Z",
+                               "end": "2024-03-20T00:00:00Z"})
+            return r, t, out
+
+        r_warn, t_warn, out_warn = _full(-2.33)
+        r_plain, t_plain, out_plain = _full(-0.0233)
+        # 对照前提：一携带警告、一不携带
+        assert r_warn.get("threshold_unit_warnings"), "带警告前提"
+        assert "threshold_unit_warnings" not in r_plain, "对照前提"
+        # translate 同构：均成功产 draft
+        assert t_warn["status"] == t_plain["status"] == "draft"
+        # validate-backtest 同构：均成功返回、顶层键集一致、不渗入警告键
+        assert sorted(out_warn) == sorted(out_plain)
+        assert "threshold_unit_warnings" not in out_warn
+        assert "threshold_unit_warnings" not in out_plain
 
     def test_c18_direction_short_composition(self, env, api_client):
         """C18（依赖 change A）：direction=short 与警告同场——两纯增量
