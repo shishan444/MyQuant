@@ -184,6 +184,34 @@ class TestInteractionSemantics:
                  for _, t in r.trades_df.iterrows()]
         assert holds == [6, 6]
 
+    def test_eng7_sl_exit_reentry_independent_counting(self):
+        """ENG-7 SL 路径补（tester）：spec「再入场独立计数」Scenario 字面
+        是「SL 出场后同策略再次入场→计数从新入场 bar 重新起算」——既有
+        ENG-7 第一笔经 max_hold 到期出场，SL 出场路径（entry_bar 不清零
+        的残留路径——SL/TP 段只清 entry_price/peak_price）无字面覆盖。
+
+        编排：i₀₁=3，bar 5 探低触发 SL（持有 3 根<6——第一笔非到期
+        出场）；i₀₂=7 再入场，第二笔恰持有 6 根（bar 12 到期）。若
+        entry_bar/计数未重置（残留第一笔 bar 3），第二笔会在 bar 8
+        提前平仓（持有 2 根）——断言值恰好区分两形态。
+        """
+        import numpy as np
+        p = np.full(N, 60000.0)
+        p[5] = 53400.0    # bar 5 探低（low≈53347<SL 线 57000）
+        df, r = _run(_dna(max_hold=6, stop_loss=0.05), df=_df(p),
+                     sig=_sig([2, 6]))
+        assert r.total_trades == 2
+        t1, t2 = (r.trades_df.sort_values("Entry Timestamp")
+                  .iloc[0], r.trades_df.sort_values("Entry Timestamp")
+                  .iloc[1])
+        b1_exit = df.index.get_loc(pd.Timestamp(t1["Exit Timestamp"]))
+        assert b1_exit == 5, "第一笔经 SL 出场（非到期）"
+        holds = [_bars(t["Entry Timestamp"], t["Exit Timestamp"])
+                 for _, t in r.trades_df.iterrows()]
+        assert holds == [3, 6], "第二笔从新入场 bar 起算恰持有 6 根"
+        b2_exit = df.index.get_loc(pd.Timestamp(t2["Exit Timestamp"]))
+        assert b2_exit == 12, "第二笔 bar 12 到期平仓（残留 bar 3 则 bar 8）"
+
 
 class TestBatchAndRegression:
     def test_eng8_batch_single_source(self):

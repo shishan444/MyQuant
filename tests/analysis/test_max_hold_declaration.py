@@ -217,6 +217,36 @@ class TestManualDnaValidation:
         assert validate_dna(self._dna_with(max_hold=1)).is_valid
         assert validate_dna(self._dna_with(max_hold=200)).is_valid
 
+    def test_bool_flagged(self):
+        """S-2：bool 是 int 子类穿透值域比较（1<=True<=200 成立，
+        等效 N=1=入场次 bar 即平仓）——类型层排除，与登记面
+        「bool 排除」（strategy-param-declaration）同口径。"""
+        result = validate_dna(self._dna_with(max_hold=True))
+        assert not result.is_valid
+        assert any("max_hold" in e and "integer" in e
+                   for e in result.errors)
+
+    def test_float_flagged(self):
+        """S-2：float 穿透值域取整（3.5 等效 ceil=第 4 根平仓的
+        未定义行为）——类型层拦截（spec「正整数 N」）。"""
+        result = validate_dna(self._dna_with(max_hold=3.5))
+        assert not result.is_valid
+        assert any("max_hold" in e and "integer" in e
+                   for e in result.errors)
+
+    def test_str_flagged_not_raise(self):
+        """S-2：str 形态修复前在值域比较裸抛 TypeError（int<=str
+        不可比较）——现类型层 errors.append，不抛异常。"""
+        result = validate_dna(self._dna_with(max_hold="4"))
+        assert not result.is_valid
+        assert any("max_hold" in e and "integer" in e
+                   for e in result.errors)
+
+    def test_valid_int_unaffected(self):
+        """回归锚：合法 int 不受类型分支影响（防过度收紧）。"""
+        result = validate_dna(self._dna_with(max_hold=4))
+        assert result.is_valid
+
 
 class TestMcpDisclosure:
     def test_description_nine_keys(self):
