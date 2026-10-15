@@ -135,6 +135,11 @@ class RiskGenesModel(BaseModel):
     exit_fraction: Optional[float] = None
     add_fraction: Optional[float] = None
     max_exposure: Optional[float] = None
+    # 时间出场（add-max-hold-exit D-2，security S-1 修复）：与 RiskGenes
+    # 同步——漏键会使 extra="forbid" 拒收含 max_hold 的 DNA 直传/回显，
+    # 且 crud 读回 ValidationError 被吞 → GET 响应 dna=null（DNA 静默
+    # 消失）；值域权威在 validator（传输层不加 bound，三键先例同款）
+    max_hold: Optional[int] = None
 
 
 class DNAModel(BaseModel):

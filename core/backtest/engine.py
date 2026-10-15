@@ -431,6 +431,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     """
     i = c.i
     col = c.col
+    # entry_bar 清零纪律（add-max-hold-exit D-3）：时间出场与信号出场
+    # 段与 entry_price 同点清零；SL/TP/清算段不清——其消费点（时间
+    # 出场分支）守卫含 entry_price>0，且入场时无条件重写，残留旧值
+    # 永不生效（行为等价的整洁写法，非正确性依赖）
 
     # 逐列参数查取
     direction_val = direction_vals[col]

@@ -124,7 +124,8 @@ def _validate_strategy_params(
     """
     from core.strategy.dna import SL_MODES
     from core.strategy.validator import (
-        MAX_LEVERAGE, SL_ATR_MAX, SL_ATR_MIN, SL_PCT_MAX, SL_PCT_MIN,
+        MAX_HOLD_MAX, MAX_HOLD_MIN, MAX_LEVERAGE, SL_ATR_MAX, SL_ATR_MIN,
+        SL_PCT_MAX, SL_PCT_MIN,
     )
 
     if not isinstance(params, dict):
@@ -218,7 +219,6 @@ def _validate_strategy_params(
     # 时间出场声明（add-max-hold-exit D-1）：正整数 bar 数（最长持有
     # N 根 K 线的到期无条件平仓）；值域单源 validator（MAX_HOLD_MIN/
     # MAX——与 validate_dna 手工 DNA 校验双消费方同源）
-    from core.strategy.validator import MAX_HOLD_MAX, MAX_HOLD_MIN
     max_hold = params.get("max_hold")
     if max_hold is not None:
         if not isinstance(max_hold, int) or isinstance(max_hold, bool) \

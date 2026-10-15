@@ -163,11 +163,18 @@ class TestGeneAndTranslation:
             RiskGenes(max_hold=6).to_dict()).max_hold == 6
 
     def test_d2_fields_ten_and_legacy_parity(self):
-        """DEC-8 补：比对集十字段；存量双方（无键 DNA 解析 get None vs
-        无声明产物 None）恒等——扩键连续。"""
+        """DEC-8 补：比对集十字段；存量侧（手写字面 dict 模拟库内旧
+        dna_json——无 max_hold 键）与无声明产物经比对集逐字段恒等
+        ——扩键连续（get 缺键读 None 语义）。"""
         assert "max_hold" in _D2_RISK_FIELDS
         assert len(_D2_RISK_FIELDS) == 10
-        legacy_dict = RiskGenes(stop_loss=0.05).to_dict()
+        legacy_dict = {  # 存量库内 dna_json 形（无新键字面）
+            "stop_loss": 0.05, "take_profit": None,
+            "position_size": 0.3, "leverage": 1, "direction": "long",
+            "sl_mode": "pct", "atr_period": 14,
+            "exit_fraction": None, "add_fraction": None,
+            "max_exposure": None,
+        }
         produced_dict = RiskGenes(stop_loss=0.05).to_dict()
         assert tuple(legacy_dict.get(f) for f in _D2_RISK_FIELDS) == \
             tuple(produced_dict.get(f) for f in _D2_RISK_FIELDS)
@@ -336,3 +343,57 @@ class TestLiveOutOfRange:
         （出场承载现状缺口族成员，实盘化前统一处理）。"""
         src = Path("core/live_trading/executor.py").read_text(encoding="utf-8")
         assert "max_hold" not in src
+
+
+class TestReviewFindingsRegression:
+    """team3 审查发现（security2 S-1/S-2）的回归锚。"""
+
+    def test_transport_model_accepts_max_hold_dna(self):
+        """S-1：api 传输模型同步声明 max_hold——含键 DNA 可直传/回显
+        （extra=forbid 漏键会拒收，且 crud 读回 ValidationError 被吞
+        → GET dna=null 的 DNA 静默消失）。"""
+        from api.schemas import DNAModel
+        from core.strategy.dna import (
+            ExecutionGenes,
+            LogicGenes,
+            SignalGene,
+            SignalRole,
+            StrategyDNA,
+        )
+        gene = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
+            condition={"type": "lt", "threshold": 35})
+        dna = StrategyDNA(
+            signal_genes=[gene], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(max_hold=6))
+        model = DNAModel.model_validate(json.loads(dna.to_json()))
+        assert model.risk_genes.max_hold == 6
+
+    @pytest.mark.parametrize("bad", [True, 3.5, "6"])
+    def test_validate_dna_type_guard(self, bad):
+        """S-2：手工 DNA 面类型防护——bool 穿透值域静默化为 N=1、
+        float 穿透取整、str 裸 TypeError，均在类型层拦截。"""
+        from core.strategy.dna import (
+            ExecutionGenes,
+            LogicGenes,
+            SignalGene,
+            SignalRole,
+            StrategyDNA,
+        )
+        gene = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
+            condition={"type": "lt", "threshold": 35})
+        exit_g = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.EXIT_TRIGGER, field_name="rsi_14",
+            condition={"type": "gt", "threshold": 65})
+        dna = StrategyDNA(
+            signal_genes=[gene, exit_g], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(max_hold=bad))
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any("max_hold" in e for e in result.errors)

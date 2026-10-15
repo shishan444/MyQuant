@@ -227,12 +227,19 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             f"(bounded by risk_genes.leverage)")
 
     # 时间出场持有上界（add-max-hold-exit D-1）：None=合法缺省态（无
-    # 时间离场——存量语义），不报错；登记路径经声明块校验前置拦截
+    # 时间离场——存量语义），不报错；登记路径经声明块校验前置拦截。
+    # 类型防护（security S-2 修复）：与登记侧同形制——bool 穿透值域
+    # （1<=True<=200 成立）静默化为 N=1、float 穿透取整、str 抛裸
+    # TypeError，均在类型层拦截
     mh_val = risk.max_hold
-    if mh_val is not None and not (MAX_HOLD_MIN <= mh_val <= MAX_HOLD_MAX):
-        errors.append(
-            f"max_hold {mh_val} out of range "
-            f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}] (bars)")
+    if mh_val is not None:
+        if not isinstance(mh_val, int) or isinstance(mh_val, bool):
+            errors.append(
+                f"max_hold must be an integer (bars), got {type(mh_val).__name__}")
+        elif not (MAX_HOLD_MIN <= mh_val <= MAX_HOLD_MAX):
+            errors.append(
+                f"max_hold {mh_val} out of range "
+                f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}] (bars)")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
