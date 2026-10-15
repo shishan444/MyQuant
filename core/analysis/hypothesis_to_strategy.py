@@ -284,12 +284,23 @@ def translate_hypothesis(
     # 既有策略形制零变化。不可静默降级：策略声明承载密度语义。
     entry_policy = conditions.get("trigger_policy")
 
+    # 方向直通（add-direction-channel A3）：conditions 顶层 direction
+    # （登记归一形——short 才写键）覆盖产物 risk_genes.direction；
+    # 存量/long 假设无键 → or "long" 与 RiskGenes 默认同值（产物
+    # dna_json 逐位不变）。方向唯一来源=假设声明（strategy_params
+    # 白名单不扩 direction——无双源）；gene_signature 已编码 dir:
+    # （dna.py），short 产物签名异于一切 long 策略，同签名分流不跨
+    # 方向误命中；_D2_RISK_FIELDS 九键不扩（签名已编码方向，比对集
+    # 管「签名未编码的策略层参数」，两机制正交）
+    risk_genes = _declared_risk_genes(declared_params)  # 声明块映射（0.4.2 R1）
+    risk_genes.direction = conditions.get("direction") or "long"
+
     dna = StrategyDNA(
         signal_genes=genes,
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(
             symbol=strategy_symbol, timeframe=strategy_timeframe),
-        risk_genes=_declared_risk_genes(declared_params),  # 声明块映射（0.4.2 R1）
+        risk_genes=risk_genes,
         parent_ids=[hypothesis_id],  # 谱系回链
         signal_sources=signal_sources,
         composition=composition,

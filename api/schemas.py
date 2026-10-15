@@ -946,6 +946,11 @@ class HypothesisCreate(BaseModel):
     exit_partial_conditions: Optional[List[ConditionItem]] = None
     add_trigger_conditions: Optional[List[ConditionItem]] = None
     add_suppress_conditions: Optional[List[ConditionItem]] = None
+    # 交易方向键（add-direction-channel A1）：弱形制字符串键——值域
+    # {long, short} 的权威校验在服务层 3.7 步（422 错误即文档）；
+    # 缺省 None 与显式 "long" 语义相同（同指纹同实体）；归一形
+    # short 才写 conditions 顶层键（服务层写键进身份指纹）
+    direction: Optional[str] = None
 
 
 class HypothesisTransitionRequest(BaseModel):
@@ -957,6 +962,9 @@ class HypothesisResponse(BaseModel):
     hypothesis_id: str
     status: str = "active"
     duplicated: bool = False
+    # 交易方向回显（add-direction-channel）：实体属性键（每个假设都有
+    # 方向，存量即 long）——新建/幂等命中均携带，既有消费方零适配
+    direction: str = "long"
     # 登记自动预检警告段（add-hypothesis-precheck D6）：预检成功时携带
     # 三态结论与判定锚数值（锚=分析段实际触发数，多区间取最小值）；
     # 纯增量可选键——既有消费方零适配；幂等命中/预检降级不携带。

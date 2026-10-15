@@ -501,7 +501,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             strategy_params: Optional[dict[str, Any]] = None,
             exit_partial_conditions: Optional[list[dict[str, Any]]] = None,
             add_trigger_conditions: Optional[list[dict[str, Any]]] = None,
-            add_suppress_conditions: Optional[list[dict[str, Any]]] = None) -> Dict[str, Any]:
+            add_suppress_conditions: Optional[list[dict[str, Any]]] = None,
+            direction: Optional[str] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
         {indicator, params, field}（多输出指标 field 必填，参数空间经
@@ -567,7 +568,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         触发条件属研究主张）；组条目不带 timeframe 键；组存在须非空。
         翻译映射 REDUCE_TRIGGER/ADD_TRIGGER/ADD_INHIBIT；分批数值参数
         （exit_fraction 0.5/add_fraction 0.1/max_exposure 1.0 缺省）经
-        strategy_params 声明块承载（有组无值自动归一化字面值）。"""
+        strategy_params 声明块承载（有组无值自动归一化字面值）。
+        direction 可选（交易方向 {long,short}——做空假设通道）：缺省与
+        显式 "long" 语义相同（同指纹同实体）；"short" 为做空假设——
+        方向参与假设身份指纹与幂等身份（同条件集+同区间集+异方向=
+        两条独立假设，各自独立幂等/判定并集/谱系族）；翻译直通产物
+        risk_genes.direction（做空策略价格下跌产生正收益）；登记响应
+        回显 direction 键（新建/幂等命中均携带）；非法值 422
+        RESEARCH_PARAM_INVALID（detail 含 field/legal_range）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
@@ -584,6 +592,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["add_trigger_conditions"] = add_trigger_conditions
         if add_suppress_conditions is not None:
             body["add_suppress_conditions"] = add_suppress_conditions
+        if direction is not None:
+            body["direction"] = direction
         return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()
@@ -610,7 +620,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         与门槛判定明细；同键重复幂等返回既有）。verdict 三态：
         pass/fail/inconclusive——inconclusive=证据不足非证伪（样本不足
         或每笔收益均值 95% 置信区间跨零——方向不可区分于噪声），假设
-        保持 active 可换区间再验证、不可作迁移证据。"""
+        保持 active 可换区间再验证、不可作迁移证据。返回体 direction=short
+        时，total_return/win_rate 等指标为空头口径（价格下跌产生正收益）；
+        benchmark_return 恒为同期多头买入持有，excess_return=空头收益−多头基准。"""
         return api.post("/api/research/validate-backtest", {
             "hypothesis_id": hypothesis_id, "strategy_id": strategy_id,
             "request_range": {"symbol": symbol, "timeframe": timeframe,
@@ -625,7 +637,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                                hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
         """随机窗口抽查（同种子同参数结果一致；返回最差窗口与分位摘要）。
         每窗按三段闸门判定，总判定最差聚合三态：任一窗 fail→fail；
-        无 fail 有 inconclusive 窗→inconclusive；全 pass→pass。"""
+        无 fail 有 inconclusive 窗→inconclusive；全 pass→pass。返回体
+        direction=short 时，total_return/win_rate 等指标为空头口径（价格
+        下跌产生正收益）；benchmark_return 恒为同期多头买入持有，
+        excess_return=空头收益−多头基准。"""
         body = {"strategy_id": strategy_id, "symbol": symbol,
                 "timeframe": timeframe, "data_start": data_start,
                 "data_end": data_end, "window_bars": window_bars,
@@ -656,7 +671,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         假设保持 active）；不挂假设 adhoc 纯日志（verdict 照报、
         record_id=None）。验证区间不入判定并集（防同区间重复靠幂等
         ——与隔离回测同语义）。与随机窗口抽查互补：抽查答「任意时段
-        都行吗」，分段答「哪类行情不行」。"""
+        都行吗」，分段答「哪类行情不行」。返回体 direction=short 时，
+        total_return/win_rate 等指标为空头口径（价格下跌产生正收益）；
+        benchmark_return 恒为同期多头买入持有，excess_return=空头收益−多头基准。"""
         body = {"strategy_id": strategy_id, "symbol": symbol,
                 "timeframe": timeframe, "start": start, "end": end,
                 "segmentation": segmentation}

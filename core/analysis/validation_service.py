@@ -269,12 +269,22 @@ def segmentation_identity(mode: str, segments=None) -> str:
 
 
 def _dup_payload(existing: Dict[str, Any]) -> Dict[str, Any]:
-    """幂等命中返回形（五元命中——隔离/分段/随机窗共用）。"""
+    """幂等命中返回形（隔离/分段共用；五元命中+方向同构回显）。
+
+    direction（add-direction-channel A4）：读既有 result_json 顶层键
+    （首次路径写入），存量记录无键按 "long" 补——幂等重放与首次请求
+    返回体同构（MUST，spec 验证证据档案 Requirement）。
+    """
+    result = json.loads(existing["result"]) if existing["result"] else None
+    direction = "long"
+    if isinstance(result, dict) and result.get("direction"):
+        direction = result["direction"]
     return {
         "record_id": existing["record_id"],
         "verdict": existing["verdict"],
         "duplicated": True,
-        "result": json.loads(existing["result"]) if existing["result"] else None,
+        "direction": direction,
+        "result": result,
     }
 
 
@@ -404,6 +414,9 @@ def run_isolated_backtest(
                    "indicators": indicator_names},
         "bars_used": bars_used,
         "symbol": symbol, "timeframe": timeframe,
+        # 方向披露（add-direction-channel A4）：纯增量键，来源=draft
+        # DNA——幂等重放经 _dup_payload 同构回显；旧消费方零适配
+        "direction": dna.risk_genes.direction,
     }, ensure_ascii=False)
     params_json = json.dumps({
         "request_range": request_range, "range_hash": rh,
@@ -424,6 +437,7 @@ def run_isolated_backtest(
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
                    "basis": WARMUP_RULE_TEXT},
         "judged_ranges": judged,
+        "direction": dna.risk_genes.direction,
     }
 
 
@@ -474,13 +488,18 @@ def random_window_test(
         db_path, hypothesis_id or "adhoc", strategy_id, rh,
         level="random_window")  # G7 五元：随机窗身份（segmentation 空串）
     if existing is not None:
+        _rw_result = json.loads(existing["result"]) if existing["result"] else None
+        # 方向同构回显（add-direction-channel A4）：存量无键按 long 补
+        _rw_direction = _rw_result.get("direction") \
+            if isinstance(_rw_result, dict) else None
         return {"record_id": existing["record_id"], "seed": seed,
                 "duplicated": True,
                 # 0.3.3 G6：幂等重放与首次请求同形——顶层 verdict 取
                 # 记录 verdict 列（:360 先例同源；worst_window.verdict 是
                 # 收益最差窗的窗口判定，不等于三态聚合，禁作提取源）
                 "verdict": existing["verdict"],
-                "result": json.loads(existing["result"]) if existing["result"] else None}
+                "direction": _rw_direction or "long",
+                "result": _rw_result}
 
     rng = np.random.default_rng(seed)
     # 顺序抽样保证不重叠且可复现
@@ -526,7 +545,10 @@ def random_window_test(
                            "n_windows": n_windows, "data_start": data_start,
                            "data_end": data_end, "symbol": symbol,
                            "timeframe": timeframe}, ensure_ascii=False),
-        result=json.dumps({"windows": windows, "summary": summary},
+        result=json.dumps({"windows": windows, "summary": summary,
+                           # 方向披露（add-direction-channel A4）：幂等
+                           # 重放提取源；纯增量键
+                           "direction": dna.risk_genes.direction},
                           ensure_ascii=False),
         verdict=agg, range_hash=rh)
 
@@ -534,6 +556,7 @@ def random_window_test(
             # 0.3.3 G6：顶层 verdict（值=在场 agg 聚合判定）——与幂等
             # 命中路径同形同值，程序化判定链单点取值
             "verdict": agg,
+            "direction": dna.risk_genes.direction,
             "windows": windows, "summary": summary}
 
 
@@ -921,7 +944,10 @@ def run_staged_validation(
                      if hasattr(seg["end"], "isoformat") else seg["end"]}
                     for seg in seg_list]},
                 ensure_ascii=False),
-            result=json.dumps({"segments": seg_results, "summary": summary},
+            result=json.dumps({"segments": seg_results, "summary": summary,
+                               # 方向披露（add-direction-channel A4）：
+                               # 纯增量键，幂等重放提取源
+                               "direction": dna.risk_genes.direction},
                               ensure_ascii=False),
             verdict=verdict, range_hash=rh)
     else:
@@ -949,6 +975,7 @@ def run_staged_validation(
         "segments": seg_results,
         "summary": summary,
         "judged_ranges": judged,
+        "direction": dna.risk_genes.direction,
     }
 
 
