@@ -97,7 +97,7 @@ class TestDirectionIdentity:
         assert "direction" not in cond_base
         assert hash_json(cond_short) != hash_json(cond_base)
 
-    @pytest.mark.parametrize("order", [("long_first", "short_first")])
+    @pytest.mark.parametrize("order", ["long_first", "short_first"])
     def test_dual_direction_independent_entities(self, api_client, order):
         """A1-3：双向登记序均两实体、两 id、hash 互异（不互相顶掉）。"""
         seq = (["short", None] if order == "long_first"
@@ -168,3 +168,82 @@ class TestDirectionEcho:
         assert r2["duplicated"] is True
         assert r2["hypothesis_id"] == r1["hypothesis_id"]
         assert r2["direction"] == "long"
+
+
+class _FakeMcp:
+    def __init__(self):
+        self.registered = {}
+
+    def tool(self):
+        def deco(fn):
+            self.registered[fn.__name__] = fn
+            return fn
+        return deco
+
+
+class TestDirectionChannelLayeringFull:
+    """A1 完成标准⑥补全：字符串值域错三通道收口（tester 补）。
+
+    既有用例已覆盖 REST 面（A1-1）与非字符串的 REST/service 直调
+    （A1-6 两用例）；此处补 service 直调字符串值域错与 MCP 工具通道
+    两形制（经 tools.py api.post 到 REST 路由——服务端同一校验点，
+    错误转译复用 QuantApiClient._raise_api_error 同一函数）。
+    """
+
+    def test_bad_string_service_direct(self, tmp_path: Path):
+        """字符串值域错（service 直调通道）→ 3.7 步 RESEARCH_PARAM_INVALID。"""
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        from core.analysis.executor import ensure_research_tables
+        ensure_research_tables(db)
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db, conditions=json.loads(json.dumps(CONDITIONS)),
+                statement="s", data_ranges=RANGES, direction="both")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "direction"
+
+    def _mcp_register_fn(self, api_client):
+        from mcpserver import tools as tools_mod
+
+        class _HttpApi:
+            """MCP 工具 api 依赖薄壳：走 TestClient 真实路由，
+            错误转译复用 QuantApiClient._raise_api_error（同形制）。"""
+
+            def post(self, url, body):
+                resp = api_client.post(url, json=body)
+                if resp.is_error:
+                    from mcpserver.api_client import _raise_api_error
+                    _raise_api_error(resp)
+                return resp.json()
+
+        mcp = _FakeMcp()
+        tools_mod.register_research_tools(mcp, _HttpApi())
+        return mcp.registered["register_hypothesis"]
+
+    def test_non_string_via_mcp_tool_channel(self, api_client):
+        """非字符串值（MCP 工具通道）：与 REST 面同值同形制——
+        被路由层 pydantic 拦截（string_type + body.direction loc），
+        tool_safe 统一错误通道转 {"error": {...}} 返回。"""
+        fn = self._mcp_register_fn(api_client)
+        out = fn(when_conditions=CONDITIONS["when_conditions"],
+                 then_conditions=CONDITIONS["then_conditions"],
+                 statement="s", data_ranges=RANGES, direction=123)
+        assert "error" in out
+        assert out["error"]["code"] == "API_INTERNAL_ERROR"  # 422 框架形制
+        detail = out["error"]["detail"]
+        assert isinstance(detail, list)
+        assert any(e.get("type") == "string_type"
+                   and "direction" in (e.get("loc") or []) for e in detail)
+
+    def test_bad_string_via_mcp_tool_channel(self, api_client):
+        """字符串值域错（MCP 工具通道）：pydantic 不校验字符串值域，
+        穿透到服务层 3.7 步 → {"error": RESEARCH_PARAM_INVALID}。"""
+        fn = self._mcp_register_fn(api_client)
+        out = fn(when_conditions=CONDITIONS["when_conditions"],
+                 then_conditions=CONDITIONS["then_conditions"],
+                 statement="s", data_ranges=RANGES, direction="both")
+        assert "error" in out
+        assert out["error"]["code"] == "RESEARCH_PARAM_INVALID"
+        assert out["error"]["detail"]["field"] == "direction"
+        assert out["error"]["detail"]["legal_range"] == ["long", "short"]

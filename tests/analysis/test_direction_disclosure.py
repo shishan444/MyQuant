@@ -193,3 +193,93 @@ class TestIdempotentIsomorphicEcho:
         b1, b2 = first.json(), again.json()
         assert b2["duplicated"] is True
         assert b1["direction"] == b2["direction"] == "short"
+
+
+def _record_result(db: Path, hypothesis_id: str, strategy_id: str,
+                   level: str):
+    """按五元身份中可直判的三元（hypothesis/strategy/level）取记录行
+    的 (record_id, result json)。"""
+    import sqlite3
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT record_id, result FROM validation_records "
+            "WHERE hypothesis_id=? AND strategy_id=? AND level=?",
+            (hypothesis_id, strategy_id, level)).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, f"无 {level} 记录行"
+    return row[0], json.loads(row[1])
+
+
+class TestShortDisclosureFullGates:
+    """A3-1 补全（tester）：short 三关收口——随机窗/分段两关的返回体
+    与 result_json 记录读回（tasks A4 完成标准①三关均含记录行断言；
+    既有用例仅隔离关有读回）。"""
+
+    def test_short_rw_and_staged_in_body_and_record(self, env, api_client):
+        api_client.app.state.db_path = env["db"]
+        api_client.app.state.data_dir = env["data_dir"]
+        hid = _register_hyp(api_client, direction="short")
+        _make_draft(env["db"], "st_gates", "short")
+
+        rw = api_client.post("/api/research/random-window-test", json={
+            "strategy_id": "st_gates", "symbol": "BTCUSDT", "timeframe": "4h",
+            "data_start": "2024-01-10T00:00:00Z",
+            "data_end": "2024-03-20T00:00:00Z",
+            "window_bars": 60, "n_windows": 2, "seed": 7,
+            "hypothesis_id": hid})
+        assert rw.status_code == 200, rw.text
+        assert rw.json()["direction"] == "short"
+        _, rw_result = _record_result(env["db"], hid, "st_gates",
+                                      "random_window")
+        assert rw_result["direction"] == "short"
+
+        st = api_client.post("/api/research/staged-validation", json={
+            "strategy_id": "st_gates", "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-03-01T00:00:00Z", "end": "2024-03-20T00:00:00Z",
+            "segmentation": "auto", "hypothesis_id": hid})
+        assert st.status_code == 200, st.text
+        assert st.json()["direction"] == "short"
+        _, st_result = _record_result(env["db"], hid, "st_gates",
+                                      "staged_validation")
+        assert st_result["direction"] == "short"
+
+
+class TestLegacyRecordEcho:
+    """A3-4 存量场景补（tester）：幂等早退读既有 result_json 顶层
+    direction，存量记录无键按 "long" 补（tasks A4 完成标准④「存量
+    记录无键场景含」——既有用例均为新路径记录，未覆盖存量无键）。"""
+
+    def test_legacy_record_without_direction_key_echoes_long(
+            self, env, api_client):
+        api_client.app.state.db_path = env["db"]
+        api_client.app.state.data_dir = env["data_dir"]
+        hid = _register_hyp(api_client, direction="short")
+        _make_draft(env["db"], "st_legacy", "short")
+        first = _iso_request(api_client, hid, "st_legacy",
+                             "2024-03-01T00:00:00Z", "2024-03-15T00:00:00Z")
+        assert first.status_code == 200, first.text
+        assert first.json()["direction"] == "short"
+
+        # 构造存量形制：抹掉记录行 result 的 direction 键（模拟
+        # add-direction-channel 之前落库的记录）
+        record_id, result = _record_result(env["db"], hid, "st_legacy",
+                                           "isolated_backtest")
+        result.pop("direction", None)
+        import sqlite3
+        conn = sqlite3.connect(env["db"])
+        try:
+            conn.execute(
+                "UPDATE validation_records SET result=? WHERE record_id=?",
+                (json.dumps(result, ensure_ascii=False), record_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+        again = _iso_request(api_client, hid, "st_legacy",
+                             "2024-03-01T00:00:00Z", "2024-03-15T00:00:00Z")
+        assert again.status_code == 200, again.text
+        body = again.json()
+        assert body["duplicated"] is True
+        assert body["direction"] == "long", "存量无键记录幂等回显补 long"
