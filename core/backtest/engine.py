@@ -204,7 +204,8 @@ def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
         position_mask: 持仓掩码（True=该 bar 持仓中）。
         cost_rate: 单 bar 资金费率。
         position_values: 逐 bar 仓位价值 float64 数组；提供时按
-            position_value（实际借入额）而非总权益计费。
+            |position_value|（实际借入额的绝对量——空头仓位价值为负，
+            借入的名义敞口与方向无关，取绝对值计费）而非总权益计费。
 
     Returns:
         总扣费额。
@@ -212,7 +213,14 @@ def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
     total_cost = 0.0
     for i in range(1, len(adjusted)):
         if position_mask[i]:
-            base = position_values[i - 1] if position_values is not None else adjusted[i - 1]
+            if position_values is not None:
+                # add-direction-channel D-4 修复卡：空头仓位价值为负数，
+                # 带符号计费会使 funding 变成给空头的收入（实证
+                # short=-3533 vs long=+3881 方向翻转）——借入额是名义
+                # 敞口的绝对量，与持仓方向无关（固定正费率保守估计口径）
+                base = abs(position_values[i - 1])
+            else:
+                base = adjusted[i - 1]
             cost = base * cost_rate
             total_cost += cost
             adjusted[i] -= cost
