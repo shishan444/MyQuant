@@ -110,6 +110,7 @@ def register_hypothesis(
             precheck_data_dir=data_dir,   # 登记自动预检（D6，Q1 裁 A）
             trigger_policy=payload.trigger_policy,  # 整体级触发策略（卡2）
             strategy_params=payload.strategy_params,  # 策略层参数声明块（0.4.2 R1）
+            direction=payload.direction,  # 交易方向（add-direction-channel A1）
         )
         return HypothesisResponse(**out)
     except ResearchError as exc:

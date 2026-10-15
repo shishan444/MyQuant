@@ -287,6 +287,7 @@ def register_hypothesis(
     precheck_data_dir: Optional[Path] = None,
     trigger_policy: Optional[Dict[str, Any]] = None,
     strategy_params: Optional[Dict[str, Any]] = None,
+    direction: Optional[str] = None,
 ) -> Dict[str, Any]:
     """登记假设（校验链 + 幂等 + 原子写）。
 
@@ -305,6 +306,12 @@ def register_hypothesis(
     参数声明块（可选对象；显式空对象 {}=显式声明「无参数」，与键缺失
     语义不同）；不进 conditions/不进 conditions_hash（不参与身份指纹
     ——参数变体经终态后重登记产生）；幂等四分支详见 3.6 步与第 4 步。
+
+    direction（add-direction-channel）：交易方向 {"long","short"}，
+    缺省 None 与显式 "long" 语义相同（同指纹同实体）；归一形 short
+    才写 conditions 顶层键——方向随 conditions_json 落库同源进身份
+    指纹（同条件同区间异方向=两条独立假设，family/判定并集/谱系按
+    hash 天然分族零改动）。
 
     Returns:
         {"hypothesis_id", "duplicated": bool, "precheck_warnings"?: dict,
@@ -472,6 +479,21 @@ def register_hypothesis(
         # 构造行为逐位等价
         strategy_params = _validate_strategy_params({}, conditions)
 
+    # 3.7 交易方向校验与归一（add-direction-channel）：值域权威校验在
+    #     本步（REST/MCP 两面穿透到服务层同一校验点；非字符串值在路由
+    #     层已被 pydantic string_type 拦截，服务层直调面由 not in 集合
+    #     判定对跨类型值天然成立）。归一形 short 才写 conditions 顶层
+    #     键（trigger_policy 同款）——写键先于第 4 步 hash 计算，指纹
+    #     输入与 conditions_json 落库同源；None/显式 "long" 一律不写
+    #     键（存量 conditions 字面与 hash 逐位不变）
+    if direction is not None and direction not in ("long", "short"):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"direction 须为 long|short 之一: {direction!r}",
+            detail={"field": "direction", "legal_range": ["long", "short"]})
+    if direction == "short":
+        conditions["direction"] = "short"
+
     # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)
     ranges_hash = hash_json(data_ranges)
@@ -483,12 +505,24 @@ def register_hypothesis(
             existing_params = json.loads(raw) if raw else {}
         except (json.JSONDecodeError, TypeError):
             existing_params = {}
+        # 方向回显（add-direction-channel）：读既有假设 conditions 顶层
+        # 键（存量无键=long）；identity 查询返回全行 dict，conditions 在场。
+        # 值域收敛（security S-1）：脏值不反射——与写入侧归一形口径对称
+        try:
+            _existing_direction = json.loads(
+                existing["conditions"]).get("direction", "long") \
+                if existing.get("conditions") else "long"
+        except (json.JSONDecodeError, TypeError):
+            _existing_direction = "long"
+        if _existing_direction not in ("long", "short"):
+            _existing_direction = "long"
         if not params_declared:
             # 分支①：请求键缺失——不参与声明比对（旧调用方零适配；
             # 组存在时的字面化物化值不改变「未带键」的比对豁免）
             return {
                 "hypothesis_id": existing["hypothesis_id"],
                 "duplicated": True,
+                "direction": _existing_direction,
                 "existing_strategy_params": existing_params,
             }
         # 分支②③：带键（含显式 {}）→ 归一形字面值全等比对
@@ -500,6 +534,7 @@ def register_hypothesis(
             return {
                 "hypothesis_id": existing["hypothesis_id"],
                 "duplicated": True,
+                "direction": _existing_direction,
                 "existing_strategy_params": existing_params,
             }
         # 不等：显式拒绝（防静默丢弃既有声明），detail 附既有摘要与
@@ -588,7 +623,9 @@ def register_hypothesis(
             if strategy_params is not None else None),
         screen_use=screen_use,
     )
-    out = {"hypothesis_id": hid, "duplicated": False}
+    out = {"hypothesis_id": hid, "duplicated": False,
+           # 方向回显（归一形——None/显式 long 均回显 "long"）
+           "direction": direction or "long"}
     if precheck_warnings is not None:
         out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
         # 挂接预检留痕（CARD-03，spec R4「预检执行 MUST 自动落研究日志」
