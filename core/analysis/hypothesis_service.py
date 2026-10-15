@@ -506,12 +506,15 @@ def register_hypothesis(
         except (json.JSONDecodeError, TypeError):
             existing_params = {}
         # 方向回显（add-direction-channel）：读既有假设 conditions 顶层
-        # 键（存量无键=long）；identity 查询返回全行 dict，conditions 在场
+        # 键（存量无键=long）；identity 查询返回全行 dict，conditions 在场。
+        # 值域收敛（security S-1）：脏值不反射——与写入侧归一形口径对称
         try:
             _existing_direction = json.loads(
                 existing["conditions"]).get("direction", "long") \
                 if existing.get("conditions") else "long"
         except (json.JSONDecodeError, TypeError):
+            _existing_direction = "long"
+        if _existing_direction not in ("long", "short"):
             _existing_direction = "long"
         if not params_declared:
             # 分支①：请求键缺失——不参与声明比对（旧调用方零适配；

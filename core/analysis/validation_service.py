@@ -276,8 +276,10 @@ def _dup_payload(existing: Dict[str, Any]) -> Dict[str, Any]:
     返回体同构（MUST，spec 验证证据档案 Requirement）。
     """
     result = json.loads(existing["result"]) if existing["result"] else None
+    # 值域收敛（security S-1）：脏值/null 不反射——恒回显合法二值
     direction = "long"
-    if isinstance(result, dict) and result.get("direction"):
+    if isinstance(result, dict) \
+            and result.get("direction") in ("long", "short"):
         direction = result["direction"]
     return {
         "record_id": existing["record_id"],
@@ -489,9 +491,12 @@ def random_window_test(
         level="random_window")  # G7 五元：随机窗身份（segmentation 空串）
     if existing is not None:
         _rw_result = json.loads(existing["result"]) if existing["result"] else None
-        # 方向同构回显（add-direction-channel A4）：存量无键按 long 补
+        # 方向同构回显（add-direction-channel A4）：存量无键/脏值按 long
+        # 补（security S-1 值域收敛——恒回显合法二值）
         _rw_direction = _rw_result.get("direction") \
             if isinstance(_rw_result, dict) else None
+        if _rw_direction not in ("long", "short"):
+            _rw_direction = "long"
         return {"record_id": existing["record_id"], "seed": seed,
                 "duplicated": True,
                 # 0.3.3 G6：幂等重放与首次请求同形——顶层 verdict 取

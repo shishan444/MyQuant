@@ -244,8 +244,9 @@ def _apply_funding_costs(
         timeframe: bar 周期串（未知周期按 4h 折算）。
         trades_df: 逐笔记录（Entry/Exit Timestamp）；None=全程按持仓
             扣费（legacy 形制），空表=零费用（无持仓即无资金费）。
-        position_values: 逐 bar 仓位价值数组；提供时按仓位价值
-            （实际借入额）而非总权益计费。
+        position_values: 逐 bar 仓位价值数组；提供时按
+            |position_value|（实际借入额的绝对量——空头仓位价值为负，
+            借入的名义敞口与方向无关）而非总权益计费。
     """
     if leverage <= 1:
         return equity_curve, 0.0
