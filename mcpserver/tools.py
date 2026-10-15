@@ -543,7 +543,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         422）。
         strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
         正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
-        position_size/leverage/exit_fraction/add_fraction/max_exposure
+        position_size/leverage/exit_fraction/add_fraction/max_exposure/
+        max_hold
         （值域按 sl_mode 分叉：pct/trail 档 [0.005,0.20] 比例值、
         atr 档 [0.5,5.0] ATR 倍数；sl_mode∈{pct,atr,trail}；
         take_profit>stop_loss，trail 档豁免；position_size∈
@@ -551,7 +552,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         add_fraction∈(0,1] 须伴随宿主组分批声明；max_exposure∈
         (0,生效杠杆]（未声明 leverage 时上界 1——声明更大上限须同
         时声明 leverage）；三键有组无值时登记归一化字面化 0.5/0.1/
-        1.0）；
+        1.0）；max_hold∈[1,200] 正整数 bar 数——最长持有 N 根 K 线的
+        时间出场（到期无条件平仓，与条件出场/止损止盈并行的第三出场
+        机制；不声明=无时间离场；N=1 行为等价 N=2——入场 bar 的出场
+        时点被入场单占据，最早平仓在入场次 bar；仅回测域生效——live
+        链路当前不承载，实盘化前统一处理）；
         翻译时逐参数映射进产物 risk_genes（返回体 risk_genes=
         "declared"；无声明=平台默认 "platform_default"）。声明块
         不进条件指纹与幂等身份（同条件集+同区间集=同一假设——参数

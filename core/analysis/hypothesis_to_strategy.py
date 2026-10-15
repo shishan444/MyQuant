@@ -26,14 +26,16 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
 
-# 同签名分流的策略层参数比对集（D2/DC-9 九字段）：签名未编码的策略层
-# 参数异 ⇒ 不误返既有——atr_period 翻译产物恒 14、库内手工 DNA 可设
-# 异值，异值即建新实体防语义偷换；exit_fraction/add_fraction/max_exposure
-# 三键 4.3 前不入 RiskGenes（dict.get 缺键读 None，存量双方恒等——
-# 字段扩展后比对自动携带，连续）
+# 同签名分流的策略层参数比对集（D2/DC-9，add-max-hold-exit 扩十字段）：
+# 签名未编码的策略层参数异 ⇒ 不误返既有——atr_period 翻译产物恒 14、
+# 库内手工 DNA 可设异值，异值即建新实体防语义偷换；exit_fraction/
+# add_fraction/max_exposure 三键 4.3 前不入 RiskGenes（dict.get 缺键
+# 读 None，存量双方恒等——字段扩展后比对自动携带，连续）；max_hold
+# 同款（add-max-hold-exit D-2：签名不编码策略层参数既有模式）
 _D2_RISK_FIELDS = (
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "atr_period",
+    "max_hold",
 )
 
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
@@ -164,7 +166,8 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
     if not declared:
         return RiskGenes()  # platform_default
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
-            "leverage", "exit_fraction", "add_fraction", "max_exposure")
+            "leverage", "exit_fraction", "add_fraction", "max_exposure",
+            "max_hold")
     # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
     # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
     # （=手工 DNA 缺省语义），不穿透进 RiskGenes

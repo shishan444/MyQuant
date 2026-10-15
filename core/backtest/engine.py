@@ -137,12 +137,15 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
     返回 (sl_mode_val, atr_col_or_None, exit_fraction, add_fraction,
-    max_exposure)：
+    max_exposure, max_hold)：
     - sl_mode 经 sl_mode_code 映射分派码；atr 模式装载 ATR 列（装载
       校验在 _load_atr_column），非 atr 模式返回 None——占位数组由
       调用方决定（单路径全 1 向量、批量路径逐列堆叠）
     - 分批三参数缺省物化（0.4.2 R3/A5）：None→0.5/0.1/1.0——「有
       声明用声明、无声明用缺省」全路径统一，引擎内恒具体值
+    - max_hold 缺省物化（add-max-hold-exit D-3）：None→0.0=禁用
+      （沿 sl_stop>0 才启用形制）；1D 逐列常数参数族（numba 标量
+      索引——2D 形式破坏比较语义且与批量路径分叉）
 
     review-042 CARD-04：_build_portfolio 与 batch_run 原为双份实现
     （批量处注释自证「漏装=该列按缺省执行=与单路径静默分叉」），装配
@@ -158,7 +161,10 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
                     if risk_genes.add_fraction is not None else 0.1)
     max_exposure = (float(risk_genes.max_exposure)
                     if risk_genes.max_exposure is not None else 1.0)
-    return sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure
+    max_hold = (float(risk_genes.max_hold)
+                if risk_genes.max_hold is not None else 0.0)
+    return (sl_mode_val, atr_col, exit_fraction, add_fraction,
+            max_exposure, max_hold)
 
 
 @dataclass
@@ -354,26 +360,31 @@ def _apply_leverage_to_equity(
 
 @njit
 def pre_sim_func_nb(c):
-    """仿真前置状态初始化（每列 entry_price / is_liquidated / peak_price 数组）。
+    """仿真前置状态初始化（每列 entry_price / is_liquidated / peak_price
+    / entry_bar 数组）。
 
     经 vbt 生命周期链作为 order_func_nb 首组参数传入，供逐 bar 回调
     就地读写（入场价记忆、清算标记与 trail 峰值——float 承载因 numba
     状态数组须数值型）。peak_price（0.4.2 R2）：trail 模式持仓期峰值
     （多=最高价/空=最低价），0.0=无持仓（开仓重置成交价、清仓清零）。
+    entry_bar（add-max-hold-exit D-3）：入场 bar 序号记忆（与入场价
+    同点写入——每次入场独立重计持有根数；0.0=无持仓）。
     """
     n_cols = c.target_shape[1]
     entry_price = np.full(n_cols, 0.0, dtype=np.float64)
     is_liquidated = np.full(n_cols, 0.0, dtype=np.float64)  # 0.0=False，1.0=True
     peak_price = np.full(n_cols, 0.0, dtype=np.float64)
-    return (entry_price, is_liquidated, peak_price)
+    entry_bar = np.full(n_cols, 0.0, dtype=np.float64)
+    return (entry_price, is_liquidated, peak_price, entry_bar)
 
 
 @njit
-def order_func_nb(c, entry_price, is_liquidated, peak_price,
+def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, sl_modes, atr_arr,
                   exit_fractions, add_fractions, max_exposures,
+                  max_holds,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
                   mmr_tier_max, mmr_tier_rate):
@@ -410,6 +421,9 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
         exit_fractions, add_fractions, max_exposures: 分批逐列参数
             （1D float64；装配层物化缺省 0.5/0.1/1.0——A5「有声明用
             声明、无声明用缺省」全路径统一，引擎内不再判 None）。
+        max_holds: 时间出场逐列参数（1D float64；装配层物化 None→0.0
+            =禁用——沿 sl_stop>0 才启用形制；0.0 以外的值=持有第 N
+            根 bar 的出场时点无条件全平，N 为该值取整）。
         fee, slippage: 标量费滑（基础费率——杠杆放大归
             _apply_leverage_to_equity 后处理）。
         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
@@ -417,6 +431,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
     """
     i = c.i
     col = c.col
+    # entry_bar 清零纪律（add-max-hold-exit D-3）：时间出场与信号出场
+    # 段与 entry_price 同点清零；SL/TP/清算段不清——其消费点（时间
+    # 出场分支）守卫含 entry_price>0，且入场时无条件重写，残留旧值
+    # 永不生效（行为等价的整洁写法，非正确性依赖）
 
     # 逐列参数查取
     direction_val = direction_vals[col]
@@ -635,10 +653,29 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
                             slippage=effective_slippage,
                         )
 
+    # 时间出场（max_hold——add-max-hold-exit D-3，参数出场族第三机制）：
+    # 持有第 N 根 bar 的出场时点无条件全平（A-1 口径：入场成交 bar 计
+    # 第 1 根，判定式 (i−entry_bar+1)≥N）。判定序位于 SL/TP 之后、信
+    # 号出场之前——同 bar 双命中时价格触发优先于到期（止损保护优先）；
+    # 减仓/加仓不清计数（不动 entry_bar——部分离场不动整仓时间计数）。
+    # 0=禁用（装配层 None→0.0 物化，首判即假——存量行为精确等价）
+    if max_holds[col] > 0.5 and c.position_now != 0.0 and entry_price[col] > 0.0:
+        if (i - entry_bar[col] + 1.0) >= max_holds[col]:
+            entry_price[col] = 0.0
+            peak_price[col] = 0.0
+            entry_bar[col] = 0.0
+            return vbt_nb.order_nb(
+                size=np.float64(-c.position_now),
+                size_type=np.int64(0),
+                fees=effective_fee,
+                slippage=effective_slippage,
+            )
+
     # 离场信号
     if exits[i, col] > 0.5 and c.position_now != 0.0:
         entry_price[col] = 0.0
         peak_price[col] = 0.0
+        entry_bar[col] = 0.0
         return vbt_nb.order_nb(
             size=np.float64(-c.position_now),
             size_type=np.int64(0),
@@ -649,6 +686,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price,
     # 入场信号
     if entries[i, col] > 0.5 and c.position_now == 0.0:
         entry_price[col] = current_price
+        entry_bar[col] = float(i)  # 持有计数起点（每次入场独立重计）
         peak_price[col] = current_price  # trail 峰值重置为成交价（开仓重锚）
         # mixed 模式：方向由 direction_signal 定交易侧
         dir_sign = direction_signal[i, col]
@@ -752,11 +790,12 @@ class BacktestEngine:
         leverage = float(dna.risk_genes.leverage)
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
-        # SL 模式分派+ATR 装载+分批三参数（0.4.2 R2/R3）：per-DNA 装配
-        # 单源 _per_dna_risk_params（与 batch_run 共享——漏装即与批量
-        # 路径静默分叉）；非 atr 模式占位全 1 数组（引擎不消费）
-        sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure = \
-            _per_dna_risk_params(dna.risk_genes, enhanced_df)
+        # SL 模式分派+ATR 装载+分批三参数+时间出场（0.4.2 R2/R3、
+        # add-max-hold-exit D-3）：per-DNA 装配单源 _per_dna_risk_params
+        # （与 batch_run 共享——漏装即与批量路径静默分叉）；非 atr 模式
+        # 占位全 1 数组（引擎不消费）
+        (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
+         max_hold) = _per_dna_risk_params(dna.risk_genes, enhanced_df)
         if atr_col is None:
             atr_col = np.ones(len(enhanced_df), dtype=np.float64)
         atr_2d = atr_col.reshape(-1, 1)
@@ -799,6 +838,10 @@ class BacktestEngine:
             np.array([exit_fraction], dtype=np.float64),
             np.array([add_fraction], dtype=np.float64),
             np.array([max_exposure], dtype=np.float64),
+            # 时间出场 1D 单元素（逐列常数参数族——与 sl_stops 等九参数
+            # 同形制；2D 形式在 order_func_nb 标量索引处破坏 numba 比较
+            # 语义且与批量路径分叉，add-max-hold-exit D-3）
+            np.array([max_hold], dtype=np.float64),
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
@@ -1106,6 +1149,9 @@ class BacktestEngine:
         exit_fractions = np.array([p[2] for p in per_dna], dtype=np.float64)
         add_fractions = np.array([p[3] for p in per_dna], dtype=np.float64)
         max_exposures = np.array([p[4] for p in per_dna], dtype=np.float64)
+        # 时间出场逐列参数（add-max-hold-exit D-3：单源装配追加元——
+        # 漏装即该列按 0 执行=与单路径静默分叉，CARD-04 同款防护）
+        max_holds = np.array([p[5] for p in per_dna], dtype=np.float64)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -1128,6 +1174,7 @@ class BacktestEngine:
             exit_fractions,
             add_fractions,
             max_exposures,
+            max_holds,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,

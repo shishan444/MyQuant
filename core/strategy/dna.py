@@ -180,6 +180,9 @@ class RiskGenes:
     exit_fraction: Optional[float] = None   # 部分离场比例（reduce 分支）
     add_fraction: Optional[float] = None    # 加仓比例（add 分支，分母=当前权益）
     max_exposure: Optional[float] = None    # 总敞口上限（名义/权益；None 引擎侧按 1.0）
+    # 时间出场（add-max-hold-exit）：最长持有 N 根 bar 的到期无条件
+    # 平仓；None=无时间离场（存量语义，引擎侧物化 0=禁用）
+    max_hold: Optional[int] = None
 
     def to_dict(self) -> dict:
         # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
@@ -200,6 +203,8 @@ class RiskGenes:
             result["add_fraction"] = self.add_fraction
         if self.max_exposure is not None:
             result["max_exposure"] = self.max_exposure
+        if self.max_hold is not None:
+            result["max_hold"] = self.max_hold
         return result
 
     @classmethod

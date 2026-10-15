@@ -92,7 +92,7 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 # 配对，未知键状态退出）
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
-    "exit_fraction", "add_fraction", "max_exposure",
+    "exit_fraction", "add_fraction", "max_exposure", "max_hold",
 })
 
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
@@ -124,7 +124,8 @@ def _validate_strategy_params(
     """
     from core.strategy.dna import SL_MODES
     from core.strategy.validator import (
-        MAX_LEVERAGE, SL_ATR_MAX, SL_ATR_MIN, SL_PCT_MAX, SL_PCT_MIN,
+        MAX_HOLD_MAX, MAX_HOLD_MIN, MAX_LEVERAGE, SL_ATR_MAX, SL_ATR_MIN,
+        SL_PCT_MAX, SL_PCT_MIN,
     )
 
     if not isinstance(params, dict):
@@ -214,6 +215,20 @@ def _validate_strategy_params(
                 "RESEARCH_PARAM_INVALID",
                 f"leverage {leverage!r} 越出值域 [1, {MAX_LEVERAGE}]",
                 detail={"field": "leverage", "legal_range": [1, MAX_LEVERAGE]})
+
+    # 时间出场声明（add-max-hold-exit D-1）：正整数 bar 数（最长持有
+    # N 根 K 线的到期无条件平仓）；值域单源 validator（MAX_HOLD_MIN/
+    # MAX——与 validate_dna 手工 DNA 校验双消费方同源）
+    max_hold = params.get("max_hold")
+    if max_hold is not None:
+        if not isinstance(max_hold, int) or isinstance(max_hold, bool) \
+                or not (MAX_HOLD_MIN <= max_hold <= MAX_HOLD_MAX):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"max_hold {max_hold!r} 越出值域 "
+                f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}]（正整数 bar 数）",
+                detail={"field": "max_hold",
+                        "legal_range": [MAX_HOLD_MIN, MAX_HOLD_MAX]})
 
     # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
     #    纯组间规则在登记链主体——不依赖声明块携带）──

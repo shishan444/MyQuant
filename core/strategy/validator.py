@@ -33,6 +33,14 @@ SL_ATR_MAX = 5.0
 # 杠杆红线单源（D4/DC-5）：api/schemas.py 三处 Field(le=…)、validator
 # risk 域、登记声明块校验五处同源引用——改值代价=一处常量+边界用例
 MAX_LEVERAGE = 10
+# 时间出场持有上界（add-max-hold-exit D-4）：max_hold 正整数 bar 数
+# 值域单源——登记声明块校验（hypothesis_service）与 validate_dna 手工
+# DNA 校验双消费方（DC-15 权威双点同族）。MIN=1=「持有 1 根 bar 即
+# 离场」的最短合法语义（N=1 物理退化为与 N=2 等价——入场 bar 时点被
+# 入场单占据，见 max-hold-exit spec）；MAX=200 与指标周期类参数上界
+# （ParamDef period max=200）的 bar 数语义量级习惯一致
+MAX_HOLD_MIN = 1
+MAX_HOLD_MAX = 200
 
 
 @dataclass
@@ -217,6 +225,21 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         errors.append(
             f"max_exposure {me_val} out of range (0, {risk.leverage}] "
             f"(bounded by risk_genes.leverage)")
+
+    # 时间出场持有上界（add-max-hold-exit D-1）：None=合法缺省态（无
+    # 时间离场——存量语义），不报错；登记路径经声明块校验前置拦截。
+    # 类型防护（security S-2 修复）：与登记侧同形制——bool 穿透值域
+    # （1<=True<=200 成立）静默化为 N=1、float 穿透取整、str 抛裸
+    # TypeError，均在类型层拦截
+    mh_val = risk.max_hold
+    if mh_val is not None:
+        if not isinstance(mh_val, int) or isinstance(mh_val, bool):
+            errors.append(
+                f"max_hold must be an integer (bars), got {type(mh_val).__name__}")
+        elif not (MAX_HOLD_MIN <= mh_val <= MAX_HOLD_MAX):
+            errors.append(
+                f"max_hold {mh_val} out of range "
+                f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}] (bars)")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
