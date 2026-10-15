@@ -209,6 +209,9 @@ class TestPrecheck:
         out = r.stdout + r.stderr
         assert "已被以下进程监听" in out
         assert str(hog.proc.pid) in out, "错误须含占用进程 PID"
+        assert "python" in out, "错误须含占用进程命令行线索（ps command）"
+        assert "stop.sh" in out, "错误须附处置指引（stop.sh 清理或手工处置）"
+        assert hog.proc.poll() is None, "预检失败不得擅杀占用进程（处置权归操作者）"
         assert not (REPO / ".myquant_api.pid").exists(), "PID 文件未写入"
 
     def test_b2_mcp_precheck_fails(self, ports, pid_guard, hogs, tmp_path):
@@ -221,6 +224,22 @@ class TestPrecheck:
         assert "启动成功" not in out
         assert str(ports["mcp"]) in out
         assert str(hog.proc.pid) in out
+
+    def test_default_mode_api_failure_stops_subsequent_services(
+            self, ports, pid_guard, hogs, tmp_path):
+        """spec「端口占用显式失败」（默认模式形态）+ B3 完成标准③：
+        多服务模式先行服务预检失败 → exit 1 使后续 MCP/Web 均不被拉起
+        （无 PID 文件、无 Web 启动输出、汇总块不打印）。"""
+        hog = hogs(_HEALTH_HOG, ports["api"])
+        assert hog.wait_listening()
+        r = _run_start([], _env(ports, tmp_path / "q.db"))
+        assert r.returncode == 1
+        out = r.stdout + r.stderr
+        assert "启动成功" not in out
+        assert "MyQuant 服务已启动" not in out, "失败路径汇总块不得打印"
+        assert "Web 前端" not in out, "先行失败后 Web 不被拉起"
+        assert not (REPO / ".myquant_mcp.pid").exists(), "后续 MCP 不被拉起"
+        assert not (REPO / ".myquant_web.pid").exists()
 
 
 # ── B3/B4：假成功路径（竞态窗构造） ──────────────────────────
@@ -243,6 +262,10 @@ class TestVerifyResponder:
         assert ("实际应答者是既有进程" in out
                 or "监听者不是本次进程" in out), out
         assert str(hog.proc.pid) in out, "错误须含实际应答/监听者 PID"
+        if "实际应答者是既有进程" in out:
+            # spec Scenario「假成功路径」THEN：形态一（本次已死）PID 文件被清理
+            assert not (REPO / ".myquant_api.pid").exists(), \
+                "形态一（本次进程已死）死 PID 文件必须清理"
 
     def test_b4_mcp_fake_success_intercepted(self, ports, pid_guard, hogs):
         """B4（假成功路径 MCP）：本次 MCP 秒死（坏档位 env——经实测
@@ -264,12 +287,15 @@ class TestVerifyResponder:
 
 class TestThirdState:
     def test_b5_exhausted_alive_exits_nonzero_textual(self):
-        """B5（降级文本断言）：进程仍活分支 exit 1 在文且不含成功字样。"""
+        """B5（降级文本断言）：进程仍活分支 exit 1 在文且不含成功字样。
+        alive 切分须在 else 前收界——不收界时已死分支的 exit 1 会兜住
+        断言，「仍活分支 exit 1 被回退删除」这一第三态收编核心回归
+        无法被识别（反证实验证实，见回归记录）。"""
         src = START.read_text(encoding="utf-8")
         api_seg = src.split("start_api")[1].split("start_mcp")[0]
         mcp_seg = src.split("start_mcp")[1].split("start_web")[0]
         for seg, label in ((api_seg, "api"), (mcp_seg, "mcp")):
-            alive = seg.split("kill -0")[1]  # 仍活分支
+            alive = seg.split("kill -0")[1].split("else")[0]  # 仍活分支
             assert "exit 1" in alive, f"{label} 仍活分支缺 exit 1"
             assert "启动成功" not in alive, f"{label} 仍活分支不得含成功字样"
 
@@ -292,7 +318,7 @@ class TestNormalPath:
         start.sh）逐字节一致（PID/端口数字归一）。真实启动两轮（分支
         版/main 版各一次），间以自管理清理。main 版放 scripts/ 同级
         （APP_DIR 推导依赖脚本位置——放 tmp 会指向错误的 venv）。"""
-        main_sh = REPO / "scripts" / ".start_main_test.sh"
+        main_sh = REPO / f"scripts/.start_main_test_{os.getpid()}.sh"
         main = subprocess.run(
             ["git", "show", "main:scripts/start.sh"],
             cwd=REPO, capture_output=True, text=True, check=True)
@@ -329,6 +355,22 @@ class TestNormalPath:
         assert out_branch == out_main, (
             f"正常路径输出漂移:\n--- 分支 ---\n{out_branch}\n--- main ---\n{out_main}")
         assert "API 服务启动成功" in out_branch
+
+    def test_mcp_normal_path_starts_and_exits_zero(self, ports, pid_guard,
+                                                   tmp_path):
+        """start_mcp 成功路径行为补位（B2/B4 均为失败路径，成功路径此前
+        仅 B11 文本锚保护打印行）：-m 端口空闲 → tcp_probe 命中本次进程、
+        verify_responder 通过、退出 0、PID 文件在。API 未起仅 warning
+        不阻塞（spec「API 可达性自检」语义）。"""
+        try:
+            r = _run_start(["-m"], _env(ports, tmp_path / "q.db"))
+            assert r.returncode == 0, r.stdout + r.stderr
+            out = r.stdout + r.stderr
+            assert "MCP 服务启动成功" in out
+            assert "127.0.0.1:%d/mcp" % ports["mcp"] in out
+            assert (REPO / ".myquant_mcp.pid").exists()
+        finally:
+            _cleanup_started_services()
 
 
 # ── B9：PID 活跳过 ────────────────────────────────────────────
@@ -399,3 +441,5 @@ class TestTextualAnchors:
         # main 内 start_api 先于 start_mcp——exit 1 使后者不执行（set -e
         # + 函数内直接 exit 的传导在 B10 行为证）
         assert src.index("start_api") < src.index("start_mcp")
+        # spec：先行就绪服务不自动回滚——失败文案须附统一清理指引
+        assert "已启动的其他服务可用 scripts/stop.sh 统一清理" in src

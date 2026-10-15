@@ -79,41 +79,48 @@ precheck_port() {
     pids=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
     if [[ -n "$pids" ]]; then
         error "$label 无法启动：端口 $port 已被以下进程监听"
-        for pid in $pids; do
-            error "  PID $pid: $(ps -p "$pid" -o command= 2>/dev/null || echo '未知（可能已退出）')"
-        done
+        print_pid_clues "占用进程" $pids
         error "本脚本不自动杀占用进程（处置权在操作者）：确认后可用 scripts/stop.sh 清理或手工处置，然后重跑"
         exit 1
     fi
 }
 
+# 逐 PID 线索打印（三失败路径统一形制——reviewer3 F2 收敛：三处逐
+# PID 打印重复提取；ps 失败兜底「未知」——线索尽力而为，不因 ps
+# 失败阻断报错主语义）
+print_pid_clues() {
+    local label="$1"; shift
+    for p in "$@"; do
+        error "  ${label} PID $p: $(ps -p "$p" -o command= 2>/dev/null || echo '未知')"
+    done
+}
+
 # 应答者身份核验（fix-start-silent-failure B-2）：健康检查通过后核验
-# 「本次 $pid 存活且端口监听者集合含 $pid」——预检与绑定之间的竞态
+# 「本次 $pid 存活且端口监听者恰为 $pid」——预检与绑定之间的竞态
 # 窗口兜底（curl 命中他人的假成功经典形态）。顺序铁律：健康通过 →
 # 核验 → 核验通过才允许打印成功。形态一（本次进程已死+他人应答）删
 # PID 文件（死值不残留）；形态二（活但非监听者）保留 PID 文件（stop.sh
-# 仍可管理它）——两种失败形态的清理时机不同。监听者集合用空格包围
-# 子串匹配（正确处理多 PID 输出——IPv4/IPv6 双 socket 等）
+# 仍可管理它）——两种失败形态的清理时机不同。
+# 监听者判定=单成员严格相等（reviewer3 F1 修复：空格包围子串匹配在
+# lsof 多行输出〔多进程共存监听〕下对行尾成员永不匹配——误杀正常
+# 路径；且多进程共存时「应答者必须是本次进程」的不量本就要求唯一
+# 监听者——他人共存即失败，保守方向与不变量一致）
 verify_responder() {
     local pid="$1" port="$2" label="$3" pid_file="$4"
     if ! kill -0 "$pid" 2>/dev/null; then
         local holders
         holders=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
         error "$label 启动失败：本次进程 (PID $pid) 已退出，但健康检查有应答——端口 $port 的实际应答者是既有进程"
-        for p in $holders; do
-            error "  应答进程 PID $p: $(ps -p "$p" -o command= 2>/dev/null || echo '未知')"
-        done
+        print_pid_clues "应答进程" $holders
         error "请处置应答进程后重跑；已启动的其他服务可用 scripts/stop.sh 统一清理"
         rm -f "$pid_file"
         exit 1
     fi
     local listeners
     listeners=$(lsof -ti :"$port" -sTCP:LISTEN 2>/dev/null || true)
-    if [[ " $listeners " != *" $pid "* ]]; then
+    if [[ "$listeners" != "$pid" ]]; then
         error "$label 启动失败：健康检查有应答，但端口 $port 的监听者不是本次进程 (PID $pid)"
-        for p in $listeners; do
-            error "  监听进程 PID $p: $(ps -p "$p" -o command= 2>/dev/null || echo '未知')"
-        done
+        print_pid_clues "监听进程" $listeners
         error "本次进程仍在运行（可用 scripts/stop.sh 一并清理）；请处置监听进程后重跑"
         exit 1
     fi
