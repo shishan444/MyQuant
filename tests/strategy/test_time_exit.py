@@ -85,6 +85,24 @@ class TestDomainValidation:
         assert validate_dna(_dna("12h", 600)).is_valid, "12h 仍是日内域"
         assert validate_dna(_dna("1d", None)).is_valid, "无声明不涉组合"
 
+    def test_c5_validate_dna_type_and_range_rejected(self):
+        """validate_dna 侧 time_exit 类型/值域两分支（闸门覆盖缺口
+        补锚——登记面同语义已测，DNA 侧独立分支直调）：非 int/bool 拒、
+        越界拒、合法值放行。"""
+        from core.strategy.validator import validate_dna
+
+        def _dna(te):
+            dna = make_dna()
+            dna.risk_genes.time_exit_utc = te
+            return dna
+
+        for bad in ("x", 12.5, True, -1, 1440):
+            res = validate_dna(_dna(bad))
+            assert not res.is_valid, f"{bad!r} 应拒"
+            assert any("time_exit" in e for e in res.errors)
+        assert validate_dna(_dna(600)).is_valid
+        assert validate_dna(_dna(0)).is_valid, "0 是 0:00 合法时刻"
+
 
 class TestEngineSentinelAndTrigger:
     """U6b/c/d/e/f：引擎语义。"""
@@ -309,3 +327,20 @@ class TestPerBarExitTiming:
         assert hits["Status"].iloc[0] == "Closed", "全平非部分出场"
         # 同 Position 无拆分重复（双机制不得各出一次）
         assert int((tr["Position Id"] == hits["Position Id"].iloc[0]).sum()) == 1
+
+    def test_nontime_index_fallback_zero_impact(self):
+        """非时序索引兜底（闸门覆盖缺口补锚）：bar_ts 分钟数组转换
+        失败时填 0——声明 time_exit 的回测在非时序索引合成帧上跑通
+        不炸（兜底「零影响」声称的行为证据；ts 数组仅时刻分支消费，
+        填 0 时刻判定按 bar 0 分钟基准仍可触发）。"""
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.executor import (
+            dna_to_signal_set, clear_indicator_cache)
+        dna = make_dna(entry_value=70, exit_value=101)
+        dna.risk_genes.time_exit_utc = 600
+        dna.execution_genes.timeframe = "1h"
+        df = make_enhanced_df(n=60, freq="1h", seed=7).reset_index(drop=True)
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df)
+        res = BacktestEngine().run(dna, df, signal_set=sig)
+        assert res.total_trades >= 1, "兜底路径回测可完成且出场发生"

@@ -311,3 +311,36 @@ def test_u7d_stats_mask_reads_hour_utc(tmp_path):
     expect = (df["hour_utc"] >= 12).fillna(False).astype(bool)
     assert mask.tolist() == expect.tolist(), "统计面掩码与列定义一致"
     assert mask.sum() > 0, "12:00 起的 bar 应命中（非全 False 假绿）"
+
+
+def test_inject_idempotent_and_naive_utc():
+    """注入助手幂等+naive 索引语义（闸门覆盖缺口补锚）：二次注入值
+    不变；naive 索引按 UTC 解释（装载层已统一 tz-aware——防御分支）。"""
+    from core.data.derived_columns import inject_derived_columns
+    idx = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-01 05:30", tz="UTC")], name="timestamp")
+    df = pd.DataFrame({"close": [1.0]}, index=idx)
+    inject_derived_columns(df)
+    v1 = df["hour_utc"].iloc[0]
+    inject_derived_columns(df)
+    assert df["hour_utc"].iloc[0] == v1 == 5.5, "幂等且值=5.5（5:30）"
+    df_naive = pd.DataFrame(
+        {"close": [1.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2024-01-01 05:30")]))
+    inject_derived_columns(df_naive)
+    assert df_naive["hour_utc"].iloc[0] == 5.5, "naive 按 UTC 解释"
+
+
+def test_executor_direct_read_missing_column_fails_fast():
+    """执行直读白名单 fail-fast（闸门覆盖缺口补锚）：帧缺 hour_utc 列
+    （绕过装载层的工程接线错误形）显式 ValueError 附指路——不走前缀
+    兜底静默取错列。"""
+    from core.strategy.executor import _get_indicator_column
+    from core.strategy.dna import SignalGene, SignalRole
+    df = pd.DataFrame(
+        {"close": [1.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2024-01-01", tz="UTC")]))
+    gene = SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                      {"type": "gt", "threshold": 12})
+    with pytest.raises(ValueError, match="loader must inject"):
+        _get_indicator_column(df, gene)

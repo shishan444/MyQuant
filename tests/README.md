@@ -232,3 +232,21 @@
 - 退化等值锚（KC-S3）只在 atr_p==ema_p 且 mult=2 形成立——KC 存量债务全量特殊性下的唯一修复前对照点（真实数据 18941 行三列零差异基线载锚文件 docstring）；列名规则两指标不同形（BB std_str 仅整数形去尾 .0、KC mult 保留 2.0 形）——各自锚定，勿为表面一致性改任何一侧
 - KC 自算三列在 atr_p>ema_p 形下遮罩分裂（middle 首个有效 bar 早于带列）——序关系不变量锚现按 middle 遮罩断言（kc_20_10 形三列一致安全）；若对 atr_p>ema_p 形断言序关系，须改按三列共有有效区，否则 middle 遮罩内带列 NaN 段会误红；下游按行消费三列时中间段仅有 middle，对拍历史 KC 数字须知
 
+## 十区 · add-session-structure-expression（时段与结构表达力）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| 三结构指标（SessionRange/Pivot/Supertrend） | 四不变量合成序列逐 bar 人工核算（会话外终值保持至 UTC 日界——D-3 方向 B 裁决；start_minute>0 边界锚「保持≠跨日延续」；Pivot 确认延迟 j+right 落位+确认前不可见+ffill；Supertrend 常数行情+dir 二值+shift(1) 防前视回归）；vwap 人工核算；列名 encode/decode 往返三形；尾部 NaN 检查豁免（段首周期性 NaN 4h 下 16.7%>5% 门槛） | `analysis/test_structure_indicators.py`+`backtest/test_indicators.py` | Supertrend 文献数值序列锚未落（P7 以常数退化+趋势翻转计数兑现，辨别力有限） |
+| time_exit_utc 时刻出场 | 值域族四拒三放行；逐笔出场 bar 开盘时刻锚（排除法：唯一出场途径=time_exit——t=600 全 10:00/t=0 全 0:00 非禁用/None 零中途出场/4h 网格左闭右开 t=0→0:00、t=240→4:00 归下根）；1d 退化≡max_hold=1 metrics 全等（引擎层行为锚——入口按 C5 拒该组合）；SL 同 bar 双命中单次全平（两分支订单同构，判定序不可观察）；五点同步对拍；validate_dna 拒日线组合（C5：1d+值拒/4h、12h+值放/1d+None 放） | `strategy/test_time_exit.py` | — |
+| hour_utc 基础列通道 | 值形制 [0,24) 半开；域拒三面同码同 detail 键集（ref_tf 引用周期优先、base_tf 回退）；登记面 tf=1d 修饰拒+翻译面独立拒绝（纵深防御，直调 `_translate_conditions`）；1d 帧不注入（双保险物理面）；统计面 mask_for 直读；全链四层+基因三元组+双侧触发一致；预热防炸白名单跳过；target [0,24) 硬校验（C4：24 拒=半开域上界）；action 域 cross/price 拒 | `data/test_hour_utc_channel.py`+`analysis/test_column_ref.py` | — |
+| 跨参数钩子+分钟预热 | 钩子机制（测试注册指标 > 与 == 各一+detail 逐键+无钩子零变化+SessionRange 实指标拒）；分钟维折算三锚+base_tf=None 存量 200；轴分钟维两向锚（@1m 轴@1h 基准=200 不虚增/@1h 轴@1m 基准=1440 不欠账——D-2 修复契约值）；WARMUP_RULE_TEXT 第五句披露面锚 | `analysis/test_column_ref.py`+`analysis/test_registry_meta.py` | — |
+| 端到端与计数 | 多空全链至隔离验证出结果（SessionRange 突破入场+time_exit 出场+回执四键）；inspect_cases 两锚（pivot 确认前不可见+session 命中结构 hour⊆{1..23} 且存在 hour>=8 会话外位点——D-3 语义钉入 e2e）；非法族四项（时段倒序/时刻越界/确认根数零/日线引用）；计数 48 双断言+mcpserver 四处快照 | `api/test_session_structure_e2e.py`+`mcpserver/test_contract_parity.py` 等 | P8 真实归档数据未用（合成 make_ohlcv 固定 seed——数据停更裁决下以合成为准） |
+| 回执与测试基建 | 翻译回执身份四键（含 time_exit_utc）；bool 不穿透四位（C6：`_translate_receipt`/`_identity_reflection` 的 max_hold/time_exit_utc）；tier_registered 顺序依赖修复（自足注册 conftest `_FakeMcp`/`_FakeApi`） | `mcpserver/test_return_contract.py` | — |
+
+### add-session-structure-expression 守护行
+- SessionRange 会话外语义=D-3 方向 B 裁决（design 2.3 原文「窗口结束后输出固定值至日终」）：u3a 主锚+u3a2 边界锚双锁——改回会话外 NaN、或把保持做过头成跨日延续（日段 ffill 形态误填日界后窗口前段）均红
+- time_exit 哨兵 -1.0 与 max_hold 0.0 家族差异（0=0:00 合法时刻非禁用）——物化锚+0:00 逐笔锚双锁；引擎层 1d 退化锚为「入口拒绝（C5）、引擎成立」的事实锁（dna_to_signal_set/BacktestEngine 均不经 validate_dna——动任一入口加校验时须复核该前提）
+- TestPerBarExitTiming 排除法前提=SL/TP/max_hold 全 None+出场信号阈值永不触发——改 make_dna 默认值或引擎新增出场机制时须复核「唯一出场途径」仍独占，否则逐笔时刻断言失真
+- 轴分钟维量纲=基准 bar（时间量折算，D-2 修复）——两向锚写死 200/1440 契约值；动 TF_MINUTES 表、span 下限或折算式必红
+- 存量等价性证据链：X10 无声明路径逐字节对照 main 基线（git archive 同 venv 同 seed 同参）——合入前如再动 engine/装载实现，须重跑该对照（脚本形制见闸门留证）
+

@@ -320,3 +320,15 @@ class TestCrossParamsHook:
         ok = _resolve_indicator_ref({
             "indicator": "RSI", "params": {"period": 14}, "field": "rsi"})
         assert ok.field == "rsi"
+
+    def test_hour_utc_domain_skip_compatibility_faces(self):
+        """域校验兼容面双跳过（闸门覆盖缺口补锚）：base_tf/ref_tf 双
+        None（无周期上下文——既有两参调用面零变化）与未知周期名均
+        放行不拒（域校验只在有已知周期上下文时生效）。"""
+        from core.analysis.column_ref import resolve_column_ref
+        # 双 None：无周期上下文 → 跳过域校验（兼容面）
+        r = resolve_column_ref("hour_utc")
+        assert r.kind == "base" and r.column_name == "hour_utc"
+        # 未知周期名（TF_SECONDS 无键）→ 跳过不炸
+        r2 = resolve_column_ref("hour_utc", base_tf="7h")
+        assert r2.kind == "base"
