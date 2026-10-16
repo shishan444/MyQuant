@@ -406,15 +406,22 @@ def _get_indicator_column_for_test(df, gene):
 
 class TestLookbackInnerUnknownType:
     """lookback_* 内层类型完全未知（非阈值/价格族）→ 委托主入口
-    evaluate_condition 的 else 兜底 → 全 False（不炸不误报）。"""
+    evaluate_condition → 结构化拒绝 ResearchError
+    （unify-tool-return-contract：主入口 else 兜底从静默全 False
+    收口为拒绝后，内层委托路径行为随单点语义同步传播——未识别
+    即显式拒绝）。"""
 
-    def test_inner_unknown_type_all_false(self):
+    def test_inner_unknown_type_rejected(self):
+        from core.analysis.errors import ResearchError
+
         df = _make_df(30)
         condition = {"type": "lookback_any", "window": 3,
                      "inner": {"type": "totally_unknown_type"}}
-        result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
-        assert len(result) == len(df)
-        assert not result.any()
+        with pytest.raises(ResearchError) as exc_info:
+            evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
+        assert exc_info.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert exc_info.value.detail["condition_type"] == "totally_unknown_type"
+        assert "legal_types" in exc_info.value.detail
 
 
 class TestInnerConditionChainArcUnreachable:

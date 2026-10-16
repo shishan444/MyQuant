@@ -23,8 +23,25 @@ import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
 from core.features.registry import INDICATOR_REGISTRY, resolve_indicator_column
+from core.analysis.errors import ResearchError  # 轻量定义点直取（errors.py 唯一权威，零反向依赖）
 
 logger = logging.getLogger(__name__)
+
+# 可求值条件类型合法集（unify-tool-return-contract 契约单源）——按
+# evaluate_condition 实际分派集显式穷举 16 类型。注册表侧全部
+# supported_conditions 的并集须与本集双向相等（tests/strategy/
+# test_executor.py S6b 主断言，任一侧漂移都红）。两处 ConditionType
+# 枚举为历史异集现状（core/strategy/dna.py ConditionType 15 成员
+# 无 eq；api/schemas.py ConditionType 8 成员）——枚举不参与本集的
+# 子集/相等断言（历史形制非缺陷，断言会误报）。
+EVALUABLE_CONDITION_TYPES: frozenset[str] = frozenset({
+    "eq", "lt", "gt", "le", "ge",
+    "cross_above", "cross_below",
+    "price_above", "price_below",
+    "cross_above_series", "cross_below_series",
+    "lookback_any", "lookback_all",
+    "touch_bounce", "role_reversal", "wick_touch",
+})
 
 
 @dataclass
@@ -56,7 +73,9 @@ def evaluate_condition(
 ) -> pd.Series:
     """结构化条件 dict → 布尔 Series（单基因条件求值的唯一入口）。
 
-    未知条件类型返回全 False（进化变异可产任意类型串，不炸链）。
+    未知条件类型结构化拒绝（ResearchError RESEARCH_NOT_EXPRESSIBLE，
+    unify-tool-return-contract 第一静默面收口——进化变异产物经前置
+    清洗与 batch 增捕双兜底，正常链路经翻译双校验不触达此处）。
 
     Args:
         indicator_series: 指标值序列（subject 侧）。
@@ -67,6 +86,11 @@ def evaluate_condition(
 
     Returns:
         与输入同索引的布尔 Series。
+
+    Raises:
+        ResearchError: 条件 type ∉ EVALUABLE_CONDITION_TYPES（detail 含
+            condition_type 与 legal_types；indicator 由调用层补注——
+            本函数无 gene 视野）。
     """
     cond_type = condition["type"]
 
@@ -136,7 +160,18 @@ def evaluate_condition(
     elif cond_type == "wick_touch":
         return _eval_wick_touch(indicator_series, close_series, df, condition)
     else:
-        return pd.Series(False, index=indicator_series.index)
+        # unify-tool-return-contract：未知类型从静默全 False 改结构化
+        # 拒绝（与统计层「未识别即显式拒绝」纪律对齐）。合法集单源
+        # EVALUABLE_CONDITION_TYPES；调用层（dna_to_signal_set /
+        # batch_signal_sets）对 detail 补注 indicator 上下文。
+        raise ResearchError(
+            "RESEARCH_NOT_EXPRESSIBLE",
+            f"未知条件类型：{cond_type}（合法集见 detail.legal_types）",
+            detail={
+                "condition_type": cond_type,
+                "legal_types": sorted(EVALUABLE_CONDITION_TYPES),
+            },
+        )
 
 
 def _resolve_target_indicator_series(condition: dict, df: pd.DataFrame | None) -> pd.Series | None:
@@ -616,7 +651,6 @@ def dna_to_signal_set(
             and len(dna.layers) == 1
             and dna.layers[0].timeframe == _exec_tf)
         if _policy is not None and not _single_compat:
-            from core.analysis.hypothesis_service import ResearchError
             raise ResearchError(
                 "RESEARCH_NOT_EXPRESSIBLE",
                 "多周期（MTF）形态暂不支持 entry_trigger_policy——层间"
@@ -842,8 +876,28 @@ def dna_to_signal_set(
                     index=enhanced_df.index,
                 )
                 direction_genes.append(gene_direction)
-        except ValueError:
-            continue
+        except ResearchError as exc:
+            # evaluate_condition 无 gene 视野——顶层拒绝前补注基因
+            # 上下文（RESEARCH_NOT_EXPRESSIBLE.detail 附 indicator）
+            if isinstance(exc.detail, dict) and "indicator" not in exc.detail:
+                exc.detail["indicator"] = gene.indicator
+            raise
+        except ValueError as exc:
+            # unify-tool-return-contract D7 第二静默面收口：本 except 块
+            # 内唯一 ValueError 源即列解析（_get_indicator_column）与
+            # 求值路径——「静默跳过该基因」退役，结构化拒绝直达顶层
+            # （路由层转 422）；已知 type 畸形参数防御分支（全 False）
+            # 属 evaluate_condition 内部形态，不经此面
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"策略基因不可求值：indicator={gene.indicator}",
+                detail={
+                    "indicator": gene.indicator,
+                    "params": gene.params,
+                    "field": gene.field_name,
+                    "cause": str(exc),
+                },
+            )
 
     all_entry = entry_triggers + entry_guards
     entries = combine_signals(all_entry, dna.logic_genes.entry_logic) if all_entry else pd.Series(False, index=enhanced_df.index)
@@ -936,11 +990,11 @@ def batch_signal_sets(
 
     # 延迟 import（analysis→strategy 既有依赖方向为正向，此处按项目
     # 延迟先例保持加载序稳定）：MTF 回退的防御拒绝透传判型用
-    from core.analysis.hypothesis_service import ResearchError
 
     # 第 1 步：求值全部唯一基因条件
     gene_results: dict[tuple, pd.Series] = {}
     skipped_genes = 0  # fix-executor-batch-health：签名非法跳过计数（可观测）
+    rejected_genes = 0  # unify-tool-return-contract：结构化拒绝跳过计数（S12b 可计数性锚）
 
     for dna in individuals:
         # MTF 个体走 dna_to_signal_set 全路径（第 2 步统一处理）
@@ -970,6 +1024,21 @@ def batch_signal_sets(
                     df=enhanced_df,
                 )
                 gene_results[sig] = signal.fillna(False)
+            except ResearchError as exc:
+                # unify-tool-return-contract：前置清洗上线前存量个体的
+                # 防御纵深——结构化拒绝（未知类型/列不可解析）在本域
+                # 不炸整批：基因不入求值表（组装段 .get 缺省全 False）
+                # + warning 披露 code/detail（沿签名非法跳过同款可观测
+                # 形制）。与策略级 ResearchError 透传不吞（:988-995
+                # D10 先例）两粒度两级并存
+                if isinstance(exc.detail, dict) and "indicator" not in exc.detail:
+                    exc.detail["indicator"] = gene.indicator
+                rejected_genes += 1
+                logger.warning(
+                    "batch_signal_sets 跳过拒绝基因 code=%s detail=%r "
+                    "indicator=%s condition=%r",
+                    exc.code, exc.detail, gene.indicator, gene.condition)
+                continue
             except (ValueError, KeyError, TypeError):
                 # TypeError 兜条件 target 为 None 等形态的求值失败
                 # （numpy 数值 vs None 比较）——与既有白名单同走全 False
@@ -979,6 +1048,10 @@ def batch_signal_sets(
     if skipped_genes:
         logger.warning(
             "batch_signal_sets 本批共跳过 %d 个签名非法基因", skipped_genes)
+    if rejected_genes:
+        logger.warning(
+            "batch_signal_sets 本批共拒绝 %d 个基因（结构化拒绝，未入求值表）",
+            rejected_genes)
 
     # 第 2 步：逐个体组装 SignalSet
     results: list[SignalSet] = []
