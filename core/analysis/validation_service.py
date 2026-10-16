@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.analysis.backtest_bridge import run_backtest_on_range
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError, load_stored_json  # 轻量定义点直取（errors.py 唯一权威）
 from core.analysis.isolation import (
     _parse_ts,
     iter_all_pages,
@@ -317,7 +317,12 @@ def _dup_payload(
     result_json 顶层键（add-direction-channel A4），存量记录无键按
     "long" 收敛。
     """
-    result = json.loads(existing["result"]) if existing["result"] else None
+    # 幂等数据源解析兜底（CARD-02）：result_json 由写入侧序列化，
+    # 损坏（外部改写/截断）时结构化拒绝点名记录，不裸炸 500
+    result = load_stored_json(
+        existing["result"], source="validation_records.result",
+        detail={"record_id": existing["record_id"]},
+    ) if existing["result"] else None
     base = {
         "record_id": existing["record_id"],
         "verdict": existing["verdict"],
@@ -523,7 +528,11 @@ def random_window_test(
         db_path, hypothesis_id or "adhoc", strategy_id, rh,
         level="random_window")  # G7 五元：随机窗身份（segmentation 空串）
     if existing is not None:
-        _rw_result = json.loads(existing["result"]) if existing["result"] else None
+        # 幂等数据源解析兜底（CARD-02）：同 _dup_payload 形制
+        _rw_result = load_stored_json(
+            existing["result"], source="validation_records.result",
+            detail={"record_id": existing["record_id"]},
+        ) if existing["result"] else None
         # 方向同构回显（add-direction-channel A4）：存量无键/脏值按 long
         # 补（security S-1 值域收敛——恒回显合法二值）
         _rw_direction = _rw_result.get("direction") \

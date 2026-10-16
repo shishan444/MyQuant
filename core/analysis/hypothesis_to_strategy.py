@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError, load_stored_json  # 轻量定义点直取（errors.py 唯一权威）
 from core.persistence.repository import research as rr
 
 # 同签名分流的策略层参数比对集（D2/DC-9，add-max-hold-exit 扩十字段）：
@@ -229,8 +229,14 @@ def translate_hypothesis(
                 # direction/max_hold 按收敛缺省（S2f 锚）
                 **_translate_receipt("long", None, False)}
 
-    conditions = json.loads(hyp["conditions"])
-    data_ranges = json.loads(hyp["data_ranges"])
+    # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
+    # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
+    conditions = load_stored_json(
+        hyp["conditions"], source="research_hypotheses.conditions",
+        detail={"hypothesis_id": hypothesis_id})
+    data_ranges = load_stored_json(
+        hyp["data_ranges"], source="research_hypotheses.data_ranges",
+        detail={"hypothesis_id": hypothesis_id})
 
     # 跨币种拒绝
     symbols = {r.get("symbol") for r in data_ranges if isinstance(r, dict)}
