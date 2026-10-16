@@ -187,9 +187,13 @@ def screen_patterns(
     n_total = int(in_stat.sum())
 
     # 指标矩阵 + 条件展开（逐指标 stop_check）
+    # skipped_indicators 三因分类（unify-tool-return-contract 规则④）：
+    # 系统自主跳过附原因——reason 封闭枚举三值 {no_default_params,
+    # compute_failed, no_covered_actions}；compute_failed 附
+    # reason_detail（首个异常摘要，可空——无产出且无异常时为 None）
     work = df.copy()
     probes: List[Dict[str, Any]] = []
-    skipped_indicators: List[str] = []
+    skipped_indicators: List[Dict[str, Any]] = []
     from core.features.indicators import _compute_indicator
 
     for name in feature_names:
@@ -197,25 +201,33 @@ def screen_patterns(
             stop_check()
         param_sets = _DEFAULT_PARAMS.get(name)
         if not param_sets:
-            skipped_indicators.append(name)
+            skipped_indicators.append(
+                {"name": name, "reason": "no_default_params"})
             continue
         produced: List[str] = []
+        first_err: Optional[str] = None
         for params in param_sets:
             try:
                 new_cols = _compute_indicator(work, name, dict(params))
-            except Exception:  # noqa: BLE001 —— 跳过并声明，不拖垮扫描
+            except Exception as exc:  # noqa: BLE001 —— 跳过并声明，不拖垮扫描
+                if first_err is None:
+                    first_err = str(exc)
                 continue
             for col, series in new_cols.items():
                 if col not in work.columns:
                     work[col] = series
                 produced.append(col)
         if not produced:
-            skipped_indicators.append(name)
+            entry = {"name": name, "reason": "compute_failed"}
+            if first_err is not None:
+                entry["reason_detail"] = first_err
+            skipped_indicators.append(entry)
             continue
         covered = _emit_conditions_for(work, name, produced, probes)
 
         if not covered:
-            skipped_indicators.append(name)
+            skipped_indicators.append(
+                {"name": name, "reason": "no_covered_actions"})
 
     # 前向收益（每持有期一次全序列，全候选共享）
     fwd_by_h = {h: work["close"].pct_change(h).shift(-h) for h in horizon_list}
