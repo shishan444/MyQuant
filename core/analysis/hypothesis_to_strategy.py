@@ -35,7 +35,7 @@ from core.persistence.repository import research as rr
 _D2_RISK_FIELDS = (
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "atr_period",
-    "max_hold",
+    "max_hold", "time_exit_utc",
 )
 
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
@@ -214,7 +214,7 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
         return RiskGenes()  # platform_default
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
             "leverage", "exit_fraction", "add_fraction", "max_exposure",
-            "max_hold")
+            "max_hold", "time_exit_utc")
     # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
     # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
     # （=手工 DNA 缺省语义），不穿透进 RiskGenes

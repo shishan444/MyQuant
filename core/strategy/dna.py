@@ -193,6 +193,9 @@ class RiskGenes:
     # 时间出场（add-max-hold-exit）：最长持有 N 根 bar 的到期无条件
     # 平仓；None=无时间离场（存量语义，引擎侧物化 0=禁用）
     max_hold: Optional[int] = None
+    # 固定时刻出场（任务 6）：每日 UTC 分钟时刻 0-1439 无条件全平；
+    # None=未声明（引擎物化哨兵 -1.0——0 是 0:00 合法值非禁用）
+    time_exit_utc: Optional[int] = None
 
     def to_dict(self) -> dict:
         # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
@@ -215,6 +218,8 @@ class RiskGenes:
             result["max_exposure"] = self.max_exposure
         if self.max_hold is not None:
             result["max_hold"] = self.max_hold
+        if self.time_exit_utc is not None:
+            result["time_exit_utc"] = self.time_exit_utc
         return result
 
     @classmethod

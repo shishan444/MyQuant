@@ -41,6 +41,11 @@ MAX_LEVERAGE = 10
 # （ParamDef period max=200）的 bar 数语义量级习惯一致
 MAX_HOLD_MIN = 1
 MAX_HOLD_MAX = 200
+# 固定时刻出场（add-session-structure-expression 任务 6）：UTC 分钟
+# 时刻 0-1439（0=0:00 合法值非禁用哨兵——引擎哨兵 -1.0 区别于
+# max_hold 的 0.0=禁用）；值域单源（登记声明块与 validate_dna 同源）
+TIME_EXIT_UTC_MIN = 0
+TIME_EXIT_UTC_MAX = 1439
 
 
 @dataclass
@@ -269,6 +274,19 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             errors.append(
                 f"max_hold {mh_val} out of range "
                 f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}] (bars)")
+
+    # 固定时刻出场（add-session-structure-expression 任务 6）：UTC
+    # 分钟时刻（None=缺省合法）；类型防护同 max_hold；0=0:00 合法
+    te_val = getattr(risk, "time_exit_utc", None)
+    if te_val is not None:
+        if not isinstance(te_val, int) or isinstance(te_val, bool):
+            errors.append(
+                f"time_exit_utc must be an integer (UTC minute), "
+                f"got {type(te_val).__name__}")
+        elif not (TIME_EXIT_UTC_MIN <= te_val <= TIME_EXIT_UTC_MAX):
+            errors.append(
+                f"time_exit_utc {te_val} out of range "
+                f"[{TIME_EXIT_UTC_MIN}, {TIME_EXIT_UTC_MAX}] (UTC minutes)")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
