@@ -786,7 +786,11 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         order_size = np.float64(size_pct * dir_sign)
         order_size_type = np.int64(2)  # 百分比仓
         if position_modes[col] > 0.5:
-            if sl_mode < 0.5:
+            if sl_mode < 0.5 or sl_mode > 1.5:
+                # pct(0)/trail(2) 的 stop_loss 同为比例域（trail=峰值
+                # 回撤比例——止损距离口径=入场价×比例，D-6 修复：此前
+                # trail 误并入 ATR 倍数分支，而装配层对非 atr 模式 ATR
+                # 占位全 1，stop_dist=比例值×1 数值错档致 qty 虚高顶格）
                 stop_dist = current_price * sl_stop
             else:
                 stop_dist = sl_stop * atr_arr[i, col]
@@ -923,7 +927,9 @@ class BacktestEngine:
                     value_now = float(self.init_cash)
                 else:
                     value_now = float(val_arr[pos - 1])
-                if rg.sl_mode == "pct":
+                if rg.sl_mode in ("pct", "trail"):
+                    # pct/trail 的 stop_loss 同为比例域（与引擎回调入场
+                    # 分派同步，D-6——trail 此前误走 ATR 倍数分支）
                     stop_dist = price * sl_stop
                 else:
                     if atr_col is None or pos >= len(atr_col):
