@@ -116,10 +116,14 @@ def save_hypothesis_with_log(
             conn.execute(insert(ResearchLog).values(
                 log_id=_new_id(),
                 hypothesis_id=hypothesis_id,
-                entry_type="screen_use",
+                # GAP-10 泛化：entry_type/summary 随 screen_use dict 携带
+                # （新路径 analysis_ref；缺省沿 screen_use 旧值——存量
+                # 调用方与测试零适配）
+                entry_type=screen_use.get("entry_type", "screen_use"),
                 ref_id=screen_use["ref_id"],
                 data_ranges=screen_use["data_ranges"],
-                summary="scan candidate referenced at registration",
+                summary=screen_use.get(
+                    "summary", "scan candidate referenced at registration"),
                 created_at=now,
             ))
 

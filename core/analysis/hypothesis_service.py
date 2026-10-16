@@ -586,36 +586,64 @@ def register_hypothesis(
                              "变体是新假设实体）",
             })
 
-    # 4.5 谱系引用校验（区间事实取自任务记录——D5）
+    # 4.5 谱系引用校验（区间事实取自任务记录——D5；GAP-10 泛化两类同核）
     screen_use: Optional[Dict[str, str]] = None
     if provenance is not None:
-        if not (isinstance(provenance, dict)
-                and provenance.get("task_id")
-                and provenance.get("candidate_fingerprint")):
+        # ref_type 归一（GAP-10）：旧两键形制无 ref_type 补默认
+        # screen_candidate（与 AnalysisProvenance 模型层同语义——直调
+        # dict 形式与 API 层模型双入口一致）；非法值拒附值域
+        _LEGAL_REF_TYPES = ("screen_candidate", "analysis_task")
+        _ref_type = provenance.get("ref_type", "screen_candidate") \
+            if isinstance(provenance, dict) else None
+        if _ref_type not in _LEGAL_REF_TYPES:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                "provenance 须含 task_id 与 candidate_fingerprint",
+                f"provenance.ref_type 非法: {_ref_type!r}",
+                detail={"field": "provenance.ref_type",
+                        "legal_range": list(_LEGAL_REF_TYPES)})
+        if not (isinstance(provenance, dict) and provenance.get("task_id")):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "provenance 须含 task_id",
                 detail={"field": "provenance"})
+        # 指纹条件性（服务层兜底——API 层模型 after 校验同语义）：
+        # screen_candidate 必填 / analysis_task 可选
+        _fp = provenance.get("candidate_fingerprint")
+        if _ref_type == "screen_candidate" and not _fp:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "ref_type=screen_candidate 须携带 candidate_fingerprint"
+                "（候选定位语义；analysis_task 任务级引用方可省略）",
+                detail={"field": "provenance.candidate_fingerprint"})
         task = rr.get_analysis_task(db_path, str(provenance["task_id"]))
         if task is None:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"provenance 引用的扫描任务不存在: {provenance['task_id']}",
+                f"provenance 引用的分析任务不存在: {provenance['task_id']}",
                 detail={"field": "provenance.task_id",
                         "task_id": str(provenance["task_id"])})
         try:
             task_params = json.loads(task["params"]) if task.get("params") else {}
         except (json.JSONDecodeError, TypeError):
             task_params = {}
+        # 两类同核：区间事实键=data_range（实测形制——网格/统计/预检任务
+        # params 均为单对象 {symbol,timeframe,start,end}；查证记录
+        # 2026-10-16 四任务实测一致）
         task_range = task_params.get("data_range")
         if not task_range or "start" not in task_range or "end" not in task_range:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"扫描任务记录缺区间事实: {provenance['task_id']}",
+                f"分析任务记录缺区间事实: {provenance['task_id']}",
                 detail={"field": "provenance.task_id"})
         screen_use = {
             "ref_id": str(provenance["task_id"]),
             "data_ranges": json.dumps([task_range], ensure_ascii=False),
+            # GAP-10 留痕：entry_type/summary 随泛化（两类统一
+            # analysis_ref；消费方无 entry_type 硬过滤——路由层写入侧
+            # 家族互斥已核）
+            "entry_type": "analysis_ref",
+            "summary": f"analysis reference: task {provenance['task_id']}"
+                       f" (ref_type={_ref_type})",
         }
 
     # 4.6 登记自动预检（add-hypothesis-precheck D6：Q1 裁 A——全登记路径
