@@ -159,3 +159,60 @@ class TestCollectRefsSubjectDictTranslation:
         refs2 = collect_condition_refs(
             {"subject": "close", "action": "gt", "target": "zzz_unknown"})
         assert refs2 == []
+
+
+class TestConditionItemStrictness:
+    """T6：条件形制严格化（unblock-research-validation 任务 5，GAP-08 防呆）。"""
+
+    def test_t6a_subject_inner_timeframe_pointed_rejection(self):
+        """T6a 主锚：subject 内 timeframe → 422 指路（「timeframe 是
+        条件顶层键，不在 subject 内部」——RR-015 实测静默忽略防呆）。"""
+        from api.schemas import ConditionItem, IndicatorRef
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError) as ei:
+            IndicatorRef(**{"indicator": "RSI", "params": {"period": 14},
+                            "field": "rsi", "timeframe": "1d"})
+        assert "timeframe" in str(ei.value)
+        with pytest.raises(ValidationError):
+            ConditionItem(**{
+                "subject": {"indicator": "RSI", "params": {"period": 14},
+                            "timeframe": "1d"},
+                "action": "lt", "target": 35})
+
+    def test_t6b_condition_item_unknown_key(self):
+        """T6b 条目未知顶层键 422（extra=forbid）。"""
+        from api.schemas import ConditionItem
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            ConditionItem(**{"subject": {"indicator": "RSI",
+                                         "params": {"period": 14}},
+                             "action": "lt", "target": 35,
+                             "bogus_key": 1})
+
+    def test_t6c_array_whitelist_with_keys_detail(self):
+        """T6c 数组校验白名单：未知键附 {unknown_keys, legal_keys}+指路。"""
+        from core.analysis.condition_kernel import validate_conditions_array
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            validate_conditions_array([
+                {"subject": {"indicator": "RSI", "params": {}},
+                 "action": "lt", "target": 35, "inner_bogus": 1}])
+        assert ei.value.detail["unknown_keys"] == ["inner_bogus"]
+        assert set(ei.value.detail["legal_keys"]) == {
+            "subject", "action", "target", "timeframe"}
+        assert "顶层键" in ei.value.detail["hint"]
+
+    def test_t6d_kernel_whitelist_matches_schemas(self):
+        """T6d 对拍：kernel 白名单 == ConditionItem 声明面。"""
+        from core.analysis.condition_kernel import _CONDITION_ITEM_KEYS
+        from api.schemas import ConditionItem
+        declared = set(ConditionItem.model_fields.keys())
+        assert set(_CONDITION_ITEM_KEYS) == declared, \
+            "白名单与声明面漂移（共享单点对拍锚）"
+
+    def test_t6f_legal_request_zero_change(self):
+        """T6f 合法请求零变化：白名单四键请求照常通过。"""
+        from core.analysis.condition_kernel import validate_conditions_array
+        validate_conditions_array([
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35, "timeframe": "1d"}])

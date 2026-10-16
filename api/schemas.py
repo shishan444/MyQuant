@@ -864,7 +864,13 @@ class LiveTradingTaskListResponse(BaseModel):
 
 
 class IndicatorRef(BaseModel):
-    """参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。"""
+    """参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。
+
+    extra=forbid（unblock-research-validation T6）：subject 对象拒绝
+    未知键——周期标记 timeframe 是条件顶层键不在 subject 内部
+    （RR-015 实测错位层级曾被静默忽略导致 1d/1h 同值）。"""
+    model_config = ConfigDict(extra="forbid")
+
     indicator: str
     params: Dict[str, Any] = {}
     field: Optional[str] = None
@@ -877,6 +883,10 @@ class ConditionItem(BaseModel):
     字符串精确名（业务校验在 service 层 resolve_column_ref）。
     0.2.14：可选 timeframe 键——仅 when 条件、>= 基准周期的高周期
     （timeframe 修饰整条件，掩码投影求值；then 条件携带即拒）。"""
+
+    # extra=forbid（T6b）：条件条目拒绝白名单外键（防呆共享单点
+    # 与 condition_kernel 同语义——四消费者自动获得）
+    model_config = ConfigDict(extra="forbid")
 
     subject: Union[str, IndicatorRef]
     action: str

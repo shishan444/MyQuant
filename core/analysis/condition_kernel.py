@@ -293,6 +293,11 @@ def collect_condition_refs(
     return refs
 
 
+# 条件条目允许键集（unblock-research-validation T6：与登记面
+# ConditionItem extra=forbid 同语义共享单点——全部条件消费者同语义）
+_CONDITION_ITEM_KEYS = frozenset({"subject", "action", "target", "timeframe"})
+
+
 def validate_conditions_array(conditions: Any) -> None:
     """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、
     装载前；CARD-05 自路由提升为条件域共享单点，第四消费者 exit_sweep
@@ -319,6 +324,21 @@ def validate_conditions_array(conditions: Any) -> None:
                 f"conditions[{i}] 须含 subject/action/target",
                 detail={"param": f"conditions[{i}]",
                         "legal_form": "{subject, action, target}"})
+        # 逐键白名单（unblock-research-validation T6c）：与登记面
+        # ConditionItem（extra=forbid）同语义——未知键附 {unknown_keys,
+        # legal_keys} 与 timeframe 指路；四消费者（condition_stats/
+        # counter_profile/event_study/exit_sweep）自动获得
+        unknown = sorted(set(c) - _CONDITION_ITEM_KEYS)
+        if unknown:
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"conditions[{i}] 含未知键 {unknown}"
+                f"（合法键集 {sorted(_CONDITION_ITEM_KEYS)}；周期标记"
+                " timeframe 是条件顶层键，不在 subject 内部）",
+                detail={"param": f"conditions[{i}]",
+                        "unknown_keys": unknown,
+                        "legal_keys": sorted(_CONDITION_ITEM_KEYS),
+                        "hint": "timeframe 是条件顶层键，不在 subject 内部"})
 
 
 # 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。
