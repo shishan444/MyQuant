@@ -494,6 +494,11 @@ def evaluate_layer(
                 )
                 direction_genes.append(gene_direction)
         except ValueError:
+            # 已知边界（fix-review CARD-06 披露）：列不可达/求值
+            # ValueError 静默跳过该基因——design 限定单周期直译
+            # 路径收口（dna_to_signal_set 主路径已走结构化拒绝），
+            # MTF 层内基因的同类收口归包二 MTF 执行链改造，非待
+            # 清理残留
             continue
 
     all_entry = entry_triggers + entry_guards

@@ -191,7 +191,9 @@ def screen_patterns(
     # 系统自主跳过附原因——reason 封闭枚举三值 {no_default_params,
     # compute_failed, no_covered_actions}；compute_failed 有异常时附
     # reason_detail（首个异常摘要；无异常时键缺席——「可空」的实现
-    # 形制即键缺席，非值 None）
+    # 形制即键缺席，非值 None）；数据未配置（衍生品文件/列缺失）的
+    # 静默无产出同样归入 compute_failed 且无 reason_detail——「未
+    # 配置」与「计算失败」语义折叠为已知披露（fix-review CARD-06）
     work = df.copy()
     probes: List[Dict[str, Any]] = []
     skipped_indicators: List[Dict[str, Any]] = []

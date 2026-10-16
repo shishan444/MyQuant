@@ -202,7 +202,10 @@ def _try_merge_derivatives(
         # df.attrs（对象级传播——ThreadPoolExecutor 并发下天然隔离，
         # 优于模块级全局）。探测失败降级 probe_failed 不阻断装载
         # （架构 A1：披露是伴随物不是闸门）。文件缺失的 absent 态由
-        # 既有 skipped_indicators 声明通道承载（spec 场景集对齐）。
+        # 既有 skipped_indicators 声明通道承载（spec 场景集对齐）；该
+        # 承载在 screen_patterns 侧折入 compute_failed 且无
+        # reason_detail——「未配置」与「计算失败」语义折叠为已知披露
+        # （fix-review CARD-06）。
         # gap 判定基准（CARD-02）：coverage_range 声明的请求区间优先
         # （tz 经 to_utc 归一——与 analysis 域同族纪律；函数内导入，
         # core.data 模块级不反向依赖 core.analysis，同 mtf_alignment

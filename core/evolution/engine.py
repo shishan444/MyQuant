@@ -147,6 +147,13 @@ def validate_offspring(dna: StrategyDNA, enhanced_df=None) -> StrategyDNA:
     保底不变量：清洗后零 ENTRY_TRIGGER 基因 → 整个体淘汰（raise，
      走繁殖循环既有「换随机个体」路径）。
 
+    MTF 边界（fix-review CARD-06 披露）：本清洗只遍历顶层
+    signal_genes，MTF 个体 layers 内基因不在本清洗面——防线为
+    进化新生基因恒合法（supported_conditions 与执行器合法集双源
+    互锁）+ 评估层对求值失败个体兜底 0 分 + batch 路径 D10 防御
+    拒绝透传；layers 内基因的同等清洗完整化归包二 MTF 执行链
+    改造。
+
     Returns:
         清洗后的同一 dna 实例（原地修改 signal_genes 与 mutation_ops）。
 
