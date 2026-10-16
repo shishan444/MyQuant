@@ -545,3 +545,37 @@ class TestRunnerStatus:
             assert key in body
         assert body["pending_depth"] == 1
         assert body["running_count"] == 0
+
+
+class TestLifespanPlacement:
+    """纸盘 lifespan 挂载摆位守护（缺陷④同类面——inspect 静态锚）。
+
+    纸盘段（PaperScheduler 构造+startup_recover）须先于 runner.start()
+    执行——段的延迟 import 链与恢复扫描持 GIL 的开销若发生在
+    EvolutionRunner 启动之后，会推迟其首扫相位落入跨域时序窗口
+    （tests/api/test_evolution_routes_extra.py 守护用例 409→200 flaky
+    实录，12 连跑 3-5 红；摆位前移后 24/24 全绿）。语义零变化、纯
+    摆位纪律——静态锚防后人「整理代码顺序」挪回（时序型竞态断言
+    不可靠，按裁决以摆位锚+实证为覆盖）。
+    """
+
+    def test_paper_segment_precedes_runner_start(self) -> None:
+        import inspect
+
+        from api import app as app_mod
+
+        lines = inspect.getsource(app_mod).splitlines()
+
+        def _code_line(token: str) -> int:
+            """token 首个非注释出现行（摆位纪律注释自身含
+            "runner.start()" 字样——排除防误中）。"""
+            return next(i for i, ln in enumerate(lines)
+                        if token in ln
+                        and not ln.strip().startswith("#"))
+
+        paper_line = _code_line("startup_recover()")
+        start_line = _code_line("runner.start()")
+        assert paper_line < start_line, (
+            f"纸盘段（startup_recover 行 {paper_line + 1}）须先于 "
+            f"runner.start()（行 {start_line + 1}）——摆位纪律见 "
+            f"app.py 纸盘段注释")

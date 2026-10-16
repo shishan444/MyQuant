@@ -503,3 +503,26 @@ class TestRevisionPath:
 
         with pytest.raises(TaskNotConcludedError):
             regenerate_final_report(db, tmp_path, tid)
+
+
+class TestSingleSourceGuard:
+    """绩效指标单源守护（spec R8：指标公式单源引用 compute_metrics
+    ——inspect 静态锚；行为守护（bars_per_year 双锚+diff 手算锚）之外
+    的防回潮层）。
+    """
+
+    def test_compute_metrics_single_source(self):
+        """单源三断言：import 在场+调用在场+手写指标公式特征零命中
+        （np.std/.cummax/pct_change/.rolling——sharpe/回撤公式体特征；
+        total_return 区间口径直算为模块 docstring 声明的合法例外）。"""
+        import inspect
+
+        import core.paper_trading.reporting as reporting_mod
+
+        src = inspect.getsource(reporting_mod)
+        assert "from core.scoring.metrics import compute_metrics" in src
+        assert "compute_metrics(" in src, "消费点须在场"
+        for feature in ("np.std", ".cummax", "pct_change", ".rolling"):
+            assert feature not in src, (
+                f"手写指标公式特征 {feature} 在场——绩效层指标须单源经 "
+                f"compute_metrics 计算")
