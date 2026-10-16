@@ -254,13 +254,20 @@ class TestStopDispatch:
             h.teardown()
 
     def test_terminal_stop_rejected(self, tmp_path):
-        """终态任务 stop 请求拒绝（terminal）。"""
+        """终态任务 stop 请求拒绝（terminal）。
+
+        终态行构造走合法链 pending→running→completed（选项 i——
+        CAS 时代测试直建通道不再非法直跳终态）。
+        """
         h = _SchedulerHarness(tmp_path)
         try:
             tid = h.create_task()
             paper.update_task(
+                h.db, tid, status="running",
+                started_at="2030-01-01T00:00:00+00:00")
+            paper.update_task(
                 h.db, tid, status="completed",
-                stopped_at="2030-01-01T00:00:00+00:00")
+                stopped_at="2030-01-01T00:00:01+00:00")
             assert h.scheduler.stop_task(tid) == "terminal"
         finally:
             h.teardown()

@@ -20,6 +20,7 @@ from core.paper_trading.kernel.fills import MarketFill
 from core.paper_trading.kernel.intents import SignalInterpreter
 from core.paper_trading.kernel.ledger import Ledger
 from core.paper_trading.kernel.types import (
+    IMMEDIATE_KINDS,
     BarSignals,
     ClosedBar,
     ExecutionEvent,
@@ -89,8 +90,7 @@ class ChainHarness:
             bar, signals, self.ledger.snapshot(bar.close, bar.seq),
             self.ledger.params)
         self.pending.extend(
-            i for i in post
-            if i.kind not in ("exit_liquidation", "exit_sl", "exit_tp"))
+            i for i in post if i.kind not in IMMEDIATE_KINDS)
         # trail 峰值落账（持仓期逐 bar）
         self.ledger.update_trail_peak(bar)
 

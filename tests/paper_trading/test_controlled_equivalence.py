@@ -138,6 +138,13 @@ class _Harness:
             push=lambda tid, p: None, on_concluded=lambda tid, st: None,
             start_after=self.df.index[_WARMUP].isoformat())
         assert executor.prepare() is True, "装载须就绪"
+        # 模拟拾取写 running（回放通道跳过 run()——迁移链不断：
+        # pending→running→completed；CARD-06 后 append_bar 的 task_state
+        # UPDATE 附 WHERE status='running'，直驱不置 running 会冻结
+        # task_state 组——形制沿 test_executor 模拟拾取）
+        paper.update_task(
+            self.db, self.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         executor.process_frames(self.enhanced, 0)
 
         # 回测侧：对照段=enhanced 切回（指标列带 warmup 记忆——桥形制）

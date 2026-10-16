@@ -38,19 +38,21 @@ def _make_db(tmp_path: Path) -> Path:
 
 def _seed_task(db: Path, task_id: str = "pt_report00001", *,
                timeframe: str = "4h", status: str = "running",
-               started: bool = True, research_status: str = "unverified",
+               research_status: str = "unverified",
                leverage: int = 5, started_at: str = BASE_TIME) -> str:
-    """直建任务（测试通道）+状态机迁移到目标态。"""
+    """直建任务（测试通道）+按合法迁移链迁到目标态（组 2 缺陷⑤ CAS
+    守门后 update_task 拒非法直迁——pending→running→终态）。"""
     from core.persistence.repository import paper
     paper.create_task(
         db, task_id=task_id, strategy_id="strat-1",
         dna_snapshot_json=DNA_JSON, symbol="BTCUSDT", timeframe=timeframe,
         research_status_snapshot=research_status,
         initial_cash=50_000.0, leverage=leverage, window_bars=180)
-    kwargs = {"status": status}
-    if started:
-        kwargs["started_at"] = started_at
-    paper.update_task(db, task_id, **kwargs)
+    if status != "pending":
+        paper.update_task(db, task_id, status="running",
+                          started_at=started_at)
+        if status != "running":
+            paper.update_task(db, task_id, status=status)
     return task_id
 
 
@@ -199,7 +201,7 @@ class TestDeviationLayer:
         """pending 未开跑：无对照区间→unavailable（不调桥）。"""
         from core.paper_trading.reporting import build_report
         db = _make_db(tmp_path)
-        tid = _seed_task(db, status="pending", started=False)
+        tid = _seed_task(db, status="pending")
 
         report = build_report(db, tmp_path, tid)
         assert report["deviation"]["backtest"] is None
@@ -330,20 +332,83 @@ class TestEvidenceLayer:
         assert evidence["funding_pending_points"] is None
         assert evidence["funding_post_terminal_backfill"] is None
 
-    def test_position_bars(self, tmp_path):
-        """持仓时长披露：bars_processed−entry_seq（无仓=0）。"""
+    def test_position_bars_same_domain_as_kernel(self, tmp_path):
+        """持仓根数=最近 open 起 equity 行数（kernel bars_held=当前 seq−
+        入场 seq+1 的库内等价口径，含入场当根）：反手 open 重建锚（不
+        从旧仓期起数）、减仓不重置、空仓 0。"""
         from core.paper_trading.reporting import build_report
         from core.persistence.repository import paper
         db = _make_db(tmp_path)
         tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 5)  # bar 0..4
+        # bar1 开多 → bar3 信号平+反手开空（同 bar close+open）
         paper.append_bar(
-            db, tid, bar_time=_bar_time(0, 240), fills=[],
-            equity={"equity": 50_000.0, "balance": 49_000.0,
-                    "unrealized_pnl": 100.0, "position_side": "long"},
-            task_state={"bars_processed": 10, "position_entry_bar_seq": 2})
+            db, tid, bar_time=_bar_time(1, 240),
+            fills=[{"seq": 4, "kind": "open", "side": "long",
+                    "price": 100.0, "quantity": 1.5, "fee": 0.15,
+                    "realized_pnl": None, "reason": "signal"}],
+            equity={"equity": 50_000.0, "balance": 49_800.0,
+                    "unrealized_pnl": 100.0, "position_side": "long"})
+        paper.append_bar(
+            db, tid, bar_time=_bar_time(3, 240),
+            fills=[
+                {"seq": 1, "kind": "close", "side": "long",
+                 "price": 105.0, "quantity": 1.5, "fee": 0.15,
+                 "realized_pnl": 60.0, "reason": "reverse"},
+                {"seq": 2, "kind": "open", "side": "short",
+                 "price": 105.0, "quantity": 1.4, "fee": 0.15,
+                 "realized_pnl": None, "reason": "reverse"},
+            ],
+            equity={"equity": 50_060.0, "balance": 49_900.0,
+                    "unrealized_pnl": 0.0, "position_side": "short"},
+            task_state={"bars_processed": 4, "position_side": "short",
+                        "position_entry_bar_seq": 3})
 
         evidence = build_report(db, tmp_path, tid)["evidence"]
-        assert evidence["position_bars"] == 8
+        # 反手后新仓自 bar3 起：bar3/4 两根（旧多头 bar1-3 期不计）
+        assert evidence["position_bars"] == 2
+
+    def test_position_bars_domain_separation(self, tmp_path):
+        """start_after 域分离锚（修复卡 A1）：bars_processed 是任务感知
+        计数（start_after 跳过的历史 bar 不+1）、position_entry_bar_seq
+        是 feed 全量帧行号——生产场景两域相差数千。持仓根数必须按
+        open 起的数据行数计（正数、与实际持仓根数一致）；旧混域相减
+        （bars_processed−entry_seq）在此场景=3−101=−98 必红。"""
+        from core.paper_trading.reporting import build_report
+        from core.persistence.repository import paper
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        # 任务自全量帧第 100 根起（前 100 根为 start_after 跳过的历史）：
+        # equity 行=bar 100/101/102 共 3 根，bar 101 入场
+        for i in (100, 101, 102):
+            paper.append_bar(
+                db, tid, bar_time=_bar_time(i, 240),
+                fills=([{"seq": 4, "kind": "open", "side": "long",
+                         "price": 100.0, "quantity": 1.5, "fee": 0.15,
+                         "realized_pnl": None, "reason": "signal"}]
+                       if i == 101 else []),
+                equity={"equity": 50_000.0, "balance": 49_800.0,
+                        "unrealized_pnl": 100.0,
+                        "position_side": "long" if i >= 101 else None},
+                task_state={"bars_processed": i - 99,
+                            "position_side": "long" if i >= 101 else None,
+                            "position_entry_bar_seq": 101 if i >= 101
+                            else None})
+
+        evidence = build_report(db, tmp_path, tid)["evidence"]
+        # 自入场 bar 101 起两根（101/102），为正且与实际持仓根数一致
+        assert evidence["position_bars"] == 2
+        assert evidence["position_bars"] > 0
+
+    def test_position_bars_flat_zero(self, tmp_path):
+        """空仓（position_side=NULL）披露 0。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 3)
+
+        evidence = build_report(db, tmp_path, tid)["evidence"]
+        assert evidence["position_bars"] == 0
 
 
 class TestSchemaGuard:
@@ -397,7 +462,7 @@ class TestFinalization:
         from core.paper_trading.reporting import (
             TaskNotConcludedError, finalize_report)
         db = _make_db(tmp_path)
-        tid = _seed_task(db, status=status, started=(status == "running"))
+        tid = _seed_task(db, status=status)
 
         with pytest.raises(TaskNotConcludedError):
             finalize_report(db, tmp_path, tid)
@@ -409,7 +474,7 @@ class TestFinalization:
         from core.paper_trading.reporting import (
             TaskNotConcludedError, get_final_report)
         db = _make_db(tmp_path)
-        tid = _seed_task(db, status=status, started=(status == "running"))
+        tid = _seed_task(db, status=status)
 
         with pytest.raises(TaskNotConcludedError):
             get_final_report(db, tid)
@@ -499,7 +564,7 @@ class TestRevisionPath:
         from core.paper_trading.reporting import (
             TaskNotConcludedError, regenerate_final_report)
         db = _make_db(tmp_path)
-        tid = _seed_task(db, status=status, started=(status == "running"))
+        tid = _seed_task(db, status=status)
 
         with pytest.raises(TaskNotConcludedError):
             regenerate_final_report(db, tmp_path, tid)

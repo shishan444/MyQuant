@@ -105,6 +105,11 @@ class TestFullReplay:
             "2024-01-04 16:00:00.001", "2024-01-05 00:00:00.002"])
         ex = h.make_executor()
         assert ex.prepare() is True
+        # 模拟拾取写 running（回放通道跳过 run()——迁移链不断：
+        # pending→running→completed，默认守门时代直跳会被拒）
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         ex.process_frames(h.enhanced, 0)
 
         task = h.task()
@@ -150,6 +155,9 @@ class TestFullReplay:
         """权益快照逐 bar 落库（balance/unrealized_pnl/持仓侧/累计费）。"""
         h = _Harness(tmp_path, funding_times=["2024-01-04 16:00:00"])
         ex = h.make_executor()
+        paper.update_task(  # 模拟拾取写 running（迁移链+task_state 前置）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         ex.process_frames(h.enhanced, 0)
         task = h.task()
         eqs = paper.list_equity_snapshots(h.db, h.task_id, limit=1000)
@@ -217,6 +225,9 @@ class TestStopBoundary:
 
         controller = StopAfter(stop_after)
         ex = h.make_executor(controller=controller)
+        paper.update_task(  # 模拟拾取写 running（迁移链+task_state 前置）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         ex.process_frames(h.enhanced, 0)
 
         task = h.task()
@@ -322,6 +333,60 @@ class TestPrepareValidation:
         ex = h.make_executor()
         assert ex.prepare() is True
         assert h.task()["status"] == "pending"
+
+
+class TestPrepareEscapeGuard:
+    """prepare 裸异常防逃逸（CARD-02：逃逸击穿工作线程→任务永留
+    pending 每 2s 无限重拾——兜底转 prepare_failed error）。"""
+
+    def test_corrupt_parquet_rejected_not_looping(self, tmp_path):
+        """坏 parquet（load 崩溃）→prepare_failed error（不逃逸）。"""
+        h = _Harness(tmp_path)
+        corrupt = h.data_dir / "BTCUSDT_4h.parquet"
+        corrupt.unlink()
+        corrupt.write_text("not a parquet at all")  # 坏文件
+        ex = h.make_executor()
+        assert ex._prepare_guarded() is False
+        task = h.task()
+        assert task["status"] == "error"
+        assert "prepare_failed" in task["error_detail"]
+
+    def test_refresh_exception_rejected_not_looping(self, tmp_path):
+        """feed.refresh 抛错（MTF 组装期）→prepare_failed error。"""
+        from tests.helpers.data_factory import make_mtf_dna
+
+        h = _Harness(tmp_path)
+        daily = make_ohlcv(n=60, freq="1d", seed=7, base_price=100.0)
+        save_parquet(daily, h.data_dir / "BTCUSDT_1d.parquet")
+        frames = {"4h": h.df, "1d": daily}
+
+        def broken_refresh(self):
+            raise RuntimeError("fetch exploded")
+
+        h.registry = FeedRegistry(
+            h.data_dir,
+            fetcher=lambda **k: frames[k["interval"]],
+            funding_refresher=lambda **k: _funding_frame([]))
+        # feed.refresh 打补丁为抛错（模拟归档通道故障）
+        from core.paper_trading.runtime.feed import SymbolFeed
+
+        original = SymbolFeed.refresh
+        SymbolFeed.refresh = broken_refresh
+        try:
+            h.task_id = paper.create_task(
+                h.db, strategy_id="strat-mtf",
+                dna_snapshot_json=make_mtf_dna(
+                    timeframes=("1d", "4h")).to_json(),
+                symbol="BTCUSDT", timeframe="4h",
+                research_status_snapshot="unverified",
+                initial_cash=10_000.0, leverage=1, window_bars=30)
+            ex = h.make_executor()
+            assert ex._prepare_guarded() is False
+        finally:
+            SymbolFeed.refresh = original
+        task = h.task()
+        assert task["status"] == "error"
+        assert "prepare_failed" in task["error_detail"]
 
 
 class TestMtfPrepare:

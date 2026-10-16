@@ -17,7 +17,11 @@ pytestmark = [pytest.mark.unit]
 
 from core.market_model import maintenance_margin_rate
 from core.paper_trading.kernel.fills import MarketFill
-from core.paper_trading.kernel.ledger import Ledger, liquidation_price
+from core.paper_trading.kernel.ledger import (
+    Ledger,
+    funding_amount,
+    liquidation_price,
+)
 from core.paper_trading.kernel.types import Intent, RiskParams
 
 _ZERO_COST = MarketFill(fee_rate=0.0, slippage_rate=0.0)
@@ -341,6 +345,26 @@ class TestStateMachine:
             10_000.0 - 1_000.0 - fill.fee)
 
 
+class TestSingleSourceGuard:
+    """定仓公式单源守护（spec R3：MUST NOT 在新域复制公式——inspect
+    静态锚；行为守护（受控等价两侧等值+恒等式手算锚）之外的防回潮层）。
+    """
+
+    def test_risk_budget_qty_single_source_consumption(self):
+        """单源三断言：import 在场+消费点在场+params.risk_fraction
+        唯一出现于调用实参（内联公式复制必产生第二处即红）。"""
+        import core.paper_trading.kernel.ledger as ledger_mod
+
+        src = inspect.getsource(ledger_mod)
+        assert "from core.backtest.engine import risk_budget_qty" in src
+        assert "risk_budget_qty(" in src, "消费点须在场"
+        # params.risk_fraction 唯一出现=risk_budget_qty 调用实参行
+        # （docstring 为无前缀文字不计）——本地复制公式必再出现
+        assert src.count("params.risk_fraction") == 1, (
+            "risk_fraction 参与处须唯一（单源调用实参）——出现第二处"
+            "即疑定仓公式体复制")
+
+
 class TestFunding:
     """族 2 kernel 锚：apply_funding 金额=quantity×结算价×rate×方向符号。"""
 
@@ -384,3 +408,54 @@ class TestFunding:
         ledger = Ledger(10_000.0, make_params())
         assert ledger.apply_funding(rate=0.0001, settle_price=100.0) == 0.0
         assert ledger.balance == 10_000.0
+
+
+class TestFundingAmountSingleSource:
+    """B1 收敛锚：funding_amount 纯函数单点（正常结算与快照重算
+    （补旧账/终态回补）共用——runtime 侧改接后的引用面）。"""
+
+    @pytest.mark.parametrize("signed_qty,rate,expected", [
+        (100.0, 0.0001, 1.1),    # 多头 rate>0：付
+        (-100.0, 0.0001, -1.1),  # 空头 rate>0：收
+        (100.0, -0.0001, -1.1),  # 多头 rate<0：收
+        (-100.0, -0.0001, 1.1),  # 空头 rate<0：付
+    ])
+    def test_signed_quantity_and_rate_signs(self, signed_qty, rate,
+                                            expected):
+        assert funding_amount(signed_qty, 110.0, rate) \
+            == pytest.approx(expected)
+
+    def test_apply_funding_consistent_with_single_point(self):
+        """apply_funding 与纯函数单点一致（同参数同值）。"""
+        ledger = TestFunding._ledger("long")
+        amount = ledger.apply_funding(rate=0.0001, settle_price=110.0)
+        assert amount == pytest.approx(funding_amount(100.0, 110.0, 0.0001))
+
+
+class TestStopTakeDisclosureAnchors:
+    """A2 回归锚：atr 模式 TP 披露值与判定权威同式（ATR 倍数域）。
+
+    此前 _initial_stop 的 is_tp 恒走 pct 域，atr 模式 TP 披露
+    =entry×(1+tp) 与实际判定线 entry+tp×ATR 不一致（纯披露面缺陷，
+    review A2 修正）。
+    """
+
+    def test_atr_mode_tp_disclosure_uses_atr_multiple(self):
+        """atr 模式：sl=100−2×2.5=95、tp=100+4×2.5=110（倍数域）。"""
+        params = make_params(sl_mode="atr", stop_loss=2.0,
+                             take_profit=4.0)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0, entry_atr=2.5)
+        pos = ledger.position
+        assert pos.sl_price == pytest.approx(95.0)
+        assert pos.tp_price == pytest.approx(110.0)
+
+    def test_pct_mode_tp_disclosure_uses_ratio(self):
+        """pct 模式对照：tp=100×1.10=110（比例域锚入场价）。"""
+        params = make_params(sl_mode="pct", stop_loss=0.05,
+                             take_profit=0.10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        pos = ledger.position
+        assert pos.sl_price == pytest.approx(95.0)
+        assert pos.tp_price == pytest.approx(110.0)

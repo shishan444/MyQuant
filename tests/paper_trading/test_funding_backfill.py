@@ -198,6 +198,9 @@ class TestShortSideBackfill:
         all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
         h = _FundingHarness(tmp_path, dna=make_dna(direction="short"))
         executor = h.make_executor()
+        paper.update_task(  # 模拟拾取写 running（迁移链+task_state 前置）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         cut = _N_BARS - 6
         executor.process_frames(h.enhanced.iloc[:cut], 0)
 
@@ -234,6 +237,11 @@ class TestTerminalBackfill:
         all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
         h = _FundingHarness(tmp_path)  # 空索引——全部挂起
         executor = h.make_executor()
+        assert executor.prepare() is True
+        # 模拟拾取写 running（回放通道跳过 run()——迁移链不断）
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         executor.task_row["window_bars"] = 40  # 就地注窗口——帧内结题
         executor.process_frames(h.enhanced, 0)
         task = h.task()
@@ -296,6 +304,10 @@ class TestTerminalBackfill:
         all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
         h = _FundingHarness(tmp_path, initial_funding_times=all_points)
         executor = h.make_executor()
+        assert executor.prepare() is True
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         executor.task_row["window_bars"] = 40
         executor.process_frames(h.enhanced, 0)
         assert h.task()["status"] == "completed"
@@ -308,6 +320,38 @@ class TestTerminalBackfill:
             on_revision=lambda tid: revisions.append(tid))
         assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
         assert revisions == []
+
+    def test_scheduler_default_backfill_uses_registry_data_dir(
+            self, tmp_path):
+        """装配特征（CARD-05）：守护循环缺省回补经 registry.data_dir
+        ——路径算术缺省（曾指向不存在的 core/data/market）死链消除。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
+        h = _FundingHarness(tmp_path)  # 空索引——跑出 pending 行
+        executor = h.make_executor()
+        assert executor.prepare() is True
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        executor.task_row["window_bars"] = 40
+        executor.process_frames(h.enhanced, 0)
+        assert h.task()["status"] == "completed"
+        assert h.funding_rows("pending")
+        # 归档补齐到 registry 的 data_dir（装配真值目录）
+        save_parquet(_funding_frame(all_points),
+                     h.data_dir / "BTCUSDT_funding.parquet")
+
+        scheduler = PaperScheduler(
+            h.db, registry=h.registry, poll_interval=0.2)  # 不注入回补
+        try:
+            scheduler.run_once()  # 真缺省链：_default_backfill
+            disclosed = h.funding_rows("settled_disclosure_only")
+            assert disclosed, "缺省回补须经 registry.data_dir 命中归档"
+            assert h.funding_rows("pending") == []
+        finally:
+            scheduler.stop()
+            scheduler.join(timeout=5.0)
 
 
 class TestFundingCounts:

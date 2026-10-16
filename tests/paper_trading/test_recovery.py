@@ -1,9 +1,10 @@
-"""恢复器测试（rebuild-paper-trading 任务 3.4）。
+"""恢复器测试（rebuild-paper-trading 任务 3.4；启动扫描经
+scheduler.startup_recover——review B2 后单入口）。
 
 覆盖：崩溃续跑（bar N 落库后重启→bar N+1 续跑，此前成交/权益/资金费
 完好不重扣）+恢复校验四判据参数化各转 error（保留数据）+可信续跑状态
 重建（持仓/余额/待执行意图）+重放幂等（恢复后首 bar 与库内最后 fill
-同 bar_time→唯一键吸收+游标判重跳过）+scan_and_recover 启动扫描。
+同 bar_time→唯一键吸收+游标判重跳过）+startup_recover 启动扫描。
 
 崩溃模拟：同步驱动执行器至 bar N 后直接丢弃对象（任务行停留在
 running+bars_processed=N——调度器拾取后崩溃的持久化残态）。
@@ -23,7 +24,6 @@ from core.paper_trading.runtime.executor import PaperTaskExecutor
 from core.paper_trading.runtime.feed import FeedRegistry, FeedSubscription
 from core.paper_trading.runtime.recovery import (
     recover_task,
-    scan_and_recover,
     validate_recovery,
 )
 from core.persistence.db_ext import init_db_ext
@@ -302,10 +302,14 @@ class TestReplayIdempotency:
 
 
 class TestStartupScan:
-    """启动扫描（app lifespan 入口——scan_and_recover）。"""
+    """启动扫描（scheduler.startup_recover——lifespan 入口；scan_and_recover
+    旧函数已删：其恢复执行器只计数即丢弃不起线程，保留即「假恢复」
+    陷阱——review B2 裁决）。"""
 
     def test_scan_recovers_and_rejects(self, tmp_path):
-        """混合残态：可信续跑+不可信转 error 分桶计数。"""
+        """混合残态：可信续跑（起线程）+不可信转 error 分桶计数。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
         h = _RecoveryHarness(tmp_path)
         h.run_until_crash(_CRASH_AT)  # 可信残态
 
@@ -326,8 +330,15 @@ class TestStartupScan:
             task_state={"bars_processed": 1,
                         "last_bar_time": h.df.index[0].isoformat()})
 
-        result = scan_and_recover(
-            h.db, registry=h.registry, start_after=_REPLAY_ALL)
-        assert result == {"recovered": 1, "untrusted": 1}
-        assert paper.get_task(h.db, broken_id)["status"] == "error"
-        assert paper.get_task(h.db, h.task_id)["status"] == "running"
+        scheduler = PaperScheduler(
+            h.db, registry=h.registry, poll_interval=0.2)
+        try:
+            counts = scheduler.startup_recover()
+            assert counts == {"recovered": 1, "untrusted": 1}
+            assert paper.get_task(h.db, broken_id)["status"] == "error"
+            # 可信任务被起线程续跑（并发槽登记在案）
+            assert h.task_id in scheduler.status()["active_task_ids"]
+            assert paper.get_task(h.db, h.task_id)["status"] == "running"
+        finally:
+            scheduler.stop()
+            scheduler.join(timeout=5.0)

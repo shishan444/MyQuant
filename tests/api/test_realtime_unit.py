@@ -271,9 +271,13 @@ class TestEmitTaskSnapshot:
             db_path, task_id="pt-1", strategy_id="st-1",
             dna_snapshot_json="{}", symbol="BTCUSDT", timeframe="4h",
             research_status_snapshot="unverified")
-        paper.update_task(db_path, "pt-1", status=status,
-                          started_at="2026-10-01T00:00:00+00:00")
+        if status != "pending":
+            paper.update_task(db_path, "pt-1", status="running",
+                              started_at="2026-10-01T00:00:00+00:00")
         if with_account:
+            # 账户组写入须在 running 态窗口（CARD-06 后 append_bar 的
+            # task_state UPDATE 附 WHERE status='running'——终态后写
+            # 被冻结），故先 running 写账户组再迁终态
             task_state: dict = {"balance": 100_000.0,
                                 "unrealized_pnl": 50.0,
                                 "total_trades": 3}
@@ -290,6 +294,11 @@ class TestEmitTaskSnapshot:
                 equity={"equity": 100_050.0, "balance": 100_000.0,
                         "unrealized_pnl": 50.0, "position_side": "long"},
                 task_state=task_state)
+        if status == "completed":
+            # completed 前态仅 running（缺陷⑤守门拒 pending 直迁）——
+            # 合法两跳构造（账户组已在 running 窗口落库）
+            paper.update_task(db_path, "pt-1", status="completed",
+                              stopped_at="2026-10-01T00:00:00+00:00")
         return db_path
 
     def test_active_paper_task_emits_new_schema_snapshot(

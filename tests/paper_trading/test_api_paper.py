@@ -85,7 +85,10 @@ def _create(client, **overrides) -> dict:
 
 def _seed_terminal(db: Path, task_id: str = "pt_t000000001", *,
                    status: str = "completed") -> str:
-    """仓库直建终态任务（clone/DELETE/report-final 的门槛对象）。"""
+    """仓库直建终态任务（clone/DELETE/report-final 的门槛对象）。
+    迁移链走合法路径（缺陷⑤守门后 update_task 拒 pending→completed
+    类非法直迁）：completed=两跳 pending→running→completed；stopped/
+    error 自 pending 单跳合法。"""
     from core.persistence.repository import paper
 
     paper.create_task(
@@ -93,8 +96,14 @@ def _seed_terminal(db: Path, task_id: str = "pt_t000000001", *,
         dna_snapshot_json='{"risk_genes": {"leverage": 2}}',
         symbol="BTCUSDT", timeframe="4h",
         research_status_snapshot="unverified")
-    paper.update_task(db, task_id, status=status, started_at=BASE_TIME,
-                      stopped_at=BASE_TIME)
+    if status == "completed":
+        paper.update_task(db, task_id, status="running",
+                          started_at=BASE_TIME)
+        paper.update_task(db, task_id, status="completed",
+                          stopped_at=BASE_TIME)
+    else:
+        paper.update_task(db, task_id, status=status, started_at=BASE_TIME,
+                          stopped_at=BASE_TIME)
     return task_id
 
 
@@ -164,6 +173,25 @@ class TestCreateTask:
                 "strategy_id": "st-1", **extra})
             assert resp.status_code == 422, extra
             assert isinstance(resp.json()["detail"], list)
+
+    def test_create_illegal_symbol_422(self, paper_api) -> None:
+        """symbol 入口白名单（CARD-01①）：用户可控 symbol 直落任务行
+        且下游 parquet 路径直拼——路径注入形/含分隔符/超长/空串均 422
+        （validate_symbol 单源，Pydantic 校验数组形制）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        for bad in ("../../X", "BTC/USDT", "BTC USDT", "x" * 21, ""):
+            resp = client.post("/api/paper-trading/tasks", json={
+                "strategy_id": "st-1", "symbol": bad})
+            assert resp.status_code == 422, bad
+            assert isinstance(resp.json()["detail"], list)
+
+    def test_create_legal_symbol_passes(self, paper_api) -> None:
+        """合法 symbol 放行对照（白名单不误伤——显式覆写 DNA 值合法）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        row = _create(client, symbol="ETHUSDT")
+        assert row["symbol"] == "ETHUSDT"
 
     def test_create_overload_stays_pending_201(self, paper_api) -> None:
         """上限排队（spec Scenario 超限排队）：并发满载时创建不拒绝

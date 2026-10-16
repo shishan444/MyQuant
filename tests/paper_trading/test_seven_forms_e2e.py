@@ -120,6 +120,12 @@ class _FormHarness:
             on_concluded=lambda tid, st: None,
             start_after=_REPLAY_ALL)
         assert ex.prepare() is True, self.task()["error_detail"]
+        # 模拟拾取写 running（回放通道跳过 run()——迁移链不断：
+        # pending→running→completed，默认守门时代直跳会被拒；沿
+        # test_executor.py 全链回放先例）
+        paper.update_task(
+            self.db, self.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
         ex.process_frames(self.enhanced, 0)
         return ex
 

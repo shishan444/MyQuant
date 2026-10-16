@@ -171,6 +171,7 @@ class TestAppendBar:
 
         db = _make_db(tmp_path)
         tid = _create_sample_task(db)
+        paper.update_task(db, tid, status="running")  # CARD-06：task_state 更新需 running
         paper.append_bar(
             db, tid, bar_time="2026-10-16T00:00:00+00:00",
             fills=[_fill(1), _fill(2, kind="exit_sl", realized_pnl=-12.5,
@@ -200,6 +201,7 @@ class TestAppendBar:
 
         db = _make_db(tmp_path)
         tid = _create_sample_task(db)
+        paper.update_task(db, tid, status="running")  # CARD-06：task_state 更新需 running
         rng = random.Random(20261016)
 
         bars = []
@@ -299,6 +301,42 @@ class TestAppendBar:
         row = paper.get_task(db, tid)
         assert row["bars_processed"] == 0
         assert row["last_bar_time"] is None
+
+    def test_task_state_frozen_after_terminal(self, tmp_path: Path):
+        """CARD-06 锚：终态任务上 append_bar（僵尸执行器迟到写形制）——
+        明细行照落（append-only 披露面）+task_state 组零变化（游标/
+        账户/统计/updated_at 全冻结——终态封账语义延伸）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.update_task(db, tid, status="running", started_at="t0")
+        paper.append_bar(
+            db, tid, bar_time="2026-10-16T00:00:00+00:00",
+            fills=[_fill(1)], equity=_equity(50_000.0),
+            task_state=_bar_state(1, last_bar_time="2026-10-16T00:00:00+00:00",
+                                  total_trades=1),
+        )
+        paper.update_task(db, tid, status="stopped", stop_reason="user_stop")
+        frozen = paper.get_task(db, tid)
+
+        # 僵尸迟到写：同 bar 重放（明细唯一键吸收）+次 bar 新写+task_state 毒写
+        paper.append_bar(
+            db, tid, bar_time="2026-10-16T04:00:00+00:00",
+            fills=[_fill(1, kind="open", price=999.0)],  # 与首 bar 同 seq 不同 bar=新键照落
+            equity=_equity(1.0),
+            funding=[_funding("2026-10-16T00:00:00+00:00")],
+            task_state=_bar_state(99, last_bar_time="2026-10-16T04:00:00+00:00",
+                                  balance=0.5, total_trades=99),
+        )
+        after = paper.get_task(db, tid)
+        assert after == frozen, "终态后 task_state 组零覆写（含 updated_at）"
+        assert after["bars_processed"] == 1 and after["total_trades"] == 1
+        # 明细照落（披露面 append-only）：新 fill 新 equity 落库，
+        # funding 与首 bar 无重叠键照落
+        assert len(paper.list_fills(db, tid)) == 2
+        assert len(paper.list_equity_snapshots(db, tid)) == 2
+        assert len(paper.list_funding_records(db, tid)) == 1
 
     def test_or_ignore_swallows_not_null_violation(self, tmp_path: Path):
         """行为锚（诚实披露非断言期望）：SQLite OR IGNORE 连 NOT NULL
@@ -489,6 +527,174 @@ class TestReportVersions:
         assert latest["report_json"] == '{"v": 2, "n": 5}'
 
 
+class TestCasUpdate:
+    """update_task CAS 前态门（缺陷⑤ stop 吞没竞态库层前提）：
+    expected_status 是 WHERE 条件非新写面，与六字段白名单并存。"""
+
+    def test_cas_hit(self, tmp_path: Path):
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)  # pending
+        n = paper.update_task(
+            db, tid, expected_status="pending",
+            status="running", started_at="2026-10-16T01:00:00+00:00",
+        )
+        assert n == 1
+        row = paper.get_task(db, tid)
+        assert row["status"] == "running"
+        assert row["started_at"] == "2026-10-16T01:00:00+00:00"
+
+    def test_cas_miss_rejected_atomically(self, tmp_path: Path):
+        """前态已变→零行生效：status 与同批其余字段（stop_reason）均
+        不写——单语句原子门，无 check-then-act 缝隙。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.update_task(db, tid, status="running")  # 前态已迁
+
+        n = paper.update_task(
+            db, tid, expected_status="pending",
+            status="stopped", stop_reason="user_stop",
+        )
+        assert n == 0
+        row = paper.get_task(db, tid)
+        assert row["status"] == "running", "前态不匹配整批拒写"
+        assert row["stop_reason"] is None
+
+    def test_cas_set_form_matches_any(self, tmp_path: Path):
+        """集合形：前态属集合即命中（executor 续跑写 running 用
+        {"pending","running"} 含自身覆盖恢复场景）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.update_task(db, tid, status="running")
+        # running ∈ {pending, running} → 命中（自身覆盖）
+        assert paper.update_task(
+            db, tid, expected_status={"pending", "running"},
+            heartbeat_at="2026-10-16T02:00:00+00:00",
+        ) == 1
+        # 终态不属集合 → 拒
+        paper.update_task(db, tid, status="stopped")
+        assert paper.update_task(
+            db, tid, expected_status={"pending", "running"},
+            status="running",
+        ) == 0
+        assert paper.get_task(db, tid)["status"] == "stopped"
+
+    def test_default_gate_semantics(self, tmp_path: Path):
+        """None=默认守门（修订版——无条件直调也过不了门）：合法迁移
+        放行/非法迁移（跳态）零行拒/同态幂等覆写放行三面。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)  # pending
+
+        # 守门命中：合法链 pending→running
+        assert paper.update_task(db, tid, status="running",
+                                 started_at="t1") == 1
+        # 非法迁移拒：跳态 running→pending（红锚 t3 同语义——无条件
+        # 直调被默认门拦）
+        assert paper.update_task(db, tid, status="pending") == 0
+        row = paper.get_task(db, tid)
+        assert row["status"] == "running", "非法迁移整批拒写"
+        assert row["stop_reason"] is None
+        # 同态幂等覆写放行（恢复续跑场景）：running→running 命中
+        assert paper.update_task(
+            db, tid, status="running", heartbeat_at="t2") == 1
+        assert paper.get_task(db, tid)["heartbeat_at"] == "t2"
+
+    def test_default_gate_rejects_skip_and_terminal_exit(self, tmp_path: Path):
+        """默认门两拒：跳态（pending→completed）与终态出发（终态吸收
+        ——stopped→running 仅同态放行集不含）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        assert paper.update_task(db, tid, status="completed") == 0, \
+            "跳态 pending→completed 拒"
+        assert paper.get_task(db, tid)["status"] == "pending"
+
+        paper.update_task(db, tid, status="running")
+        paper.update_task(db, tid, status="stopped", stop_reason="user_stop")
+        assert paper.update_task(db, tid, status="running") == 0, \
+            "终态吸收：stopped→running 拒"
+        assert paper.get_task(db, tid)["status"] == "stopped"
+
+    def test_non_status_write_ungated(self, tmp_path: Path):
+        """非 status 写不受守门影响：任意态心跳/错误字段无条件生效
+        （expected_status 缺省时）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        assert paper.update_task(db, tid, heartbeat_at="t3",
+                                 error_detail="no_data") == 1
+        row = paper.get_task(db, tid)
+        assert row["heartbeat_at"] == "t3" and row["error_detail"] == "no_data"
+        assert row["status"] == "pending", "非 status 写不动状态"
+
+    def test_custom_tightening_replaces_default(self, tmp_path: Path):
+        """自定义收紧替换默认门：stopped 默认门含 pending（未拾取撤销
+        通道），显式 expected='running' 时 pending 态被拒——stop 分流
+        依据（零命中重读分流 running 分支）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)  # pending
+        # 默认门：pending→stopped 放行（§7.1 端点 4 未拾取撤销）
+        assert paper.update_task(db, tid, status="stopped",
+                                 stop_reason="user_stop") == 1
+        # 显式收紧换任务验证：pending 态不在显式集 {running} 被拒
+        tid2 = _create_sample_task(db, task_id="pt_def456000002")
+        assert paper.update_task(
+            db, tid2, expected_status="running", status="stopped") == 0, \
+            "显式收紧：pending 态不在 {running} 被拒"
+        assert paper.get_task(db, tid2)["status"] == "pending"
+
+    def test_no_expected_status_keeps_unconditional(self, tmp_path: Path):
+        """None=现状无条件兼容：不传 expected_status 照常生效；返回值
+        int 形（旧调用面不接收零破坏）；白名单过滤在 CAS 路径同样适用。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        assert paper.update_task(db, tid) == 0                     # 空 kwargs no-op
+        # CAS 路径白名单外字段仍拒（游标不外写）
+        paper.update_task(db, tid, expected_status="pending",
+                          bars_processed=99, balance=1.0)
+        row = paper.get_task(db, tid)
+        assert row["bars_processed"] == 0 and row["balance"] is None
+
+
+class TestStatusTransitionsSource:
+    """前态单源派生视图锚：PT_STATUS_TRANSITIONS 与组 3 scheduler
+    LEGAL_TRANSITIONS 逐对一致（硬编码锚——不 import 施工中文件，
+    漂移时此锚红）。"""
+
+    def test_transitions_view_content(self):
+        from core.persistence.repository.paper import (
+            PT_STATUS_PREDECESSORS, PT_STATUS_TRANSITIONS,
+        )
+        assert PT_STATUS_PREDECESSORS == {
+            "pending": frozenset(),
+            "running": frozenset({"pending"}),
+            "completed": frozenset({"running"}),
+            "stopped": frozenset({"pending", "running"}),
+            "error": frozenset({"pending", "running"}),
+        }
+        assert PT_STATUS_TRANSITIONS == frozenset({
+            ("pending", "running"),
+            ("pending", "stopped"),   # 未拾取撤销（§7.1 端点 4）
+            ("pending", "error"),     # 装载校验拒绝（tasks 3.2 不进 running）
+            ("running", "completed"),
+            ("running", "stopped"),
+            ("running", "error"),
+        })
+
+
 class TestFundingBackfillInBar:
     """Q-2 运行中补旧账（append_bar.funding_backfills——tasks 3.5
     「先补旧账再记新账」，与该 bar 新结算同事务）。"""
@@ -613,6 +819,9 @@ class TestTerminalBackfillRows:
             task_state=_bar_state(1, last_bar_time="2026-10-15T16:00:00+00:00",
                                   balance=49_900.0),
         )
+        # 终态走合法链两步（status 写默认前态守门——选项 i 适配）
+        paper.update_task(db, tid, status="running",
+                          started_at="2026-10-15T15:00:00+00:00")
         paper.update_task(db, tid, status="completed",
                           stopped_at="2026-10-15T17:00:00+00:00")
 
