@@ -183,6 +183,18 @@ class TestCreateTask:
         row = _create(client)
         assert row["status"] == "pending"  # 第 11 个恒 201 排队
 
+    @pytest.mark.parametrize("status", ["draft", "archived"])
+    def test_create_any_library_status_201(self, paper_api, status) -> None:
+        """任意策略库条目可上盘（spec R11 不设前置）：draft/archived
+        生命周期状态不进创建拒绝面（拒绝面仅 404/422 两类——研究
+        验证状态经 research_status_snapshot 披露而非拦截）。"""
+        client, db = paper_api
+        _seed_strategy(db, strategy_id=f"st-{status}", status=status)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": f"st-{status}"})
+        assert resp.status_code == 201, (status, resp.text)
+        assert resp.json()["status"] == "pending"
+
 
 # ── window_bars 四形态编码 ──
 
