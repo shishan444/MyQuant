@@ -189,17 +189,19 @@ def derive_warmup_full(
                         warmup,
                         math.ceil(minutes / base_minutes))
             # 轴引用为 (indicator, params) 元组清单（_gene_tf_axis_refs
-            # 单源形制）——分钟维取指标名
-            for tf_key, tf_refs in (indicator_tfs or {}).items():
-                tf_min = TF_MINUTES.get(tf_key)
-                if not tf_min:
-                    continue
+            # 单源形制）——分钟维取指标名；warmup_minutes 是**时间需求**
+            # （自然分钟，与求值轴无关），折算基准 bar 用 base_minutes
+            # ——此前误除轴分钟产出轴 bar 数（返回值语义=基准 bar 数），
+            # 1m 轴@1h 基准虚增 / 1h 轴@1m 基准欠账双向偏差
+            #（fix-review D-2）
+            for tf_refs in (indicator_tfs or {}).values():
                 for ref in tf_refs:
                     name = ref[0] if isinstance(ref, (tuple, list)) else ref
                     defn = INDICATOR_REGISTRY.get(name)
                     minutes = getattr(defn, "warmup_minutes", None) if defn else None
                     if minutes:
-                        warmup = max(warmup, math.ceil(minutes / tf_min))
+                        warmup = max(
+                            warmup, math.ceil(minutes / base_minutes))
     return warmup
 
 
