@@ -215,8 +215,9 @@ def test_canonical_param_key_order_independent():
 
 def test_base_columns_registry_intact():
     """基础列清单自 hypothesis_service 移入后内容不变（迁移完整性）。"""
+    # dict 形（hour_utc 域元数据）——keys() 集合比较；八列全保留
     assert {"open", "high", "low", "close", "volume", "trades",
-            "open_interest", "funding_rate"} <= BASE_SUBJECT_COLUMNS
+            "open_interest", "funding_rate"} <= set(BASE_SUBJECT_COLUMNS)
 
 
 # ---------------------------------------------------------------- 五域集成锚

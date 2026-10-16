@@ -54,7 +54,7 @@ class TestAllowedSubjectColumns:
 
         # 精确列全集 ⊇ 八个基础列（open/high/low/close/volume/trades/
         # open_interest/funding_rate）
-        assert BASE_SUBJECT_COLUMNS <= cols
+        assert set(BASE_SUBJECT_COLUMNS) <= cols
         # 前缀集 = 指标注册表 output_fields 拍平（单一事实源锚——
         # 前缀集不得另立来源）
         from core.features.registry import INDICATOR_REGISTRY
@@ -77,7 +77,7 @@ class TestAllowedSubjectColumns:
     def test_前缀集不含基础列(self, db: Path) -> None:
         # 前缀集仅指标输出字段——基础列走精确列集，两集职责分离
         _, prefixes = allowed_subject_columns(db)
-        assert not (prefixes & BASE_SUBJECT_COLUMNS)
+        assert not (prefixes & set(BASE_SUBJECT_COLUMNS))
 
 
 class TestTransitionSuperseded:
