@@ -459,15 +459,55 @@ class TestExposureConsistency:
             checked += 1
         assert checked >= 1, "应有可推导的非截断笔"
 
-    @pytest.mark.skip(reason=(
-        "D-6 疑似缺陷待 developer 定位：trail×risk_budget 入场量与公式"
-        "20 倍偏差（qty=2.5229 顶格 vs expect=0.1091）+出场后不重进"
-        "（trades=1）；atr 档同参精确吻合作对照。复现：hour==0 离散"
-        "入场+time_exit=600 出场、rf=0.001/mult=2.0。修复后去 skip 即验"))
     def test_v4d_trail_manual_derivation(self):
-        """V4d trail 档逐笔人工推导（同 atr 档式：qty=eq×rf÷(mult×
-        atr_i)）——D-6 定位后启用。"""
-        self.test_v4cd_atr_trail_manual_derivation("trail")
+        """V4d trail 档逐笔人工推导（D-6 修复后口径）：trail 的
+        stop_loss 与 pct 同为比例域（validator 分叉域管 pct+trail）——
+        入场 qty=eq×rf÷(price×sl_stop)（与 pct 同式；D-6 修复前入场段
+        把 trail 并入 ATR 倍数式且 trail 不装载 ATR 列乘占位 1）。
+        离散单次入场构造（hour==0 入场+time_exit=600 时刻出场）同
+        时验证出场后循环重进。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+            StrategyDNA)
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.executor import (
+            dna_to_signal_set, clear_indicator_cache)
+
+        df_full = make_enhanced_df(n=400, seed=42)
+        df = df_full.iloc[20:].copy()  # 跳过 ATR 预热（atr 档复用）
+        df["hour_utc"] = df.index.hour + df.index.minute / 60.0
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "le", "threshold": 0.0}),  # 仅 0:00
+                SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER, None,
+                           {"type": "gt", "threshold": 20.0})],  # 永不
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(
+                sl_mode="trail", stop_loss=0.05, take_profit=None,
+                atr_period=14, position_mode="risk_budget",
+                risk_fraction=0.001, time_exit_utc=600))
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df)
+        _, pf = BacktestEngine().run_with_portfolio(dna, df)
+        tr = pf.trades.records_readable
+        val = pf.value().values
+        assert len(tr) >= 5, \
+            f"出场后应循环重进（每日 0:00 入场 10:00 出场），实际 {len(tr)} 笔"
+        checked = 0
+        for k in range(len(tr)):
+            pos = df.index.get_loc(tr["Entry Timestamp"].iloc[k])
+            eq = val[pos - 1] if pos > 0 else val[0]
+            price = float(df["close"].iloc[pos])  # 决策 bar 收盘价
+            qty = tr["Size"].iloc[k]
+            if qty * float(tr["Avg Entry Price"].iloc[k]) >= eq * 0.999:
+                continue  # 截断笔豁免
+            expect_qty = eq * 0.001 / (price * 0.05)
+            assert abs(qty - expect_qty) <= expect_qty * 0.01, \
+                f"trail 第{k}笔 qty 人工推导破坏: {qty} vs {expect_qty}"
+            checked += 1
+        assert checked >= 1, "应有可推导的非截断笔"
 
     def test_v4g_position_sizing_seven_subkeys(self):
         """V4g 披露子键全键在场（裁决 A=七键入契：六子键+F-B4-1 安全
