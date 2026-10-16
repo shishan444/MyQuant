@@ -213,12 +213,20 @@ def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
     formula_refs = {s["ref"] for s in (dna.signal_sources or [])
                     if s.get("type") == "formula" and s.get("ref")}
     # 基因级周期分组（unblock-research-validation 预热第三维）：
-    # 带基因级 tf 的指标按轴分组传折算维度（基准轴指标仍在主清单）
-    indicator_tfs: Dict[str, List[str]] = {}
+    # 带基因级 tf 的基因按轴分组为 (indicator, params) 引用清单（含
+    # 序列对照类条件的 target_indicator 并集——design 2.5 契约；收敛
+    # 粒度按条件实际参数推导），基准轴指标仍在主清单
+    indicator_tfs: Dict[str, List[tuple]] = {}
     for gene in (getattr(dna, "signal_genes", None) or []):
         gene_tf = getattr(gene, "timeframe", None)
         if gene_tf is not None and gene_tf != dna.execution_genes.timeframe:
-            indicator_tfs.setdefault(gene_tf, []).append(gene.indicator)
+            axis_refs = [(gene.indicator, dict(gene.params or {}))]
+            cond = gene.condition if isinstance(gene.condition, dict) else {}
+            if cond.get("target_indicator"):
+                axis_refs.append((
+                    cond["target_indicator"],
+                    dict(cond.get("target_params") or {})))
+            indicator_tfs.setdefault(gene_tf, []).extend(axis_refs)
     warmup = derive_warmup_full(
         db_path, indicator_names, formula_refs,
         indicator_tfs=indicator_tfs or None,

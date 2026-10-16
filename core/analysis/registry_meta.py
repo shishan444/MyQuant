@@ -124,17 +124,19 @@ def derive_warmup_full(
     仅含内置引用时与 derive_warmup 完全一致（floor 200 自带）。
 
     高周期轴维度（unblock-research-validation 基因级 timeframe）：
-    indicator_tfs={轴周期: 该轴指标名清单}——每轴按 derive_warmup
-    同式算轴 bar 数，× 轴周期分钟 ÷ 基准周期分钟折算为基准 bar 并入
-    主 max（indicator_convergence 单源不复制；缺 base_tf 时该维跳过
-    ——兼容既有两参数调用面）。
+    indicator_tfs={轴周期: 该轴 (indicator, params) 引用清单（含
+    target_indicator 并集）}——每轴按 high_tf_warmup_span（收敛粒度，
+    indicator_convergence 单源不复制）算前扩时长，÷ 基准周期折算为
+    基准 bar 并入主 max（与主公式 200 floor 显式分离；缺 base_tf 时
+    该维跳过——兼容既有两参数调用面）。
 
     Args:
         db_path: 插件注册表所在库（插件列 lookback 需要）。
         indicator_names: 内置指标名清单（INDICATOR_REGISTRY 键）。
         plugin_columns: 插件列名集合（fx_*/model_* 精确名；空/None
             时跳过插件维度）。
-        indicator_tfs: 基因级高周期轴分组（轴周期→指标名清单）。
+        indicator_tfs: 基因级高周期轴分组（轴周期→(indicator,
+            params) 引用清单）。
         base_tf: 基准周期（折算分母；None 时跳过高周期维度）。
 
     Raises:
@@ -149,16 +151,24 @@ def derive_warmup_full(
         from core.analysis.warmup_loader import TF_MINUTES
         base_minutes = TF_MINUTES.get(base_tf)
         if base_minutes:
-            for tf_key, tf_indicator_names in indicator_tfs.items():
-                if not tf_indicator_names or tf_key == base_tf:
+            for tf_key, tf_refs in indicator_tfs.items():
+                if not tf_refs or tf_key == base_tf:
                     continue
                 tf_minutes = TF_MINUTES.get(tf_key)
                 if not tf_minutes:
                     continue
-                tf_warmup = derive_warmup(list(tf_indicator_names))
+                # 折算基数=high_tf_warmup_span（收敛粒度 max(实际参数×3,
+                # 20)——indicator_convergence 单源不复制），÷ 基准周期折
+                # 基准 bar（design 2.5 契约）；与主公式 derive_warmup 的
+                # 200 floor 显式分离（两式语义刻意不同，见 mtf_alignment
+                # 模块 docstring——此前误用主式使 RSI(14)@1d 按 200 而非
+                # 42 bar 折算）。函数内延迟 import 环规避（同 plugin 先例
+                # ——mtf_alignment 函数内反向 import 本模块）
+                from core.data.mtf_alignment import high_tf_warmup_span
+                span = high_tf_warmup_span(list(tf_refs), tf_key)
                 warmup = max(
                     warmup,
-                    int(tf_warmup * tf_minutes / base_minutes))
+                    int(span.total_seconds() // (base_minutes * 60)))
     return warmup
 
 
