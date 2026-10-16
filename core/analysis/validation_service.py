@@ -196,6 +196,25 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
     return StrategyDNA.from_json(row["dna_json"]), row
 
 
+def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
+    """基因级高周期轴引用分组：带基因级 tf 的基因按轴归入
+    (indicator, params) 引用清单（含序列对照类条件的 target_indicator
+    并集——design 2.5 契约；收敛粒度按条件实际参数推导）。基准轴
+    指标不在此（仍在 warmup 主清单）。warmup 折算与短窗预检两
+    消费方单源（fix-review B8 抽取）。"""
+    axis_map: Dict[str, List[tuple]] = {}
+    for gene in (getattr(dna, "signal_genes", None) or []):
+        gene_tf = getattr(gene, "timeframe", None)
+        if gene_tf is not None and gene_tf != dna.execution_genes.timeframe:
+            refs = [(gene.indicator, dict(gene.params or {}))]
+            cond = gene.condition if isinstance(gene.condition, dict) else {}
+            if cond.get("target_indicator"):
+                refs.append((cond["target_indicator"],
+                             dict(cond.get("target_params") or {})))
+            axis_map.setdefault(gene_tf, []).extend(refs)
+    return axis_map
+
+
 def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
     """DNA warmup 推导薄壳：提取引用 → derive_warmup_full 两维同式。
 
@@ -213,25 +232,68 @@ def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
     formula_refs = {s["ref"] for s in (dna.signal_sources or [])
                     if s.get("type") == "formula" and s.get("ref")}
     # 基因级周期分组（unblock-research-validation 预热第三维）：
-    # 带基因级 tf 的基因按轴分组为 (indicator, params) 引用清单（含
-    # 序列对照类条件的 target_indicator 并集——design 2.5 契约；收敛
-    # 粒度按条件实际参数推导），基准轴指标仍在主清单
-    indicator_tfs: Dict[str, List[tuple]] = {}
-    for gene in (getattr(dna, "signal_genes", None) or []):
-        gene_tf = getattr(gene, "timeframe", None)
-        if gene_tf is not None and gene_tf != dna.execution_genes.timeframe:
-            axis_refs = [(gene.indicator, dict(gene.params or {}))]
-            cond = gene.condition if isinstance(gene.condition, dict) else {}
-            if cond.get("target_indicator"):
-                axis_refs.append((
-                    cond["target_indicator"],
-                    dict(cond.get("target_params") or {})))
-            indicator_tfs.setdefault(gene_tf, []).extend(axis_refs)
+    # 分组提取单源 _gene_tf_axis_refs（B8 抽取——与短窗预检共用）
+    indicator_tfs = _gene_tf_axis_refs(dna)
     warmup = derive_warmup_full(
         db_path, indicator_names, formula_refs,
         indicator_tfs=indicator_tfs or None,
         base_tf=dna.execution_genes.timeframe)
     return warmup, indicator_names
+
+
+# 基因级高周期轴装载下限（fix-review B8 / DEV-5 裁决 B）：值与
+# load_mtf_data 的 min_bars 缺省同源——预检拦截集合=装载层会跳过的
+# 集合，不扩大拒绝面
+_GENE_TF_MIN_BARS = 50
+
+
+def _reject_short_window_for_gene_tfs(
+    dna, window_bars: int, base_tf: str, *, scope: str,
+) -> None:
+    """短窗×基因级高周期入口预检（统计无意义窗的诚实拒绝）。
+
+    边界披露（裁决 B）：窗内高周期采样物理稀薄的组合（如 30 bar@4h
+    对 1d 基因=窗内仅 5 根）对随机窗口/分段抽查无统计意义——判据
+    与装载层同源（窗内采样 bar 保守向上取整 + 轴收敛 bar
+    high_tf_warmup_span 单源 < min_bars 即拒，RESEARCH_DATA_
+    INSUFFICIENT 族纪律），拒绝提前到入口并附可行动 detail
+    （window_bars/gene_tf/need_hint）。保守取整保证只拦装载必拒的
+    组合；边缘不一致落回既有基因级 fail-loud 兜底（_evaluate_gene_
+    signal 轴缺失拒绝）。无基因级高周期基因零行为；显式分段不在
+    预检面（用户自担段设计，fail-loud 兜底）。
+    """
+    axis_refs = _gene_tf_axis_refs(dna)
+    if not axis_refs:
+        return
+    import math
+    from core.data.timeframes import TF_SECONDS
+    from core.data.mtf_alignment import high_tf_warmup_span
+    base_sec = TF_SECONDS.get(base_tf)
+    if not base_sec:
+        return
+    for gene_tf, refs in axis_refs.items():
+        gene_sec = TF_SECONDS.get(gene_tf)
+        if not gene_sec:
+            continue
+        in_window = math.ceil(window_bars * base_sec / gene_sec)
+        warmup_bars = math.ceil(
+            high_tf_warmup_span(refs, gene_tf).total_seconds() / gene_sec)
+        if in_window + warmup_bars < _GENE_TF_MIN_BARS:
+            need = math.ceil(
+                (_GENE_TF_MIN_BARS - warmup_bars) * gene_sec / base_sec)
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"{scope}对基因级周期 {gene_tf} 不可构成有效样本：窗 "
+                f"{window_bars} bar 折算轴内约 {in_window} bar + 收敛 "
+                f"{warmup_bars} bar < 装载下限 {_GENE_TF_MIN_BARS}"
+                "（统计无意义窗诚实拒绝）",
+                detail={
+                    "window_bars": window_bars, "gene_tf": gene_tf,
+                    "in_window_bars": in_window,
+                    "warmup_bars": warmup_bars,
+                    "min_bars": _GENE_TF_MIN_BARS,
+                    "need_hint": f"加宽窗口至 ≥{need} bar（基准 {base_tf}）"
+                                 " 或降低基因周期"})
 
 
 # threshold_profile 按名白名单（安全关 S-3，方向 B）：预定义名 → 实际
@@ -535,6 +597,11 @@ def random_window_test(
 
     每窗独立 warmup 前扩（与隔离回测同语义）；窗口在
     [data_start, data_end] 内随机抽样（同 rng 种子 → 同窗口集）。
+
+    物理边界（fix-review B8 裁决 B）：短窗×基因级高周期组合（窗内
+    采样+收敛 < 装载轴下限 50 bar）入口预检显式拒绝（detail 附
+    window_bars/gene_tf/need_hint——统计无意义窗诚实拒绝；fail-loud
+    为第二道兜底；见 _reject_short_window_for_gene_tfs）。
     """
     # threshold_profile 按名解析（结构校验前置；每窗 judge 消费）
     threshold_profile = _resolve_threshold_profile(threshold_profile)
@@ -582,6 +649,12 @@ def random_window_test(
                 "verdict": existing["verdict"],
                 "direction": _rw_direction or "long",
                 "result": _rw_result}
+
+    # 短窗×基因级高周期入口预检（fix-review B8 / 裁决 B）：装载层
+    # 跳过→fail-loud 的两段式拒绝提前为入口显式拒绝（幂等命中不受
+    # 影响——预检在幂等查询后）
+    _reject_short_window_for_gene_tfs(
+        dna, window_bars, timeframe, scope="随机窗口")
 
     rng = np.random.default_rng(seed)
     # 顺序抽样保证不重叠且可复现
@@ -854,7 +927,12 @@ def _auto_segments(
     start: str, end: str,
 ) -> List[Dict[str, Any]]:
     """auto 切段：装载请求区间 → ADX/ATR default 现算 → build_segments
-    → type→label 映射（判读统计三键透传；bar 数由位置差重算）。"""
+    → type→label 映射（判读统计三键透传；bar 数由位置差重算）。
+
+    物理边界（fix-review B8 裁决 B）：短段×基因级高周期组合由
+    run_staged_validation 在段清单就绪后逐段预检（判据与装载层
+    同源，见 _reject_short_window_for_gene_tfs；explicit 段不在
+    预检面——调用方自担段内采样充分性）。"""
     from core.analysis.regime_segments import build_segments
     from core.analysis.registry_meta import default_params_for
     from core.data.mtf_loader import (
@@ -975,6 +1053,24 @@ def run_staged_validation(
             segments, start, end)
     else:
         seg_list = _auto_segments(data_dir, symbol, timeframe, start, end)
+        # 短段×基因级高周期预检（fix-review B8 / 裁决 B）：auto 短段
+        # 与随机短窗同根因，段清单就绪后逐段预检（不足段整体拒绝；
+        # explicit 段用户自担设计走既有 fail-loud 兜底）
+        import math as _math
+        from core.data.timeframes import TF_SECONDS as _TF_SEC
+        _base_sec = _TF_SEC.get(timeframe)
+        for seg in seg_list:
+            seg_bars = seg.get("bars")
+            if (seg_bars is None and _base_sec
+                    and seg.get("start") and seg.get("end")):
+                _span_sec = (
+                    to_utc(pd.Timestamp(seg["end"]))
+                    - to_utc(pd.Timestamp(seg["start"]))).total_seconds()
+                seg_bars = _math.ceil(_span_sec / _base_sec)
+            if seg_bars:
+                _reject_short_window_for_gene_tfs(
+                    dna, int(seg_bars), timeframe,
+                    scope=f"分段 {seg.get('label', '?')}")
 
     # G7 五元幂等（后置补做）：段清单就绪后按分段身份查询——同区间
     # 不同分段方案（auto / 不同 explicit 清单）各自独立命中
