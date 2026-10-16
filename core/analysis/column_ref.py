@@ -186,6 +186,19 @@ def _resolve_indicator_ref(ref: Dict[str, Any]) -> ColumnDef:
                 f"{indicator}.{key}={val} 越界（合法 [{pdef.min}, {pdef.max}]）",
                 detail={"indicator": indicator, "key": key, "value": val})
 
+    # 跨参数约束钩子（add-session-structure-expression 任务 1）：
+    # 逐参数域校验通过后的联合校验（如时段起止序）——无钩子指标
+    # （cross_params=None）零行为变化
+    hook = getattr(defn, "cross_params", None)
+    if hook is not None:
+        violation = hook(params)
+        if violation is not None:
+            raise ColumnRefError(
+                "PARAM_INVALID",
+                f"{indicator} 跨参数约束不满足: {violation}",
+                detail={"indicator": indicator, "params": dict(params),
+                        "violation": violation})
+
     outputs = list(defn.output_fields)
     field_name = ref.get("field")
     if len(outputs) > 1:

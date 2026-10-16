@@ -15,7 +15,7 @@ indicators.py）；自 indicators.py 拆出以控制单文件 800 行上限。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +50,15 @@ class IndicatorDef:
     guard_only: bool = False
     naming: str = "default"       # column naming mode
     compute_mode: str = "eager"   # "eager" | "lazy"
+    # 跨参数约束钩子（add-session-structure-expression 任务 1）：
+    # 参数各自域校验通过后的第二道联合校验（如 SessionRange 的
+    # start_minute<end_minute）；签名 (params) -> Optional[str]，
+    # 返回非 None 即拒绝消息（None=通过）。无钩子指标零行为变化。
+    cross_params: Optional[Callable[[Dict[str, float]], Optional[str]]] = None
+    # 分钟语义预热（任务 2）：以自然分钟计的收敛需求（如 SessionRange
+    # 的 1440=完整一天），derive_warmup_full 按 base_tf 折算为 bar 并入
+    # 主 max；None=不参与该维（floor 200 既有语义不虚增）。
+    warmup_minutes: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

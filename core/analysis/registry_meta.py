@@ -169,6 +169,34 @@ def derive_warmup_full(
                 warmup = max(
                     warmup,
                     int(span.total_seconds() // (base_minutes * 60)))
+    # 分钟语义预热维（add-session-structure-expression 任务 2）：
+    # 指标级 warmup_minutes（自然分钟——如 SessionRange 1440=完整
+    # 一天）按 base_tf 折算 bar=ceil(minutes ÷ 周期分钟) 并入主 max；
+    # base_tf 缺席（存量两参调用面）该维不参与——floor 200 不虚增
+    if base_tf:
+        from core.analysis.warmup_loader import TF_MINUTES
+        import math
+        base_minutes = TF_MINUTES.get(base_tf)
+        if base_minutes:
+            for name in (indicator_names or []):
+                defn = INDICATOR_REGISTRY.get(name)
+                minutes = getattr(defn, "warmup_minutes", None) if defn else None
+                if minutes:
+                    warmup = max(
+                        warmup,
+                        math.ceil(minutes / base_minutes))
+            # 轴引用为 (indicator, params) 元组清单（_gene_tf_axis_refs
+            # 单源形制）——分钟维取指标名
+            for tf_key, tf_refs in (indicator_tfs or {}).items():
+                tf_min = TF_MINUTES.get(tf_key)
+                if not tf_min:
+                    continue
+                for ref in tf_refs:
+                    name = ref[0] if isinstance(ref, (tuple, list)) else ref
+                    defn = INDICATOR_REGISTRY.get(name)
+                    minutes = getattr(defn, "warmup_minutes", None) if defn else None
+                    if minutes:
+                        warmup = max(warmup, math.ceil(minutes / tf_min))
     return warmup
 
 
@@ -186,7 +214,8 @@ WARMUP_RULE_TEXT = (
     "主公式下限 200 分属两式）；"
     "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)；"
     "基因级周期维度：各高周期轴 warmup bar 数 × 轴周期 ÷ 基准周期"
-    "折算为基准 bar 并入主 max（1d 轴 42 bar @1h 基准 = 1008 基准 bar）"
+    "折算为基准 bar 并入主 max（1d 轴 42 bar @1h 基准 = 1008 基准 bar）；"
+    "分钟语义预热维：指标级 warmup_minutes（自然分钟，如 SessionRange 1440=完整一天）按基准周期折算 bar=ceil(分钟 ÷ 周期分钟) 并入主 max"
 )
 
 

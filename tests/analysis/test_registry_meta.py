@@ -208,3 +208,37 @@ class TestGeneTfAxisRefsTargetUnion:
         assert axis["1d"][0] == ("RSI", {"period": 14}), "主指标在轴清单"
         assert ("EMA", {"period": 100}) in axis["1d"], \
             "target_indicator 并入轴引用（高周期轴目标列同收敛）"
+
+
+class TestWarmupMinutesDimension:
+    """U2：分钟语义预热维（add-session-structure-expression 任务 2）。"""
+
+    def test_u2a_conversion_anchors(self, tmp_path):
+        """U2a 折算三锚：1440 分钟在 1h=24 bar / 15m=96 / 1m=1440。"""
+        import pytest as _pytest
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef, ParamDef
+        INDICATOR_REGISTRY["_TEST_MIN_IND"] = IndicatorDef(
+            category="structure", params={},
+            output_fields=["x"], supported_conditions=["gt"],
+            warmup_minutes=1440)
+        try:
+            for tf, expect in (("1h", 24), ("15m", 96), ("1m", 1440)):
+                w = derive_warmup_full(tmp_path / "q.db", ["_TEST_MIN_IND"],
+                                       base_tf=tf)
+                # 无周期类参数指标主式=200——分钟维至少抬到 expect
+                assert w == max(200, expect), f"{tf}: {w} != {max(200, expect)}"
+        finally:
+            del INDICATOR_REGISTRY["_TEST_MIN_IND"]
+
+    def test_u2b_no_base_tf_baseline(self, tmp_path):
+        """U2b base_tf=None 存量逐字节（分钟维不参与=200 不虚增）。"""
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef
+        INDICATOR_REGISTRY["_TEST_MIN_IND"] = IndicatorDef(
+            category="structure", params={},
+            output_fields=["x"], supported_conditions=["gt"],
+            warmup_minutes=1440)
+        try:
+            assert derive_warmup_full(
+                tmp_path / "q.db", ["_TEST_MIN_IND"]) == 200
+        finally:
+            del INDICATOR_REGISTRY["_TEST_MIN_IND"]

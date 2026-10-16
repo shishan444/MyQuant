@@ -271,3 +271,51 @@ class TestFiveDomainIntegration:
                                      "action": "gt", "target": 0}]},
                 statement="s", data_ranges=rng)
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+
+class TestCrossParamsHook:
+    """U1：跨参数约束钩子（add-session-structure-expression 任务 1）。"""
+
+    def test_u1a_order_violation_rejected(self):
+        """U1a start≥end 两例拒（>与==各一）——以测试注册的带钩子
+        指标验证机制（SessionRange 实指标在任务 3 落地后另测）。"""
+        import pytest as _pytest
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef, ParamDef
+        from core.analysis.column_ref import ColumnRefError, _resolve_indicator_ref
+
+        def _hook(p):
+            if p["start_minute"] >= p["end_minute"]:
+                return "start_minute 须小于 end_minute（时段倒序无意义）"
+            return None
+
+        INDICATOR_REGISTRY["_TEST_HOOK_IND"] = IndicatorDef(
+            category="structure",
+            params={"start_minute": ParamDef(int, 0, 1439, 0, 1),
+                    "end_minute": ParamDef(int, 0, 1439, 420, 1)},
+            output_fields=["x"], supported_conditions=["gt"],
+            cross_params=_hook)
+        try:
+            for bad in ({"start_minute": 500, "end_minute": 420},
+                        {"start_minute": 420, "end_minute": 420}):
+                with _pytest.raises(ColumnRefError) as ei:
+                    _resolve_indicator_ref({
+                        "indicator": "_TEST_HOOK_IND",
+                        "params": bad, "field": "x"})
+                assert ei.value.code == "PARAM_INVALID"
+                assert ei.value.detail["params"] == bad  # U1c detail 逐键
+                assert "violation" in ei.value.detail
+            # 合法序放行
+            ok = _resolve_indicator_ref({
+                "indicator": "_TEST_HOOK_IND",
+                "params": {"start_minute": 0, "end_minute": 420},
+                "field": "x"})
+            assert ok.params == {"start_minute": 0, "end_minute": 420}
+        finally:
+            del INDICATOR_REGISTRY["_TEST_HOOK_IND"]
+
+    def test_u1b_hookless_unchanged(self):
+        """U1b 无钩子指标零变化（RSI 正常解析）。"""
+        from core.analysis.column_ref import _resolve_indicator_ref
+        ok = _resolve_indicator_ref({
+            "indicator": "RSI", "params": {"period": 14}, "field": "rsi"})
+        assert ok.field == "rsi"
