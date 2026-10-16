@@ -715,9 +715,9 @@ def _missing_component_evidence(
 ) -> List[str]:
     """缺分量证据的源清单（双源判据——Q3 用户裁决 (a)∪(b)）。
 
-    (a) 研究日志 component_eval 记录（summary.columns 精确字符串
-        相等——unblock-research-validation B 段翻译试算的供给面，
-        「翻译过=有记录」不变式）；
+    (a) 研究日志 component_eval 记录（逐组件一条，summary.column
+        精确字符串相等——unblock-research-validation B 段翻译试算
+        的供给面，「翻译过=有记录」不变式）；
     (b) 既有 validation_records level=component 且 verdict=pass
     （params.column 匹配——查询面原样保留；verdict=pass 过滤保持
     0.2.11 D3 收紧语义）。
@@ -749,9 +749,9 @@ def _missing_component_evidence(
             summary = json.loads(entry.get("summary") or "{}")
         except (json.JSONDecodeError, TypeError):
             continue
-        cols = summary.get("columns")
-        if isinstance(cols, list):
-            evidenced.update(c for c in cols if isinstance(c, str))
+        col = summary.get("column")
+        if isinstance(col, str):
+            evidenced.add(col)
     return [s["ref"] for s in plugin_sources if s["ref"] not in evidenced]
 
 

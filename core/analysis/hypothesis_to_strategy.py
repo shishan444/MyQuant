@@ -236,7 +236,6 @@ def _run_formula_trial(
         enrich_with_plugin_columns, plugin_columns_lookback)
     from core.data.mtf_loader import find_parquet, safe_symbol
     from core.data.storage import load_parquet
-    from core.analysis.warmup_loader import TF_MINUTES
     import pandas as pd
 
     path = find_parquet(Path(data_dir), safe_symbol(rng["symbol"]),
@@ -253,7 +252,6 @@ def _run_formula_trial(
             f"公式组件试算数据不可装载: {rng['symbol']} {rng['timeframe']}",
             detail={"data_range": rng, "reason": "empty_parquet"})
     warmup = plugin_columns_lookback(db_path, set(formula_refs))
-    tf_minutes = TF_MINUTES.get(rng["timeframe"], 240)
     need_rows = min(len(df), max(warmup + 8, 32))
     head = df.iloc[:need_rows].copy()
     try:
@@ -282,17 +280,25 @@ def _run_formula_trial(
 
 
 def _write_component_eval(db_path, strategy_id, formula_refs, rng, bars):
-    """component_eval 记录写入（任务 8/9 共用单点）。"""
+    """component_eval 记录写入（任务 8/9 共用单点；逐组件一条）。
+
+    记录形制按契约（tasks 任务 8）：每组件一条，summary 单键
+    {"column": c, "source": "formula", "evaluated_bars": int}，
+    data_ranges=json([试算区间]) 列表形（design 明文）——研究
+    日志是 MCP 可查面，键名为契约（此前 columns 列表汇总一条为
+    实现偏差，门禁读侧同步改 column 单键精确相等）。
+    """
     from core.persistence.repository import research as rr
-    rr.append_research_log(
-        db_path, hypothesis_id=None,
-        entry_type="component_eval",
-        ref_id=strategy_id,
-        data_ranges=json.dumps(rng, ensure_ascii=False),
-        summary=json.dumps(
-            {"columns": sorted(formula_refs), "source": "formula",
-             "evaluated_bars": bars},
-            ensure_ascii=False))
+    for column in sorted(formula_refs):
+        rr.append_research_log(
+            db_path, hypothesis_id=None,
+            entry_type="component_eval",
+            ref_id=strategy_id,
+            data_ranges=json.dumps([rng], ensure_ascii=False),
+            summary=json.dumps(
+                {"column": column, "source": "formula",
+                 "evaluated_bars": bars},
+                ensure_ascii=False))
 
 
 def _backfill_component_eval(
@@ -307,13 +313,18 @@ def _backfill_component_eval(
     """
     try:
         from core.persistence.repository import research as rr
-        logs = rr.list_research_log(
-            db_path, entry_type="component_eval", limit=1)
-        # 精确判定：该策略 id 已有记录则跳过（list 过滤面无 ref_id
-        # 参数——按全量日志扫描 ref_id 精确匹配）
-        all_logs = rr.list_research_log(db_path, limit=500)
-        if any(e.get("entry_type") == "component_eval"
-               and e.get("ref_id") == strategy_id for e in all_logs):
+        # 精确判定：该策略 id 已有 component_eval 记录则跳过
+        # （entry_type 过滤缩小扫描面 + iter_all_pages 分页取全后按
+        # ref_id 精确匹配——与门禁读侧同查询形制；不取全则日志超量
+        # 时 asc 尾部恒不含新 entry_type，幂等失效导致三命中点重复
+        # 试算+重写）
+        from core.analysis.isolation import iter_all_pages
+        existing = [
+            e for e in iter_all_pages(
+                lambda off, lim: rr.list_research_log(
+                    db_path, entry_type="component_eval",
+                    offset=off, limit=lim))]
+        if any(e.get("ref_id") == strategy_id for e in existing):
             return
         from core.strategy.dna import StrategyDNA
         dna_obj = StrategyDNA.from_json(row.get("dna_json") or "{}")
@@ -481,7 +492,10 @@ def translate_hypothesis(
         group_conditions = conditions.get(group_key)
         if not group_conditions:
             continue
-        group_short = group_key.rsplit("_conditions", 1)[0].replace("_", " ")
+        # field 定位键保留下划线完整键形（与登记面同位 field 及
+        # _translate_conditions 插件 tf 拒绝的 field 同形制——结构化
+        # 键不做自然语言化）
+        group_short = group_key.rsplit("_conditions", 1)[0]
         if group_key == "add_trigger_conditions":
             _guard_condition_timeframe(
                 "add_trigger", group_conditions, strategy_timeframe)

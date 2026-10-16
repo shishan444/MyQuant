@@ -351,16 +351,18 @@ class TestComponentTrialAndEvidence:
             if ref_id is None or e.get("ref_id") == ref_id]
 
     def test_t7b_record_shape(self, db, data_dir):
-        """T7b 记录形制逐键：entry_type/ref_id/summary.columns/source/
-        evaluated_bars>0。"""
+        """T7b 记录形制逐键（契约形制——逐组件一条）：单组件场景
+        logs 恰 1 条，entry_type/ref_id/summary.column（单键）/
+        source/evaluated_bars>0。"""
         col = _plugin(db)
         hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
                                   "target": 0.5}])
         out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         logs = self._component_logs(db, out["strategy_id"])
         assert logs, "翻译过=有记录（不变式）"
+        assert len(logs) == 1, f"单组件应逐组件一条，got {len(logs)}"
         summary = json.loads(logs[0]["summary"])
-        assert summary["columns"] == [col]
+        assert summary["column"] == col
         assert summary["source"] == "formula"
         assert summary["evaluated_bars"] > 0
 
