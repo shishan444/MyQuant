@@ -231,7 +231,8 @@ class TestRegistrationRegression:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["precheck_warnings"]["verdict"] == "pass"
-        # 谱系回链日志同事务落库（既有语义不因预检改变）
+        # 谱系回链日志同事务落库（既有语义不因预检改变；entry_type
+        # 随 GAP-10 泛化为 analysis_ref——两类统一留痕）
         entries = rr.list_research_log(reg_env["db"], hypothesis_id=None)
-        assert any(e["entry_type"] == "screen_use"
+        assert any(e["entry_type"] == "analysis_ref"
                    for e in entries)

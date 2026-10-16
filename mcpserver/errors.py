@@ -178,6 +178,22 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "time_exit_utc": "固定时刻出场参数越域：time_exit_utc 为 UTC 分钟"
                      "时刻 0-1439（0=0:00、1439=23:59；单位是分钟不是"
                      "小时）——按 detail.legal_range 修正",
+    # 动态定仓（complete-research-tooling 任务 4）：同族 field 通道
+    "position_mode": "定仓模式非法：position_mode ∈ {fixed, risk_budget}"
+                     "（缺省 fixed 固定比例；risk_budget=风险预算制——"
+                     "须同时声明 risk_fraction 与 stop_loss）",
+    "risk_fraction": "风险预算比例越域：risk_fraction ∈ (0, 0.5]"
+                     "（每笔风险预算占当時权益比例，闭区间上界 0.5）",
+    # 谱系引用泛化（complete-research-tooling 任务 3）：两类引用
+    # （screen_candidate 扫描候选/analysis_task 分析任务）的参数面
+    "provenance.ref_type": "引用类型非法：ref_type ∈ {screen_candidate,"
+                           " analysis_task}（扫描候选/网格统计任务两类"
+                           "来源——按实际来源选型）",
+    "provenance.candidate_fingerprint": "候选指纹缺失：ref_type="
+                                        "screen_candidate 须携带 "
+                                        "candidate_fingerprint（候选定位"
+                                        "语义；analysis_task 任务级引用"
+                                        "方可省略）",
 }
 
 

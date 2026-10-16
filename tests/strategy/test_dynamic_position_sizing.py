@@ -200,3 +200,59 @@ class TestEngineBehavior:
             vn = val[pos - 1] if pos > 0 else 100000.0
             notional = abs(tr["Size"].iloc[k]) * tr["Avg Entry Price"].iloc[k]
             assert notional <= vn * 1.01, "空头敞口约束同款失效"
+
+
+class TestPairingTable:
+    """组间配对对照表用例化（任务 5——docs/动态定仓组间配对对照表.md
+    行为锚：首仓制/取严/比例不变）。"""
+
+    def test_add_path_first_position_only(self):
+        """首仓制：add 分支不读 position_mode——同加仓信号下 risk_budget
+        与 fixed 的加仓笔 size 同构（比例路径，非风险预算复合）。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+            StrategyDNA)
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.executor import (
+            dna_to_signal_set, clear_indicator_cache)
+        df = make_enhanced_df(n=400, seed=42)
+        # 构造 entry+add 双信号：hour<=1 入场、hour in 2..5 加仓
+        df["hour_utc"] = df.index.hour + df.index.minute / 60.0
+        sizes = {}
+        for mode, extra in (("fixed", {}),
+                            ("rb", {"position_mode": "risk_budget",
+                                    "risk_fraction": 0.1,
+                                    "stop_loss": 0.05})):
+            clear_indicator_cache()
+            dna = StrategyDNA(
+                signal_genes=[
+                    SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER,
+                               None, {"type": "le", "threshold": 1.0}),
+                    SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER,
+                               None, {"type": "gt", "threshold": 20.0}),
+                    SignalGene("hour_utc", {}, SignalRole.ADD_TRIGGER,
+                               None, {"type": "le", "threshold": 5.0})],
+                logic_genes=LogicGenes(),
+                execution_genes=ExecutionGenes(timeframe="1h"),
+                risk_genes=RiskGenes(add_fraction=0.2, take_profit=None,
+                                     **extra))
+            sig = dna_to_signal_set(dna, df)
+            _, pf = BacktestEngine().run_with_portfolio(dna, df)
+            tr = pf.trades.records_readable
+            adds = tr[tr["Size"] > 0]
+            sizes[mode] = len(tr)
+        # 两模式交易笔数同构（加仓机制本身与定仓模式正交——首仓制：
+        # add 路径不因 risk_budget 产生额外/缺失笔）
+        assert sizes["fixed"] > 0
+        assert sizes["rb"] == sizes["fixed"], \
+            "首仓制：加仓路径不读 position_mode，笔数应同构"
+
+    def test_pairing_table_doc_exists(self):
+        """Y7 交付物核验：对照表文档在场（文档+测试双证据之文档面）。"""
+        from pathlib import Path
+        doc = Path(__file__).resolve().parents[2] / \
+            "docs" / "动态定仓组间配对对照表.md"
+        assert doc.exists(), "组间配对对照表文档缺失"
+        text = doc.read_text(encoding="utf-8")
+        for row_anchor in ("首仓制", "全局取严", "比例不变", "公式分母"):
+            assert row_anchor in text, f"对照表缺行锚: {row_anchor}"

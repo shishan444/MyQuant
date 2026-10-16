@@ -163,11 +163,12 @@ class TestGeneAndTranslation:
             RiskGenes(max_hold=6).to_dict()).max_hold == 6
 
     def test_d2_fields_ten_and_legacy_parity(self):
-        """DEC-8 补：比对集十一字段；存量侧（手写字面 dict 模拟库内旧
-        dna_json——无 max_hold 键）与无声明产物经比对集逐字段恒等
-        ——扩键连续（get 缺键读 None 语义）。"""
+        """DEC-8 补：比对集十三字段（complete-research-tooling 任务 4
+        扩 position_mode/risk_fraction）；存量侧（手写字面 dict 模拟
+        库内旧 dna_json——无 max_hold 键）与无声明产物经比对集逐字段
+        恒等——扩键连续（get 缺键读 None 语义）。"""
         assert "max_hold" in _D2_RISK_FIELDS
-        assert len(_D2_RISK_FIELDS) == 11
+        assert len(_D2_RISK_FIELDS) == 13
         legacy_dict = {  # 存量库内 dna_json 形（无新键字面）
             "stop_loss": 0.05, "take_profit": None,
             "position_size": 0.3, "leverage": 1, "direction": "long",
