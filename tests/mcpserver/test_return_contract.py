@@ -21,42 +21,11 @@ pytestmark = [pytest.mark.integration]
 
 from mcpserver.tools import register_readonly_tools, register_research_tools
 
-
-class _FakeMcp:
-    """捕获 @mcp.tool() 注册的工具函数（恒等装饰）。"""
-
-    def __init__(self):
-        self.registered = {}
-
-    def tool(self):
-        def deco(fn):
-            self.registered[fn.__name__] = fn
-            return fn
-        return deco
-
-
-class _FakeApi:
-    """固定样本 API（GET 透传记录；POST 固定返回）。"""
-
-    def __init__(self, samples: dict | None = None):
-        self.samples = samples or {}
-        self.calls: list[tuple] = []
-
-    def get(self, url, params=None):
-        self.calls.append(("GET", url, params))
-        return self.samples.get(url, {"items": [], "total": 0})
-
-    def post(self, url, body):
-        self.calls.append(("POST", url, body))
-        return self.samples.get(url, {"ok": True})
-
-    def poll_until_terminal(self, url, terminal=(), total_timeout=60.0):
-        self.calls.append(("POLL", url, None))
-        return self.samples.get(url, {"status": "completed"})
+from conftest import _FakeMcp, RecordingFakeApi  # 同目录（pytest prepend）
 
 
 def _all_tools() -> dict[str, Any]:
-    mcp, api = _FakeMcp(), _FakeApi()
+    mcp, api = _FakeMcp(), RecordingFakeApi()
     register_readonly_tools(mcp, api)
     register_research_tools(mcp, api)
     return mcp.registered
@@ -110,7 +79,7 @@ class TestListArrayShape:
     def test_list_tools_pass_through_array(self, tool_name, url, fixed):
         """清单工具返回体=API 层固定样本原样透传（数组/对象形制不
         在 MCP 层被包裹变形）。"""
-        mcp, api = _FakeMcp(), _FakeApi({url: fixed})
+        mcp, api = _FakeMcp(), RecordingFakeApi({url: fixed})
         register_readonly_tools(mcp, api)
         result = mcp.registered[tool_name]()
         assert result == fixed, \
@@ -120,7 +89,7 @@ class TestListArrayShape:
         """策略列表（dict 形 items）：折叠变形是既有设计（D8 折叠后
         条目无 dna），但形制仍为 {items:[...]} 数组形——规则③的
         适用面（list_strategies 不在透传参数化里，因其有意变形）。"""
-        mcp, api = _FakeMcp(), _FakeApi({
+        mcp, api = _FakeMcp(), RecordingFakeApi({
             "/api/strategies": {"items": [{"strategy_id": "s1",
                                            "name": "n", "symbol": "BTCUSDT",
                                            "timeframe": "4h"}],

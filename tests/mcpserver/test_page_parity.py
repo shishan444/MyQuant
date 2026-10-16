@@ -15,6 +15,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
+from conftest import _FakeMcp  # 同目录（pytest prepend）
+
 _CONDITIONS = {
     "when_conditions": [{"subject": "close", "action": "gt", "target": 0}],
     "then_conditions": [{"subject": "close", "action": "gt", "target": -1}],
@@ -91,16 +93,6 @@ class TestPageOneParityMcp:
     """
 
     def test_s4c_mcp_tool_params_identical(self):
-        class _FakeMcp:
-            def __init__(self):
-                self.registered = {}
-
-            def tool(self):
-                def deco(fn):
-                    self.registered[fn.__name__] = fn
-                    return fn
-                return deco
-
         class _CapturingApi:
             def __init__(self):
                 self.gets = []
