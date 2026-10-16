@@ -1,9 +1,10 @@
 """实盘决策 pipeline（第6步）—— 单 bar 决策翻译，复用 judgment 纯计算。
 
 职责：``sig_set`` + ``bar_idx`` + ``LiveAccountState`` → ``OrderAction``(或 None=hold)。
-- 复用 ``core.trading.judgment.evaluate``（决策纯函数）—— 共享纯计算层。
-- 复用 ``core.trading.types.BarSignals``（信号提取）。
-- 适配：``LiveAccountState`` → ``core.trading.AccountState``（字段映射）。
+- 复用自有域 ``core.live_trading.judgment.evaluate``（决策纯函数，rebuild-paper-trading
+  6.1 自旧 core/trading 逐字迁入——旧域退役前置）。
+- 复用自有域 ``core.live_trading.types.BarSignals``（信号提取）。
+- 适配：``LiveAccountState`` → ``AccountState``（字段映射）。
 - 翻译：``Decision`` → ``OrderAction``（v1 仅 open/close/hold；add/reduce→None，加减仓后续）。
 
 不含：数据拉取/轮询（Runner 第7步）、下单（Gateway 第4步）、风控（RiskGuard 第5步）。
@@ -15,14 +16,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.trading.judgment import evaluate
-from core.trading.types import AccountState, BarSignals, Decision, JudgmentConfig
-
-from .types import LiveAccountState, OrderAction
+from .judgment import evaluate
+from .types import (
+    AccountState,
+    BarSignals,
+    Decision,
+    JudgmentConfig,
+    LiveAccountState,
+    OrderAction,
+)
 
 
 def to_judgment_state(live: LiveAccountState) -> AccountState:
-    """LiveAccountState → core.trading.AccountState（字段适配，复用 judgment）。"""
+    """LiveAccountState → AccountState（字段适配，复用 judgment）。"""
     pos = live.position
     has = bool(pos and pos.has_position)
     return AccountState(

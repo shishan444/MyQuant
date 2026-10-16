@@ -7,7 +7,8 @@
   后台执行落库（run_source=batch_backtest）
 - GET /api/strategies/batch-backtest/{result_id}：404、JSON 字段解析与坏 JSON 容错
 
-IO 边界（ReplayRunner/df 装载/fitness 计算）mock 为固定输出，只记录编排行为。
+IO 边界（BacktestEngine.batch_run/df 装载/fitness 计算）mock 为固定输出，
+只记录编排行为（Q-1=a 迁移后执行内核为回测引擎，替身随迁）。
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -27,13 +29,22 @@ from fastapi.testclient import TestClient
 from tests.helpers.data_factory import make_dna, make_ohlcv
 
 
-def _fake_replay_result(
+def _fake_engine_result(
     total_return: float = 0.05, total_trades: int = 0,
 ) -> SimpleNamespace:
-    """ReplayRunner 结果替身：零交易路径走 metrics fallback。"""
+    """BacktestEngine.batch_run 结果替身：零交易路径（win_rate=None 透传）。"""
     return SimpleNamespace(
-        equity_curve=[], total_trades=total_trades, events_log=[],
-        bars_processed=0, total_return=total_return, liquidated=False,
+        equity_curve=pd.Series([100000.0, 100050.0, 100100.0]),
+        total_trades=total_trades,
+        win_rate=None,
+        total_return=total_return,
+        liquidated=False,
+        total_funding_cost=0.0,
+        trades_df=None,
+        metrics_dict={
+            "sharpe_ratio": 0.1, "max_drawdown": 0.01,
+            "win_rate": None, "profit_factor": 0.0,
+        },
     )
 
 
@@ -131,8 +142,9 @@ class TestProcessorStep:
         processor._load_df = lambda *a, **kw: df
         processor._load_mtf = lambda *a, **kw: None
         processor._compute_fitness = lambda *a, **kw: _fitness_result()
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [
+                _fake_engine_result(), _fake_engine_result()]
             progress = processor.process_step(0)
 
         # BatchBacktestResultItem 序列化后 error=None 表示成功（键恒存在）
@@ -145,22 +157,23 @@ class TestProcessorStep:
         assert item.qualified is True
 
     def test_leverage_override_applied(self, batch_db: Path, tmp_path: Path) -> None:
-        """payload.leverage != 1 时覆盖 DNA 的 risk_genes.leverage。"""
+        """payload.leverage != 1 时覆盖组内每个 DNA 的 risk_genes.leverage。"""
         captured = {}
 
-        def _capture_run(dna, df, **kw):
-            captured["leverage"] = dna.risk_genes.leverage
-            return _fake_replay_result()
+        def _capture_batch_run(dnas, df, **kw):
+            captured["leverages"] = [d.risk_genes.leverage for d in dnas]
+            return [_fake_engine_result() for _ in dnas]
 
         processor = _make_processor(batch_db, tmp_path, leverage=3)
         processor.init()
         processor._load_df = lambda *a, **kw: make_ohlcv(50, "4h")
         processor._load_mtf = lambda *a, **kw: None
         processor._compute_fitness = lambda *a, **kw: _fitness_result()
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.side_effect = _capture_run
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.side_effect = _capture_batch_run
             processor.process_step(0)
-        assert captured["leverage"] == 3
+        # 组内两策略（s-high/s-low）逐个 deepcopy 覆写后同批传入
+        assert captured["leverages"] == [3, 3]
 
     def test_strategy_level_exception_recorded(
         self, batch_db: Path, tmp_path: Path,
@@ -180,8 +193,9 @@ class TestProcessorStep:
             return _fitness_result()
 
         processor._compute_fitness = _flaky_fitness
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [
+                _fake_engine_result(), _fake_engine_result()]
             processor.process_step(0)
 
         errors = [r for r in processor.all_results if r.error]
@@ -225,7 +239,7 @@ class TestProcessorStep:
     def test_equity_curve_serialized_when_trades_exist(
         self, batch_db: Path, tmp_path: Path,
     ) -> None:
-        """有交易时 equity 曲线按 bars_processed 对齐时间戳序列化落库。"""
+        """引擎权益曲线（Series）按索引直序列化落库（无截尾对齐）。"""
         import json as _json
         from core.persistence.repository.backtest_result import get_backtest_result
         processor = _make_processor(batch_db, tmp_path, strategy_ids=["s-high"])
@@ -235,31 +249,31 @@ class TestProcessorStep:
         processor._load_mtf = lambda *a, **kw: None
         processor._compute_fitness = lambda *a, **kw: _fitness_result()
         fake = SimpleNamespace(
-            equity_curve=[100000.0, 100500.0, 101000.0],
+            equity_curve=pd.Series(
+                [100000.0, 100500.0, 101000.0], index=df.index[:3]),
             total_trades=3,
-            events_log=[
-                {"type": "position_closed", "pnl": 50.0,
-                 "entry_price": 100.0, "exit_price": 105.0, "exit_reason": "tp"},
-                {"type": "position_closed", "pnl": -20.0,
-                 "entry_price": 105.0, "exit_price": 100.0, "exit_reason": "sl"},
-            ],
-            bars_processed=3,
-            total_return=0.01, liquidated=False,
+            win_rate=0.5,
+            total_return=0.01, liquidated=False, total_funding_cost=0.0,
+            trades_df=None,
+            metrics_dict={
+                "sharpe_ratio": 0.1, "max_drawdown": 0.01,
+                "win_rate": 0.5, "profit_factor": 0.0,
+            },
         )
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = fake
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [fake]
             processor.process_step(0)
 
         rows = [r for r in processor.all_results if not r.error]
         row = get_backtest_result(batch_db, rows[0].result_id)
         curve = _json.loads(row["equity_curve"])
         assert len(curve) == 3
-        # 现状语义：时间戳取 df.index[-bars_processed:]（末尾对齐），
-        # 50 根 4h 数据的最后 3 根首根为 2024-01-08 20:00
-        assert curve[0]["timestamp"] == "2024-01-08 20:00:00"
+        # 引擎语义：Series 索引直序列化（删截尾对齐），时间戳=曲线自身
+        # 索引；替身取 df 前 3 根 → 首根为序列首根 2024-01-01 00:00
+        assert curve[0]["timestamp"] == "2024-01-01 00:00:00"
         assert curve[0]["value"] == 100000.0
         assert curve[-1]["value"] == 101000.0
-        # win_rate 按 position_closed 事件盈亏比计算（1 胜 1 负）
+        # win_rate 直取引擎产物（三态透传——替身给数值即数值）
         assert rows[0].win_rate == 0.5
 
     def test_mtf_strategy_triggers_mtf_load(
@@ -278,8 +292,8 @@ class TestProcessorStep:
         processor._load_df = lambda *a, **kw: make_ohlcv(50, "4h")
         processor._load_mtf = lambda *a, **kw: mtf_calls.append(kw) or None
         processor._compute_fitness = lambda *a, **kw: _fitness_result()
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [_fake_engine_result()]
             processor.process_step(0)
         assert len(mtf_calls) == 1  # MTF 装载被触发
 
@@ -294,8 +308,9 @@ class TestProcessorFinalize:
 
         fitness_by_calls = iter([_fitness_result(fitness=2.0), _fitness_result(fitness=9.0)])
         processor._compute_fitness = lambda *a, **kw: next(fitness_by_calls)
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [
+                _fake_engine_result(), _fake_engine_result()]
             processor.process_step(0)
 
         result = processor.finalize()
@@ -354,8 +369,8 @@ class TestStreamEndpoint:
             symbol="BTCUSDT", timeframe="4h", name="StreamStrat",
         )
 
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [_fake_engine_result()]
             with patch(
                 "core.data.mtf_loader.load_and_prepare_df",
                 return_value=make_ohlcv(50, "4h"),
@@ -400,8 +415,8 @@ class TestStreamEndpoint:
             db_path, strategy_id="s-cancel", dna_json=make_dna().to_json(),
             symbol="BTCUSDT", timeframe="4h", name="CancelStrat",
         )
-        with patch("core.trading.replay.ReplayRunner") as runner_cls:
-            runner_cls.return_value.run.return_value = _fake_replay_result()
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [_fake_engine_result()]
             with patch(
                 "core.data.mtf_loader.load_and_prepare_df",
                 return_value=make_ohlcv(50, "4h"),

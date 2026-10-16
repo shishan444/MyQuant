@@ -72,7 +72,13 @@ class TestBenchmarkKeys:
 
 
 class TestBarsPerYearUnification:
-    """Decision 6：公共常量为单一权威源，engine 与 batch 同源引用。"""
+    """Decision 6：公共常量为单一权威源，engine 按档引用。
+
+    batch 侧换算面已随 Q-1=a 迁移消失（batch 直接消费引擎计算，
+    rebuild-paper-trading 6.2）——原 batch 同源断言用例随之删除，
+    同源契约由四入口一致性（tests/consistency/test_four_entry_
+    consistency.py）承担。
+    """
 
     def test_constant_covers_all_tiers_expected_values(self):
         # batch 全集 + engine 独有 3d 档；数值与既有 batch.py:149-152 一致
@@ -82,13 +88,6 @@ class TestBarsPerYearUnification:
             "3d": 365 // 3,
         }
         assert DEFAULT_BARS_PER_YEAR == 2190
-
-    def test_batch_processor_same_source_all_tiers(self):
-        from api.routes.strategies.batch import _BatchBacktestProcessor
-        for tf, expected in BARS_PER_YEAR.items():
-            assert _BatchBacktestProcessor._bars_per_year(None, tf) == expected
-        # 未知档缺省不变（=4h 档）
-        assert _BatchBacktestProcessor._bars_per_year(None, "9h") == DEFAULT_BARS_PER_YEAR
 
     def test_engine_uses_constant_for_1m(self):
         # 原 engine 映射缺 1m 档 → 错落缺省 2190；统一后 1m 真跑取 525600

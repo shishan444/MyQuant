@@ -67,6 +67,46 @@ def make_ohlcv(
     return df
 
 
+def make_flat_ohlcv(
+    n: int = 140,
+    freq: str = "4h",
+    base_price: float = 100.0,
+    step: float = 0.003,
+    seed: int = 11,
+    start: str = "2024-01-01",
+) -> pd.DataFrame:
+    """Generate flat-bar OHLCV (open≡high≡low≡close) for controlled equivalence.
+
+    受控等价专用平价 bar：四价合一（每根 K 线开盘=最高=最低=收盘），
+    行情由随机游走 close 驱动。用途（rebuild-paper-trading 8.1 受控
+    等价层的受控手段）：纸盘引擎信号类意图按执行 bar 开盘价成交、回测
+    引擎 vbt 按当根 close 成交——平价使两引擎的成交基准价重合，逐笔
+    成交与逐 bar 权益的数值对照成为可能。
+
+    Args:
+        n: Number of bars.
+        freq: Pandas frequency string (e.g. "4h", "1h").
+        base_price: Starting price.
+        step: Per-bar return stddev (keep well below stop distance to
+            avoid triggering immediate exits in equivalence scenarios).
+        seed: Random seed for reproducibility.
+        start: Start date string.
+    """
+    rng = np.random.default_rng(seed)
+    returns = rng.standard_normal(n) * step
+    close = base_price * np.cumprod(1 + returns)
+    volume = rng.integers(100, 10000, size=n).astype(float)
+
+    dates = pd.date_range(start, periods=n, freq=freq, tz="UTC")
+    df = pd.DataFrame(
+        {"open": close, "high": close, "low": close, "close": close,
+         "volume": volume},
+        index=dates,
+    )
+    df.index.name = "timestamp"
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Signal Gene helpers
 # ---------------------------------------------------------------------------
@@ -247,6 +287,112 @@ def make_mtf_dna(
         mtf_mode=mtf_mode,
         confluence_threshold=confluence_threshold,
         proximity_mult=proximity_mult,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Form DNA helpers (rebuild-paper-trading 8.2 形态矩阵)
+# ---------------------------------------------------------------------------
+
+def make_scaled_dna(
+    direction: str = "long",
+    exit_fraction: float | None = 0.3,
+    add_fraction: float | None = 0.2,
+    max_exposure: float | None = 1.0,
+    add_inhibit: bool = False,
+    timeframe: str = "4h",
+    symbol: str = "BTCUSDT",
+    **risk_kwargs,
+) -> StrategyDNA:
+    """Create a scaling (REDUCE+ADD roles) StrategyDNA for form matrix.
+
+    可控触发形态段（design 测试基建②）：分批角色基因 DNA——REDUCE
+    触发 RSI>55（与 EXIT 的 RSI>70 错开，持仓中先减后平可分辨）、
+    ADD 触发 RSI<35（与 ENTRY 的 RSI<30 部分重叠，开仓后邻段加仓）；
+    add_inhibit=True 时附 ADD_INHIBIT RSI<32（RSI<32 的 bar 抑制加仓——
+    三参数显式/缺省由三参数传 None 切换（缺省物化形态）。
+
+    Args:
+        direction: "long" | "short" | "mixed".
+        exit_fraction: 部分离场比例；None=缺省物化（0.5）。
+        add_fraction: 加仓比例；None=缺省物化（0.1）。
+        max_exposure: 总敞口上限；None=缺省物化（1.0）。
+        add_inhibit: 是否附 ADD_INHIBIT 抑制基因。
+        timeframe: Execution timeframe.
+        symbol: Trading pair.
+        **risk_kwargs: RiskGenes 其余字段覆写（sl_mode/max_hold 等，
+            组合锚用）。
+
+    Returns:
+        StrategyDNA with entry + exit + REDUCE/ADD(/INHIBIT) genes.
+    """
+    genes = [
+        make_signal_gene(role=SignalRole.ENTRY_TRIGGER,
+                         condition_type="lt", condition_value=30),
+        make_signal_gene(role=SignalRole.EXIT_TRIGGER,
+                         condition_type="gt", condition_value=70),
+        make_signal_gene(role=SignalRole.REDUCE_TRIGGER,
+                         condition_type="gt", condition_value=55),
+        make_signal_gene(role=SignalRole.ADD_TRIGGER,
+                         condition_type="lt", condition_value=35),
+    ]
+    if add_inhibit:
+        genes.append(make_signal_gene(
+            role=SignalRole.ADD_INHIBIT,
+            condition_type="lt", condition_value=32))
+    risk = dict(
+        direction=direction,
+        exit_fraction=exit_fraction,
+        add_fraction=add_fraction,
+        max_exposure=max_exposure,
+    )
+    risk.update(risk_kwargs)
+    return StrategyDNA(
+        signal_genes=genes,
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
+        risk_genes=RiskGenes(**risk),
+    )
+
+
+def make_mixed_dna(
+    direction_threshold: float = 25,
+    timeframe: str = "4h",
+    symbol: str = "BTCUSDT",
+    **risk_kwargs,
+) -> StrategyDNA:
+    """Create a mixed-direction StrategyDNA with a DIRECTION gene.
+
+    可控触发形态段（design 测试基建②）：mixed 方向须带 DIRECTION 基因
+    （validate_dna 拒绝无基因形态）——DIRECTION 触发 RSI>threshold
+    （True→+1 多 / False→−1 空）。threshold 缺省 25 与 ENTRY 的 RSI<30
+    交叠出双向开仓段：RSI∈(25,30)→多、RSI≤25→空，且方向翻转 bar 上
+    出现两步反手（close reason=reverse）。
+
+    Args:
+        direction_threshold: DIRECTION 基因的 RSI 阈值。
+        timeframe: Execution timeframe.
+        symbol: Trading pair.
+        **risk_kwargs: RiskGenes 其余字段覆写。
+
+    Returns:
+        StrategyDNA with entry + exit + DIRECTION genes.
+    """
+    risk = dict(direction="mixed")
+    risk.update(risk_kwargs)
+    return StrategyDNA(
+        signal_genes=[
+            make_signal_gene(role=SignalRole.ENTRY_TRIGGER,
+                             condition_type="lt", condition_value=30),
+            make_signal_gene(role=SignalRole.EXIT_TRIGGER,
+                             condition_type="gt", condition_value=70),
+            make_signal_gene(role=SignalRole.DIRECTION,
+                             condition_type="gt",
+                             condition_value=direction_threshold),
+        ],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
+        risk_genes=RiskGenes(**risk),
     )
 
 

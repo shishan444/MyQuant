@@ -41,6 +41,15 @@ READONLY_ENDPOINTS = frozenset({
     "/api/research/feature-requests",
     "/api/research/plugins/formula",
     "/api/research/plugins/model",
+    # 纸盘只读四件的 GET 端点族（rebuild-paper-trading 5.3）
+    "/api/paper-trading/tasks",
+    "/api/paper-trading/tasks/{task_id}",
+    "/api/paper-trading/tasks/{task_id}/fills",
+    "/api/paper-trading/tasks/{task_id}/equity",
+    "/api/paper-trading/tasks/{task_id}/funding",
+    "/api/paper-trading/tasks/{task_id}/report",
+    "/api/paper-trading/tasks/{task_id}/report/final",
+    "/api/paper-trading/runner-status",
 })
 
 # 研究执行档 POST 允许集（登记/验证/分析/需求单/进化触发）
@@ -59,6 +68,8 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/research/plugins/model",                          # 模型插件配置
     "/api/research/translate/{hypothesis_id}",              # 假设→策略转化
     "/api/evolution/tasks",                                 # 触发进化
+    "/api/paper-trading/tasks",                             # mount 上盘（rebuild-paper-trading 5.3）
+    "/api/paper-trading/tasks/{task_id}/stop",              # unmount 撤盘（stop 语义）
 })
 
 # 触金面（任何档位永不出现：下单/调仓/风控修改/实盘开关）
