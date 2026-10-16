@@ -444,7 +444,8 @@ def translate_hypothesis(
                 "risk_genes": risk_origin,
                 # 身份回读（规则②）：该分支只有产物 id 无行数据——
                 # direction/max_hold 按收敛缺省（S2f 锚）
-                **_translate_receipt("long", None, None, False)}
+                **_translate_receipt(
+                    "long", None, None, "fixed", None, False)}
 
     # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
     # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
@@ -584,7 +585,9 @@ def translate_hypothesis(
                 "risk_genes": risk_origin,
                 **_translate_receipt(
                     _identity["direction"], _identity["max_hold"],
-                    _identity["time_exit_utc"], True)}
+                    _identity["time_exit_utc"],
+                    _identity["position_mode"],
+                    _identity["risk_fraction"], True)}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -601,7 +604,9 @@ def translate_hypothesis(
                 "risk_genes": risk_origin,
                 **_translate_receipt(
                     _identity["direction"], _identity["max_hold"],
-                    _identity["time_exit_utc"], False)}
+                    _identity["time_exit_utc"],
+                    _identity["position_mode"],
+                    _identity["risk_fraction"], False)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
@@ -633,7 +638,9 @@ def translate_hypothesis(
             "risk_genes": risk_origin,
             **_translate_receipt(
                 risk_genes.direction, risk_genes.max_hold,
-                risk_genes.time_exit_utc, False)}
+                risk_genes.time_exit_utc,
+                risk_genes.position_mode, risk_genes.risk_fraction,
+                False)}
 
 
 def _translate_conditions(
@@ -993,9 +1000,12 @@ _REUSE_NOTE = (
 
 
 def _translate_receipt(direction: str, max_hold, time_exit,
+                        position_mode, risk_fraction,
                         reuse: bool) -> Dict[str, Any]:
-    """翻译回执身份四键（四返回点统一形制——time_exit_utc 任务 6
-    增键，回执面与声明面同步）。"""
+    """翻译回执身份六键（四返回点统一形制——time_exit_utc 任务 6
+    增键、position_mode/risk_fraction 任务 4 增键（K1 回执接线补齐），
+    回执面与声明面同步；值域收敛+bool 排除与 _identity_reflection
+    同族同款）。"""
     return {
         "direction": direction if direction in ("long", "short") else "long",
         # bool 排除（security F-5）：与 _identity_reflection 同族——
@@ -1004,5 +1014,13 @@ def _translate_receipt(direction: str, max_hold, time_exit,
         and not isinstance(max_hold, bool) else None,
         "time_exit_utc": time_exit if isinstance(time_exit, int)
         and not isinstance(time_exit, bool) else None,
+        # 仓位模式属身份语义键（参数变体族——回执须可见，K1）：
+        # 非法/缺省收敛 "fixed"；risk_fraction bool 排除（True 穿透
+        # 冒充 1.0 比例）
+        "position_mode": position_mode
+        if position_mode in ("fixed", "risk_budget") else "fixed",
+        "risk_fraction": float(risk_fraction)
+        if isinstance(risk_fraction, (int, float))
+        and not isinstance(risk_fraction, bool) else None,
         "reuse_note": _REUSE_NOTE if reuse else None,
     }

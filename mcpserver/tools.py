@@ -795,9 +795,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
-        回执身份四键：direction（产物方向 long|short）、max_hold（声明
+        回执身份六键：direction（产物方向 long|short）、max_hold（声明
         的最长持仓 bar 数|int|null）、time_exit_utc（声明的固定时刻
-        出场 UTC 分钟|int|null）、reuse_note（same_dna_existing=true
+        出场 UTC 分钟|int|null）、position_mode（声明的仓位模式
+        fixed|risk_budget，缺省 fixed）、risk_fraction（声明的风险
+        预算比例|float|null）、reuse_note（same_dna_existing=true
         时附同基因策略复用三要素说明，其余 null）。多周期边界：when 与
         加仓触发组条件支持顶层 timeframe 键（值须合法周期且不低于策略
         基准周期——低于基准拒，等于基准与缺省同语义归一）；then/减仓/
