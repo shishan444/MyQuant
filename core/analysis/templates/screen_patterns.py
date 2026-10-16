@@ -269,6 +269,10 @@ def screen_patterns(
                 "mean": mean,
                 "median": float(valid.median()),
                 "win_rate": float((valid > 0).mean()),
+                # 方向分类标注（包四 GAP-01 确定部分②——统计量正负
+                # 的候选方向提示，排序不受此键影响）
+                "direction_hint": ("short" if mean < 0
+                                   else "long" if mean > 0 else "neutral"),
                 "p_value": p,
                 "fingerprint": canonical_condition_hash(
                     cond, timeframe),
@@ -330,6 +334,10 @@ def screen_patterns(
                     "mean": float(valid.mean()),
                     "median": float(valid.median()),
                     "win_rate": float((valid > 0).mean()),
+                    # 方向分类标注（同单条件——组合候选同款提示）
+                    "direction_hint": ("short" if float(valid.mean()) < 0
+                                       else "long" if float(valid.mean()) > 0
+                                       else "neutral"),
                     "p_value": p,
                     "fingerprint": combo_fp,
                 }
