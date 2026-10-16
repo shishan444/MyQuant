@@ -941,9 +941,15 @@ def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     time_exit = rg.get("time_exit_utc")
     return {
         "direction": direction if direction in ("long", "short") else "long",
-        "max_hold": int(max_hold) if isinstance(max_hold, int) else None,
+        # bool 排除（security F-5）：bool 是 int 子类，True 会穿透
+        # isinstance(int) 回显为 1（time_exit_utc 即 0:01 合法时刻）——
+        # 与 validator 侧 S-2 类型防护同族
+        "max_hold": int(max_hold)
+        if isinstance(max_hold, int) and not isinstance(max_hold, bool)
+        else None,
         "time_exit_utc": int(time_exit)
-        if isinstance(time_exit, int) else None,
+        if isinstance(time_exit, int) and not isinstance(time_exit, bool)
+        else None,
     }
 
 
@@ -961,7 +967,11 @@ def _translate_receipt(direction: str, max_hold, time_exit,
     增键，回执面与声明面同步）。"""
     return {
         "direction": direction if direction in ("long", "short") else "long",
-        "max_hold": max_hold if isinstance(max_hold, int) else None,
-        "time_exit_utc": time_exit if isinstance(time_exit, int) else None,
+        # bool 排除（security F-5）：与 _identity_reflection 同族——
+        # bool 穿透会以 1/0 进回执冒充合法 bar 数/时刻
+        "max_hold": max_hold if isinstance(max_hold, int)
+        and not isinstance(max_hold, bool) else None,
+        "time_exit_utc": time_exit if isinstance(time_exit, int)
+        and not isinstance(time_exit, bool) else None,
         "reuse_note": _REUSE_NOTE if reuse else None,
     }
