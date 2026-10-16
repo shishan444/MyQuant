@@ -114,6 +114,11 @@ HINTS: Dict[str, str] = {
     "RESEARCH_FORMULA_REGISTRY_MISSING":
         "valid 插件的注册表条目缺失（原子双写断裂的数据完整性异常）："
         "核对 signal_registry 与插件表是否被外部改动，必要时重建注册条目",
+    "RESEARCH_STORED_DATA_INVALID":
+        "库内持久化数据损坏（非请求参数错误，重试无效）：按 detail 的"
+        "parse_error 与记录标识（record_id/hypothesis_id/ref）定位损坏"
+        "记录，核对是否被外部改写或数据迁移遗留；持续出现附 detail "
+        "提交问题报告",
     "RESEARCH_PLUGIN_COLUMN_NOT_FOUND":
         "条件引用的插件列不可达：用 list_signal_columns 查询当前可见插件"
         "列（only_visible），更正列名或先 register_formula_plugin 注册",
