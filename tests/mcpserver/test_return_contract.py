@@ -137,7 +137,7 @@ class TestCountAndParityReentry:
 
     def test_indicator_count_assertions_exist(self):
         from core.features.registry import INDICATOR_REGISTRY
-        assert len(INDICATOR_REGISTRY) == 45
+        assert len(INDICATOR_REGISTRY) == 48
 
     def test_research_tools_tier_registered(self):
         from mcpserver.tools import TOOL_TIERS

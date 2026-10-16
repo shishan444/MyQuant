@@ -99,7 +99,7 @@ def test_stdio_full_chain(live_api):
                 # （SDK 2.x 把 list 结果逐元素分段——每段一个对象）
                 res = await session.call_tool("list_indicators", {})
                 payload = [json.loads(c.text) for c in res.content]
-                assert len(payload) == 45
+                assert len(payload) == 48
                 assert payload[0]["name"]  # 元素结构完整
 
                 # 3) 写路径工具：登记假设（真落库）
