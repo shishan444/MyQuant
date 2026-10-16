@@ -183,7 +183,8 @@ def derive_warmup_full(
         if base_minutes:
             for name in (indicator_names or []):
                 defn = INDICATOR_REGISTRY.get(name)
-                minutes = getattr(defn, "warmup_minutes", None) if defn else None
+                # warmup_minutes 为 dataclass 定义字段（恒存在，None=无）
+                minutes = defn.warmup_minutes if defn else None
                 if minutes:
                     warmup = max(
                         warmup,
@@ -198,7 +199,7 @@ def derive_warmup_full(
                 for ref in tf_refs:
                     name = ref[0] if isinstance(ref, (tuple, list)) else ref
                     defn = INDICATOR_REGISTRY.get(name)
-                    minutes = getattr(defn, "warmup_minutes", None) if defn else None
+                    minutes = defn.warmup_minutes if defn else None
                     if minutes:
                         warmup = max(
                             warmup, math.ceil(minutes / base_minutes))

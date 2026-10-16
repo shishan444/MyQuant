@@ -566,13 +566,13 @@ def resolve_indicator_column(
         return f"{field}_{int(params['left'])}_{int(params['right'])}"
 
     if naming == "supertrend":
-        # float 编码（kc 同款 str 形制——3.0 → "3.0"）
+        # float 编码（kc 同款 str 形制——3.0 → "3.0"）；合法域
+        # {supertrend, supertrend_dir} 下 f"{field}_..." 单式覆盖
+        # （缺省 supertrend 由 or 前置归一）
         atr_p = int(params["atr_period"])
         mult = float(params["multiplier"])
         field = field_name or "supertrend"
-        if field == "supertrend_dir":
-            return f"supertrend_dir_{atr_p}_{mult}"
-        return f"supertrend_{atr_p}_{mult}"
+        return f"{field}_{atr_p}_{mult}"
 
     if naming == "kc":
         ema_p = int(params["ema_period"])

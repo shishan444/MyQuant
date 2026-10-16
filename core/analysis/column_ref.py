@@ -243,7 +243,7 @@ def _resolve_indicator_ref(ref: Dict[str, Any]) -> ColumnDef:
     # 跨参数约束钩子（add-session-structure-expression 任务 1）：
     # 逐参数域校验通过后的联合校验（如时段起止序）——无钩子指标
     # （cross_params=None）零行为变化
-    hook = getattr(defn, "cross_params", None)
+    hook = defn.cross_params  # dataclass 定义字段（恒存在，None=无钩子）
     if hook is not None:
         violation = hook(params)
         if violation is not None:

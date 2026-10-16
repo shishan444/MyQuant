@@ -53,9 +53,6 @@ def compute_session_range(
     prev_in = in_session.shift(1, fill_value=False)
     typ = (df["high"] + df["low"] + df["close"]) / 3.0
     pv = typ * df["volume"]
-    session_id = in_session.ne(in_session.shift()).cumsum()
-
-    grp = prev_in.astype(float)
     # 会话内的连续段编号（供组内累积）：以 prev_in 的会话段为单位
     seg = (prev_in & ~prev_in.shift(1, fill_value=False)).cumsum()
     valid = prev_in.astype(bool)

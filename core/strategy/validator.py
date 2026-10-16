@@ -277,7 +277,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
 
     # 固定时刻出场（add-session-structure-expression 任务 6）：UTC
     # 分钟时刻（None=缺省合法）；类型防护同 max_hold；0=0:00 合法
-    te_val = getattr(risk, "time_exit_utc", None)
+    te_val = risk.time_exit_utc  # dataclass 定义字段（恒存在，None=缺省）
     if te_val is not None:
         if not isinstance(te_val, int) or isinstance(te_val, bool):
             errors.append(

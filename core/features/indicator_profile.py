@@ -352,6 +352,16 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
 
     # == ml (1) ==
+    "FractalEntropy": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"bins": [10], "lookback": [100]},
+        recommended_conditions=[
+            ConditionPreset("gt", [0.8]),
+            ConditionPreset("lt", [0.4]),
+        ],
+        follow_probability=0.45,
+    ),
+
     # == structure (3)（add-session-structure-expression——进化画像双源
     # 完备性：注册表成员全覆盖锚要求）==
     "SessionRange": IndicatorProfile(
@@ -375,15 +385,6 @@ PROFILES: Dict[str, IndicatorProfile] = {
         recommended_conditions=[
             ConditionPreset("cross_above", [None]),
             ConditionPreset("cross_below", [None]),
-        ],
-        follow_probability=0.45,
-    ),
-    "FractalEntropy": IndicatorProfile(
-        recommended_roles=["entry_guard"],
-        recommended_params={"bins": [10], "lookback": [100]},
-        recommended_conditions=[
-            ConditionPreset("gt", [0.8]),
-            ConditionPreset("lt", [0.4]),
         ],
         follow_probability=0.45,
     ),

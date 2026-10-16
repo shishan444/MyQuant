@@ -133,6 +133,21 @@ def _load_atr_column(enhanced_df: pd.DataFrame, atr_period: int) -> np.ndarray:
     return arr
 
 
+def _bar_ts_minutes_and_tf(index, tf: str) -> tuple:
+    """bar 开盘时刻（UTC epoch 分钟数组）与执行周期分钟数装配单点
+    （run/batch_run 两入口共用——time_exit 时刻出场覆盖判定的两输入；
+    epoch 分钟取整——bar 时刻为整点）。非时序索引（合成测试形制）
+    ts 数组填 0——仅被 time_exit 时刻分支消费，无声明路径哨兵 -1
+    短路不读取（零影响）。"""
+    try:
+        _ts = pd.DatetimeIndex(index).astype("int64") // 1_000_000_000
+        bar_ts = (_ts / 60.0).to_numpy(dtype=np.float64)
+    except (TypeError, ValueError):
+        bar_ts = np.zeros(len(index), dtype=np.float64)
+    from core.analysis.warmup_loader import TF_MINUTES
+    return bar_ts, float(TF_MINUTES.get(tf, 240))
+
+
 def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
@@ -166,7 +181,7 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     # 固定时刻出场（任务 6）：None→-1.0=禁用哨兵（区别于 max_hold
     # 的 0.0——time_exit 的 0 是 0:00 UTC 合法时刻值）
     time_exit = (float(risk_genes.time_exit_utc)
-                 if getattr(risk_genes, "time_exit_utc", None) is not None
+                 if risk_genes.time_exit_utc is not None
                  else -1.0)
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
             max_exposure, max_hold, time_exit)
@@ -826,20 +841,10 @@ class BacktestEngine:
         (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
          max_hold, time_exit) = _per_dna_risk_params(
             dna.risk_genes, enhanced_df)
-        # bar 开盘时刻（UTC epoch 分钟，1D）与执行周期分钟数（任务 6
-        # 时刻出场覆盖判定的两输入；epoch 分钟取整——bar 时刻为整点）
-        try:
-            _ts = pd.DatetimeIndex(enhanced_df.index).astype("int64") \
-                // 1_000_000_000
-            bar_ts_minutes_arr = (_ts / 60.0).to_numpy(dtype=np.float64)
-        except (TypeError, ValueError):
-            # 非时序索引（合成测试形制）：填 0——ts 数组仅被 time_exit
-            # 时刻分支消费，无声明路径哨兵 -1 短路不读取（零影响）
-            bar_ts_minutes_arr = np.zeros(
-                len(enhanced_df), dtype=np.float64)
-        from core.analysis.warmup_loader import TF_MINUTES
-        tf_minutes_val = float(
-            TF_MINUTES.get(dna.execution_genes.timeframe, 240))
+        # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
+        # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
+        bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
+            enhanced_df.index, dna.execution_genes.timeframe)
         if atr_col is None:
             atr_col = np.ones(len(enhanced_df), dtype=np.float64)
         atr_2d = atr_col.reshape(-1, 1)
@@ -1203,20 +1208,12 @@ class BacktestEngine:
         max_holds = np.array([p[5] for p in per_dna], dtype=np.float64)
         time_exits = np.array([p[6] for p in per_dna], dtype=np.float64)
         # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
-        # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe））
-        try:
-            _ts = pd.DatetimeIndex(enhanced_df.index).astype("int64") \
-                // 1_000_000_000
-            bar_ts_minutes_arr = (_ts / 60.0).to_numpy(dtype=np.float64)
-        except (TypeError, ValueError):
-            # 非时序索引（合成测试形制）：填 0——ts 数组仅被 time_exit
-            # 时刻分支消费，无声明路径哨兵 -1 短路不读取（零影响）
-            bar_ts_minutes_arr = np.zeros(
-                len(enhanced_df), dtype=np.float64)
-        from core.analysis.warmup_loader import TF_MINUTES
+        # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe）；
+        # run/batch 共用装配单点 _bar_ts_minutes_and_tf）
         exec_tf = individuals[0].execution_genes.timeframe \
             if individuals else "4h"
-        tf_minutes_val = float(TF_MINUTES.get(exec_tf, 240))
+        bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
+            enhanced_df.index, exec_tf)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
