@@ -859,10 +859,18 @@ class BacktestEngine:
     def _position_sizing_disclosure(
         self, dna, portfolio, enhanced_df,
     ) -> dict:
-        """仓位口径披露六子键（complete-research-tooling 任务 4）。
+        """仓位口径披露七子键（complete-research-tooling 任务 4；
+        F-B4-1 补 replay_status）。
 
-        {mode, risk_fraction, leverage_cap, orders_capped,
-        avg_entry_size, max_entry_size}——mode/risk_fraction 为声明
+        {mode, risk_fraction, leverage_cap, replay_status,
+        orders_capped, avg_entry_size, max_entry_size}——mode/
+        risk_fraction 为声明面。replay_status（F-B4-1 失败不虚标）：
+        统计三键的可信度状态，恒带两态——"ok"=值可信（fixed 档声明
+        面确定 / risk_budget 重放成功含零交易）；"failed"=重放异常，
+        orders_capped 与 avg/max_entry_size 置 None（此前失败路径
+        吞错返回部分 out 使 orders_capped 恒 0——虚标「无截断」）。
+
+        声明续注
         面；leverage_cap=min(leverage, max_exposure)（与引擎截断 cap
         同源）；orders_capped 与 entry size 统计为 risk_budget 档
         确定性重放（与 numba 回调共用 _risk_budget_qty 公式单点——
@@ -883,6 +891,7 @@ class BacktestEngine:
             "mode": mode,
             "risk_fraction": rg.risk_fraction,
             "leverage_cap": leverage_cap,
+            "replay_status": "ok",
             "orders_capped": 0,
             "avg_entry_size": None,
             "max_entry_size": None,
@@ -922,7 +931,12 @@ class BacktestEngine:
                     stop_dist = sl_stop * float(atr_col[pos])
                 _, hit = _risk_budget_qty(
                     value_now, price, stop_dist, float(rg.risk_fraction),
-                    float(rg.leverage), leverage_cap)
+                    float(rg.leverage),
+                    # 第 6 参按形参语义传有效 max_exposure（None→1.0
+                    # 显式化）——此前传已 min 合并的 leverage_cap，幂等
+                    # 恒等但签名语义误导（K6）
+                    float(rg.max_exposure) if rg.max_exposure is not None
+                    else 1.0)
                 capped += int(hit)
             out["orders_capped"] = capped
             out["avg_entry_size"] = (
@@ -934,6 +948,12 @@ class BacktestEngine:
                 "position_sizing disclosure replay failed",
                 exc_info=True,
             )
+            # 失败不虚标（F-B4-1）：三统计键不可信置 None + 状态显式
+            # 披露——禁止以初值 0 假装「无截断」
+            out["replay_status"] = "failed"
+            out["orders_capped"] = None
+            out["avg_entry_size"] = None
+            out["max_entry_size"] = None
         return out
 
     def _build_portfolio(
