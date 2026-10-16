@@ -43,6 +43,11 @@ EVALUABLE_CONDITION_TYPES: frozenset[str] = frozenset({
     "touch_bounce", "role_reversal", "wick_touch",
 })
 
+# 基础列直读白名单（add-session-structure-expression 任务 7）：
+# 装载层注入的派生基础列（hour_utc）——非注册表指标，_get_indicator_
+# column 直读
+_BASE_DIRECT_READ_COLUMNS = frozenset({"hour_utc"})
+
 
 @dataclass
 class SignalSet:
@@ -412,6 +417,17 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     缓存——同代重复查找零重算；缓存生命周期由调用方显式清理
     （clear_indicator_cache，dna_to_signal_set 入口调用）。
     """
+    # 基础列直读白名单（任务 7）：派生基础列（hour_utc）由装载层
+    # 注入、非指标注册表成员——绕过注册表解析直接取列（与
+    # EVALUABLE_CONDITION_TYPES 同族单例常量；列缺失由下游 KeyError
+    # 显式失败，不走前缀兜底）
+    if gene.indicator in _BASE_DIRECT_READ_COLUMNS:
+        col = df.get(gene.indicator)
+        if col is None:
+            raise ValueError(
+                f"Derived base column {gene.indicator} missing "
+                f"(loader must inject——两装载入口单点)")
+        return col
     cache = _cache if _cache is not None else _indicator_column_cache
     cache_key = (id(df), gene.indicator,
                  tuple(sorted(gene.params.items())),

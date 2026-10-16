@@ -133,6 +133,21 @@ def _load_atr_column(enhanced_df: pd.DataFrame, atr_period: int) -> np.ndarray:
     return arr
 
 
+def _bar_ts_minutes_and_tf(index, tf: str) -> tuple:
+    """bar 开盘时刻（UTC epoch 分钟数组）与执行周期分钟数装配单点
+    （run/batch_run 两入口共用——time_exit 时刻出场覆盖判定的两输入；
+    epoch 分钟取整——bar 时刻为整点）。非时序索引（合成测试形制）
+    ts 数组填 0——仅被 time_exit 时刻分支消费，无声明路径哨兵 -1
+    短路不读取（零影响）。"""
+    try:
+        _ts = pd.DatetimeIndex(index).astype("int64") // 1_000_000_000
+        bar_ts = (_ts / 60.0).to_numpy(dtype=np.float64)
+    except (TypeError, ValueError):
+        bar_ts = np.zeros(len(index), dtype=np.float64)
+    from core.analysis.warmup_loader import TF_MINUTES
+    return bar_ts, float(TF_MINUTES.get(tf, 240))
+
+
 def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
@@ -163,8 +178,13 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
                     if risk_genes.max_exposure is not None else 1.0)
     max_hold = (float(risk_genes.max_hold)
                 if risk_genes.max_hold is not None else 0.0)
+    # 固定时刻出场（任务 6）：None→-1.0=禁用哨兵（区别于 max_hold
+    # 的 0.0——time_exit 的 0 是 0:00 UTC 合法时刻值）
+    time_exit = (float(risk_genes.time_exit_utc)
+                 if risk_genes.time_exit_utc is not None
+                 else -1.0)
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
-            max_exposure, max_hold)
+            max_exposure, max_hold, time_exit)
 
 
 @dataclass
@@ -384,9 +404,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, sl_modes, atr_arr,
                   exit_fractions, add_fractions, max_exposures,
-                  max_holds,
+                  max_holds, time_exits,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
+                  bar_ts_minutes, tf_minutes,
                   mmr_tier_max, mmr_tier_rate):
     """逐 bar 订单回调（实时 SL/TP 与清算判定；SL 段按 sl_mode 三分派）。
 
@@ -653,6 +674,29 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                             slippage=effective_slippage,
                         )
 
+    # 固定时刻出场（add-session-structure-expression 任务 6，参数
+    # 出场族第四机制）：当根 bar 时间区间 [open_ts, open_ts+tf) 覆盖
+    # 当日 UTC 分钟时刻即无条件全平（左闭右开——区间右端时刻归下根
+    # bar）。覆盖判定：r=(t_exit−bar 当日分钟) mod 1440 < tf_minutes
+    # （t_exit 每日重复出现，取不早于 bar 开盘的下一次出现判定是否
+    # 落在本 bar 区间内）；tf≥1440（日线及以上）每 bar 覆盖全天恒
+    # 触发≡max_hold=1 退化（spec 记录在案）。判定序：SL/TP 之后、
+    # max_hold 之前（价格触发优先于时刻到期）。-1.0=禁用哨兵
+    # （None 物化；0.0 是 0:00 合法值——首判 t_exit>=0 即假等价性：
+    # 哨兵 -1.0 使存量（无声明）路径零行为变化）
+    if time_exits[col] >= 0.0 and c.position_now != 0.0:
+        r = (time_exits[col] - (bar_ts_minutes[i] % 1440.0)) % 1440.0
+        if r < tf_minutes:
+            entry_price[col] = 0.0
+            peak_price[col] = 0.0
+            entry_bar[col] = 0.0
+            return vbt_nb.order_nb(
+                size=np.float64(-c.position_now),
+                size_type=np.int64(0),
+                fees=effective_fee,
+                slippage=effective_slippage,
+            )
+
     # 时间出场（max_hold——add-max-hold-exit D-3，参数出场族第三机制）：
     # 持有第 N 根 bar 的出场时点无条件全平（A-1 口径：入场成交 bar 计
     # 第 1 根，判定式 (i−entry_bar+1)≥N）。判定序位于 SL/TP 之后、信
@@ -795,7 +839,12 @@ class BacktestEngine:
         # （与 batch_run 共享——漏装即与批量路径静默分叉）；非 atr 模式
         # 占位全 1 数组（引擎不消费）
         (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
-         max_hold) = _per_dna_risk_params(dna.risk_genes, enhanced_df)
+         max_hold, time_exit) = _per_dna_risk_params(
+            dna.risk_genes, enhanced_df)
+        # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
+        # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
+        bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
+            enhanced_df.index, dna.execution_genes.timeframe)
         if atr_col is None:
             atr_col = np.ones(len(enhanced_df), dtype=np.float64)
         atr_2d = atr_col.reshape(-1, 1)
@@ -842,11 +891,16 @@ class BacktestEngine:
             # 同形制；2D 形式在 order_func_nb 标量索引处破坏 numba 比较
             # 语义且与批量路径分叉，add-max-hold-exit D-3）
             np.array([max_hold], dtype=np.float64),
+            np.array([time_exit], dtype=np.float64),
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
             low_2d,
             direction_signal_2d,
+            # bar 开盘 UTC 分钟绝对数（任务 6 时刻覆盖判定）+每 bar
+            # 周期分钟数（执行周期——timeframe_minutes 单源派生）
+            bar_ts_minutes_arr,
+            np.float64(tf_minutes_val),
             _mm_tier_arrays()[0],
             _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,
@@ -1152,6 +1206,14 @@ class BacktestEngine:
         # 时间出场逐列参数（add-max-hold-exit D-3：单源装配追加元——
         # 漏装即该列按 0 执行=与单路径静默分叉，CARD-04 同款防护）
         max_holds = np.array([p[5] for p in per_dna], dtype=np.float64)
+        time_exits = np.array([p[6] for p in per_dna], dtype=np.float64)
+        # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
+        # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe）；
+        # run/batch 共用装配单点 _bar_ts_minutes_and_tf）
+        exec_tf = individuals[0].execution_genes.timeframe \
+            if individuals else "4h"
+        bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
+            enhanced_df.index, exec_tf)
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -1175,11 +1237,14 @@ class BacktestEngine:
             add_fractions,
             max_exposures,
             max_holds,
+            time_exits,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
             low_2d,
             direction_signal_matrix,
+            bar_ts_minutes_arr,
+            np.float64(tf_minutes_val),
             _mm_tier_arrays()[0],
             _mm_tier_arrays()[1],
             pre_sim_func_nb=pre_sim_func_nb,

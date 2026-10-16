@@ -143,6 +143,9 @@ class RiskGenesModel(BaseModel):
     # 且 crud 读回 ValidationError 被吞 → GET 响应 dna=null（DNA 静默
     # 消失）；值域权威在 validator（传输层不加 bound，三键先例同款）
     max_hold: Optional[int] = None
+    # 固定时刻出场（任务 6 同步铁律）：UTC 分钟 0-1439（值域权威在
+    # validator——传输层不加 bound）
+    time_exit_utc: Optional[int] = None
 
 
 class DNAModel(BaseModel):

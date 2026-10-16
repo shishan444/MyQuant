@@ -42,11 +42,15 @@ class ColumnRefError(ValueError):
 
 
 #: 基础列清单（自 hypothesis_service 移入——单一事实源；假设引擎
-#: _resolve_subject 的列语义不变）
-BASE_SUBJECT_COLUMNS = frozenset({
-    "open", "high", "low", "close", "volume", "trades",
-    "open_interest", "funding_rate",
-})
+#: _resolve_subject 的列语义不变）。add-session-structure-expression
+#: 任务 7 起 dict 形（值=域元数据；八列空元数据=零变化）——第九列
+#: hour_utc 带 intraday_only 域标记（仅日内周期可引用，日线及以上
+#: 拒绝）。`in` 判定 dict 与 frozenset 同语义，七处消费方零适配。
+BASE_SUBJECT_COLUMNS = {
+    "open": {}, "high": {}, "low": {}, "close": {}, "volume": {},
+    "trades": {}, "open_interest": {}, "funding_rate": {},
+    "hour_utc": {"intraday_only": True},
+}
 
 
 @dataclass
@@ -106,12 +110,61 @@ def _looks_like_encoded(name: str) -> bool:
         return True
 
 
-def resolve_column_ref(ref: Any, db_path: Optional[Path] = None) -> ColumnDef:
+# 日内周期上界（hour_utc 域校验）：周期分钟超过该值的禁止引用
+# intraday_only 列（日线 1d=1440 分钟及以上）
+_INTRADAY_MINUTES_MAX = 720  # 12h 及更细粒度为日内；1d=1440 拒
+
+
+def is_intraday_timeframe(tf: str) -> bool:
+    """周期是否日内（≤12h——intraday_only 列引用域的判定单源，与
+    _check_base_column_domain 同一上界常量；未知周期 False 保守，
+    值域校验归 TIMEFRAME_UNKNOWN 链）。"""
+    from core.data.timeframes import TF_SECONDS
+    sec = TF_SECONDS.get(tf)
+    return sec is not None and sec <= _INTRADAY_MINUTES_MAX * 60
+
+
+def _check_base_column_domain(column: str, base_tf, ref_tf=None) -> None:
+    """带域元数据基础列的周期域校验（任务 7 单点；D-6② 引用周期语义）。
+
+    现唯一域标记 intraday_only（hour_utc）：校验对象=引用周期
+    （ref_tf 优先——条件带 timeframe 时该 tf 即求值轴；无修饰回退
+    base_tf）；引用周期分钟 > _INTRADAY_MINUTES_MAX 时拒绝（日线
+    及以上引用小时列无意义——每日一 bar 值恒定）；两者皆 None/
+    未知周期跳过（兼容面——供给方三面各自传执行周期）。
+    """
+    meta = BASE_SUBJECT_COLUMNS.get(column)
+    if not meta or not meta.get("intraday_only"):
+        return
+    eff_tf = ref_tf or base_tf
+    if eff_tf is None:
+        return
+    from core.data.timeframes import TF_SECONDS
+    sec = TF_SECONDS.get(eff_tf)
+    if sec is None:
+        return
+    if sec / 60.0 > _INTRADAY_MINUTES_MAX:
+        raise ColumnRefError(
+            "PARAM_INVALID",
+            f"{column} 为日内列（intraday_only），引用周期 {eff_tf} "
+            "（日线及以上）不可引用——每日一 bar 下该列值恒定无意义",
+            detail={"column": column, "ref_tf": eff_tf,
+                    "base_tf": base_tf, "domain": "intraday_only",
+                    "hint": "时刻列的求值轴必须是日内周期"
+                            "（12h 及以下），或改用其他基础列"})
+
+
+def resolve_column_ref(ref: Any, db_path: Optional[Path] = None,
+                       base_tf: Optional[str] = None,
+                       ref_tf: Optional[str] = None) -> ColumnDef:
     """混合形制校验（五域统一入口）。
 
     Args:
         ref: 结构化 dict（参数化指标）或 str（基础列/插件列精确名）。
         db_path: 插件列注册表所在库（插件列判定需要；None 时跳过插件判定）。
+        base_tf: 基准周期（域元数据校验供给——无修饰条件的求值轴）。
+        ref_tf: 条件引用周期（D-6②——条件带 timeframe 时该 tf 优先
+            作为域校验对象）。
 
     Returns:
         ColumnDef。
@@ -125,6 +178,7 @@ def resolve_column_ref(ref: Any, db_path: Optional[Path] = None) -> ColumnDef:
 
     if isinstance(ref, str):
         if ref in BASE_SUBJECT_COLUMNS:
+            _check_base_column_domain(ref, base_tf, ref_tf=ref_tf)
             return ColumnDef(kind="base", column_name=ref)
         if db_path is not None and ref in _visible_plugin_columns(db_path):
             return ColumnDef(kind="plugin", column_name=ref)
@@ -185,6 +239,19 @@ def _resolve_indicator_ref(ref: Dict[str, Any]) -> ColumnDef:
                 "PARAM_INVALID",
                 f"{indicator}.{key}={val} 越界（合法 [{pdef.min}, {pdef.max}]）",
                 detail={"indicator": indicator, "key": key, "value": val})
+
+    # 跨参数约束钩子（add-session-structure-expression 任务 1）：
+    # 逐参数域校验通过后的联合校验（如时段起止序）——无钩子指标
+    # （cross_params=None）零行为变化
+    hook = defn.cross_params  # dataclass 定义字段（恒存在，None=无钩子）
+    if hook is not None:
+        violation = hook(params)
+        if violation is not None:
+            raise ColumnRefError(
+                "PARAM_INVALID",
+                f"{indicator} 跨参数约束不满足: {violation}",
+                detail={"indicator": indicator, "params": dict(params),
+                        "violation": violation})
 
     outputs = list(defn.output_fields)
     field_name = ref.get("field")
@@ -255,6 +322,33 @@ def _build_decoders() -> List[Tuple[re.Pattern, str, Dict[str, Any]]]:
                     {"field": sema,
                      "param_groups": {"1": "k_period", "2": "d_period"},
                      "float_groups": set()}))
+        elif naming == "session":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^({fields_alt})_{pat_num}_{pat_num}$"), name,
+                {"field_group": "1",
+                 "param_groups": {"2": "start_minute", "3": "end_minute"},
+                 "float_groups": set()}))
+        elif naming == "pivot":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^({fields_alt})_{pat_num}_{pat_num}$"), name,
+                {"field_group": "1",
+                 "param_groups": {"2": "left", "3": "right"},
+                 "float_groups": set()}))
+        elif naming == "supertrend":
+            # 两 pattern 固定 field（dir 列与主线列；field 不进组——
+            # 列名前缀即字段语义）
+            rules.append((re.compile(
+                rf"^supertrend_dir_{pat_num}_{pat_float}$"), name,
+                {"field": "supertrend_dir",
+                 "param_groups": {"1": "atr_period", "2": "multiplier"},
+                 "float_groups": {"multiplier"}}))
+            rules.append((re.compile(
+                rf"^supertrend_{pat_num}_{pat_float}$"), name,
+                {"field": "supertrend",
+                 "param_groups": {"1": "atr_period", "2": "multiplier"},
+                 "float_groups": {"multiplier"}}))
         elif naming == "kc":
             fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
             rules.append((re.compile(

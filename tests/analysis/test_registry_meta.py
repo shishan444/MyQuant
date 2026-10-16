@@ -31,7 +31,7 @@ class TestIndicatorMetadata:
     def test_covers_all_builtin_indicators(self) -> None:
         """外化条目与注册表逐项一致（47 项）。"""
         meta = indicator_metadata()
-        assert len(meta) == len(INDICATOR_REGISTRY) == 45  # Q3 摘牌后
+        assert len(meta) == len(INDICATOR_REGISTRY) == 48  # Q3 摘牌后
         assert {m["name"] for m in meta} == set(INDICATOR_REGISTRY)
 
     def test_every_entry_has_lookback(self) -> None:
@@ -101,7 +101,7 @@ class TestAvailableSignalColumns:
     def test_builtin_only_without_plugins(self, db_path: Path) -> None:
         cols = available_signal_columns(db_path)
         builtin = [c for c in cols if c["source"] == "builtin"]
-        assert len(builtin) == 45  # Q3 摘牌后
+        assert len(builtin) == 48  # Q3 摘牌后
 
     def test_plugin_registration_appears_immediately(self, db_path: Path) -> None:
         """插件注册后合并查询即时出现新条目（双源一致）。"""
@@ -208,3 +208,63 @@ class TestGeneTfAxisRefsTargetUnion:
         assert axis["1d"][0] == ("RSI", {"period": 14}), "主指标在轴清单"
         assert ("EMA", {"period": 100}) in axis["1d"], \
             "target_indicator 并入轴引用（高周期轴目标列同收敛）"
+
+
+class TestWarmupMinutesDimension:
+    """U2：分钟语义预热维（add-session-structure-expression 任务 2）。"""
+
+    def test_u2a_conversion_anchors(self, tmp_path):
+        """U2a 折算三锚：1440 分钟在 1h=24 bar / 15m=96 / 1m=1440。"""
+        import pytest as _pytest
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef, ParamDef
+        INDICATOR_REGISTRY["_TEST_MIN_IND"] = IndicatorDef(
+            category="structure", params={},
+            output_fields=["x"], supported_conditions=["gt"],
+            warmup_minutes=1440)
+        try:
+            for tf, expect in (("1h", 24), ("15m", 96), ("1m", 1440)):
+                w = derive_warmup_full(tmp_path / "q.db", ["_TEST_MIN_IND"],
+                                       base_tf=tf)
+                # 无周期类参数指标主式=200——分钟维至少抬到 expect
+                assert w == max(200, expect), f"{tf}: {w} != {max(200, expect)}"
+        finally:
+            del INDICATOR_REGISTRY["_TEST_MIN_IND"]
+
+    def test_u2b_no_base_tf_baseline(self, tmp_path):
+        """U2b base_tf=None 存量逐字节（分钟维不参与=200 不虚增）。"""
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef
+        INDICATOR_REGISTRY["_TEST_MIN_IND"] = IndicatorDef(
+            category="structure", params={},
+            output_fields=["x"], supported_conditions=["gt"],
+            warmup_minutes=1440)
+        try:
+            assert derive_warmup_full(
+                tmp_path / "q.db", ["_TEST_MIN_IND"]) == 200
+        finally:
+            del INDICATOR_REGISTRY["_TEST_MIN_IND"]
+
+    def test_u2c_axis_minute_dimension_two_directions(self, tmp_path):
+        """U2c 轴引用分钟维两向锚（D-2 修复后形制：分钟需求按时间量
+        折算基准 bar，与求值轴周期无关）。
+
+        SessionRange（warmup_minutes=1440=完整一日）：
+        - @1m 轴 @1h 基准 → 1440 分钟=24 基准 bar < floor 200 → 200
+          （修复前轴 bar 数 1440 直接并入虚增）；
+        - @1h 轴 @1m 基准 → 1440 分钟=1440 根 1m 基准 bar（修复前
+          既有轴维度 span 下限只给 1200——欠账 4 小时收敛窗）。
+        """
+        assert derive_warmup_full(
+            tmp_path / "q.db", [],
+            indicator_tfs={"1m": [("SessionRange", {})]},
+            base_tf="1h") == 200, "1m 轴不虚增（floor 生效）"
+        assert derive_warmup_full(
+            tmp_path / "q.db", [],
+            indicator_tfs={"1h": [("SessionRange", {})]},
+            base_tf="1m") == 1440, "1h 轴@1m 基准按时间量折算（不欠账）"
+
+    def test_u2_rule_text_fifth_sentence(self):
+        """U2 披露面：WARMUP_RULE_TEXT 含分钟语义预热维第五句要素
+        （四披露面单源同口径——文本面锚，与 T5d 第四句同形制）。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        assert "分钟语义预热维" in WARMUP_RULE_TEXT
+        assert "warmup_minutes" in WARMUP_RULE_TEXT

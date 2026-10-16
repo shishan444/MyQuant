@@ -93,6 +93,7 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "max_hold",
+    "time_exit_utc",
 })
 
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
@@ -229,6 +230,20 @@ def _validate_strategy_params(
                 f"[{MAX_HOLD_MIN}, {MAX_HOLD_MAX}]（正整数 bar 数）",
                 detail={"field": "max_hold",
                         "legal_range": [MAX_HOLD_MIN, MAX_HOLD_MAX]})
+    # 固定时刻出场（任务 6）：UTC 分钟时刻；值域单源 validator
+    from core.strategy.validator import TIME_EXIT_UTC_MAX, TIME_EXIT_UTC_MIN
+    time_exit = params.get("time_exit_utc")
+    if time_exit is not None:
+        if not isinstance(time_exit, int) or isinstance(time_exit, bool) \
+                or not (TIME_EXIT_UTC_MIN <= time_exit <= TIME_EXIT_UTC_MAX):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"time_exit_utc {time_exit!r} 越出值域 "
+                f"[{TIME_EXIT_UTC_MIN}, {TIME_EXIT_UTC_MAX}]"
+                "（UTC 分钟时刻，0-1439）",
+                detail={"field": "time_exit_utc",
+                        "legal_range": [TIME_EXIT_UTC_MIN,
+                                         TIME_EXIT_UTC_MAX]})
 
     # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
     #    纯组间规则在登记链主体——不依赖声明块携带）──
@@ -443,8 +458,13 @@ def register_hypothesis(
         for i, c in enumerate(conds):
             field_name = f"{group}_conditions[{i}].subject"
             try:
+                # base_tf/ref_tf 供给（任务 7 三面之一 + D-6② 引用周期
+                # 语义——登记面取 data_ranges 基准周期与条件自身
+                # timeframe 做域元数据校验，最严面；tf 剥离在 resolve
+                # 之后，此处 c 的 timeframe 仍在场）
                 c["subject"] = resolve_column_ref(
-                    c["subject"], db_path).ref_dict()
+                    c["subject"], db_path, base_tf=base_tf,
+                    ref_tf=c.get("timeframe")).ref_dict()
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",

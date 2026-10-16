@@ -35,7 +35,7 @@ from core.persistence.repository import research as rr
 _D2_RISK_FIELDS = (
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "atr_period",
-    "max_hold",
+    "max_hold", "time_exit_utc",
 )
 
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
@@ -189,10 +189,12 @@ def build_signal_genes(
     # 静默丢弃，故显式拒绝而非误译为入场门控）
     when_genes, when_sources = _translate_conditions(
         when_conditions, db_path=db_path,
-        label="when_conditions", role=SignalRole.ENTRY_TRIGGER)
+        label="when_conditions", role=SignalRole.ENTRY_TRIGGER,
+        base_tf=strategy_timeframe)
     then_genes, then_sources = _translate_conditions(
         then_conditions, db_path=db_path,
-        label="then_conditions", role=SignalRole.EXIT_TRIGGER)
+        label="then_conditions", role=SignalRole.EXIT_TRIGGER,
+        base_tf=strategy_timeframe)
     return when_genes + then_genes, when_sources + then_sources
 
 
@@ -214,7 +216,7 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
         return RiskGenes()  # platform_default
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
             "leverage", "exit_fraction", "add_fraction", "max_exposure",
-            "max_hold")
+            "max_hold", "time_exit_utc")
     # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
     # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
     # （=手工 DNA 缺省语义），不穿透进 RiskGenes
@@ -442,7 +444,7 @@ def translate_hypothesis(
                 "risk_genes": risk_origin,
                 # 身份回读（规则②）：该分支只有产物 id 无行数据——
                 # direction/max_hold 按收敛缺省（S2f 锚）
-                **_translate_receipt("long", None, False)}
+                **_translate_receipt("long", None, None, False)}
 
     # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
     # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
@@ -502,7 +504,7 @@ def translate_hypothesis(
         else:
             _reject_condition_timeframe(group_short, group_conditions)
         g_genes, g_sources = _translate_conditions(
-            group_conditions, db_path=db_path,
+            group_conditions, db_path=db_path, base_tf=strategy_timeframe,
             label=group_key, role=group_role)
         if g_sources:  # 结构上不可达（插件列在非 ENTRY 角色已被拒），
             raise ResearchError(   # 防御性收口——不静默丢弃插件源
@@ -581,7 +583,8 @@ def translate_hypothesis(
                 "duplicated": False, "same_dna_existing": True,
                 "risk_genes": risk_origin,
                 **_translate_receipt(
-                    _identity["direction"], _identity["max_hold"], True)}
+                    _identity["direction"], _identity["max_hold"],
+                    _identity["time_exit_utc"], True)}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -597,7 +600,8 @@ def translate_hypothesis(
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
                 **_translate_receipt(
-                    _identity["direction"], _identity["max_hold"], False)}
+                    _identity["direction"], _identity["max_hold"],
+                    _identity["time_exit_utc"], False)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
@@ -628,11 +632,13 @@ def translate_hypothesis(
             "genes": [f"{g.indicator}({g.field_name})" for g in genes],
             "risk_genes": risk_origin,
             **_translate_receipt(
-                risk_genes.direction, risk_genes.max_hold, False)}
+                risk_genes.direction, risk_genes.max_hold,
+                risk_genes.time_exit_utc, False)}
 
 
 def _translate_conditions(
     conditions: List[Dict[str, Any]], *, db_path: Path, label: str, role,
+    base_tf: str = "",
 ) -> tuple[List, List[Dict[str, Any]]]:
     """条件 → (内置 SignalGene 列表, 插件信号源列表)。
 
@@ -662,7 +668,11 @@ def _translate_conditions(
         if isinstance(subject, dict):
             from core.analysis.column_ref import ColumnRefError, resolve_column_ref
             try:
-                cdef = resolve_column_ref(subject, db_path)
+                # base_tf/ref_tf 供给（任务 7 三面之二 + D-6②——翻译面
+                # 域校验与登记面同源；条件带 timeframe 时该 tf 为求值轴）
+                cdef = resolve_column_ref(
+                    subject, db_path, base_tf=base_tf or None,
+                    ref_tf=cond_tf)
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -789,6 +799,61 @@ def _translate_conditions(
         # ge/le 含等号无对应严格形态——显式拒绝（禁静默近似映射
         # price_above，错误语义完整性优先于表面覆盖，完整四条理由见
         # openspec 变更一 design.md 第 3 节）。
+        # hour_utc 放行域（add-session-structure-expression 任务 7，
+        # Q2=基础列基因通道终稿）：hour_utc × gt/lt/ge/le × 数值
+        # target（[0,24) 小数域阈值——U7b 值形制）→ 基因承载
+        # （indicator="hour_utc"/params={}/field=None——执行链直读
+        # 白名单）；其余 action（cross/price 族）拒绝——小时列无穿越
+        # 语义闭环必要（周期回绕比较需取模，当前以 gt/lt 组合可表达）
+        if subject == "hour_utc":
+            if action in ("gt", "lt", "ge", "le") \
+                    and isinstance(target, (int, float)) \
+                    and not isinstance(target, bool):
+                # target 值域硬校验（security F-1）：[0,24) 小时域
+                # （U7b 值形制——开盘 UTC 小时+分钟/60，23:59 → 23.9833）
+                # ——域外阈值（如 25 的 lt）比较恒 False 无语义，软放行
+                # 会产出永不/恒触发的基因；落地兜底文案自述的 [0,24) 域
+                if not (0 <= target < 24):
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] 不可表达: hour_utc target {target}"
+                        " 超出 [0,24) 小时域（UTC 开盘时刻小数）",
+                        detail={"condition": cond,
+                                "slow_path": "target 取 [0,24) 小数"
+                                             "（bar 开盘 UTC 小时"
+                                             "+分钟/60）"})
+                # 引用周期交互校验（D-6② 翻译面防线——登记面为权威，
+                # 此处拦库内/手工路径）：hour_utc 求值轴（条件 tf 优先，
+                # 无修饰回退基准）须日内，日线及以上值恒定无意义
+                from core.analysis.column_ref import is_intraday_timeframe
+                _eff_tf = cond_tf or (base_tf or None)
+                if _eff_tf and not is_intraday_timeframe(_eff_tf):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{label}[{i}] 不可表达: hour_utc 求值轴 "
+                        f"{_eff_tf} 为日线及以上——每日一 bar 下小时列"
+                        "值恒定无意义",
+                        detail={"condition": cond, "ref_tf": _eff_tf,
+                                "hint": "时刻列的求值轴必须是日内周期"
+                                        "（12h 及以下），或去掉 timeframe"
+                                        " 修饰在日内基准上求值"})
+                genes.append(SignalGene(
+                    indicator="hour_utc",
+                    params={},
+                    role=role,
+                    field_name=None,
+                    condition=_ACTION_MAP[action](target),
+                    timeframe=cond_tf,
+                ))
+                continue
+            raise ResearchError(
+                "RESEARCH_NOT_EXPRESSIBLE",
+                f"{label}[{i}] 不可表达: hour_utc 仅支持数值比较 "
+                "gt/lt/ge/le × 数值 target（[0,24) 小时域）",
+                detail={"condition": cond,
+                        "slow_path": "cross/price 族对小时列不支持"
+                                     "（周期回绕语义未定义）"})
+
         if subject == "close":
             from core.analysis.condition_kernel import _classify_target_ref
             t_kind, t_ref = _classify_target_ref(target)
@@ -895,9 +960,18 @@ def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     rg = _risk_genes_of_row(row) if row else {}
     direction = rg.get("direction")
     max_hold = rg.get("max_hold")
+    time_exit = rg.get("time_exit_utc")
     return {
         "direction": direction if direction in ("long", "short") else "long",
-        "max_hold": int(max_hold) if isinstance(max_hold, int) else None,
+        # bool 排除（security F-5）：bool 是 int 子类，True 会穿透
+        # isinstance(int) 回显为 1（time_exit_utc 即 0:01 合法时刻）——
+        # 与 validator 侧 S-2 类型防护同族
+        "max_hold": int(max_hold)
+        if isinstance(max_hold, int) and not isinstance(max_hold, bool)
+        else None,
+        "time_exit_utc": int(time_exit)
+        if isinstance(time_exit, int) and not isinstance(time_exit, bool)
+        else None,
     }
 
 
@@ -909,10 +983,17 @@ _REUSE_NOTE = (
     "挂载依赖调用方显式携带 hypothesis_id；执行周期由验证请求参数指定")
 
 
-def _translate_receipt(direction: str, max_hold, reuse: bool) -> Dict[str, Any]:
-    """翻译回执身份三键（四返回点统一形制）。"""
+def _translate_receipt(direction: str, max_hold, time_exit,
+                        reuse: bool) -> Dict[str, Any]:
+    """翻译回执身份四键（四返回点统一形制——time_exit_utc 任务 6
+    增键，回执面与声明面同步）。"""
     return {
         "direction": direction if direction in ("long", "short") else "long",
-        "max_hold": max_hold if isinstance(max_hold, int) else None,
+        # bool 排除（security F-5）：与 _identity_reflection 同族——
+        # bool 穿透会以 1/0 进回执冒充合法 bar 数/时刻
+        "max_hold": max_hold if isinstance(max_hold, int)
+        and not isinstance(max_hold, bool) else None,
+        "time_exit_utc": time_exit if isinstance(time_exit, int)
+        and not isinstance(time_exit, bool) else None,
         "reuse_note": _REUSE_NOTE if reuse else None,
     }

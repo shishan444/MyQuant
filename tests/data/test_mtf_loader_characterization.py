@@ -141,7 +141,10 @@ class TestLoadAndPrepareDf:
     def test_raw_passthrough_keeps_ohlcv_columns(self, tmp_path) -> None:
         save_parquet(make_ohlcv(60), tmp_path / "BTCUSDT_1h.parquet")
         out = load_and_prepare_df(tmp_path, "BTCUSDT", "1h", compute_indicators=False)
-        assert list(out.columns) == ["open", "high", "low", "close", "volume"]
+        # hour_utc 由装载层注入（add-session-structure-expression 任务 7
+        # ——特征随实现更新：派生基础列属装载契约新成员）
+        assert list(out.columns) == ["open", "high", "low", "close",
+                                     "volume", "hour_utc"]
         assert len(out) == 60
         assert out["close"].iloc[0] == 10.0
 
@@ -207,7 +210,9 @@ class TestLoadAndPrepareDf:
         mock_compute.assert_called_once()
         called_df = mock_compute.call_args.args[0]
         assert len(called_df) == 60
-        assert list(called_df.columns) == ["open", "high", "low", "close", "volume"]
+        # 派生列注入先于指标层（任务 7——hour_utc 可被插件引用）
+        assert list(called_df.columns) == ["open", "high", "low", "close",
+                                           "volume", "hour_utc"]
         assert mock_compute.call_args.kwargs.get("stop_check") is stop
 
 
@@ -294,7 +299,8 @@ class TestLoadMtfData:
         out = load_mtf_data(
             tmp_path, "BTCUSDT", "1h", enhanced, {"4h"}, compute_indicators=False
         )
-        assert list(out["4h"].columns) == ["open", "high", "low", "close", "volume"]
+        assert list(out["4h"].columns) == ["open", "high", "low", "close",
+                                           "volume", "hour_utc"]
         assert len(out["4h"]) == 60
 
     def test_data_start_slice_applies_to_loaded_tf(self, tmp_path) -> None:

@@ -361,6 +361,33 @@ PROFILES: Dict[str, IndicatorProfile] = {
         ],
         follow_probability=0.45,
     ),
+
+    # == structure (3)（add-session-structure-expression——进化画像双源
+    # 完备性：注册表成员全覆盖锚要求）==
+    "SessionRange": IndicatorProfile(
+        recommended_roles=["entry_guard", "entry_trigger"],
+        recommended_params={"start_minute": [0, 60], "end_minute": [420, 480]},
+        recommended_conditions=[_GT, _LT],
+        follow_probability=0.40,
+    ),
+    "Pivot": IndicatorProfile(
+        recommended_roles=["entry_trigger"],
+        recommended_params={"left": [5], "right": [5]},
+        recommended_conditions=[
+            ConditionPreset("cross_above", [None]),
+            ConditionPreset("gt", [None]),
+        ],
+        follow_probability=0.40,
+    ),
+    "Supertrend": IndicatorProfile(
+        recommended_roles=["entry_trigger"],
+        recommended_params={"atr_period": [10], "multiplier": [3.0]},
+        recommended_conditions=[
+            ConditionPreset("cross_above", [None]),
+            ConditionPreset("cross_below", [None]),
+        ],
+        follow_probability=0.45,
+    ),
     # == structure (1) ==
     "VolumeProfile": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],

@@ -173,6 +173,11 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                  "不同）——查看 detail.legal_range 与 sl_mode，按档修正",
     "events": "事件数超上限：缩小区间或收窄 indicators 指标集"
               "（detail 含 actual/limit）",
+    # 固定时刻出场（add-session-structure-expression 任务 6）：登记
+    # 声明块校验族 detail 用 field 承载（分派层 field 兼容通道）
+    "time_exit_utc": "固定时刻出场参数越域：time_exit_utc 为 UTC 分钟"
+                     "时刻 0-1439（0=0:00、1439=23:59；单位是分钟不是"
+                     "小时）——按 detail.legal_range 修正",
 }
 
 

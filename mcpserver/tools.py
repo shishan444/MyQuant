@@ -103,7 +103,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_indicators() -> Any:
-        """内置指标元数据（45 项：参数空间、输出列、lookback——warmup 推导
+        """内置指标元数据（48 项：参数空间、输出列、lookback——warmup 推导
         依据；预算规则：主公式 max(200, 跨指标取最大的(周期类参数注册表
         上限之和 × 3))，高周期条件掩码链 max(条件实际参数 × 3, 20)——bar
         数按该轴周期折算为前扩时长（1d 轴 42 bar = 42 天；下限 20 与主
@@ -558,7 +558,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
         正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
         position_size/leverage/exit_fraction/add_fraction/max_exposure/
-        max_hold
+        max_hold/time_exit_utc
         （值域按 sl_mode 分叉：pct/trail 档 [0.005,0.20] 比例值、
         atr 档 [0.5,5.0] ATR 倍数；sl_mode∈{pct,atr,trail}；
         take_profit>stop_loss，trail 档豁免；position_size∈
@@ -570,7 +570,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         时间出场（到期无条件平仓，与条件出场/止损止盈并行的第三出场
         机制；不声明=无时间离场；N=1 行为等价 N=2——入场 bar 的出场
         时点被入场单占据，最早平仓在入场次 bar；仅回测域生效——live
-        链路当前不承载，实盘化前统一处理）；
+        链路当前不承载，实盘化前统一处理）；time_exit_utc∈[0,1439]
+        整数（UTC 分钟时刻——固定时刻出场，持仓 bar 区间覆盖该时刻
+        即平仓；跨日持仓逐日生效；与 max_hold 并存先到者先触发；无
+        宿主组依赖；不声明=无固定时刻出场）；
         翻译时逐参数映射进产物 risk_genes（返回体 risk_genes=
         "declared"；无声明=平台默认 "platform_default"）。声明块
         不进条件指纹与幂等身份（同条件集+同区间集=同一假设——参数
@@ -763,8 +766,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
-        回执身份三键：direction（产物方向 long|short）、max_hold（声明
-        的最长持仓 bar 数|int|null）、reuse_note（same_dna_existing=true
+        回执身份四键：direction（产物方向 long|short）、max_hold（声明
+        的最长持仓 bar 数|int|null）、time_exit_utc（声明的固定时刻
+        出场 UTC 分钟|int|null）、reuse_note（same_dna_existing=true
         时附同基因策略复用三要素说明，其余 null）。多周期边界：when 与
         加仓触发组条件支持顶层 timeframe 键（值须合法周期且不低于策略
         基准周期——低于基准拒，等于基准与缺省同语义归一）；then/减仓/

@@ -3,7 +3,7 @@
 
 覆盖 tasks D1/D2 完成标准与 D5③：
 - 值域常量双消费方（登记声明块+手工 DNA validate_dna）
-- 拒绝四形态与 null 负向；幂等四分支携带；变体十字段
+- 拒绝四形态与 null 负向；幂等四分支携带；变体十一字段
 - 基因扩展三处一致性（Optional 键/非 None 才写/from_dict 零迁移）
 - 序列化与比对集回归（存量逐位不变）
 - 三关+沙盒行为链走通（VAL-1/VAL-2）；live 范围外互证（LIVE-1）
@@ -118,7 +118,7 @@ class TestIdempotentAndVariant:
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_variant_after_terminal_new_entity(self, db):
-        """DEC-5：终态后异 max_hold 重登记→新实体→新 draft（十字段比对
+        """DEC-5：终态后异 max_hold 重登记→新实体→新 draft（十一字段比对
         max_hold 异→不误返既有）。"""
         from core.analysis.hypothesis_service import transition_hypothesis
         h1 = _register(db, sp={"max_hold": 6})
@@ -163,11 +163,11 @@ class TestGeneAndTranslation:
             RiskGenes(max_hold=6).to_dict()).max_hold == 6
 
     def test_d2_fields_ten_and_legacy_parity(self):
-        """DEC-8 补：比对集十字段；存量侧（手写字面 dict 模拟库内旧
+        """DEC-8 补：比对集十一字段；存量侧（手写字面 dict 模拟库内旧
         dna_json——无 max_hold 键）与无声明产物经比对集逐字段恒等
         ——扩键连续（get 缺键读 None 语义）。"""
         assert "max_hold" in _D2_RISK_FIELDS
-        assert len(_D2_RISK_FIELDS) == 10
+        assert len(_D2_RISK_FIELDS) == 11
         legacy_dict = {  # 存量库内 dna_json 形（无新键字面）
             "stop_loss": 0.05, "take_profit": None,
             "position_size": 0.3, "leverage": 1, "direction": "long",

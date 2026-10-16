@@ -215,8 +215,9 @@ def test_canonical_param_key_order_independent():
 
 def test_base_columns_registry_intact():
     """基础列清单自 hypothesis_service 移入后内容不变（迁移完整性）。"""
+    # dict 形（hour_utc 域元数据）——keys() 集合比较；八列全保留
     assert {"open", "high", "low", "close", "volume", "trades",
-            "open_interest", "funding_rate"} <= BASE_SUBJECT_COLUMNS
+            "open_interest", "funding_rate"} <= set(BASE_SUBJECT_COLUMNS)
 
 
 # ---------------------------------------------------------------- 五域集成锚
@@ -271,3 +272,63 @@ class TestFiveDomainIntegration:
                                      "action": "gt", "target": 0}]},
                 statement="s", data_ranges=rng)
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+
+class TestCrossParamsHook:
+    """U1：跨参数约束钩子（add-session-structure-expression 任务 1）。"""
+
+    def test_u1a_order_violation_rejected(self):
+        """U1a start≥end 两例拒（>与==各一）——以测试注册的带钩子
+        指标验证机制（SessionRange 实指标在任务 3 落地后另测）。"""
+        import pytest as _pytest
+        from core.features.registry import INDICATOR_REGISTRY, IndicatorDef, ParamDef
+        from core.analysis.column_ref import ColumnRefError, _resolve_indicator_ref
+
+        def _hook(p):
+            if p["start_minute"] >= p["end_minute"]:
+                return "start_minute 须小于 end_minute（时段倒序无意义）"
+            return None
+
+        INDICATOR_REGISTRY["_TEST_HOOK_IND"] = IndicatorDef(
+            category="structure",
+            params={"start_minute": ParamDef(int, 0, 1439, 0, 1),
+                    "end_minute": ParamDef(int, 0, 1439, 420, 1)},
+            output_fields=["x"], supported_conditions=["gt"],
+            cross_params=_hook)
+        try:
+            for bad in ({"start_minute": 500, "end_minute": 420},
+                        {"start_minute": 420, "end_minute": 420}):
+                with _pytest.raises(ColumnRefError) as ei:
+                    _resolve_indicator_ref({
+                        "indicator": "_TEST_HOOK_IND",
+                        "params": bad, "field": "x"})
+                assert ei.value.code == "PARAM_INVALID"
+                assert ei.value.detail["params"] == bad  # U1c detail 逐键
+                assert "violation" in ei.value.detail
+            # 合法序放行
+            ok = _resolve_indicator_ref({
+                "indicator": "_TEST_HOOK_IND",
+                "params": {"start_minute": 0, "end_minute": 420},
+                "field": "x"})
+            assert ok.params == {"start_minute": 0, "end_minute": 420}
+        finally:
+            del INDICATOR_REGISTRY["_TEST_HOOK_IND"]
+
+    def test_u1b_hookless_unchanged(self):
+        """U1b 无钩子指标零变化（RSI 正常解析）。"""
+        from core.analysis.column_ref import _resolve_indicator_ref
+        ok = _resolve_indicator_ref({
+            "indicator": "RSI", "params": {"period": 14}, "field": "rsi"})
+        assert ok.field == "rsi"
+
+    def test_hour_utc_domain_skip_compatibility_faces(self):
+        """域校验兼容面双跳过（闸门覆盖缺口补锚）：base_tf/ref_tf 双
+        None（无周期上下文——既有两参调用面零变化）与未知周期名均
+        放行不拒（域校验只在有已知周期上下文时生效）。"""
+        from core.analysis.column_ref import resolve_column_ref
+        # 双 None：无周期上下文 → 跳过域校验（兼容面）
+        r = resolve_column_ref("hour_utc")
+        assert r.kind == "base" and r.column_name == "hour_utc"
+        # 未知周期名（TF_SECONDS 无键）→ 跳过不炸
+        r2 = resolve_column_ref("hour_utc", base_tf="7h")
+        assert r2.kind == "base"

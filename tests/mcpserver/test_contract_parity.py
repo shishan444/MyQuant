@@ -514,8 +514,8 @@ class TestIndicatorCountAlignment:
     def test_s3b_absolute_snapshot_45(self) -> None:
         """绝对快照：注册表实测 45（与声明锁死；新指标入库先翻此断言）。"""
         from core.features.registry import INDICATOR_REGISTRY
-        assert len(INDICATOR_REGISTRY) == 45, (
-            "注册表基数漂移——新指标入库（包三 48）须同步四处声明"
+        assert len(INDICATOR_REGISTRY) == 48, (
+            "注册表基数漂移——包三三指标已入库（48）；后续增减须同步四处声明"
             "与本快照")
 
     def test_s3a_four_declarations_carry_runtime_count(self) -> None:

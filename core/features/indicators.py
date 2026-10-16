@@ -77,6 +77,11 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "FundingZScore": [{"period": 30}],
     "OIPriceDivergence": [{"period": 14}],
     "FundingPressure": [{"period": 8}],
+    # == structure (3)（add-session-structure-expression）==
+    "SessionRange": [{"start_minute": 0, "end_minute": 420},
+                     {"start_minute": 60, "end_minute": 480}],
+    "Pivot": [{"left": 5, "right": 5}],
+    "Supertrend": [{"atr_period": 10, "multiplier": 3.0}],
     # ML indicators (compute_mode="lazy", skipped by default)
     "FractalEntropy": [{"bins": 10, "lookback": 100}],
 }
@@ -373,6 +378,27 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         new_cols[f"mfe_score_{bins}_{lookback}"] = compute_fractal_entropy(
             df["close"], bins=bins, lookback=lookback,
         )
+    # == structure (3)（add-session-structure-expression 任务 3-5）==
+    # 分支内逐键解包（AST 参数域对拍锚要求声明键在本分支被显式消费
+    # ——委托实现整体收 params，此处解包即真实消费点）
+    elif name == "SessionRange":
+        from core.features.structure_indicators import compute_session_range
+        start_m = int(params["start_minute"])
+        end_m = int(params["end_minute"])
+        new_cols.update(compute_session_range(
+            df, name, {"start_minute": start_m, "end_minute": end_m}))
+    elif name == "Pivot":
+        from core.features.structure_indicators import compute_pivot
+        left = int(params["left"])
+        right = int(params["right"])
+        new_cols.update(compute_pivot(
+            df, name, {"left": left, "right": right}))
+    elif name == "Supertrend":
+        from core.features.structure_indicators import compute_supertrend
+        atr_p = int(params["atr_period"])
+        mult = float(params["multiplier"])
+        new_cols.update(compute_supertrend(
+            df, name, {"atr_period": atr_p, "multiplier": mult}))
     return new_cols
 
 

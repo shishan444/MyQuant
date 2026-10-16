@@ -118,7 +118,7 @@ def test_http_transport_full_chain(mcp_http_server):
 
                 res = await session.call_tool("list_indicators", {})
                 payload = [json.loads(c.text) for c in res.content]
-                assert len(payload) == 45  # Q3 摘牌后 47→45（2026-10-14）
+                assert len(payload) == 48  # Q3 摘牌后 47→45（2026-10-14）
 
                 reg = await session.call_tool("register_hypothesis", {
                     "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",

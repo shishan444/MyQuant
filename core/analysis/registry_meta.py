@@ -20,6 +20,9 @@ from core.features.registry import INDICATOR_REGISTRY
 _PERIOD_LIKE_PARAMS = frozenset({
     "period", "fast", "slow", "signal", "k_period", "d_period",
     "ema_period", "atr_period", "lookback",
+    # Pivot 确认延迟双参（add-session-structure-expression：bar 数语义
+    # ——left+right 求和为 warmup 收敛需求）
+    "left", "right",
 })
 
 # 小数比率语义列（add-threshold-unit-warning C-1）：值域量级以 1 为界的
@@ -59,7 +62,7 @@ def _indicator_lookback(defn: Any) -> int:
 
 
 def indicator_metadata() -> List[Dict[str, Any]]:
-    """内置 45 指标元数据只读外化（含 lookback 与参数空间）。"""
+    """内置 48 指标元数据只读外化（含 lookback 与参数空间）。"""
     out: List[Dict[str, Any]] = []
     for name, defn in INDICATOR_REGISTRY.items():
         out.append({
@@ -169,6 +172,37 @@ def derive_warmup_full(
                 warmup = max(
                     warmup,
                     int(span.total_seconds() // (base_minutes * 60)))
+    # 分钟语义预热维（add-session-structure-expression 任务 2）：
+    # 指标级 warmup_minutes（自然分钟——如 SessionRange 1440=完整
+    # 一天）按 base_tf 折算 bar=ceil(minutes ÷ 周期分钟) 并入主 max；
+    # base_tf 缺席（存量两参调用面）该维不参与——floor 200 不虚增
+    if base_tf:
+        from core.analysis.warmup_loader import TF_MINUTES
+        import math
+        base_minutes = TF_MINUTES.get(base_tf)
+        if base_minutes:
+            for name in (indicator_names or []):
+                defn = INDICATOR_REGISTRY.get(name)
+                # warmup_minutes 为 dataclass 定义字段（恒存在，None=无）
+                minutes = defn.warmup_minutes if defn else None
+                if minutes:
+                    warmup = max(
+                        warmup,
+                        math.ceil(minutes / base_minutes))
+            # 轴引用为 (indicator, params) 元组清单（_gene_tf_axis_refs
+            # 单源形制）——分钟维取指标名；warmup_minutes 是**时间需求**
+            # （自然分钟，与求值轴无关），折算基准 bar 用 base_minutes
+            # ——此前误除轴分钟产出轴 bar 数（返回值语义=基准 bar 数），
+            # 1m 轴@1h 基准虚增 / 1h 轴@1m 基准欠账双向偏差
+            #（fix-review D-2）
+            for tf_refs in (indicator_tfs or {}).values():
+                for ref in tf_refs:
+                    name = ref[0] if isinstance(ref, (tuple, list)) else ref
+                    defn = INDICATOR_REGISTRY.get(name)
+                    minutes = defn.warmup_minutes if defn else None
+                    if minutes:
+                        warmup = max(
+                            warmup, math.ceil(minutes / base_minutes))
     return warmup
 
 
@@ -186,7 +220,8 @@ WARMUP_RULE_TEXT = (
     "主公式下限 200 分属两式）；"
     "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)；"
     "基因级周期维度：各高周期轴 warmup bar 数 × 轴周期 ÷ 基准周期"
-    "折算为基准 bar 并入主 max（1d 轴 42 bar @1h 基准 = 1008 基准 bar）"
+    "折算为基准 bar 并入主 max（1d 轴 42 bar @1h 基准 = 1008 基准 bar）；"
+    "分钟语义预热维：指标级 warmup_minutes（自然分钟，如 SessionRange 1440=完整一天）按基准周期折算 bar=ceil(分钟 ÷ 周期分钟) 并入主 max"
 )
 
 

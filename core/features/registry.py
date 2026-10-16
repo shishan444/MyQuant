@@ -15,7 +15,7 @@ indicators.py）；自 indicators.py 拆出以控制单文件 800 行上限。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +50,19 @@ class IndicatorDef:
     guard_only: bool = False
     naming: str = "default"       # column naming mode
     compute_mode: str = "eager"   # "eager" | "lazy"
+    # 跨参数约束钩子（add-session-structure-expression 任务 1）：
+    # 参数各自域校验通过后的第二道联合校验（如 SessionRange 的
+    # start_minute<end_minute）；签名 (params) -> Optional[str]，
+    # 返回非 None 即拒绝消息（None=通过）。无钩子指标零行为变化。
+    cross_params: Optional[Callable[[Dict[str, float]], Optional[str]]] = None
+    # 分钟语义预热（任务 2）：以自然分钟计的收敛需求（如 SessionRange
+    # 的 1440=完整一天），derive_warmup_full 按 base_tf 折算为 bar 并入
+    # 主 max；None=不参与该维（floor 200 既有语义不虚增）。
+    warmup_minutes: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (45 indicators, 6 categories)
+# Indicator Registry (48 indicators, 7 categories)
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -411,6 +420,45 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         naming="mfe",
         compute_mode="lazy",
     ),
+
+    # == structure (3)（add-session-structure-expression 任务 3-5） ==
+    "SessionRange": IndicatorDef(
+        category="structure",
+        params={
+            "start_minute": ParamDef("int", 0, 1439, 0, 1),
+            "end_minute": ParamDef("int", 0, 1439, 420, 1),
+        },
+        output_fields=["session_high", "session_low", "session_vwap"],
+        # 六动作：三列各 gt/lt（区间突破与回落两类表达）
+        supported_conditions=["gt", "lt", "ge", "le", "cross_above",
+                              "cross_below"],
+        naming="session",
+        warmup_minutes=1440,  # 完整一天（会话结构跨日周期性）
+        cross_params=lambda p: (
+            "start_minute 须小于 end_minute（时段倒序无意义）"
+            if p["start_minute"] >= p["end_minute"] else None),
+    ),
+    "Pivot": IndicatorDef(
+        category="structure",
+        params={
+            "left": ParamDef("int", 1, 100, 5, 1),
+            "right": ParamDef("int", 1, 100, 5, 1),
+        },
+        output_fields=["pivot_high", "pivot_low"],
+        supported_conditions=["gt", "lt", "ge", "le", "cross_above",
+                              "cross_below"],
+        naming="pivot",
+    ),
+    "Supertrend": IndicatorDef(
+        category="structure",
+        params={
+            "atr_period": ParamDef("int", 5, 50, 10, 1),
+            "multiplier": ParamDef("float", 1.0, 5.0, 3.0, 0.5),
+        },
+        output_fields=["supertrend", "supertrend_dir"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        naming="supertrend",
+    ),
 }
 
 
@@ -507,6 +555,24 @@ def resolve_indicator_column(
         field = field_name or "k"
         prefix = "stoch_k" if field == "k" else "stoch_d"
         return f"{prefix}_{k_period}_{d_period}"
+
+    if naming == "session":
+        # session_{field}_{start}_{end}（时段参数编码进列名）
+        field = field_name or "session_high"
+        return f"{field}_{int(params['start_minute'])}_{int(params['end_minute'])}"
+
+    if naming == "pivot":
+        field = field_name or "pivot_high"
+        return f"{field}_{int(params['left'])}_{int(params['right'])}"
+
+    if naming == "supertrend":
+        # float 编码（kc 同款 str 形制——3.0 → "3.0"）；合法域
+        # {supertrend, supertrend_dir} 下 f"{field}_..." 单式覆盖
+        # （缺省 supertrend 由 or 前置归一）
+        atr_p = int(params["atr_period"])
+        mult = float(params["multiplier"])
+        field = field_name or "supertrend"
+        return f"{field}_{atr_p}_{mult}"
 
     if naming == "kc":
         ema_p = int(params["ema_period"])

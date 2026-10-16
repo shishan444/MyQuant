@@ -165,9 +165,15 @@ def _dna_indicator_names(dna) -> List[str]:
     列名 target 指标的 lookback 不计入则 target 列前段 NaN，进场
     信号前段缺失）。"""
     names = set()
+    # 派生基础列（hour_utc）非注册表成员——跳过（derive_warmup 对
+    # 未知指标 KeyError；装载注入零收敛成本，防炸点）；import 提至
+    # 闭包外层（逐基因重复 import 无意义）
+    from core.strategy.executor import _BASE_DIRECT_READ_COLUMNS
 
     def _collect_gene(gene) -> None:
         if getattr(gene, "indicator", None):
+            if gene.indicator in _BASE_DIRECT_READ_COLUMNS:
+                return
             names.add(gene.indicator)
         # 序列形条件（gt/lt/ge/le/cross_*_series 带 target_indicator）：
         # target 侧指标并入 warmup 并集
