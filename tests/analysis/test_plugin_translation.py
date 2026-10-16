@@ -543,3 +543,94 @@ class TestGateDualSourceEdgeAnchors:
         assert ei.value.code == "RESEARCH_COMPONENT_EVIDENCE_MISSING"
         assert ei.value.detail["missing"] == [col_b], \
             "有证据源不在缺失清单（(a) 源有效），仅无证据源被列"
+
+
+class TestBackfillHitPoints:
+    """T7f'②③/T7g（tester 补——覆盖率证据显示仅命中点①被测：②
+    active 同签名分流与③ draft 同签名分流补试算+失败不阻断语义）。
+
+    spec「翻译幂等命中与同签名分流命中 MUST 对库内无记录的 formula
+    组件补试算写记录；补试算失败 MUST NOT 阻断幂等返回」。"""
+
+    def _wipe_component_evals(self, db):
+        from core.persistence.repository.research import (
+            ResearchLog, _engine_for)
+        from sqlalchemy import delete
+        with _engine_for(db).begin() as conn:
+            conn.execute(delete(ResearchLog).where(
+                ResearchLog.entry_type == "component_eval"))
+
+    def _component_log_refs(self, db):
+        return [e.get("ref_id") for e in rr.list_research_log(
+            db, entry_type="component_eval", limit=200)]
+
+    def _translate_plugin_hypothesis(self, db, data_dir):
+        """登记→翻译一个插件列假设，返回 (hid, 产物, 列名)。"""
+        col = _plugin(db, name=f"mom_{uuid.uuid4().hex[:6]}")
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir,
+                                   hypothesis_id=hid)
+        return hid, out, col
+
+
+    def test_t7f_active_hit_backfills(self, db, data_dir):
+        """命中点②（active 同签名分流）：同指纹新假设翻译命中既有
+        active 策略 → 返回前对该策略补写 component_eval。"""
+        from core.analysis.hypothesis_service import transition_hypothesis
+        from core.persistence.repository.strategy import _engine_for, Strategy
+        from sqlalchemy import update as sa_update
+        hid_a, out_a, col = self._translate_plugin_hypothesis(db, data_dir)
+        sid = out_a["strategy_id"]
+        # 产物转正（active 形态）+腾位假设
+        with _engine_for(db).begin() as conn:
+            conn.execute(sa_update(Strategy).where(
+                Strategy.strategy_id == sid).values(status="active"))
+        transition_hypothesis(db, hid_a, target_status="abandoned",
+                              evidence_ref="命中点②构造")
+        # 同指纹重登记（active 化产物的假设已终态）→ 翻译命中 active_hit
+        hid_b = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                    "target": 0.5}])
+        self._wipe_component_evals(db)
+        res = translate_hypothesis(db, data_dir=data_dir,
+                                   hypothesis_id=hid_b)
+        assert res["strategy_id"] == sid, "命中既有 active（same_dna）"
+        assert res["same_dna_existing"] is True
+        assert sid in self._component_log_refs(db), \
+            "命中点② active 分流补试算写记录（ref_id=命中策略 id）"
+
+    def test_t7f_draft_hit_backfills(self, db, data_dir):
+        """命中点③（draft 同签名分流）：同指纹新假设（谱系无 draft）
+        翻译命中既有 draft → 返回前补写记录。"""
+        from core.analysis.hypothesis_service import transition_hypothesis
+        hid_a, out_a, col = self._translate_plugin_hypothesis(db, data_dir)
+        sid = out_a["strategy_id"]
+        transition_hypothesis(db, hid_a, target_status="abandoned",
+                              evidence_ref="命中点③构造")
+        hid_b = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                    "target": 0.5}])
+        self._wipe_component_evals(db)
+        res = translate_hypothesis(db, data_dir=data_dir,
+                                   hypothesis_id=hid_b)
+        assert res["strategy_id"] == sid, "命中既有 draft（duplicated）"
+        assert res["duplicated"] is True
+        assert sid in self._component_log_refs(db), \
+            "命中点③ draft 分流补试算写记录"
+
+    def test_t7g_backfill_failure_does_not_block(self, db, data_dir, caplog):
+        """T7g 失败语义：命中点补试算失败（data_dir 不可用）→ 不阻断
+        幂等返回 + warn + 不写记录（门禁兜底拦截）。"""
+        import logging as _logging
+        hid, out, _col = self._translate_plugin_hypothesis(db, data_dir)
+        sid = out["strategy_id"]
+        self._wipe_component_evals(db)
+        bad_dir = data_dir.parent / "void_market"   # 空目录：装载必败
+        bad_dir.mkdir(exist_ok=True)
+        with caplog.at_level(_logging.WARNING):
+            res = translate_hypothesis(db, data_dir=bad_dir,
+                                       hypothesis_id=hid)
+        assert res["strategy_id"] == sid and res["status"] == "draft", \
+            "补试算失败不阻断幂等返回"
+        assert self._component_log_refs(db) == [], "失败不写记录"
+        assert any("补试算失败" in r.getMessage() for r in caplog.records), \
+            "失败 warn 披露"
