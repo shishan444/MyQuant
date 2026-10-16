@@ -155,13 +155,20 @@ class TestCountAndParityReentry:
     def test_receipt_bool_not_penetrating(self):
         """C6（security F-5）：bool 不再按 int 穿透回执——bool 是 int
         子类，穿透会以 1/0 冒充合法 bar 数/时刻；真值 3/600 照常回显。
-        两函数四位（max_hold/time_exit_utc）全验。"""
+        两函数多位（max_hold/time_exit_utc/risk_fraction）全验；六键
+        形制（K1 接线：position_mode/risk_fraction 进回执）。"""
         from core.analysis.hypothesis_to_strategy import (
             _identity_reflection, _translate_receipt)
-        r = _translate_receipt("long", True, True, False)
+        r = _translate_receipt("long", True, True, "fixed", True, False)
         assert r["max_hold"] is None and r["time_exit_utc"] is None
-        r2 = _translate_receipt("long", 3, 600, False)
+        assert r["risk_fraction"] is None, "bool 冒充 1.0 比例须拒"
+        r2 = _translate_receipt(
+            "long", 3, 600, "risk_budget", 0.04, False)
         assert r2["max_hold"] == 3 and r2["time_exit_utc"] == 600
+        assert r2["position_mode"] == "risk_budget"
+        assert r2["risk_fraction"] == 0.04
+        r3 = _translate_receipt("long", 3, 600, "bogus", 0.04, False)
+        assert r3["position_mode"] == "fixed", "非法模式收敛 fixed"
         row = {"dna_json": '{"risk_genes": {"direction": "long", '
                             '"max_hold": true, "time_exit_utc": true}}'}
         ir = _identity_reflection(row)

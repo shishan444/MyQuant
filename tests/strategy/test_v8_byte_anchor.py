@@ -35,6 +35,12 @@ def _run_snapshot() -> str:
             sig = dna_to_signal_set(dna, df)
             res = BacktestEngine().run(dna, df, signal_set=sig)
             m = res.metrics_dict
+            # 披露增量键排除（complete-research-tooling 任务 4）：
+            # position_sizing 是声明面披露（fixed 档六子键，值不随执行
+            # 路径变化）——锚语义=执行路径行为回归检测，非 metrics 键集
+            # 冻结；增量披露键入锚会把锚降级为键集快照，每次加披露键
+            # 都要动基线，掩盖真正的行为漂移信号
+            m = {k: v for k, v in m.items() if k != "position_sizing"}
             out[f"seed{seed}_lev{lev}_{direction}_{entry_val}"] = {
                 k: (round(float(v), 10)
                     if isinstance(v, (int, float)) and v == v else str(v))

@@ -143,18 +143,75 @@ class TestProvenanceRegistration:
         assert hits, "扫描区间应经 screen_use 进入判定并集"
 
     def test_screen_use_range_comes_from_task_record(self, tmp_path):
-        """G1：screen_use 区间取自任务记录的 data_range，非 AI 自报。"""
+        """G1：screen_use 区间取自任务记录的 data_range，非 AI 自报。
+
+        包四 GAP-10 泛化后 entry_type=analysis_ref（两类统一——
+        screen_candidate 与 analysis_task 同族留痕；区间取数语义不变）。
+        """
         db = _db(tmp_path)
         task_id = _make_screen_task(db)  # 任务区间 = SCAN_RANGE
         register_hypothesis(
             db, conditions=_conditions(), statement="引用扫描候选",
             data_ranges=[OTHER_RANGE],
             provenance={"task_id": task_id, "candidate_fingerprint": "abc"})
-        uses = rr.list_research_log(db, entry_type="screen_use")
+        uses = rr.list_research_log(db, entry_type="analysis_ref")
         assert len(uses) == 1
         logged = json.loads(uses[0]["data_ranges"])[0]
         assert logged["start"] == SCAN_RANGE["start"]
         assert logged["end"] == SCAN_RANGE["end"]
+        assert f"task {task_id}" in uses[0]["summary"], \
+            "summary 携带 task_id 与 ref_type（analysis_ref 留痕形制）"
+
+    def test_analysis_task_provenance_registers(self, tmp_path):
+        """包四 GAP-10 主锚（V3a）：analysis_task 引用网格统计任务（无
+        指纹）——登记成功、analysis_ref 日志在场（summary 携带 task_id
+        与 ref_type）、任务区间进判定并集、旧 screen_use 键零写入。"""
+        db = _db(tmp_path)
+        task_id = "ant_grid00000001"
+        rr.save_analysis_task(
+            db, task_id=task_id, template="analysis:condition_stats",
+            params=json.dumps({"template": "condition_stats",
+                               "data_range": SCAN_RANGE}))
+        rr.update_analysis_task(db, task_id=task_id, status="succeeded")
+        out = register_hypothesis(
+            db, conditions=_conditions(), statement="引用网格统计来源",
+            data_ranges=[OTHER_RANGE],
+            provenance={"ref_type": "analysis_task", "task_id": task_id})
+        assert out["duplicated"] is False
+        refs = rr.list_research_log(db, entry_type="analysis_ref")
+        assert len(refs) == 1
+        assert f"task {task_id}" in refs[0]["summary"]
+        assert "ref_type=analysis_task" in refs[0]["summary"]
+        assert rr.list_research_log(db, entry_type="screen_use") == []
+        union = judged_ranges_union(db, out["hypothesis_id"])
+        assert overlaps_with_request(
+            union, SCAN_RANGE["start"], SCAN_RANGE["end"]), \
+            "网格任务区间应经 analysis_ref 进入判定并集"
+
+    def test_legacy_two_keys_and_bad_ref_type(self, tmp_path):
+        """V3c/V3d：旧两键形制（无 ref_type）零适配可读（补默认
+        screen_candidate）；非法 ref_type 拒附值域。"""
+        from api.schemas import AnalysisProvenance, ScreenProvenance
+        assert ScreenProvenance is AnalysisProvenance, "别名不断裂（V3f）"
+        m = AnalysisProvenance.model_validate(
+            {"task_id": "t", "candidate_fingerprint": "fp"})
+        assert m.ref_type == "screen_candidate"
+        db = _db(tmp_path)
+        # 旧两键走服务层直调路径同样补默认（兼容读端到端）
+        task_id = _make_screen_task(db)
+        out = register_hypothesis(
+            db, conditions=_conditions(), statement="旧形制登记",
+            data_ranges=[OTHER_RANGE],
+            provenance={"task_id": task_id, "candidate_fingerprint": "abc"})
+        assert out["duplicated"] is False
+        with pytest.raises(ResearchError, match="ref_type"):
+            register_hypothesis(
+                db, conditions=_conditions(), statement="坏引用类型",
+                # 换区间避开幂等拦截（provenance 校验在幂等步之后——
+                # 同条件集同区间集的第二笔会先命中 duplicated 返回）
+                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
+                              "start": "2024-06-01", "end": "2024-07-01"}],
+                provenance={"ref_type": "bogus", "task_id": task_id})
 
     def test_unknown_task_rejected_without_writes(self, tmp_path):
         """谱系引用不存在任务被拒：无假设行、无任何日志写入。"""
@@ -383,3 +440,40 @@ class TestScreenReusePrecheckTolerance:
                 ResearchHypothesis.hypothesis_id == hid).values(
                 conditions='{"when_conditions": [], "then_conditions": []}'))
         _screen_reuse_check(db, hid, SCAN_RANGE)  # 指纹集空返回
+
+
+class TestAnalysisTaskSameCore:
+    """包四 V3e 补（tester 审查）：两类引用的任务存在性核验同核——
+    analysis_task 形态引用不存在任务同样拒且零写入（screen_candidate
+    形态既有 test_unknown_task_rejected_without_writes 已证）。"""
+
+    def test_analysis_task_unknown_rejected_no_writes(self, tmp_path):
+        db = _db(tmp_path)
+        with pytest.raises(ResearchError, match="分析任务"):
+            register_hypothesis(
+                db, conditions=_conditions(), statement="引用幽灵网格任务",
+                data_ranges=[OTHER_RANGE],
+                provenance={"ref_type": "analysis_task",
+                            "task_id": "ant_ghost00001"})
+        assert rr.list_research_log(db) == [], "拒绝路径零留痕"
+
+
+class TestProvenanceGateCompletions:
+    """闸门覆盖缺口补锚：provenance 门两分支——服务层缺 task_id 拒；
+    schema 层 screen_candidate 缺指纹 ValueError（服务层包装版已测、
+    schema 直测补全）。"""
+
+    def test_missing_task_id_rejected(self, tmp_path):
+        db = _db(tmp_path)
+        with pytest.raises(ResearchError, match="task_id"):
+            register_hypothesis(
+                db, conditions=_conditions(), statement="缺任务标识",
+                data_ranges=[OTHER_RANGE],
+                provenance={"candidate_fingerprint": "abc"})
+
+    def test_schema_fingerprint_conditionality_valueerror(self):
+        from api.schemas import AnalysisProvenance
+        import pytest as _pytest
+        with _pytest.raises(ValueError, match="candidate_fingerprint"):
+            AnalysisProvenance.model_validate(
+                {"ref_type": "screen_candidate", "task_id": "t1"})

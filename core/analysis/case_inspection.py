@@ -73,6 +73,8 @@ _MIN_CONTEXT_BARS = 1
 _DEFAULT_CONTEXT_BARS = 8
 _MAX_TIMESTAMPS = 5
 _MAX_SERIALIZED_BYTES = 24576  # 形制退化兜底（极限组合 5×41 行全域可用）
+# 组合条件指纹拼接分隔（包四 GAP-03——逐条单条件指纹排序后 join 再摘要）
+_SEP_FINGERPRINT = "|"
 
 # 求值面中数据集可达动作集（design D7：engine action_map 20 键的可达
 # 子集——spike/shrink 仅依赖 subject 序列滚动均值、lookback 依赖 df
@@ -112,37 +114,79 @@ def _parse_selector(
     start: Optional[str],
     end: Optional[str],
 ) -> Tuple[str, Any]:
-    """selector 结构校验（装载前）：两形态互斥 + F5 同传拒 + H2 超发拒。
+    """selector 结构校验（装载前）：三形态恰一 + F5 同传拒 + H2 超发拒。
 
     Returns:
-        ("condition", condition_dict) 或 ("timestamps", 归一时间戳列表)。
+        ("condition", condition_dict) / ("conditions", 条目列表——包四
+        GAP-03 条件数组 1..5 AND) / ("timestamps", 归一时间戳列表)。
     """
     if not isinstance(selector, dict):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            "selector 须为对象（恰含 condition 或 timestamps 之一）",
+            "selector 须为对象（恰含 condition / conditions / timestamps 之一）",
             detail={"param": "selector",
                     "legal_range": "condition 三键 {subject,action,target} "
-                                   "或 timestamps 数组（互斥）"})
+                                   "或 conditions 数组（1..5 条 AND）或 "
+                                   "timestamps 数组（互斥）"})
     keys = set(selector.keys())
-    extra = keys - {"condition", "timestamps"}
+    extra = keys - {"condition", "conditions", "timestamps"}
     if extra:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"selector 含未知键: {sorted(extra)}（恰含 condition 或 timestamps 之一）",
+            f"selector 含未知键: {sorted(extra)}"
+            "（恰含 condition / conditions / timestamps 之一）",
             detail={"param": "selector", "illegal": sorted(extra)})
     has_cond = "condition" in keys
+    has_conds = "conditions" in keys
     has_ts = "timestamps" in keys
-    if has_cond and has_ts:
+    present = [k for k, on in (("condition", has_cond),
+                               ("conditions", has_conds),
+                               ("timestamps", has_ts)) if on]
+    if len(present) > 1:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            "selector 双形态混用（恰含 condition 或 timestamps 之一）",
-            detail={"param": "selector"})
-    if not has_cond and not has_ts:
+            f"selector 形态互斥（同传 {present}——恰含其一）",
+            detail={"param": "selector", "mutex_pair": present})
+    if not present:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
-            "selector 缺形态键（恰含 condition 或 timestamps 之一）",
+            "selector 缺形态键（恰含 condition / conditions / timestamps 之一）",
             detail={"param": "selector"})
+
+    if has_conds:
+        # 包四 GAP-03：条件数组形态——条数与逐条白名单经共享单点
+        # （与 condition_stats 等 0.4.1 四消费者同一校验），逐条
+        # subject 合法性沿单条件链（resolve 校验即解析）
+        from core.analysis.condition_kernel import validate_conditions_array
+        conds = selector["conditions"]
+        validate_conditions_array(conds)
+        for i, cond in enumerate(conds):
+            if not isinstance(cond["action"], str):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"conditions[{i}].action 须为字符串",
+                    detail={"param": f"conditions[{i}]"})
+            if isinstance(cond["subject"], (str, dict)):
+                from core.analysis.column_ref import (
+                    ColumnRefError, resolve_column_ref)
+                _is_plugin = (isinstance(cond["subject"], str)
+                              and cond["subject"].startswith(
+                                  ("fx_", "model_")))
+                try:
+                    if not _is_plugin:
+                        resolve_column_ref(cond["subject"])
+                except ColumnRefError as exc:
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"conditions[{i}].subject 非法: {exc.message}",
+                        detail={"param": f"conditions[{i}]",
+                                "code": exc.code, **exc.detail}) from exc
+            else:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    f"conditions[{i}].subject 须为字符串或结构化指标对象",
+                    detail={"param": f"conditions[{i}]"})
+        return "conditions", conds
 
     if has_cond:
         cond = selector["condition"]
@@ -214,6 +258,47 @@ def _parse_selector(
             f"timestamps 含不可解析项: {exc}",
             detail={"param": "selector.timestamps"}) from exc
     return "timestamps", normalized
+
+
+def _validate_condition_tf(
+    cond_entry: Dict[str, Any], timeframe: str,
+    param_label: str = "condition.timeframe",
+) -> None:
+    """timeframe 键前置校验（值域+方向——低周期/未知周期装载前拒绝）。
+
+    包四 GAP-03 提取为两形态共用单点（condition 单条件内联段迁移，
+    conditions 数组逐条同语义）；param_label 带定位（数组场景
+    conditions[{i}].timeframe——多条件排障可定位，K8）。
+    """
+    _tf_key = cond_entry.get("timeframe")
+    if _tf_key is None:
+        return
+    from core.data.timeframes import TF_SECONDS
+    if _tf_key not in TF_SECONDS:
+        raise ResearchError(
+            "TIMEFRAME_UNKNOWN",
+            f"未知周期: {_tf_key!r}",
+            detail={"param": param_label,
+                    "timeframe": _tf_key,
+                    "legal_range": sorted(TF_SECONDS)})
+    if timeframe not in TF_SECONDS:
+        raise ResearchError(
+            "TIMEFRAME_UNKNOWN",
+            f"未知基准周期: {timeframe!r}",
+            detail={"param": "timeframe",
+                    "timeframe": timeframe,
+                    "legal_range": sorted(TF_SECONDS)})
+    # 方向判定走权威 assert_higher_tf（design B1「登记侧与求值侧
+    # 共用判定」——message 随之统一，含聚合歧义说明）
+    from core.data.mtf_alignment import assert_higher_tf
+    try:
+        assert_higher_tf(_tf_key, timeframe)
+    except ValueError as exc:
+        raise ResearchError(
+            "TIMEFRAME_NOT_HIGHER", str(exc),
+            detail={"param": param_label,
+                    "timeframe": _tf_key,
+                    "base_timeframe": timeframe}) from exc
 
 
 def _validate_action(action: str) -> None:
@@ -346,9 +431,11 @@ def inspect_cases(
         data_dir: parquet 数据目录。
         symbol: 交易对（如 BTCUSDT）。
         timeframe: bar 周期（TF_MINUTES 键；未知周期按 240 分钟兜底）。
-        selector: 两形态互斥——condition（{subject, action, target} 三键，
-            扫描候选同形制直喂）或 timestamps（点名时间戳 ≤5，与区间
-            参数同传拒绝）。
+        selector: 三形态互斥——condition（{subject, action, target} 三键，
+            扫描候选同形制直喂）/ conditions（条件数组 1..5 条 AND——
+            包四 GAP-03，与 condition_stats 等四消费者同一校验与求值
+            内核，组合假设案例无需拆单条件近似）或 timestamps（点名
+            时间戳 ≤5，与区间参数同传拒绝）。
         limit: 案例数上限 1..5（缺省 3；condition 形态等距取样）。
         context_bars: 每案例窗口前后根数 1..20（缺省 8）。
         start: 请求区间起点（显式走 load_with_warmup；缺省全量直装 +
@@ -382,35 +469,7 @@ def inspect_cases(
 
     if kind == "condition":
         _validate_action(payload["action"])
-        # timeframe 键前置校验（值域+方向——低周期/未知周期装载前拒绝）
-        _tf_key = payload.get("timeframe")
-        if _tf_key is not None:
-            from core.data.timeframes import TF_SECONDS
-            if _tf_key not in TF_SECONDS:
-                raise ResearchError(
-                    "TIMEFRAME_UNKNOWN",
-                    f"未知周期: {_tf_key!r}",
-                    detail={"param": "condition.timeframe",
-                            "timeframe": _tf_key,
-                            "legal_range": sorted(TF_SECONDS)})
-            if timeframe not in TF_SECONDS:
-                raise ResearchError(
-                    "TIMEFRAME_UNKNOWN",
-                    f"未知基准周期: {timeframe!r}",
-                    detail={"param": "timeframe",
-                            "timeframe": timeframe,
-                            "legal_range": sorted(TF_SECONDS)})
-            # 方向判定走权威 assert_higher_tf（design B1「登记侧与求值侧
-            # 共用判定」——message 随之统一，含聚合歧义说明）
-            from core.data.mtf_alignment import assert_higher_tf
-            try:
-                assert_higher_tf(_tf_key, timeframe)
-            except ValueError as exc:
-                raise ResearchError(
-                    "TIMEFRAME_NOT_HIGHER", str(exc),
-                    detail={"param": "condition.timeframe",
-                            "timeframe": _tf_key,
-                            "base_timeframe": timeframe}) from exc
+        _validate_condition_tf(payload, timeframe)
         if indicator is None:
             # 0.2.14：结构化 subject 自带指标名（indicator 参数可省——
             # 假设 when 条件无需转写直接喂入）；fix-research-c3：插件列
@@ -430,12 +489,52 @@ def inspect_cases(
                         "指标计算；结构化 subject 与插件列 subject 可省"
                         "——自带指标名/求值定义）",
                         detail={"param": "indicator"})
+    elif kind == "conditions":
+        # 包四 GAP-03：条件数组——action/timeframe 逐条前置校验；
+        # indicator 推导=顶层可选（展示与 warmup 并集基准），逐条
+        # 结构化 subject 的指标名进 warmup 并集（求值自足——
+        # mask_for 两段式任意参数现算）；全字符串条目且非插件时
+        # 沿单条件形态语义要求顶层 indicator
+        for i, c in enumerate(payload):
+            _validate_action(c["action"])
+            _validate_condition_tf(
+                c, timeframe, param_label=f"conditions[{i}].timeframe")
+        _extra_inds = sorted({
+            c["subject"].get("indicator")
+            for c in payload if isinstance(c["subject"], dict)
+            and c["subject"].get("indicator") is not None})
+        if indicator is None:
+            _all_plugin_or_struct = all(
+                isinstance(c["subject"], dict)
+                or (isinstance(c["subject"], str)
+                    and c["subject"].startswith(("fx_", "model_")))
+                for c in payload)
+            if not _all_plugin_or_struct and not _extra_inds:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "conditions 形态含字符串 subject 条目时 indicator "
+                    "必填（供该条默认参数输出列边界与 warmup 推导；"
+                    "全部条目为结构化 subject 或插件列时可省）",
+                    detail={"param": "indicator"})
     if indicator is not None and indicator not in INDICATOR_REGISTRY:
         raise ResearchError(
             "RESEARCH_INDICATOR_UNKNOWN",
             f"未知指标: {indicator}",
             detail={"param": "indicator",
                     "legal_range": sorted(INDICATOR_REGISTRY)})
+    # conditions 形态：逐条结构化 subject 指标在册校验（求值期
+    # mask_for 两段式会解析——装载前拒绝零留痕语义与顶层一致）
+    if kind == "conditions":
+        for c in payload:
+            if isinstance(c["subject"], dict):
+                _ind = c["subject"].get("indicator")
+                if _ind is not None and _ind not in INDICATOR_REGISTRY:
+                    raise ResearchError(
+                        "RESEARCH_INDICATOR_UNKNOWN",
+                        f"未知指标: {_ind}",
+                        detail={"param": "conditions[].subject.indicator",
+                                "indicator": str(_ind),
+                                "legal_range": sorted(INDICATOR_REGISTRY)})
 
     # ---------------- 装载双路径 ----------------
     # end 三态：显式=装载终点外扩 context_bars 根（尾部窗口完整）；
@@ -451,11 +550,20 @@ def inspect_cases(
     # 路线——「眼见为实」语义下插件头部 NaN 窗口属缺陷一同族误导）
     from core.analysis.condition_kernel import collect_condition_plugin_columns
     from core.analysis.plugin_service import assert_plugin_columns_reachable
-    plugin_columns = (collect_condition_plugin_columns([payload])
-                      if kind == "condition" else set())
+    plugin_columns = (collect_condition_plugin_columns(
+        [payload] if kind == "condition" else payload)
+        if kind in ("condition", "conditions") else set())
     if plugin_columns:
         assert_plugin_columns_reachable(db_path, plugin_columns)
     _warm_names = [indicator] if indicator is not None else []
+    # conditions 形态：warmup 并集=顶层 indicator + 逐条结构化 subject
+    # 指标（「只用不算」契约——求值域起点按并集 warmup 后首根）
+    if kind == "conditions":
+        _warm_names = list(dict.fromkeys(
+            _warm_names
+            + [c["subject"]["indicator"] for c in payload
+               if isinstance(c["subject"], dict)
+               and c["subject"].get("indicator") is not None]))
     _min_warmup: Optional[int] = None
     if plugin_columns:
         from core.analysis.registry_meta import derive_warmup_full
@@ -463,7 +571,7 @@ def inspect_cases(
             db_path, _warm_names, plugin_columns)
 
     start_ts: Optional[pd.Timestamp] = None
-    if kind == "condition" and start is not None:
+    if kind in ("condition", "conditions") and start is not None:
         # 显式 start：load_with_warmup（前缀不足报 WARMUP_INSUFFICIENT）
         df, start_ts = load_with_warmup(
             data_dir, symbol, timeframe,
@@ -536,17 +644,39 @@ def inspect_cases(
                         "column": subject,
                         "legal_range": sorted(available)})
         _validate_target(payload["target"], work.columns)
+    elif kind == "conditions":
+        # 包四 GAP-03：逐条字符串 subject 默认参数输出列边界 + target
+        # 判别（与单条件形态同语义链；结构化 subject 经求值期两段式
+        # 现算，装载前在册校验已做）
+        available = list(ind_cols.keys())
+        for i, c in enumerate(payload):
+            subject = c["subject"]
+            _subj_plugin = (isinstance(subject, str)
+                            and subject.startswith(("fx_", "model_")))
+            if (isinstance(subject, str) and not _subj_plugin
+                    and subject not in available):
+                raise ResearchError(
+                    "RESEARCH_COLUMN_NOT_AVAILABLE",
+                    f"conditions[{i}].subject 列 {subject!r} 不属于 "
+                    f"{indicator} 默认参数输出列（非默认参数请用结构化 "
+                    "subject 引用）",
+                    detail={"param": f"conditions[{i}].subject",
+                            "column": subject,
+                            "legal_range": sorted(available)})
+            _validate_target(c["target"], work.columns)
 
     # ---------------- 求值域与取样 ----------------
     if plugin_columns:
         from core.analysis.registry_meta import derive_warmup_full
         warmup_bars = derive_warmup_full(
             db_path, _warm_names, plugin_columns)
-    elif indicator is not None:
-        warmup_bars = derive_warmup([indicator])
+    elif _warm_names:
+        # conditions 形态=并集 warmup（顶层+逐条结构化 subject 指标）；
+        # 单条件形态 _warm_names=[indicator] 同式（等价原 [indicator]）
+        warmup_bars = derive_warmup(_warm_names)
     else:
         warmup_bars = 0
-    if kind == "condition":
+    if kind in ("condition", "conditions"):
         if start_ts is not None:
             effective_start_ts = start_ts
         else:
@@ -569,7 +699,14 @@ def inspect_cases(
         mtf_ctx = MtfEvalContext(
             data_dir=data_dir, symbol=symbol, base_tf=timeframe,
             eval_start=effective_start_ts)
-        mask = mask_for(work, payload, mtf=mtf_ctx) & in_domain
+        # 包四 GAP-03：conditions 形态走 mask_for_all（与 condition_stats
+        # 等四消费者同一组合求值内核——命中一致性行为可证；单条件形态
+        # 保持 mask_for 单点路径逐字节不变）
+        from core.analysis.condition_kernel import mask_for_all
+        if kind == "conditions":
+            mask = mask_for_all(work, payload, mtf=mtf_ctx) & in_domain
+        else:
+            mask = mask_for(work, payload, mtf=mtf_ctx) & in_domain
         hits = np.where(mask.values)[0]  # 升序
         n_matched = int(len(hits))
         positions = _sample_positions(hits, limit)
@@ -596,10 +733,11 @@ def inspect_cases(
         _build_case(df, work, pos, context_bars, ind_cols)
         for pos in positions
     ]
-    # effective_start 披露基准：condition 形态=求值域起点（显式 start 即
-    # 请求起点；缺省即 warmup 后首根）；timestamps 形态无求值域，有指标
-    # 时披露 warmup 后位置（头部读数无效区）、无指标即数据首 bar
-    if kind == "condition":
+    # effective_start 披露基准：condition/conditions 形态=求值域起点
+    # （显式 start 即请求起点；缺省即 warmup 后首根——conditions 为
+    # 并集 warmup）；timestamps 形态无求值域，有指标时披露 warmup 后
+    # 位置（头部读数无效区）、无指标即数据首 bar
+    if kind in ("condition", "conditions"):
         effective_start_out = effective_start_ts
     elif indicator is not None and len(df) > warmup_bars:
         effective_start_out = df.index[warmup_bars]
@@ -633,6 +771,16 @@ def inspect_cases(
 
     if kind == "condition":
         ref_id = canonical_condition_hash(payload, timeframe)
+    elif kind == "conditions":
+        # 组合指纹（包四 GAP-03）：逐条单条件指纹排序 join 再摘要
+        # （组合指纹独立形制——定长分隔 join 后摘要，碰撞安全；
+        # 与 screen_patterns 组合候选 combo_fp 的 16hex 无分隔拼接
+        # 非同款形制，K7 注释修正）
+        import hashlib as _hashlib
+        _fps = sorted(canonical_condition_hash(c, timeframe)
+                      for c in payload)
+        ref_id = _hashlib.sha256(
+            _SEP_FINGERPRINT.join(_fps).encode("utf-8")).hexdigest()[:16]
     else:
         ref_id = f"timestamps:{n_matched}"
     rr.append_research_log(

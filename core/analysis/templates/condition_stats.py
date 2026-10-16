@@ -237,6 +237,20 @@ def condition_stats(
         f"forward_return_{forward_bars}b": _series_stats(valid),
         f"baseline_{forward_bars}b": {"mean": baseline_mean},
         "win_rate": float((valid > 0).mean()) if len(valid) else None,
+        # 方向口径披露（包四 GAP-01 确定部分①——计算不变纯增量）：
+        # win_rate/forward_return_mean 为做多持有口径（收益=价格涨跌幅）。
+        # short 视角下做空胜率=收益为负比例；零收益样本不计入任一胜方
+        # （不可用 1−win_rate 换算——平局样本使两视角胜率之和<1）。
+        "metric_perspective": {
+            "win_rate": "long_holding（收益为正比例——做多持有口径）",
+            "short_view_win_rate":
+                "收益为负比例=做空胜率（零收益样本不计入胜方，"
+                "不可用 1−win_rate 换算）",
+            "forward_return_mean":
+                "做多持有口径（正=价格上涨）；做空视角取其负号语义解读"
+                "——负均值即做空有利方向（效应方向判定见 effect_direction"
+                " 类输出键，方向锚自适应）",
+        },
         "same_bar_return_stats": _series_stats(ret[stat_mask]),
         "close_stats_when_hit": _series_stats(work.loc[stat_mask, "close"]),
         "dropped_tail_signals": dropped,

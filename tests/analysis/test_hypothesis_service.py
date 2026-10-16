@@ -231,12 +231,13 @@ class TestRegisterValidationGaps:
 
     def test_provenance_三拒与坏params容错(self, db: Path) -> None:
         base = dict(self._BASE)
-        # 形制缺键
-        with pytest.raises(ResearchError, match="provenance"):
+        # 形制缺键（包四 GAP-10：旧两键缺指纹按 ref_type=screen_candidate
+        # 的指纹条件性拒——任务存在性核验在指纹校验之后）
+        with pytest.raises(ResearchError, match="candidate_fingerprint"):
             register_hypothesis(db, **base,
                                 provenance={"task_id": "t1"})
-        # 任务不存在
-        with pytest.raises(ResearchError, match="扫描任务"):
+        # 任务不存在（两类同核——GAP-10 文案随泛化）
+        with pytest.raises(ResearchError, match="分析任务"):
             register_hypothesis(db, **base,
                                 provenance={"task_id": "ghost_task",
                                             "candidate_fingerprint": "fp"})

@@ -423,3 +423,24 @@ class TestSkippedThreeReasons:
         for token in ("no_default_params", "compute_failed",
                       "no_covered_actions", "{name, reason}"):
             assert token in src, f"工具描述缺元素形制说明: {token}"
+
+
+class TestDirectionHint:
+    """包四 V1'-4（GAP-01 确定部分②——判无缺陷后的披露面）。"""
+
+    def test_v1_4_direction_hint_matches_mean_sign(self):
+        """候选条目 direction_hint 与 mean 符号一致（short<0/long>0/
+        neutral=0），值域三态；排序键不含 hint（纯增量标注）。"""
+        r = screen_patterns(
+            _random_walk(1), data_ranges=_RANGES, timeframe="1h",
+            features=["RSI"])
+        candidates = r.payload["candidates"]
+        assert candidates, "扫描应有候选"
+        for c in candidates:
+            assert c["direction_hint"] in ("long", "short", "neutral")
+            if c["direction_hint"] == "short":
+                assert c["mean"] < 0
+            elif c["direction_hint"] == "long":
+                assert c["mean"] > 0
+            else:
+                assert c["mean"] == 0

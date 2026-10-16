@@ -13,7 +13,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (AliasChoices, BaseModel, ConfigDict, Field,
+                      field_validator, model_validator)
 
 # 值域单源引用（D4 家族/0.4.2 值域单源化）：sl_mode 取值域与杠杆红线
 # 的权威常量在 core 层，传输层只派生消费——改值单点生效，禁字面重复
@@ -146,6 +147,10 @@ class RiskGenesModel(BaseModel):
     # 固定时刻出场（任务 6 同步铁律）：UTC 分钟 0-1439（值域权威在
     # validator——传输层不加 bound）
     time_exit_utc: Optional[int] = None
+    # 动态定仓（complete-research-tooling 任务 4 同步铁律）：枚举/值域
+    # 权威在 validator（传输层不加 bound/pattern——五键先例同款）
+    position_mode: Optional[str] = None
+    risk_fraction: Optional[float] = None
 
 
 class DNAModel(BaseModel):
@@ -935,15 +940,49 @@ class DataRangeItem(BaseModel):
         return v
 
 
-class ScreenProvenance(BaseModel):
-    """扫描谱系引用（add-screen-patterns D5）：声明候选来源。
+class AnalysisProvenance(BaseModel):
+    """分析谱系引用（complete-research-tooling GAP-10 泛化）：声明假设
+    来源的分析任务与候选指纹。
 
-    只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；
+    两类引用（ref_type）：
+    - screen_candidate：全谱扫描候选（旧形制=task_id+candidate_fingerprint
+      两键必填——旧调用方零适配，model_validator 补默认值）；
+    - analysis_task：网格/统计类分析任务来源（无指纹可引，指纹可选
+      ——GAP-10 主场景）。
+
+    两类同核（服务层）：task_id 存在性+任务记录区间事实核验保留
+    （防虚构来源——声明不供数，区间一律取自任务记录）；
     不参与假设幂等键（同条件同区间重复登记命中同一假设）。
     """
 
+    ref_type: Literal["screen_candidate", "analysis_task"] = "screen_candidate"
     task_id: str
-    candidate_fingerprint: str
+    candidate_fingerprint: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_two_keys_compat(cls, data: Any) -> Any:
+        """旧两键形制兼容读（GAP-10）：无 ref_type 键补默认
+        screen_candidate——旧记录/旧调用方零适配。"""
+        if isinstance(data, dict) and "ref_type" not in data:
+            return {**data, "ref_type": "screen_candidate"}
+        return data
+
+    @model_validator(mode="after")
+    def _fingerprint_conditionality(self) -> "AnalysisProvenance":
+        """指纹条件性：screen_candidate 指纹必填（候选定位语义）；
+        analysis_task 指纹可选（任务级引用无指纹可引）。"""
+        if (self.ref_type == "screen_candidate"
+                and not self.candidate_fingerprint):
+            raise ValueError(
+                "RESEARCH_PARAM_INVALID: ref_type=screen_candidate 须携带 "
+                "candidate_fingerprint（候选定位语义；analysis_task "
+                "任务级引用方可省略）")
+        return self
+
+
+# 兼容别名（GAP-10 泛化改名防导入断裂——旧导入方零适配）
+ScreenProvenance = AnalysisProvenance
 
 
 class HypothesisCreate(BaseModel):

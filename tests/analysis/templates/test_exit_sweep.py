@@ -766,3 +766,17 @@ class TestAsyncThreshold:
             assert len(result["results"]) == 11
         finally:
             exec_mod._EXECUTOR = old
+
+
+def test_v1_5_direction_reused_no_perspective_param():
+    """包四 V1'-5：exit_sweep 复用既有 direction 形参（必填），无
+    perspective 同义参数（命名纪律——防回流）。"""
+    import inspect as _inspect
+    from core.analysis.templates.exit_sweep import exit_sweep
+
+    sig = _inspect.signature(exit_sweep)
+    params = set(sig.parameters)
+    assert "direction" in params, "direction 形参在场（既有复用）"
+    assert sig.parameters["direction"].default is _inspect.Parameter.empty, \
+        "direction 必填（非可选）"
+    assert "perspective" not in params, "不得新增同义双参数"

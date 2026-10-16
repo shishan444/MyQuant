@@ -250,3 +250,21 @@
 - 轴分钟维量纲=基准 bar（时间量折算，D-2 修复）——两向锚写死 200/1440 契约值；动 TF_MINUTES 表、span 下限或折算式必红
 - 存量等价性证据链：X10 无声明路径逐字节对照 main 基线（git archive 同 venv 同 seed 同参）——合入前如再动 engine/装载实现，须重跑该对照（脚本形制见闸门留证）
 
+## 十一区 · complete-research-tooling（研究工具完备）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| 方向视角口径披露（V1'） | 判无缺陷诊断归档（RR-013 归因=统计显著性不足非工具偏多，诊断报告+脚本在 works/研究档案/）；metric_perspective 三子键（win_rate 做多持有口径+short 换算防平局误差）；screen_patterns direction_hint 符号一致三态（D-4 输出装配漏搬运已修）；exit_sweep 复用 direction 无 perspective 防回流；V1'-1 判据零行为改动=四模板双版本对拍全等（main 098addd vs 分支逐字节，披露键排除） | `templates/test_condition_stats.py`+`templates/test_screen_patterns.py`+`templates/test_exit_sweep.py` | — |
+| inspect_cases 条件数组（V2） | AND 语义独立推导（交集数人工现算）；命中一致锚（同条件组与 condition_stats hit_count 精确相等——request_start 对齐窗）；互斥 mutex_pair 两例；条数域 0/6 拒+1/5 放；旧两形态等价；防降级（未知 action 结构化拒）；tf 键归一联动；回显原样 | `analysis/test_case_inspection.py`（TestConditionsArrayForm） | — |
+| provenance 泛化（V3） | analysis_task 新形制主锚（登记成功+analysis_ref 留痕携带 task_id/ref_type+任务区间进判定并集+旧 screen_use 零写入）；旧两键零适配兼容读；非法 ref_type 拒；别名不断裂；两类同核（analysis_task ghost 拒零留痕补全）；指纹条件性两态；网格 params 实测形制（data_range 键）入锚 | `analysis/test_screen_lineage.py`+`analysis/test_hypothesis_service.py`+`api/test_precheck_registration.py` | — |
+| 动态定仓两键（V4） | 五点同步（validator 常量/dna/schemas/键集 13 字段/翻译键集）；域三例+组合校验（0 拒/0.5 放/0.51 拒、mode 非法、缺 rf/缺 sl 拒）；pct 档等价（逐笔 size 0.5% 容差）；atr 档逐笔人工推导（qty=eq×rf÷(mult×atr) 独立现算**精确相等**）；trail 档比例域口径推导（qty=eq×rf÷(price×sl)——D-6 裁决：trail 与 pct 同为比例域，design 2.4「ATR 基准」括注系笔误）+出场后循环重进断言；pct 档风险预算恒等式（qty×price×sl≈eq×rf）；杠杆截断+计数；空头对称敞口；披露七键（裁决 A：replay_status 入契两态——F-B4-1 失败不虚标）；v8 锚内嵌 sha 承载存量逐字节（豁免 position_sizing 增量键） | `strategy/test_dynamic_position_sizing.py`+`strategy/test_v8_byte_anchor.py`+`analysis/test_max_hold_declaration.py` | — |
+| 组间配对对照表（Y7） | 文档面四行锚（首仓制/全局取严/比例不变/公式分母）+行为面：笔数同构+首仓等价构造（fixed 0.3 vs rb rf=0.015/sl=0.05）下全订单序列逐笔 size 对比（0.5% 计价口径容差）——「add 不读 position_mode」公式级证明 | `strategy/test_dynamic_position_sizing.py`（TestPairingTable） | — |
+| 回执与披露基建（K 系） | 回执六键（position_mode/risk_fraction 值域收敛+bool 不穿透多位+非法模式收敛 fixed）；披露重放失败不虚标（三统计键置 None+replay_status=failed 两态） | `mcpserver/test_return_contract.py`+`strategy/test_dynamic_position_sizing.py`（TestDisclosureFailureNoFake） | — |
+
+### complete-research-tooling 守护行
+- trail 档 stop_loss 量纲=比例域（D-6 裁决终态）：入场 qty=eq×rf÷(price×sl_stop) 与 pct 同式、出场 peak×(1−sl_stop) 同字段同量纲——validator 分叉域（atr→[0.5,5.0]，else 含 trail→[0.005,0.20]）是权威域；任何「trail 走 ATR 倍数」的改动三锚齐红（V4d 推导+域校验+出场段一致性）
+- position_sizing 披露=七键契约（裁决 A）：replay_status 两态（ok/failed）——failed 时 orders_capped/avg/max_entry_size 置 None 不虚标（F-B4-1）；v8 锚豁免该增量披露键（执行行为锚非键集快照——加披露键不再动 v8 基线）
+- inspect_cases conditions 形态与 condition_stats 共用 mask_for_all 内核——命中一致锚（11=11）锁两工具同核；改任一侧求值内核该锚红
+- 配对表逐笔对比前提=首仓等价构造（0.3 名义对齐）：动 make_dna 缺省或 add_fraction 语义时复核「首仓等价→权益路径全同→订单序列可比」前提链
+- V1'-1 证据链：四模板双版本逐字节对拍（git archive main 同 venv 同参，披露键排除）——再动四模板计算路径须重跑对拍（脚本形制见闸门留证）
+

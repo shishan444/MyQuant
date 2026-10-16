@@ -93,7 +93,7 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "max_hold",
-    "time_exit_utc",
+    "time_exit_utc", "position_mode", "risk_fraction",
 })
 
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
@@ -244,6 +244,50 @@ def _validate_strategy_params(
                 detail={"field": "time_exit_utc",
                         "legal_range": [TIME_EXIT_UTC_MIN,
                                          TIME_EXIT_UTC_MAX]})
+
+    # 动态定仓（complete-research-tooling 任务 4）：两键域校验+组合
+    # 校验（值域单源 validator——RISK_FRACTION_MIN/MAX 同源引用）
+    from core.strategy.validator import (  # 值域单源引用（三名全被使用）
+        POSITION_MODES, RISK_FRACTION_MAX, RISK_FRACTION_MIN,
+    )
+    pm = params.get("position_mode")
+    if pm is not None and pm not in POSITION_MODES:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"position_mode {pm!r} 非法（合法值 {list(POSITION_MODES)}"
+            "——fixed 固定比例/risk_budget 风险预算制定仓）",
+            detail={"field": "position_mode",
+                    "legal_range": list(POSITION_MODES)})
+    rf = params.get("risk_fraction")
+    if rf is not None:
+        if not isinstance(rf, (int, float)) or isinstance(rf, bool) \
+                or not (RISK_FRACTION_MIN < rf <= RISK_FRACTION_MAX):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"risk_fraction {rf!r} 越出值域 "
+                f"({RISK_FRACTION_MIN}, {RISK_FRACTION_MAX}]"
+                "（每笔风险预算占当時权益比例）",
+                detail={"field": "risk_fraction",
+                        "legal_range": f"({RISK_FRACTION_MIN}, "
+                                       f"{RISK_FRACTION_MAX}]"})
+    # 组合校验（沿组间配对族先例）：risk_budget 须 risk_fraction 与
+    # stop_loss>0（止损距离是仓位公式分母——无止损=风险预算不可定义；
+    # stop_loss 值域校验在前段已做，此处只核在场性）
+    if pm == "risk_budget":
+        if rf is None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "position_mode=risk_budget 须同时声明 risk_fraction"
+                "（入场 size=当時权益×risk_fraction÷止损距离）",
+                detail={"field": "risk_fraction",
+                        "legal_range": f"({RISK_FRACTION_MIN}, "
+                                       f"{RISK_FRACTION_MAX}]"})
+        if not params.get("stop_loss"):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "position_mode=risk_budget 须同时声明 stop_loss"
+                "（止损距离是仓位公式分母——无止损=风险预算不可定义）",
+                detail={"field": "stop_loss"})
 
     # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
     #    纯组间规则在登记链主体——不依赖声明块携带）──
@@ -586,36 +630,64 @@ def register_hypothesis(
                              "变体是新假设实体）",
             })
 
-    # 4.5 谱系引用校验（区间事实取自任务记录——D5）
+    # 4.5 谱系引用校验（区间事实取自任务记录——D5；GAP-10 泛化两类同核）
     screen_use: Optional[Dict[str, str]] = None
     if provenance is not None:
-        if not (isinstance(provenance, dict)
-                and provenance.get("task_id")
-                and provenance.get("candidate_fingerprint")):
+        # ref_type 归一（GAP-10）：旧两键形制无 ref_type 补默认
+        # screen_candidate（与 AnalysisProvenance 模型层同语义——直调
+        # dict 形式与 API 层模型双入口一致）；非法值拒附值域
+        _LEGAL_REF_TYPES = ("screen_candidate", "analysis_task")
+        _ref_type = provenance.get("ref_type", "screen_candidate") \
+            if isinstance(provenance, dict) else None
+        if _ref_type not in _LEGAL_REF_TYPES:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                "provenance 须含 task_id 与 candidate_fingerprint",
+                f"provenance.ref_type 非法: {_ref_type!r}",
+                detail={"field": "provenance.ref_type",
+                        "legal_range": list(_LEGAL_REF_TYPES)})
+        if not (isinstance(provenance, dict) and provenance.get("task_id")):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "provenance 须含 task_id",
                 detail={"field": "provenance"})
+        # 指纹条件性（服务层兜底——API 层模型 after 校验同语义）：
+        # screen_candidate 必填 / analysis_task 可选
+        _fp = provenance.get("candidate_fingerprint")
+        if _ref_type == "screen_candidate" and not _fp:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "ref_type=screen_candidate 须携带 candidate_fingerprint"
+                "（候选定位语义；analysis_task 任务级引用方可省略）",
+                detail={"field": "provenance.candidate_fingerprint"})
         task = rr.get_analysis_task(db_path, str(provenance["task_id"]))
         if task is None:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"provenance 引用的扫描任务不存在: {provenance['task_id']}",
+                f"provenance 引用的分析任务不存在: {provenance['task_id']}",
                 detail={"field": "provenance.task_id",
                         "task_id": str(provenance["task_id"])})
         try:
             task_params = json.loads(task["params"]) if task.get("params") else {}
         except (json.JSONDecodeError, TypeError):
             task_params = {}
+        # 两类同核：区间事实键=data_range（实测形制——网格/统计/预检任务
+        # params 均为单对象 {symbol,timeframe,start,end}；查证记录
+        # 2026-10-16 四任务实测一致）
         task_range = task_params.get("data_range")
         if not task_range or "start" not in task_range or "end" not in task_range:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"扫描任务记录缺区间事实: {provenance['task_id']}",
+                f"分析任务记录缺区间事实: {provenance['task_id']}",
                 detail={"field": "provenance.task_id"})
         screen_use = {
             "ref_id": str(provenance["task_id"]),
             "data_ranges": json.dumps([task_range], ensure_ascii=False),
+            # GAP-10 留痕：entry_type/summary 随泛化（两类统一
+            # analysis_ref；消费方无 entry_type 硬过滤——路由层写入侧
+            # 家族互斥已核）
+            "entry_type": "analysis_ref",
+            "summary": f"analysis reference: task {provenance['task_id']}"
+                       f" (ref_type={_ref_type})",
         }
 
     # 4.6 登记自动预检（add-hypothesis-precheck D6：Q1 裁 A——全登记路径
