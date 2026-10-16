@@ -206,7 +206,11 @@ class TestComputeAllIndicators:
         cutoff = int(len(result) * 0.4)
         tail = result.iloc[cutoff:]
         indicator_cols = [c for c in result.columns if c not in sample_ohlcv.columns]
-        skip_cols = {"psar", "cvd"}
+        # SessionRange 三列（add-session-structure-expression）：会话外
+        # 段 NaN 是设计语义（t-1 累积仅会话内有值——跨会话归零不虚构
+        # 前值），非收敛缺陷——与 psar/cvd 的已知稀疏形同列豁免
+        skip_cols = {"psar", "cvd"} | {
+            c for c in indicator_cols if c.startswith("session_")}
         for col in indicator_cols:
             if col in skip_cols:
                 continue
