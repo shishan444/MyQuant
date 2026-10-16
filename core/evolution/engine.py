@@ -130,17 +130,31 @@ class _AdaptiveMutationController:
         return 1.0
 
 
-def validate_offspring(dna: StrategyDNA) -> None:
-    """变异/交叉产物结构校验（fix-executor-batch-health 校验最小集）。
+def validate_offspring(dna: StrategyDNA, enhanced_df=None) -> StrategyDNA:
+    """变异/交叉产物入库前校验+清洗（unify-tool-return-contract 双检）。
 
-    只覆盖两个实证非法形态（发现新形态时增量扩，不做全字段 schema）：
-    1. 条件 threshold 显式为 None（求值层数值 vs None 比较失败）；
-    2. 基因签名不可哈希（条件含 dict/list 值——去重与组装的 hash 失败）。
+    两层防线：
+    - 结构校验（fix-executor-batch-health 既有最小集，raise 形）：
+      1. 条件 threshold 显式为 None（求值层数值 vs None 比较失败）；
+      2. 基因签名不可哈希（条件含 dict/list 值——去重与组装的 hash 失败）。
+    - 基因级双检（剔除形——坏基因剔除、个体保留）：
+      3. 条件 type ∉ EVALUABLE_CONDITION_TYPES（执行器合法集单源）；
+      4. 指标列可达性试解析（enhanced_df 在场时 _get_indicator_column，
+         ValueError → 剔除；无 df 跳过该维——繁殖侧无数据帧）。
+
+    被剔除个体 mutation_ops 注记 "sanitized:{reason}"（可查性）；
+    适应度降权由评估层按注记施加（evaluation.SANITIZED_FITNESS_PENALTY）。
+    保底不变量：清洗后零 ENTRY_TRIGGER 基因 → 整个体淘汰（raise，
+     走繁殖循环既有「换随机个体」路径）。
+
+    Returns:
+        清洗后的同一 dna 实例（原地修改 signal_genes 与 mutation_ops）。
 
     Raises:
-        ValueError: 产物含结构非法基因（消息带 indicator 与原因）。
+        ValueError: 结构非法（threshold None/不可哈希）或清洗后零
+            ENTRY_TRIGGER（消息带 indicator 与原因）。
     """
-    from core.strategy.executor import _gene_signature
+    from core.strategy.executor import _gene_signature, EVALUABLE_CONDITION_TYPES
 
     for gene in getattr(dna, "signal_genes", []):
         cond = gene.condition or {}
@@ -154,6 +168,39 @@ def validate_offspring(dna: StrategyDNA) -> None:
             raise ValueError(
                 f"非法变异产物：{gene.indicator} 基因签名不可哈希"
                 f"（condition={cond!r}）") from None
+
+    # 基因级双检剔除（入库前）
+    kept_genes = []
+    removed_any = False
+    for gene in dna.signal_genes:
+        cond = gene.condition or {}
+        cond_type = cond.get("type") if isinstance(cond, dict) else None
+        if cond_type not in EVALUABLE_CONDITION_TYPES:
+            dna.mutation_ops.append(
+                f"sanitized:unknown_condition_type:{gene.indicator}")
+            removed_any = True
+            continue
+        if enhanced_df is not None:
+            try:
+                from core.strategy.executor import _get_indicator_column
+                _get_indicator_column(enhanced_df, gene)
+            except ValueError:
+                dna.mutation_ops.append(
+                    f"sanitized:column_unreachable:{gene.indicator}")
+                removed_any = True
+                continue
+        kept_genes.append(gene)
+
+    if removed_any:
+        from core.strategy.dna import SignalRole
+        has_entry_trigger = any(
+            g.role == SignalRole.ENTRY_TRIGGER for g in kept_genes)
+        if not has_entry_trigger:
+            raise ValueError(
+                "非法变异产物：清洗后零 ENTRY_TRIGGER 基因（坏基因占比过高）")
+        dna.signal_genes = kept_genes
+
+    return dna
 
 
 def _tournament_select(
@@ -403,12 +450,13 @@ class EvolutionEngine:
                     if getattr(child, "signal_sources", None) or getattr(child, "composition", None):
                         if random.random() < 0.3:
                             child = mutate_composition(child)
-                    # 源头校验（fix-executor-batch-health）：变异产物结构
-                    # 合法性在入种群前拦截——非法（条件 target 为 None、
-                    # 条件含不可哈希值）抛 ValueError 被下方既有 except
-                    # 捕获→换随机个体（与变异失败同构处置，零新控制流；
-                    # 既有兜底管不住「合法返回的非法结构」，此为缺口本质）
-                    validate_offspring(child)
+                    # 源头校验+清洗（fix-executor-batch-health /
+                    # unify-tool-return-contract 双检）：变异产物在入种
+                    # 群前拦截结构非法（threshold None/不可哈希）并剔除
+                    # 非法条件类型基因（繁殖侧无数据帧，可达性维由评估
+                    # 层补充）；抛 ValueError 被下方既有 except 捕获→换
+                    # 随机个体（与变异失败同构处置，零新控制流）
+                    child = validate_offspring(child)
                     children.append(child)
                 except Exception:
                     children.append(create_random_dna(

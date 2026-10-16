@@ -20,6 +20,12 @@ from core.strategy.dna import StrategyDNA
 
 logger = logging.getLogger(__name__)
 
+# 被清洗个体（前置清洗剔除过坏基因）的适应度惩罚系数
+# （unify-tool-return-contract 实施定值）：剔除本身是修复，轻惩罚
+# 保留基因信息——避免被清洗个体以剔除后更松的条件集（AND 下更易
+# 触发）获得虚高适应度
+SANITIZED_FITNESS_PENALTY = 0.9
+
 
 def build_requirements(task_row: Dict[str, Any]):
     """从任务配置构造 RequirementsConfig。
@@ -247,6 +253,24 @@ def evaluate_population(
         # 每代开始清一次指标缓存
         clear_indicator_cache()
 
+        # unify-tool-return-contract 评估侧前置清洗（可达性维）：繁殖侧
+        # 已检条件类型（无数据帧）；此处进化当次数据帧在场，逐个体试
+        # 解析基因列——不可达基因剔除+mutation_ops 注记。清洗后零
+        # ENTRY_TRIGGER 的淘汰形在评估侧不炸批：个体保持原样，batch
+        # 增捕兜底+零信号自然 0 分。被清洗个体适应度按
+        # SANITIZED_FITNESS_PENALTY 温和降权（剔除本身是修复，轻惩罚
+        # 保留基因信息——系数为实施定值）
+        sanitized_ids = set()
+        for ind in population:
+            n_ops_before = len(getattr(ind, "mutation_ops", None) or [])
+            try:
+                from core.evolution.engine import validate_offspring
+                validate_offspring(ind, enhanced_df)
+            except ValueError:
+                pass
+            if len(getattr(ind, "mutation_ops", None) or []) > n_ops_before:
+                sanitized_ids.add(id(ind))
+
         # 批量回测（内置信号计算）
         bt = BacktestEngine()
         try:
@@ -274,10 +298,16 @@ def evaluate_population(
                 metrics, requirements=req,
                 liquidated=bt_result.liquidated,
             )
+            # 被清洗个体（本代有基因剔除）温和降权（unify-tool-return-
+            # contract 前置清洗配套——降权与诊断同值，避免多样性度量
+            # 消费到两个口径）
+            score = fitness_result["fitness"]
+            if id(ind) in sanitized_ids:
+                score *= SANITIZED_FITNESS_PENALTY
             # 诊断挂到个体（与逐个体路径同构，供多样性度量消费）
             ind._eval_diagnostics = {
-                "score": fitness_result["fitness"],
-                "fitness": fitness_result["fitness"],
+                "score": score,
+                "fitness": score,
                 "qualified": fitness_result["qualified"],
                 "satisfaction": fitness_result.get("satisfaction", {}),
                 "total_trades": bt_result.total_trades,
@@ -291,7 +321,7 @@ def evaluate_population(
                 "used_real_data": True,
                 "fallback": False,
             }
-            scores.append(fitness_result["fitness"])
+            scores.append(score)
 
         return scores
 
