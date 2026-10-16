@@ -151,3 +151,32 @@ class TestGapClosureMeta:
         from core.analysis.registry_meta import indicator_convergence
         with pytest.raises(KeyError, match="未知指标"):
             indicator_convergence("GHOST_IND", {})
+
+
+class TestGeneLevelTfWarmup:
+    """T5：预热第三维（unblock-research-validation 任务 4）。"""
+
+    def test_t5a_conversion_anchor(self, tmp_path):
+        """T5a 折算锚：RSI(14)@1d on 4h 基准——轴 floor 200 bar ×
+        1440/240 = 1200 基准 bar（人工核算定值）。"""
+        from core.analysis.validation_service import _derive_dna_warmup
+        from tests.helpers.data_factory import make_dna
+        d = make_dna()
+        d.signal_genes[0].timeframe = "1d"
+        d.execution_genes.timeframe = "4h"
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        assert w == 1200, f"折算锚 1200，got {w}"
+
+    def test_t5b_baseline_unchanged(self, tmp_path):
+        """T5b 基准路径：无基因级 tf 时推导与两维式一致（200）。"""
+        from core.analysis.validation_service import _derive_dna_warmup
+        from tests.helpers.data_factory import make_dna
+        d = make_dna()
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        assert w == 200
+
+    def test_t5d_rule_text_fourth_sentence(self):
+        """T5d 披露面同口径：WARMUP_RULE_TEXT 含基因级维度第四句。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        assert "基因级周期维度" in WARMUP_RULE_TEXT
+        assert "折算" in WARMUP_RULE_TEXT
