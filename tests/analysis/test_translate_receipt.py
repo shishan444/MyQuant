@@ -181,14 +181,23 @@ class TestIntentionalBoundaryNote:
     def test_s10_cross_symbol_note_present(self, db):
         """跨品种拒绝 detail 附「有意设计边界」标注短语（纯文案锚）。"""
         from core.analysis.hypothesis_service import ResearchError
+        from core.persistence.repository import research as rr
+        import json as _json
         ranges_multi = [
             {"symbol": "BTCUSDT", "timeframe": "4h",
              "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
             {"symbol": "ETHUSDT", "timeframe": "4h",
              "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
         ]
-        hid = register_hypothesis(db, conditions=_CONDS, statement="s",
-                                  data_ranges=ranges_multi)["hypothesis_id"]
+        # 登记面拦截同 symbol 校验——跨品种假设经库内直插构造（该
+        # 分支是对存量/历史形态的防御，绕过登记面直测翻译防线）
+        hid = "hyp_cross_symbol_s10"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid,
+            conditions=_json.dumps(_CONDS),
+            conditions_hash="ch_s10_cross", statement="s",
+            data_ranges=_json.dumps(ranges_multi),
+            ranges_hash="rh_s10_cross")
         with pytest.raises(ResearchError) as ei:
             translate_hypothesis(db, hypothesis_id=hid)
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
