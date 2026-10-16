@@ -531,28 +531,76 @@ class TestTranslationReject:
     转化拒绝且无静默降级；考试链不可用为边界声明（无策略可跑，不可
     构造考试链「不受影响」断言——TD-1）。"""
 
-    def test_when带timeframe_转化拒绝(self, env):
+    def test_when带timeframe_转化放行(self, env):
+        """unblock-research-validation T10 翻转：when 组 timeframe 从
+        拒绝翻转为放行——产物基因带第六属性+与显式无修饰请求同产物
+        同签名（tf 严格高于基准写入基因；登记链经 canonical 化保留
+        原键、翻译链提取——行为断言反向加强非仅删除）。"""
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         from core.analysis.hypothesis_service import register_hypothesis
+        from core.persistence.repository.strategy import get_strategy
+        import json as _json
 
+        conds = {"when_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14},
+                         "field": "rsi"}, "action": "lt", "target": 55,
+             "timeframe": "4h"}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"}, "action": "gt", "target": 70}]}
         out = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [
-                {"subject": "close", "action": "gt", "target": 0.0,
-                 "timeframe": "4h"}],
-                "then_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0}]},
-            statement="转化拒绝测试",
+            env["db"], conditions=conds, statement="放行测试",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
                           "start": "2023-06-01T00:00:00Z",
                           "end": "2023-07-01T00:00:00Z"}])
-        with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(env["db"],
-                                 hypothesis_id=out["hypothesis_id"])
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "多周期假设翻译暂不支持" in ei.value.message
-        # 慢通道披露：生命周期上限语义
-        assert "active" in (ei.value.detail or {}).get("slow_path", "")
+        result = translate_hypothesis(env["db"],
+                                      hypothesis_id=out["hypothesis_id"],
+                                      strategy_timeframe="1h")
+        assert result["status"] == "draft"
+        row = get_strategy(env["db"], result["strategy_id"])
+        genes = _json.loads(row["dna_json"])["signal_genes"]
+        assert genes and genes[0].get("timeframe") == "4h", \
+            "严格高于基准的 tf 写入基因第六属性"
+
+        # 对照：同条件显式无修饰 → 基因无 timeframe 键、签名不同
+        out2 = register_hypothesis(
+            env["db"],
+            conditions={"when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"}, "action": "lt", "target": 55}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI", "params": {"period": 14},
+                                 "field": "rsi"}, "action": "gt",
+                     "target": 70}]},
+            statement="对照",
+            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
+                          "start": "2023-06-01T00:00:00Z",
+                          "end": "2023-07-01T00:00:00Z"}])
+        # 上一假设仍 active——同身份重登记走终态变体路径：终态化后登记
+        from core.analysis.hypothesis_service import transition_hypothesis
+        transition_hypothesis(env["db"], out["hypothesis_id"],
+                              target_status="abandoned", evidence_ref="翻转测试腾位")
+        out2 = register_hypothesis(
+            env["db"],
+            conditions={"when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"}, "action": "lt", "target": 55}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI", "params": {"period": 14},
+                                 "field": "rsi"}, "action": "gt",
+                     "target": 70}]},
+            statement="对照",
+            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
+                          "start": "2023-06-01T00:00:00Z",
+                          "end": "2023-07-01T00:00:00Z"}])
+        result2 = translate_hypothesis(env["db"],
+                                       hypothesis_id=out2["hypothesis_id"],
+                                       strategy_timeframe="1h")
+        row2 = get_strategy(env["db"], result2["strategy_id"])
+        genes2 = _json.loads(row2["dna_json"])["signal_genes"]
+        assert "timeframe" not in genes2[0], "无修饰基因不含 tf 键"
+        assert row2["gene_signature"] != row["gene_signature"], \
+            "同基因异周期必异签名（D2）"
 
     def test_带键假设_求值与案例检查不受影响(self, env):
         """拒绝边界只限转化：同假设条件在求值链（掩码投影）与案例

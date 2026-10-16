@@ -95,47 +95,92 @@ def _plugin_signal_columns(db_path: Path) -> Dict[str, str]:
     }
 
 
+def _guard_condition_timeframe(
+    group: str, conds: List[Dict[str, Any]], base_tf: str,
+) -> None:
+    """放行组（when/add_trigger）timeframe 三步校验链（单点，两组共用）。
+
+    unblock-research-validation A 段四组三放行域：
+    ①键值 ∈ TF_SECONDS（TIMEFRAME_UNKNOWN——与登记面错误码族对齐）；
+    ②高于或等于基准（assert_higher_tf 既有 >= 语义零改动）；
+    ③tf==基准 → 条件键归一剥离（与登记面 canonical 化剥离同语义——
+    主库明文「显式写基准周期与缺省语义完全相同（同指纹同求值）」，
+    不写入基因=翻译面归一）；tf 严格高于基准 → 键保留在条件 dict，
+    由 _translate_conditions 提取写入基因 timeframe 字段（执行链
+    高周期轴求值+掩码投影）。
+    翻译面校验为纵深防御（对绕过登记的库内/手工数据）——权威防线
+    在登记面（TIMEFRAME_UNKNOWN/TIMEFRAME_NOT_HIGHER+canonical 化
+    归一齐备）。
+    """
+    from core.data.timeframes import TF_SECONDS
+    from core.data.mtf_alignment import assert_higher_tf
+
+    for i, c in enumerate(conds):
+        if not isinstance(c, dict) or "timeframe" not in c:
+            continue
+        tf_key = c["timeframe"]
+        field_name = f"{group}_conditions[{i}].timeframe"
+        if tf_key not in TF_SECONDS:
+            raise ResearchError(
+                "TIMEFRAME_UNKNOWN",
+                f"未知周期: {tf_key!r}",
+                detail={"field": field_name, "timeframe": tf_key,
+                        "legal_range": sorted(TF_SECONDS)})
+        try:
+            assert_higher_tf(tf_key, base_tf)
+        except ValueError as exc:
+            raise ResearchError(
+                "TIMEFRAME_NOT_HIGHER", str(exc),
+                detail={"field": field_name, "timeframe": tf_key,
+                        "base_timeframe": base_tf}) from exc
+        if tf_key == base_tf:
+            # 归一：显式基准=缺省语义（主库明文）——剥离键不写入基因
+            c.pop("timeframe")
+
+
+def _reject_condition_timeframe(group: str, conds: List[Dict[str, Any]]) -> None:
+    """拒绝组（then/exit_partial/add_suppress）timeframe 键拒绝（单点）。"""
+    for i, c in enumerate(conds):
+        if isinstance(c, dict) and c.get("timeframe") is not None:
+            raise ResearchError(
+                "RESEARCH_NOT_EXPRESSIBLE",
+                f"{group}_conditions[{i}] 携带 timeframe 键——"
+                "THEN 条件为前向收益对照语义（forward_bars 以基准 bar "
+                "计），跨周期前向窗口归属未定义（仅 when 与加仓触发组"
+                "支持 timeframe 键）",
+                detail={
+                    "field": f"{group}_conditions[{i}].timeframe",
+                    "timeframe": c.get("timeframe"),
+                    "slow_path": "多周期标记仅进场侧（when 与加仓触发）"
+                                 "支持；出场/减仓/抑制组请以基准周期条"
+                                 "件表达"})
+
+
 def build_signal_genes(
     when_conditions: List[Dict[str, Any]],
     then_conditions: List[Dict[str, Any]],
     db_path: Path,
+    strategy_timeframe: str = "4h",
 ) -> tuple[List, List[Dict[str, Any]]]:
     """不落库纯翻译入口（0.4.1 S4）——条件组 → (内置基因, 插件源)。
 
-    timeframe 防线与翻译能力同点权威单源：防线循环自 translate_
-    hypothesis 原形搬入（两组遍历、错误码/detail/field 命名逐字保持
-    ——消费侧自建校验被否：第二套防线漂移风险），再分别调
-    _translate_conditions（ENTRY_TRIGGER/EXIT_TRIGGER）。
+    timeframe 防线与翻译能力同点权威单源（unblock-research-validation
+    A 段四组三放行域改造）：when 组放行（_guard_condition_timeframe
+    三步校验+归一）、then 组维持拒绝（_reject_condition_timeframe）。
     translate_hypothesis（落库产 draft）与 exit_sweep（构造内存 DNA
     不落库）为两消费方——禁止第二套条件→信号基因逻辑。
 
     不落库、不查假设、不产 draft；THEN 空=空基因列表放行（离场全靠
     risk_genes——translate_hypothesis 既有先例）；插件列条件自然
-    透传（不被新拒绝面拦）。
+    透传（不被新拒绝面拦——timeframe 校验经条件顶层键不触碰插件源）。
     """
     from core.strategy.dna import SignalRole
 
-    # 多周期假设拒绝（0.2.14 Q3=a）：timeframe 修饰整条件（掩码投影
-    # 求值语义），TimeframeLayer 层映射的 role 归属与跨层组装语义待
-    # 独立版本产品决策——显式拒绝，不产出静默降级为单周期的草稿。
-    # 假设的登记、条件求值类分析与案例检查不受此边界影响；研究考试链
-    # （隔离回测/随机窗口/分段）在翻译支持前不可用于混合周期假设。
-    for group, conds in (("when", when_conditions),
-                         ("then", then_conditions)):
-        for i, c in enumerate(conds):
-            if isinstance(c, dict) and c.get("timeframe") is not None:
-                raise ResearchError(
-                    "RESEARCH_NOT_EXPRESSIBLE",
-                    f"{group}_conditions[{i}] 携带 timeframe 键——"
-                    "多周期假设翻译暂不支持（TimeframeLayer 层映射语义"
-                    "留独立版本决策）；假设的登记、条件求值类分析与案例"
-                    "检查不受影响",
-                    detail={
-                        "field": f"{group}_conditions[{i}].timeframe",
-                        "timeframe": c.get("timeframe"),
-                        "slow_path": "多周期假设翻译支持前，此类假设"
-                                     "生命周期上限为 active"
-                                     "（仅可经 abandoned/superseded 退出）"})
+    # 四组三放行域（unblock-research-validation）：when 放行（校验链
+    # +tf==base 归一），then 拒绝；add_trigger/exit_partial/add_suppress
+    # 在 translate_hypothesis 分批组循环处置（S4 入口只承 when/then）
+    _guard_condition_timeframe("when", when_conditions, strategy_timeframe)
+    _reject_condition_timeframe("then", then_conditions)
 
     # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝；
     # 插件列出场源当前不可表达——组装器只组合入场，出场插件源会被
@@ -252,24 +297,37 @@ def translate_hypothesis(
     # 多周期防线与双组翻译经 S4 公共入口（0.4.1）：防线循环原形在
     # build_signal_genes 内（与翻译能力同点权威单源）；跨币种防线
     # 基于多区间 data_ranges 不适用单区间请求，留在本函数。
+    # unblock-research-validation：when 组放行（三步校验+归一）。
     genes, plugin_sources = build_signal_genes(
         conditions.get("when_conditions", []),
-        conditions.get("then_conditions", []), db_path)
+        conditions.get("then_conditions", []), db_path,
+        strategy_timeframe=strategy_timeframe)
 
     # 分批三组翻译（0.4.2 R3，scaled-position-actions）：组内条目与
     # when/then 同构同拒（插件列 subject 在新组=不可表达——组装器只
     # 组合入场，插件源出场/加仓会被静默丢弃故显式拒绝）；组基因自然
     # 进 gene_signature（信号基因全集参与签名计算）
+    # unblock-research-validation 四组三放行域（Q1 裁决=加仓组跟随
+    # when 侧打通）：add_trigger 放行（校验链单点共用）、exit_partial/
+    # add_suppress 维持拒绝——分批三组全部纳入防线（静默穿透洞封闭）
     from core.strategy.dna import SignalRole
     _SCALING_ROLE_MAP = (
         ("exit_partial_conditions", SignalRole.REDUCE_TRIGGER),
         ("add_trigger_conditions", SignalRole.ADD_TRIGGER),
         ("add_suppress_conditions", SignalRole.ADD_INHIBIT),
     )
+    # 已知边界披露：adds 侧无 trigger_policy 机制（边沿加仓无表达，
+    # 替代=基准周期条件）
     for group_key, group_role in _SCALING_ROLE_MAP:
         group_conditions = conditions.get(group_key)
         if not group_conditions:
             continue
+        group_short = group_key.rsplit("_conditions", 1)[0].replace("_", " ")
+        if group_key == "add_trigger_conditions":
+            _guard_condition_timeframe(
+                "add_trigger", group_conditions, strategy_timeframe)
+        else:
+            _reject_condition_timeframe(group_short, group_conditions)
         g_genes, g_sources = _translate_conditions(
             group_conditions, db_path=db_path,
             label=group_key, role=group_role)
@@ -404,6 +462,11 @@ def _translate_conditions(
         subject = cond.get("subject", "")
         action = cond.get("action", "")
         target = cond.get("target")
+        # 基因级周期提取（unblock-research-validation）：放行组条件顶层
+        # timeframe 键经防线校验后写入基因第六属性（tf==base 已在防线
+        # 归一剥离——到这里的非 None 值恒为严格高于基准）；基因 condition
+        # dict 为重建产物不含该键（键剥离语义天然成立）
+        cond_tf = cond.get("timeframe")
 
         # 结构化指标引用（0.2.13）：ColumnDef 直映射 SignalGene——
         # indicator/params 原样传递（多参指标天然支持），field 传语义名
@@ -479,11 +542,22 @@ def _translate_conditions(
                 role=role,
                 field_name=cdef.field,
                 condition=condition,
+                timeframe=cond_tf,
             ))
             continue
 
         # 插件列（注册表精确名）：翻译为 formula/model 信号源
         if subject in plugin_columns:
+            if cond_tf is not None:
+                # 插件源无 timeframe 槽位（signal_sources 结构不带周期
+                # 维）——放行组内携带即拒（与组别拒绝同族显式面）
+                raise ResearchError(
+                    "RESEARCH_NOT_EXPRESSIBLE",
+                    f"{label}[{i}] 不可表达: 插件列条件暂不支持 "
+                    "timeframe 键（插件信号源无周期槽位）",
+                    detail={"field": f"{label}[{i}].timeframe",
+                            "timeframe": cond_tf,
+                            "condition": cond})
             source_type = plugin_columns[subject]
             if role != SignalRole.ENTRY_TRIGGER:
                 raise ResearchError(
@@ -541,6 +615,7 @@ def _translate_conditions(
                         condition={"type":
                                    "price_below" if action == "lt"
                                    else "price_above"},
+                        timeframe=cond_tf,
                     ))
                     continue
                 if action in ("ge", "le"):

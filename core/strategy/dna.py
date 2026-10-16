@@ -104,6 +104,11 @@ class SignalGene:
                     单输出指标为 ``None``。
         condition: 结构化条件字典，如 {"type": "lt", "threshold": 30}
                    或 {"type": "price_above"}（无需阈值）。
+        timeframe: 基因级周期标记（unblock-research-validation A 段）——
+                    该条件在哪个周期的 K 线轴上求值（None=策略基准
+                    周期）。when/加仓触发组条件经翻译防线写入；序列化
+                    有值才写（存量基因逐字节不变），gene_signature
+                    有值才编码 @tf 后缀（同基因异周期必异签名）。
     """
 
     indicator: str
@@ -111,15 +116,20 @@ class SignalGene:
     role: SignalRole
     field_name: Optional[str] = None
     condition: Dict[str, Any] = field(default_factory=dict)
+    timeframe: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "indicator": self.indicator,
             "params": self.params,
             "role": self.role.value,
             "field": self.field_name,
             "condition": self.condition,
         }
+        # 基因级周期有值才写（存量序列化逐字节不变）
+        if self.timeframe is not None:
+            out["timeframe"] = self.timeframe
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "SignalGene":
@@ -314,7 +324,12 @@ class StrategyDNA:
             param_parts = sorted(f"{k}={v}" for k, v in gene.params.items())
             param_summary = ",".join(param_parts)
             cond_type = gene.condition.get("type", "?") if gene.condition else "?"
-            parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
+            # 基因级周期有值才编码 @tf 后缀（D2：防 GAP-11 同签名分流
+            # 复发——同基因异周期必异签名；无值基因签名逐位不变）
+            gene_part = f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}"
+            if gene.timeframe is not None:
+                gene_part += f"@{gene.timeframe}"
+            parts.append(gene_part)
         parts.append(f"lev:{self.risk_genes.leverage}")
         parts.append(f"dir:{self.risk_genes.direction}")
         # 层结构计入签名（M3 修复：同基因不同分层配置不再同签名）
@@ -511,7 +526,9 @@ def generate_strategy_name(dna: "StrategyDNA") -> str:
     # 全部区分性字段拼短哈希（同触发指标策略的唯一性来源）
     sig_parts = []
     for g in dna.signal_genes:
-        sig_parts.append(f"{g.indicator}:{g.role.value}:{sorted(g.params.items())}")
+        # 基因级周期计入哈希（T1e：异周期策略名不同）
+        tf_suffix = f"@{g.timeframe}" if g.timeframe is not None else ""
+        sig_parts.append(f"{g.indicator}:{g.role.value}:{sorted(g.params.items())}{tf_suffix}")
     sig_parts.append(f"logic:{dna.logic_genes.entry_logic}/{dna.logic_genes.exit_logic}")
     sig_parts.append(f"risk:{dna.risk_genes.stop_loss}/{dna.risk_genes.take_profit}/{dna.risk_genes.position_size}")
     # 层配置计入哈希（同基础基因不同分层的策略区分）

@@ -102,6 +102,9 @@ class SignalGeneModel(BaseModel):
     role: SignalRole
     field: Optional[str] = Field(None, validation_alias=AliasChoices("field_name", "field"))
     condition: Dict[str, Any] = Field(default_factory=dict)
+    # 基因级周期标记（unblock-research-validation A 段；RiskGenesModel
+    # 同步铁律——DNA 加字段 API 模型必须同步）
+    timeframe: Optional[str] = None
 
 
 class LogicGenesModel(BaseModel):

@@ -20,10 +20,11 @@ unsupported > spike > indeterminate > plateau）。判定标尺内建不可传�
 两期分野：校验期任何失败=整批 422 无部分结果；执行期单组回测失败=
 该组标注不阻塞（失败组列示）。
 
-条件能力域边界：不支持高周期 timeframe 键——条件经策略翻译链，
+条件能力域边界（unblock-research-validation 后）：when 侧条件
+timeframe 键放行（高周期轴求值+掩码投影，同翻译链）——
 RESEARCH_NOT_EXPRESSIBLE 显式拒绝不静默降级（与 translate_hypothesis
 同一公共入口防线同源同码；condition_stats/counter_profile 的分析域
-掩码路径支持 timeframe——三模板能力域各 spec 显式可辨）。
+掩码路径同族支持——三模板能力域各 spec 显式可辨）。
 
 留痕：检查型（entry_type="exit_sweep"、hypothesis_id=None 不挂不进
 判定并集——param_sweep「检查不消耗验证区间」先例同构）。
@@ -204,7 +205,8 @@ def exit_sweep(
 
     Args:
         condition / conditions: 二选一（形制与条件统计一致；MUST NOT
-            携带 timeframe 键——翻译链防线 RESEARCH_NOT_EXPRESSIBLE）。
+            携带顶层 timeframe 键经翻译链放行域校验（非法/低于
+            基准拒；等于基准归一）。
         direction: {long, short}（注入 risk_genes.direction——方向语义
             由 DNA 承载，One-Way 方向自适应下净期望>0 即与提交方向一致）。
         grid: {modes: [{mode, stops, take_profits}]}——网格按止损模式
@@ -246,7 +248,11 @@ def exit_sweep(
 
     # 条件组 → 内存 DNA（S4 不落库纯翻译入口——timeframe 防线同源同码；
     # THEN 空列表=离场全靠 risk_genes，与隔离验证同一执行链）
-    genes, plugin_sources = build_signal_genes(cond_list, [], db_path)
+    # unblock-research-validation：when 侧放行域生效——exit_sweep 的
+    # 条件即 when 语义（求值出场），基准周期取请求区间 timeframe
+    genes, plugin_sources = build_signal_genes(
+        cond_list, [], db_path,
+        strategy_timeframe=request_range["timeframe"])
     # 信号源组装（镜像 translate_hypothesis 同段——rule 源承载内置基因、
     # 插件源各自成源、composition 固定 AND）
     if plugin_sources:
