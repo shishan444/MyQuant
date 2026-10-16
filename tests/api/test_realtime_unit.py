@@ -488,3 +488,23 @@ class TestPaperEventChannel:
         fill_payload = received[2][0][1]
         assert fill_payload["bar_time"] == "2026-10-01T04:00:00+00:00"
         assert isinstance(fill_payload["bar_time"], str)
+
+
+class TestConnectAuthRejection:
+    """三命名空间 connect 的 auth 拒绝分支（闸门盲区消解——A2
+    认证在 handler 层的接线；函数层 check_socket_auth 已由
+    test_auth_middleware 覆盖）。"""
+
+    def test_connect_rejected_without_token_when_key_set(
+            self, monkeypatch):
+        """API key 设置态下无 token connect：三命名空间均 False。"""
+        import asyncio
+
+        import api.realtime as realtime
+
+        monkeypatch.setenv("MYQUANT_API_KEY", "secret-1")
+        environ = {"QUERY_STRING": ""}  # 无 token
+        for handler in (realtime._connect_evolution,
+                        realtime._connect_trading,
+                        realtime._connect_streams):
+            assert asyncio.run(handler("sid-x", environ)) is False

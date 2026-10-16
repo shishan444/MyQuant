@@ -10,8 +10,10 @@ executor→落库——合成帧注入 fetcher，不经真实网络）。
 from __future__ import annotations
 
 import importlib
+import threading
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -437,3 +439,314 @@ class TestRunnerStatus:
             assert status["pending_depth"] == 0
         finally:
             h.teardown()
+
+
+class TestDaemonAndDefensivePaths:
+    """闸门盲区消解：守护线程/防御分支/异常吞咽定向锚。
+
+    全部可控注入（fake 执行器/spy recover/异常注入），无 sleep 竞态
+    依赖；守护循环用例以 poll_interval=0.05 缩短等待。
+    """
+
+    def test_default_data_dir_project_root(self, tmp_path):
+        """不传 data_dir → registry 取项目根 data/market 缺省。"""
+        db = tmp_path / "paper.db"
+        init_db_ext(db)
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        s = PaperScheduler(db)
+        assert str(s.registry.data_dir).endswith("data/market")
+
+    def test_start_idempotent_same_thread(self, tmp_path):
+        """重复 start 幂等：守护线程同一实例（不叠线程）。"""
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.scheduler = type(h.scheduler)(
+                h.db, registry=h.registry, poll_interval=0.05)
+            h.scheduler.start()
+            first = h.scheduler._thread
+            h.scheduler.start()
+            assert h.scheduler._thread is first
+        finally:
+            h.scheduler.stop()
+            h.scheduler.join(timeout=5.0)
+
+    def test_daemon_loop_survives_run_once_exception(self, tmp_path):
+        """守护循环单轮异常续轮：run_once 首轮抛异常后守护线程继续。"""
+        h = _SchedulerHarness(tmp_path)
+        h.scheduler = type(h.scheduler)(
+            h.db, registry=h.registry, poll_interval=0.05)
+        calls: list[int] = []
+        original = h.scheduler.run_once
+
+        def flaky_run_once():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("首轮异常")
+            original()
+
+        h.scheduler.run_once = flaky_run_once
+        try:
+            h.scheduler.start()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and len(calls) < 2:
+                time.sleep(0.02)
+            assert len(calls) >= 2, "守护线程须在首轮异常后续轮"
+        finally:
+            h.scheduler.stop()
+            h.scheduler.join(timeout=5.0)
+
+    def test_startup_recover_skips_known_executor(self, tmp_path):
+        """startup_recover：本进程执行器在座（_executors 登记）→
+        跳过该行不重复恢复。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        h.scheduler._executors[tid] = object()
+        result = h.scheduler.startup_recover()
+        assert h.recover_calls == []
+        assert result == {"recovered": 0, "untrusted": 0}
+
+    def test_startup_recover_swallows_recover_exception(self, tmp_path):
+        """startup_recover：恢复函数抛异常 → 记日志不崩、按不可信
+        分桶计数（untrusted+1——恢复失败行的保守归类）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+
+        def broken_recover(db_path, row, **kwargs):
+            raise RuntimeError("恢复器自身异常")
+
+        h.scheduler._recover_fn = broken_recover
+        result = h.scheduler.startup_recover()
+        assert result == {"recovered": 0, "untrusted": 1}
+
+    def test_reap_finished_removes_dead_thread_entries(self, tmp_path):
+        """_reap_finished：已结束线程的登记摘除（_threads/_executors）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        # 先迁终态防拾取段重新 launch 覆盖登记（合法两跳链——CAS
+        # 守门拒 pending→completed 直迁）
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        paper.update_task(h.db, tid, status="completed",
+                          stopped_at="2030-01-01T00:00:00+00:00")
+        dead = threading.Thread(target=lambda: None)
+        dead.start()
+        dead.join()
+        h.scheduler._threads[tid] = dead
+        h.scheduler._executors[tid] = object()
+        h.scheduler.run_once()
+        assert tid not in h.scheduler._threads
+        assert tid not in h.scheduler._executors
+
+    def test_malformed_heartbeat_skipped(self, tmp_path):
+        """心跳字段坏值（不可解析串）→ 不判超时不移交不崩。"""
+        import pandas as pd
+
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(
+            h.db, tid, status="running",
+            started_at="2030-01-01T00:00:00+00:00",
+            heartbeat_at="not-a-timestamp")
+        h.scheduler._now_fn = lambda: pd.Timestamp("2030-02-01", tz="UTC")
+        h.scheduler.run_once()
+        assert h.recover_calls == []
+
+    def test_stale_heartbeat_inseat_executor_cooperative_stop(
+            self, tmp_path):
+        """心跳超时+执行器在座：协作停（request_stop）不移交——防
+        双执行器并发写库的守护分支（假死先协作停，下轮再验）。"""
+        import pandas as pd
+
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(
+            h.db, tid, status="running",
+            started_at="2030-01-01T00:00:00+00:00",
+            heartbeat_at="2030-01-01T00:00:00+00:00")
+        fake_exec = MagicMock()
+        h.scheduler._executors[tid] = fake_exec
+        h.scheduler._now_fn = lambda: pd.Timestamp("2030-02-01", tz="UTC")
+        h.scheduler.run_once()
+        fake_exec.controller.request_stop.assert_called_once()
+        assert h.recover_calls == []
+
+    def test_hand_over_dedupes_within_round(self, tmp_path):
+        """_hand_over 同轮去重：同任务二次调用零恢复（handed 吸收）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        row = paper.get_task(h.db, tid)
+        handed: set[str] = set()
+        h.scheduler._hand_over(row, handed, reason="heartbeat_timeout")
+        h.scheduler._hand_over(row, handed, reason="heartbeat_timeout")
+        assert len(h.recover_calls) == 1
+
+    def test_hand_over_starts_recovered_executor_thread(self, tmp_path):
+        """移交成功路径：恢复器返回执行器 → 工作线程启动+登记在座。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        started = threading.Event()
+        fake_exec = MagicMock()
+
+        def mark_started():
+            started.set()
+
+        fake_exec.run = mark_started
+        h.scheduler._recover_fn = lambda *a, **k: fake_exec
+        row = paper.get_task(h.db, tid)
+        h.scheduler._hand_over(row, set(), reason="heartbeat_timeout")
+        assert started.wait(timeout=5.0), "恢复线程须真启动"
+        assert h.scheduler._executors[tid] is fake_exec
+
+    def test_pickup_full_capacity_returns_early(self, tmp_path):
+        """活跃数达上限：拾取段早退（新 pending 不拾不炸）。"""
+        h = _SchedulerHarness(tmp_path, max_running=1)
+        tid = h.create_task()
+        h.scheduler._executors["occupied"] = object()  # 槽已占
+        h.scheduler.run_once()
+        assert paper.get_task(h.db, tid)["status"] == "pending"
+
+    def test_launch_skips_registered_task(self, tmp_path):
+        """拾取清单内任务已在座（并发登记）→ 不重复起线程。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        h.scheduler._executors[tid] = object()
+        h.scheduler.run_once()
+        assert tid not in h.scheduler._threads, "在座任务不重复 launch"
+
+    def test_backfill_exception_swallowed(self, tmp_path):
+        """终态回补例程异常：单轮吞咽续轮（守护循环不崩）。"""
+        h = _SchedulerHarness(tmp_path)
+        h.create_task()
+
+        def broken_backfill(db_path):
+            raise RuntimeError("回补异常")
+
+        h.scheduler._backfill_fn = broken_backfill
+        h.scheduler.run_once()  # 不抛即通过
+
+    def test_stop_task_inseat_running_returns_stopping(self, tmp_path):
+        """scheduler 层：running+在座执行器 stop → request_stop+stopping
+        （API 层 fake_exec 面之外的本层直驱锚）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        fake_exec = MagicMock()
+        h.scheduler._executors[tid] = fake_exec
+        assert h.scheduler.stop_task(tid) == "stopping"
+        fake_exec.controller.request_stop.assert_called_once()
+
+    def test_stop_pending_zero_hit_terminal_fallback(self, tmp_path,
+                                                     monkeypatch):
+        """pending 分支 CAS 零命中（并发方已直迁终态）→ 按现态分流
+        terminal（吞没防线的收口分支）。"""
+        import core.paper_trading.runtime.scheduler as sched_mod
+
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(
+            h.db, tid, status="stopped",
+            stopped_at="2030-01-01T00:00:00+00:00",
+            stop_reason="user_stop")
+        # 行已终态而 stop_task 读到 pending 旧快照：patch get_task 首读
+        # 返 pending 行、CAS 更新零命中（patch update_task hit=0）
+        real_get = paper.get_task
+        state = {"first": True}
+
+        def stale_get(db, task_id, **kw):
+            row = dict(real_get(db, task_id, **kw))
+            if state["first"]:
+                state["first"] = False
+                row["status"] = "pending"  # 旧快照
+            return row
+
+        monkeypatch.setattr(sched_mod.paper_repo, "get_task", stale_get)
+        monkeypatch.setattr(
+            sched_mod.paper_repo, "update_task", lambda *a, **k: 0)
+        assert h.scheduler.stop_task(tid) == "terminal"
+
+    def test_parse_iso_naive_string_localizes_utc(self):
+        """无时区时刻串 → 按 UTC 本地化（心跳判定输入归一）。"""
+        from core.paper_trading.runtime.scheduler import _parse_iso
+
+        ts = _parse_iso("2030-01-01T00:00:00")
+        assert ts.tz is not None and "UTC" in str(ts.tz)
+
+    def test_startup_recover_success_path_counts_recovered(self, tmp_path):
+        """startup_recover 成功路径：恢复器返回执行器 → recovered=1
+        +线程登记（_start_recovered 真启动）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        started = threading.Event()
+        fake_exec = MagicMock()
+        fake_exec.run = started.set
+        h.scheduler._recover_fn = lambda *a, **k: fake_exec
+        result = h.scheduler.startup_recover()
+        assert result == {"recovered": 1, "untrusted": 0}
+        assert started.wait(timeout=5.0)
+        assert h.scheduler._executors[tid] is fake_exec
+
+    def test_default_recover_untrusted_row_returns_none(self, tmp_path):
+        """缺省恢复函数（延迟 import 真恢复器）：不可信残态 → None
+        （恢复器已写 error 保留数据）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        # running 但 balance 从未落（恢复校验判据 2 命中）
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2030-01-01T00:00:00+00:00")
+        row = paper.get_task(h.db, tid)
+        assert h.scheduler._default_recover(h.db, row) is None
+        assert paper.get_task(h.db, tid)["status"] == "error"
+
+    def test_refresh_feeds_skips_dead_feed_and_swallows_error(
+            self, tmp_path):
+        """_refresh_feeds 两防御分支：get 返 None 的键跳过+refresh
+        抛异常吞咽续轮。"""
+        h = _SchedulerHarness(tmp_path)
+        broken_feed = MagicMock()
+        broken_feed.subscriber_count = 1
+        broken_feed.refresh = MagicMock(
+            side_effect=RuntimeError("feed 刷新异常"))
+        fake_registry = MagicMock()
+        fake_registry.active_keys = [("GHOST", "4h"), ("DEAD", "1h")]
+        fake_registry.get = lambda *k: (
+            None if k[0] == "DEAD" else broken_feed)
+        h.scheduler.registry = fake_registry
+        h.scheduler.run_once()  # 两分支均不炸即通过
+        broken_feed.refresh.assert_called_once()
+
+    def test_executor_concluded_without_client_callback_noop(self, tmp_path):
+        """终态回调清理：未挂 on_concluded 客户端回调 → 清理后静默
+        （if None 分支）。"""
+        h = _SchedulerHarness(tmp_path)
+        bare = type(h.scheduler)(h.db, registry=h.registry)
+        tid = h.create_task()
+        bare._executors[tid] = object()
+        bare._executor_concluded(tid, "completed")  # 不炸即通过
+        assert tid not in bare._executors
+
+    def test_stop_task_unknown_not_found(self, tmp_path):
+        """scheduler 层：不存在任务 stop → "not_found"。"""
+        h = _SchedulerHarness(tmp_path)
+        assert h.scheduler.stop_task("ghost-task") == "not_found"
+
+    def test_stop_pending_but_registered_cooperative(self, tmp_path):
+        """pending 行+执行器已登记（拾取与置 running 间的窗口）→
+        协作停 request_stop 返回 stopping（95c2eac 吞没防线分支）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()  # 行保持 pending
+        fake_exec = MagicMock()
+        h.scheduler._executors[tid] = fake_exec
+        assert h.scheduler.stop_task(tid) == "stopping"
+        fake_exec.controller.request_stop.assert_called_once()

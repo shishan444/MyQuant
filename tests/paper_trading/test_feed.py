@@ -348,3 +348,98 @@ class TestFundingRefreshThrottle:
 
         feed.refresh()
         assert arrived == []
+
+
+class TestFeedDirectSubscribeApi:
+    """Feed 直连订阅 API 与散点防御分支（闸门盲区消解）。"""
+
+    def test_settlement_close_equals_open_returns_empty(self):
+        """结算点枚举边界：close==open（零长区间）→ 空（左开右闭下
+        不含任何点）。"""
+        ts = pd.Timestamp("2026-08-30 16:00", tz="UTC")
+        assert settlement_points_between(ts, ts) == []
+
+    def test_direct_subscribe_unsubscribe_and_idempotent(self, tmp_path):
+        """Feed 直连 API：subscribe 登记计数+unsubscribe 摘除+幂等
+        （未订阅句柄 no-op）。"""
+        frame = make_ohlcv(n=100, freq="4h")
+        registry, _ = _make_registry(tmp_path, [frame])
+        sub_holder = FeedSubscription(on_frames=lambda df, idx: None)
+        feed = registry.acquire("BTCUSDT", "4h", sub_holder)
+        assert feed.subscriber_count == 1
+
+        got: list[int] = []
+        direct = feed.subscribe(lambda df, idx: got.append(idx))
+        assert feed.subscriber_count == 2
+        feed.refresh()
+        assert len(got) == 1  # 直连订阅收广播
+        feed.unsubscribe(direct)
+        assert feed.subscriber_count == 1
+        feed.unsubscribe(direct)  # 幂等（未订阅 no-op）
+        assert feed.subscriber_count == 1
+
+    def test_refresh_stop_check_invoked(self, tmp_path):
+        """refresh(stop_check=...)：帧处理链调用停止检查（长计算协作
+        通道接线锚）。"""
+        frame = make_ohlcv(n=100, freq="4h")
+        registry, _ = _make_registry(tmp_path, [frame])
+        sub = FeedSubscription(on_frames=lambda df, idx: None)
+        feed = registry.acquire("BTCUSDT", "4h", sub)
+        calls: list[int] = []
+        feed.refresh(stop_check=lambda: calls.append(1))
+        assert calls, "stop_check 须在刷新链中被调用"
+
+    def test_forming_filter_naive_index_localizes_utc(self, tmp_path):
+        """forming 过滤：无时区索引末根按 UTC 本地化再判（时区归一
+        防御分支）。"""
+        naive = make_ohlcv(n=100, freq="4h")
+        naive.index = pd.DatetimeIndex(naive.index.tz_localize(None))
+        registry, _ = _make_registry(
+            tmp_path, [naive], clock=FakeClock("2030-01-01"))  # 全闭合
+        sub = FeedSubscription(on_frames=lambda df, idx: None)
+        feed = registry.acquire("BTCUSDT", "4h", sub)
+        feed.refresh()
+        assert feed.latest_df is not None and len(feed.latest_df) == 100
+
+    def test_registry_release_unknown_key_noop(self, tmp_path):
+        """release 对不存在键 no-op（get None 早退分支）。"""
+        frame = make_ohlcv(n=100, freq="4h")
+        registry, _ = _make_registry(tmp_path, [frame])
+        sub = FeedSubscription(on_frames=lambda df, idx: None)
+        registry.release("GHOST", "4h", sub)  # 不炸即通过
+
+    def test_atr_supplement_with_stop_check_invoked(self, tmp_path):
+        """ATR 非默认周期现算链的 stop_check 接线（现算路径协作通道）。"""
+        frame = make_ohlcv(n=100, freq="4h")
+        registry, _ = _make_registry(tmp_path, [frame])
+        calls: list[int] = []
+        sub = FeedSubscription(
+            on_frames=lambda df, idx: None, atr_periods={20})
+        feed = registry.acquire("BTCUSDT", "4h", sub)
+        feed.refresh(stop_check=lambda: calls.append(1))
+        assert "atr_20" in feed.latest_df.columns
+        assert len(calls) >= 2  # 主链+现算链均调
+
+    def test_forming_filter_naive_index_truncates_last(self, tmp_path):
+        """forming 过滤：naive 索引（tz_localize 分支）末根未闭合截行。"""
+        naive = make_ohlcv(n=100, freq="4h")
+        naive.index = pd.DatetimeIndex(naive.index.tz_localize(None))
+        # 末根 2024-01-17 12:00（naive）——clock 14:30 → 16:00>now forming
+        registry, _ = _make_registry(
+            tmp_path, [naive], clock=FakeClock("2024-01-17 14:30"))
+        sub = FeedSubscription(on_frames=lambda df, idx: None)
+        feed = registry.acquire("BTCUSDT", "4h", sub)
+        feed.refresh()
+        assert len(feed.latest_df) == 99  # forming 末根截除
+
+    def test_refresh_empty_frame_keeps_no_product(self, tmp_path):
+        """refresh 收空帧：早退无产物（latest_df 保持 None——下游
+        装载校验按无数据处理）。"""
+        import pandas as pd
+
+        empty = pd.DataFrame()
+        registry, _ = _make_registry(tmp_path, [empty])
+        sub = FeedSubscription(on_frames=lambda df, idx: None)
+        feed = registry.acquire("BTCUSDT", "4h", sub)
+        feed.refresh()
+        assert feed.latest_df is None

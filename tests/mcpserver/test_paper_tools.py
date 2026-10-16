@@ -280,3 +280,63 @@ class TestToolBehavior:
         method, url, params = api.calls[-1]
         assert (method, url) == ("GET", "/api/paper-trading/tasks")
         assert params == {"limit": 50, "offset": 0, "status": "running"}
+
+
+class TestMountFullParamAssembly:
+    """mount 全参 body 组装分支（闸门盲区消解——fee/slippage/symbol/
+    stop_loss_pct 可选键补齐）。"""
+
+    def test_mount_all_optional_params_in_body(self) -> None:
+        """五可选参数显式传入全落 body（与 REST 创建参数面完整对拍）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"](
+            "st-9", initial_cash=50_000.0, leverage=5, fee=0.002,
+            slippage=0.001, symbol="ETHUSDT", window_bars=60,
+            stop_loss_pct=0.2)
+        _, _, body = api.calls[-1]
+        assert body == {
+            "strategy_id": "st-9", "initial_cash": 50_000.0,
+            "leverage": 5, "fee": 0.002, "slippage": 0.001,
+            "symbol": "ETHUSDT", "window_bars": 60,
+            "stop_loss_pct": 0.2}
+
+
+class TestRequestAuthHeader:
+    """_request 在 API key 设置态的 Authorization 携带（闸门盲区
+    消解——A2 客户端侧接线）。"""
+
+    def test_api_key_sent_as_bearer_header(self, monkeypatch) -> None:
+        """MYQUANT_API_KEY 设置态：请求头带 Bearer（未设则不带）。"""
+        import mcpserver.api_client as ac
+        from mcpserver.api_client import QuantApiClient
+
+        captured: dict = {}
+
+        class _Ctx:
+            def __init__(self, resp):
+                self._resp = resp
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, url, params=None):
+                return self._resp
+
+        import httpx
+
+        real_client = ac.httpx.Client
+
+        def capturing_client(**kw):
+            captured.update(kw)
+            return _Ctx(httpx.Response(200, json={}))
+
+        monkeypatch.setattr(ac.httpx, "Client", capturing_client)
+        monkeypatch.setenv("MYQUANT_API_KEY", "secret-9")
+        api = QuantApiClient(base_url="http://x", profile="research")
+        api.get("/api/paper-trading/tasks")
+        assert captured["headers"] == {"Authorization": "Bearer secret-9"}
+        monkeypatch.delenv("MYQUANT_API_KEY")
+        monkeypatch.setattr(ac.httpx, "Client", real_client)

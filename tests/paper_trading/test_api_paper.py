@@ -607,3 +607,30 @@ class TestLifespanPlacement:
             f"纸盘段（startup_recover 行 {paper_line + 1}）须先于 "
             f"runner.start()（行 {start_line + 1}）——摆位纪律见 "
             f"app.py 纸盘段注释")
+
+
+class TestSchedulerUnavailableDegradation:
+    """调度器未挂载的降级面（闸门盲区消解）。"""
+
+    def test_stop_without_scheduler_503(self, paper_api) -> None:
+        """app.state 未挂调度器 → stop 请求 503（服务不可用显式拒绝
+        而非静默成功）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        row = _create(client)
+        del client.app.state.paper_scheduler
+        resp = client.post(
+            f"/api/paper-trading/tasks/{row['task_id']}/stop")
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "paper scheduler not available"
+
+    def test_runner_status_without_scheduler_zero_shape(
+            self, paper_api) -> None:
+        """runner-status 未挂调度器 → 四键零值退化形态（可见性面
+        不炸）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        del client.app.state.paper_scheduler
+        body = client.get("/api/paper-trading/runner-status").json()
+        assert body == {"max_running_tasks": None, "running_count": 0,
+                        "active_task_ids": [], "pending_depth": 0}

@@ -378,3 +378,168 @@ class TestFundingCounts:
             assert pd.Timestamp(row["settle_time"]) in covered
         for row in pending:
             assert pd.Timestamp(row["settle_time"]) not in covered
+
+
+class TestBackfillDefensivePaths:
+    """终态回补例程防御分支定向锚（闸门盲区消解）。"""
+
+    def test_recover_rebuild_exception_writes_error(self, tmp_path):
+        """恢复重建异常分支：from_task_row 抛 → error(recovery_
+        untrusted: 重建失败) 保留数据。"""
+        h = _FundingHarness(tmp_path)
+        tid = h.task_id
+        paper.update_task(h.db, tid, status="running",
+                          started_at="2026-10-16T00:00:00+00:00")
+        paper.append_bar(
+            h.db, tid, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 1,
+                        "last_bar_time": h.df.index[0].isoformat(),
+                        "balance": 100.0})
+        import core.paper_trading.runtime.recovery as recovery_mod
+        from unittest.mock import patch
+
+        with patch.object(
+                recovery_mod.PaperTaskExecutor, "from_task_row",
+                side_effect=RuntimeError("重建崩")):
+            result = recovery_mod.recover_task(
+                h.db, paper.get_task(h.db, tid), registry=h.registry,
+                start_after=_REPLAY_ALL)
+        assert result is None
+        task = paper.get_task(h.db, tid)
+        assert task["status"] == "error"
+        assert "重建失败" in task["error_detail"]
+
+    def test_backfill_partial_points_uncovered_keeps_pending(
+            self, tmp_path):
+        """回补例程部分点未达：可达点回填+未达点保持 pending（混合
+        归档）。"""
+        h = _FundingHarness(tmp_path)
+        executor = h.make_executor()
+        executor.task_row["window_bars"] = 40
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        executor.process_frames(h.enhanced, 0)
+        assert h.task()["status"] == "completed"
+        pending = h.funding_rows("pending")
+        assert pending, "前置：须有挂起行"
+        # 归档只覆盖半数挂起点
+        half = [r["settle_time"] for r in pending][: len(pending) // 2]
+        save_parquet(_funding_frame(
+            [pd.Timestamp(t).strftime("%Y-%m-%d %H:%M:%S") for t in half]),
+            h.data_dir / "BTCUSDT_funding.parquet")
+        from core.paper_trading.runtime.recovery import (
+            backfill_terminal_funding)
+
+        result = backfill_terminal_funding(h.db, data_dir=h.data_dir)
+        assert result["rows_backfilled"] == len(half)
+        assert len(h.funding_rows("pending")) == len(pending) - len(half)
+
+    def test_backfill_invalid_symbol_skipped_routine_survives(
+            self, tmp_path):
+        """非法 symbol 任务行：索引装载跳过（warning）不拖死整例程。"""
+        h = _FundingHarness(tmp_path)
+        # 直构一条非法 symbol 的终态任务带 pending 行
+        bad_id = paper.create_task(
+            h.db, strategy_id="strat-bad",
+            dna_snapshot_json=make_dna().to_json(),
+            symbol="../../etc", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=10_000.0, leverage=1, window_bars=10)
+        paper.update_task(h.db, bad_id, status="running",
+                          started_at="2026-10-16T00:00:00+00:00")
+        paper.append_bar(
+            h.db, bad_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 1,
+                        "last_bar_time": h.df.index[0].isoformat(),
+                        "balance": 100.0, "position_side": "long",
+                        "position_quantity": 1.0, "position_entry": 100.0},
+            funding=[{"settle_time": h.df.index[0].isoformat(),
+                      "status": "pending", "rate": None, "amount": None,
+                      "position_quantity": 1.0,
+                      "settle_price": 100.0}])
+        paper.update_task(h.db, bad_id, status="completed",
+                          stopped_at="2026-10-16T01:00:00+00:00")
+        from core.paper_trading.runtime.recovery import (
+            backfill_terminal_funding)
+
+        result = backfill_terminal_funding(h.db, data_dir=h.data_dir)
+        # 例程不崩；非法 symbol 任务零回填
+        assert result["tasks_backfilled"] == 0
+
+    def test_backfill_revision_callback_exception_swallowed(
+            self, tmp_path):
+        """修订回调抛异常：回填已生效不回滚（日志吞咽）。"""
+        h = _FundingHarness(tmp_path)
+        executor = h.make_executor()
+        executor.task_row["window_bars"] = 40
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        executor.process_frames(h.enhanced, 0)
+        all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
+        save_parquet(_funding_frame(all_points),
+                     h.data_dir / "BTCUSDT_funding.parquet")
+        from core.paper_trading.runtime.recovery import (
+            backfill_terminal_funding)
+
+        def crashing_revision(tid):
+            raise RuntimeError("修订回调崩")
+
+        result = backfill_terminal_funding(
+            h.db, data_dir=h.data_dir, on_revision=crashing_revision)
+        assert result["rows_backfilled"] > 0
+        assert h.funding_rows("pending") == []
+
+    def test_backfill_broken_and_empty_parquet_survive(self, tmp_path):
+        """索引装载防御：坏 parquet（垃圾字节）与空 parquet 均安全
+        返回空索引（例程不崩）。"""
+        import os
+
+        h = _FundingHarness(tmp_path)
+        # 坏文件：非 parquet 字节
+        (h.data_dir / "BTCUSDT_funding.parquet").write_bytes(
+            b"this is not a parquet file")
+        from core.paper_trading.runtime.recovery import (
+            backfill_terminal_funding, _load_funding_index)
+
+        assert _load_funding_index(h.data_dir, "BTCUSDT") == {}
+        result = backfill_terminal_funding(h.db, data_dir=h.data_dir)
+        assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
+        # 空帧文件：同样空索引
+        save_parquet(_funding_frame([]),
+                     h.data_dir / "BTCUSDT_funding.parquet")
+        assert _load_funding_index(h.data_dir, "BTCUSDT") == {}
+        assert os.path.exists(h.data_dir / "BTCUSDT_funding.parquet")
+
+    def test_backfill_rows_concurrently_processed_skips(self, tmp_path):
+        """行在 updates 构造后已被并发处理（filled=0）：跳过计数与
+        修订（重放窗口防御分支）。"""
+        from unittest.mock import patch
+
+        import core.paper_trading.runtime.recovery as recovery_mod
+
+        h = _FundingHarness(tmp_path)
+        executor = h.make_executor()
+        executor.task_row["window_bars"] = 40
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        executor.process_frames(h.enhanced, 0)
+        assert h.task()["status"] == "completed"
+        all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
+        save_parquet(_funding_frame(all_points),
+                     h.data_dir / "BTCUSDT_funding.parquet")
+        revisions: list[str] = []
+        with patch.object(
+                recovery_mod.paper_repo, "backfill_funding_rows",
+                return_value=0):
+            result = backfill_terminal_funding(
+                h.db, data_dir=h.data_dir,
+                on_revision=lambda tid: revisions.append(tid))
+        assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
+        assert revisions == []

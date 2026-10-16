@@ -591,3 +591,18 @@ class TestSingleSourceGuard:
             assert feature not in src, (
                 f"手写指标公式特征 {feature} 在场——绩效层指标须单源经 "
                 f"compute_metrics 计算")
+
+
+class TestPositionBarsZeroTrades:
+    """闸门盲区消解：无 open 成交的 position_bars=0 分支。"""
+
+    def test_position_bars_zero_without_open_fills(self, tmp_path):
+        """零交易任务：无 open 成交 → position_bars=0（A1 口径的
+        无持仓退化分支）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 5)
+
+        report = build_report(db, tmp_path, tid)
+        assert report["evidence"]["position_bars"] == 0

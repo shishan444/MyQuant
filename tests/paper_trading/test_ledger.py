@@ -459,3 +459,40 @@ class TestStopTakeDisclosureAnchors:
         pos = ledger.position
         assert pos.sl_price == pytest.approx(95.0)
         assert pos.tp_price == pytest.approx(110.0)
+
+
+class TestIntentPreconditionGuards:
+    """意图前置条件守卫与全平计数（闸门盲区消解）。"""
+
+    def test_open_with_existing_position_returns_none(self):
+        """持仓中 open 意图 → None（重复开仓防御——不加仓不炸）。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        fill = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(105.0, seq=1),
+            _ZERO_COST)
+        assert fill is None
+        assert ledger.position.quantity == pytest.approx(100.0)
+
+    def test_reduce_without_position_returns_none(self):
+        """无持仓 reduce 意图 → None（无仓可减防御）。"""
+        ledger = Ledger(10_000.0, make_params())
+        fill = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0),
+            _ZERO_COST)
+        assert fill is None
+
+    def test_full_reduce_closes_position_and_counts_trade(self):
+        """exit_fraction=1.0 全量减仓 → 清仓+计一次全平交易。"""
+        params = make_params(position_size=0.1, leverage=10,
+                             exit_fraction=1.0)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)  # qty=100
+        fill = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(120.0, seq=1),
+            _ZERO_COST)
+        assert fill is not None
+        assert fill.quantity == pytest.approx(100.0)
+        assert ledger.position is None  # quantity<=0 → 清仓
+        assert ledger.closed_trades == 1
