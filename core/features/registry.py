@@ -4,7 +4,7 @@
 INDICATOR_REGISTRY（45 指标注册表）与 get_interchangeable（同类
 互换集查询）。
 价值与服务对象：全工程指标元数据唯一权威——19 个生产文件消费
-（analysis 域 14 / strategy 2 / evolution 1 / features 1 /
+（analysis 域 13 / strategy 2 / evolution 1 / features 1 /
 validation 1 / api 1），支撑翻译侧 supported_conditions 合法集、
 列名解析 resolve_indicator_column 全链单源、变异侧 ParamDef.clamp
 值域收敛、同类互换 get_interchangeable 候选集。
@@ -451,10 +451,14 @@ def resolve_indicator_column(
     field_name: str = "",
     naming: str = "",
 ) -> str:
-    """把指标名+参数解析为预期 DataFrame 列名（列命名约定全链单源）。
+    """把指标名+参数解析为预期 DataFrame 列名（列命名约定权威正向
+    解析点）。
 
-    所有消费方（executor.py 列解析 / indicators.py 计算侧）一律经
-    本函数取列名，不各自复制 if/elif 分派链——多份副本即漂移源。
+    消费现状（实然披露）：executor 列解析全链经本函数
+    （_get_indicator_column 单点转发）；indicators.py 计算侧产列
+    按同一命名约定自拼列名（与各 naming 分支为镜像实现，约定变更
+    须双侧同步）；column_ref.py 的逆文法解码与之对偶——同一命名
+    约定现存三份须同步的实现（正向解析/产列自拼/逆向解码）。
 
     Args:
         name: 注册表内指标名（如 "EMA"、"BB"）。
