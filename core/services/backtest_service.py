@@ -108,12 +108,13 @@ def compute_needed_tfs(dnas, timeframe: str) -> set:
     non-empty set iff any DNA is MTF, so `if needed_tfs:` matches that exactly
     (do NOT add a len>1 gate here — it would change copy 2's behaviour).
     """
+    # 判据单源（unblock-research-validation 3a）：研究链同款收集器
+    # （layers ∪ 基因级 timeframe ∪ 执行周期）；import 移出循环体
+    #（fix-review B4④——逐 DNA 重复 import 无意义，sys.modules 命中
+    # 也只是白查一次）
+    from core.analysis.backtest_bridge import _collect_needed_tfs
     needed: set = set()
     for d in dnas:
-        # unblock-research-validation 3a：判据单源化——逐 DNA 经研究链
-        # 同款收集器（layers ∪ 基因级 timeframe ∪ 执行周期），列表
-        # 聚合语义保持（任一 DNA 需装载即装载）
-        from core.analysis.backtest_bridge import _collect_needed_tfs
         per = _collect_needed_tfs(d, timeframe)
         needed |= per
     if needed:

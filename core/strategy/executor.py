@@ -367,8 +367,11 @@ def _evaluate_gene_signal(gene, enhanced_df, dfs_by_timeframe=None) -> pd.Series
     """基因信号求值单点（unblock-research-validation 基因级周期分支）。
 
     基准周期基因（timeframe None）：现路径逐字节不变（tf==基准在
-    翻译面已归一剥离；防御性等值处理=直接以基准路径求值，语义与
-    归一同——投影对 tf==基准恒等）。
+    翻译面已归一剥离）。防御性披露（fix-review B4③）：显式标记
+    tf==基准（绕过翻译归一的手工 DNA）走下方投影分支——
+    project_completed_bool 有触发时间戳 +tf 收敛挂载语义（落在
+    收盘时刻所在基准 bar），与基准路径直接求值非严格逐位等——
+    语义差异披露而非恒等宣称。
     带基因级高周期：高周期轴求值（_get_indicator_column+evaluate_
     condition 在轴 df 上）→ project_completed_bool 掩码投影到基准轴
     （role 无关——ADD_TRIGGER 等自动获得投影；先投影后 policy 的
