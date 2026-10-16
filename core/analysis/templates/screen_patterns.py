@@ -325,19 +325,22 @@ def screen_patterns(
                 p, _ = p_value_for(fwd, combo_mask, h, baseline_mean[h])
                 if p is None:
                     continue
+                _combo_mean = float(valid.mean())  # K10：单算复用
                 rec = {
                     "condition": None,  # 组合条件在输出层组装
                     "parts": [a["condition"], b["condition"]],
                     "indicator": f'{a["indicator"]}+{b["indicator"]}',
                     "horizon": h,
                     "samples": int(len(valid)),
-                    "mean": float(valid.mean()),
+                    "mean": _combo_mean,
                     "median": float(valid.median()),
                     "win_rate": float((valid > 0).mean()),
-                    # 方向分类标注（同单条件——组合候选同款提示）
-                    "direction_hint": ("short" if float(valid.mean()) < 0
-                                       else "long" if float(valid.mean()) > 0
-                                       else "neutral"),
+                    # 方向分类标注（同单条件——组合候选同款提示；
+                    # mean 单算复用，K10）
+                    "direction_hint": (
+                        "short" if _combo_mean < 0
+                        else "long" if _combo_mean > 0
+                        else "neutral"),
                     "p_value": p,
                     "fingerprint": combo_fp,
                 }
@@ -386,6 +389,9 @@ def screen_patterns(
             "best_horizon": r["horizon"],
             "mean": round(r["mean"], 6),
             "win_rate": round(r["win_rate"], 4),
+            # 方向分类标注（包四 GAP-01 ②——D-4 修复：中间 records 带
+            # 键但装配白名单漏搬运致对外不可达）
+            "direction_hint": r["direction_hint"],
             "q_value": round(r["q_value"], 6),
             "fdr_significant": r["fdr_significant"],
         }

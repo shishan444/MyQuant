@@ -247,7 +247,7 @@ def _validate_strategy_params(
 
     # 动态定仓（complete-research-tooling 任务 4）：两键域校验+组合
     # 校验（值域单源 validator——RISK_FRACTION_MIN/MAX 同源引用）
-    from core.strategy.validator import (  # noqa: F401  单源引用
+    from core.strategy.validator import (  # 值域单源引用（三名全被使用）
         POSITION_MODES, RISK_FRACTION_MAX, RISK_FRACTION_MIN,
     )
     pm = params.get("position_mode")

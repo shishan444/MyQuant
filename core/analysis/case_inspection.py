@@ -260,11 +260,15 @@ def _parse_selector(
     return "timestamps", normalized
 
 
-def _validate_condition_tf(cond_entry: Dict[str, Any], timeframe: str) -> None:
+def _validate_condition_tf(
+    cond_entry: Dict[str, Any], timeframe: str,
+    param_label: str = "condition.timeframe",
+) -> None:
     """timeframe 键前置校验（值域+方向——低周期/未知周期装载前拒绝）。
 
     包四 GAP-03 提取为两形态共用单点（condition 单条件内联段迁移，
-    conditions 数组逐条同语义）。
+    conditions 数组逐条同语义）；param_label 带定位（数组场景
+    conditions[{i}].timeframe——多条件排障可定位，K8）。
     """
     _tf_key = cond_entry.get("timeframe")
     if _tf_key is None:
@@ -274,7 +278,7 @@ def _validate_condition_tf(cond_entry: Dict[str, Any], timeframe: str) -> None:
         raise ResearchError(
             "TIMEFRAME_UNKNOWN",
             f"未知周期: {_tf_key!r}",
-            detail={"param": "condition.timeframe",
+            detail={"param": param_label,
                     "timeframe": _tf_key,
                     "legal_range": sorted(TF_SECONDS)})
     if timeframe not in TF_SECONDS:
@@ -292,7 +296,7 @@ def _validate_condition_tf(cond_entry: Dict[str, Any], timeframe: str) -> None:
     except ValueError as exc:
         raise ResearchError(
             "TIMEFRAME_NOT_HIGHER", str(exc),
-            detail={"param": "condition.timeframe",
+            detail={"param": param_label,
                     "timeframe": _tf_key,
                     "base_timeframe": timeframe}) from exc
 
@@ -491,9 +495,10 @@ def inspect_cases(
         # 结构化 subject 的指标名进 warmup 并集（求值自足——
         # mask_for 两段式任意参数现算）；全字符串条目且非插件时
         # 沿单条件形态语义要求顶层 indicator
-        for c in payload:
+        for i, c in enumerate(payload):
             _validate_action(c["action"])
-            _validate_condition_tf(c, timeframe)
+            _validate_condition_tf(
+                c, timeframe, param_label=f"conditions[{i}].timeframe")
         _extra_inds = sorted({
             c["subject"].get("indicator")
             for c in payload if isinstance(c["subject"], dict)
@@ -768,7 +773,9 @@ def inspect_cases(
         ref_id = canonical_condition_hash(payload, timeframe)
     elif kind == "conditions":
         # 组合指纹（包四 GAP-03）：逐条单条件指纹排序 join 再摘要
-        # （screen_patterns 组合候选 combo_fp 同款形制）
+        # （组合指纹独立形制——定长分隔 join 后摘要，碰撞安全；
+        # 与 screen_patterns 组合候选 combo_fp 的 16hex 无分隔拼接
+        # 非同款形制，K7 注释修正）
         import hashlib as _hashlib
         _fps = sorted(canonical_condition_hash(c, timeframe)
                       for c in payload)
