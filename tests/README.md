@@ -315,7 +315,7 @@
 - 终态置位后同帧剩余 bar 不感知（窗口到点/停止条件=观察结束非行为暂停）——test_scheduler 停止条件零干预锚的逐笔一致前提；放松该停点会使停止后仍产成交（禁干预面必红）
 - pt_task 统计组 win/loss=全平事件计数（win+loss=total_trades 自洽；reduce 部分 realized_pnl 只进 total_pnl）——与组 4 报告侧 total_trades 判据（realized_pnl 非 NULL 含 reduce）是两层口径（表披露 vs 报告聚合），对照时勿混
 - 阶段四覆盖闸门不可达判定（行+分支残留逐条，调用图依据）：executor.py:280（_prepare_guarded 的 TaskStopRequested 透传——prepare 调用链无 check_stop 抛点，check_stop 仅 :464 空闲期/:534 bar 边界，防御性保留）/executor.py:445（run() 的 except TaskStopRequested——_loop 自带同异常收口不外抛，结构不可达）/executor.py:582->584（atr 列缺失 False 侧——装载校验 atr_missing 前置拦截后运行中列必在）/executor.py:848->850（_finalize 的非终态 False 侧——该函数契约仅收终态）/executor.py:240->252·262->264（恢复重建分支组合的特定交错侧——重建成功/失败两主径已各有锚）；feed.py:273（funding 广播锁内快照段的特定交错侧）/feed.py:288（forming 过滤 df.empty 早退——上游 refresh 已拦空帧后此为双保险）；判定为防御保留非死代码，行为变化时须重评
-- 实盘判定迁移复刻（组 6 前置承接）：tests/live/test_judgment.py=tests/trading/test_judgment.py 断言面零改动+import 切 core.live_trading 自有域（组 7 删旧域后判定分支覆盖不丢失）+三补全（direction=0 双语境 hold/confidence<0.1 下限钳制）——judgment.py 100% 行+分支；注意 min_hold_bars/min_profit_ratio/profit_add_only 是实盘链自有判定规格，与纸盘「考场无观点」两链两规格
+- 实盘判定迁移复刻（组 6 前置承接）：tests/live/test_live_judgment.py=tests/trading/test_judgment.py 断言面零改动+import 切 core.live_trading 自有域（组 7 删旧域后判定分支覆盖不丢失）+三补全（direction=0 双语境 hold/confidence<0.1 下限钳制）——judgment.py 100% 行+分支；文件名带 live 前缀防与旧 tests/trading/test_judgment.py 同名模块冲突（子目录无 __init__.py，全仓库一把收集会撞名）；注意 min_hold_bars/min_profit_ratio/profit_add_only 是实盘链自有判定规格，与纸盘「考场无观点」两链两规格
 
 ### rebuild-paper-trading 守护行（组 4·报告器）
 - 报告「出场类」判据=pt_fill.realized_pnl 非 NULL（含 reduce 部分出场）：kernel 对 close/exit_*/reduce 全部回填 realized_pnl，回测引擎 trade_returns=vbt trades pnl/init_cash 同含部分出场记录——两侧口径对齐是 8.1 受控等价前置；把判据收窄为出场六种 kind 会使 total_trades/trade_returns/win_rate 三输入错位（compute_metrics 内部配对），勿改
