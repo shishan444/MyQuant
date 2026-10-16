@@ -168,6 +168,18 @@ class TestColumnResolutionRejection:
         assert err.detail["field"] is None
         assert "cause" in err.detail and err.detail["cause"]
 
+    def test_s8a_field_echoed_when_declared(self):
+        """field 两态的 str 态：gene.field_name 声明时 detail.field
+        原样回显（field_name 是多产出指标的列名声明，直通不丢）。"""
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="NOPE_GHOST", params={},
+                                condition_value=50, field_name="ghost_col")
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        assert exc_info.value.detail["field"] == "ghost_col"
+
     def test_s8b_two_silent_faces_both_reject(self):
         """两层静默专项：未知类型基因与不可解析列基因同策略共存 →
         均显式拒绝直达顶层（任一先触达即 raise，无一被吞）。"""

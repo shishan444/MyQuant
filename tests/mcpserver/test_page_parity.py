@@ -124,3 +124,80 @@ class TestPageOneParityMcp:
             f"MCP 工具层复现 page=1≠无参——按升级路径走变更传播：{api.gets!r}"
         assert all("page" in params for _, params in api.gets), \
             "工具恒发 page 键（透传面契约）"
+
+
+class TestPageOneParityFastmcpLive:
+    """S4c 补全：真实 FastMCP 调用面（设计卡 2.4 第三层原义）——
+    live uvicorn 服务 + build_server + call_tool 全链路（同
+    test_contract_parity.TestListFolding 形制）。直击 team-lead
+    2026-10-15 MCP 层实测矛盾记录（page=1→0 条/无参→50 条，服务为
+    最新代码）的复现场景：本层通过则矛盾记录归因环境（如旧服务实例
+    劫持）；复现则按升级路径走变更传播。
+    """
+
+    @pytest.fixture(scope="class")
+    def live_server(self, tmp_path_factory):
+        import threading
+        import time as _time
+
+        import uvicorn
+
+        from api.app import create_app
+
+        db = tmp_path_factory.mktemp("parity_mcp") / "quant.db"
+        data_dir = tmp_path_factory.mktemp("parity_mcp_data")
+        # 登记面校验 symbol 数据在场——造最小 BTCUSDT_4h parquet
+        # （同 tests/conftest.py tmp_data_dir 形制）
+        import pandas as pd
+
+        pd.DataFrame(
+            {"open": [60000], "high": [61000], "low": [59000],
+             "close": [60500], "volume": [100]},
+            index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+        ).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+        app = create_app(db_path=db, data_dir=data_dir)
+        server = uvicorn.Server(uvicorn.Config(
+            app, host="127.0.0.1", port=0, log_level="error"))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = _time.monotonic() + 15
+        while _time.monotonic() < deadline:
+            if server.started:
+                break
+            _time.sleep(0.1)
+        port = server.servers[0].sockets[0].getsockname()[1]
+        yield f"http://127.0.0.1:{port}"
+        server.should_exit = True
+        thread.join(timeout=5)
+
+    def test_s4c_fastmcp_live_page1_equals_default(self, live_server):
+        import json
+
+        import httpx
+
+        from mcpserver.server import build_server
+        from tests.mcpserver.test_contract_parity import run_async
+
+        # 造 3 条研究日志（经真实 HTTP 登记面）
+        for i in range(3):
+            resp = httpx.post(f"{live_server}/api/research/hypotheses", json={
+                "conditions": _CONDITIONS,
+                "statement": f"MCP page 校验 {i}",
+                "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                                 "start": f"2024-01-0{i + 1}T00:00:00Z",
+                                 "end": "2024-03-01T00:00:00Z"}]})
+            assert resp.status_code == 200, resp.text
+
+        mcp, _ = build_server(profile="readonly", base_url=live_server)
+
+        def _call(**kwargs):
+            result = run_async(mcp.call_tool("get_research_log", kwargs))
+            text = result.content[0].text if hasattr(
+                result.content[0], "text") else result.content[0]
+            return json.loads(text)
+
+        with_page = _call(page=1)
+        without = _call()
+        assert without.get("items"), "前置：日志非空（否则断言空对空无意义）"
+        assert with_page == without, \
+            f"FastMCP 调用面复现 page=1≠无参——按升级路径走变更传播"

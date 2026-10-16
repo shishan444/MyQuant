@@ -72,6 +72,26 @@ class TestIsolatedPayloadContract:
         assert "result" not in replay, "result 嵌套已退役"
         assert "result" not in first
 
+    def test_s1b_idempotent_values_match_first(self, db, data_dir,
+                                               hypothesis_id):
+        """S1b 值级：幂等重放与首次逐键值相等（幂等=同一验证记录的
+        投影——result_json 内嵌完整首次 payload，重放解出的核心数据
+        键与首次逐键一致，仅 duplicated 翻转 True）。"""
+        save_strategy(db, strategy_id="st_s1v", dna_json=_dna().to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        kw = dict(hypothesis_id=hypothesis_id, strategy_id="st_s1v",
+                  request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                                 "start": "2023-03-01", "end": "2023-03-20"})
+        first = run_isolated_backtest(db, data_dir, **kw)
+        replay = run_isolated_backtest(db, data_dir, **kw)
+
+        for key in ("record_id", "verdict", "metrics", "threshold_details",
+                    "warmup", "bars_used", "symbol", "timeframe",
+                    "judged_ranges", "direction"):
+            assert replay[key] == first[key], f"幂等重放 {key} 与首次不一致"
+        assert first["duplicated"] is False
+        assert replay["duplicated"] is True
+
     def test_s1d_judged_ranges_response_time_union(self, db, data_dir,
                                                    hypothesis_id):
         """S1d judged_ranges 现算语义：首次（落库后含本记录）与幂等

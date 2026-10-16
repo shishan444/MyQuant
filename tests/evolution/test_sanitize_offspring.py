@@ -118,6 +118,58 @@ class TestReachabilityCheck:
         assert ghost in dna.signal_genes, "无 df 不做可达性检（评估侧负责）"
 
 
+class TestSanitizedFitnessPenalty:
+    """S7d 系数形制（tasks.md「留实施后补」项——实施已落 evaluation
+    层）：被清洗个体适应度温和降权。对照断言：同基因集个体 vs 剔除
+    坏基因后与其等价的个体，后者得分=前者×SANITIZED_FITNESS_PENALTY。"""
+
+    def test_sanitized_individual_score_penalized(self):
+        """带不可达列基因个体经评估侧清洗剔除后与干净个体基因集相同
+        → 原始 fitness 相同，被清洗者得分按系数降权（非零 fitness
+        前置——entry=40/exit=60 在 n=600 固定样本上实测 >0）。"""
+        from api.runner import EvolutionRunner
+        from core.evolution.evaluation import SANITIZED_FITNESS_PENALTY
+
+        df = make_enhanced_df(n=600)
+        clean = make_dna(entry_value=40, exit_value=60)
+        sanitized = make_dna(entry_value=40, exit_value=60)
+        ghost = make_signal_gene(
+            indicator="GHOST_PENALTY", params={},
+            role=SignalRole.EXIT_TRIGGER, condition_value=50)
+        sanitized.signal_genes = [*sanitized.signal_genes, ghost]
+
+        task_row = {"symbol": "BTCUSDT", "timeframe": "4h",
+                    "score_template": "profit_first"}
+        runner = EvolutionRunner.__new__(EvolutionRunner)
+        scores = runner._evaluate_population(
+            [clean, sanitized], task_row, leverage=1, direction="long",
+            enhanced_df=df, dfs_by_timeframe=None)
+
+        assert scores[0] > 0, \
+            f"前置失效：干净个体 fitness 须非零（固定样本漂移），got {scores[0]}"
+        assert any(op.startswith("sanitized:") for op in sanitized.mutation_ops), \
+            "前置失效：坏基因未被评估侧清洗注记"
+        assert scores[1] == pytest.approx(scores[0] * SANITIZED_FITNESS_PENALTY), \
+            f"被清洗个体应降权 {SANITIZED_FITNESS_PENALTY}：{scores[1]} vs {scores[0]}"
+
+    def test_clean_individual_not_penalized(self):
+        """干净个体不触发降权（惩罚只挂被清洗者——mutation_ops 无
+        sanitized 注记的个体得分不受系数影响，回归对照）。"""
+        from api.runner import EvolutionRunner
+
+        df = make_enhanced_df(n=600)
+        dna = make_dna(entry_value=40, exit_value=60)
+        task_row = {"symbol": "BTCUSDT", "timeframe": "4h",
+                    "score_template": "profit_first"}
+        runner = EvolutionRunner.__new__(EvolutionRunner)
+        score = runner._evaluate_population(
+            [dna], task_row, leverage=1, direction="long",
+            enhanced_df=df, dfs_by_timeframe=None)[0]
+        assert not any(op.startswith("sanitized:")
+                       for op in dna.mutation_ops)
+        assert score > 0  # 与上一用例同款固定样本同款值域（非零锚）
+
+
 class TestStructuralChecksPreserved:
     """既有结构校验维持 raise 形（fix-executor-batch-health 基线不回归）。"""
 

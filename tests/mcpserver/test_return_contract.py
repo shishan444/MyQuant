@@ -99,7 +99,14 @@ class TestListArrayShape:
          [{"column": "rsi_14"}]),
         ("list_data_sources", "/api/data/available-sources",
          {"sources": [{"symbol": "BTCUSDT"}]}),
-    ], ids=["indicators", "signals", "data_sources"])
+        ("list_hypotheses", "/api/research/hypotheses",
+         {"items": [{"hypothesis_id": "h1"}], "total": 1}),
+        ("list_evolution_tasks", "/api/evolution/tasks",
+         {"items": [{"task_id": "t1"}], "total": 1}),
+        ("list_feature_requests", "/api/research/feature-requests",
+         {"items": [{"request_id": "f1"}], "total": 1}),
+    ], ids=["indicators", "signals", "data_sources",
+            "hypotheses", "evolution_tasks", "feature_requests"])
     def test_list_tools_pass_through_array(self, tool_name, url, fixed):
         """清单工具返回体=API 层固定样本原样透传（数组/对象形制不
         在 MCP 层被包裹变形）。"""
@@ -110,7 +117,9 @@ class TestListArrayShape:
             f"{tool_name} 透传变形：{result!r} != {fixed!r}"
 
     def test_list_strategies_dict_items_form(self):
-        """策略列表（dict 形 items）折叠后仍为 {items:[...]} 数组形。"""
+        """策略列表（dict 形 items）：折叠变形是既有设计（D8 折叠后
+        条目无 dna），但形制仍为 {items:[...]} 数组形——规则③的
+        适用面（list_strategies 不在透传参数化里，因其有意变形）。"""
         mcp, api = _FakeMcp(), _FakeApi({
             "/api/strategies": {"items": [{"strategy_id": "s1",
                                            "name": "n", "symbol": "BTCUSDT",
@@ -129,11 +138,12 @@ class TestAutonomyDisclosure:
     _TOOLS_SRC = Path("mcpserver/tools.py").read_text(encoding="utf-8")
 
     def test_skip_disclosure_in_docs(self):
+        """跳过原因披露全集锚：三枚举值在工具描述源码在场（S5c 在
+        test_screen_patterns 详测，此处防全集漂移）。"""
         src = self._TOOLS_SRC
-        for token in ("no_covered_actions", "skipped_genes"):
-            assert token in src or True  # skipped_indicators 三因在
-        # screen_patterns 三因披露（S5c 已详测，此处全集锚）
-        assert "compute_failed" in src
+        for token in ("no_default_params", "compute_failed",
+                      "no_covered_actions"):
+            assert token in src, f"工具描述缺跳过原因枚举: {token}"
 
     def test_error_channel_never_raises(self):
         """tool_safe 错误通道：API 失败转 {"error": {...}} 不 raise
