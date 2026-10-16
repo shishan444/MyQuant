@@ -35,7 +35,7 @@ from core.persistence.repository import research as rr
 _D2_RISK_FIELDS = (
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "atr_period",
-    "max_hold", "time_exit_utc",
+    "max_hold", "time_exit_utc", "position_mode", "risk_fraction",
 )
 
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
@@ -216,7 +216,7 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
         return RiskGenes()  # platform_default
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
             "leverage", "exit_fraction", "add_fraction", "max_exposure",
-            "max_hold", "time_exit_utc")
+            "max_hold", "time_exit_utc", "position_mode", "risk_fraction")
     # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
     # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
     # （=手工 DNA 缺省语义），不穿透进 RiskGenes
@@ -956,11 +956,15 @@ def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
     从库内策略行 dna_json 提取 direction/max_hold——direction 值域
     收敛（脏值/null 恒回显 "long"）；解析失败同收敛（缺行/畸形存量
-    不炸回执）。"""
+    不炸回执）。position_mode/risk_fraction（complete-research-
+    tooling 任务 4）：仓位模式属身份语义键（参数变体族——回执须
+    可见）；值域收敛同款（脏值回显缺省）。"""
     rg = _risk_genes_of_row(row) if row else {}
     direction = rg.get("direction")
     max_hold = rg.get("max_hold")
     time_exit = rg.get("time_exit_utc")
+    position_mode = rg.get("position_mode")
+    risk_fraction = rg.get("risk_fraction")
     return {
         "direction": direction if direction in ("long", "short") else "long",
         # bool 排除（security F-5）：bool 是 int 子类，True 会穿透
@@ -972,6 +976,11 @@ def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "time_exit_utc": int(time_exit)
         if isinstance(time_exit, int) and not isinstance(time_exit, bool)
         else None,
+        "position_mode": position_mode
+        if position_mode in ("fixed", "risk_budget") else "fixed",
+        "risk_fraction": float(risk_fraction)
+        if isinstance(risk_fraction, (int, float))
+        and not isinstance(risk_fraction, bool) else None,
     }
 
 

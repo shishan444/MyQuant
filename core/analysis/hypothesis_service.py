@@ -93,7 +93,7 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "max_hold",
-    "time_exit_utc",
+    "time_exit_utc", "position_mode", "risk_fraction",
 })
 
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
@@ -244,6 +244,50 @@ def _validate_strategy_params(
                 detail={"field": "time_exit_utc",
                         "legal_range": [TIME_EXIT_UTC_MIN,
                                          TIME_EXIT_UTC_MAX]})
+
+    # 动态定仓（complete-research-tooling 任务 4）：两键域校验+组合
+    # 校验（值域单源 validator——RISK_FRACTION_MIN/MAX 同源引用）
+    from core.strategy.validator import (  # noqa: F401  单源引用
+        POSITION_MODES, RISK_FRACTION_MAX, RISK_FRACTION_MIN,
+    )
+    pm = params.get("position_mode")
+    if pm is not None and pm not in POSITION_MODES:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"position_mode {pm!r} 非法（合法值 {list(POSITION_MODES)}"
+            "——fixed 固定比例/risk_budget 风险预算制定仓）",
+            detail={"field": "position_mode",
+                    "legal_range": list(POSITION_MODES)})
+    rf = params.get("risk_fraction")
+    if rf is not None:
+        if not isinstance(rf, (int, float)) or isinstance(rf, bool) \
+                or not (RISK_FRACTION_MIN < rf <= RISK_FRACTION_MAX):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"risk_fraction {rf!r} 越出值域 "
+                f"({RISK_FRACTION_MIN}, {RISK_FRACTION_MAX}]"
+                "（每笔风险预算占当時权益比例）",
+                detail={"field": "risk_fraction",
+                        "legal_range": f"({RISK_FRACTION_MIN}, "
+                                       f"{RISK_FRACTION_MAX}]"})
+    # 组合校验（沿组间配对族先例）：risk_budget 须 risk_fraction 与
+    # stop_loss>0（止损距离是仓位公式分母——无止损=风险预算不可定义；
+    # stop_loss 值域校验在前段已做，此处只核在场性）
+    if pm == "risk_budget":
+        if rf is None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "position_mode=risk_budget 须同时声明 risk_fraction"
+                "（入场 size=当時权益×risk_fraction÷止损距离）",
+                detail={"field": "risk_fraction",
+                        "legal_range": f"({RISK_FRACTION_MIN}, "
+                                       f"{RISK_FRACTION_MAX}]"})
+        if not params.get("stop_loss"):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "position_mode=risk_budget 须同时声明 stop_loss"
+                "（止损距离是仓位公式分母——无止损=风险预算不可定义）",
+                detail={"field": "stop_loss"})
 
     # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
     #    纯组间规则在登记链主体——不依赖声明块携带）──

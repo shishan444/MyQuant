@@ -46,6 +46,11 @@ MAX_HOLD_MAX = 200
 # max_hold 的 0.0=禁用）；值域单源（登记声明块与 validate_dna 同源）
 TIME_EXIT_UTC_MIN = 0
 TIME_EXIT_UTC_MAX = 1439
+# 动态定仓（complete-research-tooling 任务 4）：枚举与值域单源——登记
+# 面声明块校验与 validate_dna 双消费方同源（MAX_HOLD 同款形制）
+POSITION_MODES = ("fixed", "risk_budget")
+RISK_FRACTION_MIN = 0.0   # 开区间下界（0 排除）
+RISK_FRACTION_MAX = 0.5   # 闭区间上界（P9 上界核对——validator 惯例）
 
 
 @dataclass
@@ -298,6 +303,37 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 f"time_exit_utc requires an intraday execution timeframe "
                 f"(daily+ bars cover every UTC minute — time exit always "
                 f"triggers, degenerate to max_hold=1), got '{exec_tf}'")
+
+    # 动态定仓（complete-research-tooling 任务 4）：position_mode 枚举
+    # {fixed, risk_budget}（None=缺省 fixed 合法）；risk_fraction (0,0.5]
+    # （bool 排除——类型防护同族）；risk_budget 组合须 stop_loss>0
+    # （止损距离是仓位公式的分母——无止损=风险预算不可定义）
+    pm_val = risk.position_mode
+    rf_val = risk.risk_fraction
+    if pm_val is not None:
+        if pm_val not in POSITION_MODES:
+            errors.append(
+                f"position_mode must be one of {list(POSITION_MODES)}, "
+                f"got {pm_val!r}")
+    if rf_val is not None:
+        if isinstance(rf_val, bool) or not isinstance(rf_val, (int, float)):
+            errors.append(
+                f"risk_fraction must be a number in ({RISK_FRACTION_MIN}, "
+                f"{RISK_FRACTION_MAX}], got {type(rf_val).__name__}")
+        elif not (RISK_FRACTION_MIN < rf_val <= RISK_FRACTION_MAX):
+            errors.append(
+                f"risk_fraction {rf_val} out of range "
+                f"({RISK_FRACTION_MIN}, {RISK_FRACTION_MAX}]")
+    if pm_val == "risk_budget":
+        if rf_val is None:
+            errors.append(
+                "position_mode='risk_budget' requires risk_fraction "
+                "(entry size = equity × risk_fraction ÷ stop distance)")
+        if not risk.stop_loss or risk.stop_loss <= 0:
+            errors.append(
+                "position_mode='risk_budget' requires stop_loss > 0 "
+                "(stop distance is the size formula denominator — "
+                "no stop = risk budget undefined)")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")

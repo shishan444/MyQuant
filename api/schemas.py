@@ -147,6 +147,10 @@ class RiskGenesModel(BaseModel):
     # 固定时刻出场（任务 6 同步铁律）：UTC 分钟 0-1439（值域权威在
     # validator——传输层不加 bound）
     time_exit_utc: Optional[int] = None
+    # 动态定仓（complete-research-tooling 任务 4 同步铁律）：枚举/值域
+    # 权威在 validator（传输层不加 bound/pattern——五键先例同款）
+    position_mode: Optional[str] = None
+    risk_fraction: Optional[float] = None
 
 
 class DNAModel(BaseModel):

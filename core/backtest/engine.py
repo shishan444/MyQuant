@@ -148,6 +148,31 @@ def _bar_ts_minutes_and_tf(index, tf: str) -> tuple:
     return bar_ts, float(TF_MINUTES.get(tf, 240))
 
 
+@njit
+def _risk_budget_qty(value_now, price, stop_dist, risk_fraction,
+                     leverage, max_exposure):
+    """风险预算定仓公式单点（complete-research-tooling 任务 4）。
+
+    入场数量 qty=当時权益×risk_fraction÷实际生效止损距离（每笔风险
+    预算恒等：qty×stop_dist=value_now×risk_fraction）；名义敞口上限
+    cap=当時权益×min(leverage, max_exposure)（与 max_exposure 同域
+    取严）——超限截断 qty=cap/price 并标记 capped。
+    入场/重放计数双消费方共用本函数（python 侧调用 njit 函数合法，
+    公式单点防两处漂移）。距离/价格/权益非正 → (0, 0)（调用方回退
+    fixed 百分比路径——防御直构 DNA 的残缺组合）。
+    """
+    if stop_dist <= 0.0 or price <= 0.0 or value_now <= 0.0 \
+            or stop_dist != stop_dist:  # NaN 防御（atr 预热期）
+        return 0.0, 0.0
+    qty = value_now * risk_fraction / stop_dist
+    cap = value_now * min(leverage, max_exposure)
+    capped = 0.0
+    if qty * price > cap:
+        qty = cap / price
+        capped = 1.0
+    return qty, capped
+
+
 def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
@@ -183,8 +208,17 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     time_exit = (float(risk_genes.time_exit_utc)
                  if risk_genes.time_exit_utc is not None
                  else -1.0)
+    # 动态定仓（complete-research-tooling 任务 4）：None/"fixed"→0.0=
+    # 百分比固定路径（逐字节不变）；"risk_budget"→1.0=风险预算档；
+    # risk_fraction None→0.0（risk_budget 档登记面已强制声明，引擎侧
+    # 缺省 0 防御直构 DNA）
+    position_mode_code = (
+        1.0 if risk_genes.position_mode == "risk_budget" else 0.0)
+    risk_fraction = (float(risk_genes.risk_fraction)
+                     if risk_genes.risk_fraction is not None else 0.0)
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
-            max_exposure, max_hold, time_exit)
+            max_exposure, max_hold, time_exit,
+            position_mode_code, risk_fraction)
 
 
 @dataclass
@@ -405,6 +439,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                   sl_stops, tp_stops, sl_modes, atr_arr,
                   exit_fractions, add_fractions, max_exposures,
                   max_holds, time_exits,
+                  position_modes, risk_fractions,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
                   bar_ts_minutes, tf_minutes,
@@ -743,9 +778,27 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
             else:
                 actual_direction = 1.0  # 空
             dir_sign = 1.0  # size 正、方向控制多空
+        # 动态定仓（任务 4）：fixed 档（含缺省 0.0）百分比路径逐字节
+        # 不变；risk_budget 档数量仓——止损距离按 sl_mode 三档分派
+        # （pct=价格×比例/atr 与 trail=比例×当根 ATR——trail 初始追踪
+        # 距离=入场 bar ATR 基准），公式单点 _risk_budget_qty；距离
+        # 不可定义（无止损/NaN）回退 fixed 百分比路径（防御直构 DNA）
+        order_size = np.float64(size_pct * dir_sign)
+        order_size_type = np.int64(2)  # 百分比仓
+        if position_modes[col] > 0.5:
+            if sl_mode < 0.5:
+                stop_dist = current_price * sl_stop
+            else:
+                stop_dist = sl_stop * atr_arr[i, col]
+            qty, capped = _risk_budget_qty(
+                c.value_now, current_price, stop_dist,
+                risk_fractions[col], leverage, max_exposures[col])
+            if qty > 0.0:
+                order_size = np.float64(qty * dir_sign)
+                order_size_type = np.int64(0)  # 数量仓
         return vbt_nb.order_nb(
-            size=np.float64(size_pct * dir_sign),
-            size_type=np.int64(2),  # 百分比仓
+            size=order_size,
+            size_type=order_size_type,
             direction=np.int64(int(actual_direction)),
             fees=effective_fee,
             slippage=effective_slippage,
@@ -803,6 +856,86 @@ class BacktestEngine:
         self.fee = fee
         self.slippage = slippage
 
+    def _position_sizing_disclosure(
+        self, dna, portfolio, enhanced_df,
+    ) -> dict:
+        """仓位口径披露六子键（complete-research-tooling 任务 4）。
+
+        {mode, risk_fraction, leverage_cap, orders_capped,
+        avg_entry_size, max_entry_size}——mode/risk_fraction 为声明
+        面；leverage_cap=min(leverage, max_exposure)（与引擎截断 cap
+        同源）；orders_capped 与 entry size 统计为 risk_budget 档
+        确定性重放（与 numba 回调共用 _risk_budget_qty 公式单点——
+        python 侧调用 njit 函数，两处公式不漂移）。ATR 距离按
+        _load_atr_column 单点自装载（与 _build_portfolio 同源——
+        装配层重载一次，重放成本可忽略）。
+
+        重放对齐假设（诚实披露）：value_now=订单 bar 前一 bar 期末
+        组合价值（portfolio.value() 曲线，首 bar 退化 init_cash）
+        ——numba 侧 c.value_now 即订单决策时点的当前组合价值。
+        """
+        rg = dna.risk_genes
+        mode = rg.position_mode or "fixed"
+        leverage_cap = min(
+            float(rg.leverage),
+            float(rg.max_exposure) if rg.max_exposure is not None else 1.0)
+        out = {
+            "mode": mode,
+            "risk_fraction": rg.risk_fraction,
+            "leverage_cap": leverage_cap,
+            "orders_capped": 0,
+            "avg_entry_size": None,
+            "max_entry_size": None,
+        }
+        if mode != "risk_budget" or rg.risk_fraction is None:
+            return out  # fixed 档：声明面即全部（size 恒定=position_size）
+        try:
+            trades = portfolio.trades.records_readable
+            if trades is None or len(trades) == 0:
+                return out
+            value_curve = portfolio.value()
+            if isinstance(value_curve, pd.DataFrame):
+                value_curve = value_curve.iloc[:, 0]
+            val_arr = value_curve.values
+            idx_positions = enhanced_df.index.get_indexer(
+                pd.DatetimeIndex(trades["Entry Timestamp"]))
+            sl_stop = float(rg.stop_loss) if rg.stop_loss else 0.0
+            atr_col = (
+                _load_atr_column(enhanced_df, int(rg.atr_period))
+                if rg.sl_mode != "pct" else None)
+            capped = 0
+            sizes = []
+            for k in range(len(trades)):
+                pos = int(idx_positions[k])
+                price = float(trades["Avg Entry Price"].iloc[k])
+                size = abs(float(trades["Size"].iloc[k]))
+                sizes.append(size)
+                if pos <= 0:
+                    value_now = float(self.init_cash)
+                else:
+                    value_now = float(val_arr[pos - 1])
+                if rg.sl_mode == "pct":
+                    stop_dist = price * sl_stop
+                else:
+                    if atr_col is None or pos >= len(atr_col):
+                        continue  # 防御——atr 装载失败理论不可达
+                    stop_dist = sl_stop * float(atr_col[pos])
+                _, hit = _risk_budget_qty(
+                    value_now, price, stop_dist, float(rg.risk_fraction),
+                    float(rg.leverage), leverage_cap)
+                capped += int(hit)
+            out["orders_capped"] = capped
+            out["avg_entry_size"] = (
+                float(np.mean(sizes)) if sizes else None)
+            out["max_entry_size"] = (
+                float(np.max(sizes)) if sizes else None)
+        except Exception:
+            logger.warning(
+                "position_sizing disclosure replay failed",
+                exc_info=True,
+            )
+        return out
+
     def _build_portfolio(
         self,
         dna: StrategyDNA,
@@ -839,7 +972,8 @@ class BacktestEngine:
         # （与 batch_run 共享——漏装即与批量路径静默分叉）；非 atr 模式
         # 占位全 1 数组（引擎不消费）
         (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
-         max_hold, time_exit) = _per_dna_risk_params(
+         max_hold, time_exit, position_mode_code, risk_fraction
+         ) = _per_dna_risk_params(
             dna.risk_genes, enhanced_df)
         # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
         # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
@@ -892,6 +1026,9 @@ class BacktestEngine:
             # 语义且与批量路径分叉，add-max-hold-exit D-3）
             np.array([max_hold], dtype=np.float64),
             np.array([time_exit], dtype=np.float64),
+            # 动态定仓两参数（任务 4——逐列常数参数族，time_exit 同款）
+            np.array([position_mode_code], dtype=np.float64),
+            np.array([risk_fraction], dtype=np.float64),
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
@@ -1010,6 +1147,16 @@ class BacktestEngine:
         sharpe = metrics["sharpe_ratio"]
         max_dd = metrics["max_drawdown"]
         win_rate = metrics["win_rate"]
+
+        # 仓位口径披露（complete-research-tooling 任务 4——纯增量键）：
+        # mode/risk_fraction/leverage_cap 声明面 + orders_capped 截断计数
+        # （risk_budget 档确定性重放——与 numba 回调共用 _risk_budget_qty
+        # 公式单点；value_now 对齐=订单 bar 前一 bar 期末组合价值，首
+        # bar 退化 init_cash——披露对齐假设）+ entry size 统计（数量仓
+        # 口径；fixed 档 size 恒定只报 mode/参数面）
+        position_sizing_disclosure = self._position_sizing_disclosure(
+            dna, portfolio, enhanced_df)
+        metrics["position_sizing"] = position_sizing_disclosure
 
         if len(equity_curve) >= 2 and equity_curve.iloc[0] > 0:
             raw_return = float(equity_curve.iloc[-1] / equity_curve.iloc[0] - 1)
@@ -1207,6 +1354,9 @@ class BacktestEngine:
         # 漏装即该列按 0 执行=与单路径静默分叉，CARD-04 同款防护）
         max_holds = np.array([p[5] for p in per_dna], dtype=np.float64)
         time_exits = np.array([p[6] for p in per_dna], dtype=np.float64)
+        # 动态定仓两参数（任务 4——单源装配追加元同款防护）
+        position_modes = np.array([p[7] for p in per_dna], dtype=np.float64)
+        risk_fractions = np.array([p[8] for p in per_dna], dtype=np.float64)
         # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
         # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe）；
         # run/batch 共用装配单点 _bar_ts_minutes_and_tf）
@@ -1238,6 +1388,8 @@ class BacktestEngine:
             max_exposures,
             max_holds,
             time_exits,
+            position_modes,
+            risk_fractions,
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,

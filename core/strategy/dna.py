@@ -196,6 +196,13 @@ class RiskGenes:
     # 固定时刻出场（任务 6）：每日 UTC 分钟时刻 0-1439 无条件全平；
     # None=未声明（引擎物化哨兵 -1.0——0 是 0:00 合法值非禁用）
     time_exit_utc: Optional[int] = None
+    # 动态定仓（complete-research-tooling 任务 4）：None=缺省 fixed
+    # （固定比例 position_size 路径逐字节不变）；"risk_budget"=风险预
+    # 算制定仓——入场 size=当時权益×risk_fraction÷实际生效止损距离
+    # （按 sl_mode 三档分派距离；须声明 stop_loss>0——登记面组合校验）
+    position_mode: Optional[str] = None
+    # 风险预算比例 (0,0.5]（risk_budget 档生效；fixed 档不消费）
+    risk_fraction: Optional[float] = None
 
     def to_dict(self) -> dict:
         # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
@@ -220,6 +227,10 @@ class RiskGenes:
             result["max_hold"] = self.max_hold
         if self.time_exit_utc is not None:
             result["time_exit_utc"] = self.time_exit_utc
+        if self.position_mode is not None:
+            result["position_mode"] = self.position_mode
+        if self.risk_fraction is not None:
+            result["risk_fraction"] = self.risk_fraction
         return result
 
     @classmethod
