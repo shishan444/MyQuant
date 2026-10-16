@@ -537,3 +537,15 @@ class TestIndicatorCountAlignment:
             assert f"内置 {count}" in src or f"{count} 项" in src \
                 or f"({count} indicators" in src, \
                 f"{path} 计数声明未携带运行时计数 {count}"
+
+
+class TestMultiTimeframeBoundaryDisclosure:
+    """任务 6：工具描述多周期边界三句（unblock-research-validation）。"""
+
+    def test_translate_and_register_docs_carry_boundary(self) -> None:
+        src = Path("mcpserver/tools.py").read_text("utf-8")
+        for token in ("when 与",
+                      "加仓触发组",
+                      "不低于策略" ,"不低于", "基准周期",
+                      "拒绝"):
+            assert token in src, f"描述缺边界要素: {token}"
