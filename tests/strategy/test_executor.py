@@ -320,3 +320,52 @@ class TestBatchResearchErrorTolerance:
             results = batch_signal_sets([dna], df)
         assert len(results) == 1
         assert any("跳过拒绝基因" in r.getMessage() for r in caplog.records)
+
+
+class TestIndicatorSupplementGuard:
+    """补注守卫的 False 侧（覆盖率盲区消解）：ResearchError.detail
+    已含 indicator 时不被调用层覆盖——防双写抹掉既有上下文。当前
+    调用链 evaluate_condition 恒不带 indicator，故经 monkeypatch
+    控制异常形制直证守卫行为。"""
+
+    @staticmethod
+    def _raiser():
+        from core.analysis.errors import ResearchError
+
+        def _raise(*args, **kwargs):
+            raise ResearchError(
+                "RESEARCH_NOT_EXPRESSIBLE", "探针",
+                detail={"condition_type": "eq", "indicator": "ORIGINAL_CTX"})
+        return _raise
+
+    def test_direct_path_keeps_existing_indicator(self, monkeypatch):
+        """直译路径：detail 已含 indicator=ORIGINAL_CTX → 原样透出
+        （不被 gene.indicator 覆盖为 RSI）。"""
+        from core.strategy import executor as executor_mod
+
+        monkeypatch.setattr(executor_mod, "evaluate_condition",
+                            self._raiser())
+        df = make_enhanced_df(n=30)
+        dna = make_dna()
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        assert exc_info.value.detail["indicator"] == "ORIGINAL_CTX"
+
+    def test_batch_path_keeps_existing_indicator(self, monkeypatch, caplog):
+        """batch 路径同款守卫：detail 内既有 indicator 保留
+        ORIGINAL_CTX 不被 gene.indicator 覆盖；warning 的 indicator=
+        打 gene 名（披露拒绝发生在哪个基因，与 detail 补注两回事）。"""
+        from core.strategy import executor as executor_mod
+
+        monkeypatch.setattr(executor_mod, "evaluate_condition",
+                            self._raiser())
+        df = make_enhanced_df(n=60)
+        dna = make_dna()
+        with caplog.at_level(logging.WARNING, logger="core.strategy.executor"):
+            results = batch_signal_sets([dna], df)
+        assert len(results) == 1, "整批完成"
+        rec = next(r for r in caplog.records
+                   if "跳过拒绝基因" in r.getMessage())
+        msg = rec.getMessage()
+        assert "indicator=RSI" in msg, "warning 披露 gene 名"
+        assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"

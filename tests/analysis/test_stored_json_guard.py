@@ -185,6 +185,18 @@ class TestAuthorityKeyBlacklist:
         assert out["direction"] == "short"  # 合法二值原样回显
         assert not caplog.records
 
+    def test_result_json_non_dict_guarded(self, db, data_dir):
+        """result_json 为合法 JSON 但非 dict（如数组——load_stored_json
+        只拦解析失败不拦形制）：isinstance 守卫兜住不炸，权威三键仍
+        正确、direction 收敛 long（防御分支行为锁定——非 dict 内容
+        不参与合并，result 内嵌键缺席如实缺席）。"""
+        out = self._dup_with_result(db, "[1, 2, 3]")
+        assert out["record_id"] == "rec_auth"
+        assert out["verdict"] == "pass"
+        assert out["duplicated"] is True
+        assert out["direction"] == "long"
+        assert "metrics" not in out  # 非 dict 无可合并键
+
 
 class TestHypothesisJsonCorrupt:
     """假设 conditions / data_ranges 损坏 → 翻译结构化拒绝。"""

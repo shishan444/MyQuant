@@ -419,13 +419,17 @@ class TestBacktestGaps:
                            "position_size": 0.3},
         }
 
-    def test_legacy_fallback_skips_unknown_indicator(
+    def test_legacy_fallback_unknown_indicator_rejected(
         self, api_client: TestClient,
     ) -> None:
-        """enhanced 未命中走 legacy：非法基因指标 except continue 不炸。
+        """enhanced 未命中走 legacy：非法基因指标经端点结构化拒绝。
 
         data_start/end 收窄使区间内 bar 数 < load_and_prepare_df 的
         min_bars（50）→ enhanced None → legacy 裸 df 路径。
+        unify-tool-return-contract D7 列解析收口（+CARD-08 端点传播
+        配套）后：非法基因从「continue 跳过零信号完成 200」变为
+        422 结构化拒绝（RESEARCH_CONDITION_INVALID）——旧行为锚随
+        修复退役，测试同步改正确行为。
         """
         make_ohlcv(120, "4h").to_parquet(
             api_client.app.state.data_dir / "FALLBK_4h.parquet")
@@ -435,8 +439,10 @@ class TestBacktestGaps:
                   "symbol": "FALLBK", "timeframe": "4h",
                   "data_start": "2024-01-01", "data_end": "2024-01-08"},
         )
-        # 指标列缺失的策略在引擎内零信号完成（非法基因被 continue 跳过）
-        assert response.status_code == 200
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert detail["code"] == "RESEARCH_CONDITION_INVALID"
+        assert detail["detail"]["indicator"] == "NOSUCHIND"
 
     def test_timeframe_pool_elif_loads_mtf(self, api_client: TestClient) -> None:
         """非 MTF DNA + timeframe_pool 多值 → elif 装载分支。"""
