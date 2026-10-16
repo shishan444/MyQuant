@@ -705,12 +705,20 @@ def run_sandbox_backtest(
 def _missing_component_evidence(
     db_path: Path, plugin_sources: List[Dict[str, Any]],
 ) -> List[str]:
-    """缺独立分量验证记录（level=component、params.column 匹配）的源清单。
+    """缺分量证据的源清单（双源判据——Q3 用户裁决 (a)∪(b)）。
 
-    分量证据须 verdict=pass（0.2.11 D3 收紧——fail/inconclusive 的分量
-    记录不算有效证据，组合加严门不开后门；当前无 component 级写入点，
-    收紧落在查询语义上、零行为差异）。
+    (a) 研究日志 component_eval 记录（summary.columns 精确字符串
+        相等——unblock-research-validation B 段翻译试算的供给面，
+        「翻译过=有记录」不变式）；
+    (b) 既有 validation_records level=component 且 verdict=pass
+    （params.column 匹配——查询面原样保留；verdict=pass 过滤保持
+    0.2.11 D3 收紧语义）。
+    放行=任一源命中；拦截=双无（全新未执行列）。「或活跃且被引用」
+    恒真分支不复活（语义锚——design 明文移除）。model 列组件维持
+    拦截（本包解禁范围=formula 线：试算不写 model 记录，双源皆无
+    恒拦——已知行为边界）。
     """
+    # (b) 源：component 级 pass 记录
     component_records = [
         r for r in iter_all_pages(
             lambda off, lim: rr.list_validation_records(
@@ -724,6 +732,18 @@ def _missing_component_evidence(
             evidenced.add(params.get("column"))
         except (json.JSONDecodeError, TypeError):
             continue
+    # (a) 源：component_eval 研究日志（翻译试算写入）
+    for entry in iter_all_pages(
+            lambda off, lim: rr.list_research_log(
+                db_path, entry_type="component_eval",
+                offset=off, limit=lim)):
+        try:
+            summary = json.loads(entry.get("summary") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        cols = summary.get("columns")
+        if isinstance(cols, list):
+            evidenced.update(c for c in cols if isinstance(c, str))
     return [s["ref"] for s in plugin_sources if s["ref"] not in evidenced]
 
 

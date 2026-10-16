@@ -116,7 +116,9 @@ def _guard_condition_timeframe(
     from core.data.mtf_alignment import assert_higher_tf
 
     for i, c in enumerate(conds):
-        if not isinstance(c, dict) or "timeframe" not in c:
+        # null 值键=无标记（与登记面 c.get("timeframe") is None 同语义
+        # ——显式 null 不视作标记，键保留但跳过校验）
+        if not isinstance(c, dict) or c.get("timeframe") is None:
             continue
         tf_key = c["timeframe"]
         field_name = f"{group}_conditions[{i}].timeframe"
@@ -221,12 +223,156 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
            if k in declared and declared[k] is not None})
 
 
+def _run_formula_trial(
+    db_path: Path, formula_refs, rng, data_dir,
+) -> int:
+    """公式组件试算核心（任务 8/9 共用单点——三命中点补试算同源）。
+
+    在 rng 区间最小装载（warmup 按组件 lookback）逐组件求值
+    （enrich_with_plugin_columns 单元复用）；成功返回 evaluated_bars，
+    失败抛 ResearchError（调用方决定拒绝或降级语义）。
+    """
+    from core.analysis.plugin_service import (
+        enrich_with_plugin_columns, plugin_columns_lookback)
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    from core.data.storage import load_parquet
+    from core.analysis.warmup_loader import TF_MINUTES
+    import pandas as pd
+
+    path = find_parquet(Path(data_dir), safe_symbol(rng["symbol"]),
+                        rng["timeframe"])
+    if path is None:
+        raise ResearchError(
+            "RESEARCH_SYMBOL_NOT_FOUND",
+            f"公式组件试算数据不可达: {rng['symbol']} {rng['timeframe']}",
+            detail={"data_range": rng, "reason": "no_parquet"})
+    df = load_parquet(path)
+    if df is None or len(df) == 0:
+        raise ResearchError(
+            "RESEARCH_SYMBOL_NOT_FOUND",
+            f"公式组件试算数据不可装载: {rng['symbol']} {rng['timeframe']}",
+            detail={"data_range": rng, "reason": "empty_parquet"})
+    warmup = plugin_columns_lookback(db_path, set(formula_refs))
+    tf_minutes = TF_MINUTES.get(rng["timeframe"], 240)
+    need_rows = min(len(df), max(warmup + 8, 32))
+    head = df.iloc[:need_rows].copy()
+    try:
+        enriched = enrich_with_plugin_columns(
+            db_path, head, set(formula_refs))
+    except ResearchError:
+        raise
+    except Exception as exc:
+        raise ResearchError(
+            "RESEARCH_CONDITION_INVALID",
+            f"公式组件试算失败: {sorted(formula_refs)}",
+            detail={"columns": sorted(formula_refs),
+                    "error": str(exc)[:200]}) from exc
+    # 逐组件列在场且非全 NaN（evaluated_bars>0 语义）
+    for col in formula_refs:
+        series = enriched[col] if col in getattr(enriched, "columns", []) \
+            else None
+        evaluated = (int(series.notna().sum())
+                     if series is not None else 0)
+        if evaluated <= 0:
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"公式组件试算零产出: {col}",
+                detail={"column": col, "reason": "all_nan"})
+    return need_rows
+
+
+def _write_component_eval(db_path, strategy_id, formula_refs, rng, bars):
+    """component_eval 记录写入（任务 8/9 共用单点）。"""
+    from core.persistence.repository import research as rr
+    rr.append_research_log(
+        db_path, hypothesis_id=None,
+        entry_type="component_eval",
+        ref_id=strategy_id,
+        data_ranges=json.dumps(rng, ensure_ascii=False),
+        summary=json.dumps(
+            {"columns": sorted(formula_refs), "source": "formula",
+             "evaluated_bars": bars},
+            ensure_ascii=False))
+
+
+def _backfill_component_eval(
+    db_path: Path, strategy_id: str, row, data_ranges, data_dir,
+) -> None:
+    """三命中点补试算（任务 9：谱系幂等/active 分流/draft 分流）。
+
+    「翻译过=有记录」不变式覆盖存量：命中既有策略时，其 formula
+    组件若无 component_eval 记录（试算上线前入库的存量）则补试算
+    写记录（ref_id=命中策略 id）。失败语义三处一致：不阻断返回 +
+    logger.warning + 不写（门禁兜底拦截）。
+    """
+    try:
+        from core.persistence.repository import research as rr
+        logs = rr.list_research_log(
+            db_path, entry_type="component_eval", limit=1)
+        # 精确判定：该策略 id 已有记录则跳过（list 过滤面无 ref_id
+        # 参数——按全量日志扫描 ref_id 精确匹配）
+        all_logs = rr.list_research_log(db_path, limit=500)
+        if any(e.get("entry_type") == "component_eval"
+               and e.get("ref_id") == strategy_id for e in all_logs):
+            return
+        from core.strategy.dna import StrategyDNA
+        dna_obj = StrategyDNA.from_json(row.get("dna_json") or "{}")
+        refs = [s["ref"] for s in (dna_obj.signal_sources or [])
+                if s.get("type") == "formula" and s.get("ref")]
+        if not refs:
+            return
+        rng = next((r for r in (data_ranges or [])
+                    if isinstance(r, dict) and r.get("symbol")
+                    and r.get("timeframe")), None)
+        if rng is None or data_dir is None:
+            return  # 无区间可试——门禁兜底
+        bars = _run_formula_trial(db_path, refs, rng, data_dir)
+        _write_component_eval(db_path, strategy_id, refs, rng, bars)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "补试算失败（不阻断返回，门禁兜底）: strategy=%s",
+            strategy_id, exc_info=True)
+
+
+def _component_precheck(
+    db_path: Path, dna, data_ranges, plugin_sources, data_dir,
+) -> None:
+    """组件装载试算（unblock-research-validation B 段任务 8）。
+
+    仅含 formula 组件产物执行（model 组件不试算不写——walk-forward
+    训练窗自理，门禁 model 线维持拦截为已知行为边界）。逐组件在
+    data_ranges 首区间最小装载试算（_run_formula_trial 共用单点）：
+    成功 → _write_component_eval（门禁双源判据 (a) 源的记录供给，
+    「翻译过=有记录」不变式）；失败 → 翻译整体拒绝（不可求值的
+    draft 是死策略）。
+    """
+    formula_refs = [s["ref"] for s in (plugin_sources or [])
+                    if s.get("type") == "formula" and s.get("ref")]
+    if not formula_refs:
+        return
+    rng = next((r for r in (data_ranges or [])
+                if isinstance(r, dict) and r.get("symbol")
+                and r.get("timeframe")), None)
+    if rng is None or data_dir is None:
+        raise ResearchError(
+            "RESEARCH_CONDITION_INVALID",
+            "公式组件试算不可执行（区间或数据目录不可得）",
+            detail={"data_range": rng, "reason":
+                    "no_valid_range" if rng is None else "data_dir_unavailable"})
+    bars = _run_formula_trial(db_path, formula_refs, rng, data_dir)
+    _write_component_eval(
+        db_path, str(getattr(dna, "strategy_id", None) or ""),
+        formula_refs, rng, bars)
+
+
 def translate_hypothesis(
     db_path: Path,
     *,
     hypothesis_id: str,
     strategy_symbol: str = "BTCUSDT",
     strategy_timeframe: str = "4h",
+    data_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """把 active 假设转化为**草稿策略**（draft，验证对象；不要求 pass 前置）。
 
@@ -267,6 +413,19 @@ def translate_hypothesis(
     # 幂等：谱系中 draft 产物存在即返回（转正后无 draft，可对新假设重译）
     existing_draft = _find_draft_by_parent(db_path, hypothesis_id)
     if existing_draft is not None:
+        # 三命中点补试算①（谱系幂等）：存量 draft 组件无记录则补
+        # （本分支在 data_ranges 解析前——就地解析补试算所需区间）
+        from core.persistence.repository.strategy import get_strategy
+        try:
+            hit_ranges = load_stored_json(
+                hyp["data_ranges"], source="research_hypotheses.data_ranges",
+                detail={"hypothesis_id": hypothesis_id})
+        except (ResearchError, TypeError, KeyError):
+            hit_ranges = []
+        _backfill_component_eval(
+            db_path, existing_draft,
+            get_strategy(db_path, existing_draft) or {},
+            hit_ranges, data_dir)
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
@@ -399,6 +558,10 @@ def translate_hypothesis(
         # 恰等于平台默认时仍须标 declared（「有声明→declared」，review-042
         # CARD-03：按九字段与默认全等判会把同一声明标成 platform_default）
         _identity = _identity_reflection(active_hit)
+        # 三命中点补试算②（active 分流）
+        _backfill_component_eval(
+            db_path, active_hit["strategy_id"], active_hit,
+            data_ranges, data_dir)
         return {"strategy_id": active_hit["strategy_id"],
                 "status": active_hit.get("status") or "active",
                 "duplicated": False, "same_dna_existing": True,
@@ -412,6 +575,10 @@ def translate_hypothesis(
         None)
     if draft_hit is not None:
         _identity = _identity_reflection(draft_hit)
+        # 三命中点补试算③（draft 分流）
+        _backfill_component_eval(
+            db_path, draft_hit["strategy_id"], draft_hit,
+            data_ranges, data_dir)
         return {"strategy_id": draft_hit["strategy_id"], "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
@@ -419,6 +586,12 @@ def translate_hypothesis(
                     _identity["direction"], _identity["max_hold"], False)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
+    # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
+    # 仅含 formula 组件产物执行）——成功写 component_eval 记录（门禁
+    # 双源 (a) 源），失败整体拒绝；ref_id=产物策略 id（先定 id 再试算
+    # 落库——试算拒绝时 id 不落库无副作用）
+    dna.strategy_id = strategy_id
+    _component_precheck(db_path, dna, data_ranges, plugin_sources, data_dir)
     from core.persistence.repository.strategy import save_strategy
     save_strategy(
         db_path, strategy_id=strategy_id,

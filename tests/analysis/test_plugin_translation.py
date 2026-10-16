@@ -53,6 +53,16 @@ def db(tmp_path: Path) -> Path:
     return d
 
 
+@pytest.fixture()
+def data_dir(tmp_path: Path) -> Path:
+    """试算装载目录（unblock-research-validation 起 translate 需
+    data_dir——公式组件试算在 data_ranges 首区间最小装载）。"""
+    d = tmp_path / "market"
+    d.mkdir()
+    _df(400).to_parquet(d / "BTCUSDT_4h.parquet")
+    return d
+
+
 def _plugin(db, name="mom", expression="zscore(close, 20)") -> str:
     """注册测试公式插件，返回其信号列名。"""
     return register_formula_plugin(
@@ -84,14 +94,14 @@ def _dna_of(db, strategy_id) -> StrategyDNA:
 
 
 class TestPluginTranslation:
-    def test_plugin_condition_translates_to_formula_source(self, db):
+    def test_plugin_condition_translates_to_formula_source(self, db, data_dir):
         """纯插件列假设：条件翻译为 formula 源（ref/threshold/operator），
         不产 rule 基因，组合层 logic and（插件源即全部条件）。"""
         col = _plugin(db)
         # 登记域强制 then 非空，纯插件最小形态（when=[插件]/then=[]）
         # 经直落假设行构造——翻译器输入契约是库内假设行
         hid = _raw_hyp(db, when=[{"subject": col, "action": "gt", "target": 0.5}])
-        out = translate_hypothesis(db, hypothesis_id=hid)
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         assert out["status"] == "draft"
         dna = _dna_of(db, out["strategy_id"])
         assert dna.signal_genes == []
@@ -100,7 +110,7 @@ class TestPluginTranslation:
         assert dna.composition == {"mode": "logic", "op": "and"}
         assert hid in dna.parent_ids, "谱系回链"
 
-    def test_mixed_conditions_compose_and(self, db):
+    def test_mixed_conditions_compose_and(self, db, data_dir):
         """混合假设：内置条件照旧进 rule 基因，插件条件成 formula 源，
         composition logic AND（合取语义，不发明优先级）。"""
         col = _plugin(db)
@@ -108,7 +118,7 @@ class TestPluginTranslation:
             {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35},
             {"subject": col, "action": "gt", "target": 0.5},
         ], then=[{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}])
-        out = translate_hypothesis(db, hypothesis_id=hid)
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         dna = _dna_of(db, out["strategy_id"])
         # 内置条件全部进基因（when 入场 + then 出场，语义不变）
         assert [g.field_name for g in dna.signal_genes] == ["rsi", "rsi"]  # N4 语义名
@@ -121,32 +131,32 @@ class TestPluginTranslation:
         ("action", "operator"),
         [("gt", ">"), ("lt", "<"), ("ge", ">="), ("le", "<=")],
     )
-    def test_operator_mapping_four_actions(self, db, action, operator):
+    def test_operator_mapping_four_actions(self, db, data_dir, action, operator):
         """四种数值比较 action 的 operator 映射保真（lt/le 不被吞成 >）。"""
         col = _plugin(db)
         hid = _raw_hyp(db, when=[
             {"subject": col, "action": action, "target": 1.25}])
-        out = translate_hypothesis(db, hypothesis_id=hid)
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         src = _dna_of(db, out["strategy_id"]).signal_sources[0]
         assert src == {"type": "formula", "ref": col,
                        "threshold": 1.25, "operator": operator}
 
-    def test_plugin_cross_above_rejected(self, db):
+    def test_plugin_cross_above_rejected(self, db, data_dir):
         """穿越类 action 作用于插件列：显式拒绝并指明需数值比较。"""
         col = _plugin(db)
         hid = _raw_hyp(db, when=[
             {"subject": col, "action": "cross_above", "target": 0.5}])
         with pytest.raises(ResearchError, match="插件列暂不支持该 action"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
-    def test_plugin_non_numeric_target_rejected(self, db):
+    def test_plugin_non_numeric_target_rejected(self, db, data_dir):
         col = _plugin(db)
         hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
                                   "target": "ema_50"}])
         with pytest.raises(ResearchError, match="target 须为数值"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
-    def test_then_plugin_condition_rejected(self, db):
+    def test_then_plugin_condition_rejected(self, db, data_dir):
         """THEN 插件列显式拒绝（出场组合待后续版本；不静默误译为
         入场门控——出场语义颠倒比拒绝更糟）。"""
         col = _plugin(db)
@@ -159,15 +169,15 @@ class TestPluginTranslation:
                        then=[{"subject": col, "action": "gt", "target": 0.5}])
         # 0.4.2 R3 文案泛化（覆盖分批组）："暂不支持出场"→"仅支持入场"
         with pytest.raises(ResearchError, match="then_conditions.*仅支持\n?\s*入场信号源"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
-    def test_stale_plugin_column_rejected(self, db):
+    def test_stale_plugin_column_rejected(self, db, data_dir):
         """失效插件列（注册表曾有判定路径但列不存在）：拒绝且文案
         含「插件」与「失效」，区别于基础列/未知列。"""
         hid = _raw_hyp(db, when=[{"subject": "fx_ghost", "action": "gt",
                                   "target": 0.5}])
         with pytest.raises(ResearchError, match="插件列 subject（fx_ghost）已失效"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
     @pytest.mark.parametrize("col", [
         "open", "high", "low", "volume", "trades",
@@ -182,9 +192,9 @@ class TestPluginTranslation:
         with pytest.raises(
                 ResearchError,
                 match=f"内置基础列 subject（{col}）不可表达为"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
-    def test_close_numeric_target_new_message(self, db):
+    def test_close_numeric_target_new_message(self, db, data_dir):
         """B1-T07（三段格局第二段）：close+lt/gt+数值 target——
         引导文案改写为「现仅支持编码列名 target」，与 ge/le 新文案
         （T06）可辨；不再落笼统基础列拒绝文案。"""
@@ -193,7 +203,7 @@ class TestPluginTranslation:
         with pytest.raises(
                 ResearchError,
                 match="close 基础列主体现仅支持编码列名 target") as ei:
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         # team3 reviewer 发现 2 修正：断言对象=实际异常消息（原字面量
         # 自断言恒真）——确认不落笼统基础列文案
         assert "内置基础列" not in ei.value.message
@@ -201,14 +211,14 @@ class TestPluginTranslation:
         hid2 = _raw_hyp(db, when=[{"subject": "definitely_not_a_column",
                                    "action": "gt", "target": 1}])
         with pytest.raises(ResearchError, match="字符串 subject.*definitely_not_a_column"):
-            translate_hypothesis(db, hypothesis_id=hid2)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid2)
 
-    def test_bare_indicator_prefix_rejected_as_builtin(self, db):
+    def test_bare_indicator_prefix_rejected_as_builtin(self, db, data_dir):
         """指标前缀本身（rsi 无参数后缀）非参数化形制：仍拒绝。"""
         hid = _raw_hyp(db, when=[{"subject": "rsi", "action": "gt",
                                   "target": 50}])
         with pytest.raises(ResearchError, match="不可表达"):
-            translate_hypothesis(db, hypothesis_id=hid)
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
 
 class TestAssemblyOperatorCompat:
@@ -219,7 +229,7 @@ class TestAssemblyOperatorCompat:
         return [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
                            "rsi_14", {"type": "lt", "threshold": 35})]
 
-    def test_default_operator_backward_compatible(self, db):
+    def test_default_operator_backward_compatible(self, db, data_dir):
         """无 operator 字段的源行为不变（">"，既有 weighted_vote 用例
         语义不变）。"""
         col = _plugin(db)
@@ -264,7 +274,7 @@ class TestAssemblyOperatorCompat:
             series.astype(float), threshold).fillna(False)
         assert sig.entries.equals(expected.astype(bool))
 
-    def test_pure_plugin_neutral_baseline(self, db):
+    def test_pure_plugin_neutral_baseline(self, db, data_dir):
         """无规则源（纯插件条件策略）：AND 单位元基线——entries 即
         插件布尔本身，不被空 rule 基因的全 False 静默作废。"""
         col = _plugin(db)
@@ -329,3 +339,131 @@ class TestGeneSignatureCoversSources:
         assert len({a.gene_signature, other_ref.gene_signature,
                     other_op.gene_signature}) == 3, \
             "ref/threshold/operator 任一不同即不同基因型"
+
+
+class TestComponentTrialAndEvidence:
+    """T7/T7f'/T8：组件试算+三命中点补试算+门禁双源
+    （unblock-research-validation B 段）。"""
+
+    def _component_logs(self, db, ref_id=None):
+        return [e for e in rr.list_research_log(
+            db, entry_type="component_eval", limit=200)
+            if ref_id is None or e.get("ref_id") == ref_id]
+
+    def test_t7b_record_shape(self, db, data_dir):
+        """T7b 记录形制逐键：entry_type/ref_id/summary.columns/source/
+        evaluated_bars>0。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        logs = self._component_logs(db, out["strategy_id"])
+        assert logs, "翻译过=有记录（不变式）"
+        summary = json.loads(logs[0]["summary"])
+        assert summary["columns"] == [col]
+        assert summary["source"] == "formula"
+        assert summary["evaluated_bars"] > 0
+
+    def test_t7c_pure_rule_zero_log(self, db, data_dir):
+        """T7c 纯 rule 产物零留痕（无 formula 组件不试算）。"""
+        hid = _hyp(db, when=[{"subject": {"indicator": "RSI",
+                                          "params": {"period": 14}},
+                              "action": "lt", "target": 35}],
+                   then=[{"subject": {"indicator": "RSI",
+                                      "params": {"period": 30}},
+                          "action": "gt", "target": 60}])
+        translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        assert self._component_logs(db) == []
+
+    def test_t7d_failed_trial_rejects_translation(self, db, data_dir):
+        """T7d 试算失败翻译整体拒（坏表达式组件——zscore 窗口参数
+        越界形（表达式合法注册但求值崩）不可求值的 draft 是死策略）。"""
+        # 表达式静态校验面很全（未知标识符/窗口越界注册即拒）——真实
+        # 失败面经坏数据构造：parquet 缺 close 列（表达式引用 close，
+        # 注册静态校验通过、试算装载求值崩）
+        bad_dir = data_dir.parent / "bad_market"
+        bad_dir.mkdir()
+        bad_df = _df(60).drop(columns=["close"])
+        bad_df.to_parquet(bad_dir / "BTCUSDT_4h.parquet")
+        col = _plugin(db)  # zscore(close, 20)——静态合法
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, data_dir=bad_dir, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_t7h_range_unavailable_rejects(self, db, tmp_path):
+        """T7h 区间不可得拒（data_dir=None 附 reason）。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)  # 不传 data_dir
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert ei.value.detail["reason"] == "data_dir_unavailable"
+
+    def test_t7f_prime_three_hitpoints_backfill(self, db, data_dir):
+        """T7f' 三命中点补试算：存量 draft（试算上线前形态——抹掉
+        component_eval 记录模拟）经谱系幂等重译补记录。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        sid = out["strategy_id"]
+        assert self._component_logs(db, sid)  # 首译已写
+        # 模拟存量：直删日志行（无 update——构造无记录态重演）
+        from core.persistence.repository.research import _engine_for, ResearchLog
+        from sqlalchemy import delete
+        with _engine_for(db).begin() as conn:
+            conn.execute(delete(ResearchLog).where(
+                ResearchLog.entry_type == "component_eval"))
+        assert self._component_logs(db) == []
+        replay = translate_hypothesis(db, data_dir=data_dir,
+                                      hypothesis_id=hid)  # 谱系幂等命中点
+        assert replay["strategy_id"] == sid
+        assert self._component_logs(db, sid), "命中点补试算写记录"
+
+    def test_t8a_source_releases_gate(self, db, data_dir):
+        """T8a 门禁 (a) 源放行：翻译即产 component_eval 记录 →
+        组合策略验证不被组件证据门禁拦截（原 GAP-09 死锁解除锚）。"""
+        col = _plugin(db)
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        from core.analysis.validation_service import _missing_component_evidence
+        missing = _missing_component_evidence(db, [
+            {"type": "formula", "ref": col}])
+        assert missing == [], f"(a) 源应放行，missing={missing}"
+
+    def test_t8_both_missing_blocked(self, db, tmp_path):
+        """T8 双无拦截：全新未注册执行列（无记录无 component pass）
+        ——手工 DNA 直查门禁。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        missing = _missing_component_evidence(db, [
+            {"type": "formula", "ref": "fx_never_evaluated"}])
+        assert missing == ["fx_never_evaluated"]
+
+    def test_t8b_source_releases_and_precise_match(self, db, data_dir):
+        """T8 (b) 源放行+精确匹配边界：手工 component pass 记录命中
+        foo；foo_v2 前缀相似仍拦。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        rr.save_validation_with_log(
+            db, record_id="rec_comp_b", hypothesis_id="adhoc",
+            strategy_id="st_x", level="component",
+            params=json.dumps({"column": "foo"}),
+            result=None, verdict="pass", range_hash="rh_b")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "foo"}]) == []
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "foo_v2"}]) == ["foo_v2"]
+
+    def test_t8_verdict_pass_filter_kept(self, db, tmp_path):
+        """T8 verdict=pass 过滤保持：fail 的 component 记录不算证据。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        rr.save_validation_with_log(
+            db, record_id="rec_comp_fail", hypothesis_id="adhoc",
+            strategy_id="st_x", level="component",
+            params=json.dumps({"column": "bar"}),
+            result=None, verdict="fail", range_hash="rh_f")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": "bar"}]) == ["bar"]
