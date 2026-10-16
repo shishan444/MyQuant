@@ -634,3 +634,80 @@ class TestBackfillHitPoints:
         assert self._component_log_refs(db) == [], "失败不写记录"
         assert any("补试算失败" in r.getMessage() for r in caplog.records), \
             "失败 warn 披露"
+
+
+class TestTranslationDefenseEdgeCover:
+    """纵深防御边缘（tester 补——覆盖率核验暴露的改动行缺口，
+    均契约面）：翻译面 tf==base 归一剥离 / 空 parquet 试算拒 /
+    补试算幂等跳过（DEV-3 修复行为面）。"""
+
+    def test_translation_side_base_tf_normalization_direct_row(self, env=None):
+        """翻译面归一（独立于登记面 canonical 化）：直落假设行带
+        tf==基准（绕过登记面）→ 翻译归一剥离键，基因无 timeframe
+        ——spec 双层同语义的第二层直证。"""
+        import json as _json
+        import uuid as _uuid
+        from pathlib import Path
+        import tempfile
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+        tmp = Path(tempfile.mkdtemp())
+        db = tmp / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        when = {"subject": {"indicator": "RSI", "params": {"period": 14},
+                            "field": "rsi"}, "action": "lt", "target": 55,
+                "timeframe": "4h"}          # ==策略基准 4h
+        hid = f"hyp_{_uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid,
+            conditions=_json.dumps({"when_conditions": [when],
+                                    "then_conditions": []}),
+            conditions_hash=_uuid.uuid4().hex, statement="s",
+            data_ranges=_json.dumps([
+                {"symbol": "BTCUSDT", "timeframe": "4h",
+                 "start": "2024-01-01T00:00:00Z",
+                 "end": "2024-02-01T00:00:00Z"}]),
+            ranges_hash=_uuid.uuid4().hex)
+        out = translate_hypothesis(db, hypothesis_id=hid,
+                                   strategy_timeframe="4h")
+        genes = _json.loads(
+            get_strategy(db, out["strategy_id"])["dna_json"]
+        )["signal_genes"]
+        assert genes and "timeframe" not in genes[0], \
+            "翻译面 tf==基准归一剥离（登记面之外的第二层同语义）"
+
+    def test_empty_parquet_trial_rejected(self, db, tmp_path):
+        """空 parquet（0 bar）→ 试算数据不可装载结构化拒
+        （reason=empty_parquet——与 no_parquet/数据目录缺省分立）。"""
+        col = _plugin(db)
+        void = tmp_path / "void2_market"
+        void.mkdir()
+        pd.DataFrame(columns=["open", "high", "low", "close", "volume"]
+                     ).to_parquet(void / "BTCUSDT_4h.parquet")
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, data_dir=void, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+        assert ei.value.detail["reason"] == "empty_parquet"
+
+    def test_backfill_idempotent_skip_when_recorded(self, db, data_dir):
+        """补试算幂等跳过：命中策略已有 component_eval 记录 → 重译
+        命中不重复写（记录条数不变——DEV-3 修复的行为面）。"""
+        col = _plugin(db, name="mom_idem")
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        sid = out["strategy_id"]
+        before = len([e for e in rr.list_research_log(
+            db, entry_type="component_eval", limit=200)
+            if e.get("ref_id") == sid])
+        assert before >= 1
+        again = translate_hypothesis(db, data_dir=data_dir,
+                                     hypothesis_id=hid)
+        assert again["strategy_id"] == sid
+        after = len([e for e in rr.list_research_log(
+            db, entry_type="component_eval", limit=200)
+            if e.get("ref_id") == sid])
+        assert after == before, "已有记录命中不重复写（幂等）"

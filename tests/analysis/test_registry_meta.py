@@ -181,3 +181,30 @@ class TestGeneLevelTfWarmup:
         from core.analysis.registry_meta import WARMUP_RULE_TEXT
         assert "基因级周期维度" in WARMUP_RULE_TEXT
         assert "折算" in WARMUP_RULE_TEXT
+
+
+class TestGeneTfAxisRefsTargetUnion:
+    """T5 补（tester 补——覆盖率核验暴露）：cross_*_series 型基因的
+    target_indicator 并入基因级轴引用清单（契约：refs=基因
+    (indicator, params) 含 target_indicator 并集——目标轴指标同样
+    须在高周期轴收敛，缺则高周期轴 warmup 虚低）。"""
+
+    def test_t5_target_indicator_joins_axis_refs(self, tmp_path):
+        from core.analysis.validation_service import _gene_tf_axis_refs
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
+        )
+        from tests.helpers.data_factory import make_signal_gene
+        g = make_signal_gene(condition_type="lt", condition_value=30)
+        g.condition = {"type": "cross_above_series",
+                       "target_indicator": "EMA",
+                       "target_params": {"period": 100}}
+        g.timeframe = "1d"
+        dna = StrategyDNA(
+            signal_genes=[g], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        axis = _gene_tf_axis_refs(dna)
+        assert axis["1d"][0] == ("RSI", {"period": 14}), "主指标在轴清单"
+        assert ("EMA", {"period": 100}) in axis["1d"], \
+            "target_indicator 并入轴引用（高周期轴目标列同收敛）"
