@@ -115,38 +115,56 @@ def _looks_like_encoded(name: str) -> bool:
 _INTRADAY_MINUTES_MAX = 720  # 12h 及更细粒度为日内；1d=1440 拒
 
 
-def _check_base_column_domain(column: str, base_tf) -> None:
-    """带域元数据基础列的周期域校验（任务 7 单点）。
+def is_intraday_timeframe(tf: str) -> bool:
+    """周期是否日内（≤12h——intraday_only 列引用域的判定单源，与
+    _check_base_column_domain 同一上界常量；未知周期 False 保守，
+    值域校验归 TIMEFRAME_UNKNOWN 链）。"""
+    from core.data.timeframes import TF_SECONDS
+    sec = TF_SECONDS.get(tf)
+    return sec is not None and sec <= _INTRADAY_MINUTES_MAX * 60
 
-    现唯一域标记 intraday_only（hour_utc）：base_tf 周期分钟 >
-    _INTRADAY_MINUTES_MAX 时拒绝（日线及以上引用小时列无意义——
-    每日一 bar 值恒定）；base_tf None/未知周期跳过（兼容面——
-    供给方三面各自传执行周期）。
+
+def _check_base_column_domain(column: str, base_tf, ref_tf=None) -> None:
+    """带域元数据基础列的周期域校验（任务 7 单点；D-6② 引用周期语义）。
+
+    现唯一域标记 intraday_only（hour_utc）：校验对象=引用周期
+    （ref_tf 优先——条件带 timeframe 时该 tf 即求值轴；无修饰回退
+    base_tf）；引用周期分钟 > _INTRADAY_MINUTES_MAX 时拒绝（日线
+    及以上引用小时列无意义——每日一 bar 值恒定）；两者皆 None/
+    未知周期跳过（兼容面——供给方三面各自传执行周期）。
     """
     meta = BASE_SUBJECT_COLUMNS.get(column)
-    if not meta or not meta.get("intraday_only") or base_tf is None:
+    if not meta or not meta.get("intraday_only"):
+        return
+    eff_tf = ref_tf or base_tf
+    if eff_tf is None:
         return
     from core.data.timeframes import TF_SECONDS
-    minutes = TF_SECONDS.get(base_tf)
-    if minutes is None:
+    sec = TF_SECONDS.get(eff_tf)
+    if sec is None:
         return
-    if minutes / 60.0 > _INTRADAY_MINUTES_MAX:
+    if sec / 60.0 > _INTRADAY_MINUTES_MAX:
         raise ColumnRefError(
             "PARAM_INVALID",
-            f"{column} 为日内列（intraday_only），基准周期 {base_tf} "
+            f"{column} 为日内列（intraday_only），引用周期 {eff_tf} "
             "（日线及以上）不可引用——每日一 bar 下该列值恒定无意义",
-            detail={"column": column, "base_tf": base_tf,
-                    "domain": "intraday_only",
-                    "hint": "换 12h 及以下周期，或改用其他基础列"})
+            detail={"column": column, "ref_tf": eff_tf,
+                    "base_tf": base_tf, "domain": "intraday_only",
+                    "hint": "时刻列的求值轴必须是日内周期"
+                            "（12h 及以下），或改用其他基础列"})
 
 
 def resolve_column_ref(ref: Any, db_path: Optional[Path] = None,
-                       base_tf: Optional[str] = None) -> ColumnDef:
+                       base_tf: Optional[str] = None,
+                       ref_tf: Optional[str] = None) -> ColumnDef:
     """混合形制校验（五域统一入口）。
 
     Args:
         ref: 结构化 dict（参数化指标）或 str（基础列/插件列精确名）。
         db_path: 插件列注册表所在库（插件列判定需要；None 时跳过插件判定）。
+        base_tf: 基准周期（域元数据校验供给——无修饰条件的求值轴）。
+        ref_tf: 条件引用周期（D-6②——条件带 timeframe 时该 tf 优先
+            作为域校验对象）。
 
     Returns:
         ColumnDef。
@@ -160,7 +178,7 @@ def resolve_column_ref(ref: Any, db_path: Optional[Path] = None,
 
     if isinstance(ref, str):
         if ref in BASE_SUBJECT_COLUMNS:
-            _check_base_column_domain(ref, base_tf)
+            _check_base_column_domain(ref, base_tf, ref_tf=ref_tf)
             return ColumnDef(kind="base", column_name=ref)
         if db_path is not None and ref in _visible_plugin_columns(db_path):
             return ColumnDef(kind="plugin", column_name=ref)

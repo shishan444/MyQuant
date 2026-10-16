@@ -458,10 +458,13 @@ def register_hypothesis(
         for i, c in enumerate(conds):
             field_name = f"{group}_conditions[{i}].subject"
             try:
-                # base_tf 供给（任务 7 三面之一——登记面取 data_ranges
-                # 基准周期做域元数据校验，最严面：全组统一按基准拒）
+                # base_tf/ref_tf 供给（任务 7 三面之一 + D-6② 引用周期
+                # 语义——登记面取 data_ranges 基准周期与条件自身
+                # timeframe 做域元数据校验，最严面；tf 剥离在 resolve
+                # 之后，此处 c 的 timeframe 仍在场）
                 c["subject"] = resolve_column_ref(
-                    c["subject"], db_path, base_tf=base_tf).ref_dict()
+                    c["subject"], db_path, base_tf=base_tf,
+                    ref_tf=c.get("timeframe")).ref_dict()
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",

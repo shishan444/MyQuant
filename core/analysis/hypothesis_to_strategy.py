@@ -189,10 +189,12 @@ def build_signal_genes(
     # 静默丢弃，故显式拒绝而非误译为入场门控）
     when_genes, when_sources = _translate_conditions(
         when_conditions, db_path=db_path,
-        label="when_conditions", role=SignalRole.ENTRY_TRIGGER)
+        label="when_conditions", role=SignalRole.ENTRY_TRIGGER,
+        base_tf=strategy_timeframe)
     then_genes, then_sources = _translate_conditions(
         then_conditions, db_path=db_path,
-        label="then_conditions", role=SignalRole.EXIT_TRIGGER)
+        label="then_conditions", role=SignalRole.EXIT_TRIGGER,
+        base_tf=strategy_timeframe)
     return when_genes + then_genes, when_sources + then_sources
 
 
@@ -502,7 +504,7 @@ def translate_hypothesis(
         else:
             _reject_condition_timeframe(group_short, group_conditions)
         g_genes, g_sources = _translate_conditions(
-            group_conditions, db_path=db_path,
+            group_conditions, db_path=db_path, base_tf=strategy_timeframe,
             label=group_key, role=group_role)
         if g_sources:  # 结构上不可达（插件列在非 ENTRY 角色已被拒），
             raise ResearchError(   # 防御性收口——不静默丢弃插件源
@@ -636,6 +638,7 @@ def translate_hypothesis(
 
 def _translate_conditions(
     conditions: List[Dict[str, Any]], *, db_path: Path, label: str, role,
+    base_tf: str = "",
 ) -> tuple[List, List[Dict[str, Any]]]:
     """条件 → (内置 SignalGene 列表, 插件信号源列表)。
 
@@ -665,7 +668,11 @@ def _translate_conditions(
         if isinstance(subject, dict):
             from core.analysis.column_ref import ColumnRefError, resolve_column_ref
             try:
-                cdef = resolve_column_ref(subject, db_path)
+                # base_tf/ref_tf 供给（任务 7 三面之二 + D-6②——翻译面
+                # 域校验与登记面同源；条件带 timeframe 时该 tf 为求值轴）
+                cdef = resolve_column_ref(
+                    subject, db_path, base_tf=base_tf or None,
+                    ref_tf=cond_tf)
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",
@@ -815,6 +822,21 @@ def _translate_conditions(
                                 "slow_path": "target 取 [0,24) 小数"
                                              "（bar 开盘 UTC 小时"
                                              "+分钟/60）"})
+                # 引用周期交互校验（D-6② 翻译面防线——登记面为权威，
+                # 此处拦库内/手工路径）：hour_utc 求值轴（条件 tf 优先，
+                # 无修饰回退基准）须日内，日线及以上值恒定无意义
+                from core.analysis.column_ref import is_intraday_timeframe
+                _eff_tf = cond_tf or (base_tf or None)
+                if _eff_tf and not is_intraday_timeframe(_eff_tf):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{label}[{i}] 不可表达: hour_utc 求值轴 "
+                        f"{_eff_tf} 为日线及以上——每日一 bar 下小时列"
+                        "值恒定无意义",
+                        detail={"condition": cond, "ref_tf": _eff_tf,
+                                "hint": "时刻列的求值轴必须是日内周期"
+                                        "（12h 及以下），或去掉 timeframe"
+                                        " 修饰在日内基准上求值"})
                 genes.append(SignalGene(
                     indicator="hour_utc",
                     params={},
