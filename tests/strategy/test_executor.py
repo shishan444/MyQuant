@@ -369,3 +369,230 @@ class TestIndicatorSupplementGuard:
         msg = rec.getMessage()
         assert "indicator=RSI" in msg, "warning 披露 gene 名"
         assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"
+
+
+class TestGeneLevelTimeframeExecution:
+    """T3/T4a：基因级周期执行链（unblock-research-validation 任务 3）。"""
+
+    def _mtf_env(self, n_base=400):
+        """1h 基准 + 1d 高周期轴（make_enhanced_df 指标双轴齐备）。"""
+        from tests.helpers.data_factory import make_enhanced_df
+        base = make_enhanced_df(n=n_base, freq="1h", seed=21)
+        # 高周期轴：同行情 1d 重采样形制（独立合成即可——对照用同轴）
+        hi = make_enhanced_df(n=n_base // 24 + 2, freq="1d", seed=22)
+        return base, hi
+
+    def test_t3b_higher_tf_evaluation_independent_reference(self):
+        """T3b 高周期求值独立对照：基因 RSI(14)@1d lt 阈值 → 信号 ==
+        1d 轴手工求值经 project_completed_bool 投影（mtf_alignment
+        权威函数独立构造期望）。"""
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA
+        base, hi = self._mtf_env()
+        # 纯 entry DNA（隔离对照——make_dna 自带 exit 基因会经既有
+        # 「同 bar 进出清洗」语义改写 entries，非投影面差异）
+        dna = StrategyDNA(
+            signal_genes=[make_dna().signal_genes[0]],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes())
+        dna.signal_genes[0].timeframe = "1d"
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        # 独立对照：1d 轴上手工求值同条件 → 权威投影
+        hi_col = hi["rsi_14"]
+        hi_signal = (hi_col < 30).fillna(False)
+        expect = project_completed_bool(hi_signal, base.index, "1d")
+        pd.testing.assert_series_equal(
+            sig.entries.reindex(base.index).fillna(False), expect,
+            check_names=False)
+
+    def test_t3c_axis_missing_fail_loud(self):
+        """T3c 轴缺失 fail-loud：基因级 1d 但装载集无 1d → 结构化拒绝
+        （禁止静默降级为基准周期求值）。"""
+        base, hi = self._mtf_env(120)
+        dna = make_dna()
+        dna.signal_genes[0].timeframe = "1d"
+        dna.execution_genes.timeframe = "1h"
+        with pytest.raises(ResearchError) as ei:
+            dna_to_signal_set(dna, base, dfs_by_timeframe={"4h": hi})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+        assert ei.value.detail["timeframe"] == "1d"
+
+    def test_t3a_baseline_genes_byte_identical(self):
+        """T3a 疫苗 3 前置：无 tf 基因在 dfs_by_timeframe 在场时仍走
+        基准路径（与不传轴逐位一致）。"""
+        base, hi = self._mtf_env(200)
+        dna = make_dna()
+        a = dna_to_signal_set(dna, base)
+        b = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(a.entries, b.entries, check_names=False)
+
+    def test_t3f_batch_single_point_consistency(self):
+        """T3f batch 与主路径单点一致：同 DNA（带基因级 tf）两域
+        entries 逐位一致。"""
+        base, hi = self._mtf_env(240)
+        dna = make_dna()
+        dna.signal_genes[0].timeframe = "1d"
+        dna.execution_genes.timeframe = "1h"
+        solo = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        batched = batch_signal_sets([dna], base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(
+            solo.entries, batched[0].entries, check_names=False)
+
+    def test_t4a_collect_needed_tfs_gene_level(self):
+        """T4a 装载判据三层并集：layers ∪ 基因级 tf ∪ 执行周期。"""
+        from core.analysis.backtest_bridge import _collect_needed_tfs
+        d = make_dna()                      # 单层无 tf
+        assert _collect_needed_tfs(d, "4h") == set()
+        d.signal_genes[0].timeframe = "1d"  # 单层+基因级
+        assert _collect_needed_tfs(d, "4h") == {"1d", "4h"}
+        from tests.helpers.data_factory import make_mtf_dna
+        m = make_mtf_dna(timeframes=("1d", "4h"))
+        assert _collect_needed_tfs(m, "1h") == {"1d", "4h", "1h"}
+
+    def test_t3e_evolution_offspring_baseline_path(self):
+        """T3e 进化产物恒现路径：无 tf 基因（进化恒产）求值不受
+        dfs_by_timeframe 在场影响（进化评估装载传轴场景）。"""
+        base, hi = self._mtf_env(150)
+        dna = make_dna(entry_value=30, exit_value=70)
+        a = batch_signal_sets([dna], base)
+        b = batch_signal_sets([dna], base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(
+            a[0].entries, b[0].entries, check_names=False)
+
+
+class TestGeneTfProjectionOrder:
+    """T2g-2/T2g-3/T3d/T2f-2 信号层（tester 补——spec delta「多周期
+    与事件策略组合」「加仓触发组多周期放行」Scenario 推导：先投影
+    后 policy、1d 广播窗 first_true 取首 bar、防前视不早于收盘、
+    adds=状态窗逐 bar）。"""
+
+    _ENTRY_ONLY_DNA = None
+
+    def _tf_dna(self, roles_tfs, entry_value=70, exit_value=99):
+        """构造带基因级 tf 的 DNA（roles_tfs=[(SignalRole, tf)]）。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalRole, StrategyDNA,
+        )
+        genes = []
+        for role, tf in roles_tfs:
+            g = make_signal_gene(
+                role=role, condition_type=(
+                    "gt" if role == SignalRole.EXIT_TRIGGER else "lt"),
+                condition_value=(
+                    exit_value if role == SignalRole.EXIT_TRIGGER
+                    else entry_value))
+            g.timeframe = tf
+            genes.append(g)
+        return StrategyDNA(
+            signal_genes=genes, logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes())
+
+    def _hand_hi_signal(self, hi, entry_value=70):
+        """独立期望：1d 轴手工求值同条件（不调被测求值实现）。"""
+        return (hi["rsi_14"] < entry_value).fillna(False)
+
+    def test_t3d_no_lookahead_not_before_close(self):
+        """T3d 防前视：1d 信号投影 4h 基准轴，首个 True 不早于 1d
+        首个 True bar 的收盘时点（已收盘才可见——契约前视纪律）。"""
+        from core.data.timeframes import TF_SECONDS
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna([(SignalRole.ENTRY_TRIGGER, "1d"),
+                            (SignalRole.EXIT_TRIGGER, None)],
+                           entry_value=30, exit_value=99)
+        # 独立期望：1d 轴手工求值首 True 的收盘时刻
+        hi_sig = self._hand_hi_signal(hi, entry_value=30)
+        assert hi_sig.any(), "前提：1d 轴存在 True（构造保证）"
+        first_hi = hi_sig[hi_sig].index[0]
+        close_ts = first_hi + pd.Timedelta(seconds=TF_SECONDS["1d"])
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        entries = sig.entries.reindex(base.index).fillna(False)
+        assert entries.any(), "投影后有信号（前提）"
+        first_base = entries[entries].index[0]
+        assert first_base >= close_ts, (
+            f"投影信号早于 1d 收盘时点：{first_base} < {close_ts}")
+
+    def _hand_env(self, n_base=400):
+        from tests.helpers.data_factory import make_enhanced_df
+        base = make_enhanced_df(n=n_base, freq="1h", seed=21)
+        hi = make_enhanced_df(n=n_base // 24 + 2, freq="1d", seed=22)
+        return base, hi
+
+    def test_t2g_2_first_true_takes_first_bar_of_window(self):
+        """T2g-2/T2g-3 顺序契约+同构：1d 广播窗（连续 True）经
+        first_true 变换取每窗首 bar——期望=权威投影+权威 policy 函数
+        串联独立构造（policy 语义不因投影层漂移）。"""
+        from core.analysis.event_policy import apply_policy_to_series
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna([(SignalRole.ENTRY_TRIGGER, "1d"),
+                            (SignalRole.EXIT_TRIGGER, None)],
+                           entry_value=70, exit_value=99)
+        dna.entry_trigger_policy = {"mode": "first_true"}
+        # 独立期望：手工 1d 求值 → 权威投影（广播窗）→ 权威 policy
+        hi_sig = self._hand_hi_signal(hi, entry_value=70)
+        broadcast = project_completed_bool(hi_sig, base.index, "1d")
+        # 前提鉴别力：存在长度>1 的连续窗（first_true 才有可观察差异）
+        runs = (broadcast != broadcast.shift(fill_value=False)).cumsum()
+        run_lens = broadcast.groupby(runs).sum()
+        assert (run_lens[run_lens.index.map(
+            lambda k: broadcast.groupby(runs).first()[k]) > 0] > 1).any(), \
+            "前提：存在多 bar 广播窗"
+        expected = apply_policy_to_series(
+            broadcast, {"mode": "first_true"})
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        got = sig.entries.reindex(base.index).fillna(False)
+        pd.testing.assert_series_equal(
+            got, expected.astype(bool), check_names=False)
+
+    def test_t2f_2_adds_broadcast_state_window(self):
+        """T2f-2 信号层：ADD_TRIGGER tf=1d → adds=掩码广播状态窗
+        （窗内逐 bar True 连续，非边沿脉冲）——引擎步进/封顶机制
+        既有锚见 tests/backtest/test_scaling_execution.py。"""
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna(
+            [(SignalRole.ENTRY_TRIGGER, None),
+             (SignalRole.EXIT_TRIGGER, None),
+             (SignalRole.ADD_TRIGGER, "1d")],
+            entry_value=70, exit_value=99)
+        hi_sig = self._hand_hi_signal(hi, entry_value=70)
+        expected = project_completed_bool(hi_sig, base.index, "1d")
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        got = sig.adds.reindex(base.index).fillna(False)
+        pd.testing.assert_series_equal(
+            got, expected, check_names=False)
+        # 状态窗断言：True 段为连续多 bar（广播语义，非单 bar 边沿）
+        if got.any():
+            runs = (got != got.shift(fill_value=False)).cumsum()
+            run_lens = got.groupby(runs).sum()
+            assert (run_lens[run_lens > 0] > 1).any(), \
+                "广播窗应为连续多 bar 状态窗"
+
+
+class TestNeededTfsSingleSource:
+    """T4e 条件性单点断言（tester 补——任务 3a 采纳合并单源：
+    backtest_service.compute_needed_tfs 逐 DNA 委托研究链收集器
+    _collect_needed_tfs——patch 收集器后工程域行为跟随即证明委托，
+    双实现漂移在结构上不可发生）。"""
+
+    def test_t4e_compute_needed_tfs_delegates_single_collector(self, monkeypatch):
+        import core.analysis.backtest_bridge as bridge
+        from core.services.backtest_service import compute_needed_tfs
+        calls = []
+        orig = bridge._collect_needed_tfs
+
+        def spy(dna, exec_tf):
+            calls.append((getattr(dna, "strategy_id", None), exec_tf))
+            return orig(dna, exec_tf)
+
+        monkeypatch.setattr(bridge, "_collect_needed_tfs", spy)
+        d1, d2 = make_dna(), make_dna()
+        d1.signal_genes[0].timeframe = "1d"
+        out = compute_needed_tfs([d1, d2], "4h")
+        assert len(calls) == 2, "逐 DNA 全部经单源收集器"
+        assert out == {"1d", "4h"}, "聚合语义保持（任一 DNA 需装载即装载）"

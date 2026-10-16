@@ -409,14 +409,15 @@ def register_hypothesis(
             if tf_key is None:
                 continue
             field_name = f"{group}_conditions[{i}].timeframe"
-            if group != "when":
-                # THEN 与分批组条目同规则拒 timeframe（0.4.2 R3：分批组
-                # 为出场/加仓触发语义，跨周期掩码投影归属未定义）
+            # unblock-research-validation Q1 裁决：加仓触发组跟随 when
+            # 侧放行（执行语义=基准轴基因级掩码投影，role 无关）；
+            # then/exit_partial/add_suppress 维持拒绝
+            if group not in ("when", "add_trigger"):
                 raise ResearchError(
                     "TIMEFRAME_ON_THEN",
                     "THEN 条件为前向收益对照语义（forward_bars 以基准 bar "
                     "计），跨周期前向窗口归属未定义——不接受 timeframe 键"
-                    "（分批组条目同规则）",
+                    "（仅 when 与加仓触发组支持）",
                     detail={"field": field_name, "timeframe": tf_key})
             if tf_key not in TF_SECONDS:
                 raise ResearchError(

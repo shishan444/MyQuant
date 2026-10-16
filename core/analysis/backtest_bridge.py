@@ -21,10 +21,21 @@ from core.analysis.warmup_loader import TF_MINUTES, to_utc
 
 
 def _collect_needed_tfs(dna, exec_tf: str) -> set:
-    """收集 DNA 声明的全部时间层 ∪ 执行周期（is_mtf 即装载语义）。"""
-    if not (getattr(dna, "is_mtf", False) and dna.layers):
-        return set()
-    return {layer.timeframe for layer in dna.layers} | {exec_tf}
+    """装载集判据单源：layers ∪ 基因级 timeframe ∪ 执行周期。
+
+    unblock-research-validation：基因级周期维并入——单层 DNA 带基因
+    级 tf 同样触发装载（空集=纯基准周期不装载语义保持）。研究链
+    （run_backtest_on_range）与工程端点群（backtest_service.
+    compute_needed_tfs 逐 DNA 聚合）同款判据共用本单点。
+    """
+    tfs = set()
+    if getattr(dna, "is_mtf", False) and dna.layers:
+        tfs |= {layer.timeframe for layer in dna.layers}
+    for gene in (getattr(dna, "signal_genes", None) or []):
+        gene_tf = getattr(gene, "timeframe", None)
+        if gene_tf is not None:
+            tfs.add(gene_tf)
+    return tfs | {exec_tf} if tfs else set()
 
 
 def _slice_signal_set(sig_set, index: pd.Index):

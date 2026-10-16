@@ -151,3 +151,60 @@ class TestGapClosureMeta:
         from core.analysis.registry_meta import indicator_convergence
         with pytest.raises(KeyError, match="未知指标"):
             indicator_convergence("GHOST_IND", {})
+
+
+class TestGeneLevelTfWarmup:
+    """T5：预热第三维（unblock-research-validation 任务 4）。"""
+
+    def test_t5a_conversion_anchor(self, tmp_path):
+        """T5a 折算锚（契约推导值）：RSI(14)@1d on 4h 基准——收敛粒度
+        14×3=42 bar × 1440/240 = 252 基准 bar（high_tf_warmup_span 折算
+        基数，非主公式 200 floor——design 2.5）。"""
+        from core.analysis.validation_service import _derive_dna_warmup
+        from tests.helpers.data_factory import make_dna
+        d = make_dna()
+        d.signal_genes[0].timeframe = "1d"
+        d.execution_genes.timeframe = "4h"
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        assert w == 252, f"折算锚 252，got {w}"
+
+    def test_t5b_baseline_unchanged(self, tmp_path):
+        """T5b 基准路径：无基因级 tf 时推导与两维式一致（200）。"""
+        from core.analysis.validation_service import _derive_dna_warmup
+        from tests.helpers.data_factory import make_dna
+        d = make_dna()
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        assert w == 200
+
+    def test_t5d_rule_text_fourth_sentence(self):
+        """T5d 披露面同口径：WARMUP_RULE_TEXT 含基因级维度第四句。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        assert "基因级周期维度" in WARMUP_RULE_TEXT
+        assert "折算" in WARMUP_RULE_TEXT
+
+
+class TestGeneTfAxisRefsTargetUnion:
+    """T5 补（tester 补——覆盖率核验暴露）：cross_*_series 型基因的
+    target_indicator 并入基因级轴引用清单（契约：refs=基因
+    (indicator, params) 含 target_indicator 并集——目标轴指标同样
+    须在高周期轴收敛，缺则高周期轴 warmup 虚低）。"""
+
+    def test_t5_target_indicator_joins_axis_refs(self, tmp_path):
+        from core.analysis.validation_service import _gene_tf_axis_refs
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
+        )
+        from tests.helpers.data_factory import make_signal_gene
+        g = make_signal_gene(condition_type="lt", condition_value=30)
+        g.condition = {"type": "cross_above_series",
+                       "target_indicator": "EMA",
+                       "target_params": {"period": 100}}
+        g.timeframe = "1d"
+        dna = StrategyDNA(
+            signal_genes=[g], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        axis = _gene_tf_axis_refs(dna)
+        assert axis["1d"][0] == ("RSI", {"period": 14}), "主指标在轴清单"
+        assert ("EMA", {"period": 100}) in axis["1d"], \
+            "target_indicator 并入轴引用（高周期轴目标列同收敛）"

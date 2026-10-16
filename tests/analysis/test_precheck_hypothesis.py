@@ -746,9 +746,30 @@ class TestWarmupSourceParity:
             data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
                           "start": "2024-01-01T00:00:00+00:00",
                           "end": "2024-02-01T00:00:00+00:00"}])
-        tr = translate_hypothesis(db_path, hypothesis_id=out["hypothesis_id"])
+        tr = translate_hypothesis(db_path, hypothesis_id=out["hypothesis_id"],
+                                  data_dir=self._tdir(db_path))
         row = get_strategy(db_path, tr["strategy_id"])
         return StrategyDNA.from_json(row["dna_json"])
+
+    @staticmethod
+    def _tdir(db_path) -> Path:
+        """试算装载目录（unblock 起 translate 需 data_dir——惰性造
+        最小 4h parquet，父目录复用 db 目录隔离）。"""
+        import numpy as np
+        import pandas as pd
+        d = db_path.parent / "trial_market"
+        d.mkdir(exist_ok=True)
+        f = d / f"{SYMBOL}_4h.parquet"
+        if not f.exists():
+            rng = np.random.default_rng(3)
+            idx = pd.date_range("2023-10-01", periods=300, freq="4h",
+                                tz="UTC", name="timestamp")
+            close = 60000 + np.cumsum(rng.normal(0, 100, 300))
+            pd.DataFrame({"open": close, "high": close + 50,
+                          "low": close - 50, "close": close,
+                          "volume": rng.uniform(100, 800, 300),
+                          "trades": 40}, index=idx).to_parquet(f)
+        return d
 
     def test_builtin_condition_set_same_warmup(self, db_path) -> None:
         from core.analysis.templates.precheck_hypothesis import (

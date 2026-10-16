@@ -450,3 +450,40 @@ class TestRegisterTriggerPolicy:
         monkeypatch.setattr(pk, "run_registration_precheck", spy)
         self._register(db, {"mode": "none"}, precheck_data_dir=tmp_path)
         assert captured["policy"] is None        # 归一 None（缺省同）
+
+
+class TestAddTriggerTfRegistrationIdempotency:
+    """T2f-R1（tester 补——unblock-research-validation）：加仓触发组
+    timeframe 放行后的登记幂等——tf 进指纹正常参与幂等键（同 tf 重
+    登记命中既有；异 tf 不误命中）。"""
+
+    _BASE = {
+        "when_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35}],
+        "then_conditions": [
+            {"subject": "close", "action": "gt", "target": 0}],
+    }
+    _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-02-01T00:00:00Z"}]
+
+    def _register_tf(self, db: Path, tf, statement: str):
+        conds = {**self._BASE, "add_trigger_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "gt", "target": 60, "timeframe": tf}]}
+        return register_hypothesis(
+            db, conditions=conds, statement=statement,
+            data_ranges=self._RANGES)
+
+    def test_同tf重登记命中幂等_异tf不误命中(self, db: Path) -> None:
+        out1 = self._register_tf(db, "1d", "tf 幂等")
+        assert out1["duplicated"] is False
+        again = self._register_tf(db, "1d", "tf 幂等重复")
+        assert again["duplicated"] is True
+        assert again["hypothesis_id"] == out1["hypothesis_id"], \
+            "同 tf 请求幂等命中既有（tf 进指纹不妨碍幂等）"
+        other = self._register_tf(db, "1w", "tf 异周期")
+        assert other["duplicated"] is False
+        assert other["hypothesis_id"] != out1["hypothesis_id"], \
+            "异 tf 必异指纹（tf 被指纹忽略则此处误命中）"

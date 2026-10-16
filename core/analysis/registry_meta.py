@@ -108,8 +108,10 @@ def derive_warmup_full(
     db_path: Path,
     indicator_names: List[str],
     plugin_columns: Optional[set] = None,
+    indicator_tfs: Optional[dict] = None,
+    base_tf: Optional[str] = None,
 ) -> int:
-    """两维 warmup 推导式：max(内置指标推导, 插件公式 lookback, 200)。
+    """三维 warmup 推导式：max(内置基准轴推导, 高周期轴折算, 插件, 200)。
 
     预检（add-hypothesis-precheck）与隔离回测 ``_derive_dna_warmup``
     的同源公共入口——两处共用同段代码即「预检 warmup 数值与隔离验证
@@ -121,11 +123,21 @@ def derive_warmup_full(
     可达性（不可达 422 结构化拒绝），禁止依赖本函数的静默跳过判定面。
     仅含内置引用时与 derive_warmup 完全一致（floor 200 自带）。
 
+    高周期轴维度（unblock-research-validation 基因级 timeframe）：
+    indicator_tfs={轴周期: 该轴 (indicator, params) 引用清单（含
+    target_indicator 并集）}——每轴按 high_tf_warmup_span（收敛粒度，
+    indicator_convergence 单源不复制）算前扩时长，÷ 基准周期折算为
+    基准 bar 并入主 max（与主公式 200 floor 显式分离；缺 base_tf 时
+    该维跳过——兼容既有两参数调用面）。
+
     Args:
         db_path: 插件注册表所在库（插件列 lookback 需要）。
         indicator_names: 内置指标名清单（INDICATOR_REGISTRY 键）。
         plugin_columns: 插件列名集合（fx_*/model_* 精确名；空/None
             时跳过插件维度）。
+        indicator_tfs: 基因级高周期轴分组（轴周期→(indicator,
+            params) 引用清单）。
+        base_tf: 基准周期（折算分母；None 时跳过高周期维度）。
 
     Raises:
         KeyError: 内置指标未知（derive_warmup 透传）。
@@ -135,6 +147,28 @@ def derive_warmup_full(
         # 延迟 import（环规避）：plugin_service 依赖链不进本模块加载期
         from core.analysis.plugin_service import plugin_columns_lookback
         warmup = max(warmup, plugin_columns_lookback(db_path, set(plugin_columns)))
+    if indicator_tfs and base_tf:
+        from core.analysis.warmup_loader import TF_MINUTES
+        base_minutes = TF_MINUTES.get(base_tf)
+        if base_minutes:
+            for tf_key, tf_refs in indicator_tfs.items():
+                if not tf_refs or tf_key == base_tf:
+                    continue
+                tf_minutes = TF_MINUTES.get(tf_key)
+                if not tf_minutes:
+                    continue
+                # 折算基数=high_tf_warmup_span（收敛粒度 max(实际参数×3,
+                # 20)——indicator_convergence 单源不复制），÷ 基准周期折
+                # 基准 bar（design 2.5 契约）；与主公式 derive_warmup 的
+                # 200 floor 显式分离（两式语义刻意不同，见 mtf_alignment
+                # 模块 docstring——此前误用主式使 RSI(14)@1d 按 200 而非
+                # 42 bar 折算）。函数内延迟 import 环规避（同 plugin 先例
+                # ——mtf_alignment 函数内反向 import 本模块）
+                from core.data.mtf_alignment import high_tf_warmup_span
+                span = high_tf_warmup_span(list(tf_refs), tf_key)
+                warmup = max(
+                    warmup,
+                    int(span.total_seconds() // (base_minutes * 60)))
     return warmup
 
 
@@ -150,7 +184,9 @@ WARMUP_RULE_TEXT = (
     "高周期条件掩码链 max(条件实际参数 × 3, 20)，bar 数按该轴周期折算"
     "为前扩时长（1d 轴 42 bar = 42 天，非 42 根基准 bar；下限 20 与"
     "主公式下限 200 分属两式）；"
-    "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)"
+    "策略链含公式插件时取 max(内置指标推导, plugin_formula_lookback)；"
+    "基因级周期维度：各高周期轴 warmup bar 数 × 轴周期 ÷ 基准周期"
+    "折算为基准 bar 并入主 max（1d 轴 42 bar @1h 基准 = 1008 基准 bar）"
 )
 
 

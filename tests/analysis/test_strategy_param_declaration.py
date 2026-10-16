@@ -206,17 +206,29 @@ class TestParamDomainValidation:
                 db, conditions=dict(base_cond, add_trigger_conditions=[]),
                 statement="empty-group", data_ranges=_ranges())
         assert "非空列表" in ei.value.message
-        # 组条目带 timeframe → 422（与 THEN 同规则）
-        with pytest.raises(ResearchError) as ei:
-            register_hypothesis(
-                db, conditions=dict(
-                    base_cond,
-                    add_trigger_conditions=[{
-                        "subject": "close", "action": "gt", "target": 0,
-                        "timeframe": "1d"}]),
-                statement="tf", data_ranges=_ranges())
-        assert "timeframe" in str(ei.value.message) or \
-            ei.value.code == "TIMEFRAME_ON_THEN"
+        # 组条目带 timeframe（unblock-research-validation Q1 翻转）：
+        # add_trigger 放行（跟随 when 侧）；exit_partial/add_suppress 拒
+        ok = register_hypothesis(
+            db, conditions=dict(
+                base_cond,
+                add_trigger_conditions=[{
+                    "subject": "close", "action": "gt", "target": 0,
+                    "timeframe": "1d"}]),
+            statement="tf", data_ranges=_ranges())
+        assert ok["hypothesis_id"], "加仓触发组带 tf 登记放行"
+        for group_key in ("exit_partial_conditions", "add_suppress_conditions"):
+            with pytest.raises(ResearchError) as ei:
+                register_hypothesis(
+                    db, conditions=dict(
+                        base_cond,
+                        add_trigger_conditions=[{
+                            "subject": "close", "action": "gt", "target": 0}],
+                        **{group_key: [{
+                            "subject": "close", "action": "gt", "target": 0,
+                            "timeframe": "1d"}]}),
+                    statement=f"tf-{group_key}", data_ranges=_ranges())
+            assert ei.value.code == "TIMEFRAME_ON_THEN", \
+                f"{group_key} 带 tf 应拒"
 
     def test_group_without_value_normalized(self, db):
         """有组无值→归一化字面化：组存在而未声明比例，落库声明块含

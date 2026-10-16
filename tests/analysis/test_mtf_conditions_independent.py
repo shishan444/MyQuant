@@ -432,20 +432,30 @@ class TestCrossChainIndependent:
 # ---------------------------------------------------------------- 转化拒绝（B7）
 
 class TestTranslationRejectIndependent:
-    def test_多周期假设转化显式拒绝_不产出草稿(self, db, rand_env):
-        """spec「多周期假设转化显式拒绝」：带 timeframe 键假设转化
-        MUST 拒并说明暂不支持；MUST NOT 静默降级产出单周期草稿。"""
+    def test_多周期假设转化放行_基因写入周期(self, db, rand_env):
+        """unblock-research-validation T10 翻转（独立链复锚）：带
+        timeframe 键 when 假设转化放行——产物基因带第六属性 tf、
+        禁止静默降级为无标记草稿（行为断言反向加强）。"""
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         from core.persistence.repository import strategy as sr
+        from core.persistence.repository.strategy import get_strategy
+        import json as _json
 
-        db.parent.parent.mkdir(exist_ok=True)   # noqa: 保留 tmp 结构
-        out = _register(db, _when(timeframe="4h"))
-        before = sr.list_strategies(db)
-        with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(db, hypothesis_id=out["hypothesis_id"])
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "多周期假设翻译暂不支持" in ei.value.message
-        assert sr.list_strategies(db) == before   # 禁止变化：无草稿落库
+        when = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                             "field": "rsi"}, "action": "lt",
+                 "target": 55, "timeframe": "4h"}]
+        then = [{"subject": {"indicator": "RSI", "params": {"period": 30},
+                             "field": "rsi"}, "action": "gt", "target": 70}]
+        out = _register(db, when, then)
+        result = translate_hypothesis(
+            db, hypothesis_id=out["hypothesis_id"],
+            strategy_timeframe="1h")
+        assert result["status"] == "draft"
+        row = get_strategy(db, result["strategy_id"])
+        genes = _json.loads(row["dna_json"])["signal_genes"]
+        assert genes and genes[0].get("timeframe") == "4h", \
+            "基因级 tf 写入（不静默降级）"
+        assert row["status"] == "draft", "草稿落库（get_strategy 直查）"
 
     def test_同假设登记与求值不受转化边界影响(self, db, rand_env):
         """spec：拒绝文案明示登记/条件求值类分析/案例检查不受影响。"""

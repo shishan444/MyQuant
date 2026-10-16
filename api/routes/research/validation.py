@@ -329,13 +329,21 @@ def translate_hypothesis(
     hypothesis_id: str,
     payload: TranslateRequest | None = None,
     db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
     """假设→策略转化器：conditions 为唯一翻译源；不可表达显式拒绝。"""
     from core.analysis.hypothesis_to_strategy import translate_hypothesis as _t
     from pydantic import BaseModel as _BM  # noqa: F401
 
     try:
+        # security S-2（fix-review B6）：strategy_timeframe 裸 str——前置
+        # 值域校验消两路 500 冒出面（非法 tf 在 find_parquet 装载路径
+        # 抛裸 ValueError；analysis.py :799 同款先例，校验先于转化）。
+        # payload=None 走 schema 缺省 "4h" 合法，无校验面
+        if payload is not None:
+            require_known_timeframe(
+                payload.strategy_timeframe, "strategy_timeframe")
         kw = payload.model_dump() if payload else {}
-        return _t(db_path, hypothesis_id=hypothesis_id, **kw)
+        return _t(db_path, hypothesis_id=hypothesis_id, data_dir=data_dir, **kw)
     except ResearchError as exc:
         raise research_error_to_http(exc) from exc

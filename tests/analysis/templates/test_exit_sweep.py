@@ -544,23 +544,41 @@ class TestCapabilityDomainAndLog:
     def _env(self, tmp_path):
         self.d, self.db = _make_env(tmp_path)
 
-    def test_timeframe_condition_rejected_with_field_name(self):
-        """S4 timeframe 拒绝锚：防线经公共入口——错误码/detail/field
-        命名与 translate_hypothesis 同源同码（不产出任何扫描结果）。"""
+    def test_timeframe_condition_accepted_and_low_tf_rejected(self):
+        """unblock-research-validation T10 翻转：when 侧 timeframe 从
+        拒绝翻转为放行——高周期条件（1d@4h 基准）经翻译链成功执行
+        扫描；反向加强：低于基准的 tf（30m）仍被防线拒绝（校验链
+        TIMEFRAME_NOT_HIGHER——错误码/detail 命名锚保持）。"""
+        # 1d 高周期数据（掩码投影装载）
+        idx_1d = pd.date_range("2023-01-01", periods=90, freq="1d",
+                               tz="UTC", name="timestamp")
+        rng = np.random.default_rng(5)
+        c1d = 60000 + np.cumsum(rng.normal(0, 300, 90))
+        pd.DataFrame({"open": c1d, "high": c1d + 150, "low": c1d - 150,
+                      "close": c1d, "volume": rng.uniform(100, 900, 90),
+                      "trades": 40}, index=idx_1d).to_parquet(
+            self.d / f"{SYMBOL}_1d.parquet")
         cond = dict(_COND, timeframe="1d")
+        out = exit_sweep(self.db, self.d, dict(RNG_DEF), condition=cond,
+                         direction="long", grid=_grid([0.01], [0.02]))
+        assert out["template"] == "exit_sweep"
+        assert isinstance(out["payload"]["results"], list)
+        # 反向加强：低于基准仍拒（校验链第二步）
         with pytest.raises(ResearchError) as ei:
-            exit_sweep(self.db, self.d, dict(RNG_DEF), condition=cond,
+            exit_sweep(self.db, self.d, dict(RNG_DEF),
+                       condition=dict(_COND, timeframe="30m"),
                        direction="long", grid=_grid([0.01], [0.02]))
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert ei.value.detail["field"] == "when_conditions[0].timeframe"
+        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
 
-    def test_capability_domain_contrast(self, api_client):
-        """能力域对照锚：同一 timeframe 条件在 condition_stats 正常执行
-        （掩码投影路径）vs exit_sweep 拒绝——防防线双向漂移。"""
+    def test_capability_domain_both_supported(self, api_client):
+        """能力域对照锚（unblock-research-validation 翻转）：同一
+        timeframe 条件在 condition_stats（分析域掩码投影）与
+        exit_sweep（翻译链基因级 tf）双双正常执行——两域能力对齐，
+        防防线回潮（双向：任一侧回到拒绝即红）。"""
         api_client.app.state.db_path = self.db
         api_client.app.state.data_dir = self.d
         cond = dict(_COND, timeframe="1d")
-        # 需 1d 数据供掩码投影
+        # 需 1d 数据供掩码投影与高周期装载
         idx_1d = pd.date_range("2023-01-01", periods=250, freq="1d",
                                tz="UTC", name="timestamp")
         rng = np.random.default_rng(5)
@@ -576,15 +594,12 @@ class TestCapabilityDomainAndLog:
                        "forward_bars": 6},
             "data_range": dict(RNG_DEF)})
         assert ok.status_code == 200, ok.text  # 掩码投影路径正常执行
-        rejected = api_client.post("/api/research/analysis", json={
+        ok2 = api_client.post("/api/research/analysis", json={
             "template": "exit_sweep",
             "params": {"condition": cond, "direction": "long",
                        "grid": _grid([0.01], [0.02])},
             "data_range": dict(RNG_DEF)})
-        assert rejected.status_code == 422
-        detail = rejected.json()["detail"]
-        assert detail["code"] == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "results" not in detail  # 不产出任何扫描结果
+        assert ok2.status_code == 200, ok2.text  # 翻译链放行同族支持
 
     def test_engine_sl_mode_dispatch_double_guard(self):
         """S5 双向守护（0.4.2 分派实施后翻转形态）：pct/atr 双注入

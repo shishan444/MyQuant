@@ -512,12 +512,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         {indicator, params, field}（多输出指标 field 必填，参数空间经
         list_indicators 查询）、基础列/插件列用字符串精确名（经
         list_signal_columns 校验）；字符串编码形（如 rsi_14）已关闭。
-        when 条目 MAY 携带可选 timeframe 键（0.2.14）：仅 >= 基准周期
-        （data_ranges 统一周期）的高周期——timeframe 修饰整条件（掩码
-        投影：subject/action/target 在高周期轴求值、布尔掩码按
-        asof_completed 投影回基准索引——仅已收盘高周期 K 线可见）；
-        低周期/未知周期/then 携带键结构化拒绝；显式写基准周期=缺省
-        同身份；高周期须数据目录可达（登记时校验）。
+        条件条目 MAY 携带可选顶层 timeframe 键：支持组=when 与
+        add_trigger_conditions（Q1 裁决加仓触发组跟随 when 侧）；
+        值须合法周期且 >= 基准周期（data_ranges 统一周期）——timeframe
+        修饰整条件（掩码投影：subject/action/target 在高周期轴求值、
+        布尔掩码按 asof_completed 投影回基准索引——仅已收盘高周期
+        K 线可见）；低周期/未知周期/then 与减仓抑制组携带键结构化
+        拒绝；显式写基准周期=缺省同身份（canonical 归一）；高周期须
+        数据目录可达（登记时校验）。
         data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间，
         0.2.14 起须全条目同 symbol 同 timeframe——该周期即基准周期）。
         同条件集+区间集
@@ -763,7 +765,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
         回执身份三键：direction（产物方向 long|short）、max_hold（声明
         的最长持仓 bar 数|int|null）、reuse_note（same_dna_existing=true
-        时附同基因策略复用三要素说明，其余 null）。
+        时附同基因策略复用三要素说明，其余 null）。多周期边界：when 与
+        加仓触发组条件支持顶层 timeframe 键（值须合法周期且不低于策略
+        基准周期——低于基准拒，等于基准与缺省同语义归一）；then/减仓/
+        抑制组携带 timeframe 拒绝（跨周期前向/归属语义未定义）；插件列
+        条件不支持 timeframe（插件源无周期槽位）。
         转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
         return api.post(
             f"/api/research/translate/{quote(hypothesis_id, safe='')}",

@@ -168,6 +168,35 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 )
                 errors.extend(cond_errors)
 
+    # 基因级 timeframe 值域校验（fix-review B5 / security S-1）：手工
+    # DNA 五入口落库前拦截（此前非法 tf 可落库，装载/执行时点才炸且
+    # find_parquet 路径 ValueError 裸穿 500）。判据与翻译防线同源：
+    # tf ∈ TF_SECONDS 且 >= 执行周期（低于执行周期无定义，与翻译面
+    # assert_higher_tf >= 语义一致）；顶层与 layers 基因同面；errors
+    # 收集形与 max_hold 同制（不 raise）
+    from core.data.timeframes import TF_SECONDS
+    exec_tf = dna.execution_genes.timeframe
+    exec_tf_seconds = TF_SECONDS.get(exec_tf)
+    _all_genes: List[tuple] = [
+        (f"Gene {i}", g) for i, g in enumerate(dna.signal_genes)]
+    for layer in (dna.layers or []):
+        _all_genes.extend(
+            (f"Layer {layer.timeframe} gene {i}", g)
+            for i, g in enumerate(layer.signal_genes))
+    for label, gene in _all_genes:
+        gene_tf = getattr(gene, "timeframe", None)
+        if gene_tf is None:
+            continue
+        if gene_tf not in TF_SECONDS:
+            errors.append(
+                f"{label}: timeframe must be one of "
+                f"{sorted(TF_SECONDS)}, got '{gene_tf}'")
+        elif exec_tf_seconds is not None \
+                and TF_SECONDS[gene_tf] < exec_tf_seconds:
+            errors.append(
+                f"{label}: timeframe '{gene_tf}' must be >= execution "
+                f"timeframe '{exec_tf}'")
+
     # 风险基因值域校验（sl_mode 感知——值域按模式分叉，DC-11/DC-12；
     # trail/atr 是合法 DNA 形态，本处只判值域，交易链兼容性归
     # validate_trading_compatibility 独立入口，严格分层）

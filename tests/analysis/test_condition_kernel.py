@@ -159,3 +159,109 @@ class TestCollectRefsSubjectDictTranslation:
         refs2 = collect_condition_refs(
             {"subject": "close", "action": "gt", "target": "zzz_unknown"})
         assert refs2 == []
+
+
+class TestConditionItemStrictness:
+    """T6：条件形制严格化（unblock-research-validation 任务 5，GAP-08 防呆）。"""
+
+    def test_t6a_subject_inner_timeframe_pointed_rejection(self):
+        """T6a 主锚：subject 内 timeframe → 422 指路（「timeframe 是
+        条件顶层键，不在 subject 内部」——RR-015 实测静默忽略防呆）。"""
+        from api.schemas import ConditionItem, IndicatorRef
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError) as ei:
+            IndicatorRef(**{"indicator": "RSI", "params": {"period": 14},
+                            "field": "rsi", "timeframe": "1d"})
+        assert "timeframe" in str(ei.value)
+        with pytest.raises(ValidationError):
+            ConditionItem(**{
+                "subject": {"indicator": "RSI", "params": {"period": 14},
+                            "timeframe": "1d"},
+                "action": "lt", "target": 35})
+
+    def test_t6b_condition_item_unknown_key(self):
+        """T6b 条目未知顶层键 422（extra=forbid）。"""
+        from api.schemas import ConditionItem
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            ConditionItem(**{"subject": {"indicator": "RSI",
+                                         "params": {"period": 14}},
+                             "action": "lt", "target": 35,
+                             "bogus_key": 1})
+
+    def test_t6c_array_whitelist_with_keys_detail(self):
+        """T6c 数组校验白名单：未知键附 {unknown_keys, legal_keys}+指路。"""
+        from core.analysis.condition_kernel import validate_conditions_array
+        from core.analysis.hypothesis_service import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            validate_conditions_array([
+                {"subject": {"indicator": "RSI", "params": {}},
+                 "action": "lt", "target": 35, "inner_bogus": 1}])
+        assert ei.value.detail["unknown_keys"] == ["inner_bogus"]
+        assert set(ei.value.detail["legal_keys"]) == {
+            "subject", "action", "target", "timeframe"}
+        assert "顶层键" in ei.value.detail["hint"]
+
+    def test_t6d_kernel_whitelist_matches_schemas(self):
+        """T6d 对拍：kernel 白名单 == ConditionItem 声明面。"""
+        from core.analysis.condition_kernel import _CONDITION_ITEM_KEYS
+        from api.schemas import ConditionItem
+        declared = set(ConditionItem.model_fields.keys())
+        assert set(_CONDITION_ITEM_KEYS) == declared, \
+            "白名单与声明面漂移（共享单点对拍锚）"
+
+    def test_t6f_legal_request_zero_change(self):
+        """T6f 合法请求零变化：白名单四键请求照常通过。"""
+        from core.analysis.condition_kernel import validate_conditions_array
+        validate_conditions_array([
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35, "timeframe": "1d"}])
+
+
+class TestConditionItemStrictnessConsumers:
+    """T6e 四消费者（tester 补——spec「全部条件消费者同语义」：未知
+    键经共享单点白名单结构化拒绝）。参数化四模板入口各一例。
+
+    现状警示（2026-10-15 实证）：regime_split/exit_sweep 拒绝 ✓；
+    condition_stats/event_study 静默通过（未知键被忽略直接产出结果
+    ——GAP-08 同型）——两例红为本偏差的失败证据，待修复转绿
+    （DEV-4 已退回 developer）。"""
+
+    @pytest.mark.parametrize("template", [
+        "condition_stats", "event_study", "regime_split", "exit_sweep"])
+    def test_t6e_unknown_key_rejected_per_consumer(self, template, tmp_path):
+        from importlib import import_module
+        from core.analysis.errors import ResearchError
+        from tests.helpers.data_factory import make_enhanced_df
+        df = make_enhanced_df(n=300, freq="4h", seed=3)
+        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2023-01-01T00:00:00Z",
+                "end": "2023-02-01T00:00:00Z"}]
+        bad = {"subject": {"indicator": "RSI", "params": {"period": 14}},
+               "action": "lt", "target": 35, "inner_bogus": 1}
+        mod = import_module(f"core.analysis.templates.{template}")
+        fn = getattr(mod, template)
+        if template == "exit_sweep":
+            # exit_sweep 形制：(db_path, data_dir, request_range, *, ...)
+            from core.persistence.db_ext import init_db_ext
+            db = tmp_path / "q.db"
+            init_db_ext(db)
+            data_dir = tmp_path / "market"
+            data_dir.mkdir()
+            make_enhanced_df(n=300, freq="4h", seed=3).to_parquet(
+                data_dir / "BTCUSDT_4h.parquet")
+            with pytest.raises(ResearchError) as ei:
+                fn(db, data_dir, dict(rng[0]), condition=bad,
+                   direction="long",
+                   grid={"stop_loss": [0.01], "take_profit": [0.02]})
+        else:
+            kwargs = {"condition": bad, "data_ranges": rng}
+            if template == "condition_stats":
+                kwargs = {"conditions": [bad], "data_ranges": rng,
+                          "forward_bars": 6}
+            elif template == "regime_split":
+                kwargs = {"conditions": [bad], "data_ranges": rng}
+            with pytest.raises(ResearchError) as ei:
+                fn(df, **kwargs)
+        assert "inner_bogus" in str(ei.value.detail.get(
+            "unknown_keys", [])) or "未知键" in ei.value.message

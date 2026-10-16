@@ -537,3 +537,162 @@ class TestGapClosureValidation:
             db, strategy_id="st_g6b") if r["record_id"] == out["record_id"]]
         assert len(recs) == 1
         assert recs[0]["verdict"] == out["verdict"]
+
+
+class TestGeneTfFourValidationEntries:
+    """T4b/T5c（tester 补——unblock-research-validation spec「验证链
+    装载 MUST 覆盖基因级 timeframe」）：四验证入口（隔离/随机窗口/
+    分段/沙盒）× 基因级 tf 策略跑通（装载判据三层并集生效——若
+    装载桥未扩展，入口将以轴缺失 fail-loud 拒，用例天然鉴别）；
+    T5c 探针锚：高周期轴装载与基准轴同窗前扩（时长等价传递）。"""
+
+    @pytest.fixture()
+    def gene_tf_strategy(self, db) -> str:
+        """entry RSI(14)@1d + exit RSI@4h 基准的策略（tf=基因级）。"""
+        gene_entry = SignalGene(
+            "RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "rsi_14",
+            {"type": "lt", "threshold": 35})
+        gene_entry.timeframe = "1d"
+        gene_exit = SignalGene(
+            "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+            {"type": "gt", "threshold": 70})
+        dna = StrategyDNA(
+            signal_genes=[gene_entry, gene_exit],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_gene_tf", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        return "st_gene_tf"
+
+    def test_t4b_isolated_backtest_runs(self, db, data_dir, hypothesis_id,
+                                        gene_tf_strategy):
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id=gene_tf_strategy,
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-06-01", "end": "2023-07-01"})
+        assert out["verdict"] in ("pass", "fail", "inconclusive"), \
+            "隔离验证跑出三态判定（非轴缺失拒绝）"
+
+    def test_t4b_random_window_runs(self, db, data_dir, gene_tf_strategy):
+        """随机窗口主线：窗长 240 bar（40 天）——1d 轴窗内收盘数+
+        前扩 ≥ load_mtf_data min_bars=50，装载跑通。"""
+        from core.analysis.validation_service import random_window_test
+        out = random_window_test(
+            db, data_dir, strategy_id=gene_tf_strategy, symbol="BTCUSDT",
+            timeframe="4h", data_start="2023-05-01",
+            data_end="2023-08-15", window_bars=240, n_windows=2, seed=5)
+        assert len(out["windows"]) == 2, "随机窗口全部跑出（非轴缺失拒）"
+
+    def test_t4b_random_window_short_window_preflight_rejected(
+            self, db, data_dir, gene_tf_strategy):
+        """短窗×基因级高周期契约锚（DEV-5 裁决 B 落地 247aa74：
+        统计无意义窗入口显式拒绝——30 bar@4h 窗内 1d 采样 5 bar+
+        轴收敛 42 bar < min_bars=50，detail 附可行动六键）。"""
+        from core.analysis.validation_service import random_window_test
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, data_dir, strategy_id=gene_tf_strategy, symbol="BTCUSDT",
+                timeframe="4h", data_start="2023-06-01",
+                data_end="2023-08-01", window_bars=30, n_windows=1, seed=5)
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+        detail = ei.value.detail
+        assert detail["gene_tf"] == "1d"
+        assert detail["in_window_bars"] == 5, "窗内 1d 采样 5 bar（30/6）"
+        assert detail["warmup_bars"] == 42, "轴收敛 42 bar（14×3 收敛粒度）"
+        assert detail["min_bars"] == 50
+        assert "need_hint" in detail, "附建议窗长（可行动形制）"
+
+    def test_t4b_staged_validation_runs(self, db, data_dir, gene_tf_strategy):
+        """分段主线：显式两段各 45 天（段窗+42 天前扩的 1d 轴窗
+        87 根 > min_bars=50）。auto 分段按 regime 切段、短段（如
+        30 天内）在基因级 1d 下与随机短窗同根因——1d 轴装载窗不足
+        min_bars 被跳过→基因级 fail-loud（现状记录锚见
+        test_t4b_random_window_short_window_rejected_current，能力
+        边界已上报裁决）。"""
+        from core.analysis.validation_service import run_staged_validation
+        out = run_staged_validation(
+            db, data_dir, strategy_id=gene_tf_strategy, symbol="BTCUSDT",
+            timeframe="4h", start="2023-05-01", end="2023-08-01",
+            segmentation="explicit",
+            segments=[
+                {"label": "seg_a", "start": "2023-05-01",
+                 "end": "2023-06-15"},
+                {"label": "seg_b", "start": "2023-06-15",
+                 "end": "2023-08-01"}])
+        assert out.get("segments") or out.get("windows") or out.get(
+            "record_id"), "分段验证产出成绩单（非轴缺失拒）"
+
+    def test_t4b_sandbox_runs_and_t5c_same_window_prefix(
+            self, db, data_dir, gene_tf_strategy, monkeypatch):
+        """沙盒跑通 + T5c 探针：spy load_mtf_data 捕获装载参数——
+        needed_tfs 含基因级 1d，且高周期轴 data_start 与基准轴装载
+        前扩起点同窗（时长等价传递，无二次折算）。"""
+        from core.analysis.validation_service import run_sandbox_backtest
+        from core.data import mtf_loader
+        captured: dict = {}
+        _orig_mtf = mtf_loader.load_mtf_data
+        _orig_base = mtf_loader.load_and_prepare_df
+
+        def spy_mtf(data_dir_, symbol_, exec_tf, enhanced, needed_tfs,
+                    data_start=None, data_end=None, **kw):
+            captured["hi"] = {"needed": set(needed_tfs),
+                              "data_start": data_start}
+            return _orig_mtf(data_dir_, symbol_, exec_tf, enhanced,
+                             needed_tfs, data_start=data_start,
+                             data_end=data_end, **kw)
+
+        def spy_base(data_dir_, symbol_, tf, data_start=None, **kw):
+            captured["base"] = data_start
+            return _orig_base(data_dir_, symbol_, tf,
+                              data_start=data_start, **kw)
+
+        monkeypatch.setattr(mtf_loader, "load_mtf_data", spy_mtf)
+        monkeypatch.setattr(mtf_loader, "load_and_prepare_df", spy_base)
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id=gene_tf_strategy, symbol="BTCUSDT",
+            timeframe="4h", start="2023-06-01", end="2023-07-01")
+        assert out.get("metrics") is not None or out.get("result") is not \
+            None or len(out) > 0, "沙盒跑出结果"
+        assert "1d" in captured["hi"]["needed"], \
+            "装载集含基因级 timeframe（三层并集）"
+        assert captured["hi"]["data_start"] == captured["base"], (
+            f"高周期轴前扩起点 {captured['hi']['data_start']} 应与基准轴"
+            f" {captured['base']} 同窗（时长等价传递）")
+
+
+class TestExplicitSegmentShortWindowPreflight:
+    """短窗预检边界（tester 补——247aa74 设计明文：explicit 段不在
+    预检面，段内采样充分性调用方自担；auto 段/随机窗口才预检拒。
+    本锚披露两分面：explicit 短段不预检拒（自担语义），装载可行时
+    正常出成绩单）。"""
+
+    def test_explicit_short_segment_not_preflighted(
+            self, db, data_dir, hypothesis_id):
+        gene_entry = SignalGene(
+            "RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "rsi_14",
+            {"type": "lt", "threshold": 35})
+        gene_entry.timeframe = "1d"
+        gene_exit = SignalGene(
+            "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+            {"type": "gt", "threshold": 70})
+        dna = StrategyDNA(
+            signal_genes=[gene_entry, gene_exit],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_exp_short", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        from core.analysis.validation_service import run_staged_validation
+        # 15 天段（窗内 1d 采样约 2 bar<warmup 42——统计意义弱）：
+        # explicit 自担语义=不预检拒；段+warmup 前扩装载窗 56 根 1d
+        # ≥ min_bars → 装载可行 → 正常出成绩单
+        out = run_staged_validation(
+            db, data_dir, strategy_id="st_exp_short", symbol="BTCUSDT",
+            timeframe="4h", start="2023-05-01", end="2023-05-15",
+            segmentation="explicit",
+            segments=[{"label": "s", "start": "2023-05-01",
+                       "end": "2023-05-15"}])
+        assert out.get("segments") or out.get("record_id"), \
+            "explicit 段不预检（自担语义），装载可行即出成绩单"

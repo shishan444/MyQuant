@@ -363,6 +363,47 @@ def combine_signals(signal_list: list[pd.Series], logic: str) -> pd.Series:
 _indicator_column_cache: dict = {}
 
 
+def _evaluate_gene_signal(gene, enhanced_df, dfs_by_timeframe=None) -> pd.Series:
+    """基因信号求值单点（unblock-research-validation 基因级周期分支）。
+
+    基准周期基因（timeframe None）：现路径逐字节不变（tf==基准在
+    翻译面已归一剥离）。防御性披露（fix-review B4③）：显式标记
+    tf==基准（绕过翻译归一的手工 DNA）走下方投影分支——
+    project_completed_bool 有触发时间戳 +tf 收敛挂载语义（落在
+    收盘时刻所在基准 bar），与基准路径直接求值非严格逐位等——
+    语义差异披露而非恒等宣称。
+    带基因级高周期：高周期轴求值（_get_indicator_column+evaluate_
+    condition 在轴 df 上）→ project_completed_bool 掩码投影到基准轴
+    （role 无关——ADD_TRIGGER 等自动获得投影；先投影后 policy 的
+    顺序契约在调用方循环层完成，policy 保持出口挂点）。高周期轴
+    数据缺失显式拒绝（fail-loud，禁止静默降级为基准周期求值——
+    load_mtf_data 的 layers 静默跳过语义不适用基因级）。主路径
+    （dna_to_signal_set）与批量域（batch_signal_sets）共用本单点。
+    """
+    gene_tf = getattr(gene, "timeframe", None)
+    if gene_tf is None:
+        indicator_col = _get_indicator_column(enhanced_df, gene)
+        return evaluate_condition(
+            indicator_col, enhanced_df["close"], gene.condition,
+            df=enhanced_df)
+    # 基因级周期在场：需要装载轴
+    hi_df = (dfs_by_timeframe or {}).get(gene_tf)
+    if hi_df is None:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"基因级周期 {gene_tf} 数据轴缺失（装载集未覆盖——装载"
+            "判据须含基因级 timeframe）",
+            detail={"timeframe": gene_tf,
+                    "available": sorted((dfs_by_timeframe or {}).keys())})
+    from core.data.mtf_alignment import project_completed_bool
+    hi_col = _get_indicator_column(hi_df, gene)
+    hi_signal = evaluate_condition(
+        hi_col, hi_df["close"], gene.condition, df=hi_df)
+    projected = project_completed_bool(
+        hi_signal.fillna(False), enhanced_df.index, gene_tf)
+    return projected
+
+
 def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     """从 enhanced DataFrame 解析指标列（基因级列查找单点）。
 
@@ -855,8 +896,12 @@ def dna_to_signal_set(
 
     for gene in dna.signal_genes:
         try:
-            indicator_col = _get_indicator_column(enhanced_df, gene)
-            signal = evaluate_condition(indicator_col, close, gene.condition, df=enhanced_df)
+            # 基因信号求值单点（unblock-research-validation）：基准周期
+            # 基因现路径逐字节不变；基因级高周期轴求值+掩码投影
+            # （role 无关）。投影在本循环层完成——policy 保持出口挂点
+            # （先投影后 policy 顺序契约，禁止反序）
+            signal = _evaluate_gene_signal(
+                gene, enhanced_df, dfs_by_timeframe)
             signal = signal.fillna(False)
 
             if gene.role == SignalRole.ENTRY_TRIGGER:
@@ -1023,11 +1068,8 @@ def batch_signal_sets(
                 continue
 
             try:
-                indicator_col = _get_indicator_column(enhanced_df, gene)
-                signal = evaluate_condition(
-                    indicator_col, enhanced_df["close"], gene.condition,
-                    df=enhanced_df,
-                )
+                signal = _evaluate_gene_signal(
+                    gene, enhanced_df, dfs_by_timeframe)
                 gene_results[sig] = signal.fillna(False)
             except ResearchError as exc:
                 # unify-tool-return-contract：前置清洗上线前存量个体的
