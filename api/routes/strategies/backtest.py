@@ -60,6 +60,7 @@ from api.schemas import (
     VerifySessionListResponse,
 )
 from core.backtest import engine as _bt_engine_mod
+from core.analysis.errors import ResearchError  # 轻量定义点直取（errors.py 唯一权威）
 from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
@@ -171,7 +172,16 @@ def backtest_strategy(
             set(payload.timeframe_pool), payload.data_start, payload.data_end,
         )
 
-    result = engine.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+    # 执行器 raise 化后的传播配套（CARD-08）：非法条件类型等经
+    # engine.run 冒泡的 ResearchError 转结构化 422，不裸穿 500
+    # （与验证端点 validate.py catch 形制对齐——装载/评分链零
+    # ResearchError 抛出面，捕获面收口在引擎执行单点）
+    try:
+        result = engine.run(
+            dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+    except ResearchError as exc:
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
 
     metrics = backtest_service.fallback_metrics(result)
     score_result = score_strategy(

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.analysis.backtest_bridge import run_backtest_on_range
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError, load_stored_json  # 轻量定义点直取（errors.py 唯一权威）
 from core.analysis.isolation import (
     _parse_ts,
     iter_all_pages,
@@ -44,6 +45,14 @@ from core.analysis.thresholds import (
 )
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
 from core.persistence.repository import research as rr
+
+logger = logging.getLogger(__name__)
+
+# 幂等数据源权威键黑名单（fix-review CARD-03）：base 的身份与幂等
+# 三键由记录列/调用方权威产生，库内 result_json 内嵌同名键（损坏
+# 或外部改写）不得覆盖权威值——命中跳过并告警留痕（与 direction
+# 白名单二值收敛特判同构：一个是值域收敛，一个是整键拒绝）
+_PAYLOAD_AUTHORITY_KEYS = frozenset({"record_id", "verdict", "duplicated"})
 
 # 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
 # 留足余量；50k 为默认起点，按回测速度实施校准）
@@ -268,26 +277,78 @@ def segmentation_identity(mode: str, segments=None) -> str:
     return ""
 
 
-def _dup_payload(existing: Dict[str, Any]) -> Dict[str, Any]:
-    """幂等命中返回形（隔离/分段共用；五元命中+方向同构回显）。
+def _validation_payload(
+    base: Dict[str, Any],
+    result: Optional[Dict[str, Any]],
+    *,
+    db_path: Optional[Path] = None,
+    hypothesis_id: Optional[str] = None,
+    judged: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """验证返回体单一映射（unify-tool-return-contract 规则①）。
 
-    direction（add-direction-channel A4）：读既有 result_json 顶层键
-    （首次路径写入），存量记录无键按 "long" 补——幂等重放与首次请求
-    返回体同构（MUST，spec 验证证据档案 Requirement）。
+    统一形制=首次/幂等两分支顶层键集并集全顶层、result 嵌套退役：
+    payload = base（身份与入口专有键）∪ result 内嵌键顶层化 ∪
+    judged_ranges。isolated 首次/幂等与 staged 首次/幂等四点共用
+    （staged 专有键由 base 参数化，禁一套键集硬套两入口）——键集
+    一致性由本函数结构保证，契约测试断言两分支顶层键集合相等。
+
+    - 权威键黑名单（CARD-03）：result 内嵌 record_id/verdict/
+      duplicated 不覆盖 base（权威值来自记录列与调用方），命中
+      跳过并 warning。
+    - direction 值域收敛（security S-1）：脏值/null 恒回显合法二值。
+    - judged_ranges 同源现算 judged_ranges_union（语义=响应时点
+      判定并集，落库后含本记录——首次与幂等同口径）；judged 显式
+      传入时直用（staged 首次已现算，避免双算）。
     """
-    result = json.loads(existing["result"]) if existing["result"] else None
-    # 值域收敛（security S-1）：脏值/null 不反射——恒回显合法二值
-    direction = "long"
-    if isinstance(result, dict) \
-            and result.get("direction") in ("long", "short"):
-        direction = result["direction"]
-    return {
+    payload = dict(base)
+    if isinstance(result, dict):
+        for key, value in result.items():
+            if key in _PAYLOAD_AUTHORITY_KEYS:
+                logger.warning(
+                    "result_json 内嵌权威键 %r，跳过不覆盖（base 权威值保留）",
+                    key)
+                continue
+            if key != "direction":
+                payload[key] = value
+    direction = result.get("direction") if isinstance(result, dict) else None
+    payload["direction"] = direction if direction in ("long", "short") else "long"
+    if judged is None:
+        judged = judged_ranges_union(db_path, hypothesis_id) \
+            if (db_path is not None and hypothesis_id) else []
+    payload.setdefault("judged_ranges", judged)
+    return payload
+
+
+def _dup_payload(
+    existing: Dict[str, Any],
+    *,
+    db_path: Optional[Path] = None,
+    hypothesis_id: Optional[str] = None,
+    entry_ctx: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """幂等命中返回形（隔离/分段共用；经 _validation_payload 与首次同构）。
+
+    幂等数据源=result_json（写入侧保证内嵌完整首次 payload）；entry
+    专有键（staged 的入口参数）经 entry_ctx 参数化。direction 读
+    result_json 顶层键（add-direction-channel A4），存量记录无键按
+    "long" 收敛。
+    """
+    # 幂等数据源解析兜底（CARD-02）：result_json 由写入侧序列化，
+    # 损坏（外部改写/截断）时结构化拒绝点名记录，不裸炸 500
+    result = load_stored_json(
+        existing["result"], source="validation_records.result",
+        detail={"record_id": existing["record_id"]},
+    ) if existing["result"] else None
+    base = {
         "record_id": existing["record_id"],
         "verdict": existing["verdict"],
         "duplicated": True,
-        "direction": direction,
-        "result": result,
     }
+    if entry_ctx:
+        base.update(entry_ctx)
+    return _validation_payload(
+        base, result, db_path=db_path, hypothesis_id=hypothesis_id)
 
 
 def _hypothesis_precheck(
@@ -319,7 +380,8 @@ def _hypothesis_precheck(
             db_path, hypothesis_id, strategy_id, rh,
             level=idem_level, segmentation=idem_segmentation)
         if existing is not None:
-            return _dup_payload(existing)
+            return _dup_payload(
+                existing, db_path=db_path, hypothesis_id=hypothesis_id)
     judged = judged_ranges_union(db_path, hypothesis_id)
     overlaps = overlaps_with_request(
         judged, request_range["start"], request_range["end"])
@@ -360,9 +422,6 @@ def run_isolated_backtest(
                                idem_level="isolated_backtest")
     if dup is not None:
         return dup
-    # payload 的并集快照：写库前时点（不含本次写入——原前置查询的
-    # 值语义；与 precheck 内查询间无写操作，等价）
-    judged = judged_ranges_union(db_path, hypothesis_id)
 
     # 策略与 DNA
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
@@ -430,17 +489,13 @@ def run_isolated_backtest(
         params=params_json, result=result_json, verdict=verdict, range_hash=rh,
         components=components_json)
 
-    return {
-        "record_id": record_id,
-        "verdict": verdict,
-        "duplicated": False,
-        "metrics": metrics,
-        "threshold_details": details,
-        "warmup": {"bars": actual_warmup, "derived": warmup_bars,
-                   "basis": WARMUP_RULE_TEXT},
-        "judged_ranges": judged,
-        "direction": dna.risk_genes.direction,
-    }
+    # 统一返回体（unify-tool-return-contract 规则①）：经单一映射函数
+    # 与幂等分支同构（11 键全顶层；warmup 与 result_json 同 4 子键；
+    # judged_ranges 响应时点现算=落库后含本记录，与幂等重放同口径）
+    return _validation_payload(
+        {"record_id": record_id, "verdict": verdict, "duplicated": False},
+        json.loads(result_json),
+        db_path=db_path, hypothesis_id=hypothesis_id)
 
 
 def random_window_test(
@@ -490,7 +545,11 @@ def random_window_test(
         db_path, hypothesis_id or "adhoc", strategy_id, rh,
         level="random_window")  # G7 五元：随机窗身份（segmentation 空串）
     if existing is not None:
-        _rw_result = json.loads(existing["result"]) if existing["result"] else None
+        # 幂等数据源解析兜底（CARD-02）：同 _dup_payload 形制
+        _rw_result = load_stored_json(
+            existing["result"], source="validation_records.result",
+            detail={"record_id": existing["record_id"]},
+        ) if existing["result"] else None
         # 方向同构回显（add-direction-channel A4）：存量无键/脏值按 long
         # 补（security S-1 值域收敛——恒回显合法二值）
         _rw_direction = _rw_result.get("direction") \
@@ -887,7 +946,15 @@ def run_staged_validation(
             level="staged_validation",
             segmentation=segmentation_identity(segmentation, seg_list))
         if existing is not None:
-            return _dup_payload(existing)
+            # staged 幂等：专有键经入口参数化（与首次同构；result 内
+            # 嵌键由写入侧补齐保证——存量记录缺键时入口值兜底）
+            return _dup_payload(
+                existing, db_path=db_path, hypothesis_id=hypothesis_id,
+                entry_ctx={"strategy_id": strategy_id,
+                           "hypothesis_id": hypothesis_id,
+                           "segmentation": segmentation,
+                           "request_range": request_range,
+                           "warmup_bars": int(warmup_bars)})
 
     # ---- 逐段回测与段级门槛 ----
     seg_results: List[Dict[str, Any]] = []
@@ -952,7 +1019,12 @@ def run_staged_validation(
             result=json.dumps({"segments": seg_results, "summary": summary,
                                # 方向披露（add-direction-channel A4）：
                                # 纯增量键，幂等重放提取源
-                               "direction": dna.risk_genes.direction},
+                               "direction": dna.risk_genes.direction,
+                               # 写入侧补齐不变量（unify-tool-return-
+                               # contract）：result_json 内嵌完整首次
+                               # payload 键——幂等重放数据源完备
+                               "request_range": request_range,
+                               "warmup_bars": int(warmup_bars)},
                               ensure_ascii=False),
             verdict=verdict, range_hash=rh)
     else:
@@ -969,19 +1041,17 @@ def run_staged_validation(
     if hypothesis_id is not None:
         judged = judged_ranges_union(db_path, hypothesis_id)
 
-    return {
-        "record_id": record_id,
-        "verdict": verdict,
-        "strategy_id": strategy_id,
-        "hypothesis_id": hypothesis_id,
-        "segmentation": segmentation,
-        "request_range": request_range,
-        "warmup_bars": int(warmup_bars),
-        "segments": seg_results,
-        "summary": summary,
-        "judged_ranges": judged,
-        "direction": dna.risk_genes.direction,
-    }
+    # 统一返回体（unify-tool-return-contract 规则①）：经单一映射函数
+    # 与幂等分支同构（staged 专有键由 base 参数化；duplicated 纯增量
+    # 键使两入口返回体形制一致）
+    return _validation_payload(
+        {"record_id": record_id, "verdict": verdict, "duplicated": False,
+         "strategy_id": strategy_id, "hypothesis_id": hypothesis_id,
+         "segmentation": segmentation, "request_range": request_range,
+         "warmup_bars": int(warmup_bars)},
+        {"segments": seg_results, "summary": summary,
+         "direction": dna.risk_genes.direction},
+        judged=judged)
 
 
 def query_union_balance(

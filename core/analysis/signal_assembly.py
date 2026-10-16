@@ -156,7 +156,15 @@ def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
             "RESEARCH_SIGNAL_SOURCE_INVALID",
             f"模型信号源无 valid 版本: {column}",
             detail={"ref": column})
-    cfg = dict(json.loads(row["config"]))
+    # 库内 config 解析兜底（CARD-02）：损坏（外部改写/截断）与无
+    # valid 版本/求值失败同族——信号源不可用，沿本函数既有码内联
+    try:
+        cfg = dict(json.loads(row["config"]))
+    except json.JSONDecodeError as exc:
+        raise ResearchError(
+            "RESEARCH_SIGNAL_SOURCE_INVALID",
+            f"模型信号源配置损坏（JSON 无法解析）: {column}",
+            detail={"ref": column, "parse_error": str(exc)}) from exc
     cfg.pop("_config_hash", None)
     try:
         res = fit_predict_walk_forward(df, ModelPluginConfig(**cfg))

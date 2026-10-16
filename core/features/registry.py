@@ -1,7 +1,15 @@
-"""Indicator registry: data structures and indicator definitions.
+"""指标注册表：指标元数据的数据结构与 45 指标定义（全链单源权威）。
 
-Defines ParamDef, IndicatorDef, INDICATOR_REGISTRY, and get_interchangeable().
-Extracted from indicators.py to keep file sizes within the 800-line limit.
+职能：定义 ParamDef（参数域）、IndicatorDef（指标定义）、
+INDICATOR_REGISTRY（45 指标注册表）与 get_interchangeable（同类
+互换集查询）。
+价值与服务对象：全工程指标元数据唯一权威——19 个生产文件消费
+（analysis 域 13 / strategy 2 / evolution 1 / features 1 /
+validation 1 / api 1），支撑翻译侧 supported_conditions 合法集、
+列名解析 resolve_indicator_column 全链单源、变异侧 ParamDef.clamp
+值域收敛、同类互换 get_interchangeable 候选集。
+边界：只承载元数据与命名解析，不做指标计算（计算归
+indicators.py）；自 indicators.py 拆出以控制单文件 800 行上限。
 """
 
 from __future__ import annotations
@@ -16,7 +24,7 @@ from typing import Dict, List, Optional
 
 @dataclass
 class ParamDef:
-    """Parameter definition with range constraints for mutation."""
+    """参数定义（min/max/default/step 值域——变异算子的参数域权威）。"""
     type: str          # "int" | "float"
     min: float
     max: float
@@ -25,7 +33,8 @@ class ParamDef:
     candidates: Optional[List[float]] = None
 
     def clamp(self, value: float) -> float:
-        """Clamp value to valid range, rounded to step boundary."""
+        """钳制 value 到 [min, max] 并取整到 step 边界（变异产物的
+        参数域收敛——越界值拉回合法域，而非拒绝整个个体）。"""
         import math
         value = max(self.min, min(self.max, value))
         return round(value / self.step) * self.step
@@ -33,7 +42,7 @@ class ParamDef:
 
 @dataclass
 class IndicatorDef:
-    """Definition of a single indicator in the registry."""
+    """单个指标的注册表定义（类别/参数域/输出列/合法条件集）。"""
     category: str
     params: Dict[str, ParamDef]
     output_fields: List[str]
@@ -44,7 +53,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (30 indicators, 6 categories)
+# Indicator Registry (45 indicators, 6 categories)
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -406,7 +415,8 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
 
 
 def get_interchangeable(indicator_name: str) -> List[str]:
-    """Return indicators in the same category (excludes self)."""
+    """返回同类别全部其他指标（变异侧同类互换候选集；类别相同视为
+    语义可互换。未注册名返回空列表=无互换面）。"""
     if indicator_name not in INDICATOR_REGISTRY:
         return []
     category = INDICATOR_REGISTRY[indicator_name].category
@@ -441,21 +451,26 @@ def resolve_indicator_column(
     field_name: str = "",
     naming: str = "",
 ) -> str:
-    """Resolve indicator name + params to the expected DataFrame column name.
+    """把指标名+参数解析为预期 DataFrame 列名（列命名约定权威正向
+    解析点）。
 
-    Single source of truth for column naming conventions.  All consumers
-    (executor.py, indicators.py) should call this
-    instead of duplicating if/elif chains.
+    消费现状（实然披露）：executor 列解析全链经本函数
+    （_get_indicator_column 单点转发）；indicators.py 计算侧产列
+    按同一命名约定自拼列名（与各 naming 分支为镜像实现，约定变更
+    须双侧同步）；column_ref.py 的逆文法解码与之对偶——同一命名
+    约定现存三份须同步的实现（正向解析/产列自拼/逆向解码）。
 
     Args:
-        name: Indicator name from registry (e.g. "EMA", "BB").
-        params: Parameter dict (e.g. {"period": 20}).
-        field_name: Optional field for multi-output indicators (e.g. "upper").
-        naming: Naming mode from IndicatorDef.naming. If empty, auto-resolved
-            from INDICATOR_REGISTRY.
+        name: 注册表内指标名（如 "EMA"、"BB"）。
+        params: 参数字典（如 {"period": 20}）。
+        field_name: 多输出指标的字段名（如布林带 "upper"）；缺省取
+            各 naming 分支的缺省字段。
+        naming: 列名模式（IndicatorDef.naming 值）；空串=按
+            INDICATOR_REGISTRY 自动解析。
 
     Returns:
-        Expected column name string.
+        预期列名字符串（未注册指标在 default 模式下回退
+        name.lower() 前缀形）。
     """
     # Auto-resolve naming from registry if not explicitly provided
     if not naming:
@@ -527,5 +542,6 @@ def resolve_indicator_column(
         lookback = int(params["lookback"])
         return f"mfe_score_{bins}_{lookback}"
 
-    # Unknown naming mode fallback
+    # 未知 naming 模式兜底：回退裸指标名小写形（新 naming 分支遗漏时
+    # 列名仍确定——与 default 分支的未注册回退同形）
     return name.lower()

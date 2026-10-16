@@ -30,8 +30,11 @@ from tests.helpers.data_factory import make_ohlcv, make_dna
 class TestExecutorExceptions:
     """Exception tests for core/strategy/executor.py."""
 
-    def test_unknown_indicator_raises(self):
-        """Passing an unknown indicator to dna_to_signal_set should not crash silently."""
+    def test_unknown_indicator_rejected(self):
+        """未知指标基因结构化拒绝（unify-tool-return-contract D7 第二
+        静默面收口：列解析失败从静默跳过改 ResearchError——旧「全 False
+        信号」行为锚随修复退役，测试同步改正确行为）。"""
+        from core.analysis.errors import ResearchError
         from core.strategy.executor import dna_to_signal_set
         from core.strategy.dna import SignalGene, SignalRole, StrategyDNA, LogicGenes, ExecutionGenes, RiskGenes
 
@@ -50,10 +53,10 @@ class TestExecutorExceptions:
         )
         df = make_ohlcv(n=100, freq="4h")
 
-        # Should not raise -- executor catches missing indicators gracefully
-        # by returning all-False signals (evaluate_layer catches ValueError)
-        signal_set = dna_to_signal_set(dna, df)
-        assert signal_set.entries.dtype == bool
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        assert exc_info.value.code == "RESEARCH_CONDITION_INVALID"
+        assert exc_info.value.detail["indicator"] == "NONEXISTENT_INDICATOR"
 
     def test_evaluate_condition_missing_type_key(self):
         """Condition dict without 'type' key should not crash."""
@@ -64,13 +67,17 @@ class TestExecutorExceptions:
         with pytest.raises(KeyError):
             evaluate_condition(s, close, {"value": 50})
 
-    def test_evaluate_condition_unknown_type_returns_false(self):
-        """Unknown condition type returns all-False series."""
+    def test_evaluate_condition_unknown_type_rejected(self):
+        """未知条件类型结构化拒绝（unify-tool-return-contract 2.6 第一
+        静默面收口：全 False 退役改 raise——旧行为锚随修复退役，测试
+        同步改正确行为；S6a 详测在 tests/strategy/test_executor.py）。"""
+        from core.analysis.errors import ResearchError
         from core.strategy.executor import evaluate_condition
         s = pd.Series([1.0, 2.0, 3.0])
         close = pd.Series([100.0, 101.0, 102.0])
-        result = evaluate_condition(s, close, {"type": "totally_unknown"})
-        assert not result.any()
+        with pytest.raises(ResearchError) as exc_info:
+            evaluate_condition(s, close, {"type": "totally_unknown"})
+        assert exc_info.value.code == "RESEARCH_NOT_EXPRESSIBLE"
 
 # ============================================================================
 # Gap 2: BacktestEngine.run() boundary conditions

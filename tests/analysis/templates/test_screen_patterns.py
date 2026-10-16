@@ -64,7 +64,8 @@ class TestScreenPatternsBasics:
         r = screen_patterns(
             _random_walk(1), data_ranges=_RANGES, timeframe="1h",
             features=["OI_ZScore"], horizons=[4]).to_dict()
-        assert "OI_ZScore" in r["payload"]["skipped_indicators"]
+        skipped = r["payload"]["skipped_indicators"]
+        assert any(e["name"] == "OI_ZScore" for e in skipped)
         assert r["payload"]["candidates"] == []
 
     def test_stop_check_interrupts_without_output(self):
@@ -240,7 +241,8 @@ class TestGapClosureScreen:
         r = screen_patterns(
             _random_walk(1), data_ranges=_RANGES, timeframe="1h",
             features=["RSI"], horizons=[4]).to_dict()
-        assert "RSI" in r["payload"]["skipped_indicators"]
+        assert any(e["name"] == "RSI"
+                   for e in r["payload"]["skipped_indicators"])
 
     def test_stop_check_主循环与组合循环两调用点(self):
         """stop_check 覆盖主循环（逐指标）与组合循环（逐配对）——
@@ -287,8 +289,9 @@ class TestGapClosureScreen3:
         r = screen_patterns(
             _random_walk(1, 300), data_ranges=_RANGES, timeframe="1h",
             features=["OI_ZScore", "RSI"], horizons=[4]).to_dict()
-        assert "OI_ZScore" in r["payload"]["skipped_indicators"]
-        assert "RSI" not in r["payload"]["skipped_indicators"]
+        skipped = r["payload"]["skipped_indicators"]
+        assert any(e["name"] == "OI_ZScore" for e in skipped)
+        assert all(e["name"] != "RSI" for e in skipped)
 
 
 class TestGapClosureComboSkip:
@@ -358,3 +361,65 @@ class TestGapClosureComboSkip:
         assert len(large["candidates"]) <= 100
         manual = sum(1 for c in large["candidates"] if c["fdr_significant"])
         assert large["n_significant"] == manual
+
+
+class TestSkippedThreeReasons:
+    """S5a/S5b/S5c：skipped_indicators 三因分类（unify-tool-return-contract 任务 7）。"""
+
+    def test_s5a_three_reasons_each_hit_by_name(self):
+        """三原因具名各一例（S5a 原义）：VolumeProfile 无默认参数网格
+        （no_default_params——注册表成员但不在 _DEFAULT_PARAMS）/OBV
+        计算有产出但无覆盖动作（no_covered_actions）/OI_ZScore 计算
+        无产出（compute_failed——衍生品列缺失静默无产出，无异常时
+        reason_detail 键缺席=「可空」的实现形制）。"""
+        r = screen_patterns(
+            _random_walk(1, 400), data_ranges=_RANGES, timeframe="1h",
+            features=["VolumeProfile", "OBV", "OI_ZScore"],
+            horizons=[4]).to_dict()
+        by_name = {e["name"]: e
+                   for e in r["payload"]["skipped_indicators"]}
+        assert by_name["VolumeProfile"]["reason"] == "no_default_params"
+        assert by_name["OBV"]["reason"] == "no_covered_actions"
+        assert by_name["OI_ZScore"]["reason"] == "compute_failed"
+        assert "reason_detail" not in by_name["OI_ZScore"], \
+            "静默无产出（无异常）不附 reason_detail"
+
+    def test_s5b_reason_in_closed_enum_for_all(self):
+        """S5b 全量枚举封闭：全指标扫描 skipped 元素 reason ∈ 三值
+        封闭枚举，元素形制含 name/reason。"""
+        r = screen_patterns(
+            _random_walk(1, 400), data_ranges=_RANGES, timeframe="1h",
+            features="all", horizons=[4]).to_dict()
+        skipped = r["payload"]["skipped_indicators"]
+        assert skipped, "跳过清单非空"
+        for e in skipped:
+            assert set(e) >= {"name", "reason"}, f"元素形制：{e}"
+            assert e["reason"] in ("no_default_params", "compute_failed",
+                                   "no_covered_actions"), f"枚举外值：{e}"
+
+    def test_compute_failed_carries_reason_detail_on_exception(
+            self, monkeypatch):
+        """compute 抛异常时 reason_detail=首个异常摘要（设计卡 2.5：
+        compute_failed 附 reason_detail: str 首个异常摘要，可空）。"""
+        import core.features.indicators as indicators_mod
+
+        def _boom(df, name, params):
+            raise RuntimeError("boom-探针异常")
+
+        monkeypatch.setattr(indicators_mod, "_compute_indicator", _boom)
+        r = screen_patterns(
+            _random_walk(1, 300), data_ranges=_RANGES, timeframe="1h",
+            features=["RSI"], horizons=[4]).to_dict()
+        skipped = r["payload"]["skipped_indicators"]
+        assert len(skipped) == 1 and skipped[0]["name"] == "RSI"
+        assert skipped[0]["reason"] == "compute_failed"
+        assert skipped[0].get("reason_detail") == "boom-探针异常"
+
+    def test_s5c_tool_doc_element_form(self):
+        """S5c 工具描述同步元素形制（源码文本断言——工具经闭包注册
+        无模块级属性）。"""
+        from pathlib import Path
+        src = Path("mcpserver/tools.py").read_text("utf-8")
+        for token in ("no_default_params", "compute_failed",
+                      "no_covered_actions", "{name, reason}"):
+            assert token in src, f"工具描述缺元素形制说明: {token}"

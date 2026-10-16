@@ -11,25 +11,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-
-class _FakeMcp:
-    def __init__(self):
-        self.registered = {}
-
-    def tool(self):
-        def deco(fn):
-            self.registered[fn.__name__] = fn
-            return fn
-        return deco
-
-
-class _FakeApi:
-    def __init__(self):
-        self.posts = []
-
-    def post(self, url, body):
-        self.posts.append((url, body))
-        return {"hypothesis_id": "h1"}
+from conftest import _FakeApi, _FakeMcp  # 同目录（pytest prepend）
 
 
 _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
