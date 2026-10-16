@@ -442,7 +442,7 @@ def translate_hypothesis(
                 "risk_genes": risk_origin,
                 # 身份回读（规则②）：该分支只有产物 id 无行数据——
                 # direction/max_hold 按收敛缺省（S2f 锚）
-                **_translate_receipt("long", None, False)}
+                **_translate_receipt("long", None, None, False)}
 
     # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
     # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
@@ -581,7 +581,8 @@ def translate_hypothesis(
                 "duplicated": False, "same_dna_existing": True,
                 "risk_genes": risk_origin,
                 **_translate_receipt(
-                    _identity["direction"], _identity["max_hold"], True)}
+                    _identity["direction"], _identity["max_hold"],
+                    _identity["time_exit_utc"], True)}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -597,7 +598,8 @@ def translate_hypothesis(
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
                 **_translate_receipt(
-                    _identity["direction"], _identity["max_hold"], False)}
+                    _identity["direction"], _identity["max_hold"],
+                    _identity["time_exit_utc"], False)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
@@ -628,7 +630,8 @@ def translate_hypothesis(
             "genes": [f"{g.indicator}({g.field_name})" for g in genes],
             "risk_genes": risk_origin,
             **_translate_receipt(
-                risk_genes.direction, risk_genes.max_hold, False)}
+                risk_genes.direction, risk_genes.max_hold,
+                risk_genes.time_exit_utc, False)}
 
 
 def _translate_conditions(
@@ -922,9 +925,12 @@ def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     rg = _risk_genes_of_row(row) if row else {}
     direction = rg.get("direction")
     max_hold = rg.get("max_hold")
+    time_exit = rg.get("time_exit_utc")
     return {
         "direction": direction if direction in ("long", "short") else "long",
         "max_hold": int(max_hold) if isinstance(max_hold, int) else None,
+        "time_exit_utc": int(time_exit)
+        if isinstance(time_exit, int) else None,
     }
 
 
@@ -936,10 +942,13 @@ _REUSE_NOTE = (
     "挂载依赖调用方显式携带 hypothesis_id；执行周期由验证请求参数指定")
 
 
-def _translate_receipt(direction: str, max_hold, reuse: bool) -> Dict[str, Any]:
-    """翻译回执身份三键（四返回点统一形制）。"""
+def _translate_receipt(direction: str, max_hold, time_exit,
+                        reuse: bool) -> Dict[str, Any]:
+    """翻译回执身份四键（四返回点统一形制——time_exit_utc 任务 6
+    增键，回执面与声明面同步）。"""
     return {
         "direction": direction if direction in ("long", "short") else "long",
         "max_hold": max_hold if isinstance(max_hold, int) else None,
+        "time_exit_utc": time_exit if isinstance(time_exit, int) else None,
         "reuse_note": _REUSE_NOTE if reuse else None,
     }
