@@ -802,6 +802,19 @@ def _translate_conditions(
             if action in ("gt", "lt", "ge", "le") \
                     and isinstance(target, (int, float)) \
                     and not isinstance(target, bool):
+                # target 值域硬校验（security F-1）：[0,24) 小时域
+                # （U7b 值形制——开盘 UTC 小时+分钟/60，23:59 → 23.9833）
+                # ——域外阈值（如 25 的 lt）比较恒 False 无语义，软放行
+                # 会产出永不/恒触发的基因；落地兜底文案自述的 [0,24) 域
+                if not (0 <= target < 24):
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] 不可表达: hour_utc target {target}"
+                        " 超出 [0,24) 小时域（UTC 开盘时刻小数）",
+                        detail={"condition": cond,
+                                "slow_path": "target 取 [0,24) 小数"
+                                             "（bar 开盘 UTC 小时"
+                                             "+分钟/60）"})
                 genes.append(SignalGene(
                     indicator="hour_utc",
                     params={},
