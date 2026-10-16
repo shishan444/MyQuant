@@ -456,3 +456,24 @@ class TestAnalysisTaskSameCore:
                 provenance={"ref_type": "analysis_task",
                             "task_id": "ant_ghost00001"})
         assert rr.list_research_log(db) == [], "拒绝路径零留痕"
+
+
+class TestProvenanceGateCompletions:
+    """闸门覆盖缺口补锚：provenance 门两分支——服务层缺 task_id 拒；
+    schema 层 screen_candidate 缺指纹 ValueError（服务层包装版已测、
+    schema 直测补全）。"""
+
+    def test_missing_task_id_rejected(self, tmp_path):
+        db = _db(tmp_path)
+        with pytest.raises(ResearchError, match="task_id"):
+            register_hypothesis(
+                db, conditions=_conditions(), statement="缺任务标识",
+                data_ranges=[OTHER_RANGE],
+                provenance={"candidate_fingerprint": "abc"})
+
+    def test_schema_fingerprint_conditionality_valueerror(self):
+        from api.schemas import AnalysisProvenance
+        import pytest as _pytest
+        with _pytest.raises(ValueError, match="candidate_fingerprint"):
+            AnalysisProvenance.model_validate(
+                {"ref_type": "screen_candidate", "task_id": "t1"})

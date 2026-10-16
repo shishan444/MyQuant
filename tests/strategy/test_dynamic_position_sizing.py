@@ -526,3 +526,52 @@ class TestExposureConsistency:
                            "max_entry_size", "replay_status"}, \
             f"实际键集: {sorted(ps)}"
         assert ps["replay_status"] in ("ok", "failed")
+
+
+class TestGateCompletions:
+    """闸门覆盖缺口补锚：零交易披露 ok 路径+validate_dna 侧
+    position_mode/risk_fraction 直调域（登记面已测、DNA 面补全）。"""
+
+    def test_zero_trades_disclosure_ok(self):
+        """零交易 risk_budget（入场永不触发）——披露 replay_status=ok
+        且三统计键非 None（零交易=成功重放含空集，非失败）。"""
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.executor import (
+            dna_to_signal_set, clear_indicator_cache)
+        df = make_enhanced_df(n=100, seed=42)
+        dna = make_dna(entry_value=-100, exit_value=70)  # RSI<-100 永不
+        dna.risk_genes.position_mode = "risk_budget"
+        dna.risk_genes.risk_fraction = 0.04
+        dna.risk_genes.stop_loss = 0.05
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df)
+        res = BacktestEngine().run(dna, df, signal_set=sig)
+        assert res.total_trades == 0
+        ps = res.metrics_dict["position_sizing"]
+        assert ps["replay_status"] == "ok", "零交易=成功重放非失败"
+        assert ps["orders_capped"] == 0
+        # avg/max 零交易=None=空集诚实披露（区别于 failed 的虚标 None
+        # ——replay_status 已区分两态）
+        assert "avg_entry_size" in ps and ps["avg_entry_size"] is None
+
+    def test_validator_face_position_domain(self):
+        """validate_dna 侧直调：position_mode 非法拒/risk_fraction 类型
+        与域拒（0/0.51/bool）/合法放行。"""
+        from core.strategy.validator import validate_dna
+
+        def _dna(**kw):
+            d = make_dna()
+            for k, v in kw.items():
+                setattr(d.risk_genes, k, v)
+            return d
+
+        res = validate_dna(_dna(position_mode="bogus"))
+        assert not res.is_valid
+        assert any("position_mode" in e for e in res.errors)
+        for bad_rf in ("x", True, 0, 0.51):
+            r = validate_dna(_dna(position_mode="risk_budget",
+                                  risk_fraction=bad_rf, stop_loss=0.05))
+            assert not r.is_valid, f"risk_fraction={bad_rf!r} 应拒"
+        assert validate_dna(_dna(position_mode="risk_budget",
+                                 risk_fraction=0.04,
+                                 stop_loss=0.05)).is_valid

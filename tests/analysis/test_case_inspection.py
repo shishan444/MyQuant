@@ -753,3 +753,46 @@ class TestConditionsArrayForm:
         """V2h 回显：selector_echo 原样回显输入（未归一）。"""
         out = self._array_call(env, self._CONDS)
         assert out["selector_echo"] == {"conditions": self._CONDS}
+
+    def test_v2i_entry_type_defenses(self, env):
+        """闸门覆盖缺口补锚：条目类型防御三分支——action 非字符串拒/
+        subject 非法列转译拒（ColumnRefError→CONDITION_INVALID）/
+        subject 类型错拒。"""
+        bads = [
+            dict(self._CONDS[0], action=123),              # action 非字符串
+            {"subject": "no_such_column", "action": "gt",
+             "target": 1.0},                               # 非法列
+            {"subject": 42, "action": "gt", "target": 1.0},  # 类型错
+        ]
+        for bad in bads:
+            with pytest.raises(ResearchError) as ei:
+                self._array_call(env, [bad] + self._CONDS[1:])
+            assert ei.value.code in ("RESEARCH_PARAM_INVALID",
+                                     "RESEARCH_CONDITION_INVALID")
+
+    def test_v2j_indicator_required_for_string_subject(self, env):
+        """闸门覆盖缺口补锚：字符串 subject 条目时 indicator 必填
+        （供输出列边界与 warmup 推导）；携带时列须属于该指标默认参数
+        输出列。"""
+        with pytest.raises(ResearchError, match="indicator"):
+            inspect_cases(
+                env["db"], env["data_dir"], symbol=SYMBOL, timeframe="1d",
+                selector={"conditions": [
+                    {"subject": "rsi_14", "action": "lt", "target": 30.0}]})
+        with pytest.raises(ResearchError, match="不属于"):
+            inspect_cases(
+                env["db"], env["data_dir"], symbol=SYMBOL, timeframe="1d",
+                selector={"conditions": [
+                    {"subject": "close", "action": "gt", "target": 1.0}]},
+                indicator="RSI")
+
+    def test_v2k_unknown_indicator_in_structured_subject(self, env):
+        """闸门覆盖缺口补锚：结构化 subject 指标未知在册拒（装载前
+        零留痕语义——经 resolve 转译为 RESEARCH_CONDITION_INVALID，
+        与单条件形态同码）。"""
+        with pytest.raises(ResearchError) as ei:
+            self._array_call(env, [
+                {"subject": {"indicator": "NoSuchInd",
+                             "params": {}},
+                 "action": "gt", "target": 1.0}])
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
