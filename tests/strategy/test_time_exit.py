@@ -330,16 +330,19 @@ class TestPerBarExitTiming:
 
     def test_nontime_index_fallback_zero_impact(self):
         """非时序索引兜底（闸门覆盖缺口补锚）：bar_ts 分钟数组转换
-        失败时填 0——声明 time_exit 的回测在非时序索引合成帧上跑通
-        不炸（兜底「零影响」声称的行为证据；ts 数组仅时刻分支消费，
-        填 0 时刻判定按 bar 0 分钟基准仍可触发）。"""
+        失败时填 0——声明 time_exit 的回测在不可解析索引合成帧上跑通
+        不炸（兜底「零影响」声称的行为证据；字符串索引使
+        DatetimeIndex 转换抛 ValueError 走 except 分支——RangeIndex
+        会静默转 int64 走 try 路径，须用字符串索引构造）。"""
         from core.backtest.engine import BacktestEngine
         from core.strategy.executor import (
             dna_to_signal_set, clear_indicator_cache)
         dna = make_dna(entry_value=70, exit_value=101)
         dna.risk_genes.time_exit_utc = 600
         dna.execution_genes.timeframe = "1h"
-        df = make_enhanced_df(n=60, freq="1h", seed=7).reset_index(drop=True)
+        df = make_enhanced_df(n=60, freq="1h", seed=7)
+        df.index = pd.Index([f"x{i}" for i in range(len(df))],
+                            name="timestamp")
         clear_indicator_cache()
         sig = dna_to_signal_set(dna, df)
         res = BacktestEngine().run(dna, df, signal_set=sig)
