@@ -189,3 +189,28 @@ class TestLookbackInnerDepth:
             _mk_dna_with_condition({"type": "lookback_any"}))
         assert any("requires 'window'" in e for e in result.errors)
         assert any("requires 'inner'" in e for e in result.errors)
+
+
+class TestValidatorExecutorLineup:
+    """两防线同判锚：validator 前置拦截面与 executor 执行拒绝面经
+    EVALUABLE_CONDITION_TYPES 单源一致——同一非法类型两侧同判（防
+    未来任一侧改 import 源或本地复制集合造成防线分叉）。"""
+
+    @pytest.mark.parametrize("bad_type", ["no_such_type", "eq_"])
+    def test_same_bad_type_rejected_by_both_lines(self, bad_type):
+        """validator 拒绝（error 收集）且 executor raise
+        RESEARCH_NOT_EXPRESSIBLE——同判不依赖两侧各自维护的集合。"""
+        import pandas as pd
+
+        from core.analysis.errors import ResearchError
+        from core.strategy.executor import evaluate_condition
+
+        result = validate_dna(
+            _mk_dna_with_condition({"type": bad_type, "threshold": 50}))
+        assert not result.is_valid, f"validator 应拒绝 {bad_type}"
+
+        series = pd.Series([50.0, 55.0, 60.0])
+        with pytest.raises(ResearchError) as exc_info:
+            evaluate_condition(
+                series, series.copy(), {"type": bad_type, "threshold": 50})
+        assert exc_info.value.code == "RESEARCH_NOT_EXPRESSIBLE"
