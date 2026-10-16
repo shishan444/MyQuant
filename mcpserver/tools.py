@@ -103,7 +103,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def list_indicators() -> Any:
-        """内置指标元数据（47 项：参数空间、输出列、lookback——warmup 推导
+        """内置指标元数据（45 项：参数空间、输出列、lookback——warmup 推导
         依据；预算规则：主公式 max(200, 跨指标取最大的(周期类参数注册表
         上限之和 × 3))，高周期条件掩码链 max(条件实际参数 × 3, 20)——bar
         数按该轴周期折算为前扩时长（1d 轴 42 bar = 42 天；下限 20 与主

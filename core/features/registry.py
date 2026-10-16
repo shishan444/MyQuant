@@ -44,7 +44,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (30 indicators, 6 categories)
+# Indicator Registry (45 indicators, 6 categories)
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {

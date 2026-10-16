@@ -501,3 +501,39 @@ class TestTriggerPolicyDisclosure:
             r"trigger_policy: Optional\[dict\[str, Any\]\] = None",
             self._TOOLS_SRC)
         assert m is not None, "register_hypothesis 签名未增 trigger_policy"
+
+
+class TestIndicatorCountAlignment:
+    """S3a/S3b：指标计数四处声明对齐（unify-tool-return-contract 任务 6）。
+
+    双保险：相对断言（四处声明文本含 str(len(INDICATOR_REGISTRY))）
+    + 绝对快照（len()==45——包三 add-session-structure-expression 三
+    新指标入库后翻转 48，届时同步四处声明）。
+    """
+
+    def test_s3b_absolute_snapshot_45(self) -> None:
+        """绝对快照：注册表实测 45（与声明锁死；新指标入库先翻此断言）。"""
+        from core.features.registry import INDICATOR_REGISTRY
+        assert len(INDICATOR_REGISTRY) == 45, (
+            "注册表基数漂移——新指标入库（包三 48）须同步四处声明"
+            "与本快照")
+
+    def test_s3a_four_declarations_carry_runtime_count(self) -> None:
+        """相对断言：四处声明文本携带运行时真实计数（漂移即红）。"""
+        from core.features.registry import INDICATOR_REGISTRY
+        count = str(len(INDICATOR_REGISTRY))
+        sources = {
+            "core/analysis/registry_meta.py":
+                Path("core/analysis/registry_meta.py").read_text("utf-8"),
+            "api/routes/research/registry.py":
+                Path("api/routes/research/registry.py").read_text("utf-8"),
+            "mcpserver/tools.py":
+                Path("mcpserver/tools.py").read_text("utf-8"),
+            "core/features/registry.py":
+                Path("core/features/registry.py").read_text("utf-8"),
+        }
+        for path, src in sources.items():
+            # docstring/注释声明位（45 项 / 45 indicators / 45 指标）
+            assert f"内置 {count}" in src or f"{count} 项" in src \
+                or f"({count} indicators" in src, \
+                f"{path} 计数声明未携带运行时计数 {count}"

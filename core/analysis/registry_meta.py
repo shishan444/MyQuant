@@ -59,7 +59,7 @@ def _indicator_lookback(defn: Any) -> int:
 
 
 def indicator_metadata() -> List[Dict[str, Any]]:
-    """内置 47 指标元数据只读外化（含 lookback 与参数空间）。"""
+    """内置 45 指标元数据只读外化（含 lookback 与参数空间）。"""
     out: List[Dict[str, Any]] = []
     for name, defn in INDICATOR_REGISTRY.items():
         out.append({
