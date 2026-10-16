@@ -149,6 +149,41 @@ class TestSharedFeed:
         assert got == [0]
         assert feed.latest_df is not None
 
+    def test_same_key_single_indicator_computation(
+            self, tmp_path, monkeypatch):
+        """同键两订阅共享一份指标计算（spec「共享一份行情拉取与
+        指标计算」——拉取一份已由 fetch spy 断言，此处补计算面：
+        一次 refresh 两订阅收广播，compute_all_indicators 只发生
+        一次且两订阅收到同一产物对象）。"""
+        frame = make_ohlcv(n=100, freq="4h")
+        registry, _ = _make_registry(tmp_path, [frame])
+
+        import core.features.indicators as indicators_mod
+        calls: list[int] = []
+        real = indicators_mod.compute_all_indicators
+
+        def counting(df, **kwargs):
+            calls.append(len(df))
+            return real(df, **kwargs)
+
+        monkeypatch.setattr(
+            indicators_mod, "compute_all_indicators", counting)
+
+        products: list[int] = []  # id(df)——产物对象同一性
+        sub_a = FeedSubscription(
+            on_frames=lambda df, idx: products.append(id(df)))
+        sub_b = FeedSubscription(
+            on_frames=lambda df, idx: products.append(id(df)))
+        feed_a = registry.acquire("BTCUSDT", "4h", sub_a)
+        feed_b = registry.acquire("BTCUSDT", "4h", sub_b)
+        assert feed_a is feed_b  # 同键单例（共享单位）
+
+        feed_a.refresh()
+        assert len(calls) == 1, "一次 refresh 指标计算只发生一份"
+        # 两订阅各收一次广播、产物同一对象（只读共享非复制）
+        assert len(products) == 2
+        assert products[0] == products[1]
+
 
 class TestFormingBarFilter:
     """forming bar 过滤（沿旧 runner 判据：末根+周期>now 截末行）。"""

@@ -492,3 +492,27 @@ class TestJudgmentOrder:
             make_bar(timestamp=ts), BarSignals(exit=True),
             make_account(position=pos), params)
         assert intents[0].kind == "exit_time"
+
+    def test_reduce_priority_over_add_same_bar(self):
+        """判定序「减仓→加仓」：同 bar 双信号 reduce 优先——加仓段
+        该 bar 短路（spec 七段固定序；与 max_exposure 超限跳过同形制：
+        不炸不降级，次根信号仍亮则次根执行）。"""
+        pos = make_position(qty=100.0)
+        intents = interpret(
+            make_bar(), BarSignals(reduce=True, add=True),
+            make_account(position=pos), make_params())
+        assert [i.kind for i in intents] == ["reduce"]
+
+    def test_time_exit_priority_over_max_hold_same_bar(self):
+        """时间出场段内内序：time_exit_utc 先于 max_hold（对齐引擎
+        内序——executor 八步序第 3 步注释声明；同 bar 双到期取
+        time_exit，出场 reason 可区分两机制）。"""
+        import pandas as pd
+        ts = pd.Timestamp("2026-08-30 08:00:00+00:00")
+        pos = make_position(entry_bar_seq=0)
+        params = make_params(time_exit_utc=480, max_hold=5)
+        # bar_seq=4 → bars_held=5=max_hold 到期；480=开盘分钟同触
+        intents = interpret(
+            make_bar(timestamp=ts, seq=4), BarSignals(),
+            make_account(position=pos, bar_seq=4), params)
+        assert [i.kind for i in intents] == ["exit_time"]

@@ -266,6 +266,105 @@ class TestStopDispatch:
             h.teardown()
 
 
+class TestStopRaceWindows:
+    """stop×拾取/移交竞态窗口（确定性交错注入锚）。
+
+    交错注入：patch get_task 在 stop_task 读行的间隙注入并发方完成
+    的落库效果（每步均为对真实仓库函数的调用，仅手工重排顺序——
+    TESTing 并发可控同步点形制）；执行器 run() 起点的 running 写按
+    executor.py:398-400 等价重放。
+
+    契约依据（spec R1）：stop 应答 "stopped" 即终局承诺（未拾取撤销
+    语义+状态迁移唯一写者）——交错下任务终态 running 属 stop 请求
+    吞没。【缺陷在案锚：修复前红，禁删断言或放宽语义迁就实现】
+    """
+
+    def test_stop_pending_swallowed_by_concurrent_pickup(self, tmp_path):
+        """窗口①：stop 读 pending → 拾取在间隙置 running → stop 仍按
+        旧快照写 stopped → 执行器写覆盖回 running——应答 stopped 而
+        任务照跑（吞没）。"""
+        import core.paper_trading.runtime.scheduler as sched_mod
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            tid = h.create_task()
+            real_get = paper.get_task
+            injected = {"done": False}
+
+            def racing_get(db, task_id, **kw):
+                row = real_get(db, task_id, **kw)
+                if (row and row["task_id"] == tid
+                        and row["status"] == "pending"
+                        and not injected["done"]):
+                    injected["done"] = True
+                    # t1：并发拾取线程在本间隙完成置 running
+                    # （_launch→executor.run() 起点写，executor.py:398）
+                    paper.update_task(
+                        h.db, tid, status="running",
+                        started_at="2030-01-01T00:00:00+00:00")
+                return row
+
+            original = sched_mod.paper_repo.get_task
+            sched_mod.paper_repo.get_task = racing_get
+            try:
+                answer = h.scheduler.stop_task(tid)
+            finally:
+                sched_mod.paper_repo.get_task = original
+
+            # t3：执行器 run() 起点写（prepare 已过，等价重放）
+            paper.update_task(
+                h.db, tid, status="running",
+                started_at="2030-01-01T00:00:10+00:00")
+            final = paper.get_task(h.db, tid)
+            assert not (answer == "stopped"
+                        and final["status"] == "running"), (
+                f"stop 吞没：应答 {answer} 而终态 "
+                f"{final['status']}——拾取竞态窗口在案")
+        finally:
+            h.teardown()
+
+    def test_stop_running_during_handover_swallowed(self, tmp_path):
+        """窗口②：心跳超时移交进行中（recover 未返回、_executors 未
+        登记）REST 线程调 stop——查表无执行器直迁 stopped；随后移交
+        完成起线程，run() 覆写回 running——应答 stopped 而任务照跑。"""
+        import pandas as pd
+
+        import core.paper_trading.runtime.scheduler as sched_mod
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            tid = h.create_task()
+            paper.update_task(
+                h.db, tid, status="running",
+                started_at="2030-01-01T00:00:00+00:00",
+                heartbeat_at="2030-01-01T00:00:00+00:00")
+
+            stop_answer: list[str] = []
+
+            def recover_and_inject_stop(db_path, row, **kwargs):
+                # 移交进行中（此刻 _executors 尚未登记）——并发 REST
+                # 线程调真实 stop_task：running 分支查表无 → 直迁
+                stop_answer.append(h.scheduler.stop_task(row["task_id"]))
+                return None  # 返回 None 后移交不起线程——t3 重放
+
+            h.scheduler._recover_fn = recover_and_inject_stop
+            h.scheduler._now_fn = lambda: pd.Timestamp(
+                "2030-02-01", tz="UTC")  # 4h bar→12h 超时；30 天恒超
+            h.scheduler.run_once()
+
+            # t3：移交线程起跑后 run() 起点写（executor.py:398 等价）
+            paper.update_task(
+                h.db, tid, status="running",
+                started_at="2030-01-01T00:01:00+00:00")
+            final = paper.get_task(h.db, tid)
+            assert not (stop_answer == ["stopped"]
+                        and final["status"] == "running"), (
+                f"stop 吞没：应答 {stop_answer} 而终态 "
+                f"{final['status']}——移交竞态窗口在案")
+        finally:
+            h.teardown()
+
+
 class TestHeartbeatHandover:
     """心跳超时移交恢复器（>3×bar 周期）。"""
 
