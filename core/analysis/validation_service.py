@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,14 @@ from core.analysis.thresholds import (
 )
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
 from core.persistence.repository import research as rr
+
+logger = logging.getLogger(__name__)
+
+# 幂等数据源权威键黑名单（fix-review CARD-03）：base 的身份与幂等
+# 三键由记录列/调用方权威产生，库内 result_json 内嵌同名键（损坏
+# 或外部改写）不得覆盖权威值——命中跳过并告警留痕（与 direction
+# 白名单二值收敛特判同构：一个是值域收敛，一个是整键拒绝）
+_PAYLOAD_AUTHORITY_KEYS = frozenset({"record_id", "verdict", "duplicated"})
 
 # 沙盒单次 bar 上限（M6：防爆超时——须在 MCP write_timeout=60s 内
 # 留足余量；50k 为默认起点，按回测速度实施校准）
@@ -284,6 +293,9 @@ def _validation_payload(
     （staged 专有键由 base 参数化，禁一套键集硬套两入口）——键集
     一致性由本函数结构保证，契约测试断言两分支顶层键集合相等。
 
+    - 权威键黑名单（CARD-03）：result 内嵌 record_id/verdict/
+      duplicated 不覆盖 base（权威值来自记录列与调用方），命中
+      跳过并 warning。
     - direction 值域收敛（security S-1）：脏值/null 恒回显合法二值。
     - judged_ranges 同源现算 judged_ranges_union（语义=响应时点
       判定并集，落库后含本记录——首次与幂等同口径）；judged 显式
@@ -292,6 +304,11 @@ def _validation_payload(
     payload = dict(base)
     if isinstance(result, dict):
         for key, value in result.items():
+            if key in _PAYLOAD_AUTHORITY_KEYS:
+                logger.warning(
+                    "result_json 内嵌权威键 %r，跳过不覆盖（base 权威值保留）",
+                    key)
+                continue
             if key != "direction":
                 payload[key] = value
     direction = result.get("direction") if isinstance(result, dict) else None

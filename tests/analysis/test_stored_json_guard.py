@@ -136,6 +136,56 @@ class TestIdempotentResultCorrupt:
         assert ei.value.detail["record_id"] == "rec_rw_broken"
 
 
+class TestAuthorityKeyBlacklist:
+    """CARD-03：幂等 result_json 内嵌权威键不覆盖 base（记录列与
+    调用方为权威源）；正常键合并与 direction 收敛不受影响。"""
+
+    def _dup_with_result(self, db, result_json: str) -> dict:
+        from core.analysis.validation_service import (
+            _range_hash, run_isolated_backtest,
+        )
+        hid = _register_hyp(db)
+        req = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2024-01-01T00:00:00Z", "end": "2024-01-15T00:00:00Z"}
+        rr.save_validation_with_log(
+            db, record_id="rec_auth", hypothesis_id=hid, strategy_id="st_a",
+            level="isolated_backtest", params=json.dumps({"request_range": req}),
+            result=result_json, verdict="pass", range_hash=_range_hash(req))
+        return run_isolated_backtest(db, db, hypothesis_id=hid,
+                                     strategy_id="st_a", request_range=req)
+
+    def test_authority_keys_not_overridden(self, db, caplog):
+        """伪造三键（record_id/verdict/duplicated）不覆盖权威值
+        （修复前：duplicated=false / verdict=fake / record_id=FAKE
+        会从 result 内嵌透出——幂等语义可被库内数据伪造）。"""
+        forged = json.dumps({
+            "record_id": "FAKE_ID", "verdict": "fail", "duplicated": False,
+            "metrics": {"total_trades": 1}})
+        with caplog.at_level("WARNING", logger="core.analysis.validation_service"):
+            out = self._dup_with_result(db, forged)
+        assert out["record_id"] == "rec_auth"
+        assert out["verdict"] == "pass"
+        assert out["duplicated"] is True
+        # 非权威键仍顶层化合并（黑名单不误伤）
+        assert out["metrics"] == {"total_trades": 1}
+        # 命中跳过有 warning 留痕
+        assert any("权威键" in r.message for r in caplog.records)
+
+    def test_normal_result_merges_unchanged(self, db, caplog):
+        """正常 result（无权威键）零 warning、合并行为不变（守卫
+        不改既有正常链路）。"""
+        normal = json.dumps({
+            "metrics": {"total_trades": 2}, "bars_used": 300,
+            "direction": "short"})
+        with caplog.at_level("WARNING", logger="core.analysis.validation_service"):
+            out = self._dup_with_result(db, normal)
+        assert out["duplicated"] is True
+        assert out["verdict"] == "pass"
+        assert out["metrics"] == {"total_trades": 2}
+        assert out["direction"] == "short"  # 合法二值原样回显
+        assert not caplog.records
+
+
 class TestHypothesisJsonCorrupt:
     """假设 conditions / data_ranges 损坏 → 翻译结构化拒绝。"""
 
