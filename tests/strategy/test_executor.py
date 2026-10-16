@@ -369,3 +369,93 @@ class TestIndicatorSupplementGuard:
         msg = rec.getMessage()
         assert "indicator=RSI" in msg, "warning 披露 gene 名"
         assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"
+
+
+class TestGeneLevelTimeframeExecution:
+    """T3/T4a：基因级周期执行链（unblock-research-validation 任务 3）。"""
+
+    def _mtf_env(self, n_base=400):
+        """1h 基准 + 1d 高周期轴（make_enhanced_df 指标双轴齐备）。"""
+        from tests.helpers.data_factory import make_enhanced_df
+        base = make_enhanced_df(n=n_base, freq="1h", seed=21)
+        # 高周期轴：同行情 1d 重采样形制（独立合成即可——对照用同轴）
+        hi = make_enhanced_df(n=n_base // 24 + 2, freq="1d", seed=22)
+        return base, hi
+
+    def test_t3b_higher_tf_evaluation_independent_reference(self):
+        """T3b 高周期求值独立对照：基因 RSI(14)@1d lt 阈值 → 信号 ==
+        1d 轴手工求值经 project_completed_bool 投影（mtf_alignment
+        权威函数独立构造期望）。"""
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA
+        base, hi = self._mtf_env()
+        # 纯 entry DNA（隔离对照——make_dna 自带 exit 基因会经既有
+        # 「同 bar 进出清洗」语义改写 entries，非投影面差异）
+        dna = StrategyDNA(
+            signal_genes=[make_dna().signal_genes[0]],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes())
+        dna.signal_genes[0].timeframe = "1d"
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        # 独立对照：1d 轴上手工求值同条件 → 权威投影
+        hi_col = hi["rsi_14"]
+        hi_signal = (hi_col < 30).fillna(False)
+        expect = project_completed_bool(hi_signal, base.index, "1d")
+        pd.testing.assert_series_equal(
+            sig.entries.reindex(base.index).fillna(False), expect,
+            check_names=False)
+
+    def test_t3c_axis_missing_fail_loud(self):
+        """T3c 轴缺失 fail-loud：基因级 1d 但装载集无 1d → 结构化拒绝
+        （禁止静默降级为基准周期求值）。"""
+        base, hi = self._mtf_env(120)
+        dna = make_dna()
+        dna.signal_genes[0].timeframe = "1d"
+        dna.execution_genes.timeframe = "1h"
+        with pytest.raises(ResearchError) as ei:
+            dna_to_signal_set(dna, base, dfs_by_timeframe={"4h": hi})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+        assert ei.value.detail["timeframe"] == "1d"
+
+    def test_t3a_baseline_genes_byte_identical(self):
+        """T3a 疫苗 3 前置：无 tf 基因在 dfs_by_timeframe 在场时仍走
+        基准路径（与不传轴逐位一致）。"""
+        base, hi = self._mtf_env(200)
+        dna = make_dna()
+        a = dna_to_signal_set(dna, base)
+        b = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(a.entries, b.entries, check_names=False)
+
+    def test_t3f_batch_single_point_consistency(self):
+        """T3f batch 与主路径单点一致：同 DNA（带基因级 tf）两域
+        entries 逐位一致。"""
+        base, hi = self._mtf_env(240)
+        dna = make_dna()
+        dna.signal_genes[0].timeframe = "1d"
+        dna.execution_genes.timeframe = "1h"
+        solo = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        batched = batch_signal_sets([dna], base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(
+            solo.entries, batched[0].entries, check_names=False)
+
+    def test_t4a_collect_needed_tfs_gene_level(self):
+        """T4a 装载判据三层并集：layers ∪ 基因级 tf ∪ 执行周期。"""
+        from core.analysis.backtest_bridge import _collect_needed_tfs
+        d = make_dna()                      # 单层无 tf
+        assert _collect_needed_tfs(d, "4h") == set()
+        d.signal_genes[0].timeframe = "1d"  # 单层+基因级
+        assert _collect_needed_tfs(d, "4h") == {"1d", "4h"}
+        from tests.helpers.data_factory import make_mtf_dna
+        m = make_mtf_dna(timeframes=("1d", "4h"))
+        assert _collect_needed_tfs(m, "1h") == {"1d", "4h", "1h"}
+
+    def test_t3e_evolution_offspring_baseline_path(self):
+        """T3e 进化产物恒现路径：无 tf 基因（进化恒产）求值不受
+        dfs_by_timeframe 在场影响（进化评估装载传轴场景）。"""
+        base, hi = self._mtf_env(150)
+        dna = make_dna(entry_value=30, exit_value=70)
+        a = batch_signal_sets([dna], base)
+        b = batch_signal_sets([dna], base, dfs_by_timeframe={"1d": hi})
+        pd.testing.assert_series_equal(
+            a[0].entries, b[0].entries, check_names=False)

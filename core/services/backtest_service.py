@@ -99,7 +99,8 @@ def build_signals_from_events(events_log: list) -> Optional[str]:
 def compute_needed_tfs(dnas, timeframe: str) -> set:
     """Collect MTF layer timeframes + the exec timeframe for a list of DNAs.
 
-    Returns an empty set when no DNA is MTF (caller then skips load_mtf_data).
+    Returns an empty set when no DNA needs multi-tf loading (no MTF
+    layers and no gene-level timeframe; caller then skips load_mtf_data).
     Source: strategies.py copies 2/3/4/5.
 
     Behaviour preserved: copy 2 originally called load_mtf_data inside
@@ -109,9 +110,12 @@ def compute_needed_tfs(dnas, timeframe: str) -> set:
     """
     needed: set = set()
     for d in dnas:
-        if getattr(d, "is_mtf", False) and getattr(d, "layers", None):
-            for layer in d.layers:
-                needed.add(layer.timeframe)
+        # unblock-research-validation 3a：判据单源化——逐 DNA 经研究链
+        # 同款收集器（layers ∪ 基因级 timeframe ∪ 执行周期），列表
+        # 聚合语义保持（任一 DNA 需装载即装载）
+        from core.analysis.backtest_bridge import _collect_needed_tfs
+        per = _collect_needed_tfs(d, timeframe)
+        needed |= per
     if needed:
         needed.add(timeframe)
     return needed
