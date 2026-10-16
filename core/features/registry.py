@@ -62,7 +62,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (45 indicators, 6 categories)
+# Indicator Registry (48 indicators, 7 categories)
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -420,6 +420,45 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         naming="mfe",
         compute_mode="lazy",
     ),
+
+    # == structure (3)（add-session-structure-expression 任务 3-5） ==
+    "SessionRange": IndicatorDef(
+        category="structure",
+        params={
+            "start_minute": ParamDef("int", 0, 1439, 0, 1),
+            "end_minute": ParamDef("int", 0, 1439, 420, 1),
+        },
+        output_fields=["session_high", "session_low", "session_vwap"],
+        # 六动作：三列各 gt/lt（区间突破与回落两类表达）
+        supported_conditions=["gt", "lt", "ge", "le", "cross_above",
+                              "cross_below"],
+        naming="session",
+        warmup_minutes=1440,  # 完整一天（会话结构跨日周期性）
+        cross_params=lambda p: (
+            "start_minute 须小于 end_minute（时段倒序无意义）"
+            if p["start_minute"] >= p["end_minute"] else None),
+    ),
+    "Pivot": IndicatorDef(
+        category="structure",
+        params={
+            "left": ParamDef("int", 1, 100, 5, 1),
+            "right": ParamDef("int", 1, 100, 5, 1),
+        },
+        output_fields=["pivot_high", "pivot_low"],
+        supported_conditions=["gt", "lt", "ge", "le", "cross_above",
+                              "cross_below"],
+        naming="pivot",
+    ),
+    "Supertrend": IndicatorDef(
+        category="structure",
+        params={
+            "atr_period": ParamDef("int", 5, 50, 10, 1),
+            "multiplier": ParamDef("float", 1.0, 5.0, 3.0, 0.5),
+        },
+        output_fields=["supertrend", "supertrend_dir"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        naming="supertrend",
+    ),
 }
 
 
@@ -516,6 +555,24 @@ def resolve_indicator_column(
         field = field_name or "k"
         prefix = "stoch_k" if field == "k" else "stoch_d"
         return f"{prefix}_{k_period}_{d_period}"
+
+    if naming == "session":
+        # session_{field}_{start}_{end}（时段参数编码进列名）
+        field = field_name or "session_high"
+        return f"{field}_{int(params['start_minute'])}_{int(params['end_minute'])}"
+
+    if naming == "pivot":
+        field = field_name or "pivot_high"
+        return f"{field}_{int(params['left'])}_{int(params['right'])}"
+
+    if naming == "supertrend":
+        # float 编码（kc 同款 str 形制——3.0 → "3.0"）
+        atr_p = int(params["atr_period"])
+        mult = float(params["multiplier"])
+        field = field_name or "supertrend"
+        if field == "supertrend_dir":
+            return f"supertrend_dir_{atr_p}_{mult}"
+        return f"supertrend_{atr_p}_{mult}"
 
     if naming == "kc":
         ema_p = int(params["ema_period"])

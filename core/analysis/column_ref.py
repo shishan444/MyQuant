@@ -268,6 +268,33 @@ def _build_decoders() -> List[Tuple[re.Pattern, str, Dict[str, Any]]]:
                     {"field": sema,
                      "param_groups": {"1": "k_period", "2": "d_period"},
                      "float_groups": set()}))
+        elif naming == "session":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^({fields_alt})_{pat_num}_{pat_num}$"), name,
+                {"field_group": "1",
+                 "param_groups": {"2": "start_minute", "3": "end_minute"},
+                 "float_groups": set()}))
+        elif naming == "pivot":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^({fields_alt})_{pat_num}_{pat_num}$"), name,
+                {"field_group": "1",
+                 "param_groups": {"2": "left", "3": "right"},
+                 "float_groups": set()}))
+        elif naming == "supertrend":
+            # 两 pattern 固定 field（dir 列与主线列；field 不进组——
+            # 列名前缀即字段语义）
+            rules.append((re.compile(
+                rf"^supertrend_dir_{pat_num}_{pat_float}$"), name,
+                {"field": "supertrend_dir",
+                 "param_groups": {"1": "atr_period", "2": "multiplier"},
+                 "float_groups": {"multiplier"}}))
+            rules.append((re.compile(
+                rf"^supertrend_{pat_num}_{pat_float}$"), name,
+                {"field": "supertrend",
+                 "param_groups": {"1": "atr_period", "2": "multiplier"},
+                 "float_groups": {"multiplier"}}))
         elif naming == "kc":
             fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
             rules.append((re.compile(

@@ -31,7 +31,7 @@ class TestIndicatorMetadata:
     def test_covers_all_builtin_indicators(self) -> None:
         """外化条目与注册表逐项一致（47 项）。"""
         meta = indicator_metadata()
-        assert len(meta) == len(INDICATOR_REGISTRY) == 45  # Q3 摘牌后
+        assert len(meta) == len(INDICATOR_REGISTRY) == 48  # Q3 摘牌后
         assert {m["name"] for m in meta} == set(INDICATOR_REGISTRY)
 
     def test_every_entry_has_lookback(self) -> None:
@@ -101,7 +101,7 @@ class TestAvailableSignalColumns:
     def test_builtin_only_without_plugins(self, db_path: Path) -> None:
         cols = available_signal_columns(db_path)
         builtin = [c for c in cols if c["source"] == "builtin"]
-        assert len(builtin) == 45  # Q3 摘牌后
+        assert len(builtin) == 48  # Q3 摘牌后
 
     def test_plugin_registration_appears_immediately(self, db_path: Path) -> None:
         """插件注册后合并查询即时出现新条目（双源一致）。"""

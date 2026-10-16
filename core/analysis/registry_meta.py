@@ -20,6 +20,9 @@ from core.features.registry import INDICATOR_REGISTRY
 _PERIOD_LIKE_PARAMS = frozenset({
     "period", "fast", "slow", "signal", "k_period", "d_period",
     "ema_period", "atr_period", "lookback",
+    # Pivot 确认延迟双参（add-session-structure-expression：bar 数语义
+    # ——left+right 求和为 warmup 收敛需求）
+    "left", "right",
 })
 
 # 小数比率语义列（add-threshold-unit-warning C-1）：值域量级以 1 为界的
@@ -59,7 +62,7 @@ def _indicator_lookback(defn: Any) -> int:
 
 
 def indicator_metadata() -> List[Dict[str, Any]]:
-    """内置 45 指标元数据只读外化（含 lookback 与参数空间）。"""
+    """内置 48 指标元数据只读外化（含 lookback 与参数空间）。"""
     out: List[Dict[str, Any]] = []
     for name, defn in INDICATOR_REGISTRY.items():
         out.append({

@@ -373,6 +373,16 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         new_cols[f"mfe_score_{bins}_{lookback}"] = compute_fractal_entropy(
             df["close"], bins=bins, lookback=lookback,
         )
+    # == structure (3)（add-session-structure-expression 任务 3-5） ==
+    elif name == "SessionRange":
+        from core.features.structure_indicators import compute_session_range
+        new_cols.update(compute_session_range(df, name, params))
+    elif name == "Pivot":
+        from core.features.structure_indicators import compute_pivot
+        new_cols.update(compute_pivot(df, name, params))
+    elif name == "Supertrend":
+        from core.features.structure_indicators import compute_supertrend
+        new_cols.update(compute_supertrend(df, name, params))
     return new_cols
 
 
