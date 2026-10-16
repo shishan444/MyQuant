@@ -550,3 +550,160 @@ class ValidationRecord(Base):
     range_hash: Mapped[str] = mapped_column(Text, nullable=False)
     components: Mapped[Optional[str]] = mapped_column(Text)  # JSON 分量证据 record_id 清单
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# == paper trading 域（5 表，rebuild-paper-trading 2.1）==
+# 字段级权威源：openspec 变更 rebuild-paper-trading design.md §4.1-4.5；
+# 时间戳列沿工程 TEXT ISO 形制；JSON 列以 Text 存 JSON 字符串
+# （strategy.dna_json 先例）。唯一键在 __table_args__ 与 Alembic 迁移
+# 两处同步声明（两方不一致静默架空——验证须实库 PRAGMA index_list）。
+# 旧三表（paper_trading_task/paper_trade/paper_equity_snapshot）留档
+# 不删不改（组 7 退役旧仓库，表数据保留）。
+
+
+class PtTask(Base):
+    """
+    纸盘任务主表（运行态权威）：五态状态机（pending/running/
+    completed/stopped/error）+账户/持仓/统计三组运行状态+恢复游标
+    （last_bar_time）+创建时快照组（dna/research_status——任务自包含）。
+    """
+
+    __tablename__ = "pt_task"
+    __table_args__ = ()
+    # task_id：uuid4 hex 12 位沿旧形制（api/routes/trading.py:111 同源惯例）
+    task_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)  # 上盘来源引用
+    dna_snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)  # 创建时 DNA 快照（D-6）
+    symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    # 二值从 DNA execution_genes 抄录（查询效率列，不独立配置）
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False)
+    initial_cash: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('100000'))
+    fee: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0.001'))
+    slippage: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0.0005'))
+    leverage: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))  # 覆写值，缺省取 DNA
+    window_bars: Mapped[Optional[int]] = mapped_column(Integer)  # NULL=不限期不自动结题
+    stop_loss_pct: Mapped[Optional[float]] = mapped_column(REAL)  # NULL=无停止条件
+    bars_processed: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))  # 窗口游标
+    last_bar_time: Mapped[Optional[str]] = mapped_column(Text)  # 恢复游标=最后处理完的 bar
+    # 账户运行态组（组完整性=全 NULL 或全非 NULL——恢复校验判据）
+    balance: Mapped[Optional[float]] = mapped_column(REAL)
+    position_side: Mapped[Optional[str]] = mapped_column(Text)
+    position_entry: Mapped[Optional[float]] = mapped_column(REAL)
+    position_quantity: Mapped[Optional[float]] = mapped_column(REAL)
+    position_margin: Mapped[Optional[float]] = mapped_column(REAL)
+    position_open_cost: Mapped[Optional[float]] = mapped_column(REAL)
+    position_sl_price: Mapped[Optional[float]] = mapped_column(REAL)
+    position_tp_price: Mapped[Optional[float]] = mapped_column(REAL)
+    position_trail_peak: Mapped[Optional[float]] = mapped_column(REAL)
+    position_entry_bar_seq: Mapped[Optional[int]] = mapped_column(Integer)
+    unrealized_pnl: Mapped[Optional[float]] = mapped_column(REAL)
+    # bar N−1 所产待执行意图（次根开盘执行）
+    pending_intent_json: Mapped[Optional[str]] = mapped_column(Text)
+    # 统计组
+    total_trades: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    win_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    loss_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    total_pnl: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
+    # 创建时研究状态快照（§9.2 四值：draft/unverified/verified/
+    # verification_failed——strategy.status/qualified 映射）
+    research_status_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[Optional[str]] = mapped_column(Text)
+    stopped_at: Mapped[Optional[str]] = mapped_column(Text)
+    stop_reason: Mapped[Optional[str]] = mapped_column(Text)
+    heartbeat_at: Mapped[Optional[str]] = mapped_column(Text)
+    error_detail: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class PtFill(Base):
+    """
+    纸盘成交流水（成交流水权威+审计依据）：seq 按 design §3.5 八步序
+    编号——「为什么这根 K 线做了这个动作」的审计锚。
+    """
+
+    __tablename__ = "pt_fill"
+    __table_args__ = (
+        # (task_id, bar_time, seq) 唯一：恢复重放幂等键（INSERT OR IGNORE）
+        Index("ux_pt_fill_task_bar_seq", "task_id", "bar_time", "seq", unique=True),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(Text, ForeignKey("pt_task.task_id"))
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 九值同 Intent.kind（open/close/add/reduce/exit_sl/exit_tp/
+    # exit_max_hold/exit_time/exit_liquidation）
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    side: Mapped[Optional[str]] = mapped_column(Text)
+    price: Mapped[Optional[float]] = mapped_column(REAL)
+    quantity: Mapped[Optional[float]] = mapped_column(REAL)
+    fee: Mapped[Optional[float]] = mapped_column(REAL)
+    realized_pnl: Mapped[Optional[float]] = mapped_column(REAL)  # 仅出场类
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class PtEquity(Base):
+    """
+    纸盘权益快照（权益权威）：每 bar 收盘估值一行，append-only
+    （Q-2 挂起补记不回改历史快照）。
+    """
+
+    __tablename__ = "pt_equity"
+    __table_args__ = (
+        # (task_id, bar_time) 唯一：幂等键（INSERT OR IGNORE）
+        Index("ux_pt_equity_task_bar", "task_id", "bar_time", unique=True),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(Text, ForeignKey("pt_task.task_id"))
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)
+    equity: Mapped[float] = mapped_column(REAL, nullable=False)
+    balance: Mapped[float] = mapped_column(REAL, nullable=False)
+    unrealized_pnl: Mapped[float] = mapped_column(REAL, nullable=False)
+    # 空仓快照为 NULL（不引入 'flat' 假状态——与 pt_task 账户组
+    # 全 NULL 语义一致）
+    position_side: Mapped[Optional[str]] = mapped_column(Text)
+    cumulative_funding: Mapped[float] = mapped_column(REAL, nullable=False)
+
+
+class PtFunding(Base):
+    """
+    纸盘资金费明细（资金费权威）：一结算点一行（唯一键吸收补记
+    回填）。Q-2 三态：settled=正常/运行中补记已扣款｜pending=挂起
+    （rate/amount NULL+快照）｜settled_disclosure_only=终态后回填
+    未扣款（终态封账 append-only）。
+    """
+
+    __tablename__ = "pt_funding"
+    __table_args__ = (
+        # (task_id, settle_time) 唯一：一结算点一行，补记回填不产生新行
+        Index("ux_pt_funding_task_settle", "task_id", "settle_time", unique=True),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(Text, ForeignKey("pt_task.task_id"))
+    settle_time: Mapped[str] = mapped_column(Text, nullable=False)  # 8h 结算点时刻
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)  # 承载该结算的 bar
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'settled'"))
+    rate: Mapped[Optional[float]] = mapped_column(REAL)  # settled 行真实费率；pending 行 NULL
+    amount: Mapped[Optional[float]] = mapped_column(REAL)  # 正=付出/负=收到；pending 行 NULL
+    position_quantity: Mapped[float] = mapped_column(REAL, nullable=False)  # 结算/挂起时仓位快照
+    settle_price: Mapped[float] = mapped_column(REAL, nullable=False)  # 承载 bar close，补记金额计算用
+
+
+class PtReport(Base):
+    """
+    纸盘结题报告（派生物视图，非第二事实源）：复合 PK (task_id,
+    report_version)。结题固化初版 version=1；终态后补记触发修订版
+    恒 version=2 重算覆盖（补记历史权威在 pt_funding 行）。
+    """
+
+    __tablename__ = "pt_report"
+    __table_args__ = ()
+    task_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    report_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    as_of: Mapped[str] = mapped_column(Text, nullable=False)  # 重算时点
+    report_json: Mapped[str] = mapped_column(Text, nullable=False)  # 完整报告 JSON

@@ -243,11 +243,77 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
             params["status"] = status
         return api.get("/api/research/feature-requests", params=params)
 
+    # ── 纸盘只读四件（rebuild-paper-trading 5.3） ──
+
+    @mcp.tool()
+    @tool_safe
+    def list_paper_tasks(status: Optional[str] = None, limit: int = 20,
+                         offset: int = 0) -> Dict[str, Any]:
+        """纸盘任务列表（实时行情虚拟资金前向验证的任务状态查询；
+        status 五态过滤 pending|running|completed|stopped|error；
+        created_at 倒序分页 limit≤50/offset）。"""
+        limit = max(1, min(limit, _PAGE_MAX))
+        offset = max(0, offset)
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if status:
+            params["status"] = status
+        return api.get("/api/paper-trading/tasks", params=params)
+
+    @mcp.tool()
+    @tool_safe
+    def get_paper_task(task_id: str) -> Dict[str, Any]:
+        """纸盘任务详情（运行态组：账户/持仓/统计+窗口游标 bars_processed
+        +研究验证状态快照 research_status_snapshot）。"""
+        return api.get(
+            f"/api/paper-trading/tasks/{quote(task_id, safe='')}")
+
+    @mcp.tool()
+    @tool_safe
+    def get_paper_report(task_id: str, final: bool = False) -> Dict[str, Any]:
+        """纸盘验证报告（三层结构 performance/deviation/evidence，无
+        可行/不可行自动判定——考场无观点）。final=False 滚动版（实时
+        计算，任意状态可取——running 中随时看当前成绩）；final=True
+        结题固化版（未结题 409 task not concluded）。"""
+        # 路径字面量分派（AST 对拍形制——变量拼接会脱出白名单提取）
+        if final:
+            return api.get(
+                f"/api/paper-trading/tasks/{quote(task_id, safe='')}"
+                "/report/final")
+        return api.get(
+            f"/api/paper-trading/tasks/{quote(task_id, safe='')}/report")
+
+    @mcp.tool()
+    @tool_safe
+    def get_paper_history(task_id: str, type: str = "fills",
+                          limit: int = 100) -> Dict[str, Any]:
+        """纸盘历史明细三面：type=fills 成交流水（含 seq/kind/reason 审计
+        字段，bar_time 升序）｜equity 权益曲线（逐 bar 快照）｜funding
+        资金费明细（逐 8h 结算点对账披露——settled/pending/
+        settled_disclosure_only 三态可见）。分页 limit≤50。"""
+        if type == "fills":
+            return api.get(
+                f"/api/paper-trading/tasks/{quote(task_id, safe='')}/fills",
+                params={"limit": max(1, min(limit, _PAGE_MAX))})
+        if type == "equity":
+            return api.get(
+                f"/api/paper-trading/tasks/{quote(task_id, safe='')}/equity",
+                params={"limit": max(1, min(limit, _PAGE_MAX))})
+        if type == "funding":
+            return api.get(
+                f"/api/paper-trading/tasks/{quote(task_id, safe='')}/funding",
+                params={"limit": max(1, min(limit, _PAGE_MAX))})
+        return {"error": errors.error_payload(
+            "MCP_PARAM_INVALID",
+            f"type 须为 fills|equity|funding，收到 {type!r}")}
+
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
                get_market_snapshot, union_balance,
                list_hypotheses, get_hypothesis, get_research_log,
-               get_analysis_task, get_validation_report, list_feature_requests):
+               get_analysis_task, get_validation_report,
+               list_feature_requests,
+               list_paper_tasks, get_paper_task, get_paper_report,
+               get_paper_history):
         TOOL_TIERS["readonly"].add(fn.__name__)
 
 
@@ -835,11 +901,62 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             terminal=("completed", "failed", "stopped", "cancelled"),
             total_timeout=total_timeout)
 
+    # ── 纸盘挂载两件（rebuild-paper-trading 5.3；研究执行档——资源
+    #    创建语义类比触发回测/进化任务，非触金） ──
+
+    @mcp.tool()
+    @tool_safe
+    def mount_paper_task(strategy_id: str,
+                         initial_cash: Optional[float] = None,
+                         leverage: Optional[int] = None,
+                         fee: Optional[float] = None,
+                         slippage: Optional[float] = None,
+                         symbol: Optional[str] = None,
+                         window_bars: Optional[int] = None,
+                         stop_loss_pct: Optional[float] = None,
+                         ) -> Dict[str, Any]:
+        """挂载纸盘任务（上盘=把策略库条目送去实时前向验证）。参数面与
+        REST 创建完全一致——仅验证条件参数（初始资金/杠杆/费滑/品种/
+        验证窗口/停止条件），**不含任何策略语义参数**：方向与执行周期
+        以策略 DNA 为准，AI 无法经挂载覆写信号语义。创建恒受理（201
+        pending 行；并发满载时排队不拒绝）。window_bars：缺省 180 根；
+        N≥1=N 根窗口到点自动结题（不限期窗口是 REST 专属形态——显式
+        null 与参数缺省在本工具参数面不可区分，故不经 MCP 表达）。
+        策略演化不影响已挂载任务（创建时 DNA 快照自包含）。"""
+        body: Dict[str, Any] = {"strategy_id": strategy_id}
+        if initial_cash is not None:
+            body["initial_cash"] = initial_cash
+        if leverage is not None:
+            body["leverage"] = leverage
+        if fee is not None:
+            body["fee"] = fee
+        if slippage is not None:
+            body["slippage"] = slippage
+        if symbol is not None:
+            body["symbol"] = symbol
+        if window_bars is not None:
+            body["window_bars"] = window_bars
+        if stop_loss_pct is not None:
+            body["stop_loss_pct"] = stop_loss_pct
+        return api.post("/api/paper-trading/tasks", body)
+
+    @mcp.tool()
+    @tool_safe
+    def unmount_paper_task(task_id: str) -> Dict[str, Any]:
+        """撤盘（stop 语义：保留数据出结题报告，**不删除证据**——成交/
+        权益/资金费记录与报告均可查）。running 任务协作停止（当前 K 线
+        完整落库后退出）；pending 未拾取直接撤销；终态任务 409（幂等
+        拒绝面）。结题报告经 get_paper_report(final=true) 获取。"""
+        return api.post(
+            f"/api/paper-trading/tasks/{quote(task_id, safe='')}/stop", {})
+
     for fn in (run_analysis, inspect_cases, query_indicator,
                register_hypothesis, transition_hypothesis,
                run_isolated_validation, run_random_window_test,
                run_staged_validation, run_backtest,
                register_formula_plugin, register_model_plugin,
                translate_hypothesis_to_strategy,
-               submit_feature_request, trigger_evolution, poll_evolution_task):
+               submit_feature_request, trigger_evolution,
+               poll_evolution_task,
+               mount_paper_task, unmount_paper_task):
         TOOL_TIERS["research"].add(fn.__name__)

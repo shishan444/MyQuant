@@ -11,35 +11,52 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+# 留档旧纸盘三表（rebuild-paper-trading 2.1 裁决）：旧仓库
+# core/persistence/repository/paper_trading.py（组 7 才退役）仍 import
+# 旧模型类——退役前模型类不得删除，故表仍在 metadata；断言语义按
+# 「活跃表清单」表达：旧三表移出活跃集、新五表（pt_*）补入。
+# 组 7 删旧模型类时同步收走本集合与相关断言。
+_LEGACY_PAPER_TABLES = frozenset({
+    "paper_equity_snapshot", "paper_trade", "paper_trading_task",
+})
+
+_LEGACY_PAPER_INDEXES = frozenset({
+    ("paper_equity_snapshot", "idx_equity_task_time"),
+    ("paper_trade", "idx_paper_trade_task"),
+    ("paper_trade", "idx_paper_trade_unique"),  # B1.3 幂等唯一索引
+})
+
 
 class TestModelMetadata:
-    """模型全量声明：11 legacy 表 + 8 研究域表（add-ai-research-mcp 1.2），导入无误。"""
+    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表
+    （rebuild-paper-trading 2.1；其中旧纸盘三表转留档），导入无误。"""
 
     def test_table_count(self):
         from core.persistence.orm import Base
-        assert len(Base.metadata.tables) == 19
+        active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
+        assert len(active) == 21
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
         expected = {
             "backtest_result", "dataset_meta", "evolution_history",
             "evolution_task", "generation_snapshot", "live_trading_task",
-            "paper_equity_snapshot", "paper_trade", "paper_trading_task",
             "strategy", "verify_session",
             # 研究域（add-ai-research-mcp）
             "research_hypotheses", "research_log", "analysis_tasks",
             "formula_plugins", "model_plugins", "signal_registry",
             "feature_requests", "validation_records",
+            # 纸盘域（rebuild-paper-trading 2.1）
+            "pt_task", "pt_fill", "pt_equity", "pt_funding", "pt_report",
         }
-        assert expected == set(Base.metadata.tables)
+        assert expected == set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
+        # 留档旧三表退役前仍在 metadata（组 7 随旧模型类删除收走）
+        assert _LEGACY_PAPER_TABLES <= set(Base.metadata.tables)
 
     def test_secondary_indexes(self):
         from core.persistence.orm import Base
         idx = {(t.name, i.name) for t in Base.metadata.sorted_tables for i in t.indexes}
         expected = {
-            ("paper_equity_snapshot", "idx_equity_task_time"),
-            ("paper_trade", "idx_paper_trade_task"),
-            ("paper_trade", "idx_paper_trade_unique"),  # B1.3 幂等唯一索引
             ("strategy", "idx_strategy_best_score"),
             ("strategy", "idx_strategy_gene_signature"),
             ("strategy", "idx_strategy_source"),
@@ -55,8 +72,37 @@ class TestModelMetadata:
             ("feature_requests", "ix_feature_requests_status"),
             ("validation_records", "ux_validation_idem"),
             ("validation_records", "ix_validation_hypothesis"),
+            # 纸盘域唯一键（rebuild-paper-trading 2.1；Alembic d8a2f6c3e9b1
+            # 同规声明——两方不一致静默架空，实库验证见 PRAGMA 惯例）
+            ("pt_fill", "ux_pt_fill_task_bar_seq"),
+            ("pt_equity", "ux_pt_equity_task_bar"),
+            ("pt_funding", "ux_pt_funding_task_settle"),
         }
-        assert expected == idx
+        assert expected == idx - _LEGACY_PAPER_INDEXES
+        # 留档旧三表索引退役前仍在（随组 7 收走）
+        assert _LEGACY_PAPER_INDEXES <= idx
+
+    def test_pt_unique_constraints(self):
+        """纸盘域三唯一键形制锚（列序=幂等键语义；与迁移 d8a2f6c3e9b1
+        两处同步声明的 ORM 侧）。"""
+        from core.persistence.orm import Base
+        expected = {
+            "ux_pt_fill_task_bar_seq": ("pt_fill", ["task_id", "bar_time", "seq"]),
+            "ux_pt_equity_task_bar": ("pt_equity", ["task_id", "bar_time"]),
+            "ux_pt_funding_task_settle": ("pt_funding", ["task_id", "settle_time"]),
+        }
+        for name, (table, cols) in expected.items():
+            t = Base.metadata.tables[table]
+            uq = [i for i in t.indexes if i.name == name]
+            assert uq and uq[0].unique, f"{name} 须为唯一索引"
+            assert [c.name for c in uq[0].columns] == cols
+
+    def test_pt_report_composite_pk(self):
+        """pt_report 复合主键 (task_id, report_version)——Q-2 版本机制
+        （结题初版 v1/终态后补记修订版恒 v2 覆盖）的库级身份。"""
+        from core.persistence.orm import Base
+        t = Base.metadata.tables["pt_report"]
+        assert [c.name for c in t.primary_key.columns] == ["task_id", "report_version"]
 
     def test_paper_trade_unique_constraint(self):
         from core.persistence.orm import Base
@@ -467,7 +513,14 @@ class TestDatasetMetaRepository:
         ver = conn.execute("SELECT version_num FROM alembic_version").fetchall()
         conn.close()
         assert len(ver) == 1, "接管后版本表就位"
-        assert counts_before == counts_after, "全部业务表行数零损失"
+        # 零损失语义：既有业务表行数全等；链演进新增表（如
+        # rebuild-paper-trading 五表）接管后为 0 行空表——upgrade 补链
+        # 建表不携数据，不构成损失
+        added = set(counts_after) - set(counts_before)
+        assert all(counts_after[t] == 0 for t in added), f"新增表须为空表: {added}"
+        shared = set(counts_before) & set(counts_after)
+        assert {t: counts_before[t] for t in shared} \
+            == {t: counts_after[t] for t in shared}, "全部业务表行数零损失"
         # 终态业务表 schema == 干净 upgrade head 库（对照组）
         fresh = tmp_path / "fresh.db"
         TestAlembicBaseline._alembic("upgrade", "head", db_path=fresh)

@@ -149,8 +149,8 @@ def _bar_ts_minutes_and_tf(index, tf: str) -> tuple:
 
 
 @njit
-def _risk_budget_qty(value_now, price, stop_dist, risk_fraction,
-                     leverage, max_exposure):
+def risk_budget_qty(value_now, price, stop_dist, risk_fraction,
+                    leverage, max_exposure):
     """风险预算定仓公式单点（complete-research-tooling 任务 4）。
 
     入场数量 qty=当時权益×risk_fraction÷实际生效止损距离（每笔风险
@@ -781,7 +781,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         # 动态定仓（任务 4）：fixed 档（含缺省 0.0）百分比路径逐字节
         # 不变；risk_budget 档数量仓——止损距离按 sl_mode 三档分派
         # （pct=价格×比例/atr 与 trail=比例×当根 ATR——trail 初始追踪
-        # 距离=入场 bar ATR 基准），公式单点 _risk_budget_qty；距离
+        # 距离=入场 bar ATR 基准），公式单点 risk_budget_qty；距离
         # 不可定义（无止损/NaN）回退 fixed 百分比路径（防御直构 DNA）
         order_size = np.float64(size_pct * dir_sign)
         order_size_type = np.int64(2)  # 百分比仓
@@ -794,7 +794,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 stop_dist = current_price * sl_stop
             else:
                 stop_dist = sl_stop * atr_arr[i, col]
-            qty, capped = _risk_budget_qty(
+            qty, capped = risk_budget_qty(
                 c.value_now, current_price, stop_dist,
                 risk_fractions[col], leverage, max_exposures[col])
             if qty > 0.0:
@@ -877,7 +877,7 @@ class BacktestEngine:
         声明续注
         面；leverage_cap=min(leverage, max_exposure)（与引擎截断 cap
         同源）；orders_capped 与 entry size 统计为 risk_budget 档
-        确定性重放（与 numba 回调共用 _risk_budget_qty 公式单点——
+        确定性重放（与 numba 回调共用 risk_budget_qty 公式单点——
         python 侧调用 njit 函数，两处公式不漂移）。ATR 距离按
         _load_atr_column 单点自装载（与 _build_portfolio 同源——
         装配层重载一次，重放成本可忽略）。
@@ -935,7 +935,7 @@ class BacktestEngine:
                     if atr_col is None or pos >= len(atr_col):
                         continue  # 防御——atr 装载失败理论不可达
                     stop_dist = sl_stop * float(atr_col[pos])
-                _, hit = _risk_budget_qty(
+                _, hit = risk_budget_qty(
                     value_now, price, stop_dist, float(rg.risk_fraction),
                     float(rg.leverage),
                     # 第 6 参按形参语义传有效 max_exposure（None→1.0
@@ -1176,7 +1176,7 @@ class BacktestEngine:
 
         # 仓位口径披露（complete-research-tooling 任务 4——纯增量键）：
         # mode/risk_fraction/leverage_cap 声明面 + orders_capped 截断计数
-        # （risk_budget 档确定性重放——与 numba 回调共用 _risk_budget_qty
+        # （risk_budget 档确定性重放——与 numba 回调共用 risk_budget_qty
         # 公式单点；value_now 对齐=订单 bar 前一 bar 期末组合价值，首
         # bar 退化 init_cash——披露对齐假设）+ entry size 统计（数量仓
         # 口径；fixed 档 size 恒定只报 mode/参数面）

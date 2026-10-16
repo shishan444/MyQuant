@@ -88,7 +88,8 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
         return  # 测试上下文无库——跳过快照
 
     def _read() -> dict | None:
-        from core.persistence.repository import evolution as evo, paper_trading as ptt
+        from core.persistence.repository import evolution as evo
+        from core.persistence.repository import paper
         if namespace == "/evolution":
             row = evo.get_task(db_path, room)
             if row is None or row.get("status") not in ("running", "paused", "pending", "stopped"):
@@ -100,13 +101,27 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
                 "max_generations": row.get("max_generations"),
                 "current_phase": row.get("current_phase"),
             }
-        row = ptt.get_paper_trading_task(db_path, room)
-        if row is None or row.get("status") not in ("running", "paused", "stopped"):
+        # /trading：纸盘新域快照（rebuild-paper-trading 5.2，design §7.2
+        # 新 schema——旧 paper_trading 表读取面切换，旧仓库随组 7 退役）。
+        # 任务存在即发（五态 status 自解释——终态重连端可感知任务已结束）。
+        # equity 派生与 AccountSnapshot.equity 同式（P0 权益修复联动）：
+        # balance 开仓已扣 margin，持仓中须加回 position_margin——逐仓
+        # 口径 equity=balance+margin+未实现盈亏；空仓 margin 项为 0；
+        # 账户组 NULL（未运行）→None 透传非 0 假值
+        row = paper.get_task(db_path, room)
+        if row is None:
             return None
+        balance = row.get("balance")
+        unrealized = row.get("unrealized_pnl")
+        margin = row.get("position_margin")
+        equity = (None if balance is None
+                  else balance + (margin or 0.0) + (unrealized or 0.0))
         return {
-            "type": "task_snapshot", "task_id": room, "status": row.get("status"),
-            "position_side": row.get("position_side"), "balance": row.get("balance"),
-            "total_trades": row.get("total_trades", 0), "total_pnl": row.get("total_pnl"),
+            "type": "task_snapshot", "task_id": room,
+            "status": row.get("status"),
+            "equity": equity,
+            "balance": balance,
+            "total_trades": row.get("total_trades", 0),
         }
     snapshot = await asyncio.to_thread(_read)
     if snapshot is not None:

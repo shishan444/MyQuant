@@ -29,6 +29,7 @@ from .routes import validate as validate_route
 from .routes import scene as scene_route
 from .routes import trading as trading_route
 from .routes import live_trading as live_trading_route
+from .routes import paper_trading as paper_trading_route
 from .schemas import HealthResponse
 
 try:
@@ -116,6 +117,24 @@ def create_app(
 
         set_ws_push_fn(_ws_push_evolution)
         set_trading_ws_push_fn(_ws_push_trading)
+
+        # 纸盘交易新域调度器（rebuild-paper-trading 组 3）：启动期恢复
+        # 扫描（running 残态：可信续跑/不可信转 error）→ 守护线程拾取。
+        # 旧 TradingRunner 挂载原位保留至组 7 切换——新旧端点族前缀不同
+        # （/api/paper-trading vs /api/trading），不暴露双入口。
+        # 摆位纪律：本段须在 runner.start() 之前——段的延迟 import 链与
+        # 恢复扫描开销若发生在已启动的 EvolutionRunner 之后，会经 GIL
+        # 推迟 runner 首扫相位、落进测试的落行-请求窗口（缺陷④跨域
+        # flaky 实测锁定）；放 runner 启动前则全部开销先于任何守护
+        # 线程完成，且 capture_loop 已跑（push 可用）。
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        paper_scheduler = PaperScheduler(
+            db_path=db_path, data_dir=data_dir, push=_make_push("/trading"))
+        paper_scheduler.startup_recover()
+        app.state.paper_scheduler = paper_scheduler
+        paper_scheduler.start()
+
         runner.start()
         trading_runner.start()
 
@@ -128,6 +147,8 @@ def create_app(
         trading_runner.stop()
         runner.join(timeout=5.0)
         trading_runner.join(timeout=5.0)
+        paper_scheduler.stop()
+        paper_scheduler.join(timeout=5.0)
 
         # 研究执行器停止（守护扫描停、不等待在途计算）；重置单例供测试复用
         from core.analysis import executor as _research_exec
@@ -164,6 +185,9 @@ def create_app(
     app.include_router(data.router)
     app.include_router(trading_route.router)
     app.include_router(live_trading_route.router)
+    # 纸盘交易新域端点族（rebuild-paper-trading 5.1；与旧 /api/trading
+    # 前缀不同不暴露双入口，旧挂载保留至组 7 切换）
+    app.include_router(paper_trading_route.router)
     app.include_router(validate_route.router)
     app.include_router(scene_route.router)
 
