@@ -30,6 +30,13 @@ def compute_session_range(
 
     会话成员判定：bar 开盘时刻的 UTC 分钟 ∈ [start_minute, end_minute)
     （左闭右开——end_minute 时刻的 bar 归下一段）。
+
+    会话周期段（B1 修复——窗口结束值固定至日终）：段起点=进入会话，
+    段终点=UTC 日界。段内会话外行 ffill 延续会话终值（spec「窗口
+    结束值固定至日终」）；跨段不延续——次日窗口开始前 NaN（保住
+    UTC 日界重置不变量；按会话周期段而非日历日分组，start_minute>0
+    时当日 0:00 至窗口开始前不承接昨日终值）。跨午夜时段（防御
+    分支）同被日界切断归零——未启用形制不为此精化。
     """
     start_m = int(params["start_minute"])
     end_m = int(params["end_minute"])
@@ -53,12 +60,20 @@ def compute_session_range(
     seg = (prev_in & ~prev_in.shift(1, fill_value=False)).cumsum()
     valid = prev_in.astype(bool)
 
+    # 会话周期段编号（B1——供段内 ffill）：进入会话或 UTC 日界均开
+    # 新段（日界切断跨段延续）
+    enter_session = in_session & ~in_session.shift(1, fill_value=False)
+    day = pd.Series(df.index.normalize(), index=df.index)
+    cycle = (enter_session | day.ne(day.shift())).cumsum()
+
     def _session_cummax(series: pd.Series) -> pd.Series:
         # 输入先 shift(1)（t-1 累积——当前 bar 不进自身输出）
         base = series.shift(1).where(valid)
         # 段内 cummax：seg 相同且 valid 的行组内累积
-        return base.groupby(seg[base.notna()]).cummax() if base.notna().any() \
-            else base
+        inner = base.groupby(seg[base.notna()]).cummax() \
+            if base.notna().any() else base
+        # 会话周期段内 ffill：会话外行延续会话终值至日终
+        return inner.groupby(cycle).ffill()
 
     session_high = _session_cummax(df["high"])
     session_low = _session_cummax(-df["low"]) * -1.0
@@ -68,7 +83,9 @@ def compute_session_range(
     seg_valid = seg[valid]
     sum_pv = cum_pv.groupby(seg_valid).cumsum()
     sum_vol = cum_vol.groupby(seg_valid).cumsum()
-    session_vwap = (sum_pv / sum_vol.replace(0.0, np.nan))
+    # vwap 同口径段内 ffill（会话外延续 Σ/Σ 终值）
+    session_vwap = (
+        sum_pv / sum_vol.replace(0.0, np.nan)).groupby(cycle).ffill()
 
     return {
         f"session_high_{start_m}_{end_m}": session_high,

@@ -207,8 +207,9 @@ class TestComputeAllIndicators:
         tail = result.iloc[cutoff:]
         indicator_cols = [c for c in result.columns if c not in sample_ohlcv.columns]
         # SessionRange 三列（add-session-structure-expression）：会话外
-        # 段 NaN 是设计语义（t-1 累积仅会话内有值——跨会话归零不虚构
-        # 前值），非收敛缺陷——与 psar/cvd 的已知稀疏形同列豁免
+        # 延续终值非稀疏（B1 修复——段内 ffill 至日终），但每会话周期
+        # 段首根仍 NaN（t-1 无会话数据——跨段归零不虚构前值）——4h bar
+        # 下每日 1/6 ≈16.7% 超 5% 门槛，skip 保留；与 psar/cvd 同列豁免
         skip_cols = {"psar", "cvd"} | {
             c for c in indicator_cols if c.startswith("session_")}
         for col in indicator_cols:

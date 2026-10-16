@@ -54,30 +54,53 @@ class TestSessionRange:
         return _df_from_rows(rows)
 
     def test_u3a_four_invariants(self):
-        """X1=U3a 四不变量：t 时刻输出只含截至 t-1 的会话数据（合成
-        已知序列逐 bar 人工核算——会话外大波 100/90 不进会话列；
-        会话第二根才可见首根值；跨会话归零不延续）。"""
+        """X1=U3a 四不变量：t 时刻输出只含截至 t-1 的会话数据；窗口
+        结束后终值保持至 UTC 日界（D-3 裁决=方向 B：design 2.3 原文
+        「窗口结束后输出固定值至日终」）；跨会话日界重置；窗口首根
+        NaN。合成已知序列逐 bar 人工核算。"""
         df = self._session_df()
         out = _compute_indicator(df, "SessionRange",
                                  {"start_minute": 0, "end_minute": 420})
         sh = out["session_high_0_420"]
-        # 日1：hour0 会话首根——t-1 无会话数据 → NaN
+        # 窗口首根（t-1 无会话数据）→ NaN
         assert np.isnan(sh.iloc[0])
-        # 日1 hour1：可见 hour0 的 high=10
+        # 窗口内逐 bar：可见上一根 high（进行中聚合不含当根）
         assert sh.iloc[1] == 10
-        # 日1 hour6：cummax(10..15)=15（不含自身 16——t-1 累积）
         assert sh.iloc[6] == 15
-        # 会话外 hour7：t-1（hour6）在会话 → 可见 16（会话外首根仍
-        # 承接 t-1 会话值）；hour8 起 t-1 会话外 → NaN（大波不进）
+        # 会话外：终值保持至日终（窗口最终聚合含末根 h6 的 16；
+        # 会话外大波 100/90 不进会话列）
         assert sh.iloc[7] == 16
-        assert np.isnan(sh.iloc[8]) and np.isnan(sh.iloc[23])
-        # 日2 hour0（index24，次日 0 点）：prev=日1 hour23 会话外
-        # → NaN（跨会话归零）
+        assert sh.iloc[8] == 16 and sh.iloc[23] == 16, "终值保持至日终"
+        # UTC 日界重置：日2 首根 NaN（新窗口 t-1 无数据）
         assert np.isnan(sh.iloc[24])
-        # 日2 hour1（index25）：可见日2 hour0 的 high=20
+        # 日2 窗口内逐 bar 更新
         assert sh.iloc[25] == 20
         sl = out["session_low_0_420"]
         assert np.isnan(sl.iloc[0]) and sl.iloc[1] == 1
+        assert sl.iloc[8] == 1 and sl.iloc[23] == 1, "low 终值同样保持"
+
+    def test_u3a2_nonzero_start_boundary(self):
+        """X1 补（D-3 方向 B 边界锚）：start_minute>0 时「窗口开始前
+        NaN」与「窗口结束后终值保持」两段并存且互不误伤——日界后、
+        窗口开始前段必须 NaN（保持至日终 ≠ 跨日延续）。"""
+        df = self._session_df()
+        out = _compute_indicator(df, "SessionRange",
+                                 {"start_minute": 120, "end_minute": 300})
+        sh = out["session_high_120_300"]
+        # 日1 窗口开始前（h0-h1）与窗口首根（h2）NaN
+        assert np.isnan(sh.iloc[0]) and np.isnan(sh.iloc[1]) \
+            and np.isnan(sh.iloc[2])
+        # 窗口内进行中累积（不含当根）：日1 h2/h3/h4 high=12/13/14
+        assert sh.iloc[3] == 12 and sh.iloc[4] == 13
+        # 会话外终值保持（含 h4 聚合=14）至日终
+        assert sh.iloc[5] == 14 and sh.iloc[6] == 14 and sh.iloc[23] == 14
+        # 关键：日2 窗口开始前（h0-h1）NaN——昨日终值 14 不得跨日延续
+        assert np.isnan(sh.iloc[24]) and np.isnan(sh.iloc[25]), \
+            "日界后窗口开始前段须 NaN（保持≠跨日延续）"
+        # 日2 新窗口：首根 NaN→累积→保持（h2/h3/h4 high=22/23/24）
+        assert np.isnan(sh.iloc[26])
+        assert sh.iloc[27] == 22 and sh.iloc[28] == 23
+        assert sh.iloc[29] == 24, "日2 终值（h2-h4 max=24）自 h5 保持"
 
     def test_u3b_vwap_manual(self):
         """U3b vwap 人工核算：日1 hour2 处 vwap = Σ(typ×vol)/Σvol

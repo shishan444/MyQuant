@@ -118,6 +118,17 @@ class TestInspectCasesAnchors:
         )
         # t-1 累积：会话首根 bar 不产生 case（NaN 不命中——非全命中）
         assert 0 <= out["n_matched"] < 400
+        # 加严（tester 补——新语义 D-3 方向 B 命中结构）：非 NaN ⟺
+        # 会话内（t-1 累积）或会话外（终值保持）——命中 bar hour
+        # ⊆ {1..23}（0:00 日界重置 NaN 不可命中）；且存在 hour>=8 的
+        # 会话外位点（终值保持使会话外可表达——把语义差异钉进 e2e，
+        # 防再次静默回退到会话外 NaN）。
+        assert out["n_matched"] > 0, "合成数据下会话列应有命中"
+        hours = {pd.Timestamp(c["trigger_ts"]).hour for c in out["cases"]}
+        assert hours <= set(range(1, 24)), \
+            f"命中 bar hour 不得含 0（日界重置 NaN），实际: {hours}"
+        assert any(h >= 8 for h in hours), \
+            f"应存在会话外（hour>=8）命中位点（终值保持语义），实际: {hours}"
 
 
 class TestIllegalFamily:
