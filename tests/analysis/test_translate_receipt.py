@@ -173,3 +173,24 @@ class TestReuseNote:
         hid = _hyp(db)
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert "duplicated_by_same_dna" not in out
+
+
+class TestIntentionalBoundaryNote:
+    """S10：跨品种有意边界标注（unify-tool-return-contract 任务 9）。"""
+
+    def test_s10_cross_symbol_note_present(self, db):
+        """跨品种拒绝 detail 附「有意设计边界」标注短语（纯文案锚）。"""
+        from core.analysis.hypothesis_service import ResearchError
+        ranges_multi = [
+            {"symbol": "BTCUSDT", "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+            {"symbol": "ETHUSDT", "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
+        ]
+        hid = register_hypothesis(db, conditions=_CONDS, statement="s",
+                                  data_ranges=ranges_multi)["hypothesis_id"]
+        with pytest.raises(ResearchError) as ei:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "有意设计边界" in ei.value.detail.get("note", ""), \
+            "detail.note 缺有意边界标注"

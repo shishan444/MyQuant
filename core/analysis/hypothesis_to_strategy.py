@@ -240,7 +240,8 @@ def translate_hypothesis(
             f"跨币种假设不可表达（WHEN/THEN 分属 {sorted(symbols)}）——"
             "策略表达为单品种信号源",
             detail={"symbols": sorted(symbols),
-                    "slow_path": "提交 feature-requests 描述跨品种需求"})
+                    "slow_path": "提交 feature-requests 描述跨品种需求",
+                    "note": "此为有意设计边界（单品种信号源），非待修复缺陷"})
 
     # 多周期防线与双组翻译经 S4 公共入口（0.4.1）：防线循环原形在
     # build_signal_genes 内（与翻译能力同点权威单源）；跨币种防线
