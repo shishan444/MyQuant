@@ -140,6 +140,29 @@ class TestCountAndParityReentry:
         assert len(INDICATOR_REGISTRY) == 48
 
     def test_research_tools_tier_registered(self):
-        from mcpserver.tools import TOOL_TIERS
+        """两档工具集非空（自足注册——TOOL_TIERS 由装配函数运行时填充
+        （tools.py），无装配副作用的单跑场景由本用例显式注册，消除对
+        同 session 先前测试的顺序依赖；set.add 幂等，全量重复注册无害）。"""
+        from conftest import _FakeApi, _FakeMcp  # 同目录（pytest prepend）
+        from mcpserver.tools import (
+            TOOL_TIERS, register_readonly_tools, register_research_tools)
+        mcp, api = _FakeMcp(), _FakeApi()
+        register_readonly_tools(mcp, api)
+        register_research_tools(mcp, api)
         assert TOOL_TIERS["research"], "research 档工具集非空"
         assert TOOL_TIERS["readonly"], "readonly 档工具集非空"
+
+    def test_receipt_bool_not_penetrating(self):
+        """C6（security F-5）：bool 不再按 int 穿透回执——bool 是 int
+        子类，穿透会以 1/0 冒充合法 bar 数/时刻；真值 3/600 照常回显。
+        两函数四位（max_hold/time_exit_utc）全验。"""
+        from core.analysis.hypothesis_to_strategy import (
+            _identity_reflection, _translate_receipt)
+        r = _translate_receipt("long", True, True, False)
+        assert r["max_hold"] is None and r["time_exit_utc"] is None
+        r2 = _translate_receipt("long", 3, 600, False)
+        assert r2["max_hold"] == 3 and r2["time_exit_utc"] == 600
+        row = {"dna_json": '{"risk_genes": {"direction": "long", '
+                            '"max_hold": true, "time_exit_utc": true}}'}
+        ir = _identity_reflection(row)
+        assert ir["max_hold"] is None and ir["time_exit_utc"] is None

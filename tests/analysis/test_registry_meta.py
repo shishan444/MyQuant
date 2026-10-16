@@ -242,3 +242,29 @@ class TestWarmupMinutesDimension:
                 tmp_path / "q.db", ["_TEST_MIN_IND"]) == 200
         finally:
             del INDICATOR_REGISTRY["_TEST_MIN_IND"]
+
+    def test_u2c_axis_minute_dimension_two_directions(self, tmp_path):
+        """U2c 轴引用分钟维两向锚（D-2 修复后形制：分钟需求按时间量
+        折算基准 bar，与求值轴周期无关）。
+
+        SessionRange（warmup_minutes=1440=完整一日）：
+        - @1m 轴 @1h 基准 → 1440 分钟=24 基准 bar < floor 200 → 200
+          （修复前轴 bar 数 1440 直接并入虚增）；
+        - @1h 轴 @1m 基准 → 1440 分钟=1440 根 1m 基准 bar（修复前
+          既有轴维度 span 下限只给 1200——欠账 4 小时收敛窗）。
+        """
+        assert derive_warmup_full(
+            tmp_path / "q.db", [],
+            indicator_tfs={"1m": [("SessionRange", {})]},
+            base_tf="1h") == 200, "1m 轴不虚增（floor 生效）"
+        assert derive_warmup_full(
+            tmp_path / "q.db", [],
+            indicator_tfs={"1h": [("SessionRange", {})]},
+            base_tf="1m") == 1440, "1h 轴@1m 基准按时间量折算（不欠账）"
+
+    def test_u2_rule_text_fifth_sentence(self):
+        """U2 披露面：WARMUP_RULE_TEXT 含分钟语义预热维第五句要素
+        （四披露面单源同口径——文本面锚，与 T5d 第四句同形制）。"""
+        from core.analysis.registry_meta import WARMUP_RULE_TEXT
+        assert "分钟语义预热维" in WARMUP_RULE_TEXT
+        assert "warmup_minutes" in WARMUP_RULE_TEXT

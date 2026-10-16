@@ -13,7 +13,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.strategy.dna import RiskGenes
-from tests.helpers.data_factory import make_dna, make_enhanced_df
+from tests.helpers.data_factory import make_dna, make_enhanced_df, make_ohlcv
 
 
 class TestDomainValidation:
@@ -174,3 +174,138 @@ class TestFivePointSync:
         # test_u6a 已证）
         from core.analysis.hypothesis_to_strategy import _D2_RISK_FIELDS
         assert "time_exit_utc" in _D2_RISK_FIELDS
+
+
+class TestPerBarExitTiming:
+    """U6 逐笔出场时刻锚（tester 补——断言面审查暴露的缺口）。
+
+    既有 u6d 为覆盖公式的代数自证（未触生产代码）、u6e/u6f 弱断言
+    （total_trades>=1/2 在机制失效时同样满足——None 禁用对照下
+    total_trades=1 亦成立）。本类用排除法在逐笔层锁时刻触发行为：
+    stop_loss/take_profit/max_hold 全置 None、出场信号阈值永不触发
+    ——唯一出场途径=time_exit_utc，trades 的出场 bar 开盘时刻即
+    「当根区间 [open, open+tf) 覆盖时刻」的直接证据。末根 bar 的
+    期末强平非时刻触发，从断言中排除。
+    """
+
+    def _run(self, time_exit, freq="1h", n=240, seed=21):
+        """返回 (result, 中途出场时刻集, df)——中途=排除末根强平。"""
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.executor import dna_to_signal_set, clear_indicator_cache
+        dna = make_dna(entry_value=70, exit_value=101)  # 入场常触发
+        dna.risk_genes.stop_loss = None
+        dna.risk_genes.take_profit = None
+        dna.risk_genes.max_hold = None
+        if time_exit is not None:
+            dna.risk_genes.time_exit_utc = time_exit
+        dna.execution_genes.timeframe = freq
+        df = make_enhanced_df(n=n, freq=freq, seed=seed)
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df)
+        res, portfolio = BacktestEngine().run_with_portfolio(dna, df)
+        trades = portfolio.trades.records_readable
+        mid = pd.DatetimeIndex(
+            [t for t in trades["Exit Timestamp"] if t != df.index[-1]])
+        return res, mid, df
+
+    def test_midtrade_exits_all_at_declared_hour(self):
+        """t=600（10:00）@1h：全部中途出场 bar 开盘恰为 10:00
+        （跨日逐日触发——多笔且时刻唯一）。"""
+        res, mid, _ = self._run(600)
+        assert len(mid) >= 2, "多日持仓应有多笔时刻出场"
+        assert all(t.hour == 10 and t.minute == 0 for t in mid), \
+            f"出场 bar 应全部为 10:00 开盘，实际: {list(mid[:5])}"
+
+    def test_zero_is_valid_moment_not_disabled(self):
+        """t=0 是 0:00 合法时刻（非禁用哨兵）：出场 bar 全部 0:00
+        （u6b 物化断言的行为面补全）。"""
+        res, mid, _ = self._run(0)
+        assert len(mid) >= 2, "0 应触发（区别于禁用）"
+        assert all(t.hour == 0 and t.minute == 0 for t in mid), \
+            f"出场 bar 应全部为 0:00 开盘，实际: {list(mid[:5])}"
+
+    def test_none_sentinel_no_midtrade_exit(self):
+        """None→哨兵 -1.0：除末根强平外零出场——无声明路径在
+        「唯一出场途径=time_exit」设计下的行为锚（u6h 等价性声明的
+        行为面证据）。"""
+        res, mid, _ = self._run(None)
+        assert len(mid) == 0, f"禁用时不应有中途出场: {list(mid[:5])}"
+
+    def test_coverage_left_closed_right_open_on_4h_grid(self):
+        """覆盖边界（实现层——u6d 的实证版）：4h 网格下 t=0 仅在
+        0:00 开盘 bar 触发；t=240 归下根仅在 4:00 开盘 bar 触发
+        （区间 [open, open+tf) 左闭右开：t==open 触发、t==open+tf
+        归下根）。"""
+        _, mid0, _ = self._run(0, freq="4h")
+        _, mid240, _ = self._run(240, freq="4h")
+        assert len(mid0) >= 2 and all(t.hour == 0 for t in mid0), \
+            f"t=0 应仅在 0:00 bar 触发，实际: {list(mid0[:5])}"
+        assert len(mid240) >= 2 and all(t.hour == 4 for t in mid240), \
+            f"t=240 应仅在 4:00 bar 触发（归下根），实际: {list(mid240[:5])}"
+
+    def test_daily_degenerate_equals_max_hold_1(self):
+        """U6f 等价性对照（引擎层行为锚）：入口侧（validate_dna）按
+        C5 拒绝 time_exit_utc×日线组合；本用例直构 DNA 直跑引擎（
+        dna_to_signal_set/BacktestEngine 均不经 validate_dna），锁
+        design 2.6「日线退化≡max_hold=1」的引擎行为事实——同数据
+        同入场结构 metrics 全等（防引擎回归或未来放开入口后语义漂移）。"""
+        def _run_risk(apply):
+            from core.backtest.engine import BacktestEngine
+            from core.strategy.executor import (
+                dna_to_signal_set, clear_indicator_cache)
+            dna = make_dna(entry_value=70, exit_value=101)
+            dna.risk_genes.stop_loss = None
+            dna.risk_genes.take_profit = None
+            apply(dna.risk_genes)
+            dna.execution_genes.timeframe = "1d"
+            df = make_enhanced_df(n=200, freq="1d", seed=5)
+            clear_indicator_cache()
+            sig = dna_to_signal_set(dna, df)
+            return BacktestEngine().run(dna, df, signal_set=sig)
+
+        ra = _run_risk(lambda rg: setattr(rg, "time_exit_utc", 600))
+        rb = _run_risk(lambda rg: setattr(rg, "max_hold", 1))
+        assert ra.total_trades >= 2
+        assert ra.total_trades == rb.total_trades
+        assert ra.metrics_dict == rb.metrics_dict, \
+            "1d 退化与 max_hold=1 的 metrics 应全等"
+
+    def test_u6c_same_bar_double_hit_single_close(self):
+        """U6c 同 bar 双命中全平：SL 触碰线与时刻出场同一 bar 命中时
+        恰一笔全平出场（Closed 无拆分重复）。
+
+        判定序说明（tester 探针结论）：SL 与 time_exit 两分支的出场
+        订单形制同构（市价全平、同 bar close 成交），先后序在行为层
+        不可观察——可观察面=双命中时单次全平、无部分/重复出场。
+        构造：hour_utc<=1 每日 0/1 点确定性入场，无出场信号；把持仓
+        期内一根 10:00 bar 的 low 打穿 SL 线（entry≈39598×0.95≈37618
+        →low=37000）→ 该 bar 双命中。
+        """
+        from core.backtest.engine import BacktestEngine
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, SignalGene, SignalRole, StrategyDNA)
+        from core.strategy.executor import (
+            dna_to_signal_set, clear_indicator_cache)
+
+        df = make_ohlcv(n=240, freq="1h", seed=42)
+        ts = pd.Timestamp("2024-01-02 10:00:00+00:00")  # 持仓期内 10:00 bar
+        pos = df.index.get_loc(ts)
+        df.iloc[pos, df.columns.get_loc("low")] = 37000.0
+        df["hour_utc"] = df.index.hour + df.index.minute / 60.0
+        dna = StrategyDNA(
+            signal_genes=[SignalGene(
+                "hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                {"type": "le", "threshold": 1.0})],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(stop_loss=0.05, time_exit_utc=600))
+        clear_indicator_cache()
+        sig = dna_to_signal_set(dna, df)
+        assert int(sig.entries.sum()) >= 10, "确定性入场信号在产生"
+        _, portfolio = BacktestEngine().run_with_portfolio(dna, df)
+        tr = portfolio.trades.records_readable
+        hits = tr[tr["Exit Timestamp"] == ts]
+        assert len(hits) == 1, f"双命中 bar 应恰一笔出场，实际 {len(hits)}"
+        assert hits["Status"].iloc[0] == "Closed", "全平非部分出场"
+        # 同 Position 无拆分重复（双机制不得各出一次）
+        assert int((tr["Position Id"] == hits["Position Id"].iloc[0]).sum()) == 1
