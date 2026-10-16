@@ -287,6 +287,17 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             errors.append(
                 f"time_exit_utc {te_val} out of range "
                 f"[{TIME_EXIT_UTC_MIN}, {TIME_EXIT_UTC_MAX}] (UTC minutes)")
+        # 周期组合校验（security F-3）：日线及以上每 bar 覆盖全天，
+        # 时刻出场恒触发 ≡ max_hold=1 退化——与时刻出场意图背离，
+        # 组合拒绝（周期分钟经 TF_SECONDS 单源；未知周期跳过——
+        # 该形由基因级 tf 值域校验另行报错）
+        if isinstance(te_val, int) and not isinstance(te_val, bool) \
+                and exec_tf_seconds is not None \
+                and exec_tf_seconds >= 1440 * 60:
+            errors.append(
+                f"time_exit_utc requires an intraday execution timeframe "
+                f"(daily+ bars cover every UTC minute — time exit always "
+                f"triggers, degenerate to max_hold=1), got '{exec_tf}'")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")

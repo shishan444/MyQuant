@@ -66,6 +66,25 @@ class TestDomainValidation:
                 tmp_path / "q.db", conditions=conds, statement=f"s{ok}",
                 data_ranges=rng_k, strategy_params={"time_exit_utc": ok})
 
+    def test_c5_daily_tf_combination_rejected(self):
+        """C5：validate_dna 拒 time_exit_utc×日线及以上组合（>=1440
+        分钟——每 bar 覆盖全天恒触发，退化无意义）；4h/12h+600（日内
+        域上界）与 1d+None（无声明不涉组合）放行。"""
+        from core.strategy.validator import validate_dna
+
+        def _dna(tf, te):
+            dna = make_dna()  # 合法基线（entry+exit 齐备）
+            dna.execution_genes.timeframe = tf
+            dna.risk_genes.time_exit_utc = te
+            return dna
+
+        res = validate_dna(_dna("1d", 600))
+        assert not res.is_valid
+        assert any("time_exit" in e for e in res.errors)
+        assert validate_dna(_dna("4h", 600)).is_valid
+        assert validate_dna(_dna("12h", 600)).is_valid, "12h 仍是日内域"
+        assert validate_dna(_dna("1d", None)).is_valid, "无声明不涉组合"
+
 
 class TestEngineSentinelAndTrigger:
     """U6b/c/d/e/f：引擎语义。"""
@@ -117,8 +136,12 @@ class TestEngineSentinelAndTrigger:
         assert res.total_trades >= 1, "时段出场机制在产生交易"
 
     def test_u6f_daily_tf_degenerate_maxhold1(self):
-        """U6f 日线退化：1d bar（tf=1440）每 bar 覆盖全天恒触发 ≡
-        max_hold=1（任何入场当根/次根即出）。"""
+        """U6f 日线退化（引擎层行为锚）：1d bar（tf=1440）每 bar 覆盖
+        全天恒触发 ≡ max_hold=1（任何入场当根/次根即出）。入口侧
+        （validate_dna）按 C5/security F-3 拒绝 time_exit_utc×日线组合；
+        本用例直构 DNA 直跑引擎（不经 validate_dna），锁 design 2.6
+        「日线退化≡max_hold=1」的引擎行为事实（防引擎回归或未来放开
+        入口后语义漂移）。"""
         dna = make_dna(entry_value=70, exit_value=101)
         dna.risk_genes.time_exit_utc = 600
         dna.execution_genes.timeframe = "1d"
