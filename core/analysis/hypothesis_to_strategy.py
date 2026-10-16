@@ -193,7 +193,11 @@ def translate_hypothesis(
     Returns:
         {"strategy_id", "status": "draft", "duplicated": bool,
          "same_dna_existing": bool, "genes": [...],
-         "risk_genes": "platform_default" | "declared"}。
+         "risk_genes": "platform_default" | "declared",
+         "direction": "long"|"short", "max_hold": int|null,
+         "reuse_note": str|null}（身份三键规则②：方向/最长持仓/
+         复用说明——same_dna_existing=true 时 reuse_note 为固定三
+         要素文案）。
     """
     hyp = rr.get_hypothesis(db_path, hypothesis_id)
     if hyp is None:
@@ -220,7 +224,10 @@ def translate_hypothesis(
     if existing_draft is not None:
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
-                "risk_genes": risk_origin}
+                "risk_genes": risk_origin,
+                # 身份回读（规则②）：该分支只有产物 id 无行数据——
+                # direction/max_hold 按收敛缺省（S2f 锚）
+                **_translate_receipt("long", None, False)}
 
     conditions = json.loads(hyp["conditions"])
     data_ranges = json.loads(hyp["data_ranges"])
@@ -326,19 +333,25 @@ def translate_hypothesis(
         # 来源标注统一用 risk_origin（declared_params 非空判据）——声明值
         # 恰等于平台默认时仍须标 declared（「有声明→declared」，review-042
         # CARD-03：按九字段与默认全等判会把同一声明标成 platform_default）
+        _identity = _identity_reflection(active_hit)
         return {"strategy_id": active_hit["strategy_id"],
                 "status": active_hit.get("status") or "active",
                 "duplicated": False, "same_dna_existing": True,
-                "risk_genes": risk_origin}
+                "risk_genes": risk_origin,
+                **_translate_receipt(
+                    _identity["direction"], _identity["max_hold"], True)}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
          and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
         None)
     if draft_hit is not None:
+        _identity = _identity_reflection(draft_hit)
         return {"strategy_id": draft_hit["strategy_id"], "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
-                "risk_genes": risk_origin}
+                "risk_genes": risk_origin,
+                **_translate_receipt(
+                    _identity["direction"], _identity["max_hold"], False)}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     from core.persistence.repository.strategy import save_strategy
@@ -361,7 +374,9 @@ def translate_hypothesis(
     return {"strategy_id": strategy_id, "status": "draft",
             "duplicated": False, "same_dna_existing": False,
             "genes": [f"{g.indicator}({g.field_name})" for g in genes],
-            "risk_genes": risk_origin}
+            "risk_genes": risk_origin,
+            **_translate_receipt(
+                risk_genes.direction, risk_genes.max_hold, False)}
 
 
 def _translate_conditions(
@@ -600,3 +615,35 @@ def _risk_genes_of_row(row: Dict[str, Any]) -> Dict[str, Any]:
         return rg if isinstance(rg, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """幂等/分流分支的身份回读（unify-tool-return-contract 规则②）。
+
+    从库内策略行 dna_json 提取 direction/max_hold——direction 值域
+    收敛（脏值/null 恒回显 "long"）；解析失败同收敛（缺行/畸形存量
+    不炸回执）。"""
+    rg = _risk_genes_of_row(row) if row else {}
+    direction = rg.get("direction")
+    max_hold = rg.get("max_hold")
+    return {
+        "direction": direction if direction in ("long", "short") else "long",
+        "max_hold": int(max_hold) if isinstance(max_hold, int) else None,
+    }
+
+
+# reuse_note 固定文案（规则②：same_dna_existing=true 时的复用三要素
+# 披露——命中既有同基因策略实体/共享语义/验证挂载依赖；不新增
+# duplicated_by_same_dna 近义键）
+_REUSE_NOTE = (
+    "命中既有同基因策略实体：该策略可被多假设共享复用；其验证记录"
+    "挂载依赖调用方显式携带 hypothesis_id；执行周期由验证请求参数指定")
+
+
+def _translate_receipt(direction: str, max_hold, reuse: bool) -> Dict[str, Any]:
+    """翻译回执身份三键（四返回点统一形制）。"""
+    return {
+        "direction": direction if direction in ("long", "short") else "long",
+        "max_hold": max_hold if isinstance(max_hold, int) else None,
+        "reuse_note": _REUSE_NOTE if reuse else None,
+    }

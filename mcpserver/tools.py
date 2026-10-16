@@ -757,6 +757,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
+        回执身份三键：direction（产物方向 long|short）、max_hold（声明
+        的最长持仓 bar 数|int|null）、reuse_note（same_dna_existing=true
+        时附同基因策略复用三要素说明，其余 null）。
         转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
         return api.post(
             f"/api/research/translate/{quote(hypothesis_id, safe='')}",
