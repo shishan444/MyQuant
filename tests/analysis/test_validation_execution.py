@@ -660,3 +660,39 @@ class TestGeneTfFourValidationEntries:
         assert captured["hi"]["data_start"] == captured["base"], (
             f"高周期轴前扩起点 {captured['hi']['data_start']} 应与基准轴"
             f" {captured['base']} 同窗（时长等价传递）")
+
+
+class TestExplicitSegmentShortWindowPreflight:
+    """短窗预检边界（tester 补——247aa74 设计明文：explicit 段不在
+    预检面，段内采样充分性调用方自担；auto 段/随机窗口才预检拒。
+    本锚披露两分面：explicit 短段不预检拒（自担语义），装载可行时
+    正常出成绩单）。"""
+
+    def test_explicit_short_segment_not_preflighted(
+            self, db, data_dir, hypothesis_id):
+        gene_entry = SignalGene(
+            "RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "rsi_14",
+            {"type": "lt", "threshold": 35})
+        gene_entry.timeframe = "1d"
+        gene_exit = SignalGene(
+            "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+            {"type": "gt", "threshold": 70})
+        dna = StrategyDNA(
+            signal_genes=[gene_entry, gene_exit],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_exp_short", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        from core.analysis.validation_service import run_staged_validation
+        # 15 天段（窗内 1d 采样约 2 bar<warmup 42——统计意义弱）：
+        # explicit 自担语义=不预检拒；段+warmup 前扩装载窗 56 根 1d
+        # ≥ min_bars → 装载可行 → 正常出成绩单
+        out = run_staged_validation(
+            db, data_dir, strategy_id="st_exp_short", symbol="BTCUSDT",
+            timeframe="4h", start="2023-05-01", end="2023-05-15",
+            segmentation="explicit",
+            segments=[{"label": "s", "start": "2023-05-01",
+                       "end": "2023-05-15"}])
+        assert out.get("segments") or out.get("record_id"), \
+            "explicit 段不预检（自担语义），装载可行即出成绩单"
