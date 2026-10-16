@@ -1,14 +1,16 @@
 """Integration tests for _BatchBacktestProcessor.init (strategies batch backtest).
 
 _BatchBacktestProcessor.init mirrors _VerifyProcessor.init (group strategies by
-symbol/timeframe, build step list). process_step uses ReplayRunner
-(DecisionPipeline bar-by-bar) which needs heavier mocking; here we cover init()
-grouping + the 404 path, reusing the same fixture pattern as test_verify_processor.
+symbol/timeframe, build step list). process_step uses BacktestEngine.batch_run
+(Q-1=a engine path, rebuild-paper-trading 6.2) which needs heavier mocking; here
+we cover init() grouping + the 404 path, reusing the same fixture pattern as
+test_verify_processor.
 """
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -70,28 +72,27 @@ class TestBatchBacktestProcessorInit:
             assert exc.value.status_code == 404
 
 
-def _fake_replay_result(trades=3):
-    """Stand-in for ReplayRunner.run() result with enough data for compute_metrics."""
+def _fake_engine_result(trades=3):
+    """Stand-in for BacktestEngine.batch_run() result (engine-path fields)."""
     return SimpleNamespace(
-        equity_curve=[100_000.0 + i * 500 for i in range(20)],
+        equity_curve=pd.Series([100_000.0 + i * 500 for i in range(20)]),
         total_trades=trades,
-        events_log=[
-            {"type": "position_closed", "side": "long", "entry_price": 100.0,
-             "exit_price": 105.0, "pnl": 1000.0, "exit_reason": "signal"},
-            {"type": "position_closed", "side": "long", "entry_price": 105.0,
-             "exit_price": 100.0, "pnl": -500.0, "exit_reason": "signal"},
-            {"type": "position_closed", "side": "long", "entry_price": 100.0,
-             "exit_price": 108.0, "pnl": 800.0, "exit_reason": "signal"},
-        ][:trades],
+        win_rate=0.5,
         total_return=0.05,
-        bars_processed=20,
+        liquidated=False,
+        total_funding_cost=0.0,
+        trades_df=None,
+        metrics_dict={
+            "sharpe_ratio": 0.2, "max_drawdown": 0.01,
+            "win_rate": 0.5, "profit_factor": 1.0,
+        },
     )
 
 
 class TestBatchBacktestProcessorProcessStep:
-    """_BatchBacktestProcessor.process_step: ReplayRunner bar-by-bar execution."""
+    """_BatchBacktestProcessor.process_step: BacktestEngine.batch_run execution."""
 
-    def test_process_step_runs_replay_and_records_result(self, batch_db, tmp_path):
+    def test_process_step_runs_engine_and_records_result(self, batch_db, tmp_path):
         from api.routes.strategies import _BatchBacktestProcessor
         from api.schemas import VerifyDateRange, BatchBacktestRequest
 
@@ -103,8 +104,8 @@ class TestBatchBacktestProcessorProcessStep:
         df = make_ohlcv(50, "4h")
 
         with patch("api.routes.strategies.backtest._bt_engine_mod"), \
-             patch("core.trading.replay.ReplayRunner") as replay_cls:
-            replay_cls.return_value.run.return_value = _fake_replay_result()
+             patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.return_value = [_fake_engine_result()]
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
             processor._load_df = lambda *a, **kw: df
             processor._load_mtf = lambda *a, **kw: None
@@ -131,13 +132,13 @@ class TestBatchBacktestProcessorProcessStep:
         short_df = make_ohlcv(5, "4h")  # < 10 rows
 
         with patch("api.routes.strategies.backtest._bt_engine_mod"), \
-             patch("core.trading.replay.ReplayRunner") as replay_cls:
+             patch("core.backtest.engine.BacktestEngine") as engine_cls:
             processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
             processor._load_df = lambda *a, **kw: short_df
             processor.init()
             processor.process_step(0)
 
-        # ReplayRunner.run never called (insufficient data short-circuits)
-        assert replay_cls.return_value.run.call_count == 0
+        # batch_run never called (insufficient data short-circuits)
+        assert engine_cls.return_value.batch_run.call_count == 0
         # an error result was accumulated
         assert any(getattr(r, "error", None) for r in processor.all_results)

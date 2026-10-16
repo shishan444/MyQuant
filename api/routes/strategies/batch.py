@@ -6,13 +6,13 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import uuid
 import asyncio
 import threading
 
-import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -65,7 +65,6 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
-from core.scoring.metrics import BARS_PER_YEAR, DEFAULT_BARS_PER_YEAR
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
 
@@ -76,16 +75,15 @@ router = APIRouter()
 
 
 class _BatchBacktestProcessor:
-    """批回测处理器（DecisionPipeline 仿真引擎）。
+    """批回测处理器（回测引擎口径）。
 
-    经 ReplayRunner 逐 bar 执行：开盘价成交/限价单/ATR 止损与
-    实时保证金追踪。
+    经 BacktestEngine.batch_run 执行（Q-1=a 裁决，rebuild-paper-trading
+    6.2 迁移）：同组 (N,M) 矩阵单次调用，与单策略回测同引擎同口径。
     """
 
     def __init__(self, payload: BatchBacktestRequest, db_path: Path, data_dir: Path):
         from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
         from core.scoring.scorer import compute_fitness, RequirementsConfig
-        from core.scoring.metrics import compute_metrics
 
         self.payload = payload
         self.db_path = db_path
@@ -94,7 +92,6 @@ class _BatchBacktestProcessor:
         self._load_mtf = load_mtf_data
         self._compute_fitness = compute_fitness
         self._RequirementsConfig = RequirementsConfig
-        self._compute_metrics = compute_metrics
 
         self.strategies_by_group: Dict[str, List[Dict]] = {}
         self.strategy_names: Dict[str, str] = {}
@@ -140,30 +137,24 @@ class _BatchBacktestProcessor:
             for dr in self.payload.data_ranges
         ]
 
-    def _build_equity_json_from_curve(
-        self, equity_curve: list, df: pd.DataFrame, bars_processed: int,
-    ) -> Optional[str]:
-        """净值曲线与 DataFrame 时间戳序列化为 JSON。"""
-        if not equity_curve or bars_processed <= 0:
+    def _build_equity_json_from_curve(self, equity_curve) -> Optional[str]:
+        """引擎权益曲线（Series）按索引直序列化为 JSON（无截尾对齐）。"""
+        if equity_curve is None or len(equity_curve) == 0:
             return None
-        timestamps = df.index[-bars_processed:]
         return json.dumps([
             {"timestamp": str(ts)[:19], "value": round(float(v), 4)}
-            for ts, v in zip(timestamps, equity_curve)
+            for ts, v in equity_curve.items()
         ])
 
-    def _build_signals_json_from_events(self, events_log: list) -> Optional[str]:
-        """position_closed 事件序列化为 JSON 信号（委托 backtest_service）。"""
-        return backtest_service.build_signals_from_events(events_log)
-
-    def _bars_per_year(self, timeframe: str) -> int:
-        # 公共单一权威源（metrics.py，与回测引擎同源）；补全 3d 档，
-        # 缺省 2190（=4h 档）不变
-        return BARS_PER_YEAR.get(timeframe, DEFAULT_BARS_PER_YEAR)
+    def _build_signals_json_from_trades(self, trades_df) -> Optional[str]:
+        """引擎逐笔记录（vectorbt 列）序列化为 JSON 信号（委托 backtest_service）。"""
+        if trades_df is None or len(trades_df) == 0:
+            return None
+        return json.dumps(backtest_service.build_signals_from_trades_df(trades_df))
 
     def process_step(self, step_index: int) -> Dict:
-        """处理一个 group×range 步（DecisionPipeline 执行）。"""
-        from core.trading.replay import ReplayRunner
+        """处理一个 group×range 步（BacktestEngine.batch_run 执行）。"""
+        from core.backtest.engine import BacktestEngine
 
         group_key, group_strategies, dr = self.steps[step_index]
         symbol = group_strategies[0]["symbol"]
@@ -206,58 +197,36 @@ class _BatchBacktestProcessor:
                     needed_tfs, data_start=dr.start, data_end=dr.end,
                 )
 
-            # 逐策略经 ReplayRunner 执行（DecisionPipeline 决策管线）
+            # 杠杆覆写（deepcopy 副本，不污染库内 DNA）→ 同组 dnas 清单
+            dnas = []
             for s_info in group_strategies:
+                dna = copy.deepcopy(s_info["dna"])
+                if self.payload.leverage != 1:
+                    dna.risk_genes.leverage = self.payload.leverage
+                dnas.append(dna)
+
+            # 同组 (N, M) 矩阵单次调用（进化评估链同款性能底座），
+            # 结果与 dnas 同序
+            engine = BacktestEngine(
+                init_cash=self.payload.init_cash,
+                fee=self.payload.fee,
+                slippage=self.payload.slippage,
+            )
+            results = engine.batch_run(
+                dnas, enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+            )
+
+            # 逐策略消费（与 dnas 同序；消费级异常单策略隔离）
+            for s_info, result in zip(group_strategies, results):
                 sid = s_info["strategy_id"]
-                dna = s_info["dna"]
                 try:
-                    import copy
-                    dna = copy.deepcopy(dna)
-                    if self.payload.leverage != 1:
-                        dna.risk_genes.leverage = self.payload.leverage
-
-                    runner = ReplayRunner(
-                        init_cash=self.payload.init_cash,
-                        fee=self.payload.fee,
-                        slippage=self.payload.slippage,
-                    )
-                    result = runner.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-
-                    # 由净值曲线计算指标
-                    eq_curve = result.equity_curve
-                    total_trades = result.total_trades
-                    if eq_curve and total_trades > 0:
-                        eq_series = pd.Series(eq_curve)
-                        closed_events = [
-                            e for e in result.events_log
-                            if e.get("type") == "position_closed"
-                        ]
-                        metrics = self._compute_metrics(
-                            eq_series,
-                            total_trades=total_trades,
-                            bars_per_year=self._bars_per_year(timeframe),
-                            trade_win_rate=(
-                                sum(1 for e in closed_events if (e.get("pnl") or 0) > 0)
-                                / len(closed_events)
-                            ) if closed_events else None,
-                        )
-                    else:
-                        metrics = {
-                            "annual_return": 0.0, "sharpe_ratio": 0.0,
-                            "max_drawdown": 0.0, "win_rate": None,
-                            "profit_factor": 0.0,
-                        }
-
-                    # 检查事件流中的清算标记
-                    liquidated = any(
-                        e.get("exit_reason") == "liquidation"
-                        for e in result.events_log
-                        if e.get("type") == "position_closed"
-                    )
+                    # 指标直取引擎产物（fallback_metrics=metrics_dict 单源），
+                    # win_rate 三态 None 透传（零交易合法缺失）
+                    metrics = backtest_service.fallback_metrics(result)
 
                     score_result = self._compute_fitness(
                         metrics, requirements=self._RequirementsConfig(),
-                        liquidated=liquidated,
+                        liquidated=result.liquidated,
                     )
                     fitness = score_result["fitness"]
                     qualified = score_result["qualified"]
@@ -265,10 +234,10 @@ class _BatchBacktestProcessor:
                     result_id = str(uuid.uuid4())
 
                     equity_curve_json = self._build_equity_json_from_curve(
-                        result.equity_curve, enhanced_df, result.bars_processed
+                        result.equity_curve
                     )
-                    signals_json = self._build_signals_json_from_events(
-                        result.events_log
+                    signals_json = self._build_signals_json_from_trades(
+                        result.trades_df
                     )
 
                     save_backtest_result(
@@ -281,7 +250,7 @@ class _BatchBacktestProcessor:
                         sharpe_ratio=metrics.get("sharpe_ratio", 0.0),
                         max_drawdown=metrics.get("max_drawdown", 0.0),
                         win_rate=metrics.get("win_rate"),
-                        total_trades=total_trades,
+                        total_trades=result.total_trades,
                         total_score=score_result.get("total_score", 0.0),
                         template_name="explorer",
                         dimension_scores=json.dumps(score_result.get("dimension_scores", {})),
@@ -302,11 +271,11 @@ class _BatchBacktestProcessor:
                         sharpe_ratio=metrics.get("sharpe_ratio", 0.0),
                         max_drawdown=metrics.get("max_drawdown", 0.0),
                         win_rate=metrics.get("win_rate"),
-                        total_trades=total_trades,
+                        total_trades=result.total_trades,
                         profit_factor=metrics.get("profit_factor", 0.0),
                         fitness=fitness, qualified=qualified,
-                        liquidated=liquidated,
-                        total_funding_cost=0.0,
+                        liquidated=result.liquidated,
+                        total_funding_cost=result.total_funding_cost,
                     )
                     self.all_results.append(item)
                     self.strategy_period_data[sid].append({
