@@ -1,7 +1,8 @@
 """恢复器（recovery——design §5.4）+终态资金费回补例程（tasks 3.5）。
 
-恢复触发：app 启动期扫 status=running（调度器 _recover_stale_running）
-+运行期心跳超时任务（调度器 _check_heartbeats 移交）。
+恢复触发：app 启动期扫 status=running（scheduler.startup_recover——
+lifespan 挂载段直调，恢复执行器起线程续跑）+运行期心跳超时任务
+（调度器 _check_heartbeats 移交）。
 
 恢复校验四判据（任一命中→error+error_detail=recovery_untrusted+保留
 数据——「不可信状态不静默续跑」的旧裁决内核）：
@@ -30,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
+from core.paper_trading.kernel.ledger import funding_amount
 from core.paper_trading.runtime.executor import (
     PaperTaskExecutor,
     intents_from_json,
@@ -107,54 +109,33 @@ def recover_task(
         return None
 
 
-def scan_and_recover(
-    db_path: Path,
-    **executor_kwargs: Any,
-) -> Dict[str, int]:
-    """启动扫描：全部 running 任务逐个恢复（app lifespan 挂载入口）。
-
-    Returns:
-        Dict[str, int]: {"recovered": 续跑数, "untrusted": 转 error 数}。
-    """
-    recovered = untrusted = 0
-    for row in paper_repo.list_tasks(
-            db_path, status="running", limit=10_000):
-        executor = recover_task(db_path, row, **executor_kwargs)
-        if executor is not None:
-            recovered += 1
-        else:
-            untrusted += 1
-    return {"recovered": recovered, "untrusted": untrusted}
-
-
 def backfill_terminal_funding(
     db_path: Path,
     *,
-    data_dir: Optional[Path] = None,
+    data_dir: Path,
     on_revision: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, int]:
     """终态后资金费回补例程（Q-2 封账设计——调度器守护循环定期调）。
 
     扫全部任务（含终态）的 pt_funding pending 行：funding 归档可达则
     回填 rate/amount（amount=挂起快照公式：带符号数量×结算价×真实
-    费率）但不动 balance（终态封账 append-only——结题时点 balance/
-    曲线/指标不重写），status→settled_disclosure_only；回填任务触发
-    报告修订版回调（恒 version=2 重算覆盖+终态后补记披露段——组 4
-    reporting 接入）。
+    费率，kernel.funding_amount 单点）但不动 balance（终态封账
+    append-only——结题时点 balance/曲线/指标不重写），status→
+    settled_disclosure_only；回填任务触发报告修订版回调（恒
+    version=2 重算覆盖+终态后补记披露段——组 4 reporting 接入）。
 
     Args:
         db_path: research.db 库路径。
-        data_dir: funding parquet 目录（缺省读既有归档文件——不主动
-            拉取；刷新归调度器 feed 侧节流职责）。
+        data_dir: funding parquet 目录（必传显式——CARD-05：历史
+            路径算术缺省指向不存在的 core/data/market 使回补静默
+            死链；装配真值由调用方（scheduler）经 registry.data_dir
+            传入，不做推算）。
         on_revision: 报告修订版回调（task_id）。
 
     Returns:
         Dict[str, int]: {"tasks_backfilled": 回填任务数,
         "rows_backfilled": 回填行数}。
     """
-    if data_dir is None:
-        data_dir = Path(__file__).resolve().parent.parent.parent / \
-            "data" / "market"
     symbol_indexes: Dict[str, Dict[pd.Timestamp, float]] = {}
     tasks_backfilled = rows_backfilled = 0
     for task in paper_repo.list_tasks(db_path, limit=100_000):
@@ -174,7 +155,10 @@ def backfill_terminal_funding(
             rate = rate_index.get(point)
             if rate is None:
                 continue
-            amount = row["position_quantity"] * row["settle_price"] * rate
+            # 金额公式单点引用 kernel.funding_amount（B1 改接——防
+            # 三处漂移：apply_funding/补旧账/终态回补同链路）
+            amount = funding_amount(
+                row["position_quantity"], row["settle_price"], rate)
             # rows 形制 [{settle_time, rate, amount}]——目标态恒
             # 'settled_disclosure_only' 由仓库接口定死（对质②形制
             # 收口：不传 status）
@@ -216,6 +200,13 @@ def _load_funding_index(
     from core.data.storage import load_parquet
 
     index: Dict[pd.Timestamp, float] = {}
+    from core.data.validation import validate_symbol
+
+    try:
+        validate_symbol(symbol)  # 直拼前命名白名单（CARD-01②）
+    except ValueError:
+        logger.warning("funding 索引装载跳过非法 symbol: %r", symbol)
+        return index  # 单任务坏 symbol 不拖死整例程（其余任务照常回补）
     path = data_dir / f"{symbol}_funding.parquet"
     if not path.exists():
         return index

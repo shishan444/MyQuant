@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core.paper_trading.kernel.types import ClosedBar, Fill, Intent
-
-# 即时类 kind（按触发价成交）——与 types.IMMEDIATE_KINDS 同集，独立
-# 引用避免 fills→types 循环外的隐式耦合（词汇两处一义：成交价分派）
-_TRIGGER_PRICE_KINDS = frozenset(
-    {"exit_sl", "exit_tp", "exit_liquidation"})
+from core.paper_trading.kernel.types import (
+    IMMEDIATE_KINDS,
+    ClosedBar,
+    Fill,
+    Intent,
+)
 
 # 入场族 kind（方向=目标方向）；出场族方向=持仓方向
 _ENTRY_SIDE_KINDS = frozenset({"open", "add"})
@@ -45,9 +45,10 @@ class MarketFill(FillModel):
 
     成交价规则：信号类（open/close/add/reduce）与时间类
     （exit_max_hold/exit_time）按执行 bar 开盘价；即时类
-    （exit_sl/exit_tp/exit_liquidation）按意图触发价。滑点=成交价向
-    不利方向偏移（买入 ×(1+slip)/卖出 ×(1−slip)——与持仓方向无关，
-    由资金动作决定；对齐回测引擎 vbt order slippage 形制）。
+    （IMMEDIATE_KINDS 单源：exit_sl/exit_tp/exit_liquidation）按意图
+    触发价。滑点=成交价向不利方向偏移（买入 ×(1+slip)/卖出
+    ×(1−slip)——与持仓方向无关，由资金动作决定；对齐回测引擎 vbt
+    order slippage 形制）。
     """
 
     def __init__(self, fee_rate: float, slippage_rate: float):
@@ -73,7 +74,7 @@ class MarketFill(FillModel):
     @staticmethod
     def _base_price(intent: Intent, exec_bar: ClosedBar) -> float:
         """基准价分派：即时类按触发价、其余按执行 bar 开盘价。"""
-        if intent.kind in _TRIGGER_PRICE_KINDS:
+        if intent.kind in IMMEDIATE_KINDS:
             return float(intent.trigger_price)
         return float(exec_bar.open)
 

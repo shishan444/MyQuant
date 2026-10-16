@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
 from uuid import uuid4
 
 from sqlalchemy import delete, desc, func, insert, select, update
@@ -40,6 +40,48 @@ _BAR_STATE_COLUMNS = frozenset({
     "pending_intent_json", "total_trades", "win_count", "loss_count",
     "total_pnl", "heartbeat_at", "updated_at",
 })
+
+# pt_task 状态机合法前态单源（design §5.1 五态+§7.1 端点 4 未拾取撤销
+# pending→stopped+tasks 3.2 装载校验拒绝 pending→error 不进 running）：
+# by-target 索引——update_task 的 status 写默认守门直接消费。scheduler
+# 侧迁移对集（by-source 索引）经 PT_STATUS_TRANSITIONS 派生引用，不另
+# 立第二逻辑源（命名单源纪律；import 方向=scheduler→persistence 正向，
+# persistence 不引 core.paper_trading——infra 零域依赖）
+PT_STATUS_PREDECESSORS: Dict[str, frozenset] = {
+    "pending": frozenset(),  # 无迁移入 pending（clone=新建行非迁移）
+    "running": frozenset({"pending"}),
+    "completed": frozenset({"running"}),
+    "stopped": frozenset({"pending", "running"}),
+    "error": frozenset({"pending", "running"}),
+}
+
+# (from, to) 迁移对派生视图（scheduler 状态机测试消费——数据单源在
+# 上映射，两视图不可能漂移）
+PT_STATUS_TRANSITIONS: frozenset = frozenset(
+    (src, tgt)
+    for tgt, srcs in PT_STATUS_PREDECESSORS.items()
+    for src in srcs
+)
+
+
+def _as_status_tuple(expected_status: Union[str, Iterable[str]]) -> tuple:
+    """expected_status 归一（str→单元组；可迭代→元组）——显式前态集
+    的两种传形统一为 IN 参数（迁移门与纯前置两分支共用微单点）。"""
+    return (
+        (expected_status,) if isinstance(expected_status, str)
+        else tuple(expected_status)
+    )
+
+
+def _resolve_status_gate(
+    target: str, expected_status: Optional[Union[str, Iterable[str]]],
+) -> tuple:
+    """status 写的前态门集合：显式 expected_status 优先（调用方自定义
+    收紧）；缺省=合法前态 ∪ 目标态自身（同态幂等覆写放行——恢复续跑
+    场景依赖）。未知目标态按仅同态放行（保守：五态外取值本就不该出现）。"""
+    if expected_status is not None:
+        return _as_status_tuple(expected_status)
+    return tuple(PT_STATUS_PREDECESSORS.get(target, frozenset()) | {target})
 
 
 def new_task_id() -> str:
@@ -104,23 +146,49 @@ def get_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def update_task(db_path: Path, task_id: str, **kwargs) -> None:
+def update_task(
+    db_path: Path, task_id: str, *,
+    expected_status: Optional[Union[str, Iterable[str]]] = None,
+    **kwargs,
+) -> int:
     """更新任务状态机字段（白名单过滤+updated_at 刷新，空集 no-op）。
 
     游标/账户/统计组不在白名单——仅经 append_bar 原子更新（模块
     docstring 写者隔离锚点）。
+
+    status 写的前态守门（缺陷⑤ CAS 修订版：默认内建，spec R1「应答
+    stopped 即终局承诺」要求写点原子——无条件直调也过不了门）：
+    - 写 status 且不提供 expected_status：默认守门 WHERE status IN
+      (合法前态 ∪ {目标态自身})——同态幂等覆写放行（恢复续跑场景
+      依赖），非法迁移零行命中拒写（返回 0 由调用方分流，不静默）；
+      前态单源=PT_STATUS_PREDECESSORS；先例 evolution.update_task
+      expected_statuses 条件更新同构语义；
+    - 提供 expected_status（str 或集合）：以显式前态集替换默认门
+      （自定义收紧，如 stop 的 pending 分支拒 running 态）；
+    - 不写 status 的更新不受守门影响（无 expected_status 时无条件；
+      有则按显式集前置）；
+    - expected_status 是 WHERE 条件不是新写面，与六字段白名单写者
+      隔离并存；
+    - 返回受影响行数（旧调用面不接收返回值，零破坏）。
     """
     if not kwargs:
-        return
+        return 0
     filtered = {k: v for k, v in kwargs.items() if k in _ALLOWED_UPDATE_COLUMNS}
     if not filtered:
-        return
+        return 0
     filtered["updated_at"] = _now()
+    stmt = update(PtTask).where(PtTask.task_id == task_id)
+    if "status" in filtered:
+        stmt = stmt.where(
+            PtTask.status.in_(_resolve_status_gate(filtered["status"],
+                                                  expected_status))
+        )
+    elif expected_status is not None:
+        stmt = stmt.where(PtTask.status.in_(_as_status_tuple(expected_status)))
     engine = _engine_for(db_path)
     with engine.begin() as conn:
-        conn.execute(
-            update(PtTask).where(PtTask.task_id == task_id).values(**filtered)
-        )
+        result = conn.execute(stmt.values(**filtered))
+        return result.rowcount
 
 
 def list_tasks(
@@ -173,7 +241,10 @@ def append_bar(
       含 status='pending' 前置——已 settled 行不命中（影响行数 0 静默
       跳过），这是崩溃重放后二次扣款路径的幂等防线；
     - task_state 为该 bar 终态的绝对快照（白名单 _BAR_STATE_COLUMNS），
-      重放同值收敛；
+      其 UPDATE 附 status='running' 前置（CARD-06）：终态后零行命中
+      静默接受——明细照落（append-only 披露面，spec「保留已产出
+      数据」）、运行态组冻结（终态封账语义延伸；僵尸执行器迟到写的
+      旧 bar 明细经唯一键幂等吸收零污染，运行态权威不被终态后覆写）；
     - 任一写失败整体回滚（原子性）。
     """
     engine = _engine_for(db_path)
@@ -222,9 +293,12 @@ def append_bar(
             }
             if filtered:
                 filtered["updated_at"] = _now()
+                # CARD-06：running 前置——终态后零行命中静默接受
+                # （明细照落、运行态组冻结，见函数 docstring）
                 conn.execute(
                     update(PtTask)
-                    .where(PtTask.task_id == task_id)
+                    .where(PtTask.task_id == task_id,
+                           PtTask.status == "running")
                     .values(**filtered)
                 )
 
@@ -326,7 +400,13 @@ def clone_task(
     """克隆重跑：同 dna_snapshot+同任务参数新建 pending 行，进度/账户/
     统计组归零；research_status_snapshot 按 clone 创建时点重新快照
     （读当前 strategy 行重算——strategy 已删则 ValueError 上抛调用方
-    转业务错误）。原任务不存在返回 None。"""
+    转业务错误）。原任务不存在返回 None。
+
+    字段装配委托 create_task 单点（B4 收敛）：clone 只传复制面+重算
+    快照，归零硬编码（pending/bars_processed=0/账户 NULL/统计 0/时间
+    戳 now）复用 create_task——pt_task 加列时装配面单处维护，clone
+    侧新增必填参数显式暴露而非静默缺省。
+    """
     from core.persistence.repository.strategy import get_strategy
 
     source = get_task(db_path, task_id)
@@ -337,22 +417,18 @@ def clone_task(
         raise ValueError(
             f"strategy {source['strategy_id']!r} 不存在，无法重算快照")
 
-    # 参数名 new_task_id 遮蔽同名模块函数，体内直生（同 uuid4 hex 12 式）
-    tid = new_task_id if new_task_id is not None else uuid4().hex[:12]
-    now = _now()
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(insert(PtTask).values(
-            task_id=tid, status="pending", strategy_id=source["strategy_id"],
-            dna_snapshot_json=source["dna_snapshot_json"],
-            symbol=source["symbol"], timeframe=source["timeframe"],
-            initial_cash=source["initial_cash"], fee=source["fee"],
-            slippage=source["slippage"], leverage=source["leverage"],
-            window_bars=source["window_bars"],
-            stop_loss_pct=source["stop_loss_pct"], bars_processed=0,
-            research_status_snapshot=resolve_research_status(strategy),
-            created_at=now, updated_at=now,
-        ))
+    tid = create_task(
+        db_path,
+        task_id=new_task_id,
+        strategy_id=source["strategy_id"],
+        dna_snapshot_json=source["dna_snapshot_json"],
+        symbol=source["symbol"], timeframe=source["timeframe"],
+        research_status_snapshot=resolve_research_status(strategy),
+        initial_cash=source["initial_cash"], fee=source["fee"],
+        slippage=source["slippage"], leverage=source["leverage"],
+        window_bars=source["window_bars"],
+        stop_loss_pct=source["stop_loss_pct"],
+    )
     return get_task(db_path, tid)
 
 

@@ -57,6 +57,27 @@ def liquidation_price(side: str, entry_price: float, quantity: float,
         quantity * (1.0 + mmr))
 
 
+def funding_amount(signed_qty: float, settle_price: float,
+                   rate: float) -> float:
+    """资金费金额单点=带符号数量×结算价×费率（正=付出/负=收到）。
+
+    signed_qty 带方向符号（多头正/空头负——方向编码在符号，快照
+    重算场景无 side 列可恢复）；符号×rate 天然实现「rate>0 多头付/
+    空头收、rate<0 反向」。消费方=apply_funding（正常结算）与
+    runtime 补旧账/终态回补（用快照数量重算、不读当前仓位——
+    公式单源防三处漂移）。
+
+    Args:
+        signed_qty: 带符号持仓数量（多头正/空头负）。
+        settle_price: 结算价（承载 bar 收盘价）。
+        rate: 该结算点真实费率。
+
+    Returns:
+        float: 结算金额（正=付出/负=收到）。
+    """
+    return signed_qty * settle_price * rate
+
+
 @dataclass
 class Position:
     """持仓可变状态（Ledger 内部——对外经 AccountSnapshot 只读）。"""
@@ -341,8 +362,9 @@ class Ledger:
     def apply_funding(self, rate: float, settle_price: float) -> float:
         """资金费结算（与杠杆无关——对质六裁决：leverage=1 同扣）。
 
-        金额=quantity×结算价×rate×方向符号（rate>0 多头付/空头收；
-        rate<0 反向）；balance 直减（负金额=入账）。
+        金额经 funding_amount 单点（signed_qty=当前仓数量×方向符号；
+        rate>0 多头付/空头收、rate<0 反向）；balance 直减（负金额=
+        入账）。
 
         Args:
             rate: 该结算点真实费率（funding parquet）。
@@ -355,7 +377,7 @@ class Ledger:
         if pos is None:
             return 0.0
         sign = 1.0 if pos.side == "long" else -1.0
-        amount = pos.quantity * settle_price * rate * sign
+        amount = funding_amount(sign * pos.quantity, settle_price, rate)
         self.balance -= amount
         self.total_funding += amount
         return amount
@@ -365,7 +387,9 @@ class Ledger:
     def _initial_stop(self, side: str, entry_price: float,
                       entry_atr: float | None,
                       is_tp: bool) -> float | None:
-        """开仓时点 SL/TP 披露值（pct/atr 可算；trail 同 pct 比例域）。
+        """开仓时点 SL/TP 披露值（与判定权威同式：atr 模式 SL/TP 均
+        ATR 倍数域、pct/trail 均比例域锚入场价——review A2 修正：此前
+        is_tp 恒走 pct 域致 atr 模式 TP 披露与实际判定线不一致）。
 
         判定权威在解释器逐 bar 现算（trail 随峰值移动、加仓重锚后
         变化）——本值仅持久化披露面。ATR 无效时 None（该 bar 无防线
@@ -375,13 +399,13 @@ class Ledger:
         value = params.take_profit if is_tp else params.stop_loss
         if value is None or value <= 0.0:
             return None
-        if is_tp or params.sl_mode != "atr":
-            offset = entry_price * value
-        else:
+        if params.sl_mode == "atr":
             if entry_atr is None or entry_atr != entry_atr \
                     or entry_atr <= 0.0:
                 return None
             offset = value * entry_atr
+        else:
+            offset = entry_price * value
         if side == "long":
             return entry_price + offset if is_tp else entry_price - offset
         return entry_price - offset if is_tp else entry_price + offset

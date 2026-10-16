@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_data_dir, get_db_path
+from core.data.validation import validate_symbol
 from core.paper_trading.reporting import (
     FINAL_STATUSES,
     TaskNotConcludedError,
@@ -58,6 +59,18 @@ class PaperTaskCreate(BaseModel):
     symbol: Optional[str] = None
     window_bars: Optional[int] = Field(180, ge=1)
     stop_loss_pct: Optional[float] = Field(None, gt=0, le=1)
+
+    @field_validator("symbol")
+    @classmethod
+    def _validate_symbol_whitelist(
+            cls, v: Optional[str]) -> Optional[str]:
+        """symbol 入口白名单（CARD-01①）：用户可控 symbol 直落任务行、
+        下游 parquet 路径直拼——接 core/data/validation.validate_symbol
+        单源（与写路径 updater 同点），非法 422 校验数组拒绝；None=
+        缺省取 DNA 不经此面。"""
+        if v is None:
+            return v
+        return validate_symbol(v)
 
 
 class PaperTaskResponse(BaseModel):

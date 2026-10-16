@@ -35,19 +35,16 @@ from core.paper_trading.constants import (
 from core.paper_trading.runtime.executor import PaperTaskExecutor
 from core.paper_trading.runtime.feed import FeedRegistry
 from core.persistence.repository import paper as paper_repo
+from core.persistence.repository.paper import PT_STATUS_TRANSITIONS
 from core.persistence.timestamps import utc_now_iso
 
 logger = logging.getLogger("paper_runtime")
 
-# 五态状态机合法迁移集（design §5.1；其余一律拒绝——写库前守门）
-LEGAL_TRANSITIONS = frozenset({
-    ("pending", "running"),    # 拾取（执行器 prepare 成功写 started_at）
-    ("pending", "stopped"),    # 未拾取撤销（stop_reason=user_stop）
-    ("pending", "error"),      # 装载校验拒绝（不进 running）
-    ("running", "completed"),  # 窗口到点自动结题
-    ("running", "stopped"),    # 用户 stop 协作退出/停止条件触发
-    ("running", "error"),      # 执行异常/恢复不可信
-})
+# 五态状态机合法迁移集（design §5.1；其余一律拒绝——写库前守门）。
+# 数据源=仓库层 PT_STATUS_TRANSITIONS 派生视图（CAS 增补改引——权威
+# 数据 PT_STATUS_PREDECESSORS 在仓库层定义，persistence 零域依赖方向
+# 正、约束离表近；本模块仅消费派生 (from,to) 集，杜绝两处状态集漂移）
+LEGAL_TRANSITIONS = PT_STATUS_TRANSITIONS
 
 # 心跳超时系数（>3×bar 周期视为失联——design §5.1）
 HEARTBEAT_TIMEOUT_MULTIPLIER = 3
@@ -172,39 +169,48 @@ class PaperScheduler:
         数据；可信重建执行器并由本调度器起工作线程续跑（不待心跳超时）。
         """
         counts = {"recovered": 0, "untrusted": 0}
-        handed: set[str] = set()
         for row in paper_repo.list_tasks(
                 self.db_path, status="running", limit=10_000):
             with self._lock:
                 known = row["task_id"] in self._executors
             if known:
                 continue
-            recover = self._recover_fn or self._default_recover
-            try:
-                executor = recover(
-                    self.db_path, row,
-                    registry=self.registry, push=self.push,
-                    on_concluded=self._executor_concluded)
-            except Exception:
-                logger.exception(
-                    "纸盘任务 %s 启动恢复失败", row["task_id"])
-                executor = None
+            executor = self._call_recover(row)
             if executor is None:
                 counts["untrusted"] += 1  # 恢复器已转 error（保留数据）
                 continue
-            task_id = row["task_id"]
-            thread = threading.Thread(
-                target=executor.run, name=f"paper-recovered-{task_id}",
-                daemon=True)
-            with self._lock:
-                self._executors[task_id] = executor
-                self._threads[task_id] = thread
-            thread.start()
+            self._start_recovered(row, executor)
             counts["recovered"] += 1
         if counts["recovered"] or counts["untrusted"]:
             logger.info("纸盘启动恢复：续跑 %d / 不可信 %d",
                         counts["recovered"], counts["untrusted"])
         return counts
+
+    def _call_recover(self, row: Dict[str, Any]):
+        """恢复函数调用单点（注入面 recover_fn——异常记日志归 None）。"""
+        recover = self._recover_fn or self._default_recover
+        try:
+            return recover(
+                self.db_path, row,
+                registry=self.registry, push=self.push,
+                on_concluded=self._executor_concluded)
+        except Exception:
+            logger.exception("纸盘任务 %s 恢复调用失败", row["task_id"])
+            return None
+
+    def _start_recovered(
+        self, row: Dict[str, Any], executor: PaperTaskExecutor,
+    ) -> None:
+        """恢复执行器续跑起线程（startup_recover 与 _hand_over 共用——
+        锁内登记+start；review B3 同构收敛单点）。"""
+        task_id = row["task_id"]
+        thread = threading.Thread(
+            target=executor.run, name=f"paper-recovered-{task_id}",
+            daemon=True)
+        with self._lock:
+            self._executors[task_id] = executor
+            self._threads[task_id] = thread
+        thread.start()
 
     # ── 单轮扫描（测试通道） ────────────────────────────────
 
@@ -213,8 +219,8 @@ class PaperScheduler:
         回补（handed 集合防同轮重复移交）。
 
         启动期恢复扫描（无条件扫 running）不经本循环——app lifespan
-        挂载段一次性调 recovery.scan_and_recover；守护循环只按心跳
-        超时移交（design §5.4 两触发面）。
+        挂载段直调 startup_recover（恢复执行器起线程续跑）；守护循环
+        只按心跳超时移交（design §5.4 两触发面）。
         """
         handed: set[str] = set()
         self._reap_finished()
@@ -272,25 +278,10 @@ class PaperScheduler:
         if task_id in handed:
             return
         handed.add(task_id)
-        recover = self._recover_fn or self._default_recover
-        try:
-            executor = recover(
-                self.db_path, row,
-                registry=self.registry, push=self.push,
-                on_concluded=self._executor_concluded)
-        except Exception:
-            logger.exception(
-                "纸盘任务 %s 恢复移交失败（%s）", task_id, reason)
-            return
+        executor = self._call_recover(row)
         if executor is None:
             return  # 不可信——恢复器已转 error（保留数据）
-        thread = threading.Thread(
-            target=executor.run, name=f"paper-recovered-{task_id}",
-            daemon=True)
-        with self._lock:
-            self._executors[task_id] = executor
-            self._threads[task_id] = thread
-        thread.start()
+        self._start_recovered(row, executor)
         logger.info("纸盘任务 %s 经恢复器续跑（%s）", task_id, reason)
 
     @staticmethod
@@ -369,47 +360,73 @@ class PaperScheduler:
         except Exception:
             logger.exception("终态资金费回补例程异常（续轮）")
 
-    @staticmethod
-    def _default_backfill(db_path: Path) -> None:
+    def _default_backfill(self, db_path: Path) -> None:
+        """缺省回补函数（data_dir 取 registry.data_dir 事实源——
+        CARD-05：路径算术缺省曾指向不存在的 core/data/market，回补
+        静默死链；registry 持有装配期真值消除推算）。"""
         from core.paper_trading.runtime.recovery import (
             backfill_terminal_funding,
         )
 
-        backfill_terminal_funding(db_path)
+        backfill_terminal_funding(
+            db_path, data_dir=self.registry.data_dir)
 
     # ── 状态机与请求面（REST 层的调度器入口） ────────────────
 
     def stop_task(self, task_id: str) -> str:
-        """stop 请求三态分派（调度器写者面；REST 转译 HTTP 语义）。
+        """stop 请求分派（调度器写者面；REST 转译 HTTP 语义）。
+
+        CAS 原子链（缺陷⑤吞没防线）：写 stopped 恒带前态门——命中即
+        落笔（answer="stopped"=终局承诺，spec R1：随后任何执行器启动
+        写被 run() 侧 CAS 拒绝）；零命中=前态已变（并发拾取置
+        running）→重读按现态分流。
 
         Returns:
-            str: "stopped"（pending 未拾取撤销，已直迁）｜"stopping"
-            （running 协作停已请求）｜"terminal"（终态拒绝）｜
-            "not_found"。
+            str: "stopped"（CAS 命中，终局已落笔）｜"stopping"（本进程
+            执行器协作停已请求——bar 边界收敛 stopped）｜"terminal"
+            （终态拒绝）｜"not_found"。
         """
         row = paper_repo.get_task(self.db_path, task_id)
         if row is None:
             return "not_found"
         status = row["status"]
         if status == "pending":
-            if not can_transition("pending", "stopped"):
-                return "terminal"
-            paper_repo.update_task(
-                self.db_path, task_id, status="stopped",
-                stopped_at=utc_now_iso(), stop_reason="user_stop")
-            return "stopped"
-        if status == "running":
             with self._lock:
                 executor = self._executors.get(task_id)
             if executor is not None:
+                # 拾取已登记（线程将置/已置 running）——协作停
                 executor.controller.request_stop()
                 return "stopping"
-            # 无本进程执行器（移交中/他进程）——直迁（终态幂等面）
-            paper_repo.update_task(
+            hit = paper_repo.update_task(
                 self.db_path, task_id, status="stopped",
-                stopped_at=utc_now_iso(), stop_reason="user_stop")
-            return "stopped"
+                stopped_at=utc_now_iso(), stop_reason="user_stop",
+                expected_status="pending")
+            if hit > 0:
+                return "stopped"
+            # 零命中=并发拾取已置 running——按现态分流（孤儿 running
+            # 的 CAS 由 _stop_running 收口）
+            current = paper_repo.get_task(self.db_path, task_id)
+            if current is not None and current["status"] == "running":
+                return self._stop_running(task_id)
+            return "terminal"
+        if status == "running":
+            return self._stop_running(task_id)
         return "terminal"
+
+    def _stop_running(self, task_id: str) -> str:
+        """running 态停：本进程执行器协作停；无执行器（移交中/启动
+        遗留孤儿）CAS 原子直迁（执行器若随后启动，run() 侧 CAS 零命中
+        放弃——终局不被覆写）。"""
+        with self._lock:
+            executor = self._executors.get(task_id)
+        if executor is not None:
+            executor.controller.request_stop()
+            return "stopping"
+        hit = paper_repo.update_task(
+            self.db_path, task_id, status="stopped",
+            stopped_at=utc_now_iso(), stop_reason="user_stop",
+            expected_status="running")
+        return "stopped" if hit > 0 else "terminal"
 
     def status(self) -> Dict[str, Any]:
         """runner-status 数据面（活跃清单/上限/运行数/pending 深度）。"""

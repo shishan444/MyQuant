@@ -197,7 +197,8 @@ def _assemble_report(
 
     performance, paper_side = _performance_layer(
         task, equity_rows, exit_fills)
-    evidence = _evidence_layer(task, equity_rows, exit_fills, funding_rows)
+    evidence = _evidence_layer(
+        task, equity_rows, fill_rows, exit_fills, funding_rows)
     deviation = _deviation_layer(
         db_path, data_dir, task, equity_rows, paper_side, evidence)
     return {
@@ -352,6 +353,7 @@ def _attribution_notes(evidence: Dict[str, Any]) -> List[str]:
 def _evidence_layer(
     task: Dict[str, Any],
     equity_rows: List[Dict[str, Any]],
+    fill_rows: List[Dict[str, Any]],
     exit_fills: List[Dict[str, Any]],
     funding_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -362,9 +364,7 @@ def _evidence_layer(
     """
     bars_run = len(equity_rows)
     closed_trades = len(exit_fills)
-    entry_seq = task["position_entry_bar_seq"]
-    position_bars = (
-        task["bars_processed"] - entry_seq if entry_seq is not None else 0)
+    position_bars = _position_bars(task, equity_rows, fill_rows)
     settled = sum(
         1 for r in funding_rows if r["status"] in _SETTLED_STATUSES)
     pending = sum(1 for r in funding_rows if r["status"] == "pending")
@@ -387,3 +387,28 @@ def _evidence_layer(
         "funding_pending_points": pending if funding_rows else None,
         "funding_post_terminal_backfill": backfill,
     }
+
+
+def _position_bars(
+    task: Dict[str, Any],
+    equity_rows: List[Dict[str, Any]],
+    fill_rows: List[Dict[str, Any]],
+) -> int:
+    """当前持仓已持有根数（kernel.bars_held 同域等价口径，修复卡 A1）。
+
+    kernel 口径=当前 bar seq−入场 bar seq+1（ClosedBar.seq 域=feed 全量
+    帧行号，account.py bars_held）；报告器只读库拿不到当前 bar 的全量
+    帧 seq，等价同基=最近一次 open 成交 bar 起的权益行数（每 bar 落库
+    契约下=seq 差+1 含入场当根；减仓/加仓不引入 open 故不重置、反手
+    open 重建锚——与 kernel「持仓期连续」语义一致）。禁用 bars_processed
+    参与算术：它是任务感知计数（start_after 跳过的历史段不+1），与
+    全量帧行号混域相减在生产场景恒得大负数。无 open 记录而有持仓=
+    状态损坏，按 0 披露不炸报告（数据视图哲学）。
+    """
+    if task["position_side"] is None or not equity_rows:
+        return 0
+    open_bars = [f["bar_time"] for f in fill_rows if f["kind"] == "open"]
+    if not open_bars:
+        return 0
+    last_open = max(open_bars)
+    return sum(1 for r in equity_rows if r["bar_time"] >= last_open)

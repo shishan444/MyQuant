@@ -45,7 +45,7 @@ from core.paper_trading.constants import POLL_INTERVAL_SECONDS
 from core.paper_trading.kernel.account import AccountSnapshot
 from core.paper_trading.kernel.fills import MarketFill
 from core.paper_trading.kernel.intents import SignalInterpreter
-from core.paper_trading.kernel.ledger import Ledger, Position
+from core.paper_trading.kernel.ledger import Ledger, Position, funding_amount
 from core.paper_trading.kernel.types import (
     BarSignals,
     ClosedBar,
@@ -265,6 +265,24 @@ class PaperTaskExecutor:
 
     # ── 装载三就绪校验（design §5.3：不可就绪→error 不进 running） ──
 
+    def _prepare_guarded(self) -> bool:
+        """prepare 防逃逸包装（CARD-02）：裸异常（坏 parquet/refresh
+        抛错/指标现算崩溃等）若逃出 run() 会击穿工作线程——任务永留
+        pending 被守护循环每 2s 无限重拾。此处兜底转 prepare_failed
+        error（pending→error 合法迁移，_reject 通道）。
+
+        TaskStopRequested 透传（prepare 期间 stop 协作语义保留——
+        run() 的 except 分支按 user_stop 收口）。
+        """
+        try:
+            return self.prepare()
+        except TaskStopRequested:
+            raise
+        except Exception as exc:
+            logger.exception("纸盘任务 %s 装载异常", self.task_id)
+            return self._reject(
+                f"prepare_failed: {type(exc).__name__}: {exc}")
+
     def prepare(self) -> bool:
         """装载校验（执行周期 parquet 存在/指标可算/atr 列可产出+辅周期
         完整性+DNA 值域）。
@@ -277,8 +295,14 @@ class PaperTaskExecutor:
         if not result:
             return self._reject("invalid_dna: DNA 值域校验未过")
 
-        path = self._data_dir / (
-            f"{self.task_row['symbol']}_{self._timeframe}.parquet")
+        symbol = self.task_row["symbol"]
+        try:
+            from core.data.validation import validate_symbol
+
+            validate_symbol(symbol)  # 直拼前命名白名单（CARD-01②）
+        except ValueError as exc:
+            return self._reject(f"invalid_symbol: {exc}")
+        path = self._data_dir / f"{symbol}_{self._timeframe}.parquet"
         if not path.exists():
             return self._reject("no_data: 执行周期 parquet 不存在")
         from core.data.storage import load_parquet
@@ -357,6 +381,9 @@ class PaperTaskExecutor:
                 if tf == self._timeframe:
                     continue
                 # 快速拒绝面：parquet 缺失直接拒（不触发全量回拉）
+                from core.data.validation import validate_symbol
+
+                validate_symbol(symbol)  # 直拼前命名白名单（CARD-01②）
                 aux_path = self._data_dir / f"{symbol}_{tf}.parquet"
                 if not aux_path.exists():
                     return None
@@ -393,11 +420,21 @@ class PaperTaskExecutor:
         running（写 started_at）后进主循环，直到终态（窗口到点/
         stop 协作退出/异常）。
         """
-        if not self.prepare():
+        if not self._prepare_guarded():
             return
-        paper_repo.update_task(
+        # CAS 前态门（缺陷⑤吞没防线）：pending→running 合法迁移原子写；
+        # 集合含自身覆盖恢复续跑场景（恢复行本就 running，同态幂等
+        # 覆写 started_at）。零命中=并发 stop 已直迁终态（拾取后启动
+        # 前窗口）——放弃启动（终局承诺不被覆写，spec R1）。
+        hit = paper_repo.update_task(
             self.db_path, self.task_id, status="running",
-            started_at=utc_now_iso())
+            started_at=utc_now_iso(),
+            expected_status={"pending", "running"})
+        if hit == 0:
+            logger.info(
+                "纸盘任务 %s 启动前已终态（并发 stop/他写）——放弃启动",
+                self.task_id)
+            return
         self.subscribe_feeds()
         self._push(self.task_id, {
             "type": "task_started", "task_id": self.task_id})
@@ -671,7 +708,7 @@ class PaperTaskExecutor:
             if rate is None:
                 still_pending.append(row)
                 continue
-            amount = self._funding_amount(
+            amount = funding_amount(
                 row["position_quantity"], row["settle_price"], rate)
             self.ledger.balance -= amount
             self.ledger.total_funding += amount
@@ -701,7 +738,7 @@ class PaperTaskExecutor:
                         "position_quantity": signed_qty,
                         "settle_price": float(bar.close)})
                     continue
-                amount = self._funding_amount(
+                amount = funding_amount(
                     signed_qty, float(bar.close), rate)
                 self.ledger.balance -= amount
                 self.ledger.total_funding += amount
@@ -714,17 +751,6 @@ class PaperTaskExecutor:
             self._pending_funding.extend(
                 r for r in new_rows if r["status"] == "pending")
         return new_rows, backfills
-
-    @staticmethod
-    def _funding_amount(signed_qty: float, settle_price: float,
-                        rate: float) -> float:
-        """资金费金额=带符号数量×结算价×费率（正=付出/负=收到）。
-
-        position_quantity 快照带符号（多头正/空头负——方向编码在符号，
-        补记侧无 side 列可恢复）；符号×rate 天然实现「rate>0 多头付/
-        空头收、rate<0 反向」。
-        """
-        return signed_qty * settle_price * rate
 
     # ── 落库与推送 ───────────────────────────────────────────
 
@@ -794,7 +820,7 @@ class PaperTaskExecutor:
     # ── 终态 ────────────────────────────────────────────────
 
     def _evaluate_conclusion(self, snap: AccountSnapshot) -> None:
-        """八步序第 8 步后半：停止条件判定（窗口到点判定在 _loop 出口）。
+        """八步序第 8 步后半：停止条件判定（窗口到点在此判定、_loop 出口消费）。
 
         停止条件=运行控制不是行为干预：只结束观察，本 bar 的交易已按
         八步序完整落库。
