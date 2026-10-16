@@ -102,6 +102,16 @@ class TestInspectCasesAnchors:
         # 确认前不可见：命中案例数 < 全窗 bar 数+context 上界（前
         # left+right 根无已确认枢轴——非全命中）
         assert 0 <= out["n_matched"] < 400
+        # 加严（F3）：确认延迟结构锚——e2e 链 warmup 前缀恒充足使
+        # 「请求首段零命中」不可观测，下沉列级锚定：Pivot(left=5,
+        # right=5) 输出列前 right 根必 NaN（任何候选需后 right 根
+        # 确认——确认前候选值不可引用，杜绝未来函数）
+        from core.features.indicators import _compute_indicator
+        pdf = make_ohlcv(n=80, freq="1h", start="2023-06-01")
+        ph = _compute_indicator(
+            pdf, "Pivot", {"left": 5, "right": 5})["pivot_high_5_5"]
+        assert ph.iloc[:5].isna().all(), "前 right=5 根必 NaN——确认延迟"
+        assert ph.notna().any(), "窗内应有已确认枢轴（锚检出力前提）"
 
     def test_u9b_session_no_lookahead(self, tmp_path):
         from core.analysis.case_inspection import inspect_cases

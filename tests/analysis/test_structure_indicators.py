@@ -211,18 +211,52 @@ class TestSupertrend:
     """U5：Supertrend 标准公式。"""
 
     def test_u5a_manual_small_sample(self):
-        """U5a 文献标准公式人工核算小样本：常数值行情（high=low=close
-        =100）下 TR=0 → ATR=0 → 带宽=HL2 → close 不穿越带 → dir 初始
-        后延续；supertrend 值=100。"""
+        """U5a 文献标准公式人工核算小样本（F1 重写——可确立方向构造
+        +带值锚）。
+
+        构造与手算：前 12 根 O=H=L=C=100（TR=0 → Wilder ATR(min_periods=
+        10)=0 → 上下轨=100）；第 13 根（i=12）H=110/L=100/C=110：hl2=105，
+        TR=10，ATR[12]=0.9×0+0.1×10=1.0，上轨=105+3=108、下轨=105−3=102；
+        close[11]=100 ≮ final_upper[11]=100 → final_upper[12]=108，close
+        110>108 上穿确立 → dir[12]=+1，supertrend[12]=final_lower[12]=
+        下轨 102（close[11]=100 不> final_lower[11]=100 → 不延续取新）。
+
+        已知边界披露：dir 三态——0 为未定态（首翻转前），未定态下
+        supertrend 列出 NaN（无可引用带值）；常数行情（零穿越事件）
+        全程未定：st 全 NaN、dir 恒 0（原版断言 dropna().all() 空集
+        恒真零检出力，故重写）。
+        """
+        rows = [(i % 24, 0, 100, 100, 100, 1) for i in range(12)]
+        rows.append((12, 0, 110, 100, 110, 1))
+        rows += [(13 + i, 0, 110, 110, 110, 1) for i in range(17)]
+        df = _df_from_rows(rows)
+        out = _compute_indicator(df, "Supertrend",
+                                 {"atr_period": 10, "multiplier": 3.0})
+        st, d = out["supertrend_10_3.0"], out["supertrend_dir_10_3.0"]
+        # 带值锚：确立 bar 的 supertrend=下轨 102、dir=+1（手算链见
+        # docstring）
+        assert st.iloc[12] == 102.0, f"确立 bar 带值锚 102，got {st.iloc[12]}"
+        assert d.iloc[12] == 1.0
+        # 未定态：确立前 dir=0 且 st=NaN（未定不出值——非收敛缺陷）
+        assert (d.iloc[:12] == 0).all()
+        assert st.iloc[:12].isna().all()
+        # 确立后延续多头：dir 恒 +1、st 取下轨（后续 ATR 收敛带上移，
+        # 单调不减）
+        assert (d.iloc[13:] == 1.0).all()
+        later = st.iloc[13:].dropna()
+        assert (later.diff().fillna(0) >= 0).all()
+
+    def test_u5a2_flat_market_undetermined_state(self):
+        """U5a2 常数行情未定态锚（F1 补——零翻转事件的契约行为）：
+        dir 恒 0（未定）、st 全 NaN（未定态不出值——与 u5b 的翻转
+        行情互补，锁「未定≠收敛缺陷」语义）。"""
         rows = [(i % 24, 0, 100, 100, 100, 1) for i in range(30)]
         df = _df_from_rows(rows)
         out = _compute_indicator(df, "Supertrend",
                                  {"atr_period": 10, "multiplier": 3.0})
         st, d = out["supertrend_10_3.0"], out["supertrend_dir_10_3.0"]
-        # ATR 收敛后（min_periods 后）带=100，close==带——不触发穿越，
-        # dir 延续初始（首根后无翻转事件）
-        assert (st.iloc[12:].dropna() == 100).all()
-        assert int((d.diff().fillna(0) != 0).sum()) == 0, "常数行情零翻转"
+        assert (d == 0).all(), "常数行情零穿越 → dir 恒未定态 0"
+        assert st.isna().all(), "未定态 supertrend 不出值"
 
     def test_u5b_dir_binary_and_flip(self):
         """U5b dir 二值 ±1 + 翻转=cross 0 表达锚：构造先跌后涨行情
