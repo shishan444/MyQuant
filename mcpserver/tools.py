@@ -285,6 +285,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        方向口径（包四 GAP-01 披露）：win_rate 与 forward_return_mean 为
+        做多持有口径（收益=价格涨跌幅）；short 视角下做空胜率=收益为负
+        比例（零收益样本不计入胜方，不可用 1−win_rate 换算）——返回体
+        metric_perspective 键携带同款口径说明，计算逻辑不随视角变化
+        （param_sweep 效应方向锚自适应做空候选，见其 effect_direction
+        输出列）。
         当前可用比较动作全集（fix-research-c2 起，统计与翻译两侧
         一致）：gt/lt/ge/le、cross_above/cross_below（含 breakout/
         breakdown 别名）、price_above/price_below（价格对指标列比较
@@ -307,7 +313,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         指纹，登记引用时经
         register_hypothesis.provenance 回链；组合候选（is_combination
         产物）经 precheck_hypothesis 获得组合复核——when 条件全集 AND
-        语义整体求值）。param_sweep 参数稳健性检查（第③步检查①，快路径
+        语义整体求值）；候选条目携带 direction_hint 方向分类标注
+        （包四 GAP-01——short=统计量均值为负的做空候选/long=均值为正
+        的做多候选/neutral=零均值；仅提示性标注，排序仍按 FDR 校正
+        q 值不变）。param_sweep 参数稳健性检查（第③步检查①，快路径
         同步直返）：params.indicator（指标名）+ params.condition（结构化
         {subject, action, target}——subject 混合形制：参数化指标
         {indicator, params, field} 结构化对象或字符串精确名（扫描候选
@@ -380,7 +389,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         exit_sweep 退出参数扫描（0.4.1 R6——本模板不挂假设：结果
         三要素 hypothesis_id 被模板忽略，留痕检查型不进判定并集）：
         params 必填 condition|conditions（二选一）+ direction（long/
-        short）+ grid={modes:[{mode, stops, take_profits}]}——网格按
+        short——做空语义经此既有形参表达（包四 GAP-01：不新增
+        perspective 同义参数）；direction=short 时出场统计按空头持仓
+        计算——价格下跌产生正收益，win_rate 即做空胜率）+
+        grid={modes:[{mode, stops, take_profits}]}——网格按
         止损模式分组（量纲随模式双关）；模式合法集=回测引擎真实分派
         集引用式（0.4.1={pct}——atr/trail 422 披露「引擎未支持」；
         0.4.2 扩分派后自动跟随）；stops 值域 pct 档 [0.005,0.20] 与
@@ -419,18 +431,23 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             indicator: Optional[str] = None) -> Dict[str, Any]:
         """案例抽查（第③步检查③——眼见为实）：候选条件或点名时间戳的
         真实触发案例窗口，全流程唯一让原始 K 线进入上下文的通道。selector
-        两形态互斥：{condition:{subject,action,target}}（subject 混合形制：
+        三形态互斥：{condition:{subject,action,target}}（subject 混合形制：
         参数化指标 {indicator, params, field} 结构化或字符串精确名——
         扫描候选同形制直喂；0.2.14 起 MAY 携带 timeframe 键=高周期条件
         掩码投影（>= 请求基准周期、结构化 subject 任意参数现算、
         indicator 参数可省——注意穿越类动作挂高周期为状态窗语义：
-        一次穿越持续 True 至下次高周期收盘）或 {timestamps:[...]}（点名
-        ≤5，自带定位不传 start/end）。硬上限：limit ≤5（缺省 3，命中
-        超限等距取样首尾保底，n_matched 披露命中总数）、context_bars
-        ≤20（缺省 8，触发点前后各取）。start 缺省=全量数据集+effective_start
-        披露有效域；end 显式时装载终点自动外扩 context_bars 根（尾部窗口
-        完整）。用法：检查①②统计判定通过后，抽查真实案例辨数据质量
-        （K 线缺口/异常值/指标失真——统计量会把坏数据平均掉）。"""
+        一次穿越持续 True 至下次高周期收盘）或 {conditions:[c1..c5]}
+        （包四 GAP-03 条件数组——1..5 条 AND 交集命中，条目形制与
+        condition 同构；校验与求值和 condition_stats 等四消费者同一
+        内核，组合假设案例无需拆单条件近似；warmup=全部条目指标引用
+        并集；含字符串 subject 条目时 indicator 参数必填）或
+        {timestamps:[...]}（点名 ≤5，自带定位不传 start/end）。硬上限：
+        limit ≤5（缺省 3，命中超限等距取样首尾保底，n_matched 披露命中
+        总数）、context_bars ≤20（缺省 8，触发点前后各取）。start 缺省=
+        全量数据集+effective_start 披露有效域；end 显式时装载终点自动
+        外扩 context_bars 根（尾部窗口完整）。用法：检查①②统计判定通过
+        后，抽查真实案例辨数据质量（K 线缺口/异常值/指标失真——统计量
+        会把坏数据平均掉）。"""
         body: Dict[str, Any] = {
             "symbol": symbol, "timeframe": timeframe, "selector": selector,
             "limit": limit, "context_bars": context_bars}
