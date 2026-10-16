@@ -634,3 +634,122 @@ class TestGapClosureTfBase:
                                  "timeframe": "1d"}},
                              limit=3)
         assert ei.value.code == "TIMEFRAME_UNKNOWN"
+
+
+class TestConditionsArrayForm:
+    """包四 V2 系：selector conditions 条件数组第三形态（GAP-03）。
+
+    期望全部独立推导（numpy 现算位置真相）；V2b 命中一致锚=同条件组
+    与 condition_stats 共用 mask_for_all 内核的行为互证（探针定值
+    11=11，窗对齐=request_start 取数据首 bar+warmup）。
+    """
+
+    _CONDS = [
+        {"subject": {"indicator": "RSI", "params": {"period": 14}},
+         "action": "lt", "target": 30.0},
+        {"subject": {"indicator": "RSI", "params": {"period": 14}},
+         "action": "gt", "target": 20.0},
+    ]
+
+    def _array_call(self, env, conditions, **kw):
+        params = dict(symbol=SYMBOL, timeframe="1d",
+                      selector={"conditions": conditions}, indicator="RSI")
+        params.update(kw)
+        return inspect_cases(env["db"], env["data_dir"], **params)
+
+    @staticmethod
+    def _independent_intersection(df) -> int:
+        """位置真相：测试内独立现算 20<RSI14<30（域=WARMUP 后）。"""
+        from core.features.indicators import _compute_indicator
+
+        rsi = _compute_indicator(
+            df.copy(), "RSI", {"period": 14})["rsi_14"].to_numpy()
+        dom = np.arange(len(df)) >= WARMUP
+        return int(((rsi < 30.0) & (rsi > 20.0) & dom).sum())
+
+    def test_v2a_and_semantics_manual_derivation(self, env):
+        """V2a AND 语义人工推导：两条件命中=交集（非并集/非末条覆盖）。"""
+        expect = self._independent_intersection(env["df"])
+        assert expect > 0
+        out = self._array_call(env, self._CONDS)
+        assert out["n_matched"] == expect, \
+            "AND 语义：命中数应等于独立现算交集"
+
+    def test_v2b_hit_parity_with_condition_stats(self, env):
+        """V2b 命中一致锚：同条件组 inspect_cases 与 condition_stats
+        命中数精确相等（共用 mask_for_all 的行为互证——窗对齐：
+        request_start=数据首 bar+WARMUP）。"""
+        from core.analysis.templates.condition_stats import condition_stats
+
+        expect = self._independent_intersection(env["df"])
+        df = env["df"]
+        cs = condition_stats(
+            df, conditions=self._CONDS,
+            data_ranges=[{"symbol": SYMBOL, "timeframe": "1d",
+                          "start": df.index[0].date().isoformat(),
+                          "end": df.index[-1].date().isoformat()}],
+            forward_bars=2, min_samples=5,
+            request_start=df.index[WARMUP])
+        assert cs.payload["hit_count"] == expect
+        out = self._array_call(env, self._CONDS)
+        assert out["n_matched"] == cs.payload["hit_count"], \
+            "两工具同条件组命中数应精确相等（共用内核）"
+
+    @pytest.mark.parametrize("other", ["condition", "timestamps"])
+    def test_v2c_mutex_422(self, env, other):
+        """V2c 互斥：conditions 与另两形态同传 422 附 mutex_pair。"""
+        extra = {"condition": self._CONDS[0],
+                 "timestamps": ["2024-01-15T00:00:00Z"]}[other]
+        with pytest.raises(ResearchError) as ei:
+            inspect_cases(
+                env["db"], env["data_dir"], symbol=SYMBOL, timeframe="1d",
+                selector={"conditions": self._CONDS, other: extra},
+                indicator="RSI")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["mutex_pair"] == sorted(
+            ["conditions", other])
+
+    @pytest.mark.parametrize("n,ok", [(0, False), (6, False),
+                                      (1, True), (5, True)])
+    def test_v2d_conditions_count_bounds(self, env, n, ok):
+        """V2d 条数域：0/6 拒（param=conditions，1..5），1/5 放行。"""
+        conds = [self._CONDS[i % 2] for i in range(n)] if n else []
+        if ok:
+            out = self._array_call(env, conds)
+            assert out["n_matched"] > 0
+        else:
+            with pytest.raises(ResearchError) as ei:
+                self._array_call(env, conds)
+            assert ei.value.detail["param"] == "conditions"
+            assert ei.value.detail["legal_range"] == "1..5"
+
+    def test_v2e_legacy_forms_unchanged(self, env):
+        """V2e 旧形态零变化：condition 形态与 conditions[单条] 同一条件
+        命中数相等（第三形态引入不改单条件语义；timestamps 形态由
+        既有 TestSamplingAndWindows 全族承载）。"""
+        single = _call(env)  # 既有缺省：rsi_14 lt 30
+        arr1 = self._array_call(env, [self._CONDS[0]])
+        assert single["n_matched"] == arr1["n_matched"]
+
+    def test_v2f_unknown_action_rejected(self, env):
+        """V2f 校验前置：数组条目未知 action 结构化拒（防 engine 静默
+        全 False 降级——与单条件形态防降级锚同语义）。"""
+        bad = [dict(self._CONDS[0], action="bogus")]
+        with pytest.raises(ResearchError) as ei:
+            self._array_call(env, bad)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+    def test_v2g_timeframe_key_processed(self, env):
+        """V2g timeframe 键联动：条目带 timeframe=基准周期（1d）→
+        归一剥离语义（与不带等价）；高周期投影面由掩码投影既有测试
+        族承载（mask_for 两形态共用）。"""
+        with_tf = [dict(self._CONDS[0], timeframe="1d"), self._CONDS[1]]
+        out_tf = self._array_call(env, with_tf)
+        out_plain = self._array_call(env, self._CONDS)
+        assert out_tf["n_matched"] == out_plain["n_matched"], \
+            "tf==基准归一后语义应与缺省完全一致"
+
+    def test_v2h_selector_echo(self, env):
+        """V2h 回显：selector_echo 原样回显输入（未归一）。"""
+        out = self._array_call(env, self._CONDS)
+        assert out["selector_echo"] == {"conditions": self._CONDS}

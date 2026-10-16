@@ -336,3 +336,33 @@ class TestDirectCallCheckGroup:
         with pytest.raises(ResearchError) as ei:
             condition_stats(df, **kw)
         assert ei.value.detail["param"] == "condition|conditions"
+
+
+class TestPerspectiveDisclosure:
+    """包四 V1'-2/V1'-3（GAP-01 判无缺陷后的披露存在性面——
+    诊断报告 works/研究档案/RR-013-param_sweep-unsupported-诊断报告.md）。"""
+
+    def test_v1_2_metric_perspective_keys_present(self) -> None:
+        """V1'-2 口径披露键在场：win_rate 做多持有口径+short 换算
+        语义+forward_return_mean 口径——三子键（计算不变纯增量）。"""
+        df = _make_df()
+        out = condition_stats(df, **_gt_median_kwargs(df)).payload
+        mp = out["metric_perspective"]
+        assert set(mp) >= {"win_rate", "short_view_win_rate",
+                           "forward_return_mean"}
+        assert "long_holding" in mp["win_rate"], "做多持有口径明示"
+        assert "做空胜率" in mp["short_view_win_rate"]
+
+    def test_v1_3_short_conversion_no_tie_error(self) -> None:
+        """V1'-3 换算语义防平局误差：披露明示「不可用 1−win_rate」；
+        numpy 语义独立断言——零收益样本不计入任一胜方，两视角胜率
+        之和 <1（人工核算：[+1, -1, 0] 序列 win_rate=1/3、
+        short 视角=1/3、和=2/3≠1）。"""
+        df = _make_df()
+        out = condition_stats(df, **_gt_median_kwargs(df)).payload
+        assert "不可用 1−win_rate" in out["metric_perspective"][
+            "short_view_win_rate"]
+        v = np.array([1.0, -1.0, 0.0])  # 含平局的独立小样本
+        assert (v > 0).mean() == 1 / 3 and (v < 0).mean() == 1 / 3
+        assert (v > 0).mean() + (v < 0).mean() < 1.0, \
+            "平局样本使 1−win_rate 换算失真（披露语义成立）"

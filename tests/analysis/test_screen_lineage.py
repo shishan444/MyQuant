@@ -440,3 +440,19 @@ class TestScreenReusePrecheckTolerance:
                 ResearchHypothesis.hypothesis_id == hid).values(
                 conditions='{"when_conditions": [], "then_conditions": []}'))
         _screen_reuse_check(db, hid, SCAN_RANGE)  # 指纹集空返回
+
+
+class TestAnalysisTaskSameCore:
+    """包四 V3e 补（tester 审查）：两类引用的任务存在性核验同核——
+    analysis_task 形态引用不存在任务同样拒且零写入（screen_candidate
+    形态既有 test_unknown_task_rejected_without_writes 已证）。"""
+
+    def test_analysis_task_unknown_rejected_no_writes(self, tmp_path):
+        db = _db(tmp_path)
+        with pytest.raises(ResearchError, match="分析任务"):
+            register_hypothesis(
+                db, conditions=_conditions(), statement="引用幽灵网格任务",
+                data_ranges=[OTHER_RANGE],
+                provenance={"ref_type": "analysis_task",
+                            "task_id": "ant_ghost00001"})
+        assert rr.list_research_log(db) == [], "拒绝路径零留痕"
