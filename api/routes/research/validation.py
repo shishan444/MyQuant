@@ -336,6 +336,13 @@ def translate_hypothesis(
     from pydantic import BaseModel as _BM  # noqa: F401
 
     try:
+        # security S-2（fix-review B6）：strategy_timeframe 裸 str——前置
+        # 值域校验消两路 500 冒出面（非法 tf 在 find_parquet 装载路径
+        # 抛裸 ValueError；analysis.py :799 同款先例，校验先于转化）。
+        # payload=None 走 schema 缺省 "4h" 合法，无校验面
+        if payload is not None:
+            require_known_timeframe(
+                payload.strategy_timeframe, "strategy_timeframe")
         kw = payload.model_dump() if payload else {}
         return _t(db_path, hypothesis_id=hypothesis_id, data_dir=data_dir, **kw)
     except ResearchError as exc:
