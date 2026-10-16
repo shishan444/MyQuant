@@ -189,8 +189,9 @@ def screen_patterns(
     # 指标矩阵 + 条件展开（逐指标 stop_check）
     # skipped_indicators 三因分类（unify-tool-return-contract 规则④）：
     # 系统自主跳过附原因——reason 封闭枚举三值 {no_default_params,
-    # compute_failed, no_covered_actions}；compute_failed 附
-    # reason_detail（首个异常摘要，可空——无产出且无异常时为 None）
+    # compute_failed, no_covered_actions}；compute_failed 有异常时附
+    # reason_detail（首个异常摘要；无异常时键缺席——「可空」的实现
+    # 形制即键缺席，非值 None）
     work = df.copy()
     probes: List[Dict[str, Any]] = []
     skipped_indicators: List[Dict[str, Any]] = []

@@ -589,15 +589,14 @@ def _apply_entry_trigger_policy(dna: StrategyDNA,
     if policy is None:
         return entries
     from core.analysis.event_policy import apply_policy_to_series, validate_policy
-    # CARD-01（event-triggers 批次三）：策略通道全程无校验的求值点单点
-    # 收口——归一（对归一形幂等；非法形在此 422 而非求值中途裸
-    # TypeError/KeyError）；显式 {"mode": "none"} 归一 None=等价无策略
-    # 原样返回（D4 归一形约定）
+    # 求值点单点收口（event-triggers 批次三 CARD-01/CARD-03 合并表述）：
+    # 归一校验（对归一形幂等；非法形在此 422 而非求值中途裸 TypeError/
+    # KeyError；显式 {"mode": "none"} 归一 None=等价无策略原样返回，
+    # D4 归一形约定）→ bars 校验+变换+回投收敛 apply_policy_to_series
+    # 单点（param 名保真策略链声明键 entry_trigger_policy）
     policy = validate_policy(policy)
     if policy is None:
         return entries
-    # CARD-03：bars 校验+变换+回投收敛 apply_policy_to_series 单点
-    # （param 名保真策略链声明键 entry_trigger_policy）
     return apply_policy_to_series(
         entries, policy, param_name="entry_trigger_policy")
 
@@ -663,6 +662,11 @@ def dna_to_signal_set(
         if dna.mtf_mode is not None:
             from core.strategy.mtf_engine import run_mtf_engine
             return run_mtf_engine(dna, dfs_by_timeframe, enhanced_df)
+
+        # legacy 通道的脉冲投影依赖（层循环内逐层 import 收敛为循环外
+        # 单次——同 :551/:591 函数级先例）
+        from core.data.mtf_alignment import infer_tf_delta, pulse_completed
+
         trend_entries = []
         trend_exits = []
         exec_entries = []
@@ -707,7 +711,6 @@ def dna_to_signal_set(
                 # 0.2.14：脉冲投影收口 pulse_completed（触发时间戳 +tf
                 # 平移——落在收盘时刻所在基准 bar；_resample_pulse 退役，
                 # 末 bar 硬编码 1 天窗口缺陷一并消除）
-                from core.data.mtf_alignment import infer_tf_delta, pulse_completed
                 _layer_delta = infer_tf_delta(layer_df.index)
                 pulse_entries = pulse_completed(sig.entries, enhanced_df.index, _layer_delta)
                 pulse_exits = pulse_completed(sig.exits, enhanced_df.index, _layer_delta)
@@ -987,9 +990,6 @@ def batch_signal_sets(
     """
     if not individuals:
         return []
-
-    # 延迟 import（analysis→strategy 既有依赖方向为正向，此处按项目
-    # 延迟先例保持加载序稳定）：MTF 回退的防御拒绝透传判型用
 
     # 第 1 步：求值全部唯一基因条件
     gene_results: dict[tuple, pd.Series] = {}

@@ -302,8 +302,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         [4,12,24,48,72]）、params.top_n（默认 20）、params.min_samples（默认
         30）——输出按 FDR 校正 q 值排序的候选清单；skipped_indicators 为
         {name, reason} 数组（reason 封闭枚举三值：no_default_params 无默认
-        参数网格/compute_failed 计算无产出（附 reason_detail 首个异常摘要）
-        /no_covered_actions 无覆盖动作；含候选指纹，登记引用时经
+        参数网格/compute_failed 计算无产出（异常时附 reason_detail 首个
+        异常摘要，无异常时无此键）/no_covered_actions 无覆盖动作；含候选
+        指纹，登记引用时经
         register_hypothesis.provenance 回链；组合候选（is_combination
         产物）经 precheck_hypothesis 获得组合复核——when 条件全集 AND
         语义整体求值）。param_sweep 参数稳健性检查（第③步检查①，快路径
