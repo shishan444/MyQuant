@@ -42,11 +42,15 @@ class ColumnRefError(ValueError):
 
 
 #: 基础列清单（自 hypothesis_service 移入——单一事实源；假设引擎
-#: _resolve_subject 的列语义不变）
-BASE_SUBJECT_COLUMNS = frozenset({
-    "open", "high", "low", "close", "volume", "trades",
-    "open_interest", "funding_rate",
-})
+#: _resolve_subject 的列语义不变）。add-session-structure-expression
+#: 任务 7 起 dict 形（值=域元数据；八列空元数据=零变化）——第九列
+#: hour_utc 带 intraday_only 域标记（仅日内周期可引用，日线及以上
+#: 拒绝）。`in` 判定 dict 与 frozenset 同语义，七处消费方零适配。
+BASE_SUBJECT_COLUMNS = {
+    "open": {}, "high": {}, "low": {}, "close": {}, "volume": {},
+    "trades": {}, "open_interest": {}, "funding_rate": {},
+    "hour_utc": {"intraday_only": True},
+}
 
 
 @dataclass
@@ -106,7 +110,38 @@ def _looks_like_encoded(name: str) -> bool:
         return True
 
 
-def resolve_column_ref(ref: Any, db_path: Optional[Path] = None) -> ColumnDef:
+# 日内周期上界（hour_utc 域校验）：周期分钟超过该值的禁止引用
+# intraday_only 列（日线 1d=1440 分钟及以上）
+_INTRADAY_MINUTES_MAX = 720  # 12h 及更细粒度为日内；1d=1440 拒
+
+
+def _check_base_column_domain(column: str, base_tf) -> None:
+    """带域元数据基础列的周期域校验（任务 7 单点）。
+
+    现唯一域标记 intraday_only（hour_utc）：base_tf 周期分钟 >
+    _INTRADAY_MINUTES_MAX 时拒绝（日线及以上引用小时列无意义——
+    每日一 bar 值恒定）；base_tf None/未知周期跳过（兼容面——
+    供给方三面各自传执行周期）。
+    """
+    meta = BASE_SUBJECT_COLUMNS.get(column)
+    if not meta or not meta.get("intraday_only") or base_tf is None:
+        return
+    from core.data.timeframes import TF_SECONDS
+    minutes = TF_SECONDS.get(base_tf)
+    if minutes is None:
+        return
+    if minutes / 60.0 > _INTRADAY_MINUTES_MAX:
+        raise ColumnRefError(
+            "PARAM_INVALID",
+            f"{column} 为日内列（intraday_only），基准周期 {base_tf} "
+            "（日线及以上）不可引用——每日一 bar 下该列值恒定无意义",
+            detail={"column": column, "base_tf": base_tf,
+                    "domain": "intraday_only",
+                    "hint": "换 12h 及以下周期，或改用其他基础列"})
+
+
+def resolve_column_ref(ref: Any, db_path: Optional[Path] = None,
+                       base_tf: Optional[str] = None) -> ColumnDef:
     """混合形制校验（五域统一入口）。
 
     Args:
@@ -125,6 +160,7 @@ def resolve_column_ref(ref: Any, db_path: Optional[Path] = None) -> ColumnDef:
 
     if isinstance(ref, str):
         if ref in BASE_SUBJECT_COLUMNS:
+            _check_base_column_domain(ref, base_tf)
             return ColumnDef(kind="base", column_name=ref)
         if db_path is not None and ref in _visible_plugin_columns(db_path):
             return ColumnDef(kind="plugin", column_name=ref)

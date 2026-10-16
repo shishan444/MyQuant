@@ -458,8 +458,10 @@ def register_hypothesis(
         for i, c in enumerate(conds):
             field_name = f"{group}_conditions[{i}].subject"
             try:
+                # base_tf 供给（任务 7 三面之一——登记面取 data_ranges
+                # 基准周期做域元数据校验，最严面：全组统一按基准拒）
                 c["subject"] = resolve_column_ref(
-                    c["subject"], db_path).ref_dict()
+                    c["subject"], db_path, base_tf=base_tf).ref_dict()
             except ColumnRefError as exc:
                 raise ResearchError(
                     "RESEARCH_CONDITION_INVALID",

@@ -108,6 +108,10 @@ def load_and_prepare_df(
 
     df = _try_merge_derivatives(
         data_dir, symbol_, timeframe, df, coverage_range=coverage_range)
+    # 派生基础列（任务 7 单点注入——两装载入口各一次；指标计算前
+    # 注入使派生列可被插件公式引用）
+    from core.data.derived_columns import inject_derived_columns
+    inject_derived_columns(df)
     if compute_indicators:
         from core.features.indicators import compute_all_indicators
         return compute_all_indicators(df, stop_check=stop_check)
@@ -157,6 +161,9 @@ def load_mtf_data(
             if len(tf_df) < min_bars:
                 continue
             tf_df = _try_merge_derivatives(data_dir, symbol_, tf, tf_df)
+            # 派生基础列（任务 7——各轴同注入；单点助手幂等）
+            from core.data.derived_columns import inject_derived_columns
+            inject_derived_columns(tf_df)
             dfs_by_timeframe[tf] = (
                 compute_all_indicators(tf_df, stop_check=stop_check)
                 if compute_indicators else tf_df

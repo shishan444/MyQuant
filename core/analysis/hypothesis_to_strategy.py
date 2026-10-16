@@ -789,6 +789,33 @@ def _translate_conditions(
         # ge/le 含等号无对应严格形态——显式拒绝（禁静默近似映射
         # price_above，错误语义完整性优先于表面覆盖，完整四条理由见
         # openspec 变更一 design.md 第 3 节）。
+        # hour_utc 放行域（add-session-structure-expression 任务 7，
+        # Q2=基础列基因通道终稿）：hour_utc × gt/lt/ge/le × 数值
+        # target（[0,24) 小数域阈值——U7b 值形制）→ 基因承载
+        # （indicator="hour_utc"/params={}/field=None——执行链直读
+        # 白名单）；其余 action（cross/price 族）拒绝——小时列无穿越
+        # 语义闭环必要（周期回绕比较需取模，当前以 gt/lt 组合可表达）
+        if subject == "hour_utc":
+            if action in ("gt", "lt", "ge", "le") \
+                    and isinstance(target, (int, float)) \
+                    and not isinstance(target, bool):
+                genes.append(SignalGene(
+                    indicator="hour_utc",
+                    params={},
+                    role=role,
+                    field_name=None,
+                    condition=_ACTION_MAP[action](target),
+                    timeframe=cond_tf,
+                ))
+                continue
+            raise ResearchError(
+                "RESEARCH_NOT_EXPRESSIBLE",
+                f"{label}[{i}] 不可表达: hour_utc 仅支持数值比较 "
+                "gt/lt/ge/le × 数值 target（[0,24) 小时域）",
+                detail={"condition": cond,
+                        "slow_path": "cross/price 族对小时列不支持"
+                                     "（周期回绕语义未定义）"})
+
         if subject == "close":
             from core.analysis.condition_kernel import _classify_target_ref
             t_kind, t_ref = _classify_target_ref(target)

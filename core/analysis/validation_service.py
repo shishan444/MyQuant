@@ -168,6 +168,11 @@ def _dna_indicator_names(dna) -> List[str]:
 
     def _collect_gene(gene) -> None:
         if getattr(gene, "indicator", None):
+            # 派生基础列（hour_utc）非注册表成员——跳过（derive_warmup
+            # 对未知指标 KeyError；装载注入零收敛成本，防炸点）
+            from core.strategy.executor import _BASE_DIRECT_READ_COLUMNS
+            if gene.indicator in _BASE_DIRECT_READ_COLUMNS:
+                return
             names.add(gene.indicator)
         # 序列形条件（gt/lt/ge/le/cross_*_series 带 target_indicator）：
         # target 侧指标并入 warmup 并集
