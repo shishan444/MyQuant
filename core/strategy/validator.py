@@ -340,12 +340,29 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
 def _validate_condition_structure(
     condition: dict, gene_idx: int, prefix: str = "",
 ) -> List[str]:
-    """新条件类型的结构完整性校验（缺必需键即 error 点名条件类型与键）。"""
+    """新条件类型的结构完整性校验（缺必需键即 error 点名条件类型与键）。
+
+    cond_type 合法集校验（fix-review CARD-01）：合法集单源
+    EVALUABLE_CONDITION_TYPES（executor 侧执行分派集）——validator
+    前置拦截使装载面与执行侧 RESEARCH_NOT_EXPRESSIBLE 拒绝面一致化，
+    存量库内非法 cond_type 策略装载从通过变拒绝。executor 顶层拖入
+    numpy/pandas 重依赖，validator 为纯结构校验轻模块，函数内延迟
+    import 保持装载链轻（executor.py 同形制先例：indicators/
+    mtf_engine 延迟装载）。
+    """
+    # 延迟 import：EVALUABLE_CONDITION_TYPES 唯一权威在 executor
+    # （合法集契约单源，S6b 双向相等断言锁两侧不漂移）
+    from core.strategy.executor import EVALUABLE_CONDITION_TYPES
+
     errors: List[str] = []
     label = prefix if prefix else f"Gene {gene_idx}"
     cond_type = condition.get("type", "")
 
-    if cond_type in ("cross_above_series", "cross_below_series"):
+    if cond_type not in EVALUABLE_CONDITION_TYPES:
+        errors.append(
+            f"{label}: condition type must be one of "
+            f"{sorted(EVALUABLE_CONDITION_TYPES)}, got '{cond_type}'")
+    elif cond_type in ("cross_above_series", "cross_below_series"):
         if "target_indicator" not in condition:
             errors.append(f"{label}: {cond_type} requires 'target_indicator'")
     elif cond_type in ("lookback_any", "lookback_all"):
@@ -353,6 +370,31 @@ def _validate_condition_structure(
             errors.append(f"{label}: {cond_type} requires 'window'")
         if "inner" not in condition:
             errors.append(f"{label}: {cond_type} requires 'inner' condition")
+        else:
+            # inner 深度校验（CARD-01 同族小面收口）：执行侧
+            # _evaluate_inner_condition 对 inner 缺 type 委托主入口
+            # condition["type"] 裸下标炸链、阈值四类缺 threshold 静默
+            # 用 0（executor.py:204-205）——装载前结构拦截
+            inner = condition["inner"]
+            if not isinstance(inner, dict):
+                errors.append(
+                    f"{label}: {cond_type} 'inner' must be a dict, "
+                    f"got {type(inner).__name__}")
+            elif "type" not in inner:
+                errors.append(
+                    f"{label}: {cond_type} inner condition requires 'type'")
+            else:
+                inner_type = inner["type"]
+                if inner_type not in EVALUABLE_CONDITION_TYPES:
+                    errors.append(
+                        f"{label}: {cond_type} inner condition type must be "
+                        f"one of {sorted(EVALUABLE_CONDITION_TYPES)}, "
+                        f"got '{inner_type}'")
+                elif inner_type in ("lt", "gt", "le", "ge") \
+                        and "threshold" not in inner:
+                    errors.append(
+                        f"{label}: {cond_type} inner condition "
+                        f"({inner_type}) requires 'threshold'")
     elif cond_type == "touch_bounce":
         if "direction" not in condition:
             errors.append(f"{label}: touch_bounce requires 'direction'")
