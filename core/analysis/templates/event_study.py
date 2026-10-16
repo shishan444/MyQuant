@@ -68,6 +68,13 @@ def event_study(
             "直调方同样须遵守）",
             detail={"param": "condition|conditions",
                     "legal_form": "任选其一"})
+    # 条件条目白名单校验（unblock-research-validation T6 / DEV-4：与
+    # 登记面 ConditionItem extra=forbid 同语义共享单点——全部条件消费
+    # 者同语义，未知键结构化拒绝不再静默忽略；condition 单数包装单条
+    # 数组同过校验）
+    from core.analysis.condition_kernel import validate_conditions_array
+    validate_conditions_array(
+        conditions if conditions is not None else [condition])
 
     # trigger-policy 卡4（5.1）：形制归一 + bars 数据长度上界求值侧
     # 校验（数据已加载——D12 与 forward_bars 同窗同位置；CARD-03 收敛

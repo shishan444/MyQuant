@@ -111,6 +111,13 @@ def condition_stats(
             "condition 与 conditions 须二选一（键组分派在路由层——"
             "直调方同样须遵守）",
             detail={"param": "condition|conditions", "legal_form": "任选其一"})
+    # 条件条目白名单校验（unblock-research-validation T6 / DEV-4：与
+    # 登记面 ConditionItem extra=forbid 同语义共享单点——全部条件消费
+    # 者同语义，未知键结构化拒绝不再静默忽略；condition 单数包装单条
+    # 数组同过校验）
+    from core.analysis.condition_kernel import validate_conditions_array
+    validate_conditions_array(
+        conditions if conditions is not None else [condition])
     if indicator is not None:
         from core.analysis.templates.column_guard import require_indicator
         require_indicator(indicator, INDICATOR_REGISTRY)
