@@ -459,3 +459,116 @@ class TestGeneLevelTimeframeExecution:
         b = batch_signal_sets([dna], base, dfs_by_timeframe={"1d": hi})
         pd.testing.assert_series_equal(
             a[0].entries, b[0].entries, check_names=False)
+
+
+class TestGeneTfProjectionOrder:
+    """T2g-2/T2g-3/T3d/T2f-2 信号层（tester 补——spec delta「多周期
+    与事件策略组合」「加仓触发组多周期放行」Scenario 推导：先投影
+    后 policy、1d 广播窗 first_true 取首 bar、防前视不早于收盘、
+    adds=状态窗逐 bar）。"""
+
+    _ENTRY_ONLY_DNA = None
+
+    def _tf_dna(self, roles_tfs, entry_value=70, exit_value=99):
+        """构造带基因级 tf 的 DNA（roles_tfs=[(SignalRole, tf)]）。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalRole, StrategyDNA,
+        )
+        genes = []
+        for role, tf in roles_tfs:
+            g = make_signal_gene(
+                role=role, condition_type=(
+                    "gt" if role == SignalRole.EXIT_TRIGGER else "lt"),
+                condition_value=(
+                    exit_value if role == SignalRole.EXIT_TRIGGER
+                    else entry_value))
+            g.timeframe = tf
+            genes.append(g)
+        return StrategyDNA(
+            signal_genes=genes, logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes())
+
+    def _hand_hi_signal(self, hi, entry_value=70):
+        """独立期望：1d 轴手工求值同条件（不调被测求值实现）。"""
+        return (hi["rsi_14"] < entry_value).fillna(False)
+
+    def test_t3d_no_lookahead_not_before_close(self):
+        """T3d 防前视：1d 信号投影 4h 基准轴，首个 True 不早于 1d
+        首个 True bar 的收盘时点（已收盘才可见——契约前视纪律）。"""
+        from core.data.timeframes import TF_SECONDS
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna([(SignalRole.ENTRY_TRIGGER, "1d"),
+                            (SignalRole.EXIT_TRIGGER, None)],
+                           entry_value=30, exit_value=99)
+        # 独立期望：1d 轴手工求值首 True 的收盘时刻
+        hi_sig = self._hand_hi_signal(hi, entry_value=30)
+        assert hi_sig.any(), "前提：1d 轴存在 True（构造保证）"
+        first_hi = hi_sig[hi_sig].index[0]
+        close_ts = first_hi + pd.Timedelta(seconds=TF_SECONDS["1d"])
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        entries = sig.entries.reindex(base.index).fillna(False)
+        assert entries.any(), "投影后有信号（前提）"
+        first_base = entries[entries].index[0]
+        assert first_base >= close_ts, (
+            f"投影信号早于 1d 收盘时点：{first_base} < {close_ts}")
+
+    def _hand_env(self, n_base=400):
+        from tests.helpers.data_factory import make_enhanced_df
+        base = make_enhanced_df(n=n_base, freq="1h", seed=21)
+        hi = make_enhanced_df(n=n_base // 24 + 2, freq="1d", seed=22)
+        return base, hi
+
+    def test_t2g_2_first_true_takes_first_bar_of_window(self):
+        """T2g-2/T2g-3 顺序契约+同构：1d 广播窗（连续 True）经
+        first_true 变换取每窗首 bar——期望=权威投影+权威 policy 函数
+        串联独立构造（policy 语义不因投影层漂移）。"""
+        from core.analysis.event_policy import apply_policy_to_series
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna([(SignalRole.ENTRY_TRIGGER, "1d"),
+                            (SignalRole.EXIT_TRIGGER, None)],
+                           entry_value=70, exit_value=99)
+        dna.entry_trigger_policy = {"mode": "first_true"}
+        # 独立期望：手工 1d 求值 → 权威投影（广播窗）→ 权威 policy
+        hi_sig = self._hand_hi_signal(hi, entry_value=70)
+        broadcast = project_completed_bool(hi_sig, base.index, "1d")
+        # 前提鉴别力：存在长度>1 的连续窗（first_true 才有可观察差异）
+        runs = (broadcast != broadcast.shift(fill_value=False)).cumsum()
+        run_lens = broadcast.groupby(runs).sum()
+        assert (run_lens[run_lens.index.map(
+            lambda k: broadcast.groupby(runs).first()[k]) > 0] > 1).any(), \
+            "前提：存在多 bar 广播窗"
+        expected = apply_policy_to_series(
+            broadcast, {"mode": "first_true"})
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        got = sig.entries.reindex(base.index).fillna(False)
+        pd.testing.assert_series_equal(
+            got, expected.astype(bool), check_names=False)
+
+    def test_t2f_2_adds_broadcast_state_window(self):
+        """T2f-2 信号层：ADD_TRIGGER tf=1d → adds=掩码广播状态窗
+        （窗内逐 bar True 连续，非边沿脉冲）——引擎步进/封顶机制
+        既有锚见 tests/backtest/test_scaling_execution.py。"""
+        from core.data.mtf_alignment import project_completed_bool
+        from core.strategy.dna import SignalRole
+        base, hi = self._hand_env()
+        dna = self._tf_dna(
+            [(SignalRole.ENTRY_TRIGGER, None),
+             (SignalRole.EXIT_TRIGGER, None),
+             (SignalRole.ADD_TRIGGER, "1d")],
+            entry_value=70, exit_value=99)
+        hi_sig = self._hand_hi_signal(hi, entry_value=70)
+        expected = project_completed_bool(hi_sig, base.index, "1d")
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        got = sig.adds.reindex(base.index).fillna(False)
+        pd.testing.assert_series_equal(
+            got, expected, check_names=False)
+        # 状态窗断言：True 段为连续多 bar（广播语义，非单 bar 边沿）
+        if got.any():
+            runs = (got != got.shift(fill_value=False)).cumsum()
+            run_lens = got.groupby(runs).sum()
+            assert (run_lens[run_lens > 0] > 1).any(), \
+                "广播窗应为连续多 bar 状态窗"

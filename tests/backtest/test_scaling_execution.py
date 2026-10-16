@@ -328,3 +328,52 @@ class TestEngineScalingExecution:
             dna = create_random_dna()
             roles = {g.role for g in dna.signal_genes}
             assert not (roles & bad), f"进化产物含分批角色: {roles & bad}"
+
+
+class TestGeneTfAddsBroadcastEngine:
+    """T2f-2 引擎层（tester 补——unblock-research-validation spec
+    「加仓触发组多周期放行」Scenario：1d 掩码广播为基准轴状态窗，
+    窗内逐 bar 加仓、add_fraction 步进、max_exposure 封顶）。
+
+    鉴别力设计：1d 轴 16 bar（RSI(14) 仅末 2 根有值且 True）——
+    状态窗投影≈数十根 1h bar True（加仓至名义 1.0 全额现金上限
+    7 次封顶→25 股）；若投影退化为脉冲式（每根 1d bar 仅落位 1 根
+    1h bar）则仅 2 次加仓→12.5 股。两形制终态可区分。信号层独立
+    锚（adds==权威投影状态窗）见 tests/strategy/test_executor.py
+    TestGeneTfProjectionOrder。"""
+
+    def test_t2f_2_state_window_stepwise_to_cap(self):
+        from tests.helpers.data_factory import make_enhanced_df
+        from core.strategy.dna import SignalGene, SignalRole
+        n = 200
+        base = make_enhanced_df(n=n, freq="1h", seed=21)
+        # 恒定价格（指标列已算好不受覆写影响）：隔离止损/浮盈干扰
+        for c in ("open", "high", "low", "close"):
+            base[c] = 40000.0
+        hi = make_enhanced_df(n=16, freq="1d", seed=22)
+        entry = mk_gene(SignalRole.ENTRY_TRIGGER, threshold=99.0)
+        exit_g = SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                            condition={"type": "gt", "threshold": 99.9})
+        add_g = mk_gene(SignalRole.ADD_TRIGGER, threshold=99.0)
+        add_g.timeframe = "1d"
+        dna = StrategyDNA(
+            signal_genes=[entry, exit_g, add_g],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(position_size=0.3, add_fraction=0.1,
+                                 leverage=5, max_exposure=5.0))
+        sig = dna_to_signal_set(dna, base, dfs_by_timeframe={"1d": hi})
+        assert sig.adds.sum() > 10, \
+            "前提自检：1d True 广播应覆盖数十根 1h bar（状态窗）"
+        eng = BacktestEngine(init_cash=1_000_000, fee=0.0, slippage=0.0)
+        r = eng.run(dna, base, signal_set=sig)
+        trades = r.trades_df
+        assert trades is not None and len(trades) >= 1
+        last_size = abs(trades.iloc[-1]["Size"])
+        # 手工核算：恒定价 40000、权益 1e6——entry 7.5 股；窗内逐
+        # bar 加 2.5 股至名义 1.0 全额现金上限（7 次封顶→25 股）。
+        # 脉冲退化形制（2 根 1d bar 各落位 1 bar）仅 2 次加仓
+        # → 7.5+5=12.5 股——两形制终态可区分
+        assert abs(last_size - 25.0) < 1e-6, (
+            f"状态窗逐 bar 步进至全额上限应 25 股，实际 {last_size}——"
+            "12.5 股=投影退化为脉冲式（每根 1d bar 仅 1 根 1h bar 加仓）")

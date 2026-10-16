@@ -469,3 +469,77 @@ class TestComponentTrialAndEvidence:
             result=None, verdict="fail", range_hash="rh_f")
         assert _missing_component_evidence(
             db, [{"type": "formula", "ref": "bar"}]) == ["bar"]
+
+
+class TestGateDualSourceEdgeAnchors:
+    """T8 边界锚+疫苗 2 集成链（tester 补——spec research-validation
+    -protocol：「或活跃」分支移除鉴别锚（活跃注册列零证据→拦）+
+    「组件证据零操作达成」全链+组合加严「缺分量证据被拒」。"""
+
+    def test_t8_active_registered_column_without_evidence_blocked(self, db):
+        """「或活跃」移除鉴别锚：列在插件注册表活跃（刚注册成功）但
+        零 component_eval/component pass 证据 → 门禁仍拦（若「或活跃
+        且被引用」分支复活，本例将放行——恒真分支无判别力）。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        col = _plugin(db, name="mom_active")   # 注册即活跃
+        missing = _missing_component_evidence(db, [
+            {"type": "formula", "ref": col}])
+        assert missing == [col], "活跃注册列零证据仍拦（双无拦截）"
+
+    def test_w2_vaccine2_full_chain_gate_release(
+            self, db, data_dir):
+        """疫苗 2 集成链（spec Scenario「组件证据零操作达成」）：
+        登记→翻译（试算写记录+产 draft）→隔离验证——组件证据门禁
+        放行（验证跑出三态判定，不因组件证据 409）。"""
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.validation_service import run_isolated_backtest
+        col = _plugin(db, name="mom_v2")
+        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
+                                  "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        assert out["status"] == "draft"
+        res = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hid,
+            strategy_id=out["strategy_id"],
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2024-02-20", "end": "2024-03-05"})
+        assert res["verdict"] in ("pass", "fail", "inconclusive"), \
+            "门禁放行（不因组件证据 RESEARCH_COMPONENT_EVIDENCE_MISSING 拒）"
+
+    def test_t8_combo_strict_missing_component_rejected(
+            self, db, data_dir):
+        """组合加严协同（spec MODIFIED「缺分量证据被拒」+「component_
+        eval 证据亦开组合门」）：双 formula 源策略——有证据源不拖累、
+        无证据源拦截并列名（组合门恒收紧，(a) 源证据不放宽）。"""
+        from core.analysis.validation_service import (
+            ResearchError, run_isolated_backtest)
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
+        from core.persistence.repository.strategy import save_strategy
+        col_a = _plugin(db, name="mom_ca")   # 将有证据（经翻译试算）
+        col_b = _plugin(db, name="mom_cb")   # 恒零证据
+        hid = _raw_hyp(db, when=[{"subject": col_a, "action": "gt",
+                                  "target": 0.5}])
+        translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        dna = StrategyDNA(
+            signal_genes=[],
+            signal_sources=[{"type": "formula", "ref": col_a,
+                             "threshold": 0.5, "operator": ">"},
+                            {"type": "formula", "ref": col_b,
+                             "threshold": 0.5, "operator": ">"}],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_combo_strict",
+                      dna_json=dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h")
+        with pytest.raises(ResearchError) as ei:
+            run_isolated_backtest(
+                db, data_dir, hypothesis_id=hid,
+                strategy_id="st_combo_strict",
+                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                               "start": "2024-02-20", "end": "2024-03-05"})
+        assert ei.value.code == "RESEARCH_COMPONENT_EVIDENCE_MISSING"
+        assert ei.value.detail["missing"] == [col_b], \
+            "有证据源不在缺失清单（(a) 源有效），仅无证据源被列"

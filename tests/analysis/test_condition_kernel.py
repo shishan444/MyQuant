@@ -216,3 +216,52 @@ class TestConditionItemStrictness:
         validate_conditions_array([
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
              "action": "lt", "target": 35, "timeframe": "1d"}])
+
+
+class TestConditionItemStrictnessConsumers:
+    """T6e 四消费者（tester 补——spec「全部条件消费者同语义」：未知
+    键经共享单点白名单结构化拒绝）。参数化四模板入口各一例。
+
+    现状警示（2026-10-15 实证）：regime_split/exit_sweep 拒绝 ✓；
+    condition_stats/event_study 静默通过（未知键被忽略直接产出结果
+    ——GAP-08 同型）——两例红为本偏差的失败证据，待修复转绿
+    （DEV-4 已退回 developer）。"""
+
+    @pytest.mark.parametrize("template", [
+        "condition_stats", "event_study", "regime_split", "exit_sweep"])
+    def test_t6e_unknown_key_rejected_per_consumer(self, template, tmp_path):
+        from importlib import import_module
+        from core.analysis.errors import ResearchError
+        from tests.helpers.data_factory import make_enhanced_df
+        df = make_enhanced_df(n=300, freq="4h", seed=3)
+        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2023-01-01T00:00:00Z",
+                "end": "2023-02-01T00:00:00Z"}]
+        bad = {"subject": {"indicator": "RSI", "params": {"period": 14}},
+               "action": "lt", "target": 35, "inner_bogus": 1}
+        mod = import_module(f"core.analysis.templates.{template}")
+        fn = getattr(mod, template)
+        if template == "exit_sweep":
+            # exit_sweep 形制：(db_path, data_dir, request_range, *, ...)
+            from core.persistence.db_ext import init_db_ext
+            db = tmp_path / "q.db"
+            init_db_ext(db)
+            data_dir = tmp_path / "market"
+            data_dir.mkdir()
+            make_enhanced_df(n=300, freq="4h", seed=3).to_parquet(
+                data_dir / "BTCUSDT_4h.parquet")
+            with pytest.raises(ResearchError) as ei:
+                fn(db, data_dir, dict(rng[0]), condition=bad,
+                   direction="long",
+                   grid={"stop_loss": [0.01], "take_profit": [0.02]})
+        else:
+            kwargs = {"condition": bad, "data_ranges": rng}
+            if template == "condition_stats":
+                kwargs = {"conditions": [bad], "data_ranges": rng,
+                          "forward_bars": 6}
+            elif template == "regime_split":
+                kwargs = {"conditions": [bad], "data_ranges": rng}
+            with pytest.raises(ResearchError) as ei:
+                fn(df, **kwargs)
+        assert "inner_bogus" in str(ei.value.detail.get(
+            "unknown_keys", [])) or "未知键" in ei.value.message
