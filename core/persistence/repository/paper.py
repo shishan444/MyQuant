@@ -65,6 +65,13 @@ PT_STATUS_TRANSITIONS: frozenset = frozenset(
     for src in srcs
 )
 
+# 终态集派生视图（状态图无出边态=keys−union(values)——与
+# credential._active_statuses 同数据单源互补；task_end 回流扫描与
+# 结题门槛消费，reporting.FINAL_STATUSES 语义等价但独立声明避免
+# 调度器拖 reporting 聚合链）
+PT_STATUS_TERMINAL: frozenset = frozenset(PT_STATUS_PREDECESSORS) - set().union(
+    *PT_STATUS_PREDECESSORS.values())
+
 
 def _as_status_tuple(expected_status: Union[str, Iterable[str]]) -> tuple:
     """expected_status 归一（str→单元组；可迭代→元组）——显式前态集

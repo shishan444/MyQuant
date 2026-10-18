@@ -11,9 +11,9 @@
   TestRealTriggerPaths（经服务与研究链行为对照）；
 - E4 三态旧值读取面：draft/active/archived 输入经旧解析函数与
   列表过滤的读取语义保持；
-- E5 中间态防误报锚：先行窗 paper 态任务结束停留=预期（纸盘域
-  未接迁移链是设计内两窗中间态，非缺陷——延后窗 5.2 接入后本锚
-  反转）。
+- E5 中间态防误报锚：先行窗「paper 态任务结束停留=预期」锚已在
+  5.2 接入时移除并替换为触发链恢复锚（paper 态任务终态→回流
+  active——两窗各钉一面）。
 """
 from __future__ import annotations
 
@@ -113,42 +113,59 @@ class TestE4ThreeLegacyStatusReadSurface:
         assert draft_ids == {"st_v_d"}
 
 
-class TestE5InterimStateNoFalseAlarm:
-    """E5：中间态防误报锚（先行窗一面——延后窗 5.2 接入后反转）。"""
+class TestE5TriggerChainRestored:
+    """E5：触发链恢复锚（延后窗一面——先行窗「paper 态任务结束
+    停留=预期」锚随 5.2 接入移除，本锚替换钉反面：触发链已恢复）。"""
 
-    def test_paper_trading_domain_has_no_lifecycle_wiring(self):
-        """先行窗中间态锚：core/paper_trading/ 域零 lifecycle 接线
-        （AST import 扫描）——paper 态策略的任务结束停留 paper 是
-        设计内预期（两窗结构：边定义先行/生产触发方延后），非缺陷。
-        延后窗 5.1/5.2 接入时本锚移除并以触发链恢复锚替代。"""
-        sources = [p for p in _PAPER_TRADING_DIR.glob("*.py")]
-        assert sources, "扫描域为空——先查路径"
-        for path in sources:
-            targets = set()
-            for node in ast.walk(ast.parse(
-                    path.read_text(encoding="utf-8"))):
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    targets.add(node.module)
-                elif isinstance(node, ast.Import):
-                    targets.update(a.name for a in node.names)
-            stray = {t for t in targets
-                     if t == "core.strategy.lifecycle"
-                     or t.startswith("core.strategy.lifecycle.")}
-            assert not stray, \
-                f"{path.name} 已接 lifecycle（延后窗范围先行窗不得出现）: {stray}"
+    def test_paper_task_end_returns_strategy_to_active(self, db):
+        """paper 态策略的纸盘任务终态→经调度器回调回流 active（5.2
+        接入后触发链恢复——任务结束不再停留 paper）。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+        from core.persistence.repository import paper as paper_repo
 
-    def test_scanner_detects_known_positive(self):
-        """负例自证：同一 AST 扫描器对 lifecycle import 正例源码命中。"""
-        positive = ("from core.strategy.lifecycle import transit\n"
-                    "import core.strategy.lifecycle.service\n")
+        save_strategy(db, strategy_id="st_e5", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h", status="active",
+                      gene_signature="sig_e5")
+        from sqlalchemy import text
+        from core.persistence.orm.engine import engine_for
+        with engine_for(db).begin() as conn:
+            conn.execute(text("UPDATE strategy SET status='paper'"
+                              " WHERE strategy_id='st_e5'"))
+        paper_repo.create_task(
+            db, task_id="pt_e500000001", strategy_id="st_e5",
+            dna_snapshot_json="{}", symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        paper_repo.update_task(db, task_id="pt_e500000001",
+                               status="running",
+                               started_at="2030-01-01T00:00:00+00:00")
+        paper_repo.update_task(db, task_id="pt_e500000001",
+                               status="completed",
+                               stopped_at="2030-01-01T00:00:00+00:00")
+        scheduler = PaperScheduler(db, data_dir=db.parent)
+        scheduler._executor_concluded("pt_e500000001", "completed")
+        with engine_for(db).connect() as conn:
+            status = conn.execute(text("SELECT status FROM strategy"
+                                       " WHERE strategy_id='st_e5'")).scalar_one()
+            events = conn.execute(text(
+                "SELECT from_status, to_status, trigger FROM"
+                " strategy_transition_event WHERE strategy_id='st_e5'")).all()
+        assert status == "active"
+        assert events == [("paper", "active", "task_end")]
+
+    def test_scheduler_uses_lifecycle_transit(self):
+        """触发链在场面：scheduler 已接 lifecycle 公共入口（AST import
+        扫描正锚——先行窗反向锚（零接线）的反转面）。"""
+        import core.paper_trading.runtime.scheduler as scheduler_module
+
         targets = set()
-        for node in ast.walk(ast.parse(positive)):
+        for node in ast.walk(ast.parse(
+                Path(scheduler_module.__file__).read_text(
+                    encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.module:
                 targets.add(node.module)
             elif isinstance(node, ast.Import):
                 targets.update(a.name for a in node.names)
-        stray = {t for t in targets
-                 if t == "core.strategy.lifecycle"
-                 or t.startswith("core.strategy.lifecycle.")}
-        assert stray == {"core.strategy.lifecycle",
-                         "core.strategy.lifecycle.service"}
+        hits = {t for t in targets
+                if t == "core.strategy.lifecycle"
+                or t.startswith("core.strategy.lifecycle.")}
+        assert hits, "scheduler 须接 lifecycle（5.2 触发链恢复）"
