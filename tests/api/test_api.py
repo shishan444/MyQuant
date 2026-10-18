@@ -394,6 +394,37 @@ class TestStrategyRevalidate:
         response = client.post("/api/strategies/nonexistent-id/revalidate")
         assert response.status_code == 404
 
+    def test_revalidate_atomic_rollback_on_reset_failure(
+            self, client: TestClient, monkeypatch) -> None:
+        """CARD-03 两步同事务：统计重置步故障注入→迁移+事件+重置全
+        回滚（status 保持 archived、verify 组原值、零事件）——不留
+        「已 draft 但旧统计未作废」中间态（修复前 update_strategy 在
+        事务外，transit 已提交不可回滚）。"""
+        # 双模块身份坑：client fixture 的 app 经 MyQuant.api.* 身份加载
+        # （conftest create_app import 路径），patch 须打同身份模块对象
+        import sys
+
+        crud_module = sys.modules["MyQuant.api.routes.strategies.crud"]
+
+        sid, _ = self._seed_archived_with_stats(client)
+        before = client.get(f"/api/strategies/{sid}").json()
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("reset step failed")
+
+        monkeypatch.setattr(crud_module, "update_strategy", _boom)
+        with pytest.raises(RuntimeError):
+            client.post(f"/api/strategies/{sid}/revalidate")
+        monkeypatch.undo()
+
+        after = client.get(f"/api/strategies/{sid}").json()
+        assert after["status"] == "archived", "迁移回滚"
+        assert after["verify_count"] == before["verify_count"]
+        assert after["verify_avg_score"] == before["verify_avg_score"]
+        events = TestStrategyDelete._transition_events(client, sid)
+        # 恰好只剩 seed 的 mount 事件——revalidate 迁移事件随事务回滚
+        assert events == [("active", "paper", "mount")]
+
 # ── Test: Strategy Backtest ──
 
 class TestStrategyBacktest:

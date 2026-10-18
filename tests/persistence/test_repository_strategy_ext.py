@@ -136,6 +136,46 @@ class TestUpdateDelete:
         repo.delete_strategy(db, "ghost")  # 不抛错即通过
 
 
+class TestUpdateConnPassthrough:
+    """update_strategy conn 可选透传（CARD-03，形制同 paper.create_task）：
+    传入走外层事务（回滚不落库/提交落库）；白名单与 status 拒绝在
+    透传路径同样生效。缺省自开单事务行为由 TestUpdateDelete 组承载。"""
+
+    def test_透传外层回滚不落库(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            repo.update_strategy(db, strategy_id="s1", name="in_tx",
+                                conn=conn)
+            conn.rollback()
+        assert repo.get_strategy(db, "s1")["name"] is None, \
+            "透传更新随外层回滚不落库"
+
+    def test_透传提交落库(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            repo.update_strategy(db, strategy_id="s1", name="committed",
+                                conn=conn)
+        assert repo.get_strategy(db, "s1")["name"] == "committed"
+
+    def test_透传路径status键仍拒绝(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            with pytest.raises(LifecycleError):
+                repo.update_strategy(db, strategy_id="s1", status="active",
+                                     conn=conn)
+
+
 class TestVerifyStatsRolling:
     """update_strategy_verify_stats：COALESCE/MAX 增量滚动。"""
 
