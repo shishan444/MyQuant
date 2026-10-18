@@ -177,7 +177,8 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
     返回 (sl_mode_val, atr_col_or_None, exit_fraction, add_fraction,
-    max_exposure, max_hold)：
+    max_exposure, max_hold, time_exit, position_mode_code,
+    risk_fraction, effective_first_size)：
     - sl_mode 经 sl_mode_code 映射分派码；atr 模式装载 ATR 列（装载
       校验在 _load_atr_column），非 atr 模式返回 None——占位数组由
       调用方决定（单路径全 1 向量、批量路径逐列堆叠）
@@ -216,9 +217,18 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
         1.0 if risk_genes.position_mode == "risk_budget" else 0.0)
     risk_fraction = (float(risk_genes.risk_fraction)
                      if risk_genes.risk_fraction is not None else 0.0)
+    # 首笔生效比例（add-position-sizing-params 2.1）：声明 initial_
+    # fraction 时替换 fixed 路径首笔定仓来源，否则 position_size（存量
+    # 路径）。物化分派单点——两构建入口均从本元组取值；risk_budget 档
+    # 消费端不读 size_pct（互斥由装载校验承担，直构防御=忽略，不设
+    # 第二判断源）
+    effective_first_size = (
+        float(risk_genes.initial_fraction)
+        if risk_genes.initial_fraction is not None
+        else float(risk_genes.position_size))
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
             max_exposure, max_hold, time_exit,
-            position_mode_code, risk_fraction)
+            position_mode_code, risk_fraction, effective_first_size)
 
 
 @dataclass
@@ -989,7 +999,6 @@ class BacktestEngine:
 
         direction_map = {"long": 0, "short": 1, "mixed": 2}
         direction_val = direction_map.get(dna.risk_genes.direction, 0)
-        size_pct = dna.risk_genes.position_size
         leverage = float(dna.risk_genes.leverage)
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
@@ -998,9 +1007,14 @@ class BacktestEngine:
         # （与 batch_run 共享——漏装即与批量路径静默分叉）；非 atr 模式
         # 占位全 1 数组（引擎不消费）
         (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
-         max_hold, time_exit, position_mode_code, risk_fraction
+         max_hold, time_exit, position_mode_code, risk_fraction,
+         effective_first_size,
          ) = _per_dna_risk_params(
             dna.risk_genes, enhanced_df)
+        # 首笔生效比例（add-position-sizing-params 2.1）：size_pct 赋值
+        # 源从装配元组取（effective_first_size=声明 initial_fraction 否
+        # 则 position_size）——物化分派单点，两入口同批接线
+        size_pct = effective_first_size
         # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
         # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
         bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
@@ -1344,11 +1358,6 @@ class BacktestEngine:
             [direction_map.get(dna.risk_genes.direction, 0) for dna in individuals],
             dtype=np.float64,
         )
-        size_pcts = np.array(
-            [float(dna.risk_genes.position_size)
-             for dna in individuals],
-            dtype=np.float64,
-        )
         leverages = np.array(
             [float(dna.risk_genes.leverage) for dna in individuals],
             dtype=np.float64,
@@ -1383,6 +1392,12 @@ class BacktestEngine:
         # 动态定仓两参数（任务 4——单源装配追加元同款防护）
         position_modes = np.array([p[7] for p in per_dna], dtype=np.float64)
         risk_fractions = np.array([p[8] for p in per_dna], dtype=np.float64)
+        # 首笔生效比例（add-position-sizing-params 2.1）：size_pcts 赋值
+        # 源从装配元组取（p[9]=effective_first_size——声明 initial_
+        # fraction 否则 position_size）。与 _build_portfolio 同批接线：
+        # 漏接本入口的失效形态是进化种群首笔静默按 position_size 执行
+        # 的静默分叉（不报错）
+        size_pcts = np.array([p[9] for p in per_dna], dtype=np.float64)
         # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
         # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe）；
         # run/batch 共用装配单点 _bar_ts_minutes_and_tf）
