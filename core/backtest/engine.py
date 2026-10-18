@@ -882,9 +882,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
             dir_sign = 1.0  # size 正、方向控制多空
         # 动态定仓（任务 4）：fixed 档（含缺省 0.0）百分比路径逐字节
         # 不变；risk_budget 档数量仓——止损距离按 sl_mode 三档分派
-        # （pct=价格×比例/atr 与 trail=比例×当根 ATR——trail 初始追踪
-        # 距离=入场 bar ATR 基准），公式单点 risk_budget_qty；距离
-        # 不可定义（无止损/NaN）回退 fixed 百分比路径（防御直构 DNA）
+        # （pct/trail 同为价格×比例〔trail=峰值回撤比例〕，仅 atr=
+        # 比例×当根 ATR——与下方分支及内层 D-6 注释一致），公式单点
+        # risk_budget_qty；距离不可定义（无止损/NaN）回退 fixed
+        # 百分比路径（防御直构 DNA）
         order_size = np.float64(size_pct * dir_sign)
         order_size_type = np.int64(2)  # 百分比仓
         if position_modes[col] > 0.5:
