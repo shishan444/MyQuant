@@ -357,10 +357,18 @@ def _evidence_layer(
     exit_fills: List[Dict[str, Any]],
     funding_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """证据强度层：60/5 双阈值+研究状态快照+funding 三态计数。
+    """证据强度层：60/5 双阈值+研究状态快照+funding 三态计数+出场
+    原因分布。
 
     insufficient_evidence = bars_run<60 OR closed_trades<5（任一命中即
     整份报告标注；position_bars 共同披露但不参与判定）。
+
+    exit_reasons（add-position-sizing-params 层 6）：出场类 fill
+    （realized_pnl 已回填行——沿既有「出场类」口径，含 reduce 部分
+    出场）按 Intent kind 直接作键聚合；close 类按 reason 细分为
+    "close:signal"/"close:reverse"；无出场任务该键={}（键恒在场，
+    与「无数据」区分）。权威源=pt_fill（聚合派生视图不另立第二
+    事实源）。
     """
     bars_run = len(equity_rows)
     closed_trades = len(exit_fills)
@@ -368,6 +376,13 @@ def _evidence_layer(
     settled = sum(
         1 for r in funding_rows if r["status"] in _SETTLED_STATUSES)
     pending = sum(1 for r in funding_rows if r["status"] == "pending")
+    # 出场原因分布：kind 直接作键（close 细分 reason；reduce 沿
+    # 「realized_pnl 非 NULL」口径自然落键）
+    exit_reasons: Dict[str, int] = {}
+    for f in exit_fills:
+        key = (f"close:{f['reason']}" if f["kind"] == "close"
+               else f["kind"])
+        exit_reasons[key] = exit_reasons.get(key, 0) + 1
     # 终态后补记披露段（design §6.3）：N 点、合计金额 M——未计入账户余额
     disclosure = [
         r for r in funding_rows if r["status"] == "settled_disclosure_only"]
@@ -386,6 +401,7 @@ def _evidence_layer(
         # 无 funding 行=None（「无资金费数据」与「0 笔挂起」语义区分）
         "funding_pending_points": pending if funding_rows else None,
         "funding_post_terminal_backfill": backfill,
+        "exit_reasons": exit_reasons,
     }
 
 
