@@ -9,6 +9,11 @@
 time_exit/max_hold/信号出场全部同款 order_nb 成交机制（U6c 探针结论
 同源；纸盘侧「次根开盘」执行与引擎的跨环境一致性由受控等价层平价 bar
 构造承载，见 tests/helpers/data_factory.make_flat_ohlcv docstring）。
+设计卡「vbt 次根成交=次根开盘出场」措辞的偏差对质已由 team-lead 裁决
+（2026-10-18）：采纳同形制实现——「次根开盘」是纸盘 pending 机制的
+出场形制措辞外溢，引擎侧全部出场机制均为当根 close 扣滑点；两环境
+出场价形制差属既有环境形制差，跨环境等价归组 6 受控等价（平价 bar）
+承载，与 Q-1 预排口径同一处理族。
 
 等价锚原理：恒定价格序列下浮亏=0，loss≡funding_acc（旁路累计）；
 触发 bar 的手算累计 F(i)=Σ 每根增量（=|仓位|×close×lev×rate——与
