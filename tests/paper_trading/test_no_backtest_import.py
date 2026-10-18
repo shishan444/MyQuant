@@ -18,13 +18,22 @@ change 后 ledger 不再持有定仓公式（移驻 core/positioning 注册条�
 
 断言形制（design §11 R10「沿符号级双书写形制纪律」）：扫描
 core/paper_trading/ 全部 .py 源码文本——
-- 模块点形：`from core.backtest`/`import core.backtest` 零出现
-  （任何位置，含注释——现状基线已零命中）；
+- 模块点形：`core.backtest` 任何位置零出现（含注释/docstring 与
+  importlib 动态 import 字符串——点形是 Python import 语句与动态
+  模块路径的真实书写通道；现状基线全域零命中）+子模块导入变体
+  `from core import backtest` 同拒；
 - 路径斜杠形：`core/backtest` 命中行必须全部位于注释或 docstring
   （文档性对照说明——在案两处：runtime/feed.py 模块 docstring 的
   ATR 装载形制对照、kernel/types.py 模块 docstring 的物化缺省表
   对照锚，均为设计保留的对照关系描述）；代码位置（含字符串字面量
   ——动态 import 路径）命中即红。
+
+tester 收紧记录（2026-10-18 建网核对）：原点形断言只查
+`from core.backtest`/`import core.backtest` 两前缀，变异实证暴露
+两漏检面——importlib.import_module("core.backtest.engine") 点形
+动态字符串与 from core import backtest 子模块变体均不红，而
+acceptance 声称「含动态 import 字符串」名不副实；收紧为裸
+`core.backtest` 任何位置零出现（现状零命中，收紧零成本）。
 """
 from __future__ import annotations
 
@@ -49,13 +58,15 @@ class TestNoBacktestImport:
     """REQ-4-07：core/paper_trading/ 对回测引擎引用零命中。"""
 
     def test_no_dotted_import_of_core_backtest_anywhere(self):
-        """模块点形零命中：全部源码文本（含注释/docstring）不出现
-        `from core.backtest` 与 `import core.backtest`——纸盘对回测
-        引擎的 import 依赖为零（任何书写变体均拒）。"""
+        """模块点形零命中：全部源码文本（含注释/docstring/字符串
+        字面量）不出现 `core.backtest`——涵盖 import 语句、importlib
+        动态 import 字符串与任何书写变体；子模块导入变体
+        `from core import backtest` 同拒（纸盘对回测引擎的 import
+        依赖为零）。"""
         offenders: list[str] = []
         for path in _python_files():
             text = path.read_text(encoding="utf-8")
-            for needle in ("from core.backtest", "import core.backtest"):
+            for needle in ("core.backtest", "from core import backtest"):
                 if needle in text:
                     offenders.append(f"{path.relative_to(_PAPER_DIR)}: "
                                      f"{needle}")

@@ -657,6 +657,14 @@ class TestLedgerSizeOpenReferenceParity:
          dict(position_mode="risk_budget", risk_fraction=0.5,
               stop_loss=0.01, leverage=2, max_exposure=0.5),
          100_000.0, 100.0, None),
+        # 恰等边界：dist=100×0.25=25、qty=100000×0.25÷25=1000、
+        # 名义=1000×100=100000==cap=100000×min(1,1.0)（全链二进制
+        # 精确值）——严格大于（两侧 cap 判定同为 qty×price>cap）不
+        # 成立→不截断、capped=False；任一侧比较符漂移为 >= 即经
+        # capped 分量红（对拍锁两侧同比较符边界）
+        ("rb cap 恰等边界不截断",
+         dict(position_mode="risk_budget", risk_fraction=0.25,
+              stop_loss=0.25), 100_000.0, 100.0, None),
         ("rb 拒绝 sl=0 回退 fixed",
          dict(position_mode="risk_budget", risk_fraction=0.01,
               stop_loss=0.0), 10_000.0, 100.0, None),
@@ -721,6 +729,11 @@ class TestLedgerSizeOpenReferenceParity:
                           risk_fraction=0.5, stop_loss=0.01,
                           leverage=2, max_exposure=0.5), 100_000.0,
              100.0, None, (500.0, True)),  # cap=100000×min(2,0.5)
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.25, stop_loss=0.25),
+             100_000.0, 100.0, None, (1_000.0, False)),
+            # 恰等边界：名义 1000×100=cap=100000，严格大于不成立
+            # →不截断（比较符边界锚——>= 漂移经 capped 翻红）
             (self._params(position_mode="risk_budget",
                           risk_fraction=0.01, stop_loss=0.0),
              10_000.0, 100.0, None, (30.0, False)),  # 回退 10000×0.3/100
