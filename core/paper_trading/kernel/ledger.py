@@ -262,6 +262,12 @@ class Ledger:
 
         判定序与意图合法性由解释器/执行器保证；本方法对语境不符的
         意图（有仓开仓/无仓出场）返回 None 不抛异常（防御面）。
+        执行点守卫：open/add 分支定仓结果 qty 无效（NaN/≤0，
+        `not (qty > 0.0)` 单式并拦——含 NaN equity 传导的 margin
+        NaN，SEC-04 收编）时同样 return None 不落账——防 NaN 经
+        fill 链污染 balance/position；价格侧 inf 由装载点守卫
+        （executor._closed_bar 四价 isfinite）单点拦截，本守卫
+        不重复；常态路径价格有效时恒 False 零影响。
 
         Args:
             intent: 待执行意图。
@@ -271,13 +277,16 @@ class Ledger:
                 消费；其余意图不读）。
 
         Returns:
-            Fill | None: 成交记录（realized_pnl 已回填）；语境不符 None。
+            Fill | None: 成交记录（realized_pnl 已回填）；语境不符
+            或 qty 无效 None。
         """
         kind = intent.kind
         if kind == "open":
             if self.position is not None:
                 return None
             qty, capped = self.size_open(exec_bar.open, entry_atr)
+            if not (qty > 0.0):
+                return None
             fill = fill_model.fill(intent, exec_bar, qty)
             fill.capped = capped
             self._apply_open(fill, exec_bar, entry_atr)
@@ -288,6 +297,8 @@ class Ledger:
             add_margin = self.params.add_fraction * self.equity(
                 exec_bar.open)
             qty_add = add_margin * self.params.leverage / exec_bar.open
+            if not (qty_add > 0.0):
+                return None
             fill = fill_model.fill(intent, exec_bar, qty_add)
             self._apply_add(fill)
             return fill
