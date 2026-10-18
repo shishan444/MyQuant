@@ -203,6 +203,14 @@ class RiskGenes:
     position_mode: Optional[str] = None
     # 风险预算比例 (0,0.5]（risk_budget 档生效；fixed 档不消费）
     risk_fraction: Optional[float] = None
+    # 首笔动用资金比例 (0,1]（add-position-sizing-params）：声明时替
+    # 换 fixed 路径的首笔定仓来源（margin=当时权益×initial_fraction），
+    # 加仓仍走 add_fraction；与 risk_budget 互斥（同笔首仓不可两个指挥）
+    initial_fraction: Optional[float] = None
+    # 持仓金额防线（>0 生效，上界完全放开——考场无观点）：单一合并
+    # 持仓总浮亏（未实现亏损+该持仓累计资金费净支出）按收盘价判定，
+    # 达线次根开盘全平；None=未声明（执行物化 0.0=禁用）
+    max_position_loss: Optional[float] = None
 
     def to_dict(self) -> dict:
         # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
@@ -231,6 +239,10 @@ class RiskGenes:
             result["position_mode"] = self.position_mode
         if self.risk_fraction is not None:
             result["risk_fraction"] = self.risk_fraction
+        if self.initial_fraction is not None:
+            result["initial_fraction"] = self.initial_fraction
+        if self.max_position_loss is not None:
+            result["max_position_loss"] = self.max_position_loss
         return result
 
     @classmethod

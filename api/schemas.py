@@ -151,6 +151,10 @@ class RiskGenesModel(BaseModel):
     # 权威在 validator（传输层不加 bound/pattern——五键先例同款）
     position_mode: Optional[str] = None
     risk_fraction: Optional[float] = None
+    # 仓位参数（add-position-sizing-params 同步铁律）：首笔比例 (0,1]
+    # 与金额防线 >0——值域权威在 validator（传输层不加 bound，先例同款）
+    initial_fraction: Optional[float] = None
+    max_position_loss: Optional[float] = None
 
 
 class DNAModel(BaseModel):
