@@ -122,6 +122,18 @@ class TestValidateEntry:
                 ["version"],
                 id="version 小于 1"),
             pytest.param(
+                {"model_id": ""}, (),
+                ["model_id", "非空"],
+                id="model_id 空"),
+            pytest.param(
+                {"implementation": object()}, (),
+                ["implementation", "三方法"],
+                id="implementation 缺三方法"),
+            pytest.param(
+                {"environments": ()}, (),
+                ["environments", "非空"],
+                id="environments 空"),
+            pytest.param(
                 {}, ("test-model",),
                 ["唯一"],
                 id="重复 model_id"),
