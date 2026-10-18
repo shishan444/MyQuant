@@ -44,8 +44,8 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | discovery | 模式发现引擎 | KNN 相似匹配、决策树规则提取、统计验证 | `core/discovery/` | 声明式 |
 | validation | 假设验证引擎 | WHEN/THEN 规则验证、场景检测（6 种场景）、前瞻统计 | `core/validation/` | 声明式 |
 | prediction | 价格区间预测 | GARCH(1,1) 在线波动率、8 市场因子、动态 K 值、离线进化优化预测公式 | `core/prediction/` | 声明式 |
-| trading | 模拟纸盘交易与决策管线 | DecisionPipeline 决策管线、订单生成/管理、虚拟账户、历史回放、后台运行器 | `core/trading/` | 声明式 |
-| live_trading | 实盘网关与执行（执行放行关闭） | 币安网关/OMS/风控/执行器；与模拟盘共享**纯计算边界**（core.trading.judgment 的 evaluate 纯函数 + types 数据类，零状态共享） | `core/live_trading/` | 声明式 |
+| paper_trading | 纸盘交易（模拟盘新域，rebuild-paper-trading） | kernel 三件（intents 意图生成/fills 成交定价/ledger 账本与账户）、runtime（scheduler 调度器/executor 执行器/feed 数据作业/recovery 恢复器）、三层报告；五态状态机+七事件推送 | `core/paper_trading/` | 声明式 |
+| live_trading | 实盘网关与执行（执行放行关闭） | 币安网关/OMS/风控/执行器；判定词汇（judgment 的 evaluate 纯函数 + Decision 等 types 数据类）自有于本域（自 core/trading 迁入，旧模拟域已退役） | `core/live_trading/` | 声明式 |
 | persistence | 数据持久化层 | SQLite 表管理、进化快照存储 | `core/persistence/` | 声明式 |
 | logging | 日志配置 | 按模块和日期组织日志文件路径 | `core/logging/` | 声明式 |
 | api | FastAPI HTTP/WS 接口层 | 路由定义、请求校验、WebSocket 推送、后台任务调度 | `api/` | 声明式 |
