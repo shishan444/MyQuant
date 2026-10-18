@@ -1,43 +1,39 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { TrendingUp } from "lucide-react";
-import { Button, Form, InputNumber, Modal, Switch } from "antd";
-
-const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
-
-const DIRECTION_OPTIONS: { value: string; label: string }[] = [
-  { value: "long", label: "仅多" },
-  { value: "short", label: "仅空" },
-  { value: "mixed", label: "混合" },
-];
+import { useQuery } from "@tanstack/react-query";
+import { Button, Form, Input, InputNumber, Modal, Select, Switch } from "antd";
+import { useStrategies } from "@/hooks/useStrategies";
+import type { CreateTradingTaskParams } from "@/services/trading";
 
 interface CreateTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  strategyName: string | null;
-  symbol: string;
-  timeframe: string;
-  initialCash: number;
-  leverage: number;
-  direction: string;
-  onConfirm: (params: { initialCash: number; leverage: number; direction: string; confidenceSizingEnabled: boolean }) => void;
+  /** 入口跳转预选策略（Strategies/Verify 页「模拟交易」带入 strategy_id） */
+  presetStrategyId?: string | null;
+  onConfirm: (params: CreateTradingTaskParams) => void;
 }
 
 interface CreateFormValues {
-  initialCash: number;
-  leverage: number;
-  direction: string;
-  confidenceSizing: boolean;
+  strategyId: string;
+  initialCash?: number;
+  leverage?: number;
+  symbol?: string;
+  fee?: number;
+  slippage?: number;
+  windowBars?: number;
+  unlimitedWindow: boolean;
+  stopLossPct?: number;
 }
 
+/**
+ * 创建纸盘任务（上盘流转形制）：只收策略编号+可选覆写——DNA 由后端从
+ * 策略库快照，timeframe/direction 恒从 DNA 抄录（无参数位，传入即 422）。
+ * 覆写面：symbol/initial_cash/fee/slippage/leverage/window_bars/stop_loss_pct。
+ */
 export function CreateTaskDialog({
   open,
   onOpenChange,
-  strategyName,
-  symbol,
-  timeframe,
-  initialCash: defaultCash,
-  leverage: defaultLeverage,
-  direction: defaultDirection,
+  presetStrategyId,
   onConfirm,
 }: CreateTaskDialogProps) {
   // 表单草稿唯一持有者=AntD Form（ui-state spec）；弹层开启时同步外部默认值
@@ -46,22 +42,48 @@ export function CreateTaskDialog({
   useEffect(() => {
     if (open) {
       form.setFieldsValue({
-        initialCash: defaultCash,
-        leverage: defaultLeverage,
-        direction: defaultDirection,
-        confidenceSizing: false,
+        strategyId: presetStrategyId ?? "",
+        initialCash: 100_000,
+        leverage: undefined,
+        symbol: undefined,
+        fee: 0.001,
+        slippage: 0.0005,
+        windowBars: 180,
+        unlimitedWindow: false,
+        stopLossPct: undefined,
       });
     }
-  }, [open, defaultCash, defaultLeverage, defaultDirection, form]);
+  }, [open, presetStrategyId, form]);
+
+  // 策略编号选择面（远程列表——GET /api/strategies）
+  const { data: strategyList, isLoading: strategiesLoading } = useQuery(
+    useStrategies({ limit: 200 }),
+  );
+  const strategyOptions = useMemo(
+    () =>
+      (strategyList?.items ?? []).map((s) => ({
+        value: s.strategy_id,
+        label: s.name ? `${s.name}（${s.symbol}/${s.timeframe}）` : `${s.strategy_id}（${s.symbol}/${s.timeframe}）`,
+      })),
+    [strategyList],
+  );
 
   const handleConfirm = async () => {
     const values = await form.validateFields();
-    onConfirm({
-      initialCash: values.initialCash,
-      leverage: values.leverage,
-      direction: values.direction,
-      confidenceSizingEnabled: values.confidenceSizing,
-    });
+    // 覆写面只带显式填写项（undefined 项不传=后端取缺省/DNA；JSON 序列化自动剔除）
+    const params: CreateTradingTaskParams = {
+      strategy_id: values.strategyId,
+    };
+    if (values.initialCash != null) params.initial_cash = values.initialCash;
+    if (values.leverage != null) params.leverage = values.leverage;
+    if (values.symbol) params.symbol = values.symbol.trim().toUpperCase();
+    if (values.fee != null) params.fee = values.fee;
+    if (values.slippage != null) params.slippage = values.slippage;
+    // 窗口四形态：不限期开关=显式 null；未开且未填=不传（后端缺省 180）
+    if (values.unlimitedWindow) params.window_bars = null;
+    else if (values.windowBars != null) params.window_bars = values.windowBars;
+    if (values.stopLossPct != null) params.stop_loss_pct = values.stopLossPct;
+    onConfirm(params);
   };
 
   return (
@@ -74,33 +96,39 @@ export function CreateTaskDialog({
           创建模拟交易任务
         </span>
       }
-      width={480}
+      width={520}
       footer={[
         <Button key="cancel" onClick={() => onOpenChange(false)}>
           取消
         </Button>,
         <Button key="confirm" type="primary" onClick={handleConfirm}>
           创建任务
-        </Button>,
+        </Button>
       ]}
     >
       <p className="text-sm text-text-secondary mb-4">
-        使用该策略启动模拟交易。运行引擎将先处理历史数据，然后切换至实时模式。
+        选定策略编号后上盘：策略 DNA 由后端从策略库流转快照，交易方向与周期恒取 DNA（不可覆写）。
+        受理后进入 pending 排队，超限自动等待。
       </p>
 
       <Form form={form} layout="vertical" className="!mb-0">
-        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border-default p-3">
-          <div>
-            <span className="text-xs text-text-muted">策略</span>
-            <p className="font-medium text-text-primary">{strategyName || "未命名策略"}</p>
-          </div>
-          <div>
-            <span className="text-xs text-text-muted">交易对</span>
-            <p className="font-medium text-text-primary">
-              {symbol} / {timeframe}
-            </p>
-          </div>
+        <Form.Item
+          label="策略"
+          name="strategyId"
+          className="!mb-3"
+          rules={[{ required: true, message: "请选择策略" }]}
+        >
+          <Select
+            showSearch
+            allowClear
+            placeholder="搜索并选择策略"
+            options={strategyOptions}
+            loading={strategiesLoading}
+            optionFilterProp="label"
+          />
+        </Form.Item>
 
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-border-default p-3">
           <Form.Item
             label="初始资金"
             name="initialCash"
@@ -110,92 +138,43 @@ export function CreateTaskDialog({
             <InputNumber min={100} step={10000} className="w-full font-num" style={{ width: "100%" }} />
           </Form.Item>
 
-          <Form.Item label="杠杆倍数" name="leverage" className="!mb-2">
-            <div className="flex gap-1" role="radiogroup" aria-label="杠杆倍数">
-              {LEVERAGE_OPTIONS.map((opt) => (
-                <Form.Item key={opt} name="leverage" noStyle>
-                  <LeverageOption option={opt} />
-                </Form.Item>
-              ))}
-            </div>
+          <Form.Item label="杠杆倍数（留空取 DNA）" name="leverage" className="!mb-2">
+            {/* 上限 10=后端杠杆红线单源 MAX_LEVERAGE（core/strategy/validator.py:35；
+                生成类型不带值域约束，前端显式声明与后端同值） */}
+            <InputNumber min={1} max={10} precision={0} placeholder="取 DNA" className="w-full font-num" style={{ width: "100%" }} />
           </Form.Item>
 
-          <Form.Item label="交易方向" name="direction" className="!mb-0 col-span-2">
-            <div className="flex gap-1" role="radiogroup" aria-label="交易方向">
-              {DIRECTION_OPTIONS.map((opt) => (
-                <Form.Item key={opt.value} name="direction" noStyle>
-                  <DirectionOption option={opt} />
-                </Form.Item>
-              ))}
-            </div>
+          <Form.Item label="交易对覆写（留空取 DNA）" name="symbol" className="!mb-2">
+            <Input placeholder="如 BTCUSDT" allowClear />
           </Form.Item>
 
-          <div className="col-span-2 flex items-center justify-between">
+          <Form.Item label="止损比例（留空不设）" name="stopLossPct" className="!mb-2">
+            <InputNumber min={0.01} max={1} step={0.05} placeholder="如 0.2" className="w-full font-num" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item label="手续费率" name="fee" className="!mb-2">
+            <InputNumber min={0} step={0.0005} className="w-full font-num" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item label="滑点" name="slippage" className="!mb-2">
+            <InputNumber min={0} step={0.0001} className="w-full font-num" style={{ width: "100%" }} />
+          </Form.Item>
+
+          <Form.Item label="窗口根数（bar 数）" name="windowBars" className="!mb-0">
+            <InputNumber min={1} precision={0} placeholder="180" className="w-full font-num" style={{ width: "100%" }} disabled={form.getFieldValue("unlimitedWindow")} />
+          </Form.Item>
+
+          <div className="flex items-center justify-between">
             <div>
-              <span className="text-xs text-text-muted">置信度仓位缩放</span>
-              <p className="text-xs text-text-muted/60">根据信号置信度动态调整入场仓位大小</p>
+              <span className="text-xs text-text-muted">不限期</span>
+              <p className="text-xs text-text-muted/60">不自动结题，手动停止</p>
             </div>
-            <Form.Item name="confidenceSizing" valuePropName="checked" className="!mb-0" noStyle>
-              <Switch aria-label="置信度仓位缩放" />
+            <Form.Item name="unlimitedWindow" valuePropName="checked" className="!mb-0" noStyle>
+              <Switch aria-label="不限期" onChange={() => form.validateFields(["windowBars"]).catch(() => {})} />
             </Form.Item>
           </div>
         </div>
       </Form>
     </Modal>
-  );
-}
-
-/** 杠杆/方向选项以受控小按钮呈现（Form.Item 包裹取值，点击写回表单） */
-function OptionButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`px-2 py-1 rounded text-xs font-medium transition-colors border ${
-        active
-          ? "text-accent-gold border-accent-gold/40"
-          : "border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
-      }`}
-      style={active ? { background: "rgba(245,158,11,0.2)" } : undefined}
-    >
-      {label}
-    </button>
-  );
-}
-
-function LeverageOption({ option, value, onChange }: {
-  option: number;
-  value?: number;
-  onChange?: (v: number) => void;
-}) {
-  return (
-    <OptionButton
-      label={`${option}x`}
-      active={value === option}
-      onClick={() => onChange?.(option)}
-    />
-  );
-}
-
-function DirectionOption({ option, value, onChange }: {
-  option: { value: string; label: string };
-  value?: string;
-  onChange?: (v: string) => void;
-}) {
-  return (
-    <OptionButton
-      label={option.label}
-      active={value === option.value}
-      onClick={() => onChange?.(option.value)}
-    />
   );
 }

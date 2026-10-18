@@ -27,8 +27,6 @@ READONLY_ENDPOINTS = frozenset({
     "/api/evolution/tasks",
     "/api/evolution/tasks/{task_id}",
     "/api/evolution/runner-status",
-    "/api/trading/runner-status",
-    "/api/trading/status",
     "/api/research/indicators",
     "/api/research/signals",
     "/api/research/market-snapshot",
@@ -73,8 +71,7 @@ RESEARCH_POST_ENDPOINTS = frozenset({
 })
 
 # 触金面（任何档位永不出现：下单/调仓/风控修改/实盘开关）
-FORBIDDEN_PATTERNS = ("/api/trading/start", "/api/trading/stop",
-                      "/api/live", "/api/trading/order", "/api/trading/close")
+FORBIDDEN_PATTERNS = ("/api/live",)
 
 
 class EndpointNotAllowed(Exception):

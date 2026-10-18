@@ -75,7 +75,7 @@ _SLIP = 0.0005
 
 def _funding_frame(times: tuple[str, ...],
                    rate: float = 0.0001) -> pd.DataFrame:
-    """funding 归档帧（沿 test_executor 形制；times 空=空索引）。"""
+    """funding 归档帧（沿 test_paper_executor 形制；times 空=空索引）。"""
     idx = pd.DatetimeIndex(pd.to_datetime(list(times), utc=True),
                            name="timestamp")
     return pd.DataFrame({"funding_rate": [rate] * len(idx)}, index=idx)
@@ -141,7 +141,7 @@ class _Harness:
         # 模拟拾取写 running（回放通道跳过 run()——迁移链不断：
         # pending→running→completed；CARD-06 后 append_bar 的 task_state
         # UPDATE 附 WHERE status='running'，直驱不置 running 会冻结
-        # task_state 组——形制沿 test_executor 模拟拾取）
+        # task_state 组——形制沿 test_paper_executor 模拟拾取）
         paper.update_task(
             self.db, self.task_id, status="running",
             started_at="2026-10-16T00:00:00+00:00")
@@ -416,7 +416,7 @@ class TestNonEquivalenceLayerDeclaration:
       ——任意杠杆持仓跨 8h 结算点均扣）vs 回测=固定费率估算（RATE_
       PER_8H 按 bar 折算）+lev≤1 免扣——对账锚由组 3 tests/
       paper_trading/test_funding_backfill.py（挂起补记逐点对账）与
-      tests/paper_trading/test_executor.py TestFundingSettlement（金额
+      tests/paper_trading/test_paper_executor.py TestFundingSettlement（金额
       =数量×结算价×费率×方向符号锚）承载。
     """
 

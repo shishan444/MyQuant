@@ -152,9 +152,10 @@ class TestMoneyTouchBoundary:
     """触金封禁集合断言（spec Scenario「触金封禁不动」）。"""
 
     def test_new_endpoints_disjoint_from_forbidden_patterns(self) -> None:
-        """新端点族与 FORBIDDEN_PATTERNS 前缀零相交（含 stop 后缀路径
-        ——/api/paper-trading/tasks/x/stop 不落入 /api/trading/stop 前
-        线，前缀匹配防误伤双向核验）。"""
+        """新端点族与剩余 FORBIDDEN_PATTERNS 前缀零相交（含 stop 后缀
+        路径——/api/paper-trading/tasks/x/stop 不落入任何触金前缀线，
+        前缀匹配防误伤双向核验；旧交易域前缀已随旧域退役删除，
+        FORBIDDEN_PATTERNS 仅存 /api/live）。"""
         from mcpserver.api_client import FORBIDDEN_PATTERNS
 
         paths = [

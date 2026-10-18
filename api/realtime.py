@@ -102,7 +102,8 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
                 "current_phase": row.get("current_phase"),
             }
         # /trading：纸盘新域快照（rebuild-paper-trading 5.2，design §7.2
-        # 新 schema——旧 paper_trading 表读取面切换，旧仓库随组 7 退役）。
+        # 新 schema——旧 paper_trading 表读取面切换，旧仓库已随旧域
+        # 退役移除，frontend-switch-and-retire R.1）。
         # 任务存在即发（五态 status 自解释——终态重连端可感知任务已结束）。
         # equity 派生与 AccountSnapshot.equity 同式（P0 权益修复联动）：
         # balance 开仓已扣 margin，持仓中须加回 position_margin——逐仓

@@ -1,6 +1,6 @@
 """limit/page 参数上限特征网（CARD-09 修复锚定，修复期安全网）。
 
-锚定五文件 16 参数 Query 约束后的行为（现状=修复后行为）：
+锚定各路由文件 Query 约束后的行为（现状=修复后行为）：
 - 列表类上限 500、ohlcv 类上限 50000；超限 → 422
 - 下界：limit/page ge=1（0 与负值 → 422）、offset ge=0（负值 → 422）
 - 恰等上限放行（le 含等号）；默认值路径不变
@@ -25,8 +25,6 @@ class TestUpperBound422:
         pytest.param("/api/data/chart-indicators/BTCUSDT/4h", "limit", 50001, id="chart-indicators 50001"),
         pytest.param("/api/evolution/strategies", "limit", 501, id="evolution strategies 501"),
         pytest.param("/api/evolution/tasks/tx/discovered-strategies", "limit", 501, id="discovered 501"),
-        pytest.param("/api/trading/tasks", "limit", 501, id="trading tasks 501"),
-        pytest.param("/api/trading/tasks/tx/trades", "limit", 501, id="trades 501"),
         pytest.param("/api/strategies", "limit", 501, id="strategies 501"),
         pytest.param("/api/strategies/verify/history", "limit", 501, id="verify history 501"),
         pytest.param("/api/strategies/verify/sessions", "limit", 501, id="verify sessions 501"),
@@ -38,7 +36,6 @@ class TestUpperBound422:
     @pytest.mark.parametrize(("url", "params"), [
         pytest.param("/api/evolution/tasks", {"page": 0}, id="page=0"),
         pytest.param("/api/evolution/tasks", {"page_size": 501}, id="page_size=501"),
-        pytest.param("/api/trading/tasks", {"offset": -1}, id="trading offset=-1"),
         pytest.param("/api/strategies", {"offset": -5}, id="strategies offset=-5"),
         pytest.param("/api/data/datasets", {"limit": 0}, id="limit=0 下界拒绝"),
         pytest.param("/api/data/datasets", {"limit": -1}, id="limit=-1"),
@@ -80,7 +77,6 @@ class TestBoundaryAndDefaultPass:
         """默认参数路径不受约束影响。"""
         assert api_client.get("/api/data/datasets").status_code == 200
         assert api_client.get("/api/evolution/tasks").status_code == 200
-        assert api_client.get("/api/trading/tasks").status_code == 200
         assert api_client.get("/api/strategies").status_code == 200
         assert api_client.get("/api/strategies/verify/history").status_code == 200
         assert api_client.get("/api/strategies/verify/sessions").status_code == 200

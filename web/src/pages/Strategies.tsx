@@ -756,15 +756,8 @@ export function Strategies() {
   };
 
   const handlePaperTrade = (strategy: Strategy) => {
-    if (!strategy.dna) return;
-    navigate("/trading", {
-      state: {
-        dna: strategy.dna, symbol: strategy.symbol, timeframe: strategy.timeframe,
-        strategyName: strategy.name,
-        leverage: strategy.dna.risk_genes?.leverage,
-        direction: strategy.dna.risk_genes?.direction,
-      },
-    });
+    // 上盘流转（rebuild-paper-trading）：Trading 创建面只收 strategy_id，DNA 由后端从策略库快照
+    navigate("/trading", { state: { strategyId: strategy.strategy_id } });
   };
 
   const handleSeedEvolve = (strategy: Strategy) => {

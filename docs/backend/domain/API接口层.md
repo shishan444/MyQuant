@@ -29,7 +29,7 @@
 | strategies | /api/strategies | GET /, GET /{id} | 策略列表 + 策略详情 |
 | validate | /api/validate | POST / | DNA 校验接口 |
 | ws | /ws | WebSocket /ws/{task_id} | 实时进化进度推送 |
-| trading | /api/trading | POST /start, POST /stop | 实盘/模拟交易任务管理 |
+| paper_trading | /api/paper-trading | POST /tasks, GET /tasks（十二端点族：创建/列表/详情/fills/equity/funding/report/report-final/clone/DELETE/stop/runner-status） | 纸盘任务管理（上盘只收 strategy_id、五态状态机、三层报告） |
 | chart_config | /api/chart-config | GET / | 图表配置接口 |
 | scene | /api/scene | GET /, POST / | 场景管理（多策略对比场景） |
 

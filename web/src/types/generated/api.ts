@@ -656,147 +656,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/trading/tasks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Tasks */
-        get: operations["list_tasks_api_trading_tasks_get"];
-        put?: never;
-        /** Create Task */
-        post: operations["create_task_api_trading_tasks_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Task */
-        get: operations["get_task_api_trading_tasks__task_id__get"];
-        put?: never;
-        post?: never;
-        /** Delete Task */
-        delete: operations["delete_task_api_trading_tasks__task_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop Task */
-        post: operations["stop_task_api_trading_tasks__task_id__stop_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}/restart": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Restart Task
-         * @description 按既有任务同策略/同参数克隆创建新任务。
-         */
-        post: operations["restart_task_api_trading_tasks__task_id__restart_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}/trades": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Trades */
-        get: operations["get_trades_api_trading_tasks__task_id__trades_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}/equity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Equity */
-        get: operations["get_equity_api_trading_tasks__task_id__equity_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/tasks/{task_id}/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Metrics */
-        get: operations["get_metrics_api_trading_tasks__task_id__metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/trading/runner-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runner Status */
-        get: operations["runner_status_api_trading_runner_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/live-trading/tasks": {
         parameters: {
             query?: never;
@@ -835,6 +694,221 @@ export interface paths {
         head?: never;
         /** Update Task */
         patch: operations["update_task_api_live_trading_tasks__task_id__patch"];
+        trace?: never;
+    };
+    "/api/paper-trading/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tasks
+         * @description 任务列表（created_at 倒序分页+total 真总数；status 过滤）。
+         */
+        get: operations["list_tasks_api_paper_trading_tasks_get"];
+        put?: never;
+        /**
+         * Create Task
+         * @description 上盘（创建恒 201 返 pending 行——受理≠运行，超限停留 pending
+         *     排队不拒绝；拒绝面仅 404 strategy not found 与 422 校验数组）。
+         */
+        post: operations["create_task_api_paper_trading_tasks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Task
+         * @description 任务详情（含运行态组+统计组）。
+         */
+        get: operations["get_task_api_paper_trading_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Task
+         * @description 删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。
+         */
+        delete: operations["delete_task_api_paper_trading_tasks__task_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Task
+         * @description stop 请求三态分派（状态机写者=调度器，REST 只转发）：
+         *     pending→直接 stopped（未拾取撤销）；running→协作停止（bar 边界
+         *     退出，行仍 running 至执行器迁移）；终态→409。
+         */
+        post: operations["stop_task_api_paper_trading_tasks__task_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone Task
+         * @description 任意终态克隆重跑（同 DNA 快照同任务参数新建 pending 行）；
+         *     运行/pending→409；strategy 已删→404（快照无法重算）。
+         */
+        post: operations["clone_task_api_paper_trading_tasks__task_id__clone_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/fills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fills
+         * @description 成交流水（bar_time 升序，含 seq/kind/reason 审计字段）。
+         */
+        get: operations["get_fills_api_paper_trading_tasks__task_id__fills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/equity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Equity
+         * @description 权益曲线（bar_time 升序）。
+         */
+        get: operations["get_equity_api_paper_trading_tasks__task_id__equity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/funding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Funding
+         * @description 资金费明细（settle_time 升序；对账披露面——三态可见）。
+         */
+        get: operations["get_funding_api_paper_trading_tasks__task_id__funding_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Report
+         * @description 滚动报告（实时计算不落库；任意状态可取——running 中随时取
+         *     当前版，三层退化自解释）。
+         */
+        get: operations["get_report_api_paper_trading_tasks__task_id__report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/report/final": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Final
+         * @description 结题固化版：?version 缺省最新版、?version=1 取结题初版（Q-2
+         *     版本机制）；未结题→409 "task not concluded"；终态无固化版→404。
+         */
+        get: operations["get_final_api_paper_trading_tasks__task_id__report_final_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/runner-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Runner Status
+         * @description 调度器状态（活跃任务清单/上限/当前运行数/pending 深度——队列
+         *     可见性面，design §7.1 端点 12）。
+         */
+        get: operations["runner_status_api_paper_trading_runner_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/validate": {
@@ -1064,6 +1138,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/union-balance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Union Balance
+         * @description 判定并集余量查询（0.4.1 R4）：已判区间/剩余可用区间/保守折算。
+         *
+         *     三参数必填（账本为假设级）；只读零副作用（不落日志不写库——查询
+         *     不是研究决策证据）；假设不存在 404 前置判定（不以空清单伪装成功）；
+         *     数据范围按 parquet 首尾 bar 完整时间戳直读（半开 [首 bar, 尾
+         *     bar+1×TF)）。与隔离验证的重叠拦截同一账本两出口——查询 remaining
+         *     段发起隔离验证不被拒。
+         */
+        get: operations["union_balance_api_research_union_balance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/validation/{strategy_id}/report": {
         parameters: {
             query?: never;
@@ -1177,12 +1277,13 @@ export interface paths {
         put?: never;
         /**
          * Query Indicator
-         * @description 单指标任意参数现算读数（检查④）：归约摘要直返（≤2048 字节）。
+         * @description 单指标/批量指标现算读数（检查④）：归约摘要直返（分档 2048/16384）。
          *
          *     reductions 封闭枚举多选（latest/quantiles/regime_means/
          *     trend_slope，缺省前两者）；params 缺省拼注册表 default（echo 披露
          *     实际生效值）；装载双路径复用 0.2.8 契约（显式 start 走 warmup
-         *     前扩，缺省全量直装 + effective_start 披露）。
+         *     前扩，缺省全量直装 + effective_start 披露）。groups 形制：组成员
+         *     与单组字段同形（各组区间独立）、组数 1..8、整批原子。
          */
         post: operations["query_indicator_api_research_query_indicator_post"];
         delete?: never;
@@ -1248,7 +1349,7 @@ export interface paths {
         };
         /**
          * Indicators
-         * @description 内置指标元数据（47 项，含 lookback——warmup 推导依据）。
+         * @description 内置指标元数据（48 项，含 lookback——warmup 推导依据）。
          */
         get: operations["indicators_api_research_indicators_get"];
         put?: never;
@@ -1355,6 +1456,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/feature-requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Feature Request
+         * @description 慢通道需求单回销（变更二 4.2——工程侧动作，研究侧 MCP 面不设
+         *     回销工具：通道隔离承载权限语义，本工程无认证体系下的唯一可执行
+         *     权限边界）。
+         *
+         *     部分更新三规则：
+         *     ① 不带 resolution 键 = 该字段不更新（保留现值）；
+         *     ② status→open 时 resolution 自动置 null（open 态无出处的一致性）；
+         *     ③ status=resolved 时 resolution 必填（无出处不得标已实现）→ 422
+         *        detail.param="resolution"；wont_fix 时可选（裁决依据=用户终局
+         *        裁决，note 建议不强制）。
+         *     幂等：请求所含字段与现值全等时 200 返回当前态。
+         */
+        patch: operations["patch_feature_request_api_research_feature_requests__request_id__patch"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1376,6 +1507,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisProvenance
+         * @description 分析谱系引用（complete-research-tooling GAP-10 泛化）：声明假设
+         *     来源的分析任务与候选指纹。
+         *
+         *     两类引用（ref_type）：
+         *     - screen_candidate：全谱扫描候选（旧形制=task_id+candidate_fingerprint
+         *       两键必填——旧调用方零适配，model_validator 补默认值）；
+         *     - analysis_task：网格/统计类分析任务来源（无指纹可引，指纹可选
+         *       ——GAP-10 主场景）。
+         *
+         *     两类同核（服务层）：task_id 存在性+任务记录区间事实核验保留
+         *     （防虚构来源——声明不供数，区间一律取自任务记录）；
+         *     不参与假设幂等键（同条件同区间重复登记命中同一假设）。
+         */
+        AnalysisProvenance: {
+            /**
+             * Ref Type
+             * @default screen_candidate
+             * @enum {string}
+             */
+            ref_type: "screen_candidate" | "analysis_task";
+            /** Task Id */
+            task_id: string;
+            /** Candidate Fingerprint */
+            candidate_fingerprint?: string | null;
+        };
         /**
          * AnalysisRunRequest
          * @description 五类模板统一入口（附.4）。
@@ -1993,36 +2151,6 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** EquitySnapshotListResponse */
-        EquitySnapshotListResponse: {
-            /** Snapshots */
-            snapshots: components["schemas"]["EquitySnapshotResponse"][];
-            /** Total */
-            total: number;
-        };
-        /** EquitySnapshotResponse */
-        EquitySnapshotResponse: {
-            /** Id */
-            id: number;
-            /** Task Id */
-            task_id: string;
-            /** Timestamp */
-            timestamp: string;
-            /** Equity */
-            equity: number;
-            /** Balance */
-            balance: number;
-            /**
-             * Unrealized Pnl
-             * @default 0
-             */
-            unrealized_pnl: number;
-            /**
-             * Position Side
-             * @default flat
-             */
-            position_side: string;
-        };
         /** EvolutionHistoryRecord */
         EvolutionHistoryRecord: {
             /** Generation */
@@ -2298,6 +2426,19 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * FeatureRequestPatch
+         * @description 回销 PATCH 载荷（变更二 4.2）：status 必填；resolution 可选
+         *     （{source 必填, note 可选}——at/by 由服务端补齐）。
+         */
+        FeatureRequestPatch: {
+            /** Status */
+            status: string;
+            /** Resolution */
+            resolution?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** FeatureRequestResponse */
         FeatureRequestResponse: {
             /** Request Id */
@@ -2308,6 +2449,21 @@ export interface components {
             status: string;
             /** Created At */
             created_at: string;
+        };
+        /** FinalReportResponse */
+        FinalReportResponse: {
+            /** Task Id */
+            task_id: string;
+            /** Report Version */
+            report_version: number;
+            /** Generated At */
+            generated_at: string;
+            /** As Of */
+            as_of: string;
+            /** Report */
+            report: {
+                [key: string]: unknown;
+            };
         };
         /** FormulaPluginCreate */
         FormulaPluginCreate: {
@@ -2387,11 +2543,23 @@ export interface components {
             statement: string;
             /** Data Ranges */
             data_ranges: components["schemas"]["DataRangeItem"][];
-            provenance?: components["schemas"]["ScreenProvenance"] | null;
+            provenance?: components["schemas"]["AnalysisProvenance"] | null;
             /** Trigger Policy */
             trigger_policy?: {
                 [key: string]: unknown;
             } | null;
+            /** Strategy Params */
+            strategy_params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Exit Partial Conditions */
+            exit_partial_conditions?: components["schemas"]["ConditionItem"][] | null;
+            /** Add Trigger Conditions */
+            add_trigger_conditions?: components["schemas"]["ConditionItem"][] | null;
+            /** Add Suppress Conditions */
+            add_suppress_conditions?: components["schemas"]["ConditionItem"][] | null;
+            /** Direction */
+            direction?: string | null;
         };
         /** HypothesisListResponse */
         HypothesisListResponse: {
@@ -2428,10 +2596,23 @@ export interface components {
              * @default false
              */
             duplicated: boolean;
+            /**
+             * Direction
+             * @default long
+             */
+            direction: string;
             /** Precheck Warnings */
             precheck_warnings?: {
                 [key: string]: unknown;
             } | null;
+            /** Existing Strategy Params */
+            existing_strategy_params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Threshold Unit Warnings */
+            threshold_unit_warnings?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** HypothesisTransitionRequest */
         HypothesisTransitionRequest: {
@@ -2443,6 +2624,10 @@ export interface components {
         /**
          * IndicatorRef
          * @description 参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。
+         *
+         *     extra=forbid（unblock-research-validation T6）：subject 对象拒绝
+         *     未知键——周期标记 timeframe 是条件顶层键不在 subject 内部
+         *     （RR-015 实测错位层级曾被静默忽略导致 1d/1h 同值）。
          */
         IndicatorRef: {
             /** Indicator */
@@ -2594,7 +2779,7 @@ export interface components {
         /** LiveTradingTaskUpdate */
         LiveTradingTaskUpdate: {
             /** Status */
-            status?: string | null;
+            status?: ("pending" | "running" | "stopped" | "error") | null;
             /** Config Json */
             config_json?: string | null;
             /** Stop Reason */
@@ -2678,118 +2863,158 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
-        /** PaperTradeListResponse */
-        PaperTradeListResponse: {
-            /** Trades */
-            trades: components["schemas"]["PaperTradeResponse"][];
-            /** Total */
-            total: number;
+        /** PaperEquityListResponse */
+        PaperEquityListResponse: {
+            /** Snapshots */
+            snapshots: components["schemas"]["PaperEquityResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
         };
-        /** PaperTradeResponse */
-        PaperTradeResponse: {
+        /** PaperEquityResponse */
+        PaperEquityResponse: {
             /** Id */
             id: number;
             /** Task Id */
             task_id: string;
             /** Bar Time */
             bar_time: string;
+            /** Equity */
+            equity: number;
+            /** Balance */
+            balance: number;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
+            /** Position Side */
+            position_side?: string | null;
+            /** Cumulative Funding */
+            cumulative_funding?: number | null;
+        };
+        /** PaperFillListResponse */
+        PaperFillListResponse: {
+            /** Fills */
+            fills: components["schemas"]["PaperFillResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+        };
+        /** PaperFillResponse */
+        PaperFillResponse: {
+            /** Id */
+            id: number;
+            /** Task Id */
+            task_id: string;
+            /** Bar Time */
+            bar_time: string;
+            /** Seq */
+            seq: number;
+            /** Kind */
+            kind: string;
             /** Side */
-            side: string;
-            /** Action */
-            action: string;
+            side?: string | null;
             /** Price */
-            price: number;
+            price?: number | null;
             /** Quantity */
-            quantity: number;
-            /** Pnl */
-            pnl?: number | null;
-            /**
-             * Fee Paid
-             * @default 0
-             */
-            fee_paid: number;
+            quantity?: number | null;
+            /** Fee */
+            fee?: number | null;
+            /** Realized Pnl */
+            realized_pnl?: number | null;
             /** Reason */
             reason?: string | null;
         };
+        /** PaperFundingListResponse */
+        PaperFundingListResponse: {
+            /** Records */
+            records: components["schemas"]["PaperFundingResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+        };
+        /** PaperFundingResponse */
+        PaperFundingResponse: {
+            /** Id */
+            id: number;
+            /** Task Id */
+            task_id: string;
+            /** Settle Time */
+            settle_time: string;
+            /** Bar Time */
+            bar_time: string;
+            /** Status */
+            status: string;
+            /** Rate */
+            rate?: number | null;
+            /** Amount */
+            amount?: number | null;
+            /** Position Quantity */
+            position_quantity?: number | null;
+            /** Settle Price */
+            settle_price?: number | null;
+        };
         /**
-         * PaperTradingTaskCreate
-         * @description 创建模拟盘任务的请求体。
+         * PaperTaskCreate
+         * @description 创建纸盘任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
+         *     库流转快照——design §11 偏差 2「消灭手工抄写」）。
+         *
+         *     window_bars 四形态编码（spec 上盘流转 Requirement）：不传=缺省 180；
+         *     显式 null=不限期（不自动结题）；显式 N≥1=N 根；0/负/非整=422。
+         *     leverage/symbol 缺省取 DNA；timeframe 恒从 DNA 抄录（无参数位）。
          */
-        PaperTradingTaskCreate: {
-            /**
-             * Dna Json
-             * @description StrategyDNA as JSON string
-             */
-            dna_json: string;
-            /**
-             * Symbol
-             * @default BTCUSDT
-             */
-            symbol: string;
-            /**
-             * Timeframe
-             * @default 4h
-             */
-            timeframe: string;
+        PaperTaskCreate: {
+            /** Strategy Id */
+            strategy_id: string;
             /**
              * Initial Cash
              * @default 100000
              */
             initial_cash: number;
+            /** Leverage */
+            leverage?: number | null;
             /**
              * Fee
              * @default 0.001
              */
             fee: number;
             /**
-             * Leverage
-             * @default 1
+             * Slippage
+             * @default 0.0005
              */
-            leverage: number;
+            slippage: number;
+            /** Symbol */
+            symbol?: string | null;
             /**
-             * Direction
-             * @default long
+             * Window Bars
+             * @default 180
              */
-            direction: string;
-            /**
-             * Score Template
-             * @default explorer
-             * @enum {string}
-             */
-            score_template: "explorer" | "optimizer" | "max_return" | "balanced" | "steady" | "custom" | "aggressive" | "profit_first" | "conservative" | "risk_first";
-            /** Strategy Name */
-            strategy_name?: string | null;
-            /**
-             * Strategy Id
-             * @description Optional strategy ID for qualified check
-             */
-            strategy_id?: string | null;
-            /**
-             * Confidence Sizing Enabled
-             * @default false
-             */
-            confidence_sizing_enabled: boolean;
-            /**
-             * Prediction Dna Json
-             * @description PredictionDNA as JSON string
-             */
-            prediction_dna_json?: string | null;
+            window_bars: number | null;
+            /** Stop Loss Pct */
+            stop_loss_pct?: number | null;
         };
-        /** PaperTradingTaskListResponse */
-        PaperTradingTaskListResponse: {
+        /** PaperTaskListResponse */
+        PaperTaskListResponse: {
             /** Tasks */
-            tasks: components["schemas"]["PaperTradingTaskResponse"][];
+            tasks: components["schemas"]["PaperTaskResponse"][];
             /** Total */
             total: number;
         };
-        /** PaperTradingTaskResponse */
-        PaperTradingTaskResponse: {
+        /** PaperTaskResponse */
+        PaperTaskResponse: {
             /** Task Id */
             task_id: string;
             /** Status */
             status: string;
-            /** Strategy Name */
-            strategy_name?: string | null;
+            /** Strategy Id */
+            strategy_id: string;
             /** Symbol */
             symbol: string;
             /** Timeframe */
@@ -2798,12 +3023,50 @@ export interface components {
             initial_cash: number;
             /** Fee */
             fee: number;
+            /** Slippage */
+            slippage: number;
             /** Leverage */
             leverage: number;
-            /** Direction */
-            direction: string;
-            /** Score Template */
-            score_template: string;
+            /** Window Bars */
+            window_bars?: number | null;
+            /** Stop Loss Pct */
+            stop_loss_pct?: number | null;
+            /** Bars Processed */
+            bars_processed: number;
+            /** Last Bar Time */
+            last_bar_time?: string | null;
+            /** Balance */
+            balance?: number | null;
+            /** Position Side */
+            position_side?: string | null;
+            /** Position Entry */
+            position_entry?: number | null;
+            /** Position Quantity */
+            position_quantity?: number | null;
+            /** Position Margin */
+            position_margin?: number | null;
+            /** Position Open Cost */
+            position_open_cost?: number | null;
+            /** Position Sl Price */
+            position_sl_price?: number | null;
+            /** Position Tp Price */
+            position_tp_price?: number | null;
+            /** Position Trail Peak */
+            position_trail_peak?: number | null;
+            /** Position Entry Bar Seq */
+            position_entry_bar_seq?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
+            /** Total Trades */
+            total_trades: number;
+            /** Win Count */
+            win_count: number;
+            /** Loss Count */
+            loss_count: number;
+            /** Total Pnl */
+            total_pnl: number;
+            /** Research Status Snapshot */
+            research_status_snapshot: string;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -2814,61 +3077,10 @@ export interface components {
             stopped_at?: string | null;
             /** Stop Reason */
             stop_reason?: string | null;
-            /** Position Side */
-            position_side?: string | null;
-            /** Position Entry */
-            position_entry?: number | null;
-            /** Position Quantity */
-            position_quantity?: number | null;
-            /** Position Margin */
-            position_margin?: number | null;
-            /** Position Funding */
-            position_funding?: number | null;
-            /** Balance */
-            balance?: number | null;
-            /**
-             * Unrealized Pnl
-             * @default 0
-             */
-            unrealized_pnl: number;
-            /**
-             * Total Trades
-             * @default 0
-             */
-            total_trades: number;
-            /**
-             * Total Pnl
-             * @default 0
-             */
-            total_pnl: number;
-            /**
-             * Win Count
-             * @default 0
-             */
-            win_count: number;
-            /**
-             * Loss Count
-             * @default 0
-             */
-            loss_count: number;
-            /** Last Bar Time */
-            last_bar_time?: string | null;
-            /** Last Bar Close */
-            last_bar_close?: number | null;
-            /**
-             * Execution Model
-             * @default v1
-             */
-            execution_model: string;
-            /**
-             * Confidence Sizing Enabled
-             * @default false
-             */
-            confidence_sizing_enabled: boolean;
-            /** Prediction Dna Json */
-            prediction_dna_json?: string | null;
-            /** Warnings */
-            warnings?: string[] | null;
+            /** Heartbeat At */
+            heartbeat_at?: string | null;
+            /** Error Detail */
+            error_detail?: string | null;
         };
         /**
          * QueryIndicatorRequest
@@ -2876,6 +3088,12 @@ export interface components {
          *
          *     params 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases
          *     的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。
+         *
+         *     0.4.1 R1 批量形制：可选 groups 与单组专属字段（indicator/params/
+         *     reductions/start/end）互斥（同传 422 指明互斥对；symbol/timeframe
+         *     公共必填保留）。groups MUST 显式声明——本模型无 model_config，
+         *     pydantic 默认 ignore 会静默丢键使批量请求降级单组语义；indicator
+         *     随之转可选（单组形制缺 indicator 由服务层 422）。
          */
         QueryIndicatorRequest: {
             /** Symbol */
@@ -2883,7 +3101,7 @@ export interface components {
             /** Timeframe */
             timeframe: string;
             /** Indicator */
-            indicator: string;
+            indicator?: string | null;
             /** Params */
             params?: {
                 [key: string]: unknown;
@@ -2894,6 +3112,10 @@ export interface components {
             start?: string | null;
             /** End */
             end?: string | null;
+            /** Groups */
+            groups?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** RandomWindowRequest */
         RandomWindowRequest: {
@@ -3002,6 +3224,20 @@ export interface components {
              * @default 14
              */
             atr_period: number;
+            /** Exit Fraction */
+            exit_fraction?: number | null;
+            /** Add Fraction */
+            add_fraction?: number | null;
+            /** Max Exposure */
+            max_exposure?: number | null;
+            /** Max Hold */
+            max_hold?: number | null;
+            /** Time Exit Utc */
+            time_exit_utc?: number | null;
+            /** Position Mode */
+            position_mode?: string | null;
+            /** Risk Fraction */
+            risk_fraction?: number | null;
         };
         /** RuleConditionInput */
         RuleConditionInput: {
@@ -3227,19 +3463,6 @@ export interface components {
                 [key: string]: string;
             }[];
         };
-        /**
-         * ScreenProvenance
-         * @description 扫描谱系引用（add-screen-patterns D5）：声明候选来源。
-         *
-         *     只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；
-         *     不参与假设幂等键（同条件同区间重复登记命中同一假设）。
-         */
-        ScreenProvenance: {
-            /** Task Id */
-            task_id: string;
-            /** Candidate Fingerprint */
-            candidate_fingerprint: string;
-        };
         /** SignalGeneModel */
         "SignalGeneModel-Input": {
             /** Indicator */
@@ -3255,6 +3478,8 @@ export interface components {
             condition?: {
                 [key: string]: unknown;
             };
+            /** Timeframe */
+            timeframe?: string | null;
         };
         /** SignalGeneModel */
         "SignalGeneModel-Output": {
@@ -3271,6 +3496,8 @@ export interface components {
             condition?: {
                 [key: string]: unknown;
             };
+            /** Timeframe */
+            timeframe?: string | null;
         };
         /**
          * SignalRole
@@ -3445,70 +3672,6 @@ export interface components {
             return_pct: number;
             /** Is Win */
             is_win: boolean;
-        };
-        /** TradingMetricsResponse */
-        TradingMetricsResponse: {
-            /** Task Id */
-            task_id: string;
-            /**
-             * Total Return
-             * @default 0
-             */
-            total_return: number;
-            /**
-             * Total Return Pct
-             * @default 0
-             */
-            total_return_pct: number;
-            /** Win Rate */
-            win_rate?: number | null;
-            /** Profit Factor */
-            profit_factor?: number | null;
-            /**
-             * Max Drawdown
-             * @default 0
-             */
-            max_drawdown: number;
-            /**
-             * Max Drawdown Pct
-             * @default 0
-             */
-            max_drawdown_pct: number;
-            /**
-             * Avg Trade Pnl
-             * @default 0
-             */
-            avg_trade_pnl: number;
-            /**
-             * Total Trades
-             * @default 0
-             */
-            total_trades: number;
-            /**
-             * Total Pnl
-             * @default 0
-             */
-            total_pnl: number;
-            /**
-             * Realized Pnl
-             * @default 0
-             */
-            realized_pnl: number;
-            /**
-             * Unrealized Pnl
-             * @default 0
-             */
-            unrealized_pnl: number;
-            /**
-             * Win Count
-             * @default 0
-             */
-            win_count: number;
-            /**
-             * Loss Count
-             * @default 0
-             */
-            loss_count: number;
         };
         /** TranslateRequest */
         TranslateRequest: {
@@ -5127,315 +5290,6 @@ export interface operations {
             };
         };
     };
-    list_tasks_api_trading_tasks_get: {
-        parameters: {
-            query?: {
-                status?: string | null;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradingTaskListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_task_api_trading_tasks_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaperTradingTaskCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradingTaskResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_task_api_trading_tasks__task_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradingTaskResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_task_api_trading_tasks__task_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stop_task_api_trading_tasks__task_id__stop_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradingTaskResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restart_task_api_trading_tasks__task_id__restart_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradingTaskResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_trades_api_trading_tasks__task_id__trades_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaperTradeListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_equity_api_trading_tasks__task_id__equity_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EquitySnapshotListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_metrics_api_trading_tasks__task_id__metrics_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TradingMetricsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runner_status_api_trading_runner_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     list_tasks_api_live_trading_tasks_get: {
         parameters: {
             query?: {
@@ -5593,6 +5447,388 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tasks_api_paper_trading_tasks_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperTaskListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_task_api_paper_trading_tasks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperTaskCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_task_api_paper_trading_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_task_api_paper_trading_tasks__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_task_api_paper_trading_tasks__task_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clone_task_api_paper_trading_tasks__task_id__clone_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fills_api_paper_trading_tasks__task_id__fills_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperFillListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_equity_api_paper_trading_tasks__task_id__equity_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperEquityListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_funding_api_paper_trading_tasks__task_id__funding_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperFundingListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_report_api_paper_trading_tasks__task_id__report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_final_api_paper_trading_tasks__task_id__report_final_get: {
+        parameters: {
+            query?: {
+                version?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FinalReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runner_status_api_paper_trading_runner_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -5970,6 +6206,41 @@ export interface operations {
                 "application/json": components["schemas"]["RandomWindowRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    union_balance_api_research_union_balance_get: {
+        parameters: {
+            query: {
+                symbol: string;
+                timeframe: string;
+                hypothesis_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -6505,6 +6776,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeatureRequestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_feature_request_api_research_feature_requests__request_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeatureRequestPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

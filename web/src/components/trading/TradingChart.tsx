@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
-import type { PaperTrade } from "@/services/trading";
+import type { PaperFill } from "@/services/trading";
 import type { SignalData } from "@/components/charts/KlineChart";
 
 interface TradingChartProps {
   symbol: string;
   timeframe: string;
-  trades: PaperTrade[];
+  fills: PaperFill[];
   height?: number;
   isActive?: boolean;
 }
@@ -32,16 +32,23 @@ function barsAgoDate(timeframe: string, bars: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-function tradesToSignals(trades: PaperTrade[]): SignalData[] {
-  return trades
-    .filter((t) => t.side) // skip records with empty side
-    .map((t) => ({
-      type: `${t.action}_${t.side}` as SignalData["type"],
-      timestamp: t.bar_time,
+/** fill.kind 出场五值归并为 close（KlineChart 信号动作词汇四值） */
+const EXIT_KINDS = new Set(["exit_sl", "exit_tp", "exit_max_hold", "exit_time", "exit_liquidation"]);
+
+function fillAction(kind: string): "open" | "close" | "add" | "reduce" {
+  return EXIT_KINDS.has(kind) ? "close" : (kind as "open" | "close" | "add" | "reduce");
+}
+
+function fillsToSignals(fills: PaperFill[]): SignalData[] {
+  return fills
+    .filter((f) => f.side) // 出场全平类 side=null 不画信号（与旧口径一致）
+    .map((f) => ({
+      type: `${fillAction(f.kind)}_${f.side}` as SignalData["type"],
+      timestamp: f.bar_time,
     }));
 }
 
-export function TradingChart({ symbol, timeframe, trades, height = 420, isActive }: TradingChartProps) {
+export function TradingChart({ symbol, timeframe, fills, height = 420, isActive }: TradingChartProps) {
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
   // Only load the last 200 bars of data for paper trading chart
@@ -63,7 +70,7 @@ export function TradingChart({ symbol, timeframe, trades, height = 420, isActive
     refetchInterval: isActive ? 30_000 : false,
   });
 
-  const signals = useMemo(() => tradesToSignals(trades), [trades]);
+  const signals = useMemo(() => fillsToSignals(fills), [fills]);
 
   if (isLoadingOhlcv || !candleData?.length) {
     return (

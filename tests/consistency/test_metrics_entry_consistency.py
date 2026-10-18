@@ -3,13 +3,10 @@
 病根注记（2026-09-24 普查实锤；xfail strict = 收口完成转绿时报错
 提醒摘牌，红→绿即阶段 1 验收主证据）：
 
-- win_rate 绩效口径多处独立实现三种口径：
+- win_rate 绩效口径多处独立实现：
   * backtest/engine.py:583 逐笔小数（winning / len(pnl_arr)）
   * scoring/metrics.py:107-114 逐笔优先小数 + bar 级 fallback，
     零交易落 0.0（应缺失）
-  * scoring/trading_metrics.py:60 小数，max(total_trades,1) 使零
-    交易胜率为 0.0 而非缺失——违反 numerical-accuracy-verification
-    的「无交易时胜率为缺失而非 0」Requirement
   * validation/rule_engine.py:181 百分比口径（*100）
 - rule_engine 以信号配对判胜负、回测/模拟盘以逐笔平仓 pnl 判胜：
   两套配对逻辑在部分平仓/信号未平仓边界可能结构性不等，本测试
@@ -42,29 +39,6 @@ def _flat_equity(n: int = 100, cash: float = 10_000.0) -> pd.Series:
 
 class TestZeroTradeMissingSemantics:
     """spec：numerical-accuracy-verification「无交易缺省语义」。"""
-
-    def test_trading_metrics_zero_trades_win_rate_missing(self):
-        from core.scoring.trading_metrics import (
-            TradingMetricsInput,
-            compute_trading_metrics,
-        )
-
-        metrics = compute_trading_metrics(
-            TradingMetricsInput(
-                initial_cash=10_000.0,
-                balance=10_000.0,
-                total_trades=0,
-                win_count=0,
-                loss_count=0,
-                realized_pnl=0.0,
-                unrealized_pnl=0.0,
-                position_side=None,
-                position_margin=0.0,
-                close_pnls=[],
-                equity_snapshots=[10_000.0],
-            )
-        )
-        assert metrics["win_rate"] is None or np.isnan(metrics["win_rate"])
 
     def test_compute_metrics_zero_trades_win_rate_missing(self):
         from core.scoring.metrics import compute_metrics
@@ -121,60 +95,6 @@ class TestDecimalScaleUniformity:
         assert result.total_trades > 0
         # 计算层应统一小数口径
         assert 0.0 <= result.win_rate <= 1.0
-
-
-# ---------------------------------------------------------------------------
-# 同口径内两链同值（常绿哨兵：收口前即成立，收口后必须保持）
-# ---------------------------------------------------------------------------
-
-
-class TestTwoChainsSameValue:
-    def test_win_rate_two_chains_identical(self):
-        """同一份逐笔明细，回测链公式与模拟盘链公式必须同值。
-
-        引擎侧 win_rate 来源公式（engine.py:583 winning/len(pnl_arr)）
-        由调用方算出后传入 compute_metrics；此处按同公式复算对照。
-        """
-        from core.scoring.metrics import compute_metrics
-        from core.scoring.trading_metrics import (
-            TradingMetricsInput,
-            compute_trading_metrics,
-        )
-
-        close_pnls = [100.0, -50.0, 80.0, -30.0, 120.0]
-        wins = sum(1 for p in close_pnls if p > 0)
-        engine_formula = wins / len(close_pnls)
-
-        equity = 10_000.0 + np.cumsum([0.0] + close_pnls)
-        equity_curve = pd.Series(
-            equity, index=pd.date_range("2026-01-01", periods=len(equity), freq="h")
-        )
-        backtest_metrics = compute_metrics(
-            equity_curve,
-            total_trades=len(close_pnls),
-            trade_win_rate=engine_formula,
-            trade_returns=np.array(close_pnls) / 10_000.0,
-        )
-
-        paper_metrics = compute_trading_metrics(
-            TradingMetricsInput(
-                initial_cash=10_000.0,
-                balance=float(equity[-1]),
-                total_trades=len(close_pnls),
-                win_count=wins,
-                loss_count=len(close_pnls) - wins,
-                realized_pnl=float(sum(close_pnls)),
-                unrealized_pnl=0.0,
-                position_side=None,
-                position_margin=0.0,
-                close_pnls=close_pnls,
-                equity_snapshots=[float(x) for x in equity],
-            )
-        )
-
-        assert paper_metrics["win_rate"] == pytest.approx(engine_formula)
-        assert backtest_metrics["win_rate"] == pytest.approx(engine_formula)
-        assert paper_metrics["win_rate"] == pytest.approx(backtest_metrics["win_rate"])
 
 
 # ---------------------------------------------------------------------------

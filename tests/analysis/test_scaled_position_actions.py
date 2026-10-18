@@ -2,7 +2,8 @@
 B4/L2 用例组 + 4.6 翻译生产路径拒绝面收口）。
 
 覆盖：三角色映射四断言/插件列新组拒绝/组基因进签名/翻译生产路径
-三链装载即拒（B3-17 完整收口——真实翻译产物双证据）/预检组级披露/
+live 链装载即拒（B3-17 收口——真实翻译产物证据；回放/模拟旧链随
+旧域退役摘除）/预检组级披露/
 示例策略形态端到端（版本 DoD：组合入场+部分离场+trail+风险声明→
 登记→翻译→回测行为与设计一致）。
 """
@@ -153,8 +154,8 @@ class TestTranslationMapping:
 class TestProductionPathRejection:
     """4.6 翻译生产路径拒绝面收口（B3-17 完整断言——真实翻译产物双证据）。"""
 
-    def test_translated_scaling_dna_rejected_all_links(self, db):
-        """真实翻译产物（REDUCE/ADD/ADD_INHIBIT 基因 DNA）三链装载即拒。"""
+    def test_translated_scaling_dna_rejected_on_live(self, db):
+        """真实翻译产物（REDUCE/ADD/ADD_INHIBIT 基因 DNA）live 链装载即拒。"""
         h = _register_scaling(db, exit_group=GROUP_RSI_HIGH,
                               add_group=GROUP_RSI_LOW,
                               suppress_group=[_cond(80, "gt")])
@@ -162,12 +163,12 @@ class TestProductionPathRejection:
         from core.strategy.dna import StrategyDNA
         dna = StrategyDNA.from_dict(
             json.loads(get_strategy(db, t["strategy_id"])["dna_json"]))
-        for link in ("replay", "paper", "live"):
+        for link in ("live",):
             reasons = validate_trading_compatibility(dna, link)
             assert reasons and "分批" in reasons[0], (link, reasons)
 
-    def test_translated_trail_dna_rejected_all_links(self, db):
-        """trail 声明经翻译产物三链拒（翻译生产路径的模式面）。"""
+    def test_translated_trail_dna_rejected_on_live(self, db):
+        """trail 声明经翻译产物 live 链拒（翻译生产路径的模式面）。"""
         h = _register_scaling(
             db, sp={"sl_mode": "trail", "stop_loss": 0.05}, period=27)
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
@@ -175,7 +176,7 @@ class TestProductionPathRejection:
         dna = StrategyDNA.from_dict(
             json.loads(get_strategy(db, t["strategy_id"])["dna_json"]))
         assert dna.risk_genes.sl_mode == "trail"
-        for link in ("replay", "paper", "live"):
+        for link in ("live",):
             assert validate_trading_compatibility(dna, link)
 
 
@@ -288,6 +289,6 @@ class TestDoDEndToEnd:
         assert result.total_trades >= 1, "DoD 链应有交易"
         assert np.isfinite(result.total_return), "trail 回测不炸"
 
-        # 4. 交易链拒绝面：同一真实产物三链拒（trail+分批双判据）
-        reasons = validate_trading_compatibility(dna, "paper")
+        # 4. live 链拒绝面：同一真实产物（trail+分批双判据）
+        reasons = validate_trading_compatibility(dna, "live")
         assert len(reasons) == 2  # trail + 分批角色（双判据合并报告）

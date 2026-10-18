@@ -11,11 +11,10 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-# 留档旧纸盘三表（rebuild-paper-trading 2.1 裁决）：旧仓库
-# core/persistence/repository/paper_trading.py（组 7 才退役）仍 import
-# 旧模型类——退役前模型类不得删除，故表仍在 metadata；断言语义按
-# 「活跃表清单」表达：旧三表移出活跃集、新五表（pt_*）补入。
-# 组 7 删旧模型类时同步收走本集合与相关断言。
+# 留档旧纸盘三表（rebuild-paper-trading 2.1 裁决）：旧域退役（组 7）
+# 只删旧仓库代码，旧三表数据与 ORM 模型类留档不删，故表仍在
+# metadata；断言语义按「活跃表清单」表达：旧三表移出活跃集、
+# 新五表（pt_*）补入。
 _LEGACY_PAPER_TABLES = frozenset({
     "paper_equity_snapshot", "paper_trade", "paper_trading_task",
 })

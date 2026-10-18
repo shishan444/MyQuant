@@ -1,5 +1,6 @@
 /**
  * Tests for hooks/useTrading.ts: query key factory + mutation hooks.
+ * （新域形制：create 收 strategy_id+覆写；restart→clone）
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
@@ -12,10 +13,13 @@ vi.mock("@/services/trading", () => ({
   getTradingTask: vi.fn(),
   createTradingTask: vi.fn(),
   stopTradingTask: vi.fn(),
-  getTradingTrades: vi.fn(),
+  cloneTradingTask: vi.fn(),
+  getTradingFills: vi.fn(),
+  getTradingFunding: vi.fn(),
   getTradingRunnerStatus: vi.fn(),
   getTradingEquity: vi.fn(),
-  getTradingMetrics: vi.fn(),
+  getTradingReport: vi.fn(),
+  getTradingFinalReport: vi.fn(),
   deleteTradingTask: vi.fn(),
 }));
 
@@ -28,12 +32,15 @@ import {
   useTradingTasks,
   useCreateTradingTask,
   useStopTradingTask,
+  useCloneTradingTask,
   useDeleteTradingTask,
+  isTerminalStatus,
 } from "@/hooks/useTrading";
 import {
   listTradingTasks,
   createTradingTask,
   stopTradingTask,
+  cloneTradingTask,
   deleteTradingTask,
 } from "@/services/trading";
 
@@ -54,19 +61,37 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("isTerminalStatus（终态门槛——clone/delete/结题报告）", () => {
+  it("completed/stopped/error 为终态", () => {
+    expect(isTerminalStatus("completed")).toBe(true);
+    expect(isTerminalStatus("stopped")).toBe(true);
+    expect(isTerminalStatus("error")).toBe(true);
+  });
+
+  it("pending/running 非终态", () => {
+    expect(isTerminalStatus("pending")).toBe(false);
+    expect(isTerminalStatus("running")).toBe(false);
+  });
+});
+
 describe("useTrading hooks", () => {
   // --- useTradingTasks ---
   describe("useTradingTasks", () => {
     it("fetches task list on mount", async () => {
       const mockData = {
         tasks: [{
-          task_id: "t1", status: "stopped", strategy_name: null, symbol: "BTCUSDT", timeframe: "4h",
-          initial_cash: 100000, fee: 0.001, leverage: 1, direction: "long", score_template: "default",
-          created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", started_at: null, stopped_at: null,
-          stop_reason: null, position_side: null, position_entry: null, position_quantity: null, position_margin: null,
-          position_funding: null, balance: null, unrealized_pnl: 0, total_trades: 0, total_pnl: 0, win_count: 0,
-          loss_count: 0, last_bar_time: null, last_bar_close: null, confidence_sizing_enabled: false,
-          execution_model: "v1",
+          task_id: "t1", status: "stopped" as const, strategy_id: "s1", symbol: "BTCUSDT",
+          timeframe: "4h", initial_cash: 100000, fee: 0.001, slippage: 0.0005,
+          leverage: 1, window_bars: 180, stop_loss_pct: null, bars_processed: 100,
+          last_bar_time: null, balance: null, position_side: null, position_entry: null,
+          position_quantity: null, position_margin: null, position_open_cost: null,
+          position_sl_price: null, position_tp_price: null, position_trail_peak: null,
+          position_entry_bar_seq: null, unrealized_pnl: null, total_trades: 0,
+          win_count: 0, loss_count: 0, total_pnl: 0,
+          research_status_snapshot: "researched",
+          created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z",
+          started_at: null, stopped_at: null, stop_reason: null, heartbeat_at: null,
+          error_detail: null,
         }],
         total: 1,
       };
@@ -90,10 +115,10 @@ describe("useTrading hooks", () => {
     });
   });
 
-  // --- useCreateTradingTask ---
+  // --- useCreateTradingTask（strategy_id+可选覆写） ---
   describe("useCreateTradingTask", () => {
     it("calls createTradingTask and invalidates queries on success", async () => {
-      const params = { dna_json: "{}", symbol: "BTCUSDT", timeframe: "4h" };
+      const params = { strategy_id: "s1", initial_cash: 200_000, window_bars: null };
       const mockTask = { task_id: "new1", status: "pending" };
       vi.mocked(createTradingTask).mockResolvedValueOnce(mockTask as any);
 
@@ -118,6 +143,21 @@ describe("useTrading hooks", () => {
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(stopTradingTask).toHaveBeenCalledWith("t1");
+    });
+  });
+
+  // --- useCloneTradingTask（原 restart 调用面） ---
+  describe("useCloneTradingTask", () => {
+    it("calls cloneTradingTask with taskId（新任务编号返回）", async () => {
+      const mockTask = { task_id: "t2", status: "pending" };
+      vi.mocked(cloneTradingTask).mockResolvedValueOnce(mockTask as any);
+
+      const { result } = renderHook(() => useCloneTradingTask(), { wrapper: createWrapper() });
+
+      result.current.mutate("t1");
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(cloneTradingTask).toHaveBeenCalledWith("t1");
     });
   });
 

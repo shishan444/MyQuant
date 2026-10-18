@@ -18,7 +18,6 @@ from api.schemas import (
     BacktestRequest,
     CompareRequest,
     EvolutionTaskCreate,
-    PaperTradingTaskCreate,
     RequirementsConfigModel,
     ScoreTemplateName,
     ScoringObjective,
@@ -83,11 +82,6 @@ class TestSchemaRejection:
             EvolutionTaskCreate(symbol="BTCUSDT", timeframe="4h",
                                 score_template="bogus")
 
-    def test_paper_trading_task_invalid_template_rejected(self):
-        # security 记录项 A：同名字段一致性收口（不流入评分链，值域同拒）
-        with pytest.raises(ValidationError):
-            PaperTradingTaskCreate(dna_json="{}", score_template="nonexistent")
-
     def test_requirements_invalid_objective_rejected(self):
         with pytest.raises(ValidationError):
             RequirementsConfigModel(objective="bogus")
@@ -100,11 +94,9 @@ class TestSchemaRejection:
         "template", ["explorer", "optimizer", "max_return", "profit_first", "risk_first"]
     )
     def test_legal_templates_accepted_including_aliases(self, template):
-        # 合法值（含别名）在全部四模型接受
+        # 合法值（含别名）在全部三模型接受
         assert BacktestRequest(dataset_id="X", score_template=template).score_template == template
         assert CompareRequest(strategy_ids=["s"], dataset_id="X",
                               score_template=template).score_template == template
         assert EvolutionTaskCreate(symbol="BTCUSDT", timeframe="4h",
                                    score_template=template).score_template == template
-        assert PaperTradingTaskCreate(
-            dna_json="{}", score_template=template).score_template == template

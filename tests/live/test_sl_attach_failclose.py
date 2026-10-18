@@ -29,7 +29,7 @@ from core.live_trading.types import (
     OrderStatus,
     OrderType,
 )
-from core.trading.types import Decision
+from core.live_trading.types import Decision
 
 
 class FakePipeline:

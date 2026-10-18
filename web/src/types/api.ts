@@ -466,75 +466,129 @@ export interface BatchBacktestSummaryItem {
 }
 
 // ---------------------------------------------------------------------------
-// Trading (纸交易域)
+// Trading (纸盘交易域——/api/paper-trading 新域，rebuild-paper-trading 切换)
 // ---------------------------------------------------------------------------
 
+/** 任务状态 ← 后端 PaperTaskResponse.status（string），消费端判别联合收窄（五态） */
+export type PaperTaskStatus = "pending" | "running" | "completed" | "stopped" | "error";
+
 /**
- * 交易任务 ← 后端 PaperTradingTaskResponse。
- * strategy_name、started_at 等可空字段后端声明可选，实际响应恒有——
- * 消费端收窄为必填可空。
+ * 纸盘任务 ← 后端 PaperTaskResponse；status 收窄五态联合。
+ * 账户运行态组（balance/position_* 等）后端声明可选，未运行恒 null——
+ * 消费端按可空透传（P0 权益修复：NULL 不折算 0 假值）。
  */
-export type TradingTask = Omit<
-  S["PaperTradingTaskResponse"],
-  | "strategy_name"
-  | "started_at"
-  | "stopped_at"
-  | "stop_reason"
-  | "position_side"
-  | "position_entry"
-  | "position_quantity"
-  | "position_margin"
-  | "position_funding"
-  | "balance"
-  | "last_bar_time"
-  | "last_bar_close"
-> & {
-  strategy_name: string | null;
-  started_at: string | null;
-  stopped_at: string | null;
-  stop_reason: string | null;
-  position_side: string | null;
-  position_entry: number | null;
-  position_quantity: number | null;
-  position_margin: number | null;
-  position_funding: number | null;
-  balance: number | null;
-  last_bar_time: string | null;
-  last_bar_close: number | null;
+export type TradingTask = Omit<S["PaperTaskResponse"], "status"> & {
+  status: PaperTaskStatus;
 };
 
-/** 交易任务列表 ← 后端 PaperTradingTaskListResponse；tasks 收窄为域类型 */
-export type TradingTaskList = Omit<S["PaperTradingTaskListResponse"], "tasks"> & {
+/** 任务列表 ← 后端 PaperTaskListResponse；tasks 收窄为域类型 */
+export type TradingTaskList = Omit<S["PaperTaskListResponse"], "tasks"> & {
   tasks: TradingTask[];
 };
 
-/** 纸交易成交 ← 后端 PaperTradeResponse；pnl/reason 后端可选，消费端收窄必填可空 */
-export type PaperTrade = Omit<S["PaperTradeResponse"], "pnl" | "reason"> & {
-  pnl: number | null;
-  reason: string | null;
+/** 纸盘成交 ← 后端 PaperFillResponse（形状一致；side/price 等可空字段透传） */
+export type PaperFill = S["PaperFillResponse"];
+
+/** 成交流水 ← 后端 PaperFillListResponse（fills+limit+offset+has_more 探测式分页） */
+export type PaperFillList = S["PaperFillListResponse"];
+
+/**
+ * 建任务参数 ← 后端 PaperTaskCreate；default 必填字段构造端保持可选
+ * （strategy_id 必给——上盘流转只收策略编号，DNA 由后端从策略库快照；
+ * 语义参数 direction/timeframe 无参数位，传入即 422）。
+ */
+export type CreateTradingTaskParams = Partial<S["PaperTaskCreate"]> & {
+  strategy_id: string;
 };
 
-/** 纸交易成交列表 ← 后端 PaperTradeListResponse；trades 收窄为域类型 */
-export type PaperTradeList = Omit<S["PaperTradeListResponse"], "trades"> & {
-  trades: PaperTrade[];
+/** 权益快照 ← 后端 PaperEquityResponse（形状一致） */
+export type EquitySnapshot = S["PaperEquityResponse"];
+
+/** 权益曲线 ← 后端 PaperEquityListResponse（snapshots+limit+offset+has_more） */
+export type EquitySnapshotList = S["PaperEquityListResponse"];
+
+/** 资金费记录 ← 后端 PaperFundingResponse（三态可见对账披露面） */
+export type FundingRecord = S["PaperFundingResponse"];
+
+/** 资金费列表 ← 后端 PaperFundingListResponse */
+export type FundingRecordList = S["PaperFundingListResponse"];
+
+/**
+ * 滚动报告 ← GET /api/paper-trading/tasks/{id}/report 端点（响应为裸 dict
+ * 无 schema），按 core/paper_trading/reporting.py 三层结构补形（任意状态
+ * 可取；报告结构无自动判定字段——考场无观点）。
+ */
+export interface TradingReport {
+  task_id: string;
+  strategy_id: string;
+  status: string;
+  generated_at: string;
+  performance: TradingReportPerformance;
+  deviation: TradingReportDeviation;
+  evidence: TradingReportEvidence;
+}
+
+/**
+ * 绝对绩效层 ← compute_metrics 单源输出（core/scoring/metrics.py 回测族）。
+ * 核心键必填；扩展键（benchmark 族等）视输入存在，消费端可选。
+ */
+export interface TradingReportPerformance {
+  annual_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number; // 负小数（drawdown.min()）
+  win_rate: number | null; // 零交易缺失语义
+  calmar_ratio: number;
+  total_trades: number;
+  sortino_ratio: number;
+  profit_factor: number;
+  max_consecutive_losses: number;
+  monthly_consistency: number;
+  r_squared: number;
+  total_bars?: number;
+  market_annual_return?: number;
+  alpha?: number;
+  backtest_years?: number;
+  benchmark_return?: number | null;
+  excess_return?: number | null;
+}
+
+/**
+ * 偏差对照层 ← 同策略同参数任务区间回测预期成绩+diff+归因披露。
+ * 对照失败该层标 unavailable（backtest=null），整份报告不失败。
+ */
+export interface TradingReportDeviation {
+  backtest: Record<string, unknown> | null;
+  diff: {
+    total_return: number | null;
+    sharpe_ratio: number | null;
+    max_drawdown: number | null;
+    win_rate: number | null;
+  };
+  unavailable_reason: string | null;
+  attribution_notes: string[];
+}
+
+/** 证据强度层 ← 60/5 双阈值+研究状态快照+funding 三态两计数 */
+export interface TradingReportEvidence {
+  bars_run: number;
+  closed_trades: number;
+  position_bars: number;
+  insufficient_evidence: boolean;
+  research_status: string;
+  funding_settled_points: number;
+  funding_pending_points: number | null; // 无 funding 行=None（区别于 0 笔挂起）
+  funding_post_terminal_backfill: { points: number; total_amount: number } | null;
+}
+
+/** 结题报告外壳 ← 后端 FinalReportResponse；report dict 洞收窄为报告体 */
+export type TradingFinalReport = Omit<S["FinalReportResponse"], "report"> & {
+  report: TradingReport;
 };
 
-/** 建任务参数 ← 后端 PaperTradingTaskCreate；后端 default 必填，构造端保持可选（dna_json 必给） */
-export type CreateTradingTaskParams = Partial<S["PaperTradingTaskCreate"]> & {
-  dna_json: string;
-};
-
-/** 权益快照 ← 后端 EquitySnapshotResponse（形状一致） */
-export type EquitySnapshot = S["EquitySnapshotResponse"];
-
-/** 权益快照列表 ← 后端 EquitySnapshotListResponse */
-export type EquitySnapshotList = S["EquitySnapshotListResponse"];
-
-/** 交易指标 ← 后端 TradingMetricsResponse（形状覆盖前端原用子集） */
-export type TradingMetrics = S["TradingMetricsResponse"];
-
-/** runner 状态 ← /api/trading/runner-status 端点（响应为裸 dict 无 schema），按实际 JSON 形状 */
+/** runner 状态 ← /api/paper-trading/runner-status 端点（响应为裸 dict 无 schema），按 core/paper_trading/runtime/scheduler.py status() */
 export interface TradingRunnerStatus {
-  is_alive: boolean;
-  active_task_id: string | null;
+  max_running_tasks: number | null;
+  running_count: number;
+  active_task_ids: string[];
+  pending_depth: number;
 }

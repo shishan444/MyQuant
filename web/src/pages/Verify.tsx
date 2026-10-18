@@ -488,8 +488,9 @@ export function Verify() {
                       onToggleExpand={() => setExpandedCardId(expandedCardId === item.strategy_id ? null : item.strategy_id)}
                       onTrade={() => {
                         const s = strategyMap.get(item.strategy_id);
-                        if (!s?.dna) return;
-                        navigate("/trading", { state: { dna: s.dna, symbol: s.symbol, timeframe: s.timeframe, strategyName: s.name } });
+                        if (!s) return;
+                        // 上盘流转：Trading 创建面只收 strategy_id，DNA 由后端从策略库快照
+                        navigate("/trading", { state: { strategyId: s.strategy_id } });
                       }}
                       onBacktest={() => {
                         const s = strategyMap.get(item.strategy_id);

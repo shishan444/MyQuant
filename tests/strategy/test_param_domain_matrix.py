@@ -19,7 +19,8 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from api.schemas import RiskGenesModel, EvolutionTaskCreate, PaperTradingTaskCreate
+from api.schemas import RiskGenesModel, EvolutionTaskCreate
+from api.routes.paper_trading import PaperTaskCreate
 from core.strategy.dna import RiskGenes, SL_MODES, SignalGene, SignalRole, StrategyDNA
 from core.strategy.validator import (
     MAX_LEVERAGE,
@@ -151,11 +152,11 @@ class TestPydanticTransportGrid:
         # leverage 唯一三面一致字段：pydantic ge/le 存量保留（单源 MAX_LEVERAGE）
         with pytest.raises(Exception):
             RiskGenesModel(leverage=11)
-        # 另两处 Field 同源（evolution 任务创建与 paper 任务创建）
+        # 另两处 Field 同源（evolution 任务创建与纸盘任务创建）
         for model_cls, build in (
             (EvolutionTaskCreate, lambda lev: {"leverage": lev}),
-            (PaperTradingTaskCreate, lambda lev: {
-                "dna_json": "{}", "leverage": lev}),
+            (PaperTaskCreate, lambda lev: {
+                "strategy_id": "s", "leverage": lev}),
         ):
             with pytest.raises(Exception):
                 model_cls(**build(11))

@@ -622,10 +622,13 @@ class TestWhitelist:
             api.post("/api/research/hypotheses", {"x": 1})
 
     def test_money_endpoints_never_allowed(self) -> None:
+        # 触金封禁输入换 live 族仍存模式（旧交易域前缀随旧域退役删除，
+        # FORBIDDEN_PATTERNS 仅存 /api/live——frontend-switch-and-retire
+        # R.1 增补一）
         for profile in ("readonly", "research"):
             api = QuantApiClient(base_url="http://127.0.0.1:1", profile=profile)
-            for path in ("/api/trading/start", "/api/live/start",
-                         "/api/trading/order/buy"):
+            for path in ("/api/live/start", "/api/live/order/buy",
+                         "/api/live/close"):
                 with pytest.raises(EndpointNotAllowed):
                     api.get(path)
                 with pytest.raises(EndpointNotAllowed):

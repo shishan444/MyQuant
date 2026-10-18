@@ -117,18 +117,34 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
   // （TestClient 同 payload 201——环境差异待查）；策略创建依赖段留跟进，
   // verify 端到端口径已由 journeys/consistency 层锚定（同窗全等+聚合自洽）
 
-  // ── 模拟盘：创建 → 停止（状态机收敛）
-  const pt = await request.post(`${API}/api/trading/tasks`, {
-    data: { dna_json: JSON.stringify(DNA), symbol: 'E2ECL', timeframe: '4h',
-            initial_cash: 100000, fee: 0.001, leverage: 1, direction: 'long' },
+  // ── 模拟盘（纸盘新域）：库内策略上盘 → 停止（状态机收敛）。
+  // 旧域 dna_json 直传已退役（frontend-switch-and-retire R.1）——新域
+  // 创建只收 strategy_id（DNA 由后端从策略库流转快照）。优先复用本
+  // 链路进化产出的库内策略（冠军上盘的闭环语义）；进化 failed 无产
+  // 出时回退库内任一策略（R-10 在册：真服务 POST /api/strategies 500，
+  // 不走先落库路径）
+  let strategyId: string | undefined
+  const evolved = Array.isArray(eff.strategies) ? eff.strategies : []
+  if (evolved.length > 0) {
+    strategyId = (evolved[0] as Record<string, unknown>).strategy_id as string
+  } else {
+    const pool = await (await request.get(`${API}/api/strategies?limit=1`)).json()
+    // StrategyListResponse 键名为 items（api/schemas.py StrategyListResponse）
+    const first = Array.isArray(pool.items) ? pool.items[0] : undefined
+    strategyId = first?.strategy_id as string | undefined
+  }
+  expect(strategyId, '上盘策略源（进化产出或库内既有）').toBeTruthy()
+
+  const pt = await request.post(`${API}/api/paper-trading/tasks`, {
+    data: { strategy_id: strategyId },
   })
   expect(pt.status()).toBe(201)
   const tradeId = (await pt.json()).task_id
-  const stop = await request.post(`${API}/api/trading/tasks/${tradeId}/stop`)
+  const stop = await request.post(`${API}/api/paper-trading/tasks/${tradeId}/stop`)
   expect(stop.status()).toBe(200)
   let stopped = false
   while (Date.now() < deadline) {
-    const row = await (await request.get(`${API}/api/trading/tasks/${tradeId}`)).json()
+    const row = await (await request.get(`${API}/api/paper-trading/tasks/${tradeId}`)).json()
     if (row.status === 'stopped') { stopped = true; break }
     await page_wait(500)
   }

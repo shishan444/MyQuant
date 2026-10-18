@@ -1,11 +1,13 @@
 """B1 吞错误导止血的复现测试（refactor-myquant-backend-b1-b11 · B1 组）。
 
-五处 P0 锚点，每处测试先行（红→绿）：
+四处 P0 锚点，每处测试先行（红→绿）：
 - 1.1 core/evolution/evaluation.py build_requirements 解析失败静默回退默认 objective
 - 1.2 api/runner.py 快照写失败静默丢弃
-- 1.3 core/trading/runner.py bar 游标前移与事件落库的原子性
 - 1.4 api/routes/strategies.py verify mark_failed 路径自身吞错
 - 1.5 api/routes/data.py 图表六连吞错拖垮整层
+
+B1.3（旧 core/trading/runner.py bar 游标与事件落库原子性）随旧交易域
+退役（frontend-switch-and-retire R.2）。
 """
 
 import json
@@ -101,22 +103,6 @@ class TestBuildRequirementsMalformedVisible:
 # B1.2: 快照写失败不得静默丢弃
 # ===========================================================================
 
-@pytest.fixture
-def trading_db_with_task(tmp_path: Path) -> Path:
-    """B1.3 场景：模拟盘任务库（含 task-001）。"""
-    from core.persistence.repository.paper_trading import save_paper_trading_task
-    from core.persistence.db_ext import init_db_ext
-    from tests.helpers.data_factory import make_dna
-
-    db_path = tmp_path / "test_b1_trading.db"
-    init_db_ext(db_path)
-    dna = make_dna(direction="long", leverage=1)
-    save_paper_trading_task(
-        db_path, task_id="task-001", dna_json=dna.to_json(),
-        symbol="BTCUSDT", timeframe="4h", initial_cash=100_000, fee=0.001,
-    )
-    return db_path
-
 @pytest.mark.integration
 class TestSnapshotWriteFailureVisible:
     """save_snapshot 失败 → error 日志暴露（含原因链），进化继续不中断。
@@ -163,132 +149,6 @@ class TestSnapshotWriteFailureVisible:
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert any("save_snapshot" in r.message for r in errors), "快照写失败必须留下 error 日志"
         assert any(r.exc_info is not None for r in errors), "日志必须含原因链 (exc_info)"
-
-
-# ===========================================================================
-# B1.3: bar 游标前移与事件落库的原子性/幂等性
-# ===========================================================================
-
-class _StopAfterTwoWaits:
-    """跑两轮主循环后停止（第一轮中断重放，第二轮重试）。"""
-
-    def __init__(self):
-        self._waits = 0
-
-    @property
-    def stop_requested(self):
-        return self._waits >= 2
-
-    def check_stop(self):
-        from core.trading.runner import TaskStopRequested
-        if self._waits >= 2:
-            raise TaskStopRequested()
-
-    def wait(self, timeout):
-        self._waits += 1
-
-    def request_stop(self):
-        self._waits = 2
-
-
-@pytest.mark.integration
-class TestBarCursorReplayNoDuplicate:
-    """bar 循环中途失败后重试，不得重复落库 paper_trade 事件。
-
-    现状缺陷：游标（df）在全部 bar 处理完后才前移（runner.py:406），
-    中途异常被 :407 兜底后循环继续，下一轮从旧游标重放全部新 bar，
-    已落库事件重复写入。
-    """
-
-    def test_replayed_bars_do_not_duplicate_events(self, trading_db_with_task, tmp_path):
-        """第 3 根新 bar 处理失败一次 → 重试后每 (bar_time, action) 恰一行。"""
-        import sqlite3
-        from types import SimpleNamespace
-        from unittest.mock import patch
-
-        from core.trading.runner import TradingRunner
-        from core.persistence.repository.paper_trading import get_paper_trading_task
-        from tests.helpers.data_factory import make_ohlcv
-
-        runner = TradingRunner(db_path=trading_db_with_task, data_dir=tmp_path)
-        task_row = get_paper_trading_task(trading_db_with_task, "task-001")
-        task_row["created_at"] = None  # 不过滤历史 bar
-
-        df_initial = make_ohlcv(100, "4h")
-        df_extended = make_ohlcv(105, "4h")
-        new_bar_times = [ts.isoformat() for ts in df_extended.index[100:]]
-        fail_target = new_bar_times[2]  # 第 3 根新 bar 首次处理时模拟中断
-        failed_once = set()
-
-        def fake_process_bar(**kwargs):
-            bt = kwargs["bar_time"]
-            if bt == fail_target and bt not in failed_once:
-                failed_once.add(bt)
-                raise RuntimeError("simulated interruption")
-            return SimpleNamespace(
-                events=[{
-                    "type": "position_opened", "side": "long",
-                    "entry_price": 100.0, "quantity": 1.0, "fee_paid": 0.0,
-                }],
-                pending_decision=None,
-            )
-
-        controller = _StopAfterTwoWaits()
-        with patch.object(runner, "_load_data", return_value=df_initial), \
-             patch.object(runner, "_fetch_and_update", return_value=df_extended), \
-             patch.object(runner, "_init_predictor", return_value=None), \
-             patch.object(runner, "_push_position_update"), \
-             patch("core.trading.pipeline.DecisionPipeline") as _Pipeline:
-            _Pipeline.return_value.process_bar.side_effect = fake_process_bar
-            runner._execute_task(task_row, "task-001", controller)
-
-        conn = sqlite3.connect(str(trading_db_with_task))
-        dup = conn.execute(
-            "SELECT task_id, bar_time, action, COUNT(*) c FROM paper_trade "
-            "GROUP BY task_id, bar_time, action HAVING c > 1"
-        ).fetchall()
-        per_bar = conn.execute(
-            "SELECT bar_time, COUNT(*) c FROM paper_trade GROUP BY bar_time"
-        ).fetchall()
-        conn.close()
-
-        assert dup == [], f"重放产生重复事件: {dup}"
-        # 5 根新 bar 的事件全部恰好落库一次（重试覆盖失败 bar，不漏不重）
-        assert len(per_bar) == 5, f"应有 5 根新 bar 的事件，实际 {len(per_bar)}"
-        assert all(c == 1 for _, c in per_bar)
-
-
-class TestSavePaperTradeIdempotent:
-    """幂等兜底层：同 (task_id, bar_time, action) 重复写入只留一行。"""
-
-    def test_duplicate_insert_ignored(self, trading_db_with_task):
-        """同一事件插入两次 → 表中恰一行（INSERT OR IGNORE + 唯一约束）。"""
-        from core.persistence.repository.paper_trading import count_paper_trades, save_paper_trade
-
-        for _ in range(2):
-            save_paper_trade(
-                trading_db_with_task,
-                task_id="task-001", bar_time="2024-01-01T00:00:00",
-                side="long", action="open",
-                price=100.0, quantity=1.0,
-            )
-        assert count_paper_trades(trading_db_with_task, "task-001") == 1
-
-    def test_same_bar_different_action_both_kept(self, trading_db_with_task):
-        """同 bar 的 open 与 close 是不同事件，各自保留。"""
-        from core.persistence.repository.paper_trading import count_paper_trades, save_paper_trade
-
-        save_paper_trade(
-            trading_db_with_task,
-            task_id="task-001", bar_time="2024-01-01T00:00:00",
-            side="long", action="open", price=100.0, quantity=1.0,
-        )
-        save_paper_trade(
-            trading_db_with_task,
-            task_id="task-001", bar_time="2024-01-01T00:00:00",
-            side="long", action="close", price=110.0, quantity=1.0, pnl=10.0,
-        )
-        assert count_paper_trades(trading_db_with_task, "task-001") == 2
 
 
 # ===========================================================================

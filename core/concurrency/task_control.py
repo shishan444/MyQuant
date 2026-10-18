@@ -1,7 +1,7 @@
-"""协作取消统一件（B4.2 双源消除：api/trading 双 runner 的 TaskController 归一）。
+"""协作取消统一件（B4.2 双源消除：进化/交易双 runner 的 TaskController 归一）。
 
-TaskStopRequested 异常与 TaskController 语义在两 runner 本就同构
-（threading.Event + check_stop 抛出）；归一后两处 import 同一套。
+TaskStopRequested 异常与 TaskController 语义在各 runner 本就同构
+（threading.Event + check_stop 抛出）；归一后各处 import 同一套。
 """
 from __future__ import annotations
 

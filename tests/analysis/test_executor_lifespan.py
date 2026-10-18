@@ -1,8 +1,8 @@
 """研究执行器 lifespan 集成测试（add-ai-research-mcp 1.4 验收绑定）。
 
-验收目标：长计算占满研究线程池 worker 期间，交易端点
-（/api/trading/runner-status）与进化任务查询保持响应——计算压力
-不得由交易服务承担（D3 验收绑定）。
+验收目标：长计算占满研究线程池 worker 期间，纸盘端点
+（/api/paper-trading/runner-status）与进化任务查询保持响应——计算
+压力不得由交易服务承担（D3 验收绑定）。
 """
 
 import sqlite3
@@ -59,8 +59,8 @@ class TestTradingNotBlockedByResearch:
             time.sleep(0.02)
         assert started["flag"], "重任务未开始"
 
-        # 重计算运行期间：交易端点与进化 runner-status 必须快速响应
-        for endpoint in ["/api/trading/runner-status", "/api/evolution/runner-status"]:
+        # 重计算运行期间：纸盘端点与进化 runner-status 必须快速响应
+        for endpoint in ["/api/paper-trading/runner-status", "/api/evolution/runner-status"]:
             t0 = time.monotonic()
             resp = api_client.get(endpoint)
             elapsed = time.monotonic() - t0

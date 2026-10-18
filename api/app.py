@@ -1,7 +1,7 @@
 """FastAPI 应用装配点：生命周期、CORS、路由挂载与 socket.io 桥。
 
 职能：create_app 是全工程唯一的应用工厂——初始化 DB schema、装配
-evolution/trading 双 runner、research executor 与 socket.io 实时通道，
+evolution runner、research executor 与 socket.io 实时通道，
 挂载全部 REST 路由；模块尾把 FastAPI 与 socket.io 组合为单一 ASGI
 应用供 uvicorn 启动。
 服务对象：全部 /api/* 路由（经 app.state 注入依赖）与 web 前端
@@ -27,7 +27,6 @@ from core.persistence.db_ext import init_db_ext
 from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
-from .routes import trading as trading_route
 from .routes import live_trading as live_trading_route
 from .routes import paper_trading as paper_trading_route
 from .schemas import HealthResponse
@@ -70,11 +69,6 @@ def create_app(
         recover_stale_tasks(db_path)
         restart_crashed_tasks(db_path)
 
-        # 模拟盘域恢复：中断任务回收后起 TradingRunner
-        from core.trading.runner import TradingRunner, set_trading_ws_push_fn, recover_stale_trading_tasks
-
-        recover_stale_trading_tasks(db_path)
-
         # Research executor（add-ai-research-mcp 1.4）：研究域表自愈 →
         # 中断任务回收 → 线程池执行器单例（SIGTERM 时随进程释放）
         from core.analysis.executor import (
@@ -94,9 +88,6 @@ def create_app(
         runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
         app.state.evolution_runner = runner
 
-        trading_runner = TradingRunner(db_path=db_path, data_dir=data_dir)
-        app.state.trading_runner = trading_runner
-
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os
         from . import realtime
@@ -113,15 +104,11 @@ def create_app(
                 realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
             return _push
         _ws_push_evolution = _make_push("/evolution")
-        _ws_push_trading = _make_push("/trading")
 
         set_ws_push_fn(_ws_push_evolution)
-        set_trading_ws_push_fn(_ws_push_trading)
 
         # 纸盘交易新域调度器（rebuild-paper-trading 组 3）：启动期恢复
         # 扫描（running 残态：可信续跑/不可信转 error）→ 守护线程拾取。
-        # 旧 TradingRunner 挂载原位保留至组 7 切换——新旧端点族前缀不同
-        # （/api/paper-trading vs /api/trading），不暴露双入口。
         # 摆位纪律：本段须在 runner.start() 之前——段的延迟 import 链与
         # 恢复扫描开销若发生在已启动的 EvolutionRunner 之后，会经 GIL
         # 推迟 runner 首扫相位、落进测试的落行-请求窗口（缺陷④跨域
@@ -136,17 +123,14 @@ def create_app(
         paper_scheduler.start()
 
         runner.start()
-        trading_runner.start()
 
         yield
 
-        # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停双 runner
+        # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停
+        # evolution runner 与纸盘调度器
         set_ws_push_fn(None)
-        set_trading_ws_push_fn(None)
         runner.stop()
-        trading_runner.stop()
         runner.join(timeout=5.0)
-        trading_runner.join(timeout=5.0)
         paper_scheduler.stop()
         paper_scheduler.join(timeout=5.0)
 
@@ -183,10 +167,8 @@ def create_app(
     app.include_router(strategies.router)
     app.include_router(evolution.router)
     app.include_router(data.router)
-    app.include_router(trading_route.router)
     app.include_router(live_trading_route.router)
-    # 纸盘交易新域端点族（rebuild-paper-trading 5.1；与旧 /api/trading
-    # 前缀不同不暴露双入口，旧挂载保留至组 7 切换）
+    # 纸盘交易新域端点族（rebuild-paper-trading 5.1）
     app.include_router(paper_trading_route.router)
     app.include_router(validate_route.router)
     app.include_router(scene_route.router)

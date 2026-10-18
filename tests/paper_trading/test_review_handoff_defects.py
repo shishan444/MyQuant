@@ -32,7 +32,7 @@ from core.paper_trading.kernel.ledger import Ledger
 from core.paper_trading.kernel.types import Intent, RiskParams
 from core.paper_trading.reporting import build_report
 from core.persistence.repository import paper
-from tests.paper_trading.test_executor import _Harness
+from tests.paper_trading.test_paper_executor import _Harness
 
 _ZERO_COST = MarketFill(fee_rate=0.0, slippage_rate=0.0)
 
