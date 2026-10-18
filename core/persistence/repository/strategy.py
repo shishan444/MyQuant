@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, func, insert, or_, select, update
+from sqlalchemy import Connection, delete, func, insert, or_, select, update
 
 from core.persistence.orm.models import Strategy
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -262,6 +262,7 @@ def update_strategy(
     db_path: Path,
     *,
     strategy_id: str,
+    conn: Optional[Connection] = None,
     **fields: Any,
 ) -> None:
     """更新既有策略的一个或多个字段（白名单不变）。
@@ -269,6 +270,10 @@ def update_strategy(
     status 键显式拒绝（build-strategy-lifecycle 1.3）：此前为静默
     过滤（_ALLOWED_UPDATE_FIELDS 不含 status），现传入即 raise——
     状态变更唯一合法通道=生命周期迁移服务（写面收敛，行为变化点）。
+
+    conn 可选透传（CARD-03，形制同 paper.create_task）：传入则更新走
+    外层事务（如 revalidate 的迁移+统计重置两步同事务）；缺省自开
+    单事务（既有直更行为不变）。
     """
     if "status" in fields:
         raise LifecycleError(
@@ -283,13 +288,17 @@ def update_strategy(
     if not values:
         return
     values["updated_at"] = _now()
+    stmt = (
+        update(Strategy)
+        .where(Strategy.strategy_id == strategy_id)
+        .values(**values)
+    )
+    if conn is not None:
+        conn.execute(stmt)
+        return
     engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(
-            update(Strategy)
-            .where(Strategy.strategy_id == strategy_id)
-            .values(**values)
-        )
+    with engine.begin() as own:
+        own.execute(stmt)
 
 
 def delete_strategy(db_path: Path, strategy_id: str) -> None:

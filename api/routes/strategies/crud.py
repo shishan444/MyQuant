@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from core.persistence.orm.engine import engine_for
 from core.persistence.repository.backtest_result import (
     get_backtest_result,
     list_backtest_results,
@@ -353,7 +354,9 @@ def revalidate_strategy_endpoint(
     置 NULL——models.py verify 组列）+validation_records 不删不改（审计
     事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时
     旧值可自事件追溯）+水位不归零（事件 append-only）。非
-    archived→409 STRATEGY_ILLEGAL_TRANSITION。"""
+    archived→409 STRATEGY_ILLEGAL_TRANSITION。迁移+重置两步同事务
+    （CARD-03）：重置失败则迁移一并回滚，不留「已 draft 但旧统计
+    未作废」中间态。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -373,14 +376,18 @@ def revalidate_strategy_endpoint(
         "verify_star": existing.get("verify_star"),
         "last_verified_at": existing.get("last_verified_at"),
     }
+    engine = engine_for(db_path)
     try:
-        transit(db_path, strategy_id, target="draft", trigger="revalidate",
-                evidence={"invalidated_stats": invalidated})
+        with engine.begin() as conn:
+            transit(db_path, strategy_id, target="draft",
+                    trigger="revalidate",
+                    evidence={"invalidated_stats": invalidated}, conn=conn)
+            update_strategy(
+                db_path, strategy_id=strategy_id, conn=conn,
+                verify_count=0, verify_avg_score=None,
+                verify_best_score=None, verify_star=None,
+                last_verified_at=None)
     except LifecycleError as exc:
         raise _lifecycle_error_to_http(exc) from exc
-    update_strategy(
-        db_path, strategy_id=strategy_id,
-        verify_count=0, verify_avg_score=None, verify_best_score=None,
-        verify_star=None, last_verified_at=None)
     row = get_strategy(db_path, strategy_id)
     return _strategy_row_to_response(row)
