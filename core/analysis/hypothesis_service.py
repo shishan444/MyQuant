@@ -313,6 +313,18 @@ def _validate_strategy_params(
                                        f"{INITIAL_FRACTION_MAX}]"})
     mpl = params.get("max_position_loss")
     if mpl is not None:
+        # 类型先行拦截（CARD-02）：非数字/bool 原先直落 float() 裸穿
+        # 500（float('abc')=ValueError、float([5])=TypeError 均不在
+        # except 面），对齐 validator.py 先类型后有限性形制，非数字
+        # 走本 RESEARCH_PARAM_INVALID 分支而非扩 except 面掩盖类型语义
+        if not isinstance(mpl, (int, float)) or isinstance(mpl, bool):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"max_position_loss {mpl!r} 须为数字"
+                f"（> {MAX_POSITION_LOSS_MIN} 且有限，无上界）",
+                detail={"field": "max_position_loss",
+                        "legal_range": f"> {MAX_POSITION_LOSS_MIN} "
+                                       f"(finite)"})
         # 有限性检查（SEC-02，与 validate_dna 同源同式）：inf/超大整数
         # 不是金额——float 化溢出的 int 同非有限。「无上界」语义不受
         # 影响（finite 不是上界）
@@ -320,8 +332,7 @@ def _validate_strategy_params(
             mpl_finite = math.isfinite(float(mpl))
         except OverflowError:
             mpl_finite = False
-        if not isinstance(mpl, (int, float)) or isinstance(mpl, bool) \
-                or not mpl_finite or not mpl > MAX_POSITION_LOSS_MIN:
+        if not mpl_finite or not mpl > MAX_POSITION_LOSS_MIN:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"max_position_loss {mpl!r} 越出值域 "
