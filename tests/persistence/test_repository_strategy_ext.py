@@ -167,3 +167,41 @@ class TestVerifyStatsRolling:
                 db, "s1", new_score=score, verify_star=1,
                 verified_at="2026-01-01T00:00:00+00:00")
         assert repo.get_strategy(db, "s1")["verify_best_score"] == 90.0
+
+
+class TestWriteSurfaceLockdown:
+    """三写点收编·repository 侧两项（build-strategy-lifecycle 1.3）：
+    save 初始态白名单（函数级 422 先于 DB 触发器——双层守卫层②面）
+    +update 对 status 键显式拒绝（此前静默过滤，行为变化点：写面
+    收敛后全库 status 唯一写点=生命周期迁移服务 CAS）。"""
+
+    @pytest.mark.parametrize("bad", ["paper", "candidate", "live", "archived"])
+    def test_save初始态白名单外结构化拒绝(self, db, bad):
+        from core.strategy.lifecycle.machine import LifecycleError
+        with pytest.raises(LifecycleError) as ei:
+            repo.save_strategy(db, strategy_id="st_bad", dna_json="{}",
+                               symbol="BTCUSDT", timeframe="4h", status=bad)
+        assert ei.value.code == "STRATEGY_INITIAL_STATUS_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["status"] == bad
+        assert sorted(ei.value.detail["allowed"]) == ["active", "draft"]
+
+    def test_save白名单内两值放行(self, db):
+        # 签名错开：同签名 active 行会被 save 去重吞（既有语义）
+        _strategy(db, "st_d", status="draft", signature="sig-wl-d")
+        _strategy(db, "st_a", status="active", signature="sig-wl-a")
+        assert repo.get_strategy(db, "st_d")["status"] == "draft"
+        assert repo.get_strategy(db, "st_a")["status"] == "active"
+
+    def test_update传status键显式拒绝(self, db):
+        from core.strategy.lifecycle.machine import LifecycleError
+        _strategy(db, "st_lock")
+        with pytest.raises(LifecycleError) as ei:
+            repo.update_strategy(db, strategy_id="st_lock",
+                                 status="archived", name="x")
+        assert ei.value.code == "STRATEGY_STATUS_WRITE_FORBIDDEN"
+        assert ei.value.status == 422
+        # 拒绝非静默：整个调用失败，无部分写入（name 亦未落）
+        row = repo.get_strategy(db, "st_lock")
+        assert row["status"] == "active"
+        assert row["name"] is None

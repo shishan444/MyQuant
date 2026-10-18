@@ -8,7 +8,7 @@ paper.py:50）。零 IO 零第三方依赖（纯常量模块，可被 alembic �
 """
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, Tuple
+from typing import Any, Dict, FrozenSet, Tuple
 
 # 六态值域（strategy.status 列值域；三态旧值原义保留：draft=假设
 # 转化草稿（验证对象），active=可消费，archived=归档；新三态：
@@ -86,3 +86,21 @@ WATERLINE_ORDER: Dict[str, int] = {
 # 初始合法态白名单（INSERT 域：save_strategy 函数级校验与 DB INSERT
 # 触发器同集——新策略只能以草稿或直接转正态入场，不得擅自加严/放宽）
 INITIAL_STATUSES: frozenset = frozenset({"draft", "active"})
+
+
+class LifecycleError(Exception):
+    """生命周期域错误：code + http_status + message + detail。
+
+    沿 ResearchError 形制（core/analysis/errors.py——code/status/
+    message/detail 四件套，路由层转 HTTPException）；本类住常量基座
+    模块=轻量定义点纪律（零第三方依赖、零域内反向依赖，repository
+    与 service 均可安全模块级 import，不拖引擎链）。
+    """
+
+    def __init__(self, code: str, message: str, *, status: int = 409,
+                 detail: Any = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.detail = detail

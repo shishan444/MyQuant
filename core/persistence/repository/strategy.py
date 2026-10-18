@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, insert, or_, select, update
 from core.persistence.orm.models import Strategy
 from core.persistence.orm.engine import engine_for as _engine_for
 from core.persistence.timestamps import utc_now_iso as _now
+from core.strategy.lifecycle.machine import INITIAL_STATUSES, LifecycleError
 
 _SORT_ALLOWED_COLUMNS = {
     "created_at", "updated_at", "best_score", "best_fitness",
@@ -55,7 +56,20 @@ def save_strategy(
     status="draft" 免去重（improve-mcp-agent-loop M4）：草稿无绩效，
     "保留更优"语义错位且会静默吞掉插入（translate 幽灵 id）——草稿
     一律纯 insert，同签名分流由调用方（translate）显式处理。
+
+    初始态白名单（build-strategy-lifecycle 1.3）：只允许 {draft,
+    active}——先于 DB INSERT 触发器的函数级结构化拒绝（422 形制，
+    双层守卫的层②面；六态其余值只能经生命周期迁移服务进入）。
     """
+    if status not in INITIAL_STATUSES:
+        raise LifecycleError(
+            code="STRATEGY_INITIAL_STATUS_INVALID",
+            message="策略初始状态只允许 draft 或 active",
+            status=422,
+            detail={"strategy_id": strategy_id, "status": status,
+                    "allowed": sorted(INITIAL_STATUSES),
+                    "note": "其余状态只能经 core/strategy/lifecycle 迁移服务进入"},
+        )
     if gene_signature is None:
         try:
             from core.strategy.dna import StrategyDNA
@@ -244,7 +258,21 @@ def update_strategy(
     strategy_id: str,
     **fields: Any,
 ) -> None:
-    """更新既有策略的一个或多个字段（白名单不变）。"""
+    """更新既有策略的一个或多个字段（白名单不变）。
+
+    status 键显式拒绝（build-strategy-lifecycle 1.3）：此前为静默
+    过滤（_ALLOWED_UPDATE_FIELDS 不含 status），现传入即 raise——
+    状态变更唯一合法通道=生命周期迁移服务（写面收敛，行为变化点）。
+    """
+    if "status" in fields:
+        raise LifecycleError(
+            code="STRATEGY_STATUS_WRITE_FORBIDDEN",
+            message="status 变更只经生命周期迁移服务（transit）",
+            status=422,
+            detail={"strategy_id": strategy_id,
+                    "note": "update 通道显式拒绝 status 键；"
+                            "唯一写点=core/strategy/lifecycle/service.py CAS"},
+        )
     values = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
     if not values:
         return
