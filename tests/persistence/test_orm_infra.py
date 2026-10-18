@@ -27,13 +27,14 @@ _LEGACY_PAPER_INDEXES = frozenset({
 
 
 class TestModelMetadata:
-    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表
-    （rebuild-paper-trading 2.1；其中旧纸盘三表转留档），导入无误。"""
+    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表 + 1 生命
+    周期事件表（build-strategy-lifecycle 1.2；其中旧纸盘三表转留档），
+    导入无误。"""
 
     def test_table_count(self):
         from core.persistence.orm import Base
         active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
-        assert len(active) == 21
+        assert len(active) == 22
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
@@ -47,6 +48,8 @@ class TestModelMetadata:
             "feature_requests", "validation_records",
             # 纸盘域（rebuild-paper-trading 2.1）
             "pt_task", "pt_fill", "pt_equity", "pt_funding", "pt_report",
+            # 生命周期事件表（build-strategy-lifecycle 1.2）
+            "strategy_transition_event",
         }
         assert expected == set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
         # 留档旧三表退役前仍在 metadata（组 7 随旧模型类删除收走）
@@ -76,6 +79,10 @@ class TestModelMetadata:
             ("pt_fill", "ux_pt_fill_task_bar_seq"),
             ("pt_equity", "ux_pt_equity_task_bar"),
             ("pt_funding", "ux_pt_funding_task_settle"),
+            # 生命周期事件表（build-strategy-lifecycle 1.2；Alembic
+            # de92805ed44c 同规声明——两方不一致静默架空）
+            ("strategy_transition_event",
+             "idx_strategy_transition_event_strategy_created"),
         }
         assert expected == idx - _LEGACY_PAPER_INDEXES
         # 留档旧三表索引退役前仍在（随组 7 收走）
