@@ -372,14 +372,31 @@ class Ledger:
         self.closed_trades += 1
         self.position = None
 
+    def record_funding(self, amount: float) -> None:
+        """资金费落账单点（三键一次更新——对质①裁决收单点）。
+
+        balance 直减（负金额=入账）；账户级 total_funding 累计（跨
+        持仓披露）；当前持仓存在则持仓级 funding_paid 累计（金额
+        防线判定输入——带符号：付出为正=加深浮亏、收到为负=抵减；
+        无持仓只前两键）。消费方=apply_funding（正常结算）与 runtime
+        结算两分支（新账/补旧账——补旧账金额按快照数量重算后经本点
+        落账）——funding_paid 累加无第二写点。
+
+        Args:
+            amount: 结算金额（正=付出/负=收到；经 funding_amount
+                单点或其快照重算产出）。
+        """
+        self.balance -= amount
+        self.total_funding += amount
+        if self.position is not None:
+            self.position.funding_paid += amount
+
     def apply_funding(self, rate: float, settle_price: float) -> float:
         """资金费结算（与杠杆无关——对质六裁决：leverage=1 同扣）。
 
         金额经 funding_amount 单点（signed_qty=当前仓数量×方向符号；
-        rate>0 多头付/空头收、rate<0 反向）；balance 直减（负金额=
-        入账）。两口径并存归集：账户级 total_funding 累计（跨持仓
-        披露）+持仓级 pos.funding_paid 累计（金额防线判定输入——
-        带符号：付出为正=加深浮亏、收到为负=抵减）。
+        rate>0 多头付/空头收、rate<0 反向），落账经 record_funding
+        单点（balance/total_funding/funding_paid 三键）。
 
         Args:
             rate: 该结算点真实费率（funding parquet）。
@@ -393,9 +410,7 @@ class Ledger:
             return 0.0
         sign = 1.0 if pos.side == "long" else -1.0
         amount = funding_amount(sign * pos.quantity, settle_price, rate)
-        self.balance -= amount
-        self.total_funding += amount
-        pos.funding_paid += amount
+        self.record_funding(amount)
         return amount
 
     # ── 披露用止损止盈快照（开仓/重锚时点值） ────────────────

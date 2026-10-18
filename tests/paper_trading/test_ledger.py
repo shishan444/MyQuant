@@ -584,6 +584,41 @@ class TestFundingPaidLifecycle:
         assert ledger.apply_funding(rate=0.0001, settle_price=100.0) == 0.0
         assert ledger.total_funding == 0.0
 
+    @pytest.mark.parametrize("rate", [0.0001, -0.0001])
+    def test_apply_and_record_dual_path_same_effect(self, rate):
+        """双路径同式断言（对质①裁决测试锁）：apply_funding 与
+        funding_amount+record_funding 两路径对 funding_paid/balance/
+        total_funding 三键同值——funding_paid 累加单源在 record_funding，
+        executor 与 apply_funding 皆为消费方无第二写点。"""
+        def _fresh_ledger():
+            params = make_params(position_size=0.1, leverage=10)
+            ledger = Ledger(10_000.0, params)
+            _open(ledger, 100.0)  # qty=100
+            return ledger
+
+        via_apply = _fresh_ledger()
+        amount = via_apply.apply_funding(rate=rate, settle_price=110.0)
+
+        via_record = _fresh_ledger()
+        via_record.record_funding(
+            funding_amount(100.0, 110.0, rate))
+
+        assert amount == pytest.approx(funding_amount(100.0, 110.0, rate))
+        assert via_apply.position.funding_paid \
+            == pytest.approx(via_record.position.funding_paid)
+        assert via_apply.balance == pytest.approx(via_record.balance)
+        assert via_apply.total_funding == pytest.approx(
+            via_record.total_funding)
+
+    def test_record_funding_without_position_only_two_keys(self):
+        """无持仓经 record_funding 落账：只动 balance/total_funding 两键
+        （funding_paid 无归集载体——空仓语义）。"""
+        ledger = Ledger(10_000.0, make_params())
+        ledger.record_funding(1.5)
+        assert ledger.position is None
+        assert ledger.balance == pytest.approx(10_000.0 - 1.5)
+        assert ledger.total_funding == pytest.approx(1.5)
+
 
 class TestInitialFractionSizing:
     """首笔定仓分派（add-position-sizing-params 族 4）。

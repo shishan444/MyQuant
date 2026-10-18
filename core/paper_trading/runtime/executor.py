@@ -723,11 +723,11 @@ class PaperTaskExecutor:
         则逐点结算（金额=quantity×bar_close×rate×方向符号）；索引未达
         落 pending 行（rate/amount NULL+快照 settle_price/
         position_quantity——带符号数量编码方向，补记侧无 side 列可恢复）。
-        扣款同步归集持仓级 funding_paid（金额防线判定的资金费分量）：
-        新结算经 apply_funding 单点（含归集）；补旧账金额按快照数量
-        重算（不读当前仓位——公式单源），当时有仓则归集当前持仓
-        （跨持仓段的挂起补扣归新仓，方向保守=防线偏敏感；重启恢复
-        按 settle_time≥持仓开始时刻过滤自愈）。
+        两分支扣款均经 ledger.record_funding 单点（balance/total_funding/
+        持仓级 funding_paid 三键——金额防线判定的资金费分量；补旧账
+        金额按快照数量重算不读当前仓位，当时有仓则归集当前持仓——
+        跨持仓段的挂起补扣归新仓，方向保守=防线偏敏感，重启恢复按
+        settle_time≥持仓开始时刻过滤自愈；对质①裁决）。
         """
         backfills: List[Dict[str, Any]] = []
         feed = self.registry.get(self.task_row["symbol"], self._timeframe)
@@ -745,11 +745,7 @@ class PaperTaskExecutor:
                 continue
             amount = funding_amount(
                 row["position_quantity"], row["settle_price"], rate)
-            self.ledger.balance -= amount
-            self.ledger.total_funding += amount
-            pos_now = self.ledger.position
-            if pos_now is not None:
-                pos_now.funding_paid += amount
+            self.ledger.record_funding(amount)
             # rows 形制 [{settle_time, rate, amount}]——目标态恒
             # 'settled' 由仓库接口定死（对质②形制收口：不传 status）
             backfills.append({
@@ -776,9 +772,8 @@ class PaperTaskExecutor:
                         "position_quantity": signed_qty,
                         "settle_price": float(bar.close)})
                     continue
-                # apply_funding 单点：金额/balance/total_funding 同式
-                # +持仓级 funding_paid 归集（原三行手写收单点）
-                amount = self.ledger.apply_funding(rate, float(bar.close))
+                amount = funding_amount(signed_qty, float(bar.close), rate)
+                self.ledger.record_funding(amount)
                 new_rows.append({
                     "settle_time": point.isoformat(),
                     "status": "settled", "rate": rate, "amount": amount,
