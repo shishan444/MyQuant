@@ -648,6 +648,20 @@ class TestMaxPositionLoss:
             make_account(position=fresh_pos, mark=94.0), params)
         assert miss == []
 
+    def test_risk_budget_mode_orthogonal_guard_fires(self):
+        """防线与定仓模式正交（specs ADDED 条款：fixed 与 risk_budget
+        档下均生效）——risk_budget 物化参数下判定段照常触发（定仓
+        模式只管首笔来源，不参与防线判定；互斥仅约束 initial_fraction
+        ×risk_budget，max_position_loss 与 risk_budget 共存合法）。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(position_mode="risk_budget",
+                             risk_fraction=0.05, max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0), params)
+        assert [(i.kind, i.reason) for i in intents] \
+            == [("exit_max_loss", "max_loss")]
+
 
 class TestMaxLossAttributionOrder:
     """族 6 归因序：金额防线段位次=SL/TP 后、时间出场前。

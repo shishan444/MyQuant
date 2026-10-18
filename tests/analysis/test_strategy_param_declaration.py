@@ -538,6 +538,25 @@ class TestSizingParamsDeclaration:
         t2 = translate_hypothesis(db, hypothesis_id=h2["hypothesis_id"])
         assert t2["strategy_id"] != t1["strategy_id"]
 
+    @pytest.mark.parametrize("key,declared,other", [
+        ("initial_fraction", 0.2, 0.5),
+        ("max_position_loss", 500.0, 900.0),
+    ], ids=["initial-fraction", "max-position-loss"])
+    def test_idempotency_carries_new_keys(self, db, key, declared, other):
+        """新键进幂等全等比对（specs 幂等段通用条款对两新键的携带——
+        此前四分支测试仅用存量键，新键只在终态变体场景验证过）：
+        active 态同身份带键同值→duplicated；异值→422（detail 附既有
+        声明摘要，防静默丢弃）。"""
+        _register(db, {key: declared})
+        r_same = _register(db, {key: declared})
+        assert r_same["duplicated"] is True
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {key: other})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        d = ei.value.detail
+        assert d["existing_strategy_params"] == {key: declared}
+        assert "slow_path" in d
+
 
 # ── 变体端到端 + 分流两线 ──────────────────────────────────────────
 

@@ -752,6 +752,25 @@ class TestExitReasons:
         assert exit_reasons["close:reverse"] == 1
         assert "close" not in exit_reasons  # 无未细分裸键
 
+    def test_remaining_exit_kinds_aggregated(self, tmp_path):
+        """七类列举的其余三类（exit_tp/exit_time/exit_liquidation——
+        specs Requirement 键集列举）kind 直作键聚合在场：一笔一类、
+        键名原样无细分无改写。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("exit_tp", "tp"),
+            ("exit_time", "time"),
+            ("exit_liquidation", "liquidation"),
+        ])
+
+        exit_reasons = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        assert exit_reasons == {
+            "exit_tp": 1, "exit_time": 1, "exit_liquidation": 1}
+
     def test_no_new_performance_keys(self, tmp_path):
         """performance 层零触碰：键集不含 exit_reasons（schema 无新
         performance 键——聚合只进 evidence 层）。"""

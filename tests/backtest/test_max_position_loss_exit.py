@@ -152,6 +152,43 @@ class TestEquivalenceAnchor:
         df, res = _run(_dna(mpl=1e9))  # 永不触发档
         assert res.total_funding_cost == base_total
 
+    def test_second_segment_accumulation_resets(self):
+        """funding_acc 生命周期锚（design 层 4 可核验约束）：出场清零
+        ——两段持仓同阈值 L=3×incr₁，第二段出场 bar 按第二段独立累计
+        手算（第二段 qty 因第一段出入场滑点损耗略缩 → incr₂<incr₁，
+        需 4 根计费；「恰 3 根对称」不成立是行为事实非缺陷）。反证：
+        第一段不清零则第二段 bar 22 即触发（残留 3×incr₁+incr₂≥L
+        恒真）；空仓段（bar 7-20）误累计则更早。事后层两段分段和
+        交叉对拍。"""
+        import math
+
+        pos, incr, _ = self._baseline()
+        L = incr * 3
+        df, res = _run(
+            _dna(mpl=L), sig=_sig(entries_bars=(2, 20)))
+        pairs = [_bars_of(df, row)
+                 for _, row in res.trades_df.iterrows()]
+        assert len(pairs) == 2, f"应恰两段持仓，实际 {pairs}"
+        rate = _funding_cost_rate(3, "4h")
+        sizes = [abs(float(row["Size"]))
+                 for _, row in res.trades_df.iterrows()]
+        incrs = [s * 100.0 * 3.0 * rate for s in sizes]
+        (e1, x1), (e2, x2) = pairs
+        # 各段独立累计：出场 bar=入场 bar+ceil(L/该段 incr)（含等）
+        exp1 = e1 + math.ceil(L / incrs[0] - 1e-9)
+        exp2 = e2 + math.ceil(L / incrs[1] - 1e-9)
+        assert (e1, x1) == (3, exp1), f"第一段: {pairs[0]} 预期 (3,{exp1})"
+        assert (e2, x2) == (21, exp2), (
+            f"第二段应独立累计至 {exp2}——受第一段残留污染（未清零时"
+            f"bar {e2 + 1} 即触发）或空仓段误累计: {pairs[1]}")
+        # 清零反证面：实际出场晚于「残留即触发」的最早可能 bar
+        assert x2 > e2 + 1, "第二段次根即触发=funding_acc 未清零"
+        # 事后层=两段分段和（段间空仓不计费）
+        seg1 = incrs[0] * (x1 - e1)
+        seg2 = incrs[1] * (x2 - e2)
+        assert abs(res.total_funding_cost - (seg1 + seg2)) \
+            <= (seg1 + seg2) * 1e-9
+
 
 class TestRegressionAnchor:
     """族 10b 回归锚：不声明逐字节不变（v8 字节锚=固定样本 metrics 与
@@ -287,3 +324,63 @@ class TestMechanismAnchors:
         df_s, r_s = _run(_dna(mpl=200.0, leverage=1), df=df)
         _, exit_s = _bars_of(df_s, r_s.trades_df.iloc[0])
         assert b0 == exit_s, "批量与单路径同源（出场 bar 一致）"
+
+
+class TestModeOrthogonality:
+    """防线与定仓模式正交（specs ADDED：fixed 与 risk_budget 档下均
+    生效）——risk_budget 定仓下仓位来源走风险预算公式（qty 恒等式
+    证明），防线金额阈值照常按该仓位判定触发。lev=1 无资金费分量
+    （纯价格浮亏路径）。"""
+
+    def test_risk_budget_sizing_guard_still_fires(self):
+        p = np.full(N, 100.0)
+        p[5] = 99.9   # 浅跌：手算 loss 未达线
+        p[6] = 99.7   # 深跌：手算 loss 达线
+        df = _df(p)
+        guarded = _dna(mpl=200.0, leverage=1, stop_loss=0.05,
+                       position_mode="risk_budget", risk_fraction=0.04)
+        df_g, res = _run(guarded, df=df)
+        assert res.total_trades >= 1
+        row = res.trades_df.iloc[0]
+        entry_b, exit_b = _bars_of(df_g, row)
+        qty = abs(float(row["Size"]))
+        entry = float(row["Avg Entry Price"])
+
+        # 仓位来源=risk_budget 公式（恒等式：qty×entry×sl≈eq×rf）
+        budget = qty * entry * 0.05
+        assert abs(budget - 100000 * 0.04) <= 100000 * 0.04 * 0.01, (
+            f"首笔应走风险预算公式，恒等式破坏: {budget}")
+
+        # 防线在该仓位下触发：出场 bar=首个手算 loss≥mpl 的 bar
+        # （首达线夹逼——从成交 qty/entry 独立手算，非回填实现值）
+        loss5 = qty * (entry - float(df["close"].iloc[5]))
+        loss6 = qty * (entry - float(df["close"].iloc[6]))
+        assert exit_b == 6, f"risk_budget 档防线应 bar 6 触发，实际 {exit_b}"
+        assert loss5 < 200.0 <= loss6, (
+            f"夹逼前提破坏: bar5={loss5} bar6={loss6}（entry={entry} "
+            f"qty={qty}）")
+
+        # 无防线对照：同 risk_budget 定仓不声明防线 → 持仓到末根
+        _, res_c = _run(
+            _dna(leverage=1, stop_loss=0.05, position_mode="risk_budget",
+                 risk_fraction=0.04), df=df)
+        _, exit_c = _bars_of(df, res_c.trades_df.iloc[0])
+        assert exit_c == N - 1, "无防线对照应持仓到末根"
+
+
+class TestFundingCostRateSingleSource:
+    """费率单源直锚（design 层 4「公式单源」可核验约束）：leverage≤1
+    短路 0（与事后层直返零费用同口径）+公式手算对照（RATE_PER_8H×
+    periods_per_bar×borrowed_ratio）。此前仅作为构造前提间接出现。"""
+
+    def test_leverage_short_circuit(self):
+        assert _funding_cost_rate(1, "4h") == 0.0
+        assert _funding_cost_rate(0.5, "4h") == 0.0
+
+    def test_formula_hand_calc(self):
+        # lev=3、4h：0.001×(4/8)×(2/3)=1/3000
+        assert _funding_cost_rate(3, "4h") == pytest.approx(1.0 / 3000)
+        # lev=2、4h：0.001×0.5×0.5
+        assert _funding_cost_rate(2, "4h") == pytest.approx(0.00025)
+        # lev=3、1h（timeframe 映射单源）：0.001×(1/8)×(2/3)
+        assert _funding_cost_rate(3, "1h") == pytest.approx(0.001 / 12)
