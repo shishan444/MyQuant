@@ -26,6 +26,7 @@ pytestmark = [pytest.mark.integration]
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from api.schemas import BatchBacktestRequest
 from tests.helpers.data_factory import make_dna, make_ohlcv
 
 
@@ -528,3 +529,43 @@ class TestDetailEndpoint:
         assert data["equity_curve"] is None
         assert data["signals"] is None
         assert data["dimension_scores"] is None
+
+
+class TestLeverageBoundValidation:
+    """CARD-03：BatchBacktestRequest.leverage 值域 [1, MAX_LEVERAGE]（422 面）。
+
+    与 VerifyRequest 同族 Field 形制（api/schemas 单源 MAX_LEVERAGE=
+    10——core/strategy/validator 杠杆红线）。越界在路由装配层拦 422、
+    先于 handler（strategy_ids 无效本会 404——422 优先证明校验层拦
+    截）；域内 leverage=1 的流式端到端由本文件 TestStreamEndpoint
+    既有用例承载（payload 缺省即 1——引用声明不重复建）。
+    """
+
+    @pytest.mark.parametrize(
+        "leverage", [0, 11], ids=["下界外 0", "上界外 MAX_LEVERAGE+1"])
+    def test_leverage_out_of_bounds_422(self, api_client: TestClient,
+                                        leverage: int) -> None:
+        """越界 leverage → 422（结构化校验拒绝——裸 leverage 不再
+        覆盖组内 DNA 装配）。"""
+        response = api_client.post(
+            "/api/strategies/batch-backtest/stream",
+            json={"strategy_ids": ["ghost-1"],
+                  "data_ranges": [
+                      {"start": "2024-01-01", "end": "2024-06-01"}],
+                  "leverage": leverage})
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "leverage", [1, 5, 10],
+        ids=["下界 1", "域内 5", "上界 MAX_LEVERAGE"])
+    def test_leverage_in_bounds_schema_accepts(self, leverage: int) -> None:
+        """域内含两侧边界 schema 构造照常、缺省=1（合法值不误拦）。"""
+        req = BatchBacktestRequest(
+            strategy_ids=["s-1"],
+            data_ranges=[{"start": "2024-01-01", "end": "2024-06-01"}],
+            leverage=leverage)
+        assert req.leverage == leverage
+        assert BatchBacktestRequest(
+            strategy_ids=["s-1"],
+            data_ranges=[{"start": "2024-01-01", "end": "2024-06-01"}],
+        ).leverage == 1
