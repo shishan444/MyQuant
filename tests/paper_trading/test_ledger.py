@@ -496,3 +496,159 @@ class TestIntentPreconditionGuards:
         assert fill.quantity == pytest.approx(100.0)
         assert ledger.position is None  # quantity<=0 → 清仓
         assert ledger.closed_trades == 1
+
+
+class TestFundingPaidLifecycle:
+    """持仓级资金费归集生命周期（add-position-sizing-params 族 4）。
+
+    funding_paid=当前持仓判定输入（金额防线的资金费分量）；
+    total_funding=账户累计披露——两口径并存。
+    """
+
+    def test_open_initializes_zero(self):
+        """开仓归零：新 Position.funding_paid=0.0。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        assert ledger.position.funding_paid == 0.0
+
+    def test_settlement_accumulates_signed(self):
+        """结算累加带符号：付出为正（加深浮亏）、收到为负（抵减）。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)  # qty=100
+        paid = ledger.apply_funding(rate=0.0001, settle_price=100.0)
+        assert paid == pytest.approx(1.0)
+        assert ledger.position.funding_paid == pytest.approx(1.0)
+        received = ledger.apply_funding(rate=-0.0001, settle_price=100.0)
+        assert received == pytest.approx(-1.0)
+        assert ledger.position.funding_paid == pytest.approx(0.0)
+
+    def test_accumulated_funding_flows_into_snapshot(self):
+        """快照透传：snapshot().position.funding_paid 与内部态同值
+        （解释器判定输入链路）。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        ledger.apply_funding(rate=0.0001, settle_price=100.0)
+        ledger.apply_funding(rate=0.0001, settle_price=110.0)  # +1.1
+        snap = ledger.snapshot(mark_price=100.0)
+        assert snap.position.funding_paid == pytest.approx(2.1)
+
+    def test_add_keeps_accumulation_continuous(self):
+        """并仓延续：加仓不重置 funding_paid（同一 Position 对象——
+        Q7 并仓语义：合并持仓的总浮亏含并仓后累计资金费）。"""
+        params = make_params(position_size=0.1, leverage=10,
+                             add_fraction=0.1)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        ledger.apply_funding(rate=0.0001, settle_price=100.0)  # 1.0
+        pos_before = ledger.position
+        ledger.execute(
+            Intent(kind="add", direction="long"), _bar(110.0, seq=1),
+            _ZERO_COST)
+        assert ledger.position is pos_before  # 同一对象延续
+        assert ledger.position.funding_paid == pytest.approx(1.0)
+        ledger.apply_funding(rate=0.0001, settle_price=110.0)
+        assert ledger.position.funding_paid > 1.0  # 并仓后继续累计
+
+    def test_close_discards_and_total_funding_persists(self):
+        """全平丢弃持仓级口径、账户级 total_funding 并存保留。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        ledger.apply_funding(rate=0.0001, settle_price=100.0)  # 1.0
+        ledger.execute(
+            Intent(kind="close", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)
+        assert ledger.position is None  # 持仓级口径随对象丢弃
+        assert ledger.total_funding == pytest.approx(1.0)  # 账户级保留
+
+    def test_reentry_resumes_from_zero(self):
+        """全平→再入场：新持仓 funding_paid 从零起（旧段不残留），
+        账户级 total_funding 跨段连续累计。"""
+        params = make_params(position_size=0.1, leverage=10)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        ledger.apply_funding(rate=0.0001, settle_price=100.0)  # 1.0
+        ledger.execute(
+            Intent(kind="close", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)
+        _open(ledger, 100.0, seq=2)
+        assert ledger.position.funding_paid == 0.0
+        assert ledger.total_funding == pytest.approx(1.0)
+
+    def test_no_position_settlement_no_accumulation(self):
+        """空仓结算零归集（apply_funding 空仓分支 0.0）。"""
+        ledger = Ledger(10_000.0, make_params())
+        assert ledger.apply_funding(rate=0.0001, settle_price=100.0) == 0.0
+        assert ledger.total_funding == 0.0
+
+
+class TestInitialFractionSizing:
+    """首笔定仓分派（add-position-sizing-params 族 4）。
+
+    数值锚（specs）：权益 10 万、声明 initial_fraction=0.2 → 首笔
+    margin=2 万；对照不声明×position_size=0.3=3 万。分派式与引擎
+    装配 effective_first_size 同式（materialize 对照断言锁）。
+    """
+
+    def test_declared_initial_fraction_sizes_first_entry(self):
+        """声明 0.2：首笔 margin=100_000×0.2=20_000（position_size
+        0.3 被替换不消费）。"""
+        params = make_params(
+            initial_fraction=0.2, position_size=0.3, leverage=1)
+        ledger = Ledger(100_000.0, params)
+        fill = _open(ledger, 100.0)
+        assert ledger.position.margin == pytest.approx(20_000.0)
+        assert fill.quantity == pytest.approx(200.0)
+
+    def test_undeclared_uses_position_size_baseline(self):
+        """不声明对照：margin=100_000×0.3=30_000（存量路径逐位不变）。"""
+        params = make_params(position_size=0.3, leverage=1)
+        ledger = Ledger(100_000.0, params)
+        fill = _open(ledger, 100.0)
+        assert ledger.position.margin == pytest.approx(30_000.0)
+        assert fill.quantity == pytest.approx(300.0)
+
+    def test_add_behavior_identical_when_first_entry_equal(self):
+        """加仓行为与不声明时逐位一致：首仓经两路径等价（声明
+        initial_fraction=0.2 vs 不声明 position_size=0.2 殊途同归）
+        后，同序列加仓成交/margin/balance 逐位一致——initial_fraction
+        消费点仅首笔，加仓走 add_fraction 既有公式零变化。"""
+        declared = Ledger(
+            100_000.0, make_params(
+                initial_fraction=0.2, position_size=0.3, leverage=1,
+                add_fraction=0.1))
+        undeclared = Ledger(
+            100_000.0, make_params(
+                position_size=0.2, leverage=1, add_fraction=0.1))
+        for ledger in (declared, undeclared):
+            _open(ledger, 100.0)
+            assert ledger.position.quantity == pytest.approx(200.0)
+        fill_a = declared.execute(
+            Intent(kind="add", direction="long"), _bar(110.0, seq=1),
+            _ZERO_COST)
+        fill_b = undeclared.execute(
+            Intent(kind="add", direction="long"), _bar(110.0, seq=1),
+            _ZERO_COST)
+        assert fill_a.quantity == fill_b.quantity
+        assert declared.position.quantity \
+            == pytest.approx(undeclared.position.quantity)
+        assert declared.position.margin \
+            == pytest.approx(undeclared.position.margin)
+        assert declared.balance == pytest.approx(undeclared.balance)
+
+    def test_risk_budget_ignores_initial_fraction(self):
+        """risk_budget 档不读 initial_fraction：直构共存（绕过装载
+        互斥）走 risk_budget 定仓（与不声明同值——防御=忽略）。"""
+        with_if = make_params(
+            position_mode="risk_budget", risk_fraction=0.01,
+            stop_loss=0.02, initial_fraction=0.2, position_size=0.3)
+        without_if = make_params(
+            position_mode="risk_budget", risk_fraction=0.01,
+            stop_loss=0.02, position_size=0.3)
+        fill_a = _open(Ledger(100_000.0, with_if), 100.0)
+        fill_b = _open(Ledger(100_000.0, without_if), 100.0)
+        assert fill_a.quantity == pytest.approx(500.0)  # 100_000×0.01/2
+        assert fill_a.quantity == fill_b.quantity
