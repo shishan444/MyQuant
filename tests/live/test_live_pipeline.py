@@ -17,7 +17,7 @@ from core.live_trading.pipeline import (
     to_judgment_state,
 )
 from core.live_trading.types import LiveAccountState, LivePosition, OrderAction
-from core.trading.types import Decision
+from core.live_trading.types import Decision
 
 
 def _sig(entry=False, exit_=False, add=False, reduce_=False, direction=1.0):

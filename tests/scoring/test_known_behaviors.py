@@ -13,7 +13,6 @@ pytestmark = [pytest.mark.unit]
 
 from core.scoring.metrics import compute_metrics
 from core.scoring.scorer import RequirementsConfig, compute_fitness
-from core.scoring.trading_metrics import TradingMetricsInput, compute_trading_metrics
 
 
 def _series(values, freq="4h"):
@@ -29,18 +28,6 @@ def _scorer_metrics(**overrides):
     }
     base.update(overrides)
     return base
-
-
-def _trading_data(**kw):
-    base = dict(
-        initial_cash=10000.0, balance=10500.0, total_trades=4, win_count=3,
-        loss_count=1, realized_pnl=500.0, unrealized_pnl=0.0,
-        position_side=None, position_margin=0.0,
-        close_pnls=[200.0, 150.0, 100.0, -50.0],
-        equity_snapshots=[10000.0, 10200.0, 10100.0, 10500.0],
-    )
-    base.update(kw)
-    return TradingMetricsInput(**base)
 
 
 class TestKnownUnadjudicatedBehaviors:
@@ -64,17 +51,6 @@ class TestKnownUnadjudicatedBehaviors:
         result = compute_fitness({"total_trades": 0}, requirements=req)
         assert result["objective_name"] == "bogus"
         assert result["fitness"] == 0.0
-
-    def test_all_bad_snapshots_same_output_as_empty(self):
-        """分歧点（CARD-07 有意防御但口径未裁决）：全坏点快照
-        [NaN, inf, NaN] 与空序列产出完全相同（回撤 0.0）——「无数据」
-        与「数据全坏」不区分，消费方无法从结果察觉上游坏数据。
-        """
-        m_bad = compute_trading_metrics(_trading_data(
-            equity_snapshots=[float("nan"), float("inf"), float("nan")]))
-        m_empty = compute_trading_metrics(_trading_data(equity_snapshots=[]))
-        assert m_bad["max_drawdown"] == m_empty["max_drawdown"] == 0.0
-        assert m_bad["max_drawdown_pct"] == m_empty["max_drawdown_pct"] == 0.0
 
     def test_plain_index_monthly_resample_exception_swallowed(self):
         """分歧点：非 DatetimeIndex 时 resample 抛异常被裸 except 吞掉

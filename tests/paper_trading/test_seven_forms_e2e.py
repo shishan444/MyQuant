@@ -8,12 +8,10 @@ design §8.2 七形态（总体方案验收「七种策略形态」的权威定�
 （build_report 滚动+finalize_report 结题固化+get_final_report 取版）。
 
 形态定性断言（design §8.2 形态定性修正）：
-- ⑤trail/⑥scaled 为旧链拒载形态、新链必跑（显式断言——对照面=
-  validate_trading_compatibility(dna,"paper") 非空，新链完整跑通出
-  报告）；
-- ④atr 为旧链放行的既有能力（对照面=返回空列表放行——明令禁止
-  反向断言），断言面=守卫强化（装载前置拦截+单 bar ATR NaN 静默
-  不回退 pct）与旧链行为等价；
+- ⑤trail/⑥scaled 新链必跑（完整跑通出报告——旧链拒载对照面随旧
+  交易域退役摘除，frontend-switch-and-retire R.2）；
+- ④atr 断言面=守卫强化（装载前置拦截+单 bar ATR NaN 静默不回退
+  pct）；
 - 各形态对应忠实性断言分派（_FORM_CHECKS 映射）。
 """
 from __future__ import annotations
@@ -37,7 +35,6 @@ from core.paper_trading.runtime.executor import PaperTaskExecutor
 from core.paper_trading.runtime.feed import FeedRegistry, FeedSubscription
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import paper
-from core.strategy.validator import validate_trading_compatibility
 from tests.helpers.data_factory import (
     make_dna,
     make_mixed_dna,
@@ -195,9 +192,7 @@ def _check_atr(h):
 
 
 def _check_trail(h):
-    """trail：旧链拒载形态新链必跑+追踪止损=峰值×(1−sl)。"""
-    reasons = validate_trading_compatibility(h.dna, "paper")
-    assert reasons, "旧链 trail 三链拒载（对照面）"
+    """trail：追踪止损=峰值×(1−sl)（新链原生支持）。"""
     fills = h.fills()
     sls = [(f, e) for f, e in _exit_entry_pairs(fills)
            if f["kind"] == "exit_sl"]
@@ -210,10 +205,7 @@ def _check_trail(h):
 
 
 def _check_scaled(h):
-    """scaled：旧链拒载形态新链必跑+减仓 30% 即 30%+加仓权益比例。"""
-    reasons = validate_trading_compatibility(h.dna, "paper")
-    assert reasons and "分批" in " ".join(reasons), \
-        "旧链分批三链拒载（对照面）"
+    """scaled：减仓 30% 即 30%+加仓权益比例（新链原生支持分批）。"""
     fills = h.fills()
     kinds = {f["kind"] for f in fills}
     assert {"reduce", "add"} <= kinds
@@ -303,12 +295,11 @@ class TestSevenFormsEndToEnd:
         # 形态对应忠实性断言分派
         _FORM_CHECKS[form](h)
 
-    def test_trail_and_scaled_are_old_chain_rejected_forms(self, tmp_path):
-        """trail/scaled 两形态可跑显式断言：旧链拒载（对照面非空）
-        +新链完整跑通出报告（新链必跑——形态定性修正）。"""
+    def test_trail_and_scaled_run_full_chain(self, tmp_path):
+        """trail/scaled 两形态新链完整跑通出报告（新链必跑——形态
+        定性修正；旧链拒载对照面随旧域退役摘除）。"""
         for form in ("trail", "scaled"):
             dna = _form_dna(form)
-            assert validate_trading_compatibility(dna, "paper"), form
             h = _FormHarness(tmp_path / form, dna)
             h.run_task()
             assert h.task()["status"] == "completed"
@@ -316,14 +307,11 @@ class TestSevenFormsEndToEnd:
             assert report["status"] == "completed"
             assert h.fills(), f"{form} 新链必跑"
 
-    def test_atr_old_chain_admits_and_guard_equivalent(self, tmp_path):
-        """atr 形态：旧链放行对照（返回空列表——禁止反向断言）+守卫
-        强化与旧链行为等价——单 bar ATR NaN 该 bar 无 SL/TP 意图
-        （静默不回退 pct）、次根恢复后防线恢复。"""
+    def test_atr_guard_nan_silent_no_pct_fallback(self, tmp_path):
+        """atr 形态：守卫强化——单 bar ATR NaN 该 bar 无 SL/TP 意图
+        （静默不回退 pct）、次根恢复后防线恢复（旧链放行对照面随旧
+        域退役摘除）。"""
         dna = _form_dna("atr")
-        # 旧链放行对照面（validate_trading_compatibility 的能力矩阵：
-        # atr+paper 放行——与代码一致方向断言）
-        assert validate_trading_compatibility(dna, "paper") == []
 
         # 正常版：首个 SL 触发 bar 定位（守卫用例的对照锚）
         plain = _FormHarness(tmp_path / "plain", dna)

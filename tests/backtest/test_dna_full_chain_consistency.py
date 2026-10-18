@@ -4,7 +4,7 @@
 未逐字段断言全等, 也未验证经 SQLite TEXT 列存取后一致, 更未验证 roundtrip 后 executor
 翻译的信号一致。本契约补全:
   1. 全字段 to_json/from_json roundtrip 逐字段相等(含 MTF 层/控制字段/gene_signature)
-  2. 经 SQLite TEXT 列存取后还原一致(strategy 表 + paper_trading_task 表)
+  2. 经 SQLite TEXT 列存取后还原一致(strategy 表 + 纸盘 pt_task 表)
   3. roundtrip 后 dna_to_signal_set 产出的信号与原 DNA 完全一致(序列化不丢 executor 信息)
   4. legacy 'trend' role 迁移为 'structure'
   5. is_mtf 标志 roundtrip 保留
@@ -21,9 +21,7 @@ from core.strategy.dna import (  # noqa: E402
     ExecutionGenes,
 )
 from core.strategy.executor import dna_to_signal_set  # noqa: E402
-from core.persistence.repository.paper_trading import (  # noqa: E402
-    get_paper_trading_task, save_paper_trading_task,
-)
+from core.persistence.repository import paper  # noqa: E402
 from core.persistence.repository.strategy import (  # noqa: E402
     get_strategy, save_strategy,
 )
@@ -116,16 +114,23 @@ class TestSqliteTextSurvival:
         assert row is not None
         _assert_roundtrip_equal(dna, StrategyDNA.from_json(row["dna_json"]))
 
-    def test_paper_trading_task_roundtrip(self, tmp_path: Path):
+    def test_paper_task_roundtrip(self, tmp_path: Path):
+        """纸盘新域载体：pt_task.dna_snapshot_json 存取还原一致
+        （frontend-switch-and-retire R.2 由旧 paper_trading_task 表迁来，
+        roundtrip 语义保留——上盘流转快照列同样是 TEXT 全文存储）。"""
         db = tmp_path / "test.db"
         init_db_ext(db)
         dna = _full_field_dna()
-        save_paper_trading_task(db, task_id="t1", dna_json=dna.to_json(),
-                                symbol="ETHUSDT", timeframe="4h",
-                                initial_cash=100_000, fee=0.001)
-        row = get_paper_trading_task(db, "t1")
+        paper.create_task(
+            db, task_id="t1", strategy_id="s1",
+            dna_snapshot_json=dna.to_json(),
+            symbol="ETHUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=100_000, fee=0.001)
+        row = paper.get_task(db, "t1")
         assert row is not None
-        _assert_roundtrip_equal(dna, StrategyDNA.from_json(row["dna_json"]))
+        _assert_roundtrip_equal(
+            dna, StrategyDNA.from_json(row["dna_snapshot_json"]))
 
 
 class TestLegacyMigration:

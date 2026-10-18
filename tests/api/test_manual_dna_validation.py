@@ -1,16 +1,17 @@
 """手工 DNA 通道值域校验（review-042 CARD-12）。
 
 修复前现象：validate_dna 在 api/ 零调用——POST /api/strategies 与
-POST /api/trading/tasks（含 /api/live-trading/tasks）的 DNA 无任何
+策略创建入口（含 /api/live-trading/tasks；旧交易域任务入口随旧域
+退役——frontend-switch-and-retire R.2）的 DNA 无任何
 值域校验：NaN/越域/bool 收窄（True→1.0）经 Pydantic 全过落库，
 引擎 sl=ep×(1−1.0)=0 恒不触发（看似设了止损实为无止损）；
 exit_fraction=NaN 传播权益曲线致隔离验证判定失真。
 
-锚组（三入口同防线）：
+锚组（同防线）：
 - NaN / 越域 / bool 收窄各一 422 锚（detail 含 errors 清单）
 - 合法 DNA 通过锚（防线不误伤）
 - live 创建点 trail 早拒锚（装载即拒前移——落库前 422）
-- live 创建点值域锚（live 链与 paper 链同防线）
+- live 创建点值域锚（live 链同防线）
 """
 
 import json
@@ -100,24 +101,6 @@ class TestStrategyCreateValidation:
         r = self._post_raw(api_client, exit_fraction=float("nan"))
         assert r.status_code == 422
         assert any("exit_fraction" in e for e in r.json()["detail"]["errors"])
-
-
-class TestTradingTaskValidation:
-    def test_nan_rejected(self, api_client):
-        """模拟盘任务创建值域锚：dna_json 携带 NaN 值域 422。"""
-        dna = _genes_dna(stop_loss=float("nan"))
-        r = api_client.post("/api/trading/tasks",
-                            json={"dna_json": dna.to_json(),
-                                  "symbol": "BTCUSDT", "timeframe": "4h"})
-        assert r.status_code == 422
-        assert r.json()["detail"]["code"] == "DNA_VALIDATION_FAILED"
-
-    def test_valid_dna_passes(self, api_client):
-        dna = _genes_dna()
-        r = api_client.post("/api/trading/tasks",
-                            json={"dna_json": dna.to_json(),
-                                  "symbol": "BTCUSDT", "timeframe": "4h"})
-        assert r.status_code == 201, r.text
 
 
 class TestLiveTaskValidation:

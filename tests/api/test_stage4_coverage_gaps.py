@@ -550,17 +550,6 @@ class TestSceneGaps:
             assert key in first
 
 
-class TestTradingGaps:
-    """trading.py runner-status 无 runner 分支（275）。"""
-
-    def test_runner_status_without_runner(self) -> None:
-        from types import SimpleNamespace
-        from api.routes.trading import runner_status
-        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
-        result = runner_status(request)
-        assert result == {"is_alive": False, "active_task_id": None}
-
-
 class TestLiveTradingGaps:
     """live_trading.py PATCH 空 updates 跳过（67-69 分支）。"""
 

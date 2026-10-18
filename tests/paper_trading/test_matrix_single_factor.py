@@ -43,7 +43,6 @@ from core.paper_trading.runtime.feed import FeedRegistry, FeedSubscription
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import paper
 from core.strategy.executor import dna_to_signal_set
-from core.strategy.validator import validate_trading_compatibility
 from tests.helpers.data_factory import (
     make_dna,
     make_mixed_dna,
@@ -541,15 +540,11 @@ class TestSingleFactorOffsets:
 class TestCombinationAnchors:
     """组合锚七件（mixed×MTF 因 MTF 缺陷阻塞，见单因子 MTF 维）。"""
 
-    def test_trail_times_scaling_first_run_on_new_chain(self, tmp_path):
-        """trail×分批：旧链双拒交集（validate_trading_compatibility
-        两判据齐拒）新链首跑（add/reduce/追踪止损齐产出）。"""
+    def test_trail_times_scaling_runs_on_new_chain(self, tmp_path):
+        """trail×分批：新链齐产出（add/reduce/追踪止损同场——旧链
+        双拒对照面随旧域退役摘除，frontend-switch-and-retire R.2）。"""
         dna = make_scaled_dna(sl_mode="trail", stop_loss=0.05,
                               take_profit=None)
-        reasons = validate_trading_compatibility(dna, "paper")
-        joined = " ".join(reasons)
-        assert reasons and "trail" in joined, reasons
-        assert "分批" in joined, reasons
         h = _MatrixHarness(tmp_path, dna)
         h.run_task()
         assert h.task()["status"] == "completed"

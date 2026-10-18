@@ -180,8 +180,8 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   的 bar 不加仓）三可选组键，组内 {subject,action,target} 与 when/then
   同构；**组键进条件指纹参与假设身份**（触发条件属研究主张）；分批
   数值参数（exit_fraction 缺省 0.5/add_fraction 0.1/max_exposure 1.0）
-  经 strategy_params 声明块承载（有组无值自动归一化）。仅回测链执行
-  ——交易三链（回放/模拟/实盘）对分批角色与 trail 模式装载即拒。
+  经 strategy_params 声明块承载（有组无值自动归一化）。回测与纸盘
+  新域执行分批与 trail；live 链对分批角色与 trail/atr 模式装载即拒。
 - **止损模式三分派（0.4.2）**：pct（入场价比例，存量语义）/atr
   （止损=入场价∓倍数×ATR，按 DNA atr_period 动态取列，数据不足显式
   拒）/trail（自最高价/最低价回撤达比例全部离场，多空对称）——回测
