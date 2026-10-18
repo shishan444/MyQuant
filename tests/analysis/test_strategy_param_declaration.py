@@ -418,6 +418,23 @@ class TestSizingParamsDeclaration:
         r = _register(db, {"max_position_loss": 1e12}, period=21)
         assert r["duplicated"] is False
 
+    @pytest.mark.parametrize("bad", [
+        "abc",   # str：float() 抛 ValueError
+        [5],     # list：float() 抛 TypeError
+        True,    # bool：int 子类穿透纯值域比较（与上两形态同分支）
+    ], ids=["str", "list", "bool"])
+    def test_mpl_non_numeric_types_rejected_structured(self, db, bad):
+        """CARD-02 类型前置拦截（登记面）：非数字/bool 走「须为数字」
+        分支（修复前 'abc'=ValueError、[5]=TypeError 裸穿 500——不在
+        except 面），422+消息可辨+detail 含 field/legal_range——对齐
+        validator.py 先类型后有限性形制，不扩 except 面掩盖类型语义。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {"max_position_loss": bad})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert "须为数字" in ei.value.message
+        assert ei.value.detail["field"] == "max_position_loss"
+        assert "legal_range" in ei.value.detail
+
     def test_mutual_exclusion_rejected_with_legitimate_neighbors(self, db):
         """互斥在登记面拒绝：initial_fraction+risk_budget → 422
         （field=initial_fraction）；邻界不误拒（fixed 显式+if 合法、
