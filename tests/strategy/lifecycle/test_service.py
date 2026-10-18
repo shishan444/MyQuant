@@ -327,6 +327,102 @@ class TestIdempotentAndTransaction:
         assert _events(db) == 0
 
 
+class _ConcurrentMigrator:
+    """CARD-05 并发窗口注入器：主调 CAS UPDATE 到达时先执行 prelude
+    （经同 conn 完成他者迁移或直插事件+改状态），再放行主调 CAS
+    （rowcount=0 → 幂等回查分支）——比 _RaceInjector 多保真事件侧。"""
+
+    def __init__(self, conn, prelude):
+        self._conn = conn
+        self._prelude = prelude
+        self._done = False
+
+    def execute(self, stmt, *args, **kwargs):
+        if (not self._done and isinstance(stmt, Update)
+                and stmt.table.name == "strategy"):
+            self._done = True
+            self._prelude(self._conn)
+        return self._conn.execute(stmt, *args, **kwargs)
+
+
+class TestIdempotentTriggerAttribution:
+    """CARD-05 幂等回填同 trigger 归因：同边双合法 trigger（draft→
+    archived 的 manual_archive/refute）并发时，幂等响应不误挂他者
+    trigger 的事件；同 trigger 归因最近事件；同刻 tie-break 取
+    event_id 更大者。"""
+
+    def _run_under_window(self, db, sid, trigger, evidence, prelude):
+        from core.strategy.lifecycle.service import transit
+
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            wrapper = _ConcurrentMigrator(conn, prelude)
+            return transit(db, sid, target="archived", trigger=trigger,
+                           evidence=evidence, conn=wrapper)
+
+    def test_cross_trigger_no_misattribution_same_trigger_attributes(
+            self, db):
+        """双 trigger 归因分派：他者 manual_archive 并发完迁后——
+        主调 refute→event_id=None（异 trigger 无可归因事件，不误挂
+        他者）；主调 manual_archive→归因他者事件 id（同 trigger）。"""
+        from core.strategy.lifecycle.service import _transit_on_conn
+
+        # 格一：主调 refute（异 trigger）
+        _add(db, "st_attr1", status="draft")
+        out_refute = self._run_under_window(
+            db, "st_attr1", "refute", {"record_id": "vr_fail_attr"},
+            lambda conn: _transit_on_conn(
+                conn, "st_attr1", target="archived",
+                trigger="manual_archive", evidence=None))
+        assert out_refute["idempotent"] is True
+        assert out_refute["event_id"] is None, \
+            "异 trigger 不得误挂他者 manual_archive 事件（CARD-05 本体）"
+        rows = _events(db, "st_attr1")
+        assert len(rows) == 1 and rows[0][2] == "manual_archive", \
+            "幂等分支零新事件，在场唯一事件=他者"
+
+        # 格二：主调 manual_archive（同 trigger）——归因他者事件
+        _add(db, "st_attr2", status="draft")
+        out_same = self._run_under_window(
+            db, "st_attr2", "manual_archive", None,
+            lambda conn: _transit_on_conn(
+                conn, "st_attr2", target="archived",
+                trigger="manual_archive", evidence=None))
+        assert out_same["idempotent"] is True
+        assert out_same["event_id"] is not None
+        engine = engine_for(db)
+        with engine.connect() as conn:
+            ids = conn.execute(text(
+                "SELECT event_id FROM strategy_transition_event"
+                " WHERE strategy_id='st_attr2'")).scalars().all()
+        assert out_same["event_id"] in ids, "同 trigger 归因到在场他者事件"
+
+    def test_same_instant_tie_break_prefers_larger_event_id(self, db):
+        """同刻双同 trigger 事件：归因 event_id 字典序更大者（次序键
+        兼治 created_at 同刻 tie-break）。"""
+        _add(db, "st_tie", status="draft")
+
+        def _prelude(conn):
+            conn.execute(text(
+                "UPDATE strategy SET status='archived'"
+                " WHERE strategy_id='st_tie'"))
+            conn.execute(text(
+                "INSERT INTO strategy_transition_event (event_id,"
+                " strategy_id, from_status, to_status, trigger,"
+                " created_at) VALUES"
+                " ('evt_tie_a', 'st_tie', 'draft', 'archived',"
+                " 'manual_archive', '2026-10-18T00:00:00'),"
+                " ('evt_tie_b', 'st_tie', 'draft', 'archived',"
+                " 'manual_archive', '2026-10-18T00:00:00')"))
+
+        out = self._run_under_window(
+            db, "st_tie", "manual_archive", None, _prelude)
+        assert out["idempotent"] is True
+        assert out["event_id"] == "evt_tie_b", \
+            "同刻 tie-break 取 event_id 更大者"
+        assert len(_events(db, "st_tie")) == 2, "幂等分支零新事件"
+
+
 class TestCredentialFunctions:
     """credential.py 三态判定+守卫两分支+收紧位锚（2.2）。"""
 
