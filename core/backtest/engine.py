@@ -178,7 +178,7 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
 
     返回 (sl_mode_val, atr_col_or_None, exit_fraction, add_fraction,
     max_exposure, max_hold, time_exit, position_mode_code,
-    risk_fraction, effective_first_size)：
+    risk_fraction, effective_first_size, max_position_loss)：
     - sl_mode 经 sl_mode_code 映射分派码；atr 模式装载 ATR 列（装载
       校验在 _load_atr_column），非 atr 模式返回 None——占位数组由
       调用方决定（单路径全 1 向量、批量路径逐列堆叠）
@@ -226,9 +226,17 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
         float(risk_genes.initial_fraction)
         if risk_genes.initial_fraction is not None
         else float(risk_genes.position_size))
+    # 持仓金额防线（add-position-sizing-params 2.2）：None→0.0=禁用
+    # 哨兵（值域 >0 使 0 天然无歧义——max_hold 同款形制）；1D 逐列常数
+    # 参数族。funding_acc 旁路费率不入本元组（leverage/timeframe 两入
+    # 在调用方直接经 _funding_cost_rate 单源折算——与事后层同源）
+    max_position_loss = (float(risk_genes.max_position_loss)
+                         if risk_genes.max_position_loss is not None
+                         else 0.0)
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
             max_exposure, max_hold, time_exit,
-            position_mode_code, risk_fraction, effective_first_size)
+            position_mode_code, risk_fraction, effective_first_size,
+            max_position_loss)
 
 
 @dataclass
@@ -297,6 +305,29 @@ def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
     return total_cost
 
 
+def _funding_cost_rate(leverage: float, timeframe: str) -> float:
+    """单 bar 资金费率折算单源（add-position-sizing-params 2.2）。
+
+    公式：RATE_PER_8H×periods_per_bar×borrowed_ratio（每 8 小时 0.1%
+    按 bar 周期比例折算——非 ceil，不足一期按零头比例收；计费基数=
+    借入部分 (leverage−1)/leverage）。leverage≤1 时 0（无借入零费用）。
+    消费方两处同源：事后层 _apply_funding_costs（权益曲线扣减）与
+    order_func_nb 的 funding_acc 旁路累计（金额防线判定输入）——两处
+    费率不漂移由本单点承担。
+    """
+    if leverage <= 1:
+        return 0.0
+    RATE_PER_8H = 0.001
+    hours_per_bar = {
+        "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
+        "1h": 1, "4h": 4, "1d": 24, "3d": 72,
+    }.get(timeframe, 4)
+    # 比例折算而非 ceil——不足一期按零头比例收，避免多收
+    periods_per_bar = hours_per_bar / 8.0
+    borrowed_ratio = (leverage - 1) / leverage
+    return RATE_PER_8H * periods_per_bar * borrowed_ratio
+
+
 def _apply_funding_costs(
     equity_curve: pd.Series, leverage: int, timeframe: str,
     trades_df: Optional[pd.DataFrame] = None,
@@ -304,9 +335,9 @@ def _apply_funding_costs(
 ) -> tuple[pd.Series, float]:
     """杠杆资金费扣减——仅持仓时段收费。
 
-    费率口径：每 8 小时 0.1% 按 bar 周期比例折算（非 ceil——不足一期
-    的零头按比例收，避免多收）；计费基数=借入部分 (leverage-1)/
-    leverage。边界条件：leverage≤1 零费用直返。
+    费率口径：单源 _funding_cost_rate（RATE_PER_8H×periods_per_bar×
+    borrowed_ratio；不足一期的零头按比例收，避免多收）。边界条件：
+    leverage≤1 零费用直返。
 
     Args:
         equity_curve: 逐 bar 组合权益。
@@ -321,15 +352,7 @@ def _apply_funding_costs(
     if leverage <= 1:
         return equity_curve, 0.0
 
-    RATE_PER_8H = 0.001
-    hours_per_bar = {
-        "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
-        "1h": 1, "4h": 4, "1d": 24, "3d": 72,
-    }.get(timeframe, 4)
-    # 比例折算而非 ceil——不足一期按零头比例收，避免多收
-    periods_per_bar = hours_per_bar / 8.0
-    borrowed_ratio = (leverage - 1) / leverage
-    cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
+    cost_rate = _funding_cost_rate(leverage, timeframe)
 
     # 持仓掩码：True=持仓中
     position_mask = np.zeros(len(equity_curve), dtype=np.bool_)
@@ -425,7 +448,7 @@ def _apply_leverage_to_equity(
 @njit
 def pre_sim_func_nb(c):
     """仿真前置状态初始化（每列 entry_price / is_liquidated / peak_price
-    / entry_bar 数组）。
+    / entry_bar / funding_acc 数组）。
 
     经 vbt 生命周期链作为 order_func_nb 首组参数传入，供逐 bar 回调
     就地读写（入场价记忆、清算标记与 trail 峰值——float 承载因 numba
@@ -433,22 +456,30 @@ def pre_sim_func_nb(c):
     （多=最高价/空=最低价），0.0=无持仓（开仓重置成交价、清仓清零）。
     entry_bar（add-max-hold-exit D-3）：入场 bar 序号记忆（与入场价
     同点写入——每次入场独立重计持有根数；0.0=无持仓）。
+    funding_acc（add-position-sizing-params 2.2）：当前持仓累计资金费
+    （金额防线判定的资金费分量），与 entry_price 同生命周期（开仓归零、
+    出场清零）。不落库不进报告不进 metrics、不触碰 vbt 可见状态（只读
+    position_now/close 写自身数组）——对外可见资金费事实仍只有事后层
+    total_funding_cost 与调整后权益曲线一处。
     """
     n_cols = c.target_shape[1]
     entry_price = np.full(n_cols, 0.0, dtype=np.float64)
     is_liquidated = np.full(n_cols, 0.0, dtype=np.float64)  # 0.0=False，1.0=True
     peak_price = np.full(n_cols, 0.0, dtype=np.float64)
     entry_bar = np.full(n_cols, 0.0, dtype=np.float64)
-    return (entry_price, is_liquidated, peak_price, entry_bar)
+    funding_acc = np.full(n_cols, 0.0, dtype=np.float64)
+    return (entry_price, is_liquidated, peak_price, entry_bar, funding_acc)
 
 
 @njit
 def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                  funding_acc,
                   entries, exits, adds, reduces,
                   direction_vals, size_pcts, leverages,
                   sl_stops, tp_stops, sl_modes, atr_arr,
                   exit_fractions, add_fractions, max_exposures,
                   max_holds, time_exits,
+                  max_position_losses, funding_cost_rates,
                   position_modes, risk_fractions,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
@@ -473,8 +504,8 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
       约束，沿交易链 NaN guard 先例——预热期无止损保护）。
 
     Args（经 vbt 生命周期链传入）:
-        entry_price, is_liquidated, peak_price: pre_sim_func_nb 传入
-            的可变状态。
+        entry_price, is_liquidated, peak_price, entry_bar, funding_acc:
+            pre_sim_func_nb 传入的可变状态。
 
     Args（经 order_args 传入）:
         entries, exits, adds, reduces: 2D float64 信号矩阵。
@@ -490,6 +521,11 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         max_holds: 时间出场逐列参数（1D float64；装配层物化 None→0.0
             =禁用——沿 sl_stop>0 才启用形制；0.0 以外的值=持有第 N
             根 bar 的出场时点无条件全平，N 为该值取整）。
+        max_position_losses: 持仓金额防线逐列参数（1D float64；装配层
+            物化 None→0.0=禁用哨兵——0.0 使首判即假，存量零开销）。
+        funding_cost_rates: funding_acc 旁路累计的单 bar 费率逐列参数
+            （1D float64；装配层经 _funding_cost_rate 单源折算，
+            lev≤1 时 0——与事后层同源）。
         fee, slippage: 标量费滑（基础费率——杠杆放大归
             _apply_leverage_to_equity 后处理）。
         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
@@ -513,6 +549,18 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     effective_fee = fee
     effective_slippage = slippage
 
+    # funding_acc 当 bar 旁路累计（add-position-sizing-params 2.2，先于
+    # 一切出场 return——出场 bar 也计费，与事后层 _apply_funding_loop_nb
+    # 的滞后基数 abs(position_values[i−1]) 同式：abs(仓位)×close[i−1]×
+    # leverage，费率经 _funding_cost_rate 单源）。三重短路：未声明防线
+    # （首判即假——存量路径 funding_acc 恒零零开销）、i==0（无滞后 bar）、
+    # lev≤1（费率 0）。纯读 position_now/close，写自身数组——不触碰
+    # vbt 可见状态
+    if max_position_losses[col] > 0.0 and i > 0 \
+            and c.position_now != 0.0 and funding_cost_rates[col] > 0.0:
+        funding_acc[col] += (abs(c.position_now) * c.close[i - 1, col]
+                             * leverage * funding_cost_rates[col])
+
     # 已清算 → 强平余仓；仓位归零后资金充足时可再入场
     if is_liquidated[col] > 0.5:
         if c.position_now != 0.0:
@@ -534,6 +582,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         # 复位清算标记，落入下方入场逻辑
         is_liquidated[col] = 0.0
         entry_price[col] = 0.0
+        funding_acc[col] = 0.0
         # 落入下方入场信号处理
 
     current_price = c.close[i, col]
@@ -552,6 +601,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
+            funding_acc[col] = 0.0
             peak_price[col] = 0.0
             return vbt_nb.order_nb(
                 size=np.float64(-c.position_now),
@@ -575,6 +625,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 # SL：bar LOW 触碰止损线
                 if sl_stop > 0.0 and bar_low <= sl_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -585,6 +636,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 # TP：bar HIGH 触及止盈线
                 if tp_stop > 0.0 and bar_high >= tp_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -599,6 +651,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 # SL：bar HIGH 触碰止损线
                 if sl_stop > 0.0 and bar_high >= sl_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -609,6 +662,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 # TP：bar LOW 触及止盈线
                 if tp_stop > 0.0 and bar_low <= tp_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -629,6 +683,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
                 if sl_stop > 0.0 and bar_low <= sl_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -638,6 +693,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                     )
                 if tp_stop > 0.0 and bar_high >= tp_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -654,6 +710,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
                 if sl_stop > 0.0 and bar_high >= sl_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -663,6 +720,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                     )
                 if tp_stop > 0.0 and bar_low <= tp_level:
                     entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
                     peak_price[col] = 0.0
                     return vbt_nb.order_nb(
                         size=np.float64(-c.position_now),
@@ -680,6 +738,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                     tp_level = ep + tp_stop * atr_value if tp_stop > 0.0 else 0.0
                     if sl_stop > 0.0 and bar_low <= sl_level:
                         entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
                         peak_price[col] = 0.0
                         return vbt_nb.order_nb(
                             size=np.float64(-c.position_now),
@@ -689,6 +748,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                         )
                     if tp_stop > 0.0 and bar_high >= tp_level:
                         entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
                         peak_price[col] = 0.0
                         return vbt_nb.order_nb(
                             size=np.float64(-c.position_now),
@@ -702,6 +762,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                     tp_level = ep - tp_stop * atr_value if tp_stop > 0.0 else 0.0
                     if sl_stop > 0.0 and bar_high >= sl_level:
                         entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
                         peak_price[col] = 0.0
                         return vbt_nb.order_nb(
                             size=np.float64(-c.position_now),
@@ -711,6 +772,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                         )
                     if tp_stop > 0.0 and bar_low <= tp_level:
                         entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
                         peak_price[col] = 0.0
                         return vbt_nb.order_nb(
                             size=np.float64(-c.position_now),
@@ -718,6 +780,31 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                             fees=effective_fee,
                             slippage=effective_slippage,
                         )
+
+    # 持仓金额防线（add-position-sizing-params 2.2，参数出场族第五
+    # 机制）：单一合并持仓总浮亏（价格浮亏+该持仓累计资金费净支出）
+    # 按当根收盘价判定，≥声明金额全平。判定序：SL/TP 之后、time_exit
+    # 之前（价格触发优先——与止损同根双触发归止损：SL 段在前先 return，
+    # 位次与纸盘判定序一致）；与 time_exit/max_hold 同形制（判定段
+    # return 全平单、当根 close 成交）。公式带符号天然双向：空头
+    # position_now<0、价涨 (close−entry)>0，乘积为负取负号后为正=浮亏
+    # 态；价跌时乘积为正、取负号为负=盈利态不触发——无方向分支。
+    # 0.0=禁用哨兵（装配层 None 物化，首判即假——存量零开销）
+    if max_position_losses[col] > 0.0 and c.position_now != 0.0 \
+            and entry_price[col] > 0.0:
+        loss = -(c.position_now * (current_price - entry_price[col])) \
+            + funding_acc[col]
+        if loss >= max_position_losses[col]:
+            entry_price[col] = 0.0
+            funding_acc[col] = 0.0
+            peak_price[col] = 0.0
+            entry_bar[col] = 0.0
+            return vbt_nb.order_nb(
+                size=np.float64(-c.position_now),
+                size_type=np.int64(0),
+                fees=effective_fee,
+                slippage=effective_slippage,
+            )
 
     # 固定时刻出场（add-session-structure-expression 任务 6，参数
     # 出场族第四机制）：当根 bar 时间区间 [open_ts, open_ts+tf) 覆盖
@@ -733,6 +820,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         r = (time_exits[col] - (bar_ts_minutes[i] % 1440.0)) % 1440.0
         if r < tf_minutes:
             entry_price[col] = 0.0
+            funding_acc[col] = 0.0
             peak_price[col] = 0.0
             entry_bar[col] = 0.0
             return vbt_nb.order_nb(
@@ -751,6 +839,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     if max_holds[col] > 0.5 and c.position_now != 0.0 and entry_price[col] > 0.0:
         if (i - entry_bar[col] + 1.0) >= max_holds[col]:
             entry_price[col] = 0.0
+            funding_acc[col] = 0.0
             peak_price[col] = 0.0
             entry_bar[col] = 0.0
             return vbt_nb.order_nb(
@@ -763,6 +852,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     # 离场信号
     if exits[i, col] > 0.5 and c.position_now != 0.0:
         entry_price[col] = 0.0
+        funding_acc[col] = 0.0
         peak_price[col] = 0.0
         entry_bar[col] = 0.0
         return vbt_nb.order_nb(
@@ -777,6 +867,9 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         entry_price[col] = current_price
         entry_bar[col] = float(i)  # 持有计数起点（每次入场独立重计）
         peak_price[col] = current_price  # trail 峰值重置为成交价（开仓重锚）
+        # funding_acc 开仓归零（新持仓的资金费从零累计——出场清零之外
+        # 的第二重锚点，防上一持仓残留值泄入新持仓判定）
+        funding_acc[col] = 0.0
         # mixed 模式：方向由 direction_signal 定交易侧
         dir_sign = direction_signal[i, col]
         if direction_val < 1.5:  # long(0)/short(1) 固定方向
@@ -1008,13 +1101,19 @@ class BacktestEngine:
         # 占位全 1 数组（引擎不消费）
         (sl_mode_val, atr_col, exit_fraction, add_fraction, max_exposure,
          max_hold, time_exit, position_mode_code, risk_fraction,
-         effective_first_size,
+         effective_first_size, max_position_loss,
          ) = _per_dna_risk_params(
             dna.risk_genes, enhanced_df)
         # 首笔生效比例（add-position-sizing-params 2.1）：size_pct 赋值
         # 源从装配元组取（effective_first_size=声明 initial_fraction 否
         # 则 position_size）——物化分派单点，两入口同批接线
         size_pct = effective_first_size
+        # 金额防线旁路费率（add-position-sizing-params 2.2）：单源
+        # _funding_cost_rate 折算（lev≤1 时 0——旁路累计短路；与事后层
+        # _apply_funding_costs 同源）
+        funding_rate = _funding_cost_rate(
+            float(dna.risk_genes.leverage),
+            dna.execution_genes.timeframe)
         # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
         # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
         bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
@@ -1066,6 +1165,10 @@ class BacktestEngine:
             # 语义且与批量路径分叉，add-max-hold-exit D-3）
             np.array([max_hold], dtype=np.float64),
             np.array([time_exit], dtype=np.float64),
+            # 金额防线两参数（add-position-sizing-params 2.2——逐列常数
+            # 参数族，time_exit 同款；费率经 _funding_cost_rate 单源）
+            np.array([max_position_loss], dtype=np.float64),
+            np.array([funding_rate], dtype=np.float64),
             # 动态定仓两参数（任务 4——逐列常数参数族，time_exit 同款）
             np.array([position_mode_code], dtype=np.float64),
             np.array([risk_fraction], dtype=np.float64),
@@ -1398,6 +1501,11 @@ class BacktestEngine:
         # 漏接本入口的失效形态是进化种群首笔静默按 position_size 执行
         # 的静默分叉（不报错）
         size_pcts = np.array([p[9] for p in per_dna], dtype=np.float64)
+        # 金额防线（add-position-sizing-params 2.2）：None→0.0 禁用哨兵
+        # 逐列参数族+旁路费率逐列（单源 _funding_cost_rate；批量种群
+        # 共享同一执行周期——batch_run 语义，费率差异仅来自逐列 leverage）
+        max_position_losses = np.array(
+            [p[10] for p in per_dna], dtype=np.float64)
         # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
         # 周期（batch_run 语义：全部个体同一 enhanced_df/timeframe）；
         # run/batch 共用装配单点 _bar_ts_minutes_and_tf）
@@ -1405,6 +1513,11 @@ class BacktestEngine:
             if individuals else "4h"
         bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
             enhanced_df.index, exec_tf)
+        funding_cost_rates = np.array(
+            [_funding_cost_rate(float(dna.risk_genes.leverage), exec_tf)
+             for dna in individuals],
+            dtype=np.float64,
+        )
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -1429,6 +1542,8 @@ class BacktestEngine:
             max_exposures,
             max_holds,
             time_exits,
+            max_position_losses,
+            funding_cost_rates,
             position_modes,
             risk_fractions,
             np.float64(self.fee),
