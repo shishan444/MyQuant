@@ -165,8 +165,8 @@ const TradingTaskCompleted = z.object({
   total_trades: z.number(),
 }).strict();
 
-/** stop_reason 键恒在、值可 null（stop_loss 阈值路径值为 null——nullable 非 optional，
- *  与 window_bars 的表述形制统一） */
+/** stop_reason 键恒在；当前全部调用路径为字符串（user_stop/stop_condition——
+ *  executor._finalize("stopped") 四处调用均显式传串），schema nullable 为宽容超集 */
 const TradingTaskStopped = z.object({
   type: z.literal("task_stopped"),
   task_id: z.string(),
