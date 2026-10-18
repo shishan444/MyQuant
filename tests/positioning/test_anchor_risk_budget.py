@@ -153,3 +153,25 @@ class TestDistanceDispatchThreeModes:
         assert qty == pytest.approx(
             100_000.0 * 0.02 / (2.0 * 2.5), rel=1e-12)
         assert qty == pytest.approx(400.0, rel=1e-12)
+
+
+class TestAddReduceSameFormulaAsModelOne:
+    """R3 补充（tester 建网 2026-10-18）：二号 size_add/size_reduce
+    与一号同式同值（spec「size_add 与 size_reduce SHALL 与一号同式
+    （首仓制——risk_budget 档的加仓减仓不走风险预算法）」——此前
+    只有 R1 的 callable 在册断言，无数值行为锚）。
+
+    同输入同值=同式实证：加仓滚动基数 12000×0.1=1200、减仓比例
+    0.3 直传——与 R2 一号锚（add_rolling_base/reduce_fraction）
+    同字面值，两模型对 add/reduce 各自实现而行为恒等。
+    """
+
+    def test_size_add_rolling_base_same_value_as_model_one(self):
+        """二号 size_add(12000, 0.1)=1200（加仓时点权益×add_fraction
+        滚动基数——与一号同输入同值）。"""
+        assert _model().size_add(12_000.0, 0.1) == pytest.approx(
+            1_200.0, rel=1e-12)
+
+    def test_size_reduce_passthrough_same_value_as_model_one(self):
+        """二号 size_reduce(0.3)=0.3（比例直传——与一号同值）。"""
+        assert _model().size_reduce(0.3) == pytest.approx(0.3, rel=1e-12)

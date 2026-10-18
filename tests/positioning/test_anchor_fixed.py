@@ -71,6 +71,16 @@ class TestFixedProportionalAnchors:
         assert {a.name for a in FIXED_PROPORTIONAL_ANCHORS} == set(
             _LITERAL_EXPECTED)
 
+    def test_zero_equity_natural_zero_open(self):
+        """equity=0 时一号输出 0（design §3 SizingInput 契约：equity
+        必填、≤0 时一号输出 0——0×first_size 的自然积，非拒绝分支；
+        与二号 0 权益返回 0.0 拒绝的语义区分锚）。"""
+        model = get_model(MODEL_FIXED_PROPORTIONAL).implementation
+        qty = model.size_open(
+            SizingInput(equity=0.0, base_price=100.0),
+            FixedProportionalParams(first_size=0.3))
+        assert qty == 0.0
+
 
 class TestFixedProportionalDeterminism:
     """R2 确定性（spec「同输入同输出的确定性」Scenario）。"""
