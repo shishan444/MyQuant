@@ -575,3 +575,162 @@ class TestNonEquivalenceLayerDeclaration:
         bt_eq = h.bt_result.equity_curve
         assert len(paper_eq) == len(bt_eq)
         assert (paper_eq - bt_eq).abs().max() > 1.0, "杠杆>1 分叉实证"
+
+
+class TestLedgerSizeOpenReferenceParity:
+    """R7 扩面（build-position-registry 4.7）：ledger.size_open 经注
+    册表路径后的输出 vs 参照实现参数网格直对拍（两档×{正常/拒绝/cap}
+    域逐位等值）。
+
+    参照实现的推导路径独立于被测面（不调 ledger 的任何定仓实现）：
+    - risk_budget 档=引擎 risk_budget_qty 直调（真实对拍消费方——
+      距离按 design §6 契约式手算：pct/trail=base_price×stop_loss、
+      atr=stop_loss×ATR）；
+    - fixed 档与拒绝回退=手算链（margin=权益×首笔生效比例、qty=
+      margin×leverage/price——design §9.2 等值链的现状式）；
+    - 分派序对齐消费端语义：risk_budget 档先 risk_budget_qty，
+      (0,0) 拒绝时切 fixed 手算链回退（capped=False）。
+
+    受控手段沿模块 docstring 声明（本类为单元级直调 size_open，不
+    经引擎/执行器全链——平价数据/费滑/funding 维度不涉及）。既有
+    三层（TestPositionSizingEquivalence fixed/risk_budget 档+
+    TestInitialFractionEquivalence）零修改全绿承载端到端锁定。
+    """
+
+    @staticmethod
+    def _reference_size_open(params, base_price, entry_atr, cash):
+        """参照实现（引擎函数直调+手算链——期望生成器非被测实现）。"""
+        from core.backtest.engine import risk_budget_qty
+
+        if params.position_mode == "risk_budget":
+            if params.sl_mode == "atr":
+                if (entry_atr is None or entry_atr != entry_atr
+                        or entry_atr <= 0.0):
+                    dist = float("nan")
+                else:
+                    dist = params.stop_loss * entry_atr
+            else:  # pct/trail 比例域同式（D-6 终态）
+                dist = base_price * params.stop_loss
+            qty, capped = risk_budget_qty(
+                cash, base_price, dist, params.risk_fraction,
+                float(params.leverage), params.max_exposure)
+            if qty > 0.0:
+                return qty, bool(capped)
+        # fixed 档/拒绝回退：手算链（首笔生效比例物化>0 优先）
+        first = (params.initial_fraction
+                 if params.initial_fraction > 0 else params.position_size)
+        margin = cash * first
+        return margin * params.leverage / base_price, False
+
+    @staticmethod
+    def _params(**overrides):
+        from core.paper_trading.kernel.types import RiskParams
+
+        base = dict(
+            stop_loss=0.05, take_profit=None, position_size=0.3,
+            leverage=1, direction="long", sl_mode="pct", atr_period=14)
+        base.update(overrides)
+        return RiskParams(**base)
+
+    # 网格（两档×正常/拒绝/cap+杠杆/取严/回退细节——期望由参照实现
+    # 推导，代表案例字面锚由 test_representative_literals 承载）
+    _GRID = [
+        ("fixed 正常 lev4", dict(position_size=0.25, leverage=4),
+         10_000.0, 100.0, None),
+        ("fixed 声明 if=0.2 lev2",
+         dict(position_size=0.3, initial_fraction=0.2, leverage=2),
+         10_000.0, 50.0, None),
+        ("rb pct 正常 500",
+         dict(position_mode="risk_budget", risk_fraction=0.01,
+              stop_loss=0.02), 100_000.0, 100.0, None),
+        ("rb trail 正常", dict(position_mode="risk_budget",
+                               risk_fraction=0.01, stop_loss=0.02,
+                               sl_mode="trail"), 100_000.0, 100.0, None),
+        ("rb atr 正常 400",
+         dict(position_mode="risk_budget", risk_fraction=0.02,
+              stop_loss=2.0, sl_mode="atr"), 100_000.0, 100.0, 2.5),
+        ("rb cap 截断 min 取严",
+         dict(position_mode="risk_budget", risk_fraction=0.5,
+              stop_loss=0.01, leverage=10, max_exposure=1.0),
+         100_000.0, 100.0, None),
+        ("rb cap max_exposure 取严侧",
+         dict(position_mode="risk_budget", risk_fraction=0.5,
+              stop_loss=0.01, leverage=2, max_exposure=0.5),
+         100_000.0, 100.0, None),
+        ("rb 拒绝 sl=0 回退 fixed",
+         dict(position_mode="risk_budget", risk_fraction=0.01,
+              stop_loss=0.0), 10_000.0, 100.0, None),
+        ("rb 拒绝 rf 物化 0 回退",
+         dict(position_mode="risk_budget", risk_fraction=0.0,
+              stop_loss=0.05), 10_000.0, 100.0, None),
+        ("rb 拒绝 atr None 回退",
+         dict(position_mode="risk_budget", risk_fraction=0.01,
+              stop_loss=2.0, sl_mode="atr"), 10_000.0, 100.0, None),
+        ("rb 拒绝 atr NaN 回退",
+         dict(position_mode="risk_budget", risk_fraction=0.01,
+              stop_loss=2.0, sl_mode="atr"), 10_000.0, 100.0,
+         float("nan")),
+        ("rb 拒绝回退带 if 声明",
+         dict(position_mode="risk_budget", risk_fraction=0.01,
+              stop_loss=0.0, initial_fraction=0.2), 10_000.0, 100.0,
+         None),
+    ]
+
+    @pytest.mark.parametrize(
+        ("overrides", "cash", "base_price", "entry_atr"),
+        [pytest.param(o, c, p, a, id=name)
+         for name, o, c, p, a in _GRID])
+    def test_size_open_matches_reference_grid(
+            self, overrides, cash, base_price, entry_atr):
+        """改造后 ledger.size_open（经 resolve 单点+注册表模型+执行层
+        cap/回退）vs 参照实现逐位等值（qty 与 capped 两分量）。"""
+        from core.paper_trading.kernel.ledger import Ledger
+
+        params = self._params(**overrides)
+        ledger = Ledger(cash, params)
+        got = ledger.size_open(base_price, entry_atr)
+        expected = self._reference_size_open(
+            params, base_price, entry_atr, cash)
+        assert got[0] == pytest.approx(expected[0], rel=1e-12), (
+            f"数量分叉: ledger={got[0]} 参照={expected[0]}")
+        assert got[1] == expected[1], (
+            f"capped 标记分叉: ledger={got[1]} 参照={expected[1]}")
+
+    def test_representative_literals(self):
+        """代表案例手算字面锚（防参照实现与被测实现同错的双路径盲区
+        ——期望为独立手算字面值，非任何程序推导）：
+        fixed lev4→100；rb 正常→500；atr→400；cap 取严→(1000, True)
+        与 (500, True)；拒绝回退→30；回退带 if 声明→20。"""
+        from core.paper_trading.kernel.ledger import Ledger
+
+        cases = [
+            (self._params(position_size=0.25, leverage=4), 10_000.0,
+             100.0, None, (100.0, False)),  # 10000×0.25×4/100
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.01, stop_loss=0.02),
+             100_000.0, 100.0, None, (500.0, False)),
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.02, stop_loss=2.0,
+                          sl_mode="atr"), 100_000.0, 100.0, 2.5,
+             (400.0, False)),
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.5, stop_loss=0.01,
+                          leverage=10, max_exposure=1.0), 100_000.0,
+             100.0, None, (1_000.0, True)),  # cap=100000×min(10,1)
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.5, stop_loss=0.01,
+                          leverage=2, max_exposure=0.5), 100_000.0,
+             100.0, None, (500.0, True)),  # cap=100000×min(2,0.5)
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.01, stop_loss=0.0),
+             10_000.0, 100.0, None, (30.0, False)),  # 回退 10000×0.3/100
+            (self._params(position_mode="risk_budget",
+                          risk_fraction=0.01, stop_loss=0.0,
+                          initial_fraction=0.2), 10_000.0, 100.0,
+             None, (20.0, False)),  # 回退分派读声明 10000×0.2/100
+        ]
+        for params, cash, price, atr, expected in cases:
+            got = Ledger(cash, params).size_open(price, atr)
+            assert got[0] == pytest.approx(expected[0], rel=1e-12), (
+                params, got, expected)
+            assert got[1] == expected[1], (params, got, expected)
