@@ -89,11 +89,13 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 
 # strategy_params 键集白名单（0.4.2 R1=风险五参数；R3 任务 4.1 扩至
 # 八键——exit_fraction/add_fraction/max_exposure 启用域校验与宿主组
-# 配对，未知键状态退出）
+# 配对，未知键状态退出；add-position-sizing-params 扩两键——
+# initial_fraction/max_position_loss 仓位参数）
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "max_hold",
     "time_exit_utc", "position_mode", "risk_fraction",
+    "initial_fraction", "max_position_loss",
 })
 
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
@@ -288,6 +290,46 @@ def _validate_strategy_params(
                 "position_mode=risk_budget 须同时声明 stop_loss"
                 "（止损距离是仓位公式分母——无止损=风险预算不可定义）",
                 detail={"field": "stop_loss"})
+
+    # 仓位参数两键（add-position-sizing-params 5.2）：值域单源
+    # validator（INITIAL_FRACTION_MIN/MAX+MAX_POSITION_LOSS_MIN——
+    # 与 validate_dna 手工 DNA 校验同源常量）
+    from core.strategy.validator import (
+        INITIAL_FRACTION_MAX, INITIAL_FRACTION_MIN, MAX_POSITION_LOSS_MIN,
+    )
+    if_val = params.get("initial_fraction")
+    if if_val is not None:
+        if not isinstance(if_val, (int, float)) or isinstance(if_val, bool) \
+                or not (INITIAL_FRACTION_MIN < if_val
+                        <= INITIAL_FRACTION_MAX):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"initial_fraction {if_val!r} 越出值域 "
+                f"({INITIAL_FRACTION_MIN}, {INITIAL_FRACTION_MAX}]"
+                "（首笔动用资金比例，上界 1.0=全部可用资金）",
+                detail={"field": "initial_fraction",
+                        "legal_range": f"({INITIAL_FRACTION_MIN}, "
+                                       f"{INITIAL_FRACTION_MAX}]"})
+    mpl = params.get("max_position_loss")
+    if mpl is not None:
+        if not isinstance(mpl, (int, float)) or isinstance(mpl, bool) \
+                or not mpl > MAX_POSITION_LOSS_MIN:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"max_position_loss {mpl!r} 越出值域 "
+                f"> {MAX_POSITION_LOSS_MIN}（金额无上界——考场无观点）",
+                detail={"field": "max_position_loss",
+                        "legal_range": f"> {MAX_POSITION_LOSS_MIN}"})
+    # 互斥（与 validate_dna 同源语义）：initial_fraction 替换 fixed 路径
+    # 首仓、risk_budget 反推首仓——同笔首仓受两个指挥即拒绝
+    if if_val is not None and pm == "risk_budget":
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "initial_fraction 与 position_mode='risk_budget' 互斥"
+            "（两者都只决定首笔定仓——同笔首仓不可两个指挥）",
+            detail={"field": "initial_fraction",
+                    "legal_range": "声明 initial_fraction 时 "
+                                   "position_mode 须为 fixed 或缺省"})
 
     # ── 分批三键域校验+组间配对（R3，4.1 启用；抑制组依赖触发组的
     #    纯组间规则在登记链主体——不依赖声明块携带）──
