@@ -1,4 +1,11 @@
-import type { BacktestResult, ChartIndicatorsResponse, DNA } from "@/types/api";
+import type {
+  BacktestResult,
+  ChartIndicatorsResponse,
+  DNA,
+  PaperFill,
+  TradingReport,
+  TradingTask,
+} from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Mock: OHLCV candle data
@@ -193,36 +200,98 @@ export const mockBacktestResult: BacktestResult = {
 };
 
 // ---------------------------------------------------------------------------
-// Mock: Trading types
+// Mock: Trading types（/api/paper-trading 新域）
 // ---------------------------------------------------------------------------
 
-export const mockTradingMetrics = {
+/** 纸盘任务行（PaperTaskResponse 形制——五态状态机+账户运行态组） */
+export const mockTradingTask: TradingTask = {
   task_id: "t1",
-  total_return: 2000,
-  total_return_pct: 2.0,
-  win_rate: 0.6,
-  profit_factor: 1.8,
-  max_drawdown: 800,
-  max_drawdown_pct: 0.8,
-  avg_trade_pnl: 400,
-  total_trades: 5,
-  total_pnl: 2000,
-  realized_pnl: 2000,
+  status: "stopped",
+  strategy_id: "11111111-2222-3333-4444-555555555555",
+  symbol: "BTCUSDT",
+  timeframe: "4h",
+  initial_cash: 100000,
+  fee: 0.001,
+  slippage: 0.0005,
+  leverage: 1,
+  window_bars: 180,
+  stop_loss_pct: null,
+  bars_processed: 100,
+  last_bar_time: null,
+  balance: 102000,
+  position_side: null,
+  position_entry: null,
+  position_quantity: null,
+  position_margin: null,
+  position_open_cost: null,
+  position_sl_price: null,
+  position_tp_price: null,
+  position_trail_peak: null,
+  position_entry_bar_seq: null,
   unrealized_pnl: 0,
+  total_trades: 5,
   win_count: 3,
   loss_count: 2,
+  total_pnl: 2000,
+  research_status_snapshot: "researched",
+  created_at: "2025-01-01T00:00:00Z",
+  updated_at: "2025-01-02T00:00:00Z",
+  started_at: "2025-01-01T00:00:00Z",
+  stopped_at: "2025-01-02T00:00:00Z",
+  stop_reason: "user_stop",
+  heartbeat_at: null,
+  error_detail: null,
 };
 
-export const mockPaperTrade = {
+/** 滚动报告（三层结构——performance/deviation/evidence） */
+export const mockTradingReport: TradingReport = {
+  task_id: "t1",
+  strategy_id: "11111111-2222-3333-4444-555555555555",
+  status: "stopped",
+  generated_at: "2025-01-02T00:00:00Z",
+  performance: {
+    annual_return: 0.35,
+    sharpe_ratio: 1.8,
+    max_drawdown: -0.008,
+    win_rate: 0.6,
+    calmar_ratio: 43.75,
+    total_trades: 5,
+    sortino_ratio: 2.1,
+    profit_factor: 1.8,
+    max_consecutive_losses: 1,
+    monthly_consistency: 0.5,
+    r_squared: 0.9,
+  },
+  deviation: {
+    backtest: { total_return: 0.018, sharpe_ratio: 1.6, max_drawdown: -0.007, win_rate: 0.6 },
+    diff: { total_return: 0.002, sharpe_ratio: 0.2, max_drawdown: -0.001, win_rate: 0 },
+    unavailable_reason: null,
+    attribution_notes: ["资金费：纸盘按真实资金费率逐点结算，回测按固定 0.001 估算"],
+  },
+  evidence: {
+    bars_run: 100,
+    closed_trades: 5,
+    position_bars: 0,
+    insufficient_evidence: false,
+    research_status: "researched",
+    funding_settled_points: 3,
+    funding_pending_points: 0,
+    funding_post_terminal_backfill: null,
+  },
+};
+
+/** 纸盘成交（PaperFillResponse 形制） */
+export const mockPaperFill: PaperFill = {
   id: 1,
   task_id: "t1",
   bar_time: "2025-01-05T08:00:00Z",
+  seq: 3,
+  kind: "open",
   side: "long",
-  action: "open",
   price: 100000,
   quantity: 0.1,
-  pnl: null,
-  fee_paid: 10,
-  reason: null,
+  fee: 10,
+  realized_pnl: null,
+  reason: "signal",
 };
 

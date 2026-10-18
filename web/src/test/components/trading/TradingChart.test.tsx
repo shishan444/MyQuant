@@ -1,10 +1,10 @@
 /**
- * Tests for TradingChart component and tradesToSignals logic.
- * Covers: signal conversion, loading state, empty trades.
+ * Tests for TradingChart component and fillsToSignals logic.
+ * Covers: signal conversion (kind 九值归并), loading state, empty fills.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { PaperTrade } from "@/services/trading";
+import type { PaperFill } from "@/services/trading";
 
 // Mock hooks and child components
 vi.mock("@/hooks/useChartIndicators", () => ({
@@ -24,17 +24,18 @@ import { useChartIndicators } from "@/hooks/useChartIndicators";
 
 const mockUseChartIndicators = vi.mocked(useChartIndicators);
 
-function makeTrade(overrides: Partial<PaperTrade> = {}): PaperTrade {
+function makeFill(overrides: Partial<PaperFill> = {}): PaperFill {
   return {
     id: 1,
     task_id: "t1",
     bar_time: "2025-01-05T08:00:00Z",
+    seq: 3,
+    kind: "open",
     side: "long",
-    action: "open",
     price: 100000,
     quantity: 0.1,
-    pnl: null,
-    fee_paid: 10,
+    fee: 10,
+    realized_pnl: null,
     reason: null,
     ...overrides,
   };
@@ -43,81 +44,59 @@ function makeTrade(overrides: Partial<PaperTrade> = {}): PaperTrade {
 describe("TradingChart", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  // --- tradesToSignals: open -> buy ---
-  it("converts open trades to buy signals", () => {
     mockUseChartIndicators.mockReturnValue({
       candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
       volumeData: [],
       isLoadingOhlcv: false,
     } as any);
+  });
 
-    const trades = [makeTrade({ action: "open", bar_time: "2025-01-05T08:00:00Z" })];
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={trades} />);
-
+  // --- fillsToSignals: open -> buy 侧信号 ---
+  it("converts open fills to signals", () => {
+    const fills = [makeFill({ kind: "open", bar_time: "2025-01-05T08:00:00Z" })];
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={fills} />);
     expect(screen.getByTestId("signal-count").textContent).toBe("1");
   });
 
-  // --- tradesToSignals: close -> sell ---
-  it("converts close trades to sell signals", () => {
-    mockUseChartIndicators.mockReturnValue({
-      candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
-      volumeData: [],
-      isLoadingOhlcv: false,
-    } as any);
-
-    const trades = [makeTrade({ action: "close", bar_time: "2025-01-10T12:00:00Z" })];
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={trades} />);
-
+  // --- 出场五值（exit_*）归并 close 侧信号 ---
+  it("converts exit_sl fills to signals (归并 close)", () => {
+    const fills = [makeFill({ kind: "exit_sl", side: "short", bar_time: "2025-01-10T12:00:00Z" })];
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={fills} />);
     expect(screen.getByTestId("signal-count").textContent).toBe("1");
   });
 
-  // --- tradesToSignals: includes add/reduce actions as signals ---
-  it("includes trades with action other than open/close as signals", () => {
-    mockUseChartIndicators.mockReturnValue({
-      candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
-      volumeData: [],
-      isLoadingOhlcv: false,
-    } as any);
-
-    const trades = [
-      makeTrade({ action: "add", bar_time: "2025-01-05T08:00:00Z" }),
-      makeTrade({ action: "reduce", bar_time: "2025-01-06T08:00:00Z" }),
-    ];
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={trades} />);
-
-    expect(screen.getByTestId("signal-count").textContent).toBe("2");
-  });
-
-  // --- Empty trades ---
-  it("handles empty trades array", () => {
-    mockUseChartIndicators.mockReturnValue({
-      candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
-      volumeData: [],
-      isLoadingOhlcv: false,
-    } as any);
-
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={[]} />);
+  // --- 出场类 side=null 不画信号（与旧口径一致——filter side） ---
+  it("skips exit fills with null side", () => {
+    const fills = [makeFill({ kind: "exit_sl", side: null })];
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={fills} />);
     expect(screen.getByTestId("signal-count").textContent).toBe("0");
   });
 
-  // --- Mixed trades ---
-  it("correctly maps mixed open and close trades", () => {
-    mockUseChartIndicators.mockReturnValue({
-      candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
-      volumeData: [],
-      isLoadingOhlcv: false,
-    } as any);
-
-    const trades = [
-      makeTrade({ id: 1, action: "open", bar_time: "2025-01-05T08:00:00Z" }),
-      makeTrade({ id: 2, action: "close", bar_time: "2025-01-10T12:00:00Z" }),
-      makeTrade({ id: 3, action: "open", bar_time: "2025-01-15T08:00:00Z" }),
-      makeTrade({ id: 4, action: "close", bar_time: "2025-01-20T12:00:00Z" }),
+  // --- includes add/reduce actions as signals ---
+  it("includes fills with kind other than open as signals", () => {
+    const fills = [
+      makeFill({ id: 1, kind: "add", bar_time: "2025-01-05T08:00:00Z" }),
+      makeFill({ id: 2, kind: "reduce", bar_time: "2025-01-06T08:00:00Z" }),
     ];
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={trades} />);
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={fills} />);
+    expect(screen.getByTestId("signal-count").textContent).toBe("2");
+  });
 
+  // --- Empty fills ---
+  it("handles empty fills array", () => {
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={[]} />);
+    expect(screen.getByTestId("signal-count").textContent).toBe("0");
+  });
+
+  // --- Mixed fills ---
+  it("correctly maps mixed open and exit fills", () => {
+    const fills = [
+      makeFill({ id: 1, kind: "open", bar_time: "2025-01-05T08:00:00Z" }),
+      makeFill({ id: 2, kind: "exit_tp", side: "short", bar_time: "2025-01-10T12:00:00Z" }),
+      makeFill({ id: 3, kind: "open", bar_time: "2025-01-15T08:00:00Z" }),
+      makeFill({ id: 4, kind: "exit_liquidation", side: "short", bar_time: "2025-01-20T12:00:00Z" }),
+    ];
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={fills} />);
     expect(screen.getByTestId("signal-count").textContent).toBe("4");
   });
 
@@ -129,7 +108,7 @@ describe("TradingChart", () => {
       isLoadingOhlcv: true,
     } as any);
 
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={[]} />);
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={[]} />);
     expect(screen.getByText("Loading chart...")).toBeInTheDocument();
   });
 
@@ -141,7 +120,7 @@ describe("TradingChart", () => {
       isLoadingOhlcv: false,
     } as any);
 
-    render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={[]} />);
+    render(<TradingChart symbol="BTCUSDT" timeframe="4h" fills={[]} />);
     expect(screen.getByText("Loading chart...")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Tests for useTradingWebSocket hook.
- * Covers: connection lifecycle, message handling, reconnection, cleanup.
+ * Covers: connection lifecycle, message handling (七事件分发), reconnection, cleanup.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
@@ -13,10 +13,13 @@ vi.mock("@/services/trading", () => ({
   getTradingTask: vi.fn(),
   createTradingTask: vi.fn(),
   stopTradingTask: vi.fn(),
-  getTradingTrades: vi.fn(),
+  cloneTradingTask: vi.fn(),
+  getTradingFills: vi.fn(),
+  getTradingFunding: vi.fn(),
   getTradingRunnerStatus: vi.fn(),
   getTradingEquity: vi.fn(),
-  getTradingMetrics: vi.fn(),
+  getTradingReport: vi.fn(),
+  getTradingFinalReport: vi.fn(),
   deleteTradingTask: vi.fn(),
 }));
 
@@ -61,7 +64,7 @@ function createWrapper() {
 }
 
 beforeEach(() => {
-    vi.stubEnv("VITE_REALTIME_TRANSPORT", "native");  // B8.4 后默认 socketio——本套锚定 native 实现面
+  vi.stubEnv("VITE_REALTIME_TRANSPORT", "native");  // B8.4 后默认 socketio——本套锚定 native 实现面
   vi.clearAllMocks();
   MockWS.reset();
   vi.useFakeTimers();
@@ -93,7 +96,7 @@ describe("useTradingWebSocket", () => {
     expect(result.current).toBe(true);
   });
 
-  it("handles position_update message by scheduling invalidation", () => {
+  it("handles task_update message by scheduling invalidation", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
@@ -104,10 +107,48 @@ describe("useTradingWebSocket", () => {
 
     const ws = MockWS.getLast()!;
     act(() => {
-      ws.onmessage!({ data: JSON.stringify({ type: "position_update", task_id: "t1", position: null, balance: 100000, equity: 100000, unrealized_pnl: 0, total_trades: 0, total_pnl: 0 }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "task_update", task_id: "t1", status: "running", equity: 100500, balance: 100000, unrealized_pnl: 500, bars_processed: 42, window_bars: 180 }) });
     });
 
     // Invalidation is delayed 2000ms
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(invalidateSpy).toHaveBeenCalled();
+  });
+
+  it("handles fill_event message by scheduling invalidation", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    renderHook(() => useTradingWebSocket("t1"), { wrapper });
+
+    const ws = MockWS.getLast()!;
+    act(() => {
+      ws.onmessage!({ data: JSON.stringify({ type: "fill_event", task_id: "t1", bar_time: "2026-10-17T08:00:00+00:00", seq: 3, kind: "open", side: "long", price: 50000, quantity: 0.1, fee: 5, realized_pnl: null, reason: "signal" }) });
+    });
+
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(invalidateSpy).toHaveBeenCalled();
+  });
+
+  it("handles terminal events (task_completed/stopped/error) by scheduling invalidation", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    renderHook(() => useTradingWebSocket("t1"), { wrapper });
+
+    const ws = MockWS.getLast()!;
+    act(() => {
+      ws.onmessage!({ data: JSON.stringify({ type: "task_completed", task_id: "t1", final_equity: 102000, total_trades: 7 }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "task_stopped", task_id: "t1", stop_reason: "user_stop" }) });
+      ws.onmessage!({ data: JSON.stringify({ type: "task_error", task_id: "t1", error_detail: "boom" }) });
+    });
+
     act(() => { vi.advanceTimersByTime(2000); });
     expect(invalidateSpy).toHaveBeenCalled();
   });
@@ -145,10 +186,7 @@ describe("useTradingWebSocket", () => {
     });
 
     act(() => { vi.advanceTimersByTime(2000); });
-    // Should not schedule invalidation for unknown types
-    // (the scheduleInvalidation in onmessage only fires for position_update/task_started)
-    // But since there's a catch-all scheduleInvalidation outside the if... let me check
-    // Actually looking at the code, only position_update and task_started trigger it
+    // 未识别事件丢弃留痕（不触发失效）
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 

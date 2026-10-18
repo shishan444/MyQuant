@@ -112,7 +112,8 @@ export const EvolutionEvent = z.discriminatedUnion("type", [
 export type EvolutionEvent = z.infer<typeof EvolutionEvent>;
 
 // ---------------------------------------------------------------------------
-// trading 通道业务事件（payload 实证：core/trading/runner.py、ws.py）
+// trading 通道业务事件（纸盘新域七事件——payload 实证：core/paper_trading/
+// runtime/executor.py _push 构造点 + api/realtime.py _emit_task_snapshot）
 // ---------------------------------------------------------------------------
 
 const TradingTaskStarted = z.object({
@@ -120,39 +121,71 @@ const TradingTaskStarted = z.object({
   task_id: z.string(),
 });
 
+/** connect 快照（api/realtime.py /trading 分支：任务存在即发，五态自解释） */
 const TradingTaskSnapshot = z.object({
   type: z.literal("task_snapshot"),
   task_id: z.string(),
   status: z.string(),
-  position_side: z.string().nullable(),
+  equity: z.number().nullable(),
   balance: z.number().nullable(),
   total_trades: z.number(),
-  total_pnl: z.number(),
 });
 
-const PositionUpdate = z.object({
-  type: z.literal("position_update"),
+/** 每 bar 落库后推进推送（executor._persist_bar） */
+const TradingTaskUpdate = z.object({
+  type: z.literal("task_update"),
   task_id: z.string(),
-  position: z
-    .object({
-      side: z.string(),
-      entry_price: z.number(),
-      quantity: z.number(),
-      margin: z.number(),
-      cumulative_funding: z.number(),
-    })
-    .nullable(),
-  balance: z.number(),
+  status: z.string(),
   equity: z.number(),
+  balance: z.number(),
   unrealized_pnl: z.number(),
+  bars_processed: z.number(),
+  window_bars: z.number().nullable(),
+});
+
+/** 逐笔成交推送（executor._execute；side/price 等出场类可空） */
+const TradingFillEvent = z.object({
+  type: z.literal("fill_event"),
+  task_id: z.string(),
+  bar_time: z.string(),
+  seq: z.number(),
+  kind: z.string(),
+  side: z.string().nullable(),
+  price: z.number().nullable(),
+  quantity: z.number().nullable(),
+  fee: z.number().nullable(),
+  realized_pnl: z.number().nullable(),
+  reason: z.string().nullable(),
+});
+
+const TradingTaskCompleted = z.object({
+  type: z.literal("task_completed"),
+  task_id: z.string(),
+  final_equity: z.number(),
   total_trades: z.number(),
-  total_pnl: z.number(),
+});
+
+/** stop_reason 可缺省（stop_loss 阈值触发的 stopped 无 reason） */
+const TradingTaskStopped = z.object({
+  type: z.literal("task_stopped"),
+  task_id: z.string(),
+  stop_reason: z.string().nullable(),
+});
+
+const TradingTaskError = z.object({
+  type: z.literal("task_error"),
+  task_id: z.string(),
+  error_detail: z.string(),
 });
 
 export const TradingEvent = z.discriminatedUnion("type", [
   TradingTaskStarted,
   TradingTaskSnapshot,
-  PositionUpdate,
+  TradingTaskUpdate,
+  TradingFillEvent,
+  TradingTaskCompleted,
+  TradingTaskStopped,
+  TradingTaskError,
 ]);
 
 export type TradingEvent = z.infer<typeof TradingEvent>;

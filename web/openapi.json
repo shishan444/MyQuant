@@ -1922,6 +1922,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 500,
+              "minimum": 2,
               "default": 20,
               "title": "Boll Period"
             }
@@ -1932,6 +1934,8 @@
             "required": false,
             "schema": {
               "type": "number",
+              "maximum": 10.0,
+              "minimum": 0.1,
               "default": 2.0,
               "title": "Boll Std"
             }
@@ -2765,6 +2769,618 @@
         }
       }
     },
+    "/api/paper-trading/tasks": {
+      "post": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Create Task",
+        "description": "上盘（创建恒 201 返 pending 行——受理≠运行，超限停留 pending\n排队不拒绝；拒绝面仅 404 strategy not found 与 422 校验数组）。",
+        "operationId": "create_task_api_paper_trading_tasks_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperTaskCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "List Tasks",
+        "description": "任务列表（created_at 倒序分页+total 真总数；status 过滤）。",
+        "operationId": "list_tasks_api_paper_trading_tasks_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperTaskListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Task",
+        "description": "任务详情（含运行态组+统计组）。",
+        "operationId": "get_task_api_paper_trading_tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Delete Task",
+        "description": "删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。",
+        "operationId": "delete_task_api_paper_trading_tasks__task_id__delete",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Task Api Paper Trading Tasks  Task Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/stop": {
+      "post": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Stop Task",
+        "description": "stop 请求三态分派（状态机写者=调度器，REST 只转发）：\npending→直接 stopped（未拾取撤销）；running→协作停止（bar 边界\n退出，行仍 running 至执行器迁移）；终态→409。",
+        "operationId": "stop_task_api_paper_trading_tasks__task_id__stop_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/clone": {
+      "post": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Clone Task",
+        "description": "任意终态克隆重跑（同 DNA 快照同任务参数新建 pending 行）；\n运行/pending→409；strategy 已删→404（快照无法重算）。",
+        "operationId": "clone_task_api_paper_trading_tasks__task_id__clone_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/fills": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Fills",
+        "description": "成交流水（bar_time 升序，含 seq/kind/reason 审计字段）。",
+        "operationId": "get_fills_api_paper_trading_tasks__task_id__fills_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperFillListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/equity": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Equity",
+        "description": "权益曲线（bar_time 升序）。",
+        "operationId": "get_equity_api_paper_trading_tasks__task_id__equity_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperEquityListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/funding": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Funding",
+        "description": "资金费明细（settle_time 升序；对账披露面——三态可见）。",
+        "operationId": "get_funding_api_paper_trading_tasks__task_id__funding_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperFundingListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/report": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Report",
+        "description": "滚动报告（实时计算不落库；任意状态可取——running 中随时取\n当前版，三层退化自解释）。",
+        "operationId": "get_report_api_paper_trading_tasks__task_id__report_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Report Api Paper Trading Tasks  Task Id  Report Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/report/final": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Final",
+        "description": "结题固化版：?version 缺省最新版、?version=1 取结题初版（Q-2\n版本机制）；未结题→409 \"task not concluded\"；终态无固化版→404。",
+        "operationId": "get_final_api_paper_trading_tasks__task_id__report_final_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalReportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/runner-status": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Runner Status",
+        "description": "调度器状态（活跃任务清单/上限/当前运行数/pending 深度——队列\n可见性面，design §7.1 端点 12）。",
+        "operationId": "runner_status_api_paper_trading_runner_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Runner Status Api Paper Trading Runner Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/validate": {
       "post": {
         "tags": [
@@ -3314,6 +3930,69 @@
         }
       }
     },
+    "/api/research/union-balance": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Union Balance",
+        "description": "判定并集余量查询（0.4.1 R4）：已判区间/剩余可用区间/保守折算。\n\n三参数必填（账本为假设级）；只读零副作用（不落日志不写库——查询\n不是研究决策证据）；假设不存在 404 前置判定（不以空清单伪装成功）；\n数据范围按 parquet 首尾 bar 完整时间戳直读（半开 [首 bar, 尾\nbar+1×TF)）。与隔离验证的重叠拦截同一账本两出口——查询 remaining\n段发起隔离验证不被拒。",
+        "operationId": "union_balance_api_research_union_balance_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "timeframe",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Timeframe"
+            }
+          },
+          {
+            "name": "hypothesis_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Hypothesis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Union Balance Api Research Union Balance Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/validation/{strategy_id}/report": {
       "get": {
         "tags": [
@@ -3555,7 +4234,7 @@
           "research"
         ],
         "summary": "Query Indicator",
-        "description": "单指标任意参数现算读数（检查④）：归约摘要直返（≤2048 字节）。\n\nreductions 封闭枚举多选（latest/quantiles/regime_means/\ntrend_slope，缺省前两者）；params 缺省拼注册表 default（echo 披露\n实际生效值）；装载双路径复用 0.2.8 契约（显式 start 走 warmup\n前扩，缺省全量直装 + effective_start 披露）。",
+        "description": "单指标/批量指标现算读数（检查④）：归约摘要直返（分档 2048/16384）。\n\nreductions 封闭枚举多选（latest/quantiles/regime_means/\ntrend_slope，缺省前两者）；params 缺省拼注册表 default（echo 披露\n实际生效值）；装载双路径复用 0.2.8 契约（显式 start 走 warmup\n前扩，缺省全量直装 + effective_start 披露）。groups 形制：组成员\n与单组字段同形（各组区间独立）、组数 1..8、整批原子。",
         "operationId": "query_indicator_api_research_query_indicator_post",
         "requestBody": {
           "content": {
@@ -3783,7 +4462,7 @@
           "research"
         ],
         "summary": "Indicators",
-        "description": "内置指标元数据（47 项，含 lookback——warmup 推导依据）。",
+        "description": "内置指标元数据（48 项，含 lookback——warmup 推导依据）。",
         "operationId": "indicators_api_research_indicators_get",
         "responses": {
           "200": {
@@ -4140,6 +4819,61 @@
         }
       }
     },
+    "/api/research/feature-requests/{request_id}": {
+      "patch": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Patch Feature Request",
+        "description": "慢通道需求单回销（变更二 4.2——工程侧动作，研究侧 MCP 面不设\n回销工具：通道隔离承载权限语义，本工程无认证体系下的唯一可执行\n权限边界）。\n\n部分更新三规则：\n① 不带 resolution 键 = 该字段不更新（保留现值）；\n② status→open 时 resolution 自动置 null（open 态无出处的一致性）；\n③ status=resolved 时 resolution 必填（无出处不得标已实现）→ 422\n   detail.param=\"resolution\"；wont_fix 时可选（裁决依据=用户终局\n   裁决，note 建议不强制）。\n幂等：请求所含字段与现值全等时 200 返回当前态。",
+        "operationId": "patch_feature_request_api_research_feature_requests__request_id__patch",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureRequestPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Feature Request Api Research Feature Requests  Request Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health Check",
@@ -4161,6 +4895,40 @@
   },
   "components": {
     "schemas": {
+      "AnalysisProvenance": {
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "screen_candidate",
+              "analysis_task"
+            ],
+            "title": "Ref Type",
+            "default": "screen_candidate"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "candidate_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Fingerprint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "title": "AnalysisProvenance",
+        "description": "分析谱系引用（complete-research-tooling GAP-10 泛化）：声明假设\n来源的分析任务与候选指纹。\n\n两类引用（ref_type）：\n- screen_candidate：全谱扫描候选（旧形制=task_id+candidate_fingerprint\n  两键必填——旧调用方零适配，model_validator 补默认值）；\n- analysis_task：网格/统计类分析任务来源（无指纹可引，指纹可选\n  ——GAP-10 主场景）。\n\n两类同核（服务层）：task_id 存在性+任务记录区间事实核验保留\n（防虚构来源——声明不供数，区间一律取自任务记录）；\n不参与假设幂等键（同条件同区间重复登记命中同一假设）。"
+      },
       "AnalysisRunRequest": {
         "properties": {
           "template": {
@@ -4965,7 +5733,8 @@
           "window": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 1.0
               },
               {
                 "type": "null"
@@ -5038,6 +5807,7 @@
             "title": "Timeframe"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "subject",
@@ -6429,6 +7199,32 @@
         "title": "FeatureRequestCreate",
         "description": "慢通道需求单：title 上限 200 字符；payload 序列化上限 64KB\n（慢通道只保证持久化与可查——超大结构直入 DB 前置拒绝）。"
       },
+      "FeatureRequestPatch": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "FeatureRequestPatch",
+        "description": "回销 PATCH 载荷（变更二 4.2）：status 必填；resolution 可选\n（{source 必填, note 可选}——at/by 由服务端补齐）。"
+      },
       "FeatureRequestResponse": {
         "properties": {
           "request_id": {
@@ -6456,6 +7252,40 @@
           "created_at"
         ],
         "title": "FeatureRequestResponse"
+      },
+      "FinalReportResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "report_version": {
+            "type": "integer",
+            "title": "Report Version"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "report": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Report"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "report_version",
+          "generated_at",
+          "as_of",
+          "report"
+        ],
+        "title": "FinalReportResponse"
       },
       "FormulaPluginCreate": {
         "properties": {
@@ -6645,7 +7475,7 @@
           "provenance": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ScreenProvenance"
+                "$ref": "#/components/schemas/AnalysisProvenance"
               },
               {
                 "type": "null"
@@ -6663,6 +7493,71 @@
               }
             ],
             "title": "Trigger Policy"
+          },
+          "strategy_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Params"
+          },
+          "exit_partial_conditions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConditionItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Partial Conditions"
+          },
+          "add_trigger_conditions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConditionItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Add Trigger Conditions"
+          },
+          "add_suppress_conditions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConditionItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Add Suppress Conditions"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
           }
         },
         "type": "object",
@@ -6732,6 +7627,11 @@
             "title": "Duplicated",
             "default": false
           },
+          "direction": {
+            "type": "string",
+            "title": "Direction",
+            "default": "long"
+          },
           "precheck_warnings": {
             "anyOf": [
               {
@@ -6743,6 +7643,33 @@
               }
             ],
             "title": "Precheck Warnings"
+          },
+          "existing_strategy_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Strategy Params"
+          },
+          "threshold_unit_warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold Unit Warnings"
           }
         },
         "type": "object",
@@ -6793,12 +7720,13 @@
             "title": "Field"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "indicator"
         ],
         "title": "IndicatorRef",
-        "description": "参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。"
+        "description": "参数化指标结构化引用（0.2.13 列命名统一——OpenAPI 外化形制）。\n\nextra=forbid（unblock-research-validation T6）：subject 对象拒绝\n未知键——周期标记 timeframe 是条件顶层键不在 subject 内部\n（RR-015 实测错位层级曾被静默忽略导致 1d/1h 同值）。"
       },
       "InspectCasesRequest": {
         "properties": {
@@ -7083,7 +8011,13 @@
           "status": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "stopped",
+                  "error"
+                ]
               },
               {
                 "type": "null"
@@ -7227,6 +8161,747 @@
           "data"
         ],
         "title": "OhlcvResponse"
+      },
+      "PaperEquityListResponse": {
+        "properties": {
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/PaperEquityResponse"
+            },
+            "type": "array",
+            "title": "Snapshots"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshots",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "PaperEquityListResponse"
+      },
+      "PaperEquityResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "bar_time": {
+            "type": "string",
+            "title": "Bar Time"
+          },
+          "equity": {
+            "type": "number",
+            "title": "Equity"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "position_side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Side"
+          },
+          "cumulative_funding": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Funding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "bar_time",
+          "equity",
+          "balance"
+        ],
+        "title": "PaperEquityResponse"
+      },
+      "PaperFillListResponse": {
+        "properties": {
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/PaperFillResponse"
+            },
+            "type": "array",
+            "title": "Fills"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fills",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "PaperFillListResponse"
+      },
+      "PaperFillResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "bar_time": {
+            "type": "string",
+            "title": "Bar Time"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Side"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "bar_time",
+          "seq",
+          "kind"
+        ],
+        "title": "PaperFillResponse"
+      },
+      "PaperFundingListResponse": {
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/PaperFundingResponse"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "PaperFundingListResponse"
+      },
+      "PaperFundingResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "settle_time": {
+            "type": "string",
+            "title": "Settle Time"
+          },
+          "bar_time": {
+            "type": "string",
+            "title": "Bar Time"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "position_quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Quantity"
+          },
+          "settle_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settle Price"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "settle_time",
+          "bar_time",
+          "status"
+        ],
+        "title": "PaperFundingResponse"
+      },
+      "PaperTaskCreate": {
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "initial_cash": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Initial Cash",
+            "default": 100000
+          },
+          "leverage": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leverage"
+          },
+          "fee": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Fee",
+            "default": 0.001
+          },
+          "slippage": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Slippage",
+            "default": 0.0005
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "window_bars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Bars",
+            "default": 180
+          },
+          "stop_loss_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Loss Pct"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "strategy_id"
+        ],
+        "title": "PaperTaskCreate",
+        "description": "创建纸盘任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略\n库流转快照——design §11 偏差 2「消灭手工抄写」）。\n\nwindow_bars 四形态编码（spec 上盘流转 Requirement）：不传=缺省 180；\n显式 null=不限期（不自动结题）；显式 N≥1=N 根；0/负/非整=422。\nleverage/symbol 缺省取 DNA；timeframe 恒从 DNA 抄录（无参数位）。"
+      },
+      "PaperTaskListResponse": {
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/PaperTaskResponse"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks",
+          "total"
+        ],
+        "title": "PaperTaskListResponse"
+      },
+      "PaperTaskResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "initial_cash": {
+            "type": "number",
+            "title": "Initial Cash"
+          },
+          "fee": {
+            "type": "number",
+            "title": "Fee"
+          },
+          "slippage": {
+            "type": "number",
+            "title": "Slippage"
+          },
+          "leverage": {
+            "type": "integer",
+            "title": "Leverage"
+          },
+          "window_bars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Bars"
+          },
+          "stop_loss_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Loss Pct"
+          },
+          "bars_processed": {
+            "type": "integer",
+            "title": "Bars Processed"
+          },
+          "last_bar_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Bar Time"
+          },
+          "balance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance"
+          },
+          "position_side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Side"
+          },
+          "position_entry": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Entry"
+          },
+          "position_quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Quantity"
+          },
+          "position_margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Margin"
+          },
+          "position_open_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Open Cost"
+          },
+          "position_sl_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Sl Price"
+          },
+          "position_tp_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Tp Price"
+          },
+          "position_trail_peak": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Trail Peak"
+          },
+          "position_entry_bar_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Entry Bar Seq"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "total_trades": {
+            "type": "integer",
+            "title": "Total Trades"
+          },
+          "win_count": {
+            "type": "integer",
+            "title": "Win Count"
+          },
+          "loss_count": {
+            "type": "integer",
+            "title": "Loss Count"
+          },
+          "total_pnl": {
+            "type": "number",
+            "title": "Total Pnl"
+          },
+          "research_status_snapshot": {
+            "type": "string",
+            "title": "Research Status Snapshot"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Reason"
+          },
+          "heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat At"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "status",
+          "strategy_id",
+          "symbol",
+          "timeframe",
+          "initial_cash",
+          "fee",
+          "slippage",
+          "leverage",
+          "bars_processed",
+          "total_trades",
+          "win_count",
+          "loss_count",
+          "total_pnl",
+          "research_status_snapshot",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PaperTaskResponse"
       },
       "PaperTradeListResponse": {
         "properties": {
@@ -7713,7 +9388,14 @@
             "title": "Timeframe"
           },
           "indicator": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Indicator"
           },
           "params": {
@@ -7763,16 +9445,30 @@
               }
             ],
             "title": "End"
+          },
+          "groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groups"
           }
         },
         "type": "object",
         "required": [
           "symbol",
-          "timeframe",
-          "indicator"
+          "timeframe"
         ],
         "title": "QueryIndicatorRequest",
-        "description": "指标读数入口（add-query-indicator；独立通道，检查④）。\n\nparams 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases\n的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。"
+        "description": "指标读数入口（add-query-indicator；独立通道，检查④）。\n\nparams 嵌套 dict（各指标参数名不同）走 POST body——与 inspect_cases\n的 selector 同一传输契约裁决；服务层深度校验（结构化 422）。\n\n0.4.1 R1 批量形制：可选 groups 与单组专属字段（indicator/params/\nreductions/start/end）互斥（同传 422 指明互斥对；symbol/timeframe\n公共必填保留）。groups MUST 显式声明——本模型无 model_config，\npydantic 默认 ignore 会静默丢键使批量请求降级单组语义；indicator\n随之转可选（单组形制缺 indicator 由服务层 422）。"
       },
       "RandomWindowRequest": {
         "properties": {
@@ -7926,7 +9622,7 @@
           },
           "sl_mode": {
             "type": "string",
-            "pattern": "^(pct|atr)$",
+            "pattern": "^(pct|atr|trail)$",
             "title": "Sl Mode",
             "default": "pct"
           },
@@ -7935,6 +9631,83 @@
             "minimum": 1.0,
             "title": "Atr Period",
             "default": 14
+          },
+          "exit_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Fraction"
+          },
+          "add_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Add Fraction"
+          },
+          "max_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Exposure"
+          },
+          "max_hold": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Hold"
+          },
+          "time_exit_utc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Exit Utc"
+          },
+          "position_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Mode"
+          },
+          "risk_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Fraction"
           }
         },
         "additionalProperties": false,
@@ -8320,25 +10093,6 @@
         "title": "SceneTypesResponse",
         "description": "可用场景类型清单（含元数据）。"
       },
-      "ScreenProvenance": {
-        "properties": {
-          "task_id": {
-            "type": "string",
-            "title": "Task Id"
-          },
-          "candidate_fingerprint": {
-            "type": "string",
-            "title": "Candidate Fingerprint"
-          }
-        },
-        "type": "object",
-        "required": [
-          "task_id",
-          "candidate_fingerprint"
-        ],
-        "title": "ScreenProvenance",
-        "description": "扫描谱系引用（add-screen-patterns D5）：声明候选来源。\n\n只触发 screen_use 日志（区间一律取自任务记录，声明不供数）；\n不参与假设幂等键（同条件同区间重复登记命中同一假设）。"
-      },
       "SignalGeneModel-Input": {
         "properties": {
           "indicator": {
@@ -8368,6 +10122,17 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Condition"
+          },
+          "timeframe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeframe"
           }
         },
         "additionalProperties": false,
@@ -8408,6 +10173,17 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Condition"
+          },
+          "timeframe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeframe"
           }
         },
         "additionalProperties": false,

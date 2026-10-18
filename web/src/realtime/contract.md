@@ -81,27 +81,56 @@
   "target_score": number, "max_generations": number }
 ```
 
-## trading 通道业务事件（S→C）
+## trading 通道业务事件（S→C，纸盘新域七事件）
 
-### task_started（core/trading/runner.py:219）
+> rebuild-paper-trading 切换（2026-10-17）：旧三事件（task_started 旧形 /
+> task_snapshot 旧形 / position_update）全退役，换新七事件族。
+> 构造点实证：core/paper_trading/runtime/executor.py `_push`（:409/:439/:674/:812/:858/:863/:867）+
+> api/realtime.py `_emit_task_snapshot`（/trading 分支）。连接形制与频道不变
+> （namespace /trading、room=task_id）。
+
+### task_started（executor.py:439，pending→running 迁移完成后）
 ```json
 { "type": "task_started", "task_id": string }
 ```
 
-### task_snapshot（ws.py:148，重连恢复）
+### task_snapshot（api/realtime.py，connect 即下发；任务存在即发，五态 status 自解释）
 ```json
 { "type": "task_snapshot", "task_id": string, "status": string,
-  "position_side": string|null, "balance": number|null,
-  "total_trades": number, "total_pnl": number }
+  "equity": number|null, "balance": number|null, "total_trades": number }
+```
+equity 派生与 AccountSnapshot.equity 同式（balance+margin+未实现盈亏；账户组 NULL→None 透传非 0 假值）。
+
+### task_update（executor.py:812，每 bar 原子落库后）
+```json
+{ "type": "task_update", "task_id": string, "status": "running",
+  "equity": number, "balance": number, "unrealized_pnl": number,
+  "bars_processed": number, "window_bars": number|null }
 ```
 
-### position_update（core/trading/runner.py:653，每根 K 线推进后）
+### fill_event（executor.py:674，逐笔成交）
 ```json
-{ "type": "position_update", "task_id": string,
-  "position": { "side": string, "entry_price": number, "quantity": number,
-                "margin": number, "cumulative_funding": number } | null,
-  "balance": number, "equity": number, "unrealized_pnl": number,
-  "total_trades": number, "total_pnl": number }
+{ "type": "fill_event", "task_id": string, "bar_time": string, "seq": number,
+  "kind": string, "side": string|null, "price": number|null,
+  "quantity": number|null, "fee": number|null,
+  "realized_pnl": number|null, "reason": string|null }
+```
+kind=Intent 九值（open/close/add/reduce/exit_sl/exit_tp/exit_max_hold/exit_time/exit_liquidation）；出场类 side 为 null。
+
+### task_completed（executor.py:858，窗口到点终态）
+```json
+{ "type": "task_completed", "task_id": string,
+  "final_equity": number, "total_trades": number }
+```
+
+### task_stopped（executor.py:863，协作停/止损阈值终态；stop_reason 可缺省 null）
+```json
+{ "type": "task_stopped", "task_id": string, "stop_reason": string|null }
+```
+
+### task_error（executor.py:409 装载失败早退 / :867 执行异常终态）
+```json
+{ "type": "task_error", "task_id": string, "error_detail": string }
 ```
 
 ## 流式通道事件（verify/batch 共用形制，SSE `event:` 帧）

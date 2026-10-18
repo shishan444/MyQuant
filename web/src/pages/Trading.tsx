@@ -5,40 +5,47 @@ import {
   Square,
   Trash2,
   Plus,
-  RotateCcw,
+  Copy,
   Search,
   AlertCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
-import { App, Button as AntButton, Input, Table, Tag, type TableProps } from "antd";
+import { App, Button as AntButton, Collapse, Input, Table, Tabs, Tag, type TableProps } from "antd";
 import { cn, formatCurrency, formatPercent } from "@/lib/utils";
 import {
   useTradingTasks,
-  useTradingTrades,
+  useTradingFills,
   useStopTradingTask,
   useCreateTradingTask,
-  useRestartTradingTask,
+  useCloneTradingTask,
   useDeleteTradingTask,
   useTradingWebSocket,
   useTradingEquity,
-  useTradingMetrics,
+  useTradingReport,
+  useTradingFinalReport,
+  useTradingFunding,
   useRunnerStatus,
+  isTerminalStatus,
 } from "@/hooks/useTrading";
 import { TradingChart } from "@/components/trading/TradingChart";
 import { EquityCurve } from "@/components/charts/EquityCurve";
 import { MetricsDashboard } from "@/components/trading/MetricsDashboard";
 import { RunnerStatusBadge } from "@/components/trading/RunnerStatusBadge";
 import { CreateTaskDialog } from "@/components/trading/CreateTaskDialog";
-import type { TradingTask, PaperTrade } from "@/services/trading";
+import type { PaperFill, FundingRecord, TradingTask } from "@/services/trading";
 
 type PositionSide = "long" | "short" | "flat";
 
+/** 五态徽标（pending/running/completed/stopped/error——新域状态机） */
 const STATUS_BADGE_MAP: Record<string, { label: string; color: string }> = {
-  pending: { label: "等待中", color: "warning" },
+  pending: { label: "排队中", color: "warning" },
   running: { label: "运行中", color: "success" },
+  completed: { label: "已完结", color: "processing" },
   stopped: { label: "已停止", color: "error" },
+  error: { label: "异常", color: "error" },
 };
 
 const POSITION_BADGE_MAP: Record<PositionSide, { label: string; color: string }> = {
@@ -47,16 +54,15 @@ const POSITION_BADGE_MAP: Record<PositionSide, { label: string; color: string }>
   flat: { label: "空仓", color: "default" },
 };
 
-const DIR_LABEL: Record<string, string> = {
-  long: "仅多",
-  short: "仅空",
-  mixed: "混合",
-};
-
-function toPositionSide(side: string | null): PositionSide {
+function toPositionSide(side: string | null | undefined): PositionSide {
   if (side === "long") return "long";
   if (side === "short") return "short";
   return "flat";
+}
+
+/** 策略编号短显（UUID 形制取前 8 位；非 UUID 原样） */
+function shortStrategyId(strategyId: string): string {
+  return strategyId.length > 12 ? `${strategyId.slice(0, 8)}…` : strategyId;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,19 +74,20 @@ function TaskListItem({
   isSelected,
   onSelect,
   onDelete,
-  onRestart,
+  onClone,
 }: {
   task: TradingTask;
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
-  onRestart: () => void;
+  onClone: () => void;
 }) {
   const statusBadge = STATUS_BADGE_MAP[task.status] ?? STATUS_BADGE_MAP.stopped;
 
   const returnRate =
     task.initial_cash > 0 ? (task.total_pnl || 0) / task.initial_cash : 0;
-  const isStopped = task.status === "stopped";
+  // clone/delete 终态门槛：运行/排队中不可删不可克隆（后端 409 stop first）
+  const isTerminal = isTerminalStatus(task.status);
 
   return (
     <GlassCard
@@ -94,10 +101,10 @@ function TaskListItem({
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-sm font-medium text-text-primary truncate">
-            {task.strategy_name || task.symbol}
+            {task.symbol}
           </span>
-          <span className="text-[10px] text-text-muted">
-            {task.symbol} / {task.timeframe} / {task.leverage}x
+          <span className="text-[10px] text-text-muted" title={task.strategy_id}>
+            {shortStrategyId(task.strategy_id)} / {task.timeframe} / {task.leverage}x
           </span>
         </div>
         <Tag color={statusBadge.color} className="!m-0 !text-[9px] !leading-4 shrink-0">
@@ -119,18 +126,18 @@ function TaskListItem({
           {formatPercent(returnRate)}
         </span>
       </div>
-      {isStopped && (
+      {isTerminal && (
         <div className="flex items-center gap-1 self-end">
           <AntButton
             type="text"
             size="small"
-            aria-label="重新开始"
+            aria-label="克隆重跑"
             onClick={(e) => {
               e.stopPropagation();
-              onRestart();
+              onClone();
             }}
           >
-            <RotateCcw className="h-3 w-3" style={{ color: "#F59E0B" }} />
+            <Copy className="h-3 w-3" style={{ color: "#F59E0B" }} />
           </AntButton>
           <AntButton
             type="text"
@@ -164,7 +171,7 @@ export function Trading() {
   const location = useLocation();
   const navigate = useNavigate();
   const createTask = useCreateTradingTask();
-  const restartMut = useRestartTradingTask();
+  const cloneMut = useCloneTradingTask();
   const deleteMut = useDeleteTradingTask();
 
   const tasks = taskList?.tasks ?? [];
@@ -179,72 +186,36 @@ export function Trading() {
     const q = searchQuery.toLowerCase();
     return tasks.filter(
       (t) =>
-        (t.strategy_name || "").toLowerCase().includes(q) ||
-        t.symbol.toLowerCase().includes(q),
+        t.symbol.toLowerCase().includes(q) ||
+        t.strategy_id.toLowerCase().includes(q),
     );
   }, [tasks, searchQuery]);
 
-  // Route state for auto-create from Strategies page
-  const [pendingCreate, setPendingCreate] = useState<{
-    dna: string;
-    symbol: string;
-    timeframe: string;
-    strategyName: string | null;
-    initialCash: number;
-    leverage: number;
-    direction: string;
-  } | null>(null);
+  // Route state for auto-create from Strategies/Verify pages（上盘流转：带 strategy_id）
+  const [presetStrategyId, setPresetStrategyId] = useState<string | null>(null);
 
   useEffect(() => {
-    const state = location.state as {
-      dna?: unknown;
-      symbol?: string;
-      timeframe?: string;
-      strategyName?: string;
-      initialCash?: number;
-      leverage?: number;
-      direction?: string;
-    } | null;
-
-    if (state?.dna) {
-      setPendingCreate({
-        dna: typeof state.dna === "string" ? state.dna : JSON.stringify(state.dna),
-        symbol: state.symbol || "BTCUSDT",
-        timeframe: state.timeframe || "4h",
-        strategyName: state.strategyName ?? null,
-        initialCash: state.initialCash ?? 100_000,
-        leverage: state.leverage ?? 1,
-        direction: state.direction ?? "long",
-      });
+    const state = location.state as { strategyId?: unknown } | null;
+    if (state?.strategyId && typeof state.strategyId === "string") {
+      setPresetStrategyId(state.strategyId);
       setDialogOpen(true);
       window.history.replaceState({}, "");
     }
   }, []);
 
   const handleConfirmCreate = useCallback(
-    (params: { initialCash: number; leverage: number; direction: string; confidenceSizingEnabled: boolean }) => {
-      if (pendingCreate) {
-        createTask.mutate({
-          dna_json: pendingCreate.dna,
-          symbol: pendingCreate.symbol,
-          timeframe: pendingCreate.timeframe,
-          strategy_name: pendingCreate.strategyName ?? undefined,
-          initial_cash: params.initialCash,
-          leverage: params.leverage,
-          direction: params.direction,
-          confidence_sizing_enabled: params.confidenceSizingEnabled,
-        });
-        setPendingCreate(null);
-      }
+    (params: Parameters<typeof createTask.mutate>[0]) => {
+      createTask.mutate(params);
+      setPresetStrategyId(null);
       setDialogOpen(false);
     },
-    [pendingCreate, createTask],
+    [createTask],
   );
 
   const openDeleteConfirm = useCallback((taskId: string) => {
     modal.confirm({
       title: "删除任务",
-      content: "将永久删除该任务及所有关联数据（交易记录、权益快照），此操作不可撤销。",
+      content: "将永久删除该任务及所有关联数据（成交、权益、资金费、报告），此操作不可撤销。",
       okText: "确认删除",
       okButtonProps: { danger: true },
       cancelText: "取消",
@@ -255,17 +226,17 @@ export function Trading() {
     });
   }, [modal, deleteMut, selectedTaskId]);
 
-  const openRestartConfirm = useCallback((task: TradingTask) => {
+  const openCloneConfirm = useCallback((task: TradingTask) => {
     modal.confirm({
-      title: "重新开始模拟交易",
-      content: `使用相同策略（${task.strategy_name || task.symbol}）在 ${task.symbol} / ${task.timeframe} 上创建新任务？初始资金: ${formatCurrency(task.initial_cash)}。`,
-      okText: "创建任务",
+      title: "克隆重跑",
+      content: `以同一策略快照与任务参数（${task.symbol} / ${task.timeframe}，初始资金 ${formatCurrency(task.initial_cash)}）创建新任务？原任务数据保留。`,
+      okText: "创建克隆任务",
       cancelText: "取消",
       onOk: () => {
-        restartMut.mutate(task.task_id);
+        cloneMut.mutate(task.task_id);
       },
     });
-  }, [modal, restartMut]);
+  }, [modal, cloneMut]);
 
   if (isLoading) {
     return (
@@ -308,12 +279,7 @@ export function Trading() {
         <CreateTaskDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
-          strategyName={pendingCreate?.strategyName ?? null}
-          symbol={pendingCreate?.symbol ?? "BTCUSDT"}
-          timeframe={pendingCreate?.timeframe ?? "4h"}
-          initialCash={pendingCreate?.initialCash ?? 100_000}
-          leverage={pendingCreate?.leverage ?? 1}
-          direction={pendingCreate?.direction ?? "long"}
+          presetStrategyId={presetStrategyId}
           onConfirm={handleConfirmCreate}
         />
       </PageTransition>
@@ -329,17 +295,17 @@ export function Trading() {
         <div className="w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto pr-1">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-text-primary">任务列表</h2>
-            <RunnerStatusBadge
-              isAlive={runnerStatus?.is_alive ?? false}
-              activeTaskId={runnerStatus?.active_task_id ?? null}
-            />
+            <RunnerStatusBadge status={runnerStatus} />
           </div>
 
           <AntButton
             block
             size="small"
             icon={<Plus className="h-3 w-3" />}
-            onClick={() => navigate("/strategies")}
+            onClick={() => {
+              setPresetStrategyId(null);
+              setDialogOpen(true);
+            }}
           >
             新建任务
           </AntButton>
@@ -348,7 +314,7 @@ export function Trading() {
             <Input
               size="small"
               prefix={<Search className="h-3 w-3 text-text-muted" />}
-              placeholder="搜索策略名或交易对..."
+              placeholder="搜索交易对或策略编号..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               allowClear
@@ -362,7 +328,7 @@ export function Trading() {
               isSelected={task.task_id === activeTaskId}
               onSelect={() => setSelectedTaskId(task.task_id)}
               onDelete={() => openDeleteConfirm(task.task_id)}
-              onRestart={() => openRestartConfirm(task)}
+              onClone={() => openCloneConfirm(task)}
             />
           ))}
         </div>
@@ -373,7 +339,7 @@ export function Trading() {
             <TaskDetailPanel
               task={activeTask}
               wsConnected={wsConnected}
-              onRestart={() => openRestartConfirm(activeTask)}
+              onClone={() => openCloneConfirm(activeTask)}
             />
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -387,17 +353,11 @@ export function Trading() {
       <CreateTaskDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        strategyName={pendingCreate?.strategyName ?? null}
-        symbol={pendingCreate?.symbol ?? "BTCUSDT"}
-        timeframe={pendingCreate?.timeframe ?? "4h"}
-        initialCash={pendingCreate?.initialCash ?? 100_000}
-        leverage={pendingCreate?.leverage ?? 1}
-        direction={pendingCreate?.direction ?? "long"}
+        presetStrategyId={presetStrategyId}
         onConfirm={handleConfirmCreate}
       />
 
-      {/* 确认交互单源=AntD modal 体系（原 AlertDialog×2 收敛） */}
-      {/* 删除/重启弹层由 openDeleteConfirm/openRestartConfirm 命令式触发 */}
+      {/* 确认交互单源=AntD modal 体系；删除/克隆弹层由 openDeleteConfirm/openCloneConfirm 命令式触发 */}
     </PageTransition>
   );
 }
@@ -406,40 +366,43 @@ export function Trading() {
 // Task Detail Panel (right side)
 // ---------------------------------------------------------------------------
 
-const TRADE_PAGE_SIZE = 5;
+const FILL_PAGE_SIZE = 5;
 
 function TaskDetailPanel({
   task,
   wsConnected,
-  onRestart,
+  onClone,
 }: {
   task: TradingTask;
   wsConnected: boolean;
-  onRestart: () => void;
+  onClone: () => void;
 }) {
   const stopMut = useStopTradingTask();
 
-  const { data: tradeData } = useTradingTrades(task.task_id, 500);
-  const { data: equityData } = useTradingEquity(task.task_id);
-  const { data: metricsData } = useTradingMetrics(task.task_id);
+  const { data: fillData } = useTradingFills(task.task_id, 500);
+  const { data: equityData } = useTradingEquity(task.task_id, 500);
+  const { data: fundingData } = useTradingFunding(task.task_id, 500);
+  const { data: reportData } = useTradingReport(task.task_id);
+  const isTerminal = isTerminalStatus(task.status);
+  const { data: finalReportData } = useTradingFinalReport(task.task_id, isTerminal);
 
-  const trades = tradeData?.trades ?? [];
-  const totalTrades = tradeData?.total ?? 0;
+  const fills = fillData?.fills ?? [];
+  const totalTrades = task.total_trades;
   const equitySnapshots = equityData?.snapshots ?? [];
+  const fundingRecords = fundingData?.records ?? [];
   const isRunning = task.status === "running";
   const isActive = isRunning || task.status === "pending";
-  const isStopped = task.status === "stopped";
   const mutating = stopMut.isPending;
 
-  const [visibleTrades, setVisibleTrades] = useState(TRADE_PAGE_SIZE);
+  const [visibleFills, setVisibleFills] = useState(FILL_PAGE_SIZE);
 
   // Reset visible count when task changes
   useEffect(() => {
-    setVisibleTrades(TRADE_PAGE_SIZE);
+    setVisibleFills(FILL_PAGE_SIZE);
   }, [task.task_id]);
 
-  const displayedTrades = trades.slice(0, visibleTrades);
-  const hasMore = visibleTrades < trades.length;
+  const displayedFills = fills.slice(0, visibleFills);
+  const hasMoreFills = visibleFills < fills.length || (fillData?.has_more ?? false);
 
   // Account overview computations
   const posSide = toPositionSide(task.position_side);
@@ -451,6 +414,14 @@ function TaskDetailPanel({
   const equityReturn =
     task.initial_cash > 0 ? (equity - task.initial_cash) / task.initial_cash : 0;
 
+  // 报告源：终态取结题固化版（含版本标识），否则滚动报告
+  const report = finalReportData?.report ?? reportData;
+  const reportBadge = finalReportData
+    ? `结题固化版 v${finalReportData.report_version}`
+    : isTerminal
+      ? "结题固化版生成中"
+      : "滚动报告";
+
   return (
     <div className="flex flex-col gap-3">
       {/* Account Overview Card */}
@@ -459,15 +430,13 @@ function TaskDetailPanel({
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3 flex-wrap">
             <h2 className="text-base font-semibold text-text-primary">
-              {task.strategy_name || task.symbol}
+              {task.symbol}
             </h2>
-            <span className="text-xs text-text-muted">
-              {task.symbol} / {task.timeframe} / {task.leverage}x
-              {task.direction && (
-                <span className="ml-1">
-                  / {DIR_LABEL[task.direction] ?? task.direction}
-                </span>
-              )}
+            <span
+              className="text-xs text-text-muted"
+              title={task.strategy_id}
+            >
+              策略 {shortStrategyId(task.strategy_id)} / {task.timeframe} / {task.leverage}x
             </span>
             <Tag color={STATUS_BADGE_MAP[task.status]?.color} className="!m-0 !text-[10px]">
               {STATUS_BADGE_MAP[task.status]?.label ?? task.status}
@@ -496,13 +465,24 @@ function TaskDetailPanel({
                 <Square className="h-3 w-3" /> 停止
               </AntButton>
             )}
-            {isStopped && (
-              <AntButton size="small" onClick={onRestart}>
-                <RotateCcw className="h-3 w-3" /> 重新开始
+            {isTerminal && (
+              <AntButton size="small" onClick={onClone}>
+                <Copy className="h-3 w-3" /> 克隆重跑
               </AntButton>
             )}
           </div>
         </div>
+
+        {/* Error detail line（error 终态/装载失败的拒绝原因披露） */}
+        {task.status === "error" && task.error_detail && (
+          <div className="mt-2 flex items-start gap-2 rounded border border-loss/30 bg-loss/10 px-2 py-1.5 text-xs text-loss">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span className="break-all">{task.error_detail}</span>
+          </div>
+        )}
+        {task.status === "stopped" && task.stop_reason && (
+          <div className="mt-1 text-xs text-text-muted">停止原因：{task.stop_reason}</div>
+        )}
 
         {/* Three key numbers: Balance / Unrealized PnL / Equity */}
         <div className="mt-3 grid grid-cols-3 gap-6">
@@ -570,8 +550,36 @@ function TaskDetailPanel({
         )}
       </GlassCard>
 
-      {/* Performance Metrics */}
-      <MetricsDashboard metrics={metricsData} initialCash={task.initial_cash} />
+      {/* Performance Metrics（报告第一层主指标）+ 报告源版本标识 */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-text-secondary">验证报告</h3>
+        <Tag className="!m-0 !text-[10px]" color={finalReportData ? "gold" : "default"}>
+          {reportBadge}
+        </Tag>
+      </div>
+      <MetricsDashboard report={report} task={task} />
+
+      {/* 报告二三层折叠（偏差对照+证据强度——考场无观点，只披露不判定） */}
+      {report && (
+        <GlassCard className="p-3">
+          <Collapse
+            ghost
+            size="small"
+            items={[
+              {
+                key: "deviation",
+                label: <span className="text-xs text-text-secondary">偏差对照层（纸盘 vs 同区间回测预期）</span>,
+                children: <DeviationLayer deviation={report.deviation} />,
+              },
+              {
+                key: "evidence",
+                label: <span className="text-xs text-text-secondary">证据强度层（60/5 双阈值）</span>,
+                children: <EvidenceLayer evidence={report.evidence} />,
+              },
+            ]}
+          />
+        </GlassCard>
+      )}
 
       {/* Chart + Equity Curve (grouped in one card) */}
       <GlassCard className="p-3">
@@ -585,7 +593,7 @@ function TaskDetailPanel({
         <TradingChart
           symbol={task.symbol}
           timeframe={task.timeframe}
-          trades={trades}
+          fills={fills}
           height={380}
           isActive={isActive}
         />
@@ -593,7 +601,7 @@ function TaskDetailPanel({
           <div className="mt-2 pt-2 border-t border-border-default">
             <span className="text-xs text-text-secondary mb-1 block">权益曲线</span>
             <EquityCurve
-              data={equitySnapshots.map((s) => ({ timestamp: s.timestamp, value: s.equity }))}
+              data={equitySnapshots.map((s) => ({ timestamp: s.bar_time, value: s.equity }))}
               baseline={task.initial_cash}
               height={120}
             />
@@ -601,37 +609,168 @@ function TaskDetailPanel({
         )}
       </GlassCard>
 
-      {/* Trade History */}
+      {/* 成交流水 / 资金费 标签页 */}
       <div>
-        <h3 className="mb-2 text-sm font-medium text-text-secondary">
-          交易记录 ({totalTrades})
-        </h3>
-        {trades.length === 0 ? (
-          <div className="flex items-center justify-center h-20 rounded-lg border border-border-default">
-            <span className="text-sm text-text-muted">暂无交易记录</span>
+        <Tabs
+          size="small"
+          items={[
+            {
+              key: "fills",
+              label: `成交流水 (${totalTrades})`,
+              children: (
+                <div>
+                  {fills.length === 0 ? (
+                    <div className="flex items-center justify-center h-20 rounded-lg border border-border-default">
+                      <span className="text-sm text-text-muted">暂无成交记录</span>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border-default overflow-hidden">
+                      <Table<PaperFill>
+                        rowKey="id"
+                        columns={FILL_COLUMNS}
+                        dataSource={displayedFills}
+                        size="small"
+                        pagination={false}
+                      />
+                      {hasMoreFills && (
+                        <div className="flex justify-center py-2 border-t border-border-default">
+                          <AntButton
+                            type="text"
+                            size="small"
+                            className="!text-xs !text-text-muted"
+                            onClick={() => setVisibleFills(fills.length)}
+                          >
+                            查看全部
+                          </AntButton>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: "funding",
+              label: `资金费 (${fundingRecords.length})`,
+              children: (
+                <div>
+                  {fundingRecords.length === 0 ? (
+                    <div className="flex items-center justify-center h-20 rounded-lg border border-border-default">
+                      <span className="text-sm text-text-muted">暂无资金费记录</span>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border-default overflow-hidden">
+                      <Table<FundingRecord>
+                        rowKey="id"
+                        columns={FUNDING_COLUMNS}
+                        dataSource={fundingRecords}
+                        size="small"
+                        pagination={false}
+                        scroll={{ y: 320 }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 报告二三层（折叠内容）
+// ---------------------------------------------------------------------------
+
+function fmtNum(v: number | null | undefined, digits = 4): string {
+  return v == null ? "-" : v.toFixed(digits);
+}
+
+/** 偏差对照层：diff 关键四指标差值（纸盘−回测）+归因披露 */
+function DeviationLayer({ deviation }: { deviation: NonNullable<Parameters<typeof MetricsDashboard>[0]["report"]>["deviation"] }) {
+  if (deviation.unavailable_reason) {
+    return (
+      <div className="text-xs text-text-muted space-y-1">
+        <p>对照不可用：{deviation.unavailable_reason}</p>
+        <ul className="list-disc pl-4 space-y-0.5">
+          {deviation.attribution_notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  const diffs: Array<{ label: string; value: number | null; percent?: boolean }> = [
+    { label: "总收益差", value: deviation.diff.total_return, percent: true },
+    { label: "Sharpe 差", value: deviation.diff.sharpe_ratio },
+    { label: "最大回撤差", value: deviation.diff.max_drawdown, percent: true },
+    { label: "胜率差", value: deviation.diff.win_rate, percent: true },
+  ];
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {diffs.map((d) => (
+          <div key={d.label} className="rounded border border-border-default px-2 py-1.5">
+            <span className="text-[10px] text-text-muted block">{d.label}（纸盘−回测）</span>
+            <span
+              className={cn(
+                "font-num text-sm",
+                (d.value ?? 0) > 0 && "text-profit",
+                (d.value ?? 0) < 0 && "text-loss",
+                d.value == null && "text-text-muted",
+              )}
+            >
+              {d.value == null ? "-" : d.percent ? formatPercent(d.value) : d.value.toFixed(4)}
+            </span>
           </div>
-        ) : (
-          <div className="rounded-lg border border-border-default overflow-hidden">
-            <Table<PaperTrade>
-              rowKey="id"
-              columns={TRADE_COLUMNS}
-              dataSource={displayedTrades}
-              size="small"
-              pagination={false}
-            />
-            {hasMore && (
-              <div className="flex justify-center py-2 border-t border-border-default">
-                <AntButton
-                  type="text"
-                  size="small"
-                  className="!text-xs !text-text-muted"
-                  onClick={() => setVisibleTrades(trades.length)}
-                >
-                  查看全部 (共{totalTrades}条)
-                </AntButton>
-              </div>
-            )}
+        ))}
+      </div>
+      <ul className="list-disc pl-4 text-xs text-text-muted space-y-0.5">
+        {deviation.attribution_notes.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 证据强度层：样本量+双阈值判定+研究状态快照+funding 三态计数 */
+function EvidenceLayer({ evidence }: { evidence: NonNullable<Parameters<typeof MetricsDashboard>[0]["report"]>["evidence"] }) {
+  const items = [
+    { label: "运行 bar 数", value: `${evidence.bars_run}` },
+    { label: "平仓笔数", value: `${evidence.closed_trades}` },
+    { label: "持仓 bar 数", value: `${evidence.position_bars}` },
+    { label: "资金费已结", value: `${evidence.funding_settled_points} 点` },
+    {
+      label: "资金费挂起",
+      value: evidence.funding_pending_points == null ? "无数据" : `${evidence.funding_pending_points} 点`,
+    },
+  ];
+  return (
+    <div className="space-y-2">
+      {evidence.insufficient_evidence && (
+        <div className="flex items-center gap-2 rounded border border-accent-gold/30 bg-accent-gold/10 px-2 py-1.5 text-xs text-accent-gold">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span>证据不足（运行不足 60 根或平仓不足 5 笔）——结论参考性有限</span>
+        </div>
+      )}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+        {items.map((it) => (
+          <div key={it.label} className="rounded border border-border-default px-2 py-1.5">
+            <span className="text-[10px] text-text-muted block">{it.label}</span>
+            <span className="font-num text-sm text-text-primary">{it.value}</span>
           </div>
+        ))}
+      </div>
+      <div className="text-xs text-text-muted space-y-0.5">
+        <p>研究状态快照：{evidence.research_status}</p>
+        {evidence.funding_post_terminal_backfill && (
+          <p>
+            终态后补记：{evidence.funding_post_terminal_backfill.points} 点、合计{" "}
+            {fmtNum(evidence.funding_post_terminal_backfill.total_amount, 2)}（未计入账户余额）
+          </p>
         )}
       </div>
     </div>
@@ -639,14 +778,19 @@ function TaskDetailPanel({
 }
 
 // ---------------------------------------------------------------------------
-// TradeRow
+// Fill / Funding 表列
 // ---------------------------------------------------------------------------
 
-const ACTION_LABEL: Record<string, string> = {
+const KIND_LABEL: Record<string, string> = {
   open: "开仓",
   close: "平仓",
   add: "加仓",
   reduce: "减仓",
+  exit_sl: "止损",
+  exit_tp: "止盈",
+  exit_max_hold: "持有上限",
+  exit_time: "限时出场",
+  exit_liquidation: "强平",
 };
 const SIDE_LABEL: Record<string, string> = {
   long: "做多",
@@ -663,11 +807,13 @@ const REASON_LABEL: Record<string, string> = {
   sl: "止损",
   tp: "止盈",
   liquidation: "强平",
+  reverse: "反手",
+  window: "窗口",
   reduce_full: "减仓平仓",
 };
 
-/** 交易明细列（TradeRow 迁移为声明式 columns——render 逻辑原样移植） */
-const TRADE_COLUMNS: TableProps<PaperTrade>["columns"] = [
+/** 成交流水列（kind 九值词表直出） */
+const FILL_COLUMNS: TableProps<PaperFill>["columns"] = [
   {
     title: "时间",
     dataIndex: "bar_time",
@@ -678,25 +824,34 @@ const TRADE_COLUMNS: TableProps<PaperTrade>["columns"] = [
   {
     title: "方向",
     dataIndex: "side",
-    render: (v: string) => (
-      <span className={cn("text-sm", SIDE_COLOR[v] ?? "text-text-primary")}>
-        {SIDE_LABEL[v] ?? v}
+    render: (v: string | null) => (
+      <span className={cn("text-sm", SIDE_COLOR[v ?? ""] ?? "text-text-primary")}>
+        {SIDE_LABEL[v ?? ""] ?? v ?? "-"}
       </span>
     ),
   },
   {
     title: "操作",
-    dataIndex: "action",
-    render: (v: string) => <span className="text-sm text-text-primary">{ACTION_LABEL[v] ?? v}</span>,
+    dataIndex: "kind",
+    render: (v: string) => <span className="text-sm text-text-primary">{KIND_LABEL[v] ?? v}</span>,
   },
   {
     title: "价格",
     dataIndex: "price",
-    render: (v: number) => <span className="font-num text-sm text-text-primary">{formatCurrency(v)}</span>,
+    render: (v: number | null) => (
+      <span className="font-num text-sm text-text-primary">{v != null ? formatCurrency(v) : "-"}</span>
+    ),
   },
   {
-    title: "盈亏",
-    dataIndex: "pnl",
+    title: "数量",
+    dataIndex: "quantity",
+    render: (v: number | null) => (
+      <span className="font-num text-sm text-text-primary">{v != null ? v.toFixed(6) : "-"}</span>
+    ),
+  },
+  {
+    title: "已实现盈亏",
+    dataIndex: "realized_pnl",
     render: (v: number | null) =>
       v !== null ? (
         <span className={cn("font-num text-sm font-medium", v > 0 && "text-profit", v < 0 && "text-loss")}>
@@ -710,7 +865,69 @@ const TRADE_COLUMNS: TableProps<PaperTrade>["columns"] = [
     title: "原因",
     dataIndex: "reason",
     render: (v: string | null) => (
-      <span className="text-xs text-text-muted">{REASON_LABEL[v ?? ""] ?? v ?? "-"}</span>
+      <span className="text-xs text-text-muted">{v ? REASON_LABEL[v] ?? v : "-"}</span>
+    ),
+  },
+];
+
+/** 资金费三态标签 */
+const FUNDING_STATUS_TAG: Record<string, { label: string; color: string }> = {
+  settled: { label: "已结算", color: "success" },
+  pending: { label: "挂起待补", color: "warning" },
+  settled_disclosure_only: { label: "终态后补记（未扣款）", color: "default" },
+};
+
+const FUNDING_COLUMNS: TableProps<FundingRecord>["columns"] = [
+  {
+    title: "结算时刻",
+    dataIndex: "settle_time",
+    render: (v: string) => (
+      <span className="text-xs text-text-muted">{v.slice(0, 19).replace("T", " ")}</span>
+    ),
+  },
+  {
+    title: "状态",
+    dataIndex: "status",
+    render: (v: string) => {
+      const tag = FUNDING_STATUS_TAG[v] ?? { label: v, color: "default" };
+      return (
+        <Tag color={tag.color} className="!m-0 !text-[10px]">
+          {tag.label}
+        </Tag>
+      );
+    },
+  },
+  {
+    title: "费率",
+    dataIndex: "rate",
+    render: (v: number | null) => (
+      <span className="font-num text-sm text-text-primary">{fmtNum(v, 6)}</span>
+    ),
+  },
+  {
+    title: "金额",
+    dataIndex: "amount",
+    render: (v: number | null) =>
+      v !== null ? (
+        <span className={cn("font-num text-sm", v > 0 && "text-loss", v < 0 && "text-profit")}>
+          {formatCurrency(v)}
+        </span>
+      ) : (
+        <span className="text-text-muted">-</span>
+      ),
+  },
+  {
+    title: "持仓数量",
+    dataIndex: "position_quantity",
+    render: (v: number | null) => (
+      <span className="font-num text-sm text-text-primary">{v != null ? v.toFixed(6) : "-"}</span>
+    ),
+  },
+  {
+    title: "结算价",
+    dataIndex: "settle_price",
+    render: (v: number | null) => (
+      <span className="font-num text-sm text-text-primary">{v != null ? formatCurrency(v) : "-"}</span>
     ),
   },
 ];

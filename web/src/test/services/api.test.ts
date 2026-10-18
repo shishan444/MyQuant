@@ -25,7 +25,7 @@ afterEach(() => {
 describe("G16.0 拦截器契约：HTTP 分层", () => {
   it("409 conflict：透出后端业务 detail（可理解冲突）", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(409, { detail: "已有运行中的交易任务" }));
-    const err = (await api.post("/api/trading/tasks", { json: {} }).catch((e: unknown) => e)) as ApiError;
+    const err = (await api.post("/api/paper-trading/tasks", { json: {} }).catch((e: unknown) => e)) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.kind).toBe("conflict");
     expect(err.status).toBe(409);
@@ -34,7 +34,7 @@ describe("G16.0 拦截器契约：HTTP 分层", () => {
 
   it("409 conflict：无 detail 时给默认冲突文案", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(409, {}));
-    const err = (await api.post("/api/trading/tasks/t1/stop").catch((e: unknown) => e)) as ApiError;
+    const err = (await api.post("/api/paper-trading/tasks/t1/stop").catch((e: unknown) => e)) as ApiError;
     expect(err.kind).toBe("conflict");
     expect(err.message).toBe("操作冲突：目标状态已被其他操作改变，请刷新后重试");
   });
@@ -71,7 +71,7 @@ describe("G16.0 拦截器契约：HTTP 分层", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(500, { detail: "Traceback (most recent call last): File /app/core/..." }),
     );
-    const err = (await api.get("/api/trading/tasks").catch((e: unknown) => e)) as ApiError;
+    const err = (await api.get("/api/paper-trading/tasks").catch((e: unknown) => e)) as ApiError;
     expect(err.kind).toBe("server");
     expect(err.message).toBe("服务暂不可用，请稍后重试");
     expect(err.message).not.toContain("Traceback");
@@ -81,14 +81,14 @@ describe("G16.0 拦截器契约：HTTP 分层", () => {
 describe("G16.0 拦截器契约：网络层（网络与业务区分）", () => {
   it("网络断连 × GET（幂等）：网络连接失败文案", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
-    const err = (await api.get("/api/trading/tasks").catch((e: unknown) => e)) as ApiError;
+    const err = (await api.get("/api/paper-trading/tasks").catch((e: unknown) => e)) as ApiError;
     expect(err.kind).toBe("network");
     expect(err.message).toBe("网络连接失败，请检查网络后重试");
   });
 
   it("网络断连 × POST（非幂等 mutation）：结果未知语义", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
-    const err = (await api.post("/api/trading/tasks", { json: {} }).catch((e: unknown) => e)) as ApiError;
+    const err = (await api.post("/api/paper-trading/tasks", { json: {} }).catch((e: unknown) => e)) as ApiError;
     expect(err.kind).toBe("network");
     expect(err.message).toContain("操作结果未知");
     expect(err.message).toContain("刷新页面确认当前状态");
