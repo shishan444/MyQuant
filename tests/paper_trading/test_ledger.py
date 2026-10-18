@@ -345,26 +345,6 @@ class TestStateMachine:
             10_000.0 - 1_000.0 - fill.fee)
 
 
-class TestSingleSourceGuard:
-    """定仓公式单源守护（spec R3：MUST NOT 在新域复制公式——inspect
-    静态锚；行为守护（受控等价两侧等值+恒等式手算锚）之外的防回潮层）。
-    """
-
-    def test_risk_budget_qty_single_source_consumption(self):
-        """单源三断言：import 在场+消费点在场+params.risk_fraction
-        唯一出现于调用实参（内联公式复制必产生第二处即红）。"""
-        import core.paper_trading.kernel.ledger as ledger_mod
-
-        src = inspect.getsource(ledger_mod)
-        assert "from core.backtest.engine import risk_budget_qty" in src
-        assert "risk_budget_qty(" in src, "消费点须在场"
-        # params.risk_fraction 唯一出现=risk_budget_qty 调用实参行
-        # （docstring 为无前缀文字不计）——本地复制公式必再出现
-        assert src.count("params.risk_fraction") == 1, (
-            "risk_fraction 参与处须唯一（单源调用实参）——出现第二处"
-            "即疑定仓公式体复制")
-
-
 class TestFunding:
     """族 2 kernel 锚：apply_funding 金额=quantity×结算价×rate×方向符号。"""
 

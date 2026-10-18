@@ -2,9 +2,10 @@
 
 Ledger 是每任务实例的持仓/余额状态机：只接受执行器按判定序传入的
 意图，经 FillModel 产出成交后做状态变更，不做任何决策。定仓分派
-（14 参数消费的 open 分支）是本模块的参数忠实执行面；公式单源引用
-core/backtest/engine.py 的 risk_budget_qty（重命名公开符号，第三
-消费方——不在本域复制公式）。
+（14 参数消费的 open 分支）经 core/positioning 模型注册表分派
+（resolve 单点+条目纯 Python 实现——公式权威驻注册条目手算锚，与
+回测引擎 njit 实现各持、对拍守护等值；本域不 import 回测引擎的
+定仓函数，REQ-4-07 终态就位）。
 
 清算两式（D-1 仓位口径，mmr 单源 core/market_model 按判定时刻名义
 选档）：
@@ -18,7 +19,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.backtest.engine import risk_budget_qty
 from core.market_model import maintenance_margin_rate
 from core.paper_trading.kernel.account import (
     AccountSnapshot,
@@ -26,6 +26,12 @@ from core.paper_trading.kernel.account import (
 )
 from core.paper_trading.kernel.fills import FillModel
 from core.paper_trading.kernel.types import ClosedBar, Fill, Intent, RiskParams
+from core.positioning import (
+    MODEL_RISK_BUDGET,
+    SizingInput,
+    get_model,
+    resolve,
+)
 
 
 def liquidation_price(side: str, entry_price: float, quantity: float,
@@ -196,18 +202,19 @@ class Ledger:
 
     def size_open(self, base_price: float,
                   entry_atr: float | None) -> tuple[float, bool]:
-        """入场定仓（fixed/risk_budget 两档分派）。
+        """入场定仓（经 core/positioning 注册表分派——两档单点）。
 
         fixed 档（缺省/"fixed"）：margin=equity×首笔生效比例（声明
         initial_fraction（物化 >0）用之、否则 position_size——与引擎
-        装配 effective_first_size 分派同式，对照断言锁），quantity
+        装配 effective_first_size 同式，resolve 单点分派），quantity
         =margin×leverage/price（逐字节不变形制）。risk_budget 档：
-        qty=权益×risk_fraction÷止损距离（公式单源 risk_budget_qty），
-        cap=权益×min(leverage,max_exposure) 截断并标记 capped；距离
-        不可定义（残缺组合/ATR NaN）时公式单点返回 (0,0)→回退 fixed
-        定仓（对齐回测引擎兜底，不另设抛异常分支——第二逻辑源禁令）；
-        risk_budget 档不读 initial_fraction（互斥由装载校验承担，
-        直构防御=忽略）。
+        qty=权益×risk_fraction÷止损距离（距离三档分派驻二号模型；
+        公式权威=注册条目手算锚），cap=权益×min(leverage,max_
+        exposure) 截断并标记 capped（护栏住执行层——模型输出裸值
+        不含截断）；距离不可定义（残缺组合/ATR NaN）模型拒绝返回
+        0→经 resolve 降档一号回退 fixed 定仓（对齐回测引擎兜底，
+        不另设抛异常分支——第二逻辑源禁令）；risk_budget 档不读
+        initial_fraction（互斥由装载校验承担，直构防御=忽略）。
 
         Args:
             base_price: 定仓基准价（执行 bar 开盘价，滑点前——与引擎
@@ -220,39 +227,31 @@ class Ledger:
         """
         params = self.params
         equity_now = self.equity(base_price)
-        if params.position_mode == "risk_budget":
-            stop_dist = self._stop_distance(base_price, entry_atr)
-            qty, capped = risk_budget_qty(
-                equity_now, base_price, stop_dist, params.risk_fraction,
-                float(params.leverage), params.max_exposure)
+        resolved = resolve(params.position_mode, params.position_size,
+                           params.initial_fraction, params.risk_fraction,
+                           params.sl_mode, params.stop_loss)
+        if resolved.model_id == MODEL_RISK_BUDGET:
+            model = get_model(resolved.model_id).implementation
+            qty = model.size_open(
+                SizingInput(equity_now, base_price, entry_atr),
+                resolved.params)
             if qty > 0.0:
-                return qty, bool(capped)
-            # (0,0) 防御分支 → 回退 fixed（受控等价覆盖此路径）
-        first_size = (params.initial_fraction
-                      if params.initial_fraction > 0
-                      else params.position_size)
-        margin = equity_now * first_size
+                # cap 截断（执行层护栏——与引擎 njit risk_budget_qty
+                # 逐式同构：cap=权益×min(leverage, max_exposure)、
+                # 超限 qty=cap/price 并标记）
+                cap = equity_now * min(float(params.leverage),
+                                       params.max_exposure)
+                if qty * base_price > cap:
+                    return cap / base_price, True
+                return qty, False
+            # 模型拒绝（距离不可定义）→ resolve 降档一号回退 fixed
+            # （受控等价覆盖此路径）
+            resolved = resolve(None, params.position_size,
+                               params.initial_fraction)
+        model = get_model(resolved.model_id).implementation
+        margin = model.size_open(
+            SizingInput(equity_now, base_price, None), resolved.params)
         return margin * params.leverage / base_price, False
-
-    def _stop_distance(self, price: float,
-                       entry_atr: float | None) -> float:
-        """risk_budget 定仓的止损距离（sl_mode 分派）。
-
-        pct/trail 同为比例域（price×sl——对齐回测引擎 D-6 修复后的
-        入场分派；design §3.4「trail=sl×入场 bar ATR 基准」为修复前
-        旧语义，见实施汇报偏差记录）；atr=sl×该 bar ATR。距离不可
-        定义两源：无止损（≤0）返回 0.0、ATR 无效（None/NaN/≤0）
-        返回 NaN——两者经公式单点 (0,0) 防御回退 fixed。
-        """
-        sl = self.params.stop_loss
-        if sl <= 0.0:
-            return 0.0
-        if self.params.sl_mode == "atr":
-            if entry_atr is None or entry_atr != entry_atr \
-                    or entry_atr <= 0.0:
-                return float("nan")
-            return sl * entry_atr
-        return price * sl
 
     # ── 执行入口（意图 → 成交 → 状态变更） ───────────────────
 
