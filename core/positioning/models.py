@@ -14,11 +14,16 @@ stop_loss 比例域（D-6 终态）、atr=stop_loss×该 bar ATR）。两模型
 预算法）。
 
 拒绝语义（第二逻辑源禁令）：二号拒绝四源以返回值 0.0 表达不抛
-异常——stop_loss≤0、base_price≤0 或 equity≤0、atr 模式下 ATR
-None/NaN/≤0；risk_fraction 物化 0（直构防御值）时 qty 恒 0，数值
-上等同拒绝。一号无拒绝分支（现状 fixed 档无防御）。输出裸值不含
-cap 截断（护栏住执行层——leverage/max_exposure 不进本模块任何
-输入，结构性分离）。
+异常——stop_loss≤0/NaN、base_price≤0/NaN 或 equity≤0/NaN、atr
+模式下 ATR None/NaN/≤0（拒绝链统一 `not (x > 0.0)` 单式，NaN 与
+≤0 并拦——拦截面不窄于引擎 njit 侧 risk_budget_qty：njit 仅对
+stop_dist 拦 NaN，price/equity NaN 源为其不设防面、本侧拦属超出
+面，两源直调对拍不等值属预期〔防御域边界，特征化锚驻 test_
+parity〕）；NaN 输入显式 0.0→调用方降档，终态与现状隐式侥幸
+一致；risk_fraction 物化 0（直构防御值）时 qty 恒 0，数值上等同
+拒绝。一号无拒绝分支（现状 fixed 档无防御）。输出裸值不含 cap
+截断（护栏住执行层——leverage/max_exposure 不进本模块任何输入，
+结构性分离）。
 
 对拍谓词承载分工：本模块内嵌的是数据网格（案例+期望值+断言域
 标注）；「纯 Python vs njit」的等值断言器住 tests/positioning/
@@ -107,13 +112,18 @@ class RiskBudgetModel:
 
     def size_open(self, inp: SizingInput,
                   params: RiskBudgetParams) -> float:
-        """开仓目标数量（拒绝四源→0.0，逐源对齐现状防御链）。"""
-        if (params.stop_loss <= 0.0 or inp.base_price <= 0.0
-                or inp.equity <= 0.0):
+        """开仓目标数量（拒绝四源→0.0——统一 `not (x > 0.0)` 单式：
+        NaN 与 ≤0 并拦；拦截面不窄于引擎 njit 侧 risk_budget_qty
+        〔price/equity NaN 源为本侧超出面——njit 不拦，两源直调
+        对拍不等值属预期〕；NaN 输入显式 0.0→调用方降档 fixed，
+        终态行为与现状隐式侥幸一致）。"""
+        if (not (params.stop_loss > 0.0)
+                or not (inp.base_price > 0.0)
+                or not (inp.equity > 0.0)):
             return 0.0
         if params.sl_mode == "atr":
             atr = inp.atr_value
-            if atr is None or atr != atr or atr <= 0.0:
+            if atr is None or not (atr > 0.0):
                 return 0.0
             dist = params.stop_loss * atr
         else:
