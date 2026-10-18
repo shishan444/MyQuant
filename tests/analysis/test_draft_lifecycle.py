@@ -216,14 +216,93 @@ class TestPromotion:
                 "SELECT COUNT(*) FROM strategy_transition_event")).scalar_one() == 0
 
     def test_refuted_keeps_draft(self, db):
-        """证伪假设的草稿不转正（保持 draft，永不进入可用策略集）。"""
+        """证伪假设的草稿不转正且归档出验证对象域
+        （build-strategy-lifecycle 3.2：refuted 后谱系经 transit 归档，
+        永不进入可用策略集的语义由 archived 承载——断言随契约同步）。"""
         hid = _hyp(db)
         draft_id = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
         _record(db, hid, draft_id, "fail")
         result = transition_hypothesis(db, hid, target_status="refuted",
                                        evidence_ref=f"rec_{hid[:8]}_fail")
         assert result["status"] == "refuted" and result["promoted"] is False
+        assert get_strategy(db, draft_id)["status"] == "archived"
+
+
+class TestRefutationArchival:
+    """证伪归档链（build-strategy-lifecycle 3.2 镜像形制）。"""
+
+    def test_refuted_archives_lineage_with_event(self, db):
+        """证伪链主路径：谱系 draft→archived+事件（trigger=refute，
+        evidence 含 fail record_id）+ResearchLog 留痕。"""
+        from core.persistence.orm.engine import engine_for
+        from sqlalchemy import text
+
+        hid = _hyp(db)
+        draft_id = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
+        _record(db, hid, draft_id, "fail")
+        transition_hypothesis(db, hid, target_status="refuted",
+                              evidence_ref=f"rec_{hid[:8]}_fail")
+        assert get_strategy(db, draft_id)["status"] == "archived"
+        with engine_for(db).connect() as conn:
+            rows = conn.execute(text(
+                "SELECT from_status, to_status, trigger, evidence_json"
+                " FROM strategy_transition_event"
+                " WHERE strategy_id=:i"), {"i": draft_id}).all()
+        assert len(rows) == 1
+        assert rows[0][:3] == ("draft", "archived", "refute")
+        ev = json.loads(rows[0][3])
+        assert ev["record_id"] == f"rec_{hid[:8]}_fail"
+        assert ev["hypothesis_id"] == hid
+        logs = rr.list_research_log(db, hypothesis_id=hid)
+        refutation_logs = [e for e in logs
+                           if e["entry_type"] == "refutation"
+                           and e["ref_id"] == draft_id]
+        assert len(refutation_logs) == 1
+        assert "draft archived <- refuted" in refutation_logs[0]["summary"]
+
+    def test_refuted_empty_lineage_skips_with_log(self, db):
+        """谱系空跳过：无 draft 谱系时零归档零事件+留痕（沿 promote
+        「谱系无 draft 跳过」镜像形制）。"""
+        from core.persistence.orm.engine import engine_for
+        from sqlalchemy import text
+
+        hid = _hyp(db)
+        # 证据挂在别家策略上：谱系无 draft
+        _record(db, hid, "st_other", "fail")
+        out = transition_hypothesis(db, hid, target_status="refuted",
+                                    evidence_ref=f"rec_{hid[:8]}_fail")
+        assert out["status"] == "refuted"
+        assert "谱系无 draft" in out["promotion_note"]
+        with engine_for(db).connect() as conn:
+            assert conn.execute(text(
+                "SELECT COUNT(*) FROM strategy_transition_event")).scalar_one() == 0
+        logs = rr.list_research_log(db, hypothesis_id=hid)
+        skipped = [e for e in logs if e["entry_type"] == "refutation"
+                   and "skipped" in e["summary"]]
+        assert len(skipped) == 1
+
+    def test_refuted_same_transaction_atomic(self, db, monkeypatch):
+        """同事务原子：迁移服务抛错→假设定证与谱系归档整体回滚
+        （假设保持 active、draft 保持 draft、事件零写入）。"""
+        from core.strategy import lifecycle
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("transit 注入失败")
+
+        monkeypatch.setattr(lifecycle, "transit", _boom)
+        hid = _hyp(db)
+        draft_id = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
+        _record(db, hid, draft_id, "fail")
+        with pytest.raises(RuntimeError, match="transit 注入失败"):
+            transition_hypothesis(db, hid, target_status="refuted",
+                                  evidence_ref=f"rec_{hid[:8]}_fail")
+        assert rr.get_hypothesis(db, hid)["status"] == "active"
         assert get_strategy(db, draft_id)["status"] == "draft"
+        from core.persistence.orm.engine import engine_for
+        from sqlalchemy import text
+        with engine_for(db).connect() as conn:
+            assert conn.execute(text(
+                "SELECT COUNT(*) FROM strategy_transition_event")).scalar_one() == 0
 
 
 class TestDraftWriteLock:

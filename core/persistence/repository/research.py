@@ -343,6 +343,8 @@ def transition_hypothesis_with_promotion(
 
     转正经生命周期迁移服务 transit（build-strategy-lifecycle 3.1：
     draft→active 事件同事务落表，conn 透传；语义与直改等价）。
+    refuted 定证后谱系 draft 经 transit 归档（build-strategy-lifecycle
+    3.2 镜像形制：trigger=refute，谱系空跳过+留痕）。
 
     promote 独立证据条件（improve-mcp-agent-loop M4）：仅当存在挂
     (hypothesis_id, 该 draft) 的 verdict=pass 记录才转正——防"用别的
@@ -383,6 +385,42 @@ def transition_hypothesis_with_promotion(
             summary=f"active -> {target_status} (ref={terminal_ref})",
             created_at=now,
         ))
+
+        if target_status == "refuted":
+            # 证伪归档接入（build-strategy-lifecycle 3.2，promote 的
+            # 镜像形制）：refuted 定证成功后谱系 draft 经 transit 归档
+            # （trigger=refute，evidence=假设级 fail 记录 record_id=
+            # terminal_ref——hypothesis_service 已强制其 verdict=fail），
+            # conn 透传同事务；谱系空跳过+留痕。对象范围：refuted 时谱系
+            # 恒 draft 或不存在（无「转正后事后证伪」路径），from 恒
+            # draft；「任意→archived」完整 from 覆盖由 DELETE 人工边承载
+            drafts = conn.execute(
+                select(Strategy.strategy_id)
+                .where(Strategy.parent_ids == hypothesis_id,
+                       Strategy.status == "draft")
+            ).scalars().all()
+            if not drafts:
+                out["promotion_note"] = "谱系无 draft，跳过证伪归档"
+                conn.execute(insert(ResearchLog).values(
+                    log_id=_new_id(), hypothesis_id=hypothesis_id,
+                    entry_type="refutation", ref_id=terminal_ref,
+                    summary="refutation skipped: no draft in lineage",
+                    created_at=now))
+                return out
+            from core.strategy.lifecycle import transit as _transit
+            for draft_id in drafts:
+                _transit(
+                    db_path, draft_id, target="archived", trigger="refute",
+                    evidence={"hypothesis_id": hypothesis_id,
+                              "record_id": terminal_ref},
+                    conn=conn)
+                conn.execute(insert(ResearchLog).values(
+                    log_id=_new_id(), hypothesis_id=hypothesis_id,
+                    entry_type="refutation", ref_id=draft_id,
+                    summary=(f"draft archived <- refuted "
+                             f"(evidence-bound fail {terminal_ref})"),
+                    created_at=now))
+            return out
 
         if not promote:
             return out
