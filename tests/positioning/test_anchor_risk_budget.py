@@ -107,6 +107,14 @@ class TestRejectionFourSources:
                          100_000.0, 0.0, id="源3 atr=0"),
             pytest.param(_params(sl_mode="atr", stop_loss=2.0), 100.0,
                          100_000.0, -2.5, id="源3 atr<0"),
+            # CARD-02 联动：三源 NaN 显式拦（修复 not(x>0.0) 单式
+            # ——修复前 NaN<=0 恒 False 穿透产出 NaN qty）
+            pytest.param(_params(stop_loss=_NAN), 100.0, 100_000.0, None,
+                         id="源1 stop_loss=NaN"),
+            pytest.param(_params(), _NAN, 100_000.0, None,
+                         id="源2 base_price=NaN"),
+            pytest.param(_params(), 100.0, _NAN, None,
+                         id="源2 equity=NaN"),
         ])
     def test_rejected_input_returns_zero_without_raise(
             self, params, base_price, equity, atr):

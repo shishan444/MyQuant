@@ -147,6 +147,73 @@ class TestAnchorPointsTwoImplementationsAgree:
                                                 rel=1e-12)
 
 
+class TestRejectZoneNanInputsParity:
+    """CARD-02：NaN 输入拒绝域对拍（分源——两侧防御域差异声明）。
+
+    修复（`not (x > 0.0)` 单式）后纯 Python 三源 NaN 显式 0.0。
+    对拍按源拆分：stop_dist NaN 源两侧等值（njit 侧
+    `stop_dist != stop_dist` 显式拦）；price/equity NaN 源 njit
+    防御链不含（仅承诺三源非正+dist NaN）——直调穿透，不做等值
+    断言而锚定现状形制为防御域边界（真实引擎链路 price=NaN bar
+    不触发回调、equity 由价格链传导，两源 NaN 直调不可达——形制
+    而非缺口）。atr inf 放行两侧等值（dist=inf→qty=0.0）。
+    """
+
+    _BASE = {"base_price": 100.0, "sl_mode": "pct",
+             "risk_fraction": 0.01, "leverage": 1.0,
+             "max_exposure": 1.0}
+
+    def test_stop_dist_nan_rejected_both_sides(self):
+        """stop_loss=NaN 源（dist=价×NaN=NaN）：纯 Python 0.0 ==
+        njit (0.0, 0.0)（njit dist NaN 显式拦——可拍等值面）。"""
+        case = ParityCase(
+            name="card02_dist_nan",
+            inputs={"equity": 100_000.0, "stop_loss": float("nan"),
+                    "stop_dist": float("nan"), **self._BASE},
+            zone="reject", pure_expected=0.0)
+        assert _run_pure(case) == 0.0
+        assert _run_njit(case) == (0.0, 0.0)
+
+    def test_price_and_equity_nan_domain_boundary_njit_not_guarded(self):
+        """njit 防御域边界锚：price/equity NaN 直调穿透（非承诺面）
+        ——纯 Python 0.0 vs njit (NaN, 0.0)/(主式值, 0.0)。锚定
+        两侧防御域不同的事实，防未来误把两源写入等值对拍网格。"""
+        case_eq = ParityCase(
+            name="card02_equity_nan",
+            inputs={"equity": float("nan"), "stop_loss": 0.02,
+                    "stop_dist": 2.0, **self._BASE},
+            zone="reject", pure_expected=0.0)
+        assert _run_pure(case_eq) == 0.0
+        qty, capped = _run_njit(case_eq)
+        assert qty != qty and capped == 0.0  # njit 穿透 (NaN, 0.0)
+        case_px = ParityCase(
+            name="card02_price_nan",
+            inputs={"equity": 100_000.0, "base_price": float("nan"),
+                    "stop_loss": 0.02, "stop_dist": 2.0,
+                    "risk_fraction": 0.01, "leverage": 1.0,
+                    "max_exposure": 1.0, "sl_mode": "pct"},
+            zone="reject", pure_expected=0.0)
+        assert _run_pure(case_px) == 0.0
+        # njit 主式不含 price：qty=100000×0.01/2=500、cap 判定
+        # 500×NaN>cap False → (500.0, 0.0)
+        assert _run_njit(case_px) == (500.0, 0.0)
+
+    def test_atr_inf_passes_both_sides_zero_qty(self):
+        """atr=inf 放行（not(inf>0)=False 不拦）→dist=sl×inf=inf→
+        qty=equity×rf/inf=0.0；njit stop_dist=inf 同穿透主式
+        (0.0, 0.0)——两侧等值（CARD-02 声称面的对拍锚）。"""
+        case = ParityCase(
+            name="card02_atr_inf",
+            inputs={"equity": 100_000.0, "base_price": 100.0,
+                    "atr_value": float("inf"),
+                    "sl_mode": "atr", "stop_loss": 2.0,
+                    "risk_fraction": 0.02, "stop_dist": float("inf"),
+                    "leverage": 1.0, "max_exposure": 1.0},
+            zone="equal", pure_expected=0.0)
+        assert _run_pure(case) == 0.0
+        assert _run_njit(case) == (0.0, 0.0)
+
+
 class TestExpandForBacktestBaseline:
     """R6 载体一：适配器三元组 vs 改造前装配实拍基准（design §11
     基准表——2.1 改造前 _per_dna_risk_params p[7]/p[8]/p[9] 实拍
