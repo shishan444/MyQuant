@@ -198,7 +198,7 @@ class RiskGenes:
     time_exit_utc: Optional[int] = None
     # 动态定仓（complete-research-tooling 任务 4）：None=缺省 fixed
     # （固定比例 position_size 路径逐字节不变）；"risk_budget"=风险预
-    # 算制定仓——入场 size=当時权益×risk_fraction÷实际生效止损距离
+    # 算制定仓——入场 size=当时权益×risk_fraction÷实际生效止损距离
     # （按 sl_mode 三档分派距离；须声明 stop_loss>0——登记面组合校验）
     position_mode: Optional[str] = None
     # 风险预算比例 (0,0.5]（risk_budget 档生效；fixed 档不消费）

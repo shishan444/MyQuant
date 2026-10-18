@@ -269,7 +269,7 @@ def _validate_strategy_params(
                 "RESEARCH_PARAM_INVALID",
                 f"risk_fraction {rf!r} 越出值域 "
                 f"({RISK_FRACTION_MIN}, {RISK_FRACTION_MAX}]"
-                "（每笔风险预算占当時权益比例）",
+                "（每笔风险预算占当时权益比例）",
                 detail={"field": "risk_fraction",
                         "legal_range": f"({RISK_FRACTION_MIN}, "
                                        f"{RISK_FRACTION_MAX}]"})
@@ -281,7 +281,7 @@ def _validate_strategy_params(
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 "position_mode=risk_budget 须同时声明 risk_fraction"
-                "（入场 size=当時权益×risk_fraction÷止损距离）",
+                "（入场 size=当时权益×risk_fraction÷止损距离）",
                 detail={"field": "risk_fraction",
                         "legal_range": f"({RISK_FRACTION_MIN}, "
                                        f"{RISK_FRACTION_MAX}]"})

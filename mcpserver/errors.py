@@ -183,7 +183,7 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                      "（缺省 fixed 固定比例；risk_budget=风险预算制——"
                      "须同时声明 risk_fraction 与 stop_loss）",
     "risk_fraction": "风险预算比例越域：risk_fraction ∈ (0, 0.5]"
-                     "（每笔风险预算占当時权益比例，闭区间上界 0.5）",
+                     "（每笔风险预算占当时权益比例，闭区间上界 0.5）",
     # 仓位参数（add-position-sizing-params 5.1）：同族 field 通道
     "initial_fraction": "首笔动用资金比例越域：initial_fraction ∈ "
                         "(0, 1]（闭区间上界 1.0=全部可用资金；与 "

@@ -78,8 +78,10 @@ class BarSignals:
 class Intent:
     """动作意图（解释器产出，执行器消费的最小动作单元）。
 
-    size_fraction 是比例语义的自描述（open=position_size、reduce=
-    exit_fraction、add=add_fraction、全平类=1.0）；权威值在 RiskParams，
+    size_fraction 是比例语义的自描述（open=首笔生效比例（声明
+    initial_fraction 用之、否则 position_size——实际定仓在
+    ledger.size_open 分派，本字段仅自描述）、reduce=exit_fraction、
+    add=add_fraction、全平类=1.0）；权威值在 RiskParams，
     记账器消费时读参数单源。trigger_price 仅即时类携带（SL/TP 触发价、
     清算 p_liq——按触发价成交的锚）。
 

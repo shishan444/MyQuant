@@ -153,9 +153,9 @@ def risk_budget_qty(value_now, price, stop_dist, risk_fraction,
                     leverage, max_exposure):
     """风险预算定仓公式单点（complete-research-tooling 任务 4）。
 
-    入场数量 qty=当時权益×risk_fraction÷实际生效止损距离（每笔风险
+    入场数量 qty=当时权益×risk_fraction÷实际生效止损距离（每笔风险
     预算恒等：qty×stop_dist=value_now×risk_fraction）；名义敞口上限
-    cap=当時权益×min(leverage, max_exposure)（与 max_exposure 同域
+    cap=当时权益×min(leverage, max_exposure)（与 max_exposure 同域
     取严）——超限截断 qty=cap/price 并标记 capped。
     入场/重放计数双消费方共用本函数（python 侧调用 njit 函数合法，
     公式单点防两处漂移）。距离/价格/权益非正 → (0, 0)（调用方回退
