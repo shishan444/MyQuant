@@ -184,6 +184,14 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                      "须同时声明 risk_fraction 与 stop_loss）",
     "risk_fraction": "风险预算比例越域：risk_fraction ∈ (0, 0.5]"
                      "（每笔风险预算占当時权益比例，闭区间上界 0.5）",
+    # 仓位参数（add-position-sizing-params 5.1）：同族 field 通道
+    "initial_fraction": "首笔动用资金比例越域：initial_fraction ∈ "
+                        "(0, 1]（闭区间上界 1.0=全部可用资金；与 "
+                        "position_mode='risk_budget' 互斥——同笔首仓"
+                        "不可两个指挥）",
+    "max_position_loss": "持仓金额防线越域：max_position_loss > 0"
+                         "（金额下界开区间，无上界——考场无观点不替"
+                         "用户判断防线松紧；浮亏达线次根开盘全平）",
     # 谱系引用泛化（complete-research-tooling 任务 3）：两类引用
     # （screen_candidate 扫描候选/analysis_task 分析任务）的参数面
     "provenance.ref_type": "引用类型非法：ref_type ∈ {screen_candidate,"

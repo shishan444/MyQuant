@@ -512,6 +512,19 @@ class TestParamHintScenariosParity:
         from mcpserver.errors import _PARAM_HINT_SCENARIOS
         _assert_bidirectional(_PARAM_HINT_SCENARIOS, _KNOWN_GAPS)
 
+    def test_sizing_params_scenarios_readable(self):
+        """仓位参数两键场景文案（add-position-sizing-params 5.1）：
+        键在场（登记链抛出点经 5.2 落盘——双向对拍非悬空）+文案含
+        值域与互斥要素（可读锚）。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+
+        assert "initial_fraction" in _PARAM_HINT_SCENARIOS
+        assert "max_position_loss" in _PARAM_HINT_SCENARIOS
+        if_hint = _PARAM_HINT_SCENARIOS["initial_fraction"]
+        assert "(0, 1]" in if_hint and "互斥" in if_hint
+        mpl_hint = _PARAM_HINT_SCENARIOS["max_position_loss"]
+        assert "> 0" in mpl_hint and "无上界" in mpl_hint
+
     def test_parity_self_evidence_remove_key_red(self):
         """G4-T05 红绿自证①（隔离变异）：删场景表任一键 → 正向断言
         不变红（键仍在扫描集）但反向断言红（键落入未登记差集）——

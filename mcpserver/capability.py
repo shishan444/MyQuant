@@ -169,7 +169,14 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   strategy_params（stop_loss/take_profit/sl_mode/position_size/
   leverage/exit_fraction/add_fraction/max_exposure——值域按 sl_mode
   分叉：pct/trail 档 [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；
-  sl_mode∈{pct,atr,trail}）。translate 映射进产物 risk_genes（返回体
+  sl_mode∈{pct,atr,trail}）。**仓位参数两键（add-position-sizing-
+  params）**：initial_fraction∈(0,1]（首笔动用资金比例——声明时
+  首笔定仓 margin=当时权益×该比例，替换 position_size 消费点，加仓
+  仍走 add_fraction）与 max_position_loss>0 金额无上界（持仓金额
+  防线——总浮亏=价格浮亏+该持仓累计资金费净支出，收盘判定达线
+  次根开盘全平）；initial_fraction 与 position_mode='risk_budget'
+  互斥（同笔首仓不可两个指挥）；两键**回测与纸盘同语义执行**；
+  不声明=存量行为逐位不变。translate 映射进产物 risk_genes（返回体
   risk_genes=declared；无声明=平台默认 platform_default）。**声明块与
   假设身份正交**：不进条件指纹与幂等身份（同条件集+同区间集=同一
   假设），参数变体经终态后带新声明重登记产生；幂等四分支详见工具

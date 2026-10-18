@@ -314,6 +314,35 @@ class TestSchemaParity:
             assert token in src, f"工具文档缺要素: {token}"
 
 
+class TestSizingParamsDisclosure:
+    """仓位参数两键三处披露对拍（add-position-sizing-params 5.1——
+    族 8a/b：工具 schema 描述+能力自述+错误场景文案）。"""
+
+    def test_register_hypothesis_docs_disclose_sizing_params(self) -> None:
+        """工具描述（schema 面）：两键进键集列举+值域/语义/互斥+
+        「回测与纸盘同语义执行」披露（沿动态定仓两键形制）。"""
+        import inspect
+
+        from mcpserver import tools as tools_mod
+        src = inspect.getsource(tools_mod)
+        for token in ("initial_fraction", "max_position_loss",
+                      "动用资金比例", "持仓金额防线",
+                      "同笔首仓不可两个指挥", "回测与纸盘同语义执行"):
+            assert token in src, f"工具文档缺仓位参数要素: {token}"
+
+    def test_capability_doc_discloses_sizing_params(self) -> None:
+        """能力自述：声明块披露段含两键+值域+互斥+同语义执行
+        （沿 TestCapabilityResource 形制——AI 宿主按 doc 认知参数面）。"""
+        from mcpserver.server import build_server
+
+        mcp, _ = build_server(profile="research")
+        res = run_async(mcp.read_resource("quant://capabilities"))
+        text = res[0].content if isinstance(res, list) else str(res)
+        for token in ("initial_fraction", "max_position_loss",
+                      "互斥", "回测与纸盘同语义执行"):
+            assert token in text, f"能力自述缺仓位参数披露: {token}"
+
+
 class TestListFolding:
     """2.2 分页真实生效 + 列表折叠默认响应 <20KB（D8）。"""
 
