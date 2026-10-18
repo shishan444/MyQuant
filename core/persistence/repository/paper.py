@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 from uuid import uuid4
 
-from sqlalchemy import delete, desc, func, insert, select, update
+from sqlalchemy import (
+    Connection, delete, desc, func, insert, select, update,
+)
 
 from core.persistence.orm.models import PtEquity, PtFill, PtFunding, PtReport, PtTask
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -116,23 +118,33 @@ def create_task(
     window_bars: Optional[int] = None,
     stop_loss_pct: Optional[float] = None,
     task_id: Optional[str] = None,
+    conn: Optional[Connection] = None,
 ) -> str:
     """创建纸盘任务（status 硬编码 pending、bars_processed=0、账户组
     NULL、统计组 0）。测试直建通道（design §11 偏差 2）：全参数直收
-    不查 strategy 表——REST 层负责读 strategy 组装快照后调用。"""
+    不查 strategy 表——REST 层负责读 strategy 组装快照后调用。
+
+    conn 可选透传（build-strategy-lifecycle 5.1 挂盘同事务）：传入则
+    插入走外层事务（挂盘迁移+建任务两侧原子成败——外层回滚则两侧
+    皆无）；缺省自开单事务（既有直建行为不变）。
+    """
     now = _now()
     tid = task_id or new_task_id()
+    values = dict(
+        task_id=tid, status="pending", strategy_id=strategy_id,
+        dna_snapshot_json=dna_snapshot_json, symbol=symbol,
+        timeframe=timeframe, initial_cash=initial_cash, fee=fee,
+        slippage=slippage, leverage=leverage, window_bars=window_bars,
+        stop_loss_pct=stop_loss_pct, bars_processed=0,
+        research_status_snapshot=research_status_snapshot,
+        created_at=now, updated_at=now,
+    )
+    if conn is not None:
+        conn.execute(insert(PtTask).values(**values))
+        return tid
     engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(insert(PtTask).values(
-            task_id=tid, status="pending", strategy_id=strategy_id,
-            dna_snapshot_json=dna_snapshot_json, symbol=symbol,
-            timeframe=timeframe, initial_cash=initial_cash, fee=fee,
-            slippage=slippage, leverage=leverage, window_bars=window_bars,
-            stop_loss_pct=stop_loss_pct, bars_processed=0,
-            research_status_snapshot=research_status_snapshot,
-            created_at=now, updated_at=now,
-        ))
+    with engine.begin() as own:
+        own.execute(insert(PtTask).values(**values))
     return tid
 
 

@@ -211,17 +211,135 @@ class TestCreateTask:
         row = _create(client)
         assert row["status"] == "pending"  # 第 11 个恒 201 排队
 
-    @pytest.mark.parametrize("status", ["draft", "archived"])
-    def test_create_any_library_status_201(self, paper_api, status) -> None:
-        """任意策略库条目可上盘（spec R11 不设前置）：draft/archived
-        生命周期状态不进创建拒绝面（拒绝面仅 404/422 两类——研究
-        验证状态经 research_status_snapshot 披露而非拦截）。"""
+    @pytest.mark.parametrize("status", [
+        "draft", "archived", "candidate", "live"])
+    def test_create_non_precondition_status_409(self, paper_api, status) -> None:
+        """B' 前置集收紧（build-strategy-lifecycle 5.1，spec delta
+        MODIFIED「上盘流转」：任意可上盘→{active,paper} 可上盘）：
+        四态→409 STRATEGY_ILLEGAL_TRANSITION（detail 含合法后继集），
+        任务不建+策略不变+零事件（失败回滚两侧）。candidate/live 的
+        正当通道=迭代克隆→重验证→active。"""
         client, db = paper_api
-        _seed_strategy(db, strategy_id=f"st-{status}", status=status)
-        resp = client.post("/api/paper-trading/tasks", json={
-            "strategy_id": f"st-{status}"})
-        assert resp.status_code == 201, (status, resp.text)
-        assert resp.json()["status"] == "pending"
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        _force_strategy_status(db, "st-1", status)
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        assert resp.status_code == 409, (status, resp.text)
+        detail = resp.json()["detail"]
+        assert detail["code"] == "STRATEGY_ILLEGAL_TRANSITION"
+        assert detail["detail"]["to_status"] == "paper"
+        assert paper.count_tasks(db) == 0, "409 不建任务"
+        assert _strategy_status(db, "st-1") == status, "策略不变（回滚）"
+        assert _lifecycle_events(db, "st-1") == [], "零事件（回滚）"
+
+
+# ── 挂盘三态契约（build-strategy-lifecycle 5.1） ──
+
+
+def _force_strategy_status(db: Path, strategy_id: str, status: str) -> None:
+    """测试构造轨：直 SQL 改策略状态（save_strategy 白名单外四态；
+    生产写面唯一=lifecycle CAS——构造轨豁免形制沿 test_matrix
+    _set_status 先例）。"""
+    from sqlalchemy import text
+
+    from core.persistence.orm.engine import engine_for
+
+    with engine_for(db).begin() as conn:
+        conn.execute(text("UPDATE strategy SET status=:s"
+                          " WHERE strategy_id=:i"),
+                     {"s": status, "i": strategy_id})
+
+
+def _strategy_status(db: Path, strategy_id: str) -> str:
+    from sqlalchemy import text
+
+    from core.persistence.orm.engine import engine_for
+
+    with engine_for(db).connect() as conn:
+        return conn.execute(text("SELECT status FROM strategy"
+                                 " WHERE strategy_id=:i"),
+                            {"i": strategy_id}).scalar_one()
+
+
+def _lifecycle_events(db: Path, strategy_id: str) -> list:
+    """迁移事件清单 [(from,to,trigger)]（创建序——审计读序）。"""
+    from sqlalchemy import text
+
+    from core.persistence.orm.engine import engine_for
+
+    with engine_for(db).connect() as conn:
+        return conn.execute(text(
+            "SELECT from_status, to_status, trigger FROM"
+            " strategy_transition_event WHERE strategy_id=:i"
+            " ORDER BY created_at"), {"i": strategy_id}).all()
+
+
+def _event_evidence(db: Path, strategy_id: str) -> dict:
+    import json as _json
+
+    from sqlalchemy import text
+
+    from core.persistence.orm.engine import engine_for
+
+    with engine_for(db).connect() as conn:
+        raw = conn.execute(text(
+            "SELECT evidence_json FROM strategy_transition_event"
+            " WHERE strategy_id=:i ORDER BY created_at"),
+            {"i": strategy_id}).scalar_one()
+    return _json.loads(raw)
+
+
+class TestCreateTaskLifecycleMount:
+    """5.1 挂盘三态契约：迁移/同态续挂/409 三态分派（住 transit 返回
+    层）+同事务原子两向。"""
+
+    def test_mount_from_active_migrates_with_event(self, paper_api) -> None:
+        """①from=active：201+pending 受理语义不变+同事务迁移
+        active→paper+事件 (mount) evidence 含 task_id。"""
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        row = _create(client)
+        assert row["status"] == "pending"
+        assert _strategy_status(db, "st-1") == "paper"
+        assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")]
+        assert _event_evidence(db, "st-1") == {"task_id": row["task_id"]}
+
+    def test_mount_from_paper_continues_without_event(self, paper_api) -> None:
+        """②from=paper（同策略对照续挂）：任务照建+事件表零新行+受理
+        201。"""
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        first = _create(client)   # 首挂：active→paper（产生 1 事件）
+        second = _create(client)  # 续挂：from=paper 同态不迁移
+        assert second["status"] == "pending"
+        assert second["task_id"] != first["task_id"]
+        assert _strategy_status(db, "st-1") == "paper"
+        assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")], \
+            "同态续挂零新事件"
+
+    def test_mount_atomic_rollback_on_task_failure(
+            self, paper_api, monkeypatch) -> None:
+        """③原子反向：建任务失败→迁移回滚（策略仍 active+零事件+
+        零任务）——两侧同事务原子成败。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, status="active")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("task insert failed")
+
+        monkeypatch.setattr(paper, "create_task", _boom)
+        # TestClient 默认重抛服务端异常——异常传播即失败面；断言点在
+        # 事务回滚（两侧皆无），500 响应形制由 propagate+rollback 传导
+        with pytest.raises(RuntimeError):
+            client.post("/api/paper-trading/tasks",
+                        json={"strategy_id": "st-1"})
+        assert _strategy_status(db, "st-1") == "active", "迁移回滚"
+        assert _lifecycle_events(db, "st-1") == [], "事件回滚"
+        assert paper.count_tasks(db) == 0
 
 
 # ── window_bars 四形态编码 ──

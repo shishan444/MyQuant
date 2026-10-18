@@ -7,10 +7,13 @@
 §5.1——stop 经调度器 stop_task 分派、创建只落 pending 行）。
 
 错误族遵守 api-error-contract：422=Pydantic 校验明细数组；404/409 等
-4xx=业务语义字符串 detail。创建拒绝面仅两类（上限排队 spec）：404
-strategy not found、422 校验数组；受理恒 201（受理≠运行，超限停留
-pending 排队）。语义参数（direction/timeframe/信号基因）不在创建参数
-面——extra="forbid" 使传入即 422（spec「语义不可覆写」场景）。
+4xx=业务语义字符串 detail（例外：挂盘前置态 409 沿 LifecycleError 三段
+dict——code 可辨 STRATEGY_ILLEGAL_TRANSITION）。创建拒绝面三类（上限
+排队语义保持——超限仍恒受理停留 pending 排队，409 与上限无关）：404
+strategy not found、422 校验数组、409 非法前置态（B' 前置集
+={active,paper}，build-strategy-lifecycle 5.1）；受理恒 201（受理≠运行，
+超限停留 pending 排队）。语义参数（direction/timeframe/信号基因）不在
+创建参数面——extra="forbid" 使传入即 422（spec「语义不可覆写」场景）。
 """
 from __future__ import annotations
 
@@ -236,9 +239,24 @@ def create_task(
     body: PaperTaskCreate,
     db_path: Path = Depends(get_db_path),
 ) -> PaperTaskResponse:
-    """上盘（创建恒 201 返 pending 行——受理≠运行，超限停留 pending
-    排队不拒绝；拒绝面仅 404 strategy not found 与 422 校验数组）。"""
+    """上盘（受理恒 201 返 pending 行——受理≠运行，超限停留 pending
+    排队不拒绝；拒绝面 404 strategy not found/422 校验数组/409 非法
+    前置态）。
+
+    挂盘三态契约（B' 前置集={active,paper}，build-strategy-lifecycle
+    5.1；三态分派住 transit 返回层，端点只管调用——防 TOCTOU 竞态与
+    校验散层）：from=active→同事务迁移 active→paper（trigger=mount，
+    evidence=task_id）+事件写入+任务创建；from=paper→同态续挂不迁移
+    （任务照常创建、零迁移事件——v3 §12.4 同策略对照已批能力的保留）；
+    draft/archived/candidate/live→409 STRATEGY_ILLEGAL_TRANSITION 失败
+    回滚两侧（不建任务无事件）。candidate/live 的正当上盘通道=迭代
+    克隆→重验证→active→再挂盘（不放宽 409，需求出现走变更传播）。
+    """
+    from core.persistence.orm.engine import engine_for
     from core.persistence.repository.strategy import get_strategy
+    from core.strategy.dna import StrategyDNA
+    from core.strategy.lifecycle import transit
+    from core.strategy.lifecycle.machine import LifecycleError
 
     strategy = get_strategy(db_path, body.strategy_id)
     if strategy is None:
@@ -247,22 +265,42 @@ def create_task(
     # DNA 由策略库流转：快照取库内 dna_json 原文（保真不重序列化）；
     # timeframe/symbol 缺省从 execution_genes 抄录、leverage 缺省取
     # risk_genes（任务覆写面 design §7.1 端点 1）
-    from core.strategy.dna import StrategyDNA
-
     dna = StrategyDNA.from_json(strategy["dna_json"])
-    task_id = paper.create_task(
-        db_path,
-        strategy_id=body.strategy_id,
-        dna_snapshot_json=strategy["dna_json"],
-        symbol=body.symbol or dna.execution_genes.symbol,
-        timeframe=dna.execution_genes.timeframe,
-        research_status_snapshot=paper.resolve_research_status(strategy),
-        initial_cash=body.initial_cash, fee=body.fee,
-        slippage=body.slippage,
-        leverage=(body.leverage if body.leverage is not None
-                  else dna.risk_genes.leverage),
-        window_bars=body.window_bars,
-        stop_loss_pct=body.stop_loss_pct)
+    task_id = paper.new_task_id()
+    # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
+    # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
+    snapshot = paper.resolve_research_status(strategy)
+    try:
+        with engine_for(db_path).begin() as conn:
+            # 迁移+建任务同事务原子两向：not_migrated（同态续挂）照常
+            # 建任务；LifecycleError（409 非法边/422 凭证/404/RACE）
+            # 上抛经 with 回滚——两侧皆无
+            transit(
+                db_path, body.strategy_id, target="paper", trigger="mount",
+                evidence={"task_id": task_id}, conn=conn)
+            paper.create_task(
+                db_path,
+                conn=conn,
+                task_id=task_id,
+                strategy_id=body.strategy_id,
+                dna_snapshot_json=strategy["dna_json"],
+                symbol=body.symbol or dna.execution_genes.symbol,
+                timeframe=dna.execution_genes.timeframe,
+                research_status_snapshot=snapshot,
+                initial_cash=body.initial_cash, fee=body.fee,
+                slippage=body.slippage,
+                leverage=(body.leverage if body.leverage is not None
+                          else dna.risk_genes.leverage),
+                window_bars=body.window_bars,
+                stop_loss_pct=body.stop_loss_pct)
+    except LifecycleError as exc:
+        # 沿 strategies 域 _lifecycle_error_to_http 三段 dict 形制
+        # （本域单点内联——code 可辨 STRATEGY_ILLEGAL_TRANSITION）
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message,
+                    "detail": exc.detail},
+        ) from exc
     return _task_to_response(paper.get_task(db_path, task_id))
 
 
