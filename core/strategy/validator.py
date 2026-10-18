@@ -16,6 +16,8 @@ exit_sweep 网格校验的引用式值域（扫描通道各档单点权威，改
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from typing import List
 
@@ -51,6 +53,12 @@ TIME_EXIT_UTC_MAX = 1439
 POSITION_MODES = ("fixed", "risk_budget")
 RISK_FRACTION_MIN = 0.0   # 开区间下界（0 排除）
 RISK_FRACTION_MAX = 0.5   # 闭区间上界（P9 上界核对——validator 惯例）
+# 仓位参数（add-position-sizing-params）：首笔比例 (0,1] 开下闭上；
+# 金额防线只有下界（>0），上界完全放开——考场无观点（不替用户判断
+# 「多大的金额防线不合理」）
+INITIAL_FRACTION_MIN = 0.0   # 开区间下界（0 排除——零首仓无意义）
+INITIAL_FRACTION_MAX = 1.0   # 闭区间上界（1.0=全部可用资金）
+MAX_POSITION_LOSS_MIN = 0.0  # 开区间下界（0 排除；无上界）
 
 
 @dataclass
@@ -334,6 +342,49 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 "position_mode='risk_budget' requires stop_loss > 0 "
                 "(stop distance is the size formula denominator — "
                 "no stop = risk budget undefined)")
+
+    # 仓位参数（add-position-sizing-params）：initial_fraction (0,1]
+    # 首笔动用资金比例（替换 fixed 路径首笔定仓来源，加仓不受影响）；
+    # max_position_loss 金额防线只有下界（>0，上界完全放开——考场
+    # 无观点）；两键互斥校验见下（同笔首仓不可两个指挥）。
+    # 类型防护沿 risk_fraction 形制（bool 排除）
+    if_val = risk.initial_fraction
+    mpl_val = risk.max_position_loss
+    if if_val is not None:
+        if isinstance(if_val, bool) or not isinstance(if_val, (int, float)):
+            errors.append(
+                f"initial_fraction must be a number in "
+                f"({INITIAL_FRACTION_MIN}, {INITIAL_FRACTION_MAX}], "
+                f"got {type(if_val).__name__}")
+        elif not (INITIAL_FRACTION_MIN < if_val <= INITIAL_FRACTION_MAX):
+            errors.append(
+                f"initial_fraction {if_val} out of range "
+                f"({INITIAL_FRACTION_MIN}, {INITIAL_FRACTION_MAX}]")
+    if mpl_val is not None:
+        if isinstance(mpl_val, bool) or not isinstance(mpl_val, (int, float)):
+            errors.append(
+                f"max_position_loss must be a positive number "
+                f"(> {MAX_POSITION_LOSS_MIN}, no upper bound), "
+                f"got {type(mpl_val).__name__}")
+        else:
+            # 有限性检查（SEC-01）：inf/超大整数不是金额——float 化
+            # 溢出的 int 同非有限（延迟到物化层 float() 会崩）。
+            # 「无上界=考场无观点」语义不受影响：finite 不是上界。
+            try:
+                mpl_finite = math.isfinite(float(mpl_val))
+            except OverflowError:
+                mpl_finite = False
+            if not mpl_finite or not mpl_val > MAX_POSITION_LOSS_MIN:
+                errors.append(
+                    f"max_position_loss {mpl_val} must be a finite number "
+                    f"> {MAX_POSITION_LOSS_MIN} (no upper bound)")
+    # 互斥：首笔定仓两个来源不可同时声明——initial_fraction 替换
+    # fixed 路径首仓、risk_budget 反推首仓，同笔首仓受两个指挥即拒绝
+    if if_val is not None and pm_val == "risk_budget":
+        errors.append(
+            "initial_fraction and position_mode='risk_budget' are mutually "
+            "exclusive (one first-entry sizing source only — fixed-path "
+            "replacement vs risk-budget derivation)")
 
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")

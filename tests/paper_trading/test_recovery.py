@@ -29,6 +29,7 @@ from core.paper_trading.runtime.recovery import (
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import paper
 from tests.helpers.data_factory import make_dna, make_ohlcv
+from tests.paper_trading.test_paper_executor import _max_loss_dna
 
 _N_BARS = 60
 _CRASH_AT = 25  # 崩溃点（bar N 落库后丢弃执行器）
@@ -38,7 +39,7 @@ _REPLAY_ALL = "2000-01-01T00:00:00+00:00"
 class _RecoveryHarness:
     """恢复测试装配（同步回放通道——崩溃=丢弃执行器对象）。"""
 
-    def __init__(self, tmp_path: Path, *, funding_times=()):
+    def __init__(self, tmp_path: Path, *, funding_times=(), dna=None):
         self.data_dir = tmp_path / "market"
         self.data_dir.mkdir()
         self.df = make_ohlcv(n=_N_BARS, freq="4h", seed=7, base_price=100.0)
@@ -49,7 +50,7 @@ class _RecoveryHarness:
         init_db_ext(self.db)
         self.task_id = paper.create_task(
             self.db, strategy_id="strat-1",
-            dna_snapshot_json=make_dna().to_json(),
+            dna_snapshot_json=(dna or make_dna()).to_json(),
             symbol="BTCUSDT", timeframe="4h",
             research_status_snapshot="unverified",
             initial_cash=10_000.0, leverage=1, window_bars=None)
@@ -342,3 +343,133 @@ class TestStartupScan:
         finally:
             scheduler.stop()
             scheduler.join(timeout=5.0)
+
+
+class TestMaxLossRecovery:
+    """金额防线崩溃恢复（add-position-sizing-params 族 9）。
+
+    场景（seed=7、mpl=190、崩溃点 22）：bars 0..21 落库——i=21 开盘
+    开多+i=21 bar 区间 16:00 结算点落 settled；崩溃时浮亏≈2 未达线。
+    恢复式：funding_paid=pt_funding settled 行（settle_time≥最近 open
+    bar 时刻）聚合；pending 未扣款与段外 settled 行不计入。续跑后
+    防线从持仓快照与最新收盘重判（纯函数式无持久化标记——pending
+    意图未落库即崩溃形态下，游标判重跳过、下次收盘重判恢复防线）。
+    """
+
+    @staticmethod
+    def _settled_sum(h, since_bar_time: str) -> float:
+        """库侧直查聚合（恢复式的对拍口径）。"""
+        since = pd.Timestamp(since_bar_time)
+        return sum(
+            f["amount"] for f in paper.list_funding_records(
+                h.db, h.task_id, limit=100_000)
+            if f["status"] == "settled"
+            and pd.Timestamp(f["settle_time"]) >= since)
+
+    @staticmethod
+    def _last_open_bar_time(h) -> str:
+        return max(
+            f["bar_time"] for f in paper.list_fills(
+                h.db, h.task_id, limit=100_000) if f["kind"] == "open")
+
+    def test_funding_paid_rebuilt_from_settled_rows(self, tmp_path):
+        """重建正确：恢复后 funding_paid==settled（≥open bar 时刻）
+        库侧直查聚合值。"""
+        h = _RecoveryHarness(
+            tmp_path, funding_times=["2024-01-04 16:00:00"],
+            dna=_max_loss_dna(190.0))
+        h.run_until_crash(22)  # bars 0..21：开仓+结算点已落库
+        crashed = h.task()
+        assert crashed["position_side"] is not None  # 崩溃时持仓中
+        settled = [
+            f for f in paper.list_funding_records(h.db, h.task_id, limit=1000)
+            if f["status"] == "settled"]
+        assert settled, "崩溃前须有已结算资金费行"
+
+        executor = h.recover()
+        assert executor is not None
+        expected = self._settled_sum(h, self._last_open_bar_time(h))
+        assert expected > 0.0
+        assert executor.ledger.position.funding_paid \
+            == pytest.approx(expected)
+
+    def test_pending_and_stale_settled_excluded(self, tmp_path):
+        """pending 未扣款不计入+段外 settled（settle_time<持仓开始
+        bar 时刻）不计入。"""
+        h = _RecoveryHarness(
+            tmp_path, funding_times=["2024-01-04 16:00:00"],
+            dna=_max_loss_dna(190.0))
+        h.run_until_crash(22)
+        # 人工追加两类不入集行：pending（挂起未扣款）+段外 settled
+        # （空仓期结算点——旧段资金费不归当前持仓）
+        paper.append_bar(
+            h.db, h.task_id, bar_time=h.df.index[21].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            funding=[
+                {"settle_time": "2024-01-05T00:00:00+00:00",
+                 "status": "pending", "rate": None, "amount": None,
+                 "position_quantity": 54.0, "settle_price": 90.0},
+                {"settle_time": "2024-01-01T08:00:00+00:00",
+                 "status": "settled", "rate": 0.0001, "amount": 99.0,
+                 "position_quantity": 0.0, "settle_price": 100.0},
+            ])
+        executor = h.recover()
+        assert executor is not None
+        expected = self._settled_sum(h, self._last_open_bar_time(h))
+        assert executor.ledger.position.funding_paid \
+            == pytest.approx(expected)
+        # 段外 99.0 显著大于段内结算额——重建值不含它即证明过滤
+        assert executor.ledger.position.funding_paid < 99.0
+
+    def test_rebuild_is_read_only(self, tmp_path):
+        """重建纯读零副作用：恢复前后 pt_funding/pt_fill 行数与
+        内容一致（无持久化触发标记——判定纯函数式的落库侧证据）。"""
+        h = _RecoveryHarness(
+            tmp_path, funding_times=["2024-01-04 16:00:00"],
+            dna=_max_loss_dna(190.0))
+        h.run_until_crash(22)
+        funding_before = paper.list_funding_records(
+            h.db, h.task_id, limit=100_000)
+        fills_before = paper.list_fills(h.db, h.task_id, limit=100_000)
+
+        executor = h.recover()
+        assert executor is not None
+        assert paper.list_funding_records(
+            h.db, h.task_id, limit=100_000) == funding_before
+        assert paper.list_fills(
+            h.db, h.task_id, limit=100_000) == fills_before
+
+    def test_resume_rejudges_defense_and_exits(self, tmp_path):
+        """崩溃（达线意图未落库）→恢复：游标判重跳过已处理 bar，
+        下次收盘重判达线 → exit_max_loss 次根开盘成交（族 9d——
+        防线从持仓快照与最新收盘重判，无需持久化触发标记）。"""
+        h = _RecoveryHarness(
+            tmp_path, funding_times=["2024-01-04 16:00:00"],
+            dna=_max_loss_dna(190.0))
+        h.run_until_crash(22)  # 崩溃时浮亏≈2 未达线、无 pending 意图
+
+        executor = h.recover()
+        assert executor is not None
+        executor.process_frames(h.enhanced, 0)  # 全帧重放——判重跳过
+
+        exits = [f for f in paper.list_fills(
+            h.db, h.task_id, limit=1000) if f["kind"] == "exit_max_loss"]
+        assert exits, "恢复续跑后防线须达线出场"
+        exit_fill = exits[0]
+        assert exit_fill["reason"] == "max_loss"
+        assert exit_fill["seq"] == 3
+        # 达线 bar=成交 bar 前一根：该根收盘浮亏+funding_paid≥阈值
+        exit_idx = h.enhanced.index.get_loc(
+            pd.Timestamp(exit_fill["bar_time"]))
+        open_fill = next(
+            f for f in paper.list_fills(h.db, h.task_id, limit=1000)
+            if f["kind"] == "open")
+        qty = open_fill["quantity"]
+        entry = open_fill["price"]
+        loss_at = -qty * (
+            float(h.enhanced["close"].iloc[exit_idx - 1]) - entry) \
+            + executor.ledger.total_funding  # funding 分量≥已付额
+        assert loss_at >= 190.0
+        # 全帧续跑完成（60 根全处理——崩溃前 22 根判重跳过不重扣）
+        assert h.task()["bars_processed"] == _N_BARS

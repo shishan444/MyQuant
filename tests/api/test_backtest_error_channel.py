@@ -1,10 +1,15 @@
-"""strategies 回测端点 ResearchError 传播配套测试（fix-review CARD-08）。
+"""strategies 回测端点错误通道测试（fix-review CARD-08 + CARD-01 后口径）。
 
-执行器 raise 化（结构化拒绝）后，POST /api/strategies/backtest 对经
-engine.run 冒泡的 ResearchError（非法条件类型等）转 422 结构化 body
-（detail 三段 code/message/detail），不裸穿 500——与验证端点
-research-error-channel catch 形制（validate.py → research_error_
-to_http）对齐。
+两条通道各锚其一：
+- 前置校验通道（CARD-01）：内联 DNA 在 to_dna() 后经 validate_dna
+  拦截（NaN/越域/非法条件类型等值域结构类）→ 422 DNA_VALIDATION_
+  FAILED，detail.errors 携带校验明细——非法 cond_type 在此层先拦
+  （CARD-01 前经 engine.run 冒泡 RESEARCH_NOT_EXPRESSIBLE，前置
+  拦截后该触发器不再触达执行器）。
+- ResearchError 冒泡通道（CARD-08 形制保留）：过前置校验、执行期
+  才可判的输入（未知 indicator——列解析失败）经 engine.run 冒泡 →
+  research_error_to_http 转 422 结构化 body（detail 三段），不裸穿
+  500。
 """
 from __future__ import annotations
 
@@ -51,8 +56,9 @@ def _seed_market(api_client) -> None:
 
 class TestBacktestResearchErrorChannel:
     def test_unknown_condition_type_422_structured(self, api_client):
-        """非法 cond_type 经 engine.run 冒泡 → 422 + detail 三段
-        （修复前：ResearchError 裸穿 500）。"""
+        """非法 cond_type 被前置 validate_dna 拦截（CARD-01 后口径）→
+        422 DNA_VALIDATION_FAILED+errors 明细含坏值与合法集列举
+        （修复前：经 engine.run 冒泡 RESEARCH_NOT_EXPRESSIBLE）。"""
         _seed_market(api_client)
         resp = api_client.post("/api/strategies/backtest", json={
             "dna": _bad_dna(),
@@ -62,9 +68,33 @@ class TestBacktestResearchErrorChannel:
         })
         assert resp.status_code == 422, resp.text
         body = resp.json()
-        assert body["detail"]["code"] == "RESEARCH_NOT_EXPRESSIBLE"
-        assert body["detail"]["detail"]["condition_type"] == "no_such_type"
-        assert "legal_types" in body["detail"]["detail"]
+        assert body["detail"]["code"] == "DNA_VALIDATION_FAILED"
+        errors = body["detail"]["errors"]
+        assert errors, "校验明细不得为空"
+        assert any("no_such_type" in e for e in errors), errors
+        assert any("condition type must be one of" in e
+                   for e in errors), "合法集列举须在场"
+
+    def test_unknown_indicator_research_error_channel(self, api_client):
+        """ResearchError 冒泡通道锚（CARD-01 后唯一可达路径）：未知
+        indicator 过前置校验（validate_dna 不查 indicator 合法集）、
+        执行期列解析失败 → engine.run 冒泡 ResearchError → 422 结构化
+        body（detail 三段，exc.detail 透传）——不裸穿 500。"""
+        _seed_market(api_client)
+        dna = _bad_dna()
+        dna["signal_genes"][0]["condition"] = {"type": "lt",
+                                               "threshold": 30}
+        dna["signal_genes"][0]["indicator"] = "NO_SUCH_INDICATOR"
+        resp = api_client.post("/api/strategies/backtest", json={
+            "dna": dna,
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "dataset_id": "BTCUSDT_4h",
+            "init_cash": 100000, "fee": 0.001, "slippage": 0.0005,
+        })
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_CONDITION_INVALID"
+        assert body["detail"]["detail"]["indicator"] == "NO_SUCH_INDICATOR"
 
     def test_legal_dna_still_backtests(self, api_client):
         """守卫不误伤：合法 DNA 正常回测 200（对照锚）。"""

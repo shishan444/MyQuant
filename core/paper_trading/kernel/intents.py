@@ -1,11 +1,12 @@
 """信号解释器（SignalInterpreter——四类信号+闭合 bar → 动作意图）。
 
 无状态纯函数类：interpret(closed_bar, signals_at_bar, account, params)
-按七段判定序产出该 bar 闭合时的意图（每 bar 至多一条——判定序内
+按八段判定序产出该 bar 闭合时的意图（每 bar 至多一条——判定序内
 前者命中即返回）：
 
-    清算强平→SL/TP（SL 优先 TP）→时间出场（time_exit_utc 先于
-    max_hold，对齐回测引擎内序）→信号出场→入场→减仓→加仓
+    清算强平→SL/TP（SL 优先 TP）→金额防线（max_position_loss）→
+    时间出场（time_exit_utc 先于 max_hold，对齐回测引擎内序）→
+    信号出场→入场→减仓→加仓
 
 即时类（exit_liquidation/exit_sl/exit_tp）当根按触发价成交，其余
 意图由执行器挂 pending 次根开盘执行（shift(1) 等价）。
@@ -33,7 +34,7 @@ class SignalInterpreter:
     def interpret(self, closed_bar: ClosedBar, signals_at_bar: BarSignals,
                   account: AccountSnapshot,
                   params: RiskParams) -> list[Intent]:
-        """单根闭合 bar 的意图产出（七段判定序）。
+        """单根闭合 bar 的意图产出（八段判定序）。
 
         Args:
             closed_bar: 已闭合 K 线（OHLC+序号+ATR+时间戳）。
@@ -64,14 +65,21 @@ class SignalInterpreter:
             if exit_intent is not None:
                 return [exit_intent]
 
-        # ── 3. 时间出场（time_exit_utc 先于 max_hold——引擎内序） ──
+        # ── 3. 金额防线（max_position_loss——收盘价浮亏口径） ──
+        if pos is not None and params.max_position_loss > 0:
+            loss = -account.unrealized_pnl + pos.funding_paid
+            if loss >= params.max_position_loss:
+                return [Intent(kind="exit_max_loss", direction=pos.side,
+                               reason="max_loss")]
+
+        # ── 4. 时间出场（time_exit_utc 先于 max_hold——引擎内序） ──
         if pos is not None:
             time_intent = self._time_exit_intent(closed_bar, pos,
                                                  account.bars_held, params)
             if time_intent is not None:
                 return [time_intent]
 
-        # ── 4. 信号出场（exit 信号全平 / 反向 entry 两步反手） ──
+        # ── 5. 信号出场（exit 信号全平 / 反向 entry 两步反手） ──
         if pos is not None:
             if signals_at_bar.exit:
                 return [Intent(kind="close", direction=pos.side,
@@ -83,7 +91,7 @@ class SignalInterpreter:
                     return [Intent(kind="close", direction=pos.side,
                                    reason="reverse")]
 
-        # ── 5. 入场（direction 过滤+mixed 符号 0/NaN 不开仓） ──
+        # ── 6. 入场（direction 过滤+mixed 符号 0/NaN 不开仓） ──
         if signals_at_bar.entry and pos is None:
             entry_side = self._resolve_entry_side(
                 signals_at_bar.entry_direction, params)
@@ -92,13 +100,13 @@ class SignalInterpreter:
                     kind="open", direction=entry_side,
                     size_fraction=params.position_size, reason="signal")]
 
-        # ── 6. 减仓（比例=exit_fraction；无仓忽略） ──
+        # ── 7. 减仓（比例=exit_fraction；无仓忽略） ──
         if signals_at_bar.reduce and pos is not None:
             return [Intent(kind="reduce", direction=pos.side,
                            size_fraction=params.exit_fraction,
                            reason="signal")]
 
-        # ── 7. 加仓（同向+max_exposure 敞口检查——超限跳过不炸） ──
+        # ── 8. 加仓（同向+max_exposure 敞口检查——超限跳过不炸） ──
         if signals_at_bar.add and pos is not None:
             add_side = self._resolve_entry_side(
                 signals_at_bar.entry_direction, params)

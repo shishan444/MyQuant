@@ -93,6 +93,27 @@ def _seed_exit_fills(db: Path, task_id: str, pnls: list[float], *,
                     "unrealized_pnl": 0.0, "position_side": None})
 
 
+def _seed_exit_fills_of(db: Path, task_id: str,
+                        specs: list[tuple[str, str | None]]) -> None:
+    """指定 (kind, reason) 的出场类成交逐行落库（exit_reasons 造数面）。
+
+    同 bar 复用既有权益 bar（唯一键吸收）；入场类行（realized_pnl
+    None）混入造数验证「出场类=realized_pnl 非 NULL」判据不误收。
+    """
+    from core.persistence.repository import paper
+    for j, (kind, reason) in enumerate(specs):
+        is_exit = kind not in ("open", "add")
+        paper.append_bar(
+            db, task_id, bar_time=_bar_time(10 + j, 240),
+            fills=[{"seq": 3 if is_exit else 4, "kind": kind,
+                    "side": "long", "price": 105.0, "quantity": 1.0,
+                    "fee": 0.1,
+                    "realized_pnl": -30.0 if is_exit else None,
+                    "reason": reason}],
+            equity={"equity": 50_000.0, "balance": 50_000.0,
+                    "unrealized_pnl": 0.0, "position_side": None})
+
+
 def _seed_funding(db: Path, task_id: str, rows: list[dict]) -> None:
     """资金费明细（status/rate/amount 直收——覆盖三态造数面）。"""
     from core.persistence.repository import paper
@@ -606,3 +627,253 @@ class TestPositionBarsZeroTrades:
 
         report = build_report(db, tmp_path, tid)
         assert report["evidence"]["position_bars"] == 0
+
+
+class TestExitReasons:
+    """出场原因分布（add-position-sizing-params 族 7a-e）。
+
+    归因口径=close+exit_* 全出场族七种（close 按 reason 细分）；reduce
+    仓位管理动作不归键（两层口径分工：reduce 收益计入 performance 层
+    trade_returns 组装口径）；无出场 {} 键恒在；权威源=pt_fill（报告
+    值==直查值）。
+    """
+
+    def test_aggregation_anchor(self, tmp_path):
+        """数值锚：两笔金额防线+三笔止损+close 两种细分+max_hold →
+        逐类计数正确；reduce 行在场不归键（对质②裁决）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 30)
+        _seed_exit_fills_of(db, tid, [
+            ("exit_max_loss", "max_loss"),
+            ("exit_max_loss", "max_loss"),
+            ("exit_sl", "sl"), ("exit_sl", "sl"), ("exit_sl", "sl"),
+            ("close", "signal"), ("close", "reverse"),
+            ("exit_max_hold", "max_hold"),
+            ("reduce", "signal"),
+        ])
+
+        exit_reasons = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        assert exit_reasons == {
+            "exit_max_loss": 2, "exit_sl": 3,
+            "close:signal": 1, "close:reverse": 1,
+            "exit_max_hold": 1,
+        }
+
+    def test_empty_object_key_always_present(self, tmp_path):
+        """无出场任务：exit_reasons={}（键恒在——与「无数据」区分）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 3)
+
+        evidence = build_report(db, tmp_path, tid)["evidence"]
+        assert "exit_reasons" in evidence
+        assert evidence["exit_reasons"] == {}
+
+    def test_entry_and_reduce_fills_not_counted(self, tmp_path):
+        """入场类行（realized_pnl NULL）与 reduce 行（仓位管理动作非
+        出场）均不入归因聚合（判据面锚）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("open", "signal"), ("add", "signal"),
+            ("reduce", "signal"),
+            ("exit_max_loss", "max_loss"),
+        ])
+
+        exit_reasons = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        assert exit_reasons == {"exit_max_loss": 1}
+
+    def test_reduce_returns_in_performance_not_attribution(self, tmp_path):
+        """两层口径分工（对质②裁决）：reduce 的部分实现收益计入
+        performance 层（total_trades/trade_returns 组装口径=realized_pnl
+        非 NULL 含 reduce），evidence 层归因不含它——防止「realized_
+        pnl 非 NULL 行不归键」被误读为覆盖缺口。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("reduce", "signal"), ("reduce", "signal"),
+            ("exit_max_loss", "max_loss"),
+        ])
+
+        report = build_report(db, tmp_path / "nodata", tid)
+        # 归因层：仅防线类目，无 reduce 键
+        assert report["evidence"]["exit_reasons"] == {"exit_max_loss": 1}
+        assert "reduce" not in report["evidence"]["exit_reasons"]
+        # 绩效层：returns 组装口径含 reduce（3 行 realized_pnl 全计入）
+        assert report["performance"]["total_trades"] == 3
+        assert report["evidence"]["closed_trades"] == 3
+
+    def test_single_source_parity_with_pt_fill(self, tmp_path):
+        """权威单源对拍：报告聚合值==pt_fill 直查同判据聚合值。"""
+        from core.paper_trading.reporting import build_report
+        from core.persistence.repository import paper
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 30)
+        _seed_exit_fills_of(db, tid, [
+            ("exit_max_loss", "max_loss"), ("exit_sl", "sl"),
+            ("close", "reverse"), ("close", "signal"), ("reduce", "signal"),
+        ])
+
+        report_value = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        direct: dict = {}
+        for f in paper.list_fills(db, tid, limit=100_000):
+            if f["realized_pnl"] is None or f["kind"] == "reduce":
+                continue
+            key = (f"close:{f['reason']}" if f["kind"] == "close"
+                   else f["kind"])
+            direct[key] = direct.get(key, 0) + 1
+        assert report_value == direct
+
+    def test_close_reason_subdivision_unchanged_semantics(self, tmp_path):
+        """close 细分：signal 与 reverse 分立两键（不合并为 close 单键）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("close", "signal"), ("close", "signal"),
+            ("close", "reverse"),
+        ])
+
+        exit_reasons = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        assert exit_reasons["close:signal"] == 2
+        assert exit_reasons["close:reverse"] == 1
+        assert "close" not in exit_reasons  # 无未细分裸键
+
+    def test_remaining_exit_kinds_aggregated(self, tmp_path):
+        """七类列举的其余三类（exit_tp/exit_time/exit_liquidation——
+        specs Requirement 键集列举）kind 直作键聚合在场：一笔一类、
+        键名原样无细分无改写。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("exit_tp", "tp"),
+            ("exit_time", "time"),
+            ("exit_liquidation", "liquidation"),
+        ])
+
+        exit_reasons = build_report(db, tmp_path, tid)["evidence"][
+            "exit_reasons"]
+        assert exit_reasons == {
+            "exit_tp": 1, "exit_time": 1, "exit_liquidation": 1}
+
+    def test_no_new_performance_keys(self, tmp_path):
+        """performance 层零触碰：键集不含 exit_reasons（schema 无新
+        performance 键——聚合只进 evidence 层）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [("exit_max_loss", "max_loss")])
+
+        report = build_report(db, tmp_path / "nodata", tid)
+        assert "exit_reasons" not in report["performance"]
+        assert report["evidence"]["exit_reasons"] == {"exit_max_loss": 1}
+        # 既有 performance 键面不受影响
+        assert "total_trades" in report["performance"]
+        assert "win_rate" in report["performance"]
+
+
+class TestDeviationCarriesNewParams:
+    """对照层三断言+深判定（add-position-sizing-params 族 7e+5h）。
+
+    偏差对照经 dna_override（deepcopy 快照）自然携带新参数——零专门
+    设计的行为锚；深判定=对照区间内防线触发→声明与不声明对照成绩
+    差异（参数被消费的端到端证据）。
+    """
+
+    def test_deviation_layer_three_assertions(self, tmp_path, monkeypatch):
+        """三断言：对照层在场+计算成功+两侧 DNA 同值含新键（快照与
+        dna_override 副本在 initial_fraction/max_position_loss 同值）。"""
+        from core.paper_trading.reporting import build_report
+        from core.strategy.dna import StrategyDNA
+
+        db = _make_db(tmp_path)
+        # 快照声明两新键（含 initial_fraction——传输面全键携带验证）
+        dna_json = json.dumps({
+            "risk_genes": {"leverage": 2, "initial_fraction": 0.2,
+                           "max_position_loss": 500.0}})
+        from core.persistence.repository import paper
+        paper.create_task(
+            db, task_id="pt_dev00001", strategy_id="strat-1",
+            dna_snapshot_json=dna_json, symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=50_000.0, leverage=5, window_bars=180)
+        paper.update_task(db, "pt_dev00001", status="running",
+                          started_at=BASE_TIME)
+        _seed_equity_bars(db, "pt_dev00001", 10)
+        _seed_exit_fills(db, "pt_dev00001", [100.0])
+        captured: dict = {}
+        _patch_bridge(monkeypatch, captured, metrics=dict(BT_METRICS))
+
+        report = build_report(db, tmp_path, "pt_dev00001")
+        # ① 在场：deviation 层结构键齐备
+        for key in ("backtest", "diff", "unavailable_reason",
+                    "attribution_notes"):
+            assert key in report["deviation"]
+        # ② 计算成功：backtest 非 None+无失败原因
+        assert report["deviation"]["backtest"] == BT_METRICS
+        assert report["deviation"]["unavailable_reason"] is None
+        # ③ 两侧 DNA 同值含新键：dna_override 副本携带快照声明值
+        snapshot_rg = StrategyDNA.from_dict(
+            json.loads(dna_json)).risk_genes
+        override_rg = captured["dna"].risk_genes
+        assert override_rg.initial_fraction \
+            == snapshot_rg.initial_fraction == 0.2
+        assert override_rg.max_position_loss \
+            == snapshot_rg.max_position_loss == 500.0
+        assert override_rg.leverage == 5  # 任务覆写仍生效
+
+    def test_declared_vs_undeclared_performance_differs(
+            self, tmp_path, monkeypatch):
+        """深判定（族 5h）：同数据同任务参数（除 max_position_loss）
+        两任务完整回放——声明侧对照区间内防线触发提前出场、不声明侧
+        持仓到窗口尾 → 两报告 performance 成绩差异（参数被消费的
+        端到端证据）。"""
+        from core.paper_trading.reporting import build_report
+        from tests.helpers.data_factory import make_dna
+        from tests.paper_trading.test_paper_executor import (
+            _Harness, _max_loss_dna)
+
+        reports = {}
+        final_equities = {}
+        for label, dna in (("declared", _max_loss_dna(100.0)),
+                           ("undeclared", make_dna())):
+            work_dir = tmp_path / label
+            work_dir.mkdir()
+            h = _Harness(work_dir, dna=dna, window_bars=50)
+            ex = h.make_executor()
+            ex.process_frames(h.enhanced, 0)
+            captured: dict = {}
+            _patch_bridge(monkeypatch, captured, metrics=dict(BT_METRICS))
+            report = build_report(h.db, h.data_dir, h.task_id)
+            reports[label] = report
+            from core.persistence.repository import paper
+            final_equities[label] = paper.list_equity_snapshots(
+                h.db, h.task_id, limit=100_000)[-1]["equity"]
+
+        declared, undeclared = reports["declared"], reports["undeclared"]
+        # 声明侧：防线出场类目在证据层（entry 信号持续亮——出场后
+        # 再入场再达线可多次触发，至少一次）
+        assert declared["evidence"]["exit_reasons"].get("exit_max_loss", 0) \
+            >= 1
+        # 不声明侧无防线出场（其持仓最终走止损类目——防线缺位对照）
+        assert "exit_max_loss" not in undeclared["evidence"]["exit_reasons"]
+        assert undeclared["evidence"]["exit_reasons"].get("exit_sl", 0) >= 1
+        # 对照成绩差异：出场类目不同+末根权益不同（防线提前截断 vs
+        # 持仓到止损——参数被消费的成绩面证据）
+        assert final_equities["declared"] != final_equities["undeclared"]

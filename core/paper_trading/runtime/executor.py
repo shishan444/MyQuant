@@ -8,10 +8,12 @@ bar 驱动（design §3.5 八步序，顺序固定；两时点两次 interpret �
 ChainHarness 参考切片——tests/README 十二区守护行）：
 1. 清算判定（本根执行前快照，当根按触发价成交，seq=1）；
 2. SL/TP 判定（同上，seq=2）；
-3. 时间出场+信号出场意图（bar N−1 所产）按本根开盘价成交（seq=3）；
+3. 金额防线/时间出场+信号出场意图（bar N−1 所产）按本根开盘价
+   成交（seq=3；exit_max_loss 属 pending 出场族——次根开盘执行）；
 4. 入场→减仓→加仓意图（bar N−1 所产）按本根开盘价成交（seq=4）；
 5. 资金费结算（先补旧账再记新账——Q-2，tasks 3.5：bar 区间 (open,
-   close] 跨过的每个 8h 结算点逐点扣/挂起）；
+   close] 跨过的每个 8h 结算点逐点扣/挂起；扣款同步归集持仓级
+   funding_paid——金额防线判定的资金费分量）；
 6. 权益快照（本根收盘价估值）落库；
 7. 解释器评估本根信号（本根成交后快照）→ 新意图挂 pending（次根执行）；
 8. 窗口计数（bars_processed+1）+停止条件判定（权益破线停观察——
@@ -64,8 +66,10 @@ from core.persistence.timestamps import utc_now_iso
 
 logger = logging.getLogger("paper_runtime")
 
-# 出场族 kind（第 3 步先于入场族第 4 步消费）
-_EXIT_PENDING_KINDS = ("exit_max_hold", "exit_time", "close")
+# 出场族 kind（第 3 步先于入场族第 4 步消费；exit_max_loss 收盘判定
+# 次根开盘全平——pending 出场族，非即时类三元组）
+_EXIT_PENDING_KINDS = (
+    "exit_max_hold", "exit_time", "exit_max_loss", "close")
 
 # ATR 默认档（compute_all_indicators 默认指标集产出列）
 _DEFAULT_ATR_PERIOD = 14
@@ -107,6 +111,29 @@ def fill_row(event: ExecutionEvent) -> Dict[str, Any]:
         "realized_pnl": fill.realized_pnl,
         "reason": fill.intent.reason or None,
     }
+
+
+def _rebuild_funding_paid(db_path: Path, task_id: str) -> float:
+    """崩溃恢复的持仓级资金费重建（design 层 5 恢复式）。
+
+    pt_funding 行按 status='settled' AND settle_time≥当前持仓开始
+    bar 时刻（最近一次 open 成交 bar——反手 open 重建锚，与报告
+    position_bars 同口径）聚合 amount：pending 未扣款不计入浮亏；
+    settled_disclosure_only 是终态后形态，运行中恢复不出现。
+    防线判定逐 bar 纯函数式（快照+params 现算），无需持久化触发
+    标记——重建后从最新收盘重判即恢复防线。
+    """
+    fills = paper_repo.list_fills(db_path, task_id, limit=100_000)
+    open_bars = [f["bar_time"] for f in fills if f["kind"] == "open"]
+    if not open_bars:
+        return 0.0
+    since = pd.Timestamp(max(open_bars))
+    return float(sum(
+        f["amount"] or 0.0
+        for f in paper_repo.list_funding_records(
+            db_path, task_id, limit=100_000)
+        if f["status"] == "settled"
+        and pd.Timestamp(f["settle_time"]) >= since))
 
 
 class PaperTaskExecutor:
@@ -230,8 +257,9 @@ class PaperTaskExecutor:
         """从持久化行重建执行器（可信恢复——校验由 recovery 前置）。
 
         重建面：Ledger（balance/position 字段组/closed_trades/累计
-        资金费←最后 equity 行 cumulative_funding）+pending 意图+游标
-        +统计组+挂起资金费行。
+        资金费←最后 equity 行 cumulative_funding/持仓级 funding_paid
+        ←pt_funding settled 行聚合重建）+pending 意图+游标+统计组
+        +挂起资金费行。
         """
         executor = cls(db_path, task_row, **kwargs)
         row = task_row
@@ -249,6 +277,8 @@ class PaperTaskExecutor:
                 trail_peak=float(row["position_trail_peak"]),
                 entry_bar_seq=int(row["position_entry_bar_seq"]),
             )
+            ledger.position.funding_paid = _rebuild_funding_paid(
+                db_path, row["task_id"])
         ledger.closed_trades = int(row["total_trades"])
         executor.pending = intents_from_json(row["pending_intent_json"])
         executor._pending_funding = sorted(
@@ -693,6 +723,11 @@ class PaperTaskExecutor:
         则逐点结算（金额=quantity×bar_close×rate×方向符号）；索引未达
         落 pending 行（rate/amount NULL+快照 settle_price/
         position_quantity——带符号数量编码方向，补记侧无 side 列可恢复）。
+        两分支扣款均经 ledger.record_funding 单点（balance/total_funding/
+        持仓级 funding_paid 三键——金额防线判定的资金费分量；补旧账
+        金额按快照数量重算不读当前仓位，当时有仓则归集当前持仓——
+        跨持仓段的挂起补扣归新仓，方向保守=防线偏敏感，重启恢复按
+        settle_time≥持仓开始时刻过滤自愈；对质①裁决）。
         """
         backfills: List[Dict[str, Any]] = []
         feed = self.registry.get(self.task_row["symbol"], self._timeframe)
@@ -710,8 +745,7 @@ class PaperTaskExecutor:
                 continue
             amount = funding_amount(
                 row["position_quantity"], row["settle_price"], rate)
-            self.ledger.balance -= amount
-            self.ledger.total_funding += amount
+            self.ledger.record_funding(amount)
             # rows 形制 [{settle_time, rate, amount}]——目标态恒
             # 'settled' 由仓库接口定死（对质②形制收口：不传 status）
             backfills.append({
@@ -738,10 +772,8 @@ class PaperTaskExecutor:
                         "position_quantity": signed_qty,
                         "settle_price": float(bar.close)})
                     continue
-                amount = funding_amount(
-                    signed_qty, float(bar.close), rate)
-                self.ledger.balance -= amount
-                self.ledger.total_funding += amount
+                amount = funding_amount(signed_qty, float(bar.close), rate)
+                self.ledger.record_funding(amount)
                 new_rows.append({
                     "settle_time": point.isoformat(),
                     "status": "settled", "rate": rate, "amount": amount,

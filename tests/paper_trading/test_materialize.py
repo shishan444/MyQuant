@@ -1,9 +1,11 @@
 """物化单点测试（rebuild-paper-trading 任务 1.1）。
 
-验证面：七缺省「有声明用声明/无声明用缺省」参数化、time_exit_utc=0
-合法与 −1 哨兵边界、物化值与回测引擎装配点 _per_dna_risk_params
-独立取值对照同值（两处缺省漂移必红——单源同值守护，含
-position_mode/risk_fraction 两字段）。
+验证面：九缺省「有声明用声明/无声明用缺省」参数化（含
+add-position-sizing-params 两键 0.0 哨兵）、time_exit_utc=0 合法与
+−1 哨兵边界、物化值与回测引擎装配点 _per_dna_risk_params 独立取值
+对照同值（两处缺省漂移必红——单源同值守护，含 position_mode/
+risk_fraction 与 initial_fraction/max_position_loss 及 effective_
+first_size 分派同式）。
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import pandas as pd
 from core.paper_trading.kernel.types import RiskParams, materialize
 from core.strategy.dna import RiskGenes
 
-# 七缺省字段：(字段, 声明值, 缺省值)
+# 九缺省字段：(字段, 声明值, 缺省值)
 _DEFAULTABLE_FIELDS = [
     ("exit_fraction", 0.3, 0.5),
     ("add_fraction", 0.2, 0.1),
@@ -24,11 +26,13 @@ _DEFAULTABLE_FIELDS = [
     ("max_hold", 7, 0),
     ("time_exit_utc", 600, -1),
     ("risk_fraction", 0.05, 0.0),
+    ("initial_fraction", 0.2, 0.0),
+    ("max_position_loss", 500.0, 0.0),
 ]
 
 
 class TestMaterializeDefaults:
-    """a. 七参数「有声明用声明/无声明用缺省」。"""
+    """a. 九参数「有声明用声明/无声明用缺省」。"""
 
     @pytest.mark.parametrize(
         "field,declared,default", _DEFAULTABLE_FIELDS)
@@ -73,10 +77,12 @@ class TestMaterializeDefaults:
 class TestEngineAssemblyParity:
     """物化值与回测引擎装配点独立取值对照（单源同值守护）。
 
-    引擎装配返回 9 元组 (sl_mode_val, atr_col, exit_fraction,
+    引擎装配返回 11 元组 (sl_mode_val, atr_col, exit_fraction,
     add_fraction, max_exposure, max_hold, time_exit, position_mode_code,
-    risk_fraction)——七缺省字段按位对照；position_mode 按码对照
-    （1.0="risk_budget"/0.0=其余）。
+    risk_fraction, effective_first_size, max_position_loss)——九缺省
+    字段按位对照；position_mode 按码对照（1.0="risk_budget"/0.0=其余）；
+    effective_first_size 与纸盘侧「首笔生效比例」分派同式对照（两装配
+    点同式锁：声明用 initial_fraction、否则 position_size）。
     """
 
     @staticmethod
@@ -98,8 +104,14 @@ class TestEngineAssemblyParity:
             sl_mode="atr", atr_period=14, position_mode="risk_budget",
             risk_fraction=0.1),
         lambda: RiskGenes(time_exit_utc=0),  # 0:00 合法时刻
+        lambda: RiskGenes(  # 仓位参数两键全声明
+            initial_fraction=0.2, max_position_loss=500.0),
+        lambda: RiskGenes(initial_fraction=1.0),  # 上界 1.0 合法
+        lambda: RiskGenes(max_position_loss=1e12),  # 金额防线无上界
     ], ids=["all-default", "five-declared", "risk-budget",
-            "fixed-explicit", "atr-risk-budget", "time-exit-zero"])
+            "fixed-explicit", "atr-risk-budget", "time-exit-zero",
+            "sizing-params-declared", "initial-fraction-one",
+            "max-loss-huge"])
     def test_parity_with_engine_assembly(self, rg_builder):
         rg = rg_builder()
         p = self._engine_assembly(rg)
@@ -112,3 +124,30 @@ class TestEngineAssemblyParity:
         assert ("risk_budget" if p[7] == 1.0 else "fixed") \
             == params.position_mode
         assert params.risk_fraction == p[8]
+        # 仓位参数两键（add-position-sizing-params）：物化 None→0.0
+        # 与引擎装配（None→0.0 禁用哨兵）同值
+        assert params.max_position_loss == p[10]
+        # effective_first_size 分派同式锁（两装配点同式）：
+        # 声明（物化 >0）用 initial_fraction、否则 position_size
+        expected_first = (params.initial_fraction
+                          if params.initial_fraction > 0
+                          else params.position_size)
+        assert p[9] == expected_first
+
+    @pytest.mark.parametrize("if_declared,expected_first", [
+        (None, 0.3),   # 未声明 → position_size
+        (0.2, 0.2),    # 声明 → initial_fraction（替换首笔来源）
+        (1.0, 1.0),    # 上界 1.0（全部可用资金）
+    ], ids=["undeclared-uses-position-size",
+            "declared-wins", "upper-bound-one"])
+    def test_effective_first_size_dispatch_parity(self, if_declared,
+                                                  expected_first):
+        """首笔生效比例分派同式（引擎装配第十位 vs 物化分派式）。"""
+        rg = RiskGenes(position_size=0.3, initial_fraction=if_declared)
+        p = self._engine_assembly(rg)
+        params = materialize(rg)
+        effective = (params.initial_fraction
+                     if params.initial_fraction > 0
+                     else params.position_size)
+        assert effective == expected_first
+        assert p[9] == effective

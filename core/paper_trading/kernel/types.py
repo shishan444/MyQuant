@@ -1,9 +1,11 @@
 """内核词汇：Intent/Fill/ExecutionEvent/RiskParams 数据类+物化单点。
 
-Intent 的 kind 九值=出场六种（exit_sl/exit_tp/exit_max_hold/exit_time/
-exit_liquidation+信号出场 close）+入场三种（open/add/reduce）。
-RiskParams 十四字段=风控基因组全字段物化（含动态定仓两键
-position_mode/risk_fraction），缺省物化与回测引擎装配单源同值
+Intent 的 kind 十值=出场七种（exit_sl/exit_tp/exit_max_loss/
+exit_max_hold/exit_time/exit_liquidation+信号出场 close）+入场三种
+（open/add/reduce）。
+RiskParams 十六字段=风控基因组全字段物化（含动态定仓两键
+position_mode/risk_fraction 与仓位参数两键 initial_fraction/
+max_position_loss），缺省物化与回测引擎装配单源同值
 （core/backtest/engine.py _per_dna_risk_params）——「有声明用声明、
 无声明用缺省」单点收敛在 materialize。ClosedBar/BarSignals 是解释器
 的 bar 级输入词汇（纯值对象）。
@@ -12,10 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Intent.kind 合法值（九值，spec 执行忠实性条款词汇）
+# Intent.kind 合法值（十值，spec 执行忠实性条款词汇）
 INTENT_KINDS: tuple[str, ...] = (
     "open", "close", "add", "reduce",
-    "exit_sl", "exit_tp", "exit_max_hold", "exit_time", "exit_liquidation",
+    "exit_sl", "exit_tp", "exit_max_loss",
+    "exit_max_hold", "exit_time", "exit_liquidation",
 )
 
 # 即时类意图（当根 bar 回顾判定后立即按触发价/清算价成交——八步序
@@ -75,8 +78,10 @@ class BarSignals:
 class Intent:
     """动作意图（解释器产出，执行器消费的最小动作单元）。
 
-    size_fraction 是比例语义的自描述（open=position_size、reduce=
-    exit_fraction、add=add_fraction、全平类=1.0）；权威值在 RiskParams，
+    size_fraction 是比例语义的自描述（open=首笔生效比例（声明
+    initial_fraction 用之、否则 position_size——实际定仓在
+    ledger.size_open 分派，本字段仅自描述）、reduce=exit_fraction、
+    add=add_fraction、全平类=1.0）；权威值在 RiskParams，
     记账器消费时读参数单源。trigger_price 仅即时类携带（SL/TP 触发价、
     清算 p_liq——按触发价成交的锚）。
 
@@ -143,12 +148,14 @@ class ExecutionEvent:
 
 @dataclass(frozen=True)
 class RiskParams:
-    """物化后的风控参数（十四字段——RiskGenes 全字段）。
+    """物化后的风控参数（十六字段——RiskGenes 全字段）。
 
-    七字段带缺省物化（None→缺省），与回测引擎装配点同值：
+    九字段带缺省物化（None→缺省），与回测引擎装配点同值：
     exit_fraction→0.5、add_fraction→0.1、max_exposure→1.0、
     max_hold→0（0=禁用）、time_exit_utc→-1 哨兵（0 是 0:00 合法值
-    非禁用）、position_mode→"fixed"、risk_fraction→0.0。
+    非禁用）、position_mode→"fixed"、risk_fraction→0.0、
+    initial_fraction→0.0（0=未声明）、max_position_loss→0.0
+    （0=禁用哨兵——值域 >0 使 0 天然无歧义）。
 
     Attributes:
         stop_loss: 止损参数（pct/trail=比例、atr=ATR 倍数）。
@@ -165,6 +172,10 @@ class RiskParams:
         time_exit_utc: 每日 UTC 分钟时刻全平；-1=禁用哨兵。
         position_mode: "fixed"|"risk_budget"（动态定仓分派）。
         risk_fraction: 风险预算比例（risk_budget 档消费）。
+        initial_fraction: 首笔动用资金比例；0=未声明（fixed 档
+            首笔定仓消费：>0 时替换 position_size 分派）。
+        max_position_loss: 持仓金额防线；0=禁用（浮亏达线次根
+            开盘全平，判定在解释器段 3）。
     """
 
     stop_loss: float
@@ -181,12 +192,14 @@ class RiskParams:
     time_exit_utc: int = -1
     position_mode: str = "fixed"
     risk_fraction: float = 0.0
+    initial_fraction: float = 0.0
+    max_position_loss: float = 0.0
 
 
 def materialize(risk_genes) -> RiskParams:
     """风控基因组 → 物化 RiskParams（「有声明用声明、无声明用缺省」单点）。
 
-    七缺省与回测引擎装配单源同值（_per_dna_risk_params——两处缺省
+    九缺省与回测引擎装配单源同值（_per_dna_risk_params——两处缺省
     漂移由 tests/paper_trading/test_materialize.py 对照断言守护）。
     其余七字段原样透传（stop_loss/take_profit/position_size/leverage/
     direction/sl_mode/atr_period 无缺省物化面）。
@@ -195,7 +208,7 @@ def materialize(risk_genes) -> RiskParams:
         risk_genes: core.strategy.dna.RiskGenes 实例。
 
     Returns:
-        RiskParams: 十四字段全具体的物化参数。
+        RiskParams: 十六字段全具体的物化参数。
     """
     return RiskParams(
         stop_loss=float(risk_genes.stop_loss),
@@ -219,4 +232,8 @@ def materialize(risk_genes) -> RiskParams:
         position_mode=(risk_genes.position_mode or "fixed"),
         risk_fraction=(0.0 if risk_genes.risk_fraction is None
                        else float(risk_genes.risk_fraction)),
+        initial_fraction=(0.0 if risk_genes.initial_fraction is None
+                          else float(risk_genes.initial_fraction)),
+        max_position_loss=(0.0 if risk_genes.max_position_loss is None
+                           else float(risk_genes.max_position_loss)),
     )

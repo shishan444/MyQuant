@@ -64,10 +64,11 @@ _TF = pd.Timedelta("4h")
 # 即时类（判定 bar=成交 bar 当根；其余意图次根执行——判定 bar=前一根）
 _IMMEDIATE = frozenset({"exit_sl", "exit_tp", "exit_liquidation"})
 
-# 全平族（持仓段终界；reduce 部分出场不算段终）
+# 全平族（持仓段终界；reduce 部分出场不算段终——exit_max_loss 属
+# 全平族，add-position-sizing-params）
 _FULL_EXIT = frozenset(
-    {"close", "exit_sl", "exit_tp", "exit_max_hold", "exit_time",
-     "exit_liquidation"})
+    {"close", "exit_sl", "exit_tp", "exit_max_loss", "exit_max_hold",
+     "exit_time", "exit_liquidation"})
 
 
 class _MatrixHarness:
@@ -769,3 +770,139 @@ class TestCombinationAnchors:
         k = _bar_index(h2, first_add["bar_time"])
         later = sig.adds.iloc[k + 1:k + 4]
         assert later.any(), "次根邻段须存在第二个 add 信号（被敞口门拒）"
+
+
+# ── 仓位参数两键（add-position-sizing-params 6.2：单因子+组合锚）──
+
+
+class TestSizingParamsSingleFactor:
+    """两参数入单因子偏移族（每维一专断言——独立重算形制，手算锚
+    由族 4/5 承载不重复）。"""
+
+    def test_initial_fraction_replaces_first_entry_sizing(self, tmp_path):
+        """initial_fraction=0.2：每段首笔定仓 qty=权益×0.2×lev/开盘价
+        （替换 position_size=0.5 消费点——base 形制沿杠杆维锚）。"""
+        dna = make_dna()
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, initial_fraction=0.2))
+        h = _MatrixHarness(tmp_path, dna)
+        h.run_task()
+        opens = [f for f in h.fills() if f["kind"] == "open"]
+        assert opens, "initial_fraction 形态须产出开仓"
+        for f in opens:
+            equity = _prev_balance(h, f["bar_time"])
+            open_px = float(_row(h, _bar_index(h, f["bar_time"]))["open"])
+            assert f["quantity"] == pytest.approx(
+                equity * 0.2 * 1 / open_px, rel=1e-6), f
+
+    def test_max_position_loss_exits_at_threshold_per_segment(
+            self, tmp_path):
+        """max_position_loss=150：每笔防线出场达线重算
+        loss=−qty×(判定 bar close−entry)≥150（多段防线反复触发——
+        独立重算不变量）。"""
+        dna = make_dna()
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, max_position_loss=150.0, take_profit=None))
+        h = _MatrixHarness(tmp_path, dna)
+        h.run_task()
+        ml = [(ex, entry) for ex, entry in _exit_entry_pairs(h.fills())
+              if ex["kind"] == "exit_max_loss"]
+        assert ml, "金额防线形态须有防线出场"
+        for ex, entry in ml:
+            judge = _row(h, _judge_idx(h, ex))
+            sign = 1.0 if (entry["side"] or "long") == "long" else -1.0
+            qty = self._entry_qty_at(h, entry, ex)
+            loss = -sign * qty * (float(judge["close"]) - entry["price"])
+            assert loss >= 150.0, (ex, entry, loss)
+
+    @staticmethod
+    def _entry_qty_at(h, entry: dict, ex: dict) -> float:
+        """出场时点持仓量（段内 open→add 累计、reduce 扣减——
+        持仓链重演至出场 fill 前）。"""
+        qty = 0.0
+        for f in h.fills():
+            if f["kind"] == "open":
+                qty = f["quantity"]
+            elif f["kind"] == "add":
+                qty += f["quantity"]
+            elif f["kind"] == "reduce":
+                qty -= f["quantity"]
+            elif f["kind"] in _FULL_EXIT:
+                if f is ex:
+                    return qty
+                qty = 0.0
+        return qty
+
+
+class TestSizingParamsCombinationAnchors:
+    """组合锚（卡面交集）：initial_fraction×add_fraction 首仓替换+加仓
+    不变、max_position_loss×time_exit 双机制并存、×杠杆>1 清算位次
+    优先（清算段 1 先于金额防线段 3）。"""
+
+    def test_initial_fraction_times_add_fraction_first_replace_add_same(
+            self, tmp_path):
+        """initial_fraction×add_fraction：首仓替换（qty=权益×0.2/开盘
+        ——position_size 不消费）+加仓不变（qty_add=0.2×当时权益/开盘
+        ——add_fraction 公式零变化，沿 scaled 维同式独立重算）。"""
+        dna = make_scaled_dna(add_fraction=0.2)
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, initial_fraction=0.2))
+        h = _MatrixHarness(tmp_path, dna)
+        h.run_task()
+        fills = h.fills()
+        first_open = next(f for f in fills if f["kind"] == "open")
+        open_px = float(
+            _row(h, _bar_index(h, first_open["bar_time"]))["open"])
+        # 首仓替换：qty=initial_cash×0.2/开盘（ps=0.5 不消费）
+        assert first_open["quantity"] == pytest.approx(
+            h.cash * 0.2 * 1 / open_px, rel=1e-6)
+        # 加仓不变：首个 add=0.2×当时权益/开盘（与不声明 if 同式）
+        add = next(f for f in fills if f["kind"] == "add")
+        eq = _equity_then(h, add, first_open["price"],
+                          first_open["quantity"],
+                          first_open["quantity"] * first_open["price"])
+        add_px = float(_row(h, _bar_index(h, add["bar_time"]))["open"])
+        assert add["quantity"] == pytest.approx(
+            0.2 * eq * 1 / add_px, rel=1e-6)
+
+    def test_max_position_loss_times_time_exit_coexist(self, tmp_path):
+        """max_position_loss×time_exit：双机制并存各自触发（防线达线
+        出场+时刻覆盖出场两类都在场，不互相吞——归因序同根场景由
+        族 6 判定序承载）。"""
+        dna = make_dna()
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, max_position_loss=150.0, take_profit=None,
+            time_exit_utc=600))
+        h = _MatrixHarness(tmp_path, dna)
+        h.run_task()
+        kinds = {f["kind"] for f in h.fills()}
+        assert "exit_max_loss" in kinds, "金额防线须触发"
+        assert "exit_time" in kinds, "固定时刻出场须触发"
+
+    def test_max_position_loss_liquidation_priority_when_leverage(
+            self, tmp_path):
+        """max_position_loss×杠杆>1：跳空 bar 清算与达线同根 → 归清算
+        （段 1 位次优先金额防线段 3——沿杠杆组合锚 gap 构造，mpl=1.0
+        必达线）。"""
+        dna = make_dna()
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, sl_mode="atr", stop_loss=5.0, take_profit=None,
+            leverage=10, position_size=1.0, max_position_loss=1.0))
+
+        def gap(enhanced: pd.DataFrame) -> pd.DataFrame:
+            # 开仓次根 bar 跳空：low 压到清算价下方（同 bar 浮亏亦达
+            # mpl=1.0——位次交互构造：清算段 1 vs 金额防线段 3）
+            e = enhanced.copy()
+            e.loc[pd.Timestamp("2024-01-04 16:00:00+00:00"), "low"] = 83.0
+            return e
+
+        h = _MatrixHarness(tmp_path, dna, leverage=10, cash=5_000.0,
+                           mutate=gap)
+        h.run_task()
+        fills = h.fills()
+        liq = [f for f in fills if f["kind"] == "exit_liquidation"]
+        assert liq, "跳空 bar 须触发清算"
+        assert liq[0]["seq"] == 1, "清算=段 1（优先金额防线段 3）"
+        # 该 bar 无防线成交（位次归清算——无 exit_max_loss 落在清算 bar）
+        assert not [f for f in fills if f["kind"] == "exit_max_loss"
+                    and f["bar_time"] == liq[0]["bar_time"]]

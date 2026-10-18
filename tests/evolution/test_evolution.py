@@ -122,6 +122,22 @@ class TestMutateRisk:
             assert 0.005 <= dna.risk_genes.stop_loss <= 0.20
             assert 0.10 <= dna.risk_genes.position_size <= 1.0
 
+    def test_sizing_params_declared_values_preserved(self):
+        """变异扰动面不变锚（add-position-sizing-params）：mutate_risk
+        只扰动 stop_loss/position_size/take_profit——新键声明值经
+        to_dict/from_dict 往返透传逐次保留（扰动面扩到新键必红）。"""
+        import dataclasses
+
+        dna = _make_simple_dna()
+        dna = dataclasses.replace(
+            dna, risk_genes=dataclasses.replace(
+                dna.risk_genes, initial_fraction=0.3,
+                max_position_loss=750.0))
+        for _ in range(30):
+            dna = mutate_risk(dna)
+            assert dna.risk_genes.initial_fraction == 0.3
+            assert dna.risk_genes.max_position_loss == 750.0
+
 class TestCrossover:
     def test_produces_valid_offspring(self):
         parent_a = _make_simple_dna()
@@ -136,6 +152,28 @@ class TestCrossover:
         child = crossover(parent_a, parent_b)
         assert parent_a.strategy_id in child.parent_ids
         assert parent_b.strategy_id in child.parent_ids
+
+    def test_crossover_preserves_sizing_params_object_choice(self):
+        """整对象选择保键锚（add-position-sizing-params）：risk_genes
+        整体取一方——子代两键恒等于所取亲代的声明值（携带方/无携带方
+        两分支 30 次覆盖），不产生混合或丢失。"""
+        import dataclasses
+
+        carrier = _make_simple_dna()
+        carrier = dataclasses.replace(
+            carrier, risk_genes=dataclasses.replace(
+                carrier.risk_genes, initial_fraction=0.4,
+                max_position_loss=250.0))
+        plain = _make_simple_dna()  # 新键 None（未声明形态）
+        for _ in range(30):
+            child = crossover(carrier, plain)
+            if child.risk_genes is carrier.risk_genes:
+                assert child.risk_genes.initial_fraction == 0.4
+                assert child.risk_genes.max_position_loss == 250.0
+            else:
+                assert child.risk_genes is plain.risk_genes
+                assert child.risk_genes.initial_fraction is None
+                assert child.risk_genes.max_position_loss is None
 
 class TestPopulation:
     def test_creates_population_of_size(self):

@@ -641,7 +641,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
         正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
         position_size/leverage/exit_fraction/add_fraction/max_exposure/
-        max_hold/time_exit_utc/position_mode/risk_fraction
+        max_hold/time_exit_utc/position_mode/risk_fraction/
+        initial_fraction/max_position_loss
         （值域按 sl_mode 分叉：pct/trail 档 [0.005,0.20] 比例值、
         atr 档 [0.5,5.0] ATR 倍数；sl_mode∈{pct,atr,trail}；
         take_profit>stop_loss，trail 档豁免；position_size∈
@@ -659,19 +660,32 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         宿主组依赖；不声明=无固定时刻出场）；position_mode∈
         {fixed,risk_budget}（complete-research-tooling 动态定仓——
         缺省 fixed 固定比例路径；risk_budget=风险预算制定仓：入场
-        size=当時权益×risk_fraction÷实际生效止损距离（pct 档距离=
+        size=当时权益×risk_fraction÷实际生效止损距离（pct 档距离=
         价格×比例、atr/trail 档=倍数×当根 ATR），名义敞口上限=
-        当時权益×min(leverage,max_exposure) 超限截断+orders_capped
+        当时权益×min(leverage,max_exposure) 超限截断+orders_capped
         计数披露；risk_budget 须同时声明 risk_fraction 与 stop_loss
         ——止损距离是仓位公式分母；回测报告 metrics 携带 position_
         sizing 六子键（mode/risk_fraction/leverage_cap/orders_
         capped/avg_entry_size/max_entry_size）；组间配对对照表：
         risk_budget 只管首仓，加仓仍按 add_fraction 固定比例、
         max_exposure 全局取严、exit_fraction 比例语义不变）；
-        risk_fraction∈(0,0.5]（每笔风险预算占当時权益比例）；
-        翻译时逐参数映射进产物 risk_genes（返回体 risk_genes=
-        "declared"；无声明=平台默认 "platform_default"）。声明块
-        不进条件指纹与幂等身份（同条件集+同区间集=同一假设——参数
+        risk_fraction∈(0,0.5]（每笔风险预算占当时权益比例）；
+        initial_fraction∈(0,1]（add-position-sizing-params 首笔
+        动用资金比例——声明时首笔定仓 margin=当时权益×initial_
+        fraction（fixed 路径内替换 position_size 消费点），加仓仍走
+        add_fraction、position_size 仍必填仍校验；与 position_mode=
+        risk_budget 互斥——同笔首仓不可两个指挥）；max_position_
+        loss>0 金额无上界（持仓金额防线——单一合并持仓总浮亏=
+        价格浮亏+该持仓累计资金费净支出，每根已闭合 K 线按收盘价
+        判定，达线强制全部平仓；与价格止损各自独立判定、
+        归因序在止损止盈后时间出场前；fixed 与 risk_budget 档均
+        生效；两键回测与纸盘同语义执行——判定机制/归因序一致
+        （收盘判定、位次、reason 可辨识；成交时点为环境形制差——
+        回测当根收盘扣滑点、纸盘 pending 次根开盘））；不声明两键=
+        存量行为逐位不变（首笔用 position_size、无金额防线）。翻译时
+        逐参数映射进产物 risk_genes（返回体 risk_genes="declared"；
+        无声明=平台默认 "platform_default"）。声明块不进条件指纹与
+        幂等身份（同条件集+同区间集=同一假设——参数
         变体经终态后带新声明重登记产生）；幂等四分支：请求不带键
         →duplicated 返回既有（附 existing_strategy_params 摘要键）；
         带键（含显式空对象 {}=显式声明「无参数」）与既有声明全等

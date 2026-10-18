@@ -357,6 +357,224 @@ class TestTranslationMapping:
         assert t2["duplicated"] is True and t2["risk_genes"] == "declared"
 
 
+# ── 仓位参数两键（add-position-sizing-params 5.2：族 8d+2h）─────────
+
+
+class TestSizingParamsDeclaration:
+    """initial_fraction/max_position_loss 登记面：值域/互斥/显式 null
+    双面语义差/翻译映射（值域单源 validator 常量）。"""
+
+    @pytest.mark.parametrize("params,ok", [
+        # initial_fraction (0,1]：开下闭上
+        ({"initial_fraction": 0.2}, True),
+        ({"initial_fraction": 1.0}, True),     # 上界含（全部可用资金）
+        ({"initial_fraction": 0.01}, True),
+        ({"initial_fraction": 0}, False),
+        ({"initial_fraction": -0.1}, False),
+        ({"initial_fraction": 1.01}, False),
+        ({"initial_fraction": True}, False),   # bool 冒充数值须拒
+        # max_position_loss >0 下界开、无上界（考场无观点）
+        ({"max_position_loss": 100.0}, True),
+        ({"max_position_loss": 1e12}, True),   # 无上界锚
+        ({"max_position_loss": 0}, False),
+        ({"max_position_loss": -5.0}, False),
+        ({"max_position_loss": True}, False),
+        # 两键共存合法（互斥仅约束 initial_fraction×risk_budget）
+        ({"initial_fraction": 0.2, "max_position_loss": 500.0}, True),
+    ])
+    def test_domain_validation(self, db, params, ok):
+        if ok:
+            r = _register(db, params, period=20)
+            assert r["duplicated"] is False
+        else:
+            with pytest.raises(ResearchError) as ei:
+                _register(db, params)
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert "field" in (ei.value.detail or {})
+
+    def test_domain_detail_carries_legal_range(self, db):
+        """坏值 detail 携带 field/legal_range（族 8d——MCP 错误文案
+        分派层消费的 detail 契约）。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {"initial_fraction": 0})
+        detail = ei.value.detail
+        assert detail["field"] == "initial_fraction"
+        assert "legal_range" in detail
+
+    @pytest.mark.parametrize("infinite", [
+        float("inf"), 10 ** 400, 1e999,
+    ], ids=["inf", "huge-int", "1e999"])
+    def test_mpl_finiteness_rejected_on_declaration_face(
+            self, db, infinite):
+        """SEC-02 有限性校验（登记面）：inf/超大整数 422
+        RESEARCH_PARAM_INVALID（detail field=max_position_loss+
+        legal_range 含 finite）——与 validate_dna 同源同式对拍。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {"max_position_loss": infinite})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "max_position_loss"
+        assert "finite" in str(ei.value.detail["legal_range"])
+        # 合法超大金额对照：有限大值仍放行（无上界语义不受影响）
+        r = _register(db, {"max_position_loss": 1e12}, period=21)
+        assert r["duplicated"] is False
+
+    @pytest.mark.parametrize("bad", [
+        "abc",   # str：float() 抛 ValueError
+        [5],     # list：float() 抛 TypeError
+        True,    # bool：int 子类穿透纯值域比较（与上两形态同分支）
+    ], ids=["str", "list", "bool"])
+    def test_mpl_non_numeric_types_rejected_structured(self, db, bad):
+        """CARD-02 类型前置拦截（登记面）：非数字/bool 走「须为数字」
+        分支（修复前 'abc'=ValueError、[5]=TypeError 裸穿 500——不在
+        except 面），422+消息可辨+detail 含 field/legal_range——对齐
+        validator.py 先类型后有限性形制，不扩 except 面掩盖类型语义。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {"max_position_loss": bad})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert "须为数字" in ei.value.message
+        assert ei.value.detail["field"] == "max_position_loss"
+        assert "legal_range" in ei.value.detail
+
+    def test_mutual_exclusion_rejected_with_legitimate_neighbors(self, db):
+        """互斥在登记面拒绝：initial_fraction+risk_budget → 422
+        （field=initial_fraction）；邻界不误拒（fixed 显式+if 合法、
+        risk_budget 声明但不带 if 合法）。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {
+                "position_mode": "risk_budget", "risk_fraction": 0.05,
+                "stop_loss": 0.05, "initial_fraction": 0.2})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "initial_fraction"
+        # fixed 显式+initial_fraction 合法（互斥判据唯一=risk_budget）
+        r = _register(db, {"position_mode": "fixed",
+                           "initial_fraction": 0.2}, period=30)
+        assert r["duplicated"] is False
+        # risk_budget 不带 initial_fraction 合法（存量路径）
+        r2 = _register(db, {
+            "position_mode": "risk_budget", "risk_fraction": 0.05,
+            "stop_loss": 0.05}, period=31)
+        assert r2["duplicated"] is False
+
+    def test_mutual_exclusion_three_face_parity_and_zero_side_effect(
+            self, db):
+        """族 2d 三面对拍（6.3）：同一互斥声明在 validate_dna（手工
+        DNA）与登记声明块（AI 路径）两 Python 面同拒+错误要素一致
+        （字段名 initial_fraction 与互斥语义都在场——MCP 参数面经
+        422 detail 契约与场景文案对拍，见 tests/mcpserver）；登记面
+        拒绝零副作用（hypothesis 行数前后相等——specs「互斥拒绝」
+        Scenario）。"""
+        from core.persistence.repository import research as rr
+        from core.strategy.validator import validate_dna
+
+        # 手工 DNA 面：同组合（risk_budget+if+risk_fraction+stop_loss）
+        dna = StrategyDNA(
+            signal_genes=_genes(14, 30, 70), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(),
+            risk_genes=RiskGenes(
+                stop_loss=0.05, position_size=0.5, leverage=1,
+                direction="long", sl_mode="pct", atr_period=14,
+                position_mode="risk_budget", risk_fraction=0.05,
+                initial_fraction=0.2))
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any("mutually exclusive" in e for e in result.errors)
+        assert any("initial_fraction" in e for e in result.errors)
+
+        # 登记面：同组合同拒+结构化 detail（field=initial_fraction）
+        before = len(rr.list_hypotheses(db, limit=100_000))
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {
+                "position_mode": "risk_budget", "risk_fraction": 0.05,
+                "stop_loss": 0.05, "initial_fraction": 0.2}, period=25)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "initial_fraction"
+        assert "互斥" in ei.value.message
+        # 零副作用：拒绝不落库（specs 互斥拒绝 Scenario）
+        after = len(rr.list_hypotheses(db, limit=100_000))
+        assert after == before
+
+    def test_explicit_null_rejected_on_declaration_face(self, db):
+        """族 2h 登记面：显式 null 一律坏值拒绝（数值键 null≠缺省
+        ——detail 含 field；键缺失合法对照）。"""
+        for null_key in ("initial_fraction", "max_position_loss"):
+            with pytest.raises(ResearchError) as ei:
+                _register(db, {null_key: None})
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert ei.value.detail["field"].endswith(null_key)
+        # 键缺失=合法（不参与比对，platform_default 路径）
+        r = _register(db, None, period=32)
+        assert r["duplicated"] is False
+
+    def test_null_semantics_split_declaration_vs_dna_face(self):
+        """族 2h 两路径语义差锁定：登记面 null=坏值拒绝（上例）、
+        DNA 面 null=合法缺省——手工 dna_json null 键经 from_dict 后
+        字段 None（合法缺省态），执行按缺省物化。防后续维护者拉平
+        两侧（登记面校验层拒绝 vs 序列化层超集透传）。"""
+        from core.paper_trading.kernel.types import materialize
+
+        dna_json = json.dumps({
+            "signal_genes": [], "logic_genes": {}, "execution_genes": {},
+            "risk_genes": {"stop_loss": 0.05, "position_size": 0.5,
+                           "leverage": 1, "direction": "long",
+                           "sl_mode": "pct", "atr_period": 14,
+                           "initial_fraction": None,
+                           "max_position_loss": None}})
+        dna = StrategyDNA.from_dict(json.loads(dna_json))
+        # DNA 面 null 键 → 字段 None=合法缺省（from_dict 直通承接）
+        assert dna.risk_genes.initial_fraction is None
+        assert dna.risk_genes.max_position_loss is None
+        # 执行按缺省物化（0.0=未声明/禁用哨兵）
+        params = materialize(dna.risk_genes)
+        assert params.initial_fraction == 0.0
+        assert params.max_position_loss == 0.0
+
+    def test_translation_carries_sizing_params(self, db):
+        """翻译映射：两键声明经 _declared_risk_genes 直写产物
+        risk_genes（返回体 declared；未声明键不写入=平台默认）。"""
+        h = _register(db, {"initial_fraction": 0.2,
+                           "max_position_loss": 500.0})
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["risk_genes"] == "declared"
+        rg = json.loads(get_strategy(db, t["strategy_id"])["dna_json"])[
+            "risk_genes"]
+        assert rg["initial_fraction"] == 0.2
+        assert rg["max_position_loss"] == 500.0
+
+    def test_d2_field_comparison_includes_sizing_params(self, db):
+        """_D2_RISK_FIELDS 比对清单扩两键：同条件集+异 initial_fraction
+        声明经终态重登记→翻译产新实体（参数异必建新实体不被吞并——
+        比对面携带新键的行为锚）。"""
+        from core.analysis.hypothesis_service import transition_hypothesis
+
+        h1 = _register(db, {"initial_fraction": 0.2}, statement="d2a")
+        t1 = translate_hypothesis(db, hypothesis_id=h1["hypothesis_id"])
+        transition_hypothesis(db, h1["hypothesis_id"],
+                              target_status="abandoned",
+                              evidence_ref="d2 split")
+        h2 = _register(db, {"initial_fraction": 0.5}, statement="d2b")
+        t2 = translate_hypothesis(db, hypothesis_id=h2["hypothesis_id"])
+        assert t2["strategy_id"] != t1["strategy_id"]
+
+    @pytest.mark.parametrize("key,declared,other", [
+        ("initial_fraction", 0.2, 0.5),
+        ("max_position_loss", 500.0, 900.0),
+    ], ids=["initial-fraction", "max-position-loss"])
+    def test_idempotency_carries_new_keys(self, db, key, declared, other):
+        """新键进幂等全等比对（specs 幂等段通用条款对两新键的携带——
+        此前四分支测试仅用存量键，新键只在终态变体场景验证过）：
+        active 态同身份带键同值→duplicated；异值→422（detail 附既有
+        声明摘要，防静默丢弃）。"""
+        _register(db, {key: declared})
+        r_same = _register(db, {key: declared})
+        assert r_same["duplicated"] is True
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {key: other})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        d = ei.value.detail
+        assert d["existing_strategy_params"] == {key: declared}
+        assert "slow_path" in d
+
+
 # ── 变体端到端 + 分流两线 ──────────────────────────────────────────
 
 

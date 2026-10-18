@@ -1,8 +1,8 @@
 """任务调度器（PaperScheduler——design §5.1，守护线程+五态状态机）。
 
 形制：后台守护线程（poll_interval 2s 轮询；app.py lifespan 挂载——
-新增挂载，旧 TradingRunner 挂载原位保留至组 7 切换，新旧端点族前缀
-不同不暴露双入口）。
+旧 TradingRunner 已随 frontend-switch-and-retire 退役删除，本调度器
+是纸盘任务的唯一运行入口）。
 
 职责：
 - 状态机迁移集单源（唯一写者=调度器/执行器协作，REST/MCP 仅发请求）；

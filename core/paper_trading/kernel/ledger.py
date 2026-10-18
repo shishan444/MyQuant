@@ -91,6 +91,10 @@ class Position:
     tp_price: float | None
     trail_peak: float
     entry_bar_seq: int
+    # 当前持仓累计资金费净支出（带符号：付出为正/收到为负）——金额
+    # 防线判定的资金费分量；与账户级 total_funding（跨持仓累计披露）
+    # 两口径并存。开仓归零、结算累加、并仓延续、全平随对象丢弃。
+    funding_paid: float = 0.0
 
 
 class Ledger:
@@ -167,7 +171,8 @@ class Ledger:
                 quantity=pos.quantity, margin=pos.margin,
                 open_cost=pos.open_cost, sl_price=pos.sl_price,
                 tp_price=pos.tp_price, trail_peak=pos.trail_peak,
-                entry_bar_seq=pos.entry_bar_seq),
+                entry_bar_seq=pos.entry_bar_seq,
+                funding_paid=pos.funding_paid),
             bars_held=bars_held,
             position_notional=pos.quantity * mark_price)
 
@@ -193,12 +198,16 @@ class Ledger:
                   entry_atr: float | None) -> tuple[float, bool]:
         """入场定仓（fixed/risk_budget 两档分派）。
 
-        fixed 档（缺省/"fixed"）：margin=equity×position_size，quantity
+        fixed 档（缺省/"fixed"）：margin=equity×首笔生效比例（声明
+        initial_fraction（物化 >0）用之、否则 position_size——与引擎
+        装配 effective_first_size 分派同式，对照断言锁），quantity
         =margin×leverage/price（逐字节不变形制）。risk_budget 档：
         qty=权益×risk_fraction÷止损距离（公式单源 risk_budget_qty），
         cap=权益×min(leverage,max_exposure) 截断并标记 capped；距离
         不可定义（残缺组合/ATR NaN）时公式单点返回 (0,0)→回退 fixed
-        定仓（对齐回测引擎兜底，不另设抛异常分支——第二逻辑源禁令）。
+        定仓（对齐回测引擎兜底，不另设抛异常分支——第二逻辑源禁令）；
+        risk_budget 档不读 initial_fraction（互斥由装载校验承担，
+        直构防御=忽略）。
 
         Args:
             base_price: 定仓基准价（执行 bar 开盘价，滑点前——与引擎
@@ -219,7 +228,10 @@ class Ledger:
             if qty > 0.0:
                 return qty, bool(capped)
             # (0,0) 防御分支 → 回退 fixed（受控等价覆盖此路径）
-        margin = equity_now * params.position_size
+        first_size = (params.initial_fraction
+                      if params.initial_fraction > 0
+                      else params.position_size)
+        margin = equity_now * first_size
         return margin * params.leverage / base_price, False
 
     def _stop_distance(self, price: float,
@@ -314,7 +326,8 @@ class Ledger:
             tp_price=self._initial_stop(
                 side, fill.price, entry_atr, is_tp=True),
             trail_peak=fill.price,
-            entry_bar_seq=exec_bar.seq)
+            entry_bar_seq=exec_bar.seq,
+            funding_paid=0.0)
 
     def _apply_add(self, fill: Fill) -> None:
         """加仓落账：保证金=add_fraction×当时权益→名义放大；并仓
@@ -359,12 +372,31 @@ class Ledger:
         self.closed_trades += 1
         self.position = None
 
+    def record_funding(self, amount: float) -> None:
+        """资金费落账单点（三键一次更新——对质①裁决收单点）。
+
+        balance 直减（负金额=入账）；账户级 total_funding 累计（跨
+        持仓披露）；当前持仓存在则持仓级 funding_paid 累计（金额
+        防线判定输入——带符号：付出为正=加深浮亏、收到为负=抵减；
+        无持仓只前两键）。消费方=apply_funding（正常结算）与 runtime
+        结算两分支（新账/补旧账——补旧账金额按快照数量重算后经本点
+        落账）——funding_paid 累加无第二写点。
+
+        Args:
+            amount: 结算金额（正=付出/负=收到；经 funding_amount
+                单点或其快照重算产出）。
+        """
+        self.balance -= amount
+        self.total_funding += amount
+        if self.position is not None:
+            self.position.funding_paid += amount
+
     def apply_funding(self, rate: float, settle_price: float) -> float:
         """资金费结算（与杠杆无关——对质六裁决：leverage=1 同扣）。
 
         金额经 funding_amount 单点（signed_qty=当前仓数量×方向符号；
-        rate>0 多头付/空头收、rate<0 反向）；balance 直减（负金额=
-        入账）。
+        rate>0 多头付/空头收、rate<0 反向），落账经 record_funding
+        单点（balance/total_funding/funding_paid 三键）。
 
         Args:
             rate: 该结算点真实费率（funding parquet）。
@@ -378,8 +410,7 @@ class Ledger:
             return 0.0
         sign = 1.0 if pos.side == "long" else -1.0
         amount = funding_amount(sign * pos.quantity, settle_price, rate)
-        self.balance -= amount
-        self.total_funding += amount
+        self.record_funding(amount)
         return amount
 
     # ── 披露用止损止盈快照（开仓/重锚时点值） ────────────────
