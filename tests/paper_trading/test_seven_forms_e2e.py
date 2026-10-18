@@ -142,8 +142,8 @@ def _exit_entry_pairs(fills):
     for f in fills:
         if f["kind"] == "open":
             entry = f
-        elif f["kind"] in ("close", "exit_sl", "exit_tp", "exit_max_hold",
-                           "exit_time", "exit_liquidation") \
+        elif f["kind"] in ("close", "exit_sl", "exit_tp", "exit_max_loss",
+                           "exit_max_hold", "exit_time", "exit_liquidation") \
                 and entry is not None:
             pairs.append((f, entry))
             entry = None
@@ -363,3 +363,62 @@ class TestSevenFormsEndToEnd:
         assert task["status"] == "error"
         assert "atr_missing" in task["error_detail"]
         assert task["started_at"] is None  # 不进 running
+
+
+class TestSizingParamsFormEndToEnd:
+    """仓位参数两键形态端到端（add-position-sizing-params 6.2——
+    「新参数形态可跑」显式断言：金额防线出场与 initial_fraction
+    首笔两维各自的形态断言，全链出报告）。"""
+
+    def test_sizing_form_runs_to_report_with_both_dimensions(
+            self, tmp_path):
+        """两键同声明形态全链：completed+首笔 qty=权益×initial_fraction
+        （替换 position_size）+exit_max_loss 出场在场+报告 evidence.
+        exit_reasons 含金额防线类目。"""
+        dna = make_dna()
+        # mpl=60：qty≈21.7（if=0.2 档）下 close≈89.3 即达线（i≈26），
+        # 先于 SL 线 entry×0.95≈87.5 的触碰 bar（i≥30）——防线归因
+        # 不被止损抢先
+        dna = replace(dna, risk_genes=replace(
+            dna.risk_genes, initial_fraction=0.2,
+            max_position_loss=60.0, take_profit=None))
+        h = _FormHarness(tmp_path, dna)
+        h.run_task()
+
+        task = h.task()
+        assert task["status"] == "completed", task["error_detail"]
+        assert task["bars_processed"] == _WINDOW
+
+        fills = h.fills()
+        # initial_fraction 首笔形态：qty=10_000×0.2/开盘（ps=0.5 不消费）
+        first = next(f for f in fills if f["kind"] == "open")
+        open_px = float(h.enhanced.loc[first["bar_time"], "open"])
+        assert first["quantity"] == pytest.approx(
+            10_000.0 * 0.2 / open_px, rel=1e-6)
+        # 金额防线出场形态：exit_max_loss 在场+reason 可辨识
+        ml = [f for f in fills if f["kind"] == "exit_max_loss"]
+        assert ml, "金额防线形态须有防线出场"
+        assert ml[0]["reason"] == "max_loss"
+
+        # 报告披露：evidence.exit_reasons 含金额防线类目
+        report = build_report(h.db, h.data_dir, h.task_id,
+                              generated_at="2026-10-16T00:00:00+00:00")
+        assert report["evidence"]["exit_reasons"].get("exit_max_loss") \
+            == len(ml)
+        final = finalize_report(h.db, h.data_dir, h.task_id,
+                                generated_at="2026-10-16T00:01:00+00:00")
+        assert final["performance"] == report["performance"]
+
+    def test_sizing_form_undeclared_runs_identical_to_base(self, tmp_path):
+        """不声明两键对照：base 形态行为零变化（首笔 qty=权益×
+        position_size=0.5+无 exit_max_loss——新参数形态缺省旁路锚）。"""
+        h = _FormHarness(tmp_path / "base", _form_dna("base"))
+        h.run_task()
+        assert h.task()["status"] == "completed"
+        first = next(f for f in h.fills() if f["kind"] == "open")
+        open_px = float(h.enhanced.loc[first["bar_time"], "open"])
+        assert first["quantity"] == pytest.approx(
+            10_000.0 * 0.5 / open_px, rel=1e-9)
+        assert not [f for f in h.fills()
+                    if f["kind"] == "exit_max_loss"], \
+            "未声明金额防线不得出场"
