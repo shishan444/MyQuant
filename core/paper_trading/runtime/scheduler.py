@@ -366,38 +366,50 @@ class PaperScheduler:
         LifecycleError（404 策略不存在/409 非法前态/RACE）→结构化
         error 日志→结题流程继续（pt_task 终态与 strategy.status 两
         权威分立，结题不被资产簿记失败绑架）——失败场景由
-        _replay_paper_strategies 回补自愈。
+        _replay_paper_strategies 回补自愈。意外异常（含 get_task
+        通道故障）整体兜底（CARD-02）：任何异常不得跳过
+        _on_concluded_client 结题回调（与 _run_backfill 对
+        _replay_paper_strategies 的兜底形制对齐）。
         """
         from core.strategy.lifecycle import transit
         from core.strategy.lifecycle.machine import LifecycleError
 
-        row = paper_repo.get_task(self.db_path, task_id)
-        if row is None:
-            return
-        strategy_id = row["strategy_id"]
+        strategy_id: str | None = None
         try:
-            result = transit(
-                self.db_path, strategy_id, target="active",
-                trigger="task_end",
-                evidence={"task_id": task_id, "final_status": status})
-        except LifecycleError as exc:
-            logger.error(
-                "策略回流迁移失败（结题继续）: strategy_id=%s task_id=%s"
-                " trigger=task_end code=%s message=%s detail=%s",
-                strategy_id, task_id, exc.code, exc.message, exc.detail)
-            return
-        if result["migrated"]:
-            logger.info(
-                "纸盘任务 %s 终态触发策略回流: strategy_id=%s paper→active",
-                task_id, strategy_id)
-        elif result["not_migrated_reason"] == "active_tasks_remain":
-            logger.info(
-                "策略 %s 暂不回流（仍有活跃任务，正当不触发）: task_id=%s",
+            row = paper_repo.get_task(self.db_path, task_id)
+            if row is None:
+                return
+            strategy_id = row["strategy_id"]
+            try:
+                result = transit(
+                    self.db_path, strategy_id, target="active",
+                    trigger="task_end",
+                    evidence={"task_id": task_id, "final_status": status})
+            except LifecycleError as exc:
+                logger.error(
+                    "策略回流迁移失败（结题继续）: strategy_id=%s task_id=%s"
+                    " trigger=task_end code=%s message=%s detail=%s",
+                    strategy_id, task_id, exc.code, exc.message, exc.detail)
+                return
+            if result["migrated"]:
+                logger.info(
+                    "纸盘任务 %s 终态触发策略回流: strategy_id=%s paper→active",
+                    task_id, strategy_id)
+            elif result["not_migrated_reason"] == "active_tasks_remain":
+                logger.info(
+                    "策略 %s 暂不回流（仍有活跃任务，正当不触发）: task_id=%s",
+                    strategy_id, task_id)
+            else:
+                logger.debug(
+                    "策略 %s 已处 active（回流已发生或存量未上盘行）:"
+                    " task_id=%s", strategy_id, task_id)
+        except Exception:
+            # 兜底边界（CARD-02）：回流属资产簿记侧，异常不得冒泡到
+            # _executor_concluded 跳过结题回调（pt_task 终态权威）
+            logger.exception(
+                "策略回流重放意外异常（结题继续）: strategy_id=%s"
+                " task_id=%s trigger=task_end",
                 strategy_id, task_id)
-        else:
-            logger.debug(
-                "策略 %s 已处 active（回流已发生或存量未上盘行）:"
-                " task_id=%s", strategy_id, task_id)
 
     def _run_backfill(self) -> None:
         """终态后资金费回补例程（Q-2 封账设计——注入面）+策略迁移
