@@ -394,6 +394,37 @@ class TestStrategyRevalidate:
         response = client.post("/api/strategies/nonexistent-id/revalidate")
         assert response.status_code == 404
 
+    def test_lifecycle_error_transit_conduction_both_endpoints(
+            self, client: TestClient, monkeypatch) -> None:
+        """迁移服务 LifecycleError→HTTP 传导分支（闸门②盲区消解：
+        DELETE 与 revalidate 两端点的 except 传导段）。注入 transit 抛
+        409 RACE→两端点 409+detail 透传（REST 侧非 draft 删除/重验的
+        竞态失败面——service 层 RACE 分支已有直测，此处补 REST 传导）。"""
+        import sys
+
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        crud_module = sys.modules["MyQuant.api.routes.strategies.crud"]
+
+        def _race(*args, **kwargs):
+            raise LifecycleError(
+                code="STRATEGY_TRANSITION_RACE", message="竞态",
+                status=409,
+                detail={"current_status": "paper"})
+
+        create_resp = client.post("/api/strategies", json=_sample_strategy_create())
+        sid = create_resp.json()["strategy_id"]
+        monkeypatch.setattr(crud_module, "transit", _race)
+
+        del_resp = client.delete(f"/api/strategies/{sid}")
+        assert del_resp.status_code == 409
+        assert del_resp.json()["detail"]["code"] == "STRATEGY_TRANSITION_RACE"
+
+        TestStrategyDelete._force_status(client, sid, "archived")
+        rv_resp = client.post(f"/api/strategies/{sid}/revalidate")
+        assert rv_resp.status_code == 409
+        assert rv_resp.json()["detail"]["code"] == "STRATEGY_TRANSITION_RACE"
+
     def test_revalidate_atomic_rollback_on_reset_failure(
             self, client: TestClient, monkeypatch) -> None:
         """CARD-03 两步同事务：统计重置步故障注入→迁移+事件+重置全

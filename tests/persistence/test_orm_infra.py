@@ -399,6 +399,39 @@ class TestAlembicBaseline:
         ).fetchone()[0] == "paper"
         conn.close()
 
+    def test_true_head_shape_db_stamps_head_short_circuit(
+            self, tmp_path: Path):
+        """三分支第一支（闸门②盲区消解）：真 head 形库（upgrade head
+        产物=全列+双域触发器在场）DROP 版本表后经 init_db_ext→
+        触发器判据命中 head 分支直接 stamp head 短路——不重跑迁移、
+        触发器不翻倍、版本恰一行。"""
+        from core.persistence.db_ext import init_db_ext
+
+        db = tmp_path / "true_head.db"
+        self._alembic("upgrade", "head", db_path=db)   # 全列+触发器在场
+        conn = sqlite3.connect(str(db))
+        triggers_before = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+            " AND name IN ('trg_strategy_status_domain',"
+            " 'trg_strategy_status_insert_domain')").fetchone()[0]
+        conn.execute("DROP TABLE alembic_version")   # 模拟脱轨库
+        conn.commit()
+        conn.close()
+        assert triggers_before == 2, "前置：head 产物双触发器在场"
+
+        init_db_ext(db)   # stamp head 短路分支
+
+        conn = sqlite3.connect(str(db))
+        ver = conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall()
+        triggers_after = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+            " AND name IN ('trg_strategy_status_domain',"
+            " 'trg_strategy_status_insert_domain')").fetchone()[0]
+        conn.close()
+        assert len(ver) == 1 and ver[0][0] == "de92805ed44c"
+        assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
+
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):
         """闸门重开步骤4 属性锚：换芯三分支终态不变量——任意初始形态
         （空库全链 / legacy 终态形 stamp+upgrade / 全列形经触发器判据

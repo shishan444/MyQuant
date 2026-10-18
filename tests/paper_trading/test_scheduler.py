@@ -996,6 +996,158 @@ class TestStrategyReturnFlow:
         assert "pt_flow00000001" in caplog.text
         assert "trigger=task_end" in caplog.text
 
+    def test_task_row_missing_early_return_migration_skipped(
+            self, tmp_path):
+        """任务行不在场→_replay_task_end 早退（闸门②盲区消解：row
+        None return 分支）——迁移侧无动作（策略停留 paper+零事件+
+        不炸）；客户端回调照发（结题权威独立于任务行查询——两权威
+        分离的延伸，特征记录实现行为）。"""
+        h = _ReturnFlowHarness(tmp_path)
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+        h.seed_paper_strategy("st-flow")
+        h.scheduler._executor_concluded("pt_ghost000001", "completed")
+        assert h.strategy_status("st-flow") == "paper", "迁移侧零动作"
+        assert h.events("st-flow") == []
+        assert concluded == [("pt_ghost000001", "completed")], \
+            "回调照发（结题权威不查任务行）"
+
+    def test_replay_scan_step_exception_swallowed_by_run_backfill(
+            self, tmp_path, caplog, monkeypatch):
+        """重放步异常兜底（闸门②盲区消解：_run_backfill 对
+        _replay_paper_strategies 的 except 段）——扫描整体故障记
+        exception 日志续轮，不炸守护循环。"""
+        import logging
+
+        h = _ReturnFlowHarness(tmp_path)
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+
+        def _boom():
+            raise RuntimeError("scan step crashed")
+
+        monkeypatch.setattr(
+            h.scheduler, "_replay_paper_strategies", _boom)
+        with caplog.at_level(logging.ERROR, logger="paper_runtime"):
+            h.scheduler._run_backfill()   # 不抛即过
+        assert "策略迁移重放步异常" in caplog.text
+
+    def test_replay_scan_single_strategy_failure_continues_next(
+            self, tmp_path, caplog, monkeypatch):
+        """扫描单策略迁移失败（LifecycleError）记 error 日志 continue
+        （闸门②盲区消解：_replay_paper_strategies 的 except 段）——
+        前策略失败不挡后策略自愈（下轮重扫再试）。"""
+        import logging
+
+        import core.strategy.lifecycle as lifecycle_module
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        h = _ReturnFlowHarness(tmp_path)
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+        h.seed_paper_strategy("st-bad")     # 前策略：迁移将失败
+        h.seed_paper_strategy("st-good")    # 后策略：应继续被处理
+        h.seed_task("pt_bad00000001", "st-bad", status="completed")
+        h.seed_task("pt_good0000001", "st-good", status="completed")
+
+        real_transit = lifecycle_module.transit
+        calls: list = []
+
+        def _fail_first(db_path, sid, *args, **kwargs):
+            calls.append(sid)
+            if sid == "st-bad":
+                raise LifecycleError(
+                    code="STRATEGY_TRANSITION_RACE", message="竞态",
+                    status=409, detail={})
+            return real_transit(db_path, sid, *args, **kwargs)
+
+        monkeypatch.setattr(lifecycle_module, "transit", _fail_first)
+        with caplog.at_level(logging.ERROR, logger="paper_runtime"):
+            h.scheduler._replay_paper_strategies()
+        assert h.strategy_status("st-bad") == "paper", "失败者停留待下轮"
+        assert h.strategy_status("st-good") == "active", \
+            "后策略不受前策略失败影响（continue 语义）"
+        assert "策略迁移重放失败" in caplog.text
+        assert "st-bad" in caplog.text
+
+    def test_replay_scan_picks_latest_terminal_task_per_strategy(
+            self, tmp_path):
+        """同策略多终态任务取最新：created_at 更旧的后续行不覆盖已记
+        最新（闸门②分支消解：456 False 侧）——evidence 凭证源恒为
+        最新终态任务。"""
+        from sqlalchemy import text
+
+        from core.persistence.orm.engine import engine_for
+
+        h = _ReturnFlowHarness(tmp_path)
+        h.seed_paper_strategy("st-flow")
+        h.seed_task("pt_new00000001", "st-flow", status="completed")
+        h.seed_task("pt_old00000001", "st-flow", status="stopped")
+        # 构造时间序：old 行 created_at 更早（list 序在后不覆盖 new）
+        with engine_for(h.db).begin() as conn:
+            conn.execute(text(
+                "UPDATE pt_task SET created_at='2029-01-01T00:00:00+00:00'"
+                " WHERE task_id='pt_old00000001'"))
+            conn.execute(text(
+                "UPDATE pt_task SET created_at='2030-01-01T00:00:00+00:00'"
+                " WHERE task_id='pt_new00000001'"))
+        h.scheduler._replay_paper_strategies()
+        assert h.strategy_status("st-flow") == "active"
+        with engine_for(h.db).connect() as conn:
+            ev = conn.execute(text(
+                "SELECT evidence_json FROM strategy_transition_event"
+                " WHERE strategy_id='st-flow'")).scalar_one()
+        import json as _json
+        assert _json.loads(ev)["task_id"] == "pt_new00000001", \
+            "evidence 凭证=最新终态任务（旧行不覆盖）"
+
+    def test_replay_scan_not_migrated_continues_quietly(
+            self, tmp_path, monkeypatch):
+        """扫描侧 not_migrated 返回族静默续扫（闸门②分支消解：481
+        False 侧）——守卫查询与 transit 判定间窗口出现新活跃任务→
+        active_tasks_remain正当不触发→不打回流日志继续下一策略。"""
+        import logging
+
+        import core.strategy.lifecycle as lifecycle_module
+
+        h = _ReturnFlowHarness(tmp_path)
+        h.seed_paper_strategy("st-flow")
+        h.seed_task("pt_flow00000001", "st-flow", status="completed")
+        real_transit = lifecycle_module.transit
+
+        def _inject_active_task_then_transit(db_path, sid, *args, **kwargs):
+            # 窗口注入：守卫（455-457）已过，transit 判定前插活跃任务
+            from sqlalchemy import text
+
+            from core.persistence.orm.engine import engine_for
+
+            with engine_for(h.db).begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO pt_task (task_id, status, strategy_id,"
+                    " dna_snapshot_json, symbol, timeframe,"
+                    " research_status_snapshot, created_at, updated_at)"
+                    " VALUES ('pt_win00000001', 'running', :i, '{}',"
+                    " 'BTCUSDT', '4h', 'unverified', '2030-01-01',"
+                    " '2030-01-01')"), {"i": sid})
+            return real_transit(db_path, sid, *args, **kwargs)
+
+        import logging as _logging
+        records: list = []
+        handler = _logging.Handler()
+        handler.emit = lambda rec: records.append(rec.getMessage())
+        lg = logging.getLogger("paper_runtime")
+        lg.addHandler(handler)
+        try:
+            monkeypatch.setattr(
+                lifecycle_module, "transit",
+                _inject_active_task_then_transit)
+            h.scheduler._replay_paper_strategies()   # 不炸即续扫
+        finally:
+            lg.removeHandler(handler)
+        assert h.strategy_status("st-flow") == "paper", \
+            "active_tasks_remain 正当不触发"
+        assert not any("回流 active" in m for m in records), \
+            "not_migrated 不打回流成功日志"
+
     def test_guard_shared_single_point_callback_and_scan(
             self, tmp_path, monkeypatch):
         """守卫与扫描共享判定单点：回调路径（transit 内建守卫）与扫描
