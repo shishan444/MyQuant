@@ -94,6 +94,20 @@ def backtest_strategy(
         symbol = payload.symbol or "UNKNOWN"
         timeframe = payload.timeframe or "1d"
         strategy_id = "inline"
+        # 内联 DNA 值域校验（CARD-01，position-sizing-params 审查批；
+        # 同 review-042 CARD-12 先例——crud create 通道已收口，本通道
+        # 直传即跑：NaN/越域/bool 收窄经 Pydantic 全过直进引擎，防线
+        # 静默失效三形态（NaN 恒 False 漏开仓/越域 sl 量纲双关/bool
+        # 收窄 sl=0 恒不触发）。strategy_id 分支不动——库内 DNA 落库前
+        # 已经 create 通道校验，分属不同威胁模型
+        from core.strategy.validator import validate_dna
+        _vr = validate_dna(dna)
+        if not _vr.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "DNA_VALIDATION_FAILED",
+                        "message": "DNA 值域/结构校验未通过",
+                        "errors": _vr.errors})
     else:
         raise HTTPException(
             status_code=400,
