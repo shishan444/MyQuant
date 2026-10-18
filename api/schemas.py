@@ -383,7 +383,7 @@ class VerifyRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    leverage: int = 1
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
 
 
 class VerifyResultItem(BaseModel):
@@ -437,7 +437,7 @@ class BatchBacktestRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    leverage: int = 1
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
 
 
 class BatchBacktestResultItem(BaseModel):
