@@ -26,6 +26,9 @@ class PositionSnapshot:
         trail_peak: trail 模式持仓期峰值（多头取 high 最大/空头 low
             最小；记账器逐 bar 更新）。
         entry_bar_seq: 入场成交 bar 序号（max_hold 计数基准）。
+        funding_paid: 当前持仓累计资金费净支出（带符号：付出为正/
+            收到为负；金额防线判定的资金费分量——与账户级
+            total_funding 两口径并存）。
     """
 
     side: str
@@ -37,6 +40,7 @@ class PositionSnapshot:
     tp_price: float | None
     trail_peak: float
     entry_bar_seq: int
+    funding_paid: float = 0.0
 
 
 @dataclass(frozen=True)

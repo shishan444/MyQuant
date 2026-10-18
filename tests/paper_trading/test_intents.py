@@ -4,7 +4,9 @@
 超限跳过不炸/mixed 符号 0/NaN 不开仓）+防线判定 g-i（pct/atr/trail
 三模式触发价手算锚、trail 峰值含当根、max_hold 计数、time_exit
 区间覆盖）+ATR 单 bar NaN/≤0 守卫（该 bar 无 SL/TP 意图且不回退
-pct 距离）+判定序（清算优先 SL、SL 优先 TP、止损优先时间出场）。
+pct 距离）+判定序（清算优先 SL、SL 优先 TP、止损优先时间出场）+
+金额防线（add-position-sizing-params：达线/未达线零副作用/资金费
+分量/空头双向/归因序——SL 归止损、时间/信号出场归金额防线）。
 """
 from __future__ import annotations
 
@@ -32,11 +34,13 @@ def make_params(**overrides) -> RiskParams:
 
 
 def make_position(side="long", entry=100.0, qty=10.0, margin=1000.0,
-                  trail_peak=100.0, entry_bar_seq=0) -> PositionSnapshot:
+                  trail_peak=100.0, entry_bar_seq=0,
+                  funding_paid=0.0) -> PositionSnapshot:
     return PositionSnapshot(
         side=side, entry_price=entry, quantity=qty, margin=margin,
         open_cost=qty * entry, sl_price=None, tp_price=None,
-        trail_peak=trail_peak, entry_bar_seq=entry_bar_seq)
+        trail_peak=trail_peak, entry_bar_seq=entry_bar_seq,
+        funding_paid=funding_paid)
 
 
 def make_account(position=None, balance=5000.0, mark=100.0,
@@ -516,3 +520,188 @@ class TestJudgmentOrder:
             make_bar(timestamp=ts, seq=4), BarSignals(),
             make_account(position=pos, bar_seq=4), params)
         assert [i.kind for i in intents] == ["exit_time"]
+
+
+class TestMaxPositionLoss:
+    """金额防线（add-position-sizing-params 段 3——收盘价浮亏口径）。
+
+    手算锚：entry=100、qty=10 → mark=90 时 upnl=−100、loss=100；
+    判定式 loss=−unrealized_pnl+funding_paid（资金费带符号：付出为
+    正=加深浮亏）；≥阈值触发（含等）。
+    """
+
+    def test_reaches_threshold_triggers(self):
+        """达线触发：loss=100 ≥ max_position_loss=100 → exit_max_loss。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0), params)
+        assert [(i.kind, i.direction, i.reason) for i in intents] \
+            == [("exit_max_loss", "long", "max_loss")]
+
+    def test_exactly_at_threshold_is_inclusive(self):
+        """恰好达线（==）触发（≥ 含等）；近线一侧不触发。
+
+        恰等锚：mark=94 → loss=60、阈值 60 == 含等触发；近线锚：
+        mark=94.001 → loss≈59.99 < 59.995 不触发。
+        """
+        pos = make_position(entry=100.0, qty=10.0)
+        exact = interpret(
+            make_bar(close=94.0), BarSignals(),
+            make_account(position=pos, mark=94.0),
+            make_params(max_position_loss=60.0))
+        assert [i.kind for i in exact] == ["exit_max_loss"]
+        near = interpret(
+            make_bar(close=94.001), BarSignals(),
+            make_account(position=pos, mark=94.001),
+            make_params(max_position_loss=59.995))
+        assert near == []
+
+    def test_below_threshold_behaves_as_undeclared(self):
+        """未达线零副作用：近线未达与未声明（0=禁用）输出一致。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        near = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0),
+            make_params(max_position_loss=100.01))
+        undeclared = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0),
+            make_params(max_position_loss=0.0))
+        assert near == []
+        assert near == undeclared
+
+    def test_disabled_by_default_zero_never_triggers(self):
+        """未声明（物化 0.0=禁用哨兵）：深亏也不触发（存量行为不变）。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        intents = interpret(
+            make_bar(close=50.0), BarSignals(),
+            make_account(position=pos, mark=50.0), make_params())
+        assert intents == []
+
+    def test_funding_paid_component_pushes_to_threshold(self):
+        """资金费分量进判定：价格浮亏 60+资金费 40=100 达线触发；
+        funding_paid=0 对照不触发（价格分量单独未达线）。"""
+        pos_with = make_position(entry=100.0, qty=10.0, funding_paid=40.0)
+        params = make_params(max_position_loss=100.0)
+        hit = interpret(
+            make_bar(close=94.0), BarSignals(),
+            make_account(position=pos_with, mark=94.0), params)
+        assert [i.kind for i in hit] == ["exit_max_loss"]
+        pos_without = make_position(entry=100.0, qty=10.0)
+        miss = interpret(
+            make_bar(close=94.0), BarSignals(),
+            make_account(position=pos_without, mark=94.0), params)
+        assert miss == []
+
+    def test_negative_funding_received_offsets_loss(self):
+        """资金费收入（负值）抵减浮亏：价格浮亏 100−收入 40=60 不达线。"""
+        pos = make_position(entry=100.0, qty=10.0, funding_paid=-40.0)
+        params = make_params(max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0), params)
+        assert intents == []
+
+    def test_short_side_direction_sign(self):
+        """空头双向（公式带符号天然成立）：entry=100 价升 110 →
+        upnl=−10×(110−100)=−100 达线触发、direction="short"。"""
+        pos = make_position(side="short", entry=100.0, qty=10.0)
+        params = make_params(max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=110.0), BarSignals(),
+            make_account(position=pos, mark=110.0), params)
+        assert [(i.kind, i.direction) for i in intents] \
+            == [("exit_max_loss", "short")]
+
+    def test_short_profit_side_never_triggers(self):
+        """空头盈利态（价跌）loss 为负不触发。"""
+        pos = make_position(side="short", entry=100.0, qty=10.0)
+        params = make_params(max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0), params)
+        assert intents == []
+
+    def test_no_position_never_triggers(self):
+        """空仓不判（pos None 守卫——段 3 前置）。"""
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(), make_account(),
+            make_params(max_position_loss=0.01))
+        assert intents == []
+
+    def test_reentry_resumes_from_zero_funding(self):
+        """全平→再入场：新持仓快照 funding_paid=0（旧值不残留），
+        判定 loss 只含价格分量——再入场从零累计的判定侧锚（生命周期
+        归集断言见 test_ledger）。"""
+        old_pos = make_position(entry=100.0, qty=10.0, funding_paid=40.0)
+        fresh_pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(max_position_loss=100.0)
+        # 旧持仓：价格 60+资金费 40=100 达线；新持仓同价不达线
+        hit = interpret(
+            make_bar(close=94.0), BarSignals(),
+            make_account(position=old_pos, mark=94.0), params)
+        assert [i.kind for i in hit] == ["exit_max_loss"]
+        miss = interpret(
+            make_bar(close=94.0), BarSignals(),
+            make_account(position=fresh_pos, mark=94.0), params)
+        assert miss == []
+
+
+class TestMaxLossAttributionOrder:
+    """族 6 归因序：金额防线段位次=SL/TP 后、时间出场前。
+
+    同根双触发的归因：归止损（SL 在前）/归金额防线（先于时间出场
+    与信号出场）。
+    """
+
+    def test_sl_wins_over_max_loss_same_bar(self):
+        """与止损同根双触发归止损：bar low 触碰 SL 线（95）且 mark=94.5
+        浮亏 55>50 达线 → exit_sl（段 2 在段 3 前）。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(stop_loss=0.05, max_position_loss=50.0)
+        intents = interpret(
+            make_bar(low=94.5, close=94.5), BarSignals(),
+            make_account(position=pos, mark=94.5), params)
+        assert [(i.kind, i.reason) for i in intents] == [("exit_sl", "sl")]
+
+    def test_tp_wins_over_max_loss_same_bar(self):
+        """止盈同根优先（盈利态本不达线——反向对照：TP 触发时 loss
+        为负，仅证明段序不倒挂）。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(stop_loss=0.05, take_profit=0.10,
+                             max_position_loss=50.0)
+        intents = interpret(
+            make_bar(high=110.5, low=99.0, close=110.0), BarSignals(),
+            make_account(position=pos, mark=110.0), params)
+        assert [i.kind for i in intents] == ["exit_tp"]
+
+    def test_max_loss_wins_over_time_exit_same_bar(self):
+        """与时间出场同根归金额防线：time_exit 到期+达线 → exit_max_loss。"""
+        import pandas as pd
+        ts = pd.Timestamp("2026-08-30 08:00:00+00:00")
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(time_exit_utc=480, max_position_loss=100.0)
+        intents = interpret(
+            make_bar(timestamp=ts, close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0), params)
+        assert [i.kind for i in intents] == ["exit_max_loss"]
+
+    def test_max_loss_wins_over_max_hold_same_bar(self):
+        """与 max_hold 同根归金额防线：到期+达线 → exit_max_loss。"""
+        pos = make_position(entry_bar_seq=0)
+        params = make_params(max_hold=5, max_position_loss=100.0)
+        intents = interpret(
+            make_bar(seq=4, close=90.0), BarSignals(),
+            make_account(position=pos, mark=90.0, bar_seq=4), params)
+        assert [i.kind for i in intents] == ["exit_max_loss"]
+
+    def test_max_loss_wins_over_signal_exit_same_bar(self):
+        """与信号出场同根归金额防线：exit 信号+达线 → exit_max_loss。"""
+        pos = make_position(entry=100.0, qty=10.0)
+        params = make_params(max_position_loss=100.0)
+        intents = interpret(
+            make_bar(close=90.0), BarSignals(exit=True),
+            make_account(position=pos, mark=90.0), params)
+        assert [i.kind for i in intents] == ["exit_max_loss"]

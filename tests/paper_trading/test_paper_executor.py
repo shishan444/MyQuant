@@ -37,7 +37,7 @@ _REPLAY_ALL = "2000-01-01T00:00:00+00:00"
 _SEQ_BY_KIND = {
     "exit_liquidation": 1,
     "exit_sl": 2, "exit_tp": 2,
-    "close": 3, "exit_max_hold": 3, "exit_time": 3,
+    "close": 3, "exit_max_hold": 3, "exit_time": 3, "exit_max_loss": 3,
     "open": 4, "add": 4, "reduce": 4,
 }
 
