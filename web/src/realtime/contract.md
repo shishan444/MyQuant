@@ -2,8 +2,8 @@
 
 > 本文档是前端消费与后端端点实现的**共同权威**（refactor-myquant-frontend-f1-f7 · G2 契约先行；
 > 后端容器 B8 批照此实现 socket.io 端点）。
-> 字段全部从当前代码实证（实证位置随条目标注）：evolution=api/runner.py、trading=core/trading/runner.py、
-> 连接层=api/routes/ws.py、流式=web/src/services/strategies.ts。
+> 字段全部从当前代码实证（实证位置随条目标注）：evolution=api/runner.py、trading=core/paper_trading/runtime/executor.py+api/realtime.py、
+> 连接层=api/realtime.py、流式=web/src/services/strategies.ts。
 > 当前载体为原生 WebSocket + fetch/SSE；**事件模型按目标态 socket.io 语义表达**，切换由 B8 双端同批完成。
 
 > **2026-09-15 后端容器方案设计确认（用户裁决）**：四通道**全量切换** socket.io（含 verify/batch 流式通道，
