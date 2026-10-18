@@ -278,7 +278,7 @@ class TestMechanismAnchors:
         assert loss6 < 200.0 <= pos * 0.5, "构造前提：bar 6 未达线"
 
     def test_short_direction_signed_formula(self):
-        """空头双向（公式带符号无方向分支）：空头 pos<0、价格上漲
+        """空头双向（公式带符号无方向分支）：空头 pos<0、价格上涨
         (close−entry)>0 → −(负×正)=正=浮亏态触发；价平段不触发。"""
         p = np.full(N, 100.0)
         p[6] = 100.2   # loss≈pos×0.2≈100<200 未达
