@@ -632,14 +632,15 @@ class TestPositionBarsZeroTrades:
 class TestExitReasons:
     """出场原因分布（add-position-sizing-params 族 7a-e）。
 
-    聚合判据=出场类 fill（realized_pnl 非 NULL——沿既有口径含
-    reduce）；kind 直接作键、close 按 reason 细分；无出场 {} 键恒
-    在；权威源=pt_fill（报告值==直查值）。
+    归因口径=close+exit_* 全出场族七种（close 按 reason 细分）；reduce
+    仓位管理动作不归键（两层口径分工：reduce 收益计入 performance 层
+    trade_returns 组装口径）；无出场 {} 键恒在；权威源=pt_fill（报告
+    值==直查值）。
     """
 
     def test_aggregation_anchor(self, tmp_path):
-        """数值锚：两笔金额防线+三笔止损+close 两种细分+max_hold+
-        reduce → 逐类计数与 pt_fill 聚合一致。"""
+        """数值锚：两笔金额防线+三笔止损+close 两种细分+max_hold →
+        逐类计数正确；reduce 行在场不归键（对质②裁决）。"""
         from core.paper_trading.reporting import build_report
         db = _make_db(tmp_path)
         tid = _seed_task(db)
@@ -658,7 +659,7 @@ class TestExitReasons:
         assert exit_reasons == {
             "exit_max_loss": 2, "exit_sl": 3,
             "close:signal": 1, "close:reverse": 1,
-            "exit_max_hold": 1, "reduce": 1,
+            "exit_max_hold": 1,
         }
 
     def test_empty_object_key_always_present(self, tmp_path):
@@ -672,20 +673,44 @@ class TestExitReasons:
         assert "exit_reasons" in evidence
         assert evidence["exit_reasons"] == {}
 
-    def test_entry_fills_not_counted(self, tmp_path):
-        """入场类行（realized_pnl NULL）不入聚合（判据面锚）。"""
+    def test_entry_and_reduce_fills_not_counted(self, tmp_path):
+        """入场类行（realized_pnl NULL）与 reduce 行（仓位管理动作非
+        出场）均不入归因聚合（判据面锚）。"""
         from core.paper_trading.reporting import build_report
         db = _make_db(tmp_path)
         tid = _seed_task(db)
         _seed_equity_bars(db, tid, 10)
         _seed_exit_fills_of(db, tid, [
             ("open", "signal"), ("add", "signal"),
+            ("reduce", "signal"),
             ("exit_max_loss", "max_loss"),
         ])
 
         exit_reasons = build_report(db, tmp_path, tid)["evidence"][
             "exit_reasons"]
         assert exit_reasons == {"exit_max_loss": 1}
+
+    def test_reduce_returns_in_performance_not_attribution(self, tmp_path):
+        """两层口径分工（对质②裁决）：reduce 的部分实现收益计入
+        performance 层（total_trades/trade_returns 组装口径=realized_pnl
+        非 NULL 含 reduce），evidence 层归因不含它——防止「realized_
+        pnl 非 NULL 行不归键」被误读为覆盖缺口。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills_of(db, tid, [
+            ("reduce", "signal"), ("reduce", "signal"),
+            ("exit_max_loss", "max_loss"),
+        ])
+
+        report = build_report(db, tmp_path / "nodata", tid)
+        # 归因层：仅防线类目，无 reduce 键
+        assert report["evidence"]["exit_reasons"] == {"exit_max_loss": 1}
+        assert "reduce" not in report["evidence"]["exit_reasons"]
+        # 绩效层：returns 组装口径含 reduce（3 行 realized_pnl 全计入）
+        assert report["performance"]["total_trades"] == 3
+        assert report["evidence"]["closed_trades"] == 3
 
     def test_single_source_parity_with_pt_fill(self, tmp_path):
         """权威单源对拍：报告聚合值==pt_fill 直查同判据聚合值。"""
@@ -703,7 +728,7 @@ class TestExitReasons:
             "exit_reasons"]
         direct: dict = {}
         for f in paper.list_fills(db, tid, limit=100_000):
-            if f["realized_pnl"] is None:
+            if f["realized_pnl"] is None or f["kind"] == "reduce":
                 continue
             key = (f"close:{f['reason']}" if f["kind"] == "close"
                    else f["kind"])

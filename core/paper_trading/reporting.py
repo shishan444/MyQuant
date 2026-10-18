@@ -363,12 +363,14 @@ def _evidence_layer(
     insufficient_evidence = bars_run<60 OR closed_trades<5（任一命中即
     整份报告标注；position_bars 共同披露但不参与判定）。
 
-    exit_reasons（add-position-sizing-params 层 6）：出场类 fill
-    （realized_pnl 已回填行——沿既有「出场类」口径，含 reduce 部分
-    出场）按 Intent kind 直接作键聚合；close 类按 reason 细分为
-    "close:signal"/"close:reverse"；无出场任务该键={}（键恒在场，
-    与「无数据」区分）。权威源=pt_fill（聚合派生视图不另立第二
-    事实源）。
+    exit_reasons（add-position-sizing-params 层 6，对质②裁决）＝出场
+    原因分布（归因统计）：出场类=close+exit_* 全出场族七种（close 类
+    按 reason 细分为 "close:signal"/"close:reverse"）按 Intent kind
+    直接作键聚合；reduce 是仓位管理动作非出场，不进本键——两层口径
+    显式分工：reduce 的部分实现收益计入 performance 层（「出场类=
+    realized_pnl 非 NULL」是 trade_returns 的组装口径，含 reduce），
+    evidence 层归因不含它。无出场任务该键={}（键恒在场，与「无数据」
+    区分）。权威源=pt_fill（聚合派生视图不另立第二事实源）。
     """
     bars_run = len(equity_rows)
     closed_trades = len(exit_fills)
@@ -376,10 +378,12 @@ def _evidence_layer(
     settled = sum(
         1 for r in funding_rows if r["status"] in _SETTLED_STATUSES)
     pending = sum(1 for r in funding_rows if r["status"] == "pending")
-    # 出场原因分布：kind 直接作键（close 细分 reason；reduce 沿
-    # 「realized_pnl 非 NULL」口径自然落键）
+    # 出场原因分布：kind 直接作键（close 细分 reason）；reduce 跳过
+    # （仓位管理动作非出场——归因口径，收益面归 performance 层）
     exit_reasons: Dict[str, int] = {}
     for f in exit_fills:
+        if f["kind"] == "reduce":
+            continue
         key = (f"close:{f['reason']}" if f["kind"] == "close"
                else f["kind"])
         exit_reasons[key] = exit_reasons.get(key, 0) + 1
