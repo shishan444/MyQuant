@@ -101,6 +101,10 @@ describe("TradingEvent schema L1（七事件对齐——每事件合法 payload 
     // 旧事件退役：position_update 与旧形 task_snapshot 必须拒（discriminatedUnion 无此分支）
     ["旧事件 position_update 拒收", { type: "position_update", task_id: "t1", position: null, balance: 1, equity: 1, unrealized_pnl: 0, total_trades: 0, total_pnl: 0 }],
     ["旧形 task_snapshot（position_side 形制）拒收", { type: "task_snapshot", task_id: "t1", status: "running", position_side: "long", balance: 100000, total_trades: 3, total_pnl: 120 }],
+    // .strict() 从严：多字段拒收（design §3:84「多字段少字段均红」——
+    // 合法 payload 加一个多余字段即拒）
+    ["task_update 多字段拒收（strict）", { ...validTradingEvents[3], extra_field: "x" }],
+    ["fill_event 多字段拒收（strict）", { ...validTradingEvents[5], surprise: 1 }],
   ])("拒绝：%s", (_label, bad) => {
     expect(TradingEvent.safeParse(bad).success).toBe(false);
   });

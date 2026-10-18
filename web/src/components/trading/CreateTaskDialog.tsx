@@ -139,7 +139,9 @@ export function CreateTaskDialog({
           </Form.Item>
 
           <Form.Item label="杠杆倍数（留空取 DNA）" name="leverage" className="!mb-2">
-            <InputNumber min={1} max={125} precision={0} placeholder="取 DNA" className="w-full font-num" style={{ width: "100%" }} />
+            {/* 上限 10=后端杠杆红线单源 MAX_LEVERAGE（core/strategy/validator.py:35；
+                生成类型不带值域约束，前端显式声明与后端同值） */}
+            <InputNumber min={1} max={10} precision={0} placeholder="取 DNA" className="w-full font-num" style={{ width: "100%" }} />
           </Form.Item>
 
           <Form.Item label="交易对覆写（留空取 DNA）" name="symbol" className="!mb-2">

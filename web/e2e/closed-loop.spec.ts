@@ -129,7 +129,8 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
     strategyId = (evolved[0] as Record<string, unknown>).strategy_id as string
   } else {
     const pool = await (await request.get(`${API}/api/strategies?limit=1`)).json()
-    const first = Array.isArray(pool.strategies) ? pool.strategies[0] : undefined
+    // StrategyListResponse 键名为 items（api/schemas.py StrategyListResponse）
+    const first = Array.isArray(pool.items) ? pool.items[0] : undefined
     strategyId = first?.strategy_id as string | undefined
   }
   expect(strategyId, '上盘策略源（进化产出或库内既有）').toBeTruthy()

@@ -123,7 +123,7 @@ kind=Intent 九值（open/close/add/reduce/exit_sl/exit_tp/exit_max_hold/exit_ti
   "final_equity": number, "total_trades": number }
 ```
 
-### task_stopped（executor.py:863，协作停/止损阈值终态；stop_reason 可缺省 null）
+### task_stopped（executor.py:863，协作停/止损阈值终态；stop_reason 键恒在、值可 null——stop_loss 阈值路径值为 null，nullable 非 optional）
 ```json
 { "type": "task_stopped", "task_id": string, "stop_reason": string|null }
 ```

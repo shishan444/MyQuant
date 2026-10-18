@@ -119,7 +119,7 @@ export type EvolutionEvent = z.infer<typeof EvolutionEvent>;
 const TradingTaskStarted = z.object({
   type: z.literal("task_started"),
   task_id: z.string(),
-});
+}).strict();
 
 /** connect 快照（api/realtime.py /trading 分支：任务存在即发，五态自解释） */
 const TradingTaskSnapshot = z.object({
@@ -129,7 +129,7 @@ const TradingTaskSnapshot = z.object({
   equity: z.number().nullable(),
   balance: z.number().nullable(),
   total_trades: z.number(),
-});
+}).strict();
 
 /** 每 bar 落库后推进推送（executor._persist_bar） */
 const TradingTaskUpdate = z.object({
@@ -141,7 +141,7 @@ const TradingTaskUpdate = z.object({
   unrealized_pnl: z.number(),
   bars_processed: z.number(),
   window_bars: z.number().nullable(),
-});
+}).strict();
 
 /** 逐笔成交推送（executor._execute；side/price 等出场类可空） */
 const TradingFillEvent = z.object({
@@ -156,27 +156,28 @@ const TradingFillEvent = z.object({
   fee: z.number().nullable(),
   realized_pnl: z.number().nullable(),
   reason: z.string().nullable(),
-});
+}).strict();
 
 const TradingTaskCompleted = z.object({
   type: z.literal("task_completed"),
   task_id: z.string(),
   final_equity: z.number(),
   total_trades: z.number(),
-});
+}).strict();
 
-/** stop_reason 可缺省（stop_loss 阈值触发的 stopped 无 reason） */
+/** stop_reason 键恒在、值可 null（stop_loss 阈值路径值为 null——nullable 非 optional，
+ *  与 window_bars 的表述形制统一） */
 const TradingTaskStopped = z.object({
   type: z.literal("task_stopped"),
   task_id: z.string(),
   stop_reason: z.string().nullable(),
-});
+}).strict();
 
 const TradingTaskError = z.object({
   type: z.literal("task_error"),
   task_id: z.string(),
   error_detail: z.string(),
-});
+}).strict();
 
 export const TradingEvent = z.discriminatedUnion("type", [
   TradingTaskStarted,
