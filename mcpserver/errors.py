@@ -189,9 +189,10 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                         "(0, 1]（闭区间上界 1.0=全部可用资金；与 "
                         "position_mode='risk_budget' 互斥——同笔首仓"
                         "不可两个指挥）",
-    "max_position_loss": "持仓金额防线越域：max_position_loss > 0"
-                         "（金额下界开区间，无上界——考场无观点不替"
-                         "用户判断防线松紧；浮亏达线次根开盘全平）",
+    "max_position_loss": "持仓金额防线越域：max_position_loss > 0 且为"
+                         "有限数（金额无人为上界——考场无观点不替用户"
+                         "判断防线松紧；inf/超大整数非金额拒绝；浮亏"
+                         "达线次根开盘全平）",
     # 谱系引用泛化（complete-research-tooling 任务 3）：两类引用
     # （screen_candidate 扫描候选/analysis_task 分析任务）的参数面
     "provenance.ref_type": "引用类型非法：ref_type ∈ {screen_candidate,"

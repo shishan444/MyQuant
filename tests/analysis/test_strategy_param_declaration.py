@@ -401,6 +401,23 @@ class TestSizingParamsDeclaration:
         assert detail["field"] == "initial_fraction"
         assert "legal_range" in detail
 
+    @pytest.mark.parametrize("infinite", [
+        float("inf"), 10 ** 400, 1e999,
+    ], ids=["inf", "huge-int", "1e999"])
+    def test_mpl_finiteness_rejected_on_declaration_face(
+            self, db, infinite):
+        """SEC-02 有限性校验（登记面）：inf/超大整数 422
+        RESEARCH_PARAM_INVALID（detail field=max_position_loss+
+        legal_range 含 finite）——与 validate_dna 同源同式对拍。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {"max_position_loss": infinite})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "max_position_loss"
+        assert "finite" in str(ei.value.detail["legal_range"])
+        # 合法超大金额对照：有限大值仍放行（无上界语义不受影响）
+        r = _register(db, {"max_position_loss": 1e12}, period=21)
+        assert r["duplicated"] is False
+
     def test_mutual_exclusion_rejected_with_legitimate_neighbors(self, db):
         """互斥在登记面拒绝：initial_fraction+risk_budget → 422
         （field=initial_fraction）；邻界不误拒（fixed 显式+if 合法、

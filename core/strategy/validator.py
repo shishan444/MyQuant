@@ -16,6 +16,8 @@ exit_sweep 网格校验的引用式值域（扫描通道各档单点权威，改
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from typing import List
 
@@ -364,10 +366,18 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 f"max_position_loss must be a positive number "
                 f"(> {MAX_POSITION_LOSS_MIN}, no upper bound), "
                 f"got {type(mpl_val).__name__}")
-        elif not mpl_val > MAX_POSITION_LOSS_MIN:
-            errors.append(
-                f"max_position_loss {mpl_val} must be > "
-                f"{MAX_POSITION_LOSS_MIN} (no upper bound)")
+        else:
+            # 有限性检查（SEC-01）：inf/超大整数不是金额——float 化
+            # 溢出的 int 同非有限（延迟到物化层 float() 会崩）。
+            # 「无上界=考场无观点」语义不受影响：finite 不是上界。
+            try:
+                mpl_finite = math.isfinite(float(mpl_val))
+            except OverflowError:
+                mpl_finite = False
+            if not mpl_finite or not mpl_val > MAX_POSITION_LOSS_MIN:
+                errors.append(
+                    f"max_position_loss {mpl_val} must be a finite number "
+                    f"> {MAX_POSITION_LOSS_MIN} (no upper bound)")
     # 互斥：首笔定仓两个来源不可同时声明——initial_fraction 替换
     # fixed 路径首仓、risk_budget 反推首仓，同笔首仓受两个指挥即拒绝
     if if_val is not None and pm_val == "risk_budget":

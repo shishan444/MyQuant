@@ -212,6 +212,24 @@ class TestMutualExclusion:
         assert "initial_fraction" in mutex[0]
         assert "risk_budget" in mutex[0]
 
+    @pytest.mark.parametrize("infinite", [
+        float("inf"),   # IEEE inf
+        float("-inf"),
+        10 ** 400,      # 超大 int（float 化溢出——延迟爆炸形）
+        1e999,          # 字面量解析即 inf
+    ], ids=["inf", "neg-inf", "huge-int", "1e999"])
+    def test_mpl_finiteness_rejected(self, infinite):
+        """SEC-01 有限性校验（validator 面）：inf/超大整数不是金额
+        （「无上界=考场无观点」不受影响——finite 不是上界）；此前
+        inf>0 恒真直通、10**400 延迟到物化层 float() 崩。"""
+        from core.strategy.validator import validate_dna
+        dna = make_dna()
+        dna.risk_genes.max_position_loss = infinite
+        res = validate_dna(dna)
+        assert not res.is_valid, f"{infinite!r} 须拒"
+        assert any("finite" in e and "max_position_loss" in e
+                   for e in res.errors), res.errors
+
 
 class TestPositionSizeStillEnforced:
     """族 2g：position_size 声明后无消费点但仍必填仍参与值域校验

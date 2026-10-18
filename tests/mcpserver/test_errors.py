@@ -513,9 +513,9 @@ class TestParamHintScenariosParity:
         _assert_bidirectional(_PARAM_HINT_SCENARIOS, _KNOWN_GAPS)
 
     def test_sizing_params_scenarios_readable(self):
-        """仓位参数两键场景文案（add-position-sizing-params 5.1）：
-        键在场（登记链抛出点经 5.2 落盘——双向对拍非悬空）+文案含
-        值域与互斥要素（可读锚）。"""
+        """仓位参数两键场景文案（add-position-sizing-params 5.1；
+        SEC 修复补有限性措辞）：键在场（登记链抛出点经 5.2 落盘——
+        双向对拍非悬空）+文案含值域/互斥/有限性要素（可读锚）。"""
         from mcpserver.errors import _PARAM_HINT_SCENARIOS
 
         assert "initial_fraction" in _PARAM_HINT_SCENARIOS
@@ -523,7 +523,8 @@ class TestParamHintScenariosParity:
         if_hint = _PARAM_HINT_SCENARIOS["initial_fraction"]
         assert "(0, 1]" in if_hint and "互斥" in if_hint
         mpl_hint = _PARAM_HINT_SCENARIOS["max_position_loss"]
-        assert "> 0" in mpl_hint and "无上界" in mpl_hint
+        assert "> 0" in mpl_hint and "有限数" in mpl_hint
+        assert "inf" in mpl_hint  # inf 拒绝的引导要素（SEC-02）
 
 
 class TestMutualExclusionThreeFaceMcp:
@@ -557,6 +558,26 @@ class TestMutualExclusionThreeFaceMcp:
         assert err["hint"] == _PARAM_HINT_SCENARIOS["initial_fraction"]
         assert "互斥" in err["hint"]
         assert "initial_fraction" in err["hint"]
+
+    def test_mpl_infinite_422_hint_guides_finiteness(self):
+        """SEC-02 MCP 路径对拍：inf 声明的服务端 422（登记链有限性
+        拒绝形）经 tool_safe → detail.field=max_position_loss 透传+
+        hint 引导有限性（inf/超大整数非金额）。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+
+        @tool_safe
+        def probe():
+            raise ApiError(
+                422, "RESEARCH_PARAM_INVALID",
+                "max_position_loss inf 越出值域 > 0.0（金额无人为上界"
+                "但须为有限数——inf/超大整数非金额）",
+                {"field": "max_position_loss",
+                 "legal_range": "> 0.0 (finite)"})
+
+        err = probe()["error"]
+        assert err["detail"]["field"] == "max_position_loss"
+        assert err["hint"] == _PARAM_HINT_SCENARIOS["max_position_loss"]
+        assert "有限数" in err["hint"] and "inf" in err["hint"]
 
     def test_parity_self_evidence_remove_key_red(self):
         """G4-T05 红绿自证①（隔离变异）：删场景表任一键 → 正向断言

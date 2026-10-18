@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -312,14 +313,23 @@ def _validate_strategy_params(
                                        f"{INITIAL_FRACTION_MAX}]"})
     mpl = params.get("max_position_loss")
     if mpl is not None:
+        # 有限性检查（SEC-02，与 validate_dna 同源同式）：inf/超大整数
+        # 不是金额——float 化溢出的 int 同非有限。「无上界」语义不受
+        # 影响（finite 不是上界）
+        try:
+            mpl_finite = math.isfinite(float(mpl))
+        except OverflowError:
+            mpl_finite = False
         if not isinstance(mpl, (int, float)) or isinstance(mpl, bool) \
-                or not mpl > MAX_POSITION_LOSS_MIN:
+                or not mpl_finite or not mpl > MAX_POSITION_LOSS_MIN:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"max_position_loss {mpl!r} 越出值域 "
-                f"> {MAX_POSITION_LOSS_MIN}（金额无上界——考场无观点）",
+                f"> {MAX_POSITION_LOSS_MIN}（金额无人为上界但须为有限数"
+                "——inf/超大整数非金额）",
                 detail={"field": "max_position_loss",
-                        "legal_range": f"> {MAX_POSITION_LOSS_MIN}"})
+                        "legal_range": f"> {MAX_POSITION_LOSS_MIN} "
+                                       f"(finite)"})
     # 互斥（与 validate_dna 同源语义）：initial_fraction 替换 fixed 路径
     # 首仓、risk_budget 反推首仓——同笔首仓受两个指挥即拒绝
     if if_val is not None and pm == "risk_budget":
