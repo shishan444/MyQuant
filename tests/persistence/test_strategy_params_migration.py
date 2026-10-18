@@ -15,7 +15,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 _OLD_HEAD = "a1c3e8f5b7d2"  # strategy_params 迁移前的 head
-_REV = "d8a2f6c3e9b1"  # head 随 rebuild-paper-trading 纸盘五表迁移上移（2026-10-16）
+_REV = "de92805ed44c"  # head 随 build-strategy-lifecycle 事件表迁移上移（2026-10-18）
 
 
 def _alembic(db: Path, *args: str) -> None:

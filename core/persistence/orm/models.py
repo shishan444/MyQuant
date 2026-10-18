@@ -298,6 +298,12 @@ class Strategy(Base):
     gene_signature: Mapped[Optional[str]] = mapped_column(Text)
     metrics_json: Mapped[Optional[str]] = mapped_column(Text)
     best_fitness: Mapped[Optional[float]] = mapped_column(REAL)
+    # qualified：deprecated 死列（build-strategy-lifecycle 5.3 处置）——
+    # 声明后从未写入（save_strategy 签名无此参数、_ALLOWED_UPDATE_FIELDS
+    # 不含、全库零 UPDATE 写点），实测全 NULL；资格语义已由六态+
+    # 凭证接管（research_status 三序序③兜底读冻结值）。保留不删：
+    # 过滤面连带无收益+降级路径复杂化；同名异列注意——
+    # backtest_result.qualified 是真数据活列，与本列无关。
     qualified: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('NULL'))
     verify_count: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
     verify_avg_score: Mapped[Optional[float]] = mapped_column(REAL)
@@ -606,7 +612,11 @@ class PtTask(Base):
     loss_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     total_pnl: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
     # 创建时研究状态快照（§9.2 四值：draft/unverified/verified/
-    # verification_failed——strategy.status/qualified 映射）
+    # verification_failed）。创建时点审计+查询期现算双句式
+    # （build-strategy-lifecycle 5.3）：本列=创建时点审计事实（创建/
+    # clone 时写入，与 dna_snapshot_json 同构的快照组）；查询面返回
+    # research_status=查询期现算值（resolve_research_status 三序，
+    # 迁移后随动）——不同名事实不构成双源。
     research_status_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
@@ -707,3 +717,31 @@ class PtReport(Base):
     generated_at: Mapped[str] = mapped_column(Text, nullable=False)
     as_of: Mapped[str] = mapped_column(Text, nullable=False)  # 重算时点
     report_json: Mapped[str] = mapped_column(Text, nullable=False)  # 完整报告 JSON
+
+
+# == strategy lifecycle 域（1 表，build-strategy-lifecycle 1.2）==
+# 字段级权威源：openspec 变更 build-strategy-lifecycle design.md §3.1；
+# 与 Alembic 迁移 de92805ed44c 两处同步声明（两方不一致静默架空——
+# 索引验证须实库 PRAGMA index_list，工程坑位）。值域权威源在
+# core/strategy/lifecycle/machine.py（六态/九 trigger），表列不设
+# CHECK——域守卫由双触发器+写面收敛承担。
+class StrategyTransitionEvent(Base):
+    """
+    策略状态迁移事件（迁移审计单一事实源）：append-only——repository
+    只提供 insert+query，无 update/delete 通道；存量分类不产生事件
+    （纯净性原则：事件表只记真实业务迁移）。
+    """
+
+    __tablename__ = "strategy_transition_event"
+    __table_args__ = (
+        # 水位推导与按策略查事件史的主查询路径（strategy_id, created_at）
+        Index("idx_strategy_transition_event_strategy_created",
+              "strategy_id", "created_at"),
+    )
+    event_id: Mapped[str] = mapped_column(Text, primary_key=True)  # uuid4 hex12
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    from_status: Mapped[str] = mapped_column(Text, nullable=False)
+    to_status: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[Optional[str]] = mapped_column(Text)  # 凭证载荷（JSON 字符串，可空=manual 边）
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)

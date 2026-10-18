@@ -13,8 +13,10 @@
   task.leverage——bridge 无 leverage 参数，任务覆写经 DNA 副本传入，
   bridge 零改动）；对照失败（ResearchError）该层标 unavailable 而不使
   整份报告失败；
-- 证据强度层——60/5 双阈值（constants 单源）+research_status 快照
-  （§9.2 四值，创建时快照透传）+funding 三态两计数。
+- 证据强度层——60/5 双阈值（constants 单源）+research_status 查询期
+  现算（§9.2 四值，build-strategy-lifecycle 5.3：三序解析迁移后随动；
+  策略行已删回退任务行快照列=创建时点审计事实兜底）+funding 三态两
+  计数。
 
 报告时机：滚动=实时计算（running/pending/终态均可取，不落库）；结题
 =completed/stopped/error 固化落 pt_report（error 态保留已产出数据同样
@@ -198,7 +200,7 @@ def _assemble_report(
     performance, paper_side = _performance_layer(
         task, equity_rows, exit_fills)
     evidence = _evidence_layer(
-        task, equity_rows, fill_rows, exit_fills, funding_rows)
+        db_path, task, equity_rows, fill_rows, exit_fills, funding_rows)
     deviation = _deviation_layer(
         db_path, data_dir, task, equity_rows, paper_side, evidence)
     return {
@@ -351,14 +353,20 @@ def _attribution_notes(evidence: Dict[str, Any]) -> List[str]:
 
 
 def _evidence_layer(
+    db_path: Path,
     task: Dict[str, Any],
     equity_rows: List[Dict[str, Any]],
     fill_rows: List[Dict[str, Any]],
     exit_fills: List[Dict[str, Any]],
     funding_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """证据强度层：60/5 双阈值+研究状态快照+funding 三态计数+出场
+    """证据强度层：60/5 双阈值+研究状态现算+funding 三态计数+出场
     原因分布。
+
+    research_status 查询期现算（build-strategy-lifecycle 5.3 读点①：
+    resolve_research_status 三序——迁移后随动非快照）；策略行已删
+    （draft 真删等场景）回退任务行快照列（创建时点审计事实兜底，
+    信息不丢失不虚构）。
 
     insufficient_evidence = bars_run<60 OR closed_trades<5（任一命中即
     整份报告标注；position_bars 共同披露但不参与判定）。
@@ -372,12 +380,20 @@ def _evidence_layer(
     evidence 层归因不含它。无出场任务该键={}（键恒在场，与「无数据」
     区分）。权威源=pt_fill（聚合派生视图不另立第二事实源）。
     """
+    from core.persistence.repository.strategy import get_strategy
+
     bars_run = len(equity_rows)
     closed_trades = len(exit_fills)
     position_bars = _position_bars(task, equity_rows, fill_rows)
     settled = sum(
         1 for r in funding_rows if r["status"] in _SETTLED_STATUSES)
     pending = sum(1 for r in funding_rows if r["status"] == "pending")
+    # 研究状态读点现算：策略行在→三序解析；行已删→快照列审计值兜底
+    strategy = get_strategy(db_path, task["strategy_id"])
+    research_status = (
+        paper.resolve_research_status(db_path, strategy)
+        if strategy is not None
+        else task["research_status_snapshot"])
     # 出场原因分布：kind 直接作键（close 细分 reason）；reduce 跳过
     # （仓位管理动作非出场——归因口径，收益面归 performance 层）
     exit_reasons: Dict[str, int] = {}
@@ -400,7 +416,7 @@ def _evidence_layer(
         "position_bars": position_bars,
         "insufficient_evidence": (
             bars_run < PAPER_MIN_BARS or closed_trades < PAPER_MIN_TRADES),
-        "research_status": task["research_status_snapshot"],
+        "research_status": research_status,
         "funding_settled_points": settled,
         # 无 funding 行=None（「无资金费数据」与「0 笔挂起」语义区分）
         "funding_pending_points": pending if funding_rows else None,

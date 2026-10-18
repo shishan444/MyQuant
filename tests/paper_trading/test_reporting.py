@@ -302,8 +302,10 @@ class TestEvidenceLayer:
         assert evidence["closed_trades"] == trades
         assert evidence["insufficient_evidence"] is insufficient
 
-    def test_research_status_snapshot_passthrough(self, tmp_path):
-        """研究状态四值快照透传（§9.2——创建时快照，报告时不再查库）。"""
+    def test_research_status_strategy_missing_falls_back_to_snapshot(
+            self, tmp_path):
+        """策略行已删（draft 真删等场景）：research_status 回退任务行
+        快照列（创建时点审计事实兜底——直建任务无 strategy 行即此世界）。"""
         from core.paper_trading.reporting import build_report
         db = _make_db(tmp_path)
         tid = _seed_task(db, research_status="verified")
@@ -311,6 +313,41 @@ class TestEvidenceLayer:
 
         assert build_report(db, tmp_path, tid)["evidence"][
             "research_status"] == "verified"
+
+    def test_research_status_computed_live_follows_migration(
+            self, tmp_path):
+        """读点现算（5.3②读点①）：正反向夹迁移——同任务行不动，策略
+        侧出现 draft→active 事件后报告值随动 verified（快照列冻结
+        unverified——现算非列值的防回潮锚）。"""
+        from sqlalchemy import text
+
+        from core.paper_trading.reporting import build_report
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository.strategy import save_strategy
+
+        db = _make_db(tmp_path)
+        save_strategy(db, strategy_id="strat-1", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h",
+                      gene_signature="sig_rep")
+        tid = _seed_task(db, research_status="unverified")
+        _seed_equity_bars(db, tid, 3)
+        # 迁移前（A）：无事件→序③兜底 unverified
+        assert build_report(db, tmp_path, tid)["evidence"][
+            "research_status"] == "unverified"
+        # 策略侧转正事实（draft→active 事件——构造轨直插）
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "INSERT INTO strategy_transition_event (event_id,"
+                " strategy_id, from_status, to_status, trigger,"
+                " evidence_json, created_at) VALUES ('ev_rep01',"
+                " 'strat-1', 'draft', 'active', 'credential', NULL,"
+                " '2026-10-18T00:00:00')"))
+        # 迁移后（B）：报告现算 verified——与 A 夹迁移排除恒等巧合
+        assert build_report(db, tmp_path, tid)["evidence"][
+            "research_status"] == "verified"
+        from core.persistence.repository import paper
+        assert paper.get_task(db, tid)["research_status_snapshot"] == \
+            "unverified", "快照列冻结（创建时点审计事实）"
 
     def test_funding_counts_mixed(self, tmp_path):
         """三态混合计数：settled 2+disclosure 1→settled=3/pending=1/

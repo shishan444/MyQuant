@@ -27,13 +27,14 @@ _LEGACY_PAPER_INDEXES = frozenset({
 
 
 class TestModelMetadata:
-    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表
-    （rebuild-paper-trading 2.1；其中旧纸盘三表转留档），导入无误。"""
+    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表 + 1 生命
+    周期事件表（build-strategy-lifecycle 1.2；其中旧纸盘三表转留档），
+    导入无误。"""
 
     def test_table_count(self):
         from core.persistence.orm import Base
         active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
-        assert len(active) == 21
+        assert len(active) == 22
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
@@ -47,6 +48,8 @@ class TestModelMetadata:
             "feature_requests", "validation_records",
             # 纸盘域（rebuild-paper-trading 2.1）
             "pt_task", "pt_fill", "pt_equity", "pt_funding", "pt_report",
+            # 生命周期事件表（build-strategy-lifecycle 1.2）
+            "strategy_transition_event",
         }
         assert expected == set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
         # 留档旧三表退役前仍在 metadata（组 7 随旧模型类删除收走）
@@ -76,6 +79,10 @@ class TestModelMetadata:
             ("pt_fill", "ux_pt_fill_task_bar_seq"),
             ("pt_equity", "ux_pt_equity_task_bar"),
             ("pt_funding", "ux_pt_funding_task_settle"),
+            # 生命周期事件表（build-strategy-lifecycle 1.2；Alembic
+            # de92805ed44c 同规声明——两方不一致静默架空）
+            ("strategy_transition_event",
+             "idx_strategy_transition_event_strategy_created"),
         }
         assert expected == idx - _LEGACY_PAPER_INDEXES
         # 留档旧三表索引退役前仍在（随组 7 收走）
@@ -293,9 +300,11 @@ class TestAlembicBaseline:
         conn.close()
 
     def test_init_db_product_mixed_init_db_ext_no_column_clash(self, tmp_path: Path):
-        """TD-10 边界①修复锚（d069c7d）：init_db（ORM create_all）产物
-        为 head 全列形但无 alembic_version——stamp 分支的 head 形探测
-        使其直接 stamp head 短路，不再撞 duplicate column；数据保全、
+        """TD-10 边界①修复锚（d069c7d）+CARD-01 补强：init_db（ORM
+        create_all）产物为全列形但无 alembic_version 且无 DB 触发器
+        ——stamp 分支按触发器判据（CARD-01 三分支）stamp 至 lifecycle
+        前一版由 upgrade 补触发器与存量分类（不再撞 duplicate column
+        亦不再 stamp head 短路留下无触发器的谎报终态）；数据保全、
         二次幂等。"""
         from core.persistence.db import init_db, save_task, get_task
         from core.persistence.db_ext import init_db_ext
@@ -317,12 +326,118 @@ class TestAlembicBaseline:
         init_db_ext(db)   # 二次幂等
         assert get_task(db, "mix-001") is not None
 
+    def test_create_all_form_db_init_db_ext_installs_triggers(
+            self, tmp_path: Path):
+        """CARD-01 修复锚：create_all 形库（init_db 产物——全列形、
+        事件表已由 ORM 建出、DB 触发器必缺、无 alembic_version）经
+        init_db_ext 后触发器必须补装在场且版本记账真实到 head。
+
+        修复前缺陷：全列形直判 head 短路——触发器永久缺失且版本谎报
+        终态。修复后：触发器判据三分支 stamp 至 lifecycle 前版，由
+        upgrade 补双域触发器+存量分类（迁移建表段在场守卫防撞 ORM
+        已建事件表）。附带断言存量分类语义（active×活跃任务→paper
+        零事件）与二次幂等。
+        """
+        from core.persistence.db import init_db
+        from core.persistence.db_ext import init_db_ext
+
+        def _trigger_count(path: Path) -> int:
+            conn = sqlite3.connect(str(path))
+            n = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+                " AND name IN ('trg_strategy_status_domain',"
+                " 'trg_strategy_status_insert_domain')").fetchone()[0]
+            conn.close()
+            return n
+
+        db = tmp_path / "create_all.db"
+        init_db(db)
+        assert _trigger_count(db) == 0, "前置：create_all 建不出 DB 触发器"
+        conn = sqlite3.connect(str(db))
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND"
+            " name='strategy_transition_event'").fetchone()[0] == 1, \
+            "前置：ORM 已按 models 建事件表（upgrade 防撞守卫的适用前提）"
+        conn.execute(
+            "INSERT INTO strategy (strategy_id, dna_json, symbol,"
+            " timeframe, gene_signature, source, status, created_at,"
+            " updated_at) VALUES ('st_ca', '{}', 'BTCUSDT', '4h', 'g',"
+            " 'manual', 'active', '2024-01-01', '2024-01-01')")
+        conn.execute(
+            "INSERT INTO pt_task (task_id, status, strategy_id,"
+            " dna_snapshot_json, symbol, timeframe,"
+            " research_status_snapshot, created_at, updated_at)"
+            " VALUES ('tk_ca', 'pending', 'st_ca', '{}', 'BTCUSDT', '4h',"
+            " 'unverified', '2024-01-01', '2024-01-01')")
+        conn.commit()
+        conn.close()
+
+        init_db_ext(db)
+
+        assert _trigger_count(db) == 2, "双域触发器补装在场（CARD-01 本体）"
+        conn = sqlite3.connect(str(db))
+        ver = conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall()
+        status = conn.execute(
+            "SELECT status FROM strategy WHERE strategy_id='st_ca'"
+        ).fetchone()[0]
+        events = conn.execute(
+            "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
+        conn.close()
+        assert len(ver) == 1 and ver[0][0] == "de92805ed44c", \
+            "版本记账真实到 head 恰一行"
+        assert status == "paper", "upgrade 补存量分类（active×活跃任务→paper）"
+        assert events == 0, "存量分类零事件（纯净性原则）"
+
+        init_db_ext(db)   # 二次幂等：触发器不翻倍、版本不增、分类不重跑
+        assert _trigger_count(db) == 2
+        conn = sqlite3.connect(str(db))
+        assert conn.execute(
+            "SELECT COUNT(*) FROM alembic_version").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT status FROM strategy WHERE strategy_id='st_ca'"
+        ).fetchone()[0] == "paper"
+        conn.close()
+
+    def test_true_head_shape_db_stamps_head_short_circuit(
+            self, tmp_path: Path):
+        """三分支第一支（闸门②盲区消解）：真 head 形库（upgrade head
+        产物=全列+双域触发器在场）DROP 版本表后经 init_db_ext→
+        触发器判据命中 head 分支直接 stamp head 短路——不重跑迁移、
+        触发器不翻倍、版本恰一行。"""
+        from core.persistence.db_ext import init_db_ext
+
+        db = tmp_path / "true_head.db"
+        self._alembic("upgrade", "head", db_path=db)   # 全列+触发器在场
+        conn = sqlite3.connect(str(db))
+        triggers_before = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+            " AND name IN ('trg_strategy_status_domain',"
+            " 'trg_strategy_status_insert_domain')").fetchone()[0]
+        conn.execute("DROP TABLE alembic_version")   # 模拟脱轨库
+        conn.commit()
+        conn.close()
+        assert triggers_before == 2, "前置：head 产物双触发器在场"
+
+        init_db_ext(db)   # stamp head 短路分支
+
+        conn = sqlite3.connect(str(db))
+        ver = conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall()
+        triggers_after = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+            " AND name IN ('trg_strategy_status_domain',"
+            " 'trg_strategy_status_insert_domain')").fetchone()[0]
+        conn.close()
+        assert len(ver) == 1 and ver[0][0] == "de92805ed44c"
+        assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
+
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):
         """闸门重开步骤4 属性锚：换芯三分支终态不变量——任意初始形态
-        （空库全链 / legacy 终态形 stamp+upgrade / head 形短路）经
-        init_db_ext 后收敛同一终态：alembic_version 恰一行、业务表
-        schema 与干净 head 库全等（第一分支产 fresh 即基准）、二次
-        执行幂等。"""
+        （空库全链 / legacy 终态形 stamp+upgrade / 全列形经触发器判据
+        stamp 前版+upgrade 补链，CARD-01）经 init_db_ext 后收敛同一
+        终态：alembic_version 恰一行、业务表 schema 与干净 head 库全等
+        （第一分支产 fresh 即基准）、二次执行幂等。"""
         from core.persistence.db import init_db
         from core.persistence.db_ext import init_db_ext
 
@@ -345,7 +460,7 @@ class TestAlembicBaseline:
 
         head_shape = tmp_path / "b_head.db"
         init_db(head_shape)                      # ORM 全列形、无版本表
-        init_db_ext(head_shape)                  # 分支③：head 形探测短路
+        init_db_ext(head_shape)                  # 分支③：全列形 stamp 前版+upgrade 补链（CARD-01）
 
         for db in (fresh, legacy, head_shape):
             assert _stamp_row(db) == 1, f"{db.name} 版本表恰一行"

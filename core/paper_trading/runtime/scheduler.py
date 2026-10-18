@@ -14,7 +14,10 @@
 - feed 驱动：活跃 feed 的 refresh（执行器订阅的共享作业单点刷新）；
 - 终态回补例程（Q-2，tasks 3.5）：定期扫全部任务（含终态）的
   pending 资金费行，parquet 可达则回填（不动 balance）+触发报告
-  修订版回调。
+  修订版回调；
+- 策略回流（build-strategy-lifecycle 5.2）：任务终态回调触
+  paper→active 迁移（trigger=task_end，多任务守卫+失败两权威分离）
+  +回补重放步自愈（扫描 paper 态策略重试迁移）。
 
 测试通道：run_once() 单轮同步执行（拾取/心跳/feed 刷新/回补四段），
 不经守护线程与时钟。
@@ -340,25 +343,145 @@ class PaperScheduler:
         thread.start()
 
     def _executor_concluded(self, task_id: str, status: str) -> None:
-        """执行器终态回调：登记清理+客户端回调透传。"""
+        """执行器终态回调：登记清理+策略回流迁移+客户端回调透传。
+
+        策略回流（build-strategy-lifecycle 5.2a）在登记清理后、客户端
+        回调前——迁移失败不绑架结题（两权威分离）。
+        """
         with self._lock:
             self._executors.pop(task_id, None)
             self._threads.pop(task_id, None)
+        self._replay_task_end(task_id, status)
         if self._on_concluded_client is not None:
             self._on_concluded_client(task_id, status)
 
-    def _run_backfill(self) -> None:
-        """终态后资金费回补例程（Q-2 封账设计——注入面）。
+    def _replay_task_end(self, task_id: str, status: str) -> None:
+        """任务终态触策略回流（paper→active，trigger=task_end）。
 
-        扫全部任务（含终态）的 pending 行：parquet 可达则回填 rate/
-        amount（不动 balance）+status→settled_disclosure_only+触发
+        三终态（completed/stopped/error）各自触发；凭证=task_id+终态+
+        该策略无其他活跃 pt_task（credential.has_no_active_tasks 单点
+        守卫，transit 内建判定）。返回族分流：迁移成功与非最后任务
+        （active_tasks_remain 正当不触发）记 info；已处 active
+        （already_in_status——回流已发生或存量未上盘行）正当不触发；
+        LifecycleError（404 策略不存在/409 非法前态/RACE）→结构化
+        error 日志→结题流程继续（pt_task 终态与 strategy.status 两
+        权威分立，结题不被资产簿记失败绑架）——失败场景由
+        _replay_paper_strategies 回补自愈。意外异常（含 get_task
+        通道故障）整体兜底（CARD-02）：任何异常不得跳过
+        _on_concluded_client 结题回调（与 _run_backfill 对
+        _replay_paper_strategies 的兜底形制对齐）。
+        """
+        from core.strategy.lifecycle import transit
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        strategy_id: str | None = None
+        try:
+            row = paper_repo.get_task(self.db_path, task_id)
+            if row is None:
+                return
+            strategy_id = row["strategy_id"]
+            try:
+                result = transit(
+                    self.db_path, strategy_id, target="active",
+                    trigger="task_end",
+                    evidence={"task_id": task_id, "final_status": status})
+            except LifecycleError as exc:
+                logger.error(
+                    "策略回流迁移失败（结题继续）: strategy_id=%s task_id=%s"
+                    " trigger=task_end code=%s message=%s detail=%s",
+                    strategy_id, task_id, exc.code, exc.message, exc.detail)
+                return
+            if result["migrated"]:
+                logger.info(
+                    "纸盘任务 %s 终态触发策略回流: strategy_id=%s paper→active",
+                    task_id, strategy_id)
+            elif result["not_migrated_reason"] == "active_tasks_remain":
+                logger.info(
+                    "策略 %s 暂不回流（仍有活跃任务，正当不触发）: task_id=%s",
+                    strategy_id, task_id)
+            else:
+                logger.debug(
+                    "策略 %s 已处 active（回流已发生或存量未上盘行）:"
+                    " task_id=%s", strategy_id, task_id)
+        except Exception:
+            # 兜底边界（CARD-02）：回流属资产簿记侧，异常不得冒泡到
+            # _executor_concluded 跳过结题回调（pt_task 终态权威）
+            logger.exception(
+                "策略回流重放意外异常（结题继续）: strategy_id=%s"
+                " task_id=%s trigger=task_end",
+                strategy_id, task_id)
+
+    def _run_backfill(self) -> None:
+        """终态后资金费回补例程（Q-2 封账设计——注入面）+策略迁移
+        重放步（build-strategy-lifecycle 5.2c）。
+
+        资金费步扫全部任务（含终态）的 pending 行：parquet 可达则回填
+        rate/amount（不动 balance）+status→settled_disclosure_only+触发
         报告修订版回调。缺省函数在 recovery 模块（延迟 import）。
+        重放步扫「终态 pt_task×strategy.status='paper'×无活跃任务」
+        重试 transit(task_end)——回调失败的策略下轮自愈。
         """
         backfill = self._backfill_fn or self._default_backfill
         try:
             backfill(self.db_path)
         except Exception:
             logger.exception("终态资金费回补例程异常（续轮）")
+        try:
+            self._replay_paper_strategies()
+        except Exception:
+            logger.exception("策略迁移重放步异常（续轮）")
+
+    def _replay_paper_strategies(self) -> None:
+        """回补重试通道（5.2c）：paper 态策略的终态任务重放回流。
+
+        扫描域=「终态 pt_task×strategy.status='paper'×无活跃任务」
+        （守卫判定与回调路径共享 credential.has_no_active_tasks 单点）；
+        命中即重试 transit(task_end, evidence=最新终态任务 task_id+
+        终态)。CAS+幂等：已迁移行不在扫描域（status 已 active）不产生
+        第二事件；单策略失败记日志继续（再失败下轮自愈，无新端点无
+        人工通道）。
+        """
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.lifecycle import transit
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        # 每策略取最新终态任务（evidence 凭证源——task_id+终态）
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in paper_repo.list_tasks(self.db_path, limit=100_000):
+            if row["status"] not in paper_repo.PT_STATUS_TERMINAL:
+                continue
+            sid = row["strategy_id"]
+            prev = latest.get(sid)
+            if prev is None or row["created_at"] >= prev["created_at"]:
+                latest[sid] = row
+        if not latest:
+            return
+        from core.strategy.lifecycle import credential as lifecycle_credential
+
+        engine = engine_for(self.db_path)
+        for sid, task in latest.items():
+            strategy = get_strategy(self.db_path, sid)
+            if strategy is None or strategy.get("status") != "paper":
+                continue
+            with engine.connect() as conn:
+                if not lifecycle_credential.has_no_active_tasks(conn, sid):
+                    continue
+            try:
+                result = transit(
+                    self.db_path, sid, target="active", trigger="task_end",
+                    evidence={"task_id": task["task_id"],
+                              "final_status": task["status"]})
+            except LifecycleError as exc:
+                logger.error(
+                    "策略迁移重放失败（下轮自愈）: strategy_id=%s"
+                    " task_id=%s trigger=task_end code=%s message=%s",
+                    sid, task["task_id"], exc.code, exc.message)
+                continue
+            if result["migrated"]:
+                logger.info(
+                    "回补重放：策略 %s 经终态任务 %s 回流 active",
+                    sid, task["task_id"])
 
     def _default_backfill(self, db_path: Path) -> None:
         """缺省回补函数（data_dir 取 registry.data_dir 事实源——

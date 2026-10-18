@@ -136,6 +136,46 @@ class TestUpdateDelete:
         repo.delete_strategy(db, "ghost")  # 不抛错即通过
 
 
+class TestUpdateConnPassthrough:
+    """update_strategy conn 可选透传（CARD-03，形制同 paper.create_task）：
+    传入走外层事务（回滚不落库/提交落库）；白名单与 status 拒绝在
+    透传路径同样生效。缺省自开单事务行为由 TestUpdateDelete 组承载。"""
+
+    def test_透传外层回滚不落库(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            repo.update_strategy(db, strategy_id="s1", name="in_tx",
+                                conn=conn)
+            conn.rollback()
+        assert repo.get_strategy(db, "s1")["name"] is None, \
+            "透传更新随外层回滚不落库"
+
+    def test_透传提交落库(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            repo.update_strategy(db, strategy_id="s1", name="committed",
+                                conn=conn)
+        assert repo.get_strategy(db, "s1")["name"] == "committed"
+
+    def test_透传路径status键仍拒绝(self, db):
+        from core.persistence.orm.engine import engine_for
+
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        _strategy(db, "s1", signature="sig-1")
+        engine = engine_for(db)
+        with engine.begin() as conn:
+            with pytest.raises(LifecycleError):
+                repo.update_strategy(db, strategy_id="s1", status="active",
+                                     conn=conn)
+
+
 class TestVerifyStatsRolling:
     """update_strategy_verify_stats：COALESCE/MAX 增量滚动。"""
 
@@ -167,3 +207,41 @@ class TestVerifyStatsRolling:
                 db, "s1", new_score=score, verify_star=1,
                 verified_at="2026-01-01T00:00:00+00:00")
         assert repo.get_strategy(db, "s1")["verify_best_score"] == 90.0
+
+
+class TestWriteSurfaceLockdown:
+    """三写点收编·repository 侧两项（build-strategy-lifecycle 1.3）：
+    save 初始态白名单（函数级 422 先于 DB 触发器——双层守卫层②面）
+    +update 对 status 键显式拒绝（此前静默过滤，行为变化点：写面
+    收敛后全库 status 唯一写点=生命周期迁移服务 CAS）。"""
+
+    @pytest.mark.parametrize("bad", ["paper", "candidate", "live", "archived"])
+    def test_save初始态白名单外结构化拒绝(self, db, bad):
+        from core.strategy.lifecycle.machine import LifecycleError
+        with pytest.raises(LifecycleError) as ei:
+            repo.save_strategy(db, strategy_id="st_bad", dna_json="{}",
+                               symbol="BTCUSDT", timeframe="4h", status=bad)
+        assert ei.value.code == "STRATEGY_INITIAL_STATUS_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["status"] == bad
+        assert sorted(ei.value.detail["allowed"]) == ["active", "draft"]
+
+    def test_save白名单内两值放行(self, db):
+        # 签名错开：同签名 active 行会被 save 去重吞（既有语义）
+        _strategy(db, "st_d", status="draft", signature="sig-wl-d")
+        _strategy(db, "st_a", status="active", signature="sig-wl-a")
+        assert repo.get_strategy(db, "st_d")["status"] == "draft"
+        assert repo.get_strategy(db, "st_a")["status"] == "active"
+
+    def test_update传status键显式拒绝(self, db):
+        from core.strategy.lifecycle.machine import LifecycleError
+        _strategy(db, "st_lock")
+        with pytest.raises(LifecycleError) as ei:
+            repo.update_strategy(db, strategy_id="st_lock",
+                                 status="archived", name="x")
+        assert ei.value.code == "STRATEGY_STATUS_WRITE_FORBIDDEN"
+        assert ei.value.status == 422
+        # 拒绝非静默：整个调用失败，无部分写入（name 亦未落）
+        row = repo.get_strategy(db, "st_lock")
+        assert row["status"] == "active"
+        assert row["name"] is None

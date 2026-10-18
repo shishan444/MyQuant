@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from core.persistence.orm.engine import engine_for
 from core.persistence.repository.backtest_result import (
     get_backtest_result,
     list_backtest_results,
@@ -59,8 +60,20 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
+from core.strategy.lifecycle import transit
+from core.strategy.lifecycle.machine import LifecycleError, SUCCESSORS
 
 logger = logging.getLogger(__name__)
+
+
+def _lifecycle_error_to_http(exc: LifecycleError) -> HTTPException:
+    """LifecycleError -> HTTPException（detail 三段形制，沿 research/
+    common.research_error_to_http——strategies 子包不 import 兄弟模块，
+    转换契约在本域单点维护）。"""
+    return HTTPException(
+        status_code=exc.status,
+        detail={"code": exc.code, "message": exc.message, "detail": exc.detail},
+    )
 
 
 router = APIRouter()
@@ -197,6 +210,11 @@ def list_strategies_endpoint(
 ) -> StrategyListResponse:
     """策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
     显式 status=draft 可查草稿。
+
+    qualified 过滤参数 deprecated（build-strategy-lifecycle 5.3 死列
+    处置）：strategy.qualified 声明后从未写入实测全 NULL——布尔过滤
+    恒空集=现状行为保留（API 兼容不摘参数）；资格语义已由六态+凭证
+    接管（同名异列注意：backtest_result.qualified 是真数据活列）。
     """
     try:
         rows = list_strategies(
@@ -304,8 +322,72 @@ def delete_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> None:
-    """按 ID 删除策略。"""
+    """按 ID 删除策略（build-strategy-lifecycle 3.3 两分支）：
+    draft→物理删除（现状保持）；非 draft→经 transit(manual_archive)
+    归档后 204（行保留+事件在场）——REST 同端点同状态码语义从物理
+    删除变归档（strategy-lifecycle spec delta ADDED 承载，消费者影响
+    经 S12 披露）。操作者载荷取本地单用户部署形态（工程无用户体系）。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    delete_strategy(db_path, strategy_id)
+    if existing.get("status") == "draft":
+        delete_strategy(db_path, strategy_id)
+        return
+    try:
+        transit(
+            db_path, strategy_id, target="archived",
+            trigger="manual_archive",
+            evidence={"operator": "local-user",
+                      "note": "非 draft 删除请求转归档（DELETE 端点）"})
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
+
+
+@router.post("/{strategy_id}/revalidate")
+def revalidate_strategy_endpoint(
+    strategy_id: str,
+    db_path: Path = Depends(get_db_path),
+) -> StrategyResponse:
+    """归档重启重验（build-strategy-lifecycle 3.4，沿 stop/clone 动作
+    端点形制）：archived→draft+旧验证统计作废重置（五列：verify_count
+    置 0，verify_avg_score/verify_best_score/verify_star/last_verified_at
+    置 NULL——models.py verify 组列）+validation_records 不删不改（审计
+    事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时
+    旧值可自事件追溯）+水位不归零（事件 append-only）。非
+    archived→409 STRATEGY_ILLEGAL_TRANSITION。迁移+重置两步同事务
+    （CARD-03）：重置失败则迁移一并回滚，不留「已 draft 但旧统计
+    未作废」中间态。"""
+    existing = get_strategy(db_path, strategy_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if existing.get("status") != "archived":
+        raise _lifecycle_error_to_http(LifecycleError(
+            code="STRATEGY_ILLEGAL_TRANSITION",
+            message="仅 archived 策略可重启重验",
+            status=409,
+            detail={"strategy_id": strategy_id,
+                    "from_status": existing.get("status"),
+                    "to_status": "draft",
+                    "allowed_successors": sorted(SUCCESSORS["archived"])}))
+    invalidated = {
+        "verify_count": existing.get("verify_count"),
+        "verify_avg_score": existing.get("verify_avg_score"),
+        "verify_best_score": existing.get("verify_best_score"),
+        "verify_star": existing.get("verify_star"),
+        "last_verified_at": existing.get("last_verified_at"),
+    }
+    engine = engine_for(db_path)
+    try:
+        with engine.begin() as conn:
+            transit(db_path, strategy_id, target="draft",
+                    trigger="revalidate",
+                    evidence={"invalidated_stats": invalidated}, conn=conn)
+            update_strategy(
+                db_path, strategy_id=strategy_id, conn=conn,
+                verify_count=0, verify_avg_score=None,
+                verify_best_score=None, verify_star=None,
+                last_verified_at=None)
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
+    row = get_strategy(db_path, strategy_id)
+    return _strategy_row_to_response(row)
