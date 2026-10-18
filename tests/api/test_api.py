@@ -232,15 +232,59 @@ class TestStrategyUpdate:
         assert response.status_code == 404
 
 class TestStrategyDelete:
-    def test_delete_strategy(self, client: TestClient) -> None:
-        """DELETE /api/strategies/{id} should delete strategy."""
+    @staticmethod
+    def _force_status(client: TestClient, strategy_id: str, status: str) -> None:
+        """直 SQL 构造非 draft 前置态（触发器只拦六值外——合法值直改
+        不受 DB 拦，被测对象是 DELETE 端点而非 transit）。"""
+        import sqlite3
+        db = str(client.app.state.db_path)
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE strategy SET status = ? WHERE strategy_id = ?",
+                     (status, strategy_id))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _transition_events(client: TestClient, strategy_id: str) -> list:
+        import sqlite3
+        db = str(client.app.state.db_path)
+        conn = sqlite3.connect(db)
+        rows = conn.execute(
+            "SELECT from_status, to_status, trigger FROM"
+            " strategy_transition_event WHERE strategy_id = ?",
+            (strategy_id,)).fetchall()
+        conn.close()
+        return rows
+
+    def test_delete_draft_hard_deletes(self, client: TestClient) -> None:
+        """draft→物理删除保持：204+行消失（build-strategy-lifecycle
+        3.3 分支一；POST 创建缺省 active，直改 draft 构造场景）。"""
         create_resp = client.post("/api/strategies", json=_sample_strategy_create())
         strategy_id = create_resp.json()["strategy_id"]
+        self._force_status(client, strategy_id, "draft")
         response = client.delete(f"/api/strategies/{strategy_id}")
         assert response.status_code == 204
-        # Verify it is gone
+        # 行已物理删除
         get_resp = client.get(f"/api/strategies/{strategy_id}")
         assert get_resp.status_code == 404
+        assert self._transition_events(client, strategy_id) == []
+
+    @pytest.mark.parametrize("status", ["active", "paper", "candidate", "live"])
+    def test_delete_non_draft_archives(self, client: TestClient, status: str) -> None:
+        """非 draft→经 transit(manual_archive) 归档：204+行保留
+        status=archived+事件在场（REST 同端点语义从物理删除变归档——
+        build-strategy-lifecycle 3.3 分支二，spec delta ADDED 承载）。"""
+        create_resp = client.post("/api/strategies", json=_sample_strategy_create())
+        strategy_id = create_resp.json()["strategy_id"]
+        self._force_status(client, strategy_id, status)
+        response = client.delete(f"/api/strategies/{strategy_id}")
+        assert response.status_code == 204
+        get_resp = client.get(f"/api/strategies/{strategy_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["status"] == "archived"
+        events = self._transition_events(client, strategy_id)
+        assert [(e[0], e[1], e[2]) for e in events] == [
+            (status, "archived", "manual_archive")]
 
     def test_delete_strategy_not_found(self, client: TestClient) -> None:
         """DELETE /api/strategies/{id} with nonexistent ID should return 404."""

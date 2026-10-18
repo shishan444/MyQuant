@@ -59,8 +59,20 @@ from api.schemas import (
     VerifySessionResponse,
     VerifySessionListResponse,
 )
+from core.strategy.lifecycle import transit
+from core.strategy.lifecycle.machine import LifecycleError
 
 logger = logging.getLogger(__name__)
+
+
+def _lifecycle_error_to_http(exc: LifecycleError) -> HTTPException:
+    """LifecycleError -> HTTPException（detail 三段形制，沿 research/
+    common.research_error_to_http——strategies 子包不 import 兄弟模块，
+    转换契约在本域单点维护）。"""
+    return HTTPException(
+        status_code=exc.status,
+        detail={"code": exc.code, "message": exc.message, "detail": exc.detail},
+    )
 
 
 router = APIRouter()
@@ -304,8 +316,22 @@ def delete_strategy_endpoint(
     strategy_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> None:
-    """按 ID 删除策略。"""
+    """按 ID 删除策略（build-strategy-lifecycle 3.3 两分支）：
+    draft→物理删除（现状保持）；非 draft→经 transit(manual_archive)
+    归档后 204（行保留+事件在场）——REST 同端点同状态码语义从物理
+    删除变归档（strategy-lifecycle spec delta ADDED 承载，消费者影响
+    经 S12 披露）。操作者载荷取本地单用户部署形态（工程无用户体系）。"""
     existing = get_strategy(db_path, strategy_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    delete_strategy(db_path, strategy_id)
+    if existing.get("status") == "draft":
+        delete_strategy(db_path, strategy_id)
+        return
+    try:
+        transit(
+            db_path, strategy_id, target="archived",
+            trigger="manual_archive",
+            evidence={"operator": "local-user",
+                      "note": "非 draft 删除请求转归档（DELETE 端点）"})
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
