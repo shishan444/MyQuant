@@ -270,8 +270,13 @@ RISK_BUDGET_PARITY_GRID: tuple[ParityCase, ...] = (
                 "risk_fraction": 0.01, "stop_dist": 5.0,
                 "leverage": 3.0, "max_exposure": 1.0},
         zone="equal", pure_expected=200.0),
-    # reject 域（距离不可定义/价格/权益非正——纯 Python 0.0 ==
-    # risk_budget_qty (0.0, 0.0)）
+    # reject 域（距离不可定义/价格/权益非正/三源 NaN——纯 Python 0.0
+    # == risk_budget_qty (0.0, 0.0)）。两 NaN 案例（CARD-05）的
+    # stop_dist 按距离契约传导填 NaN（stop_loss/base_price=NaN→
+    # dist=NaN），njit 拦 dist NaN 与纯 Python 拒绝等值；与 test_
+    # parity 边界锚的 dist 有效+price NaN 构造（njit 穿透面）是两个
+    # 不同面。rf=inf 不补：risk_fraction 值域 (0,0.5] 在 validator
+    # 外，直构 inf 的等值断言意义弱（architect 裁定）
     ParityCase(
         name="reject_no_stop",
         inputs={"equity": 100_000.0, "base_price": 100.0,
@@ -298,6 +303,20 @@ RISK_BUDGET_PARITY_GRID: tuple[ParityCase, ...] = (
         inputs={"equity": 100_000.0, "base_price": 100.0,
                 "atr_value": None, "sl_mode": "atr", "stop_loss": 2.0,
                 "risk_fraction": 0.02, "stop_dist": float("nan"),
+                "leverage": 1.0, "max_exposure": 1.0},
+        zone="reject", pure_expected=0.0),
+    ParityCase(  # stop_loss=NaN→dist=价×NaN=NaN（三源 NaN 拒绝）
+        name="reject_stop_loss_nan",
+        inputs={"equity": 100_000.0, "base_price": 100.0,
+                "sl_mode": "pct", "stop_loss": float("nan"),
+                "risk_fraction": 0.01, "stop_dist": float("nan"),
+                "leverage": 1.0, "max_exposure": 1.0},
+        zone="reject", pure_expected=0.0),
+    ParityCase(  # base_price=NaN→dist=NaN×比例=NaN（距离契约传导）
+        name="reject_base_price_nan",
+        inputs={"equity": 100_000.0, "base_price": float("nan"),
+                "sl_mode": "pct", "stop_loss": 0.02,
+                "risk_fraction": 0.01, "stop_dist": float("nan"),
                 "leverage": 1.0, "max_exposure": 1.0},
         zone="reject", pure_expected=0.0),
     # cap 域（名义>cap——纯 Python 裸值不截断断言+risk_budget_qty
