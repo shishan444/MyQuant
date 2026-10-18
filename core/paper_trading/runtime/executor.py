@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import queue
 import threading
 from dataclasses import asdict, replace
@@ -603,9 +604,24 @@ class PaperTaskExecutor:
             entry_direction=entry_dir,
         )
 
-    def _closed_bar(self, df: pd.DataFrame, i: int) -> ClosedBar:
-        """df 第 i 行 → ClosedBar（ATR 列按 DNA 周期读；缺列 None）。"""
+    def _closed_bar(self, df: pd.DataFrame,
+                    i: int) -> Optional[ClosedBar]:
+        """df 第 i 行 → ClosedBar（ATR 列按 DNA 周期读；缺列 None）。
+
+        装载点守卫（NaN bar 单点拦截）：open/high/low/close 任一
+        NaN/inf 判该 bar 无效返回 None——OHLC 是下游全链（判定→定仓
+        →成交→落库）的唯一价格入口，此处单点覆盖后 intents/fills/
+        ledger 均不再各自防御。ATR 不在校验面（无效 ATR 语义由
+        risk_budget 距离拒绝链与 _initial_stop 防御覆盖）。
+        """
         row = df.iloc[i]
+        open_ = float(row["open"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+        if not (math.isfinite(open_) and math.isfinite(high)
+                and math.isfinite(low) and math.isfinite(close)):
+            return None
         atr_value: Optional[float] = None
         if self.params.sl_mode == "atr":
             col = f"atr_{int(self.params.atr_period)}"
@@ -613,14 +629,21 @@ class PaperTaskExecutor:
                 atr_value = float(row[col])
         ts = df.index[i]
         return ClosedBar(
-            seq=i, open=float(row["open"]), high=float(row["high"]),
-            low=float(row["low"]), close=float(row["close"]),
+            seq=i, open=open_, high=high,
+            low=low, close=close,
             timestamp=ts, tf_minutes=self._tf_seconds / 60.0,
             atr=atr_value)
 
     def _process_bar(self, df: pd.DataFrame, i: int, sig_set) -> None:
-        """八步 bar 处理序（design §3.5——顺序固定）。"""
+        """八步 bar 处理序（design §3.5——顺序固定）。
+
+        NaN bar 跳过（装载点守卫命中）：不成交、不落库、
+        last_bar_time 不推进、pending 顺延至下一根有效 bar 消费
+        ——对齐回测「NaN bar 无成交无判定生效」的静默容忍。
+        """
         bar = self._closed_bar(df, i)
+        if bar is None:
+            return
         signals = self._bar_signals(sig_set, i)
         bar_time = df.index[i].isoformat()
 

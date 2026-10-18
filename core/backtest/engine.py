@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 # 仓位名义×档位 mmr 触发）——本模块不再持有维持率字面量（单一权威源）。
 from core.market_model import maintenance_threshold as _mm_threshold
 from core.market_model.liquidation import tier_arrays as _mm_tier_arrays
+# 定仓装配三元组物化单源（build-position-registry：resolve 单点的
+# 回测展开适配——公共层包，零引擎侧物化分派）
+from core.positioning import expand_for_backtest
 
 # 0.4.1 Q1 裁决（add-research-analysis-tools）：引擎止损真实分派域。
 # 语义=引擎已实现的真实分派集；区别于声明域 SL_MODES（core/strategy/
@@ -209,23 +212,19 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     time_exit = (float(risk_genes.time_exit_utc)
                  if risk_genes.time_exit_utc is not None
                  else -1.0)
-    # 动态定仓（complete-research-tooling 任务 4）：None/"fixed"→0.0=
-    # 百分比固定路径（逐字节不变）；"risk_budget"→1.0=风险预算档；
-    # risk_fraction None→0.0（risk_budget 档登记面已强制声明，引擎侧
-    # 缺省 0 防御直构 DNA）
-    position_mode_code = (
-        1.0 if risk_genes.position_mode == "risk_budget" else 0.0)
-    risk_fraction = (float(risk_genes.risk_fraction)
-                     if risk_genes.risk_fraction is not None else 0.0)
-    # 首笔生效比例（add-position-sizing-params 2.1）：声明 initial_
-    # fraction 时替换 fixed 路径首笔定仓来源，否则 position_size（存量
-    # 路径）。物化分派单点——两构建入口均从本元组取值；risk_budget 档
-    # 消费端不读 size_pct（互斥由装载校验承担，直构防御=忽略，不设
-    # 第二判断源）
-    effective_first_size = (
-        float(risk_genes.initial_fraction)
-        if risk_genes.initial_fraction is not None
-        else float(risk_genes.position_size))
+    # 动态定仓（complete-research-tooling 任务 4 + add-position-sizing-
+    # params 2.1 + build-position-registry）：定仓装配三元组物化单源移驻
+    # core/positioning（expand_for_backtest——resolve 单点的回测展开适配
+    # 器；None/"fixed"→code 0.0 百分比固定路径、"risk_budget"→1.0 风险
+    # 预算档，rf None→0.0 防御直构，efs=initial_fraction 物化>0 优先否则
+    # position_size——全档物化语义见 adapter.py）。三元组与改造前装配逐
+    # 位等值（R6 四组基准锁定）；两构建入口从本元组取值的接线不变；
+    # risk_budget 档消费端不读 size_pct（互斥由装载校验承担，直构防御=
+    # 忽略，不设第二判断源）
+    exp = expand_for_backtest(risk_genes.position_mode,
+                              risk_genes.position_size,
+                              risk_genes.initial_fraction,
+                              risk_genes.risk_fraction)
     # 持仓金额防线（add-position-sizing-params 2.2）：None→0.0=禁用
     # 哨兵（值域 >0 使 0 天然无歧义——max_hold 同款形制）；1D 逐列常数
     # 参数族。funding_acc 旁路费率不入本元组（leverage/timeframe 两入
@@ -235,8 +234,8 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
                          else 0.0)
     return (sl_mode_val, atr_col, exit_fraction, add_fraction,
             max_exposure, max_hold, time_exit,
-            position_mode_code, risk_fraction, effective_first_size,
-            max_position_loss)
+            exp.position_mode_code, exp.risk_fraction,
+            exp.effective_first_size, max_position_loss)
 
 
 @dataclass
@@ -883,9 +882,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
             dir_sign = 1.0  # size 正、方向控制多空
         # 动态定仓（任务 4）：fixed 档（含缺省 0.0）百分比路径逐字节
         # 不变；risk_budget 档数量仓——止损距离按 sl_mode 三档分派
-        # （pct=价格×比例/atr 与 trail=比例×当根 ATR——trail 初始追踪
-        # 距离=入场 bar ATR 基准），公式单点 risk_budget_qty；距离
-        # 不可定义（无止损/NaN）回退 fixed 百分比路径（防御直构 DNA）
+        # （pct/trail 同为价格×比例〔trail=峰值回撤比例〕，仅 atr=
+        # 比例×当根 ATR——与下方分支及内层 D-6 注释一致），公式单点
+        # risk_budget_qty；距离不可定义（无止损/NaN）回退 fixed
+        # 百分比路径（防御直构 DNA）
         order_size = np.float64(size_pct * dir_sign)
         order_size_type = np.int64(2)  # 百分比仓
         if position_modes[col] > 0.5:

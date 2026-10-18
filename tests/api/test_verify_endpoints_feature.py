@@ -22,6 +22,7 @@ pytestmark = [pytest.mark.integration]
 
 from fastapi.testclient import TestClient
 
+from api.schemas import VerifyRequest
 from tests.helpers.data_factory import make_dna, make_ohlcv
 
 
@@ -410,3 +411,34 @@ class TestVerifyHistoryAndSessions:
         assert response.status_code == 200
         ids = {i["result_id"] for i in response.json()["items"]}
         assert {"res-hist-0", "res-hist-1", "res-hist-2"} <= ids
+
+
+class TestLeverageBoundValidation:
+    """CARD-03：VerifyRequest.leverage 值域 [1, MAX_LEVERAGE]（422 面）。
+
+    Field(ge=1, le=MAX_LEVERAGE) 与 schemas :133/:538 同族形制同源
+    （MAX_LEVERAGE=10——core/strategy/validator 杠杆红线单源）。越界
+    在路由装配层（pydantic）拦截 422、不进 handler；域内 leverage=1
+    的端到端 200 由本文件既有用例承载（_payload 缺省即 1——引用
+    声明不重复建）。/verify/stream 消费同模型同装配，不重复建。
+    """
+
+    @pytest.mark.parametrize(
+        "leverage", [0, 11], ids=["下界外 0", "上界外 MAX_LEVERAGE+1"])
+    def test_leverage_out_of_bounds_422(self, verify_client: TestClient,
+                                        leverage: int) -> None:
+        """越界 leverage → 422（结构化校验拒绝——裸 leverage 不再
+        直通回测装配）。"""
+        response = verify_client.post(
+            "/api/strategies/verify",
+            json=_payload(leverage=leverage))
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "leverage", [1, 5, 10],
+        ids=["下界 1", "域内 5", "上界 MAX_LEVERAGE"])
+    def test_leverage_in_bounds_schema_accepts(self, leverage: int) -> None:
+        """域内含两侧边界 schema 构造照常、缺省=1（合法值不误拦）。"""
+        req = VerifyRequest(**_payload(leverage=leverage))
+        assert req.leverage == leverage
+        assert VerifyRequest(**_payload()).leverage == 1
