@@ -107,8 +107,9 @@ class PaperTaskResponse(BaseModel):
     win_count: int
     loss_count: int
     total_pnl: float
-    # 快照与生命周期
-    research_status_snapshot: str
+    # 快照与生命周期（research_status=查询期现算值——三序规则迁移后
+    # 随动；创建时点审计值不进 REST，DB 列名不改）
+    research_status: str
     created_at: str
     updated_at: str
     started_at: Optional[str] = None
@@ -189,7 +190,18 @@ class FinalReportResponse(BaseModel):
     report: dict
 
 
-def _task_to_response(row: dict) -> PaperTaskResponse:
+def _task_to_response(db_path: Path, row: dict) -> PaperTaskResponse:
+    """任务行转响应（读点②查询期现算——build-strategy-lifecycle 5.3）：
+    research_status=resolve_research_status 三序（迁移后随动非快照）；
+    策略行已删（draft 真删等场景）回退任务行快照列（创建时点审计
+    事实兜底——审计值不进 REST 的常态路径之外唯一回退面）。"""
+    from core.persistence.repository.strategy import get_strategy
+
+    strategy = get_strategy(db_path, row["strategy_id"])
+    research_status = (
+        paper.resolve_research_status(db_path, strategy)
+        if strategy is not None
+        else row["research_status_snapshot"])
     return PaperTaskResponse(
         task_id=row["task_id"], status=row["status"],
         strategy_id=row["strategy_id"], symbol=row["symbol"],
@@ -211,7 +223,7 @@ def _task_to_response(row: dict) -> PaperTaskResponse:
         unrealized_pnl=row["unrealized_pnl"],
         total_trades=row["total_trades"], win_count=row["win_count"],
         loss_count=row["loss_count"], total_pnl=row["total_pnl"],
-        research_status_snapshot=row["research_status_snapshot"],
+        research_status=research_status,
         created_at=row["created_at"], updated_at=row["updated_at"],
         started_at=row["started_at"], stopped_at=row["stopped_at"],
         stop_reason=row["stop_reason"], heartbeat_at=row["heartbeat_at"],
@@ -269,7 +281,7 @@ def create_task(
     task_id = paper.new_task_id()
     # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
     # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
-    snapshot = paper.resolve_research_status(strategy)
+    snapshot = paper.resolve_research_status(db_path, strategy)
     try:
         with engine_for(db_path).begin() as conn:
             # 迁移+建任务同事务原子两向：not_migrated（同态续挂）照常
@@ -301,7 +313,7 @@ def create_task(
             detail={"code": exc.code, "message": exc.message,
                     "detail": exc.detail},
         ) from exc
-    return _task_to_response(paper.get_task(db_path, task_id))
+    return _task_to_response(db_path, paper.get_task(db_path, task_id))
 
 
 @router.get("/tasks", response_model=PaperTaskListResponse)
@@ -316,7 +328,8 @@ def list_tasks(
                              offset=offset)
     total = paper.count_tasks(db_path, status=status)
     return PaperTaskListResponse(
-        tasks=[_task_to_response(t) for t in tasks], total=total)
+        tasks=[_task_to_response(db_path, t) for t in tasks],
+        total=total)
 
 
 @router.get("/tasks/{task_id}", response_model=PaperTaskResponse)
@@ -325,7 +338,7 @@ def get_task(
     db_path: Path = Depends(get_db_path),
 ) -> PaperTaskResponse:
     """任务详情（含运行态组+统计组）。"""
-    return _task_to_response(_require_task(db_path, task_id))
+    return _task_to_response(db_path, _require_task(db_path, task_id))
 
 
 @router.post("/tasks/{task_id}/stop", response_model=PaperTaskResponse)
@@ -349,7 +362,7 @@ def stop_task(
             status_code=409,
             detail=f"task already concluded: "
                    f"{_require_task(db_path, task_id)['status']}")
-    return _task_to_response(_require_task(db_path, task_id))
+    return _task_to_response(db_path, _require_task(db_path, task_id))
 
 
 @router.post("/tasks/{task_id}/clone",
@@ -367,7 +380,7 @@ def clone_task(
         new_row = paper.clone_task(db_path, task_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _task_to_response(new_row)
+    return _task_to_response(db_path, new_row)
 
 
 @router.delete("/tasks/{task_id}")

@@ -41,33 +41,48 @@ def db(tmp_path: Path) -> Path:
 
 
 class TestE1LegacyResolverSixStatuses:
-    """E1：旧解析函数（design §9.2 单源）六态输入不崩溃不劣化。"""
+    """E1：解析函数（三序规则接管后）六态输入不崩溃不劣化——签名
+    (db_path, strategy_row) 真实行形制（5.3 后无事件子集行为=旧规则：
+    非 draft 态落 qualified 分支原样）。"""
 
     @pytest.mark.parametrize("status", [
         "draft", "active", "paper", "candidate", "live", "archived"])
-    def test_six_statuses_do_not_crash_or_degrade(self, status):
-        """六态逐态输入：不抛异常且输出恒四值域内（先行窗 paper/
-        candidate/live/archived 落 qualified 分支=既有规则原样）。"""
+    def test_six_statuses_do_not_crash_or_degrade(self, db, status):
+        """六态逐态×qualified 三值（无事件世界）：不抛异常且输出恒
+        四值域内（paper/candidate/live/archived 落 qualified 分支=
+        既有规则原样——序③兜底）。"""
+        from sqlalchemy import text
+
+        from core.persistence.orm.engine import engine_for
+
+        save_strategy(db, strategy_id="st_e1", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h", status="draft",
+                      gene_signature="sig_e1")
         for qualified in (None, 1, 0):
-            row = {"status": status, "qualified": qualified}
-            out = resolve_research_status(row)
+            with engine_for(db).begin() as conn:
+                conn.execute(text(
+                    "UPDATE strategy SET status=:s, qualified=:q"
+                    " WHERE strategy_id='st_e1'"),
+                    {"s": status, "q": qualified})
+            row = {"strategy_id": "st_e1", "status": status,
+                   "qualified": qualified}
+            out = resolve_research_status(db, row)
             assert out in {"draft", "unverified", "verified",
                            "verification_failed"}, (status, qualified, out)
 
-    def test_draft_short_circuits_before_qualified(self):
-        """draft 先于 qualified 判定（序①语义先行窗已在——延后窗
-        三序规则的序①与现状一致）。"""
-        assert resolve_research_status(
-            {"status": "draft", "qualified": 1}) == "draft"
+    def test_draft_short_circuits_before_qualified(self, db):
+        """draft 先于 qualified 判定（序①语义先行窗已在——三序规则
+        的序①与现状一致）。"""
+        row = {"strategy_id": "st_e1b", "status": "draft", "qualified": 1}
+        assert resolve_research_status(db, row) == "draft"
 
-    def test_non_draft_maps_qualified_three_values(self):
-        """非 draft 态按 qualified 三值映射（旧规则保持）。"""
-        assert resolve_research_status(
-            {"status": "active", "qualified": None}) == "unverified"
-        assert resolve_research_status(
-            {"status": "active", "qualified": 1}) == "verified"
-        assert resolve_research_status(
-            {"status": "active", "qualified": 0}) == "verification_failed"
+    def test_non_draft_maps_qualified_three_values(self, db):
+        """非 draft 态无事件按 qualified 三值映射（旧规则保持=序③）。"""
+        for qualified, expected in ((None, "unverified"), (1, "verified"),
+                                    (0, "verification_failed")):
+            row = {"strategy_id": "st_e1c", "status": "active",
+                   "qualified": qualified}
+            assert resolve_research_status(db, row) == expected
 
 
 class TestE4ThreeLegacyStatusReadSurface:
@@ -91,11 +106,14 @@ class TestE4ThreeLegacyStatusReadSurface:
             conn.execute(text("UPDATE strategy SET status='archived'"
                               " WHERE strategy_id='st_c_r'"))
         assert resolve_research_status(
-            {"status": "draft", "qualified": None}) == "draft"
+            db, {"strategy_id": "st_c_d", "status": "draft",
+                 "qualified": None}) == "draft"
         assert resolve_research_status(
-            {"status": "active", "qualified": None}) == "unverified"
+            db, {"strategy_id": "st_c_a", "status": "active",
+                 "qualified": None}) == "unverified"
         assert resolve_research_status(
-            {"status": "archived", "qualified": None}) == "unverified"
+            db, {"strategy_id": "st_c_r", "status": "archived",
+                 "qualified": None}) == "unverified"
 
     def test_list_default_view_excludes_draft_kept(self, db):
         """列表默认视图排除 draft 的既有过滤行为保持（三态时代语义

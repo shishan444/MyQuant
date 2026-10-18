@@ -76,7 +76,8 @@ def mounted_task(tmp_path: Path, evolved_champion: StrategyDNA
         db, strategy_id="champ-1",
         dna_snapshot_json=strategy["dna_json"],
         symbol="BTCUSDT", timeframe="4h",
-        research_status_snapshot=paper.resolve_research_status(strategy),
+        research_status_snapshot=paper.resolve_research_status(
+            db, strategy),
     )
     return db, task_id, evolved_champion
 

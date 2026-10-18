@@ -175,6 +175,12 @@ def _strategy_filters(
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
 ):
+    """过滤面组装（list/count 共用）。
+
+    qualified 过滤 deprecated（build-strategy-lifecycle 5.3 死列处置）：
+    strategy.qualified 声明后从未写入实测全 NULL——布尔过滤恒空集=
+    现状行为保留（API 兼容不摘参数）；资格语义已由六态+凭证接管。
+    """
     if symbol is not None:
         stmt = stmt.where(Strategy.symbol == symbol)
     if source is not None:

@@ -201,3 +201,52 @@ class TestWriterUniqueness:
         assert not re.search(r"\bstatus\s*=",
                              _full_stmt(negative_orm, hit2)), \
             "窗口越界：INSERT 语句的 status 被误记到 UPDATE 头上"
+
+
+class TestQualifiedDeadColumnNoRegression:
+    """A1 死列防回潮（build-strategy-lifecycle 5.3④）：strategy.qualified
+    零写点三层符号级断言+同名异列守护（backtest_result.qualified 真数据
+    活列照常写入——死列处置不得误伤）。"""
+
+    def test_save_strategy_signature_has_no_qualified(self):
+        """层①签名：save_strategy 参数签名无 qualified（死列零写点——
+        声明后从未写入）。"""
+        import inspect
+
+        from core.persistence.repository.strategy import save_strategy
+
+        assert "qualified" not in inspect.signature(
+            save_strategy).parameters
+
+    def test_allowed_update_fields_excludes_qualified(self):
+        """层②白名单：_ALLOWED_UPDATE_FIELDS 不含 qualified（update
+        通道亦零写点）。"""
+        from core.persistence.repository.strategy import (
+            _ALLOWED_UPDATE_FIELDS,
+        )
+
+        assert "qualified" not in _ALLOWED_UPDATE_FIELDS
+
+    def test_no_sql_literal_qualified_write(self):
+        """层③SQL 字面：「UPDATE strategy SET qualified」全域零命中
+        （core/api/mcpserver 三目录——裸 SQL 直写面亦零）。"""
+        for p in _iter_py_sources():
+            src = p.read_text(encoding="utf-8")
+            assert "UPDATE strategy SET qualified" not in src, \
+                f"{p} 含裸 SQL qualified 直写"
+
+    def test_scanner_detects_known_positive(self):
+        """负例自证：字面扫描器对已知正例命中（防恒空/恒过）。"""
+        positive = "conn.execute(text(\"UPDATE strategy SET qualified=1\"))"
+        assert "UPDATE strategy SET qualified" in positive
+
+    def test_backtest_result_qualified_flow_untouched(self):
+        """同名异列守护锚：batch.py 的 qualified 流（backtest_result.
+        qualified 真数据活列）符号级在场——save_batch_results 调用带
+        qualified 实参未被死列处置误伤（行为锚=
+        tests/api/test_batch_backtest_feature.py 批量回测既有断言复跑）。"""
+        batch_path = _REPO_ROOT / "api" / "routes" / "strategies" / "batch.py"
+        src = batch_path.read_text(encoding="utf-8")
+        assert "qualified" in src, "batch.py qualified 流失踪（死列误伤）"
+        assert re.search(r"qualified\s*=", src), \
+            "backtest_result.qualified 写入实参不在场"

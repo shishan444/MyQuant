@@ -263,7 +263,9 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def get_paper_task(task_id: str) -> Dict[str, Any]:
         """纸盘任务详情（运行态组：账户/持仓/统计+窗口游标 bars_processed
-        +研究验证状态快照 research_status_snapshot）。"""
+        +研究验证状态 research_status——查询期现算〔三序规则，状态迁移
+        后随动〕；任务行快照列是创建时点审计事实，不进本响应。经 REST
+        白名单透传自动随动）。"""
         return api.get(
             f"/api/paper-trading/tasks/{quote(task_id, safe='')}")
 

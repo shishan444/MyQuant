@@ -209,6 +209,11 @@ def list_strategies_endpoint(
 ) -> StrategyListResponse:
     """策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
     显式 status=draft 可查草稿。
+
+    qualified 过滤参数 deprecated（build-strategy-lifecycle 5.3 死列
+    处置）：strategy.qualified 声明后从未写入实测全 NULL——布尔过滤
+    恒空集=现状行为保留（API 兼容不摘参数）；资格语义已由六态+凭证
+    接管（同名异列注意：backtest_result.qualified 是真数据活列）。
     """
     try:
         rows = list_strategies(

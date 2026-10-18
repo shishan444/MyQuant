@@ -7,7 +7,8 @@
   吸收恢复重放）；
 - 级联删 delete_task 五表单事务；
 - clone 新建 pending 行（research_status_snapshot 按 clone 创建时点
-  重新快照——「创建时快照」语义一致性，design §5.1）；
+  重新解析——创建时点审计+查询期现算双句式：列值=创建时点审计事实，
+  读点返回=查询期现算值，design §5.1+build-strategy-lifecycle 5.3）；
 - 游标/账户/统计组仅经 append_bar 原子更新，update_task 白名单收敛
   为状态机字段（写者隔离，design §5.5——运行态权威=pt_task 行）。
 """
@@ -21,7 +22,10 @@ from sqlalchemy import (
     Connection, delete, desc, func, insert, select, update,
 )
 
-from core.persistence.orm.models import PtEquity, PtFill, PtFunding, PtReport, PtTask
+from core.persistence.orm.models import (
+    PtEquity, PtFill, PtFunding, PtReport, PtTask,
+    StrategyTransitionEvent,
+)
 from core.persistence.orm.engine import engine_for as _engine_for
 from core.persistence.timestamps import utc_now_iso as _now
 
@@ -98,12 +102,45 @@ def new_task_id() -> str:
     return uuid4().hex[:12]
 
 
-def resolve_research_status(strategy_row: Dict[str, Any]) -> str:
-    """研究验证状态四值映射（design §9.2 单源；创建/clone 快照共用）：
-    status=draft→"draft"；qualified=NULL→"unverified"；1→"verified"；
-    0→"verification_failed"。"""
+def resolve_research_status(db_path: Path, strategy_row: Dict[str, Any]) -> str:
+    """研究验证状态解析（三序 first-match-wins 判定表单源——
+    build-strategy-lifecycle 5.3；创建/clone 快照与两读点共用）：
+    查询期现算——状态迁移后随动（非快照）；任务行快照列是创建时点
+    审计事实，两者是不同名事实。
+
+    三序（序①命中即返回，不评估②③）：
+    ① status="draft" → "draft"（revalidate 回 draft=作废重置的正确
+       表达——历史转正事件不再抬值）；
+    ② ≠draft 且事件表存在该策略 (draft→active) 事件 → "verified"
+       （trigger 不限定——该边唯一 trigger=credential，存在性判定；
+       序②是新世界首次让 verified 有生产行为的通道）；
+    ③ ≠draft 无事件 → qualified 冻结值兜底：NULL→"unverified"（死列
+       实然恒 NULL→生产输出恒 unverified，与旧世界一致无回归）/
+       1→"verified"/0→"verification_failed"（存量行解释，不静默升格）。
+
+    Args:
+        db_path: research.db 库路径（必传——序②事件表判定；拒绝可选
+            参数静默旁路三序规则）。
+        strategy_row: 策略行 dict（get_strategy 全行——须含
+            strategy_id/status/qualified）。
+
+    Returns:
+        四值之一：draft/unverified/verified/verification_failed。
+    """
     if strategy_row.get("status") == "draft":
         return "draft"
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(StrategyTransitionEvent.event_id)
+            .where(StrategyTransitionEvent.strategy_id
+                   == strategy_row.get("strategy_id"),
+                   StrategyTransitionEvent.from_status == "draft",
+                   StrategyTransitionEvent.to_status == "active")
+            .limit(1)
+        ).first()
+    if row is not None:
+        return "verified"
     qualified = strategy_row.get("qualified")
     if qualified is None:
         return "unverified"
@@ -442,7 +479,7 @@ def clone_task(
         strategy_id=source["strategy_id"],
         dna_snapshot_json=source["dna_snapshot_json"],
         symbol=source["symbol"], timeframe=source["timeframe"],
-        research_status_snapshot=resolve_research_status(strategy),
+        research_status_snapshot=resolve_research_status(db_path, strategy),
         initial_cash=source["initial_cash"], fee=source["fee"],
         slippage=source["slippage"], leverage=source["leverage"],
         window_bars=source["window_bars"],

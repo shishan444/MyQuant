@@ -143,7 +143,7 @@ class TestCreateTask:
         assert row["symbol"] == "BTCUSDT"      # execution_genes.symbol 抄录
         assert row["timeframe"] == "4h"        # execution_genes.timeframe 抄录
         assert row["leverage"] == 3            # 缺省取 DNA risk_genes.leverage
-        assert row["research_status_snapshot"] == "unverified"
+        assert row["research_status"] == "unverified"
         assert row["bars_processed"] == 0
 
     def test_create_unknown_strategy_404(self, paper_api) -> None:
@@ -436,8 +436,9 @@ class TestCloneAndDelete:
         assert new["bars_processed"] == 0
         assert new["task_id"] != tid
         assert new["strategy_id"] == "st-1"
-        # research_status_snapshot 按 clone 时点重快照（qualified=1→verified）
-        assert new["research_status_snapshot"] == "verified"
+        # research_status 按 clone 时点重解析（REST 查询期现算面——
+        # qualified=1 存量行→序③ verified）
+        assert new["research_status"] == "verified"
 
     @pytest.mark.parametrize("status", ["pending", "running"])
     def test_clone_active_409(self, paper_api, status) -> None:
@@ -523,6 +524,78 @@ class TestCloneAndDelete:
             counts_after = [_count(t) for t in
                             (PtTask, PtFill, PtEquity, PtFunding, PtReport)]
         assert counts_after == [0, 0, 0, 0, 0]  # 级联五表清零
+
+
+# ── research_status 查询期现算（build-strategy-lifecycle 5.3 读点②） ──
+
+
+class TestResearchStatusLiveReadout:
+    """REST 读点现算：三序随动（迁移后随动非快照）+快照列继续写入
+    （创建时点审计值合法在场）+clone 三层。"""
+
+    def test_rest_readout_follows_migration(self, paper_api) -> None:
+        """正反向夹迁移：挂盘时 unverified（无事件序③）→策略侧出现
+        draft→active 事件→GET 现算 verified→revalidate 回 draft→GET
+        draft（序①赢）——同一任务行快照列全程冻结（现算非列值防回潮）。"""
+        from sqlalchemy import text
+
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository import paper
+
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        row = _create(client)
+        tid = row["task_id"]
+        assert row["research_status"] == "unverified"  # 迁移前 A
+        # 策略侧转正事实（构造轨直插 draft→active 事件）
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "INSERT INTO strategy_transition_event (event_id,"
+                " strategy_id, from_status, to_status, trigger,"
+                " evidence_json, created_at) VALUES ('ev_rs01',"
+                " 'st-1', 'draft', 'active', 'credential', NULL,"
+                " '2026-10-18T00:00:00')"))
+        got = client.get(f"/api/paper-trading/tasks/{tid}")
+        assert got.json()["research_status"] == "verified"  # 迁移后 B
+        # 反向：经真实 revalidate 端点回 draft（archived→draft 合法边）
+        _force_strategy_status(db, "st-1", "archived")
+        resp = client.post("/api/strategies/st-1/revalidate")
+        assert resp.status_code == 200, resp.text
+        got2 = client.get(f"/api/paper-trading/tasks/{tid}")
+        assert got2.json()["research_status"] == "draft"  # 序①赢
+        assert paper.get_task(db, tid)["research_status_snapshot"] == \
+            "unverified", "快照列冻结（创建时点审计事实）"
+
+    def test_snapshot_column_still_written(self, paper_api) -> None:
+        """快照列继续写入断言（不停写——创建时点审计值合法在场）。"""
+        from core.persistence.repository import paper
+
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        row = _create(client)
+        stored = paper.get_task(db, row["task_id"])
+        assert stored["research_status_snapshot"] == "unverified"
+
+    def test_clone_three_layer_assertions(self, paper_api) -> None:
+        """clone 三层：①clone 行新算值（qualified=1 存量行→序③
+        verified）②两行查询面同值（同一策略现算）③原行列值冻结。"""
+        from core.persistence.repository import paper
+
+        client, db = paper_api
+        _seed_strategy(db, status="active", qualified=1)
+        tid = _seed_terminal(db)
+        resp = client.post(f"/api/paper-trading/tasks/{tid}/clone")
+        assert resp.status_code == 201, resp.text
+        new_tid = resp.json()["task_id"]
+        # ① clone 时点新算（现算面）
+        assert resp.json()["research_status"] == "verified"
+        # ② 两行查询面同值
+        orig = client.get(f"/api/paper-trading/tasks/{tid}").json()
+        cloned = client.get(f"/api/paper-trading/tasks/{new_tid}").json()
+        assert orig["research_status"] == cloned["research_status"]
+        # ③ 原任务行列值冻结（直建默认 unverified，不被 clone 改写）
+        assert paper.get_task(db, tid)["research_status_snapshot"] == \
+            "unverified"
 
 
 # ── GET 族分页与 404 ──

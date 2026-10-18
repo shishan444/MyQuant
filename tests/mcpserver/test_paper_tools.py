@@ -341,3 +341,30 @@ class TestRequestAuthHeader:
         assert captured["headers"] == {"Authorization": "Bearer secret-9"}
         monkeypatch.delenv("MYQUANT_API_KEY")
         monkeypatch.setattr(ac.httpx, "Client", real_client)
+
+
+class TestResearchStatusPassthrough:
+    """build-strategy-lifecycle 5.3 MCP 透传随动：get_paper_task 原样
+    转发 REST 响应（零独立字段处理——REST 字段更名 research_status 后
+    MCP 自动随动，无第二 schema 可漂移）。"""
+
+    def test_get_paper_task_returns_rest_payload_verbatim(self) -> None:
+        """回放含 research_status 键的 REST 样本→工具返回值逐键原样
+        （无字段改名/无快照列合成——透传面唯一事实源=REST）。"""
+        from conftest import _FakeMcp, RecordingFakeApi
+
+        from mcpserver.tools import register_readonly_tools
+
+        rest_payload = {
+            "task_id": "pt_mcp00000001", "status": "completed",
+            "strategy_id": "st-1", "symbol": "BTCUSDT", "timeframe": "4h",
+            "research_status": "verified",
+        }
+        mcp = _FakeMcp()
+        api = RecordingFakeApi(samples={
+            "/api/paper-trading/tasks/pt_mcp00000001": rest_payload})
+        register_readonly_tools(mcp, api)
+        result = mcp.registered["get_paper_task"](task_id="pt_mcp00000001")
+        assert result == rest_payload, "MCP 不得对 REST 载荷做字段变换"
+        assert ("GET", "/api/paper-trading/tasks/pt_mcp00000001",
+                None) in api.calls

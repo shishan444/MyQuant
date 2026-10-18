@@ -478,20 +478,82 @@ class TestClone:
             paper.clone_task(db, tid)
 
 
-class TestResearchStatusMapping:
-    """§9.2 四值映射（resolve_research_status 单源）。"""
+class TestResearchStatusThreeOrderGrid:
+    """三序 first-match-wins 判定表 36 格封闭参数化（build-strategy-
+    lifecycle 5.3⑦：六态×有无 draft→active 事件×qualified 三值）。
 
-    @pytest.mark.parametrize("row,expected", [
-        ({"status": "draft", "qualified": None}, "draft"),
-        ({"status": "draft", "qualified": 1}, "draft"),  # draft 优先
-        ({"status": "active", "qualified": None}, "unverified"),
-        ({"status": "active", "qualified": 1}, "verified"),
-        ({"status": "active", "qualified": 0}, "verification_failed"),
-        ({}, "unverified"),  # 字段缺失容缺
-    ])
-    def test_four_values(self, row, expected):
-        from core.persistence.repository.paper import resolve_research_status
-        assert resolve_research_status(row) == expected
+    三世界映射：qualified=1/0 格=序③存量行（fixture 直插库构造——
+    死列全 NULL 无生产行为对应，构造性测试输入）；有事件格=序②主路径
+    （verified 首次生产通道）；qualified=None 无事件格=序③兜底（新行
+    恒 unverified——死列处置与活化同 PR 封闭失真窗口）。冲突格裁决
+    显式：draft×有事件→序①赢（revalidate 回 draft=作废重置）；
+    archived/paper/candidate/live×有事件→序②赢（验证事实与终局态
+    两维正交）；paper/candidate/live×无事件→序③兜底（存量迁移行）。
+    """
+
+    _STATUSES = ("draft", "active", "paper", "candidate", "live",
+                 "archived")
+    _QUALIFIED = (None, 1, 0)
+
+    @classmethod
+    def _expected(cls, status: str, has_event: bool, qualified) -> str:
+        if status == "draft":
+            return "draft"
+        if has_event:
+            return "verified"
+        return {None: "unverified", 1: "verified",
+                0: "verification_failed"}[qualified]
+
+    @pytest.mark.parametrize(
+        "status,has_event,qualified",
+        [(s, e, q)
+         for s in ("draft", "active", "paper", "candidate", "live",
+                   "archived")
+         for e in (False, True)
+         for q in (None, 1, 0)])
+    def test_three_order_grid(self, tmp_path, status, has_event,
+                              qualified):
+        """36 格逐格：真实库世界（策略行+事件行+qualified 直插）→
+        resolve(db, 全行) 按判定表输出。"""
+        from sqlalchemy import text
+
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository.paper import (
+            resolve_research_status)
+        from core.persistence.repository.strategy import (
+            get_strategy, save_strategy)
+
+        db = _make_db(tmp_path)
+        save_strategy(db, strategy_id="st-grid", dna_json="{}",
+                      symbol="BTCUSDT", timeframe="4h", status="draft",
+                      gene_signature="sig-grid")
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "UPDATE strategy SET status=:s, qualified=:q"
+                " WHERE strategy_id='st-grid'"),
+                {"s": status, "q": qualified})
+            if has_event:
+                conn.execute(text(
+                    "INSERT INTO strategy_transition_event (event_id,"
+                    " strategy_id, from_status, to_status, trigger,"
+                    " evidence_json, created_at) VALUES ('ev_grid01',"
+                    " 'st-grid', 'draft', 'active', 'credential',"
+                    " NULL, '2026-10-18T00:00:00')"))
+        assert resolve_research_status(
+            db, get_strategy(db, "st-grid")) == self._expected(
+            status, has_event, qualified)
+
+    def test_grid_count_anchor(self):
+        """计数锚：36 格完整性（6 态×2 事件×3 值——表与判定域互锁）。"""
+        combos = [(s, e, q)
+                  for s in self._STATUSES
+                  for e in (False, True)
+                  for q in self._QUALIFIED]
+        assert len(combos) == 36
+        # 判定域抽样互锁（推导函数与判定表冲突格裁决一致）
+        assert self._expected("draft", True, 1) == "draft"       # 序①赢
+        assert self._expected("archived", True, 0) == "verified"  # 序②赢
+        assert self._expected("paper", False, None) == "unverified"  # ③兜底
 
 
 class TestReportVersions:
