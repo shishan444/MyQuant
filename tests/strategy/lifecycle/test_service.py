@@ -356,9 +356,9 @@ class TestCredentialFunctions:
             assert credential.has_no_active_tasks(conn, "st_g2") is True
 
     def test_missing_evidence_non_enum_trigger_empty(self):
-        """非必填 trigger 缺失清单恒空：manual 枚举外字符串同样走
-        manual 通道（放行根因点——现状特征记录，见
-        TestTriggerEnumRuntimeSemantics）。"""
+        """非必填 trigger 缺失清单恒空（函数级行为）：manual 枚举外
+        字符串同样返回空清单。CARD-04 后 transit 值域校验前置，本
+        函数面不再被非法 trigger 触达——断言保留为函数行为锚。"""
         assert credential.missing_evidence("manual_archive", None) == []
         assert credential.missing_evidence("bogus_trigger", None) == []
 
@@ -369,23 +369,47 @@ class TestCredentialFunctions:
 
 
 class TestTriggerEnumRuntimeSemantics:
-    """非枚举 trigger 的运行时现状（特征记录非应然背书）。
+    """非枚举 trigger 运行时语义（CARD-04 收紧后正确行为）。
 
-    契约含糊处：spec 定义 TRIGGERS 九值封闭为常量面，未定义 transit
-    运行时对非枚举 trigger 的拒绝语义（已上报 team-lead 待裁决）。
-    现状=非必填集外 trigger 走 manual 通道放行，事件表 trigger 列记
-    原值——审计事实源存在被非枚举值写入的通道。裁决收紧后本用例
-    同步改为正确行为。
+    沿革：修复前非必填集外 trigger 走 manual 通道放行且事件表记原值
+    （曾按特征测试语义记录现状并上报）；Team Lead 定夺=TRIGGERS 九值
+    封闭本就是常量契约，运行时不校验是实现缺口——收紧为 transit 值
+    域校验（422 STRATEGY_TRIGGER_INVALID），本类随卡改为正确行为。
     """
 
-    def test_non_enum_trigger_passes_and_records_raw_value(self, db):
-        """现状：非枚举 trigger 在合法边 (active→archived) 上放行，
-        事件表 trigger 列记原值 "bogus_trigger"。"""
+    def test_non_enum_trigger_rejected_422(self, db):
+        """非枚举 trigger→422 STRATEGY_TRIGGER_INVALID（detail 含
+        trigger/九值排序清单）+零写入（status 不变+事件零行）。"""
         _add(db, "st_ne", status="active")
-        out = transit(db, "st_ne", target="archived",
-                      trigger="bogus_trigger")
-        assert out["migrated"] is True
-        assert _events(db, "st_ne")[0][2] == "bogus_trigger"
+        with pytest.raises(LifecycleError) as ei:
+            transit(db, "st_ne", target="archived",
+                    trigger="bogus_trigger")
+        assert ei.value.status == 422
+        assert ei.value.code == "STRATEGY_TRIGGER_INVALID"
+        assert ei.value.detail["trigger"] == "bogus_trigger"
+        assert ei.value.detail["strategy_id"] == "st_ne"
+        from core.strategy.lifecycle.machine import TRIGGERS
+        assert ei.value.detail["valid_triggers"] == sorted(TRIGGERS)
+        assert _status(db, "st_ne") == "active"
+        assert _events(db) == 0
+
+    def test_nine_enums_pass_domain_check_on_legal_edges(self, db):
+        """九值各取一合法边全部通过值域校验（无 TRIGGER_INVALID——
+        真迁移或正常凭证分流，枚举面不拦截合法 trigger）。"""
+        from core.strategy.lifecycle.machine import (
+            TRIGGERS, TRIGGER_EDGES)
+
+        for trig in sorted(TRIGGERS):
+            frm, to = sorted(TRIGGER_EDGES[trig])[0]
+            sid = f"st_nine_{trig}"
+            _add(db, sid)
+            _set_status(db, sid, frm)
+            try:
+                transit(db, sid, target=to, trigger=trig,
+                        evidence={"record_id": "vr_x", "task_id": "tk_x",
+                                  "final_status": "completed"})
+            except LifecycleError as exc:
+                assert exc.code != "STRATEGY_TRIGGER_INVALID", trig
 
 
 class TestComputeWaterline:
