@@ -172,3 +172,52 @@ class TestRiskBudgetIgnores:
         notional = size * price
         assert abs(notional - 100000 * 0.2) > 5000, \
             f"risk_budget 档不应消费 initial_fraction，名义 {notional}"
+
+
+class TestPositioningAssemblyParity:
+    """R6 引擎侧扩面（build-position-registry 4.6）：切换后
+    _per_dna_risk_params 装配三元组（p[7]/p[8]/p[9]）与
+    core.positioning.expand_for_backtest 同参产出逐位一致——装配
+    路径与适配器同源证明；并与 design §11 基准表（改造前实拍，
+    tester 2026-10-18 独立复证）字面对照——design 锚失效即红。
+
+    四组代表 DNA 与 R6 基准表一一对应：③fixed+rf 声明=全档物化
+    关键组（fixed 档也物化 rf——按档位省略即红）。
+    """
+
+    @pytest.mark.parametrize(
+        ("rg_builder", "baseline"),
+        [
+            pytest.param(
+                lambda: RiskGenes(position_size=0.3),
+                (0.0, 0.0, 0.3), id="①fixed 缺省"),
+            pytest.param(
+                lambda: RiskGenes(position_size=0.3,
+                                  initial_fraction=0.2),
+                (0.0, 0.0, 0.2), id="②声明 initial_fraction"),
+            pytest.param(
+                lambda: RiskGenes(position_size=0.3,
+                                  risk_fraction=0.01),
+                (0.0, 0.01, 0.3), id="③fixed+rf 声明"),
+            pytest.param(
+                lambda: RiskGenes(position_mode="risk_budget",
+                                  position_size=0.3, risk_fraction=0.01),
+                (1.0, 0.01, 0.3), id="④risk_budget"),
+        ])
+    def test_engine_triple_equals_adapter_and_baseline(
+            self, rg_builder, baseline):
+        """引擎装配 p[7]/p[8]/p[9]==expand_for_backtest 三元组（同源
+        证明）==design §11 基准表字面值（行为零变化锚）。"""
+        from core.positioning import expand_for_backtest
+
+        rg = rg_builder()
+        df = make_enhanced_df(30)
+        p = _per_dna_risk_params(rg, df)
+        exp = expand_for_backtest(rg.position_mode, rg.position_size,
+                                  rg.initial_fraction, rg.risk_fraction)
+        engine_triple = (p[7], p[8], p[9])
+        assert engine_triple == (
+            exp.position_mode_code, exp.risk_fraction,
+            exp.effective_first_size), "引擎装配与适配器分叉"
+        assert engine_triple == baseline, (
+            f"装配三元组 {engine_triple} 偏离 design 基准 {baseline}")
