@@ -203,6 +203,50 @@ class TestWriterUniqueness:
             "窗口越界：INSERT 语句的 status 被误记到 UPDATE 头上"
 
 
+class TestEventAppendOnlyGuard:
+    """⑤事件表 append-only 符级守卫（spec「迁移事件表……MUST 为迁移
+    审计单一事实源，append-only（无 update/delete 通道）」）。
+
+    双书写形制全域零命中：SQL 字面形（UPDATE/DELETE FROM）+
+    SQLAlchemy 表达式形（update()/delete()）——工程内事件表写通道
+    唯一合法形=insert（service.py 事件落库）。负例自证防恒空恒过。
+    """
+
+    _LITERALS = (
+        "UPDATE strategy_transition_event",
+        "DELETE FROM strategy_transition_event",
+        "update(StrategyTransitionEvent",
+        "delete(StrategyTransitionEvent",
+    )
+
+    def test_no_event_update_delete_channel_anywhere(self):
+        """四面全域零命中=事件表无 update/delete 写通道（append-only
+        由「只有 insert 写点+无改删通道」两面合成；写点唯一由
+        TestWriterUniqueness 同族视角承载）。"""
+        for p in _iter_py_sources():
+            src = p.read_text(encoding="utf-8")
+            for lit in self._LITERALS:
+                assert lit not in src, \
+                    f"{p} 含事件表改删通道字面: {lit!r}"
+
+    def test_scanner_detects_known_positives(self):
+        """负例自证：四面各对内联已知正例命中（扫描器失效必红）。"""
+        positives = [
+            'conn.execute(text("UPDATE strategy_transition_event SET'
+            ' trigger=:t"))',
+            'conn.execute(text("DELETE FROM strategy_transition_event'
+            ' WHERE strategy_id=:i"))',
+            "conn.execute(update(StrategyTransitionEvent)"
+            ".values(trigger='x'))",
+            "conn.execute(delete(StrategyTransitionEvent)"
+            ".where(StrategyTransitionEvent.strategy_id == sid))",
+        ]
+        for positive in positives:
+            hits = [lit for lit in self._LITERALS if lit in positive]
+            assert len(hits) == 1, \
+                f"扫描器漏检/误检已知正例: {positive!r} -> {hits}"
+
+
 class TestQualifiedDeadColumnNoRegression:
     """A1 死列防回潮（build-strategy-lifecycle 5.3④）：strategy.qualified
     零写点三层符号级断言+同名异列守护（backtest_result.qualified 真数据

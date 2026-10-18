@@ -22,7 +22,8 @@ from core.persistence.orm.engine import engine_for
 from core.persistence.repository import strategy as repo
 from core.strategy.lifecycle import credential
 from core.strategy.lifecycle.machine import LifecycleError, SUCCESSORS
-from core.strategy.lifecycle.service import compute_waterline, transit
+from core.strategy.lifecycle.service import (
+    NOT_MIGRATED_REASONS, compute_waterline, transit)
 
 pytestmark = [pytest.mark.integration]
 
@@ -167,7 +168,15 @@ class TestSuccessFamily:
 
 
 class TestNotMigratedFamily:
-    """not_migrated 族：同态六格+task_end 非最后任务（六+二场景）。"""
+    """not_migrated 族：同态六格+task_end 非最后任务（六+二场景）+封闭枚举锚。"""
+
+    def test_reason_closed_enum_anchor(self):
+        """封闭枚举常量锚（spec：not_migrated_reason 封闭枚举恰两值
+        {active_tasks_remain, already_in_status}）——未来扩张第三值
+        须先改 spec 再改此处（无声扩张必红）。"""
+        assert NOT_MIGRATED_REASONS == frozenset({
+            "active_tasks_remain", "already_in_status"})
+
 
     @pytest.mark.parametrize("status,trigger", [
         ("draft", "credential"),       # 草稿重复登记场景
@@ -226,6 +235,9 @@ class TestErrorFamily:
                     evidence={"task_id": "t1"})
         assert ei.value.status == 409
         assert ei.value.code == "STRATEGY_ILLEGAL_TRANSITION"
+        # 契约三键完整：detail 含 from/to/合法后继集
+        assert ei.value.detail["from_status"] == "draft"
+        assert ei.value.detail["to_status"] == "paper"
         assert ei.value.detail["allowed_successors"] == sorted(
             SUCCESSORS["draft"])
         assert _status(db, "st_bad") == "draft"
@@ -343,10 +355,37 @@ class TestCredentialFunctions:
             assert credential.has_no_active_tasks(conn, "st_g1") is False
             assert credential.has_no_active_tasks(conn, "st_g2") is True
 
+    def test_missing_evidence_non_enum_trigger_empty(self):
+        """非必填 trigger 缺失清单恒空：manual 枚举外字符串同样走
+        manual 通道（放行根因点——现状特征记录，见
+        TestTriggerEnumRuntimeSemantics）。"""
+        assert credential.missing_evidence("manual_archive", None) == []
+        assert credential.missing_evidence("bogus_trigger", None) == []
+
     def test_req301_tightening_anchor_in_docstring(self):
         """收紧位锚在场：REQ-3-01 单点收紧位 docstring 声明。"""
         src = inspect.getsource(credential)
         assert "REQ-3-01" in src
+
+
+class TestTriggerEnumRuntimeSemantics:
+    """非枚举 trigger 的运行时现状（特征记录非应然背书）。
+
+    契约含糊处：spec 定义 TRIGGERS 九值封闭为常量面，未定义 transit
+    运行时对非枚举 trigger 的拒绝语义（已上报 team-lead 待裁决）。
+    现状=非必填集外 trigger 走 manual 通道放行，事件表 trigger 列记
+    原值——审计事实源存在被非枚举值写入的通道。裁决收紧后本用例
+    同步改为正确行为。
+    """
+
+    def test_non_enum_trigger_passes_and_records_raw_value(self, db):
+        """现状：非枚举 trigger 在合法边 (active→archived) 上放行，
+        事件表 trigger 列记原值 "bogus_trigger"。"""
+        _add(db, "st_ne", status="active")
+        out = transit(db, "st_ne", target="archived",
+                      trigger="bogus_trigger")
+        assert out["migrated"] is True
+        assert _events(db, "st_ne")[0][2] == "bogus_trigger"
 
 
 class TestComputeWaterline:
@@ -364,6 +403,21 @@ class TestComputeWaterline:
         _add(db, "st_w3", status="draft")
         _add_event(db, "st_w3", "active", "paper", "mount")
         assert compute_waterline(db, "st_w3") == 2
+
+    def test_current_status_outweighs_events(self, db):
+        """当前态侧高于事件侧：当前 live(4)×事件仅 to=active(1)→取
+        max=4（两侧取大非事件侧独大）。"""
+        _add(db, "st_w8", status="draft")
+        _add_event(db, "st_w8", "draft", "active", "credential")
+        _set_status(db, "st_w8", "live")
+        assert compute_waterline(db, "st_w8") == 4
+
+    def test_events_all_to_archived_excluded(self, db):
+        """事件侧全为 to=archived：事件行在场但序集侧空（archived 不
+        入序）+当前态 draft=0→水位 0（事件存在不等于抬水位）。"""
+        _add(db, "st_w9", status="draft")
+        _add_event(db, "st_w9", "draft", "archived", "manual_archive")
+        assert compute_waterline(db, "st_w9") == 0
 
     def test_roundtrip_no_fallback(self, db):
         """往返回落：active→paper→active 后水位=2（全史 max 非末条）。"""

@@ -919,6 +919,21 @@ class TestStrategyReturnFlow:
         assert h.strategy_status("st-flow") == "paper"
         assert h.events("st-flow") == []
 
+    def test_stock_unmounted_active_already_in_status(self, tmp_path):
+        """存量未上盘行：策略保持 active（六态前创建、从未经挂盘迁移）
+        的任务终态回调→already_in_status 正当不触发——零事件+策略
+        不变+客户端回调照常（结题不被绑架的存量兼容侧）。"""
+        h = _ReturnFlowHarness(tmp_path)
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+        h.seed_paper_strategy("st-flow", status="active")
+        h.seed_task("pt_flow00000001", "st-flow", status="completed")
+        h.scheduler._executor_concluded("pt_flow00000001", "completed")
+        assert h.strategy_status("st-flow") == "active"
+        assert h.events("st-flow") == []
+        assert concluded == [("pt_flow00000001", "completed")]
+
     def test_guard_shared_single_point_callback_and_scan(
             self, tmp_path, monkeypatch):
         """守卫与扫描共享判定单点：回调路径（transit 内建守卫）与扫描
