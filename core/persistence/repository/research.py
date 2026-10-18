@@ -341,6 +341,9 @@ def transition_hypothesis_with_promotion(
 ) -> Dict[str, Any]:
     """条件迁移 + 迁移日志 +（promote 时）谱系 draft 原子转正，同一事务。
 
+    转正经生命周期迁移服务 transit（build-strategy-lifecycle 3.1：
+    draft→active 事件同事务落表，conn 透传；语义与直改等价）。
+
     promote 独立证据条件（improve-mcp-agent-loop M4）：仅当存在挂
     (hypothesis_id, 该 draft) 的 verdict=pass 记录才转正——防"用别的
     策略的 pass 定证、转正未验证的 draft"的调包；无自身 pass 时假设
@@ -415,11 +418,16 @@ def transition_hypothesis_with_promotion(
                     summary="promotion skipped: draft has no own pass record",
                     created_at=now))
                 continue
-            conn.execute(
-                update(Strategy)
-                .where(Strategy.strategy_id == draft_id)
-                .values(status="active", updated_at=now)
-            )
+            # build-strategy-lifecycle 3.1：转正改经迁移服务（status
+            # 唯一合法写通道），conn 透传=与假设定案同事务（外层回滚
+            # 两侧皆无）；draft→active 事件（trigger=credential）同事务
+            # 落表。凭证判定与上方预检同式（服务单点纪律：内层再核一次）
+            from core.strategy.lifecycle import transit as _transit
+            _transit(
+                db_path, draft_id, target="active", trigger="credential",
+                evidence={"hypothesis_id": hypothesis_id,
+                          "record_id": has_own_pass[0]},
+                conn=conn)
             out["promoted"] = True
             out["promoted_strategy_id"] = draft_id
             conn.execute(insert(ResearchLog).values(
