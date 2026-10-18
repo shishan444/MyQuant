@@ -934,6 +934,68 @@ class TestStrategyReturnFlow:
         assert h.events("st-flow") == []
         assert concluded == [("pt_flow00000001", "completed")]
 
+    def test_channel_error_get_task_callback_survives(
+            self, tmp_path, caplog, monkeypatch):
+        """CARD-02：get_task 通道故障（OperationalError）→兜底 ERROR
+        日志（strategy_id=None 如实记）→结题回调仍达（修复前此异常
+        在 try 外冒泡跳过回调）。"""
+        import logging
+
+        from sqlalchemy.exc import OperationalError
+
+        h = _ReturnFlowHarness(tmp_path)
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+        h.seed_paper_strategy("st-flow")
+        h.seed_task("pt_flow00000001", "st-flow", status="completed")
+
+        def _boom(*args, **kwargs):
+            raise OperationalError("stmt", {}, "db locked")
+
+        monkeypatch.setattr(paper, "get_task", _boom)
+        with caplog.at_level(logging.ERROR, logger="paper_runtime"):
+            h.scheduler._executor_concluded(
+                "pt_flow00000001", "completed")
+        assert concluded == [("pt_flow00000001", "completed")], \
+            "通道故障不得跳过结题回调（CARD-02 本体）"
+        assert "意外异常" in caplog.text
+        assert "pt_flow00000001" in caplog.text
+        assert "trigger=task_end" in caplog.text
+
+    def test_unexpected_transit_error_callback_survives(
+            self, tmp_path, caplog, monkeypatch):
+        """CARD-02：transit 意外异常（非 LifecycleError）→兜底 ERROR
+        日志（strategy_id/task_id/trigger 结构化字段齐）→回调仍达；
+        LifecycleError 分流不因此改变（正当失败面由
+        test_callback_error_continues_conclusion 承载）。"""
+        import logging
+
+        import core.strategy.lifecycle as lifecycle_module
+
+        h = _ReturnFlowHarness(tmp_path)
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+        h.seed_paper_strategy("st-flow")
+        h.seed_task("pt_flow00000001", "st-flow", status="completed")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("transit boom")
+
+        monkeypatch.setattr(lifecycle_module, "transit", _boom)
+        with caplog.at_level(logging.ERROR, logger="paper_runtime"):
+            h.scheduler._executor_concluded(
+                "pt_flow00000001", "completed")
+        assert concluded == [("pt_flow00000001", "completed")], \
+            "意外异常不得跳过结题回调"
+        assert "意外异常" in caplog.text
+        assert "st-flow" in caplog.text
+        assert "pt_flow00000001" in caplog.text
+        assert "trigger=task_end" in caplog.text
+
     def test_guard_shared_single_point_callback_and_scan(
             self, tmp_path, monkeypatch):
         """守卫与扫描共享判定单点：回调路径（transit 内建守卫）与扫描
