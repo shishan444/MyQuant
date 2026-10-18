@@ -747,3 +747,114 @@ class TestRunLifecyclePaths:
         ex = h.make_executor()
         assert ex.prepare() is False
         assert "mtf_data_missing" in h.task()["error_detail"]
+
+
+def _max_loss_dna(max_position_loss: float):
+    """声明金额防线的多头 DNA（seed=7 数据：entry 信号 i=20 起持续亮、
+    i=21 开盘成交、之后持续下跌——浮亏单调扩大路径）。"""
+    from core.strategy.dna import (
+        ExecutionGenes, LogicGenes, RiskGenes, SignalRole, StrategyDNA,
+    )
+    from tests.helpers.data_factory import make_signal_gene
+
+    return StrategyDNA(
+        signal_genes=[
+            make_signal_gene(role=SignalRole.ENTRY_TRIGGER),
+            make_signal_gene(
+                role=SignalRole.EXIT_TRIGGER,
+                condition_type="gt", condition_value=70),
+        ],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+        risk_genes=RiskGenes(
+            stop_loss=0.05, take_profit=None, position_size=0.5,
+            leverage=1, direction="long", sl_mode="pct", atr_period=14,
+            max_position_loss=max_position_loss),
+    )
+
+
+class TestMaxLossExecution:
+    """金额防线执行面（add-position-sizing-params 族 5a/5b/5f）。
+
+    seed=7 路径锚：entry 信号 i=20 亮 → i=21 开盘开多（qty=5_000/
+    开盘价、entry=开盘×(1+slip)）；价格持续下跌，mpl=100 时浮亏
+    首达线 bar=26（close≈88.87、浮亏≈176；此前各 bar 浮亏均<100
+    且 low 均未触 SL 线≈87.5——归因序不争抢）→ i=27 开盘全平。
+    """
+
+    @staticmethod
+    def _first_fill_of_kind(h, kind: str) -> dict:
+        return next(
+            f for f in paper.list_fills(h.db, h.task_id, limit=1000)
+            if f["kind"] == kind)
+
+    def test_exit_max_loss_fills_next_bar_open(self, tmp_path):
+        """达线次根开盘全平：seq=3/reason=max_loss/成交 bar=达线 bar
+        次根、成交价=该根开盘×(1−slip)（卖出方向）+fill_event 携带
+        kind+达线首 bar 验证（前一根未达线）。"""
+        h = _Harness(tmp_path, dna=_max_loss_dna(100.0), window_bars=50)
+        ex = h.make_executor()
+        ex.process_frames(h.enhanced, 0)
+
+        exit_fill = self._first_fill_of_kind(h, "exit_max_loss")
+        assert exit_fill["seq"] == 3
+        assert exit_fill["reason"] == "max_loss"
+        # 成交 bar=达线 bar 次根（开盘价语义——非触发 bar 收盘）
+        exit_idx = h.enhanced.index.get_loc(
+            pd.Timestamp(exit_fill["bar_time"]))
+        trigger_idx = exit_idx - 1
+        assert trigger_idx >= 1
+        # 达线首 bar：该根收盘浮亏≥阈值、前一根未达（首达线锚）
+        open_fill = self._first_fill_of_kind(h, "open")
+        qty = open_fill["quantity"]
+        entry = open_fill["price"]
+        loss_at = -qty * (float(h.enhanced["close"].iloc[trigger_idx])
+                          - entry)
+        loss_before = -qty * (
+            float(h.enhanced["close"].iloc[trigger_idx - 1]) - entry)
+        assert loss_at >= 100.0
+        assert loss_before < 100.0
+        # 成交价=执行 bar 开盘×(1−slip)（多头平仓=卖出——不利偏移）
+        open_price = float(h.enhanced["open"].iloc[exit_idx])
+        assert exit_fill["price"] == pytest.approx(
+            open_price * (1.0 - 0.0005), rel=1e-9)
+        # fill_event 推送自然携带 kind（无新事件类型）
+        assert any(
+            p["type"] == "fill_event" and p["kind"] == "exit_max_loss"
+            for p in h.pushes)
+        # 全平后无持仓（exit_max_loss 是全平单）
+        assert h.task()["position_side"] is None
+
+    def test_last_bar_threshold_no_exit(self, tmp_path):
+        """窗口末根达线四断言：意图挂 pending 随任务终结消亡/不出场
+        成交/任务正常 completed/pt_fill 不含 exit_max_loss（specs
+        「窗口末根达线不出场」Scenario——窗口是运行控制不是行为干预）。"""
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+        probe = _Harness(
+            probe_dir, dna=_max_loss_dna(100.0), window_bars=50)
+        probe_ex = probe.make_executor()
+        probe_ex.process_frames(probe.enhanced, 0)
+        exit_fill = self._first_fill_of_kind(probe, "exit_max_loss")
+        trigger_idx = probe.enhanced.index.get_loc(
+            pd.Timestamp(exit_fill["bar_time"])) - 1
+
+        # 窗口恰在达线 bar 终结：达线 bar 是处理的最后一根
+        h = _Harness(
+            tmp_path, dna=_max_loss_dna(100.0),
+            window_bars=trigger_idx + 1)
+        ex = h.make_executor()
+        paper.update_task(  # 模拟拾取写 running（迁移链 pending→running→completed）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)
+
+        task = h.task()
+        assert task["status"] == "completed"  # 任务正常 completed
+        assert task["bars_processed"] == trigger_idx + 1
+        assert task["position_side"] is not None  # 持仓保留（未出场）
+        kinds = [f["kind"] for f in paper.list_fills(
+            h.db, h.task_id, limit=1000)]
+        assert "exit_max_loss" not in kinds  # 不产生出场成交
+        # 意图挂 pending（内存面）随任务终结消亡——无次根可执行
+        assert [i.kind for i in ex.pending] == ["exit_max_loss"]
