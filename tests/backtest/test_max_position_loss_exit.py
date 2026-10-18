@@ -384,3 +384,78 @@ class TestFundingCostRateSingleSource:
         assert _funding_cost_rate(2, "4h") == pytest.approx(0.00025)
         # lev=3、1h（timeframe 映射单源）：0.001×(1/8)×(2/3)
         assert _funding_cost_rate(3, "1h") == pytest.approx(0.001 / 12)
+
+
+class TestGuardCoexistsWithSlTpModes:
+    """防线声明（远档不触发）与 SL/TP 四模式子分支共存：trail 多头
+    TP/atr 多头 TP/atr 空头 SL/atr 空头 TP 出场照常（出场分支的
+    funding_acc 清零行随之执行——增量行穿透锚；「声明不干扰」与
+    test_sl_same_bar_precedence 同构的纯旁路面）。"""
+
+    @staticmethod
+    def _atr_df(prices, atr=2.0):
+        df = _df(prices)
+        df["atr_14"] = atr
+        return df
+
+    @pytest.mark.parametrize(
+        ("label", "direction", "risk_kw", "touch_bar"),
+        [
+            # trail 多头 TP：TP=ep×1.05≈105，bar5 high≈106.1 触发；
+            # trail SL=peak×0.70 随涨抬高不触
+            ("trail-long-tp", "long",
+             dict(sl_mode="trail", stop_loss=0.30, take_profit=0.05), 5),
+            # atr 多头 TP：TP=ep+4×atr≈108，bar7 high≈109.1 触发；
+            # SL=ep−1.5×atr≈97 不触
+            ("atr-long-tp", "long",
+             dict(sl_mode="atr", stop_loss=1.5, take_profit=4.0), 7),
+            # atr 空头 SL：SL=ep+1.5×atr≈103，bar6 high≈104.1 触发
+            ("atr-short-sl", "short",
+             dict(sl_mode="atr", stop_loss=1.5, take_profit=4.0), 6),
+            # atr 空头 TP：TP=ep−1.5×atr≈97，bar6 low≈96.4 触发；
+            # SL=ep+3×atr≈106 不触
+            ("atr-short-tp", "short",
+             dict(sl_mode="atr", stop_loss=3.0, take_profit=1.5), 6),
+            # trail 空头 TP：TP=ep×0.95≈95，bar5 跌到 94（low≈93.9）
+            # 触发；trail SL 反侧宽档不触
+            ("trail-short-tp", "short",
+             dict(sl_mode="trail", stop_loss=0.30, take_profit=0.05), 5),
+        ],
+        ids=["trail-long-tp", "atr-long-tp", "atr-short-sl", "atr-short-tp",
+             "trail-short-tp"])
+    def test_guard_declared_sltp_exit_unchanged(
+            self, label, direction, risk_kw, touch_bar):
+        p = np.full(N, 100.0)
+        p[5] = 106.0   # 涨触面（trail TP/atr 多头 TP/atr 空头 SL 用）
+        p[6] = 104.0 if direction == "short" else 100.0
+        p[7] = 109.0 if direction == "long" else 100.0
+        if direction == "short":   # 空头 TP 用下跌
+            p[5] = 100.0
+            p[6] = 96.5 if label in ("atr-short-tp",) else 104.0
+            if label == "trail-short-tp":
+                p[5] = 94.0
+                p[6] = 100.0
+        df = self._atr_df(p)
+        sig = _sig()
+
+        def _mk(mpl=None):
+            dna = _dna(mpl=mpl, direction=direction, leverage=1,
+                       stop_loss=risk_kw["stop_loss"],
+                       sl_mode=risk_kw["sl_mode"])
+            dna.risk_genes.take_profit = risk_kw["take_profit"]
+            return dna
+
+        guarded = _mk(mpl=1e9)
+        plain = _mk()
+        df_g, r_g = _run(guarded, df=df, sig=sig)
+        _, r_p = _run(plain, df=df, sig=sig)
+        assert r_g.total_trades == r_p.total_trades >= 1, (
+            f"{label}: 出场须发生且声明防线不改变笔数")
+        g_pair = _bars_of(df_g, r_g.trades_df.iloc[0])
+        p_pair = _bars_of(df, r_p.trades_df.iloc[0])
+        assert g_pair == p_pair == (3, touch_bar), (
+            f"{label}: 出场 bar 应 ({3}, {touch_bar})，声明侧 {g_pair} "
+            f"对照 {p_pair}")
+        assert abs(_exit_price(r_g.trades_df.iloc[0])
+                   - _exit_price(r_p.trades_df.iloc[0])) < 1e-12, (
+            f"{label}: 出场价不得因防线声明漂移")
