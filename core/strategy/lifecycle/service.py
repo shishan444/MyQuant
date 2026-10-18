@@ -162,13 +162,18 @@ def _transit_on_conn(
         ).scalar_one_or_none()
         if current == target:
             # 幂等（事后发现入口）：已处目标态——不产生第二事件，
-            # 回填最近同边事件 id（返回族与首迁同构）
+            # 回填最近同边同 trigger 事件 id（CARD-05：同边双合法
+            # trigger（如 draft→archived 的 manual_archive/refute）
+            # 并发时归因到本 trigger 的事件，不误挂他者；次序键加
+            # event_id 兼治同刻 tie-break——返回族与首迁同构）
             event_id = conn.execute(
                 select(StrategyTransitionEvent.event_id)
                 .where(StrategyTransitionEvent.strategy_id == strategy_id,
                        StrategyTransitionEvent.from_status == from_status,
-                       StrategyTransitionEvent.to_status == target)
-                .order_by(StrategyTransitionEvent.created_at.desc())
+                       StrategyTransitionEvent.to_status == target,
+                       StrategyTransitionEvent.trigger == trigger)
+                .order_by(StrategyTransitionEvent.created_at.desc(),
+                          StrategyTransitionEvent.event_id.desc())
                 .limit(1)
             ).scalar_one_or_none()
             return {"migrated": True, "strategy_id": strategy_id,
