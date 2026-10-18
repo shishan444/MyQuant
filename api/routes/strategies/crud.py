@@ -60,7 +60,7 @@ from api.schemas import (
     VerifySessionListResponse,
 )
 from core.strategy.lifecycle import transit
-from core.strategy.lifecycle.machine import LifecycleError
+from core.strategy.lifecycle.machine import LifecycleError, SUCCESSORS
 
 logger = logging.getLogger(__name__)
 
@@ -335,3 +335,47 @@ def delete_strategy_endpoint(
                       "note": "非 draft 删除请求转归档（DELETE 端点）"})
     except LifecycleError as exc:
         raise _lifecycle_error_to_http(exc) from exc
+
+
+@router.post("/{strategy_id}/revalidate")
+def revalidate_strategy_endpoint(
+    strategy_id: str,
+    db_path: Path = Depends(get_db_path),
+) -> StrategyResponse:
+    """归档重启重验（build-strategy-lifecycle 3.4，沿 stop/clone 动作
+    端点形制）：archived→draft+旧验证统计作废重置（五列：verify_count
+    置 0，verify_avg_score/verify_best_score/verify_star/last_verified_at
+    置 NULL——models.py verify 组列）+validation_records 不删不改（审计
+    事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时
+    旧值可自事件追溯）+水位不归零（事件 append-only）。非
+    archived→409 STRATEGY_ILLEGAL_TRANSITION。"""
+    existing = get_strategy(db_path, strategy_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if existing.get("status") != "archived":
+        raise _lifecycle_error_to_http(LifecycleError(
+            code="STRATEGY_ILLEGAL_TRANSITION",
+            message="仅 archived 策略可重启重验",
+            status=409,
+            detail={"strategy_id": strategy_id,
+                    "from_status": existing.get("status"),
+                    "to_status": "draft",
+                    "allowed_successors": sorted(SUCCESSORS["archived"])}))
+    invalidated = {
+        "verify_count": existing.get("verify_count"),
+        "verify_avg_score": existing.get("verify_avg_score"),
+        "verify_best_score": existing.get("verify_best_score"),
+        "verify_star": existing.get("verify_star"),
+        "last_verified_at": existing.get("last_verified_at"),
+    }
+    try:
+        transit(db_path, strategy_id, target="draft", trigger="revalidate",
+                evidence={"invalidated_stats": invalidated})
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
+    update_strategy(
+        db_path, strategy_id=strategy_id,
+        verify_count=0, verify_avg_score=None, verify_best_score=None,
+        verify_star=None, last_verified_at=None)
+    row = get_strategy(db_path, strategy_id)
+    return _strategy_row_to_response(row)

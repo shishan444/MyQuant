@@ -291,6 +291,109 @@ class TestStrategyDelete:
         response = client.delete("/api/strategies/nonexistent-id")
         assert response.status_code == 404
 
+
+class TestStrategyRevalidate:
+    """归档重启重验（build-strategy-lifecycle 3.4）。"""
+
+    @staticmethod
+    def _seed_archived_with_stats(
+        client: TestClient, *, records: int = 0,
+    ) -> tuple:
+        """构造带统计与事件史的 archived 策略：POST 创建（active）→
+        直 SQL 写五列统计+直插 mount 事件（水位 2）+直改 archived+
+        可选直插 validation_records 行。返回 (strategy_id, record_ids)。"""
+        import sqlite3
+        create_resp = client.post("/api/strategies", json=_sample_strategy_create())
+        sid = create_resp.json()["strategy_id"]
+        db = str(client.app.state.db_path)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE strategy SET verify_count = 3, verify_avg_score = 71.5,"
+            " verify_best_score = 88.25, verify_star = 4,"
+            " last_verified_at = '2026-10-01T00:00:00'"
+            " WHERE strategy_id = ?", (sid,))
+        conn.execute(
+            "INSERT INTO strategy_transition_event (event_id, strategy_id,"
+            " from_status, to_status, trigger, created_at)"
+            " VALUES ('ev_seed_1', ?, 'active', 'paper', 'mount',"
+            " '2026-10-02T00:00:00')", (sid,))
+        conn.execute(
+            "UPDATE strategy SET status = 'archived' WHERE strategy_id = ?",
+            (sid,))
+        rec_ids = []
+        for i in range(records):
+            rec_id = f"rec_rv_{i}"
+            conn.execute(
+                "INSERT INTO validation_records (record_id, hypothesis_id,"
+                " strategy_id, level, params, verdict, range_hash, created_at)"
+                " VALUES (?, 'hyp_rv', ?, 'isolated_backtest', '{}', 'pass',"
+                " ?, '2026-10-01T00:00:00')", (rec_id, sid, f"rh_rv_{i}"))
+            rec_ids.append(rec_id)
+        conn.commit()
+        conn.close()
+        return sid, rec_ids
+
+    def test_revalidate_resets_stats_keeps_records_waterline(
+        self, client: TestClient,
+    ) -> None:
+        """主路径：archived→draft+五列作废重置+validation_records 不删
+        不改+事件 evidence 含作废统计快照+水位不归零（仍 2）。"""
+        sid, rec_ids = self._seed_archived_with_stats(client, records=2)
+        response = client.post(f"/api/strategies/{sid}/revalidate")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "draft"
+        # 五列前后对照：count=0、四列 NULL
+        assert data["verify_count"] == 0
+        assert data["verify_avg_score"] is None
+        assert data["verify_best_score"] is None
+        assert data["verify_star"] is None
+        assert data["last_verified_at"] is None
+
+        import sqlite3
+        conn = sqlite3.connect(str(client.app.state.db_path))
+        events = conn.execute(
+            "SELECT from_status, to_status, trigger, evidence_json FROM"
+            " strategy_transition_event WHERE strategy_id = ?"
+            " ORDER BY created_at", (sid,)).fetchall()
+        records_after = conn.execute(
+            "SELECT COUNT(*) FROM validation_records"
+            " WHERE strategy_id = ?", (sid,)).fetchone()[0]
+        conn.close()
+        # validation_records 不删不改（审计事实）
+        assert records_after == 2
+        # 事件：seed mount + revalidate 迁移事件
+        assert [(e[0], e[1], e[2]) for e in events] == [
+            ("active", "paper", "mount"), ("archived", "draft", "revalidate")]
+        ev = json.loads(events[1][3])
+        # evidence 记作废明细（重置前快照）
+        assert ev["invalidated_stats"] == {
+            "verify_count": 3, "verify_avg_score": 71.5,
+            "verify_best_score": 88.25, "verify_star": 4,
+            "last_verified_at": "2026-10-01T00:00:00"}
+        # 水位不归零：事件全史 max（to=paper 序 2）保留
+        from core.strategy.lifecycle import compute_waterline
+        assert compute_waterline(client.app.state.db_path, sid) == 2
+
+    @pytest.mark.parametrize(
+        "status", ["draft", "active", "paper", "candidate", "live"])
+    def test_revalidate_non_archived_409(
+        self, client: TestClient, status: str,
+    ) -> None:
+        """非 archived 五态→409 STRATEGY_ILLEGAL_TRANSITION，状态不变。"""
+        create_resp = client.post("/api/strategies", json=_sample_strategy_create())
+        sid = create_resp.json()["strategy_id"]
+        TestStrategyDelete._force_status(client, sid, status)
+        response = client.post(f"/api/strategies/{sid}/revalidate")
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "STRATEGY_ILLEGAL_TRANSITION"
+        get_resp = client.get(f"/api/strategies/{sid}")
+        assert get_resp.json()["status"] == status
+
+    def test_revalidate_not_found_404(self, client: TestClient) -> None:
+        response = client.post("/api/strategies/nonexistent-id/revalidate")
+        assert response.status_code == 404
+
 # ── Test: Strategy Backtest ──
 
 class TestStrategyBacktest:
