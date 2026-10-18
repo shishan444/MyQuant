@@ -421,6 +421,44 @@ class TestSizingParamsDeclaration:
             "stop_loss": 0.05}, period=31)
         assert r2["duplicated"] is False
 
+    def test_mutual_exclusion_three_face_parity_and_zero_side_effect(
+            self, db):
+        """族 2d 三面对拍（6.3）：同一互斥声明在 validate_dna（手工
+        DNA）与登记声明块（AI 路径）两 Python 面同拒+错误要素一致
+        （字段名 initial_fraction 与互斥语义都在场——MCP 参数面经
+        422 detail 契约与场景文案对拍，见 tests/mcpserver）；登记面
+        拒绝零副作用（hypothesis 行数前后相等——specs「互斥拒绝」
+        Scenario）。"""
+        from core.persistence.repository import research as rr
+        from core.strategy.validator import validate_dna
+
+        # 手工 DNA 面：同组合（risk_budget+if+risk_fraction+stop_loss）
+        dna = StrategyDNA(
+            signal_genes=_genes(14, 30, 70), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(),
+            risk_genes=RiskGenes(
+                stop_loss=0.05, position_size=0.5, leverage=1,
+                direction="long", sl_mode="pct", atr_period=14,
+                position_mode="risk_budget", risk_fraction=0.05,
+                initial_fraction=0.2))
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any("mutually exclusive" in e for e in result.errors)
+        assert any("initial_fraction" in e for e in result.errors)
+
+        # 登记面：同组合同拒+结构化 detail（field=initial_fraction）
+        before = len(rr.list_hypotheses(db, limit=100_000))
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {
+                "position_mode": "risk_budget", "risk_fraction": 0.05,
+                "stop_loss": 0.05, "initial_fraction": 0.2}, period=25)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "initial_fraction"
+        assert "互斥" in ei.value.message
+        # 零副作用：拒绝不落库（specs 互斥拒绝 Scenario）
+        after = len(rr.list_hypotheses(db, limit=100_000))
+        assert after == before
+
     def test_explicit_null_rejected_on_declaration_face(self, db):
         """族 2h 登记面：显式 null 一律坏值拒绝（数值键 null≠缺省
         ——detail 含 field；键缺失合法对照）。"""

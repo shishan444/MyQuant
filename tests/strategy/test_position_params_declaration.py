@@ -193,6 +193,25 @@ class TestMutualExclusion:
         res = validate_dna(dna)
         assert res.is_valid, f"fixed 档共存不应误拒: {res.errors}"
 
+    def test_f2d_three_face_parity_anchor(self):
+        """族 2d 三面对拍·strategy 面（6.3）：同一互斥构造拒绝+错误
+        文案结构化可读（两字段名与互斥语义齐备——登记声明块面与
+        零副作用断言见 tests/analysis、MCP 参数面 422 detail 契约与
+        场景文案见 tests/mcpserver，三面共拒同一组合）。"""
+        from core.strategy.validator import validate_dna
+        dna = make_dna()
+        dna.risk_genes.initial_fraction = 0.2
+        dna.risk_genes.position_mode = "risk_budget"
+        dna.risk_genes.risk_fraction = 0.1
+        dna.risk_genes.stop_loss = 0.05
+        res = validate_dna(dna)
+        assert not res.is_valid
+        mutex = [e for e in res.errors if "mutually exclusive" in e]
+        assert mutex, f"互斥文案缺席: {res.errors}"
+        # 结构化可读：一条错误内两字段名齐备（定位到冲突双方）
+        assert "initial_fraction" in mutex[0]
+        assert "risk_budget" in mutex[0]
+
 
 class TestPositionSizeStillEnforced:
     """族 2g：position_size 声明后无消费点但仍必填仍参与值域校验

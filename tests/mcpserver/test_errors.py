@@ -525,6 +525,39 @@ class TestParamHintScenariosParity:
         mpl_hint = _PARAM_HINT_SCENARIOS["max_position_loss"]
         assert "> 0" in mpl_hint and "无上界" in mpl_hint
 
+
+class TestMutualExclusionThreeFaceMcp:
+    """族 2d 三面对拍·MCP 参数面（add-position-sizing-params 6.3）。
+
+    同一互斥声明（initial_fraction+risk_budget）的服务端 422 经
+    tool_safe 错误通道：detail 契约透传（field=initial_fraction）+
+    hint 场景分派（互斥文案可读）——validate_dna 面与登记声明块面
+    见 tests/strategy 与 tests/analysis，三面共拒同一组合。
+    """
+
+    def test_422_payload_carries_field_and_mutex_hint(self):
+        """422 RESEARCH_PARAM_INVALID（登记链互斥抛出形）经 tool_safe
+        → {"error": {code/message/detail/hint}}：detail.field 透传+
+        hint=initial_fraction 场景文案（含互斥与值域要素）。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+
+        @tool_safe
+        def probe():
+            raise ApiError(
+                422, "RESEARCH_PARAM_INVALID",
+                "initial_fraction 与 position_mode='risk_budget' 互斥"
+                "（两者都只决定首笔定仓——同笔首仓不可两个指挥）",
+                {"field": "initial_fraction",
+                 "legal_range": "声明 initial_fraction 时 "
+                                "position_mode 须为 fixed 或缺省"})
+
+        err = probe()["error"]
+        assert err["code"] == "RESEARCH_PARAM_INVALID"
+        assert err["detail"]["field"] == "initial_fraction"
+        assert err["hint"] == _PARAM_HINT_SCENARIOS["initial_fraction"]
+        assert "互斥" in err["hint"]
+        assert "initial_fraction" in err["hint"]
+
     def test_parity_self_evidence_remove_key_red(self):
         """G4-T05 红绿自证①（隔离变异）：删场景表任一键 → 正向断言
         不变红（键仍在扫描集）但反向断言红（键落入未登记差集）——
