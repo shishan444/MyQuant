@@ -2,7 +2,8 @@
 
 transit=全系统唯一合法 strategy.status 变更通道（设计卡 2.1 契约）。
 内部序（每边同构）：载入（404）→边校验（同态=not_migrated 事前入口；
-异态不在矩阵=409 含合法后继集）→凭证分派（credential.py——缺失
+异态不在矩阵=409 含合法后继集）→trigger 值域校验（非枚举=422，
+CARD-04）→凭证分派（credential.py——缺失
 422 含缺失清单/task_end 守卫 not_migrated）→CAS（rowcount=0 重查：
 已处目标态=幂等成功响应，否则 409 RACE）→事件同事务→三族返回。
 
@@ -26,7 +27,7 @@ from core.persistence.orm.models import Strategy, StrategyTransitionEvent
 from core.persistence.timestamps import utc_now_iso as _now
 from core.strategy.lifecycle import credential as _credential
 from core.strategy.lifecycle.machine import (
-    SUCCESSORS, TRANSITION_MATRIX, WATERLINE_ORDER, LifecycleError)
+    SUCCESSORS, TRANSITION_MATRIX, TRIGGERS, WATERLINE_ORDER, LifecycleError)
 
 # not_migrated 原因封闭枚举（正当不触发——两来源：同态事前入口/
 # task_end 非最后任务守卫）
@@ -62,8 +63,9 @@ def transit(
 
     Raises:
         LifecycleError: 404 STRATEGY_NOT_FOUND / 409
-            STRATEGY_ILLEGAL_TRANSITION / 422 STRATEGY_CREDENTIAL_
-            INSUFFICIENT / 409 STRATEGY_TRANSITION_RACE。
+            STRATEGY_ILLEGAL_TRANSITION / 422 STRATEGY_TRIGGER_INVALID /
+            422 STRATEGY_CREDENTIAL_INSUFFICIENT /
+            409 STRATEGY_TRANSITION_RACE。
     """
     if conn is not None:
         return _transit_on_conn(
@@ -116,7 +118,17 @@ def _transit_on_conn(
             detail={"strategy_id": strategy_id,
                     "from_status": from_status, "to_status": target,
                     "allowed_successors": sorted(SUCCESSORS[from_status])})
-    # ④凭证分派（缺失→422 含缺失清单；task_end 守卫→not_migrated）
+    # ④trigger 值域校验（CARD-04）：九值封闭为常量契约（machine.
+    # TRIGGERS，Team Lead 定夺非契约改写）——非枚举值修复前走 manual
+    # 通道放行并记入事件，审计事实源存在被任意字符串写入的通道
+    if trigger not in TRIGGERS:
+        raise LifecycleError(
+            code="STRATEGY_TRIGGER_INVALID",
+            message=f"非法迁移触发枚举：{trigger}",
+            status=422,
+            detail={"strategy_id": strategy_id, "trigger": trigger,
+                    "valid_triggers": sorted(TRIGGERS)})
+    # ⑤凭证分派（缺失→422 含缺失清单；task_end 守卫→not_migrated）
     missing = _credential.missing_evidence(trigger, evidence)
     if missing:
         raise LifecycleError(
@@ -137,7 +149,7 @@ def _transit_on_conn(
             and not _credential.has_no_active_tasks(conn, strategy_id)):
         return _not_migrated(strategy_id, from_status, target,
                              "active_tasks_remain")
-    # ⑤CAS：WHERE 前态命中才写（rowcount=0=并发窗口——重查分流）
+    # ⑥CAS：WHERE 前态命中才写（rowcount=0=并发窗口——重查分流）
     result = conn.execute(
         update(Strategy)
         .where(Strategy.strategy_id == strategy_id,
@@ -169,7 +181,7 @@ def _transit_on_conn(
             detail={"strategy_id": strategy_id,
                     "from_status": from_status, "to_status": target,
                     "current_status": current})
-    # ⑥迁移事件（同事务，append-only）
+    # ⑦迁移事件（同事务，append-only）
     event_id = uuid4().hex[:12]
     conn.execute(insert(StrategyTransitionEvent).values(
         event_id=event_id, strategy_id=strategy_id,
@@ -177,7 +189,7 @@ def _transit_on_conn(
         evidence_json=(json.dumps(evidence, ensure_ascii=False)
                        if evidence else None),
         created_at=now))
-    # ⑦成功族
+    # ⑧成功族
     return {"migrated": True, "strategy_id": strategy_id,
             "from_status": from_status, "to_status": target,
             "event_id": event_id, "idempotent": False}
