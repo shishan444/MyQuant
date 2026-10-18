@@ -36,23 +36,30 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    conn = op.get_bind()
     # ①事件表（append-only：无 update/delete 通道由 repository 层承担，
-    # 表级无约束可加）
-    op.create_table('strategy_transition_event',
-    sa.Column('event_id', sa.Text(), nullable=False),
-    sa.Column('strategy_id', sa.Text(), nullable=False),
-    sa.Column('from_status', sa.Text(), nullable=False),
-    sa.Column('to_status', sa.Text(), nullable=False),
-    sa.Column('trigger', sa.Text(), nullable=False),
-    sa.Column('evidence_json', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.Text(), nullable=False),
-    sa.PrimaryKeyConstraint('event_id'),
-    )
-    op.create_index(
-        'idx_strategy_transition_event_strategy_created',
-        'strategy_transition_event', ['strategy_id', 'created_at'],
-        unique=False,
-    )
+    # 表级无约束可加）。在场守卫（CARD-01）：create_all 形库（init_db
+    # 产物）已按 models 建出本表与索引（stamp 至前一版后 upgrade 防撞
+    # 表）——在场则跳过建表只走②触发器与③存量分类
+    has_event_table = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='strategy_transition_event'")).scalar() > 0
+    if not has_event_table:
+        op.create_table('strategy_transition_event',
+        sa.Column('event_id', sa.Text(), nullable=False),
+        sa.Column('strategy_id', sa.Text(), nullable=False),
+        sa.Column('from_status', sa.Text(), nullable=False),
+        sa.Column('to_status', sa.Text(), nullable=False),
+        sa.Column('trigger', sa.Text(), nullable=False),
+        sa.Column('evidence_json', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint('event_id'),
+        )
+        op.create_index(
+            'idx_strategy_transition_event_strategy_created',
+            'strategy_transition_event', ['strategy_id', 'created_at'],
+            unique=False,
+        )
 
     # ②双域触发器：IN 列表从 machine 常量拼装（值域单源，不复制字面量）
     from core.strategy.lifecycle.machine import (
@@ -91,7 +98,6 @@ def upgrade() -> None:
                  - set().union(*PT_STATUS_PREDECESSORS.values()))
     _active_set = ",".join(
         f"'{s}'" for s in sorted(frozenset(PT_STATUS_PREDECESSORS) - _terminal))
-    conn = op.get_bind()
     conn.execute(sa.text(
         "UPDATE strategy SET status = 'paper' "
         "WHERE status = 'active' AND strategy_id IN ("
