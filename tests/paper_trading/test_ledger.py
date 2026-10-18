@@ -463,6 +463,60 @@ class TestIntentPreconditionGuards:
             _ZERO_COST)
         assert fill is None
 
+
+class TestExecuteQtyGuard:
+    """CARD-01 锚 B/C：execute 定仓结果 qty 无效守卫（open/add 双分支）。
+
+    卡面契约：open/add 分支定仓结果无效（NaN/≤0——单式
+    `not (qty > 0.0)` 并拦）时 return None 不落账——防 NaN 经 fill 链
+    污染 balance/position（锚 C=禁止变化面）；inf 不在执行点守卫面
+    （价格侧 inf 由装载点 executor._closed_bar 四价 isfinite 单点
+    拦截，卡面明确不重复拦——放行锚固化管理裁决，收紧须过卡）。
+    期望全部经真实传导链构造（NaN/零/负 balance → equity → margin →
+    qty），不覆写被测定仓函数。
+    """
+
+    def test_open_nan_equity_conduit_rejected_without_fill(self):
+        """锚 B(NaN)：NaN equity 真实传导（margin=NaN×first_size、
+        qty=NaN）→ None 不落账、保持空仓（NaN 不得经 fill 链入账）。"""
+        ledger = Ledger(float("nan"), make_params())
+        fill = _open(ledger, 100.0)
+        assert fill is None
+        assert ledger.position is None
+
+    @pytest.mark.parametrize(
+        "balance", [0.0, -1_000.0], ids=["零权益 qty=0", "负权益 qty<0"])
+    def test_open_nonpositive_qty_rejected_balance_unchanged(self,
+                                                             balance):
+        """锚 B(≤0)：零权益自然积 0/负权益负值传导 qty≤0 → None
+        不开仓；锚 C：balance 不被无效开仓触碰（禁止变化面）。"""
+        ledger = Ledger(balance, make_params())
+        fill = _open(ledger, 100.0)
+        assert fill is None
+        assert ledger.position is None
+        assert ledger.balance == balance
+
+    def test_add_nan_equity_conduit_rejected_position_unchanged(self):
+        """add 分支同式守卫：开仓后 NaN equity 传导 add_margin=NaN、
+        qty_add=NaN → None；锚 C：持仓 quantity 保持原值不被污染。"""
+        ledger = Ledger(10_000.0, make_params())
+        assert _open(ledger, 100.0) is not None
+        qty_before = ledger.position.quantity
+        ledger.balance = float("nan")  # 注入 NaN equity 语境
+        fill = ledger.execute(
+            Intent(kind="add", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)
+        assert fill is None
+        assert ledger.position.quantity == qty_before
+
+    def test_open_inf_qty_passes_guard_card_semantics(self):
+        """inf 不在执行点守卫面（卡面语义锚）：inf>0 为 True 放行
+        落账——价格侧 inf 由装载点单点拦截，执行点不重复拦；此处
+        若转为拦截即守卫面偏离卡面，须过卡重裁。"""
+        ledger = Ledger(float("inf"), make_params())
+        fill = _open(ledger, 100.0)
+        assert fill is not None  # 放行锚（守卫面定位，非污染断言）
+
     def test_full_reduce_closes_position_and_counts_trade(self):
         """exit_fraction=1.0 全量减仓 → 清仓+计一次全平交易。"""
         params = make_params(position_size=0.1, leverage=10,

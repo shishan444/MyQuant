@@ -11,6 +11,7 @@ pending 快照不扣）。
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -170,6 +171,70 @@ class TestFullReplay:
         assert settled, "数据已达结算点须 settled"
         # 持仓 bar 的快照携带持仓侧；累计资金费=settled 金额合计
         assert any(e["position_side"] == "long" for e in eqs)
+
+
+class TestNanBarSkip:
+    """CARD-01 锚 A：NaN/inf bar 装载点跳过与窗口顺延语义。
+
+    卡面契约：OHLC 任一非 finite（NaN/inf）判该 bar 无效——不成交、
+    不落库、last_bar_time 不推进；NaN bar 不占 bars_processed 计数，
+    任务顺延消费后续 bar 凑满 window_bars。验证形制=基线（干净帧）
+    vs 污染帧（窗口内三根污染 bar：四价全 NaN/close 单值 NaN/high=inf
+    三种形制各一）的快照集合差集精确断言——期望从窗口语义独立推导
+    （idx 0..52 共 53 根去 3 污染根=50 有效根、末根 idx 52），不依赖
+    seed 的信号分布。
+    """
+
+    def test_nan_bars_skipped_window_fills_with_valid_bars(self, tmp_path):
+        """三根污染 bar 全跳过：bars_processed 仍 50（有效根口径）、
+        快照差集恰为 −{30,40,45}+{50,51,52}、污染根无成交、落库数据
+        全 finite、窗口凑满正常结题。"""
+        for sub in ("clean", "dirty"):  # _Harness 的 data_dir 非递归建
+            (tmp_path / sub).mkdir()
+        h = _Harness(tmp_path / "clean")
+        ex = h.make_executor()
+        assert ex.prepare() is True
+        paper.update_task(h.db, h.task_id, status="running",
+                          started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)  # 基线：干净帧
+        base_eqs = paper.list_equity_snapshots(h.db, h.task_id, limit=1000)
+        assert len(base_eqs) == 50
+
+        h2 = _Harness(tmp_path / "dirty")
+        dirty = h2.enhanced.copy()
+        for col in ("open", "high", "low", "close"):
+            dirty.iloc[30, dirty.columns.get_loc(col)] = float("nan")
+        dirty.iloc[40, dirty.columns.get_loc("close")] = float("nan")
+        dirty.iloc[45, dirty.columns.get_loc("high")] = float("inf")
+        ex2 = h2.make_executor()
+        assert ex2.prepare() is True
+        paper.update_task(h2.db, h2.task_id, status="running",
+                          started_at="2026-10-16T00:00:00+00:00")
+        ex2.process_frames(dirty, 0)
+
+        task = h2.task()
+        assert task["status"] == "completed"  # 顺延凑满后正常结题
+        assert task["bars_processed"] == 50  # 污染根不占窗口计数
+        eqs2 = paper.list_equity_snapshots(h2.db, h2.task_id, limit=1000)
+        assert len(eqs2) == 50  # 逐有效 bar 快照（污染根不落库）
+        base_times = {e["bar_time"] for e in base_eqs}
+        dirty_times = {e["bar_time"] for e in eqs2}
+        expect_removed = {h2.enhanced.index[k].isoformat()
+                          for k in (30, 40, 45)}
+        expect_added = {h2.enhanced.index[k].isoformat()
+                        for k in (50, 51, 52)}
+        assert dirty_times == (base_times - expect_removed) | expect_added, (
+            f"快照差集异常: +{sorted(dirty_times - base_times)} "
+            f"-{sorted(base_times - dirty_times)}")
+        # 污染根上无成交（不成交面）
+        fills = paper.list_fills(h2.db, h2.task_id, limit=1000)
+        assert {f["bar_time"] for f in fills} & expect_removed == set()
+        # 落库数据无 NaN/inf 侧写（不落库+不污染）
+        for e in eqs2:
+            assert math.isfinite(float(e["equity"])), e
+        for f in fills:
+            assert math.isfinite(float(f["price"])), f
+            assert math.isfinite(float(f["quantity"])), f
 
 
 class TestFundingSettlement:
