@@ -418,11 +418,52 @@ def delete_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> dict:
-    """删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。"""
+    """删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。
+
+    删除补偿回流（delete-task-reentry-guard 方案甲）：删除完成后对关
+    联策略执行一次 paper→active 回流尝试（trigger=task_end，evidence
+    来自删除前持有的任务行内存事实）——封「终态后删除任务与回流竞
+    态窗」内回流永久失据的缺口（后台扫描域依赖任务行在场，行已删无
+    法走扫描形）。全部边界情形由 transit 单点承担（幂等
+    already_in_status/另有活跃任务 active_tasks_remain/非 paper 态守
+卫——与既有回调/后台重试两通道汇合同一汇合点）；失败仅记日志不绑
+    架删除——删除是既成事实，无其他终态任务行的策略滞留 paper 态由
+    后台通道兜底（语义边界：当场闭环窗口内多数情形，不承诺绝对自
+    愈——绝对自愈属策略中心建设范畴）。响应契约零变化（回流结果不
+    进响应——补偿是后台性动作）。"""
     row = _require_task(db_path, task_id)
     if row["status"] not in FINAL_STATUSES:
         raise HTTPException(status_code=409, detail="stop first")
     paper.delete_task(db_path, task_id)
+    # 补回流尝试：evidence 键满足 credential._TASK_END_REQUIRED_KEYS
+    # （task_id/final_status 两键）；值来自删除前持有的 row（内存事实
+    # 非重查）；日志分支沿 _replay_task_end 通道形制（error 含 code/
+    # message，info migrated，debug 静默不迁移）
+    from core.strategy.lifecycle import transit
+    from core.strategy.lifecycle.machine import LifecycleError
+
+    try:
+        result = transit(
+            db_path, row["strategy_id"], target="active",
+            trigger="task_end",
+            evidence={"task_id": task_id,
+                      "final_status": row["status"]})
+    except LifecycleError as exc:
+        logger.error(
+            "删除补偿回流失败（删除不回滚）: strategy_id=%s task_id=%s"
+            " trigger=task_end code=%s message=%s",
+            row["strategy_id"], task_id, exc.code, exc.message)
+    else:
+        if result["migrated"]:
+            logger.info(
+                "删除补偿回流：策略 %s 经已删任务 %s 回流 active",
+                row["strategy_id"], task_id)
+        elif result.get("not_migrated_reason"):
+            logger.debug(
+                "删除补偿回流未迁移（幂等/正当不触发）: strategy_id=%s"
+                " task_id=%s reason=%s",
+                row["strategy_id"], task_id,
+                result["not_migrated_reason"])
     return {"deleted": True}
 
 
