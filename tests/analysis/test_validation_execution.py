@@ -35,11 +35,19 @@ _RSI_GENE = lambda: SignalGene(  # noqa: E731 —— 与既有测试同构的构
     "RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "rsi_14",
     {"type": "lt", "threshold": 35})
 
+_EXIT_GENE = lambda: SignalGene(  # noqa: E731 —— 层 exit 补齐：T3 读库
+    # 二道校验后，直写库构造须过 validate_dna 结构完备面（层缺 exit
+    # 旧版经 REST 直通可跑、现被正确拒绝——修构造不损 MTF 装载语义）
+    "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+    {"type": "gt", "threshold": 65})
+
 
 def _mtf_dna(layer_tfs):
-    """显式 layers 的 MTF DNA（is_mtf=True）。"""
+    """显式 layers 的 MTF DNA（is_mtf=True；层基因 entry+exit 齐备——
+    过 validate_dna 结构完备面）。"""
     return StrategyDNA(
-        layers=[TimeframeLayer(timeframe=tf, signal_genes=[_RSI_GENE()],
+        layers=[TimeframeLayer(timeframe=tf,
+                               signal_genes=[_RSI_GENE(), _EXIT_GENE()],
                                logic_genes=LogicGenes())
                 for tf in layer_tfs],
         execution_genes=ExecutionGenes(timeframe="4h"),
