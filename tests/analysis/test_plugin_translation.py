@@ -106,7 +106,8 @@ class TestPluginTranslation:
         dna = _dna_of(db, out["strategy_id"])
         assert dna.signal_genes == []
         assert dna.signal_sources == [
-            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">"}]
+            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">",
+             "role": "entry"}]
         assert dna.composition == {"mode": "logic", "op": "and"}
         assert hid in dna.parent_ids, "谱系回链"
 
@@ -124,7 +125,8 @@ class TestPluginTranslation:
         assert [g.field_name for g in dna.signal_genes] == ["rsi", "rsi"]  # N4 语义名
         assert dna.signal_sources == [
             {"type": "rule"},
-            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">"}]
+            {"type": "formula", "ref": col, "threshold": 0.5, "operator": ">",
+             "role": "entry"}]
         assert dna.composition == {"mode": "logic", "op": "and"}
 
     @pytest.mark.parametrize(
@@ -139,7 +141,8 @@ class TestPluginTranslation:
         out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         src = _dna_of(db, out["strategy_id"]).signal_sources[0]
         assert src == {"type": "formula", "ref": col,
-                       "threshold": 1.25, "operator": operator}
+                       "threshold": 1.25, "operator": operator,
+                       "role": "entry"}
 
     def test_plugin_cross_above_rejected(self, db, data_dir):
         """穿越类 action 作用于插件列：显式拒绝并指明需数值比较。"""

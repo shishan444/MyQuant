@@ -49,6 +49,19 @@ def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
                     "message": "DNA 值域/结构校验未通过",
                     "errors": _vr.errors})
 
+    # 插件源能力边界判据（recognize-plugin-source-dna T4，第一问·方向
+    # 二）：live 链未接入插件信号组装，插件源在场即拒（含混合形态）。
+    # 错误码分立（补丁①）：PLUGIN_SOURCES_UNSUPPORTED=「执行环境不支持」
+    # 而非「策略无效」——结构校验已过（上方），此处是环境能力边界。
+    from core.strategy.validator import has_plugin_sources
+    if has_plugin_sources(dna):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PLUGIN_SOURCES_UNSUPPORTED",
+                "message": "执行环境不支持插件信号源（live 链未接入插件"
+                           "信号组装）——请经研究验证链沙盒回测"})
+
     # live 交易链兼容性前移（装载即拒的入口化——CARD-12 早拒锚）：trail
     # /分批等 live 链不支持的模式原本在 Runner 装载点才拒（任务已落库
     # 才失败），创建点前移到落库前——与 LiveTradingExecutor.__post_init__

@@ -322,9 +322,21 @@ class PaperTaskExecutor:
             bool: True=就绪（可进 running）；False=已写 error（不进
             running——「载入即拒」纪律）。
         """
-        result = validate_dna_quiet(self.dna)
-        if not result:
-            return self._reject("invalid_dna: DNA 值域校验未过")
+        # DNA 校验（T4 改造：validate_dna_quiet 布尔包装退役，直调明细
+        # 形制）+插件源能力边界判据（第一问·方向二——结构合法但 paper
+        # 链未接入插件信号组装，在场即拒；错误码分立〔补丁①〕：这是
+        # 「执行环境不支持」而非「策略无效」，detail 指明能力边界与
+        # 替代通道）
+        from core.strategy.validator import validate_dna, has_plugin_sources
+        result = validate_dna(self.dna)
+        if not result.is_valid:
+            return self._reject(
+                "invalid_dna: DNA 值域校验未过（"
+                + "; ".join(result.errors) + "）")
+        if has_plugin_sources(self.dna):
+            return self._reject(
+                "plugin_sources_unsupported: 执行环境不支持插件信号源"
+                "（paper 链未接入插件信号组装）——请经研究验证链沙盒回测")
 
         symbol = self.task_row["symbol"]
         try:
@@ -929,8 +941,6 @@ class PaperTaskExecutor:
                 "纸盘任务 %s 结题回调失败（不回滚终态）", self.task_id)
 
 
-def validate_dna_quiet(dna) -> bool:
-    """validate_dna 布尔包装（装载校验消费面）。"""
-    from core.strategy.validator import validate_dna
-
-    return validate_dna(dna).is_valid
+# （validate_dna_quiet 原定义位于此处——recognize-plugin-source-dna
+# T4 改造中随消费点（prepare 装载校验直调 validate_dna 明细形制）
+# 一并退役删除，调用面全域清零经 grep 核验）

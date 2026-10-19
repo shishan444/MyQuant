@@ -242,7 +242,7 @@ class TestTranslatedDraftAffectsSignals:
         assert [s for s in draft["signal_sources"]
                 if s["type"] == "formula"] == [
             {"type": "formula", "ref": col, "threshold": 0.5,
-             "operator": ">"}]
+             "operator": ">", "role": "entry"}]
         assert draft["composition"] == {"mode": "logic", "op": "and"}
 
         # 对照版：同假设条件去除插件列后重译（纯 rule 退化形态）
