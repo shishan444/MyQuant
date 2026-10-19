@@ -194,7 +194,9 @@ def _task_to_response(db_path: Path, row: dict) -> PaperTaskResponse:
     """任务行转响应（读点②查询期现算——build-strategy-lifecycle 5.3）：
     research_status=resolve_research_status 三序（迁移后随动非快照）；
     策略行已删（draft 真删等场景）回退任务行快照列（创建时点审计
-    事实兜底——审计值不进 REST 的常态路径之外唯一回退面）。"""
+    事实兜底——审计值不进 REST 的常态路径之外唯一回退面）。
+    单任务入口（GET /tasks/{id} 等单行消费方）；列表页走
+    _tasks_to_responses 批量形制（D 卡查询常数化）。"""
     from core.persistence.repository.strategy import get_strategy
 
     strategy = get_strategy(db_path, row["strategy_id"])
@@ -202,6 +204,34 @@ def _task_to_response(db_path: Path, row: dict) -> PaperTaskResponse:
         paper.resolve_research_status(db_path, strategy)
         if strategy is not None
         else row["research_status_snapshot"])
+    return _task_response_from(row, research_status)
+
+
+def _tasks_to_responses(db_path: Path, rows: list) -> list:
+    """任务页批量组装（refactor-paper-runtime-data-access D 卡：
+    strategy 批查 1 次+事件表批查 1 次，循环内零逐行查询——原每行
+    get_strategy+resolve 序②各 1 查的 N+1 形制（50 行/页≈100 次）
+    降为常数次；缓存边界=单次请求内（research_status 查询期现算
+    语义，禁止跨请求缓存）；strategy 行已删→字典缺键走快照列兜底
+    （与单任务入口同语义）。"""
+    sids = {r["strategy_id"] for r in rows}
+    strat_by_sid = {s["strategy_id"]: s
+                    for s in paper.list_strategies_by_ids(db_path, sids)}
+    with_event = paper.strategies_with_draft_to_active_event(db_path, sids)
+    out = []
+    for r in rows:
+        s = strat_by_sid.get(r["strategy_id"])
+        research_status = (
+            paper.research_status_from(
+                s, r["strategy_id"] in with_event)
+            if s is not None
+            else r["research_status_snapshot"])
+        out.append(_task_response_from(r, research_status))
+    return out
+
+
+def _task_response_from(row: dict, research_status: str) -> PaperTaskResponse:
+    """响应构造（字段映射单点——单任务/批量两入口共用）。"""
     return PaperTaskResponse(
         task_id=row["task_id"], status=row["status"],
         strategy_id=row["strategy_id"], symbol=row["symbol"],
@@ -328,7 +358,7 @@ def list_tasks(
                              offset=offset)
     total = paper.count_tasks(db_path, status=status)
     return PaperTaskListResponse(
-        tasks=[_task_to_response(db_path, t) for t in tasks],
+        tasks=_tasks_to_responses(db_path, tasks),
         total=total)
 
 

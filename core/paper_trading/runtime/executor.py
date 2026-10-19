@@ -124,17 +124,17 @@ def _rebuild_funding_paid(db_path: Path, task_id: str) -> float:
     防线判定逐 bar 纯函数式（快照+params 现算），无需持久化触发
     标记——重建后从最新收盘重判即恢复防线。
     """
-    fills = paper_repo.list_fills(db_path, task_id, limit=100_000)
-    open_bars = [f["bar_time"] for f in fills if f["kind"] == "open"]
-    if not open_bars:
+    # 聚合下推（B①②，refactor-paper-runtime-data-access）：max(open
+    # bar_time) 与 settled 合计由数据库直接产出——原两处全量拉取
+    # （fills limit=100_000+funding limit=100_000）+Python 聚合拆除，
+    # 窗口假设（超限锚点偏早/累计偏大）从机理消除；NULL 语义等价点：
+    # COALESCE(SUM(amount),0.0) ≡ Python 逐行 ``or 0.0`` 兜零，
+    # settle_time>=since 闭区间两侧同判（bar_time/settle_time 同列
+    # 族 ISO 字符串，字典序=时间序）。
+    since = paper_repo.max_open_fill_bar_time(db_path, task_id)
+    if since is None:
         return 0.0
-    since = pd.Timestamp(max(open_bars))
-    return float(sum(
-        f["amount"] or 0.0
-        for f in paper_repo.list_funding_records(
-            db_path, task_id, limit=100_000)
-        if f["status"] == "settled"
-        and pd.Timestamp(f["settle_time"]) >= since))
+    return paper_repo.sum_settled_funding_since(db_path, task_id, since)
 
 
 class PaperTaskExecutor:
@@ -282,16 +282,15 @@ class PaperTaskExecutor:
                 db_path, row["task_id"])
         ledger.closed_trades = int(row["total_trades"])
         executor.pending = intents_from_json(row["pending_intent_json"])
-        executor._pending_funding = sorted(
-            (f for f in paper_repo.list_funding_records(
-                db_path, row["task_id"], limit=100_000)
-             if f["status"] == "pending"),
-            key=lambda f: f["settle_time"])
-        # 累计资金费以 pt_equity 权威回填（append-only 快照最后一行）
-        snaps = paper_repo.list_equity_snapshots(
-            db_path, row["task_id"], limit=1_000_000)
-        if snaps:
-            ledger.total_funding = float(snaps[-1]["cumulative_funding"])
+        # 行查询下推（B④）：pending 资金费重建带 status 过滤+settle_time
+        # 升序（查询内置排序，行集=真正要处理的对象，零到几行——过滤
+        # 下推不聚合）；累计资金费 B③：末行快照由数据库直出（原
+        # limit=1_000_000 全量拉取拆除），空集→None 语义保持
+        executor._pending_funding = paper_repo.list_funding_records(
+            db_path, row["task_id"], limit=100_000, status="pending")
+        snap = paper_repo.latest_equity_snapshot(db_path, row["task_id"])
+        if snap is not None:
+            ledger.total_funding = float(snap["cumulative_funding"])
         return executor
 
     # ── 装载三就绪校验（design §5.3：不可就绪→error 不进 running） ──

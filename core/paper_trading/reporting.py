@@ -42,8 +42,10 @@ from core.persistence.timestamps import utc_now_iso
 from core.scoring.metrics import compute_metrics
 
 # 结题终态（固化/修订/取 final 的统一门槛；未结题 → TaskNotConcludedError，
-# REST 层组 5 转 409 "task not concluded"）
-FINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "error"})
+# REST 层组 5 转 409 "task not concluded"）——paper 单点常量别名
+# （refactor-paper-runtime-data-access C 卡：原独立字面声明归一为
+# 同一对象，三处恒等由静态保证；reporting 已 import paper 零新增依赖）
+FINAL_STATUSES: frozenset[str] = paper.PT_STATUS_TERMINAL
 
 # 偏差对照 warmup 前扩根数（design §6.4 契约值）
 DEVIATION_WARMUP_BARS = 200

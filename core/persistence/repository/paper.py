@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 
 from core.persistence.orm.models import (
-    PtEquity, PtFill, PtFunding, PtReport, PtTask,
+    PtEquity, PtFill, PtFunding, PtReport, PtTask, Strategy,
     StrategyTransitionEvent,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -71,10 +71,15 @@ PT_STATUS_TRANSITIONS: frozenset = frozenset(
 
 # 终态集派生视图（状态图无出边态=keys−union(values)——与
 # credential._active_statuses 同数据单源互补；task_end 回流扫描与
-# 结题门槛消费，reporting.FINAL_STATUSES 语义等价但独立声明避免
-# 调度器拖 reporting 聚合链）
+# 结题门槛消费；reporting.FINAL_STATUSES 为本常量单点别名——三处
+# 归一（refactor-paper-runtime-data-access C 卡：同一对象恒等由
+# 静态保证替代测试近似，SQL 下推 IN 子句与 Python 判定同源）
 PT_STATUS_TERMINAL: frozenset = frozenset(PT_STATUS_PREDECESSORS) - set().union(
     *PT_STATUS_PREDECESSORS.values())
+
+# 活跃集派生视图（非终态=keys−terminal——与 PT_STATUS_TERMINAL 同款
+# 模块级形制；has_no_active_tasks 判定集合的单点，SQL 下推同源消费）
+PT_STATUS_ACTIVE: frozenset = frozenset(PT_STATUS_PREDECESSORS) - PT_STATUS_TERMINAL
 
 
 def _as_status_tuple(expected_status: Union[str, Iterable[str]]) -> tuple:
@@ -139,12 +144,62 @@ def resolve_research_status(db_path: Path, strategy_row: Dict[str, Any]) -> str:
                    StrategyTransitionEvent.to_status == "active")
             .limit(1)
         ).first()
-    if row is not None:
+    return research_status_from(strategy_row, row is not None)
+
+
+def research_status_from(
+    strategy_row: Dict[str, Any], has_draft_active_event: bool,
+) -> str:
+    """三序 first-match-wins 判定本体（序②数据注入形——单点：
+    resolve_research_status 单策略入口与列表批量路径共用，防判定
+    逻辑复制〔D②，refactor-paper-runtime-data-access〕；序②的批量
+    姊妹数据源见 strategies_with_draft_to_active_event）。"""
+    if strategy_row.get("status") == "draft":
+        return "draft"
+    if has_draft_active_event:
         return "verified"
     qualified = strategy_row.get("qualified")
     if qualified is None:
         return "unverified"
     return "verified" if qualified == 1 else "verification_failed"
+
+
+def list_strategies_by_ids(
+    db_path: Path, strategy_ids: Iterable[str],
+) -> List[Dict[str, Any]]:
+    """按 ID 集合批查策略行（WHERE IN——列表接口批量化 D①，
+    refactor-paper-runtime-data-access；空集返回空，缺键=策略行已删
+    语义由消费方字典缺键分支承载）。"""
+    ids = list(strategy_ids)
+    if not ids:
+        return []
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(Strategy).where(Strategy.strategy_id.in_(ids))
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def strategies_with_draft_to_active_event(
+    db_path: Path, strategy_ids: Iterable[str],
+) -> set:
+    """存在 (draft→active) 迁移事件的策略 ID 存在集（DISTINCT WHERE
+    IN——resolve_research_status 序②的批量姊妹形 D②：一次查询取存在
+    集，循环内序②改集合成员判定；单策略入口保持不变，其他消费方
+    零影响）。"""
+    ids = list(strategy_ids)
+    if not ids:
+        return set()
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(StrategyTransitionEvent.strategy_id).distinct()
+            .where(StrategyTransitionEvent.strategy_id.in_(ids),
+                   StrategyTransitionEvent.from_status == "draft",
+                   StrategyTransitionEvent.to_status == "active")
+        ).all()
+    return {r[0] for r in rows}
 
 
 def create_task(
@@ -250,12 +305,18 @@ def update_task(
 def list_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50,
     offset: int = 0, order: str = "desc",
+    status_in: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """列纸盘任务（status 过滤+created_at 排序+分页；desc=REST 列表
-    倒序缺省，asc=调度器拾取最早优先序）。"""
+    """列纸盘任务（status 单值/status_in 集合过滤+created_at 排序+
+    分页；desc=REST 列表倒序缺省，asc=调度器拾取最早优先序；
+    status_in=集合过滤 SQL 下推——调度器终态域扫描查询收窄
+    （refactor-paper-runtime-data-access A-1），空集=零行）。"""
     stmt = select(PtTask)
     if status:
         stmt = stmt.where(PtTask.status == status)
+    if status_in is not None:
+        stmt = stmt.where(
+            PtTask.status.in_(_as_status_tuple(status_in)))
     col = PtTask.created_at.desc() if order == "desc" else PtTask.created_at.asc()
     stmt = stmt.order_by(col).limit(limit).offset(offset)
     engine = _engine_for(db_path)
@@ -420,16 +481,88 @@ def list_equity_snapshots(
 
 def list_funding_records(
     db_path: Path, task_id: str, limit: int = 100, offset: int = 0,
+    status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """取任务资金费明细（settle_time 升序+分页——对账披露面）。"""
+    """取任务资金费明细（settle_time 升序+分页——对账披露面；
+    status 过滤参数——回补例程 pending 行查询下推，A-2）。"""
+    stmt = select(PtFunding).where(PtFunding.task_id == task_id)
+    if status:
+        stmt = stmt.where(PtFunding.status == status)
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         rows = conn.execute(
-            select(PtFunding).where(PtFunding.task_id == task_id)
-            .order_by(PtFunding.settle_time.asc())
+            stmt.order_by(PtFunding.settle_time.asc())
             .limit(limit).offset(offset)
         ).mappings().all()
     return [dict(r) for r in rows]
+
+
+def has_pending_funding(db_path: Path) -> bool:
+    """pending 资金费行存在性（LIMIT 1 轻量查询——终态后回补例程
+    存在性短路判据，refactor-paper-runtime-data-access A-2：False
+    （平时常态）直接返回，全免任务全量拉取与逐任务 funding 查询）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(PtFunding.task_id)
+            .where(PtFunding.status == "pending").limit(1)
+        ).first()
+    return row is not None
+
+
+def list_pending_funding_task_ids(db_path: Path) -> List[str]:
+    """pending 资金费涉事任务清单（DISTINCT——回补例程收窄循环域，
+    仅涉事任务被拉取）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(PtFunding.task_id)
+            .where(PtFunding.status == "pending").distinct()
+        ).all()
+    return [r[0] for r in rows]
+
+
+def max_open_fill_bar_time(db_path: Path, task_id: str) -> Optional[str]:
+    """最近一次 open 成交的 bar_time（SQL MAX——恢复链聚合下推 B①，
+    refactor-paper-runtime-data-access；空集→None=无持仓，消费侧
+    None→return 0.0 语义保持）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(
+            select(func.max(PtFill.bar_time)).where(
+                PtFill.task_id == task_id, PtFill.kind == "open")
+        ).scalar_one_or_none()
+
+
+def sum_settled_funding_since(
+    db_path: Path, task_id: str, since: str,
+) -> float:
+    """settled 资金费合计（SQL SUM+COALESCE 兜零——恢复链聚合下推
+    B②；NULL 语义等价点：SUM 忽略 NULL+COALESCE(0.0) ≡ Python 逐行
+    ``or 0.0`` 兜零；settle_time>=since 闭区间与 Python ``>=`` 同判）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        v = conn.execute(
+            select(func.coalesce(func.sum(PtFunding.amount), 0.0)).where(
+                PtFunding.task_id == task_id,
+                PtFunding.status == "settled",
+                PtFunding.settle_time >= since)
+        ).scalar_one()
+    return float(v)
+
+
+def latest_equity_snapshot(
+    db_path: Path, task_id: str,
+) -> Optional[Dict[str, Any]]:
+    """最新权益快照行（bar_time 时序末行 ORDER BY DESC LIMIT 1——
+    恢复链聚合下推 B③；空集→None，``if snaps:`` 分支语义保持）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(PtEquity).where(PtEquity.task_id == task_id)
+            .order_by(PtEquity.bar_time.desc()).limit(1)
+        ).mappings().first()
+    return dict(row) if row is not None else None
 
 
 def delete_task(db_path: Path, task_id: str) -> bool:

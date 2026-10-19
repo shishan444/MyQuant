@@ -25,13 +25,11 @@ _TASK_END_REQUIRED_KEYS: Tuple[str, ...] = ("task_id", "final_status")
 
 
 def _active_statuses() -> frozenset:
-    """pt_task 活跃集（非终态）：PT_STATUS_PREDECESSORS 派生单源
-    （终态=状态图无出边态=keys−union(values)——同 A3 存量分类口径，
-    import 常量不复制字面量）。"""
-    from core.persistence.repository.paper import PT_STATUS_PREDECESSORS
-    terminal = (frozenset(PT_STATUS_PREDECESSORS)
-                - set().union(*PT_STATUS_PREDECESSORS.values()))
-    return frozenset(PT_STATUS_PREDECESSORS) - terminal
+    """pt_task 活跃集（非终态）：paper 单点派生常量直返（零推导
+    消费——原 import 前身图后重写派生公式已收敛为单点常量，
+    refactor-paper-runtime-data-access C 卡；薄壳保留防调用面散改）。"""
+    from core.persistence.repository.paper import PT_STATUS_ACTIVE
+    return PT_STATUS_ACTIVE
 
 
 def missing_evidence(
