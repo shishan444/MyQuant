@@ -111,7 +111,9 @@ class _BatchBacktestProcessor:
                 dna = StrategyDNA.from_json(row["dna_json"])
                 # 读库二道校验（recognize-plugin-source-dna T3）：库内
                 # DNA 损坏（本机直改库可绕过写入时校验）→422 数据完整
-                # 性错误，不静默跳过（HTTPException 经下方前置分支放行）
+                # 性错误，不静默跳过（HTTPException 经下方前置分支放行）。
+                # 防线边界：覆盖「可解析但校验不过」；from_json 解析失败
+                # 的更重损毁仍沿既有 except 分支静默跳过（非本防线覆盖）
                 from core.strategy.validator import validate_dna
                 _vr = validate_dna(dna)
                 if not _vr.is_valid:
