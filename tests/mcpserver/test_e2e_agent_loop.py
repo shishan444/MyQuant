@@ -2,8 +2,9 @@
 
 list_data_sources → run_analysis → register_hypothesis → translate 产
 draft → run_isolated_validation（挂 draft）→ run_random_window_test →
-transition（supported 时 draft 自动转正）——全程经 MCP call_tool，零
-直接 REST；任一步失败返回 {error: {code, message, detail, hint}}。
+transition（supported 时谱系 draft 若有自身 pass 记录则同事务转正）
+——全程经 MCP call_tool，零直接 REST；任一步失败返回 {error: {code,
+message, detail, hint}}。
 """
 import asyncio
 import json
@@ -131,7 +132,8 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
                window_bars=20, n_windows=3, seed=7, hypothesis_id=hid)
     assert rw["summary"]["n_windows"] == 3
 
-    # 7) 定案：pass→supported（draft 同事务转正）；fail→refuted（draft 留存）；
+    # 7) 定案：pass→supported（谱系 draft 若有自身 pass 记录则同事务转正）；
+    #    fail→refuted（draft 留存）；
     #    inconclusive→不可定论（0.2.11：证据不足 422 拒 + 假设保持 active）
     if validation["verdict"] == "inconclusive":
         rejected = _call(mcp, "transition_hypothesis",
