@@ -102,15 +102,39 @@ def bt_rows_now(affected):
 # ---------------------------------------------------------------- R1 完备性
 
 
-# 清除后形制守卫（用户裁决 2026-10-13）：策略表行数为零属预期状态
-import sqlite3 as _sq
-from pathlib import Path as _P
-def _legacy_purged() -> bool:
-    db = _P(__file__).resolve().parents[2] / "data/quant.db"
-    if not db.exists():
+# 清除后形制守卫（用户裁决 2026-10-13）：历史核验对象（86 行清单）全部
+# 不在库即已清除。判据按清单逐 ID 查询而非表行数——清库后新策略进场
+# 不影响判定（新行 ID 不在清单，与「历史行是否在场」正交）。
+def _get_legacy_ids() -> list[str] | None:
+    """历史核验清单：OUT/manifest.json 的 86 项 strategy_id（与 affected
+    fixture 同源表达式）。manifest 不可得 → None（守卫侧保守不跳过，
+    manifest 缺失场景由 manifest fixture 自身的 skip 兜住）。"""
+    p = OUT / "manifest.json"
+    if not p.exists():
+        return None
+    data = json.loads(p.read_text())
+    return [s["strategy_id"]
+            for s in data["classes"]["strategy_evolution"]["strategies"]]
+
+
+def _legacy_rows_absent(db_path: Path, legacy_ids: list[str] | None) -> bool:
+    """判据：legacy_ids 逐 ID 均不在 strategy 表 → True（守卫显式跳过）；
+    任一在场 → False（核验有对象、正常跑）。一次 IN 查询命中集非空即
+    False，不做行数比较。缺失值保守不跳过：db_path 不存在、清单为
+    None 或空 list → False。"""
+    if not db_path.exists():
         return False
-    return _sq.connect(db).execute(
-        "SELECT COUNT(*) FROM strategy").fetchone()[0] == 0
+    if not legacy_ids:
+        return False
+    conn = _ro(db_path)
+    try:
+        ph = ",".join("?" * len(legacy_ids))
+        hits = conn.execute(
+            f"SELECT strategy_id FROM strategy WHERE strategy_id IN ({ph})",
+            legacy_ids).fetchall()
+        return not hits
+    finally:
+        conn.close()
 class TestR1Completeness:
     """①类全量口径：三载体各自全量、三方一致、逐条旧值在。"""
 
@@ -204,7 +228,7 @@ class TestR1WritebackReconciliation:
             self, backup, comparison, bt_rows_now):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
         """数字列回写规则：不可重算→旧值保留；可重算→库=新值；
         新值缺失（动态列集不写 None）→旧值保留。"""
@@ -228,7 +252,7 @@ class TestR1WritebackReconciliation:
 self, backup, bt_rows_now):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
 
         """实际数字变化行数=640（lead 口径回写面对账固化）。"""
@@ -243,7 +267,7 @@ self, backup, bt_rows_now):
 self, backup, bt_rows_now):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
 
         """非数字列（equity_curve/trades_json/参数列等）逐行不变。"""
@@ -260,7 +284,7 @@ self, backup, bt_rows_now):
 self, manifest, backup, comparison, affected):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
 
         """strategy 行：metrics_json 同名键同步最新可重算值、其余键与
@@ -332,7 +356,7 @@ class TestR2Distinguishability:
 self, manifest, comparison, std_layer):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
 
         """分层抽样（std 1.0/1.5/2.5/3.0 各一行·有交易可重算行）：
@@ -402,7 +426,7 @@ class TestR5StateZeroMigration:
 self, backup, bt_rows_now):
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
 
         """A9-⑤：backtest_result.qualified 998 行逐行不变（vs 备份）。"""
@@ -413,7 +437,7 @@ self, backup, bt_rows_now):
         """涉事 86 行 status 全 active（①类枚举前提），pre_c5 可见行零迁移。"""
         # 清除后形制（用户裁决 2026-10-13：历史策略已全部清除——
         # 本断言的历史核验已在清除前完成并留档，行缺失时跳过不假绿）
-        if _legacy_purged():
+        if _legacy_rows_absent(DB, _get_legacy_ids()):
             pytest.skip("历史策略已清除（用户裁决）——清除前核验已留档")
         conn = _ro(DB)
         now = {r[0]: r[1] for r in conn.execute(
@@ -551,3 +575,50 @@ class TestClass2DisposalContract:
                 assert src == "result_ref"
             else:
                 assert src in {"research_archive", "none"}
+
+
+# ------------------------------------------- 判据 _legacy_rows_absent 三场景锚
+# 合成清单与生产清单等价（判据是纯集合判定），锚零 OUT 产物依赖——
+# 产物缺失环境可独立跑。守卫 skip 路径不写内联元测试，以全量实证
+# （skipped 计数恰=10）为守卫接线的等效锚。
+class TestGuardLegacyRowsAbsent:
+    """三场景（S1/S2/S3）+两缺失值边界（U4/U5），直断判据返回值。"""
+
+    LEGACY = [f"legacy_{i:03d}" for i in range(86)]
+
+    @staticmethod
+    def _mk_db(path: Path, ids) -> Path:
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE strategy (strategy_id TEXT PRIMARY KEY)")
+        conn.executemany("INSERT INTO strategy VALUES (?)",
+                         [(i,) for i in ids])
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_s1_legacy_rows_present_returns_false(self, tmp_path):
+        """S1 历史行在场（清单抽样≥3）→False（守卫不跳过、正常跑）。"""
+        db = self._mk_db(tmp_path / "q.db", self.LEGACY[::17])  # 抽样 6 个
+        assert _legacy_rows_absent(db, self.LEGACY) is False
+
+    def test_s2_legacy_rows_absent_returns_true(self, tmp_path):
+        """S2 历史行不在场（空表）→True（守卫显式跳过）。"""
+        db = self._mk_db(tmp_path / "q.db", [])
+        assert _legacy_rows_absent(db, self.LEGACY) is True
+
+    def test_s3_new_rows_only_still_returns_true(self, tmp_path):
+        """S3 新行在场+历史不在→True（仍显式跳过——当前十红的修复
+        归宿；旧判据 COUNT(*)==0 在此场景误判为 False，唯一判别锚）。"""
+        db = self._mk_db(tmp_path / "q.db", ["new_001", "new_002"])
+        assert _legacy_rows_absent(db, self.LEGACY) is True
+
+    def test_u4_db_missing_returns_false(self, tmp_path):
+        """U4 边界：db 文件不存在→False（保守不跳过）。"""
+        assert _legacy_rows_absent(tmp_path / "absent.db", self.LEGACY) \
+            is False
+
+    def test_u5_none_ids_returns_false(self, tmp_path):
+        """U5 边界：清单 None（manifest 不可得）→False（保守不跳过，
+        manifest 缺失场景由 manifest fixture 自身 skip 兜住）。"""
+        db = self._mk_db(tmp_path / "q.db", [])
+        assert _legacy_rows_absent(db, None) is False
