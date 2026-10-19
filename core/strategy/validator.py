@@ -7,7 +7,7 @@
 进化链 population（种群初始化）与 operators（变异子代校验），
 非法产出回退保底以此为据；SL_PCT_MIN/MAX 与 SL_ATR_MIN/MAX 同时是
 exit_sweep 网格校验的引用式值域（扫描通道各档单点权威，改域单点
-生效），MAX_LEVERAGE 为杠杆红线单源（api/schemas 三处 Field 同源
+生效），MAX_LEVERAGE 为杠杆红线单源（api/schemas 各处 Field 同源
 引用——D4 家族）。
 
 职责边界：只判合法性与结构完整，不判策略优劣（表现评估归回测
@@ -32,8 +32,12 @@ SL_PCT_MAX = 0.20
 # risk 域、登记声明块校验（hypothesis_service）、exit_sweep atr 档）
 SL_ATR_MIN = 0.5
 SL_ATR_MAX = 5.0
-# 杠杆红线单源（D4/DC-5）：api/schemas.py 三处 Field(le=…)、validator
-# risk 域、登记声明块校验五处同源引用——改值代价=一处常量+边界用例
+# 杠杆红线单源（D4/DC-5）：全部消费方（api/schemas.py 的 Field(le=MAX_
+# LEVERAGE) 各处〔含请求/响应两侧〕、api/routes/paper_trading.py 的
+# Field 同源、validator risk 域、登记声明块校验）一律经本常量同源引用，
+# 禁散写字面量——改值代价=一处常量+边界用例（原「三处/五处」计数式
+# 表述随消费方增删漂移，改为不依赖计数的同源表述——improve-schema-
+# bound-symmetry 盘点附带核对）
 MAX_LEVERAGE = 10
 # 时间出场持有上界（add-max-hold-exit D-4）：max_hold 正整数 bar 数
 # 值域单源——登记声明块校验（hypothesis_service）与 validate_dna 手工
