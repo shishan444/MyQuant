@@ -427,10 +427,10 @@ def delete_task(
     法走扫描形）。全部边界情形由 transit 单点承担（幂等
     already_in_status/另有活跃任务 active_tasks_remain/非 paper 态守
 卫——与既有回调/后台重试两通道汇合同一汇合点）；失败仅记日志不绑
-    架删除——删除是既成事实，无其他终态任务行的策略滞留 paper 态由
-    后台通道兜底（语义边界：当场闭环窗口内多数情形，不承诺绝对自
-    愈——绝对自愈属策略中心建设范畴）。响应契约零变化（回流结果不
-    进响应——补偿是后台性动作）。"""
+    架删除——删除是既成事实；无其他终态任务行的策略滞留 paper 态且
+    无自愈通道（后台扫描域依赖任务行在场，行已删即失据——语义边界：
+    当场闭环窗口内多数情形，不承诺绝对自愈，绝对自愈属策略中心建设
+    范畴）。响应契约零变化（回流结果不进响应——补偿是后台性动作）。"""
     row = _require_task(db_path, task_id)
     if row["status"] not in FINAL_STATUSES:
         raise HTTPException(status_code=409, detail="stop first")
