@@ -133,7 +133,7 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
     assert rw["summary"]["n_windows"] == 3
 
     # 7) 定案：pass→supported（谱系 draft 若有自身 pass 记录则同事务转正）；
-    #    fail→refuted（draft 留存）；
+    #    fail→refuted（谱系 draft 同事务归档 draft→archived，trigger=refute）；
     #    inconclusive→不可定论（0.2.11：证据不足 422 拒 + 假设保持 active）
     if validation["verdict"] == "inconclusive":
         rejected = _call(mcp, "transition_hypothesis",
