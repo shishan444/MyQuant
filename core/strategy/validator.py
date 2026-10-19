@@ -61,6 +61,37 @@ INITIAL_FRACTION_MAX = 1.0   # 闭区间上界（1.0=全部可用资金）
 MAX_POSITION_LOSS_MIN = 0.0  # 开区间下界（0 排除；无上界）
 
 
+def _entry_plugin_sources(dna: StrategyDNA) -> List[dict]:
+    """role 解释为 entry 的插件源条目（进场判据的插件源面）。
+
+    type∈{"formula","model"} 且 role 缺省或 =="entry" 的源解释为 entry
+    ——缺省=entry 与全链既有契约一致（引擎组装器只组进场侧/翻译器拒
+    绝插件出场/存量 11 行零 role 键零迁移）；role=="exit" 源不顶替
+    entry（防「无 ENTRY 基因+仅 exit 源」形态下进场条件空集的静默零
+    交易在结构层复刻——该形态按两源皆空拒绝）。
+    """
+    return [
+        s for s in (dna.signal_sources or [])
+        if isinstance(s, dict)
+        and s.get("type") in ("formula", "model")
+        and s.get("role", "entry") == "entry"
+    ]
+
+
+def has_plugin_sources(dna: StrategyDNA) -> bool:
+    """signal_sources 含插件源条目（type∈{formula,model}）——在场即真。
+
+    执行链能力边界判据（recognize-plugin-source-dna T4）：模拟盘/实盘/
+    REST 回测通道未接入插件信号组装，插件源在场即拒（含混合形态——
+    插件源被静默忽略、结果只反映内置基因，比零交易更隐蔽；「在场即
+    拒」防静默失真回潮）。与结构校验（_entry_plugin_sources）正交：
+    结构校验问「策略形态合法吗」，本判据问「这个执行环境支持吗」。
+    """
+    return any(
+        isinstance(s, dict) and s.get("type") in ("formula", "model")
+        for s in (dna.signal_sources or []))
+
+
 @dataclass
 class ValidationResult:
     """DNA 校验结果（is_valid=errors 为空；warnings 不影响放行）。"""
@@ -95,7 +126,10 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             g for g in dna.signal_genes
             if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
         ]
-        if not entry_signals:
+        # 进场判据双源（recognize-plugin-source-dna T2）：ENTRY 角色基因
+        # 与 role 解释为 entry 的插件源任一在场即过；插件源不顶替出场
+        # （exit 判据不变）。
+        if not entry_signals and not _entry_plugin_sources(dna):
             errors.append("No entry signal defined (need at least one entry_trigger or entry_guard)")
 
         exit_signals = [
@@ -124,13 +158,28 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             )
         has_execution = False
         has_trend = False
+        # 复制形态层判据基准（recognize-plugin-source-dna T2）：顶层
+        # entry 面（ENTRY 角色基因或 role 解释为 entry 的插件源）——单层
+        # 序化兼容层产物（层基因集与顶层完全一致——库存被误拒策略的
+        # 实测形态）时层 entry 判据随顶层同判：顶层 entry 面在场→放行
+        # （纯插件策略顶层插件源可顶替层 entry）；真分层维持强制（AND
+        # 组合下层缺 entry=该层恒假=组合恒假，放行等于放行无意义策略；
+        # OR 组合维持现状从严——无存量与生产者证据不放开）。
+        top_entry_present = bool(
+            [g for g in dna.signal_genes
+             if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)]
+            or _entry_plugin_sources(dna))
         for layer in dna.layers:
             layer_entry = [
                 g for g in layer.signal_genes
                 if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
             ]
             if not layer_entry:
-                errors.append(f"Layer {layer.timeframe}: no entry signal defined")
+                is_mirror_layer = (
+                    len(dna.layers) == 1
+                    and layer.signal_genes == dna.signal_genes)
+                if not (is_mirror_layer and top_entry_present):
+                    errors.append(f"Layer {layer.timeframe}: no entry signal defined")
             layer_exit = [
                 g for g in layer.signal_genes
                 if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)

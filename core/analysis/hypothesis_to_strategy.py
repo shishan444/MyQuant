@@ -794,6 +794,12 @@ def _translate_conditions(
                 "ref": subject,
                 "threshold": float(target),
                 "operator": operator,
+                # 角色标记（recognize-plugin-source-dna T1）：翻译链产出的
+                # 插件源显式写 entry；读取侧对无 role 键存量条目同按 entry
+                # 解释（缺省=entry 全链契约，存量 11 行零迁移）。
+                # "exit" 值域前向声明（翻译器拒绝插件出场——无生产者），
+                # 无消费逻辑，语义留未来。
+                "role": "entry",
             })
             continue
 
