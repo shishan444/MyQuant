@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient  # noqa: F401（fixture 类型标注用）
 
 from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
-from core.strategy.validator import has_plugin_sources
+from core.strategy.validator import has_plugin_sources, validate_dna
 from tests.helpers.data_factory import make_dna
 
 # 库存验证资产定位（判定并集纪律外的库文件只读保护——mode=ro）
@@ -57,6 +57,9 @@ _QUANT_DB = _REPO_ROOT / "data" / "quant.db"
 
 # 库存两行混合形态策略 id（组 0 验证资产，非测试装置——禁改库）
 HYBRID_SIDS = ("st_fa536d692525", "st_7cd382d439fa")
+
+# 库存红痕行（MTF 复制形态误拒本体，组 0 ⑤a 锚对象——禁改库）
+RED_TRACE_SID = "st_0c1c0b54daa7"
 
 # 四路径注册键（api/routes/strategies/ 聚合 prefix=/api/strategies）
 ROUTES = ("backtest", "compare", "verify", "batch")
@@ -233,6 +236,30 @@ class TestFourRoutesPluginReject:
         assert resp.json()["detail"]["code"] == \
             "PLUGIN_SOURCES_UNSUPPORTED", f"[{route}] {resp.text}"
 
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_stored_red_trace_row_rejected_on_all_routes(
+            self, api_client, route):
+        """红痕行实测（tasks 3.1 完成标准「红痕行经四路径转绿」的
+        交付用例固化，2026-10-19 tester 复核补锚 C-5）：st_0c1c0b54daa7
+        （MTF 复制形态+formula 源，mode=ro 只读取行→写测试库）经四路径
+        → 422 PLUGIN_SOURCES_UNSUPPORTED——「转绿」语义=不再被 T3 结构
+        校验（DNA_VALIDATION_FAILED）误拒，T4 通道层在场即拒接管。两层
+        归属：该行 validate_dna 层预期 True（红灯基线锚 ⑤a），本断言
+        属 REST 通道层（预期 422）。库行不可得时 skip。"""
+        dna_json = _read_stored_dna_json(RED_TRACE_SID)
+        db = api_client.app.state.db_path
+        _persist(db, "store-red-trace", dna_json)
+
+        resp = _post_route(api_client, route, "store-red-trace")
+
+        assert resp.status_code == 422, f"[{route}] {resp.text}"
+        body = resp.json()["detail"]
+        assert body["code"] == "PLUGIN_SOURCES_UNSUPPORTED", \
+            f"[{route}] {body}"
+        assert body["code"] != "DNA_VALIDATION_FAILED", (
+            f"[{route}] 红痕行被结构校验误拒（T2 未生效即撤卡事故"
+            f"机理复现）：{body}")
+
 
 class TestDistinctErrorCodeOnDamagedDna:
     """分码断言：损坏 DNA 行 → DNA_VALIDATION_FAILED（两码不同值）。"""
@@ -286,6 +313,54 @@ class TestPlainStrategyControlGroup:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["total_trades"] >= 0
+
+
+class TestCrudCreateUpdateChannelPass:
+    """crud 创建/更新通道放行（design T2 矩阵 crud.py:171/:304 格）：
+    纯插件策略经通道放行（拒绝面收窄）的通道级直测——此前证据为
+    validate_dna 单点消费的间接论证（2026-10-19 tester 复核补锚，
+    team-lead 裁定补通道格直测）。结构校验层放行与 T4 通道拒绝正交：
+    本 class 断言的是 crud 通道（无插件源执行能力判据，仅结构校验）。"""
+
+    def test_pure_plugin_dna_create_201(self, api_client):
+        """纯插件策略（EXIT 基因+formula 源，T2 下结构合法）经
+        POST /api/strategies 创建 → 201；落库回读 from_json→
+        validate_dna is_valid=True（请求直传→落库→回读三层一致的
+        通道放行完整证明）。"""
+        import json as _json
+
+        resp = api_client.post("/api/strategies", json={
+            "name": "pure-plugin-create",
+            "dna": _json.loads(_pure_plugin_dna().to_json()),
+            "symbol": "BTCUSDT", "timeframe": "4h",
+        })
+        assert resp.status_code == 201, resp.text
+        sid = resp.json()["strategy_id"]
+
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(api_client.app.state.db_path, sid)
+        assert row is not None, "创建响应 201 但落库行不可得"
+        result = validate_dna(StrategyDNA.from_json(row["dna_json"]))
+        assert result.is_valid, result.errors
+
+    def test_pure_plugin_dna_update_200(self, api_client):
+        """更新通道（crud.py:304）：active 行 PUT 换纯插件 DNA → 200
+        （save_strategy 缺省 status="active"，非 draft 不触写锁）；
+        回读落库 DNA 过校验。"""
+        import json as _json
+
+        db = api_client.app.state.db_path
+        _persist(db, "s-update-target", make_dna().to_json())
+
+        resp = api_client.put(
+            "/api/strategies/s-update-target",
+            json={"dna": _json.loads(_pure_plugin_dna().to_json())})
+        assert resp.status_code == 200, resp.text
+
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(db, "s-update-target")
+        result = validate_dna(StrategyDNA.from_json(row["dna_json"]))
+        assert result.is_valid, result.errors
 
 
 class TestInlineDnaEntryRejected:

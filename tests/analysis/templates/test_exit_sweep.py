@@ -780,3 +780,53 @@ def test_v1_5_direction_reused_no_perspective_param():
     assert sig.parameters["direction"].default is _inspect.Parameter.empty, \
         "direction 必填（非可选）"
     assert "perspective" not in params, "不得新增同义双参数"
+
+
+class TestPluginSourceRoleMark:
+    """插件路径产物 role 标记（recognize-plugin-source-dna T1/组 1：
+    tasks 1.1「两域产物断言——翻译链与 exit_sweep 产出条目均带
+    role:"entry"」的 exit_sweep 域侧；2026-10-19 tester 复核补锚 C-6）。
+
+    覆盖机理（共享链）：exit_sweep 的插件源条目经 build_signal_genes
+    共享构造产出（exit_sweep.py 内 `from ... import build_signal_genes`
+    局部导入），role:"entry" 在共享构造单点写入——本 class 用回测桥
+    捕获（判定轨道 _fake_bridge 同款 monkeypatch 形制）取到送桥 DNA，
+    断言其 signal_sources 条目带 role 键，把「共享链自动覆盖」从代码
+    论证升级为测试证明。"""
+
+    @pytest.fixture(autouse=True)
+    def _env(self, tmp_path, monkeypatch):
+        self.d, self.db = _make_env(tmp_path)
+        self._mp = monkeypatch
+
+    def test_plugin_condition_yields_role_marked_source(self):
+        """混合条件（内置 RSI+插件列）跑 sweep：送桥 DNA 的
+        signal_sources == [rule 源, formula 源带 role:"entry"]——
+        与翻译链产物（test_plugin_translation.py 同构断言）两侧
+        证明共享构造单点写键。"""
+        from core.analysis.plugin_service import register_formula_plugin
+
+        col = register_formula_plugin(
+            self.db, name="mom", expression="zscore(close, 20)")["column"]
+        captured = []
+
+        def _capture_bridge(db_path, data_dir, dna, *args, **kw):
+            captured.append(dna)
+            return ({"total_return": 0.01, "sharpe_ratio": 1.0,
+                     "max_drawdown": 0.1, "win_rate": 1.0,
+                     "total_trades": 1, "liquidated": False,
+                     "alpha": 0.0, "market_annual_return": 0.0,
+                     "benchmark_return": None, "excess_return": None},
+                    [0.01], 200, 500)
+
+        self._mp.setattr(bb, "run_backtest_on_range", _capture_bridge)
+        exit_sweep(self.db, self.d, dict(RNG_DEF), conditions=[
+            _COND, {"subject": col, "action": "gt", "target": 0.5}],
+            direction="long", grid=_grid([0.01], [0.02]))
+
+        assert captured, "回测桥未被调用（捕获面空——断言未触达产物）"
+        sources = captured[0].signal_sources
+        assert sources == [
+            {"type": "rule"},
+            {"type": "formula", "ref": col, "threshold": 0.5,
+             "operator": ">", "role": "entry"}], sources

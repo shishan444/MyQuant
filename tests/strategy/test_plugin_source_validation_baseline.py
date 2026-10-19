@@ -17,7 +17,8 @@
   * ⑥ role 缺省解析独立锚——无 role 键插件源按 entry 参与进场判定
     的正向证明（T1 契约「缺省=entry」读取侧），与生产侧显式写
     role:"entry" 构成两侧证明：两变体同判放行。
-- 防回退批七项（本锚提交时绿，防新判据过严/过宽）：
+- 防回退批十项（本锚提交时绿，防新判据过严/过宽；G7-G9 为 2026-10-19
+  tester 复核补锚——team-lead 裁定 C-1/C-2/C-3 三处契约点补护栏）：
   * G1 标准 ENTRY+EXIT 基因策略保持放行。
   * G2 标准 MTF 真分层保持放行。
   * G3 signal_genes 与 signal_sources 双空仍拒（"No entry signal
@@ -32,6 +33,13 @@
   * ⑤b 存量两行混合形态回归锚——st_fa536d692525/st_7cd382d439fa
     只读实测 is_valid=True（现状绿+组 2 改造后维持绿——防新判据
     过严误拒混合形态的报警锚）。
+  * G7 插件源不顶替出场（T2「exit 判据不变」）：ENTRY 基因在场+
+    无 EXIT 基因+插件源在场 → 仍报 "No exit signal defined"。
+  * G8 OR 组合维持现状（design T2 裁量留痕）：真分层 OR 缺 entry
+    层仍拒——「OR 放开待真实形态出现再议」的护栏锚。
+  * G9 补丁③ MTF 对向格：复制形态（单层基因集=顶层）+顶层仅
+    role:"exit" 源 → 层与顶层同报（role:"exit" 不顶替 entry 在
+    MTF 侧同效，与 G6 非 MTF 格构成两侧证明）。
 
 两层归属注记（tasks 0.1 指定写入）：⑤b 两行绿对照属 validate_dna 层
 （结构校验预期 True）；组 4.3 的混合形态 REST 实测断言属 REST 通道层
@@ -345,3 +353,70 @@ class TestGuardGreenBaseline:
         result = validate_dna(dna)
         assert result.is_valid, (
             f"存量混合形态行 {sid} 应维持通过：{result.errors}")
+
+    def test_g7_plugin_source_does_not_substitute_exit(self):
+        """G7 插件源不顶替出场（T2 契约「exit 判据不变——signal_genes
+        无 EXIT 角色基因仍报错」）：ENTRY 基因在场（entry 面由基因
+        满足）+无 EXIT 基因+插件源在场 → 仍报 "No exit signal
+        defined"。现有红灯批用例的 exit 面均由 EXIT 基因满足，若
+        实现误让插件源（或 role:"exit" 源）顶替出场判据，全套不红
+        ——本锚补该护栏（2026-10-19 tester 复核补锚 C-1）。"""
+        dna = StrategyDNA(
+            signal_genes=[_entry_gene()],
+            signal_sources=[_formula_source()],
+            risk_genes=RiskGenes(),
+        )
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any("No exit signal defined" in e for e in result.errors), \
+            result.errors
+
+    def test_g8_or_true_layering_missing_entry_still_rejected(self):
+        """G8 OR 组合维持现状（design T2 裁量留痕「OR 放开待真实形态
+        出现再议」——不为未出现形态放开）：真分层 OR 缺 entry 层仍报
+        "Layer X: no entry signal defined"。G4 仅覆盖 AND/缺省组合，
+        本锚补 OR 侧护栏（2026-10-19 tester 复核补锚 C-2）。"""
+        dna = StrategyDNA(
+            signal_genes=[_entry_gene(), _exit_gene()],
+            layers=[
+                TimeframeLayer("1h", [_entry_gene(), _exit_gene()],
+                               LogicGenes(), "execution"),
+                TimeframeLayer("4h", [_exit_gene()],
+                               LogicGenes(), "zone"),
+            ],
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            cross_layer_logic="OR",
+            signal_sources=[_formula_source()],
+            risk_genes=RiskGenes(),
+        )
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any(
+            f"Layer 4h: no entry signal defined" in e
+            for e in result.errors), result.errors
+
+    def test_g9_replica_mtf_with_only_role_exit_source_still_rejected(self):
+        """G9 补丁③ MTF 对向格：复制形态（len(layers)==1 且层基因集
+        与顶层一致）+顶层仅 role:"exit" 源（顶层 entry 面空）→ 层与
+        顶层同报 "Layer X: no entry signal defined"——role:"exit" 源
+        不顶替 entry 在 MTF 复制形态放行判据中同效（R2 测顶层缺省源
+        放行、G6 测非 MTF 拒，本锚补中间格；2026-10-19 tester 复核
+        补锚 C-3）。"""
+        gene = _exit_gene()
+        dna = StrategyDNA(
+            signal_genes=[gene],
+            layers=[TimeframeLayer(
+                timeframe="4h",
+                signal_genes=[gene],
+                logic_genes=LogicGenes(),
+                role=None,
+            )],
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            signal_sources=[_formula_source(role="exit")],
+            risk_genes=RiskGenes(),
+        )
+        result = validate_dna(dna)
+        assert not result.is_valid
+        assert any(
+            f"Layer 4h: no entry signal defined" in e
+            for e in result.errors), result.errors
