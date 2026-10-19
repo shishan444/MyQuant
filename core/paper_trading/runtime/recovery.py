@@ -136,13 +136,21 @@ def backfill_terminal_funding(
         Dict[str, int]: {"tasks_backfilled": 回填任务数,
         "rows_backfilled": 回填行数}。
     """
+    # 存在性短路（A-2，refactor-paper-runtime-data-access）：零
+    # pending 资金费（平时常态）直接返回——全免任务全量拉取与逐任务
+    # funding 查询；有 pending 时循环域收窄为涉事任务（DISTINCT 清
+    # 单），funding 查询带 status='pending' 过滤下推。
+    if not paper_repo.has_pending_funding(db_path):
+        return {"tasks_backfilled": 0, "rows_backfilled": 0}
+    pending_task_ids = set(paper_repo.list_pending_funding_task_ids(db_path))
     symbol_indexes: Dict[str, Dict[pd.Timestamp, float]] = {}
     tasks_backfilled = rows_backfilled = 0
-    for task in paper_repo.list_tasks(db_path, limit=100_000):
-        pendings = [
-            f for f in paper_repo.list_funding_records(
-                db_path, task["task_id"], limit=100_000)
-            if f["status"] == "pending"]
+    for tid in sorted(pending_task_ids):
+        task = paper_repo.get_task(db_path, tid)
+        if task is None:
+            continue
+        pendings = paper_repo.list_funding_records(
+            db_path, task["task_id"], limit=100_000, status="pending")
         if not pendings:
             continue
         symbol = task["symbol"]

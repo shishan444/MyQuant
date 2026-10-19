@@ -446,11 +446,19 @@ class PaperScheduler:
         from core.strategy.lifecycle import transit
         from core.strategy.lifecycle.machine import LifecycleError
 
-        # 每策略取最新终态任务（evidence 凭证源——task_id+终态）
+        # 双层短路（A-1，refactor-paper-runtime-data-access）：第一层
+        # 零 paper 策略=扫描域空，全免十万条任务表拉取（平时常态）；
+        # 第二层任务查询按终态集合 SQL 下推（status_in 消费 C 卡单点
+        # 集合——与 Python 判定同一对象），原 Python 终态过滤行拆除。
+        # 每策略最新终态任务归并保留（最新行选取是业务语义，SQL 窗口
+        # 化收益薄不改）。
+        from core.persistence.repository.strategy import list_strategies
+        if not list_strategies(self.db_path, status="paper"):
+            return
         latest: Dict[str, Dict[str, Any]] = {}
-        for row in paper_repo.list_tasks(self.db_path, limit=100_000):
-            if row["status"] not in paper_repo.PT_STATUS_TERMINAL:
-                continue
+        for row in paper_repo.list_tasks(
+                self.db_path, limit=100_000,
+                status_in=paper_repo.PT_STATUS_TERMINAL):
             sid = row["strategy_id"]
             prev = latest.get(sid)
             if prev is None or row["created_at"] >= prev["created_at"]:
