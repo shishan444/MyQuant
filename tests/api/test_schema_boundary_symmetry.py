@@ -29,12 +29,15 @@ _LEVERAGE_MODELS = (
 
 
 def _field_bounds(model: type[BaseModel], name: str):
-    """取模型字段的 (ge, le) 声明（FieldInfo metadata 中取约束）。"""
+    """取模型字段的 (ge, le) 声明（FieldInfo metadata 中取约束——
+    is not None 判定取值，防 ge=0.0 等 falsy 边界被漏取）。"""
     info = model.model_fields[name]
     ge = le = None
     for m in info.metadata:
-        ge = getattr(m, "ge", None) or ge
-        le = getattr(m, "le", None) or le
+        if getattr(m, "ge", None) is not None:
+            ge = m.ge
+        if getattr(m, "le", None) is not None:
+            le = m.le
     return ge, le
 
 
@@ -77,14 +80,26 @@ class TestSym2OutOfRangeExposed:
 
 class TestSym3LegalDataZeroImpact:
     @pytest.mark.parametrize("ok", [1, 3, MAX_LEVERAGE])
-    def test_legal_values_pass_all_models(self, ok):
-        """SYM3：合法值（经请求侧防线的库内值域）构造全过——补边界
-        前后响应逐位一致的声明面（越界值库内不存在：盘点核查全绿）。"""
+    def test_legal_leverage_passes_all_five_models(self, ok):
+        """SYM3：合法杠杆值五模型构造全过（请求四+响应一——补边界
+        前后响应逐位一致的声明面；越界值库内不存在：盘点核查全绿）。"""
+        assert RiskGenesModel(leverage=ok).leverage == ok
+        assert VerifyRequest(strategy_ids=["s"], data_ranges=[],
+                             leverage=ok).leverage == ok
+        assert BatchBacktestRequest(
+            strategy_ids=["s"], data_ranges=[], leverage=ok).leverage == ok
+        assert EvolutionTaskCreate(
+            symbol="BTCUSDT", timeframe="4h", leverage=ok).leverage == ok
         assert EvolutionTaskResponse(
             **_resp(leverage=ok)).leverage == ok
-        assert EvolutionTaskCreate(
-            symbol="BTCUSDT", timeframe="4h",
-            leverage=ok).leverage == ok
+
+    def test_legal_min_max_values_pass(self):
+        """SYM3 补充：A-2/A-3 合法值通过锚（防边界方向性回归——
+        如 ge 误写为 5.0 时 SYM2 拒绝面仍绿而本锚红）。"""
+        r = EvolutionTaskResponse(
+            **_resp(min_annual_return=6.0, max_drawdown_limit=0.5))
+        assert r.min_annual_return == 6.0
+        assert r.max_drawdown_limit == 0.5
 
 
 class TestSym4BaselineDocumented:
