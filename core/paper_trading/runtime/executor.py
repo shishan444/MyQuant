@@ -130,7 +130,10 @@ def _rebuild_funding_paid(db_path: Path, task_id: str) -> float:
     # 窗口假设（超限锚点偏早/累计偏大）从机理消除；NULL 语义等价点：
     # COALESCE(SUM(amount),0.0) ≡ Python 逐行 ``or 0.0`` 兜零，
     # settle_time>=since 闭区间两侧同判（bar_time/settle_time 同列
-    # 族 ISO 字符串，字典序=时间序）。
+    # 族 ISO 字符串，字典序=时间序）。字典序=时间序的前提=两列格式
+    # 同构（生产写入面 isoformat 整点无微秒段；毫秒变体分歧实证与
+    # 生产不可达论证见 change review-testing.md §五，前提锚用例
+    # TestCardBTimeFormatPremise）。
     since = paper_repo.max_open_fill_bar_time(db_path, task_id)
     if since is None:
         return 0.0

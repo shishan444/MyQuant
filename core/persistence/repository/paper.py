@@ -539,7 +539,9 @@ def sum_settled_funding_since(
 ) -> float:
     """settled 资金费合计（SQL SUM+COALESCE 兜零——恢复链聚合下推
     B②；NULL 语义等价点：SUM 忽略 NULL+COALESCE(0.0) ≡ Python 逐行
-    ``or 0.0`` 兜零；settle_time>=since 闭区间与 Python ``>=`` 同判）。"""
+    ``or 0.0`` 兜零；settle_time>=since 闭区间与 Python ``>=`` 同判
+    ——前提=两列格式同构：生产写入面 isoformat 整点无微秒段；分歧
+    实证与生产不可达论证见 change review-testing.md §五）。"""
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         v = conn.execute(

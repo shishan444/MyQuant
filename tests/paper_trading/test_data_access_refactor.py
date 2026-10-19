@@ -11,7 +11,9 @@
   有 open fill 零 settled→COALESCE 0.0）；闭区间边界（settle_time
   恰等于 since 计入、早于排除——MAX 选取一并锚定）；NULL 语义
   （SUM 忽略 NULL 行+全 NULL 兜零 ≡ Python 逐行 or 0.0）；权益
-  末行空集→None。
+  末行空集→None；格式同构前提锚（毫秒变体异构下 SQL 字典序与
+  pd.Timestamp 语义的分歧实证+两同判对照——两列生产写入面
+  isoformat 整点无微秒段，前提当前成立；写入面变化即红灯）。
 - C 卡（终态集合单点）：reporting.FINAL_STATUSES 与
   PT_STATUS_TERMINAL 同一对象；credential._active_statuses 单点
   直返 PT_STATUS_ACTIVE；terminal∪active=状态全集且零交集。
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -200,9 +203,12 @@ class TestCardAShortCircuits:
 
     def test_backfill_zero_pending_short_circuits(
             self, tmp_path, monkeypatch):
-        """零 pending 资金费（平时常态）：返回两零计数且 list_tasks
-        零调用——存在性短路全免任务全量拉取（库有任务行，短路失效
-        时必拉任务表——计数 0 即短路证明）。"""
+        """零 pending 资金费（平时常态）：has_pending_funding 存在性
+        查询恰 1 次（机制锚——短路判定本身被执行且仅执行一次），
+        短路生效返回两零计数；list_tasks 零调用+逐任务 funding 查询
+        零调用（tasks 2.2「全免任务全量拉取与逐任务 funding 查询」
+        完成标准的独立断言面——两消费点 recovery 属性访问形制，
+        可拦截）。"""
         db = _make_db(tmp_path)
         _seed_task(db, "pt_bf01", "st-any")  # 任务在场、pt_funding 空
 
@@ -213,12 +219,34 @@ class TestCardAShortCircuits:
             task_calls.append(kwargs)
             return orig_list_tasks(*args, **kwargs)
 
+        pending_calls: list[dict] = []
+        orig_has_pending = paper_repo.has_pending_funding
+
+        def _spy_has_pending(*args, **kwargs):
+            pending_calls.append(kwargs)
+            return orig_has_pending(*args, **kwargs)
+
+        funding_calls: list[dict] = []
+        orig_list_funding = paper_repo.list_funding_records
+
+        def _spy_list_funding(*args, **kwargs):
+            funding_calls.append(kwargs)
+            return orig_list_funding(*args, **kwargs)
+
         monkeypatch.setattr(paper_repo, "list_tasks", _spy_list_tasks)
+        monkeypatch.setattr(paper_repo, "has_pending_funding",
+                            _spy_has_pending)
+        monkeypatch.setattr(paper_repo, "list_funding_records",
+                            _spy_list_funding)
 
         result = backfill_terminal_funding(db, data_dir=tmp_path)
 
+        # 机制锚：存在性短路判定恰 1 次（recovery:143 属性访问——
+        # 若短路逻辑被拆除，此断言红）
+        assert len(pending_calls) == 1
         assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
         assert task_calls == []
+        assert funding_calls == []
 
 
 class TestCardBAggregationBoundaries:
@@ -324,6 +352,83 @@ class TestCardBAggregationBoundaries:
         assert snap is not None
         assert snap["bar_time"] == "2024-01-03T00:00:00+00:00"
         assert snap["cumulative_funding"] == pytest.approx(2.75)
+
+
+def _legacy_rebuild_funding_paid(db: Path, task_id: str) -> float:
+    """改造前语义独立复算（git 67391ae^ executor 形制逐行照抄——
+    pd.Timestamp 比较语义；独立参考，非当前实现回填）。"""
+    fills = paper_repo.list_fills(db, task_id, limit=100_000)
+    open_bars = [f["bar_time"] for f in fills if f["kind"] == "open"]
+    if not open_bars:
+        return 0.0
+    since = pd.Timestamp(max(open_bars))
+    return float(sum(
+        f["amount"] or 0.0
+        for f in paper_repo.list_funding_records(
+            db, task_id, limit=100_000)
+        if f["status"] == "settled"
+        and pd.Timestamp(f["settle_time"]) >= since))
+
+
+class TestCardBTimeFormatPremise:
+    """B 卡等价前提锚：bar_time/settle_time「同列族 ISO 字符串，
+    字典序=时间序」仅在两列格式同构时成立（executor.py _rebuild
+    注释与 sum_settled_funding_since docstring 的前提）。生产写入面
+    两列均出自 pd.Timestamp(...).isoformat() 网格整点（微秒恒零→
+    isoformat 不产生微数段），前提当前成立；本类锚定该前提——写入
+    面出现异构格式（毫秒变体等）即刻红灯（分歧实证与生产不可达
+    论证见 change review-testing.md §五）。"""
+
+    def test_rebuild_since_with_micros_excludes_same_instant_no_micros(
+            self, tmp_path):
+        """分歧主证：since（open bar_time）带零微秒段、settle 同时刻
+        无微秒段——字典序 '+'(0x2B)<'.'(0x2E) 排除同时刻行（7.0），
+        pd.Timestamp 语义相等计入（12.0）：同数据两语义不同结果。"""
+        db = _make_db(tmp_path)
+        tid = _seed_task(db, "pt_ms01", "st-b")
+        _append_bar(
+            db, tid, "2024-01-03T00:00:00.000000+00:00",
+            fills=[_open_fill(1)],
+            funding=[
+                _settled("2024-01-03T00:00:00+00:00", 5.0),  # 分歧行
+                _settled("2024-01-03T00:00:01+00:00", 7.0),  # 晚 1 秒
+            ])
+        current = _rebuild_funding_paid(db, tid)
+        legacy = _legacy_rebuild_funding_paid(db, tid)
+        # 改造后（Text 列 SQL 字典序）：分歧行被排除
+        assert current == pytest.approx(7.0)
+        # 改造前（pd.Timestamp 语义）：同时刻相等计入
+        assert legacy == pytest.approx(12.0)
+        # 分歧实证——前提「格式同构」被打破时两语义不再等价
+        assert current != legacy
+
+    def test_rebuild_since_without_micros_includes_same_instant_with(
+            self, tmp_path):
+        """同判对照 A：since 无微秒段、settle 同时刻带零微秒段——
+        '.'>'+' 字典序与 Timestamp 相等语义同判（两侧都计入）。"""
+        db = _make_db(tmp_path)
+        tid = _seed_task(db, "pt_ms02", "st-b")
+        _append_bar(
+            db, tid, "2024-01-03T00:00:00+00:00",
+            fills=[_open_fill(1)],
+            funding=[
+                _settled("2024-01-03T00:00:00.000000+00:00", 5.0)])
+        assert _rebuild_funding_paid(db, tid) == pytest.approx(5.0)
+        assert _legacy_rebuild_funding_paid(db, tid) == pytest.approx(5.0)
+
+    def test_rebuild_settle_micros_later_included_both_semantics(
+            self, tmp_path):
+        """同判对照 B：settle 带非零微秒且晚于 since——两语义同判
+        （都计入）。"""
+        db = _make_db(tmp_path)
+        tid = _seed_task(db, "pt_ms03", "st-b")
+        _append_bar(
+            db, tid, "2024-01-03T00:00:00+00:00",
+            fills=[_open_fill(1)],
+            funding=[
+                _settled("2024-01-03T00:00:00.500000+00:00", 5.0)])
+        assert _rebuild_funding_paid(db, tid) == pytest.approx(5.0)
+        assert _legacy_rebuild_funding_paid(db, tid) == pytest.approx(5.0)
 
 
 class TestCardCTerminalSetSinglePoint:
