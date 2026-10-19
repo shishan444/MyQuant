@@ -567,7 +567,7 @@ class EvolutionTaskResponse(BaseModel):
     best_fitness: Optional[float] = None
     requirements: Optional[RequirementsConfigModel] = None
     qualified_count: int = 0
-    leverage: int = 1
+    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
     direction: str = "long"
     data_start: Optional[str] = None
     data_end: Optional[str] = None
@@ -582,8 +582,8 @@ class EvolutionTaskResponse(BaseModel):
     champion_satisfaction: Optional[Dict[str, Any]] = None
     continuous: bool = True
     strategy_threshold: float = 80.0
-    min_annual_return: float = 0.10
-    max_drawdown_limit: Optional[float] = None
+    min_annual_return: float = Field(default=0.10, ge=0.0, le=10.0)
+    max_drawdown_limit: Optional[float] = Field(default=None, ge=0.05, le=0.80)
     strategy_count: int = 0
     exploration_efficiency: float = 0.0
     current_phase: Optional[str] = None
