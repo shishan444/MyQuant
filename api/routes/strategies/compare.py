@@ -124,6 +124,28 @@ def compare_strategies(
 
         try:
             dna = StrategyDNA.from_json(row["dna_json"])
+            # 读库二道校验（recognize-plugin-source-dna T3）：库内 DNA
+            # 损坏（本机直改库可绕过写入时校验）→422 数据完整性错误
+            # （HTTPException 经下方前置分支放行，不进 per-item error）
+            from core.strategy.validator import validate_dna
+            _vr = validate_dna(dna)
+            if not _vr.is_valid:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "DNA_VALIDATION_FAILED",
+                            "message": "Library DNA invalid（库内 DNA 结构/值域非法）",
+                            "errors": _vr.errors})
+            # 插件源能力边界判据（T4，第二问·乙）：在场即拒（含混合
+            # 形态）；错误码分立（补丁①）
+            from core.strategy.validator import has_plugin_sources
+            if has_plugin_sources(dna):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "PLUGIN_SOURCES_UNSUPPORTED",
+                        "message": "策略含插件信号源，REST 对比回测通道不支持"
+                                   "（引擎该通道未接插件信号集，结果将为零"
+                                   "交易）——请经研究验证链沙盒回测"})
             symbol = dna.execution_genes.symbol
             timeframe = dna.execution_genes.timeframe
 
@@ -214,6 +236,8 @@ def compare_strategies(
                 satisfaction=score_result.get("satisfaction"),
                 dimension_scores=score_result.get("dimension_scores"),
             ))
+        except HTTPException:
+            raise
         except Exception as exc:
             results.append(CompareResultItem(
                 strategy_id=sid,

@@ -86,6 +86,31 @@ def backtest_strategy(
         if row is None:
             raise HTTPException(status_code=404, detail="Strategy not found")
         dna = StrategyDNA.from_json(row["dna_json"])
+        # 读库二道校验（recognize-plugin-source-dna T3）：本机直改库文件
+        # 可绕过写入时校验（create 通道防线只覆盖正常写入路径），读库
+        # 路径复查是防线——威胁模型升级（2026-10 技术债务需求文件
+        # A-1/B-1；旧表述「分属不同威胁模型故本分支不动」就此翻案）。
+        from core.strategy.validator import validate_dna
+        _vr = validate_dna(dna)
+        if not _vr.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "DNA_VALIDATION_FAILED",
+                        "message": "Library DNA invalid（库内 DNA 结构/值域非法）",
+                        "errors": _vr.errors})
+        # 插件源能力边界判据（recognize-plugin-source-dna T4，第二问·
+        # 乙）：REST 回测通道未接入插件信号组装，插件源在场即拒（含混
+        # 合形态——插件源被静默忽略、结果只反映内置基因，比零交易更
+        # 隐蔽）；错误码分立（补丁①）：结构合法但通道不支持。
+        from core.strategy.validator import has_plugin_sources
+        if has_plugin_sources(dna):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
+                    "message": "策略含插件信号源，REST 回测通道不支持"
+                               "（引擎该通道未接插件信号集，结果将为零"
+                               "交易）——请经研究验证链沙盒回测"})
         symbol = row["symbol"]
         timeframe = row["timeframe"]
         strategy_id = payload.strategy_id
@@ -98,8 +123,10 @@ def backtest_strategy(
         # 同 review-042 CARD-12 先例——crud create 通道已收口，本通道
         # 直传即跑：NaN/越域/bool 收窄经 Pydantic 全过直进引擎，防线
         # 静默失效三形态（NaN 恒 False 漏开仓/越域 sl 量纲双关/bool
-        # 收窄 sl=0 恒不触发）。strategy_id 分支不动——库内 DNA 落库前
-        # 已经 create 通道校验，分属不同威胁模型
+        # 收窄 sl=0 恒不触发）。（原注「strategy_id 分支不动——库内
+        # DNA 落库前已经 create 通道校验，分属不同威胁模型」已翻案：
+        # 本机直改库可绕过写入时校验，读库复查是防线，见上方
+        # strategy_id 分支二道校验，recognize-plugin-source-dna T3）
         from core.strategy.validator import validate_dna
         _vr = validate_dna(dna)
         if not _vr.is_valid:
