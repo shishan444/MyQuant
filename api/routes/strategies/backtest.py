@@ -135,6 +135,19 @@ def backtest_strategy(
                 detail={"code": "DNA_VALIDATION_FAILED",
                         "message": "DNA 值域/结构校验未通过",
                         "errors": _vr.errors})
+        # 插件源能力边界判据（T4 第二问·乙，实施裁量补齐第五入口）：
+        # REST 回测通道整体未接入插件信号组装——读库四路径之外，内联
+        # 直传入口同判在场即拒（T4 目标「静默零交易从行为面消除」覆盖
+        # 同通道全部入口；裁量依据随交付呈报披露）
+        from core.strategy.validator import has_plugin_sources
+        if has_plugin_sources(dna):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
+                    "message": "策略含插件信号源，REST 回测通道不支持"
+                               "（引擎该通道未接插件信号集，结果将为零"
+                               "交易）——请经研究验证链沙盒回测"})
     else:
         raise HTTPException(
             status_code=400,

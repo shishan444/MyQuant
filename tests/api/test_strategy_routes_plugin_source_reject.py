@@ -286,3 +286,39 @@ class TestPlainStrategyControlGroup:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["total_trades"] >= 0
+
+
+class TestInlineDnaEntryRejected:
+    """内联直传入口（POST /api/strategies/backtest 带 dna 字段）在场
+    即拒——REST 回测通道第五入口（实施裁量补齐：T4 目标「静默零交易
+    从行为面消除」覆盖同通道全部入口；补齐前实测 200 total_trades=0
+    的静默零交易残留，裁量依据随交付呈报披露）。"""
+
+    def test_inline_plugin_dna_rejected(self, api_client):
+        import numpy as np
+        import pandas as pd
+
+        data_dir = api_client.app.state.data_dir
+        rng = np.random.default_rng(3)
+        idx = pd.date_range("2024-01-01", periods=300, freq="4h",
+                            tz="UTC", name="timestamp")
+        close = 60000 + np.cumsum(rng.normal(0, 100, 300))
+        pd.DataFrame({
+            "open": close, "high": close + 50, "low": close - 50,
+            "close": close, "volume": rng.uniform(100, 800, 300),
+        }, index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+
+        import json as _json
+        dna = _json.loads(_pure_plugin_dna().to_json())
+
+        resp = api_client.post("/api/strategies/backtest", json={
+            "dna": dna,
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "dataset_id": "BTCUSDT_4h",
+        })
+
+        assert resp.status_code == 422, resp.text
+        body = resp.json()["detail"]
+        assert body["code"] == "PLUGIN_SOURCES_UNSUPPORTED", body
+        assert "插件信号源" in body["message"], body
+        assert "沙盒" in body["message"], body
