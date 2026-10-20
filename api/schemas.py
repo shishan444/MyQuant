@@ -926,6 +926,10 @@ class HypothesisResponse(BaseModel):
     # 清单非空时携带（纯增量可选键——警告不阻断登记，语义独立于
     # precheck_warnings 的数据预检三态）；幂等命中不携带
     threshold_unit_warnings: Optional[List[Dict[str, Any]]] = None
+    # 浅收割形制警告（fr_fd5e89897f8d）：pct 档 take_profit<=stop_loss
+    # （R:R<1 高胜率浅收割）放行时的披露键（纯增量可选——service 返回
+    # 体与 REST 响应面同键透出）；仅新建路径且命中形制时携带
+    strategy_param_warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class HypothesisListResponse(BaseModel):
