@@ -55,9 +55,12 @@ def live_api(tmp_path_factory):
     from core.strategy.dna import (
         ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
     init_db_ext(db)
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（行为等效）
     dna = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                 "rsi_14", {"type": "lt", "threshold": 35})],
+                                 "rsi_14", {"type": "lt", "threshold": 35}),
+                      SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                                 "rsi_14", {"type": "gt", "threshold": 1e9})],
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes())

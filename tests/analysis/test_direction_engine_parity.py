@@ -116,8 +116,14 @@ def world(tmp_path_factory):
         indicator="OI_ChangeRate", params={"period": STEP},
         role=SignalRole.ENTRY_TRIGGER, field_name=f"oi_change_rate_{STEP}",
         condition={"type": "gt", "threshold": 0.05})
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：手工构造补恒假 exit
+    # （gt 1e9 永不触发——行为等效原无 exit 默认路径）
+    _exit_g = SignalGene(
+        indicator="OI_ChangeRate", params={"period": STEP},
+        role=SignalRole.EXIT_TRIGGER, field_name=f"oi_change_rate_{STEP}",
+        condition={"type": "gt", "threshold": 1e9})
     dna1 = StrategyDNA(
-        signal_genes=[gene], logic_genes=LogicGenes(),
+        signal_genes=[gene, _exit_g], logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(direction="short"))
     save_strategy(db, strategy_id="st_lev1", dna_json=dna1.to_json(),
@@ -129,11 +135,15 @@ def world(tmp_path_factory):
     # 才启用），双方向同持仓窗口（均 1 笔持有到段末）——固定正费率与
     # 方向无关的判定前提
     for key, direction in (("fund_s", "short"), ("fund_l", "long")):
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：stop_loss=0.0「禁用」
+        # 自造形态在值域 [0.005, 0.20] 外不再可用——取域上界 0.20
+        # （段内波动远低于 20% 阈，近似无 SL 的对照语义保持）；补
+        # 恒假 exit（行为等效原无 exit 默认路径）
         dna_f = StrategyDNA(
-            signal_genes=[gene], logic_genes=LogicGenes(),
+            signal_genes=[gene, _exit_g], logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="4h"),
             risk_genes=RiskGenes(direction=direction, leverage=2,
-                                 stop_loss=0.0))
+                                 stop_loss=0.20))
         save_strategy(db, strategy_id=f"st_{key}", dna_json=dna_f.to_json(),
                       symbol="BTCUSDT", timeframe="4h", name=f"fund-{key}")
         out[f"st_{key}"] = f"st_{key}"
@@ -211,8 +221,13 @@ class TestA43FundingSymmetry:
             world["data_dir"], "BTCUSDT", "4h",
             data_start="2024-01-21T00:00:00Z",
             data_end="2024-04-10T00:00:00Z")
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：stop_loss=0「禁用」
+        # 自造形态不再合法（值域 [0.005, 0.20]），st_fund_* 取域上界
+        # 0.20——跑窗后移至下跌段尾（剩余回撤 ≈3.9%<20% 不触发，
+        # 「各 1 笔持有到段末」前提保持；窗口仍在下跌段，费率对称
+        # 断言语义不变）
         bt_df = enhanced[enhanced.index
-                         >= pd.Timestamp("2024-02-20T00:00:00Z")]
+                         >= pd.Timestamp("2024-04-04T00:00:00Z")]
         out = {}
         for key, st in (("fund_s", "st_fund_s"), ("fund_l", "st_fund_l"),
                         ("lev1", "st_lev1")):

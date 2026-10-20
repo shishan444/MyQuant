@@ -122,6 +122,10 @@ HINTS: Dict[str, str] = {
     "RESEARCH_PLUGIN_COLUMN_NOT_FOUND":
         "条件引用的插件列不可达：用 list_signal_columns 查询当前可见插件"
         "列（only_visible），更正列名或先 register_formula_plugin 注册",
+    "RESEARCH_DNA_INVALID":
+        "库内策略 DNA 结构/值域非法（非请求参数错误，重试同 DNA 无效）："
+        "按 detail.errors 定位具体判据（含 signal_sources 条目序号与键名），"
+        "修正 DNA 后经策略写入入口更新或修正库内 dna_json 再重试",
     "RESEARCH_COMPOSITION_INVALID":
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
     # ---- 沙盒回测

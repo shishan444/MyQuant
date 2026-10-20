@@ -57,10 +57,15 @@ def strategy_id_module(tmp_path_factory):
     init_db_ext(db)
     from core.analysis.executor import ensure_research_tables
     ensure_research_tables(db)
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9
+    # 永不触发——与原无 exit 构造行为等效，引擎走同默认路径）
     dna = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14},
                                  SignalRole.ENTRY_TRIGGER, "rsi_14",
-                                 {"type": "lt", "threshold": 35})],
+                                 {"type": "lt", "threshold": 35}),
+                      SignalGene("RSI", {"period": 14},
+                                 SignalRole.EXIT_TRIGGER, "rsi_14",
+                                 {"type": "gt", "threshold": 1e9})],
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes())

@@ -104,9 +104,13 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
     # 先给假设一条 pass 验证记录（干净区间；策略先经直接构造）
     from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, ExecutionGenes
     from core.persistence.repository.strategy import save_strategy
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（插件源不
+    # 顶替出场——T2 语义；行为等效，组合策略语义面不变）
     dna = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                 "rsi_14", {"type": "lt", "threshold": 35})],
+                                 "rsi_14", {"type": "lt", "threshold": 35}),
+                      SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                                 "rsi_14", {"type": "gt", "threshold": 1e9})],
         execution_genes=ExecutionGenes(timeframe="4h"),
         signal_sources=[
             {"type": "rule"},
@@ -151,9 +155,13 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
     # 恒假门也等于对照版交易数，断言必红。交易数是聚合量，组合版与
     # 对照版可能巧合同数，故对照用确定性的恒假门版本。
     from core.strategy.dna import RiskGenes
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（行为等效）
+    _exit_g = SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                         "rsi_14", {"type": "gt", "threshold": 1e9})
     rule_only = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                 "rsi_14", {"type": "lt", "threshold": 35})],
+                                 "rsi_14", {"type": "lt", "threshold": 35}),
+                      _exit_g],
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes())
     save_strategy(db, strategy_id="st_rule_only", dna_json=rule_only.to_json(),

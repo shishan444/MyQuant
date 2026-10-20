@@ -56,12 +56,23 @@ def env(tmp_path: Path):
 
 
 def _make_draft(db: Path, strategy_id: str, direction: str):
+    """构造方向披露用 draft 策略。
+
+    signal-sources-structure-gate 卡 R 起研究链装载挂全量
+    validate_dna（Q-1 裁决）——构造补 EXIT 基因（原单 ENTRY 构造
+    过不了装载校验：缺 exit 是 validate_dna 语义下的坏 DNA，生产
+    路径 translate 产物恒含 exit；direction 断言面不受影响）。
+    """
     gene = SignalGene(
         indicator="RSI", params={"period": 14},
         role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
         condition={"type": "lt", "threshold": 35})
+    exit_gene = SignalGene(
+        indicator="RSI", params={"period": 14},
+        role=SignalRole.EXIT_TRIGGER, field_name="rsi_14",
+        condition={"type": "cross_above", "threshold": 50.0})
     dna = StrategyDNA(
-        signal_genes=[gene], logic_genes=LogicGenes(),
+        signal_genes=[gene, exit_gene], logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(direction=direction))
     save_strategy(db, strategy_id=strategy_id, dna_json=dna.to_json(),

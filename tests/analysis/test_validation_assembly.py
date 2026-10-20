@@ -57,9 +57,13 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 def _strategy(db, sid, signal_sources=None, composition=None):
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9 永不
+    # 触发——与原无 exit 构造行为等效，引擎走同默认路径）
     dna = StrategyDNA(
         signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                 "rsi_14", {"type": "lt", "threshold": 35})],
+                                 "rsi_14", {"type": "lt", "threshold": 35}),
+                      SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                                 "rsi_14", {"type": "gt", "threshold": 1e9})],
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(),
         signal_sources=signal_sources, composition=composition)

@@ -319,10 +319,17 @@ class TestValidationLinkBehavior:
             role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
             condition={"type": "lt", "threshold": 45})
 
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（行为
+        # 等效——max_hold 出场才是被测面，RSI 出场恒不触发）
+        exit_g = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.EXIT_TRIGGER, field_name="rsi_14",
+            condition={"type": "gt", "threshold": 1e9})
+
         def _save(sid, mh):
             rg = RiskGenes(max_hold=mh) if mh else RiskGenes()
             dna = StrategyDNA(
-                signal_genes=[gene], logic_genes=LogicGenes(),
+                signal_genes=[gene, exit_g], logic_genes=LogicGenes(),
                 execution_genes=ExecutionGenes(timeframe="4h"),
                 risk_genes=rg)
             # status=draft 免签名去重（既有机制：非 draft 同签名保留
