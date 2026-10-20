@@ -32,10 +32,18 @@ SYMBOL = "BTCUSDT"
 
 
 def _tema_dna() -> StrategyDNA:
+    """TEMA 策略（threshold=1e9 时 entry/exit 皆恒真——验收锚的
+    确定性构造：交易频繁；与 analysis 版 test_staged_validation
+    同语义）。signal-sources-structure-gate 卡 R 起研究链装载挂
+    全量 validate_dna（Q-1）——原单 ENTRY 构造缺 exit 过不了装载
+    校验（坏 DNA），补恒真 exit 保持频繁交易语义。"""
     gene = SignalGene("TEMA", {"period": 20}, SignalRole.ENTRY_TRIGGER,
                       "tema_20", {"type": "lt", "threshold": 1e9})
+    exit_gene = SignalGene("TEMA", {"period": 20}, SignalRole.EXIT_TRIGGER,
+                           "tema_20", {"type": "lt", "threshold": 1e9})
     return StrategyDNA(
-        layers=[TimeframeLayer(timeframe="1d", signal_genes=[gene],
+        layers=[TimeframeLayer(timeframe="1d",
+                               signal_genes=[gene, exit_gene],
                                logic_genes=LogicGenes())],
         execution_genes=ExecutionGenes(timeframe="1d"),
         risk_genes=RiskGenes())

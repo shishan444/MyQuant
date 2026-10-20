@@ -321,9 +321,13 @@ class TestSeedDivergenceAndUpdateIdempotence:
         from core.strategy.dna import (
             ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
         from core.persistence.repository.strategy import save_strategy
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9
+        # 永不触发——与原无 exit 默认路径行为等效）
         save_strategy(db, strategy_id="st_rw", dna_json=StrategyDNA(
             signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                     "rsi_14", {"type": "lt", "threshold": 35})],
+                                     "rsi_14", {"type": "lt", "threshold": 35}),
+                          SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                                     "rsi_14", {"type": "gt", "threshold": 1e9})],
             logic_genes=LogicGenes(), execution_genes=ExecutionGenes(timeframe="4h"),
             risk_genes=RiskGenes()).to_json(), symbol="BTCUSDT", timeframe="4h")
         payload = {

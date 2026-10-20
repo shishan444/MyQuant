@@ -37,30 +37,16 @@ def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
         logger.warning("invalid dna_json on live task create: %r", e, exc_info=e)
         raise HTTPException(status_code=400, detail="Invalid dna_json format")
 
-    # 手工 DNA 值域校验（review-042 CARD-12）：与 trading.py 任务创建点
-    # 同形收口——解析过而值域坏（NaN/越域/bool 收窄）不落库；live 链
-    # 无止损持仓暴露真实资金风险，值域防线在入口不在 Runner
-    from core.strategy.validator import validate_dna
-    _vr = validate_dna(dna)
-    if not _vr.is_valid:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "DNA_VALIDATION_FAILED",
-                    "message": "DNA 值域/结构校验未通过",
-                    "errors": _vr.errors})
-
-    # 插件源能力边界判据（recognize-plugin-source-dna T4，第一问·方向
-    # 二）：live 链未接入插件信号组装，插件源在场即拒（含混合形态）。
-    # 错误码分立（补丁①）：PLUGIN_SOURCES_UNSUPPORTED=「执行环境不支持」
-    # 而非「策略无效」——结构校验已过（上方），此处是环境能力边界。
-    from core.strategy.validator import has_plugin_sources
-    if has_plugin_sources(dna):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "PLUGIN_SOURCES_UNSUPPORTED",
-                "message": "执行环境不支持插件信号源（live 链未接入插件"
-                           "信号组装）——请经研究验证链沙盒回测"})
+    # 手工 DNA 值域校验（review-042 CARD-12）+插件源能力边界
+    # （recognize-plugin-source-dna T4，第一问·方向二）：live 链未
+    # 接入插件信号组装，插件源在场即拒（含混合形态）；错误码分立
+    # （补丁①）：PLUGIN_SOURCES_UNSUPPORTED=「执行环境不支持」而非
+    # 「策略无效」——结构校验已过（上方），此处是环境能力边界。
+    # signal-sources-structure-gate 卡 G 起两段拒绝表达收敛为
+    # strategies/_common helper（跨目录函数级 import 无环；判据单源
+    # 不动，消息逐字节不变）。
+    from api.routes.strategies._common import _reject_invalid_or_plugin_dna
+    _reject_invalid_or_plugin_dna(dna, library_dna=False, channel="live")
 
     # live 交易链兼容性前移（装载即拒的入口化——CARD-12 早拒锚）：trail
     # /分批等 live 链不支持的模式原本在 Runner 装载点才拒（任务已落库

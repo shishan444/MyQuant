@@ -20,7 +20,9 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ._common import _progress_payload, _safe_error_message
+from ._common import (
+    _progress_payload, _reject_invalid_or_plugin_dna, _safe_error_message,
+)
 
 from core.persistence.repository.backtest_result import (
     get_backtest_result,
@@ -180,30 +182,13 @@ class _VerifyProcessor:
                 continue
             try:
                 dna = StrategyDNA.from_json(row["dna_json"])
-                # 读库二道校验（recognize-plugin-source-dna T3）：库内
-                # DNA 损坏（本机直改库可绕过写入时校验）→422 数据完整
-                # 性错误，不静默跳过（HTTPException 经下方前置分支放行）。
-                # 防线边界：覆盖「可解析但校验不过」；from_json 解析失败
-                # 的更重损毁仍沿既有 except 分支静默跳过（非本防线覆盖）
-                from core.strategy.validator import validate_dna
-                _vr = validate_dna(dna)
-                if not _vr.is_valid:
-                    raise HTTPException(
-                        status_code=422,
-                        detail={"code": "DNA_VALIDATION_FAILED",
-                                "message": "Library DNA invalid（库内 DNA 结构/值域非法）",
-                                "errors": _vr.errors})
-                # 插件源能力边界判据（T4，第二问·乙）：在场即拒（含混合
-                # 形态）；错误码分立（补丁①）
-                from core.strategy.validator import has_plugin_sources
-                if has_plugin_sources(dna):
-                    raise HTTPException(
-                        status_code=422,
-                        detail={
-                            "code": "PLUGIN_SOURCES_UNSUPPORTED",
-                            "message": "策略含插件信号源，REST 回测通道不支持"
-                                       "（引擎该通道未接插件信号集，结果将为"
-                                       "零交易）——请经研究验证链沙盒回测"})
+                # 读库二道校验（recognize-plugin-source-dna T3）+
+                # 插件源能力边界（T4 第二问·乙）：卡 G 起两段拒绝表达
+                # 收敛为 _common helper（判据单源不动，消息逐字节不变；
+                # 防线边界不变：from_json 解析失败的更重损毁仍沿既有
+                # except 分支静默跳过——非本防线覆盖）
+                _reject_invalid_or_plugin_dna(
+                    dna, library_dna=True, channel="verify")
                 group_key = f"{dna.execution_genes.symbol}_{dna.execution_genes.timeframe}"
                 strategies_by_group.setdefault(group_key, []).append({
                     "strategy_id": sid, "dna": dna,
