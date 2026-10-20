@@ -231,3 +231,77 @@ class TestErrorCodePrecedence:
         detail = h.task()["error_detail"]
         assert detail.startswith("invalid_dna"), detail
         assert "plugin_sources_unsupported" not in detail, detail
+
+
+class TestStructureGateMalformedSources:
+    """signal_sources 结构判据在 paper 装载面的生效
+    （signal-sources-structure-gate 0.4·paper 面——新增 class，
+    既有断言零调整）。
+
+    - 拼错型：从静默放行（插件条件一字未生效地跑）→ invalid_dna
+      拒绝+点名串（条目序号+实际值）入 error_detail。
+    - 缺 ref 型：error_detail 从 plugin_sources_unsupported 分支迁到
+      invalid_dna 分支（D-3 在 paper 面的体现——「结构坏」先于
+      「环境不支持」报出，与 TestErrorCodePrecedence 同顺位）。
+    - 对照（零行为锚）：合法混合形态仍 plugin_sources_unsupported
+      ——新判据不改变能力边界判据的行为面。
+    """
+
+    def test_mistyped_source_rejected_as_invalid_dna(self, tmp_path):
+        """拼错型（type="fomula"）→ prepare False+invalid_dna 前缀
+        +点名串（signal_sources[0] 与实际值）入 error_detail+不含
+        plugin_sources_unsupported（现状静默放行——prepare True，
+        红）。"""
+        dna = StrategyDNA(
+            signal_genes=[_entry_gene(), _exit_gene()],
+            signal_sources=[{"type": "fomula"}],
+            risk_genes=RiskGenes(),
+        )
+        h = _Harness(tmp_path, dna)
+        ex = h.make_executor()
+
+        assert ex.prepare() is False, (
+            "拼错型被静默放行（结构判据未生效——装载即跑、插件条件"
+            "一字未生效的静默失真形态）")
+        detail = h.task()["error_detail"]
+        assert detail.startswith("invalid_dna"), detail
+        assert "signal_sources[0]" in detail, detail
+        assert "fomula" in detail, detail
+        assert "plugin_sources_unsupported" not in detail, (
+            f"拼错型误报能力边界码：{detail}")
+
+    def test_missing_ref_rejected_as_invalid_dna(self, tmp_path):
+        """缺 ref 型 → invalid_dna 前缀+requires 'ref' 点名（D-3
+        迁移后目标态——现状 plugin_sources_unsupported 前缀，红）。"""
+        dna = StrategyDNA(
+            signal_genes=[_entry_gene(), _exit_gene()],
+            signal_sources=[{"type": "formula", "threshold": 0.5}],
+            risk_genes=RiskGenes(),
+        )
+        h = _Harness(tmp_path, dna)
+        ex = h.make_executor()
+
+        assert ex.prepare() is False
+        detail = h.task()["error_detail"]
+        assert detail.startswith("invalid_dna"), (
+            f"缺 ref 型应走结构拒绝分支（D-3 归位）：{detail}")
+        assert "requires 'ref'" in detail, detail
+        assert "plugin_sources_unsupported" not in detail, detail
+
+    def test_legal_mixed_still_plugin_sources_unsupported(self, tmp_path):
+        """对照（零行为锚）：合法混合形态（rule 裸+formula 带 ref）
+        → 仍 plugin_sources_unsupported——结构判据放行后能力边界
+        判据接管，与既有 TestPluginSourceLoadingReject 主格行为
+        逐位一致（新判据对合法形态的行为零变化）。"""
+        dna = StrategyDNA(
+            signal_genes=[_entry_gene(), _exit_gene()],
+            signal_sources=[{"type": "rule"}, _plugin_source()],
+            risk_genes=RiskGenes(),
+        )
+        h = _Harness(tmp_path, dna)
+        ex = h.make_executor()
+
+        assert ex.prepare() is False
+        detail = h.task()["error_detail"]
+        assert detail.startswith("plugin_sources_unsupported"), detail
+        assert "invalid_dna" not in detail, detail
