@@ -50,6 +50,15 @@ def _create(client: TestClient, dna: StrategyDNA):
         "dna_json": dna.to_json(), "direction": "long"})
 
 
+# 字节基线（signal-sources-structure-gate 1.2 补强，采集时点=卡 V 判据
+# 落地后、卡 G 收敛前〔组 1 工作区，基 commit 79642c7〕；live 入口
+# library_dna=False 态与 channel="live" 映射的字面量锚——卡 G 收敛为
+# helper 后须逐字节复现〔AC-9 双点绿判据的锚面〕）
+LIVE_PLUGIN_MESSAGE = ("执行环境不支持插件信号源（live 链未接入插件"
+                       "信号组装）——请经研究验证链沙盒回测")
+LIVE_DNA_INLINE_MESSAGE = "DNA 值域/结构校验未通过"
+
+
 class TestLivePluginSourceReject:
     """live 链装载拒绝（错误码分立+语义短语）。"""
 
@@ -71,6 +80,10 @@ class TestLivePluginSourceReject:
         body = resp.json()["detail"]
         assert body["code"] == "PLUGIN_SOURCES_UNSUPPORTED", body
         assert "不支持" in body["message"], body
+        # 二级断言（字节基线）：message 逐字节+detail 键集精确（PLUGIN
+        # 段无 errors 键）
+        assert body["message"] == LIVE_PLUGIN_MESSAGE, body
+        assert set(body) == {"code", "message"}, body
 
     def test_hybrid_builtin_genes_plus_plugin_source_rejected_422(
             self, api_client):
@@ -127,3 +140,6 @@ class TestLiveControlGroupAndDistinctCode:
         body = resp.json()["detail"]
         assert body["code"] == "DNA_VALIDATION_FAILED", body
         assert body["code"] != "PLUGIN_SOURCES_UNSUPPORTED"
+        # 二级断言（字节基线）：直传态 message 逐字节+detail 键集精确
+        assert body["message"] == LIVE_DNA_INLINE_MESSAGE, body
+        assert set(body) == {"code", "message", "errors"}, body

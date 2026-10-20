@@ -42,6 +42,17 @@ _N_BARS = 200
 _SEED = 7
 _REPLAY_ALL = "2000-01-01T00:00:00+00:00"
 
+# 字节基线（signal-sources-structure-gate 1.2 补强，采集时点=卡 V 判据
+# 落地后、卡 G 收敛前〔组 1 工作区，基 commit 79642c7〕；paper 面
+# error_detail 字符串形制〔前缀+文案〕的字面量锚——_reject 形制不在
+# 卡 G 收敛面，本锚锁 paper 面拒绝表达零漂移）
+PAPER_PLUGIN_DETAIL = ("plugin_sources_unsupported: 执行环境不支持插件"
+                       "信号源（paper 链未接入插件信号组装）——请经研究"
+                       "验证链沙盒回测")
+PAPER_INVALID_VALUE_DETAIL = (
+    "invalid_dna: DNA 值域校验未过（"
+    "Position size 2.0 out of range [0.10, 1.0]）")
+
 
 def _exit_gene() -> SignalGene:
     """出场基因（对齐库存插件源策略实测形态：RSI cross_above 50）。"""
@@ -144,6 +155,8 @@ class TestPluginSourceLoadingReject:
         assert "不支持" in detail, detail
         assert "invalid_dna" not in detail, (
             f"分码语义破坏：环境不支持误报为策略无效——{detail}")
+        # 二级断言（字节基线）：error_detail 逐字节
+        assert detail == PAPER_PLUGIN_DETAIL, detail
         # _reject 通道三件套之推送面（update_task/error 日志之外）
         assert any(p["type"] == "task_error"
                    and p["error_detail"] == detail for p in h.pushes), (
@@ -231,6 +244,8 @@ class TestErrorCodePrecedence:
         detail = h.task()["error_detail"]
         assert detail.startswith("invalid_dna"), detail
         assert "plugin_sources_unsupported" not in detail, detail
+        # 二级断言（字节基线）：error_detail 逐字节（值域形态）
+        assert detail == PAPER_INVALID_VALUE_DETAIL, detail
 
 
 class TestStructureGateMalformedSources:
