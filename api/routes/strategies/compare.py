@@ -14,8 +14,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ._common import _reject_invalid_or_plugin_dna, \
-    _safe_error_message
+from ._common import (_reject_invalid_or_plugin_dna, _safe_error_message)
 
 from core.persistence.repository.backtest_result import (
     get_backtest_result,

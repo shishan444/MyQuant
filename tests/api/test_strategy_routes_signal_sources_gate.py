@@ -69,10 +69,9 @@ def _entry_gene() -> SignalGene:
                       "rsi", {"type": "lt", "threshold": 35})
 
 
-def _plugin_source(**extra) -> dict:
+def _plugin_source() -> dict:
     src = {"type": "formula", "ref": "fx_fx_trend_pullback",
            "threshold": 0.5, "operator": ">"}
-    src.update(extra)
     return src
 
 

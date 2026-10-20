@@ -48,8 +48,10 @@ GUARDED_FILES = [
 EXCLUDED_FILES = [_STRAT_DIR / "crud.py", _REPO_ROOT / "api" / "routes" / "evolution.py"]
 
 
-def _valid_plain_dna() -> StrategyDNA:
-    """合法纯基因 DNA（两段全过——不 raise 面）。"""
+def _dna(signal_sources=None) -> StrategyDNA:
+    """合法骨架（entry/exit 齐全）+指定 signal_sources——三态构造器
+    （review Q-3 收敛：对齐姊妹文件 test_strategy_routes_signal_
+    sources_gate.py 的 _dna_with_sources 形制）。"""
     return StrategyDNA(
         signal_genes=[
             SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
@@ -57,36 +59,24 @@ def _valid_plain_dna() -> StrategyDNA:
             SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
                        "rsi", {"type": "cross_above", "threshold": 50.0}),
         ],
+        signal_sources=signal_sources,
         risk_genes=RiskGenes(),
     )
+
+
+def _valid_plain_dna() -> StrategyDNA:
+    """合法纯基因 DNA（两段全过——不 raise 面）。"""
+    return _dna()
 
 
 def _invalid_dna() -> StrategyDNA:
     """结构坏 DNA（缺 ref——第一段命中面）。"""
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                       "rsi", {"type": "lt", "threshold": 35}),
-            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                       "rsi", {"type": "cross_above", "threshold": 50.0}),
-        ],
-        signal_sources=[{"type": "formula", "threshold": 0.5}],
-        risk_genes=RiskGenes(),
-    )
+    return _dna([{"type": "formula", "threshold": 0.5}])
 
 
 def _pure_plugin_dna() -> StrategyDNA:
     """结构合法纯插件 DNA（第二段命中面）。"""
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                       "rsi", {"type": "lt", "threshold": 35}),
-            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                       "rsi", {"type": "cross_above", "threshold": 50.0}),
-        ],
-        signal_sources=[{"type": "formula", "ref": "fx_demo"}],
-        risk_genes=RiskGenes(),
-    )
+    return _dna([{"type": "formula", "ref": "fx_demo"}])
 
 
 class TestInlineScan:
@@ -236,17 +226,8 @@ class TestJudgementOrderInternalized:
         """结构坏+合法插件源并存 → 报 DNA_VALIDATION_FAILED（第一段
         先判——「策略坏」优先于「环境不支持」，判定顺序不变量单点化
         的 helper 内证明）。"""
-        dna = StrategyDNA(
-            signal_genes=[
-                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                           "rsi", {"type": "lt", "threshold": 35}),
-                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                           "rsi", {"type": "cross_above", "threshold": 50.0}),
-            ],
-            signal_sources=[{"type": "fomula"},
-                            {"type": "formula", "ref": "fx_demo"}],
-            risk_genes=RiskGenes(),
-        )
+        dna = _dna([{"type": "fomula"},
+                    {"type": "formula", "ref": "fx_demo"}])
         with pytest.raises(HTTPException) as ei:
             _reject_invalid_or_plugin_dna(
                 dna, library_dna=True, channel="backtest")

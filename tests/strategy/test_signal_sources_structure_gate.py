@@ -70,9 +70,8 @@ class TestTypeWhitelistReject:
     def test_bad_type_rejected_with_named_value(self, stype, rendered):
         """白名单外 type（含缺键）→ 拒绝+D-5 点名（序号子串+值带引号
         渲染——``got 'fomula'`` 而非 ``got fomula``，repr 形制）。"""
-        entry = {"ref": "fx_demo"} if stype is not None else {}
         # 缺 type 键形态：条目无 type；其余形态：type 键取坏值
-        source = dict(entry) if stype is None else {"type": stype}
+        source = {} if stype is None else {"type": stype}
         result = validate_dna(_skeleton_dna([source]))
         assert not result.is_valid, (
             f"白名单外 type={stype!r} 被静默放行（判据未生效）："

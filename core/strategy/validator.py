@@ -96,8 +96,10 @@ def has_plugin_sources(dna: StrategyDNA) -> bool:
     执行链能力边界判据（recognize-plugin-source-dna T4）：模拟盘/实盘/
     REST 回测通道未接入插件信号组装，插件源在场即拒（含混合形态——
     插件源被静默忽略、结果只反映内置基因，比零交易更隐蔽；「在场即
-    拒」防静默失真回潮）。与结构校验（_entry_plugin_sources）正交：
-    结构校验问「策略形态合法吗」，本判据问「这个执行环境支持吗」。
+    拒」防静默失真回潮）。与 validate_dna 的 signal_sources 结构判据
+    正交（_entry_plugin_sources 为 entry 面提取器而非校验器——review
+    Q-4 修正旧括号指代）：结构判据问「策略形态合法吗」，本判据问
+    「这个执行环境支持吗」。
     """
     return any(
         isinstance(s, dict) and s.get("type") in ("formula", "model")
