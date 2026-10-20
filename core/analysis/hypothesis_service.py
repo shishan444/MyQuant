@@ -191,13 +191,16 @@ def _validate_strategy_params(
                 detail={"field": "take_profit", "legal_range": [lo, hi],
                         "sl_mode": sl_mode})
         # TP>SL：trail 档豁免（回撤比例与固定止盈不构成盈亏比，A1）；
-        # atr 档保留（倍数盈亏比有意义）
-        if stop_loss is not None and sl_mode != "trail" \
+        # pct 档降级为警告不阻断（fr_fd5e89897f8d——高胜率浅收割形制
+        # R:R<1 是均值回归/恐慌收割类策略的常态设计，exit_sweep 官方
+        # 网格支持并推荐 tp<sl 配置；登记返回体 strategy_param_warnings
+        # 披露，裁决权归研究者）；atr 档保留 raise（倍数盈亏比有意义）
+        if stop_loss is not None and sl_mode == "atr" \
                 and take_profit <= stop_loss:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"take_profit ({take_profit}) 须大于 stop_loss ({stop_loss})"
-                f"（sl_mode={sl_mode} 档不豁免）",
+                f"（sl_mode=atr 档不豁免）",
                 detail={"field": "take_profit",
                         "legal_range": "> stop_loss",
                         "sl_mode": sl_mode})
@@ -819,6 +822,31 @@ def register_hypothesis(
     except Exception as exc:  # noqa: BLE001 —— 降级语义：警告失败不阻断登记
         logger.warning("阈值单位警告判定降级（登记照常）: %s", exc)
 
+    # 4.8 浅收割形制警告（fr_fd5e89897f8d）：pct 档 take_profit<=stop_loss
+    #     （R:R<1 高胜率浅收割）在 4.6 值域校验已放行（校验层同步降级），
+    #     此处纯增量警告披露——裁决权归研究者（与 threshold_unit_warnings
+    #     同形制：不阻断、幂等命中不携带）。trail 档无此语义（豁免）；
+    #     atr 档校验层仍拒（不达此处）。
+    strategy_param_warnings = None
+    try:
+        if (strategy_params is not None
+                and strategy_params.get("sl_mode", "pct") == "pct"
+                and strategy_params.get("take_profit") is not None
+                and strategy_params.get("stop_loss") is not None
+                and strategy_params["take_profit"]
+                <= strategy_params["stop_loss"]):
+            strategy_param_warnings = [{
+                "field": "strategy_params.take_profit",
+                "take_profit": strategy_params["take_profit"],
+                "stop_loss": strategy_params["stop_loss"],
+                "hint": "take_profit<=stop_loss（R:R<1 高胜率浅收割形制）"
+                        "——exit_sweep 网格支持此类配置（宽止损扛逆行+"
+                        "浅止盈装第一波）；警告不阻断登记，风控语义由"
+                        "研究者自负",
+            }]
+    except Exception as exc:  # noqa: BLE001 —— 降级语义：警告失败不阻断登记
+        logger.warning("浅收割警告判定降级（登记照常）: %s", exc)
+
     # 5. 原子写（provenance 存在时同事务追加 screen_use 日志；声明块
     #    归一形 JSON 串入列——None=无声明列 NULL）
     import uuid
@@ -841,6 +869,8 @@ def register_hypothesis(
            "direction": direction or "long"}
     if threshold_unit_warnings is not None:
         out["threshold_unit_warnings"] = threshold_unit_warnings
+    if strategy_param_warnings is not None:
+        out["strategy_param_warnings"] = strategy_param_warnings
     if precheck_warnings is not None:
         out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
         # 挂接预检留痕（CARD-03，spec R4「预检执行 MUST 自动落研究日志」

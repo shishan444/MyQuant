@@ -781,3 +781,49 @@ class TestRegisterPrecheckLogFailureTolerated:
             precheck_data_dir=data_dir)
         assert out["hypothesis_id"]
         assert out["duplicated"] is False
+
+
+class TestShallowHarvestWarning:
+    """fr_fd5e89897f8d：pct 档 take_profit<=stop_loss（R:R<1 高胜率浅
+    收割形制）从校验拒绝降级为登记返回体警告——裁决权归研究者。"""
+
+    _CONDS = {
+        "when_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35}],
+        "then_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "gt", "target": 50}],
+    }
+    _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2024-02-15T00:00:00Z",
+                "end": "2024-03-20T00:00:00Z"}]
+
+    def test_pct_tp_le_sl_registered_with_warning(self, db):
+        out = register_hypothesis(
+            db, conditions=self._CONDS, statement="浅收割", 
+            data_ranges=self._RANGES,
+            strategy_params={"sl_mode": "pct", "stop_loss": 0.08,
+                             "take_profit": 0.03, "leverage": 1})
+        assert out["duplicated"] is False
+        warns = out.get("strategy_param_warnings")
+        assert warns and warns[0]["field"] == "strategy_params.take_profit"
+        assert warns[0]["take_profit"] == 0.03
+        assert warns[0]["stop_loss"] == 0.08
+
+    def test_pct_tp_gt_sl_no_warning(self, db):
+        out = register_hypothesis(
+            db, conditions=self._CONDS, statement="常规盈亏比",
+            data_ranges=self._RANGES,
+            strategy_params={"sl_mode": "pct", "stop_loss": 0.03,
+                             "take_profit": 0.08, "leverage": 1})
+        assert "strategy_param_warnings" not in out
+
+    def test_trail_tp_le_sl_no_warning(self, db):
+        # trail 档本就豁免（A1），放行不触发浅收割警告（语义不适用）
+        out = register_hypothesis(
+            db, conditions=self._CONDS, statement="trail 跟踪",
+            data_ranges=self._RANGES,
+            strategy_params={"sl_mode": "trail", "stop_loss": 0.05,
+                             "take_profit": 0.03, "leverage": 1})
+        assert "strategy_param_warnings" not in out
