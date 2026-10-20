@@ -336,10 +336,12 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         )
 
     # 止盈>止损：trail 档豁免（回撤比例与固定止盈不构成盈亏比，A1）；
-    # atr 档保留（倍数盈亏比有意义）
+    # pct 档放行（fr_fd5e89897f8d——R:R<1 高胜率浅收割形制，exit_sweep
+    # 网格支持；登记面 strategy_param_warnings 披露，与 hypothesis_service
+    # 同步降级）；atr 档保留（倍数盈亏比有意义）
     if (
         risk.take_profit is not None
-        and risk.sl_mode != "trail"
+        and risk.sl_mode == "atr"
         and risk.take_profit <= risk.stop_loss
     ):
         errors.append(f"Take profit ({risk.take_profit}) must be greater than stop loss ({risk.stop_loss})")

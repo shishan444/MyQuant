@@ -83,7 +83,9 @@ class TestParamDomainValidation:
         ({"stop_loss": 0.001}, False),
         ({"stop_loss": 2.0}, False),    # pct 档比例域外（同值异判锚）
         ({"stop_loss": 0.05, "take_profit": 0.10}, True),
-        ({"stop_loss": 0.05, "take_profit": 0.03}, False),  # tp<=sl
+        # pct 档 tp<=sl：fr_fd5e89897f8d 起降级为放行+登记警告
+        # （R:R<1 高胜率浅收割形制；attribution 见 hypothesis_service）
+        ({"stop_loss": 0.05, "take_profit": 0.03}, True),
         # atr 档（倍数域）
         ({"sl_mode": "atr", "stop_loss": 2.0, "take_profit": 4.0}, True),
         ({"sl_mode": "atr", "stop_loss": 0.5}, True),   # 下边界

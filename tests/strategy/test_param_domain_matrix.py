@@ -81,6 +81,15 @@ class TestValidatorDomainGrid:
         # trail 档豁免 TP>SL（回撤比例与固定止盈不构成盈亏比，A1）
         assert _errors(sl_mode="trail", stop_loss=0.05, take_profit=0.03) == []
 
+    def test_take_profit_le_stop_loss_pct_allowed(self):
+        # pct 档放行 TP<=SL（fr_fd5e89897f8d——R:R<1 高胜率浅收割形制：
+        # 宽止损扛逆行+浅止盈装第一波；exit_sweep 网格支持，登记面
+        # strategy_param_warnings 披露——三面同步：validator/service/
+        # hypothesis 登记警告通道）
+        assert _errors(sl_mode="pct", stop_loss=0.08, take_profit=0.03) == []
+        # 边界：TP==SL 亦放行（R:R=1 中性形制）
+        assert _errors(sl_mode="pct", stop_loss=0.05, take_profit=0.05) == []
+
     def test_sl_mode_enum(self):
         # 1.1 补齐后状态：validator 格覆盖 sl_mode（现状缺口已修）
         assert _errors(sl_mode="trailing") != []
