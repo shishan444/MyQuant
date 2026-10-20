@@ -33,6 +33,7 @@ from core.persistence.repository.verify_session import (
     save_verify_session,
     update_verify_session,
 )
+from ._common import _reject_invalid_or_plugin_dna
 from api.deps import get_data_dir, get_db_path
 from api.schemas import (
     BacktestRequest,
@@ -90,27 +91,11 @@ def backtest_strategy(
         # 可绕过写入时校验（create 通道防线只覆盖正常写入路径），读库
         # 路径复查是防线——威胁模型升级（2026-10 技术债务需求文件
         # A-1/B-1；旧表述「分属不同威胁模型故本分支不动」就此翻案）。
-        from core.strategy.validator import validate_dna
-        _vr = validate_dna(dna)
-        if not _vr.is_valid:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "DNA_VALIDATION_FAILED",
-                        "message": "Library DNA invalid（库内 DNA 结构/值域非法）",
-                        "errors": _vr.errors})
-        # 插件源能力边界判据（recognize-plugin-source-dna T4，第二问·
-        # 乙）：REST 回测通道未接入插件信号组装，插件源在场即拒（含混
-        # 合形态——插件源被静默忽略、结果只反映内置基因，比零交易更
-        # 隐蔽）；错误码分立（补丁①）：结构合法但通道不支持。
-        from core.strategy.validator import has_plugin_sources
-        if has_plugin_sources(dna):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
-                    "message": "策略含插件信号源，REST 回测通道不支持"
-                               "（引擎该通道未接插件信号集，结果将为零"
-                               "交易）——请经研究验证链沙盒回测"})
+        # 插件源能力边界判据（T4，第二问·乙）：REST 回测通道未接入
+        # 插件信号组装，插件源在场即拒（含混合形态）；错误码分立
+        # （补丁①）。signal-sources-structure-gate 卡 G 起两段拒绝
+        # 表达收敛为 _common helper（判据单源不动，消息逐字节不变）。
+        _reject_invalid_or_plugin_dna(dna, library_dna=True, channel="backtest")
         symbol = row["symbol"]
         timeframe = row["timeframe"]
         strategy_id = payload.strategy_id
@@ -127,27 +112,10 @@ def backtest_strategy(
         # DNA 落库前已经 create 通道校验，分属不同威胁模型」已翻案：
         # 本机直改库可绕过写入时校验，读库复查是防线，见上方
         # strategy_id 分支二道校验，recognize-plugin-source-dna T3）
-        from core.strategy.validator import validate_dna
-        _vr = validate_dna(dna)
-        if not _vr.is_valid:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "DNA_VALIDATION_FAILED",
-                        "message": "DNA 值域/结构校验未通过",
-                        "errors": _vr.errors})
-        # 插件源能力边界判据（T4 第二问·乙，实施裁量补齐第五入口）：
-        # REST 回测通道整体未接入插件信号组装——读库四路径之外，内联
-        # 直传入口同判在场即拒（T4 目标「静默零交易从行为面消除」覆盖
-        # 同通道全部入口；裁量依据随交付呈报披露）
-        from core.strategy.validator import has_plugin_sources
-        if has_plugin_sources(dna):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
-                    "message": "策略含插件信号源，REST 回测通道不支持"
-                               "（引擎该通道未接插件信号集，结果将为零"
-                               "交易）——请经研究验证链沙盒回测"})
+        # 插件源能力边界（T4 第二问·乙，实施裁量补齐第五入口）：
+        # 内联直传同判在场即拒。卡 G 起两段拒绝表达收敛为 _common
+        # helper（判据单源不动，消息逐字节不变）。
+        _reject_invalid_or_plugin_dna(dna, library_dna=False, channel="backtest")
     else:
         raise HTTPException(
             status_code=400,

@@ -31,9 +31,16 @@ _RSI_GENE = lambda: SignalGene(  # noqa: E731
     {"type": "lt", "threshold": 35})
 
 
+_EXIT_GENE = lambda: SignalGene(  # noqa: E731 —— 卡 R 起装载挂全量
+    # validate_dna（Q-1）：补恒假 exit（gt 1e9 永不触发——与原无 exit
+    # 构造行为等效）
+    "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+    {"type": "gt", "threshold": 1e9})
+
+
 def _dna(direction: str = "long") -> StrategyDNA:
     return StrategyDNA(
-        signal_genes=[_RSI_GENE()], logic_genes=LogicGenes(),
+        signal_genes=[_RSI_GENE(), _EXIT_GENE()], logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(direction=direction))
 

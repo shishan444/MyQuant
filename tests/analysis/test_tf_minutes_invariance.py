@@ -131,10 +131,15 @@ def strategy(env):
         sid = f"st_{tf}_{tag}"
         idx = env[2][tf]
         n = _SPECS[tf]
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补层 exit 基因
+        # （原单 ENTRY 构造缺 exit 过不了装载校验；exit 同判据保持
+        # 周期不变性测试的对照语义）
         dna = StrategyDNA(
             layers=[TimeframeLayer(timeframe=tf, signal_genes=[
                 SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                           "rsi_14", {"type": "lt", "threshold": 45})],
+                           "rsi_14", {"type": "lt", "threshold": 45}),
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                           "rsi_14", {"type": "gt", "threshold": 1e9})],
                 logic_genes=LogicGenes())],
             execution_genes=ExecutionGenes(timeframe=tf),
             risk_genes=RiskGenes())

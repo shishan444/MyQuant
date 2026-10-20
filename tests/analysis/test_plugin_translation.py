@@ -497,8 +497,15 @@ class TestGateDualSourceEdgeAnchors:
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         from core.analysis.validation_service import run_isolated_backtest
         col = _plugin(db, name="mom_v2")
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补 then（指标 subject
+        # 恒假形态 RSI gt 1e9——翻译产物含 exit 基因过装载校验，恒假
+        # 出场与原无 then 产物的默认出场路径行为等效；断言面是门禁
+        # 放行三态判定，不受出场形态影响）
         hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
-                                  "target": 0.5}])
+                                  "target": 0.5}],
+                       then=[{"subject": {"indicator": "RSI",
+                                          "params": {"period": 14}},
+                              "action": "gt", "target": 1e9}])
         out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         assert out["status"] == "draft"
         res = run_isolated_backtest(
@@ -525,8 +532,14 @@ class TestGateDualSourceEdgeAnchors:
         hid = _raw_hyp(db, when=[{"subject": col_a, "action": "gt",
                                   "target": 0.5}])
         translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        from core.strategy.dna import SignalGene, SignalRole
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit 基因
+        # （纯插件源只顶 entry 不顶 exit——T2「不顶替出场」语义；
+        # exit 恒假与原无 exit 构造行为等效，分量证据门断言面不变）
         dna = StrategyDNA(
-            signal_genes=[],
+            signal_genes=[SignalGene(
+                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 1e9})],
             signal_sources=[{"type": "formula", "ref": col_a,
                              "threshold": 0.5, "operator": ">"},
                             {"type": "formula", "ref": col_b,

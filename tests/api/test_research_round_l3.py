@@ -141,7 +141,11 @@ class TestResearchRoundDoD:
                           signal_genes=[SignalGene(
                               "RSI", {"period": 14},
                               SignalRole.ENTRY_TRIGGER, "rsi_14",
-                              {"type": "lt", "threshold": 45})],
+                              {"type": "lt", "threshold": 45}),
+                              SignalGene(
+                              "RSI", {"period": 14},
+                              SignalRole.EXIT_TRIGGER, "rsi_14",
+                              {"type": "gt", "threshold": 1e9})],
                           logic_genes=LogicGenes(),
                           execution_genes=ExecutionGenes(
                               symbol=SYMBOL, timeframe="4h"),

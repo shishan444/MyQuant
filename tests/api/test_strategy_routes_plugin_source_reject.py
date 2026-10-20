@@ -64,6 +64,26 @@ RED_TRACE_SID = "st_0c1c0b54daa7"
 # 四路径注册键（api/routes/strategies/ 聚合 prefix=/api/strategies）
 ROUTES = ("backtest", "compare", "verify", "batch")
 
+# 字节基线（signal-sources-structure-gate 1.2 补强，采集时点=卡 V 判据
+# 落地后、卡 G 收敛前〔组 1 工作区，基 commit 79642c7〕；采集值经人工
+# 锚回 design 4.3 表与卡 V 模板后入基——卡 G 收敛为 helper 后这些字面
+# 量即「收敛前后逐字节不变」的对照基准）
+PLUGIN_MESSAGE_BY_ROUTE = {
+    "backtest": ("策略含插件信号源，REST 回测通道不支持（引擎该通道"
+                 "未接插件信号集，结果将为零交易）——请经研究验证链"
+                 "沙盒回测"),
+    "verify": ("策略含插件信号源，REST 回测通道不支持（引擎该通道"
+               "未接插件信号集，结果将为零交易）——请经研究验证链"
+               "沙盒回测"),
+    "compare": ("策略含插件信号源，REST 对比回测通道不支持（引擎该"
+                "通道未接插件信号集，结果将为零交易）——请经研究验证"
+                "链沙盒回测"),
+    "batch": ("策略含插件信号源，REST 批量回测通道不支持（引擎该通道"
+              "未接插件信号集，结果将为零交易）——请经研究验证链沙盒"
+              "回测"),
+}
+DNA_LIBRARY_MESSAGE = "Library DNA invalid（库内 DNA 结构/值域非法）"
+
 
 def _exit_gene() -> SignalGene:
     return SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
@@ -196,6 +216,11 @@ class TestFourRoutesPluginReject:
             f"[{route}] {body}"
         assert "插件信号源" in body["message"], f"[{route}] {body}"
         assert "沙盒" in body["message"], f"[{route}] {body}"
+        # 二级断言（字节基线）：message 逐字节+detail 键集精确（PLUGIN
+        # 段无 errors 键——契约不对称是基准的一部分）
+        assert body["message"] == PLUGIN_MESSAGE_BY_ROUTE[route], \
+            f"[{route}] {body}"
+        assert set(body) == {"code", "message"}, f"[{route}] {body}"
 
     @pytest.mark.parametrize("route", ROUTES)
     def test_hybrid_builtin_genes_row_rejected_on_all_routes(
@@ -285,6 +310,10 @@ class TestDistinctErrorCodeOnDamagedDna:
         body = resp.json()["detail"]
         assert body["code"] == "DNA_VALIDATION_FAILED", f"[{route}] {body}"
         assert body["code"] != "PLUGIN_SOURCES_UNSUPPORTED"
+        # 二级断言（字节基线）：读库态 message 逐字节+detail 键集精确
+        # （DNA 段含 errors 键）
+        assert body["message"] == DNA_LIBRARY_MESSAGE, f"[{route}] {body}"
+        assert set(body) == {"code", "message", "errors"}, f"[{route}] {body}"
 
 
 class TestPlainStrategyControlGroup:
@@ -313,6 +342,52 @@ class TestPlainStrategyControlGroup:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["total_trades"] >= 0
+
+
+class TestByteBaselineAnchors:
+    """字节基线二级锚（signal-sources-structure-gate 1.2）：缺 ref/
+    拼错/非 dict 三类结构畸形经四路径的响应字面量——采集时点=卡 V
+    落地后、卡 G 收敛前（组 1 工作区，基 commit 79642c7）。errors
+    消息对卡 V 模板渲染值锚定；库内读库两态 message 键集在此锁死
+    （卡 G 收敛为 helper 后须逐字节复现这些值——AC-9 双点绿判据的
+    锚面）。"""
+
+    @pytest.mark.parametrize(
+        ("label", "sources", "expected_error"),
+        [
+            pytest.param("缺ref", [{"type": "formula", "threshold": 0.5}],
+                         "signal_sources[0]: type 'formula' requires 'ref'",
+                         id="缺ref"),
+            pytest.param("拼错", [{"type": "fomula"}],
+                         "signal_sources[0]: type must be one of "
+                         "('formula', 'model', 'rule'), got 'fomula'",
+                         id="拼错type"),
+            pytest.param("非dict条目", [{"type": "rule"}, "x"],
+                         "signal_sources[1] must be a dict, got str",
+                         id="非dict条目"),
+        ],
+    )
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_structural_malformed_byte_exact(self, api_client, route,
+                                             label, sources, expected_error):
+        """结构畸形经四路径 → 422+读库态 message 逐字节+errors 恰为
+        卡 V 模板渲染值+detail 键集 {code, message, errors}。"""
+        db = api_client.app.state.db_path
+        sid = f"s-bb-{label}"
+        _persist(db, sid, StrategyDNA(
+            signal_genes=[_entry_gene(), _exit_gene()],
+            signal_sources=sources,
+            risk_genes=RiskGenes(),
+        ).to_json())
+
+        resp = _post_route(api_client, route, sid)
+
+        assert resp.status_code == 422, f"[{route}/{label}] {resp.text}"
+        body = resp.json()["detail"]
+        assert body["code"] == "DNA_VALIDATION_FAILED", f"[{route}] {body}"
+        assert body["message"] == DNA_LIBRARY_MESSAGE, f"[{route}] {body}"
+        assert body["errors"] == [expected_error], f"[{route}] {body}"
+        assert set(body) == {"code", "message", "errors"}, f"[{route}] {body}"
 
 
 class TestCrudCreateUpdateChannelPass:

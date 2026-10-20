@@ -192,6 +192,16 @@ def _dna_indicator_names(dna) -> List[str]:
 
 
 def _load_strategy_dna(db_path: Path, strategy_id: str):
+    """读库装载策略 DNA（四入口共用单点：隔离回测/随机窗口/沙盒
+    回测/分段验证经调用自动全覆盖）。
+
+    装载即校验（signal-sources-structure-gate 卡 R，Q-1 裁决=挂
+    全量 validate_dna）：from_json 成功后、return 前执行全量结构/
+    值域校验——不过即 ResearchError(RESEARCH_DNA_INVALID) 结构化
+    拒绝（detail 携 strategy_id+errors 判据明细）。防线边界：「可
+    解析但校验不过」；from_json 解析失败的更重损毁沿既有边界
+    （挂账 TECH-DEBT，与装载校验分属两层）。
+    """
     from core.persistence.repository.strategy import get_strategy
     from core.strategy.dna import StrategyDNA
 
@@ -199,7 +209,15 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
     if row is None:
         raise ResearchError("RESEARCH_STRATEGY_NOT_FOUND",
                             f"策略不存在: {strategy_id}", status=404)
-    return StrategyDNA.from_json(row["dna_json"]), row
+    dna = StrategyDNA.from_json(row["dna_json"])
+    from core.strategy.validator import validate_dna
+    vr = validate_dna(dna)
+    if not vr.is_valid:
+        raise ResearchError(
+            "RESEARCH_DNA_INVALID",
+            f"库内策略 DNA 结构/值域非法: {strategy_id}",
+            detail={"strategy_id": strategy_id, "errors": vr.errors})
+    return dna, row
 
 
 def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:

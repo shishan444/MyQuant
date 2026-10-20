@@ -44,8 +44,12 @@ _EXIT_GENE = lambda: SignalGene(  # noqa: E731 —— 层 exit 补齐：T3 读�
 
 def _mtf_dna(layer_tfs):
     """显式 layers 的 MTF DNA（is_mtf=True；层基因 entry+exit 齐备——
-    过 validate_dna 结构完备面）。"""
+    过 validate_dna 结构完备面）。顶层同步带基因：卡 R 起装载挂
+    全量 validate_dna（Q-1），空 layers 调用形态（_mtf_dna([])）顶层
+    无基因过不了装载校验——顶层基因对非空 layers 调用零影响
+    （MTF 分支不查顶层 entry/exit；条件结构面层内同基因已覆盖）。"""
     return StrategyDNA(
+        signal_genes=[_RSI_GENE(), _EXIT_GENE()],
         layers=[TimeframeLayer(timeframe=tf,
                                signal_genes=[_RSI_GENE(), _EXIT_GENE()],
                                logic_genes=LogicGenes())
@@ -449,8 +453,12 @@ class TestGapClosureValidation:
         bad_gene = SignalGene("GHOST_IND", {"period": 14},
                               SignalRole.ENTRY_TRIGGER, "ghost_14",
                               {"type": "lt", "threshold": 35})
+        # 卡 R 起装载挂全量 validate_dna：补 exit 基因（缺 exit 过不了
+        # 装载校验到不了 warmup 推导；GHOST_IND 仍为 entry——注册表外
+        # 指标的 KeyError 转译面不变）
         bad_dna = StrategyDNA(
-            signal_genes=[bad_gene], logic_genes=LogicGenes(),
+            signal_genes=[bad_gene, _EXIT_GENE()],
+            logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="4h"),
             risk_genes=RiskGenes())
         sid = f"st_bad_{runner}"

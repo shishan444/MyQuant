@@ -63,6 +63,13 @@ RISK_FRACTION_MAX = 0.5   # 闭区间上界（P9 上界核对——validator 惯
 INITIAL_FRACTION_MIN = 0.0   # 开区间下界（0 排除——零首仓无意义）
 INITIAL_FRACTION_MAX = 1.0   # 闭区间上界（1.0=全部可用资金）
 MAX_POSITION_LOSS_MIN = 0.0  # 开区间下界（0 排除；无上界）
+# signal_sources 条目 type 白名单（signal-sources-structure-gate 卡
+# V）：结构判据单源——validate_dna R-1b 成员判定与消息渲染同源引用；
+# rule=规则条目（恒裸键，无 ref 要求），formula/model=插件源（须带
+# ref）。插件子集 ("formula","model") 在 _entry_plugin_sources/
+# has_plugin_sources/R-1c 三处以字面量存在（消费语义各自独立，本
+# change 不重构——扩源类型需三处联动，记为已知债）
+SIGNAL_SOURCE_TYPES = ("formula", "model", "rule")
 
 
 def _entry_plugin_sources(dna: StrategyDNA) -> List[dict]:
@@ -74,8 +81,9 @@ def _entry_plugin_sources(dna: StrategyDNA) -> List[dict]:
     entry（防「无 ENTRY 基因+仅 exit 源」形态下进场条件空集的静默零
     交易在结构层复刻——该形态按两源皆空拒绝）。
     """
+    sources = dna.signal_sources
     return [
-        s for s in (dna.signal_sources or [])
+        s for s in (sources if isinstance(sources, list) else [])
         if isinstance(s, dict)
         and s.get("type") in ("formula", "model")
         and s.get("role", "entry") == "entry"
@@ -88,8 +96,10 @@ def has_plugin_sources(dna: StrategyDNA) -> bool:
     执行链能力边界判据（recognize-plugin-source-dna T4）：模拟盘/实盘/
     REST 回测通道未接入插件信号组装，插件源在场即拒（含混合形态——
     插件源被静默忽略、结果只反映内置基因，比零交易更隐蔽；「在场即
-    拒」防静默失真回潮）。与结构校验（_entry_plugin_sources）正交：
-    结构校验问「策略形态合法吗」，本判据问「这个执行环境支持吗」。
+    拒」防静默失真回潮）。与 validate_dna 的 signal_sources 结构判据
+    正交（_entry_plugin_sources 为 entry 面提取器而非校验器——review
+    Q-4 修正旧括号指代）：结构判据问「策略形态合法吗」，本判据问
+    「这个执行环境支持吗」。
     """
     return any(
         isinstance(s, dict) and s.get("type") in ("formula", "model")
@@ -123,6 +133,35 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     """
     errors: List[str] = []
     warnings: List[str] = []
+
+    # signal_sources 结构判据（signal-sources-structure-gate 卡 V）：
+    # 第一判据块——entry 判据经 _entry_plugin_sources 消费
+    # signal_sources 迭代，形制判据必须先行。None=合法退化（R-1d，
+    # 存量语义）；顶层非 list 前置点名（防 str 迭代出字符/键的怪
+    # 消息、防 int/bool 迭代 TypeError 在判据内炸穿）；逐条 elif
+    # 语义（a 独占，b/c 互斥）——每条目至多一条结构判据消息。最小
+    # 结构边界：ref 值形制（None/空串）不判（执行侧既有
+    # RESEARCH_SIGNAL_SOURCE_INVALID 防线承接）；role/threshold/
+    # operator/weight 不在校验范围
+    ss = dna.signal_sources
+    if ss is not None and not isinstance(ss, list):
+        errors.append(
+            f"signal_sources must be a list, got {type(ss).__name__}")
+    elif isinstance(ss, list):
+        for i, s in enumerate(ss):
+            if not isinstance(s, dict):
+                errors.append(
+                    f"signal_sources[{i}] must be a dict, "
+                    f"got {type(s).__name__}")
+            elif s.get("type") not in SIGNAL_SOURCE_TYPES:
+                errors.append(
+                    f"signal_sources[{i}]: type must be one of "
+                    f"{SIGNAL_SOURCE_TYPES}, got {s.get('type')!r}")
+            elif s.get("type") in ("formula", "model") \
+                    and "ref" not in s:
+                errors.append(
+                    f"signal_sources[{i}]: type {s.get('type')!r} "
+                    f"requires 'ref'")
 
     # 非 MTF 策略：查顶层 signal_genes
     if not dna.layers:

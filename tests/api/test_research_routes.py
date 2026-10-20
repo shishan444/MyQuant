@@ -55,8 +55,12 @@ def research_env(tmp_path: Path):
         field_name="rsi_14",
         condition={"type": "lt", "threshold": 35},
     )
+    # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9 永不触发——与原无 exit 默认路径行为等效）
     dna = StrategyDNA(
-        signal_genes=[gene], logic_genes=LogicGenes(),
+        signal_genes=[gene, SignalGene(
+            "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+            {"type": "gt", "threshold": 1e9})],
+        logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
         risk_genes=RiskGenes(),
     )
@@ -241,8 +245,14 @@ class TestIsolatedBacktest:
         gene = SignalGene(
             indicator="EMA", params={"period": 50}, role=SignalRole.ENTRY_TRIGGER,
             field_name="ema_50", condition={"type": "gt", "threshold": 61500})
+        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9 永不触发——与原无 exit 默认路径行为等效）
         dna = StrategyDNA(
-            signal_genes=[gene], logic_genes=LogicGenes(),
+            signal_genes=[gene, SignalGene(
+                indicator="EMA", params={"period": 50},
+                role=SignalRole.EXIT_TRIGGER,
+                field_name="ema_50",
+                condition={"type": "gt", "threshold": 1e9})],
+            logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="4h"),
             risk_genes=RiskGenes())
         save_strategy(research_env["db"], strategy_id="st_emamem", dna_json=dna.to_json(),
