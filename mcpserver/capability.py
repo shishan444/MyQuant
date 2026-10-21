@@ -102,7 +102,7 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   构造域对齐），纯插件进场不再被静默作废（此前 0 笔交易无提示）；
   组合态可疑形态（规则基线全 False+插件源在场）落 [signal-assembly]
   前缀告警留痕（真实零触发同告警——可观测优先的既定契约）。
-- **组合条件（0.4.1）**：condition_stats/event_study/regime_split 支持 conditions
+- **组合条件（0.4.1 起；regime_split 2026-10-14 起）**：condition_stats/event_study/regime_split 支持 conditions
   条件数组（AND 语义，条数 1..5，每条混合形制含可选高周期
   timeframe 键——掩码投影）。兼容锚=参数键形制：旧 condition 键
   逐字节不变；conditions（含长度 1）统一走引用并集前扩装载
