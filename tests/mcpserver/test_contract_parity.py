@@ -593,7 +593,14 @@ class TestRegimeSplitConditionsDisclosure:
     B1 支持面互拍：主条款「与路由键组实际支持面一致——描述面能力
     清单漂移即缺陷」的类别级防线（A1-A3 只钉 regime_split 成员在场，
     清单多写/漏写其他成员不红——B1 补此洞）。
+    A5 插件列条目锚（CARD-02）：capability 插件列条目清单含
+    regime_split（spec「插件列条件可用」Scenario 的披露面），清单
+    串内命中形制——新标题自带 regime_split 括注（CARD-01 同类），
+    段内子串命中不构成成员证据。
     """
+
+    _PLUGINS_ENTRY_SEG = ("分析模板插件列条件（fix-research-c3起；"
+                          "regime_split2026-10-14起）", "纯公式进场形制")
 
     _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
 
@@ -609,6 +616,15 @@ class TestRegimeSplitConditionsDisclosure:
         j = squashed.find(end, i)
         assert j != -1, f"截段终点锚不在场: {end}"
         return squashed[i:j]
+
+    @staticmethod
+    def _conditions_support_list(squashed: str) -> set:
+        """conditions 支持清单提取：斜杠清单串 → 成员集（B1/A5 共用）。"""
+        mo = re.search(
+            r"condition_stats/event_study(?:/\w+)*支持conditions", squashed)
+        assert mo is not None, "conditions 支持清单锚不在场"
+        return set(
+            mo.group(0).removesuffix("支持conditions").split("/"))
 
     def test_a1_overview_list_carries_regime_split(self) -> None:
         src = self._squash(self._TOOLS_SRC)
@@ -627,7 +643,7 @@ class TestRegimeSplitConditionsDisclosure:
         seg = self._squash(m.group(0))
         for token in ("conditions", "二选一", "互斥", "condition|conditions",
                       "1..5", "AND",
-                      "timeframe", "并集",
+                      "timeframe", "并集", "插件列",
                       "params.indicator+params.condition"):
             assert token in seg, f"regime_split 段落缺披露要素: {token}"
 
@@ -683,15 +699,8 @@ class TestRegimeSplitConditionsDisclosure:
             "regime_split 路由分支缺 conditions 分叉——支持面提取失真")
         face_route.add("regime_split")
 
-        def _overview_list(text: str) -> set:
-            mo = re.search(
-                r"condition_stats/event_study(?:/\w+)*支持conditions", text)
-            assert mo is not None, "conditions 支持清单锚不在场"
-            return set(
-                mo.group(0).removesuffix("支持conditions").split("/"))
-
         src = self._squash(self._TOOLS_SRC)
-        face_overview = _overview_list(src)
+        face_overview = self._conditions_support_list(src)
         face_segment = {
             name for name, start, end in (
                 ("counter_profile", "counter_profile反例画像",
@@ -703,7 +712,7 @@ class TestRegimeSplitConditionsDisclosure:
 
         from mcpserver.capability import CAPABILITY_DOC
         doc = self._squash(CAPABILITY_DOC)
-        face_capability = _overview_list(
+        face_capability = self._conditions_support_list(
             self._segment(
                 doc, "组合条件（0.4.1起；regime_split2026-10-14起）",
                 "区间事件摘要"))
@@ -714,3 +723,34 @@ class TestRegimeSplitConditionsDisclosure:
         assert face_doc == face_route, (
             "描述面 conditions 支持清单与路由实际支持面漂移: "
             f"{sorted(face_doc)} vs {sorted(face_route)}")
+
+    def test_a5_plugin_column_entry_carries_regime_split(self) -> None:
+        """capability 插件列条目清单含 regime_split（CARD-02）。
+
+        spec「插件列条件可用」Scenario（conditions 含公式插件列
+        subject）的披露面锚——行为面由 P2 组 test_plugin_column_
+        conditions_route_nonzero 守护，本锚钉能力自述清单成员。
+        两断言：①conditions 支持面（B1 face_overview）⊆ 插件列
+        清单——凡支持 conditions 的模板其条件 subject 插件列披露
+        须一致（spec 混合形制条款「结构化/基础列/插件列 subject
+        均可」）；②fix-research-c3 时代既有五成员不回退。清单串
+        内命中形制（标题自带 regime_split 括注——CARD-01 同类，
+        段内子串命中不构成成员证据）。不与路由装载链互拍：
+        event_study 旧形走普通装载、inspect_cases 走 cases 端点，
+        装载链代理指标不精确，互拍产假漂移。
+        """
+        from mcpserver.capability import CAPABILITY_DOC
+        doc = self._squash(CAPABILITY_DOC)
+        seg = self._segment(doc, *self._PLUGINS_ENTRY_SEG)
+        mo = re.search(r"([\w]+(?:/\w+)*)的条件引用插件列", seg)
+        assert mo is not None, "插件列条目缺清单串（披露形制漂移）"
+        face_plugins = set(mo.group(1).split("/"))
+
+        missing = self._conditions_support_list(
+            self._squash(self._TOOLS_SRC)) - face_plugins
+        assert not missing, (
+            "conditions 支持面未全部披露插件列条件（混合形制条款——"
+            f"插件列 subject 均可）: 缺 {sorted(missing)}")
+        for tpl in ("condition_stats", "event_study", "inspect_cases",
+                    "param_sweep", "counter_profile"):
+            assert tpl in face_plugins, f"插件列条目既有成员回退: {tpl}"
