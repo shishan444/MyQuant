@@ -67,7 +67,12 @@ def _anchor_domain(anchor: DisclosureAnchor) -> str:
         assert anchor.seg_start and anchor.seg_end, (
             f"[{anchor.anchor_id}] {anchor.kind} 锚数据缺段域锚"
             "（seg_start/seg_end 必填——空段域=全文件域仅清零锚语义）")
-    elif not anchor.seg_start:
+    else:
+        # 对称 guard（reviewer 随记）：清零锚=逐文件断言，误填段域会
+        # 使清零扫描域收窄（段外旧语义残留漏检不红）
+        assert not anchor.seg_start and not anchor.seg_end, (
+            f"[{anchor.anchor_id}] negative_clear 锚须空段域"
+            "（清零=逐文件断言——填段域致扫描域收窄漏检）")
         return sq
     return _segment(sq, anchor.seg_start, anchor.seg_end)
 
