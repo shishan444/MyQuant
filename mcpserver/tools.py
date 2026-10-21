@@ -344,7 +344,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         旧组 condition ∥ 新组 conditions）；条数 1..5（AND 语义——全部
         条件同时成立的时点才计入统计与事件流；空数组与超限 422 披露
         条数域）；每条沿单条件混合形制（结构化指标对象/字符串列名，
-        含可选高周期 timeframe 键）。形制间边界差异：两形制在
+        含可选高周期 timeframe 键）。conditions 条目中插件列引用
+        （fx_/model_ 前缀列）与 timeframe 键不可同用——422
+        RESEARCH_CONDITION_INVALID，detail 携带 plugin_columns 与
+        hint「移除 timeframe 键（基准周期求值）或改用内置指标列
+        引用」（插件列只注入基准周期数据，高周期轴求值语义未定义）。
+        形制间边界差异：两形制在
         condition_stats 上结果一致（存量本前扩装载）；在 event_study
         上存在区间首段指标收敛性差异——旧键走普通装载（头部 bar 指标
         为截断近似、payload 键集冻结无 warmup_bars 键），conditions
@@ -395,7 +400,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         unsupported 附稳健区间（unsupported=该区间无任何显著正证据——
         丢弃或彻底换条件，换阈值复查无意义）；输出逐点披露原始统计量与
         判定所用参数（gates）——判定标尺内建，改网格/持有期/区间是正当
-        复查方式，判定参数不可传。regime_split 行情分段（第③步检查②，
+        复查方式，判定参数不可传。条件可携带可选高周期 timeframe 键
+        （语义与假设登记的多周期条件一致——仅 >= 请求基准周期的高
+        周期、经掩码投影求值，低周期拒绝）；插件列引用与 timeframe
+        键不可同用（422 边界见 conditions 总述句）。regime_split 行情分段（第③步检查②，
         快路径）：params.segmentation（"auto" 或显式段列表
         [{start,end,type?}]）、可选 params.indicator+params.condition+
         params.forward_bars（携带则逐段统计前向收益——段样本<30 标
@@ -481,10 +489,13 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         (take_profits)) ≤50；重复模式条目拒绝；校验期任何失败整批
         422 无部分结果、执行期单组回测失败该组标注不阻塞（两期分野）；
         不设 take_profit>stop_loss 约束（劣结构组按引擎真实行为回测
-        如实呈现、三道门自然判 ineffective）；条件 MUST NOT 携带
-        timeframe 键（翻译链防线 RESEARCH_NOT_EXPRESSIBLE——与
-        translate_hypothesis 同一公共入口；condition_stats/
-        counter_profile 掩码路径支持 timeframe，能力域差异即此）；
+        如实呈现、三道门自然判 ineffective）；条件条目可携带
+        timeframe 键，语义三分支——等于基准周期与缺省语义相同
+        （键归一，显式写基准周期不构成高周期过滤）、严格高于基准
+        周期经掩码投影求值（与策略翻译链同款放行）、低于基准周期
+        拒绝（TIMEFRAME_NOT_HIGHER）；不可表达形制仍显式拒绝不
+        静默降级（RESEARCH_NOT_EXPRESSIBLE，与 translate_
+        hypothesis 同一公共入口防线）；
         输出每组 {mode,stop_loss,take_profit,win_rate,profit_factor
         （亏损笔数 0→null）,net_expectation（含费滑）,max_drawdown,
         total_trades,status}+三道门整体判定（连续门直接复用
