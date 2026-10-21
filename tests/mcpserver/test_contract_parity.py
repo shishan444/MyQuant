@@ -578,3 +578,68 @@ class TestMultiTimeframeBoundaryDisclosure:
                       "不低于策略" ,"不低于", "基准周期",
                       "拒绝"):
             assert token in src, f"描述缺边界要素: {token}"
+
+
+class TestRegimeSplitConditionsDisclosure:
+    """regime_split 组合条件披露对拍（regime-split-combined-conditions）。
+
+    功能面 cd3f1a9 已落地（模板/路由/spec/测试四层），本锚守护声明面
+    三处不回退：run_analysis conditions 总述句清单、regime_split 模板
+    段落、能力自述组合条件条目——docstring 未披露等于 AI 消费者视角的
+    能力不存在（fr_5eb0c37ab1b0 误用病灶面）。A4 防回退：既有
+    counter_profile/exit_sweep 的 condition|conditions 披露不被误伤。
+    工具经 @mcp.tool() 闭包注册无模块级属性，doc 断言走源码文本
+    （同 TestDisclosureParity 取材纪律）。
+    """
+
+    _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _squash(text: str) -> str:
+        return "".join(text.split())
+
+    @staticmethod
+    def _segment(squashed: str, start: str, end: str) -> str:
+        """squash 域内截段：[start 锚起点, end 锚起点)，两锚均须在场。"""
+        i = squashed.find(start)
+        assert i != -1, f"截段起点锚不在场: {start}"
+        j = squashed.find(end, i)
+        assert j != -1, f"截段终点锚不在场: {end}"
+        return squashed[i:j]
+
+    def test_a1_overview_list_carries_regime_split(self) -> None:
+        src = self._squash(self._TOOLS_SRC)
+        seg = self._segment(src, "支持conditions条件数组形制",
+                            "并集（「只用不算」契约）")
+        assert "event_study/regime_split" in seg, (
+            "run_analysis conditions 总述句清单未含 regime_split"
+            "（斜杠连写形制，与竖线模板枚举串可区分）")
+
+    def test_a2_regime_split_segment_tokens(self) -> None:
+        m = re.search(
+            r"regime_split 行情分段.*?(?=precheck_hypothesis 假设预检)",
+            self._TOOLS_SRC, re.S)
+        assert m is not None, "regime_split 段落截段锚漂移"
+        seg = self._squash(m.group(0))
+        for token in ("conditions", "二选一", "1..5", "AND",
+                      "timeframe", "并集",
+                      "params.indicator+params.condition"):
+            assert token in seg, f"regime_split 段落缺披露要素: {token}"
+
+    def test_a3_capability_combo_entry_carries_regime_split(self) -> None:
+        from mcpserver.capability import CAPABILITY_DOC
+        doc = self._squash(CAPABILITY_DOC)
+        seg = self._segment(doc, "组合条件（0.4.1）", "区间事件摘要")
+        assert "regime_split" in seg, (
+            "能力自述组合条件条目未含 regime_split")
+
+    def test_a4_existing_counter_exit_disclosure_intact(self) -> None:
+        src = self._squash(self._TOOLS_SRC)
+        for name, start, end in (
+            ("counter_profile", "counter_profile反例画像",
+             "exit_sweep退出参数扫描"),
+            ("exit_sweep", "exit_sweep退出参数扫描", "走202+轮询"),
+        ):
+            seg = self._segment(src, start, end)
+            assert "condition|conditions" in seg, (
+                f"{name} 段落既有 condition|conditions 披露回退")
