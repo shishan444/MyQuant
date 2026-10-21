@@ -120,14 +120,15 @@ def fit_predict_walk_forward(
         # L2 对小尺度特征过度收缩——sklearn 文档明确建议回归族先
         # 标准化。scaler 只见训练窗，预测段仅 transform
         scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr.values)
-
         model = (
             LogisticRegression(max_iter=200)
             if config.template == "rolling_logistic"
             else LinearRegression()
         )
         try:
+            # fit_transform 与 fit 同入包装：inf 等非法输入在 scaler
+            # 即抛 ValueError，若置于 try 外会绕过「训练失败」转译
+            X_tr_s = scaler.fit_transform(X_tr.values)
             model.fit(X_tr_s, y_tr.values)
         except ValueError as exc:
             raise ModelPipelineError(f"训练失败: {exc}") from exc
