@@ -166,8 +166,32 @@ def _model_column(db_path: Path, column: str, df: pd.DataFrame) -> pd.Series:
             f"模型信号源配置损坏（JSON 无法解析）: {column}",
             detail={"ref": column, "parse_error": str(exc)}) from exc
     cfg.pop("_config_hash", None)
+    # 特征引用解析 + 装载 + 列名替换（与训练入口 register_model_plugin
+    # 同源三步）：0.2.13 混合形制落库的 features 为 canonical 形
+    # （指标 {indicator, params, field} dict / 基础列·插件列字符串），
+    # 管线按精确列名取数——执行侧直喂 dict 形触发 unhashable
+    # （模型列执行链全断，RR-034 沙盒首航实证）；字符串形（旧版
+    # config）经同一解析口双形兼容
+    from core.analysis.column_ref import ColumnRefError, resolve_column_ref
+    from core.analysis.plugin_service import (
+        _copy_config_with_columns, _enrich_feature_columns)
+    feature_defs = []
+    bad: list = []
+    for f in cfg.get("features", []):
+        try:
+            feature_defs.append(resolve_column_ref(f, db_path))
+        except ColumnRefError as exc:
+            bad.append(f"{f!r}: {exc.message}")
+    if bad:
+        raise ResearchError(
+            "RESEARCH_SIGNAL_SOURCE_INVALID",
+            f"模型信号源特征引用不可用: {column}",
+            detail={"ref": column, "bad_features": bad}) from None
     try:
-        res = fit_predict_walk_forward(df, ModelPluginConfig(**cfg))
+        df = _enrich_feature_columns(db_path, df, feature_defs)
+        run_cfg = _copy_config_with_columns(
+            ModelPluginConfig(**cfg), feature_defs)
+        res = fit_predict_walk_forward(df, run_cfg)
     except ModelPipelineError as exc:
         raise ResearchError(
             "RESEARCH_SIGNAL_SOURCE_INVALID",
