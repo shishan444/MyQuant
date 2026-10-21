@@ -101,6 +101,7 @@ def fit_predict_walk_forward(
     n_refits = 0
 
     from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.preprocessing import StandardScaler
 
     start = min_train
     while start < n:
@@ -114,13 +115,20 @@ def fit_predict_walk_forward(
             start += step
             continue
 
+        # 特征标准化（训练窗内拟合——统计量零未来泄漏）：正则化对
+        # 尺度敏感，跨类特征量级悬殊（如 RSI 0-100 vs CMF ±0.3）时
+        # L2 对小尺度特征过度收缩——sklearn 文档明确建议回归族先
+        # 标准化。scaler 只见训练窗，预测段仅 transform
+        scaler = StandardScaler()
+        X_tr_s = scaler.fit_transform(X_tr.values)
+
         model = (
             LogisticRegression(max_iter=200)
             if config.template == "rolling_logistic"
             else LinearRegression()
         )
         try:
-            model.fit(X_tr.values, y_tr.values)
+            model.fit(X_tr_s, y_tr.values)
         except ValueError as exc:
             raise ModelPipelineError(f"训练失败: {exc}") from exc
 
@@ -129,7 +137,7 @@ def fit_predict_walk_forward(
         X_seg = X.iloc[seg]
         valid = X_seg.notna().all(axis=1)
         if valid.any():
-            pred = model.predict(X_seg[valid].values)
+            pred = model.predict(scaler.transform(X_seg[valid].values))
             # 单步赋值（chained assignment 在 CoW 语义下不写回——弃用写法）
             seg_positions = np.arange(start, min(start + step, n))[valid.values]
             signal.iloc[seg_positions] = pred
