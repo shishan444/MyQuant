@@ -175,3 +175,36 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
                       else ["register", "analysis", "validate"])
     for expected in expected_chain:
         assert expected in types, f"日志链路缺 {expected}: {types}"
+
+
+def test_regime_split_conditions_combo_via_mcp(live_env):
+    """regime_split conditions 组合条件经 MCP 全链行为锚（2.1）。
+
+    声明面三处披露由对拍锚（test_contract_parity A1-A3）守护，本锚钉
+    行为面正例：conditions 双条件（一条结构化指标对象+一条列名
+    target——P2 组 DUAL 同构）经 build_server MCP 通道直达 REST 双键
+    组分叉，同步直返+组合触发集（AND）逐段统计非空。
+    fr_5eb0c37ab1b0 误用面（组合塞 condition 单键 422）的防回归正例。
+    """
+    base = live_env
+    mcp, _ = build_server(profile="research", base_url=base)
+
+    result = _call(mcp, "run_analysis",
+                   template="regime_split",
+                   params={"conditions": [
+                       {"subject": {"indicator": "RSI",
+                                    "params": {"period": 14}},
+                        "action": "lt", "target": 45},
+                       {"subject": "close", "action": "lt",
+                        "target": "ema_20"},
+                   ]},
+                   symbol="BTCUSDT", timeframe="4h",
+                   start="2023-02-01T00:00:00Z",
+                   end="2023-05-01T00:00:00Z")
+    assert "error" not in result, result
+    assert "task_id" not in result, "区间 bar 数远低于 _HEAVY_ROWS 应同步直返"
+    payload = result["payload"]
+    assert payload["condition_by_segment"], payload
+    assert any(s["samples"] > 0
+               for s in payload["condition_by_segment"]), (
+        "组合触发集为空——AND 双条件在该数据上应有命中", payload)
