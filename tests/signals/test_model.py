@@ -106,3 +106,48 @@ class TestCopyOnWriteReproduction:
             res = fit_predict_walk_forward(df, ModelPluginConfig(**CFG))
             n_valid = res.signal.notna().sum()
             assert n_valid > 100, f"CoW 下信号写入失效（全 NaN 形态复现）: {n_valid}"
+
+
+class TestFeatureScaling:
+    """特征标准化（训练窗内拟合）：悬殊尺度下小尺度特征的可学习性锚。
+
+    修复前形态：无标准化 + L2 正则（C=1）——±0.3 尺度的信号特征相对
+    ±300 尺度的噪声特征被过度收缩（同等预测贡献需更大系数→更大惩罚），
+    模型实际学不到信号（OOS ≈ 0.5）。修复后两特征同尺度，可学习。
+    """
+
+    def test_悬殊尺度下小尺度信号可学习(self) -> None:
+        rng = np.random.default_rng(11)
+        n = 1200
+        # 信号特征（±0.3 尺度）驱动前向方向；噪声特征 ±300 尺度纯噪声
+        sig = rng.normal(0, 0.3, n)
+        ret = np.roll(sig, 2) * 0.02 + rng.normal(0, 0.004, n)
+        ret[:2] = 0
+        close = 100 * np.cumprod(1 + ret)
+        df = pd.DataFrame({
+            "close": close, "volume": rng.uniform(10, 100, n),
+            "sig_small": sig, "noise_big": rng.normal(0, 300, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="1h",
+                               tz="UTC", name="timestamp"))
+        cfg = ModelPluginConfig(
+            name="scale", features=["sig_small", "noise_big"],
+            template="rolling_logistic",
+            params={"window": 0, "step": 20},
+            target={"type": "return_sign", "horizon": 1})
+        res = fit_predict_walk_forward(df, cfg)
+        # 信号驱动构造下可学习性显著高于随机（修复前 ≈0.5）
+        assert res.oos_summary["oos_accuracy"] > 0.7, (
+            f"小尺度信号未被学到（疑似标准化缺失回归）: "
+            f"{res.oos_summary['oos_accuracy']}")
+
+    def test_零方差特征不崩溃(self) -> None:
+        """训练窗内零方差特征（常数列）：StandardScaler 以 1.0 兜底
+        （sklearn 语义），管道不崩溃、产出有效信号。"""
+        df = _df()
+        df["const"] = 5.0
+        cfg = ModelPluginConfig(
+            name="c", features=["mom", "const"], template="rolling_logistic",
+            params={"window": 0, "step": 20},
+            target={"type": "return_sign", "horizon": 1})
+        res = fit_predict_walk_forward(df, cfg)
+        assert res.signal.notna().sum() > 300
