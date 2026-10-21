@@ -25,7 +25,7 @@ from mcpserver.capability import CAPABILITY_DOC
 from _disclosure_anchors import (
     ALL_ANCHORS, CAPABILITY_ENTRY_ANCHORED, CAPABILITY_ENTRY_WHITELIST,
     NEGATIVE_CLEAR_TOKENS, REGISTERED_TEMPLATES, TIMEFRAME_FACES,
-    DisclosureAnchor,
+    DisclosureAnchor, _SEG_COUNTER, _SEG_EXIT, _SEG_REQUIRED, _SEG_SEGMENT,
 )
 
 pytestmark = [pytest.mark.integration]
@@ -55,9 +55,19 @@ def _segment(squashed: str, start: str, end: str) -> str:
 
 
 def _anchor_domain(anchor: DisclosureAnchor) -> str:
-    """锚段域：空起止锚=全文件 squash 域（清零锚语义）。"""
+    """锚段域：空起止锚=全文件 squash 域（仅清零锚语义）。
+
+    F1 guard（reviewer 五维检测）：非 negative_clear 锚段域必填——
+    「往清单加行」漏写段域时静默退化全文件扫描=守护变松不红；end
+    缺失同禁（_segment 对空终点 find("")==i 恒命中产空段域，报错
+    「段域缺披露要素」误导归因为披露缺失）。
+    """
     sq = _source_squash(anchor.source)
-    if not anchor.seg_start:
+    if anchor.kind != "negative_clear":
+        assert anchor.seg_start and anchor.seg_end, (
+            f"[{anchor.anchor_id}] {anchor.kind} 锚数据缺段域锚"
+            "（seg_start/seg_end 必填——空段域=全文件域仅清零锚语义）")
+    elif not anchor.seg_start:
         return sq
     return _segment(sq, anchor.seg_start, anchor.seg_end)
 
@@ -163,6 +173,9 @@ def test_timeframe_face_cross_check(face) -> None:
     任一侧漂移即红：教了实际不支持（假披露）/支持了不教（能力
     静默——TD-3 病灶类别）。
     """
+    # F1 预放（reviewer）：TimeframeFace 段域必填——落点无全文件语义
+    assert face.seg_start and face.seg_end, (
+        f"[{face.face_id}] face 数据缺段域锚（落点截段必填）")
     seg = _segment(_source_squash(face.source), face.seg_start, face.seg_end)
     disclosed = all(t in seg for t in face.tokens)
     fact = all(fact_supports_timeframe(t) for t in face.fact_templates)
@@ -265,17 +278,15 @@ def test_g3_required_keys_match_route_table() -> None:
     assert set(table) <= enum, \
         f"键组表含未披露模板: {sorted(set(table) - enum)}"
 
-    seg_required = _segment(
-        _TOOLS_SQUASH, "params必填键（缺键422detail含键名）：",
-        "支持conditions条件数组形制")
+    # F2 收敛（reviewer 五维检测）：段域定义单真相源——复用锚数据
+    # _SEG_* 常量，消互拍内联字面串双源（内联版 exit_sweep 终点
+    # 「走202+轮询」还把该被守护要素右开排除在互拍段域外——
+    # _SEG_EXIT=body={ 的注释依据见 _disclosure_anchors.py:55-57）
+    seg_required = _segment(_TOOLS_SQUASH, *_SEG_REQUIRED)
     seg_map = {
-        "counter_profile": _segment(
-            _TOOLS_SQUASH, "counter_profile反例画像", "exit_sweep退出参数扫描"),
-        "exit_sweep": _segment(
-            _TOOLS_SQUASH, "exit_sweep退出参数扫描", "走202+轮询"),
-        "segment_narrative": _segment(
-            _TOOLS_SQUASH, "segment_narrative区间事件摘要",
-            "counter_profile反例画像"),
+        "counter_profile": _segment(_TOOLS_SQUASH, *_SEG_COUNTER),
+        "exit_sweep": _segment(_TOOLS_SQUASH, *_SEG_EXIT),
+        "segment_narrative": _segment(_TOOLS_SQUASH, *_SEG_SEGMENT),
     }
     for tpl, groups in table.items():
         seg = seg_map.get(tpl, seg_required)
