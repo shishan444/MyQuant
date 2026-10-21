@@ -634,9 +634,17 @@ class TestRegimeSplitConditionsDisclosure:
     def test_a3_capability_combo_entry_carries_regime_split(self) -> None:
         from mcpserver.capability import CAPABILITY_DOC
         doc = self._squash(CAPABILITY_DOC)
-        seg = self._segment(doc, "组合条件（0.4.1）", "区间事件摘要")
-        assert "regime_split" in seg, (
-            "能力自述组合条件条目未含 regime_split")
+        seg = self._segment(
+            doc, "组合条件（0.4.1起；regime_split2026-10-14起）",
+            "区间事件摘要")
+        # 清单成员断言（非段内子串）：CARD-01 后条目标题自带
+        # regime_split 括注，段内任意子串命中不构成成员在场证据——
+        # 须命中斜杠清单串本身（与 A1/B1 提取形制一致）
+        mo = re.search(
+            r"condition_stats/event_study(?:/\w+)*支持conditions", seg)
+        assert mo is not None, "能力自述组合条件条目缺 conditions 支持清单"
+        assert "/regime_split" in mo.group(0), (
+            "能力自述组合条件条目清单未含 regime_split")
 
     def test_a4_existing_counter_exit_disclosure_intact(self) -> None:
         src = self._squash(self._TOOLS_SRC)
@@ -696,7 +704,9 @@ class TestRegimeSplitConditionsDisclosure:
         from mcpserver.capability import CAPABILITY_DOC
         doc = self._squash(CAPABILITY_DOC)
         face_capability = _overview_list(
-            self._segment(doc, "组合条件（0.4.1）", "区间事件摘要"))
+            self._segment(
+                doc, "组合条件（0.4.1起；regime_split2026-10-14起）",
+                "区间事件摘要"))
 
         assert face_capability == face_overview, (
             "conditions 支持清单两声明面漂移（总述句 vs 能力自述条目）: "

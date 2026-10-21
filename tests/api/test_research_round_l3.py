@@ -181,7 +181,8 @@ class TestResearchRoundDoD:
         from mcpserver.capability import build_capability_doc
         text = build_capability_doc(
             ["union_balance", "query_indicator", "run_analysis"])
-        for token in ("批量读数（0.4.1）", "组合条件（0.4.1）",
+        for token in ("批量读数（0.4.1）",
+                      "组合条件（0.4.1 起；regime_split 2026-10-14 起）",
                       "区间事件摘要（0.4.1 segment_narrative）",
                       "判定并集余量查询（0.4.1 union_balance）",
                       "反例画像（0.4.1 counter_profile）",
