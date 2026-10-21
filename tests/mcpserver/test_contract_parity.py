@@ -590,6 +590,9 @@ class TestRegimeSplitConditionsDisclosure:
     counter_profile/exit_sweep 的 condition|conditions 披露不被误伤。
     工具经 @mcp.tool() 闭包注册无模块级属性，doc 断言走源码文本
     （同 TestDisclosureParity 取材纪律）。
+    B1 支持面互拍：主条款「与路由键组实际支持面一致——描述面能力
+    清单漂移即缺陷」的类别级防线（A1-A3 只钉 regime_split 成员在场，
+    清单多写/漏写其他成员不红——B1 补此洞）。
     """
 
     _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
@@ -622,7 +625,8 @@ class TestRegimeSplitConditionsDisclosure:
             self._TOOLS_SRC, re.S)
         assert m is not None, "regime_split 段落截段锚漂移"
         seg = self._squash(m.group(0))
-        for token in ("conditions", "二选一", "1..5", "AND",
+        for token in ("conditions", "二选一", "互斥", "condition|conditions",
+                      "1..5", "AND",
                       "timeframe", "并集",
                       "params.indicator+params.condition"):
             assert token in seg, f"regime_split 段落缺披露要素: {token}"
@@ -644,3 +648,59 @@ class TestRegimeSplitConditionsDisclosure:
             seg = self._segment(src, start, end)
             assert "condition|conditions" in seg, (
                 f"{name} 段落既有 condition|conditions 披露回退")
+
+    def test_b1_support_faces_consistent_with_route(self) -> None:
+        """conditions 支持面互拍：路由实际支持面与三披露面清单一致。
+
+        主条款「与路由键组实际支持面一致——描述面能力清单漂移即
+        缺陷」的直接锚（fr_5eb0c37ab1b0 病灶的类别级防线）：新增
+        模板支持 conditions 而忘披露、或描述面多写/漏写成员均红。
+        路由面 = 键组表含 conditions 的模板 ∪ regime_split（无必填
+        键不进键组表——分支内 conditions 分叉在场断言，不写死集合）；
+        描述面 = 总述句清单 ∪ 段落披露面（counter_profile/exit_sweep
+        的 condition|conditions 段落形制，A4 守护在场）；能力自述面
+        = 组合条件条目清单（与总述句同层互拍）。
+        """
+        from api.routes.research import analysis as analysis_mod
+        table = analysis_mod._TEMPLATE_REQUIRED_KEYS
+        face_route = {t for t, groups in table.items()
+                      if any("conditions" in g for g in groups)}
+        analysis_src = Path(analysis_mod.__file__).read_text(encoding="utf-8")
+        m = re.search(
+            r'template == "regime_split":.*'
+            r'(?=template == "segment_narrative")',
+            analysis_src, re.S)
+        assert m is not None, "regime_split 路由分支截段锚漂移"
+        assert 'p.get("conditions")' in m.group(0), (
+            "regime_split 路由分支缺 conditions 分叉——支持面提取失真")
+        face_route.add("regime_split")
+
+        def _overview_list(text: str) -> set:
+            mo = re.search(
+                r"condition_stats/event_study(?:/\w+)*支持conditions", text)
+            assert mo is not None, "conditions 支持清单锚不在场"
+            return set(
+                mo.group(0).removesuffix("支持conditions").split("/"))
+
+        src = self._squash(self._TOOLS_SRC)
+        face_overview = _overview_list(src)
+        face_segment = {
+            name for name, start, end in (
+                ("counter_profile", "counter_profile反例画像",
+                 "exit_sweep退出参数扫描"),
+                ("exit_sweep", "exit_sweep退出参数扫描", "走202+轮询"),
+            )
+            if "condition|conditions" in self._segment(src, start, end)}
+        face_doc = face_overview | face_segment
+
+        from mcpserver.capability import CAPABILITY_DOC
+        doc = self._squash(CAPABILITY_DOC)
+        face_capability = _overview_list(
+            self._segment(doc, "组合条件（0.4.1）", "区间事件摘要"))
+
+        assert face_capability == face_overview, (
+            "conditions 支持清单两声明面漂移（总述句 vs 能力自述条目）: "
+            f"{sorted(face_overview)} vs {sorted(face_capability)}")
+        assert face_doc == face_route, (
+            "描述面 conditions 支持清单与路由实际支持面漂移: "
+            f"{sorted(face_doc)} vs {sorted(face_route)}")
