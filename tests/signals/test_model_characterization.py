@@ -140,11 +140,15 @@ class TestWalkForwardEdges:
         with pytest.raises(ModelPipelineError, match="未知目标类型"):
             fit_predict_walk_forward(df, cfg)
 
-    def test_inf_feature_raises_training_failure(self) -> None:
-        # inf 不被 notna 过滤，进入 sklearn.fit 触发 ValueError → 包装上抛
+    @pytest.mark.parametrize("bad", [np.inf, -np.inf],
+                             ids=["正inf", "负inf"])
+    def test_inf_feature_raises_training_failure(self, bad) -> None:
+        # inf 不被 notna 过滤，进入 sklearn（fit_transform 与 fit）触发
+        # ValueError → 「训练失败」包装上抛（阶段四属性补强：正负 inf
+        # 对称——任一方向非有限值都不得绕过包装裸抛）
         df = make_df(230)
         df["f1"] = 1.0
-        df.loc[df.index[150], "f1"] = np.inf
+        df.loc[df.index[150], "f1"] = bad
         cfg = ModelPluginConfig(name="m", features=["f1"], params={"step": 20})
         with pytest.raises(ModelPipelineError, match="训练失败"):
             fit_predict_walk_forward(df, cfg)
