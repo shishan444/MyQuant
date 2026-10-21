@@ -339,7 +339,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split 无必填键。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
-        （0.4.1）：与旧键组二选一（同传 422 指明互斥——condition_stats
+        （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
         旧组 condition ∥ 新组 conditions）；条数 1..5（AND 语义——全部
         条件同时成立的时点才计入统计与事件流；空数组与超限 422 披露

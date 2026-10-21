@@ -208,3 +208,32 @@ def test_regime_split_conditions_combo_via_mcp(live_env):
     assert any(s["samples"] > 0
                for s in payload["condition_by_segment"]), (
         "组合触发集为空——AND 双条件在该数据上应有命中", payload)
+
+
+def test_regime_split_dual_key_mutex_error_shape_via_mcp(live_env):
+    """regime_split 双键同传经 MCP 通道的 422 结构化形制锚。
+
+    fr_5eb0c37ab1b0 误用面的错误侧：AI 误用形制收到的 422 经
+    tool_safe 转写后，error.detail.param="condition|conditions" 与
+    legal_form 二选一指引须保真——detail 丢失即被误读为功能缺口。
+    REST 层互斥分支由 P2 组 test_route_key_group_mutex 守护、
+    机制级转写在 test_errors.py TestToolSafeDecorator，本锚钉真实
+    MCP→REST 链路上 regime_split 行为面的端到端形制。
+    """
+    base = live_env
+    mcp, _ = build_server(profile="research", base_url=base)
+
+    cond = {"subject": {"indicator": "RSI", "params": {"period": 14}},
+            "action": "lt", "target": 45}
+    result = _call(mcp, "run_analysis",
+                   template="regime_split",
+                   params={"condition": cond, "conditions": [cond]},
+                   symbol="BTCUSDT", timeframe="4h",
+                   start="2023-02-01T00:00:00Z",
+                   end="2023-03-01T00:00:00Z")
+    assert "error" in result, result
+    e = result["error"]
+    assert e["code"] == "RESEARCH_PARAM_INVALID", e
+    detail = e["detail"]
+    assert detail["param"] == "condition|conditions", detail
+    assert "二选一" in detail["legal_form"], detail
