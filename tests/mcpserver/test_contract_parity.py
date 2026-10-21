@@ -609,9 +609,10 @@ class TestRegimeSplitConditionsDisclosure:
 
     def test_a1_overview_list_carries_regime_split(self) -> None:
         src = self._squash(self._TOOLS_SRC)
-        seg = self._segment(src, "支持conditions条件数组形制",
-                            "并集（「只用不算」契约）")
-        assert "event_study/regime_split" in seg, (
+        m = re.search(r"condition_stats/event_study(?:/\w+)*支持conditions",
+                      src)
+        assert m is not None, "conditions 总述句清单锚漂移"
+        assert "/regime_split" in m.group(0), (
             "run_analysis conditions 总述句清单未含 regime_split"
             "（斜杠连写形制，与竖线模板枚举串可区分）")
 

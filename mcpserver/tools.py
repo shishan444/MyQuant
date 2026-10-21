@@ -338,7 +338,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split 无必填键。
-        condition_stats/event_study 支持 conditions 条件数组形制
+        condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
         旧组 condition ∥ 新组 conditions）；条数 1..5（AND 语义——全部
@@ -402,7 +402,20 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         insufficient_sample）。状态序列直切与行情快照同一套机械判读
         （高波动覆盖态优先于趋势/震荡三态），判读参数内建不可调、gates
         披露；段清单供「候选规律在各行情段是否一致」检查与后续分段
-        验证（0.2.10）共用段定义。precheck_hypothesis 假设预检（登记前
+        验证（0.2.10）共用段定义。conditions 组合条件形制与
+        condition 单条件键二选一（同传 422，detail.param=
+        "condition|conditions" 指明互斥对）：条数 1..5（AND 语义
+        ——全部条件同时成立的组合触发集做逐段统计，分段统计口径
+        与单条件形制一致），空数组与超限 422 披露 legal_range=
+        1..5；每条沿单条件混合形制（结构化指标对象/基础列/插件列
+        字符串精确名，含可选高周期 timeframe 键——掩码投影求值），
+        但插件列引用与 timeframe 键不可同用（插件列只注入基准周期
+        数据，高周期轴求值语义未定义——422 RESEARCH_CONDITION_
+        INVALID，detail 携带 plugin_columns 与 hint「移除
+        timeframe 键（基准周期求值）或改用内置指标列引用」）；
+        conditions 形式经引用并集前扩装载，warmup 预算=全部条目
+        指标引用的并集（「只用不算」契约）。
+        precheck_hypothesis 假设预检（登记前
         体检，G3 组合复核+G11 频率外推+G5 事前预算三合一）：params.
         when_conditions（when 条件全集，登记同构混合形制含可选
         timeframe 键）+ params.validate_range（拟验证区间 {symbol,
