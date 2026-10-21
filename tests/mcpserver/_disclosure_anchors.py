@@ -438,6 +438,79 @@ GROUP3_ANCHORS: tuple = (
 )
 
 # ---------------------------------------------------------------------------
+# 组 4：五文案残余漂移面补强（tester 建网——fix/mcp-disclosure-review-anchor）
+# ---------------------------------------------------------------------------
+# 收录依据：W1/W5/W3/W4 目标锚与组 1 既有锚之外的落地文案语义承重墙——
+# 建网核对发现五文案落地句存在未被任何锚钉住的要素（delta-3「边界句
+# 全量入锚」契约面），逐 token 实测在场后收录（现状记录语义）。
+
+# 能力域句精确限定 token 集（文案三②/文案四同款句共享——与
+# _DOMAIN_SENTENCE_TOKENS 并存互补：后者钉五要素骨架，本集钉三分支
+# 结构词、等基准歧义防线（delta-2 三分支精确表述要件）与防线动词、
+# 机制来源引用）
+_DOMAIN_PRECISION_TOKENS = (
+    "语义三分支",           # 三分支结构词（等基准/严格高/低周期三分）
+    "严格高于基准周期",      # 等基准歧义防线（排除「>=」笼统表述回潮）
+    "不静默降级",           # 防线动词（显式拒绝的对面——丢了只剩错误码罗列）
+    "同款放行",             # 机制来源引用（与策略翻译链同源放行）
+    "同一公共入口",          # 防线结构声明（translate_hypothesis 公共入口）
+)
+
+GROUP4_ANCHORS: tuple = (
+    DisclosureAnchor(
+        anchor_id="W1b-总述段-互斥机制理由",
+        source="tools", seg_start=_SEG_OVERVIEW[0], seg_end=_SEG_OVERVIEW[1],
+        kind="token_set",
+        tokens=("只注入基准周期数据",),
+        scope="TD-1 互斥机制理由（插件列数据域——为何互斥非任意规则）",
+        basis="文案一机制半句（W1 钉结论面/三要素，本锚钉理由面）",
+    ),
+    DisclosureAnchor(
+        anchor_id="W2b-能力自述反例画像条目-形制对齐句",
+        source="capability", seg_start=_CSEG_COUNTER[0], seg_end=_CSEG_COUNTER[1],
+        kind="token_set",
+        tokens=("形制与条件统计一致",),
+        scope="TD-2a 形制对齐声明（W2 只钉 condition|conditions 符号）",
+        basis="文案二①措辞骨架×tools.py:458-459 段落既有句对齐",
+    ),
+    DisclosureAnchor(
+        anchor_id="W3b-能力自述退出参数扫描条目-形制对齐句",
+        source="capability", seg_start=_CSEG_EXIT[0], seg_end=_CSEG_EXIT[1],
+        kind="token_set",
+        tokens=("形制与条件统计一致",),
+        scope="TD-2b 形制对齐声明（W3-二选一只钉符号）",
+        basis="文案三①措辞骨架×tools.py:470-472 段落形制",
+    ),
+    DisclosureAnchor(
+        anchor_id="W3c-能力自述退出参数扫描条目-能力域句精确限定",
+        source="capability", seg_start=_CSEG_EXIT[0], seg_end=_CSEG_EXIT[1],
+        kind="token_set", tokens=_DOMAIN_PRECISION_TOKENS,
+        scope="TD-3 条目侧精确限定（W3-五要素之外的措辞承重墙）",
+        basis="文案三②×delta-2 三分支精确表述要件（「>=」笼统表述歧义）",
+    ),
+    DisclosureAnchor(
+        anchor_id="W4b-exit_sweep段-能力域句精确限定",
+        source="tools", seg_start=_SEG_EXIT[0], seg_end=_SEG_EXIT[1],
+        kind="token_set", tokens=_DOMAIN_PRECISION_TOKENS,
+        scope="TD-3 段落侧精确限定（W4-五要素之外的措辞承重墙）",
+        basis="文案四×delta-2 三分支精确表述要件（与条目侧两处一致）",
+    ),
+    DisclosureAnchor(
+        anchor_id="W5b-param_sweep段-限定与互斥转述",
+        source="tools", seg_start=_SEG_PARAMSWEEP[0], seg_end=_SEG_PARAMSWEEP[1],
+        kind="token_set",
+        tokens=("仅>=请求基准周期", "语义与假设登记的多周期条件一致",
+                "插件列引用与timeframe键不可同用",
+                "422边界见conditions总述句"),
+        scope="第五缺口补教残余面（W5/落点3 只钉 timeframe 支持语义，"
+              "不钉限定形与互斥转述）",
+        basis="文案五后半句（设计卡「同句可含互斥边界提示」落地物——"
+              "param_sweep 单条件在互斥校验六分支覆盖域内，A-2）×"
+              "「仅>=」限定与假设登记语义对照引用",
+    ),
+)
+
+# ---------------------------------------------------------------------------
 # 完备性元断言登记面（双向相等——「全检」名实相符的机制核心）
 # ---------------------------------------------------------------------------
 
@@ -472,4 +545,5 @@ CAPABILITY_ENTRY_WHITELIST: tuple = (
 )
 
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
-                      + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS)
+                      + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
+                      + GROUP4_ANCHORS)
