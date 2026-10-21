@@ -173,6 +173,64 @@ class TestModelSourceAssembly:
         assert ss.entries.dtype == bool
         assert len(ss.entries) == 400
 
+    def test_model源_dict形特征_解析装载与列名替换(self, db, monkeypatch) -> None:
+        """0.2.13 生产形制回归锚：库内 config 的 features 为 canonical
+        dict 形（指标 {indicator, params, field}）——执行侧须解析回
+        ColumnDef、现算装载特征列、替换为精确列名后进管线（直喂 dict
+        触发 unhashable，模型列执行链全断——RR-034 沙盒首航实证）。"""
+        _insert_model_plugin(
+            db, version=1, status="valid",
+            features=[{"indicator": "RSI", "params": {"period": 14},
+                       "field": "rsi"}])
+        _register_model_column(db)
+        df = _df()
+        received = {}
+
+        def fake_wfw(df_in, cfg):
+            received["features"] = cfg.features
+            received["columns"] = list(df_in.columns)
+            return SimpleNamespace(signal=pd.Series(
+                np.where(np.arange(len(df_in)) % 2, 1.0, -1.0),
+                index=df_in.index))
+
+        monkeypatch.setattr(signals_model, "fit_predict_walk_forward", fake_wfw)
+        assemble_signal_set(
+            db, _dna([{"type": "model", "ref": "model_m"}], genes=[]), df)
+
+        # 特征已替换为精确列名（非 dict），且该列被现算装载进 df
+        assert len(received["features"]) == 1
+        feat = received["features"][0]
+        assert isinstance(feat, str)
+        assert feat in received["columns"]
+
+    def test_model源_dict形特征_真管道冒烟(self, db) -> None:
+        """dict 形特征不注入替身的端到端：RSI 现算注入 + 真实
+        walk-forward 管线装配出布尔 entries（生产 500 的直接复现锚）。"""
+        _insert_model_plugin(
+            db, version=1, status="valid",
+            features=[{"indicator": "RSI", "params": {"period": 14},
+                       "field": "rsi"}])
+        _register_model_column(db)
+        ss = assemble_signal_set(
+            db, _dna([{"type": "model", "ref": "model_m"}], genes=[]), _df())
+        assert ss.entries.dtype == bool
+        assert len(ss.entries) == 400
+
+    def test_model源特征引用不可用_结构化拒绝(self, db) -> None:
+        """dict 形特征解析失败（未知指标）：显式拒绝而非静默缺列——
+        引用失败显式拒绝契约（模块头）在特征维度的延伸。"""
+        _insert_model_plugin(
+            db, version=1, status="valid",
+            features=[{"indicator": "NOPE", "params": {"period": 14},
+                       "field": "nope"}])
+        _register_model_column(db)
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(
+                db, _dna([{"type": "model", "ref": "model_m"}], genes=[]),
+                _df())
+        assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
+        assert "特征引用不可用" in ei.value.message
+
 
 class TestCombineBranches:
     @pytest.fixture()
