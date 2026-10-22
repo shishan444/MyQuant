@@ -222,6 +222,20 @@ class TestHelperUnitBehavior:
             _reject_invalid_or_plugin_dna(
                 _valid_plain_dna(), library_dna=True, channel="paper")
 
+    def test_invalid_channel_message_renders_keyset(self):
+        """ValueError 消息键集渲染单源锚（CARD-06）：消息列出
+        _PLUGIN_REJECT_MESSAGES 全部键（f-string join 渲染——随表
+        扩容自动同步）。改回手写清单漏键（如漏 evolution）即红。"""
+        with pytest.raises(ValueError) as ei:
+            _reject_invalid_or_plugin_dna(
+                _valid_plain_dna(), library_dna=True, channel="paper")
+        msg = str(ei.value)
+        for key in ("backtest", "verify", "batch", "compare", "live",
+                    "evolution"):
+            assert key in msg, (
+                f"ValueError 消息未含映射键 {key}（键集渲染单源被破坏"
+                f"——手写清单回潮）：{msg}")
+
     def test_signature_unchanged_weak_anchor(self):
         """签名未动弱锚（design 卡 G 契约形制）：keyword-only 双参数
         library_dna/channel。"""
