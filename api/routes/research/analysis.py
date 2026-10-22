@@ -78,6 +78,31 @@ def _load_df(data_dir: Path, r: Dict[str, str]):
     return df
 
 
+def _reject_tf_plugin_mix(cond_list, plugin_columns) -> None:
+    """timeframe 键×插件列引用组合边界守卫（Q-2，dna-strong-typing-
+    and-disclosure-hygiene 件⑧）——单源助手：_load_with_condition_refs
+    校验本体与两旧键路径（event_study condition / regime_split
+    condition）同码同文案同 detail。静默 0 命中属禁止形态（用户裁决
+    2026-10-13 能力完整方向）：_mask_higher 在高周期轴求值、插件列只
+    注入基准周期 df，高周期语义未定义。plugin_columns 为调用方已收集
+    集（空集直接返回——守卫不引入二次收集）。
+    """
+    if not plugin_columns:
+        return
+    for c in cond_list:
+        if isinstance(c, dict) and c.get("timeframe") and any(
+                str(c.get(k, "")).startswith(("fx_", "model_"))
+                for k in ("subject", "target")):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                "高周期条件（timeframe 键）暂不支持插件列引用——插件"
+                "列只注入基准周期数据，高周期轴求值语义未定义",
+                detail={"param": "condition.timeframe",
+                        "plugin_columns": sorted(plugin_columns),
+                        "hint": "移除 timeframe 键（基准周期求值）"
+                                "或改用内置指标列引用"})
+
+
 def _load_with_condition_refs(
     data_dir: Path, rng: Dict[str, str],
     indicator: Optional[str] = None,
@@ -125,22 +150,9 @@ def _load_with_condition_refs(
             ind for ind, _ in collect_condition_refs(c, strict=True)]
     # 五步之①：插件列引用收集（subject/target 两侧，前缀保守宽面）
     plugin_columns: set = collect_condition_plugin_columns(cond_list)
-    if plugin_columns:
-        # 高周期掩码投影+插件列组合显式拒绝（用户裁决 2026-10-13 能力
-        # 完整方向）：_mask_higher 在高周期轴求值、插件列只注入基准
-        # 周期 df——静默 0 命中属缺陷一同族，显式声明不支持优于静默
-        for c in cond_list:
-            if isinstance(c, dict) and c.get("timeframe") and any(
-                    str(c.get(k, "")).startswith(("fx_", "model_"))
-                    for k in ("subject", "target")):
-                raise ResearchError(
-                    "RESEARCH_CONDITION_INVALID",
-                    "高周期条件（timeframe 键）暂不支持插件列引用——插件"
-                    "列只注入基准周期数据，高周期轴求值语义未定义",
-                    detail={"param": "condition.timeframe",
-                            "plugin_columns": sorted(plugin_columns),
-                            "hint": "移除 timeframe 键（基准周期求值）"
-                                    "或改用内置指标列引用"})
+    # 高周期掩码投影+插件列组合显式拒绝（单源助手 _reject_tf_plugin_
+    # mix——Q-2 起旧键路径同码共享）
+    _reject_tf_plugin_mix(cond_list, plugin_columns)
     min_warmup: Optional[int] = None
     if plugin_columns:
         if db_path is None:
@@ -397,6 +409,15 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         if p.get("indicator"):
             _require_known_indicator(p["indicator"])
             warm_names.append(p["indicator"])
+        # Q-2 组合边界守卫（件⑧）：regime_split 旧键 condition 路径
+        # ——插件列整体支持维持 conditions 形式现状，本守卫只拒
+        # timeframe×插件列组合（_load_warm 前先于装载拒绝）
+        if p.get("condition") is not None:
+            from core.analysis.condition_kernel import (
+                collect_condition_plugin_columns)
+            _reject_tf_plugin_mix(
+                [p["condition"]],
+                collect_condition_plugin_columns([p["condition"]]))
         df, request_start = _load_warm(warm_names)
         return _with_derivatives_coverage(regime_split(
             df, segmentation=p.get("segmentation", "auto"),
@@ -568,6 +589,10 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         from core.analysis.condition_kernel import (
             collect_condition_plugin_columns)
         _plg = collect_condition_plugin_columns([p["condition"]])
+        # Q-2 组合边界守卫（件⑧）：timeframe 键×插件列——接线段前
+        # （可达性校验先于组合边界会让「名字对但带 timeframe」的请求
+        # 得到错误码错位），与新键路径同码同文案同 detail
+        _reject_tf_plugin_mix([p["condition"]], _plg)
         if _plg:
             from core.analysis.plugin_service import (
                 assert_plugin_columns_reachable,
