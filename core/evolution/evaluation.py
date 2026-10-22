@@ -97,6 +97,11 @@ def parse_timeframe_pool(task_row: Dict[str, Any]) -> List[str]:
     return pool
 
 
+# 插件源评估拒绝的可归因理由（Q-3 三道共用单源文案；REST 回测通道
+# 同族能力边界——评估链接入 assemble_signal_set 属未来 change）
+_PLUGIN_EVAL_REASON = "进化评估链未接入插件信号组装"
+
+
 def evaluate_dna(
     individual: StrategyDNA,
     task_row: Dict[str, Any],
@@ -127,6 +132,28 @@ def evaluate_dna(
         "fallback": True,
         "liquidated": False,
     }
+
+    # Q-3 评估入口族三道拒绝之三（单体/回退路径，dna-strong-typing-
+    # and-disclosure-hygiene 件⑤）：插件源在场即拒——不进回测引擎，
+    # 0 分+error 标记+可归因 reason（不炸任务不失真评分；引擎调用链
+    # dna_to_signal_set→bt.run 对插件源静默按 rule-only 失真打分）。
+    # 判据面=仅插件源（composition 无插件源时无求值语义，不拒）
+    from core.strategy.validator import has_plugin_sources
+    if has_plugin_sources(individual):
+        logger.warning(
+            "evaluate_dna 插件源个体拒绝评估 code=PLUGIN_SOURCES_"
+            "UNSUPPORTED strategy_id=%s reason=%s",
+            getattr(individual, "strategy_id", None),
+            _PLUGIN_EVAL_REASON)
+        return {
+            **diagnostics,
+            "score": 0.0,
+            "fitness": 0.0,
+            "qualified": False,
+            "fallback": False,
+            "error": True,
+            "reason": f"PLUGIN_SOURCES_UNSUPPORTED: {_PLUGIN_EVAL_REASON}",
+        }
 
     try:
         from core.backtest.engine import BacktestEngine
@@ -271,11 +298,33 @@ def evaluate_population(
             if len(getattr(ind, "mutation_ops", None) or []) > n_ops_before:
                 sanitized_ids.add(id(ind))
 
+        # Q-3 评估入口族三道拒绝之二（批量主路径，dna-strong-typing-
+        # and-disclosure-hygiene 件⑤）：插件源个体不进 batch_run——
+        # 前置过滤+原位 0.0 占位（本函数返回 List[float]，形制与顺序
+        # 零变化），归因经 logger.warning 结构化字段（code+strategy_id
+        # +reason——调用方 runner 消费分数序列，进化语义只需 0 分淘
+        #汰）。覆盖 crossover 继承产物与 champion 种子等一切进入种群
+        # 的 v2 个体
+        from core.strategy.validator import has_plugin_sources
+        blocked = {i for i, ind in enumerate(population)
+                   if has_plugin_sources(ind)}
+        if blocked:
+            for i in sorted(blocked):
+                logger.warning(
+                    "evaluate_population 插件源个体拒绝评估 "
+                    "code=PLUGIN_SOURCES_UNSUPPORTED strategy_id=%s "
+                    "reason=%s",
+                    getattr(population[i], "strategy_id", None),
+                    _PLUGIN_EVAL_REASON)
+        evaluable = [ind for i, ind in enumerate(population)
+                     if i not in blocked]
+        eval_pos = [i for i in range(len(population)) if i not in blocked]
+
         # 批量回测（内置信号计算）
         bt = BacktestEngine()
         try:
             bt_results = bt.batch_run(
-                population, enhanced_df,
+                evaluable, enhanced_df,
                 dfs_by_timeframe=dfs_by_timeframe,
             )
         except Exception:
@@ -291,8 +340,8 @@ def evaluate_population(
         # requirements_json 优先于 legacy 列
         req = build_requirements(task_row)
 
-        scores = []
-        for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
+        scores = [0.0] * len(population)
+        for out_i, (ind, bt_result) in enumerate(zip(evaluable, bt_results)):
             metrics = bt_result.metrics_dict
             fitness_result = compute_fitness(
                 metrics, requirements=req,
@@ -321,7 +370,7 @@ def evaluate_population(
                 "used_real_data": True,
                 "fallback": False,
             }
-            scores.append(score)
+            scores[eval_pos[out_i]] = score
 
         return scores
 

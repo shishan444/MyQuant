@@ -57,6 +57,12 @@ TIME_EXIT_UTC_MAX = 1439
 POSITION_MODES = ("fixed", "risk_budget")
 RISK_FRACTION_MIN = 0.0   # 开区间下界（0 排除）
 RISK_FRACTION_MAX = 0.5   # 闭区间上界（P9 上界核对——validator 惯例）
+# 组合段 mode 封闭白名单（H4-a，dna-strong-typing-and-disclosure-hygiene
+# 件②）：单源常量——validate_dna 结构判据与组装器求值期拒绝消息
+# （signal_assembly.py 未知 mode raise）同源引用渲染，改域单点生效；
+# 值域分工：仅 mode 枚举+类型形归本校验（前置），weights 各值/
+# threshold/operator 数值域维持组装求值单点既有权威
+COMPOSITION_MODES = ("weighted_vote", "gate", "logic")
 # 仓位参数（add-position-sizing-params）：首笔比例 (0,1] 开下闭上；
 # 金额防线只有下界（>0），上界完全放开——考场无观点（不替用户判断
 # 「多大的金额防线不合理」）
@@ -162,6 +168,28 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 errors.append(
                     f"signal_sources[{i}]: type {s.get('type')!r} "
                     f"requires 'ref'")
+
+    # composition 结构判据（H4-a 件②，沿 signal_sources 判据同族形制：
+    # None 合法退化、errors 收集不 raise、逐条至多一条消息、点名实际
+    # 类型/值）。坏 mode 形态从「201 落库→回测期 422」前移为「创建/
+    # 更新/进化种群初始化即 422」；求值期 RESEARCH_COMPOSITION_INVALID
+    # 保留为已落库存量的兜底防线（纵深）。值域分工：threshold/weights
+    # 各值/operator/role 不判（组装求值单点既有权威承接）。
+    comp = dna.composition
+    if comp is not None and not isinstance(comp, dict):
+        errors.append(
+            f"composition must be a dict, got {type(comp).__name__}")
+    elif isinstance(comp, dict):
+        mode = comp.get("mode", "weighted_vote")  # 缺省与求值 :93 一致
+        if mode not in COMPOSITION_MODES:
+            errors.append(
+                f"composition: mode must be one of {COMPOSITION_MODES}, "
+                f"got {mode!r}")
+        elif mode == "weighted_vote" and "weights" in comp \
+                and not isinstance(comp["weights"], dict):
+            errors.append(
+                f"composition.weights must be a dict, "
+                f"got {type(comp['weights']).__name__}")
 
     # 非 MTF 策略：查顶层 signal_genes
     if not dna.layers:

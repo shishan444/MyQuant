@@ -170,7 +170,14 @@ class DNAModel(BaseModel):
     generation: int = 0
     parent_ids: List[str] = Field(default_factory=list)
     mutation_ops: List[str] = Field(default_factory=list)
-    layers: Optional[List[dict]] = None
+    # H4-c 强形制（dna-strong-typing-and-disclosure-hygiene 件④）：
+    # List[dict] → List[TimeframeLayerModel]——坏形（条目非 dict/缺
+    # timeframe/signal_genes 元素坏形/多余键）传输层 422（pydantic
+    # 既有通道），先于 to_dna() 与持久化，不再以未包装 TypeError 落
+    # 500。timeframe/role 值域不在此判（装载侧 TIMEFRAME_UNKNOWN 族与
+    # validator 层判据白名单为既有权威，防双头）；存量四键层与模型
+    # 字段一一对应，读库零迁移
+    layers: Optional[List["TimeframeLayerModel"]] = None
     cross_layer_logic: str = "AND"
     mtf_mode: Optional[str] = None
     confluence_threshold: float = 0.3

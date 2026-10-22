@@ -21,10 +21,10 @@ unsupported > spike > indeterminate > plateau）。判定标尺内建不可传�
 该组标注不阻塞（失败组列示）。
 
 条件能力域边界（unblock-research-validation 后）：when 侧条件
-timeframe 键放行（高周期轴求值+掩码投影，同翻译链）——
-RESEARCH_NOT_EXPRESSIBLE 显式拒绝不静默降级（与 translate_hypothesis
-同一公共入口防线同源同码；condition_stats/counter_profile 的分析域
-掩码路径同族支持——三模板能力域各 spec 显式可辨）。
+timeframe 键放行——等于基准周期时键归一、与缺省语义完全相同
+（显式写基准周期不构成高周期过滤）；严格高于基准周期时高周期轴
+求值+掩码投影；低于基准周期时 TIMEFRAME_NOT_HIGHER 结构化拒绝；
+不可表达形制 RESEARCH_NOT_EXPRESSIBLE 显式拒绝不静默降级。
 
 留痕：检查型（entry_type="exit_sweep"、hypothesis_id=None 不挂不进
 判定并集——param_sweep「检查不消耗验证区间」先例同构）。

@@ -26,12 +26,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.analysis.errors import ResearchError, load_stored_json  # 轻量定义点直取（errors.py 唯一权威）
 from core.persistence.repository import research as rr
 
-# 同签名分流的策略层参数比对集（D2/DC-9，add-max-hold-exit 扩十字段）：
-# 签名未编码的策略层参数异 ⇒ 不误返既有——atr_period 翻译产物恒 14、
-# 库内手工 DNA 可设异值，异值即建新实体防语义偷换；exit_fraction/
-# add_fraction/max_exposure 三键 4.3 前不入 RiskGenes（dict.get 缺键
-# 读 None，存量双方恒等——字段扩展后比对自动携带，连续）；max_hold
-# 同款（add-max-hold-exit D-2：签名不编码策略层参数既有模式）
+# risk_genes 完整键集（15 键，D2/DC-9 谱系）：TD-14 起分流判定已由
+# _dna_equivalent 全量基因型复核承担（risk_genes 含于 to_dict 比对集，
+# 比对职责被吸收），本常量的运行时消费随之退役；保留供测试锚消费
+# ——test_max_hold_declaration/test_time_exit/test_dynamic_position_
+# sizing 以它断言 risk_genes 键集完整性（声明块映射无丢键）
 _D2_RISK_FIELDS = (
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "atr_period",
@@ -197,11 +196,6 @@ def build_signal_genes(
         label="then_conditions", role=SignalRole.EXIT_TRIGGER,
         base_tf=strategy_timeframe)
     return when_genes + then_genes, when_sources + then_sources
-
-
-def _risk_params_tuple(rg_dict: Dict[str, Any]) -> Tuple:
-    """risk_genes dict → 九字段可比对元组（缺键读 None——存量连续）。"""
-    return tuple(rg_dict.get(f) for f in _D2_RISK_FIELDS)
 
 
 def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
@@ -562,15 +556,17 @@ def translate_hypothesis(
 
     # 同签名显式分流（MUST NOT 静默不落库）。签名用往返规范化后的对象算
     # ——构造态与库内（from_json）的 layers auto-wrap 形制不同，直接比对必失配。
-    # 0.4.2 D2/DC-9 增强：签名命中后还须九字段策略层参数全等（经 dna_json
-    # 逐行解析比对——签名未编码的参数异 ⇒ 不误返既有，建新实体防语义偷换）
+    # TD-14 等价复核：签名命中后还须基因型全量等价（_dna_equivalent——
+    # 两侧经 dna_json 往返规范化后逐键全等，排除过程字段四键）。
+    # 九字段策略层参数比对被全量复核吸收（risk_genes 含于 to_dict）；
+    # 签名与九字段都不覆盖的差异（condition.threshold、execution_genes
+    # 的 symbol/timeframe）在复核面显形——变体与跨市场同名不复用。
     dna = StrategyDNA.from_json(dna.to_json())
-    new_risk_params = _risk_params_tuple(dna.risk_genes.to_dict())
     same_dna = _find_by_signature(db_path, dna.gene_signature)
     active_hit = next(
         (r for r in same_dna
          if r.get("status") != "draft"
-         and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
+         and _dna_equivalent(dna, r.get("dna_json") or "")),
         None)
     if active_hit is not None:
         # 来源标注统一用 risk_origin（declared_params 非空判据）——声明值
@@ -593,7 +589,7 @@ def translate_hypothesis(
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
-         and _risk_params_tuple(_risk_genes_of_row(r)) == new_risk_params),
+         and _dna_equivalent(dna, r.get("dna_json") or "")),
         None)
     if draft_hit is not None:
         _identity = _identity_reflection(draft_hit)
@@ -955,9 +951,55 @@ def _find_by_signature(db_path: Path, gene_signature: str) -> List[Dict[str, Any
     return find_by_gene_signature(db_path, gene_signature)
 
 
+# 等价复核排除集（TD-14）：strategy_id/parent_ids/generation/mutation_ops
+# 是实例溯源信息而非基因型语义——比对含它们则一切复用判定恒假
+# （每次翻译 parent_ids 都指向不同假设）
+_EQUIV_EXCLUDE_FIELDS = frozenset(
+    {"strategy_id", "parent_ids", "generation", "mutation_ops"})
+
+
+def _dna_equivalent(new_dna, row_dna_json: str) -> bool:
+    """同签名分流的基因型等价复核（TD-14 方向 b）。
+
+    两侧均经 from_json→to_dict 往返规范化后逐键全等（构造态与库内
+    auto-wrap 形制差异被吸收；显式 None 键与缺键经往返同为缺省态，
+    不产生假差异），比对集覆盖 risk_genes 全键、execution_genes
+    （symbol/timeframe）、信号基因 condition.threshold 等签名未编码
+    的语义差异——签名同而复核不等 ⇒ 变体，穿透建新实体不复用。
+    行侧 dna_json 缺失/畸形不可证 = 不等价（保守穿透，不复用）。
+
+    空容器归一：to_dict 的「非 None 才写」会把显式空容器写出
+    （translate 纯 rule 产物 signal_sources=[]）、缺省 None 不写——
+    基因型语义上空信号源集=无插件源=缺省，比对前 []/{} 归一为
+    缺键，不产生假差异。纯 rule 源形 [{"type":"rule"},…]（translate
+    产物的显式缺省形，:522/:525 组装）与手工 DNA 缺省 None 同为
+    「无插件源」——同归一；含 formula/model 源的列表是真实基因型
+    差异，不归一。
+    """
+    from core.strategy.dna import StrategyDNA
+
+    def _norm(v):
+        if v in ([], {}):
+            return None
+        if (isinstance(v, list) and v and all(
+                isinstance(s, dict) and s == {"type": "rule"}
+                for s in v)):
+            return None
+        return v
+
+    try:
+        ours = StrategyDNA.from_json(new_dna.to_json()).to_dict()
+        theirs = StrategyDNA.from_json(row_dna_json).to_dict()
+    except (ValueError, TypeError, KeyError):
+        return False
+    keys = (set(ours) | set(theirs)) - _EQUIV_EXCLUDE_FIELDS
+    return all(_norm(ours.get(k)) == _norm(theirs.get(k)) for k in keys)
+
+
 def _risk_genes_of_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """策略行 dna_json → risk_genes dict（解析失败/缺段返回空 dict——
-    九字段比对读 None，不炸分流；畸形存量按「参数不可证全等」处理）。"""
+    _identity_reflection 身份回读消费：缺键取 None 走收敛缺省，不炸
+    回执；非分流消费——分流判定已由 _dna_equivalent 全量复核承担）。"""
     try:
         dna = json.loads(row.get("dna_json") or "{}")
         rg = dna.get("risk_genes")

@@ -766,6 +766,18 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         child_layers = list(parent_b.layers)
         child_cross_logic = parent_b.cross_layer_logic
 
+    # v2 字段同亲代原子继承（H2，dna-strong-typing-and-disclosure-
+    # hygiene 件⑤）：signal_sources 与 composition 必须整对取自同一
+    # 亲代——composition.weights 键集按插件源 ref 列名索引、mode/op/
+    # threshold 描述的正是该源集合的组合方式，跨亲代拼合必产键集与
+    # 源集错位的无意义基因型（禁两键独立 choice）。退化形态：两亲代
+    # 均无→(None, None) 逐位不变；单亲代有→choice 在「有值/None」
+    # 间取其一（沿元字段先例的探索语义，不特判）
+    v2_pair = random.choice([
+        (parent_a.signal_sources, parent_a.composition),
+        (parent_b.signal_sources, parent_b.composition),
+    ])
+
     child = StrategyDNA(
         signal_genes=child_signals,
         logic_genes=logic,
@@ -781,11 +793,12 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         proximity_mult=random.choice([parent_a.proximity_mult, parent_b.proximity_mult]),
         # 入场触发策略继承（trigger-policy D11 / Q5 裁决）：沿本函数
         # 六处元字段 random.choice 先例——子代是全新基因型，触发声明
-        # 取其一亲代（v2 字段 signal_sources/composition 既有丢失为
-        # TD-E 存量缺陷，不搭车）
+        # 取其一亲代
         entry_trigger_policy=random.choice([
             parent_a.entry_trigger_policy,
             parent_b.entry_trigger_policy]),
+        signal_sources=v2_pair[0],
+        composition=v2_pair[1],
     )
     return child
 

@@ -591,10 +591,15 @@ def _save_manual(db: Path, strategy_id: str, genes, **risk):
 
 
 def _genes(period: int, lo: int, hi: int):
+    # field_name="rsi" 对齐翻译产物形制（_cond 的 field 经 resolve 出
+    # 语义名——field_name 是基因语义字段，等价复核逐键比对含它；
+    # 辅助构造缺它则反向锚（全等→命中）永远差一键）
     return [
         SignalGene("RSI", {"period": period}, SignalRole.ENTRY_TRIGGER,
+                   field_name="rsi",
                    condition={"type": "lt", "threshold": lo}),
         SignalGene("RSI", {"period": period}, SignalRole.EXIT_TRIGGER,
+                   field_name="rsi",
                    condition={"type": "gt", "threshold": hi}),
     ]
 
@@ -655,6 +660,60 @@ class TestDiversionTwoLines:
         h3 = _register(db, period=49, lo=25, hi=75, statement="s3")
         t3 = translate_hypothesis(db, hypothesis_id=h3["hypothesis_id"])
         assert t3["same_dna_existing"] is True and t3["strategy_id"] == "st_d2c"
+
+    def test_line3_threshold_variant_builds_new(self, db):
+        """线 3（TD-14）：同签名同九字段仅 condition.threshold 异 →
+        建新实体拿自己的 strategy_id——签名只编码 indicator(params):
+        cond_type:role（不含阈值）、九字段比对不含条件阈值，现状会
+        误命中旧策略返回别人的 id（变体永远拿不到自己的策略）。"""
+        # 手工策略 entry 阈值 18；假设登记 lo=20 → 翻译产物阈值 20
+        _save_manual(db, "st_l3", _genes(50, 18, 80))
+        h = _register(db, period=50, lo=20, hi=80)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is False
+        assert t["strategy_id"] != "st_l3"
+
+    def test_cross_symbol_no_false_reuse(self, db):
+        """跨 symbol 误复用消除：execution_genes 不进签名（签名编码段
+        无 symbol/timeframe），等价复核全量含 execution_genes——
+        symbol 异必建新（design 2.1 行为面的附带正确性收益）。"""
+        dna_eth = StrategyDNA(
+            signal_genes=_genes(50, 20, 80), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(symbol="ETHUSDT",
+                                           timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_eth", dna_json=dna_eth.to_json(),
+                      symbol="ETHUSDT", timeframe="4h", name="eth",
+                      source="manual")
+        h = _register(db, period=50, lo=20, hi=80)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is False
+        assert t["strategy_id"] != "st_eth"
+
+    def test_generation_process_field_excluded(self, db):
+        """过程字段排除锚（TD-14 变异②打点）：库内行 generation=5
+        （进化谱系残留）与翻译产物（generation=0）其余基因型全等 →
+        仍分流命中——generation/parent_ids 等过程字段是实例溯源信息
+        非基因型语义，参与比对则一切跨代复用恒假。"""
+        manual = {
+            "strategy_id": "st_gen5", "generation": 5, "parent_ids": [],
+            "mutation_ops": ["crossover"],
+            "signal_genes": [g.to_dict() for g in _genes(44, 25, 75)],
+            "logic_genes": LogicGenes().to_dict(),
+            "execution_genes": ExecutionGenes().to_dict(),
+            "risk_genes": RiskGenes().to_dict(),
+            "cross_layer_logic": "AND", "mtf_mode": None,
+            "confluence_threshold": 0.3, "proximity_mult": 1.5,
+            "layers": None,
+        }
+        save_strategy(db, strategy_id="st_gen5",
+                      dna_json=json.dumps(manual),
+                      symbol="BTCUSDT", timeframe="4h", name="gen5",
+                      source="manual")
+        h = _register(db, period=44, lo=25, hi=75)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is True
+        assert t["strategy_id"] == "st_gen5"
 
     def test_legacy_dna_continuity(self, db):
         """连续性锚：存量 dna_json 无新键读 None——与新产物比对双方缺省连续。"""
