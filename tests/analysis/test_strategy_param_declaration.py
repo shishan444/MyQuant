@@ -690,6 +690,31 @@ class TestDiversionTwoLines:
         assert t["same_dna_existing"] is False
         assert t["strategy_id"] != "st_eth"
 
+    def test_generation_process_field_excluded(self, db):
+        """过程字段排除锚（TD-14 变异②打点）：库内行 generation=5
+        （进化谱系残留）与翻译产物（generation=0）其余基因型全等 →
+        仍分流命中——generation/parent_ids 等过程字段是实例溯源信息
+        非基因型语义，参与比对则一切跨代复用恒假。"""
+        manual = {
+            "strategy_id": "st_gen5", "generation": 5, "parent_ids": [],
+            "mutation_ops": ["crossover"],
+            "signal_genes": [g.to_dict() for g in _genes(44, 25, 75)],
+            "logic_genes": LogicGenes().to_dict(),
+            "execution_genes": ExecutionGenes().to_dict(),
+            "risk_genes": RiskGenes().to_dict(),
+            "cross_layer_logic": "AND", "mtf_mode": None,
+            "confluence_threshold": 0.3, "proximity_mult": 1.5,
+            "layers": None,
+        }
+        save_strategy(db, strategy_id="st_gen5",
+                      dna_json=json.dumps(manual),
+                      symbol="BTCUSDT", timeframe="4h", name="gen5",
+                      source="manual")
+        h = _register(db, period=44, lo=25, hi=75)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is True
+        assert t["strategy_id"] == "st_gen5"
+
     def test_legacy_dna_continuity(self, db):
         """连续性锚：存量 dna_json 无新键读 None——与新产物比对双方缺省连续。"""
         # 手工插无 exit_fraction 键的存量形 dna（risk_genes 无新键）
