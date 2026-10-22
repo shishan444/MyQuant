@@ -197,9 +197,14 @@ class TestOriginAnnotationConsistency:
         from core.persistence.repository.strategy import save_strategy
 
         genes = [
+            # field_name="rsi" 对齐翻译产物形制（等价复核逐键比对含
+            # field_name——语义字段不归一，构造侧对齐；与 test_strategy_
+            # param_declaration._genes() 同款修正）
             SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       field_name="rsi",
                        condition={"type": "lt", "threshold": 30}),
             SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       field_name="rsi",
                        condition={"type": "gt", "threshold": 70}),
         ]
         manual = StrategyDNA(
