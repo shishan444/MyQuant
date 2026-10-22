@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
+from core.strategy.validator import COMPOSITION_MODES  # mode 白名单单源（H4-a）
 
 logger = logging.getLogger(__name__)
 
@@ -327,4 +328,6 @@ def _combine(
 
     raise ResearchError(
         "RESEARCH_COMPOSITION_INVALID",
-        f"未知组合模式: {mode}（weighted_vote|gate|logic）")
+        # mode 白名单单源渲染（H4-a 件②）：validator.COMPOSITION_MODES
+        # 为唯一权威（validate_dna 结构判据与求值期兜底拒绝同源）
+        f"未知组合模式: {mode}（合法集 {COMPOSITION_MODES}）")
