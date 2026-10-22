@@ -448,7 +448,16 @@ def _mask_higher(
     work: pd.DataFrame, condition: Dict[str, Any],
     mtf: MtfEvalContext, tf: str,
 ) -> pd.Series:
-    """掩码投影路径：整条件高周期轴求值 → asof_completed 布尔投影。"""
+    """掩码投影路径：整条件高周期轴求值 → asof_completed 布尔投影。
+
+    timeframe×插件列守卫（CARD-01，Q-2 内核化）：subject/target 插件列
+    引用（str 前缀判定，单源常量 _PLUGIN_COLUMN_PREFIXES）显式拒绝——
+    插件列只注入基准周期 df（装载链 enrich），高周期 raw 无该列，静默
+    列缺失全 False 即「静默 0 命中」禁止形态。code/文案与 api 层
+    _reject_tf_plugin_mix 统一；api 三处守卫保留为纵深，不经 api 守卫
+    的求值路径（precheck_hypothesis / case_inspection 直落本入口）由
+    此统一获得。
+    """
     from core.analysis.column_ref import (
         resolve_column_ref, try_decode_column_ref,
     )
@@ -456,6 +465,19 @@ def _mask_higher(
         TF_SECONDS, high_tf_warmup_span, project_completed_bool,
     )
     from core.analysis.hypothesis_service import ResearchError
+
+    # 守卫先于一切（含幂等缓存——拒绝语义不因缓存短路）
+    for key in ("subject", "target"):
+        ref = condition.get(key)
+        if isinstance(ref, str) and ref.startswith(_PLUGIN_COLUMN_PREFIXES):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                "高周期条件（timeframe 键）暂不支持插件列引用——插件"
+                "列只注入基准周期数据，高周期轴求值语义未定义",
+                detail={"param": "condition.timeframe",
+                        "column": ref, "timeframe": tf,
+                        "hint": "移除 timeframe 键（基准周期求值）"
+                                "或改用内置指标列引用"})
 
     # 幂等缓存命中（同条件重复求值零重算）
     cache_col = _mtf_cache_column(condition, tf)

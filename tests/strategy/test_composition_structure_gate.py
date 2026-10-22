@@ -170,6 +170,39 @@ class TestCompositionLegalGuard:
             f"errors={result.errors}")
 
 
+class TestDefaultModeSingleSource:
+    """缺省 mode 单源锚（CARD-07）：DEFAULT_COMPOSITION_MODE 为
+    validator 模块级常量，结构校验与求值两侧 get 缺省同源引用——
+    双写字面量漂移（缺省值两处失同步）形态的防复发红界。"""
+
+    def test_constant_membership(self):
+        """常量成员关系：缺省值属白名单（缺省合法的判据前提）。"""
+        from core.strategy.validator import (
+            COMPOSITION_MODES, DEFAULT_COMPOSITION_MODE)
+        assert DEFAULT_COMPOSITION_MODE == "weighted_vote"
+        assert DEFAULT_COMPOSITION_MODE in COMPOSITION_MODES
+
+    def test_assembly_side_imports_same_constant(self):
+        """求值侧同源引用：signal_assembly 模块引用的是同一常量对象
+        （import 链在场——若改回字面量双写，本断言不感知但缺省行为
+        锚与下条源码清零断言兜住）。"""
+        from core.analysis import signal_assembly
+        from core.strategy.validator import DEFAULT_COMPOSITION_MODE
+        assert signal_assembly.DEFAULT_COMPOSITION_MODE \
+            is DEFAULT_COMPOSITION_MODE
+
+    def test_no_default_literal_duplication(self):
+        """缺省 get 双写清零：两文件的 get("mode", ...) 第二参均为
+        常量符号（源码文本不再出现 get("mode", "weighted_vote") 形）。"""
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        for rel in ("core/strategy/validator.py",
+                    "core/analysis/signal_assembly.py"):
+            text = (root / rel).read_text(encoding="utf-8")
+            assert 'get("mode", "weighted_vote")' not in text, (
+                f"{rel} 缺省 get 回退字面量双写（CARD-07 单源回潮）")
+
+
 # ===========================================================================
 # 入口层（REST 通道——前置 422 落库前；判据落地前红：现状 201 落库）
 # ===========================================================================
@@ -206,3 +239,63 @@ class TestStrategyCreateCompositionGate:
         }
         r = api_client.post("/api/strategies", json=body)
         assert r.status_code == 201, r.text
+
+
+class TestCompositionGateOtherEntries:
+    """AC-2「经创建/更新/进化入口」三入口的另两入口：更新（PUT）与
+    进化（initial_dna）——判据经 validate_dna 单点生效，创建入口已锚
+    （TestStrategyCreateCompositionGate），此处补齐契约点名的其余
+    两入口（crud.py:304 / evolution.py:241 同款 422 通道）。"""
+
+    @pytest.mark.integration
+    def test_bad_mode_422_on_update(self, api_client):
+        """PUT /api/strategies/{id} 换坏 composition DNA → 422
+        DNA_VALIDATION_FAILED（update 通道同款早拒绝——经 POST 建合法
+        策略再 PUT 换坏形不得绕过）。"""
+        create = api_client.post("/api/strategies", json={
+            "name": "comp-put",
+            "dna": _skeleton_dna(None).to_dict(),
+            "symbol": "BTCUSDT", "timeframe": "4h",
+        })
+        assert create.status_code == 201, create.text
+        sid = create.json()["strategy_id"]
+        r = api_client.put(f"/api/strategies/{sid}", json={
+            "dna": _skeleton_dna({"mode": "vote"}).to_dict()})
+        assert r.status_code == 422, (
+            f"更新入口坏 mode 现状 {r.status_code}——判据未在 update "
+            f"通道生效：{r.text[:300]}")
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+        assert any("mode must be one of" in e for e in detail["errors"])
+
+    @pytest.mark.integration
+    def test_bad_mode_422_on_evolution_entry(self, api_client):
+        """POST /api/evolution/tasks initial_dna 坏 composition → 422
+        DNA_VALIDATION_FAILED+任务无新行（坏祖先不落库——落库后变异
+        扩散整代种群）。"""
+        import sqlite3
+
+        db = api_client.app.state.db_path
+
+        def _task_count() -> int:
+            conn = sqlite3.connect(db)
+            try:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM evolution_task").fetchone()[0]
+            finally:
+                conn.close()
+
+        before = _task_count()
+        r = api_client.post("/api/evolution/tasks", json={
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "target_score": 80.0, "score_template": "explorer",
+            "population_size": 15, "max_generations": 200,
+            "initial_dna": _skeleton_dna({"mode": "vote"}).to_dict(),
+        })
+        assert r.status_code == 422, (
+            f"进化入口坏 composition 现状 {r.status_code}——判据未在 "
+            f"initial_dna 通道生效：{r.text[:300]}")
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+        assert any("mode must be one of" in e for e in detail["errors"])
+        assert _task_count() == before, "拒绝后任务表出现新行（坏祖先落库）"

@@ -78,6 +78,26 @@ class TestLegacyKeyTfPluginMix:
         assert resp.json()["detail"]["code"] == \
             "RESEARCH_PLUGIN_COLUMN_NOT_FOUND"
 
+    def test_plugin_with_tf_equal_base_exempted(self, api_client,
+                                                 combo_env):
+        """CARD-03 豁免锚（三分支「等于基准」半边）：timeframe 键值
+        ==基准周期（4h）与缺省同语义（键归一）——不触组合守卫，走
+        基准求值通道（可达性校验先出：未注册列 →
+        RESEARCH_PLUGIN_COLUMN_NOT_FOUND，非组合边界码）。与上一用例
+        （无键→可达性码）、拒绝锚（1d≠4h→组合边界码）构成三分支
+        对照：无键/等于基准同语义，严格高于才组合边界拒绝。"""
+        _wire(api_client, combo_env)
+        cond = dict(TF_PLUGIN_COND, timeframe="4h")  # ==基准周期
+        resp = api_client.post("/api/research/analysis", json=_body(
+            "event_study", {"condition": cond}))
+        assert resp.status_code == 422, (
+            f"tf==base 豁免后应走可达性校验（未注册列 422），"
+            f"现状 {resp.status_code}：{resp.text[:200]}")
+        assert resp.json()["detail"]["code"] == \
+            "RESEARCH_PLUGIN_COLUMN_NOT_FOUND", (
+            "tf==base 被组合边界误拒（豁免未生效——键归一与缺省"
+            "同语义，三分支契约）")
+
     def test_new_key_mix_guard_not_regressed(self, api_client, combo_env):
         """护栏：新键 conditions 路径既有互斥不回退（校验本体仍在
         新键路径生效）。"""

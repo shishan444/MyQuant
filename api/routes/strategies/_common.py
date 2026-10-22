@@ -1,7 +1,7 @@
 """Strategies 路由私有公共位（B5.1 拆分后 verify/batch/compare 共用）。
 
-signal-sources-structure-gate（D-6）起兼载六入口（backtest 读库/内联、
-batch、verify、compare、live 任务创建）共用的 DNA 拒绝表达
+signal-sources-structure-gate（D-6）起兼载多入口（backtest 读库/内联、
+batch、verify、compare、live/evolution 任务创建）共用的 DNA 拒绝表达
 （_reject_invalid_or_plugin_dna）。判据单源在 core/strategy/validator
 （validate_dna 结构/值域+has_plugin_sources 能力边界），本模块只承载
 HTTP 拒绝表达（状态码/错误码/消息模板）；live 为跨目录消费方
@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-# 插件源能力边界消息的通道名映射（R-8 逐字节基准——六入口现状消息
+# 插件源能力边界消息的通道名映射（R-8 逐字节基准——各入口现状消息
 # 的机械转写；channel 集与 _reject_invalid_or_plugin_dna 的校验集同源）
 _PLUGIN_REJECT_MESSAGES = {
     "backtest": (
@@ -48,7 +48,7 @@ _PLUGIN_REJECT_MESSAGES = {
         "信号组装，评估将失真）——请经研究验证链沙盒回测"),
 }
 
-# 读库态/直传态的结构拒绝消息（library_dna 两态——六处现状的机械转写）
+# 读库态/直传态的结构拒绝消息（library_dna 两态——各处现状的机械转写）
 _DNA_INVALID_MESSAGES = {
     True: "Library DNA invalid（库内 DNA 结构/值域非法）",
     False: "DNA 值域/结构校验未通过",
@@ -61,7 +61,7 @@ def _reject_invalid_or_plugin_dna(
     library_dna: bool,
     channel: str,
 ) -> None:
-    """六入口共用的 DNA 拒绝表达（两段判定顺序内化）。
+    """各入口共用的 DNA 拒绝表达（两段判定顺序内化）。
 
     判据单源不动（R-7）：validate_dna（结构/值域）与
     has_plugin_sources（执行环境能力边界）的签名、语义、所在文件均
@@ -72,19 +72,21 @@ def _reject_invalid_or_plugin_dna(
         dna: 已解析的 StrategyDNA（解析/404 责任在调用方）。
         library_dna: True=读库装载（消息「Library DNA invalid…」）/
             False=请求直传（消息「DNA 值域/结构校验未通过」）。
-        channel: 消费通道名（backtest/batch/verify/compare/live）
-            ——插件源拒绝消息的通道名映射键。
+        channel: 消费通道名（backtest/batch/verify/compare/live/
+            evolution）——插件源拒绝消息的通道名映射键。
 
     Raises:
         HTTPException: 422 DNA_VALIDATION_FAILED（detail 含 errors
             判据明细）或 422 PLUGIN_SOURCES_UNSUPPORTED（detail 无
             errors 键——两码键集不对称是既有契约基准的一部分）。
-        ValueError: channel 不在五值集（编程错误——沿
+        ValueError: channel 不在映射键集（编程错误——沿
             validate_trading_compatibility 的 link 校验先例）。
     """
     if channel not in _PLUGIN_REJECT_MESSAGES:
+        # 键集渲染单源（CARD-06）：随映射表扩容自动同步，不再手写清单
         raise ValueError(
-            f"channel 须为 backtest/batch/verify/compare/live，got {channel!r}")
+            f"channel 须为 {'/'.join(_PLUGIN_REJECT_MESSAGES)}，"
+            f"got {channel!r}")
 
     # 第一段：结构/值域校验（先于能力边界——「策略坏」优先报出）
     from core.strategy.validator import validate_dna

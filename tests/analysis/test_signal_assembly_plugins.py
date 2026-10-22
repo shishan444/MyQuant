@@ -287,6 +287,21 @@ class TestCombineBranches:
         assert ei.value.code == "RESEARCH_COMPOSITION_INVALID"
         assert "bogus" in ei.value.message
 
+    def test_未知组合模式_消息渲染单源(self, db, formula_col) -> None:
+        """求值期兜底拒绝消息改引 COMPOSITION_MODES 常量渲染后的
+        现状锚（H4-a 件②，signal_assembly.py 改动行）：消息以「合法集」
+        引出三模式成员——validator 结构判据消息与求值期兜底同源渲染
+        （改域单点生效），此锚钉住渲染形制不回退为硬编码异形。"""
+        dna = _dna([{"type": "formula", "ref": formula_col}],
+                   {"mode": "bogus"})
+        with pytest.raises(ResearchError) as ei:
+            assemble_signal_set(db, dna, _df())
+        assert ei.value.code == "RESEARCH_COMPOSITION_INVALID"
+        assert "合法集" in ei.value.message
+        for m in ("weighted_vote", "gate", "logic"):
+            assert m in ei.value.message, (
+                f"消息未含白名单成员 {m}：{ei.value.message}")
+
     def test_有规则源_基线不被单位元替换(self, db, formula_col) -> None:
         """signal_sources 含 rule 型：entries = 规则基线 AND 插件
         （weighted_vote 交集语义；对照=同基因纯规则策略）。"""

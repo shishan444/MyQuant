@@ -1,20 +1,23 @@
-"""守卫 helper 收敛静态锚（signal-sources-structure-gate 3.1·卡 G）。
+"""守卫 helper 收敛静态锚（signal-sources-structure-gate 3.1·卡 G；
+CARD-05 扩约 evolution 第七守卫文件）。
 
 契约出处（design 卡 G，R-8 逐字节基准+A-1 排除面）：
-- 六调用点（backtest 读库/内联、batch、verify、compare、live 任务
-  创建）的两段拒绝表达收敛为 _common._reject_invalid_or_plugin_dna
-  ——六调用点文件不再内联出现两错误码的代码字符串字面量；判据
-  单源在 core/strategy/validator 不动。
-- 排除面（A-1）：crud.py 与 evolution.py 的 validate_dna 单段内联块
-  **不在收敛面**（无插件能力判据的第一段）——显式列名防扫描误伤。
+- 七调用点（backtest 读库/内联、batch、verify、compare、live 任务
+  创建、evolution 任务创建）的两段拒绝表达收敛为
+  _common._reject_invalid_or_plugin_dna——七调用点文件不再内联出现
+  两错误码的代码字符串字面量；判据单源在 core/strategy/validator
+  不动。evolution 面历史注记：Q-3 件⑤加插件段时形成手写两段未移出
+  排除面（静态守卫漏防），CARD-05 收敛后移入守卫面（回潮即红）。
+- 排除面（A-1）：crud.py 的 validate_dna 单段内联块**不在收敛面**
+  （无插件能力判据的第一段）——显式列名防扫描误伤。
 - 匹配形制：带双引号的代码字符串字面量 ``"DNA_VALIDATION_FAILED"``
   /``"PLUGIN_SOURCES_UNSUPPORTED"``——注释中的裸词不命中
   （live_trading.py:54 威胁模型注释含裸词 PLUGIN_SOURCES_
   UNSUPPORTED 属翻案记录保留，子串扫描会恒红——reviewer 发现修订）。
 - _common.py 内两码各恰一次（helper 是唯一表达点）。
-- helper 参数轴六格对拍：(library_dna, channel) 六组合的 message
-  逐字节==design 4.3 表（采集基线同源字面量——卡 G 前后双点绿的
-  锚面）。
+- helper 参数轴对拍：(library_dna, channel) 组合与 channel 全映射的
+  message 逐字节==design 4.3 表+Q-3 件⑤ evolution 条目（采集基线
+  同源字面量——卡 G 前后双点绿的锚面）。
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STRAT_DIR = _REPO_ROOT / "api" / "routes" / "strategies"
 
-# 六调用点所在文件（#1-5 同目录；#6 跨目录——显式清单不依赖 grep
+# 七调用点所在文件（#1-5 同目录；#6/#7 跨目录——显式清单不依赖 grep
 # head 截断）
 GUARDED_FILES = [
     _STRAT_DIR / "backtest.py",
@@ -42,10 +45,11 @@ GUARDED_FILES = [
     _STRAT_DIR / "verify.py",
     _STRAT_DIR / "compare.py",
     _REPO_ROOT / "api" / "routes" / "live_trading.py",
+    _REPO_ROOT / "api" / "routes" / "evolution.py",
 ]
 
 # 排除面（A-1）：validate_dna 单段内联块保留的文件——显式列名
-EXCLUDED_FILES = [_STRAT_DIR / "crud.py", _REPO_ROOT / "api" / "routes" / "evolution.py"]
+EXCLUDED_FILES = [_STRAT_DIR / "crud.py"]
 
 
 def _dna(signal_sources=None) -> StrategyDNA:
@@ -80,12 +84,12 @@ def _pure_plugin_dna() -> StrategyDNA:
 
 
 class TestInlineScan:
-    """六调用点文件两码零内联（带引号代码字面量匹配）。"""
+    """七调用点文件两码零内联（带引号代码字面量匹配）。"""
 
     @pytest.mark.parametrize(
         "guarded", GUARDED_FILES, ids=[f.name for f in GUARDED_FILES])
     def test_no_inline_error_code_literals(self, guarded):
-        """收敛后六文件不再内联出现两码的代码字符串字面量——
+        """收敛后七文件不再内联出现两码的代码字符串字面量——
         后续新增守卫若再内联（复制回潮）此锚即红。注释裸词不命中。"""
         text = guarded.read_text(encoding="utf-8")
         assert '"DNA_VALIDATION_FAILED"' not in text, (
@@ -96,8 +100,8 @@ class TestInlineScan:
             "字面量（收敛回潮——应改用 _common helper）")
 
     def test_excluded_files_keep_inline_first_segment(self):
-        """排除面（A-1）：crud/evolution 的单段内联块保留——文件
-        仍在（扫描不误伤的对照锚；非行为断言，形制在场性检查）。"""
+        """排除面（A-1）：crud 的单段内联块保留——文件仍在
+        （扫描不误伤的对照锚；非行为断言，形制在场性检查）。"""
         for excluded in EXCLUDED_FILES:
             assert excluded.exists(), f"排除面文件缺席：{excluded}"
 
@@ -113,8 +117,9 @@ class TestInlineScan:
 
 
 class TestHelperParamAxis:
-    """参数轴六格对拍：(library_dna, channel) 六组合 message 逐字节
-    ==design 4.3 表（与 1.2 采集基线同源字面量）。"""
+    """参数轴对拍：(library_dna, channel) 组合与 channel 全映射的
+    message 逐字节==design 4.3 表+Q-3 件⑤ evolution 条目（与 1.2
+    采集基线同源字面量）。"""
 
     @pytest.mark.parametrize(
         ("library_dna", "channel", "expected"),
@@ -129,11 +134,14 @@ class TestHelperParamAxis:
              "Library DNA invalid（库内 DNA 结构/值域非法）"),
             (False, "backtest", "DNA 值域/结构校验未通过"),
             (False, "live", "DNA 值域/结构校验未通过"),
+            (False, "evolution", "DNA 值域/结构校验未通过"),
         ],
         ids=["读库-backtest", "读库-verify", "读库-batch",
-             "读库-compare", "直传-backtest内联", "直传-live"])
+             "读库-compare", "直传-backtest内联", "直传-live",
+             "直传-evolution"])
     def test_dna_message_axis(self, library_dna, channel, expected):
-        """第一段 message 两态×通道六格（结构坏 DNA 命中）。"""
+        """第一段 message 两态×通道七格（结构坏 DNA 命中；evolution
+        格=Q-3 件⑤初始入口拒绝，CARD-05 收敛后同 helper 承载）。"""
         with pytest.raises(HTTPException) as ei:
             _reject_invalid_or_plugin_dna(
                 _invalid_dna(), library_dna=library_dna, channel=channel)
@@ -163,10 +171,15 @@ class TestHelperParamAxis:
             ("live",
              "执行环境不支持插件信号源（live 链未接入插件"
              "信号组装）——请经研究验证链沙盒回测"),
+            ("evolution",
+             "执行环境不支持插件信号源（进化评估链未接入插件"
+             "信号组装，评估将失真）——请经研究验证链沙盒回测"),
         ],
-        ids=["backtest", "verify", "batch", "compare", "live"])
+        ids=["backtest", "verify", "batch", "compare", "live",
+             "evolution"])
     def test_plugin_message_axis(self, channel, expected):
-        """第二段 message 五映射（纯插件 DNA 命中）。"""
+        """第二段 message channel 全映射六格（纯插件 DNA 命中；
+        evolution 格=Q-3 件⑤ _PLUGIN_REJECT_MESSAGES 进化条目）。"""
         with pytest.raises(HTTPException) as ei:
             _reject_invalid_or_plugin_dna(
                 _pure_plugin_dna(), library_dna=True, channel=channel)
@@ -203,11 +216,25 @@ class TestHelperUnitBehavior:
             _valid_plain_dna(), library_dna=True, channel="backtest") is None
 
     def test_invalid_channel_raises_value_error(self):
-        """channel 非五值 → ValueError（编程错误——沿
+        """channel 不在合法集 → ValueError（编程错误——沿
         validate_trading_compatibility 的 link 校验先例）。"""
         with pytest.raises(ValueError, match="channel"):
             _reject_invalid_or_plugin_dna(
                 _valid_plain_dna(), library_dna=True, channel="paper")
+
+    def test_invalid_channel_message_renders_keyset(self):
+        """ValueError 消息键集渲染单源锚（CARD-06）：消息列出
+        _PLUGIN_REJECT_MESSAGES 全部键（f-string join 渲染——随表
+        扩容自动同步）。改回手写清单漏键（如漏 evolution）即红。"""
+        with pytest.raises(ValueError) as ei:
+            _reject_invalid_or_plugin_dna(
+                _valid_plain_dna(), library_dna=True, channel="paper")
+        msg = str(ei.value)
+        for key in ("backtest", "verify", "batch", "compare", "live",
+                    "evolution"):
+            assert key in msg, (
+                f"ValueError 消息未含映射键 {key}（键集渲染单源被破坏"
+                f"——手写清单回潮）：{msg}")
 
     def test_signature_unchanged_weak_anchor(self):
         """签名未动弱锚（design 卡 G 契约形制）：keyword-only 双参数

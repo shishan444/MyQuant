@@ -63,6 +63,10 @@ RISK_FRACTION_MAX = 0.5   # 闭区间上界（P9 上界核对——validator 惯
 # 值域分工：仅 mode 枚举+类型形归本校验（前置），weights 各值/
 # threshold/operator 数值域维持组装求值单点既有权威
 COMPOSITION_MODES = ("weighted_vote", "gate", "logic")
+# 组合段 mode 缺省值（CARD-07）：结构校验（validate_dna）与求值
+# （signal_assembly）两处 get 缺省的单源常量——双写字面量在求值侧
+# 行号漂移后无从对齐，符号锚取代行号锚
+DEFAULT_COMPOSITION_MODE = "weighted_vote"
 # 仓位参数（add-position-sizing-params）：首笔比例 (0,1] 开下闭上；
 # 金额防线只有下界（>0），上界完全放开——考场无观点（不替用户判断
 # 「多大的金额防线不合理」）
@@ -180,7 +184,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         errors.append(
             f"composition must be a dict, got {type(comp).__name__}")
     elif isinstance(comp, dict):
-        mode = comp.get("mode", "weighted_vote")  # 缺省与求值 :93 一致
+        mode = comp.get("mode", DEFAULT_COMPOSITION_MODE)  # 缺省与 signal_assembly 求值缺省一致（符号锚）
         if mode not in COMPOSITION_MODES:
             errors.append(
                 f"composition: mode must be one of {COMPOSITION_MODES}, "
