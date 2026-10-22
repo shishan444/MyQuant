@@ -990,7 +990,10 @@ def _dna_equivalent(new_dna, row_dna_json: str) -> bool:
     try:
         ours = StrategyDNA.from_json(new_dna.to_json()).to_dict()
         theirs = StrategyDNA.from_json(row_dna_json).to_dict()
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, AttributeError):
+        # AttributeError：合法 JSON 畸形 DNA（如子段为 str 而非 dict，
+        # to_dict 属性访问穿 AttributeError）——同属「不可证等价」
+        # 保守穿透面，窄扩不宽捕获（CARD-08）
         return False
     keys = (set(ours) | set(theirs)) - _EQUIV_EXCLUDE_FIELDS
     return all(_norm(ours.get(k)) == _norm(theirs.get(k)) for k in keys)
