@@ -121,7 +121,7 @@ def _load_with_condition_refs(
     (strict=True)；顶层 indicator 可选（有则并入——condition_stats
     新形制下转可选）。单条件形制（indicator+condition）逐字节不变。
 
-    fix-research-c3 插件维度接入（五步，与 precheck 装载同构——两入口
+    fix-research-c3 插件维度接入（与 precheck 装载同构——两入口
     共用权威处理）：收集（collect_condition_plugin_columns）→ 可达性
     校验（assert_plugin_columns_reachable——不可达 422
     RESEARCH_PLUGIN_COLUMN_NOT_FOUND「名字写错」）→ 两维 warmup

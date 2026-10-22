@@ -170,7 +170,8 @@ GROUP1_ANCHORS: tuple = (
         anchor_id="G1-exit_sweep段-既有要素",
         source="tools", seg_start=_SEG_EXIT[0], seg_end=_SEG_EXIT[1],
         kind="token_set",
-        tokens=("condition|conditions", "direction", "grid=", "0.4.1={pct}",
+        tokens=("condition|conditions", "direction", "grid=",
+                "现值{pct,atr,trail}",
                 "三道门", "不挂假设", "202+轮询"),
         covered=("exit_sweep",),
         scope="exit_sweep 段落",
@@ -208,7 +209,7 @@ GROUP1_ANCHORS: tuple = (
         anchor_id="G1-能力自述退出参数扫描条目-既有要素",
         source="capability", seg_start=_CSEG_EXIT[0], seg_end=_CSEG_EXIT[1],
         kind="token_set",
-        tokens=("Σ≤50组", "0.4.1={pct}", "不挂假设", "202+轮询"),
+        tokens=("Σ≤50组", "现值{pct,atr,trail}", "不挂假设", "202+轮询"),
         scope="退出参数扫描条目", basis="既有披露（capability.py:130-139）",
     ),
 )
@@ -373,6 +374,10 @@ NEGATIVE_CLEAR_TOKENS: tuple = (
     "MUSTNOT支持高周期",
     "高周期条件显式拒绝",
     "condition_stats/counter_profile",
+    # 联动⑬（dna-strong-typing-and-disclosure-hygiene）：模式集披露句
+    # 刷新至现值 {pct,atr,trail} 后的旧 token 清零（两声明面同步刷新）
+    "0.4.1={pct}",
+    "引擎未支持",
 )
 
 NEGATIVE_CLEAR_ANCHORS: tuple = (
@@ -423,7 +428,7 @@ GROUP3_ANCHORS: tuple = (
         anchor_id="G3-exit_sweep段-模式合法集与direction枚举",
         source="tools", seg_start=_SEG_EXIT[0], seg_end=_SEG_EXIT[1],
         kind="token_set",
-        tokens=("0.4.1={pct}", "引擎未支持", "long/", "short"),
+        tokens=("现值{pct,atr,trail}", "long/", "short"),
         scope="exit_sweep 模式集{pct}+direction 枚举",
         basis="tools.py:477-478/:472-475（引擎真实分派集引用式）",
     ),
@@ -511,6 +516,126 @@ GROUP4_ANCHORS: tuple = (
 )
 
 # ---------------------------------------------------------------------------
+# 组 5：七行新锚（CARD-01 六处缺口+Keltner 终局句——dna-strong-typing-
+# and-disclosure-hygiene 件⑫；design 3.7 表行→锚条目拆分：负向清零
+# 逐 kind 独立成锚、逗号/·分割清单族以整串 token_set 承载（引擎成员
+# 分割=斜杠，整串锚防漂移力等同且更严））
+# ---------------------------------------------------------------------------
+
+# Keltner 终局句段域（tools=query_indicator docstring 指标参数修复段
+# 至 body 构造；capability=指标参数修复条目至比较动作全集条目）
+_SEG_KELTNER = ("指标参数修复（2026-10-13）", "body={")
+_CSEG_KELTNER = ("指标参数修复（2026-10-13）", "比较动作全集")
+
+GROUP5_ANCHORS: tuple = (
+    # —— 行 1-3：segment_narrative 三清单族（拆行锚——原 CARD-01 第一处）——
+    DisclosureAnchor(
+        anchor_id="G5-段叙事段-轨道族三成员",
+        source="tools", seg_start=_SEG_SEGMENT[0], seg_end=_SEG_SEGMENT[1],
+        kind="token_set",
+        tokens=("轨道族{BB,Keltner,Donchian}",),
+        covered=("segment_narrative",),
+        scope="默认事件源轨道族清单（整串锚——成员增删即串变红）",
+        basis="design 3.7 行 1（tools.py:457）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-段叙事段-不入默认集五类别",
+        source="tools", seg_start=_SEG_SEGMENT[0], seg_end=_SEG_SEGMENT[1],
+        kind="list_members",
+        list_pattern=r"不入默认集类别([\w/]+)在结果",
+        members=("trend_strength", "volume", "structure", "ml",
+                 "derivatives"),
+        covered=("segment_narrative",),
+        scope="不入默认集类别清单（结果披露口径+显式点名不受限）",
+        basis="design 3.7 行 2（tools.py:458-459）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-段叙事段-封闭交叉对三成员",
+        source="tools", seg_start=_SEG_SEGMENT[0], seg_end=_SEG_SEGMENT[1],
+        kind="token_set",
+        tokens=("MACD(macd,signal)·Stochastic(k,d)·Aroon(up,down)",),
+        covered=("segment_narrative",),
+        scope="indicator_cross 封闭交叉对清单（整串锚——·分割族）",
+        basis="design 3.7 行 3（tools.py:461）",
+    ),
+    # —— 行 4：precheck 三键（CARD-01 第二处）——
+    DisclosureAnchor(
+        anchor_id="G5-precheck段-三层报告三键",
+        source="tools", seg_start=_SEG_PRECHECK[0], seg_end=_SEG_PRECHECK[1],
+        kind="token_set",
+        tokens=("combination_stats", "frequency_projection", "budget_check"),
+        covered=("precheck_hypothesis",),
+        scope="precheck 三层报告键集",
+        basis="design 3.7 行 4（tools.py:432-434）",
+    ),
+    # —— 行 5：capability 组合条件条目要素（CARD-01 第三处）——
+    DisclosureAnchor(
+        anchor_id="G5-能力自述组合条件条目-装载差异要素",
+        source="capability", seg_start=_CSEG_COMBO[0], seg_end=_CSEG_COMBO[1],
+        kind="token_set",
+        tokens=("收敛性差异", "并集前扩装载", "warmup预算=全部条目引用并集"),
+        scope="组合条件条目装载语义三要素（event_study 两形制差异面）",
+        basis="design 3.7 行 5（capability.py:104-110）",
+    ),
+    # —— 行 6：capability 插件列条目边界（CARD-01 第四处；件⑦去计数
+    #    后流程枚举为唯一权威描述——计数词双清零防回流）——
+    DisclosureAnchor(
+        anchor_id="G5-能力自述插件列条目-装载链与两码边界",
+        source="capability", seg_start=_CSEG_PLUGINS[0], seg_end=_CSEG_PLUGINS[1],
+        kind="token_set",
+        tokens=("装载链（收集→可达性校验→两维warmup→求值注入→存在性校验）",
+                "RESEARCH_PLUGIN_COLUMN_NOT_FOUND",
+                "RESEARCH_COLUMN_NOT_AVAILABLE", "不再静默0样本"),
+        scope="插件列条目装载链流程枚举+两码分工+静默禁令",
+        basis="design 3.7 行 6（capability.py:91-97；件⑦去计数后文案）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-能力自述-装载计数词清零",
+        source="capability", seg_start="", seg_end="",
+        kind="negative_clear",
+        tokens=("五步", "四步"),
+        scope="装载流程计数词全域清零（流程枚举即权威描述——计数随"
+              "流程演进漂移，件⑦三书写点统一不写计数）",
+        basis="design 3.7 行 6 负向半（件⑦）",
+    ),
+    # —— 行 7：Keltner 终局句双面（债 2026-10-13-02；含负向清零双面）——
+    DisclosureAnchor(
+        anchor_id="G5-query_indicator段-Keltner终局句",
+        source="tools", seg_start=_SEG_KELTNER[0], seg_end=_SEG_KELTNER[1],
+        kind="token_set",
+        tokens=("吞参语义", "历史策略已全部清除", "无存量即无重算",
+                "新生成计算数值正确"),
+        scope="Keltner 终局句（tools 面）：吞参语义事实+终局裁决口径",
+        basis="design 3.7 行 7 / design 3.6 定稿文案（tools.py）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-能力自述指标参数修复条目-Keltner终局句",
+        source="capability", seg_start=_CSEG_KELTNER[0], seg_end=_CSEG_KELTNER[1],
+        kind="token_set",
+        tokens=("吞参语义", "历史策略已全部清除", "无存量即无重算",
+                "新生成的计算数值正确"),
+        scope="Keltner 终局句（capability 面）+BB 半句终局口径",
+        basis="design 3.7 行 7 / design 3.6（capability.py:81-87）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-Keltner死路径引用清零-tools",
+        source="tools", seg_start="", seg_end="",
+        kind="negative_clear",
+        tokens=("技术债务-2026-10-13.md", "待需求侧裁决"),
+        scope="死路径引用清零（内部相对路径与已过期裁决状态词）",
+        basis="design 3.7 行 7 负向半",
+    ),
+    DisclosureAnchor(
+        anchor_id="G5-Keltner死路径引用清零-capability",
+        source="capability", seg_start="", seg_end="",
+        kind="negative_clear",
+        tokens=("技术债务-2026-10-13.md", "待需求侧裁决"),
+        scope="死路径引用清零（capability 面）",
+        basis="design 3.7 行 7 负向半",
+    ),
+)
+
+# ---------------------------------------------------------------------------
 # 完备性元断言登记面（双向相等——「全检」名实相符的机制核心）
 # ---------------------------------------------------------------------------
 
@@ -546,4 +671,4 @@ CAPABILITY_ENTRY_WHITELIST: tuple = (
 
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
                       + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
-                      + GROUP4_ANCHORS)
+                      + GROUP4_ANCHORS + GROUP5_ANCHORS)

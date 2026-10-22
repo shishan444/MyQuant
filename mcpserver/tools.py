@@ -483,9 +483,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         计算——价格下跌产生正收益，win_rate 即做空胜率）+
         grid={modes:[{mode, stops, take_profits}]}——网格按
         止损模式分组（量纲随模式双关）；模式合法集=回测引擎真实分派
-        集引用式（0.4.1={pct}——atr/trail 422 披露「引擎未支持」；
-        0.4.2 扩分派后自动跟随）；stops 值域 pct 档 [0.005,0.20] 与
-        validator 现役域同源；止盈必填正值；跨模式 Σ(len(stops)×len
+        集引用式（现值 {pct, atr, trail}，引擎扩分派后自动跟随）；
+        stops 值域 pct 档 [0.005,0.20] 与 validator 现役域同源、
+        atr 档 [0.5, 5.0]（ATR 倍数）与 validator 现役域同源；止盈
+        必填正值；跨模式 Σ(len(stops)×len
         (take_profits)) ≤50；重复模式条目拒绝；校验期任何失败整批
         422 无部分结果、执行期单组回测失败该组标注不阻塞（两期分野）；
         不设 take_profit>stop_loss 约束（劣结构组按引擎真实行为回测
@@ -579,10 +580,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         任一组失败整批 422 无部分结果（detail 以 groups[N] 指明组序）；
         载荷分档：单组 2048 / 批量 16384 字节。
         指标参数修复（2026-10-13）：BB std 与 Keltner
-        atr_period/multiplier 传参修复已生效；BB 历史存量已全量重算
-        回写（对照旧档案数字以重算后为准）；Keltner 存量仍为吞参
-        语义（重算边界待裁决，见 works/设计稿/技术债务-2026-10-13.md
-        TD-2026-10-13-02）。"""
+        atr_period/multiplier 传参修复已生效，新生成计算数值正确；
+        BB 历史存量已按 2026-10-13 终局裁决整批清除。Keltner 历史
+        存量为吞参语义（atr_period 从未生效）；按 2026-10-14 裁决
+        历史策略已全部清除——无存量即无重算，重算边界问题终局
+        关闭。"""
         body: Dict[str, Any] = {
             "symbol": symbol, "timeframe": timeframe}
         # 单组字段无条件透传（is not None 形制——与 params/reductions 同）：

@@ -61,7 +61,12 @@ class MtfEvalContext:
     eval_start：求值域（统计域）起点——高周期 warmup 检查基准
     （研究链=request_start / inspect_cases=effective_start / 缺省=
     work.index[0] 装载域起点，保守方向：早于统计域起点的检查只会
-    更严不会漏）。
+    更严不会漏）。实施裁决披露（TD-13，0.2.14）：warmup 检查基准
+    =eval_start（装载产物 request_start——TD-7 单点接线），非装载
+    域首行；条件粒度 warmup 以 indicator_convergence 实际参数推导
+    （非注册表名字级 max）；策略链 tf 由索引差分中位数推断
+    （infer_tf_delta）。三处为 0.2.14 实施裁决，design 本体字面
+    （名字级 max/work.index[0]/tf 键入参）已失效不得按其重新实施。
     """
     data_dir: Path
     symbol: str

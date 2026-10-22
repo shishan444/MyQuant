@@ -830,3 +830,26 @@ class TestPluginSourceRoleMark:
             {"type": "rule"},
             {"type": "formula", "ref": col, "threshold": 0.5,
              "operator": ">", "role": "entry"}], sources
+
+
+def test_docstring_cross_template_reference_cleared():
+    """件⑥ 对照句消亡防复发红界（dna-strong-typing-and-disclosure-
+    hygiene，design 3.1）：exit_sweep.py 单文件 squash 域内跨模板
+    对照句旧串（「三模板」「condition_stats/counter_profile」）
+    不得在场——跨模板对照句是第二书写点，随模板扩容漂移；
+    2026-10-22 消亡重写为自足三分支句后此断言钉住不回流
+    （沿 test_capability_warmup_rule_faithful 的 assert-not-in 先例）。
+    """
+    import sys
+
+    # 模块属性被包内同名函数遮蔽（templates.exit_sweep 属性=函数），
+    # 经 sys.modules 取模块本体
+    _mod = sys.modules["core.analysis.templates.exit_sweep"]
+
+    def _squash(s: str) -> str:
+        return "".join(s.split())
+
+    source = Path(_mod.__file__).read_text(encoding="utf-8")
+    squashed = _squash(source)
+    assert "三模板" not in squashed
+    assert _squash("condition_stats/counter_profile") not in squashed
