@@ -715,6 +715,34 @@ class TestDiversionTwoLines:
         assert t["same_dna_existing"] is True
         assert t["strategy_id"] == "st_gen5"
 
+    def test_empty_container_normalized_to_default(self, db):
+        """空容器归一锚（design 2.1 形制归一条款——阶段四盲区消解）：
+        库内行显式空容器（signal_sources=[]/composition={}——to_dict
+        非 None 才写出的形制）与翻译产物缺省 None 同为「无插件源/
+        无组合层」——_norm 归一为缺省态等价命中，不产生假差异
+        （空容器侧是真实基因型差异时不归一——由源集比对承载）。"""
+        manual = {
+            "strategy_id": "st_empty", "generation": 0, "parent_ids": [],
+            "mutation_ops": [],
+            "signal_genes": [g.to_dict() for g in _genes(42, 25, 75)],
+            "logic_genes": LogicGenes().to_dict(),
+            "execution_genes": ExecutionGenes().to_dict(),
+            "risk_genes": RiskGenes().to_dict(),
+            "signal_sources": [], "composition": {},
+            "cross_layer_logic": "AND", "mtf_mode": None,
+            "confluence_threshold": 0.3, "proximity_mult": 1.5,
+            "layers": None,
+        }
+        save_strategy(db, strategy_id="st_empty",
+                      dna_json=json.dumps(manual),
+                      symbol="BTCUSDT", timeframe="4h", name="empty",
+                      source="manual")
+        h = _register(db, period=42, lo=25, hi=75)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is True, (
+            "显式空容器与缺省态产生假差异（_norm 空容器归一失效）")
+        assert t["strategy_id"] == "st_empty"
+
     def test_cross_timeframe_no_false_reuse(self, db):
         """跨 timeframe 误复用消除（AC-1 行为面另一半）：execution
         timeframe 经 from_json auto-wrap 层段（L:{tf}:execution）进入
