@@ -715,6 +715,57 @@ class TestDiversionTwoLines:
         assert t["same_dna_existing"] is True
         assert t["strategy_id"] == "st_gen5"
 
+    def test_cross_timeframe_no_false_reuse(self, db):
+        """跨 timeframe 误复用消除（AC-1 行为面另一半）：execution
+        timeframe 经 from_json auto-wrap 层段（L:{tf}:execution）进入
+        往返态签名——1d 库存行与 4h 翻译产物在签名层即分流建新
+        （机制注记：与 symbol 半边不同——symbol 不进签名也不进层段，
+        靠复核面分流，见 test_cross_symbol_no_false_reuse；两半边殊
+        途同归于「不再误复用」）。"""
+        dna_1d = StrategyDNA(
+            signal_genes=_genes(50, 20, 80), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(symbol="BTCUSDT",
+                                           timeframe="1d"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_1d", dna_json=dna_1d.to_json(),
+                      symbol="BTCUSDT", timeframe="1d", name="tf-1d",
+                      source="manual")
+        h = _register(db, period=50, lo=20, hi=80)  # 翻译产物 timeframe=4h
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is False, (
+            "timeframe 异的库存策略被误分流复用（L:{tf} 层段未进签名"
+            "或复核未含 execution_genes 差异）")
+        assert t["strategy_id"] != "st_1d"
+
+    @pytest.mark.parametrize(
+        "bad_json",
+        [
+            pytest.param("{not-valid-json", id="非法 JSON 串"),
+            pytest.param('{"signal_genes": "oops"}', id="合法 JSON 畸形 DNA"),
+        ],
+    )
+    def test_malformed_row_dna_json_penetrates_to_new(self, db, bad_json):
+        """畸形存量保守穿透（design 2.1 缺失值条款）：行侧 dna_json
+        畸形不可证 = 不等价 → 穿透建新不复用（与 _risk_genes_of_row
+        现行「不可证=不命中」同向保守——畸形行不该挡住变体拿到自己
+        的策略）。畸形行 dna_json 无法经 save_strategy 自动算签名
+        （解析失败签名落 None→检索不命中），故显式传往返态签名构造
+        「签名命中+复核才见畸形」的形态（构造态签名缺 auto-wrap
+        层段 L:{tf}，与翻译产物往返态签名不匹配，亦检索不命中）。"""
+        carrier = StrategyDNA(
+            signal_genes=_genes(43, 20, 80), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(),
+            risk_genes=RiskGenes())
+        sig = StrategyDNA.from_json(carrier.to_json()).gene_signature
+        save_strategy(db, strategy_id="st_mal", dna_json=bad_json,
+                      symbol="BTCUSDT", timeframe="4h", name="mal",
+                      source="manual", gene_signature=sig)
+        h = _register(db, period=43, lo=20, hi=80)
+        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        assert t["same_dna_existing"] is False, (
+            f"畸形 dna_json 行被误分流复用（不可证应=不命中）：{bad_json}")
+        assert t["strategy_id"] != "st_mal"
+
     def test_legacy_dna_continuity(self, db):
         """连续性锚：存量 dna_json 无新键读 None——与新产物比对双方缺省连续。"""
         # 手工插无 exit_fraction 键的存量形 dna（risk_genes 无新键）

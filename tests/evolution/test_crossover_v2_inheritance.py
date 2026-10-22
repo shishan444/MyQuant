@@ -171,6 +171,9 @@ class TestEvolutionInitialDnaPluginReject:
             f"插件源 initial_dna 现状 {r.status_code} 落库（落库后任务内"
             f"失真评估）——入口拒绝未生效：{r.text[:300]}")
         assert r.json()["detail"]["code"] == "PLUGIN_SOURCES_UNSUPPORTED"
+        # 消息表单源锚（_PLUGIN_REJECT_MESSAGES 进化条目——design 2.5
+        # 定稿文案指明「进化评估链未接入插件信号组装」）
+        assert "进化评估链未接入插件信号组装" in r.json()["detail"]["message"]
 
     def test_rule_initial_dna_still_accepted(self, api_client):
         """护栏：纯 rule initial_dna 创建不受影响（201）。"""
@@ -202,9 +205,13 @@ class TestEvaluationPluginReject:
         return {"symbol": "BTCUSDT", "timeframe": "4h",
                 "data_start": None, "data_end": None}
 
-    def test_batch_path_filters_plugin_individual(self, tmp_path, monkeypatch):
+    def test_batch_path_filters_plugin_individual(self, tmp_path, monkeypatch,
+                                                  caplog):
         """批量主路径：插件源个体不进 batch_run（引擎收到的种群不含
-        它）+原位 0.0 占位（返回形制与顺序零变化）。"""
+        它）+原位 0.0 占位（返回形制与顺序零变化）+归因经 logger.warning
+        结构化字段（code+strategy_id+reason——spec「结构化 error 标记」
+        在批量路径的落地形制，调用方只消费分数序列）。"""
+        import logging
         import types
 
         import pandas as pd
@@ -214,6 +221,7 @@ class TestEvaluationPluginReject:
         plugin = _rule_dna(
             signal_sources=[_plugin_source("fx_demo")],
             composition={"mode": "gate"})
+        plugin.strategy_id = "st_plg_batch"
         rule = _rule_dna()
         received = {}
 
@@ -228,14 +236,23 @@ class TestEvaluationPluginReject:
         monkeypatch.setitem(
             __import__("sys").modules, "core.backtest.engine",
             fake_engine_mod)
-        scores = ev.evaluate_population(
-            [plugin, rule], self._task_row(), tmp_path,
-            enhanced_df=pd.DataFrame({"close": [1.0] * 5}))
+        with caplog.at_level(logging.WARNING,
+                             logger="core.evolution.evaluation"):
+            scores = ev.evaluate_population(
+                [plugin, rule], self._task_row(), tmp_path,
+                enhanced_df=pd.DataFrame({"close": [1.0] * 5}))
         assert len(scores) == 2 and scores[0] == 0.0, (
             f"插件源个体应原位 0.0 占位且长度不变：{scores}")
         assert id(rule) in received.get("pop_ids", []), "rule 个体应进引擎"
         assert id(plugin) not in received.get("pop_ids", []), (
             "插件源个体不得进 batch_run")
+        warn = [r for r in caplog.records
+                if "插件源个体拒绝评估" in r.getMessage()]
+        assert warn, "批量路径拒绝无留痕（归因日志未落）"
+        msg = warn[0].getMessage()
+        assert "code=PLUGIN_SOURCES_UNSUPPORTED" in msg
+        assert "strategy_id=st_plg_batch" in msg
+        assert "进化评估链未接入插件信号组装" in msg
 
     def test_single_path_zero_score_with_reason(self, tmp_path):
         """单体回退路径：evaluate_dna 对插件源个体 0 分+error 标记+

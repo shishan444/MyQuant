@@ -206,3 +206,63 @@ class TestStrategyCreateCompositionGate:
         }
         r = api_client.post("/api/strategies", json=body)
         assert r.status_code == 201, r.text
+
+
+class TestCompositionGateOtherEntries:
+    """AC-2「经创建/更新/进化入口」三入口的另两入口：更新（PUT）与
+    进化（initial_dna）——判据经 validate_dna 单点生效，创建入口已锚
+    （TestStrategyCreateCompositionGate），此处补齐契约点名的其余
+    两入口（crud.py:304 / evolution.py:241 同款 422 通道）。"""
+
+    @pytest.mark.integration
+    def test_bad_mode_422_on_update(self, api_client):
+        """PUT /api/strategies/{id} 换坏 composition DNA → 422
+        DNA_VALIDATION_FAILED（update 通道同款早拒绝——经 POST 建合法
+        策略再 PUT 换坏形不得绕过）。"""
+        create = api_client.post("/api/strategies", json={
+            "name": "comp-put",
+            "dna": _skeleton_dna(None).to_dict(),
+            "symbol": "BTCUSDT", "timeframe": "4h",
+        })
+        assert create.status_code == 201, create.text
+        sid = create.json()["strategy_id"]
+        r = api_client.put(f"/api/strategies/{sid}", json={
+            "dna": _skeleton_dna({"mode": "vote"}).to_dict()})
+        assert r.status_code == 422, (
+            f"更新入口坏 mode 现状 {r.status_code}——判据未在 update "
+            f"通道生效：{r.text[:300]}")
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+        assert any("mode must be one of" in e for e in detail["errors"])
+
+    @pytest.mark.integration
+    def test_bad_mode_422_on_evolution_entry(self, api_client):
+        """POST /api/evolution/tasks initial_dna 坏 composition → 422
+        DNA_VALIDATION_FAILED+任务无新行（坏祖先不落库——落库后变异
+        扩散整代种群）。"""
+        import sqlite3
+
+        db = api_client.app.state.db_path
+
+        def _task_count() -> int:
+            conn = sqlite3.connect(db)
+            try:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM evolution_task").fetchone()[0]
+            finally:
+                conn.close()
+
+        before = _task_count()
+        r = api_client.post("/api/evolution/tasks", json={
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "target_score": 80.0, "score_template": "explorer",
+            "population_size": 15, "max_generations": 200,
+            "initial_dna": _skeleton_dna({"mode": "vote"}).to_dict(),
+        })
+        assert r.status_code == 422, (
+            f"进化入口坏 composition 现状 {r.status_code}——判据未在 "
+            f"initial_dna 通道生效：{r.text[:300]}")
+        detail = r.json()["detail"]
+        assert detail["code"] == "DNA_VALIDATION_FAILED"
+        assert any("mode must be one of" in e for e in detail["errors"])
+        assert _task_count() == before, "拒绝后任务表出现新行（坏祖先落库）"
