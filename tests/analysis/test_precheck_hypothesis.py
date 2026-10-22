@@ -525,6 +525,54 @@ class TestHtfConditionInCombo:
             [{"subject": "close", "action": "gt", "target": "95"}])
         assert out["payload"]["combination_stats"]["n_triggers"] == 90
 
+    def test_plugin_column_with_htf_rejected(self, tmp_path, db_path) -> None:
+        """CARD-01 内核守卫（timeframe×插件列，Q-2 求值层防线）：
+        precheck 路径不经 api 层 _reject_tf_plugin_mix（装载链收集
+        后直落 MtfEvalContext 求值），注册可达的插件列携带 timeframe
+        键 → _mask_higher 入口显式拒绝 RESEARCH_CONDITION_INVALID
+        （同码同文案），非静默 0 命中——守卫先于幂等缓存与高周期
+        装载（1w/4h raw 缺失不改变拒绝码）。"""
+        df1, data_dir = self._htf_env(tmp_path)
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_c1", name="fx_c1",
+            version=1, expression="rolling_mean(close, 5)",
+            output_columns='["fx_c1_demo"]',
+            entry_id="e_c1", column_name="fx_c1_demo")
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df1.index[210].isoformat(),
+               "end": df1.index[-1].isoformat()}
+        with pytest.raises(ResearchError) as ei:
+            precheck_hypothesis(
+                db_path, data_dir, rng, dict(rng),
+                [{"subject": "fx_c1_demo", "action": "gt", "target": "0",
+                  "timeframe": "4h"}])
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        detail = ei.value.detail or {}
+        assert detail.get("param") == "condition.timeframe"
+        assert detail.get("column") == "fx_c1_demo"
+        assert detail.get("timeframe") == "4h"
+        assert "移除 timeframe" in detail.get("hint", "")
+
+    def test_plugin_column_base_period_unaffected(self, tmp_path,
+                                                  db_path) -> None:
+        """CARD-01 护栏：同插件列条件不带 timeframe 键 → 基准周期
+        enrich 求值照常（守卫零误伤——装载链 enrich 注入基准 df，
+        全链 verdict 正常产出）。"""
+        df1, data_dir = self._htf_env(tmp_path)
+        rr.save_plugin_with_registry(
+            db_path, source="formula", plugin_id="p_c1b", name="fx_c1b",
+            version=1, expression="rolling_mean(close, 5)",
+            output_columns='["fx_c1b_demo"]',
+            entry_id="e_c1b", column_name="fx_c1b_demo")
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df1.index[210].isoformat(),
+               "end": df1.index[-1].isoformat()}
+        out = precheck_hypothesis(
+            db_path, data_dir, rng, dict(rng),
+            [{"subject": "fx_c1b_demo", "action": "gt", "target": "0"}])
+        assert out["verdict"] in ("pass", "warn", "reject_suggestion"), (
+            "基准周期插件列条件被守卫误伤（不应拒）")
+
 
 # ---------------------------------------------------------------- 装载
 

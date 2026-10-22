@@ -199,6 +199,50 @@ class TestSelectorAndLimits:
         assert out["sampling"] == "even"
 
 
+class TestPluginTfGuard:
+    """CARD-01 内核守卫（timeframe×插件列，Q-2 求值层防线）：
+    inspect_cases 路径不经 api 层 _reject_tf_plugin_mix（装载链可达性
+    校验后直落 MtfEvalContext 求值），注册可达的插件列携带 timeframe
+    键 → _mask_higher 入口显式拒绝 RESEARCH_CONDITION_INVALID（同码
+    同文案），非静默 0 命中。守卫先于高周期装载——1w raw 缺失不改变
+    拒绝码。
+
+    注记：target 侧 fx_/model_ 前缀在本路径被前置形制校验拦截
+    （RESEARCH_PARAM_INVALID param=indicator），不可达内核守卫——
+    同为显式拒绝非静默，码不同属 inspect 形制校验既有边界。"""
+
+    @staticmethod
+    def _register_fx(env):
+        rr.save_plugin_with_registry(
+            env["db"], source="formula", plugin_id="p_c1i",
+            name="fx_c1i", version=1, expression="rolling_mean(close, 5)",
+            output_columns='["fx_c1i_demo"]',
+            entry_id="e_c1i", column_name="fx_c1i_demo")
+
+    def test_plugin_column_with_htf_rejected(self, env):
+        """注册可达 fx 列 + timeframe 键（1w 严格高于 base 1d）→
+        组合边界拒绝，detail 携带 column/timeframe/hint。"""
+        self._register_fx(env)
+        with pytest.raises(ResearchError) as ei:
+            _call(env, selector={"condition": {
+                "subject": "fx_c1i_demo", "action": "gt",
+                "target": 0.5, "timeframe": "1w"}})
+        assert _err(ei).code == "RESEARCH_CONDITION_INVALID"
+        detail = ei.value.detail or {}
+        assert detail.get("param") == "condition.timeframe"
+        assert detail.get("column") == "fx_c1i_demo"
+        assert detail.get("timeframe") == "1w"
+        assert "移除 timeframe" in detail.get("hint", "")
+
+    def test_plugin_column_base_period_unaffected(self, env):
+        """CARD-01 护栏：同插件列条件不带 timeframe 键 → 基准周期
+        enrich 求值照常返回案例（守卫零误伤）。"""
+        self._register_fx(env)
+        out = _call(env, selector={"condition": {
+            "subject": "fx_c1i_demo", "action": "gt", "target": 0.5}})
+        assert out["n_matched"] >= 0, "基准周期插件列条件被守卫误伤"
+
+
 class TestSamplingAndWindows:
     """取样与窗口契约（位置真相独立推导）。"""
 
