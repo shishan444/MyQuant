@@ -233,32 +233,14 @@ def create_task(
             from api.routes.research.common import research_error_to_http
             raise research_error_to_http(exc) from exc
 
-        # 手工 DNA 值域校验（review-042 CARD-15）：与 strategies 路由
-        # 同款——initial_dna 此前仅 validate_policy，坏值 201 落库后
-        # population.init_population 祖先直接 append 无校验（随机个体/
-        # 子代有 validate_dna 唯祖先漏），坏基因扩散整代种群
-        from core.strategy.validator import validate_dna
-        _vr = validate_dna(dna)
-        if not _vr.is_valid:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "DNA_VALIDATION_FAILED",
-                        "message": "DNA 值域/结构校验未通过",
-                        "errors": _vr.errors})
-
-        # Q-3 评估入口族三道拒绝之一（任务入口，dna-strong-typing-
-        # and-disclosure-hygiene 件⑤）：插件源 initial_dna 在场即拒
-        # ——先于任务落库（runner 异步消费，落库后拒绝只能失败整个
-        # 任务）；消息表同源（_PLUGIN_REJECT_MESSAGES 进化条目——
-        # 与 REST 回测通道同族「在场即拒」能力边界）
-        from api.routes.strategies._common import _PLUGIN_REJECT_MESSAGES
-        from core.strategy.validator import has_plugin_sources
-        if has_plugin_sources(dna):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
-                    "message": _PLUGIN_REJECT_MESSAGES["evolution"]})
+        # 手工 DNA 拒绝收敛 _common 单源 helper（CARD-05）：值域校验
+        # （review-042 CARD-15——initial_dna 坏值 422 先于落库，唯祖先
+        # 漏校验致坏基因扩散已收口）+ 插件源在场即拒（Q-3 件⑤——
+        # 先于任务落库，runner 异步消费落库后拒绝只能失败整个任务）
+        # 两段与六入口 helper 行为逐字一致（请求直传态/进化通道）
+        from api.routes.strategies._common import _reject_invalid_or_plugin_dna
+        _reject_invalid_or_plugin_dna(
+            dna, library_dna=False, channel="evolution")
     else:
         from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes, TimeframeLayer
         base_signals = [
