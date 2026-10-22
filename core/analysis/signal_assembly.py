@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.errors import ResearchError   # CARD-02 断链：轻量定义点
-from core.strategy.validator import COMPOSITION_MODES  # mode 白名单单源（H4-a）
+# mode 白名单单源（H4-a）；缺省单源（CARD-07——与 validate_dna 同字面量）
+from core.strategy.validator import COMPOSITION_MODES, DEFAULT_COMPOSITION_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ def assemble_signal_set(
             plugin_cols[col] = work[col]
 
     # 组合（composition.mode 缺省 = weighted_vote，threshold 0.5 交集语义）
-    mode = (dna.composition or {}).get("mode", "weighted_vote")
+    mode = (dna.composition or {}).get("mode", DEFAULT_COMPOSITION_MODE)
     combined = _combine(base, dna, plugin_cols, mode)
 
     # 组合态可观测哨兵（fix-research-c4 C4.2）：有规则进场侧基因、
