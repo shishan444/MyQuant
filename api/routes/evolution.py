@@ -245,6 +245,20 @@ def create_task(
                 detail={"code": "DNA_VALIDATION_FAILED",
                         "message": "DNA 值域/结构校验未通过",
                         "errors": _vr.errors})
+
+        # Q-3 评估入口族三道拒绝之一（任务入口，dna-strong-typing-
+        # and-disclosure-hygiene 件⑤）：插件源 initial_dna 在场即拒
+        # ——先于任务落库（runner 异步消费，落库后拒绝只能失败整个
+        # 任务）；消息表同源（_PLUGIN_REJECT_MESSAGES 进化条目——
+        # 与 REST 回测通道同族「在场即拒」能力边界）
+        from api.routes.strategies._common import _PLUGIN_REJECT_MESSAGES
+        from core.strategy.validator import has_plugin_sources
+        if has_plugin_sources(dna):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "PLUGIN_SOURCES_UNSUPPORTED",
+                    "message": _PLUGIN_REJECT_MESSAGES["evolution"]})
     else:
         from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes, TimeframeLayer
         base_signals = [
