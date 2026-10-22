@@ -322,6 +322,75 @@ class TestBatchResearchErrorTolerance:
         assert any("跳过拒绝基因" in r.getMessage() for r in caplog.records)
 
 
+class TestDegradationLogging:
+    """H4-b（Q-4 维持+留痕，dna-strong-typing-and-disclosure-hygiene 件③）：
+    两面降级行为零变化（全 False/空信号集维持），纯日志补齐——
+
+    - 基因级白名单 (ValueError, KeyError, TypeError)：单基因求值失败
+      →该基因全 False——补逐基因 warning（indicator+异常类名，沿
+      ResearchError 跳过基因的 :1100-1103 同款可观测形制）；
+    - 个体级组装层 except Exception：→_empty_signal_set——补逐个体
+      warning（strategy_id+异常类名——零信号策略可归因）。
+    """
+
+    def test_gene_whitelist_degradation_logged(self, caplog):
+        """白名单基因降级留痕：未知指标+合法条件类型走 ValueError
+        白名单（_get_indicator_column 列缺失——S12a 同款形态）→
+        warning 含 indicator 与异常类名（现状静默——红）。"""
+        df = make_enhanced_df(n=60)
+        dna = make_dna()
+        dna.signal_genes = [
+            make_signal_gene(indicator="GHOST_X",
+                             condition_type="lt", condition_value=30),
+            *dna.signal_genes[1:],
+        ]
+        with caplog.at_level(logging.WARNING, logger="core.strategy.executor"):
+            results = batch_signal_sets([dna], df)
+        assert len(results) == 1, "行为面：降级不炸批维持"
+        msgs = [r for r in caplog.records
+                if "基因求值降级" in r.getMessage()]
+        assert msgs, "白名单基因降级无留痕（Q-4 +留痕未落地）"
+        assert "indicator=GHOST_X" in msgs[0].getMessage()
+        assert "exception=" in msgs[0].getMessage()
+
+    def test_individual_assembly_degradation_logged(self, caplog, monkeypatch):
+        """个体级组装层降级留痕：MTF 个体组装抛普通异常 →空信号集
+        维持+warning 含 strategy_id 与异常类名（现状静默——红）。"""
+        from core.strategy import executor as exc_mod
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
+            TimeframeLayer,
+        )
+
+        base = make_enhanced_df(n=120, freq="1h", seed=21)
+        hi = make_enhanced_df(n=8, freq="1d", seed=22)
+        # 显式 layers 构造（is_mtf 判据=_layers_explicit，构造期标记）
+        dna = StrategyDNA(
+            signal_genes=make_dna().signal_genes,
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(),
+            layers=[TimeframeLayer(
+                "1h", make_dna().signal_genes, LogicGenes(), None)],
+        )
+        dna.strategy_id = "st_deg_log"
+        assert dna.is_mtf, "测试前提：MTF 个体走组装分支"
+
+        def _boom(*a, **kw):
+            raise RuntimeError("组装意外")
+
+        monkeypatch.setattr(exc_mod, "dna_to_signal_set", _boom)
+        with caplog.at_level(logging.WARNING, logger="core.strategy.executor"):
+            results = batch_signal_sets(
+                [dna], base, dfs_by_timeframe={"1d": hi})
+        assert len(results) == 1, "行为面：空信号集降级维持不炸批"
+        msgs = [r for r in caplog.records
+                if "个体组装降级" in r.getMessage()]
+        assert msgs, "个体组装降级无留痕（Q-4 +留痕未落地）"
+        assert "strategy_id=st_deg_log" in msgs[0].getMessage()
+        assert "exception=RuntimeError" in msgs[0].getMessage()
+
+
 class TestIndicatorSupplementGuard:
     """补注守卫的 False 侧（覆盖率盲区消解）：ResearchError.detail
     已含 indicator 时不被调用层覆盖——防双写抹掉既有上下文。当前

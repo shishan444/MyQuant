@@ -1102,10 +1102,16 @@ def batch_signal_sets(
                     "indicator=%s condition=%r",
                     exc.code, exc.detail, gene.indicator, gene.condition)
                 continue
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError) as exc:
                 # TypeError 兜条件 target 为 None 等形态的求值失败
                 # （numpy 数值 vs None 比较）——与既有白名单同走全 False
-                # 降级，单基因失败不炸整批
+                # 降级，单基因失败不炸整批；H4-b（Q-4 维持+留痕，
+                # dna-strong-typing-and-disclosure-hygiene 件③）补逐
+                # 基因 warning——坏基因降级可排查（沿 ResearchError
+                # 跳过基因的同款可观测形制，行为零变化纯日志）
+                logger.warning(
+                    "batch_signal_sets 基因求值降级全 False indicator=%s "
+                    "exception=%s", gene.indicator, type(exc).__name__)
                 gene_results[sig] = pd.Series(False, index=enhanced_df.index)
 
     if skipped_genes:
@@ -1127,7 +1133,15 @@ def batch_signal_sets(
                 # 防御拒绝透传不吞（trigger-policy D10/6.3）：带 policy
                 # MTF DNA 的结构化拒绝不得被静默替换成「策略零信号」
                 raise
-            except Exception:
+            except Exception as exc:
+                # H4-b（Q-4 维持+留痕，件③）：组装层降级补逐个体
+                # warning——零信号策略可归因（H4-c 强形制挡住传输层
+                # 坏形后，此面仅剩进化内部构造/库存深层坏形的兜底；
+                # 行为零变化纯日志）
+                logger.warning(
+                    "batch_signal_sets 个体组装降级空信号集 strategy_id=%s "
+                    "exception=%s",
+                    getattr(dna, "strategy_id", None), type(exc).__name__)
                 results.append(_empty_signal_set(enhanced_df))
             continue
 
