@@ -334,6 +334,14 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
                 return df[node.id].astype(float)
             raise FormulaError(f"列引用不存在: {node.id}")
         if isinstance(node, ast.Call):
+            # 防御面（SEC-4）：静态校验先行保证正常入口 func 必为 Name；
+            # 不经 validate_formula 直调求值器时，func 非 Name（如 a.b(1)
+            # 的 Attribute / a(1)(2) 的 Call）下 node.func.id 是裸
+            # AttributeError——此处统一为 FormulaError（ValueError 子类，
+            # 上层既有 except (TypeError, ValueError) 捕获面可接住）
+            if not isinstance(node.func, ast.Name):
+                raise FormulaError(
+                    f"调用目标必须是函数名，得到 {type(node.func).__name__}")
             fname = node.func.id  # 已由静态校验保证
             args = [_ev(a) for a in node.args]
             try:

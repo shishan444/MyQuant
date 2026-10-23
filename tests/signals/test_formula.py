@@ -115,6 +115,19 @@ class TestEvaluation:
         with pytest.raises(FormulaError, match="看向未来|非负"):
             evaluate_formula("shift(close, -1)", df)
 
+    @pytest.mark.parametrize(
+        "expr", ["a.b(1)", "a(1)(2)"],
+        ids=["func=Attribute", "func=Call"])
+    def test_non_name_call_func_raises_formula_error(
+            self, expr: str) -> None:
+        """SEC-4 防御：绕过静态校验直调求值器，func 非 Name 的 Call
+        统一为 FormulaError（防御契约面=func 非 ast.Name 的任何 Call，
+        双形态防只防 Attribute 不防 Call 的窄实现——裸 AttributeError
+        不匹配 raises(FormulaError) 即红）。"""
+        df = _df()
+        with pytest.raises(FormulaError, match="Attribute|Call"):
+            evaluate_formula(expr, df)
+
 
 # ================================================================ 0.2.12 扩充
 # T1 白名单函数 / T2 静态校验与推导（TESTING 轮锚定）
