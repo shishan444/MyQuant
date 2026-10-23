@@ -101,6 +101,14 @@ class TestPageOneParityRest:
 
         app = create_app(db_path=db_path, data_dir=tmp_data_dir)
 
+        # 隔离生效自证的基线：进入 lifespan 前的线程名集合——断言面
+        # 是差集（lifespan 窗口内**新增**线程不含两名），非全局清单
+        # 绝对不含：前序测试泄漏的 evolution-runner（TD-③ 在册不修）
+        # 在全量态恒在进程清单，全局措辞会使断言在全量态恒红；差集
+        # 精确锚「s4b 自身 lifespan 未启动 runner/scheduler」——patch
+        # 若不被实际调用，lifespan 会新增同名线程，差集即红。
+        names_before_lifespan = {t.name for t in threading.enumerate()}
+
         async def _run():
             # httpx 0.28：ASGITransport 仅异步——独立客户端栈直调 ASGI
             # （不走 TestClient 的 starlette 栈）；lifespan 经
@@ -121,22 +129,19 @@ class TestPageOneParityRest:
                 with_page = (await client.get(
                     "/api/research/log", params={"page": 1})).json()
                 without = (await client.get("/api/research/log")).json()
-                # 隔离生效自证（design v2.4 契约级）：lifespan 活跃窗口
-                # （进入+POST+两次 GET 全程）内抓线程名清单——断言措辞
-                # 用线程名字符串（Thread.name），防「patch 方法在但不被
-                # lifespan 实际调用」的假隔离；任务级线程
-                # （paper-recovered-{task_id} 等，lifespan 同步 recover
-                # 创建，空库零任务不产生）不在断言面。
                 names_during_lifespan = [t.name for t in threading.enumerate()]
             return with_page, without, names_during_lifespan
 
         with_page, without, names_during_lifespan = asyncio.run(_run())
-        assert "evolution-runner" not in names_during_lifespan, (
-            "隔离未生效：evolution-runner 线程仍在（假隔离——patch "
-            f"方法未被 lifespan 实际调用）: {names_during_lifespan}")
-        assert "paper-scheduler" not in names_during_lifespan, (
-            "隔离未生效：paper-scheduler 线程仍在（假隔离——patch "
-            f"方法未被 lifespan 实际调用）: {names_during_lifespan}")
+        new_threads = set(names_during_lifespan) - names_before_lifespan
+        assert "evolution-runner" not in new_threads, (
+            "隔离未生效：s4b 自身 lifespan 新增了 evolution-runner 线程"
+            f"（假隔离——patch 方法未被 lifespan 实际调用）:"
+            f" 新增={sorted(new_threads)}")
+        assert "paper-scheduler" not in new_threads, (
+            "隔离未生效：s4b 自身 lifespan 新增了 paper-scheduler 线程"
+            f"（假隔离——patch 方法未被 lifespan 实际调用）:"
+            f" 新增={sorted(new_threads)}")
         assert with_page == without, (
             "REST 层复现——按升级路径走变更传播\n"
             f"[F1 逐键 diff] {_key_diff(with_page, without)}")
