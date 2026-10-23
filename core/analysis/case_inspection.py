@@ -58,7 +58,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from core.analysis.condition_kernel import MtfEvalContext, mask_for
+from core.analysis.condition_kernel import (
+    PLUGIN_COLUMN_PREFIXES, MtfEvalContext, mask_for,
+)
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
@@ -171,7 +173,7 @@ def _parse_selector(
                     ColumnRefError, resolve_column_ref)
                 _is_plugin = (isinstance(cond["subject"], str)
                               and cond["subject"].startswith(
-                                  ("fx_", "model_")))
+                                  PLUGIN_COLUMN_PREFIXES))
                 try:
                     if not _is_plugin:
                         resolve_column_ref(cond["subject"])
@@ -211,7 +213,7 @@ def _parse_selector(
             # 列名解析不适用（非编码列名/基础列），合法性由主流程装载
             # 段的 registry 可达性校验把关（两码分工同分析模板装载链）
             _is_plugin = (isinstance(cond["subject"], str)
-                          and cond["subject"].startswith(("fx_", "model_")))
+                          and cond["subject"].startswith(PLUGIN_COLUMN_PREFIXES))
             try:
                 if not _is_plugin:
                     resolve_column_ref(cond["subject"])
@@ -481,7 +483,7 @@ def inspect_cases(
                 _subj = payload["subject"]
                 _subj_is_plugin = (
                     isinstance(_subj, str)
-                    and _subj.startswith(("fx_", "model_")))
+                    and _subj.startswith(PLUGIN_COLUMN_PREFIXES))
                 if not _subj_is_plugin:
                     raise ResearchError(
                         "RESEARCH_PARAM_INVALID",
@@ -507,7 +509,7 @@ def inspect_cases(
             _all_plugin_or_struct = all(
                 isinstance(c["subject"], dict)
                 or (isinstance(c["subject"], str)
-                    and c["subject"].startswith(("fx_", "model_")))
+                    and c["subject"].startswith(PLUGIN_COLUMN_PREFIXES))
                 for c in payload)
             if not _all_plugin_or_struct and not _extra_inds:
                 raise ResearchError(
@@ -633,7 +635,7 @@ def inspect_cases(
         # 保持默认参数输出列边界（字符串不携带参数，默认边界即其语义）
         subject = payload["subject"]
         _subj_plugin = (isinstance(subject, str)
-                        and subject.startswith(("fx_", "model_")))
+                        and subject.startswith(PLUGIN_COLUMN_PREFIXES))
         if (isinstance(subject, str) and not _subj_plugin
                 and subject not in available):
             raise ResearchError(
@@ -652,7 +654,7 @@ def inspect_cases(
         for i, c in enumerate(payload):
             subject = c["subject"]
             _subj_plugin = (isinstance(subject, str)
-                            and subject.startswith(("fx_", "model_")))
+                            and subject.startswith(PLUGIN_COLUMN_PREFIXES))
             if (isinstance(subject, str) and not _subj_plugin
                     and subject not in available):
                 raise ResearchError(

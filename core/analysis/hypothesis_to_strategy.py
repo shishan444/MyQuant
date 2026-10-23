@@ -910,11 +910,12 @@ def _translate_conditions(
         # 字符串 subject（0.2.13 起）：参数化指标编码形已退役（入口关闭+
         # 存量迁移）——只可能是基础列 / 插件失效列 / 未知列，全部不可表达
         # （close 的 lt/gt+decoded 组合已在上方分支放行，不会落到这里）
+        from core.analysis.condition_kernel import PLUGIN_COLUMN_PREFIXES
         if subject in BASE_SUBJECT_COLUMNS:
             reason = (f"内置基础列 subject（{subject}）不可表达为"
                       "指标信号源（参数化指标请用结构化引用 "
                       "{indicator, params, field}）")
-        elif subject.startswith(("fx_", "model_")):
+        elif subject.startswith(PLUGIN_COLUMN_PREFIXES):
             reason = (f"插件列 subject（{subject}）已失效"
                       "（信号注册表无此列——插件被删除或未注册）")
         else:
