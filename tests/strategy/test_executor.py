@@ -433,9 +433,22 @@ class TestIndicatorSupplementGuard:
         with caplog.at_level(logging.WARNING, logger="core.strategy.executor"):
             results = batch_signal_sets([dna], df)
         assert len(results) == 1, "整批完成"
-        rec = next(r for r in caplog.records
-                   if "跳过拒绝基因" in r.getMessage())
-        msg = rec.getMessage()
+        # 串台隔离修复（fix-fullrun-baseline-4red ④）：caplog 按
+        # propagation 捕获全局日志——全量态取证实证泄漏的
+        # evolution-runner 线程（前序测试 lifespan join 超时遗留）
+        # 的「跳过拒绝基因」warning 串入本测试记录集且排前，旧检索
+        # （next 取第一条）错取串台记录致 RSI 断言摇摆红。按产生线程
+        # 归属过滤（fullrun-discipline 测试独立性：断言锚定本测试
+        # 上下文产生的记录）——守护两断言语义原样；泄漏线程记录不属
+        # 于本测试产物，排除有定性依据（api/app.py:112-118 工程档案
+        # 「缺陷④跨域 flaky 实测锁定」+runner daemon api/runner.py:134
+        # +join 超时泄漏 api/app.py:133）。泄漏本身不修（TD-③ 在册）。
+        import threading
+        mine = [r for r in caplog.records
+                if "跳过拒绝基因" in r.getMessage()
+                and r.thread == threading.get_ident()]
+        assert mine, "本测试 batch 调用未产生拒绝基因 warning"
+        msg = mine[0].getMessage()
         assert "indicator=RSI" in msg, "warning 披露 gene 名"
         assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"
 

@@ -34,6 +34,28 @@ def _seed_logs(client, n: int = 3):
         assert resp.status_code == 200, resp.text
 
 
+def _key_diff(a, b, path: str = "") -> list:
+    """[F1 常驻取证] 两响应逐键差异树（断言失败信息增强）。
+
+    递归下降 dict/list，产出差异路径清单；断言语义（== 全等比较）
+    不变——仅失败时可见的信息增强装置。"""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in sorted(set(a) | set(b)):
+            out += _key_diff(a.get(k), b.get(k), f"{path}.{k}")
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        out = []
+        for i in range(max(len(a), len(b))):
+            av = a[i] if i < len(a) else "<缺>"
+            bv = b[i] if i < len(b) else "<缺>"
+            out += _key_diff(av, bv, f"{path}[{i}]")
+        return out
+    if a != b:
+        return [{path: {"page1": a, "default": b}}]
+    return []
+
+
 class TestPageOneParityHttp:
     """S4a：HTTP 层（TestClient）page=1 与无参逐键相等。"""
 
@@ -50,10 +72,32 @@ class TestPageOneParityHttp:
 class TestPageOneParityRest:
     """S4b：REST 层（httpx ASGITransport 直调，独立客户端栈）等价。"""
 
-    def test_s4b_httpx_asgi_page1_equals_default(self, db_path, tmp_data_dir):
+    def test_s4b_httpx_asgi_page1_equals_default(
+            self, db_path, tmp_data_dir, monkeypatch):
         import asyncio
         import httpx
+        import threading
         from api.app import create_app
+        from api.runner import EvolutionRunner
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        # 测试独立性隔离（design v2.4 形制，零生产代码）：本测试仅测
+        # REST 分页对拍（两路由 Depends→repository 依赖链），与被测面
+        # 无关的后台组件不启动。类级 setattr 遮蔽基类方法——
+        # EvolutionRunner 无 start/join override（走 threading.Thread
+        # 原生），join 必须同 patch：start no-op 后未启动线程在 lifespan
+        # 关停段（api/app.py runner.join(timeout=5.0)）join 抛
+        # RuntimeError 经 __aexit__ 传播致 error；PaperScheduler 自定义
+        # join 有 _thread None 守卫，仅 patch start 即安全。不隔离面：
+        # startup_recover/recover_stale_tasks/restart_crashed_tasks 为
+        # lifespan 同步调用先于 POST；executor watchdog 写库面=
+        # analysis_tasks 超时回写（空库无在途任务不触发）；
+        # realtime.capture_loop 无写库通道（V-2a 核验）。
+        monkeypatch.setattr(EvolutionRunner, "start", lambda self: None)
+        monkeypatch.setattr(
+            EvolutionRunner, "join",
+            lambda self, timeout=None: None)
+        monkeypatch.setattr(PaperScheduler, "start", lambda self: None)
 
         app = create_app(db_path=db_path, data_dir=tmp_data_dir)
 
@@ -77,10 +121,25 @@ class TestPageOneParityRest:
                 with_page = (await client.get(
                     "/api/research/log", params={"page": 1})).json()
                 without = (await client.get("/api/research/log")).json()
-            return with_page, without
+                # 隔离生效自证（design v2.4 契约级）：lifespan 活跃窗口
+                # （进入+POST+两次 GET 全程）内抓线程名清单——断言措辞
+                # 用线程名字符串（Thread.name），防「patch 方法在但不被
+                # lifespan 实际调用」的假隔离；任务级线程
+                # （paper-recovered-{task_id} 等，lifespan 同步 recover
+                # 创建，空库零任务不产生）不在断言面。
+                names_during_lifespan = [t.name for t in threading.enumerate()]
+            return with_page, without, names_during_lifespan
 
-        with_page, without = asyncio.run(_run())
-        assert with_page == without, "REST 层复现——按升级路径走变更传播"
+        with_page, without, names_during_lifespan = asyncio.run(_run())
+        assert "evolution-runner" not in names_during_lifespan, (
+            "隔离未生效：evolution-runner 线程仍在（假隔离——patch "
+            f"方法未被 lifespan 实际调用）: {names_during_lifespan}")
+        assert "paper-scheduler" not in names_during_lifespan, (
+            "隔离未生效：paper-scheduler 线程仍在（假隔离——patch "
+            f"方法未被 lifespan 实际调用）: {names_during_lifespan}")
+        assert with_page == without, (
+            "REST 层复现——按升级路径走变更传播\n"
+            f"[F1 逐键 diff] {_key_diff(with_page, without)}")
         assert without.get("items"), "前置：日志非空"
 
 
