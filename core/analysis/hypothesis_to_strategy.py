@@ -537,7 +537,7 @@ def translate_hypothesis(
     # dna_json 逐位不变）。方向唯一来源=假设声明（strategy_params
     # 白名单不扩 direction——无双源）；gene_signature 已编码 dir:
     # （dna.py），short 产物签名异于一切 long 策略，同签名分流不跨
-    # 方向误命中；_D2_RISK_FIELDS 九键不扩（签名已编码方向，比对集
+    # 方向误命中；_D2_RISK_FIELDS 不扩（签名已编码方向，比对集
     # 管「签名未编码的策略层参数」，两机制正交）
     risk_genes = _declared_risk_genes(declared_params)  # 声明块映射（0.4.2 R1）
     risk_genes.direction = conditions.get("direction") or "long"
