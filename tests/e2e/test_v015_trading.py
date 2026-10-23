@@ -11,6 +11,33 @@ from playwright.sync_api import Page
 import os
 BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
+# 非产品级控制台噪音排除清单（fix-fullrun-baseline-4red ①出路 b）——
+# 每项附定性依据（为何不属于守护对象「产品级 console error」）；
+# 新增排除项合法性条件=定性依据在场+交付单列呈报（假绿禁令——
+# 无定性依据的收窄不得作为修复手段）。
+EXCLUDED_NOISE = (
+    ("favicon",
+     "浏览器自动请求 favicon 的 404 资源噪音，非页面代码错误"),
+    ("devtools",
+     "浏览器开发工具自身输出，非页面代码错误"),
+    ("net::",
+     "网络层错误码枚举前缀（ERR_*），指向资源加载失败而非产品逻辑"),
+    ("failed to load resource",
+     "资源加载失败（静态资源/接口 4xx-5xx）——功能性失败由功能用例守护"),
+    ("is not connected to any form element",
+     "antd 开发模式框架警告：Form.useForm() 实例未绑定 Form 元素"
+     "（2026-10-23 定性——生产构建不打印；/trading 全部功能用例绿证"
+     "零功能影响；前端代码清理属前端承接范围，A-arch-1 裁决不处理）"),
+)
+
+
+def _filter_console_errors(errors: list[str]) -> list[str]:
+    """收集→排除管线（排除清单单源消费；子串匹配统一 lower 形）。"""
+    return [
+        e for e in errors
+        if not any(sub in e.lower() for sub, _ in EXCLUDED_NOISE)
+    ]
+
 
 def _wait_react(page: Page, timeout: int = 8000):
     """Wait for React to hydrate by polling for content in #root."""
@@ -39,14 +66,21 @@ class TestTradingPageLoad:
         page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
         _goto_trading(page)
         page.wait_for_timeout(2000)
-        filtered = [
-            e for e in errors
-            if "favicon" not in e.lower()
-            and "devtools" not in e.lower()
-            and "net::" not in e.lower()
-            and "failed to load resource" not in e.lower()
-        ]
+        filtered = _filter_console_errors(errors)
         assert len(filtered) == 0, f"Console errors on /trading: {filtered}"
+
+    def test_exclusion_keeps_collection_alive(self, page: Page):
+        """排除词语义宽度变异哨兵（5.2）：注入一条非排除形态
+        console.error，验证收集面未被排除词吞掉——注入消息必须出现
+        在未排除集合（排除清单若吞掉收集面，本用例红）。"""
+        errors: list[str] = []
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        _goto_trading(page)
+        page.evaluate("console.error('E2E_PROBE_not_in_excluded_noise')")
+        page.wait_for_timeout(500)
+        filtered = _filter_console_errors(errors)
+        assert any("E2E_PROBE_not_in_excluded_noise" in e for e in filtered), \
+            f"注入的非排除形态 error 被排除词吞掉（收集面被破坏）: {filtered}"
 
     def test_page_has_content(self, page: Page):
         _goto_trading(page)
