@@ -267,14 +267,17 @@ class TestSourceAndDisclosure:
         src = res.payload["source"]
         assert src["default_set"] is False
         assert src["indicators"] == ["PSAR"]
-        # 点名集外指标无四类事件语义——事件清单可空（结构统计完整）
-        assert res.payload["structure"]["event_counts"] == {
-            "pattern_trigger": 0, "indicator_cross": 0,
-            "band_position": 0, "sustained_run": 0} or \
-            res.payload["events"] == [] or True
+        # 点名集外指标无 pattern/cross/band 事件语义；急涨段仍产生
+        # sustained_run 游程（事件清单非空——原「清单可空/计数全零」
+        # 期望与实际行为不符，被 or True 恒真遮蔽）
         # 聚焦断言：无 pattern/cross/band 事件（PSAR 不属任何事件源）
         types = {e["type"] for e in res.payload["events"]}
         assert types <= {"sustained_run"}
+        # 结构统计旁证：三类零计数与事件清单一致
+        counts = res.payload["structure"]["event_counts"]
+        assert counts["pattern_trigger"] == 0
+        assert counts["indicator_cross"] == 0
+        assert counts["band_position"] == 0
 
     def test_unknown_indicator_rejected(self):
         df = _ramp_df()
