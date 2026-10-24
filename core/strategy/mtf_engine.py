@@ -347,14 +347,19 @@ def evaluate_layer_with_context(
     layer,
     df: pd.DataFrame,
     exec_df_index: pd.DatetimeIndex | None = None,
+    dfs_by_timeframe: dict | None = None,
 ) -> LayerResult:
     """Evaluate a TimeframeLayer and extract context data.
 
     For structure/zone layers, also extracts direction and price levels.
     For execution layers, returns only the basic signal set.
+
+    dfs_by_timeframe 透传（fix-mtf-execution-consistency R1）：层内带
+    基因级周期标注的基因经 evaluate_layer 合流单点需要装载集；ctx
+    提取（extract_context）保持层轴不扩（R1-M1 负向回归锚锁定）。
     """
     # Get base signal evaluation
-    sig = evaluate_layer(layer, df)
+    sig = evaluate_layer(layer, df, dfs_by_timeframe)
 
     role = layer.role
     if role is None:
@@ -743,7 +748,8 @@ def run_mtf_engine(
 
         # For non-execution layers, pass exec index for resampling
         exec_index = exec_df.index if layer.timeframe != exec_tf else None
-        lr = evaluate_layer_with_context(layer, layer_df, exec_df.index)
+        lr = evaluate_layer_with_context(
+            layer, layer_df, exec_df.index, dfs_by_timeframe)
         layer_results.append((layer.timeframe, lr))
 
     # Get execution layer signals
