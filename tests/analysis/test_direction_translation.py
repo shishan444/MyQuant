@@ -103,3 +103,37 @@ class TestDirectionThroughTranslation:
         assert t_short["strategy_id"] != t_long["strategy_id"]
         assert t_short["duplicated"] is False
         assert t_short["same_dna_existing"] is False
+
+
+class TestRiskGenesOfRow:
+    """_risk_genes_of_row 直测（fix-fullrun-baseline-4red 阶段四盲区
+    :1011-1012——身份回读消费的解析兜底此前未触达）。"""
+
+    @pytest.mark.parametrize(
+        ("row", "expected"),
+        [
+            pytest.param({"dna_json": '{"risk_genes": {"direction": "short"}}'},
+                         {"direction": "short"}, id="合法段原样返回"),
+            pytest.param({"dna_json": '{"risk_genes": [1, 2]}'}, {},
+                         id="rg 非 dict 归空"),
+            pytest.param({"dna_json": '{"signal_genes": []}'}, {},
+                         id="缺段归空"),
+            pytest.param({"dna_json": None}, {}, id="缺 dna_json 归空"),
+            pytest.param({"dna_json": "{not-json"}, {}, id="坏 JSON 归空"),
+            pytest.param({"dna_json": 42}, {}, id="非 str dna_json 归空"),
+        ])
+    def test_row_to_risk_genes(self, row, expected):
+        from core.analysis.hypothesis_to_strategy import _risk_genes_of_row
+        assert _risk_genes_of_row(row) == expected
+
+
+# ---------------- 不可达判定锚（阶段四盲区清单） ----------------
+# 以下防御分支经调用图核验结构上不可达，锚定判定依据防误判为测试缺口：
+# 1. hypothesis_to_strategy.py:505-509（g_sources 非空收口）：源码自述
+#    「结构上不可达（插件列在非 ENTRY 角色已被拒）」——插件列条件
+#    在进入该分组翻译前已由角色守卫拒绝，g_sources 恒空，raise 仅作
+#    防御性收口（不静默丢弃插件源）。
+# 2. hypothesis_to_strategy.py:718-722（action 不可表达列名 target）：
+#    源码自述「保留为 _ACTION_MAP 未来扩键的防御纵深」——当前
+#    _ACTION_MAP 键集与上游 action 白名单同步，扩键未同步时显式
+#    拒绝优于静默漏翻译；正常链到不了该 raise。

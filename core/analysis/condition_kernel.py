@@ -349,7 +349,7 @@ def validate_conditions_array(conditions: Any) -> None:
 # 插件列命名前缀（fx_* 公式 / model_* 模型）——前缀面收集的判定依据。
 # 可达性权威判定在 signal_registry（column_ref._visible_plugin_columns），
 # 前缀匹配是保守宽面：收集结果须再经调用方可达性校验（预检装载入口）。
-_PLUGIN_COLUMN_PREFIXES = ("fx_", "model_")
+PLUGIN_COLUMN_PREFIXES = ("fx_", "model_")
 
 
 def collect_condition_plugin_columns(conditions) -> set:
@@ -376,7 +376,7 @@ def collect_condition_plugin_columns(conditions) -> set:
             continue
         for key in ("subject", "target"):
             ref = condition.get(key)
-            if isinstance(ref, str) and ref.startswith(_PLUGIN_COLUMN_PREFIXES):
+            if isinstance(ref, str) and ref.startswith(PLUGIN_COLUMN_PREFIXES):
                 cols.add(ref)
     return cols
 
@@ -451,7 +451,7 @@ def _mask_higher(
     """掩码投影路径：整条件高周期轴求值 → asof_completed 布尔投影。
 
     timeframe×插件列守卫（CARD-01，Q-2 内核化）：subject/target 插件列
-    引用（str 前缀判定，单源常量 _PLUGIN_COLUMN_PREFIXES）显式拒绝——
+    引用（str 前缀判定，单源常量 PLUGIN_COLUMN_PREFIXES）显式拒绝——
     插件列只注入基准周期 df（装载链 enrich），高周期 raw 无该列，静默
     列缺失全 False 即「静默 0 命中」禁止形态。code/文案与 api 层
     _reject_tf_plugin_mix 统一；api 三处守卫保留为纵深，不经 api 守卫
@@ -469,7 +469,7 @@ def _mask_higher(
     # 守卫先于一切（含幂等缓存——拒绝语义不因缓存短路）
     for key in ("subject", "target"):
         ref = condition.get(key)
-        if isinstance(ref, str) and ref.startswith(_PLUGIN_COLUMN_PREFIXES):
+        if isinstance(ref, str) and ref.startswith(PLUGIN_COLUMN_PREFIXES):
             raise ResearchError(
                 "RESEARCH_CONDITION_INVALID",
                 "高周期条件（timeframe 键）暂不支持插件列引用——插件"

@@ -93,10 +93,11 @@ def _reject_tf_plugin_mix(cond_list, plugin_columns, base_tf: str) -> None:
     """
     if not plugin_columns:
         return
+    from core.analysis.condition_kernel import PLUGIN_COLUMN_PREFIXES
     for c in cond_list:
         tf_key = c.get("timeframe") if isinstance(c, dict) else None
         if tf_key and tf_key != base_tf and any(
-                str(c.get(k, "")).startswith(("fx_", "model_"))
+                str(c.get(k, "")).startswith(PLUGIN_COLUMN_PREFIXES)
                 for k in ("subject", "target")):
             raise ResearchError(
                 "RESEARCH_CONDITION_INVALID",

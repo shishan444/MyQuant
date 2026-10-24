@@ -162,7 +162,10 @@ class TestMutateMtfMode:
         # Mode should have changed
         modes = [None, "direction", "confluence", "direction+confluence"]
         if dna.mtf_mode in modes:
-            assert mutant.mtf_mode != dna.mtf_mode or True  # May wrap around
+            # operators.mutate_mtf_mode 偏移恒取 1~len-1 再回绕取模，
+            # 回绕后必异于原位——变化断言是确定性的，无随机例外
+            assert mutant.mtf_mode != dna.mtf_mode
+            assert mutant.mtf_mode in modes  # 回绕仍在合法值域
 
     def test_noop_for_single_tf(self):
         """Single-timeframe DNA should be returned as-is."""

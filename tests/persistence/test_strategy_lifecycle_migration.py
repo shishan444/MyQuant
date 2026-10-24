@@ -3,9 +3,10 @@
 沿 test_strategy_params_migration.py 的 subprocess alembic 惯例。
 两条验证轨：
 - 构造轨（fixture 库）：实库四验+触发器 ABORT 双面用例+存量分类
-  四类参数化+幂等重跑；
-- 真实库对账轨（主库 data/quant.db）：零操作对账五断言（主库不在
-  或未升级则 skip——升级入口=验证命令 alembic upgrade head）。
+  四类参数化+幂等重跑+自然增长不解耦复证+断言集可红性自证；
+- 真实库对账轨（主库 data/quant.db）：迁移不变量常驻断言（结构
+  在场+六值域+记录性披露——与库内容自然增长解耦；主库不在或
+  结构未就位则 skip）。
 
 触发器验证必须查实库 sqlite_master（PRAGMA/SELECT），不读声明式
 schema——ORM/Alembic 两方不一致时 IF NOT EXISTS 会静默架空（工程坑位）。
@@ -25,9 +26,13 @@ _REV = "de92805ed44c"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MAIN_DB = _REPO_ROOT / "data" / "quant.db"
 
-# 主库存量快照（任务书只读核验 2026-10-17：11 行全 draft）——行数
-# 自然增长时同步此锚
-_MAIN_DB_STRATEGY_ROWS = 11
+# 六态值域（迁移正确性不变量——与 strategy-lifecycle spec 同源）
+_LIFECYCLE_DOMAIN = {"draft", "active", "paper", "candidate", "live",
+                     "archived"}
+# 迁移交付的结构面全名清单（sqlite_master 实查锚——禁模糊计数：
+# 合法重建场景须红而非静默放过）
+_EXPECTED_TRIGGERS = ("trg_strategy_status_domain",
+                      "trg_strategy_status_insert_domain")
 
 
 def _alembic(db: Path, *args: str) -> None:
@@ -63,6 +68,48 @@ def _insert_pt_task(
 def _event_rows(conn: sqlite3.Connection) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
+
+
+def _structure_present(conn: sqlite3.Connection) -> bool:
+    """结构在场探测（skip 判定）：事件表+双触发器齐备。
+
+    结构在场 ⟺ 库已行进至 de92805ed44c 或其任何后继（后续
+    migration 不删结构——向后兼容保证；downgrade 才拆结构，回环
+    测试在案）。ver==_REV 判定在 head 前进后会使活库恒 skip
+    （豁免面自动扩大），故以结构判定充要。"""
+    has_table = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+        " AND name='strategy_transition_event'").fetchone()[0] > 0
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger'")}
+    return has_table and set(_EXPECTED_TRIGGERS) <= names
+
+
+def _assert_lifecycle_invariants(conn: sqlite3.Connection) -> None:
+    """迁移不变量断言集（A1 结构在场+A2 值域不变量）。
+
+    主库对账轨/构造轨自然增长用例/可红性变异轨共用本单源——
+    断言与库内容自然增长解耦（行数/状态分布随正常使用变化，
+    不是迁移正确性判据；库使用状态经 A3 记录性披露）。"""
+    # A1 结构在场：事件表+双触发器全名清单逐一在场（沿本文件
+    # test_triggers_present_in_sqlite_master 的 sqlite_master 实查形制）
+    has_table = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+        " AND name='strategy_transition_event'").fetchone()[0]
+    assert has_table == 1, (
+        "strategy_transition_event 表缺失"
+        f"（未升级至 {_REV} 或结构被拆）")
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger'")}
+    for trg in _EXPECTED_TRIGGERS:
+        assert trg in names, f"触发器 {trg} 缺失（sqlite_master 实查）"
+    # A2 值域不变量：全部行 status ∈ 六值域（存量分类归入六值域的
+    # 迁移结果投影，读面兜底）
+    rows = conn.execute(
+        "SELECT strategy_id, status FROM strategy").fetchall()
+    bad = [(sid, status) for sid, status in rows
+           if status not in _LIFECYCLE_DOMAIN]
+    assert not bad, f"status 越出六值域: {bad}"
 
 
 @pytest.fixture()
@@ -250,38 +297,110 @@ class TestStockClassification:
             assert _event_rows(conn) == 0
 
 
-class TestMainDbZeroOpReconciliation:
-    """真实库对账轨（主库）：零操作对账五断言。
+class TestNaturalGrowthInvariants:
+    """库自然增长不解耦性复证：断言集与库内容解耦的持续验证载体。
 
-    主库存量 11 行全 draft+无活跃 pt_task——分类规则当前零命中
-    （真实零操作）。主库不在或未升级至本 revision 时 skip（升级入口
-    =验证命令 venv/bin/python -m alembic upgrade head）。
+    模拟活库正常增长路径（draft 直插；非 draft 经 INSERT active
+    初始集内插入后 UPDATE 流转至目标态——INSERT 侧触发器仅放行
+    {draft, active}，六值域内 UPDATE 放行），断言逻辑仍绿——
+    防未来断言改回快照锚。"""
+
+    def test_growth_keeps_invariants_green(self, legacy_db: Path):
+        _alembic(legacy_db, "upgrade", "head")
+        with _conn(legacy_db) as conn:
+            _insert_strategy(conn, "st_grow_draft", "draft")
+            _insert_strategy(conn, "st_grow_flow", "active")
+            conn.execute(
+                "UPDATE strategy SET status='paper'"
+                " WHERE strategy_id='st_grow_flow'")
+            conn.execute(
+                "UPDATE strategy SET status='archived'"
+                " WHERE strategy_id='st_grow_flow'")
+            conn.commit()
+            _assert_lifecycle_invariants(conn)
+
+
+class TestInvariantRedability:
+    """断言集可红性自证（变异自检常驻化）。
+
+    坏形态隔离库上断言集必须红——防断言退化恒真；全部变异在
+    fixture 隔离库，绝不动主库。对象=迁移后状态不变量（结构/
+    值域），非迁移过程。"""
+
+    def test_a1_red_when_event_table_dropped(self, legacy_db: Path):
+        _alembic(legacy_db, "upgrade", "head")
+        with _conn(legacy_db) as conn:
+            conn.execute("DROP TABLE strategy_transition_event")
+            conn.commit()
+        with _conn(legacy_db) as conn:
+            with pytest.raises(AssertionError,
+                               match="strategy_transition_event"):
+                _assert_lifecycle_invariants(conn)
+
+    @pytest.mark.parametrize("trg", _EXPECTED_TRIGGERS)
+    def test_a1_red_when_trigger_dropped(self, legacy_db: Path, trg: str):
+        _alembic(legacy_db, "upgrade", "head")
+        with _conn(legacy_db) as conn:
+            conn.execute(f"DROP TRIGGER {trg}")
+            conn.commit()
+        with _conn(legacy_db) as conn:
+            with pytest.raises(AssertionError, match=trg):
+                _assert_lifecycle_invariants(conn)
+
+    def test_a2_red_on_out_of_domain_row(self, legacy_db: Path):
+        """A2 红向：域外值直改被六值域守卫触发器 RAISE ABORT 挡住
+        构造不出红——须 DROP TRIGGER 先行解除守卫再注入；DROP 后
+        重建同名 no-op 空壳（A1 锚名字在场不查行为），使变异精确
+        落在 A2（值域不变量）而非 A1 先红。"""
+        _alembic(legacy_db, "upgrade", "head")
+        with _conn(legacy_db) as conn:
+            _insert_strategy(conn, "st_red", "draft")
+            conn.execute("DROP TRIGGER trg_strategy_status_domain")
+            conn.execute(
+                "CREATE TRIGGER trg_strategy_status_domain "
+                "BEFORE UPDATE ON strategy BEGIN SELECT 1; END")
+            conn.execute(
+                "UPDATE strategy SET status='bogus'"
+                " WHERE strategy_id='st_red'")
+            conn.commit()
+        with _conn(legacy_db) as conn:
+            with pytest.raises(AssertionError, match="六值域"):
+                _assert_lifecycle_invariants(conn)
+
+    def test_structure_absent_means_not_present(self, legacy_db: Path):
+        """skip 分支可触发性：未升级形态（旧 head 空库）结构探测
+        必为 False——主库轨据此 skip 并附理由。"""
+        with _conn(legacy_db) as conn:
+            assert not _structure_present(conn)
+
+
+class TestMainDbMigrationInvariants:
+    """真实库对账轨（主库）：迁移不变量常驻断言。
+
+    断言集（_assert_lifecycle_invariants 单源）与库内容自然增长
+    解耦——活库随正常使用发生行数增长与状态流转不破坏断言；
+    「迁移时刻」语义（分类规则/零事件/幂等）由构造轨完整承接。
+    库使用状态（行数/状态分布/版本号）经 A3 记录性披露（非断言）。
+    主库不在→skip；结构未就位→skip（无从验证，先跑 alembic
+    upgrade head）。
     """
 
-    def test_main_db_five_assertions(self):
+    def test_main_db_invariants(self):
         if not _MAIN_DB.exists():
             pytest.skip("主库 data/quant.db 不在")
         with _conn(_MAIN_DB) as conn:
+            if not _structure_present(conn):
+                pytest.skip(
+                    f"主库未升级至 {_REV}（结构不在场——先跑"
+                    " alembic upgrade head）")
+            _assert_lifecycle_invariants(conn)
+            # A3 记录性披露（非断言）：库使用状态随正常使用变化，
+            # 不是迁移正确性判据
+            dist = conn.execute(
+                "SELECT status, COUNT(*) FROM strategy"
+                " GROUP BY status ORDER BY status").fetchall()
             ver = conn.execute(
-                "SELECT version_num FROM alembic_version").fetchone()
-        if ver is None or ver[0] != _REV:
-            pytest.skip(f"主库未升级至 {_REV}（先跑 alembic upgrade head）")
-
-        with _conn(_MAIN_DB) as conn:
-            rows = conn.execute(
-                "SELECT strategy_id, status FROM strategy").fetchall()
-            events = _event_rows(conn)
-        from core.strategy.lifecycle.machine import WATERLINE_ORDER
-        # ① 11=11 行数对账（存量快照锚：行数自然增长时同步）
-        assert len(rows) == _MAIN_DB_STRATEGY_ROWS
-        # ② 全 draft 状态不变（迁移前即全 draft）
-        assert all(status == "draft" for _, status in rows)
-        # ③ 零触碰（无任何行被分类改写——分类只动 active 行，库内零 active）
-        assert not any(status == "paper" for _, status in rows)
-        # ④ 事件表零行（存量分类不产生事件——纯净性原则）
-        assert events == 0
-        # ⑤ 存量行水位全 0（draft 序 0+事件侧零贡献——推导基线=当前归类态）
-        assert WATERLINE_ORDER["draft"] == 0
-        assert all(status not in WATERLINE_ORDER
-                   or WATERLINE_ORDER[status] == 0
-                   for _, status in rows)
+                "SELECT version_num FROM alembic_version").fetchone()[0]
+        total = sum(count for _, count in dist)
+        print(f"[A3 披露] 主库 strategy 行数={total}"
+              f" 状态分布={dict(dist)} alembic_version={ver}")

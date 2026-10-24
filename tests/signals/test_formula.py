@@ -115,6 +115,70 @@ class TestEvaluation:
         with pytest.raises(FormulaError, match="看向未来|非负"):
             evaluate_formula("shift(close, -1)", df)
 
+    @pytest.mark.parametrize(
+        "expr", ["a.b(1)", "a(1)(2)"],
+        ids=["func=Attribute", "func=Call"])
+    def test_non_name_call_func_raises_formula_error(
+            self, expr: str) -> None:
+        """SEC-4 防御：绕过静态校验直调求值器，func 非 Name 的 Call
+        统一为 FormulaError（防御契约面=func 非 ast.Name 的任何 Call，
+        双形态防只防 Attribute 不防 Call 的窄实现——裸 AttributeError
+        不匹配 raises(FormulaError) 即红）。"""
+        df = _df()
+        with pytest.raises(FormulaError, match="Attribute|Call"):
+            evaluate_formula(expr, df)
+
+    @pytest.mark.parametrize(
+        ("expr", "match"),
+        [
+            pytest.param("shift(close, 1", "语法错误",
+                         id="语法错误收口"),
+            pytest.param("'abc'", r"非常量类型: str", id="str 常量收口"),
+            pytest.param("None", r"非常量类型: NoneType",
+                         id="None 常量收口"),
+        ])
+    def test_bypass_defense_forms_raise_formula_error(
+            self, expr: str, match: str) -> None:
+        """CARD-01 防御收口：不经 validate_formula 直调求值器时，
+        语法错误与非常量类型统一为 FormulaError（文案与静态关
+        :227/:244 同形制），不裸穿 SyntaxError/TypeError。正常入口
+        由静态校验先行拦截，此三形态仅存在于直调面。
+        """
+        df = _df()
+        with pytest.raises(FormulaError, match=match):
+            evaluate_formula(expr, df)
+
+    def test_bypass_defense_deep_nesting_no_leak(self) -> None:
+        """CARD-01 深嵌套双入口不裸穿：ast.parse 解析面对深嵌套
+        抛出的错误（C 解析器 200 层上限 SyntaxError 或解析递归
+        RecursionError——两分支均已收口）统一为 FormulaError；
+        formula_lookback 同形态返回 0（非法表达式到不了求值层）。
+
+        不可达判定锚（阶段四盲区清单 formula.py:197-201——lookback
+        的 RecursionError/MemoryError 分支）：CPython 3.13（本工程
+        venv 实测）下两类构造均触达不了该分支——①括号嵌套 6000 层
+        由 C 解析器 200 层上限直接抛 SyntaxError（too many nested
+        parentheses，走既有 :194 分支）；②10 万项 BinOp 链（1+1+…）
+        迭代解析正常返回不递归。RecursionError 分支属解释器版本
+        差异的防御性兜底；MemoryError 需真实内存耗尽不可构造测试。
+        该分支保留正确（与 validate_formula :229-231 既有 MemoryError
+        面同构），覆盖工具按不可达豁免。
+        """
+        deep = "(" * 6000 + "1" + ")" * 6000
+        df = _df()
+        with pytest.raises(FormulaError, match="语法错误|嵌套过深"):
+            evaluate_formula(deep, df)
+        assert formula_lookback(deep) == 0
+
+    def test_bypass_defense_keywords_rejected(self) -> None:
+        """CARD-02 防御收口：不经 validate_formula 直调求值器时，
+        关键字参数不再被静默丢弃（此前 shift(close, 1, bogus=2)
+        无声算出正常结果——卡实锤形态），统一收口 FormulaError
+        （文案与静态关 :263-264 逐字对齐）。"""
+        df = _df()
+        with pytest.raises(FormulaError, match="不支持关键字参数"):
+            evaluate_formula("shift(close, 1, bogus=2)", df)
+
 
 # ================================================================ 0.2.12 扩充
 # T1 白名单函数 / T2 静态校验与推导（TESTING 轮锚定）

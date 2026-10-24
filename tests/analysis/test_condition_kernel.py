@@ -13,6 +13,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.condition_kernel import (
+    PLUGIN_COLUMN_PREFIXES, collect_condition_plugin_columns,
     collect_condition_refs, mask_for, mask_for_all)
 from core.analysis.hypothesis_service import ResearchError
 
@@ -265,3 +266,50 @@ class TestConditionItemStrictnessConsumers:
                 fn(df, **kwargs)
         assert "inner_bogus" in str(ei.value.detail.get(
             "unknown_keys", [])) or "未知键" in ei.value.message
+
+
+class TestPluginColumnCollection:
+    """插件列前缀判定行为锚（fix-fullrun-baseline-4red 特征网：
+    TD-CARD-02 常量收敛为单源 PLUGIN_COLUMN_PREFIXES 后，前缀判定
+    根的现状记录——collect_condition_plugin_columns 是预检装载链
+    （precheck/analysis 路由/case_inspection）的插件列收集入口，
+    此前测试域零直接承载，行为等价仅靠消费域回归间接保证）。"""
+
+    def test_prefixes_tuple_value(self) -> None:
+        """常量值锚：fx_（公式插件）+model_（模型插件）两前缀。"""
+        assert PLUGIN_COLUMN_PREFIXES == ("fx_", "model_")
+
+    def test_collects_prefixed_subject_and_target(self) -> None:
+        """subject/target 侧字符串前缀列均收集；保守宽面——无需
+        registry 注册（可达性校验归调用方，收集面不收窄）。"""
+        conds = [
+            {"subject": "fx_alpha", "action": "gt", "target": "model_beta"},
+            {"subject": "model_gamma", "action": "lt", "target": 0.5},
+        ]
+        assert collect_condition_plugin_columns(conds) == {
+            "fx_alpha", "model_beta", "model_gamma"}
+
+    def test_non_prefixed_and_structured_refs_skipped(self) -> None:
+        """基础列 subject/数值 target/结构化 dict subject/非 dict
+        条件项均不参与收集（纯基础列+数值条件集为空集）。"""
+        conds = [
+            {"subject": "close", "action": "gt", "target": 1.0},
+            {"subject": {"indicator": "RSI", "params": {"period": 14},
+                         "field": "value"}, "action": "gt", "target": 70},
+            "not-a-dict",
+        ]
+        assert collect_condition_plugin_columns(conds) == set()
+
+    def test_collection_order_independent_and_idempotent(self) -> None:
+        """不变量（属性补强）：收集结果是集合——与条件顺序无关、
+        重复引用幂等（同一插件列多次出现收集一次）。"""
+        conds = [
+            {"subject": "fx_a", "action": "gt", "target": "fx_b"},
+            {"subject": "fx_b", "action": "lt", "target": 0.5},
+            {"subject": "fx_a", "action": "gt", "target": 1.0},
+        ]
+        once = collect_condition_plugin_columns(conds)
+        assert once == collect_condition_plugin_columns(
+            list(reversed(conds))), "顺序无关"
+        assert once == collect_condition_plugin_columns(conds + conds), \
+            "重复幂等"
