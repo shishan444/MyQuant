@@ -128,6 +128,38 @@ class TestEvaluation:
         with pytest.raises(FormulaError, match="Attribute|Call"):
             evaluate_formula(expr, df)
 
+    @pytest.mark.parametrize(
+        ("expr", "match"),
+        [
+            pytest.param("shift(close, 1", "语法错误",
+                         id="语法错误收口"),
+            pytest.param("'abc'", r"非常量类型: str", id="str 常量收口"),
+            pytest.param("None", r"非常量类型: NoneType",
+                         id="None 常量收口"),
+        ])
+    def test_bypass_defense_forms_raise_formula_error(
+            self, expr: str, match: str) -> None:
+        """CARD-01 防御收口：不经 validate_formula 直调求值器时，
+        语法错误与非常量类型统一为 FormulaError（文案与静态关
+        :227/:244 同形制），不裸穿 SyntaxError/TypeError。正常入口
+        由静态校验先行拦截，此三形态仅存在于直调面。
+        """
+        df = _df()
+        with pytest.raises(FormulaError, match=match):
+            evaluate_formula(expr, df)
+
+    def test_bypass_defense_deep_nesting_no_leak(self) -> None:
+        """CARD-01 深嵌套双入口不裸穿：ast.parse 解析面对深嵌套
+        抛出的错误（C 解析器 200 层上限 SyntaxError 或解析递归
+        RecursionError——两分支均已收口）统一为 FormulaError；
+        formula_lookback 同形态返回 0（非法表达式到不了求值层）。
+        """
+        deep = "(" * 6000 + "1" + ")" * 6000
+        df = _df()
+        with pytest.raises(FormulaError, match="语法错误|嵌套过深"):
+            evaluate_formula(deep, df)
+        assert formula_lookback(deep) == 0
+
 
 # ================================================================ 0.2.12 扩充
 # T1 白名单函数 / T2 静态校验与推导（TESTING 轮锚定）
