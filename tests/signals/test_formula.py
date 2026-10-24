@@ -160,6 +160,15 @@ class TestEvaluation:
             evaluate_formula(deep, df)
         assert formula_lookback(deep) == 0
 
+    def test_bypass_defense_keywords_rejected(self) -> None:
+        """CARD-02 防御收口：不经 validate_formula 直调求值器时，
+        关键字参数不再被静默丢弃（此前 shift(close, 1, bogus=2)
+        无声算出正常结果——卡实锤形态），统一收口 FormulaError
+        （文案与静态关 :263-264 逐字对齐）。"""
+        df = _df()
+        with pytest.raises(FormulaError, match="不支持关键字参数"):
+            evaluate_formula("shift(close, 1, bogus=2)", df)
+
 
 # ================================================================ 0.2.12 扩充
 # T1 白名单函数 / T2 静态校验与推导（TESTING 轮锚定）
