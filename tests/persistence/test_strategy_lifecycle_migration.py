@@ -374,7 +374,7 @@ class TestInvariantRedability:
             assert not _structure_present(conn)
 
 
-class TestMainDbZeroOpReconciliation:
+class TestMainDbMigrationInvariants:
     """真实库对账轨（主库）：迁移不变量常驻断言。
 
     断言集（_assert_lifecycle_invariants 单源）与库内容自然增长
@@ -385,7 +385,7 @@ class TestMainDbZeroOpReconciliation:
     upgrade head）。
     """
 
-    def test_main_db_five_assertions(self):
+    def test_main_db_invariants(self):
         if not _MAIN_DB.exists():
             pytest.skip("主库 data/quant.db 不在")
         with _conn(_MAIN_DB) as conn:
