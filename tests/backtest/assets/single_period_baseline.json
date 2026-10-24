@@ -1,0 +1,17 @@
+{
+  "seed": 20261024,
+  "n_bars": 3600,
+  "dna_json": "{\n  \"strategy_id\": \"st_baseline_anchor_t3\",\n  \"generation\": 0,\n  \"parent_ids\": [],\n  \"mutation_ops\": [],\n  \"signal_genes\": [\n    {\n      \"indicator\": \"BB\",\n      \"params\": {\n        \"period\": 20,\n        \"std\": 2\n      },\n      \"role\": \"entry_trigger\",\n      \"field\": \"upper\",\n      \"condition\": {\n        \"type\": \"price_above\"\n      }\n    },\n    {\n      \"indicator\": \"RVOL\",\n      \"params\": {\n        \"period\": 20\n      },\n      \"role\": \"entry_trigger\",\n      \"field\": \"rvol\",\n      \"condition\": {\n        \"type\": \"gt\",\n        \"threshold\": 1.2\n      }\n    },\n    {\n      \"indicator\": \"RSI\",\n      \"params\": {\n        \"period\": 14\n      },\n      \"role\": \"entry_guard\",\n      \"field\": \"rsi\",\n      \"condition\": {\n        \"type\": \"lt\",\n        \"threshold\": 70\n      }\n    },\n    {\n      \"indicator\": \"BB\",\n      \"params\": {\n        \"period\": 20,\n        \"std\": 2\n      },\n      \"role\": \"exit_trigger\",\n      \"field\": \"middle\",\n      \"condition\": {\n        \"type\": \"price_below\"\n      }\n    },\n    {\n      \"indicator\": \"RSI\",\n      \"params\": {\n        \"period\": 14\n      },\n      \"role\": \"exit_guard\",\n      \"field\": \"rsi\",\n      \"condition\": {\n        \"type\": \"gt\",\n        \"threshold\": 25\n      }\n    },\n    {\n      \"indicator\": \"RVOL\",\n      \"params\": {\n        \"period\": 20\n      },\n      \"role\": \"add_trigger\",\n      \"field\": \"rvol\",\n      \"condition\": {\n        \"type\": \"gt\",\n        \"threshold\": 2.0\n      }\n    },\n    {\n      \"indicator\": \"EMA\",\n      \"params\": {\n        \"period\": 21\n      },\n      \"role\": \"reduce_trigger\",\n      \"field\": \"ema\",\n      \"condition\": {\n        \"type\": \"price_below\"\n      }\n    },\n    {\n      \"indicator\": \"EMA\",\n      \"params\": {\n        \"period\": 7\n      },\n      \"role\": \"exit_trigger\",\n      \"field\": \"ema\",\n      \"condition\": {\n        \"type\": \"price_above\"\n      }\n    }\n  ],\n  \"logic_genes\": {\n    \"entry_logic\": \"AND\",\n    \"exit_logic\": \"AND\",\n    \"add_logic\": \"AND\",\n    \"reduce_logic\": \"AND\"\n  },\n  \"execution_genes\": {\n    \"timeframe\": \"30m\",\n    \"symbol\": \"BTCUSDT\"\n  },\n  \"risk_genes\": {\n    \"stop_loss\": 0.05,\n    \"take_profit\": null,\n    \"position_size\": 0.3,\n    \"leverage\": 1,\n    \"direction\": \"short\",\n    \"sl_mode\": \"pct\",\n    \"atr_period\": 14,\n    \"exit_fraction\": 0.5,\n    \"add_fraction\": 0.1\n  },\n  \"cross_layer_logic\": \"AND\",\n  \"mtf_mode\": null,\n  \"confluence_threshold\": 0.3,\n  \"proximity_mult\": 1.5,\n  \"signal_sources\": [\n    {\n      \"type\": \"rule\"\n    }\n  ]\n}",
+  "counts": {
+    "entries": 36,
+    "exits": 285,
+    "adds": 3,
+    "reduces": 1585
+  },
+  "sha256": {
+    "entries": "a16c611fe53d4ebee20b26eb706b8222c4dc378801a19480496d815e051e72f3",
+    "exits": "cfe58180099a1cc9f82b9b5d6dc94d905fde76ab5515be14c00eaccea7d55b14",
+    "adds": "cbe3ec48184a17acade79a39578dd1a3568f16740f28acd13f94adda6cf81409",
+    "reduces": "f35f4673f27973973a94ee4a22fd0b5aed82c153b9d41ef9ba764fddd5e55850"
+  }
+}
