@@ -320,8 +320,10 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
 
 
 class TranslateRequest(BaseModel):
+    """转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准
+    周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。"""
     strategy_symbol: str = "BTCUSDT"
-    strategy_timeframe: str = "4h"
+    strategy_timeframe: Optional[str] = None
 
 
 @router.post("/translate/{hypothesis_id}")
@@ -339,8 +341,9 @@ def translate_hypothesis(
         # security S-2（fix-review B6）：strategy_timeframe 裸 str——前置
         # 值域校验消两路 500 冒出面（非法 tf 在 find_parquet 装载路径
         # 抛裸 ValueError；analysis.py :799 同款先例，校验先于转化）。
-        # payload=None 走 schema 缺省 "4h" 合法，无校验面
-        if payload is not None:
+        # R2（fix-mtf-execution-consistency）：缺省 None=继承哨兵——
+        # 只对非 None 值校验（None 经 translate 继承假设基准周期）
+        if payload is not None and payload.strategy_timeframe is not None:
             require_known_timeframe(
                 payload.strategy_timeframe, "strategy_timeframe")
         kw = payload.model_dump() if payload else {}

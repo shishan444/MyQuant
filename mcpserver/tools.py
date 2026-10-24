@@ -899,11 +899,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def translate_hypothesis_to_strategy(
             hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
-            strategy_timeframe: str = "4h") -> Dict[str, Any]:
+            strategy_timeframe: str | None = None) -> Dict[str, Any]:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
-        回执身份六键：direction（产物方向 long|short）、max_hold（声明
+        执行周期契约：strategy_timeframe 缺省 None=继承假设基准周期
+（data_ranges[0].timeframe；存量异周期假设拒绝并指引显式传参）；
+回执 execution_timeframe 键披露产物执行周期。
+回执身份六键：direction（产物方向 long|short）、max_hold（声明
         的最长持仓 bar 数|int|null）、time_exit_utc（声明的固定时刻
         出场 UTC 分钟|int|null）、position_mode（声明的仓位模式
         fixed|risk_budget，缺省 fixed）、risk_fraction（声明的风险
