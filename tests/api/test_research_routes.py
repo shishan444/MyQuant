@@ -478,8 +478,11 @@ class TestConcurrencyAndIdempotence:
         assert len(created) == 1, f"恰一个新建: {bodies}"
         dbp = Path(api_client.app.state.db_path)
         rows = rr.list_hypotheses(dbp)
-        assert len([h for h in rows
-                    if h["conditions_hash"] == created[0].get("hypothesis_id", "")or True]) >= 1
+        # 新建行落库核对：响应 hypothesis_id 即行主键（conditions_hash
+        # 是另一列幂等哈希——原断言两侧字段错位恒假，靠 or True 遮蔽）
+        assert any(
+            h["hypothesis_id"] == created[0]["hypothesis_id"]
+            for h in rows)
         # 幂等键唯一性由部分唯一索引裁决：同身份行数 <= 1
         import json as _json
         ident_rows = [h for h in rows if h["status"] == "active"]
