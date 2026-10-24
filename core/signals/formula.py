@@ -194,6 +194,11 @@ def formula_lookback(expression: str) -> int:
         tree = ast.parse(expression, mode="eval")
     except SyntaxError:
         return 0
+    except (RecursionError, MemoryError):
+        # 对齐 validate_formula 解析收口面：深嵌套在 10KB 内可触顶
+        # 解析递归——非法表达式到不了求值层（注册静态校验先行拦截），
+        # lookback 按无窗口贡献 0（与语法错误分支同语义）
+        return 0
     lookback = 0
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
@@ -304,6 +309,11 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
     """
     try:
         tree = ast.parse(expr, mode="eval")
+    except SyntaxError as exc:
+        # 收口对齐 validate_formula :227-228（位置信息同形制）：
+        # 不经静态校验直调求值器时语法错误不再裸穿
+        raise FormulaError(
+            f"语法错误（位置 {exc.lineno}:{exc.offset}）: {exc.msg}") from exc
     except (RecursionError, MemoryError) as exc:
         # MemoryError：CPython C 级解析器栈溢出（"source too complex"）
         raise FormulaError("表达式嵌套过深（解析递归超限）") from exc
@@ -313,6 +323,12 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
         if isinstance(node, ast.Expression):
             return _ev(node.body)
         if isinstance(node, ast.Constant):
+            # 静态关「非常量类型」同款防御（文案对齐）：str/None 等
+            # 常量不经校验直落此处 float() 炸 TypeError/ValueError
+            # 裸穿——收口为 FormulaError（上层捕获面可接住）
+            if not isinstance(node.value, (int, float)):
+                raise FormulaError(
+                    f"非常量类型: {type(node.value).__name__}")
             return float(node.value)
         if isinstance(node, ast.BinOp):
             left, right = _ev(node.left), _ev(node.right)
