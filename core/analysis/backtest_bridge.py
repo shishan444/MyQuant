@@ -185,5 +185,10 @@ def run_backtest_on_range(
                              if result.benchmark_return is not None else None),
         "excess_return": (float(result.excess_return)
                           if result.excess_return is not None else None),
+        # C3 成因区分（fix-mtf-execution-consistency）：请求区间信号
+        # 计数四键——三态判读①entries==0=条件未触发（装配异常已被
+        # R1 结构化拒绝前置拦截）②entries>0 且 total_trades==0=执行
+        # 段无成交（资金/风控/时序）③正常；四通道回执自动携带
+        "signal_counts": getattr(result, "signal_counts", None),
     }
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)

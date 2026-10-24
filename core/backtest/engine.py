@@ -263,6 +263,12 @@ class BacktestResult:
     degraded_layers: int = 0
     market_annual_return: float = 0.0
     alpha: float = 0.0
+    # 信号计数披露（fix-mtf-execution-consistency C3）：请求区间口径
+    # 四键 {entries, exits, adds, reduces}——「条件全假零交易」与
+    # 「装配异常」在回测输出可区分（三态判读：①entries==0=条件未
+    # 触发；②entries>0 且 total_trades==0=执行段无成交；③正常）。
+    # None=未经 run() 求值路径（批量/直组 portfolio 形制）——纯增量。
+    signal_counts: dict | None = None
     # 基准对照（improve-backtest-benchmark-disclosure）：区间口径。
     # None=无基准数据（早退/无基准序列），不与 0.0 混同——0.0 是
     # 「基准区间持平」的真实值；零费基准（不扣资金费/交易费，从严）
@@ -1198,6 +1204,7 @@ class BacktestEngine:
         add_count: int = 0,
         reduce_count: int = 0,
         degraded: int = 0,
+        signal_counts: dict | None = None,
     ) -> BacktestResult:
         """从已构建的 portfolio 组装 BacktestResult（杠杆放大→清算判定→资金费→指标）。"""
         equity_curve = portfolio.value()
@@ -1331,6 +1338,7 @@ class BacktestEngine:
             alpha=metrics.get("alpha", 0.0),
             benchmark_return=metrics.get("benchmark_return"),
             excess_return=metrics.get("excess_return"),
+            signal_counts=signal_counts,
         )
 
     def run(
@@ -1341,6 +1349,18 @@ class BacktestEngine:
         signal_set=None,
     ) -> BacktestResult:
         """单策略 DNA 回测（构建 portfolio → 组装结果）。"""
+        # C3 信号计数：signal_set 缺省时求值上移到 run（一次求值两
+        # 消费——计数与 portfolio 构建同源不重算；显式传入（插件源
+        # 组装链）直接计数）
+        if signal_set is None:
+            signal_set = dna_to_signal_set(
+                dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        sig_counts = {
+            "entries": int(signal_set.entries.fillna(False).sum()),
+            "exits": int(signal_set.exits.fillna(False).sum()),
+            "adds": int(signal_set.adds.fillna(False).sum()),
+            "reduces": int(signal_set.reduces.fillna(False).sum()),
+        }
         build_result = self._build_portfolio(
             dna, enhanced_df,
             dfs_by_timeframe=dfs_by_timeframe,
@@ -1354,6 +1374,7 @@ class BacktestEngine:
 
         return self._build_result_from_portfolio(
             portfolio, dna, enhanced_df, add_count, reduce_count, degraded,
+            signal_counts=sig_counts,
         )
 
     def run_with_portfolio(
