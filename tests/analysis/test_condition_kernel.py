@@ -299,3 +299,17 @@ class TestPluginColumnCollection:
             "not-a-dict",
         ]
         assert collect_condition_plugin_columns(conds) == set()
+
+    def test_collection_order_independent_and_idempotent(self) -> None:
+        """不变量（属性补强）：收集结果是集合——与条件顺序无关、
+        重复引用幂等（同一插件列多次出现收集一次）。"""
+        conds = [
+            {"subject": "fx_a", "action": "gt", "target": "fx_b"},
+            {"subject": "fx_b", "action": "lt", "target": 0.5},
+            {"subject": "fx_a", "action": "gt", "target": 1.0},
+        ]
+        once = collect_condition_plugin_columns(conds)
+        assert once == collect_condition_plugin_columns(
+            list(reversed(conds))), "顺序无关"
+        assert once == collect_condition_plugin_columns(conds + conds), \
+            "重复幂等"

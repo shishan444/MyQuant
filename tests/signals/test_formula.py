@@ -153,6 +153,16 @@ class TestEvaluation:
         抛出的错误（C 解析器 200 层上限 SyntaxError 或解析递归
         RecursionError——两分支均已收口）统一为 FormulaError；
         formula_lookback 同形态返回 0（非法表达式到不了求值层）。
+
+        不可达判定锚（阶段四盲区清单 formula.py:197-201——lookback
+        的 RecursionError/MemoryError 分支）：CPython 3.13（本工程
+        venv 实测）下两类构造均触达不了该分支——①括号嵌套 6000 层
+        由 C 解析器 200 层上限直接抛 SyntaxError（too many nested
+        parentheses，走既有 :194 分支）；②10 万项 BinOp 链（1+1+…）
+        迭代解析正常返回不递归。RecursionError 分支属解释器版本
+        差异的防御性兜底；MemoryError 需真实内存耗尽不可构造测试。
+        该分支保留正确（与 validate_formula :229-231 既有 MemoryError
+        面同构），覆盖工具按不可达豁免。
         """
         deep = "(" * 6000 + "1" + ")" * 6000
         df = _df()

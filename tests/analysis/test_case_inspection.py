@@ -840,3 +840,30 @@ class TestConditionsArrayForm:
                              "params": {}},
                  "action": "gt", "target": 1.0}])
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+
+    def test_v2j_array_string_subject_requires_indicator(self, env):
+        """闸门补锚（阶段四盲区消解 :509-515）：conditions 数组形态
+        字符串 subject 混入且 indicator 未传 → 必填守卫直拒。:484
+        单条件形态已由 v2j 承载；数组形态分支体（含插件列前缀判定
+        消费点 :510）此前测试域未触达。"""
+        with pytest.raises(ResearchError, match="indicator 必填"):
+            self._array_call(
+                env, [{"subject": "close", "action": "gt", "target": 1.0}],
+                indicator=None)
+
+    def test_v2k_array_unknown_indicator_rejected_at_parse(self, env):
+        """闸门补锚（阶段四盲区消解 :534 定性翻转）：数组形态结构化
+        subject 未知指标在 _parse_selector（:181 resolve 转译）前置
+        拦截为 CONDITION_INVALID——:534 的 INDICATOR_UNKNOWN 直拒
+        为防御纵深（结构上不可达：入口 :470 先经 _parse_selector
+        同判校验，通过者 indicator 必在册，到不了 :534 的 raise）。
+        本用例锁前置拦截现状——若未来 :181 校验移除使 :534 成为
+        唯一防线，错误码翻转为 INDICATOR_UNKNOWN 时本用例即红。"""
+        with pytest.raises(ResearchError) as ei:
+            self._array_call(
+                env, [{"subject": {"indicator": "NoSuchInd",
+                                   "params": {}},
+                       "action": "gt", "target": 50.0}],
+                indicator=None)
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert "NoSuchInd" in ei.value.message
