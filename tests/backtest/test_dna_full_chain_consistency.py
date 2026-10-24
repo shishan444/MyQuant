@@ -166,3 +166,225 @@ class TestExecutorSignalConsistency:
             sig_original.adds, sig_roundtrip.adds, check_names=False)
         pd.testing.assert_series_equal(
             sig_original.reduces, sig_roundtrip.reduces, check_names=False)
+
+
+# ═══════════════════════════════════════════════════════════════
+# T② 二层往返不变式族（fix-mtf-execution-consistency R1b，组 1）
+#
+# 三要素硬性检查清单（红锚归因程序——缺一即失效）：
+#   ① 测试 DNA 含带轴基因（timeframe=3d ≠ 执行周期 30m）；
+#   ② 经「落库链二层形制」——伪层形制 dna_json（旧 to_dict 时代
+#      auto-wrap 层字节）落库后库加载，非纯内存往返；
+#   ③ 求值传装载集（执行轴 30m + 标注轴 3d + 伪层轴 30m）。
+# ═══════════════════════════════════════════════════════════════
+
+def _r1b_axis_env(n_30m: int = 4320, seed: int = 11):
+    """30m 基准 + 3d 轴合成环境（形制同 test_mtf_layer_gene_tf.py）。"""
+    base = make_ohlcv(n=n_30m, freq="30min", start="2024-01-01", seed=seed)
+
+    def _resample(rule):
+        out = pd.DataFrame({
+            "open": base["open"].resample(rule).first(),
+            "high": base["high"].resample(rule).max(),
+            "low": base["low"].resample(rule).min(),
+            "close": base["close"].resample(rule).last(),
+            "volume": base["volume"].resample(rule).sum(),
+        }).dropna()
+        return out[(out["high"] >= out["low"]) & (out["volume"] > 0)]
+
+    return base, _resample("3D")
+
+
+def _r1b_annotated_dna() -> "StrategyDNA":
+    """带轴基因 DNA（EMA@3d 趋势类 + BB/RVOL 无标注——活体同构骨架）。
+
+    基因选型说明：趋势类带轴基因在 seed 固定合成数据下有自然触发
+    （形态类 AND 组合在随机游走下可能零触发使对照侧恒空——锚失判
+    别力）；带轴基因形态类的判别锚归 T①-B（组 2）。
+    """
+    from core.strategy.dna import TimeframeLayer  # 局部 import 防循环
+
+    genes = [
+        SignalGene("EMA", {"period": 10}, SignalRole.ENTRY_TRIGGER,
+                   "ema", {"type": "price_above"},
+                   timeframe="3d"),
+        SignalGene("RVOL", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                   "rvol", {"type": "gt", "threshold": 1.0}),
+        SignalGene("BB", {"period": 20, "std": 2}, SignalRole.EXIT_TRIGGER,
+                   "middle", {"type": "price_below"}),
+    ]
+    dna = StrategyDNA(
+        strategy_id="st_t2_roundtrip_anchor",
+        signal_genes=genes,
+        execution_genes=ExecutionGenes(timeframe="30m", symbol="BTCUSDT"),
+        logic_genes=LogicGenes(),
+        risk_genes=RiskGenes(direction="short", exit_fraction=0.5,
+                             add_fraction=0.1),
+        signal_sources=[{"type": "rule"}])
+    return dna
+
+
+def _r1b_legacy_autowrap_json(dna: "StrategyDNA") -> str:
+    """构造旧 to_dict 时代的伪层形制 dna_json（R1b 前序列化形制）。
+
+    旧 to_dict 会把 from_json auto-wrap 的伪层写出——本函数等价复刻
+    该历史形制：正常 to_dict 后注入单伪层（层周期=执行周期、层基因
+    同 signal_genes、role None、无 mtf_mode 键差异）。
+    """
+    import json as _json
+    from core.strategy.dna import TimeframeLayer
+
+    payload = _json.loads(dna.to_json())
+    ghost = TimeframeLayer(
+        timeframe=dna.execution_genes.timeframe,
+        signal_genes=list(dna.signal_genes),
+        logic_genes=LogicGenes(
+            entry_logic=dna.logic_genes.entry_logic,
+            exit_logic=dna.logic_genes.exit_logic),
+    )
+    payload["layers"] = [ghost.to_dict()]
+    return _json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _assert_five_tuple_equal(sig_a, sig_b):
+    """五元组逐位相等断言（entries/exits/adds/reduces/entry_direction）。"""
+    pd.testing.assert_series_equal(
+        sig_a.entries, sig_b.entries, check_names=False)
+    pd.testing.assert_series_equal(
+        sig_a.exits, sig_b.exits, check_names=False)
+    pd.testing.assert_series_equal(
+        sig_a.adds, sig_b.adds, check_names=False)
+    pd.testing.assert_series_equal(
+        sig_a.reduces, sig_b.reduces, check_names=False)
+    pd.testing.assert_series_equal(
+        sig_a.entry_direction, sig_b.entry_direction, check_names=False)
+
+
+class TestR1bTwoLayerRoundtripInvariants:
+    """T② 族：内存构造态 vs 落库链加载态同路由同语义（R1b 四条件判据）。"""
+
+    def _load_set(self, base, df_3d):
+        return {"30m": base, "3d": df_3d}
+
+    def test_t2_1_memory_vs_loaded_five_tuple_identical(self, tmp_path):
+        """主锚：三要素 DNA 伪层加载态与内存构造态五元组逐位相等。"""
+        base, df_3d = _r1b_axis_env()
+        dna_mem = _r1b_annotated_dna()
+        legacy_json = _r1b_legacy_autowrap_json(dna_mem)
+        dna_loaded = StrategyDNA.from_json(legacy_json)
+        assert dna_loaded.is_mtf is False  # 愈合判据生效（前置）
+
+        sig_mem = dna_to_signal_set(
+            dna_mem, base, self._load_set(base, df_3d))
+        sig_loaded = dna_to_signal_set(
+            dna_loaded, base, self._load_set(base, df_3d))
+        assert int(sig_mem.entries.fillna(False).sum()) > 0, (
+            "对照信号应非空（seed 固定下带轴基因应有触发）")
+        _assert_five_tuple_equal(sig_mem, sig_loaded)
+
+    def test_t2_2_legacy_loaded_equals_equivalent_flat_dna(self, tmp_path):
+        """存量对照锚：伪层加载态求值 == 语义字段现造等价无层 DNA 求值。"""
+        base, df_3d = _r1b_axis_env()
+        dna_mem = _r1b_annotated_dna()
+        legacy_json = _r1b_legacy_autowrap_json(dna_mem)
+        dna_loaded = StrategyDNA.from_json(legacy_json)
+
+        # 等价无层 DNA：以同一语义字段现造（非往返产物）
+        flat = StrategyDNA(
+            strategy_id="st_t2_flat_equiv",
+            signal_genes=[SignalGene.from_dict(g.to_dict())
+                          for g in dna_loaded.signal_genes],
+            execution_genes=ExecutionGenes(**{
+                "timeframe": dna_loaded.execution_genes.timeframe,
+                "symbol": dna_loaded.execution_genes.symbol}),
+            logic_genes=LogicGenes(),
+            risk_genes=RiskGenes(direction="short", exit_fraction=0.5,
+                                 add_fraction=0.1),
+            signal_sources=[{"type": "rule"}])
+        sig_loaded = dna_to_signal_set(
+            dna_loaded, base, self._load_set(base, df_3d))
+        sig_flat = dna_to_signal_set(
+            flat, base, self._load_set(base, df_3d))
+        _assert_five_tuple_equal(sig_flat, sig_loaded)
+
+    def test_t2_3a_autowrap_form_loads_as_single_period(self):
+        """形态分锚 (a)：伪层形制加载态 is_mtf=False。"""
+        dna_mem = _r1b_annotated_dna()
+        loaded = StrategyDNA.from_json(_r1b_legacy_autowrap_json(dna_mem))
+        assert loaded.is_mtf is False
+        assert loaded.layers is not None and len(loaded.layers) == 1
+        # 内存构造态同路由（无显式层构造）
+        assert dna_mem.is_mtf is False
+
+    def test_t2_3b_explicit_layer_forms_stay_mtf(self):
+        """形态分锚 (b)：真显式层五形态加载态 is_mtf=True 保持（负向防误归）。"""
+        dna_mem = _r1b_annotated_dna()
+
+        def _with_layers_json(layers, mtf_mode=None, empty_top=False):
+            import json as _json
+            payload = _json.loads(dna_mem.to_json())
+            payload["layers"] = [l.to_dict() for l in layers]
+            if mtf_mode is not None:
+                payload["mtf_mode"] = mtf_mode
+            if empty_top:
+                payload["signal_genes"] = []
+            return _json.dumps(payload, ensure_ascii=False)
+
+        from core.strategy.dna import TimeframeLayer
+        one_tf = dna_mem.execution_genes.timeframe
+        genes = list(dna_mem.signal_genes)
+
+        # 多层（4h+30m）
+        multi = [
+            TimeframeLayer("4h", list(genes), LogicGenes()),
+            TimeframeLayer(one_tf, list(genes), LogicGenes()),
+        ]
+        assert StrategyDNA.from_json(_with_layers_json(multi)).is_mtf is True
+        # 带 mtf_mode 单层=执行周期
+        single = [TimeframeLayer(one_tf, list(genes), LogicGenes())]
+        assert StrategyDNA.from_json(
+            _with_layers_json(single, mtf_mode="score")).is_mtf is True
+        # 层周期异构单层（4h≠执行 30m）
+        hetero = [TimeframeLayer("4h", list(genes), LogicGenes())]
+        assert StrategyDNA.from_json(_with_layers_json(hetero)).is_mtf is True
+        # 带 role 单层（=执行周期但带角色——进化 trend 层形态）
+        roled = [TimeframeLayer(one_tf, list(genes), LogicGenes(),
+                                role="structure")]
+        assert StrategyDNA.from_json(_with_layers_json(roled)).is_mtf is True
+        # 顶层空基因+单层同周期（镜像条件不满足——基因只在层内的真显式
+        # 层，tf 不变性冻结锚与进化层形构造实存形态；误归会使单周期
+        # 路径读空基因集产出全零信号——实施期冻结值红实证）
+        empty_top = [TimeframeLayer(one_tf, list(genes), LogicGenes())]
+        loaded = StrategyDNA.from_json(
+            _with_layers_json(empty_top, empty_top=True))
+        assert loaded.is_mtf is True, (
+            "顶层空 signal_genes 的单层形态不满足镜像特征，须保持层路径")
+
+    def test_t2_4_new_product_json_has_no_layers_key(self):
+        """新产物字节锚：R1b 后 to_dict 不再写 auto-wrap 层（结构锚）。"""
+        import json as _json
+        dna = _r1b_annotated_dna()
+        # 构造态经规范化往返（translate :564 同款 from_json→to_json）
+        normalized = StrategyDNA.from_json(dna.to_json())
+        payload = _json.loads(normalized.to_json())
+        assert "layers" not in payload, (
+            "新转化产物 dna_json 不应携带 auto-wrap 层字节")
+
+    def test_t2_5_legacy_bytes_not_migrated_on_load(self, tmp_path):
+        """存量字节不迁移锚：加载含伪层存量 dna_json 后库内字节不变。"""
+        db = tmp_path / "t2_5.db"
+        init_db_ext(db)
+        dna_mem = _r1b_annotated_dna()
+        legacy_json = _r1b_legacy_autowrap_json(dna_mem)
+        save_strategy(db, strategy_id="st_t2_legacy",
+                      dna_json=legacy_json, symbol="BTCUSDT",
+                      timeframe="30m", source="manual")
+
+        row_before = get_strategy(db, "st_t2_legacy")
+        loaded = StrategyDNA.from_json(row_before["dna_json"])  # 加载动作
+        assert loaded.is_mtf is False  # 愈合生效且不改字节
+        row_after = get_strategy(db, "st_t2_legacy")
+        assert row_before["dna_json"] == row_after["dna_json"], (
+            "加载不得触发库内 dna_json 字节清洗")
+        assert '"layers"' in row_after["dna_json"], (
+            "存量伪层字节应原样保留（可审计）")
