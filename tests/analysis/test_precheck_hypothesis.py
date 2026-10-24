@@ -832,7 +832,8 @@ class TestWarmupSourceParity:
                              "field": "ema"},
                  "action": "gt", "target": 0}]
         dna = self._register_and_translate(db_path, when)
-        warmup_isolated, indicators = _derive_dna_warmup(db_path, dna)
+        warmup_isolated, indicators = _derive_dna_warmup(
+            db_path, dna, dna.execution_genes.timeframe)
         names, plugins = _collect_precheck_refs(when)
         warmup_precheck = derive_warmup_full(db_path, names, plugins)
         assert warmup_precheck == warmup_isolated == 600   # EMA 上限 600
@@ -854,7 +855,8 @@ class TestWarmupSourceParity:
                  "action": "gt", "target": 0},
                 {"subject": "fx_src_col", "action": "gt", "target": 0}]
         dna = self._register_and_translate(db_path, when)
-        warmup_isolated, _ = _derive_dna_warmup(db_path, dna)
+        warmup_isolated, _ = _derive_dna_warmup(
+            db_path, dna, dna.execution_genes.timeframe)
         names, plugins = _collect_precheck_refs(when)
         warmup_precheck = derive_warmup_full(db_path, names, plugins)
         assert plugins == {"fx_src_col"}

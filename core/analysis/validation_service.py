@@ -239,7 +239,7 @@ def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
     return axis_map
 
 
-def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
+def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]]:
     """DNA warmup 推导薄壳：提取引用 → derive_warmup_full 两维同式。
 
     双产出保持（(warmup, indicator_names)——后者被 warmup.indicators
@@ -258,10 +258,15 @@ def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
     # 基因级周期分组（unblock-research-validation 预热第三维）：
     # 分组提取单源 _gene_tf_axis_refs（B8 抽取——与短窗预检共用）
     indicator_tfs = _gene_tf_axis_refs(dna)
+    # R3 接线（fix-mtf-execution-consistency）：base_tf 必填消费轴——
+    # 推导折算分母与回测装载消费轴显式一致（守卫在前保证
+    # base_tf==execution_genes.timeframe，折算分母无歧义）；移除
+    # dna.execution_genes.timeframe 内部兜底（显式契约防复发——漂移
+    # DNA 的执行周期≠请求周期时兜底产 8 倍欠账）
     warmup = derive_warmup_full(
         db_path, indicator_names, formula_refs,
         indicator_tfs=indicator_tfs or None,
-        base_tf=dna.execution_genes.timeframe)
+        base_tf=base_tf)
     return warmup, indicator_names
 
 
@@ -534,7 +539,8 @@ def run_isolated_backtest(
 
     # warmup 推导（内置 ×3 与插件公式 lookback 取大，floor 200）
     try:
-        warmup_bars, indicator_names = _derive_dna_warmup(db_path, dna)
+        warmup_bars, indicator_names = _derive_dna_warmup(
+            db_path, dna, timeframe)  # R3：消费轴（请求周期）
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 
@@ -577,7 +583,9 @@ def run_isolated_backtest(
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
                    "basis": WARMUP_RULE_TEXT,
-                   "indicators": indicator_names},
+                   "indicators": indicator_names,
+                   # R3：推导轴披露（消费轴=请求周期——研究者可查轴单位）
+                   "base_timeframe": timeframe},
         "bars_used": bars_used,
         "symbol": symbol, "timeframe": timeframe,
         # 方向披露（add-direction-channel A4）：纯增量键，来源=draft
@@ -634,7 +642,7 @@ def random_window_test(
     import numpy as np
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
-    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna, timeframe)  # R3：消费轴
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
@@ -782,7 +790,7 @@ def run_sandbox_backtest(
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     symbol = symbol or strat_row.get("symbol", "BTCUSDT")
     timeframe = timeframe or strat_row.get("timeframe", "4h")
-    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna, timeframe)  # R3：消费轴
 
     # trade_returns 不进沙盒响应（不判门槛不披露 CI——_ 占位解包）
     metrics, _trade_returns, actual_warmup, bars_used = run_backtest_on_range(
@@ -1070,7 +1078,8 @@ def run_staged_validation(
     # ---- 策略与 warmup ----
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     try:
-        warmup_bars, _indicator_names = _derive_dna_warmup(db_path, dna)
+        warmup_bars, _indicator_names = _derive_dna_warmup(
+            db_path, dna, timeframe)  # R3：消费轴（请求周期）
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 

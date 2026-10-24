@@ -165,7 +165,7 @@ class TestGeneLevelTfWarmup:
         d = make_dna()
         d.signal_genes[0].timeframe = "1d"
         d.execution_genes.timeframe = "4h"
-        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d, "4h")
         assert w == 252, f"折算锚 252，got {w}"
 
     def test_t5b_baseline_unchanged(self, tmp_path):
@@ -173,7 +173,7 @@ class TestGeneLevelTfWarmup:
         from core.analysis.validation_service import _derive_dna_warmup
         from tests.helpers.data_factory import make_dna
         d = make_dna()
-        w, _ = _derive_dna_warmup(tmp_path / "q.db", d)
+        w, _ = _derive_dna_warmup(tmp_path / "q.db", d, d.execution_genes.timeframe)
         assert w == 200
 
     def test_t5d_rule_text_fourth_sentence(self):
