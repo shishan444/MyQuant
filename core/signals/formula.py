@@ -359,6 +359,11 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
                 raise FormulaError(
                     f"调用目标必须是函数名，得到 {type(node.func).__name__}")
             fname = node.func.id  # 已由静态校验保证
+            # 静态关「不支持关键字参数」同款防御（文案逐字对齐）：
+            # 不经校验直调时 keywords 此前被静默丢弃——
+            # shift(close, 1, bogus=2) 无声算出正常结果（卡实锤）
+            if node.keywords:
+                raise FormulaError("不支持关键字参数")
             args = [_ev(a) for a in node.args]
             try:
                 return FORMULA_FUNCTIONS[fname](*args)
