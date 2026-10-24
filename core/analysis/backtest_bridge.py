@@ -60,11 +60,47 @@ def _slice_signal_set(sig_set, index: pd.Index):
     )
 
 
+def ensure_timeframe_consistent(
+    dna, request_timeframe: str, *, strategy_id: str | None = None,
+) -> None:
+    """请求周期一致性守卫（fix-mtf-execution-consistency R3/D6 单源）。
+
+    dna.execution_genes.timeframe != request_timeframe 时结构化拒绝
+    （RESEARCH_TIMEFRAME_MISMATCH 422）——异轴执行的求值语义未定义
+    （信号在 A 轴生产、warmup 按 B 轴折算、投影跨轴漂移），折算或
+    披露均修不了语义漂移，故校验拒绝（项目纪律先例：跨币种/MTF×
+    policy/低周期三处拒绝同族）。守卫只拦显式不一致；缺省链自洽
+    调用（不传 timeframe → 缺省取策略行周期 == 执行周期）不在守卫
+    面——存量漂移产物的修正归历史回扫重验通道（S 卡），两机制正交。
+
+    双挂同一单源：①桥 run_backtest_on_range 入口第一校验（四通道
+    隔离/随机/沙盒/分段全经桥=单挂全覆盖）；②工程回测端点 from_json
+    后装载前。一致则静默通过。
+    """
+    exec_tf = dna.execution_genes.timeframe
+    if exec_tf != request_timeframe:
+        raise ResearchError(
+            "RESEARCH_TIMEFRAME_MISMATCH",
+            f"验证请求周期 {request_timeframe} ≠ 策略执行周期 {exec_tf}"
+            "（异轴执行语义未定义，拒绝执行）",
+            status=422,
+            detail={
+                "request_timeframe": request_timeframe,
+                "dna_execution_timeframe": exec_tf,
+                "strategy_id": strategy_id,
+                "need_hint": (
+                    "验证请求周期须等于策略执行周期（策略定义轴）；"
+                    "换轴验证请回假设侧修改基准周期"
+                    "（data_ranges.timeframe）后重新转化"),
+            })
+
+
 def run_backtest_on_range(
     db_path: Path, data_dir: Path, dna, symbol: str, timeframe: str,
     start: str, end: str, warmup_bars: int,
     *, init_cash: float = 100000.0,
     fee: float = 0.001, slippage: float = 0.0005,
+    strategy_id: str | None = None,
 ) -> Tuple[Dict[str, Any], np.ndarray | None, int, int]:
     """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
 
@@ -75,6 +111,10 @@ def run_backtest_on_range(
     """
     from core.backtest import engine as bt_engine_mod
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
+
+    # 周期一致性守卫（D6）：入口第一校验（enhanced 装载前省 IO）——
+    # 显式异轴拒绝；缺省链自洽调用（timeframe=策略行周期）自然通过
+    ensure_timeframe_consistent(dna, timeframe, strategy_id=strategy_id)
 
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     warmup_delta = pd.Timedelta(minutes=tf_minutes * warmup_bars)

@@ -563,7 +563,8 @@ def run_isolated_backtest(
     # 回测（warmup 前扩装载）
     metrics, trade_returns, actual_warmup, bars_used = run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe,
-        request_range["start"], request_range["end"], warmup_bars)
+        request_range["start"], request_range["end"], warmup_bars,
+        strategy_id=strategy_id)
 
     # 门槛机械判定（组合用收紧 profile；三段闸门含证据闸门/CI）
     verdict, details = judge(metrics, effective_profile,
@@ -690,7 +691,8 @@ def random_window_test(
         w_end = w_start + window_bars * bar_delta
         metrics, w_returns, actual_warmup, bars = run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
-            str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars)
+            str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars,
+            strategy_id=strategy_id)
         verdict, details = judge(metrics, threshold_profile,
                                  trade_returns=w_returns)
         windows.append({
@@ -785,7 +787,8 @@ def run_sandbox_backtest(
     # trade_returns 不进沙盒响应（不判门槛不披露 CI——_ 占位解包）
     metrics, _trade_returns, actual_warmup, bars_used = run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
-        init_cash=init_cash, fee=fee, slippage=slippage)
+        init_cash=init_cash, fee=fee, slippage=slippage,
+        strategy_id=strategy_id)
 
     # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
     # 取该假设全部日志条目 data_ranges，现成无需改动）
@@ -1133,7 +1136,7 @@ def run_staged_validation(
         # 三态都有明细供归因）
         metrics, seg_returns, _actual_warmup, bars_used = run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
-            seg_start, seg_end, warmup_bars)
+            seg_start, seg_end, warmup_bars, strategy_id=strategy_id)
         entry["metrics"] = metrics
         entry["bars_used"] = int(bars_used)
         seg_verdict, seg_details = judge(metrics,

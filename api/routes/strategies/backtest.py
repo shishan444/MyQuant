@@ -122,6 +122,21 @@ def backtest_strategy(
             detail="Must provide either strategy_id or dna",
         )
 
+    # 周期一致性守卫（fix-mtf-execution-consistency R3/D6 挂点②）：
+    # 请求周期≠DNA 执行周期 → 结构化拒绝——与验证通道同款错误面
+    # （单源 ensure_timeframe_consistent 双挂：桥入口+本端点装载前）。
+    # strategy_id 分支 timeframe 取策略行值（自洽调用自然通过，兼防
+    # 直改库的行/DNA 周期漂移）；内联分支对显式传参异轴生效。
+    from core.analysis.backtest_bridge import ensure_timeframe_consistent
+    from core.analysis.errors import ResearchError as _ResearchError
+    from api.routes.research.common import research_error_to_http
+
+    try:
+        ensure_timeframe_consistent(
+            dna, timeframe, strategy_id=strategy_id)
+    except _ResearchError as exc:
+        raise research_error_to_http(exc) from exc
+
     # 装载数据集（白名单校验后直拼路径）
     # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
     from core.data.validation import validate_import_interval, validate_symbol
