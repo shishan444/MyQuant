@@ -452,6 +452,56 @@ class TestIndicatorSupplementGuard:
         assert "indicator=RSI" in msg, "warning 披露 gene 名"
         assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"
 
+    def test_cross_thread_log_filter_keeps_assertion_stable(
+            self, monkeypatch, caplog):
+        """④串台确定性承载（fullrun-discipline「泄漏线程日志不
+        干扰断言」scenario 的常驻验证）：伪造泄漏线程向同 logger
+        打排前的 MACD warning，本测试主线程 batch 调用产 RSI
+        warning——按产生线程归属过滤检索必选本线程记录。排前
+        断言同时证明「退回旧检索（取第一条）必错取串台记录」
+        ——检索若退回不过滤形制，本用例即红。注入与断言同在
+        方法体内（caplog setup 期记录在 call 期被清——本 change
+        DELIVERY 坑位 2）。"""
+        import threading
+
+        from core.strategy import executor as executor_mod
+
+        monkeypatch.setattr(executor_mod, "evaluate_condition",
+                            self._raiser())
+        logger = logging.getLogger("core.strategy.executor")
+        # 伪造串台（先落记录=排前形态）：形制贴 executor.py:1101
+        # 生产 warning（「跳过拒绝基因」+ indicator=%s）
+        spoofer = threading.Thread(
+            target=lambda: logger.warning(
+                "batch_signal_sets 跳过拒绝基因 code=%s detail=%r "
+                "indicator=%s condition=%r",
+                "RESEARCH_NOT_EXPRESSIBLE", {"probe": "串台注入"},
+                "MACD", {"type": "eq"}),
+            name="evolution-runner")
+        df = make_enhanced_df(n=60)
+        dna = make_dna()
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            spoofer.start()
+            spoofer.join()
+            results = batch_signal_sets([dna], df)
+        assert len(results) == 1, "整批完成"
+        rejected = [r for r in caplog.records
+                    if "跳过拒绝基因" in r.getMessage()]
+        assert rejected, "前置：拒绝基因 warning 在场"
+        assert any(r.thread != threading.get_ident()
+                   for r in rejected), "前置：串台记录确属他线程"
+        assert "indicator=MACD" in rejected[0].getMessage(), \
+            "前置：串台记录排前（旧检索取第一条必错取——过滤必要性锚）"
+        mine = [r for r in rejected
+                if r.thread == threading.get_ident()]
+        assert mine, "本测试 batch 调用未产生拒绝基因 warning"
+        msg = mine[0].getMessage()
+        assert "indicator=RSI" in msg, "线程过滤后仍捕本测试记录"
+        assert "ORIGINAL_CTX" in msg, "detail 内既有上下文保留"
+        assert not any("indicator=MACD" in r.getMessage()
+                       for r in mine), "串台记录被线程归属过滤排除"
+
 
 class TestGeneLevelTimeframeExecution:
     """T3/T4a：基因级周期执行链（unblock-research-validation 任务 3）。"""
