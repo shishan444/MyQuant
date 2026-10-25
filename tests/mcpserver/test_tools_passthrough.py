@@ -29,6 +29,26 @@ def _register_and_call(**kw):
     return out, api.posts[0]
 
 
+class TestUnionBalanceReadonlyPassthrough:
+    """阶段四盲区消解（fix-mtf-review-consistency ②）：union_balance
+    只读工具 GET 透传行为锚——三必填参数进查询串、路由路径正确
+    （:142 未覆盖行——tests/mcpserver 透传域）。"""
+
+    def test_get_passthrough_three_required_params(self):
+        from conftest import RecordingFakeApi
+        from mcpserver import tools as tools_mod
+
+        mcp, api = _FakeMcp(), RecordingFakeApi()
+        tools_mod.register_readonly_tools(mcp, api)
+        fn = mcp.registered["union_balance"]
+        fn(symbol="BTCUSDT", timeframe="4h", hypothesis_id="hyp_x")
+        method, url, params = api.calls[0]
+        assert method == "GET"
+        assert url == "/api/research/union-balance"
+        assert params == {"symbol": "BTCUSDT", "timeframe": "4h",
+                          "hypothesis_id": "hyp_x"}
+
+
 class TestRegisterHypothesisTriggerPolicyPassthrough:
     def test_with_policy_in_body(self):
         out, (url, body) = _register_and_call(

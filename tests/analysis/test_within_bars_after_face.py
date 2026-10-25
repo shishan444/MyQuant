@@ -149,6 +149,78 @@ class TestT7RegistrationFace:
         assert "window" in fields and "inner_action" in fields
 
 
+class TestT7TranslateWindowDomain:
+    """阶段四盲区消解（fix-mtf-review-consistency ②）：翻译链
+    within_bars_after window 值域拒绝——T⑦.5 已锁执行链
+    evaluate_condition 侧，本锚锁翻译分支侧（:749-753 守卫）。
+
+    契约：window 非 int/bool/负值/零 → RESEARCH_PARAM_INVALID 422，
+    detail 附 param+value+legal_range；合法 window 缺省 5。
+    """
+
+    @pytest.fixture()
+    def db(self, tmp_path: Path) -> Path:
+        d = tmp_path / "q.db"
+        init_db_ext(d)
+        ensure_research_tables(d)
+        return d
+
+    def _register_wba(self, db, window):
+        return register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": {"indicator": "RVOL",
+                                 "params": {"period": 20}},
+                     "action": "within_bars_after", "target": 1.5,
+                     "inner_action": "gt", "window": window}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}},
+                     "action": "gt", "target": 65}]},
+            statement="window 值域锚",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01"}]
+        )["hypothesis_id"]
+
+    @pytest.mark.parametrize("bad", [0, -3, "x", 2.5, True],
+                             ids=["零", "负数", "字符串", "浮点", "bool"])
+    def test_translate_bad_window_rejected(self, db, bad):
+        hid = self._register_wba(db, bad)
+        with pytest.raises(ResearchError) as exc:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert exc.value.code == "RESEARCH_PARAM_INVALID"
+        assert exc.value.status == 422
+        assert exc.value.detail["param"] == "condition.window"
+        assert exc.value.detail["legal_range"] == ">=1 整数"
+
+    def test_translate_window_default_5_passes(self, db):
+        """缺省 window=5 放行（登记面不带 window 键）。"""
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [
+                    {"subject": {"indicator": "RVOL",
+                                 "params": {"period": 20}},
+                     "action": "within_bars_after", "target": 1.5,
+                     "inner_action": "gt"}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}},
+                     "action": "gt", "target": 65}]},
+            statement="window 缺省锚",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01"}]
+        )["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(db, out["strategy_id"])
+        genes = json.loads(row["dna_json"])["signal_genes"]
+        wba = next(g for g in genes
+                   if g["condition"].get("type") == "within_bars_after")
+        assert wba["condition"]["window"] == 5
+
+
 class TestT6InnerActionsSingleSource:
     """T⑥ 锚对拍锁（CARD-04，fix-mtf-review-consistency）：inner_action
     五员词表单源不漂移。

@@ -140,6 +140,31 @@ class TestIdempotencyNarrowing:
         # =谱系命中即返（base_tf=None 不进收窄判据）
         assert _find_draft_by_parent(db, hid) == "st_drift_old"
 
+    def test_corrupted_draft_dna_json_releases_rebuild(
+            self, tmp_path):
+        """阶段四盲区消解（fix-mtf-review-consistency ②）：幂等收窄
+        分支的 dna_json 损坏防御（:1073-1074 except 分支）——谱系
+        draft 的 dna_json 损坏/缺键 → exec_tf 不可解析 → 不满足
+        「产物执行周期==假设基准才命中」的收窄条件（S 卡契约）→
+        放行重建（保守处置：不可证明一致即重建），旧 draft 保留审计。
+        """
+        db, _, hid = _seed_env(tmp_path)
+        with sqlite3.connect(db) as conn:
+            # 基准可解析（30m）但 draft 产物 dna_json 损坏
+            conn.execute(
+                "UPDATE strategy SET dna_json='{broken json' "
+                "WHERE strategy_id='st_drift_old'")
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        assert out["duplicated"] is False, (
+            "损坏 draft 不可证明周期一致——须放行重建（收窄条件不命中）")
+        assert out["strategy_id"] != "st_drift_old"
+        new_exec = json.loads(
+            get_strategy(db, out["strategy_id"])["dna_json"]
+        )["execution_genes"]["timeframe"]
+        assert new_exec == "30m"  # R2 继承基准
+        # 旧 draft（损坏字节）保留审计
+        assert get_strategy(db, "st_drift_old") is not None
+
     def test_consistent_draft_idempotent_unchanged(self, tmp_path):
         """回归锚：一致 draft（执行周期==基准）现行幂等不变——重建后
         二次 translate 返回同一产物。"""
@@ -198,6 +223,86 @@ class TestRerunFourSteps:
                 "SELECT status FROM research_hypotheses WHERE "
                 "hypothesis_id=?", (hid,)).fetchone()["status"]
         assert hyp_status == "active"  # 不自动迁移
+
+
+class TestRerunGuardsAndCliSmoke:
+    """阶段四盲区消解（fix-mtf-review-consistency ②）：rerun 通道
+    前置校验分支+旧记录 params 容错分支+两脚本 main CLI 薄壳冒烟。"""
+
+    def test_missing_hypothesis_system_exit(self, tmp_path):
+        """前置校验：假设不存在 → SystemExit（:50）。"""
+        from scripts.rerun_polluted_validation import rerun_hypothesis
+
+        db, d, _ = _seed_env(tmp_path)
+        with pytest.raises(SystemExit, match="假设不存在"):
+            rerun_hypothesis(db, d, "hyp_ghost")
+
+    def test_terminal_hypothesis_system_exit(self, tmp_path):
+        """前置校验：终态假设 → SystemExit（:52——重验对象须 active）。"""
+        from scripts.rerun_polluted_validation import rerun_hypothesis
+
+        db, d, hid = _seed_env(tmp_path)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET status='concluded' "
+                "WHERE hypothesis_id=?", (hid,))
+        with pytest.raises(SystemExit, match="终态"):
+            rerun_hypothesis(db, d, hid)
+
+    def test_corrupted_old_record_params_falls_back_to_data_ranges(
+            self, tmp_path):
+        """旧记录 params 损坏容错（:85-86 except 分支）：损坏记录跳过
+        →request_range 回退假设 data_ranges 区间（C1 活体锚形制）。"""
+        from scripts.rerun_polluted_validation import rerun_hypothesis
+
+        db, d, hid = _seed_env(tmp_path)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO validation_records (record_id, hypothesis_id,"
+                " strategy_id, level, params, verdict, range_hash,"
+                " created_at, pollution_cause)"
+                " VALUES ('rec_bad', ?, 'st_drift_old',"
+                " 'isolated_backtest', '{broken params', 'inconclusive',"
+                " 'rh_bad', '2026-01-01', 'gene_tf_drift')", (hid,))
+            conn.commit()
+        summary = rerun_hypothesis(db, d, hid)
+        # 回退=假设 data_ranges 区间（_seed_env 基准区间）
+        assert summary["rerun_range"]["timeframe"] == "30m"
+        assert summary["rerun_range"]["start"] == "2024-06-01"
+        assert summary["rerun_range"]["end"] == "2024-07-01"
+
+    def test_rescan_main_cli_smoke(self, tmp_path, monkeypatch, capsys):
+        """rescan main CLI 薄壳冒烟（进程内 argv 注入——coverage 行级
+        可采集；空库清单全空正常返回）。"""
+        import sys as _sys
+
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        monkeypatch.setattr(
+            _sys, "argv",
+            ["rescan_pollution.py", "--db", str(db), "--dry-run"])
+        from scripts.rescan_pollution import main
+        main()  # 正常路径不 SystemExit
+        captured = capsys.readouterr()
+        assert '"drifted_strategies": {}' in captured.out
+        assert "清单" in captured.err  # 清单摘要行走 stderr
+        assert "（dry-run）" in captured.err
+
+    def test_rerun_main_cli_smoke(self, tmp_path, monkeypatch, capsys):
+        """rerun main CLI 薄壳冒烟（进程内 argv 注入全链——_seed_env
+        等价环境经 argparse 入口跑四步+摘要 JSON+stderr 判定连锁提醒）。"""
+        import sys as _sys
+
+        db, d, hid = _seed_env(tmp_path)
+        monkeypatch.setattr(
+            _sys, "argv",
+            ["rerun_polluted_validation.py", "--db", str(db),
+             "--data-dir", str(d), "--hypothesis", hid])
+        from scripts.rerun_polluted_validation import main
+        main()
+        captured = capsys.readouterr()
+        assert '"new_record_id"' in captured.out
+        assert "不自动迁移" in captured.err
 
 
 class TestRealLibraryFixedAnchor:
