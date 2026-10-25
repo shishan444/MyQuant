@@ -94,9 +94,13 @@ def init_db_ext(db_path: Path) -> None:
             # 短路后触发器永久缺失且版本谎报
             conn2 = _sqlite3.connect(str(db_path))
             try:
+                # head 全列判据含 pollution_cause（fix-mtf-execution-
+                # consistency S 卡 a7f3d2c8e9b4）——缺此判据时 lifecycle
+                # 形库会被误判 head 短路 upgrade，新列永久缺失
                 is_head_columns = conn2.execute(
                     "SELECT COUNT(*) FROM pragma_table_info('validation_records') "
-                    "WHERE name='segmentation'").fetchone()[0] > 0
+                    "WHERE name IN ('segmentation', 'pollution_cause')"
+                ).fetchone()[0] == 2
                 has_domain_triggers = conn2.execute(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
                     "AND name IN ('trg_strategy_status_domain', "

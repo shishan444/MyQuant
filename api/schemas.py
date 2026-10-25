@@ -26,7 +26,7 @@ from core.strategy.validator import MAX_LEVERAGE
 _SL_MODE_PATTERN = "^(" + "|".join(SL_MODES) + ")$"
 
 
-# ── Enums ──
+# ── 枚举 ──
 
 
 class ImportFormat(str, Enum):
@@ -92,7 +92,7 @@ class RequirementsConfigModel(BaseModel):
     min_profit_factor: float = Field(default=1.2, ge=0.0, description="Minimum profit factor")
 
 
-# ── DNA Component Models ──
+# ── DNA 组件模型 ──
 
 
 class SignalGeneModel(BaseModel):
@@ -207,7 +207,7 @@ class TimeframeLayerModel(BaseModel):
     role: Optional[str] = None  # "structure" | "zone" | "execution"
 
 
-# ── Strategy Schemas ──
+# ── 策略域模型 ──
 
 
 class StrategyCreate(BaseModel):
@@ -374,7 +374,7 @@ class CompareResponse(BaseModel):
     results: List[CompareResultItem]
 
 
-# ── Verify Schemas ──
+# ── 验证域模型 ──
 
 
 class VerifyDateRange(BaseModel):
@@ -433,7 +433,7 @@ class VerifyResponse(BaseModel):
     summary: List[VerifySummaryItem]
 
 
-# ── Batch Backtest Schemas ──
+# ── 批量回测域模型 ──
 
 
 class BatchBacktestRequest(BaseModel):
@@ -524,7 +524,7 @@ class VerifySessionListResponse(BaseModel):
     total: int
 
 
-# ── Evolution Schemas ──
+# ── 进化域模型 ──
 
 
 class EvolutionTaskCreate(BaseModel):
@@ -619,7 +619,7 @@ class EvolutionHistoryResponse(BaseModel):
     generations: List[EvolutionHistoryRecord]
 
 
-# ── Data Schemas ──
+# ── 数据域模型 ──
 
 
 class DataImportResponse(BaseModel):
@@ -670,7 +670,7 @@ class OhlcvResponse(BaseModel):
     data: List[Dict[str, Any]]
 
 
-# ── Config Schemas ──
+# ── 配置域模型 ──
 
 
 class AvailableSource(BaseModel):
@@ -796,6 +796,12 @@ class ConditionItem(BaseModel):
     action: str
     target: Union[float, str]
     timeframe: Optional[str] = None
+    # R4 时序动作族可选键（fix-mtf-execution-consistency）：window=开窗
+    # 根数（>=1 整数，值域校验在翻译/分析链）；inner_action=内层动作
+    # （合法集 gt/lt/ge/le/price_above——与分析链 _LOOKBACK_INNER_
+    # ACTIONS 同源）；内层阈值由 target 兼任（沿 lookback 族先例）
+    window: Optional[int] = None
+    inner_action: Optional[str] = None
 
 
 class HypothesisConditions(BaseModel):

@@ -422,7 +422,11 @@ class StrategyDNA:
             result["composition"] = self.composition
         if self.entry_trigger_policy is not None:
             result["entry_trigger_policy"] = self.entry_trigger_policy
-        if self.layers:
+        # R1b 止血（fix-mtf-execution-consistency）：auto-wrap 兼容层
+        # 不再序列化——仅显式层（_layers_explicit）才写出。旧读者读
+        # 无 layers 键的新 json 时 from_dict auto-wrap 分支内存补齐，
+        # 向后兼容；新转化产物 dna_json 不再携带伪层字节。
+        if self.layers and self._layers_explicit:
             result["layers"] = [layer.to_dict() for layer in self.layers]
         return result
 
@@ -494,8 +498,27 @@ class StrategyDNA:
         instance.confluence_threshold = confluence_threshold
         instance.proximity_mult = proximity_mult
         # 仅数据携带的 layers 标记为显式（auto-wrap 兼容层不标——
-        # is_mtf 语义据此区分数据结构与真多周期）
-        instance._layers_explicit = layers is not None
+        # is_mtf 语义据此区分数据结构与真多周期）。
+        # R1b 愈合判据（fix-mtf-execution-consistency 五条件）：数据
+        # 携带但形态=auto-wrap 伪层不标记显式——①单层 ②层周期==执行
+        # 周期 ③mtf_mode 缺省 ④层 role None ⑤层基因==顶层 signal_genes
+        # （镜像特征——auto-wrap 构造（下方）以顶层基因为源包层，顶层
+        # 空 signal_genes 的真显式层〔基因只在层内，如 tf 不变性锚与
+        # 进化层形构造〕不满足镜像，保持显式层路由——单周期路径读顶层
+        # 基因，误归即丢全部基因）。存量 dna_json 不改字节，加载即
+        # is_mtf=False 走单周期路径，与内存构造态同语义；真显式层形态
+        # （多层/带 mtf_mode/层周期异构/带角色层/顶层基因非镜像）维持
+        # 显式不被误归。gene_signature 层段判据（`if self.layers:`）
+        # 各司其职不随本判据改——签名=基因型指纹，路由=形态判定。
+        _is_autowrap_form = (
+            layers is not None
+            and len(layers) == 1
+            and layers[0].timeframe == instance.execution_genes.timeframe
+            and mtf_mode is None
+            and layers[0].role is None
+            and layers[0].signal_genes == (instance.signal_genes or [])
+        )
+        instance._layers_explicit = layers is not None and not _is_autowrap_form
 
         # auto-wrap：无 layers 但有 signal_genes 时包单层（执行周期）——
         # 单周期 DNA 在层形接口上的兼容形态

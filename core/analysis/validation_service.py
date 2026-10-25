@@ -239,7 +239,7 @@ def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
     return axis_map
 
 
-def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
+def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]]:
     """DNA warmup 推导薄壳：提取引用 → derive_warmup_full 两维同式。
 
     双产出保持（(warmup, indicator_names)——后者被 warmup.indicators
@@ -258,10 +258,15 @@ def _derive_dna_warmup(db_path: Path, dna) -> Tuple[int, List[str]]:
     # 基因级周期分组（unblock-research-validation 预热第三维）：
     # 分组提取单源 _gene_tf_axis_refs（B8 抽取——与短窗预检共用）
     indicator_tfs = _gene_tf_axis_refs(dna)
+    # R3 接线（fix-mtf-execution-consistency）：base_tf 必填消费轴——
+    # 推导折算分母与回测装载消费轴显式一致（守卫在前保证
+    # base_tf==execution_genes.timeframe，折算分母无歧义）；移除
+    # dna.execution_genes.timeframe 内部兜底（显式契约防复发——漂移
+    # DNA 的执行周期≠请求周期时兜底产 8 倍欠账）
     warmup = derive_warmup_full(
         db_path, indicator_names, formula_refs,
         indicator_tfs=indicator_tfs or None,
-        base_tf=dna.execution_genes.timeframe)
+        base_tf=base_tf)
     return warmup, indicator_names
 
 
@@ -459,6 +464,7 @@ def _hypothesis_precheck(
     db_path: Path, hypothesis_id: str, strategy_id: str,
     rh: str, request_range: Dict[str, str],
     *, idem_level: Optional[str] = None, idem_segmentation: str = "",
+    rerun_mode: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """验证族前置检查四步（isolated/staged 同构提取）。
 
@@ -489,7 +495,12 @@ def _hypothesis_precheck(
     judged = judged_ranges_union(db_path, hypothesis_id)
     overlaps = overlaps_with_request(
         judged, request_range["start"], request_range["end"])
-    if overlaps:
+    if overlaps and not rerun_mode:
+        # 重验取代豁免（fix-mtf-execution-consistency S）：rerun 模式
+        # 跳过并集面——重跑旧区间不是「同区间反复判定刷 verdict」而是
+        # 污染修正取代（新记录 supersedes 引用旧记录；无旧记录的漂移
+        # 假设=取代未落记录的原验证活动，同属取代语义）；幂等键与终态
+        # 检查照常生效（新 strategy_id 不命中幂等）
         raise ResearchError(
             "RESEARCH_RANGE_OVERLAP",
             "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
@@ -507,6 +518,7 @@ def run_isolated_backtest(
     strategy_id: str,
     request_range: Dict[str, str],
     threshold_profile: Optional[Dict[str, Any]] = None,
+    rerun_mode: bool = False,
 ) -> Dict[str, Any]:
     """隔离回测（判定流见模块 docstring）。
 
@@ -523,7 +535,8 @@ def run_isolated_backtest(
     rh = _range_hash(request_range)
     dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
                                request_range,
-                               idem_level="isolated_backtest")
+                               idem_level="isolated_backtest",
+                               rerun_mode=rerun_mode)
     if dup is not None:
         return dup
 
@@ -534,7 +547,8 @@ def run_isolated_backtest(
 
     # warmup 推导（内置 ×3 与插件公式 lookback 取大，floor 200）
     try:
-        warmup_bars, indicator_names = _derive_dna_warmup(db_path, dna)
+        warmup_bars, indicator_names = _derive_dna_warmup(
+            db_path, dna, timeframe)  # R3：消费轴（请求周期）
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 
@@ -563,7 +577,8 @@ def run_isolated_backtest(
     # 回测（warmup 前扩装载）
     metrics, trade_returns, actual_warmup, bars_used = run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe,
-        request_range["start"], request_range["end"], warmup_bars)
+        request_range["start"], request_range["end"], warmup_bars,
+        strategy_id=strategy_id)
 
     # 门槛机械判定（组合用收紧 profile；三段闸门含证据闸门/CI）
     verdict, details = judge(metrics, effective_profile,
@@ -576,7 +591,9 @@ def run_isolated_backtest(
         "threshold_details": details,
         "warmup": {"bars": actual_warmup, "derived": warmup_bars,
                    "basis": WARMUP_RULE_TEXT,
-                   "indicators": indicator_names},
+                   "indicators": indicator_names,
+                   # R3：推导轴披露（消费轴=请求周期——研究者可查轴单位）
+                   "base_timeframe": timeframe},
         "bars_used": bars_used,
         "symbol": symbol, "timeframe": timeframe,
         # 方向披露（add-direction-channel A4）：纯增量键，来源=draft
@@ -633,7 +650,7 @@ def random_window_test(
     import numpy as np
 
     dna, _ = _load_strategy_dna(db_path, strategy_id)
-    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna, timeframe)  # R3：消费轴
     tf_minutes = TF_MINUTES.get(timeframe, 240)
     bar_delta = pd.Timedelta(minutes=tf_minutes)
 
@@ -690,7 +707,8 @@ def random_window_test(
         w_end = w_start + window_bars * bar_delta
         metrics, w_returns, actual_warmup, bars = run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
-            str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars)
+            str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars,
+            strategy_id=strategy_id)
         verdict, details = judge(metrics, threshold_profile,
                                  trade_returns=w_returns)
         windows.append({
@@ -780,12 +798,13 @@ def run_sandbox_backtest(
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     symbol = symbol or strat_row.get("symbol", "BTCUSDT")
     timeframe = timeframe or strat_row.get("timeframe", "4h")
-    warmup_bars, _ = _derive_dna_warmup(db_path, dna)
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna, timeframe)  # R3：消费轴
 
     # trade_returns 不进沙盒响应（不判门槛不披露 CI——_ 占位解包）
     metrics, _trade_returns, actual_warmup, bars_used = run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
-        init_cash=init_cash, fee=fee, slippage=slippage)
+        init_cash=init_cash, fee=fee, slippage=slippage,
+        strategy_id=strategy_id)
 
     # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
     # 取该假设全部日志条目 data_ranges，现成无需改动）
@@ -1067,7 +1086,8 @@ def run_staged_validation(
     # ---- 策略与 warmup ----
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     try:
-        warmup_bars, _indicator_names = _derive_dna_warmup(db_path, dna)
+        warmup_bars, _indicator_names = _derive_dna_warmup(
+            db_path, dna, timeframe)  # R3：消费轴（请求周期）
     except KeyError as exc:
         raise ResearchError("RESEARCH_CONDITION_INVALID", str(exc)) from exc
 
@@ -1133,7 +1153,7 @@ def run_staged_validation(
         # 三态都有明细供归因）
         metrics, seg_returns, _actual_warmup, bars_used = run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
-            seg_start, seg_end, warmup_bars)
+            seg_start, seg_end, warmup_bars, strategy_id=strategy_id)
         entry["metrics"] = metrics
         entry["bars_used"] = int(bars_used)
         seg_verdict, seg_details = judge(metrics,

@@ -712,3 +712,105 @@ class TestExplicitSegmentShortWindowPreflight:
                        "end": "2023-05-15"}])
         assert out.get("segments") or out.get("record_id"), \
             "explicit 段不预检（自担语义），装载可行即出成绩单"
+
+
+# ═══════════════════════════════════════════════════════════════
+# T⑤ warmup 轴一致锚（fix-mtf-execution-consistency R3，组 2）
+# ═══════════════════════════════════════════════════════════════
+
+class TestR3WarmupAxisConsistency:
+    """带 3d 标注+30m 基准策略：推导轴=消费轴（请求周期 30m）。
+
+    修复前缺陷（组 0 快照实证）：base_tf 兜底=execution_genes.timeframe，
+    漂移 DNA（exec 4h）下 360 根 4h 被当 30m 前扩——两轴分离时 warmup
+    欠账 8 倍。修复后：base_tf 必填消费轴（请求周期），推导折算分母
+    与装载消费轴显式一致。
+    """
+
+    @pytest.fixture()
+    def env_30m(self, tmp_path):
+        """30m 执行轴 + 3d 高周期轴合成数据 + 带轴策略。"""
+        import numpy as np
+        from core.persistence.repository.strategy import save_strategy
+        from core.strategy.dna import SignalGene
+
+        d = tmp_path / "market"
+        d.mkdir(exist_ok=True)
+        db = d.parent / "q.db"
+        init_db_ext(db)
+        from core.analysis.executor import ensure_research_tables
+        ensure_research_tables(db)
+        rng = np.random.default_rng(21)
+        idx = pd.date_range("2023-06-01", periods=15000, freq="30min",
+                            tz="UTC", name="timestamp")
+        close = 60000 + np.cumsum(rng.normal(0, 80, 15000))
+        pd.DataFrame({"open": close, "high": close + 40, "low": close - 40,
+                      "close": close,
+                      "volume": rng.uniform(100, 800, 15000),
+                      "trades": 40}, index=idx).to_parquet(
+            d / "BTCUSDT_30m.parquet")
+        rng3 = np.random.default_rng(22)
+        idx3 = pd.date_range("2022-06-01", periods=600, freq="3D",
+                             tz="UTC", name="timestamp")
+        close3 = 60000 + np.cumsum(rng3.normal(0, 600, 600))
+        pd.DataFrame({"open": close3, "high": close3 + 300,
+                      "low": close3 - 300, "close": close3,
+                      "volume": rng3.uniform(100, 800, 600),
+                      "trades": 40}, index=idx3).to_parquet(
+            d / "BTCUSDT_3d.parquet")
+
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene("EMA", {"period": 10}, SignalRole.ENTRY_TRIGGER,
+                           "ema", {"type": "price_above"}, timeframe="3d"),
+                SignalGene("RVOL", {"period": 20}, SignalRole.EXIT_TRIGGER,
+                           "rvol", {"type": "gt", "threshold": 2.0})],
+            execution_genes=ExecutionGenes(timeframe="30m",
+                                           symbol="BTCUSDT"),
+            logic_genes=LogicGenes(), risk_genes=RiskGenes(),
+            signal_sources=[{"type": "rule"}])
+        sid = "st_t5_warmup_axis"
+        save_strategy(db, strategy_id=sid,
+                      dna_json=dna.to_json(), symbol="BTCUSDT",
+                      timeframe="30m", gene_signature="sig_t5_warmup")
+        hid = register_hypothesis(
+            db,
+            conditions={"when_conditions": [
+                {"subject": {"indicator": "EMA", "params": {"period": 10}},
+                 "action": "gt", "target": 0, "timeframe": "3d"}],
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 0}]},
+            statement="T5 warmup 轴",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
+                          "start": "2023-12-01", "end": "2023-12-10"}]
+        )["hypothesis_id"]
+        return db, d, sid, hid
+
+    def test_t5_main_axis_consistent_and_magnitude(self, env_30m):
+        """主锚+副锚：推导值与消费轴直算折算值相等，量级数千根 30m
+        （>1000，防凑数）；回执 warmup.base_timeframe=="30m" 可查。"""
+        from core.analysis.registry_meta import derive_warmup_full
+        from core.analysis.validation_service import _derive_dna_warmup
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.dna import StrategyDNA as _SD
+
+        db, data_dir, sid, hid = env_30m
+        dna = _SD.from_json(get_strategy(db, sid)["dna_json"])
+        # 通道消费路径（R3 后 base_tf=请求周期）
+        w_channel, _ = _derive_dna_warmup(db, dna, "30m")
+        # 测试内独立推导路径（不经薄壳直调推导单源）
+        w_direct = derive_warmup_full(
+            db, ["RVOL"], set(),
+            indicator_tfs={"3d": [("EMA", {"period": 10})]},
+            base_tf="30m")
+        assert w_channel == w_direct, (
+            f"通道推导 {w_channel} ≠ 消费轴直算 {w_direct}")
+        assert w_channel > 1000, (
+            f"3d 轴折算 30m 量级应数千根，got {w_channel}（欠账回归？）")
+
+        # 端到端：隔离回测回执 base_timeframe 键
+        res = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hid, strategy_id=sid,
+            request_range={"symbol": "BTCUSDT",
+                           "start": "2024-01-01", "end": "2024-04-01"})
+        assert res["warmup"]["base_timeframe"] == "30m"

@@ -372,6 +372,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         consecutive_down/cross_above_series/cross_below_series/
         lookback_any/touch_bounce/role_reversal；未识别 action 结构化
         拒绝（422 附 legal_values=动作分派表键集）。
+        时序动作（fix-mtf-execution-consistency R4 起）：
+        within_bars_after（内层事件在近 N 根内触发过、不含当根——
+        lookback_any 的当根排除变体；登记面可选键 window（>=1 整数）
+        与 inner_action（gt/lt/ge/le/price_above，内层阈值由 target
+        兼任）；window 单位=基因求值轴根数，轴内求值后投影）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
         task_id 轮询）；其余模板求值行数超过 10000（_HEAVY_ROWS，见
         api/routes/research/analysis.py 常量）降级异步，低于阈值同步
@@ -899,11 +904,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def translate_hypothesis_to_strategy(
             hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
-            strategy_timeframe: str = "4h") -> Dict[str, Any]:
+            strategy_timeframe: str | None = None) -> Dict[str, Any]:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
-        回执身份六键：direction（产物方向 long|short）、max_hold（声明
+        执行周期契约：strategy_timeframe 缺省 None=继承假设基准周期
+（data_ranges[0].timeframe；存量异周期假设拒绝并指引显式传参）；
+回执 execution_timeframe 键披露产物执行周期。
+回执身份六键：direction（产物方向 long|short）、max_hold（声明
         的最长持仓 bar 数|int|null）、time_exit_utc（声明的固定时刻
         出场 UTC 分钟|int|null）、position_mode（声明的仓位模式
         fixed|risk_budget，缺省 fixed）、risk_fraction（声明的风险

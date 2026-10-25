@@ -61,6 +61,8 @@ _SEG_SEGMENT = ("segment_narrative区间事件摘要", "counter_profile反例画
 _SEG_ASYNC = ("同步/异步分界：", "screen_patterns全谱扫描")
 _SEG_REQUIRED = ("params必填键（缺键422detail含键名）：", "支持conditions条件数组形制")
 _SEG_ACTIONS = ("当前可用比较动作全集", "同步/异步分界：")
+# R4 时序动作段（fix-mtf-execution-consistency）——与动作全集段共终点
+_SEG_WBA = ("时序动作（fix-mtf-execution-consistencyR4起）：", "同步/异步分界：")
 # 能力自述条目段域（capability.py CAPABILITY_DOC）
 _CSEG_COMBO = ("组合条件（0.4.1起；regime_split2026-10-14起）", "区间事件摘要")
 _CSEG_PLUGINS = ("分析模板插件列条件（fix-research-c3起；regime_split2026-10-14起）",
@@ -439,6 +441,17 @@ GROUP3_ANCHORS: tuple = (
         tokens=("封闭枚举long/short", "mixed是执行概念不属研究主张"),
         scope="direction 枚举（counter_profile 侧）",
         basis="tools.py:460-461（包四 GAP-01）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G3-时序动作段-within_bars_after语义与登记键",
+        source="tools", seg_start=_SEG_WBA[0], seg_end=_SEG_WBA[1],
+        kind="token_set",
+        tokens=("within_bars_after", "不含当根", "当根排除变体", "window",
+                "inner_action", "内层阈值由target兼任", "基因求值轴根数",
+                "轴内求值后投影"),
+        scope="时序动作 within_bars_after（R4 起登记面披露）",
+        basis="design 卡 R4 基数同步点第 7 处（MCP 登记工具 docstring"
+              " 动作清单披露处）×tools.py:375-379",
     ),
 )
 

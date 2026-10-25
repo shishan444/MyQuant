@@ -162,7 +162,7 @@ def build_signal_genes(
     when_conditions: List[Dict[str, Any]],
     then_conditions: List[Dict[str, Any]],
     db_path: Path,
-    strategy_timeframe: str = "4h",
+    strategy_timeframe: Optional[str] = None,
 ) -> tuple[List, List[Dict[str, Any]]]:
     """不落库纯翻译入口（0.4.1 S4）——条件组 → (内置基因, 插件源)。
 
@@ -175,6 +175,11 @@ def build_signal_genes(
     不落库、不查假设、不产 draft；THEN 空=空基因列表放行（离场全靠
     risk_genes——translate_hypothesis 既有先例）；插件列条件自然
     透传（不被新拒绝面拦——timeframe 校验经条件顶层键不触碰插件源）。
+
+    strategy_timeframe 缺省 None=继承哨兵（fix-mtf-execution-
+    consistency R2）——translate_hypothesis 在调用前完成继承解析传
+    具体值；exit_sweep 等其余消费方显式传请求周期。None 直达（缺
+    继承解析的调用）由下游 tf 校验/装载 fail-loud 兜底。
     """
     from core.strategy.dna import SignalRole
 
@@ -380,7 +385,7 @@ def translate_hypothesis(
     *,
     hypothesis_id: str,
     strategy_symbol: str = "BTCUSDT",
-    strategy_timeframe: str = "4h",
+    strategy_timeframe: Optional[str] = None,
     data_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """把 active 假设转化为**草稿策略**（draft，验证对象；不要求 pass 前置）。
@@ -431,17 +436,17 @@ def translate_hypothesis(
                 detail={"hypothesis_id": hypothesis_id})
         except (ResearchError, TypeError, KeyError):
             hit_ranges = []
+        hit_row = get_strategy(db_path, existing_draft) or {}
         _backfill_component_eval(
-            db_path, existing_draft,
-            get_strategy(db_path, existing_draft) or {},
-            hit_ranges, data_dir)
+            db_path, existing_draft, hit_row, hit_ranges, data_dir)
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
-                # 身份回读（规则②）：该分支只有产物 id 无行数据——
-                # direction/max_hold 按收敛缺省（S2f 锚）
+                # 身份回读（规则②）：direction/max_hold 按收敛缺省
+                # （S2f 锚）；execution_timeframe 读行取产物实际周期
                 **_translate_receipt(
-                    "long", None, None, "fixed", None, False)}
+                    "long", None, None, "fixed", None, False,
+                    execution_timeframe=hit_row.get("timeframe"))}
 
     # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
     # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
@@ -462,6 +467,39 @@ def translate_hypothesis(
             detail={"symbols": sorted(symbols),
                     "slow_path": "提交 feature-requests 描述跨品种需求",
                     "note": "此为有意设计边界（单品种信号源），非待修复缺陷"})
+
+    # R2 转化执行周期契约（fix-mtf-execution-consistency）：缺省
+    # 继承假设基准周期（D1=data_ranges[0].timeframe——登记面强制全条
+    # 目同 symbol 同 timeframe，基准周期唯一）；显式传参优先（用户
+    # 指定，逐字节兼容）。A1 防御：继承分支前校验周期唯一——存量
+    # 异周期假设（登记收紧前遗留）结构化拒绝并指引显式传参，不静默
+    # 取首条。
+    if strategy_timeframe is None:
+        # 结构守卫（fix-mtf-review-consistency CARD-24）：畸形
+        # data_ranges（空数组/首元素非 dict）——A1 防御的 isinstance
+        # 过滤对畸形元素产出空集（不触发下方周期不一致拒绝），落到
+        # 继承取值行裸 .get 炸 AttributeError 500；空数组则继承 None
+        # 落下游 DB 层 IntegrityError 延迟爆炸。结构化拒绝（与 A1
+        # 指引同款形制）诚实早拦；显式传参不进本分支不受影响。
+        if not data_ranges or not isinstance(data_ranges[0], dict):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "存量假设 data_ranges 结构畸形，无法确定继承基准——"
+                "请修正数据或显式传 strategy_timeframe",
+                detail={"param": "strategy_timeframe",
+                        "data_ranges": data_ranges,
+                        "need_hint": "显式传 strategy_timeframe 指定执行周期"})
+        hyp_tfs = sorted({r.get("timeframe") for r in data_ranges
+                          if isinstance(r, dict)})
+        if len(hyp_tfs) > 1:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"存量假设 data_ranges 周期不一致（{hyp_tfs}），无法确定"
+                "继承基准——请修正数据或显式传 strategy_timeframe",
+                detail={"param": "strategy_timeframe",
+                        "timeframes": hyp_tfs,
+                        "need_hint": "显式传 strategy_timeframe 指定执行周期"})
+        strategy_timeframe = data_ranges[0].get("timeframe") if data_ranges else None
 
     # 多周期防线与双组翻译经 S4 公共入口（0.4.1）：防线循环原形在
     # build_signal_genes 内（与翻译能力同点权威单源）；跨币种防线
@@ -585,7 +623,8 @@ def translate_hypothesis(
                     _identity["direction"], _identity["max_hold"],
                     _identity["time_exit_utc"],
                     _identity["position_mode"],
-                    _identity["risk_fraction"], True)}
+                    _identity["risk_fraction"], True,
+                    execution_timeframe=active_hit.get("timeframe"))}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -604,7 +643,8 @@ def translate_hypothesis(
                     _identity["direction"], _identity["max_hold"],
                     _identity["time_exit_utc"],
                     _identity["position_mode"],
-                    _identity["risk_fraction"], False)}
+                    _identity["risk_fraction"], False,
+                    execution_timeframe=draft_hit.get("timeframe"))}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
@@ -638,7 +678,7 @@ def translate_hypothesis(
                 risk_genes.direction, risk_genes.max_hold,
                 risk_genes.time_exit_utc,
                 risk_genes.position_mode, risk_genes.risk_fraction,
-                False)}
+                False, execution_timeframe=strategy_timeframe)}
 
 
 def _translate_conditions(
@@ -684,11 +724,71 @@ def _translate_conditions(
                     f"{label}[{i}] subject 非法: {exc.message}",
                     detail={"condition": cond, "code": exc.code,
                             **exc.detail}) from exc
+            if action == "within_bars_after":
+                # R4 翻译专门分支（fix-mtf-execution-consistency）：
+                # _ACTION_MAP 形制不满足（lambda 只收 target 单参）——
+                # 登记面平铺键 {target 兼任内层阈值, inner_action, window}
+                # → 基因面嵌套形 {type, window, inner={type, threshold}}。
+                # inner_action 白名单与分析链 _LOOKBACK_INNER_ACTIONS
+                # 同源五员（T⑥ 锚对拍锁；不含 within_bars_after——嵌套
+                # 窗口防域）。
+                inner_action = cond.get("inner_action", "price_above")
+                # fix-mtf-review-consistency CARD-04：五员词表单源引用
+                # （condition_kernel.LOOKBACK_INNER_ACTIONS——与
+                # validation/engine 的 _LOOKBACK_INNER_ACTIONS 同一
+                # 常量对象，T⑥ 锚两侧同源断言）
+                from core.analysis.condition_kernel import \
+                    LOOKBACK_INNER_ACTIONS as _INNER_LEGAL
+                if inner_action not in _INNER_LEGAL:
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] inner_action 不可表达: "
+                        f"{inner_action!r}（可表达: {sorted(_INNER_LEGAL)}）",
+                        detail={"condition": cond})
+                window = cond.get("window", 5)
+                if (not isinstance(window, int) or isinstance(window, bool)
+                        or window < 1):
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        f"{label}[{i}] window 须为 >=1 整数: {window!r}",
+                        detail={"param": "condition.window",
+                                "value": str(window),
+                                "legal_range": ">=1 整数"})
+                condition = {"type": "within_bars_after", "window": window,
+                             "inner": {"type": inner_action}}
+                if inner_action in ("gt", "lt", "ge", "le"):
+                    # fix-mtf-review-consistency CARD-01：target 分诊复用
+                    # _classify_target_ref 单点（与下方 gt 路径同款形制）
+                    # ——放行面=数值（int/float）与数值串；列名形
+                    # （decoded/base_column/unknown）inner 阈值无序列表达，
+                    # 结构化拒绝（原裸 float() 对非数值串炸 500）
+                    from core.analysis.condition_kernel import \
+                        _classify_target_ref
+                    t_kind, _ = _classify_target_ref(target)
+                    if (t_kind not in ("non_str", "numeric")
+                            or not isinstance(target, (int, float, str))
+                            or isinstance(target, bool)):
+                        raise ResearchError(
+                            "RESEARCH_NOT_EXPRESSIBLE",
+                            f"{label}[{i}] target 须为数值（内层动作 "
+                            f"{inner_action} 的阈值，列名 target 不可表达）",
+                            detail={"condition": cond})
+                    condition["inner"]["threshold"] = float(target)
+                genes.append(SignalGene(
+                    indicator=cdef.indicator,
+                    params=dict(cdef.params),
+                    role=role,
+                    field_name=cdef.field,
+                    condition=condition,
+                    timeframe=cond_tf,
+                ))
+                continue
             if action not in _ACTION_MAP:
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
                     f"{label}[{i}] action 不可表达: {action}"
-                    f"（可表达: {sorted(_ACTION_MAP)}）",
+                    f"（可表达: {sorted(_ACTION_MAP)})"
+                    f"（时序动作: within_bars_after）",
                     detail={"condition": cond})
             # fix-research-c6：target 分类复用 _classify_target_ref 单点
             # ——数值/数值串→threshold 形（现状逐字节不变）；编码列名
@@ -935,12 +1035,45 @@ def _translate_conditions(
 
 
 def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:
-    """幂等查询：谱系 parent_ids 含该假设的 draft 产物。"""
+    """幂等查询：谱系 parent_ids 含该假设的 draft 产物。
+
+    幂等收窄（fix-mtf-execution-consistency S/D4）：命中判据扩为
+    「谱系命中 且 产物执行周期==假设基准周期（data_ranges[0].
+    timeframe）」——漂移产物（R2 前默认 4h 时代落库）放行重建，
+    旧产物保留审计（不删不改）。基准周期不可解析时退回现行幂等
+    （保守不收窄）。同签名分流安全（design 卡 7）：漂移旧 draft 库内
+    gene_signature 含 L:{漂移执行周期} 伪层段、重建新产物含 L:{假设
+    基准}——签名不同→_find_by_signature 不命中→直接新建实体。
+    """
+    from core.persistence.repository import research as rr
     from core.persistence.repository.strategy import list_strategies
+
+    base_tf = None
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is not None:
+        try:
+            ranges = json.loads(hyp["data_ranges"])
+            # 畸形条目防御（fix-mtf-review-consistency CARD-05）：
+            # 首元素非 dict（库内损坏/手工数据）时 .get 抛 AttributeError
+            # 不在 except 集内裸穿 500——与主流程 A1 防御同款形制收口，
+            # base_tf=None 退回现行幂等（docstring「不可解析退回」语义
+            # 完整达成）
+            base_tf = (ranges[0].get("timeframe")
+                       if ranges and isinstance(ranges[0], dict) else None)
+        except (json.JSONDecodeError, TypeError, IndexError):
+            base_tf = None
 
     rows = list_strategies(db_path, status="draft", limit=500)
     for row in rows:
         if row.get("parent_ids") and hypothesis_id in str(row["parent_ids"]):
+            if base_tf is not None:
+                try:
+                    exec_tf = json.loads(row["dna_json"])[
+                        "execution_genes"]["timeframe"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    exec_tf = None
+                if exec_tf != base_tf:
+                    continue  # 漂移 draft：放行重建（旧产物保留审计）
             return row["strategy_id"]
     return None
 
@@ -1055,11 +1188,15 @@ _REUSE_NOTE = (
 
 def _translate_receipt(direction: str, max_hold, time_exit,
                         position_mode, risk_fraction,
-                        reuse: bool) -> Dict[str, Any]:
-    """翻译回执身份六键（四返回点统一形制——time_exit_utc 任务 6
+                        reuse: bool,
+                        execution_timeframe: Optional[str] = None,
+) -> Dict[str, Any]:
+    """翻译回执身份七键（四返回点统一形制——time_exit_utc 任务 6
     增键、position_mode/risk_fraction 任务 4 增键（K1 回执接线补齐），
     回执面与声明面同步；值域收敛+bool 排除与 _identity_reflection
-    同族同款）。"""
+    同族同款；execution_timeframe 第七键（fix-mtf-execution-
+    consistency R2）=产物 execution_genes.timeframe（缺省继承后值——
+    纯增量披露，旧消费方零适配）。"""
     return {
         "direction": direction if direction in ("long", "short") else "long",
         # bool 排除（security F-5）：与 _identity_reflection 同族——
@@ -1077,4 +1214,6 @@ def _translate_receipt(direction: str, max_hold, time_exit,
         if isinstance(risk_fraction, (int, float))
         and not isinstance(risk_fraction, bool) else None,
         "reuse_note": _REUSE_NOTE if reuse else None,
+        # 第七键：产物执行周期（R2 披露——缺省继承假设基准可查）
+        "execution_timeframe": execution_timeframe,
     }

@@ -28,7 +28,8 @@ from core.analysis.errors import ResearchError  # 轻量定义点直取（errors
 logger = logging.getLogger(__name__)
 
 # 可求值条件类型合法集（unify-tool-return-contract 契约单源）——按
-# evaluate_condition 实际分派集显式穷举 16 类型。注册表侧全部
+# evaluate_condition 实际分派集显式穷举 17 类型（fix-mtf-execution-
+# consistency R4 增 within_bars_after）。注册表侧全部
 # supported_conditions 的并集须与本集双向相等（tests/strategy/
 # test_executor.py S6b 主断言，任一侧漂移都红）。两处 ConditionType
 # 枚举为历史异集现状（core/strategy/dna.py ConditionType 15 成员
@@ -41,6 +42,7 @@ EVALUABLE_CONDITION_TYPES: frozenset[str] = frozenset({
     "cross_above_series", "cross_below_series",
     "lookback_any", "lookback_all",
     "touch_bounce", "role_reversal", "wick_touch",
+    "within_bars_after",
 })
 
 # 基础列直读白名单（add-session-structure-expression 任务 7）：
@@ -157,6 +159,24 @@ def evaluate_condition(
         inner = condition.get("inner", {})
         inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
         return (inner_signal.astype(float).rolling(window=window, min_periods=window).sum() == window).fillna(False).astype(bool)
+    elif cond_type == "within_bars_after":
+        # R4 时序动作（fix-mtf-execution-consistency）：内层事件在近 N
+        # 根内触发过、不含当根——lookback_any 的当根排除变体（shift(1)
+        # 承载排除；min_periods=1 头部宽容与 lookback_any 同构）。窗口
+        # N 单位=该基因求值轴（标注轴）根数——轴内求值后投影（铁律 2）。
+        # window 值域沿 _cond_window 先例域（>=1 整数，坏值拒绝）。
+        window = condition.get("window", 5)
+        if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"condition.window 须为 >=1 整数: {window!r}",
+                detail={"param": "condition.window",
+                        "value": str(window),
+                        "legal_range": ">=1 整数"})
+        inner = condition.get("inner", {})
+        inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
+        return (inner_signal.astype(float).shift(1).rolling(
+            window=window, min_periods=1).sum() > 0).fillna(False).astype(bool)
     # ── 支撑/阻力类条件 ──
     elif cond_type == "touch_bounce":
         return _eval_touch_bounce(indicator_series, close_series, df, condition)
@@ -506,11 +526,19 @@ def clear_indicator_cache() -> None:
 def evaluate_layer(
     layer,
     df: pd.DataFrame,
+    dfs_by_timeframe: dict | None = None,
 ) -> SignalSet:
     """在预计算 DataFrame 上求值单个 TimeframeLayer。
 
     返回含 entries/exits/adds/reduces 的 SignalSet（MTF 逐层求值
     单元——层内按基因角色分组后经 logic_genes 组合）。
+
+    基因求值合流（fix-mtf-execution-consistency R1）：带基因级周期
+    标注（gene.timeframe）的基因走既有单点 ``_evaluate_gene_signal``
+    ——标注轴内求值 → 已收盘投影到层轴后参与层内组合（投影先于
+    跨轴组合，铁律 2）；无标注基因在层轴 df 直接求值（现行为逐字节
+    不变）。dfs_by_timeframe 缺省 None=不带装载集的既有调用兼容
+    （此时带标注基因由单点显式拒绝——fail-loud 不静默）。
     """
     close = df["close"]
     entry_triggers, entry_guards = [], []
@@ -522,8 +550,12 @@ def evaluate_layer(
 
     for gene in layer.signal_genes:
         try:
-            indicator_col = _get_indicator_column(df, gene)
-            signal = evaluate_condition(indicator_col, close, gene.condition, df=df)
+            if getattr(gene, "timeframe", None) is not None:
+                # R1 合流：带标注基因经单点（轴内求值+投影到层轴索引）
+                signal = _evaluate_gene_signal(gene, df, dfs_by_timeframe)
+            else:
+                indicator_col = _get_indicator_column(df, gene)
+                signal = evaluate_condition(indicator_col, close, gene.condition, df=df)
             signal = signal.fillna(False)
 
             if gene.role == SignalRole.ENTRY_TRIGGER:
@@ -550,13 +582,28 @@ def evaluate_layer(
                     index=df.index,
                 )
                 direction_genes.append(gene_direction)
-        except ValueError:
-            # 已知边界（fix-review CARD-06 披露）：列不可达/求值
-            # ValueError 静默跳过该基因——design 限定单周期直译
-            # 路径收口（dna_to_signal_set 主路径已走结构化拒绝），
-            # MTF 层内基因的同类收口归包二 MTF 执行链改造，非待
-            # 清理残留
-            continue
+        except ResearchError as exc:
+            # R1 收口：evaluate_condition 无 gene 视野——顶层拒绝前
+            # 补注基因上下文（与单周期路径 :948-953 同款形制；轴缺失
+            # RESEARCH_DATA_INSUFFICIENT 经 _evaluate_gene_signal 单点
+            # 产出后透传，单点同错误在两路径同码同 detail 形制）
+            if isinstance(exc.detail, dict) and "indicator" not in exc.detail:
+                exc.detail["indicator"] = gene.indicator
+            raise
+        except ValueError as exc:
+            # R1 收口（fix-review CARD-06 边界退役）：「静默跳过该基因」
+            # 改结构化拒绝直达顶层——与单周期路径 :954-969 同款转译，
+            # 基因信号不产生即红（残缺 SignalSet 缺陷形态消灭）
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"策略基因不可求值：indicator={gene.indicator}",
+                detail={
+                    "indicator": gene.indicator,
+                    "params": gene.params,
+                    "field": gene.field_name,
+                    "cause": str(exc),
+                },
+            )
 
     all_entry = entry_triggers + entry_guards
     entries = combine_signals(all_entry, layer.logic_genes.entry_logic) if all_entry else pd.Series(False, index=df.index)
@@ -759,7 +806,7 @@ def dna_to_signal_set(
                 degraded_count += 1
                 continue
 
-            sig = evaluate_layer(layer, layer_df)
+            sig = evaluate_layer(layer, layer_df, dfs_by_timeframe)
             layer_role = layer.role  # None 即缺省 "execution" 执行层
             exec_tf = dna.execution_genes.timeframe
             is_cross_tf = layer.timeframe != exec_tf

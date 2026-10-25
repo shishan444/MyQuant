@@ -1,7 +1,7 @@
-"""指标注册表：指标元数据的数据结构与 45 指标定义（全链单源权威）。
+"""指标注册表：指标元数据的数据结构与 48 指标定义（全链单源权威）。
 
 职能：定义 ParamDef（参数域）、IndicatorDef（指标定义）、
-INDICATOR_REGISTRY（45 指标注册表）与 get_interchangeable（同类
+INDICATOR_REGISTRY（48 指标注册表）与 get_interchangeable（同类
 互换集查询）。
 价值与服务对象：全工程指标元数据唯一权威——19 个生产文件消费
 （analysis 域 13 / strategy 2 / evolution 1 / features 1 /
@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Callable
 
 
 # ---------------------------------------------------------------------------
-# Registry data structures
+# 注册表数据结构
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -62,7 +62,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (48 indicators, 7 categories)
+# 指标注册表（48 指标，9 类别——类别分节标签见下方各 == 分节）
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -72,42 +72,47 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         params={"period": ParamDef("int", 5, 200, 50, 5, candidates=[7, 15, 20, 30, 60, 90])},
         output_fields=["ema"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
     "SMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5)},
         output_fields=["sma"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
     "WMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5)},
         output_fields=["wma"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
     "DEMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5)},
         output_fields=["dema"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
     "TEMA": IndicatorDef(
         category="trend",
         params={"period": ParamDef("int", 5, 200, 50, 5)},
         output_fields=["tema"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
     # == momentum (9) ==
     "RSI": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 2, 50, 14, 2)},
         output_fields=["rsi"],
-        supported_conditions=["lt", "gt", "le", "ge"],
+        supported_conditions=["lt", "gt", "le", "ge", "within_bars_after"],
     ),
     "MACD": IndicatorDef(
         category="momentum",
@@ -117,7 +122,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "signal": ParamDef("int", 5, 20, 9, 1),
         },
         output_fields=["macd", "signal", "histogram"],
-        supported_conditions=["cross_above", "cross_below", "gt", "lt"],
+        supported_conditions=["cross_above", "cross_below", "gt", "lt", "within_bars_after"],
         naming="macd",
     ),
     "Stochastic": IndicatorDef(
@@ -127,46 +132,47 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "d_period": ParamDef("int", 3, 20, 3, 1),
         },
         output_fields=["k", "d"],
-        supported_conditions=["lt", "gt", "cross_above", "cross_below"],
+        supported_conditions=["lt", "gt", "cross_above", "cross_below", "within_bars_after"],
         naming="stoch",
     ),
     "CCI": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 5, 50, 20, 2)},
         output_fields=["cci"],
-        supported_conditions=["lt", "gt"],
+        supported_conditions=["lt", "gt", "within_bars_after"],
     ),
     "ROC": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 2, 50, 12, 2)},
         output_fields=["roc"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "Williams %R": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 2, 50, 14, 2)},
         output_fields=["willr"],
-        supported_conditions=["lt", "gt"],
+        supported_conditions=["lt", "gt", "within_bars_after"],
     ),
     "Aroon": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 10, 50, 25, 5)},
         output_fields=["aroon_up", "aroon_down", "aroon_osc"],
         supported_conditions=["cross_above", "cross_below", "gt", "lt",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
         naming="aroon",
     ),
     "CMO": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 2, 50, 14, 2)},
         output_fields=["cmo"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "TRIX": IndicatorDef(
         category="momentum",
         params={"period": ParamDef("int", 5, 50, 12, 2)},
         output_fields=["trix"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
 
     # == volatility (4) ==
@@ -178,6 +184,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         },
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below", "lookback_any", "lookback_all",
+                              "within_bars_after",
                               "touch_bounce", "role_reversal", "wick_touch"],
         naming="bb",
     ),
@@ -185,7 +192,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="volatility",
         params={"period": ParamDef("int", 5, 50, 14, 2)},
         output_fields=["atr"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
         guard_only=True,
     ),
     "Keltner": IndicatorDef(
@@ -197,7 +204,8 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         },
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below",
-                              "touch_bounce", "role_reversal", "wick_touch"],
+                              "touch_bounce", "role_reversal", "wick_touch",
+                              "within_bars_after"],
         naming="kc",
     ),
     "Donchian": IndicatorDef(
@@ -205,7 +213,8 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         params={"period": ParamDef("int", 5, 50, 20, 2)},
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below",
-                              "touch_bounce", "role_reversal", "wick_touch"],
+                              "touch_bounce", "role_reversal", "wick_touch",
+                              "within_bars_after"],
         naming="dc",
     ),
 
@@ -214,50 +223,53 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="volume",
         params={},
         output_fields=["obv"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "CMF": IndicatorDef(
         category="volume",
         params={"period": ParamDef("int", 5, 30, 20, 2)},
         output_fields=["cmf"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
     ),
     "MFI": IndicatorDef(
         category="volume",
         params={"period": ParamDef("int", 5, 30, 14, 2)},
         output_fields=["mfi"],
-        supported_conditions=["lt", "gt"],
+        supported_conditions=["lt", "gt", "within_bars_after"],
     ),
     "RVOL": IndicatorDef(
         category="volume",
         params={"period": ParamDef("int", 5, 100, 20, 5)},
         output_fields=["rvol"],
-        supported_conditions=["gt", "lt", "lookback_any", "lookback_all"],
+        supported_conditions=["gt", "lt", "lookback_any", "lookback_all",
+                              "within_bars_after"],
     ),
     "VROC": IndicatorDef(
         category="volume",
         params={"period": ParamDef("int", 5, 50, 14, 5)},
         output_fields=["vroc"],
-        supported_conditions=["gt", "lt", "lookback_any", "lookback_all"],
+        supported_conditions=["gt", "lt", "lookback_any", "lookback_all",
+                              "within_bars_after"],
     ),
     "AD": IndicatorDef(
         category="volume",
         params={},
         output_fields=["ad"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "CVD": IndicatorDef(
         category="volume",
         params={},
         output_fields=["cvd"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "VWMA": IndicatorDef(
         category="volume",
         params={"period": ParamDef("int", 5, 200, 20, 5)},
         output_fields=["vwma"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
-                              "cross_above_series", "cross_below_series"],
+                              "cross_above_series", "cross_below_series",
+                              "within_bars_after"],
     ),
 
     # == trend_strength (2) ==
@@ -265,7 +277,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="trend_strength",
         params={"period": ParamDef("int", 7, 50, 14, 2)},
         output_fields=["adx"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
         guard_only=True,
     ),
     "PSAR": IndicatorDef(
@@ -275,7 +287,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "max_step": ParamDef("float", 0.1, 0.3, 0.2, 0.05),
         },
         output_fields=["psar"],
-        supported_conditions=["price_above", "price_below"],
+        supported_conditions=["price_above", "price_below", "within_bars_after"],
         guard_only=True,
         naming="psar",
     ),
@@ -285,7 +297,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_bearish_engulfing"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -293,7 +305,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_evening_star"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -301,7 +313,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_3blackcrows"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -309,7 +321,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_shooting_star"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -317,7 +329,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_3whitesoldiers"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -325,7 +337,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_morning_star"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -333,7 +345,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_bullish_reversal"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -341,7 +353,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_bearish_reversal"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -349,7 +361,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_bullish_divergence"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -357,7 +369,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="pattern",
         params={},
         output_fields=["pattern_bearish_divergence"],
-        supported_conditions=["eq"],
+        supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
     ),
@@ -370,7 +382,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "lookback": ParamDef("int", 20, 200, 60, 20),
         },
         output_fields=["vp_poc", "vp_vah", "vp_val"],
-        supported_conditions=["touch_bounce", "role_reversal"],
+        supported_conditions=["touch_bounce", "role_reversal", "within_bars_after"],
         guard_only=True,
         naming="vp",
         compute_mode="lazy",
@@ -381,31 +393,31 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         category="derivatives",
         params={"period": ParamDef("int", 5, 50, 14, 2)},
         output_fields=["oi_change_rate"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
     ),
     "OI_ZScore": IndicatorDef(
         category="derivatives",
         params={"period": ParamDef("int", 5, 50, 20, 2)},
         output_fields=["oi_zscore"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
     ),
     "FundingZScore": IndicatorDef(
         category="derivatives",
         params={"period": ParamDef("int", 10, 60, 30, 5)},
         output_fields=["funding_zscore"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
     ),
     "OIPriceDivergence": IndicatorDef(
         category="derivatives",
         params={"period": ParamDef("int", 5, 50, 14, 2)},
         output_fields=["oi_price_divergence"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
     ),
     "FundingPressure": IndicatorDef(
         category="derivatives",
         params={"period": ParamDef("int", 4, 30, 8, 2)},
         output_fields=["funding_pressure"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
     ),
 
     # == ml (1) ==
@@ -416,7 +428,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "lookback": ParamDef("int", 30, 200, 100, 10),
         },
         output_fields=["mfe_score"],
-        supported_conditions=["gt", "lt"],
+        supported_conditions=["gt", "lt", "within_bars_after"],
         naming="mfe",
         compute_mode="lazy",
     ),
@@ -431,7 +443,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["session_high", "session_low", "session_vwap"],
         # 六动作：三列各 gt/lt（区间突破与回落两类表达）
         supported_conditions=["gt", "lt", "ge", "le", "cross_above",
-                              "cross_below"],
+                              "cross_below", "within_bars_after"],
         naming="session",
         warmup_minutes=1440,  # 完整一天（会话结构跨日周期性）
         cross_params=lambda p: (
@@ -446,7 +458,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         },
         output_fields=["pivot_high", "pivot_low"],
         supported_conditions=["gt", "lt", "ge", "le", "cross_above",
-                              "cross_below"],
+                              "cross_below", "within_bars_after"],
         naming="pivot",
     ),
     "Supertrend": IndicatorDef(
@@ -456,7 +468,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "multiplier": ParamDef("float", 1.0, 5.0, 3.0, 0.5),
         },
         output_fields=["supertrend", "supertrend_dir"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
         naming="supertrend",
     ),
 }
@@ -475,10 +487,10 @@ def get_interchangeable(indicator_name: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Column name resolution — single source of truth
+# 列名解析——唯一权威单源
 # ---------------------------------------------------------------------------
 
-# Pattern indicator name -> fixed column name mapping
+# 形态类指标名 → 固定列名映射（形态类无参数，列名不带参数后缀）
 _PATTERN_COLUMNS: Dict[str, str] = {
     "BearishEngulfing": "pattern_bearish_engulfing",
     "EveningStar": "pattern_evening_star",
@@ -520,7 +532,7 @@ def resolve_indicator_column(
         预期列名字符串（未注册指标在 default 模式下回退
         name.lower() 前缀形）。
     """
-    # Auto-resolve naming from registry if not explicitly provided
+    # naming 未显式提供时从注册表自动解析（未注册指标回退 default）
     if not naming:
         reg = INDICATOR_REGISTRY.get(name)
         naming = reg.naming if reg else "default"

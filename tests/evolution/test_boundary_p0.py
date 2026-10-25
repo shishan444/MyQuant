@@ -117,13 +117,18 @@ class TestEvaluateLayerAllGenesFail:
             logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
         )
 
-        result = evaluate_layer(layer, df)
+        # fix-mtf-execution-consistency R1：静默跳过退役——层内基因
+        # 求值失败（未知指标列解析 ValueError）转译结构化拒绝
+        # RESEARCH_CONDITION_INVALID（detail 四键），不再产出全 False
+        # 残缺 SignalSet（旧契约「all-False SignalSet」随缺陷行为退役）
+        from core.analysis.errors import ResearchError
 
-        assert isinstance(result, SignalSet)
-        assert not result.entries.any()
-        assert not result.exits.any()
-        assert not result.adds.any()
-        assert not result.reduces.any()
+        with pytest.raises(ResearchError) as exc_info:
+            evaluate_layer(layer, df)
+        assert exc_info.value.code == "RESEARCH_CONDITION_INVALID"
+        assert exc_info.value.detail["indicator"] == "NONEXISTENT_INDICATOR"
+        for key in ("params", "field", "cause"):
+            assert key in exc_info.value.detail
 
 
 class TestResampleSignalsEmptyInputs:

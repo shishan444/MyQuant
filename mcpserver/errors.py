@@ -73,6 +73,10 @@ HINTS: Dict[str, str] = {
     "TIMEFRAME_NOT_HIGHER":
         "低周期条件请降基准表达：基准周期（data_ranges 统一周期）降为"
         "该低周期、其余条件挂高周期——聚合歧义不可自证",
+    "RESEARCH_TIMEFRAME_MISMATCH":
+        "验证请求周期≠策略执行周期（异轴执行语义未定义）：不传 "
+        "timeframe 用策略行周期自洽验证；换轴验证请回假设侧修改基准"
+        "周期（data_ranges.timeframe）后重新转化（translate）",
     "RESEARCH_MTF_CONTEXT_MISSING":
         "求值入口未构建多周期上下文（调用方接线缺陷非输入错误）："
         "经 run_analysis/inspect_cases/api/validate 正规入口重试；"
@@ -173,6 +177,11 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                   "（detail 的 limit/actual 披露实际值）",
     "condition|conditions": "condition 与 conditions 须二选一"
                             "（键组分派，直调方同样须遵守）",
+    # 转化执行周期（fix-mtf-execution-consistency R2）：A1 异周期继承
+    # 拒绝的 detail.param 面
+    "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"
+                          "不一致）：显式传 strategy_timeframe 指定执行"
+                          "周期，或修正假设 data_ranges 后重新登记",
     "stop_loss": "止损参数越域：值域随 sl_mode 分档（pct 档与 atr 档"
                  "不同）——查看 detail.legal_range 与 sl_mode，按档修正",
     "events": "事件数超上限：缩小区间或收窄 indicators 指标集"

@@ -30,6 +30,12 @@ from core.features.indicators import INDICATOR_REGISTRY, get_interchangeable
 from core.features.registry import IndicatorDef
 from core.features.indicator_profile import PROFILES
 
+# 内层动作构造池（fix-mtf-review-consistency CARD-04：lookback 与
+# within_bars_after 两构造分支的同文件重复收敛）——构造域独立词表
+# （design 卡 R4：与求值域五员 LOOKBACK_INNER_ACTIONS 不互相同步，
+# 含 price_below 构造探索面），tuple 防误改
+_SIMPLE_INNER_TYPES = ("price_above", "price_below", "gt", "lt")
+
 
 def _new_id() -> str:
     return str(uuid.uuid4())
@@ -121,11 +127,28 @@ def generate_random_condition(
     elif cond_type in ("lookback_any", "lookback_all"):
         window = random.choice([3, 5, 8, 10])
         # 内层条件取简单形态
-        inner_types = ["price_above", "price_below", "gt", "lt"]
-        inner_type = random.choice(inner_types)
+        inner_type = random.choice(_SIMPLE_INNER_TYPES)
         inner: dict = {"type": inner_type}
         if inner_type in ("lt", "gt"):
             inner["threshold"] = round(random.uniform(-1, 1), 2)
+            if inner_type == "gt":
+                inner["threshold"] = random.choice([0.0, 0.5, 1.0])
+            else:
+                inner["threshold"] = random.choice([0.0, -0.5, -1.0])
+        condition["window"] = window
+        condition["inner"] = inner
+    elif cond_type == "within_bars_after":
+        # R4 时序动作构造分支（fix-mtf-execution-consistency 同步点⑧）：
+        # 词表收录面（:91 随机选择）自动获得，构造面须显式分支——缺此
+        # 分支时 1/17 概率产出裸 {"type": ...}（缺 window/inner）→求值
+        # KeyError→batch 降级全 False→个体适应度静默失真（收录与构造
+        # 两面独立）。形制沿 lookback 先例：window 取既有窗池、inner
+        # 取简单形态（嵌套形 {"type", "threshold"}——登记面平铺键经
+        # 翻译分支转换，两域键形不得混植）。
+        window = random.choice([3, 5, 8, 10])
+        inner_type = random.choice(_SIMPLE_INNER_TYPES)
+        inner: dict = {"type": inner_type}
+        if inner_type in ("lt", "gt"):
             if inner_type == "gt":
                 inner["threshold"] = random.choice([0.0, 0.5, 1.0])
             else:
