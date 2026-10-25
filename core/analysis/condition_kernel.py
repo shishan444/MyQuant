@@ -306,6 +306,16 @@ def collect_condition_refs(
 _CONDITION_ITEM_KEYS = frozenset(
     {"subject", "action", "target", "timeframe", "window", "inner_action"})
 
+# lookback 族内层动作合法集（fix-mtf-review-consistency CARD-04：原
+# validation/engine 与 hypothesis_to_strategy 翻译分支两处字面量收敛
+# 单源）——gt/lt/ge/le 阈值比较四员+price_above 默认比较（缺省
+# price_above 是既有契约）。within_bars_after 不入（嵌套窗口防域，
+# spec「MUST NOT 进入内层动作白名单」）。消费方：validation engine
+# （_LOOKBACK_INNER_ACTIONS 名 re-export）、hypothesis_to_strategy
+# 翻译分支（inner_action 白名单判定）。
+LOOKBACK_INNER_ACTIONS = frozenset(
+    {"gt", "lt", "ge", "le", "price_above"})
+
 
 def validate_conditions_array(conditions: Any) -> None:
     """conditions 数组参数校验（0.4.1 任务 1.4——必填键组通过后、

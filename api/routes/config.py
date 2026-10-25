@@ -59,6 +59,11 @@ def _write_config(db_path: Path, config: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+    # SEC-01 轻量改善（team3 审查顺做，用户批准）：密钥可能落盘——
+    # 属主读写权限收敛（本地单用户威胁模型下的文件权限面；加密存储
+    # 升级归 live-trading 规划域）
+    import os as _os
+    _os.chmod(path, 0o600)
 
 
 def _masked_view(cfg: Dict[str, Any]) -> Dict[str, Any]:

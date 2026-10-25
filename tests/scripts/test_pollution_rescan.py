@@ -159,6 +159,40 @@ class TestSRescanCriteria:
         r = rescan(db)
         assert "st_same_tf" not in r["drifted_strategies"]
 
+    def test_hypothesis_add_trigger_timeframe_criteria(self, db):
+        """假设侧判据 add_trigger 组：条目带 timeframe≠基准入清单；
+        add_trigger 无 timeframe 不入（when 组判据由主用例承载——
+        两组 EXISTS 子句各自可独立命中）。"""
+        ranges = json.dumps([{"symbol": "BTCUSDT", "timeframe": "30m",
+                              "start": "2024-01-01", "end": "2024-02-01"}])
+
+        def _insert(hid, add_conds):
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "INSERT INTO research_hypotheses (hypothesis_id,"
+                    " conditions, conditions_hash, statement, data_ranges,"
+                    " ranges_hash, status, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?, 'active', '2026-01-01',"
+                    " '2026-01-01')",
+                    (hid, json.dumps({
+                        "when_conditions": [
+                            {"subject": {"indicator": "RVOL",
+                                         "params": {"period": 20}},
+                             "action": "gt", "target": 1.5}],
+                        "add_trigger_conditions": add_conds}),
+                     f"hash_{hid}", hid, ranges, f"rh_{hid}"))
+
+        _insert("hyp_add_drift", [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35, "timeframe": "1d"}])
+        _insert("hyp_add_clean", [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35}])
+        r = rescan(db)
+        assert "hyp_add_drift" in r["drifted_hypotheses"], (
+            "add_trigger 条目 timeframe≠基准应入清单")
+        assert "hyp_add_clean" not in r["drifted_hypotheses"]
+
     def test_dry_run_no_write(self, db):
         """dry-run：清点不落库。"""
         _seed(db)

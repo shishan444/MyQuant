@@ -579,9 +579,13 @@ def _cross_below_series_condition(
 
 
 # 0.3.7 TD-11：lookback 族内层动作合法集（与 _lookback_condition 求值
-# 分支同源防漂移——枚举对拍锚守护；缺省 price_above 是既有契约）
-_LOOKBACK_INNER_ACTIONS = frozenset(
-    {"gt", "lt", "ge", "le", "price_above"})
+# 分支同源防漂移——枚举对拍锚守护；缺省 price_above 是既有契约）。
+# fix-mtf-review-consistency CARD-04：定义点收敛至 condition_kernel
+# 单源（LOOKBACK_INNER_ACTIONS），此处按原名 re-export——既有测试
+# import 与本模块内部引用零改动
+from core.analysis.condition_kernel import (
+    LOOKBACK_INNER_ACTIONS as _LOOKBACK_INNER_ACTIONS,
+)
 
 
 def _lookback_inner_mask(

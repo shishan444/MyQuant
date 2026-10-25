@@ -475,6 +475,20 @@ def translate_hypothesis(
     # 异周期假设（登记收紧前遗留）结构化拒绝并指引显式传参，不静默
     # 取首条。
     if strategy_timeframe is None:
+        # 结构守卫（fix-mtf-review-consistency CARD-24）：畸形
+        # data_ranges（空数组/首元素非 dict）——A1 防御的 isinstance
+        # 过滤对畸形元素产出空集（不触发下方周期不一致拒绝），落到
+        # 继承取值行裸 .get 炸 AttributeError 500；空数组则继承 None
+        # 落下游 DB 层 IntegrityError 延迟爆炸。结构化拒绝（与 A1
+        # 指引同款形制）诚实早拦；显式传参不进本分支不受影响。
+        if not data_ranges or not isinstance(data_ranges[0], dict):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "存量假设 data_ranges 结构畸形，无法确定继承基准——"
+                "请修正数据或显式传 strategy_timeframe",
+                detail={"param": "strategy_timeframe",
+                        "data_ranges": data_ranges,
+                        "need_hint": "显式传 strategy_timeframe 指定执行周期"})
         hyp_tfs = sorted({r.get("timeframe") for r in data_ranges
                           if isinstance(r, dict)})
         if len(hyp_tfs) > 1:
@@ -719,12 +733,17 @@ def _translate_conditions(
                 # 同源五员（T⑥ 锚对拍锁；不含 within_bars_after——嵌套
                 # 窗口防域）。
                 inner_action = cond.get("inner_action", "price_above")
-                _INNER_LEGAL = ("gt", "lt", "ge", "le", "price_above")
+                # fix-mtf-review-consistency CARD-04：五员词表单源引用
+                # （condition_kernel.LOOKBACK_INNER_ACTIONS——与
+                # validation/engine 的 _LOOKBACK_INNER_ACTIONS 同一
+                # 常量对象，T⑥ 锚两侧同源断言）
+                from core.analysis.condition_kernel import \
+                    LOOKBACK_INNER_ACTIONS as _INNER_LEGAL
                 if inner_action not in _INNER_LEGAL:
                     raise ResearchError(
                         "RESEARCH_NOT_EXPRESSIBLE",
                         f"{label}[{i}] inner_action 不可表达: "
-                        f"{inner_action!r}（可表达: {list(_INNER_LEGAL)}）",
+                        f"{inner_action!r}（可表达: {sorted(_INNER_LEGAL)}）",
                         detail={"condition": cond})
                 window = cond.get("window", 5)
                 if (not isinstance(window, int) or isinstance(window, bool)
@@ -738,12 +757,21 @@ def _translate_conditions(
                 condition = {"type": "within_bars_after", "window": window,
                              "inner": {"type": inner_action}}
                 if inner_action in ("gt", "lt", "ge", "le"):
-                    if (not isinstance(target, (int, float, str))
+                    # fix-mtf-review-consistency CARD-01：target 分诊复用
+                    # _classify_target_ref 单点（与下方 gt 路径同款形制）
+                    # ——放行面=数值（int/float）与数值串；列名形
+                    # （decoded/base_column/unknown）inner 阈值无序列表达，
+                    # 结构化拒绝（原裸 float() 对非数值串炸 500）
+                    from core.analysis.condition_kernel import \
+                        _classify_target_ref
+                    t_kind, _ = _classify_target_ref(target)
+                    if (t_kind not in ("non_str", "numeric")
+                            or not isinstance(target, (int, float, str))
                             or isinstance(target, bool)):
                         raise ResearchError(
                             "RESEARCH_NOT_EXPRESSIBLE",
                             f"{label}[{i}] target 须为数值（内层动作 "
-                            f"{inner_action} 的阈值）",
+                            f"{inner_action} 的阈值，列名 target 不可表达）",
                             detail={"condition": cond})
                     condition["inner"]["threshold"] = float(target)
                 genes.append(SignalGene(
@@ -1025,7 +1053,13 @@ def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:
     if hyp is not None:
         try:
             ranges = json.loads(hyp["data_ranges"])
-            base_tf = ranges[0].get("timeframe") if ranges else None
+            # 畸形条目防御（fix-mtf-review-consistency CARD-05）：
+            # 首元素非 dict（库内损坏/手工数据）时 .get 抛 AttributeError
+            # 不在 except 集内裸穿 500——与主流程 A1 防御同款形制收口，
+            # base_tf=None 退回现行幂等（docstring「不可解析退回」语义
+            # 完整达成）
+            base_tf = (ranges[0].get("timeframe")
+                       if ranges and isinstance(ranges[0], dict) else None)
         except (json.JSONDecodeError, TypeError, IndexError):
             base_tf = None
 

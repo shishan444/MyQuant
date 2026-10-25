@@ -562,9 +562,13 @@ class TestIndicatorCountAlignment:
                 Path("core/features/registry.py").read_text("utf-8"),
         }
         for path, src in sources.items():
-            # docstring/注释声明位（45 项 / 45 indicators / 45 指标）
+            # docstring/注释声明位（45 项 / 45 indicators / 45 指标）。
+            # fix-mtf-review-consistency S3a 词形修复：CARD-02 计数同步
+            # +CARD-09 翻译后 registry.py 声明词形为「48 指标定义/注册表」
+            # ——token 集补「{N} 指标」形（计数断言语义不变）
             assert f"内置 {count}" in src or f"{count} 项" in src \
-                or f"({count} indicators" in src, \
+                or f"({count} indicators" in src \
+                or f"{count} 指标" in src, \
                 f"{path} 计数声明未携带运行时计数 {count}"
 
 
@@ -578,6 +582,27 @@ class TestMultiTimeframeBoundaryDisclosure:
                       "不低于策略" ,"不低于", "基准周期",
                       "拒绝"):
             assert token in src, f"描述缺边界要素: {token}"
+
+
+class TestTranslateTimeframeContractDisclosure:
+    """R2 转化执行周期契约披露锚（fix-mtf-execution-consistency 组 2）。
+
+    spec delta「转化执行周期契约」明文 MCP docstring 同步披露——
+    docstring 未披露等于 AI 消费者视角的能力不存在（三面一致纪律）。
+    锁 translate 工具 docstring 执行周期契约句四要素：缺省继承语义、
+    继承来源（data_ranges[0].timeframe）、A1 异周期拒绝指引、回执
+    execution_timeframe 键。服务层行为锚在 tests/analysis/
+    test_translate_timeframe_contract.py（R2 六用例），本锚为 MCP
+    披露面（R2 锚族的 tests/mcpserver/ 面）。
+    """
+
+    def test_translate_doc_carries_timeframe_contract(self) -> None:
+        src = Path("mcpserver/tools.py").read_text("utf-8")
+        for token in ("继承假设基准周期",
+                      "data_ranges[0].timeframe",
+                      "存量异周期假设拒绝",
+                      "execution_timeframe"):
+            assert token in src, f"translate 披露缺执行周期契约要素: {token}"
 
 
 class TestRegimeSplitConditionsDisclosure:

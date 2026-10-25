@@ -174,7 +174,8 @@ def backtest_strategy(
         data_end=payload.data_end,
     )
 
-    # Fallback: load raw data and compute indicators per-gene (legacy path)
+    # 回退路径：装载原始数据并逐基因现算指标（legacy 形制——mtf_loader
+    # 增强装载不可得时兜底）
     if enhanced_df is None:
         from core.data.storage import load_parquet
 
