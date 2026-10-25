@@ -135,3 +135,54 @@ class TestT7WithinBarsAfterSemantics:
     def test_vocab_includes_within_bars_after(self):
         """词表收录（基数 17 详锚在 T3.2/S6b 更新——此处类型在场断言）。"""
         assert "within_bars_after" in EVALUABLE_CONDITION_TYPES
+
+    @pytest.mark.parametrize("seed", [91, 92, 93],
+                             ids=["随机流91", "随机流92", "随机流93"])
+    def test_within_equals_lookback_shifted_by_one(self, seed):
+        """属性·恒等式（阶段四④）：within_bars_after(N) ==
+        lookback_any(N).shift(1)（布尔归一后逐位）——「不含当根」的
+        完整数学表达=整窗右移一根。
+
+        注：朴素包含性 within⊆lookback 在 shift 语义下不成立（两窗
+        错位一根：within 窗=[k-N,k-1]、lookback 窗=[k-N+1,k]，首建锚
+        时实证推翻）；T⑦.1 的「差恰为当根」是单调单穿越构造下的特例
+        面，本锚锁一般输入的全序列恒等关系。"""
+        rng = np.random.RandomState(seed)
+        n = 400
+        series = pd.Series(rng.uniform(20, 80, n))
+        close = pd.Series(np.full(n, 100.0))
+        for inner, w in (({"type": "lt", "threshold": 50}, 1),
+                         ({"type": "lt", "threshold": 50}, 3),
+                         ({"type": "gt", "threshold": 55}, 8)):
+            within = evaluate_condition(
+                series, close, {"type": "within_bars_after",
+                                "window": w, "inner": inner}).fillna(False)
+            lookback = evaluate_condition(
+                series, close, {"type": "lookback_any",
+                                "window": w, "inner": inner}).fillna(False)
+            expected = lookback.shift(1).fillna(False)
+            pd.testing.assert_series_equal(
+                within, expected, check_names=False,
+                obj=f"within({w})==lookback({w}).shift(1) seed={seed}")
+
+    @pytest.mark.parametrize("seed", [95, 96],
+                             ids=["随机流95", "随机流96"])
+    def test_window_monotone_growing(self, seed):
+        """属性·窗口单调性（阶段四④）：N1<N2 → within_bars_after(N1)
+        ⊆ within_bars_after(N2)——窗口扩大回看历史更长触发集只增不减
+        （min_periods=1 头部宽容下仍成立）。"""
+        rng = np.random.RandomState(seed)
+        n = 400
+        series = pd.Series(rng.uniform(20, 80, n))
+        close = pd.Series(np.full(n, 100.0))
+        inner = {"type": "gt", "threshold": 55}
+        sigs = {}
+        for w in (1, 2, 5, 10, 20):
+            sigs[w] = evaluate_condition(
+                series, close, {"type": "within_bars_after",
+                                "window": w, "inner": inner}).fillna(False)
+        ws = sorted(sigs)
+        for small, big in zip(ws, ws[1:]):
+            assert (sigs[small] & ~sigs[big]).sum() == 0, (
+                f"seed={seed}: w={small} 触发超出 w={big}"
+                "——窗口单调性破坏")
