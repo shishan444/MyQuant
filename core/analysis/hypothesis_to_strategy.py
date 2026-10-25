@@ -733,12 +733,17 @@ def _translate_conditions(
                 # 同源五员（T⑥ 锚对拍锁；不含 within_bars_after——嵌套
                 # 窗口防域）。
                 inner_action = cond.get("inner_action", "price_above")
-                _INNER_LEGAL = ("gt", "lt", "ge", "le", "price_above")
+                # fix-mtf-review-consistency CARD-04：五员词表单源引用
+                # （condition_kernel.LOOKBACK_INNER_ACTIONS——与
+                # validation/engine 的 _LOOKBACK_INNER_ACTIONS 同一
+                # 常量对象，T⑥ 锚两侧同源断言）
+                from core.analysis.condition_kernel import \
+                    LOOKBACK_INNER_ACTIONS as _INNER_LEGAL
                 if inner_action not in _INNER_LEGAL:
                     raise ResearchError(
                         "RESEARCH_NOT_EXPRESSIBLE",
                         f"{label}[{i}] inner_action 不可表达: "
-                        f"{inner_action!r}（可表达: {list(_INNER_LEGAL)}）",
+                        f"{inner_action!r}（可表达: {sorted(_INNER_LEGAL)}）",
                         detail={"condition": cond})
                 window = cond.get("window", 5)
                 if (not isinstance(window, int) or isinstance(window, bool)
