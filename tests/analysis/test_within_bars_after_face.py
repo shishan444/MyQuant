@@ -64,12 +64,20 @@ class TestT6ThreeFaceSync:
         assert "within_bars_after" not in _LOOKBACK_INNER_ACTIONS
 
     def test_registry_union_covers_new_action(self):
-        """注册表并集覆盖（S6b 主断言的补充面——挂载指标清点）。"""
+        """注册表并集覆盖（S6b 主断言的补充面——挂载指标清点）。
+
+        CARD-02（fix-mtf-review-consistency）后收紧：全指标统一携带
+        （动作与指标无关，design 卡 R4 词表同步①——含 guard_only 四
+        指标）——缺挂任一指标即红（原非空断言对缺漏不敏感）。
+        """
         from core.features.registry import INDICATOR_REGISTRY
         carriers = [
             name for name, reg in INDICATOR_REGISTRY.items()
             if "within_bars_after" in (reg.supported_conditions or [])]
         assert carriers, "注册表侧无人携带 within_bars_after（S6b 必红）"
+        assert set(carriers) == set(INDICATOR_REGISTRY), (
+            f"未全量挂载（缺 {sorted(set(INDICATOR_REGISTRY) - set(carriers))}）"
+            "——CARD-02 全指标携带契约（含 guard_only）")
         assert "within_bars_after" in EVALUABLE_CONDITION_TYPES
 
 

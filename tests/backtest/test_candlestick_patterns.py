@@ -177,7 +177,10 @@ def test_pattern_indicators_in_registry():
     for name in pattern_indicators:
         assert name in INDICATOR_REGISTRY, f"{name} not in registry"
         assert INDICATOR_REGISTRY[name].category == "pattern"
-        assert INDICATOR_REGISTRY[name].supported_conditions == ["eq"]
+        # CARD-02（fix-mtf-review-consistency）：R4 动作与指标无关，
+        # 全指标统一挂载 within_bars_after（design 卡 R4 词表同步①）
+        assert INDICATOR_REGISTRY[name].supported_conditions == [
+            "eq", "within_bars_after"]
         assert INDICATOR_REGISTRY[name].params == {}
 
 # -- Compute integration --
