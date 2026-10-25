@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Callable
 
 
 # ---------------------------------------------------------------------------
-# Registry data structures
+# 注册表数据结构
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -62,7 +62,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (48 indicators, 7 categories)
+# 指标注册表（48 指标，9 类别——类别分节标签见下方各 == 分节）
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -487,10 +487,10 @@ def get_interchangeable(indicator_name: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Column name resolution — single source of truth
+# 列名解析——唯一权威单源
 # ---------------------------------------------------------------------------
 
-# Pattern indicator name -> fixed column name mapping
+# 形态类指标名 → 固定列名映射（形态类无参数，列名不带参数后缀）
 _PATTERN_COLUMNS: Dict[str, str] = {
     "BearishEngulfing": "pattern_bearish_engulfing",
     "EveningStar": "pattern_evening_star",
@@ -532,7 +532,7 @@ def resolve_indicator_column(
         预期列名字符串（未注册指标在 default 模式下回退
         name.lower() 前缀形）。
     """
-    # Auto-resolve naming from registry if not explicitly provided
+    # naming 未显式提供时从注册表自动解析（未注册指标回退 default）
     if not naming:
         reg = INDICATOR_REGISTRY.get(name)
         naming = reg.naming if reg else "default"
