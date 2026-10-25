@@ -55,6 +55,10 @@ ISOLATED_FROZEN = {
     "1m": {"total_return": 0.01312489993600674, "sharpe_ratio": 0.0,
            "max_drawdown": -0.005595930502329647, "win_rate": 1.0,
            "total_trades": 1, "liquidated": False,
+           # signal_counts（fix-mtf-execution-consistency C3 增量键，
+           # 探针 2026-10-24 随键冻结）
+           "signal_counts": {"adds": 0, "entries": 869, "exits": 0,
+                             "reduces": 0},
            "alpha": -71.21170763836355,
            "market_annual_return": 73.89553212064902,
            "benchmark_return": 0.04410592221559706,
@@ -63,6 +67,8 @@ ISOLATED_FROZEN = {
            "sharpe_ratio": -24.22466525224047,
            "max_drawdown": -0.04249570702113313, "win_rate": 0.0,
            "total_trades": 3, "liquidated": False,
+           "signal_counts": {"adds": 0, "entries": 1289, "exits": 0,
+                             "reduces": 0},
            "alpha": 0.24540469986210112,
            "market_annual_return": -0.9872502477947531,
            "benchmark_return": -0.11705577783402021,
@@ -71,6 +77,8 @@ ISOLATED_FROZEN = {
            "sharpe_ratio": -14.698310106033595,
            "max_drawdown": -0.05909860652345216, "win_rate": 0.0,
            "total_trades": 4, "liquidated": False,
+           "signal_counts": {"adds": 0, "entries": 1243, "exits": 0,
+                             "reduces": 0},
            "alpha": 0.27608024845212165,
            "market_annual_return": -0.4294028554427679,
            "benchmark_return": -0.17481517872597718,
