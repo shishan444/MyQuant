@@ -145,7 +145,6 @@ def generate_random_condition(
         inner_type = random.choice(inner_types)
         inner: dict = {"type": inner_type}
         if inner_type in ("lt", "gt"):
-            inner["threshold"] = round(random.uniform(-1, 1), 2)
             if inner_type == "gt":
                 inner["threshold"] = random.choice([0.0, 0.5, 1.0])
             else:
