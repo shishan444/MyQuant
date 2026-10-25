@@ -62,6 +62,49 @@ def _exec_tf(db, sid: str) -> str:
     return json.loads(row["dna_json"])["execution_genes"]["timeframe"]
 
 
+class TestCard24MalformedRangesGuard:
+    """CARD-24（fix-mtf-review-consistency）：继承分支前结构守卫——
+    畸形 data_ranges 三形态（首元素 str/list/空数组，直写库绕登记
+    校验构造）结构化拒绝 422，与 A1 周期不一致拒绝同码同形制
+    （param+need_hint+data_ranges 回显）。原缺陷面：首元素非 dict
+    落继承取值行裸 .get 炸 AttributeError 500；空数组继承 None 落
+    DB 层 IntegrityError 延迟爆炸。正常缺省继承零变化由既有
+    test_default_inherits_hypothesis_base_tf 承载。
+    """
+
+    @pytest.mark.parametrize(
+        "ranges_json", ['["4h"]', '[["4h"]]', "[]"],
+        ids=["首元素str", "首元素list", "空数组"])
+    def test_malformed_ranges_rejected_422(self, db, ranges_json):
+        """三形态畸形 → RESEARCH_PARAM_INVALID 422+畸形文案+
+        detail 三键（param/data_ranges 回显/need_hint 指引）。"""
+        hid = _hyp(db, "30m")
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=? "
+                "WHERE hypothesis_id=?", (ranges_json, hid))
+        with pytest.raises(ResearchError) as exc:
+            translate_hypothesis(db, hypothesis_id=hid)
+        assert exc.value.code == "RESEARCH_PARAM_INVALID"
+        assert exc.value.status == 422
+        assert "结构畸形" in str(exc.value.message)
+        assert exc.value.detail["param"] == "strategy_timeframe"
+        assert exc.value.detail["data_ranges"] == json.loads(ranges_json)
+        assert "strategy_timeframe" in exc.value.detail["need_hint"]
+
+    def test_explicit_param_bypasses_guard(self, db):
+        """显式传参不进继承分支不受守卫（用户指定优先于继承——
+        畸形 data_ranges+显式传参照常转化）。"""
+        hid = _hyp(db, "30m")
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=? "
+                "WHERE hypothesis_id=?", ('["4h"]', hid))
+        out = translate_hypothesis(
+            db, hypothesis_id=hid, strategy_timeframe="30m")
+        assert out["execution_timeframe"] == "30m"
+
+
 class TestR2TranslateTimeframeContract:
     def test_default_inherits_hypothesis_base_tf(self, db):
         """缺省继承：30m 假设不传参 → 产物 30m（行同值）+回执可查。"""
