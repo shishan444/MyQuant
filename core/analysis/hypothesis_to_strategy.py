@@ -1034,7 +1034,13 @@ def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:
     if hyp is not None:
         try:
             ranges = json.loads(hyp["data_ranges"])
-            base_tf = ranges[0].get("timeframe") if ranges else None
+            # 畸形条目防御（fix-mtf-review-consistency CARD-05）：
+            # 首元素非 dict（库内损坏/手工数据）时 .get 抛 AttributeError
+            # 不在 except 集内裸穿 500——与主流程 A1 防御同款形制收口，
+            # base_tf=None 退回现行幂等（docstring「不可解析退回」语义
+            # 完整达成）
+            base_tf = (ranges[0].get("timeframe")
+                       if ranges and isinstance(ranges[0], dict) else None)
         except (json.JSONDecodeError, TypeError, IndexError):
             base_tf = None
 
