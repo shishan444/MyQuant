@@ -562,9 +562,13 @@ class TestIndicatorCountAlignment:
                 Path("core/features/registry.py").read_text("utf-8"),
         }
         for path, src in sources.items():
-            # docstring/注释声明位（45 项 / 45 indicators / 45 指标）
+            # docstring/注释声明位（45 项 / 45 indicators / 45 指标）。
+            # fix-mtf-review-consistency S3a 词形修复：CARD-02 计数同步
+            # +CARD-09 翻译后 registry.py 声明词形为「48 指标定义/注册表」
+            # ——token 集补「{N} 指标」形（计数断言语义不变）
             assert f"内置 {count}" in src or f"{count} 项" in src \
-                or f"({count} indicators" in src, \
+                or f"({count} indicators" in src \
+                or f"{count} 指标" in src, \
                 f"{path} 计数声明未携带运行时计数 {count}"
 
 
