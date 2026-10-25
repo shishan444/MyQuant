@@ -141,6 +141,87 @@ class TestT7RegistrationFace:
         assert "window" in fields and "inner_action" in fields
 
 
+class TestT7TargetThresholdGuard:
+    """CARD-01（fix-mtf-review-consistency）：within_bars_after 翻译分支
+    inner 阈值 target 分诊拒绝锚。
+
+    修复契约（developer 修复+tester 全链探针九例实证）：登记面放行
+    任意 target 形制，缺陷面在 translate 层——target 分诊复用
+    condition_kernel._classify_target_ref 单点（与同函数 gt 路径同款
+    形制）：列名形（decoded/base_column/unknown 三类）inner 阈值无
+    序列表达结构化拒绝（原裸 float() 对非数值串炸 500）；数值与数值
+    串放行 float(target)；None/bool/list 非 str 数值形拒。price_above
+    inner 的 target 为占位（inner 只带 type 不带 threshold）零消费。
+
+    合法路径（target=1.5）逐字节不变回归由既有 test_t7_4 精确嵌套形
+    断言承载，此处锁数值串放行面+全部拒绝面。
+    """
+
+    @pytest.fixture()
+    def db(self, tmp_path: Path) -> Path:
+        d = tmp_path / "q.db"
+        init_db_ext(d)
+        ensure_research_tables(d)
+        return d
+
+    def _wba_cond(self, target, inner_action="gt"):
+        return {"subject": {"indicator": "RVOL", "params": {"period": 20}},
+                "action": "within_bars_after", "target": target,
+                "inner_action": inner_action, "window": 5}
+
+    def _register_and_translate(self, db, target, inner_action="gt"):
+        hid = register_hypothesis(
+            db,
+            conditions={
+                "when_conditions": [self._wba_cond(target, inner_action)],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}},
+                     "action": "gt", "target": 65}]},
+            statement="CARD-01 target 分诊",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01"}]
+        )["hypothesis_id"]
+        return translate_hypothesis(db, hypothesis_id=hid)
+
+    @pytest.mark.parametrize(
+        "bad", ["ema_20", "close", "abc", None, True, [1]],
+        ids=["decoded 指标列名", "base_column 基础列名", "unknown 非数值串",
+             "None", "bool", "list"])
+    def test_column_and_non_numeric_target_rejected(self, db, bad):
+        """拒绝面六例：列名形三类+非 str 数值形三类 → translate
+        RESEARCH_NOT_EXPRESSIBLE 422（登记面放行，缺陷面在 translate）。"""
+        with pytest.raises(ResearchError) as exc:
+            self._register_and_translate(db, bad)
+        assert exc.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert exc.value.status == 422
+        assert exc.value.detail["condition"]["action"] == "within_bars_after"
+        assert "列名 target 不可表达" in str(exc.value.message)
+
+    def test_numeric_string_target_passes_as_float(self, db):
+        """数值串放行面：target="2.5" → 产物 inner.threshold=2.5
+        （float 转换形制——与数值 1.5 同款放行）。"""
+        out = self._register_and_translate(db, "2.5")
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(db, out["strategy_id"])
+        genes = json.loads(row["dna_json"])["signal_genes"]
+        wba = next(g for g in genes
+                   if g["condition"].get("type") == "within_bars_after")
+        assert wba["condition"]["inner"] == {"type": "gt", "threshold": 2.5}
+
+    def test_price_above_inner_target_placeholder_not_consumed(self, db):
+        """占位零消费：inner_action=price_above（inner 只带 type 不带
+        threshold）→ 列名 target 放行（target 不进分诊面）。"""
+        out = self._register_and_translate(db, "close",
+                                           inner_action="price_above")
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(db, out["strategy_id"])
+        genes = json.loads(row["dna_json"])["signal_genes"]
+        wba = next(g for g in genes
+                   if g["condition"].get("type") == "within_bars_after")
+        assert wba["condition"]["inner"] == {"type": "price_above"}
+
+
 class TestT1DParityWithinBarsAfter:
     def test_dual_chain_parity_with_current_bar_event(self):
         """T①-D 双链对拍：分析面掩码 vs 执行面信号逐位相等。
