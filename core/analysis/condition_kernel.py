@@ -299,8 +299,12 @@ def collect_condition_refs(
 
 
 # 条件条目允许键集（unblock-research-validation T6：与登记面
-# ConditionItem extra=forbid 同语义共享单点——全部条件消费者同语义）
-_CONDITION_ITEM_KEYS = frozenset({"subject", "action", "target", "timeframe"})
+# ConditionItem extra=forbid 同语义共享单点——全部条件消费者同语义）。
+# window/inner_action（fix-mtf-execution-consistency R4）：时序动作族
+# 可选键（within_bars_after；lookback_any/lookback_all 登记面顺带解锁
+# 披露——行为面扩大属披露非回归）
+_CONDITION_ITEM_KEYS = frozenset(
+    {"subject", "action", "target", "timeframe", "window", "inner_action"})
 
 
 def validate_conditions_array(conditions: Any) -> None:

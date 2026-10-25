@@ -54,10 +54,11 @@ class TestLegalTypeSet:
         # 断言（历史形制非缺陷）。
         assert EVALUABLE_CONDITION_TYPES == union
 
-    def test_s6b_constant_is_frozenset_of_16(self):
-        """常量形制锚：frozenset、16 类型（执行器实际分派集基数）。"""
+    def test_s6b_constant_is_frozenset_of_17(self):
+        """常量形制锚：frozenset、17 类型（执行器实际分派集基数——
+        fix-mtf-execution-consistency R4 增 within_bars_after 16→17）。"""
         assert isinstance(EVALUABLE_CONDITION_TYPES, frozenset)
-        assert len(EVALUABLE_CONDITION_TYPES) == 16
+        assert len(EVALUABLE_CONDITION_TYPES) == 17
 
     def test_enumerate_all_types_pass_through(self):
         """穷举穿透：每类型最小样本基因求值不触发未知类型拒绝
@@ -87,6 +88,9 @@ class TestLegalTypeSet:
                 "inner": {"type": "gt", "threshold": 50}},
             "lookback_all": {
                 "type": "lookback_all", "window": 3,
+                "inner": {"type": "gt", "threshold": 50}},
+            "within_bars_after": {
+                "type": "within_bars_after", "window": 3,
                 "inner": {"type": "gt", "threshold": 50}},
             "touch_bounce": {
                 "type": "touch_bounce", "threshold": 0.02,

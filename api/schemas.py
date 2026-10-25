@@ -796,6 +796,12 @@ class ConditionItem(BaseModel):
     action: str
     target: Union[float, str]
     timeframe: Optional[str] = None
+    # R4 时序动作族可选键（fix-mtf-execution-consistency）：window=开窗
+    # 根数（>=1 整数，值域校验在翻译/分析链）；inner_action=内层动作
+    # （合法集 gt/lt/ge/le/price_above——与分析链 _LOOKBACK_INNER_
+    # ACTIONS 同源）；内层阈值由 target 兼任（沿 lookback 族先例）
+    window: Optional[int] = None
+    inner_action: Optional[str] = None
 
 
 class HypothesisConditions(BaseModel):

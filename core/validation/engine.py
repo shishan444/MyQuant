@@ -399,6 +399,9 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "cross_above_series": lambda s, t: _cross_above_series_condition(df, cond, s),
         "cross_below_series": lambda s, t: _cross_below_series_condition(df, cond, s),
         "lookback_any": lambda s, t: _lookback_condition(df, cond, s, "any"),
+        # R4 时序动作（fix-mtf-execution-consistency）：事件后 N 根内
+        # 不含当根——与执行链同口径（shift(1) 后开窗，T①-D 对拍锁）
+        "within_bars_after": lambda s, t: _within_bars_after_condition(df, cond, s),
         # 支撑/阻力动作（Phase 4）
         "touch_bounce": lambda s, t: _resolve_snr_pattern(df, "touch_bounce", s.name if hasattr(s, "name") else subject, cond),
         "role_reversal": lambda s, t: _resolve_snr_pattern(df, "role_reversal", s.name if hasattr(s, "name") else subject, cond),
@@ -581,17 +584,18 @@ _LOOKBACK_INNER_ACTIONS = frozenset(
     {"gt", "lt", "ge", "le", "price_above"})
 
 
-def _lookback_condition(
-    df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
+def _lookback_inner_mask(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
 ) -> pd.Series:
-    """前瞻核验：window bar 内内层条件是否达成（any/all 两模式）。"""
-    # inner_action 校验用（局部引用先例同 _cond_number——模块级互引
-    # 延迟加载，见 hypothesis_service 依赖方向）
-    from core.analysis.hypothesis_service import ResearchError
+    """内层动作掩码（inner_action×target 兼任阈值对 subject 列求值）。
 
-    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
-    # （校验拆至 _cond_window，与 THEN 截窗共用同源）
-    window = _cond_window(cond)
+    lookback 族与 within_bars_after 共用单源（fix-mtf-execution-
+    consistency R4 提取——同族内层机制一处实现）。TD-11 非法内层动作
+    结构化拒绝含内（within_bars_after 不入 _LOOKBACK_INNER_ACTIONS
+    白名单——嵌套窗口递归在此拒绝，spec「MUST NOT 进入内层动作
+    白名单」由不含即达）。
+    """
+    from core.analysis.hypothesis_service import ResearchError
 
     inner_action = cond.get("inner_action", "price_above")
     if inner_action not in _LOOKBACK_INNER_ACTIONS:
@@ -611,21 +615,47 @@ def _lookback_condition(
         # F-2 先例同码族），缺省 0 保留
         threshold = _cond_number(cond, "target", 0)
         if inner_action == "gt":
-            inner_signal = subject_series > threshold
+            return subject_series > threshold
         elif inner_action == "lt":
-            inner_signal = subject_series < threshold
+            return subject_series < threshold
         elif inner_action == "ge":
-            inner_signal = subject_series >= threshold
+            return subject_series >= threshold
         else:
-            inner_signal = subject_series <= threshold
-    else:
-        # 默认内层动作：price_above
-        inner_signal = df["close"] > subject_series
+            return subject_series <= threshold
+    # 默认内层动作：price_above
+    return df["close"] > subject_series
+
+
+def _lookback_condition(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
+) -> pd.Series:
+    """前瞻核验：window bar 内内层条件是否达成（any/all 两模式）。"""
+    # F-2：坏值/零/负窗口结构化拒绝——裸穿 rolling(window=0) 直接 500
+    # （校验拆至 _cond_window，与 THEN 截窗共用同源）
+    window = _cond_window(cond)
+    inner_signal = _lookback_inner_mask(df, cond, subject_series)
 
     if mode == "any":
         return inner_signal.rolling(window=window, min_periods=1).apply(any, raw=False).fillna(False).astype(bool)
     else:
         return inner_signal.rolling(window=window, min_periods=1).apply(all, raw=False).fillna(False).astype(bool)
+
+
+def _within_bars_after_condition(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
+) -> pd.Series:
+    """事件后 N 根内（不含当根）——R4 时序动作（fix-mtf-execution-
+    consistency）。
+
+    求值形制与执行链（executor.evaluate_condition within_bars_after
+    分支）同一当根排除口径：内层掩码 shift(1) 后 rolling(window,
+    min_periods=1).sum()>0——双链对拍 T①-D 行为锁（分析链漏 shift(1)
+    则当根事件判别场景必红）。
+    """
+    window = _cond_window(cond)
+    inner_signal = _lookback_inner_mask(df, cond, subject_series)
+    return (inner_signal.astype(float).shift(1).rolling(
+        window=window, min_periods=1).sum() > 0).fillna(False).astype(bool)
 
 
 def _cond_number(cond: Dict, key: str, default, cast=float):

@@ -132,6 +132,26 @@ def generate_random_condition(
                 inner["threshold"] = random.choice([0.0, -0.5, -1.0])
         condition["window"] = window
         condition["inner"] = inner
+    elif cond_type == "within_bars_after":
+        # R4 时序动作构造分支（fix-mtf-execution-consistency 同步点⑧）：
+        # 词表收录面（:91 随机选择）自动获得，构造面须显式分支——缺此
+        # 分支时 1/17 概率产出裸 {"type": ...}（缺 window/inner）→求值
+        # KeyError→batch 降级全 False→个体适应度静默失真（收录与构造
+        # 两面独立）。形制沿 lookback 先例：window 取既有窗池、inner
+        # 取简单形态（嵌套形 {"type", "threshold"}——登记面平铺键经
+        # 翻译分支转换，两域键形不得混植）。
+        window = random.choice([3, 5, 8, 10])
+        inner_types = ["price_above", "price_below", "gt", "lt"]
+        inner_type = random.choice(inner_types)
+        inner: dict = {"type": inner_type}
+        if inner_type in ("lt", "gt"):
+            inner["threshold"] = round(random.uniform(-1, 1), 2)
+            if inner_type == "gt":
+                inner["threshold"] = random.choice([0.0, 0.5, 1.0])
+            else:
+                inner["threshold"] = random.choice([0.0, -0.5, -1.0])
+        condition["window"] = window
+        condition["inner"] = inner
     elif cond_type == "touch_bounce":
         condition["direction"] = random.choice(["support", "resistance"])
         condition["proximity_pct"] = random.choice([0.005, 0.01, 0.02])

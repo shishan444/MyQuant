@@ -710,11 +710,57 @@ def _translate_conditions(
                     f"{label}[{i}] subject 非法: {exc.message}",
                     detail={"condition": cond, "code": exc.code,
                             **exc.detail}) from exc
+            if action == "within_bars_after":
+                # R4 翻译专门分支（fix-mtf-execution-consistency）：
+                # _ACTION_MAP 形制不满足（lambda 只收 target 单参）——
+                # 登记面平铺键 {target 兼任内层阈值, inner_action, window}
+                # → 基因面嵌套形 {type, window, inner={type, threshold}}。
+                # inner_action 白名单与分析链 _LOOKBACK_INNER_ACTIONS
+                # 同源五员（T⑥ 锚对拍锁；不含 within_bars_after——嵌套
+                # 窗口防域）。
+                inner_action = cond.get("inner_action", "price_above")
+                _INNER_LEGAL = ("gt", "lt", "ge", "le", "price_above")
+                if inner_action not in _INNER_LEGAL:
+                    raise ResearchError(
+                        "RESEARCH_NOT_EXPRESSIBLE",
+                        f"{label}[{i}] inner_action 不可表达: "
+                        f"{inner_action!r}（可表达: {list(_INNER_LEGAL)}）",
+                        detail={"condition": cond})
+                window = cond.get("window", 5)
+                if (not isinstance(window, int) or isinstance(window, bool)
+                        or window < 1):
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        f"{label}[{i}] window 须为 >=1 整数: {window!r}",
+                        detail={"param": "condition.window",
+                                "value": str(window),
+                                "legal_range": ">=1 整数"})
+                condition = {"type": "within_bars_after", "window": window,
+                             "inner": {"type": inner_action}}
+                if inner_action in ("gt", "lt", "ge", "le"):
+                    if (not isinstance(target, (int, float, str))
+                            or isinstance(target, bool)):
+                        raise ResearchError(
+                            "RESEARCH_NOT_EXPRESSIBLE",
+                            f"{label}[{i}] target 须为数值（内层动作 "
+                            f"{inner_action} 的阈值）",
+                            detail={"condition": cond})
+                    condition["inner"]["threshold"] = float(target)
+                genes.append(SignalGene(
+                    indicator=cdef.indicator,
+                    params=dict(cdef.params),
+                    role=role,
+                    field_name=cdef.field,
+                    condition=condition,
+                    timeframe=cond_tf,
+                ))
+                continue
             if action not in _ACTION_MAP:
                 raise ResearchError(
                     "RESEARCH_NOT_EXPRESSIBLE",
                     f"{label}[{i}] action 不可表达: {action}"
-                    f"（可表达: {sorted(_ACTION_MAP)}）",
+                    f"（可表达: {sorted(_ACTION_MAP)})"
+                    f"（时序动作: within_bars_after）",
                     detail={"condition": cond})
             # fix-research-c6：target 分类复用 _classify_target_ref 单点
             # ——数值/数值串→threshold 形（现状逐字节不变）；编码列名

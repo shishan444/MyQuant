@@ -372,6 +372,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         consecutive_down/cross_above_series/cross_below_series/
         lookback_any/touch_bounce/role_reversal；未识别 action 结构化
         拒绝（422 附 legal_values=动作分派表键集）。
+        时序动作（fix-mtf-execution-consistency R4 起）：
+        within_bars_after（内层事件在近 N 根内触发过、不含当根——
+        lookback_any 的当根排除变体；登记面可选键 window（>=1 整数）
+        与 inner_action（gt/lt/ge/le/price_above，内层阈值由 target
+        兼任）；window 单位=基因求值轴根数，轴内求值后投影）。
         同步/异步分界：pattern_mining 与 screen_patterns 恒异步（202+
         task_id 轮询）；其余模板求值行数超过 10000（_HEAVY_ROWS，见
         api/routes/research/analysis.py 常量）降级异步，低于阈值同步

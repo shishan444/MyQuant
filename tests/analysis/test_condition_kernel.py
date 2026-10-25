@@ -199,8 +199,11 @@ class TestConditionItemStrictness:
                 {"subject": {"indicator": "RSI", "params": {}},
                  "action": "lt", "target": 35, "inner_bogus": 1}])
         assert ei.value.detail["unknown_keys"] == ["inner_bogus"]
+        # R4（fix-mtf-execution-consistency）：window/inner_action 入
+        # 白名单（时序动作族可选键——lookback 族登记面顺带解锁披露）
         assert set(ei.value.detail["legal_keys"]) == {
-            "subject", "action", "target", "timeframe"}
+            "subject", "action", "target", "timeframe",
+            "window", "inner_action"}
         assert "顶层键" in ei.value.detail["hint"]
 
     def test_t6d_kernel_whitelist_matches_schemas(self):
