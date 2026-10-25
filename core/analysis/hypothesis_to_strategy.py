@@ -475,6 +475,20 @@ def translate_hypothesis(
     # 异周期假设（登记收紧前遗留）结构化拒绝并指引显式传参，不静默
     # 取首条。
     if strategy_timeframe is None:
+        # 结构守卫（fix-mtf-review-consistency CARD-24）：畸形
+        # data_ranges（空数组/首元素非 dict）——A1 防御的 isinstance
+        # 过滤对畸形元素产出空集（不触发下方周期不一致拒绝），落到
+        # 继承取值行裸 .get 炸 AttributeError 500；空数组则继承 None
+        # 落下游 DB 层 IntegrityError 延迟爆炸。结构化拒绝（与 A1
+        # 指引同款形制）诚实早拦；显式传参不进本分支不受影响。
+        if not data_ranges or not isinstance(data_ranges[0], dict):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "存量假设 data_ranges 结构畸形，无法确定继承基准——"
+                "请修正数据或显式传 strategy_timeframe",
+                detail={"param": "strategy_timeframe",
+                        "data_ranges": data_ranges,
+                        "need_hint": "显式传 strategy_timeframe 指定执行周期"})
         hyp_tfs = sorted({r.get("timeframe") for r in data_ranges
                           if isinstance(r, dict)})
         if len(hyp_tfs) > 1:
