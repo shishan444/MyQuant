@@ -32,17 +32,22 @@ sys.path.insert(0, str(ROOT))
 
 POLLUTION_CAUSE = "gene_tf_drift"
 
-# 精筛判据（json_each 成员级——与 architect 独立复现 SQL 同形）
+# 精筛判据（D4 语义精确化——实施期修正）：漂移=产物执行周期≠源假设
+# 基准周期（且带基因级标注在场）。原「基因 tf≠exec」字面判据会把
+# 重验修正产物（exec=基准+带轴标注——正确形态）误入清单；漂移的
+# 本质是 exec 轴错位而非标注存在性。无谱系假设的策略不入判据面
+# （parent_ids 挂假设才有「基准」可对照——纯进化产物不在此域）。
 STRATEGY_DRIFT_SQL = """
-SELECT strategy_id,
-       json_extract(dna_json, '$.execution_genes.timeframe') AS exec_tf
-FROM strategy
+SELECT s.strategy_id,
+       json_extract(s.dna_json, '$.execution_genes.timeframe') AS exec_tf
+FROM strategy s
+JOIN research_hypotheses h
+  ON s.parent_ids = h.hypothesis_id
 WHERE EXISTS (
-    SELECT 1 FROM json_each(strategy.dna_json, '$.signal_genes') g
-    WHERE json_extract(g.value, '$.timeframe') IS NOT NULL
-      AND json_extract(g.value, '$.timeframe')
-          != json_extract(strategy.dna_json,
-                          '$.execution_genes.timeframe'))
+    SELECT 1 FROM json_each(s.dna_json, '$.signal_genes') g
+    WHERE json_extract(g.value, '$.timeframe') IS NOT NULL)
+  AND json_extract(s.dna_json, '$.execution_genes.timeframe')
+      != json_extract(h.data_ranges, '$[0].timeframe')
 """
 
 HYPOTHESIS_DRIFT_SQL = """

@@ -1007,12 +1007,39 @@ def _translate_conditions(
 
 
 def _find_draft_by_parent(db_path: Path, hypothesis_id: str) -> Optional[str]:
-    """幂等查询：谱系 parent_ids 含该假设的 draft 产物。"""
+    """幂等查询：谱系 parent_ids 含该假设的 draft 产物。
+
+    幂等收窄（fix-mtf-execution-consistency S/D4）：命中判据扩为
+    「谱系命中 且 产物执行周期==假设基准周期（data_ranges[0].
+    timeframe）」——漂移产物（R2 前默认 4h 时代落库）放行重建，
+    旧产物保留审计（不删不改）。基准周期不可解析时退回现行幂等
+    （保守不收窄）。同签名分流安全（design 卡 7）：漂移旧 draft 库内
+    gene_signature 含 L:{漂移执行周期} 伪层段、重建新产物含 L:{假设
+    基准}——签名不同→_find_by_signature 不命中→直接新建实体。
+    """
+    from core.persistence.repository import research as rr
     from core.persistence.repository.strategy import list_strategies
+
+    base_tf = None
+    hyp = rr.get_hypothesis(db_path, hypothesis_id)
+    if hyp is not None:
+        try:
+            ranges = json.loads(hyp["data_ranges"])
+            base_tf = ranges[0].get("timeframe") if ranges else None
+        except (json.JSONDecodeError, TypeError, IndexError):
+            base_tf = None
 
     rows = list_strategies(db_path, status="draft", limit=500)
     for row in rows:
         if row.get("parent_ids") and hypothesis_id in str(row["parent_ids"]):
+            if base_tf is not None:
+                try:
+                    exec_tf = json.loads(row["dna_json"])[
+                        "execution_genes"]["timeframe"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    exec_tf = None
+                if exec_tf != base_tf:
+                    continue  # 漂移 draft：放行重建（旧产物保留审计）
             return row["strategy_id"]
     return None
 

@@ -56,10 +56,12 @@ def _seed(db, *, drifted=True, hyp_drift=True, with_records=True):
     with sqlite3.connect(db) as conn:
         conn.execute(
             "INSERT INTO strategy (strategy_id, name, dna_json, source,"
-            " symbol, timeframe, created_at, updated_at, status)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            " symbol, timeframe, created_at, updated_at, status,"
+            " parent_ids)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             ("st_drift", "漂移", _dna_json([_gene(tf="3d")]), "manual",
-             "BTCUSDT", "4h", "2026-01-01", "2026-01-01", "draft"))
+             "BTCUSDT", "4h", "2026-01-01", "2026-01-01", "draft",
+             "hyp_drift"))  # 谱系挂漂移假设（exec 4h≠基准 30m——精确判据）
         conn.execute(
             "INSERT INTO strategy (strategy_id, name, dna_json, source,"
             " symbol, timeframe, created_at, updated_at, status)"

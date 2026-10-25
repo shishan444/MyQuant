@@ -464,6 +464,7 @@ def _hypothesis_precheck(
     db_path: Path, hypothesis_id: str, strategy_id: str,
     rh: str, request_range: Dict[str, str],
     *, idem_level: Optional[str] = None, idem_segmentation: str = "",
+    rerun_mode: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """验证族前置检查四步（isolated/staged 同构提取）。
 
@@ -494,7 +495,12 @@ def _hypothesis_precheck(
     judged = judged_ranges_union(db_path, hypothesis_id)
     overlaps = overlaps_with_request(
         judged, request_range["start"], request_range["end"])
-    if overlaps:
+    if overlaps and not rerun_mode:
+        # 重验取代豁免（fix-mtf-execution-consistency S）：rerun 模式
+        # 跳过并集面——重跑旧区间不是「同区间反复判定刷 verdict」而是
+        # 污染修正取代（新记录 supersedes 引用旧记录；无旧记录的漂移
+        # 假设=取代未落记录的原验证活动，同属取代语义）；幂等键与终态
+        # 检查照常生效（新 strategy_id 不命中幂等）
         raise ResearchError(
             "RESEARCH_RANGE_OVERLAP",
             "请求区间与判定区间重叠（判定并集=自报∪日志，漏报被日志拦截）",
@@ -512,6 +518,7 @@ def run_isolated_backtest(
     strategy_id: str,
     request_range: Dict[str, str],
     threshold_profile: Optional[Dict[str, Any]] = None,
+    rerun_mode: bool = False,
 ) -> Dict[str, Any]:
     """隔离回测（判定流见模块 docstring）。
 
@@ -528,7 +535,8 @@ def run_isolated_backtest(
     rh = _range_hash(request_range)
     dup = _hypothesis_precheck(db_path, hypothesis_id, strategy_id, rh,
                                request_range,
-                               idem_level="isolated_backtest")
+                               idem_level="isolated_backtest",
+                               rerun_mode=rerun_mode)
     if dup is not None:
         return dup
 
