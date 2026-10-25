@@ -43,6 +43,9 @@ class BacktestResult(Base):
     max_drawdown: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
     win_rate: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
     total_trades: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    # 污染标注（fix-mtf-execution-consistency S）：历史回扫写入
+    # 'gene_tf_drift'；NULL=未标注（存量不回填）
+    pollution_cause: Mapped[Optional[str]] = mapped_column(Text)
     total_score: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
     template_name: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'profit_first'"))
     dimension_scores: Mapped[Optional[str]] = mapped_column(Text)
@@ -554,6 +557,9 @@ class ValidationRecord(Base):
     # 跨零，证据不足非证伪——thresholds.py）
     verdict: Mapped[str] = mapped_column(Text, nullable=False)
     range_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # 污染标注（fix-mtf-execution-consistency S）：历史回扫写入
+    # 'gene_tf_drift'；NULL=未标注（存量不回填）
+    pollution_cause: Mapped[Optional[str]] = mapped_column(Text)
     components: Mapped[Optional[str]] = mapped_column(Text)  # JSON 分量证据 record_id 清单
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
