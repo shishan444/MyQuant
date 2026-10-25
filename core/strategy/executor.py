@@ -28,7 +28,8 @@ from core.analysis.errors import ResearchError  # 轻量定义点直取（errors
 logger = logging.getLogger(__name__)
 
 # 可求值条件类型合法集（unify-tool-return-contract 契约单源）——按
-# evaluate_condition 实际分派集显式穷举 16 类型。注册表侧全部
+# evaluate_condition 实际分派集显式穷举 17 类型（fix-mtf-execution-
+# consistency R4 增 within_bars_after）。注册表侧全部
 # supported_conditions 的并集须与本集双向相等（tests/strategy/
 # test_executor.py S6b 主断言，任一侧漂移都红）。两处 ConditionType
 # 枚举为历史异集现状（core/strategy/dna.py ConditionType 15 成员
@@ -41,6 +42,7 @@ EVALUABLE_CONDITION_TYPES: frozenset[str] = frozenset({
     "cross_above_series", "cross_below_series",
     "lookback_any", "lookback_all",
     "touch_bounce", "role_reversal", "wick_touch",
+    "within_bars_after",
 })
 
 # 基础列直读白名单（add-session-structure-expression 任务 7）：
@@ -157,6 +159,24 @@ def evaluate_condition(
         inner = condition.get("inner", {})
         inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
         return (inner_signal.astype(float).rolling(window=window, min_periods=window).sum() == window).fillna(False).astype(bool)
+    elif cond_type == "within_bars_after":
+        # R4 时序动作（fix-mtf-execution-consistency）：内层事件在近 N
+        # 根内触发过、不含当根——lookback_any 的当根排除变体（shift(1)
+        # 承载排除；min_periods=1 头部宽容与 lookback_any 同构）。窗口
+        # N 单位=该基因求值轴（标注轴）根数——轴内求值后投影（铁律 2）。
+        # window 值域沿 _cond_window 先例域（>=1 整数，坏值拒绝）。
+        window = condition.get("window", 5)
+        if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"condition.window 须为 >=1 整数: {window!r}",
+                detail={"param": "condition.window",
+                        "value": str(window),
+                        "legal_range": ">=1 整数"})
+        inner = condition.get("inner", {})
+        inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
+        return (inner_signal.astype(float).shift(1).rolling(
+            window=window, min_periods=1).sum() > 0).fillna(False).astype(bool)
     # ── 支撑/阻力类条件 ──
     elif cond_type == "touch_bounce":
         return _eval_touch_bounce(indicator_series, close_series, df, condition)
