@@ -633,7 +633,7 @@ def _validate_condition_structure(
     elif cond_type in ("cross_above_series", "cross_below_series"):
         if "target_indicator" not in condition:
             errors.append(f"{label}: {cond_type} requires 'target_indicator'")
-    elif cond_type in ("lookback_any", "lookback_all"):
+    elif cond_type in ("lookback_any", "lookback_all", "within_bars_after"):
         if "window" not in condition:
             errors.append(f"{label}: {cond_type} requires 'window'")
         if "inner" not in condition:

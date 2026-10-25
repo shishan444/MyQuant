@@ -31,7 +31,9 @@ def _mk_dna_with_condition(condition: dict) -> StrategyDNA:
     return StrategyDNA(signal_genes=genes, risk_genes=RiskGenes())
 
 
-# 16 合法类型完整结构样本（role_reversal 补 'role'——validator 既有
+# 17 合法类型完整结构样本（fix-mtf-execution-consistency R4 增
+# within_bars_after——validator 结构校验同步第 9 处；role_reversal
+# 补 'role'——validator 既有
 # 结构校验要求必需键；其余与 tests/strategy/test_executor.py 穷举
 # 样本同构）
 _LEGAL_CASES = {
@@ -55,6 +57,9 @@ _LEGAL_CASES = {
         "inner": {"type": "gt", "threshold": 50}},
     "lookback_all": {
         "type": "lookback_all", "window": 3,
+        "inner": {"type": "gt", "threshold": 50}},
+    "within_bars_after": {
+        "type": "within_bars_after", "window": 3,
         "inner": {"type": "gt", "threshold": 50}},
     "touch_bounce": {
         "type": "touch_bounce", "threshold": 0.02,
