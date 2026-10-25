@@ -141,6 +141,75 @@ class TestT7RegistrationFace:
         assert "window" in fields and "inner_action" in fields
 
 
+class TestT6InnerActionsSingleSource:
+    """T⑥ 锚对拍锁（CARD-04，fix-mtf-review-consistency）：inner_action
+    五员词表单源不漂移。
+
+    原缺陷形态：validation engine 与 hypothesis_to_strategy 翻译分支
+    两处字面量各自维护——词表增删员漏一侧即静默分叉（求值域放行/
+    翻译域拒绝或反之）。收敛后单源=condition_kernel.LOOKBACK_INNER_
+    ACTIONS，本锚锁三处消费同源：engine re-export 同一对象、翻译
+    分支引用单源（源码形制锚防回退字面量）、行为级拒绝文案五员。
+
+    求值域五员（gt/lt/ge/le/price_above）与构造域独立词表
+    （operators._SIMPLE_INNER_TYPES 含 price_below）不互相同步——
+    design 卡 R4 明文独立域，不设跨域相等断言。
+    """
+
+    def test_engine_reexport_same_object_as_kernel(self):
+        """engine re-export 与 condition_kernel 定义同一对象（is 级）。"""
+        from core.analysis.condition_kernel import LOOKBACK_INNER_ACTIONS
+        from core.validation import engine as val_engine
+        assert val_engine._LOOKBACK_INNER_ACTIONS is LOOKBACK_INNER_ACTIONS
+
+    def test_five_members_exact_no_nested_no_price_below(self):
+        """五员精确集：不含 within_bars_after（spec 嵌套窗口防域
+        MUST NOT）与 price_below（求值域边界——构造域探索面）。"""
+        from core.analysis.condition_kernel import LOOKBACK_INNER_ACTIONS
+        assert LOOKBACK_INNER_ACTIONS == frozenset(
+            {"gt", "lt", "ge", "le", "price_above"})
+
+    def test_translate_branch_references_single_source(self):
+        """翻译分支源码引用单源常量（import as 形制）——回退为本地
+        字面量即红（源码形制锚，防漂移回潮）。"""
+        from core.analysis import hypothesis_to_strategy as h2s
+        src = Path(h2s.__file__).read_text(encoding="utf-8")
+        assert "LOOKBACK_INNER_ACTIONS as _INNER_LEGAL" in src, (
+            "翻译分支须引用单源常量而非本地字面量（CARD-04 收敛回退）")
+        # 五员字面量不得回潮（字面量形制与本模块 import 并存时锚不红
+        # ——显式排除双形制并存）
+        assert '("gt", "lt", "ge", "le", "price_above")' not in src, (
+            "hypothesis_to_strategy 内出现五员字面量（单源回退）")
+
+    def test_translate_rejection_lists_sorted_five_members(self, tmp_path):
+        """行为级：非法 inner_action 翻译拒绝文案携带五员清单
+        （sorted 字母序——CARD-04 后展示形制）。"""
+        d = tmp_path / "q.db"
+        init_db_ext(d)
+        ensure_research_tables(d)
+        hid = register_hypothesis(
+            d,
+            conditions={
+                "when_conditions": [
+                    {"subject": {"indicator": "RVOL",
+                                 "params": {"period": 20}},
+                     "action": "within_bars_after", "target": 1.5,
+                     "inner_action": "nope", "window": 5}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}},
+                     "action": "gt", "target": 65}]},
+            statement="T6 单源锚",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                          "start": "2024-01-01", "end": "2024-02-01"}]
+        )["hypothesis_id"]
+        with pytest.raises(ResearchError) as exc:
+            translate_hypothesis(d, hypothesis_id=hid)
+        assert exc.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "['ge', 'gt', 'le', 'lt', 'price_above']" in str(
+            exc.value.message)
+
+
 class TestT7TargetThresholdGuard:
     """CARD-01（fix-mtf-review-consistency）：within_bars_after 翻译分支
     inner 阈值 target 分诊拒绝锚。
