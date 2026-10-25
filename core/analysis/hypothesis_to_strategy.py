@@ -738,12 +738,21 @@ def _translate_conditions(
                 condition = {"type": "within_bars_after", "window": window,
                              "inner": {"type": inner_action}}
                 if inner_action in ("gt", "lt", "ge", "le"):
-                    if (not isinstance(target, (int, float, str))
+                    # fix-mtf-review-consistency CARD-01：target 分诊复用
+                    # _classify_target_ref 单点（与下方 gt 路径同款形制）
+                    # ——放行面=数值（int/float）与数值串；列名形
+                    # （decoded/base_column/unknown）inner 阈值无序列表达，
+                    # 结构化拒绝（原裸 float() 对非数值串炸 500）
+                    from core.analysis.condition_kernel import \
+                        _classify_target_ref
+                    t_kind, _ = _classify_target_ref(target)
+                    if (t_kind not in ("non_str", "numeric")
+                            or not isinstance(target, (int, float, str))
                             or isinstance(target, bool)):
                         raise ResearchError(
                             "RESEARCH_NOT_EXPRESSIBLE",
                             f"{label}[{i}] target 须为数值（内层动作 "
-                            f"{inner_action} 的阈值）",
+                            f"{inner_action} 的阈值，列名 target 不可表达）",
                             detail={"condition": cond})
                     condition["inner"]["threshold"] = float(target)
                 genes.append(SignalGene(
