@@ -117,6 +117,29 @@ class TestIdempotencyNarrowing:
         # 旧 draft 保留（不删不改）
         assert get_strategy(db, "st_drift_old") is not None
 
+    def test_malformed_ranges_first_element_not_dict_falls_back(
+            self, tmp_path):
+        """CARD-05（fix-mtf-review-consistency）：data_ranges 首元素非
+        dict（库内损坏/手工数据形——直写库绕登记校验构造）→ 幂等函数
+        base_tf 不可解析退回现行幂等（谱系有 draft 即返回，不窄化不
+        重建），不裸穿 AttributeError（原 except 集不含该异常）。
+
+        注：同款假设 translate 全链主流程取值行（hypothesis_to_
+        strategy.py:488 裸 .get）仍同款裸穿——范围外专项清单在案，
+        本锚只锁幂等单点防御面（畸形全链行为属范围外问题不作绿锚）。
+        """
+        from core.analysis.hypothesis_to_strategy import _find_draft_by_parent
+
+        db, _, hid = _seed_env(tmp_path)
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=? "
+                "WHERE hypothesis_id=?",
+                (json.dumps([["4h"]]), hid))
+        # _seed_env 谱系有漂移 draft（st_drift_old）——退回现行幂等
+        # =谱系命中即返（base_tf=None 不进收窄判据）
+        assert _find_draft_by_parent(db, hid) == "st_drift_old"
+
     def test_consistent_draft_idempotent_unchanged(self, tmp_path):
         """回归锚：一致 draft（执行周期==基准）现行幂等不变——重建后
         二次 translate 返回同一产物。"""
