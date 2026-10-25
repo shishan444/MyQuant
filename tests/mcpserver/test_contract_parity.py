@@ -580,6 +580,27 @@ class TestMultiTimeframeBoundaryDisclosure:
             assert token in src, f"描述缺边界要素: {token}"
 
 
+class TestTranslateTimeframeContractDisclosure:
+    """R2 转化执行周期契约披露锚（fix-mtf-execution-consistency 组 2）。
+
+    spec delta「转化执行周期契约」明文 MCP docstring 同步披露——
+    docstring 未披露等于 AI 消费者视角的能力不存在（三面一致纪律）。
+    锁 translate 工具 docstring 执行周期契约句四要素：缺省继承语义、
+    继承来源（data_ranges[0].timeframe）、A1 异周期拒绝指引、回执
+    execution_timeframe 键。服务层行为锚在 tests/analysis/
+    test_translate_timeframe_contract.py（R2 六用例），本锚为 MCP
+    披露面（R2 锚族的 tests/mcpserver/ 面）。
+    """
+
+    def test_translate_doc_carries_timeframe_contract(self) -> None:
+        src = Path("mcpserver/tools.py").read_text("utf-8")
+        for token in ("继承假设基准周期",
+                      "data_ranges[0].timeframe",
+                      "存量异周期假设拒绝",
+                      "execution_timeframe"):
+            assert token in src, f"translate 披露缺执行周期契约要素: {token}"
+
+
 class TestRegimeSplitConditionsDisclosure:
     """regime_split 组合条件披露对拍（regime-split-combined-conditions）。
 

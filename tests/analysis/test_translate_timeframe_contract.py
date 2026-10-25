@@ -122,6 +122,29 @@ class TestR2TranslateTimeframeContract:
         third = translate_hypothesis(db, hypothesis_id=hid2)
         assert third["execution_timeframe"] == "30m"  # 分流点同键
 
+    def test_receipt_key_on_active_redirection_point(self, db):
+        """回执第七键第四返回点：active 同基因分流（same_dna_existing
+        =True——产物转正后谱系 draft 消失，同基因新假设命中 active
+        分流点）。至此四返回点（谱系幂等/active 分流/draft 分流/新
+        转化）全部触达。"""
+        hid = _hyp(db, "30m")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        # 模拟转正：draft → active（谱系 draft 消失）
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE strategy SET status='active' WHERE strategy_id=?",
+                (first["strategy_id"],))
+        hid3 = register_hypothesis(
+            db, conditions=_CONDS, statement="s3",
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
+                          "start": "2024-05-01T00:00:00Z",
+                          "end": "2024-06-01T00:00:00Z"}])["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hid3)
+        assert out["same_dna_existing"] is True, "须命中 active 同基因分流"
+        assert out["duplicated"] is False
+        assert out["execution_timeframe"] == "30m", (
+            "active 分流点第七键须在场且=产物行周期")
+
     def test_mcp_and_rest_default_semantics(self, db):
         """四入口默认一致：MCP 工具签名默认 None+REST schema 默认 None
         （两入口缺省均透传服务层继承语义——签名/schema 层锚）。"""
