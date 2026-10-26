@@ -282,6 +282,18 @@ def _cluster_disclosure(
     return out
 
 
+def _range_seg_mask(index: pd.Index, start: str, end: str) -> pd.Series:
+    """区间 [start, end) 半开掩码（端点 to_utc 归一，右端不计入）。
+
+    逐区间统计的共用构造（两处同构收敛单点）：compute_precheck_report
+    analysis_segment 锚与 run_registration_precheck then_coverage 循环
+    引用同构。
+    """
+    lo = to_utc(pd.Timestamp(start))
+    hi = to_utc(pd.Timestamp(end))
+    return pd.Series((index >= lo) & (index < hi), index=index)
+
+
 def compute_precheck_report(
     work: pd.DataFrame,
     when_conditions: List[Dict[str, Any]],
@@ -383,10 +395,7 @@ def compute_precheck_report(
         parts = []
         per_range_out = []
         for r in per_range:
-            lo = to_utc(pd.Timestamp(r["start"]))
-            hi = to_utc(pd.Timestamp(r["end"]))
-            seg = pd.Series((work.index >= lo) & (work.index < hi),
-                            index=work.index)
+            seg = _range_seg_mask(work.index, r["start"], r["end"])
             parts.append(seg)
             entry = {
                 "start": r["start"], "end": r["end"],
@@ -651,19 +660,17 @@ def run_registration_precheck(
         coverages: List[float] = []
         always_true = False
         for r in data_ranges:
-            lo = to_utc(pd.Timestamp(r["start"]))
-            hi = to_utc(pd.Timestamp(r["end"]))
-            seg = pd.Series((df.index >= lo) & (df.index < hi),
-                            index=df.index)
+            seg = _range_seg_mask(df.index, r["start"], r["end"])
             seg_bars = int(seg.sum())
             if seg_bars == 0:
                 continue  # 空区间跳过（0÷0 不算恒真）
             hit_bars = int((then_combo & seg).sum())
+            coverage = hit_bars / seg_bars
             per_range_cov.append({
                 "start": r["start"], "end": r["end"],
                 "hit_bars": hit_bars, "stat_bars": seg_bars,
-                "coverage": hit_bars / seg_bars})
-            coverages.append(hit_bars / seg_bars)
+                "coverage": coverage})
+            coverages.append(coverage)
             if hit_bars == seg_bars:
                 always_true = True
         out["then_coverage"] = {
