@@ -1078,3 +1078,184 @@ class TestClusteringDisclosure:
         assert clustered["verdict"] == uniform["verdict"] == "pass"
         assert clustered["frequency_projection"]["projected_trades"] == \
             pytest.approx(uniform["frequency_projection"]["projected_trades"])
+
+
+# --------------------------------------- D2 then 覆盖率（fix-executor-column-and-exit-guard B 组锚）
+
+class TestThenCoverage:
+    """D2：then_conditions 并入预检装载与求值——纯增量键 then_coverage
+    （覆盖率口径=then 组 AND 交集触发 bar 数/区间全体 bar 数；判定锚=
+    最差区间；不经 trigger_policy——出场无事件化语义）。
+
+    数据全部手工构造（_deterministic_df 形制），触发数人工核算。
+    """
+
+    @staticmethod
+    def _env(tmp_path, closes):
+        """401 bar 1h 数据目录；请求区间=尾段 100 bar（idx[300,400)，
+        end=最后 bar 时间戳 → 半开区间恰含 idx[300..399]）。"""
+        df = _deterministic_df(closes)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        df.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df.index[300].isoformat(),
+               "end": df.index[400].isoformat()}
+        return df, data_dir, rng
+
+    def _run(self, db_path, data_dir, rng, when, then, **kw):
+        return run_registration_precheck(
+            db_path, data_dir, when, [rng], then_conditions=then, **kw)
+
+    WHEN_TRIVIAL = [{"subject": "close", "action": "gt", "target": 0}]
+
+    def test_b1_always_true_real_form(self, tmp_path, db_path):
+        """B1 恒真实录形（BUG-2 主证）：then 全 bar 触发 →
+        always_true=true、min_coverage=1.0、per_range hit==stat==100。"""
+        _, data_dir, rng = self._env(tmp_path, [100.0] * 401)
+        out = self._run(db_path, data_dir, rng,
+                        self.WHEN_TRIVIAL,
+                        [{"subject": "close", "action": "gt", "target": 60}])
+        tc = out["then_coverage"]
+        assert tc["always_true"] is True
+        assert tc["min_coverage"] == 1.0
+        assert tc["per_range"][0]["hit_bars"] == 100
+        assert tc["per_range"][0]["stat_bars"] == 100
+        assert tc["per_range"][0]["coverage"] == 1.0
+        assert tc["threshold_warn"] == 0.9
+        # spec scenario「覆盖率数据随预检透出」THEN 五键之一：note
+        # 口径披露（覆盖率口径与判定锚说明）在场
+        assert "覆盖率口径" in tc["note"]
+
+    def test_b2_95_percent_form(self, tmp_path, db_path):
+        """B2：区间内 95 bar 触发 5 bar 不触发 → min_coverage=0.95、
+        always_true=false（95/100 整数构造：区间=idx[300,400)，热段
+        idx[300..394] 95 根 + 冷段 idx[395..399] 5 根）。"""
+        closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
+        _, data_dir, rng = self._env(tmp_path, closes)
+        out = self._run(db_path, data_dir, rng,
+                        self.WHEN_TRIVIAL,
+                        [{"subject": "close", "action": "gt", "target": 60}])
+        tc = out["then_coverage"]
+        assert tc["always_true"] is False
+        assert tc["min_coverage"] == pytest.approx(0.95)
+        assert tc["per_range"][0]["hit_bars"] == 95
+        assert tc["per_range"][0]["stat_bars"] == 100
+
+    def test_b3_half_form(self, tmp_path, db_path):
+        """B3：50% 形（区间内 50 热 50 冷交替）。"""
+        closes = [100.0] * 300 + [100.0, 50.0] * 50 + [100.0]
+        _, data_dir, rng = self._env(tmp_path, closes)
+        out = self._run(db_path, data_dir, rng,
+                        self.WHEN_TRIVIAL,
+                        [{"subject": "close", "action": "gt", "target": 60}])
+        tc = out["then_coverage"]
+        assert tc["always_true"] is False
+        assert tc["min_coverage"] == pytest.approx(0.5)
+        assert tc["per_range"][0]["hit_bars"] == 50
+
+    def test_b10_two_then_and_intersection(self, tmp_path, db_path):
+        """B10：双 then AND 交集——恒真（close gt 0）×50%（close gt 60）
+        → 交集=50%。"""
+        closes = [100.0] * 300 + [100.0, 50.0] * 50 + [100.0]
+        _, data_dir, rng = self._env(tmp_path, closes)
+        out = self._run(db_path, data_dir, rng, self.WHEN_TRIVIAL, [
+            {"subject": "close", "action": "gt", "target": 0},    # 恒真
+            {"subject": "close", "action": "gt", "target": 60},   # 50%
+        ])
+        tc = out["then_coverage"]
+        assert tc["always_true"] is False
+        assert tc["min_coverage"] == pytest.approx(0.5)
+
+    def test_b0_then_none_no_key(self, tmp_path, db_path):
+        """B0：then=None → 返回体无 then_coverage 键（键身份锚）。"""
+        _, data_dir, rng = self._env(tmp_path, [100.0] * 401)
+        out = self._run(db_path, data_dir, rng, self.WHEN_TRIVIAL, None)
+        assert "then_coverage" not in out
+
+    def test_b9_then_not_through_trigger_policy(self, tmp_path, db_path):
+        """B9：then 求值不经 trigger_policy——带 first_true 策略 + 恒真
+        then 时 hit_bars 仍==stat_bars（若误走事件化，恒真段仅计首根
+        hit=1≠100，本锚即红）。"""
+        _, data_dir, rng = self._env(tmp_path, [100.0] * 401)
+        out = self._run(db_path, data_dir, rng,
+                        self.WHEN_TRIVIAL,
+                        [{"subject": "close", "action": "gt", "target": 60}],
+                        trigger_policy={"mode": "first_true"})
+        tc = out["then_coverage"]
+        assert tc["always_true"] is True
+        assert tc["per_range"][0]["hit_bars"] == \
+            tc["per_range"][0]["stat_bars"] == 100
+
+    def test_b8_empty_range_skipped(self, tmp_path, db_path):
+        """B8 边界组：零长度区间（start==end，半开恒空）跳过不进
+        per_range；全空 → min_coverage=null 且 0÷0 不算恒真。（数据外
+        区间在装载层已被 RESEARCH_DATA_INSUFFICIENT 拒绝——空区间
+        的合法形态=start==end。）"""
+        df, data_dir, _ = self._env(tmp_path, [100.0] * 401)
+        void_rng = {"symbol": SYMBOL, "timeframe": "1h",
+                    "start": df.index[350].isoformat(),
+                    "end": df.index[350].isoformat()}
+        # 混合区间：一个有效（全 100 恒真）+ 一个零长度
+        valid_rng = {"symbol": SYMBOL, "timeframe": "1h",
+                     "start": df.index[300].isoformat(),
+                     "end": df.index[400].isoformat()}
+        out_mix = run_registration_precheck(
+            db_path, data_dir, self.WHEN_TRIVIAL, [valid_rng, void_rng],
+            then_conditions=[{"subject": "close", "action": "gt",
+                              "target": 60}])
+        tc = out_mix["then_coverage"]
+        assert len(tc["per_range"]) == 1               # 空区间跳过
+        assert tc["always_true"] is True               # 有效区间恒真照判
+        # 全空：区间清单全部零长度
+        out_void = run_registration_precheck(
+            db_path, data_dir, self.WHEN_TRIVIAL, [void_rng],
+            then_conditions=[{"subject": "close", "action": "gt",
+                              "target": 60}])
+        tc2 = out_void["then_coverage"]
+        assert tc2["per_range"] == []
+        assert tc2["min_coverage"] is None
+        assert tc2["always_true"] is False             # 0÷0 不算恒真
+
+    def test_b4_rsi2_on_demand_compute(self, tmp_path, db_path):
+        """B4：then 引用 RSI(2)（非默认参数——BUG-1 原案参数形制；
+        参数域 [2,50]，99 越界故不取）→ 求值成功（mask_for 现算路径，
+        与卡 D1 正交协同——修复前 executor 侧该形制错列，预检 then
+        面经 kernel 现算正确）。"""
+        df = make_ohlcv(n=401, freq="1h", start="2024-01-01", seed=7)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df.index[300].isoformat(),
+               "end": df.index[400].isoformat()}
+        out = self._run(db_path, data_dir, rng, self.WHEN_TRIVIAL, [
+            {"subject": {"indicator": "RSI", "params": {"period": 2}},
+             "action": "lt", "target": 90}])
+        tc = out["then_coverage"]
+        assert tc["per_range"], "RSI(2) 现算求值须成功产出区间明细"
+        pr = tc["per_range"][0]
+        assert pr["stat_bars"] == 100
+        assert 0 <= pr["hit_bars"] <= 100
+
+    def test_b6_then_reference_widens_warmup(self, tmp_path, db_path):
+        """B6：then 引用 EMA（lookback 600=period 上限 200×3）→
+        warmup_bars 含 then 维度（引用并集装载一次两用——与隔离回测
+        装载预算同源）。基线（when 仅 close 基础列）warmup=200。"""
+        df = make_ohlcv(n=801, freq="1h", start="2024-01-01", seed=7)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / f"{SYMBOL}_1h.parquet")
+        rng = {"symbol": SYMBOL, "timeframe": "1h",
+               "start": df.index[700].isoformat(),
+               "end": df.index[800].isoformat()}
+        base = run_registration_precheck(db_path, data_dir,
+                                         self.WHEN_TRIVIAL, [rng])
+        with_then = run_registration_precheck(
+            db_path, data_dir, self.WHEN_TRIVIAL, [rng],
+            then_conditions=[{
+                "subject": {"indicator": "EMA", "params": {"period": 20}},
+                "action": "gt", "target": 0}])
+        assert base["warmup_bars"] == 200
+        assert with_then["warmup_bars"] == 600
+        assert "then_coverage" in with_then

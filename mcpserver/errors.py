@@ -62,6 +62,13 @@ HINTS: Dict[str, str] = {
         "模板内部错误：附 detail 的 template/exception_type/summary "
         "提交问题报告；同参数重试大概率无效（0.3.2 卡4/卡5——诊断字段 "
         "保留异常文本，message 通道已保持干净）",
+    # ---- 出场条件覆盖率防线（fix-executor-column-and-exit-guard D3）
+    "RESEARCH_EXIT_ALWAYS_TRUE":
+        "出场条件（then_conditions）在登记区间内全 bar 触发（恒真出场）"
+        "——同 bar 开平互斥清洗将抹杀全部进场信号，回测必然零进场；"
+        "按 detail.range 核对该区间 then 条件语义（实录形制：空头版误写 "
+        "close price_above BB lower——close 永远在下轨上方），改写为"
+        "非常驻形出场条件后重新登记",
     # ---- 多周期条件（0.2.14）
     "TIMEFRAME_ON_THEN":
         "THEN 条件不接受 timeframe 键（前向收益对照以基准 bar 计，"

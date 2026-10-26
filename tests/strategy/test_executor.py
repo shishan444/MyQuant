@@ -12,6 +12,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+import numpy as np
 import pandas as pd
 
 from core.analysis.errors import ResearchError
@@ -214,6 +215,326 @@ class TestColumnResolutionRejection:
         ]
         with pytest.raises(ResearchError):
             dna_to_signal_set(dna, df)
+
+
+class TestMissingParamKeyRejection:
+    """A5 四格锚（fix-executor-column-and-exit-guard D1）：两段×两类
+    收口完备性——resolve 段与现算段各自拦 KeyError/TypeError，统一
+    ValueError（文案锚 "bad or missing parameter key"），链路顶层
+    收编 RESEARCH_CONDITION_INVALID（detail 四键、无 500 裸穿）。
+
+    四格：a EMA(params={})——default-naming 族缺参，resolve get 不抛、
+    落现算段 KeyError；b BB(period=20 缺 std)——参数化 naming 族，
+    resolve 段 KeyError；c1 BB(period=None)——resolve 段 TypeError
+    （int(None) 先于 std 缺失）；c2 EMA(period=None)——现算段
+    TypeError（default 分支 get 不抛、落现算段 int(None)）。c2 专红
+    「resolve 段包全两类、现算段偷懒只包 KeyError」的部分实现。
+    """
+
+    def _assert_value_error(self, df, gene):
+        from core.strategy.executor import _get_indicator_column
+        with pytest.raises(ValueError, match="bad or missing parameter key"):
+            _get_indicator_column(df, gene)
+
+    def _assert_research_error(self, df, gene, indicator, params):
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        err = exc_info.value
+        assert err.code == "RESEARCH_CONDITION_INVALID"
+        assert err.status == 422          # 无 500 裸穿
+        assert err.detail["indicator"] == indicator
+        assert err.detail["params"] == params
+        assert "field" in err.detail
+        assert "bad or missing parameter key" in err.detail["cause"]
+
+    def test_a5a_ema_missing_period_compute_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="EMA", params={},
+                                condition_type="gt", condition_value=0)
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "EMA", {})
+
+    def test_a5b_bb_missing_std_resolve_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="BB", params={"period": 20},
+                                condition_type="price_below",
+                                field_name="lower")
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "BB", {"period": 20})
+
+    def test_a5c1_bb_none_period_resolve_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="BB", params={"period": None},
+                                condition_type="price_below",
+                                field_name="lower")
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "BB", {"period": None})
+
+    def test_a5c2_ema_none_period_compute_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="EMA", params={"period": None},
+                                condition_type="gt", condition_value=0)
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "EMA", {"period": None})
+
+    def test_a8_unregistered_prefix_hitable_still_rejects(self):
+        """A8：未注册指标且 df 存在前缀可命中列（"NOPE" vs "nope_x"，
+        手工 DNA 直挂形态）→ 不存在「前缀命中静默取列」——与全落空
+        形态（NOPE_GHOST 族 s8a）同码同 detail 形制拒绝。
+        """
+        df = make_enhanced_df(n=30)
+        df["nope_x"] = df["close"]   # 前缀可命中的诱饵列
+        gene = make_signal_gene(indicator="NOPE", params={},
+                                condition_type="lt", condition_value=1)
+        from core.strategy.executor import _get_indicator_column
+        with pytest.raises(ValueError, match="Cannot find column for indicator NOPE"):
+            _get_indicator_column(df, gene)
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        err = exc_info.value
+        assert err.code == "RESEARCH_CONDITION_INVALID"
+        assert err.status == 422
+        assert err.detail["indicator"] == "NOPE"
+        assert err.detail["params"] == {}
+        assert "cause" in err.detail and err.detail["cause"]
+
+
+class TestEntryExitMutexWarning:
+    """F1-F6（fix-executor-column-and-exit-guard D5）：同 bar 开平互斥
+    清洗单点 helper——清洗逐字节等价（F3）+ 抹杀率告警（F1/F4 触发、
+    F2/F5 不触发、F6 除零守护）。五处调用点（executor 层内/MTF 组合
+    出口/单周期主路径/batch 组装出口/mtf_engine）的逐位等价由既有
+    覆盖测试回归承载（SignalSet 全字段断言）。
+    """
+
+    @staticmethod
+    def _bools(vals):
+        return pd.Series(vals, dtype=bool)
+
+    def test_f1_helper_full_kill_warns_and_clears(self, caplog):
+        """F1 单元面：恒真出场形（部分进场全被抹）→ caplog 告警 +
+        清洗后 entries 全 False（清洗语义不变）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, False, True])
+        exits = self._bools([True, True, True, True])     # 恒真出场
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)
+        assert not bool(cleaned.any())                    # 全 False
+        joined = "\n".join(r.getMessage() for r in caplog.records)
+        assert "同 bar 进出场冲突抹杀进场信号" in joined
+        assert "3/3（100%）" in joined                    # killed/total 数字
+
+    def test_f1_dna_chain_full_kill_warns(self, caplog):
+        """F1 链路面（BUG-2 实录形）：恒真出场 DNA 经 dna_to_signal_set
+        → 告警在场 + entries 全 False（执行链兜底不经登记链的路径）。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=30)
+        df["hour_utc"] = df.index.hour
+        entry = SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           None, {"type": "lt", "threshold": 30})
+        exit_gene = SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER,
+                               None, {"type": "gt", "threshold": -1})
+        dna = make_dna()
+        dna.signal_genes = [entry, exit_gene]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            ss = dna_to_signal_set(dna, df)
+        assert not bool(ss.entries.any())
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f2_normal_dna_no_warning(self, caplog):
+        """F2：正常 DNA（出场低频，冲突比例远低于半数）无该告警。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=200)
+        entry = SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           None, {"type": "lt", "threshold": 50})
+        exit_gene = SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                               None, {"type": "gt", "threshold": 95})
+        dna = make_dna()
+        dna.signal_genes = [entry, exit_gene]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            dna_to_signal_set(dna, df)
+        assert not any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                       for r in caplog.records)
+
+    def test_f3_equivalent_to_inline_formula(self):
+        """F3：清洗与 entries & ~(entries & exits) 逐位等价（随机
+        布尔对 × 多组 seed）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        for seed in (1, 7, 42):
+            rng = np.random.default_rng(seed)
+            entries = pd.Series(rng.random(500) < 0.4)
+            exits = pd.Series(rng.random(500) < 0.4)
+            pd.testing.assert_series_equal(
+                _apply_entry_exit_mutex(entries, exits),
+                entries & ~(entries & exits), check_names=False)
+
+    def test_f4_exact_half_boundary_triggers(self, caplog):
+        """F4：killed/total 恰 0.5（2 进场 1 抹杀）触发（≥ 含边界）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, False])
+        exits = self._bools([True, False, False])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            _apply_entry_exit_mutex(entries, exits)
+        assert any("1/2（50%）" in r.getMessage() for r in caplog.records)
+
+    def test_f5_one_third_no_warning(self, caplog):
+        """F5：1/3 形（killed/total=0.33 < 0.5）不触发。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, True, False])
+        exits = self._bools([True, False, False, False])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)
+        assert not any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                       for r in caplog.records)
+        assert bool(cleaned.iloc[1]) and bool(cleaned.iloc[2])  # 清洗仍正确
+
+    def test_f6_zero_entries_no_warning_no_division_error(self, caplog):
+        """F6：total=0（进场空集）无告警无 ZeroDivisionError。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([False, False])
+        exits = self._bools([True, True])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)   # 不抛即过
+        assert not bool(cleaned.any())
+        assert not caplog.records
+
+    # ---------------- F3 补锚：五处清洗点逐处在场性 ----------------
+    # spec MUST「清洗点经单点 helper 同语义覆盖全部五处」——F1 链路锚
+    # 只触达单周期主路径；其余四处任一漏替换回内联两行时，既有回归
+    # （只护清洗语义）全绿而该路径告警 MUST 失效。以下四锚逐处锁
+    # 「该路径经 helper 且告警在场」，推导链：F1-F6 锁 helper 行为 +
+    # 本组锁每处调用点在链上。
+
+    def test_f3a_evaluate_layer_internal_cleanup_warns(self, caplog):
+        """F3-a 清洗点①evaluate_layer 层内（executor.py:664）：恒真
+        出场层（entry 恒真 × exit 恒真）直调求值 → 告警在场 + entries
+        全 False。该形制只经过层内清洗单点，caplog 来源无歧义。"""
+        from core.strategy.dna import (
+            LogicGenes, SignalGene, SignalRole, TimeframeLayer,
+        )
+        from core.strategy.executor import evaluate_layer
+        df = make_enhanced_df(n=60, freq="1h", seed=3)
+        df["hour_utc"] = df.index.hour
+        layer = TimeframeLayer("1h", [
+            SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+            SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+        ], LogicGenes(), None)
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            ss = evaluate_layer(layer, df)
+        assert not bool(ss.entries.any())            # 清洗语义不变
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f3b_mtf_combined_exit_via_helper(self, monkeypatch):
+        """F3-b 清洗点②MTF 组合出口（dna_to_signal_set MTF 分支）：
+        spy 计数锚——两层数据下 helper 调用恰 3 次（逐层 evaluate_layer
+        各 1 + 组合出口 1）。组合出口漏替换回内联两行时计数=2 即红。
+        caplog 无法区分层内与组合出口的告警来源（单点 helper 同
+        logger），故以调用计数锁在场性；helper 告警行为由 F1-F6 锚定。"""
+        from core.strategy import executor as exc_mod
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+            StrategyDNA, TimeframeLayer,
+        )
+        calls = []
+        real = exc_mod._apply_entry_exit_mutex
+
+        def spy(entries, exits):
+            calls.append(1)
+            return real(entries, exits)
+
+        monkeypatch.setattr(exc_mod, "_apply_entry_exit_mutex", spy)
+        base = make_enhanced_df(n=120, freq="1h", seed=5)
+        base["hour_utc"] = base.index.hour
+        hi = make_enhanced_df(n=30, freq="1d", seed=6)
+        hi["hour_utc"] = hi.index.hour
+        gene = lambda role: SignalGene(   # noqa: E731 —— 两层同形构造
+            "hour_utc", {}, role, None, {"type": "gt", "threshold": -1})
+        dna = StrategyDNA(
+            signal_genes=[],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(),
+            layers=[
+                TimeframeLayer("1h", [gene(SignalRole.ENTRY_TRIGGER)],
+                               LogicGenes(), None),
+                TimeframeLayer("1d", [gene(SignalRole.ENTRY_TRIGGER)],
+                               LogicGenes(), None),
+            ],
+        )
+        assert dna.is_mtf, "测试前提：MTF 个体走组合分支"
+        # dfs_by_timeframe 须含执行层自身数据（缺则层降级跳过——
+        # executor.py:833 fail-loud 留痕，组合面只剩 1d 层）
+        ss = dna_to_signal_set(dna, base, {"1h": base, "1d": hi})
+        assert len(calls) == 3, (
+            f"两层数据 helper 调用应恰 3 次（层内×2+组合出口×1），"
+            f"实际 {len(calls)}——组合出口清洗未经单点 helper")
+        assert bool(ss.entries.any())   # 两层恒真 entry、无 exit——组合后保留
+
+    def test_f3c_batch_assembly_cleanup_warns(self, caplog):
+        """F3-c 清洗点③batch 组装出口（batch_signal_sets 组装段
+        executor.py:1296）：恒真出场形经批量通道 → 告警在场。单周期
+        个体走基因去重组装（不经 evaluate_layer），组装出口是该路径
+        唯一清洗点，caplog 来源无歧义。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=120, freq="1h", seed=7)
+        df["hour_utc"] = df.index.hour
+        dna = make_dna()
+        dna.signal_genes = [
+            SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+            SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+        ]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            results = batch_signal_sets([dna], df)
+        assert len(results) == 1
+        assert not bool(results[0].entries.any())    # 全抹（清洗语义不变）
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f3d_mtf_engine_combined_warns(self, caplog):
+        """F3-d 清洗点④mtf_engine._build_exec_signal_set
+        （mtf_engine.py:853）：执行轴信号集合并出口直调——恒真 entry ×
+        恒真 exit → 告警在场 + entries 全 False。mtf_engine 经
+        from-import 绑定 helper，告警 logger 仍为 core.strategy.executor
+        单源（本锚兼证 from-import 绑定未断）。"""
+        from core.strategy.dna import LogicGenes, TimeframeLayer
+        from core.strategy.executor import SignalSet
+        from core.strategy.mtf_engine import (
+            LayerResult, _build_exec_signal_set,
+        )
+        df = make_enhanced_df(n=60, freq="4h", seed=9)
+        idx = df.index
+        always = SignalSet(
+            entries=pd.Series(True, index=idx),
+            exits=pd.Series(True, index=idx),
+            adds=pd.Series(False, index=idx),
+            reduces=pd.Series(False, index=idx))
+        dna = make_dna()   # execution timeframe="4h" 与层 tf 一致（reindex 直取）
+        dna.layers = [TimeframeLayer("4h", [], LogicGenes(), None)]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            out = _build_exec_signal_set(
+                [("4h", LayerResult(signal_set=always))], dna, df)
+        assert not bool(out.entries.any())           # 清洗语义不变
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
 
 
 class TestDefenseIndependence:

@@ -67,8 +67,12 @@ def _payload(df, when=None, ranges=None, provenance=None):
         "conditions": {
             "when_conditions": when or [
                 {"subject": "close", "action": "gt", "target": 0}],
+            # then 恒假形（不依赖数据分布的合法非恒真出场）——恒真
+            # then 被 D3 出场防线拒绝（fix-executor-column-and-
+            # exit-guard Q1=A），登记链测试须用非恒真出场条件
+            # （reg_env 数据单调，RSI 形仍恒真故不可用）
             "then_conditions": [
-                {"subject": "close", "action": "gt", "target": 0}],
+                {"subject": "close", "action": "lt", "target": -1}],
         },
         "statement": "预检挂接测试假设",
         "data_ranges": ranges or _ranges(df),

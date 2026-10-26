@@ -488,3 +488,181 @@ class TestAddTriggerTfRegistrationIdempotency:
         assert other["duplicated"] is False
         assert other["hypothesis_id"] != out1["hypothesis_id"], \
             "异 tf 必异指纹（tf 被指纹忽略则此处误命中）"
+
+
+class TestExitCoverageD2D4:
+    """D2/D4 登记级行为（fix-executor-column-and-exit-guard B5/B7/E 组锚）。
+
+    then 覆盖率数据经 precheck_warnings.then_coverage 透出（B 组单测面
+    在 test_precheck_hypothesis.py）；登记级锚：幂等三键全无（B5）、
+    求值异常降级（B7）、警告档边界（E1-E4）、判定异常降级（E5）、
+    待启用衔接锚（E6）、与 threshold_unit_warnings 正交并存。
+    """
+
+    RSI_WHEN = [
+        {"subject": {"indicator": "RSI", "params": {"period": 14}},
+         "action": "lt", "target": 35}]
+
+    @staticmethod
+    def _env(tmp_path, closes, freq="1h"):
+        """确定性数据目录+尾 100 bar 请求区间（_deterministic 形制，
+        追加 funding_rate 列供正交锚用）。"""
+        import pandas as pd
+        idx = pd.date_range("2024-01-01", periods=len(closes), freq=freq,
+                            tz="UTC")
+        close = pd.Series(closes, index=idx, dtype=float)
+        df = pd.DataFrame({
+            "open": close, "high": close + 1.0, "low": close - 1.0,
+            "close": close, "volume": 100.0,
+            "funding_rate": 0.0001,
+        })
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        rng = {"symbol": "BTCUSDT", "timeframe": "1h",
+               "start": df.index[len(closes) - 101].isoformat(),
+               "end": df.index[len(closes) - 1].isoformat()}
+        return data_dir, rng
+
+    def _register_env(self, db, tmp_path, closes, then_target=60,
+                      when=None):
+        data_dir, rng = self._env(tmp_path, closes)
+        return register_hypothesis(
+            db, conditions={
+                "when_conditions": when or self.RSI_WHEN,
+                "then_conditions": [
+                    {"subject": "close", "action": "gt",
+                     "target": then_target}],
+            }, statement="s", data_ranges=[rng],
+            precheck_data_dir=data_dir)
+
+    def test_b5_idempotent_hit_carries_no_three_keys(self, db, tmp_path):
+        """B5：幂等命中（第 4 步早退）不执行 4.6/4.6.5——precheck_
+        warnings/then_coverage/exit_coverage_warnings 三键全无。"""
+        closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
+        first = self._register_env(db, tmp_path, closes)
+        assert first["duplicated"] is False
+        assert "precheck_warnings" in first          # 首登携带（含 then_coverage）
+        assert "then_coverage" in first["precheck_warnings"]
+        again = self._register_env(db, tmp_path, closes)
+        assert again["duplicated"] is True
+        assert "precheck_warnings" not in again
+        assert "then_coverage" not in again
+        assert "exit_coverage_warnings" not in again
+
+    def test_b7_then_eval_exception_degrades_registration(self, db, tmp_path,
+                                                          monkeypatch):
+        """B7：then 求值内部异常 → 4.6 降级：登记照常、precheck_
+        warnings 整键缺失（then_coverage 与警告键连带不携带）。"""
+        import importlib
+        closes = [100.0] * 401
+        data_dir, rng = self._env(tmp_path, closes)
+        pk = importlib.import_module(
+            "core.analysis.templates.precheck_hypothesis")
+
+        def boom(*a, **kw):
+            raise RuntimeError("then 求值内部异常形")
+
+        monkeypatch.setattr(pk, "run_registration_precheck", boom)
+        out = register_hypothesis(
+            db, conditions={
+                "when_conditions": self.RSI_WHEN,
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 60}],
+            }, statement="s", data_ranges=[rng],
+            precheck_data_dir=data_dir)
+        assert out["duplicated"] is False
+        assert "precheck_warnings" not in out
+        assert "exit_coverage_warnings" not in out
+
+    def test_e1_95_percent_warn_key_with_percent_hint(self, db, tmp_path):
+        """E1：95% 形 → 登记成功、exit_coverage_warnings 有键、hint 含
+        覆盖率百分数（95.0%）。"""
+        closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
+        out = self._register_env(db, tmp_path, closes)
+        assert "exit_coverage_warnings" in out
+        w = out["exit_coverage_warnings"][0]
+        assert w["field"] == "then_conditions"
+        assert w["min_coverage"] == pytest.approx(0.95)
+        assert w["threshold"] == 0.9
+        assert "95.0%" in w["hint"]
+        assert "95/100" in w["hint"]                  # 最差区间 hit/stat
+        # TL-01（B 向裁决，CARD-07）：hint 含实录形制指路（与 D3
+        # message、mcpserver hint 同源表述）——delta scenario
+        # 「高覆盖率警告不阻断」THEN「实录形制指路」的断言面
+        assert "空头版误写 close price_above BB lower" in w["hint"]
+
+    def test_e2_50_percent_no_key(self, db, tmp_path):
+        """E2：50% 形无键。"""
+        closes = [100.0] * 300 + [100.0, 50.0] * 50 + [100.0]
+        out = self._register_env(db, tmp_path, closes)
+        assert "exit_coverage_warnings" not in out
+
+    def test_e3_89_9_percent_no_key(self, db, tmp_path):
+        """E3：89.9%（899/1000 整数构造）无键。"""
+        closes = ([100.0] * 100
+                  + [100.0] * 899 + [50.0] * 101)     # 区间 1000 bar：899 热
+        out = self._register_env(db, tmp_path, closes)
+        assert "exit_coverage_warnings" not in out
+
+    def test_e4_exactly_90_percent_has_key(self, db, tmp_path):
+        """E4：恰 0.9（90/100 构造）有键（≥ 判据含边界）。"""
+        closes = [100.0] * 300 + [100.0] * 90 + [50.0] * 10 + [100.0]
+        out = self._register_env(db, tmp_path, closes)
+        assert "exit_coverage_warnings" in out
+        assert out["exit_coverage_warnings"][0]["min_coverage"] == \
+            pytest.approx(0.9)
+
+    def test_e5_warning_construction_exception_degrades(self, db, tmp_path,
+                                                        monkeypatch):
+        """E5：判定段异常（then_coverage 畸形——min_coverage 非数值）
+        → 警告构造吞掉登记照常。"""
+        import importlib
+        closes = [100.0] * 401
+        data_dir, rng = self._env(tmp_path, closes)
+        pk = importlib.import_module(
+            "core.analysis.templates.precheck_hypothesis")
+
+        def fake_precheck(*a, **kw):
+            return {"verdict": "pass", "analysis_segment_trades": 5,
+                    "then_coverage": {"min_coverage": "畸形非数值",
+                                      "always_true": False,
+                                      "threshold_warn": 0.9,
+                                      "per_range": []}}
+
+        monkeypatch.setattr(pk, "run_registration_precheck", fake_precheck)
+        out = register_hypothesis(
+            db, conditions={
+                "when_conditions": self.RSI_WHEN,
+                "then_conditions": [
+                    {"subject": "close", "action": "gt", "target": 60}],
+            }, statement="s", data_ranges=[rng],
+            precheck_data_dir=data_dir)
+        assert out["duplicated"] is False             # 登记照常
+        assert "exit_coverage_warnings" not in out
+
+    @pytest.mark.skip(reason="E6 待启用态：Q1 终裁 A 档下恒真被 D3 先行"
+                        "拒绝（C1 锚），永不落 D4 警告档的 1.0 形；Q1 改"
+                        " B 档（摘 D3）时启用本锚——恒真形落警告档衔接"
+                        "（D4 判据 ≥0.9 含 1.0 自然承接）")
+    def test_e6_always_true_falls_to_warn_tier(self, db, tmp_path):
+        """E6（Q1 改 B 档时启用）：恒真形 → 无硬拒绝、落
+        exit_coverage_warnings（min_coverage=1.0）。"""
+        closes = [100.0] * 401
+        out = self._register_env(db, tmp_path, closes)
+        assert "exit_coverage_warnings" in out
+        assert out["exit_coverage_warnings"][0]["min_coverage"] == 1.0
+
+    def test_orthogonal_threshold_unit_and_exit_coverage_coexist(
+            self, db, tmp_path):
+        """正交锚：同次登记 threshold 单位警告（funding_rate 小数比率
+        列大阈值）与 exit_coverage_warnings（95% then）两键并存互不吞。"""
+        closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
+        when_with_unit_trap = self.RSI_WHEN + [
+            {"subject": "funding_rate", "action": "gt", "target": 2.3}]
+        out = self._register_env(db, tmp_path, closes,
+                                 when=when_with_unit_trap)
+        assert "threshold_unit_warnings" in out       # 单位警告在
+        assert "exit_coverage_warnings" in out        # 覆盖率警告在（互不吞）
+        assert any("funding_rate" in w["column"]
+                   for w in out["threshold_unit_warnings"])

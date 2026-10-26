@@ -943,6 +943,11 @@ class HypothesisResponse(BaseModel):
     # （R:R<1 高胜率浅收割）放行时的披露键（纯增量可选——service 返回
     # 体与 REST 响应面同键透出）；仅新建路径且命中形制时携带
     strategy_param_warnings: Optional[List[Dict[str, Any]]] = None
+    # 出场覆盖率警告（fix-executor-column-and-exit-guard D4）：then 组
+    # 最差区间覆盖率 ≥0.9 且非恒真时的披露键（恒真被 D3 硬拒绝不达
+    # 此面；纯增量可选——service 返回体与 REST 响应面同键透出）；仅
+    # 新建路径且命中阈值时携带，幂等命中不携带
+    exit_coverage_warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class HypothesisListResponse(BaseModel):

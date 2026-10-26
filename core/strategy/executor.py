@@ -27,6 +27,35 @@ from core.analysis.errors import ResearchError  # 轻量定义点直取（errors
 
 logger = logging.getLogger(__name__)
 
+# 同 bar 开平互斥清洗抹杀率告警阈值（fix-executor-column-and-exit-guard
+# D5）：正常策略偶发同 bar 竞争远低于半数；实录全抹形态（499/499）必
+# 触发。模块级内建（禁参数面），判据=清洗前口径 killed/total。
+_CONFLICT_KILL_WARN_RATIO = 0.5
+
+
+def _apply_entry_exit_mutex(entries: pd.Series, exits: pd.Series) -> pd.Series:
+    """同 bar 开平互斥清洗单点（冲突保留出场、清洗进场）+ 抹杀率告警。
+
+    清洗结果与 ``entries & ~(entries & exits)`` 逐字节等价（五处调用
+    点原内联两行形制的机械收敛，调用方含 MTF 组合出口/batch 组装出口
+    与 mtf_engine）——仅增告警：清洗前进场触发被同 bar 出场冲突抹杀
+    比例 ≥ ``_CONFLICT_KILL_WARN_RATIO`` 时 logger.warning（执行链
+    纵深披露，不经登记链的路径——手工 DNA/进化产物/纸盘挂载——由此
+    兜底；不改信号语义、不改 SignalSet 任何字段）。
+    """
+    both = entries & exits
+    total = int(entries.sum())
+    if total > 0:
+        killed = int(both.sum())
+        if killed / total >= _CONFLICT_KILL_WARN_RATIO:
+            logger.warning(
+                "同 bar 进出场冲突抹杀进场信号 %d/%d（%.0f%%）——出场"
+                "信号疑似常驻形态，建议核对出场条件（登记面防线见 "
+                "exit_coverage_warnings / RESEARCH_EXIT_ALWAYS_TRUE）；"
+                "本告警为执行链纵深披露，不改变信号语义",
+                killed, total, killed / total * 100)
+    return entries & ~both
+
 # 可求值条件类型合法集（unify-tool-return-contract 契约单源）——按
 # evaluate_condition 实际分派集显式穷举 17 类型（fix-mtf-execution-
 # consistency R4 增 within_bars_after）。注册表侧全部
@@ -429,12 +458,25 @@ def _evaluate_gene_signal(gene, enhanced_df, dfs_by_timeframe=None) -> pd.Series
     return projected
 
 
+def _bad_param_key_message(indicator, params) -> str:
+    """指标参数键缺失/畸形的统一拒绝文案（resolve 段/现算段同源单点）。
+
+    两段 except 收口 ValueError 共用本函数；尾段子串
+    "bad or missing parameter key" 是 A5 四格完备性锚的断言面
+    （两段×两类，tests/strategy/test_executor.py），改文案须同步锚。
+    """
+    return (
+        f"Cannot resolve/compute indicator {indicator} with "
+        f"params {params}: bad or missing parameter key")
+
+
 def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     """从 enhanced DataFrame 解析指标列（基因级列查找单点）。
 
-    查找序：注册表精确列名 → 列名前缀匹配 → 按需现算（变异产生
-    非默认参数时列未预计算）。结果按 (df 身份, 指标, 参数, 字段)
-    缓存——同代重复查找零重算；缓存生命周期由调用方显式清理
+    查找序：注册表精确列名 → 按需现算（变异产生非默认参数时列未
+    预计算）。未注册指标显式拒绝（无列名编码权威，前缀/子串静默
+    取列形态已退役）。结果按 (df 身份, 指标, 参数, 字段) 缓存——
+    同代重复查找零重算；缓存生命周期由调用方显式清理
     （clear_indicator_cache，dna_to_signal_set 入口调用）。
     """
     # 基础列直读白名单（任务 7）：派生基础列（hour_utc）由装载层
@@ -461,55 +503,56 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     # 经注册表解析列名（编码命名权威）
     reg = INDICATOR_REGISTRY.get(indicator)
     if reg is not None:
-        col = resolve_indicator_column(
-            indicator, params, gene.field_name or "", reg.naming
-        )
+        try:
+            col = resolve_indicator_column(
+                indicator, params, gene.field_name or "", reg.naming
+            )
+        except (KeyError, TypeError) as exc:
+            # 参数化 naming 族（bb/macd/stoch 等）缺参数键在此段下标
+            # 访问抛 KeyError、参数值畸形抛 TypeError（登记链已拦——
+            # column_ref 参数键校验；手工 DNA/变异直达形态）——统一
+            # 收口 ValueError，顶层收编为 RESEARCH_CONDITION_INVALID
+            raise ValueError(
+                _bad_param_key_message(indicator, params)) from exc
     else:
-        # 未知指标兜底：按列名前缀匹配
-        matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
-        if matches:
-            col = matches[0]
-        else:
-            raise ValueError(f"Cannot find column for indicator {indicator}")
+        # 未注册指标：无列名编码权威，前缀命中静默取列形态已退役
+        # （fix-executor-column-and-exit-guard 段 A——A10 存量扫描闸门
+        # 先行：活求值五表零命中零影响落地；generation_snapshot 历
+        # 史快照域扫而不迁）
+        raise ValueError(f"Cannot find column for indicator {indicator}")
 
     if col in df.columns:
         result = df[col]
         cache[cache_key] = result
         return result
 
-    # 兜底：列名子串匹配
-    matches = [c for c in df.columns if col in c]
-    if matches:
-        result = df[matches[0]]
-        cache[cache_key] = result
-        return result
-
     # 按需现算：指标已注册但列未预计算（如变异产生非默认参数）——
-    # 现算并写回 df 供后续查找复用
-    if reg is not None:
-        from core.features.indicators import _compute_indicator
+    # 现算并写回 df 供后续查找复用（能到此处 reg 必非 None：未注册
+    # 指标已在上文 raise）
+    from core.features.indicators import _compute_indicator
+    try:
         new_cols = _compute_indicator(df, indicator, params)
-        if new_cols:
-            # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
-            # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
-            # 成本线性上升——攒齐 new_cols 整块赋值，列集合与值不变；
-            # 极短数据下部分输出列可能为 None（原逐列写回同样容忍），
-            # 以 None 列写入保持列集合不变
-            df[list(new_cols.keys())] = pd.DataFrame(
-                {name: (series if series is not None else None)
-                 for name, series in new_cols.items()},
-                index=df.index)
-            # 现算列写回后重试查找
-            if col in df.columns:
-                result = df[col]
-                cache[cache_key] = result
-                return result
-            # 列名不完全一致——按现算输出列名互含匹配
-            for name in new_cols:
-                if col in name or name in col:
-                    result = df[name]
-                    cache[cache_key] = result
-                    return result
+    except (KeyError, TypeError) as exc:
+        # default-naming 族（EMA/RSI 等）缺参数键在现算段下标访问
+        # 抛 KeyError、参数值畸形（period=None 等）抛 TypeError——
+        # 与 resolve 段同文案收口（两段×两类完备性锚 A5 四格）
+        raise ValueError(
+            _bad_param_key_message(indicator, params)) from exc
+    if new_cols:
+        # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
+        # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
+        # 成本线性上升——攒齐 new_cols 整块赋值，列集合与值不变；
+        # 极短数据下部分输出列可能为 None（原逐列写回同样容忍），
+        # 以 None 列写入保持列集合不变
+        df[list(new_cols.keys())] = pd.DataFrame(
+            {name: (series if series is not None else None)
+             for name, series in new_cols.items()},
+            index=df.index)
+        # 现算列写回后重试查找
+        if col in df.columns:
+            result = df[col]
+            cache[cache_key] = result
+            return result
 
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
 
@@ -627,9 +670,8 @@ def evaluate_layer(
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=df.index)
 
-    # 同 bar 开平互斥（冲突时保留 exit）
-    both = entries & exits
-    entries = entries & ~both
+    # 同 bar 开平互斥（冲突时保留 exit）——单点 helper（告警收敛）
+    entries = _apply_entry_exit_mutex(entries, exits)
 
     # 由 DIRECTION 基因构建 entry_direction（存在时）
     entry_direction = direction_genes[0] if direction_genes else None
@@ -923,8 +965,8 @@ def dna_to_signal_set(
             combined_entries = _apply_entry_trigger_policy(
                 dna, combined_entries)
 
-        both = combined_entries & combined_exits
-        combined_entries = combined_entries & ~both
+        combined_entries = _apply_entry_exit_mutex(
+            combined_entries, combined_exits)
 
         # 由趋势层构建 entry_direction（mixed 方向支持）
         entry_direction = None
@@ -1042,8 +1084,8 @@ def dna_to_signal_set(
     if apply_trigger_policy:
         entries = _apply_entry_trigger_policy(dna, entries)
 
-    both = entries & exits
-    entries = entries & ~both
+    # 同 bar 开平互斥清洗（单点 helper——等价内联两行+抹杀率告警）
+    entries = _apply_entry_exit_mutex(entries, exits)
 
     # 生成 entry_direction（mixed 模式走共享单源；单方向显式设定）
     entry_direction = None
@@ -1261,8 +1303,7 @@ def batch_signal_sets(
         # 同款——combine 后、entry∧exit 清洗前
         entries = _apply_entry_trigger_policy(dna, entries)
 
-        both = entries & exits
-        entries = entries & ~both
+        entries = _apply_entry_exit_mutex(entries, exits)
 
         # 生成 entry_direction（mixed 模式走共享单源；单方向保持 None——
         # 批量路径既有形制，方向由 direction_vals 数组承载）

@@ -657,6 +657,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         ——如 -2.33 应为 -0.0233 的百分数误写）。警告不阻断登记（个别
         指标大阈值可能合法，自行核对）；五组条件（when/then/分批三组）
         全覆盖；幂等命中不携带。
+        登记返回体另附可选 exit_coverage_warnings 键（出场条件覆盖率
+        警告——then_conditions 高覆盖纯观察面）：then 组 AND 交集逐
+        区间覆盖率（判定锚=最差区间）≥0.9 时警示（field/min_coverage/
+        threshold/per_range/hint 五要素单条目——hint 提示接近恒真，
+        若非有意设计请核对 then 条件语义；实录形制：空头版误写
+        close price_above BB lower——close 永远在下轨上方）。警告
+        不阻断登记（高覆盖出场可能是有意设计，裁决权归研究者）；
+        恒真出场（登记区间内全 bar 触发）不走本键而硬拒绝
+        RESEARCH_EXIT_ALWAYS_TRUE；幂等命中与预检降级不携带。
         trigger_policy 可选（事件策略层，条件集整体级——修饰 when
         全集 AND 合并掩码如何变换为事件流，非单条件修饰）：封闭枚举
         {"mode": "none"|"first_true"|"suppress_bars", "bars": <正整数>}

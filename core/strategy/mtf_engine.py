@@ -38,7 +38,7 @@ import pandas as pd
 from core.strategy.dna import StrategyDNA, SignalRole, SignalGene, derive_role
 from core.strategy.executor import (
     SignalSet, evaluate_layer, _get_indicator_column, resample_signals,
-    evaluate_condition, combine_signals,
+    evaluate_condition, combine_signals, _apply_entry_exit_mutex,
 )
 from core.features.registry import INDICATOR_REGISTRY
 
@@ -848,9 +848,10 @@ def _build_exec_signal_set(
     combined_adds = combine_signals(all_adds, "OR")
     combined_reduces = combine_signals(all_reduces, "OR")
 
-    # 入场与离场同 bar 并存时入场让位
-    both = combined_entries & combined_exits
-    combined_entries = combined_entries & ~both
+    # 入场与离场同 bar 并存时入场让位——单点 helper（等价内联两行
+    # +抹杀率告警，fix-executor-column-and-exit-guard D5）
+    combined_entries = _apply_entry_exit_mutex(
+        combined_entries, combined_exits)
 
     return SignalSet(
         entries=combined_entries,

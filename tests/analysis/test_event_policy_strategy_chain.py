@@ -32,15 +32,22 @@ from tests.helpers.data_factory import make_ohlcv
 
 @pytest.fixture()
 def df():
-    return make_ohlcv(n=300, freq="4h", start="2024-01-01", seed=7)
+    df = make_ohlcv(n=300, freq="4h", start="2024-01-01", seed=7)
+    # hour_utc 派生基础列（装载层注入形制——测试手工注入等价；直读
+    # 白名单成员、全 bar 有效无 NaN）：fix-executor-column-and-exit-
+    # guard 段 A 退役后未注册指标 "CLOSE" 伪桥接形态退役，恒真掩码
+    # 载体改白名单列
+    df["hour_utc"] = df.index.hour
+    return df
 
 
 def _policy_dna(policy=None) -> StrategyDNA:
-    """恒真入场（close>0 全段单 True 段）+ 无出场——事件位手算友好。"""
+    """恒真入场（hour_utc>-1 全段单 True 段——白名单直读列无 NaN；
+    原 "CLOSE" 伪指标桥接形态随段 A 退役）+ 无出场——事件位手算友好。"""
     return StrategyDNA(
         signal_genes=[
-            SignalGene("CLOSE", {}, SignalRole.ENTRY_TRIGGER, "close",
-                       {"type": "gt", "threshold": 0}),
+            SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
         ],
         logic_genes=LogicGenes(),
         execution_genes=ExecutionGenes(timeframe="4h"),
@@ -185,8 +192,8 @@ def _mtf_policy_dna() -> StrategyDNA:
         layers=[
             TimeframeLayer(timeframe="4h", role="execution",
                            signal_genes=[SignalGene(
-                               "CLOSE", {}, SignalRole.ENTRY_TRIGGER,
-                               "close", {"type": "gt", "threshold": 0})]),
+                               "hour_utc", {}, SignalRole.ENTRY_TRIGGER,
+                               None, {"type": "gt", "threshold": -1})]),
             TimeframeLayer(timeframe="1d", role="trend",
                            signal_genes=[]),
         ],
