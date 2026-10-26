@@ -819,8 +819,14 @@ def register_hypothesis(
                         "slow_path": "修正 then 条件后重新登记；若有意的高频出场"
                                      "设计，请改写为非常驻形条件"})
             try:
+                # 兜底值与 precheck 权威源同源（F-4 单源）——模块级
+                # import 会成环，沿上文函数内延迟 import 先例
+                from core.analysis.templates.precheck_hypothesis import (
+                    _EXIT_COVERAGE_WARN,
+                )
                 min_cov = then_coverage.get("min_coverage")
-                threshold = then_coverage.get("threshold_warn", 0.9)
+                threshold = then_coverage.get("threshold_warn",
+                                              _EXIT_COVERAGE_WARN)
                 if min_cov is not None and min_cov >= threshold:
                     worst = next(
                         (r for r in then_coverage.get("per_range", [])
