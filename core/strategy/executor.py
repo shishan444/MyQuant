@@ -516,33 +516,33 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         return result
 
     # 按需现算：指标已注册但列未预计算（如变异产生非默认参数）——
-    # 现算并写回 df 供后续查找复用
-    if reg is not None:
-        from core.features.indicators import _compute_indicator
-        try:
-            new_cols = _compute_indicator(df, indicator, params)
-        except (KeyError, TypeError) as exc:
-            # default-naming 族（EMA/RSI 等）缺参数键在现算段下标访问
-            # 抛 KeyError、参数值畸形（period=None 等）抛 TypeError——
-            # 与 resolve 段同文案收口（两段×两类完备性锚 A5 四格）
-            raise ValueError(
-                f"Cannot resolve/compute indicator {indicator} with "
-                f"params {params}: bad or missing parameter key") from exc
-        if new_cols:
-            # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
-            # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
-            # 成本线性上升——攒齐 new_cols 整块赋值，列集合与值不变；
-            # 极短数据下部分输出列可能为 None（原逐列写回同样容忍），
-            # 以 None 列写入保持列集合不变
-            df[list(new_cols.keys())] = pd.DataFrame(
-                {name: (series if series is not None else None)
-                 for name, series in new_cols.items()},
-                index=df.index)
-            # 现算列写回后重试查找
-            if col in df.columns:
-                result = df[col]
-                cache[cache_key] = result
-                return result
+    # 现算并写回 df 供后续查找复用（能到此处 reg 必非 None：未注册
+    # 指标已在上文 raise）
+    from core.features.indicators import _compute_indicator
+    try:
+        new_cols = _compute_indicator(df, indicator, params)
+    except (KeyError, TypeError) as exc:
+        # default-naming 族（EMA/RSI 等）缺参数键在现算段下标访问
+        # 抛 KeyError、参数值畸形（period=None 等）抛 TypeError——
+        # 与 resolve 段同文案收口（两段×两类完备性锚 A5 四格）
+        raise ValueError(
+            f"Cannot resolve/compute indicator {indicator} with "
+            f"params {params}: bad or missing parameter key") from exc
+    if new_cols:
+        # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
+        # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
+        # 成本线性上升——攒齐 new_cols 整块赋值，列集合与值不变；
+        # 极短数据下部分输出列可能为 None（原逐列写回同样容忍），
+        # 以 None 列写入保持列集合不变
+        df[list(new_cols.keys())] = pd.DataFrame(
+            {name: (series if series is not None else None)
+             for name, series in new_cols.items()},
+            index=df.index)
+        # 现算列写回后重试查找
+        if col in df.columns:
+            result = df[col]
+            cache[cache_key] = result
+            return result
 
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
 
