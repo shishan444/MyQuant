@@ -256,15 +256,20 @@ class TestExitAlwaysTrueL3:
     warnings 同键透出。"""
 
     @staticmethod
-    def _env_client(tmp_path):
-        """401 bar 1h 全 100 close 的恒真可判定环境（本地覆写 api_client
-        数据面——dummy 1 bar 4h 环境装载必降级，触达不了判定面）。"""
+    def _env_client(tmp_path, closes=None):
+        """401 bar 1h 数据环境（本地覆写 api_client 数据面——dummy 1
+        bar 4h 环境装载必降级，触达不了判定面）。closes 缺省全 100
+        恒真形；95% 形传 [100]*300+[100]*95+[50]*5+[100] 复用本构造
+        （区间 idx[300,400) 内 95 热 5 冷）。"""
         import pandas as pd
         from MyQuant.api.app import create_app
         from fastapi.testclient import TestClient
 
-        idx = pd.date_range("2024-01-01", periods=401, freq="1h", tz="UTC")
-        close = pd.Series([100.0] * 401, index=idx, dtype=float)
+        if closes is None:
+            closes = [100.0] * 401
+        idx = pd.date_range("2024-01-01", periods=len(closes), freq="1h",
+                            tz="UTC")
+        close = pd.Series(closes, index=idx, dtype=float)
         df = pd.DataFrame({
             "open": close, "high": close + 1.0, "low": close - 1.0,
             "close": close, "volume": 100.0,
@@ -303,23 +308,9 @@ class TestExitAlwaysTrueL3:
     def test_l3_95_percent_warns_key_transported(self, tmp_path):
         """95% 形经 REST 登记成功，exit_coverage_warnings 经
         response_model 同键透出（E1 的 API 面镜像）。"""
-        import pandas as pd
-        from MyQuant.api.app import create_app
-        from fastapi.testclient import TestClient
-
         closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
-        idx = pd.date_range("2024-01-01", periods=len(closes), freq="1h",
-                            tz="UTC")
-        close = pd.Series(closes, index=idx, dtype=float)
-        df = pd.DataFrame({
-            "open": close, "high": close + 1.0, "low": close - 1.0,
-            "close": close, "volume": 100.0,
-        })
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
-        app = create_app(db_path=tmp_path / "q.db", data_dir=data_dir)
-        with TestClient(app) as client:
+        client, idx = self._env_client(tmp_path, closes=closes)
+        with client:
             resp = client.post("/api/research/hypotheses", json={
                 "conditions": {
                     "when_conditions": [
