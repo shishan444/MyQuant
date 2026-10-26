@@ -461,9 +461,18 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     # 经注册表解析列名（编码命名权威）
     reg = INDICATOR_REGISTRY.get(indicator)
     if reg is not None:
-        col = resolve_indicator_column(
-            indicator, params, gene.field_name or "", reg.naming
-        )
+        try:
+            col = resolve_indicator_column(
+                indicator, params, gene.field_name or "", reg.naming
+            )
+        except (KeyError, TypeError) as exc:
+            # 参数化 naming 族（bb/macd/stoch 等）缺参数键在此段下标
+            # 访问抛 KeyError、参数值畸形抛 TypeError（登记链已拦——
+            # column_ref 参数键校验；手工 DNA/变异直达形态）——统一
+            # 收口 ValueError，顶层收编为 RESEARCH_CONDITION_INVALID
+            raise ValueError(
+                f"Cannot resolve/compute indicator {indicator} with "
+                f"params {params}: bad or missing parameter key") from exc
     else:
         # 未知指标兜底：按列名前缀匹配
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
@@ -477,18 +486,19 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         cache[cache_key] = result
         return result
 
-    # 兜底：列名子串匹配
-    matches = [c for c in df.columns if col in c]
-    if matches:
-        result = df[matches[0]]
-        cache[cache_key] = result
-        return result
-
     # 按需现算：指标已注册但列未预计算（如变异产生非默认参数）——
     # 现算并写回 df 供后续查找复用
     if reg is not None:
         from core.features.indicators import _compute_indicator
-        new_cols = _compute_indicator(df, indicator, params)
+        try:
+            new_cols = _compute_indicator(df, indicator, params)
+        except (KeyError, TypeError) as exc:
+            # default-naming 族（EMA/RSI 等）缺参数键在现算段下标访问
+            # 抛 KeyError、参数值畸形（period=None 等）抛 TypeError——
+            # 与 resolve 段同文案收口（两段×两类完备性锚 A5 四格）
+            raise ValueError(
+                f"Cannot resolve/compute indicator {indicator} with "
+                f"params {params}: bad or missing parameter key") from exc
         if new_cols:
             # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
             # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
@@ -504,12 +514,6 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
                 result = df[col]
                 cache[cache_key] = result
                 return result
-            # 列名不完全一致——按现算输出列名互含匹配
-            for name in new_cols:
-                if col in name or name in col:
-                    result = df[name]
-                    cache[cache_key] = result
-                    return result
 
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
 

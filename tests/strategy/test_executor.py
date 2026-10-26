@@ -216,6 +216,69 @@ class TestColumnResolutionRejection:
             dna_to_signal_set(dna, df)
 
 
+class TestMissingParamKeyRejection:
+    """A5 四格锚（fix-executor-column-and-exit-guard D1）：两段×两类
+    收口完备性——resolve 段与现算段各自拦 KeyError/TypeError，统一
+    ValueError（文案锚 "bad or missing parameter key"），链路顶层
+    收编 RESEARCH_CONDITION_INVALID（detail 四键、无 500 裸穿）。
+
+    四格：a EMA(params={})——default-naming 族缺参，resolve get 不抛、
+    落现算段 KeyError；b BB(period=20 缺 std)——参数化 naming 族，
+    resolve 段 KeyError；c1 BB(period=None)——resolve 段 TypeError
+    （int(None) 先于 std 缺失）；c2 EMA(period=None)——现算段
+    TypeError（default 分支 get 不抛、落现算段 int(None)）。c2 专红
+    「resolve 段包全两类、现算段偷懒只包 KeyError」的部分实现。
+    """
+
+    def _assert_value_error(self, df, gene):
+        from core.strategy.executor import _get_indicator_column
+        with pytest.raises(ValueError, match="bad or missing parameter key"):
+            _get_indicator_column(df, gene)
+
+    def _assert_research_error(self, df, gene, indicator, params):
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        err = exc_info.value
+        assert err.code == "RESEARCH_CONDITION_INVALID"
+        assert err.status == 422          # 无 500 裸穿
+        assert err.detail["indicator"] == indicator
+        assert err.detail["params"] == params
+        assert "field" in err.detail
+        assert "bad or missing parameter key" in err.detail["cause"]
+
+    def test_a5a_ema_missing_period_compute_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="EMA", params={},
+                                condition_type="gt", condition_value=0)
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "EMA", {})
+
+    def test_a5b_bb_missing_std_resolve_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="BB", params={"period": 20},
+                                condition_type="price_below",
+                                field_name="lower")
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "BB", {"period": 20})
+
+    def test_a5c1_bb_none_period_resolve_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="BB", params={"period": None},
+                                condition_type="price_below",
+                                field_name="lower")
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "BB", {"period": None})
+
+    def test_a5c2_ema_none_period_compute_segment(self):
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="EMA", params={"period": None},
+                                condition_type="gt", condition_value=0)
+        self._assert_value_error(df, gene)
+        self._assert_research_error(df, gene, "EMA", {"period": None})
+
+
 class TestDefenseIndependence:
     """S9：防线独立性——绕过清洗直调执行器仍兜底拒绝。"""
 

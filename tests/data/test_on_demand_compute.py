@@ -192,3 +192,83 @@ class TestMultiOutputOnDemand:
 
         assert result is not None
         assert len(result) == 200
+
+
+# ---------------------------------------------------------------------------
+# S1.5: Substring fallback retirement (fix-executor-column-and-exit-guard A1/A2)
+# ---------------------------------------------------------------------------
+
+class TestSubstringFallbackRetirement:
+    """精确列名 miss 必须落按需现算，不得子串命中他参数列。
+
+    修复前缺陷：请求 rsi_2 时 "rsi_2" in "rsi_21" 子串命中，静默返回
+    RSI(21) 列，现算路径永不可达（BUG-1 主证）。
+    """
+
+    def test_rsi_2_computed_exact_not_substring_rsi_21(self):
+        df = make_ohlcv(n=200)
+        for p in (7, 14, 21):
+            df[f"rsi_{p}"] = _compute_indicator(df, "RSI", {"period": p})[f"rsi_{p}"]
+        gene = make_signal_gene(indicator="RSI", params={"period": 2},
+                                condition_type="lt", condition_value=10)
+
+        from core.strategy.executor import (
+            _get_indicator_column, clear_indicator_cache,
+        )
+        clear_indicator_cache()
+        result = _get_indicator_column(df, gene)
+
+        expected = _compute_indicator(df, "RSI", {"period": 2})["rsi_2"]
+        # check_names=False：pandas-ta 产 Series.name 为库内命名（RSI_2）
+        # 与 dict 键/df 列名（rsi_2）不同源——锚的本意是逐元素值一致
+        pd.testing.assert_series_equal(
+            result.reset_index(drop=True),
+            expected.reset_index(drop=True), check_names=False)
+        assert result.name == "rsi_2"
+        assert "rsi_2" in df.columns
+
+    def test_ema_5_computed_exact_not_substring_ema_50(self):
+        df = make_ohlcv(n=200)
+        for p in (10, 20, 50, 100, 200):
+            df[f"ema_{p}"] = _compute_indicator(df, "EMA", {"period": p})[f"ema_{p}"]
+        gene = make_signal_gene(indicator="EMA", params={"period": 5},
+                                condition_type="gt", condition_value=0)
+
+        from core.strategy.executor import (
+            _get_indicator_column, clear_indicator_cache,
+        )
+        clear_indicator_cache()
+        result = _get_indicator_column(df, gene)
+
+        expected = _compute_indicator(df, "EMA", {"period": 5})["ema_5"]
+        pd.testing.assert_series_equal(
+            result.reset_index(drop=True),
+            expected.reset_index(drop=True), check_names=False)
+        assert result.name == "ema_5"
+        assert "ema_5" in df.columns
+
+    def test_a9_naming_desync_fails_loud_with_available_columns(self):
+        """A9：naming 失同步形态——resolve 产物与现算产列名仅子串
+        关系（"macd_8_21_5_histogram" vs 实际 "macd_8_21_5" /
+        "macd_histogram_8_21_5"）→ 显式 ValueError 附实际可用列清单
+        （互含取列退役：不静默拿错语义分量，fail-loud 暴露失同步）。
+        """
+        df = make_ohlcv(n=300)
+        gene = make_signal_gene(indicator="MACD",
+                                params={"fast": 8, "slow": 21, "signal": 5},
+                                condition_type="cross_above",
+                                condition_value=0,
+                                field_name="histogram")
+        from core.strategy.executor import (
+            _get_indicator_column, clear_indicator_cache,
+        )
+        clear_indicator_cache()
+        # 故障注入：resolve 层失同步产出词序畸形列名（仅与现算产列
+        # 成子串关系——旧互含分支会静默取 macd_8_21_5 错语义分量）
+        with patch("core.strategy.executor.resolve_indicator_column",
+                   return_value="macd_8_21_5_histogram"):
+            with pytest.raises(ValueError) as exc_info:
+                _get_indicator_column(df, gene)
+        msg = str(exc_info.value)
+        assert "Available" in msg
+        assert "macd_8_21_5" in msg        # 实际可用列清单在案
