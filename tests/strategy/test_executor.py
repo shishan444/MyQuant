@@ -12,6 +12,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+import numpy as np
 import pandas as pd
 
 from core.analysis.errors import ResearchError
@@ -300,6 +301,113 @@ class TestMissingParamKeyRejection:
         assert err.detail["indicator"] == "NOPE"
         assert err.detail["params"] == {}
         assert "cause" in err.detail and err.detail["cause"]
+
+
+class TestEntryExitMutexWarning:
+    """F1-F6（fix-executor-column-and-exit-guard D5）：同 bar 开平互斥
+    清洗单点 helper——清洗逐字节等价（F3）+ 抹杀率告警（F1/F4 触发、
+    F2/F5 不触发、F6 除零守护）。五处调用点（executor 层内/MTF 组合
+    出口/单周期主路径/batch 组装出口/mtf_engine）的逐位等价由既有
+    覆盖测试回归承载（SignalSet 全字段断言）。
+    """
+
+    @staticmethod
+    def _bools(vals):
+        return pd.Series(vals, dtype=bool)
+
+    def test_f1_helper_full_kill_warns_and_clears(self, caplog):
+        """F1 单元面：恒真出场形（部分进场全被抹）→ caplog 告警 +
+        清洗后 entries 全 False（清洗语义不变）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, False, True])
+        exits = self._bools([True, True, True, True])     # 恒真出场
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)
+        assert not bool(cleaned.any())                    # 全 False
+        joined = "\n".join(r.getMessage() for r in caplog.records)
+        assert "同 bar 进出场冲突抹杀进场信号" in joined
+        assert "3/3（100%）" in joined                    # killed/total 数字
+
+    def test_f1_dna_chain_full_kill_warns(self, caplog):
+        """F1 链路面（BUG-2 实录形）：恒真出场 DNA 经 dna_to_signal_set
+        → 告警在场 + entries 全 False（执行链兜底不经登记链的路径）。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=30)
+        df["hour_utc"] = df.index.hour
+        entry = SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           None, {"type": "lt", "threshold": 30})
+        exit_gene = SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER,
+                               None, {"type": "gt", "threshold": -1})
+        dna = make_dna()
+        dna.signal_genes = [entry, exit_gene]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            ss = dna_to_signal_set(dna, df)
+        assert not bool(ss.entries.any())
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f2_normal_dna_no_warning(self, caplog):
+        """F2：正常 DNA（出场低频，冲突比例远低于半数）无该告警。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=200)
+        entry = SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           None, {"type": "lt", "threshold": 50})
+        exit_gene = SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                               None, {"type": "gt", "threshold": 95})
+        dna = make_dna()
+        dna.signal_genes = [entry, exit_gene]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            dna_to_signal_set(dna, df)
+        assert not any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                       for r in caplog.records)
+
+    def test_f3_equivalent_to_inline_formula(self):
+        """F3：清洗与 entries & ~(entries & exits) 逐位等价（随机
+        布尔对 × 多组 seed）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        for seed in (1, 7, 42):
+            rng = np.random.default_rng(seed)
+            entries = pd.Series(rng.random(500) < 0.4)
+            exits = pd.Series(rng.random(500) < 0.4)
+            pd.testing.assert_series_equal(
+                _apply_entry_exit_mutex(entries, exits),
+                entries & ~(entries & exits), check_names=False)
+
+    def test_f4_exact_half_boundary_triggers(self, caplog):
+        """F4：killed/total 恰 0.5（2 进场 1 抹杀）触发（≥ 含边界）。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, False])
+        exits = self._bools([True, False, False])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            _apply_entry_exit_mutex(entries, exits)
+        assert any("1/2（50%）" in r.getMessage() for r in caplog.records)
+
+    def test_f5_one_third_no_warning(self, caplog):
+        """F5：1/3 形（killed/total=0.33 < 0.5）不触发。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([True, True, True, False])
+        exits = self._bools([True, False, False, False])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)
+        assert not any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                       for r in caplog.records)
+        assert bool(cleaned.iloc[1]) and bool(cleaned.iloc[2])  # 清洗仍正确
+
+    def test_f6_zero_entries_no_warning_no_division_error(self, caplog):
+        """F6：total=0（进场空集）无告警无 ZeroDivisionError。"""
+        from core.strategy.executor import _apply_entry_exit_mutex
+        entries = self._bools([False, False])
+        exits = self._bools([True, True])
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            cleaned = _apply_entry_exit_mutex(entries, exits)   # 不抛即过
+        assert not bool(cleaned.any())
+        assert not caplog.records
 
 
 class TestDefenseIndependence:

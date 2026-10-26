@@ -27,6 +27,35 @@ from core.analysis.errors import ResearchError  # 轻量定义点直取（errors
 
 logger = logging.getLogger(__name__)
 
+# 同 bar 开平互斥清洗抹杀率告警阈值（fix-executor-column-and-exit-guard
+# D5）：正常策略偶发同 bar 竞争远低于半数；实录全抹形态（499/499）必
+# 触发。模块级内建（禁参数面），判据=清洗前口径 killed/total。
+_CONFLICT_KILL_WARN_RATIO = 0.5
+
+
+def _apply_entry_exit_mutex(entries: pd.Series, exits: pd.Series) -> pd.Series:
+    """同 bar 开平互斥清洗单点（冲突保留出场、清洗进场）+ 抹杀率告警。
+
+    清洗结果与 ``entries & ~(entries & exits)`` 逐字节等价（五处调用
+    点原内联两行形制的机械收敛，调用方含 MTF 组合出口/batch 组装出口
+    与 mtf_engine）——仅增告警：清洗前进场触发被同 bar 出场冲突抹杀
+    比例 ≥ ``_CONFLICT_KILL_WARN_RATIO`` 时 logger.warning（执行链
+    纵深披露，不经登记链的路径——手工 DNA/进化产物/纸盘挂载——由此
+    兜底；不改信号语义、不改 SignalSet 任何字段）。
+    """
+    both = entries & exits
+    total = int(entries.sum())
+    if total > 0:
+        killed = int(both.sum())
+        if killed / total >= _CONFLICT_KILL_WARN_RATIO:
+            logger.warning(
+                "同 bar 进出场冲突抹杀进场信号 %d/%d（%.0f%%）——出场"
+                "信号疑似常驻形态，建议核对出场条件（登记面防线见 "
+                "exit_coverage_warnings / RESEARCH_EXIT_ALWAYS_TRUE）；"
+                "本告警为执行链纵深披露，不改变信号语义",
+                killed, total, killed / total * 100)
+    return entries & ~both
+
 # 可求值条件类型合法集（unify-tool-return-contract 契约单源）——按
 # evaluate_condition 实际分派集显式穷举 17 类型（fix-mtf-execution-
 # consistency R4 增 within_bars_after）。注册表侧全部
@@ -631,9 +660,8 @@ def evaluate_layer(
     all_reduce = reduce_triggers + reduce_guards
     reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=df.index)
 
-    # 同 bar 开平互斥（冲突时保留 exit）
-    both = entries & exits
-    entries = entries & ~both
+    # 同 bar 开平互斥（冲突时保留 exit）——单点 helper（告警收敛）
+    entries = _apply_entry_exit_mutex(entries, exits)
 
     # 由 DIRECTION 基因构建 entry_direction（存在时）
     entry_direction = direction_genes[0] if direction_genes else None
@@ -927,8 +955,8 @@ def dna_to_signal_set(
             combined_entries = _apply_entry_trigger_policy(
                 dna, combined_entries)
 
-        both = combined_entries & combined_exits
-        combined_entries = combined_entries & ~both
+        combined_entries = _apply_entry_exit_mutex(
+            combined_entries, combined_exits)
 
         # 由趋势层构建 entry_direction（mixed 方向支持）
         entry_direction = None
@@ -1046,8 +1074,8 @@ def dna_to_signal_set(
     if apply_trigger_policy:
         entries = _apply_entry_trigger_policy(dna, entries)
 
-    both = entries & exits
-    entries = entries & ~both
+    # 同 bar 开平互斥清洗（单点 helper——等价内联两行+抹杀率告警）
+    entries = _apply_entry_exit_mutex(entries, exits)
 
     # 生成 entry_direction（mixed 模式走共享单源；单方向显式设定）
     entry_direction = None
@@ -1265,8 +1293,7 @@ def batch_signal_sets(
         # 同款——combine 后、entry∧exit 清洗前
         entries = _apply_entry_trigger_policy(dna, entries)
 
-        both = entries & exits
-        entries = entries & ~both
+        entries = _apply_entry_exit_mutex(entries, exits)
 
         # 生成 entry_direction（mixed 模式走共享单源；单方向保持 None——
         # 批量路径既有形制，方向由 direction_vals 数组承载）
