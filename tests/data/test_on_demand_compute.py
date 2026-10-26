@@ -1,10 +1,13 @@
-"""Tests for on-demand indicator computation in _get_indicator_column.
+"""_get_indicator_column 按需现算机制的特征测试（修复期特征网）。
 
-Validates that:
-- Precomputed columns are returned without triggering on-demand compute
-- Missing columns trigger _compute_indicator and the result is written to df
-- Computed columns are reused for subsequent lookups within the same df
-- Indicators not in registry still raise ValueError
+被测面=executor 列解析链（core/strategy/executor）的按需现算段：
+指标已注册但列未预计算（如变异产生非默认参数）时现算并写回 df。
+覆盖五组行为锚（S1.1-S1.5）：
+- 预计算列直读优先，不触发按需现算（零开销）
+- 列缺失触发 _compute_indicator，结果写回 df
+- 同 df 后续查找复用现算列，不重算
+- 未注册指标显式 raise ValueError
+- 子串兜底退役：精确列名 miss 落现算，不子串命中他参数列
 """
 import pytest
 
@@ -20,11 +23,11 @@ pytestmark = [pytest.mark.unit]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助构造
 # ---------------------------------------------------------------------------
 
 def _gene_df_with_rsi_14():
-    """Return (gene, df) where df has rsi_14 precomputed."""
+    """返回 (gene, df)，df 已预计算 rsi_14 列。"""
     df = make_ohlcv(n=200)
     df["rsi_14"] = _compute_indicator(df, "RSI", {"period": 14})["rsi_14"]
     gene = make_signal_gene(indicator="RSI", params={"period": 14},
@@ -33,7 +36,7 @@ def _gene_df_with_rsi_14():
 
 
 def _gene_df_without_rsi_99():
-    """Return (gene, df) where rsi_99 is NOT in df."""
+    """返回 (gene, df)，df 不含 rsi_99 列（触发按需现算形）。"""
     df = make_ohlcv(n=200)
     gene = make_signal_gene(indicator="RSI", params={"period": 99},
                             condition_type="lt", condition_value=30)
@@ -41,11 +44,11 @@ def _gene_df_without_rsi_99():
 
 
 # ---------------------------------------------------------------------------
-# S1.1: Precomputed columns hit first (zero overhead)
+# S1.1: 预计算列优先直读（零开销）
 # ---------------------------------------------------------------------------
 
 class TestPrecomputedPriority:
-    """Precomputed columns must be returned without on-demand compute."""
+    """预计算列必须直读返回，不触发按需现算。"""
 
     def test_precomputed_column_returned_directly(self):
         gene, df = _gene_df_with_rsi_14()
@@ -64,11 +67,11 @@ class TestPrecomputedPriority:
 
 
 # ---------------------------------------------------------------------------
-# S1.2: On-demand compute fallback
+# S1.2: 按需现算兜底
 # ---------------------------------------------------------------------------
 
 class TestOnDemandCompute:
-    """Missing columns should trigger _compute_indicator and return result."""
+    """列缺失应触发 _compute_indicator 并返回结果。"""
 
     def test_missing_column_triggers_compute(self):
         gene, df = _gene_df_without_rsi_99()
@@ -78,7 +81,7 @@ class TestOnDemandCompute:
         clear_indicator_cache()
         result = _get_indicator_column(df, gene)
 
-        # Column should now exist in df
+        # 现算后列应已在 df 中
         assert "rsi_99" in df.columns
         assert result is not None
         assert len(result) == 200
@@ -89,7 +92,7 @@ class TestOnDemandCompute:
         clear_indicator_cache()
         _get_indicator_column(df, gene)
 
-        # The computed column must be in df for reuse
+        # 现算列必须写回 df 供复用
         assert "rsi_99" in df.columns
 
     def test_unknown_indicator_still_raises(self):
@@ -102,7 +105,7 @@ class TestOnDemandCompute:
             _get_indicator_column(df, gene)
 
     def test_compute_returns_empty_still_raises(self):
-        """If _compute_indicator returns empty dict, ValueError still raised."""
+        """_compute_indicator 返回空 dict 时仍须 raise ValueError。"""
         gene, df = _gene_df_without_rsi_99()
         from core.strategy.executor import _get_indicator_column, clear_indicator_cache
         clear_indicator_cache()
@@ -113,22 +116,22 @@ class TestOnDemandCompute:
 
 
 # ---------------------------------------------------------------------------
-# S1.3: Computed column reuse within same generation
+# S1.3: 现算列同代内复用
 # ---------------------------------------------------------------------------
 
 class TestComputeReuse:
-    """On-demand computed columns must be reusable without recomputation."""
+    """按需现算列必须可复用且不重算。"""
 
     def test_second_lookup_uses_cached_column(self):
         gene, df = _gene_df_without_rsi_99()
         from core.strategy.executor import _get_indicator_column, clear_indicator_cache
         clear_indicator_cache()
 
-        # First lookup triggers compute
+        # 首次查找触发现算
         result1 = _get_indicator_column(df, gene)
         assert "rsi_99" in df.columns
 
-        # Second lookup should NOT recompute (use cache)
+        # 二次查找不应重算（走缓存）
         with patch("core.features.indicators._compute_indicator") as mock:
             result2 = _get_indicator_column(df, gene)
             mock.assert_not_called()
@@ -136,7 +139,7 @@ class TestComputeReuse:
         pd.testing.assert_series_equal(result1, result2)
 
     def test_different_genes_same_params_reuse_column(self):
-        """Two genes with same (indicator, params) should share the df column."""
+        """同 (indicator, params) 的两个基因应共享同一 df 列。"""
         gene1, df = _gene_df_without_rsi_99()
         gene2 = make_signal_gene(indicator="RSI", params={"period": 99},
                                   role=gene1.role, condition_type="gt",
@@ -156,11 +159,11 @@ class TestComputeReuse:
 
 
 # ---------------------------------------------------------------------------
-# S1.4: Multi-output indicator on-demand (e.g. MACD, BB)
+# S1.4: 多输出指标按需现算（如 MACD、BB）
 # ---------------------------------------------------------------------------
 
 class TestMultiOutputOnDemand:
-    """Multi-output indicators (MACD, BB) should work with on-demand compute."""
+    """多输出指标（MACD、BB）应正常走按需现算。"""
 
     def test_macd_non_default_params(self):
         df = make_ohlcv(n=300)
@@ -195,7 +198,7 @@ class TestMultiOutputOnDemand:
 
 
 # ---------------------------------------------------------------------------
-# S1.5: Substring fallback retirement (fix-executor-column-and-exit-guard A1/A2)
+# S1.5: 子串兜底退役（fix-executor-column-and-exit-guard A1/A2）
 # ---------------------------------------------------------------------------
 
 class TestSubstringFallbackRetirement:
