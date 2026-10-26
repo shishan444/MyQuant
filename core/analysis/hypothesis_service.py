@@ -840,7 +840,9 @@ def register_hypothesis(
                             f"出场条件覆盖率 {min_cov:.1%}（最差区间 "
                             f"{worst.get('hit_bars')}/{worst.get('stat_bars')} "
                             "bar 触发）——接近恒真，若非有意设计请核对 then "
-                            "条件语义；警告不阻断登记，裁决权归研究者"),
+                            "条件语义（实录形制：空头版误写 close price_above "
+                            "BB lower——close 永远在下轨上方）；警告不阻断"
+                            "登记，裁决权归研究者"),
                     }]
             except Exception as exc:  # noqa: BLE001 —— 降级语义：警告失败不阻断登记
                 logger.warning("出场覆盖率警告判定降级（登记照常）: %s", exc)
