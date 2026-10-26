@@ -349,8 +349,12 @@ class TestRegistrationTimeframe:
         return register_hypothesis(
             env["db"],
             conditions={"when_conditions": when,
+                        # then 默认低覆盖形（恒真 then 被 D3 出场防线
+                        # 拒绝，fix-executor-column-and-exit-guard Q1=A）
                         "then_conditions": then or [
-                            {"subject": "close", "action": "gt", "target": 0}]},
+                            {"subject": {"indicator": "RSI",
+                                         "params": {"period": 14}},
+                             "action": "gt", "target": 70}]},
             statement="mtf 登记测试",
             data_ranges=ranges or [
                 {"symbol": SYMBOL, "timeframe": "1h",
@@ -436,8 +440,10 @@ class TestRegistrationReachability:
                 "when_conditions": [
                     {"subject": "close", "action": "gt", "target": 0.0,
                      "timeframe": timeframe}],
+                # then 恒假形（合法非恒真出场——恒真 then 被 D3 出场
+                # 防线拒绝，fix-executor-column-and-exit-guard Q1=A）
                 "then_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0}]},
+                    {"subject": "close", "action": "lt", "target": -1}]},
             "data_ranges": [{"symbol": SYMBOL, "timeframe": "1h",
                              "start": "2023-06-10T00:00:00Z",
                              "end": "2023-06-20T00:00:00Z"}]})

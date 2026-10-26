@@ -247,3 +247,97 @@ class TestDirectionChannelLayeringFull:
         assert out["error"]["code"] == "RESEARCH_PARAM_INVALID"
         assert out["error"]["detail"]["field"] == "direction"
         assert out["error"]["detail"]["legal_range"] == ["long", "short"]
+
+
+class TestExitAlwaysTrueL3:
+    """L3（fix-executor-column-and-exit-guard D3）：API 面 422 断言——
+    恒真 then 登记 → RESEARCH_EXIT_ALWAYS_TRUE 经既有研究错误通道
+    透出（错误即文档）；95% 形经 REST 登记成功且 exit_coverage_
+    warnings 同键透出。"""
+
+    @staticmethod
+    def _env_client(tmp_path):
+        """401 bar 1h 全 100 close 的恒真可判定环境（本地覆写 api_client
+        数据面——dummy 1 bar 4h 环境装载必降级，触达不了判定面）。"""
+        import pandas as pd
+        from MyQuant.api.app import create_app
+        from fastapi.testclient import TestClient
+
+        idx = pd.date_range("2024-01-01", periods=401, freq="1h", tz="UTC")
+        close = pd.Series([100.0] * 401, index=idx, dtype=float)
+        df = pd.DataFrame({
+            "open": close, "high": close + 1.0, "low": close - 1.0,
+            "close": close, "volume": 100.0,
+        })
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        app = create_app(db_path=tmp_path / "q.db", data_dir=data_dir)
+        return TestClient(app), idx
+
+    def test_l3_always_true_422_via_error_channel(self, tmp_path):
+        client, idx = self._env_client(tmp_path)
+        with client:
+            resp = client.post("/api/research/hypotheses", json={
+                "conditions": {
+                    "when_conditions": [
+                        {"subject": {"indicator": "RSI",
+                                     "params": {"period": 14}},
+                         "action": "lt", "target": 35}],
+                    "then_conditions": [
+                        {"subject": "close", "action": "gt",
+                         "target": 60}],
+                },
+                "statement": "L3 恒真拒绝",
+                "data_ranges": [{
+                    "symbol": "BTCUSDT", "timeframe": "1h",
+                    "start": idx[300].isoformat(),
+                    "end": idx[400].isoformat()}],
+            })
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_EXIT_ALWAYS_TRUE"
+        assert detail["detail"]["coverage"] == 1.0
+        assert detail["detail"]["hit_bars"] == detail["detail"]["stat_bars"]
+
+    def test_l3_95_percent_warns_key_transported(self, tmp_path):
+        """95% 形经 REST 登记成功，exit_coverage_warnings 经
+        response_model 同键透出（E1 的 API 面镜像）。"""
+        import pandas as pd
+        from MyQuant.api.app import create_app
+        from fastapi.testclient import TestClient
+
+        closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
+        idx = pd.date_range("2024-01-01", periods=len(closes), freq="1h",
+                            tz="UTC")
+        close = pd.Series(closes, index=idx, dtype=float)
+        df = pd.DataFrame({
+            "open": close, "high": close + 1.0, "low": close - 1.0,
+            "close": close, "volume": 100.0,
+        })
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        app = create_app(db_path=tmp_path / "q.db", data_dir=data_dir)
+        with TestClient(app) as client:
+            resp = client.post("/api/research/hypotheses", json={
+                "conditions": {
+                    "when_conditions": [
+                        {"subject": {"indicator": "RSI",
+                                     "params": {"period": 14}},
+                         "action": "lt", "target": 35}],
+                    "then_conditions": [
+                        {"subject": "close", "action": "gt",
+                         "target": 60}],
+                },
+                "statement": "L3 警告透出",
+                "data_ranges": [{
+                    "symbol": "BTCUSDT", "timeframe": "1h",
+                    "start": idx[300].isoformat(),
+                    "end": idx[400].isoformat()}],
+            })
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["duplicated"] is False
+        assert body["exit_coverage_warnings"]
+        assert body["exit_coverage_warnings"][0]["threshold"] == 0.9

@@ -254,11 +254,16 @@ class TestPrecheckRangeEligibility:
             "data_range": dict(range_x)})
         assert resp.status_code == 200, resp.text
 
-        # 2) 登记假设（自报 Y；挂接预检自动跑 Y，与 X 无关）
+        # 2) 登记假设（自报 Y；挂接预检自动跑 Y，与 X 无关）——then 用
+        # 低覆盖形（恒真 then 被 D3 出场防线拒绝，
+        # fix-executor-column-and-exit-guard Q1=A）
         reg = api_client.post("/api/research/hypotheses", json={
             "conditions": {
                 "when_conditions": _conds(),
-                "then_conditions": _conds(),
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}},
+                     "action": "gt", "target": 70}],
             },
             "statement": "预检区间资格测试假设",
             "data_ranges": [range_y],

@@ -776,9 +776,68 @@ def register_hypothesis(
             precheck_warnings = run_registration_precheck(
                 db_path, precheck_data_dir, when, data_ranges,
                 trigger_policy=normalized_policy,
-                scaling_groups=_scaling_groups or None)
+                scaling_groups=_scaling_groups or None,
+                # D2 出场覆盖率（fix-executor-column-and-exit-guard）：
+                # then 已过第 1/2.5/3 步校验与 canonical 化；求值面=
+                # then_conditions（exit_partial 显式排除——REDUCE 语义
+                # 不与 both 清洗交互）
+                then_conditions=conditions.get("then_conditions"))
         except Exception as exc:  # noqa: BLE001 —— 降级语义：预检失败不阻断登记
             logger.warning("登记预检降级（登记照常）: %s", exc)
+
+    # 4.6.5 出场条件覆盖率防线（fix-executor-column-and-exit-guard
+    #     D3/D4；Q1 终裁 A 分层）：恒真 then 硬拒绝（RESEARCH_EXIT_
+    #     ALWAYS_TRUE——恒真出场下同 bar 开平互斥清洗必然抹杀全部
+    #     进场信号，回测零进场且无合法策略用例）+ ≥0.9 高覆盖不阻断
+    #     警告（exit_coverage_warnings——裁决权归研究者）。D3 判定在
+    #     4.6 降级域之外（fail-open 于数据缺失——precheck_warnings
+    #     缺席即不拒绝；fail-close 于恒真实证）；D4 警告构造异常吞掉
+    #     登记照常（沿 4.7/4.8 降级先例）。幂等命中已在第 4 步早退，
+    #     本步不执行不携带。
+    exit_coverage_warnings = None
+    if precheck_warnings is not None:
+        then_coverage = precheck_warnings.get("then_coverage")
+        if isinstance(then_coverage, dict):
+            if then_coverage.get("always_true") is True:
+                first_true = next(
+                    (r for r in then_coverage.get("per_range", [])
+                     if r.get("hit_bars") == r.get("stat_bars")), {})
+                raise ResearchError(
+                    "RESEARCH_EXIT_ALWAYS_TRUE",
+                    "then_conditions 在登记区间内全 bar 触发（恒真出场）——"
+                    "同 bar 开平互斥清洗将抹杀全部进场信号，回测必然零进场；"
+                    "恒真 then 无合法策略用例（出场常驻=永不持仓）。请核对出场"
+                    "条件语义（实录形制：空头版误写 close price_above BB lower"
+                    "——close 永远在下轨上方）",
+                    detail={
+                        "field": "then_conditions",
+                        "coverage": 1.0,
+                        "hit_bars": first_true.get("hit_bars"),
+                        "stat_bars": first_true.get("stat_bars"),
+                        "range": {"start": first_true.get("start"),
+                                  "end": first_true.get("end")},
+                        "slow_path": "修正 then 条件后重新登记；若有意的高频出场"
+                                     "设计，请改写为非常驻形条件"})
+            try:
+                min_cov = then_coverage.get("min_coverage")
+                threshold = then_coverage.get("threshold_warn", 0.9)
+                if min_cov is not None and min_cov >= threshold:
+                    worst = next(
+                        (r for r in then_coverage.get("per_range", [])
+                         if r.get("coverage") == min_cov), {})
+                    exit_coverage_warnings = [{
+                        "field": "then_conditions",
+                        "min_coverage": min_cov,
+                        "threshold": threshold,
+                        "per_range": then_coverage.get("per_range"),
+                        "hint": (
+                            f"出场条件覆盖率 {min_cov:.1%}（最差区间 "
+                            f"{worst.get('hit_bars')}/{worst.get('stat_bars')} "
+                            "bar 触发）——接近恒真，若非有意设计请核对 then "
+                            "条件语义；警告不阻断登记，裁决权归研究者"),
+                    }]
+            except Exception as exc:  # noqa: BLE001 —— 降级语义：警告失败不阻断登记
+                logger.warning("出场覆盖率警告判定降级（登记照常）: %s", exc)
 
     # 4.7 阈值单位可疑警告（add-threshold-unit-warning C-2）：小数比率
     #     语义列的 |target|>1 → 纯增量警告键（不阻断登记——个别指标
@@ -871,6 +930,8 @@ def register_hypothesis(
         out["threshold_unit_warnings"] = threshold_unit_warnings
     if strategy_param_warnings is not None:
         out["strategy_param_warnings"] = strategy_param_warnings
+    if exit_coverage_warnings is not None:
+        out["exit_coverage_warnings"] = exit_coverage_warnings
     if precheck_warnings is not None:
         out["precheck_warnings"] = precheck_warnings   # 纯增量键（成功时）
         # 挂接预检留痕（CARD-03，spec R4「预检执行 MUST 自动落研究日志」

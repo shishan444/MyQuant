@@ -390,10 +390,13 @@ class TestBacktestChainBehaviour:
         """β 形态回测过滤生效：混合（规则∩插件）交易笔数不超过纯规则
         对照、也不超过纯插件对照（交集语义的双向收敛）。"""
         med = float(bt_env["df"]["close"].median())
+        # 出场阈值上浮 5%（SMA(5) 与 EMA(10) 同为中位线穿越时高度同相
+        # ——同 bar 开平冲突清洗后进场近乎全灭；上浮打破同相。原
+        # "CLOSE"→sma_50 子串伪取的相位差曾掩盖此形态）
         exit_ema = SignalGene(
             indicator="EMA", params={"period": 10},
             role=SignalRole.EXIT_TRIGGER, field_name="ema",
-            condition={"type": "gt", "threshold": med})
+            condition={"type": "gt", "threshold": med * 1.05})
         entry = _gene(SignalRole.ENTRY_TRIGGER, med)
         common = dict(execution_genes=ExecutionGenes(timeframe="1h"),
                       signal_genes=[entry, exit_ema])

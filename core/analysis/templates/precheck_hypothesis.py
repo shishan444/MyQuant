@@ -578,6 +578,13 @@ def precheck_hypothesis(
 
 # ---------------------------------------------------------------- 挂接壳
 
+# 出场覆盖率警告阈值（fix-executor-column-and-exit-guard D2/D4）：模块
+# 级内建单一权威源（禁参数面，沿 _MIN_TRADES_WARN 惯例）——then_coverage
+# 回显与登记面 D4 警告判定同源引用（hypothesis_service 消费
+# then_coverage.threshold_warn，不另立第二定义）
+_EXIT_COVERAGE_WARN = 0.9
+
+
 def run_registration_precheck(
     db_path: Path,
     data_dir: Path,
@@ -585,6 +592,7 @@ def run_registration_precheck(
     data_ranges: List[Dict[str, str]],
     trigger_policy: Optional[Dict[str, Any]] = None,
     scaling_groups: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    then_conditions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """登记自动挂接预检（design D6）——多区间最差锚，返回警告段。
 
@@ -596,6 +604,13 @@ def run_registration_precheck(
     （validate_policy 产物；None=无策略——逐 bar 现状口径），登记
     挂接的传参通道（trigger-policy 卡2），事件口径消费见
     compute_precheck_report（任务 5.3）。
+
+    then_conditions（D2 出场覆盖率）：装载引用集扩为 when+then 并集
+    （一次装载两用——then 引用并入 warmup 两维推导与装载前扩，与
+    隔离回测装载预算同源）；求值=then 组 AND 交集逐区间覆盖率（分母
+    =区间全体 bar，stat_bars==0 空区间跳过；不经 trigger_policy——
+    出场无事件化语义）。纯增量键 then_coverage；None 时无该键。
+    本函数不判定不 raise（覆盖防线判定在 hypothesis_service 独立域）。
     """
     symbol = data_ranges[0]["symbol"]
     timeframe = data_ranges[0]["timeframe"]
@@ -604,7 +619,8 @@ def run_registration_precheck(
 
     df, request_start, warmup_bars = _load_precheck_df(
         db_path, data_dir, symbol, timeframe,
-        union_start, union_end, when_conditions)
+        union_start, union_end,
+        when_conditions + (then_conditions or []))
 
     mtf = MtfEvalContext(
         data_dir=data_dir, symbol=symbol, base_tf=timeframe,
@@ -615,7 +631,7 @@ def run_registration_precheck(
         per_range=data_ranges, warmup_bars=warmup_bars, mtf=mtf,
         trigger_policy=trigger_policy, scaling_groups=scaling_groups)
 
-    return {
+    out = {
         "verdict": payload["verdict"],
         "analysis_segment_trades":
             payload["frequency_projection"]["analysis_segment_trades"],
@@ -628,3 +644,35 @@ def run_registration_precheck(
             "取逐区间最小值——最差锚）；显式外推（projected_trades）"
             "经 precheck_hypothesis 模板"),
     }
+
+    if then_conditions:
+        then_combo = _combo_mask(df, then_conditions, mtf)
+        per_range_cov: List[Dict[str, Any]] = []
+        coverages: List[float] = []
+        always_true = False
+        for r in data_ranges:
+            lo = to_utc(pd.Timestamp(r["start"]))
+            hi = to_utc(pd.Timestamp(r["end"]))
+            seg = pd.Series((df.index >= lo) & (df.index < hi),
+                            index=df.index)
+            seg_bars = int(seg.sum())
+            if seg_bars == 0:
+                continue  # 空区间跳过（0÷0 不算恒真）
+            hit_bars = int((then_combo & seg).sum())
+            per_range_cov.append({
+                "start": r["start"], "end": r["end"],
+                "hit_bars": hit_bars, "stat_bars": seg_bars,
+                "coverage": hit_bars / seg_bars})
+            coverages.append(hit_bars / seg_bars)
+            if hit_bars == seg_bars:
+                always_true = True
+        out["then_coverage"] = {
+            "min_coverage": min(coverages) if coverages else None,
+            "always_true": always_true,
+            "threshold_warn": _EXIT_COVERAGE_WARN,
+            "per_range": per_range_cov,
+            "note": (
+                "覆盖率口径=then 组 AND 交集触发 bar 数/区间全体 bar 数；"
+                "判定锚=最差区间"),
+        }
+    return out
