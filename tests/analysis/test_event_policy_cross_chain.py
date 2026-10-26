@@ -59,11 +59,11 @@ def chain_env(tmp_path_factory):
     return {"df": df, "data_dir": data_dir, "db": db, "seg": seg}
 
 
-_THESHOLD_RSI = 65.0
+_THRESHOLD_RSI = 65.0
 
 
 def _threshold(env) -> float:
-    return _THESHOLD_RSI
+    return _THRESHOLD_RSI
 
 
 def _baseline(env, policy=None, lo=None, hi=None, tailcut=False):
@@ -78,7 +78,7 @@ def _baseline(env, policy=None, lo=None, hi=None, tailcut=False):
     if lo is not None or hi is not None:
         seg = df[(df.index >= pd.Timestamp(lo or df.index[0]))
                  & (df.index <= pd.Timestamp(hi or df.index[-1]))]
-    mask = (seg["rsi_14"] < _THESHOLD_RSI).values
+    mask = (seg["rsi_14"] < _THRESHOLD_RSI).values
     events = mask_to_events(mask, policy)
     if tailcut:
         events = events[events + 1 < len(seg)]
@@ -194,7 +194,7 @@ class TestCrossChainConsistency:
         seg = df[(df.index >= pd.Timestamp(SEG_LATE[0]))
                  & (df.index <= pd.Timestamp(SEG_LATE[1]))]
         events = mask_to_events(
-            (seg["rsi_14"] < _THESHOLD_RSI).values,
+            (seg["rsi_14"] < _THRESHOLD_RSI).values,
             {"mode": "first_true"})
         expected = [str(seg.index[i]) for i in events if i + 1 < len(seg)]
         assert payload["n_events"] == len(expected)
