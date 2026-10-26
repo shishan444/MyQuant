@@ -587,6 +587,10 @@ class TestExitCoverageD2D4:
         assert w["threshold"] == 0.9
         assert "95.0%" in w["hint"]
         assert "95/100" in w["hint"]                  # 最差区间 hit/stat
+        # TL-01（B 向裁决，CARD-07）：hint 含实录形制指路（与 D3
+        # message、mcpserver hint 同源表述）——delta scenario
+        # 「高覆盖率警告不阻断」THEN「实录形制指路」的断言面
+        assert "空头版误写 close price_above BB lower" in w["hint"]
 
     def test_e2_50_percent_no_key(self, db, tmp_path):
         """E2：50% 形无键。"""
