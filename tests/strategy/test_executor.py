@@ -278,6 +278,29 @@ class TestMissingParamKeyRejection:
         self._assert_value_error(df, gene)
         self._assert_research_error(df, gene, "EMA", {"period": None})
 
+    def test_a8_unregistered_prefix_hitable_still_rejects(self):
+        """A8：未注册指标且 df 存在前缀可命中列（"NOPE" vs "nope_x"，
+        手工 DNA 直挂形态）→ 不存在「前缀命中静默取列」——与全落空
+        形态（NOPE_GHOST 族 s8a）同码同 detail 形制拒绝。
+        """
+        df = make_enhanced_df(n=30)
+        df["nope_x"] = df["close"]   # 前缀可命中的诱饵列
+        gene = make_signal_gene(indicator="NOPE", params={},
+                                condition_type="lt", condition_value=1)
+        from core.strategy.executor import _get_indicator_column
+        with pytest.raises(ValueError, match="Cannot find column for indicator NOPE"):
+            _get_indicator_column(df, gene)
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        err = exc_info.value
+        assert err.code == "RESEARCH_CONDITION_INVALID"
+        assert err.status == 422
+        assert err.detail["indicator"] == "NOPE"
+        assert err.detail["params"] == {}
+        assert "cause" in err.detail and err.detail["cause"]
+
 
 class TestDefenseIndependence:
     """S9：防线独立性——绕过清洗直调执行器仍兜底拒绝。"""

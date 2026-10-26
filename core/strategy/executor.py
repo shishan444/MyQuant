@@ -432,9 +432,10 @@ def _evaluate_gene_signal(gene, enhanced_df, dfs_by_timeframe=None) -> pd.Series
 def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     """从 enhanced DataFrame 解析指标列（基因级列查找单点）。
 
-    查找序：注册表精确列名 → 列名前缀匹配 → 按需现算（变异产生
-    非默认参数时列未预计算）。结果按 (df 身份, 指标, 参数, 字段)
-    缓存——同代重复查找零重算；缓存生命周期由调用方显式清理
+    查找序：注册表精确列名 → 按需现算（变异产生非默认参数时列未
+    预计算）。未注册指标显式拒绝（无列名编码权威，前缀/子串静默
+    取列形态已退役）。结果按 (df 身份, 指标, 参数, 字段) 缓存——
+    同代重复查找零重算；缓存生命周期由调用方显式清理
     （clear_indicator_cache，dna_to_signal_set 入口调用）。
     """
     # 基础列直读白名单（任务 7）：派生基础列（hour_utc）由装载层
@@ -474,12 +475,11 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
                 f"Cannot resolve/compute indicator {indicator} with "
                 f"params {params}: bad or missing parameter key") from exc
     else:
-        # 未知指标兜底：按列名前缀匹配
-        matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
-        if matches:
-            col = matches[0]
-        else:
-            raise ValueError(f"Cannot find column for indicator {indicator}")
+        # 未注册指标：无列名编码权威，前缀命中静默取列形态已退役
+        # （fix-executor-column-and-exit-guard 段 A——A10 存量扫描闸门
+        # 先行：活求值五表零命中零影响落地；generation_snapshot 历
+        # 史快照域扫而不迁）
+        raise ValueError(f"Cannot find column for indicator {indicator}")
 
     if col in df.columns:
         result = df[col]
