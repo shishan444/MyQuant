@@ -409,6 +409,133 @@ class TestEntryExitMutexWarning:
         assert not bool(cleaned.any())
         assert not caplog.records
 
+    # ---------------- F3 补锚：五处清洗点逐处在场性 ----------------
+    # spec MUST「清洗点经单点 helper 同语义覆盖全部五处」——F1 链路锚
+    # 只触达单周期主路径；其余四处任一漏替换回内联两行时，既有回归
+    # （只护清洗语义）全绿而该路径告警 MUST 失效。以下四锚逐处锁
+    # 「该路径经 helper 且告警在场」，推导链：F1-F6 锁 helper 行为 +
+    # 本组锁每处调用点在链上。
+
+    def test_f3a_evaluate_layer_internal_cleanup_warns(self, caplog):
+        """F3-a 清洗点①evaluate_layer 层内（executor.py:664）：恒真
+        出场层（entry 恒真 × exit 恒真）直调求值 → 告警在场 + entries
+        全 False。该形制只经过层内清洗单点，caplog 来源无歧义。"""
+        from core.strategy.dna import (
+            LogicGenes, SignalGene, SignalRole, TimeframeLayer,
+        )
+        from core.strategy.executor import evaluate_layer
+        df = make_enhanced_df(n=60, freq="1h", seed=3)
+        df["hour_utc"] = df.index.hour
+        layer = TimeframeLayer("1h", [
+            SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+            SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+        ], LogicGenes(), None)
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            ss = evaluate_layer(layer, df)
+        assert not bool(ss.entries.any())            # 清洗语义不变
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f3b_mtf_combined_exit_via_helper(self, monkeypatch):
+        """F3-b 清洗点②MTF 组合出口（dna_to_signal_set MTF 分支）：
+        spy 计数锚——两层数据下 helper 调用恰 3 次（逐层 evaluate_layer
+        各 1 + 组合出口 1）。组合出口漏替换回内联两行时计数=2 即红。
+        caplog 无法区分层内与组合出口的告警来源（单点 helper 同
+        logger），故以调用计数锁在场性；helper 告警行为由 F1-F6 锚定。"""
+        from core.strategy import executor as exc_mod
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+            StrategyDNA, TimeframeLayer,
+        )
+        calls = []
+        real = exc_mod._apply_entry_exit_mutex
+
+        def spy(entries, exits):
+            calls.append(1)
+            return real(entries, exits)
+
+        monkeypatch.setattr(exc_mod, "_apply_entry_exit_mutex", spy)
+        base = make_enhanced_df(n=120, freq="1h", seed=5)
+        base["hour_utc"] = base.index.hour
+        hi = make_enhanced_df(n=30, freq="1d", seed=6)
+        hi["hour_utc"] = hi.index.hour
+        gene = lambda role: SignalGene(   # noqa: E731 —— 两层同形构造
+            "hour_utc", {}, role, None, {"type": "gt", "threshold": -1})
+        dna = StrategyDNA(
+            signal_genes=[],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(),
+            layers=[
+                TimeframeLayer("1h", [gene(SignalRole.ENTRY_TRIGGER)],
+                               LogicGenes(), None),
+                TimeframeLayer("1d", [gene(SignalRole.ENTRY_TRIGGER)],
+                               LogicGenes(), None),
+            ],
+        )
+        assert dna.is_mtf, "测试前提：MTF 个体走组合分支"
+        # dfs_by_timeframe 须含执行层自身数据（缺则层降级跳过——
+        # executor.py:833 fail-loud 留痕，组合面只剩 1d 层）
+        ss = dna_to_signal_set(dna, base, {"1h": base, "1d": hi})
+        assert len(calls) == 3, (
+            f"两层数据 helper 调用应恰 3 次（层内×2+组合出口×1），"
+            f"实际 {len(calls)}——组合出口清洗未经单点 helper")
+        assert bool(ss.entries.any())   # 两层恒真 entry、无 exit——组合后保留
+
+    def test_f3c_batch_assembly_cleanup_warns(self, caplog):
+        """F3-c 清洗点③batch 组装出口（batch_signal_sets 组装段
+        executor.py:1296）：恒真出场形经批量通道 → 告警在场。单周期
+        个体走基因去重组装（不经 evaluate_layer），组装出口是该路径
+        唯一清洗点，caplog 来源无歧义。"""
+        from core.strategy.dna import SignalGene, SignalRole
+        df = make_enhanced_df(n=120, freq="1h", seed=7)
+        df["hour_utc"] = df.index.hour
+        dna = make_dna()
+        dna.signal_genes = [
+            SignalGene("hour_utc", {}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+            SignalGene("hour_utc", {}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": -1}),
+        ]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            results = batch_signal_sets([dna], df)
+        assert len(results) == 1
+        assert not bool(results[0].entries.any())    # 全抹（清洗语义不变）
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
+    def test_f3d_mtf_engine_combined_warns(self, caplog):
+        """F3-d 清洗点④mtf_engine._build_exec_signal_set
+        （mtf_engine.py:853）：执行轴信号集合并出口直调——恒真 entry ×
+        恒真 exit → 告警在场 + entries 全 False。mtf_engine 经
+        from-import 绑定 helper，告警 logger 仍为 core.strategy.executor
+        单源（本锚兼证 from-import 绑定未断）。"""
+        from core.strategy.dna import LogicGenes, TimeframeLayer
+        from core.strategy.executor import SignalSet
+        from core.strategy.mtf_engine import (
+            LayerResult, _build_exec_signal_set,
+        )
+        df = make_enhanced_df(n=60, freq="4h", seed=9)
+        idx = df.index
+        always = SignalSet(
+            entries=pd.Series(True, index=idx),
+            exits=pd.Series(True, index=idx),
+            adds=pd.Series(False, index=idx),
+            reduces=pd.Series(False, index=idx))
+        dna = make_dna()   # execution timeframe="4h" 与层 tf 一致（reindex 直取）
+        dna.layers = [TimeframeLayer("4h", [], LogicGenes(), None)]
+        with caplog.at_level(logging.WARNING,
+                             logger="core.strategy.executor"):
+            out = _build_exec_signal_set(
+                [("4h", LayerResult(signal_set=always))], dna, df)
+        assert not bool(out.entries.any())           # 清洗语义不变
+        assert any("同 bar 进出场冲突抹杀进场信号" in r.getMessage()
+                   for r in caplog.records)
+
 
 class TestDefenseIndependence:
     """S9：防线独立性——绕过清洗直调执行器仍兜底拒绝。"""

@@ -1123,13 +1123,14 @@ class TestThenCoverage:
         assert tc["per_range"][0]["stat_bars"] == 100
         assert tc["per_range"][0]["coverage"] == 1.0
         assert tc["threshold_warn"] == 0.9
+        # spec scenario「覆盖率数据随预检透出」THEN 五键之一：note
+        # 口径披露（覆盖率口径与判定锚说明）在场
+        assert "覆盖率口径" in tc["note"]
 
     def test_b2_95_percent_form(self, tmp_path, db_path):
         """B2：区间内 95 bar 触发 5 bar 不触发 → min_coverage=0.95、
-        always_true=false（95/100 整数构造）。"""
-        closes = [100.0] * 395 + [50.0] * 5 + [100.0]   # 区间尾 100 bar：95 热 5 冷
-        # 区间=idx[300..399]：idx[300..394] 热段延续、idx[395..399] 冷热交替？
-        # 修正：直接构造前 300 bar 全热 + 尾 101 bar 中 5 冷
+        always_true=false（95/100 整数构造：区间=idx[300,400)，热段
+        idx[300..394] 95 根 + 冷段 idx[395..399] 5 根）。"""
         closes = [100.0] * 300 + [100.0] * 95 + [50.0] * 5 + [100.0]
         _, data_dir, rng = self._env(tmp_path, closes)
         out = self._run(db_path, data_dir, rng,
@@ -1232,7 +1233,7 @@ class TestThenCoverage:
             {"subject": {"indicator": "RSI", "params": {"period": 2}},
              "action": "lt", "target": 90}])
         tc = out["then_coverage"]
-        assert tc["per_range"], "RSI(99) 现算求值须成功产出区间明细"
+        assert tc["per_range"], "RSI(2) 现算求值须成功产出区间明细"
         pr = tc["per_range"][0]
         assert pr["stat_bars"] == 100
         assert 0 <= pr["hit_bars"] <= 100
