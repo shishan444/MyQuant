@@ -157,3 +157,34 @@ class TestC3SignalCountsDisclosure:
         assert "signal_counts" in result_json["metrics"]
         assert set(result_json["metrics"]["signal_counts"].keys()) == {
             "entries", "exits", "adds", "reduces"}
+
+
+class TestCrossEngineCountConsistency:
+    """A3 合成对照锚（fix-executor-column-and-exit-guard 5.1）：同 df
+    下 executor 链进场触发数 == 统计层 mask_for AND 交集计数——跨引擎
+    互证同构（BUG-1 修复前 executor 子串伪命中使两引擎计数分歧）。
+    本锚同时守护 R3「统计层零改动」：condition_kernel 求值侧任何漂移
+    都使两侧计数不等即红。
+
+    真实数据 68 逐数锚为一次性留痕（works/研究档案/），不入常驻——
+    真实数据断言随数据更新脆断。
+    """
+
+    def test_executor_entries_equal_kernel_mask_count(self):
+        from core.analysis.condition_kernel import mask_for
+        df = _df(n=800, seed=31)
+        gene = SignalGene("RSI", {"period": 2}, SignalRole.ENTRY_TRIGGER,
+                          None, {"type": "lt", "threshold": 10})
+        dna = StrategyDNA(
+            signal_genes=[gene],   # 无出场基因——零清洗干扰纯计数
+            execution_genes=ExecutionGenes(timeframe="30m"),
+            logic_genes=LogicGenes(), risk_genes=RiskGenes(direction="long"),
+            signal_sources=[{"type": "rule"}])
+        ss = dna_to_signal_set(dna, df)
+        cond = {"subject": {"indicator": "RSI", "params": {"period": 2},
+                            "field": "rsi"},
+                "action": "lt", "target": 10}
+        kernel_mask = mask_for(df, cond, None)
+        # 无出场基因 → exits 恒 False → 清洗零作用，entries 即原始触发
+        assert int(ss.entries.sum()) == int(kernel_mask.sum())
+        assert int(ss.entries.sum()) > 0        # 非退化形态
