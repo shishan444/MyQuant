@@ -458,6 +458,18 @@ def _evaluate_gene_signal(gene, enhanced_df, dfs_by_timeframe=None) -> pd.Series
     return projected
 
 
+def _bad_param_key_message(indicator, params) -> str:
+    """指标参数键缺失/畸形的统一拒绝文案（resolve 段/现算段同源单点）。
+
+    两段 except 收口 ValueError 共用本函数；尾段子串
+    "bad or missing parameter key" 是 A5 四格完备性锚的断言面
+    （两段×两类，tests/strategy/test_executor.py），改文案须同步锚。
+    """
+    return (
+        f"Cannot resolve/compute indicator {indicator} with "
+        f"params {params}: bad or missing parameter key")
+
+
 def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     """从 enhanced DataFrame 解析指标列（基因级列查找单点）。
 
@@ -501,8 +513,7 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
             # column_ref 参数键校验；手工 DNA/变异直达形态）——统一
             # 收口 ValueError，顶层收编为 RESEARCH_CONDITION_INVALID
             raise ValueError(
-                f"Cannot resolve/compute indicator {indicator} with "
-                f"params {params}: bad or missing parameter key") from exc
+                _bad_param_key_message(indicator, params)) from exc
     else:
         # 未注册指标：无列名编码权威，前缀命中静默取列形态已退役
         # （fix-executor-column-and-exit-guard 段 A——A10 存量扫描闸门
@@ -526,8 +537,7 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         # 抛 KeyError、参数值畸形（period=None 等）抛 TypeError——
         # 与 resolve 段同文案收口（两段×两类完备性锚 A5 四格）
         raise ValueError(
-            f"Cannot resolve/compute indicator {indicator} with "
-            f"params {params}: bad or missing parameter key") from exc
+            _bad_param_key_message(indicator, params)) from exc
     if new_cols:
         # 一次整块写回（fix-executor-batch-health）：逐列 insert 在宽
         # enhanced_df（>100 列）上触发 pandas PerformanceWarning 且插入
