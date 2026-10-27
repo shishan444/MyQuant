@@ -589,3 +589,57 @@ class TestR2RoleChannelBuckets:
         expect = (df["rsi_14"] > 55).fillna(False)
         assert bool((sig.exits.fillna(False) == expect).all()), \
             "出场固定 AND——投票/权重语义不适用出场"
+
+    @pytest.mark.parametrize(("mode", "op"), [
+        ("weighted_vote", None), ("gate", None),
+        ("logic", "AND"), ("logic", "OR"),
+    ], ids=["weighted_vote", "gate", "logic_and", "logic_or"])
+    def test_card01_mixed_sources_survive_composition(
+            self, db, fx_true_col, fx_part_col, mode, op):
+        """混合形态×composition 四模式矩阵（CARD-01 修复锚）：
+        entry 插件与非 entry 插件**并存**时走 composition 三模式分支
+        ——修复前分支内新建字典 `return {"entries": ...}` 丢弃已积累
+        的非 entry 桶，无规则侧基因时 exits/reduces 通道静默恒 0
+        （纯非 entry 形态不触发该分支，原 TestR2RoleChannelBuckets
+        覆盖缺口）。修复后非 entry 桶在四模式下全部进通道合并：
+        无规则侧=插件独立生效（恒真 exit 全段/分段 exit_partial=92），
+        有规则侧=AND 交集（恒真元下 exits==base）。"""
+        df = self._enhanced()
+        comp = {"mode": mode}
+        if op:
+            comp["op"] = op
+        entry_src = self._src(fx_true_col, "entry")
+        exit_true = self._src(fx_true_col, "exit")
+        exit_part_seg = self._src(fx_part_col, "exit_partial")
+        # 两态：无/有 exit 侧规则基因（reduces 侧两态同构取无规则态）
+        dna_no_rule = _dna([entry_src, exit_true, exit_part_seg],
+                           composition=comp, genes=self._genes())
+        sig = assemble_signal_set(db, dna_no_rule, df)
+        assert bool(sig.exits.all()), \
+            f"{mode}{op or ''}：混合形态 exit 桶独立生效（修复前恒 0）"
+        seg_expect = df["close"] > 55000
+        assert int(sig.reduces.sum()) == int(seg_expect.sum()) == 92, \
+            f"{mode}{op or ''}：分段 exit_partial 桶独立生效（AND 单位元）"
+        dna_with_rule = _dna([entry_src, exit_true, exit_part_seg],
+                             composition=comp, genes=self._genes("exit"))
+        sig2 = assemble_signal_set(db, dna_with_rule, df)
+        base_expect = (df["rsi_14"] > 55).fillna(False)
+        assert bool((sig2.exits.fillna(False) == base_expect).all()), \
+            f"{mode}{op or ''}：有规则侧 exit 桶 AND（恒真元=base 交集）"
+
+    def test_card01_mixed_and_semantics_with_segmented_exit(
+            self, db, fx_true_col, fx_part_col):
+        """混合形态 AND 语义区分锚（weighted_vote）：entry 恒真插件+
+        exit **分段**插件并存——exits == base.exits & 分段布尔（AND
+        交集非替换；与纯非 entry 形态的 test_exit_bucket_and_rule_side
+        构成混合/纯两形制对照）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "entry"),
+                    self._src(fx_part_col, "exit")],
+                   composition={"mode": "weighted_vote", "threshold": 0.5},
+                   genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55) & (df["close"] > 55000)
+        assert bool((sig.exits.fillna(False) == expect).all()), \
+            "混合形态 AND 交集（37 bar——替换/OR 必红）"
+        assert int(expect.sum()) == 37
