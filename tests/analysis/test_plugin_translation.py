@@ -877,7 +877,9 @@ class TestR2MultiRolePluginSources:
         # 使签名必异（ref/threshold/operator 全同）
         assert sig_c != sig_c2, "同列异角色必异签名（role 段生效）"
         # 存量零迁移：纯 entry 编码无 role 段（签名含四元组不含冒号尾段）
-        assert sig_a  # 存量 entry 形制签名照常产出
+        # 存量零迁移的实质断言（entry 编码逐位不变）由
+        # test_e5_zero_migration_entry_encoding 承载（原「assert sig_a」
+        # 恒真弱断言移除）
 
     def test_e3_stale_plugin_in_group_rejected(self, db, data_dir):
         """E3 失效拒绝：失效插件列在出场组显式拒绝（组装期引用失败
@@ -928,3 +930,75 @@ class TestR2MultiRolePluginSources:
         assert sig.exits.dtype == bool
         assert bool(sig.exits.any()), \
             "fx 出场源独立驱动 exits（close>95 段触发）"
+
+    def test_e2_same_column_three_groups_consistent(self, db, data_dir):
+        """E2 对称性锚：同一 fx 列在 when/then/exit_partial 三组均可
+        表达（同列同语义——role 随组别正确装配，无组别歧视拒绝）。"""
+        col = _plugin(db, name="fx_e2", expression="gt(close, 0)")
+        rsi = {"indicator": "RSI", "params": {"period": 14}}
+        rule = [{"subject": rsi, "action": "lt", "target": 35}]
+        rule_then = [{"subject": dict(rsi, params={"period": 30}),
+                      "action": "gt", "target": 60}]
+        fx_cond = {"subject": col, "action": "gt", "target": 0.5}
+        # A：同列入 when（entry）
+        out_a = translate_hypothesis(
+            db, data_dir=data_dir,
+            hypothesis_id=_hyp(db, when=rule + [fx_cond], then=rule_then))
+        # B：同列入 then（exit）
+        out_b = translate_hypothesis(
+            db, data_dir=data_dir,
+            hypothesis_id=_hyp(db, when=rule, then=[fx_cond]))
+        # C：同列入 exit_partial 组（组键经直落构造）
+        conds_c = {"when_conditions": rule,
+                   "then_conditions": rule_then,
+                   "exit_partial_conditions": [fx_cond]}
+        hid_c = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid_c,
+            conditions=json.dumps(conds_c, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="e2c",
+            data_ranges=json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=json.dumps({"stop_loss": 0.05}))
+        out_c = translate_hypothesis(db, data_dir=data_dir,
+                                     hypothesis_id=hid_c)
+        def _role(out):
+            dna = self._dna_sources(db, out)
+            return [s.get("role") for s in dna["signal_sources"]
+                    if s.get("type") in ("formula", "model")
+                    and s.get("ref") == col]
+        assert _role(out_a) == ["entry"], "同列 when 组 → entry"
+        assert _role(out_b) == ["exit"], "同列 then 组 → exit"
+        assert _role(out_c) == ["exit_partial"], "同列 exit_partial 组 → exit_partial"
+
+    def test_e4_trial_chain_covers_group_plugins(self, db, data_dir):
+        """E4 试算链锚：exit_partial 组插件源经落库前试算（_component_
+        precheck 不因组别跳过）——门禁 (a) 源记录在场（「翻译过=有
+        记录」不变式扩展到分批组）。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        out, col = self._fx_exit_strategy(
+            db, data_dir, "exit_partial_conditions", "fx_e4")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": col}]) == [], \
+            "分批组插件源试算记录在场（试算链按角色同适用）"
+
+    def test_e5_zero_migration_entry_encoding(self):
+        """E5 零迁移实质断言：插件条目无 role 键（存量形制）与显式
+        role="entry" 编码逐位一致（签名相等）；同参 role="exit" 条目
+        签名必异（追加 ":<role>" 段——仅非 entry 编码）。"""
+        def _sig(role_key, role_value):
+            src = {"type": "formula", "ref": "fx_z", "threshold": 0.5,
+                   "operator": ">"}
+            if role_key:
+                src[role_key] = role_value
+            dna = StrategyDNA(
+                signal_genes=[], logic_genes=LogicGenes(),
+                execution_genes=ExecutionGenes(timeframe="4h"),
+                risk_genes=RiskGenes(), signal_sources=[src])
+            return dna.gene_signature
+        sig_legacy = _sig(None, None)        # 存量：无 role 键
+        sig_entry = _sig("role", "entry")    # 显式 entry
+        sig_exit = _sig("role", "exit")      # 非 entry
+        assert sig_legacy == sig_entry, \
+            "entry 条目编码逐位不变（无键与显式 entry 同码——零迁移）"
+        assert sig_entry != sig_exit, "非 entry 条目追加 role 段（必异签名）"

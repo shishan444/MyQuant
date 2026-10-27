@@ -84,6 +84,27 @@ class TestRegistrationGate:
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
         assert ei.value.detail["action"] == "spike"
 
+    def test_gate_covers_scaling_groups(self, db):
+        """组覆盖补全：分批三组（exit_partial/add_trigger/add_suppress）
+        统计专属动作登记即拒（拒绝面覆盖全部条件组）。"""
+        for group in ("exit_partial_conditions",
+                      "add_trigger_conditions",
+                      "add_suppress_conditions"):
+            conds = {
+                "when_conditions": [
+                    {"subject": _RSI, "action": "gt", "target": 60}],
+                "then_conditions": [
+                    {"subject": _RSI, "action": "lt", "target": 40}],
+                group: [{"subject": _RSI, "action": "spike", "target": 0}],
+            }
+            with pytest.raises(ResearchError) as ei:
+                register_hypothesis(
+                    db, conditions=conds, statement="g",
+                    data_ranges=_RANGES, strategy_params=dict(_SP))
+            assert ei.value.code == "RESEARCH_CONDITION_INVALID", group
+            assert ei.value.detail["action"] == "spike", group
+            assert group in ei.value.detail["field"], group
+
     def test_two_sets_disjoint_union_complete(self):
         """常量域自洽：可表达 ∩ 统计专属 = 空（差集无重叠——重叠
         动作的语义归属将歧义）。"""
@@ -206,3 +227,36 @@ class TestR1ThreeActionTranslation:
         # 冒烟断言=类型与索引对齐非崩溃）
         assert sig.entries.dtype == bool
         assert len(sig.entries) == len(df)
+
+    def test_d1_full_chain_triggers_align_pattern(self, tmp_path):
+        """D1 端到端强化（spec Scenario「登记到回测端到端」：全链成功
+        且触发计数>0）：eq 条件全链（登记→translate→回测求值）触发
+        bar 与形态列 True 逐 bar 对齐——「eq 1=形态列 True 的 bar
+        触发」的 spec 字面断言（原 test_d1_backtest_evaluable 冒烟
+        断言不锁触发，本用例补行为级）。"""
+        import pandas as pd
+        from core.features.indicators import compute_all_indicators
+        from core.strategy.executor import dna_to_signal_set
+        from tests.helpers.data_factory import make_ohlcv
+
+        hid_cond = {"subject": self._BULL, "action": "eq", "target": 1}
+        db = tmp_path / "q3.db"
+        init_db_ext(db)
+        from core.analysis.executor import ensure_research_tables
+        ensure_research_tables(db)
+        t = self._tr(db, hid_cond)
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.dna import StrategyDNA
+        dna = StrategyDNA.from_json(
+            get_strategy(db, t["strategy_id"])["dna_json"])
+        df = compute_all_indicators(make_ohlcv(300, seed=1))
+        entry_genes = [g for g in dna.signal_genes
+                       if g.role.value == "entry_trigger"]
+        assert len(entry_genes) == 1, "构造前提：入场侧恰一条 eq 基因"
+        sig = dna_to_signal_set(dna, df)
+        pat = df["pattern_bullish_divergence"] == 1
+        assert int(pat.sum()) > 0, "构造前提：形态列有 True（seed=1=43）"
+        assert int(sig.entries.sum()) == int(pat.sum()), \
+            "触发计数>0 且等于形态列 True 数"
+        assert bool((sig.entries == pat).all()), \
+            "entries 与形态列 True 逐 bar 对齐（eq 1 语义）"

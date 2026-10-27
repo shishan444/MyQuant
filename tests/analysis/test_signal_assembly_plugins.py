@@ -462,3 +462,130 @@ class TestCombineParamValidation:
         with pytest.raises(ResearchError) as ei:
             assemble_signal_set(db, dna, _df())
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+
+class TestR2RoleChannelBuckets:
+    """R2 组装器分桶通道锚（indicator-and-action-repair 卡 F 6.2
+    ——tester 锚 C2-E 组装器字段级：四桶 AND 组合逐桶断言+无规则侧
+    独立生效+composition 仅入场）。
+
+    源级 role 键分桶：exit→exits、exit_partial→reduces、add_trigger
+    →adds、add_suppress→取反 AND；无规则侧基因时插件组独立生效
+    （base 通道恒 False 不作废插件——AND 单位元先例对称）。
+    """
+
+    @pytest.fixture()
+    def fx_true_col(self, db: Path) -> str:
+        """恒真插件列（close 恒正 → gt(close, 0) 全段 True）。"""
+        return register_formula_plugin(
+            db, name="always", expression="gt(close, 0)")["column"]
+
+    @pytest.fixture()
+    def fx_part_col(self, db: Path) -> str:
+        """分段插件列（close>55000——seed=5 数据 92 段 True，与规则
+        出场条件既有交集（37 bar）又有差集（61 bar），可区分 AND 与
+        替换语义）。"""
+        return register_formula_plugin(
+            db, name="part", expression="gt(close, 55000)")["column"]
+
+    @staticmethod
+    def _enhanced() -> pd.DataFrame:
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+        return compute_all_indicators(
+            make_ohlcv(300, seed=5, base_price=60000.0))
+
+    @staticmethod
+    def _genes(*sides) -> list:
+        """入场基因 + 各侧规则基因（rsi 阈值取分段可触发形态）。"""
+        by_role = {
+            "exit": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 55}),
+            "reduce": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.REDUCE_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 50}),
+            "add": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.ADD_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 45}),
+        }
+        genes = [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                            "rsi_14", {"type": "lt", "threshold": 35})]
+        for s in sides:
+            genes.append(by_role[s]())
+        return genes
+
+    @staticmethod
+    def _src(col: str, role: str) -> dict:
+        return {"type": "formula", "ref": col, "threshold": 0.5,
+                "operator": ">", "role": role}
+
+    def test_exit_bucket_and_rule_side(self, db, fx_part_col):
+        """exit 桶 AND 规则出场：exits == 规则出场 & 插件布尔（分段
+        插件列区分 AND 与替换——两集合不等的实数据对照）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_part_col, "exit")], genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55) & (df["close"] > 55000)
+        assert bool((sig.exits.fillna(False) == expect).all()), "exit AND 组合"
+        # 构造前提：交集与差集双向非空（AND 语义可区分——替换/OR 必红）
+        assert int(expect.sum()) == 37 and int(((df["rsi_14"] > 55) & ~(df["close"] > 55000)).sum()) == 61
+
+    def test_exit_partial_bucket_reduces(self, db, fx_true_col):
+        """exit_partial 桶 → reduces 通道（有规则侧 AND；恒真插件下
+        reduces == 规则 reduce 信号）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit_partial")],
+                   genes=self._genes("reduce"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 50).fillna(False)
+        assert bool((sig.reduces.fillna(False) == expect).all()), \
+            "exit_partial AND reduce 通道"
+
+    def test_add_trigger_bucket_adds(self, db, fx_true_col):
+        """add_trigger 桶 → adds 通道（有规则侧 AND）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "add_trigger")],
+                   genes=self._genes("add"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 45).fillna(False)
+        assert bool((sig.adds.fillna(False) == expect).all()), \
+            "add_trigger AND add 通道"
+
+    def test_add_suppress_negation_and(self, db, fx_true_col):
+        """add_suppress 取反 AND（spec Scenario「插件加仓抑制语义」）：
+        恒真抑制条件下规则加仓信号全灭；无抑制源对照照常触发。"""
+        df = self._enhanced()
+        genes = self._genes("add")
+        sig_off = assemble_signal_set(
+            db, _dna([self._src(fx_true_col, "add_suppress")], genes=genes),
+            df)
+        sig_free = assemble_signal_set(db, _dna([], genes=genes), df)
+        assert bool(sig_free.adds.any()), "构造前提：规则加仓有触发段"
+        assert not bool(sig_off.adds.any()), \
+            "fx=True 段加仓信号被抑制（取反 AND）"
+
+    def test_no_rule_side_plugin_independent(self, db, fx_true_col):
+        """无规则侧独立生效：仅入场基因+各非 entry 插件源（无对应
+        规则基因）→ reduces/adds 由插件独立驱动（base 通道恒 False
+        不作废插件——AND 单位元对称）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit_partial"),
+                    self._src(fx_true_col, "add_trigger")],
+                   genes=self._genes())
+        sig = assemble_signal_set(db, dna, df)
+        assert bool(sig.reduces.all()), "纯插件 reduce 独立生效（恒真列全段）"
+        assert bool(sig.adds.all()), "纯插件 add 独立生效"
+
+    def test_composition_mode_not_polluting_exit(self, db, fx_true_col):
+        """composition 仅入场（spec Scenario「组合模式不污染出场」）：
+        weighted_vote 策略含插件出场源——出场仍固定 AND（恒真插件下
+        exits == 规则出场，非投票语义）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit")],
+                   composition={"mode": "weighted_vote", "threshold": 0.5},
+                   genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55).fillna(False)
+        assert bool((sig.exits.fillna(False) == expect).all()), \
+            "出场固定 AND——投票/权重语义不适用出场"

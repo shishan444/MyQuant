@@ -1118,3 +1118,24 @@ class TestActionSetSingleSource:
             members = {m.value for m in ctype}
             assert "eq" not in members, \
                 "dna.ConditionType 历史异集（无 eq）——拉平须经裁决"
+
+
+class TestEqThresholdDefaultFallback:
+    """D2 eq threshold 缺省兜底锚（indicator-and-action-repair 卡 E
+    A1：threshold 缺省=1 由 executor 求值层 :133-135 兜底——翻译层
+    不物化执行层缺省，产物无 threshold 键时求值面补 1）。"""
+
+    def test_eq_without_threshold_defaults_to_one(self):
+        """{"type":"eq"} 无 threshold 键 → 按 1 比较（布尔 pattern 列
+        True 的 bar 恰触发——登记显式 target 兼任 threshold，无键形态
+        由求值层缺省承接）。"""
+        df = make_enhanced_df(n=60)
+        series = df["pattern_bullish_divergence"]
+        if int(series.sum()) == 0:  # 合成 60 根可能零触发——构造非零对照
+            series = series.copy()
+            series.iloc[30] = 1
+            series.iloc[45] = 1
+        out = evaluate_condition(series, df["close"], {"type": "eq"})
+        assert bool((out == (series == 1)).all()), \
+            "缺省 threshold=1：恰 True bar 触发"
+        assert int(out.sum()) == int(series.sum()) > 0

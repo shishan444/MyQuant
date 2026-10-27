@@ -263,6 +263,117 @@ class TestDonchianWindowExcludesCurrent:
         assert set(reg.output_fields) == {"upper", "middle", "lower"}
 
 
+class TestDonchianThreeStateRepair:
+    """C3 三态归正（tester 锚 C2-C 组，proposal 三态畸变全谱）。
+
+    含当根窗口下 close∈[low,high] 而下轨≤low/上轨≥high，close×轨道
+    的不等式链被钳制：role_reversal 穿越链（was_above/now_below 两臂
+    ——proposal 行号锚 executor.py:334/:339 即该函数内两行）恒假；
+    touch_bounce 可触发但触及的是「含自己的轨道」（语义偏移非恒假）。
+    shift(1) 统一归正——本类各态独立行为锚。
+    """
+
+    def _fall_df(self):
+        """缓升→急跌破前低→企稳（role_reversal 解锁形态数据）。"""
+        from numpy import concatenate, cumsum
+        rng = np.random.default_rng(2)
+        seg1 = 100 + cumsum(rng.normal(0.05, 0.4, 80))
+        seg2 = np.linspace(seg1[-1], seg1[-1] - 25, 30)
+        seg3 = seg2[-1] + cumsum(rng.normal(0.0, 0.4, 20))
+        close = concatenate([seg1, seg2, seg3])
+        n = len(close)
+        return pd.DataFrame({
+            "open": close, "high": close + 0.4, "low": close - 0.4,
+            "close": close, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+
+    def test_c3_role_reversal_crossing_chain_unlocked(self):
+        """C3 ①②穿越链+role 臂恒假归正：dc_lower 上 role_reversal
+        （resistance=线原为支撑价格在线上→当根下破）触发数>0，触发
+        bar 两臂数据面同时成立（was_above：lookback 前价格在线上；
+        now_below：当根价格在线下——修复前下轨≤low≤close 臂恒假）。"""
+        from core.strategy.executor import evaluate_condition
+        df = self._fall_df()
+        lower = _compute_indicator(df, "Donchian", {"period": 20})[
+            "dc_lower_20"]
+        lb = 10
+        rr = evaluate_condition(
+            lower, df["close"],
+            {"type": "role_reversal", "role": "resistance",
+             "lookback": lb}, df=df)
+        assert int(rr.sum()) > 0, "role_reversal 穿越链解锁（恒假归正）"
+        for i in np.flatnonzero(rr.to_numpy()):
+            assert df["close"].iloc[i - lb] > lower.iloc[i - lb], \
+                f"was_above 臂（bar {i}）"
+            assert df["close"].iloc[i] < lower.iloc[i], \
+                f"now_below 臂（bar {i}）——修复前下轨含当根致恒假"
+
+    def _touch_df(self):
+        """平台→下探压低前 N 根最低→回踩低位再升（touch 两态数据）。"""
+        close = np.concatenate([
+            np.full(30, 100.0),
+            np.linspace(100, 92, 15),
+            np.full(10, 92.0),
+            np.array([92.6, 93.4, 94.2, 95.0, 95.8, 96.4]),
+            np.linspace(96.4, 99, 29),
+        ])
+        n = len(close)
+        return pd.DataFrame({
+            "open": close, "high": close + 0.3, "low": close - 0.3,
+            "close": close, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+
+    def test_c3_touch_bounce_touches_prior_channel(self):
+        """C3 ③触及语义归正（正锚）：回踩至「前 N 根最低」附近且反弹
+        的 bar 触发——触及的是前 N 根轨道（非含自身轨道）。"""
+        from core.strategy.executor import evaluate_condition
+        df = self._touch_df()
+        lower = _compute_indicator(df, "Donchian", {"period": 20})[
+            "dc_lower_20"]
+        pct = 0.01
+        tb = evaluate_condition(
+            lower, df["close"],
+            {"type": "touch_bounce", "direction": "support",
+             "proximity_pct": pct}, df=df)
+        assert int(tb.sum()) > 0, "回踩前 N 根轨道的反弹 bar 触发"
+        for i in np.flatnonzero(tb.to_numpy()):
+            prev_min = df["low"].iloc[i - 20:i].min()
+            assert abs(df["low"].iloc[i] - lower.iloc[i]) \
+                <= abs(lower.iloc[i]) * pct, f"触及前 N 根轨道（bar {i}）"
+            assert lower.iloc[i] == pytest.approx(prev_min), \
+                f"轨道=前 20 根最低（bar {i}）"
+
+    def test_c3_touch_bounce_new_low_bar_not_touch(self):
+        """C3 ③触及语义归正（差异锚）：当根深创新低且长下影收回的
+        bar 不触发——旧语义轨道含当根（line=当根 low）proximity=0
+        恒近线会触发；新语义轨道=前 N 根最低，跌破远离不构成触及。"""
+        from core.strategy.executor import evaluate_condition
+        close = np.full(60, 100.0)
+        df = pd.DataFrame({
+            "open": close, "high": close, "low": close - 0.3,
+            "close": close, "volume": np.full(60, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=60, freq="4h",
+                               tz="UTC", name="timestamp"))
+        # bar 50：low 深破前 20 根最低（97），close 长下影收回走高
+        df.iloc[50, df.columns.get_loc("low")] = 97.0
+        df.iloc[50, df.columns.get_loc("close")] = 100.3
+        df.iloc[50, df.columns.get_loc("open")] = 99.7
+        df.iloc[50, df.columns.get_loc("high")] = 100.5
+        df.iloc[51, df.columns.get_loc("close")] = 100.6
+        lower = _compute_indicator(df, "Donchian", {"period": 20})[
+            "dc_lower_20"]
+        assert lower.iloc[50] == pytest.approx(99.7), \
+            "前 20 根最低（不含当根 97）"
+        tb = evaluate_condition(
+            lower, df["close"],
+            {"type": "touch_bounce", "direction": "support",
+             "proximity_pct": 0.01}, df=df)
+        assert not bool(tb.iloc[50]), \
+            "深创新低 bar 远离前 N 根轨道——触及语义=前 N 根轨道非含自身"
+
+
 class TestDivergenceWindowSemanticsUpgrade:
     """B4-P2 语义升级锚（indicator-and-action-repair 2.4，卡 B 2.2
     ——tester 锚 C2-B5）：两臂窗口极值+门槛可选两态。"""
