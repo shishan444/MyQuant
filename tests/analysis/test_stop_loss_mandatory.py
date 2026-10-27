@@ -105,6 +105,11 @@ class TestF4ExistingChannelsUnchanged:
         ({"stop_loss": 0.5}, [0.005, 0.2]),
         ({"stop_loss": 0.001}, [0.005, 0.2]),
         ({"sl_mode": "atr", "stop_loss": 0.05}, [0.5, 5.0]),
+        # 闸门②盲区补面：take_profit 同族值域分叉（stop_loss 合法
+        # 前提下 take_profit 越域走同一拒绝形制——双键对照侧）
+        ({"stop_loss": 0.05, "take_profit": 0.5}, [0.005, 0.2]),
+        ({"sl_mode": "atr", "stop_loss": 2.0, "take_profit": 0.05},
+         [0.5, 5.0]),
     ])
     def test_out_of_range_value_domain(self, db, params, legal):
         with pytest.raises(ResearchError) as ei:

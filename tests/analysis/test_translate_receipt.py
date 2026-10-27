@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -353,6 +354,33 @@ class TestRiskGenesDisclosure:
         # 3a 稳定锚：同一假设重复挂载 → 披露逐键稳定
         out_b2 = translate_hypothesis(db, hypothesis_id="hyp_b_a7")
         assert out_b2["risk_genes_disclosure"] == disc_b
+
+    def test_default_filled_set_identity_property(self):
+        """闸门④属性补强：差集恒等式全称（固定种子随机采样 declared
+        子集 × 库内键集）——default_filled == ORDER ∩ values 键集 −
+        declared 非 null 键集，且 ⊆ values 键集（标注的必是回显的）。"""
+        from core.analysis.hypothesis_to_strategy import (
+            _RISK_GENES_DISCLOSURE_ORDER as ORDER,
+            _risk_genes_disclosure)
+        rng = np.random.default_rng(11)
+        pool = list(ORDER) + ["max_hold", "time_exit_utc", "risk_fraction",
+                              "initial_fraction", "max_position_loss"]
+        for _ in range(30):
+            n_values = int(rng.integers(1, len(pool) + 1))
+            value_keys = list(rng.choice(pool, size=n_values, replace=False))
+            dna_rg = {k: 0.05 for k in value_keys}
+            declared = {k: (None if rng.random() < 0.3 else 0.1)
+                        for k in rng.choice(
+                            pool, size=int(rng.integers(0, 6)),
+                            replace=False)}
+            disc = _risk_genes_disclosure(
+                json.dumps({"risk_genes": dna_rg}), dict(declared))
+            expected = [k for k in ORDER
+                        if k in dna_rg and declared.get(k) is None]
+            assert disc["default_filled"] == expected, \
+                f"差集恒等式破坏: values={sorted(dna_rg)} declared={declared}"
+            assert set(disc["default_filled"]) <= set(disc["values"]), \
+                "标注集不得超出回显键集"
 
     def test_corrupted_block_null_disclosure(self, db):
         """CARD-04 特征锚（坏数据态——从实现行为记录防倒退）：存量行

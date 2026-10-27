@@ -596,3 +596,26 @@ class TestStagedWarmupDetailDisclosure:
         assert detail["available_bars"] == 100
         assert detail["data_start"] == df.index[0].isoformat()
         assert detail["rule"] == WARMUP_RULE_TEXT
+
+
+class TestGateBlindSpotFill:
+    """闸门②盲区消解（阶段四）——staged 链防御分支补面。"""
+
+    def test_explicit_segments_empty_rejected(self, env):
+        """explicit 模式 segments 空列表 → 422 段不能为空（_validate_
+        explicit_segments 首判——恰切分语义下空段集无从谈起）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, segmentation="explicit", segments=[])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "segments"
+
+    def test_auto_segments_too_short_no_segment(self, env):
+        """auto 切段数据不足 → 422 区间太短切不出段（build_segments
+        未产出任何段——fail-loud 非空段清单伪装成功）。"""
+        from core.analysis.validation_service import _auto_segments
+        df = env["df"]
+        end = df.index[-1].isoformat()
+        start = df.index[-3].isoformat()  # 尾端 3 bar：ADX 预热远不足
+        with pytest.raises(ResearchError) as ei:
+            _auto_segments(env["data_dir"], SYMBOL, "1d", start, end)
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"

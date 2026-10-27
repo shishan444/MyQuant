@@ -364,6 +364,106 @@ class TestC2RealParquetCalibration:
         assert col.iloc[-1] == pytest.approx(0.0004)
 
 
+class TestGateBlindSpotFill:
+    """闸门②盲区消解（阶段四）——_funding_rates_for 防御分支补面：
+
+    - attrs 形态异常（非 dict）→ 覆盖边界不可得降级 coverage_unknown
+      （不炸不静默——按在场列值计费+status 可判读）；
+    - coverage_unknown 态的 NaN 洞 → gaps 同样报 hole（「零费可以
+      静默不行」在边界不可得路径同样成立——C9 语义的 unknown 侧）。
+    """
+
+    def test_attrs_malformed_falls_back_unknown(self):
+        """derivatives_coverage 值非 dict（异常形态——pandas attrs 本身
+        恒 Mapping，异常态在 coverage 值层）→ except 降级 cov=None →
+        coverage_unknown（在场列值计费，不因 attrs 形态炸供给）。"""
+        idx = pd.date_range("2024-01-01", periods=8, freq="4h", tz="UTC")
+        df = pd.DataFrame({"funding_rate": 0.001}, index=idx)
+        df.attrs["derivatives_coverage"] = "malformed-not-a-dict"
+        rates, meta = _funding_rates_for(df, "4h")
+        assert meta["status"] == "coverage_unknown"
+        assert np.allclose(rates, 0.001 * 0.5), "按在场列值计费"
+
+    def test_coverage_unknown_hole_still_disclosed(self):
+        """coverage_unknown+段内 NaN 洞 → gaps 报 hole 且洞段零费
+        （unknown 态的缺失披露义务与 loaded 态同构）。"""
+        idx = pd.date_range("2024-01-01", periods=12, freq="4h", tz="UTC")
+        df = pd.DataFrame({"funding_rate": 0.001}, index=idx)
+        df.loc[idx[4]:idx[6], "funding_rate"] = np.nan  # 段内洞
+        rates, meta = _funding_rates_for(df, "4h")
+        assert meta["status"] == "coverage_unknown"
+        hole = [g for g in meta["gaps"] if g["kind"] == "hole"]
+        assert hole and hole[0]["start"] == idx[4].isoformat(), \
+            "unknown 态洞段不静默"
+        assert not rates[4:7].any(), "洞段零费"
+        assert np.allclose(rates[:4], 0.001 * 0.5), "正常段照常计费"
+
+
+class TestFundingProperties:
+    """闸门④属性补强：纯函数不变量（一类输入应保持的全称关系——
+    样例锚的补强面，非替代）。"""
+
+    @staticmethod
+    def _gap_mask(meta, idx):
+        """从 gaps 元数据重建零费区布尔掩码（独立于被测实现的
+        reconstruction——依据披露契约语义）。"""
+        mask = np.zeros(len(idx), dtype=bool)
+        for g in meta.get("gaps") or []:
+            s, e = pd.Timestamp(g["start"]), pd.Timestamp(g["end"])
+            mask |= (idx >= s) & (idx <= e)
+        return mask
+
+    @pytest.mark.parametrize("hole_at,cover_a,cover_b", [
+        (None, 0, -1),            # 全覆盖无洞
+        ((6, 9), 0, -1),          # 段中洞
+        (None, 8, 30),            # 头段外
+        ((15, 18), 4, 34),        # 洞+双侧段外
+        ((0, 4), 0, -1),          # 头部洞
+    ], ids=["全覆盖", "段中洞", "头段外", "洞+双侧段外", "头部洞"])
+    def test_zero_rate_iff_disclosed_gap(self, hole_at, cover_a, cover_b):
+        """全称不变量：零费区 ⟺ 披露区（gaps 并集）∪ 真实零费率列值
+        ——「零费可以静默不行」的恒等式面（每个零费 bar 必有披露
+        归属；每个披露 bar 必零费）。"""
+        n = 40
+        idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
+        rng = np.random.default_rng(3)
+        col = rng.uniform(0.0001, 0.0005, n)  # 非零随机费率（避列值零）
+        if hole_at:
+            col[hole_at[0]:hole_at[1] + 1] = np.nan
+        df = pd.DataFrame({"funding_rate": col}, index=idx)
+        df.attrs["derivatives_coverage"] = {"funding": {
+            "available_start": idx[cover_a].isoformat(),
+            "available_end": idx[cover_b].isoformat()}}
+        rates, meta = _funding_rates_for(df, "4h")
+        zero_mask = rates == 0.0
+        gap_mask = self._gap_mask(meta, idx)
+        nan_col = np.isnan(col)
+        # 恒等式两侧：rates==0 ⟺ gaps ∪ 原始 NaN（洞与段外皆入 gaps；
+        # 段外含 ffill 外推——列值非 NaN 但属披露区）
+        assert np.array_equal(zero_mask, gap_mask | nan_col), \
+            f"零费区与披露区不全等: zero={zero_mask.sum()} disclosed={(gap_mask | nan_col).sum()}"
+
+    @pytest.mark.parametrize("pv_sign,rate_sign", [
+        (1, 1), (1, -1), (-1, 1), (-1, -1)])
+    def test_paid_received_mutually_exclusive(self, pv_sign, rate_sign):
+        """互斥律：付出/收入两桶不同时非零（方向由仓位符号单源推出
+        ——多空×正负费率四组合全称；净额恒=付出−收入）。"""
+        n = 12
+        idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
+        eq = pd.Series(np.full(n, 100000.0), index=idx)
+        trades = pd.DataFrame(
+            {"Entry Timestamp": [idx[0]], "Exit Timestamp": [idx[-1]]})
+        rates = np.full(n, 0.001 * rate_sign * 0.5)
+        pv = np.full(n, 100000.0 * pv_sign)
+        adj, paid, received = _apply_funding_costs(
+            eq, "4h", trades_df=trades, position_values=pv, rates=rates)
+        assert paid == 0.0 or received == 0.0, "两桶互斥律破坏"
+        net = paid - received
+        expected_net = 100000.0 * pv_sign * rate_sign * 0.0005 * (n - 1)
+        assert abs(net - expected_net) < 1e-6, \
+            "净额恒等式破坏（方向单源+连续折算）"
+
+
 class TestC9NanSemantics:
     """C9：NaN 三态——段外洞/段内洞/正常段；「零费可以静默不行」=
     费用 0 与披露在场双断言。"""

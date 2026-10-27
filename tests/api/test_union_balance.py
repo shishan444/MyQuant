@@ -297,3 +297,20 @@ class TestRouteContract:
         assert "/api/research/union-balance" in READONLY_ENDPOINTS
         from tests.mcpserver._expected_tools import EXPECTED_RESEARCH_TOOLS
         assert "union_balance" in EXPECTED_RESEARCH_TOOLS
+
+
+class TestGateBlindSpotFill:
+    """闸门②盲区消解（阶段四）——union-balance 无数据防御分支补面。"""
+
+    def test_symbol_without_parquet_rejected(self, ub_env, tmp_path):
+        """查询 symbol 无 parquet → 404 SYMBOL_NOT_FOUND（find_parquet
+        未命中——不静默按空区间计；假设须真实在场——存在性 404 前置
+        先于数据面判定）。"""
+        empty_dir = tmp_path / "no_market"
+        empty_dir.mkdir()
+        hid = _register(ub_env["db"])
+        with pytest.raises(ResearchError) as ei:
+            query_union_balance(
+                ub_env["db"], empty_dir, hypothesis_id=hid,
+                symbol="NOSUCH", timeframe="4h")
+        assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"

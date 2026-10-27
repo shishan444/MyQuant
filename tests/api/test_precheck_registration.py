@@ -241,3 +241,30 @@ class TestRegistrationRegression:
         entries = rr.list_research_log(reg_env["db"], hypothesis_id=None)
         assert any(e["entry_type"] == "analysis_ref"
                    for e in entries)
+
+
+class TestStopLossMandatoryRoute:
+    """闸门⑤层级补全（阶段四）：F 组强制判据的真实路由验证——
+    服务层 ResearchError 经 research_error_to_http 透传为结构化 422
+    （test_stop_loss_mandatory 为服务层直调，此处补路由层证据）。"""
+
+    def test_register_without_params_422_route(self, api_client, reg_env):
+        _wire(api_client, reg_env)
+        body = _payload(reg_env["df"])
+        del body["strategy_params"]
+        resp = api_client.post("/api/research/hypotheses", json=body)
+        assert resp.status_code == 422, resp.text
+        outer = resp.json()["detail"]
+        assert outer["code"] == "RESEARCH_PARAM_INVALID"
+        assert outer["detail"]["field"] == "strategy_params"
+
+    def test_register_without_stop_loss_422_route(self, api_client, reg_env):
+        _wire(api_client, reg_env)
+        body = _payload(reg_env["df"])
+        body["strategy_params"] = {"max_hold": 6}  # 有块无 stop_loss
+        resp = api_client.post("/api/research/hypotheses", json=body)
+        assert resp.status_code == 422, resp.text
+        outer = resp.json()["detail"]
+        assert outer["code"] == "RESEARCH_PARAM_INVALID"
+        assert outer["detail"]["field"] == "strategy_params.stop_loss"
+        assert outer["detail"]["legal_range"] == [0.005, 0.2]
