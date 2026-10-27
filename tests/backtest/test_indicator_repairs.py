@@ -154,12 +154,12 @@ class TestDivergenceDependency:
         bull = out["pattern_bullish_divergence"]
         rsi = out["rsi_14"]
         assert bull.sum() > 0, f"背离触发数 {bull.sum()} 应 >0"
-        # 触发质量：触发 bar 三条件成立（当前语义=单点比较）
+        # 触发质量（B4-P2 两臂窗口极值语义）：触发 bar 当根创前 N 根
+        # 最低 AND RSI 未创同期新低（窗口不含当根）；纯背离无门槛
         for i in np.flatnonzero(bull.to_numpy() > 0):
             lb = 20
-            assert df["low"].iloc[i] < df["low"].iloc[i - lb]
-            assert rsi.iloc[i] > rsi.iloc[i - lb]
-            assert rsi.iloc[i] < 40
+            assert df["low"].iloc[i] < df["low"].iloc[i - lb:i].min()
+            assert rsi.iloc[i] > rsi.iloc[i - lb:i].min()
 
     def test_b4_bearish_symmetric(self):
         """B4 对称锚：Bearish 同病同修——同段 bearish 触发解锁
@@ -169,14 +169,14 @@ class TestDivergenceDependency:
         assert "rsi_14" in out
         assert out["pattern_bearish_divergence"].sum() > 0, \
             "Bearish 触发解锁（对称镜像）"
-        # 对称质量：bearish 触发 bar 价格新高+RSI 走低同断言
+        # 对称质量（两臂窗口极值镜像）：当根创前 N 根最高 AND RSI
+        # 未创同期新高（窗口不含当根）
         bear = out["pattern_bearish_divergence"]
         rsi = out["rsi_14"]
         for i in np.flatnonzero(bear.to_numpy() > 0):
             lb = 20
-            assert df["high"].iloc[i] > df["high"].iloc[i - lb]
-            assert rsi.iloc[i] < rsi.iloc[i - lb]
-            assert rsi.iloc[i] > 60
+            assert df["high"].iloc[i] > df["high"].iloc[i - lb:i].max()
+            assert rsi.iloc[i] < rsi.iloc[i - lb:i].max()
 
     def test_b1_silent_zero_path_eliminated(self):
         """B1 静默路径不可达：divergence 直调缺 rsi → 结构化拒绝
@@ -261,3 +261,80 @@ class TestDonchianWindowExcludesCurrent:
         reg = INDICATOR_REGISTRY["Donchian"]
         assert "cross" not in reg.supported_conditions
         assert set(reg.output_fields) == {"upper", "middle", "lower"}
+
+
+class TestDivergenceWindowSemanticsUpgrade:
+    """B4-P2 语义升级锚（indicator-and-action-repair 2.4，卡 B 2.2
+    ——tester 锚 C2-B5）：两臂窗口极值+门槛可选两态。"""
+
+    def test_b5_new_old_semantics_observable_diff(self):
+        """①新旧语义对照可观察：单点比较（旧）与窗口极值（新）在
+        构造样例上触发集不同——窗口极值对「非恰好 20 根前的更高
+        低点」也触发。"""
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        n = 100
+        rng = np.random.default_rng(0)
+        close = 100 + np.cumsum(rng.normal(-0.1, 1.0, n))
+        df = pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        df["rsi_14"] = 50 + rng.normal(0, 15, n)
+        new = detect_bullish_divergence(df)["pattern_bullish_divergence"]
+        # 旧语义（等价复算：单点比较+oversold<40 门槛）
+        old = ((df["low"] < df["low"].shift(20))
+               & (df["rsi_14"] > df["rsi_14"].shift(20))
+               & (df["rsi_14"] < 40)).fillna(0).astype(int)
+        # 可观察差异：两语义触发集不完全重合（窗口极值更敏感）
+        assert not new.equals(old), "新旧语义触发集应有可观察差异"
+
+    def test_b5_threshold_optional_two_states(self):
+        """③门槛两态可区分：缺省不启用=纯背离；显式 oversold=40 过滤
+        （触发数 ≤ 纯背离——过滤是收紧）。"""
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        # seed=1 数据两态可区分（seed=0 触发全落超卖区——不可区分
+        # 形态，实证扫描选定可区分样例）
+        rng = np.random.default_rng(1)
+        n = 400
+        close = 100 + np.cumsum(rng.normal(-0.05, 1.2, n))
+        df = pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": rng.uniform(100, 1000, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        # 直调面需自带 rsi 列（B4-P0 拒绝面——闭包经 _compute_indicator）
+        df = df.copy()
+        df["rsi_14"] = _compute_indicator(
+            df, "RSI", {"period": 14})["rsi_14"]
+        bare = detect_bullish_divergence(df)["pattern_bullish_divergence"]
+        filtered = detect_bullish_divergence(df, oversold=40)[
+            "pattern_bullish_divergence"]
+        assert bare.sum() > filtered.sum() > 0, \
+            f"两态可区分：纯背离 {bare.sum()} > 超卖过滤 {filtered.sum()} > 0"
+        assert bare.sum() >= filtered.sum(), "门槛过滤是收紧方向"
+
+    def test_b5_deep_dive_density_direction(self):
+        """方向性锚：深跌段触发密度高于平静段（背离的经济语义）。"""
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        n = 300
+        rng = np.random.default_rng(3)
+        calm = 100 + np.cumsum(rng.normal(0, 0.2, n))    # 平静段
+        dive = 100 + np.cumsum(rng.normal(-0.8, 1.5, n))  # 深跌段
+        def _count(close):
+            df = pd.DataFrame({
+                "open": close * 0.999, "high": close * 1.005,
+                "low": close * 0.995, "close": close,
+                "volume": np.full(n, 100.0),
+            }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                                   tz="UTC", name="timestamp"))
+            df["rsi_14"] = _compute_indicator(
+                df, "RSI", {"period": 14})["rsi_14"]
+            return detect_bullish_divergence(df)[
+                "pattern_bullish_divergence"].sum()
+        assert _count(dive) > _count(calm), "深跌段背离密度更高"

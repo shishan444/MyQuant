@@ -20,10 +20,16 @@ from core.features.patterns.candlestick import (
 )
 
 
-def detect_bullish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFrame:
-    """Bullish divergence: price makes lower low but RSI makes higher low.
+def detect_bullish_divergence(
+    df: pd.DataFrame, lookback: int = 20,
+    oversold: float | None = None,
+) -> pd.DataFrame:
+    """Bullish divergence: 价格臂当根创前 N 根最低 AND 动量臂 RSI
+    未创同期新低（两臂窗口极值——B4-P2 语义升级）。
 
-    Uses a rolling window to compare local minima of price and RSI.
+    窗口不含当根（价格臂 low[t] < min(low[t-N..t-1])——与 B5 Donchian
+    同哲学）。oversold 门槛为可选过滤（缺省 None=不启用——纯背离
+    语义；研究者要超卖过滤在假设条件另加 RSI 条件，语义分层）。
     """
     result = df.copy()
 
@@ -44,23 +50,32 @@ def detect_bullish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFr
             "（经装载层闭包供给——直调面缺列即拒绝，不静默置 0）",
             detail={"indicator": "BullishDivergence", "dependency": "RSI"})
 
-    price_low = df["low"].rolling(window=lookback, min_periods=lookback).min()
     rsi_val = df[rsi_col]
+    # 两臂窗口极值（B4-P2）：前 N 根窗口（shift(1) 不含当根）
+    prev_low_min = df["low"].shift(1).rolling(
+        window=lookback, min_periods=lookback).min()
+    prev_rsi_min = rsi_val.shift(1).rolling(
+        window=lookback, min_periods=lookback).min()
 
-    price_lower = df["low"] < df["low"].shift(lookback)
-    rsi_higher = rsi_val > rsi_val.shift(lookback)
-    rsi_oversold = rsi_val < 40
+    price_arm = df["low"] < prev_low_min       # 当根创前 N 根最低
+    momentum_arm = rsi_val > prev_rsi_min      # RSI 未创同期新低
 
-    result["pattern_bullish_divergence"] = (
-        price_lower & rsi_higher & rsi_oversold
-    ).fillna(0).astype(int)
+    combined = price_arm & momentum_arm
+    if oversold is not None:                   # 可选超卖过滤（缺省纯背离）
+        combined = combined & (rsi_val < oversold)
+
+    result["pattern_bullish_divergence"] = combined.fillna(0).astype(int)
     return result
 
 
-def detect_bearish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFrame:
-    """Bearish divergence: price makes higher high but RSI makes lower high.
+def detect_bearish_divergence(
+    df: pd.DataFrame, lookback: int = 20,
+    overbought: float | None = None,
+) -> pd.DataFrame:
+    """Bearish divergence: 价格臂当根创前 N 根最高 AND 动量臂 RSI
+    未创同期新高（两臂窗口极值——B4-P2 语义升级，Bullish 镜像）。
 
-    Uses a rolling window to compare local maxima of price and RSI.
+    overbought 门槛为可选过滤（缺省 None=不启用——纯背离语义）。
     """
     result = df.copy()
 
@@ -80,14 +95,20 @@ def detect_bearish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFr
             detail={"indicator": "BearishDivergence", "dependency": "RSI"})
 
     rsi_val = df[rsi_col]
+    # 两臂窗口极值（镜像）：前 N 根窗口（shift(1) 不含当根）
+    prev_high_max = df["high"].shift(1).rolling(
+        window=lookback, min_periods=lookback).max()
+    prev_rsi_max = rsi_val.shift(1).rolling(
+        window=lookback, min_periods=lookback).max()
 
-    price_higher = df["high"] > df["high"].shift(lookback)
-    rsi_lower = rsi_val < rsi_val.shift(lookback)
-    rsi_overbought = rsi_val > 60
+    price_arm = df["high"] > prev_high_max      # 当根创前 N 根最高
+    momentum_arm = rsi_val < prev_rsi_max       # RSI 未创同期新高
 
-    result["pattern_bearish_divergence"] = (
-        price_higher & rsi_lower & rsi_overbought
-    ).fillna(0).astype(int)
+    combined = price_arm & momentum_arm
+    if overbought is not None:                  # 可选超买过滤
+        combined = combined & (rsi_val > overbought)
+
+    result["pattern_bearish_divergence"] = combined.fillna(0).astype(int)
     return result
 
 
