@@ -59,6 +59,12 @@ class IndicatorDef:
     # 的 1440=完整一天），derive_warmup_full 按 base_tf 折算为 bar 并入
     # 主 max；None=不参与该维（floor 200 既有语义不虚增）。
     warmup_minutes: Optional[int] = None
+    # 依赖指标显式声明（indicator-and-action-repair B4-P0，A3 裁决=
+    # registry 依赖字段）：依赖是指标内在属性、registry 是指标元数据
+    # 权威单源；_compute_indicator 装载层按此闭包补齐缺失依赖列
+    # （Bullish/BearishDivergence 声明 ["RSI"]——研究链裸装载直调
+    # 路径的恒零断链由此消灭）
+    depends_on: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +370,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
+        depends_on=["RSI"],
     ),
     "BearishDivergence": IndicatorDef(
         category="pattern",
@@ -372,6 +379,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["eq", "within_bars_after"],
         guard_only=False,
         naming="pattern",
+        depends_on=["RSI"],
     ),
 
     # == structure (1) ==

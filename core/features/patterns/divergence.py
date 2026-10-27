@@ -34,8 +34,15 @@ def detect_bullish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFr
             break
 
     if rsi_col is None:
-        result["pattern_bullish_divergence"] = 0
-        return result
+        # B4-P0：静默置 0 改结构化拒绝（正常链路经 _compute_indicator
+        # 的 depends_on 闭包自动补 RSI——本分支正常不可达，仅防绕过
+        # 装载层的直调；恒 0 列对研究者是「无信号」假象）
+        from core.analysis.errors import ResearchError  # 局部导入（core.data 先例）
+        raise ResearchError(
+            "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+            "依赖指标 RSI 计算失败：BullishDivergence 需 rsi 列"
+            "（经装载层闭包供给——直调面缺列即拒绝，不静默置 0）",
+            detail={"indicator": "BullishDivergence", "dependency": "RSI"})
 
     price_low = df["low"].rolling(window=lookback, min_periods=lookback).min()
     rsi_val = df[rsi_col]
@@ -64,8 +71,13 @@ def detect_bearish_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFr
             break
 
     if rsi_col is None:
-        result["pattern_bearish_divergence"] = 0
-        return result
+        # B4-P0：同 BullishDivergence——静默置 0 改结构化拒绝（对称）
+        from core.analysis.errors import ResearchError
+        raise ResearchError(
+            "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+            "依赖指标 RSI 计算失败：BearishDivergence 需 rsi 列"
+            "（经装载层闭包供给——直调面缺列即拒绝，不静默置 0）",
+            detail={"indicator": "BearishDivergence", "dependency": "RSI"})
 
     rsi_val = df[rsi_col]
 

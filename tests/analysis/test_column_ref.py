@@ -176,7 +176,18 @@ def test_roundtrip_lock_encode_matches_compute_output(sample):
                 produced.add(encode_column_ref(name, dict(params), f))
             except Exception:
                 pass
-        missing = [c for c in cols if c not in produced]
+        # B4-P0 闭包注入：depends_on 依赖列随宿主产出（encode 权威
+        # 只覆盖宿主 output_fields——依赖列非 encode 面，排除后对照）
+        dep_cols = set()
+        for dep in (getattr(defn, "depends_on", None) or []):
+            dep_reg = INDICATOR_REGISTRY.get(dep)
+            if dep_reg:
+                for f in dep_reg.output_fields:
+                    dep_cols.add(encode_column_ref(
+                        dep, {k: p.default
+                              for k, p in dep_reg.params.items()}, f)
+                        if dep_reg.params else f"{f}")
+        missing = [c for c in cols if c not in produced and c not in dep_cols]
         checked += len(cols)
         if missing:
             drift.append((name, sample, sorted(cols), missing))

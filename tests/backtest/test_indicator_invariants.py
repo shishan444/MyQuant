@@ -228,7 +228,8 @@ class TestWarmupBoundary:
         for col, warmup in [
             ("bb_upper_20_2", FIXED_WARMUP_BB),
             ("kc_20_10_2.0_upper", FIXED_WARMUP_KC),
-            ("dc_upper_20", FIXED_WARMUP_DC),
+            # shift(1) 不含当根（B5）：首有效值延后 1 根——warmup+1
+            ("dc_upper_20", FIXED_WARMUP_DC + 1),
             ("sma_20", FIXED_WARMUP_SMA),
         ]:
             assert enhanced[col].iloc[: warmup - 1].isna().all(), col

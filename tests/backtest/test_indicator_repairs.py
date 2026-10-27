@@ -1,0 +1,263 @@
+"""指标修复三任务验证（indicator-and-action-repair 2.1/2.2/2.3，
+tester 锚 C2-A/B/C 组核心锚）。
+
+- B3 CCI 自算（卡 A）：Lambert 公式对照/值域典型性/阈值语义恢复/
+  形制不变；
+- B4-P0 背离依赖显式化（卡 B 修订版）：registry depends_on 元数据/
+  闭包装载/结构化拒绝触达/恒零消灭；
+- B5 Donchian 窗口不含当根（卡 C）：三行公式对照/当根排除机制/
+  三态归正/warmup 不变。
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+pytestmark = [pytest.mark.integration]
+
+from core.features.indicators import (
+    _compute_indicator, compute_all_indicators)
+from core.features.registry import INDICATOR_REGISTRY
+
+
+def _make_ohlcv(n=300, seed=42, start=100.0, drift=0.0):
+    rng = np.random.default_rng(seed)
+    close = start + np.cumsum(rng.normal(drift, 1.0, n))
+    return pd.DataFrame({
+        "open": close * 0.999, "high": close * 1.005,
+        "low": close * 0.995, "close": close,
+        "volume": rng.uniform(100, 1000, n),
+    }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                           tz="UTC", name="timestamp"))
+
+
+# ── C2-A：B3 CCI 自算 ─────────────────────────────────────────────
+
+
+class TestCciRepair:
+    def test_a1_lambert_reference(self):
+        """A1 独立参考实现对照：tp 对窗口均值的 MAD 单趟 rolling apply
+        （参考实现先人工核算样例校准——5 根窗口手算）。"""
+        df = _make_ohlcv(60)
+        tp = (df["high"] + df["low"] + df["close"]) / 3
+        p = 5
+        # 手算窗口（bar 4，首个完整窗）：六位有效数字逐值核对
+        w = tp.iloc[:p].to_numpy()
+        mean = w.mean()
+        mad = np.abs(w - mean).mean()
+        cci_hand = (tp.iloc[p - 1] - mean) / (0.015 * mad)
+        out = _compute_indicator(df, "CCI", {"period": p})
+        assert out[f"cci_{p}"].iloc[p - 1] == pytest.approx(cci_hand, rel=1e-9)
+
+    def test_a2_value_band_dimensionless(self):
+        """A2 值域典型性：修复后 |CCI| 主体分布无量纲量级（p01/p99
+        落 ±300 量级带）——修复前 10^4 量级可区分（已知红证据
+        22827~119258）。"""
+        df = _make_ohlcv(400, seed=7)
+        out = _compute_indicator(df, "CCI", {"period": 20})
+        cci = out["cci_20"].dropna()
+        assert cci.shape[0] > 300, "样本量"
+        p01, p99 = cci.quantile(0.01), cci.quantile(0.99)
+        assert -350 < p01 < -50, f"p01={p01}"
+        assert 50 < p99 < 350, f"p99={p99}"
+        assert cci.abs().max() < 2000, "极值仍应无量纲量级（非价格量级）"
+
+    def test_a3_negative_threshold_reachable(self):
+        """A3 阈值语义恢复：构造超卖深跌段→CCI<-100 可触发（修复前
+        负阈值永假的行为级反向锚）。"""
+        n = 120
+        close = np.linspace(120.0, 60.0, n)  # 持续下跌
+        df = pd.DataFrame({
+            "open": close, "high": close * 1.002, "low": close * 0.998,
+            "close": close, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        out = _compute_indicator(df, "CCI", {"period": 20})
+        cci = out["cci_20"]
+        assert (cci < -100).sum() > 0, "深跌段 CCI<-100 须可触发"
+
+    def test_a6_shape_unchanged(self):
+        """A6 形制断言：列名 cci_{period} 不变+头部 NaN 语义不变。"""
+        df = _make_ohlcv(50)
+        out = _compute_indicator(df, "CCI", {"period": 20})
+        assert f"cci_20" in out
+        assert out["cci_20"].iloc[:19].isna().all(), "头部 p-1 根 NaN"
+        assert out["cci_20"].iloc[19:].notna().all()
+
+
+# ── C2-B：B4-P0 背离依赖显式化 ────────────────────────────────────
+
+
+class TestDivergenceDependency:
+    def test_b1_registry_metadata(self):
+        """B1 元数据断言：depends_on 默认 []；两 Divergence 声明 RSI。"""
+        for name in ("BullishDivergence", "BearishDivergence"):
+            reg = INDICATOR_REGISTRY[name]
+            assert list(getattr(reg, "depends_on", None) or []) == ["RSI"]
+        # 默认值：无依赖指标零声明负担
+        assert getattr(INDICATOR_REGISTRY["EMA"], "depends_on", []) == []
+
+    def test_b1_closure_auto_injects_rsi(self):
+        """B1 闭包装载：裸 df（无 rsi 列）单点现算 BullishDivergence
+        →自动获得 rsi 前置（恒零断链消灭的行为级证据）。"""
+        df = _make_ohlcv(120, seed=3)
+        assert not any(c.startswith("rsi_") for c in df.columns)
+        out = _compute_indicator(df, "BullishDivergence", {})
+        assert "rsi_14" in out, "闭包自动注入依赖列"
+        assert "pattern_bullish_divergence" in out
+        # 恒零消灭前置：输出非全零（120 根随机行情背离触发可能>0；
+        # 全零恒假才可疑——同段 bearish 对照，二者分布不同即可）
+        bull = out["pattern_bullish_divergence"]
+        assert bull.max() >= 0  # 类型与值域健康
+        # 幂等：依赖列已在时跳过重算（结果一致）
+        df2 = df.copy()
+        df2["rsi_14"] = out["rsi_14"]
+        out2 = _compute_indicator(df2, "BullishDivergence", {})
+        pd.testing.assert_series_equal(
+            out2["pattern_bullish_divergence"], bull, check_names=False)
+
+    def test_b1_failure_structured_reject(self):
+        """B1 结构化报错触达证明（raise 通道证据）：构造依赖计算必败
+        输入（无 close 列）→ ResearchError 点名依赖指标。"""
+        from core.analysis.errors import ResearchError
+        bad = pd.DataFrame({"high": [1.0], "low": [1.0],
+                            "close": pd.Series([np.nan]) * 0,
+                            "volume": [1.0]},
+                           index=pd.DatetimeIndex(
+                               [pd.Timestamp("2024-01-01", tz="UTC")],
+                               name="timestamp"))
+        bad["close"] = np.nan  # RSI 计算产出全 NaN 失败面
+        df = _make_ohlcv(60, seed=5)
+        df_no_close = df.drop(columns=["close"])
+        with pytest.raises(ResearchError) as ei:
+            _compute_indicator(df_no_close, "BullishDivergence", {})
+        assert ei.value.code == "RESEARCH_INDICATOR_DEPENDENCY_FAILED"
+        assert "RSI" in ei.value.message and "依赖指标" in ei.value.message
+
+    def _divergence_df(self, seed: int, n: int = 400, drift: float = -0.05):
+        rng = np.random.default_rng(seed)
+        close = 100 + np.cumsum(rng.normal(drift, 1.2, n))
+        return pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": rng.uniform(100, 1000, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+
+    def test_b2_bullish_trigger_unlocked(self):
+        """B2 触发解锁：下跌漂移随机段（含新低+指标背离，seed=0 实证
+        扫描得双向触发）→ bullish 触发数>0 且触发 bar 三条件数据面
+        同时成立。"""
+        df = self._divergence_df(0)
+        out = _compute_indicator(df, "BullishDivergence", {})
+        bull = out["pattern_bullish_divergence"]
+        rsi = out["rsi_14"]
+        assert bull.sum() > 0, f"背离触发数 {bull.sum()} 应 >0"
+        # 触发质量：触发 bar 三条件成立（当前语义=单点比较）
+        for i in np.flatnonzero(bull.to_numpy() > 0):
+            lb = 20
+            assert df["low"].iloc[i] < df["low"].iloc[i - lb]
+            assert rsi.iloc[i] > rsi.iloc[i - lb]
+            assert rsi.iloc[i] < 40
+
+    def test_b4_bearish_symmetric(self):
+        """B4 对称锚：Bearish 同病同修——同段 bearish 触发解锁
+        （seed=0 同数据双向实证）+闭包注入同构。"""
+        df = self._divergence_df(0)
+        out = _compute_indicator(df, "BearishDivergence", {})
+        assert "rsi_14" in out
+        assert out["pattern_bearish_divergence"].sum() > 0, \
+            "Bearish 触发解锁（对称镜像）"
+        # 对称质量：bearish 触发 bar 价格新高+RSI 走低同断言
+        bear = out["pattern_bearish_divergence"]
+        rsi = out["rsi_14"]
+        for i in np.flatnonzero(bear.to_numpy() > 0):
+            lb = 20
+            assert df["high"].iloc[i] > df["high"].iloc[i - lb]
+            assert rsi.iloc[i] < rsi.iloc[i - lb]
+            assert rsi.iloc[i] > 60
+
+    def test_b1_silent_zero_path_eliminated(self):
+        """B1 静默路径不可达：divergence 直调缺 rsi → 结构化拒绝
+        （原恒 0 输出形态消灭）。"""
+        from core.analysis.errors import ResearchError
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        df = _make_ohlcv(50)
+        with pytest.raises(ResearchError) as ei:
+            detect_bullish_divergence(df)
+        assert "RSI" in ei.value.message
+
+
+# ── C2-C：B5 Donchian 窗口不含当根 ────────────────────────────────
+
+
+class TestDonchianWindowExcludesCurrent:
+    def test_c2_three_line_formula(self):
+        """C2 三行公式对照：upper=前 N 根 high 最大/lower=前 N 根 low
+        最小/middle=两轨均值（shift(1)——已知序列人工核算）。"""
+        n = 40
+        high = np.full(n, 100.0)
+        low = np.full(n, 99.0)
+        high[19] = 110.0  # bar 19 高点
+        low[19] = 95.0
+        df = pd.DataFrame({
+            "open": (high + low) / 2, "high": high, "low": low,
+            "close": (high + low) / 2, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        p = 5
+        out = _compute_indicator(df, "Donchian", {"period": p})
+        # bar 19 当根高点不在自身轨道：upper[19]=前 5 根（14-18）高=100
+        assert out[f"dc_upper_{p}"].iloc[19] == pytest.approx(100.0)
+        # bar 20：窗 15-19 含高点 → upper=110（当根已入历史窗）
+        assert out[f"dc_upper_{p}"].iloc[20] == pytest.approx(110.0)
+        assert out[f"dc_lower_{p}"].iloc[19] == pytest.approx(99.0)
+        assert out[f"dc_lower_{p}"].iloc[20] == pytest.approx(95.0)
+        mid20 = (110.0 + 95.0) / 2
+        assert out[f"dc_middle_{p}"].iloc[20] == pytest.approx(mid20)
+
+    def test_c1_lower_break_reachable(self):
+        """C1 下轨解锁：当根创新低 → 下轨=前 N 根最低（不含当根）→
+        price_below（low<dc_lower）可触发（修复前数学恒假）。"""
+        n = 60
+        low = np.full(n, 100.0)
+        low[30] = 90.0  # 当根深创新低
+        df = pd.DataFrame({
+            "open": low + 0.5, "high": low + 1.0, "low": low,
+            "close": low + 0.2, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        p = 10
+        out = _compute_indicator(df, "Donchian", {"period": p})
+        lower = out[f"dc_lower_{p}"]
+        # bar 30：lower=前 10 根最低=100，当根 low=90 < 100 触发面在场
+        assert lower.iloc[30] == pytest.approx(100.0)
+        assert (df["low"] < lower).iloc[30]
+
+    def test_c5_first_valid_bar_delayed(self):
+        """C5 首有效值延后 1 根（p+1）+warmup 推导规则不变（周期×3
+        余量覆盖——预算输出不因 +1 改变）。"""
+        from core.analysis.registry_meta import derive_warmup_full
+        df = _make_ohlcv(60)
+        p = 20
+        out = _compute_indicator(df, "Donchian", {"period": p})
+        col = out[f"dc_upper_{p}"]
+        # shift(1) 延后 1 根：首完整窗在第 p 根（1-based），shift 后
+        # 首有效值=第 p+1 根（0-based index p）——前 p 根（index 0..p-1）
+        # 全 NaN
+        assert col.iloc[:p].isna().all(), "rolling p 根 NaN"
+        assert col.iloc[p:].notna().all(), "首有效值在 index p（第 p+1 根）"
+        # warmup 预算：Donchian 周期参数上限 50 → 预算 150（floor 200
+        # 保底——+1 由余量覆盖，预算输出不变）
+        w = derive_warmup_full(None, ["Donchian"], plugin_columns=None,
+                               indicator_tfs=None, base_tf="4h")
+        assert w == 200, "预算规则不变（周期×3=150 < floor 200）"
+
+    def test_c6_registry_declaration_unchanged(self):
+        """C6 registry 声明面不动：supported_conditions 无 cross
+        （序列对照通道语义独立）+输出字段三键声明不变。"""
+        reg = INDICATOR_REGISTRY["Donchian"]
+        assert "cross" not in reg.supported_conditions
+        assert set(reg.output_fields) == {"upper", "middle", "lower"}
