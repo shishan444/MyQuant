@@ -330,8 +330,6 @@ def _combine(
             for b in bools[1:]:
                 combined = combined & b
             result[r_key] = combined
-    if not plugin_bools and not role_bools:
-        return result
     if not plugin_bools:
         # 仅非 entry 桶：entries 原样（base 通道），桶结果进通道合并
         return result
@@ -366,14 +364,18 @@ def _combine(
             total += b.astype(float).values * w
             w_sum += w
         vote = pd.Series(total / max(w_sum, 1e-9), index=idx) >= threshold
-        return {"entries": entries & vote}
+        # review2 CARD-01：组合结果回写 result 后单点 return——新建
+        # 字典会丢前段已积累的非 entry 桶（混合形态出场/分批静默失效）
+        result["entries"] = entries & vote
+        return result
 
     if mode == "gate":
         # 门控：全部 gate 源为真时放行基础 entries
         gate_mask = pd.Series(True, index=idx)
         for b in plugin_bools.values():
             gate_mask &= b
-        return {"entries": entries & gate_mask}
+        result["entries"] = entries & gate_mask
+        return result
 
     if mode == "logic":
         op = comp.get("op", "AND").upper()
@@ -383,8 +385,10 @@ def _combine(
             plugin_any |= b
             plugin_all &= b
         if op == "OR":
-            return {"entries": entries | plugin_any}
-        return {"entries": entries & plugin_all}
+            result["entries"] = entries | plugin_any
+            return result
+        result["entries"] = entries & plugin_all
+        return result
 
     raise ResearchError(
         "RESEARCH_COMPOSITION_INVALID",
