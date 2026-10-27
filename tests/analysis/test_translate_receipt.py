@@ -2,9 +2,14 @@
 
 规则②：影响研究判断的身份信息（direction/max_hold/reuse_note）在
 翻译回执回显——四返回点统一形制（禁只测 happy path）。
+
+research-execution-config-alignment 1.1 增：TestRiskGenesDisclosure
+（C1-A 组——执行配置全量披露：values 库内行回读同源+default_filled
+声明块差集，新登记/存量回放双路径拆分+钻石锚）。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +19,7 @@ pytestmark = [pytest.mark.integration]
 from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.hypothesis_to_strategy import translate_hypothesis
 from core.persistence.db_ext import init_db_ext
+from core.persistence.repository import research as rr
 
 _CONDS = {
     "when_conditions": [
@@ -203,3 +209,142 @@ class TestIntentionalBoundaryNote:
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
         assert "有意设计边界" in ei.value.detail.get("note", ""), \
             "detail.note 缺有意边界标注"
+
+
+class TestRiskGenesDisclosure:
+    """C1-A 组（卡 A 披露契约）：单一组装双消费的 translate 侧面。
+
+    values=落库 dna_json.risk_genes 原样回显（禁两处组装——同源断言）；
+    default_filled=库内实际键集−声明块键集（固定序）；新登记/存量回放
+    双路径各自断言（A2 拆分——数据面可反推声明路径）。
+    """
+
+    def _row_risk_genes(self, db, strategy_id):
+        from core.persistence.repository.strategy import get_strategy
+        return json.loads(
+            get_strategy(db, strategy_id)["dna_json"])["risk_genes"]
+
+    def test_a1_values_mirror_stored_row(self, db):
+        """A1：新建分支 values==落库行 risk_genes 逐键相等；键集=7
+        恒写键+已声明条件键，不多不少（to_dict 形制断言）。"""
+        hid = _hyp(db, strategy_params={"stop_loss": 0.08})
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        assert disc["values"] == self._row_risk_genes(db, out["strategy_id"])
+        assert set(disc["values"]) == {
+            "stop_loss", "take_profit", "position_size", "leverage",
+            "direction", "sl_mode", "atr_period"}
+        assert disc["values"]["stop_loss"] == 0.08
+
+    def test_a2_new_registration_path(self, db):
+        """A2 新登记路径：显式声明 stop_loss → 不入 default_filled 且
+        values 回显声明值；risk_origin=declared（CARD-03 回归④）。"""
+        hid = _hyp(db, strategy_params={"stop_loss": 0.08})
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        assert "stop_loss" not in disc["default_filled"]
+        assert disc["values"]["stop_loss"] == 0.08
+        assert out["risk_genes"] == "declared"
+
+    def test_a2_legacy_replay_path(self, db):
+        """A2 存量回放路径：strategy_params NULL（直插存量形）→
+        stop_loss ∈ default_filled 且值==平台默认 0.05；
+        risk_origin=platform_default（D6 存量界线——翻译不拦）。"""
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id="hyp_legacy_a2",
+            conditions=json.dumps(_CONDS), conditions_hash="ch_a2_legacy",
+            statement="s", data_ranges=json.dumps(_RANGES),
+            ranges_hash="rh_a2_legacy")
+        out = translate_hypothesis(db, hypothesis_id="hyp_legacy_a2")
+        disc = out["risk_genes_disclosure"]
+        assert "stop_loss" in disc["default_filled"]
+        assert disc["values"]["stop_loss"] == 0.05
+        assert out["risk_genes"] == "platform_default"
+
+    def test_default_filled_fixed_order(self, db):
+        """default_filled 按固定序输出（结构断言——序对照常量不硬编码
+        字面量；default_filled ⊆ 固定序∩库内键集）。"""
+        from core.analysis.hypothesis_to_strategy import (
+            _RISK_GENES_DISCLOSURE_ORDER as ORDER)
+        hid = _hyp(db, strategy_params={"stop_loss": 0.08, "max_hold": 6})
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        expected = [k for k in ORDER
+                    if k in disc["values"]
+                    and k not in {"stop_loss", "max_hold"}]
+        assert disc["default_filled"] == expected, \
+            "default_filled 须按固定序过滤输出"
+
+    def test_a4_idempotent_replay_isomorphic(self, db):
+        """A4：同假设重复 translate → 披露逐键同构；幂等分支 values==
+        行回读（库内权威事实，非当前构造对象）。"""
+        hid = _hyp(db, strategy_params={"stop_loss": 0.08})
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        replay = translate_hypothesis(db, hypothesis_id=hid)
+        assert replay["duplicated"] is True
+        assert replay["risk_genes_disclosure"] == \
+            first["risk_genes_disclosure"]
+        assert replay["risk_genes_disclosure"]["values"] == \
+            self._row_risk_genes(db, replay["strategy_id"])
+
+    def test_a5_declared_all_reachable_keys(self, db):
+        """A5 集成态：声明块覆盖全部可声明键（11 键——direction 与
+        atr_period 不在声明块白名单、分批三键须宿主组不纳入）→
+        default_filled 恰为 ["direction", "atr_period"]（唯二残留）。"""
+        full = {"stop_loss": 0.05, "take_profit": 0.10, "sl_mode": "pct",
+                "position_size": 0.3, "leverage": 2,
+                "max_hold": 6, "time_exit_utc": 600,
+                "position_mode": "fixed", "risk_fraction": 0.02,
+                "initial_fraction": 0.5, "max_position_loss": 5000.0}
+        hid = _hyp(db, conds=dict(_CONDS, direction="short"),
+                   strategy_params=full)
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        assert disc["default_filled"] == ["direction", "atr_period"], \
+            "全键显式下残留应恰为 direction+atr_period（白名单无此二键）"
+        assert disc["values"]["direction"] == "short"
+
+    def test_a5_unit_sixteen_declared_empty(self):
+        """A5 单元边界：声明块覆盖库内全部键（直插形——登记面不可达）
+        → default_filled==[]；解析失败 → values={} 且 default_filled=[]
+        （不炸回执）。"""
+        from core.analysis.hypothesis_to_strategy import (
+            _risk_genes_disclosure)
+        dna_rg = {"stop_loss": 0.05, "take_profit": 0.1,
+                  "position_size": 0.3, "leverage": 2, "direction": "long",
+                  "sl_mode": "pct", "atr_period": 14}
+        disc = _risk_genes_disclosure(
+            json.dumps({"risk_genes": dna_rg}), dict(dna_rg))
+        assert disc["default_filled"] == []
+        assert _risk_genes_disclosure(
+            "{not json", {"stop_loss": 0.08}) == \
+            {"values": {}, "default_filled": []}
+
+    def test_a7_diamond_same_dna_two_declared_faces(self, db):
+        """A7 钻石锚：显式声明恰等默认值（A）与无声明存量（B）→ 同
+        risk_genes 值 → 分流同一策略实体；披露各按声明面（A 无标注
+        declared/B 含标注 platform_default）——把 A 的显式声明错标
+        默认填充即红。"""
+        hid_a = _hyp(db, strategy_params={"stop_loss": 0.05})
+        out_a = translate_hypothesis(db, hypothesis_id=hid_a)
+        assert out_a["risk_genes"] == "declared"
+        assert "stop_loss" not in \
+            out_a["risk_genes_disclosure"]["default_filled"]
+        assert out_a["risk_genes_disclosure"]["values"]["stop_loss"] == 0.05
+
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id="hyp_b_a7",
+            conditions=json.dumps(_CONDS), conditions_hash="ch_a7_b",
+            statement="s", data_ranges=json.dumps(_RANGES),
+            ranges_hash="rh_a7_b")
+        out_b = translate_hypothesis(db, hypothesis_id="hyp_b_a7")
+        assert out_b["strategy_id"] == out_a["strategy_id"], \
+            "同基因值应分流同一 draft 实体"
+        assert out_b["duplicated"] is True
+        assert out_b["risk_genes"] == "platform_default"
+        disc_b = out_b["risk_genes_disclosure"]
+        assert "stop_loss" in disc_b["default_filled"]
+        assert disc_b["values"]["stop_loss"] == 0.05
+        # 3a 稳定锚：同一假设重复挂载 → 披露逐键稳定
+        out_b2 = translate_hypothesis(db, hypothesis_id="hyp_b_a7")
+        assert out_b2["risk_genes_disclosure"] == disc_b

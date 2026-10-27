@@ -925,7 +925,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         出场 UTC 分钟|int|null）、position_mode（声明的仓位模式
         fixed|risk_budget，缺省 fixed）、risk_fraction（声明的风险
         预算比例|float|null）、reuse_note（same_dna_existing=true
-        时附同基因策略复用三要素说明，其余 null）。多周期边界：when 与
+        时附同基因策略复用三要素说明，其余 null）。回执另附
+        risk_genes_disclosure（执行配置全量披露）：values=落库
+        risk_genes 逐键回显、default_filled=值取平台默认的键名清单
+        （声明块差集——研究者可判显式声明与静默默认）。多周期边界：when 与
         加仓触发组条件支持顶层 timeframe 键（值须合法周期且不低于策略
         基准周期——低于基准拒，等于基准与缺省同语义归一）；then/减仓/
         抑制组携带 timeframe 拒绝（跨周期前向/归属语义未定义）；插件列
