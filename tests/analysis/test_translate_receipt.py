@@ -354,6 +354,35 @@ class TestRiskGenesDisclosure:
         out_b2 = translate_hypothesis(db, hypothesis_id="hyp_b_a7")
         assert out_b2["risk_genes_disclosure"] == disc_b
 
+    def test_corrupted_block_null_disclosure(self, db):
+        """CARD-04 特征锚（坏数据态——从实现行为记录防倒退）：存量行
+        strategy_params 坏 JSON/非 dict 真值（登记面 F1 不可达，仅
+        库内坏数据形态）→ translate 200 不炸；产物走平台默认构造
+        （origin=platform_default）；default_filled=null（无从判定≠
+        全部默认——不虚标全集）。对照：合法列 NULL→全集标注（D6
+        界线，test_a2_legacy 承载）。"""
+        import sqlite3
+        bad_raw = ["{not json", "[1, 2]", "123"]  # 坏JSON/list/数字真值
+        for i, raw in enumerate(bad_raw):
+            hid = f"hyp_corrupt_{i}"
+            rr.save_hypothesis_with_log(
+                db, hypothesis_id=hid, conditions=json.dumps(_CONDS),
+                conditions_hash=f"ch_{hid}", statement="s",
+                data_ranges=json.dumps(_RANGES),
+                ranges_hash=f"rh_{hid}")
+            conn = sqlite3.connect(db)
+            with conn:
+                conn.execute(
+                    "UPDATE research_hypotheses SET strategy_params=? "
+                    "WHERE hypothesis_id=?", (raw, hid))
+            conn.close()
+            out = translate_hypothesis(db, hypothesis_id=hid)
+            assert out["risk_genes"] == "platform_default", raw
+            disc = out["risk_genes_disclosure"]
+            assert disc["default_filled"] is None, \
+                f"坏块 {raw!r} 须 null（无从判定不虚标全集）"
+            assert disc["values"], "values 披露仍完整"
+
     def test_active_diversion_disclosure_reflects_existing_row(self, db):
         """spec Scenario「分流命中披露为既有产物事实」（tester 缺口
         补齐）：翻译命中库内同基因型既有 active 策略（same_dna_existing

@@ -168,6 +168,62 @@ class TestAdhocNullDefaultFilled:
         assert disc["values"]["stop_loss"] == 0.08
 
 
+class TestCorruptedDeclarationStates:
+    """CARD-04 特征锚（坏数据态——从实现行为记录防倒退）：披露归因
+    三态收敛——正常块→差集；列 NULL/空→全集（D6 界线）；坏 JSON/
+    非 dict 真值/假设行缺失→null（无从判定≠全部默认，不虚标全集）。
+    行缺失态在 API 面被 404 前置拦截（validation_service:509），
+    _risk_disclosure 的该分支为纵深防御层——单元直调锚定。"""
+
+    def _dna_stub(self, stop_loss=0.05):
+        from core.strategy.dna import RiskGenes
+        rg = RiskGenes(stop_loss=stop_loss).to_dict()
+
+        class _D:
+            @staticmethod
+            def to_json():
+                return json.dumps({"risk_genes": rg})
+        return _D()
+
+    def test_row_missing_null_not_full_set(self, env):
+        """行缺失（hypothesis_id 指向不存在行）→ null——原全集虚标
+        收正的特征锚（修复前 declared=None 落全集标注）。"""
+        from core.analysis.validation_service import _risk_disclosure
+        disc = _risk_disclosure(env["db"], self._dna_stub(), "hyp_ghost")
+        assert disc["default_filled"] is None, \
+            "行缺失无从判定 → null（不虚标全集）"
+        assert disc["values"], "values 仍完整"
+
+    def test_corrupted_block_null(self, env):
+        """声明块坏 JSON/非 dict 真值 → null（与正常块差集、合法
+        NULL 全集三态可区分——同 null 值异因，对照断言防过收敛）。"""
+        import sqlite3
+        from core.analysis.validation_service import _risk_disclosure
+        from core.analysis.hypothesis_service import register_hypothesis
+        hid = register_hypothesis(
+            env["db"], conditions=CONDITIONS, statement="s",
+            data_ranges=_RANGES, strategy_params={"stop_loss": 0.08},
+        )["hypothesis_id"]
+        conn = sqlite3.connect(env["db"])
+        with conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET strategy_params=? "
+                "WHERE hypothesis_id=?", ("[1, 2]", hid))
+        conn.close()
+        disc = _risk_disclosure(env["db"], self._dna_stub(0.08), hid)
+        assert disc["default_filled"] is None, "坏块 → null"
+        # 对照：同假设列 NULL（合法无声明）→ 全集差集标注非 null
+        conn = sqlite3.connect(env["db"])
+        with conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET strategy_params=NULL "
+                "WHERE hypothesis_id=?", (hid,))
+        conn.close()
+        disc2 = _risk_disclosure(env["db"], self._dna_stub(0.08), hid)
+        assert isinstance(disc2["default_filled"], list) \
+            and disc2["default_filled"], "合法 NULL → 全集（D6 保留）"
+
+
 class TestDirectBuildMaterializedDefault:
     """A8 直建路径披露两要素（卡 A 入口分诊③——tester 缺口补齐）。
 
