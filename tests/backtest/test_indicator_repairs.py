@@ -378,6 +378,32 @@ class TestDivergenceWindowSemanticsUpgrade:
     """B4-P2 语义升级锚（indicator-and-action-repair 2.4，卡 B 2.2
     ——tester 锚 C2-B5）：两臂窗口极值+门槛可选两态。"""
 
+    def test_b3_deterministic_known_divergence(self):
+        """B3 人工核算样例（确定样例法）：构造已知背离序列——价格
+        当根创前 20 根最低且 RSI 未创同期新低——精确断言恰在该 bar
+        触发（排除随机性，触发位置逐 bar 锁定）。"""
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        n = 60
+        close = np.full(n, 100.0)
+        close[30] = 99.0    # 前段低点（进入历史窗）
+        close[31:50] = 100.0
+        close[50] = 98.5    # 当根创新低（< min(low[30..49])=99）
+        close[51:] = 100.0
+        df = pd.DataFrame({
+            "open": close, "high": close + 0.3, "low": close - 0.3,
+            "close": close, "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        rsi = np.full(n, 50.0)
+        rsi[30] = 30.0      # 历史低 RSI（动量臂对照基准）
+        rsi[50] = 35.0      # 当根 RSI 高于历史窗最低（未创新低）
+        df["rsi_14"] = rsi
+        bull = detect_bullish_divergence(df)["pattern_bullish_divergence"]
+        assert int(bull.sum()) == 1, "恰一处背离触发"
+        assert bool(bull.iloc[50]), "触发位置=bar 50（确定样例）"
+        assert not bool(bull.iloc[30]), "历史低点非当根创低不触发"
+
     def test_b5_new_old_semantics_observable_diff(self):
         """①新旧语义对照可观察：单点比较（旧）与窗口极值（新）在
         构造样例上触发集不同——窗口极值对「非恰好 20 根前的更高
