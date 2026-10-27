@@ -342,9 +342,13 @@ class TestGenerateRandomCondition:
     """Test the unified generate_random_condition function."""
 
     def test_generates_basic_condition(self):
+        """产出合法条件：type ∈ RSI supported_conditions（画像跟随
+        lt/gt 或自由探索全声明集——原断言「in 四类」与自由探索语义
+        不符，靠随机运气绿，修正为声明域断言）。"""
+        from core.features.registry import INDICATOR_REGISTRY
         cond = generate_random_condition("RSI")
         assert "type" in cond
-        assert cond["type"] in ("lt", "gt", "le", "ge")
+        assert cond["type"] in INDICATOR_REGISTRY["RSI"].supported_conditions
 
     def test_generates_threshold_for_comparison(self):
         cond = generate_random_condition("RSI")

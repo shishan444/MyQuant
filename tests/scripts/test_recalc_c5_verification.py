@@ -470,6 +470,17 @@ self, backup, bt_rows_now):
     def test_generation_snapshot_byte_identical(self, manifest):
         """①类快照只对照不回写：涉事 17067 行 best_dna/population_json
         逐字节不变（sha256 vs pre_c5）。"""
+        # 清除后形制（用户裁决二 2026-10-27：进化产物四对象彻底清除
+        # 含 generation_snapshot 全表——本断言的对照行集已随裁决消亡，
+        # 清除前核验留档见 works/研究档案/进化清除对账-2026-10-27.json；
+        # 沿同文件历史策略清除先例 skip 不假绿）
+        import sqlite3 as _sq
+        _c = _sq.connect(DB)
+        _n = _c.execute("SELECT count(*) FROM generation_snapshot").fetchone()[0]
+        _c.close()
+        if _n == 0:
+            pytest.skip("generation_snapshot 已按用户裁决二全表清除"
+                        "——清除前字节核验已留档")
         if not PRE_DB.exists():
             pytest.skip("quant.db.pre_c5_backup 不在")
         conn, pre = _ro(DB), _ro(PRE_DB)
