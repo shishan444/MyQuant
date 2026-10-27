@@ -677,6 +677,16 @@ def random_window_test(
     window_bars/gene_tf/need_hint——统计无意义窗诚实拒绝；fail-loud
     为第二道兜底；见 _reject_short_window_for_gene_tfs）。
     """
+    # hypothesis 存在性前置（CARD-05 三入口对称）：None=adhoc 无谱系
+    # 通道保留不拒；沿 _hypothesis_precheck 404 形制仅查存在性（终态
+    # 409 是否同构涉研究协议语义不扩）；前置先于幂等查询——伪造/失效
+    # id 不再直写 validation_records.hypothesis_id 列
+    if hypothesis_id is not None:
+        hyp = rr.get_hypothesis(db_path, hypothesis_id)
+        if hyp is None:
+            raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
+                                f"假设不存在: {hypothesis_id}", status=404)
+
     # threshold_profile 按名解析（结构校验前置；每窗 judge 消费）
     threshold_profile = _resolve_threshold_profile(threshold_profile)
 
