@@ -122,16 +122,23 @@ def _extract_outputs(
     return outputs
 
 
-def _ensure_dependencies(df: pd.DataFrame, name: str) -> tuple:
+def _ensure_dependencies(df: pd.DataFrame, name: str, visited: tuple = ()) -> tuple:
     """depends_on 闭包装载（B4-P0 依赖显式化，design 卡 B 2.1）。
 
     计算宿主指标前按 registry depends_on 声明检查 df 缺失依赖列→
     递归 _compute_indicator 按该依赖默认参数现算注入**局部副本**
-    （输入 df 不被修改）；幂等：依赖列已在 df 时跳过重算；依赖
-    计算失败→结构化拒绝点名依赖（「依赖指标 RSI 计算失败」）。
-    研究链五入口（indicator_query/case_inspection/plugin_service/
-    warmup_loader/validation_service 的裸装载+单独现算）与
-    compute_all_indicators 批量路径全经此单点受益。
+    （输入 df 不被修改）；幂等：依赖产出列族已在 df 时跳过重算
+    （review2 CARD-02：registry output_fields 是前缀类别名（RSI→
+    "rsi"），实际产出列带参数后缀（rsi_14）——按列族判定，裸名
+    in 检查恒 False 恒重算的形制错位在此收口）；依赖计算失败→
+    结构化拒绝点名依赖（「依赖指标 RSI 计算失败」）。研究链五入口
+    （indicator_query/case_inspection/plugin_service/warmup_loader/
+    validation_service 的裸装载+单独现算）与 compute_all_indicators
+    批量路径全经此单点受益。
+
+    visited（S-3 顺带）：装载归链（祖先指标序，不含本指标）——链上
+    已见本指标即结构化拒绝循环依赖声明（替代千层递归撞限后错误
+    归因指错对象）；缺省空集，外部调用零感知。
 
     Returns:
         (work_df, injected_cols)：work_df=补齐依赖列后的副本（依赖
@@ -141,10 +148,17 @@ def _ensure_dependencies(df: pd.DataFrame, name: str) -> tuple:
 
     Raises:
         ResearchError: RESEARCH_INDICATOR_DEPENDENCY_FAILED（依赖
-            计算失败——静默恒 0 路径消灭的失败可见面）。
+            计算失败——静默恒 0 路径消灭的失败可见面；循环依赖
+            声明同码拒绝，detail 带完整链）。
     """
     from core.analysis.errors import ResearchError  # 局部导入——core.data 先例（模块级不反向依赖 core/analysis）
 
+    if name in visited:
+        chain = "→".join((*visited, name))
+        raise ResearchError(
+            "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+            f"循环依赖声明: {chain}",
+            detail={"indicator": name, "chain": [*visited, name]})
     reg = INDICATOR_REGISTRY.get(name)
     deps = list(getattr(reg, "depends_on", None) or [])
     if not deps:
@@ -157,7 +171,13 @@ def _ensure_dependencies(df: pd.DataFrame, name: str) -> tuple:
                 "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
                 f"指标 {name} 声明的依赖 {dep} 不在注册表",
                 detail={"indicator": name, "dependency": dep})
-        if not all(c in df.columns for c in dep_reg.output_fields):
+        # 产出列族在场判定：output_field 裸名相等（无参数指标）或
+        # f"_{参数后缀}" 前缀命中（参数化指标）——与 divergence
+        # 消费端前缀取列语义自洽；嵌套前缀形（macd_signal_* 对
+        # "signal"）不在场时保守判缺重算，行为无害
+        if not all(
+                any(c == f or c.startswith(f + "_") for c in df.columns)
+                for f in dep_reg.output_fields):
             missing.append(dep)
     if not missing:
         return df, {}
@@ -166,7 +186,9 @@ def _ensure_dependencies(df: pd.DataFrame, name: str) -> tuple:
         dep_reg = INDICATOR_REGISTRY[dep]
         dep_params = {k: p.default for k, p in dep_reg.params.items()}
         try:
-            extra.update(_compute_indicator(df, dep, dep_params))
+            extra.update(
+                _compute_indicator(df, dep, dep_params,
+                                   visited=(*visited, name)))
         except ResearchError:
             raise
         except Exception as exc:
@@ -177,7 +199,9 @@ def _ensure_dependencies(df: pd.DataFrame, name: str) -> tuple:
     return df.assign(**extra), extra
 
 
-def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> Dict[str, pd.Series]:
+def _compute_indicator(
+        df: pd.DataFrame, name: str, params: Dict[str, Any],
+        visited: tuple = ()) -> Dict[str, pd.Series]:
     """Compute a single indicator and return new columns as a dict.
 
     Does NOT modify the input DataFrame. Returns only the newly computed
@@ -185,9 +209,10 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
 
     depends_on 闭包（B4-P0）：宿主计算前经 _ensure_dependencies 补齐
     缺失依赖列——注入的依赖列并入返回值（入口消费面全量并回 df；
-    幂等：依赖列已在时零开销直返）。
+    幂等：依赖列已在时零开销直返）。visited=装载归链（S-3：互递归
+    传递，循环依赖结构化拒绝；缺省空集，外部调用零感知）。
     """
-    df, _injected = _ensure_dependencies(df, name)
+    df, _injected = _ensure_dependencies(df, name, visited)
     new_cols: Dict[str, pd.Series] = dict(_injected)
 
     if name == "EMA":
