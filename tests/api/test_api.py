@@ -493,6 +493,9 @@ class TestStrategyBacktest:
         mock_result.equity_curve = MagicMock()
         mock_result.trades_df = None
         mock_result.total_funding_cost = 0.0
+        # 资金费披露五键（卡 C 3.4）：显式配 None，防 MagicMock 属性
+        # 被 pydantic dict 校验拒收
+        mock_result.funding = None
         mock_result.liquidated = False
         # 基准对照五键（improve-backtest-benchmark-disclosure 2.2）：
         # 显式配 dict，防 MagicMock 属性被 __float__ 静默强转成假值

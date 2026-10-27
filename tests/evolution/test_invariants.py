@@ -125,17 +125,27 @@ class TestLeverageInvariants:
             "Equity curves must differ between 1x and 3x leverage"
 
     def test_leverage_1x_no_funding_cost(self):
-        """1x leverage should always have zero funding cost."""
+        """（卡 C 翻转）1x 杠杆解耦计费：无费率供给零费（本例裸 df）；
+        有费率列时 1x 同样计费（正锚见 test_funding_edge_cases
+        test_no_funding_with_1x_leverage——同名义敞口费用相等）。"""
         df = _make_trending_df(n=100)
         sig_set = _force_entry_exit(df, entry_bar=3, exit_bar=60)
 
         engine = make_engine()
         result = engine.run(make_dna(leverage=1, stop_loss=0.0, take_profit=0.0), df, signal_set=sig_set)
         assert result.total_funding_cost == 0.0
+        assert result.funding["coverage"]["status"] == "not_loaded"
 
     def test_leverage_higher_means_higher_funding(self):
-        """Higher leverage should produce higher funding costs."""
+        """（卡 C 适配）更高杠杆=更大名义敞口=更高资金费——费率经
+        funding_rate 时序供给（注入常数列；裸 df 零费的负向锚见
+        test_funding_perpetual C0）。"""
         df = _make_trending_df(n=100, end_price=110)
+        # 永续口径：费率列+全覆盖 attrs（合成环境对齐装载链语义）
+        df["funding_rate"] = 0.001
+        df.attrs["derivatives_coverage"] = {"funding": {
+            "available_start": df.index[0].isoformat(),
+            "available_end": df.index[-1].isoformat()}}
         sig_set = _force_entry_exit(df, entry_bar=3, exit_bar=60)
 
         engine = make_engine()

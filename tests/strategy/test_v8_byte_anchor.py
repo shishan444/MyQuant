@@ -2,9 +2,15 @@
 
 基线=main（2026-10-16 b576e53，双静默面收口前）生成的固定样本
 metrics 全量 JSON sha256。固定样本：4 组（seed 42/7 × long/short
-× leverage 1/2，n=600 合成数据 make_enhanced_df）。本分支实测与
-main 逐字节相等（f39b89ca…）——执行器收口不触达合法 DNA 路径的
-直接证据。快照漂移=行为回归信号，须先查明再更新。
+× leverage 1/2，n=600 合成数据 make_enhanced_df）。快照漂移=行为
+回归信号，须先查明再更新。
+
+基线沿革：
+- f39b89ca…（原基线）→ ae069171…：research-execution-config-
+  alignment 卡 C 资金费永续化——合成数据无 funding_rate 列，
+  lev2 组旧模型恒定正费扣减被时序供给零费取代（裸数据零费为
+  新合法语义）；lev1 组旧零费不变。属预期行为变更（proposal
+  影响面：B2 修复后回测指标跨版本不可比），随变更更新基线。
 """
 from __future__ import annotations
 
@@ -15,7 +21,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-_BASELINE_SHA = "f39b89caa101a5f4d739d6de6d831689eea65eaf9b429a8f61d07c18cc82f9e7"
+_BASELINE_SHA = "ae069171f22c84eb50400a614401a4209e5fdf5201ed0603839f5ca048510151"
 
 
 def _run_snapshot() -> str:

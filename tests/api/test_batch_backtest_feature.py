@@ -41,6 +41,7 @@ def _fake_engine_result(
         total_return=total_return,
         liquidated=False,
         total_funding_cost=0.0,
+        funding=None,
         trades_df=None,
         metrics_dict={
             "sharpe_ratio": 0.1, "max_drawdown": 0.01,
@@ -255,6 +256,7 @@ class TestProcessorStep:
             total_trades=3,
             win_rate=0.5,
             total_return=0.01, liquidated=False, total_funding_cost=0.0,
+            funding=None,
             trades_df=None,
             metrics_dict={
                 "sharpe_ratio": 0.1, "max_drawdown": 0.01,

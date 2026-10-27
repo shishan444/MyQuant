@@ -125,34 +125,35 @@ class TestValidatorLeverageDirection:
 # ---------------------------------------------------------------------------
 
 class TestFundingCostCalculation:
-    def test_no_cost_for_1x(self):
-        curve = pd.Series([100000, 101000, 102000])
-        adjusted, cost = _apply_funding_costs(curve, 1, "4h")
-        assert cost == 0.0
+    """（卡 C 改写）直调事后层新签名：费率经 rates 显式供给（时序
+    化——_funding_cost_rate 旧折算退役）；1x 计费=杠杆解耦性质。"""
+
+    def test_no_cost_without_rates_supply(self):
+        # 无时序供给（裸调用不传 rates）→ 零费直返（1x 与任意档同）
+        curve = pd.Series([100000.0, 101000.0, 102000.0])
+        adjusted, paid, received = _apply_funding_costs(curve, "4h")
+        assert paid == 0.0 and received == 0.0
         pd.testing.assert_series_equal(adjusted, curve)
 
-    def test_4h_2x_funding_cost(self):
+    def test_4h_rate_proration_exact(self):
         curve = pd.Series([100000.0, 101000.0, 102000.0])
-        adjusted, cost = _apply_funding_costs(curve, 2, "4h")
-        # 4h: periods_per_bar = 4/8 = 0.5 (proportional, not ceil)
-        # borrowed_ratio = 1/2 = 0.5
-        # cost_rate = 0.001 * 0.5 * 0.5 = 0.00025
-        assert cost > 0
-        # Bar 1 cost: 100000 * 0.00025 = 25
-        # Bar 2 cost: (101000 - 25) * 0.00025 ≈ 25.244
-        # total ≈ 50.244
-        expected_bar1 = 100000 * 0.00025
+        # 4h 单 bar 费率=0.001×4/8=0.0005（比例折算，无借贷折减）
+        rates = np.array([0.0005, 0.0005, 0.0005])
+        adjusted, paid, received = _apply_funding_costs(
+            curve, "4h", rates=rates)
+        # 无 trades_df=legacy 全程持仓；bar1 基数=100000 → cost=50
+        expected_bar1 = 100000 * 0.0005
         assert abs(adjusted.iloc[1] - (101000 - expected_bar1)) < 0.01
-        assert cost > expected_bar1
+        assert paid > expected_bar1
 
-    def test_1d_3x_funding_cost(self):
+    def test_1d_rate_proration_exact(self):
         curve = pd.Series([100000.0, 99000.0])
-        adjusted, cost = _apply_funding_costs(curve, 3, "1d")
-        # 1d: hours_per_bar = 24, periods_per_bar = ceil(24/8) = 3
-        # borrowed_ratio = 2/3
-        # cost_rate = 0.001 * 3 * 2/3 = 0.002
-        expected_cost = 100000 * 0.002
-        assert abs(cost - expected_cost) < 0.01
+        # 1d 单 bar 费率=0.001×24/8=0.003
+        rates = np.array([0.003, 0.003])
+        adjusted, paid, received = _apply_funding_costs(
+            curve, "1d", rates=rates)
+        expected_cost = 100000 * 0.003
+        assert abs(paid - expected_cost) < 0.01
 
 class TestLiquidationCheck:
     def test_no_liquidation_for_1x(self):

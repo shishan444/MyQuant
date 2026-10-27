@@ -228,6 +228,13 @@ class TestA43FundingSymmetry:
         # 断言语义不变）
         bt_df = enhanced[enhanced.index
                          >= pd.Timestamp("2024-04-04T00:00:00Z")]
+        # 永续口径（卡 C）：费率经 funding_rate 时序供给——合成环境
+        # 注入常数正费率列+全覆盖 attrs（对齐装载链 ffill 语义）
+        bt_df = bt_df.copy()
+        bt_df["funding_rate"] = 0.001
+        bt_df.attrs["derivatives_coverage"] = {"funding": {
+            "available_start": bt_df.index[0].isoformat(),
+            "available_end": bt_df.index[-1].isoformat()}}
         out = {}
         for key, st in (("fund_s", "st_fund_s"), ("fund_l", "st_fund_l"),
                         ("lev1", "st_lev1")):
@@ -235,25 +242,33 @@ class TestA43FundingSymmetry:
             result = BacktestEngine().run(
                 dna, bt_df, dfs_by_timeframe={"4h": bt_df}, signal_set=None)
             out[key] = (float(result.total_funding_cost),
-                        int(result.total_trades))
+                        int(result.total_trades),
+                        float(result.funding["total_cost"]),
+                        float(result.funding["total_received"]))
         return out
 
     def test_funding_positive_and_direction_symmetric(self, engine_funding):
-        """固定正费率与方向无关：无 SL 双方向同持仓窗口（各 1 笔持有
-        到段末）金额同号同量级（D-4 修复卡的回归锚——修复前 short 为
-        负收入即符号翻转+35% 量级差；修复后残余差异<1%，来自空头
-        cash 结构下逐 bar 名义值的路径差异，非方向性计费）。"""
-        (f_s, n_s), (f_l, n_l) = (engine_funding["fund_s"],
-                                   engine_funding["fund_l"])
+        """正费率多空互付（卡 C 性质三）：无 SL 双方向同持仓窗口（各 1
+        笔持有到段末）——多头付出/空头收入（净支出为负），同名义敞口
+        两侧金额同量级（互付对称；残余差异<1% 来自空头 cash 结构下逐
+        bar 名义值的路径差异，非方向性计费）。D-4 锚演进注记：旧口径
+        「双向同号正支出」已被永续多空互付语义取代。"""
+        (f_s, n_s, _, r_s), (f_l, n_l, p_l, _) = (
+            engine_funding["fund_s"], engine_funding["fund_l"])
         assert n_s == n_l == 1, "同持仓窗口前提（各 1 笔持有到段末）"
-        assert f_s > 0, \
-            "leverage=2 下 short 路径 funding 为零/为负 → 缺陷（D-4）"
-        assert f_l > 0
-        assert abs(f_s - f_l) < 0.01 * max(1.0, abs(f_l))
+        assert f_l > 0 and p_l > 0, "多头正费率=付出"
+        assert f_s < 0 and r_s > 0, \
+            "空头正费率=收入（净支出为负——互付语义非缺陷）"
+        assert abs(r_s - p_l) < 0.01 * max(1.0, p_l), \
+            "互付对称：空头收入额≈多头付出额（同名义敞口）"
 
     def test_leverage_one_zero_funding_legal_boundary(self, engine_funding):
-        """leverage=1 无借入直返零费——引擎既有合法边界，非缺陷。"""
-        assert engine_funding["lev1"][0] == 0.0
+        """（翻转）leverage=1 同样计费——计费基数=名义敞口（杠杆解耦，
+        卡 C 性质一）；旧「无借入直返零费」边界随借贷模型退役。lev1
+        对照为 short draft：正费率=收入（净支出为负），断言取费额
+        非零（计费在场）。"""
+        f1, _, _, r1 = engine_funding["lev1"]
+        assert r1 > 0, "1x 计费在场（名义敞口口径，short 收入侧）"
 
 
 class TestA44BenchmarkSemantics:

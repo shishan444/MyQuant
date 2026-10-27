@@ -239,7 +239,7 @@ def reference_backtest(
         liquidated = bool((unfunded < maintenance).any())
     pv_levered = _levered_position_values(ohlcv, trades, raw_eq, leverage)
     result, total_funding = _apply_funding(
-        unfunded, pv_levered, ohlcv.index, trades, leverage, timeframe,
+        unfunded, pv_levered, ohlcv, trades, timeframe,
     )
 
     return RefResult(
@@ -299,20 +299,28 @@ def _levered_position_values(ohlcv: pd.DataFrame, trades: list[RefTrade],
     return pv * leverage
 
 
-def _apply_funding(equity: np.ndarray, pv: np.ndarray | None, index: pd.DatetimeIndex,
-                   trades: list[RefTrade], leverage: float, timeframe: str,
+def _apply_funding(equity: np.ndarray, pv: np.ndarray | None,
+                   ohlcv: pd.DataFrame, trades: list[RefTrade],
+                   timeframe: str,
                    ) -> tuple[np.ndarray, float]:
-    """契约 8b：持仓区间每 bar 扣 pv[i-1]*rate；rate=0.001*(h/8)*((L-1)/L)。"""
-    if leverage <= 1 or pv is None or not trades:
+    """契约 8b（永续口径对齐——research-execution-config-alignment 卡 C）：
+    费率经 funding_rate 时序供给（列值 NaN→0 ×hours/8 折算；无列=零费
+    直返——无时序供给不静默按常数估费）；计费基数=|pv| 名义敞口（1x
+    同样计费、无借贷比例折减），费率符号进乘积×trade 方向互付（多头
+    正费付出/空头收入）。段外置零归引擎装载层（attrs 权威源），参考
+    对拍面无列恒零费与引擎 not_loaded 态一致。"""
+    if pv is None or not trades or "funding_rate" not in ohlcv.columns:
         return equity, 0.0
     hours = _HOURS_PER_BAR.get(timeframe, 4)
-    cost_rate = 0.001 * (hours / 8.0) * ((leverage - 1) / leverage)
+    rates = ohlcv["funding_rate"].to_numpy(dtype=np.float64).copy()
+    rates[np.isnan(rates)] = 0.0
+    rates = rates * (hours / 8.0)
     adjusted = equity.copy()
     total = 0.0
     for t in trades:
         for i in range(max(t.entry_idx + 1, 1), t.exit_idx + 1):
-            if i < len(adjusted) and pv[i - 1] > 0:
-                cost = pv[i - 1] * cost_rate
+            if i < len(adjusted) and rates[i] != 0.0 and pv[i - 1] != 0:
+                cost = abs(pv[i - 1]) * rates[i] * t.direction
                 total += cost
                 adjusted[i] -= cost
     return adjusted, total

@@ -338,6 +338,10 @@ class BacktestResponse(BaseModel):
     benchmark_return: Optional[float] = None
     excess_return: Optional[float] = None
     alpha: Optional[float] = None
+    # 永续资金费披露五键（research-execution-config-alignment 卡 C 3.4）：
+    # total_funding_cost 为净支出（付出−收入），付出/收入分列与缺失区间
+    # 披露见本键——None=未携带（旧存库行/早退路径）
+    funding: Optional[Dict[str, Any]] = None
     market_annual_return: Optional[float] = None
     profit_factor: Optional[float] = None
 
@@ -465,6 +469,8 @@ class BatchBacktestResultItem(BaseModel):
     qualified: bool = False
     liquidated: bool = False
     total_funding_cost: float = 0.0
+    # 永续资金费披露五键（卡 C 3.4——同 BacktestResponse 形制）
+    funding: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
