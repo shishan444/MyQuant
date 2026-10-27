@@ -1053,3 +1053,68 @@ class TestNeededTfsSingleSource:
         out = compute_needed_tfs([d1, d2], "4h")
         assert len(calls) == 2, "逐 DNA 全部经单源收集器"
         assert out == {"1d", "4h"}, "聚合语义保持（任一 DNA 需装载即装载）"
+
+
+class TestActionSetSingleSource:
+    """动作集单一权威源断言网（indicator-and-action-repair B6 卡 D
+    4.3，F1 五表三层断言）——任一侧漂移即红。
+
+    五表：①registry supported_conditions ②executor
+    EVALUABLE_CONDITION_TYPES ③翻译 _ACTION_MAP ④统计面
+    action_map（STATISTICS_ACTION_KEYS 事实源）⑤case_inspection
+    _SUPPORTED_ACTIONS；单源=RESEARCH_EXPRESSIBLE_ACTIONS（登记面
+    与翻译面同源引用）。
+    """
+
+    def test_expressible_subset_evaluable(self):
+        """①可表达 ⊆ 执行合法（可表达必可执行——按翻译产物 type
+        投影：breakout/breakdown 为翻译层别名，产物 type 归一为
+        cross_above/cross_below 后须全部在执行合法集）。"""
+        from core.analysis.hypothesis_service import (
+            RESEARCH_EXPRESSIBLE_ACTIONS)
+        _ALIAS = {"breakout": "cross_above", "breakdown": "cross_below"}
+        projected = {_ALIAS.get(a, a) for a in RESEARCH_EXPRESSIBLE_ACTIONS}
+        assert projected <= EVALUABLE_CONDITION_TYPES
+
+    def test_action_map_subset_expressible(self):
+        """②翻译 _ACTION_MAP ⊆ 可表达集（2.5 时点 10 ⊆ 14；2.7 扩
+        至 13 后单源恰等断言生效——本断言恒成立的超集关系保持）。"""
+        from core.analysis.hypothesis_service import (
+            RESEARCH_EXPRESSIBLE_ACTIONS)
+        from core.analysis.hypothesis_to_strategy import _ACTION_MAP
+        assert frozenset(_ACTION_MAP) <= RESEARCH_EXPRESSIBLE_ACTIONS
+
+    def test_registry_union_subset_evaluable(self):
+        """③registry 并集 ⊆ 执行合法（S6b 主断言为更强双向相等——
+        本条为引用性关系断言，防 S6b 语义变更时静默丢失包含关系）。"""
+        from core.features.registry import INDICATOR_REGISTRY
+        union = set()
+        for reg in INDICATOR_REGISTRY.values():
+            union.update(reg.supported_conditions)
+        assert union <= EVALUABLE_CONDITION_TYPES
+
+    def test_statistics_keys_equal_union(self):
+        """④统计面键集 == 可表达 ∪ STATISTICS_ONLY（恰等——差集
+        显式化非静默；统计面新增动作不同步两常量即红）。"""
+        from core.analysis.hypothesis_service import (
+            RESEARCH_EXPRESSIBLE_ACTIONS, STATISTICS_ONLY_ACTIONS)
+        from core.validation.engine import STATISTICS_ACTION_KEYS
+        assert STATISTICS_ACTION_KEYS == (
+            RESEARCH_EXPRESSIBLE_ACTIONS | STATISTICS_ONLY_ACTIONS)
+
+    def test_case_inspection_subset_statistics(self):
+        """⑤case_inspection 通道集 ⊆ 统计面键集（可达子集声明）。"""
+        from core.analysis.case_inspection import _SUPPORTED_ACTIONS
+        from core.validation.engine import STATISTICS_ACTION_KEYS
+        assert _SUPPORTED_ACTIONS <= STATISTICS_ACTION_KEYS
+
+    def test_history_heterogeneous_sets_exempt(self):
+        """F2 历史异集豁免面固化：两处 ConditionType 枚举（dna.py
+        15 成员无 eq/schemas.py 8 成员）不参与断言——豁免纪律锚
+        （防后续维护者误拉平两侧枚举触发假红）。"""
+        import core.strategy.dna as dna_mod
+        ctype = getattr(dna_mod, "ConditionType", None)
+        if ctype is not None:  # 枚举在场即固化「无 eq」现状
+            members = {m.value for m in ctype}
+            assert "eq" not in members, \
+                "dna.ConditionType 历史异集（无 eq）——拉平须经裁决"

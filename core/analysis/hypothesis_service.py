@@ -99,6 +99,37 @@ _STRATEGY_PARAM_KEYS = frozenset({
     "initial_fraction", "max_position_loss",
 })
 
+# ── 动作集单一权威源（indicator-and-action-repair B6 卡 D 4.1）──
+# 研究可表达动作集：登记面 action 域校验（B6-行为 2.6）与翻译层
+# （hypothesis_to_strategy import 引用——新依赖无环：翻译层已在
+# 登记层下游）同源引用。14 键=翻译 _ACTION_MAP 现有 10 键 +
+# within_bars_after（时序触发，登记平铺键形制，翻译走专门分支
+# 不经 _ACTION_MAP）+ R1 三键（eq/touch_bounce/role_reversal——
+# 2.7 翻译映射落地后 _ACTION_MAP 扩至 13 键，单源恰等断言
+# RESEARCH_EXPRESSIBLE_ACTIONS − {within_bars_after} ==
+# frozenset(_ACTION_MAP) 届时生效——扩动作漏改必红）。
+# 值域按 registry supported_conditions 语义：仅含两侧已支持或本
+# change 落地的动作。
+RESEARCH_EXPRESSIBLE_ACTIONS: frozenset = frozenset({
+    "gt", "lt", "ge", "le",
+    "cross_above", "cross_below", "breakout", "breakdown",
+    "price_above", "price_below",
+    "within_bars_after",
+    "eq", "touch_bounce", "role_reversal",
+})
+
+# 统计面专属动作集（卡 D 4.2 差集显式声明）：统计可算但翻译不可
+# 表达——登记面即拒（2.6 落地），研究者动作不再浪费性消耗到
+# translate 才断链。值=统计面 action_map 键集 − 可表达集（恰等
+# 断言锚在 tests/strategy——统计键集运行时漂移即红）
+STATISTICS_ONLY_ACTIONS: frozenset = frozenset({
+    "touch", "spike", "shrink",
+    "divergence_top", "divergence_bottom",
+    "consecutive_up", "consecutive_down",
+    "lookback_all", "wick_touch",
+    "cross_above_series", "cross_below_series", "lookback_any",
+})
+
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
 _SCALING_GROUP_KEYS = ("exit_partial_conditions", "add_trigger_conditions",
                        "add_suppress_conditions")
