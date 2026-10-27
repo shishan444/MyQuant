@@ -89,3 +89,120 @@ class TestRegistrationGate:
         动作的语义归属将歧义）。"""
         assert RESEARCH_EXPRESSIBLE_ACTIONS & STATISTICS_ONLY_ACTIONS \
             == frozenset()
+
+
+class TestR1ThreeActionTranslation:
+    """R1 三键翻译映射端到端（indicator-and-action-repair 2.7，卡 E
+    ——tester 锚 C2-D1/D2/D3+F1 单源恰等）。
+
+    eq 进 _ACTION_MAP 常规；touch_bounce/role_reversal 专门分支参数
+    透传（不写键=产物不含缺省参数键——执行层缺省兜底）。
+    """
+
+    _BB = {"indicator": "BB", "params": {"period": 20, "std": 2},
+           "field": "lower"}
+    _BULL = {"indicator": "BullishDivergence", "params": {}}
+
+    def _tr(self, db, when_cond):
+        hid = register_hypothesis(
+            db,
+            conditions={"when_conditions": [when_cond],
+                        "then_conditions": [
+                            {"subject": self._BULL, "action": "gt",
+                             "target": 60}]},
+            statement="r1", data_ranges=_RANGES,
+            strategy_params=dict(_SP))["hypothesis_id"]
+        return translate_hypothesis(db, hypothesis_id=hid)
+
+    def _gene_condition(self, db, when_cond):
+        from core.persistence.repository.strategy import get_strategy
+        t = self._tr(db, when_cond)
+        dna = get_strategy(db, t["strategy_id"])["dna_json"]
+        genes = __import__("json").loads(dna)["signal_genes"]
+        entries = [g for g in genes if g["role"] == "entry_trigger"]
+        return entries[0]["condition"]
+
+    def test_d1_eq_full_chain(self, db):
+        """D1 端到端主锚：pattern 列 eq 1 入场假设→登记→translate→
+        产物条件形制匹配 executor 求值分支（threshold float 化）。"""
+        cond = self._gene_condition(
+            db, {"subject": self._BULL, "action": "eq", "target": 1})
+        assert cond == {"type": "eq", "threshold": 1.0}
+
+    def test_d2_eq_default_threshold(self, db):
+        """D2 eq threshold 两态：显式携带物化 / executor 缺省=1 兜底
+        （登记 target 兼任 threshold——不携带键的缺省形由求值层兜底，
+        产物层无缺省键形制）。"""
+        cond = self._gene_condition(
+            db, {"subject": self._BULL, "action": "eq", "target": 0})
+        assert cond == {"type": "eq", "threshold": 0.0}
+
+    def test_d3_touch_bounce_two_states(self, db):
+        """D3 touch_bounce 两态：不携带参数→产物恰 {"type"}（执行层
+        缺省不物化）；携带 direction/proximity_pct→恰这些键透传。"""
+        cond_bare = self._gene_condition(
+            db, {"subject": self._BB, "action": "touch_bounce",
+                 "target": 0})
+        assert cond_bare == {"type": "touch_bounce"}, \
+            "不携带键=产物不含缺省参数键"
+        cond_full = self._gene_condition(
+            db, {"subject": self._BB, "action": "touch_bounce",
+                 "target": 0, "direction": "resistance",
+                 "proximity_pct": 0.02})
+        assert cond_full == {"type": "touch_bounce",
+                             "direction": "resistance",
+                             "proximity_pct": 0.02}, "全量透传不丢键"
+
+    def test_d3_role_reversal_two_states(self, db):
+        """D3 role_reversal 两态：缺省态恰 {"type"}；role/lookback
+        显式态恰这些键。"""
+        cond_bare = self._gene_condition(
+            db, {"subject": self._BB, "action": "role_reversal",
+                 "target": 0})
+        assert cond_bare == {"type": "role_reversal"}
+        cond_full = self._gene_condition(
+            db, {"subject": self._BB, "action": "role_reversal",
+                 "target": 0, "role": "support", "lookback": 20})
+        assert cond_full == {"type": "role_reversal", "role": "support",
+                             "lookback": 20}
+
+    # 专门分支键（design 卡 E：多参透传不走 _ACTION_MAP 单参
+    # lambda——沿 within_bars_after 先例；恰等面=map ∪ 分支键集）
+    _SPECIAL_BRANCH_ACTIONS = frozenset(
+        {"within_bars_after", "touch_bounce", "role_reversal"})
+
+    def test_f1_single_source_exact_equality(self):
+        """⑥单源恰等断言落地（2.7 生效）：RESEARCH_EXPRESSIBLE_
+        ACTIONS == frozenset(_ACTION_MAP) ∪ 专门分支键集（14=11+3
+        ——design 卡 E：touch_bounce/role_reversal/wthin_bars_after
+        走专门分支不进 map；扩动作漏改任一侧即红）。"""
+        from core.analysis.hypothesis_to_strategy import _ACTION_MAP
+        assert RESEARCH_EXPRESSIBLE_ACTIONS == (
+            frozenset(_ACTION_MAP) | self._SPECIAL_BRANCH_ACTIONS)
+
+    def test_d1_backtest_evaluable(self, tmp_path):
+        """D1 四层贯通末段：产物基因经 executor 求值可触发（eq 条件
+        在布尔 pattern 列上真实回测求值——合成数据冒烟）。"""
+        import json as _json
+        import numpy as np
+        import pandas as pd
+        from core.features.indicators import compute_all_indicators
+        from core.strategy.executor import dna_to_signal_set
+        from tests.helpers.data_factory import make_ohlcv
+
+        hid_cond = {"subject": self._BULL, "action": "eq", "target": 1}
+        db = tmp_path / "q2.db"
+        init_db_ext(db)
+        from core.analysis.executor import ensure_research_tables
+        ensure_research_tables(db)
+        t = self._tr(db, hid_cond)
+        from core.persistence.repository.strategy import get_strategy
+        from core.strategy.dna import StrategyDNA
+        dna = StrategyDNA.from_json(
+            get_strategy(db, t["strategy_id"])["dna_json"])
+        df = compute_all_indicators(make_ohlcv(300, seed=1))
+        sig = dna_to_signal_set(dna, df)
+        # 求值面健康：entries 布尔序列产出（触发与否由数据决定，
+        # 冒烟断言=类型与索引对齐非崩溃）
+        assert sig.entries.dtype == bool
+        assert len(sig.entries) == len(df)

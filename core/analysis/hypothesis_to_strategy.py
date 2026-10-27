@@ -65,6 +65,10 @@ _ACTION_MAP = {
     # target 为占位不进产物（与统计面占位契约对齐）、threshold 不参与。
     "price_above": lambda t: {"type": "price_above"},
     "price_below": lambda t: {"type": "price_below"},
+    # 布尔 pattern 列相等（indicator-and-action-repair R1 卡 E，A1）：
+    # 布尔 pattern 列（BullishDivergence 等）eq 1——threshold 缺省=1
+    # 由 executor 求值层兜底（:133-135），登记显式携带则物化
+    "eq": lambda t: {"type": "eq", "threshold": float(t)},
 }
 
 # target 占位直通动作集：这两键的比较主体固定 close，target（数值/
@@ -779,6 +783,31 @@ def _translate_conditions(
                     f"{label}[{i}] subject 非法: {exc.message}",
                     detail={"condition": cond, "code": exc.code,
                             **exc.detail}) from exc
+            if action in ("touch_bounce", "role_reversal"):
+                # R1 翻译专门分支（indicator-and-action-repair 卡 E）：
+                # 参数透传形制（direction/proximity_pct、role/lookback）
+                # ——lambda 单参收不下，沿 within_bars_after 先例。
+                # 不写键即用 executor 求值层缺省（A2：direction=
+                # support/proximity_pct=0.01/role=resistance/lookback=
+                # 10——翻译层不物化执行层缺省值，产物只含登记携带键）；
+                # condition_kernel 全量透传（D-r2 登记侧 extra 键不丢）。
+                if action == "touch_bounce":
+                    condition = {"type": "touch_bounce", **{
+                        k: cond[k] for k in
+                        ("direction", "proximity_pct") if k in cond}}
+                else:
+                    condition = {"type": "role_reversal", **{
+                        k: cond[k] for k in
+                        ("role", "lookback") if k in cond}}
+                genes.append(SignalGene(
+                    indicator=cdef.indicator,
+                    params=dict(cdef.params),
+                    role=role,
+                    field_name=cdef.field,
+                    condition=condition,
+                    timeframe=cond_tf,
+                ))
+                continue
             if action == "within_bars_after":
                 # R4 翻译专门分支（fix-mtf-execution-consistency）：
                 # _ACTION_MAP 形制不满足（lambda 只收 target 单参）——
