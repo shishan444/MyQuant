@@ -225,21 +225,25 @@ def _risk_disclosure(db_path: Path, dna, hypothesis_id: Optional[str]) -> dict:
 
     values=验证对象 dna 序列化后的 risk_genes（与 translate 回执走
     同一 _risk_genes_disclosure 组装——键集一致性由共用单点结构保证）；
-    default_filled=同 parent 假设声明块差集；hypothesis_id 缺失
-    （手工/进化产物验证）→ default_filled=null——非声明路径无从判定
-    声明面，values 仍完整（「值披露无死角，来源标注分层」）。
+    default_filled 三态（CARD-04 披露归因收敛）：parent 假设声明块
+    差集（列 NULL/空=合法存量无声明→全集标注，D6 界线保留）；null=
+    无从判定（hypothesis_id 缺失的手工/进化产物验证，或假设行缺失/
+    声明块坏 JSON/非 dict 真值的损坏态——无从判定≠全部默认，不虚标
+    全集），values 仍完整（「值披露无死角，来源标注分层」）。
     """
-    from core.analysis.hypothesis_to_strategy import _risk_genes_disclosure
+    from core.analysis.hypothesis_to_strategy import (
+        _load_declared_params, _risk_genes_disclosure)
     declared = None
+    undeterminable = False
     if hypothesis_id:
         hyp = rr.get_hypothesis(db_path, hypothesis_id)
-        if hyp is not None:
-            raw = hyp.get("strategy_params")
-            try:
-                declared = json.loads(raw) if raw else None
-            except (json.JSONDecodeError, TypeError):
-                declared = None
-    disclosure = _risk_genes_disclosure(dna.to_json(), declared)
+        if hyp is None:
+            undeterminable = True  # 行缺失（库内删除）=无从判定
+        else:
+            declared, undeterminable = _load_declared_params(
+                hyp.get("strategy_params"))
+    disclosure = _risk_genes_disclosure(
+        dna.to_json(), declared, undeterminable=undeterminable)
     if not hypothesis_id:
         disclosure["default_filled"] = None
     return disclosure
