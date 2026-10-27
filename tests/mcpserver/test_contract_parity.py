@@ -308,7 +308,7 @@ class TestSchemaParity:
 
         from mcpserver import tools as tools_mod
         src = inspect.getsource(tools_mod)
-        for token in ("strategy_params", "幂等四分支", "终态后带新声明重登记",
+        for token in ("strategy_params", "幂等两分支", "终态后带新声明重登记",
                       "exit_partial_conditions", "ADD_INHIBIT",
                       "分批条件组", "exit_fraction", "生效杠杆"):
             assert token in src, f"工具文档缺要素: {token}"
