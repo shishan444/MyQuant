@@ -559,6 +559,53 @@ def register_hypothesis(
                                      "STATISTICS_ONLY_ACTIONS 声明"
                                      f"（{sorted(STATISTICS_ONLY_ACTIONS)}）",
                     })
+            # R1 支撑/阻力动作参数键值域（review2 CARD-03 副修）：
+            # 值域权威校验落服务层登记链（非翻译层）——登记自动执行
+            # 的预检统计面先于 translate 消费同一条件（engine 预检
+            # 取键同款 else 兜底，坏值落库会产出翻转的预检警告误导
+            # 研究者）；不写键=求值层缺省（合法，不校验）；键在错
+            # 动作上携带不校值（翻译层按动作取键，不消费即不生效）
+            _action = c.get("action")
+            _base = f"{group}_conditions[{i}]"
+            if _action == "touch_bounce":
+                _dir = c.get("direction")
+                if _dir is not None and _dir not in ("support", "resistance"):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.direction 须为 support/resistance: {_dir!r}",
+                        detail={"field": f"{_base}.direction",
+                                "action": _action, "value": _dir,
+                                "legal_range": ["support", "resistance"]})
+                _prox = c.get("proximity_pct")
+                if _prox is not None and (
+                        not isinstance(_prox, (int, float))
+                        or isinstance(_prox, bool) or _prox <= 0):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.proximity_pct 须为 >0 数值: {_prox!r}",
+                        detail={"field": f"{_base}.proximity_pct",
+                                "action": _action, "value": str(_prox),
+                                "legal_range": ">0 数值（近线距离比例，"
+                                               "如 0.02=2%）"})
+            elif _action == "role_reversal":
+                _role = c.get("role")
+                if _role is not None and _role not in ("support", "resistance"):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.role 须为 support/resistance: {_role!r}",
+                        detail={"field": f"{_base}.role",
+                                "action": _action, "value": _role,
+                                "legal_range": ["support", "resistance"]})
+                _lb = c.get("lookback")
+                if _lb is not None and (
+                        not isinstance(_lb, int) or isinstance(_lb, bool)
+                        or _lb < 1):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.lookback 须为 >=1 整数: {_lb!r}",
+                        detail={"field": f"{_base}.lookback",
+                                "action": _action, "value": str(_lb),
+                                "legal_range": ">=1 整数（回看根数）"})
 
     # 2. 区间（0.2.14：单周期收紧——全部条目同 symbol 同 timeframe，
     #    该周期即基准周期；timeframe 键的方向校验以它为基准）

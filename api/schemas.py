@@ -808,6 +808,17 @@ class ConditionItem(BaseModel):
     # ACTIONS 同源）；内层阈值由 target 兼任（沿 lookback 族先例）
     window: Optional[int] = None
     inner_action: Optional[str] = None
+    # R1 支撑/阻力动作族可选键（indicator-and-action-repair 卡 E；
+    # review2 CARD-03 补 schema 同步——R4 先例同款遗漏收口）：
+    # touch_bounce 携带 direction（支撑/阻力侧）与 proximity_pct
+    # （近线距离比例）；role_reversal 携带 role 与 lookback（回看
+    # 根数）——不写键即用求值层缺省（direction=support/
+    # proximity_pct=0.01/role=resistance/lookback=10，翻译产物只含
+    # 登记携带键）；值域权威校验在服务层登记链（B6 段）
+    direction: Optional[str] = None
+    proximity_pct: Optional[float] = None
+    role: Optional[str] = None
+    lookback: Optional[int] = None
 
 
 class HypothesisConditions(BaseModel):

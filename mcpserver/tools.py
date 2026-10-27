@@ -636,6 +636,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         K 线可见）；低周期/未知周期/then 与减仓抑制组携带键结构化
         拒绝；显式写基准周期=缺省同身份（canonical 归一）；高周期须
         数据目录可达（登记时校验）。
+        条目另 MAY 携带动作族可选参数键（值域校验在登记链，坏值 422
+        RESEARCH_CONDITION_INVALID）：action=touch_bounce（触碰反弹）
+        携带 direction∈{support,resistance}（支撑/阻力侧，缺省
+        support）与 proximity_pct（近线距离比例 >0，如 0.02=2%，缺省
+        0.01）；action=role_reversal（角色反转）携带 role∈
+        {support,resistance}（反转后角色，缺省 resistance）与
+        lookback（回看根数 >=1 整数，缺省 10）——不写键即用求值层
+        缺省；参数键进条件指纹（带参与不带参=不同假设）。
         data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间，
         0.2.14 起须全条目同 symbol 同 timeframe——该周期即基准周期）。
         同条件集+区间集
