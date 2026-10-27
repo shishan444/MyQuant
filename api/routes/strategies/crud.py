@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from core.persistence.orm.engine import engine_for
 from core.persistence.repository.backtest_result import (
@@ -23,6 +24,7 @@ from core.persistence.repository.backtest_result import (
 from core.persistence.repository.strategy import (
     count_strategies,
     delete_strategy,
+    find_by_gene_signature,
     get_strategy,
     list_strategies,
     save_strategy,
@@ -175,6 +177,37 @@ def create_strategy(
             detail={"code": "DNA_VALIDATION_FAILED",
                     "message": "DNA 值域/结构校验未通过",
                     "errors": _vr.errors})
+
+    # B8 同签名预检分流（research-execution-config-alignment 卡 B）：
+    # save_strategy 同签名去重对非 draft 新行是「保留更优，否则静默
+    # 返回」——POST 面表现为落库 id 不存在转 500（无结构化语义、无
+    # 既有 id 可循）。预检在 save 前显式分流：同签名既有行（非 draft
+    # 优先）且提交不更优（本端点不收 best_score，恒不更优）→ 200 +
+    # duplicated 附既有 id（同签名已存在是幂等事实非冲突——与
+    # translate 幂等分支同库同语义，消费方直接续用既有 id）；更优则
+    # 透传 save_strategy（覆写路径，行为与现状逐位一致）；未命中正常
+    # insert。真错误（解析失败/校验不过）已在上文既有通道先拒，不落
+    # 入分流路径（错误/幂等两通道分离）。
+    _sig_hits = find_by_gene_signature(db_path, dna.gene_signature) \
+        if dna.gene_signature else []
+    _hit = next((h for h in _sig_hits if h.get("status") != "draft"),
+                _sig_hits[0] if _sig_hits else None)
+    if _hit is not None:
+        _existing_score = _hit.get("best_score")
+        _new_score = None  # StrategyCreate 无 best_score 字段（恒不更优）
+        _new_is_better = (
+            _new_score is not None
+            and (_existing_score is None or _new_score > _existing_score))
+        if not _new_is_better:
+            _draft_hit = _hit.get("status") == "draft"
+            return JSONResponse(status_code=200, content={
+                "strategy_id": _hit["strategy_id"],
+                "duplicated": True,
+                "gene_signature": dna.gene_signature,
+                "note": ("同签名草稿策略已存在，保留既有（draft 无绩效"
+                         "语义，不走保留更优对比）" if _draft_hit else
+                         "同签名策略已存在且绩效不低于提交，保留既有"),
+            })
 
     save_strategy(
         db_path,
