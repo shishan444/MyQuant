@@ -1,23 +1,17 @@
-"""Divergence detection: price vs RSI/MACD direction mismatch.
+"""背离检测（价格臂 vs 动量臂 RSI 的方向不确认）。
 
-Detects bullish and bearish divergences where price makes new extremes
-but the indicator does not confirm, signaling potential reversal.
+职能：检测看涨/看跌背离——价格臂创前 N 根极值而动量臂 RSI 不创
+同期极值（潜在反转信号，两臂窗口极值语义）。服务对象：研究链
+pattern 列现算（indicators._compute_indicator 的 Bullish/
+BearishDivergence 分支）与批量预计算铺列（_DEFAULT_PARAMS 含两
+背离指标）。职责边界：动量臂消费 rsi_ 前缀列——缺列结构化拒绝
+（依赖闭包装载由 _ensure_dependencies 单点供给，本模块只消费
+不补列）。
 """
 
 from __future__ import annotations
 
 import pandas as pd
-
-from core.features.patterns.candlestick import (
-    detect_bearish_engulfing,
-    detect_evening_star,
-    detect_three_black_crows,
-    detect_shooting_star,
-    detect_three_white_soldiers,
-    detect_morning_star,
-    detect_bullish_reversal,
-    detect_bearish_reversal,
-)
 
 
 def detect_bullish_divergence(
@@ -29,7 +23,9 @@ def detect_bullish_divergence(
 
     窗口不含当根（价格臂 low[t] < min(low[t-N..t-1])——与 B5 Donchian
     同哲学）。oversold 门槛为可选过滤（缺省 None=不启用——纯背离
-    语义；研究者要超卖过滤在假设条件另加 RSI 条件，语义分层）。
+    语义；可达面=Python 直调（装载层现算分支零参透传，携带即被
+    静默忽略），登记面无此通道——研究者要超卖过滤在假设条件另加
+    RSI 条件，语义分层）。
     """
     result = df.copy()
 
@@ -110,18 +106,3 @@ def detect_bearish_divergence(
 
     result["pattern_bearish_divergence"] = combined.fillna(0).astype(int)
     return result
-
-
-# Pattern name to function mapping for easy dispatch
-PATTERN_FUNCTIONS = {
-    "pattern_bearish_engulfing": detect_bearish_engulfing,
-    "pattern_evening_star": detect_evening_star,
-    "pattern_3blackcrows": detect_three_black_crows,
-    "pattern_shooting_star": detect_shooting_star,
-    "pattern_3whitesoldiers": detect_three_white_soldiers,
-    "pattern_morning_star": detect_morning_star,
-    "pattern_bullish_reversal": detect_bullish_reversal,
-    "pattern_bearish_reversal": detect_bearish_reversal,
-    "pattern_bullish_divergence": detect_bullish_divergence,
-    "pattern_bearish_divergence": detect_bearish_divergence,
-}

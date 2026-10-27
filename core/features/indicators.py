@@ -1,9 +1,13 @@
-"""Indicator computation engine.
+"""指标计算引擎（批量预计算+单点现算双入口）。
 
-Provides _compute_indicator() and compute_all_indicators() for batch
-pre-computation via pandas-ta.  Registry structures and indicator
-definitions live in registry.py and are re-exported here for backward
-compatibility.
+职能：以 pandas-ta 为底座计算全部注册指标——compute_all_indicators
+按默认参数集批量预计算（增强 df 全量铺列，回测/进化链消费），
+_compute_indicator 按指定指标+参数单点现算（研究链五入口
+indicator_query/case_inspection/plugin_service/warmup_loader/
+validation_service 的裸装载与单独现算走此单点——依赖闭包
+_ensure_dependencies 全入口共享）。职责边界：指标定义元数据（注册
+表/参数域/输出列）权威在 registry.py，本模块 re-export 仅为向后
+兼容面——定义变更走 registry 单源，不在此造第二权威。
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from core.features.registry import (
 
 
 # ---------------------------------------------------------------------------
-# Default parameter sets for pre-computation
+# 批量预计算默认参数集（compute_all_indicators 铺列形制声明——每指标
+# 多参数组全量预铺、消费端按列名取用；单点现算不走此表）
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
@@ -202,10 +207,12 @@ def _ensure_dependencies(df: pd.DataFrame, name: str, visited: tuple = ()) -> tu
 def _compute_indicator(
         df: pd.DataFrame, name: str, params: Dict[str, Any],
         visited: tuple = ()) -> Dict[str, pd.Series]:
-    """Compute a single indicator and return new columns as a dict.
+    """单点现算单个指标，返回新列 dict（列名 -> Series）。
 
-    Does NOT modify the input DataFrame. Returns only the newly computed
-    columns keyed by column name.
+    职责契约：输入 df 不被修改（依赖闭包注入走局部副本）；返回值
+    仅含本次产出列——含依赖闭包注入的依赖列（入口消费面 assign
+    全量并回 df）；未知指标名不在此报错（返回空 dict，白名单校验
+    在登记/装载层各自权威面——本函数只管「算」，不管「该不该算」）。
 
     depends_on 闭包（B4-P0）：宿主计算前经 _ensure_dependencies 补齐
     缺失依赖列——注入的依赖列并入返回值（入口消费面全量并回 df；
@@ -508,17 +515,23 @@ def _rolling_volume_profile(
     lookback: int = 60,
     which: str = "poc",
 ) -> pd.Series:
-    """Compute rolling volume profile and return POC/VAH/VAL series.
+    """滚动成交量分布：逐 bar 对前 lookback 根做价格分桶成交量直方
+    图，返回指定分布位序列（成本支撑/阻力位语义）。
+
+    按需计算（VolumeProfile 注册为 guard_only+compute_mode=lazy——
+    批量预计算 skip_lazy 跳过，仅研究链显式单点现算触达：全量铺列
+    对批量路径过贵，rolling 直方图是 O(n×lookback) 逐 bar 重算）。
 
     Args:
-        close: Close price series.
-        volume: Volume series.
-        bins: Number of price bins for histogram.
-        lookback: Rolling window size.
-        which: "poc" (point of control), "vah" (value area high), "val" (value area low).
+        close: 收盘价序列（分桶轴）。
+        volume: 成交量序列（直方图权重）。
+        bins: 价格分桶数。
+        lookback: 滚动窗口根数。
+        which: 取哪个分布位——"poc"（成交量最大桶价位，point of
+            control）、"vah"（价值区上沿）、"val"（价值区下沿）。
 
     Returns:
-        Series of the requested level values, same index as input.
+        指定分布位的 Series，与输入同索引；窗口内样本不足处为 NaN。
     """
     close_vals = close.values
     volume_vals = volume.values

@@ -102,12 +102,12 @@ _STRATEGY_PARAM_KEYS = frozenset({
 # ── 动作集单一权威源（indicator-and-action-repair B6 卡 D 4.1）──
 # 研究可表达动作集：登记面 action 域校验（B6-行为 2.6）与翻译层
 # （hypothesis_to_strategy import 引用——新依赖无环：翻译层已在
-# 登记层下游）同源引用。14 键=翻译 _ACTION_MAP 现有 10 键 +
-# within_bars_after（时序触发，登记平铺键形制，翻译走专门分支
-# 不经 _ACTION_MAP）+ R1 三键（eq/touch_bounce/role_reversal——
-# 2.7 翻译映射落地后 _ACTION_MAP 扩至 13 键，单源恰等断言
-# RESEARCH_EXPRESSIBLE_ACTIONS − {within_bars_after} ==
-# frozenset(_ACTION_MAP) 届时生效——扩动作漏改必红）。
+# 登记层下游）同源引用。14 键=翻译 _ACTION_MAP 11 键（R1 eq 已入
+# 映射）+ 专门分支 3 键（within_bars_after 时序触发/touch_bounce/
+# role_reversal 支撑阻力族——多参透传不走 _ACTION_MAP 单参
+# lambda，沿专门分支形制）；恰等断言 RESEARCH_EXPRESSIBLE_ACTIONS
+# == frozenset(_ACTION_MAP) ∪ 专门分支键集 落在 tests/analysis/
+# test_action_domain_gate.py test_f1（14=11+3——扩动作漏改必红）。
 # 值域按 registry supported_conditions 语义：仅含两侧已支持或本
 # change 落地的动作。
 RESEARCH_EXPRESSIBLE_ACTIONS: frozenset = frozenset({
