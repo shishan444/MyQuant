@@ -747,3 +747,122 @@ class TestLedgerSizeOpenReferenceParity:
             assert got[0] == pytest.approx(expected[0], rel=1e-12), (
                 params, got, expected)
             assert got[1] == expected[1], (params, got, expected)
+
+
+# ── SL 三档触发对照（research-execution-config-alignment 1.5，G1 锚；
+#    矩阵收正=pct 三链放行/atr+trail 回测纸盘放行 live 拒——收正锚由
+#    tests/live 既有 reasons 断言+test_intents TestStopTakeLevels 手算
+#    锚零改动承载，本组补缺「跨链触发一致性」）────────────────────
+
+_SL_N = 34
+
+
+def _sl_df(dive_from: float, dive_price: float, dive_start: int = 24,
+           pre_dive: dict | None = None) -> pd.DataFrame:
+    """SL 触发场景价格序列：平段（100）→微跌组（RSI<45 驱动入场信号
+    bar≈21-22、执行 bar 22-23）→dive_start 起深跌到 dive_price（必触
+    发段）→尾段回升（RSI 回升不再入场，恰一轮出场）。
+    """
+    import numpy as np
+    p = np.full(_SL_N, 100.0)
+    for i, v in (pre_dive or {20: 99.5, 21: 99.3, 22: 99.0, 23: 98.8}).items():
+        p[i] = v
+    p[dive_start:_SL_N - 4] = dive_price
+    p[_SL_N - 4:] = 100.0  # 回升段（出场后价格恢复）
+    idx = pd.date_range("2024-01-01", periods=_SL_N, freq="4h",
+                        tz="UTC", name="timestamp")
+    return pd.DataFrame({
+        "open": p, "high": p * 1.001, "low": p * 0.999, "close": p,
+        "volume": np.full(_SL_N, 100.0)}, index=idx)
+
+
+class TestStopLossTriggerEquivalence:
+    """G1 跨链触发一致性：同 DNA 同数据段，回测 run 与纸盘
+    process_frames 的止损触发 bar 两侧全等+触发价（线值）两侧同构
+    ——三档参数化（pct 锚入场价/atr 入场价−倍数×当根 ATR/trail 峰值
+    含当根）。出场价形制差（纸盘触发价成交 vs 回测当根 close 成交）
+    属既有环境形制差：断言面=触发 bar 全等+纸盘 fill price==手算线值
+    （触发价成交自证）+回测 Exit bar 的 bar 内触及（low≤线值）。"""
+
+    @staticmethod
+    def _first_sl_trade(h):
+        """首笔 SL 出场两侧锚（纸盘 exit_sl fill×回测首笔 trade）。"""
+        exits = [f for f in h.fills if f["kind"] == "exit_sl"]
+        trades = h.bt_result.trades_df
+        assert trades is not None and len(trades) >= 1, "回测须有交易"
+        assert exits, "纸盘须有 exit_sl 出场"
+        f = exits[0]
+        r0 = trades.iloc[0]
+        return f, r0
+
+    def test_pct_anchor_entry_price(self, tmp_path):
+        """pct 档：线值=入场价×(1−sl)（锚入场价）。"""
+        h = _Harness(tmp_path, dna=make_dna(
+            entry_value=45, exit_value=55, stop_loss=0.05,
+            take_profit=_TP, position_size=_PS, leverage=1),
+            df=_sl_df(99.0, 94.0))
+        f, r0 = self._first_sl_trade(h)
+        entry = float(r0["Avg Entry Price"])
+        line = entry * (1 - 0.05)
+        # 触发 bar 两侧全等（SL 即时类：两侧判定与成交同 bar）
+        paper_bar = h.index_loc(f["bar_time"])
+        bt_bar = int(h.df.index.get_loc(pd.Timestamp(r0["Exit Timestamp"])))
+        assert paper_bar == bt_bar, \
+            f"触发 bar 两侧分叉: 纸盘 {paper_bar} 回测 {bt_bar}"
+        # 触发价同构：纸盘触发价成交==手算线值；回测 bar 内触及
+        assert f["price"] == pytest.approx(line, rel=1e-9), \
+            f"纸盘触发价 {f['price']} != pct 线值 {line}"
+        assert float(h.df["low"].iloc[bt_bar]) <= line, "回测 Exit bar 须触及线值"
+        assert f["quantity"] == pytest.approx(float(r0["Size"]), rel=1e-9)
+
+    def test_trail_anchor_peak_inclusive(self, tmp_path):
+        """trail 档：线值=峰值×(1−sl)（峰值含当根——先涨后跌形态）。"""
+        import numpy as np
+        # 形态：微跌入场（entry≈99）→ 涨至 105（峰值）→ 跌破 99.75
+        # （=105×0.95）触发 → 回升
+        p = np.full(_SL_N, 100.0)
+        for i, v in {20: 99.5, 21: 99.3, 22: 99.0, 23: 98.8}.items():
+            p[i] = v
+        p[24:28] = 105.0          # 峰值段（trail 峰值更新含当根）
+        p[28:30] = 99.5           # 回撤跌破 105×0.95=99.75 → 触发
+        p[30:] = 100.0
+        idx = pd.date_range("2024-01-01", periods=_SL_N, freq="4h",
+                            tz="UTC", name="timestamp")
+        df = pd.DataFrame({
+            "open": p, "high": p * 1.001, "low": p * 0.999, "close": p,
+            "volume": np.full(_SL_N, 100.0)}, index=idx)
+        # exit_value=90：涨段 RSI 峰值 86.4 不触发信号出场（实测
+        # 序列）——唯一出场途径=trail 止损
+        dna = make_dna(entry_value=45, exit_value=90, stop_loss=0.05,
+                       take_profit=_TP, position_size=_PS, leverage=1)
+        dna.risk_genes.sl_mode = "trail"
+        h2 = _Harness(tmp_path, dna=dna, df=df)
+        f, r0 = self._first_sl_trade(h2)
+        peak = 105.0 * 1.001       # 峰值段最高 high（trail 峰值取 high）
+        line = peak * (1 - 0.05)
+        paper_bar = h2.index_loc(f["bar_time"])
+        bt_bar = int(h2.df.index.get_loc(
+            pd.Timestamp(r0["Exit Timestamp"])))
+        assert paper_bar == bt_bar
+        assert f["price"] == pytest.approx(line, rel=1e-3), \
+            f"纸盘触发价 {f['price']} != trail 线值 {line}"
+        assert float(h2.df["low"].iloc[bt_bar]) <= line
+
+    def test_atr_anchor_entry_minus_atr_multiple(self, tmp_path):
+        """atr 档：线值=入场价−倍数×触发 bar ATR（逐 bar ATR——
+        线值随列变；触发价断言经 enhanced atr_14 列手算对拍）。"""
+        dna = make_dna(entry_value=45, exit_value=55, stop_loss=2.0,
+                       take_profit=4.0, position_size=_PS, leverage=1)
+        dna.risk_genes.sl_mode = "atr"
+        h2 = _Harness(tmp_path, dna=dna, df=_sl_df(99.0, 94.0))
+        f, r0 = self._first_sl_trade(h2)
+        entry = float(r0["Avg Entry Price"])
+        paper_bar = h2.index_loc(f["bar_time"])
+        bt_bar = int(h2.df.index.get_loc(
+            pd.Timestamp(r0["Exit Timestamp"])))
+        assert paper_bar == bt_bar
+        atr_val = float(h2.enhanced["atr_14"].iloc[bt_bar])
+        line = entry - 2.0 * atr_val
+        assert f["price"] == pytest.approx(line, rel=1e-3), \
+            f"纸盘触发价 {f['price']} != atr 线值 {line}"
+        assert float(h2.df["low"].iloc[bt_bar]) <= line
