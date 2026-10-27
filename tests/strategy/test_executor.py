@@ -1077,8 +1077,11 @@ class TestActionSetSingleSource:
         assert projected <= EVALUABLE_CONDITION_TYPES
 
     def test_action_map_subset_expressible(self):
-        """②翻译 _ACTION_MAP ⊆ 可表达集（2.5 时点 10 ⊆ 14；2.7 扩
-        至 13 后单源恰等断言生效——本断言恒成立的超集关系保持）。"""
+        """②翻译 _ACTION_MAP ⊆ 可表达集（11 ⊆ 14——eq 入 map 后；
+        单源恰等断言 RESEARCH_EXPRESSIBLE_ACTIONS == frozenset(
+        _ACTION_MAP) ∪ 专门分支 3 键（within_bars_after/touch_bounce/
+        role_reversal）已落 tests/analysis/test_action_domain_gate.py
+        test_f1（14=11+3）——本超集断言作为恒成立底线保持）。"""
         from core.analysis.hypothesis_service import (
             RESEARCH_EXPRESSIBLE_ACTIONS)
         from core.analysis.hypothesis_to_strategy import _ACTION_MAP
