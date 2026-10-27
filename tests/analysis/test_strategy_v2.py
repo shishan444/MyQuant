@@ -265,14 +265,18 @@ class TestTranslator:
             self._register_and_pass(db, self._expressible_conditions(), ranges)
 
     def test_inexpressible_action_rejected(self, db):
+        """（B6 翻转）不可表达 action 在登记面即拒——原「登记成功后
+        translate 断链」路径随 action 域校验前移消亡（消耗面不再
+        浪费性占用研究动作）。"""
         conds = {
             "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "divergence_top",
                                  "target": 0}],
             "then_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}],
         }
-        hid = self._register_and_pass(db, conds, self._ranges())
-        with pytest.raises(ResearchError, match="action 不可表达"):
-            translate_hypothesis(db, hypothesis_id=hid)
+        with pytest.raises(ResearchError) as ei:
+            self._register_and_pass(db, conds, self._ranges())
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert ei.value.detail["action"] == "divergence_top"
 
     @pytest.mark.parametrize(
         ("action", "expected_condition"),
@@ -433,42 +437,46 @@ class TestGapClosureTranslator:
         assert ei.value.code == "RESEARCH_HYPOTHESIS_NOT_FOUND"
         assert ei.value.status == 404
 
-    def test_无可表达条件_NOT_EXPRESSIBLE(self, db) -> None:
-        """全部条件不可表达（action 族外）→ 314 拒。"""
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": "close", "action": "within_pct",
-                     "target": 5}],
-                "then_conditions": [
-                    {"subject": "close", "action": "within_pct",
-                     "target": 5}],
-            },
-            statement="全不可表达",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+    def test_无可表达action_登记面拒(self, db) -> None:
+        """（B6 翻转）action 族外登记即拒——原 314 断链路径随
+        action 域校验前移消亡。"""
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(db, hypothesis_id=hid)
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+            register_hypothesis(
+                db,
+                conditions={
+                    "when_conditions": [
+                        {"subject": "close", "action": "within_pct",
+                         "target": 5}],
+                    "then_conditions": [
+                        {"subject": "close", "action": "within_pct",
+                         "target": 5}],
+                },
+                statement="全不可表达",
+                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-01-01T00:00:00Z",
+                              "end": "2024-02-01T00:00:00Z"}],
+                strategy_params={"stop_loss": 0.05})
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert ei.value.detail["action"] == "within_pct"
 
-    def test_when带不可表达action_拒(self, db) -> None:
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": "close", "action": "within_pct",
-                     "target": 5}],
-                "then_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0}],
-            },
-            statement="when 不可表达",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        with pytest.raises(ResearchError, match="不可表达"):
-            translate_hypothesis(db, hypothesis_id=hid)
+    def test_when带不可表达action_登记面拒(self, db) -> None:
+        with pytest.raises(ResearchError) as ei:
+            register_hypothesis(
+                db,
+                conditions={
+                    "when_conditions": [
+                        {"subject": "close", "action": "within_pct",
+                         "target": 5}],
+                    "then_conditions": [
+                        {"subject": "close", "action": "gt", "target": 0}],
+                },
+                statement="when 不可表达",
+                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-01-01T00:00:00Z",
+                              "end": "2024-02-01T00:00:00Z"}],
+                strategy_params={"stop_loss": 0.05})
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert "when_conditions[0].action" in ei.value.detail["field"]
 
 
 class TestGapClosureDraftHit:
@@ -605,7 +613,9 @@ class TestTranslatorRejections:
             translate_hypothesis(db, hypothesis_id=hid)
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
 
-    def test_action不可表达_拒绝附合法动作清单(self, db):
+    def test_action不可表达_登记面拒附合法动作清单(self, db):
+        """（B6 翻转）未知动作登记即拒附可表达清单——原翻译面
+        RESEARCH_NOT_EXPRESSIBLE 断链路径随校验前移消亡。"""
         conds = {
             "when_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -614,13 +624,14 @@ class TestTranslatorRejections:
             "then_conditions": [
                 {"subject": "close", "action": "gt", "target": 0}],
         }
-        hid = register_hypothesis(
-            db, conditions=conds, statement="s",
-            data_ranges=self._ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(db, hypothesis_id=hid)
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "bogus_action" in str(ei.value)
+            register_hypothesis(
+                db, conditions=conds, statement="s",
+                data_ranges=self._ranges(),
+                strategy_params={"stop_loss": 0.05})
+        assert ei.value.code == "RESEARCH_CONDITION_INVALID"
+        assert ei.value.detail["action"] == "bogus_action"
+        assert "gt" in ei.value.detail["legal_range"]
 
     def test_when无可表达条件_拒绝(self, db):
         """when 组空（经 DB 直写绕开 register 非空校验——翻译器对

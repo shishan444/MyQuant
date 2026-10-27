@@ -537,6 +537,29 @@ def register_hypothesis(
                     f"{field_name} 须含 subject/action/target",
                     detail={"field": field_name})
 
+    # 1.5 action 域校验前移（indicator-and-action-repair B6 卡 D 4.2）：
+    #     统计可算但翻译不可表达的动作（STATISTICS_ONLY_ACTIONS 族）
+    #     登记即拒——研究者动作不再浪费性消耗到 translate 才
+    #     RESEARCH_NOT_EXPRESSIBLE 断链；单源 RESEARCH_EXPRESSIBLE_
+    #     ACTIONS（与翻译层同源；扩动作漏改必红由断言网承载）。
+    #     R1 三键（eq/touch_bounce/role_reversal）登记放行——翻译
+    #     映射随 2.7 落地（本包内闭环）。
+    for group, conds in group_conds.items():
+        for i, c in enumerate(conds):
+            if c.get("action") not in RESEARCH_EXPRESSIBLE_ACTIONS:
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    f"动作 {c.get('action')!r} 登记不可表达"
+                    "（研究假设消费面向策略翻译——统计专属动作不走登记）",
+                    detail={
+                        "field": f"{group}_conditions[{i}].action",
+                        "action": c.get("action"),
+                        "legal_range": sorted(RESEARCH_EXPRESSIBLE_ACTIONS),
+                        "slow_path": "统计面可算但翻译不可表达的动作见 "
+                                     "STATISTICS_ONLY_ACTIONS 声明"
+                                     f"（{sorted(STATISTICS_ONLY_ACTIONS)}）",
+                    })
+
     # 2. 区间（0.2.14：单周期收紧——全部条目同 symbol 同 timeframe，
     #    该周期即基准周期；timeframe 键的方向校验以它为基准）
     if not isinstance(data_ranges, list) or not data_ranges:
