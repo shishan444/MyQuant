@@ -106,7 +106,7 @@ class TestDomainReject:
                 statement="s",
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1d",
                               "start": "2024-01-01T00:00:00Z",
-                              "end": "2024-02-01T00:00:00Z"}])
+                              "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         assert e2.value.code == "RESEARCH_CONDITION_INVALID"
         assert e2.value.detail["code"] == "PARAM_INVALID"
         assert {"column", "base_tf", "domain", "hint", "ref_tf"} <= \
@@ -132,7 +132,7 @@ class TestDomainReject:
                 statement="s",
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                               "start": "2024-01-01T00:00:00Z",
-                              "end": "2024-02-01T00:00:00Z"}])
+                              "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         assert ei.value.detail["ref_tf"] == "1d", "校验对象=引用周期"
 
     def test_u7c_translation_rejects_1d_ref(self, tmp_path):
@@ -212,7 +212,7 @@ class TestDomainReject:
                 "end": "2024-02-01T00:00:00Z"}]
         for act in ("cross_above", "price_above"):
             hid = register_hypothesis(db, conditions=conds(act),
-                                      statement="s", data_ranges=rng
+                                      statement="s", data_ranges=rng, strategy_params={"stop_loss": 0.05}
                                       )["hypothesis_id"]
             with pytest.raises(ResearchError):
                 translate_hypothesis(db, data_dir=tmp_path,
@@ -248,7 +248,7 @@ class TestFullChain:
             statement="s",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
                           "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid, data_dir=d,
                                    strategy_timeframe="1h")
         genes = _json.loads(

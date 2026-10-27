@@ -141,7 +141,7 @@ class TestIsolatedPayloadContract:
             statement="s", data_ranges=[{"symbol": "BTCUSDT",
                                          "timeframe": "4h",
                                          "start": "2023-01-01T00:00:00Z",
-                                         "end": "2023-02-01T00:00:00Z"}],
+                                         "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
         )["hypothesis_id"]
         save_strategy(db, strategy_id="st_dir",
                       dna_json=_dna(direction="short").to_json(),

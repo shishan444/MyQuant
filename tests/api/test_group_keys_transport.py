@@ -29,6 +29,7 @@ def _base() -> dict:
         "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                          "start": "2024-01-01T00:00:00Z",
                          "end": "2024-02-01T00:00:00Z"}],
+        "strategy_params": {"stop_loss": 0.05},
     }
 
 

@@ -640,7 +640,7 @@ class TestSandboxBacktestSeriesForm:
             # data_ranges 是研究自报，回测请求区间须在其外）
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
                           "start": "2020-01-01T00:00:00Z",
-                          "end": "2020-01-10T00:00:00Z"}])
+                          "end": "2020-01-10T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         return out["hypothesis_id"]
 
     def test_series_form_sandbox_nonzero_and_warmup_union(self, sandbox):

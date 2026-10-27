@@ -72,7 +72,7 @@ def _register_hyp(db) -> str:
         statement="s", data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                                      "start": "2024-05-01T00:00:00Z",
                                      "end": "2024-06-01T00:00:00Z"}]
-    )["hypothesis_id"]
+    , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 def _save_strategy(db, sid) -> None:

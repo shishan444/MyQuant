@@ -294,7 +294,7 @@ class TestRealTriggerPaths:
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         hid = register_hypothesis(
             research_db, conditions=_CONDS, statement="s",
-            data_ranges=_RANGES)["hypothesis_id"]
+            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(
             research_db, hypothesis_id=hid)["strategy_id"]
         rr.save_validation_with_log(
@@ -316,7 +316,7 @@ class TestRealTriggerPaths:
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         hid = register_hypothesis(
             research_db, conditions=_CONDS, statement="s",
-            data_ranges=_RANGES)["hypothesis_id"]
+            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(
             research_db, hypothesis_id=hid)["strategy_id"]
         rr.save_validation_with_log(

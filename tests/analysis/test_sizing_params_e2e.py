@@ -30,7 +30,8 @@ from core.strategy.dna import StrategyDNA
 from tests.helpers.data_factory import make_ohlcv
 
 _INIT_CASH = 100_000.0
-_DECLARED = {"initial_fraction": 0.6, "max_position_loss": 100.0}
+_DECLARED = {"stop_loss": 0.05, "initial_fraction": 0.6,
+             "max_position_loss": 100.0}
 
 
 def _conds(period: int) -> dict:
@@ -104,7 +105,8 @@ class TestFullChainBacktest:
     def test_undeclared_control_unchanged_default_path(self, db):
         """不声明对照：产物两键 None（platform_default）→首仓名义=
         权益×position_size 默认 0.3（3 万）→出场走止损（更晚、笔数少）。"""
-        dna = _translated_dna(db, period=20, sp=None)
+        # D5 后对照=最小块（仅 stop_loss——两键不声明仍走默认路径）
+        dna = _translated_dna(db, period=20, sp={"stop_loss": 0.05})
         assert dna.risk_genes.initial_fraction is None
         assert dna.risk_genes.max_position_loss is None
         rg_dict = json.loads(dna.to_json())["risk_genes"]

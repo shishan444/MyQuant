@@ -258,7 +258,7 @@ class TestPrecheckRangeEligibility:
         # 低覆盖形（恒真 then 被 D3 出场防线拒绝，
         # fix-executor-column-and-exit-guard Q1=A）
         reg = api_client.post("/api/research/hypotheses", json={
-            "conditions": {
+            "strategy_params": {"stop_loss": 0.05}, "conditions": {
                 "when_conditions": _conds(),
                 "then_conditions": [
                     {"subject": {"indicator": "RSI",

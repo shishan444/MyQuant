@@ -60,7 +60,7 @@ def _register(db, start="2023-02-01T00:00:00Z", end="2023-03-01T00:00:00Z"):
                         "then_conditions": [dict(cond)]},
         statement="s",
         data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
-                      "start": start, "end": end}])["hypothesis_id"]
+                      "start": start, "end": end}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 class TestTwoExitConsistency:

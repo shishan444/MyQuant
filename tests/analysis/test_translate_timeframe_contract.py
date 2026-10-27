@@ -52,7 +52,7 @@ def db(tmp_path: Path) -> Path:
 def _hyp(db, tf: str = "30m") -> str:
     return register_hypothesis(
         db, conditions=_CONDS, statement="s", data_ranges=_ranges(tf)
-    )["hypothesis_id"]
+    , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 def _exec_tf(db, sid: str) -> str:
@@ -161,7 +161,7 @@ class TestR2TranslateTimeframeContract:
             db, conditions=_CONDS, statement="s2",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
                           "start": "2024-03-01T00:00:00Z",
-                          "end": "2024-04-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2024-04-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         third = translate_hypothesis(db, hypothesis_id=hid2)
         assert third["execution_timeframe"] == "30m"  # 分流点同键
 
@@ -181,7 +181,7 @@ class TestR2TranslateTimeframeContract:
             db, conditions=_CONDS, statement="s3",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
                           "start": "2024-05-01T00:00:00Z",
-                          "end": "2024-06-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2024-06-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid3)
         assert out["same_dna_existing"] is True, "须命中 active 同基因分流"
         assert out["duplicated"] is False

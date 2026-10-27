@@ -20,7 +20,7 @@ CONDITIONS = {
 
 def _register(client, start: str, statement: str = "特征网假设"):
     return client.post("/api/research/hypotheses", json={
-        "conditions": CONDITIONS, "statement": statement,
+        "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": statement,
         "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                          "start": start, "end": "2024-03-01T00:00:00Z"}]})
 

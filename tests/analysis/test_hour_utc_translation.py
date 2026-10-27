@@ -57,7 +57,7 @@ def _register(env, when) -> str:
         env["db"],
         conditions={"when_conditions": [when],
                     "then_conditions": [_THEN_RSI]},
-        statement="hour_utc 翻译面", data_ranges=_RANGES)
+        statement="hour_utc 翻译面", data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})
     return out["hypothesis_id"]
 
 

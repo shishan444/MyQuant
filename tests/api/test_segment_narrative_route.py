@@ -138,7 +138,7 @@ class TestSegmentNarrativeRoute:
             statement="t", data_ranges=[{
                 "symbol": SYMBOL, "timeframe": "1h",
                 "start": "2023-06-01T00:00:00Z",
-                "end": "2023-07-01T00:00:00Z"}])
+                "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         hyp_id = reg["hypothesis_id"]
         resp = api_client.post("/api/research/analysis", json={
             "template": "segment_narrative",

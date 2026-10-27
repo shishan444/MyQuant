@@ -100,7 +100,7 @@ class TestSandboxBacktest:
             db, conditions=_CONDS, statement="s",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-01-01T00:00:00Z",
-                          "end": "2023-02-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2023-03-01", end="2023-03-20",

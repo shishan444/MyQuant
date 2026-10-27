@@ -730,7 +730,7 @@ class TestDataRangeTimestampValidation:
         """合法 naive 形制不被误拒：hypotheses 端点 naive 日期直达
         业务层成功创建（校验器放行 naive——消费端按 UTC 解释）。"""
         resp = api_client.post("/api/research/hypotheses", json={
-            "conditions": {
+            "strategy_params": {"stop_loss": 0.05}, "conditions": {
                 "when_conditions": [{"subject": "close", "action": "gt",
                                      "target": 0}],
                 "then_conditions": [{"subject": "close", "action": "gt",

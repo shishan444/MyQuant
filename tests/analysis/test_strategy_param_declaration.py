@@ -62,8 +62,15 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-06-01T00:00:00Z"}]
 
 
-def _register(db: Path, sp=None, period: int = 14, lo: int = 30, hi: int = 70,
-              statement: str = "s"):
+_NO_SP = object()  # 哨兵：区分「未传」（补最小合法块）与显式 None（负锚）
+
+
+def _register(db: Path, sp=_NO_SP, period: int = 14, lo: int = 30,
+              hi: int = 70, statement: str = "s"):
+    # D5 起 sp 缺省=携带最小合法块（stop_loss）；显式传 None（在场性
+    # 负锚）原样透传被 3.6 步拒
+    if sp is _NO_SP:
+        sp = {"stop_loss": 0.05}
     return register_hypothesis(
         db, conditions=_cond(period, lo, hi), statement=statement,
         data_ranges=_ranges(), strategy_params=sp)
@@ -100,15 +107,19 @@ class TestParamDomainValidation:
         ({"sl_mode": "trail", "stop_loss": 0.05, "take_profit": 0.03}, True),  # 豁免
         # sl_mode 枚举
         ({"sl_mode": "trailing"}, False),
-        # position_size / leverage
-        ({"position_size": 0.10}, True),
-        ({"position_size": 1.0}, True),
-        ({"position_size": 0.05}, False),
-        ({"position_size": 1.5}, False),
-        ({"leverage": 1}, True),
-        ({"leverage": 10}, True),
-        ({"leverage": 11}, False),
-        ({"leverage": 0}, False),
+        # position_size / leverage（D5 起块须携带 stop_loss——值域焦点
+        # 保持，在场性锚归 test_stop_loss_mandatory F1）
+        ({"stop_loss": 0.05, "position_size": 0.10}, True),
+        ({"stop_loss": 0.05, "position_size": 1.0}, True),
+        ({"stop_loss": 0.05, "position_size": 0.05}, False),
+        ({"stop_loss": 0.05, "position_size": 1.5}, False),
+        ({"stop_loss": 0.05, "leverage": 1}, True),
+        ({"stop_loss": 0.05, "leverage": 10}, True),
+        ({"stop_loss": 0.05, "leverage": 11}, False),
+        ({"stop_loss": 0.05, "leverage": 0}, False),
+        # D5 在场性：无 stop_loss 块拒（档位声明不冒充数值声明）
+        ({"position_size": 0.5}, False),
+        ({"max_hold": 6}, False),
     ])
     def test_domain_validation(self, db, params, ok):
         if ok:
@@ -146,7 +157,7 @@ class TestParamDomainValidation:
                         "exit_partial_conditions": _GROUP_ADD,
                     },
                     statement="pair", data_ranges=_ranges(),
-                    strategy_params=bad)
+                    strategy_params={"stop_loss": 0.05, **bad})
             assert ei.value.code == "RESEARCH_PARAM_INVALID"
             assert "field" in (ei.value.detail or {})
         # max_exposure 上界随声明 leverage 联动（1.5+leverage=2 过）
@@ -157,8 +168,8 @@ class TestParamDomainValidation:
                 "add_trigger_conditions": _GROUP_ADD,
             },
             statement="pair-ok", data_ranges=_ranges(),
-            strategy_params={"max_exposure": 1.5, "leverage": 2,
-                             "add_fraction": 0.1})
+            strategy_params={"stop_loss": 0.05, "max_exposure": 1.5,
+                             "leverage": 2, "add_fraction": 0.1})
         assert r["duplicated"] is False
 
     def test_max_exposure_hint_names_leverage_link(self, db):
@@ -176,7 +187,8 @@ class TestParamDomainValidation:
                     "add_trigger_conditions": _GROUP_ADD,
                 },
                 statement="mx", data_ranges=_ranges(),
-                strategy_params={"max_exposure": 1.5, "add_fraction": 0.1})
+                strategy_params={"stop_loss": 0.05, "max_exposure": 1.5,
+                                 "add_fraction": 0.1})
         d = ei.value.detail
         assert d["field"] == "max_exposure"
         assert d["legal_range"] == [0, 1]  # 上界=未声明 leverage 的默认 1
@@ -189,10 +201,12 @@ class TestParamDomainValidation:
                      "then_conditions": _cond(35)["then_conditions"]}
         # exit_fraction 无宿主组 → 422
         with pytest.raises(ResearchError):
-            _register(db, {"exit_fraction": 0.5}, period=35)
+            _register(db, {"stop_loss": 0.05, "exit_fraction": 0.5},
+                      period=35)
         # add_fraction 无宿主组 → 422
         with pytest.raises(ResearchError):
-            _register(db, {"add_fraction": 0.1}, period=35)
+            _register(db, {"stop_loss": 0.05, "add_fraction": 0.1},
+                      period=35)
         # add_suppress 组无 add_trigger 组 → 422
         with pytest.raises(ResearchError) as ei:
             register_hypothesis(
@@ -200,13 +214,15 @@ class TestParamDomainValidation:
                     base_cond,
                     add_suppress_conditions=[{"subject": "close",
                                               "action": "gt", "target": 0}]),
-                statement="sup", data_ranges=_ranges())
+                statement="sup", data_ranges=_ranges(),
+                strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         # 组显式空列表 → 422
         with pytest.raises(ResearchError) as ei:
             register_hypothesis(
                 db, conditions=dict(base_cond, add_trigger_conditions=[]),
-                statement="empty-group", data_ranges=_ranges())
+                statement="empty-group", data_ranges=_ranges(),
+                strategy_params={"stop_loss": 0.05})
         assert "非空列表" in ei.value.message
         # 组条目带 timeframe（unblock-research-validation Q1 翻转）：
         # add_trigger 放行（跟随 when 侧）；exit_partial/add_suppress 拒
@@ -216,7 +232,8 @@ class TestParamDomainValidation:
                 add_trigger_conditions=[{
                     "subject": "close", "action": "gt", "target": 0,
                     "timeframe": "1d"}]),
-            statement="tf", data_ranges=_ranges())
+            statement="tf", data_ranges=_ranges(),
+            strategy_params={"stop_loss": 0.05})
         assert ok["hypothesis_id"], "加仓触发组带 tf 登记放行"
         for group_key in ("exit_partial_conditions", "add_suppress_conditions"):
             with pytest.raises(ResearchError) as ei:
@@ -228,7 +245,8 @@ class TestParamDomainValidation:
                         **{group_key: [{
                             "subject": "close", "action": "gt", "target": 0,
                             "timeframe": "1d"}]}),
-                    statement=f"tf-{group_key}", data_ranges=_ranges())
+                    statement=f"tf-{group_key}", data_ranges=_ranges(),
+                    strategy_params={"stop_loss": 0.05})
             assert ei.value.code == "TIMEFRAME_ON_THEN", \
                 f"{group_key} 带 tf 应拒"
 
@@ -245,12 +263,13 @@ class TestParamDomainValidation:
                 "exit_partial_conditions": group,
                 "add_trigger_conditions": group,
             },
-            statement="norm", data_ranges=_ranges())
+            statement="norm", data_ranges=_ranges(),
+            strategy_params={"stop_loss": 0.05})
         assert r["duplicated"] is False
         row = get_hypothesis(db, r["hypothesis_id"])
         params = json.loads(row["strategy_params"])
-        assert params == {"exit_fraction": 0.5, "add_fraction": 0.1,
-                          "max_exposure": 1.0}
+        assert params == {"stop_loss": 0.05, "exit_fraction": 0.5,
+                          "add_fraction": 0.1, "max_exposure": 1.0}
 
     def test_group_keys_participate_identity(self, db):
         """组键参与身份指纹：同条件集一个含组一个不含 → 两个独立假设。"""
@@ -260,16 +279,18 @@ class TestParamDomainValidation:
         base_cond = {"when_conditions": _cond(37)["when_conditions"],
                      "then_conditions": _cond(37)["then_conditions"]}
         r1 = register_hypothesis(db, conditions=dict(base_cond),
-                                 statement="a", data_ranges=_ranges())
+                                 statement="a", data_ranges=_ranges(),
+                                 strategy_params={"stop_loss": 0.05})
         r2 = register_hypothesis(
             db, conditions=dict(base_cond, exit_partial_conditions=group),
-            statement="b", data_ranges=_ranges())
+            statement="b", data_ranges=_ranges(),
+            strategy_params={"stop_loss": 0.05})
         assert r1["hypothesis_id"] != r2["hypothesis_id"]
 
     def test_error_detail_shape(self, db):
         """错误 detail 含 field 与 legal_range（错误即文档）。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, {"leverage": 50})
+            _register(db, {"stop_loss": 0.05, "leverage": 50})
         d = ei.value.detail
         assert d["field"] == "leverage" and d["legal_range"] == [1, 10]
 
@@ -278,12 +299,14 @@ class TestParamDomainValidation:
 
 
 class TestIdempotencyFourBranches:
-    def test_branch_missing_key_duplicated(self, db):
-        """①键缺失：不参与比对 duplicated 不拒（旧调用方零适配）+摘要。"""
+    def test_branch_missing_key_rejected(self, db):
+        """①（D5 翻转）键缺失（None）重登记：3.6 步在场判据拒——原
+        「不参与比对 duplicated」兼容分支随 None 态收拢消亡。"""
         _register(db, {"stop_loss": 0.05})
-        r = _register(db)  # 键缺失
-        assert r["duplicated"] is True
-        assert r["existing_strategy_params"] == {"stop_loss": 0.05}
+        with pytest.raises(ResearchError) as ei:
+            _register(db, None)  # 显式 None 块（键缺失）
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "strategy_params"
 
     def test_branch_equal_duplicated(self, db):
         """③带键全等（键序无关）：duplicated。"""
@@ -301,19 +324,14 @@ class TestIdempotencyFourBranches:
         assert d["existing_strategy_params"] == {"stop_loss": 0.05}
         assert "slow_path" in d
 
-    def test_empty_object_three_anchors(self, db):
-        """②显式空对象三条：{} vs NULL→duplicated / {} vs 非空→422 / 键缺失不拒。"""
-        _register(db)  # 既有 NULL 声明
-        r = _register(db, {})  # {} vs NULL → 全等 duplicated
-        assert r["duplicated"] is True
-        assert r["existing_strategy_params"] == {}
-
-        r2 = _register(db)  # 键缺失 vs NULL → duplicated 不拒
-        assert r2["duplicated"] is True
-
-        _register(db, {"stop_loss": 0.05}, period=21)  # 既有非空声明（新身份）
-        with pytest.raises(ResearchError):
-            _register(db, {}, period=21)  # {} vs 非空 → 422
+    def test_empty_object_anchors(self, db):
+        """②（D5 翻转）显式空对象：{} 登记即拒（stop_loss 在场判据）——
+        原「{} vs NULL 全等 duplicated」与「键缺失不拒」两锚随 None/空块
+        收拢消亡；{} vs 非空仍 422（在场判据先拒，语义不回归）。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, {})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "strategy_params.stop_loss"
 
     def test_declaration_not_in_identity(self, db):
         """声明块不进 conditions_hash（身份指纹零变化）：同条件集异声明
@@ -344,9 +362,16 @@ class TestTranslationMapping:
         assert rg["atr_period"] == 14
 
     def test_default_path_regression(self, db):
-        """缺省路径回归：无声明登记+翻译与现状逐位一致（platform_default）。"""
-        h = _register(db)
-        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
+        """（D5 翻转）平台默认路径的存量形：无声明登记面已消亡——
+        直插存量假设（strategy_params NULL）translate 仍走平台默认
+        （D6 存量界线行为级锚）；登记面恒 declared。"""
+        from core.persistence.repository import research as rr
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id="hyp_d5_default",
+            conditions=json.dumps(_cond(14, 30, 70)), conditions_hash="ch_d5d",
+            statement="s", data_ranges=json.dumps(_ranges()),
+            ranges_hash="rh_d5d")
+        t = translate_hypothesis(db, hypothesis_id="hyp_d5_default")
         assert t["duplicated"] is False and t["same_dna_existing"] is False
         assert t["risk_genes"] == "platform_default"
         rg = json.loads(get_strategy(db, t["strategy_id"])["dna_json"])["risk_genes"]
@@ -367,22 +392,24 @@ class TestSizingParamsDeclaration:
     双面语义差/翻译映射（值域单源 validator 常量）。"""
 
     @pytest.mark.parametrize("params,ok", [
-        # initial_fraction (0,1]：开下闭上
-        ({"initial_fraction": 0.2}, True),
-        ({"initial_fraction": 1.0}, True),     # 上界含（全部可用资金）
-        ({"initial_fraction": 0.01}, True),
-        ({"initial_fraction": 0}, False),
-        ({"initial_fraction": -0.1}, False),
-        ({"initial_fraction": 1.01}, False),
-        ({"initial_fraction": True}, False),   # bool 冒充数值须拒
+        # initial_fraction (0,1]：开下闭上（D5 起块携带 stop_loss——
+        # 值域焦点保持，在场性锚归 test_stop_loss_mandatory）
+        ({"stop_loss": 0.05, "initial_fraction": 0.2}, True),
+        ({"stop_loss": 0.05, "initial_fraction": 1.0}, True),  # 上界含
+        ({"stop_loss": 0.05, "initial_fraction": 0.01}, True),
+        ({"stop_loss": 0.05, "initial_fraction": 0}, False),
+        ({"stop_loss": 0.05, "initial_fraction": -0.1}, False),
+        ({"stop_loss": 0.05, "initial_fraction": 1.01}, False),
+        ({"stop_loss": 0.05, "initial_fraction": True}, False),  # bool 须拒
         # max_position_loss >0 下界开、无上界（考场无观点）
-        ({"max_position_loss": 100.0}, True),
-        ({"max_position_loss": 1e12}, True),   # 无上界锚
-        ({"max_position_loss": 0}, False),
-        ({"max_position_loss": -5.0}, False),
-        ({"max_position_loss": True}, False),
+        ({"stop_loss": 0.05, "max_position_loss": 100.0}, True),
+        ({"stop_loss": 0.05, "max_position_loss": 1e12}, True),  # 无上界锚
+        ({"stop_loss": 0.05, "max_position_loss": 0}, False),
+        ({"stop_loss": 0.05, "max_position_loss": -5.0}, False),
+        ({"stop_loss": 0.05, "max_position_loss": True}, False),
         # 两键共存合法（互斥仅约束 initial_fraction×risk_budget）
-        ({"initial_fraction": 0.2, "max_position_loss": 500.0}, True),
+        ({"stop_loss": 0.05, "initial_fraction": 0.2,
+          "max_position_loss": 500.0}, True),
     ])
     def test_domain_validation(self, db, params, ok):
         if ok:
@@ -398,7 +425,7 @@ class TestSizingParamsDeclaration:
         """坏值 detail 携带 field/legal_range（族 8d——MCP 错误文案
         分派层消费的 detail 契约）。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, {"initial_fraction": 0})
+            _register(db, {"stop_loss": 0.05, "initial_fraction": 0})
         detail = ei.value.detail
         assert detail["field"] == "initial_fraction"
         assert "legal_range" in detail
@@ -412,12 +439,13 @@ class TestSizingParamsDeclaration:
         RESEARCH_PARAM_INVALID（detail field=max_position_loss+
         legal_range 含 finite）——与 validate_dna 同源同式对拍。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, {"max_position_loss": infinite})
+            _register(db, {"stop_loss": 0.05, "max_position_loss": infinite})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["field"] == "max_position_loss"
         assert "finite" in str(ei.value.detail["legal_range"])
         # 合法超大金额对照：有限大值仍放行（无上界语义不受影响）
-        r = _register(db, {"max_position_loss": 1e12}, period=21)
+        r = _register(db, {"stop_loss": 0.05, "max_position_loss": 1e12},
+                      period=21)
         assert r["duplicated"] is False
 
     @pytest.mark.parametrize("bad", [
@@ -431,7 +459,7 @@ class TestSizingParamsDeclaration:
         except 面），422+消息可辨+detail 含 field/legal_range——对齐
         validator.py 先类型后有限性形制，不扩 except 面掩盖类型语义。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, {"max_position_loss": bad})
+            _register(db, {"stop_loss": 0.05, "max_position_loss": bad})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert "须为数字" in ei.value.message
         assert ei.value.detail["field"] == "max_position_loss"
@@ -448,7 +476,7 @@ class TestSizingParamsDeclaration:
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["field"] == "initial_fraction"
         # fixed 显式+initial_fraction 合法（互斥判据唯一=risk_budget）
-        r = _register(db, {"position_mode": "fixed",
+        r = _register(db, {"stop_loss": 0.05, "position_mode": "fixed",
                            "initial_fraction": 0.2}, period=30)
         assert r["duplicated"] is False
         # risk_budget 不带 initial_fraction 合法（存量路径）
@@ -503,9 +531,10 @@ class TestSizingParamsDeclaration:
                 _register(db, {null_key: None})
             assert ei.value.code == "RESEARCH_PARAM_INVALID"
             assert ei.value.detail["field"].endswith(null_key)
-        # 键缺失=合法（不参与比对，platform_default 路径）
-        r = _register(db, None, period=32)
-        assert r["duplicated"] is False
+        # （D5 翻转）键缺失（None 块）不再合法——3.6 步在场判据拒
+        with pytest.raises(ResearchError) as ei:
+            _register(db, None, period=32)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_null_semantics_split_declaration_vs_dna_face(self):
         """族 2h 两路径语义差锁定：登记面 null=坏值拒绝（上例）、
@@ -533,7 +562,7 @@ class TestSizingParamsDeclaration:
     def test_translation_carries_sizing_params(self, db):
         """翻译映射：两键声明经 _declared_risk_genes 直写产物
         risk_genes（返回体 declared；未声明键不写入=平台默认）。"""
-        h = _register(db, {"initial_fraction": 0.2,
+        h = _register(db, {"stop_loss": 0.05, "initial_fraction": 0.2,
                            "max_position_loss": 500.0})
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         assert t["risk_genes"] == "declared"
@@ -548,12 +577,12 @@ class TestSizingParamsDeclaration:
         比对面携带新键的行为锚）。"""
         from core.analysis.hypothesis_service import transition_hypothesis
 
-        h1 = _register(db, {"initial_fraction": 0.2}, statement="d2a")
+        h1 = _register(db, {"stop_loss": 0.05, "initial_fraction": 0.2}, statement="d2a")
         t1 = translate_hypothesis(db, hypothesis_id=h1["hypothesis_id"])
         transition_hypothesis(db, h1["hypothesis_id"],
                               target_status="abandoned",
                               evidence_ref="d2 split")
-        h2 = _register(db, {"initial_fraction": 0.5}, statement="d2b")
+        h2 = _register(db, {"stop_loss": 0.05, "initial_fraction": 0.5}, statement="d2b")
         t2 = translate_hypothesis(db, hypothesis_id=h2["hypothesis_id"])
         assert t2["strategy_id"] != t1["strategy_id"]
 
@@ -566,14 +595,15 @@ class TestSizingParamsDeclaration:
         此前四分支测试仅用存量键，新键只在终态变体场景验证过）：
         active 态同身份带键同值→duplicated；异值→422（detail 附既有
         声明摘要，防静默丢弃）。"""
-        _register(db, {key: declared})
-        r_same = _register(db, {key: declared})
+        _register(db, {"stop_loss": 0.05, key: declared})
+        r_same = _register(db, {"stop_loss": 0.05, key: declared})
         assert r_same["duplicated"] is True
         with pytest.raises(ResearchError) as ei:
-            _register(db, {key: other})
+            _register(db, {"stop_loss": 0.05, key: other})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         d = ei.value.detail
-        assert d["existing_strategy_params"] == {key: declared}
+        assert d["existing_strategy_params"] == {
+            "stop_loss": 0.05, key: declared}
         assert "slow_path" in d
 
 
@@ -849,13 +879,17 @@ class TestApiTransport:
                 "stop_loss": 0.05, "sl_mode": "pct"}
 
             # API 层坏值 422（全链校验拒绝）
-            bad = dict(body, strategy_params={"leverage": 50})
+            bad = dict(body, strategy_params={"stop_loss": 0.05,
+                                              "leverage": 50})
             assert client.post("/api/research/hypotheses",
                                json=bad).status_code == 422
 
     def test_api_empty_object_preserved(self, tmp_data_dir, tmp_path):
-        """B2 {} 传输保全锚：JSON 体 strategy_params={} 经全链到达 service
-        仍是空 dict 而非 None（否则 {} 语义坍缩为键缺失，三锚失效）。"""
+        """B2 {} 传输保全锚（D5 修订）：JSON 体 strategy_params={} 经
+        全链到达 service 仍是空 dict 而非 None——传输面保全的证据从
+        「duplicated」变为「422 拒因=stop_loss 在场判据（service 层
+        校验点的 detail），而非 pydantic 丢键」；键缺失（无
+        strategy_params 键）到达 service 为 None → 3.6 步在场拒。"""
         from fastapi.testclient import TestClient
 
         from api.app import create_app
@@ -867,15 +901,18 @@ class TestApiTransport:
         with TestClient(app) as client:
             base = {"conditions": _cond(), "statement": "empty obj",
                     "data_ranges": _ranges()}
+            # 键缺失（None）→ 3.6 步在场拒（service 收到 None 而非 {}）
             r1 = client.post("/api/research/hypotheses", json=base)
-            assert r1.status_code == 200
-            # 显式 {} 登记同身份（既有 NULL）→ duplicated（{}≠键缺失语义成立的前提）
+            assert r1.status_code == 422
+            assert r1.json()["detail"]["detail"]["field"] == \
+                "strategy_params"
+            # 显式 {} 到达 service 是 {} → 在场判据拒（field=stop_loss
+            # ——传输未坍缩；坍缩为 None 则 field=strategy_params）
             r2 = client.post("/api/research/hypotheses",
                              json=dict(base, strategy_params={}))
-            assert r2.status_code == 200
-            out = r2.json()
-            assert out["duplicated"] is True
-            assert out["existing_strategy_params"] == {}
+            assert r2.status_code == 422
+            assert r2.json()["detail"]["detail"]["field"] == \
+                "strategy_params.stop_loss"
 
     def test_api_existing_summary_passthrough(self, tmp_data_dir, tmp_path):
         """existing_strategy_params 经 response_model 透传（MCP 面前置）。"""
@@ -892,6 +929,8 @@ class TestApiTransport:
                     "data_ranges": _ranges()}
             client.post("/api/research/hypotheses",
                         json=dict(base, strategy_params={"stop_loss": 0.05}))
-            r = client.post("/api/research/hypotheses", json=base)  # 键缺失
+            r = client.post("/api/research/hypotheses",
+                            json=dict(base,
+                                      strategy_params={"stop_loss": 0.05}))
             assert r.status_code == 200
             assert r.json()["existing_strategy_params"] == {"stop_loss": 0.05}

@@ -35,7 +35,8 @@ RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
 
 def _body(direction=None, statement="方向测试"):
     body = {"conditions": CONDITIONS, "statement": statement,
-            "data_ranges": RANGES}
+            "data_ranges": RANGES,
+            "strategy_params": {"stop_loss": 0.05}}
     if direction is not None:
         body["direction"] = direction
     return body
@@ -72,7 +73,7 @@ class TestDirectionValueDomain:
         with pytest.raises(ResearchError) as ei:
             register_hypothesis(
                 db, conditions=json.loads(json.dumps(CONDITIONS)),
-                statement="s", data_ranges=RANGES, direction=123)
+                statement="s", data_ranges=RANGES, direction=123, strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["field"] == "direction"
 
@@ -199,7 +200,7 @@ class TestDirectionChannelLayeringFull:
         with pytest.raises(ResearchError) as ei:
             register_hypothesis(
                 db, conditions=json.loads(json.dumps(CONDITIONS)),
-                statement="s", data_ranges=RANGES, direction="both")
+                statement="s", data_ranges=RANGES, direction="both", strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["field"] == "direction"
 
@@ -238,11 +239,14 @@ class TestDirectionChannelLayeringFull:
 
     def test_bad_string_via_mcp_tool_channel(self, api_client):
         """字符串值域错（MCP 工具通道）：pydantic 不校验字符串值域，
-        穿透到服务层 3.7 步 → {"error": RESEARCH_PARAM_INVALID}。"""
+        穿透到服务层 3.7 步 → {"error": RESEARCH_PARAM_INVALID}。
+        D5 注记：须带最小声明块——3.6 步在场校验先于 3.7，无块请求
+        在声明块处即拒，direction 值域错误通道被掩盖。"""
         fn = self._mcp_register_fn(api_client)
         out = fn(when_conditions=CONDITIONS["when_conditions"],
                  then_conditions=CONDITIONS["then_conditions"],
-                 statement="s", data_ranges=RANGES, direction="both")
+                 statement="s", data_ranges=RANGES, direction="both",
+                 strategy_params={"stop_loss": 0.05})
         assert "error" in out
         assert out["error"]["code"] == "RESEARCH_PARAM_INVALID"
         assert out["error"]["detail"]["field"] == "direction"
@@ -284,7 +288,7 @@ class TestExitAlwaysTrueL3:
         client, idx = self._env_client(tmp_path)
         with client:
             resp = client.post("/api/research/hypotheses", json={
-                "conditions": {
+                "strategy_params": {"stop_loss": 0.05}, "conditions": {
                     "when_conditions": [
                         {"subject": {"indicator": "RSI",
                                      "params": {"period": 14}},
@@ -312,7 +316,7 @@ class TestExitAlwaysTrueL3:
         client, idx = self._env_client(tmp_path, closes=closes)
         with client:
             resp = client.post("/api/research/hypotheses", json={
-                "conditions": {
+                "strategy_params": {"stop_loss": 0.05}, "conditions": {
                     "when_conditions": [
                         {"subject": {"indicator": "RSI",
                                      "params": {"period": 14}},

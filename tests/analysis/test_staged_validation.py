@@ -96,7 +96,7 @@ def _register_hyp(env) -> str:
         statement="分段验证测试假设",
         data_ranges=[{"symbol": SYMBOL, "timeframe": "1d",
                       "start": "2020-01-01T00:00:00Z",
-                      "end": "2020-01-10T00:00:00Z"}])
+                      "end": "2020-01-10T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
     return out["hypothesis_id"]
 
 

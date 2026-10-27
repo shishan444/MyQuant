@@ -66,7 +66,7 @@ def data_dir(tmp_path: Path) -> Path:
 def _register(db, when, then, ranges):
     return register_hypothesis(
         db, conditions={"when_conditions": when, "then_conditions": then},
-        statement="s", data_ranges=ranges)["hypothesis_id"]
+        statement="s", data_ranges=ranges, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 class TestPassthroughProduct:
@@ -301,7 +301,7 @@ class TestCloseSubjectTranslation:
             statement="B1-T03", data_ranges=[
                 {"symbol": "BTCUSDT", "timeframe": "4h",
                  "start": "2023-09-01T00:00:00Z",
-                 "end": "2023-12-01T00:00:00Z"}])["hypothesis_id"]
+                 "end": "2023-12-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid)
         from core.persistence.repository.strategy import get_strategy
         stored = json.loads(get_strategy(db, out["strategy_id"])["dna_json"])

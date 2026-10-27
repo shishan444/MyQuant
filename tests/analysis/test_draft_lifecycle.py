@@ -39,7 +39,7 @@ def db(tmp_path: Path) -> Path:
 def _hyp(db, conds=None, ranges=None) -> str:
     return register_hypothesis(
         db, conditions=conds or _CONDS, statement="s",
-        data_ranges=ranges or _RANGES)["hypothesis_id"]
+        data_ranges=ranges or _RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 def _record(db, hid, sid, verdict, rec_id=None):

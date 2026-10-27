@@ -103,15 +103,22 @@ def world(tmp_path_factory):
         h = register_hypothesis(
             db, conditions=json.loads(json.dumps(CONDITIONS)),
             statement=f"OI 流入-{key}", data_ranges=RANGES,
-            strategy_params={"leverage": 2}, direction=direction)
+            strategy_params={"stop_loss": 0.05, "leverage": 2},
+            direction=direction)
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         out[f"hyp_{key}"] = h["hypothesis_id"]
         out[f"st_{key}"] = t["strategy_id"]
 
     # leverage=1 对照：手工 short draft（RiskGenes 平台默认 leverage=1）
+    # D5 注记：登记链无块重放通道收拢后，lev1 对照须独立条件身份
+    # （原靠「None 不参与比对」豁免分支与 short 共用同一假设）——
+    # OI 阈值微调即新研究主张，行为面（手工 draft 装载）不变
+    _WHEN_LEV1 = [dict(WHEN[0], target=0.0500001)]
     h1 = register_hypothesis(
-        db, conditions=json.loads(json.dumps(CONDITIONS)),
-        statement="OI 流入-lev1", data_ranges=RANGES, direction="short")
+        db, conditions=json.loads(json.dumps(
+            {"when_conditions": _WHEN_LEV1, "then_conditions": THEN})),
+        statement="OI 流入-lev1", data_ranges=RANGES, direction="short",
+        strategy_params={"stop_loss": 0.05})
     gene = SignalGene(
         indicator="OI_ChangeRate", params={"period": STEP},
         role=SignalRole.ENTRY_TRIGGER, field_name=f"oi_change_rate_{STEP}",

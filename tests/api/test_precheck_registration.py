@@ -76,6 +76,7 @@ def _payload(df, when=None, ranges=None, provenance=None):
         },
         "statement": "预检挂接测试假设",
         "data_ranges": ranges or _ranges(df),
+        "strategy_params": {"stop_loss": 0.05},
     }
     if provenance is not None:
         body["provenance"] = provenance

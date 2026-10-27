@@ -121,6 +121,7 @@ def test_http_transport_full_chain(mcp_http_server):
                 assert len(payload) == 48  # Q3 摘牌后 47→45（2026-10-14）
 
                 reg = await session.call_tool("register_hypothesis", {
+                     "strategy_params": {"stop_loss": 0.05},
                     "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                          "target": 35}],
                     "then_conditions": [{"subject": "close", "action": "gt",

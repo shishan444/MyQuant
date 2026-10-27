@@ -81,6 +81,7 @@ def _make_draft(db: Path, strategy_id: str, direction: str):
 
 def _register_hyp(client, direction=None):
     body = {"conditions": CONDITIONS, "statement": "披露测试",
+            "strategy_params": {"stop_loss": 0.05},
             "data_ranges": [{
                 "symbol": "BTCUSDT", "timeframe": "4h",
                 "start": "2024-01-01T00:00:00Z",

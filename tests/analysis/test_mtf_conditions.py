@@ -358,7 +358,7 @@ class TestRegistrationTimeframe:
             statement="mtf 登记测试",
             data_ranges=ranges or [
                 {"symbol": SYMBOL, "timeframe": "1h",
-                 "start": "2023-06-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}])
+                 "start": "2023-06-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
 
     def _when(self, **extra):
         cond = {"subject": "close", "action": "gt", "target": 0.0}
@@ -446,7 +446,8 @@ class TestRegistrationReachability:
                     {"subject": "close", "action": "lt", "target": -1}]},
             "data_ranges": [{"symbol": SYMBOL, "timeframe": "1h",
                              "start": "2023-06-10T00:00:00Z",
-                             "end": "2023-06-20T00:00:00Z"}]})
+                             "end": "2023-06-20T00:00:00Z"}],
+            "strategy_params": {"stop_loss": 0.05}})
         return resp
 
     def test_高周期可达_登记成功(self, api_client, env):
@@ -558,7 +559,7 @@ class TestTranslationReject:
             env["db"], conditions=conds, statement="放行测试",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
                           "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}])
+                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         result = translate_hypothesis(env["db"],
                                       hypothesis_id=out["hypothesis_id"],
                                       strategy_timeframe="1h")
@@ -581,7 +582,7 @@ class TestTranslationReject:
             statement="对照",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
                           "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}])
+                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         # 上一假设仍 active——同身份重登记走终态变体路径：终态化后登记
         from core.analysis.hypothesis_service import transition_hypothesis
         transition_hypothesis(env["db"], out["hypothesis_id"],
@@ -598,7 +599,7 @@ class TestTranslationReject:
             statement="对照",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
                           "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}])
+                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         result2 = translate_hypothesis(env["db"],
                                        hypothesis_id=out2["hypothesis_id"],
                                        strategy_timeframe="1h")
@@ -740,7 +741,7 @@ class TestUnblockFourGroupGuard:
             env["db"],
             conditions={"when_conditions": [when_explicit],
                         "then_conditions": [_THEN_RSI]},
-            statement="显式基准", data_ranges=_RANGES_1H)
+            statement="显式基准", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
         from core.persistence.repository import research as rr
         row_a = next(h for h in rr.list_hypotheses(env["db"])
                      if h["hypothesis_id"] == out_a["hypothesis_id"])
@@ -752,7 +753,7 @@ class TestUnblockFourGroupGuard:
             env["db"],
             conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
                         "then_conditions": [_THEN_RSI]},
-            statement="无修饰", data_ranges=_RANGES_1H)
+            statement="无修饰", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
         assert out_b["hypothesis_id"] == out_a["hypothesis_id"]
         assert out_b.get("duplicated") is True, "归一后同指纹字面连续"
         # 第二层：翻译面归一——产物基因无 timeframe 键
@@ -772,7 +773,7 @@ class TestUnblockFourGroupGuard:
             env["db"],
             conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
                         "then_conditions": [_THEN_RSI]},
-            statement="无修饰对照", data_ranges=_RANGES_1H)
+            statement="无修饰对照", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
         res_c = translate_hypothesis(env["db"],
                                      hypothesis_id=out_c["hypothesis_id"],
                                      strategy_timeframe="1h",
@@ -793,7 +794,7 @@ class TestUnblockFourGroupGuard:
             env["db"],
             conditions={"when_conditions": [when_plugin],
                         "then_conditions": [_THEN_RSI]},
-            statement="插件 tf", data_ranges=_RANGES_1H)
+            statement="插件 tf", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
         assert out["hypothesis_id"], "登记面 when 组放行（可登记）"
         with pytest.raises(ResearchError) as ei:
             translate_hypothesis(env["db"],
@@ -816,7 +817,7 @@ class TestUnblockFourGroupGuard:
             conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
                         "then_conditions": [_THEN_RSI],
                         "add_trigger_conditions": [add_tf]},
-            statement="加仓组 tf", data_ranges=_RANGES_1H)
+            statement="加仓组 tf", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
         res = translate_hypothesis(env["db"],
                                    hypothesis_id=out["hypothesis_id"],
                                    strategy_timeframe="1h",
@@ -878,7 +879,7 @@ class TestUnblockFourGroupGuard:
             conditions={"when_conditions": [when_tf],
                         "then_conditions": [_THEN_RSI]},
             statement="policy 组合", data_ranges=_RANGES_1H,
-            trigger_policy={"mode": "first_true"})
+            trigger_policy={"mode": "first_true"}, strategy_params={"stop_loss": 0.05})
         res = translate_hypothesis(env["db"],
                                    hypothesis_id=out["hypothesis_id"],
                                    strategy_timeframe="1h",

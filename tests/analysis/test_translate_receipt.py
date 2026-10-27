@@ -42,7 +42,12 @@ def db(tmp_path: Path) -> Path:
     return d
 
 
-def _hyp(db, conds=None, strategy_params=None) -> str:
+_NO_SP = object()  # 哨兵：未传补最小合法块；显式 None（负锚）透传
+
+
+def _hyp(db, conds=None, strategy_params=_NO_SP) -> str:
+    if strategy_params is _NO_SP:
+        strategy_params = {"stop_loss": 0.05}
     return register_hypothesis(
         db, conditions=conds or _CONDS, statement="s",
         data_ranges=_RANGES,
@@ -69,7 +74,7 @@ class TestTranslateReceiptThreeKeys:
 
     def test_s2c_max_hold_declared_echoed(self, db):
         """S2c 声明 max_hold=6 → 回显 int 6。"""
-        hid = _hyp(db, strategy_params={"max_hold": 6})
+        hid = _hyp(db, strategy_params={"stop_loss": 0.05, "max_hold": 6})
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert out["max_hold"] == 6
         assert isinstance(out["max_hold"], int)

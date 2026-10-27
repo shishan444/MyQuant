@@ -683,7 +683,8 @@ class TestCapabilityDomainAndLog:
             conditions={"when_conditions": [_COND],
                         "then_conditions": [dict(_COND)]},
             statement="s",
-            data_ranges=[dict(RNG_DEF)])["hypothesis_id"]
+            data_ranges=[dict(RNG_DEF)],
+            strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         api_client.app.state.db_path = self.db
         api_client.app.state.data_dir = self.d
         resp = api_client.post("/api/research/analysis", json={

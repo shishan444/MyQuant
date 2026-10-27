@@ -71,7 +71,7 @@ def _register(db, tmp_path, closes, then_target=60, ranges=None):
     data_dir, rng = _data_env(tmp_path, closes)
     return register_hypothesis(
         db, conditions=_conds(then_target), statement="s",
-        data_ranges=ranges or [rng], precheck_data_dir=data_dir)
+        data_ranges=ranges or [rng], precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
 
 
 class TestExitAlwaysTrueRejection:
@@ -85,7 +85,7 @@ class TestExitAlwaysTrueRejection:
         with pytest.raises(ResearchError) as ei:
             register_hypothesis(
                 db, conditions=_conds(), statement="s",
-                data_ranges=[rng], precheck_data_dir=data_dir)
+                data_ranges=[rng], precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         err = ei.value
         assert err.code == "RESEARCH_EXIT_ALWAYS_TRUE"
         assert err.status == 422
@@ -101,7 +101,7 @@ class TestExitAlwaysTrueRejection:
         with pytest.raises(ResearchError) as ei2:
             register_hypothesis(
                 db, conditions=_conds(), statement="s2",
-                data_ranges=[rng], precheck_data_dir=data_dir)
+                data_ranges=[rng], precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         assert ei2.value.code == "RESEARCH_EXIT_ALWAYS_TRUE"
         assert rr.count_hypotheses(db) == 0
 
@@ -130,7 +130,7 @@ class TestExitAlwaysTrueRejection:
         monkeypatch.setattr(pk, "run_registration_precheck", boom)
         out = register_hypothesis(
             db, conditions=_conds(), statement="s",
-            data_ranges=[rng], precheck_data_dir=data_dir)
+            data_ranges=[rng], precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False
         assert "precheck_warnings" not in out
         assert "exit_coverage_warnings" not in out
@@ -162,7 +162,7 @@ class TestExitAlwaysTrueRejection:
             register_hypothesis(
                 db, conditions=_conds(), statement="s",
                 data_ranges=[rng_a, rng_b],
-                precheck_data_dir=data_dir)
+                precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         err = ei.value
         assert err.code == "RESEARCH_EXIT_ALWAYS_TRUE"
         # detail 锚定首个恒真区间（A）

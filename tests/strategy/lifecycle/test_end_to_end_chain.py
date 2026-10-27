@@ -69,7 +69,7 @@ def _promote_via_research_chain(db: Path) -> str:
     from core.analysis.hypothesis_to_strategy import translate_hypothesis
 
     hid = register_hypothesis(
-        db, conditions=_CONDS, statement="s", data_ranges=_RANGES)[
+        db, conditions=_CONDS, statement="s", data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})[
         "hypothesis_id"]
     sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
     rr.save_validation_with_log(

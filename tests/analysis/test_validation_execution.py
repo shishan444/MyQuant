@@ -98,7 +98,7 @@ def hypothesis_id(db) -> str:
         statement="s",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
-                      "end": "2023-02-01T00:00:00Z"}],
+                      "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
     )["hypothesis_id"]
 
 
@@ -782,7 +782,7 @@ class TestR3WarmupAxisConsistency:
                     {"subject": "close", "action": "gt", "target": 0}]},
             statement="T5 warmup 轴",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
-                          "start": "2023-12-01", "end": "2023-12-10"}]
+                          "start": "2023-12-01", "end": "2023-12-10"}], strategy_params={"stop_loss": 0.05}
         )["hypothesis_id"]
         return db, d, sid, hid
 

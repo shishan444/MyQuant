@@ -60,7 +60,12 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-03-01T00:00:00Z"}]
 
 
-def _register(db: Path, sp=None, direction=None):
+_NO_SP = object()  # 哨兵：未传补最小合法块；显式 None（负锚）透传
+
+
+def _register(db: Path, sp=_NO_SP, direction=None):
+    if sp is _NO_SP:
+        sp = {"stop_loss": 0.05}
     return register_hypothesis(
         db, conditions=_cond(), statement="max_hold 测试",
         data_ranges=_ranges(), strategy_params=sp, direction=direction)
@@ -80,14 +85,14 @@ class TestDeclarationDomain:
             # 参数变体走终态后重登记，见 TestIdempotentAndVariant）
             r = register_hypothesis(
                 db, conditions=_cond(period=14 + i), statement=f"b{i}",
-                data_ranges=_ranges(), strategy_params={"max_hold": v})
+                data_ranges=_ranges(), strategy_params={"stop_loss": 0.05, "max_hold": v})
             assert r["duplicated"] is False
 
     @pytest.mark.parametrize("bad", [0, True, 300, 2.5])
     def test_reject_four_forms(self, db, bad):
         """下界/bool/上界/非整数四形态（DEC-3 拒绝参数化）。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"max_hold": bad})
+            _register(db, sp={"stop_loss": 0.05, "max_hold": bad})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.detail["field"] == "max_hold"
         assert ei.value.detail["legal_range"] == [1, 200]
@@ -95,7 +100,7 @@ class TestDeclarationDomain:
     def test_explicit_null_rejected_by_existing_face(self, db):
         """null 负向：显式 null 由既有全键 null 拒绝面覆盖。"""
         with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"max_hold": None})
+            _register(db, sp={"stop_loss": 0.05, "max_hold": None})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert "null" in str(ei.value)
 
@@ -104,31 +109,33 @@ class TestIdempotentAndVariant:
     """DEC-4/DEC-5：幂等四分支与变体路径。"""
 
     def test_idempotent_branches_carry_max_hold(self, db):
-        r1 = _register(db, sp={"max_hold": 6})
+        r1 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
         # 同值 → duplicated
-        r2 = _register(db, sp={"max_hold": 6})
+        r2 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
         assert r2["duplicated"] is True
         assert r2["hypothesis_id"] == r1["hypothesis_id"]
-        # 不带键 → duplicated（旧调用方零适配）
-        r3 = _register(db)
-        assert r3["duplicated"] is True
+        # （D5 翻转）不带块重登记 → 3.6 步在场拒（原「旧调用方
+        # 零适配」豁免分支收拢消亡）
+        with pytest.raises(ResearchError) as ei:
+            _register(db, None)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
         # 异值 → 422 附变体路径指引
         with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"max_hold": 24})
+            _register(db, sp={"stop_loss": 0.05, "max_hold": 24})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_variant_after_terminal_new_entity(self, db):
         """DEC-5：终态后异 max_hold 重登记→新实体→新 draft（十一字段比对
         max_hold 异→不误返既有）。"""
         from core.analysis.hypothesis_service import transition_hypothesis
-        h1 = _register(db, sp={"max_hold": 6})
+        h1 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
         t1 = translate_hypothesis(db, hypothesis_id=h1["hypothesis_id"])
         assert _risk_of(db, t1["strategy_id"])["max_hold"] == 6
         # 终态后重登记（abandoned 免证据）
         transition_hypothesis(db, h1["hypothesis_id"],
                               target_status="abandoned",
                               evidence_ref="测试变体路径")
-        h2 = _register(db, sp={"max_hold": 24})
+        h2 = _register(db, sp={"stop_loss": 0.05, "max_hold": 24})
         assert h2["hypothesis_id"] != h1["hypothesis_id"]
         t2 = translate_hypothesis(db, hypothesis_id=h2["hypothesis_id"])
         assert t2["strategy_id"] != t1["strategy_id"]
@@ -140,7 +147,7 @@ class TestGeneAndTranslation:
 
     def test_expression_chain_declared(self, db):
         """DEC-1：声明→翻译→DNA 一致（risk_genes="declared"）。"""
-        h = _register(db, sp={"max_hold": 6})
+        h = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         assert t["risk_genes"] == "declared"
         rg = _risk_of(db, t["strategy_id"])

@@ -120,7 +120,7 @@ class TestT7RegistrationFace:
             statement="R4 登记面全通",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         # 统计面可求值（分析链掩码非异常）
         df = _df()
         cond = {"subject": {"indicator": "RVOL", "params": {"period": 20}},
@@ -181,7 +181,7 @@ class TestT7TranslateWindowDomain:
             statement="window 值域锚",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
     @pytest.mark.parametrize("bad", [0, -3, "x", 2.5, True],
                              ids=["零", "负数", "字符串", "浮点", "bool"])
@@ -211,7 +211,7 @@ class TestT7TranslateWindowDomain:
             statement="window 缺省锚",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid)
         from core.persistence.repository.strategy import get_strategy
         row = get_strategy(db, out["strategy_id"])
@@ -282,7 +282,7 @@ class TestT6InnerActionsSingleSource:
             statement="T6 单源锚",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as exc:
             translate_hypothesis(d, hypothesis_id=hid)
         assert exc.value.code == "RESEARCH_NOT_EXPRESSIBLE"
@@ -330,7 +330,7 @@ class TestT7TargetThresholdGuard:
             statement="CARD-01 target 分诊",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         return translate_hypothesis(db, hypothesis_id=hid)
 
     @pytest.mark.parametrize(

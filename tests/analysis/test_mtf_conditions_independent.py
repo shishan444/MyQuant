@@ -85,7 +85,8 @@ def _register(db, when, then=None, ranges=None):
         statement="mtf 独立复核",
         data_ranges=ranges or [
             {"symbol": SYMBOL, "timeframe": "1h",
-             "start": "2024-03-01T00:00:00Z", "end": "2024-04-01T00:00:00Z"}])
+             "start": "2024-03-01T00:00:00Z", "end": "2024-04-01T00:00:00Z"}],
+        strategy_params={"stop_loss": 0.05})
 
 
 def _when(**extra):

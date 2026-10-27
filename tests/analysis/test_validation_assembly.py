@@ -138,7 +138,7 @@ class TestDanglingSourceRejected:
             statement="s", data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                                          "start": "2024-05-01T00:00:00Z",
                                          "end": "2024-06-01T00:00:00Z"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         # 伪造分量证据绕过加严门（本用例锁定的是组装层失效拒绝）
         rr.save_validation_with_log(
             db, record_id="rec_ghost", hypothesis_id=hid, strategy_id=None,
@@ -236,7 +236,7 @@ class TestTranslatedDraftAffectsSignals:
                 {"subject": col, "action": "gt", "target": 0.5}],
             "then_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}]},
-            statement="s", data_ranges=ranges)["hypothesis_id"]
+            statement="s", data_ranges=ranges, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
         assert out["status"] == "draft", "插件列假设翻译不得被拒"
         draft_sid = out["strategy_id"]
@@ -255,7 +255,7 @@ class TestTranslatedDraftAffectsSignals:
                 {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
             "then_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}]},
-            statement="s", data_ranges=ranges)["hypothesis_id"]
+            statement="s", data_ranges=ranges, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         ctl_sid = translate_hypothesis(
             db, data_dir=data_dir,
             hypothesis_id=hid_ctl)["strategy_id"]
@@ -338,7 +338,7 @@ class TestBooleanColumnConsumptionChain:
             statement="布尔列金叉门",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-11-01T00:00:00Z",
-                          "end": "2023-12-01T00:00:00Z"}])
+                          "end": "2023-12-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         hid = out["hypothesis_id"]
         assert hid
         # 消费点二：翻译（插件列条件 → formula 信号源，threshold 0.5）
@@ -400,7 +400,7 @@ class TestGoldenCrossAcceptanceAnchor:
             statement="EMA12 上穿 EMA26 金叉",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-11-01T00:00:00Z",
-                          "end": "2023-12-01T00:00:00Z"}])
+                          "end": "2023-12-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
         draft = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=out["hypothesis_id"])
         assert draft["strategy_id"], "金叉假设可翻译为策略"

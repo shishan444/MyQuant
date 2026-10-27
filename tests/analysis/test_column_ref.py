@@ -243,7 +243,7 @@ class TestFiveDomainIntegration:
             "then_conditions": [{"subject": {"indicator": "RSI",
                                              "params": {"period": 14}},
                                  "action": "gt", "target": 50}]},
-            statement="macd", data_ranges=rng)["hypothesis_id"]
+            statement="macd", data_ranges=rng, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         res = translate_hypothesis(db_path, hypothesis_id=hid)
         assert res["genes"][0] == "MACD(signal)"
         # N4 取列锚：field 语义名 → executor resolve 精确取 macd_signal 列
@@ -270,7 +270,7 @@ class TestFiveDomainIntegration:
                                      "action": "lt", "target": 30}],
                 "then_conditions": [{"subject": "close",
                                      "action": "gt", "target": 0}]},
-                statement="s", data_ranges=rng)
+                statement="s", data_ranges=rng, strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
 
 
