@@ -197,6 +197,38 @@ class TestR1ParamApiRegistration:
             assert set(cond) == want_keys, (hid, set(cond))
 
 
+    def test_bool_coercion_api_surface_recorded(self, api_client, reg_env):
+        """bool coercion API 面现状记录（developer 裁决 b，2026-10-27
+        维持现状）：pydantic 平台级 bool→数值 coercion（True→1.0）使
+        服务层 bool 拒分支在 API 面结构上不可达——经 API 传 True 登记
+        200 且参数被洗为 1.0 落进产物（与直调面拒构成两面分层：API=
+        schema 先洗的平台行为，直调=服务层 isinstance 防线，锚定于
+        test_bool_rejected_in_service_layer）。裁决理由：四键单独
+        Strict 会与 target/window 等同 schema 字段行为分叉；True→1.0
+        落合法值域无危险行为面；R4 window 先例同款家族一致。此锚锁
+        现状防静默漂移——若未来统一改 Strict 收口，本锚红出即迁移
+        提示（连同 test_bool_rejected_in_service_layer 的直调面语义
+        一起重审）。"""
+        import json as _json
+        from core.persistence.repository.strategy import get_strategy
+        _wire(api_client, reg_env)
+        hid = api_client.post("/api/research/hypotheses", json=_body(
+            reg_env["df"], _tb(proximity_pct=True))).json()["hypothesis_id"]
+        hid2 = api_client.post("/api/research/hypotheses", json=_body(
+            reg_env["df"], _rr(lookback=True))).json()["hypothesis_id"]
+        for hid, key, coerced in ((hid, "proximity_pct", 1.0),
+                                  (hid2, "lookback", 1)):
+            out = translate_hypothesis(
+                reg_env["db"], data_dir=reg_env["data_dir"],
+                hypothesis_id=hid)
+            dna = _json.loads(
+                get_strategy(reg_env["db"], out["strategy_id"])["dna_json"])
+            cond = [g for g in dna["signal_genes"]
+                    if g["role"] == "entry_trigger"][0]["condition"]
+            assert cond[key] == coerced, \
+                f"{key}: True 经 coercion 落产物为 {coerced}（现状记录）"
+
+
 class TestR1ParamServiceDirectCall:
     """服务层直调面（register_hypothesis 直调——bool 拒分支在 API 面
     被 pydantic coercion 前置洗白（True→1.0 合法值放行），bool 拒的
