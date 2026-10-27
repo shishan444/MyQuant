@@ -9,6 +9,7 @@ funding_acc 旁路——同回测总额一致性经引擎级人工核算对照�
 """
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -283,6 +284,84 @@ class TestC8ContinuousProration:
         # 1x 也计费（性质一）+净支出语义
         assert result.total_funding_cost == \
             f["total_cost"] - f["total_received"]
+
+
+class TestC2RealParquetCalibration:
+    """C2 资产第二组：真实 BTCUSDT_funding.parquet 抽段对拍（tester
+    缺口补齐——test-plan C2「合成可控+真实对拍」两组资产）。真实
+    8h 结算形制（实测尾行含 +1ms 偏移行）下装载层 ffill 语义人工
+    核算对照+单点供给消费。数据文件缺位时 skip（离线环境）。"""
+
+    PARQUET = Path(__file__).resolve().parents[2] \
+        / "data" / "market" / "BTCUSDT_funding.parquet"
+
+    def test_real_segment_ffill_and_rates(self):
+        import pandas as pd
+        if not self.PARQUET.exists():
+            pytest.skip("真实 funding parquet 不在场（离线环境）")
+        fund = pd.read_parquet(self.PARQUET)
+        seg = fund.loc["2024-03-01":"2024-03-31"]  # 抽段（31 天）
+        assert len(seg) >= 90, "8h 结算段行数量级 sanity"
+        # 4h OHLCV 网格覆盖同段（装载链 merge_derivatives 形制）
+        idx = pd.date_range(seg.index.min().ceil("4h"), seg.index.max(),
+                            freq="4h", tz="UTC", name="timestamp")
+        close = np.full(len(idx), 100.0)
+        ohlcv = pd.DataFrame({
+            "open": close, "high": close * 1.001, "low": close * 0.999,
+            "close": close, "volume": 1000.0}, index=idx)
+        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+        merged = merge_derivatives_into_ohlcv(ohlcv, funding_df=seg)
+        # 装载层 ffill 语义：段内全窗非空+逐 bar==最近一次已知结算费率
+        # （reindex(method="ffill") asof 语义人工核算对照）
+        assert "funding_rate" in merged.columns
+        assert merged["funding_rate"].notna().all(), "覆盖段内无 NaN"
+        expected = seg["funding_rate"].reindex(merged.index, method="ffill")
+        assert np.allclose(merged["funding_rate"].to_numpy(),
+                           expected.to_numpy()), \
+            "每 bar 携带最近一次已知结算费率（ffill 逐 bar 对照）"
+        # 单点供给消费：rates==列值×hours_frac（4h=0.5）+coverage 边界
+        # ==parquet 段实际界（mtf_loader G12 探测语义以 attrs 表达）
+        merged.attrs["derivatives_coverage"] = {"funding": {
+            "available_start": seg.index.min().isoformat(),
+            "available_end": seg.index.max().isoformat()}}
+        rates, meta = _funding_rates_for(merged, "4h")
+        assert meta["status"] == "loaded"
+        assert meta["covered"][0] == seg.index.min().isoformat()
+        assert meta["covered"][1] == seg.index.max().isoformat()
+        assert np.allclose(rates, merged["funding_rate"].to_numpy() * 0.5), \
+            "rates=列值×4/8 直接映射（真实费率非恒定）"
+        # 真实时变：费率非常数（恒定费率模型可与本段区分——性质二的
+        # 真实数据旁证）
+        assert seg["funding_rate"].nunique() > 10
+
+    def test_c4_plus_one_ms_offset_absorbed_by_ffill(self):
+        """C4：8h 结算时点 +1ms 偏移被装载层 ffill 吸收（实测形制：
+        parquet 尾行 16:00:00.001000）。asof 语义下偏移点顺延至下一
+        bar 生效（延迟可见非丢失），无 NaN、无二次归并。"""
+        import pandas as pd
+        f_idx = pd.DatetimeIndex(
+            ["2024-01-01 00:00:00+00:00", "2024-01-01 08:00:00.001+00:00",
+             "2024-01-01 16:00:00.002+00:00", "2024-01-02 00:00:00+00:00"],
+            name="timestamp")
+        funding = pd.DataFrame(
+            {"funding_rate": [0.0001, 0.0002, 0.0003, 0.0004]}, index=f_idx)
+        idx = pd.date_range("2024-01-01", periods=12, freq="4h",
+                            tz="UTC", name="timestamp")
+        ohlcv = pd.DataFrame(
+            {"close": np.full(12, 100.0)}, index=idx)
+        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+        merged = merge_derivatives_into_ohlcv(ohlcv, funding_df=funding)
+        col = merged["funding_rate"]
+        assert col.notna().all(), "偏移时点经 ffill 全窗覆盖"
+        # 人工核算（asof-ffill）：bar 04:00/08:00 因结算点 08:00:00.001
+        # 晚于 bar 时点 → 仍取 00:00 值（08:00 bar 不见 +1ms 偏移结算
+        # 点）；bar 12:00 取 08:00:00.001 值——偏移点顺延至下一 bar
+        # 生效（延迟可见非丢失）
+        assert col.iloc[2] == pytest.approx(0.0001), \
+            "08:00 bar 不见 +1ms 偏移结算点（asof 语义）"
+        assert col.iloc[3] == pytest.approx(0.0002), \
+            "偏移结算点顺延至 12:00 bar 生效"
+        assert col.iloc[-1] == pytest.approx(0.0004)
 
 
 class TestC9NanSemantics:

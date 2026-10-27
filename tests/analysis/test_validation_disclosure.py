@@ -168,6 +168,66 @@ class TestAdhocNullDefaultFilled:
         assert disc["values"]["stop_loss"] == 0.08
 
 
+class TestDirectBuildMaterializedDefault:
+    """A8 直建路径披露两要素（卡 A 入口分诊③——tester 缺口补齐）。
+
+    POST /api/strategies 直建（dna.risk_genes 不写 stop_loss）→
+    RiskGenesModel pydantic default 物化 0.05 落库（物化显式——与
+    登记面「拒绝默认填充」分层的入口语义）；验证披露 default_filled
+    =null 恒态（直建请求体不算声明面：schema 物化发生在验证前，
+    落库后请求体键集信息已丢失——「物化与显式不可区分」恒态语义）；
+    values 完整回显（含物化 stop_loss）。
+    """
+
+    def test_direct_build_materializes_and_validates_null(
+            self, env, api_client):
+        api_client.app.state.db_path = env["db"]
+        api_client.app.state.data_dir = env["data_dir"]
+        dna = {
+            "signal_genes": [
+                {"indicator": "RSI", "params": {"period": 14},
+                 "role": "entry_trigger", "field": None,
+                 "condition": {"type": "lt", "threshold": 35}},
+                {"indicator": "RSI", "params": {"period": 14},
+                 "role": "exit_trigger", "field": None,
+                 "condition": {"type": "gt", "threshold": 60}},
+            ],
+            "logic_genes": {"entry_logic": "AND", "exit_logic": "AND"},
+            "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+            # 不写 stop_loss——schema default 物化路径（对照 A2：登记面
+            # 此形态被 F1 拒，直建面合法且物化）
+            "risk_genes": {"take_profit": 0.10, "position_size": 0.3},
+        }
+        r = api_client.post("/api/strategies", json={
+            "name": "直建披露", "dna": dna,
+            "symbol": "BTCUSDT", "timeframe": "4h"})
+        assert r.status_code == 201, r.text
+        sid = r.json()["strategy_id"]
+        # 物化显式：落库行 dna_json.risk_genes.stop_loss==0.05（非 None
+        # 缺席——pydantic default 已写进落库事实）
+        from core.persistence.repository.strategy import get_strategy
+        row = get_strategy(env["db"], sid)
+        assert json.loads(row["dna_json"])["risk_genes"]["stop_loss"] == 0.05
+
+        # 验证披露两要素（adhoc 面——直建策略无假设谱系）
+        rv = api_client.post("/api/research/random-window-test", json={
+            "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
+            "data_start": "2024-01-10T00:00:00Z",
+            "data_end": "2024-03-20T00:00:00Z",
+            "window_bars": 60, "n_windows": 2, "seed": 7})
+        assert rv.status_code == 200, rv.text
+        disc = rv.json()["risk_genes_disclosure"]
+        assert disc["default_filled"] is None, \
+            "直建无谱系 → null 恒态（物化不可反推声明面）"
+        assert disc["values"]["stop_loss"] == 0.05, "values 含物化值"
+        assert {"stop_loss", "take_profit", "position_size",
+                "leverage"} <= set(disc["values"]), "values 完整回显"
+        # 记录行读回同值
+        result = _record_result(env["db"], "adhoc", sid, "random_window")
+        assert result["risk_genes_disclosure"]["default_filled"] is None
+        assert result["risk_genes_disclosure"]["values"]["stop_loss"] == 0.05
+
+
 class TestStagedWithHypothesis:
     """staged 挂假设：result_json 与返回体披露在场且同 translate 回执。"""
 

@@ -353,3 +353,37 @@ class TestRiskGenesDisclosure:
         # 3a 稳定锚：同一假设重复挂载 → 披露逐键稳定
         out_b2 = translate_hypothesis(db, hypothesis_id="hyp_b_a7")
         assert out_b2["risk_genes_disclosure"] == disc_b
+
+    def test_active_diversion_disclosure_reflects_existing_row(self, db):
+        """spec Scenario「分流命中披露为既有产物事实」（tester 缺口
+        补齐）：翻译命中库内同基因型既有 active 策略（same_dna_existing
+        =true）→ 披露 values==被命中 active 行 dna_json 回读；声明面差
+        集按当前假设声明块（存量无块假设 → default_filled 含 stop_loss）
+        ——披露的是落库事实，标注反映本次声明面。"""
+        import sqlite3
+        hid_a = _hyp(db, strategy_params={"stop_loss": 0.05})
+        out_a = translate_hypothesis(db, hypothesis_id=hid_a)
+        sid = out_a["strategy_id"]
+        # arrange：draft 产物行升 active（分流分支选择面——非断言对象）
+        conn = sqlite3.connect(db)
+        with conn:
+            conn.execute(
+                "UPDATE strategy SET status='active' WHERE strategy_id=?",
+                (sid,))
+        conn.close()
+
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id="hyp_b_active",
+            conditions=json.dumps(_CONDS), conditions_hash="ch_b_act",
+            statement="s", data_ranges=json.dumps(_RANGES),
+            ranges_hash="rh_b_act")
+        out_b = translate_hypothesis(db, hypothesis_id="hyp_b_active")
+        assert out_b["same_dna_existing"] is True
+        assert out_b["strategy_id"] == sid
+        disc = out_b["risk_genes_disclosure"]
+        assert disc["values"] == self._row_risk_genes(db, sid), \
+            "values==被命中 active 行落库回读（非当前构造对象）"
+        assert disc["values"]["stop_loss"] == 0.05
+        assert "stop_loss" in disc["default_filled"], \
+            "存量无块假设 → 默认填充标注按本次声明面"
+        assert out_b["risk_genes"] == "platform_default"
