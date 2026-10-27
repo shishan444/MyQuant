@@ -220,6 +220,35 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
     return dna, row
 
 
+def _risk_disclosure(db_path: Path, dna, hypothesis_id: Optional[str]) -> dict:
+    """验证记录执行配置披露（卡 A 双消费点的验证侧组装）。
+
+    values=验证对象 dna 序列化后的 risk_genes（与 translate 回执走
+    同一 _risk_genes_disclosure 组装——键集一致性由共用单点结构保证）；
+    default_filled 三态（CARD-04 披露归因收敛）：parent 假设声明块
+    差集（列 NULL/空=合法存量无声明→全集标注，D6 界线保留）；null=
+    无从判定（hypothesis_id 缺失的手工/进化产物验证，或假设行缺失/
+    声明块坏 JSON/非 dict 真值的损坏态——无从判定≠全部默认，不虚标
+    全集），values 仍完整（「值披露无死角，来源标注分层」）。
+    """
+    from core.analysis.hypothesis_to_strategy import (
+        _load_declared_params, _risk_genes_disclosure)
+    declared = None
+    undeterminable = False
+    if hypothesis_id:
+        hyp = rr.get_hypothesis(db_path, hypothesis_id)
+        if hyp is None:
+            undeterminable = True  # 行缺失（库内删除）=无从判定
+        else:
+            declared, undeterminable = _load_declared_params(
+                hyp.get("strategy_params"))
+    disclosure = _risk_genes_disclosure(
+        dna.to_json(), declared, undeterminable=undeterminable)
+    if not hypothesis_id:
+        disclosure["default_filled"] = None
+    return disclosure
+
+
 def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
     """基因级高周期轴引用分组：带基因级 tf 的基因按轴归入
     (indicator, params) 引用清单（含序列对照类条件的 target_indicator
@@ -599,6 +628,10 @@ def run_isolated_backtest(
         # 方向披露（add-direction-channel A4）：纯增量键，来源=draft
         # DNA——幂等重放经 _dup_payload 同构回显；旧消费方零适配
         "direction": dna.risk_genes.direction,
+        # 执行配置披露（卡 A 双消费点验证侧）：与 translate 回执同一
+        # 组装单点；幂等重放经 result_json 内嵌键自动同构
+        "risk_genes_disclosure": _risk_disclosure(
+            db_path, dna, hypothesis_id),
     }, ensure_ascii=False)
     params_json = json.dumps({
         "request_range": request_range, "range_hash": rh,
@@ -644,6 +677,16 @@ def random_window_test(
     window_bars/gene_tf/need_hint——统计无意义窗诚实拒绝；fail-loud
     为第二道兜底；见 _reject_short_window_for_gene_tfs）。
     """
+    # hypothesis 存在性前置（CARD-05 三入口对称）：None=adhoc 无谱系
+    # 通道保留不拒；沿 _hypothesis_precheck 404 形制仅查存在性（终态
+    # 409 是否同构涉研究协议语义不扩）；前置先于幂等查询——伪造/失效
+    # id 不再直写 validation_records.hypothesis_id 列
+    if hypothesis_id is not None:
+        hyp = rr.get_hypothesis(db_path, hypothesis_id)
+        if hyp is None:
+            raise ResearchError("RESEARCH_HYPOTHESIS_NOT_FOUND",
+                                f"假设不存在: {hypothesis_id}", status=404)
+
     # threshold_profile 按名解析（结构校验前置；每窗 judge 消费）
     threshold_profile = _resolve_threshold_profile(threshold_profile)
 
@@ -735,6 +778,9 @@ def random_window_test(
 
     # 落验证记录（level=random_window；种子在 params 中持久化 → 可复现审计）
     record_id = f"rec_{uuid.uuid4().hex[:12]}"
+    # 执行配置披露（卡 A）：无谱系（adhoc 手工/进化产物）→
+    # default_filled=null；result_json 与返回体同一对象（禁两处组装）
+    disclosure = _risk_disclosure(db_path, dna, hypothesis_id)
     rr.save_validation_with_log(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id or "adhoc",
         strategy_id=strategy_id, level="random_window", segmentation="",
@@ -745,7 +791,8 @@ def random_window_test(
         result=json.dumps({"windows": windows, "summary": summary,
                            # 方向披露（add-direction-channel A4）：幂等
                            # 重放提取源；纯增量键
-                           "direction": dna.risk_genes.direction},
+                           "direction": dna.risk_genes.direction,
+                           "risk_genes_disclosure": disclosure},
                           ensure_ascii=False),
         verdict=agg, range_hash=rh)
 
@@ -754,6 +801,7 @@ def random_window_test(
             # 命中路径同形同值，程序化判定链单点取值
             "verdict": agg,
             "direction": dna.risk_genes.direction,
+            "risk_genes_disclosure": disclosure,
             "windows": windows, "summary": summary}
 
 
@@ -1178,6 +1226,9 @@ def run_staged_validation(
 
     # ---- 写入双路径 ----
     record_id: Optional[str] = None
+    # 执行配置披露（卡 A）：无谱系（adhoc 纯日志）→ default_filled=null；
+    # 写入分支与返回体同一对象（禁两处组装——首次与幂等重放同构）
+    disclosure = _risk_disclosure(db_path, dna, hypothesis_id)
     if hypothesis_id is not None:
         record_id = f"rec_{uuid.uuid4().hex[:12]}"
         rr.save_validation_with_log(
@@ -1198,6 +1249,7 @@ def run_staged_validation(
                                # 方向披露（add-direction-channel A4）：
                                # 纯增量键，幂等重放提取源
                                "direction": dna.risk_genes.direction,
+                               "risk_genes_disclosure": disclosure,
                                # 写入侧补齐不变量（unify-tool-return-
                                # contract）：result_json 内嵌完整首次
                                # payload 键——幂等重放数据源完备
@@ -1228,7 +1280,8 @@ def run_staged_validation(
          "segmentation": segmentation, "request_range": request_range,
          "warmup_bars": int(warmup_bars)},
         {"segments": seg_results, "summary": summary,
-         "direction": dna.risk_genes.direction},
+         "direction": dna.risk_genes.direction,
+         "risk_genes_disclosure": disclosure},
         judged=judged)
 
 

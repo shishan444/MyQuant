@@ -287,6 +287,7 @@ class _BatchBacktestProcessor:
                         fitness=fitness, qualified=qualified,
                         liquidated=result.liquidated,
                         total_funding_cost=result.total_funding_cost,
+                        funding=result.funding,
                     )
                     self.all_results.append(item)
                     self.strategy_period_data[sid].append({

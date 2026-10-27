@@ -223,6 +223,12 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                                         "candidate_fingerprint（候选定位"
                                         "语义；analysis_task 任务级引用"
                                         "方可省略）",
+    # 止损显式声明强制（research-execution-config-alignment D5②：
+    # stop_loss 键在场判据的 detail field 面）
+    "strategy_params.stop_loss": "止损为强制风控组件：登记声明块必须"
+                                 "显式携带 stop_loss（pct/trail 档比例值"
+                                 " [0.005,0.20]/atr 档 ATR 倍数 [0.5,5.0]，"
+                                 "legal_range 按 sl_mode 分叉）",
 }
 
 

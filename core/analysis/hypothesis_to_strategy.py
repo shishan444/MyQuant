@@ -38,6 +38,17 @@ _D2_RISK_FIELDS = (
     "initial_fraction", "max_position_loss",
 )
 
+# risk_genes 披露固定序（16 键全集——RiskGenes.to_dict 输出含
+# direction；与 15 键 _D2_RISK_FIELDS 声明块比对集是两个集合）：
+# research-execution-config-alignment 卡 A 单源。default_filled 按
+# 此序过滤输出——键序稳定供程序化消费与测试逐键断言
+_RISK_GENES_DISCLOSURE_ORDER = (
+    "stop_loss", "take_profit", "position_size", "leverage", "direction",
+    "sl_mode", "atr_period", "exit_fraction", "add_fraction",
+    "max_exposure", "max_hold", "time_exit_utc", "position_mode",
+    "risk_fraction", "initial_fraction", "max_position_loss",
+)
+
 # 条件 action → SignalGene.condition 的映射（阈值/穿越类可表达）
 _ACTION_MAP = {
     "gt": lambda t: {"type": "gt", "threshold": float(t)},
@@ -201,6 +212,27 @@ def build_signal_genes(
         label="then_conditions", role=SignalRole.EXIT_TRIGGER,
         base_tf=strategy_timeframe)
     return when_genes + then_genes, when_sources + then_sources
+
+
+def _load_declared_params(
+        raw: Optional[str]) -> tuple[Optional[Dict[str, Any]], bool]:
+    """声明块列读入三分（CARD-04 披露归因收敛）。
+
+    NULL/空 → (None, False)=合法存量无声明（D6 界线——default_filled
+    全集标注）；坏 JSON/非 dict 真值（列表/数字等）→ (None, True)=损坏
+    （无从判定≠全部默认——default_filled=null）。translate 读入与
+    validation _risk_disclosure 两消费点单源；返回 dict 恒为 dict|None，
+    下游 .items()/in 消费面（组装与 RiskGenes 映射）天然安全。
+    """
+    if not raw:
+        return None, False
+    try:
+        declared = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None, True
+    if not isinstance(declared, dict):
+        return None, True
+    return declared, False
 
 
 def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
@@ -392,7 +424,9 @@ def translate_hypothesis(
 
     risk_genes 映射（0.4.2 R1）：假设声明块（strategy_params 列）非空
     → 逐参数写入产物 risk_genes（"declared"）；NULL/空 → RiskGenes()
-    平台默认（"platform_default"，现行为逐位兼容）。同签名分流增强：
+    平台默认（"platform_default"，现行为逐位兼容）；坏 JSON/非 dict
+    真值 → 产物同走平台默认构造，披露 default_filled=null（CARD-04：
+    无从判定≠全部默认，不虚标全集）。同签名分流增强：
     签名命中后还须九字段策略层参数全等才分流（参数异必建新实体）。
 
     Returns:
@@ -416,12 +450,13 @@ def translate_hypothesis(
             f"假设已终态（{hyp['status']}），拒绝转化；请登记新假设"
             "（可在新假设中引用旧假设）", status=409)
 
-    # 声明块读入（0.4.2 R1）：NULL → None（平台默认路径逐位兼容）
+    # 声明块读入（0.4.2 R1）：NULL → None（平台默认路径逐位兼容）；
+    # 坏 JSON/非 dict 真值 → undetermined（CARD-04 三分：产物构造走
+    # 平台默认——坏数据无法映射声明，risk_origin=platform_default 是
+    # 产物构造路径的事实标注；披露面 default_filled=null 如实反映
+    # 无从判定，与合法无声明的全集标注区分）
     raw_params = hyp.get("strategy_params")
-    try:
-        declared_params = json.loads(raw_params) if raw_params else None
-    except (json.JSONDecodeError, TypeError):
-        declared_params = None
+    declared_params, _declared_undetermined = _load_declared_params(raw_params)
     risk_origin = "declared" if declared_params else "platform_default"
 
     # 幂等：谱系中 draft 产物存在即返回（转正后无 draft，可对新假设重译）
@@ -442,6 +477,10 @@ def translate_hypothesis(
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
+                # 披露取被命中产物行回读（卡 A MUST——披露的就是落库的）
+                "risk_genes_disclosure": _risk_genes_disclosure(
+                    hit_row.get("dna_json") or "", declared_params,
+                    undeterminable=_declared_undetermined),
                 # 身份回读（规则②）：direction/max_hold 按收敛缺省
                 # （S2f 锚）；execution_timeframe 读行取产物实际周期
                 **_translate_receipt(
@@ -619,6 +658,12 @@ def translate_hypothesis(
                 "status": active_hit.get("status") or "active",
                 "duplicated": False, "same_dna_existing": True,
                 "risk_genes": risk_origin,
+                # 披露取被命中产物行回读（卡 A MUST——同签名分流下
+                # 声明键集异而值全等时差集按各自声明块计算，与
+                # risk_origin 呼应）
+                "risk_genes_disclosure": _risk_genes_disclosure(
+                    active_hit.get("dna_json") or "", declared_params,
+                    undeterminable=_declared_undetermined),
                 **_translate_receipt(
                     _identity["direction"], _identity["max_hold"],
                     _identity["time_exit_utc"],
@@ -639,6 +684,10 @@ def translate_hypothesis(
         return {"strategy_id": draft_hit["strategy_id"], "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
+                # 披露取被命中产物行回读（卡 A MUST）
+                "risk_genes_disclosure": _risk_genes_disclosure(
+                    draft_hit.get("dna_json") or "", declared_params,
+                    undeterminable=_declared_undetermined),
                 **_translate_receipt(
                     _identity["direction"], _identity["max_hold"],
                     _identity["time_exit_utc"],
@@ -654,9 +703,10 @@ def translate_hypothesis(
     dna.strategy_id = strategy_id
     _component_precheck(db_path, dna, data_ranges, plugin_sources, data_dir)
     from core.persistence.repository.strategy import save_strategy
+    dna_json = dna.to_json()  # 落库与披露同一序列化产物（单一事实）
     save_strategy(
         db_path, strategy_id=strategy_id,
-        dna_json=dna.to_json(),
+        dna_json=dna_json,
         symbol=strategy_symbol, timeframe=strategy_timeframe,
         name=f"假设转化 {hypothesis_id[:12]}",
         source="hypothesis", parent_ids=hypothesis_id,
@@ -674,6 +724,11 @@ def translate_hypothesis(
             "duplicated": False, "same_dna_existing": False,
             "genes": [f"{g.indicator}({g.field_name})" for g in genes],
             "risk_genes": risk_origin,
+            # 新建分支披露=构造对象 to_json 后的值（卡 A——与落库
+            # dna_json 同一序列化产物）
+            "risk_genes_disclosure": _risk_genes_disclosure(
+                dna_json, declared_params,
+                undeterminable=_declared_undetermined),
             **_translate_receipt(
                 risk_genes.direction, risk_genes.max_hold,
                 risk_genes.time_exit_utc,
@@ -1143,6 +1198,46 @@ def _risk_genes_of_row(row: Dict[str, Any]) -> Dict[str, Any]:
         return rg if isinstance(rg, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _risk_genes_disclosure(row_dna_json: str,
+                           declared_params: Optional[dict],
+                           undeterminable: bool = False) -> dict:
+    """执行配置全量披露组装单点（卡 A：单一组装双消费）。
+
+    两消费点：translate 四返回点与 validation_service 验证记录
+    result_json 组装——键集一致性由共用本函数结构保证（禁两处组装）。
+
+    Args:
+        row_dna_json: 策略行 dna_json（幂等/分流分支 MUST 传被命中产物
+            行回读——「披露的就是落库的」；新建分支传构造对象 to_json
+            后的值）。
+        declared_params: 挂载假设声明块（登记面 strategy_params 解析值；
+            None=无声明——存量假设/平台默认路径）。
+        undeterminable: 声明面损坏（坏 JSON/非 dict 真值/假设行缺失——
+            CARD-04）：无从判定≠全部默认，default_filled 收敛 null 而
+            非全集虚标。
+
+    Returns:
+        {"values": <dna_json.risk_genes 原样回显——7 常键恒在+已声明
+         条件键，解析失败收敛 {}>, "default_filled": 三态——库内实际
+         键集−声明块键集（按 _RISK_GENES_DISCLOSURE_ORDER 固定序
+         过滤；None=无谱系/损坏无从判定）、undeterminable=True 时恒
+         null}。
+        声明块 null 值键不计入声明键集（与 _declared_risk_genes
+        「null 键跳过不写入」同语义——null 键的落库值即平台默认）。
+    """
+    try:
+        rg = json.loads(row_dna_json or "{}").get("risk_genes")
+        values = rg if isinstance(rg, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        values = {}
+    declared = {k for k, v in (declared_params or {}).items()
+                if v is not None}
+    default_filled = None if undeterminable else [
+        k for k in _RISK_GENES_DISCLOSURE_ORDER
+        if k in values and k not in declared]
+    return {"values": values, "default_filled": default_filled}
 
 
 def _identity_reflection(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:

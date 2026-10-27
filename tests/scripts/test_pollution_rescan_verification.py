@@ -91,7 +91,8 @@ def _seed_env(tmp_path):
                  "action": "gt", "target": 2.0}]},
         statement="重验锚",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
-                      "start": "2024-06-01", "end": "2024-07-01"}]
+                      "start": "2024-06-01", "end": "2024-07-01"}],
+        strategy_params={"stop_loss": 0.05}
     )["hypothesis_id"]
     # 落一条漂移 draft（exec 4h≠基准 30m——R2 前时代产物）
     save_strategy(db, strategy_id="st_drift_old",

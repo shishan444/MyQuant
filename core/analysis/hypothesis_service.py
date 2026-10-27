@@ -171,6 +171,21 @@ def _validate_strategy_params(
     else:
         lo, hi = SL_PCT_MIN, SL_PCT_MAX
 
+    # D5 判据②（裁决一）：stop_loss 显式在场强制——档位声明不冒充
+    # 数值声明（仅写 sl_mode 不带 stop_loss 仍落 dna.py 平台默认的
+    # 路径消灭）；键 null 由 CARD-01 既有拒承接、值越域由下方分叉
+    # 值域校验承接——三态各归其错互补不重叠
+    if "stop_loss" not in params:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"stop_loss 必填（sl_mode={sl_mode} 档合法值域 [{lo}, {hi}]）",
+            detail={"field": "strategy_params.stop_loss",
+                    "legal_range": [lo, hi],
+                    "sl_mode": sl_mode,
+                    "hint": "止损为强制风控组件，登记必须显式声明 "
+                            "stop_loss（pct/trail 档比例值 [0.005,0.20]/"
+                            "atr 档 ATR 倍数 [0.5,5.0]）"})
+
     stop_loss = params.get("stop_loss")
     if stop_loss is not None:
         if not isinstance(stop_loss, (int, float)) or isinstance(stop_loss, bool) \
@@ -608,22 +623,26 @@ def register_hypothesis(
             detail={"field": "add_suppress_conditions",
                     "legal_range": "须与 add_trigger_conditions 组同在"})
 
-    # 3.6 strategy_params 声明块校验（0.4.2 R1/R3：先于幂等——归一形
-    #     字面值参与四分支比对（有组无值在此字面化补齐）；坏值 422
-    #     阻断登记。{} 与键缺失在此分流：{} 进入全等比对（显式声明
-    #     「无参数」），None 不参与比对。组存在而未带声明块键：分批
-    #     数值物化字面值（spec「有组无值缺省归一化」——落库与比对
-    #     按字面值；幂等分支判定仍按请求是否带键的原始标志）
-    params_declared = strategy_params is not None
-    if params_declared:
-        strategy_params = _validate_strategy_params(
-            strategy_params, conditions)
-    elif any(k in conditions for k in _SCALING_GROUP_KEYS):
-        # 有组无值→字面化与 _validate_strategy_params 尾部归一化同源
-        # （review-042 CARD-05 双份收敛）：{} 无未知键/null 键、sl_mode
-        # 缺省过检，宿主组判据同 conditions——返回即物化形，与原内联
-        # 构造行为逐位等价
-        strategy_params = _validate_strategy_params({}, conditions)
+    # 3.6 strategy_params 声明块校验（0.4.2 R1/R3 + research-execution-
+    #     config-alignment D5 止损显式声明强制）：strategy_params None
+    #     一律 422 拒——原「None 不参与比对」与「有组无值→空 dict
+    #     字面化」两态全部收拢（带分批组必带声明块）；校验先于幂等
+    #     与落库，拒绝时零写入。{} 空块与无 stop_loss 块由
+    #     _validate_strategy_params 的在场判据（D5②）拒。存量界线
+    #     （D6）：已落库假设的 translate/幂等重放/验证不经登记链
+    #     照旧成功（登记时拦、翻译不拦——_declared_risk_genes 空→
+    #     平台默认路径保留）
+    if strategy_params is None:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "strategy_params 声明块必填（止损为强制风控组件）",
+            detail={"field": "strategy_params",
+                    "legal_range": "含 stop_loss 的声明块对象",
+                    "hint": "止损为强制风控组件，登记必须显式声明 "
+                            "stop_loss（pct/trail 档比例值 [0.005,0.20]/"
+                            "atr 档 ATR 倍数 [0.5,5.0]）"})
+    strategy_params = _validate_strategy_params(
+        strategy_params, conditions)
 
     # 3.7 交易方向校验与归一（add-direction-channel）：值域权威校验在
     #     本步（REST/MCP 两面穿透到服务层同一校验点；非字符串值在路由
@@ -662,16 +681,10 @@ def register_hypothesis(
             _existing_direction = "long"
         if _existing_direction not in ("long", "short"):
             _existing_direction = "long"
-        if not params_declared:
-            # 分支①：请求键缺失——不参与声明比对（旧调用方零适配；
-            # 组存在时的字面化物化值不改变「未带键」的比对豁免）
-            return {
-                "hypothesis_id": existing["hypothesis_id"],
-                "duplicated": True,
-                "direction": _existing_direction,
-                "existing_strategy_params": existing_params,
-            }
-        # 分支②③：带键（含显式 {}）→ 归一形字面值全等比对
+        # D5 后请求恒带声明块（None 在 3.6 步已拒）——归一形字面值
+        # 全等比对（原「请求键缺失不参与比对」兼容分支随 None 态
+        # 收拢消亡；存量假设与带块请求全等比对——存量 NULL 归一形
+        # null 与任何块不等，走变体路径指引，不静默丢弃既有声明）
         req_norm = json.dumps(strategy_params, sort_keys=True,
                               ensure_ascii=False)
         exist_norm = json.dumps(existing_params, sort_keys=True,

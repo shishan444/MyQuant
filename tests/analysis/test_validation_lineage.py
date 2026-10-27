@@ -136,7 +136,7 @@ class TestVariantLineage:
         """单假设单实体回归：同假设重复翻译恒分流返回同一实体，
         lineage 恒单实体。"""
         h = register_hypothesis(db, conditions=_cond(period=21),
-                                statement="s", data_ranges=_ranges())
+                                statement="s", data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})
         t1 = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         t2 = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         assert t1["strategy_id"] == t2["strategy_id"]  # draft 幂等
@@ -158,7 +158,7 @@ class TestVariantLineage:
         assert fam_ids == {env["h1"], env["h2"]}
         # 异条件假设（period 33）不在族内
         other = register_hypothesis(db, conditions=_cond(period=33),
-                                    statement="other", data_ranges=_ranges())
+                                    statement="other", data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})
         assert other["hypothesis_id"] not in fam_ids
 
     def test_evolution_strategy_not_misattached(self, db, env):
@@ -177,7 +177,7 @@ class TestAggregationAndReadOnly:
     def test_aggregation_not_truncated(self, db):
         """聚合不经 200 截断（B6-31）：>200 条记录计数与实况一致。"""
         h = register_hypothesis(db, conditions=_cond(period=28),
-                                statement="bulk", data_ranges=_ranges())
+                                statement="bulk", data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         sid = t["strategy_id"]
         for i in range(230):
@@ -221,7 +221,7 @@ class TestAggregationAndReadOnly:
         组装/report_notice 存在。以前：整报告 404、谱系跟着看不见；
         现在：新草稿查报告能列出各代草稿与各自记录归属。"""
         h = register_hypothesis(db, conditions=_cond(period=35),
-                                statement="norec", data_ranges=_ranges())
+                                statement="norec", data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         with _client(db, tmp_data_dir) as c:
             resp = c.get(f"/api/research/validation/{t['strategy_id']}/report")
@@ -298,7 +298,7 @@ class TestRecordIdsDisclosure:
         """B2-T05：直插 201 条记录 → record_ids 全量披露（不经
         limit=200 列表截断路径——截断则恰差 1 条即红）。"""
         h = register_hypothesis(db, conditions=_cond(period=21),
-                                statement="bulk", data_ranges=_ranges())
+                                statement="bulk", data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})
         d = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])[
             "strategy_id"]
         for i in range(201):

@@ -88,6 +88,7 @@ def test_breakpoint_1b_plugin_to_composite_validation(live_api):
         "statement": "超卖与动量共振时倾向修复",
         "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                          "start": "2023-11-01T00:00:00Z", "end": "2023-12-01T00:00:00Z"}],
+        "strategy_params": {"stop_loss": 0.05},
     })
     hid = reg["hypothesis_id"]
 

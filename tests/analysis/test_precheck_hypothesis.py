@@ -793,7 +793,7 @@ class TestWarmupSourceParity:
             statement="warmup 同源测试假设",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
                           "start": "2024-01-01T00:00:00+00:00",
-                          "end": "2024-02-01T00:00:00+00:00"}])
+                          "end": "2024-02-01T00:00:00+00:00"}], strategy_params={"stop_loss": 0.05})
         tr = translate_hypothesis(db_path, hypothesis_id=out["hypothesis_id"],
                                   data_dir=self._tdir(db_path))
         row = get_strategy(db_path, tr["strategy_id"])

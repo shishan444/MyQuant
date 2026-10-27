@@ -166,7 +166,7 @@ def strategy(env):
             statement=f"不变性锚 {tf} {tag}",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": tf,
                           "start": idx[100].isoformat(),
-                          "end": idx[1000].isoformat()}])["hypothesis_id"]
+                          "end": idx[1000].isoformat()}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         return sid, hid, idx, n
 
     return _make

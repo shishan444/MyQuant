@@ -173,8 +173,9 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
   WHEN 条件 → 入场信号，THEN 条件按「预期兑现即离场」→ 出场信号；
   两者均不可表达时显式拒绝。
-- **策略层参数声明块（0.4.2）**：register_hypothesis 可选
-  strategy_params（stop_loss/take_profit/sl_mode/position_size/
+- **策略层参数声明块（0.4.2）**：register_hypothesis 必填
+  strategy_params（D5 起 stop_loss 键必填——缺失或不带键 422；
+  stop_loss/take_profit/sl_mode/position_size/
   leverage/exit_fraction/add_fraction/max_exposure——值域按 sl_mode
   分叉：pct/trail 档 [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；
   sl_mode∈{pct,atr,trail}）。**仓位参数两键（add-position-sizing-
@@ -187,15 +188,16 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   不声明=存量行为逐位不变。translate 映射进产物 risk_genes（返回体
   risk_genes=declared；无声明=平台默认 platform_default）。**声明块与
   假设身份正交**：不进条件指纹与幂等身份（同条件集+同区间集=同一
-  假设），参数变体经终态后带新声明重登记产生；幂等四分支详见工具
-  文档（{}=显式声明「无参数」≠键缺失）。
+  假设），参数变体经终态后带新声明重登记产生；幂等两分支详见工具
+  文档（声明块必填后无「不带键」态——全等→duplicated、不等→422）。
 - **分批条件组（0.4.2）**：exit_partial_conditions（部分离场→
   REDUCE_TRIGGER）/add_trigger_conditions（加仓触发→ADD_TRIGGER）/
   add_suppress_conditions（加仓抑制→ADD_INHIBIT——任一抑制条件成立
   的 bar 不加仓）三可选组键，组内 {subject,action,target} 与 when/then
   同构；**组键进条件指纹参与假设身份**（触发条件属研究主张）；分批
   数值参数（exit_fraction 缺省 0.5/add_fraction 0.1/max_exposure 1.0）
-  经 strategy_params 声明块承载（有组无值自动归一化）。回测与纸盘
+  经 strategy_params 声明块承载（宿主组在场而块内缺数值键时自动
+  归一化）。回测与纸盘
   新域执行分批与 trail；live 链对分批角色与 trail/atr 模式装载即拒。
 - **止损模式三分派（0.4.2）**：pct（入场价比例，存量语义）/atr
   （止损=入场价∓倍数×ATR，按 DNA atr_period 动态取列，数据不足显式

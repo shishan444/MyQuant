@@ -338,6 +338,10 @@ class BacktestResponse(BaseModel):
     benchmark_return: Optional[float] = None
     excess_return: Optional[float] = None
     alpha: Optional[float] = None
+    # 永续资金费披露五键（research-execution-config-alignment 卡 C 3.4）：
+    # total_funding_cost 为净支出（付出−收入），付出/收入分列与缺失区间
+    # 披露见本键——None=未携带（旧存库行/早退路径）
+    funding: Optional[Dict[str, Any]] = None
     market_annual_return: Optional[float] = None
     profit_factor: Optional[float] = None
 
@@ -465,6 +469,8 @@ class BatchBacktestResultItem(BaseModel):
     qualified: bool = False
     liquidated: bool = False
     total_funding_cost: float = 0.0
+    # 永续资金费披露五键（卡 C 3.4——同 BacktestResponse 形制）
+    funding: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
@@ -897,9 +903,10 @@ class HypothesisCreate(BaseModel):
     # 合法枚举与参数要求，错误即文档；API 层只声明键存在与对象形）
     trigger_policy: Optional[Dict[str, Any]] = None
     # 策略层参数声明块（0.4.2 R1，strategy-param-declaration 规格）：
-    # 弱形制对象键（沿 trigger_policy 先例）——键白名单/值域分叉的
-    # 权威校验在服务层 3.6 步；显式空对象 {}=显式声明「无参数」（与
-    # 键缺失语义不同，幂等四分支分流）；不进 conditions/不进 hash
+    # 弱形制对象键（沿 trigger_policy 先例）——键白名单/值域分叉/
+    # D5 必填（含 stop_loss 键）的权威校验在服务层 3.6 步：None 与
+    # 空块 {} 均 422（传输层保持 Optional 形制，错误即文档）；不进
+    # conditions/不进 hash
     strategy_params: Optional[Dict[str, Any]] = None
     # 分批条件组三顶层键（0.4.2 R3/DC-13，scaled-position-actions 规格）：
     # 路由层非 None 时并入 conditions dict（「归一非 None 才写键」——

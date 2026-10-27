@@ -104,6 +104,7 @@ def test_stdio_full_chain(live_api):
 
                 # 3) 写路径工具：登记假设（真落库）
                 reg = await session.call_tool("register_hypothesis", {
+                     "strategy_params": {"stop_loss": 0.05},
                     "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                          "target": 35}],
                     "then_conditions": [{"subject": "close", "action": "gt",

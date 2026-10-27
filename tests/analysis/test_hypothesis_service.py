@@ -44,7 +44,7 @@ def _register(db: Path, statement: str = "s") -> str:
         statement=statement,
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
-                      "end": "2024-02-01T00:00:00Z"}],
+                      "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
     )["hypothesis_id"]
 
 
@@ -199,7 +199,7 @@ class TestRegisterValidationGaps:
             "then_conditions": [dict(self._BASE["conditions"]["then_conditions"][0])]}
         mutate(kw)
         with pytest.raises(ResearchError):
-            register_hypothesis(db, **kw)
+            register_hypothesis(db, **kw, strategy_params={"stop_loss": 0.05})
 
     def test_条件带未知timeframe_拒(self, db: Path) -> None:
         kw = {**self._BASE}
@@ -210,7 +210,7 @@ class TestRegisterValidationGaps:
             "then_conditions": [dict(
                 self._BASE["conditions"]["then_conditions"][0])]}
         with pytest.raises(ResearchError) as ei:
-            register_hypothesis(db, **kw)
+            register_hypothesis(db, **kw, strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "TIMEFRAME_UNKNOWN"
 
     def test_基准周期未知_拒(self, db: Path) -> None:
@@ -225,7 +225,7 @@ class TestRegisterValidationGaps:
             "then_conditions": [dict(
                 self._BASE["conditions"]["then_conditions"][0])]}
         with pytest.raises(ResearchError) as ei:
-            register_hypothesis(db, **kw)
+            register_hypothesis(db, **kw, strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "TIMEFRAME_UNKNOWN"
         assert "基准周期" in ei.value.message
 
@@ -235,12 +235,12 @@ class TestRegisterValidationGaps:
         # 的指纹条件性拒——任务存在性核验在指纹校验之后）
         with pytest.raises(ResearchError, match="candidate_fingerprint"):
             register_hypothesis(db, **base,
-                                provenance={"task_id": "t1"})
+                                provenance={"task_id": "t1"}, strategy_params={"stop_loss": 0.05})
         # 任务不存在（两类同核——GAP-10 文案随泛化）
         with pytest.raises(ResearchError, match="分析任务"):
             register_hypothesis(db, **base,
                                 provenance={"task_id": "ghost_task",
-                                            "candidate_fingerprint": "fp"})
+                                            "candidate_fingerprint": "fp"}, strategy_params={"stop_loss": 0.05})
         # 任务在但 params 坏 JSON（容错为 {}）→ 区间事实缺失拒
         from core.persistence.repository import research as rr
         rr.save_analysis_task(db, task_id="task_badjson",
@@ -249,7 +249,7 @@ class TestRegisterValidationGaps:
         with pytest.raises(ResearchError, match="缺区间事实"):
             register_hypothesis(db, **base,
                                 provenance={"task_id": "task_badjson",
-                                            "candidate_fingerprint": "fp"})
+                                            "candidate_fingerprint": "fp"}, strategy_params={"stop_loss": 0.05})
 
 
 class TestTransitionGaps:
@@ -353,7 +353,7 @@ class TestRegisterTriggerPolicy:
         return register_hypothesis(
             db, conditions=self._conds(), statement="s",
             data_ranges=ranges or self.RANGES,
-            trigger_policy=policy, **kw)
+            trigger_policy=policy, **kw, strategy_params={"stop_loss": 0.05})
 
     def _stored_conditions(self, db, hid) -> dict:
         import json as _json
@@ -475,7 +475,7 @@ class TestAddTriggerTfRegistrationIdempotency:
              "action": "gt", "target": 60, "timeframe": tf}]}
         return register_hypothesis(
             db, conditions=conds, statement=statement,
-            data_ranges=self._RANGES)
+            data_ranges=self._RANGES, strategy_params={"stop_loss": 0.05})
 
     def test_同tf重登记命中幂等_异tf不误命中(self, db: Path) -> None:
         out1 = self._register_tf(db, "1d", "tf 幂等")
@@ -534,7 +534,7 @@ class TestExitCoverageD2D4:
                     {"subject": "close", "action": "gt",
                      "target": then_target}],
             }, statement="s", data_ranges=[rng],
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
 
     def test_b5_idempotent_hit_carries_no_three_keys(self, db, tmp_path):
         """B5：幂等命中（第 4 步早退）不执行 4.6/4.6.5——precheck_
@@ -570,7 +570,7 @@ class TestExitCoverageD2D4:
                 "then_conditions": [
                     {"subject": "close", "action": "gt", "target": 60}],
             }, statement="s", data_ranges=[rng],
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False
         assert "precheck_warnings" not in out
         assert "exit_coverage_warnings" not in out
@@ -637,7 +637,7 @@ class TestExitCoverageD2D4:
                 "then_conditions": [
                     {"subject": "close", "action": "gt", "target": 60}],
             }, statement="s", data_ranges=[rng],
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False             # 登记照常
         assert "exit_coverage_warnings" not in out
 

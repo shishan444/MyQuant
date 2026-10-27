@@ -41,6 +41,7 @@ def _fake_engine_result(
         total_return=total_return,
         liquidated=False,
         total_funding_cost=0.0,
+        funding=None,
         trades_df=None,
         metrics_dict={
             "sharpe_ratio": 0.1, "max_drawdown": 0.01,
@@ -255,6 +256,7 @@ class TestProcessorStep:
             total_trades=3,
             win_rate=0.5,
             total_return=0.01, liquidated=False, total_funding_cost=0.0,
+            funding=None,
             trades_df=None,
             metrics_dict={
                 "sharpe_ratio": 0.1, "max_drawdown": 0.01,
@@ -569,3 +571,16 @@ class TestLeverageBoundValidation:
             strategy_ids=["s-1"],
             data_ranges=[{"start": "2024-01-01", "end": "2024-06-01"}],
         ).leverage == 1
+
+
+class TestEquityCurveSerializationGuard:
+    """闸门②盲区补面（阶段四）：权益曲线序列化 None/空态 → None
+    （不落空数组假曲线——batch 结果可判「无曲线」与「空曲线」）。"""
+
+    def test_none_and_empty_series_return_none(self) -> None:
+        import pandas as pd
+        from api.routes.strategies.batch import _BatchBacktestProcessor
+        proc = _BatchBacktestProcessor.__new__(_BatchBacktestProcessor)
+        assert proc._build_equity_json_from_curve(None) is None
+        assert proc._build_equity_json_from_curve(
+            pd.Series(dtype=float)) is None

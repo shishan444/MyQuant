@@ -109,6 +109,7 @@ def test_breakpoint_1a_full_research_loop(live_api):
         "statement": "RSI 超卖后价格倾向修复",
         "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                          "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}],
+        "strategy_params": {"stop_loss": 0.05},
     })
     assert reg["duplicated"] is False
     hid = reg["hypothesis_id"]

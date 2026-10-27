@@ -48,7 +48,7 @@ def _oi_cond(target=-2.33, action="gt"):
 def _register(db, conditions, direction=None):
     return register_hypothesis(
         db, conditions=conditions, statement="单位警告测试",
-        data_ranges=_ranges(), direction=direction)
+        data_ranges=_ranges(), direction=direction, strategy_params={"stop_loss": 0.05})
 
 
 # ── C16/C4：判定函数 unit 段 ─────────────────────────────────
@@ -159,7 +159,8 @@ class TestWarningBehavior:
         # exit_fraction 组配对（数值键须有宿主组）
         r = register_hypothesis(
             db, conditions=cond, statement="五组",
-            data_ranges=_ranges(), strategy_params={"exit_fraction": 0.5})
+            data_ranges=_ranges(),
+            strategy_params={"stop_loss": 0.05, "exit_fraction": 0.5})
         w = r.get("threshold_unit_warnings")
         fields = sorted(e["field"] for e in w)
         assert fields == ["add_trigger_conditions[0]", "when_conditions[0]"]
@@ -273,6 +274,7 @@ class TestRestFaceAndCoexistence:
             "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                              "start": "2024-02-20T00:00:00Z",
                              "end": "2024-03-20T00:00:00Z"}],
+            "strategy_params": {"stop_loss": 0.05},
         }
         resp = api_client.post("/api/research/hypotheses", json=body)
         assert resp.status_code == 200, resp.text
@@ -310,7 +312,7 @@ class TestRestFaceAndCoexistence:
                 env["db"], conditions=_cond(target), statement="零阻断全链",
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                               "start": "2024-01-05T00:00:00Z",
-                              "end": "2024-02-10T00:00:00Z"}])
+                              "end": "2024-02-10T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
             t = translate_hypothesis(env["db"], hypothesis_id=r["hypothesis_id"])
             out = run_isolated_backtest(
                 env["db"], env["data_dir"], hypothesis_id=r["hypothesis_id"],
@@ -354,6 +356,7 @@ class TestRestFaceAndCoexistence:
             "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                              "start": "2024-02-20T00:00:00Z",
                              "end": "2024-03-20T00:00:00Z"}],
+            "strategy_params": {"stop_loss": 0.05},
         }
         resp = api_client.post("/api/research/hypotheses", json=body)
         assert resp.status_code == 200, resp.text

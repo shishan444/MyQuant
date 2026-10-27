@@ -27,7 +27,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.backtest.engine import BacktestEngine, _funding_cost_rate
+from core.backtest.engine import BacktestEngine, _funding_rates_for
 from core.strategy.dna import (
     ExecutionGenes,
     LogicGenes,
@@ -46,10 +46,17 @@ def _df(prices=None) -> pd.DataFrame:
                         name="timestamp")
     p = prices if prices is not None else np.full(N, 100.0)
     p = np.asarray(p, dtype=float)
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "open": p, "high": p * 1.001, "low": p * 0.999, "close": p,
         "volume": np.full(N, 100.0), "trades": 10,
     }, index=idx)
+    # 永续费率列（research-execution-config-alignment 卡 C：费率经
+    # funding_rate 时序供给——旁路与事后层的计费前提；全段覆盖）
+    df["funding_rate"] = 0.001
+    df.attrs["derivatives_coverage"] = {"funding": {
+        "available_start": idx[0].isoformat(),
+        "available_end": idx[-1].isoformat()}}
+    return df
 
 
 def _sig(entries_bars=(2,)):
@@ -112,19 +119,22 @@ class TestEquivalenceAnchor:
         df, res = _run(_dna())
         row = res.trades_df.iloc[0]
         pos = abs(float(row["Size"]))
-        rate = _funding_cost_rate(3, "4h")
+        # 单 bar 费率经时序供给单点（0.001×4/8=0.0005——恒定列）
+        rate = _funding_rates_for(df, "4h")[0][0]
         incr = pos * 100.0 * 3.0 * rate
         return pos, incr, res.total_funding_cost
 
     def test_exit_bar_matches_hand_derived_accumulation(self):
-        """L=120：F(5)=incr×2<120≤F(6)=incr×3 → 恰 bar 6 触发；且出场
-        时点事后层累计 total_funding_cost≈F(6)（两条独立路径同式对拍
-        ——旁路判定读值与事后层扣费在出场 bar 收敛同值）。"""
+        """L=incr×2.5：F(5)=incr×2<L≤F(6)=incr×3 → 恰 bar 6 触发；且
+        出场时点事后层累计 total_funding_cost≈F(6)（两条独立路径同式
+        对拍——旁路判定读值与事后层扣费在出场 bar 收敛同值；阈值按
+        baseline 动态构造——费率口径演进不破坏夹逼前提）。"""
         pos, incr, _ = self._baseline()
-        df, res = _run(_dna(mpl=120.0))
+        L = incr * 2.5
+        df, res = _run(_dna(mpl=L))
         entry_b, exit_b = _bars_of(df, res.trades_df.iloc[0])
         assert entry_b == 3
-        assert incr * 2 < 120.0 <= incr * 3, "构造前提：F(5)<L≤F(6)"
+        assert incr * 2 < L <= incr * 3, "构造前提：F(5)<L≤F(6)"
         assert exit_b == 6, f"应 bar 6 触发，实际 {exit_b}"
         # 事后层对 [3,6] 段的累计==F(6)（=出场时点 funding_acc 终值）
         assert abs(res.total_funding_cost - incr * 3) <= incr * 3 * 1e-9, \
@@ -169,7 +179,7 @@ class TestEquivalenceAnchor:
         pairs = [_bars_of(df, row)
                  for _, row in res.trades_df.iterrows()]
         assert len(pairs) == 2, f"应恰两段持仓，实际 {pairs}"
-        rate = _funding_cost_rate(3, "4h")
+        rate = _funding_rates_for(df, "4h")[0][0]
         sizes = [abs(float(row["Size"]))
                  for _, row in res.trades_df.iterrows()]
         incrs = [s * 100.0 * 3.0 * rate for s in sizes]
@@ -279,10 +289,12 @@ class TestMechanismAnchors:
 
     def test_short_direction_signed_formula(self):
         """空头双向（公式带符号无方向分支）：空头 pos<0、价格上涨
-        (close−entry)>0 → −(负×正)=正=浮亏态触发；价平段不触发。"""
+        (close−entry)>0 → −(负×正)=正=浮亏态触发；价平段不触发。
+        永续口径注记（卡 C）：空头正费率=资金费收入（funding_acc 负
+        累计抵减浮亏）——达线判定按价格浮亏−累计收入的净额。"""
         p = np.full(N, 100.0)
-        p[6] = 100.2   # loss≈pos×0.2≈100<200 未达
-        p[8] = 100.5   # loss≈pos×0.5≈250≥200 触发
+        p[6] = 100.2   # 价格浮亏≈pos×0.2，净额再减收入未达线
+        p[8] = 100.8   # 价格浮亏≈pos×0.8，净额≈400−5 bar 收入≥200 触发
         df = _df(p)
         df_g, res = _run(_dna(mpl=200.0, direction="short", leverage=1),
                          df=df)
@@ -290,7 +302,11 @@ class TestMechanismAnchors:
         entry_b, exit_b = _bars_of(df_g, row)
         pos = abs(float(row["Size"]))
         assert row["Direction"] == "Short"
-        assert pos * 0.2 < 200.0 <= pos * 0.5, "构造前提：bar 6 未达线"
+        # 资金费收入每 bar≈pos×100×1×0.0005；计费根=入场(3)次 bar 起
+        # 至判定 bar（bar 6=3 根、bar 8=5 根）
+        fee_income = pos * 100.0 * 1.0 * 0.0005
+        assert pos * 0.2 - 3 * fee_income < 200.0, "构造前提：bar 6 未达线"
+        assert pos * 0.8 - 5 * fee_income >= 200.0, "构造前提：bar 8 达线"
         assert exit_b == 8, f"空头浮亏达线应 bar 8 触发，实际 {exit_b}"
 
     def test_sentinel_zero_overhead_circuit(self):
@@ -369,21 +385,16 @@ class TestModeOrthogonality:
 
 
 class TestFundingCostRateSingleSource:
-    """费率单源直锚（design 层 4「公式单源」可核验约束）：leverage≤1
-    短路 0（与事后层直返零费用同口径）+公式手算对照（RATE_PER_8H×
-    periods_per_bar×borrowed_ratio）。此前仅作为构造前提间接出现。"""
+    """（卡 C 改写）旧费率折算单源 _funding_cost_rate 已整体退役
+    （杠杆解耦+比例折算迁移 _funding_rates_for）：单源直锚的等价
+    承载见 tests/backtest/test_funding_perpetual.py TestC5Retirement
+    （符号退役 grep 级+八周期映射迁移逐项）与 TestC0（供给两态）。
+    本类保留为退役哨兵——符号回潮即红。"""
 
-    def test_leverage_short_circuit(self):
-        assert _funding_cost_rate(1, "4h") == 0.0
-        assert _funding_cost_rate(0.5, "4h") == 0.0
-
-    def test_formula_hand_calc(self):
-        # lev=3、4h：0.001×(4/8)×(2/3)=1/3000
-        assert _funding_cost_rate(3, "4h") == pytest.approx(1.0 / 3000)
-        # lev=2、4h：0.001×0.5×0.5
-        assert _funding_cost_rate(2, "4h") == pytest.approx(0.00025)
-        # lev=3、1h（timeframe 映射单源）：0.001×(1/8)×(2/3)
-        assert _funding_cost_rate(3, "1h") == pytest.approx(0.001 / 12)
+    def test_legacy_rate_fn_retired(self):
+        import core.backtest.engine as engine_mod
+        assert not hasattr(engine_mod, "_funding_cost_rate"), \
+            "旧费率折算函数须退役（时序供给单点 _funding_rates_for）"
 
 
 class TestGuardCoexistsWithSlTpModes:

@@ -93,6 +93,23 @@ def _body(template, params, **range_extra):
     return {"template": template, "params": params, "data_range": rng}
 
 
+class TestRandomWindowGhostHypothesis404:
+    """CARD-05 REST 透传锚：伪造 hypothesis_id 的 random-window-test
+    → 404（服务层 RESEARCH_HYPOTHESIS_NOT_FOUND 经 research_error_to_http
+    透传——原 200 直写虚挂记录行为消灭的端点级固化）。"""
+
+    def test_ghost_hypothesis_404(self, api_client, error_env):
+        _wire(api_client, error_env)
+        resp = api_client.post("/api/research/random-window-test", json={
+            "strategy_id": "st_any", "hypothesis_id": "hyp_ghost",
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "data_start": "2024-01-01T00:00:00Z",
+            "data_end": "2024-03-01T00:00:00Z",
+            "window_bars": 60, "n_windows": 2, "seed": 7})
+        assert resp.status_code == 404, resp.text
+        assert "hyp_ghost" in resp.text
+
+
 class TestCollectRefsUnit:
     """unit①：collect_condition_refs 双语义（卡2）。"""
 
@@ -730,7 +747,7 @@ class TestDataRangeTimestampValidation:
         """合法 naive 形制不被误拒：hypotheses 端点 naive 日期直达
         业务层成功创建（校验器放行 naive——消费端按 UTC 解释）。"""
         resp = api_client.post("/api/research/hypotheses", json={
-            "conditions": {
+            "strategy_params": {"stop_loss": 0.05}, "conditions": {
                 "when_conditions": [{"subject": "close", "action": "gt",
                                      "target": 0}],
                 "then_conditions": [{"subject": "close", "action": "gt",

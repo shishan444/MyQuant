@@ -288,7 +288,7 @@ class TestRepresentativeEntries:
                                 "params": {"period": 14}},
                     "action": "gt", "target": 35}]},
             statement="cross-chain", data_ranges=[rng],
-            trigger_policy={"mode": "first_true"})["hypothesis_id"]
+            trigger_policy={"mode": "first_true"}, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(chain_env["db"], hypothesis_id=hid)
         # 验证区间与登记区间（判定并集自报部分）不重叠——后移一段
         verify_rng = {"symbol": SYMBOL, "timeframe": "4h",

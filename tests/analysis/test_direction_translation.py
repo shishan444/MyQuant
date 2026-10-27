@@ -45,7 +45,12 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-06-01T00:00:00Z"}]
 
 
-def _register(db: Path, direction=None, sp=None):
+_NO_SP = object()
+
+
+def _register(db: Path, direction=None, sp=_NO_SP):
+    if sp is _NO_SP:
+        sp = {"stop_loss": 0.05}
     return register_hypothesis(
         db, conditions=_cond(), statement="方向翻译测试",
         data_ranges=_ranges(), strategy_params=sp, direction=direction)

@@ -73,7 +73,7 @@ def _hyp(db, when, then=None) -> str:
     """经登记域登记假设（subject 校验生效——合法列用例走这里）。"""
     conditions = {"when_conditions": when, "then_conditions": then or []}
     return register_hypothesis(db, conditions=conditions, statement="s",
-                               data_ranges=_ranges())["hypothesis_id"]
+                               data_ranges=_ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
 
 def _raw_hyp(db, when, then=None) -> str:

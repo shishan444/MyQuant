@@ -109,7 +109,7 @@ class TestScreenLogTrail:
         _log_screen(db, _make_screen_task(db), ["abc"])
         out = register_hypothesis(
             db, conditions=_conditions(),
-            statement="普通登记", data_ranges=[OTHER_RANGE])
+            statement="普通登记", data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})
         union = judged_ranges_union(db, out["hypothesis_id"])
         # 并集只含自报区间，screen 留痕（不挂假设）不在其中
         assert all("2026-01-01" not in r["start"] for r in union)
@@ -120,7 +120,7 @@ class TestScreenLogTrail:
         _log_screen(db, _make_screen_task(db), ["abc"])
         register_hypothesis(db, conditions=_conditions(),
                             statement="普通登记",
-                            data_ranges=[OTHER_RANGE])
+                            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})
         screens = rr.list_research_log(db, entry_type="screen")
         assert len(screens) == 1
         all_regs = rr.list_research_log(db, entry_type="register")
@@ -136,7 +136,7 @@ class TestProvenanceRegistration:
             db, conditions=_conditions(), statement="引用扫描候选",
             data_ranges=[OTHER_RANGE],  # 自报区间≠扫描区间
             provenance={"task_id": task_id,
-                        "candidate_fingerprint": "abc123"})
+                        "candidate_fingerprint": "abc123"}, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False
         union = judged_ranges_union(db, out["hypothesis_id"])
         hits = overlaps_with_request(union, SCAN_RANGE["start"], SCAN_RANGE["end"])
@@ -153,7 +153,7 @@ class TestProvenanceRegistration:
         register_hypothesis(
             db, conditions=_conditions(), statement="引用扫描候选",
             data_ranges=[OTHER_RANGE],
-            provenance={"task_id": task_id, "candidate_fingerprint": "abc"})
+            provenance={"task_id": task_id, "candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
         uses = rr.list_research_log(db, entry_type="analysis_ref")
         assert len(uses) == 1
         logged = json.loads(uses[0]["data_ranges"])[0]
@@ -176,7 +176,7 @@ class TestProvenanceRegistration:
         out = register_hypothesis(
             db, conditions=_conditions(), statement="引用网格统计来源",
             data_ranges=[OTHER_RANGE],
-            provenance={"ref_type": "analysis_task", "task_id": task_id})
+            provenance={"ref_type": "analysis_task", "task_id": task_id}, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False
         refs = rr.list_research_log(db, entry_type="analysis_ref")
         assert len(refs) == 1
@@ -202,7 +202,7 @@ class TestProvenanceRegistration:
         out = register_hypothesis(
             db, conditions=_conditions(), statement="旧形制登记",
             data_ranges=[OTHER_RANGE],
-            provenance={"task_id": task_id, "candidate_fingerprint": "abc"})
+            provenance={"task_id": task_id, "candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
         assert out["duplicated"] is False
         with pytest.raises(ResearchError, match="ref_type"):
             register_hypothesis(
@@ -211,7 +211,7 @@ class TestProvenanceRegistration:
                 # 同条件集同区间集的第二笔会先命中 duplicated 返回）
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
                               "start": "2024-06-01", "end": "2024-07-01"}],
-                provenance={"ref_type": "bogus", "task_id": task_id})
+                provenance={"ref_type": "bogus", "task_id": task_id}, strategy_params={"stop_loss": 0.05})
 
     def test_unknown_task_rejected_without_writes(self, tmp_path):
         """谱系引用不存在任务被拒：无假设行、无任何日志写入。"""
@@ -221,7 +221,7 @@ class TestProvenanceRegistration:
                 db, conditions=_conditions(), statement="坏引用",
                 data_ranges=[OTHER_RANGE],
                 provenance={"task_id": "ant_ghost000000",
-                            "candidate_fingerprint": "abc"})
+                            "candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert rr.list_hypotheses(db, limit=10) == []
         assert rr.list_research_log(db) == []
@@ -234,10 +234,10 @@ class TestProvenanceRegistration:
             db, conditions=_conditions(), statement="带谱系",
             data_ranges=[OTHER_RANGE],
             provenance={"task_id": task_id,
-                        "candidate_fingerprint": "abc"})
+                        "candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
         second = register_hypothesis(
             db, conditions=_conditions(), statement="不带谱系",
-            data_ranges=[OTHER_RANGE])
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})
         assert first["duplicated"] is False
         assert second["duplicated"] is True
         assert second["hypothesis_id"] == first["hypothesis_id"]
@@ -247,7 +247,7 @@ class TestReverseCheck:
     def _hyp(self, db: Path, cond: dict | None = None) -> str:
         out = register_hypothesis(
             db, conditions=_conditions(cond), statement="复用核查假设",
-            data_ranges=[OTHER_RANGE])
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})
         return out["hypothesis_id"]
 
     def test_exact_reuse_rejected(self, tmp_path):
@@ -310,7 +310,7 @@ class TestReverseCheck:
         out = register_hypothesis(
             db, conditions=_conditions(), statement="带谱系",
             data_ranges=[OTHER_RANGE],
-            provenance={"task_id": task_id, "candidate_fingerprint": "abc"})
+            provenance={"task_id": task_id, "candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
         union = judged_ranges_union(db, out["hypothesis_id"])
         assert overlaps_with_request(
             union, SCAN_RANGE["start"], SCAN_RANGE["end"])
@@ -353,7 +353,7 @@ class TestScreenReusePagination:
 
         hid = register_hypothesis(
             db, conditions=_conditions(), statement="超页核查",
-            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as ei:
             _screen_reuse_check(db, hid, SCAN_RANGE)
         assert ei.value.code == "SCREEN_CANDIDATE_REUSE"
@@ -398,7 +398,7 @@ class TestScreenReuseTolerance:
                     created_at=(base + timedelta(seconds=i)).isoformat()))
         hid = register_hypothesis(
             db, conditions=_conditions(), statement="容错核查",
-            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         _screen_reuse_check(db, hid, SCAN_RANGE)  # 坏形全跳过，不抛
 
 
@@ -417,7 +417,7 @@ class TestScreenReusePrecheckTolerance:
         db = _db(tmp_path)
         hid = register_hypothesis(
             db, conditions=_conditions(), statement="坏JSON",
-            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         from sqlalchemy import update
         from core.persistence.orm.models import ResearchHypothesis
         from core.persistence.repository.dataset_meta import _engine_for
@@ -431,7 +431,7 @@ class TestScreenReusePrecheckTolerance:
         db = _db(tmp_path)
         hid = register_hypothesis(
             db, conditions=_conditions(), statement="空组",
-            data_ranges=[OTHER_RANGE])["hypothesis_id"]
+            data_ranges=[OTHER_RANGE], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         from sqlalchemy import update
         from core.persistence.orm.models import ResearchHypothesis
         from core.persistence.repository.dataset_meta import _engine_for
@@ -454,7 +454,7 @@ class TestAnalysisTaskSameCore:
                 db, conditions=_conditions(), statement="引用幽灵网格任务",
                 data_ranges=[OTHER_RANGE],
                 provenance={"ref_type": "analysis_task",
-                            "task_id": "ant_ghost00001"})
+                            "task_id": "ant_ghost00001"}, strategy_params={"stop_loss": 0.05})
         assert rr.list_research_log(db) == [], "拒绝路径零留痕"
 
 
@@ -469,7 +469,7 @@ class TestProvenanceGateCompletions:
             register_hypothesis(
                 db, conditions=_conditions(), statement="缺任务标识",
                 data_ranges=[OTHER_RANGE],
-                provenance={"candidate_fingerprint": "abc"})
+                provenance={"candidate_fingerprint": "abc"}, strategy_params={"stop_loss": 0.05})
 
     def test_schema_fingerprint_conditionality_valueerror(self):
         from api.schemas import AnalysisProvenance

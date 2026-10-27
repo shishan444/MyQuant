@@ -58,10 +58,10 @@ def _seed(db, sid: str, dna: StrategyDNA) -> None:
         gene_signature=f"sig-{sid}")
 
 
-def _register_hypothesis(client: TestClient) -> str:
+def _register_hypothesis(client: TestClient, strategy_params={"stop_loss": 0.05}) -> str:
     """经 API 登记 active 假设（isolated 端点 precheck 前置依赖）。"""
     resp = client.post("/api/research/hypotheses", json={
-        "conditions": {
+        "strategy_params": {"stop_loss": 0.05}, "conditions": {
             "when_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 14}},
                  "action": "lt", "target": 35}],
@@ -140,7 +140,7 @@ class TestResearchEndpointsRejectMalformedDna:
         sid = f"st-rg-{label}"
         _seed(db, sid, _dna_with_sources(BAD_SOURCES[label]))
         hypothesis_id = (
-            _register_hypothesis(api_client)
+            _register_hypothesis(api_client, strategy_params={"stop_loss": 0.05})
             if endpoint == "validate-backtest" else None)
 
         resp = _post_endpoint(api_client, endpoint, sid, hypothesis_id)
@@ -169,7 +169,7 @@ class TestResearchEndpointsRejectMalformedDna:
         _seed(db, sid, _dna_with_sources(
             None, risk=RiskGenes(stop_loss=0.5)))  # pct 域外
         hypothesis_id = (
-            _register_hypothesis(api_client)
+            _register_hypothesis(api_client, strategy_params={"stop_loss": 0.05})
             if endpoint == "validate-backtest" else None)
 
         resp = _post_endpoint(api_client, endpoint, sid, hypothesis_id)

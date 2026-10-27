@@ -30,7 +30,8 @@ def _seed_logs(client, n: int = 3):
             "conditions": _CONDITIONS, "statement": f"page 校验 {i}",
             "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                              "start": f"2024-01-0{i + 1}T00:00:00Z",
-                             "end": "2024-03-01T00:00:00Z"}]})
+                             "end": "2024-03-01T00:00:00Z"}],
+            "strategy_params": {"stop_loss": 0.05}})
         assert resp.status_code == 200, resp.text
 
 
@@ -124,7 +125,8 @@ class TestPageOneParityRest:
                         "data_ranges": [{"symbol": "BTCUSDT",
                                          "timeframe": "4h",
                                          "start": f"2024-01-0{i + 1}T00:00:00Z",
-                                         "end": "2024-03-01T00:00:00Z"}]})
+                                         "end": "2024-03-01T00:00:00Z"}],
+                        "strategy_params": {"stop_loss": 0.05}})
                     assert resp.status_code == 200, resp.text
                 with_page = (await client.get(
                     "/api/research/log", params={"page": 1})).json()
@@ -241,7 +243,8 @@ class TestPageOneParityFastmcpLive:
                 "statement": f"MCP page 校验 {i}",
                 "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                                  "start": f"2024-01-0{i + 1}T00:00:00Z",
-                                 "end": "2024-03-01T00:00:00Z"}]})
+                                 "end": "2024-03-01T00:00:00Z"}],
+                "strategy_params": {"stop_loss": 0.05}})
             assert resp.status_code == 200, resp.text
 
         mcp, _ = build_server(profile="readonly", base_url=live_server)

@@ -227,8 +227,8 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
                               risk_genes.risk_fraction)
     # 持仓金额防线（add-position-sizing-params 2.2）：None→0.0=禁用
     # 哨兵（值域 >0 使 0 天然无歧义——max_hold 同款形制）；1D 逐列常数
-    # 参数族。funding_acc 旁路费率不入本元组（leverage/timeframe 两入
-    # 在调用方直接经 _funding_cost_rate 单源折算——与事后层同源）
+    # 参数族。funding_acc 旁路费率不入本元组（永续口径费率经
+    # _funding_rates_for 单点时序供给——调用方装配，与事后层同源）
     max_position_loss = (float(risk_genes.max_position_loss)
                          if risk_genes.max_position_loss is not None
                          else 0.0)
@@ -274,90 +274,195 @@ class BacktestResult:
     # 「基准区间持平」的真实值；零费基准（不扣资金费/交易费，从严）
     benchmark_return: Optional[float] = None
     excess_return: Optional[float] = None
+    # 永续资金费披露五键（卡 C 3.4）：{mode:"perpetual", total_cost,
+    # total_received, coverage, caliber_note}——付出/收入分列两桶
+    # （空头收入额与负费率多头收入并入 received）；coverage=费率供给
+    # 元数据 {status, covered, gaps}（缺失区间 kind 两态分列）；
+    # caliber_note=跨环境口径差固定文案（回测连续折算 vs 纸盘/live
+    # 8h 结算点）。纯增量键。
+    funding: dict | None = None
 
 
 @njit
 def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
-                           cost_rate: float,
-                           position_values: np.ndarray | None = None) -> float:
-    """funding 资金费扣减内循环（numba njit——逐 bar 就地扣）。
+                           rates: np.ndarray,
+                           position_values: np.ndarray | None = None):
+    """永续资金费扣减内循环（numba njit——逐 bar 就地扣，卡 C 3.2）。
+
+    计费语义：cost[t]=|position_value[t−1]|×rates[t]×direction——费率
+    符号进乘积、方向由仓位符号单源推出（正费率多头付/空头收=权益
+    增加；负费率反向；direction 由 position_values 符号得出，无独立
+    方向数组）。rates 为 _funding_rates_for 产出的逐 bar 已折算费率
+    （rate_ffill×hours_per_bar/8——A3 连续折算形制）。
 
     Args:
         adjusted: 权益值 float64 数组（就地修改）。
         position_mask: 持仓掩码（True=该 bar 持仓中）。
-        cost_rate: 单 bar 资金费率。
-        position_values: 逐 bar 仓位价值 float64 数组；提供时按
-            |position_value|（实际借入额的绝对量——空头仓位价值为负，
-            借入的名义敞口与方向无关，取绝对值计费）而非总权益计费。
+        rates: 逐 bar 资金费率 float64 数组（已含 hours_frac 折算）。
+        position_values: 逐 bar 仓位价值 float64 数组；提供时计费基数=
+            |position_value|（名义敞口绝对量——1x 同样计费，无
+            借贷比例折减）而非总权益；缺省按权益×多头方向计。
 
     Returns:
-        总扣费额。
+        (总付出, 总收入)——多空互付后分列两桶（空头正费率收入、
+        负费率多头收入并入收入桶）；净支出=总付出−总收入。
     """
-    total_cost = 0.0
+    total_paid = 0.0
+    total_received = 0.0
     for i in range(1, len(adjusted)):
-        if position_mask[i]:
+        if position_mask[i] and rates[i] != 0.0:
             if position_values is not None:
-                # add-direction-channel D-4 修复卡：空头仓位价值为负数，
-                # 带符号计费会使 funding 变成给空头的收入（实证
-                # short=-3533 vs long=+3881 方向翻转）——借入额是名义
-                # 敞口的绝对量，与持仓方向无关（固定正费率保守估计口径）
-                base = abs(position_values[i - 1])
+                pv = position_values[i - 1]
+                base = abs(pv)
+                if pv > 0.0:
+                    direction = 1.0
+                elif pv < 0.0:
+                    direction = -1.0
+                else:
+                    direction = 0.0
             else:
                 base = adjusted[i - 1]
-            cost = base * cost_rate
-            total_cost += cost
+                direction = 1.0
+            cost = base * rates[i] * direction
+            if cost > 0.0:
+                total_paid += cost
+            elif cost < 0.0:
+                total_received += -cost
             adjusted[i] -= cost
-    return total_cost
+    return total_paid, total_received
 
 
-def _funding_cost_rate(leverage: float, timeframe: str) -> float:
-    """单 bar 资金费率折算单源（add-position-sizing-params 2.2）。
+def _funding_rates_for(df: pd.DataFrame, timeframe: str):
+    """永续资金费率时序供给（卡 C 3.1 单点装配——双消费点同源）。
 
-    公式：RATE_PER_8H×periods_per_bar×borrowed_ratio（每 8 小时 0.1%
-    按 bar 周期比例折算——非 ceil，不足一期按零头比例收；计费基数=
-    借入部分 (leverage−1)/leverage）。leverage≤1 时 0（无借入零费用）。
-    消费方两处同源：事后层 _apply_funding_costs（权益曲线扣减）与
-    order_func_nb 的 funding_acc 旁路累计（金额防线判定输入）——两处
-    费率不漂移由本单点承担。
+    df 含 funding_rate 列（装载链 reindex+ffill 供给——8h±1ms 偏移
+    已被 ffill 吸收，引擎不做二次归并）→ rates=列值 NaN→0 后乘
+    hours_per_bar/8 连续折算（逐 bar 单 bar 有效费率）；**段外置零**：
+    funding parquet 覆盖边界之外一律 0——含 ffill 外推尾段（外推值
+    非真实费率不计费），覆盖边界权威源=df.attrs[
+    "derivatives_coverage"].funding。df 不含列（裸 df 调用路径）→
+    rates 全零+status="not_loaded"（无时序供给零费）。
+
+    hours_per_bar 八周期映射单源（_funding_cost_rate 退役迁移至此）。
+
+    Returns:
+        (rates, meta)：meta={status, covered, gaps}——gaps 为缺失
+        区间清单 [{start, end, kind}]，kind∈{outside_coverage（覆盖
+        边界外——含 ffill 外推）/hole（覆盖段内数据洞——质量问题）}；
+        NaN→0 零费段可披露可判读（零费可以，静默不行——A4）。
     """
-    if leverage <= 1:
-        return 0.0
-    RATE_PER_8H = 0.001
+    n = len(df)
     hours_per_bar = {
         "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
         "1h": 1, "4h": 4, "1d": 24, "3d": 72,
     }.get(timeframe, 4)
-    # 比例折算而非 ceil——不足一期按零头比例收，避免多收
-    periods_per_bar = hours_per_bar / 8.0
-    borrowed_ratio = (leverage - 1) / leverage
-    return RATE_PER_8H * periods_per_bar * borrowed_ratio
+    hours_frac = hours_per_bar / 8.0
+
+    if "funding_rate" not in df.columns:
+        return (np.zeros(n, dtype=np.float64),
+                {"status": "not_loaded", "covered": None, "gaps": []})
+
+    raw = df["funding_rate"].to_numpy(dtype=np.float64)
+    nan_mask = np.isnan(raw)
+    rates = raw.copy()
+    rates[nan_mask] = 0.0
+
+    idx = df.index
+    cov = None
+    try:
+        cov = (df.attrs.get("derivatives_coverage") or {}).get("funding")
+    except Exception:  # noqa: BLE001 —— attrs 形态异常按不可得处理
+        cov = None
+
+    gaps: list[dict] = []
+
+    def _push_gap(start, end, kind):
+        # 相邻同 kind 段合并（ISO 串边界相等即相邻）
+        if gaps and gaps[-1]["kind"] == kind and gaps[-1]["end"] == start:
+            gaps[-1]["end"] = end
+        else:
+            gaps.append({"start": start, "end": end, "kind": kind})
+
+    def _segments(mask: np.ndarray):
+        """布尔掩码的连续 True 段 [(首 idx 位置, 末 idx 位置)]。"""
+        segs = []
+        pos = np.flatnonzero(mask)
+        if len(pos) == 0:
+            return segs
+        start = pos[0]
+        for k in range(1, len(pos)):
+            if pos[k] != pos[k - 1] + 1:
+                segs.append((start, pos[k - 1]))
+                start = pos[k]
+        segs.append((start, pos[-1]))
+        return segs
+
+    if cov and cov.get("available_start") and cov.get("available_end"):
+        lo = pd.Timestamp(cov["available_start"])
+        hi = pd.Timestamp(cov["available_end"])
+        before = np.asarray(idx < lo)
+        after = np.asarray(idx > hi)
+        # 段外置零（覆盖前无源+ffill 外推尾段——非真实费率不计费）
+        rates[before] = 0.0
+        rates[after] = 0.0
+        for a, b in _segments(before | after):
+            _push_gap(idx[a].isoformat(), idx[b].isoformat(),
+                      "outside_coverage")
+        # 段内洞：covered 区间内的原始 NaN 段（零费+披露分列）
+        for a, b in _segments(nan_mask & ~before & ~after):
+            _push_gap(idx[a].isoformat(), idx[b].isoformat(), "hole")
+        status = "loaded"
+        covered = [cov["available_start"], cov["available_end"]]
+    else:
+        # 覆盖边界不可得（裸列直调/探测失败降级）：按在场列值计费，
+        # status 标注可判读（不静默零费也不静默计费）
+        status = "coverage_unknown"
+        covered = None
+        for a, b in _segments(nan_mask):
+            _push_gap(idx[a].isoformat(), idx[b].isoformat(), "hole")
+
+    rates *= hours_frac
+    return rates, {"status": status, "covered": covered, "gaps": gaps}
+
+
+# 资金费口径差披露固定文案（卡 C 3.4——跨环境语义差在披露面可见）
+_FUNDING_CALIBER_NOTE = (
+    "永续合约资金费口径：回测为逐 bar 连续折算（每 bar 计费=名义敞口×"
+    "当 bar 费率×hours_per_bar/8，时变费率取 funding_rate 列 ffill 值，"
+    "多空互付——正费率多头付出/空头收入）；纸盘/live 为 8h 结算点口径"
+    "（逐结算点对账），跨环境存在口径差；覆盖边界外（含 ffill 外推）"
+    "零费，缺失区间见 coverage.gaps 分列披露")
 
 
 def _apply_funding_costs(
-    equity_curve: pd.Series, leverage: int, timeframe: str,
+    equity_curve: pd.Series,
+    timeframe: str,
     trades_df: Optional[pd.DataFrame] = None,
     position_values: Optional[np.ndarray] = None,
-) -> tuple[pd.Series, float]:
-    """杠杆资金费扣减——仅持仓时段收费。
+    rates: Optional[np.ndarray] = None,
+) -> tuple[pd.Series, float, float]:
+    """永续资金费扣减——仅持仓时段收费（卡 C 3.2/3.3）。
 
-    费率口径：单源 _funding_cost_rate（RATE_PER_8H×periods_per_bar×
-    borrowed_ratio；不足一期的零头按比例收，避免多收）。边界条件：
-    leverage≤1 零费用直返。
+    计费基数=|position_value[t−1]|（名义敞口绝对值，1x 同样计费——
+    无 leverage≤1 短路与借贷比例折减）；费率符号进乘积、
+    方向由仓位符号单源推出（多空互付）。rates 为 _funding_rates_for
+    单点产出的逐 bar 已折算费率数组（缺省全零=无时序供给零费——
+    裸 df 调用路径）。
 
     Args:
         equity_curve: 逐 bar 组合权益。
-        leverage: 杠杆倍数。
-        timeframe: bar 周期串（未知周期按 4h 折算）。
-        trades_df: 逐笔记录（Entry/Exit Timestamp）；None=全程按持仓
-            扣费（legacy 形制），空表=零费用（无持仓即无资金费）。
-        position_values: 逐 bar 仓位价值数组；提供时按
-            |position_value|（实际借入额的绝对量——空头仓位价值为负，
-            借入的名义敞口与方向无关）而非总权益计费。
-    """
-    if leverage <= 1:
-        return equity_curve, 0.0
+        timeframe: bar 周期串（hours_frac 折算在 rates 装配层完成，
+            此处仅透传语义——rates 已含折算）。
+        trades_df: 逐笔记录（Entry/Exit Timestamp）；空表=零费用
+            （无持仓即无资金费）；None=全程按持仓扣费（legacy 形制）。
+        position_values: 逐 bar 仓位价值数组（计费基数）。
+        rates: 逐 bar 已折算费率数组（_funding_rates_for 产出）。
 
-    cost_rate = _funding_cost_rate(leverage, timeframe)
+    Returns:
+        (调整后权益曲线, 总付出, 总收入)——净支出=总付出−总收入。
+    """
+    if rates is None:
+        rates = np.zeros(len(equity_curve), dtype=np.float64)
 
     # 持仓掩码：True=持仓中
     position_mask = np.zeros(len(equity_curve), dtype=np.bool_)
@@ -385,8 +490,10 @@ def _apply_funding_costs(
     if position_values is not None:
         pv_for_funding = position_values.astype(np.float64)
 
-    total_cost = _apply_funding_loop_nb(adjusted, position_mask, cost_rate, pv_for_funding)
-    return pd.Series(adjusted, index=equity_curve.index), total_cost
+    total_paid, total_received = _apply_funding_loop_nb(
+        adjusted, position_mask, rates, pv_for_funding)
+    return (pd.Series(adjusted, index=equity_curve.index),
+            total_paid, total_received)
 
 
 def _apply_leverage_to_equity(
@@ -484,7 +591,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                   sl_stops, tp_stops, sl_modes, atr_arr,
                   exit_fractions, add_fractions, max_exposures,
                   max_holds, time_exits,
-                  max_position_losses, funding_cost_rates,
+                  max_position_losses, funding_rates,
                   position_modes, risk_fractions,
                   fee, slippage,
                   high_arr, low_arr, direction_signal,
@@ -528,9 +635,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
             根 bar 的出场时点无条件全平，N 为该值取整）。
         max_position_losses: 持仓金额防线逐列参数（1D float64；装配层
             物化 None→0.0=禁用哨兵——0.0 使首判即假，存量零开销）。
-        funding_cost_rates: funding_acc 旁路累计的单 bar 费率逐列参数
-            （1D float64；装配层经 _funding_cost_rate 单源折算，
-            lev≤1 时 0——与事后层同源）。
+        funding_rates: funding_acc 旁路累计的逐 bar 费率矩阵
+            （2D float64 bars×cols；装配层经 _funding_rates_for 单点
+            产出逐列同源复制——与事后层同一费率源不漂移；已含
+            hours_frac 折算与段外置零）。
         fee, slippage: 标量费滑（基础费率——杠杆放大归
             _apply_leverage_to_equity 后处理）。
         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
@@ -554,17 +662,21 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     effective_fee = fee
     effective_slippage = slippage
 
-    # funding_acc 当 bar 旁路累计（add-position-sizing-params 2.2，先于
-    # 一切出场 return——出场 bar 也计费，与事后层 _apply_funding_loop_nb
-    # 的滞后基数 abs(position_values[i−1]) 同式：abs(仓位)×close[i−1]×
-    # leverage，费率经 _funding_cost_rate 单源）。三重短路：未声明防线
-    # （首判即假——存量路径 funding_acc 恒零零开销）、i==0（无滞后 bar）、
-    # lev≤1（费率 0）。纯读 position_now/close，写自身数组——不触碰
-    # vbt 可见状态
-    if max_position_losses[col] > 0.0 and i > 0 \
-            and c.position_now != 0.0 and funding_cost_rates[col] > 0.0:
-        funding_acc[col] += (abs(c.position_now) * c.close[i - 1, col]
-                             * leverage * funding_cost_rates[col])
+    # funding_acc 当 bar 旁路累计（永续口径——卡 C 3.3，先于一切出场
+    # return：出场 bar 也计费）。计费=名义敞口×当 bar 费率×方向
+    # （abs(position_now)×close[i−1]×leverage=名义敞口；费率符号进
+    # 乘积、方向由仓位符号单源推出——空头正费率=收入即负累计，与
+    # 事后层 _apply_funding_loop_nb 同式同源）。三重短路：未声明防线
+    # （首判即假——存量路径 funding_acc 恒零零开销）、i==0（无滞后
+    # bar）、当 bar 费率 0。纯读 position_now/close，写自身数组——
+    # 不触碰 vbt 可见状态
+    if max_position_losses[col] > 0.0 and i > 0 and c.position_now != 0.0:
+        _fr = funding_rates[i, col]
+        if _fr != 0.0:
+            _qty = c.position_now
+            _fdir = 1.0 if _qty > 0.0 else -1.0
+            funding_acc[col] += (abs(_qty) * c.close[i - 1, col]
+                                 * leverage * _fr * _fdir)
 
     # 已清算 → 强平余仓；仓位归零后资金充足时可再入场
     if is_liquidated[col] > 0.5:
@@ -1114,12 +1226,11 @@ class BacktestEngine:
         # 源从装配元组取（effective_first_size=声明 initial_fraction 否
         # 则 position_size）——物化分派单点，两入口同批接线
         size_pct = effective_first_size
-        # 金额防线旁路费率（add-position-sizing-params 2.2）：单源
-        # _funding_cost_rate 折算（lev≤1 时 0——旁路累计短路；与事后层
-        # _apply_funding_costs 同源）
-        funding_rate = _funding_cost_rate(
-            float(dna.risk_genes.leverage),
-            dna.execution_genes.timeframe)
+        # 永续资金费率时序供给（卡 C 3.1 单点——与事后层同一函数同值，
+        # 不产生第二费率源）：逐 bar 已折算费率（含段外置零），旁路按
+        # bar×列矩阵传入
+        funding_rates_1d, _funding_meta = _funding_rates_for(
+            enhanced_df, dna.execution_genes.timeframe)
         # bar 开盘时刻与执行周期分钟（任务 6 两输入——run/batch 共用
         # 装配单点 _bar_ts_minutes_and_tf，语义与注释见该 helper）
         bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
@@ -1172,9 +1283,10 @@ class BacktestEngine:
             np.array([max_hold], dtype=np.float64),
             np.array([time_exit], dtype=np.float64),
             # 金额防线两参数（add-position-sizing-params 2.2——逐列常数
-            # 参数族，time_exit 同款；费率经 _funding_cost_rate 单源）
+            # 参数族，time_exit 同款；费率为 _funding_rates_for 单点产出
+            # 的逐 bar×列矩阵——卡 C 3.3）
             np.array([max_position_loss], dtype=np.float64),
-            np.array([funding_rate], dtype=np.float64),
+            funding_rates_1d.reshape(-1, 1),
             # 动态定仓两参数（任务 4——逐列常数参数族，time_exit 同款）
             np.array([position_mode_code], dtype=np.float64),
             np.array([risk_fraction], dtype=np.float64),
@@ -1242,14 +1354,28 @@ class BacktestEngine:
             if (equity_curve < maintenance).any():
                 liquidated = True
 
-        # 杠杆仓资金费（在放大后曲线上收）
+        # 永续资金费（在放大后曲线上收——卡 C：时序费率供给与旁路装配
+        # 同一 _funding_rates_for 单点，run/batch 共用本组装点不漂移）
         timeframe = dna.execution_genes.timeframe
+        funding_rates_1d, funding_meta = _funding_rates_for(
+            enhanced_df, timeframe)
         trades_for_funding = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
-        equity_curve, total_funding_cost = _apply_funding_costs(
-            equity_curve, dna.risk_genes.leverage, timeframe,
+        equity_curve, funding_paid, funding_received = _apply_funding_costs(
+            equity_curve, timeframe,
             trades_df=trades_for_funding,
             position_values=position_values_arr,
+            rates=funding_rates_1d,
         )
+        # 旧字段语义=净支出（总付出−总收入——空头净收入为负）；REST
+        # 响应既有消费方零适配，明细两桶见 funding 披露
+        total_funding_cost = funding_paid - funding_received
+        funding_disclosure = {
+            "mode": "perpetual",
+            "total_cost": funding_paid,
+            "total_received": funding_received,
+            "coverage": funding_meta,
+            "caliber_note": _FUNDING_CALIBER_NOTE,
+        }
 
         total_trades_val = portfolio.trades.count()
         if isinstance(total_trades_val, pd.Series):
@@ -1339,6 +1465,7 @@ class BacktestEngine:
             benchmark_return=metrics.get("benchmark_return"),
             excess_return=metrics.get("excess_return"),
             signal_counts=signal_counts,
+            funding=funding_disclosure,
         )
 
     def run(
@@ -1523,8 +1650,7 @@ class BacktestEngine:
         # 的静默分叉（不报错）
         size_pcts = np.array([p[9] for p in per_dna], dtype=np.float64)
         # 金额防线（add-position-sizing-params 2.2）：None→0.0 禁用哨兵
-        # 逐列参数族+旁路费率逐列（单源 _funding_cost_rate；批量种群
-        # 共享同一执行周期——batch_run 语义，费率差异仅来自逐列 leverage）
+        # 逐列参数族
         max_position_losses = np.array(
             [p[10] for p in per_dna], dtype=np.float64)
         # bar 开盘时刻与执行周期分钟（任务 6——批量种群共享同一执行
@@ -1534,11 +1660,12 @@ class BacktestEngine:
             if individuals else "4h"
         bar_ts_minutes_arr, tf_minutes_val = _bar_ts_minutes_and_tf(
             enhanced_df.index, exec_tf)
-        funding_cost_rates = np.array(
-            [_funding_cost_rate(float(dna.risk_genes.leverage), exec_tf)
-             for dna in individuals],
-            dtype=np.float64,
-        )
+        # 永续费率旁路矩阵（卡 C 3.3）：_funding_rates_for 单点产出逐列
+        # 同源复制（多 DNA 同 df 费率列逐元素相等——与事后层同一费率源）
+        funding_rates_1d, _funding_meta = _funding_rates_for(
+            enhanced_df, exec_tf)
+        funding_rates_2d = np.tile(
+            funding_rates_1d.reshape(-1, 1), (1, M))
 
         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
         close_2d = np.tile(
@@ -1564,7 +1691,7 @@ class BacktestEngine:
             max_holds,
             time_exits,
             max_position_losses,
-            funding_cost_rates,
+            funding_rates_2d,
             position_modes,
             risk_fractions,
             np.float64(self.fee),

@@ -493,6 +493,15 @@ class TestStrategyBacktest:
         mock_result.equity_curve = MagicMock()
         mock_result.trades_df = None
         mock_result.total_funding_cost = 0.0
+        # 资金费披露五键（卡 C 3.4）：显式配 None，防 MagicMock 属性
+        # 被 pydantic dict 校验拒收；闸门⑤路由透传锚：配五键形断言
+        # BacktestResponse.funding 序列化透传不丢键
+        mock_result.funding = {
+            "mode": "perpetual", "total_cost": 12.5,
+            "total_received": 0.0,
+            "coverage": {"status": "not_loaded", "covered": None,
+                         "gaps": []},
+            "caliber_note": "回测为逐 bar 连续折算（8h 口径差披露）"}
         mock_result.liquidated = False
         # 基准对照五键（improve-backtest-benchmark-disclosure 2.2）：
         # 显式配 dict，防 MagicMock 属性被 __float__ 静默强转成假值
@@ -532,6 +541,11 @@ class TestStrategyBacktest:
         assert data["alpha"] == 0.05
         assert data["market_annual_return"] == 0.20
         assert data["profit_factor"] == 1.6
+        # 资金费披露五键路由透传（卡 C 3.4——闸门⑤层级补全）
+        assert data["funding"]["mode"] == "perpetual"
+        assert data["funding"]["total_cost"] == 12.5
+        assert data["funding"]["coverage"]["status"] == "not_loaded"
+        assert "8h" in data["funding"]["caliber_note"]
 
     def test_backtest_strategy_not_found(self, client: TestClient) -> None:
         """POST /api/strategies/backtest with invalid strategy should return 404."""

@@ -295,6 +295,7 @@ def backtest_strategy(
         signals=signals_data,
         total_funding_cost=result.total_funding_cost,
         liquidated=result.liquidated,
+        funding=result.funding,
         benchmark_return=md.get("benchmark_return"),
         excess_return=md.get("excess_return"),
         alpha=md.get("alpha"),

@@ -88,7 +88,7 @@ class TestTDCombinationAlwaysTightened:
             statement=f"TD 锚 {tag}",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2022-10-05T00:00:00Z",
-                          "end": "2022-10-20T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2022-10-20T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（行为等效）
         dna = StrategyDNA(
             signal_genes=[SignalGene(

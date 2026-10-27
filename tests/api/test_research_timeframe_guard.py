@@ -73,7 +73,7 @@ class TestUnknownTimeframeRejected:
     def test_rejection_leaves_no_persistent_side_effect(self, api_client):
         """非法周期登记：假设与日志零落库（拒绝路径零持久副作用）。"""
         resp = api_client.post("/api/research/hypotheses", json={
-            "conditions": CONDITIONS, "statement": "守卫",
+            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
             "data_ranges": [_RANGE]})
         assert resp.status_code == 422
 
@@ -85,7 +85,7 @@ class TestUnknownTimeframeRejected:
     def test_timeframe_validated_before_symbol_reachability(self, api_client):
         """同请求双错（非法周期 + 不可达 symbol）：timeframe 值域校验先报。"""
         resp = api_client.post("/api/research/hypotheses", json={
-            "conditions": CONDITIONS, "statement": "守卫",
+            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
             "data_ranges": [{**_RANGE, "symbol": "NOPEUSDT"}]})
         assert resp.status_code == 422
         detail = resp.json()["detail"]
@@ -95,7 +95,7 @@ class TestUnknownTimeframeRejected:
     def test_legal_timeframe_unaffected(self, api_client):
         """合法周期通道不受守卫影响（登记照常 200）。"""
         resp = api_client.post("/api/research/hypotheses", json={
-            "conditions": CONDITIONS, "statement": "守卫",
+            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
             "data_ranges": [{**_RANGE, "timeframe": "4h"}]})
         assert resp.status_code == 200, resp.text
 

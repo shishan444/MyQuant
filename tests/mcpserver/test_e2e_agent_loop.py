@@ -91,7 +91,8 @@ def test_agent_loop_full_close_via_mcp_only(live_env):
                 statement="RSI 超卖修复",
                 data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                               "start": "2023-01-01T00:00:00Z",
-                              "end": "2023-02-01T00:00:00Z"}])
+                              "end": "2023-02-01T00:00:00Z"}],
+                              strategy_params={"stop_loss": 0.05})
     assert reg.get("hypothesis_id"), reg
     hid = reg["hypothesis_id"]
 

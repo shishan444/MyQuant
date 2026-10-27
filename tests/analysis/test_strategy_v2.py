@@ -159,7 +159,7 @@ class TestMutateComposition:
 class TestTranslator:
     def _register_and_pass(self, db, conditions, ranges):
         hid = register_hypothesis(db, conditions=conditions, statement="s",
-                                  data_ranges=ranges)["hypothesis_id"]
+                                  data_ranges=ranges, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         rr.save_validation_with_log(
             db, record_id=f"rec_{hid[:8]}", hypothesis_id=hid,
             strategy_id="st_x", level="isolated_backtest",
@@ -186,7 +186,9 @@ class TestTranslator:
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert out["duplicated"] is False
         assert out["status"] == "draft"
-        assert out["risk_genes"] == "platform_default"
+        # D5 后登记恒带块 → risk_origin=declared（platform_default
+        # 通道保留给存量假设直插路径）
+        assert out["risk_genes"] == "declared"
         from core.persistence.repository.strategy import get_strategy
         row = get_strategy(db, out["strategy_id"])
         assert row["status"] == "draft"
@@ -197,7 +199,7 @@ class TestTranslator:
         """M4 语义反转：无 pass 记录也可转化（构建权与出货权拆开——
         pass 前置由转正门承载，转化即验证资格）。"""
         hid = register_hypothesis(db, conditions=self._expressible_conditions(),
-                                  statement="s", data_ranges=self._ranges())["hypothesis_id"]
+                                  statement="s", data_ranges=self._ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         out = translate_hypothesis(db, hypothesis_id=hid)
         assert out["duplicated"] is False and out["status"] == "draft"
 
@@ -307,10 +309,10 @@ class TestTranslator:
         """M2 补充：仅改 statement 措辞，产物 genes 逐位相同。"""
         conds = self._expressible_conditions()
         hid1 = register_hypothesis(db, conditions=conds, statement="措辞甲",
-                                   data_ranges=self._ranges())["hypothesis_id"]
+                                   data_ranges=self._ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         # 同 conditions 同 ranges → 幂等命中同一假设（statement 不参与身份）
         hid2 = register_hypothesis(db, conditions=conds, statement="完全不同的措辞乙",
-                                   data_ranges=self._ranges())["hypothesis_id"]
+                                   data_ranges=self._ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         assert hid2 == hid1, "statement 措辞不得改变假设身份（幂等键不含措辞）"
 
     def test_idempotent_and_statement_ignored(self, db):
@@ -361,7 +363,7 @@ class TestCompositeGate:
             statement="s", data_ranges=[
                 {"symbol": "BTCUSDT", "timeframe": "4h",
                  "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}]
-        )["hypothesis_id"]
+        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
         # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（行为等效）
         dna = StrategyDNA(
@@ -446,7 +448,7 @@ class TestGapClosureTranslator:
             statement="全不可表达",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as ei:
             translate_hypothesis(db, hypothesis_id=hid)
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
@@ -464,7 +466,7 @@ class TestGapClosureTranslator:
             statement="when 不可表达",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError, match="不可表达"):
             translate_hypothesis(db, hypothesis_id=hid)
 
@@ -481,13 +483,13 @@ class TestGapClosureDraftHit:
                  "action": "gt", "target": 0}]}
         hid_a = register_hypothesis(
             db, conditions=cond, statement="A",
-            data_ranges=[_R(1, 15)])["hypothesis_id"]
+            data_ranges=[_R(1, 15)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         first = translate_hypothesis(db, hypothesis_id=hid_a)
         assert first["status"] == "draft"
         # 同条件不同区间 → 新假设 B（DNA 相同）
         hid_b = register_hypothesis(
             db, conditions=cond, statement="B",
-            data_ranges=[_R(20, 28)])["hypothesis_id"]
+            data_ranges=[_R(20, 28)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         assert hid_b != hid_a
         second = translate_hypothesis(db, hypothesis_id=hid_b)
         assert second["status"] == "draft"
@@ -524,7 +526,7 @@ class TestTranslatorTriggerPolicy:
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01T00:00:00Z",
                           "end": "2024-02-01T00:00:00Z"}],
-            trigger_policy=policy)["hypothesis_id"]
+            trigger_policy=policy, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
 
     def _translate_dna(self, db, hid):
         from core.persistence.repository.strategy import get_strategy
@@ -614,7 +616,7 @@ class TestTranslatorRejections:
         }
         hid = register_hypothesis(
             db, conditions=conds, statement="s",
-            data_ranges=self._ranges())["hypothesis_id"]
+            data_ranges=self._ranges(), strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as ei:
             translate_hypothesis(db, hypothesis_id=hid)
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
@@ -778,7 +780,7 @@ class TestRegisterPrecheckLogFailureTolerated:
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-02-15T00:00:00Z",
                           "end": "2024-03-20T00:00:00Z"}],
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         assert out["hypothesis_id"]
         assert out["duplicated"] is False
 

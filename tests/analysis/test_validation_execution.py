@@ -98,8 +98,60 @@ def hypothesis_id(db) -> str:
         statement="s",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
-                      "end": "2023-02-01T00:00:00Z"}],
+                      "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
     )["hypothesis_id"]
+
+
+class TestRandomWindowHypothesisPrecheck:
+    """CARD-05 特征锚（random_window 存在性前置——三入口对称面：
+    isolated/staged 既有 precheck 锚，random_window 原缺）。伪造/
+    失效 hypothesis_id → 404 先于幂等查询与数据装载（不再直写
+    validation_records.hypothesis_id 虚挂行）；adhoc None 通道保留。"""
+
+    def test_ghost_id_404_before_loading(self, db, tmp_path):
+        """伪造 id → 404 RESEARCH_HYPOTHESIS_NOT_FOUND，且先于数据
+        装载（data_dir 空目录——若装载先行会先报数据/策略错误）。"""
+        empty = tmp_path / "empty_dir"
+        empty.mkdir()
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, empty, strategy_id="st_any", hypothesis_id="hyp_ghost",
+                symbol="BTCUSDT", timeframe="4h",
+                data_start="2024-01-01T00:00:00Z",
+                data_end="2024-03-01T00:00:00Z",
+                window_bars=60, n_windows=2, seed=7)
+        assert ei.value.code == "RESEARCH_HYPOTHESIS_NOT_FOUND"
+        assert ei.value.status == 404
+
+    def test_adhoc_none_channel_preserved(self, db, tmp_path):
+        """adhoc None → 前置不拦（执行流穿透到下一道校验——通道
+        保留证明，非「None 也被存在性拒」的过收敛）。"""
+        empty = tmp_path / "empty_dir"
+        empty.mkdir()
+        with pytest.raises(ResearchError) as ei:
+            random_window_test(
+                db, empty, strategy_id="st_none", hypothesis_id=None,
+                symbol="BTCUSDT", timeframe="4h",
+                data_start="2024-01-01T00:00:00Z",
+                data_end="2024-03-01T00:00:00Z",
+                window_bars=60, n_windows=2, seed=7)
+        assert ei.value.code != "RESEARCH_HYPOTHESIS_NOT_FOUND", \
+            "adhoc None 不得被存在性前置拦截"
+
+    def test_ghost_id_no_validation_record_written(self, db, data_dir,
+                                                   hypothesis_id):
+        """零写入断言：伪造 id 拒绝后 validation_records 无虚挂行
+        （原缺陷本体=200 直写 hypothesis_id 列）。"""
+        with pytest.raises(ResearchError):
+            random_window_test(
+                db, data_dir, strategy_id="st_any",
+                hypothesis_id="hyp_ghost_x",
+                symbol="BTCUSDT", timeframe="4h",
+                data_start="2024-01-01T00:00:00Z",
+                data_end="2024-03-01T00:00:00Z",
+                window_bars=60, n_windows=2, seed=7)
+        rows = rr.list_validation_records(db, hypothesis_id="hyp_ghost_x")
+        assert rows == [], "伪造 id 不得产生 validation_records 行"
 
 
 class TestTimezoneNormalization:
@@ -782,7 +834,7 @@ class TestR3WarmupAxisConsistency:
                     {"subject": "close", "action": "gt", "target": 0}]},
             statement="T5 warmup 轴",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
-                          "start": "2023-12-01", "end": "2023-12-10"}]
+                          "start": "2023-12-01", "end": "2023-12-10"}], strategy_params={"stop_loss": 0.05}
         )["hypothesis_id"]
         return db, d, sid, hid
 

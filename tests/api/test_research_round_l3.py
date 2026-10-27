@@ -128,7 +128,7 @@ class TestResearchRoundDoD:
             statement="L3 研究轮假设",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
                           "start": "2023-02-01T00:00:00Z",
-                          "end": "2023-03-01T00:00:00Z"}])["hypothesis_id"]
+                          "end": "2023-03-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         balance = api_client.get("/api/research/union-balance", params={
             "symbol": SYMBOL, "timeframe": "4h", "hypothesis_id": hyp})
         assert balance.status_code == 200, balance.text

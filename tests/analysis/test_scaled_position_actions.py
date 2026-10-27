@@ -74,8 +74,13 @@ GROUP_RSI_HIGH = [_cond(70, "gt")]   # RSI>70（部分离场触发）
 GROUP_RSI_LOW = [_cond(40)]          # RSI<40（加仓触发）
 
 
+_NO_SP = object()  # 哨兵：未传补最小合法块；显式 None 透传
+
+
 def _register_scaling(db, *, exit_group=None, add_group=None,
-                      suppress_group=None, sp=None, period=14):
+                      suppress_group=None, sp=_NO_SP, period=14):
+    if sp is _NO_SP:
+        sp = {"stop_loss": 0.05}
     conditions = {
         "when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": period},
@@ -141,8 +146,10 @@ class TestTranslationMapping:
 
     def test_declared_scaling_params_to_dna(self, db):
         """声明块三键→RiskGenes 物化（组在时登记归一化字面 0.5/0.1/1.0）。"""
+        # D5 后组在也须带块（None 拒）；组键归一化断言不变
         h = _register_scaling(db, exit_group=GROUP_RSI_HIGH,
-                              add_group=GROUP_RSI_LOW, sp=None)
+                              add_group=GROUP_RSI_LOW,
+                              sp={"stop_loss": 0.05})
         t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
         rg = json.loads(get_strategy(db, t["strategy_id"])["dna_json"])["risk_genes"]
         assert rg["exit_fraction"] == 0.5
@@ -190,12 +197,12 @@ class TestPrecheckGroupDisclosure:
         r_with = register_hypothesis(
             db, conditions=dict(base, add_trigger_conditions=GROUP_RSI_LOW),
             statement="with-group", data_ranges=_ranges(),
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         r_without = register_hypothesis(
             db, conditions=dict(
                 base, when_conditions=[_cond(46)]),  # 异身份（同 when 结构）
             statement="no-group", data_ranges=_ranges(),
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         w1 = r_with.get("precheck_warnings") or {}
         w0 = r_without.get("precheck_warnings") or {}
         # 组级键只出现在含组假设的 per_range
@@ -217,11 +224,11 @@ class TestPrecheckGroupDisclosure:
         }
         r_without = register_hypothesis(
             db, conditions=dict(base), statement="no-group",
-            data_ranges=_ranges(), precheck_data_dir=data_dir)
+            data_ranges=_ranges(), precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         r_with = register_hypothesis(
             db, conditions=dict(base, add_trigger_conditions=GROUP_RSI_LOW),
             statement="with-group", data_ranges=_ranges(),
-            precheck_data_dir=data_dir)
+            precheck_data_dir=data_dir, strategy_params={"stop_loss": 0.05})
         # 组键参与身份：同条件集+同区间集仍两个独立假设
         assert r_without["hypothesis_id"] != r_with["hypothesis_id"]
         w0 = r_without.get("precheck_warnings") or {}

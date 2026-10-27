@@ -144,7 +144,7 @@ class TestC3SignalCountsDisclosure:
                     {"subject": "close", "action": "gt", "target": 0}]},
             statement="c3",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
-                          "start": "2024-01-01", "end": "2024-01-10"}]
+                          "start": "2024-01-01", "end": "2024-01-10"}], strategy_params={"stop_loss": 0.05}
         )["hypothesis_id"]
         res = run_isolated_backtest(
             db, d, hypothesis_id=hid, strategy_id="st_c3",

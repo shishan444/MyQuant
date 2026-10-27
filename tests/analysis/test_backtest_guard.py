@@ -112,7 +112,7 @@ def seeded(db, data_dir) -> dict:
                 {"subject": "close", "action": "gt", "target": 0}]},
         statement="守卫锚",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                      "start": HYP_START, "end": HYP_END}])["hypothesis_id"]
+                      "start": HYP_START, "end": HYP_END}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
     return {"sid": sid, "hid": hid}
 
 

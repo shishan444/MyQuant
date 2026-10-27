@@ -39,7 +39,7 @@ class TestDomainValidation:
                 register_hypothesis(
                     tmp_path / "q.db", conditions=conds, statement="s",
                     data_ranges=ranges,
-                    strategy_params={"time_exit_utc": bad})
+                    strategy_params={"stop_loss": 0.05, "time_exit_utc": bad})
             assert ei.value.code == "RESEARCH_PARAM_INVALID"
             assert ei.value.detail["field"] == "time_exit_utc"
 
@@ -64,7 +64,7 @@ class TestDomainValidation:
                           end=f"2024-0{k + 1}-15T00:00:00Z")]
             register_hypothesis(
                 tmp_path / "q.db", conditions=conds, statement=f"s{ok}",
-                data_ranges=rng_k, strategy_params={"time_exit_utc": ok})
+                data_ranges=rng_k, strategy_params={"stop_loss": 0.05, "time_exit_utc": ok})
 
     def test_c5_daily_tf_combination_rejected(self):
         """C5：validate_dna 拒 time_exit_utc×日线及以上组合（>=1440

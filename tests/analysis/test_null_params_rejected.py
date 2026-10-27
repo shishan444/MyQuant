@@ -55,7 +55,12 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-06-01T00:00:00Z"}]
 
 
-def _register(db: Path, sp=None, period: int = 14):
+_NO_SP = object()
+
+
+def _register(db: Path, sp=_NO_SP, period: int = 14):
+    if sp is _NO_SP:
+        sp = {"stop_loss": 0.05}
     return register_hypothesis(
         db, conditions=_cond(period), statement="null-anchor",
         data_ranges=_ranges(), strategy_params=sp)
@@ -90,12 +95,16 @@ class TestNullParamsRejected:
         assert ei.value.detail["null_keys"] == ["stop_loss", "leverage"]
         assert ei.value.detail["field"] == "strategy_params.stop_loss"
 
-    def test_missing_key_still_legal(self, db):
-        """键缺失仍合法对照锚：null 拒绝不外溢——不带键登记照常成功。"""
+    def test_missing_key_rejected(self, db):
+        """（D5 翻转）键缺失（None 块）不再合法——3.6 步在场拒；null
+        拒绝不外溢的对照面改由「合法块登记照常成功」承载。"""
+        with pytest.raises(ResearchError) as ei:
+            _register(db, None)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["field"] == "strategy_params"
+        # 合法块照常成功（null 拒绝不外溢的正向对照）
         r = _register(db)
         assert r["duplicated"] is False
-        # 落库列 NULL（与显式 {} 在幂等层同形）
-        assert get_hypothesis(db, r["hypothesis_id"])["strategy_params"] is None
 
     def test_null_rejected_before_pairing_check(self, db):
         """null 拒绝先于组间配对：无宿主组时仍因 null 拒（detail 证因）。"""

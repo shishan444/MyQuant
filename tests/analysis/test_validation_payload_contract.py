@@ -45,15 +45,19 @@ def _dna(direction: str = "long") -> StrategyDNA:
         risk_genes=RiskGenes(direction=direction))
 
 
-_ISOLATED_11 = {
+_ISOLATED_KEYS = {
     "record_id", "verdict", "duplicated", "direction", "metrics",
     "threshold_details", "warmup", "bars_used", "symbol", "timeframe",
     "judged_ranges",
+    # 执行配置披露（research-execution-config-alignment 1.1 卡 A——
+    # 纯增量键，沿 direction 先例入顶层契约集；原 11 键演进为 12 键）
+    "risk_genes_disclosure",
 }
 _STAGED_KEYS = {
     "record_id", "verdict", "duplicated", "strategy_id", "hypothesis_id",
     "segmentation", "request_range", "warmup_bars", "segments", "summary",
     "judged_ranges", "direction",
+    "risk_genes_disclosure",
 }
 
 
@@ -62,7 +66,8 @@ class TestIsolatedPayloadContract:
 
     def test_s1a_s1b_isolated_first_and_idem_same_keyset(self, db, data_dir,
                                                          hypothesis_id):
-        """S1a 首次顶层 11 键；S1b 幂等与首次顶层键集集合相等且
+        """S1a 首次顶层 12 键（原 11 键+risk_genes_disclosure 披露）；
+        S1b 幂等与首次顶层键集集合相等且
         result 不在顶层（双形制退役锚）。"""
         save_strategy(db, strategy_id="st_s1", dna_json=_dna().to_json(),
                       symbol="BTCUSDT", timeframe="4h")
@@ -72,7 +77,7 @@ class TestIsolatedPayloadContract:
         first = run_isolated_backtest(db, data_dir, **kw)
         replay = run_isolated_backtest(db, data_dir, **kw)
 
-        assert set(first) == _ISOLATED_11, f"首次键集：{sorted(first)}"
+        assert set(first) == _ISOLATED_KEYS, f"首次键集：{sorted(first)}"
         assert first["duplicated"] is False
         assert replay["duplicated"] is True
         assert set(replay) == set(first), "幂等与首次顶层键集相等"
@@ -136,7 +141,7 @@ class TestIsolatedPayloadContract:
             statement="s", data_ranges=[{"symbol": "BTCUSDT",
                                          "timeframe": "4h",
                                          "start": "2023-01-01T00:00:00Z",
-                                         "end": "2023-02-01T00:00:00Z"}],
+                                         "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
         )["hypothesis_id"]
         save_strategy(db, strategy_id="st_dir",
                       dna_json=_dna(direction="short").to_json(),

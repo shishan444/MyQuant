@@ -83,7 +83,8 @@ class TestDomainAndCombination:
         db = tmp_path / "q.db"
         init_db_ext(db); ensure_research_tables(db)
         with pytest.raises(ResearchError, match="position_mode"):
-            self._register(tmp_path, db, {"position_mode": "bogus"})
+            self._register(tmp_path, db,
+                           {"stop_loss": 0.05, "position_mode": "bogus"})
         # 组合：risk_budget 缺 risk_fraction 拒
         with pytest.raises(ResearchError, match="risk_fraction"):
             self._register(tmp_path, db, {

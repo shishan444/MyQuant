@@ -181,7 +181,7 @@ class TestA1NativeTranslation:
                                  "field": "ema"},
                      "action": "gt", "target": 0}]},
             statement="A1 native translation anchor",
-            data_ranges=[dict(self.RANGE)])["hypothesis_id"]
+            data_ranges=[dict(self.RANGE)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
         genes = json.loads(get_strategy(db, sid)["dna_json"])["signal_genes"]
         entry = [g for g in genes if g["role"] == "entry_trigger"][0]
@@ -231,7 +231,7 @@ class TestA2NativeTranslation:
                             {"subject": "close", "action": "gt",
                              "target": "ema_20"}]},
             statement="A2 native translation anchor",
-            data_ranges=[dict(self.RANGE)])["hypothesis_id"]
+            data_ranges=[dict(self.RANGE)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
         return hid, sid
 
@@ -291,7 +291,7 @@ class TestA2NativeTranslation:
                             {"subject": "close", "action": "gt",
                              "target": "ema_20"}]},
             statement="A2 full-chain anchor",
-            data_ranges=[dict(reg_range)])["hypothesis_id"]
+            data_ranges=[dict(reg_range)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(_db, hypothesis_id=hid)["strategy_id"]
 
         sb = run_sandbox_backtest(
