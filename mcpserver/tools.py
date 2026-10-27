@@ -680,8 +680,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         触发不创造触发：0 事件形态照常 reject_suggestion。bars 数据
         长度上界在求值时点校验（登记时点仅形制——短区间实跑超界即
         422）。
-        strategy_params 可选（0.4.2 策略层参数声明块——与假设身份
-        正交的风险参数）：键集 stop_loss/take_profit/sl_mode/
+        strategy_params 必填（0.4.2 策略层参数声明块——与假设身份
+        正交的风险参数；缺失或不带 stop_loss 键一律 422——止损为
+        强制风控组件）：键集 stop_loss/take_profit/sl_mode/
         position_size/leverage/exit_fraction/add_fraction/max_exposure/
         max_hold/time_exit_utc/position_mode/risk_fraction/
         initial_fraction/max_position_loss
@@ -691,8 +692,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         [0.10,1.0]；leverage∈[1,10]；exit_fraction∈(0,1]/
         add_fraction∈(0,1] 须伴随宿主组分批声明；max_exposure∈
         (0,生效杠杆]（未声明 leverage 时上界 1——声明更大上限须同
-        时声明 leverage）；三键有组无值时登记归一化字面化 0.5/0.1/
-        1.0）；max_hold∈[1,200] 正整数 bar 数——最长持有 N 根 K 线的
+        时声明 leverage）；三键有宿主组而声明块内缺值时，登记归一化
+        字面化 0.5/0.1/1.0）；max_hold∈[1,200] 正整数 bar 数——最长持有 N 根 K 线的
         时间出场（到期无条件平仓，与条件出场/止损止盈并行的第三出场
         机制；不声明=无时间离场；N=1 行为等价 N=2——入场 bar 的出场
         时点被入场单占据，最早平仓在入场次 bar；仅回测域生效——live
@@ -728,12 +729,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         逐参数映射进产物 risk_genes（返回体 risk_genes="declared"；
         无声明=平台默认 "platform_default"）。声明块不进条件指纹与
         幂等身份（同条件集+同区间集=同一假设——参数
-        变体经终态后带新声明重登记产生）；幂等四分支：请求不带键
-        →duplicated 返回既有（附 existing_strategy_params 摘要键）；
-        带键（含显式空对象 {}=显式声明「无参数」）与既有声明全等
-        →duplicated、不等→422（防静默丢弃既有声明）；{} 与键缺失
-        语义不同。坏值 422 RESEARCH_PARAM_INVALID（detail 含
-        field/legal_range）。
+        变体经终态后带新声明重登记产生）；幂等两分支（声明块必填后
+        请求恒带块——无「不带键」态，空块 {} 亦被 stop_loss 在场
+        判据 422）：与既有声明归一形全等→duplicated 返回既有（附
+        existing_strategy_params 摘要键）；不等→422（防静默丢弃
+        既有声明，detail 附变体路径指引——存量假设列 NULL 归一 {}
+        与任何合法块必不等，同条件集重登记走本 422）。坏值 422
+        RESEARCH_PARAM_INVALID（detail 含 field/legal_range；
+        strategy_params.stop_loss 场景附强制声明 hint）。
         exit_partial_conditions/add_trigger_conditions/add_suppress_conditions
         可选（0.4.2 R3 分批条件组，对象数组——组内 {subject,action,target}
         与 when/then 同构）：部分离场触发/加仓触发/加仓抑制三组，进
@@ -741,7 +744,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         触发条件属研究主张）；组条目不带 timeframe 键；组存在须非空。
         翻译映射 REDUCE_TRIGGER/ADD_TRIGGER/ADD_INHIBIT；分批数值参数
         （exit_fraction 0.5/add_fraction 0.1/max_exposure 1.0 缺省）经
-        strategy_params 声明块承载（有组无值自动归一化字面值）。
+        strategy_params 声明块承载（宿主组在场而块内缺数值键时自动
+        归一化字面值）。
         direction 可选（交易方向 {long,short}——做空假设通道）：缺省与
         显式 "long" 语义相同（同指纹同实体）；"short" 为做空假设——
         方向参与假设身份指纹与幂等身份（同条件集+同区间集+异方向=
