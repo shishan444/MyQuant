@@ -118,19 +118,25 @@ class TestTranslationMapping:
         assert "exit_trigger" in roles   # then 语义保持
         assert "entry_trigger" in roles
 
-    def test_plugin_column_in_group_rejected(self, db):
-        """插件列 subject 在任一新组→翻译显式拒绝 RESEARCH_NOT_EXPRESSIBLE
-        （登记链合法——插件列是合法 subject；拒绝在翻译：插件源仅入场）。"""
+    def test_plugin_column_in_group_translates_role(self, db, data_dir):
+        """（R2 翻转）插件列在分批组放行：产物 signal_sources 含组角色
+        条目（源级 role=exit_partial——原「插件源仅入场」拒绝随卡 F
+        6.1 放行消亡，:549 接线使分批组插件源不静默丢弃）。"""
+        import json as _json
         from core.analysis.plugin_service import register_formula_plugin
-        register_formula_plugin(db, name="demo_scaling",  # 列名自动加 fx_ 前缀
+        from core.persistence.repository.strategy import get_strategy
+        register_formula_plugin(db, name="demo_scaling",
                                 expression="rolling_mean(close, 3)")
         h = _register_scaling(
             db, exit_group=[{"subject": "fx_demo_scaling",
                              "action": "gt", "target": 0}],
             period=22)
-        with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        t = translate_hypothesis(db, data_dir=data_dir,
+                                 hypothesis_id=h["hypothesis_id"])
+        dna = _json.loads(get_strategy(db, t["strategy_id"])["dna_json"])
+        roles = [s.get("role") for s in dna["signal_sources"]
+                 if s.get("type") in ("formula", "model")]
+        assert "exit_partial" in roles,             f"分批组插件源接线（role=exit_partial），got {roles}"
 
     def test_group_genes_in_signature(self, db):
         """组基因自然进 gene_signature（同条件集异组=不同签名）。"""

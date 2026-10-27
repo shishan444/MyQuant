@@ -377,9 +377,18 @@ class StrategyDNA:
             if isinstance(s, dict) and s.get("type") in ("formula", "model")
         ]
         if plugin_sources:
+            # R2 role 维度（indicator-and-action-repair 卡 F 6.1 增补
+            # 零迁移锁定）：插件条目 role 值非 "entry"（含显式 exit/
+            # exit_partial/add_trigger/add_suppress）时四元组后追加
+            # ":<role>" 段；entry 条目（含无 role 键存量）编码逐位
+            # 不变——同列 entry 与非 entry 必异编码必异签名（库去重/
+            # POST 预检/进化 exclude-set 三消费方不互判）；禁止无条件
+            # 编码 role（存量签名全漂移）
             parts.append("src:" + ";".join(sorted(
                 f"{s.get('type')}:{s.get('ref')}:"
                 f"{s.get('threshold', 0.0)}:{s.get('operator', '>')}"
+                + (f":{s.get('role')}"
+                   if s.get("role") not in (None, "entry") else "")
                 for s in plugin_sources)))
             if self.composition:
                 comp = self.composition if isinstance(self.composition, dict) else {}
