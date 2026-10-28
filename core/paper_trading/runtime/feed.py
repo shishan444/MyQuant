@@ -707,11 +707,20 @@ class FixedKeyBackfill:
             self._stop_event.wait(self.POLL_INTERVAL_SECONDS)
 
     def stop(self) -> None:
-        """协作停止（app 关停序）。"""
+        """协作停止（app 关停序——超时未退记 warning 监测面）。
+
+        join 超时后线程仍存活（REST 调用阻塞超脱 stop_event 协作
+        语义）只记日志不强杀——彻底消除（可中断的 REST 装载面）归
+        批次三 CARD-08 不修档。
+        """
         self._stop_event.set()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=10.0)
+            if thread.is_alive():
+                logger.warning(
+                    "fapi 建库线程 stop 超时未退（REST 阻塞超脱协作"
+                    "语义——监测面留痕，不强制回收）")
 
 
 def backfill_key(
