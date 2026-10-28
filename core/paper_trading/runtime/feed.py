@@ -725,7 +725,12 @@ def backfill_key(
 ) -> None:
     """单键建库（无文件全量回补/有文件尾戳补齐——merge_closed_rows 落盘）。
 
-    REST 异常上抛（调用方 run_once 记 failed 重试）。
+    done=「数据就绪」单义（批次三 CARD-03 a 案）：非空文件+尾戳新鲜，
+    或增量成功落盘。REST 异常与空响应/空文件/增量空帧三空路径一律
+    上抛（调用方 run_once 记 failed 下轮重试——空态视为暂时性：
+    固定 12 键=白名单两币种×6 周期，两年窗必有数据，「端点确认无
+    数据」在现行键集不可达；若 FIXED_SUBSCRIBE_KEYS 扩容（新币种
+    接入属另立需求），扩容 change 须重估本空态语义）。
     """
     path = Path(data_dir) / f"{symbol}_{timeframe}.parquet"
     now = now_fn()
@@ -733,19 +738,29 @@ def backfill_key(
         frame = rest_fetcher(
             symbol, timeframe,
             now - pd.DateOffset(years=history_years), now)
-        if frame is not None and not frame.empty:
-            from core.data.storage import save_parquet
+        if frame is None or frame.empty:
+            raise RuntimeError(
+                f"建库未就绪（无文件且端点空响应）：{symbol}_{timeframe}"
+                "——视为暂时性空响应，记 failed 下轮重试")
+        from core.data.storage import save_parquet
 
-            save_parquet(frame, path)
+        save_parquet(frame, path)
         return
     existing = load_parquet(path)
     if existing is None or existing.empty:
-        return
+        raise RuntimeError(
+            f"建库未就绪（文件空）：{symbol}_{timeframe}"
+            "——空文件非数据就绪，记 failed 下轮重试")
     interval = TF_SECONDS.get(timeframe, _DEFAULT_BAR_SECONDS)
     last = existing.index[-1]
     if now < last + pd.Timedelta(seconds=2 * interval):
-        return  # 尾戳已新鲜——无缺口
+        return  # 尾戳已新鲜——数据就绪
     frame = rest_fetcher(symbol, timeframe,
                          last + pd.Timedelta(seconds=interval), now)
-    if frame is not None and not frame.empty:
-        merge_closed_rows(path, frame)
+    if frame is None or frame.empty:
+        # 单义推论：缺口成立（now>=last+2×周期）而增量空响应——既非
+        # 尾戳新鲜亦非增量落盘，数据未就绪，与无文件空响应同语义
+        raise RuntimeError(
+            f"建库未就绪（缺口区间空响应）：{symbol}_{timeframe}"
+            "——记 failed 下轮重试")
+    merge_closed_rows(path, frame)
