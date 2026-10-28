@@ -34,8 +34,19 @@ def _get_or_404(db_path: Path, task_id: str) -> Dict[str, Any]:
 
 
 def pause_task(db_path: Path, task_id: str) -> TransitionResult:
-    """暂停运行中任务（仅 running 合法前态——batch1 D3 守护）。"""
+    """暂停运行中任务（仅 running 合法前态——batch1 D3 守护）。
+
+    信号先行：在跑线程经 TaskController 协作暂停（当代完整落库后退出，
+    见 runner._run_task 的 TaskPauseRequested 分支）。
+    """
     _get_or_404(db_path, task_id)
+
+    # 直达信号（与 stop_task 同形制）：通知在跑线程当代落库后暂停退出
+    from api.runner import get_active_controllers
+    controller = get_active_controllers().get(task_id)
+    if controller is not None:
+        controller.request_pause()
+
     applied = update_task(db_path, task_id, status="paused",
                           expected_statuses=("running",))
     if not applied:

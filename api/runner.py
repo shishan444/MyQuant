@@ -47,7 +47,11 @@ def get_active_controllers() -> Dict[str, "TaskController"]:
 # TaskController：经 threading.Event 的直达停止信号
 # ---------------------------------------------------------------------------
 
-from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
+from core.concurrency.task_control import (  # B4.2 归一
+    TaskController,
+    TaskPauseRequested,
+    TaskStopRequested,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +133,9 @@ class EvolutionRunner(threading.Thread):
     （实施闸门验证通过——WAL+busy_timeout 下 4 线程并发写 800 行零冲突，
     走主路径）。max_workers 缺省 2、上限 4（config evolution.
     max_concurrent_tasks 可配）；continuous 任务占一槽运行——新 pending
-    不再无限饥饿（第二槽可用）。stop/pause 经 TaskController 既有直达
-    信号（check_stop 贯穿链零改动）。
+    不再无限饥饿（第二槽可用）。stop/pause 经 TaskController 直达信号
+    协作生效：stop 代内多点检查即时退出；pause 当代完整落库后于检查点
+    退出（TaskPauseRequested 静默终结，不写状态）。
     """
 
     MAX_WORKERS_CAP = 4
@@ -171,7 +176,7 @@ class EvolutionRunner(threading.Thread):
 
     def run(self) -> None:
         import concurrent.futures
-        logger.info("EvolutionRunner started (db=%s, max_workers=%s)",
+        logger.info("进化调度线程已启动（db=%s, max_workers=%s）",
                     self.db_path, self.max_workers)
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=self.max_workers,
@@ -181,7 +186,7 @@ class EvolutionRunner(threading.Thread):
                 try:
                     self._tick()
                 except Exception:
-                    logger.error("tick error", exc_info=True)
+                    logger.error("轮询周期执行异常", exc_info=True)
                 self._last_tick_time = time.monotonic()
                 self._tick_count += 1
                 self._stop_event.wait(self.poll_interval)
@@ -220,7 +225,12 @@ class EvolutionRunner(threading.Thread):
             done = [tid for tid, fut in self._futures.items() if fut.done()]
             for tid in done:
                 self._futures.pop(tid, None)
-            inflight = set(self._futures)
+            # 占槽计数+排除集两用并集：_futures（排队+在跑）∪
+            # _active_controllers（pause 信号已发但旧线程当代未完成的窗口）
+            # ——旧线程此间物理占用 worker 槽；且 resume 后的 pending 不被
+            # 重拾，直到旧线程真终结（controller pop），防同 task_id 双执行流
+            # copy()：C 层原子快照——worker 线程并发 pop 不致迭代期尺寸变化
+            inflight = set(self._futures) | set(_active_controllers.copy())
         # 校验在跑任务是否已被 DB 侧暂停/停止（外部操作可见性——
         # TaskController 直达信号为主通道，DB 轮询为兜底）
         from core.persistence.db import get_task
@@ -241,7 +251,7 @@ class EvolutionRunner(threading.Thread):
             with self._lock:
                 self._futures[task_id] = fut
             inflight.add(task_id)
-            logger.info("Task %s submitted to pool (inflight=%d/%d)",
+            logger.info("任务 %s 已提交线程池（inflight=%d/%d）",
                         task_id, len(inflight), self.max_workers)
 
     def _find_pending_task_excluding(
@@ -265,6 +275,8 @@ class EvolutionRunner(threading.Thread):
         保证：TaskController 注册项在 finally 中必然清理（future 登记
         由 _tick 清理段负责——done 即释放）；未处理异常把任务置
         'stopped'（stop_reason=error），池线程永不为单任务故障退出。
+        例外：TaskPauseRequested 不写状态（pause_task 已写 paused），
+        线程静默终结。
         """
         task_id = task_row["task_id"]
 
@@ -273,6 +285,10 @@ class EvolutionRunner(threading.Thread):
 
         try:
             self._execute_task(task_row, task_id, controller)
+        except TaskPauseRequested:
+            # pause_task 已写 paused（DB 侧守护写入）——线程静默终结，
+            # 不写任何状态；finally pop controller 后两集合自然收敛
+            logger.info("任务 %s 当代落库后暂停退出", task_id)
         except TaskStopRequested:
             logger.info("Task %s stopped via TaskController", task_id)
             # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
@@ -562,6 +578,11 @@ class EvolutionRunner(threading.Thread):
                 if hasattr(best_ind, 'to_dict'):
                     ws_payload["champion_dna"] = best_ind.to_dict()
             _push_ws(task_id, ws_payload)
+
+            # pause 检查点（当代全部落库与推送完成后——兑现「当前代完整
+            # 落库后暂停」契约；stop 信号代内多点检查且优先级不变，pause
+            # 只在此点让当代善终后退出）
+            controller.check_pause()
 
         result = engine.evolve(
             ancestor=dna,
