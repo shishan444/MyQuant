@@ -140,7 +140,8 @@ class TestFixedKeyBackfill:
         assert len(rest.calls) == calls_before + 1  # 只重试失败键
 
     def test_background_loop_exits_when_all_done(self, tmp_path):
-        """后台线程：全键 done 后自动退出（不空转轮询）。"""
+        """后台线程：全键 done 后自动退出（不空转轮询）+线程计数
+        回落基线（建库线程退出后无残留）。"""
         import threading
         import time
 
@@ -149,6 +150,7 @@ class TestFixedKeyBackfill:
             k: frame for k in FIXED_SUBSCRIBE_KEYS})
         backfill = FixedKeyBackfill(
             tmp_path, rest_fetcher=rest, now_fn=_clock())
+        baseline = threading.active_count()  # 建库线程启动前基线
         backfill.start_background()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -157,4 +159,6 @@ class TestFixedKeyBackfill:
             time.sleep(0.02)
         assert not backfill._thread.is_alive()  # noqa: SLF001——全 done 退出
         assert all(v == "done" for v in backfill.status().values())
-        assert threading.active_count() >= 1  # 进程健康（无僵尸语义面）
+        # 线程数回落启动前基线（建库线程退出无残留——原 active_count
+        # >=1 恒真断言改基线对照）
+        assert threading.active_count() == baseline
