@@ -879,6 +879,178 @@ class TestConfigEffectChain:
 
 
 
+class TestPopulationOffsetFix:
+    """CARD-08 种群覆盖修复锚（review4_cards.md CARD-08——P0）。
+
+    修复：global_gen_offset 累加从循环体尾移至体首——种群 k 落
+    [S_{k-1}+1, S_k] 连续无覆盖（修复前种群 2 与种群 1 同 gen 槽，
+    INSERT OR REPLACE 覆盖致种群 1 数据永久丢失）。
+    """
+
+    @pytest.fixture()
+    def app_env(self, tmp_path):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+
+        db = tmp_path / "off.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        app = create_app(db_path=db, data_dir=d)
+        enhanced = compute_all_indicators(make_ohlcv(120, "4h"))
+        with patch("core.data.mtf_loader.load_and_prepare_df",
+                   return_value=enhanced), \
+             TestClient(app) as client:
+            runner = app.state.evolution_runner
+            yield {"client": client, "db": db, "runner": runner}
+
+    def _install_slow_stub(self, runner, per_call: float = 0.01):
+        """慢速替身：受控节奏延迟制造切换观察窗（current_generation
+        回爬须轮询捕获——种群切换毫秒级会漏点）；分数单调递减
+        （counter 驱动——种群 1 的代恒为全局最高分，champion 补强锚用）。"""
+        from unittest.mock import patch
+
+        counter = {"n": 0}
+
+        def slow_pop(pop, *a, **kw):
+            counter["n"] += 1
+            time.sleep(per_call)
+            return [100.0 - counter["n"] * 0.5] * len(pop)
+
+        def fake_dna(ind, *a, **kw):
+            score = _stub_score(ind)
+            return {"score": score, "fitness": score, "qualified": False,
+                    "raw_metrics": {}, "dimension_scores": {},
+                    "total_trades": 0}
+
+        p1 = patch.object(runner, "_evaluate_population", slow_pop)
+        p2 = patch.object(runner, "_evaluate_dna", fake_dna)
+        p1.start()
+        p2.start()
+        return [p1, p2]
+
+    def test_core_gen_continuity_and_no_regression(self, app_env):
+        """核心锚+current_generation 锚：≥2 种群后 history gen 从 1
+        连续至 N1+N2 无空洞+pop=1 行在场+snapshot 行数==代数；
+        current_generation 全程单调不减（修复前种群 2 首代从 N1
+        回爬至 1——轮询序列抓回退点）。"""
+        db, client = app_env["db"], app_env["client"]
+        runner = app_env["runner"]
+        patches = self._install_slow_stub(runner, per_call=0.008)
+        try:
+            _preset_task(db, "oc1", max_generations=3, continuous=1)
+            seen_cg = []
+            _wait_for(
+                lambda: 2 in self._pop_pops(db, "oc1"),
+                timeout=30, msg="未跑入第 2 种群")
+            # 持续观察 current_generation（覆盖种群切换窗）
+            for _ in range(30):
+                row = get_task(db, "oc1")
+                seen_cg.append(
+                    row["current_generation"]
+                    if row["current_generation"] is not None else 0)
+                time.sleep(0.005)
+            assert client.post(
+                "/api/evolution/tasks/oc1/stop").status_code == 200
+            _wait_for(lambda: get_task(db, "oc1")["status"] == "stopped",
+                      timeout=30, msg="未停止")
+
+            # 核心锚：gen 从 1 连续无空洞+pop=1 在场+snapshot==history
+            conn = sqlite3.connect(db)
+            gens = [r[0] for r in conn.execute(
+                "SELECT generation FROM evolution_history "
+                "WHERE task_id = 'oc1' ORDER BY generation")]
+            snaps = [r[0] for r in conn.execute(
+                "SELECT generation FROM generation_snapshot "
+                "WHERE task_id = 'oc1' ORDER BY generation")]
+            pops = self._pop_pops(db, "oc1")
+            conn.close()
+            assert gens and gens[0] == 1, "gen 序列须从 1 起（种群 1 存活）"
+            assert gens == list(range(1, len(gens) + 1)), (
+                f"gen 须连续无空洞（覆盖即断链）: {gens[:8]}...")
+            assert 1 in pops, "pop=1 行在场（种群 1 存活断言）"
+            assert snaps == gens, "snapshot 行集==history 行集（同槽双表）"
+            assert 2 in pops, "须跑 ≥2 种群"
+            # current_generation 锚：单调不减（回爬即断言红）
+            assert seen_cg == sorted(seen_cg), (
+                f"current_generation 出现回爬: {seen_cg}")
+        finally:
+            try:
+                client.post("/api/evolution/tasks/oc1/stop")
+            except Exception:
+                pass
+            for p in patches:
+                p.stop()
+
+    @staticmethod
+    def _pop_pops(db, task_id):
+        import re
+        conn = sqlite3.connect(db)
+        rows = conn.execute(
+            "SELECT top3_summary FROM evolution_history "
+            "WHERE task_id = ? ORDER BY generation",
+            (task_id,)).fetchall()
+        conn.close()
+        return [int(re.search(r"pop=(\d+)", s[0]).group(1))
+                for s in rows if s[0]]
+
+    def test_push_payload_and_champion_top1(self, app_env):
+        """推送锚+champion 快照补强锚：种群 2 population_started 的
+        total_generations_so_far==N1（修复前恒 0）；递减分数下全局
+        最高分在种群 1 首代——运行中快照 top1 即该代（修复前 gen1
+        被种群 2 覆盖，top1=种群 1 次高代——红绿分界）。"""
+        from unittest.mock import patch
+
+        db, client = app_env["db"], app_env["client"]
+        runner = app_env["runner"]
+        pushes = []
+
+        def spy_push(task_id, payload):
+            pushes.append(dict(payload))
+
+        patches = self._install_slow_stub(runner, per_call=0.004)
+        p3 = patch("api.runner._push_ws", spy_push)
+        p3.start()
+        try:
+            _preset_task(db, "oc2", max_generations=3, continuous=1)
+            _wait_for(lambda: 2 in self._pop_pops(db, "oc2"),
+                      timeout=30, msg="未跑入第 2 种群")
+            # champion 补强锚：种群 2 已跑起（覆盖窗已过）——运行中
+            # 快照 top1 应=种群 1 首代（gen=1，全局最高分 99.5）
+            r = client.get("/api/evolution/tasks/oc2/strategies")
+            body = r.json()
+            snaps = [s for s in body["strategies"]
+                     if s["source"] == "snapshot"]
+            assert snaps, "运行中快照通道可提取"
+            assert snaps[0]["generation"] == 1, (
+                f"top1 须为种群 1 首代 gen=1（修复前被种群 2 覆盖）: "
+                f"top1.gen={snaps[0]['generation']}")
+            assert snaps[0]["score"] == pytest.approx(99.5)
+            assert client.post(
+                "/api/evolution/tasks/oc2/stop").status_code == 200
+            _wait_for(lambda: get_task(db, "oc2")["status"] == "stopped",
+                      timeout=30, msg="未停止")
+            # 推送锚：首个 population_started 的 total_generations_so_far
+            # ==N1（max_generations=3）
+            starts = [p for p in pushes
+                      if p.get("type") == "population_started"]
+            assert starts, "population_started 推送在场"
+            assert starts[0]["total_generations_so_far"] == 3, (
+                f"种群 2 开始时须含上一轮代数（修复前恒 0）: "
+                f"{starts[0]['total_generations_so_far']}")
+        finally:
+            try:
+                client.post("/api/evolution/tasks/oc2/stop")
+            except Exception:
+                pass
+            p3.stop()
+            for p in patches:
+                p.stop()
+
+
 class TestPopulationCountLocalization:
     """CARD-04 _population_count 局部化锚（review4_cards.md CARD-04）。
 
@@ -968,21 +1140,15 @@ class TestPopulationCountLocalization:
                 series = self._pop_series(db, tid)
                 distinct = sorted(set(series))
                 assert len(distinct) >= 2, f"{tid} 须跑 ≥2 种群"
-                # 注：序列从 2 起非 1——独立缺陷（已上报 team-lead）：
-                # global_gen_offset 在种群 evolve 后才累加，种群 2 与
-                # 种群 1 同 gen 槽，history/snapshot INSERT OR REPLACE
-                # 覆盖掉种群 1 行（pop=1 不可见）。本锚按 CARD-04
-                # 修复面断言：任务内连续无跳变+互不污染。
-                assert distinct == list(range(distinct[0],
-                                               distinct[0] + len(distinct))), (
-                    f"{tid} pop 序号须连续无跳变（任务内计数）: "
-                    f"{distinct[:10]}...")
-            # 互不污染反例锚：B 的 gen1 行 pop 值——修复前承接 A 的
-            # 实例累计（A 已跑数百种群→B 首槽 pop 为巨大值）；修复后
-            # B 独立计数（首槽=自身种群 2，pop=2）
-            assert self._pop_series(db, "pb")[0] == 2, (
-                "B 首行 pop 须为自身任务内序号（互不污染——修复前"
-                "承接 A 的实例累计值）")
+                # CARD-08 修复后升级口径（原按覆盖缺陷现实从 2 断言）：
+                # 种群 1 存活——pop 序列各自从 1 连续递增
+                assert distinct == list(range(1, len(distinct) + 1)), (
+                    f"{tid} pop 序号须从 1 连续无跳变: {distinct[:10]}...")
+            # 互不污染反例锚：B 的首行 pop——修复前承接 A 的实例累计
+            # （巨大值）；CARD-04 修复后独立计数、CARD-08 修复后种群 1
+            # 存活故首行即自身种群 1（pop=1）
+            assert self._pop_series(db, "pb")[0] == 1, (
+                "B 首行 pop==1（任务内独立计数+种群 1 存活——双修复面）")
         finally:
             # 防挂死护栏：任何路径退出前先停任务（连续进化不自然终止，
             # 残留 worker 会使池 shutdown 永等）
