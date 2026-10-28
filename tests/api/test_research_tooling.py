@@ -245,6 +245,19 @@ class TestMCPTools:
         assert g["name"] == "原名" and g["tags"] == "keep"
         assert g["notes"] == "仅注"
 
+    def test_update_metadata_name_only(self, env):
+        """name 单独更新分支（闸门盲区消解——body 组装三参数各走一遭：
+        本用例 name、既有用例 tags+notes/notes）。"""
+        save_strategy(env["db"], strategy_id="st_p3",
+                      dna_json=make_dna().to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="旧名",
+                      tags="keep3")
+        fn = self._mcp_fn(env, "update_strategy_metadata")
+        out = fn(strategy_id="st_p3", name="新名")
+        assert "error" not in out
+        g = env["client"].get("/api/strategies/st_p3").json()
+        assert g["name"] == "新名" and g["tags"] == "keep3"
+
 
 # ── 3.5 REST 批量管理（卡 D）───────────────────────────────────────
 
@@ -459,9 +472,9 @@ class TestBatchContractExtras:
         assert g.json()["status"] == "archived"
 
     def test_export_count_symmetry_before_delete(self, seeded):
-        """C4 可确定半：删除前圈定导出（数量摘要）与删除预览数对称
-        ——研究者先导出看数量再对称确认。（分数分布摘要：实现面无
-        承载，已列偏差上报，裁决后补验。）"""
+        """C4 数量对称：删除前圈定导出（total）与删除预览数对称。
+        分数分布面已由 CARD-05 落地承载（TestBatchHardening 的
+        score_summary 锚——预览即统计查询通道）。"""
         c = seeded["client"]
         listed = c.get("/api/strategies",
                        params={"source_task_id": "taskC"}).json()
@@ -470,6 +483,58 @@ class TestBatchContractExtras:
             "source_task_id": "taskC"})
         preview = r.json()["detail"]["detail"]["matched_count"]
         assert preview == listed["total"], "预览数与导出数量对称"
+
+    def test_mcp_batch_tightening_params(self, seeded):
+        """MCP 面收紧参数分支（闸门盲区消解——generation_gt/best_score_
+        lt 的 body 组装此前仅 REST 面走过）：经 MCP 工具传收紧参数，
+        预览与执行同判据。"""
+        from mcpserver import tools as tools_mod
+
+        class _HttpApi:
+            def __init__(self, c):
+                self._c = c
+
+            def get(self, url, params=None):
+                r = self._c.get(url, params=params)
+                if r.is_error:
+                    from mcpserver.api_client import _raise_api_error
+                    _raise_api_error(r)
+                return r.json()
+
+            def post(self, url, body):
+                r = self._c.post(url, json=body)
+                if r.is_error:
+                    from mcpserver.api_client import _raise_api_error
+                    _raise_api_error(r)
+                return r.json()
+
+            def put(self, url, body):
+                return self._c.put(url, json=body).json()
+
+        class _FakeMCP:
+            def __init__(self):
+                self.registry = {}
+
+            def tool(self):
+                def deco(fn):
+                    self.registry[fn.__name__] = fn
+                    return fn
+                return deco
+
+        fake = _FakeMCP()
+        tools_mod.register_research_tools(fake, _HttpApi(seeded["client"]))
+        fn = fake.registry["batch_delete_strategies"]
+        # 预览：generation_gt=3 收紧 → 命中 gen4/gen5（matched_count=2）
+        out = fn(source_task_id="taskC", confirm=False, generation_gt=3)
+        assert out["error"]["code"] == "BATCH_DELETE_CONFIRM_REQUIRED"
+        assert out["error"]["detail"]["matched_count"] == 2
+        # 执行：best_score_lt=1.5 收紧 → 恰命中 1.0 行（严格小于）
+        out2 = fn(source_task_id="taskC", confirm=True, best_score_lt=1.5)
+        assert out2["deleted_count"] == 1
+        g = seeded["client"].get("/api/strategies",
+                                 params={"source_task_id": "taskC"})
+        assert {x["strategy_id"] for x in g.json()["items"]} == \
+            {"st_c1", "st_c2", "st_c3", "st_c4"}
 
 
 # ── C3-D4/S11 披露面（六工具 docstring 明示语义与错误面+能力自述
