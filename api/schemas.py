@@ -155,6 +155,13 @@ class RiskGenesModel(BaseModel):
     # 与金额防线 >0——值域权威在 validator（传输层不加 bound，先例同款）
     initial_fraction: Optional[float] = None
     max_position_loss: Optional[float] = None
+    # series 档止损线来源声明（dynamic-stop-loss-series 同步铁律）：
+    # 两形制互斥 {indicator, params, field?}（field 单输出指标可省）/
+    # {column: fx_ 前缀精确列名}——结构/互斥/前缀/值域权威在
+    # validator（传输层不加 bound，先例同款）；漏键会使 extra="forbid"
+    # 拒收 series 档 DNA 直传，且 crud 读回 ValidationError 被吞 →
+    # GET 响应 dna=null（DNA 静默消失）
+    sl_series_source: Optional[dict] = None
 
 
 class DNAModel(BaseModel):

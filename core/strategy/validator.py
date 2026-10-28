@@ -365,6 +365,14 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
                 f"({unit}, sl_mode={risk.sl_mode})"
             )
+        # 半配置闸（spec strategy-param-declaration 组合约束③）：非
+        # series 档携带来源键拒——登记面有闸而本面原不可达（POST 被
+        # Pydantic 拒）；传输层补键后 POST 成为可达入口，落闸使直建面
+        # 与登记面同判
+        if risk.sl_series_source is not None:
+            errors.append(
+                "sl_series_source is only allowed with sl_mode='series' "
+                f"(half-config), got sl_mode='{risk.sl_mode}'")
     else:
         src = risk.sl_series_source
         if src is None:
