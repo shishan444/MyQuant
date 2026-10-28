@@ -543,7 +543,9 @@ class TestDisclosureAndCapability:
     def test_capability_doc_includes_new_tools(self, registry):
         """S11：能力自述工具清单含六新工具条目（运行时从注册集生成）
         ——与 mcp-server 域工具清单一致由 _expected_tools 三处集合
-        断言承载（D1）。"""
+        断言承载（D1）。CARD-07 扩展：族级描述条目在场+关键语义
+        token（P3 裁决「能力条目」落地——文本漂移守护另由披露锚
+        G6 承载，此处行为断言）。"""
         from mcpserver.tools import TOOL_TIERS
         from mcpserver.capability import build_capability_doc
 
@@ -554,6 +556,10 @@ class TestDisclosureAndCapability:
         doc = build_capability_doc(sorted(TOOL_TIERS["research"]))
         for n in sorted(six):
             assert f"- {n}" in doc, f"能力自述缺新工具条目 {n}"
+        # CARD-07：族级能力条目（描述性条目非仅工具名）
+        assert "进化控制与产物管理" in doc, "族级条目标题在场"
+        for tok in ("不可逆", "confirm", "完整重跑"):
+            assert tok in doc, f"族级条目缺关键语义 token {tok!r}"
 
 
 # ── CARD-05 batch 端点四合一锚（review4_cards.md CARD-05——score_
