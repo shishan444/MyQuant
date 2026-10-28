@@ -170,6 +170,21 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   非 AI 决策——纸盘挂载不改变触金封禁边界（下单/调仓/修改风控类
   工具与端点任何档位不可达的边界永久不变）。
 
+- **进化控制与产物管理（research-tooling-data-quality）**：进化任务
+  控制与产物管理工具族六件——控制三件（stop_evolution_task 协作停止
+  ——当前代完整落库后退出/pause_evolution_task 当代完整落库后暂停
+  退出/resume_evolution_task 恢复=paused→pending 重新排队、从
+  initial_dna 完整重跑非断点续跑）+产物三件（get_evolution_strategies
+  运行中即可取任务策略集——快照通道 top10+终态 champion 兜底两态
+  连续，无第三份运行中冠军存储/update_strategy_metadata 元数据标注
+  （name/tags/notes 可选部分更新，tags 字符串形制直通）/
+  batch_delete_strategies 按进化任务圈定批量物理删除**不可逆**——
+  source_task_id 必填（无圈定的全库删除不提供）、confirm 必须显式
+  true 才执行（预览附 matched_count 与分数分布摘要 score_summary——
+  先看将删多少及其分数分布再确认）、删除域含受保护策略（paper/
+  candidate/live——在验/达标候选/实盘在役）或被非终态挂盘任务引用
+  时整批拒绝）。
+
 ## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
 - translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
   WHEN 条件 → 入场信号，THEN 条件按「预期兑现即离场」→ 出场信号；
