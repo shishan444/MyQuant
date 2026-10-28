@@ -389,6 +389,22 @@ def create_task(
                     "timeframe": exec_tf,
                     "supported": sorted(PAPER_TIMEFRAME_WHITELIST)},
             })
+    # symbol 终值白名单（C3-03/S-2：body.symbol 显式传入已在请求
+    # 校验面拦截；缺省抄录 DNA.execution_genes.symbol 的终值在此
+    # 流转点校验——与 exec_tf 同点同形制，消「201 受理后装载拒」
+    # 的占位不一致）
+    final_symbol = body.symbol or dna.execution_genes.symbol
+    if final_symbol not in PAPER_SYMBOL_WHITELIST:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PAPER_SYMBOL_NOT_SUPPORTED",
+                "message": "品种不在纸盘挂载白名单（固定订阅制——白"
+                           "名单外零数据接入不订阅不装载）",
+                "detail": {
+                    "symbol": final_symbol,
+                    "supported": sorted(PAPER_SYMBOL_WHITELIST)},
+            })
     # 快照取挂盘受理时点（四分支 resolve：active/paper 同值〔均非
     # draft 且共享事件史〕；draft→"draft"；candidate/live 按三序现算）
     snapshot = paper.resolve_research_status(db_path, strategy)

@@ -1245,3 +1245,34 @@ class TestMountDispatchToctouGuard:
         assert _strategy_status(db, "st-1") == "paper", \
             "事务内重读按真实态分派迁移"
         assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")]
+
+
+class TestMountSymbolFinalValueGuard:
+    """C3-03/S-2：symbol 终值流转点校验——body.symbol 缺省抄录
+    DNA.execution_genes.symbol 的非白名单值在受理层 422（与 exec_tf
+    同点同形制），消「201 受理后装载拒」占位不一致。"""
+
+    def test_dna_symbol_outside_whitelist_422(self, paper_api):
+        """DNA 抄录源 symbol=SOLUSDT（不传 body.symbol）→422
+        PAPER_SYMBOL_NOT_SUPPORTED（detail 含值域），任务不创建。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, timeframe="4h", symbol="SOLUSDT")
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PAPER_SYMBOL_NOT_SUPPORTED"
+        assert detail["detail"]["symbol"] == "SOLUSDT"
+        assert sorted(detail["detail"]["supported"]) == [
+            "BTCUSDT", "ETHUSDT"]
+        assert paper.count_tasks(db) == 0
+
+    def test_body_symbol_override_passes_dna_symbol(self, paper_api):
+        """显式 body.symbol 覆写白名单内值→正常受理（终值=body
+        值——DNA 源头非白名单不阻断显式白名单内覆写）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe="4h", symbol="SOLUSDT")
+        row = _create(client, symbol="ETHUSDT")
+        assert row["symbol"] == "ETHUSDT"
