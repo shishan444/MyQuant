@@ -309,6 +309,53 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
             "MCP_PARAM_INVALID",
             f"type 须为 fills|equity|funding，收到 {type!r}")}
 
+    @mcp.tool()
+    @tool_safe
+    def query_paper_signals(
+        task_id: str,
+        kind: Optional[str] = None,
+        outcome: Optional[str] = None,
+        bar_time_start: Optional[str] = None,
+        bar_time_end: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """纸盘信号记录查询（决策过程回溯——AI 复盘「为什么这笔交易/
+        为什么没成交」的主通道；与 REST /signals 同参数面同源）。
+
+        过滤面（全部可选，SQL 下推）：kind=信号类型（十值同 Intent
+        kind：open/close/add/reduce/exit_sl/exit_tp/exit_max_loss/
+        exit_max_hold/exit_time/exit_liquidation）；outcome=执行结果
+        三值——filled=成交（fill_seq 关联成交流水 (task_id,
+        exec_bar_time, fill_seq) 三元组）/rejected=被规则拦截
+        （reject_reason 枚举：insufficient_funds 资金不足/
+        exposure_cap 敞口上限/context_invalid 语境防御/below_min_
+        notional 最小名义值——后者拦截机制在后续变更落地）/expired=
+        意图随任务终态消亡（窗口末根未消费 pending 的收割记录，
+        exec_bar_time=终态 last_bar_time、seq=0）；bar_time_start+
+        bar_time_end=信号产生 bar 闭区间（ISO，两侧含入）。
+
+        排序 bar_time+seq 升序（审计读序）；limit≤500 分页（offset
+        翻页，响应 has_more 判还有）。字段字典权威：openspec
+        paper-signal-log spec「字段族明细」——gene_hits=该信号命中
+        的基因条件列表（每项 gene_index/indicator/field/condition/
+        role/timeframe 六字段，「哪条条件什么阈值」）、indicator_
+        snapshot=DNA 引用指标列该 bar 值、账户快照六列=执行尝试
+        前时点。工具只读无任何写入语义。"""
+        params: Dict[str, Any] = {
+            "limit": max(1, min(limit, 500)), "offset": max(0, offset)}
+        if kind is not None:
+            params["kind"] = kind
+        if outcome is not None:
+            params["outcome"] = outcome
+        if bar_time_start is not None:
+            params["bar_time_start"] = bar_time_start
+        if bar_time_end is not None:
+            params["bar_time_end"] = bar_time_end
+        return api.get(
+            f"/api/paper-trading/tasks/{quote(task_id, safe='')}/signals",
+            params=params)
+
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
                get_market_snapshot, union_balance,
@@ -316,7 +363,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
                get_analysis_task, get_validation_report,
                list_feature_requests,
                list_paper_tasks, get_paper_task, get_paper_report,
-               get_paper_history):
+               get_paper_history, query_paper_signals):
         TOOL_TIERS["readonly"].add(fn.__name__)
 
 

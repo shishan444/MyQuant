@@ -17,9 +17,10 @@ strategy not found、422 校验数组、409 非法前置态（B' 前置集
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -177,6 +178,53 @@ class PaperFundingResponse(BaseModel):
 
 class PaperFundingListResponse(BaseModel):
     records: List[PaperFundingResponse]
+    limit: int
+    offset: int
+    has_more: bool
+
+
+# 信号查询过滤面的枚举镜像（change paper-signal-log 任务 6）：
+# Literal 须静态字面量——值域单源在 core.paper_trading.kernel.types
+# .INTENT_KINDS（十值）与 spec 字段族（outcome 三值 filled/rejected/
+# expired），与 REST 参数面的一致性由 tests/paper_trading/
+# test_api_paper.py 锚定（任一侧漂移红）
+SignalKindFilter = Literal[
+    "open", "close", "add", "reduce", "exit_sl", "exit_tp",
+    "exit_max_loss", "exit_max_hold", "exit_time", "exit_liquidation"]
+SignalOutcomeFilter = Literal["filled", "rejected", "expired"]
+
+
+class PaperSignalResponse(BaseModel):
+    """信号记录行（gene_hits/indicator_snapshot 反序列化为 JSON
+    对象非字符串——消费方零二次解析）。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    task_id: str
+    strategy_id: str
+    bar_time: str
+    exec_bar_time: Optional[str] = None
+    seq: int
+    signal_kind: str
+    direction: Optional[str] = None
+    size_fraction: Optional[float] = None
+    gene_hits: List[dict]
+    indicator_snapshot: dict
+    outcome: str
+    reject_reason: Optional[str] = None
+    fill_seq: Optional[int] = None
+    capped: Optional[int] = None
+    equity: float
+    balance: float
+    unrealized_pnl: float
+    position_side: Optional[str] = None
+    position_quantity: Optional[float] = None
+    position_margin: Optional[float] = None
+    created_at: str
+
+
+class PaperSignalListResponse(BaseModel):
+    signals: List[PaperSignalResponse]
     limit: int
     offset: int
     has_more: bool
@@ -531,6 +579,46 @@ def get_funding(
         limit)
     return PaperFundingListResponse(
         records=[PaperFundingResponse(**r) for r in rows],
+        limit=limit, offset=offset, has_more=has_more)
+
+
+@router.get("/tasks/{task_id}/signals",
+            response_model=PaperSignalListResponse)
+def get_signals(
+    task_id: str,
+    kind: Optional[SignalKindFilter] = Query(
+        None, description="信号类型过滤（INTENT_KINDS 十值同域）"),
+    outcome: Optional[SignalOutcomeFilter] = Query(
+        None, description="执行结果过滤（filled/rejected/expired——"
+                          "expired=意图随任务终态消亡）"),
+    bar_time_start: Optional[str] = Query(
+        None, description="bar_time 闭区间起点（ISO——含入）"),
+    bar_time_end: Optional[str] = Query(
+        None, description="bar_time 闭区间终点（ISO——含入）"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db_path: Path = Depends(get_db_path),
+) -> PaperSignalListResponse:
+    """信号记录查询（change paper-signal-log 决策过程回溯面）：过滤
+    四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq
+    升序审计读序+limit+1 探测式分页；字段字典权威在 openspec
+    paper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/
+    indicator_snapshot 指标快照/reject_reason 拒因枚举四值——
+    below_min_notional 生产者在后续变更）。
+    """
+    _require_task(db_path, task_id)
+    rows, has_more = _paged(
+        paper.list_signals(
+            db_path, task_id, kind=kind, outcome=outcome,
+            bar_time_start=bar_time_start, bar_time_end=bar_time_end,
+            limit=limit + 1, offset=offset),
+        limit)
+    return PaperSignalListResponse(
+        signals=[PaperSignalResponse(
+            **{**r,
+               "gene_hits": json.loads(r["gene_hits"]),
+               "indicator_snapshot": json.loads(r["indicator_snapshot"])})
+                 for r in rows],
         limit=limit, offset=offset, has_more=has_more)
 
 
