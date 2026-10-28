@@ -1246,6 +1246,64 @@ class TestMountDispatchToctouGuard:
             "事务内重读按真实态分派迁移"
         assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")]
 
+    def test_concurrent_delete_seen_in_transaction(
+            self, paper_api, monkeypatch):
+        """事务内重读 404 分支（阶段四盲区消解——C3-02 新增面）：
+        外层受理读成功（删除前快照）×事务开启时策略已被并发删除→
+        fresh_status None→404（raise 经 with 回滚零副作用）。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        stale = strategy_repo.get_strategy(db, "st-1")
+        strategy_repo.delete_strategy(db, "st-1")  # 库内并发删除
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == "strategy not found"
+        assert paper.count_tasks(db) == 0, "404 回滚零副作用（不建任务）"
+
+    def test_transit_lifecycle_error_translated_409(
+            self, paper_api, monkeypatch):
+        """迁移分支 LifecycleError→409 结构化转译（阶段四盲区消解——
+        防御分支锚）。调用图依据：现实现「事务内重读分派」下 transit
+        诸抛点均被上游短路——404/非法边由 fresh_status 分派前置分流、
+        trigger="mount" 属 TRIGGERS 枚举、evidence 含 task_id 凭证齐、
+        同事务 CAS 无 RACE 并发窗口，故 except LifecycleError 为
+        transit 语义演化的防御面；注入构造验证转译形制（三段 dict
+        原样透传）不随演化破缺。"""
+        client, db = paper_api
+        import core.strategy.lifecycle as lifecycle_pkg
+        from core.persistence.repository import paper
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        _seed_strategy(db, status="active")
+
+        def _deny(*a, **kw):
+            raise LifecycleError(
+                "STRATEGY_TRANSITION_RACE", "注入：迁移服务竞态拒绝",
+                status=409, detail={"race": True})
+
+        # routes 函数内 `from core.strategy.lifecycle import transit`
+        # 取包命名空间属性——patch 包（patch service 模块不影响包级
+        # re-export 绑定，静默扑空）
+        monkeypatch.setattr(lifecycle_pkg, "transit", _deny)
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "STRATEGY_TRANSITION_RACE"
+        assert detail["detail"] == {"race": True}
+        assert paper.count_tasks(db) == 0, "迁移拒绝不建任务（回滚）"
+        assert _strategy_status(db, "st-1") == "active", "策略态回滚"
+        assert _lifecycle_events(db, "st-1") == [], "零事件（回滚）"
+
 
 class TestMountSymbolFinalValueGuard:
     """C3-03/S-2：symbol 终值流转点校验——body.symbol 缺省抄录
