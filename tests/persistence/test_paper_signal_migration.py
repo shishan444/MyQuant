@@ -30,7 +30,7 @@ _SIGNAL_COLUMNS = (
     ("task_id", "TEXT", True),
     ("strategy_id", "TEXT", True),
     ("bar_time", "TEXT", True),
-    ("exec_bar_time", "TEXT", False),
+    ("exec_bar_time", "TEXT", True),
     ("seq", "INTEGER", True),
     ("signal_kind", "TEXT", True),
     ("direction", "TEXT", False),

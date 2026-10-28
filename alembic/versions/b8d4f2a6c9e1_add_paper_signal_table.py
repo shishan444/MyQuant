@@ -39,7 +39,7 @@ def upgrade() -> None:
     sa.Column('task_id', sa.Text(), nullable=False),
     sa.Column('strategy_id', sa.Text(), nullable=False),
     sa.Column('bar_time', sa.Text(), nullable=False),
-    sa.Column('exec_bar_time', sa.Text(), nullable=True),
+    sa.Column('exec_bar_time', sa.Text(), nullable=False),
     sa.Column('seq', sa.Integer(), nullable=False),
     sa.Column('signal_kind', sa.Text(), nullable=False),
     sa.Column('direction', sa.Text(), nullable=True),

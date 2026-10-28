@@ -765,9 +765,10 @@ class PtSignal(Base):
     strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
     # 信号产生 bar=决策锚（ISO 与 pt_fill.bar_time 同构）
     bar_time: Mapped[str] = mapped_column(Text, nullable=False)
-    # 执行/拒绝 bar：即时类与解释器内拒绝同 bar_time、pending 次根
-    # 差一根、expired=终态 last_bar_time
-    exec_bar_time: Mapped[Optional[str]] = mapped_column(Text)
+    # 执行/拒绝 bar（NOT NULL——写入路径恒非 NULL：即时类与解释器内
+    # 拒绝同 bar_time、pending 次根差一根、expired=终态 last_bar_time；
+    # 幂等键三列之一，NULL 会逃逸唯一索引判重）
+    exec_bar_time: Mapped[str] = mapped_column(Text, nullable=False)
     # 八步序编号：即时类 1/2、pending 消费 3/4、解释器内拒绝 7、
     # expired 收割 0
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
