@@ -156,7 +156,8 @@ def intents_from_json(
 
 
 def fill_row(event: ExecutionEvent) -> Dict[str, Any]:
-    """ExecutionEvent → append_bar 的 fill 行（pt_fill 落库形制）。"""
+    """ExecutionEvent → append_bar 的 fill 行（pt_fill 落库形制；
+    核算明细三列随事件透传——任务 5）。"""
     fill = event.fill
     return {
         "seq": event.seq,
@@ -167,6 +168,9 @@ def fill_row(event: ExecutionEvent) -> Dict[str, Any]:
         "fee": fill.fee,
         "realized_pnl": fill.realized_pnl,
         "reason": fill.intent.reason or None,
+        "equity_before": event.equity_before,
+        "available_before": event.available_before,
+        "margin_used": event.margin_used,
     }
 
 
@@ -1020,9 +1024,14 @@ class PaperTaskExecutor:
                     self.win_count += 1
                 else:
                     self.loss_count += 1
-        events.append(ExecutionEvent(fill=fill, bar_time=bar.timestamp.isoformat()
-                                     if bar.timestamp is not None else str(bar.seq),
-                                     seq=seq))
+        events.append(ExecutionEvent(
+            fill=fill,
+            bar_time=bar.timestamp.isoformat()
+            if bar.timestamp is not None else str(bar.seq),
+            seq=seq,
+            equity_before=outcome.equity_before,
+            available_before=outcome.available_before,
+            margin_used=outcome.margin_used))
         # 成交信号行：fill_seq=seq（C5 三元组 (task_id, exec_bar_time,
         # fill_seq) 定位成交）；capped=cap 截断披露（非拒绝）
         signal_rows.append(self._signal_row(

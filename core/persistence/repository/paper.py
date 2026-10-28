@@ -406,6 +406,9 @@ def append_bar(
                     kind=f["kind"], side=f.get("side"), price=f.get("price"),
                     quantity=f.get("quantity"), fee=f.get("fee"),
                     realized_pnl=f.get("realized_pnl"), reason=f.get("reason"),
+                    equity_before=f.get("equity_before"),
+                    available_before=f.get("available_before"),
+                    margin_used=f.get("margin_used"),
                 )
             )
         conn.execute(

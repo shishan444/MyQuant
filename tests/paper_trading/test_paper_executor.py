@@ -1205,3 +1205,33 @@ class TestSignalLogging:
                 e["bar_time"] for e in paper.list_equity_snapshots(
                     h.db, h.task_id, limit=1000)}, \
                 "信号行 exec_bar 须为已落库 bar（同批事务面）"
+
+    def test_fill_accounting_columns_persisted(self, tmp_path):
+        """任务 5 执行器落值：open 成交的 pt_fill 行三列落库且与
+        人工核算锚一致（initial=10_000、ps=0.5、lev=1、open≈100 →
+        margin_used=名义/1、available_before=10_000、balance_after=
+        available_before−margin_used−fee）。"""
+        h = _Harness(tmp_path, window_bars=30)
+        ex = h.make_executor()
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        rsi = [50.0] * 200
+        rsi[5] = 20.0
+        ex.process_frames(self._rsi(h.enhanced, rsi), 0)
+
+        opens = [f for f in paper.list_fills(h.db, h.task_id, limit=1000)
+                 if f["kind"] == "open"]
+        assert len(opens) == 1
+        f = opens[0]
+        assert f["equity_before"] == pytest.approx(10_000.0)
+        assert f["available_before"] == pytest.approx(10_000.0)
+        assert f["margin_used"] == pytest.approx(
+            f["quantity"] * f["price"] / 1)  # leverage=1
+        # 自洽判据闭环：available_before−margin_used−fee=成交后
+        # balance——对账面=成交 bar 的权益快照行（该 bar 唯一笔成交
+        # 且无资金费结算，快照 balance 即成交后时点）
+        eq = {e["bar_time"]: e for e in paper.list_equity_snapshots(
+            h.db, h.task_id, limit=1000)}
+        assert f["available_before"] - f["margin_used"] - f["fee"] \
+            == pytest.approx(eq[f["bar_time"]]["balance"])

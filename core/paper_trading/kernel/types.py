@@ -139,11 +139,17 @@ class ExecutionEvent:
         fill: 成交明细。
         bar_time: 承载 bar 的时刻字符串（原样透传，落表形制）。
         seq: bar 内序号（八步序编号）。
+        equity_before: 成交前权益（开盘价估值——核算明细，任务 5）。
+        available_before: 成交前 balance（核算明细）。
+        margin_used: 本笔占用（open/add）/释放正值（reduce/close）。
     """
 
     fill: Fill
     bar_time: str
     seq: int
+    equity_before: float | None = None
+    available_before: float | None = None
+    margin_used: float | None = None
 
 
 @dataclass(frozen=True)
