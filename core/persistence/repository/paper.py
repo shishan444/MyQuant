@@ -336,6 +336,39 @@ def count_tasks(db_path: Path, status: Optional[str] = None) -> int:
         return conn.execute(stmt).scalar_one()
 
 
+def _insert_signal_rows(
+    conn: Connection, task_id: str, rows: List[Dict[str, Any]],
+) -> None:
+    """信号行 INSERT OR IGNORE 构造单点（append_bar 同事务面与
+    save_signals 独立事务面共用——唯一键 (task_id, exec_bar_time,
+    seq) 吸收重放/防重入；行形制=PtSignal 逐列，见 append_bar.signals）。"""
+    for s in rows:
+        conn.execute(
+            insert(PtSignal).prefix_with("OR IGNORE").values(
+                task_id=task_id,
+                strategy_id=s["strategy_id"],
+                bar_time=s["bar_time"],
+                exec_bar_time=s.get("exec_bar_time"),
+                seq=s["seq"],
+                signal_kind=s["signal_kind"],
+                direction=s.get("direction"),
+                size_fraction=s.get("size_fraction"),
+                gene_hits=s["gene_hits"],
+                indicator_snapshot=s["indicator_snapshot"],
+                outcome=s["outcome"],
+                reject_reason=s.get("reject_reason"),
+                fill_seq=s.get("fill_seq"),
+                capped=s.get("capped"),
+                equity=s["equity"], balance=s["balance"],
+                unrealized_pnl=s["unrealized_pnl"],
+                position_side=s.get("position_side"),
+                position_quantity=s.get("position_quantity"),
+                position_margin=s.get("position_margin"),
+                created_at=s.get("created_at") or _now(),
+            )
+        )
+
+
 def append_bar(
     db_path: Path,
     task_id: str,
@@ -374,31 +407,8 @@ def append_bar(
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
-        for s in signals or ():
-            conn.execute(
-                insert(PtSignal).prefix_with("OR IGNORE").values(
-                    task_id=task_id,
-                    strategy_id=s["strategy_id"],
-                    bar_time=s["bar_time"],
-                    exec_bar_time=s.get("exec_bar_time"),
-                    seq=s["seq"],
-                    signal_kind=s["signal_kind"],
-                    direction=s.get("direction"),
-                    size_fraction=s.get("size_fraction"),
-                    gene_hits=s["gene_hits"],
-                    indicator_snapshot=s["indicator_snapshot"],
-                    outcome=s["outcome"],
-                    reject_reason=s.get("reject_reason"),
-                    fill_seq=s.get("fill_seq"),
-                    capped=s.get("capped"),
-                    equity=s["equity"], balance=s["balance"],
-                    unrealized_pnl=s["unrealized_pnl"],
-                    position_side=s.get("position_side"),
-                    position_quantity=s.get("position_quantity"),
-                    position_margin=s.get("position_margin"),
-                    created_at=s.get("created_at") or _now(),
-                )
-            )
+        if signals:
+            _insert_signal_rows(conn, task_id, signals)
         for f in fills:
             conn.execute(
                 insert(PtFill).prefix_with("OR IGNORE").values(
@@ -510,36 +520,11 @@ def save_signals(
     bar 边界的信号记录走 append_bar 的 signals 面（同 bar 明细同
     事务）；本函数承载非 bar 边界写入（终态 expired 收割——_finalize
     一次性路径，OR IGNORE 吸收收割防重入的重复落库）。行形制与
-    append_bar.signals 一致（strategy_id/bar_time/seq/signal_kind/
-    gene_hits/indicator_snapshot/outcome/equity 等逐列，见 PtSignal）。
+    append_bar.signals 一致（INSERT 构造单点 _insert_signal_rows）。
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
-        for s in rows:
-            conn.execute(
-                insert(PtSignal).prefix_with("OR IGNORE").values(
-                    task_id=task_id,
-                    strategy_id=s["strategy_id"],
-                    bar_time=s["bar_time"],
-                    exec_bar_time=s.get("exec_bar_time"),
-                    seq=s["seq"],
-                    signal_kind=s["signal_kind"],
-                    direction=s.get("direction"),
-                    size_fraction=s.get("size_fraction"),
-                    gene_hits=s["gene_hits"],
-                    indicator_snapshot=s["indicator_snapshot"],
-                    outcome=s["outcome"],
-                    reject_reason=s.get("reject_reason"),
-                    fill_seq=s.get("fill_seq"),
-                    capped=s.get("capped"),
-                    equity=s["equity"], balance=s["balance"],
-                    unrealized_pnl=s["unrealized_pnl"],
-                    position_side=s.get("position_side"),
-                    position_quantity=s.get("position_quantity"),
-                    position_margin=s.get("position_margin"),
-                    created_at=s.get("created_at") or _now(),
-                )
-            )
+        _insert_signal_rows(conn, task_id, rows)
 
 
 def list_signals(
