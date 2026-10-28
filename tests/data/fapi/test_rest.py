@@ -196,6 +196,76 @@ class TestThreeFunctions:
 
 # ── 代理语义（fetcher.py:108 先例）────────────────────────
 
+class TestDirtyRowFiltering:
+    """CARD-01 脏行单点过滤：klines/funding 行级脏数据丢弃不进帧。
+
+    行级脏形制五类（klines）：OHLC/volume 非有限值（NaN/inf——
+    is_valid_bar_values 判定）与字段不可解析（坏串 ValueError/None
+    TypeError/缺字段 IndexError）——单点覆盖 reconcile/建库/重建/
+    费率四消费路径（fetch 全走 _klines_rows_to_frame）。
+    """
+
+    def test_klines_mixed_dirty_rows_good_rows_kept(self):
+        """混合六行（NaN/inf/坏串/None/缺字段各一+好行一）→恰好行。"""
+        good = _kline_row(_T0)
+        nan_row = _kline_row(_T0 + 60_000)
+        nan_row[1] = "NaN"          # open 非有限
+        inf_row = _kline_row(_T0 + 120_000)
+        inf_row[2] = "Infinity"     # high 非有限
+        bad_str_row = _kline_row(_T0 + 180_000)
+        bad_str_row[4] = "abc"      # close 不可解析
+        none_row = _kline_row(_T0 + 240_000)
+        none_row[5] = None          # volume 不可解析
+        short_row = [_T0 + 300_000]  # 缺字段（volume 位 IndexError）
+        client, _ = _make_client({"klines_pages": [
+            [good, nan_row, inf_row, bad_str_row, none_row, short_row]]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp("2026-03-27T00:00:00Z"),
+            pd.Timestamp("2026-03-27T00:10:00Z"))
+        assert len(frame) == 1  # 五脏行全弃、好行恰保留
+        assert frame.index[0] == pd.Timestamp(_T0, unit="ms", tz="UTC")
+        assert frame["open"].tolist() == [100.0]
+
+    def test_klines_all_dirty_rows_empty_frame(self):
+        """全脏行→空帧（非 None——同构列结构保持）。"""
+        nan_row = _kline_row(_T0)
+        nan_row[3] = "NaN"  # low 非有限
+        client, _ = _make_client({"klines_pages": [[nan_row]]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp("2026-03-27T00:00:00Z"),
+            pd.Timestamp("2026-03-27T00:10:00Z"))
+        assert frame is not None and frame.empty
+        assert list(frame.columns) == ["open", "high", "low", "close",
+                                       "volume"]
+
+    def test_funding_mixed_dirty_rows_good_rows_kept(self):
+        """funding 混合五行（NaN/None/缺键/坏串各一+好行一）→恰好行。
+
+        直转面同语义（CARD-01 修复第二面）：fundingRate 不可解析/
+        非有限或 fundingTime 缺失的行丢弃。
+        """
+        good = {"symbol": "BTCUSDT", "fundingTime": _T0,
+                "fundingRate": "0.0001", "markPrice": "100"}
+        nan_rate = {"symbol": "BTCUSDT", "fundingTime": _T0 + 28_800_000,
+                    "fundingRate": "NaN"}
+        none_rate = {"symbol": "BTCUSDT", "fundingTime": _T0 + 57_600_000,
+                     "fundingRate": None}
+        missing_time = {"symbol": "BTCUSDT", "fundingRate": "0.0002"}
+        bad_str = {"symbol": "BTCUSDT", "fundingTime": _T0 + 86_400_000,
+                   "fundingRate": "abc"}
+        client, _ = _make_client({"funding_rows": [
+            [good, nan_rate, none_rate, missing_time, bad_str]]})
+        frame = client.fetch_funding_rate(
+            "BTCUSDT",
+            pd.Timestamp("2026-03-27T00:00:00Z"),
+            pd.Timestamp("2026-03-27T08:00:00Z"))
+        assert frame["funding_rate"].tolist() == [0.0001]  # 四脏行全弃
+        assert frame.index.tolist() == [
+            pd.Timestamp(_T0, unit="ms", tz="UTC")]
+
+
 class TestProxySemantics:
     def test_trust_env_disabled_blocks_env_proxy_leak(self):
         """⑤直连通道：session.trust_env=False（环境代理变量不生效）。"""
