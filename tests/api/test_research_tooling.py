@@ -359,3 +359,191 @@ class TestBatchManagement:
         r = seeded["client"].request("POST", "/api/strategies/batch",
                                      json={"confirm": True})
         assert r.status_code == 422
+
+
+# ── C3-C 补齐组（tester 建网：confirm false 态三键/收紧参数/单删归档
+#    回归/导出数量对称——v2 字段级细则 C1/C2/C3/C4）──────────────────
+
+
+class TestBatchContractExtras:
+    @pytest.fixture()
+    def seeded(self, tmp_path):
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        db = tmp_path / "q2.db"
+        init_db_ext(db)
+        # taskC 五产物：代数升/分数降交错；taskD 一产物（旁观者）
+        for i, (sid, gen, sc) in enumerate([
+                ("st_c1", 1, 5.0), ("st_c2", 2, 4.0), ("st_c3", 3, 3.0),
+                ("st_c4", 4, 2.0), ("st_c5", 5, 1.0)]):
+            d = make_dna()
+            for g in d.signal_genes:
+                g.params = {"period": 14 + i}
+            save_strategy(db, strategy_id=sid, dna_json=d.to_json(),
+                          symbol="BTCUSDT", timeframe="4h", name=sid,
+                          source="evolution", source_task_id="taskC",
+                          generation=gen, best_score=sc)
+        d = make_dna()
+        for g in d.signal_genes:
+            g.params = {"period": 99}
+        save_strategy(db, strategy_id="st_d1", dna_json=d.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="st_d1",
+                      source="evolution", source_task_id="taskD")
+        import pandas as pd
+        import numpy as np
+        dd = tmp_path / "market"
+        dd.mkdir()
+        n = 30
+        close = 100 + np.cumsum(np.random.default_rng(2).normal(0, 1, n))
+        pd.DataFrame({"open": close, "high": close, "low": close,
+                      "close": close, "volume": np.full(n, 1.0)},
+                     index=pd.date_range("2024-01-01", periods=n,
+                                         freq="4h", tz="UTC",
+                                         name="timestamp")
+                     ).to_parquet(dd / "BTCUSDT_4h.parquet")
+        app = create_app(db_path=db, data_dir=dd)
+        with TestClient(app) as c:
+            yield {"client": c, "db": db}
+
+    def test_confirm_false_three_keys(self, seeded):
+        """C1 补：REST 面 confirm=false 显式态→422+三键全在场
+        （matched_count/criteria/hint——预览数使研究者知道将删多少）。"""
+        c = seeded["client"]
+        r = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "taskC", "confirm": False})
+        assert r.status_code == 422
+        d = r.json()["detail"]["detail"]
+        assert d["matched_count"] == 5
+        assert d["criteria"]["source_task_id"] == "taskC"
+        assert "confirm=true" in d["hint"], "hint 须含确认指引"
+        # 零删除（禁止变化面）
+        g = c.get("/api/strategies", params={"source_task_id": "taskC"})
+        assert g.json()["total"] == 5
+
+    def test_tightening_filters_preview_matches_execution(self, seeded):
+        """C2 补：收紧参数（参数名即严格语义 _gt/_lt）——422 预览数=
+        收紧命中数；confirm 后 deleted=同集；不满足收紧的同任务行
+        与旁观任务行逐行零变化。"""
+        c = seeded["client"]
+        # generation_gt=3 → 命中 gen 4/5（st_c4/st_c5）
+        r1 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "taskC", "generation_gt": 3})
+        assert r1.status_code == 422
+        assert r1.json()["detail"]["detail"]["matched_count"] == 2
+        assert r1.json()["detail"]["detail"]["criteria"][
+            "generation_gt"] == 3
+        r2 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "taskC", "generation_gt": 3,
+            "confirm": True})
+        assert r2.json()["deleted_count"] == 2
+        # best_score_lt=3.5 → 命中 st_c3（3.0<3.5；5.0/4.0 不动）
+        r3 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "taskC", "best_score_lt": 3.5,
+            "confirm": True})
+        assert r3.json()["deleted_count"] == 1
+        # 逐行核对：taskC 恰剩 st_c1/st_c2；taskD 旁观者零变化
+        g = c.get("/api/strategies", params={"source_task_id": "taskC"})
+        assert {x["strategy_id"] for x in g.json()["items"]} == \
+            {"st_c1", "st_c2"}
+        g2 = c.get("/api/strategies", params={"source_task_id": "taskD"})
+        assert {x["strategy_id"] for x in g2.json()["items"]} == {"st_d1"}
+
+    def test_single_delete_archive_semantics_unchanged(self, seeded):
+        """C3 补：单策略 DELETE 归档语义回归锚——非 draft 删除=归档
+        （行保留+status=archived），与批量物理 DELETE 语义分立。"""
+        c = seeded["client"]
+        r = c.delete("/api/strategies/st_c1")
+        assert r.status_code == 204
+        g = c.get("/api/strategies/st_c1")
+        assert g.status_code == 200, "单删后行保留（归档非物理删）"
+        assert g.json()["status"] == "archived"
+
+    def test_export_count_symmetry_before_delete(self, seeded):
+        """C4 可确定半：删除前圈定导出（数量摘要）与删除预览数对称
+        ——研究者先导出看数量再对称确认。（分数分布摘要：实现面无
+        承载，已列偏差上报，裁决后补验。）"""
+        c = seeded["client"]
+        listed = c.get("/api/strategies",
+                       params={"source_task_id": "taskC"}).json()
+        assert listed["total"] == 5, "圈定导出数量摘要在场（total）"
+        r = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "taskC"})
+        preview = r.json()["detail"]["detail"]["matched_count"]
+        assert preview == listed["total"], "预览数与导出数量对称"
+
+
+# ── C3-D4/S11 披露面（六工具 docstring 明示语义与错误面+能力自述
+#    新工具条目在场——「docstring 未披露=AI 视角不存在」纪律）──────
+
+
+class TestDisclosureAndCapability:
+    @pytest.fixture()
+    def registry(self, tmp_path):
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        from mcpserver import tools as tools_mod
+
+        class _HttpApi:
+            def __init__(self, c):
+                self._c = c
+
+            def get(self, url, params=None):
+                return self._c.get(url, params=params).json()
+
+            def post(self, url, body):
+                return self._c.post(url, json=body).json()
+
+            def put(self, url, body):
+                return self._c.put(url, json=body).json()
+
+        class _FakeMCP:
+            def __init__(self):
+                self.registry = {}
+
+            def tool(self):
+                def deco(fn):
+                    self.registry[fn.__name__] = fn
+                    return fn
+                return deco
+
+        db = tmp_path / "q3.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        app = create_app(db_path=db, data_dir=d)
+        with TestClient(app) as c:
+            fake = _FakeMCP()
+            tools_mod.register_research_tools(fake, _HttpApi(c))
+            yield fake.registry
+
+    def test_six_tools_docstring_disclosure(self, registry):
+        """D4：六工具 docstring 明示语义与错误面（batch_delete 不可逆
+        语义点名）——tool_safe 经 functools.wraps 保留原文。"""
+        expect = {
+            "stop_evolution_task": ("404", "409"),
+            "pause_evolution_task": ("404", "409"),
+            "resume_evolution_task": ("404", "400"),
+            "get_evolution_strategies": ("404", "top10", "champion"),
+            "update_strategy_metadata": ("404", "字符串形制直通"),
+            "batch_delete_strategies": ("不可逆", "matched_count",
+                                        "幂等"),
+        }
+        for name, tokens in expect.items():
+            doc = registry[name].__doc__ or ""
+            for tok in tokens:
+                assert tok in doc, f"{name} docstring 未披露 {tok!r}"
+
+    def test_capability_doc_includes_new_tools(self, registry):
+        """S11：能力自述工具清单含六新工具条目（运行时从注册集生成）
+        ——与 mcp-server 域工具清单一致由 _expected_tools 三处集合
+        断言承载（D1）。"""
+        from mcpserver.tools import TOOL_TIERS
+        from mcpserver.capability import build_capability_doc
+
+        six = {"stop_evolution_task", "pause_evolution_task",
+               "resume_evolution_task", "get_evolution_strategies",
+               "update_strategy_metadata", "batch_delete_strategies"}
+        assert six <= TOOL_TIERS["research"], "六新工具须入 research 档"
+        doc = build_capability_doc(sorted(TOOL_TIERS["research"]))
+        for n in sorted(six):
+            assert f"- {n}" in doc, f"能力自述缺新工具条目 {n}"
