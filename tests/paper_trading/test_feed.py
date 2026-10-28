@@ -148,8 +148,8 @@ class TestSharedFeed:
     """同键共享/异键独立/引用计数回收/装载广播。"""
 
     def test_same_key_two_subscribers_share_one_reconcile(self, tmp_path):
-        """同键两任务共享一份对账拉取：一次 reconcile 一次 REST、
-        增量广播两订阅各达一次。"""
+        """同键两任务共享一份对账拉取：装载零 REST、每轮 reconcile
+        恰一次 REST、增量广播两订阅各达一次。"""
         h = FeedHarness(tmp_path)
         received: list[tuple[str, int]] = []
         sub_a = FeedSubscription(
@@ -161,13 +161,22 @@ class TestSharedFeed:
         assert feed_a is feed_b  # 同键同实例（共享单位）
         # 装载广播达首订阅（from_idx=0 全量初始帧）
         assert ("a", 0) in received
-        # 缺口一轮：REST 拉一次、增量广播两订阅各达
-        h.clock.advance(hours=10)  # 末根+10h > 2×4h——缺口成立
+        # 装载读 parquet 零 REST（REST 归对账/重建路径——计数归属核对）
+        assert h.rest_calls == []
+        # 缺口成立（末根+10h > 2×4h）
+        h.clock.advance(hours=10)
+        # 首次对账：缺口判定成立→REST 发起拉到空响应（对账无所得的
+        # 中间态——不广播不落盘）
+        broadcast_before = len(received)
         feed_a.reconcile()
+        assert len(h.rest_calls) == 1  # 首次对账恰一次 REST
+        assert len(received) == broadcast_before  # 空响应不广播
+        # 第二次对账：REST 段有帧→合并广播，两订阅各恰达一次
         h._rest_frames = [_ohlcv_at([h.last + h.tf])]
         feed_a.reconcile()
-        assert len(h.rest_calls) >= 1  # 对账只发生一份（共享单例）
+        assert len(h.rest_calls) == 2  # 两轮对账两次 REST（精确计数）
         increments = [r for r in received if r[1] > 0]
+        assert len(increments) == 2  # 两订阅各恰一次（无重复广播）
         assert ("a", 100) in increments and ("b", 100) in increments
 
     def test_different_keys_independent_feeds(self, tmp_path):
