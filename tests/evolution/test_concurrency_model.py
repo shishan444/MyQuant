@@ -715,3 +715,126 @@ class TestQueueStopGuard:
         assert any("接手前已被外部终态化" in rec.message
                    for rec in caplog.records), "守护 warning 留痕"
         assert "g1" not in get_active_controllers(), "controller 无残留"
+
+
+class TestConfigEffectChain:
+    """CARD-03 config 生效链锚（review4_cards.md CARD-03）。
+
+    修复三处：project_root 无条件求值（显式传参路径 lifespan 不再
+    NameError——config 真实生效）+except 收窄留痕+runner 侧 int 类型
+    容错。锚用 spy/monkeypatch 注入可区分值（卡面明示：2 不可区分
+    缺省，3 才证生效）。容错场景按值层形制构造（修复设计与卡面现象
+    节均为「config 值类型错」——探针实证文档层裸 str 在 app.py or
+    链 AttributeError 属修复外场景，已另报）。
+    """
+
+    def _make_app(self, tmp_path):
+        from api.app import create_app
+        db = tmp_path / "cfg.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        return create_app(db_path=db, data_dir=d)
+
+    def test_explicit_params_config_takes_effect(self, tmp_path, monkeypatch):
+        """生效链锚（R-04）：显式传参路径下 spy 注入可区分值 3——
+        config.yaml 被打开（safe_load 被调）且值进入 runner
+        （max_workers==3——修复前 NameError 静默吞掉恒 2）。"""
+        import yaml
+        from fastapi.testclient import TestClient
+
+        calls = {"n": 0}
+
+        def spy_load(f):
+            calls["n"] += 1
+            return {"evolution": {"max_concurrent_tasks": 3}}
+
+        monkeypatch.setattr(yaml, "safe_load", spy_load)
+        app = self._make_app(tmp_path)
+        with TestClient(app):
+            runner = app.state.evolution_runner
+            assert calls["n"] >= 1, (
+                "显式传参路径 config.yaml 须真实被打开（R-04 修复面）")
+            assert runner.max_workers == 3, (
+                "可区分值 3 须进入 runner（2 不可区分缺省——锚有效性关键）")
+
+    @pytest.mark.parametrize("bad_value", [
+        pytest.param("two", id="值层字符串-ValueError 路径"),
+        pytest.param(None, id="值层空值-TypeError 路径"),
+    ])
+    def test_bad_type_falls_back_without_crash(
+            self, tmp_path, monkeypatch, bad_value):
+        """容错锚（R-05）：config 值类型错（"two"/None）不启动崩溃，
+        回退缺省 2+warning 留痕（runner 侧容错——修复设计 3）。捕获用
+        自备 handler（root 捕获顺序敏感——见 read_failure 用例注）。"""
+        import logging
+        import yaml
+        from fastapi.testclient import TestClient
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.WARNING)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        handler = _ListHandler()
+        runner_logger = logging.getLogger("RUNNER")
+        runner_logger.addHandler(handler)
+        try:
+            monkeypatch.setattr(
+                yaml, "safe_load",
+                lambda f: {"evolution": {
+                    "max_concurrent_tasks": bad_value}})
+            app = self._make_app(tmp_path)
+            with TestClient(app) as client:
+                assert client.get(
+                    "/api/evolution/runner-status").status_code == 200, (
+                    "容错后服务正常起（不启动崩溃）")
+                runner = app.state.evolution_runner
+                assert runner.max_workers == 2, "类型错回退缺省 2"
+        finally:
+            runner_logger.removeHandler(handler)
+        assert any("类型非法" in rec.getMessage()
+                   and "回退缺省 2" in rec.getMessage()
+                   for rec in handler.records), "容错 warning 须留痕"
+
+    def test_read_failure_degrades_with_warning(self, tmp_path, monkeypatch):
+        """except 收窄面：config.yaml 读取失败（OSError）降级缺省 2+
+        warning 留痕（修复前 except Exception 静默吞掉零痕迹）。
+        捕获用直挂「app」logger 的自备 handler——被测初始化链会清换
+        root handlers，caplog 的 root 捕获时序顺序敏感不可靠。"""
+        import logging
+        from fastapi.testclient import TestClient
+
+        real_open = open  # patch 前持真实引用（透传用——防自递归）
+
+        def no_open(path, *a, **kw):
+            if str(path).endswith("config.yaml"):
+                raise OSError("构造读取失败")
+            return real_open(path, *a, **kw)
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.WARNING)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        handler = _ListHandler()
+        app_logger = logging.getLogger("app")
+        app_logger.addHandler(handler)
+        try:
+            monkeypatch.setattr("builtins.open", no_open)
+            app = self._make_app(tmp_path)
+            with TestClient(app) as client:
+                assert client.get(
+                    "/api/evolution/runner-status").status_code == 200
+                assert app.state.evolution_runner.max_workers == 2
+        finally:
+            app_logger.removeHandler(handler)
+        assert any("config.yaml 读取失败" in rec.getMessage()
+                   and "用缺省 2" in rec.getMessage()
+                   for rec in handler.records), "读取失败 warning 须留痕"
