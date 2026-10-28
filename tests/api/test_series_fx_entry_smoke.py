@@ -66,6 +66,59 @@ def fx_env(api_client):
     return api_client, r.json()["strategy_id"], col
 
 
+class TestSeriesSystemChain:
+    """阶段四闸门⑤层级补全：system 级端到端链——研究登记→translate
+    →策略中心回测（series 档全生命周期一条链，公开入口全程）。"""
+
+    def test_register_translate_backtest_chain(self, api_client):
+        """登记（POST /api/research/hypotheses，series 声明）→translate
+        （POST /api/research/translate/{hid}，17 键产物）→回测（POST
+        /api/strategies/backtest strategy_id 分支）→200——三段路由
+        一条链。"""
+        rng = np.random.default_rng(3)
+        n = 300
+        steps = rng.normal(0, 70, n)
+        close = 60000 + np.cumsum(steps)
+        pd.DataFrame({
+            "open": close, "high": close + 50, "low": close - 50,
+            "close": close, "volume": rng.uniform(100, 900, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp")).to_parquet(
+            api_client.app.state.data_dir / "BTCUSDT_4h.parquet")
+        r_reg = api_client.post("/api/research/hypotheses", json={
+            "conditions": {
+                "when_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}, "field": "rsi"},
+                     "action": "lt", "target": 45}],
+                "then_conditions": [
+                    {"subject": {"indicator": "RSI",
+                                 "params": {"period": 14}, "field": "rsi"},
+                     "action": "gt", "target": 60}]},
+            "statement": "series 全链",
+            "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
+                             "start": "2024-01-20T00:00:00Z",
+                             "end": "2024-02-15T00:00:00Z"}],
+            "strategy_params": {
+                "sl_mode": "series",
+                "sl_series_source": {"indicator": "BB",
+                                     "params": {"period": 20, "std": 2},
+                                     "field": "lower"}},
+        })
+        assert r_reg.status_code == 200, r_reg.text[:300]  # 登记幂等形制 200
+        hid = r_reg.json()["hypothesis_id"]
+        r_tr = api_client.post(f"/api/research/translate/{hid}")
+        assert r_tr.status_code == 200, r_tr.text[:300]
+        out = r_tr.json()
+        assert out["risk_genes_disclosure"]["values"][
+            "sl_series_source"]["indicator"] == "BB"
+        sid = out["strategy_id"]
+        r_bt = api_client.post("/api/strategies/backtest", json={
+            "strategy_id": sid, "dataset_id": "BTCUSDT_4h"})
+        assert r_bt.status_code == 200, r_bt.text[:300]
+        assert "total_trades" in r_bt.json()
+
+
 class TestFxSeriesRouteSmoke:
     def test_backtest_route_fx_series_runs(self, fx_env):
         """主入口①：POST /api/strategies/backtest——series fx 策略真

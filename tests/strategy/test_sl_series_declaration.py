@@ -166,12 +166,20 @@ class TestA3CombinationGuards:
                                                "position_mode=risk_budget"]
 
     def test_form_mutual_exclusion(self, db):
-        """两形制互斥：两键同在拒/都缺拒。"""
+        """两形制互斥：两键同在拒/都缺拒；非 dict 形式拒（闸门①盲区
+        :252——src 须为对象）。"""
         with pytest.raises(ResearchError, match="互斥"):
             _register(db, {"indicator": "RSI", "params": {"period": 14},
                            "column": "fx_x"}, period=20)
         with pytest.raises(ResearchError):
             _register(db, {}, period=21)
+        with pytest.raises(ResearchError, match="须为对象"):
+            _register(db, "not-a-dict", period=28)
+
+    def test_params_non_dict_rejected(self, db):
+        """登记面静态校验（闸门①盲区 :292）：params 非 dict 拒。"""
+        with pytest.raises(ResearchError, match="params 须为对象"):
+            _register(db, {"indicator": "RSI", "params": "bad"}, period=29)
 
 
 class TestA4StaticValidation:
@@ -217,6 +225,17 @@ class TestDirectDNAGates:
         vr = validate_dna(dna)
         assert not vr.is_valid
         assert any("mutually exclusive" in e for e in vr.errors)
+
+    def test_validator_series_source_none_rejected(self):
+        """直建面（闸门①盲区 :379）：sl_mode=series 而 sl_series_
+        source=None → errors 含 requires sl_series_source（直构脏数据
+        的 validate_dna 面防线——登记面同判锚已另有）。"""
+        dna = make_dna()
+        dna.risk_genes.sl_mode = "series"
+        vr = validate_dna(dna)
+        assert not vr.is_valid
+        assert any("requires sl_series_source" in e for e in vr.errors), \
+            vr.errors
 
     def test_validator_source_structures(self):
         """直建面结构四态：非 dict/两键同在/都缺/fx 无前缀各自 errors。"""
@@ -277,6 +296,49 @@ class TestFSignatureIdentity:
                                           "field": "lower",
                                           "indicator": "BB"}
         assert d1.gene_signature == d2.gene_signature
+
+
+class TestGate4PureInvariants:
+    """阶段四闸门④属性补强：series 相关纯函数不变量（同输入同输出/
+    结构稳定/封闭映射——属性级而非单点）。"""
+
+    @pytest.mark.parametrize("mode", SL_MODES)
+    def test_sl_mode_code_closed_bijection(self, mode):
+        """sl_mode_code 封闭映射：四档全档位可编码、码值唯一可逆
+        （名→码单值+码→名无碰撞）、两次调用同值（确定性）。"""
+        from core.backtest.engine import sl_mode_code, _SL_MODE_CODE
+        c1, c2 = sl_mode_code(mode), sl_mode_code(mode)
+        assert c1 == c2, "确定性"
+        assert c1 == _SL_MODE_CODE[mode], "与映射表单源一致"
+        codes = [sl_mode_code(m) for m in SL_MODES]
+        assert len(set(codes)) == len(SL_MODES), "码值无碰撞（双射）"
+
+    def test_to_dict_roundtrip_invariant(self):
+        """to_dict/from_dict 往返不变量：非 series 与 series 全字段
+        两态，往返后序列化逐键相等（16/17 键基线的属性面）。"""
+        for rg in (RiskGenes(stop_loss=0.08, take_profit=0.1,
+                             exit_fraction=0.5, max_hold=50),
+                   RiskGenes(sl_mode="series",
+                             sl_series_source=dict(_BB),
+                             take_profit=0.1, position_mode="fixed")):
+            once = rg.to_dict()
+            twice = RiskGenes.from_dict(once).to_dict()
+            assert twice == once, (once, twice)
+
+    def test_signature_idempotent_deterministic(self):
+        """gene_signature 幂等+确定性：同 DNA 两次同签名；slsrc 段
+        有值才编码（None 恒不出现）。"""
+        d = make_dna()
+        d.risk_genes.sl_mode = "series"
+        d.risk_genes.sl_series_source = dict(_BB)
+        assert d.gene_signature == d.gene_signature, "幂等"
+        d2 = make_dna()
+        assert "slsrc:" not in d2.gene_signature, "无值不编码"
+        d3 = make_dna()
+        d3.risk_genes.sl_mode = "series"
+        d3.risk_genes.sl_series_source = dict(_BB)
+        assert d3.gene_signature == d.gene_signature, \
+            "同构造确定性（非 series 段逐位同源）"
 
 
 class TestSerialization:

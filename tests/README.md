@@ -371,3 +371,21 @@
 - 指标依赖闭包单点 _compute_indicator：depends_on 声明（registry）+visited 归链（CARD-02）——新增带依赖指标须声明 depends_on（裸列前缀消费=恒零断链复发）；monkeypatch 桩签名须收 visited（递归调用点关键字传参）
 - divergence rsi_col 取列序首个 rsi_ 前缀列——全量批量环境（rsi_7/14/21 并存）消费 rsi_7、研究链闭包注入消费 rsi_14 的口径分叉为历史行为（review2 报告 F-1，待 architect 判断是否立卡）
 - 组装器分桶与 composition 分支两条返回路径——桶语义测试须含混合形态（entry 桶非空才走 composition 分支，纯非 entry 形态走早返回；CARD-01 实录：纯单形态测试对分支内丢桶缺陷恒绿）
+
+## 十五区 · dynamic-stop-loss-series（series 档动态止损线）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| 声明域（C4-A/C3/E1/F） | 两形制登记端到端+field 省略两态；组合校验四断言+A3②conflict 精准形制；TP 并存+TP>SL 档位豁免（atr 对照）；登记面静态校验（指标册/params 形状/fx 可达性）；直建面 validate_dna 四态+半配置闸；16 键逐键基线+17 键键序+from_dict 往返；slsrc 签名段（必异/零迁移/键序无关/幂等）；库去重高分不覆写+同签名覆写检出力对照；POST 直建 201/GET 回显/半配置 422（RiskGenesModel 扩键面）；F1 POST 预检不命中 duplicated | `strategy/test_sl_series_declaration.py`+`api/test_strategy_post_series.py` | — |
+| 装载与 warmup（C4-C1/C2+A4 装载面） | 四路径（直取/现算/现算不可得拒/fx enrich）；四态校验（全 NaN/中段洞/≤0/头部预热合法）参数化；装载面纵深四拒（非 dict/指标不在册/多输出缺 field/fx 无前缀）；series×risk_budget 装载纵深；warmup 两轨强断言（EMA 源 600 vs 200/fx 300 抬升）+短区间 RESEARCH_WARMUP_INSUFFICIENT 拒绝可观察+充足对照；WARMUP_RULE_TEXT series 措辞；分派码 3.0+槽位非 None | `backtest/test_sl_series_loading.py` | — |
+| 执行语义（C4-B） | B1 人工核算触发价=线值+残留值变异逐位不变；B3 阶梯动态性（相邻 bar 触发/不触发+触发价=当 bar 线值）；B4 语义边界（pct 恒定 vs series 随列可区分）；TP 并存锚入场价（多空两向，误锚线值/峰值两侧检出）；B2 方向镜像三例（判定侧各自误用检出+同列同 bar 对称）；fx 源端到端；NaN 头部守卫；同 bar 清算优先；batch 逐列独立（两源列 T5/T6 分叉） | `backtest/test_sl_modes.py` TestSeriesMode | — |
+| 能力矩阵与拒绝（C4-D） | series 纸盘/live 双拒（reasons 含档位名+后续专项补齐）；纸盘双层插桩（受理 422+装载 prepare False+反面锚）；回测放行对照；非法 link ValueError；exit_sweep series entry 空值形制+引用式跟随 | `strategy/test_sl_series_capability_matrix.py` | — |
+| exit_sweep 执行面（CARD-01/R-1 A） | 指标/fx 源端到端产出行（stop_loss=null+TP 轴可区分）；warmup 逐组分叉披露+小窗口不虚增；不足单组容错（pct 组不拖累）；平面判定 series 只 TP 轴（single_value_axes 两面分叉）；fx 前缀校验 422；组数上限计数；gates.axes 披露分叉三形制 | `analysis/templates/test_exit_sweep.py` TestSeriesExecution | — |
+| 进化交叉（C4-G） | mutate_risk 往返保持+残留不改写（30 seed）+TP=None 保持+钳制源固定 seed 双锚（seed=8 钳 0.005/seed=1 自由）+残留解耦；非 series TP 推导对照；evaluate_dna 真路径（db_path 透传构造点） | `evolution/test_series_cross_guard.py` | — |
+| 五入口 fx 形式（CARD-04/S-2） | backtest/verify/compare 三路由真引擎真装载 smoke（透传缺失即红）；GET/POST 传输层；evolution evaluate 链 | `api/test_series_fx_entry_smoke.py`+`api/test_strategy_post_series.py`+`evolution/test_crossover_v2_inheritance.py` | batch 路由 smoke 未单列（构造点实参经 batch.py 处理器与 backtest 同函数族——spy 实证在案） |
+
+### dynamic-stop-loss-series 守护行
+- SL_MODES/ENGINE_SUPPORTED_SL_MODES 双集同步+分派码 {series:3.0} 原子纪律（engine.py:60 在案）——四档封闭枚举断言在 `strategy/test_param_domain_matrix.py`；改档位集两集两断言同 commit 翻转
+- disclosure 两态判定：series 档 default_filled 含 stop_loss=忠实披露恒态（引擎不消费），pct 档新登记同状态=B1 缺陷红——判定面在「引擎是否消费该值」（残留值变异锚 0.05→0.10 回测逐位不变），勿以 default_filled 键在场误判
+- gates.axes 披露随 grid 判定面分叉（series-only 单轴）——改披露形制须连 `analysis/templates/test_exit_sweep.py` gates 整体相等锚与分叉锚同 commit 翻转
+- 阶段四覆盖闸门不可达判定（行+分支）：engine.py:273-276（enrich 非 ResearchError 防御包装——enrich 内部异常已结构化）/engine.py:288（enrich 后列不在双保险——enrich 内部 verify 已拦）/engine.py:1224-1236（series×risk_budget 引擎侧兜底——装载层三道防线后设计不可达，注释在案）；行为变化时须重评

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]
 
 from core.evolution.operators import mutate_risk
+from core.persistence.db_ext import init_db_ext
 from core.strategy.dna import RiskGenes, StrategyDNA
 from tests.helpers.data_factory import make_dna
 
@@ -68,6 +71,47 @@ class TestG2ResidualUntouched:
             dna.risk_genes.take_profit = None
             out = mutate_risk(dna)
             assert out.risk_genes.take_profit is None, seed
+
+    def test_non_series_tp_none_derives_from_stop(self):
+        """非 series 对照（闸门①盲区 :691）：TP=None 的非 series 档
+        按 stop_loss 倍数初始化路径健在——series 档跳过（上例）是档位
+        语义而非分支缺失（探明 seed=2 进 0.3 概率门→0.0814）。"""
+        random.seed(2)
+        dna = make_dna()  # pct 档 stop_loss=0.05
+        dna.risk_genes.take_profit = None
+        out = mutate_risk(dna)
+        assert out.risk_genes.take_profit == pytest.approx(0.0814), \
+            "非 series 档 TP 从 stop_loss 倍数 (1.5,3.0) 推导（对照 series 保持 None）"
+
+
+class TestEvaluatePathSeries:
+    """evaluate_dna 真路径（闸门①盲区 :208——CARD-04 db_path 透传
+    构造点）：series 档个体经进化评估链真跑引擎。"""
+
+    def test_evaluate_dna_series_indicator_runs(self, tmp_path):
+        from core.evolution.evaluation import evaluate_dna
+        from core.features.indicators import compute_all_indicators
+        n = 120
+        close = np.full(n, 100.0)
+        close[40:60] = np.linspace(100, 85, 20)
+        close[60:] = 86.0
+        enhanced = compute_all_indicators(pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.002,
+            "low": close * 0.998, "close": close,
+            "volume": np.full(n, 100.0),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp")))
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        dna = _series_dna(entry_value=45, exit_value=90)
+        out = evaluate_dna(
+            dna, {"symbol": "BTCUSDT", "timeframe": "4h",
+                  "score_template": "profit_first"},
+            tmp_path, leverage=1, direction="long",
+            enhanced_df=enhanced, db_path=db)
+        assert isinstance(out, dict) and "score" in out
+        assert out.get("total_trades", 0) >= 1, \
+            f"series 档真跑触发（评估链引擎构造 db_path 透传），实际 {out}"
 
     def test_tp_nonnone_clamp_source(self):
         """G2③：TP 非 None 扰动下限按 TP 自身 pct 下界 0.005 钳制

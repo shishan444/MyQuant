@@ -135,6 +135,34 @@ class TestA4FourStates:
 
 
 class TestDepthGuard:
+    def test_loading_non_dict_source_rejected(self, env):
+        """装载面纵深（闸门①盲区 :202）：非 dict 形式装载拒。"""
+        with pytest.raises(ResearchError, match="形式非法"):
+            _load_sl_series_column(env["db"], env["enhanced"], "not-a-dict")
+
+    def test_loading_unknown_indicator_rejected(self, env):
+        """装载面纵深（闸门①盲区 :212）：指标不在注册表装载拒。"""
+        with pytest.raises(ResearchError, match="不在注册表"):
+            _load_sl_series_column(
+                env["db"], env["enhanced"],
+                {"indicator": "NoSuchInd", "params": {}})
+
+    def test_loading_multioutput_field_required(self, env):
+        """装载面纵深（闸门①盲区 :226）：多输出指标省 field 装载拒
+        （BB 两输出，field 必填——单输出省略合法已另有锚）。"""
+        with pytest.raises(ResearchError, match="field 必填"):
+            _load_sl_series_column(
+                env["db"], env["enhanced"],
+                {"indicator": "BB", "params": {"period": 20, "std": 2}})
+
+    def test_loading_fx_prefix_guard(self, env):
+        """装载面纵深（闸门①盲区 :254，CARD-02）：fx 形式列名无 fx_
+        前缀装载拒（RESEARCH_PARAM_INVALID——形制错误非数据不足）。"""
+        with pytest.raises(ResearchError) as ei:
+            _load_sl_series_column(env["db"], env["enhanced"],
+                                   {"column": "no_prefix"})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
     def test_series_risk_budget_loading_rejected(self, env):
         """C4-A3⑧ 纵深锚：直改库内 dna 绕过全部校验→装载 _per_dna_
         risk_params 显式拒——不产出按残留值计算仓位的结果。"""
