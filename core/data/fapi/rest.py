@@ -82,16 +82,34 @@ def fapi_min_notional_overrides(
 
     覆写值>内置常量>端点拉取的优先级裁定归 change-4 装载链；本函数
     只解析显式覆写面（未设置/空串的键不入返回——缺省语义由消费方
-    回退链承载）。
+    回退链承载）。畸形值（不可解析/NaN/inf/≤0）warning 丢弃该键
+    （C4-01：回退链兜底——env 是部署侧人工输入面，直穿将使覆写
+    静默失效〔NaN 比较 False 枯竭兜底失效〕或装载期崩溃〔abc 值
+    ValueError 崩启动〕，丢弃回退优先于带病装载）。
     """
+    import math
+
     source = os.environ if env is None else env
     from core.data.fapi.stream import FAPI_SYMBOLS
 
     overrides: dict[str, float] = {}
     for symbol in FAPI_SYMBOLS:
         raw = source.get(f"FAPI_MIN_NOTIONAL_{symbol}")
-        if raw:
-            overrides[symbol] = float(raw)
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            logger.warning(
+                "FAPI_MIN_NOTIONAL_%s=%r 不可解析——丢弃该覆写回退"
+                "装载链下一来源", symbol, raw)
+            continue
+        if not math.isfinite(value) or value <= 0:
+            logger.warning(
+                "FAPI_MIN_NOTIONAL_%s=%r 非有限正值——丢弃该覆写回退"
+                "装载链下一来源", symbol, raw)
+            continue
+        overrides[symbol] = value
     return overrides
 
 

@@ -1274,6 +1274,8 @@ class PaperTaskExecutor:
                 and self.ledger.position is None):
             self._concluded_status = "stopped"
             self._concluded_reason = "depleted"
+            return  # C4-05：置位即止（零行为变化——防未来追加分支
+            # 静默覆写已置位的终态信号，变异 D2 脆弱性封死）
 
     def _harvest_expired_signals(self) -> None:
         """终态收割：未消费 pending 意图逐条落 expired 行（spec 记录

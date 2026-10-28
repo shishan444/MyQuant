@@ -130,3 +130,45 @@ class TestBuiltinValueRecord:
         assert reloaded.MIN_NOTIONAL == dict(MIN_NOTIONAL_BUILTIN)
         assert reloaded.MIN_NOTIONAL is not MIN_NOTIONAL_BUILTIN, \
             "副本非同对象（装载写回不 mutate 内置常量）"
+
+
+class TestEnvOverrideSanitization:
+    """C4-01/S-1：env 覆写畸形值校验（解析单点）——不可解析/NaN/
+    inf/负/零值 warning 丢弃该键回退装载链（NaN 静默失效枯竭兜底
+    与 abc 直穿崩启动两类实证面封死）。"""
+
+    def test_unparseable_value_dropped_with_warning(self, caplog):
+        from core.data.fapi.rest import fapi_min_notional_overrides
+
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+        with caplog.at_level(logging.WARNING):
+            got = fapi_min_notional_overrides(env={
+                "FAPI_MIN_NOTIONAL_BTCUSDT": "abc",
+                "FAPI_MIN_NOTIONAL_ETHUSDT": "20"})
+        assert got == {"ETHUSDT": 20.0}, "不可解析键丢弃"
+        assert "不可解析" in caplog.text
+
+    @pytest.mark.parametrize("bad", [
+        "nan", "inf", "-inf", "-5", "0"])
+    def test_non_finite_or_non_positive_dropped(self, bad, caplog):
+        from core.data.fapi.rest import fapi_min_notional_overrides
+
+        logging.getLogger().addHandler(caplog.handler)
+        with caplog.at_level(logging.WARNING):
+            got = fapi_min_notional_overrides(env={
+                "FAPI_MIN_NOTIONAL_BTCUSDT": bad})
+        assert got == {}, f"{bad} 丢弃不装载"
+        assert "非有限正值" in caplog.text or "不可解析" in caplog.text
+
+    def test_load_with_bad_env_falls_back_cleanly(self, caplog):
+        """装载链端到端：畸形 env 键丢弃后该币回退端点/内置（不崩
+        启动、不带病装载）。"""
+        logging.getLogger().addHandler(caplog.handler)
+        with caplog.at_level(logging.WARNING):
+            table = mn.load_min_notional(
+                fetch_exchange_info=lambda: {},
+                env={"FAPI_MIN_NOTIONAL_BTCUSDT": "nan",
+                     "FAPI_MIN_NOTIONAL_ETHUSDT": "55"})
+        assert table["BTCUSDT"] == MIN_NOTIONAL_BUILTIN["BTCUSDT"], \
+            "NaN 覆写丢弃→内置回退"
+        assert table["ETHUSDT"] == 55.0, "合法覆写照常生效"
