@@ -33,7 +33,7 @@ import logging
 import math
 import queue
 import threading
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -78,16 +78,70 @@ _DEFAULT_ATR_PERIOD = 14
 # 状态机终态集（迁移拒绝面消费）
 TERMINAL_STATUSES = frozenset({"completed", "stopped", "error"})
 
+# 信号行 seq 编号（八步序位——spec 字段族明细）：即时类 1/2、pending
+# 消费 3/4、解释器内拒绝 7、expired 收割 0
+_SEQ_LIQUIDATION = 1
+_SEQ_STOP_TAKE = 2
+_SEQ_PENDING_EXIT = 3
+_SEQ_PENDING_ENTRY = 4
+_SEQ_INTERPRETER_REJECT = 7
+_SEQ_EXPIRED = 0
 
-def intent_to_json(intents: List[Intent]) -> Optional[str]:
-    """意图列表 → pt_task.pending_intent_json（空列表 None=无待执行）。"""
-    if not intents:
+# 意图 kind → 求值披露 hits 键（change paper-signal-log 任务 4）：
+# open→entry；close 按意图 reason 分流（signal=exit 信号全平、
+# reverse=entry 反向两步反手首步）；add/reduce 同名；防线族
+# （exit_sl/tp/max_loss/max_hold/time/liquidation）非基因驱动不归键
+def _hits_key_for_intent(intent: Intent) -> Optional[str]:
+    if intent.kind == "open":
+        return "entry"
+    if intent.kind == "close":
+        return "entry" if intent.reason == "reverse" else "exit"
+    if intent.kind in ("add", "reduce"):
+        return intent.kind
+    return None
+
+
+@dataclass(frozen=True)
+class PendingIntent:
+    """pending 意图+信号上下文（执行器私有词汇，任务 4）。
+
+    Attributes:
+        intent: 待执行意图（次根开盘消费）。
+        signal_bar_time: 意图产生 bar（决策锚——信号行 bar_time）。
+        gene_hits: 该 bar 命中基因项（SignalSet.hits 取键；恢复重建
+            不可得——恢复场景空披露，不伪造归因）。
+        signal_bar_index: 意图产生 bar 的帧内行号（指标快照取决策
+            bar 值的定位锚；恢复重建语境无帧行号=-1→快照空 dict）。
+    """
+
+    intent: Intent
+    signal_bar_time: str
+    gene_hits: tuple
+    signal_bar_index: int = -1
+
+
+def intent_to_json(pendings: List[PendingIntent]) -> Optional[str]:
+    """pending 列表 → pt_task.pending_intent_json（空列表 None=无待执行）。
+
+    序列化面=Intent 字段（既有 json 格式不变——恢复链兼容）；信号
+    上下文（signal_bar_time/gene_hits/行号锚）不序列化（恢复侧按
+    last_bar_time 重建 bar 锚、基因归因空披露）。
+    """
+    if not pendings:
         return None
-    return json.dumps([asdict(i) for i in intents], ensure_ascii=False)
+    return json.dumps(
+        [asdict(p.intent) for p in pendings], ensure_ascii=False)
 
 
-def intents_from_json(raw: Optional[str]) -> List[Intent]:
-    """pending_intent_json → 意图列表（解析失败上抛——恢复校验第四判据）。
+def intents_from_json(
+    raw: Optional[str], *, signal_bar_time: Optional[str] = None,
+) -> List[PendingIntent]:
+    """pending_intent_json → PendingIntent 列表（解析失败上抛——恢复
+    校验第四判据）。
+
+    signal_bar_time=意图产生 bar 锚（恢复调用方传 last_bar_time——
+    崩溃时点的未消费意图产生于最后处理完的 bar；缺省 None=无锚
+    语境）。gene_hits 恒空、行号锚 -1（见 PendingIntent docstring）。
 
     Raises:
         ValueError: JSON 解析失败或结构不符（recovery 捕获转
@@ -96,7 +150,9 @@ def intents_from_json(raw: Optional[str]) -> List[Intent]:
     if not raw:
         return []
     data = json.loads(raw)
-    return [Intent(**d) for d in data]
+    return [PendingIntent(
+        intent=Intent(**d), signal_bar_time=signal_bar_time or "",
+        gene_hits=()) for d in data]
 
 
 def fill_row(event: ExecutionEvent) -> Dict[str, Any]:
@@ -200,7 +256,7 @@ class PaperTaskExecutor:
 
         # bar 间工作副本（design §5.5：内存 Ledger，bar 边界回写）
         self.ledger = Ledger(float(task_row["initial_cash"]), params)
-        self.pending: List[Intent] = []
+        self.pending: List[PendingIntent] = []
         self.bars_processed = int(task_row.get("bars_processed") or 0)
         self.last_bar_time: Optional[str] = task_row.get("last_bar_time")
         self.win_count = int(task_row.get("win_count") or 0)
@@ -234,6 +290,11 @@ class PaperTaskExecutor:
             {int(params.atr_period)}
             if params.sl_mode == "atr" else set())
         self._atr_need = atr_need
+        # 指标快照列集（信号行 indicator_snapshot 的取值面——任务 4：
+        # DNA 引用指标列中主轴（执行周期帧）可解析者；跨轴基因
+        # （gene.timeframe 标注/MTF 层基因）与直读派生列不进快照面
+        # ——无「该 bar 单值」语义，披露边界在 _indicator_snapshot）
+        self._snapshot_columns: List[str] = self._resolve_snapshot_columns()
 
     # ── DNA 装载 ────────────────────────────────────────────
 
@@ -248,6 +309,105 @@ class PaperTaskExecutor:
         from core.strategy.dna import StrategyDNA
 
         return StrategyDNA.from_json(dna_snapshot_json)
+
+    # ── 信号记录组装（change paper-signal-log 任务 4） ──────
+
+    def _resolve_snapshot_columns(self) -> List[str]:
+        """DNA 引用指标列 → 主轴快照列名集（A1 范围）。
+
+        经注册表命名权威正向解析（resolve_indicator_column——与
+        executor 列查找同约定单点）；解析失败（未注册/参数畸形）或
+        跨轴基因（gene.timeframe 标注）跳过——快照面只承载「执行
+        周期帧该 bar 单值」语义的列（MTF 层基因同属跨轴，不在本集；
+        dna.signal_genes 为单周期展开面）。
+        """
+        from core.features.registry import (
+            INDICATOR_REGISTRY, resolve_indicator_column)
+
+        columns: List[str] = []
+        seen = set()
+        for gene in self.dna.signal_genes:
+            if getattr(gene, "timeframe", None) is not None:
+                continue  # 跨轴基因：无主轴单值语义
+            reg = INDICATOR_REGISTRY.get(gene.indicator)
+            if reg is None:
+                continue  # 直读派生列/未注册指标不在快照面
+            try:
+                col = resolve_indicator_column(
+                    gene.indicator, gene.params,
+                    gene.field_name or "", reg.naming)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if col not in seen:
+                seen.add(col)
+                columns.append(col)
+        return columns
+
+    def _indicator_snapshot(
+        self, df: pd.DataFrame, i: int,
+    ) -> Dict[str, Any]:
+        """快照列该 bar 值（NaN→None——JSON 非法值转空；列缺失跳过；
+        行号越界/负值=无锚语境→空 dict，df.iloc[-1] 末行语义须防）。"""
+        if not self._snapshot_columns or not 0 <= i < len(df):
+            return {}
+        row = df.iloc[i]
+        out: Dict[str, Any] = {}
+        for col in self._snapshot_columns:
+            if col not in df.columns:
+                continue
+            v = row[col]
+            out[col] = (None if pd.isna(v) else float(v))
+        return out
+
+    @staticmethod
+    def _account_fields(snap: AccountSnapshot) -> Dict[str, Any]:
+        """AccountSnapshot → 信号行账户快照六列（执行尝试前/求值时点）。"""
+        pos = snap.position
+        return {
+            "equity": snap.equity, "balance": snap.balance,
+            "unrealized_pnl": snap.unrealized_pnl,
+            "position_side": pos.side if pos else None,
+            "position_quantity": pos.quantity if pos else None,
+            "position_margin": pos.margin if pos else None,
+        }
+
+    def _signal_row(
+        self,
+        *,
+        bar_time: str,
+        exec_bar_time: str,
+        seq: int,
+        kind: str,
+        direction: Optional[str],
+        size_fraction: Optional[float],
+        gene_hits: List[Dict[str, Any]],
+        indicator_snapshot: Dict[str, Any],
+        outcome: str,
+        account: Dict[str, Any],
+        reject_reason: Optional[str] = None,
+        fill_seq: Optional[int] = None,
+        capped: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """信号行组装（pt_signal 落库形制——spec 字段族明细逐列）。"""
+        row: Dict[str, Any] = {
+            "strategy_id": self.task_row["strategy_id"],
+            "bar_time": bar_time,
+            "exec_bar_time": exec_bar_time,
+            "seq": seq,
+            "signal_kind": kind,
+            "direction": direction or None,
+            "size_fraction": size_fraction,
+            "gene_hits": json.dumps(gene_hits, ensure_ascii=False),
+            "indicator_snapshot": json.dumps(
+                indicator_snapshot, ensure_ascii=False),
+            "outcome": outcome,
+            "reject_reason": reject_reason,
+            "fill_seq": fill_seq,
+            "capped": capped,
+            "created_at": utc_now_iso(),
+        }
+        row.update(account)
+        return row
 
     # ── 恢复重建（校验归 recovery；本方法只做可信重建） ──────
 
@@ -284,7 +444,12 @@ class PaperTaskExecutor:
             ledger.position.funding_paid = _rebuild_funding_paid(
                 db_path, row["task_id"])
         ledger.closed_trades = int(row["total_trades"])
-        executor.pending = intents_from_json(row["pending_intent_json"])
+        # 意图产生 bar 锚=恢复游标（崩溃时点的未消费意图产生于最后
+        # 处理完的 bar）；基因归因恢复不可得——空披露（见
+        # PendingIntent docstring）
+        executor.pending = intents_from_json(
+            row["pending_intent_json"],
+            signal_bar_time=row.get("last_bar_time"))
         # 行查询下推（B④）：pending 资金费重建带 status 过滤+settle_time
         # 升序（查询内置排序，行集=真正要处理的对象，零到几行——过滤
         # 下推不聚合）；累计资金费 B③：末行快照由数据库直出（原
@@ -583,7 +748,11 @@ class PaperTaskExecutor:
         dfs_by_timeframe = self._assemble_mtf_frames(df)
         from core.strategy.executor import dna_to_signal_set
 
-        sig_set = dna_to_signal_set(self.dna, df, dfs_by_timeframe)
+        # with_hits=True：求值披露开启点（change paper-signal-log
+        # design §10——信号行的基因命中归因数据源；缺省关闭的零侵入
+        # 通道仅纸盘执行器开启）
+        sig_set = dna_to_signal_set(
+            self.dna, df, dfs_by_timeframe, with_hits=True)
         try:
             for i in range(from_idx, len(df)):
                 self.controller.check_stop()  # bar 边界协作退出锚
@@ -664,6 +833,14 @@ class PaperTaskExecutor:
         NaN bar 跳过（装载点守卫命中）：不成交、不落库、
         last_bar_time 不推进、pending 顺延至下一根有效 bar 消费
         ——对齐回测「NaN bar 无成交无判定生效」的静默容忍。
+
+        信号记录挂点（change paper-signal-log 任务 4）：第 3/4 步
+        pending 消费（成交或被拒→信号行）、第 7 步解释器拒绝（seq=7
+        行）、第 6 步落库（signals 与同 bar fills/equity/funding/
+        task 游标同一原子事务——spec「信号与成交同批原子」）。第 7
+        步的求值在本根成交后快照上进行（ledger 状态自第 5 步后不变，
+        求值调用前移至第 6 步落库前使拒绝行与 pending 上下文并入同
+        bar 事务——求值输入与产出语义等价，见 _persist_bar）。
         """
         bar = self._closed_bar(df, i)
         if bar is None:
@@ -678,43 +855,96 @@ class PaperTaskExecutor:
             return
 
         events: List[ExecutionEvent] = []
+        signal_rows: List[Dict[str, Any]] = []
+        indicator_snapshot = self._indicator_snapshot(df, i)
 
         # ── 第 1/2 步：即时类判定（本根执行前快照）当根按触发价成交 ──
+        # pre 求值只为取即时类意图（防线动作，非基因驱动）；pre 的
+        # 非即时意图与拒绝不在消费路径（意图产出点=第 7 步 post），
+        # 不落信号行
         pre = self.interpreter.interpret(
             bar, signals,
             self.ledger.snapshot(bar.close, bar.seq), self.params)
         for intent in pre.intents:
             if intent.kind == "exit_liquidation":
-                self._execute(intent, bar, events, seq=1)
+                self._execute(
+                    intent, bar, events, signal_rows, seq=_SEQ_LIQUIDATION,
+                    signal_bar_time=bar_time, gene_hits=[],
+                    indicator_snapshot=indicator_snapshot)
             elif intent.kind in ("exit_sl", "exit_tp"):
-                self._execute(intent, bar, events, seq=2)
+                self._execute(
+                    intent, bar, events, signal_rows, seq=_SEQ_STOP_TAKE,
+                    signal_bar_time=bar_time, gene_hits=[],
+                    indicator_snapshot=indicator_snapshot)
 
         # ── 第 3/4 步：上根 pending 消费（出场先于入场族）开盘价成交 ──
-        for intent in [x for x in self.pending
-                       if x.kind in _EXIT_PENDING_KINDS]:
-            self._execute(intent, bar, events, seq=3)
-        for intent in [x for x in self.pending
-                       if x.kind not in _EXIT_PENDING_KINDS]:
-            self._execute(intent, bar, events, seq=4)
+        # 成交或被拒均落信号行：bar_time=意图产生 bar（决策锚）、
+        # exec_bar_time=本根（差一根）、fill_seq 关联同 seq 成交；
+        # 指标快照取决策 bar 值（signal_bar_index 定位；恢复语境 -1
+        # →空 dict——不伪造快照）
+        for p in [x for x in self.pending
+                  if x.intent.kind in _EXIT_PENDING_KINDS]:
+            self._execute(
+                p.intent, bar, events, signal_rows, seq=_SEQ_PENDING_EXIT,
+                signal_bar_time=p.signal_bar_time,
+                gene_hits=list(p.gene_hits),
+                indicator_snapshot=(
+                    self._indicator_snapshot(df, p.signal_bar_index)
+                    if p.signal_bar_index >= 0 else {}))
+        for p in [x for x in self.pending
+                  if x.intent.kind not in _EXIT_PENDING_KINDS]:
+            self._execute(
+                p.intent, bar, events, signal_rows, seq=_SEQ_PENDING_ENTRY,
+                signal_bar_time=p.signal_bar_time,
+                gene_hits=list(p.gene_hits),
+                indicator_snapshot=(
+                    self._indicator_snapshot(df, p.signal_bar_index)
+                    if p.signal_bar_index >= 0 else {}))
         self.pending = []
 
         # ── 第 5 步：资金费（先补旧账再记新账） ──
         funding_rows, backfills = self._settle_funding(bar, bar_time)
 
+        # ── 第 7 步求值（本根成交后快照；ledger 状态自第 5 步后不变，
+        #    求值前移使拒绝行与 pending 上下文并入第 6 步同 bar 事务） ──
+        post = self.interpreter.interpret(
+            bar, signals,
+            self.ledger.snapshot(bar.close, bar.seq), self.params)
+        hits = sig_set.hits
+        snap_post = self.ledger.snapshot(bar.close, bar.seq)
+        for rej in post.rejections:
+            # 解释器内拒绝（求值层拦截）：bar_time=exec_bar_time=本根
+            # （拒绝发生 bar）、seq=7；账户快照=求值时点；基因归因按
+            # 被拦 kind 取披露键（求值披露通道关闭时空数组）
+            gene_hits: List[Dict[str, Any]] = []
+            if hits is not None:
+                gene_hits = list(hits.get(rej.kind, [])[i])
+            signal_rows.append(self._signal_row(
+                bar_time=bar_time, exec_bar_time=bar_time,
+                seq=_SEQ_INTERPRETER_REJECT, kind=rej.kind,
+                direction=rej.direction or None,
+                size_fraction=self._rejected_size_fraction(rej.kind),
+                gene_hits=gene_hits,
+                indicator_snapshot=indicator_snapshot,
+                outcome="rejected",
+                account=self._account_fields(snap_post),
+                reject_reason=rej.reason))
+        new_pending = [
+            PendingIntent(
+                intent=x, signal_bar_time=bar_time,
+                gene_hits=tuple(self._intent_hits(hits, x, i)),
+                signal_bar_index=i)
+            for x in post.intents
+            if x.kind not in ("exit_liquidation", "exit_sl", "exit_tp")]
+
         # ── 第 6 步：权益快照（收盘价估值）+单 bar 原子落库 ──
         snap = self.ledger.snapshot(bar.close, bar.seq)
         self.bars_processed += 1
         self.last_bar_time = bar_time
+        self.pending = new_pending
         self._persist_bar(
-            bar_time, events, snap, funding_rows, backfills)
-
-        # ── 第 7 步：解释器评估本根信号（本根成交后快照）挂 pending ──
-        post = self.interpreter.interpret(
-            bar, signals,
-            self.ledger.snapshot(bar.close, bar.seq), self.params)
-        self.pending = [
-            x for x in post.intents
-            if x.kind not in ("exit_liquidation", "exit_sl", "exit_tp")]
+            bar_time, events, snap, funding_rows, backfills,
+            signals=signal_rows)
 
         # trail 峰值落账（持仓期逐 bar——判定自足，状态权威落点）
         self.ledger.update_trail_peak(bar)
@@ -722,10 +952,40 @@ class PaperTaskExecutor:
         # ── 第 8 步：窗口计数已并入第 6 步 task_state；停止条件判定 ──
         self._evaluate_conclusion(snap)
 
-    def _execute(self, intent: Intent, bar: ClosedBar,
-                 events: List[ExecutionEvent], seq: int) -> None:
-        """执行单条意图（FillOutcome 消费面：被拦丢弃——拒因信号行
-        挂点随任务 4 落地，本任务行为等价不变）。
+    def _intent_hits(
+        self, hits: Optional[Dict[str, Any]], intent: Intent, i: int,
+    ) -> List[Dict[str, Any]]:
+        """意图 → 该 bar 命中基因项（求值披露通道；kind→hits 键映射
+        见 _hits_key_for_intent——防线族/通道关闭时空数组）。"""
+        if hits is None:
+            return []
+        key = _hits_key_for_intent(intent)
+        if key is None:
+            return []
+        return list(hits.get(key, [])[i])
+
+    def _rejected_size_fraction(self, kind: str) -> Optional[float]:
+        """被拒意图的比例自描述（解释器 Rejection 不携带——按 kind
+        从参数单源取：add→add_fraction；其余 None）。"""
+        if kind == "add":
+            return self.params.add_fraction
+        return None
+
+    def _execute(
+        self,
+        intent: Intent,
+        bar: ClosedBar,
+        events: List[ExecutionEvent],
+        signal_rows: List[Dict[str, Any]],
+        seq: int,
+        *,
+        signal_bar_time: str,
+        gene_hits: List[Dict[str, Any]],
+        indicator_snapshot: Dict[str, Any],
+    ) -> None:
+        """执行单条意图（FillOutcome 消费面）：成交落事件+filled 信号
+        行（fill_seq=seq 关联成交）；被拦落 rejected 信号行（拒绝发生
+        bar=承载 bar）。账户快照=执行尝试前时点（C7）。
 
         entry_atr 接线（修复卡：层间接线遗漏）：执行 bar 的 ATR 值
         （feed 指标列装载链）透传 kernel——open 意图的 risk_budget×atr
@@ -733,10 +993,23 @@ class PaperTaskExecutor:
         签名语义）。漏接会使 atr 档距离恒 NaN 走公式单点 (0,0) 防御
         恒回退 fixed。
         """
+        snap_before = self.ledger.snapshot(bar.close, bar.seq)
         outcome = self.ledger.execute(
             intent, bar, self.fill_model, entry_atr=bar.atr)
         fill = outcome.fill
+        exec_bar_time = (bar.timestamp.isoformat()
+                         if bar.timestamp is not None else str(bar.seq))
         if fill is None:
+            signal_rows.append(self._signal_row(
+                bar_time=signal_bar_time, exec_bar_time=exec_bar_time,
+                seq=seq, kind=intent.kind,
+                direction=intent.direction or None,
+                size_fraction=intent.size_fraction,
+                gene_hits=gene_hits,
+                indicator_snapshot=indicator_snapshot,
+                outcome="rejected",
+                account=self._account_fields(snap_before),
+                reject_reason=outcome.reject_reason))
             return
         if fill.realized_pnl is not None:
             self.total_pnl += fill.realized_pnl
@@ -750,6 +1023,19 @@ class PaperTaskExecutor:
         events.append(ExecutionEvent(fill=fill, bar_time=bar.timestamp.isoformat()
                                      if bar.timestamp is not None else str(bar.seq),
                                      seq=seq))
+        # 成交信号行：fill_seq=seq（C5 三元组 (task_id, exec_bar_time,
+        # fill_seq) 定位成交）；capped=cap 截断披露（非拒绝）
+        signal_rows.append(self._signal_row(
+            bar_time=signal_bar_time, exec_bar_time=exec_bar_time,
+            seq=seq, kind=intent.kind,
+            direction=intent.direction or None,
+            size_fraction=intent.size_fraction,
+            gene_hits=gene_hits,
+            indicator_snapshot=indicator_snapshot,
+            outcome="filled",
+            account=self._account_fields(snap_before),
+            fill_seq=seq,
+            capped=1 if fill.capped else None))
         self._push(self.task_id, {
             "type": "fill_event", "task_id": self.task_id,
             "bar_time": events[-1].bar_time, "seq": seq,
@@ -842,9 +1128,12 @@ class PaperTaskExecutor:
         snap: AccountSnapshot,
         funding_rows: List[Dict[str, Any]],
         backfills: List[Dict[str, Any]],
+        signals: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        """单 bar 原子落库（fills+equity+funding+task 游标与账户态一个
-        事务）+task_update 推送。"""
+        """单 bar 原子落库（fills+signals+equity+funding+task 游标与
+        账户态一个事务）+task_update 推送。signals=该 bar 信号行
+        （成交/被拒——spec「信号与成交同批原子」；缺省 None 兼容
+        既有调用面）。"""
         position = snap.position
         # 旧账回填走 append_bar 的 funding_backfills 面（对质中组 2 接口
         # 增量）——仅在非空时传参：正常路径零依赖；回填发生而接口未
@@ -856,6 +1145,7 @@ class PaperTaskExecutor:
             self.db_path, self.task_id,
             bar_time=bar_time,
             fills=[fill_row(e) for e in events],
+            signals=signals,
             equity={
                 "equity": snap.equity, "balance": snap.balance,
                 "unrealized_pnl": snap.unrealized_pnl,
@@ -917,6 +1207,51 @@ class PaperTaskExecutor:
             if snap.equity <= threshold:
                 self._concluded_status = "stopped"
 
+    def _harvest_expired_signals(self) -> None:
+        """终态收割：未消费 pending 意图逐条落 expired 行（spec 记录
+        粒度与写入时机——窗口末根 pending 收割一次性路径）。
+
+        - exec_bar_time=last_bar_time、seq=0（幂等键吸收收割防重入的
+          重复落库——_finalized 标志外的库级第二防线）；
+        - bar_time=意图产生 bar（恢复重建语境无锚=last_bar_time 兜底）；
+        - 账户快照=最后 equity 行+当前任务行持仓组（终态时点账户；
+          运行/恢复两场景统一从库取——内存态与库一致，恢复态无内存）；
+        - indicator_snapshot 空 dict（无当根 bar 语境，不伪造快照）。
+        """
+        if not self.pending:
+            return
+        task = paper_repo.get_task(self.db_path, self.task_id) or {}
+        snap_row = paper_repo.latest_equity_snapshot(
+            self.db_path, self.task_id)
+        last_bar = self.last_bar_time or task.get("last_bar_time") or ""
+        account: Dict[str, Any] = {
+            "position_side": task.get("position_side"),
+            "position_quantity": task.get("position_quantity"),
+            "position_margin": task.get("position_margin"),
+        }
+        if snap_row is not None:
+            account["equity"] = snap_row["equity"]
+            account["balance"] = snap_row["balance"]
+            account["unrealized_pnl"] = snap_row["unrealized_pnl"]
+        else:  # 防御：pending 非空必有已处理 bar（equity 行在场）
+            account["equity"] = task.get("balance") or 0.0
+            account["balance"] = task.get("balance") or 0.0
+            account["unrealized_pnl"] = task.get("unrealized_pnl") or 0.0
+        rows = [
+            self._signal_row(
+                bar_time=p.signal_bar_time or last_bar,
+                exec_bar_time=last_bar, seq=_SEQ_EXPIRED,
+                kind=p.intent.kind, direction=p.intent.direction or None,
+                size_fraction=p.intent.size_fraction,
+                gene_hits=list(p.gene_hits), indicator_snapshot={},
+                outcome="expired", account=account)
+            for p in self.pending
+        ]
+        paper_repo.save_signals(self.db_path, self.task_id, rows)
+        logger.info(
+            "纸盘任务 %s 终态收割 %d 条 expired 信号", self.task_id,
+            len(rows))
+
     def _finalize(self, status: str, *, stop_reason: Optional[str] = None,
                   error_detail: Optional[str] = None) -> None:
         """终态迁移+WS 推送+结题回调（幂等；回调异常不回滚终态——
@@ -925,6 +1260,9 @@ class PaperTaskExecutor:
             return
         self._finalized = True
         self._concluded_status = status
+        # 终态收割（expired 行）：先于终态写落库（证据与终态同批语义；
+        # 收割异常传播——不静默吞证据缺口）
+        self._harvest_expired_signals()
         fields: Dict[str, Any] = {"status": status}
         if status in TERMINAL_STATUSES:
             fields["stopped_at"] = utc_now_iso()
