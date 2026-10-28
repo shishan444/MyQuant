@@ -544,3 +544,174 @@ class TestSQLiteWriteSafetyGate:
         conn.close()
         assert n == n_threads * per_thread, f"快照行数 {n} ≠ 800（丢写）"
         assert cur is not None and cur >= 0, "任务行并发更新后不可空"
+
+
+class TestQueueStopGuard:
+    """CARD-02 排队任务 stop 后复活锚（review4_cards.md CARD-02）。
+
+    修复双层：_execute_task 接手写 expected_statuses=("pending",) 守护
+    （主修——stop 先写则放弃执行）+_tick 剔除登记时 fut.cancel()（增强
+    ——排队未开跑可取消）。锚按「stop 先写、任务后开跑」状态面构造
+    （现 while 守卫下自然排队时序不可达，防御对象是任意进入该状态的
+    路径——两层各锚一面）。
+    """
+
+    @pytest.fixture()
+    def app_env(self, tmp_path):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+
+        db = tmp_path / "qs.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        app = create_app(db_path=db, data_dir=d)
+        enhanced = compute_all_indicators(make_ohlcv(120, "4h"))
+        with patch("core.data.mtf_loader.load_and_prepare_df",
+                   return_value=enhanced), \
+             patch("api.runner_progress._push_ws"), \
+             TestClient(app) as client:
+            runner = app.state.evolution_runner
+            yield {"client": client, "db": db, "runner": runner}
+
+    def _install_gate_stub(self, runner, gate: threading.Event):
+        from unittest.mock import patch
+
+        def fake_pop(pop, *a, **kw):
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if gate.is_set():
+                    break
+                time.sleep(0.02)
+            return [_stub_score(d) for d in pop]
+
+        def fake_dna(ind, *a, **kw):
+            score = _stub_score(ind)
+            return {"score": score, "fitness": score, "qualified": False,
+                    "raw_metrics": {}, "dimension_scores": {},
+                    "total_trades": 0}
+
+        p1 = patch.object(runner, "_evaluate_population", fake_pop)
+        p2 = patch.object(runner, "_evaluate_dna", fake_dna)
+        p1.start()
+        p2.start()
+        return [p1, p2]
+
+    def test_queued_task_stop_never_starts_and_next_fills(self, app_env):
+        """主锚：双 worker 占满+第 3 任务真实排队（手工 submit——池
+        排队语义真实）→stop（200+stopped）→tick 剔除+cancel 生效→
+        释放槽后第 3 任务永不开跑（stopped 保持+零 history）+第 4 任务
+        正常补位。task_started 推送在 _execute_task 接手写之后——
+        status stopped 保持+零 history 即证明未执行（推送未发）。"""
+        db, client, runner = (app_env["db"], app_env["client"],
+                              app_env["runner"])
+        gate = threading.Event()
+        patches = self._install_gate_stub(runner, gate)
+        try:
+            _preset_task(db, "t1")
+            _preset_task(db, "t2")
+            _wait_for(lambda: get_task(db, "t1")["status"] == "running"
+                      and get_task(db, "t2")["status"] == "running",
+                      msg="t1/t2 未占满双 worker")
+
+            # 第 3 任务入池排队（DB pending+future not done——worker
+            # 全忙，submit 后真实排队）
+            _preset_task(db, "t3")
+            t3_row = dict(get_task(db, "t3"))
+            fut3 = runner._pool.submit(runner._run_task, t3_row)
+            with runner._lock:
+                runner._futures["t3"] = fut3
+            assert not fut3.done() and not fut3.cancelled(), (
+                "排队态确认（worker 全忙——future 在池队列）")
+            assert get_task(db, "t3")["status"] == "pending", (
+                "排队期 DB 应保持 pending（_run_task 未执行）")
+
+            # stop 排队中的 t3：守护含 pending→200+stopped
+            r = client.post("/api/evolution/tasks/t3/stop")
+            assert r.status_code == 200
+            assert r.json()["status"] == "stopped"
+            # tick 校验段剔除登记+cancel（排队态 cancel 应生效）
+            tick_base = runner._tick_count
+            _wait_for(lambda: runner._tick_count >= tick_base + 3,
+                      msg="等待剔除+cancel 窗口")
+            _wait_for(fut3.cancelled, timeout=5,
+                      msg="排队 future 应被 cancel（增强层生效）")
+
+            # 释放槽：t1/t2 自然完成；第 4 任务补位
+            gate.set()
+            _preset_task(db, "t4")
+            _wait_for(lambda: get_task(db, "t4")["status"] == "completed",
+                      timeout=60, msg="第 4 任务未正常补位完成")
+
+            # 主断言：t3 永不开跑——stopped 保持+零 history 落库
+            row = get_task(db, "t3")
+            assert row["status"] == "stopped", (
+                f"排队期被 stop 的任务不得复活: {row['status']}")
+            assert row["stop_reason"] == "user_stop"
+            conn = sqlite3.connect(db)
+            n_hist = conn.execute(
+                "SELECT COUNT(*) FROM evolution_history "
+                "WHERE task_id = 't3'").fetchone()[0]
+            conn.close()
+            assert n_hist == 0, "零 history=任务从未开跑（未复活）"
+            for tid in ("t1", "t2"):
+                assert get_task(db, tid)["status"] == "completed"
+        finally:
+            gate.set()
+            for p in patches:
+                p.stop()
+
+    def test_takeover_guard_stopped_before_start(self, tmp_path, caplog):
+        """守护直锚（主修独立面）：stop 先写 stopped、任务后开跑的序
+        ——直调 _run_task，接手写守护拒绝覆写，任务放弃执行+warning
+        日志+controller 无残留。"""
+        import logging
+        from unittest.mock import patch
+        from api.runner import EvolutionRunner, get_active_controllers
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+
+        db = tmp_path / "guard.db"
+        init_db_ext(db)
+        runner = EvolutionRunner(db_path=db, data_dir=tmp_path,
+                                 poll_interval=0.05)
+        _preset_task(db, "g1", max_generations=2)
+        # 模拟排队期 stop 先写（stop 通道守护含 pending→可写 stopped）
+        from core.persistence.db import update_task
+        assert update_task(db, "g1", status="stopped",
+                           stop_reason="user_stop",
+                           expected_statuses=("running", "paused", "pending"))
+        t_row = dict(get_task(db, "g1"))
+
+        enhanced = compute_all_indicators(make_ohlcv(120, "4h"))
+        with patch("core.data.mtf_loader.load_and_prepare_df",
+                   return_value=enhanced), \
+             patch("api.runner_progress._push_ws"), \
+             patch.object(runner, "_evaluate_population",
+                          lambda pop, *a, **kw: [
+                              _stub_score(d) for d in pop]), \
+             patch.object(runner, "_evaluate_dna",
+                          lambda ind, *a, **kw: {
+                              "score": _stub_score(ind),
+                              "fitness": _stub_score(ind),
+                              "qualified": False, "raw_metrics": {},
+                              "dimension_scores": {},
+                              "total_trades": 0}), \
+             caplog.at_level(logging.WARNING, logger="RUNNER"):
+            runner._run_task(t_row)
+
+        row = get_task(db, "g1")
+        assert row["status"] == "stopped", (
+            f"接手写守护拒绝覆写终态: {row['status']}")
+        conn = sqlite3.connect(db)
+        n_hist = conn.execute(
+            "SELECT COUNT(*) FROM evolution_history "
+            "WHERE task_id = 'g1'").fetchone()[0]
+        conn.close()
+        assert n_hist == 0, "放弃执行——零 history"
+        assert any("接手前已被外部终态化" in rec.message
+                   for rec in caplog.records), "守护 warning 留痕"
+        assert "g1" not in get_active_controllers(), "controller 无残留"
