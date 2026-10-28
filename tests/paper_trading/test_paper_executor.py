@@ -1591,3 +1591,47 @@ class TestUnlimitedWindowNeverAutoConcludes:
         ex.process_frames(h.enhanced, 0)
         assert h.task()["status"] == "completed"
         assert h.concluded == [(h.task_id, "completed")]
+
+
+class TestMinNotionalSignalRow:
+    """④below_min_notional 拒因行落 pt_signal（change paper-
+    depletion-terminal 任务 2 完成标准④——change-2 任务 4 承接点）：
+    exec_bar_time=执行尝试 bar、bar_time=意图产生 bar。"""
+
+    def test_rejected_row_persisted(self, tmp_path, monkeypatch):
+        """构造：初始资金足以过 insufficient_funds（qty>0）但名义
+        低于阈值→开仓拒绝行落库（seq=4、拒因 below_min_notional）。"""
+        from core.paper_trading import min_notional as mn
+
+        h = _Harness(tmp_path, window_bars=30)
+        # 阈值注入（装载表写回——executor 读表按 symbol 取）
+        mn.MIN_NOTIONAL.clear()
+        mn.MIN_NOTIONAL.update({"BTCUSDT": 1e9, "ETHUSDT": 20.0})
+        try:
+            ex = h.make_executor()
+            paper.update_task(
+                h.db, h.task_id, status="running",
+                started_at="2026-10-28T00:00:00+00:00")
+            rsi = [50.0] * 200
+            rsi[5] = 20.0
+            frame = h.enhanced.copy()
+            frame["rsi_14"] = rsi
+            ex.process_frames(frame, 0)
+        finally:
+            mn.MIN_NOTIONAL.clear()
+            mn.MIN_NOTIONAL.update(mn.MIN_NOTIONAL_BUILTIN)
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        rejected = [r for r in rows
+                    if r["reject_reason"] == "below_min_notional"]
+        assert len(rejected) == 1
+        row = rejected[0]
+        assert row["outcome"] == "rejected"
+        assert row["signal_kind"] == "open"
+        assert row["seq"] == 4
+        assert row["bar_time"] == h.enhanced.index[5].isoformat(), \
+            "bar_time=意图产生 bar（决策锚）"
+        assert row["exec_bar_time"] == h.enhanced.index[6].isoformat(), \
+            "exec_bar_time=执行尝试 bar（次根）"
+        # 无成交发生（拒绝不落账）
+        assert paper.list_fills(h.db, h.task_id, limit=1000) == []

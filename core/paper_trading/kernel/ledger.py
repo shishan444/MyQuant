@@ -296,7 +296,8 @@ class Ledger:
 
     def execute(self, intent: Intent, exec_bar: ClosedBar,
                 fill_model: FillModel,
-                entry_atr: float | None = None) -> FillOutcome:
+                entry_atr: float | None = None,
+                min_notional: float | None = None) -> FillOutcome:
         """执行单条意图（定仓→成交→状态变更，返回成交或显式拒因）。
 
         判定序与意图合法性由解释器/执行器保证；本方法对语境不符的
@@ -309,6 +310,12 @@ class Ledger:
         balance/position；价格侧 inf 由装载点守卫
         （executor._closed_bar 四价 isfinite）单点拦截，本守卫
         不重复；常态路径价格有效时恒 False 零影响。
+        最小名义值拦截（change paper-depletion-terminal 任务 2）：
+        open 分支 size_open 定仓产出后、fill_model.fill 前，成交前
+        名义 qty×base_price<min_notional→FillOutcome(None,
+        "below_min_notional")（cap 截断语义不变——截断后仍达标则
+        继续成交并标 capped）；min_notional=None=不判定（测试与
+        未装载形态）。
 
         Args:
             intent: 待执行意图。
@@ -316,12 +323,13 @@ class Ledger:
             fill_model: 成交方式（成交唯一通道）。
             entry_atr: 入场 bar ATR（open 意图的 risk_budget 档定仓
                 消费；其余意图不读）。
+            min_notional: 最小名义值阈值（执行器从启动装载表按
+                symbol 注入；None=不判定）。
 
         Returns:
             FillOutcome: fill=成交记录（realized_pnl 已回填）+
             reject_reason=None；被拦时 fill=None+拒因枚举
-            （insufficient_funds/context_invalid；below_min_notional
-            拦截分支归 change-4）。
+            （insufficient_funds/context_invalid/below_min_notional）。
         """
         kind = intent.kind
         if kind == "open":
@@ -333,6 +341,11 @@ class Ledger:
             qty, capped = self.size_open(exec_bar.open, entry_atr)
             if not (qty > 0.0):
                 return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
+            # 最小名义值拦截（size_open 产出后、fill 前——用截断后
+            # 定仓产出判定：cap 截断后仍≥阈值→成交+capped；<→拒绝）
+            if min_notional is not None \
+                    and qty * exec_bar.open < min_notional:
+                return FillOutcome(None, REJECT_BELOW_MIN_NOTIONAL)
             fill = fill_model.fill(intent, exec_bar, qty)
             fill.capped = capped
             margin_used = self._apply_open(fill, exec_bar, entry_atr)

@@ -1020,8 +1020,14 @@ class PaperTaskExecutor:
         恒回退 fixed。
         """
         snap_before = self.ledger.snapshot(bar.close, bar.seq)
+        # 最小名义值阈值注入（change paper-depletion-terminal 任务 2：
+        # 启动装载表按任务 symbol 取——白名单币恒有值；表缺键 None=
+        # 不判定防御形态）
+        from core.paper_trading.min_notional import MIN_NOTIONAL
+
         outcome = self.ledger.execute(
-            intent, bar, self.fill_model, entry_atr=bar.atr)
+            intent, bar, self.fill_model, entry_atr=bar.atr,
+            min_notional=MIN_NOTIONAL.get(self.task_row["symbol"]))
         fill = outcome.fill
         # 承载 bar 时刻单算（信号行 exec_bar_time 与事件 bar_time 同式
         # ——Q-5 收敛单变量）
