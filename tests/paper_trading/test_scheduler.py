@@ -1,6 +1,6 @@
 """任务调度器测试（rebuild-paper-trading 任务 3.3）。
 
-覆盖：状态机全迁移集+非法迁移拒绝面；并发上限（第 11 任务停留
+覆盖：状态机全迁移集+非法迁移拒绝面；并发上限（第 101 任务停留
 pending、活跃数降后拾取）+环境变量覆盖；窗口到点自动 completed+
 停止条件转 stopped（禁止变化断言：停止触发的 bar 上交易行为与无停止
 条件时逐笔一致）；stop 三态分派（pending 直接 stopped/running 协作）；
@@ -166,6 +166,28 @@ class TestConcurrencyCap:
         finally:
             monkeypatch.delenv("PAPER_MAX_RUNNING_TASKS")
             importlib.reload(constants)  # 恢复缺省（防污染后续用例）
+
+    def test_default_cap_100_s3(self, monkeypatch, tmp_path):
+        """S3 承载三面：缺省护栏 100 常量断言（spec 同值锚）+调度器
+        消费同值+队列深度可观察（runner-status 的 pending_depth 与
+        max_running_tasks 透出缺省值）。"""
+        from core.paper_trading import constants
+
+        monkeypatch.delenv("PAPER_MAX_RUNNING_TASKS", raising=False)
+        try:
+            reloaded = importlib.reload(constants)
+            assert reloaded.MAX_RUNNING_TASKS == 100, \
+                "缺省护栏 100（change paper-mount-and-concurrency）"
+            h = _SchedulerHarness(tmp_path)
+            try:
+                status = h.scheduler.status()
+                assert status["max_running_tasks"] == 100, \
+                    "调度器缺省消费 100（runner-status 透出）"
+                assert status["pending_depth"] == 0, "空队列深度 0 可观察"
+            finally:
+                h.teardown()
+        finally:
+            importlib.reload(constants)
 
 
 class TestConclusion:
@@ -964,12 +986,15 @@ class TestStrategyReturnFlow:
         assert "st-flow" in caplog.text  # info 日志（仍有活跃任务）
         assert "暂不回流" in caplog.text
 
-    def test_callback_error_continues_conclusion(self, tmp_path, caplog):
-        """回调异常→结题继续+error 日志：live 态策略（存量遗留非法
-        前态）任务终态→transit 409→结构化 error 日志（code 可辨）→
-        客户端回调仍透传（两权威分离）。注：draft 前态经 task_end 回流
-        是矩阵合法边（draft→active），运行时校验面=矩阵+凭证两层，
-        trigger-边错配不在校验面——本用例取 live 构造真 409。"""
+    def test_callback_error_continues_conclusion(self, tmp_path, caplog,
+                                                  monkeypatch):
+        """回调异常→结题继续+error 日志：paper 态任务终态+transit 意外
+        异常（CARD-02 except Exception 兜底面——change-3 前置守卫后
+        策略不在/非 paper 态在守卫层正当跳过〔debug〕不再触 transit，
+        本用例经注入构造回流侧异常）→exception 日志留痕→客户端回调
+        仍透传（两权威分离）。注：draft 前态经 task_end 回流是矩阵
+        合法边（draft→active），该冒用面已由前置守卫封死（见
+        TestRelaxedMountReturnFlow）。"""
         import logging
 
         concluded: list = []
@@ -977,12 +1002,19 @@ class TestStrategyReturnFlow:
         logging.getLogger().addHandler(caplog.handler)  # 同 fileConfig 坑位
         h.scheduler._on_concluded_client = (
             lambda tid, st: concluded.append((tid, st)))
-        h.seed_paper_strategy("st-flow", status="live")
+        h.seed_paper_strategy("st-flow", status="paper")
         h.seed_task("pt_flow00000001", "st-flow", status="completed")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("transit channel broken")
+
+        # transit 在函数体内局部 import——patch lifecycle.transit 单点
+        import core.strategy.lifecycle as lifecycle_mod
+
+        monkeypatch.setattr(lifecycle_mod, "transit", _boom)
         with caplog.at_level(logging.ERROR, logger="paper_runtime"):
             h.scheduler._executor_concluded("pt_flow00000001", "completed")
-        assert h.strategy_status("st-flow") == "live"
-        assert "STRATEGY_ILLEGAL_TRANSITION" in caplog.text
+        assert "回流重放意外异常" in caplog.text
         assert "pt_flow00000001" in caplog.text
         assert concluded == [("pt_flow00000001", "completed")], \
             "结题流程继续（客户端回调不被迁移失败绑架）"
@@ -1345,3 +1377,76 @@ class TestStrategyReturnFlow:
             assert len(h.scheduler.status()["backfill"]) == 12  # 非空状态面
         finally:
             h.teardown()
+
+
+class TestRelaxedMountReturnFlow:
+    """挂载门槛放宽后的回流安全（change paper-mount-and-concurrency
+    任务 ④）：draft/candidate/live 续挂任务终态——回流域前置守卫
+    （回流域=「paper 态」与扫描域同判据）正当跳过，策略态不变零
+    迁移事件（draft→active 是矩阵合法转正边，不守卫则 task_end
+    凭证冒用转正通道——守卫是对齐「draft 挂盘不构成转正通道」
+    终审语义的正确实现）。"""
+
+    @pytest.mark.parametrize("status", ["draft", "candidate", "live"])
+    def test_relaxed_mount_terminal_no回流(self, tmp_path, status, caplog):
+        """④draft/candidate/live 续挂任务终态：回流尝试属非法前态
+        （→active），LifecycleError 兜底捕获（error 日志）→结题继续
+        （任务终态已写）+策略态不变+零迁移事件。"""
+        import logging
+
+        h = _ReturnFlowHarness(tmp_path, name=f"relax_{status}")
+        h.seed_paper_strategy("st-relax", status=status)
+        h.seed_task("pt_relax0001", "st-relax", status="completed")
+        task_before = paper.get_task(h.db, "pt_relax0001")
+        logging.getLogger().addHandler(caplog.handler)  # 同 fileConfig 坑位
+
+        with caplog.at_level(logging.DEBUG, logger="paper_runtime"):
+            # 直调终态回调路径（_concluded 内联回流——与生产同链）
+            h.scheduler._replay_task_end("pt_relax0001", "completed")
+        assert "不回流" in caplog.text, "前置守卫正当跳过留痕（debug）"
+        # 结题继续（任务终态不被回流失败绑架）+策略态不变+零事件
+        assert task_before["status"] == "completed"
+        assert h.strategy_status("st-relax") == status, "策略态不变"
+        assert h.events("st-relax") == [], "零迁移事件"
+
+    def test_replay_scan_skips_non_paper_strategies(self, tmp_path):
+        """后台重放扫描域=「终态任务×strategy.status='paper'」——
+        draft/candidate/live 策略不在扫描域，重放步零行为。"""
+        h = _ReturnFlowHarness(tmp_path, name="scan_skip")
+        h.seed_paper_strategy("st-scan", status="draft")
+        h.seed_task("pt_scan00001", "st-scan", status="completed")
+        # 重放步两轮（幂等面）：draft 态零命中零迁移
+        h.scheduler._replay_paper_strategies()
+        h.scheduler._replay_paper_strategies()
+        assert h.strategy_status("st-scan") == "draft"
+        assert h.events("st-scan") == []
+
+    @pytest.mark.parametrize("status", ["draft", "candidate", "live"])
+    def test_concluded_chain_callback_transparent_for_non_paper(
+            self, tmp_path, status):
+        """端到端回调链（生产挂点 _executor_concluded——executor
+        on_concluded 构造直传入口，scheduler.py:199/338 同参）：三态
+        续挂任务终态→登记清理→回流守卫正当跳过→客户端结题回调仍
+        透传（守卫跳过不绑架结题）+策略态不变+零迁移事件。与上例
+        直调 _replay_task_end 互补：上例证守卫单点行为，本例证回调
+        链整体（顺序完整性——守卫 return 后回调不丢）。"""
+        h = _ReturnFlowHarness(tmp_path, name=f"chain_{status}")
+        h.seed_paper_strategy("st-chain", status=status)
+        h.seed_task("pt_chain0001", "st-chain", status="completed")
+        # 预置登记（回调链首段清理面的真实对象面——pop 对空 dict
+        # 是 no-op，预置后断言才证清理段执行）
+        h.scheduler._executors["pt_chain0001"] = object()
+        h.scheduler._threads["pt_chain0001"] = object()
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+
+        h.scheduler._executor_concluded("pt_chain0001", "completed")
+
+        assert "pt_chain0001" not in h.scheduler._executors, \
+            "执行器登记已清理（回调链首段）"
+        assert "pt_chain0001" not in h.scheduler._threads
+        assert concluded == [("pt_chain0001", "completed")], \
+            "客户端结题回调透传（非 paper 态跳过回流不绑架结题）"
+        assert h.strategy_status("st-chain") == status, "策略态不变"
+        assert h.events("st-chain") == [], "零迁移事件"

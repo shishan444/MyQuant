@@ -530,6 +530,26 @@ class PaperTaskExecutor:
             validate_symbol(symbol)  # 直拼前命名白名单（CARD-01②）
         except ValueError as exc:
             return self._reject(f"invalid_symbol: {exc}")
+
+        # 挂载双白名单装载第二道（change paper-mount-and-concurrency
+        # 任务 3：受理层被绕过〔库内行直插/dna 被改后重启〕时的库内
+        # 行兜底——沿 D1-② 双层镜像先例；格式校验先行〔invalid_symbol
+        # 是格式面〕，白名单枚举在后；拒绝 detail 双维分立可辨，值域
+        # 单源 constants 白名单与受理层同判据）
+        from core.paper_trading.constants import (
+            PAPER_SYMBOL_WHITELIST, PAPER_TIMEFRAME_WHITELIST)
+        if symbol not in PAPER_SYMBOL_WHITELIST:
+            return self._reject(
+                "symbol_not_supported_by_platform: 品种 "
+                f"{symbol} 不在纸盘白名单"
+                f"（{sorted(PAPER_SYMBOL_WHITELIST)}）——白名单外零数据"
+                "接入，任务不可装载")
+        if self.task_row["timeframe"] not in PAPER_TIMEFRAME_WHITELIST:
+            return self._reject(
+                "timeframe_not_supported_by_platform: 执行周期 "
+                f"{self.task_row['timeframe']} 不在纸盘支持档位"
+                f"（{sorted(PAPER_TIMEFRAME_WHITELIST)}——固定订阅制六档"
+                "）；策略可在回测/研究链使用")
         path = self._data_dir / f"{symbol}_{self._timeframe}.parquet"
         if not path.exists():
             return self._reject("no_data: 执行周期 parquet 不存在")

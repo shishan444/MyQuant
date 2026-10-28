@@ -27,6 +27,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_data_dir, get_db_path
 from core.data.validation import validate_symbol
+from core.paper_trading.constants import (
+    PAPER_SYMBOL_WHITELIST,
+    PAPER_TIMEFRAME_WHITELIST,
+)
 from core.paper_trading.reporting import (
     FINAL_STATUSES,
     TaskNotConcludedError,
@@ -68,13 +72,21 @@ class PaperTaskCreate(BaseModel):
     @classmethod
     def _validate_symbol_whitelist(
             cls, v: Optional[str]) -> Optional[str]:
-        """symbol 入口白名单（CARD-01①）：用户可控 symbol 直落任务行、
-        下游 parquet 路径直拼——接 core/data/validation.validate_symbol
-        单源（与写路径 updater 同点），非法 422 校验数组拒绝；None=
-        缺省取 DNA 不经此面。"""
+        """symbol 入口白名单（CARD-01①+挂载品种白名单）：格式白名单
+        （core/data/validation.validate_symbol 单源——用户可控 symbol
+        直落任务行、下游 parquet 路径直拼）后追加挂载枚举校验
+        （PAPER_SYMBOL_WHITELIST——固定 12 路订阅制的能力边界，用户
+        裁决 2026-10-28），非法 422 校验数组拒绝（detail 含白名单
+        值域）；None=缺省取 DNA 不经此面。"""
         if v is None:
             return v
-        return validate_symbol(v)
+        v = validate_symbol(v)
+        if v not in PAPER_SYMBOL_WHITELIST:
+            raise ValueError(
+                f"symbol {v} 不在纸盘挂载白名单（固定订阅制——仅支持 "
+                f"{sorted(PAPER_SYMBOL_WHITELIST)}，白名单外品种零数据"
+                f"接入不订阅不装载）")
+        return v
 
 
 class PaperTaskResponse(BaseModel):
@@ -331,16 +343,18 @@ def create_task(
 ) -> PaperTaskResponse:
     """上盘（受理恒 201 返 pending 行——受理≠运行，超限停留 pending
     排队不拒绝；拒绝面 404 strategy not found/422 校验数组/409 非法
-    前置态）。
+    前置态——仅 archived 一态）。
 
-    挂盘三态契约（B' 前置集={active,paper}，build-strategy-lifecycle
-    5.1；三态分派住 transit 返回层，端点只管调用——防 TOCTOU 竞态与
-    校验散层）：from=active→同事务迁移 active→paper（trigger=mount，
-    evidence=task_id）+事件写入+任务创建；from=paper→同态续挂不迁移
-    （任务照常创建、零迁移事件——v3 §12.4 同策略对照已批能力的保留）；
-    draft/archived/candidate/live→409 STRATEGY_ILLEGAL_TRANSITION 失败
-    回滚两侧（不建任务无事件）。candidate/live 的正当上盘通道=迭代
-    克隆→重验证→active→再挂盘（不放宽 409，需求出现走变更传播）。
+    挂盘四分支分派（挂载门槛放宽=用户裁决 2026-10-28，Q3 终审；
+    分派判据=挂载请求时点策略态，任务自包含〔DNA 快照〕不受策略
+    后续态影响）：from=active→同事务迁移 active→paper（trigger=
+    mount，evidence=task_id）+事件写入+任务创建；from=paper→同态
+    续挂不迁移（任务照常创建、零迁移事件——v3 §12.4 同策略对照
+    已批能力的保留）；from=draft/candidate/live→同态续挂不迁移
+    （任务照常创建、策略态不变、无迁移事件——与 paper 续挂同构，
+    无观察轨概念：draft 挂载任务与普通任务完全同构，research_status
+    披露由现行三序现算机制天然携带）；from=archived→409
+    STRATEGY_ILLEGAL_TRANSITION 唯一排除（失败不建任务）。
     """
     from core.persistence.orm.engine import engine_for
     from core.persistence.repository.strategy import get_strategy
@@ -357,11 +371,45 @@ def create_task(
     # risk_genes（任务覆写面 design §7.1 端点 1）
     dna = StrategyDNA.from_json(strategy["dna_json"])
     task_id = paper.new_task_id()
-    # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
-    # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
+    # 挂载周期白名单（change paper-mount-and-concurrency：周期面固定
+    # 六档，用户裁决 2026-10-28）：timeframe 恒从 DNA 抄录，校验在
+    # 流转点——「执行环境不支持」形制〔能力矩阵拒绝先例，非「策略
+    # 无效」〕：validator 的 DNA 值域不收窄，超集周期策略可存在可
+    # 回测仅不可挂盘
+    exec_tf = dna.execution_genes.timeframe
+    if exec_tf not in PAPER_TIMEFRAME_WHITELIST:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PAPER_TIMEFRAME_NOT_SUPPORTED",
+                "message": "执行周期不在纸盘挂载支持档位（执行环境不"
+                           "支持——非策略无效；validator DNA 值域不收"
+                           "窄，策略可在回测/研究链使用）",
+                "detail": {
+                    "timeframe": exec_tf,
+                    "supported": sorted(PAPER_TIMEFRAME_WHITELIST)},
+            })
+    # symbol 终值白名单（C3-03/S-2：body.symbol 显式传入已在请求
+    # 校验面拦截；缺省抄录 DNA.execution_genes.symbol 的终值在此
+    # 流转点校验——与 exec_tf 同点同形制，消「201 受理后装载拒」
+    # 的占位不一致）
+    final_symbol = body.symbol or dna.execution_genes.symbol
+    if final_symbol not in PAPER_SYMBOL_WHITELIST:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PAPER_SYMBOL_NOT_SUPPORTED",
+                "message": "品种不在纸盘挂载白名单（固定订阅制——白"
+                           "名单外零数据接入不订阅不装载）",
+                "detail": {
+                    "symbol": final_symbol,
+                    "supported": sorted(PAPER_SYMBOL_WHITELIST)},
+            })
+    # 快照取挂盘受理时点（四分支 resolve：active/paper 同值〔均非
+    # draft 且共享事件史〕；draft→"draft"；candidate/live 按三序现算）
     snapshot = paper.resolve_research_status(db_path, strategy)
     # 纸盘链能力矩阵受理层（dynamic-stop-loss-series 4.3 D1-①：
-    # series 档等纸盘不支持模式挂盘即拒——沿 live 受理前移先例
+    # series 档等纸盘不支持模式挂载即拒——沿 live 受理前移先例
     # （live_trading.py:56）同构；与装载层 executor prepare 双层镜像
     # live 链双插桩结构；判据单源 validate_trading_compatibility，
     # reasons 含档位名与「后续专项补齐」标注）
@@ -373,32 +421,63 @@ def create_task(
             detail={"code": "DNA_TRADING_INCOMPATIBLE",
                     "message": "策略与纸盘链不兼容（能力矩阵拒绝）",
                     "detail": {"reasons": _reasons}})
+
+    create_values = dict(
+        task_id=task_id,
+        strategy_id=body.strategy_id,
+        dna_snapshot_json=strategy["dna_json"],
+        symbol=body.symbol or dna.execution_genes.symbol,
+        timeframe=dna.execution_genes.timeframe,
+        research_status_snapshot=snapshot,
+        initial_cash=body.initial_cash, fee=body.fee,
+        slippage=body.slippage,
+        leverage=(body.leverage if body.leverage is not None
+                  else dna.risk_genes.leverage),
+        window_bars=body.window_bars,
+        stop_loss_pct=body.stop_loss_pct)
+    # 分派移入事务内重读（C3-02/S-1：TOCTOU 防护恢复——原三态分派
+    # 的 transit 事务内校验被四分支改造删除，此处以「事务内重读
+    # Strategy.status 再分派」为更严格实现：并发归档/转正在事务内
+    # 被看见，归档绕过窗口封死；「请求时点策略态」语义以事务内
+    # 重读时点为准）
+    from sqlalchemy import select as _select
+
+    from core.persistence.orm.models import Strategy as _Strategy
     try:
         with engine_for(db_path).begin() as conn:
-            # 迁移+建任务同事务原子两向：not_migrated（同态续挂）照常
-            # 建任务；LifecycleError（409 非法边/422 凭证/404/RACE）
-            # 上抛经 with 回滚——两侧皆无
-            transit(
-                db_path, body.strategy_id, target="paper", trigger="mount",
-                evidence={"task_id": task_id}, conn=conn)
-            paper.create_task(
-                db_path,
-                conn=conn,
-                task_id=task_id,
-                strategy_id=body.strategy_id,
-                dna_snapshot_json=strategy["dna_json"],
-                symbol=body.symbol or dna.execution_genes.symbol,
-                timeframe=dna.execution_genes.timeframe,
-                research_status_snapshot=snapshot,
-                initial_cash=body.initial_cash, fee=body.fee,
-                slippage=body.slippage,
-                leverage=(body.leverage if body.leverage is not None
-                          else dna.risk_genes.leverage),
-                window_bars=body.window_bars,
-                stop_loss_pct=body.stop_loss_pct)
+            fresh_status = conn.execute(
+                _select(_Strategy.status).where(
+                    _Strategy.strategy_id == body.strategy_id)
+            ).scalar_one_or_none()
+            if fresh_status is None:
+                raise HTTPException(
+                    status_code=404, detail="strategy not found")
+            if fresh_status == "archived":
+                # 唯一排除面（409 失败不建任务；raise 经 with 回滚
+                # ——零副作用；沿 LifecycleError 三段 dict 形制）
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "STRATEGY_ILLEGAL_TRANSITION",
+                        "message": "archived 策略不可挂盘（唯一排除面"
+                                   "——挂载门槛放宽后 archived 仍拒绝）",
+                        "detail": {
+                            "strategy_id": body.strategy_id,
+                            "from_status": "archived",
+                            "target": "paper"}},
+                )
+            if fresh_status == "active":
+                # 迁移分支：迁移+建任务同事务原子两向（LifecycleError
+                # 上抛经 with 回滚——两侧皆无）
+                transit(
+                    db_path, body.strategy_id, target="paper",
+                    trigger="mount", evidence={"task_id": task_id},
+                    conn=conn)
+            # paper/draft/candidate/live →同态续挂（Q3 终审放宽）：
+            # 不迁移不产事件，仅任务创建（本事务——无迁移侧故无两侧
+            # 原子性需求）
+            paper.create_task(db_path, conn=conn, **create_values)
     except LifecycleError as exc:
-        # 沿 strategies 域 _lifecycle_error_to_http 三段 dict 形制
-        # （本域单点内联——code 可辨 STRATEGY_ILLEGAL_TRANSITION）
         raise HTTPException(
             status_code=exc.status,
             detail={"code": exc.code, "message": exc.message,
@@ -479,19 +558,20 @@ def delete_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> dict:
-    """删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。
+    """删除任务（仅终态；六表级联单事务）；运行/pending→409 stop first。
 
     删除补偿回流（delete-task-reentry-guard 方案甲）：删除完成后对关
     联策略执行一次 paper→active 回流尝试（trigger=task_end，evidence
     来自删除前持有的任务行内存事实）——封「终态后删除任务与回流竞
     态窗」内回流永久失据的缺口（后台扫描域依赖任务行在场，行已删无
-    法走扫描形）。全部边界情形由 transit 单点承担（幂等
-    already_in_status/另有活跃任务 active_tasks_remain/非 paper 态守
-卫——与既有回调/后台重试两通道汇合同一汇合点）；失败仅记日志不绑
-    架删除——删除是既成事实；无其他终态任务行的策略滞留 paper 态且
-    无自愈通道（后台扫描域依赖任务行在场，行已删即失据——语义边界：
-    当场闭环窗口内多数情形，不承诺绝对自愈，绝对自愈属策略中心建设
-    范畴）。响应契约零变化（回流结果不进响应——补偿是后台性动作）。"""
+    法走扫描形）。回流域前置守卫（change-3 同 scheduler._replay_task_
+    end 同判据）：strategy.status≠"paper" 正当跳过不调 transit——
+    draft→active 是矩阵合法转正边（transit 不做 trigger×边交叉校验），
+    不守卫则 draft 挂载任务删除会凭 task_end 凭证非法转正（「draft
+    挂盘不构成转正通道」用户终审语义）；其余边界由 transit 承担
+    （幂等 already_in_status/另有活跃任务 active_tasks_remain）；
+    失败仅记日志不绑架删除——删除是既成事实。响应契约零变化（回流
+    结果不进响应——补偿是后台性动作）。"""
     row = _require_task(db_path, task_id)
     if row["status"] not in FINAL_STATUSES:
         raise HTTPException(status_code=409, detail="stop first")
@@ -502,6 +582,17 @@ def delete_task(
     # message，info migrated，debug 静默不迁移）
     from core.strategy.lifecycle import transit
     from core.strategy.lifecycle.machine import LifecycleError
+
+    # 回流域前置守卫（与 scheduler._replay_task_end 同判据——回流域=
+    # 「paper 态」；非 paper 态正当跳过，debug 留痕）
+    from core.persistence.repository.strategy import get_strategy
+
+    strategy_row = get_strategy(db_path, row["strategy_id"])
+    if strategy_row is None or strategy_row["status"] != "paper":
+        logger.debug(
+            "删除补偿回流跳过（策略 %s 非 paper 态）: task_id=%s",
+            row["strategy_id"], task_id)
+        return {"deleted": True}
 
     try:
         result = transit(

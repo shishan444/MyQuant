@@ -68,6 +68,18 @@ def validate_recovery(task_row: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _c3_log_clearance(rowcount: int, task_id: str, reason: str) -> None:
+    """清场写面日志单点（C3-04/S-3）：update_task 返回受影响行数——
+    零行命中=行已被并发处置（前态守门拒写：非 running 态），warning
+    留痕可观测（清场意图未落地的事实不静默）；命中则 error 落地。"""
+    if rowcount:
+        logger.error("纸盘任务 %s 存量清场: %s", task_id, reason)
+    else:
+        logger.warning(
+            "纸盘任务 %s 存量清场未落地（行已被并发处置，前态非 "
+            "running）: %s", task_id, reason)
+
+
 def recover_task(
     db_path: Path,
     task_row: Dict[str, Any],
@@ -96,6 +108,36 @@ def recover_task(
         logger.error(
             "纸盘任务 %s 恢复不可信（保留数据）: %s",
             task_row["task_id"], detail)
+        return None
+    # 存量双维清场（change paper-mount-and-concurrency 任务 5：白名单
+    # 收窄部署后，存量库的非白名单 running 残行代码兜底——转 error
+    # 保留数据，系统无静默断流僵尸任务；经本单点覆盖两恢复入口
+    # 〔startup_recover 与心跳移交〕）
+    from core.paper_trading.constants import (
+        PAPER_SYMBOL_WHITELIST, PAPER_TIMEFRAME_WHITELIST)
+    if task_row["symbol"] not in PAPER_SYMBOL_WHITELIST:
+        _reject_reason = (
+            f"symbol_not_supported_by_platform: 品种 "
+            f"{task_row['symbol']} 不在纸盘白名单"
+            f"（{sorted(PAPER_SYMBOL_WHITELIST)}）——存量任务清场转 "
+            "error（保留数据）")
+        _c3_log_clearance(
+            paper_repo.update_task(
+                db_path, task_row["task_id"], status="error",
+                error_detail=_reject_reason),
+            task_row["task_id"], _reject_reason)
+        return None
+    if task_row["timeframe"] not in PAPER_TIMEFRAME_WHITELIST:
+        _reject_reason = (
+            f"timeframe_not_supported_by_platform: 执行周期 "
+            f"{task_row['timeframe']} 不在纸盘支持档位"
+            f"（{sorted(PAPER_TIMEFRAME_WHITELIST)}）——存量任务清场"
+            "转 error（保留数据）")
+        _c3_log_clearance(
+            paper_repo.update_task(
+                db_path, task_row["task_id"], status="error",
+                error_detail=_reject_reason),
+            task_row["task_id"], _reject_reason)
         return None
     try:
         return PaperTaskExecutor.from_task_row(

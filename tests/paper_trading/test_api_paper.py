@@ -198,10 +198,12 @@ class TestCreateTask:
         （恒 201 停留 pending）——上限不进创建拒绝面。"""
         client, db = paper_api
         _seed_strategy(db)
-        # fixture 调度器 max_running 缺省 10；造 10 个 running 行占满
+        # fixture 调度器 max_running 缺省 100（change paper-mount-and-
+        # concurrency 护栏上调）；造满 100 个 running 行占满
+        from core.paper_trading.constants import MAX_RUNNING_TASKS
         from core.persistence.repository import paper
 
-        for i in range(10):
+        for i in range(MAX_RUNNING_TASKS):
             tid = f"pt_run{i:09d}"
             paper.create_task(
                 db, task_id=tid, strategy_id="st-1",
@@ -209,30 +211,24 @@ class TestCreateTask:
                 research_status_snapshot="unverified")
             paper.update_task(db, tid, status="running")
         row = _create(client)
-        assert row["status"] == "pending"  # 第 11 个恒 201 排队
+        assert row["status"] == "pending"  # 第 101 个恒 201 排队（满载）
 
-    @pytest.mark.parametrize("status", [
-        "draft", "archived", "candidate", "live"])
-    def test_create_non_precondition_status_409(self, paper_api, status) -> None:
-        """B' 前置集收紧（build-strategy-lifecycle 5.1，spec delta
-        MODIFIED「上盘流转」：任意可上盘→{active,paper} 可上盘）：
-        四态→409 STRATEGY_ILLEGAL_TRANSITION（detail 含合法后继集），
-        任务不建+策略不变+零事件（失败回滚两侧）。candidate/live 的
-        正当通道=迭代克隆→重验证→active。"""
+    def test_create_archived_status_409(self, paper_api) -> None:
+        """挂载门槛放宽后（Q3 终审 2026-10-28）archived=唯一排除面：
+        409 STRATEGY_ILLEGAL_TRANSITION，任务不建+策略不变+零事件。"""
         client, db = paper_api
         from core.persistence.repository import paper
 
         _seed_strategy(db, strategy_id="st-1", status="draft")
-        _force_strategy_status(db, "st-1", status)
+        _force_strategy_status(db, "st-1", "archived")
         resp = client.post("/api/paper-trading/tasks",
                            json={"strategy_id": "st-1"})
-        assert resp.status_code == 409, (status, resp.text)
+        assert resp.status_code == 409, resp.text
         detail = resp.json()["detail"]
         assert detail["code"] == "STRATEGY_ILLEGAL_TRANSITION"
-        assert detail["detail"]["to_status"] == "paper"
         assert paper.count_tasks(db) == 0, "409 不建任务"
-        assert _strategy_status(db, "st-1") == status, "策略不变（回滚）"
-        assert _lifecycle_events(db, "st-1") == [], "零事件（回滚）"
+        assert _strategy_status(db, "st-1") == "archived", "策略不变"
+        assert _lifecycle_events(db, "st-1") == [], "零事件"
 
 
 # ── 挂盘三态契约（build-strategy-lifecycle 5.1） ──
@@ -977,3 +973,364 @@ class TestSignalEndpoints:
         body = client.get(
             f"/api/paper-trading/tasks/{tid}/signals").json()
         assert body["signals"] == [] and body["has_more"] is False
+
+
+class TestMountWhitelist:
+    """挂载品种与周期双白名单（change paper-mount-and-concurrency
+    任务 3）：受理层 422 双维+白名单内全组合受理+常量一致性+研究面
+    不受限。"""
+
+    # 14 键中六档外 8 键（Q1 终审：固定 12 路制下不再受理）
+    _OUT_TFS = ["3m", "30m", "2h", "6h", "8h", "12h", "3d", "1w"]
+    _TFS_IN = ["1m", "5m", "15m", "1h", "4h", "1d"]
+    _SYMS_IN = ["BTCUSDT", "ETHUSDT"]
+
+    def test_symbol_outside_whitelist_422_with_domain(self, paper_api):
+        """①非白名单 symbol 422（detail 含白名单值域）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1", "symbol": "SOLUSDT"})
+        assert resp.status_code == 422
+        detail = str(resp.json()["detail"])
+        assert "BTCUSDT" in detail and "ETHUSDT" in detail, \
+            "detail 须含白名单值域"
+
+    @pytest.mark.parametrize("tf", _OUT_TFS)
+    def test_timeframe_outside_six_422(self, paper_api, tf):
+        """②非六档周期（六档外 8 键参数化）DNA 挂载 422 拒绝
+        （PAPER_TIMEFRAME_NOT_SUPPORTED——「执行环境不支持」形制，
+        detail 含支持档位），任务不创建。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe=tf)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1"})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PAPER_TIMEFRAME_NOT_SUPPORTED"
+        assert detail["detail"]["timeframe"] == tf
+        assert sorted(detail["detail"]["supported"]) == sorted(self._TFS_IN)
+        assert client.get(
+            "/api/paper-trading/tasks?limit=1").json()["total"] == 0, \
+            "拒绝面任务不创建"
+
+    @pytest.mark.parametrize("symbol", _SYMS_IN)
+    @pytest.mark.parametrize("tf", _TFS_IN)
+    def test_whitelist_full_grid_accepted(self, paper_api, symbol, tf):
+        """④白名单内 2 币种×6 周期全组合受理正常（201 pending）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe=tf, symbol=symbol)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1", "symbol": symbol})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["status"] == "pending"
+
+    def test_whitelist_constants_align_fapi_subscribe_keys(self):
+        """⑥双白名单与 change-1 固定订阅清单常量一致性（两处单源
+        同值域防漂移——12 路=2 币种×6 周期）。"""
+        from core.data.fapi.stream import (
+            FAPI_SYMBOLS, FAPI_TIMEFRAMES, FIXED_SUBSCRIBE_KEYS)
+        from core.paper_trading.constants import (
+            PAPER_SYMBOL_WHITELIST, PAPER_TIMEFRAME_WHITELIST)
+
+        assert PAPER_SYMBOL_WHITELIST == frozenset(FAPI_SYMBOLS)
+        assert PAPER_TIMEFRAME_WHITELIST == frozenset(FAPI_TIMEFRAMES)
+        assert len(FIXED_SUBSCRIBE_KEYS) == \
+            len(PAPER_SYMBOL_WHITELIST) * len(PAPER_TIMEFRAME_WHITELIST) \
+            == 12, "12 路=2 币种×6 周期互锁"
+
+    def test_validator_dna_domain_not_narrowed(self):
+        """⑤⑦研究数据面不受限+validator DNA 值域零改动：TF_SECONDS
+        14 键在位、六档外 8 键 DNA 在研究链合法（收窄仅挂载/装载层）。"""
+        from core.data.timeframes import TF_SECONDS
+        from core.strategy.validator import validate_dna
+        from tests.helpers.data_factory import make_dna
+
+        assert len(TF_SECONDS) == 14
+        for tf in self._OUT_TFS:
+            assert validate_dna(make_dna(timeframe=tf)).is_valid, \
+                f"研究链 {tf} 须照旧合法（值域不收窄）"
+
+    def test_mcp_mount_reject_via_rest_passthrough(self, paper_api):
+        """MCP mount 经 REST 校验透传（同 422 语义——白名单双通道
+        同源断言面）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe="30m")
+        # MCP 工具薄封装 POST 同端点（test_paper_tools 行为对拍在案，
+        # 此处锚 REST 端点即 MCP 透传源）
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1"})
+        assert resp.status_code == 422
+
+
+class TestMountFourBranchDispatch:
+    """挂载门槛放宽四分支（change paper-mount-and-concurrency 任务 4，
+    Q3 终审 2026-10-28）：draft/candidate/live→同态续挂不迁移；
+    archived→409 唯一排除；无观察轨概念。"""
+
+    @pytest.mark.parametrize("status", ["paper", "candidate", "live"])
+    def test_continued_mount_no_migration_event(self, paper_api,
+                                                status) -> None:
+        """②续挂分支（paper/candidate/live 三态各一）：201+任务照建+
+        策略态不变+零迁移事件（candidate/live 从现行 409 改续挂）。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        _force_strategy_status(db, "st-1", status)
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        assert resp.status_code == 201, (status, resp.text)
+        assert resp.json()["status"] == "pending"
+        assert paper.count_tasks(db) == 1
+        assert _strategy_status(db, "st-1") == status, "策略态不变"
+        assert _lifecycle_events(db, "st-1") == [], "零迁移事件"
+
+    def test_draft_mount_full_positive(self, paper_api) -> None:
+        """①draft 挂载正向：201 pending+任务可运行（executor 装载面
+        就绪）+策略保持 draft+零迁移事件；⑤research_status 披露=
+        draft（三序现算机制天然携带——零新增披露面）。"""
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        row = _create(client)
+        assert row["status"] == "pending"
+        assert _strategy_status(db, "st-1") == "draft", "策略保持 draft"
+        assert _lifecycle_events(db, "st-1") == []
+        # ⑤research_status 披露：详情查询即返 draft（现算三序序①）
+        detail = client.get(
+            f"/api/paper-trading/tasks/{row['task_id']}").json()
+        assert detail["research_status"] == "draft"
+        # ①任务可运行：装载校验通过（prepare 就绪面——draft 态不阻断
+        # 装载，无观察轨特殊分支；造最小市场数据沿 fixture data_dir）
+        import pandas as pd
+
+        from core.data.storage import save_parquet
+        from core.features.indicators import compute_all_indicators
+        from core.paper_trading.runtime.executor import PaperTaskExecutor
+        from core.paper_trading.runtime.feed import FeedRegistry
+        from core.persistence.repository import paper
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = Path(db).parent / "market"
+        raw = make_ohlcv(n=60, freq="4h", seed=7, base_price=100.0)
+        save_parquet(raw, data_dir / "BTCUSDT_4h.parquet")
+        registry = FeedRegistry(
+            data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
+            funding_refresher=lambda **k: pd.DataFrame())
+        ex = PaperTaskExecutor(
+            Path(db), paper.get_task(Path(db), row["task_id"]),
+            registry=registry, start_after="2000-01-01T00:00:00+00:00")
+        assert ex.prepare() is True, "draft 挂载任务装载就绪可运行"
+        assert compute_all_indicators is not None  # 就绪面数据链核证
+
+    def test_draft_mount_report_schema_identical_no_observation_keys(
+            self, paper_api) -> None:
+        """T6 同构守护·报告面：draft 挂载任务与普通挂载任务的滚动
+        报告键集完全一致、响应全文无观察轨标注键（「无观察轨概念」
+        排除性声明——已废弃提案的概念面不得引入；特征锚：未来任何
+        observation 类标注都会破坏本对照）。"""
+        import json as _json
+
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-d", status="draft")
+        _seed_strategy(db, strategy_id="st-a", status="active")
+        d_row = _create(client, strategy_id="st-d")
+        a_row = _create(client, strategy_id="st-a")
+        d_resp = client.get(
+            f"/api/paper-trading/tasks/{d_row['task_id']}/report")
+        a_resp = client.get(
+            f"/api/paper-trading/tasks/{a_row['task_id']}/report")
+        assert d_resp.status_code == a_resp.status_code == 200, (
+            d_resp.text, a_resp.text)
+        d_report, a_report = d_resp.json(), a_resp.json()
+        assert set(d_report) == set(a_report), \
+            "draft 挂载任务报告键集与普通任务一致（同构无特殊分支）"
+        assert "observation" not in _json.dumps(
+            d_report, ensure_ascii=False), "无观察轨标注键"
+
+
+class TestDeleteCompensationGuard:
+    """C3-01：DELETE 补偿回流前置守卫——draft 挂载→终态→DELETE→
+    策略仍 draft+零迁移事件（draft→active 矩阵合法转正边不得经
+    task_end 凭证冒用；「draft 挂盘不构成转正通道」终审语义）。"""
+
+    def test_draft_mount_delete_keeps_strategy_draft(self, paper_api):
+        """端到端：draft 挂载任务终态后删除——补偿回流被前置守卫
+        跳过（策略态不变+零迁移事件+删除成功）。"""
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        row = _create(client)
+        tid = row["task_id"]
+        # 任务推到终态（running→completed 合法链）
+        from core.persistence.repository import paper
+
+        paper.update_task(db, tid, status="running", started_at=BASE_TIME)
+        paper.update_task(db, tid, status="completed", stopped_at=BASE_TIME)
+        resp = client.delete(f"/api/paper-trading/tasks/{tid}")
+        assert resp.status_code == 200 and resp.json() == {"deleted": True}
+        assert _strategy_status(db, "st-1") == "draft", \
+            "draft 挂载任务的删除不得触发转正回流"
+        assert _lifecycle_events(db, "st-1") == [], "零迁移事件"
+        assert paper.get_task(db, tid) is None
+
+    def test_paper_mount_delete_still_compensates(self, paper_api):
+        """守卫不误伤：paper 态策略的删除补偿回流照旧（回流 active
+        +事件）——守卫只收窄域不改变 paper 态补偿语义。"""
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        row = _create(client)  # active→paper 迁移（1 事件）
+        tid = row["task_id"]
+        from core.persistence.repository import paper
+
+        paper.update_task(db, tid, status="running", started_at=BASE_TIME)
+        paper.update_task(db, tid, status="completed", stopped_at=BASE_TIME)
+        resp = client.delete(f"/api/paper-trading/tasks/{tid}")
+        assert resp.status_code == 200
+        assert _strategy_status(db, "st-1") == "active", \
+            "paper 态删除补偿回流照旧"
+        assert _lifecycle_events(db, "st-1") == [
+            ("active", "paper", "mount"),
+            ("paper", "active", "task_end")]
+
+
+class TestMountDispatchToctouGuard:
+    """C3-02/S-1：分派事务内重读 Strategy.status——并发归档绕过窗口
+    封死（外层受理读陈旧态时，事务内重读后按真实态分派）。"""
+
+    def test_concurrent_archive_bypass_window_guarded(
+            self, paper_api, monkeypatch):
+        """守卫用例：外层 get_strategy 读到 draft（陈旧），事务开启时
+        库内已被并发归档 archived→事务内重读 409 拒绝（任务不建+
+        零事件）——归档绕过续挂通道的窗口被封死。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        # 库内并发归档（外层读之后、事务开启前）
+        _force_strategy_status(db, "st-1", "archived")
+        stale = strategy_repo.get_strategy(db, "st-1")
+        stale["status"] = "draft"  # 模拟外层受理读的陈旧快照
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"]["code"] == "STRATEGY_ILLEGAL_TRANSITION"
+        assert paper.count_tasks(db) == 0, "409 不建任务（回滚零副作用）"
+        assert _strategy_status(db, "st-1") == "archived"
+        assert _lifecycle_events(db, "st-1") == []
+
+    def test_concurrent_promote_seen_in_transaction(
+            self, paper_api, monkeypatch):
+        """对称面：外层读 draft（陈旧），事务内已被转正 active→
+        重读分派走迁移分支（active→paper+事件）——重读是分派事实源。"""
+        client, db = paper_api
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        _force_strategy_status(db, "st-1", "active")  # 并发转正
+        stale = strategy_repo.get_strategy(db, "st-1")
+        stale["status"] = "draft"
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 201, resp.text
+        assert _strategy_status(db, "st-1") == "paper", \
+            "事务内重读按真实态分派迁移"
+        assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")]
+
+    def test_concurrent_delete_seen_in_transaction(
+            self, paper_api, monkeypatch):
+        """事务内重读 404 分支（阶段四盲区消解——C3-02 新增面）：
+        外层受理读成功（删除前快照）×事务开启时策略已被并发删除→
+        fresh_status None→404（raise 经 with 回滚零副作用）。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        stale = strategy_repo.get_strategy(db, "st-1")
+        strategy_repo.delete_strategy(db, "st-1")  # 库内并发删除
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == "strategy not found"
+        assert paper.count_tasks(db) == 0, "404 回滚零副作用（不建任务）"
+
+    def test_transit_lifecycle_error_translated_409(
+            self, paper_api, monkeypatch):
+        """迁移分支 LifecycleError→409 结构化转译（阶段四盲区消解——
+        防御分支锚）。调用图依据：现实现「事务内重读分派」下 transit
+        诸抛点均被上游短路——404/非法边由 fresh_status 分派前置分流、
+        trigger="mount" 属 TRIGGERS 枚举、evidence 含 task_id 凭证齐、
+        同事务 CAS 无 RACE 并发窗口，故 except LifecycleError 为
+        transit 语义演化的防御面；注入构造验证转译形制（三段 dict
+        原样透传）不随演化破缺。"""
+        client, db = paper_api
+        import core.strategy.lifecycle as lifecycle_pkg
+        from core.persistence.repository import paper
+        from core.strategy.lifecycle.machine import LifecycleError
+
+        _seed_strategy(db, status="active")
+
+        def _deny(*a, **kw):
+            raise LifecycleError(
+                "STRATEGY_TRANSITION_RACE", "注入：迁移服务竞态拒绝",
+                status=409, detail={"race": True})
+
+        # routes 函数内 `from core.strategy.lifecycle import transit`
+        # 取包命名空间属性——patch 包（patch service 模块不影响包级
+        # re-export 绑定，静默扑空）
+        monkeypatch.setattr(lifecycle_pkg, "transit", _deny)
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 409, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "STRATEGY_TRANSITION_RACE"
+        assert detail["detail"] == {"race": True}
+        assert paper.count_tasks(db) == 0, "迁移拒绝不建任务（回滚）"
+        assert _strategy_status(db, "st-1") == "active", "策略态回滚"
+        assert _lifecycle_events(db, "st-1") == [], "零事件（回滚）"
+
+
+class TestMountSymbolFinalValueGuard:
+    """C3-03/S-2：symbol 终值流转点校验——body.symbol 缺省抄录
+    DNA.execution_genes.symbol 的非白名单值在受理层 422（与 exec_tf
+    同点同形制），消「201 受理后装载拒」占位不一致。"""
+
+    def test_dna_symbol_outside_whitelist_422(self, paper_api):
+        """DNA 抄录源 symbol=SOLUSDT（不传 body.symbol）→422
+        PAPER_SYMBOL_NOT_SUPPORTED（detail 含值域），任务不创建。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, timeframe="4h", symbol="SOLUSDT")
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PAPER_SYMBOL_NOT_SUPPORTED"
+        assert detail["detail"]["symbol"] == "SOLUSDT"
+        assert sorted(detail["detail"]["supported"]) == [
+            "BTCUSDT", "ETHUSDT"]
+        assert paper.count_tasks(db) == 0
+
+    def test_body_symbol_override_passes_dna_symbol(self, paper_api):
+        """显式 body.symbol 覆写白名单内值→正常受理（终值=body
+        值——DNA 源头非白名单不阻断显式白名单内覆写）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe="4h", symbol="SOLUSDT")
+        row = _create(client, symbol="ETHUSDT")
+        assert row["symbol"] == "ETHUSDT"

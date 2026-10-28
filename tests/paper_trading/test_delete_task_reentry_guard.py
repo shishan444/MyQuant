@@ -242,8 +242,9 @@ class TestIdempotentAfterReentry:
         assert events.get("task_end") == [("paper", "active")], \
             "无第二次 task_end 迁移事件（仍仅回流时那一条）"
         assert _strategy_status(db, "st-1") == "active", "态不抖动"
-        assert any("already_in_status" in m for m in caplog.messages), \
-            "not_migrated 分支可达（already_in_status）"
+        assert any("非 paper 态" in m for m in caplog.messages), \
+            "C3-01 前置守卫正当跳过（回流域=「paper 态」，" \
+            "already_in_status 同态面由守卫先行——不再触 transit）"
         assert not _task_exists(db, tid_b)
 
 
@@ -338,10 +339,11 @@ class TestFailureSemantics:
 
     def test_delete_archived_strategy_illegal_transition_swallowed(
             self, paper_api, caplog) -> None:
-        """真实非法前态面（非 mock）：任务在场期间策略经 manual_archive
-        归档（paper→archived 合法边）→ 删除补回流命中边校验
-        STRATEGY_ILLEGAL_TRANSITION（archived→active 不在矩阵）→
-        LifecycleError 被路由吞：error 日志在案+删除响应不变。"""
+        """非 paper 态边界（非 mock）：任务在场期间策略经 manual_archive
+        归档（paper→archived 合法边）→ 删除补回流被 C3-01 前置守卫
+        正当跳过（回流域=「paper 态」，不再触 transit——archived→
+        active 的 STRATEGY_ILLEGAL_TRANSITION 面由守卫先行吸收）：
+        不 crash+态不动+删除响应不变。"""
         client, db = paper_api
         from core.strategy.lifecycle import transit
 
@@ -351,14 +353,16 @@ class TestFailureSemantics:
         transit(db, "st-1", target="archived", trigger="manual_archive")
         assert _strategy_status(db, "st-1") == "archived", "构造前置：已归档"
 
-        with caplog.at_level(logging.ERROR, logger=ROUTE_LOGGER):
+        with caplog.at_level(logging.DEBUG, logger=ROUTE_LOGGER):
             resp = client.delete(f"/api/paper-trading/tasks/{tid}")
 
         assert resp.status_code == 200
         assert resp.json() == {"deleted": True}, "真实异常面同样不绑架删除"
         assert _strategy_status(db, "st-1") == "archived", "态不被破坏"
-        assert any("STRATEGY_ILLEGAL_TRANSITION" in m
-                   for m in caplog.messages), "error 日志含 code"
+        # C3-01 前置守卫：archived 非 paper 态在守卫层正当跳过——
+        # 不再触 transit/LifecycleError（守卫先行，语义等价：不 crash
+        # +态不动+删除成功）
+        assert any("非 paper 态" in m for m in caplog.messages)
         assert not _task_exists(db, tid)
         assert "task_end" not in _events_by_trigger(db, "st-1")
 
@@ -392,9 +396,10 @@ class TestDeleteBoundaries:
 
     def test_delete_stock_active_strategy_not_migrated_no_crash(
             self, paper_api, caplog) -> None:
-        """非 paper 态（active 存量未上盘，零事件）→ DELETE：路由无
-        前置判态——transit 同态入口 already_in_status 正当不触发，
-        不抛不炸+响应契约不变+零事件。"""
+        """非 paper 态（active 存量未上盘，零事件）→ DELETE：C3-01
+        前置守卫正当跳过（回流域=「paper 态」——不再触 transit，
+        already_in_status 同态面由守卫先行），不抛不炸+响应契约
+        不变+零事件。"""
         client, db = paper_api
         _seed_strategy(db, status="active")  # 存量：从未上盘
         tid = _seed_terminal_task(db, "pt_stock_active")
@@ -407,5 +412,6 @@ class TestDeleteBoundaries:
         assert _strategy_status(db, "st-1") == "active", "存量态不动"
         assert _events_by_trigger(db, "st-1") == {}, \
             "零迁移事件（存量从未上盘）"
-        assert any("already_in_status" in m for m in caplog.messages)
+        assert any("非 paper 态" in m for m in caplog.messages), \
+            "前置守卫正当跳过留痕"
         assert not _task_exists(db, tid)

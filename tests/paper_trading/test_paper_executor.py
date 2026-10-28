@@ -1504,3 +1504,90 @@ class TestIndicatorSnapshotGuards:
                 assert "Infinity" not in r[col], (r["seq"], col)
                 assert "NaN" not in r[col], (r["seq"], col)
                 json.loads(r[col])
+
+
+class TestPrepareWhitelistSecondGate:
+    """挂载双白名单装载第二道（change paper-mount-and-concurrency
+    任务 3）：绕过受理层直插库行的双维非法任务 prepare 拒绝转 error
+    （error_detail 双维分立可辨；数据保留）。"""
+
+    def test_symbol_outside_whitelist_rejected_to_error(self, tmp_path):
+        """③非白名单 symbol 直插行：prepare→error+
+        symbol_not_supported_by_platform。"""
+        h = _Harness(tmp_path, window_bars=10)
+        # 直插绕过受理层（create_task 仓库直建不校验白名单）
+        paper.create_task(
+            h.db, strategy_id="strat-1", task_id="pt_wl000000001",
+            dna_snapshot_json=make_dna().to_json(),
+            symbol="SOLUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        row = paper.get_task(h.db, "pt_wl000000001")
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is False
+        task = paper.get_task(h.db, "pt_wl000000001")
+        assert task["status"] == "error"
+        assert "symbol_not_supported_by_platform" in task["error_detail"]
+        assert "SOLUSDT" in task["error_detail"], "detail 含违规值可辨"
+
+    def test_timeframe_outside_whitelist_rejected_to_error(self, tmp_path):
+        """③非六档 timeframe（30m）直插行：prepare→error+
+        timeframe_not_supported_by_platform。"""
+        h = _Harness(tmp_path, window_bars=10)
+        paper.create_task(
+            h.db, strategy_id="strat-1", task_id="pt_wl000000002",
+            dna_snapshot_json=make_dna(timeframe="30m").to_json(),
+            symbol="BTCUSDT", timeframe="30m",
+            research_status_snapshot="unverified")
+        row = paper.get_task(h.db, "pt_wl000000002")
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is False
+        task = paper.get_task(h.db, "pt_wl000000002")
+        assert task["status"] == "error"
+        assert "timeframe_not_supported_by_platform" \
+            in task["error_detail"]
+        assert "30m" in task["error_detail"]
+
+    def test_whitelist_row_passes_second_gate(self, tmp_path):
+        """白名单内行不受第二道影响（正常装载路径零回归——准备就绪
+        返 True 面）。"""
+        h = _Harness(tmp_path, window_bars=10)
+        row = paper.get_task(h.db, h.task_id)
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is True
+
+
+class TestUnlimitedWindowNeverAutoConcludes:
+    """不限期窗口行为锚（change paper-mount-and-concurrency 归属组
+    S4/验收 8）：window_bars=None 跨多 bar（200 根 > 缺省 180）无自动
+    终止——与同数据同跑法的显式窗口对照，差异唯一归因窗口编码
+    （None 是「不限期」而非「未到点」）。"""
+
+    def test_none_runs_all_bars_still_running(self, tmp_path):
+        """None 跑满 200 根（超缺省 180 窗口）：仍 running、零结题
+        回调——不限期=不自动结题。"""
+        h = _Harness(tmp_path, window_bars=None)
+        ex = h.make_executor()
+        paper.update_task(  # 模拟拾取写 running（迁移链+task_state 前置）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)
+        task = h.task()
+        assert task["status"] == "running", "不限期跨 200 根不自动结题"
+        assert task["bars_processed"] == _N_BARS, "全帧消化无截断"
+        assert h.concluded == [], "零结题回调"
+
+    def test_explicit_window_same_run_concludes_control(self, tmp_path):
+        """对照组：window_bars=200（=_N_BARS）同数据同跑法到点
+        completed——证明上例仍 running 是 None 编码生效而非跑法未达
+        判定点。"""
+        h = _Harness(tmp_path, window_bars=_N_BARS)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)
+        assert h.task()["status"] == "completed"
+        assert h.concluded == [(h.task_id, "completed")]

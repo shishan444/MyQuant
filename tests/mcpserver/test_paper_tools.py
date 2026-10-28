@@ -113,17 +113,20 @@ class TestMountParamSurface:
         "score_template", "prediction_dna_json"})
 
     def test_mount_params_equal_rest_create_model(self) -> None:
-        """mount 签名参数集 == REST PaperTaskCreate 字段集（完全对拍：
-        同一参数面，无一字段多无一字段少）。"""
+        """mount 签名参数集 == REST PaperTaskCreate 字段集 ∪
+        {window_unlimited}（完全对拍+MCP 侧不限期布尔转译参数——
+        window_bars=None 在工具参数面与缺省不可区分，经 spec 认可的
+        window_unlimited 布尔表达，与 REST window_bars=null 同语义）。"""
         from api.routes.paper_trading import PaperTaskCreate
 
         mcp, _ = _register("research")
         mount_params = set(
             inspect.signature(mcp.registered["mount_paper_task"]).parameters)
-        assert mount_params == set(PaperTaskCreate.model_fields), (
+        expected = set(PaperTaskCreate.model_fields) | {"window_unlimited"}
+        assert mount_params == expected, (
             f"mount 参数面与 REST 创建模型漂移："
-            f"多 {sorted(mount_params - set(PaperTaskCreate.model_fields))} / "
-            f"少 {sorted(set(PaperTaskCreate.model_fields) - mount_params)}")
+            f"多 {sorted(mount_params - expected)} / "
+            f"少 {sorted(expected - mount_params)}")
 
     def test_mount_params_no_semantic_keys(self) -> None:
         """参数面零策略语义键（黑名单逐键断言）。"""
@@ -455,3 +458,182 @@ class TestQueryPaperSignals:
 
         assert "/api/paper-trading/tasks/{task_id}/signals" \
             in READONLY_ENDPOINTS
+
+
+class TestWindowUnlimited:
+    """mount_paper_task 不限期窗口表达（change paper-mount-and-
+    concurrency 任务 2）：window_unlimited 布尔→REST window_bars=null
+    同语义；三入口（缺省 180/显式 N/不限期）语义披露。"""
+
+    def test_true_translates_to_null_body(self) -> None:
+        """①True 转译：body["window_bars"] is None（REST 四形态编码
+        既有面收显式 null——不自动结题）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9", window_unlimited=True)
+        method, url, body = api.calls[-1]
+        assert (method, url) == ("POST", "/api/paper-trading/tasks")
+        assert body == {"strategy_id": "st-9", "window_bars": None}
+
+    def test_false_default_zero_keys(self) -> None:
+        """缺省 False：不产 window 键（REST 层落缺省 180）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9")
+        _, _, body = api.calls[-1]
+        assert body == {"strategy_id": "st-9"}
+
+    def test_explicit_window_bars_still_direct(self) -> None:
+        """显式 N 根直传（三入口第二形态不回归）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9", window_bars=60)
+        _, _, body = api.calls[-1]
+        assert body == {"strategy_id": "st-9", "window_bars": 60}
+
+    def test_mutual_exclusion_rejected(self) -> None:
+        """②互斥拒绝：window_unlimited=True 与 window_bars 显式值
+        同传→结构化 MCP_PARAM_INVALID（不触 REST——请求面零副作用）。"""
+        mcp, api = _register("research")
+        result = mcp.registered["mount_paper_task"](
+            "st-9", window_bars=60, window_unlimited=True)
+        assert "error" in result
+        assert result["error"]["code"] == "MCP_PARAM_INVALID"
+        assert api.calls == [], "互斥拒绝不触 REST"
+
+    def test_docstring_three_entry_semantics(self) -> None:
+        """③docstring 披露：三入口同语义+互斥约束。"""
+        mcp, _ = _register("research")
+        doc = "".join(
+            mcp.registered["mount_paper_task"].__doc__.split())
+        for token in ("180", "window_unlimited", "互斥", "不限期",
+                      "window_bars=null"):
+            assert token in doc, f"披露锚缺失: {token}"
+
+
+class TestCrossChannelRealRest:
+    """MCP→REST 跨通道对拍（change paper-mount-and-concurrency 归属组
+    S5/I5/J2）：真 app 同步驱动（TestClient 通道）——JSON null
+    round-trip 全链（fake api 层只证 body 形态；本类证 MCP 序列化→
+    REST 反序列化→任务行落库的组合面）+白名单 422 双形制错误通道
+    回传。"""
+
+    @pytest.fixture
+    def cross(self, tmp_path, monkeypatch):
+        """真 app（无 lifespan——app.state 手动挂载沿 paper_api 形制）
+        +QuantApiClient 经薄壳打真路由+REST 直连客户端。"""
+        import mcpserver.api_client as ac
+        from api.app import create_app
+        from conftest import _FakeMcp
+        from core.persistence.db_ext import init_db_ext
+        from core.persistence.repository.strategy import save_strategy
+        from mcpserver.tools import (
+            register_readonly_tools,
+            register_research_tools,
+        )
+        from tests.helpers.data_factory import make_dna
+
+        db = tmp_path / "cross.db"
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        init_db_ext(db)
+        save_strategy(
+            db, strategy_id="st-cross",
+            dna_json=make_dna(
+                timeframe="4h", symbol="BTCUSDT").to_json(),
+            symbol="BTCUSDT", timeframe="4h", status="draft",
+            gene_signature="sig-cross")
+        save_strategy(  # 六档外周期策略（timeframe 422 透传面）
+            db, strategy_id="st-tf30",
+            dna_json=make_dna(
+                timeframe="30m", symbol="BTCUSDT").to_json(),
+            symbol="BTCUSDT", timeframe="30m",
+            status="draft", gene_signature="sig-tf30")
+        app = create_app(db_path=db, data_dir=data_dir)
+        app.state.db_path = db
+        app.state.data_dir = data_dir
+
+        class _SyncAppClient:
+            """_request 契约面薄壳（with+get/post→httpx.Response）：
+            内部 TestClient 单发请求——不进 with 块即不起 lifespan/
+            守护线程（沿 paper_api 坑位形制；ASGITransport 是异步
+            transport 与同步 Client 不兼容，故经 TestClient 同步驱动）。"""
+
+            _BASE = "http://testserver"
+
+            def __init__(self, **kw):
+                from fastapi.testclient import TestClient as _Tc
+
+                self._tc = _Tc(app, base_url=self._BASE)
+
+            def _rel(self, url: str) -> str:
+                return (url[len(self._BASE):]
+                        if url.startswith(self._BASE) else url)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, url, params=None):
+                return self._tc.get(self._rel(url), params=params)
+
+            def post(self, url, json=None):
+                return self._tc.post(self._rel(url), json=json)
+
+        monkeypatch.setattr(ac.httpx, "Client", _SyncAppClient)
+        mcp = _FakeMcp()
+        api = ac.QuantApiClient(
+            base_url="http://testserver", profile="research")
+        register_readonly_tools(mcp, api)
+        register_research_tools(mcp, api)
+        from fastapi.testclient import TestClient as _RestTc
+
+        rest_client = _RestTc(app, base_url="http://testserver")
+        yield mcp, db, rest_client
+
+    def test_window_unlimited_same_task_row_as_rest_null(self, cross):
+        """跨通道同语义对拍（spec Scenario「不限期窗口三入口同语义」）：
+        MCP window_unlimited=True 与 REST 显式 window_bars=null 创建的
+        任务行 window_bars 同为 None——真通道全链（JSON null 序列化/
+        反序列化不坍缩为缺省 180）。"""
+        mcp, db, rest = cross
+        from core.persistence.repository import paper
+
+        via_mcp = mcp.registered["mount_paper_task"](
+            "st-cross", window_unlimited=True)
+        assert via_mcp["status"] == "pending"
+        rest_resp = rest.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-cross", "window_bars": None})
+        assert rest_resp.status_code == 201, rest_resp.text
+        via_rest = rest_resp.json()
+        # 对拍面：两通道任务行 window_bars 同值 None（不限期同语义）
+        assert paper.get_task(
+            db, via_mcp["task_id"])["window_bars"] is None
+        assert paper.get_task(
+            db, via_rest["task_id"])["window_bars"] is None
+        assert via_mcp["status"] == via_rest["status"] == "pending"
+
+    def test_symbol_outside_whitelist_422_passthrough(self, cross):
+        """J2 真透传·数组形制：MCP mount symbol=SOLUSDT→REST 同判据
+        422→tool_safe 错误通道结构化返回（pydantic 校验数组降级为
+        API_INTERNAL_ERROR——detail 原文保留白名单值域，错误不坍缩）。"""
+        mcp, _, _ = cross
+
+        result = mcp.registered["mount_paper_task"](
+            "st-cross", symbol="SOLUSDT")
+        assert "error" in result
+        assert result["error"]["code"] == "API_INTERNAL_ERROR", \
+            "校验数组（非工程码 dict）走降级形制"
+        assert "SOLUSDT" in str(result["error"]["detail"])
+        assert "BTCUSDT" in str(result["error"]["detail"]), \
+            "校验数组原文保留（白名单值域回传可辨）"
+
+    def test_timeframe_outside_six_422_code_passthrough(self, cross):
+        """J2 真透传·结构化形制：MCP mount 六档外周期策略→REST 422
+        PAPER_TIMEFRAME_NOT_SUPPORTED→tool_safe 错误通道工程码原样
+        透传（非降级——与数组形制两通道对照，code 可辨）。"""
+        mcp, _, _ = cross
+
+        result = mcp.registered["mount_paper_task"]("st-tf30")
+        assert "error" in result
+        assert result["error"]["code"] == "PAPER_TIMEFRAME_NOT_SUPPORTED"
+        assert result["error"]["detail"]["timeframe"] == "30m"
