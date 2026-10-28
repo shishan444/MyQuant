@@ -100,13 +100,6 @@ class SignalSet:
     hits: dict | None = None
 
 
-# 比较算子表（fix-research-c6-F2：热路径每次调用重建 4 个 lambda 的
-# 字面量字典×2 处收敛——core/analysis/signal_assembly._SOURCE_COMPARE_OPS
-# 同族先例，operator 标准库算子）
-_CMP_OPS = {"lt": operator.lt, "gt": operator.gt,
-            "le": operator.le, "ge": operator.ge}
-
-
 # 求值披露的角色族映射（with_hits 装配面）：四信号族各自的成员角色=
 # trigger+guard。ADD_INHIBIT/DIRECTION 不进披露（抑制基因命中=不加仓
 # 无对应信号键；方向基因非四类族）
