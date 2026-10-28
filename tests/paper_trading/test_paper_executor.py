@@ -1235,3 +1235,189 @@ class TestSignalLogging:
             h.db, h.task_id, limit=1000)}
         assert f["available_before"] - f["margin_used"] - f["fee"] \
             == pytest.approx(eq[f["bar_time"]]["balance"])
+
+    def test_capped_fill_disclosed_not_rejected(self, tmp_path):
+        """字段族明细 capped 列：risk_budget cap 截断的成交以 capped=1
+        披露（截断非拒绝——outcome=filled、reject_reason None）；截断
+        事实由独立手算锚证明（qty=cap/执行 bar 开盘价，cap=权益×
+        min(leverage,max_exposure)；裸值名义=risk_fraction/stop_loss
+        =5×权益 必然超 cap=0.5×权益——在场即证截断发生）。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, SignalRole, StrategyDNA,
+        )
+
+        dna = StrategyDNA(
+            signal_genes=[
+                make_signal_gene(role=SignalRole.ENTRY_TRIGGER),
+                make_signal_gene(
+                    role=SignalRole.EXIT_TRIGGER,
+                    condition_type="gt", condition_value=70),
+            ],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+            execution_genes=ExecutionGenes(timeframe="4h",
+                                           symbol="BTCUSDT"),
+            risk_genes=RiskGenes(
+                stop_loss=0.10, take_profit=0.20, position_size=0.5,
+                leverage=1, direction="long", sl_mode="pct",
+                position_mode="risk_budget", risk_fraction=0.5,
+                max_exposure=0.5),
+        )
+        h = _Harness(tmp_path, dna=dna, window_bars=30)
+        ex = h.make_executor()
+        rsi = [50.0] * 200
+        rsi[5] = 20.0
+        ex.process_frames(self._rsi(h.enhanced, rsi), 0)
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        opens = [r for r in rows
+                 if r["signal_kind"] == "open" and r["outcome"] == "filled"]
+        assert len(opens) == 1
+        row = opens[0]
+        assert row["capped"] == 1, "cap 截断披露标记"
+        assert row["reject_reason"] is None, "截断是披露不是拒绝"
+        assert row["fill_seq"] == 4
+        # 独立手算锚：flat 时点权益=初始 10000，cap=10000×min(1,0.5)
+        # =5000；qty 以执行 bar 开盘价（滑点前定仓基准）折算
+        price = float(h.enhanced["open"].iloc[6])
+        f = [x for x in paper.list_fills(h.db, h.task_id, limit=1000)
+             if x["kind"] == "open"][0]
+        assert f["quantity"] == pytest.approx(5_000.0 / price, rel=1e-9), \
+            "截断后数量恰=cap/基准价（裸值 5×权益 的 1/10）"
+
+    def test_close_pending_filled_seq3(self, tmp_path):
+        """字段族明细 seq 枚举完备面：pending 出场族（close 次根成交）
+        信号行 seq=3——bar_time=信号 bar、exec_bar_time 差一根、
+        gene_hits 与求值披露 exit 键独立对照一致。"""
+        h = _Harness(tmp_path, window_bars=30)
+        ex = h.make_executor()
+        rsi = [50.0] * 200
+        rsi[5] = 20.0   # bar5 入场信号 → bar6 开仓
+        rsi[9] = 80.0   # bar9 出场信号 → bar10 全平
+        frame = self._rsi(h.enhanced, rsi)
+        ex.process_frames(frame, 0)
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        closes = [r for r in rows if r["signal_kind"] == "close"]
+        assert len(closes) == 1
+        row = closes[0]
+        assert row["outcome"] == "filled" and row["seq"] == 3
+        assert row["bar_time"] == h.enhanced.index[9].isoformat()
+        assert row["exec_bar_time"] == h.enhanced.index[10].isoformat()
+        assert row["direction"] == "long"
+        assert row["fill_seq"] == 3
+        # gene_hits 与求值披露通道独立对照（exit 键 bar9 命中）
+        from core.strategy.executor import dna_to_signal_set
+        sig = dna_to_signal_set(make_dna(), frame, with_hits=True)
+        assert json.loads(row["gene_hits"]) == sig.hits["exit"][9]
+        # 三元组唯一定位 close 成交
+        fills = [f for f in paper.list_fills(h.db, h.task_id, limit=1000)
+                 if f["bar_time"] == row["exec_bar_time"]
+                 and f["seq"] == row["fill_seq"]]
+        assert len(fills) == 1 and fills[0]["kind"] == "close"
+
+
+class TestRecoveredPendingSignals:
+    """恢复链 pending 消费（change paper-signal-log 任务 4 恢复语义）：
+    崩溃于 bar 边界→from_task_row 重建→次根消费的真实重建路径。
+
+    - 正面形态：恢复消费成交的信号行 bar_time=重建锚（last_bar_time）
+      、gene_hits 空披露（恢复不可得——不伪造归因）、indicator_snapshot
+      空 dict（行号锚 -1）、fill_seq 关联；
+    - 防御形态：注入语境不符意图（持仓中 open——解释器自然流不产，
+      pending_intent_json 为外部持久化面）→ context_invalid 拒绝行
+      落库（paper-trading spec「成交层拦截均 SHALL 落表」）。
+    """
+
+    def test_recovered_pending_fills_with_empty_disclosure(self, tmp_path):
+        """恢复链正面：bar5 信号落 pending 后中止（不 finalize）→
+        重建→bar6 消费成交——filled 行四披露语义（锚/空归因/空快照/
+        fill_seq），且全程零多余行。"""
+        h = _Harness(tmp_path, window_bars=30)
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        rsi = [50.0] * 200
+        rsi[5] = 20.0
+        frame = TestSignalLogging._rsi(h.enhanced, rsi)
+        ex = h.make_executor()
+        ex.process_frames(frame.iloc[:6], 0)  # bar0-5：信号落 pending 后止
+        assert h.task()["pending_intent_json"], "崩溃时点 pending 已持久化"
+
+        restored = PaperTaskExecutor.from_task_row(
+            h.db, paper.get_task(h.db, h.task_id),
+            registry=h.registry, start_after=_REPLAY_ALL)
+        restored.process_frames(frame, 6)  # bar6 起消费恢复的 pending
+
+        assert h.task()["status"] == "completed"
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        opens = [r for r in rows
+                 if r["signal_kind"] == "open" and r["outcome"] == "filled"]
+        assert len(opens) == 1, "恢复消费恰一行（不因重放翻倍）"
+        row = opens[0]
+        assert row["bar_time"] == h.enhanced.index[5].isoformat(), \
+            "bar_time=重建锚（崩溃时点 last_bar_time=意图产生 bar）"
+        assert row["exec_bar_time"] == h.enhanced.index[6].isoformat()
+        assert row["seq"] == 4 and row["fill_seq"] == 4
+        assert json.loads(row["gene_hits"]) == [], "恢复重建归因空披露"
+        assert json.loads(row["indicator_snapshot"]) == {}, \
+            "恢复语境无行号锚——快照空 dict（不伪造）"
+
+    def test_recovered_context_conflict_intent_rejected_row(self, tmp_path):
+        """恢复链防御面：注入持仓中 open 意图（pending_intent_json
+        外部面）→恢复消费→context_invalid 拒绝行落库（账户快照含
+        持仓六列完整）+不产成交。"""
+        h = _Harness(tmp_path, window_bars=30)
+        paper.update_task(  # 模拟拾取写 running（迁移链不断）
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        rsi = [50.0] * 200
+        rsi[5] = 20.0
+        frame = TestSignalLogging._rsi(h.enhanced, rsi)
+        ex = h.make_executor()
+        ex.process_frames(frame.iloc[:7], 0)  # bar0-6：bar6 开仓成交
+        assert paper.list_fills(h.db, h.task_id, limit=1000), \
+            "前置：持仓已建立"
+
+        # 注入通道=直写 DB（update_task 白名单不含游标组——写者隔离
+        # 使仓库 API 无法伪造崩溃态；直写模拟外部持久化面上的语境
+        # 不符意图）
+        import sqlite3
+        payload = json.dumps([
+            {"kind": "open", "direction": "long", "size_fraction": 0.5,
+             "reason": "signal", "trigger_price": None}])
+        with sqlite3.connect(h.db) as conn:
+            conn.execute(
+                "UPDATE pt_task SET pending_intent_json = ? "
+                "WHERE task_id = ?", (payload, h.task_id))
+        assert paper.get_task(h.db, h.task_id)["pending_intent_json"], \
+            "前置：注入已落 task 行"
+        restored = PaperTaskExecutor.from_task_row(
+            h.db, paper.get_task(h.db, h.task_id),
+            registry=h.registry, start_after=_REPLAY_ALL)
+        restored.process_frames(frame, 7)  # bar7 消费注入意图
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        rejected = [r for r in rows if r["outcome"] == "rejected"]
+        assert len(rejected) == 1
+        row = rejected[0]
+        assert row["signal_kind"] == "open"
+        assert row["reject_reason"] == "context_invalid"
+        assert row["seq"] == 4 and row["fill_seq"] is None
+        assert row["bar_time"] == h.enhanced.index[6].isoformat(), \
+            "bar_time=重建锚（注入语境同款语义）"
+        assert row["exec_bar_time"] == h.enhanced.index[7].isoformat()
+        assert json.loads(row["gene_hits"]) == []
+        assert json.loads(row["indicator_snapshot"]) == {}
+        # 账户快照完整：持仓六列在拒绝行同字段族落值；equity 与该
+        # bar 权益快照对账（拒绝不落账——两时点同源同 close）
+        assert row["position_side"] == "long"
+        assert row["position_quantity"] > 0
+        assert row["position_margin"] > 0
+        eq = {e["bar_time"]: e for e in paper.list_equity_snapshots(
+            h.db, h.task_id, limit=1000)}
+        assert row["equity"] == pytest.approx(
+            eq[row["exec_bar_time"]]["equity"])
+        # 禁止变化：注入意图不产成交（open 类成交仍恰前置一笔——
+        # 其后合成价格的 exit_sl 属自然价格行为不在锚定面）
+        assert len([f for f in paper.list_fills(
+            h.db, h.task_id, limit=1000) if f["kind"] == "open"]) == 1
