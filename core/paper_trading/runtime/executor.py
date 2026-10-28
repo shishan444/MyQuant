@@ -913,13 +913,12 @@ class PaperTaskExecutor:
         # ── 第 5 步：资金费（先补旧账再记新账） ──
         funding_rows, backfills = self._settle_funding(bar, bar_time)
 
-        # ── 第 7 步求值（本根成交后快照；ledger 状态自第 5 步后不变，
+        # ── 第 7 步求值+第 6 步落库共用的成交后快照（单次求值收敛
+        #    ——同输入同时点纯读，Q-4；ledger 状态自第 5 步后不变，
         #    求值前移使拒绝行与 pending 上下文并入第 6 步同 bar 事务） ──
-        post = self.interpreter.interpret(
-            bar, signals,
-            self.ledger.snapshot(bar.close, bar.seq), self.params)
+        snap = self.ledger.snapshot(bar.close, bar.seq)
+        post = self.interpreter.interpret(bar, signals, snap, self.params)
         hits = sig_set.hits
-        snap_post = self.ledger.snapshot(bar.close, bar.seq)
         for rej in post.rejections:
             # 解释器内拒绝（求值层拦截）：bar_time=exec_bar_time=本根
             # （拒绝发生 bar）、seq=7；账户快照=求值时点；基因归因按
@@ -935,7 +934,7 @@ class PaperTaskExecutor:
                 gene_hits=gene_hits,
                 indicator_snapshot=indicator_snapshot,
                 outcome="rejected",
-                account=self._account_fields(snap_post),
+                account=self._account_fields(snap),
                 reject_reason=rej.reason))
         new_pending = [
             PendingIntent(
@@ -946,7 +945,6 @@ class PaperTaskExecutor:
             if x.kind not in ("exit_liquidation", "exit_sl", "exit_tp")]
 
         # ── 第 6 步：权益快照（收盘价估值）+单 bar 原子落库 ──
-        snap = self.ledger.snapshot(bar.close, bar.seq)
         self.bars_processed += 1
         self.last_bar_time = bar_time
         self.pending = new_pending
@@ -1005,19 +1003,23 @@ class PaperTaskExecutor:
         outcome = self.ledger.execute(
             intent, bar, self.fill_model, entry_atr=bar.atr)
         fill = outcome.fill
+        # 承载 bar 时刻单算（信号行 exec_bar_time 与事件 bar_time 同式
+        # ——Q-5 收敛单变量）
         exec_bar_time = (bar.timestamp.isoformat()
                          if bar.timestamp is not None else str(bar.seq))
+        # 成交/被拒两段信号行的公共参数（Q-5 收敛）
+        row_common = dict(
+            bar_time=signal_bar_time, exec_bar_time=exec_bar_time,
+            seq=seq, kind=intent.kind,
+            direction=intent.direction or None,
+            size_fraction=intent.size_fraction,
+            gene_hits=gene_hits,
+            indicator_snapshot=indicator_snapshot,
+            account=self._account_fields(snap_before))
         if fill is None:
             signal_rows.append(self._signal_row(
-                bar_time=signal_bar_time, exec_bar_time=exec_bar_time,
-                seq=seq, kind=intent.kind,
-                direction=intent.direction or None,
-                size_fraction=intent.size_fraction,
-                gene_hits=gene_hits,
-                indicator_snapshot=indicator_snapshot,
                 outcome="rejected",
-                account=self._account_fields(snap_before),
-                reject_reason=outcome.reject_reason))
+                reject_reason=outcome.reject_reason, **row_common))
             return
         if fill.realized_pnl is not None:
             self.total_pnl += fill.realized_pnl
@@ -1030,8 +1032,7 @@ class PaperTaskExecutor:
                     self.loss_count += 1
         events.append(ExecutionEvent(
             fill=fill,
-            bar_time=bar.timestamp.isoformat()
-            if bar.timestamp is not None else str(bar.seq),
+            bar_time=exec_bar_time,
             seq=seq,
             equity_before=outcome.equity_before,
             available_before=outcome.available_before,
@@ -1039,16 +1040,8 @@ class PaperTaskExecutor:
         # 成交信号行：fill_seq=seq（C5 三元组 (task_id, exec_bar_time,
         # fill_seq) 定位成交）；capped=cap 截断披露（非拒绝）
         signal_rows.append(self._signal_row(
-            bar_time=signal_bar_time, exec_bar_time=exec_bar_time,
-            seq=seq, kind=intent.kind,
-            direction=intent.direction or None,
-            size_fraction=intent.size_fraction,
-            gene_hits=gene_hits,
-            indicator_snapshot=indicator_snapshot,
-            outcome="filled",
-            account=self._account_fields(snap_before),
-            fill_seq=seq,
-            capped=1 if fill.capped else None))
+            outcome="filled", fill_seq=seq,
+            capped=1 if fill.capped else None, **row_common))
         self._push(self.task_id, {
             "type": "fill_event", "task_id": self.task_id,
             "bar_time": events[-1].bar_time, "seq": seq,
