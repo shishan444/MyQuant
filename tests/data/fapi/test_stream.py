@@ -463,6 +463,9 @@ class TestMessageFace:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
         client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@bookTicker",
+             "data": {"e": "bookTicker", "b": "1", "a": "2"}}))  # 非 kline 事件
+        client.deliver_raw(json.dumps(
             {"stream": "btcusdt@kline_1m",
              "data": {"e": "kline", "k": {"i": "1m", "x": True}}}))  # 缺 s
         client.deliver_raw(json.dumps(
@@ -559,15 +562,22 @@ class TestLifecycleDefensiveBranches:
         inner = _ClientScript(["ok"])
 
         class _SendFailFactory:
-            """订阅发送抛异常的工厂包装（覆写 send_message）。"""
+            """订阅发送抛异常的工厂包装。
+
+            构造期同步 on_open 先于工厂返回——实例覆写来不及。故先以
+            construct_connects=False 构造（不触发 on_open），覆写
+            send_message 后手动触发 on_open（模拟 SDK 异步回调时序）。
+            """
 
             def __call__(self, **kwargs):
                 client = inner(**kwargs)
+                on_open = kwargs["on_open"]
 
                 def send(message):
                     raise RuntimeError("scripted: 订阅发送失败")
 
                 client.send_message = send  # 实例属性（普通方法可实例覆写）
+                on_open(client)  # 订阅经覆写面发出——抛→被吞
                 return client
 
         stream = _make_stream(recorder, _SendFailFactory())

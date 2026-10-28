@@ -825,3 +825,36 @@ class TestReconcileAllDuplicateAndDefaults:
         h.registry.flush_all()  # 1m 键抛异常被吞——1h 键续行清缓冲
         assert len(load_parquet(
             h.data_dir / "ETHUSDT_1h.parquet")) == 31  # 1h 已清
+
+    def test_mixed_duplicate_outoforder_sequence_invariants(self, tmp_path):
+        """R4 防御面属性补强：固定 seed 随机混合序列（乱序+重复）投递
+        ——内存序列保持单调递增、无重复行、行数=唯一 open_time 数
+        （sort 合并+keep-first 的不变量，任意闭合序列下成立）。"""
+        import random
+
+        rng = random.Random(20261028)
+        h = FeedHarness(tmp_path)
+        feed, _ = h.acquire()
+        # 60 根候选：正常序+随机重放（重复）+随机乱序插入的混合
+        steps = [rng.choice((1, 2, 3, -1, 0)) for _ in range(60)]
+        unique_times = {h.last + h.tf * (s if s > 0 else 1)
+                        for s in steps if s != 0}
+        for step in steps:
+            if step == 0:
+                continue  # 噪声步（跳过）
+            feed.on_closed_bar(h.event_after(step))
+        df = feed.latest_df
+        assert df.index.is_monotonic_increasing  # 不变量①：单调
+        assert not df.index.duplicated().any()   # 不变量②：无重复
+        assert len(df) == 100 + len(unique_times)  # 不变量③：行数=装载+唯一
+
+    def test_flush_all_continues_when_feed_recycled_midway(self, tmp_path,
+                                                           monkeypatch):
+        """flush_all 竞态防御：active_keys 快照后 feed 被回收（get
+        None）——跳过该键不炸不外抛。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        h.acquire()  # feed 在场（active_keys 非空）
+        monkeypatch.setattr(
+            h.registry, "get", lambda *a, **k: None)  # 回收竞态窗口
+        h.registry.flush_all()  # 不炸即通过（continue 分支）
