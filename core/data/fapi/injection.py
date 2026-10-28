@@ -83,14 +83,6 @@ class ScriptedStream:
         """投递连接事件（三态：connected/disconnected/reconnected）。"""
         self.on_connection(ConnEvent(state=state, detail=detail))
 
-    def emit_disconnect_pause_reconnect(
-        self, *,
-        _delay: float = 0.0,
-    ) -> None:
-        """断线→（延迟）→重连脚本（延迟由调用方线程控制，缺省即刻）。"""
-        self.emit_connection("disconnected", "scripted 断线")
-        self.emit_connection("reconnected", "scripted 重连")
-
     # ── 能力③：可控静默窗口 ─────────────────────────────────
     # start 后零投递即静默——能力在于「可以什么都不投」，静默判定由
     # 消费方按 now_fn 时钟推进触发（无额外接口面）。
