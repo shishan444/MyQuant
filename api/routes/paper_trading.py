@@ -529,19 +529,20 @@ def delete_task(
     task_id: str,
     db_path: Path = Depends(get_db_path),
 ) -> dict:
-    """删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。
+    """删除任务（仅终态；六表级联单事务）；运行/pending→409 stop first。
 
     删除补偿回流（delete-task-reentry-guard 方案甲）：删除完成后对关
     联策略执行一次 paper→active 回流尝试（trigger=task_end，evidence
     来自删除前持有的任务行内存事实）——封「终态后删除任务与回流竞
     态窗」内回流永久失据的缺口（后台扫描域依赖任务行在场，行已删无
-    法走扫描形）。全部边界情形由 transit 单点承担（幂等
-    already_in_status/另有活跃任务 active_tasks_remain/非 paper 态守
-卫——与既有回调/后台重试两通道汇合同一汇合点）；失败仅记日志不绑
-    架删除——删除是既成事实；无其他终态任务行的策略滞留 paper 态且
-    无自愈通道（后台扫描域依赖任务行在场，行已删即失据——语义边界：
-    当场闭环窗口内多数情形，不承诺绝对自愈，绝对自愈属策略中心建设
-    范畴）。响应契约零变化（回流结果不进响应——补偿是后台性动作）。"""
+    法走扫描形）。回流域前置守卫（change-3 同 scheduler._replay_task_
+    end 同判据）：strategy.status≠"paper" 正当跳过不调 transit——
+    draft→active 是矩阵合法转正边（transit 不做 trigger×边交叉校验），
+    不守卫则 draft 挂载任务删除会凭 task_end 凭证非法转正（「draft
+    挂盘不构成转正通道」用户终审语义）；其余边界由 transit 承担
+    （幂等 already_in_status/另有活跃任务 active_tasks_remain）；
+    失败仅记日志不绑架删除——删除是既成事实。响应契约零变化（回流
+    结果不进响应——补偿是后台性动作）。"""
     row = _require_task(db_path, task_id)
     if row["status"] not in FINAL_STATUSES:
         raise HTTPException(status_code=409, detail="stop first")
@@ -552,6 +553,17 @@ def delete_task(
     # message，info migrated，debug 静默不迁移）
     from core.strategy.lifecycle import transit
     from core.strategy.lifecycle.machine import LifecycleError
+
+    # 回流域前置守卫（与 scheduler._replay_task_end 同判据——回流域=
+    # 「paper 态」；非 paper 态正当跳过，debug 留痕）
+    from core.persistence.repository.strategy import get_strategy
+
+    strategy_row = get_strategy(db_path, row["strategy_id"])
+    if strategy_row is None or strategy_row["status"] != "paper":
+        logger.debug(
+            "删除补偿回流跳过（策略 %s 非 paper 态）: task_id=%s",
+            row["strategy_id"], task_id)
+        return {"deleted": True}
 
     try:
         result = transit(

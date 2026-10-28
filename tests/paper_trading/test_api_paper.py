@@ -1148,3 +1148,47 @@ class TestMountFourBranchDispatch:
             "draft 挂载任务报告键集与普通任务一致（同构无特殊分支）"
         assert "observation" not in _json.dumps(
             d_report, ensure_ascii=False), "无观察轨标注键"
+
+
+class TestDeleteCompensationGuard:
+    """C3-01：DELETE 补偿回流前置守卫——draft 挂载→终态→DELETE→
+    策略仍 draft+零迁移事件（draft→active 矩阵合法转正边不得经
+    task_end 凭证冒用；「draft 挂盘不构成转正通道」终审语义）。"""
+
+    def test_draft_mount_delete_keeps_strategy_draft(self, paper_api):
+        """端到端：draft 挂载任务终态后删除——补偿回流被前置守卫
+        跳过（策略态不变+零迁移事件+删除成功）。"""
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        row = _create(client)
+        tid = row["task_id"]
+        # 任务推到终态（running→completed 合法链）
+        from core.persistence.repository import paper
+
+        paper.update_task(db, tid, status="running", started_at=BASE_TIME)
+        paper.update_task(db, tid, status="completed", stopped_at=BASE_TIME)
+        resp = client.delete(f"/api/paper-trading/tasks/{tid}")
+        assert resp.status_code == 200 and resp.json() == {"deleted": True}
+        assert _strategy_status(db, "st-1") == "draft", \
+            "draft 挂载任务的删除不得触发转正回流"
+        assert _lifecycle_events(db, "st-1") == [], "零迁移事件"
+        assert paper.get_task(db, tid) is None
+
+    def test_paper_mount_delete_still_compensates(self, paper_api):
+        """守卫不误伤：paper 态策略的删除补偿回流照旧（回流 active
+        +事件）——守卫只收窄域不改变 paper 态补偿语义。"""
+        client, db = paper_api
+        _seed_strategy(db, status="active")
+        row = _create(client)  # active→paper 迁移（1 事件）
+        tid = row["task_id"]
+        from core.persistence.repository import paper
+
+        paper.update_task(db, tid, status="running", started_at=BASE_TIME)
+        paper.update_task(db, tid, status="completed", stopped_at=BASE_TIME)
+        resp = client.delete(f"/api/paper-trading/tasks/{tid}")
+        assert resp.status_code == 200
+        assert _strategy_status(db, "st-1") == "active", \
+            "paper 态删除补偿回流照旧"
+        assert _lifecycle_events(db, "st-1") == [
+            ("active", "paper", "mount"),
+            ("paper", "active", "task_end")]
