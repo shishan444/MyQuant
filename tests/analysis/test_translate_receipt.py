@@ -237,14 +237,20 @@ class TestRiskGenesDisclosure:
         out = translate_hypothesis(db, hypothesis_id=hid)
         disc = out["risk_genes_disclosure"]
         assert disc["values"] == self._row_risk_genes(db, out["strategy_id"])
+        # C4-E1 演进（dynamic-stop-loss-series）：非 series DNA 16 键
+        # 基线逐键不变（series 档新增 sl_series_source 条件键——
+        # 非 series 声明不携带则不落库，键集仍 7 恒写键）
         assert set(disc["values"]) == {
             "stop_loss", "take_profit", "position_size", "leverage",
             "direction", "sl_mode", "atr_period"}
         assert disc["values"]["stop_loss"] == 0.08
 
     def test_a2_new_registration_path(self, db):
-        """A2 新登记路径：显式声明 stop_loss → 不入 default_filled 且
-        values 回显声明值；risk_origin=declared（CARD-03 回归④）。"""
+        """A2 新登记路径（C4-E1 限定「非 series 档」）：显式声明
+        stop_loss → 不入 default_filled 且 values 回显声明值；
+        risk_origin=declared（CARD-03 回归④）。series 档新登记
+        default_filled 含 stop_loss 为合法恒态（结构性残留非行为性
+        默认——C4-A5 分态，承载于 test_sl_series_declaration）。"""
         hid = _hyp(db, strategy_params={"stop_loss": 0.08})
         out = translate_hypothesis(db, hypothesis_id=hid)
         disc = out["risk_genes_disclosure"]
@@ -444,3 +450,31 @@ class TestRiskGenesDisclosure:
         assert "stop_loss" in disc["default_filled"], \
             "存量无块假设 → 默认填充标注按本次声明面"
         assert out_b["risk_genes"] == "platform_default"
+
+
+class TestSeriesDisclosureEvolution:
+    """C4-E1 跨 change 锚演进（dynamic-stop-loss-series 4.5）：非
+    series DNA 键集基线逐键不变；series 档 16+1 条件键。"""
+
+    def test_non_series_baseline_unchanged(self, db):
+        """非 series 声明（pct 档）→ disclosure 键集无 sl_series_source
+        （7 恒写键——16 键基线的最小在场子集）。"""
+        hid = _hyp(db, strategy_params={"stop_loss": 0.08})
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        assert "sl_series_source" not in disc["values"]
+        assert "sl_series_source" not in disc["default_filled"]
+
+    def test_series_17_keys_declared(self, db):
+        """series 档声明→values 含 sl_series_source（16+1 条件键）+
+        原样回显（A5 残留恒态注记在 test_sl_series_declaration 承载）。"""
+        hid = _hyp(db, strategy_params={
+            "sl_mode": "series",
+            "sl_series_source": {"indicator": "RSI",
+                                 "params": {"period": 14}}})
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        disc = out["risk_genes_disclosure"]
+        assert disc["values"]["sl_series_source"] == {
+            "indicator": "RSI", "params": {"period": 14}}
+        # sl_series_source 登记必携→恒不入 default_filled 差集
+        assert "sl_series_source" not in disc["default_filled"]
