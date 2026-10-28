@@ -621,6 +621,11 @@ class EvolutionRunner(threading.Thread):
         while continuous and stop_reason not in ("error",):
             controller.check_stop()
 
+            # 上一轮（首轮=循环前种群 1）代数先入账——本轮 global_gen 从
+            # N_prev+1 起，推送 total_generations_so_far 亦随之含上一轮；
+            # 若在体尾累加，种群 2 落库 offset 仍 0 与种群 1 同 generation
+            # 槽（复合主键 INSERT OR REPLACE）——种群 1 数据被永久覆盖
+            global_gen_offset += result["total_generations"]
             population_count += 1
 
             logger.info(
@@ -677,8 +682,6 @@ class EvolutionRunner(threading.Thread):
             )
             champion = result["champion"]
             stop_reason = result["stop_reason"]
-            # 累计全局代偏移（防跨种群历史覆盖）
-            global_gen_offset += result["total_generations"]
 
         # 冠军落库（completed 前态守护见下）
         if champion is not None:
