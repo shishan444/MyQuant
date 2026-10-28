@@ -237,9 +237,14 @@ class EvolutionRunner(threading.Thread):
         for task_id in list(inflight):
             row = get_task(self.db_path, task_id)
             if row is not None and row["status"] not in ("running", "pending"):
-                # DB 已终态但 future 未 done（如直改库）——从登记剔除
+                # DB 已终态但 future 未 done（如直改库）——从登记剔除；
+                # 排队未开跑的 future 顺带 cancel（省一次无谓启动，已开跑
+                # 则 cancel 返回 False 无副作用；cancel 后 done=True 下轮
+                # 清理段自然处理）
                 with self._lock:
-                    self._futures.pop(task_id, None)
+                    fut = self._futures.pop(task_id, None)
+                if fut is not None:
+                    fut.cancel()
         # 空闲槽接新 pending（FIFO 创建序——饥饿消除：continuous 占一
         # 槽时第二槽可用）
         while len(inflight) < self.max_workers:
@@ -303,8 +308,13 @@ class EvolutionRunner(threading.Thread):
     def _execute_task(self, task_row: Dict[str, Any], task_id: str, controller: TaskController) -> None:
         """任务完整执行体（全部异常上抛至 _run_task 边界统一处理）。"""
 
-        # 标记 running（接手动作前态：pending）
-        update_task(self.db_path, task_id, status="running")
+        # 标记 running（接手动作前态守护：pending——排队期被外部终态化
+        # （如 stop 已写 stopped）则放弃执行，杜绝复活跑全程）
+        applied = update_task(self.db_path, task_id, status="running",
+                              expected_statuses=("pending",))
+        if not applied:
+            logger.warning("任务 %s 接手前已被外部终态化（如排队期 stop），放弃执行", task_id)
+            return
 
         # 任务启动即刻推送前端（不等首个代际）
         _push_ws(task_id, {
