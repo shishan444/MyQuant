@@ -92,6 +92,72 @@ class SignalSet:
     entry_direction: pd.Series | None = None  # 入场方向：+1 多 / -1 空（mixed 方向模式用）
     mtf_diagnostics: dict | None = None  # MTF 引擎诊断评分
     confidence: pd.Series | None = None  # MTF 逐 bar 置信度（产出与值域权威在 mtf_engine._compute_confidence）
+    # 求值披露（change paper-signal-log 任务 2，缺省关闭零侵入）：
+    # with_hits=True 时 {entry/exit/add/reduce: 逐 bar 命中基因项列表}——
+    # 每项六字段与 pt_signal.gene_hits 同构（gene_index/indicator/field/
+    # condition/role/timeframe）。MTF 新引擎路径恒 None（合成门控打破
+    # 逐基因归因，见 dna_to_signal_set docstring）
+    hits: dict | None = None
+
+
+# 比较算子表（fix-research-c6-F2：热路径每次调用重建 4 个 lambda 的
+# 字面量字典×2 处收敛——core/analysis/signal_assembly._SOURCE_COMPARE_OPS
+# 同族先例，operator 标准库算子）
+_CMP_OPS = {"lt": operator.lt, "gt": operator.gt,
+            "le": operator.le, "ge": operator.ge}
+
+
+# 求值披露的角色族映射（with_hits 装配面）：四信号族各自的成员角色=
+# trigger+guard。ADD_INHIBIT/DIRECTION 不进披露（抑制基因命中=不加仓
+# 无对应信号键；方向基因非四类族）
+_HITS_ROLE_FAMILY = {
+    "entry_trigger": "entry", "entry_guard": "entry",
+    "exit_trigger": "exit", "exit_guard": "exit",
+    "add_trigger": "add", "add_guard": "add",
+    "reduce_trigger": "reduce", "reduce_guard": "reduce",
+}
+
+
+def _empty_hits(n: int) -> dict:
+    """空 hits 骨架（四键 × n 个空桶，与输入帧逐 bar 对齐）。"""
+    return {k: [[] for _ in range(n)]
+            for k in ("entry", "exit", "add", "reduce")}
+
+
+def _gene_hit_item(gene_index: int, gene, axis_timeframe: str | None) -> dict:
+    """基因 → 披露项（与 pt_signal.gene_hits 项同构：六字段——
+    「哪条条件什么阈值」的结构化承载；condition 为基因条件字典）。
+
+    timeframe=该基因实际求值的周期轴：基因级标注（gene.timeframe，
+    标注轴求值）优先，缺 None（无标注——在所在层/帧轴求值）取
+    axis_timeframe（单周期=执行周期、MTF 层=层周期）。
+    """
+    role = getattr(gene, "role", None)
+    return {
+        "gene_index": gene_index,
+        "indicator": gene.indicator,
+        "field": gene.field_name,
+        "condition": dict(gene.condition) if gene.condition else {},
+        "role": role.value if hasattr(role, "value") else str(role),
+        "timeframe": getattr(gene, "timeframe", None) or axis_timeframe,
+    }
+
+
+def _merge_gene_hits(hits: dict, gene_index: int, gene,
+                     signal: "pd.Series",
+                     axis_timeframe: str | None = None) -> None:
+    """布尔基因信号 → 逐 bar 命中桶合并（求值披露装配单点）。
+
+    非四信号族角色（inhibitor/direction）零操作；signal 逐元素
+    fillna(False) 后按 True 位入桶。
+    """
+    item = _gene_hit_item(gene_index, gene, axis_timeframe)
+    family = _HITS_ROLE_FAMILY.get(item["role"])
+    if family is None:
+        return
+    flags = signal.fillna(False).to_numpy(dtype=bool)
+    for pos in np.nonzero(flags)[0]:
+        hits[family][int(pos)].append(item)
 
 
 # 比较算子表（fix-research-c6-F2：热路径每次调用重建 4 个 lambda 的
@@ -570,6 +636,7 @@ def evaluate_layer(
     layer,
     df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
+    gene_signals_out: list | None = None,
 ) -> SignalSet:
     """在预计算 DataFrame 上求值单个 TimeframeLayer。
 
@@ -582,6 +649,11 @@ def evaluate_layer(
     跨轴组合，铁律 2）；无标注基因在层轴 df 直接求值（现行为逐字节
     不变）。dfs_by_timeframe 缺省 None=不带装载集的既有调用兼容
     （此时带标注基因由单点显式拒绝——fail-loud 不静默）。
+
+    gene_signals_out（change paper-signal-log 任务 2 求值披露装配面）：
+    传入列表则逐基因收集 ``(gene_index, gene, 层轴布尔 Series)``——
+    dna_to_signal_set 的 with_hits 通道投影消费；缺省 None 零收集
+    （既有调用方零影响）。
     """
     close = df["close"]
     entry_triggers, entry_guards = [], []
@@ -591,7 +663,7 @@ def evaluate_layer(
     reduce_triggers, reduce_guards = [], []
     direction_genes = []
 
-    for gene in layer.signal_genes:
+    for gene_index, gene in enumerate(layer.signal_genes):
         try:
             if getattr(gene, "timeframe", None) is not None:
                 # R1 合流：带标注基因经单点（轴内求值+投影到层轴索引）
@@ -600,6 +672,8 @@ def evaluate_layer(
                 indicator_col = _get_indicator_column(df, gene)
                 signal = evaluate_condition(indicator_col, close, gene.condition, df=df)
             signal = signal.fillna(False)
+            if gene_signals_out is not None:
+                gene_signals_out.append((gene_index, gene, signal))
 
             if gene.role == SignalRole.ENTRY_TRIGGER:
                 entry_triggers.append(signal)
@@ -771,12 +845,21 @@ def dna_to_signal_set(
     enhanced_df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
     apply_trigger_policy: bool = True,
+    with_hits: bool = False,
 ) -> SignalSet:
     """StrategyDNA → 完整 SignalSet（含 adds/reduces 的信号生产主入口）。
 
     apply_trigger_policy=False 供 assemble_signal_set 取掩码态 base
     （插件组合在完整合并掩码上组合后统一变换——防二次变换；
     trigger-policy 卡5）。
+
+    with_hits=True 开启求值披露（change paper-signal-log 任务 2）：
+    返回的 SignalSet.hits 承载逐 bar 命中基因项（四键与
+    pt_signal.gene_hits 项同构）。覆盖面=单周期+MTF legacy 组合；
+    MTF 新引擎路径（mtf_mode 已设置）恒 None——合成门控（跨层分数
+    合成+决策门控）打破逐基因归因，强行归因即伪披露。缺省 False
+    既有消费方（回测/纸盘/live/分析/进化评估五方+模块内三处自消费）
+    不传参行为逐字节不变。
     """
     # 入口清空模块级指标列缓存：缓存以 id(df) 为键且不自动清理，
     # 不清则上次调用/测试的残留 Series 跨调用泄漏——Python id 复用
@@ -837,6 +920,7 @@ def dna_to_signal_set(
         has_any_role = any(layer.role is not None for layer in dna.layers)
 
         degraded_count = 0
+        mtf_hits = _empty_hits(len(enhanced_df)) if with_hits else None
         for layer in dna.layers:
             layer_df = dfs_by_timeframe.get(layer.timeframe)
             if layer_df is None:
@@ -848,7 +932,10 @@ def dna_to_signal_set(
                 degraded_count += 1
                 continue
 
-            sig = evaluate_layer(layer, layer_df, dfs_by_timeframe)
+            collected: list = []
+            sig = evaluate_layer(
+                layer, layer_df, dfs_by_timeframe,
+                gene_signals_out=collected if with_hits else None)
             layer_role = layer.role  # None 即缺省 "execution" 执行层
             exec_tf = dna.execution_genes.timeframe
             is_cross_tf = layer.timeframe != exec_tf
@@ -917,6 +1004,23 @@ def dna_to_signal_set(
                 exec_adds.append(pulse_adds)
                 exec_reduces.append(pulse_reduces)
 
+            # 求值披露（with_hits）：层内基因信号按该层信号同款投影
+            # （trend/structure/zone→resample 状态形；exec→pulse 脉冲
+            # 形；同轴原样）合并到主轴 hits——基因级与层信号走同一
+            # 投影单点，披露命中与实际信号投影语义一致
+            if with_hits and collected:
+                for gi, gene, gsig in collected:
+                    if is_cross_tf:
+                        if layer_role in ("trend", "structure", "zone"):
+                            proj = resample_signals(gsig, enhanced_df.index)
+                        else:
+                            proj = pulse_completed(
+                                gsig, enhanced_df.index, _layer_delta)
+                    else:
+                        proj = gsig
+                    _merge_gene_hits(mtf_hits, gi, gene, proj,
+                                     axis_timeframe=layer.timeframe)
+
         # 跨层信号组合
         if has_any_role:
             # 角色感知组合：尊重 cross_layer_logic 设定
@@ -950,6 +1054,7 @@ def dna_to_signal_set(
                     adds=pd.Series(False, index=enhanced_df.index),
                     reduces=pd.Series(False, index=enhanced_df.index),
                     degraded_layers=degraded_count,
+                    hits=mtf_hits,
                 )
             combined_entries = combine_signals(all_layer_entries, dna.cross_layer_logic)
             combined_exits = combine_signals(all_layer_exits, dna.cross_layer_logic)
@@ -981,6 +1086,7 @@ def dna_to_signal_set(
             reduces=combined_reduces,
             degraded_layers=degraded_count,
             entry_direction=entry_direction,
+            hits=mtf_hits,
         )
 
     # 单周期模式
@@ -998,6 +1104,8 @@ def dna_to_signal_set(
     add_inhibitors = []  # 0.4.2 R3/DC-1：ADD_INHIBIT 抑制基因
     reduce_triggers, reduce_guards = [], []
     direction_genes = []
+    # 求值披露收集面（with_hits）：(gene_index, gene, 布尔 Series)
+    gene_signal_log: list = []
 
     for gene in dna.signal_genes:
         try:
@@ -1008,6 +1116,8 @@ def dna_to_signal_set(
             signal = _evaluate_gene_signal(
                 gene, enhanced_df, dfs_by_timeframe)
             signal = signal.fillna(False)
+            if with_hits:
+                gene_signal_log.append((gene, signal))
 
             if gene.role == SignalRole.ENTRY_TRIGGER:
                 entry_triggers.append(signal)
@@ -1099,12 +1209,20 @@ def dna_to_signal_set(
             index=enhanced_df.index,
         )
 
+    hits = None
+    if with_hits:
+        hits = _empty_hits(len(enhanced_df))
+        for gene_index, (gene, signal) in enumerate(gene_signal_log):
+            _merge_gene_hits(hits, gene_index, gene, signal,
+                             axis_timeframe=dna.execution_genes.timeframe)
+
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
         entry_direction=entry_direction,
+        hits=hits,
     )
 
 
