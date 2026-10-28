@@ -29,3 +29,16 @@ DEFAULT_SLIPPAGE = 0.0005
 
 # 验证窗口缺省（根 K 线；显式 null=不限期不自动结题，由表字段表达）
 DEFAULT_WINDOW_BARS = 180
+
+# ── 挂载品种与周期双白名单（change paper-mount-and-concurrency；
+#    周期面固定六档=用户裁决 2026-10-28）───────────────────────
+# 值域与 change-1 固定订阅清单同源对齐（core/data/fapi/stream.py
+# FAPI_SYMBOLS/FAPI_TIMEFRAMES——12 路=2 币种×6 周期）：两处各自
+# 单源、同值域，一致性由 test_api_paper 断言锚定（防漂移；订阅扩容
+# 时纸盘是否跟随是独立决策，不 import 派生）。收窄仅表达为挂载/装载
+# 层能力边界——validator 的 DNA 周期值域（TF_SECONDS 14 键）不收窄，
+# 超集周期策略可存在可回测仅不可挂盘；研究数据面不受此约束。
+PAPER_SYMBOL_WHITELIST: frozenset[str] = frozenset(
+    {"BTCUSDT", "ETHUSDT"})
+PAPER_TIMEFRAME_WHITELIST: frozenset[str] = frozenset(
+    {"1m", "5m", "15m", "1h", "4h", "1d"})

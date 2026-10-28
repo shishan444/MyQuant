@@ -27,6 +27,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_data_dir, get_db_path
 from core.data.validation import validate_symbol
+from core.paper_trading.constants import (
+    PAPER_SYMBOL_WHITELIST,
+    PAPER_TIMEFRAME_WHITELIST,
+)
 from core.paper_trading.reporting import (
     FINAL_STATUSES,
     TaskNotConcludedError,
@@ -68,13 +72,21 @@ class PaperTaskCreate(BaseModel):
     @classmethod
     def _validate_symbol_whitelist(
             cls, v: Optional[str]) -> Optional[str]:
-        """symbol 入口白名单（CARD-01①）：用户可控 symbol 直落任务行、
-        下游 parquet 路径直拼——接 core/data/validation.validate_symbol
-        单源（与写路径 updater 同点），非法 422 校验数组拒绝；None=
-        缺省取 DNA 不经此面。"""
+        """symbol 入口白名单（CARD-01①+挂载品种白名单）：格式白名单
+        （core/data/validation.validate_symbol 单源——用户可控 symbol
+        直落任务行、下游 parquet 路径直拼）后追加挂载枚举校验
+        （PAPER_SYMBOL_WHITELIST——固定 12 路订阅制的能力边界，用户
+        裁决 2026-10-28），非法 422 校验数组拒绝（detail 含白名单
+        值域）；None=缺省取 DNA 不经此面。"""
         if v is None:
             return v
-        return validate_symbol(v)
+        v = validate_symbol(v)
+        if v not in PAPER_SYMBOL_WHITELIST:
+            raise ValueError(
+                f"symbol {v} 不在纸盘挂载白名单（固定订阅制——仅支持 "
+                f"{sorted(PAPER_SYMBOL_WHITELIST)}，白名单外品种零数据"
+                f"接入不订阅不装载）")
+        return v
 
 
 class PaperTaskResponse(BaseModel):
@@ -357,6 +369,24 @@ def create_task(
     # risk_genes（任务覆写面 design §7.1 端点 1）
     dna = StrategyDNA.from_json(strategy["dna_json"])
     task_id = paper.new_task_id()
+    # 挂载周期白名单（change paper-mount-and-concurrency：周期面固定
+    # 六档，用户裁决 2026-10-28）：timeframe 恒从 DNA 抄录，校验在
+    # 流转点——「执行环境不支持」形制〔能力矩阵拒绝先例，非「策略
+    # 无效」〕：validator 的 DNA 值域不收窄，超集周期策略可存在可
+    # 回测仅不可挂盘
+    exec_tf = dna.execution_genes.timeframe
+    if exec_tf not in PAPER_TIMEFRAME_WHITELIST:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PAPER_TIMEFRAME_NOT_SUPPORTED",
+                "message": "执行周期不在纸盘挂载支持档位（执行环境不"
+                           "支持——非策略无效；validator DNA 值域不收"
+                           "窄，策略可在回测/研究链使用）",
+                "detail": {
+                    "timeframe": exec_tf,
+                    "supported": sorted(PAPER_TIMEFRAME_WHITELIST)},
+            })
     # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
     # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
     snapshot = paper.resolve_research_status(db_path, strategy)

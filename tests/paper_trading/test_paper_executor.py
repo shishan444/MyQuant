@@ -1504,3 +1504,56 @@ class TestIndicatorSnapshotGuards:
                 assert "Infinity" not in r[col], (r["seq"], col)
                 assert "NaN" not in r[col], (r["seq"], col)
                 json.loads(r[col])
+
+
+class TestPrepareWhitelistSecondGate:
+    """挂载双白名单装载第二道（change paper-mount-and-concurrency
+    任务 3）：绕过受理层直插库行的双维非法任务 prepare 拒绝转 error
+    （error_detail 双维分立可辨；数据保留）。"""
+
+    def test_symbol_outside_whitelist_rejected_to_error(self, tmp_path):
+        """③非白名单 symbol 直插行：prepare→error+
+        symbol_not_supported_by_platform。"""
+        h = _Harness(tmp_path, window_bars=10)
+        # 直插绕过受理层（create_task 仓库直建不校验白名单）
+        paper.create_task(
+            h.db, strategy_id="strat-1", task_id="pt_wl000000001",
+            dna_snapshot_json=make_dna().to_json(),
+            symbol="SOLUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        row = paper.get_task(h.db, "pt_wl000000001")
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is False
+        task = paper.get_task(h.db, "pt_wl000000001")
+        assert task["status"] == "error"
+        assert "symbol_not_supported_by_platform" in task["error_detail"]
+        assert "SOLUSDT" in task["error_detail"], "detail 含违规值可辨"
+
+    def test_timeframe_outside_whitelist_rejected_to_error(self, tmp_path):
+        """③非六档 timeframe（30m）直插行：prepare→error+
+        timeframe_not_supported_by_platform。"""
+        h = _Harness(tmp_path, window_bars=10)
+        paper.create_task(
+            h.db, strategy_id="strat-1", task_id="pt_wl000000002",
+            dna_snapshot_json=make_dna(timeframe="30m").to_json(),
+            symbol="BTCUSDT", timeframe="30m",
+            research_status_snapshot="unverified")
+        row = paper.get_task(h.db, "pt_wl000000002")
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is False
+        task = paper.get_task(h.db, "pt_wl000000002")
+        assert task["status"] == "error"
+        assert "timeframe_not_supported_by_platform" \
+            in task["error_detail"]
+        assert "30m" in task["error_detail"]
+
+    def test_whitelist_row_passes_second_gate(self, tmp_path):
+        """白名单内行不受第二道影响（正常装载路径零回归——准备就绪
+        返 True 面）。"""
+        h = _Harness(tmp_path, window_bars=10)
+        row = paper.get_task(h.db, h.task_id)
+        ex = PaperTaskExecutor(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert ex.prepare() is True

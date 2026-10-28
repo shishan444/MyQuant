@@ -977,3 +977,91 @@ class TestSignalEndpoints:
         body = client.get(
             f"/api/paper-trading/tasks/{tid}/signals").json()
         assert body["signals"] == [] and body["has_more"] is False
+
+
+class TestMountWhitelist:
+    """挂载品种与周期双白名单（change paper-mount-and-concurrency
+    任务 3）：受理层 422 双维+白名单内全组合受理+常量一致性+研究面
+    不受限。"""
+
+    # 14 键中六档外 8 键（Q1 终审：固定 12 路制下不再受理）
+    _OUT_TFS = ["3m", "30m", "2h", "6h", "8h", "12h", "3d", "1w"]
+    _TFS_IN = ["1m", "5m", "15m", "1h", "4h", "1d"]
+    _SYMS_IN = ["BTCUSDT", "ETHUSDT"]
+
+    def test_symbol_outside_whitelist_422_with_domain(self, paper_api):
+        """①非白名单 symbol 422（detail 含白名单值域）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1", "symbol": "SOLUSDT"})
+        assert resp.status_code == 422
+        detail = str(resp.json()["detail"])
+        assert "BTCUSDT" in detail and "ETHUSDT" in detail, \
+            "detail 须含白名单值域"
+
+    @pytest.mark.parametrize("tf", _OUT_TFS)
+    def test_timeframe_outside_six_422(self, paper_api, tf):
+        """②非六档周期（六档外 8 键参数化）DNA 挂载 422 拒绝
+        （PAPER_TIMEFRAME_NOT_SUPPORTED——「执行环境不支持」形制，
+        detail 含支持档位），任务不创建。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe=tf)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1"})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PAPER_TIMEFRAME_NOT_SUPPORTED"
+        assert detail["detail"]["timeframe"] == tf
+        assert sorted(detail["detail"]["supported"]) == sorted(self._TFS_IN)
+        assert client.get(
+            "/api/paper-trading/tasks?limit=1").json()["total"] == 0, \
+            "拒绝面任务不创建"
+
+    @pytest.mark.parametrize("symbol", _SYMS_IN)
+    @pytest.mark.parametrize("tf", _TFS_IN)
+    def test_whitelist_full_grid_accepted(self, paper_api, symbol, tf):
+        """④白名单内 2 币种×6 周期全组合受理正常（201 pending）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe=tf, symbol=symbol)
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1", "symbol": symbol})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["status"] == "pending"
+
+    def test_whitelist_constants_align_fapi_subscribe_keys(self):
+        """⑥双白名单与 change-1 固定订阅清单常量一致性（两处单源
+        同值域防漂移——12 路=2 币种×6 周期）。"""
+        from core.data.fapi.stream import (
+            FAPI_SYMBOLS, FAPI_TIMEFRAMES, FIXED_SUBSCRIBE_KEYS)
+        from core.paper_trading.constants import (
+            PAPER_SYMBOL_WHITELIST, PAPER_TIMEFRAME_WHITELIST)
+
+        assert PAPER_SYMBOL_WHITELIST == frozenset(FAPI_SYMBOLS)
+        assert PAPER_TIMEFRAME_WHITELIST == frozenset(FAPI_TIMEFRAMES)
+        assert len(FIXED_SUBSCRIBE_KEYS) == \
+            len(PAPER_SYMBOL_WHITELIST) * len(PAPER_TIMEFRAME_WHITELIST) \
+            == 12, "12 路=2 币种×6 周期互锁"
+
+    def test_validator_dna_domain_not_narrowed(self):
+        """⑤⑦研究数据面不受限+validator DNA 值域零改动：TF_SECONDS
+        14 键在位、六档外 8 键 DNA 在研究链合法（收窄仅挂载/装载层）。"""
+        from core.data.timeframes import TF_SECONDS
+        from core.strategy.validator import validate_dna
+        from tests.helpers.data_factory import make_dna
+
+        assert len(TF_SECONDS) == 14
+        for tf in self._OUT_TFS:
+            assert validate_dna(make_dna(timeframe=tf)).is_valid, \
+                f"研究链 {tf} 须照旧合法（值域不收窄）"
+
+    def test_mcp_mount_reject_via_rest_passthrough(self, paper_api):
+        """MCP mount 经 REST 校验透传（同 422 语义——白名单双通道
+        同源断言面）。"""
+        client, db = paper_api
+        _seed_strategy(db, timeframe="30m")
+        # MCP 工具薄封装 POST 同端点（test_paper_tools 行为对拍在案，
+        # 此处锚 REST 端点即 MCP 透传源）
+        resp = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": "st-1"})
+        assert resp.status_code == 422
