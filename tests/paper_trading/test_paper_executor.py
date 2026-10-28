@@ -1467,3 +1467,40 @@ class TestIndicatorSnapshotGuards:
         parsed = _json.loads(row["indicator_snapshot"])
         assert parsed == {"rsi_14": None}
         assert "Infinity" not in row["indicator_snapshot"]
+
+    def test_inf_column_chain_writes_standard_snapshot(self, tmp_path):
+        """SEC-1 端到端面（消解直测组装函数的 punt）：决策 bar 快照列
+        inf（EMA20 守卫基因——inf>-999 守卫通过、不影响 rsi 入场触发），
+        全链落库的 indicator_snapshot 该列转 None；属性面：全任务信号
+        行两 JSON 列无 Infinity/NaN 非标字面量且可解析。"""
+        from core.strategy.dna import SignalRole
+
+        dna = make_dna()
+        dna.signal_genes = [
+            make_signal_gene(role=SignalRole.ENTRY_TRIGGER),
+            make_signal_gene(
+                indicator="EMA", params={"period": 20},
+                role=SignalRole.ENTRY_GUARD,
+                condition_type="gt", condition_value=-999),
+        ]
+        h = _Harness(tmp_path, dna=dna, window_bars=30)
+        ex = h.make_executor()
+        frame = h.enhanced.copy()
+        rsi = [50.0] * 200
+        rsi[5] = 20.0
+        frame["rsi_14"] = rsi
+        frame.iloc[5, frame.columns.get_loc("ema_20")] = float("inf")
+        ex.process_frames(frame, 0)
+
+        opens = [r for r in paper.list_signals(h.db, h.task_id, limit=1000)
+                 if r["signal_kind"] == "open" and r["outcome"] == "filled"]
+        assert len(opens) == 1
+        snap = json.loads(opens[0]["indicator_snapshot"])
+        assert snap == {"rsi_14": 20.0, "ema_20": None}, \
+            "决策 bar inf 列转 None、rsi 决策值同时在快照（对账面）"
+        # 属性扫描：全行两 JSON 列恒标准（无 Infinity/NaN 字面量）
+        for r in paper.list_signals(h.db, h.task_id, limit=1000):
+            for col in ("indicator_snapshot", "gene_hits"):
+                assert "Infinity" not in r[col], (r["seq"], col)
+                assert "NaN" not in r[col], (r["seq"], col)
+                json.loads(r[col])

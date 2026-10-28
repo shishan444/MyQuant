@@ -1078,6 +1078,17 @@ class TestSignals:
         assert len(rows) == 1, "同键重复零新行"
         assert rows[0]["outcome"] == "filled", "首写为准（值不覆写）"
 
+    def test_exec_bar_time_none_dropped_by_not_null(self, tmp_path: Path):
+        """SEC-2 约束行为面：exec_bar_time NOT NULL 经 INSERT OR IGNORE
+        形制为静默丢行（与唯一键吸收同款）——None 行零落库、不抛异常；
+        约束生效的证明：若无该约束，此行将成功落库。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.save_signals(db, tid, [_signal(1, None)])
+        assert paper.list_signals(db, tid) == []
+
     @pytest.mark.parametrize("kind", [
         "open", "close", "add", "reduce", "exit_sl", "exit_tp",
         "exit_max_loss", "exit_max_hold", "exit_time", "exit_liquidation",
