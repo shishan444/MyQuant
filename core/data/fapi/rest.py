@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
+from core.data.fapi.stream import is_valid_bar_values
 from core.data.timeframes import TF_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -116,19 +117,41 @@ def _klines_rows_to_frame(rows: list) -> pd.DataFrame:
     行形制锚（fapi klines 端点）：[openTime, open, high, low, close,
     volume, closeTime, ...]——前六位消费，其余（成交笔数/报价量等）
     不入决策面。
+
+    脏行单点过滤（批次三 CARD-01）：OHLC/volume 任一非有限值
+    （NaN/inf）或字段不可解析的行丢弃——与 WS 通道 is_valid_
+    bar_values 同源同语义（两入口脏数据一套判定），不经判定的
+    float 直转会把关行静默入帧，污染对账/建库/重建/费率四消费
+    路径（直转面同修 fetch_funding_rate）。
     """
     if not rows:
         return _empty_ohlcv_frame()
+    parsed: list[tuple[int, tuple[float, ...]]] = []
+    for row in rows:
+        try:
+            values = (float(row[1]), float(row[2]), float(row[3]),
+                      float(row[4]), float(row[5]))
+        except (TypeError, ValueError, IndexError):
+            logger.warning(
+                "fapi REST klines 行字段异常（丢弃）：openTime=%r",
+                row[0] if row else None)
+            continue
+        if not is_valid_bar_values(*values):
+            logger.warning(
+                "fapi REST 脏数据丢弃（OHLC/volume 非有限值）："
+                "openTime=%r", row[0])
+            continue
+        parsed.append((int(row[0]), values))
     frame = pd.DataFrame(
         {
-            "open": [float(row[1]) for row in rows],
-            "high": [float(row[2]) for row in rows],
-            "low": [float(row[3]) for row in rows],
-            "close": [float(row[4]) for row in rows],
-            "volume": [float(row[5]) for row in rows],
+            "open": [v[0] for _, v in parsed],
+            "high": [v[1] for _, v in parsed],
+            "low": [v[2] for _, v in parsed],
+            "close": [v[3] for _, v in parsed],
+            "volume": [v[4] for _, v in parsed],
         },
         index=pd.DatetimeIndex(
-            [pd.Timestamp(int(row[0]), unit="ms", tz="UTC") for row in rows],
+            [pd.Timestamp(ms, unit="ms", tz="UTC") for ms, _ in parsed],
             name="timestamp"),
     )
     # 端点按 openTime 升序返回——排序去重是端点契约外的本地不变式
@@ -268,10 +291,26 @@ class FapiRestClient:
                 {"funding_rate": pd.Series(dtype=float)},
                 index=pd.DatetimeIndex([], name="timestamp", tz="UTC"),
             )
+        # 脏行过滤（CARD-01 直转面同修）：费率值不可解析或非有限
+        # （NaN/inf）的行丢弃——与 klines 行同语义（对账面不吞坏点）
+        parsed: list[tuple[int, float]] = []
+        for row in rows:
+            try:
+                rate = float(row["fundingRate"])
+                ms = int(row["fundingTime"])
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    "fapi REST fundingRate 行字段异常（丢弃）：%r", row)
+                continue
+            if not is_valid_bar_values(rate):
+                logger.warning(
+                    "fapi REST 脏数据丢弃（fundingRate 非有限值）："
+                    "fundingTime=%r", row.get("fundingTime"))
+                continue
+            parsed.append((ms, rate))
         return pd.DataFrame(
-            {"funding_rate": [float(row["fundingRate"]) for row in rows]},
+            {"funding_rate": [rate for _, rate in parsed]},
             index=pd.DatetimeIndex(
-                [pd.Timestamp(int(row["fundingTime"]), unit="ms", tz="UTC")
-                 for row in rows],
+                [pd.Timestamp(ms, unit="ms", tz="UTC") for ms, _ in parsed],
                 name="timestamp"),
         )
