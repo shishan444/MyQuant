@@ -564,8 +564,9 @@ class ValidationRecord(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
-# == paper trading 域（5 表，rebuild-paper-trading 2.1）==
-# 字段级权威源：openspec 变更 rebuild-paper-trading design.md §4.1-4.5；
+# == paper trading 域（6 表，rebuild-paper-trading 2.1 + paper-signal-log）==
+# 字段级权威源：openspec 变更 rebuild-paper-trading design.md §4.1-4.5
+# 与 paper-signal-log specs/paper-signal-log/spec.md；
 # 时间戳列沿工程 TEXT ISO 形制；JSON 列以 Text 存 JSON 字符串
 # （strategy.dna_json 先例）。唯一键在 __table_args__ 与 Alembic 迁移
 # 两处同步声明（两方不一致静默架空——验证须实库 PRAGMA index_list）。
@@ -637,6 +638,11 @@ class PtFill(Base):
     """
     纸盘成交流水（成交流水权威+审计依据）：seq 按 design §3.5 八步序
     编号——「为什么这根 K 线做了这个动作」的审计锚。
+
+    核算明细三列（change paper-signal-log 任务 5）：equity_before/
+    available_before/margin_used 全 NULLable——存量 NULL=升级前成交
+    历史语义（零回填）；追加在表尾与 Alembic ALTER ADD COLUMN
+    列序一致（双声明逐列对照前提）。
     """
 
     __tablename__ = "pt_fill"
@@ -658,6 +664,10 @@ class PtFill(Base):
     fee: Mapped[Optional[float]] = mapped_column(REAL)
     realized_pnl: Mapped[Optional[float]] = mapped_column(REAL)  # 仅出场类
     reason: Mapped[Optional[str]] = mapped_column(Text)
+    # 核算明细（执行尝试前时点；open/add=占用，reduce/close=释放正值）
+    equity_before: Mapped[Optional[float]] = mapped_column(REAL)
+    available_before: Mapped[Optional[float]] = mapped_column(REAL)
+    margin_used: Mapped[Optional[float]] = mapped_column(REAL)
 
 
 class PtEquity(Base):
@@ -723,6 +733,72 @@ class PtReport(Base):
     generated_at: Mapped[str] = mapped_column(Text, nullable=False)
     as_of: Mapped[str] = mapped_column(Text, nullable=False)  # 重算时点
     report_json: Mapped[str] = mapped_column(Text, nullable=False)  # 完整报告 JSON
+
+
+class PtSignal(Base):
+    """
+    纸盘信号记录（决策过程结构化落库，change paper-signal-log）：
+    每个信号事件一行（成交/被拒/expired 收割），22 列字段族十类
+    （仓位/策略标识、双 bar 时间戳、八步序编号、信号类型、命中
+    基因、指标快照、决策输出、执行结果含拒因、账户快照、时间戳）。
+    字段字典权威源：openspec 变更 paper-signal-log specs/paper-
+    signal-log/spec.md「字段族明细」Scenario。
+
+    记录粒度=事件级：无信号常规 bar 零行；求值语义层过滤（方向
+    声明冲突、mixed 符号 0）不产记录。与同 bar fills/equity/
+    funding/task 游标同一原子事务落库（append_bar 扩展）。
+    """
+
+    __tablename__ = "pt_signal"
+    __table_args__ = (
+        # (task_id, exec_bar_time, seq) 唯一：INSERT OR IGNORE 幂等键
+        # （与 pt_fill 同款崩溃重放吸收；expired 收割 seq=0 终态一次
+        # 性路径——_finalize 幂等标志防重入）
+        Index("ux_pt_signal", "task_id", "exec_bar_time", "seq", unique=True),
+        # 跨仓位对照查询（strategy_id, bar_time）
+        Index("ix_pt_signal_strategy", "strategy_id", "bar_time"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(Text, ForeignKey("pt_task.task_id"))
+    # 创建时点冗余（pt_task.strategy_id 生命周期不变无漂移）
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # 信号产生 bar=决策锚（ISO 与 pt_fill.bar_time 同构）
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)
+    # 执行/拒绝 bar：即时类与解释器内拒绝同 bar_time、pending 次根
+    # 差一根、expired=终态 last_bar_time
+    exec_bar_time: Mapped[Optional[str]] = mapped_column(Text)
+    # 八步序编号：即时类 1/2、pending 消费 3/4、解释器内拒绝 7、
+    # expired 收割 0
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    # INTENT_KINDS 十值同域（kernel/types.py）
+    signal_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # long/short；无方向语义 NULL
+    direction: Mapped[Optional[str]] = mapped_column(Text)
+    size_fraction: Mapped[Optional[float]] = mapped_column(REAL)
+    # JSON 数组，每项={gene_index,indicator,field,condition,role,
+    # timeframe}——「哪条条件什么阈值」结构化承载
+    gene_hits: Mapped[str] = mapped_column(Text, nullable=False)
+    # JSON dict {列名:值}：DNA 引用指标列该 bar 值；无引用列空 dict
+    indicator_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    # filled/rejected/expired——expired=意图随任务终态消亡
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    # rejected 必填。枚举四值：insufficient_funds/below_min_notional/
+    # exposure_cap/context_invalid——below_min_notional 生产者在
+    # change-4，建表时值域写全预留
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text)
+    # filled 时关联 pt_fill 定位三元组 (task_id, exec_bar_time, fill_seq)
+    fill_seq: Mapped[Optional[int]] = mapped_column(Integer)
+    # filled 且 cap 截断=1（披露非拒绝）
+    capped: Mapped[Optional[int]] = mapped_column(Integer)
+    # 账户快照六列（执行尝试前时点；产生层拒绝=求值时点）
+    equity: Mapped[float] = mapped_column(REAL, nullable=False)
+    balance: Mapped[float] = mapped_column(REAL, nullable=False)
+    unrealized_pnl: Mapped[float] = mapped_column(REAL, nullable=False)
+    position_side: Mapped[Optional[str]] = mapped_column(Text)
+    position_quantity: Mapped[Optional[float]] = mapped_column(REAL)
+    position_margin: Mapped[Optional[float]] = mapped_column(REAL)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 # == strategy lifecycle 域（1 表，build-strategy-lifecycle 1.2）==

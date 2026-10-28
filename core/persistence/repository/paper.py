@@ -2,10 +2,11 @@
 
 与旧仓库 paper_trading.py 物理分开（design §4.6——旧三表留档不删
 不改不写，无跨新旧外键；旧仓库随组 7 退役）。行为锚点：
-- 单 bar 原子落库 append_bar：fills+equity+funding+task 游标与账户态
-  一个事务（engine.begin()），三明细表 INSERT OR IGNORE 幂等（唯一键
-  吸收恢复重放）；
-- 级联删 delete_task 五表单事务；
+- 单 bar 原子落库 append_bar：fills+signals+equity+funding+task 游标
+  与账户态一个事务（engine.begin()），明细表 INSERT OR IGNORE 幂等
+  （唯一键吸收恢复重放；signals 面 change paper-signal-log——信号
+  记录与同 bar 明细同事务，spec「信号与成交同批原子」）；
+- 级联删 delete_task 六表单事务（五明细表+任务行，signals 随删）；
 - clone 新建 pending 行（research_status_snapshot 按 clone 创建时点
   重新解析——创建时点审计+查询期现算双句式：列值=创建时点审计事实，
   读点返回=查询期现算值，design §5.1+build-strategy-lifecycle 5.3）；
@@ -23,7 +24,7 @@ from sqlalchemy import (
 )
 
 from core.persistence.orm.models import (
-    PtEquity, PtFill, PtFunding, PtReport, PtTask, Strategy,
+    PtEquity, PtFill, PtFunding, PtReport, PtSignal, PtTask, Strategy,
     StrategyTransitionEvent,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -345,11 +346,18 @@ def append_bar(
     funding: Optional[List[Dict[str, Any]]] = None,
     task_state: Optional[Dict[str, Any]] = None,
     funding_backfills: Optional[List[Dict[str, Any]]] = None,
+    signals: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """单 bar 原子落库：fills+equity+funding+task 游标与账户态一个事务。
+    """单 bar 原子落库：fills+signals+equity+funding+task 游标与账户态
+    一个事务。
 
     - fills 逐条 INSERT OR IGNORE——唯一键 (task_id, bar_time, seq)
       吸收恢复重放（首写为准）；
+    - signals（change paper-signal-log）逐条 OR IGNORE——唯一键
+      (task_id, exec_bar_time, seq)（行自带 exec_bar_time：即时类与
+      解释器内拒绝同 bar_time、pending 消费差一根）；信号记录与同 bar
+      fills/equity/funding/task 游标同事务（spec「信号与成交同批原子」
+      ——中途故障整体不落）；
     - equity 一行 OR IGNORE——唯一键 (task_id, bar_time)；
     - funding 逐条 OR IGNORE——唯一键 (task_id, settle_time)（一结算点
       一行，补记回填不产生新行）；
@@ -366,6 +374,31 @@ def append_bar(
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
+        for s in signals or ():
+            conn.execute(
+                insert(PtSignal).prefix_with("OR IGNORE").values(
+                    task_id=task_id,
+                    strategy_id=s["strategy_id"],
+                    bar_time=s["bar_time"],
+                    exec_bar_time=s.get("exec_bar_time"),
+                    seq=s["seq"],
+                    signal_kind=s["signal_kind"],
+                    direction=s.get("direction"),
+                    size_fraction=s.get("size_fraction"),
+                    gene_hits=s["gene_hits"],
+                    indicator_snapshot=s["indicator_snapshot"],
+                    outcome=s["outcome"],
+                    reject_reason=s.get("reject_reason"),
+                    fill_seq=s.get("fill_seq"),
+                    capped=s.get("capped"),
+                    equity=s["equity"], balance=s["balance"],
+                    unrealized_pnl=s["unrealized_pnl"],
+                    position_side=s.get("position_side"),
+                    position_quantity=s.get("position_quantity"),
+                    position_margin=s.get("position_margin"),
+                    created_at=s.get("created_at") or _now(),
+                )
+            )
         for f in fills:
             conn.execute(
                 insert(PtFill).prefix_with("OR IGNORE").values(
@@ -460,6 +493,84 @@ def list_fills(
         rows = conn.execute(
             select(PtFill).where(PtFill.task_id == task_id)
             .order_by(PtFill.bar_time.asc(), PtFill.seq.asc())
+            .limit(limit).offset(offset)
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def save_signals(
+    db_path: Path, task_id: str, rows: List[Dict[str, Any]],
+) -> None:
+    """信号行独立事务写入（INSERT OR IGNORE——唯一键 (task_id,
+    exec_bar_time, seq) 吸收重放/防重入）。
+
+    bar 边界的信号记录走 append_bar 的 signals 面（同 bar 明细同
+    事务）；本函数承载非 bar 边界写入（终态 expired 收割——_finalize
+    一次性路径，OR IGNORE 吸收收割防重入的重复落库）。行形制与
+    append_bar.signals 一致（strategy_id/bar_time/seq/signal_kind/
+    gene_hits/indicator_snapshot/outcome/equity 等逐列，见 PtSignal）。
+    """
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        for s in rows:
+            conn.execute(
+                insert(PtSignal).prefix_with("OR IGNORE").values(
+                    task_id=task_id,
+                    strategy_id=s["strategy_id"],
+                    bar_time=s["bar_time"],
+                    exec_bar_time=s.get("exec_bar_time"),
+                    seq=s["seq"],
+                    signal_kind=s["signal_kind"],
+                    direction=s.get("direction"),
+                    size_fraction=s.get("size_fraction"),
+                    gene_hits=s["gene_hits"],
+                    indicator_snapshot=s["indicator_snapshot"],
+                    outcome=s["outcome"],
+                    reject_reason=s.get("reject_reason"),
+                    fill_seq=s.get("fill_seq"),
+                    capped=s.get("capped"),
+                    equity=s["equity"], balance=s["balance"],
+                    unrealized_pnl=s["unrealized_pnl"],
+                    position_side=s.get("position_side"),
+                    position_quantity=s.get("position_quantity"),
+                    position_margin=s.get("position_margin"),
+                    created_at=s.get("created_at") or _now(),
+                )
+            )
+
+
+def list_signals(
+    db_path: Path,
+    task_id: str,
+    *,
+    kind: Optional[str] = None,
+    outcome: Optional[str] = None,
+    bar_time_start: Optional[str] = None,
+    bar_time_end: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """列任务信号记录（查询面双通道的数据单源，REST/MCP 同参数面）。
+
+    过滤全部 SQL 下推：kind（INTENT_KINDS 十值同域——枚举校验归
+    REST/MCP 入口层，仓库纯数据操作）/outcome（filled/rejected/
+    expired 三值）/bar_time 闭区间 [start, end]（ISO 字符串字典序=
+    时间序，两侧含入）；排序 bar_time+seq 升序（审计读序，spec
+    查询面条款）；limit/offset 分页。
+    """
+    stmt = select(PtSignal).where(PtSignal.task_id == task_id)
+    if kind:
+        stmt = stmt.where(PtSignal.signal_kind == kind)
+    if outcome:
+        stmt = stmt.where(PtSignal.outcome == outcome)
+    if bar_time_start is not None:
+        stmt = stmt.where(PtSignal.bar_time >= bar_time_start)
+    if bar_time_end is not None:
+        stmt = stmt.where(PtSignal.bar_time <= bar_time_end)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            stmt.order_by(PtSignal.bar_time.asc(), PtSignal.seq.asc())
             .limit(limit).offset(offset)
         ).mappings().all()
     return [dict(r) for r in rows]
@@ -568,8 +679,9 @@ def latest_equity_snapshot(
 
 
 def delete_task(db_path: Path, task_id: str) -> bool:
-    """删除纸盘任务及其全部关联数据（五表级联单事务；不存在返回
-    False）。终态门槛（仅终态可删）是路由层语义，仓库纯数据操作。"""
+    """删除纸盘任务及其全部关联数据（六表级联单事务——五明细表+
+    任务行；不存在返回 False）。终态门槛（仅终态可删）是路由层语义，
+    仓库纯数据操作。"""
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         exists = conn.execute(
@@ -578,6 +690,7 @@ def delete_task(db_path: Path, task_id: str) -> bool:
         if exists is None:
             return False
         conn.execute(delete(PtFill).where(PtFill.task_id == task_id))
+        conn.execute(delete(PtSignal).where(PtSignal.task_id == task_id))
         conn.execute(delete(PtEquity).where(PtEquity.task_id == task_id))
         conn.execute(delete(PtFunding).where(PtFunding.task_id == task_id))
         conn.execute(delete(PtReport).where(PtReport.task_id == task_id))

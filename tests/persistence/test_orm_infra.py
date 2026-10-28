@@ -27,14 +27,14 @@ _LEGACY_PAPER_INDEXES = frozenset({
 
 
 class TestModelMetadata:
-    """模型全量声明：11 legacy 表 + 8 研究域表 + 5 纸盘域表 + 1 生命
-    周期事件表（build-strategy-lifecycle 1.2；其中旧纸盘三表转留档），
-    导入无误。"""
+    """模型全量声明：11 legacy 表 + 8 研究域表 + 6 纸盘域表 + 1 生命
+    周期事件表（build-strategy-lifecycle 1.2 + paper-signal-log；
+    其中旧纸盘三表转留档），导入无误。"""
 
     def test_table_count(self):
         from core.persistence.orm import Base
         active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
-        assert len(active) == 22
+        assert len(active) == 23
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
@@ -46,8 +46,9 @@ class TestModelMetadata:
             "research_hypotheses", "research_log", "analysis_tasks",
             "formula_plugins", "model_plugins", "signal_registry",
             "feature_requests", "validation_records",
-            # 纸盘域（rebuild-paper-trading 2.1）
+            # 纸盘域（rebuild-paper-trading 2.1 + paper-signal-log pt_signal）
             "pt_task", "pt_fill", "pt_equity", "pt_funding", "pt_report",
+            "pt_signal",
             # 生命周期事件表（build-strategy-lifecycle 1.2）
             "strategy_transition_event",
         }
@@ -79,6 +80,9 @@ class TestModelMetadata:
             ("pt_fill", "ux_pt_fill_task_bar_seq"),
             ("pt_equity", "ux_pt_equity_task_bar"),
             ("pt_funding", "ux_pt_funding_task_settle"),
+            # 信号记录域（paper-signal-log；Alembic b8d4f2a6c9e1 同规声明）
+            ("pt_signal", "ux_pt_signal"),
+            ("pt_signal", "ix_pt_signal_strategy"),
             # 生命周期事件表（build-strategy-lifecycle 1.2；Alembic
             # de92805ed44c 同规声明——两方不一致静默架空）
             ("strategy_transition_event",
@@ -89,13 +93,15 @@ class TestModelMetadata:
         assert _LEGACY_PAPER_INDEXES <= idx
 
     def test_pt_unique_constraints(self):
-        """纸盘域三唯一键形制锚（列序=幂等键语义；与迁移 d8a2f6c3e9b1
-        两处同步声明的 ORM 侧）。"""
+        """纸盘域唯一键形制锚（列序=幂等键语义；与迁移 d8a2f6c3e9b1/
+        b8d4f2a6c9e1 两处同步声明的 ORM 侧）。"""
         from core.persistence.orm import Base
         expected = {
             "ux_pt_fill_task_bar_seq": ("pt_fill", ["task_id", "bar_time", "seq"]),
             "ux_pt_equity_task_bar": ("pt_equity", ["task_id", "bar_time"]),
             "ux_pt_funding_task_settle": ("pt_funding", ["task_id", "settle_time"]),
+            # paper-signal-log：信号行幂等键 (task_id, exec_bar_time, seq)
+            "ux_pt_signal": ("pt_signal", ["task_id", "exec_bar_time", "seq"]),
         }
         for name, (table, cols) in expected.items():
             t = Base.metadata.tables[table]
@@ -384,7 +390,7 @@ class TestAlembicBaseline:
         events = conn.execute(
             "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "a7f3d2c8e9b4", \
+        assert len(ver) == 1 and ver[0][0] == "c2f8e6b1d3a7", \
             "版本记账真实到 head 恰一行"
         assert status == "paper", "upgrade 补存量分类（active×活跃任务→paper）"
         assert events == 0, "存量分类零事件（纯净性原则）"
@@ -429,7 +435,7 @@ class TestAlembicBaseline:
             " AND name IN ('trg_strategy_status_domain',"
             " 'trg_strategy_status_insert_domain')").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "a7f3d2c8e9b4"
+        assert len(ver) == 1 and ver[0][0] == "c2f8e6b1d3a7"
         assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
 
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):
