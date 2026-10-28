@@ -381,6 +381,25 @@ class PaperScheduler:
             if row is None:
                 return
             strategy_id = row["strategy_id"]
+            # 回流域前置守卫（change paper-mount-and-concurrency 回流
+            # 安全实现）：回流域=「strategy.status='paper'」——与后台
+            # 重放扫描域（_replay_paper_strategies 同判据）一致。放宽
+            # 挂载（draft/candidate/live 续挂）后若不前置跳过，draft
+            # 态会经 task_end 凭证走 draft→active 矩阵合法边被「转正」
+            # （service 判定序③按全体边矩阵不分 trigger——绕过
+            # credential 判定，语义冒用）；candidate/live→active 虽被
+            # LifecycleError 兜底吸收，前置跳过使三态统一零副作用。
+            from core.persistence.repository.strategy import get_strategy
+
+            strategy_row = get_strategy(self.db_path, strategy_id)
+            if strategy_row is None:
+                return
+            if strategy_row["status"] != "paper":
+                logger.debug(
+                    "策略 %s 非 paper 态（%s）——续挂任务终态不回流"
+                    "（策略态不变，回流域=「paper 态×终态任务」）",
+                    strategy_id, strategy_row["status"])
+                return
             try:
                 result = transit(
                     self.db_path, strategy_id, target="active",

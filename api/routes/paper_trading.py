@@ -343,16 +343,18 @@ def create_task(
 ) -> PaperTaskResponse:
     """上盘（受理恒 201 返 pending 行——受理≠运行，超限停留 pending
     排队不拒绝；拒绝面 404 strategy not found/422 校验数组/409 非法
-    前置态）。
+    前置态——仅 archived 一态）。
 
-    挂盘三态契约（B' 前置集={active,paper}，build-strategy-lifecycle
-    5.1；三态分派住 transit 返回层，端点只管调用——防 TOCTOU 竞态与
-    校验散层）：from=active→同事务迁移 active→paper（trigger=mount，
-    evidence=task_id）+事件写入+任务创建；from=paper→同态续挂不迁移
-    （任务照常创建、零迁移事件——v3 §12.4 同策略对照已批能力的保留）；
-    draft/archived/candidate/live→409 STRATEGY_ILLEGAL_TRANSITION 失败
-    回滚两侧（不建任务无事件）。candidate/live 的正当上盘通道=迭代
-    克隆→重验证→active→再挂盘（不放宽 409，需求出现走变更传播）。
+    挂盘四分支分派（挂载门槛放宽=用户裁决 2026-10-28，Q3 终审；
+    分派判据=挂载请求时点策略态，任务自包含〔DNA 快照〕不受策略
+    后续态影响）：from=active→同事务迁移 active→paper（trigger=
+    mount，evidence=task_id）+事件写入+任务创建；from=paper→同态
+    续挂不迁移（任务照常创建、零迁移事件——v3 §12.4 同策略对照
+    已批能力的保留）；from=draft/candidate/live→同态续挂不迁移
+    （任务照常创建、策略态不变、无迁移事件——与 paper 续挂同构，
+    无观察轨概念：draft 挂载任务与普通任务完全同构，research_status
+    披露由现行三序现算机制天然携带）；from=archived→409
+    STRATEGY_ILLEGAL_TRANSITION 唯一排除（失败不建任务）。
     """
     from core.persistence.orm.engine import engine_for
     from core.persistence.repository.strategy import get_strategy
@@ -387,11 +389,11 @@ def create_task(
                     "timeframe": exec_tf,
                     "supported": sorted(PAPER_TIMEFRAME_WHITELIST)},
             })
-    # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
-    # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
+    # 快照取挂盘受理时点（四分支 resolve：active/paper 同值〔均非
+    # draft 且共享事件史〕；draft→"draft"；candidate/live 按三序现算）
     snapshot = paper.resolve_research_status(db_path, strategy)
     # 纸盘链能力矩阵受理层（dynamic-stop-loss-series 4.3 D1-①：
-    # series 档等纸盘不支持模式挂盘即拒——沿 live 受理前移先例
+    # series 档等纸盘不支持模式挂载即拒——沿 live 受理前移先例
     # （live_trading.py:56）同构；与装载层 executor prepare 双层镜像
     # live 链双插桩结构；判据单源 validate_trading_compatibility，
     # reasons 含档位名与「后续专项补齐」标注）
@@ -403,37 +405,55 @@ def create_task(
             detail={"code": "DNA_TRADING_INCOMPATIBLE",
                     "message": "策略与纸盘链不兼容（能力矩阵拒绝）",
                     "detail": {"reasons": _reasons}})
-    try:
-        with engine_for(db_path).begin() as conn:
-            # 迁移+建任务同事务原子两向：not_migrated（同态续挂）照常
-            # 建任务；LifecycleError（409 非法边/422 凭证/404/RACE）
-            # 上抛经 with 回滚——两侧皆无
-            transit(
-                db_path, body.strategy_id, target="paper", trigger="mount",
-                evidence={"task_id": task_id}, conn=conn)
-            paper.create_task(
-                db_path,
-                conn=conn,
-                task_id=task_id,
-                strategy_id=body.strategy_id,
-                dna_snapshot_json=strategy["dna_json"],
-                symbol=body.symbol or dna.execution_genes.symbol,
-                timeframe=dna.execution_genes.timeframe,
-                research_status_snapshot=snapshot,
-                initial_cash=body.initial_cash, fee=body.fee,
-                slippage=body.slippage,
-                leverage=(body.leverage if body.leverage is not None
-                          else dna.risk_genes.leverage),
-                window_bars=body.window_bars,
-                stop_loss_pct=body.stop_loss_pct)
-    except LifecycleError as exc:
-        # 沿 strategies 域 _lifecycle_error_to_http 三段 dict 形制
-        # （本域单点内联——code 可辨 STRATEGY_ILLEGAL_TRANSITION）
+
+    create_values = dict(
+        task_id=task_id,
+        strategy_id=body.strategy_id,
+        dna_snapshot_json=strategy["dna_json"],
+        symbol=body.symbol or dna.execution_genes.symbol,
+        timeframe=dna.execution_genes.timeframe,
+        research_status_snapshot=snapshot,
+        initial_cash=body.initial_cash, fee=body.fee,
+        slippage=body.slippage,
+        leverage=(body.leverage if body.leverage is not None
+                  else dna.risk_genes.leverage),
+        window_bars=body.window_bars,
+        stop_loss_pct=body.stop_loss_pct)
+    strategy_status = strategy["status"]
+    if strategy_status == "archived":
+        # 唯一排除面（409 失败不建任务；沿 LifecycleError 三段 dict
+        # 形制——code 可辨 STRATEGY_ILLEGAL_TRANSITION）
         raise HTTPException(
-            status_code=exc.status,
-            detail={"code": exc.code, "message": exc.message,
-                    "detail": exc.detail},
-        ) from exc
+            status_code=409,
+            detail={
+                "code": "STRATEGY_ILLEGAL_TRANSITION",
+                "message": "archived 策略不可挂盘（唯一排除面——挂载"
+                           "门槛放宽后 archived 仍拒绝）",
+                "detail": {
+                    "strategy_id": body.strategy_id,
+                    "from_status": "archived", "target": "paper"}},
+        )
+    if strategy_status == "active":
+        # 现行迁移分支：迁移+建任务同事务原子两向（LifecycleError
+        # 上抛经 with 回滚——两侧皆无）
+        try:
+            with engine_for(db_path).begin() as conn:
+                transit(
+                    db_path, body.strategy_id, target="paper",
+                    trigger="mount", evidence={"task_id": task_id},
+                    conn=conn)
+                paper.create_task(db_path, conn=conn, **create_values)
+        except LifecycleError as exc:
+            raise HTTPException(
+                status_code=exc.status,
+                detail={"code": exc.code, "message": exc.message,
+                        "detail": exc.detail},
+            ) from exc
+    else:
+        # 同态续挂分支（paper/draft/candidate/live——Q3 终审放宽）：
+        # 不迁移不产事件，仅任务创建自身事务（无迁移侧故无两侧
+        # 原子性需求）
+        paper.create_task(db_path, **create_values)
     return _task_to_response(db_path, paper.get_task(db_path, task_id))
 
 

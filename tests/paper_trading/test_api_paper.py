@@ -198,10 +198,12 @@ class TestCreateTask:
         （恒 201 停留 pending）——上限不进创建拒绝面。"""
         client, db = paper_api
         _seed_strategy(db)
-        # fixture 调度器 max_running 缺省 10；造 10 个 running 行占满
+        # fixture 调度器 max_running 缺省 100（change paper-mount-and-
+        # concurrency 护栏上调）；造满 100 个 running 行占满
+        from core.paper_trading.constants import MAX_RUNNING_TASKS
         from core.persistence.repository import paper
 
-        for i in range(10):
+        for i in range(MAX_RUNNING_TASKS):
             tid = f"pt_run{i:09d}"
             paper.create_task(
                 db, task_id=tid, strategy_id="st-1",
@@ -209,30 +211,24 @@ class TestCreateTask:
                 research_status_snapshot="unverified")
             paper.update_task(db, tid, status="running")
         row = _create(client)
-        assert row["status"] == "pending"  # 第 11 个恒 201 排队
+        assert row["status"] == "pending"  # 第 101 个恒 201 排队（满载）
 
-    @pytest.mark.parametrize("status", [
-        "draft", "archived", "candidate", "live"])
-    def test_create_non_precondition_status_409(self, paper_api, status) -> None:
-        """B' 前置集收紧（build-strategy-lifecycle 5.1，spec delta
-        MODIFIED「上盘流转」：任意可上盘→{active,paper} 可上盘）：
-        四态→409 STRATEGY_ILLEGAL_TRANSITION（detail 含合法后继集），
-        任务不建+策略不变+零事件（失败回滚两侧）。candidate/live 的
-        正当通道=迭代克隆→重验证→active。"""
+    def test_create_archived_status_409(self, paper_api) -> None:
+        """挂载门槛放宽后（Q3 终审 2026-10-28）archived=唯一排除面：
+        409 STRATEGY_ILLEGAL_TRANSITION，任务不建+策略不变+零事件。"""
         client, db = paper_api
         from core.persistence.repository import paper
 
         _seed_strategy(db, strategy_id="st-1", status="draft")
-        _force_strategy_status(db, "st-1", status)
+        _force_strategy_status(db, "st-1", "archived")
         resp = client.post("/api/paper-trading/tasks",
                            json={"strategy_id": "st-1"})
-        assert resp.status_code == 409, (status, resp.text)
+        assert resp.status_code == 409, resp.text
         detail = resp.json()["detail"]
         assert detail["code"] == "STRATEGY_ILLEGAL_TRANSITION"
-        assert detail["detail"]["to_status"] == "paper"
         assert paper.count_tasks(db) == 0, "409 不建任务"
-        assert _strategy_status(db, "st-1") == status, "策略不变（回滚）"
-        assert _lifecycle_events(db, "st-1") == [], "零事件（回滚）"
+        assert _strategy_status(db, "st-1") == "archived", "策略不变"
+        assert _lifecycle_events(db, "st-1") == [], "零事件"
 
 
 # ── 挂盘三态契约（build-strategy-lifecycle 5.1） ──
@@ -1065,3 +1061,65 @@ class TestMountWhitelist:
         resp = client.post("/api/paper-trading/tasks", json={
             "strategy_id": "st-1"})
         assert resp.status_code == 422
+
+
+class TestMountFourBranchDispatch:
+    """挂载门槛放宽四分支（change paper-mount-and-concurrency 任务 4，
+    Q3 终审 2026-10-28）：draft/candidate/live→同态续挂不迁移；
+    archived→409 唯一排除；无观察轨概念。"""
+
+    @pytest.mark.parametrize("status", ["paper", "candidate", "live"])
+    def test_continued_mount_no_migration_event(self, paper_api,
+                                                status) -> None:
+        """②续挂分支（paper/candidate/live 三态各一）：201+任务照建+
+        策略态不变+零迁移事件（candidate/live 从现行 409 改续挂）。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        _force_strategy_status(db, "st-1", status)
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        assert resp.status_code == 201, (status, resp.text)
+        assert resp.json()["status"] == "pending"
+        assert paper.count_tasks(db) == 1
+        assert _strategy_status(db, "st-1") == status, "策略态不变"
+        assert _lifecycle_events(db, "st-1") == [], "零迁移事件"
+
+    def test_draft_mount_full_positive(self, paper_api) -> None:
+        """①draft 挂载正向：201 pending+任务可运行（executor 装载面
+        就绪）+策略保持 draft+零迁移事件；⑤research_status 披露=
+        draft（三序现算机制天然携带——零新增披露面）。"""
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        row = _create(client)
+        assert row["status"] == "pending"
+        assert _strategy_status(db, "st-1") == "draft", "策略保持 draft"
+        assert _lifecycle_events(db, "st-1") == []
+        # ⑤research_status 披露：详情查询即返 draft（现算三序序①）
+        detail = client.get(
+            f"/api/paper-trading/tasks/{row['task_id']}").json()
+        assert detail["research_status"] == "draft"
+        # ①任务可运行：装载校验通过（prepare 就绪面——draft 态不阻断
+        # 装载，无观察轨特殊分支；造最小市场数据沿 fixture data_dir）
+        import pandas as pd
+
+        from core.data.storage import save_parquet
+        from core.features.indicators import compute_all_indicators
+        from core.paper_trading.runtime.executor import PaperTaskExecutor
+        from core.paper_trading.runtime.feed import FeedRegistry
+        from core.persistence.repository import paper
+        from tests.helpers.data_factory import make_ohlcv
+
+        data_dir = Path(db).parent / "market"
+        raw = make_ohlcv(n=60, freq="4h", seed=7, base_price=100.0)
+        save_parquet(raw, data_dir / "BTCUSDT_4h.parquet")
+        registry = FeedRegistry(
+            data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
+            funding_refresher=lambda **k: pd.DataFrame())
+        ex = PaperTaskExecutor(
+            Path(db), paper.get_task(Path(db), row["task_id"]),
+            registry=registry, start_after="2000-01-01T00:00:00+00:00")
+        assert ex.prepare() is True, "draft 挂载任务装载就绪可运行"
+        assert compute_all_indicators is not None  # 就绪面数据链核证
