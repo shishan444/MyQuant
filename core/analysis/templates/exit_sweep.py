@@ -66,6 +66,11 @@ def _mode_range(mode: str) -> Tuple[float, float]:
 
     if mode == "atr":
         return SL_ATR_MIN, SL_ATR_MAX
+    if mode == "series":
+        # series 档无标量值域（线值经 sl_series_source 列给出——
+        # exit_sweep grid 该档 entry 允许空 stops 形式 + sl_series_
+        # source 必携；值域维度不自动跟随）
+        return 0.0, float("inf")
     return SL_PCT_MIN, SL_PCT_MAX
 
 
@@ -121,13 +126,52 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
     #   循环外单点取 pct 域对全模式统一适用已被值域分叉取代：atr 档
     #   合法倍数（如 2.0）曾按 [0.005,0.20] 被误拒、无意义小值（如
     #   0.05 倍）被误放——量纲双关的值域义务在消费方，非自动跟随）
+    # series 档形制（dynamic-stop-loss-series 4.3）：entry 空 stops
+    # 合法（线值非标量）+ sl_series_source 必携（指标/fx 形制）；非
+    # series 档 entry 空 stops 仍拒 + sl_series_source 不得携带
     total_groups = 0
     for entry in grid["modes"]:
         mode = entry["mode"]
         lo, hi = _mode_range(mode)
+        if mode == "series":
+            src = entry.get("sl_series_source")
+            if not isinstance(src, dict) or (
+                    "indicator" not in src and "column" not in src):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "series 档 grid entry 须携带 sl_series_source"
+                    "（指标形制 {indicator, params, field?} 或 fx 形制"
+                    " {column}）",
+                    detail={"param": "grid.modes[].sl_series_source"})
+            if "indicator" in src and "column" in src:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "sl_series_source 两形制互斥",
+                    detail={"param": "grid.modes[].sl_series_source"})
+            # fx 前缀判沿登记校验同源（hypothesis_service 静态校验②
+            # 同判据）：校验期整批 422 优于执行期单组 failed
+            if "column" in src and (not isinstance(src["column"], str)
+                                    or not src["column"].startswith("fx_")):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "sl_series_source.column 须为 fx_ 前缀精确列名"
+                    f": {src['column']!r}",
+                    detail={"param": "grid.modes[].sl_series_source.column",
+                            "value": src["column"]})
+        elif "sl_series_source" in entry:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"sl_series_source 仅 series 档 entry 可携带"
+                f"（当前 mode={mode}）",
+                detail={"param": "grid.modes[].sl_series_source",
+                        "mode": mode})
         for key in ("stops", "take_profits"):
             values = entry[key]
-            if not isinstance(values, list) or not values:
+            # series 档 stops 空列表合法（线值经 sl_series_source
+            # 列给出——take_profits 仍须非空：TP 是标量照常扫描）
+            if (not isinstance(values, list)
+                    or (not values and not (mode == "series"
+                                            and key == "stops"))):
                 raise ResearchError(
                     "RESEARCH_PARAM_INVALID",
                     f"grid.modes[].{key} 须为非空列表（空列表乘积视 0 "
@@ -154,7 +198,10 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
                         "「无止盈让利润奔跑」待实战需求放开）",
                         detail={"param": "grid.modes[].take_profits",
                                 "value": v, "legal_range": "> 0"})
-        total_groups += len(entry["stops"]) * len(entry["take_profits"])
+        # series 档空 stops 按占位 1 计（执行产 1×len(tps) 组——上限
+        # 语义与实际执行组数一致；非 series 空 stops 已在 ⑤ 拒）
+        stop_count = len(entry["stops"]) or (1 if mode == "series" else 0)
+        total_groups += stop_count * len(entry["take_profits"])
     # ⑥ 跨模式组数上限
     if total_groups > _SWEEP_MAX_GROUPS:
         raise ResearchError(
@@ -281,26 +328,59 @@ def exit_sweep(
     formula_refs = {s["ref"] for s in plugin_sources
                     if s.get("type") == "formula" and s.get("ref")}
     warmup_bars = derive_warmup_full(db_path, indicator_names, formula_refs)
+    # series 档线列来源 warmup 两轨并入（dynamic-stop-loss-series 卡 B
+    # 「warmup 覆盖面=求值面」——与 validation_service._derive_dna_warmup
+    # 并入段逐行同构）：指标形式并入内置指标清单（周期×3 规则自动
+    # 推导）、fx 形式并入插件列集（依赖闭包同点扩展）。逐组传值：
+    # series 组用并入后预算、非 series 组用基础预算（混合 grid 互不
+    # 拖累——非 series 组行为零变化）；warmup 不足时 series 组按执行
+    # 期单组容错记 failed（RESEARCH_WARMUP_INSUFFICIENT）不阻塞整批
+    series_entries = [e for e in modes if e["mode"] == "series"]
+    series_warmup_bars = warmup_bars
+    if series_entries:
+        _inds, _fx_refs = list(indicator_names), set(formula_refs)
+        for e in series_entries:
+            src = e["sl_series_source"]
+            if "indicator" in src and src["indicator"] not in _inds:
+                _inds = _inds + [src["indicator"]]
+            elif "column" in src:
+                _fx_refs.add(str(src["column"]))
+        series_warmup_bars = derive_warmup_full(db_path, _inds, _fx_refs)
 
     # 逐组回测（执行期——展开序：modes 序→stops 序→tps 序，确定性；
     # 单组失败=该组标注不阻塞整批）
     results: List[Dict[str, Any]] = []
     failed_groups: List[Dict[str, Any]] = []
     for entry in modes:
-        for stop in entry["stops"]:
+        is_series = entry["mode"] == "series"
+        # series 档空 stops 单占位迭代（[None]——线值经 sl_series_
+        # source 列给出，take_profits 轴仍照常扫描）；stops 非空照常
+        # 迭代（用户显式传参的自担形制，与 pct 单点 stop 同族语义）
+        stops_iter: List[Optional[float]] = (
+            [None] if is_series and not entry["stops"] else entry["stops"])
+        group_warmup = series_warmup_bars if is_series else warmup_bars
+        for stop in stops_iter:
             for tp in entry["take_profits"]:
-                row = {"mode": entry["mode"], "stop_loss": float(stop),
+                # series 占位组 stop_loss=null（JSON null 披露「非标量
+                # 档」——RiskGenes 默认 0.05 残留不赋值，引擎不消费）
+                row = {"mode": entry["mode"],
+                       "stop_loss": (None if stop is None else float(stop)),
                        "take_profit": float(tp)}
                 try:
                     dna = copy.deepcopy(base_dna)  # 各组独立副本
-                    dna.risk_genes.stop_loss = float(stop)
+                    if stop is not None:
+                        dna.risk_genes.stop_loss = float(stop)
                     dna.risk_genes.take_profit = float(tp)
                     dna.risk_genes.sl_mode = entry["mode"]
                     dna.risk_genes.direction = direction
+                    if is_series:
+                        # 装载链只读——entry 浅拷贝嵌套引用无需再拷贝
+                        dna.risk_genes.sl_series_source = \
+                            entry["sl_series_source"]
                     metrics, trade_returns, _, _ = run_backtest_on_range(
                         db_path, data_dir, dna, symbol, timeframe,
                         request_range["start"], request_range["end"],
-                        warmup_bars)
+                        group_warmup)
                     # trade_returns 可能为 ndarray——is not None 判空
                     #（`or []` 对 ndarray 求真值抛 ValueError）
                     rets = list(trade_returns) if trade_returns is not None \
@@ -346,7 +426,14 @@ def exit_sweep(
         plane_rows = [r for r in ok_rows if r["mode"] == entry["mode"]]
         plane_verdict: Optional[str] = None
         plane_info: Dict[str, Any] = {}
-        for axis in ("stop_loss", "take_profit"):
+        # series 档止损由线列承载，stop_loss 非该档可扫描维度（「不
+        # 适用」而非「未证明」——单点轴游程恒 <min_run 恒 spike=假
+        # 可达），平面判定只取 take_profit 轴；pct 档单点 stop 仍走
+        # 两轴（用户只扫 TP=稳健性确实未证明，维持现行为——两面分叉
+        # 依据=参数是否为该档可扫描维度，非任意特判）
+        sweep_axes = ("take_profit",) if entry["mode"] == "series" \
+            else ("stop_loss", "take_profit")
+        for axis in sweep_axes:
             axis_values = sorted({r[axis] for r in plane_rows}) \
                 if plane_rows else []
             if len(axis_values) == 1:
@@ -373,11 +460,19 @@ def exit_sweep(
             "min_trades": _MIN_TRADES,
             "min_run": 2,
             "effectiveness": "net_expectation_after_fees>0",
-            "axes": ["stop_loss", "take_profit"],
+            # 轴集披露随 grid 实际判定面（series 档 stop_loss 非可扫描
+            # 维度——series-only grid 单轴；混合 grid 并集两轴）
+            "axes": (["take_profit"] if series_entries
+                     and not [e for e in modes if e["mode"] != "series"]
+                     else ["stop_loss", "take_profit"]),
             "aggregation": "worst",
         },
         "warmup_bars": warmup_bars,
     }
+    if series_entries:
+        # series 组实际执行预算（warmup_bars 键=非 series 组基础预算
+        # ——逐组分叉后两值各自披露，warmup 不足拒绝 detail 与此对账）
+        payload["series_warmup_bars"] = series_warmup_bars
     if conditions is not None:
         payload["conditions"] = [dict(c) for c in conditions]
     else:

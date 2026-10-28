@@ -226,6 +226,11 @@ class TestEvaluationPluginReject:
         received = {}
 
         class _FakeEngine:
+            def __init__(self, *a, **kw):
+                # 兼容引擎构造实参（CARD-04：db_path 透传——构造签名
+                # 变化不应使 mock 侧抛 TypeError 落入被测异常分支）
+                pass
+
             def batch_run(self, pop, *a, **kw):
                 received["pop_ids"] = [id(x) for x in pop]
                 return []

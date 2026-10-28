@@ -85,7 +85,11 @@ def derive_role(timeframe: str) -> str:
 # 登记声明块校验（hypothesis_service）；引擎真实分派集另立
 # ENGINE_SUPPORTED_SL_MODES（core/backtest/engine.py——声明域与
 # 分派集是两个概念，见 stop-loss-modes 规格「引用式约定边界」）
-SL_MODES = ("pct", "atr", "trail")
+# dynamic-stop-loss-series 增第四档 series（止损线=预先计算的价格列，
+# 来源声明 sl_series_source——仅回测域支持，纸盘/live 按能力矩阵显式
+# 拒绝）。声明域与分派集两集同步扩（原子纪律——ENGINE_SUPPORTED_
+# SL_MODES 同 commit）
+SL_MODES = ("pct", "atr", "trail", "series")
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +215,12 @@ class RiskGenes:
     # 持仓总浮亏（未实现亏损+该持仓累计资金费净支出）按收盘价判定，
     # 达线次根开盘全平；None=未声明（执行物化 0.0=禁用）
     max_position_loss: Optional[float] = None
+    # series 档止损线来源声明（dynamic-stop-loss-series）：两形制互斥
+    # ——指标形制 {indicator, params, field?}（field 单输出指标可省）或
+    # fx 形制 {column: "fx_ 前缀精确列名"}；sl_mode=series 时必填、
+    # 其余档位不得携带（半配置拒）。None=非 series 档（缺省）；装载
+    # 校验四态与 warmup 两轨见引擎 _load_sl_series_column。
+    sl_series_source: Optional[dict] = None
 
     def to_dict(self) -> dict:
         # v2 超集形制（沿 signal_sources 零迁移先例）：新键非 None 才写
@@ -243,6 +253,8 @@ class RiskGenes:
             result["initial_fraction"] = self.initial_fraction
         if self.max_position_loss is not None:
             result["max_position_loss"] = self.max_position_loss
+        if self.sl_series_source is not None:
+            result["sl_series_source"] = self.sl_series_source
         return result
 
     @classmethod
@@ -400,6 +412,14 @@ class StrategyDNA:
         if self.entry_trigger_policy is not None:
             parts.append("etp:" + json.dumps(
                 self.entry_trigger_policy, sort_keys=True,
+                ensure_ascii=False, default=str))
+        # series 档止损线来源（dynamic-stop-loss-series D4）：slsrc 段
+        # 有值才编码（沿 src:/etp: 零迁移先例）——同信号基因 series 档
+        # 与 pct 档签名必异；三消费方（库去重/POST 预检/进化 exclude-
+        # set）不互覆写
+        if self.risk_genes.sl_series_source is not None:
+            parts.append("slsrc:" + json.dumps(
+                self.risk_genes.sl_series_source, sort_keys=True,
                 ensure_ascii=False, default=str))
         return "|".join(parts)
 

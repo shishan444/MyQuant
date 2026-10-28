@@ -229,6 +229,37 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                                  "显式携带 stop_loss（pct/trail 档比例值"
                                  " [0.005,0.20]/atr 档 ATR 倍数 [0.5,5.0]，"
                                  "legal_range 按 sl_mode 分叉）",
+    # series 档来源声明族（dynamic-stop-loss-series 4.1：组合四断言+
+    # 两形制互斥+静态校验的 detail field 面——six 键同族共用语义）
+    "strategy_params.sl_mode": "series 档组合约束：sl_mode=series 须携"
+                               "带 sl_series_source 来源声明且与标量 "
+                               "stop_loss/risk_budget 互斥（其余档位不"
+                               "得携带来源键）",
+    "strategy_params.sl_series_source": "series 档止损线来源声明非法："
+                                        "两形制互斥（指标形制 "
+                                        "{indicator, params, field?} 或 "
+                                        "fx 形制 {column} 二选一）、"
+                                        "sl_mode=series 档专属",
+    "strategy_params.sl_series_source.indicator": "来源指标不在注册表："
+                                                  "sl_series_source."
+                                                  "indicator 须为 "
+                                                  "INDICATOR_REGISTRY "
+                                                  "在册指标名",
+    "strategy_params.sl_series_source.params": "来源指标参数形状非法："
+                                               "params 须为对象且键属该"
+                                               "指标的参数空间",
+    "strategy_params.sl_series_source.field": "来源输出列非法：field 须"
+                                              "属于该指标的 output_fields"
+                                              "（多输出指标必填）",
+    "strategy_params.sl_series_source.column": "fx 形制列名非法：column "
+                                               "须为 fx_ 前缀精确列名且"
+                                               "注册表可达",
+    "grid.modes[].sl_series_source": "exit_sweep series 档 entry 须携带"
+                                     "sl_series_source（指标或 fx 形制）"
+                                     "——空 stops 合法（线值经列给出）",
+    "grid.modes[].sl_series_source.column": "fx 形制列名非法：column 须为"
+                                           "fx_ 前缀精确列名（exit_sweep "
+                                           "grid 校验面与登记面同判）",
 }
 
 

@@ -329,7 +329,8 @@ class PaperTaskExecutor:
         # 链未接入插件信号组装，在场即拒；错误码分立〔补丁①〕：这是
         # 「执行环境不支持」而非「策略无效」，detail 指明能力边界与
         # 替代通道）
-        from core.strategy.validator import validate_dna, has_plugin_sources
+        from core.strategy.validator import (
+            validate_dna, validate_trading_compatibility, has_plugin_sources)
         result = validate_dna(self.dna)
         if not result.is_valid:
             return self._reject(
@@ -339,6 +340,15 @@ class PaperTaskExecutor:
             return self._reject(
                 "plugin_sources_unsupported: 执行环境不支持插件信号源"
                 "（paper 链未接入插件信号组装）——请经研究验证链沙盒回测")
+        # 纸盘链能力矩阵装载层（dynamic-stop-loss-series 4.3 D1-②
+        # 纵深：受理层被绕过时的第二道——库内 dna 被改后重启装载场景；
+        # 与受理层同判据单源 validate_trading_compatibility，link=
+        # "paper"——series 档等纸盘不支持模式装载即拒，reasons 含
+        # 档位名与「后续专项补齐」标注）
+        _compat = validate_trading_compatibility(self.dna, "paper")
+        if _compat:
+            return self._reject(
+                "trading_incompatible: " + "; ".join(_compat))
 
         symbol = self.task_row["symbol"]
         try:

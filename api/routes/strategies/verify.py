@@ -164,6 +164,7 @@ class _VerifyProcessor:
 
         self.engine = _bt_engine_mod.BacktestEngine(
             init_cash=payload.init_cash, fee=payload.fee, slippage=payload.slippage,
+            db_path=self.db_path,
         )
         self.strategies_by_group: Dict[str, List[Dict]] = {}
         self.strategy_names: Dict[str, str] = {}

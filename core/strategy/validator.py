@@ -349,18 +349,56 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             f"sl_mode must be one of {SL_MODES}, got '{risk.sl_mode}'"
         )
 
-    # 止损/止盈值域按模式分档取域（同值异判：1.5 在 pct 拒、atr 过）
+    # 止损/止盈值域按模式分档取域（同值异判：1.5 在 pct 拒、atr 过）；
+    # series 档无标量值域——校验对象为 sl_series_source 结构（动态
+    # 止损线：stop_loss 标量残留值不消费——装载层防线不产出按残留值
+    # 计算的结果）
     if risk.sl_mode == "atr":
         lo, hi = SL_ATR_MIN, SL_ATR_MAX
         unit = "ATR multiples"
     else:
         lo, hi = SL_PCT_MIN, SL_PCT_MAX
         unit = "ratio"
-    if not (lo <= risk.stop_loss <= hi):
-        errors.append(
-            f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
-            f"({unit}, sl_mode={risk.sl_mode})"
-        )
+    if risk.sl_mode != "series":
+        if not (lo <= risk.stop_loss <= hi):
+            errors.append(
+                f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
+                f"({unit}, sl_mode={risk.sl_mode})"
+            )
+        # 半配置闸（spec strategy-param-declaration 组合约束③）：非
+        # series 档携带来源键拒——登记面有闸而本面原不可达（POST 被
+        # Pydantic 拒）；传输层补键后 POST 成为可达入口，落闸使直建面
+        # 与登记面同判
+        if risk.sl_series_source is not None:
+            errors.append(
+                "sl_series_source is only allowed with sl_mode='series' "
+                f"(half-config), got sl_mode='{risk.sl_mode}'")
+    else:
+        src = risk.sl_series_source
+        if src is None:
+            errors.append(
+                "sl_mode='series' requires sl_series_source "
+                "(indicator form {indicator, params, field?} or fx form "
+                "{column})")
+        elif not isinstance(src, dict):
+            errors.append(
+                "sl_series_source must be a dict (indicator form or fx "
+                "form)")
+        else:
+            has_ind = "indicator" in src
+            has_fx = "column" in src
+            if has_ind and has_fx:
+                errors.append(
+                    "sl_series_source forms are mutually exclusive: got "
+                    "both 'indicator' and 'column'")
+            elif not has_ind and not has_fx:
+                errors.append(
+                    "sl_series_source requires 'indicator' (indicator "
+                    "form) or 'column' (fx form) key")
+            elif has_fx and not str(src["column"]).startswith("fx_"):
+                errors.append(
+                    f"sl_series_source.column must be fx_-prefixed exact "
+                    f"column name, got {src['column']!r}")
     if risk.take_profit is not None and not (lo <= risk.take_profit <= hi):
         errors.append(
             f"Take profit {risk.take_profit} out of range [{lo}, {hi}] "
@@ -468,6 +506,17 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 "position_mode='risk_budget' requires stop_loss > 0 "
                 "(stop distance is the size formula denominator — "
                 "no stop = risk budget undefined)")
+        # series×risk_budget 互斥（dynamic-stop-loss-series 双闸同源——
+        # 登记面 hypothesis_service 同判；series 档止损距离是逐 bar 线
+        # 值非标量，risk_budget 仓位公式的标量分母不可定义；残留 0.05
+        # 绕过「requires stop_loss>0」字面的洞即本判据检出对象）
+        if risk.sl_mode == "series":
+            errors.append(
+                "sl_mode='series' is mutually exclusive with "
+                "position_mode='risk_budget' (series stop line is a "
+                "per-bar value, not a scalar stop distance — risk "
+                "budget sizing is undefined; residual stop_loss=0.05 "
+                "is a materialization default, not a consumable value)")
 
     # 仓位参数（add-position-sizing-params）：initial_fraction (0,1]
     # 首笔动用资金比例（替换 fixed 路径首笔定仓来源，加仓不受影响）；
@@ -540,19 +589,20 @@ _SCALING_ROLES = frozenset({
 
 
 def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
-    """live 链兼容性校验（0.4.2 R2/D3 扩展——独立入口，与 validate_dna
-    严格分层：trail/分批是合法 DNA 形态，validate_dna 不因此报错，本
-    函数只在策略进入 **live 链**装载时判链路能力——回放/模拟旧链已
-    退役，回测引擎为能力全集基准不设闸门，纸盘新域支持分批与 trail
-    均不经本闸门）。
+    """交易链路兼容性校验（0.4.2 R2/D3 扩展+dynamic-stop-loss-series
+    link 枚举化——独立入口，与 validate_dna 严格分层：atr/trail/
+    series 是合法 DNA 形态，validate_dna 不因此报错，本函数只在策略
+    进入具体交易链装载时判链路能力——回测引擎为能力全集基准不设
+    闸门）。
 
     判据一（模式×链路静态能力矩阵）：
-    - sl_mode="trail"：live 链拒（live 链无峰值回撤实现；回测与
-      纸盘新域支持）。
-    - sl_mode="atr"：live 链拒（live 链 SL/TP v1 仅 pct——
-      _attach_sl_tp 按 pct 挂单，atr 倍数按 pct 挂单将产出
-      sl=entry×(1−stop_loss) 的负价无效止损单）。
-    - pct：放行。
+    - sl_mode="trail"：live 链拒（无峰值回撤实现）；paper 放行
+      （纸盘新域支持——矩阵新行=既有行为定形）。
+    - sl_mode="atr"：live 链拒（SL/TP v1 仅 pct——atr 倍数按 pct
+      挂单将产出负价无效止损单）；paper 放行（ATR 列装载支持）。
+    - sl_mode="series"：live 与 paper 均拒（比 trail 严一档——纸盘
+      kernel 无逐 bar 外部列装载通道；后续专项补齐）。
+    - pct：三链放行。
 
     判据二（分批角色基因存在性——DNA 层静态判别，含 layers 展开）：
         signal_genes ∪ layers[*].signal_genes 任一 role ∈ 分批角色集 →
@@ -560,30 +610,43 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
 
     Args:
         dna: 待装载的策略 DNA。
-        link: 交易链路标识（恒 "live"——由 live 插桩点传入，不猜测来源）。
+        link: 交易链路标识 ∈ {"live", "paper"}（由链路插桩点传入）。
 
     Returns:
         拒绝原因清单（空列表=兼容放行）。
 
     Raises:
-        ValueError: link 非法（编程错误——live 插桩点是唯一调用方）。
+        ValueError: link 非法（编程错误——链路插桩点是唯一调用方）。
     """
     reasons: List[str] = []
-    if link != "live":
-        raise ValueError(f"link 须为 live，got {link!r}")
+    if link not in ("live", "paper"):
+        raise ValueError(f"link 须为 live/paper，got {link!r}")
 
     sl_mode = dna.risk_genes.sl_mode
 
     # 判据一：模式×链路
     if sl_mode == "trail":
-        reasons.append(
-            "sl_mode='trail'（追踪止损）live 链无峰值回撤实现"
-            "（回测与纸盘新域支持），不支持装载")
+        if link == "live":
+            reasons.append(
+                "sl_mode='trail'（追踪止损）live 链无峰值回撤实现"
+                "（回测与纸盘新域支持），不支持装载")
     elif sl_mode == "atr":
-        reasons.append(
-            "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
-            "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
-            "sl=entry×(1−stop_loss) 的负价无效止损单")
+        if link == "live":
+            reasons.append(
+                "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
+                "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
+                "sl=entry×(1−stop_loss) 的负价无效止损单")
+    elif sl_mode == "series":
+        if link == "live":
+            reasons.append(
+                "sl_mode='series'（动态止损线）live 链不支持"
+                "（后续专项补齐）——series 档止损线为逐 bar 外部列，"
+                "live SL/TP v1 挂单形制不可表达")
+        else:
+            reasons.append(
+                "sl_mode='series'（动态止损线）纸盘链不支持"
+                "（后续专项补齐）——纸盘 kernel 无逐 bar 外部列装载"
+                "通道；回测域支持（能力全集基准）")
 
     # 判据二：分批角色（signal_genes 与全部 layers 展开并集）
     seen_roles = set()
@@ -595,7 +658,8 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
     hit_roles = sorted(
         (r for r in seen_roles if r in _SCALING_ROLES),
         key=lambda r: r.value)
-    if hit_roles:
+    if hit_roles and link == "live":
+        # 判据二仅 live 面（纸盘新域支持分批角色——矩阵定形）
         role_names = "、".join(r.value for r in hit_roles)
         reasons.append(
             f"策略含分批仓位角色基因（{role_names}）——live 链对部分"

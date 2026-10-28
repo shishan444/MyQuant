@@ -110,6 +110,7 @@ def evaluate_dna(
     direction: str = "long",
     enhanced_df=None,
     dfs_by_timeframe=None,
+    db_path=None,
 ) -> dict:
     """对单个 DNA 以数据集回测打分。
 
@@ -120,6 +121,11 @@ def evaluate_dna(
 
     接受预载数据（enhanced_df/dfs_by_timeframe）避免逐个体重复
     I/O；预载缺失时按需装载（兼容独立调用）。
+
+    Args:
+        db_path: 透传 BacktestEngine（series 档 fx 形式止损线装载
+            需插件注册表查询；None 缺省=纯计算直调面，该形制装载
+            显式拒——fail-closed）。
     """
     # 回测前强制覆盖任务级约束
     individual.risk_genes.leverage = leverage
@@ -199,7 +205,7 @@ def evaluate_dna(
             diagnostics["fallback"] = False
             return diagnostics
 
-        bt = BacktestEngine()
+        bt = BacktestEngine(db_path=db_path)
         bt_result = bt.run(individual, enhanced_df,
                            dfs_by_timeframe=dfs_by_timeframe,
                            signal_set=sig_set)
@@ -250,12 +256,17 @@ def evaluate_population(
     direction: str = "long",
     enhanced_df=None,
     dfs_by_timeframe=None,
+    db_path=None,
 ) -> List[float]:
     """以 BacktestEngine.batch_run 批量评估种群。
 
     Returns:
         分数列表（与输入种群同序）。批量失败或无预载数据时回退
         逐个体 evaluate_dna。
+
+    Args:
+        db_path: 透传 BacktestEngine/回退路径 evaluate_dna（语义同
+            evaluate_dna 同名参数）。
     """
     try:
         from core.backtest.engine import BacktestEngine
@@ -268,6 +279,7 @@ def evaluate_population(
                 evaluate_dna(
                     ind, task_row, data_dir, leverage, direction,
                     enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+                    db_path=db_path,
                 ).get("score", 0.0)
                 for ind in population
             ]
@@ -321,7 +333,7 @@ def evaluate_population(
         eval_pos = [i for i in range(len(population)) if i not in blocked]
 
         # 批量回测（内置信号计算）
-        bt = BacktestEngine()
+        bt = BacktestEngine(db_path=db_path)
         try:
             bt_results = bt.batch_run(
                 evaluable, enhanced_df,
@@ -333,6 +345,7 @@ def evaluate_population(
                 evaluate_dna(
                     ind, task_row, data_dir, leverage, direction,
                     enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+                    db_path=db_path,
                 ).get("score", 0.0)
                 for ind in population
             ]

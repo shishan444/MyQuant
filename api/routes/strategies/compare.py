@@ -106,6 +106,7 @@ def compare_strategies(
         init_cash=payload.init_cash,
         fee=payload.fee,
         slippage=payload.slippage,
+        db_path=db_path,
     )
 
     # 延迟装载：df 仅为 load_and_prepare_df 未命中时的回退底座，

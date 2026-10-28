@@ -90,9 +90,11 @@ class TestMatrixValidator:
             v = validate_dna(dna)
             assert v.is_valid, f"{dna.risk_genes.sl_mode} DNA 应合法: {v.errors}"
 
-    @pytest.mark.parametrize("link", ["backtest", "replay", "paper"])
+    @pytest.mark.parametrize("link", ["backtest", "replay", "bogus"])
     def test_bad_link_raises(self, link):
-        """值域收敛锚：收敛后 replay/paper 连同 backtest 一律非法。"""
+        """值域收敛锚：收敛后 replay/bogus 连同 backtest 一律非法
+        （paper 经 dynamic-stop-loss-series 4.3 扩为合法枚举值——
+        纸盘双层插桩承载）。"""
         with pytest.raises(ValueError):
             validate_trading_compatibility(mk_dna(), link)
 

@@ -312,6 +312,19 @@ def create_task(
     # 快照取挂盘受理时点（三态 resolve 同值：active/paper 均非 draft
     # 且共享事件史——事务内未提交迁移对库外读取不可见，前置态计算）
     snapshot = paper.resolve_research_status(db_path, strategy)
+    # 纸盘链能力矩阵受理层（dynamic-stop-loss-series 4.3 D1-①：
+    # series 档等纸盘不支持模式挂盘即拒——沿 live 受理前移先例
+    # （live_trading.py:56）同构；与装载层 executor prepare 双层镜像
+    # live 链双插桩结构；判据单源 validate_trading_compatibility，
+    # reasons 含档位名与「后续专项补齐」标注）
+    from core.strategy.validator import validate_trading_compatibility
+    _reasons = validate_trading_compatibility(dna, "paper")
+    if _reasons:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DNA_TRADING_INCOMPATIBLE",
+                    "message": "策略与纸盘链不兼容（能力矩阵拒绝）",
+                    "detail": {"reasons": _reasons}})
     try:
         with engine_for(db_path).begin() as conn:
             # 迁移+建任务同事务原子两向：not_migrated（同态续挂）照常
