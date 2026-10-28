@@ -84,16 +84,20 @@ class FeedHarness:
     """双通道测试装配（预写 parquet+脚本化 REST+可变时钟）。"""
 
     def __init__(self, tmp_path, *, frame=None, rest_frames=None,
-                 funding_frames=None, clock=None, write_parquet=True):
+                 funding_frames=None, clock=None, write_parquet=True,
+                 timeframe="4h"):
         self.data_dir = tmp_path / "market"
+        self.timeframe = timeframe
         self.frame = frame if frame is not None else make_ohlcv(
-            n=100, freq="4h")
+            n=100, freq=timeframe)
         if write_parquet:
             from core.data.storage import save_parquet
 
-            save_parquet(self.frame, self.data_dir / "BTCUSDT_4h.parquet")
+            save_parquet(
+                self.frame,
+                self.data_dir / f"BTCUSDT_{timeframe}.parquet")
         self.last = self.frame.index[-1]
-        self.tf = pd.Timedelta(seconds=TF_SECONDS["4h"])
+        self.tf = pd.Timedelta(seconds=TF_SECONDS[timeframe])
         self.clock = clock or FakeClock(self.last + self.tf)
         self._rest_frames = list(rest_frames or [])
         self.rest_calls: list[dict] = []
@@ -125,12 +129,19 @@ class FeedHarness:
 
     def acquire(self, sub=None) -> tuple:
         sub = sub or FeedSubscription(on_frames=lambda df, idx: None)
-        feed = self.registry.acquire("BTCUSDT", "4h", sub)
+        feed = self.registry.acquire("BTCUSDT", self.timeframe, sub)
         return feed, sub
 
     def event_after(self, steps: int = 1, **kwargs) -> ClosedBarEvent:
         """末根后第 steps 根的闭合事件。"""
+        kwargs.setdefault("timeframe", self.timeframe)
         return _event_at(self.last + self.tf * steps, **kwargs)
+
+    def parquet(self) -> pd.DataFrame:
+        from core.data.storage import load_parquet
+
+        return load_parquet(
+            self.data_dir / f"BTCUSDT_{self.timeframe}.parquet")
 
 
 class TestSharedFeed:
@@ -419,6 +430,138 @@ class TestConsumerCursorOverlap:
         assert len(digested) == 3  # 三根新 bar 恰好各消化一次
         assert len(set(digested)) == 3  # 无重复
         assert len(feed.latest_df) == 103
+
+
+class TestTieredPersistence:
+    """分级落盘三不变式+停机清缓冲+崩溃重建（任务 4）。"""
+
+    def test_forming_rows_never_persisted(self, tmp_path):
+        """①forming 不落库：REST 返回段含未闭合行（防御纵深）——
+        合并前滤除，内存与 parquet 均不含。"""
+        h = FeedHarness(tmp_path)
+        closed_row = h.last + h.tf          # 已闭合（index+4h<=now）
+        forming_row = h.last + 2 * h.tf     # 未闭合（index+4h>now）
+        h._rest_frames = [_ohlcv_at([closed_row, forming_row])]
+        got: list[int] = []
+        feed, _ = h.acquire(
+            FeedSubscription(on_frames=lambda df, idx: got.append(idx)))
+        got.clear()
+        h.clock.now = h.last + 2 * h.tf    # 恰闭合边界
+        feed.reconcile()
+        assert len(feed.latest_df) == 101  # 只进闭合行
+        persisted = h.parquet()
+        assert len(persisted) == 101
+        assert persisted.index[-1] == closed_row  # forming 行不在盘
+
+    def test_written_rows_never_rewritten_low_freq(self, tmp_path):
+        """②已落行不改写（低频 4h 闭合即写）：两次落盘后既有段逐值比对。"""
+        h = FeedHarness(tmp_path)
+        feed, _ = h.acquire()
+        feed.on_closed_bar(h.event_after(1))
+        before = h.parquet()
+        feed.on_closed_bar(h.event_after(2))
+        after = h.parquet()
+        assert len(after) == len(before) + 1
+        pd.testing.assert_frame_equal(
+            before, after.iloc[:len(before)], check_freq=False)
+
+    def test_written_rows_never_rewritten_after_flush(self, tmp_path):
+        """②已落行不改写（高频缓冲 flush 路径）：flush 后既有段逐值比对。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        feed, _ = h.acquire()
+        feed.on_closed_bar(h.event_after(1))
+        feed.flush_pending()
+        before = h.parquet()
+        assert len(before) == 101
+        feed.on_closed_bar(h.event_after(2))
+        feed.flush_pending()
+        after = h.parquet()
+        pd.testing.assert_frame_equal(
+            before, after.iloc[:len(before)], check_freq=False)
+
+    def test_duplicate_rows_deduped_across_buffer(self, tmp_path):
+        """③去重不重行：缓冲内重复+跨 flush 重叠——行数=去重数。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        feed, _ = h.acquire()
+        event = h.event_after(1)
+        feed.on_closed_bar(event)
+        feed.on_closed_bar(event)      # 重复投递（缓冲内去重）
+        feed.on_closed_bar(h.event_after(2))
+        feed.flush_pending()
+        assert len(h.parquet()) == 102  # 100+2（去重后）
+
+    def test_high_freq_buffer_flush_by_clock(self, tmp_path):
+        """④⑥高频 60s 缓冲：窗口内不落盘（内存=决策权威）→时钟跨
+        间隔后检查点 flush（now_fn 注入驱动，零真实等待）。"""
+        start = pd.Timestamp("2026-10-28T00:00:00Z")
+        h = FeedHarness(tmp_path, timeframe="1m", clock=FakeClock(start))
+        feed, _ = h.acquire()
+        feed._last_flush = start  # noqa: SLF001——检查点相位对齐注入
+        feed.on_closed_bar(h.event_after(1))
+        # 60s 窗口内：内存有新行（决策权威）、parquet 无（缓冲中）
+        assert len(feed.latest_df) == 101
+        assert len(h.parquet()) == 100
+        h.clock.advance(seconds=61)  # 跨间隔
+        feed.on_closed_bar(h.event_after(2))  # 落盘请求=检查点
+        assert len(h.parquet()) == 102
+
+    def test_flush_pending_idempotent_on_shutdown(self, tmp_path):
+        """⑤停机路径缓冲清空落盘：flush_pending 显式清空+幂等。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        feed, _ = h.acquire()
+        feed.on_closed_bar(h.event_after(1))
+        assert len(h.parquet()) == 101  # 首落盘（last_flush=None 即刻）
+        feed.on_closed_bar(h.event_after(2))
+        assert len(h.parquet()) == 101  # 60s 窗口内——第二根进缓冲
+        feed.flush_pending()
+        assert len(h.parquet()) == 102  # 清空落盘
+        feed.flush_pending()            # 幂等（空缓冲 no-op）
+        assert len(h.parquet()) == 102
+
+    def test_registry_flush_all(self, tmp_path):
+        """⑤聚合面：registry.flush_all 遍历活跃 feed 清缓冲。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        feed, _ = h.acquire()
+        feed.on_closed_bar(h.event_after(1))
+        h.registry.flush_all()
+        assert len(h.parquet()) == 101
+
+    def test_corrupted_parquet_deleted_and_rebuilt(self, tmp_path):
+        """⑥崩溃损坏→删文件 REST 重建：垃圾字节文件→装载检测→删除→
+        注入 REST 全量重建→落盘→装载成功。"""
+        h = FeedHarness(tmp_path)
+        rebuild_frame = make_ohlcv(n=80, freq="4h", seed=9)
+        h._rest_frames = [rebuild_frame]  # 重建回拉帧
+        # 覆写为垃圾字节（损坏 parquet——footer 缺失/半写）
+        (h.data_dir / "BTCUSDT_4h.parquet").write_bytes(b"garbage\xff\xfe")
+        got: list[int] = []
+        feed, _ = h.acquire(
+            FeedSubscription(on_frames=lambda df, idx: got.append(idx)))
+        assert feed.latest_df is not None
+        assert len(feed.latest_df) == 80  # 重建帧装载
+        rebuilt = h.parquet()
+        assert len(rebuilt) == 80  # 重建落盘
+        assert not rebuilt.index.duplicated().any()
+        assert got == [0]  # 重建帧初始广播
+
+    def test_corrupted_parquet_rebuild_failure_falls_back(self, tmp_path):
+        """⑥重建失败兜底：REST 重建抛异常→键转无产物（建库线程域）。"""
+        h = FeedHarness(tmp_path)
+
+        def boom(*args, **kwargs):
+            raise ConnectionError("scripted: 重建失败")
+
+        h.registry = FeedRegistry(
+            h.data_dir, rest_fetcher=boom,
+            funding_refresher=h._funding_refresher, now_fn=h.clock)
+        (h.data_dir / "BTCUSDT_4h.parquet").write_bytes(b"garbage")
+        feed, _ = h.acquire()
+        assert feed.latest_df is None  # 无产物（异常不上抛）
+        assert not (h.data_dir / "BTCUSDT_4h.parquet").exists()  # 损坏文件已删
 
 
 class TestAtrSupplement:

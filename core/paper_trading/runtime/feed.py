@@ -25,6 +25,7 @@ funding 面（Q-2=a 资金费挂起补记，tasks 3.5）：{symbol}_funding.parq
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,8 +33,10 @@ from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
-from core.data.storage import load_parquet, merge_parquet
+from core.data.storage import load_parquet
 from core.data.timeframes import TF_SECONDS
+
+logger = logging.getLogger(__name__)
 
 # funding 归档刷新节流间隔（秒）——design §6.3「每小时节流刷新」
 FUNDING_REFRESH_INTERVAL_SECONDS = 3600.0
@@ -46,6 +49,13 @@ _DEFAULT_BAR_SECONDS = 14400
 
 # OHLCV 基础列（WS 事件行与 REST 补拉帧的共同锚；指标列为派生面）
 OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
+
+# ── 分级落盘参数（design §2.3 受控频率合并重写+分级触发）─────
+# 低频周期：闭合即写；高频周期缓冲按间隔 flush（spec 锁语义不锁数值）
+LOW_FREQ_TIMEFRAMES = frozenset({"1h", "4h", "1d"})
+HIGH_FREQ_FLUSH_INTERVAL_SECONDS = 60.0
+# 崩溃损坏重建的回溯窗口（与启动建库 history_years 同源语义）
+REBUILD_HISTORY_YEARS = 2
 
 
 def snap_to_funding_grid(ts: pd.Timestamp) -> pd.Timestamp:
@@ -148,6 +158,8 @@ class SymbolFeed:
         self._df: Optional[pd.DataFrame] = None  # 最新产物（只读广播）
         self._loaded = False  # ensure_loaded 幂等锚
         self._subscriptions: list[FeedSubscription] = []
+        self._pending_rows: Optional[pd.DataFrame] = None  # 高频缓冲未落行
+        self._last_flush: Optional[pd.Timestamp] = None
         self._funding_index: dict[pd.Timestamp, float] = {}
         self._funding_cover: Optional[pd.Timestamp] = None  # 索引覆盖终点
         self._last_funding_refresh: Optional[pd.Timestamp] = None
@@ -207,7 +219,20 @@ class SymbolFeed:
             path_exists = self._parquet_path.exists()
         if not path_exists:
             return
-        frame = load_parquet(self._parquet_path)
+        try:
+            frame = load_parquet(self._parquet_path)
+        except Exception:
+            # 崩溃损坏窗口=重写瞬间：footer 缺失/半写文件加载失败——
+            # 删除该文件并 REST 全量重建（design §2.3 恢复路径；重建
+            # 失败转无产物由启动建库线程兜底）
+            logger.warning(
+                "feed parquet 损坏——删除并 REST 重建：%s", self._parquet_path)
+            self._parquet_path.unlink(missing_ok=True)
+            frame = self._rebuild_from_rest()
+            if frame is not None and not frame.empty:
+                from core.data.storage import save_parquet
+
+                save_parquet(frame, self._parquet_path)
         if frame is None or frame.empty:
             return
         enhanced = self._enhance(frame)  # 锁外（ATR 补充内部取锁）
@@ -216,6 +241,18 @@ class SymbolFeed:
             subscribers = list(self._subscriptions)
         for sub in subscribers:
             sub.on_frames(enhanced, 0)  # 初始帧到达（from_idx=0 全量）
+
+    def _rebuild_from_rest(self) -> Optional[pd.DataFrame]:
+        """REST 全量重建（损坏自愈——回溯窗口与建库同源语义）。"""
+        now = self._now_fn()
+        start = now - pd.DateOffset(years=REBUILD_HISTORY_YEARS)
+        try:
+            return self._rest_fetcher(self.symbol, self.timeframe, start, now)
+        except Exception:
+            logger.exception(
+                "feed REST 重建失败（键转无产物——建库线程兜底）：%s_%s",
+                self.symbol, self.timeframe)
+            return None
 
     # ── WS 路径：闭合事件追加 ───────────────────────────────
 
@@ -265,6 +302,10 @@ class SymbolFeed:
             self.symbol, self.timeframe, gap_start, now)
         if frame is None or frame.empty:
             return  # 对账无所得（端点暂无新数据）
+        # forming 防御滤（REST 契约已闭合——本滤为落盘不变式的纵深：
+        # 未闭合行不入内存不入盘）
+        frame = frame[
+            frame.index + pd.Timedelta(seconds=interval) <= now]
         merged, from_idx, new_rows = self._merge_ohlcv(base, frame)
         if merged is None:
             return  # 补拉段全为重复（WS 已先到）——不广播
@@ -313,8 +354,68 @@ class SymbolFeed:
         self._persist(new_rows)
 
     def _persist(self, new_rows: pd.DataFrame) -> None:
-        """落盘对齐（受控频率合并重写；分级触发面归落盘层扩展）。"""
-        merge_parquet(new_rows, self._parquet_path)
+        """分级落盘（受控频率合并重写+分级触发——design §2.3）。
+
+        低频周期（1h/4h/1d）闭合即写；高频周期（1m/5m/15m）缓冲行
+        累积、按 60s 检查点 flush（检查点=每次落盘请求时刻——高频
+        事件到达与守护循环对账节拍天然构成检查源）。三不变式（forming
+        不落库/已落行不改写/去重不重行）由上游闭合源+本层 keep-first
+        合并守护。
+        """
+        if self.timeframe in LOW_FREQ_TIMEFRAMES:
+            self._write_closed_rows(new_rows)
+            return
+        self._buffer_rows(new_rows)
+        self._maybe_flush()
+
+    def _buffer_rows(self, new_rows: pd.DataFrame) -> None:
+        """高频缓冲累积（先到为准去重——缓冲内不重行）。"""
+        with self._lock:
+            if self._pending_rows is None:
+                self._pending_rows = new_rows
+            else:
+                combined = pd.concat([self._pending_rows, new_rows])
+                combined = combined[
+                    ~combined.index.duplicated(keep="first")]
+                self._pending_rows = combined.sort_index()
+
+    def _maybe_flush(self) -> None:
+        """60s 检查点判定（now_fn 注入驱动——测试旁路真实等待）。"""
+        now = self._now_fn()
+        last = self._last_flush
+        due = (
+            last is None
+            or (now - last).total_seconds()
+            >= HIGH_FREQ_FLUSH_INTERVAL_SECONDS)
+        if due:
+            self.flush_pending()
+
+    def flush_pending(self) -> None:
+        """清空缓冲落盘（停机路径/SIGTERM 关停序/60s 检查点；幂等）。"""
+        with self._lock:
+            pending = self._pending_rows
+            self._pending_rows = None
+            self._last_flush = self._now_fn()
+        if pending is not None and not pending.empty:
+            self._write_closed_rows(pending)
+
+    def _write_closed_rows(self, new_rows: pd.DataFrame) -> None:
+        """闭合行合并落盘（既有行优先——已落行内容永不改写+去重不重行）。
+
+        与 storage.merge_parquet 的语义分野：共享底座 keep="last"
+        （updater 增量覆盖语义）；本层不变式要求 keep="first"（时间戳
+        已在文件时丢弃新行——崩溃恢复竞态下已落行不被内存副本改写）。
+        """
+        from core.data.storage import save_parquet
+
+        if not self._parquet_path.exists():
+            save_parquet(new_rows, self._parquet_path)
+            return
+        existing = load_parquet(self._parquet_path)
+        columns = [c for c in new_rows.columns if c in existing.columns]
+        combined = pd.concat([existing[columns], new_rows[columns]])
+        combined = combined[~combined.index.duplicated(keep="first")]
+        save_parquet(combined.sort_index(), self._parquet_path)
 
     def _enhance(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
         """全帧指标计算+ATR 并集补充（共享单次语义保持）。"""
@@ -460,6 +561,18 @@ class FeedRegistry:
         """取同键现存 feed（无/已回收 None——测试观察面）。"""
         with self._lock:
             return self._feeds.get((symbol, timeframe))
+
+    def flush_all(self) -> None:
+        """全部活跃 feed 清空缓冲落盘（进程正常退出/SIGTERM 关停序——
+        装配层关停时调用；feed 侧幂等）。"""
+        for key in self.active_keys:
+            feed = self.get(*key)
+            if feed is None:
+                continue
+            try:
+                feed.flush_pending()
+            except Exception:
+                logger.exception("feed 缓冲清空失败（关停续行）：%s", key)
 
     @property
     def active_keys(self) -> list[tuple[str, str]]:
