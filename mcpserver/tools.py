@@ -1133,16 +1133,25 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                          slippage: Optional[float] = None,
                          symbol: Optional[str] = None,
                          window_bars: Optional[int] = None,
+                         window_unlimited: bool = False,
                          stop_loss_pct: Optional[float] = None,
                          ) -> Dict[str, Any]:
         """挂载纸盘任务（上盘=把策略库条目送去实时前向验证）。参数面与
         REST 创建完全一致——仅验证条件参数（初始资金/杠杆/费滑/品种/
         验证窗口/停止条件），**不含任何策略语义参数**：方向与执行周期
         以策略 DNA 为准，AI 无法经挂载覆写信号语义。创建恒受理（201
-        pending 行；并发满载时排队不拒绝）。window_bars：缺省 180 根；
-        N≥1=N 根窗口到点自动结题（不限期窗口是 REST 专属形态——显式
-        null 与参数缺省在本工具参数面不可区分，故不经 MCP 表达）。
+        pending 行；并发满载时排队不拒绝）。验证窗口三入口同语义：
+        不传 window_bars=缺省 180 根；N≥1=N 根窗口到点自动结题；
+        window_unlimited=True=不限期（不自动结题，转译 REST
+        window_bars=null 同语义）——window_unlimited=true 与
+        window_bars 显式值同传被互斥校验拒绝（两种窗口表达不可并存）。
         策略演化不影响已挂载任务（创建时 DNA 快照自包含）。"""
+        if window_unlimited and window_bars is not None:
+            return {"error": errors.error_payload(
+                "MCP_PARAM_INVALID",
+                "window_unlimited=true 与 window_bars 互斥——不限期窗口"
+                "经 window_unlimited 表达，显式 N 根窗口经 window_bars，"
+                "两者不可同传")}
         body: Dict[str, Any] = {"strategy_id": strategy_id}
         if initial_cash is not None:
             body["initial_cash"] = initial_cash
@@ -1154,7 +1163,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["slippage"] = slippage
         if symbol is not None:
             body["symbol"] = symbol
-        if window_bars is not None:
+        if window_unlimited:
+            body["window_bars"] = None
+        elif window_bars is not None:
             body["window_bars"] = window_bars
         if stop_loss_pct is not None:
             body["stop_loss_pct"] = stop_loss_pct

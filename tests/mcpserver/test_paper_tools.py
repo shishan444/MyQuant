@@ -113,17 +113,20 @@ class TestMountParamSurface:
         "score_template", "prediction_dna_json"})
 
     def test_mount_params_equal_rest_create_model(self) -> None:
-        """mount 签名参数集 == REST PaperTaskCreate 字段集（完全对拍：
-        同一参数面，无一字段多无一字段少）。"""
+        """mount 签名参数集 == REST PaperTaskCreate 字段集 ∪
+        {window_unlimited}（完全对拍+MCP 侧不限期布尔转译参数——
+        window_bars=None 在工具参数面与缺省不可区分，经 spec 认可的
+        window_unlimited 布尔表达，与 REST window_bars=null 同语义）。"""
         from api.routes.paper_trading import PaperTaskCreate
 
         mcp, _ = _register("research")
         mount_params = set(
             inspect.signature(mcp.registered["mount_paper_task"]).parameters)
-        assert mount_params == set(PaperTaskCreate.model_fields), (
+        expected = set(PaperTaskCreate.model_fields) | {"window_unlimited"}
+        assert mount_params == expected, (
             f"mount 参数面与 REST 创建模型漂移："
-            f"多 {sorted(mount_params - set(PaperTaskCreate.model_fields))} / "
-            f"少 {sorted(set(PaperTaskCreate.model_fields) - mount_params)}")
+            f"多 {sorted(mount_params - expected)} / "
+            f"少 {sorted(expected - mount_params)}")
 
     def test_mount_params_no_semantic_keys(self) -> None:
         """参数面零策略语义键（黑名单逐键断言）。"""
@@ -455,3 +458,51 @@ class TestQueryPaperSignals:
 
         assert "/api/paper-trading/tasks/{task_id}/signals" \
             in READONLY_ENDPOINTS
+
+
+class TestWindowUnlimited:
+    """mount_paper_task 不限期窗口表达（change paper-mount-and-
+    concurrency 任务 2）：window_unlimited 布尔→REST window_bars=null
+    同语义；三入口（缺省 180/显式 N/不限期）语义披露。"""
+
+    def test_true_translates_to_null_body(self) -> None:
+        """①True 转译：body["window_bars"] is None（REST 四形态编码
+        既有面收显式 null——不自动结题）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9", window_unlimited=True)
+        method, url, body = api.calls[-1]
+        assert (method, url) == ("POST", "/api/paper-trading/tasks")
+        assert body == {"strategy_id": "st-9", "window_bars": None}
+
+    def test_false_default_zero_keys(self) -> None:
+        """缺省 False：不产 window 键（REST 层落缺省 180）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9")
+        _, _, body = api.calls[-1]
+        assert body == {"strategy_id": "st-9"}
+
+    def test_explicit_window_bars_still_direct(self) -> None:
+        """显式 N 根直传（三入口第二形态不回归）。"""
+        mcp, api = _register("research")
+        mcp.registered["mount_paper_task"]("st-9", window_bars=60)
+        _, _, body = api.calls[-1]
+        assert body == {"strategy_id": "st-9", "window_bars": 60}
+
+    def test_mutual_exclusion_rejected(self) -> None:
+        """②互斥拒绝：window_unlimited=True 与 window_bars 显式值
+        同传→结构化 MCP_PARAM_INVALID（不触 REST——请求面零副作用）。"""
+        mcp, api = _register("research")
+        result = mcp.registered["mount_paper_task"](
+            "st-9", window_bars=60, window_unlimited=True)
+        assert "error" in result
+        assert result["error"]["code"] == "MCP_PARAM_INVALID"
+        assert api.calls == [], "互斥拒绝不触 REST"
+
+    def test_docstring_three_entry_semantics(self) -> None:
+        """③docstring 披露：三入口同语义+互斥约束。"""
+        mcp, _ = _register("research")
+        doc = "".join(
+            mcp.registered["mount_paper_task"].__doc__.split())
+        for token in ("180", "window_unlimited", "互斥", "不限期",
+                      "window_bars=null"):
+            assert token in doc, f"披露锚缺失: {token}"
