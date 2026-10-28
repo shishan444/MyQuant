@@ -51,7 +51,7 @@ class TestAtrTpDisclosureDomain:
             seq=0, open=100.0, high=100.0, low=100.0, close=100.0, atr=5.0)
         fill = ledger.execute(
             Intent(kind="open", direction="long"), bar, _ZERO_COST,
-            entry_atr=5.0)
+            entry_atr=5.0).fill
         assert fill is not None  # 触达探针：开仓成交发生
 
         pos = ledger.position

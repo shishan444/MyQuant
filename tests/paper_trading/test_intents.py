@@ -67,7 +67,10 @@ def make_bar(seq=0, open_=100.0, high=101.0, low=99.0, close=100.5,
 
 
 def interpret(bar, signals, account, params):
-    return SignalInterpreter().interpret(bar, signals, account, params)
+    """既有断言面=intents（判定序与产出语义零变化——任务 3 返回值
+    升 InterpretResult 后 helper 取 intents 面，既有用例零改动）；
+    rejections 面断言见 TestInterpreterRejections。"""
+    return SignalInterpreter().interpret(bar, signals, account, params).intents
 
 
 def _risk_genes_with(**overrides):
@@ -719,3 +722,65 @@ class TestMaxLossAttributionOrder:
             make_bar(close=90.0), BarSignals(exit=True),
             make_account(position=pos, mark=90.0), params)
         assert [i.kind for i in intents] == ["exit_max_loss"]
+
+
+class TestInterpreterRejections:
+    """求值层拦截披露（change paper-signal-log 任务 3）：
+    InterpretResult.rejections 面——max_exposure 超限产
+    Rejection(reason="exposure_cap")；语义层过滤不产拒绝。"""
+
+    def test_max_exposure_exceeded_produces_rejection(self):
+        """①新增锚：敞口超限的加仓信号产 Rejection(kind="add",
+        reason="exposure_cap")、无意图产出（原为静默跳过）。"""
+        pos = make_position(side="long", entry=100.0, qty=10.0)
+        # notional_now=10×100=1000，equity≈5000+margin+upnl；
+        # max_exposure=0.1 → 上限≈500 已超（1000+add>500 恒真）
+        params = make_params(max_exposure=0.1)
+        result = SignalInterpreter().interpret(
+            make_bar(close=100.0),
+            BarSignals(add=True, entry_direction=1.0),
+            make_account(position=pos, mark=100.0), params)
+        assert result.intents == [], "超限不产意图（判定序不变）"
+        assert len(result.rejections) == 1
+        rej = result.rejections[0]
+        assert rej.kind == "add"
+        assert rej.direction == "long"
+        assert rej.reason == "exposure_cap"
+        assert rej.gene_hits == ()
+
+    def test_within_cap_no_rejection(self):
+        """上限内正常加仓：无拒绝记录（rejections 面 defaultValue 空）。"""
+        pos = make_position(side="long", entry=100.0, qty=10.0)
+        params = make_params(max_exposure=10.0)
+        result = SignalInterpreter().interpret(
+            make_bar(close=100.0),
+            BarSignals(add=True, entry_direction=1.0),
+            make_account(position=pos, mark=100.0), params)
+        assert [i.kind for i in result.intents] == ["add"]
+        assert result.rejections == []
+
+    def test_semantic_filter_produces_no_rejection(self):
+        """⑦语义层过滤不产拒绝（方向冲突不产 open——策略自身语义，
+        非执行拦截；spec 记录粒度边界）。"""
+        result = SignalInterpreter().interpret(
+            make_bar(),
+            BarSignals(entry=True, entry_direction=-1.0),
+            make_account(), make_params(direction="long"))
+        assert result.intents == []
+        assert result.rejections == [], "方向过滤不是拒绝"
+
+    def test_mixed_zero_sign_no_rejection(self):
+        """mixed 符号 0 不开仓：同为语义层过滤，零拒绝记录。"""
+        result = SignalInterpreter().interpret(
+            make_bar(),
+            BarSignals(entry=True, entry_direction=0.0),
+            make_account(), make_params(direction="mixed"))
+        assert result.intents == []
+        assert result.rejections == []
+
+    def test_no_signal_bar_empty_result(self):
+        """常规无信号 bar：intents/rejections 双空（零记录粒度）。"""
+        result = SignalInterpreter().interpret(
+            make_bar(), BarSignals(), make_account(), make_params())
+        assert result.intents == []
+        assert result.rejections == []

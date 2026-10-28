@@ -19,6 +19,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+
+# 成交层拒因枚举（change paper-signal-log 任务 3——与 pt_signal.
+# reject_reason 列值域同源）：insufficient_funds=定仓结果无效（qty
+# NaN/≤0，含 NaN equity 传导）；context_invalid=语境不符（有仓开仓/
+# 无仓出场等防御面）；below_min_notional=最小名义值拦截（拦截机制
+# 归 change-4，本 change 预留值域不收窄——建表值域写全，生产者晚到）
+REJECT_INSUFFICIENT_FUNDS = "insufficient_funds"
+REJECT_CONTEXT_INVALID = "context_invalid"
+REJECT_BELOW_MIN_NOTIONAL = "below_min_notional"
+
+
+@dataclass(frozen=True)
+class FillOutcome:
+    """execute 返回值（成交或显式拒因——None 静默丢弃退役）。
+
+    fill 非 None 时 reject_reason 恒 None；fill None 时 reject_reason
+    必填（成交层拦截不静默，spec 信号拦截显式化）。
+
+    Attributes:
+        fill: 成交记录（None=被拦）。
+        reject_reason: 拒因枚举（fill 非 None 时 None）。
+    """
+
+    fill: "Fill | None" = None
+    reject_reason: str | None = None
+
 from core.market_model import maintenance_margin_rate
 from core.paper_trading.kernel.account import (
     AccountSnapshot,
@@ -257,15 +283,17 @@ class Ledger:
 
     def execute(self, intent: Intent, exec_bar: ClosedBar,
                 fill_model: FillModel,
-                entry_atr: float | None = None) -> Fill | None:
-        """执行单条意图（定仓→成交→状态变更，返回成交记录）。
+                entry_atr: float | None = None) -> FillOutcome:
+        """执行单条意图（定仓→成交→状态变更，返回成交或显式拒因）。
 
         判定序与意图合法性由解释器/执行器保证；本方法对语境不符的
-        意图（有仓开仓/无仓出场）返回 None 不抛异常（防御面）。
+        意图（有仓开仓/无仓出场）返回 FillOutcome(None,
+        "context_invalid") 不抛异常（防御面）。
         执行点守卫：open/add 分支定仓结果 qty 无效（NaN/≤0，
         `not (qty > 0.0)` 单式并拦——含 NaN equity 传导的 margin
-        NaN，SEC-04 收编）时同样 return None 不落账——防 NaN 经
-        fill 链污染 balance/position；价格侧 inf 由装载点守卫
+        NaN，SEC-04 收编）时返回 FillOutcome(None,
+        "insufficient_funds") 不落账——防 NaN 经 fill 链污染
+        balance/position；价格侧 inf 由装载点守卫
         （executor._closed_bar 四价 isfinite）单点拦截，本守卫
         不重复；常态路径价格有效时恒 False 零影响。
 
@@ -277,44 +305,46 @@ class Ledger:
                 消费；其余意图不读）。
 
         Returns:
-            Fill | None: 成交记录（realized_pnl 已回填）；语境不符
-            或 qty 无效 None。
+            FillOutcome: fill=成交记录（realized_pnl 已回填）+
+            reject_reason=None；被拦时 fill=None+拒因枚举
+            （insufficient_funds/context_invalid；below_min_notional
+            拦截分支归 change-4）。
         """
         kind = intent.kind
         if kind == "open":
             if self.position is not None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
             qty, capped = self.size_open(exec_bar.open, entry_atr)
             if not (qty > 0.0):
-                return None
+                return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty)
             fill.capped = capped
             self._apply_open(fill, exec_bar, entry_atr)
-            return fill
+            return FillOutcome(fill)
         if kind == "add":
             if self.position is None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
             add_margin = self.params.add_fraction * self.equity(
                 exec_bar.open)
             qty_add = add_margin * self.params.leverage / exec_bar.open
             if not (qty_add > 0.0):
-                return None
+                return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty_add)
             self._apply_add(fill)
-            return fill
+            return FillOutcome(fill)
         if kind == "reduce":
             if self.position is None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
             qty = self.position.quantity * self.params.exit_fraction
             fill = fill_model.fill(intent, exec_bar, qty)
             self._apply_partial_exit(fill)
-            return fill
+            return FillOutcome(fill)
         # 出场族（close/exit_*）
         if self.position is None:
-            return None
+            return FillOutcome(None, REJECT_CONTEXT_INVALID)
         fill = fill_model.fill(intent, exec_bar, self.position.quantity)
         self._apply_close(fill)
-        return fill
+        return FillOutcome(fill)
 
     # ── 状态变更（每笔费用=名义计费；slip 已在成交价内） ──────
 

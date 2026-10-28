@@ -44,9 +44,11 @@ def _bar(price: float, seq: int = 0, atr=None):
 
 def _open(ledger: Ledger, price: float, side: str = "long", seq: int = 0,
           entry_atr=None):
+    """execute 的 fill 面便捷形（任务 3 返回值升 FillOutcome 后取
+    .fill——None 断言语义保持）。"""
     return ledger.execute(
         Intent(kind="open", direction=side), _bar(price, seq, entry_atr),
-        _ZERO_COST, entry_atr=entry_atr)
+        _ZERO_COST, entry_atr=entry_atr).fill
 
 
 class TestLiquidationAnchors:
@@ -87,7 +89,7 @@ class TestLiquidationAnchors:
             bar = ClosedBar(
                 seq=5, open=low, high=low, low=low, close=low)
             return SignalInterpreter().interpret(
-                bar, BarSignals(), account, ledger.params)
+                bar, BarSignals(), account, ledger.params).intents
 
         not_hit = _intents_at(0.904)
         assert not_hit == [] or not_hit[0].kind != "exit_liquidation"
@@ -130,8 +132,8 @@ class TestLiquidationAnchors:
         bar = ClosedBar(seq=5, open=0.903, high=0.903, low=0.903,
                         close=0.903)
         intents = SignalInterpreter().interpret(
-            bar, BarSignals(), account, ledger.params)
-        fill = ledger.execute(intents[0], bar, _ZERO_COST)
+            bar, BarSignals(), account, ledger.params).intents
+        fill = ledger.execute(intents[0], bar, _ZERO_COST).fill
         assert fill.intent.kind == "exit_liquidation"
         assert fill.price == pytest.approx(0.9036144, rel=1e-6)
         assert ledger.position is None
@@ -262,7 +264,7 @@ class TestStateMachine:
         _open(ledger, 100.0)  # margin=1_000、qty=100、balance=9_000
         fill = ledger.execute(
             Intent(kind="add", direction="long"), _bar(110.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         # 加仓时总权益=balance 9_000+margin 1_000+浮盈 100×(110−100)
         # =11_000 → add_margin=11_000×0.5=5_500
         assert fill.quantity == pytest.approx(5_500.0 * 10 / 110.0)
@@ -291,7 +293,7 @@ class TestStateMachine:
         ledger = self._ledger_with_position()  # qty=100、margin=1_000
         fill = ledger.execute(
             Intent(kind="reduce", direction="long"), _bar(120.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         assert fill.quantity == pytest.approx(50.0)  # 缺省 0.5
         assert fill.realized_pnl == pytest.approx(50.0 * 20.0)
         pos = ledger.position
@@ -315,7 +317,7 @@ class TestStateMachine:
         ledger = self._ledger_with_position()
         fill = ledger.execute(
             Intent(kind="close", direction="long"), _bar(130.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         assert fill.realized_pnl == pytest.approx(100.0 * 30.0)
         assert ledger.position is None
         assert ledger.balance == pytest.approx(
@@ -329,7 +331,7 @@ class TestStateMachine:
         _open(ledger, 100.0, side="short")
         fill = ledger.execute(
             Intent(kind="close", direction="short"), _bar(90.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         assert fill.realized_pnl == pytest.approx(100.0 * 10.0)
         assert ledger.balance == pytest.approx(11_000.0)
 
@@ -339,7 +341,7 @@ class TestStateMachine:
         params = make_params(position_size=0.1, leverage=10)
         ledger = Ledger(10_000.0, params)
         fill = ledger.execute(
-            Intent(kind="open", direction="long"), _bar(100.0), model)
+            Intent(kind="open", direction="long"), _bar(100.0), model).fill
         assert fill.fee == pytest.approx(0.001 * fill.quantity * 100.0)
         assert ledger.balance == pytest.approx(
             10_000.0 - 1_000.0 - fill.fee)
@@ -445,23 +447,27 @@ class TestIntentPreconditionGuards:
     """意图前置条件守卫与全平计数（闸门盲区消解）。"""
 
     def test_open_with_existing_position_returns_none(self):
-        """持仓中 open 意图 → None（重复开仓防御——不加仓不炸）。"""
+        """持仓中 open 意图 → 被拦+拒因 context_invalid（重复开仓防御
+        ——不加仓不炸；任务 3 拒因枚举断言）。"""
         params = make_params(position_size=0.1, leverage=10)
         ledger = Ledger(10_000.0, params)
         _open(ledger, 100.0)
-        fill = ledger.execute(
+        outcome = ledger.execute(
             Intent(kind="open", direction="long"), _bar(105.0, seq=1),
             _ZERO_COST)
-        assert fill is None
+        assert outcome.fill is None
+        assert outcome.reject_reason == "context_invalid"
         assert ledger.position.quantity == pytest.approx(100.0)
 
     def test_reduce_without_position_returns_none(self):
-        """无持仓 reduce 意图 → None（无仓可减防御）。"""
+        """无持仓 reduce 意图 → 被拦+拒因 context_invalid（无仓可减
+        防御）。"""
         ledger = Ledger(10_000.0, make_params())
-        fill = ledger.execute(
+        outcome = ledger.execute(
             Intent(kind="reduce", direction="long"), _bar(100.0),
             _ZERO_COST)
-        assert fill is None
+        assert outcome.fill is None
+        assert outcome.reject_reason == "context_invalid"
 
 
 class TestExecuteQtyGuard:
@@ -478,35 +484,45 @@ class TestExecuteQtyGuard:
 
     def test_open_nan_equity_conduit_rejected_without_fill(self):
         """锚 B(NaN)：NaN equity 真实传导（margin=NaN×first_size、
-        qty=NaN）→ None 不落账、保持空仓（NaN 不得经 fill 链入账）。"""
+        qty=NaN）→ 被拦+拒因 insufficient_funds、保持空仓（NaN 不得
+        经 fill 链入账）。"""
         ledger = Ledger(float("nan"), make_params())
-        fill = _open(ledger, 100.0)
-        assert fill is None
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST)
+        assert outcome.fill is None
+        assert outcome.reject_reason == "insufficient_funds"
         assert ledger.position is None
 
     @pytest.mark.parametrize(
         "balance", [0.0, -1_000.0], ids=["零权益 qty=0", "负权益 qty<0"])
     def test_open_nonpositive_qty_rejected_balance_unchanged(self,
                                                              balance):
-        """锚 B(≤0)：零权益自然积 0/负权益负值传导 qty≤0 → None
-        不开仓；锚 C：balance 不被无效开仓触碰（禁止变化面）。"""
+        """锚 B(≤0)：零权益自然积 0/负权益负值传导 qty≤0 → 被拦+
+        拒因 insufficient_funds 不开仓；锚 C：balance 不被无效开仓
+        触碰（禁止变化面）。"""
         ledger = Ledger(balance, make_params())
-        fill = _open(ledger, 100.0)
-        assert fill is None
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST)
+        assert outcome.fill is None
+        assert outcome.reject_reason == "insufficient_funds"
         assert ledger.position is None
         assert ledger.balance == balance
 
     def test_add_nan_equity_conduit_rejected_position_unchanged(self):
         """add 分支同式守卫：开仓后 NaN equity 传导 add_margin=NaN、
-        qty_add=NaN → None；锚 C：持仓 quantity 保持原值不被污染。"""
+        qty_add=NaN → 被拦+拒因 insufficient_funds；锚 C：持仓
+        quantity 保持原值不被污染。"""
         ledger = Ledger(10_000.0, make_params())
         assert _open(ledger, 100.0) is not None
         qty_before = ledger.position.quantity
         ledger.balance = float("nan")  # 注入 NaN equity 语境
-        fill = ledger.execute(
+        outcome = ledger.execute(
             Intent(kind="add", direction="long"), _bar(100.0, seq=1),
             _ZERO_COST)
-        assert fill is None
+        assert outcome.fill is None
+        assert outcome.reject_reason == "insufficient_funds"
         assert ledger.position.quantity == qty_before
 
     def test_open_inf_qty_passes_guard_card_semantics(self):
@@ -525,7 +541,7 @@ class TestExecuteQtyGuard:
         _open(ledger, 100.0)  # qty=100
         fill = ledger.execute(
             Intent(kind="reduce", direction="long"), _bar(120.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         assert fill is not None
         assert fill.quantity == pytest.approx(100.0)
         assert ledger.position is None  # quantity<=0 → 清仓
@@ -697,10 +713,10 @@ class TestInitialFractionSizing:
             assert ledger.position.quantity == pytest.approx(200.0)
         fill_a = declared.execute(
             Intent(kind="add", direction="long"), _bar(110.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         fill_b = undeclared.execute(
             Intent(kind="add", direction="long"), _bar(110.0, seq=1),
-            _ZERO_COST)
+            _ZERO_COST).fill
         assert fill_a.quantity == fill_b.quantity
         assert declared.position.quantity \
             == pytest.approx(undeclared.position.quantity)

@@ -11,12 +11,22 @@
 即时类（exit_liquidation/exit_sl/exit_tp）当根按触发价成交，其余
 意图由执行器挂 pending 次根开盘执行（shift(1) 等价）。
 
+拦截披露（change paper-signal-log 任务 3）：返回值从 list[Intent]
+升为 InterpretResult(intents, rejections)——求值层拦截（第 8 段
+max_exposure 超限跳过加仓）不再静默，产出 Rejection 落信号记录；
+判定序与 intents 产出语义逐字节不变。求值语义层过滤（direction
+冲突不产 open、mixed 符号 0）属策略自身语义，不产 Rejection
+（spec 信号拦截显式化：非执行拦截不记拒绝）。
+
 错误语义：解释器不抛业务异常（纯映射）。atr 模式运行中单 bar ATR
 值 NaN 或 ≤0 时该 bar 不产生 SL/TP 意图、不回退按 pct 距离计算
 （排除 ATR 倍数被按 pct 误用的负价荒谬路径），次根恢复后防线恢复；
 ATR 列整体缺失在装载校验层前置拦截（executor 侧）。
 """
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from core.paper_trading.kernel.account import AccountSnapshot, PositionSnapshot
 from core.paper_trading.kernel.ledger import liquidation_price
@@ -28,12 +38,45 @@ from core.paper_trading.kernel.types import (
 )
 
 
+@dataclass(frozen=True)
+class Rejection:
+    """求值层拦截记录（解释器产出——「信号有效但被规则拦下」的显式化）。
+
+    解释器无基因视野（BarSignals 是布尔切片）——gene_hits 承载位
+    缺省空元组，信号行的基因命中由执行器组装层从 SignalSet.hits
+    按键补齐（求值披露通道，任务 2）。
+
+    Attributes:
+        kind: 被拦意图类型（当前仅 "add"——第 8 段敞口上限）。
+        direction: 被拦意图方向（持仓侧）。
+        reason: 拒因枚举（当前 "exposure_cap"；below_min_notional
+            生产者在 change-4，值域见 pt_signal.reject_reason 列）。
+        gene_hits: 基因命中承载位（解释器层恒空，组装层填充）。
+    """
+
+    kind: str = "add"
+    direction: str = ""
+    reason: str = "exposure_cap"
+    gene_hits: tuple = field(default=())
+
+
+class InterpretResult(NamedTuple):
+    """interpret 返回值：意图+拦截记录（信号拦截显式化载体）。
+
+    intents 面与改造前 list[Intent] 逐字节同语义；rejections 面按
+    拒因逐条承载（同 bar 可多条）。
+    """
+
+    intents: list[Intent]
+    rejections: list[Rejection]
+
+
 class SignalInterpreter:
     """信号解释器（无状态纯函数类——考场无观点的映射本体）。"""
 
     def interpret(self, closed_bar: ClosedBar, signals_at_bar: BarSignals,
                   account: AccountSnapshot,
-                  params: RiskParams) -> list[Intent]:
+                  params: RiskParams) -> InterpretResult:
         """单根闭合 bar 的意图产出（八段判定序）。
 
         Args:
@@ -43,7 +86,8 @@ class SignalInterpreter:
             params: 物化后的风控参数。
 
         Returns:
-            list[Intent]: 该 bar 产出的意图（至多一条；空列表=无动作）。
+            InterpretResult: intents（至多一条；空列表=无动作——判定
+            序与产出语义逐字节不变）+rejections（求值层拦截记录）。
         """
         pos = account.position
 
@@ -55,58 +99,66 @@ class SignalInterpreter:
             hit = (closed_bar.low <= p_liq if pos.side == "long"
                    else closed_bar.high >= p_liq)
             if hit:
-                return [Intent(
+                return InterpretResult(intents=[Intent(
                     kind="exit_liquidation", direction=pos.side,
-                    reason="liquidation", trigger_price=p_liq)]
+                    reason="liquidation", trigger_price=p_liq)],
+                    rejections=[])
 
         # ── 2. SL/TP（bar 内价格触发；SL 优先 TP） ──
         if pos is not None:
             exit_intent = self._stop_take_intent(closed_bar, pos, params)
             if exit_intent is not None:
-                return [exit_intent]
+                return InterpretResult(intents=[exit_intent],
+                                       rejections=[])
 
         # ── 3. 金额防线（max_position_loss——收盘价浮亏口径） ──
         if pos is not None and params.max_position_loss > 0:
             loss = -account.unrealized_pnl + pos.funding_paid
             if loss >= params.max_position_loss:
-                return [Intent(kind="exit_max_loss", direction=pos.side,
-                               reason="max_loss")]
+                return InterpretResult(intents=[Intent(
+                    kind="exit_max_loss", direction=pos.side,
+                    reason="max_loss")], rejections=[])
 
         # ── 4. 时间出场（time_exit_utc 先于 max_hold——引擎内序） ──
         if pos is not None:
             time_intent = self._time_exit_intent(closed_bar, pos,
                                                  account.bars_held, params)
             if time_intent is not None:
-                return [time_intent]
+                return InterpretResult(intents=[time_intent],
+                                       rejections=[])
 
         # ── 5. 信号出场（exit 信号全平 / 反向 entry 两步反手） ──
         if pos is not None:
             if signals_at_bar.exit:
-                return [Intent(kind="close", direction=pos.side,
-                               reason="signal")]
+                return InterpretResult(intents=[Intent(
+                    kind="close", direction=pos.side, reason="signal")],
+                    rejections=[])
             if signals_at_bar.entry:
                 entry_side = self._resolve_entry_side(
                     signals_at_bar.entry_direction, params)
                 if entry_side is not None and entry_side != pos.side:
-                    return [Intent(kind="close", direction=pos.side,
-                                   reason="reverse")]
+                    return InterpretResult(intents=[Intent(
+                        kind="close", direction=pos.side,
+                        reason="reverse")], rejections=[])
 
         # ── 6. 入场（direction 过滤+mixed 符号 0/NaN 不开仓） ──
         if signals_at_bar.entry and pos is None:
             entry_side = self._resolve_entry_side(
                 signals_at_bar.entry_direction, params)
             if entry_side is not None:
-                return [Intent(
+                return InterpretResult(intents=[Intent(
                     kind="open", direction=entry_side,
-                    size_fraction=params.position_size, reason="signal")]
+                    size_fraction=params.position_size, reason="signal")],
+                    rejections=[])
 
         # ── 7. 减仓（比例=exit_fraction；无仓忽略） ──
         if signals_at_bar.reduce and pos is not None:
-            return [Intent(kind="reduce", direction=pos.side,
-                           size_fraction=params.exit_fraction,
-                           reason="signal")]
+            return InterpretResult(intents=[Intent(
+                kind="reduce", direction=pos.side,
+                size_fraction=params.exit_fraction, reason="signal")],
+                rejections=[])
 
-        # ── 8. 加仓（同向+max_exposure 敞口检查——超限跳过不炸） ──
+        # ── 8. 加仓（同向+max_exposure 敞口检查——超限产出拦截记录） ──
         if signals_at_bar.add and pos is not None:
             add_side = self._resolve_entry_side(
                 signals_at_bar.entry_direction, params)
@@ -116,11 +168,17 @@ class SignalInterpreter:
                                 * params.leverage)
                 if notional_now + add_notional \
                         <= account.equity * params.max_exposure:
-                    return [Intent(kind="add", direction=pos.side,
-                                   size_fraction=params.add_fraction,
-                                   reason="signal")]
+                    return InterpretResult(intents=[Intent(
+                        kind="add", direction=pos.side,
+                        size_fraction=params.add_fraction,
+                        reason="signal")], rejections=[])
+                # 敞口超限：信号有效但被规则拦下——显式产 Rejection
+                # （此前静默跳过；拦截披露，spec 信号拦截显式化）
+                return InterpretResult(intents=[], rejections=[Rejection(
+                    kind="add", direction=pos.side,
+                    reason="exposure_cap")])
 
-        return []
+        return InterpretResult(intents=[], rejections=[])
 
     # ── 防线判定（读 bar 的 high/low，非信号） ────────────────
 

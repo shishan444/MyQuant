@@ -683,7 +683,7 @@ class PaperTaskExecutor:
         pre = self.interpreter.interpret(
             bar, signals,
             self.ledger.snapshot(bar.close, bar.seq), self.params)
-        for intent in pre:
+        for intent in pre.intents:
             if intent.kind == "exit_liquidation":
                 self._execute(intent, bar, events, seq=1)
             elif intent.kind in ("exit_sl", "exit_tp"):
@@ -713,7 +713,7 @@ class PaperTaskExecutor:
             bar, signals,
             self.ledger.snapshot(bar.close, bar.seq), self.params)
         self.pending = [
-            x for x in post
+            x for x in post.intents
             if x.kind not in ("exit_liquidation", "exit_sl", "exit_tp")]
 
         # trail 峰值落账（持仓期逐 bar——判定自足，状态权威落点）
@@ -724,7 +724,8 @@ class PaperTaskExecutor:
 
     def _execute(self, intent: Intent, bar: ClosedBar,
                  events: List[ExecutionEvent], seq: int) -> None:
-        """执行单条意图（Ledger.execute 语境防御面：None 丢弃）。
+        """执行单条意图（FillOutcome 消费面：被拦丢弃——拒因信号行
+        挂点随任务 4 落地，本任务行为等价不变）。
 
         entry_atr 接线（修复卡：层间接线遗漏）：执行 bar 的 ATR 值
         （feed 指标列装载链）透传 kernel——open 意图的 risk_budget×atr
@@ -732,8 +733,9 @@ class PaperTaskExecutor:
         签名语义）。漏接会使 atr 档距离恒 NaN 走公式单点 (0,0) 防御
         恒回退 fixed。
         """
-        fill = self.ledger.execute(
+        outcome = self.ledger.execute(
             intent, bar, self.fill_model, entry_atr=bar.atr)
+        fill = outcome.fill
         if fill is None:
             return
         if fill.realized_pnl is not None:
