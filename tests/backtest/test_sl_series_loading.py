@@ -20,6 +20,7 @@ from core.backtest.engine import (
     BacktestEngine, _load_sl_series_column, _per_dna_risk_params)
 from core.features.indicators import compute_all_indicators
 from core.persistence.db_ext import init_db_ext
+from core.strategy.dna import RiskGenes
 from tests.helpers.data_factory import make_dna
 
 _BB_SRC = {"indicator": "BB", "params": {"period": 20, "std": 2},
@@ -48,6 +49,16 @@ def env(tmp_path: Path):
 
 
 class TestC1LoadingPaths:
+    def test_dispatch_not_pct_default(self, env):
+        """C1 分派断言：series 档经 _per_dna_risk_params 装配——元组
+        首位分派码=3.0（不落 pct 默认 0.0）、atr_col 槽位=线值列非
+        None（njit 签名零变化的槽位复用形制）。"""
+        p = _per_dna_risk_params(
+            RiskGenes(sl_mode="series", sl_series_source=dict(_BB_SRC)),
+            env["enhanced"], db_path=env["db"])
+        assert p[0] == 3.0, f"series 分派码 3.0，实际 {p[0]}"
+        assert p[1] is not None, "atr_col 槽位承载线值列"
+
     def test_indicator_column_direct(self, env):
         """C1 路径①：目标列在 df 直取。"""
         arr = _load_sl_series_column(env["db"], env["enhanced"], _BB_SRC)
@@ -150,6 +161,24 @@ class TestWarmupTwoTracks:
         assert "BB" in names, "series 指标源并入 warmup 指标清单"
         assert warmup >= 200
 
+    def test_indicator_track_ema_strong(self, env):
+        """C2 指标轨强断言（可区分并入与未并入）：EMA 源（注册表周期
+        上限 200 → ×3=600 > floor 200）——带源 600 vs 无源 200 对照。
+        BB 上限 50（150<floor）淹没在 floor 下不可区分，故用 EMA。"""
+        from core.analysis.validation_service import _derive_dna_warmup
+        base = make_dna()
+        warmup_base, _ = _derive_dna_warmup(env["db"], base, "4h")
+        dna = make_dna()
+        dna.risk_genes.sl_mode = "series"
+        dna.risk_genes.sl_series_source = {"indicator": "EMA",
+                                           "params": {"period": 60}}
+        warmup, names = _derive_dna_warmup(env["db"], dna, "4h")
+        assert "EMA" in names
+        assert warmup >= 600, \
+            f"EMA 源并入后预算须抬升至注册表上限×3=600，实际 {warmup}"
+        assert warmup_base == 200, \
+            f"对照组（无 series 源）应为 floor 200，实际 {warmup_base}"
+
     def test_fx_track_plugin_lookback(self, env):
         """warmup 两轨之 fx 形式：fx 列并入 plugin_columns_lookback
         依赖闭包（rolling_mean(close,30) 的 fx 列贡献窗口）。"""
@@ -166,9 +195,70 @@ class TestWarmupTwoTracks:
         # 指标名清单不含 fx）
         assert warmup >= 200
 
+    def test_fx_track_strong(self, env):
+        """C2 fx 轨强断言（可区分并入与未并入）：rolling_mean(close,300)
+        的 lookback=300 > floor 200——带 fx 源预算抬升至 300，对照无源
+        200（契约：warmup 预算 >= SL 列 lookback）。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        from core.analysis.validation_service import _derive_dna_warmup
+        col = register_formula_plugin(
+            env["db"], name="sl_warm300",
+            expression="rolling_mean(close, 300)")["column"]
+        dna = make_dna()
+        dna.risk_genes.sl_mode = "series"
+        dna.risk_genes.sl_series_source = {"column": col}
+        warmup, names = _derive_dna_warmup(env["db"], dna, "4h")
+        assert warmup >= 300, \
+            f"fx 列 lookback 300 须并入预算（>floor 200 可区分），实际 {warmup}"
+        assert "EMA" not in names and "fx" not in str(names).lower()
+
+    def test_short_range_warmup_insufficient_rejected(self, tmp_path):
+        """C2 拒绝可观察性：series fx 源（lookback 300）warmup 预算下
+        构造短区间（数据起点前仅 250 bar < 300）→ 回测装载通道
+        run_backtest_on_range 显式拒 RESEARCH_WARMUP_INSUFFICIENT
+        （detail 含实算预算）；对照数据充足区间不因 warmup 拒。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        from core.analysis.validation_service import _derive_dna_warmup
+        from core.analysis.backtest_bridge import run_backtest_on_range
+        from tests.helpers.data_factory import make_ohlcv
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        col = register_formula_plugin(
+            db, name="sl_short",
+            expression="rolling_mean(close, 300)")["column"]
+        dna = make_dna()
+        dna.execution_genes.timeframe = "1h"  # 周期一致性守卫（D6）
+        dna.risk_genes.sl_mode = "series"
+        dna.risk_genes.sl_series_source = {"column": col}
+        warmup, _ = _derive_dna_warmup(db, dna, "1h")
+        assert warmup >= 300
+        df = make_ohlcv(n=350, freq="1h", start="2024-01-01", seed=3)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        start = df.index[250].isoformat()
+        end = df.index[349].isoformat()
+        with pytest.raises(ResearchError) as ei:
+            run_backtest_on_range(db, data_dir, dna, "BTCUSDT", "1h",
+                                  start, end, warmup)
+        assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT", \
+            ei.value.code
+        assert ei.value.detail["warmup_bars"] >= 300
+        # 对照：数据充足（起点前 500 bar >= 预算）不因 warmup 拒
+        df2 = make_ohlcv(n=800, freq="1h", start="2024-01-01", seed=3)
+        data_dir2 = tmp_path / "data2"
+        data_dir2.mkdir()
+        df2.to_parquet(data_dir2 / "BTCUSDT_1h.parquet")
+        metrics, _, actual, _ = run_backtest_on_range(
+            db, data_dir2, dna, "BTCUSDT", "1h",
+            df2.index[500].isoformat(), df2.index[799].isoformat(), warmup)
+        assert actual >= warmup
+        assert "total_trades" in metrics
+
     def test_warmup_rule_text_three_sources(self):
         """WARMUP_RULE_TEXT 三处一致（常量+两复制体——contract_parity
-        锚翻转后 key 同步）。"""
+        锚翻转后 key 同步）+series 措辞要素（C2 轻锚定：文本描述与
+        行为一致性——series 档止损线列并入取大的披露在场）。"""
         from core.analysis.registry_meta import WARMUP_RULE_TEXT
         from mcpserver.capability import CAPABILITY_DOC
         import mcpserver.tools as tools_mod
@@ -177,6 +267,8 @@ class TestWarmupTwoTracks:
         for text in (WARMUP_RULE_TEXT, CAPABILITY_DOC):
             assert "plugin_columns_lookback" in text
             assert "plugin_formula_lookback" not in text
+        assert "series" in WARMUP_RULE_TEXT, \
+            "series 档止损线列并入措辞须在权威规则文本中"
 
 
 class TestB1EndToEndTrigger:

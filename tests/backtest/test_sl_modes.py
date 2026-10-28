@@ -5,11 +5,17 @@
 
 覆盖：trail 触发点与峰值生命周期（多/空对称/开仓重置）、同 bar 清算
 优先、atr 绝对价与动态取列（atr_period 可区分/现算两路径/装载校验
-参数化）、trail+TP 并存、pct 区分锚、batch 路径三模式与单路径一致。
+参数化）、trail+TP 并存、pct 区分锚、batch 路径三模式与单路径一致；
+series 档执行语义（dynamic-stop-loss-series C4-B：NaN 守卫/阶梯动态
+性/不锚入场价区分锚/TP 锚入场价/方向镜像判定侧/fx 端到端/清算优先
+/batch 逐列独立）。
 交易链拒绝面（三插桩）见 tests/trading/test_trading_link_compatibility.py。
 """
 
 from __future__ import annotations
+
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -322,3 +328,181 @@ class TestBatchPathConsistency:
         assert exit_ts(singles[0]) == T(6)
         assert exit_ts(singles[1]) == T(9)
         assert abs(results[0].total_return - results[1].total_return) > 1e-9
+
+
+def mk_series_dna(col_src=None, **risk):
+    """series 档 DNA（指标形制 BB/lower——目标列 bb_lower_20_2 直取，
+    测试以手工列值全权控制线形；col_src 可换其他指标源声明）。"""
+    src = col_src or {"indicator": "BB", "params": {"period": 20, "std": 2},
+                      "field": "lower"}
+    return mk_dna(sl_mode="series", sl_series_source=src, **risk)
+
+
+class TestSeriesMode:
+    """series 档执行语义（dynamic-stop-loss-series C4-B 组，specs
+    「series 档动态止损线」域）。
+
+    手工核算纪律沿文件头：全部线值与触发 bar 独立人工推导。基准
+    数据沿 CLOSES/HIGHS/LOWS（bar0 信号 → bar1 close=105 成交）。"""
+
+    def test_nan_head_guard_first_valid_bar_onward(self):
+        """B1 守卫细化：线列头部预热 NaN 期无 SL 约束不崩，首个有效
+        bar 起按线值比较。线=[NaN]*4+[110,109,...]：bar1-3 NaN 段
+        持仓在无约束（若误按 0/NaN 比较则 bar1 即触发或崩溃）；bar4
+        low=114>110 不触发；bar5 low=95<=109 触发。"""
+        line = [np.nan] * 4 + [110.0, 109.0, 108.0, 107.0, 106.0, 105.0]
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(), df, signal_set=sig([0], 10))
+        assert exit_ts(r) == T(5), \
+            f"NaN 头部无约束、首个有效 bar 起比较（bar5 触发），实际 {exit_ts(r)}"
+
+    def test_ladder_dynamic_adjacent_bars(self):
+        """B3 动态性锚：阶梯线相邻两 bar 分别不触发/触发——bar4 线=80
+        （low=114>80 不触发）、bar5 线=100（low=95<=100 触发）。若线
+        静态（恒 80 或恒前值）则 bar5 不触发——「止损不一定是一个值」
+        的行为级证明；触发价=当 bar 线值（出场价 close[5]=100==线值）。"""
+        line = [np.nan, np.nan, 80.0, 80.0, 80.0] + [100.0] * 5
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(), df, signal_set=sig([0], 10))
+        assert exit_ts(r) == T(5), \
+            f"bar4 不触发/bar5 触发（当 bar 线值 100），实际 {exit_ts(r)}"
+        price = float(r.trades_df["Avg Exit Price"].iloc[0])
+        assert abs(price - 100.0) < 0.5, f"触发价=当 bar 线值 100，实际 {price}"
+
+    def test_series_vs_pct_distinguishable(self):
+        """B4 语义边界锚：series 不锚入场价——入场后线值收紧（103→
+        105.5）触发位随列变。同数据 pct 档 sl=105×0.95=99.75 恒定
+        全程不触发（最低 low=102）期末平仓；series 档 bar6 low=105
+        <=105.5 触发——两档同数据不同触发可区分。"""
+        closes2 = [100, 105, 110, 112, 108, 107, 106, 105, 104, 103]
+        highs2 = [101, 106, 111, 113, 109, 108, 107, 106, 105, 104]
+        lows2 = [99, 104, 109, 111, 107, 106, 105, 104, 103, 102]
+        line = [np.nan] + [103.0] * 3 + [105.5] * 6
+        df2 = mk_df(closes2, highs2, lows2, bb_lower_20_2=line)
+        r_series = eng.run(mk_series_dna(), df2, signal_set=sig([0], 10))
+        r_pct = eng.run(mk_dna(sl_mode="pct", stop_loss=0.05), df2,
+                        signal_set=sig([0], 10))
+        assert exit_ts(r_series) == T(6), \
+            f"series bar6 触发（线值收紧至 105.5），实际 {exit_ts(r_series)}"
+        assert exit_ts(r_pct) == T(9), \
+            f"pct 99.75 全程不触发期末平仓，实际 {exit_ts(r_pct)}"
+
+    def test_tp_anchored_to_entry_long(self):
+        """specs「TP 并存锚入场价」多头：TP=ep×(1+0.10)=105×1.1=
+        115.5（锚入场价 pct 量纲）。SL 线全程 80 不触发；bar3 high=
+        116>=115.5 TP 离场。误锚线值（80×1.1=88）则 bar1 即触发；
+        误锚峰值（trail 形态）则全程不触发——T(3) 两侧可区分。"""
+        line = [np.nan] + [80.0] * 9
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(take_profit=0.10), df,
+                    signal_set=sig([0], 10))
+        assert exit_ts(r) == T(3), \
+            f"TP=115.5 于 bar3 high=116 触及，实际 {exit_ts(r)}"
+
+    def test_tp_anchored_to_entry_short(self):
+        """TP 并存空头镜像：TP=ep×(1−0.10)=105×0.9=94.5。SL 线全程
+        125 高于 high（空头 high>=125 不触发）；bar8 low=93<=94.5 TP
+        离场。误锚线值（125×0.9=112.5）则 bar1 low=104 即触发——
+        T(8) 可区分。"""
+        line = [np.nan] + [125.0] * 9
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(take_profit=0.10, direction="short"), df,
+                    signal_set=sig([0], 10))
+        assert exit_ts(r) == T(8), \
+            f"空头 TP=94.5 于 bar8 low=93 触及，实际 {exit_ts(r)}"
+
+    def test_direction_mirror_long_judges_low(self):
+        """B2 方向镜像·多头判定侧=low：线 bar2 起 112（>bar2 high=111
+        且 >=low=109）→ bar2 low=109<=112 触发 T(2)。若误用 high>=line
+        判定（111<112 不触发）则 bar3 high=116>=112 触发 T(3)——T(2)
+        检出判定侧走样。"""
+        line = [np.nan, np.nan] + [112.0] * 8
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(), df, signal_set=sig([0], 10))
+        assert exit_ts(r) == T(2), f"多头 low<=112 于 bar2 触发，实际 {exit_ts(r)}"
+
+    def test_direction_mirror_short_judges_high(self):
+        """B2 方向镜像·空头判定侧=high：线 bar2 起 99（<bar2 low=109）
+        → bar2 high=111>=99 触发 T(2)。若误用 low<=line 判定（109>99
+        不触发）则延至 bar5 low=95<=99 触发 T(5)——T(2) 检出走样。"""
+        line = [np.nan, np.nan] + [99.0] * 8
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r = eng.run(mk_series_dna(direction="short"), df,
+                    signal_set=sig([0], 10))
+        assert exit_ts(r) == T(2), f"空头 high>=99 于 bar2 触发，实际 {exit_ts(r)}"
+
+    def test_direction_mirror_same_bar_symmetric(self):
+        """B2 同列同数据多空对称：线 bar2 起 110（夹在 bar2 [low=109,
+        high=111] 区间内）→ 多头 109<=110 与空头 111>=110 同 bar 触发
+        ——同一条线服务多空两向触发对称（镜像断言）。"""
+        line = [np.nan, np.nan] + [110.0] * 8
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r_long = eng.run(mk_series_dna(), df, signal_set=sig([0], 10))
+        r_short = eng.run(mk_series_dna(direction="short"), df,
+                          signal_set=sig([0], 10))
+        assert exit_ts(r_long) == T(2) and exit_ts(r_short) == T(2), \
+            f"多空同 bar 对称触发，实际 long={exit_ts(r_long)} short={exit_ts(r_short)}"
+
+    def test_fx_source_end_to_end(self):
+        """specs「fx 源端到端」：fx 插件列（rolling_mean(close,5)）登记
+        后回测——装载链 enrich 求值落列、逐 bar 比较、触发价=当 bar
+        列值。人工核算：bar4 线=(100+105+110+112+111)/5=107.6（low=
+        110>107.6 不触发）；bar5 线=109.6、low=109<=109.6 触发 T(5)。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        from core.persistence.db_ext import init_db_ext
+        closes_f = [100, 105, 110, 112, 111, 110, 109, 108, 107, 106]
+        highs_f = [c + 1 for c in closes_f]
+        lows_f = [c - 1 for c in closes_f]
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "q.db"
+            init_db_ext(db)
+            col = register_formula_plugin(
+                db, name="sl_line_fx",
+                expression="rolling_mean(close, 5)")["column"]
+            df = mk_df(closes_f, highs_f, lows_f)
+            eng_fx = BacktestEngine(init_cash=100000, fee=0.0,
+                                    slippage=0.0, db_path=db)
+            r = eng_fx.run(mk_series_dna({"column": col}), df,
+                           signal_set=sig([0], 10))
+            assert exit_ts(r) == T(5), \
+                f"fx 线 109.6 于 bar5 low=109 触发，实际 {exit_ts(r)}"
+            price = float(r.trades_df["Avg Exit Price"].iloc[0])
+            assert abs(price - 109.6) < 1.0, \
+                f"触发价=当 bar 列值 109.6，实际 {price}"
+
+    def test_same_bar_liquidation_priority(self):
+        """B4 v2 清算优先序：leverage=10 深回撤 bar5 权益击穿维持线且
+        SL 线命中（线=96>=low=95）——清算先执行单事件；leverage=1 同
+        数据纯 SL 离场单事件（沿 trail 同款形制）。"""
+        line = [np.nan, 80.0, 80.0, 80.0, 80.0] + [96.0] * 5
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line)
+        r_liq = eng.run(mk_series_dna(leverage=10), df,
+                        signal_set=sig([0], 10))
+        r_low = eng.run(mk_series_dna(leverage=1), df,
+                        signal_set=sig([0], 10))
+        assert r_liq.liquidated, "高杠杆深回撤 bar 权益击穿维持线"
+        assert r_liq.total_trades == 1 and r_low.total_trades == 1, \
+            "同 bar 双命中清算优先单事件（两杠杆各 1 笔）"
+
+    def test_batch_per_column_series_sources(self):
+        """C1 槽位复用·batch 逐列独立：两 series DNA 各自源列
+        （bb_lower_20_2 阶梯 bar5 触发 / bb_lower_10_2 阶梯 bar6 触发）
+        batch_run 与单路径一致且两列权益分叉（列堆叠互不串扰）。"""
+        line20 = [np.nan, np.nan, 80.0, 80.0, 80.0] + [100.0] * 5
+        line10 = [np.nan, np.nan, 80.0, 80.0, 80.0, 80.0] + [101.0] * 4
+        df = mk_df(CLOSES, HIGHS, LOWS, bb_lower_20_2=line20,
+                   bb_lower_10_2=line10)
+        dnas = [mk_series_dna(),
+                mk_series_dna({"indicator": "BB",
+                               "params": {"period": 10, "std": 2},
+                               "field": "lower"})]
+        sig_sets = [sig([0], 10)] * 2
+        results = eng.batch_run(dnas, df, signal_sets=sig_sets)
+        singles = [eng.run(d, df, signal_set=sig([0], 10)) for d in dnas]
+        assert exit_ts(singles[0]) == T(5) and exit_ts(singles[1]) == T(6)
+        assert all(
+            b.total_trades == s.total_trades and
+            abs(b.total_return - s.total_return) < 1e-9
+            for b, s in zip(results, singles)), "batch 与单路径一致"
+        assert abs(results[0].total_return - results[1].total_return) > 1e-9, \
+            "两列出场 bar 不同（T5/T6）→ 权益必分叉"

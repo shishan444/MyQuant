@@ -106,12 +106,40 @@ class TestA3CombinationGuards:
         assert ei.value.detail["field"] == "strategy_params.sl_series_source"
 
     def test_series_with_scalar_stop_rejected(self, db):
-        """A3②：series+stop_loss 标量键→拒（档位参数互斥）。"""
+        """A3②：series+stop_loss 标量键→拒（档位参数互斥——conflict
+        数组精准形制，specs Scenario「stop_loss 标量键拒绝」）。"""
         with pytest.raises(ResearchError) as ei:
             _register(db, _BB, extra={"stop_loss": 0.05}, period=17)
-        assert ei.value.detail.get("conflict") == ["sl_mode=series",
-                                                   "stop_loss"][:1] or \
-            "互斥" in ei.value.message
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["conflict"] == ["sl_mode=series",
+                                               "stop_loss"], \
+            ei.value.detail
+        assert "field" in ei.value.detail and "hint" in ei.value.detail
+
+    def test_series_with_take_profit_legal(self, db):
+        """A3⑥：series+take_profit 并存合法（TP 沿 pct 量纲锚入场价
+        ——执行面锚见 tests/backtest/test_sl_modes.py TestSeriesMode）。"""
+        out = _register(db, _BB, extra={"take_profit": 0.1}, period=27)
+        t = translate_hypothesis(db, hypothesis_id=out["hypothesis_id"])
+        v = t["risk_genes_disclosure"]["values"]
+        assert v["take_profit"] == 0.1
+
+    def test_tp_below_residual_legal_series_only(self):
+        """A3⑥ TP>SL 约束 series 档豁免（trail 豁免先例同族）：series
+        档 take_profit=0.03 <= stop_loss 残留 0.05 不报错；对照 atr 档
+        同关系报错——豁免是档位语义非全局放水。"""
+        dna = make_dna()
+        dna.risk_genes.sl_mode = "series"
+        dna.risk_genes.sl_series_source = dict(_BB)
+        dna.risk_genes.take_profit = 0.03
+        assert validate_dna(dna).is_valid
+        dna_atr = make_dna()
+        dna_atr.risk_genes.sl_mode = "atr"
+        dna_atr.risk_genes.stop_loss = 2.0
+        dna_atr.risk_genes.take_profit = 1.0
+        vr = validate_dna(dna_atr)
+        assert not vr.is_valid and any(
+            "greater than stop loss" in e for e in vr.errors), vr.errors
 
     def test_non_series_with_source_rejected(self, db):
         """A3③：非 series 档携带来源键→拒（防半配置）。"""
@@ -252,6 +280,13 @@ class TestFSignatureIdentity:
 
 
 class TestSerialization:
+    # 16 键基线（7 恒写+9 条件——C4-E1 逐键对照，键序=to_dict 输出序）
+    _KEYS16 = ["stop_loss", "take_profit", "position_size", "leverage",
+               "direction", "sl_mode", "atr_period", "exit_fraction",
+               "add_fraction", "max_exposure", "max_hold", "time_exit_utc",
+               "position_mode", "risk_fraction", "initial_fraction",
+               "max_position_loss"]
+
     def test_to_dict_superset_form(self):
         """16 键基线：非 series to_dict 不写新键（存量逐字节不变）；
         series 17 键原样回显。"""
@@ -259,6 +294,71 @@ class TestSerialization:
         assert "sl_series_source" not in rg.to_dict()
         rg2 = RiskGenes(sl_mode="series", sl_series_source=dict(_BB))
         assert rg2.to_dict()["sl_series_source"] == _BB
+
+    def test_full_field_keyset_baseline_16(self):
+        """C4-E1 逐键基线：全字段非 series RiskGenes 的 to_dict 键集
+        与键序逐键等于 16 键清单（存量序列化逐字节不变的键级锚）。"""
+        rg = RiskGenes(
+            stop_loss=0.08, take_profit=0.1, position_size=0.3,
+            leverage=2, direction="short", sl_mode="pct", atr_period=20,
+            exit_fraction=0.5, add_fraction=0.1, max_exposure=1.0,
+            max_hold=100, time_exit_utc=600, position_mode="fixed",
+            risk_fraction=0.02, initial_fraction=0.5,
+            max_position_loss=1000.0)
+        assert list(rg.to_dict()) == self._KEYS16
+        assert RiskGenes.from_dict(rg.to_dict()) == rg
+
+    def test_series_keyset_17(self):
+        """C4-E1 series 17 键：同全字段+sl_series_source——新键在末位
+        （16 键基线逐键不变，第 17 键条件追加）。"""
+        kw = dict(stop_loss=0.08, take_profit=0.1, position_size=0.3,
+                  leverage=2, direction="short", atr_period=20,
+                  exit_fraction=0.5, add_fraction=0.1, max_exposure=1.0,
+                  max_hold=100, time_exit_utc=600, position_mode="fixed",
+                  risk_fraction=0.02, initial_fraction=0.5,
+                  max_position_loss=1000.0)
+        rg = RiskGenes(sl_mode="series", sl_series_source=dict(_BB), **kw)
+        assert list(rg.to_dict()) == self._KEYS16 + ["sl_series_source"]
+        assert RiskGenes.from_dict(rg.to_dict()).to_dict() == rg.to_dict()
+
+
+class TestFSignatureNoOverwrite:
+    """C4-F1 集成扩展·库去重消费方：series 产物不命中 pct 同基因
+    既有行的 duplicated 分流——同信号基因两档各自独立成行（高分跨档
+    覆写不发生）。"""
+
+    def test_series_high_score_not_overwriting_pct_row(self, db):
+        from core.persistence.repository.strategy import (
+            get_strategy, save_strategy)
+        pct_dna = make_dna()
+        series_dna = make_dna()
+        series_dna.risk_genes.sl_mode = "series"
+        series_dna.risk_genes.sl_series_source = dict(_BB)
+        assert pct_dna.gene_signature != series_dna.gene_signature, \
+            "slsrc 段生效前置（签名层锚见 TestFSignatureIdentity）"
+        save_strategy(db, strategy_id="st_pct", dna_json=pct_dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="pct",
+                      status="active", best_score=1.0)
+        # 更高分的 series 同信号基因——若同签名会覆写 st_pct 行
+        save_strategy(db, strategy_id="st_series",
+                      dna_json=series_dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="series",
+                      status="active", best_score=2.0)
+        row_pct = get_strategy(db, "st_pct")
+        row_series = get_strategy(db, "st_series")
+        assert row_pct is not None and row_series is not None, "两行并存"
+        assert row_pct["best_score"] == 1.0, \
+            "pct 行不被高分 series 行覆写（身份独立）"
+        # 检出力对照：同 pct DNA 高分再存——同签名保留更优覆写发生
+        # （覆写通道健在，series 不命中系签名不同而非通道失效）
+        save_strategy(db, strategy_id="st_pct2",
+                      dna_json=pct_dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="pct2",
+                      status="active", best_score=3.0)
+        merged = get_strategy(db, "st_pct2")
+        assert merged is not None and merged["best_score"] == 3.0
+        assert get_strategy(db, "st_pct") is None, \
+            "同签名覆写=旧行 id 被改写（对照证明覆写语义在场）"
 
     def test_sl_modes_four_entries(self):
         """SL_MODES 四档封闭枚举。"""
