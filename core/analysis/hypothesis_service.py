@@ -91,12 +91,13 @@ def allowed_subject_columns(db_path: Path) -> Tuple[set, set]:
 # strategy_params 键集白名单（0.4.2 R1=风险五参数；R3 任务 4.1 扩至
 # 八键——exit_fraction/add_fraction/max_exposure 启用域校验与宿主组
 # 配对，未知键状态退出；add-position-sizing-params 扩两键——
-# initial_fraction/max_position_loss 仓位参数）
+# initial_fraction/max_position_loss 仓位参数；dynamic-stop-loss-series
+# 扩 sl_series_source（series 档止损线来源声明——两形制互斥见校验段）
 _STRATEGY_PARAM_KEYS = frozenset({
     "stop_loss", "take_profit", "sl_mode", "position_size", "leverage",
     "exit_fraction", "add_fraction", "max_exposure", "max_hold",
     "time_exit_utc", "position_mode", "risk_fraction",
-    "initial_fraction", "max_position_loss",
+    "initial_fraction", "max_position_loss", "sl_series_source",
 })
 
 # ── 动作集单一权威源（indicator-and-action-repair B6 卡 D 4.1）──
@@ -142,6 +143,7 @@ _SCALING_DEFAULTS = {"exit_fraction": 0.5, "add_fraction": 0.1,
 def _validate_strategy_params(
     params: Dict[str, Any],
     conditions: Optional[Dict[str, Any]] = None,
+    db_path: "Path | None" = None,
 ) -> Dict[str, Any]:
     """声明块校验（登记链 3.6 步核心；八键白名单+组间配对）。
 
@@ -202,11 +204,142 @@ def _validate_strategy_params(
     else:
         lo, hi = SL_PCT_MIN, SL_PCT_MAX
 
+    # ── series 档组合校验（dynamic-stop-loss-series 4.1：四断言+两形
+    #    制互斥+登记面静态校验——错误码沿 RESEARCH_PARAM_INVALID 族）──
+    src = params.get("sl_series_source")
+    if sl_mode != "series" and "sl_series_source" in params:
+        # 断言③：非 series 档携带来源键=半配置拒
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"sl_series_source 仅 sl_mode=series 档可携带"
+            f"（当前 sl_mode={sl_mode}）",
+            detail={"field": "strategy_params.sl_series_source",
+                    "sl_mode": sl_mode,
+                    "hint": "来源键是 series 档专属——其余档位移除该键"})
+    if sl_mode == "series":
+        if src is None:
+            # 断言①：series 档无来源拒
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "sl_mode=series 须携带 sl_series_source 来源声明",
+                detail={"field": "strategy_params.sl_series_source",
+                        "legal_range": "指标形制 {indicator, params, "
+                                       "field?} 或 fx 形制 {column}",
+                        "hint": "series 档止损线=预先计算的价格列——"
+                                "来源声明必填"})
+        if "stop_loss" in params:
+            # 断言②：series 档标量键互斥
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "sl_mode=series 与 stop_loss 标量键互斥"
+                "（止损线由来源列逐 bar 给出）",
+                detail={"field": "strategy_params.stop_loss",
+                        "conflict": ["sl_mode=series", "stop_loss"],
+                        "hint": "series 档移除 stop_loss 标量键——"
+                                "线值经 sl_series_source 声明"})
+        if params.get("position_mode") == "risk_budget":
+            # 断言④：series×risk_budget 互斥精准报错
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "sl_mode=series 与 position_mode=risk_budget 互斥",
+                detail={"field": "strategy_params.sl_mode",
+                        "conflict": ["sl_mode=series",
+                                     "position_mode=risk_budget"],
+                        "hint": "risk_budget 仓位公式的止损距离须标量"
+                                "（series 线是逐 bar 值非标量）——改 "
+                                "fixed 档或标量止损档"})
+        if not isinstance(src, dict):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "sl_series_source 须为对象",
+                detail={"field": "strategy_params.sl_series_source",
+                        "legal_range": "指标形制 {indicator, params, "
+                                       "field?} 或 fx 形制 {column}"})
+        else:
+            has_ind = "indicator" in src
+            has_fx = "column" in src
+            if has_ind and has_fx:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "sl_series_source 两形制互斥（indicator 与 column "
+                    "键同在）",
+                    detail={"field": "strategy_params.sl_series_source",
+                            "legal_range": "指标形制或 fx 形制二选一"})
+            if not has_ind and not has_fx:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "sl_series_source 来源必填（indicator 或 column 键）",
+                    detail={"field": "strategy_params.sl_series_source",
+                            "legal_range": "指标形制 {indicator, params, "
+                                           "field?} 或 fx 形制 "
+                                           "{column}"})
+            if has_ind:
+                # 登记面静态校验①：指标名在册+params 形状合法（不拉
+                # 数据——列存在性不在登记面）
+                from core.features.registry import INDICATOR_REGISTRY
+                ind = src.get("indicator")
+                if not isinstance(ind, str) or ind not in \
+                        INDICATOR_REGISTRY:
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        f"sl_series_source.indicator 不在注册表: {ind!r}",
+                        detail={"field":
+                                "strategy_params.sl_series_source."
+                                "indicator",
+                                "legal_range": sorted(INDICATOR_REGISTRY)})
+                ind_params = src.get("params", {})
+                if not isinstance(ind_params, dict):
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        "sl_series_source.params 须为对象",
+                        detail={"field":
+                                "strategy_params.sl_series_source.params"})
+                reg = INDICATOR_REGISTRY[ind]
+                for k in ind_params:
+                    if k not in reg.params:
+                        raise ResearchError(
+                            "RESEARCH_PARAM_INVALID",
+                            f"sl_series_source.params 含未知参数 {k!r}"
+                            f"（指标 {ind}）",
+                            detail={"field":
+                                    "strategy_params.sl_series_source."
+                                    f"params.{k}",
+                                    "legal_range": sorted(reg.params)})
+                fld = src.get("field")
+                if fld is not None and fld not in reg.output_fields:
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        f"sl_series_source.field 非法: {fld!r}"
+                        f"（指标 {ind} 输出列 {reg.output_fields}）",
+                        detail={"field":
+                                "strategy_params.sl_series_source.field",
+                                "legal_range": list(reg.output_fields)})
+            else:
+                # 登记面静态校验②：fx 形式=列可达性（plugin_service
+                # 断言通道——登记时查注册表；db_path 缺席〔单测直调
+                # 形〕跳过可达性仅保留前缀形制校验）
+                col = src.get("column")
+                if not isinstance(col, str) or not col.startswith("fx_"):
+                    raise ResearchError(
+                        "RESEARCH_PARAM_INVALID",
+                        f"sl_series_source.column 须为 fx_ 前缀精确列名"
+                        f": {col!r}",
+                        detail={"field":
+                                "strategy_params.sl_series_source.column"})
+                if db_path is not None:
+                    from core.analysis.plugin_service import (
+                        assert_plugin_columns_reachable)
+                    assert_plugin_columns_reachable(db_path, {col})
+
     # D5 判据②（裁决一）：stop_loss 显式在场强制——档位声明不冒充
     # 数值声明（仅写 sl_mode 不带 stop_loss 仍落 dna.py 平台默认的
     # 路径消灭）；键 null 由 CARD-01 既有拒承接、值越域由下方分叉
-    # 值域校验承接——三态各归其错互补不重叠
-    if "stop_loss" not in params:
+    # 值域校验承接——三态各归其错互补不重叠。
+    # series 档第四例外（dynamic-stop-loss-series C4-A3 ⑤）：档位声明
+    # 携带来源即构成止损显式声明——series+sl_series_source+无 stop_loss
+    # 登记成功（防误按 F1「缺 stop_loss」拒掉 series 档）。
+    if "stop_loss" not in params and not (
+            sl_mode == "series" and "sl_series_source" in params):
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"stop_loss 必填（sl_mode={sl_mode} 档合法值域 [{lo}, {hi}]）",
@@ -215,7 +348,8 @@ def _validate_strategy_params(
                     "sl_mode": sl_mode,
                     "hint": "止损为强制风控组件，登记必须显式声明 "
                             "stop_loss（pct/trail 档比例值 [0.005,0.20]/"
-                            "atr 档 ATR 倍数 [0.5,5.0]）"})
+                            "atr 档 ATR 倍数 [0.5,5.0]/series 档改携 "
+                            "sl_series_source 来源声明）"})
 
     stop_loss = params.get("stop_loss")
     if stop_loss is not None:
@@ -743,7 +877,7 @@ def register_hypothesis(
                             "stop_loss（pct/trail 档比例值 [0.005,0.20]/"
                             "atr 档 ATR 倍数 [0.5,5.0]）"})
     strategy_params = _validate_strategy_params(
-        strategy_params, conditions)
+        strategy_params, conditions, db_path=db_path)
 
     # 3.7 交易方向校验与归一（add-direction-channel）：值域权威校验在
     #     本步（REST/MCP 两面穿透到服务层同一校验点；非字符串值在路由

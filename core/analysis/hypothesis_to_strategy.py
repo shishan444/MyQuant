@@ -264,7 +264,7 @@ def _declared_risk_genes(declared: Optional[Dict[str, Any]]):
     keys = ("stop_loss", "take_profit", "sl_mode", "position_size",
             "leverage", "exit_fraction", "add_fraction", "max_exposure",
             "max_hold", "time_exit_utc", "position_mode", "risk_fraction",
-            "initial_fraction", "max_position_loss")
+            "initial_fraction", "max_position_loss", "sl_series_source")
     # null 值键跳过不写入（review-042 CARD-01 纵深）：翻译侧永不写 None
     # ——存量库手工 dna_json 或绕过登记链写入的 null 键按缺省态处理
     # （=手工 DNA 缺省语义），不穿透进 RiskGenes

@@ -57,11 +57,12 @@ from core.positioning import expand_for_backtest
 # expressiveness）实施 order_func_nb 三分派（tasks 3.1/3.2）后扩展
 # 至 ("pct", "atr", "trail")——本扩展与分派实现同任务原子交付（先扩
 # 常量后实现=引用式消费方立即放行未实现模式）。
-ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct", "atr", "trail")
+ENGINE_SUPPORTED_SL_MODES: tuple[str, ...] = ("pct", "atr", "trail",
+                                              "series")
 
 # sl_mode 字符串 → order_func_nb 数值分派码（numba 侧无字符串比较，
 # 装配层单源映射；0.4.2 R2）
-_SL_MODE_CODE = {"pct": 0.0, "atr": 1.0, "trail": 2.0}
+_SL_MODE_CODE = {"pct": 0.0, "atr": 1.0, "trail": 2.0, "series": 3.0}
 
 
 def sl_mode_code(mode: str) -> float:
@@ -787,6 +788,65 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                         fees=effective_fee,
                         slippage=effective_slippage,
                     )
+        elif sl_mode > 2.5:
+            # ── series 分支（dynamic-stop-loss-series：止损线=预计算
+            # 价格列——atr_arr 槽位复用承载线值列〔njit 签名零变化；
+            # 装载链 _load_sl_series_column 填充，见 4.2〕。触发守卫=
+            # 持仓在+line 有效（NaN guard：预热/缺失 bar 无 SL 约束，
+            # 沿 atr 同哲学）；不读 sl_stop>0——stop_loss 标量残留值
+            # MUST NOT 消费〔物化默认 0.05 非行为值〕；触发价=线值
+            # 〔D2 intrabar 先例〕：多头 bar_low<=line / 空头
+            # bar_high>=line 同列镜像〔方向由持仓侧解释——D1〕；TP
+            # 沿 pct 语义锚入场价〔A1〕）──
+            line = atr_arr[i, col]
+            if line == line:  # NaN guard：线值无效 bar 无 SL 约束
+                if c.position_now > 0.0:
+                    if bar_low <= line:
+                        entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
+                else:
+                    if bar_high >= line:
+                        entry_price[col] = 0.0
+                        funding_acc[col] = 0.0
+                        peak_price[col] = 0.0
+                        return vbt_nb.order_nb(
+                            size=np.float64(-c.position_now),
+                            size_type=np.int64(0),
+                            fees=effective_fee,
+                            slippage=effective_slippage,
+                        )
+            # TP 沿 pct 语义锚入场价（与动态线 SL 并存生效）
+            if c.position_now > 0.0:
+                tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                if tp_stop > 0.0 and bar_high >= tp_level:
+                    entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
+            else:
+                tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                if tp_stop > 0.0 and bar_low <= tp_level:
+                    entry_price[col] = 0.0
+                    funding_acc[col] = 0.0
+                    peak_price[col] = 0.0
+                    return vbt_nb.order_nb(
+                        size=np.float64(-c.position_now),
+                        size_type=np.int64(0),
+                        fees=effective_fee,
+                        slippage=effective_slippage,
+                    )
         elif sl_mode > 1.5:
             # ── trail 分支（峰值回撤锁利，0.4.2 R2/A1 当 bar 口径）──
             # 峰值先更新（含当 bar）再以当 bar 对侧判定触发
@@ -1007,7 +1067,19 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         order_size = np.float64(size_pct * dir_sign)
         order_size_type = np.int64(2)  # 百分比仓
         if position_modes[col] > 0.5:
-            if sl_mode < 0.5 or sl_mode > 1.5:
+            if sl_mode > 2.5:
+                # series×risk_budget 纵深防线（引擎侧）：装载层
+                # _per_dna_risk_params 已拒（4.2），此处不可达兜底——
+                # 不产出按残留值 0.05 计算 risk_budget 仓位的结果
+                # （C4-A3 ⑧/⑨反面锚检出对象），回退 fixed 百分比仓
+                return vbt_nb.order_nb(
+                    size=np.float64(size_pct * dir_sign),
+                    size_type=np.int64(2),
+                    direction=np.int64(int(actual_direction)),
+                    fees=effective_fee,
+                    slippage=effective_slippage,
+                )
+            elif sl_mode < 0.5 or sl_mode > 1.5:
                 # pct(0)/trail(2) 的 stop_loss 同为比例域（trail=峰值
                 # 回撤比例——止损距离口径=入场价×比例，D-6 修复：此前
                 # trail 误并入 ATR 倍数分支，而装配层对非 atr 模式 ATR

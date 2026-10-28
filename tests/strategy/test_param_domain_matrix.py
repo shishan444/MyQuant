@@ -237,7 +237,9 @@ class TestSingleSourceConstants:
     """D4 家族单源：常量值锚定（改值时本组同步——防漂移）。"""
 
     def test_sl_modes_value(self):
-        assert SL_MODES == ("pct", "atr", "trail")
+        # dynamic-stop-loss-series C4-C3：四档封闭枚举（series 同步
+        # 扩容——传输 pattern 三处同源引用自动跟随）
+        assert SL_MODES == ("pct", "atr", "trail", "series")
 
     def test_atr_fork_constants(self):
         assert (SL_ATR_MIN, SL_ATR_MAX) == (0.5, 5.0)

@@ -349,18 +349,48 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             f"sl_mode must be one of {SL_MODES}, got '{risk.sl_mode}'"
         )
 
-    # 止损/止盈值域按模式分档取域（同值异判：1.5 在 pct 拒、atr 过）
+    # 止损/止盈值域按模式分档取域（同值异判：1.5 在 pct 拒、atr 过）；
+    # series 档无标量值域——校验对象为 sl_series_source 结构（动态
+    # 止损线：stop_loss 标量残留值不消费——装载层防线不产出按残留值
+    # 计算的结果）
     if risk.sl_mode == "atr":
         lo, hi = SL_ATR_MIN, SL_ATR_MAX
         unit = "ATR multiples"
     else:
         lo, hi = SL_PCT_MIN, SL_PCT_MAX
         unit = "ratio"
-    if not (lo <= risk.stop_loss <= hi):
-        errors.append(
-            f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
-            f"({unit}, sl_mode={risk.sl_mode})"
-        )
+    if risk.sl_mode != "series":
+        if not (lo <= risk.stop_loss <= hi):
+            errors.append(
+                f"Stop loss {risk.stop_loss} out of range [{lo}, {hi}] "
+                f"({unit}, sl_mode={risk.sl_mode})"
+            )
+    else:
+        src = risk.sl_series_source
+        if src is None:
+            errors.append(
+                "sl_mode='series' requires sl_series_source "
+                "(indicator form {indicator, params, field?} or fx form "
+                "{column})")
+        elif not isinstance(src, dict):
+            errors.append(
+                "sl_series_source must be a dict (indicator form or fx "
+                "form)")
+        else:
+            has_ind = "indicator" in src
+            has_fx = "column" in src
+            if has_ind and has_fx:
+                errors.append(
+                    "sl_series_source forms are mutually exclusive: got "
+                    "both 'indicator' and 'column'")
+            elif not has_ind and not has_fx:
+                errors.append(
+                    "sl_series_source requires 'indicator' (indicator "
+                    "form) or 'column' (fx form) key")
+            elif has_fx and not str(src["column"]).startswith("fx_"):
+                errors.append(
+                    f"sl_series_source.column must be fx_-prefixed exact "
+                    f"column name, got {src['column']!r}")
     if risk.take_profit is not None and not (lo <= risk.take_profit <= hi):
         errors.append(
             f"Take profit {risk.take_profit} out of range [{lo}, {hi}] "
@@ -468,6 +498,17 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 "position_mode='risk_budget' requires stop_loss > 0 "
                 "(stop distance is the size formula denominator — "
                 "no stop = risk budget undefined)")
+        # series×risk_budget 互斥（dynamic-stop-loss-series 双闸同源——
+        # 登记面 hypothesis_service 同判；series 档止损距离是逐 bar 线
+        # 值非标量，risk_budget 仓位公式的标量分母不可定义；残留 0.05
+        # 绕过「requires stop_loss>0」字面的洞即本判据检出对象）
+        if risk.sl_mode == "series":
+            errors.append(
+                "sl_mode='series' is mutually exclusive with "
+                "position_mode='risk_budget' (series stop line is a "
+                "per-bar value, not a scalar stop distance — risk "
+                "budget sizing is undefined; residual stop_loss=0.05 "
+                "is a materialization default, not a consumable value)")
 
     # 仓位参数（add-position-sizing-params）：initial_fraction (0,1]
     # 首笔动用资金比例（替换 fixed 路径首笔定仓来源，加仓不受影响）；
