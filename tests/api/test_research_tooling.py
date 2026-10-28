@@ -547,3 +547,193 @@ class TestDisclosureAndCapability:
         doc = build_capability_doc(sorted(TOOL_TIERS["research"]))
         for n in sorted(six):
             assert f"- {n}" in doc, f"能力自述缺新工具条目 {n}"
+
+
+# ── CARD-05 batch 端点四合一锚（review4_cards.md CARD-05——score_
+#    summary 收口 C4/挂盘预检/pt_task 引用/同事务/审计/结构下沉）────
+
+
+def _seed_scored(db, task_id: str, scores):
+    """构造已知分数集产物（各异 period 防 gene_signature 去重吞行；
+    None=best_score NULL 行）。"""
+    for i, sc in enumerate(scores):
+        d = make_dna()
+        for g in d.signal_genes:
+            g.params = {"period": 200 + i}
+        save_strategy(db, strategy_id=f"st_{task_id}_{i}",
+                      dna_json=d.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", name=f"st_{task_id}_{i}",
+                      source="evolution", source_task_id=task_id,
+                      best_score=sc)
+
+
+class TestBatchHardening:
+    @pytest.fixture()
+    def env(self, tmp_path):
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        import pandas as pd
+        import numpy as np
+
+        db = tmp_path / "bh.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        n = 30
+        close = 100 + np.cumsum(np.random.default_rng(5).normal(0, 1, n))
+        pd.DataFrame({"open": close, "high": close, "low": close,
+                      "close": close, "volume": np.full(n, 1.0)},
+                     index=pd.date_range("2024-01-01", periods=n,
+                                         freq="4h", tz="UTC",
+                                         name="timestamp")
+                     ).to_parquet(d / "BTCUSDT_4h.parquet")
+        app = create_app(db_path=db, data_dir=d)
+        with TestClient(app) as c:
+            yield {"client": c, "db": db}
+
+    def test_score_summary_known_values(self, env):
+        """score_summary 锚（C4 收口）：[10,20,30,40,50] inclusive 五数
+        逐值+NULL 行 null_count 披露。"""
+        c, db = env["client"], env["db"]
+        _seed_scored(db, "scA", [10.0, 20.0, 30.0, 40.0, 50.0, None])
+        r = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "scA"})
+        assert r.status_code == 422
+        s = r.json()["detail"]["detail"]["score_summary"]
+        assert s["count"] == 5, "count=非 NULL 参与分布数"
+        assert s["null_count"] == 1, "NULL 行单独披露"
+        assert s["min"] == 10.0 and s["max"] == 50.0
+        assert s["p25"] == 20.0, f"inclusive p25 应 20: {s['p25']}"
+        assert s["median"] == 30.0
+        assert s["p75"] == 40.0, f"inclusive p75 应 40: {s['p75']}"
+
+    def test_score_summary_degenerate_forms(self, env):
+        """退化形：空集五数 None；收紧后空集同形；1 行五数全同值。"""
+        c, db = env["client"], env["db"]
+        _seed_scored(db, "scB", [7.7])
+        r0 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "scB",
+            "generation_gt": 99})  # 收紧后空集
+        s0 = r0.json()["detail"]["detail"]["score_summary"]
+        assert s0 == {"count": 0, "min": None, "p25": None,
+                      "median": None, "p75": None, "max": None,
+                      "null_count": 0}
+        r1 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "scB"})
+        s1 = r1.json()["detail"]["detail"]["score_summary"]
+        assert s1 == {"count": 1, "min": 7.7, "p25": 7.7, "median": 7.7,
+                      "p75": 7.7, "max": 7.7, "null_count": 0}, (
+            "1 行退化五数全同值")
+
+    def test_protected_status_rejected_then_released(self, env):
+        """预检锚：删除域含 paper 态行——预览（confirm=false）即 422
+        保护拒绝+confirm=true 同拒+受保护行逐行在场+状态迁出后放行。"""
+        c, db = env["client"], env["db"]
+        _seed_scored(db, "ptA", [5.0, 6.0])
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE strategy SET status = 'paper' "
+                     "WHERE strategy_id = 'st_ptA_0'")
+        conn.commit()
+        conn.close()
+        for confirm in (False, True):
+            r = c.request("POST", "/api/strategies/batch", json={
+                "source_task_id": "ptA", "confirm": confirm})
+            assert r.status_code == 422, f"confirm={confirm} 须保护拒绝"
+            assert r.json()["detail"]["code"] == \
+                "BATCH_DELETE_PAPER_REFERENCED"
+            assert r.json()["detail"]["detail"]["protected_count"] == 1
+        g = c.get("/api/strategies",
+                  params={"source_task_id": "ptA"})
+        assert {x["strategy_id"] for x in g.json()["items"]} == \
+            {"st_ptA_0", "st_ptA_1"}, "受保护行零删除（逐行在场）"
+        # 处置：状态迁出保护集（paper→active 经直改模拟撤盘/归档后）
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE strategy SET status = 'active' "
+                     "WHERE strategy_id = 'st_ptA_0'")
+        conn.commit()
+        conn.close()
+        r2 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "ptA", "confirm": True})
+        assert r2.status_code == 200
+        assert r2.json()["deleted_count"] == 2, "迁出保护集后放行"
+
+    def test_pt_task_reference_guard(self, env):
+        """pt_task 引用锚：非终态（pending）纸盘任务引用删除域内策略
+        →422；终态（completed）引用→放行。"""
+        c, db = env["client"], env["db"]
+        _seed_scored(db, "ptB", [3.0])
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO pt_task (task_id, status, strategy_id, "
+            "dna_snapshot_json, symbol, timeframe, "
+            "research_status_snapshot, created_at, updated_at) VALUES "
+            "('pt-1', 'pending', 'st_ptB_0', '{}', 'BTCUSDT', '4h', "
+            "'{}', '2026-01-01T00:00:00', '2026-01-01T00:00:00')")
+        conn.commit()
+        conn.close()
+        r = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "ptB", "confirm": True})
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "BATCH_DELETE_PAPER_REFERENCED"
+        assert r.json()["detail"]["detail"]["pt_active_count"] == 1
+        # 任务终态后放行
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE pt_task SET status = 'completed' "
+                     "WHERE task_id = 'pt-1'")
+        conn.commit()
+        conn.close()
+        r2 = c.request("POST", "/api/strategies/batch", json={
+            "source_task_id": "ptB", "confirm": True})
+        assert r2.status_code == 200 and r2.json()["deleted_count"] == 1
+
+    def test_same_transaction_audit_and_structure(self, env):
+        """同事务锚（源码+行为）+审计锚（自备 handler 直挂 crud
+        logger）+结构锚（路由无 SQL 直写）。"""
+        import inspect
+        import logging
+        from core.persistence.repository import strategy as repo
+        from api.routes.strategies import crud
+
+        # 结构锚：路由 batch 函数体无 SQL 直写（下沉断言）
+        route_src = inspect.getsource(crud.batch_delete_strategies)
+        for banned in ("sa_delete", "sa_select", "select(",
+                       "delete(Strategy"):
+            assert banned not in route_src, f"路由不得直写 {banned!r}"
+        # 同事务源码锚：count 与 delete 同一 begin 块（块序：begin 在
+        # count 之前、delete 在 count 之后——单事务先查后删）
+        repo_src = inspect.getsource(
+            repo.batch_delete_by_source_task)
+        assert repo_src.count("engine.begin()") == 1
+        assert repo_src.index("engine.begin()") < repo_src.index(
+            "func.count()")
+        assert repo_src.index("func.count()") < repo_src.index(
+            "delete(Strategy)")
+
+        # 行为锚+审计锚：执行请求 matched_before==deleted_count（同事务
+        # 一致性）+warning 五要素 token
+        c, db = env["client"], env["db"]
+        _seed_scored(db, "auA", [1.0, 2.0, 3.0])
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.WARNING)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        handler = _ListHandler()
+        crud_logger = logging.getLogger("api.routes.strategies.crud")
+        crud_logger.addHandler(handler)
+        try:
+            r = c.request("POST", "/api/strategies/batch", json={
+                "source_task_id": "auA", "confirm": True})
+            body = r.json()
+        finally:
+            crud_logger.removeHandler(handler)
+        assert body["deleted_count"] == 3
+        assert body["matched_before"] == body["deleted_count"], (
+            "同事务：执行请求内 matched_before==deleted_count")
+        audit = " | ".join(rec.getMessage() for rec in handler.records)
+        assert "批量删除执行" in audit
+        assert "auA" in audit and "deleted_count=3" in audit
