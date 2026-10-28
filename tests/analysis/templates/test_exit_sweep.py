@@ -507,6 +507,30 @@ class TestSeriesExecution:
                        grid=self._series_grid(self._SMA_SRC, tps))
         assert ei.value.detail.get("limit") == 50, ei.value.detail
 
+    def test_gates_axes_disclosure_forked(self, tmp_path):
+        """gates.axes 轴集披露随 grid 判定面分叉（CARD-04）：series-
+        only grid 单轴（stop_loss 非该档可扫描维度）；pct grid 与混合
+        grid 两轴不变（判定面并集）——披露与行为一致性三形制。"""
+        d, db = _make_env(tmp_path)
+        out_series = exit_sweep(
+            db, d, dict(self._RNG_MAY), condition=_COND, direction="long",
+            grid=self._series_grid(self._SMA_SRC, [0.04, 0.08]))
+        assert out_series["payload"]["gates"]["axes"] == ["take_profit"], \
+            "series-only grid 单轴披露"
+        out_pct = exit_sweep(
+            db, d, dict(self._RNG_MAY), condition=_COND, direction="long",
+            grid=_grid([0.02], [0.04, 0.08]))
+        assert out_pct["payload"]["gates"]["axes"] == \
+            ["stop_loss", "take_profit"], "pct grid 两轴不变"
+        out_mix = exit_sweep(
+            db, d, dict(self._RNG_MAY), condition=_COND, direction="long",
+            grid={"modes": [
+                {"mode": "pct", "stops": [0.02], "take_profits": [0.04]},
+                self._series_grid(self._SMA_SRC, [0.04, 0.08])
+                ["modes"][0]]})
+        assert out_mix["payload"]["gates"]["axes"] == \
+            ["stop_loss", "take_profit"], "混合 grid 判定面并集两轴"
+
 
 class TestThreeGates:
     """判定轨道（受控注入）：三道门四值+矩阵最差聚合+标尺内建。"""
