@@ -569,3 +569,49 @@ class TestLegacyWhitelistCleanup:
         finally:
             scheduler.stop()
             scheduler.join(timeout=5.0)
+
+
+class TestClearanceWriteFace:
+    """C3-04/S-3：清场 update_task 返回值消费——零行命中（并发处置
+    前态已非 running）warning 留痕，命中行 error 落地。"""
+
+    def test_clearance_zero_rowcount_logs_warning(self, tmp_path, caplog):
+        """守门拒写面：任务已被并发置终态（非 running）→清场 update
+        零行命中→warning 留痕（不静默）；终态值不被清场覆写。"""
+        import logging
+
+        from core.paper_trading.runtime.recovery import recover_task
+
+        h = _RecoveryHarness(tmp_path)
+        logging.getLogger().addHandler(caplog.handler)  # fileConfig 坑位
+        # running 残行构造后被并发置 stopped（前态守门：stopped→error
+        # 非法迁移零行命中）
+        paper.create_task(
+            h.db, strategy_id="strat-x", task_id="pt_clw00000001",
+            dna_snapshot_json=make_dna().to_json(),
+            symbol="SOLUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        paper.update_task(
+            h.db, "pt_clw00000001", status="running", started_at="t")
+        # 落账户态使 validate_recovery 四判据通过（可达清场段）
+        paper.append_bar(
+            h.db, "pt_clw00000001", bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 10_000.0, "balance": 10_000.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 1,
+                        "last_bar_time": h.df.index[0].isoformat(),
+                        "balance": 10_000.0})
+        # 并发置终态（前态守门：stopped→error 非法迁移零行命中）
+        paper.update_task(
+            h.db, "pt_clw00000001", status="stopped",
+            stopped_at="t", stop_reason="user_stop")
+        row = paper.get_task(h.db, "pt_clw00000001")
+
+        with caplog.at_level(logging.WARNING, logger="paper_runtime"):
+            result = recover_task(
+                h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        assert result is None
+        assert "清场未落地" in caplog.text, "零行命中 warning 留痕"
+        task = paper.get_task(h.db, "pt_clw00000001")
+        assert task["status"] == "stopped", "终态不被清场覆写"
+        assert task["stop_reason"] == "user_stop"
