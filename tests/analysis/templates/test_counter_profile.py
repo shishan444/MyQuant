@@ -172,10 +172,13 @@ class TestFeatureMatrix:
         import core.features.indicators as ind_mod
         original = ind_mod._compute_indicator
 
-        def _failing(df, name, params):
+        def _failing(df, name, params, visited=()):
+            # 第 4 参签名同步（CARD-02 S-3）：_ensure_dependencies 递归
+            # 调用点以 visited= 关键字传参（装载归链），桩不收即 TypeError
+            # 被包装成依赖失败——断言面不变，纯签名适配
             if name == "CCI":
                 raise ValueError("构造失败")
-            return original(df, name, params)
+            return original(df, name, params, visited)
 
         monkeypatch.setattr(ind_mod, "_compute_indicator", _failing)
         df = _make_df(n_conform=10, n_counter=5)

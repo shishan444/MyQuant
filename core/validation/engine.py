@@ -62,6 +62,25 @@ class ValidationResult:
     warnings: List[str] = field(default_factory=list)
 
 
+# 统计面动作键集（indicator-and-action-repair B6 卡 D 4.2）：与
+# _evaluate_single_condition 内 action_map 分派表同一键集的模块级
+# 事实源——求值函数内对齐断言防两处漂移；B6 断言网④「统计面键集
+# == RESEARCH_EXPRESSIBLE_ACTIONS ∪ STATISTICS_ONLY_ACTIONS 恰等」
+# 的消费锚（hypothesis_service 两常量的运行时对账）
+STATISTICS_ACTION_KEYS: frozenset = frozenset({
+    "touch", "cross_above", "cross_below", "breakout", "breakdown",
+    "gt", "lt", "ge", "le",
+    "price_above", "price_below",
+    "eq", "lookback_all", "wick_touch",
+    "spike", "shrink",
+    "divergence_top", "divergence_bottom",
+    "consecutive_up", "consecutive_down",
+    "cross_above_series", "cross_below_series",
+    "lookback_any", "within_bars_after",
+    "touch_bounce", "role_reversal",
+})
+
+
 def validate_hypothesis(
     pair: str,
     timeframe: str,
@@ -406,6 +425,10 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "touch_bounce": lambda s, t: _resolve_snr_pattern(df, "touch_bounce", s.name if hasattr(s, "name") else subject, cond),
         "role_reversal": lambda s, t: _resolve_snr_pattern(df, "role_reversal", s.name if hasattr(s, "name") else subject, cond),
     }
+
+    # 分派表与模块级键集对齐（B6 卡 D——两处漂移即红；assert 零开销）
+    assert frozenset(action_map) == STATISTICS_ACTION_KEYS, \
+        "action_map 与 STATISTICS_ACTION_KEYS 键集漂移（须同步维护）"
 
     fn = action_map.get(action)
     if fn is None:

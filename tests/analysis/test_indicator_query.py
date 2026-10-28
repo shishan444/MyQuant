@@ -303,3 +303,49 @@ class TestGapClosureQuery3:
         with pytest.raises(ResearchError, match="有效域"):
             query_indicator(data_dir, symbol="BTCUSDT", timeframe="1d",
                             indicator="RSI", params={"period": 14})
+
+
+class TestDivergenceDependencyClosure:
+    """S7 研究链直调自动装载（indicator-and-action-repair B4-P0，spec
+    indicator-output-contract Scenario「研究链直调自动装载」）：
+    indicator_query 入口以裸 df（装载链不含 rsi 列）单独现算
+    BullishDivergence → 闭包自动前置 rsi_14，归约非恒零——修复前
+    该路径 rsi_col None 静默恒零（B4 断链主路径）。"""
+
+    def test_query_divergence_not_silent_zero(self, env):
+        out = _call(env, indicator="BullishDivergence",
+                    reductions=["quantiles"])
+        q = out["reductions"]["pattern_bullish_divergence"]["quantiles"]
+        # 求值域内（800 根 1d、seed=13 含四态 regime）背离触发存在：
+        # 恒零形态（分位全 0）=修复前静默断链，必红
+        assert any(v > 0 for v in q.values()), \
+            f"分位非全零（恒零=断链复发）：{q}"
+
+    def test_query_divergence_matches_unit_closure(self, env):
+        """入口经单点闭包（spec Scenario「研究链直调自动装载」的入口
+        级证据）：query 输出与裸 df 单点 _compute_indicator 现算（闭包
+        注入 rsi_14 形制）同域同分位——query 装载链确实走 _compute_
+        indicator 单点受益（幂等一致面由 test_indicator_repairs 的
+        test_b1_closure_auto_injects_rsi 承载）。"""
+        import numpy as np
+        import pandas as pd
+        from core.analysis.indicator_query import query_indicator
+        solo = query_indicator(
+            env["data_dir"], symbol=SYMBOL, timeframe="1d",
+            indicator="BullishDivergence", reductions=["quantiles"])
+        got = solo["reductions"]["pattern_bullish_divergence"]["quantiles"]
+        # 独立推导（T1 铁律）：同源 parquet 裸 df 单点闭包现算，域起点
+        # 用返回体披露的 effective_start（求值域以被测方披露为准对照）
+        from core.data.mtf_loader import find_parquet, safe_symbol
+        from core.data.storage import load_parquet
+        from core.features.indicators import _compute_indicator
+        raw = load_parquet(find_parquet(env["data_dir"],
+                                        safe_symbol(SYMBOL), "1d"))
+        col = _compute_indicator(
+            raw, "BullishDivergence", {})["pattern_bullish_divergence"]
+        col = col[col.index >= pd.Timestamp(solo["range"]["effective_start"])]
+        assert int((col == 1).sum()) > 0, "闭包现算触发在场（恒零即断链）"
+        for pt, key in zip((1, 5, 25, 50, 75, 95, 99),
+                           ("p01", "p05", "p25", "p50", "p75", "p95", "p99")):
+            assert got[key] == pytest.approx(
+                float(np.percentile(col.values, pt)), rel=1e-6), key

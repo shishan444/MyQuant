@@ -439,6 +439,49 @@ class TestVolumeBreakoutFeature:
         from core.validation.scene.volume_breakout import _resolve_level_column
         assert _resolve_level_column("bb_upper", pd.Index(["close", "volume"])) is None
 
+    def test_dc_upper_breakout_unlocked_by_window_repair(self):
+        """C7 scene 消费回归（indicator-and-action-repair B5 卡 C 消费方
+        ③，tester 锚 C2-C7）：level_type=dc_upper 的突破判定随窗口修正
+        正确化——量能 spike+close 创前 20 根新高触发（列名解析不变：
+        dc_upper_20）。修复前轨道含当根（dc_upper≥high≥close）致
+        close>dc_upper 数学恒假、该 level_type 全段零触发。"""
+        from core.features.indicators import _compute_indicator
+        from core.validation.scene.volume_breakout import VolumeBreakoutDetector
+        n = 80
+        rng = np.random.default_rng(1)
+        close = 100 + np.cumsum(rng.normal(0.02, 0.3, n))
+        close[60] = close[:60].max() + 3.0  # 创前 20 根新高（量能同窗 spike）
+        close[61:] = close[60] + rng.normal(0, 0.1, n - 61)
+        volume = rng.uniform(100, 300, n)
+        volume[60] = 5000.0
+        df = _base_frame({
+            "close": close, "high": close + 0.3, "low": close - 0.3,
+            "volume": volume}, n)
+        df = df.assign(**_compute_indicator(df, "Donchian", {"period": 20}))
+        triggers = VolumeBreakoutDetector().detect(
+            df, {"level_type": "dc_upper", "min_spacing": 1})
+        bars = [tp.bar_index for tp in triggers]
+        assert 60 in bars, "close 创前 N 根新高+放量 → 突破触发（恒假归正）"
+        # 机制面：触发 bar 的 close 高于「前 20 根 high 最大」（=轨道）
+        # 且不可能高于当根 high（含当根窗口下该判定恒假的根源）
+        assert df["close"].iloc[60] > df["dc_upper_20"].iloc[60]
+        assert df["close"].iloc[60] <= df["high"].iloc[60]
+
+    def test_dc_upper_no_breakout_without_new_high(self):
+        """C7 负锚：量能 spike 但 close 未创前 20 根新高 → 零触发
+        （解锁不是放宽——未突破语义保持）。"""
+        from core.features.indicators import _compute_indicator
+        from core.validation.scene.volume_breakout import VolumeBreakoutDetector
+        n = 80
+        rng = np.random.default_rng(1)
+        close = 100 + np.cumsum(rng.normal(0.02, 0.3, n))
+        volume = rng.uniform(100, 300, n)
+        volume[60] = 5000.0  # 仅量能 spike，价格未突破前窗高
+        df = _base_frame({"close": close, "volume": volume}, n)
+        df = df.assign(**_compute_indicator(df, "Donchian", {"period": 20}))
+        assert VolumeBreakoutDetector().detect(
+            df, {"level_type": "dc_upper", "min_spacing": 1}) == []
+
 
 # ===========================================================================
 # 5. SupportResistanceDetector（基线 86%，resistance 方向与解析未命中未执行）

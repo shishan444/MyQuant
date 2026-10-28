@@ -124,11 +124,42 @@ def assemble_signal_set(
         validate_policy(getattr(dna, "entry_trigger_policy", None)),
         param_name="entry_trigger_policy")
 
+    # R2 通道合并（卡 F 6.2）：非 entry 桶与 base 对应通道 AND；无
+    # 规则侧时插件组独立生效（base 通道无该侧基因=恒 False 基线，
+    # AND 会把纯插件出场/分批静默作废——沿纯插件进场单位元先例对
+    # 称处理）。add_suppress 语义=任一抑制条件成立的 bar 不加仓
+    # （取反 AND）。
+    from core.strategy.dna import SignalRole as _Role
+
+    def _has_side(roles) -> bool:
+        return any(g.role in roles for g in (dna.signal_genes or []))
+
+    exits = base.exits.fillna(False).astype(bool)
+    if "exit" in combined:
+        if _has_side((_Role.EXIT_TRIGGER, _Role.EXIT_GUARD)):
+            exits = exits & combined["exit"]
+        else:
+            exits = combined["exit"]
+    reduces = base.reduces.fillna(False).astype(bool)
+    if "exit_partial" in combined:
+        if _has_side((_Role.REDUCE_TRIGGER, _Role.REDUCE_GUARD)):
+            reduces = reduces & combined["exit_partial"]
+        else:
+            reduces = combined["exit_partial"]
+    adds = base.adds.fillna(False).astype(bool)
+    if "add_trigger" in combined:
+        if _has_side((_Role.ADD_TRIGGER, _Role.ADD_GUARD)):
+            adds = adds & combined["add_trigger"]
+        else:
+            adds = combined["add_trigger"]
+    if "add_suppress" in combined:
+        adds = adds & ~combined["add_suppress"]
+
     return SignalSet(
         entries=combined_entries,
-        exits=base.exits,
-        adds=base.adds,
-        reduces=base.reduces,
+        exits=exits,
+        adds=adds,
+        reduces=reduces,
         degraded_layers=base.degraded_layers,
         entry_direction=base.entry_direction,
         mtf_diagnostics=base.mtf_diagnostics,
@@ -244,9 +275,19 @@ def _combine(
     base, dna, plugin_cols: Dict[str, pd.Series], mode: str,
 ) -> Dict[str, pd.Series]:
     """组合决策层三模式（插件源转布尔：按源 operator 与阈值比较，
-    缺省 ">" 对 0 阈值——既有行为）。"""
+    缺省 ">" 对 0 阈值——既有行为）。
+
+    R2 多角色（indicator-and-action-repair 卡 F 6.2）：插件源按源级
+    role 键分桶（缺省=entry——无 role 键存量契约）。entry 桶走
+    composition 三模式（仅入场适用）；非 entry 四桶固定 logic AND
+    合取（风控动作合取保守——composition 投票/权重语义不适用出场/
+    分批），各桶与 base 对应通道 AND 组合，无规则侧时插件组独立
+    生效（与入场「纯插件无 rule 源=AND 单位元」先例对称）。
+    """
     idx = base.entries.index
-    plugin_bools = {}
+    plugin_bools = {}  # entry 桶（既有语义）
+    role_bools = {"exit": [], "exit_partial": [],
+                  "add_trigger": [], "add_suppress": []}
     for src in (dna.signal_sources or []):
         if src.get("type") not in ("formula", "model"):
             continue
@@ -270,12 +311,28 @@ def _combine(
                         "legal_values": sorted(_SOURCE_COMPARE_OPS),
                         "hint": "operator 须为封闭枚举集之一"})
         compare = _SOURCE_COMPARE_OPS[op]
-        plugin_bools[col] = compare(
+        cond_bool = compare(
             series.astype(float), threshold).fillna(False)
+        src_role = str(src.get("role", "entry"))
+        if src_role in role_bools:
+            role_bools[src_role].append(cond_bool)
+        else:
+            # 未知 role 值按 entry 消费（缺省契约兜底；validate 面
+            # 在翻译层——直构 DNA 的 role 漂移不炸求值）
+            plugin_bools[col] = cond_bool
 
     entries = base.entries.fillna(False).astype(bool)
+    result: Dict[str, pd.Series] = {"entries": entries}
+    # 非 entry 四桶：桶内 AND 合取（多插件同取）——输出待通道合并
+    for r_key, bools in role_bools.items():
+        if bools:
+            combined = bools[0]
+            for b in bools[1:]:
+                combined = combined & b
+            result[r_key] = combined
     if not plugin_bools:
-        return {"entries": entries}
+        # 仅非 entry 桶：entries 原样（base 通道），桶结果进通道合并
+        return result
 
     # 无规则源（纯插件条件策略，如翻译器纯插件列假设产物）：规则侧基线
     # 取组合语义单位元——AND 系（logic and / gate / weighted_vote 交集
@@ -307,14 +364,18 @@ def _combine(
             total += b.astype(float).values * w
             w_sum += w
         vote = pd.Series(total / max(w_sum, 1e-9), index=idx) >= threshold
-        return {"entries": entries & vote}
+        # review2 CARD-01：组合结果回写 result 后单点 return——新建
+        # 字典会丢前段已积累的非 entry 桶（混合形态出场/分批静默失效）
+        result["entries"] = entries & vote
+        return result
 
     if mode == "gate":
         # 门控：全部 gate 源为真时放行基础 entries
         gate_mask = pd.Series(True, index=idx)
         for b in plugin_bools.values():
             gate_mask &= b
-        return {"entries": entries & gate_mask}
+        result["entries"] = entries & gate_mask
+        return result
 
     if mode == "logic":
         op = comp.get("op", "AND").upper()
@@ -324,8 +385,10 @@ def _combine(
             plugin_any |= b
             plugin_all &= b
         if op == "OR":
-            return {"entries": entries | plugin_any}
-        return {"entries": entries & plugin_all}
+            result["entries"] = entries | plugin_any
+            return result
+        result["entries"] = entries & plugin_all
+        return result
 
     raise ResearchError(
         "RESEARCH_COMPOSITION_INVALID",

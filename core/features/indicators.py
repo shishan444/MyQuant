@@ -1,9 +1,13 @@
-"""Indicator computation engine.
+"""指标计算引擎（批量预计算+单点现算双入口）。
 
-Provides _compute_indicator() and compute_all_indicators() for batch
-pre-computation via pandas-ta.  Registry structures and indicator
-definitions live in registry.py and are re-exported here for backward
-compatibility.
+职能：以 pandas-ta 为底座计算全部注册指标——compute_all_indicators
+按默认参数集批量预计算（增强 df 全量铺列，回测/进化链消费），
+_compute_indicator 按指定指标+参数单点现算（研究链五入口
+indicator_query/case_inspection/plugin_service/warmup_loader/
+validation_service 的裸装载与单独现算走此单点——依赖闭包
+_ensure_dependencies 全入口共享）。职责边界：指标定义元数据（注册
+表/参数域/输出列）权威在 registry.py，本模块 re-export 仅为向后
+兼容面——定义变更走 registry 单源，不在此造第二权威。
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from core.features.registry import (
 
 
 # ---------------------------------------------------------------------------
-# Default parameter sets for pre-computation
+# 批量预计算默认参数集（compute_all_indicators 铺列形制声明——每指标
+# 多参数组全量预铺、消费端按列名取用；单点现算不走此表）
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
@@ -122,13 +127,100 @@ def _extract_outputs(
     return outputs
 
 
-def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> Dict[str, pd.Series]:
-    """Compute a single indicator and return new columns as a dict.
+def _ensure_dependencies(df: pd.DataFrame, name: str, visited: tuple = ()) -> tuple:
+    """depends_on 闭包装载（B4-P0 依赖显式化，design 卡 B 2.1）。
 
-    Does NOT modify the input DataFrame. Returns only the newly computed
-    columns keyed by column name.
+    计算宿主指标前按 registry depends_on 声明检查 df 缺失依赖列→
+    递归 _compute_indicator 按该依赖默认参数现算注入**局部副本**
+    （输入 df 不被修改）；幂等：依赖产出列族已在 df 时跳过重算
+    （review2 CARD-02：registry output_fields 是前缀类别名（RSI→
+    "rsi"），实际产出列带参数后缀（rsi_14）——按列族判定，裸名
+    in 检查恒 False 恒重算的形制错位在此收口）；依赖计算失败→
+    结构化拒绝点名依赖（「依赖指标 RSI 计算失败」）。研究链五入口
+    （indicator_query/case_inspection/plugin_service/warmup_loader/
+    validation_service 的裸装载+单独现算）与 compute_all_indicators
+    批量路径全经此单点受益。
+
+    visited（S-3 顺带）：装载归链（祖先指标序，不含本指标）——链上
+    已见本指标即结构化拒绝循环依赖声明（替代千层递归撞限后错误
+    归因指错对象）；缺省空集，外部调用零感知。
+
+    Returns:
+        (work_df, injected_cols)：work_df=补齐依赖列后的副本（依赖
+        已在时=原 df 零拷贝）；injected_cols=本次注入的依赖列 dict
+        （进 _compute_indicator 返回值——入口消费面 assign 全量
+        并回，依赖列随宿主计算结果一并可见）。
+
+    Raises:
+        ResearchError: RESEARCH_INDICATOR_DEPENDENCY_FAILED（依赖
+            计算失败——静默恒 0 路径消灭的失败可见面；循环依赖
+            声明同码拒绝，detail 带完整链）。
     """
-    new_cols: Dict[str, pd.Series] = {}
+    from core.analysis.errors import ResearchError  # 局部导入——core.data 先例（模块级不反向依赖 core/analysis）
+
+    if name in visited:
+        chain = "→".join((*visited, name))
+        raise ResearchError(
+            "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+            f"循环依赖声明: {chain}",
+            detail={"indicator": name, "chain": [*visited, name]})
+    reg = INDICATOR_REGISTRY.get(name)
+    deps = list(getattr(reg, "depends_on", None) or [])
+    if not deps:
+        return df, {}
+    missing = []
+    for dep in deps:
+        dep_reg = INDICATOR_REGISTRY.get(dep)
+        if dep_reg is None:
+            raise ResearchError(
+                "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+                f"指标 {name} 声明的依赖 {dep} 不在注册表",
+                detail={"indicator": name, "dependency": dep})
+        # 产出列族在场判定：output_field 裸名相等（无参数指标）或
+        # f"_{参数后缀}" 前缀命中（参数化指标）——与 divergence
+        # 消费端前缀取列语义自洽；嵌套前缀形（macd_signal_* 对
+        # "signal"）不在场时保守判缺重算，行为无害
+        if not all(
+                any(c == f or c.startswith(f + "_") for c in df.columns)
+                for f in dep_reg.output_fields):
+            missing.append(dep)
+    if not missing:
+        return df, {}
+    extra: Dict[str, pd.Series] = {}
+    for dep in missing:
+        dep_reg = INDICATOR_REGISTRY[dep]
+        dep_params = {k: p.default for k, p in dep_reg.params.items()}
+        try:
+            extra.update(
+                _compute_indicator(df, dep, dep_params,
+                                   visited=(*visited, name)))
+        except ResearchError:
+            raise
+        except Exception as exc:
+            raise ResearchError(
+                "RESEARCH_INDICATOR_DEPENDENCY_FAILED",
+                f"依赖指标 {dep} 计算失败：{exc}",
+                detail={"indicator": name, "dependency": dep}) from exc
+    return df.assign(**extra), extra
+
+
+def _compute_indicator(
+        df: pd.DataFrame, name: str, params: Dict[str, Any],
+        visited: tuple = ()) -> Dict[str, pd.Series]:
+    """单点现算单个指标，返回新列 dict（列名 -> Series）。
+
+    职责契约：输入 df 不被修改（依赖闭包注入走局部副本）；返回值
+    仅含本次产出列——含依赖闭包注入的依赖列（入口消费面 assign
+    全量并回 df）；未知指标名不在此报错（返回空 dict，白名单校验
+    在登记/装载层各自权威面——本函数只管「算」，不管「该不该算」）。
+
+    depends_on 闭包（B4-P0）：宿主计算前经 _ensure_dependencies 补齐
+    缺失依赖列——注入的依赖列并入返回值（入口消费面全量并回 df；
+    幂等：依赖列已在时零开销直返）。visited=装载归链（S-3：互递归
+    传递，循环依赖结构化拒绝；缺省空集，外部调用零感知）。
+    """
+    df, _injected = _ensure_dependencies(df, name, visited)
+    new_cols: Dict[str, pd.Series] = dict(_injected)
 
     if name == "EMA":
         period = int(params["period"])
@@ -188,7 +280,17 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
             new_cols[f"stoch_d_{k_period}_{d_period}"] = stoch_df.iloc[:, 1]
     elif name == "CCI":
         period = int(params["period"])
-        new_cols[f"cci_{period}"] = ta.cci(df["high"], df["low"], df["close"], length=period)
+        # 自算替换（indicator-and-action-repair B3）：本版本 ta.cci 的
+        # MAD 分母实现错误，值域落价格量级（实测 ±10^4，正确公式典型
+        # ±200）——沿同文件 Keltner 吞参自算先例。标准 Lambert 公式：
+        # 典型价对其 SMA 的偏离 ÷（0.015×平均绝对偏差）；MAD=窗口内
+        # tp 对当前窗口均值的平均绝对偏差（rolling apply 单趟——嵌套
+        # rolling 语义错且 warmup 翻倍）。列名/头部 NaN 语义不变。
+        tp = (df["high"] + df["low"] + df["close"]) / 3
+        mad = tp.rolling(period).apply(
+            lambda w: np.abs(w - w.mean()).mean(), raw=True)
+        new_cols[f"cci_{period}"] = (
+            tp - tp.rolling(period).mean()) / (0.015 * mad)
     elif name == "ROC":
         period = int(params["period"])
         new_cols[f"roc_{period}"] = ta.roc(df["close"], length=period)
@@ -217,14 +319,18 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
             new_cols[f"{kc_name}_lower"] = basis - mult * band
     elif name == "Donchian":
         period = int(params["period"])
-        dc_df = ta.donchian(df["high"], df["low"], lower_length=period, upper_length=period)
-        if dc_df is not None:
-            dc = _extract_outputs(
-                dc_df, {"lower": "DCL_", "middle": "DCM_", "upper": "DCU_"}
-            )
-            new_cols[f"dc_upper_{period}"] = dc["upper"]
-            new_cols[f"dc_middle_{period}"] = dc["middle"]
-            new_cols[f"dc_lower_{period}"] = dc["lower"]
+        # 窗口不含当根（B5）：轨道=前 N 根极值（shift(1)——经典
+        # Donchian 突破定义；本版本 ta.donchian 窗口含当根，致下轨
+        # price_below/cross_below 数学恒假）。生成点唯一，全消费方
+        # （executor 求值/scene/统计面）值语义一并归正（design 卡 C
+        # 计算侧形制）；warmup 预算规则不变（周期×3 余量覆盖 +1）。
+        new_cols[f"dc_upper_{period}"] = (
+            df["high"].rolling(period).max().shift(1))
+        new_cols[f"dc_lower_{period}"] = (
+            df["low"].rolling(period).min().shift(1))
+        new_cols[f"dc_middle_{period}"] = (
+            new_cols[f"dc_upper_{period}"]
+            + new_cols[f"dc_lower_{period}"]) / 2
     elif name == "OBV":
         new_cols["obv"] = ta.obv(df["close"], df["volume"])
     elif name == "CMF":
@@ -409,17 +515,23 @@ def _rolling_volume_profile(
     lookback: int = 60,
     which: str = "poc",
 ) -> pd.Series:
-    """Compute rolling volume profile and return POC/VAH/VAL series.
+    """滚动成交量分布：逐 bar 对前 lookback 根做价格分桶成交量直方
+    图，返回指定分布位序列（成本支撑/阻力位语义）。
+
+    按需计算（VolumeProfile 注册为 guard_only+compute_mode=lazy——
+    批量预计算 skip_lazy 跳过，仅研究链显式单点现算触达：全量铺列
+    对批量路径过贵，rolling 直方图是 O(n×lookback) 逐 bar 重算）。
 
     Args:
-        close: Close price series.
-        volume: Volume series.
-        bins: Number of price bins for histogram.
-        lookback: Rolling window size.
-        which: "poc" (point of control), "vah" (value area high), "val" (value area low).
+        close: 收盘价序列（分桶轴）。
+        volume: 成交量序列（直方图权重）。
+        bins: 价格分桶数。
+        lookback: 滚动窗口根数。
+        which: 取哪个分布位——"poc"（成交量最大桶价位，point of
+            control）、"vah"（价值区上沿）、"val"（价值区下沿）。
 
     Returns:
-        Series of the requested level values, same index as input.
+        指定分布位的 Series，与输入同索引；窗口内样本不足处为 NaN。
     """
     close_vals = close.values
     volume_vals = volume.values
@@ -495,6 +607,8 @@ def compute_all_indicators(
     Returns:
         Enhanced DataFrame with indicator columns appended.
     """
+    from core.analysis.errors import ResearchError  # 局部导入（同上）——except 面收录依赖失败（best-effort 跳过语义保持）
+
     result = df.copy()
 
     for name, param_sets in _DEFAULT_PARAMS.items():
@@ -509,7 +623,8 @@ def compute_all_indicators(
                 for col, values in new_cols.items():
                     if col not in result.columns:
                         result[col] = values
-            except (KeyError, ValueError, AttributeError, TypeError) as e:
+            except (KeyError, ValueError, AttributeError, TypeError,
+                    ResearchError) as e:
                 logger = logging.getLogger(__name__)
                 logger.warning(
                     "跳过指标计算 %s（参数 %s）：%s", name, params, e

@@ -462,3 +462,350 @@ class TestCombineParamValidation:
         with pytest.raises(ResearchError) as ei:
             assemble_signal_set(db, dna, _df())
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+
+class TestR2RoleChannelBuckets:
+    """R2 组装器分桶通道锚（indicator-and-action-repair 卡 F 6.2
+    ——tester 锚 C2-E 组装器字段级：四桶 AND 组合逐桶断言+无规则侧
+    独立生效+composition 仅入场）。
+
+    源级 role 键分桶：exit→exits、exit_partial→reduces、add_trigger
+    →adds、add_suppress→取反 AND；无规则侧基因时插件组独立生效
+    （base 通道恒 False 不作废插件——AND 单位元先例对称）。
+    """
+
+    @pytest.fixture()
+    def fx_true_col(self, db: Path) -> str:
+        """恒真插件列（close 恒正 → gt(close, 0) 全段 True）。"""
+        return register_formula_plugin(
+            db, name="always", expression="gt(close, 0)")["column"]
+
+    @pytest.fixture()
+    def fx_part_col(self, db: Path) -> str:
+        """分段插件列（close>55000——seed=5 数据 92 段 True，与规则
+        出场条件既有交集（37 bar）又有差集（61 bar），可区分 AND 与
+        替换语义）。"""
+        return register_formula_plugin(
+            db, name="part", expression="gt(close, 55000)")["column"]
+
+    @staticmethod
+    def _enhanced() -> pd.DataFrame:
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+        return compute_all_indicators(
+            make_ohlcv(300, seed=5, base_price=60000.0))
+
+    @staticmethod
+    def _genes(*sides) -> list:
+        """入场基因 + 各侧规则基因（rsi 阈值取分段可触发形态）。"""
+        by_role = {
+            "exit": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 55}),
+            "reduce": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.REDUCE_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 50}),
+            "add": lambda: SignalGene(
+                "RSI", {"period": 14}, SignalRole.ADD_TRIGGER,
+                "rsi_14", {"type": "gt", "threshold": 45}),
+        }
+        genes = [SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                            "rsi_14", {"type": "lt", "threshold": 35})]
+        for s in sides:
+            genes.append(by_role[s]())
+        return genes
+
+    @staticmethod
+    def _src(col: str, role: str) -> dict:
+        return {"type": "formula", "ref": col, "threshold": 0.5,
+                "operator": ">", "role": role}
+
+    def test_exit_bucket_and_rule_side(self, db, fx_part_col):
+        """exit 桶 AND 规则出场：exits == 规则出场 & 插件布尔（分段
+        插件列区分 AND 与替换——两集合不等的实数据对照）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_part_col, "exit")], genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55) & (df["close"] > 55000)
+        assert bool((sig.exits.fillna(False) == expect).all()), "exit AND 组合"
+        # 构造前提：交集与差集双向非空（AND 语义可区分——替换/OR 必红）
+        assert int(expect.sum()) == 37 and int(((df["rsi_14"] > 55) & ~(df["close"] > 55000)).sum()) == 61
+
+    def test_exit_partial_bucket_reduces(self, db, fx_true_col):
+        """exit_partial 桶 → reduces 通道（有规则侧 AND；恒真插件下
+        reduces == 规则 reduce 信号）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit_partial")],
+                   genes=self._genes("reduce"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 50).fillna(False)
+        assert bool((sig.reduces.fillna(False) == expect).all()), \
+            "exit_partial AND reduce 通道"
+
+    def test_add_trigger_bucket_adds(self, db, fx_true_col):
+        """add_trigger 桶 → adds 通道（有规则侧 AND）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "add_trigger")],
+                   genes=self._genes("add"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 45).fillna(False)
+        assert bool((sig.adds.fillna(False) == expect).all()), \
+            "add_trigger AND add 通道"
+
+    def test_add_suppress_negation_and(self, db, fx_true_col):
+        """add_suppress 取反 AND（spec Scenario「插件加仓抑制语义」）：
+        恒真抑制条件下规则加仓信号全灭；无抑制源对照照常触发。"""
+        df = self._enhanced()
+        genes = self._genes("add")
+        sig_off = assemble_signal_set(
+            db, _dna([self._src(fx_true_col, "add_suppress")], genes=genes),
+            df)
+        sig_free = assemble_signal_set(db, _dna([], genes=genes), df)
+        assert bool(sig_free.adds.any()), "构造前提：规则加仓有触发段"
+        assert not bool(sig_off.adds.any()), \
+            "fx=True 段加仓信号被抑制（取反 AND）"
+
+    def test_no_rule_side_plugin_independent(self, db, fx_true_col):
+        """无规则侧独立生效：仅入场基因+各非 entry 插件源（无对应
+        规则基因）→ reduces/adds 由插件独立驱动（base 通道恒 False
+        不作废插件——AND 单位元对称）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit_partial"),
+                    self._src(fx_true_col, "add_trigger")],
+                   genes=self._genes())
+        sig = assemble_signal_set(db, dna, df)
+        assert bool(sig.reduces.all()), "纯插件 reduce 独立生效（恒真列全段）"
+        assert bool(sig.adds.all()), "纯插件 add 独立生效"
+
+    def test_composition_mode_not_polluting_exit(self, db, fx_true_col):
+        """composition 仅入场（spec Scenario「组合模式不污染出场」）：
+        weighted_vote 策略含插件出场源——出场仍固定 AND（恒真插件下
+        exits == 规则出场，非投票语义）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "exit")],
+                   composition={"mode": "weighted_vote", "threshold": 0.5},
+                   genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55).fillna(False)
+        assert bool((sig.exits.fillna(False) == expect).all()), \
+            "出场固定 AND——投票/权重语义不适用出场"
+
+    @pytest.mark.parametrize(("mode", "op"), [
+        ("weighted_vote", None), ("gate", None),
+        ("logic", "AND"), ("logic", "OR"),
+    ], ids=["weighted_vote", "gate", "logic_and", "logic_or"])
+    def test_card01_mixed_sources_survive_composition(
+            self, db, fx_true_col, fx_part_col, mode, op):
+        """混合形态×composition 四模式矩阵（CARD-01 修复锚）：
+        entry 插件与非 entry 插件**并存**时走 composition 三模式分支
+        ——修复前分支内新建字典 `return {"entries": ...}` 丢弃已积累
+        的非 entry 桶，无规则侧基因时 exits/reduces 通道静默恒 0
+        （纯非 entry 形态不触发该分支，原 TestR2RoleChannelBuckets
+        覆盖缺口）。修复后非 entry 桶在四模式下全部进通道合并：
+        无规则侧=插件独立生效（恒真 exit 全段/分段 exit_partial=92），
+        有规则侧=AND 交集（恒真元下 exits==base）。"""
+        df = self._enhanced()
+        comp = {"mode": mode}
+        if op:
+            comp["op"] = op
+        entry_src = self._src(fx_true_col, "entry")
+        exit_true = self._src(fx_true_col, "exit")
+        exit_part_seg = self._src(fx_part_col, "exit_partial")
+        # 两态：无/有 exit 侧规则基因（reduces 侧两态同构取无规则态）
+        dna_no_rule = _dna([entry_src, exit_true, exit_part_seg],
+                           composition=comp, genes=self._genes())
+        sig = assemble_signal_set(db, dna_no_rule, df)
+        assert bool(sig.exits.all()), \
+            f"{mode}{op or ''}：混合形态 exit 桶独立生效（修复前恒 0）"
+        seg_expect = df["close"] > 55000
+        assert int(sig.reduces.sum()) == int(seg_expect.sum()) == 92, \
+            f"{mode}{op or ''}：分段 exit_partial 桶独立生效（AND 单位元）"
+        dna_with_rule = _dna([entry_src, exit_true, exit_part_seg],
+                             composition=comp, genes=self._genes("exit"))
+        sig2 = assemble_signal_set(db, dna_with_rule, df)
+        base_expect = (df["rsi_14"] > 55).fillna(False)
+        assert bool((sig2.exits.fillna(False) == base_expect).all()), \
+            f"{mode}{op or ''}：有规则侧 exit 桶 AND（恒真元=base 交集）"
+
+    def test_card01_mixed_and_semantics_with_segmented_exit(
+            self, db, fx_true_col, fx_part_col):
+        """混合形态 AND 语义区分锚（weighted_vote）：entry 恒真插件+
+        exit **分段**插件并存——exits == base.exits & 分段布尔（AND
+        交集非替换；与纯非 entry 形态的 test_exit_bucket_and_rule_side
+        构成混合/纯两形制对照）。"""
+        df = self._enhanced()
+        dna = _dna([self._src(fx_true_col, "entry"),
+                    self._src(fx_part_col, "exit")],
+                   composition={"mode": "weighted_vote", "threshold": 0.5},
+                   genes=self._genes("exit"))
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55) & (df["close"] > 55000)
+        assert bool((sig.exits.fillna(False) == expect).all()), \
+            "混合形态 AND 交集（37 bar——替换/OR 必红）"
+        assert int(expect.sum()) == 37
+
+
+class TestR2BucketInternalConjunction:
+    """阶段四②盲区消解补锚：非 entry 桶内多插件 AND 合取
+    （_combine 桶内 for b in bools[1:] 循环——单插件用例不触达）。"""
+
+    @pytest.fixture()
+    def fx_true_col(self, db: Path) -> str:
+        return register_formula_plugin(
+            db, name="always2", expression="gt(close, 0)")["column"]
+
+    @pytest.fixture()
+    def fx_part_col(self, db: Path) -> str:
+        return register_formula_plugin(
+            db, name="part2", expression="gt(close, 55000)")["column"]
+
+    def test_exit_bucket_two_plugins_and(self, db, fx_true_col, fx_part_col):
+        """exit 桶两个插件（恒真+分段）→ exits == 规则出场 & 恒真 &
+        分段（桶内合取+通道 AND 两层同时验证——任一插件 False 段即灭）。"""
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+        df = compute_all_indicators(
+            make_ohlcv(300, seed=5, base_price=60000.0))
+        genes = [
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       "rsi_14", {"type": "lt", "threshold": 35}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       "rsi_14", {"type": "gt", "threshold": 55}),
+        ]
+        dna = _dna([{"type": "formula", "ref": fx_true_col,
+                     "threshold": 0.5, "operator": ">", "role": "exit"},
+                    {"type": "formula", "ref": fx_part_col,
+                     "threshold": 0.5, "operator": ">", "role": "exit"}],
+                   genes=genes)
+        sig = assemble_signal_set(db, dna, df)
+        expect = (df["rsi_14"] > 55) & (df["close"] > 55000)
+        assert bool((sig.exits.fillna(False) == expect).all()), \
+            "桶内两插件 AND 合取（交集 37 bar）"
+        assert int(expect.sum()) == 37
+
+
+class TestR2ExitPluginEngineChain:
+    """⑤层级补全：R2 fx 出场源引擎链端到端（spec strategy-expression
+    「插件出场端到端」THEN 落在回测端——组装层锚（E6/四桶）之外的
+    引擎消费段：run_backtest_on_range 装载→组装→引擎全链，fx=True 段
+    平仓行为可观测）。"""
+
+    @pytest.fixture()
+    def env(self, tmp_path: Path):
+        from core.analysis.executor import ensure_research_tables
+        from core.persistence.db_ext import init_db_ext
+        from tests.helpers.data_factory import make_ohlcv
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        df = make_ohlcv(n=420, freq="1h", start="2024-01-01", seed=7)
+        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        q25 = float(df["close"].quantile(0.25))
+        register_formula_plugin(
+            db, name="hi", expression=f"gt(close, {q25})")
+        register_formula_plugin(
+            db, name="never", expression="gt(close, 1e12)")
+        return {"data_dir": data_dir, "db": db, "df": df,
+                "start": df.index[90].isoformat(),
+                "end": df.index[-1].isoformat()}
+
+    @staticmethod
+    def _dna(env, ref) -> StrategyDNA:
+        """恒真入场+高止损：出场差异唯一归因 fx 源（无止损/规则出场
+        干扰——恒假 fx 下持有到期恰 1 笔）。"""
+        entry = SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           "rsi_14", {"type": "lt", "threshold": 100})
+        return StrategyDNA(
+            signal_genes=[entry], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(stop_loss=0.5),
+            signal_sources=[{"type": "formula", "ref": ref,
+                             "threshold": 0.5, "operator": ">",
+                             "role": "exit"}],
+            composition={"mode": "logic", "op": "AND"})
+
+    def test_fx_exit_drives_closes_in_engine(self, env):
+        """fx 出场源引擎链：fx=True（close>q25 段）平仓→多轮交易；
+        恒假 fx 对照持有到期恰 1 笔——fx 源经组装器 SignalSet.exits
+        到引擎的平仓消费真实贯通（笔数差异唯一归因 fx 出场）。"""
+        from core.analysis.backtest_bridge import run_backtest_on_range
+        m_fx, _, _, _ = run_backtest_on_range(
+            env["db"], env["data_dir"], self._dna(env, "fx_hi"),
+            "BTCUSDT", "1h", env["start"], env["end"], warmup_bars=60)
+        m_never, _, _, _ = run_backtest_on_range(
+            env["db"], env["data_dir"], self._dna(env, "fx_never"),
+            "BTCUSDT", "1h", env["start"], env["end"], warmup_bars=60)
+        assert m_never["total_trades"] == 1, \
+            "恒假 fx：恒真入场持有到期恰 1 笔（构造前提）"
+        assert m_fx["total_trades"] > 10, \
+            f"fx=True 段平仓驱动多轮交易（实测 {m_fx['total_trades']}）"
+
+
+class TestR2ChannelBooleanAlgebra:
+    """④属性补强：组装器通道布尔代数（零元/幂等/交换律——恒等元
+    由既有恒真插件用例承载）。"""
+
+    @pytest.fixture()
+    def cols(self, db: Path):
+        q25 = None
+        return register_formula_plugin(
+            db, name="always3", expression="gt(close, 0)")["column"]
+
+    @staticmethod
+    def _df():
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+        return compute_all_indicators(
+            make_ohlcv(300, seed=5, base_price=60000.0))
+
+    @staticmethod
+    def _genes():
+        return [
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       "rsi_14", {"type": "lt", "threshold": 35}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       "rsi_14", {"type": "gt", "threshold": 55}),
+        ]
+
+    def test_annihilator_false_plugin_exits_never(self, db, cols):
+        """零元律：恒假 exit 插件 AND 规则出场 → exits 恒 False
+        （x AND 0 == 0——插件面恒假时规则出场被灭）。"""
+        never = register_formula_plugin(
+            db, name="never3", expression="gt(close, 1e12)")["column"]
+        dna = _dna([{"type": "formula", "ref": never,
+                     "threshold": 0.5, "operator": ">", "role": "exit"}],
+                   genes=self._genes())
+        sig = assemble_signal_set(db, dna, self._df())
+        assert not bool(sig.exits.any()), "恒假插件=AND 零元"
+
+    def test_idempotency_same_column_twice(self, db, cols):
+        """幂等律：同一插件列在 exit 桶两条目 == 单条目（x AND x ==
+        x——同列重复声明不改变语义）。"""
+        one = _dna([{"type": "formula", "ref": cols,
+                     "threshold": 0.5, "operator": ">", "role": "exit"}],
+                   genes=self._genes())
+        two = _dna([{"type": "formula", "ref": cols,
+                     "threshold": 0.5, "operator": ">", "role": "exit"},
+                    {"type": "formula", "ref": cols,
+                     "threshold": 0.5, "operator": ">", "role": "exit"}],
+                   genes=self._genes())
+        df = self._df()
+        s1 = assemble_signal_set(db, one, df)
+        s2 = assemble_signal_set(db, two, df)
+        assert bool((s1.exits == s2.exits).all()), "同列两条目幂等"
+
+    def test_commutativity_source_order(self, db, cols):
+        """交换律：exit 桶两不同插件源声明顺序交换结果不变（A AND B
+        == B AND A）。"""
+        part = register_formula_plugin(
+            db, name="part3", expression="gt(close, 55000)")["column"]
+        ab = [dict(type="formula", ref=cols, threshold=0.5, operator=">",
+                   role="exit"),
+              dict(type="formula", ref=part, threshold=0.5, operator=">",
+                   role="exit")]
+        df = self._df()
+        s1 = assemble_signal_set(db, _dna(ab, genes=self._genes()), df)
+        s2 = assemble_signal_set(db, _dna(ab[::-1], genes=self._genes()), df)
+        assert bool((s1.exits == s2.exits).all()), "源声明序不影响通道"

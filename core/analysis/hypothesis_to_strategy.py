@@ -65,6 +65,10 @@ _ACTION_MAP = {
     # target 为占位不进产物（与统计面占位契约对齐）、threshold 不参与。
     "price_above": lambda t: {"type": "price_above"},
     "price_below": lambda t: {"type": "price_below"},
+    # 布尔 pattern 列相等（indicator-and-action-repair R1 卡 E，A1）：
+    # 布尔 pattern 列（BullishDivergence 等）eq 1——threshold 缺省=1
+    # 由 executor 求值层兜底（:133-135），登记显式携带则物化
+    "eq": lambda t: {"type": "eq", "threshold": float(t)},
 }
 
 # target 占位直通动作集：这两键的比较主体固定 close，target（数值/
@@ -88,6 +92,17 @@ _SERIES_TYPE_MAP = {
 # 插件列条件 → formula/model 信号源的比较算子（仅数值比较可表达；
 # cross/break 类穿越语义不适用于插件连续值源，显式拒绝——见
 # _translate_conditions 的插件分支）
+# 插件源角色映射（R2 卡 F 6.1）：基因级 SignalRole 的 value（组翻译
+# 传入角色的 .value 形）→ 源级 role 键自有值域（组短名）。五值与
+# 五组一一对应；未映射值兜底 entry（防御——新增 SignalRole 不漏炸）
+_PLUGIN_SOURCE_ROLE = {
+    "entry_trigger": "entry",
+    "exit_trigger": "exit",
+    "reduce_trigger": "exit_partial",
+    "add_trigger": "add_trigger",
+    "add_inhibit": "add_suppress",
+}
+
 _PLUGIN_ACTION_OPERATOR = {
     "gt": ">", "lt": "<", "ge": ">=", "le": "<=",
 }
@@ -200,9 +215,9 @@ def build_signal_genes(
     _guard_condition_timeframe("when", when_conditions, strategy_timeframe)
     _reject_condition_timeframe("then", then_conditions)
 
-    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则拒绝；
-    # 插件列出场源当前不可表达——组装器只组合入场，出场插件源会被
-    # 静默丢弃，故显式拒绝而非误译为入场门控）
+    # THEN 按"预期兑现即离场"语义翻译为出场信号（与 WHEN 同规则；
+    # R2 修订：插件列出场源放行——源级 role="exit"，组装器 exit 桶
+    # AND 组合出场通道）
     when_genes, when_sources = _translate_conditions(
         when_conditions, db_path=db_path,
         label="when_conditions", role=SignalRole.ENTRY_TRIGGER,
@@ -549,13 +564,12 @@ def translate_hypothesis(
         conditions.get("then_conditions", []), db_path,
         strategy_timeframe=strategy_timeframe)
 
-    # 分批三组翻译（0.4.2 R3，scaled-position-actions）：组内条目与
-    # when/then 同构同拒（插件列 subject 在新组=不可表达——组装器只
-    # 组合入场，插件源出场/加仓会被静默丢弃故显式拒绝）；组基因自然
-    # 进 gene_signature（信号基因全集参与签名计算）
-    # unblock-research-validation 四组三放行域（Q1 裁决=加仓组跟随
-    # when 侧打通）：add_trigger 放行（校验链单点共用）、exit_partial/
-    # add_suppress 维持拒绝——分批三组全部纳入防线（静默穿透洞封闭）
+    # 分批三组翻译（0.4.2 R3，scaled-position-actions；R2 修订
+    # indicator-and-action-repair 卡 F 6.1）：组内条目与 when/then
+    # 同构——插件列条件在分批组同样放行（源级 role 键写组角色，组装
+    # 器按角色分桶组合——非 entry 桶 AND 通道）；组基因自然进
+    # gene_signature，插件源经 :549 接线进 signal_sources 参与组装
+    # 与 src: 段签名（同列异角色必异签名）。
     from core.strategy.dna import SignalRole
     _SCALING_ROLE_MAP = (
         ("exit_partial_conditions", SignalRole.REDUCE_TRIGGER),
@@ -580,12 +594,11 @@ def translate_hypothesis(
         g_genes, g_sources = _translate_conditions(
             group_conditions, db_path=db_path, base_tf=strategy_timeframe,
             label=group_key, role=group_role)
-        if g_sources:  # 结构上不可达（插件列在非 ENTRY 角色已被拒），
-            raise ResearchError(   # 防御性收口——不静默丢弃插件源
-                "RESEARCH_NOT_EXPRESSIBLE",
-                f"{group_key} 插件列条件不可表达（插件源仅入场）",
-                detail={"field": group_key})
         genes = genes + g_genes
+        # R2 接线（卡 F 6.1 增补②）：分批组插件源显式并入 signal_
+        # sources（原防御收口随 6.1 放行消亡——「不静默丢弃插件源」
+        # 语义由接线承接：g_sources 参与组装器分桶与 src: 段签名）
+        plugin_sources = plugin_sources + g_sources
 
     # 组装 DNA（v2）：纯内置条件 = 退化形态零迁移（单 rule 源）；
     # 含插件条件 = rule 源（承载全部内置基因，有内置条件时）+ 各插件源，
@@ -779,6 +792,31 @@ def _translate_conditions(
                     f"{label}[{i}] subject 非法: {exc.message}",
                     detail={"condition": cond, "code": exc.code,
                             **exc.detail}) from exc
+            if action in ("touch_bounce", "role_reversal"):
+                # R1 翻译专门分支（indicator-and-action-repair 卡 E）：
+                # 参数透传形制（direction/proximity_pct、role/lookback）
+                # ——lambda 单参收不下，沿 within_bars_after 先例。
+                # 不写键即用 executor 求值层缺省（A2：direction=
+                # support/proximity_pct=0.01/role=resistance/lookback=
+                # 10——翻译层不物化执行层缺省值，产物只含登记携带键）；
+                # condition_kernel 全量透传（D-r2 登记侧 extra 键不丢）。
+                if action == "touch_bounce":
+                    condition = {"type": "touch_bounce", **{
+                        k: cond[k] for k in
+                        ("direction", "proximity_pct") if k in cond}}
+                else:
+                    condition = {"type": "role_reversal", **{
+                        k: cond[k] for k in
+                        ("role", "lookback") if k in cond}}
+                genes.append(SignalGene(
+                    indicator=cdef.indicator,
+                    params=dict(cdef.params),
+                    role=role,
+                    field_name=cdef.field,
+                    condition=condition,
+                    timeframe=cond_tf,
+                ))
+                continue
             if action == "within_bars_after":
                 # R4 翻译专门分支（fix-mtf-execution-consistency）：
                 # _ACTION_MAP 形制不满足（lambda 只收 target 单参）——
@@ -916,16 +954,6 @@ def _translate_conditions(
                             "timeframe": cond_tf,
                             "condition": cond})
             source_type = plugin_columns[subject]
-            if role != SignalRole.ENTRY_TRIGGER:
-                raise ResearchError(
-                    "RESEARCH_NOT_EXPRESSIBLE",
-                    f"{label}[{i}] 不可表达: 插件列（{subject}）仅支持"
-                    "入场信号源（THEN 与分批组须为内置指标列；出场/"
-                    "加仓组合待后续版本）",
-                    detail={"condition": cond,
-                            "slow_path": "改用内置指标列 subject，"
-                            "或提交 feature-requests 描述插件出场/"
-                            "加仓需求"})
             operator = _PLUGIN_ACTION_OPERATOR.get(action)
             if operator is None:
                 raise ResearchError(
@@ -945,12 +973,16 @@ def _translate_conditions(
                 "ref": subject,
                 "threshold": float(target),
                 "operator": operator,
-                # 角色标记（recognize-plugin-source-dna T1）：翻译链产出的
-                # 插件源显式写 entry；读取侧对无 role 键存量条目同按 entry
-                # 解释（缺省=entry 全链契约，存量 11 行零迁移）。
-                # "exit" 值域前向声明（翻译器拒绝插件出场——无生产者），
-                # 无消费逻辑，语义留未来。
-                "role": "entry",
+                # 角色标记（recognize-plugin-source-dna T1；R2 多角色
+                # 扩展——indicator-and-action-repair 卡 F 6.1）：源级
+                # role 键自有五值域 {entry, exit, exit_partial,
+                # add_trigger, add_suppress}（组短名映射——与基因级
+                # SignalRole 枚举为两个层次、无对齐义务）；读取侧对
+                # 无 role 键存量条目同按 entry 解释（缺省=entry 全链
+                # 契约，存量 11 行零迁移）。同列多角色=多条目（一条件
+                # 一角色不合一）。
+                "role": _PLUGIN_SOURCE_ROLE.get(
+                    getattr(role, "value", role), "entry"),
             })
             continue
 

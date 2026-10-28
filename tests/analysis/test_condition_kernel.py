@@ -201,9 +201,13 @@ class TestConditionItemStrictness:
         assert ei.value.detail["unknown_keys"] == ["inner_bogus"]
         # R4（fix-mtf-execution-consistency）：window/inner_action 入
         # 白名单（时序动作族可选键——lookback 族登记面顺带解锁披露）
+        # review2 CARD-03：+direction/proximity_pct/role/lookback（R1
+        # 支撑/阻力动作族可选键——kernel 白名单随 ConditionItem schema
+        # 扩容同步，一致性由 T6d 对拍锚锁）
         assert set(ei.value.detail["legal_keys"]) == {
             "subject", "action", "target", "timeframe",
-            "window", "inner_action"}
+            "window", "inner_action",
+            "direction", "proximity_pct", "role", "lookback"}
         assert "顶层键" in ei.value.detail["hint"]
 
     def test_t6d_kernel_whitelist_matches_schemas(self):

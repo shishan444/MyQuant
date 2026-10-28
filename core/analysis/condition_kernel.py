@@ -302,9 +302,13 @@ def collect_condition_refs(
 # ConditionItem extra=forbid 同语义共享单点——全部条件消费者同语义）。
 # window/inner_action（fix-mtf-execution-consistency R4）：时序动作族
 # 可选键（within_bars_after；lookback_any/lookback_all 登记面顺带解锁
-# 披露——行为面扩大属披露非回归）
-_CONDITION_ITEM_KEYS = frozenset(
-    {"subject", "action", "target", "timeframe", "window", "inner_action"})
+# 披露——行为面扩大属披露非回归）。
+# direction/proximity_pct/role/lookback（review2 CARD-03）：R1 支撑/
+# 阻力动作族可选键（touch_bounce/role_reversal 参数透传——登记面
+# schema 同步的共享单点对拍面，T6d 锚锁一致）
+_CONDITION_ITEM_KEYS = frozenset({
+    "subject", "action", "target", "timeframe", "window", "inner_action",
+    "direction", "proximity_pct", "role", "lookback"})
 
 # lookback 族内层动作合法集（fix-mtf-review-consistency CARD-04：原
 # validation/engine 与 hypothesis_to_strategy 翻译分支两处字面量收敛

@@ -159,12 +159,17 @@ def test_bearish_divergence_with_rsi():
     assert "pattern_bearish_divergence" in result.columns
     assert set(result["pattern_bearish_divergence"].unique()).issubset({0, 1})
 
-def test_divergence_without_rsi_returns_zero():
+def test_divergence_without_rsi_structured_reject():
+    """（B4-P0 翻转）缺 rsi 直调不再静默置 0——结构化拒绝点名依赖
+    （正常链路经装载层闭包供给，恒 0 假象消灭）。"""
+    from core.analysis.errors import ResearchError
     df = _make_df(50)
-    result_bull = detect_bullish_divergence(df)
-    result_bear = detect_bearish_divergence(df)
-    assert result_bull["pattern_bullish_divergence"].sum() == 0
-    assert result_bear["pattern_bearish_divergence"].sum() == 0
+    with pytest.raises(ResearchError) as ei_bull:
+        detect_bullish_divergence(df)
+    with pytest.raises(ResearchError) as ei_bear:
+        detect_bearish_divergence(df)
+    assert "RSI" in ei_bull.value.message
+    assert "RSI" in ei_bear.value.message
 
 # -- Registry integration --
 def test_pattern_indicators_in_registry():

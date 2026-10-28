@@ -95,16 +95,14 @@ class TestHourUtcTranslation:
 
     def test_cross_action_rejected(self, env):
         """action 拒：cross 族对小时列不支持（周期回绕语义未定义
-        ——仅 gt/lt/ge/le × 数值 target）。"""
-        hid = _register(
-            env, {"subject": "hour_utc", "action": "cross",
-                  "target": 12.0})
-        with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(
-                env["db"], hypothesis_id=hid,
-                strategy_timeframe="1h", data_dir=env["data_dir"])
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "仅支持数值比较" in ei.value.message
+        ——仅 gt/lt/ge/le × 数值 target）。B6 后 'cross' 在登记面即
+        拒（不可表达动作集）；小时列翻译防线经直插库构造存量形
+        测试（登记面拒/翻译防线两态各自在案）。"""
+        with pytest.raises(ResearchError) as ei_reg:
+            _register(
+                env, {"subject": "hour_utc", "action": "cross",
+                      "target": 12.0})
+        assert ei_reg.value.code == "RESEARCH_CONDITION_INVALID"
 
     def test_daily_base_timeframe_rejected(self, env):
         """求值轴拒：基准 1d（条件无修饰回退基准）→ 每日一 bar 下

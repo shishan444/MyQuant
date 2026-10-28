@@ -99,6 +99,37 @@ _STRATEGY_PARAM_KEYS = frozenset({
     "initial_fraction", "max_position_loss",
 })
 
+# ── 动作集单一权威源（indicator-and-action-repair B6 卡 D 4.1）──
+# 研究可表达动作集：登记面 action 域校验（B6-行为 2.6）与翻译层
+# （hypothesis_to_strategy import 引用——新依赖无环：翻译层已在
+# 登记层下游）同源引用。14 键=翻译 _ACTION_MAP 11 键（R1 eq 已入
+# 映射）+ 专门分支 3 键（within_bars_after 时序触发/touch_bounce/
+# role_reversal 支撑阻力族——多参透传不走 _ACTION_MAP 单参
+# lambda，沿专门分支形制）；恰等断言 RESEARCH_EXPRESSIBLE_ACTIONS
+# == frozenset(_ACTION_MAP) ∪ 专门分支键集 落在 tests/analysis/
+# test_action_domain_gate.py test_f1（14=11+3——扩动作漏改必红）。
+# 值域按 registry supported_conditions 语义：仅含两侧已支持或本
+# change 落地的动作。
+RESEARCH_EXPRESSIBLE_ACTIONS: frozenset = frozenset({
+    "gt", "lt", "ge", "le",
+    "cross_above", "cross_below", "breakout", "breakdown",
+    "price_above", "price_below",
+    "within_bars_after",
+    "eq", "touch_bounce", "role_reversal",
+})
+
+# 统计面专属动作集（卡 D 4.2 差集显式声明）：统计可算但翻译不可
+# 表达——登记面即拒（2.6 落地），研究者动作不再浪费性消耗到
+# translate 才断链。值=统计面 action_map 键集 − 可表达集（恰等
+# 断言锚在 tests/strategy——统计键集运行时漂移即红）
+STATISTICS_ONLY_ACTIONS: frozenset = frozenset({
+    "touch", "spike", "shrink",
+    "divergence_top", "divergence_bottom",
+    "consecutive_up", "consecutive_down",
+    "lookback_all", "wick_touch",
+    "cross_above_series", "cross_below_series", "lookback_any",
+})
+
 # 分批组键（0.4.2 R3/DC-2 平铺顶层组键——进 conditions 参与身份指纹）
 _SCALING_GROUP_KEYS = ("exit_partial_conditions", "add_trigger_conditions",
                        "add_suppress_conditions")
@@ -505,6 +536,76 @@ def register_hypothesis(
                     "RESEARCH_CONDITION_INVALID",
                     f"{field_name} 须含 subject/action/target",
                     detail={"field": field_name})
+
+    # 1.5 action 域校验前移（indicator-and-action-repair B6 卡 D 4.2）：
+    #     统计可算但翻译不可表达的动作（STATISTICS_ONLY_ACTIONS 族）
+    #     登记即拒——研究者动作不再浪费性消耗到 translate 才
+    #     RESEARCH_NOT_EXPRESSIBLE 断链；单源 RESEARCH_EXPRESSIBLE_
+    #     ACTIONS（与翻译层同源；扩动作漏改必红由断言网承载）。
+    #     R1 三键（eq/touch_bounce/role_reversal）登记放行——翻译
+    #     映射随 2.7 落地（本包内闭环）。
+    for group, conds in group_conds.items():
+        for i, c in enumerate(conds):
+            if c.get("action") not in RESEARCH_EXPRESSIBLE_ACTIONS:
+                raise ResearchError(
+                    "RESEARCH_CONDITION_INVALID",
+                    f"动作 {c.get('action')!r} 登记不可表达"
+                    "（研究假设消费面向策略翻译——统计专属动作不走登记）",
+                    detail={
+                        "field": f"{group}_conditions[{i}].action",
+                        "action": c.get("action"),
+                        "legal_range": sorted(RESEARCH_EXPRESSIBLE_ACTIONS),
+                        "slow_path": "统计面可算但翻译不可表达的动作见 "
+                                     "STATISTICS_ONLY_ACTIONS 声明"
+                                     f"（{sorted(STATISTICS_ONLY_ACTIONS)}）",
+                    })
+            # R1 支撑/阻力动作参数键值域（review2 CARD-03 副修）：
+            # 值域权威校验落服务层登记链（非翻译层）——登记自动执行
+            # 的预检统计面先于 translate 消费同一条件（engine 预检
+            # 取键同款 else 兜底，坏值落库会产出翻转的预检警告误导
+            # 研究者）；不写键=求值层缺省（合法，不校验）；键在错
+            # 动作上携带不校值（翻译层按动作取键，不消费即不生效）
+            _action = c.get("action")
+            _base = f"{group}_conditions[{i}]"
+            if _action == "touch_bounce":
+                _dir = c.get("direction")
+                if _dir is not None and _dir not in ("support", "resistance"):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.direction 须为 support/resistance: {_dir!r}",
+                        detail={"field": f"{_base}.direction",
+                                "action": _action, "value": _dir,
+                                "legal_range": ["support", "resistance"]})
+                _prox = c.get("proximity_pct")
+                if _prox is not None and (
+                        not isinstance(_prox, (int, float))
+                        or isinstance(_prox, bool) or _prox <= 0):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.proximity_pct 须为 >0 数值: {_prox!r}",
+                        detail={"field": f"{_base}.proximity_pct",
+                                "action": _action, "value": str(_prox),
+                                "legal_range": ">0 数值（近线距离比例，"
+                                               "如 0.02=2%）"})
+            elif _action == "role_reversal":
+                _role = c.get("role")
+                if _role is not None and _role not in ("support", "resistance"):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.role 须为 support/resistance: {_role!r}",
+                        detail={"field": f"{_base}.role",
+                                "action": _action, "value": _role,
+                                "legal_range": ["support", "resistance"]})
+                _lb = c.get("lookback")
+                if _lb is not None and (
+                        not isinstance(_lb, int) or isinstance(_lb, bool)
+                        or _lb < 1):
+                    raise ResearchError(
+                        "RESEARCH_CONDITION_INVALID",
+                        f"{_base}.lookback 须为 >=1 整数: {_lb!r}",
+                        detail={"field": f"{_base}.lookback",
+                                "action": _action, "value": str(_lb),
+                                "legal_range": ">=1 整数（回看根数）"})
 
     # 2. 区间（0.2.14：单周期收紧——全部条目同 symbol 同 timeframe，
     #    该周期即基准周期；timeframe 键的方向校验以它为基准）

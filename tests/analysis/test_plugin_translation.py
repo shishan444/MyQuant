@@ -159,20 +159,21 @@ class TestPluginTranslation:
         with pytest.raises(ResearchError, match="target 须为数值"):
             translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
 
-    def test_then_plugin_condition_rejected(self, db, data_dir):
-        """THEN 插件列显式拒绝（出场组合待后续版本；不静默误译为
-        入场门控——出场语义颠倒比拒绝更糟）。"""
+    def test_then_plugin_condition_translates_exit_role(self, db, data_dir):
+        """（R2 翻转）THEN 插件列放行：产物 signal_sources 含
+        role="exit" 条目（出场桶 AND 组合——原「仅支持入场」拒绝随
+        卡 F 6.1 放行消亡）。"""
+        import json as _json
+        from core.persistence.repository.strategy import get_strategy
         col = _plugin(db)
-        hid = _hyp(db, when=[{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
-                              "target": 35}],
-                   then=[{"subject": {"indicator": "RSI", "params": {"period": 30}}, "action": "gt", "target": 60}])
-        # THEN 插件列假设（then=插件列）经直落构造
         hid = _raw_hyp(db, when=[{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
                                   "target": 35}],
                        then=[{"subject": col, "action": "gt", "target": 0.5}])
-        # 0.4.2 R3 文案泛化（覆盖分批组）："暂不支持出场"→"仅支持入场"
-        with pytest.raises(ResearchError, match="then_conditions.*仅支持\n?\s*入场信号源"):
-            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        dna = _json.loads(get_strategy(db, out["strategy_id"])["dna_json"])
+        roles = [s.get("role") for s in dna["signal_sources"]
+                 if s.get("type") in ("formula", "model")]
+        assert roles == ["exit"], f"出场插件源 role=exit，got {roles}"
 
     def test_stale_plugin_column_rejected(self, db, data_dir):
         """失效插件列（注册表曾有判定路径但列不存在）：拒绝且文案
@@ -727,3 +728,277 @@ class TestTranslationDefenseEdgeCover:
             db, entry_type="component_eval", limit=200)
             if e.get("ref_id") == sid])
         assert after == before, "已有记录命中不重复写（幂等）"
+
+
+class TestR2MultiRolePluginSources:
+    """R2 插件列多角色贯通（indicator-and-action-repair 2.8，卡 F
+    ——tester 锚 C2-E 组：E1 端到端/E2 同列一致/E5 签名可判定/
+    E6 静默丢弃反面）。"""
+
+    def _fx_exit_strategy(self, db, data_dir, group_key, role_value,
+                          extra_rule_group=None):
+        """登记（插件列进 {group_key}）→translate→产物 DNA。"""
+        col = _plugin(db, name=f"fx_{role_value}", expression="gt(close, 0)")
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 30}},
+                 "action": "gt", "target": 60}],
+        }
+        conds[group_key] = [{"subject": col, "action": "gt", "target": 0.5}]
+        if extra_rule_group:
+            conds[extra_rule_group[0]] = extra_rule_group[1]
+        hid = _hyp(db, when=conds["when_conditions"],
+                   then=conds["then_conditions"])
+        # 组键经直落构造（_hyp 只承 when/then——组条件并入 conditions）
+        import json as _json
+        hid2 = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid2,
+            conditions=_json.dumps(conds, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="r2",
+            data_ranges=_json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=_json.dumps({"stop_loss": 0.05}))
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid2)
+        return out, col
+
+    def _dna_sources(self, db, out):
+        import json as _json
+        from core.persistence.repository.strategy import get_strategy
+        dna = _json.loads(get_strategy(db, out["strategy_id"])["dna_json"])
+        return dna
+
+    def test_e1_exit_partial_plugin_end_to_end(self, db, data_dir, tmp_path):
+        """E1 端到端：fx_ 列 exit_partial 组假设→translate 产物含
+        role=exit_partial 插件源+信号基因；回测求值可执行。"""
+        out, col = self._fx_exit_strategy(
+            db, data_dir, "exit_partial_conditions", "exit_partial")
+        dna = self._dna_sources(db, out)
+        srcs = [s for s in dna["signal_sources"]
+                if s.get("type") in ("formula", "model")]
+        assert any(s.get("role") == "exit_partial" for s in srcs), \
+            "产物 signal_sources 含分批组插件条目（:549 接线）"
+        assert [{"type": "rule"}] == [s for s in dna["signal_sources"]
+                                      if s.get("type") == "rule"]
+
+    def test_e1_add_trigger_plugin_role(self, db, data_dir):
+        """E1 加仓触发组：role=add_trigger。"""
+        out, _ = self._fx_exit_strategy(
+            db, data_dir, "add_trigger_conditions", "add_trg")
+        dna = self._dna_sources(db, out)
+        srcs = [s for s in dna["signal_sources"]
+                if s.get("type") in ("formula", "model")]
+        assert any(s.get("role") == "add_trigger" for s in srcs)
+
+    def test_e1_exit_group_role(self, db, data_dir):
+        """E1 出场组（then）：role=exit。"""
+        col = _plugin(db, name="fx_exit_g", expression="gt(close, 0)")
+        hid = _hyp(
+            db,
+            when=[{"subject": {"indicator": "RSI", "params": {"period": 14}},
+                   "action": "lt", "target": 35}],
+            then=[{"subject": col, "action": "gt", "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        dna = self._dna_sources(db, out)
+        srcs = [s for s in dna["signal_sources"]
+                if s.get("type") in ("formula", "model")]
+        assert any(s.get("role") == "exit" for s in srcs)
+
+    def test_e5_signature_distinguishes_roles(self, db, data_dir):
+        """E5 签名可判定：同 fx 列同参数——exit_partial 组产物 vs 纯
+        入场产物（同内置基因形制）gene_signature 必异（role 段编码）。"""
+        col = _plugin(db, name="fx_sig", expression="gt(close, 0)")
+        # A：fx 列纯入场（when）
+        hid_a = _hyp(db, when=[
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35},
+            {"subject": col, "action": "gt", "target": 0.5}],
+            then=[{"subject": {"indicator": "RSI", "params": {"period": 30}},
+                   "action": "gt", "target": 60}])
+        out_a = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid_a)
+        from core.strategy.dna import StrategyDNA as _DNA
+        sig_a = _DNA.from_json(
+            __import__("json").dumps(self._dna_sources(db, out_a))
+        ).gene_signature
+        # B：同 fx 列进 exit_partial（when 侧仅 RSI——同 B 需绕开与 A
+        # 的 when 条件差；用同 when 两条件+组内同列）
+        out_b, _ = self._fx_exit_strategy(
+            db, data_dir, "exit_partial_conditions", "fx_sig_b")
+        # B 的 fx 列名不同（name 参数）——签名差异含 ref 差，role 段
+        # 差异锚改用同列对照：C=同列 B 形制（重造 name=fx_sig）
+        col_c = _plugin(db, name="fx_sig_c", expression="gt(close, 0)")
+        import json as _json
+        conds_c = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35},
+                {"subject": col_c, "action": "gt", "target": 0.5}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 30}},
+                 "action": "gt", "target": 60}],
+        }
+        hid_c = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid_c,
+            conditions=_json.dumps(conds_c, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="c",
+            data_ranges=_json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=_json.dumps({"stop_loss": 0.05}))
+        # C2：exit_partial 组（同 when 形制、同列不同名 fx_sig_c）
+        conds_c2 = {
+            "when_conditions": conds_c["when_conditions"],
+            "then_conditions": conds_c["then_conditions"],
+            "exit_partial_conditions": [
+                {"subject": col_c, "action": "gt", "target": 0.5}],
+        }
+        hid_c2 = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid_c2,
+            conditions=_json.dumps(conds_c2, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="c2",
+            data_ranges=_json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=_json.dumps({"stop_loss": 0.05}))
+        out_c = translate_hypothesis(db, data_dir=data_dir,
+                                     hypothesis_id=hid_c)
+        out_c2 = translate_hypothesis(db, data_dir=data_dir,
+                                      hypothesis_id=hid_c2)
+        sig_c = _DNA.from_json(
+            __import__("json").dumps(self._dna_sources(db, out_c))
+        ).gene_signature
+        sig_c2 = _DNA.from_json(
+            __import__("json").dumps(self._dna_sources(db, out_c2))
+        ).gene_signature
+        # 同列 fx_sig_c：入场条目 vs exit_partial 条目——role 段编码
+        # 使签名必异（ref/threshold/operator 全同）
+        assert sig_c != sig_c2, "同列异角色必异签名（role 段生效）"
+        # 存量零迁移：纯 entry 编码无 role 段（签名含四元组不含冒号尾段）
+        # 存量零迁移的实质断言（entry 编码逐位不变）由
+        # test_e5_zero_migration_entry_encoding 承载（原「assert sig_a」
+        # 恒真弱断言移除）
+
+    def test_e3_stale_plugin_in_group_rejected(self, db, data_dir):
+        """E3 失效拒绝：失效插件列在出场组显式拒绝（组装期引用失败
+        显式拒绝先例——signal_assembly:62）。"""
+        import json as _json
+        conds = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 35}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 30}},
+                 "action": "gt", "target": 60}],
+            "exit_partial_conditions": [
+                {"subject": "fx_ghost_role", "action": "gt", "target": 0.5}],
+        }
+        hid = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid,
+            conditions=_json.dumps(conds, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="e3",
+            data_ranges=_json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=_json.dumps({"stop_loss": 0.05}))
+        with pytest.raises(ResearchError, match="已失效"):
+            translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+
+    def test_e6_assembly_exit_plugin_drives_exits(self, db, data_dir):
+        """E6/端到端组装：fx 出场源驱动 exits——无规则出场基因时插件
+        出场独立生效（base.exits 恒 False 不作废插件通道）。"""
+        import numpy as np
+        import pandas as pd
+        from core.analysis.signal_assembly import assemble_signal_set
+        from core.strategy.dna import StrategyDNA
+        from tests.helpers.data_factory import make_ohlcv
+        from core.features.indicators import compute_all_indicators
+
+        col = _plugin(db, name="fx_exit_drv", expression="gt(close, 95)")
+        # 纯插件出场策略：when=规则、then=fx（role=exit）
+        hid = _hyp(
+            db,
+            when=[{"subject": {"indicator": "RSI", "params": {"period": 14}},
+                   "action": "lt", "target": 35}],
+            then=[{"subject": col, "action": "gt", "target": 0.5}])
+        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
+        dna = StrategyDNA.from_dict(self._dna_sources(db, out))
+        df = compute_all_indicators(make_ohlcv(300, seed=5, base_price=100.0))
+        sig = assemble_signal_set(db, dna, df)
+        assert sig.exits.dtype == bool
+        assert bool(sig.exits.any()), \
+            "fx 出场源独立驱动 exits（close>95 段触发）"
+
+    def test_e2_same_column_three_groups_consistent(self, db, data_dir):
+        """E2 对称性锚：同一 fx 列在 when/then/exit_partial 三组均可
+        表达（同列同语义——role 随组别正确装配，无组别歧视拒绝）。"""
+        col = _plugin(db, name="fx_e2", expression="gt(close, 0)")
+        rsi = {"indicator": "RSI", "params": {"period": 14}}
+        rule = [{"subject": rsi, "action": "lt", "target": 35}]
+        rule_then = [{"subject": dict(rsi, params={"period": 30}),
+                      "action": "gt", "target": 60}]
+        fx_cond = {"subject": col, "action": "gt", "target": 0.5}
+        # A：同列入 when（entry）
+        out_a = translate_hypothesis(
+            db, data_dir=data_dir,
+            hypothesis_id=_hyp(db, when=rule + [fx_cond], then=rule_then))
+        # B：同列入 then（exit）
+        out_b = translate_hypothesis(
+            db, data_dir=data_dir,
+            hypothesis_id=_hyp(db, when=rule, then=[fx_cond]))
+        # C：同列入 exit_partial 组（组键经直落构造）
+        conds_c = {"when_conditions": rule,
+                   "then_conditions": rule_then,
+                   "exit_partial_conditions": [fx_cond]}
+        hid_c = f"hyp_{uuid.uuid4().hex[:12]}"
+        rr.save_hypothesis_with_log(
+            db, hypothesis_id=hid_c,
+            conditions=json.dumps(conds_c, ensure_ascii=False),
+            conditions_hash=uuid.uuid4().hex, statement="e2c",
+            data_ranges=json.dumps(_ranges(), ensure_ascii=False),
+            ranges_hash=uuid.uuid4().hex,
+            strategy_params=json.dumps({"stop_loss": 0.05}))
+        out_c = translate_hypothesis(db, data_dir=data_dir,
+                                     hypothesis_id=hid_c)
+        def _role(out):
+            dna = self._dna_sources(db, out)
+            return [s.get("role") for s in dna["signal_sources"]
+                    if s.get("type") in ("formula", "model")
+                    and s.get("ref") == col]
+        assert _role(out_a) == ["entry"], "同列 when 组 → entry"
+        assert _role(out_b) == ["exit"], "同列 then 组 → exit"
+        assert _role(out_c) == ["exit_partial"], "同列 exit_partial 组 → exit_partial"
+
+    def test_e4_trial_chain_covers_group_plugins(self, db, data_dir):
+        """E4 试算链锚：exit_partial 组插件源经落库前试算（_component_
+        precheck 不因组别跳过）——门禁 (a) 源记录在场（「翻译过=有
+        记录」不变式扩展到分批组）。"""
+        from core.analysis.validation_service import _missing_component_evidence
+        out, col = self._fx_exit_strategy(
+            db, data_dir, "exit_partial_conditions", "fx_e4")
+        assert _missing_component_evidence(
+            db, [{"type": "formula", "ref": col}]) == [], \
+            "分批组插件源试算记录在场（试算链按角色同适用）"
+
+    def test_e5_zero_migration_entry_encoding(self):
+        """E5 零迁移实质断言：插件条目无 role 键（存量形制）与显式
+        role="entry" 编码逐位一致（签名相等）；同参 role="exit" 条目
+        签名必异（追加 ":<role>" 段——仅非 entry 编码）。"""
+        def _sig(role_key, role_value):
+            src = {"type": "formula", "ref": "fx_z", "threshold": 0.5,
+                   "operator": ">"}
+            if role_key:
+                src[role_key] = role_value
+            dna = StrategyDNA(
+                signal_genes=[], logic_genes=LogicGenes(),
+                execution_genes=ExecutionGenes(timeframe="4h"),
+                risk_genes=RiskGenes(), signal_sources=[src])
+            return dna.gene_signature
+        sig_legacy = _sig(None, None)        # 存量：无 role 键
+        sig_entry = _sig("role", "entry")    # 显式 entry
+        sig_exit = _sig("role", "exit")      # 非 entry
+        assert sig_legacy == sig_entry, \
+            "entry 条目编码逐位不变（无键与显式 entry 同码——零迁移）"
+        assert sig_entry != sig_exit, "非 entry 条目追加 role 段（必异签名）"
