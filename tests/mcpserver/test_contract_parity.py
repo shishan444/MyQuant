@@ -445,13 +445,13 @@ class TestDisclosureParity:
         from core.analysis.registry_meta import WARMUP_RULE_TEXT
         src = self._squash(self._TOOLS_SRC)
         for key in ("周期类参数注册表上限之和", "条件实际参数×3,20",
-                    "plugin_formula_lookback"):
+                    "plugin_columns_lookback"):
             assert self._squash(key) in src, f"list_indicators 描述缺口径要素: {key}"
             assert self._squash(key) in self._squash(WARMUP_RULE_TEXT)  # 要素确属权威文本
 
     def test_capability_warmup_rule_faithful(self):
         from mcpserver.capability import CAPABILITY_DOC
-        for key in ("周期类参数注册表上限之和", "plugin_formula_lookback",
+        for key in ("周期类参数注册表上限之和", "plugin_columns_lookback",
                     "条件实际参数 × 3, 20"):
             assert key in CAPABILITY_DOC, f"能力自述缺口径要素: {key}"
         # 旧口径清零（capability 曾写「最大周期×3」——Q3 裁决禁旧口径）

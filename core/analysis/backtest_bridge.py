@@ -166,7 +166,7 @@ def run_backtest_on_range(
         signal_set = _slice_signal_set(assembled, bt_df.index)
 
     engine = bt_engine_mod.BacktestEngine(
-        init_cash=init_cash, fee=fee, slippage=slippage)
+        init_cash=init_cash, fee=fee, slippage=slippage, db_path=db_path)
     result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe,
                         signal_set=signal_set)
     metrics = {

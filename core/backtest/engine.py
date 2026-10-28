@@ -177,7 +177,135 @@ def risk_budget_qty(value_now, price, stop_dist, risk_fraction,
     return qty, capped
 
 
-def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
+def _load_sl_series_column(
+    db_path, enhanced_df: pd.DataFrame, source: dict,
+) -> np.ndarray:
+    """series 档止损线列装载（dynamic-stop-loss-series 4.2——沿
+    _load_atr_column 同构四态校验）。
+
+    指标形制 {indicator, params, field?}：目标列名经 registry 命名
+    规则构造（多输出列含 field、单输出省 field 用命名展开——与
+    encode_column_ref 同源的列名推导）；df 直取/缺列经
+    _compute_indicator 现算（depends_on 闭包同点受益）/现算不可得
+    显式拒。fx 形制 {column}：enrich_with_plugin_columns 求值落列+
+    verify（失效列显式拒）。
+
+    装载校验四态（A4 哲学不可静默）：全 NaN 拒/首个非 NaN 后中段
+    洞拒/值≤0 拒（价格水平线语义）/头部预热 NaN 合法（fx lookback
+    期/指标 rolling 期）。
+
+    Raises:
+        ResearchError: RESEARCH_DATA_INSUFFICIENT（数据不足族——
+            线列缺失/失效/形态不可用）。
+    """
+    if not isinstance(source, dict):
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            "sl_series_source 形式非法（须为指标形制或 fx 形制 dict）",
+            detail={"field": "sl_series_source", "source": source})
+
+    if "indicator" in source:
+        from core.features.registry import INDICATOR_REGISTRY
+        ind = source["indicator"]
+        reg = INDICATOR_REGISTRY.get(ind)
+        if reg is None:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"sl_series_source 指标不在注册表: {ind!r}",
+                detail={"field": "sl_series_source.indicator"})
+        params = dict(source.get("params") or {})
+        # 列名推导：encode_column_ref（column_ref.py 权威——与
+        # test_column_ref roundtrip 锚同源；core.backtest→
+        # core.analysis.column_ref 为新增 import 边，方向与
+        # plugin_service 消费同族无环）
+        from core.analysis.column_ref import encode_column_ref
+        field = source.get("field")
+        if field is None:
+            outputs = list(reg.output_fields)
+            if len(outputs) > 1:
+                raise ResearchError(
+                    "RESEARCH_DATA_INSUFFICIENT",
+                    f"sl_series_source 指标 {ind} 为多输出指标"
+                    f"（{outputs}），field 必填",
+                    detail={"field": "sl_series_source.field",
+                            "output_fields": outputs})
+        col = encode_column_ref(ind, params, field)
+        if col in enhanced_df.columns:
+            series = enhanced_df[col]
+        else:
+            from core.features.indicators import _compute_indicator
+            computed = _compute_indicator(enhanced_df, ind, params)
+            if col not in computed:
+                raise ResearchError(
+                    "RESEARCH_DATA_INSUFFICIENT",
+                    f"series 止损线列 {col} 缺失且现算不可得"
+                    "（数据不足或指标计算失败）",
+                    detail={"field": col, "indicator": ind,
+                            "params": params})
+            series = computed[col]
+        label = col
+    elif "column" in source:
+        col = str(source["column"])
+        if db_path is None:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"series 止损线 fx 形制须 db_path（插件注册表查询——"
+                f"引擎构造时未提供，fx 列 {col} 不可装载）",
+                detail={"field": col,
+                        "hint": "BacktestEngine(db_path=...) 构造传入"
+                                "（桥层/路由已接；纯计算直调面用指标"
+                                "形制）"})
+        from core.analysis.plugin_service import (
+            enrich_with_plugin_columns)
+        try:
+            work = enrich_with_plugin_columns(db_path, enhanced_df,
+                                              {col})
+        except ResearchError:
+            raise
+        except Exception as exc:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"series 止损线插件列求值失败: {col}（{exc}）",
+                detail={"field": col}) from exc
+        if col not in work.columns:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"series 止损线插件列失效（不存在或未注册）: {col}",
+                detail={"field": col})
+        series = work[col]
+        label = col
+    else:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            "sl_series_source 来源必填（indicator 或 column 键）",
+            detail={"field": "sl_series_source"})
+
+    arr = pd.Series(series).values.astype(np.float64)
+    valid = ~np.isnan(arr)
+    if int(valid.sum()) == 0:
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"series 止损线列 {label} 全 NaN（区间短于周期或数据缺失）",
+            detail={"field": label})
+    first_valid = int(np.argmax(valid))
+    tail = arr[first_valid:]
+    if np.isnan(tail).any():
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"series 止损线列 {label} 首个有效值之后存在 NaN"
+            "（中段数据洞——止损保护不可静默中断）",
+            detail={"field": label})
+    if (tail <= 0.0).any():
+        raise ResearchError(
+            "RESEARCH_DATA_INSUFFICIENT",
+            f"series 止损线列 {label} 含非正值（≤0 的线值不可作"
+            "价格水平线锚）",
+            detail={"field": label})
+    return arr
+
+
+def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame,
+                         db_path=None) -> tuple:
     """单个 DNA 的风控参数装配（单路径与批量路径共享单源）。
 
     返回 (sl_mode_val, atr_col_or_None, exit_fraction, add_fraction,
@@ -198,8 +326,24 @@ def _per_dna_risk_params(risk_genes, enhanced_df: pd.DataFrame) -> tuple:
     直接属性访问（原 getattr 防御永不生效反而误导读者）。
     """
     sl_mode_val = sl_mode_code(risk_genes.sl_mode)
-    atr_col = (_load_atr_column(enhanced_df, int(risk_genes.atr_period))
-               if risk_genes.sl_mode == "atr" else None)
+    # series 档：线值列装载入 atr_col 槽位（njit 签名零变化——注释
+    # 语义扩展：atr 档=ATR 值列/series 档=线值列/其余 None）；纵深
+    # 防线：series×risk_budget 直构脏数据装载即拒（堵绕过 validate_
+    # dna 的库内改写路径——不产出按残留值计算仓位的结果）
+    if risk_genes.sl_mode == "series":
+        if risk_genes.position_mode == "risk_budget":
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "series×risk_budget 组合装载拒绝（纵深防线——series "
+                "线值非标量，risk_budget 仓位分母不可定义）",
+                detail={"conflict": ["sl_mode=series",
+                                     "position_mode=risk_budget"]})
+        atr_col = _load_sl_series_column(
+            db_path, enhanced_df, risk_genes.sl_series_source or {})
+    else:
+        atr_col = (_load_atr_column(
+            enhanced_df, int(risk_genes.atr_period))
+            if risk_genes.sl_mode == "atr" else None)
     exit_fraction = (float(risk_genes.exit_fraction)
                      if risk_genes.exit_fraction is not None else 0.5)
     add_fraction = (float(risk_genes.add_fraction)
@@ -1148,10 +1292,14 @@ class BacktestEngine:
     """vectorbt 回测引擎（Portfolio.from_order_func 形制）。"""
 
     def __init__(self, init_cash: float = 100000, fee: float = 0.001,
-                 slippage: float = 0.0005):
+                 slippage: float = 0.0005, db_path=None):
         self.init_cash = init_cash
         self.fee = fee
         self.slippage = slippage
+        # series 档 fx 形制装载依赖（dynamic-stop-loss-series 4.2）：
+        # 插件注册表查询经 db_path；None=不支持 fx 形制（装载显式拒
+        # ——桥层/路由传入，纯计算直调面仅指标形制可用）
+        self.db_path = db_path
 
     def _position_sizing_disclosure(
         self, dna, portfolio, enhanced_df,
@@ -1293,7 +1441,7 @@ class BacktestEngine:
          max_hold, time_exit, position_mode_code, risk_fraction,
          effective_first_size, max_position_loss,
          ) = _per_dna_risk_params(
-            dna.risk_genes, enhanced_df)
+            dna.risk_genes, enhanced_df, db_path=self.db_path)
         # 首笔生效比例（add-position-sizing-params 2.1）：size_pct 赋值
         # 源从装配元组取（effective_first_size=声明 initial_fraction 否
         # 则 position_size）——物化分派单点，两入口同批接线
@@ -1699,7 +1847,8 @@ class BacktestEngine:
         # per-DNA 装配单源 _per_dna_risk_params（与 _build_portfolio 共享
         # ——漏装=该列按缺省执行=与单路径静默分叉）；非 atr 模式占位
         # 全 1 列（引擎不消费）
-        per_dna = [_per_dna_risk_params(dna.risk_genes, enhanced_df)
+        per_dna = [_per_dna_risk_params(dna.risk_genes, enhanced_df,
+                                        db_path=self.db_path)
                    for dna in individuals]
         sl_mode_vals = np.array([p[0] for p in per_dna], dtype=np.float64)
         atr_matrix = np.column_stack([

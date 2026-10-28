@@ -284,6 +284,17 @@ def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]
     indicator_names = _dna_indicator_names(dna)
     formula_refs = {s["ref"] for s in (dna.signal_sources or [])
                     if s.get("type") == "formula" and s.get("ref")}
+    # series 档止损线来源 warmup 两轨并入（dynamic-stop-loss-series
+    # 4.2——warmup 覆盖面=求值面）：指标形式并入内置指标清单（周期×3
+    # 规则自动推导）；fx 形式并入插件列集（plugin_columns_lookback
+    # 依赖闭包同点扩展）
+    _sl_src = getattr(dna.risk_genes, "sl_series_source", None)
+    if isinstance(_sl_src, dict):
+        if "indicator" in _sl_src and _sl_src["indicator"] not in \
+                indicator_names:
+            indicator_names = indicator_names + [_sl_src["indicator"]]
+        elif "column" in _sl_src:
+            formula_refs.add(str(_sl_src["column"]))
     # 基因级周期分组（unblock-research-validation 预热第三维）：
     # 分组提取单源 _gene_tf_axis_refs（B8 抽取——与短窗预检共用）
     indicator_tfs = _gene_tf_axis_refs(dna)
