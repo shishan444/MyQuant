@@ -366,6 +366,14 @@ class BinanceFapiStream:
         timeframe = kline.get("i")
         if not symbol or not timeframe:
             return
+        # 键域校验（批次三 CARD-04）：订阅面固定 12 键——清单外键的
+        # 推送（端点异常加推/配置漂移）不入 last_push（健康面静默面
+        # 不被未知键稀释）也不投递（下游 registry 按键路由不认识）
+        if (symbol, timeframe) not in FIXED_SUBSCRIBE_KEYS:
+            logger.warning(
+                "fapi 流清单外键推送（丢弃）：symbol=%s tf=%s",
+                symbol, timeframe)
+            return
         with self._state_lock:
             self._last_push[(symbol, timeframe)] = self._now_fn()
         if not kline.get("x"):  # forming 更新推送——不投递
