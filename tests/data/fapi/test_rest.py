@@ -159,13 +159,13 @@ class TestThreeFunctions:
         page1 = [_kline_row(_T0 + i * 60_000) for i in range(3)]
         page2 = [_kline_row(_T0 + 3 * 60_000 + i * 60_000) for i in range(2)]
         client, sdk = _make_client({"klines_pages": [page1, page2]})
-        # end=末根开盘+1ms（半开区间恰好覆盖全部五行——两次请求即止）
+        # end=末根收盘时刻（五行全闭合）；末页后第三次空探测终止分页
         frame = client.fetch_closed_bars(
             "BTCUSDT", "1m",
             pd.Timestamp(_T0, unit="ms", tz="UTC"),
-            pd.Timestamp(_T0 + 4 * 60_000 + 1, unit="ms", tz="UTC"))
+            pd.Timestamp(_T0 + 5 * 60_000, unit="ms", tz="UTC"))
         assert len(frame) == 5
-        assert len(sdk.klines_calls) == 2  # 两页两次请求
+        assert len(sdk.klines_calls) == 3  # 两页有数据+一次空探测终止
         # 第二页起点=page1 末根（第三根）开盘+1ms
         assert sdk.klines_calls[1]["startTime"] == _T0 + 2 * 60_000 + 1
 
@@ -177,6 +177,19 @@ class TestThreeFunctions:
             "BTCUSDT", "1m",
             pd.Timestamp(_T0, unit="ms", tz="UTC"),
             pd.Timestamp(_T0 + 60_000, unit="ms", tz="UTC"))  # end=第二根开盘
+        assert len(frame) == 1
+        assert frame.index[0] == pd.Timestamp(_T0, unit="ms", tz="UTC")
+
+    def test_klines_forming_tail_filtered(self):
+        """闭合契约：未闭合尾行（openTime+tf>end）滤除——REST 只回闭合帧。"""
+        client, _ = _make_client({"klines_pages": [[
+            _kline_row(_T0),            # 00:00 根——00:01 已闭合 ✓
+            _kline_row(_T0 + 60_000),   # 00:01 根——end=00:01:59.999 未闭合 ✗
+        ]]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp(_T0, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 120_000 - 1, unit="ms", tz="UTC"))
         assert len(frame) == 1
         assert frame.index[0] == pd.Timestamp(_T0, unit="ms", tz="UTC")
 

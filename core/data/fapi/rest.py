@@ -26,6 +26,8 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
+from core.data.timeframes import TF_SECONDS
+
 logger = logging.getLogger(__name__)
 
 # ── 端点与方法族白名单（spec 写死；触金扫描常驻测试消费）────────
@@ -232,7 +234,11 @@ class FapiRestClient:
             cursor = next_cursor
         frame = _klines_rows_to_frame(collected)
         end_bound = pd.Timestamp(end_ms, unit="ms", tz="UTC")
-        return frame[frame.index < end_bound]
+        # 闭合过滤蕴含半开边界（openTime+tf<=end 蕴含 openTime<end）：
+        # 端点 klines 含当前未闭合 bar（无 x 字段），本地按周期时长判闭合
+        tf_seconds = TF_SECONDS.get(timeframe, 60)
+        return frame[
+            frame.index + pd.Timedelta(seconds=tf_seconds) <= end_bound]
 
     def fetch_exchange_info(self) -> dict:
         """拉取交易规则（exchangeInfo——filters 提取归 change-4 消费）。

@@ -101,13 +101,13 @@ class _FormHarness:
             research_status_snapshot="unverified",
             initial_cash=10_000.0, leverage=1, window_bars=window)
         self.registry = FeedRegistry(
-            self.data_dir, fetcher=lambda **k: self.df,
+            self.data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: pd.DataFrame(
                 {"funding_rate": []},
                 index=pd.DatetimeIndex([], name="timestamp")))
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
-        self.feed.refresh()
 
     def run_task(self) -> PaperTaskExecutor:
         ex = PaperTaskExecutor(

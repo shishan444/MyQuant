@@ -105,12 +105,11 @@ class _Harness:
 
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _empty_funding_frame())
         # 预建 feed（executor 装载链查费率面；dummy 订阅防回收）
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
-        self.feed.refresh()
         self.pushes: list[dict] = []
 
     def make_executor(self) -> PaperTaskExecutor:

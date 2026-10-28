@@ -75,18 +75,18 @@ class _FundingHarness:
         self._last_refresh = pd.Timestamp("2026-01-01", tz="UTC")
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: self._funding_holder["frame"],
             now_fn=lambda: self._last_refresh)
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
-        self.feed.refresh()  # 建立初始索引基线
+        self.feed.reconcile()  # 建立初始 funding 索引基线
 
     def set_funding_times(self, times) -> None:
-        """替换索引源并刷新（推进节流时钟——下一 refresh 生效）。"""
+        """替换索引源并刷新（推进节流时钟——下一 reconcile 生效）。"""
         self._funding_holder["frame"] = _funding_frame(times)
         self._last_refresh += pd.Timedelta(hours=2)  # 跨节流间隔
-        self.feed.refresh()
+        self.feed.reconcile()
 
     def make_executor(self, **overrides) -> PaperTaskExecutor:
         row = paper.get_task(self.db, self.task_id)

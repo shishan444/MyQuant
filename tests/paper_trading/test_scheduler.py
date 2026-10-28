@@ -63,7 +63,7 @@ class _SchedulerHarness:
         init_db_ext(self.db)
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: self._empty_funding())
         self.recover_calls: list[dict] = []
         self.pushes: list[dict] = []
@@ -428,7 +428,9 @@ class TestRunnerStatus:
     def test_status_payload(self, tmp_path):
         h = _SchedulerHarness(tmp_path, max_running=4)
         try:
-            tids = [h.create_task() for _ in range(2)]
+            # 大窗口保持 running（装载广播同步到达首帧——小窗口任务
+            # 毫秒级 completed，running 瞬态不可观察）
+            tids = [h.create_task(window_bars=10_000) for _ in range(2)]
             h.scheduler.run_once()
             _wait_task_status(h.db, tids[0], {"running"})
             _wait_task_status(h.db, tids[1], {"running"})
@@ -711,20 +713,20 @@ class TestDaemonAndDefensivePaths:
 
     def test_refresh_feeds_skips_dead_feed_and_swallows_error(
             self, tmp_path):
-        """_refresh_feeds 两防御分支：get 返 None 的键跳过+refresh
+        """_refresh_feeds 两防御分支：get 返 None 的键跳过+reconcile
         抛异常吞咽续轮。"""
         h = _SchedulerHarness(tmp_path)
         broken_feed = MagicMock()
         broken_feed.subscriber_count = 1
-        broken_feed.refresh = MagicMock(
-            side_effect=RuntimeError("feed 刷新异常"))
+        broken_feed.reconcile = MagicMock(
+            side_effect=RuntimeError("feed 对账异常"))
         fake_registry = MagicMock()
         fake_registry.active_keys = [("GHOST", "4h"), ("DEAD", "1h")]
         fake_registry.get = lambda *k: (
             None if k[0] == "DEAD" else broken_feed)
         h.scheduler.registry = fake_registry
         h.scheduler.run_once()  # 两分支均不炸即通过
-        broken_feed.refresh.assert_called_once()
+        broken_feed.reconcile.assert_called_once()
 
     def test_executor_concluded_without_client_callback_noop(self, tmp_path):
         """终态回调清理：未挂 on_concluded 客户端回调 → 清理后静默

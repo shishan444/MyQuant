@@ -296,16 +296,17 @@ class PaperScheduler:
         return recover_task(db_path, row, **kwargs)
 
     def _refresh_feeds(self) -> None:
-        """驱动活跃 feed 刷新（订阅制共享——同键任务一份拉取）。"""
+        """驱动活跃 feed 对账（守护循环节拍：缺口判定→REST 补拉——
+        订阅制共享，同键任务一份拉取；WS 闭合事件走接入层回调不经此）。"""
         for key in self.registry.active_keys:
             feed = self.registry.get(*key)
             if feed is None or feed.subscriber_count == 0:
                 continue
             try:
-                feed.refresh()
+                feed.reconcile()
             except Exception:
                 logger.exception(
-                    "feed 刷新失败 %s（续轮）", key)
+                    "feed 对账失败 %s（续轮）", key)
 
     def _pickup_pending(self) -> None:
         """拾取：活跃数 < 上限时按 created_at 顺序拾取 pending。

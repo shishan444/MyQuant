@@ -73,12 +73,12 @@ class _Harness:
 
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame(funding_times))
         # 预建带 funding 索引的 feed（executor 查费率面；dummy 订阅防回收）
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
-        self.feed.refresh()
+        self.feed.reconcile()  # funding 索引基线
         self.pushes: list[dict] = []
         self.concluded: list[tuple[str, str]] = []
 
@@ -423,20 +423,19 @@ class TestPrepareEscapeGuard:
         h = _Harness(tmp_path)
         daily = make_ohlcv(n=60, freq="1d", seed=7, base_price=100.0)
         save_parquet(daily, h.data_dir / "BTCUSDT_1d.parquet")
-        frames = {"4h": h.df, "1d": daily}
 
-        def broken_refresh(self):
-            raise RuntimeError("fetch exploded")
+        def broken_reconcile(self):
+            raise RuntimeError("reconcile exploded")
 
         h.registry = FeedRegistry(
             h.data_dir,
-            fetcher=lambda **k: frames[k["interval"]],
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame([]))
-        # feed.refresh 打补丁为抛错（模拟归档通道故障）
+        # feed.reconcile 打补丁为抛错（模拟对账通道故障）
         from core.paper_trading.runtime.feed import SymbolFeed
 
-        original = SymbolFeed.refresh
-        SymbolFeed.refresh = broken_refresh
+        original = SymbolFeed.reconcile
+        SymbolFeed.reconcile = broken_reconcile
         try:
             h.task_id = paper.create_task(
                 h.db, strategy_id="strat-mtf",
@@ -448,7 +447,7 @@ class TestPrepareEscapeGuard:
             ex = h.make_executor()
             assert ex._prepare_guarded() is False
         finally:
-            SymbolFeed.refresh = original
+            SymbolFeed.reconcile = original
         task = h.task()
         assert task["status"] == "error"
         assert "prepare_failed" in task["error_detail"]
@@ -464,10 +463,9 @@ class TestMtfPrepare:
         daily = make_ohlcv(n=60, freq="1d", seed=7, base_price=100.0)
         if with_aux:
             save_parquet(daily, h.data_dir / "BTCUSDT_1d.parquet")
-        frames = {"4h": h.df, "1d": daily}
         h.registry = FeedRegistry(
             h.data_dir,
-            fetcher=lambda **k: frames[k["interval"]],
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame([]))
         return h
 
@@ -666,10 +664,9 @@ class TestRunLifecyclePaths:
         h = _Harness(tmp_path)
         daily = make_ohlcv(n=60, freq="1d", seed=7, base_price=100.0)
         save_parquet(daily, h.data_dir / "BTCUSDT_1d.parquet")
-        frames = {"4h": h.df, "1d": daily}
         h.registry = FeedRegistry(
             h.data_dir,
-            fetcher=lambda **k: frames[k["interval"]],
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame([]))
         h.task_id = paper.create_task(
             h.db, strategy_id="strat-mtf",
@@ -797,10 +794,9 @@ class TestRunLifecyclePaths:
         h = _Harness(tmp_path)
         empty_daily = pd.DataFrame()
         save_parquet(empty_daily, h.data_dir / "BTCUSDT_1d.parquet")
-        frames = {"4h": h.df, "1d": empty_daily}
         h.registry = FeedRegistry(
             h.data_dir,
-            fetcher=lambda **k: frames[k["interval"]],
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame([]))
         h.task_id = paper.create_task(
             h.db, strategy_id="strat-mtf3",
