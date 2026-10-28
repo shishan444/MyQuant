@@ -66,6 +66,11 @@ def _mode_range(mode: str) -> Tuple[float, float]:
 
     if mode == "atr":
         return SL_ATR_MIN, SL_ATR_MAX
+    if mode == "series":
+        # series 档无标量值域（线值经 sl_series_source 列给出——
+        # exit_sweep grid 该档 entry 允许空 stops 形式 + sl_series_
+        # source 必携；值域维度不自动跟随）
+        return 0.0, float("inf")
     return SL_PCT_MIN, SL_PCT_MAX
 
 
@@ -121,13 +126,42 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
     #   循环外单点取 pct 域对全模式统一适用已被值域分叉取代：atr 档
     #   合法倍数（如 2.0）曾按 [0.005,0.20] 被误拒、无意义小值（如
     #   0.05 倍）被误放——量纲双关的值域义务在消费方，非自动跟随）
+    # series 档形制（dynamic-stop-loss-series 4.3）：entry 空 stops
+    # 合法（线值非标量）+ sl_series_source 必携（指标/fx 形制）；非
+    # series 档 entry 空 stops 仍拒 + sl_series_source 不得携带
     total_groups = 0
     for entry in grid["modes"]:
         mode = entry["mode"]
         lo, hi = _mode_range(mode)
+        if mode == "series":
+            src = entry.get("sl_series_source")
+            if not isinstance(src, dict) or (
+                    "indicator" not in src and "column" not in src):
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "series 档 grid entry 须携带 sl_series_source"
+                    "（指标形制 {indicator, params, field?} 或 fx 形制"
+                    " {column}）",
+                    detail={"param": "grid.modes[].sl_series_source"})
+            if "indicator" in src and "column" in src:
+                raise ResearchError(
+                    "RESEARCH_PARAM_INVALID",
+                    "sl_series_source 两形制互斥",
+                    detail={"param": "grid.modes[].sl_series_source"})
+        elif "sl_series_source" in entry:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"sl_series_source 仅 series 档 entry 可携带"
+                f"（当前 mode={mode}）",
+                detail={"param": "grid.modes[].sl_series_source",
+                        "mode": mode})
         for key in ("stops", "take_profits"):
             values = entry[key]
-            if not isinstance(values, list) or not values:
+            # series 档 stops 空列表合法（线值经 sl_series_source
+            # 列给出——take_profits 仍须非空：TP 是标量照常扫描）
+            if (not isinstance(values, list)
+                    or (not values and not (mode == "series"
+                                            and key == "stops"))):
                 raise ResearchError(
                     "RESEARCH_PARAM_INVALID",
                     f"grid.modes[].{key} 须为非空列表（空列表乘积视 0 "

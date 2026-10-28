@@ -581,19 +581,20 @@ _SCALING_ROLES = frozenset({
 
 
 def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
-    """live 链兼容性校验（0.4.2 R2/D3 扩展——独立入口，与 validate_dna
-    严格分层：trail/分批是合法 DNA 形态，validate_dna 不因此报错，本
-    函数只在策略进入 **live 链**装载时判链路能力——回放/模拟旧链已
-    退役，回测引擎为能力全集基准不设闸门，纸盘新域支持分批与 trail
-    均不经本闸门）。
+    """交易链路兼容性校验（0.4.2 R2/D3 扩展+dynamic-stop-loss-series
+    link 枚举化——独立入口，与 validate_dna 严格分层：atr/trail/
+    series 是合法 DNA 形态，validate_dna 不因此报错，本函数只在策略
+    进入具体交易链装载时判链路能力——回测引擎为能力全集基准不设
+    闸门）。
 
     判据一（模式×链路静态能力矩阵）：
-    - sl_mode="trail"：live 链拒（live 链无峰值回撤实现；回测与
-      纸盘新域支持）。
-    - sl_mode="atr"：live 链拒（live 链 SL/TP v1 仅 pct——
-      _attach_sl_tp 按 pct 挂单，atr 倍数按 pct 挂单将产出
-      sl=entry×(1−stop_loss) 的负价无效止损单）。
-    - pct：放行。
+    - sl_mode="trail"：live 链拒（无峰值回撤实现）；paper 放行
+      （纸盘新域支持——矩阵新行=既有行为定形）。
+    - sl_mode="atr"：live 链拒（SL/TP v1 仅 pct——atr 倍数按 pct
+      挂单将产出负价无效止损单）；paper 放行（ATR 列装载支持）。
+    - sl_mode="series"：live 与 paper 均拒（比 trail 严一档——纸盘
+      kernel 无逐 bar 外部列装载通道；后续专项补齐）。
+    - pct：三链放行。
 
     判据二（分批角色基因存在性——DNA 层静态判别，含 layers 展开）：
         signal_genes ∪ layers[*].signal_genes 任一 role ∈ 分批角色集 →
@@ -601,30 +602,43 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
 
     Args:
         dna: 待装载的策略 DNA。
-        link: 交易链路标识（恒 "live"——由 live 插桩点传入，不猜测来源）。
+        link: 交易链路标识 ∈ {"live", "paper"}（由链路插桩点传入）。
 
     Returns:
         拒绝原因清单（空列表=兼容放行）。
 
     Raises:
-        ValueError: link 非法（编程错误——live 插桩点是唯一调用方）。
+        ValueError: link 非法（编程错误——链路插桩点是唯一调用方）。
     """
     reasons: List[str] = []
-    if link != "live":
-        raise ValueError(f"link 须为 live，got {link!r}")
+    if link not in ("live", "paper"):
+        raise ValueError(f"link 须为 live/paper，got {link!r}")
 
     sl_mode = dna.risk_genes.sl_mode
 
     # 判据一：模式×链路
     if sl_mode == "trail":
-        reasons.append(
-            "sl_mode='trail'（追踪止损）live 链无峰值回撤实现"
-            "（回测与纸盘新域支持），不支持装载")
+        if link == "live":
+            reasons.append(
+                "sl_mode='trail'（追踪止损）live 链无峰值回撤实现"
+                "（回测与纸盘新域支持），不支持装载")
     elif sl_mode == "atr":
-        reasons.append(
-            "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
-            "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
-            "sl=entry×(1−stop_loss) 的负价无效止损单")
+        if link == "live":
+            reasons.append(
+                "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
+                "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
+                "sl=entry×(1−stop_loss) 的负价无效止损单")
+    elif sl_mode == "series":
+        if link == "live":
+            reasons.append(
+                "sl_mode='series'（动态止损线）live 链不支持"
+                "（后续专项补齐）——series 档止损线为逐 bar 外部列，"
+                "live SL/TP v1 挂单形制不可表达")
+        else:
+            reasons.append(
+                "sl_mode='series'（动态止损线）纸盘链不支持"
+                "（后续专项补齐）——纸盘 kernel 无逐 bar 外部列装载"
+                "通道；回测域支持（能力全集基准）")
 
     # 判据二：分批角色（signal_genes 与全部 layers 展开并集）
     seen_roles = set()
@@ -636,7 +650,8 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
     hit_roles = sorted(
         (r for r in seen_roles if r in _SCALING_ROLES),
         key=lambda r: r.value)
-    if hit_roles:
+    if hit_roles and link == "live":
+        # 判据二仅 live 面（纸盘新域支持分批角色——矩阵定形）
         role_names = "、".join(r.value for r in hit_roles)
         reasons.append(
             f"策略含分批仓位角色基因（{role_names}）——live 链对部分"
