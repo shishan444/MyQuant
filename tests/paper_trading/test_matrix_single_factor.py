@@ -108,7 +108,7 @@ class _MatrixHarness:
                 {"funding_rate": [0.0001] * len(idx)}, index=idx)
 
         self.registry = FeedRegistry(
-            self.data_dir, fetcher=lambda **k: self.df,
+            self.data_dir, rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=_fund)
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
@@ -117,7 +117,7 @@ class _MatrixHarness:
         for feed in [self.feed] + [
                 self.registry.get("BTCUSDT", tf)
                 for tf in self.aux_frames]:
-            feed.refresh()
+            feed.reconcile()  # funding 索引基线
 
     def run_task(self) -> "PaperTaskExecutor":
         ex = PaperTaskExecutor(

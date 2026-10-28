@@ -296,16 +296,17 @@ class PaperScheduler:
         return recover_task(db_path, row, **kwargs)
 
     def _refresh_feeds(self) -> None:
-        """驱动活跃 feed 刷新（订阅制共享——同键任务一份拉取）。"""
+        """驱动活跃 feed 对账（守护循环节拍：缺口判定→REST 补拉——
+        订阅制共享，同键任务一份拉取；WS 闭合事件走接入层回调不经此）。"""
         for key in self.registry.active_keys:
             feed = self.registry.get(*key)
             if feed is None or feed.subscriber_count == 0:
                 continue
             try:
-                feed.refresh()
+                feed.reconcile()
             except Exception:
                 logger.exception(
-                    "feed 刷新失败 %s（续轮）", key)
+                    "feed 对账失败 %s（续轮）", key)
 
     def _pickup_pending(self) -> None:
         """拾取：活跃数 < 上限时按 created_at 顺序拾取 pending。
@@ -560,7 +561,13 @@ class PaperScheduler:
         return "stopped" if hit > 0 else "terminal"
 
     def status(self) -> Dict[str, Any]:
-        """runner-status 数据面（活跃清单/上限/运行数/pending 深度）。"""
+        """runner-status 数据面（既有四字段+健康四组——change-1 任务 5）。
+
+        健康组经 registry 聚合（scheduler→registry→feed/stream 注入
+        方向，无循环 import）：ws（连接态/按键最后推送/静默秒）、
+        flush_buffer（按键缓冲行数）、reconcile（最近对账时刻与三值
+        结果）、backfill（建库状态）。未启动面=组内缺省值（K2 语义）。
+        """
         with self._lock:
             active_ids = sorted(self._executors)
         pending_count = paper_repo.count_tasks(
@@ -570,7 +577,67 @@ class PaperScheduler:
             "running_count": len(active_ids),
             "active_task_ids": active_ids,
             "pending_depth": pending_count,
+            "ws": self._ws_health(),
+            "flush_buffer": self._flush_buffer_health(),
+            "reconcile": self._reconcile_health(),
+            "backfill": self._backfill_health(),
         }
+
+    def _ws_health(self) -> Dict[str, Any]:
+        """WS 连接健康组（stream 未启动=connected False+空按键面）。"""
+        health: Dict[str, Any] = {
+            "connected": False, "last_push": {}, "silent_seconds": {}}
+        stream = getattr(self.registry, "fapi_stream", None)
+        if stream is None:
+            return health
+        health["connected"] = bool(stream.connected)
+        from core.data.fapi.stream import FIXED_SUBSCRIBE_KEYS
+
+        for symbol, timeframe in sorted(FIXED_SUBSCRIBE_KEYS):
+            pushed = stream.last_push((symbol, timeframe))
+            if pushed is None:
+                continue  # 从未推送的键不在披露面（未启动语义）
+            key = f"{symbol}_{timeframe}"
+            silent = stream.silent_seconds((symbol, timeframe))
+            health["last_push"][key] = pushed.isoformat()
+            health["silent_seconds"][key] = (
+                int(silent) if silent is not None else None)
+        return health
+
+    def _flush_buffer_health(self) -> Dict[str, int]:
+        """落盘缓冲水位组（按活跃 feed 键；无活跃 feed=空）。"""
+        buffer: Dict[str, int] = {}
+        for symbol, timeframe in self.registry.active_keys:
+            feed = self.registry.get(symbol, timeframe)
+            if feed is None:
+                continue
+            pending = feed.pending_rows_count
+            if pending:
+                buffer[f"{symbol}_{timeframe}"] = pending
+        return buffer
+
+    def _reconcile_health(self) -> Dict[str, Any]:
+        """最近对账状态组（多 feed 取最近一轮；无 feed=缺省）。"""
+        health: Dict[str, Any] = {"last_run": None, "last_result": None}
+        latest_run = None
+        for symbol, timeframe in self.registry.active_keys:
+            feed = self.registry.get(symbol, timeframe)
+            if feed is None:
+                continue
+            last_run, last_result = feed.reconcile_state
+            if last_run is not None and (
+                    latest_run is None or last_run > latest_run):
+                latest_run = last_run
+                health["last_run"] = last_run.isoformat()
+                health["last_result"] = last_result
+        return health
+
+    def _backfill_health(self) -> Dict[str, str]:
+        """建库状态组（未装配建库=空）。"""
+        backfill = getattr(self.registry, "backfill", None)
+        if backfill is None:
+            return {}
+        return backfill.status()
 
     # ── 内部 ────────────────────────────────────────────────
 

@@ -445,7 +445,7 @@ class PaperTaskExecutor:
                 sub = FeedSubscription(on_frames=lambda df, idx: None)
                 temp_subs.append((tf, sub))
                 feed = self.registry.acquire(symbol, tf, sub)
-                feed.refresh()  # 装载校验期单次刷新（增量形制）
+                feed.reconcile()  # 装载校验期单次对账（尾戳缺口补拉）
                 latest = feed.latest_df
                 if latest is None or latest.empty:
                     return None

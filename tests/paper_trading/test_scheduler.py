@@ -63,7 +63,7 @@ class _SchedulerHarness:
         init_db_ext(self.db)
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: self._empty_funding())
         self.recover_calls: list[dict] = []
         self.pushes: list[dict] = []
@@ -428,7 +428,9 @@ class TestRunnerStatus:
     def test_status_payload(self, tmp_path):
         h = _SchedulerHarness(tmp_path, max_running=4)
         try:
-            tids = [h.create_task() for _ in range(2)]
+            # 大窗口保持 running（装载广播同步到达首帧——小窗口任务
+            # 毫秒级 completed，running 瞬态不可观察）
+            tids = [h.create_task(window_bars=10_000) for _ in range(2)]
             h.scheduler.run_once()
             _wait_task_status(h.db, tids[0], {"running"})
             _wait_task_status(h.db, tids[1], {"running"})
@@ -437,6 +439,108 @@ class TestRunnerStatus:
             assert status["running_count"] == 2
             assert sorted(status["active_task_ids"]) == sorted(tids)
             assert status["pending_depth"] == 0
+            # 健康四组恒在场（K2 未装配面缺省语义）
+            assert status["ws"] == {
+                "connected": False, "last_push": {}, "silent_seconds": {}}
+            assert status["flush_buffer"] == {}
+            assert status["reconcile"] == {
+                "last_run": None, "last_result": None}
+            assert status["backfill"] == {}
+        finally:
+            h.teardown()
+
+    def test_ws_health_groups_with_stream(self, tmp_path):
+        """K1：stream 装配后 ws 三面（connected/last_push 按键/
+        silent_seconds 按键——从未推送键不在披露面）。"""
+        import pandas as pd
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            now = pd.Timestamp("2030-01-01T00:10:00Z")
+            pushes = {
+                ("BTCUSDT", "1m"): pd.Timestamp("2030-01-01T00:09:30Z"),
+                ("ETHUSDT", "4h"): pd.Timestamp("2030-01-01T00:08:00Z"),
+            }
+
+            class _FakeStream:
+                connected = True
+
+                def last_push(self, key):
+                    return pushes.get(key)
+
+                def silent_seconds(self, key):
+                    pushed = pushes.get(key)
+                    return None if pushed is None else (
+                        now - pushed).total_seconds()
+
+            h.registry.fapi_stream = _FakeStream()
+            status = h.scheduler.status()
+            ws = status["ws"]
+            assert ws["connected"] is True
+            assert ws["last_push"] == {
+                "BTCUSDT_1m": "2030-01-01T00:09:30+00:00",
+                "ETHUSDT_4h": "2030-01-01T00:08:00+00:00",
+            }
+            assert ws["silent_seconds"] == {
+                "BTCUSDT_1m": 30, "ETHUSDT_4h": 120}
+        finally:
+            h.teardown()
+
+    def test_reconcile_health_three_values(self, tmp_path):
+        """K3：reconcile 三值（ok/gap_filled:N/failed）取最近一轮。"""
+        import pandas as pd
+
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+            # 无缺口对账=ok
+            feed.reconcile()
+            assert h.scheduler.status()["reconcile"]["last_result"] == "ok"
+            # 缺口补拉=gap_filled:N
+            frame = h.df.iloc[-1:].copy()
+            frame.index = frame.index + pd.Timedelta(hours=4)
+            feed._rest_fetcher = (  # noqa: SLF001——测试注入补拉帧
+                lambda *a, **k: frame)
+            feed._now_fn = (  # noqa: SLF001——推时钟造缺口
+                lambda: h.df.index[-1] + pd.Timedelta(hours=20))
+            feed.reconcile()
+            assert h.scheduler.status()["reconcile"][
+                "last_result"] == "gap_filled:1"
+            # REST 异常=failed（记录后上抛——调度器吞咽续轮）
+            feed._rest_fetcher = (  # noqa: SLF001
+                lambda *a, **k: (_ for _ in ()).throw(
+                    ConnectionError("x")))
+            with pytest.raises(ConnectionError):
+                feed.reconcile()
+            assert h.scheduler.status()["reconcile"][
+                "last_result"] == "failed"
+        finally:
+            h.teardown()
+
+    def test_flush_buffer_health(self, tmp_path):
+        """flush_buffer 组：高频缓冲行数按活跃 feed 键披露。"""
+        import pandas as pd
+
+        from core.data.fapi.stream import ClosedBarEvent
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+            event = ClosedBarEvent(
+                symbol="BTCUSDT", timeframe="4h",
+                open_time=h.df.index[-1] + pd.Timedelta(hours=4),
+                open=100.0, high=101.0, low=99.0, close=100.5, volume=10.0)
+            feed.on_closed_bar(event)  # 4h 低频即写——缓冲为空
+            assert h.scheduler.status()["flush_buffer"] == {}
         finally:
             h.teardown()
 
@@ -711,20 +815,20 @@ class TestDaemonAndDefensivePaths:
 
     def test_refresh_feeds_skips_dead_feed_and_swallows_error(
             self, tmp_path):
-        """_refresh_feeds 两防御分支：get 返 None 的键跳过+refresh
+        """_refresh_feeds 两防御分支：get 返 None 的键跳过+reconcile
         抛异常吞咽续轮。"""
         h = _SchedulerHarness(tmp_path)
         broken_feed = MagicMock()
         broken_feed.subscriber_count = 1
-        broken_feed.refresh = MagicMock(
-            side_effect=RuntimeError("feed 刷新异常"))
+        broken_feed.reconcile = MagicMock(
+            side_effect=RuntimeError("feed 对账异常"))
         fake_registry = MagicMock()
         fake_registry.active_keys = [("GHOST", "4h"), ("DEAD", "1h")]
         fake_registry.get = lambda *k: (
             None if k[0] == "DEAD" else broken_feed)
         h.scheduler.registry = fake_registry
         h.scheduler.run_once()  # 两分支均不炸即通过
-        broken_feed.refresh.assert_called_once()
+        broken_feed.reconcile.assert_called_once()
 
     def test_executor_concluded_without_client_callback_noop(self, tmp_path):
         """终态回调清理：未挂 on_concluded 客户端回调 → 清理后静默
@@ -1179,3 +1283,65 @@ class TestStrategyReturnFlow:
         h2.seed_task("pt_cb000000001", "st-cb", status="completed")
         h2.scheduler._executor_concluded("pt_cb000000001", "completed")
         assert calls and set(calls) == {"st-cb"}, "回调路径经守卫单点"
+
+    def test_flush_buffer_pending_rows_reported(self, tmp_path):
+        """flush_buffer 组记录侧：高频 1m 缓冲未 flush 行数按键披露。"""
+        import pandas as pd
+
+        from core.data.fapi.stream import ClosedBarEvent
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "ETHUSDT", "1m",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("ETHUSDT", "1m")
+            base = pd.Timestamp("2030-01-01T00:00:00Z")
+            for i in (1, 2):
+                feed.on_closed_bar(ClosedBarEvent(
+                    symbol="ETHUSDT", timeframe="1m",
+                    open_time=base + pd.Timedelta(minutes=i),
+                    open=100.0, high=101.0, low=99.0, close=100.5,
+                    volume=10.0))
+            # 首根即刻 flush（last_flush=None）、第二根 60s 窗口内进缓冲
+            status = h.scheduler.status()["flush_buffer"]
+            assert status.get("ETHUSDT_1m") == 1
+        finally:
+            h.teardown()
+
+    def test_health_groups_feed_none_continue(self, tmp_path, monkeypatch):
+        """健康组竞态防御：active_keys 与 get 之间 feed 被回收（get
+        None）——两组跳过该键不炸（continue 分支）。"""
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            monkeypatch.setattr(
+                h.registry, "get", lambda *a, **k: None)  # 回收竞态窗口
+            status = h.scheduler.status()  # 不炸即通过
+            assert status["flush_buffer"] == {}
+            assert status["reconcile"] == {
+                "last_run": None, "last_result": None}
+        finally:
+            h.teardown()
+
+    def test_backfill_health_group_when_assembled(self, tmp_path):
+        """backfill 组装配面：registry.backfill 在场时 status 透传其
+        状态面（未装配空 dict 由既有 K2 用例承载）。"""
+        from core.paper_trading.runtime.feed import FixedKeyBackfill
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            backfill = FixedKeyBackfill(
+                h.data_dir, rest_fetcher=lambda *a, **k: pd.DataFrame(),
+                now_fn=lambda: pd.Timestamp("2030-01-01T00:00:00Z"))
+            h.registry.backfill = backfill
+            backfill.run_once()  # 空响应→全键 failed（CARD-03 单义）
+            assert h.scheduler.status()["backfill"] == backfill.status()
+            assert len(h.scheduler.status()["backfill"]) == 12  # 非空状态面
+        finally:
+            h.teardown()

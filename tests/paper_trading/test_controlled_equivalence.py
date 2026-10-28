@@ -125,10 +125,12 @@ class _Harness:
             fee=fee, slippage=slippage)
 
         self.registry = FeedRegistry(
-            self.data_dir, fetcher=lambda **k: self.df,
+            self.data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: _funding_frame(funding_times))
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
-        self.registry.acquire("BTCUSDT", "4h", self._dummy).refresh()
+        # acquire 装载行情基线+reconcile 建立 funding 索引基线
+        self.registry.acquire("BTCUSDT", "4h", self._dummy).reconcile()
 
         row = paper.get_task(self.db, self.task_id)
         executor = PaperTaskExecutor(

@@ -57,11 +57,11 @@ class _RecoveryHarness:
 
         self.registry = FeedRegistry(
             self.data_dir,
-            fetcher=lambda **k: self.df,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
             funding_refresher=lambda **k: self._funding(funding_times))
         self._dummy = FeedSubscription(on_frames=lambda df, idx: None)
         self.feed = self.registry.acquire("BTCUSDT", "4h", self._dummy)
-        self.feed.refresh()
+        self.feed.reconcile()  # funding 索引基线
 
     @staticmethod
     def _funding(times):

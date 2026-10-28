@@ -109,7 +109,7 @@ class TestPaperDoubleInstrumentation:
             initial_cash=10000.0, leverage=1)
         row = paper.get_task(db, task_id)
         from core.paper_trading.runtime.feed import FeedRegistry
-        registry = FeedRegistry(tmp_path, fetcher=lambda **k: pd.DataFrame())
+        registry = FeedRegistry(tmp_path)
         ex = PaperTaskExecutor(
             db, row, registry=registry, push=lambda *a: None,
             on_concluded=lambda *a: None)
@@ -155,7 +155,7 @@ class TestPaperDoubleInstrumentation:
             initial_cash=10000.0, leverage=1)
         row = paper.get_task(db, task_id)
         from core.paper_trading.runtime.feed import FeedRegistry
-        registry = FeedRegistry(tmp_path, fetcher=lambda **k: pd.DataFrame())
+        registry = FeedRegistry(tmp_path)
         ex = PaperTaskExecutor(
             db, row, registry=registry, push=lambda *a: None,
             on_concluded=lambda *a: None)
