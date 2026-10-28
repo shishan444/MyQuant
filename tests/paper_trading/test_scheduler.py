@@ -1450,3 +1450,24 @@ class TestRelaxedMountReturnFlow:
             "客户端结题回调透传（非 paper 态跳过回流不绑架结题）"
         assert h.strategy_status("st-chain") == status, "策略态不变"
         assert h.events("st-chain") == [], "零迁移事件"
+
+
+class TestDepletedDoesNotChangeStateMachine:
+    """change paper-depletion-terminal 任务 3 完成标准⑤：枯竭终态
+    （depleted）是 stopped 的 stop_reason 新值——五态集与合法迁移集
+    零改动（只增不改纪律；集内容锚另见 TestStatusTransitionsSource）。"""
+
+    def test_five_states_and_transitions_unchanged(self):
+        from core.persistence.repository.paper import (
+            PT_STATUS_PREDECESSORS, PT_STATUS_TRANSITIONS,
+        )
+        assert set(PT_STATUS_PREDECESSORS) == {
+            "pending", "running", "completed", "stopped", "error"}
+        assert PT_STATUS_TRANSITIONS == frozenset({
+            ("pending", "running"),
+            ("pending", "stopped"),
+            ("pending", "error"),
+            ("running", "completed"),
+            ("running", "stopped"),
+            ("running", "error"),
+        }), "depleted 不新增状态不新增迁移边（stop_reason 值域非状态域）"
