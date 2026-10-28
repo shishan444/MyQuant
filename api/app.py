@@ -48,11 +48,12 @@ def create_app(
         db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
         data_dir: Parquet 数据目录；缺省为项目根 data/market。
     """
+    # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
+    # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
+    project_root = Path(__file__).resolve().parent.parent
     if db_path is None:
-        project_root = Path(__file__).resolve().parent.parent
         db_path = project_root / "data" / "quant.db"
     if data_dir is None:
-        project_root = Path(__file__).resolve().parent.parent
         data_dir = project_root / "data" / "market"
 
     @asynccontextmanager
@@ -92,8 +93,13 @@ def create_app(
         try:
             with open(project_root / "config.yaml") as _f:
                 _cfg = _yaml.safe_load(_f) or {}
-        except Exception:
+        except (OSError, _yaml.YAMLError) as _exc:
+            # config 缺失/损坏：降级缺省并留痕（宽捕获会静默吞掉编程错误）
             _cfg = {}
+            logger.warning(
+                "config.yaml 读取失败（%s: %s），max_concurrent_tasks 用缺省 2",
+                type(_exc).__name__, _exc,
+            )
         _maxw = (_cfg.get("evolution") or {}).get(
             "max_concurrent_tasks", 2)
         runner = EvolutionRunner(

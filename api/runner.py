@@ -152,8 +152,15 @@ class EvolutionRunner(threading.Thread):
         self.data_dir = data_dir
         self.poll_interval = poll_interval
         # 上限钳制（防资源失控上界——config 越界静默收顶并日志留痕）
+        # 类型容错：config 值类型错（如 "two"/None）回缺省 2 而非启动崩溃
         requested = max_workers
-        self.max_workers = max(1, min(int(max_workers), self.MAX_WORKERS_CAP))
+        try:
+            requested = int(max_workers)
+        except (ValueError, TypeError):
+            logger.warning(
+                "max_workers=%r 类型非法（应为 int），回退缺省 2", max_workers)
+            requested = 2
+        self.max_workers = max(1, min(requested, self.MAX_WORKERS_CAP))
         if self.max_workers != requested:
             logger.warning(
                 "max_workers=%s 越界钳制为 %s（合法域 [1, %s]）",
