@@ -359,6 +359,14 @@ class PaperScheduler:
     def _replay_task_end(self, task_id: str, status: str) -> None:
         """任务终态触策略回流（paper→active，trigger=task_end）。
 
+        回流域前置守卫（change paper-mount-and-concurrency）：回流域=
+        「strategy.status='paper'」（与 _replay_paper_strategies 扫描
+        域同判据）——非 paper 态（放宽挂载的 draft/candidate/live 续挂
+        任务）正当跳过不调 transit（debug 留痕）：draft→active 是矩阵
+        合法转正边（transit 不做 trigger×边交叉校验），不守卫则
+        task_end 凭证会冒用转正通道（「draft 挂盘不构成转正通道」
+        用户终审语义）。
+
         三终态（completed/stopped/error）各自触发；凭证=task_id+终态+
         该策略无其他活跃 pt_task（credential.has_no_active_tasks 单点
         守卫，transit 内建判定）。返回族分流：迁移成功与非最后任务

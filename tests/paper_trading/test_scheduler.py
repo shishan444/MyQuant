@@ -1381,8 +1381,11 @@ class TestStrategyReturnFlow:
 
 class TestRelaxedMountReturnFlow:
     """挂载门槛放宽后的回流安全（change paper-mount-and-concurrency
-    任务 ④）：draft/candidate/live 续挂任务终态——非法前态回流尝试经
-    LifecycleError 兜底吸收（结题继续、策略态不变），回流链零改动。"""
+    任务 ④）：draft/candidate/live 续挂任务终态——回流域前置守卫
+    （回流域=「paper 态」与扫描域同判据）正当跳过，策略态不变零
+    迁移事件（draft→active 是矩阵合法转正边，不守卫则 task_end
+    凭证冒用转正通道——守卫是对齐「draft 挂盘不构成转正通道」
+    终审语义的正确实现）。"""
 
     @pytest.mark.parametrize("status", ["draft", "candidate", "live"])
     def test_relaxed_mount_terminal_no回流(self, tmp_path, status, caplog):
