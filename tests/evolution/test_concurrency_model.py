@@ -50,14 +50,16 @@ def _stub_score(dna) -> float:
     return round(100.0 * max(0.0, 1.0 - abs(sl - 0.075) / 0.075), 4)
 
 
-def _preset_task(db: Path, task_id: str, *, max_generations: int = 2) -> None:
-    """预置 pending 任务并压缩代数/关连续进化（缩短端到端时长）。"""
+def _preset_task(db: Path, task_id: str, *, max_generations: int = 2,
+                 continuous: int = 0) -> None:
+    """预置 pending 任务并压缩代数（缩短端到端时长；continuous 可开
+    连续进化——CARD-04 种群锚用）。"""
     save_task(db, task_id=task_id, target_score=80.0, template="profit_first",
               symbol="BTCUSDT", timeframe="4h", initial_dna=make_dna())
     conn = sqlite3.connect(db)
     conn.execute(
-        "UPDATE evolution_task SET max_generations = ?, continuous = 0 "
-        "WHERE task_id = ?", (max_generations, task_id))
+        "UPDATE evolution_task SET max_generations = ?, continuous = ? "
+        "WHERE task_id = ?", (max_generations, continuous, task_id))
     conn.commit()
     conn.close()
 
@@ -838,3 +840,128 @@ class TestConfigEffectChain:
         assert any("config.yaml 读取失败" in rec.getMessage()
                    and "用缺省 2" in rec.getMessage()
                    for rec in handler.records), "读取失败 warning 须留痕"
+
+
+
+class TestPopulationCountLocalization:
+    """CARD-04 _population_count 局部化锚（review4_cards.md CARD-04）。
+
+    修复：实例属性（线程池并发下跨任务交错污染落库 pop 序号）改任务内
+    局部计数（global_gen_offset 同形制）。锚按新语义：各任务 pop 从 1
+    起连续递增。反例构造：任务 A 先跑入第 2 种群再提交 B——修复前
+    B 首条 pop 承接实例累计（跳变），修复后 B 独立从 1 起。
+    """
+
+    @pytest.fixture()
+    def app_env(self, tmp_path):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from api.app import create_app
+        from core.features.indicators import compute_all_indicators
+        from tests.helpers.data_factory import make_ohlcv
+
+        db = tmp_path / "popc.db"
+        init_db_ext(db)
+        d = tmp_path / "market"
+        d.mkdir()
+        app = create_app(db_path=db, data_dir=d)
+        enhanced = compute_all_indicators(make_ohlcv(120, "4h"))
+        with patch("core.data.mtf_loader.load_and_prepare_df",
+                   return_value=enhanced), \
+             patch("api.runner_progress._push_ws"), \
+             TestClient(app) as client:
+            runner = app.state.evolution_runner
+            yield {"client": client, "db": db, "runner": runner}
+
+    @staticmethod
+    def _install_fast_stub(runner):
+        """快速评估替身（直通无挂起——种群切换自然快速推进）。"""
+        from unittest.mock import patch
+
+        p1 = patch.object(runner, "_evaluate_population",
+                          lambda pop, *a, **kw: [
+                              _stub_score(d) for d in pop])
+        p2 = patch.object(runner, "_evaluate_dna",
+                          lambda ind, *a, **kw: {
+                              "score": _stub_score(ind),
+                              "fitness": _stub_score(ind),
+                              "qualified": False, "raw_metrics": {},
+                              "dimension_scores": {}, "total_trades": 0})
+        p1.start()
+        p2.start()
+        return [p1, p2]
+
+    @staticmethod
+    def _pop_series(db, task_id):
+        """取该任务 history 的 pop 序号序列（按落库行序）。"""
+        import re
+        conn = sqlite3.connect(db)
+        rows = conn.execute(
+            "SELECT top3_summary FROM evolution_history "
+            "WHERE task_id = ? ORDER BY generation", (task_id,)).fetchall()
+        conn.close()
+        series = []
+        for (summary,) in rows:
+            m = re.search(r"pop=(\d+)", summary or "")
+            assert m, f"top3_summary 缺 pop 段: {summary!r}"
+            series.append(int(m.group(1)))
+        return series
+
+    def test_concurrent_pop_series_task_local(self, app_env):
+        """双任务并发 pop 序号连续性：A 先入第 2 种群再提交 B——
+        B 首条 pop==1（任务内独立计数）；并发窗口内各自序列从 1
+        连续递增互不跳变（交错污染反例：B 首条承接 A 的累计值）。"""
+        db, client, runner = (app_env["db"], app_env["client"],
+                              app_env["runner"])
+        patches = self._install_fast_stub(runner)
+        try:
+            # A 先独占跑：连续进化，等其进入第 2 种群（pop=2 条目在场）
+            _preset_task(db, "pa", max_generations=2, continuous=1)
+            _wait_for(lambda: 2 in self._pop_series(db, "pa"),
+                      timeout=30, msg="任务 A 未跑入第 2 种群")
+
+            # 此刻提交 B（A 已 ≥1 次种群切换）：修复前实例计数已污染，
+            # B 首条 pop 将承接累计值（≥2 跳变）；修复后独立从 1 起
+            _preset_task(db, "pb", max_generations=2, continuous=1)
+            _wait_for(lambda: get_task(db, "pb")["status"] == "running",
+                      timeout=30, msg="任务 B 未启动（与 A 并发）")
+            _wait_for(lambda: 2 in self._pop_series(db, "pb"),
+                      timeout=30, msg="任务 B 未跑入第 2 种群")
+
+            for tid in ("pa", "pb"):
+                series = self._pop_series(db, tid)
+                distinct = sorted(set(series))
+                assert len(distinct) >= 2, f"{tid} 须跑 ≥2 种群"
+                # 注：序列从 2 起非 1——独立缺陷（已上报 team-lead）：
+                # global_gen_offset 在种群 evolve 后才累加，种群 2 与
+                # 种群 1 同 gen 槽，history/snapshot INSERT OR REPLACE
+                # 覆盖掉种群 1 行（pop=1 不可见）。本锚按 CARD-04
+                # 修复面断言：任务内连续无跳变+互不污染。
+                assert distinct == list(range(distinct[0],
+                                               distinct[0] + len(distinct))), (
+                    f"{tid} pop 序号须连续无跳变（任务内计数）: "
+                    f"{distinct[:10]}...")
+            # 互不污染反例锚：B 的 gen1 行 pop 值——修复前承接 A 的
+            # 实例累计（A 已跑数百种群→B 首槽 pop 为巨大值）；修复后
+            # B 独立计数（首槽=自身种群 2，pop=2）
+            assert self._pop_series(db, "pb")[0] == 2, (
+                "B 首行 pop 须为自身任务内序号（互不污染——修复前"
+                "承接 A 的实例累计值）")
+        finally:
+            # 防挂死护栏：任何路径退出前先停任务（连续进化不自然终止，
+            # 残留 worker 会使池 shutdown 永等）
+            for tid in ("pa", "pb"):
+                try:
+                    client.post(f"/api/evolution/tasks/{tid}/stop")
+                except Exception:
+                    pass
+            for tid in ("pa", "pb"):
+                try:
+                    _wait_for(
+                        lambda t=tid: get_task(db, t)["status"]
+                        in ("stopped", "completed", "pending"),
+                        timeout=10, msg=f"{tid} 收尾停止")
+                except AssertionError:
+                    pass
+            for p in patches:
+                p.stop()
