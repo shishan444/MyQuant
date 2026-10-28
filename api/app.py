@@ -85,7 +85,19 @@ def create_app(
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
-        runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
+        # 受限并发（research-tooling-data-quality 卡 B）：config
+        # evolution.max_concurrent_tasks 可配（缺省 2 上限 4——runner
+        # 内钳制）；config 无段时用缺省
+        import yaml as _yaml
+        try:
+            with open(project_root / "config.yaml") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+        except Exception:
+            _cfg = {}
+        _maxw = (_cfg.get("evolution") or {}).get(
+            "max_concurrent_tasks", 2)
+        runner = EvolutionRunner(
+            db_path=db_path, data_dir=data_dir, max_workers=_maxw)
         app.state.evolution_runner = runner
 
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）

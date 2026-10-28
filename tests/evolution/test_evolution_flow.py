@@ -182,7 +182,8 @@ class TestRunnerErrorRecovery:
         with patch("core.data.mtf_loader.load_and_prepare_df", side_effect=RuntimeError("corrupt")):
             runner._run_task(row1)
 
-        assert runner._active_task_id is None
+        with runner._lock:
+            assert not runner._futures, "future 登记清空（并发模型语义）"
 
         # Second task: succeeds (no data -> stopped with no_data)
         save_task(tmp_db, "task-err-2", 80.0, "profit_first", "BTCUSDT", "4h", dna)
@@ -191,7 +192,8 @@ class TestRunnerErrorRecovery:
         with patch("core.data.mtf_loader.load_and_prepare_df", return_value=None):
             runner._run_task(row2)
 
-        assert runner._active_task_id is None
+        with runner._lock:
+            assert not runner._futures, "future 登记清空（并发模型语义）"
         row = get_task(tmp_db, "task-err-2")
         assert row["status"] == "stopped"
         assert row["stop_reason"] == "no_data"

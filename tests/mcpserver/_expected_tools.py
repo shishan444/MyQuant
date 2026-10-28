@@ -12,7 +12,9 @@ main 39949a7）。增减工具只改本常量一处；与 mcpserver/server.py �
 from __future__ import annotations
 
 EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
+    "batch_delete_strategies",
     "get_analysis_task",
+    "get_evolution_strategies",
     "get_hypothesis",
     "get_market_snapshot",
     "get_paper_history",
@@ -31,8 +33,10 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "list_signal_columns",
     "list_strategies",
     "mount_paper_task",
+    "pause_evolution_task",
     "poll_evolution_task",
     "query_indicator",
+    "resume_evolution_task",
     "run_staged_validation",
     "register_formula_plugin",
     "register_hypothesis",
@@ -41,10 +45,12 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "run_backtest",
     "run_isolated_validation",
     "run_random_window_test",
+    "stop_evolution_task",
     "submit_feature_request",
     "transition_hypothesis",
     "translate_hypothesis_to_strategy",
     "trigger_evolution",
     "unmount_paper_task",
     "union_balance",
+    "update_strategy_metadata",
 })

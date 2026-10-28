@@ -641,9 +641,18 @@ class TestRunnerDirectBranches:
                   template="explorer", symbol="BTCUSDT", timeframe="4h",
                   initial_dna=make_dna())
         update_task(runner.db_path, "t-done", status="stopped")
-        runner._active_task_id = "t-done"
+        # 并发模型（research-tooling-data-quality 卡 B）：属性退役改
+        # future 登记——终态 DB 行对应登记被 _tick 剔除
+        import concurrent.futures as _cf
+        runner._pool = _cf.ThreadPoolExecutor(max_workers=1)
+        _fut = runner._pool.submit(lambda: None)
+        _fut.result()
+        with runner._lock:
+            runner._futures["t-done"] = _fut
         runner._tick()
-        assert runner._active_task_id is None
+        with runner._lock:
+            assert "t-done" not in runner._futures
+        runner._pool.shutdown(wait=True)
 
     def test_tick_continues_active_running_task(self, tmp_path: Path) -> None:
         """active 任务仍 running → _tick 保留（代际推进归 on_generation）。"""

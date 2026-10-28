@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from core.persistence.orm.engine import engine_for
@@ -232,6 +233,7 @@ def create_strategy(
 def list_strategies_endpoint(
     symbol: Optional[str] = None,
     source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
@@ -254,6 +256,7 @@ def list_strategies_endpoint(
             db_path,
             symbol=symbol,
             source=source,
+            source_task_id=source_task_id,
             tags=tags,
             qualified=qualified,
             status=status,
@@ -267,7 +270,7 @@ def list_strategies_endpoint(
 
     total = count_strategies(
         db_path, symbol=symbol, source=source, tags=tags, qualified=qualified,
-        status=status,
+        status=status, source_task_id=source_task_id,
     )
     items = [_strategy_row_to_response(r) for r in rows]
     return StrategyListResponse(items=items, total=total)
@@ -424,3 +427,71 @@ def revalidate_strategy_endpoint(
         raise _lifecycle_error_to_http(exc) from exc
     row = get_strategy(db_path, strategy_id)
     return _strategy_row_to_response(row)
+
+
+# ── 批量管理（research-tooling-data-quality 卡 D：按任务圈定的常设
+#    管理通道——一次性全量清理由 change-2 任务 2.9 执行，本端点与其
+#    正交并存；source_task_id 必填=无圈定的全库批量删除不提供）──
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除请求体（confirm 契约=删除不可无声执行）。"""
+    source_task_id: str
+    generation_gt: Optional[int] = None
+    best_score_lt: Optional[float] = None
+    confirm: bool = False
+
+
+@router.post("/batch")
+def batch_delete_strategies(
+    payload: BatchDeleteRequest,
+    db_path: Path = Depends(get_db_path),
+) -> Dict[str, Any]:
+    """按进化任务批量物理删除其产物策略（不可逆——与单策略 DELETE
+    的归档语义不同，端点分离承载语义差异）。
+
+    确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附
+    matched_count 预览数+criteria 回显+hint（先看将删多少再确认）；
+    confirm=true → 单事务批量 DELETE，返回 {deleted_count, criteria}；
+    幂等：重复调用 matched 0→deleted_count=0。generation_gt/
+    best_score_lt 可选收紧（只删某代以上/分数以下——预览与执行
+    同判据）。
+    """
+    from sqlalchemy import and_, delete as sa_delete
+    from core.persistence.orm.engine import engine_for as _eng
+    from core.persistence.orm.models import Strategy as _St
+
+    criteria: Dict[str, Any] = {"source_task_id": payload.source_task_id}
+    conds = [_St.source_task_id == payload.source_task_id]
+    if payload.generation_gt is not None:
+        criteria["generation_gt"] = payload.generation_gt
+        conds.append(_St.generation > payload.generation_gt)
+    if payload.best_score_lt is not None:
+        criteria["best_score_lt"] = payload.best_score_lt
+        conds.append(_St.best_score < payload.best_score_lt)
+    where = and_(*conds)
+
+    from sqlalchemy import func as sa_func, select as sa_select
+    engine = _eng(db_path)
+    with engine.connect() as conn:
+        matched = conn.execute(
+            sa_select(sa_func.count()).select_from(_St).where(where)
+        ).scalar_one()
+
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "BATCH_DELETE_CONFIRM_REQUIRED",
+                    "message": "批量删除不可无声执行——确认请显式携带 "
+                               "confirm=true",
+                    "detail": {"matched_count": matched,
+                               "criteria": criteria,
+                               "hint": "删除不可逆，确认请显式携带 "
+                                       "confirm=true（预览数见 "
+                                       "matched_count）"}})
+
+    with engine.begin() as conn:
+        deleted = conn.execute(sa_delete(_St).where(where)).rowcount
+
+    return {"deleted_count": deleted, "criteria": criteria,
+            "matched_before": matched}
