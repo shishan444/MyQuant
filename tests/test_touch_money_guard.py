@@ -85,7 +85,7 @@ PYTHON_BINANCE_TOUCH_METHODS = frozenset({
 
 # 扫描域（生产代码全集；tests 域不扫——测试替身与自述文档不是
 # 运行时代码，变异自证经 entries 参数显式注入）
-_SCAN_DIRS = ("core", "api", "mcpserver", "scripts")
+_SCAN_DIRS = ("core", "api", "mcpserver", "scripts", "alembic")
 
 
 def _project_entries() -> list[tuple[str, str]]:
@@ -165,7 +165,8 @@ def scan_touch_money(entries: list[tuple[str, str]]) -> list[str]:
         # ①fapi SDK import 面（AST 节点+字符串字面量双面）
         modules = {m for m in _import_nodes(tree)}
         for value in _string_constants(tree):
-            if value.startswith("binance.") or "/" in value and "binance/" in value:
+            if value.startswith("binance.") or (
+                    "/" in value and "binance/" in value):
                 modules.add(value.replace("/", "."))
         for module in sorted(modules):
             if _module_subtree(module) == "fapi" and not in_fapi_whitelist:
@@ -210,13 +211,13 @@ class TestTouchMoneyGuard:
 class TestScannerCapabilityProof:
     """变异自证：构造各族调用样本断言扫描命中（能力证明非生产计数）。"""
 
-    def test_mutation_fapi_import_outside_whitelist(self, tmp_path):
+    def test_mutation_fapi_import_outside_whitelist(self):
         """变异①：白名单外 import binance.um_futures →命中。"""
         sample = ("evil/leak.py", "from binance.um_futures import UMFutures\n")
         violations = scan_touch_money([sample])
         assert any("fapi SDK import 面白名单外" in v for v in violations)
 
-    def test_mutation_fapi_dynamic_import_string(self, tmp_path):
+    def test_mutation_fapi_dynamic_import_string(self):
         """变异①纵深：importlib 动态字符串绕过 →命中（字符串面）。"""
         sample = ("evil/dyn.py",
                   'import importlib\n'
@@ -224,7 +225,7 @@ class TestScannerCapabilityProof:
         violations = scan_touch_money([sample])
         assert any("binance.um_futures" in v for v in violations)
 
-    def test_mutation_python_binance_import_outside_domain(self, tmp_path):
+    def test_mutation_python_binance_import_outside_domain(self):
         """变异②：域外 from binance.client import Client →命中。"""
         sample = ("evil/pb.py", "from binance.client import Client\n")
         violations = scan_touch_money([sample])
@@ -270,7 +271,7 @@ class TestScannerCapabilityProof:
         violations = scan_touch_money([sample])
         assert any("SDK 方法白名单外调用" in v for v in violations)
 
-    def test_mutation_samples_do_not_touch_disk(self, tmp_path):
+    def test_mutation_samples_do_not_touch_disk(self):
         """变异自证全内存构造（不写生产目录——扫描器 entries 注入）；
         主断言独立复跑仍绿（还原后复绿）。"""
         # 构造样本仅存在于内存 entries——生产文件零触碰
