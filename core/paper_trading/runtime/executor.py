@@ -350,8 +350,10 @@ class PaperTaskExecutor:
     def _indicator_snapshot(
         self, df: pd.DataFrame, i: int,
     ) -> Dict[str, Any]:
-        """快照列该 bar 值（NaN→None——JSON 非法值转空；列缺失跳过；
-        行号越界/负值=无锚语境→空 dict，df.iloc[-1] 末行语义须防）。"""
+        """快照列该 bar 值（NaN/inf→None——JSON 非法值转空〔SEC-1：
+        oi_change_rate 等比率类指标可产 inf，裸落毒化查询面为非标
+        JSON 字面量〕；列缺失跳过；行号越界/负值=无锚语境→空 dict，
+        df.iloc[-1] 末行语义须防）。"""
         if not self._snapshot_columns or not 0 <= i < len(df):
             return {}
         row = df.iloc[i]
@@ -360,7 +362,9 @@ class PaperTaskExecutor:
             if col not in df.columns:
                 continue
             v = row[col]
-            out[col] = (None if pd.isna(v) else float(v))
+            out[col] = (
+                None if (pd.isna(v) or not math.isfinite(v))
+                else float(v))
         return out
 
     @staticmethod

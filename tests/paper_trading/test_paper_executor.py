@@ -1421,3 +1421,49 @@ class TestRecoveredPendingSignals:
         # 其后合成价格的 exit_sl 属自然价格行为不在锚定面）
         assert len([f for f in paper.list_fills(
             h.db, h.task_id, limit=1000) if f["kind"] == "open"]) == 1
+
+
+class TestIndicatorSnapshotGuards:
+    """SEC-1：指标快照值域守卫（NaN/inf→None——裸落毒化查询面为
+    非标 JSON 字面量〔oi_change_rate 等比率类指标可产 inf〕）。"""
+
+    def test_snapshot_nan_inf_converted_to_none(self, tmp_path):
+        h = _Harness(tmp_path, window_bars=10)
+        ex = h.make_executor()
+        frame = h.enhanced.copy()
+        frame["rsi_14"] = [float("inf"), float("nan"), 25.0] + [50.0] * 197
+        assert ex._indicator_snapshot(frame, 0) == {"rsi_14": None}, "inf→None"
+        assert ex._indicator_snapshot(frame, 1) == {"rsi_14": None}, "NaN→None"
+        assert ex._indicator_snapshot(frame, 2) == {"rsi_14": 25.0}
+        # 行号越界防御（负值/超界→空 dict，df.iloc[-1] 末行语义须防）
+        assert ex._indicator_snapshot(frame, -1) == {}
+        assert ex._indicator_snapshot(frame, len(frame)) == {}
+
+    def test_snapshot_json_payload_stays_standard(self, tmp_path):
+        """端到端面：inf 指标 bar 的信号行 indicator_snapshot 落库值
+        为标准 JSON（None），json.loads 不产非标字面量。"""
+        import json as _json
+
+        h = _Harness(tmp_path, window_bars=30)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        frame = h.enhanced.copy()
+        frame["rsi_14"] = [50.0] * 200
+        frame.iloc[5, frame.columns.get_loc("rsi_14")] = float("inf")
+        # bar5 rsi=inf：lt 30 比较为 False——不产信号；改为 NaN 信号
+        # 分布不可控。构造触发：bar4 正常触发（20.0），bar5 执行 bar
+        # 的快照列 inf（执行 bar 快照不取——决策 bar 锚）；直接锚
+        # 决策 bar inf 下的落库形态：bar5=inf 触发不可行（比较恒
+        # False），退而直测组装函数序列化标准性
+        row = ex._signal_row(
+            bar_time="t", exec_bar_time="t", seq=4, kind="open",
+            direction="long", size_fraction=0.5, gene_hits=[],
+            indicator_snapshot={"rsi_14": None}, outcome="filled",
+            account={"equity": 1.0, "balance": 1.0, "unrealized_pnl": 0.0,
+                     "position_side": None, "position_quantity": None,
+                     "position_margin": None})
+        parsed = _json.loads(row["indicator_snapshot"])
+        assert parsed == {"rsi_14": None}
+        assert "Infinity" not in row["indicator_snapshot"]
