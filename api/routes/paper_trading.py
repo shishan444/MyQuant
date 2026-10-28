@@ -419,41 +419,54 @@ def create_task(
                   else dna.risk_genes.leverage),
         window_bars=body.window_bars,
         stop_loss_pct=body.stop_loss_pct)
-    strategy_status = strategy["status"]
-    if strategy_status == "archived":
-        # 唯一排除面（409 失败不建任务；沿 LifecycleError 三段 dict
-        # 形制——code 可辨 STRATEGY_ILLEGAL_TRANSITION）
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "STRATEGY_ILLEGAL_TRANSITION",
-                "message": "archived 策略不可挂盘（唯一排除面——挂载"
-                           "门槛放宽后 archived 仍拒绝）",
-                "detail": {
-                    "strategy_id": body.strategy_id,
-                    "from_status": "archived", "target": "paper"}},
-        )
-    if strategy_status == "active":
-        # 现行迁移分支：迁移+建任务同事务原子两向（LifecycleError
-        # 上抛经 with 回滚——两侧皆无）
-        try:
-            with engine_for(db_path).begin() as conn:
+    # 分派移入事务内重读（C3-02/S-1：TOCTOU 防护恢复——原三态分派
+    # 的 transit 事务内校验被四分支改造删除，此处以「事务内重读
+    # Strategy.status 再分派」为更严格实现：并发归档/转正在事务内
+    # 被看见，归档绕过窗口封死；「请求时点策略态」语义以事务内
+    # 重读时点为准）
+    from sqlalchemy import select as _select
+
+    from core.persistence.orm.models import Strategy as _Strategy
+    try:
+        with engine_for(db_path).begin() as conn:
+            fresh_status = conn.execute(
+                _select(_Strategy.status).where(
+                    _Strategy.strategy_id == body.strategy_id)
+            ).scalar_one_or_none()
+            if fresh_status is None:
+                raise HTTPException(
+                    status_code=404, detail="strategy not found")
+            if fresh_status == "archived":
+                # 唯一排除面（409 失败不建任务；raise 经 with 回滚
+                # ——零副作用；沿 LifecycleError 三段 dict 形制）
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "STRATEGY_ILLEGAL_TRANSITION",
+                        "message": "archived 策略不可挂盘（唯一排除面"
+                                   "——挂载门槛放宽后 archived 仍拒绝）",
+                        "detail": {
+                            "strategy_id": body.strategy_id,
+                            "from_status": "archived",
+                            "target": "paper"}},
+                )
+            if fresh_status == "active":
+                # 迁移分支：迁移+建任务同事务原子两向（LifecycleError
+                # 上抛经 with 回滚——两侧皆无）
                 transit(
                     db_path, body.strategy_id, target="paper",
                     trigger="mount", evidence={"task_id": task_id},
                     conn=conn)
-                paper.create_task(db_path, conn=conn, **create_values)
-        except LifecycleError as exc:
-            raise HTTPException(
-                status_code=exc.status,
-                detail={"code": exc.code, "message": exc.message,
-                        "detail": exc.detail},
-            ) from exc
-    else:
-        # 同态续挂分支（paper/draft/candidate/live——Q3 终审放宽）：
-        # 不迁移不产事件，仅任务创建自身事务（无迁移侧故无两侧
-        # 原子性需求）
-        paper.create_task(db_path, **create_values)
+            # paper/draft/candidate/live →同态续挂（Q3 终审放宽）：
+            # 不迁移不产事件，仅任务创建（本事务——无迁移侧故无两侧
+            # 原子性需求）
+            paper.create_task(db_path, conn=conn, **create_values)
+    except LifecycleError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message,
+                    "detail": exc.detail},
+        ) from exc
     return _task_to_response(db_path, paper.get_task(db_path, task_id))
 
 

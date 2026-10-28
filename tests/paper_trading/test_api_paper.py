@@ -1192,3 +1192,56 @@ class TestDeleteCompensationGuard:
         assert _lifecycle_events(db, "st-1") == [
             ("active", "paper", "mount"),
             ("paper", "active", "task_end")]
+
+
+class TestMountDispatchToctouGuard:
+    """C3-02/S-1：分派事务内重读 Strategy.status——并发归档绕过窗口
+    封死（外层受理读陈旧态时，事务内重读后按真实态分派）。"""
+
+    def test_concurrent_archive_bypass_window_guarded(
+            self, paper_api, monkeypatch):
+        """守卫用例：外层 get_strategy 读到 draft（陈旧），事务开启时
+        库内已被并发归档 archived→事务内重读 409 拒绝（任务不建+
+        零事件）——归档绕过续挂通道的窗口被封死。"""
+        client, db = paper_api
+        from core.persistence.repository import paper
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        # 库内并发归档（外层读之后、事务开启前）
+        _force_strategy_status(db, "st-1", "archived")
+        stale = strategy_repo.get_strategy(db, "st-1")
+        stale["status"] = "draft"  # 模拟外层受理读的陈旧快照
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"]["code"] == "STRATEGY_ILLEGAL_TRANSITION"
+        assert paper.count_tasks(db) == 0, "409 不建任务（回滚零副作用）"
+        assert _strategy_status(db, "st-1") == "archived"
+        assert _lifecycle_events(db, "st-1") == []
+
+    def test_concurrent_promote_seen_in_transaction(
+            self, paper_api, monkeypatch):
+        """对称面：外层读 draft（陈旧），事务内已被转正 active→
+        重读分派走迁移分支（active→paper+事件）——重读是分派事实源。"""
+        client, db = paper_api
+        from core.persistence.repository import strategy as strategy_repo
+
+        _seed_strategy(db, strategy_id="st-1", status="draft")
+        _force_strategy_status(db, "st-1", "active")  # 并发转正
+        stale = strategy_repo.get_strategy(db, "st-1")
+        stale["status"] = "draft"
+
+        monkeypatch.setattr(
+            strategy_repo, "get_strategy", lambda *a, **k: dict(stale))
+        resp = client.post("/api/paper-trading/tasks",
+                           json={"strategy_id": "st-1"})
+        monkeypatch.undo()
+        assert resp.status_code == 201, resp.text
+        assert _strategy_status(db, "st-1") == "paper", \
+            "事务内重读按真实态分派迁移"
+        assert _lifecycle_events(db, "st-1") == [("active", "paper", "mount")]
