@@ -660,6 +660,7 @@ class EvolutionRunner(threading.Thread):
         return evaluation.evaluate_dna(
             individual, task_row, getattr(self, "data_dir", None), leverage, direction,
             enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+            db_path=getattr(self, "db_path", None),
         )
 
     def _evaluate_population(
@@ -675,6 +676,7 @@ class EvolutionRunner(threading.Thread):
         return evaluation.evaluate_population(
             population, task_row, getattr(self, "data_dir", None), leverage, direction,
             enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+            db_path=getattr(self, "db_path", None),
         )
 
 

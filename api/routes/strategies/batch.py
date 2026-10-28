@@ -222,6 +222,7 @@ class _BatchBacktestProcessor:
                 init_cash=self.payload.init_cash,
                 fee=self.payload.fee,
                 slippage=self.payload.slippage,
+                db_path=self.db_path,
             )
             results = engine.batch_run(
                 dnas, enhanced_df, dfs_by_timeframe=dfs_by_timeframe,

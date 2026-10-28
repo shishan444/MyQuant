@@ -165,6 +165,7 @@ def backtest_strategy(
         init_cash=payload.init_cash,
         fee=payload.fee,
         slippage=payload.slippage,
+        db_path=db_path,
     )
 
     # mtf_loader 增强数据装载（含全量指标与日期切片）

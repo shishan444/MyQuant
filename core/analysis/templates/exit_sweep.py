@@ -460,7 +460,11 @@ def exit_sweep(
             "min_trades": _MIN_TRADES,
             "min_run": 2,
             "effectiveness": "net_expectation_after_fees>0",
-            "axes": ["stop_loss", "take_profit"],
+            # 轴集披露随 grid 实际判定面（series 档 stop_loss 非可扫描
+            # 维度——series-only grid 单轴；混合 grid 并集两轴）
+            "axes": (["take_profit"] if series_entries
+                     and not [e for e in modes if e["mode"] != "series"]
+                     else ["stop_loss", "take_profit"]),
             "aggregation": "worst",
         },
         "warmup_bars": warmup_bars,
