@@ -246,6 +246,16 @@ def _load_sl_series_column(
         label = col
     elif "column" in source:
         col = str(source["column"])
+        # fx 前缀校验（纵深防线第三面——登记面/validator 均有而装载
+        # 面缺位：无前缀列名静默拿行情基础列当止损线不可察）；错误码
+        # 沿 series×risk_budget 装载纵深先例（PARAM_INVALID——形制
+        # 错误非数据不足）
+        if not col.startswith("fx_"):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"series 止损线 fx 形式列名须 fx_ 前缀: {col!r}",
+                detail={"field": col,
+                        "hint": "fx 形式=fx_ 前缀精确插件列名"})
         if db_path is None:
             raise ResearchError(
                 "RESEARCH_DATA_INSUFFICIENT",
