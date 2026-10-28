@@ -71,22 +71,22 @@ class TestG2ResidualUntouched:
 
     def test_tp_nonnone_clamp_source(self):
         """G2③：TP 非 None 扰动下限按 TP 自身 pct 下界 0.005 钳制
-        （不读 stop_loss 残留——残留 0.05+0.005=0.055 下限不复现）。"""
-        for seed in range(30):
-            random.seed(seed)
-            dna = _series_dna()
-            dna.risk_genes.take_profit = 0.006  # 残留下限 0.055 之下
-            out = mutate_risk(dna)
-            if out.risk_genes.take_profit is not None:
-                assert out.risk_genes.take_profit >= 0.005, \
-                    "钳制下界=TP 值域 0.005（非残留+0.005）"
-                # 若被钳制到下界，只能是 0.005（残留推导会得 0.055）
-                if out.risk_genes.take_profit == 0.005:
-                    break
-        else:
-            # 30 seed 内未触发钳制下界路径也可（扰动向上时无差别）——
-            # 解耦面由 stop_loss 不改写+TP=None 锚承担
-            pass
+        （不读 stop_loss 残留——残留 0.05+0.005=0.055 下限不复现）。
+        固定 seed 确定性断言（seed 探明：seed=8 负向扰动穿下界被钳至
+        0.005——若误读残留则 max(0.055,·)=0.055 即红；seed=1 正向
+        扰动至 0.026 自由——钳制只在下穿时生效非全局贴下界）。"""
+        random.seed(8)
+        dna = _series_dna()
+        dna.risk_genes.take_profit = 0.006  # 残留下限 0.055 之下
+        out = mutate_risk(dna)
+        assert out.risk_genes.take_profit == pytest.approx(0.005), \
+            f"下穿钳制至 TP 值域下界 0.005，实际 {out.risk_genes.take_profit}"
+        random.seed(1)
+        dna2 = _series_dna()
+        dna2.risk_genes.take_profit = 0.006
+        out2 = mutate_risk(dna2)
+        assert out2.risk_genes.take_profit == pytest.approx(0.026), \
+            f"正向扰动自由（seed=1 → 0.026），实际 {out2.risk_genes.take_profit}"
 
     def test_decoupling_residual_change_no_effect(self):
         """G2 解耦断言：同声明同 seed 下改残留值（0.05→0.10）变异结果

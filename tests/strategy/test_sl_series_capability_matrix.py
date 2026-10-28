@@ -73,10 +73,6 @@ class TestMatrix:
 
 
 class TestPaperDoubleInstrumentation:
-    def _paper_mount_body(self, strategy_id):
-        from core.persistence.repository.strategy import save_strategy
-        return strategy_id
-
     def test_accept_layer_rejects(self, tmp_path, api_client):
         """D1-① 受理层：POST 挂载 series 档策略→create_task 结构化拒
         绝（422 reasons 含档位名+后续专项补齐）。"""
@@ -114,7 +110,6 @@ class TestPaperDoubleInstrumentation:
         row = paper.get_task(db, task_id)
         from core.paper_trading.runtime.feed import FeedRegistry
         registry = FeedRegistry(tmp_path, fetcher=lambda **k: pd.DataFrame())
-        registry_dummy = registry  # 拒绝发生在 feed 使用前
         ex = PaperTaskExecutor(
             db, row, registry=registry, push=lambda *a: None,
             on_concluded=lambda *a: None)

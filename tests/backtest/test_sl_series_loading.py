@@ -179,22 +179,6 @@ class TestWarmupTwoTracks:
         assert warmup_base == 200, \
             f"对照组（无 series 源）应为 floor 200，实际 {warmup_base}"
 
-    def test_fx_track_plugin_lookback(self, env):
-        """warmup 两轨之 fx 形式：fx 列并入 plugin_columns_lookback
-        依赖闭包（rolling_mean(close,30) 的 fx 列贡献窗口）。"""
-        from core.analysis.plugin_service import register_formula_plugin
-        from core.analysis.validation_service import _derive_dna_warmup
-        col = register_formula_plugin(
-            env["db"], name="sl_warm",
-            expression="gt(rolling_mean(close, 30), 0)")["column"]
-        dna = make_dna()
-        dna.risk_genes.sl_mode = "series"
-        dna.risk_genes.sl_series_source = {"column": col}
-        warmup, _ = _derive_dna_warmup(env["db"], dna, "4h")
-        # rolling_mean(30) 窗口并入（floor 200 之下——验证并入不炸+
-        # 指标名清单不含 fx）
-        assert warmup >= 200
-
     def test_fx_track_strong(self, env):
         """C2 fx 轨强断言（可区分并入与未并入）：rolling_mean(close,300)
         的 lookback=300 > floor 200——带 fx 源预算抬升至 300，对照无源
@@ -256,14 +240,13 @@ class TestWarmupTwoTracks:
         assert "total_trades" in metrics
 
     def test_warmup_rule_text_three_sources(self):
-        """WARMUP_RULE_TEXT 三处一致（常量+两复制体——contract_parity
-        锚翻转后 key 同步）+series 措辞要素（C2 轻锚定：文本描述与
-        行为一致性——series 档止损线列并入取大的披露在场）。"""
+        """WARMUP_RULE_TEXT 两直断面（常量+capability 复制体——新符号
+        在场/旧措辞清零）+series 措辞要素（C2 轻锚定：文本描述与行为
+        一致性——series 档止损线列并入取大的披露在场）；tools.py 复制
+        体面由 tests/mcpserver/test_contract_parity.py 承载（contract
+        parity 锚强制子串一致）。"""
         from core.analysis.registry_meta import WARMUP_RULE_TEXT
         from mcpserver.capability import CAPABILITY_DOC
-        import mcpserver.tools as tools_mod
-        src = tools_mod.__doc__ + str(tools_mod.list_indicators.__doc__) \
-            if hasattr(tools_mod, "list_indicators") else ""
         for text in (WARMUP_RULE_TEXT, CAPABILITY_DOC):
             assert "plugin_columns_lookback" in text
             assert "plugin_formula_lookback" not in text
