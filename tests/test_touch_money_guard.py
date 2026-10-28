@@ -33,7 +33,8 @@ pytestmark = [pytest.mark.unit]
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# ── 白名单单源 ─────────────────────────────────────────────
+# ── 白名单单源（权威源——tests/data/fapi/test_import_whitelist.py
+#    的简版断言引用此处常量，勿在别处重复定义）─────────────────
 # fapi SDK（binance-futures-connector）import 面唯一允许模块
 FAPI_SDK_MODULE_WHITELIST = frozenset({
     "core/data/fapi/stream.py",

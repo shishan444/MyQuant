@@ -6,17 +6,16 @@ stream.py 与 rest.py 两模块（依赖方向硬约束：数据作业与执行�
 import SDK）。本断言为 AST import 节点面；binance-connector 方法
 族白名单、python-binance 域限定与动态字符串双面扫描归常驻触金
 守护（tests/test_touch_money_guard.py，change-1 任务 6）。
+
+模块白名单常量单源驻触金守护（spec「白名单单源驻测试文件」——
+权威载体），本简版引用之不重复定义。
 """
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-# binance SDK import 面允许的模块白名单（fapi 接入层两模块单源）
-_FAPI_MODULE_WHITELIST = {
-    Path("core/data/fapi/stream.py"),
-    Path("core/data/fapi/rest.py"),
-}
+from tests.test_touch_money_guard import FAPI_SDK_MODULE_WHITELIST
 
 # 期货 connector 包的 import 面（顶层包名 binance 三包共享，按子树
 # 区分：binance.um_futures / binance.websocket[.um_futures] 归
@@ -65,7 +64,7 @@ def test_binance_sdk_import_whitelist():
         if not sdk_hits:
             continue
         relative = path.relative_to(project_root)
-        if relative not in _FAPI_MODULE_WHITELIST:
+        if relative.as_posix() not in FAPI_SDK_MODULE_WHITELIST:
             violations.append(
                 f"{relative}: import {sorted(sdk_hits)}（白名单外）")
     assert not violations, (
