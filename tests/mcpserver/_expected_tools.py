@@ -36,6 +36,7 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "pause_evolution_task",
     "poll_evolution_task",
     "query_indicator",
+    "query_paper_signals",
     "resume_evolution_task",
     "run_staged_validation",
     "register_formula_plugin",

@@ -825,3 +825,155 @@ class TestSchedulerUnavailableDegradation:
         body = client.get("/api/paper-trading/runner-status").json()
         assert body == {"max_running_tasks": None, "running_count": 0,
                         "active_task_ids": [], "pending_depth": 0}
+
+
+class TestSignalEndpoints:
+    """信号记录查询端点（change paper-signal-log 任务 6）：过滤四维+
+    排序+分页 has_more 三形态+404/422+JSON 反序列化形制。"""
+
+    @staticmethod
+    def _seed_signals(db: Path, task_id: str) -> None:
+        from core.persistence.repository import paper
+
+        paper.save_signals(db, task_id, [
+            {"strategy_id": "st-1",
+             "bar_time": "2026-10-20T00:00:00+00:00",
+             "exec_bar_time": "2026-10-20T04:00:00+00:00",
+             "seq": 4, "signal_kind": "open", "direction": "long",
+             "size_fraction": 0.5,
+             "gene_hits": '[{"gene_index": 0, "indicator": "RSI"}]',
+             "indicator_snapshot": '{"rsi_14": 25.0}',
+             "outcome": "filled", "reject_reason": None, "fill_seq": 4,
+             "capped": None, "equity": 100_000.0, "balance": 100_000.0,
+             "unrealized_pnl": 0.0, "position_side": None,
+             "position_quantity": None, "position_margin": None,
+             "created_at": BASE_TIME},
+            {"strategy_id": "st-1",
+             "bar_time": "2026-10-20T00:00:00+00:00",
+             "exec_bar_time": "2026-10-20T04:00:00+00:00",
+             "seq": 7, "signal_kind": "add", "direction": "long",
+             "size_fraction": 0.1,
+             "gene_hits": '[]', "indicator_snapshot": '{"rsi_14": 25.0}',
+             "outcome": "rejected", "reject_reason": "exposure_cap",
+             "fill_seq": None, "capped": None, "equity": 99_500.0,
+             "balance": 99_500.0, "unrealized_pnl": 0.0,
+             "position_side": "long", "position_quantity": 10.0,
+             "position_margin": 1_000.0, "created_at": BASE_TIME},
+            {"strategy_id": "st-1",
+             "bar_time": "2026-10-21T00:00:00+00:00",
+             "exec_bar_time": "2026-10-21T00:00:00+00:00",
+             "seq": 2, "signal_kind": "exit_tp", "direction": "long",
+             "size_fraction": 1.0,
+             "gene_hits": '[]', "indicator_snapshot": '{}',
+             "outcome": "filled", "reject_reason": None, "fill_seq": 2,
+             "capped": None, "equity": 101_000.0, "balance": 101_000.0,
+             "unrealized_pnl": 0.0, "position_side": None,
+             "position_quantity": None, "position_margin": None,
+             "created_at": BASE_TIME},
+            {"strategy_id": "st-1",
+             "bar_time": "2026-10-22T00:00:00+00:00",
+             "exec_bar_time": "2026-10-22T00:00:00+00:00",
+             "seq": 0, "signal_kind": "open", "direction": None,
+             "size_fraction": None,
+             "gene_hits": '[]', "indicator_snapshot": '{}',
+             "outcome": "expired", "reject_reason": None, "fill_seq": None,
+             "capped": None, "equity": 101_000.0, "balance": 101_000.0,
+             "unrealized_pnl": 0.0, "position_side": None,
+             "position_quantity": None, "position_margin": None,
+             "created_at": BASE_TIME},
+        ])
+
+    def _setup(self, paper_api):
+        client, db = paper_api
+        _seed_strategy(db)
+        tid = _seed_terminal(db)
+        self._seed_signals(db, tid)
+        return client, tid
+
+    def test_signals_404(self, paper_api) -> None:
+        client, _ = paper_api
+        assert client.get(
+            "/api/paper-trading/tasks/ghost/signals").status_code == 404
+
+    @pytest.mark.parametrize("param,value", [
+        ("kind", "bogus_kind"), ("outcome", "bogus_outcome")])
+    def test_signals_422_on_invalid_enum(self, paper_api, param,
+                                         value) -> None:
+        """422 枚举校验（api-error-contract 形制——校验面归传输层）。"""
+        client, tid = self._setup(paper_api)
+        resp = client.get(f"/api/paper-trading/tasks/{tid}/signals",
+                          params={param: value})
+        assert resp.status_code == 422
+
+    def test_signals_order_and_json_deserialization(self, paper_api) -> None:
+        """②响应形制：bar_time+seq 升序+gene_hits/indicator_snapshot
+        反序列化为 JSON 对象非字符串。"""
+        client, tid = self._setup(paper_api)
+        body = client.get(
+            f"/api/paper-trading/tasks/{tid}/signals").json()
+        got = [(s["bar_time"], s["seq"]) for s in body["signals"]]
+        assert got == [
+            ("2026-10-20T00:00:00+00:00", 4),
+            ("2026-10-20T00:00:00+00:00", 7),
+            ("2026-10-21T00:00:00+00:00", 2),
+            ("2026-10-22T00:00:00+00:00", 0)]
+        first = body["signals"][0]
+        assert first["gene_hits"] == [
+            {"gene_index": 0, "indicator": "RSI"}], "JSON 对象非字符串"
+        assert first["indicator_snapshot"] == {"rsi_14": 25.0}
+        assert first["outcome"] == "filled" and first["fill_seq"] == 4
+        rejected = body["signals"][1]
+        assert rejected["reject_reason"] == "exposure_cap"
+        expired = body["signals"][3]
+        assert expired["outcome"] == "expired"
+
+    def test_signals_filter_four_dimensions(self, paper_api) -> None:
+        """①过滤四维：kind/outcome/bar_time 闭区间（H3 两侧含入）。"""
+        client, tid = self._setup(paper_api)
+        base = f"/api/paper-trading/tasks/{tid}/signals"
+        # kind 过滤
+        opens = client.get(base, params={"kind": "open"}).json()["signals"]
+        assert {(s["seq"], s["outcome"]) for s in opens} == {
+            (4, "filled"), (0, "expired")}
+        # outcome 过滤
+        rejected = client.get(
+            base, params={"outcome": "rejected"}).json()["signals"]
+        assert len(rejected) == 1 and rejected[0]["seq"] == 7
+        # 闭区间含入：[10-20, 10-21] 含两端三行（10-22 排除）
+        windowed = client.get(base, params={
+            "bar_time_start": "2026-10-20T00:00:00+00:00",
+            "bar_time_end": "2026-10-21T00:00:00+00:00"}).json()["signals"]
+        assert [s["bar_time"] for s in windowed] == [
+            "2026-10-20T00:00:00+00:00",
+            "2026-10-20T00:00:00+00:00",
+            "2026-10-21T00:00:00+00:00"]
+        # 边界单点恰一行
+        edge = client.get(base, params={
+            "bar_time_start": "2026-10-21T00:00:00+00:00",
+            "bar_time_end": "2026-10-21T00:00:00+00:00"}).json()["signals"]
+        assert len(edge) == 1
+        # 组合过滤
+        combo = client.get(base, params={
+            "kind": "open", "outcome": "filled"}).json()["signals"]
+        assert [s["seq"] for s in combo] == [4]
+
+    def test_signals_pagination_has_more_three_forms(self, paper_api) -> None:
+        """①H4 has_more 三形态：有更多 True/恰好尽 False/末页余量。"""
+        client, tid = self._setup(paper_api)
+        base = f"/api/paper-trading/tasks/{tid}/signals"
+        p1 = client.get(base, params={"limit": 2, "offset": 0}).json()
+        assert len(p1["signals"]) == 2 and p1["has_more"] is True
+        p2 = client.get(base, params={"limit": 2, "offset": 2}).json()
+        assert len(p2["signals"]) == 2 and p2["has_more"] is False, "恰好尽"
+        p3 = client.get(base, params={"limit": 3, "offset": 2}).json()
+        assert len(p3["signals"]) == 2 and p3["has_more"] is False, "末页余量"
+        assert client.get(base, params={"limit": 501}).status_code == 422
+
+    def test_signals_empty_task(self, paper_api) -> None:
+        """空信号任务零行响应（has_more False）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        tid = _seed_terminal(db)
+        body = client.get(
+            f"/api/paper-trading/tasks/{tid}/signals").json()
+        assert body["signals"] == [] and body["has_more"] is False

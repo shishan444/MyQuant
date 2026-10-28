@@ -1,4 +1,4 @@
-"""rebuild-paper-trading 5.3：纸盘工具族六件行为锚。
+"""rebuild-paper-trading 5.3：纸盘工具族七件行为锚（paper-signal-log 起）。
 
 覆盖任务完成标准：六工具集合断言（沿 AST 对拍形制——test_contract_
 parity 的提取器+TOOL_TIERS 档位归属）；mount 参数面与 REST POST
@@ -31,7 +31,7 @@ def run_async(coro):
 
 PAPER_READONLY_TOOLS = frozenset({
     "list_paper_tasks", "get_paper_task", "get_paper_report",
-    "get_paper_history"})
+    "get_paper_history", "query_paper_signals"})
 PAPER_MOUNT_TOOLS = frozenset({"mount_paper_task", "unmount_paper_task"})
 
 
@@ -368,3 +368,90 @@ class TestResearchStatusPassthrough:
         assert result == rest_payload, "MCP 不得对 REST 载荷做字段变换"
         assert ("GET", "/api/paper-trading/tasks/pt_mcp00000001",
                 None) in api.calls
+
+
+class TestQueryPaperSignals:
+    """query_paper_signals（change paper-signal-log 任务 6）：注册档/
+    行为对拍/REST 同参数面/披露锚。"""
+
+    def test_registered_readonly_tier(self) -> None:
+        """④注册档=readonly（七件读取档）。"""
+        from mcpserver.tools import TOOL_TIERS
+
+        mcp, _ = _register("readonly")
+        assert "query_paper_signals" in mcp.registered
+        assert "query_paper_signals" in TOOL_TIERS["readonly"]
+
+    def test_passthrough_params_and_path(self) -> None:
+        """行为对拍：api_client GET /signals 同参数面透传（I1——
+        与 REST 同端点同参数）。"""
+        mcp, api = _register("readonly")
+        mcp.registered["query_paper_signals"]("tk1")
+        assert api.calls[-1] == (
+            "GET", "/api/paper-trading/tasks/tk1/signals",
+            {"limit": 100, "offset": 0})
+        mcp.registered["query_paper_signals"](
+            "tk1", kind="add", outcome="rejected",
+            bar_time_start="2026-10-01T00:00:00+00:00",
+            bar_time_end="2026-10-02T00:00:00+00:00",
+            limit=9999, offset=5)
+        method, url, params = api.calls[-1]
+        assert method == "GET"
+        assert url == "/api/paper-trading/tasks/tk1/signals"
+        assert params == {
+            "kind": "add", "outcome": "rejected",
+            "bar_time_start": "2026-10-01T00:00:00+00:00",
+            "bar_time_end": "2026-10-02T00:00:00+00:00",
+            "limit": 500, "offset": 5}, "limit 钳制 500（REST le=500 同域）"
+
+    def test_param_face_parity_with_rest(self) -> None:
+        """③I1 契约同构：MCP 参数名集与 REST Query 参数名集相等
+        （task_id/kind/outcome/bar_time_start/bar_time_end/limit/
+        offset——两通道同参数面同源）。"""
+        import inspect
+
+        from api.routes import paper_trading as routes_mod
+        from conftest import _FakeMcp, RecordingFakeApi
+
+        from mcpserver.tools import register_readonly_tools
+
+        mcp_fn = _register("readonly")[0].registered["query_paper_signals"]
+        mcp_params = set(inspect.signature(mcp_fn).parameters)
+        rest_fn = routes_mod.get_signals
+        rest_params = set(inspect.signature(rest_fn).parameters) - {
+            "db_path"}
+        assert mcp_params == rest_params, (
+            f"参数面漂移: MCP={sorted(mcp_params)} "
+            f"REST={sorted(rest_params)}")
+
+    def test_docstring_disclosure_anchors(self) -> None:
+        """⑤docstring 披露锚（token 在场形制——沿 test_disclosure_
+        anchors 要素断言）：过滤面/outcome 三值语义含 expired 归因/
+        拒因枚举/字段字典指引。"""
+        import textwrap
+
+        from conftest import _FakeMcp, RecordingFakeApi
+
+        from mcpserver.tools import register_readonly_tools
+
+        fake = _FakeMcp()
+        register_readonly_tools(fake, RecordingFakeApi())
+        doc = "".join(textwrap.dedent(
+            fake.registered["query_paper_signals"].__doc__ or "").split())
+        for token in (
+            "kind", "outcome", "filled", "rejected", "expired",
+            "bar_time_start", "bar_time_end",
+            "insufficient_funds", "exposure_cap", "context_invalid",
+            "below_min_notional",
+            "gene_hits", "indicator_snapshot", "字段族明细",
+            "has_more", "只读",
+        ):
+            assert token in doc, f"披露锚缺失: {token}"
+
+    def test_endpoint_whitelist_registered(self) -> None:
+        """白名单登记：signals GET 端点在只读允许集（能力自述工具
+        清单自动含新工具由 _expected_tools 联动锚定）。"""
+        from mcpserver.api_client import READONLY_ENDPOINTS
+
+        assert "/api/paper-trading/tasks/{task_id}/signals" \
+            in READONLY_ENDPOINTS

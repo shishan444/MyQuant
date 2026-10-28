@@ -73,7 +73,7 @@ class ChainHarness:
         pre = self.interpreter.interpret(
             bar, signals, self.ledger.snapshot(bar.close, bar.seq),
             self.ledger.params)
-        for intent in pre:
+        for intent in pre.intents:
             if intent.kind == "exit_liquidation":
                 self._execute(intent, bar, seq=1)
             elif intent.kind in ("exit_sl", "exit_tp"):
@@ -90,12 +90,13 @@ class ChainHarness:
             bar, signals, self.ledger.snapshot(bar.close, bar.seq),
             self.ledger.params)
         self.pending.extend(
-            i for i in post if i.kind not in IMMEDIATE_KINDS)
+            i for i in post.intents if i.kind not in IMMEDIATE_KINDS)
         # trail 峰值落账（持仓期逐 bar）
         self.ledger.update_trail_peak(bar)
 
     def _execute(self, intent, bar, seq):
-        fill = self.ledger.execute(intent, bar, self.fill_model)
+        fill = self.ledger.execute(
+            intent, bar, self.fill_model).fill
         if fill is not None:
             self.events.append(ExecutionEvent(
                 fill=fill,

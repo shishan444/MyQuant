@@ -81,6 +81,31 @@ def _bar_state(bars_processed: int, **over):
     return row
 
 
+def _signal(seq: int, exec_bar_time: str, **over):
+    """信号行构造（paper-signal-log）：exec_bar_time+seq=幂等键语义位。"""
+    row = {
+        "strategy_id": "strat-1",
+        "bar_time": "2026-10-16T00:00:00+00:00",
+        "exec_bar_time": exec_bar_time,
+        "seq": seq,
+        "signal_kind": "open",
+        "direction": "long",
+        "size_fraction": 0.1,
+        "gene_hits": '[{"gene_index": 0}]',
+        "indicator_snapshot": '{"rsi_14": 55.0}',
+        "outcome": "filled",
+        "reject_reason": None,
+        "fill_seq": seq,
+        "capped": None,
+        "equity": 50_000.0, "balance": 49_900.0, "unrealized_pnl": 0.0,
+        "position_side": None, "position_quantity": None,
+        "position_margin": None,
+        "created_at": "2026-10-16T00:00:00+00:00",
+    }
+    row.update(over)
+    return row
+
+
 class TestTaskCrud:
     """任务 CRUD：直建通道全参直收（REST 层组 5 负责读 strategy 组装）。"""
 
@@ -361,9 +386,9 @@ class TestAppendBar:
 
 
 class TestDeleteCascade:
-    """终态级联删五表（单事务；不存在返回 False）。"""
+    """终态级联删六表（单事务——五明细表+任务行；不存在返回 False）。"""
 
-    def test_delete_cascades_five_tables(self, tmp_path: Path):
+    def test_delete_cascades_six_tables(self, tmp_path: Path):
         from core.persistence.repository import paper
 
         db = _make_db(tmp_path)
@@ -372,6 +397,7 @@ class TestDeleteCascade:
             db, tid, bar_time="2026-10-16T00:00:00+00:00",
             fills=[_fill(1)], equity=_equity(),
             funding=[_funding("2026-10-16T00:00:00+00:00")],
+            signals=[_signal(1, "2026-10-16T00:00:00+00:00")],
             task_state=_bar_state(1),
         )
         paper.save_report(
@@ -379,8 +405,10 @@ class TestDeleteCascade:
             report_json='{"v": 1}',
         )
         assert paper.list_fills(db, tid)
+        assert paper.list_signals(db, tid)
         assert paper.delete_task(db, tid) is True
         assert paper.list_fills(db, tid) == []
+        assert paper.list_signals(db, tid) == [], "信号行随任务级联删"
         assert paper.list_equity_snapshots(db, tid) == []
         assert paper.list_funding_records(db, tid) == []
         assert paper.get_report(db, tid) is None
@@ -971,3 +999,221 @@ class TestEntryLists:
             ("2026-10-16T01:00:00+00:00", 1),
             ("2026-10-16T01:00:00+00:00", 2),
         ]
+
+
+class TestSignals:
+    """信号记录仓库面（paper-signal-log 任务 1）：双写入口幂等、
+    过滤/排序/分页 SQL 下推、十值 kind 正向。"""
+
+    def test_append_bar_signals_roundtrip(self, tmp_path: Path):
+        """bar 边界写入面：signals 与 fills/equity 同事务落库读回一致。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.append_bar(
+            db, tid, bar_time="2026-10-16T00:00:00+00:00",
+            fills=[_fill(1)], equity=_equity(),
+            signals=[_signal(1, "2026-10-16T00:00:00+00:00",
+                             bar_time="2026-10-16T00:00:00+00:00")],
+        )
+        rows = paper.list_signals(db, tid)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["task_id"] == tid
+        assert row["strategy_id"] == "strat-1"
+        assert row["signal_kind"] == "open"
+        assert row["outcome"] == "filled"
+        assert row["gene_hits"] == '[{"gene_index": 0}]'
+        assert row["indicator_snapshot"] == '{"rsi_14": 55.0}'
+        assert row["exec_bar_time"] == "2026-10-16T00:00:00+00:00"
+        assert row["seq"] == 1
+        assert row["reject_reason"] is None
+        assert row["fill_seq"] == 1
+
+    def test_signal_atomic_with_bar_writes(self, tmp_path: Path):
+        """原子性：信号行写失败（绑定类型违约）→同事务 fills/equity/
+        signals 全部不落。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        with pytest.raises(sqlalchemy.exc.SQLAlchemyError):
+            paper.append_bar(
+                db, tid, bar_time="2026-10-16T00:00:00+00:00",
+                fills=[_fill(1)], equity=_equity(),
+                signals=[_signal(1, "2026-10-16T00:00:00+00:00",
+                                 equity={"bad": "type"})],
+            )
+        assert paper.list_signals(db, tid) == []
+        assert paper.list_fills(db, tid) == []
+        assert paper.list_equity_snapshots(db, tid) == []
+
+    def test_insert_or_ignore_same_key_zero_new_rows(self, tmp_path: Path):
+        """C1 幂等键：同 (task_id, exec_bar_time, seq) 重复写零新行、
+        首写为准（两写入口——append_bar 与 save_signals——同键吸收）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.append_bar(
+            db, tid, bar_time="2026-10-16T00:00:00+00:00",
+            fills=[], equity=_equity(),
+            signals=[_signal(1, "2026-10-16T00:00:00+00:00",
+                             outcome="filled", fill_seq=1)],
+        )
+        # 同键重放（值不同）：首写为准零新行——append_bar 面
+        paper.append_bar(
+            db, tid, bar_time="2026-10-16T04:00:00+00:00",
+            fills=[], equity=_equity(),
+            signals=[_signal(1, "2026-10-16T00:00:00+00:00",
+                             outcome="rejected",
+                             reject_reason="exposure_cap")],
+        )
+        # 同键重放——save_signals 面（终态收割防重入同防线）
+        paper.save_signals(db, tid, [
+            _signal(1, "2026-10-16T00:00:00+00:00",
+                    outcome="expired")])
+        rows = paper.list_signals(db, tid)
+        assert len(rows) == 1, "同键重复零新行"
+        assert rows[0]["outcome"] == "filled", "首写为准（值不覆写）"
+
+    def test_exec_bar_time_none_dropped_by_not_null(self, tmp_path: Path):
+        """SEC-2 约束行为面：exec_bar_time NOT NULL 经 INSERT OR IGNORE
+        形制为静默丢行（与唯一键吸收同款）——None 行零落库、不抛异常；
+        约束生效的证明：若无该约束，此行将成功落库。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.save_signals(db, tid, [_signal(1, None)])
+        assert paper.list_signals(db, tid) == []
+
+    @pytest.mark.parametrize("kind", [
+        "open", "close", "add", "reduce", "exit_sl", "exit_tp",
+        "exit_max_loss", "exit_max_hold", "exit_time", "exit_liquidation",
+    ])
+    def test_signal_kind_ten_values_roundtrip(self, tmp_path: Path, kind):
+        """⑤signal_kind 十值（INTENT_KINDS 同域）参数化正向：写读一致。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.save_signals(db, tid, [
+            _signal(1, "2026-10-16T00:00:00+00:00", signal_kind=kind)])
+        rows = paper.list_signals(db, tid, kind=kind)
+        assert len(rows) == 1
+        assert rows[0]["signal_kind"] == kind
+
+    def test_list_signals_filter_order_pagination(self, tmp_path: Path):
+        """③过滤四维+排序+分页：kind/outcome/bar_time 闭区间/limit+
+        offset；bar_time+seq 升序审计读序。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        paper.save_signals(db, tid, [
+            # bar0：filled open（seq 4）+ rejected add（seq 7）
+            _signal(4, "2026-10-16T04:00:00+00:00", bar_time="2026-10-16T00:00:00+00:00"),
+            _signal(7, "2026-10-16T04:00:00+00:00", bar_time="2026-10-16T00:00:00+00:00",
+                    signal_kind="add", outcome="rejected",
+                    reject_reason="exposure_cap", fill_seq=None),
+            # bar1：filled open（seq 3，pending 消费差一根）
+            _signal(3, "2026-10-17T04:00:00+00:00", bar_time="2026-10-16T04:00:00+00:00"),
+            # bar2：expired 收割（seq 0）
+            _signal(0, "2026-10-18T04:00:00+00:00", bar_time="2026-10-17T04:00:00+00:00",
+                    outcome="expired", fill_seq=None, direction=None,
+                    size_fraction=None),
+        ])
+        # 全量：bar_time+seq 升序
+        all_rows = paper.list_signals(db, tid, limit=100)
+        assert [(r["bar_time"], r["seq"]) for r in all_rows] == [
+            ("2026-10-16T00:00:00+00:00", 4),
+            ("2026-10-16T00:00:00+00:00", 7),
+            ("2026-10-16T04:00:00+00:00", 3),
+            ("2026-10-17T04:00:00+00:00", 0),
+        ]
+        # kind 过滤
+        adds = paper.list_signals(db, tid, kind="add")
+        assert len(adds) == 1 and adds[0]["reject_reason"] == "exposure_cap"
+        # outcome 过滤
+        expired = paper.list_signals(db, tid, outcome="expired")
+        assert len(expired) == 1 and expired[0]["seq"] == 0
+        # bar_time 闭区间（两侧含入）：[bar0, bar1] 含两端不含 bar2
+        windowed = paper.list_signals(
+            db, tid, bar_time_start="2026-10-16T00:00:00+00:00",
+            bar_time_end="2026-10-16T04:00:00+00:00")
+        assert [(r["bar_time"], r["seq"]) for r in windowed] == [
+            ("2026-10-16T00:00:00+00:00", 4),
+            ("2026-10-16T00:00:00+00:00", 7),
+            ("2026-10-16T04:00:00+00:00", 3),
+        ]
+        # 组合过滤+分页
+        page = paper.list_signals(db, tid, outcome="filled", limit=1,
+                                  offset=1)
+        assert [(r["bar_time"], r["seq"]) for r in page] == [
+            ("2026-10-16T04:00:00+00:00", 3)]
+
+    def test_list_signals_pushdown_sql(self, tmp_path: Path):
+        """③SQL 下推断言：过滤/排序/分页在语句层（WHERE+ORDER BY+
+        LIMIT/OFFSET）——非取全量内存过滤。构造超 limit 数据量（300 行
+        对 limit 100）。"""
+        from sqlalchemy import event
+
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        rows = [
+            _signal(1, f"2026-10-17T{i % 24:02d}:{i // 24 % 60:02d}:00+00:00",
+                    bar_time=f"2026-10-16T{i % 24:02d}:00:00+00:00",
+                    signal_kind=("open" if i % 2 == 0 else "add"),
+                    outcome=("filled" if i % 3 == 0 else "rejected"))
+            for i in range(300)
+        ]
+        paper.save_signals(db, tid, rows)
+        assert len(paper.list_signals(db, tid, limit=1000)) == 300
+
+        engine = engine_for(db)
+        captured: list[str] = []
+
+        def _capture(conn, cursor, statement, parameters, context,
+                     executemany):
+            captured.append(statement)
+
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            got = paper.list_signals(
+                db, tid, kind="add", outcome="rejected",
+                bar_time_start="2026-10-16T05:00:00+00:00",
+                bar_time_end="2026-10-16T20:00:00+00:00",
+                limit=100, offset=0)
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+
+        assert captured, "语句捕获未触达"
+        sql = captured[-1]
+        assert sql.count("WHERE") == 1 and "pt_signal" in sql
+        assert "ORDER BY" in sql, "排序须 SQL 层"
+        assert "LIMIT" in sql and "OFFSET" in sql, "分页须 SQL 层"
+        # 行为面对应正确（下推过滤的语义抽查）
+        for r in got:
+            assert r["signal_kind"] == "add"
+            assert r["outcome"] == "rejected"
+            assert "2026-10-16T05:00:00+00:00" <= r["bar_time"] \
+                <= "2026-10-16T20:00:00+00:00"
+        assert len(got) <= 100
+
+    def test_list_signals_isolated_by_task(self, tmp_path: Path):
+        """任务隔离：他任务信号不串入。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        tid = _create_sample_task(db)
+        tid2 = _create_sample_task(db, task_id="pt_def456000002",
+                                   strategy_id="strat-2")
+        paper.save_signals(db, tid, [_signal(
+            1, "2026-10-16T00:00:00+00:00")])
+        assert paper.list_signals(db, tid2) == []
+        assert len(paper.list_signals(db, tid)) == 1

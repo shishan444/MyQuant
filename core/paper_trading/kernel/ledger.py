@@ -19,6 +19,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+
+# 成交层拒因枚举（change paper-signal-log 任务 3——与 pt_signal.
+# reject_reason 列值域同源）：insufficient_funds=定仓结果无效（qty
+# NaN/≤0，含 NaN equity 传导）；context_invalid=语境不符（有仓开仓/
+# 无仓出场等防御面）；below_min_notional=最小名义值拦截（拦截机制
+# 归 change-4，本 change 预留值域不收窄——建表值域写全，生产者晚到）
+REJECT_INSUFFICIENT_FUNDS = "insufficient_funds"
+REJECT_CONTEXT_INVALID = "context_invalid"
+REJECT_BELOW_MIN_NOTIONAL = "below_min_notional"
+
+
+@dataclass(frozen=True)
+class FillOutcome:
+    """execute 返回值（成交或显式拒因——None 静默丢弃退役）。
+
+    fill 非 None 时 reject_reason 恒 None；fill None 时 reject_reason
+    必填（成交层拦截不静默，spec 信号拦截显式化）。
+
+    核算明细三列（change paper-signal-log 任务 5，fill 非 None 时
+    全填——落 pt_fill 的 equity_before/available_before/margin_used）：
+    equity_before=成交前权益（执行 bar 开盘价估值——定仓消费的
+    equity_now 同口径）；available_before=成交前 balance；margin_
+    used=open/add 本笔占用、reduce/close 本笔释放正值（存量行三列
+    NULL=升级前成交历史语义，零回填）。
+
+    Attributes:
+        fill: 成交记录（None=被拦）。
+        reject_reason: 拒因枚举（fill 非 None 时 None）。
+        equity_before: 成交前权益（开盘价估值）。
+        available_before: 成交前 balance。
+        margin_used: 本笔占用（open/add）/释放正值（reduce/close）。
+    """
+
+    fill: "Fill | None" = None
+    reject_reason: str | None = None
+    equity_before: float | None = None
+    available_before: float | None = None
+    margin_used: float | None = None
+
 from core.market_model import maintenance_margin_rate
 from core.paper_trading.kernel.account import (
     AccountSnapshot,
@@ -257,15 +296,17 @@ class Ledger:
 
     def execute(self, intent: Intent, exec_bar: ClosedBar,
                 fill_model: FillModel,
-                entry_atr: float | None = None) -> Fill | None:
-        """执行单条意图（定仓→成交→状态变更，返回成交记录）。
+                entry_atr: float | None = None) -> FillOutcome:
+        """执行单条意图（定仓→成交→状态变更，返回成交或显式拒因）。
 
         判定序与意图合法性由解释器/执行器保证；本方法对语境不符的
-        意图（有仓开仓/无仓出场）返回 None 不抛异常（防御面）。
+        意图（有仓开仓/无仓出场）返回 FillOutcome(None,
+        "context_invalid") 不抛异常（防御面）。
         执行点守卫：open/add 分支定仓结果 qty 无效（NaN/≤0，
         `not (qty > 0.0)` 单式并拦——含 NaN equity 传导的 margin
-        NaN，SEC-04 收编）时同样 return None 不落账——防 NaN 经
-        fill 链污染 balance/position；价格侧 inf 由装载点守卫
+        NaN，SEC-04 收编）时返回 FillOutcome(None,
+        "insufficient_funds") 不落账——防 NaN 经 fill 链污染
+        balance/position；价格侧 inf 由装载点守卫
         （executor._closed_bar 四价 isfinite）单点拦截，本守卫
         不重复；常态路径价格有效时恒 False 零影响。
 
@@ -277,50 +318,78 @@ class Ledger:
                 消费；其余意图不读）。
 
         Returns:
-            Fill | None: 成交记录（realized_pnl 已回填）；语境不符
-            或 qty 无效 None。
+            FillOutcome: fill=成交记录（realized_pnl 已回填）+
+            reject_reason=None；被拦时 fill=None+拒因枚举
+            （insufficient_funds/context_invalid；below_min_notional
+            拦截分支归 change-4）。
         """
         kind = intent.kind
         if kind == "open":
             if self.position is not None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
+            # 核算明细：成交前时点（开盘价估值权益+balance）
+            equity_before = self.equity(exec_bar.open)
+            available_before = self.balance
             qty, capped = self.size_open(exec_bar.open, entry_atr)
             if not (qty > 0.0):
-                return None
+                return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty)
             fill.capped = capped
-            self._apply_open(fill, exec_bar, entry_atr)
-            return fill
+            margin_used = self._apply_open(fill, exec_bar, entry_atr)
+            return FillOutcome(
+                fill, equity_before=equity_before,
+                available_before=available_before,
+                margin_used=margin_used)
         if kind == "add":
             if self.position is None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
+            equity_before = self.equity(exec_bar.open)
+            available_before = self.balance
             add_margin = self.params.add_fraction * self.equity(
                 exec_bar.open)
             qty_add = add_margin * self.params.leverage / exec_bar.open
             if not (qty_add > 0.0):
-                return None
+                return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty_add)
-            self._apply_add(fill)
-            return fill
+            margin_used = self._apply_add(fill)
+            return FillOutcome(
+                fill, equity_before=equity_before,
+                available_before=available_before,
+                margin_used=margin_used)
         if kind == "reduce":
             if self.position is None:
-                return None
+                return FillOutcome(None, REJECT_CONTEXT_INVALID)
+            equity_before = self.equity(exec_bar.open)
+            available_before = self.balance
             qty = self.position.quantity * self.params.exit_fraction
             fill = fill_model.fill(intent, exec_bar, qty)
-            self._apply_partial_exit(fill)
-            return fill
+            released = self._apply_partial_exit(fill)
+            return FillOutcome(
+                fill, equity_before=equity_before,
+                available_before=available_before,
+                margin_used=released)
         # 出场族（close/exit_*）
         if self.position is None:
-            return None
+            return FillOutcome(None, REJECT_CONTEXT_INVALID)
+        equity_before = self.equity(exec_bar.open)
+        available_before = self.balance
         fill = fill_model.fill(intent, exec_bar, self.position.quantity)
-        self._apply_close(fill)
-        return fill
+        released = self._apply_close(fill)
+        return FillOutcome(
+            fill, equity_before=equity_before,
+            available_before=available_before,
+            margin_used=released)
 
     # ── 状态变更（每笔费用=名义计费；slip 已在成交价内） ──────
 
     def _apply_open(self, fill: Fill, exec_bar: ClosedBar,
-                    entry_atr: float | None) -> None:
-        """开仓落账：margin=qty×成交价/leverage，balance−=margin+fee。"""
+                    entry_atr: float | None) -> float:
+        """开仓落账：margin=qty×成交价/leverage，balance−=margin+fee。
+
+        Returns:
+            float: 本笔占用保证金（核算明细 margin_used 单点——与
+            落账同式同值，审计列与状态变更不分叉）。
+        """
         params = self.params
         side = "long" if fill.intent.direction == "long" else "short"
         margin = fill.quantity * fill.price / params.leverage
@@ -338,11 +407,16 @@ class Ledger:
             trail_peak=fill.price,
             entry_bar_seq=exec_bar.seq,
             funding_paid=0.0)
+        return margin
 
-    def _apply_add(self, fill: Fill) -> None:
+    def _apply_add(self, fill: Fill) -> float:
         """加仓落账：保证金=add_fraction×当时权益→名义放大；并仓
         （entry_price 加权重锚、margin/quantity 累加；trail 峰值保持
-        连续——持仓期语义不随部分加仓重置）。"""
+        连续——持仓期语义不随部分加仓重置）。
+
+        Returns:
+            float: 本笔占用保证金（核算明细 margin_used 单点）。
+        """
         pos = self.position
         add_margin = fill.quantity * fill.price / self.params.leverage
         new_qty = pos.quantity + fill.quantity
@@ -355,9 +429,15 @@ class Ledger:
         pos.open_cost += fill.quantity * fill.price
         self.balance -= add_margin + fill.fee
         self._reanchor_stops(pos)
+        return add_margin
 
-    def _apply_partial_exit(self, fill: Fill) -> None:
-        """减仓落账：按比例释放保证金；部分已实现盈亏回填成交。"""
+    def _apply_partial_exit(self, fill: Fill) -> float:
+        """减仓落账：按比例释放保证金；部分已实现盈亏回填成交。
+
+        Returns:
+            float: 本笔释放保证金（核算明细 margin_used 单点——释放
+            正值披露）。
+        """
         pos = self.position
         sign = 1.0 if pos.side == "long" else -1.0
         fill.realized_pnl = sign * fill.quantity * (
@@ -371,9 +451,14 @@ class Ledger:
         if pos.quantity <= 0.0:
             self.closed_trades += 1
             self.position = None
+        return released
 
-    def _apply_close(self, fill: Fill) -> None:
-        """全平落账：balance+=margin+pnl−fee；出场计数+1。"""
+    def _apply_close(self, fill: Fill) -> float:
+        """全平落账：balance+=margin+pnl−fee；出场计数+1。
+
+        Returns:
+            float: 全部保证金释放额（核算明细 margin_used 单点）。
+        """
         pos = self.position
         sign = 1.0 if pos.side == "long" else -1.0
         fill.realized_pnl = sign * pos.quantity * (
@@ -381,6 +466,7 @@ class Ledger:
         self.balance += pos.margin + fill.realized_pnl - fill.fee
         self.closed_trades += 1
         self.position = None
+        return pos.margin
 
     def record_funding(self, amount: float) -> None:
         """资金费落账单点（三键一次更新——对质①裁决收单点）。

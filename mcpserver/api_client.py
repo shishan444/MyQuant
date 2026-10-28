@@ -42,7 +42,8 @@ READONLY_ENDPOINTS = frozenset({
     "/api/research/feature-requests",
     "/api/research/plugins/formula",
     "/api/research/plugins/model",
-    # 纸盘只读四件的 GET 端点族（rebuild-paper-trading 5.3）
+    # 纸盘只读五件的 GET 端点族（rebuild-paper-trading 5.3+
+    # paper-signal-log 任务 6 signals 信号记录查询）
     "/api/paper-trading/tasks",
     "/api/paper-trading/tasks/{task_id}",
     "/api/paper-trading/tasks/{task_id}/fills",
@@ -50,6 +51,7 @@ READONLY_ENDPOINTS = frozenset({
     "/api/paper-trading/tasks/{task_id}/funding",
     "/api/paper-trading/tasks/{task_id}/report",
     "/api/paper-trading/tasks/{task_id}/report/final",
+    "/api/paper-trading/tasks/{task_id}/signals",
     "/api/paper-trading/runner-status",
 })
 
