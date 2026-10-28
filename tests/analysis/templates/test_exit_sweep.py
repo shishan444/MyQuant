@@ -359,6 +359,155 @@ class TestExecutionAndGates:
                                              "indeterminate")
 
 
+class TestSeriesExecution:
+    """series 档执行面（dynamic-stop-loss-series CARD-01/R-1 方向 A：
+    spec「grid 类值域消费方对 series 档 entry 允许空 sl_values 形式」
+    的可达性落地——真实引擎轨道）。
+
+    数据前提：_make_env 数据起点 2023-01-01，RNG_DEF 起点 04-01 →
+    warmup 前缀 540 bar；SMA 源预算=注册表上限 200×3=600>540——
+    默认区间下 series 组诚实拒绝（WARMUP_INSUFFICIENT），充足前缀
+    区间（05-01 起 780 bar>600）产出结果行。全部期望值经探针人工
+    对拍（n=1400/seed=11 确定性数据）。"""
+
+    _SMA_SRC = {"indicator": "SMA", "params": {"period": 20}}
+    _RNG_MAY = {"symbol": SYMBOL, "timeframe": "4h",
+                "start": "2023-05-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}
+
+    @staticmethod
+    def _series_grid(src, tps):
+        return {"modes": [{"mode": "series", "stops": [],
+                           "take_profits": list(tps),
+                           "sl_series_source": src}]}
+
+    def test_series_indicator_end_to_end_rows(self, tmp_path):
+        """指标源端到端：SMA(20) 空 stops+4 TP → 4 行 ok、stop_loss=null
+        （非标量档披露）、TP 值逐行回显；TP 轴扫描可区分（TP=0.02 触发
+        更频繁 88 笔 vs 0.04 起 85 笔——TP 真实生效的执行面证据，若
+        stop_loss 残留被消费为标量止损则行为全非）。"""
+        d, db = _make_env(tmp_path)
+        out = exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                         direction="long",
+                         grid=self._series_grid(self._SMA_SRC,
+                                                [0.02, 0.04, 0.06, 0.08]))
+        rows = out["payload"]["results"]
+        assert out["sample_size"] == 4
+        assert [r["status"] for r in rows] == ["ok"] * 4
+        assert all(r["stop_loss"] is None for r in rows), \
+            "占位组 stop_loss=null（RiskGenes 残留 0.05 不赋值）"
+        assert [r["take_profit"] for r in rows] == [0.02, 0.04, 0.06, 0.08]
+        trades = [r["total_trades"] for r in rows]
+        assert trades[0] == 88 and trades[1] == 85, \
+            f"TP=0.02 更紧出场更频繁（探针对拍 88/85），实际 {trades}"
+        assert out["payload"]["verdict"] is not None, "TP 轴判定可达"
+
+    def test_series_fx_end_to_end_rows(self, tmp_path):
+        """fx 源端到端：rolling_mean(close,5) 插件列（db 注册）→ 空
+        stops 2 TP 产出 2 行 ok（装载链 enrich 经引擎装配可达）。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        d, db = _make_env(tmp_path)
+        col = register_formula_plugin(
+            db, name="sl_sweep_fx",
+            expression="rolling_mean(close, 5)")["column"]
+        out = exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                         direction="long",
+                         grid=self._series_grid({"column": col},
+                                                [0.04, 0.08]))
+        rows = out["payload"]["results"]
+        assert [r["status"] for r in rows] == ["ok", "ok"]
+        assert all(r["stop_loss"] is None for r in rows)
+
+    def test_series_warmup_lift_disclosed(self, tmp_path):
+        """warmup 逐组分叉披露：SMA 源 series_warmup_bars=600（注册表
+        上限×3）> warmup_bars=200（基础预算）——两轨并入对照（fx 小
+        窗口列 lookback 5 不抬升=200，证明抬升系 SL 列来源并入非虚增）。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        d, db = _make_env(tmp_path)
+        out = exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                         direction="long",
+                         grid=self._series_grid(self._SMA_SRC, [0.04]))
+        p = out["payload"]
+        assert p["series_warmup_bars"] == 600 and p["warmup_bars"] == 200
+        col = register_formula_plugin(
+            db, name="sl_sweep_fx5",
+            expression="rolling_mean(close, 5)")["column"]
+        out2 = exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                          direction="long",
+                          grid=self._series_grid({"column": col}, [0.04]))
+        assert out2["payload"]["series_warmup_bars"] == 200, \
+            "小窗口 fx 列不抬升（lookback 5 < floor 200）"
+
+    def test_series_warmup_short_single_group_failed(self, tmp_path):
+        """warmup 不足 series 组单组容错：混合 grid（pct+series）默认
+        区间前缀 540 < SMA 预算 600 → series 组 failed（failure_code=
+        RESEARCH_WARMUP_INSUFFICIENT）不阻塞整批；pct 组用基础预算
+        200<540 正常 ok（混合 grid 互不拖累）；sample_size=成功组数。"""
+        d, db = _make_env(tmp_path)
+        out = exit_sweep(db, d, dict(RNG_DEF), condition=_COND,
+                         direction="long",
+                         grid={"modes": [
+                             {"mode": "pct", "stops": [0.02],
+                              "take_profits": [0.04]},
+                             self._series_grid(self._SMA_SRC, [0.04, 0.08])
+                             ["modes"][0]]})
+        p = out["payload"]
+        rows = p["results"]
+        assert rows[0]["mode"] == "pct" and rows[0]["status"] == "ok"
+        assert all(r["status"] == "failed" and
+                   r["failure_code"] == "RESEARCH_WARMUP_INSUFFICIENT"
+                   for r in rows[1:]), "series 组单组诚实拒绝"
+        assert len(p["failed_groups"]) == 2
+        assert out["sample_size"] == 1, "sample_size=成功组数"
+
+    def test_series_axes_only_take_profit(self, tmp_path):
+        """平面判定 series 档只取 take_profit 轴（stop_loss 非该档可
+        扫描维度——「不适用」）；single_value_axes 不记 series.stop_loss；
+        pct 单点组对照（pct.stop_loss 在 single_value_axes——两面分叉
+        依据=参数是否为该档可扫描维度）。"""
+        d, db = _make_env(tmp_path)
+        out = exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                         direction="long",
+                         grid={"modes": [
+                             {"mode": "pct", "stops": [0.02],
+                              "take_profits": [0.04, 0.08]},
+                             self._series_grid(self._SMA_SRC, [0.04, 0.08])
+                             ["modes"][0]]})
+        p = out["payload"]
+        axes = p["robust_ranges"]
+        assert list(axes["series"]["axes"]) == ["take_profit"], \
+            "series 档平面判定只含 TP 轴"
+        assert list(axes["pct"]["axes"]) == ["stop_loss", "take_profit"]
+        sv = p.get("single_value_axes") or []
+        assert "series.stop_loss" not in sv, "series.stop_loss 恒不记单值轴"
+        assert "pct.stop_loss" in sv, "pct 单点 stop 维持单值轴披露"
+
+    def test_series_fx_prefix_validation(self, tmp_path):
+        """校验面：series entry 的 sl_series_source.column 非 str 或无
+        fx_ 前缀 → 校验期整批 422（RESEARCH_PARAM_INVALID——先于执行）。"""
+        d, db = _make_env(tmp_path)
+        for bad_col in ("no_prefix", 123):
+            with pytest.raises(ResearchError) as ei:
+                exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                           direction="long",
+                           grid=self._series_grid({"column": bad_col},
+                                                  [0.04]))
+            assert ei.value.code == "RESEARCH_PARAM_INVALID", \
+                (bad_col, ei.value.code)
+            assert ei.value.detail["param"] == \
+                "grid.modes[].sl_series_source.column"
+
+    def test_series_empty_stops_group_cap_counted(self, tmp_path):
+        """组数上限计数：series 空 stops 按 1×len(tps) 计入 Σ≤50——
+        51 个 TP 拒（若按 0 计则放行即漏计）。"""
+        d, db = _make_env(tmp_path)
+        tps = [round(0.02 + 0.001 * i, 4) for i in range(51)]
+        with pytest.raises(ResearchError) as ei:
+            exit_sweep(db, d, dict(self._RNG_MAY), condition=_COND,
+                       direction="long",
+                       grid=self._series_grid(self._SMA_SRC, tps))
+        assert ei.value.detail.get("limit") == 50, ei.value.detail
+
+
 class TestThreeGates:
     """判定轨道（受控注入）：三道门四值+矩阵最差聚合+标尺内建。"""
 
