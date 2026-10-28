@@ -1123,3 +1123,28 @@ class TestMountFourBranchDispatch:
             registry=registry, start_after="2000-01-01T00:00:00+00:00")
         assert ex.prepare() is True, "draft 挂载任务装载就绪可运行"
         assert compute_all_indicators is not None  # 就绪面数据链核证
+
+    def test_draft_mount_report_schema_identical_no_observation_keys(
+            self, paper_api) -> None:
+        """T6 同构守护·报告面：draft 挂载任务与普通挂载任务的滚动
+        报告键集完全一致、响应全文无观察轨标注键（「无观察轨概念」
+        排除性声明——已废弃提案的概念面不得引入；特征锚：未来任何
+        observation 类标注都会破坏本对照）。"""
+        import json as _json
+
+        client, db = paper_api
+        _seed_strategy(db, strategy_id="st-d", status="draft")
+        _seed_strategy(db, strategy_id="st-a", status="active")
+        d_row = _create(client, strategy_id="st-d")
+        a_row = _create(client, strategy_id="st-a")
+        d_resp = client.get(
+            f"/api/paper-trading/tasks/{d_row['task_id']}/report")
+        a_resp = client.get(
+            f"/api/paper-trading/tasks/{a_row['task_id']}/report")
+        assert d_resp.status_code == a_resp.status_code == 200, (
+            d_resp.text, a_resp.text)
+        d_report, a_report = d_resp.json(), a_resp.json()
+        assert set(d_report) == set(a_report), \
+            "draft 挂载任务报告键集与普通任务一致（同构无特殊分支）"
+        assert "observation" not in _json.dumps(
+            d_report, ensure_ascii=False), "无观察轨标注键"

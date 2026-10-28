@@ -544,6 +544,10 @@ class TestLegacyWhitelistCleanup:
             assert "timeframe_not_supported_by_platform" \
                 in task["error_detail"]
             assert "30m" in task["error_detail"]
+            # 数据保留双维补强（spec「转 error 保留已产出数据」——
+            # timeframe 维与 symbol 维同判据）
+            assert paper.list_equity_snapshots(
+                h.db, tid, limit=10), "清场保留数据（timeframe 维）"
         finally:
             scheduler.stop()
             scheduler.join(timeout=5.0)

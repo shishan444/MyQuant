@@ -1420,3 +1420,33 @@ class TestRelaxedMountReturnFlow:
         h.scheduler._replay_paper_strategies()
         assert h.strategy_status("st-scan") == "draft"
         assert h.events("st-scan") == []
+
+    @pytest.mark.parametrize("status", ["draft", "candidate", "live"])
+    def test_concluded_chain_callback_transparent_for_non_paper(
+            self, tmp_path, status):
+        """端到端回调链（生产挂点 _executor_concluded——executor
+        on_concluded 构造直传入口，scheduler.py:199/338 同参）：三态
+        续挂任务终态→登记清理→回流守卫正当跳过→客户端结题回调仍
+        透传（守卫跳过不绑架结题）+策略态不变+零迁移事件。与上例
+        直调 _replay_task_end 互补：上例证守卫单点行为，本例证回调
+        链整体（顺序完整性——守卫 return 后回调不丢）。"""
+        h = _ReturnFlowHarness(tmp_path, name=f"chain_{status}")
+        h.seed_paper_strategy("st-chain", status=status)
+        h.seed_task("pt_chain0001", "st-chain", status="completed")
+        # 预置登记（回调链首段清理面的真实对象面——pop 对空 dict
+        # 是 no-op，预置后断言才证清理段执行）
+        h.scheduler._executors["pt_chain0001"] = object()
+        h.scheduler._threads["pt_chain0001"] = object()
+        concluded: list = []
+        h.scheduler._on_concluded_client = (
+            lambda tid, st: concluded.append((tid, st)))
+
+        h.scheduler._executor_concluded("pt_chain0001", "completed")
+
+        assert "pt_chain0001" not in h.scheduler._executors, \
+            "执行器登记已清理（回调链首段）"
+        assert "pt_chain0001" not in h.scheduler._threads
+        assert concluded == [("pt_chain0001", "completed")], \
+            "客户端结题回调透传（非 paper 态跳过回流不绑架结题）"
+        assert h.strategy_status("st-chain") == status, "策略态不变"
+        assert h.events("st-chain") == [], "零迁移事件"
