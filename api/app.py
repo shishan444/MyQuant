@@ -165,7 +165,14 @@ def create_app(
         fapi_backfill = None
         import os as _os_fapi
 
-        if not _os_fapi.environ.get("FAPI_STREAM_DISABLED"):
+        if _os_fapi.environ.get("FAPI_STREAM_DISABLED"):
+            # 旁路面披露（批次三 CARD-05）：该变量仅测试全域 conftest
+            # 置位（生产无此变量恒装配）——启动日志留痕防「生产误置/
+            # 环境泄漏」时行情面静默缺席不可归因
+            logger.warning(
+                "FAPI_STREAM_DISABLED 置位——fapi 行情流与建库线程整体"
+                "旁路（测试旁路面，生产环境出现此日志即为配置异常）")
+        else:
             from core.data.fapi.rest import fapi_env as _fapi_env
             from core.paper_trading.runtime.feed import FixedKeyBackfill
 
