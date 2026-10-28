@@ -188,16 +188,18 @@ def create_app(
                 if feed is not None:
                     feed.on_closed_bar(event)
 
-            if fapi_stream_factory is not None:
-                fapi_stream = fapi_stream_factory(
-                    on_closed_bar=_route_closed_bar,
-                    ws_base_url=_env["ws_base"], proxies=_proxies)
-            else:
+            # 单点构造（批次三 CARD-15）：两分支仅构造来源不同——
+            # factory 变量归一后参数列表单写（双写是将来加参漏一侧的
+            # 温床）；延迟 import 保持条件内（测试注入路径不 import
+            # SDK 的语义不变）
+            stream_factory = fapi_stream_factory
+            if stream_factory is None:
                 from core.data.fapi import BinanceFapiStream
 
-                fapi_stream = BinanceFapiStream(
-                    on_closed_bar=_route_closed_bar,
-                    ws_base_url=_env["ws_base"], proxies=_proxies)
+                stream_factory = BinanceFapiStream
+            fapi_stream = stream_factory(
+                on_closed_bar=_route_closed_bar,
+                ws_base_url=_env["ws_base"], proxies=_proxies)
             paper_scheduler.registry.fapi_stream = fapi_stream
             fapi_stream.start()
             fapi_backfill = FixedKeyBackfill(
