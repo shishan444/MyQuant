@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import os
 
-# 运行任务数上限（超限任务停留 pending 按 created_at 顺序排队拾取）
-MAX_RUNNING_TASKS = int(os.environ.get("PAPER_MAX_RUNNING_TASKS", "10"))
+# 运行任务数上限（超限任务停留 pending 按 created_at 顺序排队拾取；
+# 缺省 100=change paper-mount-and-concurrency 护栏上调〔2026-10-28
+# 用户裁决〕——spec「上限排队语义（质询闭环修订）」同值写死，改值改
+# 锚同步）
+MAX_RUNNING_TASKS = int(os.environ.get("PAPER_MAX_RUNNING_TASKS", "100"))
 
 # 调度器守护循环轮询间隔（秒）
 POLL_INTERVAL_SECONDS = 2.0

@@ -1,6 +1,6 @@
 """任务调度器测试（rebuild-paper-trading 任务 3.3）。
 
-覆盖：状态机全迁移集+非法迁移拒绝面；并发上限（第 11 任务停留
+覆盖：状态机全迁移集+非法迁移拒绝面；并发上限（第 101 任务停留
 pending、活跃数降后拾取）+环境变量覆盖；窗口到点自动 completed+
 停止条件转 stopped（禁止变化断言：停止触发的 bar 上交易行为与无停止
 条件时逐笔一致）；stop 三态分派（pending 直接 stopped/running 协作）；
@@ -166,6 +166,28 @@ class TestConcurrencyCap:
         finally:
             monkeypatch.delenv("PAPER_MAX_RUNNING_TASKS")
             importlib.reload(constants)  # 恢复缺省（防污染后续用例）
+
+    def test_default_cap_100_s3(self, monkeypatch, tmp_path):
+        """S3 承载三面：缺省护栏 100 常量断言（spec 同值锚）+调度器
+        消费同值+队列深度可观察（runner-status 的 pending_depth 与
+        max_running_tasks 透出缺省值）。"""
+        from core.paper_trading import constants
+
+        monkeypatch.delenv("PAPER_MAX_RUNNING_TASKS", raising=False)
+        try:
+            reloaded = importlib.reload(constants)
+            assert reloaded.MAX_RUNNING_TASKS == 100, \
+                "缺省护栏 100（change paper-mount-and-concurrency）"
+            h = _SchedulerHarness(tmp_path)
+            try:
+                status = h.scheduler.status()
+                assert status["max_running_tasks"] == 100, \
+                    "调度器缺省消费 100（runner-status 透出）"
+                assert status["pending_depth"] == 0, "空队列深度 0 可观察"
+            finally:
+                h.teardown()
+        finally:
+            importlib.reload(constants)
 
 
 class TestConclusion:
