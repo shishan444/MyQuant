@@ -100,6 +100,14 @@ def create_app(
                 "config.yaml 读取失败（%s: %s），max_concurrent_tasks 用缺省 2",
                 type(_exc).__name__, _exc,
             )
+        # 文档层非映射（如整文档裸标量）：与 or {} 防 None 同族的类型面
+        # 防御——否则 _cfg.get 处 AttributeError 启动崩溃
+        if not isinstance(_cfg, dict):
+            logger.warning(
+                "config.yaml 文档层非映射（%s），max_concurrent_tasks 用缺省 2",
+                type(_cfg).__name__,
+            )
+            _cfg = {}
         _maxw = (_cfg.get("evolution") or {}).get(
             "max_concurrent_tasks", 2)
         runner = EvolutionRunner(
