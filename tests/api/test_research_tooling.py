@@ -522,7 +522,10 @@ class TestDisclosureAndCapability:
         expect = {
             "stop_evolution_task": ("404", "409"),
             "pause_evolution_task": ("404", "409"),
-            "resume_evolution_task": ("404", "400"),
+            # CARD-06 文实对齐：resume 语义=paused→pending 重新排队+
+            # initial_dna 完整重跑（非断点续跑——历史裁决 6）
+            "resume_evolution_task": ("404", "400", "重新排队",
+                                      "完整重跑"),
             "get_evolution_strategies": ("404", "top10", "champion"),
             "update_strategy_metadata": ("404", "字符串形制直通"),
             "batch_delete_strategies": ("不可逆", "matched_count",
@@ -532,6 +535,10 @@ class TestDisclosureAndCapability:
             doc = registry[name].__doc__ or ""
             for tok in tokens:
                 assert tok in doc, f"{name} docstring 未披露 {tok!r}"
+        # 负锚：旧「断点续跑」语义措辞不得回潮（教 AI 错误预期）
+        resume_doc = registry["resume_evolution_task"].__doc__ or ""
+        assert "从暂停代继续" not in resume_doc, (
+            "resume docstring 不得残留断点续跑旧措辞")
 
     def test_capability_doc_includes_new_tools(self, registry):
         """S11：能力自述工具清单含六新工具条目（运行时从注册集生成）

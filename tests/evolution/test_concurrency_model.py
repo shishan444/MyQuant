@@ -361,6 +361,9 @@ class TestPauseSemantics:
                 # resume：paused→pending
                 r2 = client.post("/api/evolution/tasks/t1/resume")
                 assert r2.status_code == 200
+                # CARD-06 行为锚：resume 语义=paused→pending 重新排队
+                # （完整重跑非断点续跑——重拾重跑已由本用例后半验证）
+                assert r2.json()["status"] == "pending"
 
                 # 锚 3 前半：旧线程未终结期间（controller 在注册表），
                 # 多轮 tick 后仍不被拾取——双跑窗口归零
