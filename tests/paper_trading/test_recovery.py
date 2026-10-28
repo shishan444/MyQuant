@@ -473,3 +473,95 @@ class TestMaxLossRecovery:
         assert loss_at >= 190.0
         # 全帧续跑完成（60 根全处理——崩溃前 22 根判重跳过不重扣）
         assert h.task()["bars_processed"] == _N_BARS
+
+
+class TestLegacyWhitelistCleanup:
+    """存量双维清场（change paper-mount-and-concurrency 任务 5）：
+    白名单外 running 残行经 startup_recover 转 error（双维枚举分立
+    可辨）保留数据；白名单内正常恢复续跑（清场不误伤）。"""
+
+    def _legacy_running_row(self, h, task_id: str, *, symbol: str,
+                            timeframe: str) -> str:
+        """直插非白名单 running 残行（绕过受理层的存量形态——含
+        可信账户态使恢复链可达白名单判据）。"""
+        paper.create_task(
+            h.db, strategy_id="strat-l", task_id=task_id,
+            dna_snapshot_json=make_dna().to_json(),
+            symbol=symbol, timeframe=timeframe,
+            research_status_snapshot="unverified",
+            initial_cash=10_000.0, leverage=1, window_bars=None)
+        paper.update_task(
+            h.db, task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        paper.append_bar(
+            h.db, task_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 10_000.0, "balance": 10_000.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 1,
+                        "last_bar_time": h.df.index[0].isoformat(),
+                        "balance": 10_000.0})
+        return task_id
+
+    def test_legacy_symbol_outside_whitelist_to_error(self, tmp_path):
+        """①非白名单 symbol（SOLUSDT）running 残行→startup_recover 后
+        status=error+detail=symbol_not_supported_by_platform+数据保留。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        h = _RecoveryHarness(tmp_path)
+        tid = self._legacy_running_row(
+            h, "pt_lgc00000001", symbol="SOLUSDT", timeframe="4h")
+        scheduler = PaperScheduler(
+            h.db, registry=h.registry, poll_interval=0.2)
+        try:
+            counts = scheduler.startup_recover()
+            task = paper.get_task(h.db, tid)
+            assert task["status"] == "error"
+            assert "symbol_not_supported_by_platform" \
+                in task["error_detail"]
+            assert "SOLUSDT" in task["error_detail"]
+            assert counts["untrusted"] == 1
+            # 数据保留（转 error 不删除已产出明细）
+            assert paper.list_equity_snapshots(
+                h.db, tid, limit=10), "清场保留数据"
+        finally:
+            scheduler.stop()
+            scheduler.join(timeout=5.0)
+
+    def test_legacy_timeframe_outside_whitelist_to_error(self, tmp_path):
+        """②非六档 timeframe（30m）running 残行→同上（枚举
+        timeframe_not_supported_by_platform）。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        h = _RecoveryHarness(tmp_path)
+        tid = self._legacy_running_row(
+            h, "pt_lgc00000002", symbol="BTCUSDT", timeframe="30m")
+        scheduler = PaperScheduler(
+            h.db, registry=h.registry, poll_interval=0.2)
+        try:
+            scheduler.startup_recover()
+            task = paper.get_task(h.db, tid)
+            assert task["status"] == "error"
+            assert "timeframe_not_supported_by_platform" \
+                in task["error_detail"]
+            assert "30m" in task["error_detail"]
+        finally:
+            scheduler.stop()
+            scheduler.join(timeout=5.0)
+
+    def test_whitelisted_row_recovers_normally(self, tmp_path):
+        """③白名单内 running 残行正常恢复续跑（清场不误伤——
+        recovered 计数与 running 态维持）。"""
+        from core.paper_trading.runtime.scheduler import PaperScheduler
+
+        h = _RecoveryHarness(tmp_path)
+        h.run_until_crash(_CRASH_AT)  # 白名单内可信残态（BTCUSDT/4h）
+        scheduler = PaperScheduler(
+            h.db, registry=h.registry, poll_interval=0.2)
+        try:
+            counts = scheduler.startup_recover()
+            assert counts == {"recovered": 1, "untrusted": 0}
+            assert paper.get_task(h.db, h.task_id)["status"] == "running"
+            assert h.task_id in scheduler.status()["active_task_ids"]
+        finally:
+            scheduler.stop()
+            scheduler.join(timeout=5.0)

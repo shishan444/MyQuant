@@ -97,6 +97,36 @@ def recover_task(
             "纸盘任务 %s 恢复不可信（保留数据）: %s",
             task_row["task_id"], detail)
         return None
+    # 存量双维清场（change paper-mount-and-concurrency 任务 5：白名单
+    # 收窄部署后，存量库的非白名单 running 残行代码兜底——转 error
+    # 保留数据，系统无静默断流僵尸任务；经本单点覆盖两恢复入口
+    # 〔startup_recover 与心跳移交〕）
+    from core.paper_trading.constants import (
+        PAPER_SYMBOL_WHITELIST, PAPER_TIMEFRAME_WHITELIST)
+    if task_row["symbol"] not in PAPER_SYMBOL_WHITELIST:
+        _reject_reason = (
+            f"symbol_not_supported_by_platform: 品种 "
+            f"{task_row['symbol']} 不在纸盘白名单"
+            f"（{sorted(PAPER_SYMBOL_WHITELIST)}）——存量任务清场转 "
+            "error（保留数据）")
+        paper_repo.update_task(
+            db_path, task_row["task_id"], status="error",
+            error_detail=_reject_reason)
+        logger.error("纸盘任务 %s 存量清场: %s",
+                     task_row["task_id"], _reject_reason)
+        return None
+    if task_row["timeframe"] not in PAPER_TIMEFRAME_WHITELIST:
+        _reject_reason = (
+            f"timeframe_not_supported_by_platform: 执行周期 "
+            f"{task_row['timeframe']} 不在纸盘支持档位"
+            f"（{sorted(PAPER_TIMEFRAME_WHITELIST)}）——存量任务清场"
+            "转 error（保留数据）")
+        paper_repo.update_task(
+            db_path, task_row["task_id"], status="error",
+            error_detail=_reject_reason)
+        logger.error("纸盘任务 %s 存量清场: %s",
+                     task_row["task_id"], _reject_reason)
+        return None
     try:
         return PaperTaskExecutor.from_task_row(
             db_path, task_row, **executor_kwargs)
