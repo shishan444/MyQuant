@@ -439,6 +439,108 @@ class TestRunnerStatus:
             assert status["running_count"] == 2
             assert sorted(status["active_task_ids"]) == sorted(tids)
             assert status["pending_depth"] == 0
+            # 健康四组恒在场（K2 未装配面缺省语义）
+            assert status["ws"] == {
+                "connected": False, "last_push": {}, "silent_seconds": {}}
+            assert status["flush_buffer"] == {}
+            assert status["reconcile"] == {
+                "last_run": None, "last_result": None}
+            assert status["backfill"] == {}
+        finally:
+            h.teardown()
+
+    def test_ws_health_groups_with_stream(self, tmp_path):
+        """K1：stream 装配后 ws 三面（connected/last_push 按键/
+        silent_seconds 按键——从未推送键不在披露面）。"""
+        import pandas as pd
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            now = pd.Timestamp("2030-01-01T00:10:00Z")
+            pushes = {
+                ("BTCUSDT", "1m"): pd.Timestamp("2030-01-01T00:09:30Z"),
+                ("ETHUSDT", "4h"): pd.Timestamp("2030-01-01T00:08:00Z"),
+            }
+
+            class _FakeStream:
+                connected = True
+
+                def last_push(self, key):
+                    return pushes.get(key)
+
+                def silent_seconds(self, key):
+                    pushed = pushes.get(key)
+                    return None if pushed is None else (
+                        now - pushed).total_seconds()
+
+            h.registry.fapi_stream = _FakeStream()
+            status = h.scheduler.status()
+            ws = status["ws"]
+            assert ws["connected"] is True
+            assert ws["last_push"] == {
+                "BTCUSDT_1m": "2030-01-01T00:09:30+00:00",
+                "ETHUSDT_4h": "2030-01-01T00:08:00+00:00",
+            }
+            assert ws["silent_seconds"] == {
+                "BTCUSDT_1m": 30, "ETHUSDT_4h": 120}
+        finally:
+            h.teardown()
+
+    def test_reconcile_health_three_values(self, tmp_path):
+        """K3：reconcile 三值（ok/gap_filled:N/failed）取最近一轮。"""
+        import pandas as pd
+
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+            # 无缺口对账=ok
+            feed.reconcile()
+            assert h.scheduler.status()["reconcile"]["last_result"] == "ok"
+            # 缺口补拉=gap_filled:N
+            frame = h.df.iloc[-1:].copy()
+            frame.index = frame.index + pd.Timedelta(hours=4)
+            feed._rest_fetcher = (  # noqa: SLF001——测试注入补拉帧
+                lambda *a, **k: frame)
+            feed._now_fn = (  # noqa: SLF001——推时钟造缺口
+                lambda: h.df.index[-1] + pd.Timedelta(hours=20))
+            feed.reconcile()
+            assert h.scheduler.status()["reconcile"][
+                "last_result"] == "gap_filled:1"
+            # REST 异常=failed（记录后上抛——调度器吞咽续轮）
+            feed._rest_fetcher = (  # noqa: SLF001
+                lambda *a, **k: (_ for _ in ()).throw(
+                    ConnectionError("x")))
+            with pytest.raises(ConnectionError):
+                feed.reconcile()
+            assert h.scheduler.status()["reconcile"][
+                "last_result"] == "failed"
+        finally:
+            h.teardown()
+
+    def test_flush_buffer_health(self, tmp_path):
+        """flush_buffer 组：高频缓冲行数按活跃 feed 键披露。"""
+        import pandas as pd
+
+        from core.data.fapi.stream import ClosedBarEvent
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+            event = ClosedBarEvent(
+                symbol="BTCUSDT", timeframe="4h",
+                open_time=h.df.index[-1] + pd.Timedelta(hours=4),
+                open=100.0, high=101.0, low=99.0, close=100.5, volume=10.0)
+            feed.on_closed_bar(event)  # 4h 低频即写——缓冲为空
+            assert h.scheduler.status()["flush_buffer"] == {}
         finally:
             h.teardown()
 

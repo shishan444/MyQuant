@@ -41,12 +41,18 @@ except Exception:  # 包未安装（非 editable 运行）时回退常量，与 
 def create_app(
     db_path: Path | None = None,
     data_dir: Path | None = None,
+    fapi_stream_factory=None,
 ) -> FastAPI:
     """构造并配置 FastAPI 应用（全工程唯一应用工厂）。
 
     Args:
         db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
-        data_dir: Parquet 数据目录；缺省为项目根 data/market。
+        data_dir: Parquet 数据目录；缺省为项目根 FAPI_DATA_DIR（环境
+            变量缺省 data/market_fapi——fapi 独立数据面，现货归档
+            data/market 原地冻结留研究链）。
+        fapi_stream_factory: 行情流工厂（缺省生产 BinanceFapiStream；
+            测试注入替身。FAPI_STREAM_DISABLED 环境变量置位时装配
+            整体旁路——测试全域 conftest 旁路面）。
     """
     # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
     # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
@@ -54,7 +60,10 @@ def create_app(
     if db_path is None:
         db_path = project_root / "data" / "quant.db"
     if data_dir is None:
-        data_dir = project_root / "data" / "market"
+        from core.data.fapi.rest import fapi_env
+
+        raw_dir = fapi_env()["data_dir"]
+        data_dir = raw_dir if raw_dir.is_absolute() else project_root / raw_dir
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -148,17 +157,64 @@ def create_app(
         app.state.paper_scheduler = paper_scheduler
         paper_scheduler.start()
 
+        # fapi 行情接入装配（change-1 任务 5）：WS 流（固定 12 路订阅
+        # +事件按需路由到现存 feed 实例）+启动建库线程（12 键全量回补
+        # /尾戳补齐）。FAPI_STREAM_DISABLED 置位时整体旁路（测试全域
+        # conftest 旁路面——生产无该变量恒装配）。
+        fapi_stream = None
+        fapi_backfill = None
+        import os as _os_fapi
+
+        if not _os_fapi.environ.get("FAPI_STREAM_DISABLED"):
+            from core.data.fapi.rest import fapi_env as _fapi_env
+            from core.paper_trading.runtime.feed import FixedKeyBackfill
+
+            _env = _fapi_env()
+            _proxies = (
+                {"http": _env["proxy"], "https": _env["proxy"]}
+                if _env["proxy"] else None)
+
+            def _route_closed_bar(event):
+                """固定订阅按需路由：无实例键丢弃（数据面恒定/决策面按需）。"""
+                feed = paper_scheduler.registry.get(
+                    event.symbol, event.timeframe)
+                if feed is not None:
+                    feed.on_closed_bar(event)
+
+            if fapi_stream_factory is not None:
+                fapi_stream = fapi_stream_factory(
+                    on_closed_bar=_route_closed_bar,
+                    ws_base_url=_env["ws_base"], proxies=_proxies)
+            else:
+                from core.data.fapi import BinanceFapiStream
+
+                fapi_stream = BinanceFapiStream(
+                    on_closed_bar=_route_closed_bar,
+                    ws_base_url=_env["ws_base"], proxies=_proxies)
+            paper_scheduler.registry.fapi_stream = fapi_stream
+            fapi_stream.start()
+            fapi_backfill = FixedKeyBackfill(
+                data_dir=data_dir, now_fn=None)
+            paper_scheduler.registry.backfill = fapi_backfill
+            fapi_backfill.start_background()
+
         runner.start()
 
         yield
 
         # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停
-        # evolution runner 与纸盘调度器
+        # evolution runner 与纸盘调度器，最后停 fapi 流/建库并清落盘
+        # 缓冲（SIGTERM 关停序——分级落盘的停机清缓冲面）
         set_ws_push_fn(None)
         runner.stop()
         runner.join(timeout=5.0)
         paper_scheduler.stop()
         paper_scheduler.join(timeout=5.0)
+        if fapi_backfill is not None:
+            fapi_backfill.stop()
+        if fapi_stream is not None:
+            fapi_stream.stop()
+        paper_scheduler.registry.flush_all()
 
         # 研究执行器停止（守护扫描停、不等待在途计算）；重置单例供测试复用
         from core.analysis import executor as _research_exec

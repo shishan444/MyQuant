@@ -66,6 +66,18 @@ def api_client(db_path: Path, tmp_data_dir: Path):
 
 
 @pytest.fixture(autouse=True)
+def _fapi_stream_test_bypass(monkeypatch):
+    """fapi 行情流装配全域旁路（FAPI_STREAM_DISABLED 置位）。
+
+    app lifespan 的 WS 流与建库线程装配含真实网络依赖；测试全域默认
+    旁路（健康面走 K2 未启动缺省语义），装配专项测试经
+    monkeypatch.delenv 显式开启或注入 fapi_stream_factory 替身驱动。
+    """
+    monkeypatch.setenv("FAPI_STREAM_DISABLED", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_indicator_cache_between_tests():
     """Clear the global indicator column cache before and after every test.
 

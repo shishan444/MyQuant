@@ -95,6 +95,26 @@ def _default_rest_fetcher(symbol, timeframe, start_ts, end_ts) -> pd.DataFrame:
         symbol, timeframe, start_ts, end_ts)
 
 
+def merge_closed_rows(path: Path, new_rows: pd.DataFrame) -> None:
+    """闭合行合并落盘单点（既有行优先——已落行永不改写+去重不重行）。
+
+    与 storage.merge_parquet 的语义分野：共享底座 keep="last"（updater
+    增量覆盖语义）；本函数 keep="first"（时间戳已在文件时丢弃新行——
+    崩溃恢复竞态下已落行不被内存副本改写）。SymbolFeed 落盘与启动
+    建库（FixedKeyBackfill）共用本不变式单点。
+    """
+    from core.data.storage import save_parquet
+
+    if not path.exists():
+        save_parquet(new_rows, path)
+        return
+    existing = load_parquet(path)
+    columns = [c for c in new_rows.columns if c in existing.columns]
+    combined = pd.concat([existing[columns], new_rows[columns]])
+    combined = combined[~combined.index.duplicated(keep="first")]
+    save_parquet(combined.sort_index(), path)
+
+
 @dataclass(frozen=True)
 class FeedSubscription:
     """feed 订阅句柄（执行器持引用，退订/回收的协作面）。
@@ -160,6 +180,8 @@ class SymbolFeed:
         self._subscriptions: list[FeedSubscription] = []
         self._pending_rows: Optional[pd.DataFrame] = None  # 高频缓冲未落行
         self._last_flush: Optional[pd.Timestamp] = None
+        self._reconcile_last_run: Optional[pd.Timestamp] = None
+        self._reconcile_last_result: Optional[str] = None
         self._funding_index: dict[pd.Timestamp, float] = {}
         self._funding_cover: Optional[pd.Timestamp] = None  # 索引覆盖终点
         self._last_funding_refresh: Optional[pd.Timestamp] = None
@@ -283,33 +305,47 @@ class SymbolFeed:
         REST 补拉 → 去重合并 → 广播 → 落盘对齐。
 
         无基线（内存与文件俱无）跳过——初始建库归启动建库线程；无
-        缺口（末根+2×周期 > now）不广播不落盘。REST 异常上抛（调度
-        器记日志续轮——对账三触发之守护循环节拍）。
+        缺口（末根+2×周期 > now）不广播不落盘。REST 异常记 failed 后
+        上抛（调度器记日志续轮——对账三触发之守护循环节拍）。
         """
+        try:
+            outcome = self._reconcile_round()
+        except Exception:
+            with self._lock:
+                self._reconcile_last_run = self._now_fn()
+                self._reconcile_last_result = "failed"
+            raise
+        with self._lock:
+            self._reconcile_last_run = self._now_fn()
+            self._reconcile_last_result = outcome
+
+    def _reconcile_round(self) -> str:
+        """对账主体（返回 last_result 三值：ok | gap_filled:N | failed）。"""
         self._refresh_funding_if_due()
         self.ensure_loaded()
         with self._lock:
             base = self._df
         if base is None or base.empty:
-            return  # 无基线键——等启动建库线程建立
+            return "ok"  # 无基线键——等启动建库线程建立
         interval = TF_SECONDS.get(self.timeframe, _DEFAULT_BAR_SECONDS)
         last_closed = base.index[-1]
         now = self._now_fn()
         if now < last_closed + pd.Timedelta(seconds=2 * interval):
-            return  # 无缺口——下一根尚在形成（不广播不落盘）
+            return "ok"  # 无缺口——下一根尚在形成（不广播不落盘）
         gap_start = last_closed + pd.Timedelta(seconds=interval)
         frame = self._rest_fetcher(
             self.symbol, self.timeframe, gap_start, now)
         if frame is None or frame.empty:
-            return  # 对账无所得（端点暂无新数据）
+            return "ok"  # 对账无所得（端点暂无新数据）
         # forming 防御滤（REST 契约已闭合——本滤为落盘不变式的纵深：
         # 未闭合行不入内存不入盘）
         frame = frame[
             frame.index + pd.Timedelta(seconds=interval) <= now]
         merged, from_idx, new_rows = self._merge_ohlcv(base, frame)
         if merged is None:
-            return  # 补拉段全为重复（WS 已先到）——不广播
+            return "ok"  # 补拉段全为重复（WS 已先到）——不广播
         self._publish(merged, from_idx, new_rows)
+        return f"gap_filled:{len(new_rows)}"
 
     # ── 内部：合并/指标/广播/落盘 ───────────────────────────
 
@@ -400,22 +436,22 @@ class SymbolFeed:
             self._write_closed_rows(pending)
 
     def _write_closed_rows(self, new_rows: pd.DataFrame) -> None:
-        """闭合行合并落盘（既有行优先——已落行内容永不改写+去重不重行）。
+        """闭合行合并落盘（既有行优先——已落行内容永不改写+去重不重行）。"""
+        merge_closed_rows(self._parquet_path, new_rows)
 
-        与 storage.merge_parquet 的语义分野：共享底座 keep="last"
-        （updater 增量覆盖语义）；本层不变式要求 keep="first"（时间戳
-        已在文件时丢弃新行——崩溃恢复竞态下已落行不被内存副本改写）。
-        """
-        from core.data.storage import save_parquet
+    # ── 健康面（runner-status 聚合输入）─────────────────────
 
-        if not self._parquet_path.exists():
-            save_parquet(new_rows, self._parquet_path)
-            return
-        existing = load_parquet(self._parquet_path)
-        columns = [c for c in new_rows.columns if c in existing.columns]
-        combined = pd.concat([existing[columns], new_rows[columns]])
-        combined = combined[~combined.index.duplicated(keep="first")]
-        save_parquet(combined.sort_index(), self._parquet_path)
+    @property
+    def pending_rows_count(self) -> int:
+        """高频缓冲未落行数（flush_buffer 组输入；无缓冲 0）。"""
+        with self._lock:
+            return 0 if self._pending_rows is None else len(self._pending_rows)
+
+    @property
+    def reconcile_state(self) -> tuple[Optional[pd.Timestamp], Optional[str]]:
+        """最近一轮对账状态（last_run 时刻, last_result 三值）。"""
+        with self._lock:
+            return self._reconcile_last_run, self._reconcile_last_result
 
     def _enhance(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
         """全帧指标计算+ATR 并集补充（共享单次语义保持）。"""
@@ -521,6 +557,10 @@ class FeedRegistry:
         self._feed_kwargs = feed_kwargs
         self._feeds: dict[tuple[str, str], SymbolFeed] = {}
         self._lock = threading.Lock()
+        # 健康聚合挂点（装配层注入——scheduler.status 经此读 stream 与
+        # 建库状态；缺省 None=该面未启动的 K2 缺省语义）
+        self.fapi_stream: Optional[object] = None
+        self.backfill: Optional["FixedKeyBackfill"] = None
 
     def acquire(
         self, symbol: str, timeframe: str,
@@ -562,6 +602,12 @@ class FeedRegistry:
         with self._lock:
             return self._feeds.get((symbol, timeframe))
 
+    @property
+    def active_keys(self) -> list[tuple[str, str]]:
+        """现存键集（测试观察面）。"""
+        with self._lock:
+            return sorted(self._feeds)
+
     def flush_all(self) -> None:
         """全部活跃 feed 清空缓冲落盘（进程正常退出/SIGTERM 关停序——
         装配层关停时调用；feed 侧幂等）。"""
@@ -574,8 +620,132 @@ class FeedRegistry:
             except Exception:
                 logger.exception("feed 缓冲清空失败（关停续行）：%s", key)
 
-    @property
-    def active_keys(self) -> list[tuple[str, str]]:
-        """现存键集（测试观察面）。"""
+
+class FixedKeyBackfill:
+    """固定订阅 12 键初始建库（app lifespan 后台线程）。
+
+    逐键执行：无文件→REST 全量回补（回溯窗口与重建同源语义 2 年）
+    落盘；有文件→尾戳对账补齐（幂等——按尾戳增量续传，崩溃重启
+    续跑）。失败键记 failed 并在下一轮重试；全键 done 后线程退出。
+    状态面（runner-status backfill 组）：{"SYMBOL_TF": "running"|
+    "done"|"failed"}——未启动键不在字典。
+
+    异步不阻塞 app 启动；装载层 no_data 拒绝语义零改动（12 路内键
+    建库完成后数据必然就绪，窗口期约束=首次部署经健康披露确认建库
+    完成后再开始挂载——操作细节归后续部署文档）。
+    """
+
+    POLL_INTERVAL_SECONDS = 60.0
+
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        rest_fetcher: Optional[Callable[..., pd.DataFrame]] = None,
+        now_fn: Optional[Callable[[], pd.Timestamp]] = None,
+    ):
+        from core.data.fapi.stream import FIXED_SUBSCRIBE_KEYS
+
+        self.data_dir = Path(data_dir)
+        self._rest = rest_fetcher or _default_rest_fetcher
+        self._now_fn = now_fn or (lambda: pd.Timestamp.now(tz="UTC"))
+        self._keys = sorted(FIXED_SUBSCRIBE_KEYS)
+        self._status: dict[str, str] = {}
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    # ── 状态面 ──────────────────────────────────────────────
+
+    def status(self) -> dict[str, str]:
+        """建库状态快照（backfill 健康组输入）。"""
         with self._lock:
-            return sorted(self._feeds)
+            return dict(self._status)
+
+    # ── 执行面 ──────────────────────────────────────────────
+
+    def run_once(self) -> None:
+        """单轮全键扫描（done 跳过/failed 重试/未跑开跑）。"""
+        for symbol, timeframe in self._keys:
+            key = f"{symbol}_{timeframe}"
+            with self._lock:
+                if self._status.get(key) == "done":
+                    continue
+                self._status[key] = "running"
+            try:
+                backfill_key(
+                    self.data_dir, symbol, timeframe,
+                    rest_fetcher=self._rest, now_fn=self._now_fn)
+            except Exception:
+                logger.exception(
+                    "建库失败（下一轮重试）：%s", key)
+                with self._lock:
+                    self._status[key] = "failed"
+            else:
+                with self._lock:
+                    self._status[key] = "done"
+
+    def start_background(self) -> None:
+        """起后台建库线程（轮询至全键 done 或 stop）。"""
+        if self._thread is not None:
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._background_loop, name="fapi-backfill", daemon=True)
+        self._thread.start()
+
+    def _background_loop(self) -> None:
+        """轮询循环：单轮扫描→未全 done 等待重试→全 done 退出。"""
+        while not self._stop_event.is_set():
+            self.run_once()
+            with self._lock:
+                all_done = all(
+                    value == "done" for value in self._status.values())
+            if all_done:
+                logger.info("fapi 建库全键完成（线程退出）")
+                return
+            self._stop_event.wait(self.POLL_INTERVAL_SECONDS)
+
+    def stop(self) -> None:
+        """协作停止（app 关停序）。"""
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=10.0)
+
+
+def backfill_key(
+    data_dir: Path,
+    symbol: str,
+    timeframe: str,
+    *,
+    rest_fetcher: Callable[..., pd.DataFrame],
+    now_fn: Callable[[], pd.Timestamp],
+    history_years: int = REBUILD_HISTORY_YEARS,
+) -> None:
+    """单键建库（无文件全量回补/有文件尾戳补齐——merge_closed_rows 落盘）。
+
+    REST 异常上抛（调用方 run_once 记 failed 重试）。
+    """
+    path = Path(data_dir) / f"{symbol}_{timeframe}.parquet"
+    now = now_fn()
+    if not path.exists():
+        frame = rest_fetcher(
+            symbol, timeframe,
+            now - pd.DateOffset(years=history_years), now)
+        if frame is not None and not frame.empty:
+            from core.data.storage import save_parquet
+
+            save_parquet(frame, path)
+        return
+    existing = load_parquet(path)
+    if existing is None or existing.empty:
+        return
+    interval = TF_SECONDS.get(timeframe, _DEFAULT_BAR_SECONDS)
+    last = existing.index[-1]
+    if now < last + pd.Timedelta(seconds=2 * interval):
+        return  # 尾戳已新鲜——无缺口
+    frame = rest_fetcher(symbol, timeframe,
+                         last + pd.Timedelta(seconds=interval), now)
+    if frame is not None and not frame.empty:
+        merge_closed_rows(path, frame)
