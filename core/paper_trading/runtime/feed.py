@@ -370,8 +370,10 @@ class SymbolFeed:
             # 先到为准：同时间戳保留内存既有行（keep="first"——base 在前）
             combined = combined[~combined.index.duplicated(keep="first")]
             merged = combined.sort_index()
-        new_rows = merged.iloc[from_idx:] if len(merged) > from_idx else \
-            merged.iloc[0:0]
+        # 死分支收敛（批次三 CARD-14）：keep="first" 下 base 行全保留
+        # → len(merged)>=from_idx 恒成立，三元 else 不可达；len 相等时
+        # iloc[from_idx:] 即空帧
+        new_rows = merged.iloc[from_idx:]
         if new_rows.empty:
             return None, 0, new_rows
         return merged, from_idx, new_rows
@@ -482,9 +484,10 @@ class SymbolFeed:
         }
         with self._lock:
             old_cover = self._funding_cover
+            # 无基线显式空（外层三元承载「首次装载不广播」结构语义
+            # ——生成器内只判覆盖点；双重判空收敛为单层，CARD-14）
             newly_covered = sorted(
-                p for p in new_index
-                if old_cover is not None and p > old_cover
+                p for p in new_index if p > old_cover
             ) if old_cover is not None else []
             self._funding_index = new_index
             if new_index:
