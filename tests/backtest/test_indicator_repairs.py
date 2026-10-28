@@ -475,3 +475,160 @@ class TestDivergenceWindowSemanticsUpgrade:
             return detect_bullish_divergence(df)[
                 "pattern_bullish_divergence"].sum()
         assert _count(dive) > _count(calm), "深跌段背离密度更高"
+
+
+class TestDependencyClosureGuardrails:
+    """阶段四②盲区消解补锚（CARD-02 S-3 行为面）：循环依赖归链拒绝
+    +依赖不在注册表拒绝+嵌套依赖 ResearchError 直通（不二次包装）。"""
+
+    def test_b1_circular_dependency_rejected_with_chain(self, monkeypatch):
+        """循环依赖声明拒绝：A→B→A 闭包归链命中 visited →
+        RESEARCH_INDICATOR_DEPENDENCY_FAILED 且 detail.chain 披露完整
+        装载链（祖先序+本指标）。"""
+        from core.analysis.errors import ResearchError
+        monkeypatch.setitem(
+            INDICATOR_REGISTRY, "BullishDivergence",
+            INDICATOR_REGISTRY["BullishDivergence"]).__class__  # noqa
+        # dataclass 替换：copy 上改 depends_on（replace 保留原字段）
+        import dataclasses
+        bull = dataclasses.replace(
+            INDICATOR_REGISTRY["BullishDivergence"],
+            depends_on=["BearishDivergence"])
+        bear = dataclasses.replace(
+            INDICATOR_REGISTRY["BearishDivergence"],
+            depends_on=["BullishDivergence"])
+        monkeypatch.setitem(INDICATOR_REGISTRY, "BullishDivergence", bull)
+        monkeypatch.setitem(INDICATOR_REGISTRY, "BearishDivergence", bear)
+        df = _make_ohlcv(60)
+        with pytest.raises(ResearchError) as ei:
+            _compute_indicator(df, "BullishDivergence", {})
+        assert ei.value.code == "RESEARCH_INDICATOR_DEPENDENCY_FAILED"
+        chain = ei.value.detail["chain"]
+        assert chain[0] == "BullishDivergence" and "BearishDivergence" in chain
+        assert chain[-1] == "BullishDivergence", "闭包回到起点（完整链）"
+
+    def test_b1_unknown_dependency_rejected_and_passthrough(
+            self, monkeypatch):
+        """依赖不在注册表拒绝（宿主层 :175）+嵌套依赖 ResearchError
+        直通不二次包装（:197-198——依赖链上已结构化的失败原码透传，
+        message 保持内层指名）。"""
+        import dataclasses
+        from core.analysis.errors import ResearchError
+        # 层一：宿主声明未知依赖
+        bull_bad = dataclasses.replace(
+            INDICATOR_REGISTRY["BullishDivergence"],
+            depends_on=["NoSuchIndicator"])
+        monkeypatch.setitem(INDICATOR_REGISTRY, "BullishDivergence", bull_bad)
+        df = _make_ohlcv(60)
+        with pytest.raises(ResearchError) as e1:
+            _compute_indicator(df, "BullishDivergence", {})
+        assert e1.value.code == "RESEARCH_INDICATOR_DEPENDENCY_FAILED"
+        assert "NoSuchIndicator" in e1.value.message
+        assert e1.value.detail["dependency"] == "NoSuchIndicator"
+        # 层二：嵌套依赖（RSI→NoSuch）失败自内层 ResearchError 直通
+        monkeypatch.undo()
+        rsi_bad = dataclasses.replace(
+            INDICATOR_REGISTRY["RSI"], depends_on=["NoSuchIndicator"])
+        monkeypatch.setitem(INDICATOR_REGISTRY, "RSI", rsi_bad)
+        with pytest.raises(ResearchError) as e2:
+            _compute_indicator(df, "BullishDivergence", {})
+        assert e2.value.code == "RESEARCH_INDICATOR_DEPENDENCY_FAILED"
+        # 直通断言：内层（RSI 装载层）的指名原样到达——未被外层
+        # 「依赖指标 BullishDivergence 计算失败」二次包装改写
+        assert "RSI" in e2.value.message
+        assert e2.value.detail["dependency"] == "NoSuchIndicator"
+
+    def test_b5_bearish_overbought_two_states(self):
+        """B5 对称补全：Bearish overbought 门槛两态（缺省纯背离/
+        显式超买过滤收紧——与 bullish oversold 两态镜像）。"""
+        from core.features.patterns.divergence import (
+            detect_bearish_divergence)
+        rng = np.random.default_rng(7)
+        n = 400
+        close = 100 + np.cumsum(rng.normal(0.05, 1.2, n))  # 上行段（顶背离载体）
+        df = pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": rng.uniform(100, 1000, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        df["rsi_14"] = _compute_indicator(
+            df, "RSI", {"period": 14})["rsi_14"]
+        bare = detect_bearish_divergence(df)[
+            "pattern_bearish_divergence"]
+        filtered = detect_bearish_divergence(df, overbought=60)[
+            "pattern_bearish_divergence"]
+        assert bare.sum() > filtered.sum() > 0, \
+            f"两态可区分：纯背离 {bare.sum()} > 超买过滤 {filtered.sum()} > 0"
+
+
+class TestIndicatorFunctionProperties:
+    """④属性补强：核心计算面纯函数不变量（TESTING_V3「不变量与
+    属性」——验证一类输入应保持的关系；CCI/Donchian 为无量纲/线性
+    齐次输出，背离门槛为嵌套单调收紧）。"""
+
+    def _df(self, n=200, seed=11):
+        rng = np.random.default_rng(seed)
+        close = 100 + np.cumsum(rng.normal(0, 1.0, n))
+        return pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": rng.uniform(100, 1000, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+
+    def test_cci_shift_and_scale_invariance(self):
+        """CCI 平移+缩放双不变：价格全体 +c 或 ×k 输出逐值不变
+        （无量纲量的代数性质——tp−SMA 与 MAD 同为一次齐次/平移消去）。"""
+        df = self._df()
+        p = 20
+        base = _compute_indicator(df, "CCI", {"period": p})[f"cci_{p}"]
+        shifted = _compute_indicator(df + 50.0, "CCI", {"period": p})[
+            f"cci_{p}"]
+        scaled = _compute_indicator(df * 3.0, "CCI", {"period": p})[
+            f"cci_{p}"]
+        pd.testing.assert_series_equal(
+            base, shifted, check_names=False), "平移不变"
+        pd.testing.assert_series_equal(
+            base, scaled, check_names=False), "缩放不变"
+
+    def test_donchian_shift_and_scale_homogeneity(self):
+        """Donchian 线性齐次：价格 +c → 轨道同 +c；×k → 轨道同 ×k
+        （轨道为价格一次齐次函数——极值与均值的线性性）。"""
+        df = self._df()
+        p = 20
+        base = _compute_indicator(df, "Donchian", {"period": p})
+        shifted = _compute_indicator(df + 50.0, "Donchian", {"period": p})
+        scaled = _compute_indicator(df * 3.0, "Donchian", {"period": p})
+        for key in (f"dc_upper_{p}", f"dc_lower_{p}", f"dc_middle_{p}"):
+            pd.testing.assert_series_equal(
+                base[key] + 50.0, shifted[key], check_names=False), key
+            pd.testing.assert_series_equal(
+                base[key] * 3.0, scaled[key], check_names=False), key
+
+    def test_divergence_threshold_nested_monotone(self):
+        """背离门槛嵌套单调：oversold 越低过滤越强——
+        filtered(30) ⊆ filtered(40) ⊆ bare（门槛收紧是集合收缩）。"""
+        from core.features.patterns.divergence import (
+            detect_bullish_divergence)
+        rng = np.random.default_rng(9)
+        n = 500
+        close = 100 + np.cumsum(rng.normal(-0.05, 1.2, n))
+        df = pd.DataFrame({
+            "open": close * 0.999, "high": close * 1.005,
+            "low": close * 0.995, "close": close,
+            "volume": rng.uniform(100, 1000, n),
+        }, index=pd.date_range("2024-01-01", periods=n, freq="4h",
+                               tz="UTC", name="timestamp"))
+        df["rsi_14"] = _compute_indicator(
+            df, "RSI", {"period": 14})["rsi_14"]
+        bare = detect_bullish_divergence(df)["pattern_bullish_divergence"]
+        f40 = detect_bullish_divergence(df, oversold=40)[
+            "pattern_bullish_divergence"]
+        f30 = detect_bullish_divergence(df, oversold=30)[
+            "pattern_bullish_divergence"]
+        assert int(bare.sum()) > int(f40.sum()) > int(f30.sum()) >= 0, \
+            f"嵌套单调 {bare.sum()} > {f40.sum()} > {f30.sum()}"
+        # 集合收缩（逐 bar）：f30 触发集 ⊆ f40 ⊆ bare
+        assert bool(((f30 == 1) <= (f40 == 1)).all())
+        assert bool(((f40 == 1) <= (bare == 1)).all())
