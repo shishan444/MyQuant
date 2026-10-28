@@ -342,14 +342,26 @@ class BinanceFapiStream:
             return
         if not isinstance(payload, dict) or "data" not in payload:
             return  # 订阅确认等控制消息——非行情推送
-        event = payload.get("data") or {}
+        # 形态校验（批次三 CARD-02）：data/k 非 dict（list/str/标量）
+        # 时 .get 链 AttributeError 逃逸本层「解析不外抛」约束——SDK
+        # 会把回调异常经 on_error 链当连接级故障处理，一条畸形消息
+        # 伪断整条连接触发无谓重连；两处改 isinstance 显式丢弃记日志
+        event = payload.get("data")
+        if not isinstance(event, dict):
+            logger.warning("fapi 流消息 data 非对象形（丢弃）：%r", event)
+            return
         if event.get("e") != "kline":
             return
         self._handle_kline_event(event)
 
     def _handle_kline_event(self, event: dict) -> None:
         """kline 事件处理：last_push 刷新 + 闭合判定 + 脏数据丢弃 + 投递。"""
-        kline = event.get("k") or {}
+        kline = event.get("k")
+        if not isinstance(kline, dict):
+            logger.warning(
+                "fapi 流 kline 事件 k 字段非对象形（丢弃）：symbol=%s",
+                event.get("s"))
+            return
         symbol = event.get("s")
         timeframe = kline.get("i")
         if not symbol or not timeframe:
