@@ -993,7 +993,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @tool_safe
     def pause_evolution_task(task_id: str) -> Dict[str, Any]:
         """暂停进化任务（running→paused：执行链在当前代完整落库后暂停；
-        经 resume_evolution_task 恢复继续跑）。
+        经 resume_evolution_task 恢复（paused→pending 重新排队、从
+        initial_dna 完整重跑））。
         错误面（透传）：404 任务不存在；409 状态不允许（非 running）。"""
         return api.post(
             f"/api/evolution/tasks/{quote(task_id, safe='')}/pause", {})
@@ -1001,7 +1002,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def resume_evolution_task(task_id: str) -> Dict[str, Any]:
-        """恢复已暂停的进化任务（paused→running：从暂停代继续进化）。
+        """恢复已暂停的进化任务（paused→pending 重新排队，runner 拾取后
+        从 initial_dna 完整重跑——非断点续跑，历史裁决已移除 checkpoint
+        resume）。
         错误面（透传）：404 任务不存在；400 状态不允许（非 paused——
         resume 端点既有实现码，与 stop/pause 的 409 分立）。"""
         return api.post(
