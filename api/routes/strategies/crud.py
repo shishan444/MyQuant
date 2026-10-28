@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from core.persistence.orm.engine import engine_for
@@ -22,6 +23,7 @@ from core.persistence.repository.backtest_result import (
     save_backtest_result,
 )
 from core.persistence.repository.strategy import (
+    batch_delete_by_source_task,
     count_strategies,
     delete_strategy,
     find_by_gene_signature,
@@ -232,6 +234,7 @@ def create_strategy(
 def list_strategies_endpoint(
     symbol: Optional[str] = None,
     source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
@@ -254,6 +257,7 @@ def list_strategies_endpoint(
             db_path,
             symbol=symbol,
             source=source,
+            source_task_id=source_task_id,
             tags=tags,
             qualified=qualified,
             status=status,
@@ -267,7 +271,7 @@ def list_strategies_endpoint(
 
     total = count_strategies(
         db_path, symbol=symbol, source=source, tags=tags, qualified=qualified,
-        status=status,
+        status=status, source_task_id=source_task_id,
     )
     items = [_strategy_row_to_response(r) for r in rows]
     return StrategyListResponse(items=items, total=total)
@@ -424,3 +428,83 @@ def revalidate_strategy_endpoint(
         raise _lifecycle_error_to_http(exc) from exc
     row = get_strategy(db_path, strategy_id)
     return _strategy_row_to_response(row)
+
+
+# ── 批量管理（research-tooling-data-quality 卡 D：按任务圈定的常设
+#    管理通道——一次性全量清理由 change-2 任务 2.9 执行，本端点与其
+#    正交并存；source_task_id 必填=无圈定的全库批量删除不提供）──
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除请求体（confirm 契约=删除不可无声执行）。"""
+    source_task_id: str
+    generation_gt: Optional[int] = None
+    best_score_lt: Optional[float] = None
+    confirm: bool = False
+
+
+@router.post("/batch")
+def batch_delete_strategies(
+    payload: BatchDeleteRequest,
+    db_path: Path = Depends(get_db_path),
+) -> Dict[str, Any]:
+    """按进化任务批量物理删除其产物策略（不可逆——与单策略 DELETE
+    的归档语义不同，端点分离承载语义差异）。
+
+    确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附
+    matched_count 预览数+criteria 回显+score_summary（best_score
+    分布摘要 {count,min,p25,median,p75,max,null_count}——count 为
+    非 NULL 参与分布数、null_count 单独披露；1 行退化五数全同值、
+    ≥2 行 inclusive 插值、空集五数全 None）；confirm=true → 单事务
+    批量 DELETE（先查后删同事务），返回 {deleted_count, criteria,
+    matched_before}；幂等：重复调用 matched 0→deleted_count=0。
+    generation_gt/best_score_lt 可选收紧（预览与执行同判据）。
+
+    挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
+    前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
+    （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
+    或被非终态纸盘任务（pending/running）引用 → 422
+    BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
+    pt_active_count 与处置提示——先撤盘/归档后再清理）。
+    """
+    criteria: Dict[str, Any] = {"source_task_id": payload.source_task_id}
+    if payload.generation_gt is not None:
+        criteria["generation_gt"] = payload.generation_gt
+    if payload.best_score_lt is not None:
+        criteria["best_score_lt"] = payload.best_score_lt
+
+    try:
+        result = batch_delete_by_source_task(
+            db_path,
+            source_task_id=payload.source_task_id,
+            generation_gt=payload.generation_gt,
+            best_score_lt=payload.best_score_lt,
+            confirm=payload.confirm,
+        )
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
+
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "BATCH_DELETE_CONFIRM_REQUIRED",
+                    "message": "批量删除不可无声执行——确认请显式携带 "
+                               "confirm=true",
+                    "detail": {"matched_count": result.matched_count,
+                               "criteria": criteria,
+                               "score_summary": result.score_summary,
+                               "hint": "删除不可逆，确认请显式携带 "
+                                       "confirm=true（预览数见 "
+                                       "matched_count，分数分布见 "
+                                       "score_summary）"}})
+
+    # 审计留痕（不可逆物理删除：何时按什么条件删了多少——事后审计
+    # 五要素 source_task_id/criteria 全键/deleted_count/matched_before）
+    logger.warning(
+        "批量删除执行：source_task_id=%s, criteria=%s, "
+        "deleted_count=%s, matched_before=%d",
+        payload.source_task_id, criteria, result.deleted_count,
+        result.matched_count)
+
+    return {"deleted_count": result.deleted_count, "criteria": criteria,
+            "matched_before": result.matched_count}

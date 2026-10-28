@@ -26,6 +26,9 @@ READONLY_ENDPOINTS = frozenset({
     "/api/strategies/{strategy_id}",
     "/api/evolution/tasks",
     "/api/evolution/tasks/{task_id}",
+    # champion/快照策略集只读通道（research-tooling-data-quality 卡 C：
+    # get_evolution_strategies 薄封装——运行中提取经既有快照端点）
+    "/api/evolution/tasks/{task_id}/strategies",
     "/api/evolution/runner-status",
     "/api/research/indicators",
     "/api/research/signals",
@@ -68,6 +71,18 @@ RESEARCH_POST_ENDPOINTS = frozenset({
     "/api/evolution/tasks",                                 # 触发进化
     "/api/paper-trading/tasks",                             # mount 上盘（rebuild-paper-trading 5.3）
     "/api/paper-trading/tasks/{task_id}/stop",              # unmount 撤盘（stop 语义）
+    # 进化控制三工具+批量删除（research-tooling-data-quality 卡 A/D：
+    # REST 既有端点的 MCP 薄封装——停止/暂停/恢复是任务管理非触金）
+    "/api/evolution/tasks/{task_id}/stop",
+    "/api/evolution/tasks/{task_id}/pause",
+    "/api/evolution/tasks/{task_id}/resume",
+    "/api/strategies/batch",
+})
+
+# research 档 PUT 白名单（research-tooling-data-quality 卡 A：策略标注
+# 薄封装 PUT /api/strategies/{id}——部分更新语义，无创建/删除能力）
+RESEARCH_PUT_ENDPOINTS = frozenset({
+    "/api/strategies/{strategy_id}",
 })
 
 # 触金面（任何档位永不出现：下单/调仓/风控修改/实盘开关）
@@ -148,6 +163,7 @@ class QuantApiClient:
         self.write_timeout = write_timeout
         self._endpoints = READONLY_ENDPOINTS
         self._post_endpoints = RESEARCH_POST_ENDPOINTS if profile == "research" else frozenset()
+        self._put_endpoints = RESEARCH_PUT_ENDPOINTS if profile == "research" else frozenset()
         # 统计写调用重试行为（测试断言用：写失败必须 0 重试）
         self.call_log: list[Dict[str, Any]] = []
 
@@ -165,6 +181,10 @@ class QuantApiClient:
             if not _match(path, self._post_endpoints):
                 raise EndpointNotAllowed(
                     f"POST 端点 {path} 不在 {self.profile} 档写白名单")
+        elif method == "PUT":
+            if not _match(path, self._put_endpoints):
+                raise EndpointNotAllowed(
+                    f"PUT 端点 {path} 不在 {self.profile} 档写白名单")
         else:
             raise EndpointNotAllowed(f"方法 {method} 不受支持")
 
@@ -198,6 +218,9 @@ class QuantApiClient:
                 if method == "GET":
                     resp = client.get(
                         f"{self.base_url}{path}", params=params)
+                elif method == "PUT":
+                    resp = client.put(
+                        f"{self.base_url}{path}", json=json_body)
                 else:
                     resp = client.post(
                         f"{self.base_url}{path}", json=json_body)
@@ -216,6 +239,14 @@ class QuantApiClient:
     def post(self, path: str, json_body: Dict[str, Any] | None = None) -> Any:
         """写 POST：失败不自动重试（幂等性未知；失败语义原样返回）。"""
         resp = self._request("POST", path, json_body=json_body)
+        if resp.status_code == 204 or not resp.content:
+            return None
+        return resp.json()
+
+    def put(self, path: str, json_body: Dict[str, Any] | None = None) -> Any:
+        """写 PUT（research 档标注白名单——research-tooling-data-quality
+        卡 A）：失败不重试；空体容错同 post。"""
+        resp = self._request("PUT", path, json_body=json_body)
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()

@@ -364,4 +364,5 @@ class TestRunnerStopCheckChain:
         # Task should be stopped (via TaskStopRequested)
         row = get_task(db_path, "stop-during-load")
         assert row["status"] == "stopped"
-        assert runner._active_task_id is None
+        with runner._lock:
+            assert not runner._futures, "future 登记清空（并发模型语义）"

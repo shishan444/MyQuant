@@ -976,6 +976,104 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             terminal=("completed", "failed", "stopped", "cancelled"),
             total_timeout=total_timeout)
 
+    # ── 进化控制三工具（research-tooling-data-quality 卡 A：REST 既有
+    #    端点薄封装——错误码透传 404/409（stop/pause）/400（resume）──
+
+    @mcp.tool()
+    @tool_safe
+    def stop_evolution_task(task_id: str) -> Dict[str, Any]:
+        """停止进化任务（协作停止：当前代完整落库后退出——数据保留可查）。
+        适用：长跑 continuous 任务释放并发槽、放弃研究方向。
+        错误面（透传 REST 既有码）：404 任务不存在；409 状态不允许
+        （如已 completed/failed——终态任务不可再停）。返回终态 task 摘要。"""
+        return api.post(
+            f"/api/evolution/tasks/{quote(task_id, safe='')}/stop", {})
+
+    @mcp.tool()
+    @tool_safe
+    def pause_evolution_task(task_id: str) -> Dict[str, Any]:
+        """暂停进化任务（running→paused：执行链在当前代完整落库后暂停；
+        经 resume_evolution_task 恢复（paused→pending 重新排队、从
+        initial_dna 完整重跑））。
+        错误面（透传）：404 任务不存在；409 状态不允许（非 running）。"""
+        return api.post(
+            f"/api/evolution/tasks/{quote(task_id, safe='')}/pause", {})
+
+    @mcp.tool()
+    @tool_safe
+    def resume_evolution_task(task_id: str) -> Dict[str, Any]:
+        """恢复已暂停的进化任务（paused→pending 重新排队，runner 拾取后
+        从 initial_dna 完整重跑——非断点续跑，历史裁决已移除 checkpoint
+        resume）。
+        错误面（透传）：404 任务不存在；400 状态不允许（非 paused——
+        resume 端点既有实现码，与 stop/pause 的 409 分立）。"""
+        return api.post(
+            f"/api/evolution/tasks/{quote(task_id, safe='')}/resume", {})
+
+    @mcp.tool()
+    @tool_safe
+    def get_evolution_strategies(task_id: str) -> Dict[str, Any]:
+        """取进化任务的策略集（运行中即可取——卡 C：经既有快照通道）。
+        返回 strategies 列表：champion 源条目（终态 champion_dna 权威
+        冠军；运行中为空）+snapshot 源条目（逐代快照 top10，按
+        best_score 排序——运行中当代最优完整 DNA=快照 top1）。
+        单一事实源：运行中读快照表、终态读 tasks.champion_dna 两态
+        连续，无第三份运行中冠军存储。404 任务不存在。"""
+        return api.get(
+            f"/api/evolution/tasks/{quote(task_id, safe='')}/strategies")
+
+    # ── 策略标注（卡 A R4：PUT 部分更新薄封装）──
+
+    @mcp.tool()
+    @tool_safe
+    def update_strategy_metadata(
+            strategy_id: str, name: str | None = None,
+            tags: str | None = None, notes: str | None = None,
+    ) -> Dict[str, Any]:
+        """更新策略元数据（name/tags/notes 均可选——不携带的键不动，
+        沿 PUT 部分更新语义）。tags 为字符串形制直通（与 REST 语义
+        逐字一致——工程 tags 形态是字符串就暴露字符串，不做数组转换）。
+        404 策略不存在。"""
+        body: Dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if tags is not None:
+            body["tags"] = tags
+        if notes is not None:
+            body["notes"] = notes
+        return api.put(
+            f"/api/strategies/{quote(strategy_id, safe='')}", body)
+
+    # ── 批量删除（卡 D：常设管理通道——一次性数据清理由 change-2
+    #    任务 2.9 执行，本工具为按任务圈定的常态化管理面）──
+
+    @mcp.tool()
+    @tool_safe
+    def batch_delete_strategies(
+            source_task_id: str, confirm: bool,
+            generation_gt: int | None = None,
+            best_score_lt: float | None = None) -> Dict[str, Any]:
+        """按进化任务批量删除其产物策略（**物理删除不可逆**）。
+        source_task_id 必填（无圈定的全库批量删除不提供）；confirm
+        必须显式 true 才执行（false/缺省 → 422 拒绝，detail 附
+        matched_count 预览数+criteria 回显+score_summary（best_score
+        五数概括分布摘要：count 为非 NULL 参与分布数、null_count 单独
+        披露；1 行退化五数全同值、空集五数全 None）——先看将删多少
+        及其分数分布再确认）。
+        挂盘预检（预览与执行共用）：删除域含受保护策略（paper/candidate/
+        live——在验/达标候选/实盘在役）或被非终态纸盘任务引用 → 422
+        BATCH_DELETE_PAPER_REFERENCED（先撤盘/归档后再清理）。
+        generation_gt/best_score_lt 可选收紧（只删某代以上/分数以下）。
+        幂等：重复调用 deleted_count=0 不报错。与单策略 DELETE 的
+        归档语义不同（批量是物理删除）——端点分离承载语义差异。"""
+        body: Dict[str, Any] = {
+            "source_task_id": source_task_id, "confirm": confirm}
+        if generation_gt is not None:
+            body["generation_gt"] = generation_gt
+        if best_score_lt is not None:
+            body["best_score_lt"] = best_score_lt
+        return api.post("/api/strategies/batch", body)
+
     # ── 纸盘挂载两件（rebuild-paper-trading 5.3；研究执行档——资源
     #    创建语义类比触发回测/进化任务，非触金） ──
 
@@ -1033,5 +1131,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution,
                poll_evolution_task,
+               stop_evolution_task, pause_evolution_task,
+               resume_evolution_task, get_evolution_strategies,
+               update_strategy_metadata, batch_delete_strategies,
                mount_paper_task, unmount_paper_task):
         TOOL_TIERS["research"].add(fn.__name__)

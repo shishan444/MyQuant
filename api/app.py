@@ -48,11 +48,12 @@ def create_app(
         db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
         data_dir: Parquet 数据目录；缺省为项目根 data/market。
     """
+    # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
+    # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
+    project_root = Path(__file__).resolve().parent.parent
     if db_path is None:
-        project_root = Path(__file__).resolve().parent.parent
         db_path = project_root / "data" / "quant.db"
     if data_dir is None:
-        project_root = Path(__file__).resolve().parent.parent
         data_dir = project_root / "data" / "market"
 
     @asynccontextmanager
@@ -85,7 +86,32 @@ def create_app(
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
-        runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
+        # 受限并发（research-tooling-data-quality 卡 B）：config
+        # evolution.max_concurrent_tasks 可配（缺省 2 上限 4——runner
+        # 内钳制）；config 无段时用缺省
+        import yaml as _yaml
+        try:
+            with open(project_root / "config.yaml") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+        except (OSError, _yaml.YAMLError) as _exc:
+            # config 缺失/损坏：降级缺省并留痕（宽捕获会静默吞掉编程错误）
+            _cfg = {}
+            logger.warning(
+                "config.yaml 读取失败（%s: %s），max_concurrent_tasks 用缺省 2",
+                type(_exc).__name__, _exc,
+            )
+        # 文档层非映射（如整文档裸标量）：与 or {} 防 None 同族的类型面
+        # 防御——否则 _cfg.get 处 AttributeError 启动崩溃
+        if not isinstance(_cfg, dict):
+            logger.warning(
+                "config.yaml 文档层非映射（%s），max_concurrent_tasks 用缺省 2",
+                type(_cfg).__name__,
+            )
+            _cfg = {}
+        _maxw = (_cfg.get("evolution") or {}).get(
+            "max_concurrent_tasks", 2)
+        runner = EvolutionRunner(
+            db_path=db_path, data_dir=data_dir, max_workers=_maxw)
         app.state.evolution_runner = runner
 
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）

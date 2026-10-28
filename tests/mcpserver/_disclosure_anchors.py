@@ -671,6 +671,7 @@ CAPABILITY_ENTRY_ANCHORED: tuple = (
     "反例画像",            # W2/G1-能力自述反例画像条目
     "退出参数扫描",         # W3/G1-能力自述退出参数扫描条目
     "事件策略层",           # G3-能力自述事件策略层条目
+    "进化控制与产物管理",   # G6 族级条目（CARD-07——专门锚登记）
 )
 
 CAPABILITY_ENTRY_WHITELIST: tuple = (
@@ -682,6 +683,37 @@ CAPABILITY_ENTRY_WHITELIST: tuple = (
     "pattern_mining为实验性",
 )
 
+# ---------------------------------------------------------------------------
+# 组 6：进化控制与产物管理族级条目（CARD-07——research-tooling-
+# data-quality P3 裁决落地物：能力自述「能力条目」从工具名在场升级为
+# 族级描述条目；锚钉六工具关键语义防文本漂移误导 AI）
+# ---------------------------------------------------------------------------
+
+# 族级条目段域（第 2 节末条——纸盘挂载条目后、第 3 节标题前）
+_CSEG_EVOLUTION_CTRL = ("进化控制与产物管理（research-tooling-data-quality）",
+                        "草稿-转正生命周期")
+
+GROUP6_ANCHORS: tuple = (
+    DisclosureAnchor(
+        anchor_id="G6-能力自述进化控制条目-六工具关键语义",
+        source="capability", seg_start=_CSEG_EVOLUTION_CTRL[0],
+        seg_end=_CSEG_EVOLUTION_CTRL[1],
+        kind="token_set",
+        tokens=("当前代完整落库后退出",     # stop/pause 协作语义
+                "重新排队",                 # resume 语义（CARD-06 收正）
+                "完整重跑非断点续跑",        # 非断点续跑防线（历史裁决 6）
+                "两态连续",                 # champion 快照+终态通道
+                "无第三份运行中冠军存储",    # 单一事实源
+                "字符串形制直通",            # tags 形制
+                "不可逆",                   # 批量删除
+                "confirm必须显式true",       # 确认契约
+                "score_summary",            # 分数分布摘要（CARD-05）
+                "整批拒绝"),                # 受保护策略预检
+        scope="进化控制与产物管理族级条目（六工具语义面）",
+        basis="CARD-07×P3 裁决（能力条目落地）+capability.py:173-186",
+    ),
+)
+
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
                       + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
-                      + GROUP4_ANCHORS + GROUP5_ANCHORS)
+                      + GROUP4_ANCHORS + GROUP5_ANCHORS + GROUP6_ANCHORS)

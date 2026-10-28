@@ -29,6 +29,8 @@ backtest:
 
 # 默认进化参数
 evolution:
+  # 受限并发上界（research-tooling-data-quality 卡 B）：缺省 2 上限 4
+  max_concurrent_tasks: 2
   population_size: 15
   max_generations: 200
   n_workers: 6

@@ -348,3 +348,21 @@ def update_task_config(db_path: Path, task_id: str, **values: Any) -> None:
             update(EvolutionTask).where(EvolutionTask.task_id == task_id)
             .values(**{**values, "updated_at": _now()})
         )
+
+
+def find_pending_task_excluding(
+    db_path: Path, exclude: set,
+) -> Optional[Dict[str, Any]]:
+    """取最早创建的 pending 任务（排除指定 task_id 集——多槽并发下防
+    同任务重复提交；research-tooling-data-quality 卡 B）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        stmt = (
+            select(EvolutionTask)
+            .where(EvolutionTask.status == "pending")
+            .order_by(EvolutionTask.created_at.asc()).limit(1)
+        )
+        if exclude:
+            stmt = stmt.where(~EvolutionTask.task_id.in_(list(exclude)))
+        row = conn.execute(stmt).mappings().first()
+    return dict(row) if row is not None else None

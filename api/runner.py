@@ -47,7 +47,11 @@ def get_active_controllers() -> Dict[str, "TaskController"]:
 # TaskController：经 threading.Event 的直达停止信号
 # ---------------------------------------------------------------------------
 
-from core.concurrency.task_control import TaskController, TaskStopRequested  # B4.2 归一
+from core.concurrency.task_control import (  # B4.2 归一
+    TaskController,
+    TaskPauseRequested,
+    TaskStopRequested,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,23 +127,51 @@ def _split_train_test(
 
 
 class EvolutionRunner(threading.Thread):
-    """进化任务唯一执行线程（daemon：轮询 pending 任务并逐个完整执行）。"""
+    """进化任务调度线程（daemon：轮询 pending 任务并提交受限线程池执行）。
+
+    research-tooling-data-quality 卡 B：单执行线程→ThreadPoolExecutor
+    （实施闸门验证通过——WAL+busy_timeout 下 4 线程并发写 800 行零冲突，
+    走主路径）。max_workers 缺省 2、上限 4（config evolution.
+    max_concurrent_tasks 可配）；continuous 任务占一槽运行——新 pending
+    不再无限饥饿（第二槽可用）。stop/pause 经 TaskController 直达信号
+    协作生效：stop 代内多点检查即时退出；pause 当代完整落库后于检查点
+    退出（TaskPauseRequested 静默终结，不写状态）。
+    """
+
+    MAX_WORKERS_CAP = 4
 
     def __init__(
         self,
         db_path: Path,
         data_dir: Path,
         poll_interval: float = 2.0,
+        max_workers: int = 2,
     ) -> None:
         super().__init__(daemon=True, name="evolution-runner")
         self.db_path = db_path
         self.data_dir = data_dir
         self.poll_interval = poll_interval
+        # 上限钳制（防资源失控上界——config 越界静默收顶并日志留痕）
+        # 类型容错：config 值类型错（如 "two"/None）回缺省 2 而非启动崩溃
+        requested = max_workers
+        try:
+            requested = int(max_workers)
+        except (ValueError, TypeError):
+            logger.warning(
+                "max_workers=%r 类型非法（应为 int），回退缺省 2", max_workers)
+            requested = 2
+        self.max_workers = max(1, min(requested, self.MAX_WORKERS_CAP))
+        if self.max_workers != requested:
+            logger.warning(
+                "max_workers=%s 越界钳制为 %s（合法域 [1, %s]）",
+                requested, self.max_workers, self.MAX_WORKERS_CAP)
         self._stop_event = threading.Event()
-        self._active_task_id: Optional[str] = None
-        self._population_count: int = 0  # 连续进化（多代种群）计数
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
+        # 池内任务登记（task_id → Future；占槽至终态；线程安全）
+        self._lock = threading.Lock()
+        self._futures: Dict[str, "concurrent.futures.Future"] = {}
+        self._pool: Optional["concurrent.futures.ThreadPoolExecutor"] = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -149,45 +181,96 @@ class EvolutionRunner(threading.Thread):
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        logger.info("EvolutionRunner started (db=%s)", self.db_path)
-        while not self._stop_event.is_set():
-            try:
-                self._tick()
-            except Exception:
-                logger.error("tick error", exc_info=True)
-            self._last_tick_time = time.monotonic()
-            self._tick_count += 1
-            self._stop_event.wait(self.poll_interval)
+        import concurrent.futures
+        logger.info("进化调度线程已启动（db=%s, max_workers=%s）",
+                    self.db_path, self.max_workers)
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.max_workers,
+            thread_name_prefix="evolution-worker")
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    self._tick()
+                except Exception:
+                    logger.error("轮询周期执行异常", exc_info=True)
+                self._last_tick_time = time.monotonic()
+                self._tick_count += 1
+                self._stop_event.wait(self.poll_interval)
+        finally:
+            # 关停序：先拒新提交，等待在跑任务自然终态（协作停止语义
+            # ——任务级 stop 经 TaskController 更直接；池 shutdown 不
+            # 强杀执行中任务）
+            self._pool.shutdown(wait=True)
         logger.info("EvolutionRunner stopped")
 
     def get_status(self) -> dict:
-        """线程健康快照（/api/evolution/runner-status 消费，线程安全读取）。"""
+        """线程健康快照（/api/evolution/runner-status 消费，线程安全读取）。
+        并发三键（卡 B 披露义务）：max_workers/active_count/queued_count。"""
         age = time.monotonic() - self._last_tick_time if self._last_tick_time else None
+        with self._lock:
+            futures = dict(self._futures)
+        active = [tid for tid, fut in futures.items() if not fut.done()]
         return {
             "is_alive": self.is_alive(),
             "last_tick_age_seconds": round(age, 1) if age else None,
             "tick_count": self._tick_count,
-            "active_task_id": self._active_task_id,
+            "active_task_id": active[0] if len(active) == 1 else None,
+            # 并发披露（research-tooling-data-quality 卡 B：行为可观测）
+            "max_workers": self.max_workers,
+            "active_count": len(active),
+            "queued_count": len(futures) - len(active),
+            "active_task_ids": active,
         }
 
     def _tick(self) -> None:
-        """单次轮询周期：接手任务/校验在跑任务状态（代际推进在回调循环内）。"""
-        if self._active_task_id:
-            # 校验在跑任务是否已被暂停/停止（DB 状态为准）
-            from core.persistence.db import get_task
-            row = get_task(self.db_path, self._active_task_id)
-            if row is None or row["status"] not in ("running", "pending"):
-                self._active_task_id = None
-                return
-            # 代际推进由 on_generation 回调循环自行处理
+        """单次轮询周期：清理终态登记+校验在跑状态+空闲槽接新 pending。"""
+        if self._pool is None:
             return
+        # 清理已完成 future 的登记（占槽至终态——终态即释放）
+        with self._lock:
+            done = [tid for tid, fut in self._futures.items() if fut.done()]
+            for tid in done:
+                self._futures.pop(tid, None)
+            # 占槽计数+排除集两用并集：_futures（排队+在跑）∪
+            # _active_controllers（pause 信号已发但旧线程当代未完成的窗口）
+            # ——旧线程此间物理占用 worker 槽；且 resume 后的 pending 不被
+            # 重拾，直到旧线程真终结（controller pop），防同 task_id 双执行流
+            # copy()：C 层原子快照——worker 线程并发 pop 不致迭代期尺寸变化
+            inflight = set(self._futures) | set(_active_controllers.copy())
+        # 校验在跑任务是否已被 DB 侧暂停/停止（外部操作可见性——
+        # TaskController 直达信号为主通道，DB 轮询为兜底）
+        from core.persistence.db import get_task
+        for task_id in list(inflight):
+            row = get_task(self.db_path, task_id)
+            if row is not None and row["status"] not in ("running", "pending"):
+                # DB 已终态但 future 未 done（如直改库）——从登记剔除；
+                # 排队未开跑的 future 顺带 cancel（省一次无谓启动，已开跑
+                # 则 cancel 返回 False 无副作用；cancel 后 done=True 下轮
+                # 清理段自然处理）
+                with self._lock:
+                    fut = self._futures.pop(task_id, None)
+                if fut is not None:
+                    fut.cancel()
+        # 空闲槽接新 pending（FIFO 创建序——饥饿消除：continuous 占一
+        # 槽时第二槽可用）
+        while len(inflight) < self.max_workers:
+            task = self._find_pending_task_excluding(inflight)
+            if task is None:
+                break
+            task_id = task["task_id"]
+            fut = self._pool.submit(self._run_task, task)
+            with self._lock:
+                self._futures[task_id] = fut
+            inflight.add(task_id)
+            logger.info("任务 %s 已提交线程池（inflight=%d/%d）",
+                        task_id, len(inflight), self.max_workers)
 
-        # 取一个 pending 任务
-        task = self._find_pending_task()
-        if task is None:
-            return
-
-        self._run_task(task)
+    def _find_pending_task_excluding(
+            self, exclude: set) -> Optional[Dict[str, Any]]:
+        """取最早创建的 pending 任务（排除已在池内/在跑的——多槽下防
+        同任务重复提交）。"""
+        from core.persistence.repository import evolution as repo
+        return repo.find_pending_task_excluding(self.db_path, exclude)
 
     # ------------------------------------------------------------------
     # 任务执行
@@ -200,18 +283,23 @@ class EvolutionRunner(threading.Thread):
     def _run_task(self, task_row: Dict[str, Any]) -> None:
         """任务执行的异常边界（不变量保障）。
 
-        保证：_active_task_id 与 TaskController 注册项在 finally 中
-        必然清理；未处理异常把任务置 'stopped'（stop_reason=error），
-        线程自身永不为单任务故障退出。
+        保证：TaskController 注册项在 finally 中必然清理（future 登记
+        由 _tick 清理段负责——done 即释放）；未处理异常把任务置
+        'stopped'（stop_reason=error），池线程永不为单任务故障退出。
+        例外：TaskPauseRequested 不写状态（pause_task 已写 paused），
+        线程静默终结。
         """
         task_id = task_row["task_id"]
-        self._active_task_id = task_id
 
         controller = TaskController()
         _active_controllers[task_id] = controller
 
         try:
             self._execute_task(task_row, task_id, controller)
+        except TaskPauseRequested:
+            # pause_task 已写 paused（DB 侧守护写入）——线程静默终结，
+            # 不写任何状态；finally pop controller 后两集合自然收敛
+            logger.info("任务 %s 当代落库后暂停退出", task_id)
         except TaskStopRequested:
             logger.info("Task %s stopped via TaskController", task_id)
             # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
@@ -221,14 +309,18 @@ class EvolutionRunner(threading.Thread):
             logger.error("Task %s failed", task_id, exc_info=True)
             update_task(self.db_path, task_id, status="stopped", stop_reason="error")
         finally:
-            self._active_task_id = None
             _active_controllers.pop(task_id, None)
 
     def _execute_task(self, task_row: Dict[str, Any], task_id: str, controller: TaskController) -> None:
         """任务完整执行体（全部异常上抛至 _run_task 边界统一处理）。"""
 
-        # 标记 running（接手动作前态：pending）
-        update_task(self.db_path, task_id, status="running")
+        # 标记 running（接手动作前态守护：pending——排队期被外部终态化
+        # （如 stop 已写 stopped）则放弃执行，杜绝复活跑全程）
+        applied = update_task(self.db_path, task_id, status="running",
+                              expected_statuses=("pending",))
+        if not applied:
+            logger.warning("任务 %s 接手前已被外部终态化（如排队期 stop），放弃执行", task_id)
+            return
 
         # 任务启动即刻推送前端（不等首个代际）
         _push_ws(task_id, {
@@ -345,12 +437,15 @@ class EvolutionRunner(threading.Thread):
         # 变异记录（日志展示用）
         last_mutations: List[str] = []
         global_gen_offset = 0  # 连续进化全局代偏移：防跨种群历史覆盖
+        population_count = 0  # 本任务内种群序号（任务级计数——线程池并发下
+        # 实例级计数会跨任务交错污染落库的 pop 序号，与 global_gen_offset
+        # 同经闭包/nonlocal 形制）
         discovered_signatures: set = set()  # 已自动入库策略的签名集（去重）
         strategy_threshold = task_row.get("strategy_threshold", 1.0)
         champion_tracker = ChampionTracker()
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
-            nonlocal last_mutations, global_gen_offset
+            nonlocal last_mutations, global_gen_offset, population_count
 
             # 快速协作取消检查（threading.Event 直达信号）
             controller.check_stop()
@@ -383,7 +478,7 @@ class EvolutionRunner(threading.Thread):
                     }
 
             # 历史记录落库（附诊断摘要）
-            top3_summary = f"best={best_score:.1f}|pop={self._population_count + 1}"
+            top3_summary = f"best={best_score:.1f}|pop={population_count + 1}"
             if gen_diag:
                 top3_summary += f"|diag={json.dumps(gen_diag)}"
             save_history(self.db_path, task_id, global_gen, best_score, avg_score, top3_summary)
@@ -503,6 +598,11 @@ class EvolutionRunner(threading.Thread):
                     ws_payload["champion_dna"] = best_ind.to_dict()
             _push_ws(task_id, ws_payload)
 
+            # pause 检查点（当代全部落库与推送完成后——兑现「当前代完整
+            # 落库后暂停」契约；stop 信号代内多点检查且优先级不变，pause
+            # 只在此点让当代善终后退出）
+            controller.check_pause()
+
         result = engine.evolve(
             ancestor=dna,
             evaluate_fn=evaluate_fn,
@@ -521,18 +621,23 @@ class EvolutionRunner(threading.Thread):
         while continuous and stop_reason not in ("error",):
             controller.check_stop()
 
-            self._population_count += 1
+            # 上一轮（首轮=循环前种群 1）代数先入账——本轮 global_gen 从
+            # N_prev+1 起，推送 total_generations_so_far 亦随之含上一轮；
+            # 若在体尾累加，种群 2 落库 offset 仍 0 与种群 1 同 generation
+            # 槽（复合主键 INSERT OR REPLACE）——种群 1 数据被永久覆盖
+            global_gen_offset += result["total_generations"]
+            population_count += 1
 
             logger.info(
                 "Task %s: starting population #%d (stop_reason=%s)",
-                task_id, self._population_count + 1, stop_reason,
+                task_id, population_count + 1, stop_reason,
             )
 
             # 新种群开跑即推送前端
             _push_ws(task_id, {
                 "type": "population_started",
                 "task_id": task_id,
-                "population_count": self._population_count + 1,
+                "population_count": population_count + 1,
                 "best_score_ever": result.get("champion_score", 0) if result else 0,
                 "total_generations_so_far": global_gen_offset,
             })
@@ -577,8 +682,6 @@ class EvolutionRunner(threading.Thread):
             )
             champion = result["champion"]
             stop_reason = result["stop_reason"]
-            # 累计全局代偏移（防跨种群历史覆盖）
-            global_gen_offset += result["total_generations"]
 
         # 冠军落库（completed 前态守护见下）
         if champion is not None:
