@@ -1053,7 +1053,13 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """按进化任务批量删除其产物策略（**物理删除不可逆**）。
         source_task_id 必填（无圈定的全库批量删除不提供）；confirm
         必须显式 true 才执行（false/缺省 → 422 拒绝，detail 附
-        matched_count 预览数与 criteria 回显——先看将删多少再确认）。
+        matched_count 预览数+criteria 回显+score_summary（best_score
+        五数概括分布摘要：count 为非 NULL 参与分布数、null_count 单独
+        披露；1 行退化五数全同值、空集五数全 None）——先看将删多少
+        及其分数分布再确认）。
+        挂盘预检（预览与执行共用）：删除域含受保护策略（paper/candidate/
+        live——在验/达标候选/实盘在役）或被非终态纸盘任务引用 → 422
+        BATCH_DELETE_PAPER_REFERENCED（先撤盘/归档后再清理）。
         generation_gt/best_score_lt 可选收紧（只删某代以上/分数以下）。
         幂等：重复调用 deleted_count=0 不报错。与单策略 DELETE 的
         归档语义不同（批量是物理删除）——端点分离承载语义差异。"""

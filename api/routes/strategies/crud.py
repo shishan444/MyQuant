@@ -23,6 +23,7 @@ from core.persistence.repository.backtest_result import (
     save_backtest_result,
 )
 from core.persistence.repository.strategy import (
+    batch_delete_by_source_task,
     count_strategies,
     delete_strategy,
     find_by_gene_signature,
@@ -451,32 +452,37 @@ def batch_delete_strategies(
     的归档语义不同，端点分离承载语义差异）。
 
     确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附
-    matched_count 预览数+criteria 回显+hint（先看将删多少再确认）；
-    confirm=true → 单事务批量 DELETE，返回 {deleted_count, criteria}；
-    幂等：重复调用 matched 0→deleted_count=0。generation_gt/
-    best_score_lt 可选收紧（只删某代以上/分数以下——预览与执行
-    同判据）。
-    """
-    from sqlalchemy import and_, delete as sa_delete
-    from core.persistence.orm.engine import engine_for as _eng
-    from core.persistence.orm.models import Strategy as _St
+    matched_count 预览数+criteria 回显+score_summary（best_score
+    分布摘要 {count,min,p25,median,p75,max,null_count}——count 为
+    非 NULL 参与分布数、null_count 单独披露；1 行退化五数全同值、
+    ≥2 行 inclusive 插值、空集五数全 None）；confirm=true → 单事务
+    批量 DELETE（先查后删同事务），返回 {deleted_count, criteria,
+    matched_before}；幂等：重复调用 matched 0→deleted_count=0。
+    generation_gt/best_score_lt 可选收紧（预览与执行同判据）。
 
+    挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
+    前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
+    （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
+    或被非终态纸盘任务（pending/running）引用 → 422
+    BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
+    pt_active_count 与处置提示——先撤盘/归档后再清理）。
+    """
     criteria: Dict[str, Any] = {"source_task_id": payload.source_task_id}
-    conds = [_St.source_task_id == payload.source_task_id]
     if payload.generation_gt is not None:
         criteria["generation_gt"] = payload.generation_gt
-        conds.append(_St.generation > payload.generation_gt)
     if payload.best_score_lt is not None:
         criteria["best_score_lt"] = payload.best_score_lt
-        conds.append(_St.best_score < payload.best_score_lt)
-    where = and_(*conds)
 
-    from sqlalchemy import func as sa_func, select as sa_select
-    engine = _eng(db_path)
-    with engine.connect() as conn:
-        matched = conn.execute(
-            sa_select(sa_func.count()).select_from(_St).where(where)
-        ).scalar_one()
+    try:
+        result = batch_delete_by_source_task(
+            db_path,
+            source_task_id=payload.source_task_id,
+            generation_gt=payload.generation_gt,
+            best_score_lt=payload.best_score_lt,
+            confirm=payload.confirm,
+        )
+    except LifecycleError as exc:
+        raise _lifecycle_error_to_http(exc) from exc
 
     if not payload.confirm:
         raise HTTPException(
@@ -484,14 +490,21 @@ def batch_delete_strategies(
             detail={"code": "BATCH_DELETE_CONFIRM_REQUIRED",
                     "message": "批量删除不可无声执行——确认请显式携带 "
                                "confirm=true",
-                    "detail": {"matched_count": matched,
+                    "detail": {"matched_count": result.matched_count,
                                "criteria": criteria,
+                               "score_summary": result.score_summary,
                                "hint": "删除不可逆，确认请显式携带 "
                                        "confirm=true（预览数见 "
-                                       "matched_count）"}})
+                                       "matched_count，分数分布见 "
+                                       "score_summary）"}})
 
-    with engine.begin() as conn:
-        deleted = conn.execute(sa_delete(_St).where(where)).rowcount
+    # 审计留痕（不可逆物理删除：何时按什么条件删了多少——事后审计
+    # 五要素 source_task_id/criteria 全键/deleted_count/matched_before）
+    logger.warning(
+        "批量删除执行：source_task_id=%s, criteria=%s, "
+        "deleted_count=%s, matched_before=%d",
+        payload.source_task_id, criteria, result.deleted_count,
+        result.matched_count)
 
-    return {"deleted_count": deleted, "criteria": criteria,
-            "matched_before": matched}
+    return {"deleted_count": result.deleted_count, "criteria": criteria,
+            "matched_before": result.matched_count}
