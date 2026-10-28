@@ -754,3 +754,74 @@ class TestFeedDirectSubscribeApi:
         feed.reconcile()
         assert seen["data_dir"] == h.data_dir
 
+
+
+class TestReconcileAllDuplicateAndDefaults:
+    """阶段四盲区消解：全重复补拉段/缺省 funding refresher/flush_all
+    关停防御。"""
+
+    def test_reconcile_all_duplicate_segment_returns_ok(self, tmp_path):
+        """补拉段全为重复（WS 已先到）——merged None 短路 return "ok"
+        （不广播不落盘，对账状态仍 ok）。"""
+        h = FeedHarness(tmp_path)
+        got: list[int] = []
+        feed, _ = h.acquire(
+            FeedSubscription(on_frames=lambda df, idx: got.append(idx)))
+        feed.on_closed_bar(h.event_after(1))  # WS 先到一根
+        got.clear()
+        # REST 补拉段重含同一根（全重复——无新行）
+        h._rest_frames = [_ohlcv_at([h.last + h.tf])]
+        h.clock.now = h.last + 3 * h.tf
+        assert feed.reconcile() is None  # 不外抛
+        last_run, last_result = feed.reconcile_state
+        assert last_result == "ok"  # 全重复=对账无所得（非 gap_filled）
+        assert got == []  # 不广播
+
+    def test_default_funding_refresher_forwards_updater(self, tmp_path,
+                                                        monkeypatch):
+        """缺省 funding refresher（生产装配面）：转发 update_funding_data
+        （symbol+data_dir 同参）。"""
+        data_dir = tmp_path / "market"
+        data_dir.mkdir()
+        calls: list[dict] = []
+        frame = _funding_frame(["2024-01-01 00:00:00"])
+
+        def fake_update(*, symbol, data_dir):
+            calls.append({"symbol": symbol, "data_dir": data_dir})
+            return frame
+
+        monkeypatch.setattr(
+            "core.data.updater.update_funding_data", fake_update)
+        from core.paper_trading.runtime.feed import (
+            _default_funding_refresh)  # noqa: SLF001——缺省 refresher 路径
+
+        assert _default_funding_refresh(
+            symbol="BTCUSDT", data_dir=data_dir) is frame
+        assert calls == [{"symbol": "BTCUSDT", "data_dir": data_dir}]
+
+    def test_flush_all_swallows_feed_failure_continues(self, tmp_path,
+                                                       monkeypatch):
+        """flush_all 关停防御：单 feed flush 抛异常被吞续行（后续 feed
+        照常清缓冲——关停序不被单点故障绑架）。"""
+        h = FeedHarness(tmp_path, timeframe="1m",
+                        clock=FakeClock("2030-01-01"))
+        from core.data.storage import save_parquet
+
+        save_parquet(make_ohlcv(n=30, freq="1h", seed=4),
+                     h.data_dir / "ETHUSDT_1h.parquet")
+        feed_1m, _ = h.acquire()
+        feed_1h = h.registry.acquire(
+            "ETHUSDT", "1h", FeedSubscription(on_frames=lambda df, i: None))
+        feed_1m.on_closed_bar(h.event_after(1))  # 首根即刻 flush
+        feed_1m.on_closed_bar(h.event_after(2))  # 第二根进缓冲
+        feed_1h.on_closed_bar(_event_at(
+            feed_1h.latest_df.index[-1] + pd.Timedelta(hours=1),
+            timeframe="1h"))
+
+        def broken_flush():
+            raise RuntimeError("scripted: 清缓冲崩")
+
+        monkeypatch.setattr(feed_1m, "flush_pending", broken_flush)
+        h.registry.flush_all()  # 1m 键抛异常被吞——1h 键续行清缓冲
+        assert len(load_parquet(
+            h.data_dir / "ETHUSDT_1h.parquet")) == 31  # 1h 已清

@@ -1283,3 +1283,65 @@ class TestStrategyReturnFlow:
         h2.seed_task("pt_cb000000001", "st-cb", status="completed")
         h2.scheduler._executor_concluded("pt_cb000000001", "completed")
         assert calls and set(calls) == {"st-cb"}, "回调路径经守卫单点"
+
+    def test_flush_buffer_pending_rows_reported(self, tmp_path):
+        """flush_buffer 组记录侧：高频 1m 缓冲未 flush 行数按键披露。"""
+        import pandas as pd
+
+        from core.data.fapi.stream import ClosedBarEvent
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "ETHUSDT", "1m",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("ETHUSDT", "1m")
+            base = pd.Timestamp("2030-01-01T00:00:00Z")
+            for i in (1, 2):
+                feed.on_closed_bar(ClosedBarEvent(
+                    symbol="ETHUSDT", timeframe="1m",
+                    open_time=base + pd.Timedelta(minutes=i),
+                    open=100.0, high=101.0, low=99.0, close=100.5,
+                    volume=10.0))
+            # 首根即刻 flush（last_flush=None）、第二根 60s 窗口内进缓冲
+            status = h.scheduler.status()["flush_buffer"]
+            assert status.get("ETHUSDT_1m") == 1
+        finally:
+            h.teardown()
+
+    def test_health_groups_feed_none_continue(self, tmp_path, monkeypatch):
+        """健康组竞态防御：active_keys 与 get 之间 feed 被回收（get
+        None）——两组跳过该键不炸（continue 分支）。"""
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            monkeypatch.setattr(
+                h.registry, "get", lambda *a, **k: None)  # 回收竞态窗口
+            status = h.scheduler.status()  # 不炸即通过
+            assert status["flush_buffer"] == {}
+            assert status["reconcile"] == {
+                "last_run": None, "last_result": None}
+        finally:
+            h.teardown()
+
+    def test_backfill_health_group_when_assembled(self, tmp_path):
+        """backfill 组装配面：registry.backfill 在场时 status 透传其
+        状态面（未装配空 dict 由既有 K2 用例承载）。"""
+        from core.paper_trading.runtime.feed import FixedKeyBackfill
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            backfill = FixedKeyBackfill(
+                h.data_dir, rest_fetcher=lambda *a, **k: pd.DataFrame(),
+                now_fn=lambda: pd.Timestamp("2030-01-01T00:00:00Z"))
+            h.registry.backfill = backfill
+            backfill.run_once()  # 空响应→全键 failed（CARD-03 单义）
+            assert h.scheduler.status()["backfill"] == backfill.status()
+            assert len(h.scheduler.status()["backfill"]) == 12  # 非空状态面
+        finally:
+            h.teardown()

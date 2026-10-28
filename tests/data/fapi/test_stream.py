@@ -46,6 +46,7 @@ class _Recorder:
         self.closed: list[ClosedBarEvent] = []
         self.connections: list[ConnEvent] = []
         self.raise_in_closed = False
+        self.raise_in_connection = False
         self._lock = threading.Lock()
 
     def on_closed_bar(self, event: ClosedBarEvent) -> None:
@@ -57,6 +58,8 @@ class _Recorder:
     def on_connection(self, event: ConnEvent) -> None:
         with self._lock:
             self.connections.append(event)
+        if self.raise_in_connection:
+            raise RuntimeError("scripted: 连接事件回调故障")
 
 
 class _ClientScript:
@@ -451,6 +454,58 @@ class TestMessageFace:
         assert stream.last_push(("BTCUSDT", "1m")) is not None
         stream.stop()
 
+    def test_missing_symbol_or_timeframe_dropped(self):
+        """s/i 缺失的 kline 消息静默丢弃不投递（不炸不投）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: stream.connected)
+        client = script.clients[0]
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "k": {"i": "1m", "x": True}}}))  # 缺 s
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "s": "BTCUSDT",
+                      "k": {"x": True}}}))  # k 缺 i
+        assert recorder.closed == []
+        assert stream.connected
+        stream.stop()
+
+    def test_kline_field_error_dropped(self):
+        """k dict 缺 openTime（t）等字段不可构造事件——warning 丢弃
+        不投递不炸。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: stream.connected)
+        client = script.clients[0]
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "s": "BTCUSDT",
+                      "k": {"i": "1m", "x": True, "o": "1", "h": "2",
+                            "l": "0.5", "c": "1.5", "v": "10"}}}))  # 缺 t
+        assert recorder.closed == []
+        assert stream.connected
+        stream.stop()
+
+    def test_connection_callback_exception_swallowed(self):
+        """on_connection 回调抛异常被吞——流连接不受单订阅方故障影响。"""
+        recorder = _Recorder()
+        recorder.raise_in_connection = True
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        # 等待锚=工厂完成：on_open 在 FakeFapiClient 构造内同步触发并先
+        # 置 _connected，connected 锚存在「标志已置而 append 未落」窗口
+        assert _wait_until(lambda: script.clients and stream.connected)
+        event = make_closed_event()
+        script.clients[0].deliver_raw(kline_ws_payload(event))
+        assert _wait_until(lambda: len(recorder.closed) == 1)  # 投递照常
+        stream.stop()
+
     def test_event_field_mapping(self):
         """闭合事件字段映射（开盘时刻 ms→UTC Timestamp、OHLCV 浮点）。"""
         recorder = _Recorder()
@@ -472,3 +527,128 @@ class TestMessageFace:
         assert got.volume == 42.5
         assert got.closed is True
         stream.stop()
+
+
+# ── 生命周期防御分支（阶段四盲区消解）──────────────────────
+
+class TestLifecycleDefensiveBranches:
+    """stop/订阅发送/退避等待的防御分支（吞异常不断流语义）。"""
+
+    def test_stop_client_exception_swallowed(self):
+        """stop 时 client.stop 抛异常被吞（已置停——关停不外抛）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: stream.connected)
+        client = script.clients[0]
+
+        def broken_stop():
+            client_ref._on_close(client_ref)  # SDK stop 语义：close 回调先行
+            raise RuntimeError("scripted: SDK 关停崩")
+
+        client_ref = script.clients[0]
+        client.stop = broken_stop  # 实例覆写（SDK 关停异常模拟）
+        stream.stop()  # 不抛即通过（异常被吞）
+        assert not stream._thread.is_alive()  # noqa: SLF001——线程干净退出
+
+    def test_subscribe_send_failure_swallowed_connected_kept(self):
+        """on_open 内订阅发送抛异常被吞——连接仍建立、闭合事件仍投递
+        （对账兜底语义：订阅失败不伪断连接）。"""
+        recorder = _Recorder()
+        inner = _ClientScript(["ok"])
+
+        class _SendFailFactory:
+            """订阅发送抛异常的工厂包装（覆写 send_message）。"""
+
+            def __call__(self, **kwargs):
+                client = inner(**kwargs)
+
+                def send(message):
+                    raise RuntimeError("scripted: 订阅发送失败")
+
+                client.send_message = send  # 实例属性（普通方法可实例覆写）
+                return client
+
+        stream = _make_stream(recorder, _SendFailFactory())
+        stream.start()
+        # 等待锚=工厂完成（同 connection_callback 用例的窗口说明）
+        assert _wait_until(
+            lambda: inner.clients and stream.connected)  # 连接仍建立
+        event = make_closed_event()
+        inner.clients[0].deliver_raw(kline_ws_payload(event))
+        assert _wait_until(lambda: len(recorder.closed) == 1)
+        stream.stop()
+
+    def test_real_backoff_wait_interrupted_by_stop(self):
+        """无 backoff 注入（生产形制）的真实 Event.wait 分支：fail 脚本
+        断线后退避等待被 stop 打断——线程及时退出（不打满退避时长）。"""
+        import time as _time
+
+        recorder = _Recorder()
+        script = _ClientScript(["fail", "fail"])  # 构造即失败→断线退避
+        stream = BinanceFapiStream(  # 无 backoff_wait_fn——真实等待分支
+            recorder.on_closed_bar, recorder.on_connection,
+            client_factory=script)
+        t0 = _time.monotonic()
+        stream.start()
+        assert _wait_until(lambda: script.calls >= 1)
+        stream.stop()  # 退避 wait 期间 stop——立即打断
+        stream._thread.join(timeout=5.0)  # noqa: SLF001——退出观察锚
+        assert not stream._thread.is_alive()  # noqa: SLF001
+        assert _time.monotonic() - t0 < 10.0  # 未打满退避（及时退出）
+
+    def test_stop_during_connect_window_cleaned_up(self):
+        """构造返回与挂载之间的 stop 置停窗口：客户端清理返回 False
+        （不进入泊等）。"""
+        recorder = _Recorder()
+        inner = _ClientScript(["ok"])
+        gate = threading.Event()
+        stream_holder: dict = {}
+
+        class _WindowFactory:
+            """构造返回后立即置停（stop 与挂载之间的窗口注入）。"""
+
+            def __call__(self, **kwargs):
+                client = inner(**kwargs)
+                stream_holder["stream"].stop()
+                gate.set()
+                return client
+
+        stream = _make_stream(recorder, _WindowFactory())
+        stream_holder["stream"] = stream
+        stream.start()
+        assert gate.wait(timeout=5.0), "窗口注入未触达"
+        stream._thread.join(timeout=5.0)  # noqa: SLF001
+        assert not stream._thread.is_alive()  # noqa: SLF001——干净退出
+
+    def test_scripted_stream_batch_and_rest_raise_branches(self):
+        """替身面消解：emit_closed_batch 批量投递/ScriptedRestClient
+        exchange_info 与 funding 的异常脚本项/wait_dead 超时 False/
+        subscribed_streams 坏 JSON 行跳过。"""
+        from core.data.fapi.injection import ScriptedRestClient
+
+        recorder = _Recorder()
+        scripted = ScriptedStream(
+            on_closed_bar=recorder.on_closed_bar,
+            on_connection=recorder.on_connection)
+        batch = [make_closed_event(open_time="2026-10-28T00:00:00Z"),
+                 make_closed_event(open_time="2026-10-28T00:01:00Z"),
+                 make_closed_event(open_time="2026-10-28T00:00:00Z")]  # 重复
+        scripted.emit_closed_batch(batch)
+        assert len(recorder.closed) == 3  # 逐条投递（重复合法——幂等归被测方）
+
+        rest = ScriptedRestClient(
+            exchange_info=[ValueError("scripted: 规则拉取崩")],
+            funding_rates=[ConnectionError("scripted: 费率断网")])
+        with pytest.raises(ValueError):
+            rest.fetch_exchange_info()
+        with pytest.raises(ConnectionError):
+            rest.fetch_funding_rate("BTCUSDT", None, None)
+
+        client = FakeFapiClient()
+        assert client.wait_dead(timeout=0.0) is False  # 未断线超时 False
+        client.sent_messages.append("not-a-json{")  # 坏 JSON 行
+        client.sent_messages.append(json.dumps(
+            {"method": "SUBSCRIBE", "params": ["btcusdt@kline_1m"]}))
+        assert client.subscribed_streams == ["btcusdt@kline_1m"]  # 坏行跳过

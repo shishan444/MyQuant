@@ -326,3 +326,37 @@ class TestWhitelistAndEnv:
             "FAPI_MIN_NOTIONAL_ETHUSDT": "20.0",
         })
         assert overrides == {"BTCUSDT": 100.0, "ETHUSDT": 20.0}
+
+
+class TestTsParsingAndPaginationGuard:
+    """阶段四盲区消解：naive 时刻 UTC 假定/分页 cursor 自锁防御。"""
+
+    def test_naive_timestamp_inputs_treated_as_utc(self):
+        """naive pd.Timestamp 入参按 UTC 假定（tz_localize 分支）——
+        与 aware 入参同帧结果（对账输入泛化语义）。"""
+        naive_client, _ = _make_client(
+            {"klines_pages": [[_kline_row(_T0)]]})
+        aware_client, _ = _make_client(
+            {"klines_pages": [[_kline_row(_T0)]]})
+        frame_naive = naive_client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp("2026-03-27T00:00:00"),  # naive
+            pd.Timestamp("2026-03-27T00:10:00"))
+        frame_aware = aware_client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp("2026-03-27T00:00:00Z"),
+            pd.Timestamp("2026-03-27T00:10:00Z"))
+        pd.testing.assert_frame_equal(frame_naive, frame_aware)
+
+    def test_klines_cursor_selflock_breaks_pagination(self):
+        """端点异常自锁防御：页内 openTime 不前进（同根重复返回）——
+        cursor 不前进即 break 终止分页（防死循环）。"""
+        same_row = _kline_row(_T0)
+        client, sdk = _make_client(
+            {"klines_pages": [[same_row], [same_row]]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp("2026-03-27T00:00:00Z"),
+            pd.Timestamp("2026-03-27T01:00:00Z"))  # 大区间（多次分页企图）
+        assert len(sdk.klines_calls) == 2  # 第二次同 openTime 即终止
+        assert len(frame) == 1

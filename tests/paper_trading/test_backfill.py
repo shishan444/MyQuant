@@ -218,3 +218,19 @@ class TestFixedKeyBackfill:
         # 线程数回落启动前基线（建库线程退出无残留——原 active_count
         # >=1 恒真断言改基线对照）
         assert threading.active_count() == baseline
+
+    def test_start_background_idempotent_single_thread(self, tmp_path):
+        """start_background 幂等：线程在场时二次调用 no-op（不另起线程）。"""
+        import threading
+
+        frame = make_ohlcv(n=10, freq="1h", seed=3)
+        rest = _ScriptedRest({k: frame for k in FIXED_SUBSCRIBE_KEYS})
+        backfill = FixedKeyBackfill(
+            tmp_path, rest_fetcher=rest,
+            now_fn=_clock(pd.Timestamp("2026-10-27T00:00:00Z")))
+        backfill.start_background()
+        first = backfill._thread  # noqa: SLF001
+        backfill.start_background()  # 二次调用——幂等 no-op
+        assert backfill._thread is first  # noqa: SLF001——同一线程对象
+        assert threading.active_count() >= 1
+        backfill.stop()
