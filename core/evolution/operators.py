@@ -660,8 +660,18 @@ def mutate_risk(dna: StrategyDNA) -> StrategyDNA:
 
     risk = data["risk_genes"]
 
-    # stop_loss 变异：值域 [0.005, 0.20]、步长 0.005
-    if random.random() < 0.5:
+    # series 档三处置（dynamic-stop-loss-series 4.4 修订版——选项 A
+    # 裁定：残留值与进化行为全链解耦；进化面不生成 series 档 DNA）：
+    # ①stop_loss 变异分支跳过（残留 0.05 物化默认不被写——非声明值
+    # 无变异语义）；②take_profit=None 初始化分支跳过（不从残留值推导
+    # TP——TP 保持 None）；③take_profit 非 None 扰动分支下限钳制换源
+    # （max(stop_loss+0.005,…) 读残留的钳制在 series 档无依据——改
+    # TP 自身 pct 值域下界 0.005 钳制）；sl_series_source 不被任何
+    # 变异分支触碰（进化不产 series 来源新值）
+    is_series = risk.get("sl_mode") == "series"
+
+    # stop_loss 变异：值域 [0.005, 0.20]、步长 0.005（series 档跳过）
+    if not is_series and random.random() < 0.5:
         current = risk["stop_loss"]
         delta = random.choice([-1, 1]) * 0.005 * random.randint(1, 5)
         risk["stop_loss"] = round(max(0.005, min(0.20, current + delta)), 4)
@@ -673,13 +683,18 @@ def mutate_risk(dna: StrategyDNA) -> StrategyDNA:
         risk["position_size"] = round(max(0.10, min(1.0, current + delta)), 2)
 
     # take_profit 变异：None 时按 stop_loss 倍数初始化，否则步长扰动
+    # （series 档 None 保持 None——不从残留值推导；非 None 扰动下限
+    # 按 TP 自身 pct 值域下界钳制——不读 stop_loss 残留）
     if random.random() < 0.3:
         if risk["take_profit"] is None:
-            risk["take_profit"] = round(risk["stop_loss"] * random.uniform(1.5, 3.0), 4)
+            if not is_series:
+                risk["take_profit"] = round(
+                    risk["stop_loss"] * random.uniform(1.5, 3.0), 4)
         else:
             delta = random.choice([-1, 1]) * 0.01 * random.randint(1, 3)
+            lower = 0.005 if is_series else risk["stop_loss"] + 0.005
             risk["take_profit"] = round(
-                max(risk["stop_loss"] + 0.005, risk["take_profit"] + delta), 4
+                max(lower, risk["take_profit"] + delta), 4
             )
 
     # direction 不参与变异：评估前由任务级 direction 强制覆盖
