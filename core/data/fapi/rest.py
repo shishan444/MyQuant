@@ -142,6 +142,10 @@ def _klines_rows_to_frame(rows: list) -> pd.DataFrame:
                 "openTime=%r", row[0])
             continue
         parsed.append((int(row[0]), values))
+    if not parsed:
+        # 全脏滤空与 rows 空早退同构（含 index tz=UTC——naive 空索引
+        # 会在 fetch_closed_bars 的 tz-aware 边界比较上 TypeError）
+        return _empty_ohlcv_frame()
     frame = pd.DataFrame(
         {
             "open": [v[0] for _, v in parsed],
