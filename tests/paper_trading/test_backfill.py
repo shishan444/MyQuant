@@ -101,6 +101,62 @@ class TestBackfillKey:
         assert rest.calls == []
 
 
+class TestNotReadySingleMeaning:
+    """CARD-03 done=「数据就绪」单义：三空路径一律上抛（run_once 记
+    failed 下轮重试）——空态视为暂时性（固定 12 键两年窗必有数据，
+    「端点确认无数据」现行键集不可达）。"""
+
+    def test_no_file_empty_response_raises(self, tmp_path):
+        """无文件+端点空响应→RuntimeError（原假 done 主路径）。"""
+        rest = _ScriptedRest()  # 全键空帧
+        with pytest.raises(RuntimeError, match="无文件且端点空响应"):
+            backfill_key(
+                tmp_path, "BTCUSDT", "4h",
+                rest_fetcher=rest, now_fn=_clock())
+
+    def test_empty_existing_file_raises(self, tmp_path):
+        """有文件但 0 行→RuntimeError（空文件非数据就绪）。"""
+        from core.data.storage import save_parquet
+
+        save_parquet(pd.DataFrame(), tmp_path / "BTCUSDT_4h.parquet")
+        rest = _ScriptedRest()
+        with pytest.raises(RuntimeError, match="文件空"):
+            backfill_key(
+                tmp_path, "BTCUSDT", "4h",
+                rest_fetcher=rest, now_fn=_clock())
+
+    def test_incremental_empty_response_raises(self, tmp_path):
+        """缺口成立（now>=last+2×周期）+增量空响应→RuntimeError
+        （单义推论第三条：既非尾戳新鲜亦非增量落盘——不上抛则单义
+        不成立）。"""
+        from core.data.storage import save_parquet
+
+        base = make_ohlcv(n=30, freq="4h", seed=5)
+        save_parquet(base, tmp_path / "BTCUSDT_4h.parquet")
+        last = base.index[-1]
+        tf = pd.Timedelta(seconds=TF_SECONDS["4h"])
+        rest = _ScriptedRest()  # 增量空帧
+        with pytest.raises(RuntimeError, match="缺口区间空响应"):
+            backfill_key(
+                tmp_path, "BTCUSDT", "4h",
+                rest_fetcher=rest,
+                now_fn=_clock(last + 6 * tf))  # 缺口成立
+
+    def test_empty_response_failed_then_recovered_next_round(
+            self, tmp_path):
+        """空响应键经 run_once 记 failed（无未捕获逃逸）+次轮脚本换
+        帧恢复 done（暂时性空态的重试语义）。"""
+        frame = make_ohlcv(n=10, freq="1h", seed=3)
+        rest = _ScriptedRest()
+        backfill = FixedKeyBackfill(
+            tmp_path, rest_fetcher=rest, now_fn=_clock())
+        backfill.run_once()
+        assert backfill.status()["BTCUSDT_1m"] == "failed"
+        rest.frames[("BTCUSDT", "1m")] = frame
+        backfill.run_once()
+        assert backfill.status()["BTCUSDT_1m"] == "done"
+
+
 class TestFixedKeyBackfill:
     """12 键编排：状态面/failed 重试/幂等续跑/后台线程。"""
 

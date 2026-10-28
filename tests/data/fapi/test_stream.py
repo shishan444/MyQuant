@@ -391,6 +391,45 @@ class TestMessageFace:
         assert stream.connected  # 未崩
         stream.stop()
 
+    def test_malformed_data_and_k_no_escape_no_disconnect(self):
+        """CARD-02 畸形消息（data/k 非 dict）无异常逃逸+不触发断线：
+        若 .get 链 AttributeError 逃逸，SDK 会把回调异常经 on_error 链
+        当连接级故障——一条畸形消息伪断整条连接。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: stream.connected)
+        client = script.clients[0]
+        connected_events = len(recorder.connections)  # 起连事件基线
+
+        # data 非 dict 两形态（list/str）
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m", "data": [1, 2]}))
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m", "data": "oops"}))
+        # k 非 dict 两形态（list/str）+k 缺失
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "s": "BTCUSDT", "k": [1]}}))
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "s": "BTCUSDT", "k": "bad"}}))
+        client.deliver_raw(json.dumps(
+            {"stream": "btcusdt@kline_1m",
+             "data": {"e": "kline", "s": "BTCUSDT"}}))
+
+        assert recorder.closed == []  # 畸形消息零投递
+        assert len(recorder.connections) == connected_events  # 无断线/重连
+        assert stream.connected  # 连接存活（未伪断）
+
+        # 对照：后续正常闭合消息仍恰一次投递（防线不误伤正常路径）
+        event = make_closed_event()
+        client.deliver_raw(kline_ws_payload(event))
+        assert _wait_until(lambda: len(recorder.closed) == 1)
+        assert len(recorder.connections) == connected_events
+        stream.stop()
+
     def test_event_field_mapping(self):
         """闭合事件字段映射（开盘时刻 ms→UTC Timestamp、OHLCV 浮点）。"""
         recorder = _Recorder()
