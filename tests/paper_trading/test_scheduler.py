@@ -997,8 +997,6 @@ class TestStrategyReturnFlow:
         TestRelaxedMountReturnFlow）。"""
         import logging
 
-        import core.paper_trading.runtime.scheduler as sched_mod
-
         concluded: list = []
         h = _ReturnFlowHarness(tmp_path)
         logging.getLogger().addHandler(caplog.handler)  # 同 fileConfig 坑位
@@ -1010,7 +1008,6 @@ class TestStrategyReturnFlow:
         def _boom(*args, **kwargs):
             raise RuntimeError("transit channel broken")
 
-        monkeypatch.setattr(sched_mod, "__name__", sched_mod.__name__)
         # transit 在函数体内局部 import——patch lifecycle.transit 单点
         import core.strategy.lifecycle as lifecycle_mod
 
