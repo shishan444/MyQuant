@@ -257,6 +257,9 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "grid.modes[].sl_series_source": "exit_sweep series 档 entry 须携带"
                                      "sl_series_source（指标或 fx 形制）"
                                      "——空 stops 合法（线值经列给出）",
+    "grid.modes[].sl_series_source.column": "fx 形制列名非法：column 须为"
+                                           "fx_ 前缀精确列名（exit_sweep "
+                                           "grid 校验面与登记面同判）",
 }
 
 
