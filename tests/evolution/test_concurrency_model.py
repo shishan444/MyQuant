@@ -841,6 +841,42 @@ class TestConfigEffectChain:
                    and "用缺省 2" in rec.getMessage()
                    for rec in handler.records), "读取失败 warning 须留痕"
 
+    def test_document_layer_scalar_falls_back(self, tmp_path, monkeypatch):
+        """文档层裸标量锚（CARD-03 附带项——team-lead 2026-10-28 裁决
+        并入）：safe_load 返回非 dict 文档（如 config.yaml 内容就一个
+        two）——不启动崩溃+缺省 2+留痕（修复前 `_cfg.get` AttributeError
+        致 lifespan 崩）。"""
+        import logging
+        import yaml
+        from fastapi.testclient import TestClient
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.WARNING)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        handler = _ListHandler()
+        app_logger = logging.getLogger("app")
+        app_logger.addHandler(handler)
+        try:
+            monkeypatch.setattr(yaml, "safe_load", lambda f: "two")
+            app = self._make_app(tmp_path)
+            with TestClient(app) as client:
+                assert client.get(
+                    "/api/evolution/runner-status").status_code == 200, (
+                    "文档层类型错须降级起服（不启动崩溃）")
+                assert app.state.evolution_runner.max_workers == 2, (
+                    "文档层类型错回退缺省 2")
+        finally:
+            app_logger.removeHandler(handler)
+        assert any("文档层非映射" in rec.getMessage()
+                   and "用缺省 2" in rec.getMessage()
+                   for rec in handler.records), "文档层容错 warning 须留痕"
+
+
 
 
 class TestPopulationCountLocalization:
