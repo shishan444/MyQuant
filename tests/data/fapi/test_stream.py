@@ -430,6 +430,27 @@ class TestMessageFace:
         assert len(recorder.connections) == connected_events
         stream.stop()
 
+    def test_out_of_fixed_keys_push_dropped(self):
+        """CARD-04 键域校验：清单外键（30m）推送丢弃——不入 last_push
+        健康面（未知键不稀释静默披露面）不投递下游；成员键正常。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: stream.connected)
+        client = script.clients[0]
+
+        stray = make_closed_event(timeframe="30m")  # 清单外周期
+        client.deliver_raw(kline_ws_payload(stray))  # 同步内联——返回即处理完
+        assert recorder.closed == []  # 清单外键不投递
+        assert stream.last_push(("BTCUSDT", "30m")) is None  # 不入健康面
+
+        member = make_closed_event(timeframe="1m")  # 固定 12 键成员
+        client.deliver_raw(kline_ws_payload(member))
+        assert _wait_until(lambda: len(recorder.closed) == 1)
+        assert stream.last_push(("BTCUSDT", "1m")) is not None
+        stream.stop()
+
     def test_event_field_mapping(self):
         """闭合事件字段映射（开盘时刻 ms→UTC Timestamp、OHLCV 浮点）。"""
         recorder = _Recorder()
