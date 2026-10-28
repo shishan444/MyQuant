@@ -166,7 +166,6 @@ class EvolutionRunner(threading.Thread):
                 "max_workers=%s 越界钳制为 %s（合法域 [1, %s]）",
                 requested, self.max_workers, self.MAX_WORKERS_CAP)
         self._stop_event = threading.Event()
-        self._population_count: int = 0  # 连续进化（多代种群）计数
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
         # 池内任务登记（task_id → Future；占槽至终态；线程安全）
@@ -438,12 +437,15 @@ class EvolutionRunner(threading.Thread):
         # 变异记录（日志展示用）
         last_mutations: List[str] = []
         global_gen_offset = 0  # 连续进化全局代偏移：防跨种群历史覆盖
+        population_count = 0  # 本任务内种群序号（任务级计数——线程池并发下
+        # 实例级计数会跨任务交错污染落库的 pop 序号，与 global_gen_offset
+        # 同经闭包/nonlocal 形制）
         discovered_signatures: set = set()  # 已自动入库策略的签名集（去重）
         strategy_threshold = task_row.get("strategy_threshold", 1.0)
         champion_tracker = ChampionTracker()
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
-            nonlocal last_mutations, global_gen_offset
+            nonlocal last_mutations, global_gen_offset, population_count
 
             # 快速协作取消检查（threading.Event 直达信号）
             controller.check_stop()
@@ -476,7 +478,7 @@ class EvolutionRunner(threading.Thread):
                     }
 
             # 历史记录落库（附诊断摘要）
-            top3_summary = f"best={best_score:.1f}|pop={self._population_count + 1}"
+            top3_summary = f"best={best_score:.1f}|pop={population_count + 1}"
             if gen_diag:
                 top3_summary += f"|diag={json.dumps(gen_diag)}"
             save_history(self.db_path, task_id, global_gen, best_score, avg_score, top3_summary)
@@ -619,18 +621,18 @@ class EvolutionRunner(threading.Thread):
         while continuous and stop_reason not in ("error",):
             controller.check_stop()
 
-            self._population_count += 1
+            population_count += 1
 
             logger.info(
                 "Task %s: starting population #%d (stop_reason=%s)",
-                task_id, self._population_count + 1, stop_reason,
+                task_id, population_count + 1, stop_reason,
             )
 
             # 新种群开跑即推送前端
             _push_ws(task_id, {
                 "type": "population_started",
                 "task_id": task_id,
-                "population_count": self._population_count + 1,
+                "population_count": population_count + 1,
                 "best_score_ever": result.get("champion_score", 0) if result else 0,
                 "total_generations_so_far": global_gen_offset,
             })
