@@ -113,6 +113,45 @@ class TestFixedSubscriptionAssembly:
             assert feed.latest_df.index[-1] == orphan.open_time
         assert stream.stopped == 1  # 关停序断流
 
+    def test_out_of_fixed_keys_event_dropped_not_persisted(
+            self, tmp_path, monkeypatch):
+        """A10 周期外数据拒收：12 路外周期（30m）闭合事件注入→不消费
+        不落盘（无 30m feed 实例——路由丢弃；12 路内既有 feed 不受
+        串键影响——路由按 (symbol,timeframe) 精确匹配）。"""
+        _AssemblyStream.instances.clear()
+        fapi_dir = _enable_assembly(monkeypatch, tmp_path)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+        with TestClient(app):
+            stream = _AssemblyStream.instances[-1]
+            scheduler = app.state.paper_scheduler
+            # 12 路内键 feed 在场（1m——有实例对照面）
+            from core.paper_trading.runtime.feed import FeedSubscription
+
+            feed_1m = scheduler.registry.acquire(
+                "BTCUSDT", "1m",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            assert feed_1m.latest_df is None  # 无 parquet（冷启动）
+
+            from core.data.fapi.stream import ClosedBarEvent
+
+            stray = ClosedBarEvent(
+                symbol="BTCUSDT", timeframe="30m",
+                open_time=pd.Timestamp("2026-10-28T00:00:00Z"),
+                open=1.0, high=2.0, low=0.5, close=1.5, volume=10.0)
+            stream.on_closed_bar(stray)  # 周期外事件——丢弃即通过
+
+            # 不落盘：data_dir 无 30m 文件（落盘只经 feed._persist）
+            assert not (fapi_dir / "BTCUSDT_30m.parquet").exists()
+            # 12 路内 feed 不受串键影响（30m 事件不进 1m 序列）
+            assert feed_1m.latest_df is None
+            assert scheduler.registry.get("BTCUSDT", "30m") is None
+
     def test_no_backfill_without_assembly(self, tmp_path, monkeypatch):
         """旁路面（FAPI_STREAM_DISABLED）下流与建库均不装配（K2 面）。"""
         monkeypatch.setenv("FAPI_STREAM_DISABLED", "1")

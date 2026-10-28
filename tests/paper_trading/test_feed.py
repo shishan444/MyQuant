@@ -284,6 +284,26 @@ class TestOnClosedBar:
         assert got == [0]
         assert len(feed.latest_df) == 1
 
+    def test_out_of_order_event_sorted_merge_no_crash(self, tmp_path):
+        """R4 乱序防御面：open_time 早于末根的不重复事件——sort 合并
+        不炸、序列单调、无重复行（组合流按序投递下的异常形态纵深；
+        spec「乱序投递作为防御性测试面保留，不作 SDK 行为声称」——
+        仅记录防御行为不声称语义）。
+
+        实现形制披露：晚到的早时刻行经 sort 并入序列中部，from_idx=
+        追加前长度切片使该行对增量消费与落盘不可见（new_rows 只取
+        iloc[from_idx:] 末段）——内存序列含该行、下游增量面不见。
+        """
+        h = FeedHarness(tmp_path)
+        feed, _ = h.acquire(FeedSubscription(
+            on_frames=lambda df, idx: None))
+        feed.on_closed_bar(h.event_after(2))   # 先到末根+2
+        feed.on_closed_bar(h.event_after(1))   # 晚到末根+1（乱序）
+        df = feed.latest_df
+        assert df.index.is_monotonic_increasing  # 序列单调
+        assert len(df) == 102                    # 两行都在内存
+        assert not df.index.duplicated().any()   # 无重复行
+
     def test_row_lands_in_parquet(self, tmp_path):
         """事件行落盘对齐（merge 语义——既有行不改写）。"""
         h = FeedHarness(tmp_path)
