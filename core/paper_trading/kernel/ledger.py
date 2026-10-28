@@ -335,15 +335,11 @@ class Ledger:
                 return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty)
             fill.capped = capped
-            self._apply_open(fill, exec_bar, entry_atr)
-            # margin_used 与 _apply_open 落账式同式（margin=名义/
-            # leverage）——自洽判据（available_before−margin_used−fee
-            # =成交后 balance）由 test_ledger 复算锚守护
+            margin_used = self._apply_open(fill, exec_bar, entry_atr)
             return FillOutcome(
                 fill, equity_before=equity_before,
                 available_before=available_before,
-                margin_used=fill.quantity * fill.price
-                / self.params.leverage)
+                margin_used=margin_used)
         if kind == "add":
             if self.position is None:
                 return FillOutcome(None, REJECT_CONTEXT_INVALID)
@@ -355,25 +351,19 @@ class Ledger:
             if not (qty_add > 0.0):
                 return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
             fill = fill_model.fill(intent, exec_bar, qty_add)
-            self._apply_add(fill)
-            # _apply_add 落账式同式（add_margin=名义/leverage）
+            margin_used = self._apply_add(fill)
             return FillOutcome(
                 fill, equity_before=equity_before,
                 available_before=available_before,
-                margin_used=fill.quantity * fill.price
-                / self.params.leverage)
+                margin_used=margin_used)
         if kind == "reduce":
             if self.position is None:
                 return FillOutcome(None, REJECT_CONTEXT_INVALID)
             equity_before = self.equity(exec_bar.open)
             available_before = self.balance
-            pos = self.position
-            qty = pos.quantity * self.params.exit_fraction
+            qty = self.position.quantity * self.params.exit_fraction
             fill = fill_model.fill(intent, exec_bar, qty)
-            # 释放正值=按减量比例释放的保证金（_apply_partial_exit
-            # 落账式同式：pos.margin×qty/减仓前 quantity）
-            released = pos.margin * (fill.quantity / pos.quantity)
-            self._apply_partial_exit(fill)
+            released = self._apply_partial_exit(fill)
             return FillOutcome(
                 fill, equity_before=equity_before,
                 available_before=available_before,
@@ -383,9 +373,8 @@ class Ledger:
             return FillOutcome(None, REJECT_CONTEXT_INVALID)
         equity_before = self.equity(exec_bar.open)
         available_before = self.balance
-        released = self.position.margin  # 全平=全部保证金释放
         fill = fill_model.fill(intent, exec_bar, self.position.quantity)
-        self._apply_close(fill)
+        released = self._apply_close(fill)
         return FillOutcome(
             fill, equity_before=equity_before,
             available_before=available_before,
@@ -394,8 +383,13 @@ class Ledger:
     # ── 状态变更（每笔费用=名义计费；slip 已在成交价内） ──────
 
     def _apply_open(self, fill: Fill, exec_bar: ClosedBar,
-                    entry_atr: float | None) -> None:
-        """开仓落账：margin=qty×成交价/leverage，balance−=margin+fee。"""
+                    entry_atr: float | None) -> float:
+        """开仓落账：margin=qty×成交价/leverage，balance−=margin+fee。
+
+        Returns:
+            float: 本笔占用保证金（核算明细 margin_used 单点——与
+            落账同式同值，审计列与状态变更不分叉）。
+        """
         params = self.params
         side = "long" if fill.intent.direction == "long" else "short"
         margin = fill.quantity * fill.price / params.leverage
@@ -413,11 +407,16 @@ class Ledger:
             trail_peak=fill.price,
             entry_bar_seq=exec_bar.seq,
             funding_paid=0.0)
+        return margin
 
-    def _apply_add(self, fill: Fill) -> None:
+    def _apply_add(self, fill: Fill) -> float:
         """加仓落账：保证金=add_fraction×当时权益→名义放大；并仓
         （entry_price 加权重锚、margin/quantity 累加；trail 峰值保持
-        连续——持仓期语义不随部分加仓重置）。"""
+        连续——持仓期语义不随部分加仓重置）。
+
+        Returns:
+            float: 本笔占用保证金（核算明细 margin_used 单点）。
+        """
         pos = self.position
         add_margin = fill.quantity * fill.price / self.params.leverage
         new_qty = pos.quantity + fill.quantity
@@ -430,9 +429,15 @@ class Ledger:
         pos.open_cost += fill.quantity * fill.price
         self.balance -= add_margin + fill.fee
         self._reanchor_stops(pos)
+        return add_margin
 
-    def _apply_partial_exit(self, fill: Fill) -> None:
-        """减仓落账：按比例释放保证金；部分已实现盈亏回填成交。"""
+    def _apply_partial_exit(self, fill: Fill) -> float:
+        """减仓落账：按比例释放保证金；部分已实现盈亏回填成交。
+
+        Returns:
+            float: 本笔释放保证金（核算明细 margin_used 单点——释放
+            正值披露）。
+        """
         pos = self.position
         sign = 1.0 if pos.side == "long" else -1.0
         fill.realized_pnl = sign * fill.quantity * (
@@ -446,9 +451,14 @@ class Ledger:
         if pos.quantity <= 0.0:
             self.closed_trades += 1
             self.position = None
+        return released
 
-    def _apply_close(self, fill: Fill) -> None:
-        """全平落账：balance+=margin+pnl−fee；出场计数+1。"""
+    def _apply_close(self, fill: Fill) -> float:
+        """全平落账：balance+=margin+pnl−fee；出场计数+1。
+
+        Returns:
+            float: 全部保证金释放额（核算明细 margin_used 单点）。
+        """
         pos = self.position
         sign = 1.0 if pos.side == "long" else -1.0
         fill.realized_pnl = sign * pos.quantity * (
@@ -456,6 +466,7 @@ class Ledger:
         self.balance += pos.margin + fill.realized_pnl - fill.fee
         self.closed_trades += 1
         self.position = None
+        return pos.margin
 
     def record_funding(self, amount: float) -> None:
         """资金费落账单点（三键一次更新——对质①裁决收单点）。
