@@ -140,6 +140,18 @@ class TestRunnerBranchGaps:
         assert row["oos_fitness"] is not None, (
             "OOS 段应执行（200 bar test=60>=50）")
 
+    def test_annual_return_default_target(self, tmp_path):
+        """annual_return 缺省抬升分支：objective=annual_return 且
+        min_annual_return>0、target=1.0→target 取声明下限。"""
+        db, runner = self._mk_runner(tmp_path)
+        self._run(runner, db, "ar-1",
+                  row_overrides={
+                      "requirements_json":
+                          '{"objective": "annual_return", '
+                          '"min_annual_return": 0.25}'})
+        row = get_task(db, "ar-1")
+        assert row["status"] == "completed"
+
     def test_mtf_pool_multi_tf_loads(self, tmp_path):
         """多周期 tf_pool 分支：timeframe_pool 两 TF（JSON 数组形制）
         →load_mtf_data 装载分支执行（数据仅 4h——装载成功集退化为
