@@ -845,3 +845,106 @@ class TestAccountingDetail:
         assert outcome.equity_before is None
         assert outcome.available_before is None
         assert outcome.margin_used is None
+
+
+class TestMinNotionalIntercept:
+    """最小名义值拦截（change paper-depletion-terminal 任务 2）：
+    open 分支 size_open 后 fill 前判定；cap 截断语义不变。"""
+
+    def test_below_min_notional_rejected(self):
+        """①低于阈值→FillOutcome(None, below_min_notional) 不落账。
+
+        人工锚：initial=10_000、ps=0.5、lev=1、price=100→qty=50、
+        名义=5000；阈值 6000>5000→拒。"""
+        ledger = Ledger(10_000.0, make_params(position_size=0.5))
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST, min_notional=6_000.0)
+        assert outcome.fill is None
+        assert outcome.reject_reason == "below_min_notional"
+        assert ledger.position is None, "拒绝不落账"
+        assert ledger.balance == pytest.approx(10_000.0)
+
+    def test_at_threshold_passes(self):
+        """边界含入：名义恰等于阈值→放行（< 才拒）。"""
+        ledger = Ledger(10_000.0, make_params(position_size=0.5))
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST, min_notional=5_000.0)  # 名义恰 5000
+        assert outcome.fill is not None, "恰等阈值放行"
+
+    def test_intercept_point_after_size_open_before_fill(self):
+        """②拦截点位：size_open 后 fill 前——proof=capped 标记可达
+        （拦截分支早于 fill_model.fill，fill 未被调用不产成交；size_
+        open 产出（含 cap 截断）已发生——cap 后名义判定用截断值）。
+        spy fill_model 断言拦截时 fill 零调用。"""
+        calls: list = []
+
+        class _SpyFill(MarketFill):
+            def fill(self, intent, bar, qty):
+                calls.append(qty)
+                return super().fill(intent, bar, qty)
+
+        ledger = Ledger(10_000.0, make_params(position_size=0.5))
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _SpyFill(0.0, 0.0), min_notional=9_999.0)
+        assert outcome.reject_reason == "below_min_notional"
+        assert calls == [], "拦截在 fill 前（fill_model 零调用）"
+        # 对照：无阈值形态 fill 被调（定仓产出确实先行）
+        ledger2 = Ledger(10_000.0, make_params(position_size=0.5))
+        ledger2.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _SpyFill(0.0, 0.0))
+        assert calls == [50.0], "size_open 产出 50（拦截判定对象）"
+
+    def test_cap_vs_min_notional_adjacent_boundaries(self):
+        """③相邻边界双形态：risk_budget 裸名义超 cap 截断后——
+        形态 A：截断后名义仍≥MIN_NOTIONAL→成交+capped=1；
+        形态 B：截断后名义<MIN_NOTIONAL→拒绝（below_min_notional）。
+
+        人工锚：equity=10_000、lev=5、max_exposure=0.6→cap=6_000；
+        risk_fraction 大使裸名义远超 cap→qty=cap/price=60（@100）；
+        名义截断后=6_000：MIN=5_000→成交 capped；MIN=6_001→拒。"""
+        def _make_ledger():
+            return Ledger(
+                10_000.0, make_params(
+                    position_size=1.0, leverage=5, max_exposure=0.6,
+                    position_mode="risk_budget", risk_fraction=0.9,
+                    sl_mode="pct", stop_loss=0.05))
+
+        passed = _make_ledger().execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST, entry_atr=None, min_notional=5_000.0)
+        assert passed.fill is not None
+        assert passed.fill.capped is True, "cap 截断继续成交"
+        assert passed.fill.quantity == pytest.approx(60.0)
+        assert passed.reject_reason is None
+
+        rejected = _make_ledger().execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST, entry_atr=None, min_notional=6_001.0)
+        assert rejected.fill is None
+        assert rejected.reject_reason == "below_min_notional", \
+            "截断后仍低于阈值→拒绝不成交"
+
+    def test_none_threshold_disables_intercept(self):
+        """min_notional=None=不判定（缺省形态——既有行为零变化）。"""
+        ledger = Ledger(10_000.0, make_params(position_size=0.5))
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST)  # 缺省 None
+        assert outcome.fill is not None
+
+    def test_non_open_kinds_not_intercepted(self):
+        """拦截仅 open 分支：出场族不读 min_notional（阈值在场照常
+        成交）。"""
+        ledger = Ledger(10_000.0, make_params(position_size=0.5))
+        outcome = ledger.execute(
+            Intent(kind="open", direction="long"), _bar(100.0),
+            _ZERO_COST)
+        assert outcome.fill is not None
+        close = ledger.execute(
+            Intent(kind="close", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=1e12)
+        assert close.fill is not None, "出场不受最小名义值拦截"

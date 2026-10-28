@@ -149,6 +149,19 @@ def create_app(
         # 推迟 runner 首扫相位、落进测试的落行-请求窗口（缺陷④跨域
         # flaky 实测锁定）；放 runner 启动前则全部开销先于任何守护
         # 线程完成，且 capture_loop 已跑（push 可用）。
+        # MIN_NOTIONAL 启动装载（change paper-depletion-terminal 任务 1：
+        # env>端点>内置三来源；先于调度器/执行器装配——kernel 拦截判定
+        # 读装载表，失败回退内置任务行为不中断）。FAPI_STREAM_DISABLED
+        # 置位（测试全域旁路面）时跳过端点拉取直接内置值——测试不进
+        # 真实网络；装载行为本身由 test_min_notional 替身注入面全测
+        import os as _os_mn
+
+        from core.paper_trading.min_notional import load_min_notional
+
+        _mn_fetch = None
+        if _os_mn.environ.get("FAPI_STREAM_DISABLED"):
+            _mn_fetch = lambda: {}  # noqa: E731 —— 旁路：端点源空→内置
+        load_min_notional(fetch_exchange_info=_mn_fetch)
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
         paper_scheduler = PaperScheduler(

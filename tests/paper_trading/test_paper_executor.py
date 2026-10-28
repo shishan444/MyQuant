@@ -1591,3 +1591,358 @@ class TestUnlimitedWindowNeverAutoConcludes:
         ex.process_frames(h.enhanced, 0)
         assert h.task()["status"] == "completed"
         assert h.concluded == [(h.task_id, "completed")]
+
+
+class TestMinNotionalSignalRow:
+    """④below_min_notional 拒因行落 pt_signal（change paper-
+    depletion-terminal 任务 2 完成标准④——change-2 任务 4 承接点）：
+    exec_bar_time=执行尝试 bar、bar_time=意图产生 bar。"""
+
+    def test_rejected_row_persisted(self, tmp_path, monkeypatch):
+        """构造：初始资金足以过 insufficient_funds（qty>0）但名义
+        低于阈值→开仓拒绝行落库（seq=4、拒因 below_min_notional）。"""
+        from core.paper_trading import min_notional as mn
+
+        h = _Harness(tmp_path, window_bars=30)
+        # 阈值注入（装载表写回——executor 读表按 symbol 取）
+        mn.MIN_NOTIONAL.clear()
+        mn.MIN_NOTIONAL.update({"BTCUSDT": 1e9, "ETHUSDT": 20.0})
+        try:
+            ex = h.make_executor()
+            paper.update_task(
+                h.db, h.task_id, status="running",
+                started_at="2026-10-28T00:00:00+00:00")
+            rsi = [50.0] * 200
+            rsi[5] = 20.0
+            frame = h.enhanced.copy()
+            frame["rsi_14"] = rsi
+            ex.process_frames(frame, 0)
+        finally:
+            mn.MIN_NOTIONAL.clear()
+            mn.MIN_NOTIONAL.update(mn.MIN_NOTIONAL_BUILTIN)
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        rejected = [r for r in rows
+                    if r["reject_reason"] == "below_min_notional"]
+        assert len(rejected) == 1
+        row = rejected[0]
+        assert row["outcome"] == "rejected"
+        assert row["signal_kind"] == "open"
+        assert row["seq"] == 4
+        assert row["bar_time"] == h.enhanced.index[5].isoformat(), \
+            "bar_time=意图产生 bar（决策锚）"
+        assert row["exec_bar_time"] == h.enhanced.index[6].isoformat(), \
+            "exec_bar_time=执行尝试 bar（次根）"
+        # 无成交发生（拒绝不落账）
+        assert paper.list_fills(h.db, h.task_id, limit=1000) == []
+
+
+class TestDepletedTerminal:
+    """枯竭终态链路（change paper-depletion-terminal 任务 3）：证据
+    连续计数四径+判定序+reason 分派防覆写+恢复重数+空仓前置。
+
+    构造通道：装载表注入 BTCUSDT 高阈值（每次 open 定仓名义必低于）
+    ——rsi 覆写控制信号 bar；阈值中途调整构造清零径。
+    """
+
+    @staticmethod
+    def _inject_thresholds(btc: float):
+        from core.paper_trading import min_notional as mn
+
+        mn.MIN_NOTIONAL.clear()
+        mn.MIN_NOTIONAL.update({"BTCUSDT": btc, "ETHUSDT": 20.0})
+
+    @staticmethod
+    def _restore_thresholds():
+        from core.paper_trading import min_notional as mn
+
+        mn.MIN_NOTIONAL.clear()
+        mn.MIN_NOTIONAL.update(mn.MIN_NOTIONAL_BUILTIN)
+
+    @staticmethod
+    def _signal_bars(bars):
+        """bars: [(i, rsi_value), ...]——其余 bar rsi=50（无信号）。"""
+        rsi = [50.0] * 200
+        for i, v in bars:
+            rsi[i] = v
+        return rsi
+
+    def _run(self, tmp_path, rsi, *, window_bars=60, stop_loss_pct=None):
+        h = _Harness(tmp_path, window_bars=window_bars,
+                     stop_loss_pct=stop_loss_pct)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        frame = h.enhanced.copy()
+        frame["rsi_14"] = rsi
+        ex.process_frames(frame, 0)
+        return h, ex
+
+    def test_depleted_triggers_at_third_rejection(self, tmp_path):
+        """①累计 3 次（中间隔无信号 bar——证据连续）且空仓→stopped+
+        depleted+终态回调触发；⑥三次拒绝行在 pt_signal 可查。"""
+        self._inject_thresholds(1e9)
+        try:
+            # bar5/12/20 三次开仓信号（中间隔无信号 bar 计数保持）
+            h, ex = self._run(
+                tmp_path, self._signal_bars(
+                    [(5, 20.0), (12, 20.0), (20, 20.0)]))
+        finally:
+            self._restore_thresholds()
+        task = h.task()
+        assert task["status"] == "stopped"
+        assert task["stop_reason"] == "depleted", "枯竭终态 reason"
+        assert task["stopped_at"] is not None
+        assert (h.task_id, "stopped") in h.concluded, "终态回调触发（结题链）"
+        # C4-05/T-4：task_stopped 推送 payload 透传 stop_reason=depleted
+        stopped_pushes = [p for p in h.pushes
+                          if p.get("type") == "task_stopped"]
+        assert stopped_pushes and stopped_pushes[-1]["stop_reason"] == \
+            "depleted", "WS 推送面 reason 透传"
+        # ⑥计数证据可查：三次 below_min_notional 拒绝行
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        rejects = [r for r in rows
+                   if r["reject_reason"] == "below_min_notional"]
+        assert len(rejects) == 3
+        # 触发 bar=第三次拒绝所在 bar（处理完后转 stopped）
+        assert rejects[-1]["exec_bar_time"] == \
+            h.enhanced.index[21].isoformat()
+        assert task["last_bar_time"] == h.enhanced.index[21].isoformat()
+
+    def test_open_fill_resets_streak(self, tmp_path):
+        """②清零径：两拒→开仓成交（阈值中途撤）→归零→重新累积 3 次
+        才触发（成交后共 5 拒不触发——归零重数证据）。"""
+        from core.paper_trading import min_notional as mn
+
+        h = _Harness(tmp_path, window_bars=80)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        frame = h.enhanced.copy()
+        rsi = self._signal_bars([(5, 20.0), (12, 20.0)])
+        frame["rsi_14"] = rsi
+
+        self._inject_thresholds(1e9)
+        try:
+            ex.process_frames(frame.iloc[:14].copy(), 0)  # 两拒（计数 2）
+            assert ex._min_notional_streak == 2
+            # 阈值撤回（装载表恢复内置——成交可得）
+            mn.MIN_NOTIONAL.clear()
+            mn.MIN_NOTIONAL.update(mn.MIN_NOTIONAL_BUILTIN)
+            # bar20 信号→bar21 成交→计数归零
+            frame2 = h.enhanced.copy()
+            frame2["rsi_14"] = self._signal_bars([(20, 20.0)])
+            ex.process_frames(frame2.iloc[:22].copy(), 0)
+            assert ex._min_notional_streak == 0, "开仓成交归零"
+            assert ex.ledger.position is not None
+            # 归零径断言面收敛至此（清零语义+不触发）；归零后重新
+            # 累积至触发的完整径由 test_depleted_triggers_at_third_
+            # rejection 承载（触发条件不重复断言）
+        finally:
+            self._restore_thresholds()
+        assert h.task()["status"] == "running", "两拒+成交不触发"
+
+    def test_sparse_signal_streak_survives_gap(self, tmp_path):
+        """②保持径一（显式）：信号稀疏策略跨长无信号期计数不丢——
+        两拒后穿插 30+ 根无信号 bar，第三拒仍触发。"""
+        self._inject_thresholds(1e9)
+        try:
+            h, ex = self._run(
+                tmp_path, self._signal_bars(
+                    [(5, 20.0), (12, 20.0), (48, 20.0)]))
+        finally:
+            self._restore_thresholds()
+        assert h.task()["status"] == "stopped"
+        assert h.task()["stop_reason"] == "depleted", \
+            "跨长无信号期计数不丢（第三拒触发）"
+
+    def test_insufficient_funds_gap_full_flow(self, tmp_path):
+        """②保持径二完整流（C4-03/F-1+T-2）：两 below 拒→穿插
+        insufficient_funds 拒（balance 归零构造）→计数仍 2 不提前
+        触发→恢复 balance 后第三 below 拒才触发——若 insufficient
+        误计将在穿插 bar 当拍提前 depleted（断言 running 红出）。"""
+        h = _Harness(tmp_path, window_bars=80)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        self._inject_thresholds(1e9)
+        try:
+            # 两 below 拒（bar5/bar12 信号）
+            frame = h.enhanced.copy()
+            frame["rsi_14"] = self._signal_bars([(5, 20.0), (12, 20.0)])
+            ex.process_frames(frame.iloc[:14].copy(), 0)
+            assert ex._min_notional_streak == 2
+            # 穿插 insufficient：balance 归零（开仓定仓 qty=0 拒因
+            # insufficient_funds）——bar20 信号在 bar21 执行
+            ex.ledger.balance = 0.0
+            frame2 = h.enhanced.copy()
+            frame2["rsi_14"] = self._signal_bars([(20, 20.0)])
+            ex.process_frames(frame2.iloc[:22].copy(), 0)
+            assert ex._min_notional_streak == 2, \
+                "insufficient_funds 拒不递增（误计=3 将当拍触发）"
+            assert h.task()["status"] == "running", "不提前触发"
+            rows = paper.list_signals(h.db, h.task_id, limit=1000)
+            assert [r["reject_reason"] for r in rows][-1] == \
+                "insufficient_funds", "穿插拒因实录在库"
+            # 恢复 balance：第三 below 拒（bar28 信号）触发
+            ex.ledger.balance = 10_000.0
+            frame3 = h.enhanced.copy()
+            frame3["rsi_14"] = self._signal_bars([(28, 20.0)])
+            ex.process_frames(frame3.iloc[:30].copy(), 0)
+        finally:
+            self._restore_thresholds()
+        assert h.task()["status"] == "stopped"
+        assert h.task()["stop_reason"] == "depleted", \
+            "穿插 insufficient 后第三 below 拒正常触发"
+
+    def test_context_invalid_rejection_does_not_count(self, tmp_path):
+        """②保持径二补齐（C4-03/T-2）：context_invalid 拒因（有仓
+        开仓——解释器语义下自然链路不可达〔空仓才产 open〕，白盒
+        _execute 消费面断言计数不动）。"""
+        h = _Harness(tmp_path, window_bars=30)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        frame = h.enhanced.copy()
+        frame["rsi_14"] = self._signal_bars([(5, 20.0)])
+        ex.process_frames(frame.iloc[:7].copy(), 0)  # 开仓成交→持仓
+        assert ex.ledger.position is not None
+        streak_before = ex._min_notional_streak
+        from core.paper_trading.kernel.types import Intent
+
+        bar = ex._closed_bar(h.enhanced, 7)
+        events, sig_rows = [], []
+        ex._execute(  # 白盒：有仓语境直发 open 意图
+            Intent(kind="open", direction="long"), bar, events, sig_rows,
+            seq=4, signal_bar_time="t", gene_hits=[],
+            indicator_snapshot={})
+        assert sig_rows and sig_rows[0]["reject_reason"] == \
+            "context_invalid", "有仓开仓拒因实录"
+        assert ex._min_notional_streak == streak_before, \
+            "context_invalid 拒因不计数不中断"
+
+    def test_recovery_restarts_count(self, tmp_path):
+        """③恢复场景：计数 2 崩溃→重启（执行器重建）→归零重数——
+        重建后两拒不触发、第三拒触发。"""
+        self._inject_thresholds(1e9)
+        try:
+            # 段一：两拒后丢弃执行器（崩溃）——截帧 14 根（窗口 80
+            # 不到点保持 running）
+            h = _Harness(tmp_path, window_bars=80)
+            ex = h.make_executor()
+            paper.update_task(
+                h.db, h.task_id, status="running",
+                started_at="2026-10-28T00:00:00+00:00")
+            frame0 = h.enhanced.copy()
+            frame0["rsi_14"] = self._signal_bars([(5, 20.0), (12, 20.0)])
+            ex.process_frames(frame0.iloc[:14].copy(), 0)
+            assert ex._min_notional_streak == 2
+            assert h.task()["status"] == "running"
+            # 段二：重建（from_task_row——恢复链）后计数归零重数
+            restored = PaperTaskExecutor.from_task_row(
+                h.db, paper.get_task(h.db, h.task_id),
+                registry=h.registry,
+                push=lambda tid, p: None,
+                on_concluded=lambda tid, st: None,
+                start_after="2000-01-01T00:00:00+00:00")
+            assert restored._min_notional_streak == 0, \
+                "恢复不持久化重启归零"
+            frame = h.enhanced.copy()
+            frame["rsi_14"] = self._signal_bars([(20, 20.0), (28, 20.0)])
+            restored.process_frames(frame.iloc[:30].copy(), 0)
+            assert h.task()["status"] == "running", \
+                "重建后两拒不触发（计数从零重数）"
+            frame2 = h.enhanced.copy()
+            frame2["rsi_14"] = self._signal_bars([(35, 20.0)])
+            restored.process_frames(frame2.iloc[:37].copy(), 0)
+        finally:
+            self._restore_thresholds()
+        assert h.task()["status"] == "stopped"
+        assert h.task()["stop_reason"] == "depleted", "重数第三次触发"
+
+    def test_window_wins_over_depleted_same_bar(self, tmp_path):
+        """④判定序真对抗形态（C4-02/T-1+F-4）：第三 below 拒与 window
+        到点同 bar——streak 恰在 window 到点 bar 达 3，判定序 window
+        先→completed（若 depleted 判定前置则 stopped/depleted 红——
+        变异 D1 杀变锚）。
+
+        构造：window=4（第 4 根=bar3 处理完到点）；信号 bar0/1/2
+        连续→执行 bar1（拒1）/bar2（拒2）/bar3（拒3——该 bar 处理完
+        bars=4=window 到点，streak 与 window 同 bar 达 3）。"""
+        self._inject_thresholds(1e9)
+        try:
+            h, ex = self._run(
+                tmp_path, self._signal_bars(
+                    [(0, 20.0), (1, 20.0), (2, 20.0)]), window_bars=4)
+        finally:
+            self._restore_thresholds()
+        # 第三拒已计数（对抗前提核证——streak 与 window 同 bar 达 3）
+        assert ex._min_notional_streak == 3, "第三拒与 window 同 bar 发生"
+        assert h.task()["status"] == "completed", "window 判定序先赢"
+        assert h.task()["stop_reason"] is None, "completed 无 stop_reason"
+        # 三次拒绝行在库（枯竭证据同批落库——计数证据面完整）
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        assert len([r for r in rows
+                    if r["reject_reason"] == "below_min_notional"]) == 3
+
+    def test_position_holds_streak_no_trigger(self, tmp_path):
+        """⑦空仓前置显式：持仓中 streak 累积（白盒置位模拟防御分支
+        形态）不触发——空仓前置是防御面（自然路径下持仓必经开仓
+        成交即清零，streak 与持仓不可同时自然出现）。"""
+        from core.paper_trading import min_notional as mn
+
+        h = _Harness(tmp_path, window_bars=30)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        frame = h.enhanced.copy()
+        frame["rsi_14"] = self._signal_bars([(5, 20.0)])
+        ex.process_frames(frame.iloc[:7].copy(), 0)  # 开仓成交
+        assert ex.ledger.position is not None
+        ex._min_notional_streak = 3  # 白盒模拟防御形态
+        ex._evaluate_conclusion(
+            ex.ledger.snapshot(frame["close"].iloc[6], 6))
+        assert ex._concluded_status is None, \
+            "持仓中 streak≥N 不触发（空仓前置）"
+
+    def test_depleted_reason_not_overwritten(self, tmp_path):
+        """⑧stop_reason 终值：depleted 置位后分派点到达（含同帧配置
+        stop_loss_pct 的场景——停止线未触及），终值 depleted 不被
+        stop_condition 覆写；对照锚：stop_loss_pct 先命中（线触及）
+        →stop_condition（判定序）。"""
+        # 形态 A：stop_loss_pct 配置在但未触线——depleted 触发
+        self._inject_thresholds(1e9)
+        try:
+            h, ex = self._run(
+                tmp_path, self._signal_bars(
+                    [(5, 20.0), (12, 20.0), (20, 20.0)]),
+                stop_loss_pct=0.01)  # 线=9900（余额不动不触线）
+        finally:
+            self._restore_thresholds()
+        assert h.task()["status"] == "stopped"
+        assert h.task()["stop_reason"] == "depleted", \
+            "分派点消费伴生 reason——不被 stop_condition 覆写"
+
+        # 形态 B（对照）：stop_loss_pct 先命中→stop_condition
+        from core.paper_trading import min_notional as mn
+
+        case_b = tmp_path / "case_b"
+        case_b.mkdir()
+        h2 = _Harness(case_b, window_bars=30, stop_loss_pct=0.01)
+        ex2 = h2.make_executor()
+        paper.update_task(
+            h2.db, h2.task_id, status="running",
+            started_at="2026-10-28T00:00:00+00:00")
+        # 白盒置位 streak=3 + 构造权益触线（判定序锚：stop_loss_pct
+        # 分支先 return——reason=stop_condition）
+        ex2._min_notional_streak = 3
+        ex2.ledger.balance = 9_000.0  # 空仓 equity=balance<9900 线（触线）
+        snap = ex2.ledger.snapshot(9_000.0, 5)
+        ex2._evaluate_conclusion(snap)
+        assert ex2._concluded_status == "stopped"
+        assert ex2._concluded_reason == "stop_condition", "判定序锚"

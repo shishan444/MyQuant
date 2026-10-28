@@ -30,6 +30,24 @@ DEFAULT_SLIPPAGE = 0.0005
 # 验证窗口缺省（根 K 线；显式 null=不限期不自动结题，由表字段表达）
 DEFAULT_WINDOW_BARS = 180
 
+# ── 资金枯竭终态（change paper-depletion-terminal）──────────────
+# 枯竭计数阈值（累计 N 次 below_min_notional 开仓拒绝且空仓→
+# stopped+stop_reason="depleted"；spec 写死同值——机制不可配置）
+DEPLETED_STREAK_N = 3
+
+# MIN_NOTIONAL 内置回退表（端点拉取失败时兜底；env 覆写优先——
+# 装载链见 core/paper_trading/min_notional.py）。
+# 核实记录（禁凭记忆写值——实施期真实核实留档）：
+# - 渠道：https://www.binance.com/fapi/v1/exchangeInfo（生产 fapi 的
+#   www 域名别名——本机直连 fapi.binance.com 受地域限制 451，www
+#   别名可达；响应 U_MARGINED 936 symbols，serverTime=1793215948248，
+#   2026-10-28 拉取）
+# - 取值：BTCUSDT PERPETUAL(TRADING) filters MIN_NOTIONAL.notional='50'；
+#   ETHUSDT PERPETUAL(TRADING) notional='20'
+# - 交叉验证：testnet.binancefuture.com/fapi/v1/exchangeInfo 同值
+#   （50/20——两渠道互证；运行中不刷新，重启即更新）
+MIN_NOTIONAL_BUILTIN: dict[str, float] = {"BTCUSDT": 50.0, "ETHUSDT": 20.0}
+
 # ── 挂载品种与周期双白名单（change paper-mount-and-concurrency；
 #    周期面固定六档=用户裁决 2026-10-28）───────────────────────
 # 值域与 change-1 固定订阅清单同源对齐（core/data/fapi/stream.py

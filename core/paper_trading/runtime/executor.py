@@ -279,6 +279,15 @@ class PaperTaskExecutor:
                 task_row.get("last_bar_time") or task_row.get("created_at"))
         # 终态信号（第 8 步判定置位——_loop 出口消费）
         self._concluded_status: Optional[str] = None
+        # 终态 reason 伴生字段（change paper-depletion-terminal 任务 3
+        # 增量 3c：与 _concluded_status 同点置位/同点消费——防分派点把
+        # depleted 覆写为 stop_condition；缺省 None=保持既有缺省行为）
+        self._concluded_reason: Optional[str] = None
+        # 枯竭计数器（证据连续模型：below_min_notional 开仓拒绝+1；
+        # 开仓成交归零〔唯一物理反证〕；无开仓意图 bar 与非同类拒因
+        # 不动；恢复不持久化重启归零重数——空仓枯竭态权益静止为吸收
+        # 态，无信号 bar 是沉默不是反证）
+        self._min_notional_streak = 0
         self._finalized = False
 
         # feed 订阅（主周期+MTF 辅周期；forming 过滤在 feed 侧）
@@ -793,7 +802,11 @@ class PaperTaskExecutor:
         if self._concluded_status == "completed":
             self._finalize("completed")
         elif self._concluded_status == "stopped":
-            self._finalize("stopped", stop_reason="stop_condition")
+            # reason 伴生字段消费（增量 3c：depleted 置位后不被本分派
+            # 点覆写；缺省 None 保持既有 stop_condition 行为）
+            self._finalize(
+                "stopped",
+                stop_reason=self._concluded_reason or "stop_condition")
 
     def _assemble_mtf_frames(
         self, main_df: pd.DataFrame,
@@ -1020,8 +1033,14 @@ class PaperTaskExecutor:
         恒回退 fixed。
         """
         snap_before = self.ledger.snapshot(bar.close, bar.seq)
+        # 最小名义值阈值注入（change paper-depletion-terminal 任务 2：
+        # 启动装载表按任务 symbol 取——白名单币恒有值；表缺键 None=
+        # 不判定防御形态）
+        from core.paper_trading.min_notional import MIN_NOTIONAL
+
         outcome = self.ledger.execute(
-            intent, bar, self.fill_model, entry_atr=bar.atr)
+            intent, bar, self.fill_model, entry_atr=bar.atr,
+            min_notional=MIN_NOTIONAL.get(self.task_row["symbol"]))
         fill = outcome.fill
         # 承载 bar 时刻单算（信号行 exec_bar_time 与事件 bar_time 同式
         # ——Q-5 收敛单变量）
@@ -1037,10 +1056,19 @@ class PaperTaskExecutor:
             indicator_snapshot=indicator_snapshot,
             account=self._account_fields(snap_before))
         if fill is None:
+            # 枯竭计数四径之一（任务 3）：开仓被拒且拒因=below_min_
+            # notional→+1（insufficient_funds/context_invalid 不动——
+            # 前者是更深枯竭证据非反证、后者是语境防御不在计数语境）
+            if intent.kind == "open" \
+                    and outcome.reject_reason == "below_min_notional":
+                self._min_notional_streak += 1
             signal_rows.append(self._signal_row(
                 outcome="rejected",
                 reject_reason=outcome.reject_reason, **row_common))
             return
+        if intent.kind == "open":
+            # 枯竭计数四径之二：开仓成交→归零（唯一物理反证=发得起）
+            self._min_notional_streak = 0
         if fill.realized_pnl is not None:
             self.total_pnl += fill.realized_pnl
             if intent.kind not in ("open", "add", "reduce"):
@@ -1220,7 +1248,9 @@ class PaperTaskExecutor:
         """八步序第 8 步后半：停止条件判定（窗口到点在此判定、_loop 出口消费）。
 
         停止条件=运行控制不是行为干预：只结束观察，本 bar 的交易已按
-        八步序完整落库。
+        八步序完整落库。判定序固定：window→stop_loss_pct→depleted
+        （同 bar 多条件命中时前者先——window 优先即本 bar 落库后结题
+        的确定性序）。
         """
         window = self.task_row.get("window_bars")
         if window is not None and self.bars_processed >= int(window):
@@ -1232,6 +1262,20 @@ class PaperTaskExecutor:
                 1.0 - float(pct))
             if snap.equity <= threshold:
                 self._concluded_status = "stopped"
+                self._concluded_reason = "stop_condition"
+                return
+        # 枯竭终态（change paper-depletion-terminal 任务 3：证据连续
+        # 计数≥N 且空仓→stopped+depleted；空仓前置=计数生于空仓开仓
+        # 被拒、持仓出现必经开仓成交即清零——持仓中 streak 累积不触
+        # 发的显式防御）
+        from core.paper_trading.constants import DEPLETED_STREAK_N
+
+        if (self._min_notional_streak >= DEPLETED_STREAK_N
+                and self.ledger.position is None):
+            self._concluded_status = "stopped"
+            self._concluded_reason = "depleted"
+            return  # C4-05：置位即止（零行为变化——防未来追加分支
+            # 静默覆写已置位的终态信号，变异 D2 脆弱性封死）
 
     def _harvest_expired_signals(self) -> None:
         """终态收割：未消费 pending 意图逐条落 expired 行（spec 记录
