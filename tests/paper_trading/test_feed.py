@@ -20,7 +20,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.data.fapi.stream import ClosedBarEvent
-from core.data.storage import load_parquet
+from core.data.storage import load_parquet, save_parquet
 from core.data.timeframes import TF_SECONDS
 from core.paper_trading.runtime.feed import (
     FeedRegistry,
@@ -91,8 +91,6 @@ class FeedHarness:
         self.frame = frame if frame is not None else make_ohlcv(
             n=100, freq=timeframe)
         if write_parquet:
-            from core.data.storage import save_parquet
-
             save_parquet(
                 self.frame,
                 self.data_dir / f"BTCUSDT_{timeframe}.parquet")
@@ -138,8 +136,6 @@ class FeedHarness:
         return _event_at(self.last + self.tf * steps, **kwargs)
 
     def parquet(self) -> pd.DataFrame:
-        from core.data.storage import load_parquet
-
         return load_parquet(
             self.data_dir / f"BTCUSDT_{self.timeframe}.parquet")
 
@@ -181,8 +177,6 @@ class TestSharedFeed:
 
     def test_different_keys_independent_feeds(self, tmp_path):
         """不同 (symbol,timeframe) 各自独立作业（两实例两装载）。"""
-        from core.data.storage import save_parquet
-
         h = FeedHarness(tmp_path)
         save_parquet(make_ohlcv(n=50, freq="1h"),
                      h.data_dir / "ETHUSDT_1h.parquet")
