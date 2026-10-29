@@ -616,6 +616,55 @@ class TestLifecycleDefensiveBranches:
         stream._thread.join(timeout=5.0)  # noqa: SLF001
         assert not stream._thread.is_alive()  # noqa: SLF001——干净退出
 
+    def test_connect_fail_cleans_up_abandoned_client(self):
+        """CARD-03：connect 失败的弃 client 被 stop 清理（修复前无人
+        stop——半建连连接协程泄漏）且挂载解除，重连挂载新 client。"""
+        script = _ClientScript(["fail", "ok"])
+        recorder = _Recorder()
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: script.calls >= 2 and stream.connected)
+        with stream._state_lock:  # noqa: SLF001——挂载面观察锚
+            mounted = stream._client  # noqa: SLF001
+        stream.stop()
+        assert script.clients[0].stopped  # 弃 client 清理
+        assert mounted is script.clients[1]  # 挂载的是新 client 非死对象
+
+    def test_connect_fail_during_user_stop_keeps_unmounted(self):
+        """CARD-03 覆写竞态防御：connect 抛异常时用户 stop() 已解除
+        挂载（_client=None）——except 清理不把死 client 覆写回挂载面。"""
+        script = _ClientScript(["fail"])
+        recorder = _Recorder()
+        holder: dict = {}
+
+        class _StopInsideConnectFactory:
+            """connect 内先触发用户 stop（置停+解除挂载）再放行原
+            connect（fail 抛）——注入 except 路径的竞态窗口。"""
+
+            def __call__(self, **kwargs):
+                client = script(**kwargs)
+                original_connect = client.connect
+
+                def _connect(timeout: float = 30.0):
+                    holder["stream"].stop()  # 置停+置 _client=None
+                    original_connect(timeout)  # fail_on_connect 抛
+
+                client.connect = _connect
+                return client
+
+        stream = _make_stream(recorder, _StopInsideConnectFactory())
+        holder["stream"] = stream
+        stream.start()
+        stream._thread.join(timeout=5.0)  # noqa: SLF001
+        if stream._thread.is_alive():  # noqa: SLF001——防御收尾
+            stream.stop()  # 置停失败时防狂转线程泄漏（daemon 收尾）
+            stream._thread.join(timeout=5.0)  # noqa: SLF001
+        assert not stream._thread.is_alive()  # stop 置停→线程退出
+        with stream._state_lock:  # noqa: SLF001
+            mounted = stream._client  # noqa: SLF001
+        assert mounted is None  # 未被死 client 覆写回
+        assert script.clients[0].stopped  # 清理仍执行（幂等 stop）
+
     def test_scripted_stream_batch_and_rest_raise_branches(self):
         """替身面消解：emit_closed_batch 批量投递/ScriptedRestClient
         exchange_info 与 funding 的异常脚本项/wait_dead 超时 False/
