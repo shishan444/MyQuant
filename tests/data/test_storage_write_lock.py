@@ -89,18 +89,26 @@ def test_concurrent_merge_closed_rows_no_lost_rows(tmp_path: Path) -> None:
     assert list(merged["close"]) == [1.0, 10.0, 20.0]
 
 
-def test_lock_keyed_by_resolved_path(tmp_path: Path) -> None:
-    """同文件复用同一把锁（锁表单源）；锁表键为绝对路径。"""
+def test_lock_keyed_by_resolved_path(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """同文件复用同一把锁（锁表单源）：绝对/相对两形制解析到同一
+    绝对键，两次持锁取到同一锁对象（锁表不重建）。"""
     path = tmp_path / "same.parquet"
     with parquet_write_lock(path):
         key = str(path.resolve())
         assert key in _file_locks
-        # 同键取到同一把锁对象（setdict 单源——并发方互斥的前提）
-        assert _file_locks[key] is _file_locks[key]
-    # 相对/绝对两形制同键：cwd 相对路径解析到同一绝对键
-    rel = path.parent / path.name
+        first = _file_locks[key]
+    # 相对路径形制：cwd 切入 tmp 后裸文件名（真相对路径——非绝对
+    # 路径拼接）解析到同一绝对键
+    monkeypatch.chdir(tmp_path)
+    rel = Path("same.parquet")
+    assert not rel.is_absolute()  # 相对形制自锚（防虚标回潮）
     with parquet_write_lock(rel):
-        assert _file_locks[str(rel.resolve())] is _file_locks[key]
+        assert str(rel.resolve()) == key  # 相对解析=绝对键
+        second = _file_locks[key]
+    # 两次独立持锁窗口各取锁表引用：同一锁对象（锁表单源，释放
+    # 后不淘汰不重建——并发方互斥的前提）
+    assert second is first
 
 
 def test_explicit_lock_context_serializes_writers(tmp_path: Path) -> None:
