@@ -45,7 +45,7 @@ def update_funding_data(
     增量补齐，首跑按 history_start 全量拉取。
     """
     if data_dir is None:
-        data_dir = Path("data/market")
+        data_dir = Path("data/market_fapi")
     data_dir = Path(data_dir)
     validate_symbol(symbol)  # 命名白名单（path 直拼写入路径）
     path = data_dir / f"{symbol}_funding.parquet"
@@ -72,7 +72,7 @@ def update_open_interest_data(
     归档侧有约 T-5 延迟，增量终点即当前最新可得归档。
     """
     if data_dir is None:
-        data_dir = Path("data/market")
+        data_dir = Path("data/market_fapi")
     data_dir = Path(data_dir)
     if timeframes is None:
         timeframes = list(_OI_TIMEFRAMES)

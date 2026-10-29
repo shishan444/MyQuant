@@ -409,16 +409,16 @@ class TestAutoGridSmallRangeAcceptance:
     def test_oi_change_rate_grid_within_actual_range(self):
         from pathlib import Path
 
-        market = Path("data/market/BTCUSDT_4h.parquet")
+        market = Path("data/market_fapi/BTCUSDT_4h.parquet")
         if not market.exists():
-            pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market）")
+            pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi）")
         import pandas as pd
         df = pd.read_parquet(market)
         rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-05-01", "end": "2026-04-01"}
+               "start": "2025-02-15", "end": "2026-09-01"}
         from core.analysis.warmup_loader import load_with_warmup
         work, request_start = load_with_warmup(
-            Path("data/market"), "BTCUSDT", "4h",
+            Path("data/market_fapi"), "BTCUSDT", "4h",
             rng["start"], rng["end"], ["OI_ChangeRate"])
         p = param_sweep(
             work, indicator="OI_ChangeRate",

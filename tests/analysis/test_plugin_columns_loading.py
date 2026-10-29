@@ -8,8 +8,8 @@ warnings+全 False」静默降级，0 样本拒绝收场；只有 precheck 支�
 
 A4 主锚（真实数据 BTCUSDT 4h）：fx_fx_dev20_pct 作 subject 的
 condition_stats 触发数与 precheck_hypothesis 同条件一致（两链同源）
-——1755。区间用 2024-03-01 起（tasks 锚区间 2024-02-01 在当前数据
-集起点 2024-01-01 下前扩 200 bar 差 14 bar 不足——区间平移不伤
+——1755。区间用 2025-03-01 起（tasks 锚区间 2025-02-01 在当前数据
+集起点 2025-01-01 下前扩 200 bar 差 14 bar 不足——区间平移不伤
 「两链一致」锚语义，注明于此）。
 """
 
@@ -19,10 +19,10 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-MARKET_DIR = Path("data/market")
+MARKET_DIR = Path("data/market_fapi")
 
 if not (MARKET_DIR / "BTCUSDT_4h.parquet").exists():
-    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market），插件列装载锚跳过",
+    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi），插件列装载锚跳过",
                 allow_module_level=True)
 
 from api.routes.research.analysis import _load_with_condition_refs
@@ -39,7 +39,7 @@ from core.analysis.errors import ResearchError
 from core.persistence.db_ext import init_db_ext
 
 RNG = {"symbol": "BTCUSDT", "timeframe": "4h",
-       "start": "2024-03-01", "end": "2026-04-01"}
+       "start": "2025-03-01", "end": "2026-09-01"}
 COND = {"subject": "fx_fx_dev20_pct", "action": "lt", "target": -0.01}
 
 
@@ -111,7 +111,7 @@ class TestEvalFailurePath:
         conn.commit()
         conn.close()
         from tests.helpers.data_factory import make_ohlcv
-        df = make_ohlcv(n=50, freq="4h", start="2024-01-01", seed=1)
+        df = make_ohlcv(n=50, freq="4h", start="2025-01-01", seed=1)
         from core.analysis.plugin_service import enrich_with_plugin_columns
         out = enrich_with_plugin_columns(p, df, {"fx_outer"})
         with pytest.raises(ResearchError) as ei:
@@ -197,7 +197,7 @@ class TestRouteFullChain:
             "params": {"conditions": [
                 {"subject": subject, "action": "lt", "target": -0.01}]},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2024-03-01", "end": "2026-04-01"}})
+                           "start": "2025-03-01", "end": "2026-09-01"}})
 
     def test_plugin_condition_200(self, api_client, env):
         resp = self._post(api_client, env, "fx_fx_dev20_pct")
@@ -238,7 +238,7 @@ class TestEvalFailureFullChain:
             "params": {"conditions": [
                 {"subject": "fx_outer", "action": "lt", "target": 0}]},
             "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2024-06-01", "end": "2026-04-01"}})
+                           "start": "2025-06-01", "end": "2026-09-01"}})
         assert resp.status_code == 422, resp.text[:300]
         assert resp.json()["detail"]["code"] == "RESEARCH_COLUMN_NOT_AVAILABLE"
 
@@ -252,12 +252,13 @@ class TestTwoDimWarmup:
 
     def test_insufficient_prefix_structured(self, db):
         """前缀不足走结构化 RESEARCH_WARMUP_INSUFFICIENT 且预算值含
-        插件维（lookback 260 形：start=2024-02-05 前扩 210 bar，夹在
-        200 floor 与 260 之间——若插件维收集被砍，预算回落 200 即
-        210 够用不抛，本断言即红；2026-10-13 mock 复核证据在案）。"""
+        插件维（lookback 260 形：新域数据起点 2024-10-29 下
+        start=2024-11-15 前扩 ~102 bar < 260 且 > 42（floor 200 也
+        不够）——若插件维收集被砍预算仍 >102，本断言即红；负路径
+        区间随新域数据域重设（锚重录 2026-10-29）。"""
         cond = {"subject": "fx_fx_dev260", "action": "lt", "target": 1e12}
         rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-02-05", "end": "2026-04-01"}
+               "start": "2024-11-15", "end": "2026-09-01"}
         with pytest.raises(ResearchError) as ei:
             _load_with_condition_refs(
                 MARKET_DIR, rng, None, conditions=[cond], db_path=db)
@@ -280,7 +281,7 @@ class TestTwoDimWarmup:
         cond = {"subject": "fx_fx_dev20_pct",
                 "action": "cross_above", "target": "ema_50"}
         rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-06-01", "end": "2026-04-01"}
+               "start": "2025-06-01", "end": "2026-09-01"}
         df, request_start = _load_with_condition_refs(
             MARKET_DIR, rng, None, conditions=[cond], db_path=db)
         assert "fx_fx_dev20_pct" in df.columns
@@ -302,14 +303,14 @@ class TestInspectCasesP1Regression:
     即红，翻转成正式断言——翻转原子交付纪律）。"""
 
     def test_explicit_start_insufficient_warmup_structured(self, db):
-        """显式 start 前缀不足（2024-01-20 起前扩 ~114 bar < 插件维
-        200）应结构化 RESEARCH_WARMUP_INSUFFICIENT，非裸 KeyError。
-        （P1 已修——fix/research-c7 一行修 _warm_names 归一，原
-        xfail(strict) 锚 XPASS 翻转转正）"""
+        """显式 start 前缀不足（新域起点下 start=2024-11-10 起前扩
+        ~72 bar < 插件维 200）应结构化 RESEARCH_WARMUP_INSUFFICIENT，
+        非裸 KeyError。（P1 已修——fix/research-c7；负路径区间随新域
+        数据域重设，锚重录 2026-10-29）"""
         from core.analysis.case_inspection import inspect_cases
         with pytest.raises(ResearchError) as ei:
             inspect_cases(
                 db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                 selector={"condition": COND}, limit=3, context_bars=4,
-                start="2024-01-20")
+                start="2024-11-10")
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"

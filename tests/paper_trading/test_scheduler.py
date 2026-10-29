@@ -581,7 +581,7 @@ class TestDaemonAndDefensivePaths:
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
         s = PaperScheduler(db)
-        assert str(s.registry.data_dir).endswith("data/market")
+        assert str(s.registry.data_dir).endswith("data/market_fapi")
 
     def test_start_idempotent_same_thread(self, tmp_path):
         """重复 start 幂等：守护线程同一实例（不叠线程）。"""

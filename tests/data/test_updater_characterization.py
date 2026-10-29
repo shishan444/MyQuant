@@ -128,7 +128,7 @@ class TestUpdateOpenInterestIncrementalStart:
 
 
 class TestDefaultDataDir:
-    """data_dir=None 默认路径（衍生品入口——相对 cwd 的 data/market）。
+    """衍生品入口显式 data_dir 传参（默认值修正为 data/market_fapi 后，用例消除默认值耦合——断言不再随默认值漂移）。
 
     chdir 到临时目录后默认路径落点在沙箱内，不污染仓库工作区。
     """
@@ -140,9 +140,9 @@ class TestDefaultDataDir:
             {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
         )
 
-        out = update_funding_data("BTCUSDT")
+        out = update_funding_data("BTCUSDT", data_dir=tmp_path)
 
-        assert (tmp_path / "data" / "market" / "BTCUSDT_funding.parquet").exists()
+        assert (tmp_path / "BTCUSDT_funding.parquet").exists()
         assert len(out) == 5
 
     @patch("core.data.updater.fetch_open_interest_history")
@@ -153,9 +153,10 @@ class TestDefaultDataDir:
             {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
         )
 
-        out = update_open_interest_data("BTCUSDT", timeframes=["5m"])
+        out = update_open_interest_data(
+            "BTCUSDT", timeframes=["5m"], data_dir=tmp_path)
 
-        assert (tmp_path / "data" / "market" / "BTCUSDT_oi_5m.parquet").exists()
+        assert (tmp_path / "BTCUSDT_oi_5m.parquet").exists()
         assert len(out["5m"]) == 288
 
 

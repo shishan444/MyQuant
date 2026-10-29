@@ -87,7 +87,7 @@ class PaperScheduler:
         Args:
             db_path: research.db 库路径。
             data_dir: Parquet 数据目录（registry 未传时用于建注册表；
-                生产由 app.py 传入项目根 data/market）。
+                生产由 app.py 传入活跃域 data/market_fapi）。
             registry: feed 注册表（显式共享实例注入面——缺省按
                 data_dir 新建）。
             push: WS 推送回调（转传执行器）。
@@ -126,9 +126,10 @@ class PaperScheduler:
 
     @staticmethod
     def _default_data_dir() -> Path:
-        """缺省数据目录（沿 api/app.py 项目根 data/market 惯例；
-        scheduler.py→runtime→paper_trading→core→项目根 四层）。"""
-        return Path(__file__).resolve().parents[3] / "data" / "market"
+        """缺省数据目录（活跃域 data/market_fapi——cleanup-data-segment
+        R-11：与装配面 fapi_env 缺省同域；生产装配 app.py 显式传参，
+        本缺省为消除误导的修正锚）。"""
+        return Path(__file__).resolve().parents[3] / "data" / "market_fapi"
 
     # ── 生命周期 ────────────────────────────────────────────
 
