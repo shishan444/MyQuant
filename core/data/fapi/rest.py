@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
-from core.data.fapi.stream import is_valid_bar_values
+from core.data.fapi.stream import is_valid_bar_values, legacy_proxy_to_sdk
 from core.data.timeframes import TF_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -225,16 +225,30 @@ class FapiRestClient:
         新 SDK 形制（unify-fapi-sdk 契约 1，18.1.0）：构造经
         ConfigurationRestAPI（timeout 毫秒形制；proxy 显式代理语义与
         旧 SDK proxies 等价——显式代理不受 trust_env 影响）。
+
+        proxy 形制转换（审查 CARD-01）：入参保持旧扁平形制
+        {"https": url}（装配面/注入面契约不变），SDK 面转结构化
+        {protocol, host, port}——SDK parse_proxies 只认结构化形制，
+        旧扁平直传拼出 https://: 畸形代理致显式代理部署 REST 全断。
+        转换经 stream.legacy_proxy_to_sdk 单源（WS 面同型）；
+        None/空值直传。
         """
         from binance_common.configuration import ConfigurationRestAPI
-        from binance_sdk_derivatives_trading_usds_futures import (
+        from binance_sdk_derivatives_trading_usds_futures.rest_api import (
             DerivativesTradingUsdsFuturesRestAPI,
         )
 
+        sdk_proxy = None
+        if kwargs["proxies"]:
+            raw = (
+                kwargs["proxies"].get("https")
+                or kwargs["proxies"].get("http"))
+            if raw:
+                sdk_proxy = legacy_proxy_to_sdk(str(raw))
         return DerivativesTradingUsdsFuturesRestAPI(ConfigurationRestAPI(
             base_path=kwargs["base_url"],
             timeout=int(kwargs["timeout"]) * 1000,
-            proxy=kwargs["proxies"],
+            proxy=sdk_proxy,
         ))
 
     def _sdk(self) -> Any:

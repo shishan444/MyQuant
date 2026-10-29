@@ -479,11 +479,14 @@ class BinanceFapiStream:
 _DISPATCH_SENTINEL = object()
 
 
-def _legacy_proxy_to_sdk(proxy_url: str) -> dict:
-    """旧扁平代理 URL 转新 SDK 结构化 proxy 形制。
+def legacy_proxy_to_sdk(proxy_url: str) -> dict:
+    """旧扁平代理 URL 转新 SDK 结构化 proxy 形制（转换单源）。
 
     旧形制（装配层/环境不变）：{"http": url, "https": url}；
     新 SDK 形制：{"protocol": scheme, "host": ..., "port": ...}。
+
+    单源共引：WS 面（_NewSdkWsClient）与 REST 面（rest.py
+    _default_client_factory）两侧消费同一实现，不两写。
     """
     parts = urlsplit(proxy_url)
     return {
@@ -526,7 +529,7 @@ class _NewSdkWsClient:
             # 旧扁平形制取 https 通道（WS over TLS）；转结构化形制
             raw = proxies.get("https") or proxies.get("http")
             if raw:
-                sdk_proxy = _legacy_proxy_to_sdk(str(raw))
+                sdk_proxy = legacy_proxy_to_sdk(str(raw))
         self._cfg = ConfigurationWebSocketStreams(
             stream_url=self._url, proxy=sdk_proxy,
             reconnect_delay=5000, reconnect_attempts=3)
