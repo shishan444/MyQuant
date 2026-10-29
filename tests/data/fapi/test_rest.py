@@ -329,6 +329,69 @@ class TestProxySemantics:
         client._sdk()  # noqa: SLF001——触发建连
         assert sdk.session.trust_env is False
 
+    def test_default_factory_converts_legacy_proxy_to_sdk_form(self):
+        """CARD-01：默认工厂把旧扁平 proxies 转 SDK 结构化 proxy 形制。
+
+        SDK parse_proxies 只认 {protocol,host,port}——旧扁平直传拼出
+        https://: 畸形代理，显式代理部署 REST 全断。构造纯本地零网络。
+        """
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"https": "http://172.20.112.1:10809"}, timeout=30)
+        assert client.configuration.proxy == {
+            "protocol": "http", "host": "172.20.112.1", "port": 10809}
+
+    def test_default_factory_proxy_none_and_empty_passthrough(self):
+        """CARD-01：proxies=None 与空 dict 均直传 None（直连——
+        空值不进转换分支）。"""
+        client_none = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com", proxies=None, timeout=30)
+        assert client_none.configuration.proxy is None
+        client_empty = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com", proxies={}, timeout=30)
+        assert client_empty.configuration.proxy is None
+
+    def test_default_factory_http_channel_fallback(self):
+        """CARD-01：无 https 键时 http 通道兜底（WS 面同型——
+        https 优先、http 兜底）。"""
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"http": "http://10.0.0.8:8080"}, timeout=30)
+        assert client.configuration.proxy == {
+            "protocol": "http", "host": "10.0.0.8", "port": 8080}
+
+    def test_real_client_session_trust_env_blocked_via_default_factory(self):
+        """VS-2.2 真实工厂路径：默认工厂产物 session 探测命中
+        （新 SDK 私有 _session 属性在场）且 trust_env 被置 False——
+        替身面（公有 session 属性）从未证明真实属性名探测命中，
+        SDK 改名时此面唯一拦截线。构造纯本地零网络。"""
+        from requests import Session
+
+        client = FapiRestClient()  # 无注入——默认工厂真实构造
+        sdk = client._sdk()  # noqa: SLF001——触发建连+探测+阻断
+        session = getattr(sdk, "session", None) or getattr(sdk, "_session", None)
+        assert isinstance(session, Session)  # 探测命中真实属性
+        assert session.trust_env is False  # 环境代理阻断落地
+
+
+class TestLegacyProxyConversion:
+    """legacy_proxy_to_sdk 转换单源直测（WS/REST 两消费面共用——
+    CARD-01 修复后公开单源；分支边界面）。"""
+
+    def test_https_url_without_port_defaults_443(self):
+        """https URL 无端口→443（WS over TLS 缺省）。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        assert legacy_proxy_to_sdk("https://proxy.example.com") == {
+            "protocol": "https", "host": "proxy.example.com", "port": 443}
+
+    def test_http_url_without_port_defaults_80(self):
+        """http URL 无端口→80。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        assert legacy_proxy_to_sdk("http://proxy.example.com") == {
+            "protocol": "http", "host": "proxy.example.com", "port": 80}
+
 
 # ── 白名单与环境变量面 ─────────────────────────────────────
 
