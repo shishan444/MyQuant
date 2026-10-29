@@ -130,6 +130,36 @@ def test_explicit_lock_context_serializes_writers(tmp_path: Path) -> None:
     assert list(load_parquet(path)["close"]) == [1.0, 99.0]
 
 
+def test_different_file_paths_do_not_block_each_other(tmp_path: Path) -> None:
+    """VS-1.11③ 文件粒度：A 路径持锁期间 B 路径写入立即完成——
+    互斥按文件键粒度，不同路径不互相阻塞（全局单锁实现在此红）。"""
+    path_a = tmp_path / "a.parquet"
+    path_b = tmp_path / "b.parquet"
+    save_parquet(_ohlcv([("2026-01-01 00:00:00", 1.0)]), path_a)
+    in_lock = threading.Event()
+    release = threading.Event()
+
+    def hold_a() -> None:
+        with parquet_write_lock(path_a):
+            in_lock.set()
+            release.wait(timeout=5.0)  # 受控持锁窗口（主线程显式释放）
+
+    holder = threading.Thread(target=hold_a)
+    holder.start()
+    assert in_lock.wait(timeout=5.0)  # A 键已持态
+    try:
+        writer = threading.Thread(
+            target=merge_parquet,
+            args=(_ohlcv([("2026-01-01 00:01:00", 2.0)]), path_b))
+        writer.start()
+        writer.join(timeout=2.0)
+        assert not writer.is_alive(), "不同路径键不得互相阻塞（文件粒度）"
+        assert list(load_parquet(path_b)["close"]) == [2.0]
+    finally:
+        release.set()
+        holder.join(timeout=5.0)
+
+
 def test_three_entry_points_hold_lock_during_body(tmp_path, monkeypatch):
     """VS-1.11②：save_parquet/merge_parquet/merge_closed_rows 三公开
     入口函数体内文件锁为持态（hook 读侧检查 _file_locks[键].locked()）。

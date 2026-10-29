@@ -494,3 +494,78 @@ class TestDualFaceSemantics:
         loaded = feed.latest_df
         assert len(loaded) == 52  # 装载得守护器补齐的新行
         assert loaded.index[-1] == seg.index[-1]
+
+    def test_concurrent_feed_reconcile_and_guardian_same_key(self, tmp_path):
+        """③真实两组件并发（VS-1.16③，与 VS-1.11 互补）：feed 活跃
+        落盘与守护器同键增量并发写同一 parquet——经互斥单点串行化，
+        行集并集完整落盘（无丢行无重行）。屏障同步两替身取帧点：帧
+        已到手、同相位进入各自 merge 序列（读-改-写重叠最大化）。"""
+        import threading
+
+        from core.paper_trading.runtime.feed import (
+            FeedRegistry,
+            FeedSubscription,
+        )
+
+        (tmp_path / "d").mkdir()
+        _write_kline(tmp_path / "d", n=50)  # 文件基线 T0..T49
+        # feed 补 T50..T54、守护器补 T55..T59——两段不相交，并集应 60 行
+        feed_seg = make_ohlcv(n=5, freq="1min", seed=21,
+                              start=str(_T0 + 50 * _TF_1M))
+        guard_seg = make_ohlcv(n=5, freq="1min", seed=22,
+                               start=str(_T0 + 55 * _TF_1M))
+        barrier = threading.Barrier(2)
+        errs: list[BaseException] = []
+
+        def feed_fetcher(symbol, timeframe, start_ts, end_ts, *,
+                         max_bars=None):
+            barrier.wait(timeout=5.0)  # 取帧点同相位——落盘序列并发窗口
+            return feed_seg
+
+        class GuardRest:
+            def fetch_closed_bars(self, symbol, timeframe, start_ts, end_ts,
+                                  *, max_bars=None):
+                barrier.wait(timeout=5.0)
+                return guard_seg
+
+        clock = FakeClock(_T0 + 61 * _TF_1M)  # 两面缺口同刻成立
+        registry = FeedRegistry(
+            tmp_path / "d",
+            rest_fetcher=feed_fetcher,
+            funding_refresher=lambda **k: pd.DataFrame(),
+            now_fn=clock)
+        registry.acquire(
+            "BTCUSDT", "1m",
+            FeedSubscription(on_frames=lambda df, idx: None))
+        feed = registry.get("BTCUSDT", "1m")
+        guardian = DataFreshnessGuardian(
+            tmp_path / "d", rest_client=GuardRest(), now_fn=clock)
+
+        def run_feed():
+            try:
+                feed.reconcile()
+            except BaseException as exc:  # noqa: BLE001——线程面异常回收
+                errs.append(exc)
+
+        def run_guardian():
+            try:
+                guardian.guard_kline_once()
+            except BaseException as exc:  # noqa: BLE001
+                errs.append(exc)
+
+        t_feed = threading.Thread(target=run_feed)
+        t_guard = threading.Thread(target=run_guardian)
+        for t in (t_feed, t_guard):
+            t.start()
+        for t in (t_feed, t_guard):
+            t.join(timeout=10.0)
+        assert not any(t.is_alive() for t in (t_feed, t_guard))
+        assert errs == [], "真实两组件并发不得异常"
+        # 判定性断言：并集完整（基线 50+feed 5+守护器 5=60 行）连续
+        # 无重行——互斥失效（一方覆盖另一方）或 merge 语义错在此红
+        merged = load_parquet(tmp_path / "d" / "BTCUSDT_1m.parquet")
+        assert len(merged) == 60
+        assert not merged.index.has_duplicates
+        diffs = merged.index.to_series().diff().dropna()
+        assert (diffs == _TF_1M).all()
+        assert merged.index[-1] == _T0 + 59 * _TF_1M
