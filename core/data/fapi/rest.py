@@ -272,8 +272,18 @@ class FapiRestClient:
             （尾部 forming bar 被闭合过滤）。
 
         Raises:
+            ValueError: max_bars 非 None 时须为正整数（int；bool 是
+                int 子类显式排除）——负/零/NaN/inf/float 一律入口拒绝，
+                不使畸形值直达端点或在 int() 处非受控抛出。
             网络异常原样上抛（调用方捕获记日志续轮）。
         """
+        if max_bars is not None and (
+            isinstance(max_bars, bool)
+            or not isinstance(max_bars, int)
+            or max_bars <= 0
+        ):
+            raise ValueError(
+                f"max_bars 须为正整数（int、非 bool），当前: {max_bars!r}")
         start_ms = _ts_to_ms(start_ts)
         end_ms = _ts_to_ms(end_ts)
         collected: list = []
