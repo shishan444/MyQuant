@@ -1,5 +1,6 @@
 python-binance>=1.0.19
 binance-futures-connector>=4.2.0
+binance-sdk-derivatives-trading-usds-futures>=18.1.0
 vectorbt==0.28.5
 pandas-ta>=0.3.14b
 deap>=1.4.1

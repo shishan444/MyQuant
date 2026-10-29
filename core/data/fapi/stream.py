@@ -16,6 +16,32 @@ binance.websocket 子树全工程 import 点仅 stream.py 与 rest.py）。
 建连并起读线程，断线无自动重连（退避重连由本层自持）、on_message
 回调签名 (manager, data_str) 且 data 为未解析 JSON 字符串、
 on_open 在构造期内触发（订阅经 manager 原始 send_message 面发送）。
+
+新 SDK 首验记录（2026-10-29，binance-sdk-derivatives-trading-usds-
+futures 18.1.0——unify-fapi-sdk 契约 2 四要素；①②为运行实测、
+③④为源码级实证：实测窗口内本机代理出口 IP 遭币安限流〔REST 418/
+WS 订阅确认后零推送〕，消息样例与断线场景的运行级验证降档源码级，
+证据留档 /tmp/sdk_first_probe2.md，IP 解封后可补运行级样例）：
+①构造与连通：ConfigurationWebSocketStreams(stream_url=...) 构造不
+  建连；await connect(url, cfg) 阻塞至握手完成（实测约 1-2s）返回
+  client 自身——**全 async 模型**（connect/subscribe/close/reconnect
+  均协程，需事件循环线程承载——与旧 SDK 同步线程骨架的根本差异）。
+②订阅面：await subscribe(["btcusdt@kline_1m"]) 发送
+  {"method":"SUBSCRIBE","params":[...],"id":uuid}（服务端回
+  {"result":null} 确认实测）；回调注册 on("message", cb,
+  stream=<流名>)——**必须在 subscribe 之后**（先于订阅时流名不在
+  连接映射、注册被丢弃，实测 warning 锁定该时序约束）。
+③回调签名（源码级，receive_loop 分发链）：消息 json.loads 后按
+  data["stream"] 键查回调映射分发；无 response_model 时回调收整包
+  dict（stream+data 两键的组合流包装形制——与旧 SDK 未解析 str
+  不同，适配层需取 data["data"] 内层）。
+④断线行为（源码级）：**内建自动重连存在**（connect 内双任务：
+  schedule_reconnect 兜底间隔 AUTO_RECONNECT_INTERVAL_SECONDS=82800s
+  +receive_loop 断开检测触发 schedule_reconnect〔Configuration
+  reconnect_delay=5000ms 固定间隔 × reconnect_attempts=3 有限次〕
+  +serverShutdown 事件 5s 重连）——固定间隔×有限次数形制，与现自
+  持指数退避（1s/2s/4s…封顶 60s 无限重试）不等价；重连归属与
+  R-16 语义等价迁移的适配裁决见 design 契约 2。
 """
 from __future__ import annotations
 
