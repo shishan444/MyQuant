@@ -1,4 +1,5 @@
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]  # B10.1 标记激活
@@ -10,7 +11,6 @@ import pytest
 from core.persistence.repository import live_trading as persistence  # B3c.1 退役重锚定
 from core.live_trading.runner import (
     LiveTradingRunner,
-    klines_to_df,
     parse_account_state,
     parse_position_from_exchange,
 )
@@ -54,19 +54,17 @@ class TestParseAccount:
         assert s.allowed_direction == "long"
 
 
-class TestKlinesToDf:
-    def test_basic(self):
-        klines = [
-            [1000, "50000", "50100", "49900", "50050", "1.0", 2000, "50050", 10, "0.5", "25025", "0"],
-            [2000, "50050", "50200", "50000", "50150", "1.5", 3000, "75000", 12, "0.7", "35000", "0"],
-        ]
-        df = klines_to_df(klines)
-        assert len(df) == 2
-        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
-        assert df["close"].iloc[-1] == 50150.0
-
-    def test_empty(self):
-        assert klines_to_df([]).empty
+def _frame(rows: int = 2, start_ms: int = 1000, step_ms: int = 1000):
+    """构造 feed 广播帧形制（OHLCV+index=闭合时刻 UTC——帧驱动
+    run_iteration 输入面）。"""
+    stamps = [pd.Timestamp(start_ms + i * step_ms, unit="ms", tz="UTC")
+              for i in range(rows)]
+    return pd.DataFrame(
+        {"open": [50000.0] * rows, "high": [50100.0] * rows,
+         "low": [49900.0] * rows,
+         "close": [50050.0 + i for i in range(rows)],
+         "volume": [1.0 + i for i in range(rows)]},
+        index=pd.DatetimeIndex(stamps, name="open_time"))
 
 
 def _make_runner(tmp_path, executor_action=None, position_raw=None):
@@ -87,9 +85,6 @@ def _make_runner(tmp_path, executor_action=None, position_raw=None):
         def futures_get_open_orders(self, symbol=None):
             return [{"orderId": 1}]
 
-        def futures_klines(self, **p):
-            return []
-
     class FakeClient:
         raw = FakeRaw()
 
@@ -97,8 +92,14 @@ def _make_runner(tmp_path, executor_action=None, position_raw=None):
     from core.persistence.db_ext import init_db_ext
     init_db_ext(db)
     persistence.save_live_trading_task(db, "t1", "BTCUSDT", "1h", "{}")
+    from core.paper_trading.runtime.feed import FeedRegistry
+
+    registry = FeedRegistry(
+        tmp_path / "market",
+        rest_fetcher=lambda *a, **k: pd.DataFrame(),
+        funding_refresher=lambda **k: pd.DataFrame())
     runner = LiveTradingRunner(
-        executor=FakeExecutor(), client=FakeClient(),
+        executor=FakeExecutor(), client=FakeClient(), registry=registry,
         symbol="BTCUSDT", timeframe="1h", dna=object(),
         db_path=db, task_id="t1",
     )
@@ -109,8 +110,7 @@ class TestRunIteration:
     def test_processes_new_bar_and_persists(self, tmp_path, monkeypatch):
         monkeypatch.setattr("core.live_trading.runner.dna_to_signal_set", lambda dna, df: object())
         runner, db = _make_runner(tmp_path, executor_action=None)
-        klines = [[1000, "50000", "50100", "49900", "50050", "1.0", 2000, "x", 1, "x", "x", "0"]]
-        result = runner.run_iteration(klines)
+        result = runner.run_iteration(_frame())
         assert result is not None  # 新 bar 被处理（即使 action=None）
         # 持久化 + 心跳
         row = persistence.get_live_trading_task(db, "t1")
@@ -119,13 +119,14 @@ class TestRunIteration:
     def test_dedup_same_bar(self, tmp_path, monkeypatch):
         monkeypatch.setattr("core.live_trading.runner.dna_to_signal_set", lambda dna, df: object())
         runner, _ = _make_runner(tmp_path)
-        klines = [[1000, "50000", "50100", "49900", "50050", "1.0", 2000, "x", 1, "x", "x", "0"]]
-        assert runner.run_iteration(klines) is not None
-        assert runner.run_iteration(klines) is None  # 同 bar 去重
+        assert runner.run_iteration(_frame()) is not None
+        assert runner.run_iteration(_frame()) is None  # 同 bar 去重
+        # 帧追加新根再推进（游标定位帧内新根）
+        assert runner.run_iteration(_frame(rows=3)) is not None
 
-    def test_empty_klines(self, tmp_path):
+    def test_empty_frame(self, tmp_path):
         runner, _ = _make_runner(tmp_path)
-        assert runner.run_iteration([]) is None
+        assert runner.run_iteration(pd.DataFrame()) is None
 
     def test_sync_state_updates_position(self, tmp_path):
         # sync_state 从交易所拉持仓 → 更新 executor.state
