@@ -16,7 +16,6 @@ from core.data.csv_importer import import_csv, import_csv_batch
 from core.data.mtf_loader import find_parquet
 from core.data.updater import (
     update_funding_data,
-    update_market_data,
     update_open_interest_data,
 )
 from core.data.validation import (
@@ -163,19 +162,7 @@ class TestImportCsvGuards:
 
 
 class TestUpdaterGuards:
-    """updater 三入口：校验前置（fetch 发生前拒绝，无网络副作用）。"""
-
-    def test_market_data_bad_symbol_prefetch(self, tmp_path) -> None:
-        with patch("core.data.updater.fetch_klines") as mock_fetch:
-            with pytest.raises(ValueError, match="symbol 非法"):
-                update_market_data("BTC/USDT", "4h", data_dir=tmp_path)
-        mock_fetch.assert_not_called()
-
-    def test_market_data_bad_interval_prefetch(self, tmp_path) -> None:
-        with patch("core.data.updater.fetch_klines") as mock_fetch:
-            with pytest.raises(ValueError, match="interval 未知"):
-                update_market_data("BTCUSDT", "4H", data_dir=tmp_path)
-        mock_fetch.assert_not_called()
+    """updater 衍生品入口：校验前置（fetch 发生前拒绝，无网络副作用）。"""
 
     def test_funding_bad_symbol_prefetch(self, tmp_path) -> None:
         with patch("core.data.fetcher.fetch_funding_history") as mock_fetch:
