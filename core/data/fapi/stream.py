@@ -54,6 +54,7 @@ import logging
 import math
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol, runtime_checkable
 from urllib.parse import urlsplit
@@ -99,6 +100,13 @@ def silent_window_seconds(bar_seconds: int) -> float:
 # ── 重连参数（模块 constants 单源；spec 锁语义不锁数值）─────────
 RECONNECT_BACKOFF_INITIAL_SECONDS = 1.0
 RECONNECT_BACKOFF_CAP_SECONDS = 60.0
+
+# 活性判死参数（CARD-02）：泊等周期复查间隔与判死阈值（秒）。SDK
+# receive_loop 裸 json.loads 无防御，单条畸形帧协程死亡且不发 close
+# 事件（is_open 恒 True 不可依赖）→ 永久泊等僵尸；真连接 12 路秒级
+# 推送，静默超阈值必死——弃 client 按断线重连兜底
+SILENCE_DEATH_CHECK_INTERVAL_SECONDS = 60.0
+SILENCE_DEATH_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -358,7 +366,24 @@ class BinanceFapiStream:
                 client.stop()
                 self._client = None
                 return False
-        closed.wait()  # 泊等断线（close 事件 / stop 关闭）
+        # 泊等断线（close 事件 / stop 关闭）——周期醒来复查活性
+        # （CARD-02）：SDK receive_loop 裸 json.loads 无防御，单条
+        # 畸形帧协程死亡且不发 close 事件（is_open 恒 True 不可
+        # 依赖）→ 永久泊等僵尸；真连接 12 路秒级推送，静默超阈值
+        # 必死——弃 client 按断线重连
+        while not closed.wait(
+                timeout=SILENCE_DEATH_CHECK_INTERVAL_SECONDS):
+            if self._stop_event.is_set():
+                break
+            last = client.last_activity
+            if (last is not None
+                    and time.monotonic() - last > SILENCE_DEATH_SECONDS):
+                logger.warning(
+                    "fapi 流活性判死（静默超 %ss 零消息——receive_loop"
+                    " 疑似死亡不发 close 事件），弃连接按断线重连",
+                    SILENCE_DEATH_SECONDS)
+                client.stop()  # 幂等——清残留连接与分发线程
+                break
         with self._state_lock:
             self._client = None
         return True
@@ -544,6 +569,9 @@ class _NewSdkWsClient:
         self._dispatch_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._dispatch_thread: Optional[threading.Thread] = None
         self._stopped = False
+        # 活性时间戳（CARD-02）：connect 建立时初始化、SDK 回调到达
+        # 刷新——泊等方周期复查，静默超阈值判 receive_loop 死亡
+        self._last_activity: Optional[float] = None
 
     # ── 同步桥接面 ──────────────────────────────────────────
 
@@ -571,6 +599,8 @@ class _NewSdkWsClient:
             target=self._dispatch_loop, name="fapi-ws-dispatch",
             daemon=True)
         self._dispatch_thread.start()
+        # 连接建立锚点（CARD-02 活性起点——建连至首条消息间不误判）
+        self._last_activity = time.monotonic()
 
     def stop(self) -> None:
         """关闭连接+停分发线程（幂等）。"""
@@ -588,10 +618,26 @@ class _NewSdkWsClient:
             self._dispatch_queue.put(_DISPATCH_SENTINEL)
             self._dispatch_thread.join(timeout=5.0)
 
+    @property
+    def last_activity(self) -> Optional[float]:
+        """最近活性时刻（time.monotonic 秒；None=未建连）。
+
+        连接建立时初始化、SDK 回调到达刷新（CARD-02）——泊等方周期
+        复查此值，静默超 SILENCE_DEATH_SECONDS 判 receive_loop
+        死亡（弃 client 按断线重连）。
+        """
+        return self._last_activity
+
     # ── 内部（loop 线程/分发线程语境）───────────────────────
 
     def _enqueue_message(self, payload, **_kwargs) -> None:
-        """SDK 消息回调（事件循环线程）——仅入队不处理。"""
+        """SDK 消息回调（事件循环线程）——仅入队不处理。
+
+        入队即刷新活性时间戳（CARD-02）：任何 SDK 回调到达（含订阅
+        确认等控制帧）都证明 receive_loop 存活——活性探针锚在 SDK
+        回调面最入口，不区分消息类型。
+        """
+        self._last_activity = time.monotonic()
         self._dispatch_queue.put(payload)
 
     def _dispatch_loop(self) -> None:

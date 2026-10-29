@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -161,7 +162,9 @@ class FakeFapiClient:
     - deliver(payload)：投递已解析 dict（首验③——直接调 on_message，
       分发线程语境的直调等价简化）；
     - die()：模拟断线（on_close 回调——首验④ close 事件路径）；
-    - stop()：关停打标+泊等唤醒（幂等）。
+    - stop()：关停打标+泊等唤醒（幂等）；
+    - 活性面（CARD-02 与包装器同步演进）：connect 建立锚点+deliver
+      刷新+last_activity 只读——泊等方活性判死探针的替身等价面。
     """
 
     fail_on_connect: bool = False
@@ -175,6 +178,7 @@ class FakeFapiClient:
         self.connect_calls = 0
         self.stopped = False
         self._dead = threading.Event()
+        self._last_activity: Optional[float] = None
 
     # ── 包装器同步面 ────────────────────────────────────────
 
@@ -183,6 +187,13 @@ class FakeFapiClient:
         if type(self).fail_on_connect:
             raise ConnectionError("scripted: 端点不可达")
         self.connect_calls += 1
+        self._last_activity = time.monotonic()
+
+    @property
+    def last_activity(self) -> Optional[float]:
+        """最近活性时刻（time.monotonic 秒；None=未建连）——包装器
+        CARD-02 活性面的替身等价。"""
+        return self._last_activity
 
     def stop(self) -> None:
         """关停（幂等——打标+触发断线回调唤醒泊等）。"""
@@ -196,7 +207,12 @@ class FakeFapiClient:
     # ── 测试驱动面 ──────────────────────────────────────────
 
     def deliver(self, payload: dict) -> None:
-        """投递已解析 dict 消息（on_message 单参形制——首验③）。"""
+        """投递已解析 dict 消息（on_message 单参形制——首验③）。
+
+        投递即刷新活性（CARD-02——包装器 _enqueue_message 入队刷新
+        的直调等价）。
+        """
+        self._last_activity = time.monotonic()
         if self._on_message is not None:
             self._on_message(payload)
 
