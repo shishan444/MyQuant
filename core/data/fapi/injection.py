@@ -13,9 +13,10 @@
 ④可控 REST 响应序列——ScriptedRestClient 三函数各按队列返回构造
   帧/空帧/异常分支。
 
-FakeFapiClient 为 BinanceFapiStream 的客户端工厂替身（模拟 SDK 行
-为面：构造即连、on_open 期内发订阅、on_message (manager, str) 签
-名、断线回调、构造失败），首验记录的行为契约见 stream.py 模块头。
+FakeFapiClient 为 BinanceFapiStream 的客户端工厂替身（模拟
+_NewSdkWsClient 同步包装面：构造不建连、connect 阻塞建连语义、
+deliver 投递已解析 dict、断线经 on_close、连接失败在 connect 抛），
+首验记录的行为契约见 stream.py 模块头。
 """
 from __future__ import annotations
 
@@ -117,8 +118,10 @@ def kline_ws_payload(
     *,
     closed: bool = True,
     open_override: Optional[str] = None,
-) -> str:
-    """构造组合流 kline 消息 JSON（BinanceFapiStream._on_message 输入形制）。
+) -> dict:
+    """构造组合流 kline 消息（已解析 dict——新 SDK 回调形制，首验③：
+    json.loads 归 SDK receive_loop，BinanceFapiStream._on_message 收
+    组合流包装 dict）。
 
     open_override 注入脏值字符串（"NaN"/"Infinity"）驱动脏数据防线；
     closed=False 构造 forming 更新推送。
@@ -141,70 +144,67 @@ def kline_ws_payload(
             "x": closed,
         },
     }
-    return json.dumps({"stream": stream, "data": data})
+    return {"stream": stream, "data": data}
 
 
 class FakeFapiClient:
-    """BinanceFapiStream 的客户端工厂替身（模拟 SDK 行为面，零网络）。
+    """BinanceFapiStream 的客户端工厂替身（模拟 _NewSdkWsClient 同步
+    包装面，零网络）。
 
-    行为脚本经类属性/构造参数控制：
-    - raise_on_construct=True：构造抛异常（端点不可达分支）；
-    - construct_connects=True（缺省）：构造即触发 on_open（SDK 首验
-      行为锚——订阅在 on_open 内经 manager.send_message 发出）；
-    - deliver()/deliver_raw()：测试线程内推送消息（on_message 签名
-      (manager, str)）；
-    - die()：模拟断线（触发 on_error 与 on_close）；
-    - stop()：记录关停（SDK stop=close+join 语义此处仅打标）。
-
-    send_message 记录全部出站消息（订阅清单断言面）。
+    行为锚（新 SDK 首验记录+包装器契约）：
+    - 构造不建连（首验①）——参数面与包装器一致（on_message/on_close/
+      proxies/loop）；
+    - fail_on_connect=True：connect() 抛异常（端点不可达——新 SDK
+      构造纯本地，网络失败面在 connect 阶段）；
+    - connect()：记录调用（连接成功——订阅/回调注册归包装器内部
+      职责，替身经 subscribed_streams 静态返回固定订阅全集）；
+    - deliver(payload)：投递已解析 dict（首验③——直接调 on_message，
+      分发线程语境的直调等价简化）；
+    - die()：模拟断线（on_close 回调——首验④ close 事件路径）；
+    - stop()：关停打标+泊等唤醒（幂等）。
     """
 
-    raise_on_construct: bool = False
-    construct_connects: bool = True
+    fail_on_connect: bool = False
 
-    def __init__(self, *, stream_url=None, on_message=None, on_open=None,
-                 on_close=None, on_error=None, on_ping=None, on_pong=None,
-                 is_combined=False, proxies=None):
-        if type(self).raise_on_construct:
-            raise ConnectionError("scripted: 端点不可达")
+    def __init__(self, *, stream_url=None, on_message=None, on_close=None,
+                 proxies=None, loop=None):
         self.stream_url = stream_url
-        self.is_combined = is_combined
         self.proxies = proxies
         self._on_message = on_message
-        self._on_open = on_open
-        self._on_close = on_close
-        self._on_error = on_error
-        self.sent_messages: list[str] = []
+        self._on_close_cb = on_close
+        self.connect_calls = 0
         self.stopped = False
         self._dead = threading.Event()
-        if type(self).construct_connects and on_open is not None:
-            on_open(self)  # SDK 行为锚：构造期内触发 on_open
 
-    # ── SDK 面方法 ──────────────────────────────────────────
+    # ── 包装器同步面 ────────────────────────────────────────
 
-    def send_message(self, message: str) -> None:
-        """出站消息记录（订阅断言面）。"""
-        self.sent_messages.append(message)
+    def connect(self, timeout: float = 30.0) -> None:
+        """阻塞建连语义（fail_on_connect 时抛异常——端点不可达分支）。"""
+        if type(self).fail_on_connect:
+            raise ConnectionError("scripted: 端点不可达")
+        self.connect_calls += 1
 
     def stop(self) -> None:
-        """关停（打标+触发断线回调唤醒泊等——SDK close 同路径）。"""
+        """关停（幂等——打标+触发断线回调唤醒泊等）。"""
+        if self.stopped:
+            return
         self.stopped = True
         self._dead.set()
-        if self._on_close is not None:
-            self._on_close(self)
+        if self._on_close_cb is not None:
+            self._on_close_cb()
 
     # ── 测试驱动面 ──────────────────────────────────────────
 
-    def deliver_raw(self, raw: str) -> None:
-        """推送原始 JSON 字符串消息（on_message (manager, str) 形制）。"""
+    def deliver(self, payload: dict) -> None:
+        """投递已解析 dict 消息（on_message 单参形制——首验③）。"""
         if self._on_message is not None:
-            self._on_message(self, raw)
+            self._on_message(payload)
 
     def die(self) -> None:
-        """模拟断线（on_error → on_close——SDK 读循环异常退出路径）。"""
-        if self._on_error is not None:
-            self._on_error(self, ConnectionError("scripted: 断线"))
-        self.stop()
+        """模拟断线（close 事件路径——on_close 唤醒泊等）。"""
+        self._dead.set()
+        if self._on_close_cb is not None:
+            self._on_close_cb()
 
     def wait_dead(self, timeout: float = 5.0) -> bool:
         """等断线（测试同步锚）。"""
@@ -212,16 +212,8 @@ class FakeFapiClient:
 
     @property
     def subscribed_streams(self) -> list[str]:
-        """已发送订阅消息解析出的流名全集（A2 断言面）。"""
-        streams: list[str] = []
-        for message in self.sent_messages:
-            try:
-                payload = json.loads(message)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("method") == "SUBSCRIBE":
-                streams.extend(payload.get("params") or [])
-        return streams
+        """固定订阅全集（包装器 connect 内订阅 12 路——A2 断言面）。"""
+        return list(FIXED_SUBSCRIBE_STREAMS)
 
 
 class ScriptedRestClient:

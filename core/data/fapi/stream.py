@@ -1,11 +1,15 @@
-"""fapi USDT-M 永续行情流接入层（WS 组合流——binance SDK 唯一 WS 触点）。
+"""fapi USDT-M 永续行情流接入层（WS 组合流——SDK 唯一 WS 触点）。
 
-职能：把 binance-futures-connector 的 UMFutures 组合流包装为固定订阅、
-自动重连的闭合 K 线事件源——闭合事件是纸盘决策推进的唯一触发源，
-forming bar 不投递（闭合判定驻本层）。服务对象：app 装配层的事件
-路由（feed 实例按需消费）与调度器对账触发；数据作业与执行器永不
-import 本模块依赖的 SDK（依赖方向硬约束：binance.um_futures /
-binance.websocket 子树全工程 import 点仅 stream.py 与 rest.py）。
+职能：把 SDK 组合流包装为固定订阅、自动重连的闭合 K 线事件源——
+闭合事件是纸盘决策推进的唯一触发源，forming bar 不投递（闭合判定
+驻本层）。服务对象：app 装配层的事件路由（feed 实例按需消费）与
+调度器对账触发；数据作业与执行器永不 import 本模块依赖的 SDK
+（依赖方向硬约束：SDK import 点仅 stream.py 与 rest.py）。
+
+SDK 迁移（unify-fapi-sdk）：现役 SDK 为
+binance-sdk-derivatives-trading-usds-futures（全 async 模型——经
+_NewSdkWsClient 同步包装器桥接为线程模型，见类 docstring）；旧
+binance-futures-connector 处于过渡服役期（卸载锚 change 3）。
 
 固定订阅终态（用户裁决 2026-10-28）：连接建立即全量订阅 12 路常量
 清单，不随任务增退变化——无动态订阅面（数据面恒定/决策面按需的
@@ -45,13 +49,14 @@ WS 订阅确认后零推送〕，消息样例与断线场景的运行级验证�
 """
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import math
+import queue
 import threading
-import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -159,13 +164,18 @@ class FapiStreamProtocol(Protocol):
 
 
 class BinanceFapiStream:
-    """UMFutures 组合流生产实现（单连接、固定订阅、自持重连）。
+    """组合流生产实现（单连接、固定订阅、自持重连）。
 
-    线程模型：start() 起单守护线程跑生命周期循环（构造客户端〔SDK
-    构造即阻塞建连并在构造期内触发 on_open——固定订阅在该回调经
-    manager 原始 send_message 面发送〕→ 泊等断线 → 指数退避
-    1s/2s/4s/…封顶 60s 无限重试 → 重连）。连接成功存活后退避重置；
-    首连投 connected、重连投 reconnected、断线投 disconnected。
+    线程模型：start() 起单守护线程跑生命周期循环（包装器 connect
+    〔阻塞建连+固定订阅+回调注册，见 _NewSdkWsClient〕→ 泊等断线 →
+    指数退避 1s/2s/4s/…封顶 60s 无限重试 → 重连）。连接成功存活后
+    退避重置；首连投 connected、重连投 reconnected、断线投
+    disconnected。
+
+    重连归属（unify-fapi-sdk 首验④裁决）：新 SDK 内建重连仅两条触
+    发路径（82800s 兜底/serverShutdown 5s）且断线不自动触发——
+    自持指数退避循环维持无双轨竞态；每轮重连弃旧 client 重建（内
+    建随连接关闭终止）。
 
     错误语义：本层吞一切网络异常（记日志+转事件），永不向
     on_closed_bar 抛异常；回调内异常由本层捕获记日志（单订阅方
@@ -194,13 +204,14 @@ class BinanceFapiStream:
             on_closed_bar: 闭合事件回调（异常被本层捕获记日志）。
             on_connection: 连接状态回调（None=不关心）。
             ws_base_url: WS 端点基址（环境变量 FAPI_WS_BASE 由装配层
-                解析后传入；缺省官方端点）。
+                解析后传入；缺省官方端点——组合流 /stream 路径由
+                包装器拼）。
             proxies: 显式代理配置（None=直连——SDK 构造显式收参，
                 不读环境代理变量，沿 fetcher.py 直连通道先例）。
             now_fn: 当前时刻函数（缺省真实时钟；测试注入固定时刻）。
-            client_factory: WS 客户端工厂（缺省真实
-                UMFuturesWebsocketClient——延迟 import；测试注入
-                假客户端驱动连接生命周期）。
+            client_factory: WS 客户端工厂（缺省 _NewSdkWsClient——
+                延迟 import 新 SDK；测试注入假客户端驱动连接生命
+                周期）。
             backoff_wait_fn: 重连退避等待（缺省经 stop 事件可中断的
                 wait；测试注入记录序列同步驱动）。
         """
@@ -219,17 +230,39 @@ class BinanceFapiStream:
         self._last_push: dict[tuple[str, str], pd.Timestamp] = {}
         self._connected = False
         self._state_lock = threading.Lock()
+        # 新 SDK async 桥接（事件循环线程——start() 起 stop() 停，
+        # 跨重连轮次单例复用）
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
+
+    # ── 事件循环管理（新 SDK async 桥接基座）─────────────────
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """起专用事件循环线程（幂等——跨重连轮次单例）。"""
+        if self._loop is None:
+            self._loop = asyncio.new_event_loop()
+            self._loop_thread = threading.Thread(
+                target=self._loop.run_forever, name="fapi-ws-loop",
+                daemon=True)
+            self._loop_thread.start()
+        return self._loop
+
+    def _shutdown_loop(self) -> None:
+        """停事件循环线程（stop() 收尾——client 已先行关闭）。"""
+        loop, thread = self._loop, self._loop_thread
+        self._loop = None
+        self._loop_thread = None
+        if loop is not None and thread is not None:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=5.0)
+            loop.close()
 
     # ── 生命周期 ────────────────────────────────────────────
 
     @staticmethod
     def _default_client_factory(**kwargs):
         """真实 SDK 客户端工厂（延迟 import——模块顶层保持零 SDK 依赖面）。"""
-        from binance.websocket.um_futures.websocket_client import (
-            UMFuturesWebsocketClient,
-        )
-
-        return UMFuturesWebsocketClient(**kwargs)
+        return _NewSdkWsClient(**kwargs)
 
     def start(self) -> None:
         """启动生命周期线程（幂等——重复调用 no-op）。"""
@@ -237,6 +270,7 @@ class BinanceFapiStream:
             return
         self._started = True
         self._stop_event.clear()
+        self._ensure_loop()
         self._thread = threading.Thread(
             target=self._run, name="fapi-stream", daemon=True)
         self._thread.start()
@@ -255,6 +289,7 @@ class BinanceFapiStream:
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=10.0)
+        self._shutdown_loop()
 
     # ── 生命周期循环 ─────────────────────────────────────────
 
@@ -280,29 +315,19 @@ class BinanceFapiStream:
         logger.info("fapi 流生命周期线程退出")
 
     def _connect_and_park(self) -> bool:
-        """单轮连接：构造客户端（建连+固定订阅）并泊等至断线。
+        """单轮连接：包装器建连（含固定订阅+回调注册）并泊等至断线。
 
         Returns:
-            连接是否成功建立过（True=on_open 曾触发——退避重置依据）。
+            连接是否成功建立过（True=connect 完成——退避重置依据）。
 
-        SDK 形制锚（首验记录）：构造即建连并在构造期内触发 on_open
-        （订阅须在该回调里发——self._client 尚未赋值，经 manager 的
-        send_message 原始面）；构造抛异常（端点不可达）上抛由 _run
-        捕获。on_close/on_error 触发 closed 事件唤醒泊等（stop() 的
-        client.stop() 同路径）。
+        新 SDK 时序锚（首验记录）：connect 阻塞至握手；订阅与回调
+        注册在包装器 connect 内完成（on 后于 subscribe 的时序约束）；
+        断线经 close 连接事件唤醒泊等（stop() 的 client.stop() 同
+        路径）；构造/连接异常上抛由 _run 捕获记日志续轮。
         """
-        ready = threading.Event()
         closed = threading.Event()
 
-        def _on_open(manager) -> None:
-            try:
-                manager.send_message(json.dumps({
-                    "method": "SUBSCRIBE",
-                    "params": FIXED_SUBSCRIBE_STREAMS,
-                    "id": int(time.time() * 1000),
-                }))
-            except Exception:
-                logger.exception("fapi 流订阅发送失败（连接仍存活，等对账兜底）")
+        def _on_open() -> None:
             with self._state_lock:
                 self._connected = True
                 first = not self._ever_connected
@@ -310,38 +335,30 @@ class BinanceFapiStream:
             self._emit_connection(
                 "connected" if first else "reconnected",
                 f"固定订阅 {len(FIXED_SUBSCRIBE_STREAMS)} 路")
-            ready.set()
 
-        def _on_close(_manager) -> None:
-            closed.set()
-
-        def _on_error(_manager, _error) -> None:
+        def _on_close() -> None:
             closed.set()
 
         client = self._client_factory(
             stream_url=self._ws_base_url,
             on_message=self._on_message,
-            on_open=_on_open,
             on_close=_on_close,
-            on_error=_on_error,
-            is_combined=True,
             proxies=self._proxies,
+            loop=self._ensure_loop(),
         )
         with self._state_lock:
             if self._stop_event.is_set():
                 client.stop()
                 return False
             self._client = client
-        if not ready.wait(timeout=30.0):
-            # 构造返回但 on_open 未达（握手挂起）——按建立失败收尾
-            try:
+        client.connect()  # 阻塞建连+订阅+注册（异常上抛归 _run 捕获）
+        _on_open()
+        with self._state_lock:
+            if self._stop_event.is_set():
                 client.stop()
-            except Exception:
-                logger.exception("fapi 流握手超时清理异常（忽略）")
-            with self._state_lock:
                 self._client = None
-            return False
-        closed.wait()  # 泊等断线（SDK 读线程死亡回调 / stop 关闭）
+                return False
+        closed.wait()  # 泊等断线（close 事件 / stop 关闭）
         with self._state_lock:
             self._client = None
         return True
@@ -355,23 +372,20 @@ class BinanceFapiStream:
 
     # ── 消息面 ──────────────────────────────────────────────
 
-    def _on_message(self, _manager, data) -> None:
-        """SDK 消息回调（(manager, str) 签名锚；本层解析不外抛）。
+    def _on_message(self, payload) -> None:
+        """SDK 消息回调（已解析 dict——首验③：新 SDK 回调收组合流
+        包装 {"stream": "...", "data": {...}}，json.loads 归 SDK
+        receive_loop；本层解析不外抛）。
 
-        组合流消息形制 {"stream": "...", "data": {...}}；kline 事件
-        的 k.x 判闭合——forming 更新推送只刷新 last_push 不投递。
+        kline 事件的 k.x 判闭合——forming 更新推送只刷新 last_push
+        不投递。
         """
-        try:
-            payload = json.loads(data) if isinstance(data, str) else data
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("fapi 流消息解析失败（丢弃）：%r", data)
-            return
         if not isinstance(payload, dict) or "data" not in payload:
             return  # 订阅确认等控制消息——非行情推送
         # 形态校验（批次三 CARD-02）：data/k 非 dict（list/str/标量）
-        # 时 .get 链 AttributeError 逃逸本层「解析不外抛」约束——SDK
-        # 会把回调异常经 on_error 链当连接级故障处理，一条畸形消息
-        # 伪断整条连接触发无谓重连；两处改 isinstance 显式丢弃记日志
+        # 时 .get 链 AttributeError 逃逸本层「解析不外抛」约束——
+        # 回调异常会被 SDK 记错误事件，一条畸形消息伪断整条连接触发
+        # 无谓重连；两处 isinstance 显式丢弃记日志
         event = payload.get("data")
         if not isinstance(event, dict):
             logger.warning("fapi 流消息 data 非对象形（丢弃）：%r", event)
@@ -458,3 +472,137 @@ class BinanceFapiStream:
         if pushed is None:
             return None
         return (self._now_fn() - pushed).total_seconds()
+
+
+# ── 新 SDK 同步包装器（unify-fapi-sdk 契约 2——async→线程桥接）────
+
+_DISPATCH_SENTINEL = object()
+
+
+def _legacy_proxy_to_sdk(proxy_url: str) -> dict:
+    """旧扁平代理 URL 转新 SDK 结构化 proxy 形制。
+
+    旧形制（装配层/环境不变）：{"http": url, "https": url}；
+    新 SDK 形制：{"protocol": scheme, "host": ..., "port": ...}。
+    """
+    parts = urlsplit(proxy_url)
+    return {
+        "protocol": parts.scheme or "https",
+        "host": parts.hostname or "",
+        "port": parts.port if parts.port else (
+            443 if (parts.scheme or "https") == "https" else 80),
+    }
+
+
+class _NewSdkWsClient:
+    """新 SDK WS 客户端同步包装器（BinanceFapiStream 线程模型消费面）。
+
+    新 SDK 全 async（首验①）：本包装器把 connect/subscribe/close 桥
+    接为同步阻塞调用（协程经 run_coroutine_threadsafe 提交专用事件
+    循环线程——loop 由 BinanceFapiStream 生命周期管理传入）；消息回
+    调经分发队列转投独立分发线程（SDK 回调在事件循环线程执行，消费
+    方耗时处理若直调会阻塞循环卡死全部流推送——首验③链路的线程语
+    境约束）。
+
+    时序契约（首验②）：connect() 顺序=建连 → 注册 close 连接事件 →
+    固定订阅 → 逐流 on("message") 注册（on 后于 subscribe——先于订
+    阅时流名不在连接映射、注册被丢弃）→ 起分发线程。on_open 语义由
+    调用方（BinanceFapiStream）在 connect() 返回后自行触发。
+    """
+
+    def __init__(self, *, stream_url, on_message, on_close, proxies=None,
+                 loop=None, _sdk_client_factory=None):
+        from binance_common.configuration import (
+            ConfigurationWebSocketStreams,
+        )
+        from binance_sdk_derivatives_trading_usds_futures.websocket_streams import (  # noqa: E501
+            DerivativesTradingUsdsFuturesWebSocketStreams,
+        )
+
+        # 组合流端点：基址拼 /stream 路径（旧 SDK is_combined 等价）
+        self._url = stream_url.rstrip("/") + "/stream"
+        sdk_proxy = None
+        if proxies:
+            # 旧扁平形制取 https 通道（WS over TLS）；转结构化形制
+            raw = proxies.get("https") or proxies.get("http")
+            if raw:
+                sdk_proxy = _legacy_proxy_to_sdk(str(raw))
+        self._cfg = ConfigurationWebSocketStreams(
+            stream_url=self._url, proxy=sdk_proxy,
+            reconnect_delay=5000, reconnect_attempts=3)
+        if _sdk_client_factory is not None:
+            self._client = _sdk_client_factory(self._cfg)
+        else:
+            self._client = DerivativesTradingUsdsFuturesWebSocketStreams(
+                self._cfg)
+        self._loop = loop
+        self._on_message = on_message
+        self._on_close_cb = on_close
+        self._dispatch_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._dispatch_thread: Optional[threading.Thread] = None
+        self._stopped = False
+
+    # ── 同步桥接面 ──────────────────────────────────────────
+
+    def connect(self, timeout: float = 30.0) -> None:
+        """阻塞建连+固定订阅+回调注册（异常上抛归调用方捕获）。"""
+        if self._loop is None:
+            raise RuntimeError("包装器需要事件循环（loop=None——工厂"
+                               "须经 BinanceFapiStream 传入）")
+        fut = asyncio.run_coroutine_threadsafe(
+            self._client.connect(self._url, self._cfg), self._loop)
+        fut.result(timeout)
+        # 断线感知：close 连接事件（receive_loop 断开经 _emit_close_
+        # event 触发——首验④：断线不自动重连，仅事件通知）
+        self._client.on_connection("close", self._handle_close)
+        # 固定订阅（12 路）——await 语义桥接（订阅消息实际发送）
+        fut = asyncio.run_coroutine_threadsafe(
+            self._client.subscribe(FIXED_SUBSCRIBE_STREAMS), self._loop)
+        fut.result(timeout)
+        # 逐流消息回调注册（on 后于 subscribe——首验②时序约束）
+        for stream_name in FIXED_SUBSCRIBE_STREAMS:
+            self._client.on(
+                "message", self._enqueue_message, stream=stream_name)
+        # 分发线程（loop 线程仅入队——回调耗时不上事件循环）
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch_loop, name="fapi-ws-dispatch",
+            daemon=True)
+        self._dispatch_thread.start()
+
+    def stop(self) -> None:
+        """关闭连接+停分发线程（幂等）。"""
+        if self._stopped:
+            return
+        self._stopped = True
+        if self._loop is not None:
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._client.close_connection(), self._loop)
+                fut.result(timeout=10.0)
+            except Exception:
+                logger.exception("fapi 流包装器关停异常（忽略——已置停）")
+        if self._dispatch_thread is not None:
+            self._dispatch_queue.put(_DISPATCH_SENTINEL)
+            self._dispatch_thread.join(timeout=5.0)
+
+    # ── 内部（loop 线程/分发线程语境）───────────────────────
+
+    def _enqueue_message(self, payload, **_kwargs) -> None:
+        """SDK 消息回调（事件循环线程）——仅入队不处理。"""
+        self._dispatch_queue.put(payload)
+
+    def _dispatch_loop(self) -> None:
+        """分发线程：队列消费调消息处理（异常吞掉续行）。"""
+        while True:
+            item = self._dispatch_queue.get()
+            if item is _DISPATCH_SENTINEL:
+                return
+            try:
+                self._on_message(item)
+            except Exception:
+                logger.exception("fapi 流消息分发异常（吞掉续行）")
+
+    def _handle_close(self, *_args, **_kwargs) -> None:
+        """close 连接事件（loop 线程）——置断线事件唤醒泊等。"""
+        if self._on_close_cb is not None:
+            self._on_close_cb()
