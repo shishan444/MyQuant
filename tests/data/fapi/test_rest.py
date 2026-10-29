@@ -360,6 +360,44 @@ class TestProxySemantics:
         assert client.configuration.proxy == {
             "protocol": "http", "host": "10.0.0.8", "port": 8080}
 
+    def test_default_factory_blank_channel_value_passthrough(self):
+        """CARD-01 边界：https 键显式 None（raw 假值）不进转换
+        ——proxy=None 直连（空值与假值两形制均不产生畸形代理）。"""
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"https": None}, timeout=30)
+        assert client.configuration.proxy is None
+
+    def test_sdk_session_probe_none_tolerated(self):
+        """探测 None 容错：替身无 session/_session 属性时跳过
+        trust_env 置位不炸、客户端正常返回（getattr 双 None 分支）。"""
+        class BareSdk:  # 无 session/_session 属性
+            pass
+
+        client = FapiRestClient(client_factory=lambda **kwargs: BareSdk())
+        sdk = client._sdk()  # noqa: SLF001——触发建连+探测
+        assert type(sdk) is BareSdk
+
+    def test_klines_unsorted_and_duplicated_rows_normalized(self):
+        """端点乱序/重复行本地不变式：帧 index 升序+同 openTime 去重
+        （keep=last——后到覆写），排序去重是端点契约外的本地防御。"""
+        row1 = _kline_row(_T0, price=100.0)
+        row2 = _kline_row(_T0 + 60_000, price=200.0)
+        row3 = _kline_row(_T0 + 120_000, price=300.0)
+        row1_dup = _kline_row(_T0, price=111.0)  # 同 openTime 后到覆写
+        client, _ = _make_client({"klines_pages": [
+            [row3, row1, row2, row1_dup]]})  # 乱序+重复
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp(_T0, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 3 * 60_000, unit="ms", tz="UTC"))
+        assert len(frame) == 3  # 去重后恰三根
+        assert list(frame.index) == [  # 升序归一
+            pd.Timestamp(_T0, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 60_000, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 120_000, unit="ms", tz="UTC")]
+        assert frame["close"].iloc[0] == 111.5  # keep=last（dup 版本）
+
     def test_real_client_session_trust_env_blocked_via_default_factory(self):
         """VS-2.2 真实工厂路径：默认工厂产物 session 探测命中
         （新 SDK 私有 _session 属性在场）且 trust_env 被置 False——
@@ -391,6 +429,24 @@ class TestLegacyProxyConversion:
 
         assert legacy_proxy_to_sdk("http://proxy.example.com") == {
             "protocol": "http", "host": "proxy.example.com", "port": 80}
+
+    @pytest.mark.parametrize(("url", "protocol", "port"), [
+        pytest.param("http://h:8080", "http", 8080, id="http 带端口"),
+        pytest.param("https://h:443", "https", 443, id="https 显式端口"),
+        pytest.param("socks5://h:1080", "socks5", 1080, id="socks5 通道"),
+        pytest.param("https://h", "https", 443, id="https 无端口缺省"),
+    ])
+    def test_value_shape_invariant(self, url, protocol, port):
+        """值域不变量（属性面）：任意合法 URL→三键齐全、protocol
+        取 scheme、port 恒为正 int（WS/REST 两消费方共同依赖的
+        输出契约）。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        got = legacy_proxy_to_sdk(url)
+        assert set(got) == {"protocol", "host", "port"}
+        assert got["protocol"] == protocol
+        assert got["port"] == port
+        assert isinstance(got["port"], int) and got["port"] > 0
 
 
 # ── 白名单与环境变量面 ─────────────────────────────────────

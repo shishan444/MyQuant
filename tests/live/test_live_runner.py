@@ -46,6 +46,24 @@ class TestParseAccount:
         assert s.balance == 9500 and s.equity == 10000
         assert s.position is None
 
+    def test_usdt_not_first_asset_still_found(self):
+        """资产清单非首位命中 USDT：循环继续迭代弧+耗尽出口（迭代
+        到目标资产——不以清单首项为隐含前提）。"""
+        account = {"totalWalletBalance": "10000", "assets": [
+            {"asset": "BTC", "availableBalance": "0.5"},
+            {"asset": "USDT", "availableBalance": "9500"}]}
+        s = parse_account_state("BTCUSDT", account, None)
+        assert s.balance == 9500
+
+    def test_no_usdt_asset_balance_falls_to_zero(self):
+        """无 USDT 资产：循环耗尽 balance=0、equity 回退 totalWallet
+        （异常数据容错——不崩不误取他币余额）。"""
+        account = {"totalWalletBalance": "10000", "assets": [
+            {"asset": "BTC", "availableBalance": "0.5"}]}
+        s = parse_account_state("BTCUSDT", account, None)
+        assert s.balance == 0.0
+        assert s.equity == 10000.0
+
     def test_with_position(self):
         account = {"totalWalletBalance": "10000", "assets": [{"asset": "USDT", "balance": "9500"}]}
         pos = {"positionAmt": "0.1", "entryPrice": "50000", "unRealizedProfit": "100", "initialMargin": "500"}
@@ -273,3 +291,55 @@ class TestRunLifecycleAcquireRelease:
         assert registry.released == [
             ("BTCUSDT", "1h", subscription)]
         assert len(registry.released) == 1
+
+    def test_run_swallows_iteration_exception_and_persists_error(
+            self, tmp_path, monkeypatch):
+        """守护循环吞异常分支：run_iteration 抛普通 Exception→吞+
+        status=error 持久化+循环继续（后续帧照常处理——与
+        KeyboardInterrupt 穿透退出两分支对照）。三帧驱动：异常吞/
+        正常处理/穿透退出收尾。"""
+        monkeypatch.setattr(
+            "core.live_trading.runner.dna_to_signal_set",
+            lambda dna, df: object())
+
+        class RecordingRegistry:
+            def __init__(self):
+                self.subscriptions = []
+                self.released = []
+
+            def acquire(self, symbol, timeframe, subscription):
+                self.subscriptions.append(subscription)
+                return object()
+
+            def release(self, symbol, timeframe, subscription):
+                self.released.append(subscription)
+
+        registry = RecordingRegistry()
+        runner, db = _make_runner(tmp_path)
+        runner.registry = registry
+        iterations: list[int] = []
+
+        def _flaky(frame):
+            iterations.append(len(iterations))
+            if len(iterations) == 1:
+                raise ValueError("scripted: 单帧异常")
+            if len(iterations) == 3:
+                raise KeyboardInterrupt("scripted: 收尾退出")
+            return {"action": None}
+
+        runner.run_iteration = _flaky
+        import threading
+
+        thread = threading.Thread(target=runner.run, daemon=True)
+        thread.start()
+        assert _wait_until(lambda: bool(registry.subscriptions)), "未完成 acquire"
+        subscription = registry.subscriptions[0]
+        subscription.on_frames(_frame(), 0)      # 第 1 帧：异常被吞
+        subscription.on_frames(_frame(rows=3), 0)  # 第 2 帧：照常处理
+        subscription.on_frames(_frame(), 0)      # 第 3 帧：穿透退出
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
+        assert len(iterations) == 3  # 循环在异常后继续到收尾帧
+        row = persistence.get_live_trading_task(db, "t1")
+        assert row["status"] == "error"
+        assert registry.released == [subscription]  # finally release
