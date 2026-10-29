@@ -39,13 +39,15 @@ WS 订阅确认后零推送〕，消息样例与断线场景的运行级验证�
   data["stream"] 键查回调映射分发；无 response_model 时回调收整包
   dict（stream+data 两键的组合流包装形制——与旧 SDK 未解析 str
   不同，适配层需取 data["data"] 内层）。
-④断线行为（源码级）：**内建自动重连存在**（connect 内双任务：
-  schedule_reconnect 兜底间隔 AUTO_RECONNECT_INTERVAL_SECONDS=82800s
-  +receive_loop 断开检测触发 schedule_reconnect〔Configuration
-  reconnect_delay=5000ms 固定间隔 × reconnect_attempts=3 有限次〕
-  +serverShutdown 事件 5s 重连）——固定间隔×有限次数形制，与现自
-  持指数退避（1s/2s/4s…封顶 60s 无限重试）不等价；重连归属与
-  R-16 语义等价迁移的适配裁决见 design 契约 2。
+④断线行为（源码级）：**内建自动重连存在但仅两触发路径**（connect
+  内 schedule_reconnect 兜底任务间隔 AUTO_RECONNECT_INTERVAL_
+  SECONDS=82800s + serverShutdown 事件 5s 重连）——receive_loop
+  断开检测不触发 schedule_reconnect（断线路径仅发 close 事件+弃
+  连接，不发起重连）；Configuration reconnect_delay=5000ms ×
+  reconnect_attempts=3 参数挂 reconnect() 自身重试节奏（重试
+  循环内固定间隔×有限次），非断线检测路径——与现自持指数退避
+  （1s/2s/4s…封顶 60s 无限重试）不等价；重连归属与 R-16 语义等
+  价迁移的适配裁决见 design 契约 2。
 """
 from __future__ import annotations
 
