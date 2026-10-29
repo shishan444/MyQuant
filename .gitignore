@@ -11,8 +11,6 @@ venv/
 .venv/
 
 # Data files
-data/market/*.parquet
-data/market_backup*/
 data/evolution.db
 data/quant.db
 data/config.json
@@ -51,7 +49,6 @@ data/*.db
 
 # Working docs
 wroks/
-data/market/*.db
 
 # SQLite runtime files (WAL/SHM are transient, .db itself ignored above)
 data/*.db-shm

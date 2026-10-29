@@ -18,8 +18,13 @@ quant.db 的删除类策略（历史清理/退役分拣）持续产生空闲页�
 
 1. **停服**：`scripts/stop.sh`（API/MCP/Web 三进程全停——脚本前置
    自检会以 BEGIN IMMEDIATE 探测占用，未停服执行将退出码 2 拒绝）。
-2. **备份确认**：确认已有可用的库备份或 git 快照兜底（VACUUM 是
-   原地重建——虽然 SQLite 保证原子性，重大操作前保留恢复通道）。
+2. **快照临时件**（执行前 cp、核验后删）：停服库正常关闭后 wal
+   已随连接关闭合并，`cp data/quant.db /tmp/quant.db.vacuum-snap`
+   后执行第 3 步；第 4 步核验通过即删除临时件，不留常驻副本
+   （Q-2 裁决后 data/ 不再保留备份库实体，且 quant.db 在
+   .gitignore——git 从不跟踪它，本临时快照是执行窗口内唯一的
+   恢复通道；VACUUM 是原地重建，虽然 SQLite 保证原子性，重大
+   操作前保留恢复通道）。
 3. **执行**：`./venv/bin/python scripts/vacuum_quant_db.py`（缺省
    data/quant.db；可 `--db PATH` 指定）。输出前后体积与
    page_count/freelist_count 对比。
