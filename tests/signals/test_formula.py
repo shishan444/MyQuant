@@ -449,6 +449,15 @@ class TestMathVocabularyEvaluation:
         assert np.allclose(q0.to_numpy(), rmin.to_numpy(), equal_nan=True)
         assert np.allclose(q1.to_numpy(), rmax.to_numpy(), equal_nan=True)
 
+    def test_u31_quantile_monotone_in_q(self):
+        """性质锚：分位对 q 单调——同窗口下 q 大者逐位 >= q 小者
+        （分位数定义性质，阶段四属性补强）。"""
+        df = _df(n=40)
+        q03 = evaluate_formula("rolling_quantile(close, 7, 0.3)", df)
+        q07 = evaluate_formula("rolling_quantile(close, 7, 0.7)", df)
+        valid = q03.notna() & q07.notna()
+        assert (q03[valid] <= q07[valid] + 1e-12).all()
+
     def test_u31_quantile_nan_semantics(self):
         """NaN 语义按 pandas rolling 实况：窗口含 NaN 时跳过 NaN 用
         有效值计算（min_periods=1 下 {1,NaN} → 1.0——与 oracle 同源

@@ -92,6 +92,26 @@ class TestFormulaPlugin:
         cols = api_client.get("/api/research/signals").json()
         assert not any("cheat" in c["column_key"] for c in cols)
 
+    def test_math_vocabulary_words_through_real_route(
+            self, api_client, plugin_env):
+        """新词经真实路由透传（add-math-formula-vocabulary 层级补全）：
+        kalman_slope 注册走通（白名单扩容对 API 层可见、信号列即时
+        出现）+域校验拒绝经 422 结构化透传（q=0 越界，与既有前视拒
+        同 code 形制）。"""
+        _wire(api_client, plugin_env)
+        resp = api_client.post("/api/research/plugins/formula", json={
+            "name": "kf_api", "expression": "kalman_slope(close, 0.01, 25)"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["column"] == "fx_kf_api"
+        cols = api_client.get("/api/research/signals").json()
+        assert any(c["column_key"] == "fx_kf_api" for c in cols)
+        # 域校验拒绝面经同一路由结构化透传
+        resp = api_client.post("/api/research/plugins/formula", json={
+            "name": "kf_bad", "expression": "kalman(close, 0, 25)"})
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "RESEARCH_FORMULA_INVALID"
+        assert "越界" in json.dumps(resp.json(), ensure_ascii=False)
+
     def test_rejected_record_failure_does_not_mask_rejection(
             self, api_client, plugin_env, monkeypatch):
         """留档失败不影响拒绝语义（闸门终验消解：防御分支补测）。
