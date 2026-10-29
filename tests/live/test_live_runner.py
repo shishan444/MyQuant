@@ -143,3 +143,133 @@ class TestRecoverOrphan:
     def test_returns_open_orders(self, tmp_path):
         runner, _ = _make_runner(tmp_path)
         assert runner.recover_orphan_orders() == [{"orderId": 1}]
+
+
+# ── VS-2.7②④：K 线来源唯一静态断言+acquire/release 生命周期 ──
+
+
+def _wait_until(predicate, timeout: float = 5.0, interval: float = 0.01):
+    """轮询等待条件成立（生命周期线程同步锚；超时失败）。"""
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if predicate():
+            return True
+        _time.sleep(interval)
+    return False
+
+
+class TestKlineSourceUniqueness:
+    """VS-2.7②：K 线获取路径唯一=registry.acquire——构造签名含
+    registry 必填+域内无第二数据来源符号（静态断言）。"""
+
+    def test_registry_is_required_constructor_field(self):
+        """构造签名必填：缺 registry 即 TypeError（dataclass 必填字段
+        语义——K 线来源不可缺省）。"""
+        with pytest.raises(TypeError, match="registry"):
+            LiveTradingRunner(
+                executor=object(), client=object(),
+                symbol="BTCUSDT", timeframe="1h", dna=object(),
+                db_path=Path("x.db"), task_id="t1")
+
+    def test_domain_has_no_second_kline_source(self):
+        """core/live_trading/ 域内零第二数据来源：AST 扫描域内全部
+        .py——klines 族调用（任意接收者形制）与 FapiRestClient/
+        fetch_closed_bars 引用均零命中（自建行情通道即红）。"""
+        import ast as _ast
+
+        domain = Path(__file__).resolve().parents[2] / "core" / "live_trading"
+        violations: list[str] = []
+        for path in sorted(domain.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            tree = _ast.parse(path.read_text(encoding="utf-8"))
+            rel = path.relative_to(domain.parent).as_posix()
+            for node in _ast.walk(tree):
+                if (isinstance(node, _ast.Call)
+                        and isinstance(node.func, _ast.Attribute)
+                        and "klines" in node.func.attr):
+                    violations.append(f"{rel}: .{node.func.attr}()")
+                if isinstance(node, _ast.Name) and node.id == "FapiRestClient":
+                    violations.append(f"{rel}: FapiRestClient 引用")
+                if (isinstance(node, _ast.Call)
+                        and isinstance(node.func, _ast.Attribute)
+                        and node.func.attr == "fetch_closed_bars"):
+                    violations.append(f"{rel}: .fetch_closed_bars()")
+        assert violations == [], f"live_trading 域内第二数据来源：\n{violations}"
+
+    def test_runner_acquire_release_calls_present(self):
+        """正面符号锚：runner.py 含 self.registry.acquire 与
+        self.registry.release 调用节点（获取路径唯一符号+生命周期
+        闭环——与负向扫描互补）。"""
+        import ast as _ast
+
+        runner_path = (
+            Path(__file__).resolve().parents[2]
+            / "core" / "live_trading" / "runner.py")
+        tree = _ast.parse(runner_path.read_text(encoding="utf-8"))
+        called_on_registry = set()
+        for node in _ast.walk(tree):
+            if (isinstance(node, _ast.Call)
+                    and isinstance(node.func, _ast.Attribute)
+                    and isinstance(node.func.value, _ast.Attribute)
+                    and node.func.value.attr == "registry"):
+                called_on_registry.add(node.func.attr)
+        assert "acquire" in called_on_registry
+        assert "release" in called_on_registry
+
+
+class TestRunLifecycleAcquireRelease:
+    """VS-2.7④：acquire/release 生命周期——run 退出 release（订阅
+    归零回收参与；归零回收本体语义归 feed 域测试族）。"""
+
+    def test_run_releases_subscription_on_exit(self, tmp_path, monkeypatch):
+        """run 退出（致命中断穿透守护循环）→ finally release 恰一次，
+        参数与 acquire 一致（同 symbol/timeframe/subscription）。"""
+        monkeypatch.setattr(
+            "core.live_trading.runner.dna_to_signal_set",
+            lambda dna, df: object())
+
+        class FakeRegistry:
+            def __init__(self):
+                self.acquired: list[tuple] = []
+                self.released: list[tuple] = []
+
+            def acquire(self, symbol, timeframe, subscription):
+                self.acquired.append((symbol, timeframe, subscription))
+                return object()
+
+            def release(self, symbol, timeframe, subscription):
+                self.released.append((symbol, timeframe, subscription))
+
+        registry = FakeRegistry()
+        runner, _ = _make_runner(tmp_path)
+        runner.registry = registry  # 实例覆写注入（dataclass 可变）
+
+        def _boom(frame):
+            raise KeyboardInterrupt("scripted: 致命中断")
+
+        runner.run_iteration = _boom
+        import threading
+
+        def _run_and_swallow_interrupt():
+            # 吞 KeyboardInterrupt（预期退出通道——避免 daemon 线程
+            # excepthook 噪音；穿透本身即断言的退出路径证据）
+            try:
+                runner.run()
+            except KeyboardInterrupt:
+                pass
+
+        thread = threading.Thread(target=_run_and_swallow_interrupt, daemon=True)
+        thread.start()
+        assert _wait_until(lambda: bool(registry.acquired)), "未完成 acquire"
+        subscription = registry.acquired[0][2]
+        # 投帧→run_iteration 抛 KeyboardInterrupt（BaseException 穿透
+        # except Exception 守护）→ finally release
+        subscription.on_frames(_frame(), 0)
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
+        assert registry.released == [
+            ("BTCUSDT", "1h", subscription)]
+        assert len(registry.released) == 1

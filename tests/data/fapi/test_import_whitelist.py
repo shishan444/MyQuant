@@ -56,7 +56,11 @@ def _imported_sdk_modules(tree: ast.AST) -> set[str]:
 def test_binance_sdk_import_whitelist():
     """SDK 子树 import 点：新包⊆{stream.py, rest.py} 白名单+旧七子树
     全工程零命中（并集分置双锚）。"""
-    project_root = Path(__file__).resolve().parents[2]
+    # 工程根修正（tester2 覆盖核对）：本文件在 tests/data/fapi/ 下，
+    # 工程根=parents[3]；原 parents[2] 指 tests/ 目录——「全工程 .py
+    # 清单」实际只扫测试树，白名单双锚断言面恒绿（main 上即错位，
+    # 分支覆盖核对时暴露）
+    project_root = Path(__file__).resolve().parents[3]
     violations: list[str] = []
     for path in _iter_project_python_files(project_root):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -83,3 +87,15 @@ def test_binance_sdk_import_whitelist():
     assert not violations, (
         "SDK import 面越界（现役包仅允许 core/data/fapi/stream.py 与 "
         f"rest.py；旧七子树全工程零 import）：\n" + "\n".join(violations))
+
+
+def test_dependency_declarations_dual_package_coexistence():
+    """VS-2.9 依赖声明面：新包声明在场+旧包过渡期保留（双包并存是
+    回滚通道前置——文本断言防过渡期误删旧声明）。"""
+    project_root = Path(__file__).resolve().parents[3]
+    for name in ("pyproject.toml", "requirements.txt"):
+        text = (project_root / name).read_text(encoding="utf-8")
+        assert "binance-sdk-derivatives-trading-usds-futures" in text, (
+            f"{name} 缺新包声明")
+        assert "binance-futures-connector" in text, (
+            f"{name} 缺旧包过渡期声明（回滚通道前置）")

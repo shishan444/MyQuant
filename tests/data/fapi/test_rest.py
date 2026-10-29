@@ -319,6 +319,16 @@ class TestProxySemantics:
         assert holder["proxies"] is proxies
         assert sdk.session.trust_env is False  # 显式 proxies 不受影响
 
+    def test_env_proxy_set_still_trust_env_false(self, monkeypatch):
+        """VS-2.2 字面前置：环境变量 HTTP(S)_PROXY 置位+无显式代理
+        ——建连后 trust_env 仍 False（环境代理通道被阻断而非依赖
+        环境恰好未置位）。"""
+        monkeypatch.setenv("HTTP_PROXY", "http://env-leak:1080")
+        monkeypatch.setenv("HTTPS_PROXY", "http://env-leak:1080")
+        client, sdk = _make_client({})
+        client._sdk()  # noqa: SLF001——触发建连
+        assert sdk.session.trust_env is False
+
 
 # ── 白名单与环境变量面 ─────────────────────────────────────
 

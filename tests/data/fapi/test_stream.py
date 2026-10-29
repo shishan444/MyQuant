@@ -12,9 +12,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -656,3 +658,174 @@ def test_fake_client_none_callback_defensive_sides():
     client.die()               # on_error None 侧——仅 stop 打标
     assert client.stopped is True
     assert client.wait_dead(timeout=0.1) is True  # die→stop 已置 _dead
+
+
+# ── VS-2.4/VS-2.5：包装器订阅发送面+首验留档（覆盖核对补齐）──
+
+
+class _FakeAsyncSdk:
+    """新 SDK async 客户端替身（协程/注册调用全记录——订阅时序断言面）。
+
+    VS-2.4 订阅发送面驻 _NewSdkWsClient.connect 内部（BinanceFapiStream
+    测试族经 FakeFapiClient 时被整体绕过——subscribed_streams 常量直返
+    是恒真面，不能证明订阅实际发送）；本替身经 _sdk_client_factory 注入
+    包装器，按首验记录①②③的行为锚记录调用序列。
+    """
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.message_callbacks: dict[str, object] = {}
+        self.close_connection_calls = 0
+
+    async def connect(self, url, cfg):
+        self.calls.append(("connect", url))
+
+    def on_connection(self, event, handler):
+        self.calls.append(("on_connection", event))
+
+    async def subscribe(self, streams):
+        self.calls.append(("subscribe", tuple(streams)))
+
+    def on(self, event, callback, stream=None):
+        self.calls.append(("on", event, stream))
+        self.message_callbacks[stream] = callback
+
+    async def close_connection(self):
+        self.close_connection_calls += 1
+
+
+def _loop_and_thread() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """起专用事件循环线程（async 桥接基座——conftest AF_UNIX 放行面）。"""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(
+        target=loop.run_forever, name="test-ws-loop", daemon=True)
+    thread.start()
+    return loop, thread
+
+
+def _stop_loop(loop: asyncio.AbstractEventLoop,
+               thread: threading.Thread) -> None:
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5.0)
+    loop.close()
+
+
+class TestNewSdkWsClientSubscribeFace:
+    """VS-2.4 订阅发送面：连接建立即全量订阅 12 路+构造期订阅时序
+    （首验②——on 后于 subscribe，先注册时流名不在连接映射被丢弃）；
+    VS-2.3 等价族的分发桥面（loop 线程仅入队→分发线程转投消费方）。"""
+
+    @staticmethod
+    def _make_wrapper(fake, on_message, on_close=lambda: None):
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        loop, thread = _loop_and_thread()
+
+        def _teardown():
+            _stop_loop(loop, thread)
+
+        client = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=on_message, on_close=on_close,
+            loop=loop, _sdk_client_factory=lambda cfg: fake)
+        return client, _teardown
+
+    def test_connect_subscribes_full_set_in_sequence(self):
+        """连接建立即全量订阅：connect→close 注册→subscribe（恰一次、
+        12 路全集）→逐流 on 注册（12 次全部后于 subscribe——首验②）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, lambda payload: None)
+        try:
+            client.connect(timeout=5.0)
+            kinds = [c[0] for c in fake.calls]
+            # 建连先于订阅（首验①：connect 阻塞至握手完成）
+            assert kinds.index("connect") < kinds.index("subscribe")
+            # 订阅恰一次、参数=固定 12 路全集
+            assert kinds.count("subscribe") == 1
+            subscribed = next(
+                c for c in fake.calls if c[0] == "subscribe")[1]
+            assert list(subscribed) == FIXED_SUBSCRIBE_STREAMS
+            # 断线感知面：close 连接事件注册（首验④——断线仅事件通知）
+            assert any(c[0] == "on_connection" and c[1] == "close"
+                       for c in fake.calls)
+            # 逐流消息回调注册：12 次、流名=全集、全部后于 subscribe
+            on_indices = [i for i, c in enumerate(fake.calls)
+                          if c[0] == "on"]
+            assert len(on_indices) == 12
+            assert all(i > kinds.index("subscribe") for i in on_indices)
+            assert {c[2] for c in fake.calls
+                    if c[0] == "on"} == set(FIXED_SUBSCRIBE_STREAMS)
+        finally:
+            client.stop()
+            teardown()
+
+    def test_message_dispatched_via_dedicated_thread(self):
+        """消息分发桥（首验③线程语境）：SDK 推送经注册回调仅入队，
+        分发线程转投消费方 on_message——回调异常被吞不中断后续分发。"""
+        received: list[dict] = []
+        fail_first = {"yes": True}
+
+        def _on_message(payload):
+            received.append(payload)
+            if fail_first["yes"]:
+                fail_first["yes"] = False
+                raise RuntimeError("scripted: 消费方故障")
+
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, _on_message)
+        try:
+            client.connect(timeout=5.0)
+            payload1 = {"stream": "btcusdt@kline_1m", "data": {"e": "kline"}}
+            payload2 = {"stream": "ethusdt@kline_1m", "data": {"e": "kline"}}
+            fake.message_callbacks["btcusdt@kline_1m"](payload1)
+            fake.message_callbacks["ethusdt@kline_1m"](payload2)
+            # 首条回调异常被分发线程吞掉，第二条照常到达
+            assert _wait_until(lambda: len(received) >= 2)
+            assert received == [payload1, payload2]
+        finally:
+            client.stop()
+            teardown()
+
+    def test_stop_closes_connection_once_and_joins_dispatch(self):
+        """stop：close_connection 恰一次（幂等——重复 stop 不再发）+
+        分发线程随 sentinel 退出（stop 返回即已收尾）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, lambda payload: None)
+        client.connect(timeout=5.0)
+        client.stop()
+        client.stop()  # 幂等侧
+        assert fake.close_connection_calls == 1
+        dispatch = client._dispatch_thread  # noqa: SLF001——退出观察锚
+        assert dispatch is not None and not dispatch.is_alive()
+        teardown()
+
+    def test_connect_without_loop_raises(self):
+        """loop=None 防御面：connect 拒绝（工厂须经 BinanceFapiStream
+        传入事件循环——桥接基座缺失快速失败）。"""
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        client = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=lambda payload: None, on_close=lambda: None,
+            loop=None, _sdk_client_factory=lambda cfg: _FakeAsyncSdk())
+        with pytest.raises(RuntimeError, match="事件循环"):
+            client.connect(timeout=1.0)
+
+
+class TestFirstProbeRecordAnchors:
+    """VS-2.5 首验留档核验（文档核验面）：stream.py 模块头四要素首验
+    记录存在性文本锚——防记录被误删（第四要素是退避循环归属本层自持
+    的裁决依据，第二要素时序是订阅面断言的契约源）。"""
+
+    def test_module_header_four_elements_present(self):
+        stream_path = (
+            Path(__file__).resolve().parents[3]
+            / "core" / "data" / "fapi" / "stream.py")
+        header = stream_path.read_text(encoding="utf-8").split('"""')[1]
+        assert "新 SDK 首验记录" in header  # 记录在场
+        for anchor in ("构造与连通", "订阅面", "回调签名", "断线行为"):
+            assert anchor in header, f"首验四要素缺失：{anchor}"
+        # 要素④裁决锚：内建自动重连判定（退避归属维持本层自持）
+        assert "内建自动重连存在" in header
+        # 要素②时序锚：回调注册须后于订阅（先注册被连接映射丢弃）
+        assert "subscribe 之后" in header
