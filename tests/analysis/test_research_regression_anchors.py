@@ -3,7 +3,7 @@
 三锚锁「同一条件在同一真实数据上的触发计数跨代码变更不变」——参数
 修复、装载改造、模板重构任一环节改变锚值即红，防无声漂移。
 
-锚与数据（真实数据 BTCUSDT，data/market 在库；缺失时模块级 skip
+锚与数据（真实数据 BTCUSDT，data/market_fapi 在库〔锚重录后新域〕；缺失时模块级 skip
 不假绿——test_derivatives_contract 同款纪律）：
 【锚重录记录（cleanup-data-segment R-11 伴生②，2026-10-29）】：
 数据域切换 data/market（现货归档链）→ data/market_fapi（fapi 合约

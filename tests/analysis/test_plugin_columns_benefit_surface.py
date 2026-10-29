@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.slow, pytest.mark.integration]
 MARKET_DIR = Path("data/market_fapi")
 
 if not (MARKET_DIR / "BTCUSDT_4h.parquet").exists():
-    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market），插件列特征网跳过",
+    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi），插件列特征网跳过",
                 allow_module_level=True)
 
 from api.routes.research.analysis import _load_with_condition_refs
