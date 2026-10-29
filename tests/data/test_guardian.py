@@ -729,3 +729,52 @@ class TestTimerDueProperties:
         now = pd.Timestamp("2030-01-01T00:05:00Z")
         assert DataFreshnessGuardian._timer_due(
             now, last_run, interval) is expected
+
+
+# ── VS-1.15 真实形制断言（CARD-09）────────────────────────────
+
+class TestStatusSchema:
+    """守护器 status() 状态面结构判定——真实 guardian 单轮直调后断言
+    kline/derivs 两面结构（替代装配层透传恒真断言面的结构判定力）。"""
+
+    def test_status_schema_after_rounds(self, tmp_path):
+        """两单轮直调后：kline.keys=12 键全集（FIXED_SUBSCRIBE_KEYS
+        单源对照）且值域为六态枚举族；derivs 为 "symbols" 嵌套层——
+        两币种×funding/oi 两面、值域 ok|failed；status 键面与单轮
+        返回同源。"""
+        from core.data.fapi.stream import FAPI_SYMBOLS, FIXED_SUBSCRIBE_KEYS
+
+        (tmp_path / "d").mkdir()
+        _write_kline(tmp_path / "d", n=50)  # 一键有文件，其余 11 键无文件
+        rest = ScriptedRestClient()
+        clock = FakeClock(_T0 + 100 * _TF_1M)
+        guardian = DataFreshnessGuardian(
+            tmp_path / "d", rest_client=rest,
+            funding_refresher=lambda **k: pd.DataFrame(),
+            oi_refresher=lambda **k: {}, now_fn=clock)
+        kline_results = guardian.guard_kline_once()
+        derivs_results = guardian.guard_derivs_once()
+
+        status = guardian.status()
+        # kline 面：12 键全集+last_run 在位+与单轮返回同源
+        assert set(status["kline"]["keys"]) == {
+            f"{symbol}_{tf}" for symbol, tf in FIXED_SUBSCRIBE_KEYS}
+        assert status["kline"]["last_run"] is not None
+        assert status["kline"]["keys"] == kline_results
+        # 六态枚举域：fresh|ok|filled:N|skipped_no_file|skipped_corrupt|failed
+        plain_states = {"fresh", "ok", "skipped_no_file",
+                        "skipped_corrupt", "failed"}
+        for key, value in status["kline"]["keys"].items():
+            in_domain = value in plain_states or (
+                value.startswith("filled:")
+                and value.split(":", 1)[1].isdigit())
+            assert in_domain, f"{key} 值 {value!r} 超六态枚举域"
+        # derivs 面："symbols" 嵌套层（两币种×funding/oi 两面）
+        assert set(status["derivs"]) == {"last_run", "symbols"}
+        assert status["derivs"]["last_run"] is not None
+        assert status["derivs"]["symbols"] == derivs_results
+        assert set(status["derivs"]["symbols"]) == set(FAPI_SYMBOLS)
+        for symbol, faces in status["derivs"]["symbols"].items():
+            assert set(faces) == {"funding", "oi"}
+            assert faces["funding"] in {"ok", "failed"}
+            assert faces["oi"] in {"ok", "failed"}
