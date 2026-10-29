@@ -359,7 +359,17 @@ class BinanceFapiStream:
                 client.stop()
                 return False
             self._client = client
-        client.connect()  # 阻塞建连+订阅+注册（异常上抛归 _run 捕获）
+        try:
+            client.connect()  # 阻塞建连+订阅+注册（异常上抛归 _run 捕获）
+        except Exception:
+            # 异常路径弃 client 前清理（CARD-03）：半建连 client 的
+            # 连接协程资源由 stop() 收尾（幂等有 _stopped 锚）；挂载
+            # 先解除防 stop()/健康面在退避窗口读到死对象
+            with self._state_lock:
+                if self._client is client:
+                    self._client = None
+            client.stop()
+            raise
         _on_open()
         with self._state_lock:
             if self._stop_event.is_set():
