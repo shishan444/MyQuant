@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from core.data.storage import (
     _file_locks,
@@ -201,3 +202,58 @@ def test_three_entry_points_hold_lock_during_body(tmp_path, monkeypatch):
     merge_closed_rows(path, _ohlcv([("2026-01-01 00:02:00", 3.0)]))  # 入口 3
     assert held and all(held), "merge_closed_rows 读-改-写序列锁须持态"
     monkeypatch.setattr(pd.DataFrame, "to_parquet", original_to_parquet_hook)
+
+
+# ── 原子写（CARD-03——save_parquet 崩溃窗口消除）───────────────
+
+@pytest.mark.parametrize("entry", [
+    pytest.param("save", id="save_parquet"),
+    pytest.param("merge", id="merge_parquet"),
+    pytest.param("closed", id="merge_closed_rows"),
+])
+def test_atomic_write_crash_keeps_old_intact(tmp_path: Path, entry: str) -> None:
+    """CARD-03：三写入口写中途崩溃——目标文件保持旧版完整可读
+    （崩溃窗口消除）、tmp 异常路径清理、tmp 落同目录（os.replace
+    原子性前提）且不与数据集直构路径同名。"""
+    path = tmp_path / "atomic.parquet"
+    save_parquet(_ohlcv([("2026-01-01 00:00:00", 1.0)]), path)
+    new_rows = _ohlcv([("2026-01-01 00:01:00", 2.0)])
+    seen_tmp: list[Path] = []
+
+    def crash_to_parquet(self, p, *a, **kw):
+        seen_tmp.append(Path(p))
+        Path(p).write_text("half-written")  # 模拟半写内容落盘
+        raise RuntimeError("crash mid-write")
+
+    calls = {
+        "save": lambda: save_parquet(new_rows, path),
+        "merge": lambda: merge_parquet(new_rows, path),
+        "closed": lambda: merge_closed_rows(path, new_rows),
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pd.DataFrame, "to_parquet", crash_to_parquet)
+        with pytest.raises(RuntimeError):
+            calls[entry]()
+
+    # 崩溃后目标文件旧版完整（读侧旧版可读——可安全重试）
+    assert list(load_parquet(path)["close"]) == [1.0]
+    # 实写发生在同目录 tmp 上（同文件系统——rename 原子性前提）
+    # 且 tmp 名不与 {dataset_id}.parquet 直构路径形制同名
+    assert len(seen_tmp) == 1
+    tmp = seen_tmp[0]
+    assert tmp.parent == path.parent
+    assert tmp.name != path.name
+    assert ".tmp-" in tmp.name
+    # 异常路径 tmp 已被 finally 清理（目录零残留）
+    assert not [p for p in tmp_path.iterdir() if ".tmp-" in p.name]
+
+
+def test_atomic_write_no_tmp_residue_on_success(tmp_path: Path) -> None:
+    """CARD-03：正常路径三写入口全执行后目录零 tmp 残留（os.replace
+    完成形制），三入口写入成果俱在。"""
+    path = tmp_path / "clean.parquet"
+    save_parquet(_ohlcv([("2026-01-01 00:00:00", 1.0)]), path)
+    merge_parquet(_ohlcv([("2026-01-01 00:01:00", 2.0)]), path)
+    merge_closed_rows(path, _ohlcv([("2026-01-01 00:02:00", 3.0)]))
+    assert [p.name for p in tmp_path.iterdir()] == ["clean.parquet"]
+    assert list(load_parquet(path)["close"]) == [1.0, 2.0, 3.0]
