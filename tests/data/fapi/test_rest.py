@@ -36,6 +36,23 @@ def _kline_row(open_ms: int, *, price: float = 100.0) -> list:
     ]
 
 
+class _ApiResponse:
+    """新 SDK ApiResponse 替身（.data 惰性载荷直通）。"""
+
+    def __init__(self, data):
+        self.data = data
+
+
+class _Dumpable:
+    """新 SDK 建模响应替身（model_dump(by_alias=True) 回端点字段名）。"""
+
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def model_dump(self, by_alias: bool = False) -> dict:
+        return dict(self._payload)
+
+
 class FakeSDK:
     """UMFutures REST 替身（脚本化响应+调用记录+session 面）。"""
 
@@ -49,31 +66,42 @@ class FakeSDK:
         self.constructor_kwargs: dict = {}
         self.klines_calls: list[dict] = []
 
-    def klines(self, *, symbol, interval, startTime, endTime, limit):
+    def kline_candlestick_data(
+            self, symbol, interval, start_time=None, end_time=None,
+            limit=None):
+        """新 SDK kline_candlestick_data 替身（ApiResponse.data 直通
+        原始行列表——空响应模型直通形制源码级锚定）。"""
         if "klines" in self.raise_on:
             raise self.raise_on["klines"]
         self.klines_calls.append({
             "symbol": symbol, "interval": interval,
-            "startTime": startTime, "endTime": endTime, "limit": limit})
+            "startTime": start_time, "endTime": end_time, "limit": limit})
         if not self.klines_pages:
-            return []  # 页脚本耗尽=区间内无可得数据（真实端点语义）
+            return _ApiResponse([])  # 页脚本耗尽=区间内无可得数据
         # 端点尊重 limit 截断（klines 契约）——窗口路径「至多 N 根」
         # 依赖此建模（CARD-02 边界用例 max_bars=1 首次暴露）
-        return self.klines_pages.pop(0)[:limit]
+        return _ApiResponse(self.klines_pages.pop(0)[:limit])
 
-    def exchange_info(self):
+    def exchange_information(self):
+        """新 SDK exchange_information 替身（建模响应 dump 面）。"""
         if "exchange_info" in self.raise_on:
             raise self.raise_on["exchange_info"]
-        return self.exchange_info_script
+        return _ApiResponse(
+            _Dumpable(self.exchange_info_script or {}))
 
-    def funding_rate(self, *, symbol, startTime, endTime):
+    def get_funding_rate_history(
+            self, symbol=None, start_time=None, end_time=None, limit=None):
+        """新 SDK get_funding_rate_history 替身（建模行 dump 回端点
+        字段名 dict——消费面读 fundingRate/fundingTime）。"""
         if "funding_rate" in self.raise_on:
             raise self.raise_on["funding_rate"]
         if not self.funding_rows_script:
-            return []
+            return _ApiResponse([])
         if len(self.funding_rows_script) > 1:
-            return self.funding_rows_script.pop(0)
-        return self.funding_rows_script[0]
+            rows = self.funding_rows_script.pop(0)
+        else:
+            rows = self.funding_rows_script[0]
+        return _ApiResponse([_Dumpable(row) for row in rows])
 
 
 def _make_client(sdk_kwargs: dict, **client_kwargs) -> tuple[FapiRestClient, FakeSDK]:
