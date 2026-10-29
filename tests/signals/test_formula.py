@@ -616,3 +616,30 @@ class TestSeriesFirstParamGuard:
         assert len(evaluate_formula("log(10)", df)) == 60
         assert len(evaluate_formula("crossover(close, 100)", df)) == 60
         assert len(evaluate_formula("crossunder(close, 100)", df)) == 60
+
+
+class TestInfLiteralDomainRejection:
+    """CARD-02（SEC-01）：inf 字面量（1e999 解析即 inf）穿透开上界
+    域校验——kalman(close,1e999,25) 静态放行、求值产尾部 NaN 垃圾列
+    +RuntimeWarning 日志污染。out_of_domain 并入 not np.isfinite(val)
+    后静态拒（文案沿用「越界」形制，:g 格式化 inf 可读）。"""
+
+    def test_inf_q_rejected(self):
+        """主锚：开上界域 (0,+∞) 对 inf 的数值比较全放行，修复后拒。"""
+        errs = validate_formula("kalman(close, 1e999, 25)", COLS)
+        assert any("kalman q越界" in e and "inf" in e for e in errs)
+
+    def test_neg_inf_r_rejected(self):
+        """-inf 形态：既有 val < lo 已拒，并入 isfinite 后仍拒（对照）。"""
+        errs = validate_formula("kalman_slope(close, 0.01, -1e999)", COLS)
+        assert any("kalman_slope r越界" in e for e in errs)
+
+    def test_quantile_inf_still_rejected(self):
+        """对照锚：rolling_quantile q=1e999 走 [0,1] 上界既有拒，
+        并入 isfinite 不破坏既有拒绝面。"""
+        errs = validate_formula("rolling_quantile(close, 20, 1e999)", COLS)
+        assert any("分位点越界" in e for e in errs)
+
+    def test_finite_large_r_still_passes(self):
+        """防误拦：有限大 r（1e6）合法边界不受 isfinite 影响。"""
+        assert validate_formula("kalman(close, 0.01, 1e6)", COLS) == []

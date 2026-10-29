@@ -402,8 +402,13 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                             f"{fname} 第 {pidx + 1} 参（{pname}）"
                             "须为常量（静态可校验）")
                         continue
+                    # 非有限值（CARD-02）：1e999 字面量解析即 inf，
+                    # 开上界域 (0, None) 的数值比较全放行——求值产
+                    # 尾部 NaN 垃圾列+RuntimeWarning 日志污染；nan
+                    # 无字面量写法，isfinite 同时覆盖两面
                     out_of_domain = (
-                        val < lo or (lo_excl and val == lo)
+                        not np.isfinite(val)
+                        or val < lo or (lo_excl and val == lo)
                         or (hi is not None and val > hi))
                     if out_of_domain:
                         domain_text = (f"> {lo:g}" if hi is None
