@@ -821,6 +821,21 @@ class PaperTaskExecutor:
         dfs_by_timeframe = self._assemble_mtf_frames(df)
         from core.strategy.executor import dna_to_signal_set
 
+        # 运行期衍生品注入（fix-paper-funding-indicator-merge 任务 B
+        # 最小版）：feed 帧只含 K 线列，衍生品基因在此组装会不可求值
+        # ——装载期同款 merge 应用到运行帧（只读归档前向填充：归档
+        # 末端之后的 bar 沿用最后已知费率，stale 语义；归档缺失时
+        # 静默跳过）。实时费率增量拉取是 feed 侧后续增强（提案
+        # 任务 B 完整版），此处不越界做网络 IO。
+        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+
+        symbol = self.task_row["symbol"]
+        df = merge_derivatives_into_ohlcv(
+            df,
+            oi_df=self._load_deriv_frame(f"{symbol}_oi_{self._timeframe}"),
+            funding_df=self._load_deriv_frame(f"{symbol}_funding"),
+        )
+
         # with_hits=True：求值披露开启点（change paper-signal-log
         # design §10——信号行的基因命中归因数据源；缺省关闭的零侵入
         # 通道仅纸盘执行器开启）
