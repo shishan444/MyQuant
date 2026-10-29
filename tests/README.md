@@ -230,7 +230,7 @@
 
 ### C5~C7 资产（地图补登——C7.5 完备性核对）
 - tests/scripts/test_recalc_bb_semantics.py——C5 构造层 15 条（双通道枚举/幂等转正/对照三档）
-- tests/scripts/test_recalc_c5_verification.py——C5 真实库 R1~R5 只读核验
+- works/历史脚本/test_recalc_c5_verification.py——C5 真实库 R1~R5 只读核验（D-7 退役归档，原 tests/scripts/ 位）
 - tests/infra/test_contract_parity_family.py——C7 四处对拍 8 条（豁免集锚定+程序派生防漂移）
 
 ### fix-research 守护行

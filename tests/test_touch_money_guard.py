@@ -188,8 +188,17 @@ def scan_touch_money(entries: list[tuple[str, str]]) -> list[str]:
         for value in _string_constants(tree):
             if (value.startswith("binance.")
                     or value.startswith(SDK_PACKAGE_TOPLEVEL)
-                    or ("/" in value and "binance/" in value)):
-                modules.add(value.replace("/", "."))
+                    or ("/" in value and "binance/" in value)
+                    or (SDK_PACKAGE_TOPLEVEL + "/") in value):
+                module = value.replace("/", ".")
+                # 非前缀路径形制（CARD-07：包名在路径中段，如
+                # "vendor/<pkg>/x"）截 SDK 段起入判——段级归属与
+                # 顶层引用同罪；顶层形制 idx=0 截取等同原值，
+                # binance. 族不含包名（idx=-1）不截保持原语义
+                idx = module.find(SDK_PACKAGE_TOPLEVEL)
+                if idx > 0:
+                    module = module[idx:]
+                modules.add(module)
         for module in sorted(modules):
             if _module_subtree(module) == "fapi" and not in_fapi_whitelist:
                 violations.append(
@@ -274,6 +283,27 @@ class TestScannerCapabilityProof:
                   'm = importlib.import_module("binance.um_futures")\n')
         violations = scan_touch_money([sample])
         assert any("binance.um_futures" in v for v in violations)
+
+    def test_mutation_new_sdk_dynamic_string_midpath(self):
+        """变异④纵深（CARD-07）：新包动态字符串非前缀路径形制
+        （vendor/<pkg>/x——包名在路径中段）→命中（前缀+binance/
+        双条件均不认下划线包名中段形制，原为漏拦面）。"""
+        sample = ("evil/dyn2.py",
+                  "import importlib\n"
+                  "m = importlib.import_module("
+                  '"vendor/binance_sdk_derivatives_trading_usds_futures'
+                  '/rest_api")\n')
+        violations = scan_touch_money([sample])
+        assert any("fapi SDK import 面白名单外" in v for v in violations)
+        # 白名单文件内同形制合法（新包白名单按模块归属——位置
+        # 有效性自证）
+        sample_wl = ("core/data/fapi/rest.py",
+                     "import importlib\n"
+                     "m = importlib.import_module("
+                     '"vendor/binance_sdk_derivatives_trading_usds_futures'
+                     '/rest_api")\n')
+        violations_wl = scan_touch_money([sample_wl])
+        assert violations_wl == []
 
     def test_mutation_python_binance_import_outside_domain(self):
         """变异②：域外 from binance.client import Client →命中。"""
