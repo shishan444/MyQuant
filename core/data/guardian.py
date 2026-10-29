@@ -24,6 +24,7 @@ from typing import Callable, Optional
 import pandas as pd
 
 from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
+from core.data.fapi.stream import FAPI_SYMBOLS, FIXED_SUBSCRIBE_KEYS
 from core.data.storage import get_latest_timestamp, merge_closed_rows
 from core.data.timeframes import TF_SECONDS
 
@@ -197,8 +198,6 @@ class DataFreshnessGuardian:
         重建归 feed 层既有路径，守护器不自愈只保鲜）| failed（REST 异常
         ——单键捕获续键）。任一异常不中断同轮其余键。
         """
-        from core.data.fapi.stream import FIXED_SUBSCRIBE_KEYS
-
         results: dict[str, str] = {}
         for symbol, timeframe in sorted(FIXED_SUBSCRIBE_KEYS):
             key = f"{symbol}_{timeframe}"
@@ -246,8 +245,6 @@ class DataFreshnessGuardian:
         """derivs 保鲜单轮：对 FAPI_SYMBOLS 两币种逐个调 funding/OI
         refresher（显式传 symbol 与 data_dir）。单 symbol 异常捕获记
         failed 续行（不中断同轮另一币种）。"""
-        from core.data.fapi.stream import FAPI_SYMBOLS
-
         funding_fn = self._funding_refresher or \
             self._default_funding_refresher
         oi_fn = self._oi_refresher or self._default_oi_refresher
