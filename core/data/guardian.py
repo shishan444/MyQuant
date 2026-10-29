@@ -163,8 +163,8 @@ class DataFreshnessGuardian:
 
         Returns:
             {"kline": {"last_run": iso|None, "keys": {键: 六态结果}},
-             "derivs": {"last_run": iso|None,
-                        "{SYMBOL}": {"funding": 结果, "oi": 结果}}}
+             "derivs": {"last_run": iso|None, "symbols":
+                        {"{SYMBOL}": {"funding": 结果, "oi": 结果}}}}
         """
         with self._lock:
             return {
