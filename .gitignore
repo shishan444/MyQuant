@@ -14,6 +14,9 @@ venv/
 data/evolution.db
 data/quant.db
 data/config.json
+# 行情 parquet 防误加（data/ 域全为运行时数据；通配覆盖现域
+# market_fapi 与将来子域——git add . 不卷入大文件）
+data/*/*.parquet
 
 # Runtime
 *.pid
