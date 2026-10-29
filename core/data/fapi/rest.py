@@ -50,6 +50,11 @@ FAPI_DATA_DIR_DEFAULT = "data/market_fapi"
 # fapi klines 单页上限（端点硬限；分页补拉的步进参数）
 KLINE_PAGE_LIMIT = 1500
 
+# 运行时增量补拉单轮上限（R-03——feed 对账与数据保鲜守护器两消费方
+# import 同一常量不两写）：单轮从缺口区间起点取至多 N 根，调用方逐轮
+# 推进向尾部收敛；启动建库/损坏重建的全量回补不受此限（豁免面）。
+RUNTIME_BACKFILL_MAX_BARS = 10
+
 # REST 超时（秒）——兜底通道可容忍慢，不可容忍无限挂起
 REST_TIMEOUT_SECONDS = 30
 
@@ -241,8 +246,10 @@ class FapiRestClient:
         timeframe: str,
         start_ts,
         end_ts,
+        *,
+        max_bars: Optional[int] = None,
     ) -> pd.DataFrame:
-        """按时刻区间补拉闭合 K 线（klines 分页；端点白名单面）。
+        """按时刻区间补拉闭合 K 线（klines；端点白名单面）。
 
         Args:
             symbol: 交易对（白名单两币种）。
@@ -250,10 +257,19 @@ class FapiRestClient:
             start_ts: 区间起点（pd.Timestamp/ISO 串兼容，含）。
             end_ts: 区间终点（不含——半开区间语义与数据目录一致，
                 本地过滤兜底端点含端边界）。
+            max_bars: 运行时增量窗口上限（None=分页补拉全区间——
+                建库/损坏重建语义；N=单轮窗口，**start 锚定**——请求
+                区间起点不变〔缺口起点〕、limit=min(N, KLINE_PAGE_
+                LIMIT)、从起点起取至多 N 根，调用方逐轮推进向尾部
+                收敛。禁用 end 锚定〔起点裁剪为 end−N×周期的形制
+                会使深缺口首轮补尾后新鲜判定直接通过、中段空洞永久
+                残留——缺口尾部暂缺不阻塞已补齐前缀段的消费〕。
+                缺省 None 保持既有分页行为不变）。
 
         Returns:
             闭合 bar 帧（index=开盘时刻 UTC、五列），与 feed 内存
-            序列同构；空区间空帧非 None。
+            序列同构；空区间空帧非 None。窗口路径实际返回可少于 N
+            （尾部 forming bar 被闭合过滤）。
 
         Raises:
             网络异常原样上抛（调用方捕获记日志续轮）。
@@ -262,22 +278,38 @@ class FapiRestClient:
         end_ms = _ts_to_ms(end_ts)
         collected: list = []
         cursor = start_ms
-        while cursor < end_ms:
-            rows = self._sdk().klines(
-                symbol=symbol,
-                interval=timeframe,
-                startTime=cursor,
-                endTime=end_ms - 1,
-                limit=KLINE_PAGE_LIMIT,
-            )
-            if not rows:
-                break  # 区间内无可得数据（尾部推进或端点缺档）
-            collected.extend(rows)
-            next_cursor = int(rows[-1][0]) + 1
-            if next_cursor <= cursor:
-                break  # 端点异常自锁防御（cursor 不前进即终止）
-            cursor = next_cursor
-        frame = _klines_rows_to_frame(collected)
+        if max_bars is not None:
+            # 单轮窗口（start 锚定）：单页请求，起点即缺口起点，至多
+            # N 根——多轮由调用方推进（feed 对账 20s 主通道/守护器
+            # 300s 慢通道双通道收敛）
+            if cursor >= end_ms:
+                frame = _klines_rows_to_frame([])
+            else:
+                rows = self._sdk().klines(
+                    symbol=symbol,
+                    interval=timeframe,
+                    startTime=cursor,
+                    endTime=end_ms - 1,
+                    limit=min(int(max_bars), KLINE_PAGE_LIMIT),
+                )
+                frame = _klines_rows_to_frame(rows)
+        else:
+            while cursor < end_ms:
+                rows = self._sdk().klines(
+                    symbol=symbol,
+                    interval=timeframe,
+                    startTime=cursor,
+                    endTime=end_ms - 1,
+                    limit=KLINE_PAGE_LIMIT,
+                )
+                if not rows:
+                    break  # 区间内无可得数据（尾部推进或端点缺档）
+                collected.extend(rows)
+                next_cursor = int(rows[-1][0]) + 1
+                if next_cursor <= cursor:
+                    break  # 端点异常自锁防御（cursor 不前进即终止）
+                cursor = next_cursor
+            frame = _klines_rows_to_frame(collected)
         end_bound = pd.Timestamp(end_ms, unit="ms", tz="UTC")
         # 闭合过滤蕴含半开边界（openTime+tf<=end 蕴含 openTime<end）：
         # 端点 klines 含当前未闭合 bar（无 x 字段），本地按周期时长判闭合

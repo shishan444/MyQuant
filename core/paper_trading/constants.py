@@ -15,8 +15,18 @@ import os
 # 锚同步）
 MAX_RUNNING_TASKS = int(os.environ.get("PAPER_MAX_RUNNING_TASKS", "100"))
 
-# 调度器守护循环轮询间隔（秒）
+# 调度器守护循环轮询间隔（秒）——拾取/心跳/回补族节拍（对账节拍已
+# 独立为 RECONCILE_INTERVAL_SECONDS；同名类属性
+# FixedKeyBackfill.POLL_INTERVAL_SECONDS 是建库线程 60s 重试轮询，
+# 两者同名不同物）
 POLL_INTERVAL_SECONDS = 2.0
+
+# 对账守护循环节拍（秒）——独立于拾取节拍（add-data-freshness-
+# guardian R-02/裁决 A）：驱动活跃 feed 的 reconcile（缺口判定→
+# REST 补拉）；与拾取节拍由同一守护线程双计时分频执行（不新增
+# 第二调度线程）。窗口上限 RUNTIME_BACKFILL_MAX_BARS 下 60 根
+# 1m 缺口≈6 轮×20s≈2 分钟收敛（R-03 数学）
+RECONCILE_INTERVAL_SECONDS = 20.0
 
 # 最低样本线（证据强度层双阈值，design §6.5 定值依据：
 # 60=缺省窗口 180 根的三分之一；5=工程验证协议机械门槛同值）

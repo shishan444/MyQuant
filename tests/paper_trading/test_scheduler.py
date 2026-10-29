@@ -838,7 +838,7 @@ class TestDaemonAndDefensivePaths:
     def test_refresh_feeds_skips_dead_feed_and_swallows_error(
             self, tmp_path):
         """_refresh_feeds 两防御分支：get 返 None 的键跳过+reconcile
-        抛异常吞咽续轮。"""
+        抛异常吞咽续轮（R-02 双节拍后经 reconcile_once 驱动）。"""
         h = _SchedulerHarness(tmp_path)
         broken_feed = MagicMock()
         broken_feed.subscriber_count = 1
@@ -849,7 +849,7 @@ class TestDaemonAndDefensivePaths:
         fake_registry.get = lambda *k: (
             None if k[0] == "DEAD" else broken_feed)
         h.scheduler.registry = fake_registry
-        h.scheduler.run_once()  # 两分支均不炸即通过
+        h.scheduler.reconcile_once()  # 两分支均不炸即通过
         broken_feed.reconcile.assert_called_once()
 
     def test_executor_concluded_without_client_callback_noop(self, tmp_path):
@@ -1471,3 +1471,112 @@ class TestDepletedDoesNotChangeStateMachine:
             ("running", "stopped"),
             ("running", "error"),
         }), "depleted 不新增状态不新增迁移边（stop_reason 值域非状态域）"
+
+
+class TestDualTimersReconcile:
+    """R-02 双节拍（VS-1.7/1.15）：拾取族每 poll 节拍 run_once、对账
+    族独立节拍 reconcile_once——同一守护线程双计时分频，不增第二线程。
+
+    沿 TestDaemonAndDefensivePaths 形制：poll_interval=0.05 缩短等待、
+    now_fn 注入控时钟、spy 捕调用。
+    """
+
+    def test_daemon_loop_dual_timers_reconcile_independent(
+            self, tmp_path, monkeypatch):
+        """对账节拍独立于拾取节拍：间隔拉大后 run_once 多轮而
+        reconcile 仅首轮一次（last=None 视为到期——启动即首轮对账）；
+        时钟推进跨间隔后第二轮触发。"""
+        import pandas as pd
+
+        monkeypatch.setattr(
+            "core.paper_trading.runtime.scheduler"
+            ".RECONCILE_INTERVAL_SECONDS", 3600.0)
+        h = _SchedulerHarness(tmp_path)
+        h.scheduler = type(h.scheduler)(
+            h.db, registry=h.registry, poll_interval=0.05)
+        now_box = {"now": pd.Timestamp("2030-01-01T00:00:00Z")}
+        h.scheduler._now_fn = lambda: now_box["now"]  # noqa: SLF001
+
+        run_calls: list[int] = []
+        recon_calls: list[int] = []
+        original_run = h.scheduler.run_once
+
+        def spy_run():
+            run_calls.append(1)
+            original_run()
+
+        def spy_recon():
+            recon_calls.append(1)
+
+        h.scheduler.run_once = spy_run  # noqa: SLF001——spy 注入面
+        h.scheduler.reconcile_once = spy_recon  # noqa: SLF001
+        try:
+            h.scheduler.start()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and len(run_calls) < 6:
+                time.sleep(0.02)
+            # 拾取族每 poll 执行多轮；时钟未推进 → 对账恒只首轮一次
+            assert len(run_calls) >= 6, "拾取族须按 poll 节拍多轮执行"
+            assert recon_calls == [1], (
+                "时钟未跨对账间隔——reconcile 不得二次触发（首轮"
+                "=None 视为到期）")
+            # 推进时钟跨对账间隔（3600s）→ 第二轮 reconcile 触发
+            now_box["now"] = pd.Timestamp("2030-01-01T02:00:00Z")
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and len(recon_calls) < 2:
+                time.sleep(0.02)
+            assert len(recon_calls) == 2, "时钟跨间隔后对账须触发"
+        finally:
+            h.scheduler.stop()
+            h.scheduler.join(timeout=5.0)
+
+    def test_run_once_does_not_drive_reconcile(self, tmp_path):
+        """run_once 直调不再驱动 feed 对账（拾取族三段——移出证明）；
+        reconcile_once 直调驱动活跃 feed（对账族独立通道）。"""
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+            calls: list[str] = []
+            original = feed.reconcile
+            feed.reconcile = lambda: (calls.append("reconcile"), original())  # noqa: SLF001
+            h.scheduler.run_once()
+            assert calls == [], "run_once 不得驱动 feed 对账（已移驻对账节拍）"
+            h.scheduler.reconcile_once()
+            assert calls == ["reconcile"], "reconcile_once 须驱动活跃 feed"
+        finally:
+            h.teardown()
+
+    def test_reconcile_once_swallows_feed_exception(self, tmp_path):
+        """对账单轮异常吞咽续行：feed.reconcile 抛异常不外泄（下一
+        节拍重试——_refresh_feeds 既有形制）。"""
+        from core.paper_trading.runtime.feed import FeedSubscription
+
+        h = _SchedulerHarness(tmp_path)
+        try:
+            h.registry.acquire(
+                "BTCUSDT", "4h",
+                FeedSubscription(on_frames=lambda df, idx: None))
+            feed = h.registry.get("BTCUSDT", "4h")
+
+            def boom():
+                raise ConnectionError("对账网络异常")
+
+            feed.reconcile = boom  # noqa: SLF001——异常注入面
+            h.scheduler.reconcile_once()  # 不外泄即通过
+        finally:
+            h.teardown()
+
+    def test_reconcile_interval_constant_single_source(self):
+        """对账节拍常量单源：20.0 秒（裁决 A——与拾取 2.0s 分立）。"""
+        from core.paper_trading.constants import (
+            POLL_INTERVAL_SECONDS,
+            RECONCILE_INTERVAL_SECONDS,
+        )
+
+        assert RECONCILE_INTERVAL_SECONDS == 20.0
+        assert POLL_INTERVAL_SECONDS == 2.0

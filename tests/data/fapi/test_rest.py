@@ -360,3 +360,90 @@ class TestTsParsingAndPaginationGuard:
             pd.Timestamp("2026-03-27T01:00:00Z"))  # 大区间（多次分页企图）
         assert len(sdk.klines_calls) == 2  # 第二次同 openTime 即终止
         assert len(frame) == 1
+
+
+# ── 运行时增量窗口参数（add-data-freshness-guardian 契约 3，VS-1.9）──
+
+class TestFetchClosedBarsWindow:
+    """max_bars 单轮窗口（start 锚定）与 None 分页语义回归。
+
+    完成标准逐项：窗口调用从起点取至多 N 根（起点不裁剪+limit=
+    min(N, KLINE_PAGE_LIMIT)+单页请求）；缺省调用行为与改前等价
+    （分页推进形制不变）；窗口路径尾部 forming 被闭合过滤（实际
+    返回可少于 N）。
+    """
+
+    def test_window_anchor_start_not_end(self):
+        """start 锚定：请求起点=缺口起点（不被 end−N×周期 裁剪）。"""
+        # 缺口 60 根（00:00→01:00），窗口 N=10：若 end 锚定会把起点
+        # 推到 00:50——缺陷形制（深缺口中段空洞永久残留）；正确形制
+        # 起点=缺口起点 00:00、单页 limit=10
+        gap_start = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        gap_end = pd.Timestamp(_T0 + 60 * 60_000, unit="ms", tz="UTC")
+        page = [_kline_row(_T0 + i * 60_000) for i in range(10)]
+        client, sdk = _make_client({"klines_pages": [page]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m", gap_start, gap_end, max_bars=10)
+        assert len(sdk.klines_calls) == 1  # 单页请求（不再分页拉区间）
+        call = sdk.klines_calls[0]
+        assert call["startTime"] == _T0  # 起点不裁剪（start 锚定）
+        assert call["limit"] == 10
+        assert len(frame) == 10
+        assert frame.index[0] == gap_start  # 从起点起取
+        assert frame.index[-1] == pd.Timestamp(
+            _T0 + 9 * 60_000, unit="ms", tz="UTC")
+
+    def test_window_limit_capped_by_page_limit(self):
+        """limit=min(N, KLINE_PAGE_LIMIT)：N 超端点硬限时钳到 1500。"""
+        gap_start = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        gap_end = pd.Timestamp(_T0 + 3_600_000, unit="ms", tz="UTC")
+        client, sdk = _make_client({"klines_pages": [[]]})
+        client.fetch_closed_bars(
+            "BTCUSDT", "1m", gap_start, gap_end, max_bars=5000)
+        assert sdk.klines_calls[0]["limit"] == 1500
+
+    def test_window_forming_tail_filtered(self):
+        """窗口路径闭合过滤：尾部 forming 行被滤——返回可少于 N。"""
+        gap_start = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        gap_end = pd.Timestamp(_T0 + 120_000 - 1, unit="ms", tz="UTC")
+        # 两根在脚本里：00:00 闭合、00:01 forming（end=00:01:59.999）
+        page = [_kline_row(_T0), _kline_row(_T0 + 60_000)]
+        client, _ = _make_client({"klines_pages": [page]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m", gap_start, gap_end, max_bars=10)
+        assert len(frame) == 1  # 少于 N=10（尾部 forming 滤除）
+
+    def test_window_empty_region_empty_frame(self):
+        """窗口路径空区间（start>=end）零请求、空帧非 None。"""
+        t = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        client, sdk = _make_client({"klines_pages": [[]]})
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m", t, t, max_bars=10)
+        assert frame is not None and frame.empty
+        assert len(sdk.klines_calls) == 0  # 区间空——不发请求
+
+    def test_default_none_pagination_unchanged(self):
+        """max_bars=None（含缺省）分页语义不变回归。"""
+        page1 = [_kline_row(_T0 + i * 60_000) for i in range(3)]
+        page2 = [_kline_row(_T0 + 3 * 60_000 + i * 60_000)
+                 for i in range(2)]
+        client, sdk = _make_client({"klines_pages": [page1, page2]})
+        end = pd.Timestamp(_T0 + 5 * 60_000, unit="ms", tz="UTC")
+        # 显式 None 与缺省同形制（两段对照——脚本重灌防耗尽）
+        frame_default = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp(_T0, unit="ms", tz="UTC"), end)
+        sdk.klines_pages = [list(page1), list(page2)]
+        frame_none = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp(_T0, unit="ms", tz="UTC"), end, max_bars=None)
+        assert len(frame_default) == len(frame_none) == 5
+        assert len(sdk.klines_calls) == 6  # 各 3 次（两页+空探测）
+        # 分页 limit 仍是端点硬限（窗口不参与分页路径）
+        assert all(c["limit"] == 1500 for c in sdk.klines_calls)
+
+    def test_runtime_backfill_max_bars_constant(self):
+        """运行时增量单轮上限常量（R-03：单源 10——两消费方共用）。"""
+        from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
+
+        assert RUNTIME_BACKFILL_MAX_BARS == 10

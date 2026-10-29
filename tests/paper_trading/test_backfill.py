@@ -234,3 +234,26 @@ class TestFixedKeyBackfill:
         assert backfill._thread is first  # noqa: SLF001——同一线程对象
         assert threading.active_count() >= 1
         backfill.stop()
+
+
+class TestBackfillWindowExempt:
+    """R-03 豁免面（VS-1.8 分面）：建库路径的 rest_fetcher 调用不带
+    窗口参数（全量回补不受运行时上限约束——与对账路径区分）。"""
+
+    def test_backfill_call_has_no_window(self, tmp_path):
+        """backfill_key 增量补齐调用不含 max_bars 键（4 参形制）。"""
+        from core.data.storage import save_parquet
+
+        frame = make_ohlcv(n=5, freq="4h", seed=11)
+        path = tmp_path / "BTCUSDT_4h.parquet"
+        save_parquet(frame, path)
+        rest = _ScriptedRest({("BTCUSDT", "4h"): make_ohlcv(n=6, seed=11)})
+        now = frame.index[-1] + pd.Timedelta(hours=12)  # 缺口成立
+        backfill_key(
+            tmp_path, "BTCUSDT", "4h",
+            rest_fetcher=rest, now_fn=_clock(now))
+        assert len(rest.calls) == 1
+        symbol, timeframe, start_ts, end_ts = rest.calls[0]
+        assert (symbol, timeframe) == ("BTCUSDT", "4h")
+        # 起点锚=末根+周期（缺口起点）；调用面无窗口参数（豁免）
+        assert start_ts == frame.index[-1] + pd.Timedelta(hours=4)
