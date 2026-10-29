@@ -96,8 +96,8 @@ class TestKlineSixStates:
         assert guardian.status()["kline"]["keys"]["BTCUSDT_1m"] == "fresh"
 
     @pytest.mark.parametrize("offset_seconds,expected", [
-        (119, "fresh"),   # 临界内侧：now=last+119s 仍新鲜
-        (120, "ok"),      # 临界：now==last+2×周期 走缺口分支（空帧→ok）
+        pytest.param(119, "fresh", id="临界内侧-仍新鲜"),
+        pytest.param(120, "ok", id="恰界-缺口成立"),
     ])
     def test_fresh_boundary(self, tmp_path, offset_seconds, expected):
         """新鲜判定临界两侧参数化：恰界时刻缺口成立。"""
@@ -376,6 +376,129 @@ def test_default_tf_fallback_single_source():
     assert scheduler_mod.DEFAULT_TF_FALLBACK_SECONDS is single
 
 
+# ── 缺省依赖单点与生命周期防御面（阶段四闸门盲区消解）─────────
+
+class TestDefaultDependenciesAndLifecycle:
+    """缺省依赖三单点（惰性构造/缺省转调）与生命周期防御面（幂等
+    启动/未启动关停/未到期不重扫/derivs 单轮异常续轮）。"""
+
+    def test_rest_lazy_singleton(self, tmp_path, monkeypatch):
+        """缺省 rest 客户端惰性构造：不注入时延迟构造 FapiRestClient
+        且单例（两次取用同一对象——零重复建连）。"""
+        from core.data.fapi import rest as rest_mod
+
+        built: list[int] = []
+
+        class FakeClient:
+            def __init__(self):
+                built.append(1)
+
+        monkeypatch.setattr(rest_mod, "FapiRestClient", FakeClient)
+        guardian = DataFreshnessGuardian(tmp_path)
+        client1 = guardian._rest()  # noqa: SLF001——缺省依赖直测面
+        client2 = guardian._rest()  # noqa: SLF001
+        assert type(client1) is FakeClient
+        assert built == [1]  # 恰构造一次（惰性单例）
+        assert client1 is client2
+
+    def test_default_funding_refresher_delegates(self, tmp_path, monkeypatch):
+        """缺省 funding 单点转 update_funding_data——symbol/data_dir
+        显式透传（updater 默认值防坑锚）。"""
+        from core.data import updater as updater_mod
+
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            updater_mod, "update_funding_data",
+            lambda **kw: calls.append(kw) or pd.DataFrame())
+        DataFreshnessGuardian._default_funding_refresher(
+            symbol="BTCUSDT", data_dir=tmp_path)
+        assert calls == [{"symbol": "BTCUSDT", "data_dir": tmp_path}]
+
+    def test_default_oi_refresher_delegates(self, tmp_path, monkeypatch):
+        """缺省 OI 单点转 update_open_interest_data——同形显式透传。"""
+        from core.data import updater as updater_mod
+
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            updater_mod, "update_open_interest_data",
+            lambda **kw: calls.append(kw) or {"rows": 1})
+        result = DataFreshnessGuardian._default_oi_refresher(
+            symbol="ETHUSDT", data_dir=tmp_path)
+        assert calls == [{"symbol": "ETHUSDT", "data_dir": tmp_path}]
+        assert result == {"rows": 1}  # 返回值原样透传
+
+    def test_start_background_idempotent(self, tmp_path):
+        """start_background 幂等：已启动再调 no-op（同一线程对象不重建）。"""
+        guardian = DataFreshnessGuardian(
+            tmp_path, rest_client=ScriptedRestClient(),
+            funding_refresher=lambda **k: pd.DataFrame(),
+            oi_refresher=lambda **k: {}, now_fn=FakeClock(_T0))
+        try:
+            guardian.start_background()
+            first = guardian._thread  # noqa: SLF001
+            guardian.start_background()
+            assert guardian._thread is first  # noqa: SLF001——幂等 no-op
+        finally:
+            guardian.stop()
+
+    def test_stop_before_start_noop(self, tmp_path):
+        """未启动时 stop 不炸（thread None 直接过——关停序防御面）。"""
+        guardian = DataFreshnessGuardian(tmp_path)
+        guardian.stop()  # 不炸即通过
+
+    def test_derivs_round_exception_thread_survives(self, tmp_path):
+        """derivs 单轮在线程内异常→记日志续轮、线程不退出（K 线面
+        对称韧性）。异常时 last_run 未更新→下轮泊等仍到期重试。"""
+        guardian = DataFreshnessGuardian(
+            tmp_path, rest_client=ScriptedRestClient(),
+            funding_refresher=lambda **k: pd.DataFrame(),
+            oi_refresher=lambda **k: {}, now_fn=FakeClock(_T0))
+        original = guardian.guard_derivs_once
+        calls: list[int] = []
+
+        def flaky_derivs():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("derivs 首轮异常")
+            return original()
+
+        guardian.guard_derivs_once = flaky_derivs  # noqa: SLF001——注入面
+        try:
+            guardian.start_background()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and len(calls) < 2:
+                time.sleep(0.05)
+            assert len(calls) >= 2, "derivs 首轮异常后续轮（线程不退出）"
+            assert guardian._thread is not None  # noqa: SLF001
+            assert guardian._thread.is_alive()  # noqa: SLF001
+        finally:
+            guardian.stop()
+
+    def test_not_due_round_skips_kline_rescan(self, tmp_path):
+        """泊等轮未到期不重扫 K 线面：start 后跨多个泊等周期、时钟
+        不动——kline.last_run 保持首轮值（not due 分支不重跑）。"""
+        (tmp_path / "d").mkdir()
+        _write_kline(tmp_path / "d", n=50)
+        clock = FakeClock(_T0 + 100 * _TF_1M)
+        guardian = DataFreshnessGuardian(
+            tmp_path / "d", rest_client=ScriptedRestClient(),
+            funding_refresher=lambda **k: pd.DataFrame(),
+            oi_refresher=lambda **k: {}, now_fn=clock)
+        try:
+            guardian.start_background()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and (
+                    guardian.status()["kline"]["last_run"] is None):
+                time.sleep(0.05)
+            first_run = guardian.status()["kline"]["last_run"]
+            time.sleep(2.5)  # 跨 ≥2 个 1s 泊等轮（时钟不动→两计时器 not due）
+            assert guardian.status()["kline"]["last_run"] == first_run, (
+                "未到期泊等轮不得重扫（双计时到期判定）")
+            assert guardian._thread.is_alive()  # noqa: SLF001
+        finally:
+            guardian.stop()
+
+
 # ── VS-1.10 深缺口逐轮收敛 ────────────────────────────────────
 
 class TestDeepGapConvergence:
@@ -586,3 +709,23 @@ class TestDualFaceSemantics:
         diffs = merged.index.to_series().diff().dropna()
         assert (diffs == _TF_1M).all()
         assert merged.index[-1] == _T0 + 59 * _TF_1M
+
+
+# ── 计时到期判定不变量（阶段四闸门属性补强）──────────────────
+
+class TestTimerDueProperties:
+    """_timer_due 纯函数不变量三性质——与守护节拍数值解耦（任取
+    last_run/interval 组合成立，非仅 300/3600 生产值）。"""
+
+    @pytest.mark.parametrize("last_run,interval,expected", [
+        pytest.param(None, 300.0, True, id="从未执行-视为到期"),
+        pytest.param(pd.Timestamp("2030-01-01T00:00:00Z"), 300.0, True,
+                     id="恰界差等于间隔-到期"),
+        pytest.param(pd.Timestamp("2030-01-01T00:00:00Z"), 3600.0, False,
+                     id="差小于间隔-不到期"),
+    ])
+    def test_timer_due_invariants(self, last_run, interval, expected):
+        """到期判定：None 恒到期；差恰等于间隔到期；差小于间隔不到期。"""
+        now = pd.Timestamp("2030-01-01T00:05:00Z")
+        assert DataFreshnessGuardian._timer_due(
+            now, last_run, interval) is expected

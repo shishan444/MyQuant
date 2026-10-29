@@ -761,6 +761,16 @@ class TestRunnerStatus:
         assert body["pending_depth"] == 1
         assert body["running_count"] == 0
 
+    def test_runner_status_guardian_health_group(self, paper_api) -> None:
+        """守护器健康组经真实路由披露（add-data-freshness-guardian
+        A-1 端点面——契约「经既有 runner-status 聚合披露不新增端点」；
+        旁路未装配态=缺省值形制）。"""
+        client, _db = paper_api
+        body = client.get("/api/paper-trading/runner-status").json()
+        assert body["guardian"] == {
+            "kline": {"last_run": None, "keys": {}},
+            "derivs": {"last_run": None, "symbols": {}}}
+
 
 class TestLifespanPlacement:
     """纸盘 lifespan 挂载摆位守护（缺陷④同类面——inspect 静态锚）。

@@ -378,3 +378,114 @@ class TestGuardianAssembly:
             registry.flush_all = ordered_flush  # noqa: SLF001——探针注入
         # 关停序三段：流先停→守护器停→缓冲清空
         assert order == ["stream.stop", "guardian.stop", "flush_all"]
+
+
+class TestDefaultFactoryBranches:
+    """缺省装配分支（阶段四闸门盲区消解）：不注入 factory 时延迟
+    import 生产类构造——guardian 与 stream 两缺省分支经类级替身证
+    「走缺省路径+data_dir/on_closed_bar 正确传参」。"""
+
+    def test_default_guardian_branch_without_factory(
+            self, tmp_path, monkeypatch):
+        """guardian 缺省分支：不注入 guardian_factory→延迟 import
+        DataFreshnessGuardian 构造（挂点生效+data_dir 传参）。"""
+        from core.data import guardian as guardian_mod
+
+        class PatchedGuardian(_AssemblyGuardian):
+            pass
+
+        _AssemblyGuardian.instances.clear()
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(
+            guardian_mod, "DataFreshnessGuardian", PatchedGuardian)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            guardian = _AssemblyGuardian.instances[-1]
+            assert scheduler.registry.guardian is guardian  # 缺省分支构造+挂点
+            assert guardian.started == 1
+            assert guardian.data_dir == scheduler.registry.data_dir
+
+    def test_default_stream_branch_without_factory(
+            self, tmp_path, monkeypatch):
+        """stream 缺省分支：不注入 fapi_stream_factory→延迟 import
+        BinanceFapiStream 构造（on_closed_bar 路由回调传参）。"""
+        from core.data import fapi as fapi_pkg
+
+        class PatchedStream(_AssemblyStream):
+            pass
+
+        _AssemblyStream.instances.clear()
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(fapi_pkg, "BinanceFapiStream", PatchedStream)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            guardian_factory=_AssemblyGuardian)
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            stream = _AssemblyStream.instances[-1]
+            assert scheduler.registry.fapi_stream is stream  # 缺省分支构造
+            assert stream.started == 1
+            assert callable(stream.on_closed_bar)  # 路由回调传参在位
+
+
+class TestConfigDegradeBranches:
+    """config.yaml 读取降级分支（阶段四闸门盲区消解）：读取异常与
+    文档层非映射两防御路径——降级缺省 max_concurrent_tasks=2 不崩。"""
+
+    def test_config_read_error_degrades_to_default(
+            self, tmp_path, monkeypatch):
+        """config.yaml 读取异常（OSError/YAMLError）→降级缺省并留痕，
+        应用照常构造（max_concurrent_tasks 用缺省 2）。"""
+        import yaml as yaml_mod
+
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+
+        def boom_load(stream):
+            raise yaml_mod.YAMLError("scripted: config 损坏")
+
+        monkeypatch.setattr(yaml_mod, "safe_load", boom_load)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db", guardian_factory=_AssemblyGuardian)
+        with TestClient(app):  # 降级不崩即通过
+            assert app.state.paper_scheduler is not None
+
+    def test_config_non_mapping_degrades_to_default(
+            self, tmp_path, monkeypatch):
+        """config.yaml 文档层非映射（裸标量）→类型面防御降级缺省，
+        应用照常构造（AttributeError 不发生）。"""
+        import yaml as yaml_mod
+
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(
+            yaml_mod, "safe_load", lambda stream: "bare-scalar")
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db", guardian_factory=_AssemblyGuardian)
+        with TestClient(app):  # 非映射降级不崩即通过
+            assert app.state.paper_scheduler is not None

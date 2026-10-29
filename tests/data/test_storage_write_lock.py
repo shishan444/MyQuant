@@ -265,3 +265,31 @@ def test_atomic_write_no_tmp_residue_on_success(tmp_path: Path) -> None:
     merge_closed_rows(path, _ohlcv([("2026-01-01 00:02:00", 3.0)]))
     assert [p.name for p in tmp_path.iterdir()] == ["clean.parquet"]
     assert list(load_parquet(path)["close"]) == [1.0, 2.0, 3.0]
+
+
+def test_merge_invariants_index_unique_sorted(tmp_path: Path) -> None:
+    """合并不变式（阶段四闸门属性补强）：重复交错输入经两合并函数
+    后索引恒唯一且单调递增——与 keep 语义（first/last 何者胜出）正交
+    的共同不变量。"""
+    path = tmp_path / "inv.parquet"
+    save_parquet(_ohlcv([("2026-01-01 00:00:00", 1.0)]), path)
+    # 交错重复段：新帧时间戳乱序+与既有重叠
+    interleaved = _ohlcv([
+        ("2026-01-01 00:03:00", 30.0),
+        ("2026-01-01 00:01:00", 10.0),
+        ("2026-01-01 00:02:00", 20.0),
+    ])
+    merge_parquet(interleaved, path)
+    merged = load_parquet(path)
+    assert not merged.index.has_duplicates  # 唯一
+    assert merged.index.is_monotonic_increasing  # 单调
+    assert len(merged) == 4  # 无丢行
+
+    merge_closed_rows(path, _ohlcv([
+        ("2026-01-01 00:05:00", 50.0),
+        ("2026-01-01 00:04:00", 40.0),
+    ]))
+    merged2 = load_parquet(path)
+    assert not merged2.index.has_duplicates
+    assert merged2.index.is_monotonic_increasing
+    assert len(merged2) == 6

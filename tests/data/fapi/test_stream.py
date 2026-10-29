@@ -662,3 +662,15 @@ class TestLifecycleDefensiveBranches:
         client.sent_messages.append(json.dumps(
             {"method": "SUBSCRIBE", "params": ["btcusdt@kline_1m"]}))
         assert client.subscribed_streams == ["btcusdt@kline_1m"]  # 坏行跳过
+
+
+def test_fake_client_none_callback_defensive_sides():
+    """闸门盲区消解（阶段四）：FakeFapiClient 全回调缺省（None）构造
+    的防御侧——stop/deliver_raw/die 无回调不炸（no-op 面），die 仍打
+    stopped 与 _dead 标（断线同步锚保持）。"""
+    client = FakeFapiClient()  # 五回调全 None（on_open None 构造不触发）
+    client.stop()              # on_close None 侧——打标不炸
+    client.deliver_raw("{}")   # on_message None 侧——no-op
+    client.die()               # on_error None 侧——仅 stop 打标
+    assert client.stopped is True
+    assert client.wait_dead(timeout=0.1) is True  # die→stop 已置 _dead
