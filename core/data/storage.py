@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,9 +45,27 @@ def parquet_write_lock(path: Path):
 
 
 def _save_parquet_unlocked(df: pd.DataFrame, path: Path) -> None:
-    """写盘内层（调用方已持文件锁——合并族内调防嵌套自锁）。"""
+    """写盘内层（调用方已持文件锁——合并族内调防嵌套自锁）。
+
+    原子写：先写同目录临时文件再 os.replace 替换（同目录保证同一
+    文件系统——rename 原子性成立）。进程中途被杀时目标文件要么
+    旧版完整要么新版完整，无半写截断态；残留 tmp 不匹配
+    {dataset_id}.parquet 键形制（直构路径消费方扫不到），下次写
+    同名覆盖不堆积。tmp 名含线程标识是锁外并行写的防御深度：
+    各写者 tmp 独立、os.replace 各自原子，目标文件永不因 tmp
+    互踩损坏。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, engine="pyarrow")
+    tmp_path = path.with_name(f"{path.name}.tmp-{threading.get_ident()}")
+    try:
+        df.to_parquet(tmp_path, engine="pyarrow")
+        os.replace(tmp_path, path)
+    finally:
+        # 异常路径清理 tmp 残留（best-effort；os.replace 成功后已不存在）
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def save_parquet(df: pd.DataFrame, path: Path) -> None:
