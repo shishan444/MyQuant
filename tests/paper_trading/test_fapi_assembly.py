@@ -8,7 +8,8 @@
 装配旁路说明：全域 conftest 置 FAPI_STREAM_DISABLED=1；本文件各用例
 经 monkeypatch.delenv 显式开启装配面，流经 fapi_stream_factory 注入
 替身（零真实网络），建库经 monkeypatch _default_rest_fetcher 注入
-帧脚本。
+帧脚本；守护器经 guardian_factory 注入 _AssemblyGuardian 替身
+（derivs 首轮即扫——不注入则打真实 REST，CARD-01）。
 """
 from __future__ import annotations
 
@@ -72,7 +73,8 @@ class TestDataDirSwitch:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app) as client:
             scheduler = app.state.paper_scheduler
             assert Path(scheduler.registry.data_dir) == fapi_dir
@@ -92,7 +94,8 @@ class TestFixedSubscriptionAssembly:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             stream = _AssemblyStream.instances[-1]
             assert stream.started == 1
@@ -133,7 +136,8 @@ class TestFixedSubscriptionAssembly:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             stream = _AssemblyStream.instances[-1]
             scheduler = app.state.paper_scheduler
@@ -195,7 +199,8 @@ class TestBackfillThenMount:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app) as client:
             scheduler = app.state.paper_scheduler
             backfill = scheduler.registry.backfill
@@ -252,7 +257,8 @@ class TestBackfillThenMount:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             scheduler = app.state.paper_scheduler
             assert Path(scheduler.registry.data_dir) == fapi_dir
