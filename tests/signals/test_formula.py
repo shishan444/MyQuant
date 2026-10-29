@@ -185,17 +185,20 @@ class TestEvaluation:
 
 
 class TestWhitelistVocabulary:
-    """白名单 21 词与三表一致性。"""
+    """白名单 26 词与登记表一致性（add-math-formula-vocabulary 扩容后）。"""
 
-    def test_whitelist_count_21(self):
+    def test_whitelist_count_26(self):
         from core.signals.formula import FORMULA_FUNCTIONS, _FORMULA_ARITY
-        assert len(FORMULA_FUNCTIONS) == 21
+        assert len(FORMULA_FUNCTIONS) == 26
         assert set(FORMULA_FUNCTIONS) == set(_FORMULA_ARITY)
 
     def test_new_words_present(self):
         from core.signals.formula import FORMULA_FUNCTIONS
         for w in ("crossover", "crossunder", "max", "min", "gt", "lt",
-                  "eq", "logical_and", "logical_or", "logical_not"):
+                  "eq", "logical_and", "logical_or", "logical_not",
+                  # ---- add-math-formula-vocabulary 五词 ----
+                  "rolling_quantile", "sqrt", "log",
+                  "kalman", "kalman_slope"):
             assert w in FORMULA_FUNCTIONS
 
 
@@ -324,3 +327,243 @@ class TestLookbackDerivation:
         assert formula_lookback("gt(close, 5)") == 0
         assert formula_lookback("max(close, 10)") == 0
 
+
+
+# ================================================ add-math-formula-vocabulary
+# U1-2 登记面恰等 / U2 静态校验拒绝面 / U3 求值语义（design 附录测试方案）
+
+
+class TestMathVocabularyRegistry:
+    """U1-2：五词四表+附加域表登记面恰等。"""
+
+    def test_arity_registry(self):
+        from core.signals.formula import _FORMULA_ARITY
+        expect = {"rolling_quantile": 3, "sqrt": 1, "log": 1,
+                  "kalman": 3, "kalman_slope": 3}
+        for w, a in expect.items():
+            assert _FORMULA_ARITY[w] == a, w
+
+    def test_window_param_index(self):
+        from core.signals.formula import _WINDOW_PARAM_INDEX
+        assert _WINDOW_PARAM_INDEX["rolling_quantile"] == 1
+        # sqrt/log/kalman 族无窗口位（不在表=贡献 0 或走 fixed 表）
+        for w in ("sqrt", "log", "kalman", "kalman_slope"):
+            assert w not in _WINDOW_PARAM_INDEX, w
+
+    def test_fixed_lookback(self):
+        from core.signals.formula import _FIXED_LOOKBACK
+        assert _FIXED_LOOKBACK["kalman"] == 200
+        assert _FIXED_LOOKBACK["kalman_slope"] == 200
+
+    def test_extra_const_param_domains(self):
+        """附加常量参数域表：rolling_quantile 位 2 [0,1] 闭、
+        kalman/kalman_slope 位 1/2 (0,+∞) 开（下界排他）。"""
+        from core.signals.formula import _EXTRA_CONST_PARAM_DOMAINS
+        assert _EXTRA_CONST_PARAM_DOMAINS["rolling_quantile"][2] == \
+            (0.0, 1.0, False, "分位点")
+        for w in ("kalman", "kalman_slope"):
+            assert _EXTRA_CONST_PARAM_DOMAINS[w][1] == (0.0, None, True, "q")
+            assert _EXTRA_CONST_PARAM_DOMAINS[w][2] == (0.0, None, True, "r")
+
+
+class TestMathVocabularyValidation:
+    """U2：新词静态校验拒绝面（附加域表+窗口复用+前视防护不失效）。"""
+
+    def test_u21_quantile_domain(self):
+        # q 非常量 → 须为常量
+        errs = validate_formula("rolling_quantile(close, 20, close)", COLS)
+        assert any("第 3 参（分位点）须为常量" in e for e in errs)
+        # q 越界双侧 → 分位点越界 + 合法域披露
+        for bad in ("rolling_quantile(close, 20, 1.5)",
+                    "rolling_quantile(close, 20, -0.1)"):
+            errs = validate_formula(bad, COLS)
+            assert any("分位点越界" in e and "0, 1" in e for e in errs), bad
+        # 闭端点两侧合法（q=0.0/q=1.0 均过）
+        assert validate_formula("rolling_quantile(close, 20, 0.0)", COLS) == []
+        assert validate_formula("rolling_quantile(close, 20, 1.0)", COLS) == []
+
+    def test_u22_kalman_qr_domain(self):
+        """两词独立登记逐词测：非常量/非正三面拒、极小正数与无上界过。"""
+        for w in ("kalman", "kalman_slope"):
+            errs = validate_formula(f"{w}(close, close, 25)", COLS)
+            assert any("第 2 参（q）须为常量" in e for e in errs), w
+            for bad, name in ((f"{w}(close, 0, 25)", "q=0"),
+                              (f"{w}(close, 0.01, 0)", "r=0"),
+                              (f"{w}(close, 0.01, -25)", "r=-25")):
+                errs = validate_formula(bad, COLS)
+                assert any("越界" in e and "> 0" in e for e in errs), \
+                    f"{w} {name}"
+        # 开域边界合法：极小正数与超大 r 均过
+        assert validate_formula("kalman(close, 0.0001, 1e6)", COLS) == []
+        assert validate_formula("kalman_slope(close, 0.0001, 1e6)", COLS) == []
+
+    def test_u23_window_domain_reused(self):
+        """rolling_quantile 窗口位 1 复用既有窗口校验文案。"""
+        errs = validate_formula("rolling_quantile(close, 0, 0.5)", COLS)
+        assert any("窗口须 >= 1" in e for e in errs)
+        errs = validate_formula("rolling_quantile(close, 10001, 0.5)", COLS)
+        assert any("窗口超上限" in e for e in errs)
+
+    def test_u24_lookahead_guard_intact(self):
+        """扩词不破坏三关：新词内外嵌负向 shift 仍拒。"""
+        errs = validate_formula("shift(kalman_slope(close, 0.01, 25), -1)", COLS)
+        assert any("负向平移被禁止" in e for e in errs)
+        errs = validate_formula("sqrt(shift(close, -1))", COLS)
+        assert any("负向平移被禁止" in e for e in errs)
+
+    def test_u25_arity_errors(self):
+        """arity 校验对新词生效（域校验不遮蔽参数个数错误）。"""
+        errs = validate_formula("sqrt(close, 1)", COLS)
+        assert any("需要 1 个参数" in e for e in errs)
+        errs = validate_formula("kalman(close, 0.01)", COLS)
+        assert any("需要 3 个参数" in e for e in errs)
+
+
+class TestMathVocabularyEvaluation:
+    """U3：五词求值语义（手算锚+独立递归对照+收敛性质+NaN 契约）。"""
+
+    def _df_close(self, values):
+        idx = pd.date_range("2024-01-01", periods=len(values), freq="1h",
+                            tz="UTC", name="timestamp")
+        return pd.DataFrame({"close": pd.Series(values, index=idx,
+                                                dtype=float)}, index=idx)
+
+    def test_u31_rolling_quantile_manual(self):
+        """手算锚：[1..5] w=3——q=0.5 与 q=0.75 线性插值链
+        （min_periods=1 头部部分窗口分位；pos=q*(k-1) 线性插值）。"""
+        df = self._df_close([1, 2, 3, 4, 5])
+        out50 = evaluate_formula("rolling_quantile(close, 3, 0.5)", df)
+        assert out50.tolist() == pytest.approx(
+            [1.0, 1.5, 2.0, 3.0, 4.0])
+        out75 = evaluate_formula("rolling_quantile(close, 3, 0.75)", df)
+        assert out75.tolist() == pytest.approx(
+            [1.0, 1.75, 2.5, 3.5, 4.5])
+
+    def test_u31_quantile_extremes_identity(self):
+        """性质锚：q=0 ≡ rolling_min、q=1 ≡ rolling_max。"""
+        df = _df(n=40)
+        q0 = evaluate_formula("rolling_quantile(close, 7, 0)", df)
+        q1 = evaluate_formula("rolling_quantile(close, 7, 1)", df)
+        rmin = evaluate_formula("rolling_min(close, 7)", df)
+        rmax = evaluate_formula("rolling_max(close, 7)", df)
+        assert np.allclose(q0.to_numpy(), rmin.to_numpy(), equal_nan=True)
+        assert np.allclose(q1.to_numpy(), rmax.to_numpy(), equal_nan=True)
+
+    def test_u31_quantile_nan_semantics(self):
+        """NaN 语义按 pandas rolling 实况：窗口含 NaN 时跳过 NaN 用
+        有效值计算（min_periods=1 下 {1,NaN} → 1.0——与 oracle 同源
+        同调用，非 NaN 传播）。"""
+        df = self._df_close([1.0, np.nan, 3.0, 4.0, 5.0])
+        out = evaluate_formula("rolling_quantile(close, 2, 0.5)", df)
+        assert out.tolist() == pytest.approx([1.0, 1.0, 3.0, 3.5, 4.5])
+
+    def test_u32_sqrt(self):
+        df = self._df_close([4.0, 0.0, -1.0, np.nan, 9.0])
+        out = evaluate_formula("sqrt(close)", df)
+        expected = [2.0, 0.0, np.nan, np.nan, 3.0]
+        for got, exp in zip(out.tolist(), expected):
+            assert (np.isnan(got) and np.isnan(exp)) or got == exp
+
+    def test_u33_log(self):
+        """log 非正值→NaN（有意不取 -inf——spec scenario 直锚）。"""
+        df = self._df_close([1.0, float(np.e), 0.0, -1.0, np.nan])
+        out = evaluate_formula("log(close)", df)
+        expected = [0.0, 1.0, np.nan, np.nan, np.nan]
+        for got, exp in zip(out.tolist(), expected):
+            assert (np.isnan(got) and np.isnan(exp)) or \
+                got == pytest.approx(exp)
+
+    def test_u33_domain_forms_in_dsl(self):
+        """表达式形制 sqrt(0 - 1)/log(0) 在 DSL 内合法（BinOp 常量）
+        且逐位 NaN。"""
+        df = self._df_close([5.0] * 3)
+        assert np.isnan(evaluate_formula("sqrt(0 - 1)", df).iloc[0])
+        assert np.isnan(evaluate_formula("log(0)", df).iloc[0])
+
+    @staticmethod
+    def _reference_kalman(values, q=0.01, r=25.0):
+        """U3-4 独立参考递归（按 design §2 六项口径独立编码，不从
+        被测实现 import——两处独立编码构成对照）：x=[水平,斜率]，
+        x0=[s0,0]、P0=100I、F=[[1,1],[0,1]]、H=[1,0]、Q=diag(q,q)、R=r。"""
+        pr = np.asarray(values, dtype=float)
+        n = len(pr)
+        x = np.zeros((n, 2))
+        P = np.eye(2) * 100.0
+        x[0] = [pr[0], 0.0]
+        for t in range(1, n):
+            xp = np.array([x[t - 1, 0] + x[t - 1, 1], x[t - 1, 1]])
+            Pp = np.array(
+                [[P[0, 0] + P[1, 0] + P[0, 1] + P[1, 1] + q,
+                  P[0, 1] + P[1, 1]],
+                 [P[1, 0] + P[1, 1], P[1, 1] + q]])
+            S = Pp[0, 0] + r
+            K = Pp[:, 0] / S
+            x[t] = xp + K * (pr[t] - xp[0])
+            P = Pp - np.outer(K, [1.0, 0.0]) @ Pp
+        return x
+
+    def test_u34_kalman_matches_reference(self):
+        """逐位对照：线性趋势+正弦扰动短序列，被测词输出与独立参考
+        递归逐点 approx；首元素精确锚 kalman[0]==s[0]、slope[0]==0。"""
+        t = np.arange(60)
+        values = 100.0 + 0.5 * t + 3.0 * np.sin(t / 5.0)
+        df = self._df_close(values)
+        level = evaluate_formula("kalman(close, 0.01, 25)", df)
+        slope = evaluate_formula("kalman_slope(close, 0.01, 25)", df)
+        ref = self._reference_kalman(values, q=0.01, r=25.0)
+        assert level.iloc[0] == pytest.approx(values[0])
+        assert slope.iloc[0] == pytest.approx(0.0)
+        np.testing.assert_allclose(
+            level.to_numpy(), ref[:, 0], rtol=1e-9, atol=1e-9)
+        np.testing.assert_allclose(
+            slope.to_numpy(), ref[:, 1], rtol=1e-9, atol=1e-9)
+
+    def test_u35_convergence_property(self):
+        """收敛性质锚：无噪声线性趋势（斜率恒 1）200 根——slope 尾值
+        收敛 1（|err|<=1e-3）、level 贴合水平线（|err|<=1e-2）。"""
+        values = 100.0 + 1.0 * np.arange(200)
+        df = self._df_close(values)
+        slope = evaluate_formula("kalman_slope(close, 0.01, 25)", df)
+        level = evaluate_formula("kalman(close, 0.01, 25)", df)
+        assert abs(slope.iloc[-1] - 1.0) <= 1e-3
+        assert abs(level.iloc[-1] - values[-1]) <= 1e-2
+
+    def test_u36_no_nan_head(self):
+        """无 NaN 头分锚：无 NaN 输入下 kalman 族输出等长且全非 NaN
+        （递归初值机制——与 rolling 族头部部分计算语义刻意分叉）。"""
+        values = 100.0 + np.cumsum(np.random.default_rng(7).normal(0, 1, 80))
+        df = self._df_close(values)
+        for expr in ("kalman(close, 0.01, 25)",
+                     "kalman_slope(close, 0.01, 25)"):
+            out = evaluate_formula(expr, df)
+            assert len(out) == len(values)
+            assert not out.isna().any(), expr
+
+    def test_u37_nan_input_propagates_to_tail(self):
+        """NaN 传播契约：输入含 NaN → NaN 位起输出 NaN 至尾部
+        （递归无清洗——照契约断言，实现呈部分恢复即偏差）。"""
+        values = [100.0, 101.0, np.nan, 103.0, 104.0, 105.0, 106.0, 107.0]
+        df = self._df_close(values)
+        for expr in ("kalman(close, 0.01, 25)",
+                     "kalman_slope(close, 0.01, 25)"):
+            out = evaluate_formula(expr, df)
+            assert not np.isnan(out.iloc[1]), expr
+            assert np.isnan(out.iloc[2]) and np.isnan(out.iloc[-1]), expr
+
+    def test_u38_equal_length_contract(self):
+        """等长契约：五词输出与输入等长。"""
+        df = _df(n=37)
+        for expr in ("rolling_quantile(close, 9, 0.4)", "sqrt(close)",
+                     "log(close)", "kalman(close, 0.01, 25)",
+                     "kalman_slope(close, 0.01, 25)"):
+            assert len(evaluate_formula(expr, df)) == 37, expr
+
+    def test_u39_magnitude_anchor(self):
+        """量纲锚：level≈价格量纲（与 close 同数量级）、slope≈1/bar
+        （趋势 0.5/bar 下收敛到 0.5）。"""
+        values = 100.0 + 0.5 * np.arange(150)
+        df = self._df_close(values)
+        level = evaluate_formula("kalman(close, 0.01, 25)", df)
+        slope = evaluate_formula("kalman_slope(close, 0.01, 25)", df)
+        assert 0.1 * values[-1] < level.iloc[-1] < 10 * values[-1]
+        assert abs(slope.iloc[-1] - 0.5) <= 1e-3

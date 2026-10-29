@@ -67,3 +67,38 @@ class TestFormulaLookback:
     def test_plugin_columns_lookback_no_window(self, db):
         register_formula_plugin(db, name="raw", expression="abs(close - open)")
         assert plugin_columns_lookback(db, {"fx_raw"}) == 0
+
+
+class TestMathVocabularyLookback:
+    """U4（add-math-formula-vocabulary）：新词 warmup 三形态贡献与嵌套取 max。"""
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            # 窗口位形态
+            ("rolling_quantile(close, 20, 0.75)", 20),
+            # 固定贡献形态（收敛质量保守上限）
+            ("kalman(close, 0.01, 25)", 200),
+            ("kalman_slope(close, 0.01, 25)", 200),
+            # 逐元素零贡献（复合亦 0）
+            ("sqrt(close)", 0),
+            ("log(close)", 0),
+            ("sqrt(log(close))", 0),
+        ],
+    )
+    def test_u41_three_contribution_forms(self, expression, expected):
+        assert formula_lookback(expression) == expected
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            # 外层窗口 50 与内层 fixed 200 取 max
+            ("rolling_mean(kalman(close, 0.01, 25), 50)", 200),
+            # 内层窗口 300 大于外层 fixed 200 取 300
+            ("kalman(rolling_mean(close, 300), 0.01, 25)", 300),
+            # kalman 嵌 kalman_slope：双 fixed 同值
+            ("kalman(kalman_slope(close, 0.01, 25), 0.01, 25)", 200),
+        ],
+    )
+    def test_u42_nested_takes_max(self, expression, expected):
+        assert formula_lookback(expression) == expected

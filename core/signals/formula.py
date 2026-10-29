@@ -84,6 +84,67 @@ def _f_crossunder(a, b) -> pd.Series:
     return (a < b) & (_shift1(a) >= _shift1(b))
 
 
+# ------------------------------------ 数学词汇族（add-math-formula-vocabulary）
+
+def _f_rolling_quantile(s: pd.Series, n: int, q: float) -> pd.Series:
+    """滚动分位（oracle 乙轨同源 rolling_q：min_periods=1 头部部分计算）。"""
+    return s.rolling(int(n), min_periods=1).quantile(q)
+
+
+def _f_sqrt(x):
+    """逐元素平方根：负值→NaN（where 前置同时达成定义域外语义与
+    规避 numpy RuntimeWarning）。标量输入（DSL 常量形制 sqrt(0 - 1)）
+    同契约——NaN 缺失保守语义沿既有处理链。"""
+    if isinstance(x, pd.Series):
+        return np.sqrt(x.where(x >= 0))
+    return np.sqrt(x) if x >= 0 else np.nan
+
+
+def _f_log(x):
+    """逐元素自然对数：非正值→NaN（有意不取 log(0)=-inf——±inf 会
+    毒化滚动聚合且比较行为反直觉）。标量输入同契约。"""
+    if isinstance(x, pd.Series):
+        return np.log(x.where(x > 0))
+    return np.log(x) if x > 0 else np.nan
+
+
+def _kalman_states(s: pd.Series, q: float, r: float) -> np.ndarray:
+    """双状态卡尔曼递归（乙轨 oracle works/研究档案/math_validation.py:20-27
+    逐字同源）：x=[水平, 斜率]，F=[[1,1],[0,1]]、H=[1,0]、P0=100I，
+    过程噪声 diag(q,q)、观测噪声 r（标量）。
+
+    返回 n×2 状态矩阵（[:,0]=平滑水平、[:,1]=斜率，价格/bar 量纲）。
+    递归初值机制使 t=0 即有值（无 NaN 头）；输入含 NaN 时 NaN 经
+    innovation 逐 bar 传播至尾部（不修补——下游由既有显式拒绝面兜底）。
+    """
+    pr = s.to_numpy(dtype=float)
+    n = len(pr)
+    x = np.zeros((n, 2))
+    P = np.zeros((n, 2, 2))
+    x[0] = [pr[0], 0.0]
+    P[0] = np.eye(2) * 100
+    F = np.array([[1.0, 1.0], [0.0, 1.0]])
+    H = np.array([1.0, 0.0])
+    for t in range(1, n):
+        xp = F @ x[t - 1]
+        Pp = F @ P[t - 1] @ F.T + np.diag([q, q])
+        S = H @ Pp @ H + r
+        K = (Pp @ H) / S
+        x[t] = xp + K * (pr[t] - H @ xp)
+        P[t] = (np.eye(2) - np.outer(K, H)) @ Pp
+    return x
+
+
+def _f_kalman(s: pd.Series, q: float, r: float) -> pd.Series:
+    """卡尔曼平滑水平（状态分量 [:,0]，价格量纲）。"""
+    return pd.Series(_kalman_states(s, q, r)[:, 0], index=s.index)
+
+
+def _f_kalman_slope(s: pd.Series, q: float, r: float) -> pd.Series:
+    """卡尔曼斜率状态（分量 [:,1]，价格/bar 量纲；首元素 0）。"""
+    return pd.Series(_kalman_states(s, q, r)[:, 1], index=s.index)
+
+
 def _to_bool(x) -> pd.Series:
     """统一布尔化（R5）：fillna(False) 前置——astype(bool) 会把 NaN 变
     True，破坏「缺口保守不触发」语义。数值输入按非零为真。"""
@@ -96,6 +157,9 @@ def _to_bool(x) -> pd.Series:
 #: 0.2.12 扩至 21：时序结构族 crossover/crossunder（穿越时点布尔直出）
 #: 与逐元素族 max/min/gt/lt/eq/logical_and/logical_or/logical_not
 #: （比较与逻辑产布尔列，与数值混算按 0/1 参与）。
+#: add-math-formula-vocabulary 扩至 26：时序变换族并入 rolling_quantile、
+#: 逐元素族并入 sqrt/log（非定义域输入→NaN）、新增卡尔曼封装族
+#: kalman/kalman_slope（同一双状态递归的两个输出位）。
 FORMULA_FUNCTIONS: Dict[str, Callable[..., pd.Series]] = {
     "shift": _f_shift,
     "diff": _f_diff,
@@ -120,6 +184,12 @@ FORMULA_FUNCTIONS: Dict[str, Callable[..., pd.Series]] = {
     "logical_and": lambda a, b: _to_bool(a) & _to_bool(b),
     "logical_or": lambda a, b: _to_bool(a) | _to_bool(b),
     "logical_not": lambda a: ~_to_bool(a),
+    # ---- 数学词汇族（add-math-formula-vocabulary）----
+    "rolling_quantile": _f_rolling_quantile,
+    "sqrt": _f_sqrt,
+    "log": _f_log,
+    "kalman": _f_kalman,
+    "kalman_slope": _f_kalman_slope,
 }
 
 #: 各函数的参数个数（静态校验用）
@@ -130,13 +200,19 @@ _FORMULA_ARITY = {
     "crossover": 2, "crossunder": 2,
     "max": 2, "min": 2, "gt": 2, "lt": 2, "eq": 2,
     "logical_and": 2, "logical_or": 2, "logical_not": 1,
+    "rolling_quantile": 3, "sqrt": 1, "log": 1,
+    "kalman": 3, "kalman_slope": 3,
 }
 
 #: 结构固有回看贡献（0.2.12 R2——无参数位的时序结构词；与
-#: _WINDOW_PARAM_INDEX 参数位贡献取 max）
+#: _WINDOW_PARAM_INDEX 参数位贡献取 max）。kalman 族 200 为收敛
+#: 质量意义的保守上限（对齐 derive_warmup floor 200 不引入放大——
+#: 递归初值使输出无 NaN 头，warmup 是估计收敛裕度非缺失语义）。
 _FIXED_LOOKBACK = {
     "crossover": 1,
     "crossunder": 1,
+    "kalman": 200,
+    "kalman_slope": 200,
 }
 
 # 负向 shift 静态拦截的函数（第 2 参须为 >= 0 常量）
@@ -151,6 +227,20 @@ _WINDOW_PARAM_INDEX = {
     "rolling_mean": 1, "rolling_std": 1, "rolling_max": 1,
     "rolling_min": 1, "rolling_sum": 1,
     "zscore": 1, "ema": 1, "corr": 2,
+    "rolling_quantile": 1,
+}
+
+#: 附加常量参数域表（add-math-formula-vocabulary）：词 → 参数位 →
+#: (下界, 上界, 下界排他, 参数中文名)。上界 None 表示该侧无界；
+#: 下界排他=True 为开域（> 下界，kalman q/r 须严格正），False 为闭域
+#: （rolling_quantile 分位点端点 0/1 合法）。域校验在既有窗口位校验后
+#: 追加：非常量 → 拒；常量越界 → 拒（复用 _const_value 常量提取器）。
+#: 不建此表则 rolling_quantile(x,20,1.5)/kalman(close,-1,25) 静态放行、
+#: 求值层才炸——与 corr 零窗口漏检同族缺陷，静态拒优于求值才炸。
+_EXTRA_CONST_PARAM_DOMAINS = {
+    "rolling_quantile": {2: (0.0, 1.0, False, "分位点")},
+    "kalman": {1: (0.0, None, True, "q"), 2: (0.0, None, True, "r")},
+    "kalman_slope": {1: (0.0, None, True, "q"), 2: (0.0, None, True, "r")},
 }
 
 #: 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
@@ -285,6 +375,29 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                                 f"{fname} 窗口超上限: {val:g} bar"
                                 f"（上限 {MAX_PLUGIN_LOOKBACK_BARS}"
                                 "——换算 warmup 时长将溢出时间表示）")
+            # 附加常量参数域（add-math-formula-vocabulary）：非窗口参数
+            # 位的常量域校验（分位点 [0,1] 闭、kalman q/r (0,+∞) 开）——
+            # 非常量与越界均静态拒（_SHIFT_LIKE 文案同形制）
+            extra = _EXTRA_CONST_PARAM_DOMAINS.get(fname)
+            if extra:
+                for pidx, (lo, hi, lo_excl, pname) in extra.items():
+                    if len(node.args) <= pidx:
+                        continue  # arity 不符已由上方参数个数校验报错
+                    ok, val = _const_value(node.args[pidx])
+                    if not ok:
+                        errors.append(
+                            f"{fname} 第 {pidx + 1} 参（{pname}）"
+                            "须为常量（静态可校验）")
+                        continue
+                    out_of_domain = (
+                        val < lo or (lo_excl and val == lo)
+                        or (hi is not None and val > hi))
+                    if out_of_domain:
+                        domain_text = (f"> {lo:g}" if hi is None
+                                       else f"[{lo:g}, {hi:g}]")
+                        errors.append(
+                            f"{fname} {pname}越界: {val:g}"
+                            f"（合法 {domain_text}）")
 
     # 列引用（非函数名的 Name）
     called_funcs = {

@@ -246,10 +246,15 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   price_below/price_above 基因（收盘价对该指标线的严格比较），
   WHEN/THEN/分批三组同规则；ge/le 含等号形态与 open 等其余基础列
   主体仍显式拒绝——等号语义无对应严格形态，不作静默近似）**。
-- 公式插件 DSL 白名单 21 词（0.2.12）：时序变换 11 + 时序结构
-  crossover/crossunder + 逐元素 max/min/gt/lt/eq/logical_*——
-  金叉死叉等穿越结构可在公式层一次表达，产出布尔列直通假设条件
-  与策略翻译（真=触发，target 推荐 gt 0.5/ge 1/eq 1）。
+- 公式插件 DSL 白名单 26 词（0.2.12 时序结构与逐元素逻辑，
+  add-math-formula-vocabulary 数学词汇扩容）：时序变换 12（含
+  rolling_quantile 滚动分位，分位点 [0,1] 常量）+ 时序结构
+  crossover/crossunder + 逐元素 10（max/min/gt/lt/eq/logical_*
+  与数学函数 sqrt/log，非定义域输入输出 NaN）+ 卡尔曼封装 2
+  （kalman 平滑水平/kalman_slope 斜率状态，q/r 正常数、warmup
+  固定贡献 200 根）——金叉死叉等穿越结构可在公式层一次表达，
+  产出布尔列直通假设条件与策略翻译（真=触发，target 推荐
+  gt 0.5/ge 1/eq 1）。
 - 不可表达（转化会被拒绝并说明原因）：跨币种条件（WHEN BTC、
   THEN ETH）、分布形态类条件、无 subject 的模式条件、**条件携带
   timeframe 键的多周期假设**（0.2.14——TimeframeLayer 层映射的
