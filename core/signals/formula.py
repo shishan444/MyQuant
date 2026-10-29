@@ -243,6 +243,19 @@ _EXTRA_CONST_PARAM_DOMAINS = {
     "kalman_slope": {1: (0.0, None, True, "q"), 2: (0.0, None, True, "r")},
 }
 
+#: 首参为序列位的词（CARD-01 序列位防御）：首参无静态约束——传标量
+#: 常量（kalman(5,1,25)/rolling_mean(5,3)）静态放行、求值层在 _f_*
+#: 内 AttributeError 裸穿（不在 except (TypeError, ValueError) 收口
+#: 面）。max/min/gt/lt/eq/logical_* 支持常量广播、sqrt/log 标量输入
+#: 合法、crossover/crossunder 双参对称支持常量，均不在此表——白名单
+#: 形制只拦序列位词，防误拦常量合法用法。
+_SERIES_FIRST_PARAM = {
+    "shift", "diff",
+    "rolling_mean", "rolling_std", "rolling_max", "rolling_min",
+    "rolling_sum", "zscore", "ema", "corr", "abs",
+    "rolling_quantile", "kalman", "kalman_slope",
+}
+
 #: 公式插件回看窗口静态上限（bar 数）。防 warmup 换算溢出：窗口参数
 #: 无上限时 formula_lookback 可达任意大，bar 数 × 周期秒数换算
 #: pd.Timedelta 超上限（~9.2e9s，即 106751 天）即抛 OutOfBoundsTimedelta
@@ -478,6 +491,17 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
             if node.keywords:
                 raise FormulaError("不支持关键字参数")
             args = [_ev(a) for a in node.args]
+            # 序列位防御（CARD-01）：首参为序列位的词传标量（如
+            # kalman(5,1,25)）此前在 _f_* 内 AttributeError 裸穿——
+            # 不在下方 except (TypeError, ValueError) 收口面；此处
+            # 单点前置拦截（_SERIES_FIRST_PARAM 白名单词集，常量
+            # 广播/标量合法的词不拦）。零参直调形态（node.args 空）
+            # 交由下方既有收口（missing argument 为 TypeError）。
+            if (fname in _SERIES_FIRST_PARAM and node.args
+                    and not isinstance(args[0], pd.Series)):
+                raise FormulaError(
+                    f"{fname} 第 1 参须为列引用序列，实得 "
+                    f"{type(args[0]).__name__}")
             try:
                 return FORMULA_FUNCTIONS[fname](*args)
             except (TypeError, ValueError) as exc:

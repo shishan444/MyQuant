@@ -541,14 +541,15 @@ class TestMathVocabularyEvaluation:
 
     def test_u37_nan_input_propagates_to_tail(self):
         """NaN 传播契约：输入含 NaN → NaN 位起输出 NaN 至尾部
-        （递归无清洗——照契约断言，实现呈部分恢复即偏差）。"""
+        （递归无清洗——照契约断言，实现呈部分恢复即偏差；含中间位
+        逐位断言，非仅首尾两点）。"""
         values = [100.0, 101.0, np.nan, 103.0, 104.0, 105.0, 106.0, 107.0]
         df = self._df_close(values)
         for expr in ("kalman(close, 0.01, 25)",
                      "kalman_slope(close, 0.01, 25)"):
             out = evaluate_formula(expr, df)
-            assert not np.isnan(out.iloc[1]), expr
-            assert np.isnan(out.iloc[2]) and np.isnan(out.iloc[-1]), expr
+            assert not np.isnan(out.iloc[1]), f"{expr} NaN 位前应有值"
+            assert out.iloc[2:].isna().all(), f"{expr} NaN 位起至尾部逐位"
 
     def test_u38_equal_length_contract(self):
         """等长契约：五词输出与输入等长。"""
@@ -567,3 +568,51 @@ class TestMathVocabularyEvaluation:
         slope = evaluate_formula("kalman_slope(close, 0.01, 25)", df)
         assert 0.1 * values[-1] < level.iloc[-1] < 10 * values[-1]
         assert abs(slope.iloc[-1] - 0.5) <= 1e-3
+
+
+class TestSeriesFirstParamGuard:
+    """CARD-01 序列位防御：首参为序列位的词传标量统一收口
+    FormulaError（此前 AttributeError 裸穿——不在 except
+    (TypeError, ValueError) 收口面）。"""
+
+    def test_scalar_first_param_raises_formula_error(self):
+        """双形制主锚：新词 kalman(5,1,25) 与存量 rolling_mean(5,3)。"""
+        df = _df()
+        for expr in ("kalman(5, 1, 25)", "rolling_mean(5, 3)"):
+            with pytest.raises(
+                    FormulaError, match="第 1 参须为列引用序列") as ei:
+                evaluate_formula(expr, df)
+            assert "float" in str(ei.value), expr
+            assert expr.split("(")[0] in str(ei.value), expr
+
+    def test_stock_family_all_intercepted(self):
+        """存量族全覆盖：shift/diff/rolling 族/zscore/ema/corr/abs
+        及新词 rolling_quantile/kalman_slope 首参标量同收口。"""
+        df = _df()
+        for expr in ("shift(5, 1)", "diff(5, 1)",
+                     "rolling_std(5, 3)", "rolling_max(5, 3)",
+                     "rolling_min(5, 3)", "rolling_sum(5, 3)",
+                     "zscore(5, 3)", "ema(5, 3)", "abs(5)",
+                     "corr(5, volume, 3)",
+                     "rolling_quantile(5, 3, 0.5)",
+                     "kalman_slope(5, 0.01, 25)"):
+            with pytest.raises(FormulaError, match="第 1 参须为列引用序列"):
+                evaluate_formula(expr, df)
+
+    def test_constant_broadcast_words_not_hurt(self):
+        """防误拦对照：max/min/gt/lt/eq/logical_* 常量广播、sqrt/log
+        标量输入、crossover/crossunder 常量阈值均合法不受拦。"""
+        df = _df()
+        assert len(evaluate_formula("max(close, 10)", df)) == 60
+        assert len(evaluate_formula("min(close, 10)", df)) == 60
+        assert len(evaluate_formula("gt(close, 100)", df)) == 60
+        assert len(evaluate_formula("lt(close, 100)", df)) == 60
+        assert len(evaluate_formula("eq(close, close)", df)) == 60
+        assert len(evaluate_formula(
+            "logical_and(gt(close, 0), 1)", df)) == 60
+        assert len(evaluate_formula("logical_or(lt(close, 0), 0)", df)) == 60
+        assert len(evaluate_formula("logical_not(close)", df)) == 60
+        assert len(evaluate_formula("sqrt(4)", df)) == 60
+        assert len(evaluate_formula("log(10)", df)) == 60
+        assert len(evaluate_formula("crossover(close, 100)", df)) == 60
+        assert len(evaluate_formula("crossunder(close, 100)", df)) == 60
