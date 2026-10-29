@@ -33,8 +33,8 @@ from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
-from core.data.storage import load_parquet
-from core.data.timeframes import TF_SECONDS
+from core.data.storage import load_parquet, merge_closed_rows
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,6 @@ FUNDING_REFRESH_INTERVAL_SECONDS = 3600.0
 
 # 8h 结算网格（Binance 永续资金费结算节奏：UTC 00/08/16 点）
 _FUNDING_GRID = "8h"
-
-# 未知周期的 bar 秒数兜底（沿旧 runner _BAR_SECONDS.get(tf, 14400) 形制）
-_DEFAULT_BAR_SECONDS = 14400
 
 # OHLCV 基础列（WS 事件行与 REST 补拉帧的共同锚；指标列为派生面）
 OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -87,32 +84,21 @@ def settlement_points_between(
     return points
 
 
-def _default_rest_fetcher(symbol, timeframe, start_ts, end_ts) -> pd.DataFrame:
-    """缺省 REST 兜底（fapi 接入层——延迟构造，feed 永不触碰 SDK 类型）。"""
+def _default_rest_fetcher(
+    symbol, timeframe, start_ts, end_ts, *,
+    max_bars: Optional[int] = None,
+) -> pd.DataFrame:
+    """缺省 REST 兜底（fapi 接入层——延迟构造，feed 永不触碰 SDK 类型）。
+
+    max_bars 透传（R-03）：对账路径由调用方（_reconcile_round）显式
+    传窗口上限；建库/损坏重建（backfill_key/_rebuild_from_rest）不传
+    ——None=分页全区间（豁免面：启动建库的全量回补不受运行时上限
+    约束）。
+    """
     from core.data.fapi.rest import FapiRestClient
 
     return FapiRestClient().fetch_closed_bars(
-        symbol, timeframe, start_ts, end_ts)
-
-
-def merge_closed_rows(path: Path, new_rows: pd.DataFrame) -> None:
-    """闭合行合并落盘单点（既有行优先——已落行永不改写+去重不重行）。
-
-    与 storage.merge_parquet 的语义分野：共享底座 keep="last"（updater
-    增量覆盖语义）；本函数 keep="first"（时间戳已在文件时丢弃新行——
-    崩溃恢复竞态下已落行不被内存副本改写）。SymbolFeed 落盘与启动
-    建库（FixedKeyBackfill）共用本不变式单点。
-    """
-    from core.data.storage import save_parquet
-
-    if not path.exists():
-        save_parquet(new_rows, path)
-        return
-    existing = load_parquet(path)
-    columns = [c for c in new_rows.columns if c in existing.columns]
-    combined = pd.concat([existing[columns], new_rows[columns]])
-    combined = combined[~combined.index.duplicated(keep="first")]
-    save_parquet(combined.sort_index(), path)
+        symbol, timeframe, start_ts, end_ts, max_bars=max_bars)
 
 
 @dataclass(frozen=True)
@@ -327,14 +313,19 @@ class SymbolFeed:
             base = self._df
         if base is None or base.empty:
             return "ok"  # 无基线键——等启动建库线程建立
-        interval = TF_SECONDS.get(self.timeframe, _DEFAULT_BAR_SECONDS)
+        interval = TF_SECONDS.get(self.timeframe, DEFAULT_TF_FALLBACK_SECONDS)
         last_closed = base.index[-1]
         now = self._now_fn()
         if now < last_closed + pd.Timedelta(seconds=2 * interval):
             return "ok"  # 无缺口——下一根尚在形成（不广播不落盘）
         gap_start = last_closed + pd.Timedelta(seconds=interval)
+        # 运行时增量窗口（R-03）：单轮从缺口起点取至多 N 根（start
+        # 锚定——多轮由对账节拍推进收敛）；建库/重建路径不经此处
+        from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
+
         frame = self._rest_fetcher(
-            self.symbol, self.timeframe, gap_start, now)
+            self.symbol, self.timeframe, gap_start, now,
+            max_bars=RUNTIME_BACKFILL_MAX_BARS)
         if frame is None or frame.empty:
             return "ok"  # 对账无所得（端点暂无新数据）
         # forming 防御滤（REST 契约已闭合——本滤为落盘不变式的纵深：
@@ -564,6 +555,10 @@ class FeedRegistry:
         # 建库状态；缺省 None=该面未启动的 K2 缺省语义）
         self.fapi_stream: Optional[object] = None
         self.backfill: Optional["FixedKeyBackfill"] = None
+        # 保鲜守护器挂点（add-data-freshness-guardian 契约 6：属性
+        # 引用非模块依赖——registry 不 import guardian 类型，scheduler
+        # 经 getattr 聚合健康面）
+        self.guardian: Optional[object] = None
 
     def acquire(
         self, symbol: str, timeframe: str,
@@ -763,7 +758,7 @@ def backfill_key(
         raise RuntimeError(
             f"建库未就绪（文件空）：{symbol}_{timeframe}"
             "——空文件非数据就绪，记 failed 下轮重试")
-    interval = TF_SECONDS.get(timeframe, _DEFAULT_BAR_SECONDS)
+    interval = TF_SECONDS.get(timeframe, DEFAULT_TF_FALLBACK_SECONDS)
     last = existing.index[-1]
     if now < last + pd.Timedelta(seconds=2 * interval):
         return  # 尾戳已新鲜——数据就绪

@@ -108,10 +108,13 @@ class FeedHarness:
             funding_refresher=self._funding_refresher,
             now_fn=self.clock)
 
-    def _rest(self, symbol, timeframe, start_ts, end_ts) -> pd.DataFrame:
+    def _rest(
+        self, symbol, timeframe, start_ts, end_ts, *,
+        max_bars=None,
+    ) -> pd.DataFrame:
         self.rest_calls.append(
             {"symbol": symbol, "timeframe": timeframe,
-             "start": start_ts, "end": end_ts})
+             "start": start_ts, "end": end_ts, "max_bars": max_bars})
         if not self._rest_frames:
             return pd.DataFrame()
         if len(self._rest_frames) > 1:
@@ -858,3 +861,24 @@ class TestReconcileAllDuplicateAndDefaults:
         monkeypatch.setattr(
             h.registry, "get", lambda *a, **k: None)  # 回收竞态窗口
         h.registry.flush_all()  # 不炸即通过（continue 分支）
+
+
+class TestReconcileWindowPassThrough:
+    """R-03 对账链窗口传递（VS-1.8）：对账路径 REST 调用带窗口上限
+    （max_bars=RUNTIME_BACKFILL_MAX_BARS）；缺省替身向后兼容形制
+    （max_bars 可选参）。"""
+
+    def test_reconcile_passes_window_cap(self, tmp_path):
+        """对账缺口补拉调用记录含 max_bars=10（单源常量）。"""
+        from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
+
+        h = FeedHarness(tmp_path)
+        new_bar = h.last + h.tf
+        h._rest_frames = [_ohlcv_at([new_bar])]
+        feed, _ = h.acquire()
+        h.clock.now = h.last + 2 * h.tf  # 缺口成立
+        feed.reconcile()
+        assert len(h.rest_calls) == 1
+        call = h.rest_calls[0]
+        assert call["max_bars"] == RUNTIME_BACKFILL_MAX_BARS
+        assert call["max_bars"] == 10

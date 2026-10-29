@@ -255,12 +255,14 @@ class ScriptedRestClient:
 
     def fetch_closed_bars(
         self, symbol: str, timeframe: str,
-        start_ts, end_ts,
+        start_ts, end_ts, *,
+        max_bars: Optional[int] = None,
     ) -> pd.DataFrame:
-        """fetch_closed_bars 替身（记录调用+脚本响应）。"""
+        """fetch_closed_bars 替身（记录调用含 max_bars+脚本响应）。"""
         self.closed_bars_calls.append({
             "symbol": symbol, "timeframe": timeframe,
-            "start_ts": start_ts, "end_ts": end_ts})
+            "start_ts": start_ts, "end_ts": end_ts,
+            "max_bars": max_bars})
         item = self._pop(self.closed_bars_script, pd.DataFrame())
         if isinstance(item, Exception):
             raise item

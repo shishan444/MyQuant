@@ -8,7 +8,8 @@
 装配旁路说明：全域 conftest 置 FAPI_STREAM_DISABLED=1；本文件各用例
 经 monkeypatch.delenv 显式开启装配面，流经 fapi_stream_factory 注入
 替身（零真实网络），建库经 monkeypatch _default_rest_fetcher 注入
-帧脚本。
+帧脚本；守护器经 guardian_factory 注入 _AssemblyGuardian 替身
+（derivs 首轮即扫——不注入则打真实 REST，CARD-01）。
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ class _AssemblyStream:
     """装配流替身（记录 start/stop+路由回调可直调；零网络）。"""
 
     instances: list["_AssemblyStream"] = []
+    connected = False  # status() ws 健康组消费面
 
     def __init__(self, *, on_closed_bar, ws_base_url=None, proxies=None):
         self.on_closed_bar = on_closed_bar
@@ -39,6 +41,12 @@ class _AssemblyStream:
 
     def stop(self):
         self.stopped += 1
+
+    def last_push(self, key):
+        return None  # 从未推送（status() ws 健康组消费面）
+
+    def silent_seconds(self, key):
+        return None
 
 
 def _enable_assembly(monkeypatch, tmp_path, *, rest_frames=None):
@@ -65,7 +73,8 @@ class TestDataDirSwitch:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app) as client:
             scheduler = app.state.paper_scheduler
             assert Path(scheduler.registry.data_dir) == fapi_dir
@@ -85,7 +94,8 @@ class TestFixedSubscriptionAssembly:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             stream = _AssemblyStream.instances[-1]
             assert stream.started == 1
@@ -126,7 +136,8 @@ class TestFixedSubscriptionAssembly:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             stream = _AssemblyStream.instances[-1]
             scheduler = app.state.paper_scheduler
@@ -188,7 +199,8 @@ class TestBackfillThenMount:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app) as client:
             scheduler = app.state.paper_scheduler
             backfill = scheduler.registry.backfill
@@ -245,7 +257,8 @@ class TestBackfillThenMount:
 
         app = create_app(
             db_path=tmp_path / "q.db",
-            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
         with TestClient(app):
             scheduler = app.state.paper_scheduler
             assert Path(scheduler.registry.data_dir) == fapi_dir
@@ -253,3 +266,226 @@ class TestBackfillThenMount:
             # 装配运行期旧归档未被触碰（mtime 逐纳秒不变）
             assert marker.stat().st_mtime_ns == mtime_before
             assert marker.read_bytes() == b"legacy-spot-archive"
+
+
+class _AssemblyGuardian:
+    """守护器替身（记录构造/start/stop+status 状态面；零网络）。"""
+
+    instances: list["_AssemblyGuardian"] = []
+
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+        self.started = 0
+        self.stopped = 0
+        _AssemblyGuardian.instances.append(self)
+
+    def start_background(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+    def status(self):
+        return {"kline": {"last_run": "fake", "keys": {}},
+                "derivs": {"last_run": "fake", "symbols": {}}}
+
+
+class TestGuardianAssembly:
+    """守护器装配三面（VS-1.13）：缺省真实装配/factory 注入替身生效/
+    旁路置位时整体跳过（factory 亦不调用）；关停序（VS-1.14）；
+    健康披露（VS-1.15）。"""
+
+    def test_factory_injection_mounted_and_started(self, tmp_path, monkeypatch):
+        """factory 注入替身→挂点生效+start_background 被调+健康组透传。"""
+        _AssemblyGuardian.instances.clear()
+        _enable_assembly(monkeypatch, tmp_path)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw),
+            guardian_factory=_AssemblyGuardian)
+        with TestClient(app):
+            guardian = _AssemblyGuardian.instances[-1]
+            scheduler = app.state.paper_scheduler
+            assert scheduler.registry.guardian is guardian
+            assert guardian.started == 1
+            # 健康披露（VS-1.15 装配态）：status 含 guardian 组=替身状态面
+            status = scheduler.status()
+            assert status["guardian"] == guardian.status()
+        assert guardian.stopped == 1  # 关停序含守护器 stop
+
+    def test_bypass_skips_guardian_and_factory(self, tmp_path, monkeypatch):
+        """旁路优先（VS-1.13）：FAPI_STREAM_DISABLED 置位→守护器整体
+        跳过+factory 亦不调用+健康组缺省值。"""
+        _AssemblyGuardian.instances.clear()
+        monkeypatch.setenv("FAPI_STREAM_DISABLED", "1")
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db", guardian_factory=_AssemblyGuardian)
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            assert scheduler.registry.guardian is None
+            assert _AssemblyGuardian.instances == []  # factory 未被调用
+            # 健康披露（VS-1.15 未装配态）：组值为缺省不报错
+            health = scheduler.status()["guardian"]
+            assert health == {
+                "kline": {"last_run": None, "keys": {}},
+                "derivs": {"last_run": None, "symbols": {}}}
+
+    def test_shutdown_order_guardian_before_flush(self, tmp_path, monkeypatch):
+        """关停序（VS-1.14）：fapi_stream.stop < guardian.stop < flush_all
+        三序（守护器停于 flush 前——避免 flush 后守护器再写）。"""
+        _AssemblyGuardian.instances.clear()
+        _AssemblyStream.instances.clear()
+        _enable_assembly(monkeypatch, tmp_path)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        order: list[str] = []
+        stream_cls = _AssemblyStream
+        guardian_cls = _AssemblyGuardian
+
+        class OrderedStream(stream_cls):
+            def stop(self):
+                order.append("stream.stop")
+                super().stop()
+
+        class OrderedGuardian(guardian_cls):
+            def stop(self):
+                order.append("guardian.stop")
+                super().stop()
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            fapi_stream_factory=lambda **kw: OrderedStream(**kw),
+            guardian_factory=OrderedGuardian)
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            registry = scheduler.registry
+            original_flush = registry.flush_all
+
+            def ordered_flush():
+                order.append("flush_all")
+                original_flush()
+
+            registry.flush_all = ordered_flush  # noqa: SLF001——探针注入
+        # 关停序三段：流先停→守护器停→缓冲清空
+        assert order == ["stream.stop", "guardian.stop", "flush_all"]
+
+
+class TestDefaultFactoryBranches:
+    """缺省装配分支（阶段四闸门盲区消解）：不注入 factory 时延迟
+    import 生产类构造——guardian 与 stream 两缺省分支经类级替身证
+    「走缺省路径+data_dir/on_closed_bar 正确传参」。"""
+
+    def test_default_guardian_branch_without_factory(
+            self, tmp_path, monkeypatch):
+        """guardian 缺省分支：不注入 guardian_factory→延迟 import
+        DataFreshnessGuardian 构造（挂点生效+data_dir 传参）。"""
+        from core.data import guardian as guardian_mod
+
+        class PatchedGuardian(_AssemblyGuardian):
+            pass
+
+        _AssemblyGuardian.instances.clear()
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(
+            guardian_mod, "DataFreshnessGuardian", PatchedGuardian)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            fapi_stream_factory=lambda **kw: _AssemblyStream(**kw))
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            guardian = _AssemblyGuardian.instances[-1]
+            assert scheduler.registry.guardian is guardian  # 缺省分支构造+挂点
+            assert guardian.started == 1
+            assert guardian.data_dir == scheduler.registry.data_dir
+
+    def test_default_stream_branch_without_factory(
+            self, tmp_path, monkeypatch):
+        """stream 缺省分支：不注入 fapi_stream_factory→延迟 import
+        BinanceFapiStream 构造（on_closed_bar 路由回调传参）。"""
+        from core.data import fapi as fapi_pkg
+
+        class PatchedStream(_AssemblyStream):
+            pass
+
+        _AssemblyStream.instances.clear()
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(fapi_pkg, "BinanceFapiStream", PatchedStream)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db",
+            guardian_factory=_AssemblyGuardian)
+        with TestClient(app):
+            scheduler = app.state.paper_scheduler
+            stream = _AssemblyStream.instances[-1]
+            assert scheduler.registry.fapi_stream is stream  # 缺省分支构造
+            assert stream.started == 1
+            assert callable(stream.on_closed_bar)  # 路由回调传参在位
+
+
+class TestConfigDegradeBranches:
+    """config.yaml 读取降级分支（阶段四闸门盲区消解）：读取异常与
+    文档层非映射两防御路径——降级缺省 max_concurrent_tasks=2 不崩。"""
+
+    def test_config_read_error_degrades_to_default(
+            self, tmp_path, monkeypatch):
+        """config.yaml 读取异常（OSError/YAMLError）→降级缺省并留痕，
+        应用照常构造（max_concurrent_tasks 用缺省 2）。"""
+        import yaml as yaml_mod
+
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+
+        def boom_load(stream):
+            raise yaml_mod.YAMLError("scripted: config 损坏")
+
+        monkeypatch.setattr(yaml_mod, "safe_load", boom_load)
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db", guardian_factory=_AssemblyGuardian)
+        with TestClient(app):  # 降级不崩即通过
+            assert app.state.paper_scheduler is not None
+
+    def test_config_non_mapping_degrades_to_default(
+            self, tmp_path, monkeypatch):
+        """config.yaml 文档层非映射（裸标量）→类型面防御降级缺省，
+        应用照常构造（AttributeError 不发生）。"""
+        import yaml as yaml_mod
+
+        _enable_assembly(
+            monkeypatch, tmp_path,
+            rest_frames=lambda *a, **k: pd.DataFrame())
+        monkeypatch.setattr(
+            yaml_mod, "safe_load", lambda stream: "bare-scalar")
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(
+            db_path=tmp_path / "q.db", guardian_factory=_AssemblyGuardian)
+        with TestClient(app):  # 非映射降级不崩即通过
+            assert app.state.paper_scheduler is not None

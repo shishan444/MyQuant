@@ -11,7 +11,8 @@
   core/concurrency 既有基建）；
 - 心跳移交：running 但心跳超时（>3×bar 周期）的任务移交恢复器
   （注入面——core/paper_trading/runtime/recovery.recover_task）；
-- feed 驱动：活跃 feed 的 refresh（执行器订阅的共享作业单点刷新）；
+- feed 驱动：活跃 feed 的 reconcile（执行器订阅的共享作业单点对账——
+  独立对账节拍 RECONCILE_INTERVAL_SECONDS 驱动，与拾取节拍分频）；
 - 终态回补例程（Q-2，tasks 3.5）：定期扫全部任务（含终态）的
   pending 资金费行，parquet 可达则回填（不动 balance）+触发报告
   修订版回调；
@@ -19,8 +20,9 @@
   paper→active 迁移（trigger=task_end，多任务守卫+失败两权威分离）
   +回补重放步自愈（扫描 paper 态策略重试迁移）。
 
-测试通道：run_once() 单轮同步执行（拾取/心跳/feed 刷新/回补四段），
-不经守护线程与时钟。
+测试通道：run_once() 与 reconcile_once() 各自单轮同步执行（拾取/
+心跳/回补族与 feed 对账族两通道——R-02 双节拍解耦），不经守护线程
+与时钟。
 """
 from __future__ import annotations
 
@@ -30,10 +32,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from core.concurrency.task_control import TaskController
-from core.data.timeframes import TF_SECONDS
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 from core.paper_trading.constants import (
     MAX_RUNNING_TASKS,
     POLL_INTERVAL_SECONDS,
+    RECONCILE_INTERVAL_SECONDS,
 )
 from core.paper_trading.runtime.executor import PaperTaskExecutor
 from core.paper_trading.runtime.feed import FeedRegistry
@@ -51,9 +54,6 @@ LEGAL_TRANSITIONS = PT_STATUS_TRANSITIONS
 
 # 心跳超时系数（>3×bar 周期视为失联——design §5.1）
 HEARTBEAT_TIMEOUT_MULTIPLIER = 3
-
-# 未知周期兜底（沿 feed._DEFAULT_BAR_SECONDS 形制）
-_DEFAULT_BAR_SECONDS = 14400
 
 
 def can_transition(from_status: str, to_status: str) -> bool:
@@ -158,12 +158,29 @@ class PaperScheduler:
             thread.join(timeout=timeout)
 
     def _daemon_loop(self) -> None:
-        """守护循环（poll 间隔轮询 run_once；单轮异常记日志续轮）。"""
+        """守护循环（双计时分频：拾取族按 poll 节拍每轮 run_once；
+        对账族按独立节拍 reconcile_once——同一守护线程不增第二线程。
+
+        last_reconcile=None 视为到期（启动即首轮对账——「对账三触发」
+        之启动触发语义保持）；单轮异常各自记日志续轮。
+        """
+        last_reconcile: pd.Timestamp | None = None
         while not self._stop_event.wait(self._poll_interval):
             try:
                 self.run_once()
             except Exception:
                 logger.exception("纸盘调度器单轮异常（续轮）")
+            now = self._now()
+            if (
+                last_reconcile is None
+                or (now - last_reconcile).total_seconds()
+                >= RECONCILE_INTERVAL_SECONDS
+            ):
+                last_reconcile = now
+                try:
+                    self.reconcile_once()
+                except Exception:
+                    logger.exception("feed 对账守护节拍异常（续轮）")
 
     def startup_recover(self) -> Dict[str, int]:
         """启动期恢复扫描（app lifespan 入口，一次性——不经守护循环）。
@@ -218,19 +235,28 @@ class PaperScheduler:
     # ── 单轮扫描（测试通道） ────────────────────────────────
 
     def run_once(self) -> None:
-        """单轮：终态线程清理→心跳超时移交→feed 刷新→拾取→终态资金费
-        回补（handed 集合防同轮重复移交）。
+        """单轮：终态线程清理→心跳超时移交→拾取→终态资金费回补
+        （handed 集合防同轮重复移交）。
 
         启动期恢复扫描（无条件扫 running）不经本循环——app lifespan
         挂载段直调 startup_recover（恢复执行器起线程续跑）；守护循环
-        只按心跳超时移交（design §5.4 两触发面）。
+        只按心跳超时移交（design §5.4 两触发面）。feed 对账已移驻
+        独立节拍 reconcile_once（R-02 双节拍解耦——拾取/对账两族
+        节拍各有独立常量单源）。
         """
         handed: set[str] = set()
         self._reap_finished()
         self._check_heartbeats(handed)
-        self._refresh_feeds()
         self._pickup_pending()
         self._run_backfill()
+
+    def reconcile_once(self) -> None:
+        """对账守护单轮（RECONCILE_INTERVAL_SECONDS 独立节拍驱动）：
+        遍历活跃 feed 调 reconcile（缺口判定→REST 补拉——订阅制共享，
+        同键任务一份拉取；WS 闭合事件走接入层回调不经此）。单 feed
+        异常记日志续行（下一节拍重试）。
+        """
+        self._refresh_feeds()
 
     def _reap_finished(self) -> None:
         """摘除已结束的执行器线程登记（终态回调兜底）。"""
@@ -254,7 +280,7 @@ class PaperScheduler:
             if heartbeat is None:
                 continue  # 尚未处理过 bar（刚置 running）——不判超时
             timeout = HEARTBEAT_TIMEOUT_MULTIPLIER * TF_SECONDS.get(
-                row["timeframe"], _DEFAULT_BAR_SECONDS)
+                row["timeframe"], DEFAULT_TF_FALLBACK_SECONDS)
             try:
                 elapsed = (now - _parse_iso(heartbeat)).total_seconds()
             except (TypeError, ValueError):
@@ -296,8 +322,9 @@ class PaperScheduler:
         return recover_task(db_path, row, **kwargs)
 
     def _refresh_feeds(self) -> None:
-        """驱动活跃 feed 对账（守护循环节拍：缺口判定→REST 补拉——
-        订阅制共享，同键任务一份拉取；WS 闭合事件走接入层回调不经此）。"""
+        """驱动活跃 feed 对账（reconcile_once 主体——独立对账节拍：
+        缺口判定→REST 补拉，订阅制共享，同键任务一份拉取；WS 闭合
+        事件走接入层回调不经此）。"""
         for key in self.registry.active_keys:
             feed = self.registry.get(*key)
             if feed is None or feed.subscriber_count == 0:
@@ -588,12 +615,14 @@ class PaperScheduler:
         return "stopped" if hit > 0 else "terminal"
 
     def status(self) -> Dict[str, Any]:
-        """runner-status 数据面（既有四字段+健康四组——change-1 任务 5）。
+        """runner-status 数据面（既有四字段+健康五组——change-1 任务 5
+        +guardian 组 add-data-freshness-guardian）。
 
         健康组经 registry 聚合（scheduler→registry→feed/stream 注入
         方向，无循环 import）：ws（连接态/按键最后推送/静默秒）、
         flush_buffer（按键缓冲行数）、reconcile（最近对账时刻与三值
-        结果）、backfill（建库状态）。未启动面=组内缺省值（K2 语义）。
+        结果）、backfill（建库状态）、guardian（保鲜守护器两面状态）。
+        未启动面=组内缺省值（K2 语义）。
         """
         with self._lock:
             active_ids = sorted(self._executors)
@@ -608,6 +637,7 @@ class PaperScheduler:
             "flush_buffer": self._flush_buffer_health(),
             "reconcile": self._reconcile_health(),
             "backfill": self._backfill_health(),
+            "guardian": self._guardian_health(),
         }
 
     def _ws_health(self) -> Dict[str, Any]:
@@ -665,6 +695,16 @@ class PaperScheduler:
         if backfill is None:
             return {}
         return backfill.status()
+
+    def _guardian_health(self) -> Dict[str, Any]:
+        """保鲜守护器状态组（add-data-freshness-guardian A-1：经
+        registry 属性挂点聚合，不新增端点；未装配=缺省状态面——沿
+        _backfill_health 缺省形制）。"""
+        guardian = getattr(self.registry, "guardian", None)
+        if guardian is None:
+            return {"kline": {"last_run": None, "keys": {}},
+                    "derivs": {"last_run": None, "symbols": {}}}
+        return guardian.status()
 
     # ── 内部 ────────────────────────────────────────────────
 

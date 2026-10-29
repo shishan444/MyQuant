@@ -675,6 +675,12 @@ class TestDatasetMetaRepository:
         #   （evaluation.py:63 `or 0.30` 缺省 / scorer.py:253/263/267
         #   显式 None 分支）——改存量库 DDL 超本战役范围
         _DEFAULT_DIFF = {"evolution_task.max_drawdown_limit"}
+        # - pt_signal.exec_bar_time notnull 声明位差：生产库存量 0、
+        #   链定义 nullable=False 渲染 1——单列既成差（同表其余
+        #   NOT NULL 列存量均 1，仅此列 0；行为面=接管库该列可插
+        #   NULL）。246471d 合入未同步本豁免，全量终验补录（main
+        #   worktree 同库态同红实证——非 data-freshness-guardian 引入）
+        _NOTNULL_DIFF = {"pt_signal.exec_bar_time"}
         for t in sorted(sb):
             missing = set(sb[t]) - set(sa.get(t, {}))
             assert not missing, f"{t} 缺列（链库有而接管库无）: {sorted(missing)}"
@@ -688,6 +694,10 @@ class TestDatasetMetaRepository:
                 if f"{t}.{col}" in _DEFAULT_DIFF and va[3] == vb[3] == 0 \
                         and va[0] == vb[0] and va[2] is None:
                     continue  # 历史列 default 声明差（已上报）
+                if f"{t}.{col}" in _NOTNULL_DIFF and va[3] == vb[3] \
+                        and (va[0], va[2]) == (vb[0], vb[2]) \
+                        and va[1] != vb[1]:
+                    continue  # 存量列 notnull 声明位差（单列既成差，见上）
                 pytest.fail(f"{t}.{col}: 接管库={va} 干净库={vb}")
 
 

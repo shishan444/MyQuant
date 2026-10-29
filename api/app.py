@@ -42,6 +42,7 @@ def create_app(
     db_path: Path | None = None,
     data_dir: Path | None = None,
     fapi_stream_factory=None,
+    guardian_factory=None,
 ) -> FastAPI:
     """构造并配置 FastAPI 应用（全工程唯一应用工厂）。
 
@@ -53,6 +54,9 @@ def create_app(
         fapi_stream_factory: 行情流工厂（缺省生产 BinanceFapiStream；
             测试注入替身。FAPI_STREAM_DISABLED 环境变量置位时装配
             整体旁路——测试全域 conftest 旁路面）。
+        guardian_factory: 数据保鲜守护器工厂（缺省生产
+            DataFreshnessGuardian；测试注入替身。FAPI_STREAM_DISABLED
+            置位时装配整体跳过且 factory 亦不调用——旁路优先）。
     """
     # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
     # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
@@ -172,10 +176,13 @@ def create_app(
 
         # fapi 行情接入装配（change-1 任务 5）：WS 流（固定 12 路订阅
         # +事件按需路由到现存 feed 实例）+启动建库线程（12 键全量回补
-        # /尾戳补齐）。FAPI_STREAM_DISABLED 置位时整体旁路（测试全域
-        # conftest 旁路面——生产无该变量恒装配）。
+        # /尾戳补齐）+数据保鲜守护器（add-data-freshness-guardian：
+        # 应用级文件面保鲜——无纸盘任务时三族数据持续更新）。
+        # FAPI_STREAM_DISABLED 置位时整体旁路（测试全域 conftest
+        # 旁路面——生产无该变量恒装配）。
         fapi_stream = None
         fapi_backfill = None
+        fapi_guardian = None
         import os as _os_fapi
 
         if _os_fapi.environ.get("FAPI_STREAM_DISABLED"):
@@ -183,8 +190,9 @@ def create_app(
             # 置位（生产无此变量恒装配）——启动日志留痕防「生产误置/
             # 环境泄漏」时行情面静默缺席不可归因
             logger.warning(
-                "FAPI_STREAM_DISABLED 置位——fapi 行情流与建库线程整体"
-                "旁路（测试旁路面，生产环境出现此日志即为配置异常）")
+                "FAPI_STREAM_DISABLED 置位——fapi 行情流/建库线程/保鲜"
+                "守护器整体旁路（测试旁路面，生产环境出现此日志即为"
+                "配置异常）")
         else:
             from core.data.fapi.rest import fapi_env as _fapi_env
             from core.paper_trading.runtime.feed import FixedKeyBackfill
@@ -220,13 +228,28 @@ def create_app(
             paper_scheduler.registry.backfill = fapi_backfill
             fapi_backfill.start_background()
 
+            # 数据保鲜守护器（契约 6 装配面）：缺省真实守护器；
+            # guardian_factory 注入替身；registry.guardian 属性挂点
+            # （沿 backfill 先例——属性引用非模块依赖）。守护器独立
+            # 于纸盘任务存在（应用生命周期），首轮流启动即扫
+            guardian_factory_ = guardian_factory
+            if guardian_factory_ is None:
+                from core.data.guardian import DataFreshnessGuardian
+
+                guardian_factory_ = DataFreshnessGuardian
+            fapi_guardian = guardian_factory_(data_dir)
+            paper_scheduler.registry.guardian = fapi_guardian
+            fapi_guardian.start_background()
+
         runner.start()
 
         yield
 
         # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停
-        # evolution runner 与纸盘调度器，最后停 fapi 流/建库并清落盘
-        # 缓冲（SIGTERM 关停序——分级落盘的停机清缓冲面）
+        # evolution runner 与纸盘调度器，再停 fapi 流/建库，随后停
+        # 保鲜守护器（守护器停于 flush 前——避免 flush 后守护器再
+        # 写），最后清落盘缓冲（SIGTERM 关停序——分级落盘的停机清
+        # 缓冲面）
         set_ws_push_fn(None)
         runner.stop()
         runner.join(timeout=5.0)
@@ -236,6 +259,8 @@ def create_app(
             fapi_backfill.stop()
         if fapi_stream is not None:
             fapi_stream.stop()
+        if fapi_guardian is not None:
+            fapi_guardian.stop()
         paper_scheduler.registry.flush_all()
 
         # 研究执行器停止（守护扫描停、不等待在途计算）；重置单例供测试复用
