@@ -24,7 +24,7 @@ from core.data.guardian import (
     DataFreshnessGuardian,
 )
 from core.data.storage import load_parquet, save_parquet
-from core.data.timeframes import TF_SECONDS
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 from tests.helpers.data_factory import make_ohlcv
 
 _T0 = pd.Timestamp("2030-01-01T00:00:00Z")
@@ -357,6 +357,23 @@ def test_dependency_direction_zero_paper_import():
     assert offenders == [], f"守护器禁纸盘域 import：{offenders}"
     # 同时零字符串引用面（防延迟 import 字符串绕行）
     assert "paper_trading" not in source
+
+
+def test_default_tf_fallback_single_source():
+    """CARD-05：未知周期兜底秒数三写收敛单源——三消费方
+    （guardian/feed/scheduler）与 timeframes 绑定同一对象（from
+    import 不复制——收敛的动态证明）+值 14400=4h 秒数（沿旧
+    runner 形制语义锚）。"""
+    import core.data.timeframes as timeframes_mod
+    from core.paper_trading.runtime import feed as feed_mod
+    from core.paper_trading.runtime import scheduler as scheduler_mod
+
+    single = timeframes_mod.DEFAULT_TF_FALLBACK_SECONDS
+    assert single == 14400
+    assert single == TF_SECONDS["4h"]  # 兜底取 4h 秒数（语义自洽锚）
+    assert DEFAULT_TF_FALLBACK_SECONDS is single  # guardian 消费面
+    assert feed_mod.DEFAULT_TF_FALLBACK_SECONDS is single
+    assert scheduler_mod.DEFAULT_TF_FALLBACK_SECONDS is single
 
 
 # ── VS-1.10 深缺口逐轮收敛 ────────────────────────────────────
