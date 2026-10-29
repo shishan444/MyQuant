@@ -643,3 +643,68 @@ class TestInfLiteralDomainRejection:
     def test_finite_large_r_still_passes(self):
         """防误拦：有限大 r（1e6）合法边界不受 isfinite 影响。"""
         assert validate_formula("kalman(close, 0.01, 1e6)", COLS) == []
+
+
+class TestNumericParamFiniteGuard:
+    """CARD-05：窗口/步数参数位非有限值收口（SEC-01 同族）。
+    双面：静态拦 1e999 字面量；求值拦嵌套表达式产出的 inf（静态
+    分析不执行表达式，rolling_mean(close, sqrt(1e999)) 静态不可见）。
+    平移量/窗口上界保持既有无上限语义（MAX_PLUGIN_LOOKBACK_BARS
+    只限窗口位静态查），只拦非有限值。"""
+
+    def test_shift_diff_inf_literal_static_rejected(self):
+        """静态面：shift/diff 第 2 参 1e999 静态拒（-inf 走既有负参查）。"""
+        errs = validate_formula("shift(close, 1e999)", COLS)
+        assert any("平移量须为有限值" in e for e in errs)
+        errs = validate_formula("diff(close, 1e999)", COLS)
+        assert any("平移量须为有限值" in e for e in errs)
+        errs = validate_formula("shift(close, -1e999)", COLS)
+        assert any("负向平移被禁止" in e for e in errs)
+
+    def test_shift_large_finite_no_upper_bound(self):
+        """无上限语义保持：shift 平移量大有限值（10000）静态过、
+        求值不炸（越界 shift 产全 NaN——垃圾但合法，非有限值才拦）。"""
+        assert validate_formula("shift(close, 10000)", COLS) == []
+        out = evaluate_formula("shift(close, 10000)", _df())
+        assert len(out) == 60 and out.isna().all()
+
+    def test_nested_inf_window_eval_intercepted(self):
+        """求值面：嵌套表达式产 inf 静态放行（静态查跳过非常量），
+        求值守卫收口——正常入口也拦不住的形态。"""
+        df = _df()
+        for expr in ("rolling_mean(close, sqrt(1e999))",
+                     "ema(close, max(1e999, 1))",
+                     "zscore(close, sqrt(1e999))",
+                     "corr(close, volume, sqrt(1e999))",
+                     "rolling_quantile(close, sqrt(1e999), 0.5)",
+                     "shift(close, sqrt(1e999))"):
+            with pytest.raises(FormulaError, match="须为有限值"):
+                evaluate_formula(expr, df)
+
+    def test_direct_inf_literal_eval_intercepted(self):
+        """求值面：绕过静态直调的字面量 inf 同收口（静态镜像）；
+        tester 抽验面含 rolling_std，一并列全 5 形态。"""
+        df = _df()
+        for expr in ("shift(close, 1e999)", "diff(close, 1e999)",
+                     "rolling_mean(close, 1e999)", "ema(close, 1e999)",
+                     "corr(close, volume, 1e999)",
+                     "rolling_std(close, 1e999)"):
+            with pytest.raises(FormulaError, match="须为有限值"):
+                evaluate_formula(expr, df)
+
+    def test_nested_nan_window_guard_covers_too(self):
+        """对照锚：嵌套 nan 形态此前走 int(nan)=ValueError 的 except
+        兜底（文案「求值失败」），isfinite 双覆盖后升为前置守卫拦截
+        （文案「须为有限值」）——收口行为面等价，文案更精确。"""
+        df = _df()
+        with pytest.raises(FormulaError, match="须为有限值"):
+            evaluate_formula("rolling_mean(close, sqrt(0 - 1))", df)
+
+    def test_finite_windows_not_hurt(self):
+        """防误拦：正常有限窗口/步数全词族不受影响。"""
+        df = _df()
+        for expr in ("shift(close, 3)", "diff(close, 2)",
+                     "rolling_mean(close, 20)", "zscore(close, 10)",
+                     "ema(close, 5)", "corr(close, volume, 10)",
+                     "rolling_quantile(close, 5, 0.5)"):
+            assert len(evaluate_formula(expr, df)) == 60, expr

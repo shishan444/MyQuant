@@ -372,6 +372,13 @@ def validate_formula(expr: str, allowed_columns: set) -> List[str]:
                         errors.append(f"{fname} 第二参数必须是常量（静态可校验）")
                     elif val < 0:
                         errors.append(f"{fname} 负向平移被禁止（看向未来）: {val}")
+                    elif not np.isfinite(val):
+                        # 1e999 字面量解析即 inf（CARD-05）：求值层
+                        # int(inf) 抛 OverflowError 裸穿（-inf 已被上方
+                        # 负参查先拦）。平移量上界保持既有无上限语义，
+                        # 此处只拦非有限值
+                        errors.append(
+                            f"{fname} 平移量须为有限值: {val:g}")
                 else:
                     # 窗口按 _WINDOW_PARAM_INDEX 实际参数位取参（对齐
                     # formula_lookback 既有写法；0.2.12 R1 边界保留——逐元素族
@@ -507,6 +514,23 @@ def evaluate_formula(expr: str, df: pd.DataFrame,
                 raise FormulaError(
                     f"{fname} 第 1 参须为列引用序列，实得 "
                     f"{type(args[0]).__name__}")
+            # 数值参数位有限性防御（CARD-05）：窗口/步数位由嵌套
+            # 表达式产出的 inf 静态不可见（静态分析不执行表达式——
+            # rolling_mean(close, sqrt(1e999)) 静态放行），求值层
+            # int(inf) 抛 OverflowError——ArithmeticError 族不在下方
+            # except (TypeError, ValueError) 收口面。不扩全局 except
+            # （吞白名单函数真实编程错误风险——终态裁定采纳精确
+            # 镜像而非扩面），仅数值标量位拦截；isfinite 同时覆盖
+            # nan（此前走 int(nan)=ValueError 的 except 兜底，升为
+            # 前置守卫——文案更精确，收口行为面等价）。窗口/步数位
+            # 全在 _WINDOW_PARAM_INDEX（shift/diff 位 1 自然覆盖）
+            nidx = _WINDOW_PARAM_INDEX.get(fname)
+            if (nidx is not None and len(args) > nidx
+                    and isinstance(args[nidx], (int, float))
+                    and not np.isfinite(args[nidx])):
+                raise FormulaError(
+                    f"{fname} 第 {nidx + 1} 参须为有限值，实得 "
+                    f"{args[nidx]:g}")
             try:
                 return FORMULA_FUNCTIONS[fname](*args)
             except (TypeError, ValueError) as exc:
