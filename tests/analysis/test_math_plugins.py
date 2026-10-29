@@ -85,9 +85,11 @@ class TestI1RegistrationAndReference:
         assert r2["version"] == 2
         assert r2["column"] == "fx_kf_slope_v2"
 
-    def test_i12_hypothesis_can_reference_kf_slope(self, db):
+    def test_i12_hypothesis_can_reference_kf_slope(self, db, market_df):
         """假设条件引用 fx_kf_slope：allowed 列含之+登记成功（登记链
-        内含 resolve_column_ref plugin 分支+assert_plugin_columns_reachable）。"""
+        内含 resolve_column_ref plugin 分支+assert_plugin_columns_reachable）
+        +条件求值直接锚——fx_kf_slope<0 在数据面出混合布尔（真实值
+        非全 False，条件语义可触发）。"""
         for name, expr in _EXPRESSIONS.items():
             register_formula_plugin(db, name=name, expression=expr)
         assert "fx_kf_slope" in _plugin_allowed_columns(db)
@@ -106,6 +108,12 @@ class TestI1RegistrationAndReference:
             direction="short",
             strategy_params={"sl_mode": "pct", "stop_loss": 0.05})
         assert r["hypothesis_id"]
+        # 条件求值直接锚：when 条件（fx_kf_slope lt 0）的数据面在
+        # 合成行情上时真时假——非全 False（条件永不可触发）非全 True
+        enriched = enrich_with_plugin_columns(db, market_df, {"fx_kf_slope"})
+        neg = enriched["fx_kf_slope"] < 0
+        assert neg.any(), "须存在斜率为负的 bar（条件可触发）"
+        assert not neg.all(), "须存在斜率非负的 bar（条件非恒真）"
 
     def test_i13_warmup_closure_200(self, db):
         """warmup 闭包：fx_kf_slope 固定贡献 200 经 plugin_columns_

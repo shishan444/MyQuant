@@ -366,3 +366,31 @@ class TestKalmanSeriesMount:
         with pytest.raises(ResearchError) as ei:
             _load_sl_series_column(env["db"], neg, {"column": col})
         assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    @staticmethod
+    def _close_with_nan_at(env, idx):
+        df = env["enhanced"].copy()
+        v = df["close"].to_numpy(dtype=float).copy()
+        v[idx] = np.nan
+        df["close"] = v
+        return df
+
+    def test_i22_kf_all_nan_rejected(self, env):
+        """I2-2 全 NaN 面：close 首位 NaN → kalman 递归初值即 NaN、
+        NaN 传播至全列（design §2 词 4「输入 NaN 下游由装载四态之
+        全 NaN 拒兜底」的兜底链交叉锚）→ 装载拒（第一态）。"""
+        col = self._register_kf(env)
+        bad = self._close_with_nan_at(env, 0)
+        with pytest.raises(ResearchError, match="全 NaN") as ei:
+            _load_sl_series_column(env["db"], bad, {"column": col})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_i22_kf_mid_gap_rejected(self, env):
+        """I2-2 中段洞面：close 中段（位 60）NaN → kalman 输出该位起
+        至尾部全 NaN（递归无清洗不修补——首个非 NaN 后存在 NaN 的
+        中段洞形态）→ 装载拒（第二态）。"""
+        col = self._register_kf(env)
+        bad = self._close_with_nan_at(env, 60)
+        with pytest.raises(ResearchError, match="中段数据洞") as ei:
+            _load_sl_series_column(env["db"], bad, {"column": col})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
