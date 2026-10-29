@@ -26,7 +26,7 @@ import pandas as pd
 from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
 from core.data.fapi.stream import FAPI_SYMBOLS, FIXED_SUBSCRIBE_KEYS
 from core.data.storage import get_latest_timestamp, merge_closed_rows
-from core.data.timeframes import TF_SECONDS
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,6 @@ logger = logging.getLogger(__name__)
 # funding 刷新并行无害——同一 parquet 经互斥锁+merge 去重协调）。
 KLINE_GUARD_INTERVAL_SECONDS = 300.0
 DERIVS_GUARD_INTERVAL_SECONDS = 3600.0
-
-# 未知周期兜底（沿 feed._DEFAULT_BAR_SECONDS 形制）
-_DEFAULT_BAR_SECONDS = 14400
 
 
 class DataFreshnessGuardian:
@@ -221,7 +218,7 @@ class DataFreshnessGuardian:
             # 无文件：初始建库归 FixedKeyBackfill 既有分工（与 feed
             # 「无基线键跳过」同构——D-1 伴随裁定）
             return "skipped_no_file"
-        interval = TF_SECONDS.get(timeframe, _DEFAULT_BAR_SECONDS)
+        interval = TF_SECONDS.get(timeframe, DEFAULT_TF_FALLBACK_SECONDS)
         now = self._now_fn()
         if now < last + pd.Timedelta(seconds=2 * interval):
             return "fresh"  # 尾戳新鲜（沿 backfill_key 同形判定）

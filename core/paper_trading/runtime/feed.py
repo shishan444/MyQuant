@@ -34,7 +34,7 @@ from typing import Callable, Iterable, Optional
 import pandas as pd
 
 from core.data.storage import load_parquet, merge_closed_rows
-from core.data.timeframes import TF_SECONDS
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,6 @@ FUNDING_REFRESH_INTERVAL_SECONDS = 3600.0
 
 # 8h 结算网格（Binance 永续资金费结算节奏：UTC 00/08/16 点）
 _FUNDING_GRID = "8h"
-
-# 未知周期的 bar 秒数兜底（沿旧 runner _BAR_SECONDS.get(tf, 14400) 形制）
-_DEFAULT_BAR_SECONDS = 14400
 
 # OHLCV 基础列（WS 事件行与 REST 补拉帧的共同锚；指标列为派生面）
 OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -316,7 +313,7 @@ class SymbolFeed:
             base = self._df
         if base is None or base.empty:
             return "ok"  # 无基线键——等启动建库线程建立
-        interval = TF_SECONDS.get(self.timeframe, _DEFAULT_BAR_SECONDS)
+        interval = TF_SECONDS.get(self.timeframe, DEFAULT_TF_FALLBACK_SECONDS)
         last_closed = base.index[-1]
         now = self._now_fn()
         if now < last_closed + pd.Timedelta(seconds=2 * interval):
@@ -761,7 +758,7 @@ def backfill_key(
         raise RuntimeError(
             f"建库未就绪（文件空）：{symbol}_{timeframe}"
             "——空文件非数据就绪，记 failed 下轮重试")
-    interval = TF_SECONDS.get(timeframe, _DEFAULT_BAR_SECONDS)
+    interval = TF_SECONDS.get(timeframe, DEFAULT_TF_FALLBACK_SECONDS)
     last = existing.index[-1]
     if now < last + pd.Timedelta(seconds=2 * interval):
         return  # 尾戳已新鲜——数据就绪

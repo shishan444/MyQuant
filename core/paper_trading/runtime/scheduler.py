@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from core.concurrency.task_control import TaskController
-from core.data.timeframes import TF_SECONDS
+from core.data.timeframes import DEFAULT_TF_FALLBACK_SECONDS, TF_SECONDS
 from core.paper_trading.constants import (
     MAX_RUNNING_TASKS,
     POLL_INTERVAL_SECONDS,
@@ -54,9 +54,6 @@ LEGAL_TRANSITIONS = PT_STATUS_TRANSITIONS
 
 # 心跳超时系数（>3×bar 周期视为失联——design §5.1）
 HEARTBEAT_TIMEOUT_MULTIPLIER = 3
-
-# 未知周期兜底（沿 feed._DEFAULT_BAR_SECONDS 形制）
-_DEFAULT_BAR_SECONDS = 14400
 
 
 def can_transition(from_status: str, to_status: str) -> bool:
@@ -283,7 +280,7 @@ class PaperScheduler:
             if heartbeat is None:
                 continue  # 尚未处理过 bar（刚置 running）——不判超时
             timeout = HEARTBEAT_TIMEOUT_MULTIPLIER * TF_SECONDS.get(
-                row["timeframe"], _DEFAULT_BAR_SECONDS)
+                row["timeframe"], DEFAULT_TF_FALLBACK_SECONDS)
             try:
                 elapsed = (now - _parse_iso(heartbeat)).total_seconds()
             except (TypeError, ValueError):
