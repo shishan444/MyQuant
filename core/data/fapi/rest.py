@@ -142,10 +142,10 @@ def _klines_rows_to_frame(rows: list) -> pd.DataFrame:
     不入决策面。
 
     脏行单点过滤（批次三 CARD-01）：OHLC/volume 任一非有限值
-    （NaN/inf）或字段不可解析的行丢弃——与 WS 通道 is_valid_
-    bar_values 同源同语义（两入口脏数据一套判定），不经判定的
-    float 直转会把关行静默入帧，污染对账/建库/重建/费率四消费
-    路径（直转面同修 fetch_funding_rate）。
+    （NaN/inf）或字段不可解析的行丢弃——与 WS 通道
+    is_valid_bar_values 同源同语义（两入口脏数据一套判定），不经
+    判定的 float 直转会把关行静默入帧，污染对账/建库/重建/费率
+    四消费路径（直转面同修 fetch_funding_rate）。
     """
     if not rows:
         return _empty_ohlcv_frame()
@@ -259,12 +259,12 @@ class FapiRestClient:
                 本地过滤兜底端点含端边界）。
             max_bars: 运行时增量窗口上限（None=分页补拉全区间——
                 建库/损坏重建语义；N=单轮窗口，**start 锚定**——请求
-                区间起点不变〔缺口起点〕、limit=min(N, KLINE_PAGE_
-                LIMIT)、从起点起取至多 N 根，调用方逐轮推进向尾部
-                收敛。禁用 end 锚定〔起点裁剪为 end−N×周期的形制
-                会使深缺口首轮补尾后新鲜判定直接通过、中段空洞永久
-                残留——缺口尾部暂缺不阻塞已补齐前缀段的消费〕。
-                缺省 None 保持既有分页行为不变）。
+                区间起点不变〔缺口起点〕、从起点起取至多 N 根，
+                limit=min(N, KLINE_PAGE_LIMIT)，调用方逐轮推进向
+                尾部收敛。禁用 end 锚定〔起点裁剪为 end−N×周期的
+                形制会使深缺口首轮补尾后新鲜判定直接通过、中段
+                空洞永久残留——缺口尾部暂缺不阻塞已补齐前缀段
+                的消费〕。缺省 None 保持既有分页行为不变）。
 
         Returns:
             闭合 bar 帧（index=开盘时刻 UTC、五列），与 feed 内存
