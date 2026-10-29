@@ -348,17 +348,20 @@ class TestInspectCasesWiringExtra:
             "显式 start 装载后插件列应收敛非全 NaN"
 
     def test_explicit_start_plugin_dim_insufficient(self, db):
-        """插件维度前缀不足归因锚（新域重设）：start=2025-02-01
-        （新域起点 2024-10-29 后 ~606 bar）满足 EMA 600 但不足插件
-        700 → RESEARCH_WARMUP_INSUFFICIENT 且 warmup_bars=700
-        （两维取 max 的直接证据）。"""
+        """插件维度前缀不足归因锚（新域重设）：start=2025-02-07
+        （新域起点 2024-10-29 后 604 bar，2026-10-29 实测）满足 EMA
+        600 但不足插件 700 → RESEARCH_WARMUP_INSUFFICIENT 且
+        warmup_bars=700（两维取 max 的直接证据。前缀须落 (600,700)
+        窗口才成立「满足 EMA、仅插件维度不足」的归因纯度——旧
+        start=2025-02-01 前缀实测 568，EMA 维度同不足，归因断裂，
+        域数据头部变化时按此窗口重选 start）。"""
         with pytest.raises(ResearchError) as ei:
             inspect_cases(db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                           selector={"condition": {
                               "subject": "fx_fx_dev700", "action": "lt",
                               "target": 1e12}},
                           limit=2, context_bars=4, indicator="EMA",
-                          start="2025-02-01", end="2025-06-01")
+                          start="2025-02-07", end="2025-06-01")
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
         assert ei.value.detail["warmup_bars"] == 700
 
