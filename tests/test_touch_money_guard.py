@@ -76,7 +76,8 @@ FAPI_TOUCH_METHOD_ROOTS = (
 )
 # python-binance 触金方法精确集（下单/撤单/账户/持仓/杠杆族——
 # 精确名防误伤：工程内自研包装类 BinanceDemoClient.account() 的同名
-# 转发方法在案（scripts/spike_demo_live.py:107），裸 "account" 不入集）
+# 转发方法在案（works/历史脚本/spike_demo_live.py:107，2026-10-29
+# 随一次性脚本批次归档，历史在案），裸 "account" 不入集）
 PYTHON_BINANCE_TOUCH_METHODS = frozenset({
     # 下单/撤单族
     "create_order", "order_limit", "order_market", "order_oco",
