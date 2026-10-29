@@ -323,3 +323,74 @@ class TestB1EndToEndTrigger:
         res = BacktestEngine(db_path=env["db"]).run(
             dna, env["enhanced"])
         assert res.total_trades >= 1, "空头触发（high 触及线值）"
+
+
+class TestKalmanSeriesMount:
+    """I2（add-math-formula-vocabulary）：fx_kf_level 挂 series 档
+    四态交叉分锚——kalman 无 NaN 头不依赖第四态预热合法通道。"""
+
+    def _register_kf(self, env):
+        from core.analysis.plugin_service import register_formula_plugin
+        return register_formula_plugin(
+            env["db"], name="kf_level",
+            expression="kalman(close, 0.01, 25)")["column"]
+
+    def test_i21_kf_level_mounts_without_nan_head(self, env):
+        """I2-1 主锚：fx_kf_level 装载通过且全序列无 NaN——kalman
+        递归初值机制天然满足（对照 rolling 族依赖第四态的形制）。"""
+        col = self._register_kf(env)
+        arr = _load_sl_series_column(env["db"], env["enhanced"],
+                                     {"column": col})
+        assert arr.dtype == np.float64
+        assert not np.isnan(arr).any(), "kalman 输出无 NaN 头"
+        assert (arr > 0).all(), "价格水平线语义（正价格输入）"
+
+    def test_i21_nan_head_channel_still_works(self, env):
+        """I2-1 对照锚：带 NaN 头的 fx 列（shift 形制）走第四态预热
+        合法通道仍通过——两组各自设锚防互相污染。"""
+        from core.analysis.plugin_service import register_formula_plugin
+        col = register_formula_plugin(
+            env["db"], name="sl_head_nan",
+            expression="shift(close, 5)")["column"]
+        arr = _load_sl_series_column(env["db"], env["enhanced"],
+                                     {"column": col})
+        assert np.isnan(arr[:5]).all(), "shift 形制头部 NaN"
+        assert not np.isnan(arr[5:]).any()
+
+    def test_i22_kf_nonpositive_rejected(self, env):
+        """I2-2 负向：负价格序列上 kalman 水平线 ≤0 → 装载拒
+        （RESEARCH_DATA_INSUFFICIENT 四态第三态）。"""
+        col = self._register_kf(env)
+        neg = env["enhanced"].copy()
+        neg["close"] = -neg["close"].abs() - 100.0
+        with pytest.raises(ResearchError) as ei:
+            _load_sl_series_column(env["db"], neg, {"column": col})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    @staticmethod
+    def _close_with_nan_at(env, idx):
+        df = env["enhanced"].copy()
+        v = df["close"].to_numpy(dtype=float).copy()
+        v[idx] = np.nan
+        df["close"] = v
+        return df
+
+    def test_i22_kf_all_nan_rejected(self, env):
+        """I2-2 全 NaN 面：close 首位 NaN → kalman 递归初值即 NaN、
+        NaN 传播至全列（design §2 词 4「输入 NaN 下游由装载四态之
+        全 NaN 拒兜底」的兜底链交叉锚）→ 装载拒（第一态）。"""
+        col = self._register_kf(env)
+        bad = self._close_with_nan_at(env, 0)
+        with pytest.raises(ResearchError, match="全 NaN") as ei:
+            _load_sl_series_column(env["db"], bad, {"column": col})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_i22_kf_mid_gap_rejected(self, env):
+        """I2-2 中段洞面：close 中段（位 60）NaN → kalman 输出该位起
+        至尾部全 NaN（递归无清洗不修补——首个非 NaN 后存在 NaN 的
+        中段洞形态）→ 装载拒（第二态）。"""
+        col = self._register_kf(env)
+        bad = self._close_with_nan_at(env, 60)
+        with pytest.raises(ResearchError, match="中段数据洞") as ei:
+            _load_sl_series_column(env["db"], bad, {"column": col})
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
