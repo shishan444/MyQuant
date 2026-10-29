@@ -87,7 +87,9 @@ def _f_crossunder(a, b) -> pd.Series:
 # ------------------------------------ 数学词汇族（add-math-formula-vocabulary）
 
 def _f_rolling_quantile(s: pd.Series, n: int, q: float) -> pd.Series:
-    """滚动分位（oracle 乙轨同源 rolling_q：min_periods=1 头部部分计算）。"""
+    """滚动分位（oracle 乙轨同源 rolling_q：min_periods=1 头部部分计算；
+    窗口内含 NaN 时跳过 NaN 用有效值计算（min_periods 语义，与 oracle
+    同源）。"""
     return s.rolling(int(n), min_periods=1).quantile(q)
 
 
@@ -116,11 +118,15 @@ def _kalman_states(s: pd.Series, q: float, r: float) -> np.ndarray:
     返回 n×2 状态矩阵（[:,0]=平滑水平、[:,1]=斜率，价格/bar 量纲）。
     递归初值机制使 t=0 即有值（无 NaN 头）；输入含 NaN 时 NaN 经
     innovation 逐 bar 传播至尾部（不修补——下游由既有显式拒绝面兜底）。
+    空序列（n=0）原样返回空矩阵（下游 pd.Series(空, index=空) 安然
+    ——26 词唯一空序列不安然点的防御一致性加固，可达性已论证封死）。
     """
     pr = s.to_numpy(dtype=float)
     n = len(pr)
     x = np.zeros((n, 2))
     P = np.zeros((n, 2, 2))
+    if n == 0:
+        return x
     x[0] = [pr[0], 0.0]
     P[0] = np.eye(2) * 100
     F = np.array([[1.0, 1.0], [0.0, 1.0]])

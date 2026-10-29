@@ -708,3 +708,20 @@ class TestNumericParamFiniteGuard:
                      "ema(close, 5)", "corr(close, volume, 10)",
                      "rolling_quantile(close, 5, 0.5)"):
             assert len(evaluate_formula(expr, df)) == 60, expr
+
+
+class TestKalmanEmptySeriesDefense:
+    """CARD-03：kalman 族空序列防御一致性加固（26 词唯一空序列
+    不安然点——n=0 时 _kalman_states 的 x[0] 赋值 IndexError；
+    可达性已论证封死，纯防御）。空 df 求值返回空 Series 不抛。"""
+
+    def test_empty_series_returns_empty_not_raises(self):
+        idx = pd.date_range("2024-01-01", periods=0, freq="1h",
+                            tz="UTC", name="timestamp")
+        empty = pd.DataFrame(
+            {"close": pd.Series([], dtype=float)}, index=idx)
+        for expr in ("kalman(close, 0.01, 25)",
+                     "kalman_slope(close, 0.01, 25)"):
+            out = evaluate_formula(expr, empty)
+            assert isinstance(out, pd.Series), expr
+            assert len(out) == 0, expr
