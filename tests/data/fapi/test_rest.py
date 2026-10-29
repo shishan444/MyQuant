@@ -57,7 +57,9 @@ class FakeSDK:
             "startTime": startTime, "endTime": endTime, "limit": limit})
         if not self.klines_pages:
             return []  # 页脚本耗尽=区间内无可得数据（真实端点语义）
-        return self.klines_pages.pop(0)
+        # 端点尊重 limit 截断（klines 契约）——窗口路径「至多 N 根」
+        # 依赖此建模（CARD-02 边界用例 max_bars=1 首次暴露）
+        return self.klines_pages.pop(0)[:limit]
 
     def exchange_info(self):
         if "exchange_info" in self.raise_on:
@@ -447,3 +449,38 @@ class TestFetchClosedBarsWindow:
         from core.data.fapi.rest import RUNTIME_BACKFILL_MAX_BARS
 
         assert RUNTIME_BACKFILL_MAX_BARS == 10
+
+    @pytest.mark.parametrize("bad", [
+        pytest.param(-10, id="负整数"),
+        pytest.param(0, id="零"),
+        pytest.param(float("nan"), id="NaN"),
+        pytest.param(float("inf"), id="inf"),
+        pytest.param(10.5, id="float"),
+        pytest.param(True, id="bool-True"),
+        pytest.param(False, id="bool-False"),
+        pytest.param("10", id="str"),
+    ])
+    def test_max_bars_rejects_invalid_values(self, bad):
+        """CARD-02：max_bars 畸形值入口快速失败——负/零/NaN/inf/
+        float/bool（bool 是 int 子类显式排除）/str 一律 ValueError，
+        零请求直达端点（消息锚定入口校验非其他来源）。"""
+        client, sdk = _make_client({"klines_pages": [[]]})
+        t0 = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        t1 = pd.Timestamp(_T0 + 60_000, unit="ms", tz="UTC")
+        with pytest.raises(ValueError, match="max_bars 须为正整数"):
+            client.fetch_closed_bars(
+                "BTCUSDT", "1m", t0, t1, max_bars=bad)
+        assert len(sdk.klines_calls) == 0  # 入口拒绝——不发请求
+
+    def test_max_bars_minimum_positive_one_is_valid(self):
+        """CARD-02 合法侧边界：max_bars=1（最小正整数）——单页
+        limit=1、恰返回首根闭合 bar。"""
+        page = [_kline_row(_T0 + i * 60_000) for i in range(3)]
+        client, sdk = _make_client({"klines_pages": [page]})
+        t0 = pd.Timestamp(_T0, unit="ms", tz="UTC")
+        t1 = pd.Timestamp(_T0 + 3 * 60_000, unit="ms", tz="UTC")
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m", t0, t1, max_bars=1)
+        assert len(frame) == 1  # 恰首根（窗口上限生效）
+        assert frame.index[0] == t0
+        assert sdk.klines_calls[0]["limit"] == 1
