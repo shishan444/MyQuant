@@ -133,6 +133,12 @@ class TestParityTwoDslWhitelist:
             "logical_or(gt(close, 9), lt(close, 9))",
             "logical_not(gt(close, 9))",
             "corr(close, volume, 3)",
+            # ---- add-math-formula-vocabulary 五词（F-C 双向锁：扩键须补探针）----
+            "rolling_quantile(close, 3, 0.5)",
+            "sqrt(close)",
+            "log(close)",
+            "kalman(close, 0.01, 25)",
+            "kalman_slope(close, 0.01, 25)",
         ]
         allowed = set(FORMULA_FUNCTIONS) | {"open", "high", "low",
                                             "close", "volume"}
