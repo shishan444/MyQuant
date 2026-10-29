@@ -66,11 +66,42 @@ class TestVacuumScript:
             holder.close()
 
     def test_other_error_exit_one(self, tmp_path):
-        """其他错误：非法路径（目录当库）退出码 1。"""
+        """其他错误：非法路径（目录当库）退出码 1+[错误] 结构化输出。"""
         notadb = tmp_path / "dir.db"
         notadb.mkdir()
         r = _run(notadb)
         assert r.returncode == 1
+        assert "[错误]" in r.stdout, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr, "connect 异常须被捕获分流，不得裸 traceback"
+
+    def test_not_a_database_exit_one(self, tmp_path):
+        """非库文本文件：connect 惰性打开后 BEGIN IMMEDIATE 抛
+        DatabaseError（file is not a database，非 OperationalError）
+        ——三分流须按错误走 exit 1+[错误] 结构化输出，不得裸 traceback。"""
+        notadb = tmp_path / "text.db"
+        notadb.write_text("this is not a sqlite database " * 10)
+        r = _run(notadb)
+        assert r.returncode == 1
+        assert "[错误]" in r.stdout, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr
+
+    def test_race_window_exit_two(self, tmp_path):
+        """竞态窗口（VS-3.5 退出码契约）：持读锁连接与 BEGIN IMMEDIATE
+        探测兼容（探测通过），执行侧 VACUUM 拿独占锁失败——探测仅前置
+        提示，后果由执行侧同分流闭环为退出码 2。"""
+        db = tmp_path / "q.db"
+        _make_db(db)
+        holder = sqlite3.connect(db, timeout=1.0)
+        holder.execute("BEGIN")
+        holder.execute("SELECT count(*) FROM t").fetchone()
+        try:
+            r = _run(db)
+            assert r.returncode == 2, r.stdout + r.stderr
+            assert "占用" in r.stdout
+            assert "Traceback" not in r.stderr
+        finally:
+            holder.rollback()
+            holder.close()
 
     def test_idempotent_rerun_exit_zero(self, tmp_path):
         """幂等重跑：第二次执行退出码 0 且空闲页近零。"""
