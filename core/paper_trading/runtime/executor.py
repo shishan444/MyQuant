@@ -568,6 +568,23 @@ class PaperTaskExecutor:
         if raw is None or raw.empty:
             return self._reject("no_data: 执行周期 parquet 为空")
 
+        # 衍生品数据注入（fix-paper-funding-indicator-merge 任务 A）：
+        # funding/OI 归档可达时把 funding_rate / open_interest 列前向
+        # 填充合并进 K 线帧——compute_all_indicators 见 funding_rate 列
+        # 即产出 FundingZScore/FundingPressure（core/features/indicators
+        # 衍生品族），装载期信号试算随之放行衍生品基因；归档缺失/为空/
+        # 坏档时静默保持纯 K 线帧（纯价格策略装载路径零变化——merger
+        # 双 None 原样返回语义）。只读既有归档不做网络 IO（运行期增量
+        # 是 feed 侧职责，本处不越界）。
+        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+
+        raw = merge_derivatives_into_ohlcv(
+            raw,
+            oi_df=self._load_deriv_frame(
+                f"{symbol}_oi_{self._timeframe}"),
+            funding_df=self._load_deriv_frame(f"{symbol}_funding"),
+        )
+
         from core.features.indicators import compute_all_indicators
 
         try:
@@ -656,6 +673,25 @@ class PaperTaskExecutor:
         finally:
             for tf, sub in temp_subs:
                 self.registry.release(symbol, tf, sub)
+
+    def _load_deriv_frame(self, filename_stem: str):
+        """读衍生品归档 parquet（funding/OI），供装载期指标注入。
+
+        缺失/为空/坏档一律返回 None（衍生品注入是增强路径——不因
+        归档问题阻断纯 K 线策略装载；坏档 warning 留痕）。只读既有
+        归档不做网络 IO。
+        """
+        from core.data.storage import load_parquet
+
+        path = self._data_dir / f"{filename_stem}.parquet"
+        if not path.exists():
+            return None
+        try:
+            frame = load_parquet(path)
+        except Exception:  # noqa: BLE001 —— 坏档降级为缺失，不阻断装载
+            logger.warning("衍生品归档读取失败，按缺失跳过: %s", path)
+            return None
+        return frame if frame is not None and not frame.empty else None
 
     def _reject(self, detail: str) -> bool:
         """装载拒绝：pending→error（不进 running），保留数据。"""
