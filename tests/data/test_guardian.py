@@ -384,22 +384,44 @@ class TestDefaultDependenciesAndLifecycle:
 
     def test_rest_lazy_singleton(self, tmp_path, monkeypatch):
         """缺省 rest 客户端惰性构造：不注入时延迟构造 FapiRestClient
-        且单例（两次取用同一对象——零重复建连）。"""
+        （经 fapi_env 解析传 base_url/proxies——CARD-04 装配面 env
+        传参）且单例（两次取用同一对象——零重复建连）。"""
         from core.data.fapi import rest as rest_mod
 
-        built: list[int] = []
+        built: list[dict] = []
 
         class FakeClient:
-            def __init__(self):
-                built.append(1)
+            def __init__(self, **kwargs):
+                built.append(kwargs)
 
         monkeypatch.setattr(rest_mod, "FapiRestClient", FakeClient)
         guardian = DataFreshnessGuardian(tmp_path)
         client1 = guardian._rest()  # noqa: SLF001——缺省依赖直测面
         client2 = guardian._rest()  # noqa: SLF001
         assert type(client1) is FakeClient
-        assert built == [1]  # 恰构造一次（惰性单例）
+        assert len(built) == 1  # 恰构造一次（惰性单例）
         assert client1 is client2
+        assert set(built[0]) == {"base_url", "proxies"}  # env 传参面
+
+    def test_rest_env_proxy_passed_through(self, tmp_path, monkeypatch):
+        """CARD-04 值面：FAPI_PROXY 置位→装配转双键 proxies dict
+        传入；FAPI_REST_BASE 同理生效（键集断言之外的转换行为面）。"""
+        from core.data.fapi import rest as rest_mod
+
+        built: list[dict] = []
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                built.append(kwargs)
+
+        monkeypatch.setattr(rest_mod, "FapiRestClient", FakeClient)
+        monkeypatch.setenv("FAPI_PROXY", "http://proxy:1080")
+        monkeypatch.setenv("FAPI_REST_BASE", "https://fapi.example.com")
+        guardian = DataFreshnessGuardian(tmp_path)
+        guardian._rest()  # noqa: SLF001——缺省依赖直测面
+        assert built[0]["proxies"] == {
+            "http": "http://proxy:1080", "https": "http://proxy:1080"}
+        assert built[0]["base_url"] == "https://fapi.example.com"
 
     def test_default_funding_refresher_delegates(self, tmp_path, monkeypatch):
         """缺省 funding 单点转 update_funding_data——symbol/data_dir

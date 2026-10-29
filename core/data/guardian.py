@@ -88,9 +88,16 @@ class DataFreshnessGuardian:
     def _rest(self):
         """K 线补拉客户端惰性单例（缺省 FapiRestClient）。"""
         if self._rest_client is None:
-            from core.data.fapi.rest import FapiRestClient
+            from core.data.fapi.rest import FapiRestClient, fapi_env
 
-            self._rest_client = FapiRestClient()
+            # 装配面 env 传参（CARD-04）：FAPI_PROXY/FAPI_REST_BASE
+            # 契约面经 fapi_env 解析后传入（缺省无参时两键不生效）
+            _env = fapi_env()
+            self._rest_client = FapiRestClient(
+                base_url=_env["rest_base"],
+                proxies=(
+                    {"http": _env["proxy"], "https": _env["proxy"]}
+                    if _env["proxy"] else None))
         return self._rest_client
 
     @staticmethod

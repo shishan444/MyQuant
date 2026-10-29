@@ -95,9 +95,17 @@ def _default_rest_fetcher(
     ——None=分页全区间（豁免面：启动建库的全量回补不受运行时上限
     约束）。
     """
-    from core.data.fapi.rest import FapiRestClient
+    from core.data.fapi.rest import FapiRestClient, fapi_env
 
-    return FapiRestClient().fetch_closed_bars(
+    # 装配面 env 传参（CARD-04）：FAPI_PROXY/FAPI_REST_BASE 契约面
+    # 经 fapi_env 解析后传入（缺省无参时两键不生效）
+    _env = fapi_env()
+    return FapiRestClient(
+        base_url=_env["rest_base"],
+        proxies=(
+            {"http": _env["proxy"], "https": _env["proxy"]}
+            if _env["proxy"] else None),
+    ).fetch_closed_bars(
         symbol, timeframe, start_ts, end_ts, max_bars=max_bars)
 
 

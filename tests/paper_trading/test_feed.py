@@ -882,3 +882,29 @@ class TestReconcileWindowPassThrough:
         call = h.rest_calls[0]
         assert call["max_bars"] == RUNTIME_BACKFILL_MAX_BARS
         assert call["max_bars"] == 10
+
+
+def test_default_fetcher_env_params_passed(monkeypatch):
+    """CARD-04 装配面：_default_rest_fetcher 缺省构造经 fapi_env 传
+    base_url/proxies（修复前无参构造——FAPI_PROXY/FAPI_REST_BASE 在
+    feed 装配点不生效；显式注入用例不走此路径，本例直测装配点）。"""
+    from core.data.fapi import rest as rest_mod
+    from core.paper_trading.runtime.feed import _default_rest_fetcher  # noqa: SLF001
+
+    built: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            built.append(kwargs)
+
+        def fetch_closed_bars(self, *args, **kwargs):
+            return pd.DataFrame()
+
+    monkeypatch.setattr(rest_mod, "FapiRestClient", FakeClient)
+    monkeypatch.setenv("FAPI_PROXY", "http://proxy:1080")
+    monkeypatch.setenv("FAPI_REST_BASE", "https://fapi.example.com")
+    t0 = pd.Timestamp("2026-10-28T00:00:00Z")
+    _default_rest_fetcher("BTCUSDT", "1m", t0, t0)
+    assert built[0]["proxies"] == {
+        "http": "http://proxy:1080", "https": "http://proxy:1080"}
+    assert built[0]["base_url"] == "https://fapi.example.com"

@@ -172,3 +172,28 @@ class TestEnvOverrideSanitization:
         assert table["BTCUSDT"] == MIN_NOTIONAL_BUILTIN["BTCUSDT"], \
             "NaN 覆写丢弃→内置回退"
         assert table["ETHUSDT"] == 55.0, "合法覆写照常生效"
+
+
+class TestDefaultFetchAssembly:
+    """CARD-04 装配面：缺省 fetch 闭包经 fapi_env 传 base_url/proxies
+    （修复前无参构造——FAPI_PROXY/FAPI_REST_BASE 在此装配点不生效）。"""
+
+    def test_default_fetch_env_params_passed(self, monkeypatch):
+        from core.data.fapi import rest as rest_mod
+
+        built: list[dict] = []
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                built.append(kwargs)
+
+            def fetch_exchange_info(self):
+                return {}
+
+        monkeypatch.setattr(rest_mod, "FapiRestClient", FakeClient)
+        monkeypatch.setenv("FAPI_PROXY", "http://proxy:1080")
+        monkeypatch.setenv("FAPI_REST_BASE", "https://fapi.example.com")
+        mn.load_min_notional(fetch_exchange_info=None)  # 缺省闭包=装配点
+        assert built[0]["proxies"] == {
+            "http": "http://proxy:1080", "https": "http://proxy:1080"}
+        assert built[0]["base_url"] == "https://fapi.example.com"
