@@ -17,6 +17,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 import pytest
@@ -646,6 +647,74 @@ class TestLifecycleDefensiveBranches:
         from core.data.fapi.stream import FIXED_SUBSCRIBE_STREAMS
 
         assert client.subscribed_streams == FIXED_SUBSCRIBE_STREAMS
+
+
+# ── CARD-02：静默判死防御（畸形帧杀 receive_loop 的行为结果面）──
+
+
+class TestSilenceDeathGuard:
+    """CARD-02 活性判死：SDK receive_loop 死亡（零回调且不发 close
+    事件——畸形帧协程死亡的行为结果）不再永久泊等——周期复查静默
+    超阈值弃 client 按断线重连。参数缩至毫秒级驱动（模块常量运行时
+    查表，patch 生效）。"""
+
+    _PATCH = (
+        "core.data.fapi.stream.SILENCE_DEATH_CHECK_INTERVAL_SECONDS", 0.05)
+
+    def test_silence_death_triggers_reconnect(self):
+        """判死重连：零投递静默超阈值→弃 client（幂等 stop 清理）→
+        disconnected+退避+重建第二连接（事件三态序列）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok", "ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.3):
+            stream.start()
+            assert _wait_until(lambda: script.calls >= 2), "未判死重连"
+            assert _wait_until(lambda: stream.connected)
+        stream.stop()
+        assert script.clients[0].stopped  # 死连接被清理
+        # 前缀断言：缩参数下第二连接同样零投递，stop 前可能再判死
+        # 产生后续事件——首三态序列才是本用例契约面
+        states = [e.state for e in recorder.connections]
+        assert states[:3] == ["connected", "disconnected", "reconnected"]
+
+    def test_activity_refresh_prevents_false_death(self):
+        """持续推送（含控制帧——订阅确认等非行情消息）不误判死：
+        回调到达即活性刷新，连接保持不重建；控制帧不投递下游。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.3):
+            stream.start()
+            assert _wait_until(lambda: stream.connected)
+            deadline = time.monotonic() + 1.0  # 3 倍阈值窗口
+            while time.monotonic() < deadline:
+                script.clients[0].deliver({"stream": "x", "data": {}})
+                time.sleep(0.02)
+        stream.stop()
+        assert script.calls == 1  # 未判死重建
+        assert recorder.closed == []  # 控制帧不投递（附带锁定丢弃面）
+
+    def test_none_activity_conservative_skip(self):
+        """异常态防御：last_activity=None（未初始化）保守跳过不误杀
+        ——泊等保持至 stop（判死检查永不因缺数据而触发）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.2):
+            stream.start()
+            assert _wait_until(lambda: stream.connected)
+            script.clients[0]._last_activity = None  # noqa: SLF001——模拟异常态
+            time.sleep(0.5)  # 多个判死周期（若误判死则 calls 增）
+            assert script.calls == 1
+            assert stream.connected  # 泊等保持
+        stream.stop()
 
 
 def test_fake_client_none_callback_defensive_sides():
