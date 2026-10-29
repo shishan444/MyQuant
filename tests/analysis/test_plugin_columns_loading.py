@@ -6,11 +6,12 @@ warnings+全 False」静默降级，0 样本拒绝收场；只有 precheck 支�
 本文件锁修复后的装载链五步（收集→可达性→两维 warmup→求值注入→
 存在性校验）与两码分工。
 
-A4 主锚（真实数据 BTCUSDT 4h）：fx_fx_dev20_pct 作 subject 的
-condition_stats 触发数与 precheck_hypothesis 同条件一致（两链同源）
-——1755。区间用 2025-03-01 起（tasks 锚区间 2025-02-01 在当前数据
-集起点 2025-01-01 下前扩 200 bar 差 14 bar 不足——区间平移不伤
-「两链一致」锚语义，注明于此）。
+A4 主锚（真实数据 BTCUSDT 4h，data/market_fapi 新域）：fx_fx_dev20_pct
+作 subject 的 condition_stats 触发数与 precheck_hypothesis 同条件一致
+（两链同源）——1203（cleanup-data-segment 锚重录 2026-10-29：旧域值
+1755 属现货归档链；新域区间 2025-03-01 起，起点 2024-10-29 下
+2025-02-01 前已有 568 bar，前扩 200 bar 空间充足——旧域「差 14 bar
+不足」约束不复在，区间沿用不伤「两链一致」锚语义，注明于此）。
 """
 
 from pathlib import Path

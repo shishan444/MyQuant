@@ -43,6 +43,8 @@ class TestVacuumScript:
         assert r.stdout.index("[checkpoint]") < r.stdout.index("[结果]"), \
             "checkpoint 须先于 VACUUM 结果输出"
         assert "freelist_count" in r.stdout and "VACUUM 完成" in r.stdout
+        # 契约 3 输出面：前后体积（主库 …→…）与 page_count 对比均在场
+        assert "主库" in r.stdout and "page_count" in r.stdout, r.stdout
         conn = sqlite3.connect(db)
         free = conn.execute("PRAGMA freelist_count").fetchone()[0]
         conn.close()

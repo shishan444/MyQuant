@@ -575,7 +575,8 @@ class TestDaemonAndDefensivePaths:
     """
 
     def test_default_data_dir_project_root(self, tmp_path):
-        """不传 data_dir → registry 取项目根 data/market 缺省。"""
+        """不传 data_dir → registry 取项目根 data/market_fapi 缺省
+        （cleanup-data-segment R-11 改指后）。"""
         db = tmp_path / "paper.db"
         init_db_ext(db)
         from core.paper_trading.runtime.scheduler import PaperScheduler
