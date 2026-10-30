@@ -55,6 +55,11 @@ def validate_recovery(task_row: Dict[str, Any]) -> Optional[str]:
             and int(task_row.get("bars_processed") or 0) > 0):
         return "游标缺失：bars_processed>0 而 last_bar_time 为空"
     if task_row.get("balance") is None:
+        # 零 bar 豁免（fr_bc61a365fdd7）：刚挂载未收首根闭合 bar 的
+        # 任务 balance 自然 NULL（首 bar 权益快照才写）——非账户态
+        # 损坏，直接可信续跑；bars>0 而 balance NULL 才是真损坏。
+        if int(task_row.get("bars_processed") or 0) == 0:
+            return None  # 零 bar：其余判据也无从触发，直接可信
         return "账户态不完整：balance 为 NULL"
     non_null = [f for f in _POSITION_CORE_FIELDS
                 if task_row.get(f) is not None]
