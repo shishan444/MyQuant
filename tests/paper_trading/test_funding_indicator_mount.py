@@ -22,7 +22,6 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.errors import ResearchError
 from core.data.storage import save_parquet
 from core.features.indicators import compute_all_indicators
 from core.paper_trading.runtime.feed import FeedRegistry, FeedSubscription
@@ -302,16 +301,14 @@ def _fzs_gene_pair():
 
 
 class TestMtfRuntimeInjection:
-    """MTF×执行层衍生品基因形态（缺陷现状锚——reviewer/security
-    双源确证的 P0 候选卡回归红测）。
+    """MTF×执行层衍生品基因运行期注入（CARD-01 修复锚）。
 
-    现状链（亲测复现，/tmp/tester-repro-mtf.log）：装载放行——装载期
-    _assemble_prepare_frames 的主周期帧=enhanced（已注入衍生列），
-    试算可过；运行期崩——process_frames 的 merge 在
-    _assemble_mtf_frames 之后只重绑局部 df，MTF 帧表的主周期帧仍
-    纯 K 线，执行层衍生品基因在 dna_to_signal_set 处不可求值抛
-    ResearchError。修复后本类用例应改为断言全帧推进结题（主周期
-    帧同款注入）。
+    修复历史：修复前装载放行（装载期帧先注入后组装）而运行期首帧
+    崩——merge 在 _assemble_mtf_frames 之后只重绑局部 df，MTF 帧表
+    主周期帧仍纯 K 线，执行层衍生品基因不可求值抛 ResearchError
+    （缺陷现状锚见 /tmp/tester-repro-mtf.log 复现记录）。修复后
+    （_inject_derivatives 提前到帧组装前）主周期帧带衍生列，执行层
+    基因运行期可求值——全帧推进至窗口结题，与单周期路径同构。
     """
 
     @staticmethod
@@ -332,24 +329,27 @@ class TestMtfRuntimeInjection:
             initial_cash=10_000.0, leverage=1, window_bars=30)
         return h, daily
 
-    def test_mtf_exec_layer_funding_gene_mounts_then_runtime_raises(
+    def test_mtf_exec_layer_funding_gene_runtime_replays_to_completion(
             self, tmp_path):
-        """缺陷现状锚：装载放行（pending 非 error）+运行期首帧抛
-        ResearchError（MTF 帧表主周期帧未注入衍生列）。"""
+        """修复锚：装载放行（pending 非 error）+运行期全帧推进至
+        窗口结题（帧表主周期帧带衍生列，执行层基因可求值）。"""
         dna = make_mtf_dna(timeframes=("1d", "4h"))
         dna.layers[1].signal_genes = _fzs_gene_pair()  # 4h 执行层
         h, daily = self._make_mtf_harness(tmp_path, dna)
         _write_funding_parquet(h.data_dir)
         ex = h.make_executor()
-        assert ex.prepare() is True  # 现状：装载放行
+        assert ex.prepare() is True
         assert h.task()["status"] == "pending"
-        # 辅帧注入（1d 层真实参与——锚不混「辅层跳过」容错路径）
+        # 辅帧注入（1d 层真实参与——不混「辅层跳过」容错路径）
         ex._make_aux_handler("1d")(compute_all_indicators(daily), 0)
         paper.update_task(
             h.db, h.task_id, status="running",
             started_at="2026-10-16T00:00:00+00:00")
-        with pytest.raises(ResearchError, match="FundingZScore"):
-            ex.process_frames(h.df, 0)
+        ex.process_frames(h.df, 0)
+        task = h.task()
+        assert task["status"] == "completed"
+        assert task["bars_processed"] == 30
+        assert task["error_detail"] is None
 
     def test_mtf_aux_layer_funding_gene_rejected_at_mount(
             self, tmp_path):
