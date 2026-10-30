@@ -230,7 +230,7 @@
 
 ### C5~C7 资产（地图补登——C7.5 完备性核对）
 - tests/scripts/test_recalc_bb_semantics.py——C5 构造层 15 条（双通道枚举/幂等转正/对照三档）
-- tests/scripts/test_recalc_c5_verification.py——C5 真实库 R1~R5 只读核验
+- works/历史脚本/test_recalc_c5_verification.py——C5 真实库 R1~R5 只读核验（D-7 退役归档，原 tests/scripts/ 位）
 - tests/infra/test_contract_parity_family.py——C7 四处对拍 8 条（豁免集锚定+程序派生防漂移）
 
 ### fix-research 守护行
@@ -389,3 +389,19 @@
 - disclosure 两态判定：series 档 default_filled 含 stop_loss=忠实披露恒态（引擎不消费），pct 档新登记同状态=B1 缺陷红——判定面在「引擎是否消费该值」（残留值变异锚 0.05→0.10 回测逐位不变），勿以 default_filled 键在场误判
 - gates.axes 披露随 grid 判定面分叉（series-only 单轴）——改披露形制须连 `analysis/templates/test_exit_sweep.py` gates 整体相等锚与分叉锚同 commit 翻转
 - 阶段四覆盖闸门不可达判定（行+分支）：engine.py:273-276（enrich 非 ResearchError 防御包装——enrich 内部异常已结构化）/engine.py:288（enrich 后列不在双保险——enrich 内部 verify 已拦）/engine.py:1224-1236（series×risk_budget 引擎侧兜底——装载层三道防线后设计不可达，注释在案）；行为变化时须重评
+
+## 十六区 · cleanup-data-segment（数据板块清理）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| VACUUM 运维脚本（契约 3/VS-3.5） | 退出码三分流五路现实路径（成功 0/探测占用 2/竞态执行侧 2/目录与非库 1——Traceback not in stderr 钉结构化输出）+checkpoint 先于 VACUUM 输出序+幂等重跑+_is_locked 分流纯函数属性面（类型×文本两维六例参数化） | `scripts/test_vacuum_quant_db.py` | 真实执行（停服窗口）与代码合入解耦，VS-3.6 顺延深夜窗口 |
+| 数据域唯一活跃（R-11/VS-3.4①） | funding/OI 缺省分支不传 data_dir 直调（chdir 隔离断言落点 data/market_fapi——R-11 行为回归面）+scheduler 装配缺省 endswith 锚+validation 四处缺省现状记录（engine/mtf/rule_engine/scene 各一直调） | `data/test_updater_characterization.py::TestDefaultDirResolution`+`paper_trading/test_scheduler.py`+`validation/test_validation_feature_net.py`（两现状记录+缺省构造一致化） | — |
+| 冻结快照不变量（契约 5/VS-3.10 补充） | 30m/3d 四件行数精确锚（47628/319/52608/365）+mtime 冻结上界锚（早于迁移时刻 2026-10-29）——「无任何运行时写入者」契约常驻断言，任何触碰即红 | `data/test_frozen_timeframes.py` | 数据集整体重建时重录锚值（重录依据=works/历史脚本/data-market-cleanup-manifest.md 迁移校验记录） |
+| 真数据形制契约（VS-3.4② 伴生） | 28 parquet 命名/列/Index 契约+双品种衍生品指标非 NaN——随域切换改指 data/market_fapi（原指已删旧域致真数据层 3 用例静默 skip） | `data/test_derivatives_contract.py` | — |
+| 回归锚重录（VS-3.13） | A1=660/A2=141/A3=5353/A4=1203 新域实跑钉住（重录依据=docstring 口径记录）；P1-T01 值域 [-0.044,+0.054] 六点实测+全档有样本；KC-S3 段标注旧域时代历史对照 | `analysis/test_research_regression_anchors.py`+`analysis/templates/test_param_sweep.py`+`analysis/test_plugin_columns_{loading,benefit_surface}.py` | — |
+| SDK 卸载终态（VS-3.11） | 依赖声明禁回锚（binance-futures-connector not in 双声明——过渡期双包并存断言使命终结翻转）+卸载证明（ModuleNotFoundError/pip not found——运维证据面） | `data/fapi/test_import_whitelist.py` | python_binance 卸载顺延 live-trading change（Q-1 裁决） |
+
+### cleanup-data-segment 守护行
+- 退役面账本：tests/data 删 26 用例（update_market_data/fetch_klines 族——符号级判定：唯一被测符号在删除清单即删）+tests/scripts 四件归档 works/历史脚本/（test_recalc_bb_semantics/test_pollution_rescan 本批移、rescan_verification/recalc_c5 前批已移）——全量基线缩减 44，数字下降非用例失败
+- 活跃域残留判定双形式（一次性判定不设常驻测试——防注释误报护甲，设计卡裁定）：字面量形 `grep -rn 'data/market' --include='*.py' core/ api/ mcpserver/ scripts/ tests/ | grep -v market_fapi | grep -v market_backup`+拼接形 `grep -rEn '"data" */ *"market"' ...`——输出按三类分拣（活跃改/冻结豁免/历史或构造豁免），豁免清单留档 commit message；data/ 不在 .gitignore parquet 规则覆盖内（防误加面待裁定）
+- 锚值纪律：域或区间变更后 docstring 中一切数字（锚值/行数/起点/bar 数）须实测重录——机械平移的旧数字不因断言宽松而暴露（A4 锚 1755→1203、4383 行、736/2206 bar 实录）；「现状记录」用例断言宽松故侥幸绿，docstring 直换+构造目录随改指一致化是唯一可信面

@@ -36,6 +36,28 @@ def _kline_row(open_ms: int, *, price: float = 100.0) -> list:
     ]
 
 
+class _ApiResponse:
+    """新 SDK ApiResponse 替身（data 为惰性方法——真实形制 data()
+    返回 _data_function() 结果非属性；替身曾用属性形制掩盖
+    resp.data 漏调，2026-10-29 真实拉数实测逮出后对齐）。"""
+
+    def __init__(self, data):
+        self._data = data
+
+    def data(self):
+        return self._data
+
+
+class _Dumpable:
+    """新 SDK 建模响应替身（model_dump(by_alias=True) 回端点字段名）。"""
+
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def model_dump(self, by_alias: bool = False) -> dict:
+        return dict(self._payload)
+
+
 class FakeSDK:
     """UMFutures REST 替身（脚本化响应+调用记录+session 面）。"""
 
@@ -49,31 +71,42 @@ class FakeSDK:
         self.constructor_kwargs: dict = {}
         self.klines_calls: list[dict] = []
 
-    def klines(self, *, symbol, interval, startTime, endTime, limit):
+    def kline_candlestick_data(
+            self, symbol, interval, start_time=None, end_time=None,
+            limit=None):
+        """新 SDK kline_candlestick_data 替身（ApiResponse.data 直通
+        原始行列表——空响应模型直通形制源码级锚定）。"""
         if "klines" in self.raise_on:
             raise self.raise_on["klines"]
         self.klines_calls.append({
             "symbol": symbol, "interval": interval,
-            "startTime": startTime, "endTime": endTime, "limit": limit})
+            "startTime": start_time, "endTime": end_time, "limit": limit})
         if not self.klines_pages:
-            return []  # 页脚本耗尽=区间内无可得数据（真实端点语义）
+            return _ApiResponse([])  # 页脚本耗尽=区间内无可得数据
         # 端点尊重 limit 截断（klines 契约）——窗口路径「至多 N 根」
         # 依赖此建模（CARD-02 边界用例 max_bars=1 首次暴露）
-        return self.klines_pages.pop(0)[:limit]
+        return _ApiResponse(self.klines_pages.pop(0)[:limit])
 
-    def exchange_info(self):
+    def exchange_information(self):
+        """新 SDK exchange_information 替身（建模响应 dump 面）。"""
         if "exchange_info" in self.raise_on:
             raise self.raise_on["exchange_info"]
-        return self.exchange_info_script
+        return _ApiResponse(
+            _Dumpable(self.exchange_info_script or {}))
 
-    def funding_rate(self, *, symbol, startTime, endTime):
+    def get_funding_rate_history(
+            self, symbol=None, start_time=None, end_time=None, limit=None):
+        """新 SDK get_funding_rate_history 替身（建模行 dump 回端点
+        字段名 dict——消费面读 fundingRate/fundingTime）。"""
         if "funding_rate" in self.raise_on:
             raise self.raise_on["funding_rate"]
         if not self.funding_rows_script:
-            return []
+            return _ApiResponse([])
         if len(self.funding_rows_script) > 1:
-            return self.funding_rows_script.pop(0)
-        return self.funding_rows_script[0]
+            rows = self.funding_rows_script.pop(0)
+        else:
+            rows = self.funding_rows_script[0]
+        return _ApiResponse([_Dumpable(row) for row in rows])
 
 
 def _make_client(sdk_kwargs: dict, **client_kwargs) -> tuple[FapiRestClient, FakeSDK]:
@@ -290,6 +323,135 @@ class TestProxySemantics:
         client._sdk()  # noqa: SLF001
         assert holder["proxies"] is proxies
         assert sdk.session.trust_env is False  # 显式 proxies 不受影响
+
+    def test_env_proxy_set_still_trust_env_false(self, monkeypatch):
+        """VS-2.2 字面前置：环境变量 HTTP(S)_PROXY 置位+无显式代理
+        ——建连后 trust_env 仍 False（环境代理通道被阻断而非依赖
+        环境恰好未置位）。"""
+        monkeypatch.setenv("HTTP_PROXY", "http://env-leak:1080")
+        monkeypatch.setenv("HTTPS_PROXY", "http://env-leak:1080")
+        client, sdk = _make_client({})
+        client._sdk()  # noqa: SLF001——触发建连
+        assert sdk.session.trust_env is False
+
+    def test_default_factory_converts_legacy_proxy_to_sdk_form(self):
+        """CARD-01：默认工厂把旧扁平 proxies 转 SDK 结构化 proxy 形制。
+
+        SDK parse_proxies 只认 {protocol,host,port}——旧扁平直传拼出
+        https://: 畸形代理，显式代理部署 REST 全断。构造纯本地零网络。
+        """
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"https": "http://172.20.112.1:10809"}, timeout=30)
+        assert client.configuration.proxy == {
+            "protocol": "http", "host": "172.20.112.1", "port": 10809}
+
+    def test_default_factory_proxy_none_and_empty_passthrough(self):
+        """CARD-01：proxies=None 与空 dict 均直传 None（直连——
+        空值不进转换分支）。"""
+        client_none = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com", proxies=None, timeout=30)
+        assert client_none.configuration.proxy is None
+        client_empty = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com", proxies={}, timeout=30)
+        assert client_empty.configuration.proxy is None
+
+    def test_default_factory_http_channel_fallback(self):
+        """CARD-01：无 https 键时 http 通道兜底（WS 面同型——
+        https 优先、http 兜底）。"""
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"http": "http://10.0.0.8:8080"}, timeout=30)
+        assert client.configuration.proxy == {
+            "protocol": "http", "host": "10.0.0.8", "port": 8080}
+
+    def test_default_factory_blank_channel_value_passthrough(self):
+        """CARD-01 边界：https 键显式 None（raw 假值）不进转换
+        ——proxy=None 直连（空值与假值两形制均不产生畸形代理）。"""
+        client = FapiRestClient._default_client_factory(
+            base_url="https://fapi.binance.com",
+            proxies={"https": None}, timeout=30)
+        assert client.configuration.proxy is None
+
+    def test_sdk_session_probe_none_tolerated(self):
+        """探测 None 容错：替身无 session/_session 属性时跳过
+        trust_env 置位不炸、客户端正常返回（getattr 双 None 分支）。"""
+        class BareSdk:  # 无 session/_session 属性
+            pass
+
+        client = FapiRestClient(client_factory=lambda **kwargs: BareSdk())
+        sdk = client._sdk()  # noqa: SLF001——触发建连+探测
+        assert type(sdk) is BareSdk
+
+    def test_klines_unsorted_and_duplicated_rows_normalized(self):
+        """端点乱序/重复行本地不变式：帧 index 升序+同 openTime 去重
+        （keep=last——后到覆写），排序去重是端点契约外的本地防御。"""
+        row1 = _kline_row(_T0, price=100.0)
+        row2 = _kline_row(_T0 + 60_000, price=200.0)
+        row3 = _kline_row(_T0 + 120_000, price=300.0)
+        row1_dup = _kline_row(_T0, price=111.0)  # 同 openTime 后到覆写
+        client, _ = _make_client({"klines_pages": [
+            [row3, row1, row2, row1_dup]]})  # 乱序+重复
+        frame = client.fetch_closed_bars(
+            "BTCUSDT", "1m",
+            pd.Timestamp(_T0, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 3 * 60_000, unit="ms", tz="UTC"))
+        assert len(frame) == 3  # 去重后恰三根
+        assert list(frame.index) == [  # 升序归一
+            pd.Timestamp(_T0, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 60_000, unit="ms", tz="UTC"),
+            pd.Timestamp(_T0 + 120_000, unit="ms", tz="UTC")]
+        assert frame["close"].iloc[0] == 111.5  # keep=last（dup 版本）
+
+    def test_real_client_session_trust_env_blocked_via_default_factory(self):
+        """VS-2.2 真实工厂路径：默认工厂产物 session 探测命中
+        （新 SDK 私有 _session 属性在场）且 trust_env 被置 False——
+        替身面（公有 session 属性）从未证明真实属性名探测命中，
+        SDK 改名时此面唯一拦截线。构造纯本地零网络。"""
+        from requests import Session
+
+        client = FapiRestClient()  # 无注入——默认工厂真实构造
+        sdk = client._sdk()  # noqa: SLF001——触发建连+探测+阻断
+        session = getattr(sdk, "session", None) or getattr(sdk, "_session", None)
+        assert isinstance(session, Session)  # 探测命中真实属性
+        assert session.trust_env is False  # 环境代理阻断落地
+
+
+class TestLegacyProxyConversion:
+    """legacy_proxy_to_sdk 转换单源直测（WS/REST 两消费面共用——
+    CARD-01 修复后公开单源；分支边界面）。"""
+
+    def test_https_url_without_port_defaults_443(self):
+        """https URL 无端口→443（WS over TLS 缺省）。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        assert legacy_proxy_to_sdk("https://proxy.example.com") == {
+            "protocol": "https", "host": "proxy.example.com", "port": 443}
+
+    def test_http_url_without_port_defaults_80(self):
+        """http URL 无端口→80。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        assert legacy_proxy_to_sdk("http://proxy.example.com") == {
+            "protocol": "http", "host": "proxy.example.com", "port": 80}
+
+    @pytest.mark.parametrize(("url", "protocol", "port"), [
+        pytest.param("http://h:8080", "http", 8080, id="http 带端口"),
+        pytest.param("https://h:443", "https", 443, id="https 显式端口"),
+        pytest.param("socks5://h:1080", "socks5", 1080, id="socks5 通道"),
+        pytest.param("https://h", "https", 443, id="https 无端口缺省"),
+    ])
+    def test_value_shape_invariant(self, url, protocol, port):
+        """值域不变量（属性面）：任意合法 URL→三键齐全、protocol
+        取 scheme、port 恒为正 int（WS/REST 两消费方共同依赖的
+        输出契约）。"""
+        from core.data.fapi.stream import legacy_proxy_to_sdk
+
+        got = legacy_proxy_to_sdk(url)
+        assert set(got) == {"protocol", "host", "port"}
+        assert got["protocol"] == protocol
+        assert got["port"] == port
+        assert isinstance(got["port"], int) and got["port"] > 0
 
 
 # ── 白名单与环境变量面 ─────────────────────────────────────

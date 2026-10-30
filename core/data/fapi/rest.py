@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
-from core.data.fapi.stream import is_valid_bar_values
+from core.data.fapi.stream import is_valid_bar_values, legacy_proxy_to_sdk
 from core.data.timeframes import TF_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -220,10 +220,36 @@ class FapiRestClient:
 
     @staticmethod
     def _default_client_factory(**kwargs):
-        """真实 SDK REST 客户端工厂（延迟 import——import 白名单锚）。"""
-        from binance.um_futures import UMFutures
+        """真实 SDK REST 客户端工厂（延迟 import——import 白名单锚）。
 
-        return UMFutures(**kwargs)
+        新 SDK 形制（unify-fapi-sdk 契约 1，18.1.0）：构造经
+        ConfigurationRestAPI（timeout 毫秒形制；proxy 显式代理语义与
+        旧 SDK proxies 等价——显式代理不受 trust_env 影响）。
+
+        proxy 形制转换（审查 CARD-01）：入参保持旧扁平形制
+        {"https": url}（装配面/注入面契约不变），SDK 面转结构化
+        {protocol, host, port}——SDK parse_proxies 只认结构化形制，
+        旧扁平直传拼出 https://: 畸形代理致显式代理部署 REST 全断。
+        转换经 stream.legacy_proxy_to_sdk 单源（WS 面同型）；
+        None/空值直传。
+        """
+        from binance_common.configuration import ConfigurationRestAPI
+        from binance_sdk_derivatives_trading_usds_futures.rest_api import (
+            DerivativesTradingUsdsFuturesRestAPI,
+        )
+
+        sdk_proxy = None
+        if kwargs["proxies"]:
+            raw = (
+                kwargs["proxies"].get("https")
+                or kwargs["proxies"].get("http"))
+            if raw:
+                sdk_proxy = legacy_proxy_to_sdk(str(raw))
+        return DerivativesTradingUsdsFuturesRestAPI(ConfigurationRestAPI(
+            base_path=kwargs["base_url"],
+            timeout=int(kwargs["timeout"]) * 1000,
+            proxy=sdk_proxy,
+        ))
 
     def _sdk(self) -> Any:
         """SDK 客户端惰性单例（首调用建连）。"""
@@ -233,7 +259,10 @@ class FapiRestClient:
                 proxies=self._proxies,
                 timeout=self._timeout,
             )
-            session = getattr(self._client, "session", None)
+            # requests.Session 探测（新 SDK 私有属性 _session；替身可
+            # 暴露 session 公有属性——两面探测保持注入兼容）
+            session = getattr(self._client, "session", None) or getattr(
+                self._client, "_session", None)
             if session is not None:
                 # 直连通道阻断环境代理泄漏（fetcher.py:108 先例）；
                 # 显式 proxies 不受 trust_env 影响——双通道独立
@@ -295,23 +324,24 @@ class FapiRestClient:
             if cursor >= end_ms:
                 frame = _klines_rows_to_frame([])
             else:
-                rows = self._sdk().klines(
-                    symbol=symbol,
-                    interval=timeframe,
-                    startTime=cursor,
-                    endTime=end_ms - 1,
+                resp = self._sdk().kline_candlestick_data(
+                    symbol,
+                    timeframe,
+                    start_time=cursor,
+                    end_time=end_ms - 1,
                     limit=min(int(max_bars), KLINE_PAGE_LIMIT),
                 )
-                frame = _klines_rows_to_frame(rows)
+                frame = _klines_rows_to_frame(resp.data())
         else:
             while cursor < end_ms:
-                rows = self._sdk().klines(
-                    symbol=symbol,
-                    interval=timeframe,
-                    startTime=cursor,
-                    endTime=end_ms - 1,
+                resp = self._sdk().kline_candlestick_data(
+                    symbol,
+                    timeframe,
+                    start_time=cursor,
+                    end_time=end_ms - 1,
                     limit=KLINE_PAGE_LIMIT,
                 )
+                rows = resp.data()
                 if not rows:
                     break  # 区间内无可得数据（尾部推进或端点缺档）
                 collected.extend(rows)
@@ -328,12 +358,17 @@ class FapiRestClient:
             frame.index + pd.Timedelta(seconds=tf_seconds) <= end_bound]
 
     def fetch_exchange_info(self) -> dict:
-        """拉取交易规则（exchangeInfo——filters 提取归 change-4 消费）。
+        """拉取交易规则（exchangeInformation——filters 提取归装载层消费）。
+
+        新 SDK 返回建模响应（Pydantic）——model_dump(by_alias=True)
+        转端点字段名 dict（symbols/filters 键与消费面既有读取一致；
+        对外契约零变化）。
 
         Raises:
             网络异常原样上抛（调用方回退内置常量）。
         """
-        return self._sdk().exchange_info()
+        resp = self._sdk().exchange_information()
+        return resp.data().model_dump(by_alias=True)
 
     def fetch_funding_rate(self, symbol: str, start_ts, end_ts) -> pd.DataFrame:
         """按区间拉取资金费率历史（fundingRate 端点——对账披露面）。
@@ -345,11 +380,14 @@ class FapiRestClient:
             帧 index=结算时刻（UTC 8h 网格）、列 funding_rate——与
             {symbol}_funding.parquet 归档同构；空区间空帧。
         """
-        rows = self._sdk().funding_rate(
+        resp = self._sdk().get_funding_rate_history(
             symbol=symbol,
-            startTime=_ts_to_ms(start_ts),
-            endTime=_ts_to_ms(end_ts),
+            start_time=_ts_to_ms(start_ts),
+            end_time=_ts_to_ms(end_ts),
         )
+        # 新 SDK 返回建模响应列表——dump 回端点字段名 dict（消费面
+        # 读 row["fundingRate"]/row["fundingTime"] 与旧行形制一致）
+        rows = [row.model_dump(by_alias=True) for row in (resp.data() or [])]
         if not rows:
             return pd.DataFrame(
                 {"funding_rate": pd.Series(dtype=float)},

@@ -12,9 +12,12 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
+from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 import pytest
@@ -66,10 +69,11 @@ class _ClientScript:
     """客户端工厂脚本（按序产出指定行为的 FakeFapiClient）。"""
 
     def __init__(self, behaviors: list[str]):
-        """behaviors 每项："ok"（连接成功）/"fail"（构造抛异常）。"""
+        """behaviors 每项："ok"（连接成功）/"fail"（connect 抛异常——
+        新 SDK 构造纯本地，网络失败面在 connect 阶段）。"""
         self.behaviors = list(behaviors)
         self.clients: list[FakeFapiClient] = []
-        self.calls = 0  # 工厂调用次数（含构造失败——重试计数面）
+        self.calls = 0  # 工厂调用次数（含连接失败——重试计数面）
 
     def __call__(self, **kwargs):
         index = self.calls
@@ -81,8 +85,7 @@ class _ClientScript:
         class _Client(FakeFapiClient):
             pass
 
-        _Client.raise_on_construct = behavior == "fail"
-        _Client.construct_connects = True
+        _Client.fail_on_connect = behavior == "fail"
         client = _Client(**kwargs)
         self.clients.append(client)
         return client
@@ -237,7 +240,7 @@ class TestBinanceFapiStreamProduction:
         client = script.clients[0]
         event = make_closed_event()
         for dirty in ("NaN", "Infinity", "-Infinity"):
-            client.deliver_raw(
+            client.deliver(
                 kline_ws_payload(event, open_override=dirty))
         assert recorder.closed == []  # 全部丢弃不投递
         stream.stop()
@@ -251,7 +254,7 @@ class TestBinanceFapiStreamProduction:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
         event = make_closed_event(symbol="ETHUSDT", timeframe="5m")
-        client.deliver_raw(kline_ws_payload(event, closed=False))
+        client.deliver(kline_ws_payload(event, closed=False))
         assert recorder.closed == []
         assert stream.last_push(("ETHUSDT", "5m")) is not None
         stream.stop()
@@ -266,8 +269,8 @@ class TestBinanceFapiStreamProduction:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
         event = make_closed_event()
-        client.deliver_raw(kline_ws_payload(event))
-        client.deliver_raw(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
         assert len(recorder.closed) == 2  # 两次均到达（异常被吞不外抛）
         stream.stop()
 
@@ -280,8 +283,8 @@ class TestBinanceFapiStreamProduction:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
         event = make_closed_event()
-        client.deliver_raw(kline_ws_payload(event))
-        client.deliver_raw(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
         assert len(recorder.closed) == 2
         assert recorder.closed[0] == recorder.closed[1]
         stream.stop()
@@ -325,11 +328,11 @@ class TestBinanceFapiStreamProduction:
         script = _ClientScript(["fail", "fail", "ok", "fail"])
         stream = _make_stream(recorder, script)
         stream.start()
-        # 等第三次工厂调用（脚本第 3 项 ok）产生成功实例
-        assert _wait_until(
-            lambda: script.calls >= 3 and len(script.clients) >= 1)
+        # 新模型 fail 在 connect 阶段抛——实例全部进 clients（成功
+        # 实例=第 3 个：clients[2]）
+        assert _wait_until(lambda: len(script.clients) >= 3)
         assert _wait_until(lambda: stream.connected)
-        script.clients[0].die()  # 成功连接后断线（fail 调用不入实例列）
+        script.clients[2].die()  # 成功连接后断线
         # 序列应含重置点：fail(1),fail(2) 后 ok 断线重置回 1
         assert _wait_until(lambda: len(stream._test_waits) >= 4)  # noqa: SLF001
         stream.stop()
@@ -363,7 +366,7 @@ class TestSilentWindowSemantics:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
         event = make_closed_event(timeframe="1m")
-        client.deliver_raw(kline_ws_payload(event))  # 00:00 bar 闭合
+        client.deliver(kline_ws_payload(event))  # 00:00 bar 闭合
         key = ("BTCUSDT", "1m")
         assert stream.last_push(key) is not None
         assert stream.silent_seconds(key) == 0.0 or stream.silent_seconds(key) >= 0
@@ -387,9 +390,9 @@ class TestMessageFace:
         stream.start()
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
-        client.deliver_raw(json.dumps(
-            {"result": None, "id": 1}))  # 订阅确认控制消息
-        client.deliver_raw("not-a-json{")  # 坏 JSON
+        client.deliver({"result": None, "id": 1})  # 订阅确认控制消息
+        client.deliver("not-a-payload")  # 非 dict 载荷（json.loads 归
+        # SDK 侧——坏 JSON 到不了本层，本层防线=非 dict 丢弃）
         assert recorder.closed == []
         assert stream.connected  # 未崩
         stream.stop()
@@ -407,20 +410,20 @@ class TestMessageFace:
         connected_events = len(recorder.connections)  # 起连事件基线
 
         # data 非 dict 两形态（list/str）
-        client.deliver_raw(json.dumps(
-            {"stream": "btcusdt@kline_1m", "data": [1, 2]}))
-        client.deliver_raw(json.dumps(
-            {"stream": "btcusdt@kline_1m", "data": "oops"}))
+        client.deliver(
+            {"stream": "btcusdt@kline_1m", "data": [1, 2]})
+        client.deliver(
+            {"stream": "btcusdt@kline_1m", "data": "oops"})
         # k 非 dict 两形态（list/str）+k 缺失
-        client.deliver_raw(json.dumps(
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
-             "data": {"e": "kline", "s": "BTCUSDT", "k": [1]}}))
-        client.deliver_raw(json.dumps(
+             "data": {"e": "kline", "s": "BTCUSDT", "k": [1]}})
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
-             "data": {"e": "kline", "s": "BTCUSDT", "k": "bad"}}))
-        client.deliver_raw(json.dumps(
+             "data": {"e": "kline", "s": "BTCUSDT", "k": "bad"}})
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
-             "data": {"e": "kline", "s": "BTCUSDT"}}))
+             "data": {"e": "kline", "s": "BTCUSDT"}})
 
         assert recorder.closed == []  # 畸形消息零投递
         assert len(recorder.connections) == connected_events  # 无断线/重连
@@ -428,7 +431,7 @@ class TestMessageFace:
 
         # 对照：后续正常闭合消息仍恰一次投递（防线不误伤正常路径）
         event = make_closed_event()
-        client.deliver_raw(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
         assert _wait_until(lambda: len(recorder.closed) == 1)
         assert len(recorder.connections) == connected_events
         stream.stop()
@@ -444,12 +447,12 @@ class TestMessageFace:
         client = script.clients[0]
 
         stray = make_closed_event(timeframe="30m")  # 清单外周期
-        client.deliver_raw(kline_ws_payload(stray))  # 同步内联——返回即处理完
+        client.deliver(kline_ws_payload(stray))  # 同步内联——返回即处理完
         assert recorder.closed == []  # 清单外键不投递
         assert stream.last_push(("BTCUSDT", "30m")) is None  # 不入健康面
 
         member = make_closed_event(timeframe="1m")  # 固定 12 键成员
-        client.deliver_raw(kline_ws_payload(member))
+        client.deliver(kline_ws_payload(member))
         assert _wait_until(lambda: len(recorder.closed) == 1)
         assert stream.last_push(("BTCUSDT", "1m")) is not None
         stream.stop()
@@ -462,16 +465,16 @@ class TestMessageFace:
         stream.start()
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
-        client.deliver_raw(json.dumps(
+        client.deliver(
             {"stream": "btcusdt@bookTicker",
-             "data": {"e": "bookTicker", "b": "1", "a": "2"}}))  # 非 kline 事件
-        client.deliver_raw(json.dumps(
+             "data": {"e": "bookTicker", "b": "1", "a": "2"}})  # 非 kline 事件
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
-             "data": {"e": "kline", "k": {"i": "1m", "x": True}}}))  # 缺 s
-        client.deliver_raw(json.dumps(
+             "data": {"e": "kline", "k": {"i": "1m", "x": True}}})  # 缺 s
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
              "data": {"e": "kline", "s": "BTCUSDT",
-                      "k": {"x": True}}}))  # k 缺 i
+                      "k": {"x": True}}})  # k 缺 i
         assert recorder.closed == []
         assert stream.connected
         stream.stop()
@@ -485,11 +488,11 @@ class TestMessageFace:
         stream.start()
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
-        client.deliver_raw(json.dumps(
+        client.deliver(
             {"stream": "btcusdt@kline_1m",
              "data": {"e": "kline", "s": "BTCUSDT",
                       "k": {"i": "1m", "x": True, "o": "1", "h": "2",
-                            "l": "0.5", "c": "1.5", "v": "10"}}}))  # 缺 t
+                            "l": "0.5", "c": "1.5", "v": "10"}}})  # 缺 t
         assert recorder.closed == []
         assert stream.connected
         stream.stop()
@@ -505,7 +508,7 @@ class TestMessageFace:
         # 置 _connected，connected 锚存在「标志已置而 append 未落」窗口
         assert _wait_until(lambda: script.clients and stream.connected)
         event = make_closed_event()
-        script.clients[0].deliver_raw(kline_ws_payload(event))
+        script.clients[0].deliver(kline_ws_payload(event))
         assert _wait_until(lambda: len(recorder.closed) == 1)  # 投递照常
         stream.stop()
 
@@ -520,7 +523,7 @@ class TestMessageFace:
         event = make_closed_event(
             open_time="2026-10-28T00:00:00Z",
             open_=100.0, high=110.0, low=95.0, close=105.0, volume=42.5)
-        client.deliver_raw(kline_ws_payload(event))
+        client.deliver(kline_ws_payload(event))
         assert _wait_until(lambda: len(recorder.closed) == 1)
         got = recorder.closed[0]
         assert got.symbol == "BTCUSDT" and got.timeframe == "1m"
@@ -546,53 +549,38 @@ class TestLifecycleDefensiveBranches:
         assert _wait_until(lambda: stream.connected)
         client = script.clients[0]
 
+        client_ref = script.clients[0]
+
         def broken_stop():
-            client_ref._on_close(client_ref)  # SDK stop 语义：close 回调先行
+            # 包装器 stop 语义：先关连接（close 事件）再抛（关停崩模拟）
+            client_ref._on_close_cb()  # noqa: SLF001——测试注入面
             raise RuntimeError("scripted: SDK 关停崩")
 
-        client_ref = script.clients[0]
-        client.stop = broken_stop  # 实例覆写（SDK 关停异常模拟）
+        client.stop = broken_stop  # 实例覆写
         stream.stop()  # 不抛即通过（异常被吞）
         assert not stream._thread.is_alive()  # noqa: SLF001——线程干净退出
 
     def test_subscribe_send_failure_swallowed_connected_kept(self):
-        """on_open 内订阅发送抛异常被吞——连接仍建立、闭合事件仍投递
-        （对账兜底语义：订阅失败不伪断连接）。"""
+        """连接建立失败（connect 抛）被生命周期循环吞掉续轮——不外抛
+        不停线程（对账兜底语义：连接/订阅失败走退避重试，恢复后闭合
+        事件照常投递）。"""
         recorder = _Recorder()
-        inner = _ClientScript(["ok"])
-
-        class _SendFailFactory:
-            """订阅发送抛异常的工厂包装。
-
-            构造期同步 on_open 先于工厂返回——实例覆写来不及。故先以
-            construct_connects=False 构造（不触发 on_open），覆写
-            send_message 后手动触发 on_open（模拟 SDK 异步回调时序）。
-            """
-
-            def __call__(self, **kwargs):
-                client = inner(**kwargs)
-                on_open = kwargs["on_open"]
-
-                def send(message):
-                    raise RuntimeError("scripted: 订阅发送失败")
-
-                client.send_message = send  # 实例属性（普通方法可实例覆写）
-                on_open(client)  # 订阅经覆写面发出——抛→被吞
-                return client
-
-        stream = _make_stream(recorder, _SendFailFactory())
+        script = _ClientScript(["fail", "ok"])
+        stream = _make_stream(recorder, script)
         stream.start()
-        # 等待锚=工厂完成（同 connection_callback 用例的窗口说明）
-        assert _wait_until(
-            lambda: inner.clients and stream.connected)  # 连接仍建立
+        assert _wait_until(lambda: stream.connected)  # 第二轮恢复
         event = make_closed_event()
-        inner.clients[0].deliver_raw(kline_ws_payload(event))
+        script.clients[1].deliver(kline_ws_payload(event))
         assert _wait_until(lambda: len(recorder.closed) == 1)
         stream.stop()
 
     def test_real_backoff_wait_interrupted_by_stop(self):
         """无 backoff 注入（生产形制）的真实 Event.wait 分支：fail 脚本
-        断线后退避等待被 stop 打断——线程及时退出（不打满退避时长）。"""
+        断线后退避等待被 stop 打断——线程及时退出（不打满退避时长）。
+
+        等待锚=disconnected 事件已发+调度缓冲：stop 若在 _run 线程到达
+        _wait_backoff 前完成，「打断 wait」名存实亡（异常捕获后置停
+        检查直接 break——阶段四覆盖核对实证过该漂移）。"""
         import time as _time
 
         recorder = _Recorder()
@@ -602,7 +590,10 @@ class TestLifecycleDefensiveBranches:
             client_factory=script)
         t0 = _time.monotonic()
         stream.start()
-        assert _wait_until(lambda: script.calls >= 1)
+        # 事件锚：断线事件已发=异常处理完成；缓冲窗=线程进入
+        # _stop_event.wait（emit 与 wait 间无阻塞，0.2s 足够）
+        assert _wait_until(lambda: recorder.connections)
+        _time.sleep(0.2)
         stream.stop()  # 退避 wait 期间 stop——立即打断
         stream._thread.join(timeout=5.0)  # noqa: SLF001——退出观察锚
         assert not stream._thread.is_alive()  # noqa: SLF001
@@ -632,6 +623,55 @@ class TestLifecycleDefensiveBranches:
         stream._thread.join(timeout=5.0)  # noqa: SLF001
         assert not stream._thread.is_alive()  # noqa: SLF001——干净退出
 
+    def test_connect_fail_cleans_up_abandoned_client(self):
+        """CARD-03：connect 失败的弃 client 被 stop 清理（修复前无人
+        stop——半建连连接协程泄漏）且挂载解除，重连挂载新 client。"""
+        script = _ClientScript(["fail", "ok"])
+        recorder = _Recorder()
+        stream = _make_stream(recorder, script)
+        stream.start()
+        assert _wait_until(lambda: script.calls >= 2 and stream.connected)
+        with stream._state_lock:  # noqa: SLF001——挂载面观察锚
+            mounted = stream._client  # noqa: SLF001
+        stream.stop()
+        assert script.clients[0].stopped  # 弃 client 清理
+        assert mounted is script.clients[1]  # 挂载的是新 client 非死对象
+
+    def test_connect_fail_during_user_stop_keeps_unmounted(self):
+        """CARD-03 覆写竞态防御：connect 抛异常时用户 stop() 已解除
+        挂载（_client=None）——except 清理不把死 client 覆写回挂载面。"""
+        script = _ClientScript(["fail"])
+        recorder = _Recorder()
+        holder: dict = {}
+
+        class _StopInsideConnectFactory:
+            """connect 内先触发用户 stop（置停+解除挂载）再放行原
+            connect（fail 抛）——注入 except 路径的竞态窗口。"""
+
+            def __call__(self, **kwargs):
+                client = script(**kwargs)
+                original_connect = client.connect
+
+                def _connect(timeout: float = 30.0):
+                    holder["stream"].stop()  # 置停+置 _client=None
+                    original_connect(timeout)  # fail_on_connect 抛
+
+                client.connect = _connect
+                return client
+
+        stream = _make_stream(recorder, _StopInsideConnectFactory())
+        holder["stream"] = stream
+        stream.start()
+        stream._thread.join(timeout=5.0)  # noqa: SLF001
+        if stream._thread.is_alive():  # noqa: SLF001——防御收尾
+            stream.stop()  # 置停失败时防狂转线程泄漏（daemon 收尾）
+            stream._thread.join(timeout=5.0)  # noqa: SLF001
+        assert not stream._thread.is_alive()  # stop 置停→线程退出
+        with stream._state_lock:  # noqa: SLF001
+            mounted = stream._client  # noqa: SLF001
+        assert mounted is None  # 未被死 client 覆写回
+        assert script.clients[0].stopped  # 清理仍执行（幂等 stop）
+
     def test_scripted_stream_batch_and_rest_raise_branches(self):
         """替身面消解：emit_closed_batch 批量投递/ScriptedRestClient
         exchange_info 与 funding 的异常脚本项/wait_dead 超时 False/
@@ -658,10 +698,99 @@ class TestLifecycleDefensiveBranches:
 
         client = FakeFapiClient()
         assert client.wait_dead(timeout=0.0) is False  # 未断线超时 False
-        client.sent_messages.append("not-a-json{")  # 坏 JSON 行
-        client.sent_messages.append(json.dumps(
-            {"method": "SUBSCRIBE", "params": ["btcusdt@kline_1m"]}))
-        assert client.subscribed_streams == ["btcusdt@kline_1m"]  # 坏行跳过
+        # 新模型：固定订阅全集静态面（订阅归包装器 connect 内部，
+        # 替身无出站消息面——A2 断言锚=全集）
+        from core.data.fapi.stream import FIXED_SUBSCRIBE_STREAMS
+
+        assert client.subscribed_streams == FIXED_SUBSCRIBE_STREAMS
+
+
+# ── CARD-02：静默判死防御（畸形帧杀 receive_loop 的行为结果面）──
+
+
+class TestSilenceDeathGuard:
+    """CARD-02 活性判死：SDK receive_loop 死亡（零回调且不发 close
+    事件——畸形帧协程死亡的行为结果）不再永久泊等——周期复查静默
+    超阈值弃 client 按断线重连。参数缩至毫秒级驱动（模块常量运行时
+    查表，patch 生效）。"""
+
+    _PATCH = (
+        "core.data.fapi.stream.SILENCE_DEATH_CHECK_INTERVAL_SECONDS", 0.05)
+
+    def test_silence_death_triggers_reconnect(self):
+        """判死重连：零投递静默超阈值→弃 client（幂等 stop 清理）→
+        disconnected+退避+重建第二连接（事件三态序列）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok", "ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.3):
+            stream.start()
+            assert _wait_until(lambda: script.calls >= 2), "未判死重连"
+            assert _wait_until(lambda: stream.connected)
+        stream.stop()
+        assert script.clients[0].stopped  # 死连接被清理
+        # 前缀断言：缩参数下第二连接同样零投递，stop 前可能再判死
+        # 产生后续事件——首三态序列才是本用例契约面
+        states = [e.state for e in recorder.connections]
+        assert states[:3] == ["connected", "disconnected", "reconnected"]
+
+    def test_activity_refresh_prevents_false_death(self):
+        """持续推送（含控制帧——订阅确认等非行情消息）不误判死：
+        回调到达即活性刷新，连接保持不重建；控制帧不投递下游。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.3):
+            stream.start()
+            assert _wait_until(lambda: stream.connected)
+            deadline = time.monotonic() + 1.0  # 3 倍阈值窗口
+            while time.monotonic() < deadline:
+                script.clients[0].deliver({"stream": "x", "data": {}})
+                time.sleep(0.02)
+        stream.stop()
+        assert script.calls == 1  # 未判死重建
+        assert recorder.closed == []  # 控制帧不投递（附带锁定丢弃面）
+
+    def test_none_activity_conservative_skip(self):
+        """异常态防御：last_activity=None（未初始化）保守跳过不误杀
+        ——泊等保持至 stop（判死检查永不因缺数据而触发）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]), \
+                mock.patch(
+                    "core.data.fapi.stream.SILENCE_DEATH_SECONDS", 0.2):
+            stream.start()
+            assert _wait_until(lambda: stream.connected)
+            script.clients[0]._last_activity = None  # noqa: SLF001——模拟异常态
+            time.sleep(0.5)  # 多个判死周期（若误判死则 calls 增）
+            assert script.calls == 1
+            assert stream.connected  # 泊等保持
+        stream.stop()
+
+    def test_parking_wakes_on_stop_event_without_close(self):
+        """泊等循环置停防御分支：stop_event 置位而 close 事件未发
+        （stop() 与泊等线程的竞态窗口）——醒来发现置停即退出泊等，
+        线程干净收尾（不停留至判死周期）。注：置停 break 路径不清
+        _connected（现实现——记录在案的健康面观察，见闸门报告）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        stream = _make_stream(recorder, script)
+        with mock.patch(self._PATCH[0], self._PATCH[1]):
+            stream.start()
+            assert _wait_until(lambda: stream.connected)
+            states_before = len(recorder.connections)
+            stream._stop_event.set()  # noqa: SLF001——直接置停（绕过
+            # stop() 的 client.stop 路径——注入竞态窗口：close 不发）
+            stream._thread.join(timeout=5.0)  # noqa: SLF001
+            assert not stream._thread.is_alive()  # noqa: SLF001
+        # 置停退出：不发判死/断线事件（区别于判死与正常断线路径）
+        assert len(recorder.connections) == states_before
+        assert script.calls == 1  # 未判死重建
 
 
 def test_fake_client_none_callback_defensive_sides():
@@ -670,7 +799,325 @@ def test_fake_client_none_callback_defensive_sides():
     stopped 与 _dead 标（断线同步锚保持）。"""
     client = FakeFapiClient()  # 五回调全 None（on_open None 构造不触发）
     client.stop()              # on_close None 侧——打标不炸
-    client.deliver_raw("{}")   # on_message None 侧——no-op
+    client.deliver("{}")   # on_message None 侧——no-op
     client.die()               # on_error None 侧——仅 stop 打标
     assert client.stopped is True
     assert client.wait_dead(timeout=0.1) is True  # die→stop 已置 _dead
+
+
+# ── VS-2.4/VS-2.5：包装器订阅发送面+首验留档（覆盖核对补齐）──
+
+
+class _FakeAsyncSdk:
+    """新 SDK async 客户端替身（协程/注册调用全记录——订阅时序断言面）。
+
+    VS-2.4 订阅发送面驻 _NewSdkWsClient.connect 内部（BinanceFapiStream
+    测试族经 FakeFapiClient 时被整体绕过——subscribed_streams 常量直返
+    是恒真面，不能证明订阅实际发送）；本替身经 _sdk_client_factory 注入
+    包装器，按首验记录①②③的行为锚记录调用序列。
+    """
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.message_callbacks: dict[str, object] = {}
+        self.connection_handlers: dict[str, object] = {}
+        self.connect_cfg = None
+        self.close_connection_calls = 0
+        self.close_connection_raises = False
+
+    async def connect(self, url, cfg):
+        self.calls.append(("connect", url))
+        self.connect_cfg = cfg
+
+    def on_connection(self, event, handler):
+        self.calls.append(("on_connection", event))
+        self.connection_handlers[event] = handler
+
+    async def subscribe(self, streams):
+        self.calls.append(("subscribe", tuple(streams)))
+
+    def on(self, event, callback, stream=None):
+        self.calls.append(("on", event, stream))
+        self.message_callbacks[stream] = callback
+
+    async def close_connection(self):
+        self.close_connection_calls += 1
+        if self.close_connection_raises:
+            raise RuntimeError("scripted: close 崩")
+
+
+def _loop_and_thread() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """起专用事件循环线程（async 桥接基座——conftest AF_UNIX 放行面）。"""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(
+        target=loop.run_forever, name="test-ws-loop", daemon=True)
+    thread.start()
+    return loop, thread
+
+
+def _stop_loop(loop: asyncio.AbstractEventLoop,
+               thread: threading.Thread) -> None:
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5.0)
+    loop.close()
+
+
+class TestNewSdkWsClientSubscribeFace:
+    """VS-2.4 订阅发送面：连接建立即全量订阅 12 路+构造期订阅时序
+    （首验②——on 后于 subscribe，先注册时流名不在连接映射被丢弃）；
+    VS-2.3 等价族的分发桥面（loop 线程仅入队→分发线程转投消费方）。"""
+
+    @staticmethod
+    def _make_wrapper(fake, on_message, on_close=lambda: None,
+                      proxies=None):
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        loop, thread = _loop_and_thread()
+
+        def _teardown():
+            _stop_loop(loop, thread)
+
+        client = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=on_message, on_close=on_close,
+            proxies=proxies,
+            loop=loop, _sdk_client_factory=lambda cfg: fake)
+        return client, _teardown
+
+    def test_connect_subscribes_full_set_in_sequence(self):
+        """连接建立即全量订阅：connect→close 注册→subscribe（恰一次、
+        12 路全集）→逐流 on 注册（12 次全部后于 subscribe——首验②）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, lambda payload: None)
+        try:
+            client.connect(timeout=5.0)
+            kinds = [c[0] for c in fake.calls]
+            # 建连先于订阅（首验①：connect 阻塞至握手完成）
+            assert kinds.index("connect") < kinds.index("subscribe")
+            # 订阅恰一次、参数=固定 12 路全集
+            assert kinds.count("subscribe") == 1
+            subscribed = next(
+                c for c in fake.calls if c[0] == "subscribe")[1]
+            assert list(subscribed) == FIXED_SUBSCRIBE_STREAMS
+            # 断线感知面：close 连接事件注册（首验④——断线仅事件通知）
+            assert any(c[0] == "on_connection" and c[1] == "close"
+                       for c in fake.calls)
+            # 逐流消息回调注册：12 次、流名=全集、全部后于 subscribe
+            on_indices = [i for i, c in enumerate(fake.calls)
+                          if c[0] == "on"]
+            assert len(on_indices) == 12
+            assert all(i > kinds.index("subscribe") for i in on_indices)
+            assert {c[2] for c in fake.calls
+                    if c[0] == "on"} == set(FIXED_SUBSCRIBE_STREAMS)
+        finally:
+            client.stop()
+            teardown()
+
+    def test_message_dispatched_via_dedicated_thread(self):
+        """消息分发桥（首验③线程语境）：SDK 推送经注册回调仅入队，
+        分发线程转投消费方 on_message——回调异常被吞不中断后续分发。"""
+        received: list[dict] = []
+        fail_first = {"yes": True}
+
+        def _on_message(payload):
+            received.append(payload)
+            if fail_first["yes"]:
+                fail_first["yes"] = False
+                raise RuntimeError("scripted: 消费方故障")
+
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, _on_message)
+        try:
+            client.connect(timeout=5.0)
+            payload1 = {"stream": "btcusdt@kline_1m", "data": {"e": "kline"}}
+            payload2 = {"stream": "ethusdt@kline_1m", "data": {"e": "kline"}}
+            fake.message_callbacks["btcusdt@kline_1m"](payload1)
+            fake.message_callbacks["ethusdt@kline_1m"](payload2)
+            # 首条回调异常被分发线程吞掉，第二条照常到达
+            assert _wait_until(lambda: len(received) >= 2)
+            assert received == [payload1, payload2]
+        finally:
+            client.stop()
+            teardown()
+
+    def test_stop_closes_connection_once_and_joins_dispatch(self):
+        """stop：close_connection 恰一次（幂等——重复 stop 不再发）+
+        分发线程随 sentinel 退出（stop 返回即已收尾）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, lambda payload: None)
+        client.connect(timeout=5.0)
+        client.stop()
+        client.stop()  # 幂等侧
+        assert fake.close_connection_calls == 1
+        dispatch = client._dispatch_thread  # noqa: SLF001——退出观察锚
+        assert dispatch is not None and not dispatch.is_alive()
+        teardown()
+
+    def test_connect_without_loop_raises(self):
+        """loop=None 防御面：connect 拒绝（工厂须经 BinanceFapiStream
+        传入事件循环——桥接基座缺失快速失败）。"""
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        client = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=lambda payload: None, on_close=lambda: None,
+            loop=None, _sdk_client_factory=lambda cfg: _FakeAsyncSdk())
+        with pytest.raises(RuntimeError, match="事件循环"):
+            client.connect(timeout=1.0)
+
+    def test_ws_proxy_converted_to_structured_form(self):
+        """CARD-01 同族 WS 面：包装器构造把旧扁平 proxies 转结构化
+        传入 Configuration（rest 面之外的另一转换消费点——单源
+        legacy_proxy_to_sdk 的 WS 侧行为锁定）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(
+            fake, lambda p: None,
+            proxies={"https": "http://172.20.112.1:10809"})
+        try:
+            client.connect(timeout=5.0)
+            assert fake.connect_cfg.proxy == {
+                "protocol": "http",
+                "host": "172.20.112.1", "port": 10809}
+        finally:
+            client.stop()
+            teardown()
+
+    def test_ws_blank_channel_value_no_proxy(self):
+        """WS 面 blank 通道值：https 键显式 None（raw 假值）不进
+        转换——cfg.proxy=None 直连（与 rest 面 blank 值例同语义）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(
+            fake, lambda p: None, proxies={"https": None})
+        try:
+            client.connect(timeout=5.0)
+            assert fake.connect_cfg.proxy is None
+        finally:
+            client.stop()
+            teardown()
+
+    def test_stop_without_loop_only_joins_dispatch(self):
+        """loop=None 构造态的 stop：跳过 close 协程只收尾分发线程
+        （不炸——桥接基座缺失时的关停防御分支）。"""
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        client = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=lambda p: None, on_close=lambda: None,
+            loop=None, _sdk_client_factory=lambda cfg: _FakeAsyncSdk())
+        client.stop()  # 不抛即通过（loop None 分支）
+
+    def test_stop_during_connect_success_window_returns_false(self):
+        """connect 成功后置停窗口：connect 期间用户 stop()——连接
+        建立即弃（_on_open 已发事件，置停检查 client.stop+解除挂载
+        +return False 不进泊等；_run 置停 break 不发 disconnected）。
+        确定性驱动（此前为竞态偶发触达——覆盖波动源）。"""
+        recorder = _Recorder()
+        script = _ClientScript(["ok"])
+        holder: dict = {}
+
+        class _StopInsideConnectOkFactory:
+            """connect 成功前触发用户 stop（成功版置停窗口注入）。"""
+
+            def __call__(self, **kwargs):
+                client = script(**kwargs)
+                original_connect = client.connect
+
+                def _connect(timeout: float = 30.0):
+                    holder["stream"].stop()  # 置停+解除挂载
+                    original_connect(timeout)  # 成功返回
+
+                client.connect = _connect
+                return client
+
+        stream = _make_stream(recorder, _StopInsideConnectOkFactory())
+        holder["stream"] = stream
+        stream.start()
+        stream._thread.join(timeout=5.0)  # noqa: SLF001
+        if stream._thread.is_alive():  # noqa: SLF001——防御收尾
+            holder["stream"].stop()
+            stream._thread.join(timeout=5.0)  # noqa: SLF001
+        assert not stream._thread.is_alive()  # noqa: SLF001
+        assert script.clients[0].stopped  # 置停窗口内连接被弃（清理）
+        states = [e.state for e in recorder.connections]
+        assert states == ["connected"]  # 置停 break 不发 disconnected
+
+    def test_last_activity_none_before_connect_and_set_after(self):
+        """CARD-02 真实包装器活性锚：构造后 None（未建连）→connect
+        尾初始化非 None（替身 property 是等价面，生产 property 此处
+        直测）。"""
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(fake, lambda p: None)
+        try:
+            assert client.last_activity is None  # 构造后未建连
+            client.connect(timeout=5.0)
+            assert client.last_activity is not None  # 建连锚点已置
+        finally:
+            client.stop()
+            teardown()
+
+    def test_close_connection_event_wakes_parking(self):
+        """首验④断线路径：SDK close 连接事件→_handle_close→on_close
+        回调（泊等唤醒链——替身经注册的 handler 直接触发）。"""
+        woke: list[bool] = []
+        fake = _FakeAsyncSdk()
+        client, teardown = self._make_wrapper(
+            fake, lambda p: None, on_close=lambda: woke.append(True))
+        try:
+            client.connect(timeout=5.0)
+            assert "close" in fake.connection_handlers
+            fake.connection_handlers["close"]()  # SDK 断线事件
+            assert woke == [True]
+        finally:
+            client.stop()
+            teardown()
+
+    def test_stop_swallows_close_connection_exception(self):
+        """stop 防御面：close_connection 抛异常被吞（已置停——关停
+        不外抛），分发线程仍收尾。"""
+        fake = _FakeAsyncSdk()
+        fake.close_connection_raises = True
+        client, teardown = self._make_wrapper(fake, lambda p: None)
+        client.connect(timeout=5.0)
+        client.stop()  # 不抛即通过
+        assert fake.close_connection_calls == 1
+        dispatch = client._dispatch_thread  # noqa: SLF001——收尾观察锚
+        assert dispatch is not None and not dispatch.is_alive()
+        teardown()
+
+    def test_default_factory_constructs_real_client_locally(self):
+        """真实 SDK 构造分支（默认工厂+包装器无注入路径）：构造纯
+        本地不建连（首验①），类型名锚定——测试注入替身时被绕过的
+        两行的行为面。类型名断言（非 isinstance）：测试文件不 import
+        SDK 顶层——全工程 import 白名单（tests 亦在扫描面）约束。"""
+        from core.data.fapi.stream import _NewSdkWsClient  # noqa: SLF001
+
+        wrapper = _NewSdkWsClient(
+            stream_url="wss://fstream.example.com",
+            on_message=lambda p: None, on_close=lambda: None)
+        assert type(wrapper._client).__name__ == (  # noqa: SLF001——构造面
+            "DerivativesTradingUsdsFuturesWebSocketStreams")
+        # BinanceFapiStream 默认工厂直调（注入替身时被绕过的分派行）
+        made = BinanceFapiStream._default_client_factory(
+            stream_url="wss://fstream.example.com",
+            on_message=lambda p: None, on_close=lambda: None)
+        assert isinstance(made, _NewSdkWsClient)
+        assert made.last_activity is None  # 未 connect——构造不建连
+
+
+class TestFirstProbeRecordAnchors:
+    """VS-2.5 首验留档核验（文档核验面）：stream.py 模块头四要素首验
+    记录存在性文本锚——防记录被误删（第四要素是退避循环归属本层自持
+    的裁决依据，第二要素时序是订阅面断言的契约源）。"""
+
+    def test_module_header_four_elements_present(self):
+        stream_path = (
+            Path(__file__).resolve().parents[3]
+            / "core" / "data" / "fapi" / "stream.py")
+        header = stream_path.read_text(encoding="utf-8").split('"""')[1]
+        assert "新 SDK 首验记录" in header  # 记录在场
+        for anchor in ("构造与连通", "订阅面", "回调签名", "断线行为"):
+            assert anchor in header, f"首验四要素缺失：{anchor}"
+        # 要素④裁决锚：内建自动重连判定（退避归属维持本层自持）
+        assert "内建自动重连存在" in header
+        # 要素②时序锚：回调注册须后于订阅（先注册被连接映射丢弃）
+        assert "subscribe 之后" in header

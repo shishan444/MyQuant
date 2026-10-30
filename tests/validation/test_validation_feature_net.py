@@ -110,6 +110,14 @@ class TestLoadMtfData:
         result = load_mtf_data("TESTUSDT", ["4h"], data_dir=str(tmp_path))
         assert result == {}
 
+    def test_default_data_dir_resolved_when_omitted(self):
+        """现状记录：data_dir 缺省解析到仓库 data/market_fapi
+        （cleanup-data-segment R-11 改指后；mtf.py L60 分支）——
+        不存在的 symbol 走缺省目录后按「缺文件周期跳过」返回空映射。"""
+        from core.validation.mtf import load_mtf_data
+        result = load_mtf_data("NOEXIST',;'SYMBOL", ["4h"])
+        assert result == {}
+
     def test_date_filter_excludes_out_of_range(self, tmp_path):
         from core.validation.mtf import load_mtf_data
         data_dir = self._setup_files(tmp_path)
@@ -395,7 +403,8 @@ class TestValidateHypothesis:
         assert wide.match_count > narrow.match_count
 
     def test_default_data_dir_resolved_when_omitted(self):
-        """现状记录：data_dir 缺省解析到仓库 data/market（L88 分支）。"""
+        """现状记录：data_dir 缺省解析到仓库 data/market_fapi
+        （cleanup-data-segment R-11 改指后；engine.py L120 分支）。"""
         from core.validation.engine import validate_hypothesis
         result = validate_hypothesis(
             "NOEXIST',;'SYMBOL", "4h", "2024-01-01", "2025-01-01",
@@ -869,10 +878,12 @@ class TestEvaluateRules:
         monkeypatch.setattr(
             mod, "__file__",
             str(tmp_path / "x" / "y" / "fake_mod.py"))  # data_dir 缺省推导锚定 tmp
-        (tmp_path / "data" / "market").mkdir(parents=True, exist_ok=True)
+        # 构造目录随 R-11 改指 market_fapi（缺省推导 parents[3]/data/market_fapi
+        # ——构造 data/market 会被改指后代码绕过，覆盖空洞化）
+        (tmp_path / "data" / "market_fapi").mkdir(parents=True, exist_ok=True)
         import shutil
         for f in ("TESTUSDT_4h.parquet", "TESTUSDT_1d.parquet"):
-            shutil.copy(tmp_path / f, tmp_path / "data" / "market" / f)
+            shutil.copy(tmp_path / f, tmp_path / "data" / "market_fapi" / f)
         from core.analysis.condition_kernel import MtfEvalContext
         ctx = MtfEvalContext(data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
         with patch.object(mod, "load_mtf_data", return_value={}):

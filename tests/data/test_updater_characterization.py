@@ -16,7 +16,6 @@ import pandas as pd
 from core.data.storage import load_parquet, save_parquet
 from core.data.updater import (
     update_funding_data,
-    update_market_data,
     update_open_interest_data,
 )
 
@@ -41,27 +40,6 @@ def _empty_klines() -> pd.DataFrame:
     return pd.DataFrame(
         columns=["open", "high", "low", "close", "volume", "trades"]
     )
-
-
-class TestUpdateMarketDataNoNew:
-    """增量拉取为空：返回存量、磁盘不被改写。"""
-
-    def test_incremental_empty_fetch_returns_existing(self, tmp_path) -> None:
-        existing = make_ohlcv(100)
-        save_parquet(existing, tmp_path / "BTCUSDT_4h.parquet")
-
-        with patch(
-            "core.data.updater.fetch_klines", return_value=_empty_klines()
-        ):
-            out = update_market_data("BTCUSDT", "4h", data_dir=tmp_path)
-
-        assert len(out) == 100
-        # check_freq=False：parquet 往返不保留 index.freq 元数据（序列化必然丢失）
-        pd.testing.assert_frame_equal(out, existing, check_freq=False)
-        # 落盘内容同样保持存量
-        pd.testing.assert_frame_equal(
-            load_parquet(tmp_path / "BTCUSDT_4h.parquet"), existing, check_freq=False
-        )
 
 
 class TestUpdateFundingNoNew:
@@ -150,22 +128,10 @@ class TestUpdateOpenInterestIncrementalStart:
 
 
 class TestDefaultDataDir:
-    """data_dir=None 默认路径（阶段四②盲区消解：相对 cwd 的 data/market）。
+    """衍生品入口显式 data_dir 传参（默认值修正为 data/market_fapi 后，用例消除默认值耦合——断言不再随默认值漂移）。
 
     chdir 到临时目录后默认路径落点在沙箱内，不污染仓库工作区。
     """
-
-    @patch("core.data.updater.fetch_klines")
-    def test_market_data_default_dir(self, mock_fetch, tmp_path, monkeypatch) -> None:
-        monkeypatch.chdir(tmp_path)
-        df = make_ohlcv(60)
-        mock_fetch.return_value = df
-
-        out = update_market_data("BTCUSDT", "4h")
-
-        assert (tmp_path / "data" / "market" / "BTCUSDT_4h.parquet").exists()
-        assert len(out) == 60
-
     @patch("core.data.updater.fetch_funding_history")
     def test_funding_default_dir(self, mock_fetch, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
@@ -174,9 +140,9 @@ class TestDefaultDataDir:
             {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
         )
 
-        out = update_funding_data("BTCUSDT")
+        out = update_funding_data("BTCUSDT", data_dir=tmp_path)
 
-        assert (tmp_path / "data" / "market" / "BTCUSDT_funding.parquet").exists()
+        assert (tmp_path / "BTCUSDT_funding.parquet").exists()
         assert len(out) == 5
 
     @patch("core.data.updater.fetch_open_interest_history")
@@ -187,10 +153,49 @@ class TestDefaultDataDir:
             {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
         )
 
-        out = update_open_interest_data("BTCUSDT", timeframes=["5m"])
+        out = update_open_interest_data(
+            "BTCUSDT", timeframes=["5m"], data_dir=tmp_path)
 
-        assert (tmp_path / "data" / "market" / "BTCUSDT_oi_5m.parquet").exists()
+        assert (tmp_path / "BTCUSDT_oi_5m.parquet").exists()
         assert len(out["5m"]) == 288
+
+
+class TestDefaultDirResolution:
+    """VS-3.4① 缺省分支直调锚（R-11 改默认值的行为回归面）。
+
+    显式传参用例（TestDefaultDataDir）不经过 data_dir=None 分支——
+    上方两用例改显式传参消除默认值耦合后，缺省路径本身失去常驻
+    回归（默认值改回 data/market 不会红）。本类不传 data_dir 直调，
+    chdir 隔离下断言写入落点=活跃域 data/market_fapi——R-11 契约面。
+    """
+
+    @patch("core.data.updater.fetch_funding_history")
+    def test_funding_default_resolves_market_fapi(
+            self, mock_fetch, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=5, freq="8h", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
+        )
+
+        update_funding_data("BTCUSDT")
+
+        assert (tmp_path / "data" / "market_fapi"
+                / "BTCUSDT_funding.parquet").exists()
+
+    @patch("core.data.updater.fetch_open_interest_history")
+    def test_open_interest_default_resolves_market_fapi(
+            self, mock_fetch, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
+        )
+
+        update_open_interest_data("BTCUSDT", timeframes=["5m"])
+
+        assert (tmp_path / "data" / "market_fapi"
+                / "BTCUSDT_oi_5m.parquet").exists()
 
 
 class TestMergeParquetReturnValue:

@@ -66,9 +66,17 @@ def load_min_notional(
     fetch = fetch_exchange_info
     if fetch is None:
         def fetch() -> dict:
-            from core.data.fapi.rest import FapiRestClient
+            from core.data.fapi.rest import FapiRestClient, fapi_env
 
-            return FapiRestClient().fetch_exchange_info()
+            # 装配面 env 传参（CARD-04）：FAPI_PROXY/FAPI_REST_BASE
+            # 契约面经 fapi_env 解析后传入（缺省无参时两键不生效）
+            _env = fapi_env()
+            return FapiRestClient(
+                base_url=_env["rest_base"],
+                proxies=(
+                    {"http": _env["proxy"], "https": _env["proxy"]}
+                    if _env["proxy"] else None),
+            ).fetch_exchange_info()
     try:
         info = fetch() or {}
         for symbol in FAPI_SYMBOLS:

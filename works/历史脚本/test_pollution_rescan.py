@@ -1,6 +1,7 @@
 """S 回扫判据锚族（fix-mtf-execution-consistency 组 4，T4.2 构造面）。
 
-构造库测试（真实库固化锚见 test_pollution_rescan_verification.py）：
+构造库测试（真实库固化锚见 test_pollution_rescan_verification.py
+——D-7 已退役至 works/历史脚本/）：
 - 判据构造：带轴 tf≠exec 入清单 / tf==exec 不入 / 无标注不入 /
   假设侧 when+add_trigger 组判据；
 - 标注+SQL 可查询：两表 pollution_cause='gene_tf_drift' 可查；

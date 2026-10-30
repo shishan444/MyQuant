@@ -1,10 +1,13 @@
-"""Binance K 线与衍生品归档数据拉取。
+"""Binance 衍生品归档数据拉取（funding/OI——S3 月档/日档）。
 
-数据源为 Binance vision 系公共端点（K 线走 data-api.binance.vision、
-衍生品走 data.binance.vision S3 归档）——该域名族在受限地区可直连，
-无需 API key，这是与标准 API 端点的关键差异。消费链：updater 三函数
-（增量更新）→ 唯一生产链路 core/trading/runner 模拟盘数据保新 +
-scripts 手动补数；本模块不落盘（写 Parquet 归 updater/storage）。
+数据源为 data.binance.vision S3 公共归档——受限地区可达、无需
+API key，这是与标准 API 端点的关键差异。消费链：updater 衍生品
+增量更新 → 纸盘 feed funding 节流刷新+守护器 derivs 轮；本模块
+不落盘（写 Parquet 归 updater/storage）。
+
+K 线拉取管道（fetch_klines/_parse_start_ts/_years_ago_ms/_BASE_URL/
+_PAGE_LIMIT）已随数据板块整改退役（cleanup-data-segment R-09——
+现货端点零调用死管道，K 线实时面归 fapi 接入层）。
 """
 
 from __future__ import annotations
@@ -28,17 +31,9 @@ logger = logging.getLogger(__name__)
 # 地址现状见技术债务登记 C4——已裁决保留）
 _DEFAULT_PROXY = os.environ.get("BINANCE_PROXY", "http://172.20.112.1:10809")
 
-# K 线公共数据 API（全地区可达）
-# （知悉：域名可经 BINANCE_DATA_API_URL 环境变量覆写——测试替身/网关
-# 场景使用；覆写后所有 K 线请求走该地址，归档域名 _S3_ARCHIVE_URL 不受影响）
-_BASE_URL = os.environ.get("BINANCE_DATA_API_URL", "https://data-api.binance.vision")
-
 # 衍生品历史（funding / open interest）S3 公共归档，同为 vision 域名族：
 # 受限地区可达、无需 key
 _S3_ARCHIVE_URL = "https://data.binance.vision/data/futures/um"
-
-# 单次请求最大行数（Binance 接口上限）
-_PAGE_LIMIT = 1000
 
 # 日度 metrics 归档并发下载数（文件小、桶静态，8 并发安全）
 _ARCHIVE_WORKERS = 8
@@ -49,59 +44,6 @@ _MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
 _MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 
 
-def _years_ago_ms(n: int) -> int:
-    """N 年前的毫秒时间戳；闰日 2/29 落入非闰年时回退 2/28。
-
-    仅当当前日期为 2/29 且目标年份非闰年时 dt.replace 抛
-    ValueError——年度起点取近似下界即可，回退不引入前视。
-    """
-    dt = datetime.now(timezone.utc)
-    try:
-        dt = dt.replace(year=dt.year - n)
-    except ValueError:
-        dt = dt.replace(year=dt.year - n, month=2, day=28)
-    return int(dt.timestamp() * 1000)
-
-
-def _parse_start_ts(start_str: str) -> int:
-    """把人类可读的起始时间串解析为毫秒时间戳。
-
-    支持形态（按尝试顺序）："N year(s) ago UTC"、"N day(s) ago"、
-    ISO 格式（Z 后缀 tolerated）、毫秒时间戳字面量；全部不匹配
-    时兜底取 2 年前（与 fetch_klines 默认窗口一致）。
-    """
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    # "N year(s) ago UTC" 形态
-    lower = start_str.lower().strip()
-    for unit in ("year", "years"):
-        if f"{unit} ago" in lower:
-            parts = lower.split()
-            n = int(parts[0])
-            return _years_ago_ms(n)
-
-    # "N day(s) ago" 形态
-    for unit in ["day", "days"]:
-        if f"{unit} ago" in lower:
-            parts = lower.split()
-            n = int(parts[0])
-            return now_ms - n * 86400 * 1000
-
-    # ISO 格式（Z 后缀转 +00:00 后解析）
-    try:
-        dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-        return int(dt.timestamp() * 1000)
-    except (ValueError, AttributeError):
-        pass
-
-    # 毫秒时间戳字面量
-    try:
-        return int(start_str)
-    except (ValueError, TypeError):
-        pass
-
-    # 兜底：2 年前
-    return _years_ago_ms(2)
 
 
 def _build_session() -> requests.Session:
@@ -167,89 +109,6 @@ def _http_get(url: str, params: dict | None = None, timeout: int = 30) -> reques
         return _session_for("proxy").get(url, params=params, timeout=timeout)
 
 
-def fetch_klines(
-    symbol: str = "BTCUSDT",
-    interval: str = "4h",
-    start_str: str = "2 year ago UTC",
-    end_str: str | None = None,
-    api_key: str = "",
-    api_secret: str = "",
-) -> pd.DataFrame:
-    """从 Binance 公共数据 API 拉取历史 K 线（自动翻页）。
-
-    Args:
-        symbol: 交易对（如 "BTCUSDT"）。
-        interval: K 线周期（"1m"、"5m"、"15m"、"1h"、"4h"、"1d"）。
-        start_str: 起始时间串（形态见 _parse_start_ts）。
-        end_str: 结束时间串（None = 当前时刻）。
-        api_key: 未使用，保留以兼容旧调用方签名。
-        api_secret: 未使用，同上。
-
-    Returns:
-        DataFrame，列 open/high/low/close/volume/trades，
-        DatetimeIndex（UTC）。无数据时返回空帧（同列结构）。
-    """
-    start_ms = _parse_start_ts(start_str)
-    end_ms = (
-        int(datetime.now(timezone.utc).timestamp() * 1000)
-        if end_str is None
-        else _parse_start_ts(end_str)
-    )
-
-    all_klines: list[list] = []
-
-    # 翻页拉取（每页上限 _PAGE_LIMIT）
-    current_start = start_ms
-    while current_start < end_ms:
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "startTime": current_start,
-            "endTime": end_ms,
-            "limit": _PAGE_LIMIT,
-        }
-        resp = _http_get(f"{_BASE_URL}/api/v3/klines", params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if not data:
-            break
-
-        all_klines.extend(data)
-
-        # 起点推进到最后一根 K 线开盘时刻之后
-        last_open_time = data[-1][0]
-        if last_open_time <= current_start:
-            break
-        current_start = last_open_time + 1
-
-        # 不足一页说明已到终点
-        if len(data) < _PAGE_LIMIT:
-            break
-
-    if not all_klines:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "trades"])
-
-    df = pd.DataFrame(all_klines, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades",
-        "taker_buy_base", "taker_buy_quote", "ignore",
-    ])
-
-    # 只保留消费面所需列
-    df = df[["timestamp", "open", "high", "low", "close", "volume", "trades"]]
-
-    # 类型转换
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
-    df["trades"] = df["trades"].astype(int)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df = df.set_index("timestamp")
-
-    # 按时间戳去重（保留首次）
-    df = df[~df.index.duplicated(keep="first")]
-
-    return df
 
 
 def _download_archive_csv(archive_dir: str, symbol: str, stem: str) -> pd.DataFrame | None:
