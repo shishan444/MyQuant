@@ -59,6 +59,15 @@ def validate_recovery(task_row: Dict[str, Any]) -> Optional[str]:
         # 任务 balance 自然 NULL（首 bar 权益快照才写）——非账户态
         # 损坏，直接可信续跑；bars>0 而 balance NULL 才是真损坏。
         if int(task_row.get("bars_processed") or 0) == 0:
+            # 豁免收紧（CARD-02 扩充）：零 bar 的自然形态是持仓核心
+            # 字段组全 NULL（持仓首写随首个 bar 处理事务，与判据 1
+            # 「bars>0 而游标缺失」同构的物理矛盾判据）——零 bar 而
+            # 任何持仓字段非 NULL 只能来自库污染，fail-closed 不静默
+            # 续跑（部分 NULL 与全满两形态在此单点全收；不收紧则
+            # 全满形态豁免内外均无拦，带幽灵持仓 fail-open 续跑）。
+            if any(task_row.get(f) is not None
+                   for f in _POSITION_CORE_FIELDS):
+                return "物理矛盾：零 bar 任务存在持仓字段"
             return None  # 零 bar：其余判据也无从触发，直接可信
         return "账户态不完整：balance 为 NULL"
     non_null = [f for f in _POSITION_CORE_FIELDS

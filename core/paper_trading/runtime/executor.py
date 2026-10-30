@@ -445,7 +445,14 @@ class PaperTaskExecutor:
         executor = cls(db_path, task_row, **kwargs)
         row = task_row
         ledger = executor.ledger
-        ledger.balance = float(row["balance"])
+        # 零 bar 语义（CARD-02）：刚挂载未收首根闭合 bar 的任务
+        # balance 自然 NULL（首 bar 权益快照才写）——Ledger.__init__
+        # 已从 initial_cash 构造初始账户态，跳过覆写即恢复初始账户
+        # （零 bar 豁免见 validate_recovery 判据 2）；bars>0 而
+        # balance NULL 是真损坏，由 validate_recovery 前置判据拦
+        # （from_task_row 生产调用方唯一=recover_task，恒前置校验）。
+        if row["balance"] is not None:
+            ledger.balance = float(row["balance"])
         if row["position_side"] is not None:
             ledger.position = Position(
                 side=row["position_side"],
