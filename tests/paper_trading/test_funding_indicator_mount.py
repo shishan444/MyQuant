@@ -22,11 +22,15 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.errors import ResearchError
 from core.data.storage import save_parquet
-from core.paper_trading.runtime.feed import FeedSubscription
+from core.features.indicators import compute_all_indicators
+from core.paper_trading.runtime.feed import FeedRegistry, FeedSubscription
 from core.persistence.repository import paper
 from core.strategy.dna import SignalRole
-from tests.helpers.data_factory import make_ohlcv, make_dna, make_signal_gene
+from tests.helpers.data_factory import (
+    make_ohlcv, make_dna, make_mtf_dna, make_signal_gene,
+)
 
 from tests.paper_trading.test_paper_executor import _Harness, _funding_frame
 
@@ -276,3 +280,86 @@ class TestRuntimeInjection:
         for r in stale_rows:
             snapshot = json.loads(r["indicator_snapshot"])
             assert snapshot["funding_pressure_8"] == pytest.approx(0.0008)
+
+
+def _fzs_gene_pair():
+    """FundingZScore 进出场基因对（极端分置——进出场同指标形制）。"""
+    entry = make_signal_gene(
+        indicator="FundingZScore",
+        params={"period": 30},
+        role=SignalRole.ENTRY_TRIGGER,
+        condition_type="gt",
+        condition_value=1.0,
+    )
+    exit_gene = make_signal_gene(
+        indicator="FundingZScore",
+        params={"period": 30},
+        role=SignalRole.EXIT_TRIGGER,
+        condition_type="lt",
+        condition_value=-1.0,
+    )
+    return [entry, exit_gene]
+
+
+class TestMtfRuntimeInjection:
+    """MTF×执行层衍生品基因形态（缺陷现状锚——reviewer/security
+    双源确证的 P0 候选卡回归红测）。
+
+    现状链（亲测复现，/tmp/tester-repro-mtf.log）：装载放行——装载期
+    _assemble_prepare_frames 的主周期帧=enhanced（已注入衍生列），
+    试算可过；运行期崩——process_frames 的 merge 在
+    _assemble_mtf_frames 之后只重绑局部 df，MTF 帧表的主周期帧仍
+    纯 K 线，执行层衍生品基因在 dna_to_signal_set 处不可求值抛
+    ResearchError。修复后本类用例应改为断言全帧推进结题（主周期
+    帧同款注入）。
+    """
+
+    @staticmethod
+    def _make_mtf_harness(tmp_path: Path, dna):
+        """MTF 装配（4h 主帧+1d 辅 parquet+重建 registry）。"""
+        h = _Harness(tmp_path)
+        daily = make_ohlcv(n=60, freq="1d", seed=7, base_price=100.0)
+        save_parquet(daily, h.data_dir / "BTCUSDT_1d.parquet")
+        h.registry = FeedRegistry(
+            h.data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
+            funding_refresher=lambda **k: _funding_frame([]))
+        h.task_id = paper.create_task(
+            h.db, strategy_id="strat-mtf-fzs",
+            dna_snapshot_json=dna.to_json(),
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=10_000.0, leverage=1, window_bars=30)
+        return h, daily
+
+    def test_mtf_exec_layer_funding_gene_mounts_then_runtime_raises(
+            self, tmp_path):
+        """缺陷现状锚：装载放行（pending 非 error）+运行期首帧抛
+        ResearchError（MTF 帧表主周期帧未注入衍生列）。"""
+        dna = make_mtf_dna(timeframes=("1d", "4h"))
+        dna.layers[1].signal_genes = _fzs_gene_pair()  # 4h 执行层
+        h, daily = self._make_mtf_harness(tmp_path, dna)
+        _write_funding_parquet(h.data_dir)
+        ex = h.make_executor()
+        assert ex.prepare() is True  # 现状：装载放行
+        assert h.task()["status"] == "pending"
+        # 辅帧注入（1d 层真实参与——锚不混「辅层跳过」容错路径）
+        ex._make_aux_handler("1d")(compute_all_indicators(daily), 0)
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        with pytest.raises(ResearchError, match="FundingZScore"):
+            ex.process_frames(h.df, 0)
+
+    def test_mtf_aux_layer_funding_gene_rejected_at_mount(
+            self, tmp_path):
+        """对照形态：辅层衍生品基因装载即拒——装载期辅层帧来自
+        feed 内存序列（纯 K 线、不注入衍生列），试算不可求值转
+        indicators_unavailable（拒绝语义自洽，非装载绿运行崩）。"""
+        dna = make_mtf_dna(timeframes=("1d", "4h"))
+        dna.layers[0].signal_genes = _fzs_gene_pair()  # 1d 辅层
+        h, _ = self._make_mtf_harness(tmp_path, dna)
+        _write_funding_parquet(h.data_dir)
+        ex = h.make_executor()
+        assert ex.prepare() is False
+        assert "indicators_unavailable" in (h.task()["error_detail"] or "")
