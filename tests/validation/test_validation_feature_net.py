@@ -110,6 +110,14 @@ class TestLoadMtfData:
         result = load_mtf_data("TESTUSDT", ["4h"], data_dir=str(tmp_path))
         assert result == {}
 
+    def test_default_data_dir_resolved_when_omitted(self):
+        """现状记录：data_dir 缺省解析到仓库 data/market_fapi
+        （cleanup-data-segment R-11 改指后；mtf.py L60 分支）——
+        不存在的 symbol 走缺省目录后按「缺文件周期跳过」返回空映射。"""
+        from core.validation.mtf import load_mtf_data
+        result = load_mtf_data("NOEXIST',;'SYMBOL", ["4h"])
+        assert result == {}
+
     def test_date_filter_excludes_out_of_range(self, tmp_path):
         from core.validation.mtf import load_mtf_data
         data_dir = self._setup_files(tmp_path)

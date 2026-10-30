@@ -1,6 +1,7 @@
 """VACUUM 脚本测试（VS-3.5——tmp 构造库四路径）。"""
 from __future__ import annotations
 
+import importlib.util
 import sqlite3
 import subprocess
 import sys
@@ -9,6 +10,47 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path("scripts/vacuum_quant_db.py").resolve()
+
+
+def _load_module():
+    """从脚本路径加载模块（scripts/ 非包，属性测试直取 _is_locked）。"""
+    spec = importlib.util.spec_from_file_location("vacuum_quant_db", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestIsLockedClassifier:
+    """_is_locked 分流纯函数属性面（CARD-01）：异常类型×文本特征
+    两维判定——OperationalError 且含 locked 文本（两官方形态+大小写
+    不敏感）为占用；其余（打不开/非库/普通 Error）一律非占用。"""
+
+    @pytest.mark.parametrize(
+        ("exc", "expected"),
+        [
+            pytest.param(
+                sqlite3.OperationalError("database is locked"), True,
+                id="写锁占用标准形态"),
+            pytest.param(
+                sqlite3.OperationalError("database table is locked"), True,
+                id="表锁占用形态"),
+            pytest.param(
+                sqlite3.OperationalError("Database is LOCKED"), True,
+                id="大小写不敏感"),
+            pytest.param(
+                sqlite3.OperationalError("unable to open database file"),
+                False, id="目录打不开——打不开非占用"),
+            pytest.param(
+                sqlite3.DatabaseError("file is not a database"), False,
+                id="非库文件——类型不匹配"),
+            pytest.param(
+                sqlite3.Error("no more rows available"), False,
+                id="基类 Error 非占用"),
+        ],
+    )
+    def test_classifies_by_type_and_text(self, exc, expected):
+        mod = _load_module()
+        assert mod._is_locked(exc) is expected
 
 
 def _make_db(path: Path, *, with_free_pages: bool = True) -> None:
