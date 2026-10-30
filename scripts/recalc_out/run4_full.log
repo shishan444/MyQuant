@@ -1,0 +1,759 @@
+[skip-warmup] fca94792-c
+[skip-warmup] 038d1ffe-1
+[skip-warmup] c1491559-5
+[skip-warmup] da60e741-9
+[ok] dbacfab4-8de 12 行 ['no_change', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 0e5a1673-d
+[skip-warmup] e443138b-3
+[skip-warmup] fba5ceaf-9
+[skip-warmup] 92946a26-b
+[ok] 631cecd7-684 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 4c99331e-7
+[skip-warmup] 91f0956c-5
+[skip-warmup] 72f6cddc-7
+[skip-warmup] 5e0c9d22-7
+[ok] 894b0732-583 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 1669be05-6
+[skip-warmup] ee7fefa1-f
+[skip-warmup] c98e7a1b-e
+[skip-warmup] 1c445755-1
+[ok] 55e068c1-ca6 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] d4f8a705-6
+[skip-warmup] d1678179-f
+[skip-warmup] fffb136d-c
+[skip-warmup] 2a59b04b-2
+[ok] e00cc628-ed0 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] cf804e82-1
+[skip-warmup] e213f603-b
+[skip-warmup] 44822362-1
+[skip-warmup] 877b897e-4
+[ok] f26d7a2f-db2 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 5d21a19e-8
+[skip-warmup] ed1a8bb4-c
+[skip-warmup] 6bb41b07-a
+[skip-warmup] 7ad4b3e9-3
+[ok] 65c646f1-c9d 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] c9b6f5c8-d
+[skip-warmup] 5b2deee7-d
+[skip-warmup] 409226d2-8
+[skip-warmup] 989a6f76-4
+[ok] bb243516-283 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 178f0684-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+[skip-warmup] ffd872d2-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+[skip-warmup] 0ea80734-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+[skip-warmup] 3bfd9c24-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=85e55b59-0c43-45b4-b4f6-dbb8310a434b
+[ok] 85e55b59-0c4 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 6b29e85e-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+[skip-warmup] c9a5f610-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+/Users/ss/works/git/aicode/everycode/MyQuant/core/scoring/metrics.py:50: RuntimeWarning: invalid value encountered in scalar power
+  return (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+[skip-warmup] f473d348-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+/Users/ss/works/git/aicode/everycode/MyQuant/core/scoring/metrics.py:50: RuntimeWarning: invalid value encountered in scalar power
+  return (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+[skip-warmup] 5d4b4b21-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=603e723e-5ca3-4535-9b3b-dc9d074e3004
+/Users/ss/works/git/aicode/everycode/MyQuant/core/scoring/metrics.py:50: RuntimeWarning: invalid value encountered in scalar power
+  return (1 + total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+[ok] 603e723e-5ca 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] f8af080a-9
+[skip-warmup] 3727a19a-b
+[skip-warmup] e82777a0-b
+[skip-warmup] 67b6f5d2-c
+[ok] 7a1cdf0d-99c 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 55fb40e4-7
+[skip-warmup] cea02270-0
+[skip-warmup] e326d135-7
+[skip-warmup] 563cadb8-e
+[ok] 3825fe3f-9d4 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 84d1eef0-8
+[skip-warmup] 576908cf-1
+[skip-warmup] 265c8f19-1
+[skip-warmup] 3ecfe6ee-1
+[ok] d1888cc3-fd8 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] cfb7e01c-f
+[skip-warmup] 280e2438-6
+[skip-warmup] a453b221-d
+[skip-warmup] af39563c-4
+[ok] d8487f7c-216 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 8adcebb1-e
+[skip-warmup] dfa02515-6
+[skip-warmup] 66625683-e
+[skip-warmup] a77e9822-5
+[ok] 7bcea8fa-20a 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a781b09f-b
+[skip-warmup] 15ea174e-b
+[skip-warmup] d5b2a984-2
+[skip-warmup] 5e267ffa-7
+[ok] bb54e611-4f9 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 62a733b0-4
+[skip-warmup] 36af024a-0
+[skip-warmup] 9ac9be96-8
+[skip-warmup] 27322dc7-8
+[ok] 38a2de7f-7e7 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 3128cd87-0
+[skip-warmup] 2e3de609-9
+[skip-warmup] 3e52dd62-3
+[skip-warmup] 97b77e29-a
+[ok] 56c1a0c9-ff3 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 9344404a-5
+[skip-warmup] 99d8065f-f
+[skip-warmup] 65e472ce-b
+[skip-warmup] 9c75a3ae-6
+[ok] c6b6b3a8-a88 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 8a15aee8-7
+[skip-warmup] c5053eac-d
+[skip-warmup] ce660d4a-2
+[skip-warmup] 4bf298a9-4
+[ok] 322da611-e52 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 0a955110-8
+[skip-warmup] 8749b7e9-a
+[skip-warmup] 0fa2e2b2-9
+[skip-warmup] 58dae429-d
+[ok] c1575e21-5e9 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] b85d18ed-c
+[skip-warmup] 26d60abe-1
+[skip-warmup] 841540ae-8
+[skip-warmup] c2e09d24-5
+[ok] 7b9a4a72-d8e 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 2c8a9b21-9
+[skip-warmup] e527ff5e-9
+[skip-warmup] e80ff8d5-3
+[skip-warmup] 4b881b1c-e
+[ok] abab4d80-ae6 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 1c64bb17-b
+[skip-warmup] 7c7a559e-c
+[skip-warmup] c14cdf45-b
+[skip-warmup] 4779da5c-6
+[ok] 96958ade-d58 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 7898fd69-a
+[skip-warmup] 36a3732e-4
+[skip-warmup] ef84ad42-0
+[skip-warmup] 94b886f7-1
+[ok] 2f35f3fa-979 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 8ff23b3a-4
+[skip-warmup] df5efcb5-6
+[skip-warmup] 15d10b58-9
+[skip-warmup] cca2e78b-f
+[ok] cfdcec63-649 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] b6f23962-3
+[skip-warmup] 5a52875a-a
+[skip-warmup] 56a5830f-9
+[skip-warmup] 4f0cd010-8
+[ok] 4d2b9ca9-abc 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] bdbdff90-b
+[skip-warmup] c937cb76-6
+[skip-warmup] ef211ae3-9
+[skip-warmup] 170043a0-6
+[ok] d38b53a0-ead 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] d1ec60fc-5
+[skip-warmup] dcc022fb-6
+[skip-warmup] 39c4367b-6
+[skip-warmup] a13023b7-9
+[ok] 5f249fff-df2 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 35ccfc61-c
+[skip-warmup] c8698370-8
+[skip-warmup] 967df227-8
+[skip-warmup] bb1d6aa3-0
+[ok] 21b55088-0a7 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 52d5a6ac-5
+[skip-warmup] 2f938317-f
+[skip-warmup] ebf2b182-b
+[skip-warmup] 4f17fb69-0
+[ok] b91278f3-273 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 49a2a69b-e
+[skip-warmup] cd4edc44-7
+[skip-warmup] 1c2a6fca-5
+[skip-warmup] 2b3e4308-4
+[ok] 31eea736-6a7 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 765779e5-f
+[skip-warmup] c5823b85-a
+[skip-warmup] 6dc27d1d-7
+[skip-warmup] ec50ae8d-4
+[ok] 965d42f9-41e 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] f333558c-8
+[skip-warmup] cd6edfa8-5
+[skip-warmup] ba8ed007-d
+[skip-warmup] 8f344294-a
+[ok] 60cefee2-39c 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] baa1dcd4-c
+[skip-warmup] 97ee60b0-c
+[skip-warmup] cfc2bb15-0
+[skip-warmup] 2e5ed80b-5
+[ok] 03288c9d-e29 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 7bb8ab5b-4
+[skip-warmup] ab6333ec-e
+[skip-warmup] d3899402-3
+[skip-warmup] 0ec8f41a-7
+[ok] debbdab0-560 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 55cc9098-b
+[skip-warmup] 04fd46bc-9
+[skip-warmup] b986d57c-d
+[skip-warmup] 144c3b99-d
+[ok] 16155f7a-ddb 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 03f212b2-0
+[skip-warmup] 9bb41025-2
+[skip-warmup] cd2bddc8-6
+[skip-warmup] 31ca84a1-f
+[ok] 6d5bd155-68d 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] de1b647c-e
+[skip-warmup] f7d553b3-5
+[skip-warmup] a302aae9-d
+[skip-warmup] 29caa121-f
+[ok] 5d343e6e-ae5 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] d4582a11-7
+[skip-warmup] 6ac0fcd3-6
+[skip-warmup] 37b7aaf2-9
+[skip-warmup] 2647613f-4
+[ok] 49fb967f-376 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 138cb6ed-c
+[skip-warmup] 1c7c7c89-9
+[skip-warmup] 11beb95e-2
+[skip-warmup] 9e48b390-d
+[ok] 70c753ee-d49 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 9ef05bb8-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+[skip-warmup] 09b4c2db-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+[skip-warmup] 0b71449f-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+[skip-warmup] b878d1ce-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=211ae973-8f7f-478c-853a-edfa0db9deb9
+[ok] 211ae973-8f7 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 121bdcbe-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+[skip-warmup] df872ee4-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+[skip-warmup] 35a1524b-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+[skip-warmup] 245dda19-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=99d03ff7-2c9e-4ae4-82ac-df214d4532cd
+[ok] 99d03ff7-2c9 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] f8735fbb-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+[skip-warmup] 66824708-e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+[skip-warmup] a74f6750-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+[skip-warmup] 7529105d-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30968566-f73f-4bde-bc33-025b24c9e054
+[ok] 30968566-f73 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] bb6fde8d-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+[skip-warmup] 231b91e8-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+[skip-warmup] f2c5e18f-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+[skip-warmup] 37f03d93-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=65e164c4-d622-4591-8322-ec97829e12ea
+[ok] 65e164c4-d62 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 20d81245-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+[skip-warmup] 8509008e-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+[skip-warmup] a5f99141-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+[skip-warmup] c838c305-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ff093260-64e0-4d0b-8528-29195dc91a5a
+[ok] ff093260-64e 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] da6baae3-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+[skip-warmup] 8fc9fb62-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+[skip-warmup] da9a8691-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+[skip-warmup] c965a987-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=47946361-a0e7-48a1-842e-e93d3919f7de
+[ok] 47946361-a0e 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 2c3309da-e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+[skip-warmup] bcdf46be-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+[skip-warmup] 79451ce8-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+[skip-warmup] e958a7a6-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=67545cf1-78af-4ee1-9042-e325774754ff
+[ok] 67545cf1-78a 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] dfe53080-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+[skip-warmup] d9bc2f35-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+[skip-warmup] a1fb085e-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+[skip-warmup] 3c1ce94e-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=df386daf-dda7-429a-a0ab-014cf2103584
+[ok] df386daf-dda 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 95a244f7-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+[skip-warmup] 5e1d833b-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+[skip-warmup] 2a02b5ac-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+[skip-warmup] 0ee5cf44-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=9b296011-8f57-4fa3-a2b8-1485ce3f1650
+[ok] 9b296011-8f5 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 53b94264-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+[skip-warmup] 0c373dcf-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+[skip-warmup] 6dfb4f03-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+[skip-warmup] 9ffc413a-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=7d860a4e-6bea-4c03-a9db-cda382080e35
+[ok] 7d860a4e-6be 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 53239182-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+[skip-warmup] 855f7fe0-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+[skip-warmup] 4e2a131c-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+[skip-warmup] fb4d7018-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=611ad40a-b3c6-4b02-b59d-ccc9fdc693aa
+[ok] 611ad40a-b3c 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 53229c31-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+[skip-warmup] 14d996d4-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+[skip-warmup] b158403a-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+[skip-warmup] e9526701-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d3d6c094-db94-4add-a157-b555610738ff
+[ok] d3d6c094-db9 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 16a5f73b-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+[skip-warmup] 36a4d40e-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+[skip-warmup] 2cd162d9-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+[skip-warmup] ae15f5a9-e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=ddb56a0b-1ce2-4fa6-9c70-56b04b9d7909
+[ok] ddb56a0b-1ce 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 4c937c67-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+[skip-warmup] 1572733f-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+[skip-warmup] 3ebdf1b2-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+[skip-warmup] 0b568e5a-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=d26baa05-4b9b-48f0-a53c-cfcd67e96a4d
+[ok] d26baa05-4b9 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a1c6d5e9-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+[skip-warmup] 9ff084d7-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+[skip-warmup] 7382cf4e-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+[skip-warmup] 504d9ba8-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f93c47e1-7b89-4b77-b97a-b45761ece12a
+[ok] f93c47e1-7b8 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 1284f3fe-e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+[skip-warmup] 5c9c2acd-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+[skip-warmup] e2473458-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+[skip-warmup] ca7a6526-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3df0091d-92db-4512-9f27-73fe09daad1e
+[ok] 3df0091d-92d 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 86726fb0-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+[skip-warmup] 879ac7f0-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+[skip-warmup] a514b53e-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+[skip-warmup] 1bda23d3-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=e8a5fba0-d508-4df4-b995-33199ebc8157
+[ok] e8a5fba0-d50 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a24ddda4-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+[skip-warmup] 92b0d89f-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+[skip-warmup] f4f93d85-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+[skip-warmup] 8ebdd3d4-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=01a86f30-3054-4f27-bd8c-07b90a55170f
+[ok] 01a86f30-305 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 7cb3d2cd-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+[skip-warmup] c6bae2e4-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+[skip-warmup] f2404fc8-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+[skip-warmup] a2fc8f11-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=760ca817-d619-4c9a-b25a-f723e4ed8f1c
+[ok] 760ca817-d61 12 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 5eda7129-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+[skip-warmup] 6dabf781-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+[skip-warmup] 2cf1bb72-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+[skip-warmup] 1a529522-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1e229724-a2e1-4a4c-a4de-9256b236b26e
+[skip-warmup] 33cbc38c-e
+[ok] 1e229724-a2e 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a5759e7c-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+[skip-warmup] 85d81554-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+[skip-warmup] 509a1c3d-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+[skip-warmup] 3d42d410-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2eb59328-4ea8-4b70-b0eb-2703234a893a
+[skip-warmup] e0c387bb-1
+[ok] 2eb59328-4ea 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] da2188cc-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+[skip-warmup] 69324c0e-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+[skip-warmup] b90cdb50-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+[skip-warmup] 6382174e-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=fb905e7b-5623-49c0-8f8c-d8d748790846
+[skip-warmup] 9badee8e-9
+[ok] fb905e7b-562 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] d417a31e-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+[skip-warmup] 9c7093d0-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+[skip-warmup] d60678e5-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+[skip-warmup] f787081e-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3996ef59-1645-4ffc-a6b3-6f2b8de9aab7
+[skip-warmup] ab02246e-4
+[ok] 3996ef59-164 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 1f41bf24-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+[skip-warmup] 18cb77c6-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+[skip-warmup] 8ca6a5eb-e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+[skip-warmup] 8edbc74a-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=84405e6d-02d6-4491-88d2-b164c921c565
+[skip-warmup] e270311c-5
+[ok] 84405e6d-02d 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 08b7ff04-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+[skip-warmup] 4f510d77-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+[skip-warmup] ead00990-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+[skip-warmup] 81d33cd4-1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=354f6f5d-ad8d-430b-b002-43a4e6630edf
+[skip-warmup] 2a73d998-c
+[ok] 354f6f5d-ad8 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 0477de93-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+[skip-warmup] d421a4ef-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+[skip-warmup] a81b0e64-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+[skip-warmup] 5ab66bfb-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=16540a00-5020-40b8-b64f-506ccda1d3d6
+[skip-warmup] 14f361ed-5
+[ok] 16540a00-502 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 13b2cc11-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+[skip-warmup] f602160b-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+[skip-warmup] 9e0552cd-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+[skip-warmup] ad1489aa-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=f3b40710-b836-4edd-9423-acb266f01d0e
+[skip-warmup] 74871c36-f
+[ok] f3b40710-b83 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 8630dd2d-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+[skip-warmup] 707c19ba-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+[skip-warmup] b49dad5f-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+[skip-warmup] 21555eaa-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b0dcaa0c-fd7d-4ef1-b553-c12aea873678
+[skip-warmup] 8e4b3064-0
+[ok] b0dcaa0c-fd7 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 93872a1f-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+[skip-warmup] 490f7650-4
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+[skip-warmup] 7be61719-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+[skip-warmup] cf6a2f16-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b06ba571-614f-40aa-9f37-940f47ff49f2
+[skip-warmup] 9f7ea2b9-f
+[ok] b06ba571-614 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a2d51cb7-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+[skip-warmup] 57d71a93-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+[skip-warmup] 570dd4a9-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+[skip-warmup] ec151e12-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=2c5bd88b-061c-45e9-a37a-6ef1bb8e9076
+[skip-warmup] db80e5ee-f
+[ok] 2c5bd88b-061 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 65434fa4-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+[skip-warmup] 1884c4f0-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+[skip-warmup] 16eb5e62-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+[skip-warmup] 44058789-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=6dfb609a-54a7-49a5-9bed-43b74db9588e
+[skip-warmup] 5529cf7f-2
+[ok] 6dfb609a-54a 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 07adb8ae-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+[skip-warmup] 5437272f-8
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+[skip-warmup] ab9e7d77-9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+[skip-warmup] c29505aa-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=204f8133-9666-4c30-bf59-a96a463a54de
+[skip-warmup] d1bad49f-e
+[ok] 204f8133-966 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a307a06b-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+[skip-warmup] 3d361ec3-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+[skip-warmup] 04f3dbbe-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+[skip-warmup] 29c4950a-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=21aa0f96-e9c2-45c3-a891-746c040707f7
+[skip-warmup] 0f241603-0
+[ok] 21aa0f96-e9c 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 0c92cbc9-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+[skip-warmup] 81a937ee-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+[skip-warmup] ee48fc87-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+[skip-warmup] 3dd6494e-a
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=30f353ac-e1a7-4ea4-960f-b6ecc164bed9
+[skip-warmup] 6983ee18-e
+[ok] 30f353ac-e1a 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 588e88a4-b
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+[skip-warmup] 4a5eb30e-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+[skip-warmup] 297ccb7c-0
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+[skip-warmup] 4b273884-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=1d8581e7-becd-456d-9bf7-d202d84ba6e1
+[skip-warmup] 252fe230-d
+[ok] 1d8581e7-bec 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 8b528536-6
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+[skip-warmup] 4b18a742-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+[skip-warmup] 7d05d528-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+[skip-warmup] 11237aa2-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=3c127ca3-82a4-4f0d-93d5-99ebbae19501
+[skip-warmup] 0304c006-5
+[ok] 3c127ca3-82a 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] ec2a285e-2
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+[skip-warmup] 5251ca1a-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+[skip-warmup] 2bf0ed87-c
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+[skip-warmup] b2f4718b-f
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=b637ff96-666b-4ffa-8a1c-e6ef634406c5
+[skip-warmup] 64a6af5a-4
+[ok] b637ff96-666 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] a2e13b59-d
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+[skip-warmup] b2d047b4-7
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+[skip-warmup] 605e7a01-3
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+[skip-warmup] 6ecac8ad-5
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+direction='mixed' but no entry_direction signal; defaulting to long. strategy_id=4026aa65-925a-4759-beaa-66d7da8a5734
+[skip-warmup] fcfc3776-1
+[ok] 4026aa65-925 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 3b26019d-f
+[skip-warmup] 632bbe85-6
+[skip-warmup] 3ddaf0f0-7
+[skip-warmup] cf3c29fc-8
+[skip-warmup] 683e6a7f-9
+[ok] 33b32392-35b 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] 93b49fdf-a
+[skip-warmup] 6deb07e6-c
+[skip-warmup] bdcfdc29-3
+[skip-warmup] 25ac6e03-d
+[skip-warmup] c569c918-5
+[ok] 08a378f6-c2e 13 行 ['conclusion_sensitive', 'not_recalculable_data_env', 'numeric_change']
+[skip-warmup] de0d83ae-1
+[skip-warmup] 3250094f-2
+[skip-warmup] 8ea4ad42-a
+[skip-warmup] 7a0a58d2-e
+[skip-warmup] 77f2dc51-a
+完成：策略 86 行、回测行 998 条对照（明细 scripts/recalc_out/comparison_backtest.json）
+对应关系表：scripts/recalc_out/rr_archive_mapping.json（996 行）
