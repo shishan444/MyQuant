@@ -253,6 +253,97 @@ class TestRecoveryValidation:
         assert paper.list_equity_snapshots(h.db, h.task_id)
 
 
+class TestZeroBarExemption:
+    """零 bar 豁免（fr_bc61a365fdd7）：拾取后崩溃（写 running 后、
+    首根闭合 bar 处理前）的残态——bars_processed=0 且 balance 自然
+    NULL（首 bar 权益快照才写），非账户态损坏。
+
+    特征记录（现状语义）：
+    - 豁免域=balance NULL 且 bars=0：校验层放行（validate_recovery
+      返回 None）；bars>0 而 balance NULL 仍真损坏（上方
+      test_null_balance_rejected 锚）；
+    - bars=0 但 balance 有值不豁免——判据 3/4 照常走；
+    - 豁免分支直接 return None，短路判据 3/4（docstring「其余判据
+      也无从触发」的现状行为）；
+    - 【缺陷现状链】校验层放行后 recover_task 全链仍转 error：
+      from_task_row 首行 float(row["balance"]) 对 None 抛
+      TypeError，被 recover_task except 兜底写
+      error_detail="recovery_untrusted: 重建失败 …"——提交声称的
+      「直接可信续跑」未在全链达成。修复后本组 full_chain 用例应
+      同步改为断言可信续跑。
+    """
+
+    @staticmethod
+    def _crashed_before_first_bar(tmp_path: Path) -> _RecoveryHarness:
+        """零 bar 残态：create_task+写 running（拾取后、首 bar 前崩溃）。"""
+        h = _RecoveryHarness(tmp_path)
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        return h
+
+    def test_zero_bar_null_balance_validate_exempts(self, tmp_path):
+        """校验层豁免生效：validate_recovery 返回 None（修复前判据 2 拒）。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        task = h.task()
+        assert task["bars_processed"] == 0  # 前置锚：零 bar 残态
+        assert task["balance"] is None
+        assert task["last_bar_time"] is None
+        assert validate_recovery(task) is None
+
+    def test_zero_bar_full_chain_still_errors_on_rebuild(self, tmp_path):
+        """缺陷现状链：校验放行但 from_task_row 的 float(None) 使
+        recover_task 全链仍转 error（重建失败兜底）——续跑未达成。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        assert validate_recovery(h.task()) is None  # 校验层已放行
+        assert h.recover() is None  # 全链仍失败（未续跑）
+        task = h.task()
+        assert task["status"] == "error"
+        assert "重建失败" in (task["error_detail"] or "")
+
+    def test_zero_bar_balance_present_not_exempt(self, tmp_path):
+        """豁免域收窄：bars=0 但 balance 有值 → 判据照常走（坏意图
+        仍拒）——豁免不因 bars=0 全开。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        paper.append_bar(
+            h.db, h.task_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 0, "last_bar_time": None,
+                        "balance": 10_000.0,
+                        "pending_intent_json": "{broken"})
+        detail = validate_recovery(h.task())
+        assert detail and "意图不可解析" in detail
+
+    def test_zero_bar_shortcircuits_intent_check(self, tmp_path):
+        """现状记录：bars=0+balance NULL 时判据 4 被短路（坏意图也
+        放行）——豁免分支直接 return None。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        paper.append_bar(
+            h.db, h.task_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 0, "last_bar_time": None,
+                        "pending_intent_json": "{broken"})
+        assert validate_recovery(h.task()) is None
+
+    def test_zero_bar_partial_position_rebuild_fails_closed(self, tmp_path):
+        """现状记录：物理矛盾行（bars=0 但持仓字段部分非 NULL）经
+        豁免放行（判据 3 被短路），由 from_task_row 重建失败兜底转
+        error——不会静默带坏状态续跑。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        paper.append_bar(
+            h.db, h.task_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"position_side": "long", "position_entry": None})
+        assert validate_recovery(h.task()) is None  # 豁免放行（短路）
+        assert h.recover() is None  # 重建失败兜底（float(None)）
+        task = h.task()
+        assert task["status"] == "error"
+        assert "重建失败" in (task["error_detail"] or "")
+
+
 class TestReplayIdempotency:
     """重放幂等（唯一键吸收+游标判重）。"""
 
