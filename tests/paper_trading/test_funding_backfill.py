@@ -312,6 +312,60 @@ class TestTerminalBackfill:
         executor.process_frames(h.enhanced, 0)
         assert h.task()["status"] == "completed"
         assert h.funding_rows("pending") == []
+
+    def test_backfill_skips_vanished_task(self, tmp_path):
+        """防御分支：pending 涉事清单含 tid 而任务行已消失（非级联
+        删除的库异常形态——级联删除不会留孤儿 funding 行，直构
+        sqlite 删 pt_task 行）→ 该任务跳过，例程不炸零回填。"""
+        h = self._run_to_completion(tmp_path)
+        assert h.funding_rows("pending")
+        import sqlite3
+
+        with sqlite3.connect(h.db) as conn:
+            conn.execute(
+                "DELETE FROM pt_task WHERE task_id = ?", (h.task_id,))
+        assert paper.get_task(h.db, h.task_id) is None, "前置：行已消失"
+
+        revisions: list[str] = []
+        result = backfill_terminal_funding(
+            h.db, data_dir=h.data_dir,
+            on_revision=lambda tid: revisions.append(tid))
+        assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
+        assert revisions == []
+
+    def test_backfill_tolerates_race_drained_pendings(
+            self, tmp_path, monkeypatch):
+        """防御分支：ids 查询与 records 查询间 pending 行被并发消费
+        （守护循环回补与活跃执行器补旧账的竞态窗口）→ 循环内
+        records 空 continue，例程不炸零回填。替身注入 repo 边界
+        （被测面=回补循环防御，非查询本身）。"""
+        all_points = _grid_points("2024-01-04 16:00", "2024-01-11 00:00")
+        h = _FundingHarness(tmp_path, initial_funding_times=all_points)
+        executor = h.make_executor()
+        assert executor.prepare() is True
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        executor.task_row["window_bars"] = 40
+        executor.process_frames(h.enhanced, 0)
+        assert h.task()["status"] == "completed"
+        assert h.funding_rows("pending") == []  # 该任务本无 pending
+
+        # 直构竞态窗口：前置存在性与 ids 列表均指向该 tid（查询时点
+        # 有 pending 的快照语义），实际 records 已空（并发被消费）
+        from core.persistence.repository import paper as paper_repo_mod
+
+        monkeypatch.setattr(
+            paper_repo_mod, "has_pending_funding", lambda db: True)
+        monkeypatch.setattr(
+            paper_repo_mod, "list_pending_funding_task_ids",
+            lambda db: [h.task_id])
+        revisions: list[str] = []
+        result = backfill_terminal_funding(
+            h.db, data_dir=h.data_dir,
+            on_revision=lambda tid: revisions.append(tid))
+        assert result == {"tasks_backfilled": 0, "rows_backfilled": 0}
+        assert revisions == []
         assert h.funding_rows("settled")
 
         revisions: list[str] = []

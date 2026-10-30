@@ -2,8 +2,10 @@
 
 职能：把可选的 open_interest / funding_rate 两列按 OHLCV 时间索引
 对齐（reindex + ffill——衍生数据粒度与 K 线不同频，前向填充取
-「最近一次已知值」），供下游指标计算。服务对象唯一：
-mtf_loader._try_merge_derivatives → 高周期装载链（研究/回测/交易）。
+「最近一次已知值」），供下游指标计算。生产消费点三处：
+mtf_loader._try_merge_derivatives（研究/回测/交易装载链）与纸盘
+执行器 _inject_derivatives（装载期信号试算前+运行期 MTF 帧组装
+前——fix-paper-funding-indicator-merge 任务 A/B）。
 纯内存变换不落盘；衍生数据缺失时优雅直通（不阻塞装载）。
 """
 

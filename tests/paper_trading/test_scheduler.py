@@ -650,6 +650,31 @@ class TestDaemonAndDefensivePaths:
         result = h.scheduler.startup_recover()
         assert result == {"recovered": 0, "untrusted": 1}
 
+    def test_startup_recover_zero_bar_resumes_real_chain(self, tmp_path):
+        """零 bar 残态经真实恢复链续跑（CARD-02 集成面——层级补全：
+        拾取后崩溃残态由启动扫描交付续跑实效）：真实 recover_fn
+        （默认 _default_recover→recover_task）下 recovered=1、任务
+        保持 running、执行器线程登记在座。修复前该形态全链转
+        error（validate 放行但 from_task_row float(None) 重建炸）。"""
+        h = _SchedulerHarness(tmp_path)
+        tid = h.create_task()
+        paper.update_task(  # 零 bar 残态（拾取后、首 bar 前崩溃）
+            h.db, tid, status="running",
+            started_at="2030-01-01T00:00:00+00:00")
+        task = paper.get_task(h.db, tid)
+        assert task["bars_processed"] == 0 and task["balance"] is None
+
+        h.scheduler = type(h.scheduler)(
+            h.db, registry=h.registry, poll_interval=0.2)  # 真实 recover_fn
+        try:
+            result = h.scheduler.startup_recover()
+            assert result == {"recovered": 1, "untrusted": 0}
+            assert paper.get_task(h.db, tid)["status"] == "running"
+            assert tid in h.scheduler.status()["active_task_ids"]
+        finally:
+            h.scheduler.stop()
+            h.scheduler.join(timeout=5.0)
+
     def test_reap_finished_removes_dead_thread_entries(self, tmp_path):
         """_reap_finished：已结束线程的登记摘除（_threads/_executors）。"""
         h = _SchedulerHarness(tmp_path)
