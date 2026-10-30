@@ -278,7 +278,11 @@ class TestVerifyResponder:
         assert r.returncode == 1
         out = r.stdout + r.stderr
         assert "启动成功" not in out
-        assert "实际应答者是既有进程" in out or "监听者不是本次进程" in out
+        # 两种正确拦截：探活命中 hog 时身份核验拦（「监听者不是本次
+        # 进程」）；真进程 bind 失败秒退被先发现（「进程已退出」——
+        # svc_lib 版更快的失败路径，时序取决于 hog 延迟）
+        assert ("监听者不是本次进程" in out
+                or "进程已退出" in out), out
         assert not (REPO / ".myquant_mcp.pid").exists(), "死 PID 文件已清理"
 
 
@@ -287,74 +291,41 @@ class TestVerifyResponder:
 
 class TestThirdState:
     def test_b5_exhausted_alive_exits_nonzero_textual(self):
-        """B5（降级文本断言）：进程仍活分支 exit 1 在文且不含成功字样。
-        alive 切分须在 else 前收界——不收界时已死分支的 exit 1 会兜住
-        断言，「仍活分支 exit 1 被回退删除」这一第三态收编核心回归
-        无法被识别（反证实验证实，见回归记录）。"""
-        src = START.read_text(encoding="utf-8")
-        api_seg = src.split("start_api")[1].split("start_mcp")[0]
-        mcp_seg = src.split("start_mcp")[1].split("start_web")[0]
-        for seg, label in ((api_seg, "api"), (mcp_seg, "mcp")):
-            alive = seg.split("kill -0")[1].split("else")[0]  # 仍活分支
-            assert "exit 1" in alive, f"{label} 仍活分支缺 exit 1"
-            assert "启动成功" not in alive, f"{label} 仍活分支不得含成功字样"
+        """B5（降级文本断言，svc_lib 迁移版）：探活耗尽且进程仍活分支
+        return 1（入口层 exit 1）且不含成功字样。"""
+        src = (REPO / "scripts" / "svc_lib.sh").read_text(encoding="utf-8")
+        seg = src.split("start_one")[1]
+        alive = seg.split("健康检查未通过")[1].split("sleep 1")[0]
+        assert "return 1" in alive, "仍活分支缺 return 1（入口层转 exit 1）"
+        assert "启动成功" not in alive, "仍活分支不得含成功字样"
 
     def test_b6_dead_branch_unchanged_textual(self):
-        """B6（文本断言）：已死分支维持 error+rm PID+exit 1 既有形制。"""
-        src = START.read_text(encoding="utf-8")
-        for label, fn in (("API", "start_api"), ("MCP", "start_mcp")):
-            seg = src.split(fn)[1].split("start_")[0]
-            dead = seg.split("else")[1]
-            assert "error" in dead and "exit 1" in dead
-            assert "rm -f" in dead, f"{label} 已死分支 PID 文件清理在"
+        """B6（文本断言，svc_lib 迁移版）：进程已退出分支维持
+        error+rm PID 文件+return 1 既有形制。"""
+        src = (REPO / "scripts" / "svc_lib.sh").read_text(encoding="utf-8")
+        assert 'error "$label 启动失败（进程已退出）' in src, "已死分支 error 形制在"
+        dead = src.split("进程已退出")[1].split("sleep 1")[0]
+        assert "return 1" in dead and "rm -f" in dead, "已死分支 PID 清理+return 1 在"
 
 
 # ── B7：正常路径逐字节对拍（main 修复前版本 vs 本分支） ──────
 
 class TestNormalPath:
-    def test_b7_normal_path_output_identical_to_main(self, ports, pid_guard,
-                                                     tmp_path):
-        """B7（change 级必过）：端口空闲正常路径输出与修复前（main 版
-        start.sh）逐字节一致（PID/端口数字归一）。真实启动两轮（分支
-        版/main 版各一次），间以自管理清理。main 版放 scripts/ 同级
-        （APP_DIR 推导依赖脚本位置——放 tmp 会指向错误的 venv）。"""
-        main_sh = REPO / f"scripts/.start_main_test_{os.getpid()}.sh"
-        main = subprocess.run(
-            ["git", "show", "main:scripts/start.sh"],
-            cwd=REPO, capture_output=True, text=True, check=True)
-        main_sh.write_text(main.stdout)
-        main_sh.chmod(0o755)
+    def test_b7_start_output_structure_anchor(self, ports, pid_guard,
+                                                 tmp_path):
+        """B7（重构版）：旧「与 main 逐字节对拍」语义随统一性重构终结
+        （输出形态有意变更）；改为新输出结构锚——真实启动断言关键行
+        齐备（组件成功行连写形制/汇总横幅/访问地址/文档端点）。"""
         try:
-            self._b7_body(ports, tmp_path, main_sh)
-        finally:
-            main_sh.unlink(missing_ok=True)
-
-    def _b7_body(self, ports, tmp_path, main_sh):
-
-        def _normalize(text):
-            text = re.sub(r"PID: \d+", "PID: N", text)
-            text = re.sub(r"127\.0\.0\.1:\d+", "127.0.0.1:P", text)
-            text = re.sub(r"localhost:\d+", "localhost:P", text)
-            return "\n".join(
-                ln for ln in text.splitlines()
-                if "启动" in ln or "地址" in ln or "文档" in ln or "端点" in ln
-                or "====" in ln or "MyQuant" in ln)
-
-        def _run_and_collect(script):
-            env = _env(ports, tmp_path / "q.db")
-            r = subprocess.run(
-                ["bash", str(script), "-a"], env=env, capture_output=True,
-                text=True, timeout=120)
+            r = _run_start(["-a"], _env(ports, tmp_path / "q.db"))
             assert r.returncode == 0, r.stdout + r.stderr
-            _cleanup_started_services()  # 测试自管理清理（不经 stop.sh）
-            time.sleep(1)  # 端口释放窗口
-            return _normalize(r.stdout)
-
-        out_branch = _run_and_collect(START)
-        out_main = _run_and_collect(main_sh)
-        assert out_branch == out_main, (
-            f"正常路径输出漂移:\n--- 分支 ---\n{out_branch}\n--- main ---\n{out_main}")
-        assert "API 服务启动成功" in out_branch
+            out = r.stdout + r.stderr
+            assert "API 服务启动成功 (PID:" in out
+            assert "MyQuant 服务已启动" in out  # 汇总横幅
+            assert "http://localhost:%d" % ports["api"] in out
+            assert "/docs" in out
+        finally:
+            _cleanup_started_services()
 
     def test_mcp_normal_path_starts_and_exits_zero(self, ports, pid_guard,
                                                    tmp_path):
@@ -377,69 +348,71 @@ class TestNormalPath:
 
 class TestPidAliveSkip:
     def test_b9_pid_alive_skips_precheck(self, ports, pid_guard, tmp_path):
-        """B9：PID 文件在且进程活 → warn「已在运行」语义不变（跳过预检
-        与拉起，退出码 0）——被本脚本管理的进程不算占用冲突。"""
+        """B9（svc_lib 语义升级版）：PID 文件指向无关进程（非本服务
+        指纹）→ 判残留清理+照常启动成功（旧版盲信 PID 文件判「已在
+        运行」——pid 复用会误跳启动，统一性重构引入指纹核验后该形态
+        被正确识别为残留）。真指纹进程的「已在运行」幂等路径由
+        precheck_one 分支覆盖（文本锚在 TestTextualAnchors）。"""
         pid_file = REPO / ".myquant_api.pid"
-        # 用一个存活的哑进程占用 PID 槽位（不监听任何端口）
+        # 用一个存活的哑进程占用 PID 槽位（不监听任何端口、非 api 指纹）
         dummy = subprocess.Popen(
             ["sleep", "120"], stdout=subprocess.DEVNULL)
         pid_file.write_text(str(dummy.pid))
         try:
             r = _run_start(["-a"], _env(ports, tmp_path / "q.db"))
-            assert r.returncode == 0
+            assert r.returncode == 0, r.stdout + r.stderr
             out = r.stdout + r.stderr
-            assert "已在运行" in out
-            assert "已被以下进程监听" not in out, "管理内活进程不进预检"
+            assert "按残留清理" in out, "无关进程须被判残留清理"
+            assert "API 服务启动成功" in out, "清理后照常启动"
+            assert "已在运行" not in out, "盲信 PID 的旧语义不得回归"
+            assert "已被以下进程监听" not in out, "哑进程不占端口不进端口预检"
         finally:
             dummy.terminate()
             dummy.wait()
+            _cleanup_started_services()
 
 
 # ── B10：stop/restart 回归 ────────────────────────────────────
 
 class TestStopRestartRegression:
     def test_b10_restart_zero_change_and_propagation(self, ports, pid_guard):
-        """B10（文本断言版）：restart.sh 与 main 零 diff（零改动承诺）+
-        set -e 传导形制在文——start 非零退出即中止、「重启完成」不打印。
-        行为面不实跑 restart 全链：stop.sh 的 web 兜底（ps 杀 vite）会
-        误伤宿主 Web 服务——预检拦截行为已由 B1/B2 实证，传导语义由
-        set -e + B7 真实启动闭环联合覆盖。"""
-        diff = subprocess.run(
-            ["git", "diff", "main", "--", "scripts/restart.sh",
-             "scripts/stop.sh"], cwd=REPO, capture_output=True, text=True)
-        assert diff.stdout == "", f"restart/stop 须零改动: {diff.stdout[:200]}"
+        """B10（svc_lib 迁移版）：restart 薄壳转发统一入口；svc.sh 内
+        set -e 传导形制在文——stop 失败即中止（cmd_stop exit 1），
+        「重启完成」仅在 start 全或全败成功后打印。"""
         src = RESTART.read_text(encoding="utf-8")
-        assert "set -e" in src, "set -e 传导前提在文"
-        assert "start.sh" in src and "重启完成" in src
+        assert "svc.sh\" restart" in src, "薄壳转发统一入口在文"
+        svc = (REPO / "scripts" / "svc.sh").read_text(encoding="utf-8")
+        assert "set -euo pipefail" in svc, "set -e 传导前提在文"
+        assert "重启完成" in svc
+        # stop 失败传导：cmd_restart 段内 cmd_stop 直调先于 cmd_start
+        restart_seg = svc.split("cmd_restart()")[1]
+        assert restart_seg.index("cmd_stop") < restart_seg.index("cmd_start")
 
 
 # ── B8/B11：编排与形制文本断言 ────────────────────────────────
 
 class TestTextualAnchors:
     def test_b11_guard_forms_in_script(self):
-        """B11（文本断言）：两函数与 -sTCP:LISTEN 形制在文；两处成功
-        打印行文本未变；失败 exit 1 传导使汇总块仅在成功路径到达。"""
-        src = START.read_text(encoding="utf-8")
-        assert "precheck_port()" in src
-        assert "verify_responder()" in src
-        assert src.count("-sTCP:LISTEN") >= 4, (
-            "预检/核验各两处 lsof + verify 内两处 = 至少 4 形制点")
-        assert 'info "API 服务启动成功 (PID: $pid)"' in src
-        assert 'info "MCP 服务启动成功 (PID: $pid)"' in src
-        # verify 在打印成功之前（顺序铁律：健康→核验→打印）
-        api_seg = src.split("start_api")[1].split("start_mcp")[0]
-        assert api_seg.index("verify_responder") < api_seg.index("启动成功")
-        mcp_seg = src.split("start_mcp")[1].split("start_web")[0]
-        assert mcp_seg.index("verify_responder") < mcp_seg.index("启动成功")
+        """B11（svc_lib 迁移版）：守卫形制在文——预检函数+身份核验文案+
+        -sTCP:LISTEN 过滤；成功打印行连写形制（「API 服务启动成功」）；
+        身份核验文案先于成功打印（健康→核验→打印顺序铁律）。"""
+        src = (REPO / "scripts" / "svc_lib.sh").read_text(encoding="utf-8")
+        assert "precheck_one()" in src
+        assert "监听者不是本次进程" in src  # 身份核验失败文案
+        assert src.count("-sTCP:LISTEN") >= 2, "端口预检+监听者判定过滤在"
+        assert 'info "${label}启动成功 (PID: $pid)"' in src
+        # 核验文案在成功打印之前（顺序铁律：健康→核验→打印）
+        assert src.index("监听者不是本次进程") < src.index("${label}启动成功")
+        # 停止三段式形制在文（pid 文件→监听者→指纹兜底）
+        assert "指纹兜底" in src and "kill_and_wait" in src
 
     def test_b8_failure_stops_subsequent_services_textual(self):
-        """B8（文本断言）：失败统一函数内 exit 1 终止脚本——main 的后续
-        start_* 与汇总块仅在全成功路径到达（行为面由 B1/B10 联合覆盖：
-        失败即中止、汇总不打印——B1 输出无「MyQuant 服务已启动」）。"""
-        src = START.read_text(encoding="utf-8")
+        """B8（svc.sh 迁移版）：全或全败——失败回滚已起服务+exit 1，
+        汇总块仅在全成功路径到达；失败文案附统一清理指引（新语义：
+        回滚+指引兜底，取代旧版不回滚只指引——用户裁决三端一体）。"""
+        src = (REPO / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert "服务已启动" in src  # 汇总块在
-        # main 内 start_api 先于 start_mcp——exit 1 使后者不执行（set -e
-        # + 函数内直接 exit 的传导在 B10 行为证）
-        assert src.index("start_api") < src.index("start_mcp")
-        # spec：先行就绪服务不自动回滚——失败文案须附统一清理指引
+        assert "回滚已启动的服务（全或全败）" in src
         assert "已启动的其他服务可用 scripts/stop.sh 统一清理" in src
+        # 预检先行：任一障碍整体拒绝（不产生半启动状态）
+        assert "整体拒绝启动" in src

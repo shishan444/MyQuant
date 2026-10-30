@@ -1,21 +1,3 @@
 #!/usr/bin/env bash
-# MyQuant 重启脚本
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# 颜色
-GREEN='\033[0;32m'; NC='\033[0m'
-
-info() { echo -e "${GREEN}[INFO]${NC} $*"; }
-
-info "正在停止服务..."
-"$SCRIPT_DIR/stop.sh" >/dev/null 2>&1 || true
-
-sleep 2
-
-info "正在启动服务..."
-"$SCRIPT_DIR/start.sh"
-
-echo ""
-info "重启完成"
+# 兼容薄壳：转发统一入口（实现收敛至 svc_lib.sh——scripts 统一性重构 2026-10-30）
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/svc.sh" restart "$@"
