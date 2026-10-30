@@ -403,22 +403,23 @@ class TestGapClosureSweep:
 
 class TestAutoGridSmallRangeAcceptance:
     """P1-T01 验收锚（Q2 裁决落地）：小值域指标（OI_ChangeRate 实际
-    值域 ±0.12）auto 网格五点全落实际值域内且全档有样本——RR-009
-    零样本档场景反转复现（旧共享刻度 [-10,-5]/[5,10] 两档零样本）。"""
+    值域 [-0.044, +0.054]，2026-10-29 新域实测）auto 网格六点全落
+    实际值域内且全档有样本——RR-009 零样本档场景反转复现（旧共享
+    刻度 [-10,-5]/[5,10] 两档零样本）。"""
 
     def test_oi_change_rate_grid_within_actual_range(self):
         from pathlib import Path
 
-        market = Path("data/market/BTCUSDT_4h.parquet")
+        market = Path("data/market_fapi/BTCUSDT_4h.parquet")
         if not market.exists():
-            pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market）")
+            pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi）")
         import pandas as pd
         df = pd.read_parquet(market)
         rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-05-01", "end": "2026-04-01"}
+               "start": "2025-02-15", "end": "2026-09-01"}
         from core.analysis.warmup_loader import load_with_warmup
         work, request_start = load_with_warmup(
-            Path("data/market"), "BTCUSDT", "4h",
+            Path("data/market_fapi"), "BTCUSDT", "4h",
             rng["start"], rng["end"], ["OI_ChangeRate"])
         p = param_sweep(
             work, indicator="OI_ChangeRate",
@@ -428,7 +429,8 @@ class TestAutoGridSmallRangeAcceptance:
             forward_bars=24, data_ranges=[rng], timeframe="4h",
             request_start=request_start).to_dict()["payload"]
         vals = p["sweep"]["values"]
-        # 全档落实际值域内（|值| ≤ 0.5 的宽松上界——实际分布 ±0.12）
+        # 全档落实际值域内（|值| ≤ 0.5 的宽松上界——实际分布
+        # [-0.044, +0.054]，新域实测）
         assert all(abs(v) <= 0.5 for v in vals), vals
         # 全档有样本（无零样本档——旧刻度两档零样本的反转；
         # points 键=samples）

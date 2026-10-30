@@ -7,7 +7,7 @@
 双层（D4）：
 - 形制层：构造数据落盘 → _try_merge_derivatives 真调用 → 非 NaN；
   人为破坏命名/列名时红。
-- 真数据抽样层：对 data/market 的 parquet 断言命名/列/Index 契约 +
+- 真数据抽样层：对 data/market_fapi 的 parquet 断言命名/列/Index 契约 +
   双品种衍生品指标非 NaN；数据缺失时显式 skip（不假绿）。
 """
 
@@ -19,7 +19,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-MARKET_DIR = Path("data/market")
+MARKET_DIR = Path("data/market_fapi")
 SYMBOLS = ("BTCUSDT", "ETHUSDT")
 KLINE_TFS = ("15m", "30m", "1h", "4h", "1d", "3d")
 OI_TFS = ("5m", "15m", "30m", "1h", "4h", "1d", "3d")
@@ -87,7 +87,7 @@ class TestContractFormLayer:
 
 
 class TestRealDataContract:
-    """真数据抽样层：data/market 的 28 parquet 命名/列/Index 契约 +
+    """真数据抽样层：data/market_fapi 的 28 parquet 命名/列/Index 契约 +
     双品种衍生品指标全链路非 NaN（缺文件显式 skip）。"""
 
     def test_kline_files_and_columns(self):

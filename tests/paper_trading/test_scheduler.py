@@ -575,13 +575,14 @@ class TestDaemonAndDefensivePaths:
     """
 
     def test_default_data_dir_project_root(self, tmp_path):
-        """不传 data_dir → registry 取项目根 data/market 缺省。"""
+        """不传 data_dir → registry 取项目根 data/market_fapi 缺省
+        （cleanup-data-segment R-11 改指后）。"""
         db = tmp_path / "paper.db"
         init_db_ext(db)
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
         s = PaperScheduler(db)
-        assert str(s.registry.data_dir).endswith("data/market")
+        assert str(s.registry.data_dir).endswith("data/market_fapi")
 
     def test_start_idempotent_same_thread(self, tmp_path):
         """重复 start 幂等：守护线程同一实例（不叠线程）。"""

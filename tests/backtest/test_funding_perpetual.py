@@ -293,7 +293,7 @@ class TestC2RealParquetCalibration:
     核算对照+单点供给消费。数据文件缺位时 skip（离线环境）。"""
 
     PARQUET = Path(__file__).resolve().parents[2] \
-        / "data" / "market" / "BTCUSDT_funding.parquet"
+        / "data" / "market_fapi" / "BTCUSDT_funding.parquet"
 
     def test_real_segment_ffill_and_rates(self):
         import pandas as pd

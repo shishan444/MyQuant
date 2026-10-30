@@ -11,11 +11,12 @@ venv/
 .venv/
 
 # Data files
-data/market/*.parquet
-data/market_backup*/
 data/evolution.db
 data/quant.db
 data/config.json
+# 行情 parquet 防误加（data/ 域全为运行时数据；通配覆盖现域
+# market_fapi 与将来子域——git add . 不卷入大文件）
+data/*/*.parquet
 
 # Runtime
 *.pid
@@ -51,7 +52,6 @@ data/*.db
 
 # Working docs
 wroks/
-data/market/*.db
 
 # SQLite runtime files (WAL/SHM are transient, .db itself ignored above)
 data/*.db-shm

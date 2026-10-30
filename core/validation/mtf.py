@@ -57,7 +57,7 @@ def load_mtf_data(
         周期字符串 → DataFrame 的映射。
     """
     if data_dir is None:
-        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
+        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_fapi")
 
     from core.data.mtf_loader import find_parquet, safe_symbol  # B4.1：共享路径发现（含别名兜底）
 

@@ -3,23 +3,35 @@
 三锚锁「同一条件在同一真实数据上的触发计数跨代码变更不变」——参数
 修复、装载改造、模板重构任一环节改变锚值即红，防无声漂移。
 
-锚与数据（真实数据 BTCUSDT，data/market 在库；缺失时模块级 skip
+锚与数据（真实数据 BTCUSDT，data/market_fapi 在库〔锚重录后新域〕；缺失时模块级 skip
 不假绿——test_derivatives_contract 同款纪律）：
-- A1：1h 2024-02-01~2026-04-01，close lt bb_lower_20_2（BB std=2
-  未失真路径），期望 1119；双写法一致性断言（price_below 写法同得
-  1119）已随 C2 批次启用。
-- A2：4h 2024-05-01~2026-04-01，EMA5 gt ema_20 且 close lt ema_20
-  双条件 AND，期望 213（序列比较面）；已随 C6 批次启用。
-- A3：1h 2024-02-01~2026-04-01，SMA5 lt sma_20（subject=结构化
+【锚重录记录（cleanup-data-segment R-11 伴生②，2026-10-29）】：
+数据域切换 data/market（现货归档链）→ data/market_fapi（fapi 合约
+链——change 1/2 后唯一活跃域）。旧域数值（9026/1119/213）与新域
+必然不同源；区间随新域数据起点（2024-10-29）调整——1h 锚区间
+2024-02-01→2025-01-01、4h 锚区间 2024-05-01→2025-02-15（warmup
+600 bar 前扩空间充足）；新值经统计面同口径实跑推导（VS-3.13
+对账：_load_with_condition_refs → condition_stats 直调输出钉住，
+非「跑出什么记什么」——校准时点数据正确性由 change 1/2 数据链
+路保证，锚的作用是防未来漂移）。
+- A1：1h 2025-01-01~2026-04-01，close lt bb_lower_20_2（BB std=2
+  未失真路径），期望 660；双写法一致性断言（price_below 写法同得
+  660）已随 C2 批次启用。
+- A2：4h 2025-02-15~2026-04-01，EMA5 gt ema_20 且 close lt ema_20
+  双条件 AND，期望 141（序列比较面）；已随 C6 批次启用。
+- A3：1h 2025-01-01~2026-04-01，SMA5 lt sma_20（subject=结构化
   SMA(5) 引用 + target=编码列名 sma_20 的序列对序列比较），期望
-  9026——差分不变性断言（本变更启用）。
+  5353——差分不变性断言（本变更启用）。
 
-基线记录（2026-10-13，main 593b90f 修复前采集，修复后复跑一致）：
-- A3 = 9026（total_bars 19561）。与需求档案 9017 的差异原因：档案
-  值采集于 2026-09-20 数据集归档重建前的旧数据；本基线以当前数据
-  复跑口径定档（修复前后同口径同值，差分断言不受影响）。
-- A1 = 1119（total_bars 19161）——与 reviewer 复现值一致。
-- KC-S3 退化等值锚基线（atr_period=中轨周期=20、mult=2）：修复前
+基线记录（2026-10-29 新域重录定档——与头部锚重录记录同批，VS-3.13
+同口径实跑对账；旧时间线为历史：2026-10-13 main 593b90f 修复批次
+「修复前采集，修复后复跑一致」与 2026-09-20 数据集归档重建口径均
+属旧域时代，随域切换作废）：
+- A3 = 5353（新域重录值——旧域 9026/档案 9017 属现货链历史记录）。
+- A1 = 660（新域重录值——旧域 1119 属现货链历史记录）。
+- KC-S3 退化等值锚基线（atr_period=中轨周期=20、mult=2；旧域时代
+  历史对照——「18941 行/列 hash」为 2026-10-13 修复批次旧域数据
+  采集，等值断言本身为纯计算性质与数据域无关）：修复前
   ta.kc 与自算式 BTCUSDT 1h 全区间 18941 行三列零差异（列 hash：
   upper=66684aecc47e84ce、middle=820d44a13a8d8d1b、
   lower=de90be031718b9a2）——KC 存量债务全量特殊性下的唯一修复前
@@ -33,10 +45,10 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-MARKET_DIR = Path("data/market")
+MARKET_DIR = Path("data/market_fapi")
 
 if not (MARKET_DIR / "BTCUSDT_1h.parquet").exists():
-    pytest.skip("真实数据 BTCUSDT 1h/4h 不在库（data/market），回归锚跳过",
+    pytest.skip("真实数据 BTCUSDT 1h/4h 不在库（data/market_fapi），回归锚跳过",
                 allow_module_level=True)
 
 from api.routes.research.analysis import _load_with_condition_refs
@@ -65,8 +77,8 @@ class TestA3SmaCrossSeries:
                             "field": "sma"},
                 "action": "lt", "target": "sma_20"}
         got = _hit_count("SMA", {"period": 5}, cond,
-                         "1h", "2024-02-01", "2026-04-01")
-        assert got == 9026
+                         "1h", "2025-01-01", "2026-04-01")
+        assert got == 5353
 
 
 class TestA1BbLowerTouch:
@@ -75,8 +87,8 @@ class TestA1BbLowerTouch:
     def test_a1_hit_count_unchanged(self):
         cond = {"subject": "close", "action": "lt", "target": "bb_lower_20_2"}
         got = _hit_count("BB", {"period": 20, "std": 2}, cond,
-                         "1h", "2024-02-01", "2026-04-01")
-        assert got == 1119
+                         "1h", "2025-01-01", "2026-04-01")
+        assert got == 660
 
     def test_a1_dual_writing_parity(self):
         """双写法一致性（fix-research-c2 启用）：price_below 写法
@@ -88,19 +100,19 @@ class TestA1BbLowerTouch:
                             "field": "lower"},
                 "action": "price_below", "target": 0}
         got = _hit_count("BB", {"period": 20, "std": 2}, cond,
-                         "1h", "2024-02-01", "2026-04-01")
-        assert got == 1119
+                         "1h", "2025-01-01", "2026-04-01")
+        assert got == 660
 
 
 class TestA2EmaCrossClose:
-    """A2：EMA5 gt ema_20 且 close lt ema_20 双条件 AND，期望 213。
+    """A2：EMA5 gt ema_20 且 close lt ema_20 双条件 AND，期望 141。
 
     fix-research-c6 启用（序列比较统计面锚——翻译面等价形制锚见
     tests/analysis/test_dna_series_reference.py）。
     """
 
     def test_a2_hit_count(self):
-        """EMA5 gt ema_20 ∧ close lt ema_20 == 213（4h 区间锚）。"""
+        """EMA5 gt ema_20 ∧ close lt ema_20 == 141（4h 区间锚）。"""
         conds = [
             {"subject": {"indicator": "EMA", "params": {"period": 5},
                          "field": "ema"},
@@ -108,13 +120,13 @@ class TestA2EmaCrossClose:
             {"subject": "close", "action": "lt", "target": "ema_20"},
         ]
         rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-05-01", "end": "2026-04-01"}
+               "start": "2025-02-15", "end": "2026-04-01"}
         df, request_start = _load_with_condition_refs(
             MARKET_DIR, rng, None, conditions=conds)
         d = condition_stats(
             df, conditions=conds, data_ranges=[{**rng}], forward_bars=24,
             request_start=request_start).to_dict()
-        assert d["payload"]["hit_count"] == 213
+        assert d["payload"]["hit_count"] == 141
 
 
 # ---------------------------------------------------------------- B1 锚面
@@ -159,10 +171,10 @@ def _enrich(df, names_params):
 
 class TestA1NativeTranslation:
     """A1 第三写法（B1-T16）：close lt bb_lower_20_2 经原生假设翻译
-    产物求值——三写法同得 1119。"""
+    产物求值——三写法同得 660。"""
 
     RANGE = {"symbol": "BTCUSDT", "timeframe": "1h",
-             "start": "2024-02-01", "end": "2026-04-01"}
+             "start": "2025-01-01", "end": "2026-04-01"}
 
     def _translate_and_count(self, db):
         from core.analysis.hypothesis_service import register_hypothesis
@@ -202,18 +214,18 @@ class TestA1NativeTranslation:
         return int(mask.fillna(False).sum())
 
     def test_a1_three_writings_equal(self, _db):
-        """三写法一致性：统计 lt 写法（既有 1119）/ price_below 结构化
-        写法（既有 1119）/ 原生翻译写法（本用例）同得 1119。"""
-        assert self._translate_and_count(_db) == 1119
+        """三写法一致性：统计 lt 写法（既有 660）/ price_below 结构化
+        写法（既有 660）/ 原生翻译写法（本用例）同得 660。"""
+        assert self._translate_and_count(_db) == 660
 
 
 class TestA2NativeTranslation:
     """A2 翻译路径（B1-T17/T19）：RR-006 双条件（EMA5 gt ema_20 ∧
-    close lt ema_20）经原生翻译双基因 AND 求值==213；沙盒烟测非零笔；
+    close lt ema_20）经原生翻译双基因 AND 求值==141；沙盒烟测非零笔；
     隔离验证零闸门拒——整链无插件参与。"""
 
     RANGE = {"symbol": "BTCUSDT", "timeframe": "4h",
-             "start": "2024-05-01", "end": "2026-04-01"}
+             "start": "2025-02-15", "end": "2026-04-01"}
     CONDS = [
         {"subject": {"indicator": "EMA", "params": {"period": 5},
                      "field": "ema"},
@@ -265,16 +277,16 @@ class TestA2NativeTranslation:
             masks.append(evaluate_condition(
                 seg[col], seg["close"], g["condition"], seg))
         both = masks[0] & masks[1]
-        assert int(both.fillna(False).sum()) == 213
+        assert int(both.fillna(False).sum()) == 141
 
     def test_a2_full_chain_sandbox_and_isolated(self, _db):
         """B1-T19 全链路验收锚：翻译 draft 沙盒烟测 total_trades>0；
         隔离验证正常返回（无组件证据闸门拒——纯内置基因不触发该门）。
 
         区间设计：登记区间即判定并集（研究协议——先偷看不获利），
-        隔离验证须用登记区间外数据段；沙盒段（登记段 2024-05~11 双
-        条件交集 47 bar）与隔离段（2025-02~08 交集 73 bar）均实证
-        非零。出场条件用 B1 写法（close gt ema_20——回到均线上方
+        隔离验证须用登记区间外数据段；区间随新域数据起点重设（锚
+        重录 2026-10-29）：沙盒段 2025-03~09、隔离段 2025-10~2026-03
+        （双段均在新域内不重叠，非零交集由断言自证）。出场条件用 B1 写法（close gt ema_20——回到均线上方
         兑现离场），与入场 close lt ema_20 天然互斥，不经「同 bar
         开平互斥保留 exit」规则吞掉全部入场。"""
         from core.analysis.hypothesis_service import register_hypothesis
@@ -283,7 +295,7 @@ class TestA2NativeTranslation:
             run_isolated_backtest, run_sandbox_backtest)
 
         reg_range = {"symbol": "BTCUSDT", "timeframe": "4h",
-                     "start": "2024-05-01", "end": "2024-11-01"}
+                     "start": "2025-03-01", "end": "2025-09-01"}
         hid = register_hypothesis(
             _db,
             conditions={"when_conditions": self.CONDS,
@@ -296,13 +308,13 @@ class TestA2NativeTranslation:
 
         sb = run_sandbox_backtest(
             _db, MARKET_DIR, strategy_id=sid, symbol="BTCUSDT",
-            timeframe="4h", start="2024-05-01", end="2024-11-01")
+            timeframe="4h", start="2025-03-01", end="2025-09-01")
         assert sb["metrics"]["total_trades"] > 0, "沙盒须产真实非零交易"
 
         iv = run_isolated_backtest(
             _db, MARKET_DIR, hypothesis_id=hid, strategy_id=sid,
             request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2025-02-01", "end": "2025-08-01"})
+                           "start": "2025-10-01", "end": "2026-03-01"})
         assert iv["record_id"], "隔离验证被闸门拒（未产记录）"
         assert iv["verdict"] in ("pass", "fail", "inconclusive")
         # warmup 零改动锚：披露面为 {bars, derived, basis}——derived=600

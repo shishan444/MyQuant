@@ -100,7 +100,7 @@ def evaluate_rules(
     warnings: List[str] = []
 
     if data_dir is None:
-        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
+        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_fapi")
 
     # ------------------------------------------------------------------
     # 1. 装载基准周期数据

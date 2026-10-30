@@ -19,10 +19,12 @@ design §2-§6 的受益面与接线特征：
 - 零留痕（422 拒绝不写 research_log）+ MCP 工具层透传（A8）+
   R5 披露快照锚。
 
-数据集锚（真实 BTCUSDT 4h，2024-01-01 起 5954 行）：2024-03-01 前
-360 bar、2024-11-01 前 730 bar；EMA 注册表上限 period=200 →
+数据集锚（真实 BTCUSDT 4h，data/market_fapi 新域：起点 2024-10-29、
+4383 行——cleanup-data-segment 锚重录 2026-10-29，旧域「2025-01-01
+起 5954 行/前 360 bar」描述随域切换作废）：2025-03-01 前 736 bar、
+2025-11-01 前 2206 bar；EMA 注册表上限 period=200 →
 derive_warmup(["EMA"])=600（受益面带顶层 indicator 的分支区间起点
-须 ≥2024-11-01）。
+须 ≥2025-11-01）。
 """
 
 from pathlib import Path
@@ -32,10 +34,10 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-MARKET_DIR = Path("data/market")
+MARKET_DIR = Path("data/market_fapi")
 
 if not (MARKET_DIR / "BTCUSDT_4h.parquet").exists():
-    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market），插件列特征网跳过",
+    pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi），插件列特征网跳过",
                 allow_module_level=True)
 
 from api.routes.research.analysis import _load_with_condition_refs
@@ -52,13 +54,13 @@ from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.research import count_research_log
 
 COND = {"subject": "fx_fx_dev20_pct", "action": "lt", "target": -0.01}
-# 受益面带顶层 indicator 的分支：EMA warmup 600 bar，起点 2024-11-01
+# 受益面带顶层 indicator 的分支：EMA warmup 600 bar，起点 2025-11-01
 # （前 730 bar 充足）
 RNG_IND = {"symbol": "BTCUSDT", "timeframe": "4h",
-           "start": "2024-11-01", "end": "2026-04-01"}
+           "start": "2025-11-01", "end": "2026-09-01"}
 # conditions 形制（无顶层 indicator，warmup 预算 200/插件维）
 RNG = {"symbol": "BTCUSDT", "timeframe": "4h",
-       "start": "2024-03-01", "end": "2026-04-01"}
+       "start": "2025-03-01", "end": "2026-09-01"}
 
 
 @pytest.fixture(scope="module")
@@ -185,7 +187,7 @@ class TestEventStudyLegacyKeyWiring:
         ——旧键无前扩→插件列区间内全 NaN→0 事件小样本拒绝；
         conditions 形制前扩收敛→出事件。"""
         short = {"symbol": "BTCUSDT", "timeframe": "4h",
-                 "start": "2024-06-01", "end": "2024-06-15"}
+                 "start": "2025-06-01", "end": "2025-06-15"}
         cond400 = {"subject": "fx_fx_dev400", "action": "lt",
                    "target": 1e12}
         legacy = self._post(api_client, env, {"condition": cond400}, short)
@@ -317,7 +319,7 @@ class TestInspectCasesWiringExtra:
         res = inspect_cases(db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                             selector={"condition": COND}, limit=2,
                             context_bars=4, indicator="EMA",
-                            start="2024-11-01", end="2025-02-01")
+                            start="2025-11-01", end="2026-02-01")
         body = res if isinstance(res, dict) else res.to_dict()
         cases = body.get("cases") or body.get("payload", {}).get("cases")
         assert cases, f"显式 start 插件列条件应出案例集: {sorted(body)[:10]}"
@@ -346,16 +348,20 @@ class TestInspectCasesWiringExtra:
             "显式 start 装载后插件列应收敛非全 NaN"
 
     def test_explicit_start_plugin_dim_insufficient(self, db):
-        """插件维度前缀不足归因锚：start=2024-04-12（前 612 bar）
-        满足 EMA 600 但不足插件 700 → RESEARCH_WARMUP_INSUFFICIENT
-        且 warmup_bars=700（两维取 max 的直接证据）。"""
+        """插件维度前缀不足归因锚（新域重设）：start=2025-02-07
+        （新域起点 2024-10-29 后 604 bar，2026-10-29 实测）满足 EMA
+        600 但不足插件 700 → RESEARCH_WARMUP_INSUFFICIENT 且
+        warmup_bars=700（两维取 max 的直接证据。前缀须落 (600,700)
+        窗口才成立「满足 EMA、仅插件维度不足」的归因纯度——旧
+        start=2025-02-01 前缀实测 568，EMA 维度同不足，归因断裂，
+        域数据头部变化时按此窗口重选 start）。"""
         with pytest.raises(ResearchError) as ei:
             inspect_cases(db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                           selector={"condition": {
                               "subject": "fx_fx_dev700", "action": "lt",
                               "target": 1e12}},
                           limit=2, context_bars=4, indicator="EMA",
-                          start="2024-04-12", end="2024-06-01")
+                          start="2025-02-07", end="2025-06-01")
         assert ei.value.code == "RESEARCH_WARMUP_INSUFFICIENT"
         assert ei.value.detail["warmup_bars"] == 700
 
@@ -390,7 +396,7 @@ class TestInspectCasesWiringExtra:
         原 xfail(strict) 锚 XPASS 翻转转正）"""
         inspect_cases(db, MARKET_DIR, symbol="BTCUSDT", timeframe="4h",
                       selector={"condition": COND}, limit=2, context_bars=4,
-                      start="2024-11-01", end="2025-02-01")
+                      start="2025-11-01", end="2026-02-01")
 
 
 class TestRegistryChainRegression:
@@ -483,7 +489,7 @@ class TestMcpToolPassthrough:
                  {"subject": "fx_unknown_col", "action": "lt",
                   "target": 0}]},
              "symbol": "BTCUSDT", "timeframe": "4h",
-             "start": "2024-03-01", "end": "2026-04-01"}))
+             "start": "2025-03-01", "end": "2026-09-01"}))
 
     def test_not_found_visible_at_tool_layer(self, monkeypatch):
         out = self._run_tool(

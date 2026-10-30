@@ -1357,7 +1357,8 @@ class TestRunSceneVerificationFeature:
         assert not any("MTF loading failed" in w for w in result.warnings)
 
     def test_run_without_data_dir_uses_default_market_path(self):
-        """现状记录：data_dir 缺省解析到仓库 data/market（L118 分支）。"""
+        """现状记录：data_dir 缺省解析到仓库 data/market_fapi
+        （cleanup-data-segment R-11 改指后；scene_engine.py L134 分支）。"""
         from core.validation.scene.scene_engine import run_scene_verification
         result = run_scene_verification(
             symbol="NOEXIST',;'SYMBOL",  # 含非法字符验证 safe_symbol 清洗现状

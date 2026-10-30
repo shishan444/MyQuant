@@ -49,8 +49,9 @@ def create_app(
     Args:
         db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
         data_dir: Parquet 数据目录；缺省为项目根 FAPI_DATA_DIR（环境
-            变量缺省 data/market_fapi——fapi 独立数据面，现货归档
-            data/market 原地冻结留研究链）。
+            变量缺省 data/market_fapi——全工程唯一活跃数据域；旧
+            现货归档域已整体删除，其独有的 30m/3d 冻结快照四文件
+            已迁入本域，无运行时写入者）。
         fapi_stream_factory: 行情流工厂（缺省生产 BinanceFapiStream；
             测试注入替身。FAPI_STREAM_DISABLED 环境变量置位时装配
             整体旁路——测试全域 conftest 旁路面）。

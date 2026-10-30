@@ -90,12 +90,13 @@ def test_binance_sdk_import_whitelist():
 
 
 def test_dependency_declarations_dual_package_coexistence():
-    """VS-2.9 依赖声明面：新包声明在场+旧包过渡期保留（双包并存是
-    回滚通道前置——文本断言防过渡期误删旧声明）。"""
+    """VS-2.9 依赖声明面（cleanup-data-segment 6.1 卸载终态）：
+    新包声明在场+旧包声明不得回潮（卸载完成——过渡期双包并存断言
+    使命终结，翻转为禁回锚）。"""
     project_root = Path(__file__).resolve().parents[3]
     for name in ("pyproject.toml", "requirements.txt"):
         text = (project_root / name).read_text(encoding="utf-8")
         assert "binance-sdk-derivatives-trading-usds-futures" in text, (
             f"{name} 缺新包声明")
-        assert "binance-futures-connector" in text, (
-            f"{name} 缺旧包过渡期声明（回滚通道前置）")
+        assert "binance-futures-connector" not in text, (
+            f"{name} 旧包声明回潮（卸载终态——禁回锚）")
