@@ -37,10 +37,15 @@ def _kline_row(open_ms: int, *, price: float = 100.0) -> list:
 
 
 class _ApiResponse:
-    """新 SDK ApiResponse 替身（.data 惰性载荷直通）。"""
+    """新 SDK ApiResponse 替身（data 为惰性方法——真实形制 data()
+    返回 _data_function() 结果非属性；替身曾用属性形制掩盖
+    resp.data 漏调，2026-10-29 真实拉数实测逮出后对齐）。"""
 
     def __init__(self, data):
-        self.data = data
+        self._data = data
+
+    def data(self):
+        return self._data
 
 
 class _Dumpable:

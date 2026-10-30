@@ -331,7 +331,7 @@ class FapiRestClient:
                     end_time=end_ms - 1,
                     limit=min(int(max_bars), KLINE_PAGE_LIMIT),
                 )
-                frame = _klines_rows_to_frame(resp.data)
+                frame = _klines_rows_to_frame(resp.data())
         else:
             while cursor < end_ms:
                 resp = self._sdk().kline_candlestick_data(
@@ -341,7 +341,7 @@ class FapiRestClient:
                     end_time=end_ms - 1,
                     limit=KLINE_PAGE_LIMIT,
                 )
-                rows = resp.data
+                rows = resp.data()
                 if not rows:
                     break  # 区间内无可得数据（尾部推进或端点缺档）
                 collected.extend(rows)
@@ -368,7 +368,7 @@ class FapiRestClient:
             网络异常原样上抛（调用方回退内置常量）。
         """
         resp = self._sdk().exchange_information()
-        return resp.data.model_dump(by_alias=True)
+        return resp.data().model_dump(by_alias=True)
 
     def fetch_funding_rate(self, symbol: str, start_ts, end_ts) -> pd.DataFrame:
         """按区间拉取资金费率历史（fundingRate 端点——对账披露面）。
@@ -387,7 +387,7 @@ class FapiRestClient:
         )
         # 新 SDK 返回建模响应列表——dump 回端点字段名 dict（消费面
         # 读 row["fundingRate"]/row["fundingTime"] 与旧行形制一致）
-        rows = [row.model_dump(by_alias=True) for row in (resp.data or [])]
+        rows = [row.model_dump(by_alias=True) for row in (resp.data() or [])]
         if not rows:
             return pd.DataFrame(
                 {"funding_rate": pd.Series(dtype=float)},
