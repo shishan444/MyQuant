@@ -569,21 +569,9 @@ class PaperTaskExecutor:
             return self._reject("no_data: 执行周期 parquet 为空")
 
         # 衍生品数据注入（fix-paper-funding-indicator-merge 任务 A）：
-        # funding/OI 归档可达时把 funding_rate / open_interest 列前向
-        # 填充合并进 K 线帧——compute_all_indicators 见 funding_rate 列
-        # 即产出 FundingZScore/FundingPressure（core/features/indicators
-        # 衍生品族），装载期信号试算随之放行衍生品基因；归档缺失/为空/
-        # 坏档时静默保持纯 K 线帧（纯价格策略装载路径零变化——merger
-        # 双 None 原样返回语义）。只读既有归档不做网络 IO（运行期增量
-        # 是 feed 侧职责，本处不越界）。
-        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
-
-        raw = merge_derivatives_into_ohlcv(
-            raw,
-            oi_df=self._load_deriv_frame(
-                f"{symbol}_oi_{self._timeframe}"),
-            funding_df=self._load_deriv_frame(f"{symbol}_funding"),
-        )
+        # 信号试算前注入——衍生列在场衍生品基因方可求值；语义与边界
+        # 见共用面 _inject_derivatives docstring
+        raw = self._inject_derivatives(raw)
 
         from core.features.indicators import compute_all_indicators
 
@@ -692,6 +680,33 @@ class PaperTaskExecutor:
             logger.warning("衍生品归档读取失败，按缺失跳过: %s", path)
             return None
         return frame if frame is not None and not frame.empty else None
+
+    def _inject_derivatives(self, df: pd.DataFrame) -> pd.DataFrame:
+        """衍生品列注入（装载期与运行期共用面）。
+
+        funding/OI 归档可达时把 funding_rate / open_interest 列前向
+        填充合并进 K 线帧——compute_all_indicators 见 funding_rate 列
+        即产出 FundingZScore/FundingPressure（core/features/indicators
+        衍生品族），衍生品基因随之可求值；归档缺失/为空/坏档时静默
+        保持纯 K 线帧（纯价格策略路径零变化——merger 双 None 原样
+        返回语义）。前向填充取最近一次已知值：归档末端之后的 bar
+        沿用最后已知费率（stale 语义）。只读既有归档不做网络 IO
+        （实时费率增量是 feed 侧后续增强，本处不越界）。
+
+        调用面两处（fix-paper-funding-indicator-merge 任务 A/B）：
+        装载期 prepare 信号试算前，与运行期 process_frames 的 MTF
+        帧组装前——feed 帧只含 K 线列，主周期帧须先注入再组帧表，
+        执行层衍生品基因运行期方可求值。
+        """
+        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+
+        symbol = self.task_row["symbol"]
+        return merge_derivatives_into_ohlcv(
+            df,
+            oi_df=self._load_deriv_frame(
+                f"{symbol}_oi_{self._timeframe}"),
+            funding_df=self._load_deriv_frame(f"{symbol}_funding"),
+        )
 
     def _reject(self, detail: str) -> bool:
         """装载拒绝：pending→error（不进 running），保留数据。"""
@@ -818,23 +833,16 @@ class PaperTaskExecutor:
         本帧剩余 bar 不再处理（观察已结束）；stop 在 bar 边界协作退出
         （当前 bar 已完整落库）。
         """
+        # 运行期衍生品注入（fix-paper-funding-indicator-merge 任务 B
+        # 最小版）：注入必须先于 MTF 帧组装——帧表主周期帧绑定注入
+        # 后 df，执行层衍生品基因方可求值（MTF 层循环从帧表取层帧：
+        # core/strategy/executor.py 与 mtf_engine.py 两条通道；装载期
+        # 先注入后组装反序放行，注入晚于组装即帧表持纯 K 线帧、运行
+        # 期首帧崩——CARD-01 修复）。stale 语义与不越界边界见
+        # _inject_derivatives docstring。
+        df = self._inject_derivatives(df)
         dfs_by_timeframe = self._assemble_mtf_frames(df)
         from core.strategy.executor import dna_to_signal_set
-
-        # 运行期衍生品注入（fix-paper-funding-indicator-merge 任务 B
-        # 最小版）：feed 帧只含 K 线列，衍生品基因在此组装会不可求值
-        # ——装载期同款 merge 应用到运行帧（只读归档前向填充：归档
-        # 末端之后的 bar 沿用最后已知费率，stale 语义；归档缺失时
-        # 静默跳过）。实时费率增量拉取是 feed 侧后续增强（提案
-        # 任务 B 完整版），此处不越界做网络 IO。
-        from core.data.derivatives_merger import merge_derivatives_into_ohlcv
-
-        symbol = self.task_row["symbol"]
-        df = merge_derivatives_into_ohlcv(
-            df,
-            oi_df=self._load_deriv_frame(f"{symbol}_oi_{self._timeframe}"),
-            funding_df=self._load_deriv_frame(f"{symbol}_funding"),
-        )
 
         # with_hits=True：求值披露开启点（change paper-signal-log
         # design §10——信号行的基因命中归因数据源；缺省关闭的零侵入
