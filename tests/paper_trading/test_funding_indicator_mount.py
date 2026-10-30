@@ -300,6 +300,35 @@ def _fzs_gene_pair():
     return [entry, exit_gene]
 
 
+class TestInjectDerivativesProperties:
+    """_inject_derivatives 不变量属性锚（阶段四步骤 4——列集守恒
+    与只增不改语义）。"""
+
+    def test_column_set_conservation_and_values_untouched(
+            self, tmp_path):
+        """属性：注入输出列=输入列∪至多两衍生列；原始 K 线列值
+        逐位不变（注入只增不改）——双归档在场时两衍生列齐备。"""
+        h = _Harness(tmp_path)
+        _write_funding_parquet(h.data_dir)
+        kline = pd.read_parquet(h.data_dir / "BTCUSDT_4h.parquet")
+        times = pd.date_range(
+            start=kline.index.min(), periods=40, freq="4h", tz="UTC")
+        save_parquet(
+            pd.DataFrame(
+                {"open_interest": [100.0 + i for i in range(40)]},
+                index=pd.DatetimeIndex(times, name="timestamp")),
+            h.data_dir / "BTCUSDT_oi_4h.parquet")
+        ex = h.make_executor()
+
+        out = ex._inject_derivatives(h.df)
+
+        assert set(h.df.columns) <= set(out.columns)
+        assert set(out.columns) - set(h.df.columns) == {
+            "open_interest", "funding_rate"}
+        for col in h.df.columns:
+            assert (out[col] == h.df[col]).all(), col
+
+
 class TestMtfRuntimeInjection:
     """MTF×执行层衍生品基因运行期注入（CARD-01 修复锚）。
 

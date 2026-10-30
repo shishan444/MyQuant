@@ -322,18 +322,8 @@ class TestZeroBarExemption:
         detail = validate_recovery(h.task())
         assert detail and "意图不可解析" in detail
 
-    def test_zero_bar_shortcircuits_intent_check(self, tmp_path):
-        """现状记录：bars=0+balance NULL+持仓核心字段组全 NULL（豁免
-        域三条件齐备，收紧后持仓判据在此分支内先查）时判据 4 仍被
-        短路（坏意图也放行）——豁免分支直接 return None。"""
-        h = self._crashed_before_first_bar(tmp_path)
-        paper.append_bar(
-            h.db, h.task_id, bar_time=h.df.index[0].isoformat(),
-            fills=[], equity={"equity": 1.0, "balance": 1.0,
-                              "unrealized_pnl": 0.0},
-            task_state={"bars_processed": 0, "last_bar_time": None,
-                        "pending_intent_json": "{broken"})
-        assert validate_recovery(h.task()) is None
+    # D 类现状容忍用例（意图判据 4 被豁免短路）已隔离至
+    # test_recovery_tolerances.py 待口径裁决（阶段四步骤 3 V3 化）
 
     def test_zero_bar_partial_position_fail_closed_at_validate(
             self, tmp_path):
@@ -379,6 +369,29 @@ class TestZeroBarExemption:
         task = h.task()
         assert task["status"] == "error"
         assert "物理矛盾" in (task["error_detail"] or "")
+
+    _FIELD_VALUES = {
+        "position_side": "long", "position_entry": 100.0,
+        "position_quantity": 1.0, "position_margin": 50.0,
+        "position_open_cost": 100.0, "position_trail_peak": 100.0,
+        "position_entry_bar_seq": 0,
+    }
+
+    @pytest.mark.parametrize("field", [
+        pytest.param(f, id=f) for f in _FIELD_VALUES])
+    def test_zero_bar_any_single_position_field_fail_closed(
+            self, tmp_path, field):
+        """属性锚（步骤 4）：七字段任一单独非 NULL（其余保持 NULL）
+        均触发物理矛盾拒——any() 单点全收判据的逐字段完备面。"""
+        h = self._crashed_before_first_bar(tmp_path)
+        paper.append_bar(
+            h.db, h.task_id, bar_time=h.df.index[0].isoformat(),
+            fills=[], equity={"equity": 1.0, "balance": 1.0,
+                              "unrealized_pnl": 0.0},
+            task_state={"bars_processed": 0, "last_bar_time": None,
+                        field: self._FIELD_VALUES[field]})
+        detail = validate_recovery(h.task())
+        assert detail and "物理矛盾" in detail, field
 
 
 class TestReplayIdempotency:

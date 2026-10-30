@@ -557,11 +557,41 @@ class TestRiskBudgetAtrWiring:
         assert first["quantity"] * (2.0 * entry_atr) == \
             pytest.approx(10_000.0 * 0.01, rel=1e-9)
 
+    def test_closed_bar_atr_column_missing_yields_none(self, tmp_path):
+        """ATR 模式运行帧无 atr 列防御（闸门盲区消解）：装载校验用
+        parquet 全帧（atr 列可产出故放行），运行帧可为纯 K 线（feed
+        帧无指标列）——_closed_bar 的 atr 取值列缺失分支：atr=None
+        不炸（下游 risk_budget 距离拒绝链与 _initial_stop 防御承接）。"""
+        dna = make_dna()
+        dna.risk_genes.sl_mode = "atr"
+        dna.risk_genes.atr_period = 14
+        dna.risk_genes.stop_loss = 2.0  # atr 档语义=sl_mult（同上方接线锚）
+        dna.risk_genes.take_profit = 4.0  # atr 倍数值域（0.5-5.0 且>sl）
+        h = _Harness(tmp_path, dna=dna, window_bars=10)
+        ex = h.make_executor()
+        assert ex.prepare() is True  # 装载全帧 atr_14 在列
+        bar = ex._closed_bar(h.df, 5)  # 纯 K 线帧（无 atr_14 列）
+        assert bar.atr is None
+
 
 class TestRunLifecyclePaths:
     """run() 真线程生命周期/终态路径/装载拒绝细分定向锚（闸门盲区
     消解——CAS 放弃启动、空转协作停、error 终态推送、finalize 幂等
-    与回调异常吞咽、MTF 订阅退订段）。"""
+    与回调异常吞咽、MTF 订阅退订段）。
+
+    闸门不可达判定（阶段四步骤 2，调用图依据锚定）：
+    - executor.py:502（_prepare_guarded 的 TaskStopRequested 透传
+      raise）：TaskStopRequested 唯一抛出源 controller.check_stop
+      仅两处（_loop 空闲期 779/bar 边界 861），均在 prepare() 返回
+      之后——prepare 链无抛出点，except 永不命中（防御性透传，为
+      未来 prepare 加 stop 协作保留语义）；
+    - executor.py:760（run() 层 TaskStopRequested 收口）：两抛出点
+      均被内层 except 捕获收口（779→_loop 层 783；861→process_frames
+      层 finalize+return），异常不冒泡至 run() 层 except（双保险
+      防御层）；
+    - executor.py:1403→1405（_finalize 非终态 status 分支）：
+      _finalize 全调用点枚举（760/763/783/866/869/873）status 均为
+      TERMINAL_STATUSES 成员——终态写入单点无非终态调用面。"""
 
     def test_intents_json_empty_values_roundtrip(self):
         """空意图序列化：to_json([])→None、from_json(None)→[]。"""
@@ -619,6 +649,28 @@ class TestRunLifecyclePaths:
         assert task["status"] == "error"
         assert "RuntimeError" in task["error_detail"]
         assert any(p["type"] == "task_error" for p in h.pushes)
+
+    def test_run_idle_spin_then_cooperative_stop(self, tmp_path):
+        """空转拍（queue.Empty 且未 stop → check_stop 不抛 → continue
+        轮询下一拍）后协作停（闸门盲区消解——预置 stop 形态走不到
+        continue 分支：check_stop 即抛 TaskStopRequested）。"""
+        import threading
+        import time
+
+        h = _Harness(tmp_path, window_bars=None)
+        ex = h.make_executor()
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        t = threading.Thread(target=ex.run, daemon=True)
+        t.start()
+        time.sleep(4.5)  # ≥2 拍 POLL_INTERVAL（2.0s）空转
+        ex.controller.request_stop()
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "协作停须收敛退出"
+        task = h.task()
+        assert task["status"] == "stopped"
+        assert task["stop_reason"] == "user_stop"
 
     def test_finalize_idempotent_second_call_noop(self, tmp_path):
         """_finalize 幂等：二次调用零效果（终态首写保持）。"""
@@ -940,6 +992,15 @@ class TestSignalLogging:
 
     构造通道：覆写 enhanced 帧的 rsi_14 列精确控制信号分布（信号
     组装消费帧列值；_closed_bar 只读 OHLC——价格另行受控）。
+
+    闸门不可达判定（阶段四步骤 2）：executor.py:1075→1077+1077
+    （_rejected_size_fraction 的 kind≠add 返回 None 分支）——该函数
+    全库唯一调用点为解释器内拒绝行构造（executor.py:1032 附近
+    size_fraction=self._rejected_size_fraction(rej.kind)），而求值层
+    拦截按设计定形 Rejection.kind 恒 "add"（design.md Rejection
+    定义+intents.py 求值层唯一形态=敞口拦截）；kind≠add 的拒绝
+    （insufficient_funds/context_invalid/below_min_notional）均产生
+    在消费期/收割期路径，其信号行构造不经本函数。
     """
 
     @staticmethod
@@ -1391,6 +1452,7 @@ class TestRecoveredPendingSignals:
                 "WHERE task_id = ?", (payload, h.task_id))
         assert paper.get_task(h.db, h.task_id)["pending_intent_json"], \
             "前置：注入已落 task 行"
+
         restored = PaperTaskExecutor.from_task_row(
             h.db, paper.get_task(h.db, h.task_id),
             registry=h.registry, start_after=_REPLAY_ALL)
@@ -1421,6 +1483,37 @@ class TestRecoveredPendingSignals:
         # 其后合成价格的 exit_sl 属自然价格行为不在锚定面）
         assert len([f for f in paper.list_fills(
             h.db, h.task_id, limit=1000) if f["kind"] == "open"]) == 1
+
+    def test_execute_pending_without_equity_row_uses_task_fallback(
+            self, tmp_path):
+        """终态收割的 snap_row None 防御（闸门盲区消解）：pending
+        非空而 equity 行不在（外部持久化面异常形态——正常路径
+        pending 必随 bar 处理落 equity）→ expired 收割行账户快照
+        兜底取 task 行值（balance/0.0 语义）。"""
+        import sqlite3
+
+        h = _Harness(tmp_path, window_bars=30, initial_cash=0.0)
+        payload = json.dumps([
+            {"kind": "open", "direction": "long", "size_fraction": 0.5,
+             "reason": "signal", "trigger_price": None}])
+        with sqlite3.connect(h.db) as conn:
+            conn.execute(
+                "UPDATE pt_task SET bars_processed=1, last_bar_time=?, "
+                "balance=0.0, pending_intent_json=? WHERE task_id=?",
+                (h.df.index[0].isoformat(), payload, h.task_id))
+        row = paper.get_task(h.db, h.task_id)
+        assert row["bars_processed"] == 1 and row["balance"] == 0.0
+
+        ex = PaperTaskExecutor.from_task_row(
+            h.db, row, registry=h.registry, start_after=_REPLAY_ALL)
+        ex._finalize("stopped", stop_reason="user_stop")  # 终态收割路径
+
+        rows = paper.list_signals(h.db, h.task_id, limit=1000)
+        expired = [r for r in rows if r["outcome"] == "expired"]
+        assert expired, "pending 非空终态须收割 expired 行"
+        for r in expired:
+            assert r["equity"] == 0.0 and r["balance"] == 0.0, \
+                "兜底账户快照取 task 行值"
 
 
 class TestIndicatorSnapshotGuards:
@@ -1504,6 +1597,38 @@ class TestIndicatorSnapshotGuards:
                 assert "Infinity" not in r[col], (r["seq"], col)
                 assert "NaN" not in r[col], (r["seq"], col)
                 json.loads(r[col])
+
+    def test_snapshot_column_resolution_defense_and_missing_frame_col(
+            self, tmp_path):
+        """快照列收集三防御+帧缺列跳过（闸门盲区消解）：
+        跨轴基因（gene.timeframe 非 None——无主轴单值语义）、未注册
+        指标、列名解析异常（MACD 空 params→int(params["fast"])
+        KeyError）均不入快照面；快照列不在运行帧列时该列跳过
+        （纯 K 线帧快照空 dict——帧实际列取值语义）。"""
+        from core.strategy.dna import SignalRole
+
+        dna = make_dna()
+        cross_axis = make_signal_gene(role=SignalRole.ENTRY_TRIGGER)
+        cross_axis.timeframe = "1d"  # 跨轴基因
+        unregistered = make_signal_gene(
+            indicator="NoSuchIndicator", params={},
+            role=SignalRole.ENTRY_GUARD, condition_type="gt",
+            condition_value=1.0)
+        bad_params = make_signal_gene(
+            indicator="MACD", params={},  # macd naming 解析抛 KeyError
+            role=SignalRole.EXIT_GUARD, condition_type="gt",
+            condition_value=1.0)
+        dna.signal_genes = [cross_axis, unregistered, bad_params]
+        h = _Harness(tmp_path, dna=dna, window_bars=10)
+        ex = h.make_executor()
+        assert ex._resolve_snapshot_columns() == [], "三防御列均不入快照面"
+
+        (tmp_path / "b").mkdir()  # _Harness 的 data_dir 非递归建——子目录分置
+        h2 = _Harness(tmp_path / "b", window_bars=10)
+        ex2 = h2.make_executor()
+        assert "rsi_14" in ex2._resolve_snapshot_columns()  # 对照：正常列入面
+        assert ex2._indicator_snapshot(h2.df, 5) == {}, \
+            "纯 K 线帧无快照列——该列跳过（帧实际列取值）"
 
 
 class TestPrepareWhitelistSecondGate:
