@@ -1,0 +1,31 @@
+[skip-warmup] fca94792-c
+[skip-warmup] 038d1ffe-1
+[skip-warmup] c1491559-5
+[skip-warmup] da60e741-9
+Traceback (most recent call last):
+  File [35m"/Users/ss/works/git/aicode/everycode/MyQuant/scripts/recalc_bb_semantics.py"[0m, line [35m499[0m, in [35m<module>[0m
+    [31mmain[0m[1;31m()[0m
+    [31m~~~~[0m[1;31m^^[0m
+  File [35m"/Users/ss/works/git/aicode/everycode/MyQuant/scripts/recalc_bb_semantics.py"[0m, line [35m493[0m, in [35mmain[0m
+    [31mrecalc[0m[1;31m(a.db, a.data_dir, a.out, a.dry_run)[0m
+    [31m~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"/Users/ss/works/git/aicode/everycode/MyQuant/scripts/recalc_bb_semantics.py"[0m, line [35m406[0m, in [35mrecalc[0m
+    summary=[31mjson.dumps[0m[1;31m({[0m
+            [31m~~~~~~~~~~[0m[1;31m^^[0m
+        [1;31m"backtest_rows": len(results),[0m
+        [1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+        [1;31m"levels": {r["level"] for r in results}},[0m
+        [1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+        [1;31mensure_ascii=False)[0m)
+        [1;31m^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"/opt/homebrew/Caskroom/miniconda/base/envs/py3.13/lib/python3.13/json/__init__.py"[0m, line [35m242[0m, in [35mdumps[0m
+    **kw).[31mencode[0m[1;31m(obj)[0m
+          [31m~~~~~~[0m[1;31m^^^^^[0m
+  File [35m"/opt/homebrew/Caskroom/miniconda/base/envs/py3.13/lib/python3.13/json/encoder.py"[0m, line [35m202[0m, in [35mencode[0m
+    chunks = self.iterencode(o, _one_shot=True)
+  File [35m"/opt/homebrew/Caskroom/miniconda/base/envs/py3.13/lib/python3.13/json/encoder.py"[0m, line [35m263[0m, in [35miterencode[0m
+    return _iterencode(o, 0)
+  File [35m"/opt/homebrew/Caskroom/miniconda/base/envs/py3.13/lib/python3.13/json/encoder.py"[0m, line [35m182[0m, in [35mdefault[0m
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+                    f'is not JSON serializable')
+[1;35mTypeError[0m: [35mObject of type set is not JSON serializable[0m
