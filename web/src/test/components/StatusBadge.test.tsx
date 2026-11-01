@@ -41,5 +41,10 @@ describe("StatusBadge（G-1）", () => {
     render(<StatusBadge status="ok" label="达标" size="md" />);
     const badge = screen.getByText("达标");
     expect(badge.className).toContain("text-xs");
+    // sm 档（默认）与 className 透传
+    render(<StatusBadge status="warn" className="extra-cls" />);
+    const smBadge = screen.getByText("warn");
+    expect(smBadge.className).toContain("text-[11px]");
+    expect(smBadge.className).toContain("extra-cls");
   });
 });

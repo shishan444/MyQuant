@@ -21,4 +21,13 @@ describe("GhostButton（G-3）", () => {
     render(<GhostButton disabled>禁用</GhostButton>);
     expect(screen.getByRole("button", { name: "禁用" })).toBeDisabled();
   });
+
+  it("调用方 style 后置覆写默认形制（合并语义：自定义优先）", () => {
+    render(<GhostButton style={{ border: "2px dashed red" }}>覆写</GhostButton>);
+    // 内联样式属性直断言：toHaveStyle 的 border shorthand 解析在 jsdom 不可靠
+    const btn = screen.getByRole("button", { name: "覆写" }) as HTMLElement;
+    expect(btn.style.border).toBe("2px dashed red");
+    // 未覆写项保留默认（padding）
+    expect(btn.style.padding).toBe("4px 10px");
+  });
 });
