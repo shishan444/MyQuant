@@ -550,6 +550,34 @@ function TaskDetailPanel({
         )}
       </GlassCard>
 
+      {/* Chart + Equity Curve (grouped in one card) —— K 线区升首屏主体（kline-common-layer 组 2） */}
+      <GlassCard className="p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-text-secondary">K线图</span>
+          <div className="flex items-center gap-3 text-[10px] text-text-muted">
+            <span className="text-profit">&#9650; 开多/加仓</span>
+            <span className="text-loss">&#9660; 平仓/止损</span>
+          </div>
+        </div>
+        <TradingChart
+          symbol={task.symbol}
+          timeframe={task.timeframe}
+          fills={fills}
+          height={470}
+          isActive={isActive}
+        />
+        {equitySnapshots.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-border-default">
+            <span className="text-xs text-text-secondary mb-1 block">权益曲线</span>
+            <EquityCurve
+              data={equitySnapshots.map((s) => ({ timestamp: s.bar_time, value: s.equity }))}
+              baseline={task.initial_cash}
+              height={120}
+            />
+          </div>
+        )}
+      </GlassCard>
+
       {/* Performance Metrics（报告第一层主指标）+ 报告源版本标识 */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-text-secondary">验证报告</h3>
@@ -580,34 +608,6 @@ function TaskDetailPanel({
           />
         </GlassCard>
       )}
-
-      {/* Chart + Equity Curve (grouped in one card) */}
-      <GlassCard className="p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-text-secondary">K线图</span>
-          <div className="flex items-center gap-3 text-[10px] text-text-muted">
-            <span className="text-profit">&#9650; 开多/加仓</span>
-            <span className="text-loss">&#9660; 平仓/止损</span>
-          </div>
-        </div>
-        <TradingChart
-          symbol={task.symbol}
-          timeframe={task.timeframe}
-          fills={fills}
-          height={380}
-          isActive={isActive}
-        />
-        {equitySnapshots.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-border-default">
-            <span className="text-xs text-text-secondary mb-1 block">权益曲线</span>
-            <EquityCurve
-              data={equitySnapshots.map((s) => ({ timestamp: s.bar_time, value: s.equity }))}
-              baseline={task.initial_cash}
-              height={120}
-            />
-          </div>
-        )}
-      </GlassCard>
 
       {/* 成交流水 / 资金费 标签页 */}
       <div>

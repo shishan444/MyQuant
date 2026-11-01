@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
+import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
 import type { PaperFill } from "@/services/trading";
 import type { SignalData } from "@/components/charts/KlineChart";
 
@@ -10,6 +11,8 @@ interface TradingChartProps {
   fills: PaperFill[];
   height?: number;
   isActive?: boolean;
+  /** 任务累计资金费（信息栏直读，不传则不呈现该字段） */
+  cumulativeFunding?: number | null;
 }
 
 /** timeframe string -> minutes */
@@ -48,7 +51,7 @@ function fillsToSignals(fills: PaperFill[]): SignalData[] {
     }));
 }
 
-export function TradingChart({ symbol, timeframe, fills, height = 420, isActive }: TradingChartProps) {
+export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding }: TradingChartProps) {
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
   // Only load the last 200 bars of data for paper trading chart
@@ -83,6 +86,12 @@ export function TradingChart({ symbol, timeframe, fills, height = 420, isActive 
 
   return (
     <div>
+      <SymbolInfoBar
+        symbol={symbol}
+        timeframe={timeframe}
+        candles={candleData as never}
+        cumulativeFunding={cumulativeFunding}
+      />
       {/* Sub-chart indicator selector */}
       <div className="flex items-center gap-0.5 mb-1">
         <span className="mr-1 text-[11px] text-slate-500">Sub-chart</span>
