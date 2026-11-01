@@ -17,6 +17,12 @@ import {
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
 
+/**
+ * 全局导航壳层（global-nav-shell）——职能=四组目标信息架构的全局导航+折叠态形制，
+ * 导出 Sidebar（左侧导航）/Header（页头）/getPageTitle（路由→页题，供 Header 消费）。
+ * 服务对象=AppLayout（AppLayout.tsx:2-3 引入 Sidebar 与 Header），由其组合 Sidebar 导航与 Header 页头。
+ * 边界=不承担页面内容渲染（页面内容由 AppLayout 的 Outlet 挂载）。
+ */
 interface NavItem {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -167,7 +173,7 @@ export function Sidebar() {
           collapsed ? "w-16" : "w-60"
         )}
       >
-        {/* Logo */}
+        {/* Logo 区：品牌标识位；折叠态保留底边框占位，维持壳层高度 */}
         <div className="flex h-12 items-center border-b border-border-default px-4">
           {!collapsed && (
             <span className="text-lg font-semibold text-accent-gold font-mono tracking-tight">
@@ -192,7 +198,7 @@ export function Sidebar() {
           ))}
         </nav>
 
-        {/* Collapse button */}
+        {/* 折叠开关：折叠时显示 ChevronsRight＝点击向右展开的提示方向 */}
         <div className="border-t border-border-default p-2">
           <button
             onClick={toggleSidebar}
