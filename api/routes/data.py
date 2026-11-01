@@ -483,10 +483,35 @@ def get_ohlcv_by_symbol(
     timeframe: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = Query(50000, ge=1, le=50000),
+    limit: Optional[int] = Query(None, ge=1, le=50000),
+    tail: Optional[int] = Query(None, ge=1, le=50000),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
-    """按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。"""
+    """按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。
+
+    tail（kline-common-layer 组 5）：从最新一根（或 end 锚定行）往回取 N 根。
+    tail 与 start 互斥（锚定方向冲突）、tail 与 limit 互斥（数量参数冲突）——同给 422
+    DATA_PARAM_CONFLICT，不执行查询；tail 与 end 可组（历史时点重演窗口）。
+    不传 tail 时现行 head 语义不变（limit 缺省 50000 沿旧值）。
+    """
+    if tail is not None:
+        if start is not None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DATA_PARAM_CONFLICT",
+                    "message": "tail 与 start 互斥（锚定方向冲突）：tail 从最新往回锚定，start 从头过滤",
+                },
+            )
+        if limit is not None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DATA_PARAM_CONFLICT",
+                    "message": "tail 与 limit 互斥（数量参数冲突）：tail=从尾往回 N 根，limit=从头截取 N 根",
+                },
+            )
+
     # 路径解析收口 core find_parquet：周期白名单 + 别名表，杜绝 timeframe 旁路拼接
     symbol_ = safe_symbol(symbol)
     try:
@@ -502,8 +527,12 @@ def get_ohlcv_by_symbol(
 
     df = _apply_date_filter(df, start, end)
 
-    df = df.sort_index()
-    df = df.head(limit)
+    if tail is not None:
+        # 尾部 N 根（升序输出语义不变；不足 N 全给非错误）
+        df = df.sort_index().tail(tail)
+    else:
+        # 截取 limit 行（缺省 50000 沿旧值——不传 tail 现行契约不变）
+        df = df.sort_index().head(limit if limit is not None else 50000)
 
     return OhlcvResponse(
         dataset_id=f"{symbol_}_{timeframe}",
