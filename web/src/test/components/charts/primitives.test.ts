@@ -98,15 +98,25 @@ describe("价线族纯函数层", () => {
 });
 
 describe("持仓带纯函数层", () => {
-  it("toBandData：方向与区间透传（持仓中 exitTime 缺省）", () => {
-    expect(toBandData({ bar_time: "2026-01-01 00:00:00", side: "long" })).toEqual({
-      entryTime: "2026-01-01 00:00:00",
+  it("toBandData：时间键经 toTime 转数字 UTCTimestamp（与图表数据键同形制，CARD-02 后非字符串透传）；持仓中 exitTime 缺省", () => {
+    const entry = toBandData({ bar_time: "2026-01-01 00:00:00", side: "long" });
+    // 期望经 toTime 计算（无时区标记串按本地时区解析，硬编码秒值在异时区机器必红）；
+    // toTime 为独立已锚依赖函数，非被测对象——行为对照锚形制
+    expect(entry).toEqual({
+      entryTime: toTime("2026-01-01 00:00:00"),
       exitTime: undefined,
       side: "long",
     });
-    expect(
-      toBandData({ bar_time: "2026-01-01 00:00:00", side: "short" }, { bar_time: "2026-01-02 00:00:00" }),
-    ).toMatchObject({ exitTime: "2026-01-02 00:00:00", side: "short" });
+    // 数字键锚：锁「字符串透传→toTime 转换」修复面（回退即 typeof "string" 红）
+    expect(typeof entry.entryTime).toBe("number");
+
+    const closed = toBandData(
+      { bar_time: "2026-01-01 00:00:00", side: "short" },
+      { bar_time: "2026-01-02 00:00:00" },
+    );
+    expect(closed.entryTime).toBe(toTime("2026-01-01 00:00:00"));
+    expect(closed.exitTime).toBe(toTime("2026-01-02 00:00:00"));
+    expect(closed.side).toBe("short");
   });
 });
 
