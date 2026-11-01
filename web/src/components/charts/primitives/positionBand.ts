@@ -6,14 +6,13 @@ import type {
   Time,
   IChartApi,
 } from "lightweight-charts";
-// fancy-canvas 类型无独立声明——经结构化最小面声明（draw 目标仅用 useBitmapCoordinateSpace）
-interface BitmapCoordinateSpace {
+// fancy-canvas 类型无独立声明——经结构化最小面声明（draw 目标仅用 useMediaCoordinateSpace）
+interface MediaCoordinateSpace {
   context: CanvasRenderingContext2D;
   mediaSize: { width: number; height: number };
-  horizontalPixelRatio: number;
 }
 interface CanvasTarget {
-  useBitmapCoordinateSpace(cb: (scope: BitmapCoordinateSpace) => void): void;
+  useMediaCoordinateSpace(cb: (scope: MediaCoordinateSpace) => void): void;
 }
 
 /**
@@ -47,10 +46,12 @@ class PositionBandRenderer implements IPrimitivePaneRenderer {
 
   draw(target: CanvasTarget): void {
     if (!this.data) return;
-    target.useBitmapCoordinateSpace((scope) => {
+    // media 坐标空间：x1/x2 本就是 timeToCoordinate 的 media 坐标，零换算直画
+    // （fancy-canvas 对 context 预 scale(pixelRatio)，mediaSize 亦为 media 值——DPI 无关）
+    target.useMediaCoordinateSpace((scope) => {
       const ctx = scope.context;
-      const x1 = this.data!.x1 * scope.horizontalPixelRatio;
-      const x2 = this.data!.x2 !== null ? this.data!.x2 * scope.horizontalPixelRatio : scope.mediaSize.width;
+      const x1 = this.data!.x1;
+      const x2 = this.data!.x2 !== null ? this.data!.x2 : scope.mediaSize.width;
       ctx.fillStyle = this.data!.color;
       ctx.fillRect(x1, 0, Math.max(x2 - x1, 1), scope.mediaSize.height);
     });
