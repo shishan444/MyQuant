@@ -64,9 +64,11 @@ test.describe("主链路", () => {
     });
   });
 
-  test("05b 新路由占位：三条 EmptyState 诚实占位", async ({ page }) => {
+  test("05b 新路由：/workbench 真页+/live /plugins 占位", async ({ page }) => {
+    // workbench 真页（workbench-observation：B1 区标题可见）
+    await page.goto("/workbench");
+    await expect(page.getByRole("heading", { name: "待裁决事件" })).toBeVisible();
     for (const [label, path] of [
-      ["观察工作台", "/workbench"],
       ["实盘交易", "/live"],
       ["插件与组件库", "/plugins"],
     ] as const) {
