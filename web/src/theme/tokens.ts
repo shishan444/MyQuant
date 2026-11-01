@@ -16,10 +16,11 @@ export const BG = {
   bg2: "#2A2A5E99",
 } as const;
 
-/** 边框五档（同族白透明四档+金选中档；border-default 现状 0.08 与画布 0.1 微差在案不改） */
+/** 边框五档（同族白透明四档+金选中档）。default=画布实证 #FFFFFF1A（0.10）；旧载体两侧 index.css --color-border-default 与 antdTheme colorBorder 均 0.08，按「只补不删不改」不动，微差在案待基座收口 */
 export const BORDER = {
   faint: "#FFFFFF0E",
   line: "#FFFFFF14",
+  default: "#FFFFFF1A",
   strong: "#FFFFFF2E",
   selected: "#FFC76B99",
 } as const;
