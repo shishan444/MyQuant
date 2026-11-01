@@ -76,7 +76,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
       <SymbolInfoBar
         symbol={symbol}
         timeframe={timeframe}
-        candles={candleData as never}
+        candles={candleData}
         cumulativeFunding={cumulativeFunding}
       />
       {/* Sub-chart indicator selector */}

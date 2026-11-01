@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import type { CandleData } from "@/components/charts/KlineChart";
 
 /**
  * 交易对信息栏（kline-common-layer 组 2）——07 页 K 线区顶部横条。
@@ -7,10 +6,20 @@ import type { CandleData } from "@/components/charts/KlineChart";
  * 累计资金费直读任务 cumulative_funding 字段；标记价/指数价/持仓量后端无数据不呈现
  * （web-ui-truthfulness：不画假数据，待行情源 change 补）。
  */
+/** 信息栏蜡烛形（CARD-06 类型逃逸消除：自声明脱离 KlineChart.CandleData 依赖；volume 可选——上游 ohlcv 必填、防御缺列） */
+interface SymbolInfoBarCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
 interface SymbolInfoBarProps {
   symbol: string;
   timeframe: string;
-  candles: CandleData[];
+  candles: SymbolInfoBarCandle[];
   cumulativeFunding?: number | null;
 }
 
@@ -25,7 +34,7 @@ export function SymbolInfoBar({ symbol, timeframe, candles, cumulativeFunding }:
     const first = candles[0];
     const high = Math.max(...candles.map((c) => c.high));
     const low = Math.min(...candles.map((c) => c.low));
-    const vol = candles.reduce((sum, c) => sum + ((c as { volume?: number }).volume ?? 0), 0);
+    const vol = candles.reduce((sum, c) => sum + (c.volume ?? 0), 0);
     const change = first.open !== 0 ? (last.close - first.open) / first.open : 0;
     return { last: last.close, high, low, vol, change };
   }, [candles]);
