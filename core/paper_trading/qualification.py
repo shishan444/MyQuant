@@ -79,10 +79,9 @@ def paper_trigger_set(pt_signal_rows) -> list:
     """
     out = []
     for row in pt_signal_rows:
-        kind = row["signal_kind"] if isinstance(row, dict) else row.signal_kind
+        kind = row["signal_kind"]
         if kind in SIGNAL_WHITELIST:
-            bt = row["bar_time"] if isinstance(row, dict) else row.bar_time
-            out.append((bt, kind))
+            out.append((row["bar_time"], kind))
     return out
 
 
@@ -103,7 +102,7 @@ def replay_trigger_set(signal_set) -> list:
             continue
         action = REPLAY_ACTION_MAP[series_key]
         for ts in series.index[series.astype(bool)]:
-            out.append((str(ts), action))
+            out.append((ts.isoformat(), action))
     return out
 
 
