@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { AlertTriangle, Bot, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
-import { StatusBadge } from "@/components/StatusBadge";
 import {
   getPendingEvents,
   getValidationRecords,
@@ -69,11 +68,15 @@ export function Workbench() {
     <PageSections
       events={events}
       degraded={degraded}
+      truncated={eventsQ.data?.truncated ?? false}
+      scannedTasks={eventsQ.data?.scanned_tasks ?? 0}
+      scannedRunningTasks={eventsQ.data?.scanned_running_tasks ?? 0}
       availability={availability}
       eventsLoading={eventsQ.isLoading}
       eventsError={eventsQ.isError}
       records={records}
       recordsLoading={recordsQ.isLoading}
+      recordsError={recordsQ.isError}
     />
   );
 }
@@ -81,11 +84,21 @@ export function Workbench() {
 function PageSections(props: {
   events: PendingEvent[];
   degraded: number;
-  availability?: { qualify_pending: string | null; reason: string | null };
+  truncated: boolean;
+  scannedTasks: number;
+  scannedRunningTasks: number;
+  // availability 完整形（services/workbench.ts:17 三字段——历史 props 窄化
+  // 丢 trigger_deviation，CARD-05 恢复消费）
+  availability?: {
+    qualify_pending: string | null;
+    trigger_deviation: string | null;
+    reason: string | null;
+  };
   eventsLoading: boolean;
   eventsError: boolean;
   records: import("@/services/workbench").ValidationRecordRow[];
   recordsLoading: boolean;
+  recordsError: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -115,9 +128,20 @@ function PageSections(props: {
             ⚠ {props.degraded} 个事件源扫描失败已跳过（观察面降级）
           </p>
         )}
+        {props.truncated && (
+          <p className="mt-1 text-[10px] text-attention-gold">
+            ⚠ 任务扫描达上限（终态 {props.scannedTasks} / 运行中 {props.scannedRunningTasks}，
+            任一面达 1000 即截断）——超出部分未扫，可能有事件遗漏
+          </p>
+        )}
         {props.availability?.qualify_pending === "unavailable" && (
           <p className="mt-1 text-[10px] text-text-muted">
             达标事件源未建（{props.availability.reason}）——区分「无事件」与「源未建」
+          </p>
+        )}
+        {props.availability?.trigger_deviation === "unavailable" && (
+          <p className="mt-1 text-[10px] text-text-muted">
+            触发差异事件源未建——区分「无事件」与「源未建」（终态报告缺 qualification 键，说明详见 reason 拼接说明）
           </p>
         )}
       </GlassCard>
@@ -131,7 +155,9 @@ function PageSections(props: {
         {/* B2-3 最近验证结论（组A 端点消费——概要默认） */}
         <div className="mb-2">
           <p className="mb-1 text-[10px] uppercase tracking-wide text-text-muted">最近验证结论</p>
-          {props.recordsLoading ? (
+          {props.recordsError ? (
+            <p className="text-xs text-loss">验证记录源暂不可达（稍后自动重试）</p>
+          ) : props.recordsLoading ? (
             <p className="text-xs text-text-muted">装载中…</p>
           ) : props.records.length === 0 ? (
             <p className="text-xs text-text-muted">暂无验证记录</p>
@@ -177,8 +203,9 @@ function PageSections(props: {
             <span className="text-text-muted">月×周期矩阵缩略与 api/mcp 进程——随 C6 数据管理真数据</span>
           </div>
           <div className="mt-2 flex gap-2">
-            <StatusBadge status="ok" label="api" />
-            <StatusBadge status="pending" label="mcp" />
+            {/* B4 徽章已删（workbench-observation CARD-04：api 恒 ok/mcp 恒
+                pending 系硬编码假状态——web-ui-truthfulness 不画假数据，
+                随 C6 数据管理真数据再立真状态面） */}
           </div>
         </GlassCard>
       </div>

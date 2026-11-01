@@ -90,4 +90,78 @@ describe("Workbench（01 观察工作台）", () => {
     setup();
     expect(await screen.findByText("暂无验证记录")).toBeInTheDocument();
   });
+
+  it("CARD-05 两半源未建同时渲染（reason 单字段拼接）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      availability: {
+        qualify_pending: "unavailable",
+        trigger_deviation: "unavailable",
+        reason: "C5 判定器源未建（旧库行无 qualification_progress）；trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）",
+      },
+    } as never);
+    setup();
+    // 两半 unavailable 渲染块并存（区分「无事件」与「源未建」）
+    const qualifyBlock = await screen.findByText(/达标事件源未建/);
+    expect(screen.getByText(/触发差异事件源未建/)).toBeInTheDocument();
+    // qualify 块内嵌完整拼接 reason——两半说明同现一处（单字段非分源；
+    // JSX 插值产独立文本节点，regex 匹配器不可跨段——textContent 断言）
+    expect(qualifyBlock.textContent).toContain("旧库行无 qualification_progress");
+    expect(qualifyBlock.textContent).toContain("trigger 回看源未建");
+    expect(qualifyBlock.textContent).toContain("；");
+  });
+
+  it("CARD-05 仅 trigger 半边源未建（qualify 可用不渲染 qualify 块）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      availability: {
+        qualify_pending: null,
+        trigger_deviation: "unavailable",
+        reason: "trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）",
+      },
+    } as never);
+    setup();
+    expect(await screen.findByText(/触发差异事件源未建/)).toBeInTheDocument();
+    expect(screen.queryByText(/达标事件源未建/)).not.toBeInTheDocument();
+  });
+
+  it("CARD-03 验证记录源错误态呈现（B2-3 四态补全）", async () => {
+    vi.mocked(wb.getValidationRecords).mockRejectedValue(new Error("net") as never);
+    setup();
+    expect(await screen.findByText(/验证记录源暂不可达/)).toBeInTheDocument();
+  });
+
+  it("CARD-04 B4 假状态徽章已删（api/mcp 独立文本节点不再渲染）", async () => {
+    setup();
+    await screen.findByText(/最近验证结论/);  // 页面就绪后再负向断言
+    // exact 匹配只命中独立文本节点——B4 残留说明串「api/mcp 进程」不受影响
+    expect(screen.queryByText("api", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("mcp", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("CARD-07 truncated 页满披露渲染（双面形，与 degraded 并存）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 1,
+      scanned_tasks: 1000, scanned_running_tasks: 5, truncated: true,
+      availability: { qualify_pending: null, trigger_deviation: null, reason: null },
+    } as never);
+    setup();
+    // truncated 提示块呈现（双面扫描数披露——插值跨文本节点，textContent 断言）
+    const block = await screen.findByText(/任务扫描达上限/);
+    expect(block.textContent).toContain("终态 1000");
+    expect(block.textContent).toContain("运行中 5");
+    // 独立字段独立渲染块——与 degraded 披露并存不互斥
+    expect(screen.getByText(/1 个事件源扫描失败/)).toBeInTheDocument();
+  });
+
+  it("CARD-07 truncated=false 不渲染提示块", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      scanned_tasks: 5, scanned_running_tasks: 3, truncated: false,
+      availability: { qualify_pending: null, trigger_deviation: null, reason: null },
+    } as never);
+    setup();
+    await screen.findByText(/暂无待裁决事件/);
+    expect(screen.queryByText(/任务扫描达上限/)).not.toBeInTheDocument();
+  });
 });

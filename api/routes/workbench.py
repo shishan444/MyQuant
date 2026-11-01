@@ -18,6 +18,11 @@ logger = logging.getLogger("workbench")
 
 router = APIRouter(prefix="/api/workbench", tags=["workbench"])
 
+# 终态域扫描上限（CARD-07）：页满即披露 truncated（可能漏扫→显式告知；
+# count>limit 严格判定需 count_tasks 扩 status_in——最小面取舍，文案
+# 如实说「达上限可能有遗漏」非断言确漏）
+TERMINAL_SCAN_LIMIT = 1000
+
 
 class PendingEvent(BaseModel):
     type: str
@@ -36,21 +41,48 @@ class PendingEventsResponse(BaseModel):
     events: List[PendingEvent]
     degraded: int = 0          # 单源失败跳过计数（fail-open 观察面）
     availability: Availability = Availability()
+    scanned_tasks: int = 0     # 本轮实际扫描终态任务数（CARD-07 披露）
+    scanned_running_tasks: int = 0  # 本轮实际扫描运行中任务数（批次三补件）
+    truncated: bool = False    # 达扫描上限（终态或运行中任一面）——可能漏扫
 
 
 def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
-    """并集耗尽：active 态假设逐个 query_union_balance，remaining_bars==0（§7.3 单字段判定式）。"""
-    from core.analysis.validation_service import query_union_balance
+    """并集耗尽：active 态假设逐个 query_union_balance，remaining_bars==0（§7.3 单字段判定式）。
+
+    全量扫（CARD-01）：iter_all_pages 翻页（单源——判定类读场景的既有
+    帮助函数，isolation/hypothesis_service 先例），替单页 limit=50 静默
+    截断（>50 active 假设时后半静默漏扫）。
+    bounds_cache（CARD-02）：请求内 (symbol,timeframe)→data_bounds 缓存
+    ——逐假设不重复装载 parquet 边界；装载失败（raise）未入缓存即
+    「失败不缓存」，同符号后续假设自然重试。
+    """
+    from core.analysis.isolation import iter_all_pages
+    from core.analysis.validation_service import (
+        load_data_bounds, query_union_balance)
     from core.persistence.repository import research as rr
     events: List[PendingEvent] = []
     degraded = 0
-    for hyp in rr.list_hypotheses(db_path, status="active"):
+    bounds_cache: Dict[tuple, tuple] = {}
+    all_active = iter_all_pages(
+        lambda off, lim: rr.list_hypotheses(
+            db_path, status="active", offset=off, limit=lim, order="asc"))
+    for hyp in all_active:
         try:
-            for dr in hyp.get("data_ranges", []):
+            # data_ranges 仓储层为 JSON 字符串（探针实测）——先 loads 再迭代
+            # （消费方 loads 系既有约定：research/hypotheses.py:142 先例）；
+            # 损坏串 loads 失败落入本 except 的 degraded 降级（真源失败降级，
+            # 非 TypeError 伪降级——P0 退回件：字符串逐字符迭代必 TypeError）
+            ranges = json.loads(hyp.get("data_ranges") or "[]")
+            for dr in ranges:
+                key = (dr["symbol"], dr["timeframe"])
+                if key not in bounds_cache:
+                    bounds_cache[key] = load_data_bounds(
+                        data_dir, dr["symbol"], dr["timeframe"])
                 bal = query_union_balance(
                     db_path, data_dir,
                     symbol=dr["symbol"], timeframe=dr["timeframe"],
-                    hypothesis_id=hyp["hypothesis_id"])
+                    hypothesis_id=hyp["hypothesis_id"],
+                    data_bounds=bounds_cache[key])
                 if bal.get("remaining_bars") == 0:
                     events.append(PendingEvent(type="union_exhausted", payload={
                         "hypothesis_id": hyp["hypothesis_id"],
@@ -64,18 +96,22 @@ def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]
     return events, degraded
 
 
-def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int]:
+def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int, int]:
     """达标待停：运行中 pt_task 两维同时满足。
 
     两维现算（qualification.evaluate_two_dimensions 单源——与 API 层
     qualification_progress 同一函数）；equity=balance+margin+upnl 行内
     同源合成（契约登记表「权益公式」纪律）；first_met_at 直读行。
+    返回 (events, degraded, scanned)——running 面同界披露（批次三补件：
+    len==TERMINAL_SCAN_LIMIT 时 truncated 由组装段置位，与终态面同款）。
     """
     from core.paper_trading.qualification import evaluate_two_dimensions
     from core.persistence.repository import paper as paper_repo
     events: List[PendingEvent] = []
     degraded = 0
-    for task in paper_repo.list_tasks(db_path, status="running", limit=1000):
+    tasks = paper_repo.list_tasks(
+        db_path, status="running", limit=TERMINAL_SCAN_LIMIT)
+    for task in tasks:
         try:
             if task.get("balance") is None:
                 continue  # 初启未跑 bar
@@ -94,36 +130,43 @@ def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int]:
             degraded += 1
             logger.warning("qualify_pending 扫描跳过 %s: %s",
                            task.get("task_id"), exc)
-    return events, degraded
+    return events, degraded, len(tasks)
 
 
-def _trigger_deviation_events(db_path) -> tuple[List[PendingEvent], int]:
-    """触发差异：终态任务最新报告 qualification.trigger_consistency.passed==False 回看。"""
+def _trigger_deviation_events(db_path) -> tuple[List[PendingEvent], int, int]:
+    """触发差异：终态任务最新报告 qualification.trigger_consistency.passed==False 回看。
+
+    返回 (events, degraded, scanned)——scanned=本轮扫描终态任务数
+    （CARD-07 披露：页满=TERMINAL_SCAN_LIMIT 时 truncated 由组装段判定）。
+    """
     from core.paper_trading.reporting import get_final_report
     from core.persistence.repository import paper as paper_repo
     events: List[PendingEvent] = []
     degraded = 0
-    for status_t in ("completed", "stopped", "error"):
-        for task in paper_repo.list_tasks(db_path, status=status_t, limit=1000):
-            try:
-                rep = get_final_report(db_path, task["task_id"])
-                if rep is None:
-                    continue
-                report_json = rep.get("report") or {}
-                if isinstance(report_json, str):
-                    report_json = json.loads(report_json)
-                qual = report_json.get("qualification") or {}
-                tc = qual.get("trigger_consistency") or {}
-                if tc.get("passed") is False:  # 判据边界：passed=None 不产
-                    events.append(PendingEvent(type="trigger_deviation", payload={
-                        "task_id": task["task_id"],
-                        "strategy_id": task["strategy_id"],
-                        "deviation_ratio": tc.get("deviation_ratio")}))
-            except Exception as exc:  # noqa: BLE001
-                degraded += 1
-                logger.warning("trigger_deviation 扫描跳过 %s: %s",
-                               task.get("task_id"), exc)
-    return events, degraded
+    # 终态域单查（CARD-06）：status_in=PT_STATUS_TERMINAL SQL 下推替
+    # 三循环逐态扫描（paper.py:81 派生视图单源——三态字面量消重复）
+    tasks = paper_repo.list_tasks(
+        db_path, status_in=paper_repo.PT_STATUS_TERMINAL, limit=TERMINAL_SCAN_LIMIT)
+    for task in tasks:
+        try:
+            rep = get_final_report(db_path, task["task_id"])
+            if rep is None:
+                continue
+            report_json = rep.get("report") or {}
+            if isinstance(report_json, str):
+                report_json = json.loads(report_json)
+            qual = report_json.get("qualification") or {}
+            tc = qual.get("trigger_consistency") or {}
+            if tc.get("passed") is False:  # 判据边界：passed=None 不产
+                events.append(PendingEvent(type="trigger_deviation", payload={
+                    "task_id": task["task_id"],
+                    "strategy_id": task["strategy_id"],
+                    "deviation_ratio": tc.get("deviation_ratio")}))
+        except Exception as exc:  # noqa: BLE001
+            degraded += 1
+            logger.warning("trigger_deviation 扫描跳过 %s: %s",
+                           task.get("task_id"), exc)
+    return events, degraded, len(tasks)
 
 
 @router.get("/pending-events", response_model=PendingEventsResponse)
@@ -139,22 +182,32 @@ def pending_events(
 
     # C5 判定器源可用性探测：qualification_progress 键在运行任务面缺席=降级
     try:
-        events_q, deg_q = _qualify_pending_events(db_path)
+        events_q, deg_q, scanned_q = _qualify_pending_events(db_path)
     except Exception:  # noqa: BLE001——端点整体 fail-open
-        events_q, deg_q = [], 1
+        events_q, deg_q, scanned_q = [], 1, 0
     if not _qualify_source_available(db_path):
         availability.qualify_pending = "unavailable"
         availability.reason = "C5 判定器源未建（旧库行无 qualification_progress）"
 
     try:
-        events_t, deg_t = _trigger_deviation_events(db_path)
+        events_t, deg_t, scanned_t = _trigger_deviation_events(db_path)
     except Exception:  # noqa: BLE001
-        events_t, deg_t = [], 1
+        events_t, deg_t, scanned_t = [], 1, 0
+    if not _trigger_source_available(db_path):
+        availability.trigger_deviation = "unavailable"
+        # reason 单字段按需拼接两半说明（architect 卡面——非分源双 reason）
+        availability.reason = (
+            (availability.reason + "；" if availability.reason else "")
+            + "trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）")
 
     return PendingEventsResponse(
         events=events_u + events_q + events_t,
         degraded=deg_u + deg_q + deg_t,
-        availability=availability)
+        availability=availability,
+        scanned_tasks=scanned_t,
+        scanned_running_tasks=scanned_q,
+        truncated=(scanned_t >= TERMINAL_SCAN_LIMIT
+                   or scanned_q >= TERMINAL_SCAN_LIMIT))
 
 
 def _qualify_source_available(db_path) -> bool:
@@ -164,5 +217,35 @@ def _qualify_source_available(db_path) -> bool:
         for task in paper_repo.list_tasks(db_path, limit=1):
             return "first_met_at" in task
         return True  # 无任务行=无从判源（不标降级——空态合法）
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _trigger_source_available(db_path) -> bool:
+    """trigger 半边源可用性（workbench-observation CARD-05）：终态任务最新
+    报告 qualification 键在场（paper-trading-revamp 组 C 第四键——C5 前
+    旧终态报告无此键）。
+
+    三态：无终态任务=空态合法不标；任一最新报告含键=源已建（混合库同构
+    qualify 半边「任一行含列即视为已建」）；全部缺键=unavailable。
+    """
+    try:
+        from core.paper_trading.reporting import get_final_report
+        from core.persistence.repository import paper as paper_repo
+        tasks = paper_repo.list_tasks(
+            db_path, status_in=paper_repo.PT_STATUS_TERMINAL,
+            limit=TERMINAL_SCAN_LIMIT)
+        if not tasks:
+            return True  # 无终态任务=空态合法不标
+        for task in tasks:
+            rep = get_final_report(db_path, task["task_id"])
+            if rep is None:
+                continue
+            report_json = rep.get("report") or {}
+            if isinstance(report_json, str):
+                report_json = json.loads(report_json)
+            if "qualification" in report_json:
+                return True  # 任一含键=源已建
+        return False  # 全缺键=unavailable
     except Exception:  # noqa: BLE001
         return False
