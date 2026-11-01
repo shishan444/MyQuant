@@ -362,6 +362,24 @@ class TestTruncatedDisclosure:
         assert body["scanned_tasks"] == 2
         assert body["truncated"] is False
 
+    def test_running_page_full_truncated(self, client):
+        """qualify 半边（批次三补件）：running 面页满单面置位 truncated
+        （OR 语义——终态面不满仍置位）+scanned_running_tasks 披露；
+        页满不影响事件产出（扫描照常）。"""
+        from unittest.mock import patch
+        db = client._db
+        # 两 running 任务：一达标（事件应产出）+一初启（balance None 跳过）
+        _upsert_running(db, "wb_r1", balance=110.0, trades=6)
+        _upsert_running(db, "wb_r2", balance=None, trades=0)
+        with patch("api.routes.workbench.TERMINAL_SCAN_LIMIT", 2):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["scanned_running_tasks"] == 2  # 含 balance None 行
+        assert body["scanned_tasks"] == 0          # 终态面空（不满）
+        assert body["truncated"] is True           # running 单面页满 OR 置位
+        types = {e["type"] for e in body["events"]}
+        assert "qualify_pending" in types          # 页满披露不影响事件产出
+
     def test_truncated_coexists_with_degraded(self, client):
         """页满与单源失败并存：truncated=True 且 degraded>=1 同响应
         （两披露字段独立不互斥）。"""

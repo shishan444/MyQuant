@@ -139,15 +139,17 @@ describe("Workbench（01 观察工作台）", () => {
     expect(screen.queryByText("mcp", { exact: true })).not.toBeInTheDocument();
   });
 
-  it("CARD-07 truncated 页满披露渲染（与 degraded/availability 并存）", async () => {
+  it("CARD-07 truncated 页满披露渲染（双面形，与 degraded 并存）", async () => {
     vi.mocked(wb.getPendingEvents).mockResolvedValue({
       events: [], degraded: 1,
-      scanned_tasks: 1000, truncated: true,
+      scanned_tasks: 1000, scanned_running_tasks: 5, truncated: true,
       availability: { qualify_pending: null, trigger_deviation: null, reason: null },
     } as never);
     setup();
-    // truncated 提示块呈现（含扫描数披露）
-    expect(await screen.findByText(/终态任务扫描达上限/)).toBeInTheDocument();
+    // truncated 提示块呈现（双面扫描数披露——插值跨文本节点，textContent 断言）
+    const block = await screen.findByText(/任务扫描达上限/);
+    expect(block.textContent).toContain("终态 1000");
+    expect(block.textContent).toContain("运行中 5");
     // 独立字段独立渲染块——与 degraded 披露并存不互斥
     expect(screen.getByText(/1 个事件源扫描失败/)).toBeInTheDocument();
   });
@@ -155,11 +157,11 @@ describe("Workbench（01 观察工作台）", () => {
   it("CARD-07 truncated=false 不渲染提示块", async () => {
     vi.mocked(wb.getPendingEvents).mockResolvedValue({
       events: [], degraded: 0,
-      scanned_tasks: 5, truncated: false,
+      scanned_tasks: 5, scanned_running_tasks: 3, truncated: false,
       availability: { qualify_pending: null, trigger_deviation: null, reason: null },
     } as never);
     setup();
     await screen.findByText(/暂无待裁决事件/);
-    expect(screen.queryByText(/终态任务扫描达上限/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/任务扫描达上限/)).not.toBeInTheDocument();
   });
 });
