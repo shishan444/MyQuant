@@ -1,7 +1,9 @@
 """月矩阵 v2+freshness 透传契约测试（data-management-revamp 组 A2/B2）。
 
-data-integrity 2 Scenario+data-freshness-guardian 2 Scenario+五形态月夹具
+data-integrity 3 Scenario+data-freshness-guardian 2 Scenario+五形态月夹具
 +容差边界+档集不硬编码+404/gray 分野+透传/503/属性链缺失。
+第二轮补网（审查阶段）：透传 200 分支真空补齐+bars_expected 语义锚
++当月首尾容差/中间缺口分界+长周期缺口形态+months_back 参数契约+空档文件。
 """
 from __future__ import annotations
 
@@ -190,3 +192,220 @@ class TestFreshnessStatus:
         with pytest.raises(HTTPException) as ei:
             freshness_status(request=req)
         assert ei.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# 第二轮补网（审查阶段）。推导起点=specs data-integrity 3 Scenario
+# +data-freshness-guardian 2 Scenario+design §5.1 字段/参数/错误语义；
+# 实现代码仅用于确定调用形制，不用于决定断言预期。
+# ---------------------------------------------------------------------------
+
+
+def _req_with(state_attrs: dict):
+    """构造带指定 app.state 属性的直调 request（freshness 挂点链注入用）。"""
+    state = type("St", (), state_attrs)()
+    return type("R", (), {"app": type("App", (), {"state": state})()})()
+
+
+def _cur_month() -> tuple[str, pd.Timestamp]:
+    """当月键（UTC）与当月 1 日 0 点——当月用例时间基准现算（不硬编码月份）。"""
+    from datetime import datetime, timezone as tz
+    n = datetime.now(tz.utc)
+    return f"{n.year:04d}-{n.month:02d}", pd.Timestamp(year=n.year, month=n.month, day=1)
+
+
+def _cell_of(body: dict, month: str, tf: str) -> dict:
+    row = [m for m in body["short_period"]["matrix"] if m["month"] == month][0]
+    return [c for c in row["cells"] if c["timeframe"] == tf][0]
+
+
+class TestFreshnessPassthrough:
+    """正常透传 Scenario（守护器运行中→零改写）。
+
+    原网 test_passthrough_or_503 在直调形制下 request.app.state 恒无
+    paper_scheduler——恒走 503 分支，200 透传分支从未执行（恒真断言）。
+    """
+
+    def test_running_guardian_zero_rewrite(self):
+        """装配态：响应 kline/derivs 与 guardian.status() 逐键一致（零改写锚）。"""
+        from api.routes.integrity_workbench import freshness_status
+        payload = {
+            "kline": {"last_run": "2026-11-01T08:00:00+00:00",
+                      "keys": {"BTCUSDT_4h": "fresh", "BTCUSDT_1h": "stale"}},
+            "derivs": {"last_run": None,
+                       "symbols": {"BTCUSDT": {"funding": "fresh", "oi": "missing"}}},
+        }
+        guardian = type("G", (), {"status": lambda self: payload})()
+        sched = type("S", (), {"registry": type("R", (), {"guardian": guardian})()})()
+        req = _req_with({"paper_scheduler": sched})
+        out = freshness_status(request=req)
+        assert out.kline == payload["kline"]
+        assert out.derivs == payload["derivs"]
+
+    @pytest.mark.parametrize(
+        "broken", ["registry 无 guardian", "guardian 无 status 方法"])
+    def test_partial_chain_missing_503(self, broken):
+        """挂点链中间环缺失（scheduler 在但链断）→503（原网只测 state 首环）。"""
+        from api.routes.integrity_workbench import freshness_status
+        from fastapi import HTTPException
+        if broken == "registry 无 guardian":
+            sched = type("S", (), {"registry": type("R", (), {})()})()
+        else:
+            sched = type("S", (), {
+                "registry": type("R", (), {"guardian": type("G", (), {})()})()})()
+        req = _req_with({"paper_scheduler": sched})
+        with pytest.raises(HTTPException) as ei:
+            freshness_status(request=req)
+        assert ei.value.status_code == 503
+
+
+class TestBarsExpectedSemantics:
+    """bars_expected 语义锚（design §5.1：bars_actual=实有根数，
+    bars_expected=月内应有根数——缺口月差值=缺失根数）。"""
+
+    def test_full_month_expected_equals_actual(self, five_forms):
+        c, _ = five_forms
+        r = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "BTCUSDT", "months_back": 3})
+        cell = _cell_of(r.json(), "2026-09", "4h")
+        assert cell["bars_expected"] == cell["bars_actual"] == 180
+
+    def test_gap_month_shortfall_equals_missing_bars(self, five_forms):
+        """中间抽 10 根连续 bar：expected-actual=10、连续一段=1 处缺口。"""
+        c, _ = five_forms
+        r = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "GAPSY", "months_back": 3})
+        cell = _cell_of(r.json(), "2026-09", "4h")
+        assert cell["bars_expected"] - cell["bars_actual"] == 10
+        assert cell["gap_count"] == 1
+
+    def test_expected_never_below_actual_invariant(self, five_forms):
+        """不变量：任一格 bars_expected>=bars_actual（expected=应有下界）。"""
+        c, _ = five_forms
+        for sym in ("BTCUSDT", "GAPSY", "NULLSY", "BADSY", "EMPTY9"):
+            r = c.get("/api/data/integrity/monthly-matrix",
+                      params={"symbol": sym, "months_back": 3})
+            for row in r.json()["short_period"]["matrix"]:
+                for cell in row["cells"]:
+                    assert cell["bars_expected"] >= cell["bars_actual"], (
+                        sym, row["month"], cell["timeframe"])
+
+
+class TestCurrentMonthTolerance:
+    """当月（部分月）首尾容差 vs 中间缺口分界（design §5.1：连续性
+    =相邻 bar 间隔==TF，月首尾容差一档——月首缺失/月末未满不计缺口）。"""
+
+    def test_month_head_missing_tolerated_green(self, tmp_path):
+        """当月从 5 日起连续（1-4 日缺失=月首容差）→green 非缺口。"""
+        mk, m1 = _cur_month()
+        idx = pd.date_range(m1 + pd.Timedelta(days=4), periods=30, freq="4h")
+        c = _client(tmp_path, {"HEADMISS_4h.parquet": _ohlc(idx)})
+        cell = _cell_of(c.get("/api/data/integrity/monthly-matrix",
+                              params={"symbol": "HEADMISS", "months_back": 1}).json(),
+                        mk, "4h")
+        assert cell["status"] == "green"
+        assert cell["gap_count"] == 0 and cell["first_gap"] is None
+
+    def test_partial_month_tail_tolerated_green(self, tmp_path):
+        """当月 1 日起连续 8 根（月末未满=月末容差）→green 且 expected==actual。"""
+        mk, m1 = _cur_month()
+        idx = pd.date_range(m1, periods=8, freq="4h")
+        c = _client(tmp_path, {"PARTIAL_4h.parquet": _ohlc(idx)})
+        cell = _cell_of(c.get("/api/data/integrity/monthly-matrix",
+                              params={"symbol": "PARTIAL", "months_back": 1}).json(),
+                        mk, "4h")
+        assert cell["status"] == "green"
+        assert cell["bars_actual"] == 8
+        assert cell["bars_expected"] == 8
+
+    def test_current_month_inner_gap_yellow(self, tmp_path):
+        """当月中间抽 2 根（首尾齐全）→yellow 必报（容差不覆盖中间）。"""
+        mk, m1 = _cur_month()
+        idx = pd.date_range(m1, periods=40, freq="4h").delete(range(20, 22))
+        c = _client(tmp_path, {"INNER_4h.parquet": _ohlc(idx)})
+        cell = _cell_of(c.get("/api/data/integrity/monthly-matrix",
+                              params={"symbol": "INNER", "months_back": 1}).json(),
+                        mk, "4h")
+        assert cell["status"] == "yellow"
+        assert cell["gap_count"] >= 1
+        assert cell["bars_expected"] - cell["bars_actual"] == 2
+
+
+class TestLongPeriodGapForm:
+    """长周期整体检查·缺口形态（Scenario 3 面——原网只测 green 形态）。"""
+
+    def test_long_period_gap_yellow_full_span(self, tmp_path):
+        """1d 全集抽 3 根：yellow+gaps 明细；months_back=1 不裁剪长周期（不做月分桶）。"""
+        orig = pd.date_range("2026-05-01", periods=120, freq="1D")
+        idx = orig.delete(range(50, 53))
+        c = _client(tmp_path, {"LGAP_1d.parquet": _ohlc(idx)})
+        b = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "LGAP", "months_back": 1}).json()
+        # 当月（2026-11）短周期月窗不含缺口所在的 2026-06——长周期仍整体报
+        row = [r for r in b["long_period"] if r["timeframe"] == "1d"][0]
+        assert row["status"] == "yellow"
+        assert row["gap_count"] == 1
+        # 缺口段=缺口前最后一根（原序列 49 位）~ 缺口后第一根（原序列 53 位）
+        assert row["gaps"][0] == {"start": str(orig[49]), "end": str(orig[53])}
+        assert row["coverage"]["bars"] == 117
+        assert row["coverage"]["first_bar"] == str(idx[0])
+        assert row["coverage"]["last_bar"] == str(idx[-1])
+
+
+class TestEmptyFileTimeframe:
+    """空 parquet 档（文件存在零行）→该档全月 gray（design §5.1 错误语义：
+    部分周期档缺失该档全 gray——数据缺失是事实不是错误）。"""
+
+    def test_empty_file_all_months_gray(self, tmp_path):
+        c = _client(tmp_path, {"EMPTYF_4h.parquet": pd.DataFrame()})
+        b = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "EMPTYF", "months_back": 2}).json()
+        assert "4h" in b["short_period"]["timeframes"]
+        assert len(b["short_period"]["matrix"]) == 2
+        for row in b["short_period"]["matrix"]:
+            cell = [x for x in row["cells"] if x["timeframe"] == "4h"][0]
+            assert cell["status"] == "gray"
+            assert cell["bars_actual"] == 0 and cell["gap_count"] == 0
+
+
+class TestMonthsBackContract:
+    """months_back 有界查询（design §5.1：可选缺省 6，上限 12）——
+    经真实路由校验层（直调函数形制绕过 Query 校验，此处必须走装配路由）。
+
+    TestClient 不进 with：lifespan 不触发（不起 scheduler/guardian 线程，
+    规避实测竞写坑），手动补 lifespan 本会注入的 state 键。
+    """
+
+    @pytest.fixture()
+    def route_client(self, tmp_path):
+        idx = pd.date_range("2026-10-01", periods=10, freq="4h")
+        _ohlc(idx).to_parquet(tmp_path / "MB_4h.parquet")
+        from api.app import create_app
+        app = create_app(db_path=tmp_path / "q.db", data_dir=tmp_path)
+        app.state.db_path = tmp_path / "q.db"
+        app.state.data_dir = tmp_path
+        return TestClient(app)
+
+    @pytest.mark.parametrize(
+        "mb", [pytest.param(0, id="低于下限 0"),
+               pytest.param(13, id="超上限 13"),
+               pytest.param("abc", id="非整数")])
+    def test_out_of_bounds_422(self, route_client, mb):
+        r = route_client.get("/api/data/integrity/monthly-matrix",
+                             params={"symbol": "MB", "months_back": mb})
+        assert r.status_code == 422
+
+    def test_default_is_6(self, route_client):
+        r = route_client.get("/api/data/integrity/monthly-matrix",
+                             params={"symbol": "MB"})
+        assert r.status_code == 200
+        b = r.json()
+        assert b["months_back"] == 6
+        assert len(b["short_period"]["matrix"]) == 6
+
+    def test_lower_bound_1_single_month(self, route_client):
+        r = route_client.get("/api/data/integrity/monthly-matrix",
+                             params={"symbol": "MB", "months_back": 1})
+        assert r.status_code == 200
+        mk, _ = _cur_month()
+        assert [m["month"] for m in r.json()["short_period"]["matrix"]] == [mk]
