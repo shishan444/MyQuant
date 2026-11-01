@@ -768,7 +768,7 @@ function AggregateMetrics({ periods }: { periods: VerifyPeriodSummary[] }) {
   if (periods.length === 0) return null;
   const avgReturn = periods.reduce((s, p) => s + p.total_return, 0) / periods.length;
   const avgSharpe = periods.reduce((s, p) => s + p.sharpe_ratio, 0) / periods.length;
-  const maxDD = Math.max(...periods.map((p) => p.max_drawdown));
+  const maxDD = Math.min(...periods.map((p) => p.max_drawdown));
 
   return (
     <>
