@@ -220,6 +220,22 @@ class TestFirstMetWiring:
         assert expected is None  # 有效性前置：两维确实从未同时满足
         assert task["first_met_at"] is None
 
+    def test_first_met_on_final_bar_survives_terminal(self, tmp_path: Path):
+        """首满足恰为窗口末根（终局 bar）→ 值仍须落库（红锚·第二层：
+        挂点在本根 _persist_bar 之后置内存值，终局后无下一根 bar 承载
+        写库——白名单修复后该场景仍丢失；变异态实证 wb=85 对照组正常）。
+        window_bars=84=第 5 次全平 bar（01-14T20，seed=7 合成数据第 84
+        根）——首满足与窗口到点同根。"""
+        h, ex = self._run_harness(tmp_path, dna=make_dna(**_SHORT_DNA_KW),
+                                  window_bars=84)
+        ex.process_frames(h.enhanced, 0)
+        task = h.task()
+        eqs = paper.list_equity_snapshots(h.db, h.task_id, limit=10**6)
+        expected = self._expected_first_met(h, float(task["initial_cash"]))
+        # 有效性前置：首个满足 bar 恰为末根（否则场景失义）
+        assert expected == eqs[-1]["bar_time"]
+        assert task["first_met_at"] == expected
+
     def test_first_met_immutable_across_restart(self, tmp_path: Path):
         """已写不改写（幂等读路径）：first_met_at 已在库 → 恢复续跑
         不覆写（恢复沿 task 行续判；写入路径由首用例承证）。"""
