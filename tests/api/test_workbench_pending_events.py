@@ -75,6 +75,27 @@ class TestEmptyState:
 
 
 class TestUnionExhausted:
+    def test_remaining_bars_zero_produces_event_mocked(self, client):
+        """Scenario 并集耗尽正向：remaining_bars==0 → 事件产出+payload 锚。
+
+        与 remaining_bars==1 边界用例成对（0 产/1 不产）。原
+        test_remaining_bars_zero_produces_event 名义测正向、实际只证
+        fail-open degraded 路径——正向命中分支由本用例 monkeypatch 补。
+        """
+        from unittest.mock import patch
+        db = client._db
+        hid = _add_hypothesis(db)
+        with patch("core.analysis.validation_service.query_union_balance",
+                   return_value={"remaining_bars": 0}):
+            r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        events = [e for e in r.json()["events"] if e["type"] == "union_exhausted"]
+        assert len(events) == 1
+        p = events[0]["payload"]
+        assert p["hypothesis_id"] == hid
+        assert p["symbol"] == "BTCUSDT" and p["timeframe"] == "4h"
+        assert p["remaining_bars"] == 0
+
     def test_remaining_bars_zero_produces_event(self, client, tmp_path):
         """判据=remaining_bars==0（§7.3 单字段）——数据范围全判即耗尽。
 
@@ -120,6 +141,40 @@ class TestQualifyPending:
         assert len(events) == 1
         assert events[0]["payload"]["task_id"] == "wb_q1"
         assert events[0]["payload"]["first_met_at"] == "2026-11-01T00:00:00+00:00"
+
+    @pytest.mark.parametrize(
+        ("balance", "trades", "expect_event"),
+        [
+            # spec 判据「收益>0」严格大于：equity==initial_cash 恰 0 不满足
+            pytest.param(100.0, 5, False, id="收益恰0不产（严格大于侧）"),
+            # spec 判据「笔数≥5」含等：恰好 5 笔+微利 → 产
+            pytest.param(100.01, 5, True, id="恰好5笔含等侧产事件"),
+        ],
+    )
+    def test_two_dims_threshold_sides(self, client, balance, trades, expect_event):
+        """两维阈值两侧边界（§qualify 判据边界的另一侧对称补全）。"""
+        db = client._db
+        _upsert_running(db, "wb_qb", balance=balance, trades=trades)
+        r = client.get("/api/workbench/pending-events")
+        events = [e for e in r.json()["events"]
+                  if e["type"] == "qualify_pending"]
+        assert bool(events) is expect_event
+
+
+class TestAvailability:
+    def test_qualify_source_unavailable_annotation(self, client):
+        """Scenario 源未建与无事件的区分：availability 标注
+        qualify_pending=unavailable——200 正常返回+结构完整，不以空
+        events 伪装源可用。"""
+        from unittest.mock import patch
+        with patch("api.routes.workbench._qualify_source_available",
+                   return_value=False):
+            r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["availability"]["qualify_pending"] == "unavailable"
+        assert body["availability"]["reason"]
+        assert "events" in body  # 响应结构完整（事件面如实呈现）
 
 
 class TestTriggerDeviation:
