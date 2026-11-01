@@ -33,7 +33,8 @@ vi.mock("lightweight-charts", () => {
         chart.series = chart.series.filter((x: unknown) => x !== s);
       }),
       priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
-      addSeries: vi.fn((def: { _type?: string }, _opts?: unknown) => {
+      addSeries: vi.fn((def: { _type?: string }) => {
+        // 实现只声明首参（paneIndex 等实参仍全量保留在 mock.calls 供断言）
         const s: any = { seriesType: def?._type ?? "?", markers: null, setData: vi.fn(), applyOptions: vi.fn() };
         chart.series.push(s);
         return s;
