@@ -32,6 +32,29 @@ vi.mock("react-router", () => ({
   useNavigate: vi.fn(() => vi.fn()),
 }));
 
+// EquityCurve（echarts/zrender）在 jsdom 无 canvas context 崩——非本文件被测面，stub 之
+vi.mock("@/components/charts/EquityCurve", () => ({
+  EquityCurve: () => <div data-testid="equity-curve-stub" />,
+}));
+
+// useChartIndicators 真实调用会 fetch 后端（测试环境不可达）；TradingChart 对空 candleData
+// 提前 return 装载骨架、SymbolInfoBar 不挂载——mock 两根蜡烛放行渲染（非本文件被测面）
+vi.mock("@/hooks/useChartIndicators", () => ({
+  useChartIndicators: vi.fn(() => ({
+    candleData: [
+      { timestamp: "2026-01-01 00:00:00", open: 100, high: 110, low: 95, close: 105, volume: 10 },
+      { timestamp: "2026-01-01 04:00:00", open: 105, high: 115, low: 100, close: 112, volume: 20 },
+    ],
+    chartIndicators: [],
+    chartBollData: undefined,
+    volumeData: [],
+    macdData: null,
+    kdjData: null,
+    isLoadingOhlcv: false,
+    isLoadingIndicators: false,
+  })),
+}));
+
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -289,6 +312,35 @@ describe("Trading page", () => {
     render(<Trading />, { wrapper: createWrapper() });
     // Master-Detail: symbol in sidebar (span) and detail panel (h2)
     expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThanOrEqual(2);
+  });
+
+  // --- 累计资金费接线（CARD-03：Trading.tsx → TradingChart → SymbolInfoBar） ---
+  it("renders latest snapshot cumulative funding in symbol info bar", () => {
+    // 锚「取尾条 .at(-1)」语义：首条 0.5/尾条 1.25——若取 .at(0) 则呈现 +0.5000（错值静默）
+    const tasks = [
+      makeTask({ task_id: "t1", status: "running", symbol: "BTCUSDT" }),
+    ];
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks, total: 1 },
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+    } as any);
+    mockUseTradingEquity.mockReturnValue(
+      emptyQuery({
+        snapshots: [
+          { task_id: "t1", bar_time: "2026-01-01 00:00:00", equity: 100000, balance: 100000, cumulative_funding: 0.5 },
+          { task_id: "t1", bar_time: "2026-01-01 04:00:00", equity: 100010, balance: 100010, cumulative_funding: 1.25 },
+        ],
+        limit: 500,
+        offset: 0,
+        has_more: false,
+      }) as any,
+    );
+
+    render(<Trading />, { wrapper: createWrapper() });
+    // SymbolInfoBar 呈现尾条累计值（fmt 四位小数+非负带显式 +）
+    expect(screen.getByText("+1.2500 USDT")).toBeInTheDocument();
   });
 
   // --- Delete confirmation flow ---
