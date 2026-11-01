@@ -50,11 +50,9 @@ export async function getMonthlyMatrix(params: {
   symbol: string;
   months_back?: number;
 }): Promise<MonthlyMatrixResponse> {
-  const res = await api.get("/api/data/integrity/monthly-matrix", { params });
-  return res as unknown as MonthlyMatrixResponse;
+  return api.get("/api/data/integrity/monthly-matrix", { params });
 }
 
 export async function getFreshnessStatus(): Promise<FreshnessStatusResponse> {
-  const res = await api.get("/api/data/freshness/status");
-  return res as unknown as FreshnessStatusResponse;
+  return api.get("/api/data/freshness/status");
 }
