@@ -10,13 +10,16 @@ const NAV = [
   ["策略库", "/strategies"],
   ["策略验证", "/verify"],
   ["批量回测", "/batch-backtest"],
-  ["模拟交易", "/trading"],
+  ["纸盘交易", "/trading"],
   ["数据管理", "/data"],
   ["设置", "/settings"],
+  ["观察工作台", "/workbench"],
+  ["实盘交易", "/live"],
+  ["插件与组件库", "/plugins"],
 ] as const;
 
 test.describe("主链路", () => {
-  test("01 导航：8 页可达且标题正确", async ({ page }) => {
+  test("01 导航：11 页可达且标题正确", async ({ page }) => {
     for (const [label, path] of NAV) {
       await page.goto(path);
       await expect(page.getByRole("heading", { name: label }).first()).toBeVisible();
@@ -61,6 +64,19 @@ test.describe("主链路", () => {
     });
   });
 
+  test("05b 新路由占位：三条 EmptyState 诚实占位", async ({ page }) => {
+    for (const [label, path] of [
+      ["观察工作台", "/workbench"],
+      ["实盘交易", "/live"],
+      ["插件与组件库", "/plugins"],
+    ] as const) {
+      await page.goto(path);
+      // 占位主体 h3（避开 Header h1 同名标题）
+      await expect(page.locator("h3", { hasText: label })).toBeVisible();
+      await expect(page.getByText("本页面将在后续版本建设")).toBeVisible();
+    }
+  });
+
   test("06 Settings：三表单区块渲染", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.locator("form").first()).toBeVisible();
@@ -89,6 +105,49 @@ test.describe("可访问性走查", () => {
     // 首个焦点应落在可操作元素（侧栏链接/按钮），且焦点元素存在
     const focused = await page.evaluate(() => document.activeElement?.tagName ?? "");
     expect(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA"]).toContain(focused);
+  });
+});
+
+test.describe("侧栏形态基线（global-nav-shell）", () => {
+  const GROUP_TITLES = ["研究验证", "策略资产", "执行监控", "数据系统"];
+  const ALL_ITEMS = [
+    "观察工作台",
+    "策略验证",
+    "批量回测",
+    "进化中心",
+    "插件与组件库",
+    "策略库",
+    "纸盘交易",
+    "实盘交易",
+    "数据管理",
+    "设置",
+  ];
+
+  test("12 四组分组标题+10 项全部渲染", async ({ page }) => {
+    await page.goto("/workbench");
+    const nav = page.locator("nav");
+    for (const title of GROUP_TITLES) {
+      await expect(nav.getByText(title, { exact: true })).toBeVisible();
+    }
+    for (const label of ALL_ITEMS) {
+      await expect(nav.getByText(label, { exact: true })).toBeVisible();
+    }
+  });
+
+  test("13 02 无高亮位：访问 /lab 侧栏零选中项", async ({ page }) => {
+    await page.goto("/lab");
+    await expect(page.locator("nav a[aria-current='page']")).toHaveCount(0);
+  });
+
+  test("14 工作台项选中态+08 禁用态", async ({ page }) => {
+    await page.goto("/workbench");
+    const active = page.locator("nav a[aria-current='page']");
+    await expect(active).toHaveCount(1);
+    await expect(active).toContainText("观察工作台");
+    // 08 实盘交易：aria-disabled 且无链接语义
+    const disabled = page.locator("nav span[aria-disabled='true']");
+    await expect(disabled).toHaveCount(1);
+    await expect(disabled).toContainText("实盘交易");
   });
 });
 
