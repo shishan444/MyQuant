@@ -33,6 +33,7 @@ import {
 import { TradingChart } from "@/components/trading/TradingChart";
 import { EquityCurve } from "@/components/charts/EquityCurve";
 import { MetricsDashboard } from "@/components/trading/MetricsDashboard";
+import { QualificationLayer } from "@/components/trading/QualificationLayer";
 import { RunnerStatusBadge } from "@/components/trading/RunnerStatusBadge";
 import { CreateTaskDialog } from "@/components/trading/CreateTaskDialog";
 import type { PaperFill, FundingRecord, TradingTask } from "@/services/trading";
@@ -536,6 +537,22 @@ function TaskDetailPanel({
           </div>
         </div>
 
+        {/* 达标进度行（paper-trading-revamp 组 F2——运行期两维三态点） */}
+        {task.qualification_progress && (
+          <div className="mt-2 pt-2 border-t border-border-default flex items-center gap-4 text-xs text-text-muted flex-wrap">
+            <span>达标进度</span>
+            <span className={task.qualification_progress.pnl_positive ? "text-profit" : "text-text-muted"}>
+              {task.qualification_progress.pnl_positive ? "●" : "○"} 收益转正
+            </span>
+            <span className={task.qualification_progress.trades_enough ? "text-profit" : "text-text-muted"}>
+              {task.qualification_progress.trades_enough ? "●" : "○"} 笔数≥5
+            </span>
+            {task.qualification_progress.first_met_at && (
+              <span>两维首满足 {task.qualification_progress.first_met_at.replace("T", " ")}</span>
+            )}
+          </div>
+        )}
+
         {/* Position detail line (only when position is open) */}
         {hasPosition && (
           <div className="mt-2 pt-2 border-t border-border-default flex items-center gap-4 text-xs text-text-muted flex-wrap">
@@ -604,6 +621,11 @@ function TaskDetailPanel({
                 key: "evidence",
                 label: <span className="text-xs text-text-secondary">证据强度层（60/5 双阈值）</span>,
                 children: <EvidenceLayer evidence={report.evidence} />,
+              },
+              {
+                key: "qualification",
+                label: <span className="text-xs text-text-secondary">达标判定层（三维终判）</span>,
+                children: <QualificationLayer qualification={report.qualification} />,
               },
             ]}
           />

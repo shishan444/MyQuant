@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { LineSeries } from "lightweight-charts";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
 import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
+import { toTime } from "@/components/charts/core/time";
 import { fillsToSignals } from "@/components/charts/primitives";
 import type { PaperFill } from "@/services/trading";
 import type { SignalData } from "@/components/charts/KlineChart";
@@ -14,6 +16,10 @@ interface TradingChartProps {
   isActive?: boolean;
   /** 任务累计资金费（信息栏直读，不传则不呈现该字段） */
   cumulativeFunding?: number | null;
+  /** 当前止损价（标量水平线——pt_task.position_sl_price） */
+  stopLossPrice?: number | null;
+  /** trail 观测序列（pt_equity.trail_sl_price 逐 bar——重演窗口移动线） */
+  trailSeries?: Array<{ bar_time: string; trail_sl_price: number | null }>;
 }
 
 /** timeframe string -> minutes */
@@ -36,7 +42,32 @@ function barsAgoDate(timeframe: string, bars: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding }: TradingChartProps) {
+export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding,
+  stopLossPrice, trailSeries }: TradingChartProps) {
+  // F1 标注挂载（paper-trading-revamp）：chart ready 后经 primitives 挂线——
+  // 当前止损价=标量水平线（annotations 价线族）；trail 序列=折线 series（观测面消费）
+  const handleChartReady = useCallback((chart: unknown, candleSeries: unknown) => {
+    if (stopLossPrice != null && candleSeries && typeof (candleSeries as { createPriceLine?: unknown }).createPriceLine === "function") {
+      (candleSeries as { createPriceLine: (o: unknown) => unknown }).createPriceLine({
+        price: stopLossPrice,
+        color: "#FBBF24",
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: "SL(当前)",
+      });
+    }
+    const pts = (trailSeries ?? []).filter((t) => t.trail_sl_price != null);
+    if (pts.length > 0 && chart && typeof (chart as { addSeries?: unknown }).addSeries === "function") {
+      try {
+        const line = (chart as { addSeries: (d: unknown, o?: unknown) => { setData: (d: unknown) => void } }).addSeries(LineSeries, {
+          color: "#FBBF24", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        });
+        line.setData(pts.map((t) => ({ time: toTime(t.bar_time) as number, value: t.trail_sl_price as number })));
+      } catch { /* 观测线挂载失败不阻塞主图（观测面容错） */ }
+    }
+  }, [stopLossPrice, trailSeries]);
+
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
   // 纸盘图表只装载最近 200 根数据
@@ -107,6 +138,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         volumeData={volumeData}
         subChartType={subChartType}
         height={height}
+        onChartReady={handleChartReady}
       />
     </div>
   );

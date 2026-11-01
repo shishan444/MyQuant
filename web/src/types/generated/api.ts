@@ -3058,6 +3058,8 @@ export interface components {
             position_side?: string | null;
             /** Cumulative Funding */
             cumulative_funding?: number | null;
+            /** Trail Sl Price */
+            trail_sl_price?: number | null;
         };
         /** PaperFillListResponse */
         PaperFillListResponse: {
@@ -3291,6 +3293,10 @@ export interface components {
             unrealized_pnl?: number | null;
             /** Total Trades */
             total_trades: number;
+            /** Qualification Progress */
+            qualification_progress?: {
+                [key: string]: unknown;
+            } | null;
             /** Win Count */
             win_count: number;
             /** Loss Count */
