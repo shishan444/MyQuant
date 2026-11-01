@@ -61,15 +61,15 @@ class TestSlSeriesOutput:
         sl = metrics["sl_series"]
         assert sl is not None and len(sl) > 0
         assert set(sl[0].keys()) == {"time", "value"}
-        # 手工锚：序列值=装载列原值——序列索引=enhanced 全段（含 warmup
-        # 前缀，与 equity_curve 同段形制；实际起点由装载器 data_start 与
-        # 数据可得性共同决定）。稳健锚三件：首值∈fx_sl 列值集（逐位）+
-        # 时间键属 df 索引域+序列长=装载段 bar 数
-        nearest = min(df.fx_sl.tolist(), key=lambda v: abs(v - sl[0]["value"]))
-        assert sl[0]["value"] == pytest.approx(nearest, abs=1e-6)
+        # 手工锚：序列值=装载列原值——序列索引=bridge 传入 engine 的执行
+        # 段 bt_df（[start,end) 切回段，不含 warmup 前缀；engine 侧索引=
+        # 调用方传入 df，段形制由调用方装载链决定——CARD-02 注释改实同步）。
+        # 锚三件（段形制已定，逐件收紧）：首值=首时间处 fx_sl 原值（逐位）+
+        # 首时间=执行段起点 start+序列长=执行段 bar 数
         first_t = pd.Timestamp(sl[0]["time"])
-        assert first_t in df.index
-        assert len(sl) >= bars
+        assert sl[0]["value"] == pytest.approx(df.fx_sl.loc[first_t], abs=1e-6)
+        assert first_t == pd.Timestamp(start)
+        assert len(sl) == bars
 
     def test_non_series_mode_none(self, tmp_path):
         """Scenario: 非 series 档（pct）——sl_series=None（null 非空序列非零值）。"""

@@ -153,3 +153,107 @@ class TestFxSeriesRouteSmoke:
         r = client.post("/api/strategies/compare", json={
             "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h"})
         assert r.status_code == 200, r.text[:300]
+
+
+def _series_indicator_dna_dict() -> dict:
+    """series 档 indicator 形式 DNA dict（BB(20,2) lower——指标 rolling
+    预热期真 NaN，inline 直传形制）。"""
+    return {
+        "signal_genes": [
+            {"indicator": "RSI", "params": {"period": 14},
+             "role": "entry_trigger", "field": None,
+             "condition": {"type": "lt", "threshold": 30}},
+            {"indicator": "RSI", "params": {"period": 14},
+             "role": "exit_trigger", "field": None,
+             "condition": {"type": "gt", "threshold": 70}}],
+        "logic_genes": {"entry_logic": "AND", "exit_logic": "AND"},
+        "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+        "risk_genes": {
+            "sl_mode": "series",
+            "sl_series_source": {"indicator": "BB",
+                                 "params": {"period": 20, "std": 2},
+                                 "field": "lower"},
+            "take_profit": 0.10, "position_size": 0.3},
+    }
+
+
+def _pct_dna_dict() -> dict:
+    """pct 档 DNA dict（inline 直传形制——Lab 页 POST backtest dna 分支）。"""
+    return {
+        "signal_genes": [
+            {"indicator": "RSI", "params": {"period": 14},
+             "role": "entry_trigger", "field": None,
+             "condition": {"type": "lt", "threshold": 30}},
+            {"indicator": "RSI", "params": {"period": 14},
+             "role": "exit_trigger", "field": None,
+             "condition": {"type": "gt", "threshold": 70}}],
+        "logic_genes": {"entry_logic": "AND", "exit_logic": "AND"},
+        "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+        "risk_genes": {"sl_mode": "pct", "stop_loss": 0.05,
+                       "take_profit": 0.10, "position_size": 0.3},
+    }
+
+
+class TestSlSeriesRestFace:
+    """REST 面 sl_series 透传锚（hypothesis-workbench 审查 CARD-01 (a)：
+    BacktestResponse 扩键+组装段 NaN→null——路由级行为面，与 bridge 面
+    （tests/backtest/test_sl_series_output）双点对拍）。
+
+    spec stop-loss-modes「三入口响应透传 [{time,value}]」——REST 端点
+    直调 engine（请求段不切回），NaN→null 在组装点翻译（JSON 无 NaN
+    字面——前端解析前提）。
+    """
+
+    def test_backtest_response_sl_series_fx_branch(self, fx_env):
+        """strategy_id 分支：series fx 策略 REST 回测 sl_series 请求段
+        全段透出（300 点），首值=fx 列首值（rolling_mean min_periods=1
+        语义——formula DSL :47 既定形制，首点=窗口 1 均值=close 自身），
+        时间形制与 bridge 同源。"""
+        client, sid, _ = fx_env
+        r = client.post("/api/strategies/backtest", json={
+            "strategy_id": sid, "dataset_id": "BTCUSDT_4h"})
+        assert r.status_code == 200, r.text[:300]
+        sl = r.json()["sl_series"]
+        assert sl is not None and len(sl) == 300  # REST=请求段全段（不切回）
+        # 手工锚：fx=rolling_mean(close,5) 头部非 NaN（min_periods=1
+        # 部分窗口），首值=首根 close（独立读 parquet 自算）
+        px = pd.read_parquet(
+            client.app.state.data_dir / "BTCUSDT_4h.parquet")["close"]
+        assert sl[0]["value"] == pytest.approx(px.iloc[0], rel=1e-9)
+        assert sl[1]["value"] == pytest.approx(px.iloc[:2].mean(), rel=1e-9)
+        # 时间形制与 bridge 单点同源（str(t) 空格分隔+UTC 偏移——前端
+        # toTime 消费前提，形制锚全文见 TestBridgeTimeForm）
+        t0 = sl[0]["time"]
+        assert " " in t0 and "T" not in t0 and t0.endswith("+00:00")
+
+    def test_backtest_response_sl_series_nan_to_null(self, fx_env):
+        """inline dna 分支+indicator 形式（BB(20,2) lower——指标 rolling
+        预热期真 NaN）：头部 20 点 value null（NaN→null 翻译，JSON 合法），
+        首个有效值=lower=mean-2*std（pandas 独立自算）。"""
+        client, _, _ = fx_env
+        dna = _series_indicator_dna_dict()
+        r = client.post("/api/strategies/backtest", json={
+            "dna": dna, "symbol": "BTCUSDT",
+            "timeframe": "4h", "dataset_id": "BTCUSDT_4h"})
+        assert r.status_code == 200, r.text[:300]
+        sl = r.json()["sl_series"]
+        assert sl is not None and len(sl) == 300
+        # NaN→null：BB(20) 头部 19 bar rolling 预热期无定义（index 0-18，
+        # index 19=第 20 根起首个完整窗口）
+        assert [p["value"] for p in sl[:19]] == [None] * 19
+        # 首个有效值手工锚：lower = rolling20 mean - 2*rolling20 std
+        #（ddof=1，独立自算不经被测实现）
+        px = pd.read_parquet(
+            client.app.state.data_dir / "BTCUSDT_4h.parquet")["close"]
+        lower19 = (px.rolling(20).mean() - 2 * px.rolling(20).std()).iloc[19]
+        assert sl[19]["value"] == pytest.approx(lower19, rel=1e-9)
+
+    def test_backtest_response_non_series_null(self, fx_env):
+        """非 series 档（pct，inline dna 分支——Lab 直传形制）：sl_series
+        null 透传（非空序列非零值）。"""
+        client, _, _ = fx_env
+        r = client.post("/api/strategies/backtest", json={
+            "dna": _pct_dna_dict(), "symbol": "BTCUSDT",
+            "timeframe": "4h", "dataset_id": "BTCUSDT_4h"})
+        assert r.status_code == 200, r.text[:300]
+        assert r.json()["sl_series"] is None
