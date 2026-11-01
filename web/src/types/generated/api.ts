@@ -34,6 +34,11 @@ export interface paths {
          * List Strategies Endpoint
          * @description 策略列表（过滤/排序/分页）。status 缺省视图排除 draft；
          *     显式 status=draft 可查草稿。
+         *
+         *     qualified 过滤参数 deprecated（build-strategy-lifecycle 5.3 死列
+         *     处置）：strategy.qualified 声明后从未写入实测全 NULL——布尔过滤
+         *     恒空集=现状行为保留（API 兼容不摘参数）；资格语义已由六态+凭证
+         *     接管（同名异列注意：backtest_result.qualified 是真数据活列）。
          */
         get: operations["list_strategies_endpoint_api_strategies_get"];
         put?: never;
@@ -68,9 +73,78 @@ export interface paths {
         post?: never;
         /**
          * Delete Strategy Endpoint
-         * @description 按 ID 删除策略。
+         * @description 按 ID 删除策略（build-strategy-lifecycle 3.3 两分支）：
+         *     draft→物理删除（现状保持）；非 draft→经 transit(manual_archive)
+         *     归档后 204（行保留+事件在场）——REST 同端点同状态码语义从物理
+         *     删除变归档（strategy-lifecycle spec delta ADDED 承载，消费者影响
+         *     经 S12 披露）。操作者载荷取本地单用户部署形态（工程无用户体系）。
          */
         delete: operations["delete_strategy_endpoint_api_strategies__strategy_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}/revalidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revalidate Strategy Endpoint
+         * @description 归档重启重验（build-strategy-lifecycle 3.4，沿 stop/clone 动作
+         *     端点形制）：archived→draft+旧验证统计作废重置（五列：verify_count
+         *     置 0，verify_avg_score/verify_best_score/verify_star/last_verified_at
+         *     置 NULL——models.py verify 组列）+validation_records 不删不改（审计
+         *     事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时
+         *     旧值可自事件追溯）+水位不归零（事件 append-only）。非
+         *     archived→409 STRATEGY_ILLEGAL_TRANSITION。迁移+重置两步同事务
+         *     （CARD-03）：重置失败则迁移一并回滚，不留「已 draft 但旧统计
+         *     未作废」中间态。
+         */
+        post: operations["revalidate_strategy_endpoint_api_strategies__strategy_id__revalidate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Batch Delete Strategies
+         * @description 按进化任务批量物理删除其产物策略（不可逆——与单策略 DELETE
+         *     的归档语义不同，端点分离承载语义差异）。
+         *
+         *     确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附
+         *     matched_count 预览数+criteria 回显+score_summary（best_score
+         *     分布摘要 {count,min,p25,median,p75,max,null_count}——count 为
+         *     非 NULL 参与分布数、null_count 单独披露；1 行退化五数全同值、
+         *     ≥2 行 inclusive 插值、空集五数全 None）；confirm=true → 单事务
+         *     批量 DELETE（先查后删同事务），返回 {deleted_count, criteria,
+         *     matched_before}；幂等：重复调用 matched 0→deleted_count=0。
+         *     generation_gt/best_score_lt 可选收紧（预览与执行同判据）。
+         *
+         *     挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
+         *     前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
+         *     （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
+         *     或被非终态纸盘任务（pending/running）引用 → 422
+         *     BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
+         *     pt_active_count 与处置提示——先撤盘/归档后再清理）。
+         */
+        post: operations["batch_delete_strategies_api_strategies_batch_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -626,6 +700,11 @@ export interface paths {
         /**
          * Get Ohlcv By Symbol
          * @description 按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。
+         *
+         *     tail（kline-common-layer 组 5）：从最新一根（或 end 锚定行）往回取 N 根。
+         *     tail 与 start 互斥（锚定方向冲突）、tail 与 limit 互斥（数量参数冲突）——同给 422
+         *     DATA_PARAM_CONFLICT，不执行查询；tail 与 end 可组（历史时点重演窗口）。
+         *     不传 tail 时现行 head 语义不变（limit 缺省 50000 沿旧值）。
          */
         get: operations["get_ohlcv_by_symbol_api_data_ohlcv__symbol___timeframe__get"];
         put?: never;
@@ -711,8 +790,20 @@ export interface paths {
         put?: never;
         /**
          * Create Task
-         * @description 上盘（创建恒 201 返 pending 行——受理≠运行，超限停留 pending
-         *     排队不拒绝；拒绝面仅 404 strategy not found 与 422 校验数组）。
+         * @description 上盘（受理恒 201 返 pending 行——受理≠运行，超限停留 pending
+         *     排队不拒绝；拒绝面 404 strategy not found/422 校验数组/409 非法
+         *     前置态——仅 archived 一态）。
+         *
+         *     挂盘四分支分派（挂载门槛放宽=用户裁决 2026-10-28，Q3 终审；
+         *     分派判据=挂载请求时点策略态，任务自包含〔DNA 快照〕不受策略
+         *     后续态影响）：from=active→同事务迁移 active→paper（trigger=
+         *     mount，evidence=task_id）+事件写入+任务创建；from=paper→同态
+         *     续挂不迁移（任务照常创建、零迁移事件——v3 §12.4 同策略对照
+         *     已批能力的保留）；from=draft/candidate/live→同态续挂不迁移
+         *     （任务照常创建、策略态不变、无迁移事件——与 paper 续挂同构，
+         *     无观察轨概念：draft 挂载任务与普通任务完全同构，research_status
+         *     披露由现行三序现算机制天然携带）；from=archived→409
+         *     STRATEGY_ILLEGAL_TRANSITION 唯一排除（失败不建任务）。
          */
         post: operations["create_task_api_paper_trading_tasks_post"];
         delete?: never;
@@ -737,7 +828,20 @@ export interface paths {
         post?: never;
         /**
          * Delete Task
-         * @description 删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。
+         * @description 删除任务（仅终态；六表级联单事务）；运行/pending→409 stop first。
+         *
+         *     删除补偿回流（delete-task-reentry-guard 方案甲）：删除完成后对关
+         *     联策略执行一次 paper→active 回流尝试（trigger=task_end，evidence
+         *     来自删除前持有的任务行内存事实）——封「终态后删除任务与回流竞
+         *     态窗」内回流永久失据的缺口（后台扫描域依赖任务行在场，行已删无
+         *     法走扫描形）。回流域前置守卫（change-3 同 scheduler._replay_task_
+         *     end 同判据）：strategy.status≠"paper" 正当跳过不调 transit——
+         *     draft→active 是矩阵合法转正边（transit 不做 trigger×边交叉校验），
+         *     不守卫则 draft 挂载任务删除会凭 task_end 凭证非法转正（「draft
+         *     挂盘不构成转正通道」用户终审语义）；其余边界由 transit 承担
+         *     （幂等 already_in_status/另有活跃任务 active_tasks_remain）；
+         *     失败仅记日志不绑架删除——删除是既成事实。响应契约零变化（回流
+         *     结果不进响应——补偿是后台性动作）。
          */
         delete: operations["delete_task_api_paper_trading_tasks__task_id__delete"];
         options?: never;
@@ -840,6 +944,31 @@ export interface paths {
          * @description 资金费明细（settle_time 升序；对账披露面——三态可见）。
          */
         get: operations["get_funding_api_paper_trading_tasks__task_id__funding_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper-trading/tasks/{task_id}/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Signals
+         * @description 信号记录查询（change paper-signal-log 决策过程回溯面）：过滤
+         *     四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq
+         *     升序审计读序+limit+1 探测式分页；字段字典权威在 openspec
+         *     paper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/
+         *     indicator_snapshot 指标快照/reject_reason 拒因枚举四值——
+         *     below_min_notional 生产者在后续变更）。
+         */
+        get: operations["get_signals_api_paper_trading_tasks__task_id__signals_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1713,6 +1842,10 @@ export interface components {
             excess_return?: number | null;
             /** Alpha */
             alpha?: number | null;
+            /** Funding */
+            funding?: {
+                [key: string]: unknown;
+            } | null;
             /** Market Annual Return */
             market_annual_return?: number | null;
             /** Profit Factor */
@@ -1744,6 +1877,23 @@ export interface components {
              * @default 1
              */
             leverage: number;
+        };
+        /**
+         * BatchDeleteRequest
+         * @description 批量删除请求体（confirm 契约=删除不可无声执行）。
+         */
+        BatchDeleteRequest: {
+            /** Source Task Id */
+            source_task_id: string;
+            /** Generation Gt */
+            generation_gt?: number | null;
+            /** Best Score Lt */
+            best_score_lt?: number | null;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /** Body_import_csv_batch_endpoint_api_data_import_batch_post */
         Body_import_csv_batch_endpoint_api_data_import_batch_post: {
@@ -1902,6 +2052,18 @@ export interface components {
             target: number | string;
             /** Timeframe */
             timeframe?: string | null;
+            /** Window */
+            window?: number | null;
+            /** Inner Action */
+            inner_action?: string | null;
+            /** Direction */
+            direction?: string | null;
+            /** Proximity Pct */
+            proximity_pct?: number | null;
+            /** Role */
+            role?: string | null;
+            /** Lookback */
+            lookback?: number | null;
         };
         /**
          * ConfigUpdate
@@ -1953,9 +2115,7 @@ export interface components {
             /** Mutation Ops */
             mutation_ops?: string[];
             /** Layers */
-            layers?: {
-                [key: string]: unknown;
-            }[] | null;
+            layers?: components["schemas"]["TimeframeLayerModel-Input"][] | null;
             /**
              * Cross Layer Logic
              * @default AND
@@ -2008,9 +2168,7 @@ export interface components {
             /** Mutation Ops */
             mutation_ops?: string[];
             /** Layers */
-            layers?: {
-                [key: string]: unknown;
-            }[] | null;
+            layers?: components["schemas"]["TimeframeLayerModel-Output"][] | null;
             /**
              * Cross Layer Logic
              * @default AND
@@ -2613,6 +2771,14 @@ export interface components {
             threshold_unit_warnings?: {
                 [key: string]: unknown;
             }[] | null;
+            /** Strategy Param Warnings */
+            strategy_param_warnings?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Exit Coverage Warnings */
+            exit_coverage_warnings?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** HypothesisTransitionRequest */
         HypothesisTransitionRequest: {
@@ -2961,6 +3127,72 @@ export interface components {
             /** Settle Price */
             settle_price?: number | null;
         };
+        /** PaperSignalListResponse */
+        PaperSignalListResponse: {
+            /** Signals */
+            signals: components["schemas"]["PaperSignalResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+        };
+        /**
+         * PaperSignalResponse
+         * @description 信号记录行（gene_hits/indicator_snapshot 反序列化为 JSON
+         *     对象非字符串——消费方零二次解析）。
+         */
+        PaperSignalResponse: {
+            /** Id */
+            id: number;
+            /** Task Id */
+            task_id: string;
+            /** Strategy Id */
+            strategy_id: string;
+            /** Bar Time */
+            bar_time: string;
+            /** Exec Bar Time */
+            exec_bar_time?: string | null;
+            /** Seq */
+            seq: number;
+            /** Signal Kind */
+            signal_kind: string;
+            /** Direction */
+            direction?: string | null;
+            /** Size Fraction */
+            size_fraction?: number | null;
+            /** Gene Hits */
+            gene_hits: {
+                [key: string]: unknown;
+            }[];
+            /** Indicator Snapshot */
+            indicator_snapshot: {
+                [key: string]: unknown;
+            };
+            /** Outcome */
+            outcome: string;
+            /** Reject Reason */
+            reject_reason?: string | null;
+            /** Fill Seq */
+            fill_seq?: number | null;
+            /** Capped */
+            capped?: number | null;
+            /** Equity */
+            equity: number;
+            /** Balance */
+            balance: number;
+            /** Unrealized Pnl */
+            unrealized_pnl: number;
+            /** Position Side */
+            position_side?: string | null;
+            /** Position Quantity */
+            position_quantity?: number | null;
+            /** Position Margin */
+            position_margin?: number | null;
+            /** Created At */
+            created_at: string;
+        };
         /**
          * PaperTaskCreate
          * @description 创建纸盘任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
@@ -3065,8 +3297,8 @@ export interface components {
             loss_count: number;
             /** Total Pnl */
             total_pnl: number;
-            /** Research Status Snapshot */
-            research_status_snapshot: string;
+            /** Research Status */
+            research_status: string;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -3238,6 +3470,14 @@ export interface components {
             position_mode?: string | null;
             /** Risk Fraction */
             risk_fraction?: number | null;
+            /** Initial Fraction */
+            initial_fraction?: number | null;
+            /** Max Position Loss */
+            max_position_loss?: number | null;
+            /** Sl Series Source */
+            sl_series_source?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RuleConditionInput */
         RuleConditionInput: {
@@ -3658,6 +3898,32 @@ export interface components {
             /** Qualified */
             qualified?: boolean | null;
         };
+        /**
+         * TimeframeLayerModel
+         * @description MTF 策略中的单周期层（层内信号与逻辑独立于执行周期评估）。
+         */
+        "TimeframeLayerModel-Input": {
+            /** Timeframe */
+            timeframe: string;
+            /** Signal Genes */
+            signal_genes?: components["schemas"]["SignalGeneModel-Input"][];
+            logic_genes?: components["schemas"]["LogicGenesModel"];
+            /** Role */
+            role?: string | null;
+        };
+        /**
+         * TimeframeLayerModel
+         * @description MTF 策略中的单周期层（层内信号与逻辑独立于执行周期评估）。
+         */
+        "TimeframeLayerModel-Output": {
+            /** Timeframe */
+            timeframe: string;
+            /** Signal Genes */
+            signal_genes?: components["schemas"]["SignalGeneModel-Output"][];
+            logic_genes?: components["schemas"]["LogicGenesModel"];
+            /** Role */
+            role?: string | null;
+        };
         /** TradeRecordResponse */
         TradeRecordResponse: {
             /** Entry Time */
@@ -3673,18 +3939,19 @@ export interface components {
             /** Is Win */
             is_win: boolean;
         };
-        /** TranslateRequest */
+        /**
+         * TranslateRequest
+         * @description 转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准
+         *     周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。
+         */
         TranslateRequest: {
             /**
              * Strategy Symbol
              * @default BTCUSDT
              */
             strategy_symbol: string;
-            /**
-             * Strategy Timeframe
-             * @default 4h
-             */
-            strategy_timeframe: string;
+            /** Strategy Timeframe */
+            strategy_timeframe?: string | null;
         };
         /** TriggerDetail */
         TriggerDetail: {
@@ -4154,6 +4421,7 @@ export interface operations {
             query?: {
                 symbol?: string | null;
                 source?: string | null;
+                source_task_id?: string | null;
                 tags?: string | null;
                 qualified?: boolean | null;
                 status?: string | null;
@@ -4304,6 +4572,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revalidate_strategy_endpoint_api_strategies__strategy_id__revalidate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_delete_strategies_api_strategies_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
             };
             /** @description Validation Error */
             422: {
@@ -5204,7 +5538,8 @@ export interface operations {
             query?: {
                 start?: string | null;
                 end?: string | null;
-                limit?: number;
+                limit?: number | null;
+                tail?: number | null;
             };
             header?: never;
             path: {
@@ -5732,6 +6067,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaperFundingListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_signals_api_paper_trading_tasks__task_id__signals_get: {
+        parameters: {
+            query?: {
+                /** @description 信号类型过滤（INTENT_KINDS 十值同域） */
+                kind?: ("open" | "close" | "add" | "reduce" | "exit_sl" | "exit_tp" | "exit_max_loss" | "exit_max_hold" | "exit_time" | "exit_liquidation") | null;
+                /** @description 执行结果过滤（filled/rejected/expired——expired=意图随任务终态消亡） */
+                outcome?: ("filled" | "rejected" | "expired") | null;
+                /** @description bar_time 闭区间起点（ISO——含入） */
+                bar_time_start?: string | null;
+                /** @description bar_time 闭区间终点（ISO——含入） */
+                bar_time_end?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperSignalListResponse"];
                 };
             };
             /** @description Validation Error */

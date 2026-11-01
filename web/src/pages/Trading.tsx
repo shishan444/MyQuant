@@ -86,7 +86,7 @@ function TaskListItem({
 
   const returnRate =
     task.initial_cash > 0 ? (task.total_pnl || 0) / task.initial_cash : 0;
-  // clone/delete 终态门槛：运行/排队中不可删不可克隆（后端 409 stop first）
+  // 克隆/删除终态门槛：运行/排队中不可删不可克隆（后端 409，须先停止）
   const isTerminal = isTerminalStatus(task.status);
 
   return (
@@ -565,6 +565,7 @@ function TaskDetailPanel({
           fills={fills}
           height={470}
           isActive={isActive}
+          cumulativeFunding={equitySnapshots.at(-1)?.cumulative_funding}
         />
         {equitySnapshots.length > 0 && (
           <div className="mt-2 pt-2 border-t border-border-default">

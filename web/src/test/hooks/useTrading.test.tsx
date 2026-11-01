@@ -88,7 +88,7 @@ describe("useTrading hooks", () => {
           position_sl_price: null, position_tp_price: null, position_trail_peak: null,
           position_entry_bar_seq: null, unrealized_pnl: null, total_trades: 0,
           win_count: 0, loss_count: 0, total_pnl: 0,
-          research_status_snapshot: "researched",
+          research_status: "unverified",
           created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z",
           started_at: null, stopped_at: null, stop_reason: null, heartbeat_at: null,
           error_detail: null,

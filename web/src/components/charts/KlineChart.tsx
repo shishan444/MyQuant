@@ -17,6 +17,7 @@ import type {
 
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
 import { toTime } from "./core/time";
+import { signalsToMarkers } from "./primitives";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -67,7 +68,7 @@ interface KlineChartProps {
   bollData?: BollingerBandData;
   volumeData?: Array<{ time: string; value: number; color?: string }>;
   mtfIndicators?: MTFIndicatorData[];
-  /** Called once after chart and series are created. */
+  /** 图表与 series 创建完成后回调一次。 */
   onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
   subChartType?: "volume" | "macd" | "rsi" | "kdj" | "equity";
   macdData?: { macd: Array<{ time: string; value: number }>; signal: Array<{ time: string; value: number }>; histogram: Array<{ time: string; value: number }> } | null;
@@ -141,7 +142,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
   const [legendValues, setLegendValues] = useState<Record<string, string>>({});
 
-  // Chart settings from store（G17.1：全量订阅改字段级 selector）
+  // 图表设置来自 settings store（G17.1：全量订阅改字段级 selector）
   const chartSettings = useChartSettings(
     useShallow((s) => ({ emaList: s.emaList, boll: s.boll })),
   );
@@ -149,7 +150,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Stable callbacks so effect dependencies stay clean.
+  // memo 化保证引用稳定，effect 依赖数组不随渲染抖动
   const memoizedCandles = useMemo(() => toCandleData(data), [data]);
   const memoizedIndicators = useMemo(() => indicators ?? [], [indicators]);
   const memoizedSignals = useMemo(() => signals ?? [], [signals]);
@@ -158,7 +159,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const memoizedVolumeData = useMemo(() => volumeData, [volumeData]);
   const memoizedMtfIndicators = useMemo(() => mtfIndicators ?? [], [mtfIndicators]);
 
-  // Expose imperative handle
+  // 暴露命令式句柄（scrollToTime/zoomIn/zoomOut/resetView）
   useImperativeHandle(ref, () => ({
     scrollToTime: (time: string) => {
       const chart = mainChartRef.current;
@@ -202,13 +203,11 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     },
   }), []);
 
-  // Sync charts via shared hook.
-
-  // Build legend groups from current data
+  // 从当前数据构建图例分组
   useEffect(() => {
     const groups: LegendGroup[] = [];
 
-    // OHLCV group
+    // OHLCV 组
     groups.push({
       id: "ohlcv",
       label: "OHLCV",
@@ -217,7 +216,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       ],
     });
 
-    // EMA group from store
+    // EMA 组（来自 settings store）
     const emaItems: LegendItem[] = chartSettings.emaList
       .filter((e) => e.enabled)
       .map((e) => ({
@@ -230,7 +229,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       groups.push({ id: "ema", label: "趋势", items: emaItems });
     }
 
-    // BOLL group
+    // BOLL 组
     if (memoizedBollData && chartSettings.boll.enabled) {
       groups.push({
         id: "boll",
@@ -243,7 +242,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       });
     }
 
-    // MTF group
+    // MTF 组
     if (memoizedMtfIndicators.length > 0) {
       groups.push({
         id: "mtf",
@@ -257,7 +256,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       });
     }
 
-    // Triggers group
+    // 触发点组
     if (memoizedTriggers.length > 0) {
       groups.push({
         id: "triggers",
@@ -272,12 +271,12 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }, [chartSettings.emaList, chartSettings.boll.enabled, memoizedBollData, memoizedMtfIndicators, memoizedTriggers]);
 
   const handleLegendToggle = useCallback((groupId: string, itemId: string) => {
-    // Toggle visibility by applying transparent color to hidden series
+    // 切换可见性=对隐藏 series 施加透明色（lightweight-charts 无原生 visible 开关）
     const seriesMap = indicatorSeriesRefs.current;
     const bollSeries = bollSeriesRefs.current;
     const mtfSeries = mtfSeriesRefs.current;
 
-    // Try to find the series in various ref maps
+    // 依次在各 ref 映射中定位目标 series
     const targetSeries =
       seriesMap.get(itemId) ??
       (groupId === "boll" ? bollSeries[["boll_upper", "boll_middle", "boll_lower"].indexOf(itemId)] : null) ??
@@ -286,7 +285,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     if (targetSeries) {
       const currentColor = targetSeries.options().color as string;
       if (currentColor === "transparent") {
-        // Restore: we need to know the original color, simplified approach
+        // 恢复色：原色未单独存档，简化以 BOLL 黄兜底（已知局限）
         targetSeries.applyOptions({ color: "#F59E0B" });
       } else {
         targetSeries.applyOptions({ color: "transparent" });
@@ -326,7 +325,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     mainChartRef.current = mainChart;
     candleSeriesRef.current = candleSeries;
 
-    // Notify parent that chart is ready
+    // 通知父组件图表就绪
     if (onChartReadyRef.current) {
       onChartReadyRef.current(mainChart, candleSeries);
     }
@@ -349,7 +348,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
 
     resizeObserver.observe(mainRef.current);
 
-    // Crosshair move for legend values
+    // 十字光标移动时刷新图例数值
     mainChart.subscribeCrosshairMove((param: MouseEventParams) => {
       if (!param.time || !param.seriesData) {
         return;
@@ -359,7 +358,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       if (candleData && "close" in candleData) {
         vals["candle"] = `C: ${(candleData as { close: number }).close.toFixed(2)}`;
       }
-      // Update indicator values
+      // 刷新指标数值
       for (const [id, series] of indicatorSeriesRefs.current) {
         const sd = param.seriesData.get(series);
         if (sd && "value" in sd) {
@@ -369,8 +368,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       setLegendValues(vals);
     });
 
-    // autoScale + scaleMargins ensures signal markers are always visible
-    // fitContent() handles price range including all markers
+    // autoScale+scaleMargins 保证信号标记不出可视域；fitContent() 价格区间覆盖全部标记
 
     return () => {
       resizeObserver.disconnect();
@@ -427,15 +425,14 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
 
     // -- EMA lines from chart settings --
     const emaList = chartSettings.emaList.filter((e) => e.enabled);
-    // Remove old EMA series
+    // 移除失效 EMA series
     for (const [id, series] of indicatorSeriesRefs.current) {
       if (id.startsWith("ema_") && !emaList.some((e) => `ema_${e.period}` === id)) {
         mainChart.removeSeries(series);
         indicatorSeriesRefs.current.delete(id);
       }
     }
-    // EMA data comes from the indicators prop (computed by backend), so we don't create new series here
-    // The EMA series are handled through the indicators prop
+    // EMA 数据经 indicators prop 到达（后端计算），此处不新建 series——EMA series 统一走 indicators 通道
 
     // -- BOLL bands --
     for (const s of bollSeriesRefs.current) {
@@ -526,49 +523,14 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
 
     // -- Build markers (signals on candle, triggers on offset series) --
 
-    // Remove old trigger offset series
+    // 移除旧触发点偏移 series
     if (triggerOffsetSeriesRef.current) {
       mainChart.removeSeries(triggerOffsetSeriesRef.current);
       triggerOffsetSeriesRef.current = null;
     }
 
-    // Signal markers stay on candle series
-    const SIGNAL_STYLE: Record<string, {
-      position: "aboveBar" | "belowBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown" | "circle" | "square";
-      text: string;
-    }> = {
-      // Legacy (Lab backtest signals)
-      buy: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "B" },
-      sell: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "S" },
-      // Paper trading - Long
-      open_long: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "OL" },
-      close_long: { position: "aboveBar", color: "#FF9800", shape: "arrowDown", text: "CL" },
-      add_long: { position: "belowBar", color: "#00C853", shape: "circle", text: "AL" },
-      reduce_long: { position: "aboveBar", color: "#FF9800", shape: "circle", text: "RL" },
-      // Paper trading - Short
-      open_short: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "OS" },
-      close_short: { position: "belowBar", color: "#7C4DFF", shape: "arrowUp", text: "CS" },
-      add_short: { position: "aboveBar", color: "#FF1744", shape: "square", text: "AS" },
-      reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
-    };
-
-    const markers: Array<{
-      time: Time;
-      position: "aboveBar" | "belowBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown" | "circle" | "square";
-      text: string;
-    }> = [];
-
-    for (const s of memoizedSignals) {
-      const style = SIGNAL_STYLE[s.type] ?? SIGNAL_STYLE.buy;
-      markers.push({
-        time: toTime(s.timestamp),
-        ...style,
-      });
-    }
+    // 信号标记挂蜡烛 series（样式表与映射收敛在 primitives/markers——CARD-04 双写归一）
+    const markers = signalsToMarkers(memoizedSignals, toTime);
 
     if (markersPluginRef.current) {
       markersPluginRef.current.setMarkers(markers);
@@ -576,7 +538,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
     }
 
-    // Trigger markers on offset series (1.2% above candle high)
+    // 触发点标记挂偏移 series（K 线 high 上浮 1.2%——TRIGGER_OFFSET=1.012）
     if (memoizedTriggers.length > 0) {
       const candleHighMap = new Map<number, number>();
       for (const c of memoizedCandles) {
@@ -667,7 +629,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     const chart = mainChartRef.current;
     if (!chart) return;
 
-    // Remove all existing series（副图 pane=1——kline-common-layer 组 3 panes 化）
+    // 移除全部既有 series（副图 pane=1——kline-common-layer 组 3 panes 化）
     for (const s of subChartSeriesRefs.current) {
       chart.removeSeries(s);
     }
@@ -677,7 +639,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     const SUB_PANE = 1;
 
     if (memoizedSubChartType === "volume") {
-      // Volume sub-chart: histogram with green/red bars
+      // 成交量副图：红绿柱 histogram
       const volSrc = memoizedVolumeData ?? [];
       if (volSrc.length > 0) {
         const histSeries = chart.addSeries(HistogramSeries, {
@@ -695,7 +657,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         createdSeries.push(histSeries);
       }
     } else if (memoizedSubChartType === "macd" && memoizedMacdData) {
-      // MACD sub-chart: histogram + macd line + signal line
+      // MACD 副图：histogram+macd 线+signal 线
       const histogramSeries = chart.addSeries(HistogramSeries, {
         priceLineVisible: false,
         lastValueVisible: false,
@@ -727,7 +689,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       signalLine.setData(memoizedMacdData.signal.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(signalLine);
     } else if (memoizedSubChartType === "rsi") {
-      // RSI sub-chart: line + 70/30 reference lines
+      // RSI 副图：RSI 线+70/30 参考线
       if (rsiData.length > 0) {
         const rsiSeries = chart.addSeries(LineSeries, {
           color: CHART_COLORS.rsi,
@@ -764,7 +726,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         createdSeries.push(osSeries);
       }
     } else if (memoizedSubChartType === "kdj" && memoizedKdjData) {
-      // KDJ sub-chart: K/D/J lines + 80/20 reference lines
+      // KDJ 副图：K/D/J 线+80/20 参考线
       const kLine = chart.addSeries(LineSeries, {
         color: "#3B82F6",
         lineWidth: 1,
@@ -792,7 +754,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       jLine.setData(memoizedKdjData.j.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(jLine);
 
-      // 80/20 reference lines
+      // 80/20 参考线
       const allKdjPoints = memoizedKdjData.k;
       if (allKdjPoints.length > 0) {
         const time = toTime(allKdjPoints[0].time);
@@ -821,7 +783,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         createdSeries.push(ref20);
       }
     } else if (memoizedSubChartType === "equity" && memoizedEquityData.length > 0) {
-      // Equity curve sub-chart: line series showing portfolio value over time
+      // 权益曲线副图：组合价值随时间变化的 line series
       const equitySeries = chart.addSeries(LineSeries, {
         color: "#f59e0b",
         lineWidth: 2,
@@ -834,7 +796,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       );
       createdSeries.push(equitySeries);
 
-      // Reference line at initial capital (first value)
+      // 初始资金参考线（取首点值）
       const firstVal = memoizedEquityData[0].value;
       const eqStartTime = toTime(memoizedEquityData[0].time);
       const eqEndTime = toTime(memoizedEquityData[memoizedEquityData.length - 1].time);

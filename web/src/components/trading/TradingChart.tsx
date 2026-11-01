@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
 import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
+import { fillsToSignals } from "@/components/charts/primitives";
 import type { PaperFill } from "@/services/trading";
 import type { SignalData } from "@/components/charts/KlineChart";
 
@@ -29,32 +30,16 @@ const SUB_CHART_OPTIONS: { value: SubChartType; label: string }[] = [
   { value: "kdj", label: "KDJ" },
 ];
 
-/** Calculate start date for the last N bars based on timeframe. */
+/** 按 timeframe 计算最近 N 根 bar 的起始日期。 */
 function barsAgoDate(timeframe: string, bars: number): string {
   const minutes = (TF_MINUTES[timeframe] ?? 240) * bars;
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-/** fill.kind 出场五值归并为 close（KlineChart 信号动作词汇四值） */
-const EXIT_KINDS = new Set(["exit_sl", "exit_tp", "exit_max_hold", "exit_time", "exit_liquidation"]);
-
-function fillAction(kind: string): "open" | "close" | "add" | "reduce" {
-  return EXIT_KINDS.has(kind) ? "close" : (kind as "open" | "close" | "add" | "reduce");
-}
-
-function fillsToSignals(fills: PaperFill[]): SignalData[] {
-  return fills
-    .filter((f) => f.side) // 出场全平类 side=null 不画信号（与旧口径一致）
-    .map((f) => ({
-      type: `${fillAction(f.kind)}_${f.side}` as SignalData["type"],
-      timestamp: f.bar_time,
-    }));
-}
-
 export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding }: TradingChartProps) {
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
-  // Only load the last 200 bars of data for paper trading chart
+  // 纸盘图表只装载最近 200 根数据
   const dateRange = useMemo(() => ({ start: barsAgoDate(timeframe, 200) }), [timeframe]);
 
   const {
@@ -73,7 +58,9 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
     refetchInterval: isActive ? 30_000 : false,
   });
 
-  const signals = useMemo(() => fillsToSignals(fills), [fills]);
+  // fills→signals 已收敛 primitives（CARD-04 双写归一）；受控断言=宽返回收窄到
+  // KlineChart signals prop 的判别联合（子类型单向收窄）
+  const signals = useMemo(() => fillsToSignals(fills) as SignalData[], [fills]);
 
   if (isLoadingOhlcv || !candleData?.length) {
     return (
@@ -89,7 +76,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
       <SymbolInfoBar
         symbol={symbol}
         timeframe={timeframe}
-        candles={candleData as never}
+        candles={candleData}
         cumulativeFunding={cumulativeFunding}
       />
       {/* Sub-chart indicator selector */}
