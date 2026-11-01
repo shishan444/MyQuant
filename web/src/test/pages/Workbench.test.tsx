@@ -138,4 +138,28 @@ describe("Workbench（01 观察工作台）", () => {
     expect(screen.queryByText("api", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("mcp", { exact: true })).not.toBeInTheDocument();
   });
+
+  it("CARD-07 truncated 页满披露渲染（与 degraded/availability 并存）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 1,
+      scanned_tasks: 1000, truncated: true,
+      availability: { qualify_pending: null, trigger_deviation: null, reason: null },
+    } as never);
+    setup();
+    // truncated 提示块呈现（含扫描数披露）
+    expect(await screen.findByText(/终态任务扫描达上限/)).toBeInTheDocument();
+    // 独立字段独立渲染块——与 degraded 披露并存不互斥
+    expect(screen.getByText(/1 个事件源扫描失败/)).toBeInTheDocument();
+  });
+
+  it("CARD-07 truncated=false 不渲染提示块", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      scanned_tasks: 5, truncated: false,
+      availability: { qualify_pending: null, trigger_deviation: null, reason: null },
+    } as never);
+    setup();
+    await screen.findByText(/暂无待裁决事件/);
+    expect(screen.queryByText(/终态任务扫描达上限/)).not.toBeInTheDocument();
+  });
 });

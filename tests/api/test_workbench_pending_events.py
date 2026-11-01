@@ -332,6 +332,61 @@ class TestTriggerAvailability:
         assert "；" in reason                    # 单字段拼接连接符
 
 
+class TestTruncatedDisclosure:
+    """CARD-07 truncated 披露：终态扫描页满=可能漏扫的显式告知
+    （TERMINAL_SCAN_LIMIT 常量缩限构造——1000 任务页满态构造不经济）。"""
+
+    def _seed_terminal(self, db, n, report):
+        for i in range(n):
+            _add_terminal_report(db, f"wb_tr{i}", "completed", report)
+
+    def test_page_full_produces_truncated(self, client):
+        """页满产：扫描数达上限 → truncated=True+scanned_tasks 披露。"""
+        from unittest.mock import patch
+        db = client._db
+        self._seed_terminal(db, 2, {"performance": {}})
+        with patch("api.routes.workbench.TERMINAL_SCAN_LIMIT", 2):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["scanned_tasks"] == 2
+        assert body["truncated"] is True
+
+    def test_below_limit_no_truncated(self, client):
+        """不满不产：扫描数低于上限 → truncated=False+scanned 如实。"""
+        from unittest.mock import patch
+        db = client._db
+        self._seed_terminal(db, 2, {"performance": {}})
+        with patch("api.routes.workbench.TERMINAL_SCAN_LIMIT", 3):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["scanned_tasks"] == 2
+        assert body["truncated"] is False
+
+    def test_truncated_coexists_with_degraded(self, client):
+        """页满与单源失败并存：truncated=True 且 degraded>=1 同响应
+        （两披露字段独立不互斥）。"""
+        from unittest.mock import patch
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import PtReport
+        db = client._db
+        self._seed_terminal(db, 1, {"performance": {}})
+        # 第二任务报告坏 JSON——json.loads raise → degraded 路径
+        _add_terminal_report(db, "wb_bad", "stopped", {"performance": {}})
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.query(PtReport).filter(
+                PtReport.task_id == "wb_bad").update(
+                {"report_json": "{not-json"})
+            sess.commit()
+        with patch("api.routes.workbench.TERMINAL_SCAN_LIMIT", 2):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["truncated"] is True
+        assert body["degraded"] >= 1
+        assert body["scanned_tasks"] == 2
+
+
 class TestTriggerDeviation:
     def test_passed_false_event_and_null_no_event(self, client):
         """passed==false 产事件+passed=None（对照重放不可执行）不产。"""
