@@ -95,21 +95,21 @@ def ensure_timeframe_consistent(
             })
 
 
-def run_backtest_on_range(
+def prepare_replay_inputs(
     db_path: Path, data_dir: Path, dna, symbol: str, timeframe: str,
     start: str, end: str, warmup_bars: int,
-    *, init_cash: float = 100000.0,
-    fee: float = 0.001, slippage: float = 0.0005,
-    strategy_id: str | None = None,
-) -> Tuple[Dict[str, Any], np.ndarray | None, int, int]:
-    """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
+    *, strategy_id: str | None = None,
+):
+    """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start, end)。
+
+    装配链共享函数（paper-trading-revamp 组 A2 从 run_backtest_on_range
+    提取）：backtest_bridge 与纸盘对照重放器（qualification.py）共同调用，
+    逐函数同源（load_and_prepare_df/load_mtf_data/assemble_signal_set/
+    ensure_timeframe_consistent）——装配逻辑单源，不复制。
 
     Returns:
-        (metrics, trade_returns, actual_warmup_bars, bars_used)——
-        trade_returns 为每笔收益序列（judge 证据闸门 CI 判定输入；
-        内存传递不落库，metrics 保持纯可序列化）。
+        (bt_df, dfs_by_timeframe, signal_set, actual_warmup_bars)
     """
-    from core.backtest import engine as bt_engine_mod
     from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     # 周期一致性守卫（D6）：入口第一校验（enhanced 装载前省 IO）——
@@ -164,6 +164,33 @@ def run_backtest_on_range(
         assembled = assemble_signal_set(
             db_path, dna, enhanced, dfs_by_timeframe=dfs_by_timeframe)
         signal_set = _slice_signal_set(assembled, bt_df.index)
+
+    return bt_df, dfs_by_timeframe, signal_set, actual_warmup_bars
+
+
+def run_backtest_on_range(
+    db_path: Path, data_dir: Path, dna, symbol: str, timeframe: str,
+    start: str, end: str, warmup_bars: int,
+    *, init_cash: float = 100000.0,
+    fee: float = 0.001, slippage: float = 0.0005,
+    strategy_id: str | None = None,
+) -> Tuple[Dict[str, Any], np.ndarray | None, int, int]:
+    """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
+
+    装配段经共享函数 prepare_replay_inputs（组 A2 提取——行为不变锚=
+    bridge 固定样本 metrics 提取前后逐位一致）。
+
+    Returns:
+        (metrics, trade_returns, actual_warmup_bars, bars_used)——
+        trade_returns 为每笔收益序列（judge 证据闸门 CI 判定输入；
+        内存传递不落库，metrics 保持纯可序列化）。
+    """
+    from core.backtest import engine as bt_engine_mod
+
+    # 周期一致性守卫（D6）在 prepare_replay_inputs 入口第一行（enhanced 装载前省 IO）
+    bt_df, dfs_by_timeframe, signal_set, actual_warmup_bars = prepare_replay_inputs(
+        db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
+        strategy_id=strategy_id)
 
     engine = bt_engine_mod.BacktestEngine(
         init_cash=init_cash, fee=fee, slippage=slippage, db_path=db_path)
