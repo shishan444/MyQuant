@@ -18,6 +18,7 @@ import type {
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
 import { toTime } from "./core/time";
 import { signalsToMarkers } from "./primitives";
+import { attachObservationSeries, type ObservationPoint } from "./primitives/observationSeries";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -81,6 +82,14 @@ export interface KlineChartHandle {
   zoomIn: () => void;
   zoomOut: () => void;
   resetView: () => void;
+  /**
+   * 挂/换/清观测序列线（hypothesis-workbench CARD-01：不暴露 chart 实例的
+   * 命令式通道——挂/重挂/清完整生命周期由消费方经本句柄驱动）。
+   * 传 null/空数组=清线；NaN/null 值点在原语层过滤（未定义期断线）。
+   */
+  setObservationSeries: (
+    points: Array<{ time: string; value: number | null }> | null,
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +143,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const mtfSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const triggerOffsetSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // 观测序列线句柄（CARD-01 命令式通道——挂/换先清旧，消费方驱动）
+  const observationSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const initialFitDoneRef = useRef(false);
   const onChartReadyRef = useRef(onChartReady);
   onChartReadyRef.current = onChartReady;
@@ -200,6 +211,17 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     },
     resetView: () => {
       mainChartRef.current?.timeScale().fitContent();
+    },
+    setObservationSeries: (points: ObservationPoint[] | null) => {
+      const chart = mainChartRef.current;
+      if (!chart) return;
+      // 挂/换先清旧（单线语义）；chart 未就绪或空数据=纯清
+      if (observationSeriesRef.current) {
+        chart.removeSeries(observationSeriesRef.current);
+        observationSeriesRef.current = null;
+      }
+      if (!points || points.length === 0) return;
+      observationSeriesRef.current = attachObservationSeries(chart, points);
     },
   }), []);
 
@@ -382,6 +404,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       volumeSeriesRef.current = null;
       mtfSeriesRefs.current = [];
       triggerOffsetSeriesRef.current = null;
+      observationSeriesRef.current = null; // chart.remove() 已整体销毁，ref 清位防悬垂
       initialFitDoneRef.current = false;
     };
   }, [height]);

@@ -221,7 +221,7 @@ def run_backtest_on_range(
         # 可序列化形制（三入口 backtest/backtest-sandbox/inspect-cases 消费
         # 本 metrics 单点——一处透传全达）；非 series 档 None（null 透传）
         "sl_series": (
-            [{"time": str(t), "value": float(v)}
+            [{"time": str(t), "value": None if pd.isna(v) else float(v)}
              for t, v in result.sl_series.items()]
             if getattr(result, "sl_series", None) is not None else None),
     }

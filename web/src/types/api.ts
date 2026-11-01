@@ -110,8 +110,9 @@ export type BacktestResult = Omit<
   dimension_scores?: Record<string, number>;
   equity_curve?: Array<{ timestamp: string; value: number }> | null;
   signals?: TradeSignal[] | null;
-  /** series 档止损价序列（hypothesis-workbench 组 2 透传；非 series 档 null） */
-  sl_series?: Array<{ time: string; value: number }> | null;
+  /** series 档止损价序列（hypothesis-workbench 组 2 透传；非 series 档 null；
+   * value 可 null=NaN 翻译（REST/bridge NaN→null 传输，SL 未定义期——原语层过滤） */
+  sl_series?: Array<{ time: string; value: number | null }> | null;
 };
 
 /** 交易信号 ← 后端 BacktestResponse.signals 元素（dict 洞补形） */

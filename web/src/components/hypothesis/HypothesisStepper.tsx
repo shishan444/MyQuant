@@ -1,17 +1,16 @@
 import { cn } from "@/lib/utils";
+import {
+  WORKBENCH_STEPS,
+  SL_MODE_OPTIONS,
+} from "@/components/hypothesis/workbenchConstants";
 
 /**
  * 02-B1 五步流水线条（hypothesis-workbench 组 3.1）——假设工作台步骤态机：
  * 构建→预检→案例→沙盒→登记。当前步高亮、已完成步可回跳、未达步禁用。
  * 消费方 Lab 页（/lab）；步骤推进由页面业务态驱动（本组件纯呈现）。
+ * 常量/工具在 workbenchConstants（审查闸门拆分——fast refresh 恢复；
+ * re-export 仍触 only-export-components，消费方直接 import 新路径）。
  */
-export const WORKBENCH_STEPS = ["构建", "预检", "案例", "沙盒", "登记"] as const;
-
-export type WorkbenchStep = (typeof WORKBENCH_STEPS)[number];
-
-export function stepIndex(name: WorkbenchStep): number {
-  return WORKBENCH_STEPS.indexOf(name);
-}
 
 interface HypothesisStepperProps {
   current: number;
@@ -54,20 +53,9 @@ export function HypothesisStepper({ current, furthest, onStepClick }: Hypothesis
 }
 
 /**
- * 02-B2-4 风控 sl_mode 四档选择器（单源消费 dna.py SL_MODES——
- * 母案定案：SL_MODES=("pct","atr","trail","series") 唯一操作定义；
- * series 档附 sl_series_source 声明提示）。
+ * 02-B2-4 风控 sl_mode 四档选择器（选项单源 workbenchConstants.
+ * SL_MODE_OPTIONS——消费 dna.py SL_MODES 母案定案）。
  */
-export const SL_MODE_OPTIONS: Array<{
-  value: "pct" | "atr" | "trail" | "series";
-  label: string;
-  hint: string;
-}> = [
-  { value: "pct", label: "pct", hint: "百分比止损" },
-  { value: "atr", label: "atr", hint: "ATR 波动倍数" },
-  { value: "trail", label: "trail", hint: "移动止损（跟随峰值）" },
-  { value: "series", label: "series", hint: "价格列止损线（sl_series_source 声明——仅回测域）" },
-];
 
 interface SlModeSelectProps {
   value: string;

@@ -17,8 +17,6 @@ import { HypothesisStepper } from "@/components/hypothesis/HypothesisStepper";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
-import { LineSeries } from "lightweight-charts";
-import { toTime } from "@/components/charts/core/time";
 import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { ChartToolbar } from "@/components/charts/ChartToolbar";
 import { Button as AntButton, Select as AntSelect, Skeleton } from "antd";
@@ -156,9 +154,26 @@ export function Lab() {
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
-  // series 档止损线序列（hypothesis-workbench 组 4.1：回测响应 sl_series
-  // 经 onChartReady 画 LineSeries——虚线黄，形制沿 07 页 trail 观测线）
-  const [slSeries, setSlSeries] = useState<Array<{ time: string; value: number }> | null>(null);
+  // series 档止损线序列（hypothesis-workbench 组 4.1→审查 CARD-01）：回测响应
+  // sl_series 经 handle 命令式挂线——原语层虚线黄，与 07 页 trail 同观测族；
+  // 记录回测维度（symbol/timeframe），渲染期与主图维度匹配才可见——回测
+  // 标的与主图标的独立 state（Q3 根治：不匹配自失效，无需清理点）；
+  // value 可 null（后端 NaN→null，SL 未定义期断线不画）
+  const [slSeries, setSlSeries] = useState<{
+    data: Array<{ time: string; value: number | null }>;
+    symbol: string;
+    timeframe: string;
+  } | null>(null);
+  const visibleSlSeries =
+    slSeries && slSeries.symbol === pair && slSeries.timeframe === timeframe
+      ? slSeries.data
+      : null;
+
+  // series 止损线命令式挂线（CARD-01 (b)）：挂/换/清完整生命周期经 handle
+  // 通道（可见序列变化即重挂，null=清）
+  useEffect(() => {
+    chartRef.current?.setObservationSeries(visibleSlSeries);
+  }, [visibleSlSeries]);
 
   // -- Chart indicators hook (shared for hypothesis mode) --
   const {
@@ -758,7 +773,10 @@ export function Lab() {
               {backtestDna ? (
                 <BacktestModePanel
                   ref={backtestPanelRef}
-                  onResult={(r) => setSlSeries(r.sl_series ?? null)}
+                  onResult={(r) => setSlSeries(
+                    r.sl_series && r.sl_series.length > 0
+                      ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
+                      : null)}
                   dna={{
                     ...backtestDna,
                     risk_genes: {
@@ -1056,16 +1074,12 @@ export function Lab() {
               </div>
               <KlineChart
                 ref={chartRef}
-                onChartReady={(chart, _series) => {
-                  if (!slSeries || slSeries.length === 0) return;
-                  try {
-                    const line = chart.addSeries(LineSeries, {
-                      color: "#FBBF24", lineWidth: 1, lineStyle: 2,
-                      priceLineVisible: false, lastValueVisible: false,
-                    });
-                    line.setData(slSeries.map((p) => ({
-                      time: toTime(p.time.replace(" ", "T")) as never, value: p.value })));
-                  } catch { /* 序列挂载失败不阻塞主图（观测面容错） */ }
+                onChartReady={() => {
+                  // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
+                  // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
+                  // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
+                  // （React commit 序），handle 恒就绪）
+                  chartRef.current?.setObservationSeries(visibleSlSeries);
                 }}
                 data={candleData ?? []}
                 indicators={chartIndicators}
