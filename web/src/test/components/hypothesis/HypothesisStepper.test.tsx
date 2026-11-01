@@ -6,9 +6,13 @@ import { render, screen } from "@testing-library/react";
 import {
   HypothesisStepper,
   SlModeSelect,
+} from "@/components/hypothesis/HypothesisStepper";
+// 常量单源随审查闸门拆分至 workbenchConstants（fast refresh 恢复——
+// 消费方直接 import 新路径，本测试同步）
+import {
   WORKBENCH_STEPS,
   SL_MODE_OPTIONS,
-} from "@/components/hypothesis/HypothesisStepper";
+} from "@/components/hypothesis/workbenchConstants";
 
 describe("HypothesisStepper（02-B1 五步流水线）", () => {
   it("五步全渲染且序号正确", () => {

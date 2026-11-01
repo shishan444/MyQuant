@@ -96,19 +96,21 @@ const chartMocks = vi.hoisted(() => ({ setObservationSeries: vi.fn() }));
 vi.mock("@/components/charts/KlineChart", async () => {
   const { forwardRef, useImperativeHandle, useEffect } = await import("react");
   return {
-    KlineChart: forwardRef((props: any, ref: React.Ref<unknown>) => {
-      useImperativeHandle(ref, () => ({
-        zoomIn: () => {},
-        zoomOut: () => {},
-        resetView: () => {},
-        setObservationSeries: chartMocks.setObservationSeries,
-      }));
-      // 模拟真组件：图表创建即回调 onChartReady（互斥重挂的衔接锚）
-      useEffect(() => {
-        props.onChartReady?.({} as never, {} as never);
-      }, []);
-      return <div data-testid="kline-chart" />;
-    }),
+    KlineChart: forwardRef(
+      (props: { onChartReady?: (chart: never, series: never) => void },
+              ref: React.Ref<unknown>) => {
+        useImperativeHandle(ref, () => ({
+          zoomIn: () => {},
+          zoomOut: () => {},
+          resetView: () => {},
+          setObservationSeries: chartMocks.setObservationSeries,
+        }));
+        // 模拟真组件：图表创建即回调 onChartReady（互斥重挂的衔接锚）
+        useEffect(() => {
+          props.onChartReady?.({} as never, {} as never);
+        }, []);
+        return <div data-testid="kline-chart" />;
+      }),
   };
 });
 
@@ -251,7 +253,7 @@ describe("Lab - sl_series observation series (CARD-01)", () => {
         total_return_pct: 0, avg_return_pct: 0,
       }),
       isPending: false,
-    } as ReturnType<typeof useValidateRules>);
+    } as unknown as ReturnType<typeof useValidateRules>);
     vi.mocked(runBacktest).mockResolvedValue({
       ...mockBacktestResult,
       sl_series: slSeriesData,

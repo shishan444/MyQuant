@@ -53,6 +53,7 @@ vi.mock("@/components/lab/BacktestMetricsPanel", () => ({
 }));
 
 import { BacktestModePanel } from "@/components/lab/BacktestModePanel";
+import type { BacktestModePanelHandle } from "@/components/lab/BacktestModePanel";
 import { runBacktest } from "@/services/strategies";
 import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -225,7 +226,7 @@ describe("BacktestModePanel", () => {
       sl_series: slSeries,
     });
     const onResult = vi.fn();
-    const ref = { current: null as any };
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
 
     render(
       <BacktestModePanel
@@ -249,7 +250,7 @@ describe("BacktestModePanel", () => {
   it("does not call onResult when backtest fails", async () => {
     vi.mocked(runBacktest).mockRejectedValueOnce(new Error("API timeout"));
     const onResult = vi.fn();
-    const ref = { current: null as any };
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
 
     render(
       <BacktestModePanel
@@ -271,7 +272,7 @@ describe("BacktestModePanel", () => {
 
   it("runs backtest without onResult prop without crashing", async () => {
     // onResult 可选语义：宿主不消费时不影响回测主流程
-    const ref = { current: null as any };
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
 
     render(
       <BacktestModePanel ref={(el) => { ref.current = el; }} {...defaultProps} />,
