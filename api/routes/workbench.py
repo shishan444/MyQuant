@@ -46,7 +46,12 @@ def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]
     degraded = 0
     for hyp in rr.list_hypotheses(db_path, status="active"):
         try:
-            for dr in hyp.get("data_ranges", []):
+            # data_ranges 仓储层为 JSON 字符串（探针实测）——先 loads 再迭代
+            # （消费方 loads 系既有约定：research/hypotheses.py:142 先例）；
+            # 损坏串 loads 失败落入本 except 的 degraded 降级（真源失败降级，
+            # 非 TypeError 伪降级——P0 退回件：字符串逐字符迭代必 TypeError）
+            ranges = json.loads(hyp.get("data_ranges") or "[]")
+            for dr in ranges:
                 bal = query_union_balance(
                     db_path, data_dir,
                     symbol=dr["symbol"], timeframe=dr["timeframe"],
