@@ -12,7 +12,6 @@ export type SignalSide = "long" | "short";
 
 export interface SignalInput {
   type: string; // 兼容 Lab 旧词 buy/sell
-  side?: string | null;
   timestamp: string;
 }
 
@@ -45,9 +44,9 @@ export function fillAction(kind: string): SignalAction {
   return EXIT_KINDS.has(kind) ? "close" : (kind as SignalAction);
 }
 
-/** fills（纸盘成交）→ signals：出场全平类 side=null 不画（旧口径） */
+/** fills（纸盘成交）→ signals：出场全平类 side=null/缺省 不画（旧口径；side 三态对齐上游 PaperFill 契约） */
 export function fillsToSignals(
-  fills: Array<{ kind: string; side: string | null; bar_time: string }>,
+  fills: Array<{ kind: string; side?: string | null; bar_time: string }>,
 ): Array<{ type: string; timestamp: string }> {
   return fills
     .filter((f) => f.side)

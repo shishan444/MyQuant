@@ -17,6 +17,7 @@ import type {
 
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
 import { toTime } from "./core/time";
+import { signalsToMarkers } from "./primitives";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -532,43 +533,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       triggerOffsetSeriesRef.current = null;
     }
 
-    // Signal markers stay on candle series
-    const SIGNAL_STYLE: Record<string, {
-      position: "aboveBar" | "belowBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown" | "circle" | "square";
-      text: string;
-    }> = {
-      // Legacy (Lab backtest signals)
-      buy: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "B" },
-      sell: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "S" },
-      // Paper trading - Long
-      open_long: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "OL" },
-      close_long: { position: "aboveBar", color: "#FF9800", shape: "arrowDown", text: "CL" },
-      add_long: { position: "belowBar", color: "#00C853", shape: "circle", text: "AL" },
-      reduce_long: { position: "aboveBar", color: "#FF9800", shape: "circle", text: "RL" },
-      // Paper trading - Short
-      open_short: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "OS" },
-      close_short: { position: "belowBar", color: "#7C4DFF", shape: "arrowUp", text: "CS" },
-      add_short: { position: "aboveBar", color: "#FF1744", shape: "square", text: "AS" },
-      reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
-    };
-
-    const markers: Array<{
-      time: Time;
-      position: "aboveBar" | "belowBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown" | "circle" | "square";
-      text: string;
-    }> = [];
-
-    for (const s of memoizedSignals) {
-      const style = SIGNAL_STYLE[s.type] ?? SIGNAL_STYLE.buy;
-      markers.push({
-        time: toTime(s.timestamp),
-        ...style,
-      });
-    }
+    // Signal markers stay on candle series（样式表与映射收敛在 primitives/markers——CARD-04 双写归一）
+    const markers = signalsToMarkers(memoizedSignals, toTime);
 
     if (markersPluginRef.current) {
       markersPluginRef.current.setMarkers(markers);
