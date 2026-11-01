@@ -67,7 +67,7 @@ function shortStrategyId(strategyId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Task List Item (sidebar)
+// 任务列表项（左侧栏）
 // ---------------------------------------------------------------------------
 
 function TaskListItem({
@@ -181,7 +181,7 @@ export function Trading() {
 
   const wsConnected = useTradingWebSocket(activeTaskId);
 
-  // Filter tasks by search query
+  // 按搜索词过滤任务
   const filteredTasks = useMemo(() => {
     if (!searchQuery.trim()) return tasks;
     const q = searchQuery.toLowerCase();
@@ -350,7 +350,7 @@ export function Trading() {
         </div>
       </div>
 
-      {/* Create dialog */}
+      {/* 创建任务弹窗 */}
       <CreateTaskDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
@@ -364,7 +364,7 @@ export function Trading() {
 }
 
 // ---------------------------------------------------------------------------
-// Task Detail Panel (right side)
+// 任务详情面板（右侧）
 // ---------------------------------------------------------------------------
 
 const FILL_PAGE_SIZE = 5;
@@ -397,7 +397,7 @@ function TaskDetailPanel({
 
   const [visibleFills, setVisibleFills] = useState(FILL_PAGE_SIZE);
 
-  // Reset visible count when task changes
+  // 切换任务时重置可见成交数
   useEffect(() => {
     setVisibleFills(FILL_PAGE_SIZE);
   }, [task.task_id]);
@@ -405,7 +405,7 @@ function TaskDetailPanel({
   const displayedFills = fills.slice(0, visibleFills);
   const hasMoreFills = visibleFills < fills.length || (fillData?.has_more ?? false);
 
-  // Account overview computations
+  // 账户概览计算
   const posSide = toPositionSide(task.position_side);
   const hasPosition = posSide !== "flat";
   const upnl = task.unrealized_pnl ?? 0;
@@ -425,7 +425,7 @@ function TaskDetailPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Account Overview Card */}
+      {/* 账户概览卡片 */}
       <GlassCard className="p-4">
         {/* Header: strategy info + controls */}
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -485,7 +485,7 @@ function TaskDetailPanel({
           <div className="mt-1 text-xs text-text-muted">停止原因：{task.stop_reason}</div>
         )}
 
-        {/* Three key numbers: Balance / Unrealized PnL / Equity */}
+        {/* 三个关键数字：余额 / 未实现盈亏 / 权益 */}
         <div className="mt-3 grid grid-cols-3 gap-6">
           <div>
             <span className="text-[10px] text-text-muted uppercase tracking-wider">
@@ -553,7 +553,7 @@ function TaskDetailPanel({
           </div>
         )}
 
-        {/* Position detail line (only when position is open) */}
+        {/* 持仓明细行（仅持仓时显示） */}
         {hasPosition && (
           <div className="mt-2 pt-2 border-t border-border-default flex items-center gap-4 text-xs text-text-muted flex-wrap">
             <span>开仓价 {formatCurrency(task.position_entry ?? 0)}</span>
