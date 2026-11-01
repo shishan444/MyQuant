@@ -14,6 +14,7 @@ from . import (
     indicator_query,
     log,
     plugins,
+    records_list,
     registry,
     snapshot,
     validation,
@@ -30,5 +31,6 @@ for _sub in (
     registry,
     snapshot,
     log,
+    records_list,
 ):
     router.include_router(_sub.router, prefix="/api/research", tags=["research"])
