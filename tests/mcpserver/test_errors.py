@@ -486,6 +486,10 @@ _KNOWN_GAPS = frozenset({
     # guard 家族补收五键（2026-10-14 review 发现 2——无场景专属
     # hint，走通用文案，有意豁免）
     "group_a", "group_b", "as_of", "limit", "context_bars",
+    # workbench-observation 组 A：validation-records 端点内联 level/verdict
+    # 值域校验（HTTP 查询参数面，非 MCP 工具参数——AST 扫描形制①收进；
+    # 无场景专属 hint 需求，走通用文案，有意豁免）
+    "level", "verdict",
 })
 
 

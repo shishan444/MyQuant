@@ -66,6 +66,7 @@ def client(tmp_path: Path):
     _seed_records(db)
     app = create_app(db_path=db, data_dir=tmp_path / "data")
     with TestClient(app, raise_server_exceptions=False) as c:
+        c._db = db  # type: ignore[attr-defined]
         yield c
 
 
@@ -179,6 +180,28 @@ class TestFilterPagingInteraction:
 
 
 class TestEmbeddedAndMissing:
+    def test_bad_json_embedded_as_none_and_scalar_wrapped(self, client):
+        """坏 JSON 嵌入兜底（阶段四闸门 missing 收口）：坏串→None 如实
+        （不捏造不抛）；非 dict 标量 JSON→{"value": v} 包装。"""
+        from sqlalchemy import create_engine, update as sa_update
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        db = client._db
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.add(ValidationRecord(
+                record_id="vr_bad", hypothesis_id="fr_wb", strategy_id=None,
+                level="isolated_backtest", segmentation="", verdict="pass",
+                range_hash="rh_bad", params="{not-json",
+                result='"123"',  # 合法 JSON 但非 dict（标量）
+                created_at="2026-11-10T00:00:00+00:00"))
+            sess.commit()
+        by_id = {x["record_id"]: x for x in client.get(
+            "/api/research/validation-records", params={"limit": 200}
+        ).json()["records"]}
+        assert by_id["vr_bad"]["params"] is None      # 坏串如实 None
+        assert by_id["vr_bad"]["result"] == {"value": "123"}  # 标量包装
+
     def test_params_result_json_embedded_and_null(self, client):
         full = client.get("/api/research/validation-records", params={"limit": 200}).json()["records"]
         by_id = {x["record_id"]: x for x in full}

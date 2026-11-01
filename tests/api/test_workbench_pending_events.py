@@ -332,6 +332,116 @@ class TestTriggerAvailability:
         assert "；" in reason                    # 单字段拼接连接符
 
 
+class TestFailOpenPaths:
+    """fail-open 防御分支族覆盖（阶段四闸门 missing 行收口）：
+    单任务失败跳过/端点级兜底/源可用性异常/str 报告防御/无报告终态。"""
+
+    def test_single_task_failure_skipped_others_continue(self, client):
+        """qualify 单任务坏数据跳过+其余任务照常扫描（129-131）：
+        一任务 evaluate 抛→degraded+1，另一任务事件照产。"""
+        from unittest.mock import patch
+        from core.paper_trading.qualification import evaluate_two_dimensions as orig
+        db = client._db
+        _upsert_running(db, "wb_f1", balance=110.0, trades=6)
+        _upsert_running(db, "wb_f2", balance=120.0, trades=7,
+                        strategy_id="st_f2")
+
+        def flaky(equity, cash, trades):
+            if trades == 6:
+                raise RuntimeError("坏数据模拟")
+            return orig(equity, cash, trades)
+
+        with patch("core.paper_trading.qualification.evaluate_two_dimensions",
+                   side_effect=flaky):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["degraded"] == 1                      # 仅坏任务跳过
+        q_events = [e for e in body["events"]
+                    if e["type"] == "qualify_pending"]
+        assert [e["payload"]["task_id"] for e in q_events] == ["wb_f2"]
+
+    def test_endpoint_failopen_on_source_crash(self, client):
+        """端点级兜底三形态：源函数崩溃→[],1,0 不 500（186-187/194-195）；
+        源可用性探测异常→False→unavailable 标注（220-221）。"""
+        from unittest.mock import patch
+        with patch("api.routes.workbench._qualify_pending_events",
+                   side_effect=RuntimeError("qualify 源崩溃")):
+            r1 = client.get("/api/workbench/pending-events")
+        assert r1.status_code == 200
+        assert r1.json()["degraded"] == 1
+        with patch("api.routes.workbench._trigger_deviation_events",
+                   side_effect=RuntimeError("trigger 源崩溃")):
+            r2 = client.get("/api/workbench/pending-events")
+        assert r2.status_code == 200
+        assert r2.json()["degraded"] == 1
+        with patch("core.persistence.repository.paper.list_tasks",
+                   side_effect=RuntimeError("任务表不可读")):
+            r3 = client.get("/api/workbench/pending-events")
+        assert r3.status_code == 200
+        assert r3.json()["availability"]["qualify_pending"] == "unavailable"
+
+    def test_str_report_defense_reachable(self, client):
+        """str 报告防御分支可达（157/246）：get_final_report 现形制恒
+        dict（内部已 loads），str 形态为防御分支——mock 可达性证明
+        两消费函数（事件扫描+源可用性）的 loads 路径正确。"""
+        from unittest.mock import patch
+        db = client._db
+        from core.persistence.repository import paper as paper_repo
+        from sqlalchemy import create_engine, update as sa_update
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import PtTask
+        paper_repo.create_task(
+            db, strategy_id="st_f3", dna_snapshot_json="{}",
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified", window_bars=10,
+            task_id="wb_f3")
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.execute(sa_update(PtTask).where(
+                PtTask.task_id == "wb_f3").values(status="completed"))
+            sess.commit()
+        str_report = {"task_id": "wb_f3", "report_version": 1,
+                      "generated_at": "t", "as_of": "t",
+                      "report": json.dumps({"performance": {}, "qualification": {
+                          "trigger_consistency": {"passed": False,
+                                                  "deviation_ratio": 0.3}}})}
+        with patch("core.paper_trading.reporting.get_final_report",
+                   return_value=str_report):
+            r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        # 事件扫描走 str loads → trigger_deviation 事件产出
+        t_events = [e for e in body["events"]
+                    if e["type"] == "trigger_deviation"]
+        assert [e["payload"]["task_id"] for e in t_events] == ["wb_f3"]
+        # 源可用性走 str loads → qualification 键在场=不标降级
+        assert body["availability"]["trigger_deviation"] is None
+
+    def test_terminal_without_report_skipped(self, client):
+        """终态任务无报告→continue 静默跳过（154/243）：无事件无 degraded，
+        源可用性判定同样跳过该任务不误判。"""
+        from core.persistence.repository import paper as paper_repo
+        from sqlalchemy import create_engine, update as sa_update
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import PtTask
+        db = client._db
+        paper_repo.create_task(
+            db, strategy_id="st_f4", dna_snapshot_json="{}",
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified", window_bars=10,
+            task_id="wb_f4")
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.execute(sa_update(PtTask).where(
+                PtTask.task_id == "wb_f4").values(status="completed"))
+            sess.commit()
+        r = client.get("/api/workbench/pending-events")
+        body = r.json()
+        assert body["events"] == []
+        assert body["degraded"] == 0
+        # 有终态任务但无报告可读→无 qualification 键在场→全缺键 unavailable
+        assert body["availability"]["trigger_deviation"] == "unavailable"
+
+
 class TestTruncatedDisclosure:
     """CARD-07 truncated 披露：终态扫描页满=可能漏扫的显式告知
     （TERMINAL_SCAN_LIMIT 常量缩限构造——1000 任务页满态构造不经济）。"""
