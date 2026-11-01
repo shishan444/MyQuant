@@ -390,7 +390,7 @@ class TestAlembicBaseline:
         events = conn.execute(
             "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "c2f8e6b1d3a7", \
+        assert len(ver) == 1 and ver[0][0] == "b8d5f0a2c3e6", \
             "版本记账真实到 head 恰一行"
         assert status == "paper", "upgrade 补存量分类（active×活跃任务→paper）"
         assert events == 0, "存量分类零事件（纯净性原则）"
@@ -435,7 +435,7 @@ class TestAlembicBaseline:
             " AND name IN ('trg_strategy_status_domain',"
             " 'trg_strategy_status_insert_domain')").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "c2f8e6b1d3a7"
+        assert len(ver) == 1 and ver[0][0] == "b8d5f0a2c3e6"
         assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
 
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):

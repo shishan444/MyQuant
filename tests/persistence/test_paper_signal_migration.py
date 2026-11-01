@@ -179,6 +179,20 @@ class TestExistingTablesUnchanged:
         new_tables = set(after) - set(before)
         assert new_tables == {"pt_signal"}, f"新表恰 pt_signal: {new_tables}"
         for t in sorted(before):
+            if t == "pt_task":
+                # 追加面（paper-trading-revamp 组 B）：first_met_at 表尾追加
+                assert after[t][:len(before[t])] == before[t], \
+                    "pt_task 既有列不得改动（含列序）"
+                assert after[t][len(before[t]):] == ["first_met_at"]
+                continue
+            if t == "pt_equity":
+                # 追加面（paper-trading-revamp 组 E）：既有列前缀逐位保持
+                # +新增恰一列 trail_sl_price（ALTER ADD COLUMN 表尾追加）
+                assert after[t][:len(before[t])] == before[t], \
+                    "pt_equity 既有列不得改动（含列序）"
+                assert after[t][len(before[t]):] == ["trail_sl_price"], \
+                    f"pt_equity 新增恰 trail_sl_price: {after[t][len(before[t]):]}"
+                continue
             if t == "pt_fill":
                 # 追加面：既有列前缀逐位保持+新增恰三列（ALTER ADD COLUMN
                 # 语义=表尾追加）
