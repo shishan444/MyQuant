@@ -302,7 +302,9 @@ def create_app(
     app.include_router(paper_trading_route.router)
     app.include_router(validate_route.router)
     from api.routes import workbench as workbench_route
+    from api.routes import integrity_workbench as integrity_route
     app.include_router(workbench_route.router)
+    app.include_router(integrity_route.router)
     app.include_router(scene_route.router)
 
     # 研究域路由（add-ai-research-mcp）
