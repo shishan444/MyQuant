@@ -176,7 +176,8 @@ def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
         from core.analysis.backtest_bridge import prepare_replay_inputs
         from core.persistence.repository import paper as paper_repo
         from core.strategy.executor import dna_to_signal_set
-        from core.paper_trading.kernel.types import StrategyDNA
+        from core.strategy.dna import StrategyDNA
+        from core.paper_trading.reporting import DEVIATION_WARMUP_BARS
 
         dna = StrategyDNA.from_json(task["dna_snapshot_json"])
         equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
@@ -187,7 +188,7 @@ def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
         end = task["last_bar_time"]
         bt_df, dfs_by_timeframe, _sig, _w = prepare_replay_inputs(
             db_path, data_dir, dna, task["symbol"], task["timeframe"],
-            start, end, 200)
+            start, end, DEVIATION_WARMUP_BARS)
         sig_set = dna_to_signal_set(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
         replay = replay_trigger_set(sig_set)
         paper = paper_trigger_set(signal_rows)
@@ -235,8 +236,7 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
     out["attempted"] = True
     try:
         from core.strategy.lifecycle.service import transit
-        dna = None
-        from core.paper_trading.kernel.types import StrategyDNA
+        from core.strategy.dna import StrategyDNA
         dna = StrategyDNA.from_json(task["dna_snapshot_json"])
         result = transit(
             db_path, task["strategy_id"],
