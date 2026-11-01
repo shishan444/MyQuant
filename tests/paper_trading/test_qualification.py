@@ -41,9 +41,9 @@ class TestTwoDimensions:
 
 class TestTriggerConsistency:
     def test_consistency_inclusive_010(self):
-        # 分母 10、对称差 1 → 0.10 ==0.10 为 passed（含等）
-        paper = [(f"t{i}", "open") for i in range(10)]
-        replay = paper[:-1]  # 漏 1 个
+        # 分母=重放侧基数 10、对称差 1（多触发方向）→ 0.10 ==0.10 为 passed（含等）
+        paper = [(f"t{i}", "open") for i in range(9)]
+        replay = paper + [("t_extra", "open")]  # 重放多 1 个
         out = trigger_consistency(paper, replay)
         assert out["deviation_ratio"] == pytest.approx(0.10)
         assert out["passed"] is True
