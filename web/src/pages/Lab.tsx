@@ -1,3 +1,9 @@
+/**
+ * 策略实验室页（路由 /lab，首页重定向目标）。双模式：回测模式
+ * （策略库选择/配置/结果面板+K 线买卖信号）与 hypothesis 模式
+ * （条件构建器/入场出场规则——Lab 原始 UI）。消费方：App 路由
+ * （页面入口+index 重定向）。
+ */
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import {
   Play,
@@ -44,7 +50,7 @@ import type {
 import { useQuery } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
 const QUICK_DATES = [
@@ -56,10 +62,10 @@ const QUICK_DATES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Helper
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/** Format a Date as YYYY-MM-DD in local timezone (avoids toISOString UTC shift). */
+/** Date → 本地时区 YYYY-MM-DD（避免 toISOString 的 UTC 偏移）。 */
 function toLocalDateStr(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -67,7 +73,7 @@ function toLocalDateStr(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-/** Clamp a YYYY-MM-DD string to a valid date (e.g. 04-31 -> 04-30). */
+/** YYYY-MM-DD 字符串钳制到合法日期（如 04-31 → 04-30）。 */
 function clampDate(dateStr: string): string {
   if (!dateStr) return dateStr;
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -90,7 +96,7 @@ function getDefaultDates(): { start: string; end: string } {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// 组件
 // ---------------------------------------------------------------------------
 
 export function Lab() {
@@ -131,7 +137,7 @@ export function Lab() {
   const [selectedStrategyId, setSelectedStrategyId] = useState("");
   const backtestPanelRef = useRef<BacktestModePanelHandle>(null);
 
-  // Clear route state on first load so refresh returns to hypothesis mode
+  // 首载时清除路由状态，刷新回到 hypothesis 模式
   useEffect(() => {
     if (routeState?.dna) {
       window.history.replaceState({}, "");
@@ -204,7 +210,7 @@ export function Lab() {
   );
   const allStrategies = strategiesData?.items ?? [];
 
-  // When a strategy is selected from the library, populate backtest config
+  // 从策略库选中策略时回填回测配置
   const handleSelectStrategy = useCallback(
     (strategy: Strategy) => {
       if (strategy.dna) {
@@ -223,7 +229,7 @@ export function Lab() {
     [],
   );
 
-  // Build dynamic symbol and timeframe options from available sources
+  // 从可用数据源构建动态 symbol/timeframe 选项
   const dynamicSymbolOptions = useMemo(() => {
     if (!sourcesData?.sources?.length) return SYMBOL_OPTIONS;
     const seen = new Set<string>();
@@ -252,7 +258,7 @@ export function Lab() {
     return opts.length > 0 ? opts : TIMEFRAME_SELECT_OPTIONS;
   }, [sourcesData, pair]);
 
-  // Auto-set default date range
+  // 自动设置缺省日期区间
   useEffect(() => {
     const match = sourcesData?.sources?.find(
       (s) => s.symbol === pair && s.timeframe === timeframe
@@ -304,18 +310,18 @@ export function Lab() {
   const isLoading = validateMutation.isPending;
   const hasResult = ruleResult !== null;
 
-  // Collect all referenced timeframes for the condition builders
+  // 收集条件构建器引用的全部 timeframe
   const availableTimeframes = useMemo(() => {
     const tfs = new Set<string>();
     tfs.add(baseTimeframe);
     for (const c of [...entryConditions, ...exitConditions]) {
       if (c.timeframe) tfs.add(c.timeframe);
     }
-    // Also add common timeframes from dynamic options
+    // 另从动态选项补常用 timeframe
     for (const o of dynamicTimeframeOptions) {
       tfs.add(o.value);
     }
-    // Sort by duration (longest first)
+    // 按时长排序（最长在前）
     const ordered = ["3d", "1d", "4h", "1h", "15m", "5m", "1m"];
     return ordered.filter((tf) => tfs.has(tf));
   }, [baseTimeframe, entryConditions, exitConditions, dynamicTimeframeOptions]);
@@ -354,7 +360,7 @@ export function Lab() {
       return;
     }
 
-    // Validate dates before submitting
+    // 提交前校验日期
     if (!dateRange.start || !dateRange.end) {
       toast.error("请输入有效的日期范围");
       return;
@@ -379,7 +385,7 @@ export function Lab() {
       setRuleResult(res);
       setHypoFetchEnabled(true);
     } catch {
-      // handled by mutation
+      // 由 mutation 处理
     }
   }, [pair, timeframe, dateRange, entryConditions, exitConditions, validateMutation]);
 
@@ -393,7 +399,7 @@ export function Lab() {
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
     if (!ruleResult) return;
     try {
-      // Build a simple DNA from entry/exit conditions
+      // 从入场/出场条件构建简单 DNA
       const entrySignals = entryConditions.map((c) => ({
         indicator: c.subject,
         params: {},
@@ -428,7 +434,7 @@ export function Lab() {
       toast.success("策略已保存");
       setSaveDialogOpen(false);
     } catch {
-      // handled by mutation
+      // 由 mutation 处理
     }
   }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation]);
 
@@ -481,7 +487,7 @@ export function Lab() {
           }}
         />
 
-        {/* Mode switcher */}
+        {/* 模式切换 */}
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
           <button
             type="button"
@@ -521,11 +527,11 @@ export function Lab() {
           </button>
         </div>
 
-        {/* Backtest mode */}
+        {/* 回测模式 */}
         {labMode === "backtest" && (
           <GlassCard className="p-5" hover={false}>
             <div className="flex flex-col gap-5">
-              {/* Config section (collapsible) */}
+              {/* 配置区（可折叠） */}
               {btConfigCollapsed ? (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 text-xs text-slate-400">
@@ -545,7 +551,7 @@ export function Lab() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
-                  {/* Strategy selector */}
+                  {/* 策略选择器 */}
                   <div>
                     <span className="mb-1.5 block text-xs font-medium text-text-muted">
                       策略选择
@@ -567,7 +573,7 @@ export function Lab() {
                     />
                   </div>
 
-                  {/* Data source row */}
+                  {/* 数据源行 */}
                   <div>
                     <span className="mb-1.5 block text-xs font-medium text-text-muted">
                       数据源
@@ -635,7 +641,7 @@ export function Lab() {
                     </div>
                   </div>
 
-                  {/* Advanced parameters (collapsible) */}
+                  {/* 高级参数（可折叠） */}
                   <div>
                     <button
                       type="button"
@@ -749,7 +755,7 @@ export function Lab() {
                     )}
                   </div>
 
-                  {/* Action row */}
+                  {/* 操作行 */}
                   <div className="flex items-center gap-2">
                     {backtestDna && (
                       <AntButton type="text" size="small" className="!text-slate-500" onClick={() => setBtConfigCollapsed(true)}>
@@ -769,7 +775,7 @@ export function Lab() {
                 </div>
               )}
 
-              {/* Backtest result panel */}
+              {/* 回测结果面板 */}
               {backtestDna ? (
                 <BacktestModePanel
                   ref={backtestPanelRef}
@@ -808,7 +814,7 @@ export function Lab() {
           </GlassCard>
         )}
 
-        {/* Scene mode */}
+        {/* 场景模式 */}
         {labMode === "scene" && (
           <GlassCard className="p-5" hover={false}>
             <SceneModePanel
@@ -818,10 +824,10 @@ export function Lab() {
           </GlassCard>
         )}
 
-        {/* Hypothesis mode (original Lab UI) */}
+        {/* hypothesis 模式（Lab 原始 UI） */}
         {labMode === "hypothesis" && (
           <>
-        {/* Region 1: Condition Builder */}
+        {/* Region 1：条件构建器 */}
         <GlassCard className="p-4" hover={false}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-text-primary">规律构建器</h3>
@@ -853,7 +859,7 @@ export function Lab() {
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {/* Data source row */}
+              {/* 数据源行 */}
               <div>
                 <span className="mb-1.5 block text-xs font-medium text-text-muted">
                   数据源
@@ -910,7 +916,7 @@ export function Lab() {
                 </div>
               </div>
 
-              {/* Entry rules */}
+              {/* 入场规则 */}
               <RuleConditionGroup
                 title="入场规则"
                 description="全部满足则买入"
@@ -919,7 +925,7 @@ export function Lab() {
                 availableTimeframes={availableTimeframes}
               />
 
-              {/* Exit rules */}
+              {/* 出场规则 */}
               <RuleConditionGroup
                 title="出场规则"
                 description="任一满足则卖出"
@@ -928,7 +934,7 @@ export function Lab() {
                 availableTimeframes={availableTimeframes}
               />
 
-              {/* Action buttons */}
+              {/* 操作按钮 */}
               <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
@@ -964,7 +970,7 @@ export function Lab() {
           )}
         </GlassCard>
 
-        {/* Empty state / Loading / Results */}
+        {/* 空态/加载/结果 */}
 
         {!hasResult && !isLoading && (
           <GlassCard className="p-8" hover={false}>
@@ -999,7 +1005,7 @@ export function Lab() {
 
         {hasResult && !isLoading && ruleResult && (
           <>
-            {/* Stats summary */}
+            {/* 指标摘要 */}
             <GlassCard className="p-3" hover={false}>
               <div className="flex items-center gap-6 text-xs">
                 <span className="text-text-secondary">
@@ -1027,7 +1033,7 @@ export function Lab() {
               </div>
             </GlassCard>
 
-            {/* No trades suggestion */}
+            {/* 无交易提示 */}
             {ruleResult.total_trades === 0 && (
               <GlassCard className="p-4" hover={false}>
                 <div className="flex flex-col items-center gap-3 text-center">
@@ -1044,7 +1050,7 @@ export function Lab() {
               </GlassCard>
             )}
 
-            {/* KlineChart with buy/sell signals */}
+            {/* K 线图（含买卖信号） */}
             <GlassCard className="p-4" hover={false} id="lab-kline-section">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-3 text-xs text-text-muted">
@@ -1095,7 +1101,7 @@ export function Lab() {
           </>
         )}
 
-        {/* Save Strategy Dialog */}
+        {/* 保存策略对话框 */}
         <SaveStrategyDialog
           open={saveDialogOpen}
           onClose={() => setSaveDialogOpen(false)}
