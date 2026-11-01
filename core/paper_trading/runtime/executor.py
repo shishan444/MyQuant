@@ -237,6 +237,9 @@ class PaperTaskExecutor:
         self.db_path = Path(db_path)
         self.task_row = dict(task_row)
         self.task_id = task_row["task_id"]
+        # 达标判定状态（paper-trading-revamp 组 B）：恢复场景沿 task 行
+        # first_met_at 续判（旧库行缺键 None 兜底=从未满足）
+        self._first_met_at = task_row.get("first_met_at")
         self.registry = registry
         self.controller = controller or TaskController()
         self._push = push or (lambda task_id, payload: None)
@@ -1054,6 +1057,16 @@ class PaperTaskExecutor:
         # trail 峰值落账（持仓期逐 bar——判定自足，状态权威落点）
         self.ledger.update_trail_peak(bar)
 
+        # 达标两维判定（paper-trading-revamp 组 B）：equity 取本 bar
+        # 快照同源值（与 pt_equity 行同源，不自算第二种）；first_met_at
+        # 幂等单次写（NULL→非 NULL 一次——下一 bar 起随 task_state 持恒）
+        from core.paper_trading.qualification import (
+            evaluate_two_dimensions, first_met_writable)
+        _dims = evaluate_two_dimensions(
+            snap.equity, float(self.task_row["initial_cash"]), self.ledger.closed_trades)
+        if first_met_writable(self._first_met_at, _dims):
+            self._first_met_at = bar_time
+
         # ── 第 8 步：窗口计数已并入第 6 步 task_state；停止条件判定 ──
         self._evaluate_conclusion(snap)
 
@@ -1275,6 +1288,7 @@ class PaperTaskExecutor:
             funding=funding_rows or None,
             **extra,
             task_state={
+                "first_met_at": self._first_met_at,
                 "bars_processed": self.bars_processed,
                 "last_bar_time": self.last_bar_time,
                 "balance": self.ledger.balance,
