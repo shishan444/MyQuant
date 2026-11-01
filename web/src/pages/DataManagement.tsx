@@ -281,10 +281,15 @@ function UploadDialog({
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
+import { IntegrityMatrix, FreshnessTable } from "@/components/data/IntegrityPanels";
+
 export function DataManagement() {
   const { modal } = App.useApp();
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
+  // 09 页完整性两区（data-management-revamp 组 C1/C2）：symbol 沿数据集首位+月窗 6
+  const [matrixSymbol, setMatrixSymbol] = useState("BTCUSDT");
+  const [monthsBack, setMonthsBack] = useState(6);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const deleteDataset = useDeleteDataset();
@@ -401,6 +406,37 @@ export function DataManagement() {
 
   return (
     <PageTransition>
+      {/* 完整性月矩阵+保鲜表两区（09-B2r/09-B6r） */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <GlassCard className="p-3" hover={false}>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs text-text-secondary">完整性月矩阵</span>
+            <div className="flex items-center gap-2">
+              <input
+                value={matrixSymbol}
+                onChange={(e) => setMatrixSymbol(e.target.value.toUpperCase().slice(0, 12))}
+                className="w-24 rounded border border-border-default bg-transparent px-2 py-0.5 font-mono text-xs text-text-primary"
+                placeholder="symbol"
+                aria-label="矩阵 symbol"
+              />
+              <select
+                value={monthsBack}
+                onChange={(e) => setMonthsBack(Number(e.target.value))}
+                className="rounded border border-border-default bg-transparent px-1 py-0.5 text-xs text-text-secondary"
+                aria-label="月窗"
+              >
+                <option value={6}>近 6 月</option>
+                <option value={12}>近 12 月</option>
+              </select>
+            </div>
+          </div>
+          <IntegrityMatrix symbol={matrixSymbol} monthsBack={monthsBack} />
+        </GlassCard>
+        <GlassCard className="p-3" hover={false}>
+          <span className="mb-2 block text-xs text-text-secondary">数据保鲜（guardian 十二路）</span>
+          <FreshnessTable />
+        </GlassCard>
+      </div>
       <div className="flex flex-col gap-4">
         {/* Toolbar */}
         <GlassCard className="p-4" hover={false}>
