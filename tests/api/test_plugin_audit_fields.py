@@ -84,6 +84,25 @@ class TestDependencyClosure:
         assert out["dependency_closure"] == ["fx_a", "fx_b"]
         assert out["warmup_bars"] == 10  # max(zscore(fx_b,10)=10, shift(fx_a,3)=3)
 
+    def test_self_reference_closure_single_entry(self, api_client, plugin_env):
+        """A→A 自引用（表达式引用自身输出列）：闭包=仅自身一次、
+        warmup 照常计算、不抛错不超时（visited 截断对自引用同样
+        成立——spec plugin-audit 正文「自引用/环语义断言」的另一半，
+        与互引环例互补；现状记录语义）。"""
+        import uuid
+        from core.persistence.repository import research as rr
+
+        db = _wire(api_client, plugin_env)
+        rr.save_plugin_with_registry(
+            db, source="formula", plugin_id="fpl_selfref", name="selfref",
+            version=1, expression="zscore(fx_selfref, 10)",
+            output_columns='["fx_selfref"]',
+            entry_id=f"ent_{uuid.uuid4().hex[:12]}", column_name="fx_selfref")
+
+        out = plugin_audit_fields(db, {"fx_selfref"})
+        assert out["dependency_closure"] == ["fx_selfref"]
+        assert out["warmup_bars"] == 10
+
 
 class TestAuditResponseContract:
     def test_response_rows_carry_fields_matching_derivation(self, api_client, plugin_env):

@@ -292,3 +292,24 @@ def test_verify_history_item_thresholds_schema():
     assert item.total_trades == 12
     assert item.star == 2
     assert item.thresholds["drawdown_ok"] is None
+
+
+def test_threshold_follows_default_profile_single_source(monkeypatch):
+    """单源跟随（失效侧）：门槛值改 DEFAULT_PROFILE → 判定跟随——
+    封死复制常量实现形制（_threshold_star 若硬编码 0/0.25/5 而非引用
+    thresholds.py DEFAULT_PROFILE 单源，本例红；spec α Requirement
+    「门槛常量引用 thresholds.py DEFAULT_PROFILE 单源」的验收面）。
+    """
+    from core.analysis.thresholds import DEFAULT_PROFILE
+
+    row = _row(total_return=0.01, max_drawdown=-0.08, total_trades=10)
+    # 交易门槛 5→100：trades=10 由过转不过，star 3→2
+    monkeypatch.setitem(DEFAULT_PROFILE["rules"]["total_trades"], "value", 100)
+    t_patched, star_patched = _threshold_star(row)
+    assert t_patched["trades_enough"] is False
+    assert star_patched == 2
+    # 还原后同输入回到原判定（跟随是双向的——非一次性分支）
+    monkeypatch.undo()
+    t_restored, star_restored = _threshold_star(row)
+    assert t_restored["trades_enough"] is True
+    assert star_restored == 3
