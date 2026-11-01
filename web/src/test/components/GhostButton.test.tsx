@@ -15,6 +15,10 @@ describe("GhostButton（G-3）", () => {
       border: `1px solid ${BORDER.strong}`,
       color: TEXT.secondary,
     });
+    // CARD-03：画布 G-3 Label fs12+cornerRadius 4（经 RADIUS.badge 权威源）
+    // 内联直断言：toHaveStyle 走 getComputedStyle 受 AntD 注入类干扰（探针实证内联值齐全）
+    expect(btn.style.fontSize).toBe("12px");
+    expect(btn.style.borderRadius).toBe("4px");
   });
 
   it("透传 AntD ButtonProps（onClick 等交互基座不重建）", () => {
