@@ -203,17 +203,29 @@ def build_qualification_section(db_path: Path, data_dir: Path,
 
     equity 取权益快照末行同源值（与 pt_equity 行同源）；对照重放
     经 run_trigger_consistency（内部三态容错）；judged_at=调用时点。
+    入口终态守卫（审查 CARD-05）：非终态（rolling 报告）跳过对照重放
+    ——半途数据的一致性无判据意义且重放重不可每查即跑；consistency
+    占位 running_not_judged（三态 NULL）、judged_at=None（未判）；
+    两维仍现算（运行进度面）；transition 零触碰（内部守卫不变）。
     """
     from core.persistence.repository import paper as paper_repo
-    from core.paper_trading.runtime.executor import utc_now_iso
+    from core.paper_trading.runtime.executor import TERMINAL_STATUSES
+    from core.persistence.timestamps import utc_now_iso
     equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
     final_equity = float(equity_rows[-1]["equity"]) if equity_rows else float(task["initial_cash"])
-    signal_rows = paper_repo.list_signals(db_path, task["task_id"], limit=10**9)
-    consistency = run_trigger_consistency(db_path, data_dir, task, signal_rows)
+
+    if task.get("status") not in TERMINAL_STATUSES:
+        consistency = {"passed": None, "deviation_ratio": None, "numerator": None,
+                       "denominator": 0, "detail": {"reason": "running_not_judged"}}
+        judged_at = None
+    else:
+        signal_rows = paper_repo.list_signals(db_path, task["task_id"], limit=10**9)
+        consistency = run_trigger_consistency(db_path, data_dir, task, signal_rows)
+        judged_at = utc_now_iso()
     section = final_judgment(
         final_equity, float(task["initial_cash"]), int(task["total_trades"]),
         consistency)
-    section["judged_at"] = utc_now_iso()
+    section["judged_at"] = judged_at
     section["transition"] = _maybe_transit_candidate(db_path, task, section)
     return section
 
