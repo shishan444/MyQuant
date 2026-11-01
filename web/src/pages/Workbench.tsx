@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { AlertTriangle, Bot, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
-import { StatusBadge } from "@/components/StatusBadge";
 import {
   getPendingEvents,
   getValidationRecords,
@@ -74,6 +73,7 @@ export function Workbench() {
       eventsError={eventsQ.isError}
       records={records}
       recordsLoading={recordsQ.isLoading}
+      recordsError={recordsQ.isError}
     />
   );
 }
@@ -92,6 +92,7 @@ function PageSections(props: {
   eventsError: boolean;
   records: import("@/services/workbench").ValidationRecordRow[];
   recordsLoading: boolean;
+  recordsError: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -142,7 +143,9 @@ function PageSections(props: {
         {/* B2-3 最近验证结论（组A 端点消费——概要默认） */}
         <div className="mb-2">
           <p className="mb-1 text-[10px] uppercase tracking-wide text-text-muted">最近验证结论</p>
-          {props.recordsLoading ? (
+          {props.recordsError ? (
+            <p className="text-xs text-loss">验证记录源暂不可达（稍后自动重试）</p>
+          ) : props.recordsLoading ? (
             <p className="text-xs text-text-muted">装载中…</p>
           ) : props.records.length === 0 ? (
             <p className="text-xs text-text-muted">暂无验证记录</p>
@@ -188,8 +191,9 @@ function PageSections(props: {
             <span className="text-text-muted">月×周期矩阵缩略与 api/mcp 进程——随 C6 数据管理真数据</span>
           </div>
           <div className="mt-2 flex gap-2">
-            <StatusBadge status="ok" label="api" />
-            <StatusBadge status="pending" label="mcp" />
+            {/* B4 徽章已删（workbench-observation CARD-04：api 恒 ok/mcp 恒
+                pending 系硬编码假状态——web-ui-truthfulness 不画假数据，
+                随 C6 数据管理真数据再立真状态面） */}
           </div>
         </GlassCard>
       </div>
