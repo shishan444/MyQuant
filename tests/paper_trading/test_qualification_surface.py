@@ -112,7 +112,6 @@ class TestReportFourthKey:
         # 滚动报告四顶层键在响应顶层（report/final 的 FinalReportResponse
         # 才有 report 包装层）
         report = resp.json()
-
         # 既有三顶层键不变（Scenario「报告版本兼容」）
         for key in ("performance", "deviation", "evidence"):
             assert key in report
@@ -127,3 +126,38 @@ class TestReportFourthKey:
         # 凭证签发段键集（解耦披露：attempted/migrated/not_migrated_reason）
         assert set(section["transition"]) == {
             "attempted", "migrated", "not_migrated_reason"}
+
+    def test_running_report_guard_skips_replay(self, tmp_path: Path):
+        """running 滚动报告终态守卫（CARD-05 行为锚）：跳过对照重放——
+        passed=NULL（running_not_judged 占位）+judged_at=None（未判）+
+        两维仍现算+qualified=False（宁缺勿滥）+transition 恰零触碰。"""
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        h = _Harness(tmp_path, dna=make_dna(**_SHORT_DNA_KW), window_bars=120)
+        ex = h.make_executor()
+        ex.prepare()
+        paper.update_task(h.db, h.task_id, status="running",
+                          started_at="2026-11-01T00:00:00+00:00")
+        ex.process_frames(h.enhanced.iloc[:80], 0)  # 80/120——窗口未到
+        assert h.task()["status"] == "running"
+
+        app = create_app(db_path=h.db, data_dir=h.registry.data_dir)
+        app.state.db_path = h.db
+        app.state.data_dir = h.registry.data_dir
+        client = TestClient(app)
+        resp = client.get(f"/api/paper-trading/tasks/{h.task_id}/report")
+        assert resp.status_code == 200, resp.text
+        section = resp.json()["qualification"]
+
+        assert section["judged_at"] is None  # 未判
+        tc = section["trigger_consistency"]
+        assert tc["passed"] is None  # NULL≠false≠true 三态占位
+        assert tc["denominator"] == 0
+        assert tc["detail"]["reason"] == "running_not_judged"
+        assert isinstance(section["pnl_positive"], bool)  # 两维仍现算
+        assert isinstance(section["trades_enough"], bool)
+        assert section["qualified"] is False  # 宁缺勿滥
+        assert section["transition"] == {
+            "attempted": False, "migrated": False, "not_migrated_reason": None}
