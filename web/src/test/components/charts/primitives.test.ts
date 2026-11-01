@@ -20,11 +20,13 @@ import {
 import { toTime } from "@/components/charts/core/time";
 
 describe("markers 纯函数层", () => {
-  it("fillsToSignals：出场 side=null 不画、五 exit kind 归并 close", () => {
+  it("fillsToSignals：出场 side=null/缺省 不画、五 exit kind 归并 close", () => {
     const signals = fillsToSignals([
       { kind: "open", side: "long", bar_time: "2026-01-01 00:00:00" },
       { kind: "exit_sl", side: "long", bar_time: "2026-01-01 04:00:00" },
       { kind: "exit_max_hold", side: null, bar_time: "2026-01-01 08:00:00" },
+      // side 缺省（PaperFill.side? 可选三态——CARD-04 收宽后与 null 同不画）
+      { kind: "exit_time", bar_time: "2026-01-01 12:00:00" },
     ]);
     expect(signals).toEqual([
       { type: "open_long", timestamp: "2026-01-01 00:00:00" },
@@ -74,6 +76,21 @@ describe("markers 纯函数层", () => {
         expect(keys).toContain(`${action}_${side}`);
       }
     }
+  });
+
+  it("SIGNAL_STYLE 十值逐值锚（CARD-04 双写收敛同值替换——期望=收敛前 KlineChart 内联表历史基线）", () => {
+    expect(SIGNAL_STYLE).toEqual({
+      buy: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "B" },
+      sell: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "S" },
+      open_long: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "OL" },
+      close_long: { position: "aboveBar", color: "#FF9800", shape: "arrowDown", text: "CL" },
+      add_long: { position: "belowBar", color: "#00C853", shape: "circle", text: "AL" },
+      reduce_long: { position: "aboveBar", color: "#FF9800", shape: "circle", text: "RL" },
+      open_short: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "OS" },
+      close_short: { position: "belowBar", color: "#7C4DFF", shape: "arrowUp", text: "CS" },
+      add_short: { position: "aboveBar", color: "#FF1744", shape: "square", text: "AS" },
+      reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
+    });
   });
 });
 
