@@ -31,21 +31,24 @@ from core.persistence.orm.engine import engine_for as _engine_for
 from core.persistence.timestamps import utc_now_iso as _now
 
 # 状态机字段（调度器/执行器/恢复器的任务行唯一外写面；账户/持仓/
-# 统计/游标组是 append_bar 的原子专属面，不开放外写）
+# 统计/游标组是 append_bar 的原子专属面，不开放外写。例外 first_met_at：
+# 随 bar 快照走 append_bar，终局 bar 场景由 _finalize 经本通道兜底——
+# 幂等单次写 NULL→非 NULL，两通道同值不冲突）
 _ALLOWED_UPDATE_COLUMNS = frozenset({
     "status", "started_at", "stopped_at", "stop_reason", "heartbeat_at",
-    "error_detail", "updated_at",
+    "error_detail", "first_met_at", "updated_at",
 })
 
 # append_bar 的 task 行更新面（八步序第 6-8 步产出的绝对状态快照：
-# 游标+账户+统计+pending 意图+心跳——绝对值非增量，重放收敛）
+# 游标+账户+统计+pending 意图+心跳+达标首满足时点——绝对值非增量，
+# 重放收敛；first_met_at 幂等单次写 NULL→非 NULL）
 _BAR_STATE_COLUMNS = frozenset({
     "bars_processed", "last_bar_time", "balance", "position_side",
     "position_entry", "position_quantity", "position_margin",
     "position_open_cost", "position_sl_price", "position_tp_price",
     "position_trail_peak", "position_entry_bar_seq", "unrealized_pnl",
     "pending_intent_json", "total_trades", "win_count", "loss_count",
-    "total_pnl", "heartbeat_at", "updated_at",
+    "total_pnl", "first_met_at", "heartbeat_at", "updated_at",
 })
 
 # pt_task 状态机合法前态单源（design §5.1 五态+§7.1 端点 4 未拾取撤销

@@ -254,7 +254,9 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
             })
         out["migrated"] = bool(result.get("migrated"))
         if not out["migrated"]:
-            out["not_migrated_reason"] = str(result.get("reason") or result)
+            # transit 的 not_migrated 返回键=not_migrated_reason（service._not_migrated）
+            out["not_migrated_reason"] = str(
+                result.get("not_migrated_reason") or result)
     except Exception as exc:  # noqa: BLE001——迁移失败不回滚终判（解耦）
         out["not_migrated_reason"] = f"transit_failed: {exc}"
     return out
