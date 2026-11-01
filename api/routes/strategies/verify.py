@@ -29,7 +29,7 @@ from core.persistence.repository.backtest_result import (
     list_backtest_results,
     save_backtest_result,
 )
-from core.analysis.thresholds import DEFAULT_PROFILE
+from core.analysis.thresholds import DEFAULT_PROFILE, OPS
 from core.persistence.repository.strategy import (
     count_strategies,
     delete_strategy,
@@ -478,20 +478,14 @@ _THRESH_KEY_FIELD = (
     ("total_trades", "trades_enough"),
 )
 
-_THRESH_OPS = {
-    "gt": lambda v, t: v > t,
-    "ge": lambda v, t: v >= t,
-    "lt": lambda v, t: v < t,
-    "le": lambda v, t: v <= t,
-}
-
 
 def _threshold_star(row: Dict[str, Any]) -> tuple[Dict[str, Optional[bool]], int]:
     """三门槛明细现算（alignment-batch α）。
 
-    门槛常量引用 thresholds.py DEFAULT_PROFILE 单源（verify 域三门槛
-    即其语义本体，与 C5 纸盘判定器不同源——判定式等号侧由 profile
-    的 op 决定：return>0 严格、drawdown<0.25 严格、trades>=5 含等）。
+    门槛常量与比较算子引用 thresholds.py 单源（DEFAULT_PROFILE/OPS；
+    verify 域三门槛即其语义本体，与 C5 纸盘判定器不同源——判定式
+    等号侧由 profile 的 op 决定：return>0 严格、drawdown<0.25 严格、
+    trades>=5 含等）。
     口径归一：backtest_result.max_drawdown 落库为负值小数（引擎
     drawdown.min() 直落，scorer.py abs() 先例）——判定前取 abs，
     否则负值口径下 lt 0.25 恒真（-0.30 的 30% 回撤会误判 ok）。
@@ -507,7 +501,7 @@ def _threshold_star(row: Dict[str, Any]) -> tuple[Dict[str, Optional[bool]], int
             value = abs(value)
         passed = (
             None if value is None
-            else bool(_THRESH_OPS[spec["op"]](value, spec["value"]))
+            else bool(OPS[spec["op"]](value, spec["value"]))
         )
         thresholds[key] = passed
         if passed:
