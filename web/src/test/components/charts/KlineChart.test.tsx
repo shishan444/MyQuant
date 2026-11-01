@@ -20,7 +20,9 @@ vi.mock("lightweight-charts", () => {
     unsubscribeVisibleLogicalRangeChange: vi.fn(),
     applyOptions: vi.fn(),
   });
+  const mkPane = () => ({ setStretchFactor: vi.fn(), setHeight: vi.fn() });
   const mkChart = () => {
+    const panes = [mkPane(), mkPane()];
     const chart: any = {
       series: [] as any[],
       timeScale: vi.fn(() => mkTimeScale()),
@@ -35,8 +37,11 @@ vi.mock("lightweight-charts", () => {
         chart.series.push(s);
         return s;
       }),
-      addPane: vi.fn(),
-      panes: vi.fn(() => []),
+      addPane: vi.fn(() => {
+        panes.push(mkPane());
+        return panes[panes.length - 1];
+      }),
+      panes: vi.fn(() => panes),
       subscribeCrosshairMove: vi.fn((h: (p: unknown) => void) => registry.crosshairHandlers.push(h)),
     };
     registry.charts.push(chart);

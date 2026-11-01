@@ -17,7 +17,6 @@ import type {
 
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
 import { toTime } from "./core/time";
-import { useChartSync } from "./core/useChartSync";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -121,11 +120,9 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   equityData,
 }, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
-  const subChartDivRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const mainChartRef = useRef<IChartApi | null>(null);
-  const subChartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const indicatorSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(
     new Map(),
@@ -206,7 +203,6 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }), []);
 
   // Sync charts via shared hook.
-  useChartSync(mainChartRef.current, subChartRef.current);
 
   // Build legend groups from current data
   useEffect(() => {
@@ -302,16 +298,13 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   // Chart creation / destruction
   // -------------------------------------------------------------------------
   useLayoutEffect(() => {
-    if (!mainRef.current || !subChartDivRef.current) return;
-
-    const mainHeight = Math.round(height * 0.78);
-    const subHeight = Math.round(height * 0.22);
+    if (!mainRef.current) return;
 
     // -- Main chart --
     const mainChart = createChart(mainRef.current, {
       ...DARK_CHART_THEME,
       width: mainRef.current.clientWidth,
-      height: mainHeight,
+      height,
       rightPriceScale: {
         ...DARK_CHART_THEME.rightPriceScale,
         autoScale: true,
@@ -339,17 +332,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     }
 
     // -- Sub-chart (generic, series created dynamically per type) --
-    const subChart = createChart(subChartDivRef.current, {
-      ...DARK_CHART_THEME,
-      width: subChartDivRef.current.clientWidth,
-      height: subHeight,
-      timeScale: {
-        ...DARK_CHART_THEME.timeScale,
-        visible: false,
-      },
-    });
-
-    subChartRef.current = subChart;
+    // kline-common-layer 组 3：单 chart 多 pane（共用时间轴，替代双 chart+useChartSync）
+    const subPane = mainChart.addPane();
+    subPane.setStretchFactor(0.22);
+    mainChart.panes()[0].setStretchFactor(0.78);
 
     // -- ResizeObserver --
     const resizeObserver = new ResizeObserver((entries) => {
@@ -357,14 +343,11 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         const { width } = entry.contentRect;
         if (entry.target === mainRef.current) {
           mainChart.applyOptions({ width });
-        } else if (entry.target === subChartDivRef.current) {
-          subChart.applyOptions({ width });
         }
       }
     });
 
     resizeObserver.observe(mainRef.current);
-    resizeObserver.observe(subChartDivRef.current);
 
     // Crosshair move for legend values
     mainChart.subscribeCrosshairMove((param: MouseEventParams) => {
@@ -392,9 +375,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     return () => {
       resizeObserver.disconnect();
       mainChart.remove();
-      subChart.remove();
       mainChartRef.current = null;
-      subChartRef.current = null;
       candleSeriesRef.current = null;
       indicatorSeriesRefs.current.clear();
       markersPluginRef.current = null;
@@ -683,26 +664,27 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const memoizedSubChartType = useMemo(() => subChartType, [subChartType]);
 
   useEffect(() => {
-    const subChart = subChartRef.current;
-    if (!subChart) return;
+    const chart = mainChartRef.current;
+    if (!chart) return;
 
-    // Remove all existing series
+    // Remove all existing series（副图 pane=1——kline-common-layer 组 3 panes 化）
     for (const s of subChartSeriesRefs.current) {
-      subChart.removeSeries(s);
+      chart.removeSeries(s);
     }
     subChartSeriesRefs.current = [];
 
     const createdSeries: ISeriesApi<"Line" | "Histogram">[] = [];
+    const SUB_PANE = 1;
 
     if (memoizedSubChartType === "volume") {
       // Volume sub-chart: histogram with green/red bars
       const volSrc = memoizedVolumeData ?? [];
       if (volSrc.length > 0) {
-        const histSeries = subChart.addSeries(HistogramSeries, {
+        const histSeries = chart.addSeries(HistogramSeries, {
           priceFormat: { type: "volume" },
           priceLineVisible: false,
           lastValueVisible: true,
-        });
+        }, SUB_PANE);
         histSeries.setData(
           volSrc.map((d) => ({
             time: toTime(d.time),
@@ -714,10 +696,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     } else if (memoizedSubChartType === "macd" && memoizedMacdData) {
       // MACD sub-chart: histogram + macd line + signal line
-      const histogramSeries = subChart.addSeries(HistogramSeries, {
+      const histogramSeries = chart.addSeries(HistogramSeries, {
         priceLineVisible: false,
         lastValueVisible: false,
-      });
+      }, SUB_PANE);
       histogramSeries.setData(
         memoizedMacdData.histogram.map((d) => ({
           time: toTime(d.time),
@@ -727,86 +709,86 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       );
       createdSeries.push(histogramSeries);
 
-      const macdLine = subChart.addSeries(LineSeries, {
+      const macdLine = chart.addSeries(LineSeries, {
         color: "#3B82F6",
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
-      });
+      }, SUB_PANE);
       macdLine.setData(memoizedMacdData.macd.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(macdLine);
 
-      const signalLine = subChart.addSeries(LineSeries, {
+      const signalLine = chart.addSeries(LineSeries, {
         color: "#F59E0B",
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
-      });
+      }, SUB_PANE);
       signalLine.setData(memoizedMacdData.signal.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(signalLine);
     } else if (memoizedSubChartType === "rsi") {
       // RSI sub-chart: line + 70/30 reference lines
       if (rsiData.length > 0) {
-        const rsiSeries = subChart.addSeries(LineSeries, {
+        const rsiSeries = chart.addSeries(LineSeries, {
           color: CHART_COLORS.rsi,
           lineWidth: 2,
           priceLineVisible: false,
           lastValueVisible: true,
-        });
+        }, SUB_PANE);
         rsiSeries.setData(rsiData);
         createdSeries.push(rsiSeries);
 
         const time = rsiData[0].time;
         const lastTime = rsiData[rsiData.length - 1].time;
 
-        const obSeries = subChart.addSeries(LineSeries, {
+        const obSeries = chart.addSeries(LineSeries, {
           color: CHART_COLORS.overbought,
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-        });
+        }, SUB_PANE);
         obSeries.setData([{ time, value: 70 }, { time: lastTime, value: 70 }]);
         createdSeries.push(obSeries);
 
-        const osSeries = subChart.addSeries(LineSeries, {
+        const osSeries = chart.addSeries(LineSeries, {
           color: CHART_COLORS.oversold,
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-        });
+        }, SUB_PANE);
         osSeries.setData([{ time, value: 30 }, { time: lastTime, value: 30 }]);
         createdSeries.push(osSeries);
       }
     } else if (memoizedSubChartType === "kdj" && memoizedKdjData) {
       // KDJ sub-chart: K/D/J lines + 80/20 reference lines
-      const kLine = subChart.addSeries(LineSeries, {
+      const kLine = chart.addSeries(LineSeries, {
         color: "#3B82F6",
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
-      });
+      }, SUB_PANE);
       kLine.setData(memoizedKdjData.k.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(kLine);
 
-      const dLine = subChart.addSeries(LineSeries, {
+      const dLine = chart.addSeries(LineSeries, {
         color: "#F59E0B",
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
-      });
+      }, SUB_PANE);
       dLine.setData(memoizedKdjData.d.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(dLine);
 
-      const jLine = subChart.addSeries(LineSeries, {
+      const jLine = chart.addSeries(LineSeries, {
         color: "#A78BFA",
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: true,
-      });
+      }, SUB_PANE);
       jLine.setData(memoizedKdjData.j.map((d) => ({ time: toTime(d.time), value: d.value })));
       createdSeries.push(jLine);
 
@@ -816,37 +798,37 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         const time = toTime(allKdjPoints[0].time);
         const lastTime = toTime(allKdjPoints[allKdjPoints.length - 1].time);
 
-        const ref80 = subChart.addSeries(LineSeries, {
+        const ref80 = chart.addSeries(LineSeries, {
           color: "rgba(239,68,68,0.4)",
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-        });
+        }, SUB_PANE);
         ref80.setData([{ time, value: 80 }, { time: lastTime, value: 80 }]);
         createdSeries.push(ref80);
 
-        const ref20 = subChart.addSeries(LineSeries, {
+        const ref20 = chart.addSeries(LineSeries, {
           color: "rgba(34,197,94,0.4)",
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-        });
+        }, SUB_PANE);
         ref20.setData([{ time, value: 20 }, { time: lastTime, value: 20 }]);
         createdSeries.push(ref20);
       }
     } else if (memoizedSubChartType === "equity" && memoizedEquityData.length > 0) {
       // Equity curve sub-chart: line series showing portfolio value over time
-      const equitySeries = subChart.addSeries(LineSeries, {
+      const equitySeries = chart.addSeries(LineSeries, {
         color: "#f59e0b",
         lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: true,
         title: "Equity",
-      });
+      }, SUB_PANE);
       equitySeries.setData(
         memoizedEquityData.map((d) => ({ time: toTime(d.time), value: d.value })),
       );
@@ -856,14 +838,14 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       const firstVal = memoizedEquityData[0].value;
       const eqStartTime = toTime(memoizedEquityData[0].time);
       const eqEndTime = toTime(memoizedEquityData[memoizedEquityData.length - 1].time);
-      const refLine = subChart.addSeries(LineSeries, {
+      const refLine = chart.addSeries(LineSeries, {
         color: "rgba(148,163,184,0.3)",
         lineWidth: 1,
         lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
-      });
+      }, SUB_PANE);
       refLine.setData([
         { time: eqStartTime, value: firstVal },
         { time: eqEndTime, value: firstVal },
@@ -872,7 +854,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     }
 
     subChartSeriesRefs.current = createdSeries;
-    subChart.timeScale().fitContent();
+    chart.timeScale().fitContent();
   }, [memoizedSubChartType, rsiData, memoizedMacdData, memoizedKdjData, memoizedVolumeData, memoizedEquityData]);
 
   // Fullscreen toggle
@@ -939,13 +921,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         values={legendValues}
       />
 
-      <div className="flex flex-col h-full">
-        <div ref={mainRef} className="flex-[3] min-h-0" />
-        <div
-          ref={subChartDivRef}
-          className="flex-1 min-h-0 border-t border-slate-800/50"
-        />
-      </div>
+      <div ref={mainRef} className="h-full" />
     </div>
   );
 });
