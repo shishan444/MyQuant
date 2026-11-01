@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { useLocation } from "react-router";
 
+import { HypothesisStepper } from "@/components/hypothesis/HypothesisStepper";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
@@ -447,6 +448,19 @@ export function Lab() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
+        {/* 02-B1 五步流水线条（hypothesis-workbench 组 3.1）——三模式到
+            五步的映射：构建=假设验证模式 / 预检=模式内预检态 / 案例=场景
+            验证 / 沙盒=策略回测 / 登记=模式内登记动作；步骤条呈现映射态 */}
+        <HypothesisStepper
+          current={labMode === "hypothesis" ? 0 : labMode === "scene" ? 2 : 3}
+          furthest={4}
+          onStepClick={(i: number) => {
+            if (i === 0) setLabMode("hypothesis");
+            else if (i === 2) setLabMode("scene");
+            else if (i === 3) setLabMode("backtest");
+          }}
+        />
+
         {/* Mode switcher */}
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
           <button
