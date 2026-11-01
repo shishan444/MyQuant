@@ -170,6 +170,8 @@ class PaperEquityResponse(BaseModel):
     unrealized_pnl: Optional[float] = None
     position_side: Optional[str] = None
     cumulative_funding: Optional[float] = None
+    # trail 档当 bar 止损价观测（paper-trading-revamp 组 E 透传；NULL 行返回 null）
+    trail_sl_price: Optional[float] = None
 
 
 class PaperEquityListResponse(BaseModel):

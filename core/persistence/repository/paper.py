@@ -428,6 +428,7 @@ def append_bar(
                 unrealized_pnl=equity["unrealized_pnl"],
                 position_side=equity.get("position_side"),
                 cumulative_funding=equity.get("cumulative_funding", 0.0),
+                trail_sl_price=equity.get("trail_sl_price"),
             )
         )
         # 先补旧账（backfill 已有 pending 行）再记新账（新结算 INSERT）

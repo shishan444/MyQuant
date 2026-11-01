@@ -695,6 +695,10 @@ class PtEquity(Base):
     # 全 NULL 语义一致）
     position_side: Mapped[Optional[str]] = mapped_column(Text)
     cumulative_funding: Mapped[float] = mapped_column(REAL, nullable=False)
+    # trail 档当 bar 止损价观测列（paper-trading-revamp 组 E）：NULL 封闭
+    # 语义=非 trail 档任务的 bar / trail 档任务的空仓 bar；非 NULL=trail
+    # 档持仓 bar 的当 bar 止损价（决策时点值）。观测面——决策路径零引用
+    trail_sl_price: Mapped[Optional[float]] = mapped_column(REAL)
 
 
 class PtFunding(Base):

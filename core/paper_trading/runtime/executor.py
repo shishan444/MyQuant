@@ -1284,6 +1284,14 @@ class PaperTaskExecutor:
                 "unrealized_pnl": snap.unrealized_pnl,
                 "position_side": position.side if position else None,
                 "cumulative_funding": self.ledger.total_funding,
+                # trail 档当 bar 止损价观测（paper-trading-revamp 组 E）：
+                # 决策时点值（出场判定消费 ledger 内部 trail_peak，不读此列——
+                # 观测面纪律，白名单=写入点+equity 查询面）
+                "trail_sl_price": (
+                    float(position.sl_price)
+                    if (self.params.sl_mode == "trail" and position is not None
+                        and position.sl_price is not None)
+                    else None),
             },
             funding=funding_rows or None,
             **extra,
