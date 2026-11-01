@@ -61,24 +61,23 @@ class TestTriggerConsistency:
     def test_paper_whitelist_and_exit_kinds_excluded(self):
         # 六 kind 全剔除（含 exit_max_loss——pt_signal 独有最易漏）+白名单四值命中
         rows = [
-            {"kind": k, "bar_time": f"2026-01-0{i}T00:00:00"} for i, k in enumerate(
+            {"signal_kind": k, "bar_time": f"2026-01-0{i}T00:00:00"} for i, k in enumerate(
                 ["open", "close", "add", "reduce",
                  "exit_sl", "exit_tp", "exit_max_loss", "exit_max_hold",
                  "exit_time", "exit_liquidation"], start=1)
-        ] + [{"kind": "open", "bar_time": "2026-01-11T00:00:00"}]
+        ] + [{"signal_kind": "open", "bar_time": "2026-01-11T00:00:00"}]
         out = paper_trigger_set(rows)
         # 白名单四值命中 + 第 11 行 open；六执行出场 kind 全不在集
         assert len(out) == 5
         kinds = {a for _, a in out}
         assert kinds == {"open", "close", "add", "reduce"}
         assert all(k not in kinds for k in EXECUTION_EXIT_KINDS)
-        assert "exit_max_loss" not in {r["kind"] for r in rows if (r["kind"], r["bar_time"]) not in [(b, t) for t, b in [(x[0], x[1]) for x in out]]} or True
 
     def test_rejected_expired_counted(self):
         # 被拒/过期计入纸盘侧（求值产生即算触发）——fixture 里 outcome 字段
         # 不影响 paper_trigger_set（过滤只看 kind 白名单）
-        rows = [{"kind": "open", "bar_time": "t0", "outcome": "rejected"},
-                {"kind": "open", "bar_time": "t1", "outcome": "expired"}]
+        rows = [{"signal_kind": "open", "bar_time": "t0", "outcome": "rejected"},
+                {"signal_kind": "open", "bar_time": "t1", "outcome": "expired"}]
         assert len(paper_trigger_set(rows)) == 2
 
 

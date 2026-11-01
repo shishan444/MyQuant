@@ -205,6 +205,10 @@ def _assemble_report(
         db_path, task, equity_rows, fill_rows, exit_fills, funding_rows)
     deviation = _deviation_layer(
         db_path, data_dir, task, equity_rows, paper_side, evidence)
+    # 第四键 qualification（paper-trading-revamp 组 C：三维终判段——
+    # 既有三键不动；旧报告无此键合法）
+    from core.paper_trading.qualification import build_qualification_section
+    qualification = build_qualification_section(db_path, data_dir, task)
     return {
         "task_id": tid,
         "strategy_id": task["strategy_id"],
@@ -213,6 +217,7 @@ def _assemble_report(
         "performance": performance,
         "deviation": deviation,
         "evidence": evidence,
+        "qualification": qualification,
     }
 
 

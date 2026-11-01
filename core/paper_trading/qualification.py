@@ -79,7 +79,7 @@ def paper_trigger_set(pt_signal_rows) -> list:
     """
     out = []
     for row in pt_signal_rows:
-        kind = row["kind"] if isinstance(row, dict) else row.kind
+        kind = row["signal_kind"] if isinstance(row, dict) else row.signal_kind
         if kind in SIGNAL_WHITELIST:
             bt = row["bar_time"] if isinstance(row, dict) else row.bar_time
             out.append((bt, kind))
@@ -158,6 +158,63 @@ def final_judgment(final_equity: float, initial_cash: float, total_trades: int,
         "qualified": qualified,
         "profile_note": "qualification:REQ-4-01(纸盘达标域判据，语义分立于研究验证域 DEFAULT_PROFILE)",
     }
+
+
+def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
+                            signal_rows: list) -> Dict[str, Any]:
+    """对照重放器（子件三入口；终判时调用一次，无 REST 面）。
+
+    装配链纪律（硬约束）：经组 A 共享函数 prepare_replay_inputs 与
+    backtest_bridge 同源（load_and_prepare_df/load_mtf_data/
+    assemble_signal_set/ensure_timeframe_consistent 逐函数同源）。
+    重放窗=任务实际运行区间（首根 equity bar→last_bar_time）；
+    warmup 沿偏差对照层同值 200（reporting DEVIATION_WARMUP_BARS）。
+    对照面=pt_signal 信号锚（全 outcome 过滤白名单四值）；
+    任何失败→passed=NULL（三态，宁缺勿滥）不抛出。
+    """
+    try:
+        from core.analysis.backtest_bridge import prepare_replay_inputs
+        from core.persistence.repository import paper as paper_repo
+        from core.strategy.executor import dna_to_signal_set
+        from core.paper_trading.kernel.types import StrategyDNA
+
+        dna = StrategyDNA.from_json(task["dna_snapshot_json"])
+        equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
+        if not equity_rows or not task.get("last_bar_time"):
+            return {"passed": None, "deviation_ratio": None, "numerator": None,
+                    "denominator": 0, "detail": {"reason": "no_run_window"}}
+        start = equity_rows[0]["bar_time"]
+        end = task["last_bar_time"]
+        bt_df, dfs_by_timeframe, _sig, _w = prepare_replay_inputs(
+            db_path, data_dir, dna, task["symbol"], task["timeframe"],
+            start, end, 200)
+        sig_set = dna_to_signal_set(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
+        replay = replay_trigger_set(sig_set)
+        paper = paper_trigger_set(signal_rows)
+        return trigger_consistency(paper, replay)
+    except Exception as exc:  # noqa: BLE001——终判解耦：重放失败不阻塞终态
+        return {"passed": None, "deviation_ratio": None, "numerator": None,
+                "denominator": 0, "detail": {"reason": f"replay_failed: {exc}"}}
+
+
+def build_qualification_section(db_path: Path, data_dir: Path,
+                                task: Dict[str, Any]) -> Dict[str, Any]:
+    """子件二三维终判组装（reporting._assemble_report 第四键挂点）。
+
+    equity 取权益快照末行同源值（与 pt_equity 行同源）；对照重放
+    经 run_trigger_consistency（内部三态容错）；judged_at=调用时点。
+    """
+    from core.persistence.repository import paper as paper_repo
+    from core.paper_trading.runtime.executor import utc_now_iso
+    equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
+    final_equity = float(equity_rows[-1]["equity"]) if equity_rows else float(task["initial_cash"])
+    signal_rows = paper_repo.list_signals(db_path, task["task_id"], limit=10**9)
+    consistency = run_trigger_consistency(db_path, data_dir, task, signal_rows)
+    section = final_judgment(
+        final_equity, float(task["initial_cash"]), int(task["total_trades"]),
+        consistency)
+    section["judged_at"] = utc_now_iso()
+    return section
 
 
 def qualification_progress_payload(equity: Optional[float], initial_cash: float,
