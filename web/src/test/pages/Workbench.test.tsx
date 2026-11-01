@@ -12,8 +12,15 @@ vi.mock("@/services/workbench", () => ({
   getValidationRecords: vi.fn(),
 }));
 
+// CARD-03 B4 接线：IntegrityMatrix（内部消费 dataWorkbench 服务）
+vi.mock("@/services/dataWorkbench", () => ({
+  getMonthlyMatrix: vi.fn(),
+  getFreshnessStatus: vi.fn(),
+}));
+
 import { Workbench } from "@/pages/Workbench";
 import * as wb from "@/services/workbench";
+import * as dwb from "@/services/dataWorkbench";
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -47,6 +54,16 @@ const RECORDS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(dwb.getMonthlyMatrix).mockResolvedValue({
+    symbol: "BTCUSDT", generated_at: "2026-11-01T00:00:00Z", months_back: 6,
+    short_period: {
+      timeframes: ["4h"],
+      matrix: [
+        { month: "2026-10", cells: [{ timeframe: "4h", status: "green", bars_actual: 180, bars_expected: 180, gap_count: 0, first_gap: null }] },
+      ],
+    },
+    long_period: [],
+  } as never);
   vi.mocked(wb.getPendingEvents).mockResolvedValue(EVENTS as never);
   vi.mocked(wb.getValidationRecords).mockResolvedValue(RECORDS as never);
 });
@@ -163,5 +180,18 @@ describe("Workbench（01 观察工作台）", () => {
     setup();
     await screen.findByText(/暂无待裁决事件/);
     expect(screen.queryByText(/任务扫描达上限/)).not.toBeInTheDocument();
+  });
+
+  it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+6 月只读", async () => {
+    setup();
+    // B4 区月矩阵缩略消费（复用 09 页组件，01 观察面零操作语义）
+    expect(await screen.findByTestId("integrity-matrix")).toBeInTheDocument();
+    expect(dwb.getMonthlyMatrix).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "BTCUSDT", months_back: 6 }));
+  });
+
+  it("CARD-03 api/mcp 半句如实呈现「待真状态面」（truthfulness 口径）", async () => {
+    setup();
+    expect(await screen.findByText(/api\/mcp 进程状态——待真状态面/)).toBeInTheDocument();
   });
 });
