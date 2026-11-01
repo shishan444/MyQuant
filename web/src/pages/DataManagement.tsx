@@ -288,7 +288,15 @@ export function DataManagement() {
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
   // 09 页完整性两区（data-management-revamp 组 C1/C2）：symbol 沿数据集首位+月窗 6
+  // matrix symbol 双态（CARD-02 F2）：display=输入框即时态，committed=查询
+  // 提交态（queryKey 消费）——失焦/回车才提交，杜绝每键一次 monthly-matrix
+  // 全量请求（staleTime 只对同 key 生效不兜底新 key，retry:1 还放大 404 中间态）
+  const [matrixSymbolInput, setMatrixSymbolInput] = useState("BTCUSDT");
   const [matrixSymbol, setMatrixSymbol] = useState("BTCUSDT");
+  const commitMatrixSymbol = () => {
+    const v = matrixSymbolInput.toUpperCase().slice(0, 12).trim();
+    if (v) setMatrixSymbol(v);
+  };
   const [monthsBack, setMonthsBack] = useState(6);
 
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -413,11 +421,15 @@ export function DataManagement() {
             <span className="text-xs text-text-secondary">完整性月矩阵</span>
             <div className="flex items-center gap-2">
               <input
-                value={matrixSymbol}
-                onChange={(e) => setMatrixSymbol(e.target.value.toUpperCase().slice(0, 12))}
+                value={matrixSymbolInput}
+                onChange={(e) => setMatrixSymbolInput(e.target.value.toUpperCase().slice(0, 12))}
+                onBlur={commitMatrixSymbol}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitMatrixSymbol();
+                }}
                 className="w-24 rounded border border-border-default bg-transparent px-2 py-0.5 font-mono text-xs text-text-primary"
                 placeholder="symbol"
-                aria-label="矩阵 symbol"
+                aria-label="矩阵 symbol（失焦或回车提交）"
               />
               <select
                 value={monthsBack}

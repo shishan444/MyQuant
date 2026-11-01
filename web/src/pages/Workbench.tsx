@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { AlertTriangle, Bot, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
+import { IntegrityMatrix } from "@/components/data/IntegrityPanels";
 import {
   getPendingEvents,
   getValidationRecords,
@@ -198,14 +199,17 @@ function PageSections(props: {
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
             <HeartPulse className="h-3.5 w-3.5" /> 数据与系统健康
           </h2>
+          {/* 月矩阵缩略消费（C3 转交件接线——data-management-revamp 审查
+              CARD-03）：复用 09 页 IntegrityMatrix 组件（固定 BTCUSDT+6 月
+              只读——01 观察面零操作，详情/切档归 09 页导航）；api/mcp 进程
+              状态半句保留（真状态面待后续——B4 徽章删除时 web-ui-
+              truthfulness 口径不变） */}
           <div className="flex items-center gap-3 text-xs">
             <Database className="h-3.5 w-3.5 text-text-muted" />
-            <span className="text-text-muted">月×周期矩阵缩略与 api/mcp 进程——随 C6 数据管理真数据</span>
+            <span className="text-text-muted">api/mcp 进程状态——待真状态面</span>
           </div>
-          <div className="mt-2 flex gap-2">
-            {/* B4 徽章已删（workbench-observation CARD-04：api 恒 ok/mcp 恒
-                pending 系硬编码假状态——web-ui-truthfulness 不画假数据，
-                随 C6 数据管理真数据再立真状态面） */}
+          <div className="mt-2">
+            <IntegrityMatrix symbol="BTCUSDT" monthsBack={6} />
           </div>
         </GlassCard>
       </div>
