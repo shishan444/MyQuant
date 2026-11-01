@@ -47,7 +47,8 @@ _CALIBER_NOTE = (
     "逐元素 10 / 数学词汇 2（rolling_quantile 归时序变换、sqrt/log 归"
     "逐元素）。历史口径差异单列：源码分隔注释字面的「数学词汇族」曾含 "
     "rolling_quantile/sqrt/log/kalman/kalman_slope 五词——两口径差异即 "
-    "前三词的族归属，共 26 词总数不变。"
+    "前三词的族归属（词集相同，v2.1 时点共 26 词；现行总数以响应 "
+    "total 字段现算为准）。"
 )
 
 

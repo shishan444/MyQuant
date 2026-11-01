@@ -937,8 +937,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def register_formula_plugin(name: str, expression: str) -> Dict[str, Any]:
-        """注册公式插件（受限 DSL：白名单函数 26 词、禁前视、静态校验
-        三关；同名同表达式幂等返回既有版本；同名新表达式版本递增）。
+        """注册公式插件（受限 DSL：白名单函数四族（注册表现算）、禁前视、
+        静态校验三关；同名同表达式幂等返回既有版本；同名新表达式版本递增）。
         白名单四族——时序变换（shift/diff/rolling_mean|std|max|min|sum/
         zscore/ema/corr/abs/rolling_quantile(列,窗口,分位点)——分位点
         须为 [0,1] 常量）；时序结构 crossover(a,b) 上穿/crossunder
