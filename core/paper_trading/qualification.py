@@ -214,7 +214,51 @@ def build_qualification_section(db_path: Path, data_dir: Path,
         final_equity, float(task["initial_cash"]), int(task["total_trades"]),
         consistency)
     section["judged_at"] = utc_now_iso()
+    section["transition"] = _maybe_transit_candidate(db_path, task, section)
     return section
+
+
+def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
+                             section: Dict[str, Any]) -> Dict[str, Any]:
+    """子件四凭证签发接线（仅终态+qualified=true 触发；解耦语义）。
+
+    迁移失败不回滚终判、终判失败不阻塞迁移互不连带；多任务竞态=
+    状态机单源裁决（先到迁移，后到 already_in_status 如实记录）；
+    重复终判幂等（qualify 边 already_in_status 承载）。非终态
+    （rolling 报告）attempted=false 零触碰。
+    """
+    out: Dict[str, Any] = {"attempted": False, "migrated": False,
+                           "not_migrated_reason": None}
+    terminal = {"completed", "stopped", "error"}
+    if task.get("status") not in terminal or not section.get("qualified"):
+        return out
+    out["attempted"] = True
+    try:
+        from core.strategy.lifecycle.service import transit
+        dna = None
+        from core.paper_trading.kernel.types import StrategyDNA
+        dna = StrategyDNA.from_json(task["dna_snapshot_json"])
+        result = transit(
+            db_path, task["strategy_id"],
+            target="candidate", trigger="qualify",
+            evidence={
+                "task_id": task["task_id"],
+                "strategy_id": task["strategy_id"],
+                "version_ref": getattr(dna, "gene_signature", None) or task["task_id"],
+                "judged_at": section.get("judged_at"),
+                "criteria": {
+                    "pnl_positive": section["pnl_positive"],
+                    "trades_enough": section["trades_enough"],
+                    "trigger_consistency": section.get("trigger_consistency", {}).get("passed"),
+                },
+                "profile_note": section.get("profile_note"),
+            })
+        out["migrated"] = bool(result.get("migrated"))
+        if not out["migrated"]:
+            out["not_migrated_reason"] = str(result.get("reason") or result)
+    except Exception as exc:  # noqa: BLE001——迁移失败不回滚终判（解耦）
+        out["not_migrated_reason"] = f"transit_failed: {exc}"
+    return out
 
 
 def qualification_progress_payload(equity: Optional[float], initial_cash: float,

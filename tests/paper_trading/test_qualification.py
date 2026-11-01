@@ -102,3 +102,34 @@ class TestProgressPayload:
         # 语义分立：自有常量（不 import 研究域 DEFAULT_PROFILE）
         assert QUALIFICATION_PROFILE["min_trades"] == 5
         assert QUALIFICATION_PROFILE["trigger_consistency_max"] == 0.10
+
+
+class TestTransitWiring:
+    """子件四接线核心语义（D3：非终态零触碰/解耦/幂等由状态机承载）。"""
+
+    def test_non_terminal_no_transit(self, tmp_path):
+        # 非终态（running）：attempted=false 零触碰（rolling 报告不触发迁移）
+        from core.paper_trading.qualification import _maybe_transit_candidate
+        task = {"task_id": "t", "strategy_id": "s", "status": "running",
+                "dna_snapshot_json": "{}", "initial_cash": 100.0, "total_trades": 0}
+        out = _maybe_transit_candidate(tmp_path / "q.db", task, {"qualified": True})
+        assert out == {"attempted": False, "migrated": False, "not_migrated_reason": None}
+
+    def test_not_qualified_no_transit(self, tmp_path):
+        from core.paper_trading.qualification import _maybe_transit_candidate
+        task = {"task_id": "t", "strategy_id": "s", "status": "stopped",
+                "dna_snapshot_json": "{}", "initial_cash": 100.0, "total_trades": 0}
+        out = _maybe_transit_candidate(tmp_path / "q.db", task, {"qualified": False})
+        assert out["attempted"] is False
+
+    def test_transit_failure_decoupled(self, tmp_path):
+        # 终态+qualified 但库不可用：迁移失败不抛（解耦）+原因入段
+        from core.paper_trading.qualification import _maybe_transit_candidate
+        task = {"task_id": "t", "strategy_id": "s", "status": "completed",
+                "dna_snapshot_json": "not-json", "initial_cash": 100.0, "total_trades": 6}
+        out = _maybe_transit_candidate(tmp_path / "nonexistent" / "q.db", task,
+                                       {"qualified": True, "judged_at": "x",
+                                        "pnl_positive": True, "trades_enough": True})
+        assert out["attempted"] is True
+        assert out["migrated"] is False
+        assert out["not_migrated_reason"]
