@@ -1,6 +1,6 @@
 import { Button } from "antd";
 import type { ButtonProps } from "antd";
-import { BORDER, TEXT } from "@/theme/tokens";
+import { BORDER, RADIUS, TEXT } from "@/theme/tokens";
 
 /**
  * G-3 幽灵按钮（global-nav-shell）——形制核取自原型画布 G-3 frame：
@@ -14,10 +14,11 @@ export function GhostButton({ children, style, ...rest }: ButtonProps) {
       {...rest}
       style={{
         border: `1px solid ${BORDER.strong}`,
-        borderRadius: 4,
+        borderRadius: RADIUS.badge,
         padding: "4px 10px",
         height: "auto",
         color: TEXT.secondary,
+        fontSize: 12,
         ...style,
       }}
     >
