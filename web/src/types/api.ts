@@ -105,11 +105,13 @@ export type Strategy = Omit<S["StrategyResponse"], "dna" | "metrics"> & {
 /** 回测结果 ← 后端 BacktestResponse；equity_curve/signals/dimension_scores 为 dict 洞补形 */
 export type BacktestResult = Omit<
   S["BacktestResponse"],
-  "equity_curve" | "signals" | "dimension_scores"
+  "equity_curve" | "signals" | "dimension_scores" | "sl_series"
 > & {
   dimension_scores?: Record<string, number>;
   equity_curve?: Array<{ timestamp: string; value: number }> | null;
   signals?: TradeSignal[] | null;
+  /** series 档止损价序列（hypothesis-workbench 组 2 透传；非 series 档 null） */
+  sl_series?: Array<{ time: string; value: number }> | null;
 };
 
 /** 交易信号 ← 后端 BacktestResponse.signals 元素（dict 洞补形） */

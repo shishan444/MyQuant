@@ -17,6 +17,8 @@ import { HypothesisStepper } from "@/components/hypothesis/HypothesisStepper";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
+import { LineSeries } from "lightweight-charts";
+import { toTime } from "@/components/charts/core/time";
 import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { ChartToolbar } from "@/components/charts/ChartToolbar";
 import { Button as AntButton, Select as AntSelect, Skeleton } from "antd";
@@ -154,6 +156,9 @@ export function Lab() {
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
+  // series 档止损线序列（hypothesis-workbench 组 4.1：回测响应 sl_series
+  // 经 onChartReady 画 LineSeries——虚线黄，形制沿 07 页 trail 观测线）
+  const [slSeries, setSlSeries] = useState<Array<{ time: string; value: number }> | null>(null);
 
   // -- Chart indicators hook (shared for hypothesis mode) --
   const {
@@ -753,6 +758,7 @@ export function Lab() {
               {backtestDna ? (
                 <BacktestModePanel
                   ref={backtestPanelRef}
+                  onResult={(r) => setSlSeries(r.sl_series ?? null)}
                   dna={{
                     ...backtestDna,
                     risk_genes: {
@@ -1050,6 +1056,17 @@ export function Lab() {
               </div>
               <KlineChart
                 ref={chartRef}
+                onChartReady={(chart, _series) => {
+                  if (!slSeries || slSeries.length === 0) return;
+                  try {
+                    const line = chart.addSeries(LineSeries, {
+                      color: "#FBBF24", lineWidth: 1, lineStyle: 2,
+                      priceLineVisible: false, lastValueVisible: false,
+                    });
+                    line.setData(slSeries.map((p) => ({
+                      time: toTime(p.time.replace(" ", "T")) as never, value: p.value })));
+                  } catch { /* 序列挂载失败不阻塞主图（观测面容错） */ }
+                }}
                 data={candleData ?? []}
                 indicators={chartIndicators}
                 bollData={chartBollData}
