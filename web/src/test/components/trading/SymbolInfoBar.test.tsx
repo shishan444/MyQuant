@@ -19,7 +19,7 @@ function lastPriceEl() {
 
 describe("SymbolInfoBar 装载窗聚合与涨跌色", () => {
   it("上涨窗：最新价/涨跌幅/高/低/量聚合现算，涨幅红绿走 profit 色", () => {
-    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES as never} />);
+    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES} />);
     // change=(112-100)/100=+12%；last=112；high=115；low=95；vol=30
     expect(lastPriceEl()).toHaveTextContent("112.00");
     expect(lastPriceEl().style.color).toBe("var(--color-profit)");
@@ -34,7 +34,7 @@ describe("SymbolInfoBar 装载窗聚合与涨跌色", () => {
       { timestamp: "2026-01-01 00:00:00", open: 110, high: 120, low: 90, close: 108, volume: 5 },
       { timestamp: "2026-01-01 04:00:00", open: 108, high: 112, low: 88, close: 99, volume: 5 },
     ];
-    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={down as never} />);
+    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={down} />);
     // change=(99-110)/110=-10%
     expect(lastPriceEl().style.color).toBe("var(--color-loss)");
     expect(screen.getByText("-10.00%")).toBeInTheDocument();
@@ -44,14 +44,14 @@ describe("SymbolInfoBar 装载窗聚合与涨跌色", () => {
     const flat = [
       { timestamp: "2026-01-01 00:00:00", open: 100, high: 100, low: 100, close: 100, volume: 1 },
     ];
-    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={flat as never} />);
+    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={flat} />);
     expect(lastPriceEl().style.color).toBe("var(--color-profit)");
     expect(screen.getByText("+0.00%")).toBeInTheDocument();
   });
 
   it("装载窗量 vol=0 不渲染量字段（高/低仍在）", () => {
     const zeroVol = UP_CANDLES.map((c) => ({ ...c, volume: 0 }));
-    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={zeroVol as never} />);
+    render(<SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={zeroVol} />);
     expect(screen.queryByText(/装载窗量/)).not.toBeInTheDocument();
     expect(screen.getByText("115.00")).toBeInTheDocument();
   });
@@ -66,22 +66,22 @@ describe("SymbolInfoBar 空数据与资金费字段", () => {
 
   it("cumulativeFunding 不传/null 不渲染；0 渲染（0!=null）；负值无显式 +", () => {
     const { rerender } = render(
-      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES as never} />,
+      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES} />,
     );
     expect(screen.queryByText(/累计资金费/)).not.toBeInTheDocument();
 
     rerender(
-      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES as never} cumulativeFunding={null} />,
+      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES} cumulativeFunding={null} />,
     );
     expect(screen.queryByText(/累计资金费/)).not.toBeInTheDocument();
 
     rerender(
-      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES as never} cumulativeFunding={0} />,
+      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES} cumulativeFunding={0} />,
     );
     expect(screen.getByText("+0.0000 USDT")).toBeInTheDocument();
 
     rerender(
-      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES as never} cumulativeFunding={-1.5} />,
+      <SymbolInfoBar symbol="BTCUSDT" timeframe="4h" candles={UP_CANDLES} cumulativeFunding={-1.5} />,
     );
     expect(screen.getByText("-1.5000 USDT")).toBeInTheDocument();
   });
