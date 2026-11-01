@@ -8179,6 +8179,17 @@
               }
             ],
             "title": "Cumulative Funding"
+          },
+          "trail_sl_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trail Sl Price"
           }
         },
         "type": "object",
@@ -8941,6 +8952,18 @@
           "total_trades": {
             "type": "integer",
             "title": "Total Trades"
+          },
+          "qualification_progress": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualification Progress"
           },
           "win_count": {
             "type": "integer",

@@ -479,6 +479,12 @@ export type PaperTaskStatus = "pending" | "running" | "completed" | "stopped" | 
  */
 export type TradingTask = Omit<S["PaperTaskResponse"], "status"> & {
   status: PaperTaskStatus;
+  /** 达标两维（查询期现算——后端缺省 null 场景兜底） */
+  qualification_progress?: {
+    pnl_positive: boolean;
+    trades_enough: boolean;
+    first_met_at: string | null;
+  } | null;
 };
 
 /** 任务列表 ← 后端 PaperTaskListResponse；tasks 收窄为域类型 */
@@ -526,6 +532,29 @@ export interface TradingReport {
   performance: TradingReportPerformance;
   deviation: TradingReportDeviation;
   evidence: TradingReportEvidence;
+  /** 达标判定段（paper-trading-revamp：三维终判——旧报告无此键合法，可选） */
+  qualification?: TradingReportQualification;
+}
+
+/** qualification 段（三维终判：两维+触发一致性三态+凭证迁移） */
+export interface TradingReportQualification {
+  judged_at: string | null;
+  pnl_positive: boolean;
+  trades_enough: boolean;
+  trigger_consistency: {
+    passed: boolean | null;
+    deviation_ratio: number | null;
+    numerator: number | null;
+    denominator: number;
+    detail?: Record<string, unknown>;
+  };
+  qualified: boolean;
+  profile_note?: string;
+  transition?: {
+    attempted: boolean;
+    migrated: boolean;
+    not_migrated_reason: string | null;
+  };
 }
 
 /**

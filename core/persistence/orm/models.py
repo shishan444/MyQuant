@@ -615,6 +615,9 @@ class PtTask(Base):
     pending_intent_json: Mapped[Optional[str]] = mapped_column(Text)
     # 统计组
     total_trades: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    # 达标判定：首个两维同时满足 bar 的 bar_time（NULL=从未；幂等单次写——
+    # paper-trading-revamp 组 B；逐 bar 事实在 pt_equity/pt_task 可现算回看不存历史）
+    first_met_at: Mapped[Optional[str]] = mapped_column(Text)
     win_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     loss_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     total_pnl: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
@@ -692,6 +695,10 @@ class PtEquity(Base):
     # 全 NULL 语义一致）
     position_side: Mapped[Optional[str]] = mapped_column(Text)
     cumulative_funding: Mapped[float] = mapped_column(REAL, nullable=False)
+    # trail 档当 bar 止损价观测列（paper-trading-revamp 组 E）：NULL 封闭
+    # 语义=非 trail 档任务的 bar / trail 档任务的空仓 bar；非 NULL=trail
+    # 档持仓 bar 的当 bar 止损价（决策时点值）。观测面——决策路径零引用
+    trail_sl_price: Mapped[Optional[float]] = mapped_column(REAL)
 
 
 class PtFunding(Base):

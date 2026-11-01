@@ -237,6 +237,9 @@ class PaperTaskExecutor:
         self.db_path = Path(db_path)
         self.task_row = dict(task_row)
         self.task_id = task_row["task_id"]
+        # 达标判定状态（paper-trading-revamp 组 B）：恢复场景沿 task 行
+        # first_met_at 续判（旧库行缺键 None 兜底=从未满足）
+        self._first_met_at = task_row.get("first_met_at")
         self.registry = registry
         self.controller = controller or TaskController()
         self._push = push or (lambda task_id, payload: None)
@@ -1054,6 +1057,16 @@ class PaperTaskExecutor:
         # trail 峰值落账（持仓期逐 bar——判定自足，状态权威落点）
         self.ledger.update_trail_peak(bar)
 
+        # 达标两维判定（paper-trading-revamp 组 B）：equity 取本 bar
+        # 快照同源值（与 pt_equity 行同源，不自算第二种）；first_met_at
+        # 幂等单次写（NULL→非 NULL 一次——下一 bar 起随 task_state 持恒）
+        from core.paper_trading.qualification import (
+            evaluate_two_dimensions, first_met_writable)
+        _dims = evaluate_two_dimensions(
+            snap.equity, float(self.task_row["initial_cash"]), self.ledger.closed_trades)
+        if first_met_writable(self._first_met_at, _dims):
+            self._first_met_at = bar_time
+
         # ── 第 8 步：窗口计数已并入第 6 步 task_state；停止条件判定 ──
         self._evaluate_conclusion(snap)
 
@@ -1271,10 +1284,19 @@ class PaperTaskExecutor:
                 "unrealized_pnl": snap.unrealized_pnl,
                 "position_side": position.side if position else None,
                 "cumulative_funding": self.ledger.total_funding,
+                # trail 档当 bar 止损价观测（paper-trading-revamp 组 E）：
+                # 决策时点值（出场判定消费 ledger 内部 trail_peak，不读此列——
+                # 观测面纪律，白名单=写入点+equity 查询面）
+                "trail_sl_price": (
+                    float(position.sl_price)
+                    if (self.params.sl_mode == "trail" and position is not None
+                        and position.sl_price is not None)
+                    else None),
             },
             funding=funding_rows or None,
             **extra,
             task_state={
+                "first_met_at": self._first_met_at,
                 "bars_processed": self.bars_processed,
                 "last_bar_time": self.last_bar_time,
                 "balance": self.ledger.balance,
@@ -1406,6 +1428,12 @@ class PaperTaskExecutor:
             fields["stop_reason"] = stop_reason
         if error_detail is not None:
             fields["error_detail"] = error_detail
+        # 达标首满足时点终局承载（paper-trading-revamp 组 B 修复）：首满足
+        # bar 恰为终局 bar 时（窗口到点/stop 边界），_persist_bar 已过、无
+        # 下一根承载——此处兜底写库；非 None 才带（从未满足保持 NULL，
+        # 不覆写恢复场景装载值——幂等单次写语义）
+        if self._first_met_at is not None:
+            fields["first_met_at"] = self._first_met_at
         paper_repo.update_task(self.db_path, self.task_id, **fields)
         logger.info("纸盘任务 %s 终态 %s（%s）", self.task_id, status,
                     stop_reason or error_detail or "")

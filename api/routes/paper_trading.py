@@ -31,6 +31,7 @@ from core.paper_trading.constants import (
     PAPER_SYMBOL_WHITELIST,
     PAPER_TIMEFRAME_WHITELIST,
 )
+from core.paper_trading.qualification import qualification_progress_payload
 from core.paper_trading.reporting import (
     FINAL_STATUSES,
     TaskNotConcludedError,
@@ -117,6 +118,8 @@ class PaperTaskResponse(BaseModel):
     unrealized_pnl: Optional[float] = None
     # 统计组
     total_trades: int
+    # 达标判定两维（查询期现算+first_met_at 直读——paper-trading-revamp 组 B4）
+    qualification_progress: Optional[dict] = None
     win_count: int
     loss_count: int
     total_pnl: float
@@ -167,6 +170,8 @@ class PaperEquityResponse(BaseModel):
     unrealized_pnl: Optional[float] = None
     position_side: Optional[str] = None
     cumulative_funding: Optional[float] = None
+    # trail 档当 bar 止损价观测（paper-trading-revamp 组 E 透传；NULL 行返回 null）
+    trail_sl_price: Optional[float] = None
 
 
 class PaperEquityListResponse(BaseModel):
@@ -290,6 +295,16 @@ def _tasks_to_responses(db_path: Path, rows: list) -> list:
     return out
 
 
+def _latest_equity_of(row: dict) -> Optional[float]:
+    """两维判定的权益取值（契约登记表「权益公式」同源：equity=balance+
+    margin+unrealized_pnl 按后端字段直读合成；pending 初启 None）。"""
+    if row.get("balance") is None:
+        return None
+    margin = row.get("position_margin") or 0.0
+    upnl = row.get("unrealized_pnl") or 0.0
+    return float(row["balance"]) + float(margin) + float(upnl)
+
+
 def _task_response_from(row: dict, research_status: str) -> PaperTaskResponse:
     """响应构造（字段映射单点——单任务/批量两入口共用）。"""
     return PaperTaskResponse(
@@ -312,6 +327,10 @@ def _task_response_from(row: dict, research_status: str) -> PaperTaskResponse:
         position_entry_bar_seq=row["position_entry_bar_seq"],
         unrealized_pnl=row["unrealized_pnl"],
         total_trades=row["total_trades"], win_count=row["win_count"],
+        qualification_progress=qualification_progress_payload(
+            _latest_equity_of(row), float(row["initial_cash"]),
+            int(row["total_trades"]),
+            row.get("first_met_at")),
         loss_count=row["loss_count"], total_pnl=row["total_pnl"],
         research_status=research_status,
         created_at=row["created_at"], updated_at=row["updated_at"],
