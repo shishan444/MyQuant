@@ -39,12 +39,26 @@ class PendingEventsResponse(BaseModel):
 
 
 def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
-    """并集耗尽：active 态假设逐个 query_union_balance，remaining_bars==0（§7.3 单字段判定式）。"""
-    from core.analysis.validation_service import query_union_balance
+    """并集耗尽：active 态假设逐个 query_union_balance，remaining_bars==0（§7.3 单字段判定式）。
+
+    全量扫（CARD-01）：iter_all_pages 翻页（单源——判定类读场景的既有
+    帮助函数，isolation/hypothesis_service 先例），替单页 limit=50 静默
+    截断（>50 active 假设时后半静默漏扫）。
+    bounds_cache（CARD-02）：请求内 (symbol,timeframe)→data_bounds 缓存
+    ——逐假设不重复装载 parquet 边界；装载失败（raise）未入缓存即
+    「失败不缓存」，同符号后续假设自然重试。
+    """
+    from core.analysis.isolation import iter_all_pages
+    from core.analysis.validation_service import (
+        load_data_bounds, query_union_balance)
     from core.persistence.repository import research as rr
     events: List[PendingEvent] = []
     degraded = 0
-    for hyp in rr.list_hypotheses(db_path, status="active"):
+    bounds_cache: Dict[tuple, tuple] = {}
+    all_active = iter_all_pages(
+        lambda off, lim: rr.list_hypotheses(
+            db_path, status="active", offset=off, limit=lim, order="asc"))
+    for hyp in all_active:
         try:
             # data_ranges 仓储层为 JSON 字符串（探针实测）——先 loads 再迭代
             # （消费方 loads 系既有约定：research/hypotheses.py:142 先例）；
@@ -52,10 +66,15 @@ def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]
             # 非 TypeError 伪降级——P0 退回件：字符串逐字符迭代必 TypeError）
             ranges = json.loads(hyp.get("data_ranges") or "[]")
             for dr in ranges:
+                key = (dr["symbol"], dr["timeframe"])
+                if key not in bounds_cache:
+                    bounds_cache[key] = load_data_bounds(
+                        data_dir, dr["symbol"], dr["timeframe"])
                 bal = query_union_balance(
                     db_path, data_dir,
                     symbol=dr["symbol"], timeframe=dr["timeframe"],
-                    hypothesis_id=hyp["hypothesis_id"])
+                    hypothesis_id=hyp["hypothesis_id"],
+                    data_bounds=bounds_cache[key])
                 if bal.get("remaining_bars") == 0:
                     events.append(PendingEvent(type="union_exhausted", payload={
                         "hypothesis_id": hyp["hypothesis_id"],
