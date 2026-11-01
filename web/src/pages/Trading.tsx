@@ -565,6 +565,7 @@ function TaskDetailPanel({
           fills={fills}
           height={470}
           isActive={isActive}
+          cumulativeFunding={equitySnapshots.at(-1)?.cumulative_funding}
         />
         {equitySnapshots.length > 0 && (
           <div className="mt-2 pt-2 border-t border-border-default">
