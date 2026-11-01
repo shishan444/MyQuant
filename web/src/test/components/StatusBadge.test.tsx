@@ -9,12 +9,16 @@ import { STATE, LIVE_BADGE } from "@/theme/tokens";
 
 describe("StatusBadge（G-1）", () => {
   it.each(Object.keys(STATE) as Array<keyof typeof STATE>)(
-    "%s 渲染描边形制（前景=状态色）",
+    "%s 渲染描边形制（前景=状态色，边框简写含 style 可绘制）",
     (status) => {
       render(<StatusBadge status={status} />);
       const badge = screen.getByText(status);
       expect(badge).toBeInTheDocument();
       expect(badge).toHaveStyle({ color: STATE[status], borderColor: STATE[status] });
+      // CARD-01：断言 border 简写面——UA 默认 border-style:none 下仅设
+      // borderColor/borderWidth 浏览器不绘制；borderStyle 为空即缺陷态
+      expect(badge.style.borderStyle).toBe("solid");
+      expect(badge.style.borderWidth).toBe("1px");
       // 描边形制：#FFFFFF0F 染层底（jsdom 规范化为 rgba）
       expect(badge.style.backgroundColor).toBe("rgba(255, 255, 255, 0.06)");
     },
