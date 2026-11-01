@@ -2,6 +2,7 @@
  * 标注原语纯函数层单测（kline-common-layer 组 4.2）。
  */
 import { describe, it, expect, vi } from "vitest";
+import type { IChartApi, IPriceLine, ISeriesApi, Time } from "lightweight-charts";
 import {
   fillsToSignals,
   signalsToMarkers,
@@ -115,13 +116,16 @@ describe("持仓带纯函数层", () => {
 // ---------------------------------------------------------------------------
 
 function mkSeries() {
-  return { attachPrimitive: vi.fn(), createPriceLine: vi.fn(() => ({})) } as never;
+  return {
+    attachPrimitive: vi.fn(),
+    createPriceLine: vi.fn(() => ({}) as IPriceLine),
+  } as unknown as ISeriesApi<"Candlestick", Time>;
 }
 
 function mkBandHarness(coords: Record<string, number | null>) {
   const timeToCoordinate = vi.fn((t: string) => (t in coords ? coords[t] : null));
   const timeScale = { timeToCoordinate };
-  const chart = { timeScale: vi.fn(() => timeScale) } as never;
+  const chart = { timeScale: vi.fn(() => timeScale) } as unknown as IChartApi;
   const requestUpdate = vi.fn();
   const band = new PositionBand();
   band.attached({ chart, requestUpdate });
@@ -132,11 +136,10 @@ function drawCapture(band: PositionBand) {
   const fillRect = vi.fn();
   const scope = {
     context: { fillRect },
-    horizontalPixelRatio: 2,
     mediaSize: { width: 600, height: 300 },
   };
   for (const view of band.paneViews()) {
-    view.renderer()?.draw({ useBitmapCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
+    view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
   }
   return fillRect;
 }
@@ -149,23 +152,23 @@ describe("PositionBand 挂载与生命周期", () => {
     expect(series.attachPrimitive).toHaveBeenCalledWith(primitive);
     expect(primitive).toBeInstanceOf(PositionBand);
     // setData 通道可在 attached 前调用不炸（requestUpdate 未就绪为可选链）
-    expect(() => setData({ entryTime: 100, side: "long" })).not.toThrow();
+    expect(() => setData({ entryTime: "t0" as Time, side: "long" })).not.toThrow();
   });
 
   it("attached 后 setData 触发 requestUpdate 重绘请求", () => {
     const { band, requestUpdate } = mkBandHarness({});
-    band.setData({ entryTime: 100, side: "long" });
+    band.setData({ entryTime: "t0" as Time, side: "long" });
     expect(requestUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("draw 坐标换算：x 坐标×DPR、exitTime 缺省延伸至右缘、long 带绿色", () => {
+  it("draw 坐标直画：timeToCoordinate 的 media 坐标零换算、exitTime 缺省延伸至右缘（CARD-01 后 DPI 无关）", () => {
     const { band } = mkBandHarness({ entry: 10.5 });
     band.setData({ entryTime: "entry" as never, side: "long" });
     band.updateAllViews();
     const fillRect = drawCapture(band);
     expect(fillRect).toHaveBeenCalledTimes(1);
-    // x1=10.5×2=21；x2 缺省=mediaSize.width=600 → 宽 579；全高 300
-    expect(fillRect).toHaveBeenCalledWith(21, 0, 579, 300);
+    // x1=10.5 原值直画；x2 缺省=mediaSize.width=600 → 宽 589.5；全高 300
+    expect(fillRect).toHaveBeenCalledWith(10.5, 0, 589.5, 300);
   });
 
   it("draw 颜色分区：long=绿系半透明、short=红系半透明", () => {
@@ -178,9 +181,9 @@ describe("PositionBand 挂载与生命周期", () => {
       band.updateAllViews();
       const fillRect = vi.fn();
       const ctx = { fillRect, fillStyle: "" };
-      const scope = { context: ctx, horizontalPixelRatio: 1, mediaSize: { width: 600, height: 300 } };
+      const scope = { context: ctx, mediaSize: { width: 600, height: 300 } };
       for (const view of band.paneViews()) {
-        view.renderer()?.draw({ useBitmapCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
+        view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
       }
       expect(ctx.fillStyle).toBe(rgba);
     }
@@ -193,17 +196,17 @@ describe("PositionBand 挂载与生命周期", () => {
     expect(drawCapture(band)).not.toHaveBeenCalled();
   });
 
-  it("exitTime 有坐标：带区间宽度=x2×DPR-x1×DPR", () => {
+  it("exitTime 有坐标：带区间宽度=x2-x1（media 坐标差）", () => {
     const { band } = mkBandHarness({ entry: 10.5, exit: 100.25 });
     band.setData({ entryTime: "entry" as never, exitTime: "exit" as never, side: "short" });
     band.updateAllViews();
     const fillRect = drawCapture(band);
-    expect(fillRect).toHaveBeenCalledWith(21, 0, 200.5 - 21, 300);
+    expect(fillRect).toHaveBeenCalledWith(10.5, 0, 89.75, 300);
   });
 
   it("detached 后 updateAllViews 不再触碰图表（chart 置空）", () => {
     const { band, chart } = mkBandHarness({});
-    band.setData({ entryTime: 100, side: "long" });
+    band.setData({ entryTime: "t0" as Time, side: "long" });
     band.detached();
     band.updateAllViews();
     expect(chart.timeScale).not.toHaveBeenCalled();
