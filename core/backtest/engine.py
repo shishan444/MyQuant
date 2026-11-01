@@ -1683,8 +1683,8 @@ class BacktestEngine:
 
         # series 档止损线序列透出（hypothesis-workbench 组 2）：atr_col
         # 槽位在 series 档承载装载期线值列（_per_dna_risk_params :339 注释）；
-        # 索引对齐 enhanced_df（装载期列长度=enhanced 全段含 warmup 前缀——
-        # 与 equity_curve 同段形制，前端按 time 键对齐消费）
+        # 索引=调用方传入的 enhanced_df（bridge=切回执行段/REST=请求段——
+        # 不恒含 warmup 前缀，由调用方装载链决定，审查 CARD-02 注释改实）
         _sl_col = getattr(self, "_last_sl_col", None)
         self._last_sl_col = None  # 消费即清（防跨 run 泄漏）
         sl_series_out = (

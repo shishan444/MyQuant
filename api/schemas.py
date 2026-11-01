@@ -334,6 +334,10 @@ class BacktestResponse(BaseModel):
     satisfaction: Optional[Dict[str, Any]] = None
     run_source: str = "lab"
     equity_curve: Optional[List[Dict[str, Any]]] = None
+    # series 档止损线序列（hypothesis-workbench 组 2 透出→审查 CARD-01 接通
+    # REST 面）：[{time, value}]（NaN→null——SL 未定义期断线由前端原语过滤）；
+    # 非 series 档 None（沿 equity_curve 形制）
+    sl_series: Optional[List[Dict[str, Any]]] = None
     signals: Optional[List[Dict[str, Any]]] = None
     total_funding_cost: float = 0.0
     liquidated: bool = False
