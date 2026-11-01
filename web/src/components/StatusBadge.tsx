@@ -49,7 +49,7 @@ export function StatusBadge({ status, label, size = "sm", className }: StatusBad
         s.font,
         className
       )}
-      style={{ color, borderColor: color, backgroundColor: "#FFFFFF0F", borderWidth: 1 }}
+      style={{ color, border: `1px solid ${color}`, backgroundColor: "#FFFFFF0F" }}
     >
       <span className={cn("rounded-full", s.dot)} style={{ backgroundColor: color }} />
       {text}

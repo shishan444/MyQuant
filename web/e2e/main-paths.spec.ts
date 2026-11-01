@@ -74,6 +74,9 @@ test.describe("主链路", () => {
       // 占位主体 h3（避开 Header h1 同名标题）
       await expect(page.locator("h3", { hasText: label })).toBeVisible();
       await expect(page.getByText("本页面将在后续版本建设")).toBeVisible();
+      // 诚实占位负面断言：不呈现表格/图表等模拟数据形制
+      await expect(page.locator("table")).toHaveCount(0);
+      await expect(page.locator("canvas")).toHaveCount(0);
     }
   });
 
@@ -148,6 +151,43 @@ test.describe("侧栏形态基线（global-nav-shell）", () => {
     const disabled = page.locator("nav span[aria-disabled='true']");
     await expect(disabled).toHaveCount(1);
     await expect(disabled).toContainText("实盘交易");
+  });
+
+  test("15 折叠交互：点击折叠按钮隐藏分组标题，再点恢复", async ({ page }) => {
+    await page.goto("/workbench");
+    // 折叠按钮是 aside 内唯一 button（nav 项为 a/span，Header 按钮不在 aside 内）
+    const toggle = page.locator("aside button");
+    await toggle.click();
+    for (const title of GROUP_TITLES) {
+      await expect(page.locator("nav").getByText(title, { exact: true })).toHaveCount(0);
+    }
+    for (const label of ALL_ITEMS) {
+      await expect(page.locator("nav").getByText(label, { exact: true })).toHaveCount(0);
+    }
+    // 链接仍可达（9 条 NavLink），实盘禁用 span 保留
+    await expect(page.locator("nav a")).toHaveCount(9);
+    await expect(page.locator("nav span[aria-disabled='true']")).toHaveCount(1);
+    // 再点恢复展开（还原 localStorage 持久化状态，不污染后续用例）
+    await toggle.click();
+    for (const title of GROUP_TITLES) {
+      await expect(page.locator("nav").getByText(title, { exact: true })).toBeVisible();
+    }
+  });
+
+  test("16 窄视口分组渲染：375px 下四组标题与 10 项照常渲染", async ({ page }) => {
+    // 现状记录：侧栏无媒体查询分支，形制仅由 collapsed 决定——
+    // 窄视口不自动折叠、不隐藏分组标题
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto("/workbench");
+    const nav = page.locator("nav");
+    for (const title of GROUP_TITLES) {
+      await expect(nav.getByText(title, { exact: true })).toBeVisible();
+    }
+    for (const label of ALL_ITEMS) {
+      await expect(nav.getByText(label, { exact: true })).toBeVisible();
+    }
+    // 08 实盘禁用态在窄视口下保持
+    await expect(nav.locator("span[aria-disabled='true']")).toHaveCount(1);
   });
 });
 
