@@ -301,6 +301,8 @@ def create_app(
     # 纸盘交易新域端点族（rebuild-paper-trading 5.1）
     app.include_router(paper_trading_route.router)
     app.include_router(validate_route.router)
+    from api.routes import workbench as workbench_route
+    app.include_router(workbench_route.router)
     app.include_router(scene_route.router)
 
     # 研究域路由（add-ai-research-mcp）
