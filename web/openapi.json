@@ -115,7 +115,7 @@
           "strategies"
         ],
         "summary": "List Strategies Endpoint",
-        "description": "策略列表（过滤/排序/分页）。status 缺省视图排除 draft；\n显式 status=draft 可查草稿。",
+        "description": "策略列表（过滤/排序/分页）。status 缺省视图排除 draft；\n显式 status=draft 可查草稿。\n\nqualified 过滤参数 deprecated（build-strategy-lifecycle 5.3 死列\n处置）：strategy.qualified 声明后从未写入实测全 NULL——布尔过滤\n恒空集=现状行为保留（API 兼容不摘参数）；资格语义已由六态+凭证\n接管（同名异列注意：backtest_result.qualified 是真数据活列）。",
         "operationId": "list_strategies_endpoint_api_strategies_get",
         "parameters": [
           {
@@ -148,6 +148,22 @@
                 }
               ],
               "title": "Source"
+            }
+          },
+          {
+            "name": "source_task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Task Id"
             }
           },
           {
@@ -364,7 +380,7 @@
           "strategies"
         ],
         "summary": "Delete Strategy Endpoint",
-        "description": "按 ID 删除策略。",
+        "description": "按 ID 删除策略（build-strategy-lifecycle 3.3 两分支）：\ndraft→物理删除（现状保持）；非 draft→经 transit(manual_archive)\n归档后 204（行保留+事件在场）——REST 同端点同状态码语义从物理\n删除变归档（strategy-lifecycle spec delta ADDED 承载，消费者影响\n经 S12 披露）。操作者载荷取本地单用户部署形态（工程无用户体系）。",
         "operationId": "delete_strategy_endpoint_api_strategies__strategy_id__delete",
         "parameters": [
           {
@@ -380,6 +396,93 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/strategies/{strategy_id}/revalidate": {
+      "post": {
+        "tags": [
+          "strategies"
+        ],
+        "summary": "Revalidate Strategy Endpoint",
+        "description": "归档重启重验（build-strategy-lifecycle 3.4，沿 stop/clone 动作\n端点形制）：archived→draft+旧验证统计作废重置（五列：verify_count\n置 0，verify_avg_score/verify_best_score/verify_star/last_verified_at\n置 NULL——models.py verify 组列）+validation_records 不删不改（审计\n事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时\n旧值可自事件追溯）+水位不归零（事件 append-only）。非\narchived→409 STRATEGY_ILLEGAL_TRANSITION。迁移+重置两步同事务\n（CARD-03）：重置失败则迁移一并回滚，不留「已 draft 但旧统计\n未作废」中间态。",
+        "operationId": "revalidate_strategy_endpoint_api_strategies__strategy_id__revalidate_post",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Strategy Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/strategies/batch": {
+      "post": {
+        "tags": [
+          "strategies"
+        ],
+        "summary": "Batch Delete Strategies",
+        "description": "按进化任务批量物理删除其产物策略（不可逆——与单策略 DELETE\n的归档语义不同，端点分离承载语义差异）。\n\n确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附\nmatched_count 预览数+criteria 回显+score_summary（best_score\n分布摘要 {count,min,p25,median,p75,max,null_count}——count 为\n非 NULL 参与分布数、null_count 单独披露；1 行退化五数全同值、\n≥2 行 inclusive 插值、空集五数全 None）；confirm=true → 单事务\n批量 DELETE（先查后删同事务），返回 {deleted_count, criteria,\nmatched_before}；幂等：重复调用 matched 0→deleted_count=0。\ngeneration_gt/best_score_lt 可选收紧（预览与执行同判据）。\n\n挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE\n前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略\n（status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）\n或被非终态纸盘任务（pending/running）引用 → 422\nBATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/\npt_active_count 与处置提示——先撤盘/归档后再清理）。",
+        "operationId": "batch_delete_strategies_api_strategies_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Batch Delete Strategies Api Strategies Batch Post"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -1741,7 +1844,7 @@
           "data"
         ],
         "summary": "Get Ohlcv By Symbol",
-        "description": "按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。",
+        "description": "按 symbol+timeframe 直取 OHLCV（径直解析 parquet 文件）。\n\ntail（kline-common-layer 组 5）：从最新一根（或 end 锚定行）往回取 N 根。\ntail 与 start 互斥（锚定方向冲突）、tail 与 limit 互斥（数量参数冲突）——同给 422\nDATA_PARAM_CONFLICT，不执行查询；tail 与 end 可组（历史时点重演窗口）。\n不传 tail 时现行 head 语义不变（limit 缺省 50000 沿旧值）。",
         "operationId": "get_ohlcv_by_symbol_api_data_ohlcv__symbol___timeframe__get",
         "parameters": [
           {
@@ -1799,11 +1902,35 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "maximum": 50000,
-              "minimum": 1,
-              "default": 50000,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Limit"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tail"
             }
           }
         ],
@@ -2334,7 +2461,7 @@
           "paper-trading"
         ],
         "summary": "Create Task",
-        "description": "上盘（创建恒 201 返 pending 行——受理≠运行，超限停留 pending\n排队不拒绝；拒绝面仅 404 strategy not found 与 422 校验数组）。",
+        "description": "上盘（受理恒 201 返 pending 行——受理≠运行，超限停留 pending\n排队不拒绝；拒绝面 404 strategy not found/422 校验数组/409 非法\n前置态——仅 archived 一态）。\n\n挂盘四分支分派（挂载门槛放宽=用户裁决 2026-10-28，Q3 终审；\n分派判据=挂载请求时点策略态，任务自包含〔DNA 快照〕不受策略\n后续态影响）：from=active→同事务迁移 active→paper（trigger=\nmount，evidence=task_id）+事件写入+任务创建；from=paper→同态\n续挂不迁移（任务照常创建、零迁移事件——v3 §12.4 同策略对照\n已批能力的保留）；from=draft/candidate/live→同态续挂不迁移\n（任务照常创建、策略态不变、无迁移事件——与 paper 续挂同构，\n无观察轨概念：draft 挂载任务与普通任务完全同构，research_status\n披露由现行三序现算机制天然携带）；from=archived→409\nSTRATEGY_ILLEGAL_TRANSITION 唯一排除（失败不建任务）。",
         "operationId": "create_task_api_paper_trading_tasks_post",
         "requestBody": {
           "required": true,
@@ -2488,7 +2615,7 @@
           "paper-trading"
         ],
         "summary": "Delete Task",
-        "description": "删除任务（仅终态；五表级联单事务）；运行/pending→409 stop first。",
+        "description": "删除任务（仅终态；六表级联单事务）；运行/pending→409 stop first。\n\n删除补偿回流（delete-task-reentry-guard 方案甲）：删除完成后对关\n联策略执行一次 paper→active 回流尝试（trigger=task_end，evidence\n来自删除前持有的任务行内存事实）——封「终态后删除任务与回流竞\n态窗」内回流永久失据的缺口（后台扫描域依赖任务行在场，行已删无\n法走扫描形）。回流域前置守卫（change-3 同 scheduler._replay_task_\nend 同判据）：strategy.status≠\"paper\" 正当跳过不调 transit——\ndraft→active 是矩阵合法转正边（transit 不做 trigger×边交叉校验），\n不守卫则 draft 挂载任务删除会凭 task_end 凭证非法转正（「draft\n挂盘不构成转正通道」用户终审语义）；其余边界由 transit 承担\n（幂等 already_in_status/另有活跃任务 active_tasks_remain）；\n失败仅记日志不绑架删除——删除是既成事实。响应契约零变化（回流\n结果不进响应——补偿是后台性动作）。",
         "operationId": "delete_task_api_paper_trading_tasks__task_id__delete",
         "parameters": [
           {
@@ -2794,6 +2921,161 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PaperFundingListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper-trading/tasks/{task_id}/signals": {
+      "get": {
+        "tags": [
+          "paper-trading"
+        ],
+        "summary": "Get Signals",
+        "description": "信号记录查询（change paper-signal-log 决策过程回溯面）：过滤\n四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq\n升序审计读序+limit+1 探测式分页；字段字典权威在 openspec\npaper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/\nindicator_snapshot 指标快照/reject_reason 拒因枚举四值——\nbelow_min_notional 生产者在后续变更）。",
+        "operationId": "get_signals_api_paper_trading_tasks__task_id__signals_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "close",
+                    "add",
+                    "reduce",
+                    "exit_sl",
+                    "exit_tp",
+                    "exit_max_loss",
+                    "exit_max_hold",
+                    "exit_time",
+                    "exit_liquidation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "信号类型过滤（INTENT_KINDS 十值同域）",
+              "title": "Kind"
+            },
+            "description": "信号类型过滤（INTENT_KINDS 十值同域）"
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "filled",
+                    "rejected",
+                    "expired"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "执行结果过滤（filled/rejected/expired——expired=意图随任务终态消亡）",
+              "title": "Outcome"
+            },
+            "description": "执行结果过滤（filled/rejected/expired——expired=意图随任务终态消亡）"
+          },
+          {
+            "name": "bar_time_start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "bar_time 闭区间起点（ISO——含入）",
+              "title": "Bar Time Start"
+            },
+            "description": "bar_time 闭区间起点（ISO——含入）"
+          },
+          {
+            "name": "bar_time_end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "bar_time 闭区间终点（ISO——含入）",
+              "title": "Bar Time End"
+            },
+            "description": "bar_time 闭区间终点（ISO——含入）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperSignalListResponse"
                 }
               }
             }
@@ -4913,6 +5195,18 @@
             ],
             "title": "Alpha"
           },
+          "funding": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Funding"
+          },
           "market_annual_return": {
             "anyOf": [
               {
@@ -4978,6 +5272,8 @@
           },
           "leverage": {
             "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
             "title": "Leverage",
             "default": 1
           }
@@ -4989,6 +5285,47 @@
           "data_ranges"
         ],
         "title": "BatchBacktestRequest"
+      },
+      "BatchDeleteRequest": {
+        "properties": {
+          "source_task_id": {
+            "type": "string",
+            "title": "Source Task Id"
+          },
+          "generation_gt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Gt"
+          },
+          "best_score_lt": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Score Lt"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_task_id"
+        ],
+        "title": "BatchDeleteRequest",
+        "description": "批量删除请求体（confirm 契约=删除不可无声执行）。"
       },
       "Body_import_csv_batch_endpoint_api_data_import_batch_post": {
         "properties": {
@@ -5364,6 +5701,72 @@
               }
             ],
             "title": "Timeframe"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window"
+          },
+          "inner_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inner Action"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "proximity_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proximity Pct"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "lookback": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lookback"
           }
         },
         "additionalProperties": false,
@@ -5556,8 +5959,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/TimeframeLayerModel-Input"
                 },
                 "type": "array"
               },
@@ -5690,8 +6092,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/TimeframeLayerModel-Output"
                 },
                 "type": "array"
               },
@@ -6451,6 +6852,8 @@
           },
           "leverage": {
             "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
             "title": "Leverage",
             "default": 1
           },
@@ -6595,13 +6998,17 @@
           },
           "min_annual_return": {
             "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.0,
             "title": "Min Annual Return",
             "default": 0.1
           },
           "max_drawdown_limit": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "maximum": 0.8,
+                "minimum": 0.05
               },
               {
                 "type": "null"
@@ -7165,6 +7572,36 @@
               }
             ],
             "title": "Threshold Unit Warnings"
+          },
+          "strategy_param_warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Param Warnings"
+          },
+          "exit_coverage_warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Coverage Warnings"
           }
         },
         "type": "object",
@@ -7992,6 +8429,215 @@
         ],
         "title": "PaperFundingResponse"
       },
+      "PaperSignalListResponse": {
+        "properties": {
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/PaperSignalResponse"
+            },
+            "type": "array",
+            "title": "Signals"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signals",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "PaperSignalListResponse"
+      },
+      "PaperSignalResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "strategy_id": {
+            "type": "string",
+            "title": "Strategy Id"
+          },
+          "bar_time": {
+            "type": "string",
+            "title": "Bar Time"
+          },
+          "exec_bar_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Bar Time"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "signal_kind": {
+            "type": "string",
+            "title": "Signal Kind"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "size_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Fraction"
+          },
+          "gene_hits": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Gene Hits"
+          },
+          "indicator_snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Indicator Snapshot"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "reject_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Reason"
+          },
+          "fill_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Seq"
+          },
+          "capped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capped"
+          },
+          "equity": {
+            "type": "number",
+            "title": "Equity"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          },
+          "unrealized_pnl": {
+            "type": "number",
+            "title": "Unrealized Pnl"
+          },
+          "position_side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Side"
+          },
+          "position_quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Quantity"
+          },
+          "position_margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Margin"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "strategy_id",
+          "bar_time",
+          "seq",
+          "signal_kind",
+          "gene_hits",
+          "indicator_snapshot",
+          "outcome",
+          "equity",
+          "balance",
+          "unrealized_pnl",
+          "created_at"
+        ],
+        "title": "PaperSignalResponse",
+        "description": "信号记录行（gene_hits/indicator_snapshot 反序列化为 JSON\n对象非字符串——消费方零二次解析）。"
+      },
       "PaperTaskCreate": {
         "properties": {
           "strategy_id": {
@@ -8308,9 +8954,9 @@
             "type": "number",
             "title": "Total Pnl"
           },
-          "research_status_snapshot": {
+          "research_status": {
             "type": "string",
-            "title": "Research Status Snapshot"
+            "title": "Research Status"
           },
           "created_at": {
             "type": "string",
@@ -8392,7 +9038,7 @@
           "win_count",
           "loss_count",
           "total_pnl",
-          "research_status_snapshot",
+          "research_status",
           "created_at",
           "updated_at"
         ],
@@ -8643,7 +9289,7 @@
           },
           "sl_mode": {
             "type": "string",
-            "pattern": "^(pct|atr|trail)$",
+            "pattern": "^(pct|atr|trail|series)$",
             "title": "Sl Mode",
             "default": "pct"
           },
@@ -8729,6 +9375,40 @@
               }
             ],
             "title": "Risk Fraction"
+          },
+          "initial_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Fraction"
+          },
+          "max_position_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Position Loss"
+          },
+          "sl_series_source": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sl Series Source"
           }
         },
         "additionalProperties": false,
@@ -9766,6 +10446,78 @@
         "type": "object",
         "title": "StrategyUpdate"
       },
+      "TimeframeLayerModel-Input": {
+        "properties": {
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "signal_genes": {
+            "items": {
+              "$ref": "#/components/schemas/SignalGeneModel-Input"
+            },
+            "type": "array",
+            "title": "Signal Genes"
+          },
+          "logic_genes": {
+            "$ref": "#/components/schemas/LogicGenesModel"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timeframe"
+        ],
+        "title": "TimeframeLayerModel",
+        "description": "MTF 策略中的单周期层（层内信号与逻辑独立于执行周期评估）。"
+      },
+      "TimeframeLayerModel-Output": {
+        "properties": {
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "signal_genes": {
+            "items": {
+              "$ref": "#/components/schemas/SignalGeneModel-Output"
+            },
+            "type": "array",
+            "title": "Signal Genes"
+          },
+          "logic_genes": {
+            "$ref": "#/components/schemas/LogicGenesModel"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timeframe"
+        ],
+        "title": "TimeframeLayerModel",
+        "description": "MTF 策略中的单周期层（层内信号与逻辑独立于执行周期评估）。"
+      },
       "TradeRecordResponse": {
         "properties": {
           "entry_time": {
@@ -9812,13 +10564,20 @@
             "default": "BTCUSDT"
           },
           "strategy_timeframe": {
-            "type": "string",
-            "title": "Strategy Timeframe",
-            "default": "4h"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Timeframe"
           }
         },
         "type": "object",
-        "title": "TranslateRequest"
+        "title": "TranslateRequest",
+        "description": "转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准\n周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。"
       },
       "TriggerDetail": {
         "properties": {
@@ -10309,6 +11068,8 @@
           },
           "leverage": {
             "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
             "title": "Leverage",
             "default": 1
           }
