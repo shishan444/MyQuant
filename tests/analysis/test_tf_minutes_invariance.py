@@ -59,6 +59,7 @@ ISOLATED_FROZEN = {
            # 探针 2026-10-24 随键冻结）
            "signal_counts": {"adds": 0, "entries": 869, "exits": 0,
                              "reduces": 0},
+        "sl_series": None,  # hypothesis-workbench 组 2 新键（pct 档 None）
            "alpha": -71.21170763836355,
            "market_annual_return": 73.89553212064902,
            "benchmark_return": 0.04410592221559706,
@@ -69,6 +70,7 @@ ISOLATED_FROZEN = {
            "total_trades": 3, "liquidated": False,
            "signal_counts": {"adds": 0, "entries": 1289, "exits": 0,
                              "reduces": 0},
+        "sl_series": None,  # hypothesis-workbench 组 2 新键（pct 档 None）
            "alpha": 0.24540469986210112,
            "market_annual_return": -0.9872502477947531,
            "benchmark_return": -0.11705577783402021,
@@ -79,6 +81,7 @@ ISOLATED_FROZEN = {
            "total_trades": 4, "liquidated": False,
            "signal_counts": {"adds": 0, "entries": 1243, "exits": 0,
                              "reduces": 0},
+        "sl_series": None,  # hypothesis-workbench 组 2 新键（pct 档 None）
            "alpha": 0.27608024845212165,
            "market_annual_return": -0.4294028554427679,
            "benchmark_return": -0.17481517872597718,

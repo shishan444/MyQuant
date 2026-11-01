@@ -50,6 +50,8 @@ class TestBridgeBaseline:
             "market_annual_return": 0.0,
             "liquidated": False,
             "signal_counts": {"entries": 0, "exits": 400, "adds": 0, "reduces": 0},
+            # hypothesis-workbench 组 2 新键（pct 档 None——见 test_sl_series_output）
+            "sl_series": None,
         }
         assert warmup == 30
         assert bars == 400
