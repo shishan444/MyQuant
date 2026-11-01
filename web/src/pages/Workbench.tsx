@@ -81,7 +81,13 @@ export function Workbench() {
 function PageSections(props: {
   events: PendingEvent[];
   degraded: number;
-  availability?: { qualify_pending: string | null; reason: string | null };
+  // availability 完整形（services/workbench.ts:17 三字段——历史 props 窄化
+  // 丢 trigger_deviation，CARD-05 恢复消费）
+  availability?: {
+    qualify_pending: string | null;
+    trigger_deviation: string | null;
+    reason: string | null;
+  };
   eventsLoading: boolean;
   eventsError: boolean;
   records: import("@/services/workbench").ValidationRecordRow[];
@@ -118,6 +124,11 @@ function PageSections(props: {
         {props.availability?.qualify_pending === "unavailable" && (
           <p className="mt-1 text-[10px] text-text-muted">
             达标事件源未建（{props.availability.reason}）——区分「无事件」与「源未建」
+          </p>
+        )}
+        {props.availability?.trigger_deviation === "unavailable" && (
+          <p className="mt-1 text-[10px] text-text-muted">
+            触发差异事件源未建——区分「无事件」与「源未建」（终态报告缺 qualification 键，说明详见 reason 拼接说明）
           </p>
         )}
       </GlassCard>

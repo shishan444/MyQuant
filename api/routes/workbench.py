@@ -174,6 +174,12 @@ def pending_events(
         events_t, deg_t = _trigger_deviation_events(db_path)
     except Exception:  # noqa: BLE001
         events_t, deg_t = [], 1
+    if not _trigger_source_available(db_path):
+        availability.trigger_deviation = "unavailable"
+        # reason 单字段按需拼接两半说明（architect 卡面——非分源双 reason）
+        availability.reason = (
+            (availability.reason + "；" if availability.reason else "")
+            + "trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）")
 
     return PendingEventsResponse(
         events=events_u + events_q + events_t,
@@ -188,5 +194,33 @@ def _qualify_source_available(db_path) -> bool:
         for task in paper_repo.list_tasks(db_path, limit=1):
             return "first_met_at" in task
         return True  # 无任务行=无从判源（不标降级——空态合法）
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _trigger_source_available(db_path) -> bool:
+    """trigger 半边源可用性（workbench-observation CARD-05）：终态任务最新
+    报告 qualification 键在场（paper-trading-revamp 组 C 第四键——C5 前
+    旧终态报告无此键）。
+
+    三态：无终态任务=空态合法不标；任一最新报告含键=源已建（混合库同构
+    qualify 半边「任一行含列即视为已建」）；全部缺键=unavailable。
+    """
+    try:
+        from core.paper_trading.reporting import get_final_report
+        from core.persistence.repository import paper as paper_repo
+        any_terminal = False
+        for status_t in ("completed", "stopped", "error"):
+            for task in paper_repo.list_tasks(db_path, status=status_t, limit=1000):
+                any_terminal = True
+                rep = get_final_report(db_path, task["task_id"])
+                if rep is None:
+                    continue
+                report_json = rep.get("report") or {}
+                if isinstance(report_json, str):
+                    report_json = json.loads(report_json)
+                if "qualification" in report_json:
+                    return True  # 任一含键=源已建
+        return not any_terminal  # 全缺键=False；无终态任务=空态合法 True
     except Exception:  # noqa: BLE001
         return False
