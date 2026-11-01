@@ -351,6 +351,71 @@ class TestLongPeriodGapForm:
         assert row["coverage"]["first_bar"] == str(idx[0])
         assert row["coverage"]["last_bar"] == str(idx[-1])
 
+    def test_long_period_empty_file_gray(self, tmp_path):
+        """长周期档空 parquet（文件存在零行）→该档整体 gray
+        coverage 三字段空值形（design §5.1：两段同规则——数据缺失是事实不是错误）。"""
+        c = _client(tmp_path, {"LEMPTY_1d.parquet": pd.DataFrame()})
+        b = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "LEMPTY", "months_back": 1}).json()
+        row = [r for r in b["long_period"] if r["timeframe"] == "1d"][0]
+        assert row["status"] == "gray"
+        assert row["coverage"] == {"first_bar": None, "last_bar": None, "bars": 0}
+        assert row["gap_count"] == 0 and row["gaps"] == []
+
+
+class TestMultiSegmentGaps:
+    """缺口多段形态（闸门 coverage 交集补——Scenario「缺口」的多段面）：
+    分离两段各自成段；相邻异常（中间仅隔单根）合并为一段。"""
+
+    def test_two_separate_gap_segments_counted_independently(self, tmp_path):
+        """两段独立缺口：gap_count==2、first_gap=首段、gaps 两段各自 start/end。"""
+        may = pd.date_range("2026-09-01", periods=180, freq="4h")
+        idx = may.delete(list(range(80, 85)) + list(range(100, 105)))
+        c = _client(tmp_path, {"TWOGAP_4h.parquet": _ohlc(idx)})
+        cell = _cell_of(c.get("/api/data/integrity/monthly-matrix",
+                              params={"symbol": "TWOGAP", "months_back": 3}).json(),
+                        "2026-09", "4h")
+        assert cell["status"] == "yellow"
+        assert cell["gap_count"] == 2
+        # first_gap=时间序首段：段一=缺口前一根 may[79] ~ 缺口后一根 may[85]
+        assert cell["first_gap"] == {"start": str(may[79]), "end": str(may[85])}
+
+    def test_adjacent_gap_diffs_merged_into_one_segment(self, tmp_path):
+        """相邻异常合并：抽掉 may[80] 与 may[82]（中间 81 仍在）——
+        两处异常 diff 相邻触达，合并为单段 79~83（现状特征记录）。"""
+        may = pd.date_range("2026-09-01", periods=180, freq="4h")
+        idx = may.delete([80, 82])
+        c = _client(tmp_path, {"MERGE_4h.parquet": _ohlc(idx)})
+        cell = _cell_of(c.get("/api/data/integrity/monthly-matrix",
+                              params={"symbol": "MERGE", "months_back": 3}).json(),
+                        "2026-09", "4h")
+        assert cell["status"] == "yellow"
+        assert cell["gap_count"] == 1
+        assert cell["first_gap"] == {"start": str(may[79]), "end": str(may[83])}
+
+
+class TestMonthWindowSpan:
+    """月窗生成边界（闸门 coverage 交集补——months_back 跨年回退分支）。"""
+
+    def test_months_back_12_spans_year_boundary(self, tmp_path):
+        """months_back=12 跨年：最旧月为上一年 12 月，共 12 个月键。"""
+        idx = pd.date_range("2026-09-01", periods=180, freq="4h")
+        c = _client(tmp_path, {"SPAN_4h.parquet": _ohlc(idx)})
+        b = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "SPAN", "months_back": 12}).json()
+        months = [m["month"] for m in b["short_period"]["matrix"]]
+        assert len(months) == 12
+        # 跨年回退：最旧月=当前月往前第 11 个月（现算——11 月往回 11 个月=上年 12 月）
+        from datetime import datetime, timezone as tz
+        n = datetime.now(tz.utc)
+        y, m = n.year, n.month
+        for _ in range(11):
+            m -= 1
+            if m == 0:
+                m, y = 12, y - 1
+        assert months[0] == f"{y:04d}-{m:02d}"
+        assert months == sorted(months)
+
 
 class TestEmptyFileTimeframe:
     """空 parquet 档（文件存在零行）→该档全月 gray（design §5.1 错误语义：
