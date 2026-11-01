@@ -30,7 +30,7 @@ const SUB_CHART_OPTIONS: { value: SubChartType; label: string }[] = [
   { value: "kdj", label: "KDJ" },
 ];
 
-/** Calculate start date for the last N bars based on timeframe. */
+/** 按 timeframe 计算最近 N 根 bar 的起始日期。 */
 function barsAgoDate(timeframe: string, bars: number): string {
   const minutes = (TF_MINUTES[timeframe] ?? 240) * bars;
   return new Date(Date.now() - minutes * 60_000).toISOString();
@@ -39,7 +39,7 @@ function barsAgoDate(timeframe: string, bars: number): string {
 export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding }: TradingChartProps) {
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
-  // Only load the last 200 bars of data for paper trading chart
+  // 纸盘图表只装载最近 200 根数据
   const dateRange = useMemo(() => ({ start: barsAgoDate(timeframe, 200) }), [timeframe]);
 
   const {
