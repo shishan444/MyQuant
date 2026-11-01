@@ -794,6 +794,9 @@ function HistoryView({
   setExpandedSessionId: (id: string | null) => void;
   sessionResults: VerifyHistoryResponse | undefined;
 }) {
+  // 行类型仅收窄 thresholds（生成源索引签名→三键具体形，见 VerifyThresholds）
+  const rows = sessionResults?.items as VerifyHistoryRow[] | undefined;
+
   if (sessionsLoading) {
     return (
       <div className="space-y-2">
@@ -856,11 +859,7 @@ function HistoryView({
 
             {isExpanded && (
               <div className="px-3 pb-3 border-t border-slate-700/30 pt-2 overflow-x-auto space-y-2">
-                {sessionResults ? (
-                  (() => {
-                    // 行补形：后端 thresholds/star/total_trades 已声明、生成类型未同步
-                    const rows = sessionResults.items as VerifyHistoryRow[];
-                    return (
+                {rows ? (
                   <>
                     {/* B5 概要形制：星级+门槛点行+关键指标（不做全量字段铺开） */}
                     <table className="w-full text-[11px]" data-testid="session-results-table">
@@ -905,8 +904,6 @@ function HistoryView({
                     </table>
                     <ThresholdsSummary rows={rows} />
                   </>
-                    );
-                  })()
                 ) : (
                   <div className="py-4 text-center text-[11px] text-text-secondary">
                     <LoadingOutlined className="mr-1" /> 加载中...
