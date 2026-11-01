@@ -6,6 +6,7 @@ import type {
   Time,
   IChartApi,
 } from "lightweight-charts";
+import { toTime } from "../core/time";
 // fancy-canvas 类型无独立声明——经结构化最小面声明（draw 目标仅用 useMediaCoordinateSpace）
 interface MediaCoordinateSpace {
   context: CanvasRenderingContext2D;
@@ -119,11 +120,11 @@ export function attachPositionBand(series: ISeriesApi<"Candlestick", Time>): {
   return { primitive, setData: (b) => primitive.setData(b) };
 }
 
-/** 纯函数层：持仓记录 → 带数据（多笔持仓取区间并集的最近一笔；side 随持仓方向） */
+/** 纯函数层：持仓记录 → 带数据（单笔持仓区间映射；多笔由消费方逐笔挂载） */
 export function toBandData(entry: { bar_time: string; side: "long" | "short" }, exit?: { bar_time: string }): PositionBandData {
   return {
-    entryTime: entry.bar_time as unknown as Time,
-    exitTime: exit?.bar_time as unknown as Time | undefined,
+    entryTime: toTime(entry.bar_time),
+    exitTime: exit !== undefined ? toTime(exit.bar_time) : undefined,
     side: entry.side,
   };
 }
