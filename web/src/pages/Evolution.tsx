@@ -1,3 +1,11 @@
+/**
+ * 05 进化中心·主页面（alignment-batch D3 只读折中）。路由 /evolution，
+ * 呈现任务参数回显/探索进度/发现策略/产出两源（champion+snapshot）/
+ * 历史记录——任务发起归 MCP trigger_evolution，本页只回显不发起点。
+ * 数据经 react-query 拉取+活动任务 WS 实时更新；图表数据以
+ * lastActiveTaskId 兜底，任务完成后仍保留。消费方：App 路由
+ * （用户经侧边导航进入的页面入口）。
+ */
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router";
@@ -33,7 +41,7 @@ import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA, DiscoveredStrategy } from "@/types/api";
 
 // ---------------------------------------------------------------------------
-// Main Page Component
+// 主页面组件
 // ---------------------------------------------------------------------------
 
 function formatTimeframeDisplay(task: EvolutionTask): string {
@@ -46,26 +54,26 @@ export function Evolution() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // --- Expanded strategy ---
+  // --- 展开的策略 ID（策略卡展开态） ---
   const [expandedStrategyId, setExpandedStrategyId] = useState<string | null>(null);
 
-  // --- Stop confirm dialog ---
+  // --- 停止确认对话框（待停任务） ---
   const [stopTarget, setStopTarget] = useState<EvolutionTask | null>(null);
 
-  // --- Last active task ID (for chart data retention after task completes) ---
+  // --- 最近活动任务 ID（任务完成后图表数据据此保留） ---
   const [lastActiveTaskId, setLastActiveTaskId] = useState<string>("");
 
-  // --- Task detail drawer ---
+  // --- 任务详情抽屉 ---
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
 
-  // --- Data fetching ---
+  // --- 数据获取 ---
   const { data: tasksData, isLoading: tasksLoading } = useQuery(
     useEvolutionTasks({ limit: 20 })
   );
 
   const allTasks: EvolutionTask[] = tasksData?.items ?? [];
 
-  // Find active task (first running/pending)
+  // 找活动任务（首个 running/pending）
   const activeTask = useMemo(
     () => allTasks.find((t) => isActiveStatus(t.status)) ?? null,
     [allTasks]
@@ -73,23 +81,23 @@ export function Evolution() {
 
   const activeTaskId = activeTask?.task_id ?? "";
 
-  // Track last active task ID for chart data retention
+  // 记录最近活动任务 ID，供图表数据保留
   useEffect(() => {
     if (activeTaskId) setLastActiveTaskId(activeTaskId);
   }, [activeTaskId]);
 
-  // Use lastActiveTaskId as fallback so chart keeps showing data after task completes
+  // 以 lastActiveTaskId 兜底——任务完成后图表继续显示数据
   const historyTaskId = activeTaskId || lastActiveTaskId;
 
-  // Subscribe to WS updates for the active task
+  // 订阅活动任务的 WS 更新
   useEvolutionWebSocket(activeTaskId);
 
-  // Fetch detailed task data for the active task
+  // 拉取活动任务详情
   const { data: activeTaskDetail } = useQuery(
     useEvolutionTask(activeTaskId)
   );
 
-  // Fetch history for score trend chart (uses lastActiveTaskId fallback)
+  // 拉取评分趋势图历史（lastActiveTaskId 兜底）
   const { data: historyData } = useQuery(
     useEvolutionHistory(historyTaskId, !!activeTaskId)
   );
@@ -107,13 +115,13 @@ export function Evolution() {
 
   const currentTask = activeTaskDetail ?? activeTask;
 
-  // Discovered strategies from strategy table (auto-extracted during evolution)
+  // 发现的策略（来自策略表，进化过程自动摘取）
   const { data: discoveredData } = useQuery(
     useDiscoveredStrategies(historyTaskId)
   );
   const effectiveStrategies = discoveredData ?? [];
 
-  // Historical tasks (completed or stopped)
+  // 历史任务（completed 或 stopped）
   const historicalTasks = useMemo(
     () =>
       allTasks.filter(
@@ -122,7 +130,7 @@ export function Evolution() {
     [allTasks]
   );
 
-  // --- Route seed-injection notice (发起归 MCP 后，seed 入口仅提示) ---
+  // --- 路由 seed 注入提示（发起归 MCP 后，seed 入口仅提示） ---
   useEffect(() => {
     const state = location.state as { seedDna?: DNA } | null;
     if (state?.seedDna) {
@@ -132,13 +140,13 @@ export function Evolution() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- Mutations ---
+  // --- 变更操作（mutations） ---
   const pauseTask = usePauseEvolutionTask();
   const stopTask = useStopEvolutionTask();
   const resumeTask = useResumeEvolutionTask();
   const saveStrategyMutation = useCreateStrategy();
 
-  // --- Handlers ---
+  // --- 事件处理 ---
   const handlePause = useCallback(() => {
     if (!activeTaskId) return;
     pauseTask.mutate(activeTaskId);
@@ -220,7 +228,7 @@ export function Evolution() {
     [navigate, currentTask]
   );
 
-  // --- Loading skeleton ---
+  // --- 加载骨架屏 ---
   if (tasksLoading) {
     return (
       <PageTransition>
@@ -233,7 +241,7 @@ export function Evolution() {
     );
   }
 
-  // --- Derived data ---
+  // --- 派生数据 ---
   const historyRecords = historyData?.records ?? [];
   const targetScore = currentTask?.target_score ?? 80;
 
@@ -267,7 +275,7 @@ export function Evolution() {
         </div>
 
         {/* ================================================================== */}
-        {/* Area 2 - Exploration Progress                                      */}
+        {/* Area 2 - 探索进度                                                 */}
         {/* ================================================================== */}
         <GlassCard className="p-5" hover={false}>
           <div className="flex items-center justify-between">
@@ -327,7 +335,7 @@ export function Evolution() {
         </GlassCard>
 
         {/* ================================================================== */}
-        {/* Area 3 - Discovered Strategies                                     */}
+        {/* Area 3 - 发现的策略                                               */}
         {/* ================================================================== */}
         {effectiveStrategies.length > 0 && (
           <div>
@@ -375,7 +383,7 @@ export function Evolution() {
         )}
 
         {/* ================================================================== */}
-        {/* Area 5 - History                                                   */}
+        {/* Area 5 - 历史记录                                                 */}
         {/* ================================================================== */}
         {historicalTasks.length > 0 && (
           <GlassCard className="p-5" hover={false}>
@@ -394,7 +402,7 @@ export function Evolution() {
           </GlassCard>
         )}
 
-        {/* No tasks at all - show empty state */}
+        {/* 完全无任务 - 显示空状态 */}
         {allTasks.length === 0 && !currentTask && (
           <GlassCard className="p-5" hover={false}>
             <EmptyState
@@ -405,7 +413,7 @@ export function Evolution() {
           </GlassCard>
         )}
 
-        {/* Stop confirmation dialog */}
+        {/* 停止确认对话框 */}
         <ConfirmDialog
           open={stopTarget !== null}
           onOpenChange={(open) => {
@@ -419,7 +427,7 @@ export function Evolution() {
           loading={stopTask.isPending}
         />
 
-        {/* Task detail drawer */}
+        {/* 任务详情抽屉 */}
         {detailTaskId && (
           <TaskDetailDrawer
             taskId={detailTaskId}
