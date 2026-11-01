@@ -203,8 +203,6 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     },
   }), []);
 
-  // Sync charts via shared hook.
-
   // 从当前数据构建图例分组
   useEffect(() => {
     const groups: LegendGroup[] = [];
