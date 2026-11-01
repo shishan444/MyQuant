@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { LineSeries } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
 import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
@@ -46,9 +47,11 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
   stopLossPrice, trailSeries }: TradingChartProps) {
   // F1 标注挂载（paper-trading-revamp）：chart ready 后经 primitives 挂线——
   // 当前止损价=标量水平线（annotations 价线族）；trail 序列=折线 series（观测面消费）
-  const handleChartReady = useCallback((chart: unknown, candleSeries: unknown) => {
-    if (stopLossPrice != null && candleSeries && typeof (candleSeries as { createPriceLine?: unknown }).createPriceLine === "function") {
-      (candleSeries as { createPriceLine: (o: unknown) => unknown }).createPriceLine({
+  // 形参类型化（CARD-13，循 SceneModePanel 先例——KlineChart.onChartReady 同签名；
+  // 原 unknown+鸭子检查系类型缺位时代的防御，类型化后真实实例恒有方法，删除断言链）
+  const handleChartReady = useCallback((chart: IChartApi, candleSeries: ISeriesApi<"Candlestick">) => {
+    if (stopLossPrice != null) {
+      candleSeries.createPriceLine({
         price: stopLossPrice,
         color: "#FBBF24",
         lineWidth: 1,
@@ -58,12 +61,12 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
       });
     }
     const pts = (trailSeries ?? []).filter((t) => t.trail_sl_price != null);
-    if (pts.length > 0 && chart && typeof (chart as { addSeries?: unknown }).addSeries === "function") {
+    if (pts.length > 0) {
       try {
-        const line = (chart as { addSeries: (d: unknown, o?: unknown) => { setData: (d: unknown) => void } }).addSeries(LineSeries, {
+        const line = chart.addSeries(LineSeries, {
           color: "#FBBF24", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
         });
-        line.setData(pts.map((t) => ({ time: toTime(t.bar_time) as number, value: t.trail_sl_price as number })));
+        line.setData(pts.map((t) => ({ time: toTime(t.bar_time) as UTCTimestamp, value: t.trail_sl_price as number })));
       } catch { /* 观测线挂载失败不阻塞主图（观测面容错） */ }
     }
   }, [stopLossPrice, trailSeries]);
@@ -110,7 +113,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         candles={candleData}
         cumulativeFunding={cumulativeFunding}
       />
-      {/* Sub-chart indicator selector */}
+      {/* 副图指标选择器 */}
       <div className="flex items-center gap-0.5 mb-1">
         <span className="mr-1 text-[11px] text-slate-500">Sub-chart</span>
         {SUB_CHART_OPTIONS.map((opt) => (

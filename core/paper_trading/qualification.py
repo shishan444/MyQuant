@@ -14,8 +14,11 @@ profile（跨域引用会把研究域门槛变更误传导给纸盘达标）。
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("paper_runtime")
 
 # ---------------------------------------------------------------------------
 # 常量（自有，语义分立于 core/analysis/thresholds.py DEFAULT_PROFILE）
@@ -79,10 +82,9 @@ def paper_trigger_set(pt_signal_rows) -> list:
     """
     out = []
     for row in pt_signal_rows:
-        kind = row["signal_kind"] if isinstance(row, dict) else row.signal_kind
+        kind = row["signal_kind"]
         if kind in SIGNAL_WHITELIST:
-            bt = row["bar_time"] if isinstance(row, dict) else row.bar_time
-            out.append((bt, kind))
+            out.append((row["bar_time"], kind))
     return out
 
 
@@ -103,7 +105,7 @@ def replay_trigger_set(signal_set) -> list:
             continue
         action = REPLAY_ACTION_MAP[series_key]
         for ts in series.index[series.astype(bool)]:
-            out.append((str(ts), action))
+            out.append((ts.isoformat(), action))
     return out
 
 
@@ -176,7 +178,8 @@ def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
         from core.analysis.backtest_bridge import prepare_replay_inputs
         from core.persistence.repository import paper as paper_repo
         from core.strategy.executor import dna_to_signal_set
-        from core.paper_trading.kernel.types import StrategyDNA
+        from core.strategy.dna import StrategyDNA
+        from core.paper_trading.reporting import DEVIATION_WARMUP_BARS
 
         dna = StrategyDNA.from_json(task["dna_snapshot_json"])
         equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
@@ -187,14 +190,18 @@ def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
         end = task["last_bar_time"]
         bt_df, dfs_by_timeframe, _sig, _w = prepare_replay_inputs(
             db_path, data_dir, dna, task["symbol"], task["timeframe"],
-            start, end, 200)
+            start, end, DEVIATION_WARMUP_BARS)
         sig_set = dna_to_signal_set(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe)
         replay = replay_trigger_set(sig_set)
         paper = paper_trigger_set(signal_rows)
         return trigger_consistency(paper, replay)
     except Exception as exc:  # noqa: BLE001——终判解耦：重放失败不阻塞终态
+        logger.exception("对照重放器失败（task=%s）", task.get("task_id"))
+        # reason 只带异常类名（完整 exc 落日志——异常 str 携绝对路径的
+        # 场景不入 REST 披露面）
         return {"passed": None, "deviation_ratio": None, "numerator": None,
-                "denominator": 0, "detail": {"reason": f"replay_failed: {exc}"}}
+                "denominator": 0,
+                "detail": {"reason": f"replay_failed: {type(exc).__name__}"}}
 
 
 def build_qualification_section(db_path: Path, data_dir: Path,
@@ -203,17 +210,29 @@ def build_qualification_section(db_path: Path, data_dir: Path,
 
     equity 取权益快照末行同源值（与 pt_equity 行同源）；对照重放
     经 run_trigger_consistency（内部三态容错）；judged_at=调用时点。
+    入口终态守卫（审查 CARD-05）：非终态（rolling 报告）跳过对照重放
+    ——半途数据的一致性无判据意义且重放重不可每查即跑；consistency
+    占位 running_not_judged（三态 NULL）、judged_at=None（未判）；
+    两维仍现算（运行进度面）；transition 零触碰（内部守卫不变）。
     """
     from core.persistence.repository import paper as paper_repo
-    from core.paper_trading.runtime.executor import utc_now_iso
+    from core.paper_trading.runtime.executor import TERMINAL_STATUSES
+    from core.persistence.timestamps import utc_now_iso
     equity_rows = paper_repo.list_equity_snapshots(db_path, task["task_id"], limit=10**9)
     final_equity = float(equity_rows[-1]["equity"]) if equity_rows else float(task["initial_cash"])
-    signal_rows = paper_repo.list_signals(db_path, task["task_id"], limit=10**9)
-    consistency = run_trigger_consistency(db_path, data_dir, task, signal_rows)
+
+    if task.get("status") not in TERMINAL_STATUSES:
+        consistency = {"passed": None, "deviation_ratio": None, "numerator": None,
+                       "denominator": 0, "detail": {"reason": "running_not_judged"}}
+        judged_at = None
+    else:
+        signal_rows = paper_repo.list_signals(db_path, task["task_id"], limit=10**9)
+        consistency = run_trigger_consistency(db_path, data_dir, task, signal_rows)
+        judged_at = utc_now_iso()
     section = final_judgment(
         final_equity, float(task["initial_cash"]), int(task["total_trades"]),
         consistency)
-    section["judged_at"] = utc_now_iso()
+    section["judged_at"] = judged_at
     section["transition"] = _maybe_transit_candidate(db_path, task, section)
     return section
 
@@ -229,14 +248,14 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
     """
     out: Dict[str, Any] = {"attempted": False, "migrated": False,
                            "not_migrated_reason": None}
-    terminal = {"completed", "stopped", "error"}
-    if task.get("status") not in terminal or not section.get("qualified"):
+    # 终态集单源（executor.TERMINAL_STATUSES——与终判守卫同源，不立第三份字面量）
+    from core.paper_trading.runtime.executor import TERMINAL_STATUSES
+    if task.get("status") not in TERMINAL_STATUSES or not section.get("qualified"):
         return out
     out["attempted"] = True
     try:
         from core.strategy.lifecycle.service import transit
-        dna = None
-        from core.paper_trading.kernel.types import StrategyDNA
+        from core.strategy.dna import StrategyDNA
         dna = StrategyDNA.from_json(task["dna_snapshot_json"])
         result = transit(
             db_path, task["strategy_id"],
@@ -255,9 +274,14 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
             })
         out["migrated"] = bool(result.get("migrated"))
         if not out["migrated"]:
-            out["not_migrated_reason"] = str(result.get("reason") or result)
+            # transit 的 not_migrated 返回键=not_migrated_reason（service._not_migrated）
+            out["not_migrated_reason"] = str(
+                result.get("not_migrated_reason") or result)
     except Exception as exc:  # noqa: BLE001——迁移失败不回滚终判（解耦）
-        out["not_migrated_reason"] = f"transit_failed: {exc}"
+        logger.exception("凭证迁移失败（task=%s strategy=%s）",
+                         task.get("task_id"), task.get("strategy_id"))
+        # reason 只带异常类名（完整 exc 落日志，不入 REST 披露面）
+        out["not_migrated_reason"] = f"transit_failed: {type(exc).__name__}"
     return out
 
 

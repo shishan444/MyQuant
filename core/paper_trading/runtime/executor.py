@@ -1428,6 +1428,12 @@ class PaperTaskExecutor:
             fields["stop_reason"] = stop_reason
         if error_detail is not None:
             fields["error_detail"] = error_detail
+        # 达标首满足时点终局承载（paper-trading-revamp 组 B 修复）：首满足
+        # bar 恰为终局 bar 时（窗口到点/stop 边界），_persist_bar 已过、无
+        # 下一根承载——此处兜底写库；非 None 才带（从未满足保持 NULL，
+        # 不覆写恢复场景装载值——幂等单次写语义）
+        if self._first_met_at is not None:
+            fields["first_met_at"] = self._first_met_at
         paper_repo.update_task(self.db_path, self.task_id, **fields)
         logger.info("纸盘任务 %s 终态 %s（%s）", self.task_id, status,
                     stop_reason or error_detail or "")
