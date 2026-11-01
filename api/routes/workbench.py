@@ -42,7 +42,8 @@ class PendingEventsResponse(BaseModel):
     degraded: int = 0          # 单源失败跳过计数（fail-open 观察面）
     availability: Availability = Availability()
     scanned_tasks: int = 0     # 本轮实际扫描终态任务数（CARD-07 披露）
-    truncated: bool = False    # 达扫描上限（TERMINAL_SCAN_LIMIT）——可能漏扫
+    scanned_running_tasks: int = 0  # 本轮实际扫描运行中任务数（批次三补件）
+    truncated: bool = False    # 达扫描上限（终态或运行中任一面）——可能漏扫
 
 
 def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
@@ -95,18 +96,22 @@ def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]
     return events, degraded
 
 
-def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int]:
+def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int, int]:
     """达标待停：运行中 pt_task 两维同时满足。
 
     两维现算（qualification.evaluate_two_dimensions 单源——与 API 层
     qualification_progress 同一函数）；equity=balance+margin+upnl 行内
     同源合成（契约登记表「权益公式」纪律）；first_met_at 直读行。
+    返回 (events, degraded, scanned)——running 面同界披露（批次三补件：
+    len==TERMINAL_SCAN_LIMIT 时 truncated 由组装段置位，与终态面同款）。
     """
     from core.paper_trading.qualification import evaluate_two_dimensions
     from core.persistence.repository import paper as paper_repo
     events: List[PendingEvent] = []
     degraded = 0
-    for task in paper_repo.list_tasks(db_path, status="running", limit=1000):
+    tasks = paper_repo.list_tasks(
+        db_path, status="running", limit=TERMINAL_SCAN_LIMIT)
+    for task in tasks:
         try:
             if task.get("balance") is None:
                 continue  # 初启未跑 bar
@@ -125,7 +130,7 @@ def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int]:
             degraded += 1
             logger.warning("qualify_pending 扫描跳过 %s: %s",
                            task.get("task_id"), exc)
-    return events, degraded
+    return events, degraded, len(tasks)
 
 
 def _trigger_deviation_events(db_path) -> tuple[List[PendingEvent], int, int]:
@@ -177,9 +182,9 @@ def pending_events(
 
     # C5 判定器源可用性探测：qualification_progress 键在运行任务面缺席=降级
     try:
-        events_q, deg_q = _qualify_pending_events(db_path)
+        events_q, deg_q, scanned_q = _qualify_pending_events(db_path)
     except Exception:  # noqa: BLE001——端点整体 fail-open
-        events_q, deg_q = [], 1
+        events_q, deg_q, scanned_q = [], 1, 0
     if not _qualify_source_available(db_path):
         availability.qualify_pending = "unavailable"
         availability.reason = "C5 判定器源未建（旧库行无 qualification_progress）"
@@ -200,7 +205,9 @@ def pending_events(
         degraded=deg_u + deg_q + deg_t,
         availability=availability,
         scanned_tasks=scanned_t,
-        truncated=scanned_t >= TERMINAL_SCAN_LIMIT)
+        scanned_running_tasks=scanned_q,
+        truncated=(scanned_t >= TERMINAL_SCAN_LIMIT
+                   or scanned_q >= TERMINAL_SCAN_LIMIT))
 
 
 def _qualify_source_available(db_path) -> bool:
