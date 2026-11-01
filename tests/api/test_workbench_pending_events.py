@@ -254,6 +254,84 @@ class TestAvailability:
         assert "events" in body  # 响应结构完整（事件面如实呈现）
 
 
+def _add_terminal_report(db, task_id, status, report):
+    """终态任务+单报告直插（CARD-05 三态种子——TestTriggerDeviation
+    同款构造形制：create_task+status 直更+PtReport version=1）。"""
+    from sqlalchemy import create_engine, update as sa_update
+    from sqlalchemy.orm import sessionmaker
+    from core.persistence.orm.models import PtReport, PtTask
+    from core.persistence.repository import paper as paper_repo
+    paper_repo.create_task(
+        db, strategy_id="st_wb5", dna_snapshot_json="{}",
+        symbol="BTCUSDT", timeframe="4h",
+        research_status_snapshot="unverified", window_bars=10, task_id=task_id)
+    S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+    with S() as sess:
+        sess.execute(sa_update(PtTask).where(PtTask.task_id == task_id).values(
+            status=status))
+        sess.add(PtReport(task_id=task_id, report_version=1,
+                          generated_at="2026-11-01T00:00:00",
+                          as_of="2026-11-01T00:00:00",
+                          report_json=json.dumps(report)))
+        sess.commit()
+
+
+class TestTriggerAvailability:
+    """CARD-05 trigger 半边源可用性三态（spec Scenario 源未建区分的
+    trigger 半边）：无终态任务=空态合法不标；全部最新报告缺
+    qualification 键=unavailable；任一含键（混合库）=源已建不标。"""
+
+    def test_no_terminal_tasks_empty_state_not_marked(self, client):
+        """空态：无终态任务不标降级（无从判源≠源未建）。"""
+        r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        assert r.json()["availability"]["trigger_deviation"] is None
+
+    def test_all_reports_missing_key_unavailable(self, client):
+        """全缺键：终态报告无 qualification 键（C5 前旧报告）→
+        unavailable+reason 披露 trigger 半边；端点 200。"""
+        db = client._db
+        _add_terminal_report(db, "wb_a1", "completed",
+                             {"performance": {}})  # 无 qualification 键
+        _add_terminal_report(db, "wb_a2", "stopped",
+                             {"performance": {}, "other": {}})
+        r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        avail = r.json()["availability"]
+        assert avail["trigger_deviation"] == "unavailable"
+        assert "trigger 回看源未建" in avail["reason"]
+
+    def test_mixed_library_any_key_present_available(self, client):
+        """混合库：缺键旧报告与含键新报告并存 → 任一含键即源已建
+        不标（同构 qualify 半边「任一行含列」语义）。"""
+        db = client._db
+        _add_terminal_report(db, "wb_a3", "completed",
+                             {"performance": {}})  # C5 前旧形态
+        _add_terminal_report(db, "wb_a4", "stopped",
+                             {"performance": {}, "qualification": {
+                                 "trigger_consistency": {"passed": True}}})
+        r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        assert r.json()["availability"]["trigger_deviation"] is None
+
+    def test_dual_unavailable_reason_concatenated(self, client):
+        """两半同时 unavailable：reason 单字段拼接两半说明（非分源
+        双 reason——architect 卡面形制），「；」连接。"""
+        from unittest.mock import patch
+        db = client._db
+        _add_terminal_report(db, "wb_a5", "completed", {"performance": {}})
+        with patch("api.routes.workbench._qualify_source_available",
+                   return_value=False):
+            r = client.get("/api/workbench/pending-events")
+        avail = r.json()["availability"]
+        assert avail["qualify_pending"] == "unavailable"
+        assert avail["trigger_deviation"] == "unavailable"
+        reason = avail["reason"]
+        assert "C5 判定器源未建" in reason      # qualify 半边说明在
+        assert "trigger 回看源未建" in reason   # trigger 半边说明在
+        assert "；" in reason                    # 单字段拼接连接符
+
+
 class TestTriggerDeviation:
     def test_passed_false_event_and_null_no_event(self, client):
         """passed==false 产事件+passed=None（对照重放不可执行）不产。"""

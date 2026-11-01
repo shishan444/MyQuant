@@ -90,4 +90,38 @@ describe("Workbench（01 观察工作台）", () => {
     setup();
     expect(await screen.findByText("暂无验证记录")).toBeInTheDocument();
   });
+
+  it("CARD-05 两半源未建同时渲染（reason 单字段拼接）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      availability: {
+        qualify_pending: "unavailable",
+        trigger_deviation: "unavailable",
+        reason: "C5 判定器源未建（旧库行无 qualification_progress）；trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）",
+      },
+    } as never);
+    setup();
+    // 两半 unavailable 渲染块并存（区分「无事件」与「源未建」）
+    const qualifyBlock = await screen.findByText(/达标事件源未建/);
+    expect(screen.getByText(/触发差异事件源未建/)).toBeInTheDocument();
+    // qualify 块内嵌完整拼接 reason——两半说明同现一处（单字段非分源；
+    // JSX 插值产独立文本节点，regex 匹配器不可跨段——textContent 断言）
+    expect(qualifyBlock.textContent).toContain("旧库行无 qualification_progress");
+    expect(qualifyBlock.textContent).toContain("trigger 回看源未建");
+    expect(qualifyBlock.textContent).toContain("；");
+  });
+
+  it("CARD-05 仅 trigger 半边源未建（qualify 可用不渲染 qualify 块）", async () => {
+    vi.mocked(wb.getPendingEvents).mockResolvedValue({
+      events: [], degraded: 0,
+      availability: {
+        qualify_pending: null,
+        trigger_deviation: "unavailable",
+        reason: "trigger 回看源未建（终态报告无 qualification 键——C5 前旧报告）",
+      },
+    } as never);
+    setup();
+    expect(await screen.findByText(/触发差异事件源未建/)).toBeInTheDocument();
+    expect(screen.queryByText(/达标事件源未建/)).not.toBeInTheDocument();
+  });
 });
