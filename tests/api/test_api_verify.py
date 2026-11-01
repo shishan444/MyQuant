@@ -1,4 +1,4 @@
-"""Verify endpoint tests: schema validation, comprehensive score calculation, history."""
+"""Verify 端点测试：schema 校验、综合评分计算、历史记录。"""
 
 import pytest
 
@@ -17,7 +17,7 @@ from api.schemas import (
 
 
 # ---------------------------------------------------------------------------
-# Schema tests
+# schema 测试
 # ---------------------------------------------------------------------------
 
 def test_verify_date_range_schema():
@@ -105,7 +105,7 @@ def test_verify_response_schema():
 
 
 # ---------------------------------------------------------------------------
-# Endpoint existence test
+# 端点存在性测试
 # ---------------------------------------------------------------------------
 
 def test_verify_endpoint_exists():
@@ -114,11 +114,11 @@ def test_verify_endpoint_exists():
 
 
 # ---------------------------------------------------------------------------
-# Comprehensive score calculation tests
+# 综合评分计算测试
 # ---------------------------------------------------------------------------
 
 def test_comprehensive_score_all_qualified():
-    """All 3 periods qualified → consistency_bonus=1.2."""
+    """三区间全达标 → consistency_bonus=1.2。"""
     fitnesses = [1.0, 1.2, 0.8]
     avg = sum(fitnesses) / 3
     qualified_count = 3
@@ -136,7 +136,7 @@ def test_comprehensive_score_partial_qualified():
     qualified_count = 2
     total = 3
     qualified_ratio = qualified_count / total
-    consistency_bonus = 1.0  # not all qualified
+    consistency_bonus = 1.0  # 非全达标
     score = avg * qualified_ratio * consistency_bonus
     assert abs(score - avg * (2/3)) < 0.001
 
@@ -159,13 +159,13 @@ def test_comprehensive_score_single_period():
     qualified_count = 1
     total = 1
     qualified_ratio = 1.0
-    consistency_bonus = 1.2  # all qualified (1/1)
+    consistency_bonus = 1.2  # 全达标（1/1）
     score = avg * qualified_ratio * consistency_bonus
     assert abs(score - 1.8) < 0.001
 
 
 # ---------------------------------------------------------------------------
-# History endpoint tests
+# 历史端点测试
 # ---------------------------------------------------------------------------
 
 def test_verify_history_schema():
