@@ -43,7 +43,6 @@ def _client(tmp_path: Path, files: dict):
 
     class C:
         _dd = dd
-        _db = tmp_path / "q.db"
         def get(self, path, params=None):
             from fastapi import HTTPException
             if path == "/api/data/freshness/status":
@@ -57,10 +56,10 @@ def _client(tmp_path: Path, files: dict):
                 out = integrity_monthly_matrix(
                     request=_req(), symbol=params["symbol"],
                     months_back=params.get("months_back", 6),
-                    db_path=self._db, data_dir=self._dd)
+                    data_dir=self._dd)
                 return _Resp(out.model_dump())
             except HTTPException as e:
-                return _Resp(status=e.status_code)
+                return _Resp({"detail": e.detail}, status=e.status_code)
 
     def _req():
         return type("R", (), {"app": _FA()})()
@@ -151,6 +150,12 @@ class TestMonthlyMatrix:
         c, _ = five_forms
         assert c.get("/api/data/integrity/monthly-matrix",
                      params={"symbol": "NOSUCH"}).status_code == 404
+        # S-1：404 detail 回显 safe 后 sym（与响应体 symbol 同源——
+        # 带分隔符入参被剥离后回显，不再回显原始入参）
+        r = c.get("/api/data/integrity/monthly-matrix",
+                  params={"symbol": "NO-SUCH"})
+        assert r.status_code == 404
+        assert r.json()["detail"] == "No data for NOSUCH"
 
     def test_long_period_two_segment_structure(self, five_forms):
         c, _ = five_forms
@@ -175,13 +180,8 @@ class TestFreshnessStatus:
             assert "kline" in b and "derivs" in b
             assert isinstance(b["kline"], dict) and "keys" in b["kline"]
 
-    def test_attribute_chain_missing_503(self, tmp_path):
-        """挂点属性链缺失（无 scheduler 态）→503 不伪装空。"""
-        from api.app import create_app
-        app = create_app(db_path=tmp_path / "q.db", data_dir=tmp_path)
-        # 不进 lifespan（不起 scheduler）→state 无 paper_scheduler
-        client = TestClient(app, raise_server_exceptions=False)
-        # lifespan 必须触发才能处理请求——用显式关闭 lifespan 的形制：直接调路由函数
+    def test_attribute_chain_missing_503(self):
+        """挂点属性链缺失（无 scheduler 态）→503 不伪装空（直调路由函数形制）。"""
         from api.routes.integrity_workbench import freshness_status
         from fastapi import HTTPException
         class FakeState:
