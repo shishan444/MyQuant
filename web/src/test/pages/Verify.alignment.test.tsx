@@ -5,7 +5,7 @@
  * 服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
@@ -174,5 +174,50 @@ describe("VerifyThresholds 纯函数", () => {
   it("formatDrawdown 负值小数→abs 百分数", () => {
     expect(formatDrawdown(-0.08)).toBe("8.0%");
     expect(formatDrawdown(0.25)).toBe("25.0%");
+  });
+});
+
+describe("CARD-01 结果卡概要取较深回撤", () => {
+  it("两区间 -5%/-20% → AggregateMetrics 概要行显示 -20.0%（Math.min 负值口径；旧 Math.max 反转会取 -5.0%）", async () => {
+    let captured: { onComplete: (data: unknown) => void } | null = null;
+    vi.mocked(strat.verifyStrategiesStream).mockImplementation(
+      ((_payload: unknown, callbacks: { onComplete: (data: unknown) => void }) => {
+        captured = callbacks;
+      }) as never,
+    );
+
+    setup();
+    // 等策略列表加载（按钮计数 0→1），再点近3月预设填区间、点开始验证
+    // 触发 stream.start（捕获 callbacks）
+    await screen.findByText(/开始验证 \(1\)/);
+    fireEvent.click(screen.getByText("近3月"));
+    fireEvent.click(screen.getByText(/开始验证 \(1\)/));
+    expect(captured).not.toBeNull();
+
+    await act(async () => {
+      captured!.onComplete({
+        session_id: "s-card",
+        summary: [{
+          strategy_id: "st-1",
+          strategy_name: "策略一",
+          comprehensive_score: 8.4,
+          avg_fitness: 7.0,
+          qualified_count: 2,
+          total_periods: 2,
+          per_period_metrics: [
+            { data_start: "2026-01-01", data_end: "2026-02-01", fitness: 7,
+              qualified: true, total_return: 0.1, sharpe_ratio: 1.5,
+              max_drawdown: -0.05 },
+            { data_start: "2026-02-02", data_end: "2026-03-01", fitness: 7,
+              qualified: true, total_return: 0.1, sharpe_ratio: 1.5,
+              max_drawdown: -0.2 },
+          ],
+        }],
+        results: [],
+      });
+    });
+
+    expect(screen.getByText("回撤 -20.0%")).toBeInTheDocument();
+    expect(screen.queryByText("回撤 -5.0%")).not.toBeInTheDocument();
   });
 });
