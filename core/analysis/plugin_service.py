@@ -300,6 +300,27 @@ def plugin_columns_lookback(db_path: Path, columns: set) -> int:
     return lookback
 
 
+def plugin_audit_fields(db_path: Path, columns: set) -> Dict[str, Any]:
+    """插件审计两现算字段（alignment-batch β）——现算不落列（推导值
+    落列即第二事实源）。
+
+    warmup_bars=依赖闭包各表达式 lookback 的 max（与
+    plugin_columns_lookback 同源解析）；dependency_closure=闭包列集
+    （环时 visited 截断——环上各列各计一次、含自身，升版互引可造）。
+    列不在 registry（rejected/失效/未激活）→ warmup_bars null +
+    closure []（无推导依据，与「无窗口项表达式贡献 0」区分）。
+    """
+    from core.signals.formula import formula_lookback
+
+    closure = _formula_dependency_closure(db_path, columns)
+    if not closure:
+        return {"warmup_bars": None, "dependency_closure": []}
+    lookback = 0
+    for expr in closure.values():
+        lookback = max(lookback, formula_lookback(expr))
+    return {"warmup_bars": lookback, "dependency_closure": sorted(closure)}
+
+
 def assert_plugin_columns_reachable(
     db_path: Path, plugin_columns: set,
 ) -> None:

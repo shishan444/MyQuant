@@ -510,8 +510,14 @@ class VerifyHistoryItem(BaseModel):
     total_return: float = 0.0
     sharpe_ratio: float = 0.0
     max_drawdown: float = 0.0
+    total_trades: int = 0
     fitness: float = 0.0
     qualified: int = 0
+    # 三门槛明细（alignment-batch α）：现算值非落库列——门槛常量
+    # DEFAULT_PROFILE 单源；行指标缺失时对应布尔为 null（缺失≠false），
+    # star=非 null 布尔真值计数（0-3 机械换算，契约登记表四）
+    thresholds: Optional[Dict[str, Optional[bool]]] = None
+    star: int = 0
     created_at: str
 
 

@@ -29,6 +29,7 @@ from core.persistence.repository.backtest_result import (
     list_backtest_results,
     save_backtest_result,
 )
+from core.analysis.thresholds import DEFAULT_PROFILE
 from core.persistence.repository.strategy import (
     count_strategies,
     delete_strategy,
@@ -470,10 +471,54 @@ async def verify_strategies_stream(
     return {"session_id": session_id}
 
 
+# 三门槛布尔键 ← BacktestResult 指标字段（响应键名对齐呈现契约）
+_THRESH_KEY_FIELD = (
+    ("total_return", "return_positive"),
+    ("max_drawdown", "drawdown_ok"),
+    ("total_trades", "trades_enough"),
+)
+
+_THRESH_OPS = {
+    "gt": lambda v, t: v > t,
+    "ge": lambda v, t: v >= t,
+    "lt": lambda v, t: v < t,
+    "le": lambda v, t: v <= t,
+}
+
+
+def _threshold_star(row: Dict[str, Any]) -> tuple[Dict[str, Optional[bool]], int]:
+    """三门槛明细现算（alignment-batch α）。
+
+    门槛常量引用 thresholds.py DEFAULT_PROFILE 单源（verify 域三门槛
+    即其语义本体，与 C5 纸盘判定器不同源——判定式等号侧由 profile
+    的 op 决定：return>0 严格、drawdown<0.25 严格、trades>=5 含等）。
+    口径归一：backtest_result.max_drawdown 落库为负值小数（引擎
+    drawdown.min() 直落，scorer.py abs() 先例）——判定前取 abs，
+    否则负值口径下 lt 0.25 恒真（-0.30 的 30% 回撤会误判 ok）。
+    行指标缺失→对应布尔 null（缺失≠false，win_rate_failed 三态教训：
+    显式失败禁止按 false 降级）；star 按非 null 布尔真值计数（0-3）。
+    """
+    thresholds: Dict[str, Optional[bool]] = {}
+    star = 0
+    for field, key in _THRESH_KEY_FIELD:
+        spec = DEFAULT_PROFILE["rules"][field]
+        value = row.get(field)
+        if value is not None and field == "max_drawdown":
+            value = abs(value)
+        passed = (
+            None if value is None
+            else bool(_THRESH_OPS[spec["op"]](value, spec["value"]))
+        )
+        thresholds[key] = passed
+        if passed:
+            star += 1
+    return thresholds, star
+
+
 def _history_items(
     db_path: Path, results: List[Dict[str, Any]],
 ) -> List[VerifyHistoryItem]:
-    """backtest_result 行转历史条目（策略名逐行缓存）。"""
+    """backtest_result 行转历史条目（策略名逐行缓存；三门槛现算扩展）。"""
     strategy_names: Dict[str, str] = {}
     items = []
     for row in results:
@@ -481,6 +526,7 @@ def _history_items(
         if sid not in strategy_names:
             strat = get_strategy(db_path, sid)
             strategy_names[sid] = strat["name"] if strat else None
+        thresholds, star = _threshold_star(row)
         items.append(VerifyHistoryItem(
             result_id=row["result_id"],
             strategy_id=sid,
@@ -492,8 +538,11 @@ def _history_items(
             total_return=row.get("total_return", 0.0),
             sharpe_ratio=row.get("sharpe_ratio", 0.0),
             max_drawdown=row.get("max_drawdown", 0.0),
+            total_trades=row.get("total_trades", 0),
             fitness=row.get("fitness", 0.0),
             qualified=row.get("qualified", 0),
+            thresholds=thresholds,
+            star=star,
             created_at=row["created_at"],
         ))
     return items

@@ -1,6 +1,7 @@
 /**
  * Tests for Evolution page component.
- * Covers: loading state, empty state, config panel rendering, historical tasks.
+ * Covers: loading state, empty state, readonly params panel (alignment-batch D3
+ * ——发起归 MCP trigger_evolution，配置表单已移除), historical tasks.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -14,6 +15,7 @@ vi.mock("@/services/evolution", () => ({
   getEvolutionHistory: vi.fn(),
   getDiscoveredStrategies: vi.fn(),
   getAllDiscoveredStrategies: vi.fn(),
+  getTaskStrategies: vi.fn(),
   createEvolutionTask: vi.fn(),
   stopEvolutionTask: vi.fn(),
   pauseEvolutionTask: vi.fn(),
@@ -153,23 +155,27 @@ describe("Evolution page", () => {
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
-  // --- Empty state (no active task) ---
-  it("renders config form when no active task", async () => {
+  // --- Empty state (no active task): readonly params area + MCP channel notice ---
+  it("renders readonly params area with MCP notice when no active task", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByTestId("segmented-control");
-    expect(screen.getByTestId("auto-config-form")).toBeInTheDocument();
-    expect(screen.getByText("探索配置")).toBeInTheDocument();
+    await screen.findByText("当前没有进化任务");
+    // 渠道披露：头注与空态段同屏，至少一处（getAllBy 容纳多处）
+    expect(screen.getAllByText(/MCP trigger_evolution/).length).toBeGreaterThan(0);
+    // D3：发起控件移除——配置表单不在
+    expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("auto-config-form")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("seed-config-form")).not.toBeInTheDocument();
   });
 
-  // --- Config form shows auto by default ---
-  it("shows auto config form by default", async () => {
+  // --- Readonly params (no launch form by default) ---
+  it("does not render launch form (readonly-only page)", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByTestId("auto-config-form");
-    expect(screen.getByTestId("segmented-control").dataset.value).toBe("auto");
+    await screen.findByText("任务参数");
+    expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
   });
 
   // --- Progress section renders ---
@@ -185,7 +191,7 @@ describe("Evolution page", () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByText("还没有探索记录");
+    await screen.findByText("还没有进化任务");
   });
 
   // --- With completed tasks ---

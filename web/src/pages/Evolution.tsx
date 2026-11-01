@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router";
 import { Dna } from "lucide-react";
@@ -10,33 +10,27 @@ import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Skeleton } from "antd";
 
-import { SegmentedControl } from "@/components/evolution/SegmentedControl";
-import type { ExploreMode } from "@/components/evolution/SegmentedControl";
-import { AutoConfigForm } from "@/components/evolution/AutoConfigForm";
-import { SeedConfigForm } from "@/components/evolution/SeedConfigForm";
-import { ProgressPanel } from "@/components/evolution/ProgressPanel";
+import { TaskRuntimePanel } from "@/components/evolution/TaskRuntimePanel";
+import { EvolvedStrategySources } from "@/components/evolution/EvolvedStrategySources";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import { StrategyList } from "@/components/evolution/StrategyList";
 import { HistoryTable } from "@/components/evolution/HistoryTable";
-import { QuickPresets } from "@/components/evolution/QuickPresets";
 import { TaskDetailDrawer } from "@/components/evolution/TaskDetailDrawer";
-import type { Preset } from "@/components/evolution/QuickPresets";
 
 import {
   useEvolutionTasks,
   useEvolutionTask,
   useEvolutionHistory,
-  useCreateEvolutionTask,
   useStopEvolutionTask,
   usePauseEvolutionTask,
   useResumeEvolutionTask,
   useEvolutionWebSocket,
   useDiscoveredStrategies,
 } from "@/hooks/useEvolution";
-import { useAvailableSources } from "@/hooks/useDatasets";
+import { getTaskStrategies } from "@/services/evolution";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
-import type { EvolutionTask, DNA, DiscoveredStrategy, RequirementsConfig } from "@/types/api";
+import type { EvolutionTask, DNA, DiscoveredStrategy } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Main Page Component
@@ -52,31 +46,11 @@ export function Evolution() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // --- Mode selection state ---
-  const [selectedMode, setSelectedMode] = useState<ExploreMode>("auto");
-  const [seedDna, setSeedDna] = useState<DNA | null>(null);
-
-  // Read seed DNA from route state (e.g. from Lab hypothesis validation)
-  useEffect(() => {
-    const state = location.state as { seedDna?: DNA } | null;
-    if (state?.seedDna) {
-      setSeedDna(state.seedDna);
-      setSelectedMode("seed");
-      window.history.replaceState({}, "");
-    }
-  }, []);
-
   // --- Expanded strategy ---
   const [expandedStrategyId, setExpandedStrategyId] = useState<string | null>(null);
 
   // --- Stop confirm dialog ---
   const [stopTarget, setStopTarget] = useState<EvolutionTask | null>(null);
-
-  // --- Config collapsed state ---
-  const [configCollapsed, setConfigCollapsed] = useState(false);
-
-  // --- Preset selection (passed to AutoConfigForm to seed state) ---
-  const [presetToApply, setPresetToApply] = useState<Preset | null>(null);
 
   // --- Last active task ID (for chart data retention after task completes) ---
   const [lastActiveTaskId, setLastActiveTaskId] = useState<string>("");
@@ -84,29 +58,10 @@ export function Evolution() {
   // --- Task detail drawer ---
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
 
-  // --- Refs ---
-  const configRef = useRef<HTMLDivElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
-
   // --- Data fetching ---
   const { data: tasksData, isLoading: tasksLoading } = useQuery(
     useEvolutionTasks({ limit: 20 })
   );
-
-  // --- Available sources for dynamic symbol options ---
-  const { data: sourcesData } = useQuery(useAvailableSources());
-  const dynamicSymbolOptions = useMemo(() => {
-    if (!sourcesData?.sources?.length) return undefined;
-    const seen = new Set<string>();
-    const opts: { value: string; label: string }[] = [];
-    for (const s of sourcesData.sources) {
-      if (!seen.has(s.symbol)) {
-        seen.add(s.symbol);
-        opts.push({ value: s.symbol, label: s.symbol });
-      }
-    }
-    return opts.length > 0 ? opts : undefined;
-  }, [sourcesData]);
 
   const allTasks: EvolutionTask[] = tasksData?.items ?? [];
 
@@ -139,6 +94,17 @@ export function Evolution() {
     useEvolutionHistory(historyTaskId, !!activeTaskId)
   );
 
+  // 产出策略两源（D3）：champion（任务表持久冠军）+ snapshot（代际 Top 快照）
+  const {
+    data: taskStrategiesData,
+    isLoading: taskStrategiesLoading,
+    error: taskStrategiesError,
+  } = useQuery({
+    queryKey: ["evolution", "task-strategies", historyTaskId],
+    queryFn: () => getTaskStrategies(historyTaskId),
+    enabled: !!historyTaskId,
+  });
+
   const currentTask = activeTaskDetail ?? activeTask;
 
   // Discovered strategies from strategy table (auto-extracted during evolution)
@@ -156,100 +122,23 @@ export function Evolution() {
     [allTasks]
   );
 
-  // --- Auto-expand config when task completes or no task ---
+  // --- Route seed-injection notice (发起归 MCP 后，seed 入口仅提示) ---
   useEffect(() => {
-    if (!currentTask || !isActiveStatus(currentTask.status)) {
-      if (configCollapsed) {
-        setConfigCollapsed(false);
-      }
-    } else if (currentTask && isActiveStatus(currentTask.status) && !configCollapsed) {
-      setConfigCollapsed(true);
+    const state = location.state as { seedDna?: DNA } | null;
+    if (state?.seedDna) {
+      window.history.replaceState({}, "");
+      toast.info("进化任务发起已迁移至 MCP trigger_evolution，本页回显任务与产出");
     }
-  }, [currentTask, configCollapsed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- Mutations ---
-  const createTask = useCreateEvolutionTask();
   const pauseTask = usePauseEvolutionTask();
   const stopTask = useStopEvolutionTask();
   const resumeTask = useResumeEvolutionTask();
   const saveStrategyMutation = useCreateStrategy();
 
   // --- Handlers ---
-  const handleStartAuto = useCallback(
-    async (config: {
-      symbol: string;
-      timeframePool: string[];
-      indicatorPool: string[];
-      populationSize: number;
-      maxGenerations: number;
-      leverage: number;
-      direction: "long" | "short" | "mixed";
-      dataStart?: string;
-      dataEnd?: string;
-      requirements?: RequirementsConfig;
-    }) => {
-      if (activeTask) {
-        toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
-        return;
-      }
-      try {
-        await createTask.mutateAsync({
-          symbol: config.symbol,
-          timeframe: config.timeframePool[0] ?? "4h",
-          population_size: config.populationSize,
-          max_generations: config.maxGenerations,
-          indicator_pool: config.indicatorPool,
-          timeframe_pool: config.timeframePool,
-          mode: "auto",
-          leverage: config.leverage,
-          direction: config.direction,
-          data_start: config.dataStart,
-          data_end: config.dataEnd,
-          requirements: config.requirements,
-        });
-        setConfigCollapsed(true);
-      } catch {
-        // handled by mutation onError
-      }
-    },
-    [activeTask, createTask]
-  );
-
-  const handleStartSeed = useCallback(
-    async (config: {
-      symbol: string;
-      initialDna: DNA;
-      populationSize: number;
-      maxGenerations: number;
-      leverage: number;
-      direction: "long" | "short" | "mixed";
-      requirements?: RequirementsConfig;
-    }) => {
-      if (activeTask) {
-        toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
-        return;
-      }
-      try {
-        await createTask.mutateAsync({
-          symbol: config.symbol,
-          timeframe: config.initialDna.execution_genes.timeframe,
-          population_size: config.populationSize,
-          max_generations: config.maxGenerations,
-          initial_dna: config.initialDna,
-          mode: "seed",
-          leverage: config.leverage,
-          direction: config.direction,
-          requirements: config.requirements,
-        });
-        setConfigCollapsed(true);
-        setSeedDna(null);
-      } catch {
-        // handled by mutation onError
-      }
-    },
-    [activeTask, createTask]
-  );
-
   const handlePause = useCallback(() => {
     if (!activeTaskId) return;
     pauseTask.mutate(activeTaskId);
@@ -267,26 +156,10 @@ export function Evolution() {
     });
   }, [stopTarget, stopTask]);
 
-  const handleSeedEvolve = useCallback(
-    (dna: DNA) => {
-      setSeedDna(dna);
-      setSelectedMode("seed");
-      setConfigCollapsed(false);
-      configRef.current?.scrollIntoView({ behavior: "smooth" });
-    },
-    []
-  );
-
-  const handlePresetSelect = useCallback(
-    (preset: Preset) => {
-      setSelectedMode("auto");
-      setConfigCollapsed(false);
-      setPresetToApply(preset);
-      configRef.current?.scrollIntoView({ behavior: "smooth" });
-      toast.info(`已应用预设「${preset.title}」, 可调整参数后开始探索`);
-    },
-    []
-  );
+  // 发起归 MCP trigger_evolution（D3 只读折中）——种子入口保留但只做渠道提示
+  const handleSeedEvolve = useCallback(() => {
+    toast.info("进化任务发起已迁移至 MCP trigger_evolution，本页回显任务与产出");
+  }, []);
 
   const handleToggleExpand = useCallback((taskId: string) => {
     setExpandedStrategyId((prev) => (prev === taskId ? null : taskId));
@@ -347,12 +220,6 @@ export function Evolution() {
     [navigate, currentTask]
   );
 
-  const handleNewExploration = useCallback(() => {
-    setConfigCollapsed(false);
-    setSeedDna(null);
-    configRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
   // --- Loading skeleton ---
   if (tasksLoading) {
     return (
@@ -374,87 +241,26 @@ export function Evolution() {
     <PageTransition>
       <div className="flex flex-col gap-4">
         {/* ================================================================== */}
-        {/* Area 1 - Exploration Config                                       */}
+        {/* Area 1 - 任务参数（只读回显，发起归 MCP trigger_evolution）        */}
         {/* ================================================================== */}
-        <div ref={configRef}>
+        <div>
           <GlassCard className="p-5" hover={false}>
-            {configCollapsed && currentTask ? (
-              /* Collapsed summary */
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 text-xs text-slate-400">
-                  <span className="font-medium text-slate-200">
-                    {currentTask.symbol}
-                  </span>
-                  <span>
-                    {formatTimeframeDisplay(currentTask)}
-                  </span>
-                  <span>
-                    {currentTask.mode === "seed" ? "种子探索" : "自动探索"}
-                  </span>
-                  <span>
-                    {SCORE_TEMPLATE_LABELS[currentTask.score_template] ?? currentTask.score_template}
-                  </span>
-                  {isActiveStatus(currentTask.status) && (
-                    <span className="text-amber-400">
-                      进化中 Gen {currentTask.current_generation}/
-                      {currentTask.max_generations}
-                    </span>
-                  )}
-                  {currentTask.best_fitness != null && (
-                    <span className="text-emerald-400">
-                      适应度 {currentTask.best_fitness.toFixed(3)}
-                    </span>
-                  )}
-                  {currentTask.best_score != null && (
-                    <span className="text-slate-500">
-                      得分 {currentTask.best_score.toFixed(1)}
-                    </span>
-                  )}
-                  {currentTask.qualified_count != null && currentTask.qualified_count > 0 && (
-                    <span className="text-sky-400">
-                      {currentTask.qualified_count} 达标
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="text-xs text-slate-500 hover:text-slate-400"
-                  onClick={handleNewExploration}
-                >
-                  展开配置
-                </button>
-              </div>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-slate-400">任务参数</h2>
+              <span className="text-[11px] text-slate-600">
+                只读回显 · 任务发起经 MCP trigger_evolution
+              </span>
+            </div>
+
+            {currentTask ? (
+              <TaskParamsSummary task={currentTask} />
             ) : (
-              /* Full config form */
-              <div className="flex flex-col gap-4">
-                <h2 className="text-sm font-medium text-slate-400">
-                  探索配置
-                </h2>
-
-                <SegmentedControl
-                  value={selectedMode}
-                  onChange={setSelectedMode}
-                />
-
-                {selectedMode === "auto" ? (
-                  <AutoConfigForm
-                    disabled={!!activeTask}
-                    isPending={createTask.isPending}
-                    onSubmit={handleStartAuto}
-                    symbolOptions={dynamicSymbolOptions}
-                    availableSources={sourcesData?.sources}
-                    initialPreset={presetToApply}
-                    onPresetApplied={() => setPresetToApply(null)}
-                  />
-                ) : (
-                  <SeedConfigForm
-                    disabled={!!activeTask}
-                    isPending={createTask.isPending}
-                    onSubmit={handleStartSeed}
-                    seedDna={seedDna}
-                    symbolOptions={dynamicSymbolOptions}
-                  />
-                )}
+              <div className="mt-4 flex flex-col items-center gap-3 py-6">
+                <Dna className="h-10 w-10 text-slate-700" />
+                <p className="text-xs text-slate-500">当前没有进化任务</p>
+                <p className="text-[11px] text-slate-600 text-center">
+                  任务发起已迁移至 MCP trigger_evolution，本页回显任务参数、运行进度与产出策略
+                </p>
               </div>
             )}
           </GlassCard>
@@ -493,7 +299,7 @@ export function Evolution() {
 
           {currentTask ? (
             <div className="mt-4 flex flex-col gap-4">
-              <ProgressPanel
+              <TaskRuntimePanel
                 task={currentTask}
                 onPause={handlePause}
                 onResume={handleResume}
@@ -514,11 +320,8 @@ export function Evolution() {
                 没有正在进行的探索任务
               </p>
               <p className="text-[11px] text-slate-600">
-                在上方配置参数, 开始你的策略探索
+                任务发起后此处呈现运行进度
               </p>
-              <div className="mt-2 w-full">
-                <QuickPresets onSelect={handlePresetSelect} />
-              </div>
             </div>
           )}
         </GlassCard>
@@ -527,7 +330,7 @@ export function Evolution() {
         {/* Area 3 - Discovered Strategies                                     */}
         {/* ================================================================== */}
         {effectiveStrategies.length > 0 && (
-          <div ref={resultsRef}>
+          <div>
             <GlassCard className="p-5" hover={false}>
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-slate-400">
@@ -549,6 +352,26 @@ export function Evolution() {
               </div>
             </GlassCard>
           </div>
+        )}
+
+        {/* ================================================================== */}
+        {/* Area 3.5 - 产出策略两源（champion / snapshot）                     */}
+        {/* ================================================================== */}
+        {!!historyTaskId && (
+          <GlassCard className="p-5" hover={false} data-testid="evolved-sources-card">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-slate-400">
+                产出策略（冠军与代际快照）
+              </h3>
+            </div>
+            <div className="mt-3">
+              <EvolvedStrategySources
+                strategies={taskStrategiesData?.strategies ?? []}
+                loading={taskStrategiesLoading}
+                error={taskStrategiesError ? (taskStrategiesError as Error).message : null}
+              />
+            </div>
+          </GlassCard>
         )}
 
         {/* ================================================================== */}
@@ -576,8 +399,8 @@ export function Evolution() {
           <GlassCard className="p-5" hover={false}>
             <EmptyState
               icon={Dna}
-              title="还没有探索记录"
-              description="选择一种探索模式，开启你的策略进化之旅。系统将自动寻找最优策略组合。"
+              title="还没有进化任务"
+              description="任务发起经 MCP trigger_evolution 调用；发起后本页回显任务参数、运行进度与产出策略。"
             />
           </GlassCard>
         )}
@@ -602,9 +425,9 @@ export function Evolution() {
             taskId={detailTaskId}
             open={!!detailTaskId}
             onClose={() => setDetailTaskId(null)}
-            onSeedEvolve={(dna) => {
+            onSeedEvolve={() => {
               setDetailTaskId(null);
-              handleSeedEvolve(dna);
+              handleSeedEvolve();
             }}
             onVisualVerify={(dna, task) => {
               handleVisualVerify(dna, task);
@@ -613,5 +436,64 @@ export function Evolution() {
         )}
       </div>
     </PageTransition>
+  );
+}
+
+/* ── 任务参数只读回显（D3：发起归 MCP，页面只呈现任务参数） ── */
+
+function TaskParamsSummary({ task }: { task: EvolutionTask }) {
+  const directionLabel =
+    task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多";
+  const dataRange =
+    task.data_start || task.data_end
+      ? `${task.data_start ?? "?"} ~ ${task.data_end ?? "?"}`
+      : "未指定";
+  const actualRange =
+    task.data_time_start || task.data_time_end
+      ? `${(task.data_time_start ?? "?").slice(0, 10)} ~ ${(task.data_time_end ?? "?").slice(0, 10)}`
+      : null;
+  const pool = task.indicator_pool;
+
+  const rows: Array<{ label: string; value: string; title?: string }> = [
+    { label: "品种", value: task.symbol },
+    { label: "周期", value: formatTimeframeDisplay(task) },
+    { label: "模式", value: task.mode === "seed" ? "种子探索" : "自动探索" },
+    {
+      label: "评分模板",
+      value: SCORE_TEMPLATE_LABELS[task.score_template] ?? task.score_template,
+    },
+    { label: "种群规模", value: `${task.population_size}` },
+    {
+      label: "最大代数",
+      value: task.continuous === true ? "连续模式（不限）" : `${task.max_generations}`,
+    },
+    { label: "杠杆", value: `${task.leverage}x` },
+    { label: "方向", value: directionLabel },
+    { label: "数据范围", value: dataRange, title: actualRange ? `实际数据 ${actualRange}` : undefined },
+    {
+      label: "指标池",
+      value: pool && pool.length > 0 ? `${pool.length} 项` : "未指定",
+      title: pool && pool.length > 0 ? pool.join(", ") : undefined,
+    },
+    {
+      label: "达标目标",
+      value: task.requirements?.objective ?? "未指定",
+    },
+  ];
+
+  return (
+    <div
+      className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-4"
+      data-testid="task-params"
+    >
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-baseline gap-2 min-w-0" data-testid={`task-param-${r.label}`}>
+          <span className="text-[11px] text-slate-500 shrink-0">{r.label}</span>
+          <span className="text-xs font-mono text-slate-200 truncate" title={r.title ?? r.value}>
+            {r.value}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }

@@ -210,3 +210,85 @@ def test_verify_history_response_schema():
 def test_verify_history_endpoint_exists():
     from api.routes.strategies import get_verify_history
     assert callable(get_verify_history)
+
+
+# ---------------------------------------------------------------------------
+# 三门槛明细（alignment-batch α）：等号侧/星级/缺失态/负值口径归一
+# ---------------------------------------------------------------------------
+
+from api.routes.strategies.verify import _threshold_star
+
+
+def _row(total_return=0.01, max_drawdown=-0.08, total_trades=10):
+    return {
+        "total_return": total_return,
+        "max_drawdown": max_drawdown,
+        "total_trades": total_trades,
+    }
+
+
+def test_threshold_boundary_equalsides():
+    """等号侧：return==0→False（gt 严格）；drawdown==±0.25→False（lt 严格，负值 abs 归一）；trades==5→True（ge 含等）。"""
+    t, star = _threshold_star(_row(total_return=0.0, max_drawdown=0.25, total_trades=5))
+    assert t["return_positive"] is False
+    assert t["drawdown_ok"] is False
+    assert t["trades_enough"] is True
+    assert star == 1
+    # 负值口径同侧：-0.25（表实际口径）与 +0.25 判定一致
+    t_neg, star_neg = _threshold_star(_row(total_return=0.0, max_drawdown=-0.25, total_trades=5))
+    assert t_neg["drawdown_ok"] is False
+    assert star_neg == 1
+
+
+def test_threshold_negative_deep_drawdown_not_ok():
+    """负值深回撤防恒真回归：-0.30（30% 回撤）不得因负值口径 lt 0.25 恒真。"""
+    t, _ = _threshold_star(_row(max_drawdown=-0.30))
+    assert t["drawdown_ok"] is False
+    t_shallow, _ = _threshold_star(_row(max_drawdown=-0.08))
+    assert t_shallow["drawdown_ok"] is True
+
+
+def test_threshold_star_all_grades():
+    """star 全档 0-3 机械换算（非 null 布尔真值计数）。"""
+    assert _threshold_star(_row(0.01, -0.08, 10))[1] == 3
+    assert _threshold_star(_row(0.01, -0.30, 10))[1] == 2
+    assert _threshold_star(_row(-0.01, -0.30, 10))[1] == 1
+    assert _threshold_star(_row(-0.01, -0.30, 3))[1] == 0
+
+
+def test_threshold_missing_null_not_false():
+    """缺失态：指标缺失→对应布尔 null（非 false）；star 按非 null 布尔计数。"""
+    t, star = _threshold_star({})
+    assert t["return_positive"] is None
+    assert t["drawdown_ok"] is None
+    assert t["trades_enough"] is None
+    assert star == 0
+    # 混合缺失：return 缺失、两门槛达标 → star=2（缺失不计数也不判 false）
+    row = {"max_drawdown": -0.08, "total_trades": 10}
+    t_mix, star_mix = _threshold_star(row)
+    assert t_mix["return_positive"] is None
+    assert t_mix["drawdown_ok"] is True
+    assert t_mix["trades_enough"] is True
+    assert star_mix == 2
+    # 显式 None 与缺键同语义（win_rate_failed 三态：显式失败≠false）
+    t_none, _ = _threshold_star({"total_return": None})
+    assert t_none["return_positive"] is None
+
+
+def test_verify_history_item_thresholds_schema():
+    """VerifyHistoryItem 扩展字段 schema 面（thresholds/star/total_trades）。"""
+    item = VerifyHistoryItem(
+        result_id="r1",
+        strategy_id="s1",
+        symbol="BTCUSDT",
+        timeframe="4h",
+        data_start="2024-01-01",
+        data_end="2024-06-30",
+        total_trades=12,
+        thresholds={"return_positive": True, "drawdown_ok": None, "trades_enough": True},
+        star=2,
+        created_at="2025-01-01T00:00:00Z",
+    )
+    assert item.total_trades == 12
+    assert item.star == 2
+    assert item.thresholds["drawdown_ok"] is None

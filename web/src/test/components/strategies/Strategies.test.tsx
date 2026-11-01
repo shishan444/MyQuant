@@ -293,7 +293,9 @@ describe("Strategies page", () => {
     fireEvent.click(nameEl);
     // Expand panel should show strategy info labels
     await screen.findByText("策略信息");
-    expect(screen.getByText("策略结构")).toBeInTheDocument();
+    // alignment-batch D4：策略结构区改为 DNA 五段呈现
+    expect(screen.getByText("策略结构（DNA 五段）")).toBeInTheDocument();
+    expect(screen.getByText("四段履历")).toBeInTheDocument();
   });
 
   // --- Batch toolbar appears on selection ---

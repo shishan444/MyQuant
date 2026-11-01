@@ -19,6 +19,8 @@ import {
 } from "@/hooks/useStrategies";
 import { cn, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
 import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse } from "@/types/api";
+import { ThresholdDots, VerifyStar, ThresholdsSummary, type VerifyHistoryRow } from "@/components/verify/VerifyThresholds";
+import { formatDrawdown } from "@/components/verify/thresholdsUtils";
 
 interface DateRange {
   start: string;
@@ -853,36 +855,58 @@ function HistoryView({
             )}
 
             {isExpanded && (
-              <div className="px-3 pb-3 border-t border-slate-700/30 pt-2 overflow-x-auto">
+              <div className="px-3 pb-3 border-t border-slate-700/30 pt-2 overflow-x-auto space-y-2">
                 {sessionResults ? (
-                  <table className="w-full text-[11px]">
-                    <thead>
-                      <tr className="border-b border-slate-700/40">
-                        <th className="py-1.5 text-left text-text-secondary font-medium">策略名</th>
-                        <th className="py-1.5 text-left text-text-secondary font-medium">品种/周期</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">年化</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">Fitness</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">达标</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sessionResults.items.map((item) => (
-                        <tr key={item.result_id} className="border-b border-slate-700/10">
-                          <td className="py-1.5 text-text-primary truncate max-w-[120px]">{item.strategy_name ?? item.strategy_id}</td>
-                          <td className="py-1.5 text-text-secondary font-mono text-[10px]">{item.symbol}/{item.timeframe}</td>
-                          <td className={cn("py-1.5 text-center font-mono tabular-nums", item.total_return > 0 ? "text-emerald-400" : "text-red-400")}>
-                            {formatReturn(item.total_return)}
-                          </td>
-                          <td className={cn("py-1.5 text-center font-mono tabular-nums font-medium", getFitnessColor(item.fitness))}>
-                            {item.fitness.toFixed(2)}
-                          </td>
-                          <td className="py-1.5 text-center">
-                            {item.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <XIcon className="w-3 h-3 text-red-400/60 inline" />}
-                          </td>
+                  (() => {
+                    // 行补形：后端 thresholds/star/total_trades 已声明、生成类型未同步
+                    const rows = sessionResults.items as VerifyHistoryRow[];
+                    return (
+                  <>
+                    {/* B5 概要形制：星级+门槛点行+关键指标（不做全量字段铺开） */}
+                    <table className="w-full text-[11px]" data-testid="session-results-table">
+                      <thead>
+                        <tr className="border-b border-slate-700/40">
+                          <th className="py-1.5 text-left text-text-secondary font-medium">策略名</th>
+                          <th className="py-1.5 text-left text-text-secondary font-medium">品种/周期</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="门槛达标数机械换算（0-3）">星级</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="收益>0 / 回撤<25% / 交易数≥5 三门槛三态点">门槛</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">年化</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="最差区间回撤（口径取绝对值）">回撤</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">交易</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">Fitness</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">达标</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {rows.map((item) => (
+                          <tr key={item.result_id} className="border-b border-slate-700/10">
+                            <td className="py-1.5 text-text-primary truncate max-w-[120px]">{item.strategy_name ?? item.strategy_id}</td>
+                            <td className="py-1.5 text-text-secondary font-mono text-[10px]">{item.symbol}/{item.timeframe}</td>
+                            <td className="py-1.5 text-center"><VerifyStar star={item.star} /></td>
+                            <td className="py-1.5 text-center"><ThresholdDots thresholds={item.thresholds} /></td>
+                            <td className={cn("py-1.5 text-center font-mono tabular-nums", item.total_return > 0 ? "text-emerald-400" : "text-red-400")}>
+                              {formatReturn(item.total_return)}
+                            </td>
+                            <td className="py-1.5 text-center font-mono tabular-nums text-text-primary">
+                              {formatDrawdown(item.max_drawdown)}
+                            </td>
+                            <td className="py-1.5 text-center font-mono tabular-nums text-text-primary">
+                              {item.total_trades}
+                            </td>
+                            <td className={cn("py-1.5 text-center font-mono tabular-nums font-medium", getFitnessColor(item.fitness))}>
+                              {item.fitness.toFixed(2)}
+                            </td>
+                            <td className="py-1.5 text-center">
+                              {item.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <XIcon className="w-3 h-3 text-red-400/60 inline" />}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ThresholdsSummary rows={rows} />
+                  </>
+                    );
+                  })()
                 ) : (
                   <div className="py-4 text-center text-[11px] text-text-secondary">
                     <LoadingOutlined className="mr-1" /> 加载中...
