@@ -179,7 +179,7 @@ function makeTask(overrides: Partial<TradingTask> = {}): TradingTask {
     win_count: 3,
     loss_count: 2,
     total_pnl: 2000,
-    research_status_snapshot: "researched",
+    research_status: "unverified",
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-01-01T00:00:00Z",
     started_at: null,
