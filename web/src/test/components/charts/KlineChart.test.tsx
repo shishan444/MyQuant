@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { createRef } from "react";
 
 vi.mock("lightweight-charts", () => {
   const registry = {
@@ -65,6 +66,7 @@ vi.mock("lightweight-charts", () => {
 });
 
 import { KlineChart } from "@/components/charts/KlineChart";
+import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { toTime } from "@/components/charts/core/time";
 import { useChartSettings } from "@/stores/chart-settings";
 import * as lightweightCharts from "lightweight-charts";
@@ -186,6 +188,88 @@ describe("KlineChart 六面行为锚（基线）", () => {
     expect(JSON.parse(raw as string).state.emaList).toEqual(
       expect.arrayContaining([expect.objectContaining({ period: 30 })]),
     );
+  });
+});
+
+describe("KlineChart Lab 直引装配面 props 组合冒烟（panes 化行为不变性，组 3）", () => {
+  // Lab.tsx 直引挂载的 props 组合（六面锚未覆盖的通道：indicators/subChartType/macdData/kdjData/ref handle）。
+  // Lab.test.tsx 现有 mock 使 candleData=undefined，KlineChart 区块从不渲染——此处按 Lab 同构 props
+  // 在组件层记录装配行为；Lab 页全链驱动（ruleResult 路径）成本高，归 e2e/后续补充。
+  const EMA10 = { id: "ema10", type: "ema", color: "#3B82F6", data: [{ time: "2026-01-01 00:00:00", value: 103 }] };
+  const MACD = {
+    macd: [{ time: "2026-01-01 00:00:00", value: 1.5 }],
+    signal: [{ time: "2026-01-01 00:00:00", value: 1.0 }],
+    histogram: [{ time: "2026-01-01 00:00:00", value: 0.5, color: "#26a69a" }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("Lab 同构 props（volume 副图默认）：chart 创建+蜡烛通量+panes 化 addPane+ref handle 四方法可调", () => {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    const ref = createRef<KlineChartHandle>();
+    render(
+      <KlineChart
+        ref={ref}
+        data={CANDLES as never}
+        indicators={[EMA10] as never}
+        bollData={BOLL as never}
+        signals={SIGNALS as never}
+        height={650}
+        volumeData={VOLUME as never}
+        subChartType="volume"
+        macdData={null}
+        kdjData={null}
+      />,
+    );
+    const main = registry.charts[0];
+    expect(main).toBeTruthy();
+    // panes 化：单 chart+addPane（替代双 chart+useChartSync）
+    expect(main.addPane).toHaveBeenCalled();
+    expect(registry.charts).toHaveLength(1);
+    // 蜡烛数据通量
+    const cs = main.series.find((s: { seriesType: string }) => s.seriesType === "Candlestick");
+    expect(cs.setData.mock.calls[0][0]).toHaveLength(3);
+    // EMA 指标线挂主 pane（第三参非 1）
+    const emaSet = main.series.some((s: { seriesType: string; setData: { mock: { calls: unknown[][] } } }) =>
+      s.seriesType === "Line" && JSON.stringify(s.setData.mock.calls[0]?.[0] ?? []).includes("103"),
+    );
+    expect(emaSet).toBe(true);
+    // KlineChartHandle 面：ChartToolbar 依赖的 zoomIn/zoomOut/resetView/scrollToTime 可调不炸
+    expect(ref.current).toBeTruthy();
+    expect(["zoomIn", "zoomOut", "resetView", "scrollToTime"].every((m) => typeof (ref.current as never as Record<string, unknown>)[m] === "function")).toBe(true);
+    act(() => {
+      ref.current?.zoomIn();
+      ref.current?.zoomOut();
+      ref.current?.resetView();
+    });
+  });
+
+  it("Lab subChartType=macd 组合：MACD 三系列挂副 pane（addSeries 第三参=1）", () => {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    render(
+      <KlineChart
+        data={CANDLES as never}
+        indicators={[] as never}
+        bollData={BOLL as never}
+        signals={SIGNALS as never}
+        height={650}
+        volumeData={VOLUME as never}
+        subChartType="macd"
+        macdData={MACD as never}
+        kdjData={null}
+      />,
+    );
+    const main = registry.charts[0];
+    const pane1Calls = main.addSeries.mock.calls.filter((c: unknown[]) => c[2] === 1);
+    // MACD 副图=histogram+macd line+signal line 三系列
+    expect(pane1Calls).toHaveLength(3);
+    const types = pane1Calls.map((c: [{ _type?: string }]) => c[0]._type).sort();
+    expect(types).toEqual(["Histogram", "Line", "Line"]);
   });
 });
 
