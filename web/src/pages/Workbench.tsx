@@ -68,6 +68,8 @@ export function Workbench() {
     <PageSections
       events={events}
       degraded={degraded}
+      truncated={eventsQ.data?.truncated ?? false}
+      scannedTasks={eventsQ.data?.scanned_tasks ?? 0}
       availability={availability}
       eventsLoading={eventsQ.isLoading}
       eventsError={eventsQ.isError}
@@ -81,6 +83,8 @@ export function Workbench() {
 function PageSections(props: {
   events: PendingEvent[];
   degraded: number;
+  truncated: boolean;
+  scannedTasks: number;
   // availability 完整形（services/workbench.ts:17 三字段——历史 props 窄化
   // 丢 trigger_deviation，CARD-05 恢复消费）
   availability?: {
@@ -120,6 +124,12 @@ function PageSections(props: {
         {props.degraded > 0 && (
           <p className="mt-2 text-[10px] text-text-muted">
             ⚠ {props.degraded} 个事件源扫描失败已跳过（观察面降级）
+          </p>
+        )}
+        {props.truncated && (
+          <p className="mt-1 text-[10px] text-attention-gold">
+            ⚠ 终态任务扫描达上限（{props.scannedTasks} 个）——超出部分未扫，
+            可能有事件遗漏
           </p>
         )}
         {props.availability?.qualify_pending === "unavailable" && (

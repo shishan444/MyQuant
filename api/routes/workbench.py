@@ -18,6 +18,11 @@ logger = logging.getLogger("workbench")
 
 router = APIRouter(prefix="/api/workbench", tags=["workbench"])
 
+# 终态域扫描上限（CARD-07）：页满即披露 truncated（可能漏扫→显式告知；
+# count>limit 严格判定需 count_tasks 扩 status_in——最小面取舍，文案
+# 如实说「达上限可能有遗漏」非断言确漏）
+TERMINAL_SCAN_LIMIT = 1000
+
 
 class PendingEvent(BaseModel):
     type: str
@@ -36,6 +41,8 @@ class PendingEventsResponse(BaseModel):
     events: List[PendingEvent]
     degraded: int = 0          # 单源失败跳过计数（fail-open 观察面）
     availability: Availability = Availability()
+    scanned_tasks: int = 0     # 本轮实际扫描终态任务数（CARD-07 披露）
+    truncated: bool = False    # 达扫描上限（TERMINAL_SCAN_LIMIT）——可能漏扫
 
 
 def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
@@ -121,33 +128,40 @@ def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int]:
     return events, degraded
 
 
-def _trigger_deviation_events(db_path) -> tuple[List[PendingEvent], int]:
-    """触发差异：终态任务最新报告 qualification.trigger_consistency.passed==False 回看。"""
+def _trigger_deviation_events(db_path) -> tuple[List[PendingEvent], int, int]:
+    """触发差异：终态任务最新报告 qualification.trigger_consistency.passed==False 回看。
+
+    返回 (events, degraded, scanned)——scanned=本轮扫描终态任务数
+    （CARD-07 披露：页满=TERMINAL_SCAN_LIMIT 时 truncated 由组装段判定）。
+    """
     from core.paper_trading.reporting import get_final_report
     from core.persistence.repository import paper as paper_repo
     events: List[PendingEvent] = []
     degraded = 0
-    for status_t in ("completed", "stopped", "error"):
-        for task in paper_repo.list_tasks(db_path, status=status_t, limit=1000):
-            try:
-                rep = get_final_report(db_path, task["task_id"])
-                if rep is None:
-                    continue
-                report_json = rep.get("report") or {}
-                if isinstance(report_json, str):
-                    report_json = json.loads(report_json)
-                qual = report_json.get("qualification") or {}
-                tc = qual.get("trigger_consistency") or {}
-                if tc.get("passed") is False:  # 判据边界：passed=None 不产
-                    events.append(PendingEvent(type="trigger_deviation", payload={
-                        "task_id": task["task_id"],
-                        "strategy_id": task["strategy_id"],
-                        "deviation_ratio": tc.get("deviation_ratio")}))
-            except Exception as exc:  # noqa: BLE001
-                degraded += 1
-                logger.warning("trigger_deviation 扫描跳过 %s: %s",
-                               task.get("task_id"), exc)
-    return events, degraded
+    # 终态域单查（CARD-06）：status_in=PT_STATUS_TERMINAL SQL 下推替
+    # 三循环逐态扫描（paper.py:81 派生视图单源——三态字面量消重复）
+    tasks = paper_repo.list_tasks(
+        db_path, status_in=paper_repo.PT_STATUS_TERMINAL, limit=TERMINAL_SCAN_LIMIT)
+    for task in tasks:
+        try:
+            rep = get_final_report(db_path, task["task_id"])
+            if rep is None:
+                continue
+            report_json = rep.get("report") or {}
+            if isinstance(report_json, str):
+                report_json = json.loads(report_json)
+            qual = report_json.get("qualification") or {}
+            tc = qual.get("trigger_consistency") or {}
+            if tc.get("passed") is False:  # 判据边界：passed=None 不产
+                events.append(PendingEvent(type="trigger_deviation", payload={
+                    "task_id": task["task_id"],
+                    "strategy_id": task["strategy_id"],
+                    "deviation_ratio": tc.get("deviation_ratio")}))
+        except Exception as exc:  # noqa: BLE001
+            degraded += 1
+            logger.warning("trigger_deviation 扫描跳过 %s: %s",
+                           task.get("task_id"), exc)
+    return events, degraded, len(tasks)
 
 
 @router.get("/pending-events", response_model=PendingEventsResponse)
@@ -171,9 +185,9 @@ def pending_events(
         availability.reason = "C5 判定器源未建（旧库行无 qualification_progress）"
 
     try:
-        events_t, deg_t = _trigger_deviation_events(db_path)
+        events_t, deg_t, scanned_t = _trigger_deviation_events(db_path)
     except Exception:  # noqa: BLE001
-        events_t, deg_t = [], 1
+        events_t, deg_t, scanned_t = [], 1, 0
     if not _trigger_source_available(db_path):
         availability.trigger_deviation = "unavailable"
         # reason 单字段按需拼接两半说明（architect 卡面——非分源双 reason）
@@ -184,7 +198,9 @@ def pending_events(
     return PendingEventsResponse(
         events=events_u + events_q + events_t,
         degraded=deg_u + deg_q + deg_t,
-        availability=availability)
+        availability=availability,
+        scanned_tasks=scanned_t,
+        truncated=scanned_t >= TERMINAL_SCAN_LIMIT)
 
 
 def _qualify_source_available(db_path) -> bool:
@@ -209,18 +225,20 @@ def _trigger_source_available(db_path) -> bool:
     try:
         from core.paper_trading.reporting import get_final_report
         from core.persistence.repository import paper as paper_repo
-        any_terminal = False
-        for status_t in ("completed", "stopped", "error"):
-            for task in paper_repo.list_tasks(db_path, status=status_t, limit=1000):
-                any_terminal = True
-                rep = get_final_report(db_path, task["task_id"])
-                if rep is None:
-                    continue
-                report_json = rep.get("report") or {}
-                if isinstance(report_json, str):
-                    report_json = json.loads(report_json)
-                if "qualification" in report_json:
-                    return True  # 任一含键=源已建
-        return not any_terminal  # 全缺键=False；无终态任务=空态合法 True
+        tasks = paper_repo.list_tasks(
+            db_path, status_in=paper_repo.PT_STATUS_TERMINAL,
+            limit=TERMINAL_SCAN_LIMIT)
+        if not tasks:
+            return True  # 无终态任务=空态合法不标
+        for task in tasks:
+            rep = get_final_report(db_path, task["task_id"])
+            if rep is None:
+                continue
+            report_json = rep.get("report") or {}
+            if isinstance(report_json, str):
+                report_json = json.loads(report_json)
+            if "qualification" in report_json:
+                return True  # 任一含键=源已建
+        return False  # 全缺键=unavailable
     except Exception:  # noqa: BLE001
         return False

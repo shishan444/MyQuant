@@ -19,6 +19,10 @@ export interface PendingEventsResponse {
     trigger_deviation: string | null;
     reason: string | null;
   };
+  /** 本轮实际扫描终态任务数（CARD-07 披露） */
+  scanned_tasks: number;
+  /** 达扫描上限（1000）——可能漏扫的显式告知 */
+  truncated: boolean;
 }
 
 export interface ValidationRecordRow {
