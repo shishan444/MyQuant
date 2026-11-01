@@ -1,6 +1,6 @@
 /**
- * G-1 StatusBadge 单测（global-nav-shell 任务 3.4）：
- * 八态描边形制+live 唯一实心断言+尺寸两档。
+ * G-1 StatusBadge 单测（L1 契约单元层，global-nav-shell 任务 3.4）：
+ * 八态描边形制（it.each 穷举）+live 唯一实心断言+尺寸两档。
  */
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";

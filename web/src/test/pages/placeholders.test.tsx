@@ -1,5 +1,5 @@
 /**
- * global-nav-shell 三条新路由占位组件单测（特征网）：
+ * global-nav-shell 三条新路由占位组件单测（L1 契约单元层，特征网）：
  * EmptyState 诚实占位（标题+建设说明）+无模拟数据形制（负面断言）。
  * 契约：openspec/changes/global-nav-shell Scenario「未建页面诚实占位」。
  */

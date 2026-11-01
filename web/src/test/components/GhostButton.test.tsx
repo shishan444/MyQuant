@@ -1,5 +1,5 @@
 /**
- * G-3 GhostButton 单测（global-nav-shell 任务 3.4）：
+ * G-3 GhostButton 单测（L1 契约单元层，global-nav-shell 任务 3.4）：
  * 描边次级形制（border-strong 描边+画布 text-secondary）+AntD Button 基座。
  */
 import { describe, it, expect } from "vitest";
