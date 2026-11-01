@@ -124,4 +124,18 @@ describe("Workbench（01 观察工作台）", () => {
     expect(await screen.findByText(/触发差异事件源未建/)).toBeInTheDocument();
     expect(screen.queryByText(/达标事件源未建/)).not.toBeInTheDocument();
   });
+
+  it("CARD-03 验证记录源错误态呈现（B2-3 四态补全）", async () => {
+    vi.mocked(wb.getValidationRecords).mockRejectedValue(new Error("net") as never);
+    setup();
+    expect(await screen.findByText(/验证记录源暂不可达/)).toBeInTheDocument();
+  });
+
+  it("CARD-04 B4 假状态徽章已删（api/mcp 独立文本节点不再渲染）", async () => {
+    setup();
+    await screen.findByText(/最近验证结论/);  // 页面就绪后再负向断言
+    // exact 匹配只命中独立文本节点——B4 残留说明串「api/mcp 进程」不受影响
+    expect(screen.queryByText("api", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("mcp", { exact: true })).not.toBeInTheDocument();
+  });
 });
