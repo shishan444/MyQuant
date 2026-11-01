@@ -349,11 +349,36 @@ def get_ohlcv(
     dataset_id: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = Query(1000, ge=1, le=50000),
+    limit: Optional[int] = Query(None, ge=1, le=50000),
+    tail: Optional[int] = Query(None, ge=1, le=50000),
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
-    """按数据集取 OHLCV（可按时间范围过滤）。"""
+    """按数据集取 OHLCV（可按时间范围过滤）。
+
+    tail（kline-common-layer 组 5）：从最新一根（或 end 锚定行）往回取 N 根。
+    tail 与 start 互斥（锚定方向冲突）、tail 与 limit 互斥（数量参数冲突）——同给 422
+    DATA_PARAM_CONFLICT，不执行查询；tail 与 end 可组（历史时点重演窗口）。
+    不传 tail 时现行 head 语义逐字节不变（limit 缺省 1000 沿旧值）。
+    """
+    if tail is not None:
+        if start is not None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DATA_PARAM_CONFLICT",
+                    "message": "tail 与 start 互斥（锚定方向冲突）：tail 从最新往回锚定，start 从头过滤",
+                },
+            )
+        if limit is not None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "DATA_PARAM_CONFLICT",
+                    "message": "tail 与 limit 互斥（数量参数冲突）：tail=从尾往回 N 根，limit=从头截取 N 根",
+                },
+            )
+
     row = get_dataset(db_path, dataset_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -379,8 +404,12 @@ def get_ohlcv(
         end_ts = pd.Timestamp(end, tz="UTC") if df.index.tz else pd.Timestamp(end)
         df = df[df.index <= end_ts]
 
-    # 截取 limit 行
-    df = df.head(limit)
+    if tail is not None:
+        # 尾部 N 根（升序输出语义不变；不足 N 全给非错误）
+        df = df.sort_index().tail(tail)
+    else:
+        # 截取 limit 行（缺省 1000 沿旧值——不传 tail 现行契约不变）
+        df = df.head(limit if limit is not None else 1000)
 
     return OhlcvResponse(
         dataset_id=dataset_id,
