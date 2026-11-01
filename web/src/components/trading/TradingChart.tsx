@@ -1,10 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
-import { LineSeries } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import { KlineChart } from "@/components/charts/KlineChart";
+import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicators";
 import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
-import { toTime } from "@/components/charts/core/time";
 import { fillsToSignals } from "@/components/charts/primitives";
 import type { PaperFill } from "@/services/trading";
 import type { SignalData } from "@/components/charts/KlineChart";
@@ -45,11 +44,13 @@ function barsAgoDate(timeframe: string, bars: number): string {
 
 export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding,
   stopLossPrice, trailSeries }: TradingChartProps) {
-  // F1 标注挂载（paper-trading-revamp）：chart ready 后经 primitives 挂线——
-  // 当前止损价=标量水平线（annotations 价线族）；trail 序列=折线 series（观测面消费）
-  // 形参类型化（CARD-13，循 SceneModePanel 先例——KlineChart.onChartReady 同签名；
-  // 原 unknown+鸭子检查系类型缺位时代的防御，类型化后真实实例恒有方法，删除断言链）
-  const handleChartReady = useCallback((chart: IChartApi, candleSeries: ISeriesApi<"Candlestick">) => {
+  // F1 标注挂载（paper-trading-revamp）：当前止损价=标量水平线（annotations
+  // 价线族，chart ready 单次挂——SL 价为标量随任务刷新，重挂通道待后续组）；
+  // trail 序列经 KlineChartHandle.setObservationSeries 命令式通道挂线
+  // （hypothesis-workbench 审查 CARD-04：切 attachObservationSeries 原语——
+  // 30s 轮询 refetch 新 trail 数据后获得挂/重挂通道，原 onChartReady 单次
+  // 挂线在数据更新后恒 stale）；形参类型化沿 CARD-13（SceneModePanel 先例）
+  const handleChartReady = useCallback((_chart: IChartApi, candleSeries: ISeriesApi<"Candlestick">) => {
     if (stopLossPrice != null) {
       candleSeries.createPriceLine({
         price: stopLossPrice,
@@ -60,16 +61,15 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         title: "SL(当前)",
       });
     }
-    const pts = (trailSeries ?? []).filter((t) => t.trail_sl_price != null);
-    if (pts.length > 0) {
-      try {
-        const line = chart.addSeries(LineSeries, {
-          color: "#FBBF24", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
-        });
-        line.setData(pts.map((t) => ({ time: toTime(t.bar_time) as UTCTimestamp, value: t.trail_sl_price as number })));
-      } catch { /* 观测线挂载失败不阻塞主图（观测面容错） */ }
-    }
-  }, [stopLossPrice, trailSeries]);
+  }, [stopLossPrice]);
+
+  const klineRef = useRef<KlineChartHandle>(null);
+  const trailPoints = useMemo(
+    () => (trailSeries ?? []).map((t) => ({ time: t.bar_time, value: t.trail_sl_price })),
+    [trailSeries]);
+  useEffect(() => {
+    klineRef.current?.setObservationSeries(trailPoints);
+  }, [trailPoints]);
 
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
@@ -132,6 +132,13 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         ))}
       </div>
       <KlineChart
+        ref={klineRef}
+        onChartReady={(chart, series) => {
+          handleChartReady(chart, series);
+          // trail 线重挂载重挂信号（KlineChart 重建时 effect 不重跑——
+          // ref 赋值先于本回调，handle 恒就绪）
+          klineRef.current?.setObservationSeries(trailPoints);
+        }}
         data={candleData}
         signals={signals}
         indicators={chartIndicators}
@@ -141,7 +148,6 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         volumeData={volumeData}
         subChartType={subChartType}
         height={height}
-        onChartReady={handleChartReady}
       />
     </div>
   );

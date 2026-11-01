@@ -217,5 +217,12 @@ def run_backtest_on_range(
         # R1 结构化拒绝前置拦截）②entries>0 且 total_trades==0=执行
         # 段无成交（资金/风控/时序）③正常；四通道回执自动携带
         "signal_counts": getattr(result, "signal_counts", None),
+        # series 档止损价序列（hypothesis-workbench 组 2）：[{time,value}]
+        # 可序列化形制（三入口 backtest/backtest-sandbox/inspect-cases 消费
+        # 本 metrics 单点——一处透传全达）；非 series 档 None（null 透传）
+        "sl_series": (
+            [{"time": str(t), "value": None if pd.isna(v) else float(v)}
+             for t, v in result.sl_series.items()]
+            if getattr(result, "sl_series", None) is not None else None),
     }
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)

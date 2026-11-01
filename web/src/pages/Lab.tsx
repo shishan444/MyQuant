@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { useLocation } from "react-router";
 
+import { HypothesisStepper } from "@/components/hypothesis/HypothesisStepper";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
@@ -153,6 +154,26 @@ export function Lab() {
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
+  // series 档止损线序列（hypothesis-workbench 组 4.1→审查 CARD-01）：回测响应
+  // sl_series 经 handle 命令式挂线——原语层虚线黄，与 07 页 trail 同观测族；
+  // 记录回测维度（symbol/timeframe），渲染期与主图维度匹配才可见——回测
+  // 标的与主图标的独立 state（Q3 根治：不匹配自失效，无需清理点）；
+  // value 可 null（后端 NaN→null，SL 未定义期断线不画）
+  const [slSeries, setSlSeries] = useState<{
+    data: Array<{ time: string; value: number | null }>;
+    symbol: string;
+    timeframe: string;
+  } | null>(null);
+  const visibleSlSeries =
+    slSeries && slSeries.symbol === pair && slSeries.timeframe === timeframe
+      ? slSeries.data
+      : null;
+
+  // series 止损线命令式挂线（CARD-01 (b)）：挂/换/清完整生命周期经 handle
+  // 通道（可见序列变化即重挂，null=清）
+  useEffect(() => {
+    chartRef.current?.setObservationSeries(visibleSlSeries);
+  }, [visibleSlSeries]);
 
   // -- Chart indicators hook (shared for hypothesis mode) --
   const {
@@ -447,6 +468,19 @@ export function Lab() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
+        {/* 02-B1 五步流水线条（hypothesis-workbench 组 3.1）——三模式到
+            五步的映射：构建=假设验证模式 / 预检=模式内预检态 / 案例=场景
+            验证 / 沙盒=策略回测 / 登记=模式内登记动作；步骤条呈现映射态 */}
+        <HypothesisStepper
+          current={labMode === "hypothesis" ? 0 : labMode === "scene" ? 2 : 3}
+          furthest={4}
+          onStepClick={(i: number) => {
+            if (i === 0) setLabMode("hypothesis");
+            else if (i === 2) setLabMode("scene");
+            else if (i === 3) setLabMode("backtest");
+          }}
+        />
+
         {/* Mode switcher */}
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
           <button
@@ -739,6 +773,10 @@ export function Lab() {
               {backtestDna ? (
                 <BacktestModePanel
                   ref={backtestPanelRef}
+                  onResult={(r) => setSlSeries(
+                    r.sl_series && r.sl_series.length > 0
+                      ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
+                      : null)}
                   dna={{
                     ...backtestDna,
                     risk_genes: {
@@ -1036,6 +1074,13 @@ export function Lab() {
               </div>
               <KlineChart
                 ref={chartRef}
+                onChartReady={() => {
+                  // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
+                  // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
+                  // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
+                  // （React commit 序），handle 恒就绪）
+                  chartRef.current?.setObservationSeries(visibleSlSeries);
+                }}
                 data={candleData ?? []}
                 indicators={chartIndicators}
                 bollData={chartBollData}

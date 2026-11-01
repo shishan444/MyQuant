@@ -12,6 +12,8 @@ import uuid
 
 from pathlib import Path
 
+import pandas as pd
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.persistence.repository.backtest_result import (
@@ -262,6 +264,16 @@ def backtest_strategy(
             for idx, val in eq.items()
         ]
 
+    # series 档止损线序列透传（hypothesis-workbench 审查 CARD-01：engine
+    # 组 2 透出的 sl_series 接通 REST 面——沿 equity_curve 组装先例；
+    # NaN→null（SL 未定义期），前端原语层过滤 null 点断线画）
+    sl_series_data = None
+    if getattr(result, "sl_series", None) is not None:
+        sl_series_data = [
+            {"time": str(t), "value": None if pd.isna(v) else float(v)}
+            for t, v in result.sl_series.items()
+        ]
+
     # 由成交构建信号（方向感知：做空开仓=卖、做空平仓=买）
     signals_data = None
     if result.trades_df is not None and len(result.trades_df) > 0:
@@ -293,6 +305,7 @@ def backtest_strategy(
         dimension_scores=score_result.get("dimension_scores"),
         run_source="lab",
         equity_curve=equity_data,
+        sl_series=sl_series_data,
         signals=signals_data,
         total_funding_cost=result.total_funding_cost,
         liquidated=result.liquidated,

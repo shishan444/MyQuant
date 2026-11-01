@@ -53,6 +53,7 @@ vi.mock("@/components/lab/BacktestMetricsPanel", () => ({
 }));
 
 import { BacktestModePanel } from "@/components/lab/BacktestModePanel";
+import type { BacktestModePanelHandle } from "@/components/lab/BacktestModePanel";
 import { runBacktest } from "@/services/strategies";
 import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
 import { useChartSettings } from "@/stores/chart-settings";
@@ -207,6 +208,81 @@ describe("BacktestModePanel", () => {
     await waitFor(() => {
       expect(screen.getByText("API timeout")).toBeInTheDocument();
       expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
+    });
+  });
+
+  // -- onResult 回调透传（hypothesis-workbench 组 4.1：sl_series 等
+  //    结果面透传宿主——Lab 页止损线画线的数据来源）--
+
+  it("calls onResult with backtest result including sl_series after successful run", async () => {
+    // 回传体携带 series 档止损线序列（bridge [{time,value}] 形制——
+    // time 为空格分隔 ISO+UTC 偏移字面，见后端 test_sl_series_output）
+    const slSeries = [
+      { time: "2025-01-01 00:00:00+00:00", value: 95000 },
+      { time: "2025-01-02 00:00:00+00:00", value: 94500 },
+    ];
+    vi.mocked(runBacktest).mockResolvedValueOnce({
+      ...mockBacktestResult,
+      sl_series: slSeries,
+    });
+    const onResult = vi.fn();
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
+
+    render(
+      <BacktestModePanel
+        ref={(el) => { ref.current = el; }}
+        onResult={onResult}
+        {...defaultProps}
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    ref.current?.runBacktest();
+
+    // 回调收到 API 返回体本身（sl_series 原样透传宿主）
+    await waitFor(() => {
+      expect(onResult).toHaveBeenCalledTimes(1);
+    });
+    expect(onResult).toHaveBeenCalledWith(
+      expect.objectContaining({ sl_series: slSeries }));
+  });
+
+  it("does not call onResult when backtest fails", async () => {
+    vi.mocked(runBacktest).mockRejectedValueOnce(new Error("API timeout"));
+    const onResult = vi.fn();
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
+
+    render(
+      <BacktestModePanel
+        ref={(el) => { ref.current = el; }}
+        onResult={onResult}
+        {...defaultProps}
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    ref.current?.runBacktest();
+
+    await waitFor(() => {
+      expect(screen.getByText("API timeout")).toBeInTheDocument();
+    });
+    // 失败路径禁止面：无结果不回调（宿主不会拿旧/空结果画线）
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it("runs backtest without onResult prop without crashing", async () => {
+    // onResult 可选语义：宿主不消费时不影响回测主流程
+    const ref: { current: BacktestModePanelHandle | null } = { current: null };
+
+    render(
+      <BacktestModePanel ref={(el) => { ref.current = el; }} {...defaultProps} />,
+      { wrapper: createWrapper() },
+    );
+
+    ref.current?.runBacktest();
+
+    await waitFor(() => {
+      expect(screen.getByText("回测指标")).toBeInTheDocument();
     });
   });
 });

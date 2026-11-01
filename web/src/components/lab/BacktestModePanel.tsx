@@ -21,6 +21,8 @@ export interface BacktestModePanelHandle {
 
 interface BacktestModePanelProps {
   dna: DNA;
+  /** 回测完成回调（hypothesis-workbench 组 4.1：sl_series 等结果面透传宿主） */
+  onResult?: (r: BacktestResult) => void;
   symbol: string;
   timeframe: string;
   dataStart?: string;
@@ -34,6 +36,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
   function BacktestModePanel(
     {
       dna,
+      onResult,
       symbol,
       timeframe,
       dataStart,
@@ -96,6 +99,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
       })
         .then((btResult) => {
           setResult(btResult);
+          onResult?.(btResult);
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : "回测失败";

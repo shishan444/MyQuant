@@ -25,3 +25,8 @@ export {
   type SignalMarker,
   type TriggerInput,
 } from "./markers";
+export {
+  attachObservationSeries,
+  type ObservationPoint,
+  type ObservationSeriesStyle,
+} from "./observationSeries";
