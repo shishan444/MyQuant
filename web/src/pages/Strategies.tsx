@@ -273,7 +273,7 @@ function DnaSegment({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", series: "序列档" };
+const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
 
 /**
  * DNA 五段呈现（alignment-batch D4）：信号基因/逻辑基因/风险基因/执行基因/
@@ -310,7 +310,7 @@ function DnaFiveSegments({ dna }: { dna?: DNA | null }) {
       <DnaSegment label="风险基因">
         {rg ? (
           <span className="text-text-secondary font-mono">
-            {rg.direction === "long" ? "做多" : rg.direction === "short" ? "做空" : "混合"}
+            {rg.direction === "long" ? "做多" : rg.direction === "short" ? "做空" : rg.direction === "mixed" ? "混合" : "—"}
             {rg.leverage != null && ` · ${rg.leverage}x`}
             {rg.sl_mode && ` · ${SL_MODE_LABELS[rg.sl_mode] ?? rg.sl_mode}`}
             {rg.stop_loss != null && ` · SL ${(rg.stop_loss * 100).toFixed(1)}%`}
@@ -426,7 +426,7 @@ function ExpandPanel({ strategy, verifyRecords, paperTasks, onRun, onPaperTrade,
             <InfoRow label="交易对" value={strategy.symbol} />
             <InfoRow label="周期" value={strategy.timeframe} />
             <InfoRow label="状态" value={<StatusBadge status={strategy.status} />} />
-            <InfoRow label="方向" value={rg?.direction === "long" ? "做多" : rg?.direction === "short" ? "做空" : "混合"} />
+            <InfoRow label="方向" value={rg?.direction === "long" ? "做多" : rg?.direction === "short" ? "做空" : rg?.direction === "mixed" ? "混合" : "--"} />
             <InfoRow label="杠杆" value={rg?.leverage ? `${rg.leverage}x` : "--"} valueClass="text-amber-400" />
             <InfoRow label="来源" value={<SourceBadge source={strategy.source} />} />
             {strategy.generation > 0 && <InfoRow label="进化代数" value={`Gen ${strategy.generation}`} />}
