@@ -14,8 +14,11 @@ profile（跨域引用会把研究域门槛变更误传导给纸盘达标）。
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("paper_runtime")
 
 # ---------------------------------------------------------------------------
 # 常量（自有，语义分立于 core/analysis/thresholds.py DEFAULT_PROFILE）
@@ -193,8 +196,12 @@ def run_trigger_consistency(db_path: Path, data_dir: Path, task: Dict[str, Any],
         paper = paper_trigger_set(signal_rows)
         return trigger_consistency(paper, replay)
     except Exception as exc:  # noqa: BLE001——终判解耦：重放失败不阻塞终态
+        logger.exception("对照重放器失败（task=%s）", task.get("task_id"))
+        # reason 只带异常类名（完整 exc 落日志——异常 str 携绝对路径的
+        # 场景不入 REST 披露面）
         return {"passed": None, "deviation_ratio": None, "numerator": None,
-                "denominator": 0, "detail": {"reason": f"replay_failed: {exc}"}}
+                "denominator": 0,
+                "detail": {"reason": f"replay_failed: {type(exc).__name__}"}}
 
 
 def build_qualification_section(db_path: Path, data_dir: Path,
@@ -241,8 +248,9 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
     """
     out: Dict[str, Any] = {"attempted": False, "migrated": False,
                            "not_migrated_reason": None}
-    terminal = {"completed", "stopped", "error"}
-    if task.get("status") not in terminal or not section.get("qualified"):
+    # 终态集单源（executor.TERMINAL_STATUSES——与终判守卫同源，不立第三份字面量）
+    from core.paper_trading.runtime.executor import TERMINAL_STATUSES
+    if task.get("status") not in TERMINAL_STATUSES or not section.get("qualified"):
         return out
     out["attempted"] = True
     try:
@@ -270,7 +278,10 @@ def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
             out["not_migrated_reason"] = str(
                 result.get("not_migrated_reason") or result)
     except Exception as exc:  # noqa: BLE001——迁移失败不回滚终判（解耦）
-        out["not_migrated_reason"] = f"transit_failed: {exc}"
+        logger.exception("凭证迁移失败（task=%s strategy=%s）",
+                         task.get("task_id"), task.get("strategy_id"))
+        # reason 只带异常类名（完整 exc 落日志，不入 REST 披露面）
+        out["not_migrated_reason"] = f"transit_failed: {type(exc).__name__}"
     return out
 
 
