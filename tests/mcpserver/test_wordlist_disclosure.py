@@ -38,13 +38,13 @@ class TestWordlistDisclosure:
         "卡尔曼封装": ("kalman", "kalman_slope"),
     }
 
-    #: capability 族句锚 per-family（形制不统一——「时序变换族」
-    #: 「逐元素族」带族字后缀防前文非族句误锚（如「时序结构与
-    #: 逐元素逻辑」），「卡尔曼封装」全文唯一裸用）
+    #: capability 族句锚 per-family（族名带「族」字后缀防前文非族句
+    #: 误锚——如「时序结构与逐元素逻辑」；developer 修正「卡尔曼
+    #: 封装族」补齐后三族形制统一）
     _CAPABILITY_ANCHOR = {
         "时序变换": "时序变换族",
         "逐元素": "逐元素族",
-        "卡尔曼封装": "卡尔曼封装",
+        "卡尔曼封装": "卡尔曼封装族",
     }
 
     @staticmethod
