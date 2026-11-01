@@ -402,6 +402,9 @@ class BacktestResult:
     win_rate: float | None  # None=零交易合法缺失（三态语义，见 win_rate_failed 注释）
     total_trades: int
     equity_curve: pd.Series
+    # series 档止损价序列（hypothesis-workbench 组 2：sl_mode=series 时
+    # 输出装载期线值列（索引=bt 区间），其余档 None——沿 equity_curve 先例）
+    sl_series: "pd.Series | None" = None
     trades_df: pd.DataFrame | None = None
     total_funding_cost: float = 0.0
     liquidated: bool = False
@@ -1536,6 +1539,13 @@ class BacktestEngine:
             freq=None,
         )
 
+        # series 档线值列经实例属性透传（hypothesis-workbench 组 2：
+        # 四元组签名零改动——三个消费面 run/run_with_portfolio/测试直调
+        # 均解包四元组；_last_sl_col=模块内契约，组装段消费后清空防跨
+        # run 泄漏）
+        self._last_sl_col = (
+            atr_col if (sl_mode_val == sl_mode_code("series")
+                        and atr_col is not None) else None)
         return pf, int(adds.sum()), int(reduces.sum()), sig_set.degraded_layers
 
     def _build_result_from_portfolio(
@@ -1671,6 +1681,17 @@ class BacktestEngine:
 
         trades = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
 
+        # series 档止损线序列透出（hypothesis-workbench 组 2）：atr_col
+        # 槽位在 series 档承载装载期线值列（_per_dna_risk_params :339 注释）；
+        # 索引对齐 enhanced_df（装载期列长度=enhanced 全段含 warmup 前缀——
+        # 与 equity_curve 同段形制，前端按 time 键对齐消费）
+        _sl_col = getattr(self, "_last_sl_col", None)
+        self._last_sl_col = None  # 消费即清（防跨 run 泄漏）
+        sl_series_out = (
+            pd.Series(_sl_col, index=enhanced_df.index, name="sl_price")
+            if _sl_col is not None
+            else None)
+
         return BacktestResult(
             total_return=raw_return,
             sharpe_ratio=float(sharpe),
@@ -1678,6 +1699,7 @@ class BacktestEngine:
             win_rate=None if win_rate is None else float(win_rate),
             total_trades=total_trades_val,
             equity_curve=equity_curve,
+            sl_series=sl_series_out,
             trades_df=trades,
             total_funding_cost=total_funding_cost,
             liquidated=liquidated,
