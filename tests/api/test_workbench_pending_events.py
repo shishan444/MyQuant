@@ -45,6 +45,23 @@ def _add_hypothesis(db):
                       "end": "2026-02-01T00:00:00Z"}])["hypothesis_id"]
 
 
+def _add_hypothesis_variant(db, i):
+    """then target 变体假设（同 conditions 注册幂等返回同 id——变体保证
+    互异；period 变体不可行：RSI.period 参数域 [2,50] 上限 49 个不够；
+    CARD-01 全量扫/CARD-02 缓存用例的批量种子）。"""
+    from core.analysis.hypothesis_service import register_hypothesis
+    return register_hypothesis(
+        db,
+        conditions={"when_conditions": [
+            {"subject": {"indicator": "RSI", "params": {"period": 14}},
+             "action": "lt", "target": 35}],
+            "then_conditions": [{"subject": "close", "action": "gt", "target": i}]},
+        statement=f"wb 变体 {i}", strategy_params={"stop_loss": 0.05},
+        data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                      "start": "2026-01-01T00:00:00Z",
+                      "end": "2026-02-01T00:00:00Z"}])["hypothesis_id"]
+
+
 
 def _upsert_running(db, task_id, *, balance, trades, first_met=None, cash=100.0, strategy_id="st_wb"):
     """运行态任务 ORM 直插（update_task 白名单不含 balance 运行态组——测试种子专用）。"""
@@ -81,12 +98,17 @@ class TestUnionExhausted:
         与 remaining_bars==1 边界用例成对（0 产/1 不产）。原
         test_remaining_bars_zero_produces_event 名义测正向、实际只证
         fail-open degraded 路径——正向命中分支由本用例 monkeypatch 补。
+        双 patch（CARD-02 后装载序：load_data_bounds 先于
+        query_union_balance——单 patch balance 时真装载先 raise 不可达）。
         """
         from unittest.mock import patch
         db = client._db
         hid = _add_hypothesis(db)
-        with patch("core.analysis.validation_service.query_union_balance",
-                   return_value={"remaining_bars": 0}):
+        bounds = ("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
+        with patch("core.analysis.validation_service.load_data_bounds",
+                   return_value=bounds), \
+             patch("core.analysis.validation_service.query_union_balance",
+                   return_value={"remaining_bars": 0}) as qb:
             r = client.get("/api/workbench/pending-events")
         assert r.status_code == 200
         events = [e for e in r.json()["events"] if e["type"] == "union_exhausted"]
@@ -95,6 +117,8 @@ class TestUnionExhausted:
         assert p["hypothesis_id"] == hid
         assert p["symbol"] == "BTCUSDT" and p["timeframe"] == "4h"
         assert p["remaining_bars"] == 0
+        # CARD-02 传参形制：预装载 bounds 直传 query_union_balance
+        assert qb.call_args.kwargs["data_bounds"] == bounds
 
     def test_remaining_bars_zero_produces_event(self, client, tmp_path):
         """判据=remaining_bars==0（§7.3 单字段）——数据范围全判即耗尽。
@@ -115,18 +139,71 @@ class TestUnionExhausted:
         assert body["degraded"] >= 1  # fail-open 计数
 
     def test_remaining_bars_one_no_event(self, client, tmp_path):
-        """判据边界：remaining_bars==1 不产（严格 ==0）。"""
+        """判据边界：remaining_bars==1 不产（严格 ==0）。
+
+        双 patch（CARD-02 后单 patch balance 不可达——真装载先 raise
+        拦截，patch 从未被调用=恒绿未触达；变异自查：单 patch 形制下
+        把返回值改为 0 用例仍绿，证 mock 不可达）。
+        """
         db = client._db
         hid = _add_hypothesis(db)
-        # 用 monkeypatch 层面实证判据边界：patch query_union_balance 返回 1
-        import api.routes.workbench as wb
-        orig = wb.query_union_balance if hasattr(wb, "query_union_balance") else None
         from unittest.mock import patch
-        with patch("core.analysis.validation_service.query_union_balance",
-                   return_value={"remaining_bars": 1}):
+        with patch("core.analysis.validation_service.load_data_bounds",
+                   return_value=("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")), \
+             patch("core.analysis.validation_service.query_union_balance",
+                   return_value={"remaining_bars": 1}) as qb:
             r = client.get("/api/workbench/pending-events")
+        assert qb.call_count == 1  # patch 真被调用（触达证明）
         body = r.json()
         assert all(e["type"] != "union_exhausted" for e in body["events"])
+
+    def test_full_scan_beyond_first_page(self, client):
+        """CARD-01 全量扫：active 假设超单页（200）时第 201+ 不漏扫。
+
+        修复前 list_hypotheses 缺省 limit=50 单页截断（>50 后半静默
+        漏扫）；iter_all_pages 翻页后跨页全量。同 conditions 注册幂等
+        （探针实测同 id），period 变体保证 201 个互异假设。
+        """
+        from unittest.mock import patch
+        db = client._db
+        n = 201  # 第二页首条=第 201——翻页边界的最小超页规模
+        for i in range(n):
+            _add_hypothesis_variant(db, i)
+        with patch("core.analysis.validation_service.load_data_bounds",
+                   return_value=("s", "e")), \
+             patch("core.analysis.validation_service.query_union_balance",
+                   return_value={"remaining_bars": 0}):
+            r = client.get("/api/workbench/pending-events")
+        events = [e for e in r.json()["events"] if e["type"] == "union_exhausted"]
+        assert len(events) == n  # 一假设一事件——第 201 个不漏
+
+    def test_bounds_cache_single_load_per_key(self, client):
+        """CARD-02 请求内缓存：同 (symbol,timeframe) 多假设只装载一次
+        bounds；query_union_balance 收到预装载传参（每假设各判定一次）。"""
+        from unittest.mock import patch
+        db = client._db
+        _add_hypothesis_variant(db, 0)
+        _add_hypothesis_variant(db, 1)  # 同 key (BTCUSDT, 4h)
+        bounds = ("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")
+        with patch("core.analysis.validation_service.load_data_bounds",
+                   return_value=bounds) as lb, \
+             patch("core.analysis.validation_service.query_union_balance",
+                   return_value={"remaining_bars": 0}) as qb:
+            r = client.get("/api/workbench/pending-events")
+        assert lb.call_count == 1  # 同 key 一次装载（缓存命中）
+        assert qb.call_count == 2  # 两假设各自判定
+        assert all(c.kwargs.get("data_bounds") == bounds
+                   for c in qb.call_args_list)
+
+    def test_failed_bounds_load_not_cached(self, client):
+        """CARD-02 失败不缓存：装载 raise 不入缓存——同 key 两假设
+        各自失败 degraded=2（失败若被缓存伪跳过则 degraded=1）。"""
+        db = client._db
+        _add_hypothesis_variant(db, 0)
+        _add_hypothesis_variant(db, 1)  # 同 key 无 parquet 真装载两次 raise
+        r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200
+        assert r.json()["degraded"] == 2
 
 
 class TestQualifyPending:
