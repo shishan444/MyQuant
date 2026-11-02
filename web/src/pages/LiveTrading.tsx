@@ -18,12 +18,12 @@ import { toast } from "sonner";
 import { GlassCard } from "@/components/GlassCard";
 import { listLiveTasks, type LiveTradingTask } from "@/services/liveTrading";
 
-/** 风控四条真实值（PRD 契约值，非猜测）——B5 一票否决行 */
-const RISK_RULES = [
-  { label: "单笔最大下单", value: "500U" },
+/** 风控四条（risk_guard.py:37-40 工程现状权威源，非 PRD 契约值）——B5 一票否决行 */
+const RISK_RULES: { label: string; value: string; note?: string }[] = [
+  { label: "单笔名义上限", value: "1000U" },
   { label: "最小下单间隔", value: "5s" },
-  { label: "日累计上限", value: "1000U" },
-  { label: "单笔最大亏损", value: "50%" },
+  { label: "日亏损熔断", value: "500U", note: "触及停止开新仓" },
+  { label: "保证金占用上限", value: "50%", note: "占权益" },
 ];
 
 /** 安全三件（静态披露） */
@@ -33,7 +33,7 @@ const SAFETY_ITEMS = ["API Key 加密存储", "白名单 IP", "操作审计"];
 const GATE_CHECKLIST = [
   "策略已通过双关验证（V1+V2）",
   "纸盘前向验证达标（qualification 凭证）",
-  "风控参数在安全底线内（500U/5s/1000U/50%）",
+  "风控参数在安全底线内（1000U/5s/500U/50%）",
   "人工裁决门确认（最终放行须人工确认）",
 ];
 
@@ -156,7 +156,7 @@ export function LiveTrading() {
                 <div className="flex justify-between"><dt className="text-text-muted">交易对/周期</dt><dd className="font-mono">{selected.symbol}/{selected.timeframe}</dd></div>
                 <div className="flex justify-between"><dt className="text-text-muted">方向</dt><dd>{selected.direction}</dd></div>
                 <div className="flex justify-between"><dt className="text-text-muted">凭证状态</dt><dd className="text-text-muted">未接入（demo 域）</dd></div>
-                <div className="flex justify-between"><dt className="text-text-muted">风控四条</dt><dd className="font-mono">500U/5s/1000U/50%</dd></div>
+                <div className="flex justify-between"><dt className="text-text-muted">风控四条</dt><dd className="font-mono">1000U/5s/500U/50%</dd></div>
                 <div className="flex justify-between"><dt className="text-text-muted">对账节拍</dt><dd className="text-text-muted">未接入（demo 域）</dd></div>
               </dl>
             ) : (
@@ -264,6 +264,7 @@ export function LiveTrading() {
               <Ban className="h-3 w-3 text-loss" />
               <span className="text-text-secondary">{r.label}</span>
               <span className="font-mono font-semibold text-text-primary">{r.value}</span>
+              {r.note && <span className="text-[10px] text-text-muted">{r.note}</span>}
             </span>
           ))}
         </div>
