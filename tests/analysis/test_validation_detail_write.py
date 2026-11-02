@@ -420,8 +420,6 @@ class TestAtomicityAndEdges:
         """B4-3：第四写（逐笔）NOT NULL 违例 → validation_records 亦
         回滚（「记录在而明细残缺」不可达）。"""
         bad_detail = [{
-            "exec_ref": "main", "exec_index": 0,
-            "range_start": "s", "range_end": "e",
             "trades": [{"exec_ref": "main", "exec_index": 0,
                         "range_start": "s", "range_end": "e", "seq": 0,
                         "entry_time": None,  # NOT NULL 违例——故障注入
