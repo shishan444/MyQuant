@@ -575,10 +575,10 @@ def save_validation_with_log(
     segmentation：0.3.3 G7 幂等第五维（分段身份——默认空串=非分段，
     隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。
     detail（add-validation-detail B4）：执行份明细列表（_build_detail_payload
-    产物，每份 {exec_ref, exec_index, range_start, range_end, trades,
-    equity}），缺省 None 不写明细表（签名向后兼容——沙盒/既有调用方
-    零适配）。携带时四写同一事务：任一失败整体回滚——「记录在而明细
-    残缺」不可达（specs「验证明细原子落盘」）。
+    产物，每份 {trades, equity}（行级含四标识列）），缺省 None 不写
+    明细表（签名向后兼容——沙盒/既有调用方零适配）。携带时四写同一
+    事务：任一失败整体回滚——「记录在而明细残缺」不可达（specs
+    「验证明细原子落盘」）。
     """
     engine = _engine_for(db_path)
     now = _now()

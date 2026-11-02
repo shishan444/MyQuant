@@ -566,9 +566,10 @@ def _build_detail_payload(
     洞数据集错位防线；降级不拒绝：执行证据保真优先）。
 
     Returns:
-        {"exec_ref", "exec_index", "range_start", "range_end",
-         "trades": [逐笔行], "equity": 曲线行}——trades 行含除
-        record_id 外全部列（落库层补 record_id）；equity 行同。
+        {"trades": [逐笔行], "equity": 曲线行}——顶层仅两键，四标识
+        （exec_ref/exec_index/range_start/range_end）只随行级携带；
+        trades 行含除 record_id 外全部列（落库层补 record_id）；
+        equity 行同。
     """
     equity = detail["equity"]
     n = int(len(equity))
@@ -626,9 +627,7 @@ def _build_detail_payload(
                 "pnl": None if pd.isna(pnl_val) else float(pnl_val),
             })
 
-    return {"exec_ref": exec_ref, "exec_index": exec_index,
-            "range_start": str(range_start), "range_end": str(range_end),
-            "trades": trades, "equity": equity_row}
+    return {"trades": trades, "equity": equity_row}
 
 
 def _params_exec_keys(detail: Dict[str, Any]) -> Dict[str, float]:
