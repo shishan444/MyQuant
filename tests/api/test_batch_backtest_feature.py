@@ -84,10 +84,10 @@ def batch_db(tmp_path: Path) -> Path:
 
 def _make_processor(db_path: Path, data_dir: Path, strategy_ids=None, leverage=1):
     from api.routes.strategies.batch import _BatchBacktestProcessor
-    from api.schemas import BatchBacktestRequest, VerifyDateRange
+    from api.schemas import BatchBacktestRequest, BacktestDateRange
     payload = BatchBacktestRequest(
         strategy_ids=strategy_ids or ["s-high", "s-low"],
-        data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+        data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
         leverage=leverage,
     )
     return _BatchBacktestProcessor(payload, db_path, data_dir)
@@ -361,13 +361,13 @@ class TestProcessorFinalize:
         =fallback_metrics 的 metrics_dict（与生产同源）。
         """
         from api.routes.strategies.batch import _BatchBacktestProcessor
-        from api.schemas import VerifyDateRange
+        from api.schemas import BacktestDateRange
 
         payload = BatchBacktestRequest(
             strategy_ids=["s-high"],
             data_ranges=[
-                VerifyDateRange(start="2024-01-01", end="2024-03-01"),
-                VerifyDateRange(start="2024-04-01", end="2024-06-01"),
+                BacktestDateRange(start="2024-01-01", end="2024-03-01"),
+                BacktestDateRange(start="2024-04-01", end="2024-06-01"),
             ],
             leverage=1,
         )

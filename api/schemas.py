@@ -389,63 +389,15 @@ class CompareResponse(BaseModel):
     results: List[CompareResultItem]
 
 
-# ── 验证域模型 ──
+# ── 验证域模型（已退役）──
+# 旧验证会话体系 schema 族随 retire-verify-sessions 删除
+# （五端点 404；判定链路由 validation_records 体系承载）；
+# 日期范围模型保留（batch 回测请求字段在用，去 Verify 冠名）。
 
 
-class VerifyDateRange(BaseModel):
+class BacktestDateRange(BaseModel):
     start: str
     end: str
-
-
-class VerifyRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    strategy_ids: List[str]
-    data_ranges: List[VerifyDateRange]
-    init_cash: float = 100000.0
-    fee: float = 0.001
-    slippage: float = 0.0005
-    leverage: int = Field(default=1, ge=1, le=MAX_LEVERAGE)
-
-
-class VerifyResultItem(BaseModel):
-    strategy_id: str
-    data_start: str
-    data_end: str
-    total_return: float = 0.0
-    sharpe_ratio: float = 0.0
-    max_drawdown: float = 0.0
-    win_rate: Optional[float] = None
-    total_trades: int = 0
-    profit_factor: float = 0.0
-    fitness: float = 0.0
-    qualified: bool = False
-    error: Optional[str] = None
-
-
-class VerifyPeriodSummary(BaseModel):
-    data_start: str
-    data_end: str
-    total_return: float = 0.0
-    sharpe_ratio: float = 0.0
-    max_drawdown: float = 0.0
-    fitness: float = 0.0
-    qualified: bool = False
-
-
-class VerifySummaryItem(BaseModel):
-    strategy_id: str
-    strategy_name: str
-    comprehensive_score: float = 0.0
-    avg_fitness: float = 0.0
-    qualified_count: int = 0
-    total_periods: int = 0
-    per_period_metrics: List[VerifyPeriodSummary] = []
-
-
-class VerifyResponse(BaseModel):
-    results: List[VerifyResultItem]
-    summary: List[VerifySummaryItem]
 
 
 # ── 批量回测域模型 ──
@@ -455,7 +407,7 @@ class BatchBacktestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     strategy_ids: List[str]
-    data_ranges: List[VerifyDateRange]
+    data_ranges: List[BacktestDateRange]
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
@@ -499,52 +451,6 @@ class BatchBacktestSummaryItem(BaseModel):
     per_period_results: List[BatchBacktestResultItem] = []
 
 
-class VerifyHistoryItem(BaseModel):
-    result_id: str
-    strategy_id: str
-    strategy_name: Optional[str] = None
-    symbol: str
-    timeframe: str
-    data_start: str
-    data_end: str
-    total_return: float = 0.0
-    sharpe_ratio: float = 0.0
-    max_drawdown: float = 0.0
-    total_trades: int = 0
-    fitness: float = 0.0
-    qualified: int = 0
-    # 三门槛明细（alignment-batch α）：现算值非落库列——门槛常量
-    # DEFAULT_PROFILE 单源；行指标缺失时对应布尔为 null（缺失≠false），
-    # star=非 null 布尔真值计数（0-3 机械换算，契约登记表四）
-    thresholds: Optional[Dict[str, Optional[bool]]] = None
-    star: int = 0
-    created_at: str
-
-
-class VerifyHistoryResponse(BaseModel):
-    items: List[VerifyHistoryItem]
-    total: int
-
-
-class VerifySessionResponse(BaseModel):
-    session_id: str
-    status: str
-    strategy_ids: str
-    data_ranges: str
-    init_cash: float
-    fee: float
-    slippage: float
-    summary_json: Optional[str] = None
-    total_results: int = 0
-    total_strategies: int = 0
-    error_message: Optional[str] = None
-    created_at: str
-    completed_at: Optional[str] = None
-
-
-class VerifySessionListResponse(BaseModel):
-    items: List[VerifySessionResponse]
-    total: int
 
 
 # ── 进化域模型 ──

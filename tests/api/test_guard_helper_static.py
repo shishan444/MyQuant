@@ -42,7 +42,6 @@ _STRAT_DIR = _REPO_ROOT / "api" / "routes" / "strategies"
 GUARDED_FILES = [
     _STRAT_DIR / "backtest.py",
     _STRAT_DIR / "batch.py",
-    _STRAT_DIR / "verify.py",
     _STRAT_DIR / "compare.py",
     _REPO_ROOT / "api" / "routes" / "live_trading.py",
     _REPO_ROOT / "api" / "routes" / "evolution.py",
@@ -126,8 +125,6 @@ class TestHelperParamAxis:
         [
             (True, "backtest",
              "Library DNA invalid（库内 DNA 结构/值域非法）"),
-            (True, "verify",
-             "Library DNA invalid（库内 DNA 结构/值域非法）"),
             (True, "batch",
              "Library DNA invalid（库内 DNA 结构/值域非法）"),
             (True, "compare",
@@ -136,9 +133,9 @@ class TestHelperParamAxis:
             (False, "live", "DNA 值域/结构校验未通过"),
             (False, "evolution", "DNA 值域/结构校验未通过"),
         ],
-        ids=["读库-backtest", "读库-verify", "读库-batch",
+        ids=["读库-backtest", "读库-batch",
              "读库-compare", "直传-backtest内联", "直传-live",
-             "直传-evolution"])
+             "直传-evolution"])  # verify 已退役（retire-verify-sessions）
     def test_dna_message_axis(self, library_dna, channel, expected):
         """第一段 message 两态×通道七格（结构坏 DNA 命中；evolution
         格=Q-3 件⑤初始入口拒绝，CARD-05 收敛后同 helper 承载）。"""

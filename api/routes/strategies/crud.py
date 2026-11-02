@@ -32,12 +32,6 @@ from core.persistence.repository.strategy import (
     save_strategy,
     update_strategy,
 )
-from core.persistence.repository.verify_session import (
-    get_verify_session,
-    list_verify_sessions,
-    save_verify_session,
-    update_verify_session,
-)
 from api.deps import get_db_path
 from api.schemas import (
     BacktestRequest,
@@ -54,15 +48,6 @@ from api.schemas import (
     StrategyMetrics,
     StrategyResponse,
     StrategyUpdate,
-    VerifyRequest,
-    VerifyResponse,
-    VerifyResultItem,
-    VerifySummaryItem,
-    VerifyPeriodSummary,
-    VerifyHistoryItem,
-    VerifyHistoryResponse,
-    VerifySessionResponse,
-    VerifySessionListResponse,
 )
 from core.strategy.lifecycle import transit
 from core.strategy.lifecycle.machine import LifecycleError, SUCCESSORS

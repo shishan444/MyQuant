@@ -62,7 +62,7 @@ HYBRID_SIDS = ("st_fa536d692525", "st_7cd382d439fa")
 RED_TRACE_SID = "st_0c1c0b54daa7"
 
 # 四路径注册键（api/routes/strategies/ 聚合 prefix=/api/strategies）
-ROUTES = ("backtest", "compare", "verify", "batch")
+ROUTES = ("backtest", "compare", "batch")  # verify 已退役（retire-verify-sessions）
 
 # 字节基线（signal-sources-structure-gate 1.2 补强，采集时点=卡 V 判据
 # 落地后、卡 G 收敛前〔组 1 工作区，基 commit 79642c7〕；采集值经人工
@@ -72,9 +72,6 @@ PLUGIN_MESSAGE_BY_ROUTE = {
     "backtest": ("策略含插件信号源，REST 回测通道不支持（引擎该通道"
                  "未接插件信号集，结果将为零交易）——请经研究验证链"
                  "沙盒回测"),
-    "verify": ("策略含插件信号源，REST 回测通道不支持（引擎该通道"
-               "未接插件信号集，结果将为零交易）——请经研究验证链"
-               "沙盒回测"),
     "compare": ("策略含插件信号源，REST 对比回测通道不支持（引擎该"
                 "通道未接插件信号集，结果将为零交易）——请经研究验证"
                 "链沙盒回测"),
@@ -131,11 +128,6 @@ def _post_route(client: TestClient, route: str, sid: str):
     if route == "compare":
         return client.post("/api/strategies/compare", json={
             "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h"})
-    if route == "verify":
-        return client.post("/api/strategies/verify", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-01",
-                             "end": "2024-06-01"}]})
     if route == "batch":
         return client.post("/api/strategies/batch-backtest/stream", json={
             "strategy_ids": [sid],

@@ -316,8 +316,10 @@ class Strategy(Base):
 
 class VerifySession(Base):
     """
-    验证会话句柄：批量验证的运行壳（status/summary/错误信息），
-    结果行在 backtest_result.session_id 关联。
+    【已退役·停用保留】旧验证会话体系句柄（retire-verify-sessions B5）：
+    五端点与仓储模块已删（请求 404），本类零读写停用——保留因删类需
+    迁移件且与存量库 create_all 漂移；存量 4 行数据留档不删。判定
+    链路由 validation_records 体系承载（research-validation-protocol）。
     """
     __tablename__ = "verify_session"
     __table_args__ = (

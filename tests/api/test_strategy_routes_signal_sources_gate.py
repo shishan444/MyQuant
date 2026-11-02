@@ -40,7 +40,7 @@ from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
 from core.strategy.validator import has_plugin_sources, validate_dna
 from tests.helpers.data_factory import make_dna
 
-ROUTES = ("backtest", "compare", "verify", "batch")
+ROUTES = ("backtest", "compare", "batch")  # verify 已退役（retire-verify-sessions）
 
 # 三类畸形（直改库/live dna_json 通道构造集——save_strategy 与
 # from_json 均原样透传，三类全可达）
@@ -102,10 +102,6 @@ def _post_route(client: TestClient, route: str, sid: str):
     if route == "compare":
         return client.post("/api/strategies/compare", json={
             "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h"})
-    if route == "verify":
-        return client.post("/api/strategies/verify", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]})
     if route == "batch":
         return client.post("/api/strategies/batch-backtest/stream", json={
             "strategy_ids": [sid],

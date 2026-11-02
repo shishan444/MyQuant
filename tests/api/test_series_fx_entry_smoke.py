@@ -130,22 +130,6 @@ class TestFxSeriesRouteSmoke:
         assert r.status_code == 200, r.text[:300]
         assert "total_trades" in r.json()
 
-    def test_verify_route_fx_series_runs(self, fx_env):
-        """主入口②：POST /api/strategies/verify——series fx 策略多窗
-        验证 200 且 results[0].error 为 None（引擎构造点透传——fx 列
-        装载跑通到验证回测）。"""
-        client, sid, _ = fx_env
-        r = client.post("/api/strategies/verify", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-20T00:00:00Z",
-                             "end": "2024-02-05T00:00:00Z"}]})
-        assert r.status_code == 200, r.text[:300]
-        results = r.json()["results"]
-        assert len(results) == 1
-        assert results[0]["strategy_id"] == sid
-        assert results[0]["error"] is None, \
-            f"fx 装载失败会落 error 字段，实际 {results[0]['error']}"
-
     def test_compare_route_fx_series_runs(self, fx_env):
         """入口③：POST /api/strategies/compare——series fx 策略对比
         回测 200（第三路由构造点同形制透传）。"""

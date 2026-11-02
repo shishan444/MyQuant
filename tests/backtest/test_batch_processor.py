@@ -35,12 +35,12 @@ class TestBatchBacktestProcessorInit:
 
     def test_init_groups_strategies_and_builds_steps(self, batch_db, tmp_path):
         from api.routes.strategies import _BatchBacktestProcessor
-        from api.schemas import VerifyDateRange
+        from api.schemas import BacktestDateRange
         from api.schemas import BatchBacktestRequest
 
         payload = BatchBacktestRequest(
             strategy_ids=["strat-1"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
         with patch("api.routes.strategies.backtest._bt_engine_mod"):
@@ -58,11 +58,11 @@ class TestBatchBacktestProcessorInit:
     def test_init_raises_404_when_no_valid_strategies(self, batch_db, tmp_path):
         from fastapi import HTTPException
         from api.routes.strategies import _BatchBacktestProcessor
-        from api.schemas import VerifyDateRange, BatchBacktestRequest
+        from api.schemas import BacktestDateRange, BatchBacktestRequest
 
         payload = BatchBacktestRequest(
             strategy_ids=["missing-strat"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
         with patch("api.routes.strategies.backtest._bt_engine_mod"):
@@ -94,11 +94,11 @@ class TestBatchBacktestProcessorProcessStep:
 
     def test_process_step_runs_engine_and_records_result(self, batch_db, tmp_path):
         from api.routes.strategies import _BatchBacktestProcessor
-        from api.schemas import VerifyDateRange, BatchBacktestRequest
+        from api.schemas import BacktestDateRange, BatchBacktestRequest
 
         payload = BatchBacktestRequest(
             strategy_ids=["strat-1"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
         df = make_ohlcv(50, "4h")
@@ -122,11 +122,11 @@ class TestBatchBacktestProcessorProcessStep:
 
     def test_process_step_insufficient_data_records_error(self, batch_db, tmp_path):
         from api.routes.strategies import _BatchBacktestProcessor
-        from api.schemas import VerifyDateRange, BatchBacktestRequest
+        from api.schemas import BacktestDateRange, BatchBacktestRequest
 
         payload = BatchBacktestRequest(
             strategy_ids=["strat-1"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
             init_cash=100_000, fee=0.001, slippage=0.0005, leverage=1,
         )
         short_df = make_ohlcv(5, "4h")  # < 10 rows

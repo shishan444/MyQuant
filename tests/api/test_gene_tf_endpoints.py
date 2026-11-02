@@ -71,22 +71,6 @@ class TestGeneTfEndpoints:
         assert response.status_code == 200, response.text[:300]
         assert len(response.json()["results"]) == 2
 
-    def test_t4c_verify_endpoint_runs(self, api_client: TestClient) -> None:
-        """POST /api/strategies/verify：基因级 tf 策略验证 → 200
-        summary（非轴缺失）。"""
-        from core.persistence.repository.strategy import save_strategy
-        save_strategy(api_client.app.state.db_path,
-                      strategy_id="st_tf_vfy",
-                      dna_json=_gene_tf_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        response = api_client.post(
-            "/api/strategies/verify",
-            json={"strategy_ids": ["st_tf_vfy"],
-                  "data_ranges": [
-                      {"start": "2024-01-20", "end": "2024-02-20"}]})
-        assert response.status_code == 200, response.text[:300]
-        assert len(response.json()["summary"]) == 1
-
     def test_t4c_batch_stream_endpoint_runs(
             self, api_client: TestClient) -> None:
         """POST /api/strategies/batch-backtest/stream：基因级 tf 策略

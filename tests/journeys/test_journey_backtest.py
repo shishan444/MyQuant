@@ -89,8 +89,8 @@ def test_backtest_journey_l2_metrics_equal_reference(journey):
     )
     # 链路自洽：响应 result_id 落库可取（跨步数据引用一致）
     assert body.get("result_id")
-    with TestClient(app) as client:
-        hist = client.get("/api/strategies/verify/history").json()
+    # （原 verify/history 落库取回断言已随旧验证会话体系退役——
+    # retire-verify-sessions；result_id 落库由 persistence 域覆盖）
     # 评分存在（评分层在响应契约内）
     assert body.get("total_score") is not None or body.get("score") is not None
 
