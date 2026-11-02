@@ -313,6 +313,27 @@ class TestPagingOrderAndAdhoc:
         assert {"hyp_a", "hyp_b", "hyp_c", "hyp_d"} <= set(collected), \
             "null 活动时间行 hyp_d 在 cursor 路径同样可达"
 
+    def test_cursor_null_tail_page_no_repeat(self, client):
+        """缺陷锚 B 形态（specs「keyset 续页无漂移」×「null 容缺」
+        组合的另一表现）：首页末行为 null 活动时间行时，next_cursor
+        编码该行（实现现状 str(None)="None|id"），续页按契约必须为
+        空（首页已含全集）——不得重复任何已返回行。〔修复前红：
+        "None" 与 ISO 时间串比较 '2'<'N' 恒真，续页回到时间流头部
+        重复全部正常行。A 形态（NULL 行 cursor 路径漏页）由上方
+        遍历用例锚定。〕"""
+        first = client.get("/api/research/hypothesis-cards",
+                           params={"page_size": 5}).json()
+        assert len(first["items"]) == 5, "全集 5 行首页一次取全"
+        assert first["next_cursor"] is not None, "items 非空须给续页游标"
+        second = client.get("/api/research/hypothesis-cards",
+                            params={"cursor": first["next_cursor"],
+                                    "page_size": 5}).json()
+        assert second["items"] == [], \
+            "首页已含全集（末行 null 活动时间）——续页不得返回任何行"
+        ids1 = {c["hypothesis_id"] for c in first["items"]}
+        ids2 = {c["hypothesis_id"] for c in second["items"]}
+        assert not (ids1 & ids2), "已消费行不得重复出现"
+
     def test_get_no_side_effects_on_tables(self, client):
         """零持久化零副作用（Requirement 正文）：GET 前后三源表行数
         不变（响应等价的幂等断言不排除写库——本用例直接证零写入）。"""
