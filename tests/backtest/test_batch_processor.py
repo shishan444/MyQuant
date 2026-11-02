@@ -1,10 +1,11 @@
 """Integration tests for _BatchBacktestProcessor.init (strategies batch backtest).
 
-_BatchBacktestProcessor.init mirrors _VerifyProcessor.init (group strategies by
-symbol/timeframe, build step list). process_step uses BacktestEngine.batch_run
-(Q-1=a engine path, rebuild-paper-trading 6.2) which needs heavier mocking; here
-we cover init() grouping + the 404 path, reusing the same fixture pattern as
-test_verify_processor.
+_BatchBacktestProcessor.init groups strategies by symbol/timeframe and builds
+the step list（形制源自已退役的 _VerifyProcessor.init——旧验证会话体系
+退役 retire-verify-sessions 后该参照类已删，此处仅存历史沿革说明）.
+process_step uses BacktestEngine.batch_run (Q-1=a engine path,
+rebuild-paper-trading 6.2) which needs heavier mocking; here
+we cover init() grouping + the 404 path.
 """
 from pathlib import Path
 from types import SimpleNamespace
