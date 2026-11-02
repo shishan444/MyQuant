@@ -22,14 +22,11 @@ from fastapi import APIRouter, Depends
 
 from api.deps import get_db_path
 from api.routes.research.common import decode_cursor, encode_cursor
+from core.analysis.hypothesis_service import HYPOTHESIS_STATUSES
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# 状态机值域（hypothesis_service _TERMINAL 同源——与当前数据分布无关：
-# supported 存量零仍属合法值，空态文案归前端）
-_STATUSES = ("active", "supported", "refuted", "superseded", "abandoned")
 
 
 @router.get("/hypothesis-cards")
@@ -44,16 +41,19 @@ def hypothesis_cards(
     """主任务卡片查询：status 等值+q 子串过滤，recent_activity_at
     降序（次序键 hypothesis_id），cursor keyset 续页（提供时 page 被
     忽略），total 为过滤口径真总数。"""
-    # 唯一校验面：status 值域外 422（内联校验沿 records_list 先例）
-    if status is not None and status not in _STATUSES:
+    # 唯一校验面：status 值域外 422（内联校验沿 records_list 先例）；
+    # 值域=HYPOTHESIS_STATUSES（hypothesis_service 状态机权威单点引用，
+    # 非手抄——与当前数据分布无关：supported 存量零仍属合法值，空态
+    # 文案归前端）
+    if status is not None and status not in HYPOTHESIS_STATUSES:
         from api.routes.research.common import research_error_to_http
         from core.analysis.errors import ResearchError
         raise research_error_to_http(ResearchError(
             "RESEARCH_PARAM_INVALID",
-            f"status 非法: {status!r}（值域 {_STATUSES}）",
+            f"status 非法: {status!r}（值域 {HYPOTHESIS_STATUSES}）",
             status=422,
             detail={"field": "status", "value": status,
-                    "legal_range": list(_STATUSES)}))
+                    "legal_range": list(HYPOTHESIS_STATUSES)}))
     # 钳制沿 /hypotheses、/log 同款（q/page/page_size 钳制语义不产 422）
     if page < 1:
         page = 1

@@ -1218,9 +1218,14 @@ def register_hypothesis(
 
 # ---------------------------------------------------------------- 迁移
 
-# abandoned 为免证据的主动放弃终态（区别于被证据驳倒的 refuted）
-_TERMINAL = ("supported", "refuted", "superseded", "abandoned")
-_VALID_TARGETS = _TERMINAL
+# abandoned 为免证据的主动放弃终态（区别于被证据驳倒的 refuted）。
+# 状态值域公共常量（单点权威，add-hypothesis-cards 收敛路由侧手抄）：
+# 全状态集 = active（唯一非终态）+ 四终态；卡片端点 status 值域校验
+# 消费 HYPOTHESIS_STATUSES，路由不得本地重写第二份
+HYPOTHESIS_TERMINAL_STATUSES = (
+    "supported", "refuted", "superseded", "abandoned")
+HYPOTHESIS_STATUSES = ("active",) + HYPOTHESIS_TERMINAL_STATUSES
+_VALID_TARGETS = HYPOTHESIS_TERMINAL_STATUSES
 
 # 证据 verdict 匹配：supported 须 pass、refuted 须 fail（M4 协议修复）
 _REQUIRED_VERDICT = {"supported": "pass", "refuted": "fail"}
@@ -1256,7 +1261,7 @@ def transition_hypothesis(
 
     # 终态检查先于证据校验：终态假设立即拒绝（幂等判断同块），
     # 不被"证据记录不存在"的 404 掩盖终态事实
-    if hyp["status"] in _TERMINAL:
+    if hyp["status"] in HYPOTHESIS_TERMINAL_STATUSES:
         if hyp["status"] == target_status and hyp["terminal_ref"] == evidence_ref:
             return {"hypothesis_id": hypothesis_id, "status": target_status,
                     "idempotent": True, "promoted": False,
