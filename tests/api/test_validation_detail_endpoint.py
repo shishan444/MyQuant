@@ -235,6 +235,40 @@ class TestStagedPositive:
         assert [e["exec_ref"] for e in execs] == ["segA", "segB"]
 
 
+class TestOrphanTradesTolerance:
+    """读取面孤儿 trades 容错（equity 行缺失而 trades 行在——四写
+    原子性下理论不可达，仓储层兜底分支由直插触达锚定）：孤儿份挂入
+    executions、range 空串如实呈现不丢弃。"""
+
+    def test_orphan_trade_rows_surfaced(self, api_client, db_path,
+                                        hypothesis_id):
+        rr.save_validation_with_log(
+            db_path, record_id="rec_orphan", hypothesis_id=hypothesis_id,
+            strategy_id="st_x", level="isolated_backtest", params="{}",
+            result="{}", verdict="pass", range_hash="rh_orp")
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.orm.models import VrTradeDetail
+        from sqlalchemy import insert
+        with engine_for(db_path).begin() as conn:
+            conn.execute(insert(VrTradeDetail).values(
+                record_id="rec_orphan", exec_ref="main", exec_index=0,
+                range_start="2023-03-01T00:00:00Z",
+                range_end="2023-04-01T00:00:00Z", seq=0,
+                entry_time="2023-03-02T00:00:00Z", exit_time=None,
+                entry_price=100.0, exit_price=105.0, size=1.0,
+                direction="Long", pnl=5.0))
+        r = api_client.get(
+            "/api/research/validation-records/rec_orphan/detail")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["detail_available"] is True, "有明细行即可复核"
+        assert len(body["executions"]) == 1
+        ex = body["executions"][0]
+        assert ex["exec_ref"] == "main" and ex["exec_index"] == 0
+        assert len(ex["trades"]) == 1
+        assert ex["trades"][0]["pnl"] == 5.0
+
+
 class TestHttpEntryPipeline:
     """B4-12 HTTP 面全链路：validate-backtest 端点真实执行 → 落盘 →
     detail 读回（MCP 三验证工具均 api.post 透传到本端点——此段即

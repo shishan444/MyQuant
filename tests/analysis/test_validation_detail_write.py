@@ -176,7 +176,10 @@ class TestBridgeWithDetail:
 
 
 class TestBuildDetailPayload:
-    """任务 3：组装 helper 两形态+边界（B4-6/B4-7 单元面）。"""
+    """任务 3：组装 helper 两形态+边界（B4-6/B4-7——纯函数直构，
+    unit 层）。"""
+
+    pytestmark = [pytest.mark.unit]
 
     @staticmethod
     def _detail(equity: pd.Series, trades_df=None) -> dict:
@@ -198,6 +201,29 @@ class TestBuildDetailPayload:
         assert len(json.loads(eq["values"])) == 50
         assert out["trades"] == []
 
+    @pytest.mark.parametrize(("tf", "n"), [
+        pytest.param("1h", 3, id="1h 三点"),
+        pytest.param("4h", 50, id="4h 五十点"),
+        pytest.param("1d", 120, id="1d 百二点"),
+    ])
+    def test_compact_invariants_across_timeframes(self, tf, n):
+        """④属性面：等距网格不变量与 TF/长度无关——values 长度==
+        序列长度、start==首元素、紧凑键组合完整（timestamps 恒
+        NULL；降级侧互斥见 test_hole_index_degrades 的 start/length
+        双 None）。"""
+        idx = pd.date_range("2023-03-01", periods=n, freq=tf, tz="UTC")
+        equity = pd.Series(np.linspace(1e5, 1.1e5, n), index=idx)
+        out = _build_detail_payload(
+            self._detail(equity), exec_ref="main", exec_index=0,
+            range_start="s", range_end="e", timeframe=tf)
+        eq = out["equity"]
+        assert eq["grid_aligned"] == 1
+        assert eq["length"] == n
+        assert len(json.loads(eq["values"])) == n, \
+            "values 长度不变量==输入序列长度"
+        assert eq["start"] == str(idx[0])
+        assert eq["timestamps"] is None, "紧凑/降级互斥：紧凑侧无 timestamps"
+
     def test_shifted_regular_grid_still_compact(self):
         """R-1 自锚定语义：序列等距但与请求区间起点错位 → 仍紧凑
         （断言=序列自身等距性，非与装载区间对齐——契约语义备忘）。"""
@@ -209,6 +235,18 @@ class TestBuildDetailPayload:
             range_start="2023-03-01T00:00:00Z",
             range_end="2023-03-20T00:00:00Z", timeframe="4h")
         assert out["equity"]["grid_aligned"] == 1
+
+    def test_empty_equity_defensive_branch(self):
+        """零长度 equity 防御位（正常路径桥对零 bar 区间前置拒绝——
+        此分支由本用例直构触达锚定）：平凡紧凑形制、零值载荷。"""
+        out = _build_detail_payload(
+            self._detail(pd.Series(dtype=float)), exec_ref="main",
+            exec_index=0, range_start="s", range_end="e", timeframe="4h")
+        eq = out["equity"]
+        assert eq["grid_aligned"] == 1
+        assert eq["length"] == 0 and eq["start"] is None
+        assert eq["timestamps"] is None
+        assert json.loads(eq["values"]) == []
 
     def test_hole_index_degrades(self):
         """构造洞 index（抽 bar）→ 降级形制（B4-7：禁静默网格重建）。"""
