@@ -18,12 +18,14 @@ from . import (
     registry,
     snapshot,
     validation,
+    validation_detail,
 )
 
 router = APIRouter()
 for _sub in (
     hypotheses,
     validation,
+    validation_detail,
     analysis,
     cases,
     indicator_query,

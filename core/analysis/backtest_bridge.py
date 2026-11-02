@@ -174,16 +174,27 @@ def run_backtest_on_range(
     *, init_cash: float = 100000.0,
     fee: float = 0.001, slippage: float = 0.0005,
     strategy_id: str | None = None,
-) -> Tuple[Dict[str, Any], np.ndarray | None, int, int]:
+    with_detail: bool = False,
+) -> (Tuple[Dict[str, Any], np.ndarray | None, int, int]
+      | Tuple[Dict[str, Any], np.ndarray | None, int, int, Dict[str, Any]]):
     """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
 
     装配段经共享函数 prepare_replay_inputs（组 A2 提取——行为不变锚=
     bridge 固定样本 metrics 提取前后逐位一致）。
 
+    Args:
+        with_detail: True 时返回五元组（add-validation-detail B4），第
+            五元素为明细轻量载荷 {equity, trades_df, init_cash, fee,
+            slippage}——equity/trades_df 传 BacktestResult 对象引用不
+            复制（明细组装在落盘层）；三参数键=实际生效实参值。缺省
+            False 返回四元组逐位不变（六生产消费方+19 处测试解包零
+            波及——硬约束，见 change design §3.2）。
+
     Returns:
         (metrics, trade_returns, actual_warmup_bars, bars_used)——
         trade_returns 为每笔收益序列（judge 证据闸门 CI 判定输入；
-        内存传递不落库，metrics 保持纯可序列化）。
+        内存传递不落库，metrics 保持纯可序列化）；
+        with_detail=True 时追加第五元素 detail 载荷。
     """
     from core.backtest import engine as bt_engine_mod
 
@@ -225,4 +236,16 @@ def run_backtest_on_range(
              for t, v in result.sl_series.items()]
             if getattr(result, "sl_series", None) is not None else None),
     }
+    if with_detail:
+        # B4 明细载荷（传引用不复制——组装/落盘在验证服务层）；
+        # 三参数键=实际生效实参（显式传参与默认两形态同源）
+        detail = {
+            "equity": result.equity_curve,
+            "trades_df": result.trades_df,
+            "init_cash": init_cash,
+            "fee": fee,
+            "slippage": slippage,
+        }
+        return (metrics, result.trade_returns, actual_warmup_bars,
+                len(bt_df), detail)
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)

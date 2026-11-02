@@ -1396,6 +1396,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/validation-records/{record_id}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Validation Record Detail
+         * @description 验证明细整份读取：两态判定序（404 资源不存在 / 200 空骨架）。
+         */
+        get: operations["validation_record_detail_api_research_validation_records__record_id__detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/analysis": {
         parameters: {
             query?: never;
@@ -7023,6 +7043,39 @@ export interface operations {
                 "application/json": components["schemas"]["TranslateRequest"] | null;
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validation_record_detail_api_research_validation_records__record_id__detail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

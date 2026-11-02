@@ -123,6 +123,15 @@ class TestHintRegistry:
                      "API_INTERNAL_ERROR"):
             assert code in HINTS
 
+    def test_record_not_found_hint_registered(self) -> None:
+        """add-validation-detail B2：明细端点 404 码注册可行动 hint
+        （MCP 面不暴露明细端点，注册为透传映射兜底——未注册码会
+        回退通用文案，透传时 hint 失准）。"""
+        assert hint_for("RESEARCH_RECORD_NOT_FOUND") == \
+            HINTS["RESEARCH_RECORD_NOT_FOUND"]
+        assert "record_id" in hint_for("RESEARCH_RECORD_NOT_FOUND"), \
+            "hint 须含可行动要素（record_id 排查指引）"
+
     def test_template_hint_matches_authority(self) -> None:
         """hint 模板清单与 _TEMPLATES 权威源集合对拍（fix-hint-template-list 1.2）。
 

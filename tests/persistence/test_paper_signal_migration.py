@@ -177,7 +177,10 @@ class TestExistingTablesUnchanged:
 
         assert set(before) < set(after), "升级只增不改表集"
         new_tables = set(after) - set(before)
-        assert new_tables == {"pt_signal"}, f"新表恰 pt_signal: {new_tables}"
+        # pt_signal（本 change）+ 验证明细两表（后续 add-validation-detail
+        # 追加迁移——head 上移后同链建出，非本 change 爆炸半径）
+        assert new_tables == {"pt_signal", "vr_trade_detail",
+                              "vr_equity_curve"}, f"新表集: {new_tables}"
         for t in sorted(before):
             if t == "pt_task":
                 # 追加面（paper-trading-revamp 组 B）：first_met_at 表尾追加

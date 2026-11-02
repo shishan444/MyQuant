@@ -809,6 +809,73 @@ class PtSignal(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+# == 验证明细域（2 表，add-validation-detail B4）==
+# 字段级权威源：openspec 变更 add-validation-detail design.md §3.1；
+# 与 Alembic 迁移件、executor.ensure_research_tables 三处同步声明（三重
+# 声明纪律——不一致静默架空，索引验证须实库 PRAGMA index_list）。
+# 明细行 append-only：幂等查询前置使同记录重插理论不可达，唯一索引为
+# 防御层（沿 PtFill/PtEquity 语义纪律；物理粒度=份级载荷行非逐 bar 行，
+# 见 design §1 论证）。
+class VrTradeDetail(Base):
+    """验证明细·逐笔成交（每笔一行）：K 线交易位置复核的数据底座。"""
+
+    __tablename__ = "vr_trade_detail"
+    __table_args__ = (
+        # (record_id, exec_ref, seq) 唯一：份内笔序幂等锚（防御层）
+        Index("ux_vr_trade_ident", "record_id", "exec_ref", "seq", unique=True),
+        Index("ix_vr_trade_record", "record_id", "exec_index", "seq"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    record_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("validation_records.record_id"))
+    # 执行份标识：isolated="main"/staged=段 label/random="win_{i}"
+    exec_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    exec_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 份序排序键
+    range_start: Mapped[str] = mapped_column(Text, nullable=False)  # 该份回测区间
+    range_end: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)  # 份内笔序，0 起
+    entry_time: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL=尾部未平仓（vbt Status=Open、Exit Timestamp=NaT——实测
+    # vbt 0.28.5 开仓行价格/PnL 有值唯时间戳缺；保真不伪造平仓时点）
+    exit_time: Mapped[Optional[str]] = mapped_column(Text)
+    entry_price: Mapped[float] = mapped_column(REAL, nullable=False)
+    exit_price: Mapped[float] = mapped_column(REAL, nullable=False)
+    size: Mapped[float] = mapped_column(REAL, nullable=False)
+    direction: Mapped[str] = mapped_column(Text, nullable=False)  # Long/Short 原值
+    pnl: Mapped[Optional[float]] = mapped_column(REAL)  # vbt PnL 原值，NULLable
+
+
+class VrEquityCurve(Base):
+    """验证明细·资金曲线（每执行份一行，曲线为 JSON 载荷列）。
+
+    紧凑/降级双形制互斥（判别键=grid_aligned）：紧凑=曲线与理想网格
+    逐点相等（start/timeframe/length+values）；降级=数据有洞
+    （timestamps 显式数组+values，禁静默网格重建——洞数据集错位防线）。
+    """
+
+    __tablename__ = "vr_equity_curve"
+    __table_args__ = (
+        # (record_id, exec_ref) 唯一：一份一行（防御层）
+        Index("ux_vr_equity_ident", "record_id", "exec_ref", unique=True),
+        Index("ix_vr_equity_record", "record_id", "exec_index"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    record_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("validation_records.record_id"))
+    exec_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    exec_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    range_start: Mapped[str] = mapped_column(Text, nullable=False)
+    range_end: Mapped[str] = mapped_column(Text, nullable=False)
+    grid_aligned: Mapped[int] = mapped_column(Integer, nullable=False)  # 1/0
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False)
+    start: Mapped[Optional[str]] = mapped_column(Text)  # 紧凑形制：曲线首 bar
+    length: Mapped[Optional[int]] = mapped_column(Integer)  # 紧凑形制：点数
+    timestamps: Mapped[Optional[str]] = mapped_column(Text)  # 降级形制：JSON 数组
+    values: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 浮点数组
+
+
 # == strategy lifecycle 域（1 表，build-strategy-lifecycle 1.2）==
 # 字段级权威源：openspec 变更 build-strategy-lifecycle design.md §3.1；
 # 与 Alembic 迁移 de92805ed44c 两处同步声明（两方不一致静默架空——

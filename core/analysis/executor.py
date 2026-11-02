@@ -262,12 +262,13 @@ def recover_stale_analysis_tasks(db_path: Path) -> int:
 
 
 def ensure_research_tables(db_path: Path) -> None:
-    """幂等自愈：研究域八表缺失时按 ORM 声明补建（仅建不存在的表）。
+    """幂等自愈：研究域十表缺失时按 ORM 声明补建（仅建不存在的表）。
 
     定位澄清：schema 演进唯一轨仍是 Alembic（列变更走迁移，autogenerate
     零漂移有测试锁定）；本函数只为首次部署/测试库兜底——init_db_ext
     只建 legacy 表，研究域表经 ``alembic upgrade head`` 或本函数到位，
-    两条路径的 DDL 同源于 ORM 声明。
+    两条路径的 DDL 同源于 ORM 声明。十表=add-validation-detail 增
+    vr_trade_detail/vr_equity_curve 两明细表（三重声明第三处）。
     """
     from core.persistence.orm.models import (
         AnalysisTask,
@@ -278,6 +279,8 @@ def ensure_research_tables(db_path: Path) -> None:
         ResearchLog,
         SignalRegistryEntry,
         ValidationRecord,
+        VrEquityCurve,
+        VrTradeDetail,
     )
     from core.persistence.orm.engine import engine_for
 
@@ -286,6 +289,7 @@ def ensure_research_tables(db_path: Path) -> None:
         AnalysisTask.__table__, FormulaPlugin.__table__,
         ModelPlugin.__table__, SignalRegistryEntry.__table__,
         FeatureRequest.__table__, ValidationRecord.__table__,
+        VrTradeDetail.__table__, VrEquityCurve.__table__,
     ]
     from core.persistence.orm import Base
 
