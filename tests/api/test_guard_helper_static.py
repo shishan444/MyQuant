@@ -2,9 +2,9 @@
 CARD-05 扩约 evolution 第七守卫文件）。
 
 契约出处（design 卡 G，R-8 逐字节基准+A-1 排除面）：
-- 七调用点（backtest 读库/内联、batch、verify、compare、live 任务
+- 六调用点（backtest 读库/内联、batch、compare、live 任务
   创建、evolution 任务创建）的两段拒绝表达收敛为
-  _common._reject_invalid_or_plugin_dna——七调用点文件不再内联出现
+  _common._reject_invalid_or_plugin_dna——六调用点文件不再内联出现
   两错误码的代码字符串字面量；判据单源在 core/strategy/validator
   不动。evolution 面历史注记：Q-3 件⑤加插件段时形成手写两段未移出
   排除面（静态守卫漏防），CARD-05 收敛后移入守卫面（回潮即红）。
@@ -37,8 +37,8 @@ from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STRAT_DIR = _REPO_ROOT / "api" / "routes" / "strategies"
 
-# 七调用点所在文件（#1-5 同目录；#6/#7 跨目录——显式清单不依赖 grep
-# head 截断）
+# 六调用点所在文件（backtest 读库/内联同文件两点；前 3 同目录；
+# live/evolution 跨目录——显式清单不依赖 grep head 截断）
 GUARDED_FILES = [
     _STRAT_DIR / "backtest.py",
     _STRAT_DIR / "batch.py",
@@ -83,12 +83,12 @@ def _pure_plugin_dna() -> StrategyDNA:
 
 
 class TestInlineScan:
-    """七调用点文件两码零内联（带引号代码字面量匹配）。"""
+    """六调用点文件两码零内联（带引号代码字面量匹配）。"""
 
     @pytest.mark.parametrize(
         "guarded", GUARDED_FILES, ids=[f.name for f in GUARDED_FILES])
     def test_no_inline_error_code_literals(self, guarded):
-        """收敛后七文件不再内联出现两码的代码字符串字面量——
+        """收敛后五守卫文件不再内联出现两码的代码字符串字面量——
         后续新增守卫若再内联（复制回潮）此锚即红。注释裸词不命中。"""
         text = guarded.read_text(encoding="utf-8")
         assert '"DNA_VALIDATION_FAILED"' not in text, (
@@ -137,7 +137,7 @@ class TestHelperParamAxis:
              "读库-compare", "直传-backtest内联", "直传-live",
              "直传-evolution"])  # verify 已退役（retire-verify-sessions）
     def test_dna_message_axis(self, library_dna, channel, expected):
-        """第一段 message 两态×通道七格（结构坏 DNA 命中；evolution
+        """第一段 message 两态×通道六格（结构坏 DNA 命中；evolution
         格=Q-3 件⑤初始入口拒绝，CARD-05 收敛后同 helper 承载）。"""
         with pytest.raises(HTTPException) as ei:
             _reject_invalid_or_plugin_dna(
@@ -152,10 +152,6 @@ class TestHelperParamAxis:
              "策略含插件信号源，REST 回测通道不支持"
              "（引擎该通道未接插件信号集，结果将为零"
              "交易）——请经研究验证链沙盒回测"),
-            ("verify",
-             "策略含插件信号源，REST 回测通道不支持"
-             "（引擎该通道未接插件信号集，结果将为"
-             "零交易）——请经研究验证链沙盒回测"),
             ("batch",
              "策略含插件信号源，REST 批量回测通道"
              "不支持（引擎该通道未接插件信号集，"
@@ -172,10 +168,10 @@ class TestHelperParamAxis:
              "执行环境不支持插件信号源（进化评估链未接入插件"
              "信号组装，评估将失真）——请经研究验证链沙盒回测"),
         ],
-        ids=["backtest", "verify", "batch", "compare", "live",
+        ids=["backtest", "batch", "compare", "live",
              "evolution"])
     def test_plugin_message_axis(self, channel, expected):
-        """第二段 message channel 全映射六格（纯插件 DNA 命中；
+        """第二段 message channel 全映射五格（纯插件 DNA 命中；
         evolution 格=Q-3 件⑤ _PLUGIN_REJECT_MESSAGES 进化条目）。"""
         with pytest.raises(HTTPException) as ei:
             _reject_invalid_or_plugin_dna(
@@ -227,7 +223,7 @@ class TestHelperUnitBehavior:
             _reject_invalid_or_plugin_dna(
                 _valid_plain_dna(), library_dna=True, channel="paper")
         msg = str(ei.value)
-        for key in ("backtest", "verify", "batch", "compare", "live",
+        for key in ("backtest", "batch", "compare", "live",
                     "evolution"):
             assert key in msg, (
                 f"ValueError 消息未含映射键 {key}（键集渲染单源被破坏"

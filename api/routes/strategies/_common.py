@@ -25,10 +25,6 @@ _PLUGIN_REJECT_MESSAGES = {
         "策略含插件信号源，REST 回测通道不支持"
         "（引擎该通道未接插件信号集，结果将为零"
         "交易）——请经研究验证链沙盒回测"),
-    "verify": (
-        "策略含插件信号源，REST 回测通道不支持"
-        "（引擎该通道未接插件信号集，结果将为"
-        "零交易）——请经研究验证链沙盒回测"),
     "batch": (
         "策略含插件信号源，REST 批量回测通道"
         "不支持（引擎该通道未接插件信号集，"
@@ -72,7 +68,7 @@ def _reject_invalid_or_plugin_dna(
         dna: 已解析的 StrategyDNA（解析/404 责任在调用方）。
         library_dna: True=读库装载（消息「Library DNA invalid…」）/
             False=请求直传（消息「DNA 值域/结构校验未通过」）。
-        channel: 消费通道名（backtest/batch/verify/compare/live/
+        channel: 消费通道名（backtest/batch/compare/live/
             evolution）——插件源拒绝消息的通道名映射键。
 
     Raises:
