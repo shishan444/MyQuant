@@ -267,6 +267,10 @@ class TestOrphanTradesTolerance:
         assert ex["exec_ref"] == "main" and ex["exec_index"] == 0
         assert len(ex["trades"]) == 1
         assert ex["trades"][0]["pnl"] == 5.0
+        # 空曲线骨架在场（不静默丢逐笔证据——防御分支的完整承诺）
+        assert ex["equity"] == {"grid_aligned": True, "timeframe": "",
+                                "start": None, "length": 0,
+                                "timestamps": None, "values": []}
 
 
 class TestHttpEntryPipeline:
