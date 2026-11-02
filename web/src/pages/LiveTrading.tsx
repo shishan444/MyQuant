@@ -185,7 +185,7 @@ export function LiveTrading() {
                     onClick={() => toast.info("demo 域预览——人工停止不发送指令（实盘链未建设）")}
                     data-testid="live-stop-btn"
                   >
-                    人工停止
+                    人工停止（预览）
                   </AntButton>
                   <span className="text-[10px] text-text-muted">冻结语义：停止后全链只读</span>
                 </div>
