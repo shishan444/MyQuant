@@ -47,6 +47,10 @@ HINTS: Dict[str, str] = {
         "entry_type=\"screen\") 自查",
     "RESEARCH_STRATEGY_NOT_FOUND":
         "策略不存在：检查 strategy_id，或用 list_strategies 查询",
+    # add-validation-detail B2（HTTP 面专用端点的 404 码——MCP 面不
+    # 暴露明细端点，注册表按既有映射机制登记防 parity 反向红）
+    "RESEARCH_RECORD_NOT_FOUND":
+        "验证记录不存在：检查 record_id，或经验证记录列表查询",
     "RESEARCH_DATA_INSUFFICIENT":
         "区间数据不足：扩大区间，或换 list_data_sources 中 bar 数充足的"
         "品种/周期",

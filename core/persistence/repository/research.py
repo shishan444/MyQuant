@@ -29,6 +29,8 @@ from core.persistence.orm.models import (
     SignalRegistryEntry,
     Strategy,
     ValidationRecord,
+    VrEquityCurve,
+    VrTradeDetail,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
 from core.persistence.timestamps import utc_now_iso as _now
@@ -566,10 +568,18 @@ def save_validation_with_log(
     range_hash: str,
     components: Optional[str] = None,
     log_id: Optional[str] = None,
+    detail: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """原子双写：validation_records + research_log(validate)。
+    """原子多写：validation_records + research_log(validate) + 明细两表。
+
     segmentation：0.3.3 G7 幂等第五维（分段身份——默认空串=非分段，
-    隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。"""
+    隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。
+    detail（add-validation-detail B4）：执行份明细列表（_build_detail_payload
+    产物，每份 {exec_ref, exec_index, range_start, range_end, trades,
+    equity}），缺省 None 不写明细表（签名向后兼容——沙盒/既有调用方
+    零适配）。携带时四写同一事务：任一失败整体回滚——「记录在而明细
+    残缺」不可达（specs「验证明细原子落盘」）。
+    """
     engine = _engine_for(db_path)
     now = _now()
     with engine.begin() as conn:
@@ -594,6 +604,15 @@ def save_validation_with_log(
             summary=f"{level}: {verdict}",
             created_at=now,
         ))
+        if detail:
+            for exec_payload in detail:
+                equity_row = dict(exec_payload["equity"])
+                equity_row["record_id"] = record_id
+                conn.execute(insert(VrEquityCurve).values(**equity_row))
+                trade_rows = exec_payload["trades"]
+                if trade_rows:
+                    rows = [dict(t, record_id=record_id) for t in trade_rows]
+                    conn.execute(insert(VrTradeDetail), rows)
 
 
 def find_validation_by_identity(
@@ -617,6 +636,98 @@ def find_validation_by_identity(
             ).order_by(ValidationRecord.created_at)
         ).mappings().first()
     return dict(row) if row is not None else None
+
+
+def get_validation_record_by_id(
+    db_path: Path, record_id: str,
+) -> Optional[Dict[str, Any]]:
+    """单记录直读（add-validation-detail B2）：两态判定序第一态输入
+    ——无行=记录本身不存在（404）；有行=元数据+params JSON 直读源。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(ValidationRecord).where(
+                ValidationRecord.record_id == record_id)
+        ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def get_validation_executions(
+    db_path: Path, record_id: str,
+) -> List[Dict[str, Any]]:
+    """明细整份取回（B2）：两表读出按份组装（exec_index 排序、份内
+    seq 笔序）；equity 行为份骨架（原子四写保证每份必有），trades
+    挂靠 (exec_index, exec_ref)。无明细行返回 []（两态判定序第二态
+    输入——历史记录/明细落盘前记录）。equity timestamps/values JSON
+    解包为列表（紧凑形制 timestamps=None）；紧凑/降级双形制如实
+    透传不重建（specs「明细读取端点」）。
+    """
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        trade_rows = conn.execute(
+            select(VrTradeDetail).where(
+                VrTradeDetail.record_id == record_id)
+            .order_by(VrTradeDetail.exec_index, VrTradeDetail.seq)
+        ).mappings().all()
+        equity_rows = conn.execute(
+            select(VrEquityCurve).where(
+                VrEquityCurve.record_id == record_id)
+            .order_by(VrEquityCurve.exec_index)
+        ).mappings().all()
+    if not equity_rows and not trade_rows:
+        return []
+
+    trades_by_exec: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    for t in trade_rows:
+        trades_by_exec.setdefault(
+            (t["exec_index"], t["exec_ref"]), []).append({
+                "seq": t["seq"],
+                "entry_time": t["entry_time"],
+                "exit_time": t["exit_time"],
+                "entry_price": t["entry_price"],
+                "exit_price": t["exit_price"],
+                "size": t["size"],
+                "direction": t["direction"],
+                "pnl": t["pnl"],
+            })
+
+    executions = []
+    for eq in equity_rows:
+        compact = int(eq["grid_aligned"]) == 1
+        equity: Dict[str, Any] = {
+            "grid_aligned": compact,
+            "timeframe": eq["timeframe"],
+        }
+        if compact:
+            equity.update({"start": eq["start"], "length": eq["length"],
+                           "timestamps": None})
+        else:
+            equity.update({"timestamps": json.loads(eq["timestamps"])})
+        equity["values"] = json.loads(eq["values"])
+        executions.append({
+            "exec_ref": eq["exec_ref"],
+            "exec_index": eq["exec_index"],
+            "range_start": eq["range_start"],
+            "range_end": eq["range_end"],
+            "trades": trades_by_exec.get(
+                (eq["exec_index"], eq["exec_ref"]), []),
+            "equity": equity,
+        })
+    # 防御位：有 trade 行而无 equity 骨架的份（原子四写下不可达）——
+    # 如实呈现空曲线骨架，不静默丢逐笔证据
+    seen = {(e["exec_index"], e["exec_ref"]) for e in executions}
+    for (exec_index, exec_ref), trades in trades_by_exec.items():
+        if (exec_index, exec_ref) not in seen:
+            executions.append({
+                "exec_ref": exec_ref, "exec_index": exec_index,
+                "range_start": "", "range_end": "",
+                "trades": trades,
+                "equity": {"grid_aligned": True, "timeframe": "",
+                           "start": None, "length": 0,
+                           "timestamps": None, "values": []},
+            })
+    executions.sort(key=lambda e: e["exec_index"])
+    return executions
 
 
 def list_validation_records(

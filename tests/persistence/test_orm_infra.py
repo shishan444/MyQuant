@@ -34,7 +34,8 @@ class TestModelMetadata:
     def test_table_count(self):
         from core.persistence.orm import Base
         active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
-        assert len(active) == 23
+        # 23→25：验证明细两表（add-validation-detail B4）
+        assert len(active) == 25
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
@@ -51,6 +52,8 @@ class TestModelMetadata:
             "pt_signal",
             # 生命周期事件表（build-strategy-lifecycle 1.2）
             "strategy_transition_event",
+            # 验证明细域（add-validation-detail B4）
+            "vr_trade_detail", "vr_equity_curve",
         }
         assert expected == set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
         # 留档旧三表退役前仍在 metadata（组 7 随旧模型类删除收走）
@@ -87,6 +90,12 @@ class TestModelMetadata:
             # de92805ed44c 同规声明——两方不一致静默架空）
             ("strategy_transition_event",
              "idx_strategy_transition_event_strategy_created"),
+            # 验证明细域（add-validation-detail B4；Alembic c3f8a2e6d9b1
+            # 同规声明）
+            ("vr_trade_detail", "ux_vr_trade_ident"),
+            ("vr_trade_detail", "ix_vr_trade_record"),
+            ("vr_equity_curve", "ux_vr_equity_ident"),
+            ("vr_equity_curve", "ix_vr_equity_record"),
         }
         assert expected == idx - _LEGACY_PAPER_INDEXES
         # 留档旧三表索引退役前仍在（随组 7 收走）
@@ -390,7 +399,7 @@ class TestAlembicBaseline:
         events = conn.execute(
             "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "b8d5f0a2c3e6", \
+        assert len(ver) == 1 and ver[0][0] == "c3f8a2e6d9b1", \
             "版本记账真实到 head 恰一行"
         assert status == "paper", "upgrade 补存量分类（active×活跃任务→paper）"
         assert events == 0, "存量分类零事件（纯净性原则）"
@@ -435,7 +444,7 @@ class TestAlembicBaseline:
             " AND name IN ('trg_strategy_status_domain',"
             " 'trg_strategy_status_insert_domain')").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "b8d5f0a2c3e6"
+        assert len(ver) == 1 and ver[0][0] == "c3f8a2e6d9b1"
         assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
 
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):

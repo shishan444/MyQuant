@@ -550,6 +550,97 @@ def _hypothesis_precheck(
     return None
 
 
+def _build_detail_payload(
+    detail: Dict[str, Any], *,
+    exec_ref: str, exec_index: int,
+    range_start: str, range_end: str, timeframe: str,
+) -> Dict[str, Any]:
+    """明细组装（B4）：桥 detail 载荷 → 两表行结构。
+
+    网格同构守卫（R-1 定案）：理想网格 start 锚定=equity 索引自身首
+    元素（自锚定形制——断言语义=序列自身等距性，MUST NOT 锚定数据
+    装载首 bar；equity 索引是请求区间切回后的轴，与装载区间起点无关
+    ——「等距但与请求区间错位」判紧凑是该契约语义下的正确行为）；
+    相等→紧凑形制（grid_aligned=1, start/timeframe/length），不等→
+    降级形制（grid_aligned=0, timestamps 显式数组——禁静默网格重建，
+    洞数据集错位防线；降级不拒绝：执行证据保真优先）。
+
+    Returns:
+        {"exec_ref", "exec_index", "range_start", "range_end",
+         "trades": [逐笔行], "equity": 曲线行}——trades 行含除
+        record_id 外全部列（落库层补 record_id）；equity 行同。
+    """
+    equity = detail["equity"]
+    n = int(len(equity))
+    values_json = json.dumps([float(v) for v in equity.values],
+                             ensure_ascii=False)
+    if n == 0:
+        # 空曲线（防御位——正常路径桥对零 bar 区间前置拒绝）：
+        # 平凡对齐，紧凑形制 start=None
+        equity_row: Dict[str, Any] = {
+            "grid_aligned": 1, "start": None, "length": 0,
+            "timestamps": None, "values": "[]",
+        }
+    else:
+        freq = pd.Timedelta(minutes=TF_MINUTES[timeframe])
+        ideal = pd.date_range(equity.index[0], periods=n, freq=freq)
+        if equity.index.equals(ideal):
+            equity_row = {
+                "grid_aligned": 1, "start": str(equity.index[0]),
+                "length": n, "timestamps": None, "values": values_json,
+            }
+        else:
+            equity_row = {
+                "grid_aligned": 0, "start": None, "length": None,
+                "timestamps": json.dumps(
+                    [str(t) for t in equity.index], ensure_ascii=False),
+                "values": values_json,
+            }
+    equity_row.update({
+        "exec_ref": exec_ref, "exec_index": exec_index,
+        "range_start": str(range_start), "range_end": str(range_end),
+        "timeframe": timeframe,
+    })
+
+    trades: List[Dict[str, Any]] = []
+    tdf = detail.get("trades_df")
+    if tdf is not None and len(tdf) > 0:
+        # vbt 0.28.5 records_readable 列族（实测）：Entry Timestamp/
+        # Exit Timestamp/Avg Entry Price/Avg Exit Price/Size/PnL/
+        # Direction——Status=Open 行 Exit Timestamp=NaT（exit_time
+        # 存 NULL，保真不伪造平仓时点）
+        for k in range(len(tdf)):
+            row = tdf.iloc[k]
+            exit_ts = row["Exit Timestamp"]
+            pnl_val = row["PnL"]
+            trades.append({
+                "exec_ref": exec_ref, "exec_index": exec_index,
+                "range_start": str(range_start), "range_end": str(range_end),
+                "seq": k,
+                "entry_time": str(row["Entry Timestamp"]),
+                "exit_time": (None if pd.isna(exit_ts) else str(exit_ts)),
+                "entry_price": float(row["Avg Entry Price"]),
+                "exit_price": float(row["Avg Exit Price"]),
+                "size": abs(float(row["Size"])),
+                "direction": str(row["Direction"]),
+                "pnl": None if pd.isna(pnl_val) else float(pnl_val),
+            })
+
+    return {"exec_ref": exec_ref, "exec_index": exec_index,
+            "range_start": str(range_start), "range_end": str(range_end),
+            "trades": trades, "equity": equity_row}
+
+
+def _params_exec_keys(detail: Dict[str, Any]) -> Dict[str, float]:
+    """params 三键提取（B4）：init_cash/fee/slippage=实际生效实参。
+
+    值源=桥 detail 载荷回显（桥以生效形参填充——显式传参与默认两形
+    态同源，不在此硬编码默认值）。
+    """
+    return {"init_cash": detail["init_cash"], "fee": detail["fee"],
+            "slippage": detail["slippage"]}
+
+
 def run_isolated_backtest(
     db_path: Path,
     data_dir: Path,
@@ -614,11 +705,12 @@ def run_isolated_backtest(
         components_json = json.dumps(
             [s["ref"] for s in plugin_sources], ensure_ascii=False)
 
-    # 回测（warmup 前扩装载）
-    metrics, trade_returns, actual_warmup, bars_used = run_backtest_on_range(
-        db_path, data_dir, dna, symbol, timeframe,
-        request_range["start"], request_range["end"], warmup_bars,
-        strategy_id=strategy_id)
+    # 回测（warmup 前扩装载；with_detail=B4 明细落盘）
+    metrics, trade_returns, actual_warmup, bars_used, detail = (
+        run_backtest_on_range(
+            db_path, data_dir, dna, symbol, timeframe,
+            request_range["start"], request_range["end"], warmup_bars,
+            strategy_id=strategy_id, with_detail=True))
 
     # 门槛机械判定（组合用收紧 profile；三段闸门含证据闸门/CI）
     verdict, details = judge(metrics, effective_profile,
@@ -647,12 +739,18 @@ def run_isolated_backtest(
     params_json = json.dumps({
         "request_range": request_range, "range_hash": rh,
         "threshold_profile": (effective_profile or DEFAULT_PROFILE)["name"],
+        # B4 执行参数三键：值=实际生效实参（桥 detail 回显，非硬编码默认值）
+        **_params_exec_keys(detail),
     }, ensure_ascii=False)
     rr.save_validation_with_log(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id,
         strategy_id=strategy_id, level="isolated_backtest", segmentation="",
         params=params_json, result=result_json, verdict=verdict, range_hash=rh,
-        components=components_json)
+        components=components_json,
+        detail=[_build_detail_payload(
+            detail, exec_ref="main", exec_index=0,
+            range_start=request_range["start"],
+            range_end=request_range["end"], timeframe=timeframe)])
 
     # 统一返回体（unify-tool-return-contract 规则①）：经单一映射函数
     # 与幂等分支同构（11 键全顶层；warmup 与 result_json 同 4 子键；
@@ -756,13 +854,21 @@ def random_window_test(
     offsets = sorted(rng.choice(usable, size=n_windows, replace=False).tolist())
 
     windows = []
-    for off in offsets:
+    detail_execs: List[Dict[str, Any]] = []  # B4：逐窗明细（win_{i} 与窗口顺序一致）
+    exec_params: Dict[str, float] = {}  # B4：执行参数三键（各窗同值，循环内幂等覆写）
+    for i, off in enumerate(offsets):
         w_start = ds + off * bar_delta
         w_end = w_start + window_bars * bar_delta
-        metrics, w_returns, actual_warmup, bars = run_backtest_on_range(
-            db_path, data_dir, dna, symbol, timeframe,
-            str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars,
-            strategy_id=strategy_id)
+        metrics, w_returns, actual_warmup, bars, w_detail = (
+            run_backtest_on_range(
+                db_path, data_dir, dna, symbol, timeframe,
+                str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars,
+                strategy_id=strategy_id, with_detail=True))
+        exec_params = _params_exec_keys(w_detail)
+        detail_execs.append(_build_detail_payload(
+            w_detail, exec_ref=f"win_{i}", exec_index=i,
+            range_start=str(w_start.isoformat()),
+            range_end=str(w_end.isoformat()), timeframe=timeframe))
         verdict, details = judge(metrics, threshold_profile,
                                  trade_returns=w_returns)
         windows.append({
@@ -798,14 +904,16 @@ def random_window_test(
         params=json.dumps({"seed": seed, "window_bars": window_bars,
                            "n_windows": n_windows, "data_start": data_start,
                            "data_end": data_end, "symbol": symbol,
-                           "timeframe": timeframe}, ensure_ascii=False),
+                           "timeframe": timeframe,
+                           # B4 执行参数三键：值=实际生效实参（桥回显）
+                           **exec_params}, ensure_ascii=False),
         result=json.dumps({"windows": windows, "summary": summary,
                            # 方向披露（add-direction-channel A4）：幂等
                            # 重放提取源；纯增量键
                            "direction": dna.risk_genes.direction,
                            "risk_genes_disclosure": disclosure},
                           ensure_ascii=False),
-        verdict=agg, range_hash=rh)
+        verdict=agg, range_hash=rh, detail=detail_execs)
 
     return {"record_id": record_id, "seed": seed,
             # 0.3.3 G6：顶层 verdict（值=在场 agg 聚合判定）——与幂等
@@ -1195,7 +1303,9 @@ def run_staged_validation(
 
     # ---- 逐段回测与段级门槛 ----
     seg_results: List[Dict[str, Any]] = []
-    for seg in seg_list:
+    detail_execs: List[Dict[str, Any]] = []  # B4：逐段明细（exec_ref=段 label）
+    exec_params: Dict[str, float] = {}  # B4：执行参数三键（各段同值）
+    for seg_idx, seg in enumerate(seg_list):
         seg_start = seg["start"].isoformat()
         seg_end = seg["end"].isoformat()
         entry: Dict[str, Any] = {
@@ -1210,9 +1320,18 @@ def run_staged_validation(
         # 走 judge 三段闸门（0.2.11 Q1a：样本不足段判 inconclusive，
         # 原前置预判与闸门同条件重叠已删；threshold_details 恒带——
         # 三态都有明细供归因）
-        metrics, seg_returns, _actual_warmup, bars_used = run_backtest_on_range(
-            db_path, data_dir, dna, symbol, timeframe,
-            seg_start, seg_end, warmup_bars, strategy_id=strategy_id)
+        metrics, seg_returns, _actual_warmup, bars_used, seg_detail = (
+            run_backtest_on_range(
+                db_path, data_dir, dna, symbol, timeframe,
+                seg_start, seg_end, warmup_bars, strategy_id=strategy_id,
+                with_detail=True))
+        # B4：段明细（exec_ref=段 label——auto 段为 type 映射值）；
+        # adhoc 路径（无记录）明细收集但随本分支丢弃——无 record_id
+        # 物理不可落，零明细行
+        exec_params = _params_exec_keys(seg_detail)
+        detail_execs.append(_build_detail_payload(
+            seg_detail, exec_ref=seg["label"], exec_index=seg_idx,
+            range_start=seg_start, range_end=seg_end, timeframe=timeframe))
         entry["metrics"] = metrics
         entry["bars_used"] = int(bars_used)
         seg_verdict, seg_details = judge(metrics,
@@ -1254,8 +1373,9 @@ def run_staged_validation(
                      if hasattr(seg["start"], "isoformat") else seg["start"],
                      "end": seg["end"].isoformat()
                      if hasattr(seg["end"], "isoformat") else seg["end"]}
-                    for seg in seg_list]},
-                ensure_ascii=False),
+                    for seg in seg_list],
+                # B4 执行参数三键（桥回显——值=实际生效实参）
+                **exec_params}, ensure_ascii=False),
             result=json.dumps({"segments": seg_results, "summary": summary,
                                # 方向披露（add-direction-channel A4）：
                                # 纯增量键，幂等重放提取源
@@ -1267,7 +1387,7 @@ def run_staged_validation(
                                "request_range": request_range,
                                "warmup_bars": int(warmup_bars)},
                               ensure_ascii=False),
-            verdict=verdict, range_hash=rh)
+            verdict=verdict, range_hash=rh, detail=detail_execs)
     else:
         # adhoc（或无 verdict）纯日志留痕——验证记录 hypothesis_id 为
         # 非空外键，无挂靠物理不产生记录；verdict 照报、record_id=None
