@@ -26,8 +26,8 @@ const RISK_RULES: { label: string; value: string; note?: string }[] = [
   { label: "保证金占用上限", value: "50%", note: "占权益" },
 ];
 
-/** 安全三件（静态披露） */
-const SAFETY_ITEMS = ["API Key 加密存储", "白名单 IP", "操作审计"];
+/** 安全三件（REQ-2-14 目标态——总回撤熔断/篮子合计敞口/学费预算；工程现状未建，mainnet 裁决门前置） */
+const SAFETY_ITEMS = ["总回撤≥20% 全停", "篮子合计敞口上限", "学费预算·累计净亏损上限"];
 
 /** M1 四重门槛校验清单（呈现层——三层创建校验的目标态样貌） */
 const GATE_CHECKLIST = [
@@ -254,7 +254,8 @@ export function LiveTrading() {
 
       {/* B5 规则层与安全底线 */}
       <SectionCard icon={ShieldCheck} title="规则层与安全底线" subtitle="一票否决行（风控四条真实值）" testid="live-b5">
-        <div className="flex flex-wrap gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="text-[10px] text-text-muted">【工程现状】</span>
           {RISK_RULES.map((r) => (
             <span
               key={r.label}
@@ -268,7 +269,8 @@ export function LiveTrading() {
             </span>
           ))}
         </div>
-        <div className="flex flex-wrap gap-3 text-[11px] text-text-muted">
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+          <span className="text-[10px] text-amber-400">【目标态】</span>
           {SAFETY_ITEMS.map((s) => (
             <span key={s} className="inline-flex items-center gap-1">
               <BadgeCheck className="h-3.5 w-3.5" /> {s}
