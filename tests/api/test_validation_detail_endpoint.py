@@ -235,6 +235,38 @@ class TestStagedPositive:
         assert [e["exec_ref"] for e in execs] == ["segA", "segB"]
 
 
+class TestHttpEntryPipeline:
+    """B4-12 HTTP 面全链路：validate-backtest 端点真实执行 → 落盘 →
+    detail 读回（MCP 三验证工具均 api.post 透传到本端点——此段即
+    「MCP→HTTP→服务→落盘→读回」的中枢；MCP 壳形制见
+    tests/mcpserver/test_tools_passthrough.py）。"""
+
+    def test_validate_backtest_endpoint_detail_roundtrip(
+            self, api_client, svc_db, tmp_data_dir, hypothesis_id,
+            strategy_saved):
+        resp = api_client.post("/api/research/validate-backtest", json={
+            "hypothesis_id": hypothesis_id, "strategy_id": strategy_saved,
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2023-03-01T00:00:00Z",
+                              "end": "2023-04-01T00:00:00Z"}})
+        assert resp.status_code == 200
+        src = resp.json()
+        assert src["duplicated"] is False
+        r2 = api_client.get(
+            f"/api/research/validation-records/{src['record_id']}/detail")
+        assert r2.status_code == 200
+        body = r2.json()
+        assert body["detail_available"] is True
+        assert len(body["executions"]) == 1
+        ex = body["executions"][0]
+        assert ex["exec_ref"] == "main" and ex["exec_index"] == 0
+        # B2-9（HTTP 入口面）：响应 metrics 与落盘明细逐份对账
+        assert len(ex["trades"]) == src["metrics"]["total_trades"]
+        assert ex["equity"]["length"] == len(ex["equity"]["values"])
+        assert body["init_cash"] == 100000.0 and body["fee"] == 0.001 \
+            and body["slippage"] == 0.0005
+
+
 class TestDegradedPassthrough:
     """读取面降级形制透传（允许 ORM 直插降级行证如实透传——不重建
     时间轴）。"""
@@ -268,5 +300,7 @@ class TestDegradedPassthrough:
         assert eq["grid_aligned"] is False
         assert eq["timestamps"] == ts, "降级 timestamps 原样返回不重建"
         assert eq["values"] == [100.0, 101.0, 102.0]
+        assert len(eq["timestamps"]) == len(eq["values"]), \
+            "B2-9 降级形态对账：len(timestamps)==len(values)"
         # 直插 params 三键读取侧如实呈现（值任取——读取面无值域约束）
         assert body["init_cash"] == 1.0 and body["fee"] == 2.0

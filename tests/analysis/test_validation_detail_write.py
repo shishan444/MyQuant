@@ -24,7 +24,6 @@ from sqlalchemy.exc import IntegrityError
 from core.analysis.backtest_bridge import run_backtest_on_range
 from core.analysis.validation_service import (
     _build_detail_payload,
-    _params_exec_keys,
     random_window_test,
     run_isolated_backtest,
     run_sandbox_backtest,
@@ -342,6 +341,29 @@ class TestRandomDetailWrite:
         params = json.loads(row["params"])
         assert {"init_cash", "fee", "slippage"} <= set(params)
 
+    def test_idempotent_replay_zero_rewrite(self, db, data_dir, hypothesis_id,
+                                            strategy_saved):
+        """specs「幂等重放零重写」random 面：同五元重发→duplicated=true、
+        明细行数不变、重放体不因明细落盘引入新键（键集合全等条款
+        主 spec :587 限定隔离回测/分段验证两入口——random 重放 payload
+        的 duplicated/result 增键为存量形制，不在全等面；isolated 面
+        见 TestIsolatedDetailWrite）。"""
+        kw = dict(strategy_id=strategy_saved, hypothesis_id=hypothesis_id,
+                  symbol="BTCUSDT", timeframe="4h",
+                  data_start="2023-01-01T00:00:00Z",
+                  data_end="2023-06-01T00:00:00Z",
+                  window_bars=100, n_windows=2, seed=11)
+        first = random_window_test(db, data_dir, **kw)
+        before = _vr_counts(db)
+        second = random_window_test(db, data_dir, **kw)
+        assert second["duplicated"] is True
+        assert second["record_id"] == first["record_id"]
+        assert _vr_counts(db) == before, "幂等重放明细零重写"
+        # 明细不进返回体（design 3.3）：重放体不得因明细落盘引入
+        # executions/detail 类新键——键差异面限于 random 存量形制
+        assert not ({"executions", "detail", "detail_available"}
+                    & set(second)), "重放体不得引入明细新键"
+
 
 class TestStagedDetailWrite:
     """任务 4：staged 逐段真实落盘（exec_ref=段 label）。"""
@@ -367,6 +389,28 @@ class TestStagedDetailWrite:
             assert ex["range_start"] == seg["start"]
             assert ex["range_end"] == seg["end"]
             assert len(ex["trades"]) == seg["metrics"]["total_trades"]
+
+    def test_idempotent_replay_zero_rewrite_and_isomorphic(
+            self, db, data_dir, hypothesis_id, strategy_saved):
+        """B4-2 staged 面（主 spec :587 明文枚举分段验证）：同五元重发
+        →duplicated=true、明细行数不变、顶层键集合与首次相等。"""
+        kw = dict(strategy_id=strategy_saved, hypothesis_id=hypothesis_id,
+                  symbol="BTCUSDT", timeframe="4h",
+                  start="2023-02-01T00:00:00Z", end="2023-05-01T00:00:00Z",
+                  segmentation="explicit", segments=[
+                      {"label": "segA",
+                       "start": "2023-02-01T00:00:00Z",
+                       "end": "2023-03-15T00:00:00Z"},
+                      {"label": "segB",
+                       "start": "2023-03-15T00:00:00Z",
+                       "end": "2023-05-01T00:00:00Z"}])
+        first = run_staged_validation(db, data_dir, **kw)
+        before = _vr_counts(db)
+        second = run_staged_validation(db, data_dir, **kw)
+        assert second["duplicated"] is True
+        assert second["record_id"] == first["record_id"]
+        assert _vr_counts(db) == before, "幂等重放明细零重写"
+        assert set(second.keys()) == set(first.keys()), "返回体同构（:587）"
 
 
 class TestAtomicityAndEdges:
@@ -418,3 +462,49 @@ class TestAtomicityAndEdges:
             start="2023-03-01T00:00:00Z", end="2023-03-15T00:00:00Z")
         assert out["sandbox"] is True
         assert _vr_counts(db) == (0, 0), "沙盒路径零明细行"
+
+
+class TestHoleDataDegradedWrite:
+    """specs「洞数据集降级形制」链路面（B4-7 素材=自造缺口 parquet）：
+    装载层不网格化 → equity 轴带洞 → 真实回测落盘降级行。helper 单元
+    面（合成 index）见 TestBuildDetailPayload，此处证全链传导。"""
+
+    def test_hole_parquet_degrades_in_real_pipeline(
+            self, db, tmp_path, hypothesis_id, strategy_saved):
+        d = tmp_path / "hole_market"
+        d.mkdir()
+        rng = np.random.default_rng(7)
+        idx = pd.date_range("2022-10-01", periods=2000, freq="4h", tz="UTC",
+                            name="timestamp")
+        close = 60000 + np.cumsum(rng.normal(0, 110, 2000))
+        df = pd.DataFrame({"open": close, "high": close + 60,
+                           "low": close - 60, "close": close,
+                           "volume": rng.uniform(100, 800, 2000),
+                           "trades": 40}, index=idx)
+        # 请求区间内抽三根 bar（自造缺口——落在该次回测 equity 轴上）
+        drop_ts = pd.DatetimeIndex(
+            [t for t in idx
+             if pd.Timestamp("2023-03-10T00:00:00Z") <= t
+             < pd.Timestamp("2023-03-11T00:00:00Z")])
+        assert len(drop_ts) == 6, "4h 周期一日应 6 根（抽取前提自检）"
+        df.drop(index=drop_ts).to_parquet(d / "BTCUSDT_4h.parquet")
+
+        out = run_isolated_backtest(
+            db, d, hypothesis_id=hypothesis_id, strategy_id=strategy_saved,
+            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": "2023-03-01T00:00:00Z",
+                           "end": "2023-04-01T00:00:00Z"})
+        assert out["duplicated"] is False
+        ex = rr.get_validation_executions(db, out["record_id"])[0]
+        eq = ex["equity"]
+        assert eq["grid_aligned"] is False, "洞数据集必须显式降级"
+        ts = [pd.Timestamp(t) for t in eq["timestamps"]]
+        assert ts, "降级形制 timestamps 非空"
+        assert len(ts) == len(eq["values"]), "B2-9：timestamps 与 values 等长"
+        # 缺口如实呈现：被抽 bar 不在时间轴、相邻间隔存在 >4h（禁静默
+        # 按理想网格重建时间轴的直接行为证明）
+        ts_set = {str(t) for t in drop_ts}
+        assert not ts_set & {str(t) for t in ts}, "缺口 bar 不得被网格重建补回"
+        gaps = [b - a for a, b in zip(ts, ts[1:])]
+        assert max(gaps) > pd.Timedelta(hours=4), "时间轴含洞（间隔>TF）"
+        assert min(gaps) == pd.Timedelta(hours=4), "其余间隔保持 4h 等距"
