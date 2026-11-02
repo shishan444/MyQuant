@@ -370,3 +370,24 @@ class TestPagingOrderAndAdhoc:
         body_neg = client.get("/api/research/hypothesis-cards",
                               params={"page": -3, "page_size": 0}).json()
         assert body_neg["page"] == 1 and body_neg["page_size"] == 50
+
+    def test_huge_page_clamped_no_500(self, client):
+        """特征锚（CARD-03）：巨 page 钳到 _MAX_PAGE=10^15——修复前
+        offset=(page-1)*page_size 超 SQLite 64 位上界，参数绑定
+        OverflowError 裸穿 500；钳后 200 空页并回显钳制值（同
+        「page<1 钳到 1」边界族，不回退缺省）。"""
+        r = client.get("/api/research/hypothesis-cards",
+                       params={"page": 10 ** 18, "page_size": 200})
+        assert r.status_code == 200, "巨 page 不得 500（offset 溢出防御）"
+        body = r.json()
+        assert body["items"] == [], "钳后 offset 仍远超全集——空页"
+        assert body["page"] == 10 ** 15, "回显钳制值而非原值"
+
+    def test_huge_q_truncated_no_422(self, client):
+        """特征锚（CARD-03）：巨 q 截断到 200 字符不产 422——600
+        字符唯一串截断后仍不命中任何种子 statement（200 空结果）；
+        截断静默（超长精确查询语义放宽为前缀子串，不报错）。"""
+        r = client.get("/api/research/hypothesis-cards",
+                       params={"q": "巨" * 600})
+        assert r.status_code == 200, "巨 q 截断不得 422"
+        assert r.json()["total"] == 0
