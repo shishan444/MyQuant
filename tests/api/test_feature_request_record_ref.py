@@ -74,3 +74,19 @@ class TestFeedbackRecordRef:
         r = client.post("/api/research/feature-requests", json={
             "title": "t3", "payload": {"record_id": "rec_ghost_404"}})
         assert r.status_code == 200
+
+    def test_malformed_record_id_value_still_accepted(self, client):
+        """Scenario「引用不校验存在性」WHEN 面完整覆盖：格式异常值
+        （非 rec_ 前缀字符串/非字符串类型）同样提交成功——payload 为
+        自由 JSON，消费侧按键自行解读，端点不做类型校验。"""
+        for bad in ("not-a-ref", 12345, {"nested": True}):
+            r = client.post("/api/research/feature-requests", json={
+                "title": "t4", "payload": {"record_id": bad}})
+            assert r.status_code == 200, f"record_id={bad!r} 不得 422"
+        # 格式异常值原样持久化可查（读回不捏造不清洗）
+        got = client.get("/api/research/feature-requests").json()
+        items = got["items"] if isinstance(got, dict) else got
+        # dict 值不可哈希——仅收集 str/int 形态的 record_id 值
+        vals = {row["payload"].get("record_id") for row in items
+                if isinstance(row["payload"].get("record_id"), (str, int))}
+        assert {"not-a-ref", 12345} <= vals

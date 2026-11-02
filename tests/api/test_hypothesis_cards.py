@@ -102,6 +102,7 @@ def client(tmp_path: Path):
     _seed(db)
     app = create_app(db_path=db, data_dir=tmp_path / "data")
     with TestClient(app, raise_server_exceptions=False) as c:
+        c._db = db  # type: ignore[attr-defined]
         yield c
 
 
@@ -127,9 +128,10 @@ class TestFiveStatusFilter:
             assert ids == expected
         assert all(c["status"] == status for c in body["items"])
 
-    def test_supported_nonempty_returns_row(self, client):
-        """supported 现有样本（ORM 直插）可筛——值域与筛选逻辑可用，
-        与「存量零」数据分布解耦（值域是状态机事实）。"""
+    def test_superseded_empty_state_200(self, client):
+        """superseded 空态：值域是状态机事实（与数据分布无关）——零
+        存量仍 200 合法空态（total=0/items=[]/next_cursor=null）。种子
+        无 superseded 行；supported 非空筛选由上方 parametrize 承载。"""
         body = client.get("/api/research/hypothesis-cards",
                           params={"status": "superseded"}).json()
         assert body["total"] == 0 and body["items"] == []
@@ -176,6 +178,41 @@ class TestSearchAndNullSemantics:
                               params={"q": empty}).json()
             assert body["total"] == all_total["total"]
 
+    def test_q_underscore_literal_not_wildcard(self, client):
+        """q 含 _ 按字面命中（LIKE 案义字符转义——'_' 不作单字符
+        通配符）。对照行 '布林带X收窄'（X 占据 _ 位置）若 _ 被按
+        通配符解读会同页命中——字面语义下只命中 '布林带_收窄'。"""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ResearchHypothesis
+        S = sessionmaker(bind=create_engine(f"sqlite:///{client._db}"))
+        with S() as sess:
+            for hid, stmt in (("hyp_us", "布林带_收窄"),
+                              ("hyp_ux", "布林带X收窄")):
+                sess.add(ResearchHypothesis(
+                    hypothesis_id=hid, conditions="{}",
+                    conditions_hash=f"c{hid}", statement=stmt,
+                    data_ranges="[]", ranges_hash=f"r{hid}",
+                    status="superseded", created_at=_T.format(1),
+                    updated_at=_T.format(1)))
+            sess.commit()
+        body = client.get("/api/research/hypothesis-cards",
+                          params={"q": "布林带_"}).json()
+        assert body["total"] == 1
+        assert [c["statement"] for c in body["items"]] == ["布林带_收窄"]
+
+    def test_total_status_q_combined_filter(self, client):
+        """total=过滤口径真总数：status+q 双过滤同传取交集（非任一
+        满足）——active∩「动量」仅 register 产物一条。"""
+        body = client.get("/api/research/hypothesis-cards",
+                          params={"status": "active", "q": "动量"}).json()
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        # 交集空组合：refuted∩「动量」零命中（total=0 合法空态）
+        empty = client.get("/api/research/hypothesis-cards",
+                           params={"status": "refuted", "q": "动量"}).json()
+        assert empty["total"] == 0 and empty["items"] == []
+
     def test_card_row_seven_fields(self, client):
         body = client.get("/api/research/hypothesis-cards").json()
         for card in body["items"]:
@@ -190,6 +227,8 @@ class TestSearchAndNullSemantics:
         by_id = {c["hypothesis_id"]: c
                  for c in client.get("/api/research/hypothesis-cards")
                  .json()["items"]}
+        # statement 任务命名原文透传（Scenario「卡片行字段构成」）
+        assert by_id["hyp_a"]["statement"] == "RSI 超卖反弹"
         assert by_id["hyp_a"]["latest_verdict"] == "fail"
         assert by_id["hyp_a"]["latest_record_id"] == "rec_a2"
         assert by_id["hyp_a"]["validation_count"] == 2
@@ -248,3 +287,60 @@ class TestPagingOrderAndAdhoc:
                           params={"q": "绝不存在的词"}).json()
         assert body == {"items": [], "total": 0, "page": 1,
                         "page_size": 50, "next_cursor": None}
+
+    def test_cursor_traversal_collects_all_no_drift(self, client):
+        """契约锚（specs「cursor keyset 续页无漂移」×「无日志行
+        recent_activity_at=null 容缺」组合）：next_cursor 驱动遍历
+        至终页，收集并集==total 且无重复、无漏行。种子含 hyp_d
+        （null 活动时间，DESC 落末位）——null 容缺行在 cursor 路径
+        必须同样可达。〔缺陷锚：探针证实实现 keyset 条件 NULL<时间串
+        恒假，null 行漏页——本用例按契约断言，修复前红。〕"""
+        collected: list[str] = []
+        cursor = None
+        for _ in range(20):  # 防死循环上限（漂移形态=重复页时不空转）
+            params = {"page_size": 2}
+            if cursor is not None:
+                params["cursor"] = cursor
+            body = client.get("/api/research/hypothesis-cards",
+                              params=params).json()
+            collected.extend(c["hypothesis_id"] for c in body["items"])
+            cursor = body["next_cursor"]
+            if cursor is None:
+                break
+        assert len(collected) == len(set(collected)), "续页不得重复行"
+        assert len(collected) == 5, \
+            "全集 5 行（含 null 活动时间 hyp_d）须全部可达"
+        assert {"hyp_a", "hyp_b", "hyp_c", "hyp_d"} <= set(collected), \
+            "null 活动时间行 hyp_d 在 cursor 路径同样可达"
+
+    def test_get_no_side_effects_on_tables(self, client):
+        """零持久化零副作用（Requirement 正文）：GET 前后三源表行数
+        不变（响应等价的幂等断言不排除写库——本用例直接证零写入）。"""
+        from sqlalchemy import create_engine, func, select
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import (
+            ResearchHypothesis, ResearchLog, ValidationRecord)
+        S = sessionmaker(bind=create_engine(f"sqlite:///{client._db}"))
+
+        def _counts():
+            with S() as sess:
+                return tuple(
+                    sess.scalar(select(func.count()).select_from(m))
+                    for m in (ResearchHypothesis, ValidationRecord,
+                              ResearchLog))
+        before = _counts()
+        client.get("/api/research/hypothesis-cards")
+        client.get("/api/research/hypothesis-cards",
+                   params={"status": "active", "q": "动量"})
+        assert _counts() == before
+
+    def test_page_and_size_clamped_to_default(self, client):
+        """钳制特征（实现自述「沿 /hypotheses 同款」）：page<1→1、
+        page_size 越界→50——非法分页参数不产 422，钳制后回显。"""
+        body = client.get("/api/research/hypothesis-cards",
+                          params={"page": 0, "page_size": 9999}).json()
+        assert body["page"] == 1
+        assert body["page_size"] == 50
+        body_neg = client.get("/api/research/hypothesis-cards",
+                              params={"page": -3, "page_size": 0}).json()
+        assert body_neg["page"] == 1 and body_neg["page_size"] == 50

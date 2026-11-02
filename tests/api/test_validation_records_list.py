@@ -111,6 +111,15 @@ class TestOrderPaging:
         ts = [x["created_at"] for x in recs]
         assert ts == sorted(ts, reverse=True)
 
+    def test_verdict_three_states_all_present(self, client):
+        """Scenario「最近验证结论消费」：verdict 字段呈现三态——
+        全量响应 pass/fail/inconclusive 三值均如实可见（种子 6 条
+        三态循环各 2，降序时间流不吞任何一态）。"""
+        recs = client.get("/api/research/validation-records",
+                          params={"limit": 200}).json()["records"]
+        verdicts = {x["verdict"] for x in recs}
+        assert verdicts == {"pass", "fail", "inconclusive"}
+
     def test_paging_has_more(self, client):
         r1 = client.get("/api/research/validation-records", params={"limit": 4}).json()
         assert r1["has_more"] is True and len(r1["records"]) == 4

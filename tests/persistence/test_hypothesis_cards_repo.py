@@ -88,6 +88,9 @@ class TestCardsDeterminism:
         assert rr.count_hypothesis_cards(db) == 2
         assert rr.count_hypothesis_cards(db, status="active") == 1
         assert rr.count_hypothesis_cards(db, q="Q") == 1
+        # status+q 双过滤同传取交集（任务 2 完成标准⑥——非任一满足）
+        assert rr.count_hypothesis_cards(db, status="active", q="Q") == 0
+        assert rr.count_hypothesis_cards(db, status="refuted", q="Q") == 1
         # 跨页收集：page_size=1 两页合计==total（cursor 续页时 offset=0
         # ——与端点语义一致，keyset 本身承担翻页位移）
         page1 = rr.list_hypothesis_cards(db, limit=1)
