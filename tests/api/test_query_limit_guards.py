@@ -26,8 +26,10 @@ class TestUpperBound422:
         pytest.param("/api/evolution/strategies", "limit", 501, id="evolution strategies 501"),
         pytest.param("/api/evolution/tasks/tx/discovered-strategies", "limit", 501, id="discovered 501"),
         pytest.param("/api/strategies", "limit", 501, id="strategies 501"),
-        pytest.param("/api/strategies/verify/history", "limit", 501, id="verify history 501"),
-        pytest.param("/api/strategies/verify/sessions", "limit", 501, id="verify sessions 501"),
+        # verify 样本已随旧验证会话体系退役（retire-verify-sessions）——
+        # 换 research/log 的 cursor 形制校验面（真 422 面；page_size 是钳制语义）
+        pytest.param("/api/research/log", "cursor", "bad-format",
+                     id="research log 坏 cursor 422"),
     ])
     def test_over_limit_422(self, api_client: TestClient, url, param, value) -> None:
         response = api_client.get(url, params={param: value})
@@ -78,5 +80,4 @@ class TestBoundaryAndDefaultPass:
         assert api_client.get("/api/data/datasets").status_code == 200
         assert api_client.get("/api/evolution/tasks").status_code == 200
         assert api_client.get("/api/strategies").status_code == 200
-        assert api_client.get("/api/strategies/verify/history").status_code == 200
-        assert api_client.get("/api/strategies/verify/sessions").status_code == 200
+        assert api_client.get("/api/research/log").status_code == 200

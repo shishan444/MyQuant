@@ -32,7 +32,6 @@ from core.persistence.db import (
 from core.persistence.repository.backtest_result import get_backtest_result, list_backtest_results, save_backtest_result
 from core.persistence.repository.dataset_meta import delete_dataset, get_dataset, list_datasets, save_dataset_meta, update_dataset_stats
 from core.persistence.repository.strategy import delete_strategy, get_strategy, list_strategies, save_strategy, update_strategy
-from core.persistence.repository.verify_session import get_verify_session, list_verify_sessions, save_verify_session, update_verify_session
 from core.persistence.db_ext import init_db_ext
 
 # ── Fixtures ──
@@ -478,73 +477,6 @@ class TestBacktestResult:
         assert result["fitness"] == 0.0
         assert result["qualified"] == 0
         assert result["satisfaction_json"] is None
-
-# ── Test: Verify Session CRUD ──
-
-class TestVerifySessionCRUD:
-    def test_save_and_get_session(self, initialized_db: Path) -> None:
-        save_verify_session(
-            initialized_db,
-            session_id="sess-001",
-            strategy_ids='["s1","s2"]',
-            data_ranges='[{"start":"2024-01-01","end":"2024-06-30"}]',
-        )
-        session = get_verify_session(initialized_db, "sess-001")
-        assert session is not None
-        assert session["status"] == "running"
-        assert session["strategy_ids"] == '["s1","s2"]'
-
-    def test_get_session_not_found(self, initialized_db: Path) -> None:
-        assert get_verify_session(initialized_db, "nonexistent") is None
-
-    def test_update_session_completed(self, initialized_db: Path) -> None:
-        save_verify_session(
-            initialized_db,
-            session_id="sess-002",
-            strategy_ids='["s1"]',
-            data_ranges='[{"start":"2024-01-01","end":"2024-03-31"}]',
-        )
-        update_verify_session(
-            initialized_db,
-            "sess-002",
-            status="completed",
-            summary_json='[{"strategy_id":"s1","score":1.5}]',
-            total_results=3,
-            total_strategies=1,
-            completed_at="2025-06-05T12:00:00Z",
-        )
-        session = get_verify_session(initialized_db, "sess-002")
-        assert session["status"] == "completed"
-        assert session["total_results"] == 3
-        assert session["summary_json"] is not None
-
-    def test_update_session_failed(self, initialized_db: Path) -> None:
-        save_verify_session(
-            initialized_db,
-            session_id="sess-003",
-            strategy_ids='["s1"]',
-            data_ranges='[]',
-        )
-        update_verify_session(
-            initialized_db,
-            "sess-003",
-            status="failed",
-            error_message="No data ranges",
-        )
-        session = get_verify_session(initialized_db, "sess-003")
-        assert session["status"] == "failed"
-        assert session["error_message"] == "No data ranges"
-
-    def test_list_sessions_ordered(self, initialized_db: Path) -> None:
-        for i in range(3):
-            save_verify_session(
-                initialized_db,
-                session_id=f"sess-list-{i}",
-                strategy_ids='[]',
-                data_ranges='[]',
-            )
-        sessions = list_verify_sessions(initialized_db)
-        assert len(sessions) >= 3
 
     def test_backtest_result_with_session_id(self, initialized_db: Path) -> None:
         save_strategy(initialized_db, **_sample_strategy_data())

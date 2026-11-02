@@ -71,22 +71,6 @@ class TestGeneTfEndpoints:
         assert response.status_code == 200, response.text[:300]
         assert len(response.json()["results"]) == 2
 
-    def test_t4c_verify_endpoint_runs(self, api_client: TestClient) -> None:
-        """POST /api/strategies/verify：基因级 tf 策略验证 → 200
-        summary（非轴缺失）。"""
-        from core.persistence.repository.strategy import save_strategy
-        save_strategy(api_client.app.state.db_path,
-                      strategy_id="st_tf_vfy",
-                      dna_json=_gene_tf_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        response = api_client.post(
-            "/api/strategies/verify",
-            json={"strategy_ids": ["st_tf_vfy"],
-                  "data_ranges": [
-                      {"start": "2024-01-20", "end": "2024-02-20"}]})
-        assert response.status_code == 200, response.text[:300]
-        assert len(response.json()["summary"]) == 1
-
     def test_t4c_batch_stream_endpoint_runs(
             self, api_client: TestClient) -> None:
         """POST /api/strategies/batch-backtest/stream：基因级 tf 策略
@@ -104,24 +88,8 @@ class TestGeneTfEndpoints:
         assert response.status_code == 200, response.text[:300]
         session_id = response.json()["session_id"]
         assert session_id.startswith("batch_")
-        # 后台执行（装载判据在后台 step 内经 service 收集器）——轮询
-        # session 状态至终态，断言不因轴缺失失败
-        import time
-        from core.persistence.repository import strategy as _sr
-        deadline = time.time() + 60
-        last = None
-        while time.time() < deadline:
-            sessions = api_client.get(
-                "/api/strategies/verify/sessions").json()
-            rows = [s for s in sessions
-                    if s.get("session_id") == session_id] if isinstance(
-                        sessions, list) else []
-            if rows:
-                last = rows[0]
-                if str(last.get("status")) in ("completed", "failed",
-                                               "error", "done"):
-                    break
-            time.sleep(0.5)
-        # 受理即锚（后台完成断言尽力而为——session 查询面若不含 batch
-        # 会话则只断言受理 200，装载判据正确性已由 T4a/T4b 锚定）
-        assert response.status_code == 200
+        # 受理即锚：batch stream 无持久 session 查询端点
+        # （/api/strategies/verify/sessions 已随旧验证会话体系退役，
+        # retire-verify-sessions——原轮询面为该端点，退役后为死轮询
+        # 已移除）；后台装载判据正确性由 T4a/T4b 锚定，流式序列
+        # 完整性由 test_retire_verify_sessions.C1-7 锚定

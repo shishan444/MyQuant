@@ -1,4 +1,4 @@
-"""signal_sources 结构校验——写入面与读库六入口红锚
+"""signal_sources 结构校验——写入面与读库五入口红锚
 （signal-sources-structure-gate 0.2）。
 
 契约出处（design 卡 V 生效面矩阵+卡 G R-8 基准，2026-10-19 方案
@@ -7,8 +7,8 @@
   DNA_VALIDATION_FAILED+库内无新行/更新逐字节不变；非 dict 条目被
   Pydantic List[Dict] 前拦（A-3 边界——拦截层分工，不冒充结构码）；
   修正后恢复 201（拒绝可恢复）。
-- AC-6（读库六入口）：三类畸形（拼错 type/非 dict 条目/缺 ref）经
-  backtest/compare/verify/batch 四读库路径 → 422
+- AC-6（读库五入口）：三类畸形（拼错 type/非 dict 条目/缺 ref）经
+  backtest/compare/batch 三读库路径 → 422
   DNA_VALIDATION_FAILED（现状：拼错静默放行/非 dict 放行或异态/
   缺 ref 报 PLUGIN_SOURCES_UNSUPPORTED——错误码错位）；内联分支经
   Pydantic 收窄只剩 dict 形态两类；live 入口 dna_json 直传四形态
@@ -40,7 +40,7 @@ from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
 from core.strategy.validator import has_plugin_sources, validate_dna
 from tests.helpers.data_factory import make_dna
 
-ROUTES = ("backtest", "compare", "verify", "batch")
+ROUTES = ("backtest", "compare", "batch")  # verify 已退役（retire-verify-sessions）
 
 # 三类畸形（直改库/live dna_json 通道构造集——save_strategy 与
 # from_json 均原样透传，三类全可达）
@@ -102,10 +102,6 @@ def _post_route(client: TestClient, route: str, sid: str):
     if route == "compare":
         return client.post("/api/strategies/compare", json={
             "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h"})
-    if route == "verify":
-        return client.post("/api/strategies/verify", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]})
     if route == "batch":
         return client.post("/api/strategies/batch-backtest/stream", json={
             "strategy_ids": [sid],

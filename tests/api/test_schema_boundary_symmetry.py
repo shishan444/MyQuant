@@ -15,15 +15,15 @@ from api.schemas import (
     EvolutionTaskCreate,
     EvolutionTaskResponse,
     RiskGenesModel,
-    VerifyRequest,
 )
 from core.strategy.validator import MAX_LEVERAGE
 
 pytestmark = [pytest.mark.unit]
 
-# 杠杆边界字段所在模型全集（盘点清单 A-1：请求侧四处+响应侧补齐一处）
+# 杠杆边界字段所在模型全集（盘点清单：请求侧三处+响应侧一处——
+# 原第五处 VerifyRequest 随旧验证会话体系退役，retire-verify-sessions）
 _LEVERAGE_MODELS = (
-    RiskGenesModel, VerifyRequest, BatchBacktestRequest,
+    RiskGenesModel, BatchBacktestRequest,
     EvolutionTaskCreate, EvolutionTaskResponse,
 )
 
@@ -84,8 +84,6 @@ class TestSym3LegalDataZeroImpact:
         """SYM3：合法杠杆值五模型构造全过（请求四+响应一——补边界
         前后响应逐位一致的声明面；越界值库内不存在：盘点核查全绿）。"""
         assert RiskGenesModel(leverage=ok).leverage == ok
-        assert VerifyRequest(strategy_ids=["s"], data_ranges=[],
-                             leverage=ok).leverage == ok
         assert BatchBacktestRequest(
             strategy_ids=["s"], data_ranges=[], leverage=ok).leverage == ok
         assert EvolutionTaskCreate(

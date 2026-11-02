@@ -29,12 +29,6 @@ from core.persistence.repository.strategy import (
     save_strategy,
     update_strategy,
 )
-from core.persistence.repository.verify_session import (
-    get_verify_session,
-    list_verify_sessions,
-    save_verify_session,
-    update_verify_session,
-)
 from ._common import _reject_invalid_or_plugin_dna
 from api.deps import get_data_dir, get_db_path
 from api.schemas import (
@@ -52,15 +46,6 @@ from api.schemas import (
     StrategyMetrics,
     StrategyResponse,
     StrategyUpdate,
-    VerifyRequest,
-    VerifyResponse,
-    VerifyResultItem,
-    VerifySummaryItem,
-    VerifyPeriodSummary,
-    VerifyHistoryItem,
-    VerifyHistoryResponse,
-    VerifySessionResponse,
-    VerifySessionListResponse,
 )
 from core.backtest import engine as _bt_engine_mod
 from core.analysis.errors import ResearchError  # 轻量定义点直取（errors.py 唯一权威）

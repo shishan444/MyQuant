@@ -1,12 +1,12 @@
 """四入口指标一致性（2.1，含 G-1 实测裁决；R-6 反转后升级为四入口全等）。
 
-工程实况（Q-1=a 迁移后）：backtest/compare/verify/batch 四入口同走
+工程实况（Q-1=a 迁移后；verify 退役后）：backtest/compare/batch 入口同走
 BacktestEngine（引擎路径）——batch-backtest 原走 ReplayRunner（模拟盘重放
 路径），rebuild-paper-trading 6.2 迁回测引擎口径（batch_run 矩阵单次调用），
-「四入口全等」由两测试合证：引擎三入口全等（test_engine_three_entries_
+「全等」由两测试合证：引擎两入口全等（test_engine_two_entries_
 identical）+ batch×引擎一致（test_batch_engine_parity_locked）。
-G-1：verify 分段语义 = 同窗单回测（process_step 用同 engine.batch_run，
-同 init_cash/fee/slippage 参数路径）→ 单段全窗时应与 backtest 全等。
+G-1 历史锚：verify 分段语义 = 同窗单回测——该入口已随旧验证会话体系
+退役（retire-verify-sessions），全等比对面缩为两入口+batch。
 """
 
 from __future__ import annotations
@@ -76,8 +76,8 @@ def _pick(d: dict) -> dict:
     return {k: d[k] for k in METRIC_KEYS if k in d}
 
 
-def test_engine_three_entries_identical(seeded_client):
-    """G-1 裁决核心：backtest / compare / verify（单段全窗）三入口逐指标全等。"""
+def test_engine_two_entries_identical(seeded_client):
+    """G-1 裁决核心：backtest / compare 两入口逐指标全等（verify 入口已退役）。"""
     client, sid, d0, d1, _, _ = seeded_client
     # R-4（G-1 口径裁决）：verify 分段切片语义 = [start 00:00, end 00:00] 闭区间
     # （df.index <= end 日期），与全量回测差尾部同日 bar——同窗对齐后公平比对
@@ -103,18 +103,9 @@ def test_engine_three_entries_identical(seeded_client):
     items2 = body2["results"] if isinstance(body2, dict) and "results" in body2 else body2
     m_compare = _pick(items2[0])
 
-    r3 = client.post("/api/strategies/verify",
-                     json={"strategy_ids": [sid],
-                           "data_ranges": [{"start": d0, "end": d1}],
-                           "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-                           "leverage": 1})
-    assert r3.status_code == 200, r3.text
-    body3 = r3.json()
-    m_verify = _pick(body3["results"][0])
-    assert body3["results"][0].get("error") is None, body3["results"][0]
-
+    # verify 第三入口已随旧验证会话体系退役（retire-verify-sessions
+    # delta-3：全等比对面退出）——两入口全等 + batch×引擎一致合证
     assert_metrics_equal(m_backtest, m_compare, scenario="backtest-vs-compare")
-    assert_metrics_equal(m_backtest, m_verify, scenario="backtest-vs-verify")
 
 
 def test_batch_engine_parity_locked(seeded_client):

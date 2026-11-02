@@ -3,7 +3,7 @@
 四处 P0 锚点，每处测试先行（红→绿）：
 - 1.1 core/evolution/evaluation.py build_requirements 解析失败静默回退默认 objective
 - 1.2 api/runner.py 快照写失败静默丢弃
-- 1.4 api/routes/strategies.py verify mark_failed 路径自身吞错
+- 1.4 verify mark_failed 段已随旧验证会话体系退役（retire-verify-sessions）
 - 1.5 api/routes/data.py 图表六连吞错拖垮整层
 
 B1.3（旧 core/trading/runner.py bar 游标与事件落库原子性）随旧交易域
@@ -152,63 +152,6 @@ class TestSnapshotWriteFailureVisible:
 
 
 # ===========================================================================
-# B1.4: verify mark_failed 路径自身不吞错
-# ===========================================================================
-
-class TestVerifyMarkFailedNotSwallowed:
-    """失败状态写入失败必须可见——否则 session 卡 running 且无任何痕迹。
-
-    mark_failed 是失败路径的兜底写入；它自身失败（DB 故障）时静默 pass
-    意味着用户面对永久 running 的 session，无从排查。
-    """
-
-    def test_mark_failed_write_failure_is_logged(self, tmp_db, caplog):
-        """update_verify_session 抛错 → error 日志含 session 与原因链。"""
-        from unittest.mock import patch
-
-        from api.routes.strategies import _VerifyProcessor
-
-        processor = _VerifyProcessor.__new__(_VerifyProcessor)
-        processor.db_path = tmp_db
-        processor.session_id = "b1-verify-session"
-
-        with caplog.at_level(logging.ERROR, logger="api.routes.strategies"), \
-             patch("api.routes.strategies.verify.update_verify_session",
-                   side_effect=RuntimeError("db locked")):
-            # 不得再抛出（调用方在异常处理路径中），但必须留痕
-            processor.mark_failed("boom")
-
-        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert any("b1-verify-session" in r.message for r in errors), (
-            "失败状态写入失败必须留下含 session_id 的 error 日志"
-        )
-        assert any(r.exc_info is not None for r in errors), "日志必须含原因链"
-
-    def test_mark_failed_success_path_unchanged(self, tmp_db):
-        """写入成功路径行为不变（status=failed + error_message）。"""
-        from api.routes.strategies import _VerifyProcessor
-        from core.persistence.repository.verify_session import get_verify_session, save_verify_session
-
-        save_verify_session(
-            tmp_db, session_id="b1-ok",
-            strategy_ids='["s1"]', data_ranges='[{"start":"2024-01-01","end":"2024-06-01"}]',
-        )
-        processor = _VerifyProcessor.__new__(_VerifyProcessor)
-        processor.db_path = tmp_db
-        processor.session_id = "b1-ok"
-
-        processor.mark_failed("some error")
-
-        row = get_verify_session(tmp_db, "b1-ok")
-        assert row["status"] == "failed"
-        assert row["error_message"] == "some error"
-
-
-# ===========================================================================
-# B1.5: 图表指标六连吞错改逐指标降级 + 日志
-# ===========================================================================
-
-@pytest.mark.integration
 class TestChartIndicatorsPerLayerDegradation:
     """单指标计算失败 → 该层缺失必须留下 warning 日志，其他层不受影响。
 

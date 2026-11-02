@@ -215,7 +215,7 @@ class TestMtfBoundary:
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
 
     def test_batch_通道_拒绝透传不吞(self, df) -> None:
-        """经 batch_signal_sets（verify/进化评估消费路径）到达时错误
+        """经 batch_signal_sets（进化评估消费路径）到达时错误
         可见——不被 _empty_signal_set 静默替换成「策略零信号」。"""
         dfs = {"1d": df, "4h": df}
         with pytest.raises(ResearchError) as ei:

@@ -1,7 +1,7 @@
 """阶段四闸门盲区消解补洞（第 2 步产物，锚点分类：契约+边界）。
 
 按 coverage.json 全量基线的缺口清单逐文件补测（行+分支至 ≥98%）：
-- verify/evolution/crud：坏 JSON 容错分支、leverage 覆盖、stream cancel/
+- evolution/crud：坏 JSON 容错分支、leverage 覆盖、stream cancel/
   异常分支、PATCH 空更新等
 - 剩余不可达项的判定见文件尾 TestUnreachableNotes（带调用图依据）
 """
@@ -18,236 +18,6 @@ pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from tests.helpers.data_factory import make_dna, make_ohlcv
-
-
-def _verify_route_module():
-    """conftest 装配 app 实际使用的 verify 路由模块（双身份坑，见
-    test_data_upload_limits._endpoint_data_module）。"""
-    import sys
-    mod = sys.modules.get("MyQuant.api.routes.strategies.verify")
-    if mod is None:
-        import api.routes.strategies.verify as mod
-    return mod
-
-
-class TestVerifyToleranceBranches:
-    """verify.py 容错分支（112-113/187-188/314-348/439-448）。"""
-
-    def _seed_strategy(self, api_client: TestClient, sid: str = "s-v") -> None:
-        from core.persistence.repository.strategy import save_strategy
-        # name 必须显式传：save_strategy 无 name 时 row["name"]=None，而
-        # verify/batch/evolution 的 row.get("name", sid[:8]) 对 None 值键
-        # 不取默认 → VerifySummaryItem(strategy_name=None) 校验炸（500）。
-        # 生产缺陷线索已记 TD 台账（无名策略 verify 500），闸门期不改实现
-        save_strategy(
-            api_client.app.state.db_path, strategy_id=sid, name=f"Strat-{sid}",
-            dna_json=make_dna().to_json(), symbol="BTCUSDT", timeframe="4h",
-        )
-
-    def test_update_verify_fields_repo_failure_swallowed(
-        self, api_client: TestClient,
-    ) -> None:
-        """_update_strategy_verify_fields 的 repo 异常吞掉（不 500）。"""
-        from types import SimpleNamespace
-        self._seed_strategy(api_client)
-        engine_fake = SimpleNamespace(
-            batch_run=lambda dnas, df, **kw: [SimpleNamespace(
-                total_return=0.1, sharpe_ratio=1.0, max_drawdown=0.05,
-                win_rate=0.6, total_trades=5, liquidated=False,
-                metrics_dict={"sharpe_ratio": 1.0},
-            ) for _ in dnas])
-        with patch.object(_verify_route_module(), "_bt_engine_mod",
-                          SimpleNamespace(BacktestEngine=lambda **kw: engine_fake)), \
-             patch("core.data.mtf_loader.load_and_prepare_df",
-                   return_value=make_ohlcv(50, "4h")), \
-             patch("core.scoring.scorer.compute_fitness",
-                   return_value={"fitness": 7.0, "qualified": True,
-                                 "total_score": 8.0}), \
-             patch("core.persistence.repository.strategy.update_strategy_verify_stats",
-                   side_effect=RuntimeError("repo down")):
-            response = api_client.post(
-                "/api/strategies/verify",
-                json={"strategy_ids": ["s-v"],
-                      "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
-            )
-        assert response.status_code == 200  # repo 异常被吞（warning 日志）
-
-    def test_processor_init_skips_corrupt_dna(self, tmp_path: Path) -> None:
-        """processor.init 跳过坏 dna_json 策略（187-188）。"""
-        from core.persistence.repository.strategy import save_strategy
-        from core.persistence.db_ext import init_db_ext
-        from api.routes.strategies.verify import _VerifyProcessor
-        from api.schemas import VerifyRequest, VerifyDateRange
-        db_path = tmp_path / "v.db"
-        init_db_ext(db_path)
-        save_strategy(db_path, strategy_id="bad", dna_json="{corrupt",
-                      symbol="BTCUSDT", timeframe="4h")
-        save_strategy(db_path, strategy_id="good",
-                      dna_json=make_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        payload = VerifyRequest(
-            strategy_ids=["bad", "good"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
-        )
-        processor = _VerifyProcessor(payload, db_path, tmp_path)
-        processor.init()
-        assert set(processor.strategy_names) == {"good"}
-
-    def test_processor_leverage_override_branch(self, tmp_path: Path) -> None:
-        """process_step 的 leverage != 1 覆盖分支（224-228）。"""
-        from core.persistence.repository.strategy import save_strategy
-        from core.persistence.db_ext import init_db_ext
-        from api.routes.strategies.verify import _VerifyProcessor
-        from api.schemas import VerifyRequest, VerifyDateRange
-        db_path = tmp_path / "v2.db"
-        init_db_ext(db_path)
-        save_strategy(db_path, strategy_id="s-lev",
-                      dna_json=make_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        payload = VerifyRequest(
-            strategy_ids=["s-lev"], leverage=3,
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
-        )
-        processor = _VerifyProcessor(payload, db_path, tmp_path)
-        processor.init()
-        captured = {}
-
-        def _capture_batch(dnas, df, **kw):
-            for d in dnas:
-                captured["lev"] = d.risk_genes.leverage
-            return [type("R", (), {
-                "total_return": 0.1, "sharpe_ratio": 1.0,
-                "max_drawdown": 0.05, "win_rate": 0.5,
-                "total_trades": 3, "liquidated": False,
-                "metrics_dict": {"sharpe_ratio": 1.0},
-            })() for _ in dnas]
-
-        processor.engine.batch_run = _capture_batch
-        processor._load_df = lambda *a, **kw: make_ohlcv(50, "4h")
-        processor._load_mtf = lambda *a, **kw: None
-        processor._compute_fitness = lambda *a, **kw: {
-            "fitness": 5.0, "qualified": True, "total_score": 6.0}
-        processor.process_step(0)
-        assert captured["lev"] == 3
-
-    def test_processor_strategy_level_exception(self, tmp_path: Path) -> None:
-        """process_step 单策略 except：该策略记「内部错误」其余正常。"""
-        from core.persistence.repository.strategy import save_strategy
-        from core.persistence.db_ext import init_db_ext
-        from api.routes.strategies.verify import _VerifyProcessor
-        from api.schemas import VerifyRequest, VerifyDateRange
-        db_path = tmp_path / "v3.db"
-        init_db_ext(db_path)
-        save_strategy(db_path, strategy_id="s-a", dna_json=make_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        save_strategy(db_path, strategy_id="s-b",
-                      dna_json=make_dna(direction="short").to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        payload = VerifyRequest(
-            strategy_ids=["s-a", "s-b"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
-        )
-        processor = _VerifyProcessor(payload, db_path, tmp_path)
-        processor.init()
-        processor._load_df = lambda *a, **kw: make_ohlcv(50, "4h")
-        processor._load_mtf = lambda *a, **kw: None
-        calls = {"n": 0}
-
-        def _flaky(*a, **kw):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise RuntimeError("eval boom")
-            return {"fitness": 3.0, "qualified": False, "total_score": 3.0}
-
-        processor._compute_fitness = _flaky
-        processor.engine.batch_run = lambda dnas, df, **kw: [
-            type("R", (), {
-                "total_return": 0.1, "sharpe_ratio": 1.0,
-                "max_drawdown": 0.05, "win_rate": 0.5,
-                "total_trades": 3, "liquidated": False,
-                "metrics_dict": {"sharpe_ratio": 1.0},
-            })() for _ in dnas
-        ]
-        progress = processor.process_step(0)
-        errors = [r for r in progress["batch_results"] if r.get("error")]
-        assert len(errors) == 1 and errors[0]["error"] == "内部错误"
-
-    def test_processor_group_level_exception(self, tmp_path: Path) -> None:
-        """process_step 组级 except：装载抛错全组记「内部错误」。"""
-        from core.persistence.repository.strategy import save_strategy
-        from core.persistence.db_ext import init_db_ext
-        from api.routes.strategies.verify import _VerifyProcessor
-        from api.schemas import VerifyRequest, VerifyDateRange
-        db_path = tmp_path / "v4.db"
-        init_db_ext(db_path)
-        save_strategy(db_path, strategy_id="s-g", dna_json=make_dna().to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        payload = VerifyRequest(
-            strategy_ids=["s-g"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
-        )
-        processor = _VerifyProcessor(payload, db_path, tmp_path)
-
-        def _boom(*a, **kw):
-            raise RuntimeError("load boom")
-
-        processor.init()
-        processor._load_df = _boom
-        progress = processor.process_step(0)
-        assert all(r["error"] == "内部错误" for r in progress["batch_results"])
-
-    def test_stream_cancel_before_first_step(
-        self, api_client: TestClient,
-    ) -> None:
-        """verify stream cancel 分支（439-441）：零结果、session failed。"""
-        from core.persistence.repository.verify_session import get_verify_session
-        self._seed_strategy(api_client, "s-cc")
-        with patch("core.data.mtf_loader.load_and_prepare_df",
-                   return_value=make_ohlcv(50, "4h")):
-            response = api_client.post(
-                "/api/strategies/verify/stream",
-                json={"strategy_ids": ["s-cc"],
-                      "data_ranges": [{"start": "2024-01-01", "end": "2024-12-31"}]},
-            )
-            session_id = response.json()["session_id"]
-            from api import stream_control
-            stream_control.request_cancel(session_id)
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                if session_id not in stream_control._cancel_callbacks:
-                    break
-                time.sleep(0.05)
-        session = get_verify_session(api_client.app.state.db_path, session_id)
-        assert session["status"] == "failed"
-        assert session["error_message"] == "Cancelled by client"
-
-    def test_stream_finalize_error_marks_failed(
-        self, api_client: TestClient,
-    ) -> None:
-        """stream 外层 except（447-448）：finalize 抛 → mark_failed 落 failed。"""
-        from core.persistence.repository.verify_session import get_verify_session
-        self._seed_strategy(api_client, "s-err")
-        mod = _verify_route_module()
-        with patch("core.data.mtf_loader.load_and_prepare_df",
-                   return_value=make_ohlcv(50, "4h")), \
-             patch.object(mod, "update_verify_session",
-                          side_effect=RuntimeError("db down")):
-            response = api_client.post(
-                "/api/strategies/verify/stream",
-                json={"strategy_ids": ["s-err"],
-                      "data_ranges": [{"start": "2024-01-01", "end": "2024-12-31"}]},
-            )
-            session_id = response.json()["session_id"]
-            from api import stream_control
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                if session_id not in stream_control._cancel_callbacks:
-                    break
-                time.sleep(0.05)
-        # finalize 与 mark_failed 双双失败（同一 patch）——session 停留
-        # running 语义由 B1.4 error 日志兜底； unregister 已发生即异常路径走通
-        session = get_verify_session(api_client.app.state.db_path, session_id)
-        assert session is not None
 
 
 class TestEvolutionToleranceBranches:
@@ -468,7 +238,7 @@ class TestBatchGaps:
         from core.persistence.repository.strategy import save_strategy
         from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.batch import _BatchBacktestProcessor
-        from api.schemas import BatchBacktestRequest, VerifyDateRange
+        from api.schemas import BatchBacktestRequest, BacktestDateRange
         db_path = tmp_path / "b.db"
         init_db_ext(db_path)
         save_strategy(db_path, strategy_id="s-e", name="E",
@@ -476,7 +246,7 @@ class TestBatchGaps:
                       symbol="BTCUSDT", timeframe="4h")
         payload = BatchBacktestRequest(
             strategy_ids=["s-e"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
         )
         processor = _BatchBacktestProcessor(payload, db_path, tmp_path)
         processor.init()
@@ -789,36 +559,6 @@ class TestNonameStrategyRegression:
                 updated_at="2026-10-02T00:00:00Z",
             ))
 
-    def test_verify_noname_strategy_200_with_fallback_name(
-        self, api_client: TestClient,
-    ) -> None:
-        """None name 行走 verify：200 且 strategy_name=sid 前 8 位。"""
-        from types import SimpleNamespace
-        self._seed_noname(api_client.app.state.db_path, "noname-strat-1")
-        engine_fake = SimpleNamespace(
-            batch_run=lambda dnas, df, **kw: [SimpleNamespace(
-                total_return=0.1, sharpe_ratio=1.0, max_drawdown=0.05,
-                win_rate=0.6, total_trades=5, liquidated=False,
-                metrics_dict={"sharpe_ratio": 1.0},
-            ) for _ in dnas])
-        with patch.object(_verify_route_module(), "_bt_engine_mod",
-                          SimpleNamespace(BacktestEngine=lambda **kw: engine_fake)), \
-             patch("core.data.mtf_loader.load_and_prepare_df",
-                   return_value=make_ohlcv(50, "4h")), \
-             patch("core.scoring.scorer.compute_fitness",
-                   return_value={"fitness": 7.0, "qualified": True,
-                                 "total_score": 8.0}):
-            response = api_client.post(
-                "/api/strategies/verify",
-                json={"strategy_ids": ["noname-strat-1"],
-                      "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
-            )
-        assert response.status_code == 200, (
-            f"无名策略 verify 不应 500（TD-G1 修复面）: {response.text[:200]}"
-        )
-        summary = response.json()["summary"][0]
-        assert summary["strategy_name"] == "noname-s"  # sid[:8]
-
     def test_evolution_list_noname_fallback(self, api_client: TestClient) -> None:
         """evolution 策略列表：None name → strategy_id 前 8 位。"""
         from sqlalchemy import insert as sa_insert, update as sa_update
@@ -843,7 +583,7 @@ class TestNonameStrategyRegression:
         """batch processor：None name → 短 id 回退（源头同修复）。"""
         from core.persistence.db_ext import init_db_ext
         from api.routes.strategies.batch import _BatchBacktestProcessor
-        from api.schemas import BatchBacktestRequest, VerifyDateRange
+        from api.schemas import BatchBacktestRequest, BacktestDateRange
         from sqlalchemy import insert as sa_insert
         from core.persistence.orm.models import Strategy
         from core.persistence.repository.dataset_meta import _engine_for
@@ -861,7 +601,7 @@ class TestNonameStrategyRegression:
             ))
         payload = BatchBacktestRequest(
             strategy_ids=["batch-noname"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
         )
         processor = _BatchBacktestProcessor(payload, db_path, tmp_path)
         processor.init()

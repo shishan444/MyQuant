@@ -6,8 +6,9 @@ Each helper preserves the exact behaviour of its source.
 Invariant: no math/logic change — verbatim extraction.
 
 Important constraint: fallback_metrics serves ONLY the BacktestEngine path
-(copies 1-4: backtest/compare/verify/_VerifyProcessor). ReplayRunner (copy 5,
-_BatchBacktestProcessor) results lack metrics_dict / bars_per_year / trade_returns
+(backtest/compare copies; the verify/_VerifyProcessor copies were retired
+with retire-verify-sessions). ReplayRunner (_BatchBacktestProcessor)
+results lack metrics_dict / bars_per_year / trade_returns
 attributes, so it must keep its own metrics synthesis — do NOT route it through
 fallback_metrics (would change sharpe computation).
 """
@@ -20,7 +21,7 @@ from typing import Any, Dict, List, Optional
 def fallback_metrics(bt_result) -> Dict[str, Any]:
     """Return engine-computed metrics, or recompute from the equity curve.
 
-    Used by BacktestEngine-path copies (1-4). The engine pre-fills metrics_dict
+    Used by BacktestEngine-path copies (backtest/compare). The engine pre-fills metrics_dict
     on BacktestResult; compute_metrics is only a fallback when it is falsy.
     """
     from core.scoring.metrics import compute_metrics

@@ -60,7 +60,10 @@ class TestConsoleErrors:
 class TestNavigation:
     """Test client-side navigation between pages (当前 8 个路由)."""
 
-    ROUTES = ["/lab", "/evolution", "/strategies", "/verify", "/batch-backtest", "/trading", "/data", "/settings"]
+    # nav 链接对齐 Sidebar 实际清单（d9a6a0b 前端重构后：/lab 仍在路由表
+    # 但已不在 nav；/verify 前端链接待 F4 联动退役——retire-verify-sessions
+    # 后端面已 404，纯前端 nav 断言暂保留）
+    ROUTES = ["/workbench", "/verify", "/batch-backtest", "/evolution", "/plugins", "/strategies", "/trading", "/data", "/settings"]
 
     def test_sidebar_navigation_links_work(self, page: Page):
         page.goto(BASE, timeout=10000)
@@ -75,7 +78,7 @@ class TestNavigation:
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        for route in ["/lab", "/evolution", "/strategies", "/data", "/settings"]:
+        for route in ["/workbench", "/evolution", "/strategies", "/data", "/settings"]:
             page.locator(f"nav a[href='{route}']").first.click()
             page.wait_for_timeout(1000)
             assert route in page.url, f"Expected {route} in URL, got {page.url}"
@@ -125,7 +128,7 @@ class TestLayoutComponents:
 
     def test_header_title_updates_per_page(self, page: Page):
         titles_map = {
-            "/lab": "策略实验室",
+            "/workbench": "观察工作台",
             "/evolution": "进化中心",
             "/strategies": "策略库",
             "/data": "数据管理",

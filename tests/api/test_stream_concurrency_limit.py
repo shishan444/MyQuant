@@ -1,6 +1,7 @@
 """流式端点并发槽位特征网（CARD-08 修复锚定，修复期安全网）。
 
-锚定 api/stream_control.py 并发槽位与 verify/batch 两流式端点接入：
+锚定 api/stream_control.py 并发槽位与 batch 流式端点接入
+（verify 流式已随旧验证会话体系退役，retire-verify-sessions）：
 - 单元：acquire 4 次、第 5 次拒绝、release 归还、Bounded 双释放防护
 - 端点：并发满 → 429 "Too many concurrent streams"；init 404 路径槽位
   先归还（紧随请求可再占）
@@ -68,23 +69,6 @@ class TestSlotUnit:
 
 
 class TestStreamEndpoint429:
-    def test_verify_stream_rejected_when_full(self, api_client: TestClient) -> None:
-        """并发满：POST /verify/stream → 429 固定 detail。"""
-        from core.persistence.repository.strategy import save_strategy
-        save_strategy(
-            api_client.app.state.db_path, strategy_id="s-cc",
-            dna_json=make_dna().to_json(), symbol="BTCUSDT", timeframe="4h",
-        )
-        for _ in range(4):
-            assert stream_control.acquire_stream_slot()
-        response = api_client.post(
-            "/api/strategies/verify/stream",
-            json={"strategy_ids": ["s-cc"],
-                  "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
-        )
-        assert response.status_code == 429
-        assert response.json()["detail"] == "Too many concurrent streams"
-
     def test_batch_stream_rejected_when_full(self, api_client: TestClient) -> None:
         from core.persistence.repository.strategy import save_strategy
         save_strategy(
@@ -101,7 +85,7 @@ class TestStreamEndpoint429:
         assert response.status_code == 429
         assert response.json()["detail"] == "Too many concurrent streams"
 
-    def test_verify_404_init_path_returns_slot(
+    def test_batch_404_init_path_returns_slot(
         self, api_client: TestClient,
     ) -> None:
         """init 404 路径槽位先归还：紧随其后的请求可占用。"""
@@ -115,7 +99,7 @@ class TestStreamEndpoint429:
             assert stream_control.acquire_stream_slot()
         # 无效策略：acquire 第 4 槽 → init 404 → 槽位归还
         rejected = api_client.post(
-            "/api/strategies/verify/stream",
+            "/api/strategies/batch-backtest/stream",
             json={"strategy_ids": ["ghost"],
                   "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
         )
@@ -124,7 +108,7 @@ class TestStreamEndpoint429:
         with patch("core.data.mtf_loader.load_and_prepare_df",
                    return_value=make_ohlcv(50, "4h")):
             accepted = api_client.post(
-                "/api/strategies/verify/stream",
+                "/api/strategies/batch-backtest/stream",
                 json={"strategy_ids": ["s-ok"],
                       "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]},
             )

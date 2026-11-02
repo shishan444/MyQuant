@@ -1,7 +1,8 @@
-"""Strategies 路由私有公共位（B5.1 拆分后 verify/batch/compare 共用）。
+"""Strategies 路由私有公共位（B5.1 拆分后 batch/compare 共用——verify
+已随 retire-verify-sessions 退役）。
 
 signal-sources-structure-gate（D-6）起兼载多入口（backtest 读库/内联、
-batch、verify、compare、live/evolution 任务创建）共用的 DNA 拒绝表达
+batch、compare、live/evolution 任务创建）共用的 DNA 拒绝表达
 （_reject_invalid_or_plugin_dna）。判据单源在 core/strategy/validator
 （validate_dna 结构/值域+has_plugin_sources 能力边界），本模块只承载
 HTTP 拒绝表达（状态码/错误码/消息模板）；live 为跨目录消费方
@@ -25,10 +26,6 @@ _PLUGIN_REJECT_MESSAGES = {
         "策略含插件信号源，REST 回测通道不支持"
         "（引擎该通道未接插件信号集，结果将为零"
         "交易）——请经研究验证链沙盒回测"),
-    "verify": (
-        "策略含插件信号源，REST 回测通道不支持"
-        "（引擎该通道未接插件信号集，结果将为"
-        "零交易）——请经研究验证链沙盒回测"),
     "batch": (
         "策略含插件信号源，REST 批量回测通道"
         "不支持（引擎该通道未接插件信号集，"
@@ -72,7 +69,7 @@ def _reject_invalid_or_plugin_dna(
         dna: 已解析的 StrategyDNA（解析/404 责任在调用方）。
         library_dna: True=读库装载（消息「Library DNA invalid…」）/
             False=请求直传（消息「DNA 值域/结构校验未通过」）。
-        channel: 消费通道名（backtest/batch/verify/compare/live/
+        channel: 消费通道名（backtest/batch/compare/live/
             evolution）——插件源拒绝消息的通道名映射键。
 
     Raises:
@@ -127,7 +124,8 @@ def _progress_payload(
     steps: List, step_index: int, group_key: str,
     dr, batch_results: list,
 ) -> Dict[str, Any]:
-    """流式进度帧构造（verify/batch 两 processor 共用）。"""
+    """流式进度帧构造（batch processor 单用——verify processor 已随
+    retire-verify-sessions 退役）。"""
     return {
         "current": step_index + 1,
         "total": len(steps),

@@ -61,7 +61,7 @@ class _FakeProcessorMixin:
     @staticmethod
     def _make_processor(db_path: Path, tmp_path: Path):
         from api.routes.strategies.batch import _BatchBacktestProcessor
-        from api.schemas import BatchBacktestRequest, VerifyDateRange
+        from api.schemas import BatchBacktestRequest, BacktestDateRange
         from core.persistence.repository.strategy import save_strategy
         save_strategy(
             db_path, strategy_id="s-1", dna_json=make_dna().to_json(),
@@ -69,7 +69,7 @@ class _FakeProcessorMixin:
         )
         payload = BatchBacktestRequest(
             strategy_ids=["s-1"],
-            data_ranges=[VerifyDateRange(start="2024-01-01", end="2024-06-01")],
+            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
         )
         return _BatchBacktestProcessor(payload, db_path, tmp_path)
 

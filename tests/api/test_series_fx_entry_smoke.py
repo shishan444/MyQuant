@@ -2,7 +2,7 @@
 S-2——路由级行为面锚）。
 
 五引擎构造点补 db_path 透传后：series 档 fx 形式止损线经策略中心
-backtest/verify/compare 路由可用（引擎构造拿到 db_path→插件注册表
+backtest/compare 路由可用（引擎构造拿到 db_path→插件注册表
 可查→fx 列装载不再显式拒）。透传缺失时 fx 形式装载抛
 RESEARCH_DATA_INSUFFICIENT（fx 须 db_path）→ 路由结构化错——
 200/无 error 即透传生效的检出形制（真引擎真装载，无 mock）。
@@ -129,22 +129,6 @@ class TestFxSeriesRouteSmoke:
             "init_cash": 100000, "fee": 0.001, "slippage": 0.0005})
         assert r.status_code == 200, r.text[:300]
         assert "total_trades" in r.json()
-
-    def test_verify_route_fx_series_runs(self, fx_env):
-        """主入口②：POST /api/strategies/verify——series fx 策略多窗
-        验证 200 且 results[0].error 为 None（引擎构造点透传——fx 列
-        装载跑通到验证回测）。"""
-        client, sid, _ = fx_env
-        r = client.post("/api/strategies/verify", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-20T00:00:00Z",
-                             "end": "2024-02-05T00:00:00Z"}]})
-        assert r.status_code == 200, r.text[:300]
-        results = r.json()["results"]
-        assert len(results) == 1
-        assert results[0]["strategy_id"] == sid
-        assert results[0]["error"] is None, \
-            f"fx 装载失败会落 error 字段，实际 {results[0]['error']}"
 
     def test_compare_route_fx_series_runs(self, fx_env):
         """入口③：POST /api/strategies/compare——series fx 策略对比

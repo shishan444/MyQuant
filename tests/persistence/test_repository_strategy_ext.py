@@ -176,39 +176,6 @@ class TestUpdateConnPassthrough:
                                      conn=conn)
 
 
-class TestVerifyStatsRolling:
-    """update_strategy_verify_stats：COALESCE/MAX 增量滚动。"""
-
-    def test_首轮None分支与次轮增量(self, db):
-        _strategy(db, "s1", signature="sig-1")
-        repo.update_strategy_verify_stats(
-            db, "s1", new_score=80.0, verify_star=1,
-            verified_at="2026-01-01T00:00:00+00:00")
-        row = repo.get_strategy(db, "s1")
-        assert row["verify_count"] == 1
-        assert row["verify_avg_score"] == 80.0, "首轮 avg=NULL 分支取新分"
-        assert row["verify_best_score"] == 80.0, "首轮 best=NULL 分支取新分"
-        assert row["verify_star"] == 1
-        assert row["last_verified_at"] == "2026-01-01T00:00:00+00:00"
-
-        repo.update_strategy_verify_stats(
-            db, "s1", new_score=60.0, verify_star=2,
-            verified_at="2026-01-02T00:00:00+00:00")
-        row = repo.get_strategy(db, "s1")
-        assert row["verify_count"] == 2
-        assert row["verify_avg_score"] == pytest.approx(70.0), "(80*1+60)/2"
-        assert row["verify_best_score"] == 80.0, "max(80, 60) 保持"
-        assert row["verify_star"] == 2, "star 直接覆写不滚动"
-
-    def test_高分刷新best(self, db):
-        _strategy(db, "s1", signature="sig-1")
-        for score in (50.0, 90.0):
-            repo.update_strategy_verify_stats(
-                db, "s1", new_score=score, verify_star=1,
-                verified_at="2026-01-01T00:00:00+00:00")
-        assert repo.get_strategy(db, "s1")["verify_best_score"] == 90.0
-
-
 class TestWriteSurfaceLockdown:
     """三写点收编·repository 侧两项（build-strategy-lifecycle 1.3）：
     save 初始态白名单（函数级 422 先于 DB 触发器——双层守卫层②面）

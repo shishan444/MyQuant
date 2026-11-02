@@ -1,9 +1,8 @@
 """属性不变量特征网（阶段四属性补强，V3 锚点分类：属性/不变量）。
 
 对纯计算函数验证一类输入应保持的关系（明确成立条件）：
-- compute_verify_star：全 qualified 前提下 star 随 avg_fitness 单调不减，
-  且阈值边界处正确跳变（人工核算锚在 test_verify_star.py，此处补
-  单调性属性）
+- compute_verify_star 属性段已随旧验证会话体系退役
+  （retire-verify-sessions）
 - _mask/_masked_view：任意非空凭证恒全掩码、空恒空串（不依赖输入形态）
 - _safe_error_message：任意异常实例消息恒取自有限值域
   {数据文件缺失*, 内部错误}（不泄露 str(exc) 原文）
@@ -15,40 +14,6 @@ import random
 import pytest
 
 pytestmark = [pytest.mark.unit]
-
-
-class TestComputeVerifyStarMonotonicity:
-    def _star(self, fitness: float) -> int:
-        from api.routes.strategies.verify import compute_verify_star
-        return compute_verify_star(fitness, qualified_count=1, total_periods=1)
-
-    def test_star_monotonic_nondecreasing_over_fitness(self) -> None:
-        """全 qualified 前提：fitness 递增序列的 star 单调不减。"""
-        random.seed(42)
-        fitnesses = sorted(
-            [random.uniform(-2.0, 10.0) for _ in range(200)]
-            + [0.0, 1e-9, 2.0, 3.0, 4.5, 6.0]  # 阈值精确点并入后整体排序
-        )
-        stars = [self._star(f) for f in fitnesses]
-        for i, (prev, cur) in enumerate(zip(stars, stars[1:])):
-            assert cur >= prev, (
-                f"位置 {i}（fitness {fitnesses[i]:.4f}->{fitnesses[i+1]:.4f}）"
-                f"star {prev}->{cur} 下降"
-            )
-
-    def test_star_threshold_jumps(self) -> None:
-        """阈值边界跳变：恰阈值取高档、阈值下取低档。"""
-        assert self._star(5.999999) == 4
-        assert self._star(6.0) == 5
-        assert self._star(4.499999) == 3
-        assert self._star(4.5) == 4
-
-    def test_not_all_qualified_always_zero(self) -> None:
-        """非全 qualified 恒 0 星（与 fitness 无关）。"""
-        from api.routes.strategies.verify import compute_verify_star
-        for fitness in (-1.0, 0.5, 3.0, 9.9):
-            assert compute_verify_star(fitness, 0, 1) == 0
-            assert compute_verify_star(fitness, 2, 5) == 0
 
 
 class TestMaskInvariant:
