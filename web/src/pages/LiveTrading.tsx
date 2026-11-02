@@ -231,7 +231,7 @@ export function LiveTrading() {
           </div>
 
           {/* B6r 决策快照表 */}
-          <SectionCard icon={ScrollText} title="决策快照" subtitle="只读回放·预览样例" testid="live-b6">
+          <SectionCard icon={ScrollText} title="决策快照" subtitle="只读回放·目标态预览样例" testid="live-b6">
             <table className="w-full text-[11px]" data-testid="live-b6-table">
               <thead>
                 <tr className="text-text-muted text-left">
