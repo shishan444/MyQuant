@@ -771,6 +771,99 @@ def count_validation_records(
         return conn.execute(stmt).scalar_one()
 
 
+# ============================================================ 主任务卡片（B1 只读聚合，add-hypothesis-cards）
+
+# 卡片行排序/keyset 轴：recent_activity_at（research_log 最新
+# created_at 标量子查询）降序 + hypothesis_id 次序键保证确定次序。
+# NULL 语义：recent_activity_at 无日志行=NULL（SQLite DESC 排序
+# NULL 落末位——正常路径每假设必有 register 日志，NULL 仅防御手工库）
+_ACTIVITY_EXPR = (
+    select(func.max(ResearchLog.created_at))
+    .where(ResearchLog.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .scalar_subquery())
+_VALIDATION_COUNT_EXPR = (
+    select(func.count())
+    .select_from(ValidationRecord)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .scalar_subquery())
+# 最新验证结论取一：created_at 降序+record_id 次序键（同秒并列确定）
+_LATEST_VERDICT_EXPR = (
+    select(ValidationRecord.verdict)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .order_by(ValidationRecord.created_at.desc(),
+              ValidationRecord.record_id.desc())
+    .limit(1).scalar_subquery())
+_LATEST_RECORD_EXPR = (
+    select(ValidationRecord.record_id)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .order_by(ValidationRecord.created_at.desc(),
+              ValidationRecord.record_id.desc())
+    .limit(1).scalar_subquery())
+
+
+def _cards_filters(status: Optional[str], q: Optional[str]):
+    """status 等值+q 子串过滤条件（%/_ 字面转义——LIKE 案义字符不作
+    通配符；空/全空白 q 不过滤）。"""
+    filters = []
+    if status is not None:
+        filters.append(ResearchHypothesis.status == status)
+    if q is not None and q.strip():
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        filters.append(ResearchHypothesis.statement.like(
+            f"%{escaped}%", escape="\\"))
+    return filters
+
+
+def list_hypothesis_cards(
+    db_path: Path, *,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    offset: int = 0, limit: int = 50,
+    cursor: Optional[Tuple[Optional[str], str]] = None,
+    order: str = "desc",
+) -> List[Dict[str, Any]]:
+    """主任务卡片行（B1）：hypotheses 主表+三标量子查询单 SQL 联查。
+
+    卡片七字段为三源表派生视图（权威在各源表，本函数零持久化）；
+    adhoc 记录（hypothesis_id='adhoc'）因假设表零父行被主表联查自然
+    排除（结构事实非过滤特判）。cursor=(recent_activity_at,
+    hypothesis_id) keyset 续页无漂移（沿 _apply_keyset 四表同构收口）。
+    """
+    stmt = select(
+        ResearchHypothesis.hypothesis_id,
+        ResearchHypothesis.statement,
+        ResearchHypothesis.status,
+        _VALIDATION_COUNT_EXPR.label("validation_count"),
+        _LATEST_VERDICT_EXPR.label("latest_verdict"),
+        _LATEST_RECORD_EXPR.label("latest_record_id"),
+        _ACTIVITY_EXPR.label("recent_activity_at"),
+    )
+    for f in _cards_filters(status, q):
+        stmt = stmt.where(f)
+    stmt = _apply_keyset(
+        stmt, _ACTIVITY_EXPR, ResearchHypothesis.hypothesis_id,
+        cursor, order,
+    ).offset(offset).limit(limit)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return [dict(r) for r in conn.execute(stmt).mappings()]
+
+
+def count_hypothesis_cards(
+    db_path: Path, *,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+) -> int:
+    """卡片真总数（过滤口径与 list_hypothesis_cards 一致——status+q
+    双过滤后的假设计数，非当页数）。"""
+    stmt = select(func.count()).select_from(ResearchHypothesis)
+    for f in _cards_filters(status, q):
+        stmt = stmt.where(f)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        return conn.execute(stmt).scalar_one()
+
+
 # ============================================================ 插件（双写组合）
 
 def save_plugin_with_registry(

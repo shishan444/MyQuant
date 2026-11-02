@@ -17,8 +17,11 @@ from core.persistence.repository import research as rr
 
 router = APIRouter(tags=["research"])
 
-# 值域（与 ORM 注释/thresholds 三段闸门一致——非法值 422 由值域校验层产）
-_LEVELS = ("isolated_backtest", "random_window", "composite", "component")
+# 值域（与 ORM 注释/thresholds 三段闸门一致——非法值 422 由值域校验层产；
+# staged_validation 为 add-hypothesis-cards B3 修正补入——原漏致 DB 实测
+# 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留）
+_LEVELS = ("isolated_backtest", "random_window", "staged_validation",
+           "composite", "component")
 _VERDICTS = ("pass", "fail", "inconclusive")
 
 

@@ -1246,6 +1246,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/hypothesis-cards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hypothesis Cards
+         * @description 主任务卡片查询：status 等值+q 子串过滤，recent_activity_at
+         *     降序（次序键 hypothesis_id），cursor keyset 续页（提供时 page 被
+         *     忽略），total 为过滤口径真总数。
+         */
+        get: operations["hypothesis_cards_api_research_hypothesis_cards_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/validate-backtest": {
         parameters: {
             query?: never;
@@ -6798,6 +6820,43 @@ export interface operations {
                 "application/json": components["schemas"]["HypothesisTransitionRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hypothesis_cards_api_research_hypothesis_cards_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                q?: string | null;
+                page?: number;
+                page_size?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

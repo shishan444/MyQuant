@@ -264,6 +264,12 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "grid.modes[].sl_series_source.column": "fx 形制列名非法：column 须为"
                                            "fx_ 前缀精确列名（exit_sweep "
                                            "grid 校验面与登记面同判）",
+    # 主任务卡片状态筛选（add-hypothesis-cards B1）：HTTP 面内联校验的
+    # detail.field 面（MCP 面不暴露该端点——场景表按 parity 登记机制
+    # 补位，detail.field="status" 分派）
+    "status": "假设状态值域外：status ∈ {active, supported, refuted,"
+              " superseded, abandoned}（状态机五值——supported 存量"
+              "零仍属合法；查看 detail.legal_range）",
 }
 
 
