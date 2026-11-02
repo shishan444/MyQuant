@@ -45,7 +45,7 @@ def _apply_keyset(
     stmt: Any,
     created_at_col: Any,
     pk_col: Any,
-    cursor: Optional[Tuple[str, str]],
+    cursor: Optional[Tuple[Optional[str], str]],
     order: str,
 ) -> Any:
     """研究域列表的 keyset 过滤与稳定排序（四表同构收口）。
@@ -54,13 +54,25 @@ def _apply_keyset(
     and_/or_ 展开形，不依赖 SQLite 行值支持）；order 缺省 asc——
     offset/limit 翻页消费方（iter_all_pages）零改动，HTTP 列表端点
     传 desc（最新在前）并经 cursor 续页（深翻页漂移免疫）。
+
+    NULL 语义（仅 desc：cards 的 recent_activity_at 标量子查询可
+    NULL——无日志行假设；四实体表 created_at NOT NULL 不触发）：
+    SQLite DESC 缺省 NULL 落末位，而 NULL<c 比较恒假会漏末位段，
+    非 NULL cursor 须补 IS NULL 支；cursor 本身落在 NULL 段时该段
+    内只余主键可比。asc 不处理：cards 恒 desc、四表 NOT NULL，
+    组合不可达。
     """
     if cursor is not None:
         c, k = cursor
         if order == "desc":
-            stmt = stmt.where(or_(
-                created_at_col < c,
-                and_(created_at_col == c, pk_col < k)))
+            if c is None:
+                stmt = stmt.where(and_(
+                    created_at_col.is_(None), pk_col < k))
+            else:
+                stmt = stmt.where(or_(
+                    created_at_col < c,
+                    created_at_col.is_(None),
+                    and_(created_at_col == c, pk_col < k)))
         else:
             stmt = stmt.where(or_(
                 created_at_col > c,

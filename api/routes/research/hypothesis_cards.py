@@ -60,6 +60,11 @@ def hypothesis_cards(
     if page_size < 1 or page_size > 200:
         page_size = 50
     cur = decode_cursor(cursor)
+    if cur is not None and cur[0] == "None":
+        # NULL 位续页还原：末页行无日志时编码侧 str(None) 产
+        # "None|id"，decode 回字符串后须映射回 None 才进 _apply_keyset
+        # 的 NULL 段分支（时间串与 "None" 字典序比较无意义）
+        cur = (None, cur[1])
     items = rr.list_hypothesis_cards(
         db_path, status=status, q=q,
         offset=0 if cur is not None else (page - 1) * page_size,
