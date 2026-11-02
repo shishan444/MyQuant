@@ -1,3 +1,8 @@
+/**
+ * 设置页（路由 /settings）。通用/交易/指标三域配置编辑——表单草稿由
+ * AntD Form 持有（失败保留草稿+错误就近展示），指标参数经 zustand
+ * persist store 持久化。消费方：App 路由（页面入口）。
+ */
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
@@ -126,7 +131,7 @@ export function Settings() {
 }
 
 // ---------------------------------------------------------------------------
-// General settings（表单草稿=AntD Form 唯一持有）
+// 通用设置（表单草稿=AntD Form 唯一持有）
 // ---------------------------------------------------------------------------
 
 type GeneralFormValues = Pick<AppConfig, "language" | "timezone" | "notify_evolution" | "notify_signal">;
@@ -260,7 +265,7 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
 }
 
 // ---------------------------------------------------------------------------
-// Trading settings（数值字段经 InputNumber+rules：失败保留草稿+错误就近展示）
+// 交易设置（数值字段经 InputNumber+rules：失败保留草稿+错误就近展示）
 // ---------------------------------------------------------------------------
 
 type TradingFormValues = Pick<AppConfig, "init_cash" | "maker_fee" | "taker_fee" | "max_positions">;
@@ -347,7 +352,7 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 }
 
 // ---------------------------------------------------------------------------
-// Indicator settings tab（zustand persist store 持久化；订阅形态：G17.1 终核
+// 指标设置 tab（zustand persist store 持久化；订阅形态：G17.1 终核
 // 裁决豁免 selector 化——设置编辑页渲染全部分区并调用全部 actions，
 // 字段级订阅无收益，全量订阅为正确形态）
 // ---------------------------------------------------------------------------
@@ -357,7 +362,7 @@ function IndicatorSettings() {
 
   return (
     <>
-      {/* EMA section */}
+      {/* EMA 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">EMA 配置</h2>
@@ -409,7 +414,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* BOLL section */}
+      {/* BOLL 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">BOLL 配置</h2>
@@ -458,7 +463,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* RSI section */}
+      {/* RSI 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">RSI 配置</h2>
@@ -507,7 +512,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* VOL section */}
+      {/* VOL 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">成交量配置</h2>
@@ -533,7 +538,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* Actions */}
+      {/* 操作 */}
       <div className="flex items-center justify-between">
         <AntButton size="small" onClick={settings.resetToDefaults}>
           恢复默认

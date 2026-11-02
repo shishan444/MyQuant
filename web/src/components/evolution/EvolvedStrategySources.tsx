@@ -24,15 +24,35 @@ function sourceBadge(s: EvolvedStrategy) {
   );
 }
 
+/** sl_mode 档位展示标签（Strategies.tsx SL_MODE_LABELS 同形制；取值单源=后端 dna.py SL_MODES 四档） */
+const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
+
 function DnaSummary({ dna }: { dna: EvolvedStrategy["dna"] }) {
   const risk = dna.risk_genes;
-  const direction = risk?.direction === "short" ? "做空" : risk?.direction === "mixed" ? "混合" : "做多";
+  // 方向显式四分支：short/mixed/long 之外（含 risk_genes 整体缺失）不兜底显示
+  const direction =
+    risk?.direction === "short" ? "做空"
+    : risk?.direction === "mixed" ? "混合"
+    : risk?.direction === "long" ? "做多"
+    : null;
   const geneCount = (dna.signal_genes?.length ?? 0) + (dna.layers?.length ?? 0);
+  const stopLoss = risk?.stop_loss ?? null;
+  const takeProfit = risk?.take_profit ?? 0;
+  const slMode = risk?.sl_mode ?? null;
+  const parts = [
+    direction,
+    slMode ? SL_MODE_LABELS[slMode] ?? slMode : null,
+    // series 档止损线由 sl_series_source 价格列承载，stop_loss 物化残留是
+    // dataclass 缺省（dna.py 默认 0.05）而非声明值，标注防止误读
+    stopLoss != null
+      ? `止损 ${(stopLoss * 100).toFixed(1)}%${slMode === "series" ? "（非声明值）" : ""}`
+      : null,
+    takeProfit > 0 ? `止盈 ${(takeProfit * 100).toFixed(1)}%` : null,
+    `${geneCount} 个基因`,
+  ].filter((p): p is string => p != null);
   return (
     <span className="text-[11px] text-slate-500">
-      {direction} · 止损 {((risk?.stop_loss ?? 0.03) * 100).toFixed(1)}% ·{" "}
-      {(risk?.take_profit ?? 0) * 100 > 0 ? `止盈 ${((risk.take_profit ?? 0) * 100).toFixed(1)}% · ` : ""}
-      {geneCount} 个基因
+      {parts.join(" · ")}
     </span>
   );
 }

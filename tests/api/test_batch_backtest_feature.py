@@ -32,8 +32,13 @@ from tests.helpers.data_factory import make_dna, make_ohlcv
 
 def _fake_engine_result(
     total_return: float = 0.05, total_trades: int = 0,
+    max_drawdown: float = 0.01,
 ) -> SimpleNamespace:
-    """BacktestEngine.batch_run 结果替身：零交易路径（win_rate=None 透传）。"""
+    """BacktestEngine.batch_run 结果替身：零交易路径（win_rate=None 透传）。
+
+    max_drawdown 可注入（CARD-01 锚用）：真实引擎口径 drawdown≤0 恒成立
+    （core/scoring/metrics.py，-0.08=8% 回撤），负值注入按同口径。
+    """
     return SimpleNamespace(
         equity_curve=pd.Series([100000.0, 100050.0, 100100.0]),
         total_trades=total_trades,
@@ -44,7 +49,7 @@ def _fake_engine_result(
         funding=None,
         trades_df=None,
         metrics_dict={
-            "sharpe_ratio": 0.1, "max_drawdown": 0.01,
+            "sharpe_ratio": 0.1, "max_drawdown": max_drawdown,
             "win_rate": None, "profit_factor": 0.0,
         },
     )
@@ -345,6 +350,49 @@ class TestProcessorFinalize:
         """batch 无 session 表：mark_failed 为 no-op（不抛异常）。"""
         processor = _make_processor(batch_db, tmp_path)
         processor.mark_failed("some error")  # 不应抛异常
+
+    def test_finalize_worst_drawdown_takes_deepest(
+        self, batch_db: Path, tmp_path: Path,
+    ) -> None:
+        """CARD-01 回归锚：worst_max_drawdown 取较深回撤（负值口径 min）。
+
+        两区间 -0.05 / -0.20 → worst == -0.20；旧 max 反转实现会取
+        浅者 -0.05（负值口径下 max 恰取绝对值小者）。周期数据注入面
+        =fallback_metrics 的 metrics_dict（与生产同源）。
+        """
+        from api.routes.strategies.batch import _BatchBacktestProcessor
+        from api.schemas import VerifyDateRange
+
+        payload = BatchBacktestRequest(
+            strategy_ids=["s-high"],
+            data_ranges=[
+                VerifyDateRange(start="2024-01-01", end="2024-03-01"),
+                VerifyDateRange(start="2024-04-01", end="2024-06-01"),
+            ],
+            leverage=1,
+        )
+        processor = _BatchBacktestProcessor(payload, batch_db, tmp_path)
+        processor.init()
+        processor._load_df = lambda *a, **kw: make_ohlcv(50, "4h")
+        processor._load_mtf = lambda *a, **kw: None
+        processor._compute_fitness = lambda *a, **kw: _fitness_result()
+
+        dd_by_step = iter([-0.05, -0.20])
+        with patch("core.backtest.engine.BacktestEngine") as engine_cls:
+            engine_cls.return_value.batch_run.side_effect = (
+                lambda dnas, df, **kw: [
+                    _fake_engine_result(max_drawdown=next(dd_by_step))
+                    for _ in dnas])
+            processor.process_step(0)
+            processor.process_step(1)
+
+        summary = processor.finalize()["summary"]
+        assert len(summary) == 1
+        # 周期两值就位（注入面无错位）后锚聚合语义
+        period_dds = [p["max_drawdown"] for p in
+                      summary[0]["per_period_results"]]
+        assert set(period_dds) == {-0.05, -0.2}
+        assert summary[0]["worst_max_drawdown"] == -0.2
 
 
 class TestStreamEndpoint:

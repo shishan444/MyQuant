@@ -1,8 +1,8 @@
 /**
  * 03 策略验证·三门槛点行与星级组件（alignment-batch D1）。
- * 消费 verify 历史行扩展字段（total_trades/thresholds/star）——
- * 后端 pydantic 已声明（api/schemas.py VerifyHistoryItem），前端
- * 生成类型未同步，此处以交叉类型补形，生成层刷新后字段重合无冲突。
+ * 生成类型 VerifyHistoryItem 已含 total_trades/thresholds/star 三字段；
+ * VerifyHistoryRow 仅收窄 thresholds——生成源为索引签名宽形
+ * （[key: string]: boolean | null），此处收窄为三键具体形。
  * 纯函数（classifyThresholds/summarizeThresholds/formatDrawdown）在
  * thresholdsUtils.ts（react-refresh：组件文件只导出组件）。
  */
@@ -17,11 +17,9 @@ export interface VerifyThresholds {
   trades_enough: boolean | null;
 }
 
-/** 历史结果行补形：生成类型缺三新字段，运行时后端必给（thresholds 可 null） */
-export type VerifyHistoryRow = VerifyHistoryItem & {
-  total_trades?: number;
+/** 历史结果行：仅收窄 thresholds（生成源索引签名→三键具体形；total_trades/star 生成源已具体声明） */
+export type VerifyHistoryRow = Omit<VerifyHistoryItem, "thresholds"> & {
   thresholds?: VerifyThresholds | null;
-  star?: number;
 };
 
 /** 门槛定义：呈现 label 与判定式文案（常量单源在后端 DEFAULT_PROFILE，此处仅展示） */

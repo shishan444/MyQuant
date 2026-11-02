@@ -168,4 +168,22 @@ describe("Strategies（06 策略库·对齐批）", () => {
     expect(dna).toHaveTextContent("多周期层（0）");
     expect(dna.textContent).toContain("单层结构（无多周期层）");
   });
+
+  it("CARD-06 direction 缺失：风险段方向位占位「—」、信息面板方向行占位「--」，不兜「做多」", async () => {
+    // direction undefined 策略（其余字段齐备——占位只发生在方向位）
+    const stg = mkStrategy("st-nodir-0001", "无方向策略", "active");
+    stg.dna = {
+      ...DNA,
+      risk_genes: { ...DNA.risk_genes, direction: undefined },
+    } as unknown as typeof DNA;
+    vi.mocked(strat.getStrategies).mockResolvedValue({ items: [stg], total: 1 } as never);
+    setup();
+    fireEvent.click((await screen.findAllByTestId("strategy-name"))[0]);
+    // 风险基因段（:313 形制）：— · 2x · 百分比档（占位符后拼接保留）
+    const dna = await screen.findByTestId("dna-five-segments");
+    expect(dna.textContent).toContain("— · 2x · 百分比档");
+    // 信息面板方向行（:429 形制）：占位「--」；整页无「做多」兜底文案
+    expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/做多/)).not.toBeInTheDocument();
+  });
 });

@@ -40,7 +40,8 @@ COMPOSITE_WINDOW_MULTIPLIER = 1.2
 # 证据闸门缺省样本线（profile 无 total_trades 规则时的兜底；0.2.11）
 _MIN_TRADES_DEFAULT = 5
 
-_OPS = {
+# 门槛比较算子表（公开：verify 域三门槛现算等消费方复用，单源维护）
+OPS = {
     "gt": lambda v, t: v > t,
     "ge": lambda v, t: v >= t,
     "lt": lambda v, t: v < t,
@@ -58,7 +59,7 @@ def _rule_details(metrics: Dict[str, Any], prof: Dict[str, Any]) -> Tuple[bool, 
         actual = metrics.get(rule)
         passed = (
             actual is not None
-            and _OPS[op](actual, threshold)
+            and OPS[op](actual, threshold)
         )
         if not passed:
             all_passed = False

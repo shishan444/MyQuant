@@ -1,3 +1,9 @@
+/**
+ * 交易页（路由 /trading）。纸盘任务双栏：左栏任务列表+右栏详情
+ * （K 线+权益曲线同卡主体、绩效指标与错误披露）——支持从
+ * Strategies/Verify 页带 strategy_id 流转自动建盘。消费方：App
+ * 路由（页面入口）。
+ */
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
@@ -192,7 +198,7 @@ export function Trading() {
     );
   }, [tasks, searchQuery]);
 
-  // Route state for auto-create from Strategies/Verify pages（上盘流转：带 strategy_id）
+  // 自动建盘路由状态（来自 Strategies/Verify 页——上盘流转：带 strategy_id）
   const [presetStrategyId, setPresetStrategyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -292,7 +298,7 @@ export function Trading() {
   return (
     <PageTransition>
       <div className="flex h-full gap-4">
-        {/* Left sidebar: task list */}
+        {/* 左栏：任务列表 */}
         <div className="w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto pr-1">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-text-primary">任务列表</h2>
@@ -334,7 +340,7 @@ export function Trading() {
           ))}
         </div>
 
-        {/* Right panel: detail */}
+        {/* 右栏：详情 */}
         <div className="flex-1 flex flex-col gap-3 overflow-y-auto min-h-0">
           {activeTask ? (
             <TaskDetailPanel
@@ -427,7 +433,7 @@ function TaskDetailPanel({
     <div className="flex flex-col gap-3">
       {/* 账户概览卡片 */}
       <GlassCard className="p-4">
-        {/* Header: strategy info + controls */}
+        {/* 头部：策略信息+控制 */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3 flex-wrap">
             <h2 className="text-base font-semibold text-text-primary">
@@ -474,7 +480,7 @@ function TaskDetailPanel({
           </div>
         </div>
 
-        {/* Error detail line（error 终态/装载失败的拒绝原因披露） */}
+        {/* 错误详情行（error 终态/装载失败的拒绝原因披露） */}
         {task.status === "error" && task.error_detail && (
           <div className="mt-2 flex items-start gap-2 rounded border border-loss/30 bg-loss/10 px-2 py-1.5 text-xs text-loss">
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -567,7 +573,7 @@ function TaskDetailPanel({
         )}
       </GlassCard>
 
-      {/* Chart + Equity Curve (grouped in one card) —— K 线区升首屏主体（kline-common-layer 组 2） */}
+      {/* 图表+权益曲线（同卡分组） —— K 线区升首屏主体（kline-common-layer 组 2） */}
       <GlassCard className="p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs text-text-secondary">K线图</span>
@@ -596,7 +602,7 @@ function TaskDetailPanel({
         )}
       </GlassCard>
 
-      {/* Performance Metrics（报告第一层主指标）+ 报告源版本标识 */}
+      {/* 绩效指标（报告第一层主指标）+ 报告源版本标识 */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-text-secondary">验证报告</h3>
         <Tag className="!m-0 !text-[10px]" color={finalReportData ? "gold" : "default"}>

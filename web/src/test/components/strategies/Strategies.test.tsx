@@ -1,6 +1,5 @@
 /**
- * Tests for Strategies page component.
- * Covers: loading state, empty state, strategy list rendering, filter/search.
+ * Strategies 页组件测试。覆盖：加载态、空态、策略列表渲染、筛选/搜索。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -8,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import type { ReactNode } from "react";
 
-// Mock API services
+// mock API 服务层
 vi.mock("@/services/strategies", () => ({
   getStrategies: vi.fn(),
   getStrategy: vi.fn(),
@@ -19,7 +18,7 @@ vi.mock("@/services/strategies", () => ({
   compareStrategies: vi.fn(),
 }));
 
-// Mock hooks - keep useStrategies real (delegates to mocked API), mock mutations
+// mock hooks——useStrategies 保持真实（委托到已 mock 的 API），mock 变更操作
 vi.mock("@/hooks/useStrategies", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useStrategies")>();
   return {
@@ -42,7 +41,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-// Mock motion/react
+// mock motion/react
 vi.mock("motion/react", () => ({
   useReducedMotion: () => false,
   motion: new Proxy({}, {
@@ -122,9 +121,9 @@ beforeEach(() => {
 });
 
 describe("Strategies page", () => {
-  // --- Loading state ---
+  // --- 加载态 ---
   it("shows loading skeleton when loading", () => {
-    // Don't resolve the API call -> stays in loading state
+    // API 调用不 resolve → 保持加载态
     mockGetStrategies.mockReturnValue(new Promise(() => {}));
 
     render(<Strategies />, { wrapper: createWrapper() });
@@ -132,7 +131,7 @@ describe("Strategies page", () => {
     expect(pulses.length).toBeGreaterThan(0);
   });
 
-  // --- Error state ---
+  // --- 错误态 ---
   it("shows error state with retry when loading fails", async () => {
     mockGetStrategies.mockRejectedValue(new Error("服务器错误"));
 
@@ -142,17 +141,17 @@ describe("Strategies page", () => {
     expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
   });
 
-  // --- Empty state ---
+  // --- 空态 ---
   it("shows empty state when no strategies", async () => {
     mockGetStrategies.mockResolvedValue({ items: [], total: 0 });
 
     render(<Strategies />, { wrapper: createWrapper() });
-    // Wait for React Query to resolve
+    // 等待 React Query resolve
     await screen.findByText("策略库为空");
     expect(screen.getByText("前往实验室")).toBeInTheDocument();
   });
 
-  // --- Strategy list ---
+  // --- 策略列表 ---
   it("renders strategy list with names", async () => {
     const strategies = [
       makeStrategy({ strategy_id: "s1", name: "Alpha Strategy" }),
@@ -165,7 +164,7 @@ describe("Strategies page", () => {
     expect(screen.getByText("Beta Strategy")).toBeInTheDocument();
   });
 
-  // --- Strategy count ---
+  // --- 策略计数 ---
   it("shows strategy count", async () => {
     const strategies = [
       makeStrategy({ strategy_id: "s1", name: "First Strategy" }),
@@ -175,11 +174,11 @@ describe("Strategies page", () => {
 
     render(<Strategies />, { wrapper: createWrapper() });
     await screen.findByText("已保存策略");
-    // Count badge shows number of strategies
+    // 计数徽章显示策略数
     expect(screen.getByText("已保存策略").nextElementSibling?.textContent).toBe("2");
   });
 
-  // --- Filter: no match ---
+  // --- 筛选无匹配 ---
   it("shows no match text when filter excludes all", async () => {
     mockGetStrategies.mockResolvedValue({ items: [makeStrategy({ strategy_id: "s1", name: "Alpha", source: "lab" })], total: 1 });
 
@@ -192,7 +191,7 @@ describe("Strategies page", () => {
     expect(screen.getByText("未找到匹配的策略")).toBeInTheDocument();
   });
 
-  // --- Search by name ---
+  // --- 按名称搜索 ---
   it("filters strategies by search query", async () => {
     const strategies = [
       makeStrategy({ strategy_id: "s1", name: "Alpha Strategy" }),
@@ -210,7 +209,7 @@ describe("Strategies page", () => {
     expect(screen.queryByText("Beta Strategy")).not.toBeInTheDocument();
   });
 
-  // --- Source badge ---
+  // --- 来源徽章 ---
   it("renders source badge for strategies", async () => {
     mockGetStrategies.mockResolvedValue({ items: [makeStrategy({ strategy_id: "s1", source: "evolution" })], total: 1 });
 
@@ -218,7 +217,7 @@ describe("Strategies page", () => {
     await screen.findByText("进化");
   });
 
-  // --- Symbol/timeframe ---
+  // --- 品种/周期 ---
   it("renders symbol and timeframe", async () => {
     mockGetStrategies.mockResolvedValue({ items: [makeStrategy({ strategy_id: "s1", symbol: "ETHUSDT", timeframe: "1h" })], total: 1 });
 
@@ -229,7 +228,7 @@ describe("Strategies page", () => {
     expect(content).toContain("1h");
   });
 
-  // --- Delete mutation hook called ---
+  // --- 删除变更 hook 被调用 ---
   it("calls useDeleteStrategy", async () => {
     mockGetStrategies.mockResolvedValue({ items: [makeStrategy()], total: 1 });
 
@@ -238,7 +237,7 @@ describe("Strategies page", () => {
     expect(mockUseDeleteStrategy).toHaveBeenCalled();
   });
 
-  // --- Qualified badge ---
+  // --- 达标徽章 ---
   it("renders qualified badge for qualified strategy", async () => {
     mockGetStrategies.mockResolvedValue({
       items: [makeStrategy({ strategy_id: "s1", name: "Good Strat", qualified: true, best_fitness: 1.5 })],
@@ -253,7 +252,7 @@ describe("Strategies page", () => {
     expect(badges.length).toBeGreaterThanOrEqual(1);
   });
 
-  // --- Checkbox rendering ---
+  // --- 复选框渲染 ---
   it("renders checkboxes in table rows", async () => {
     mockGetStrategies.mockResolvedValue({
       items: [
@@ -270,7 +269,7 @@ describe("Strategies page", () => {
     expect(checkboxes.length).toBe(3);
   });
 
-  // --- Qualified filter ---
+  // --- 达标筛选 ---
   it("shows qualified filter select", async () => {
     mockGetStrategies.mockResolvedValue({ items: [makeStrategy()], total: 1 });
 
@@ -281,7 +280,7 @@ describe("Strategies page", () => {
     expect(screen.getByLabelText("验证状态筛选")).toBeInTheDocument();
   });
 
-  // --- Expand panel on row click ---
+  // --- 行点击展开面板 ---
   it("shows expand panel with strategy info when row name is clicked", async () => {
     mockGetStrategies.mockResolvedValue({
       items: [makeStrategy({ strategy_id: "s1", name: "Expandable" })],
@@ -291,14 +290,14 @@ describe("Strategies page", () => {
     render(<Strategies />, { wrapper: createWrapper() });
     const nameEl = await screen.findByText("Expandable");
     fireEvent.click(nameEl);
-    // Expand panel should show strategy info labels
+    // 展开面板应显示策略信息标签
     await screen.findByText("策略信息");
     // alignment-batch D4：策略结构区改为 DNA 五段呈现
     expect(screen.getByText("策略结构（DNA 五段）")).toBeInTheDocument();
     expect(screen.getByText("四段履历")).toBeInTheDocument();
   });
 
-  // --- Batch toolbar appears on selection ---
+  // --- 选中后批量工具栏出现 ---
   it("shows batch toolbar when strategies are selected", async () => {
     mockGetStrategies.mockResolvedValue({
       items: [
@@ -312,13 +311,13 @@ describe("Strategies page", () => {
     await screen.findByText("Alpha");
 
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    fireEvent.click(checkboxes[1]); // Select first strategy row
+    fireEvent.click(checkboxes[1]); // 选中第一行策略
 
     expect(screen.getByText(/已选 1 项/)).toBeInTheDocument();
     expect(screen.getByText("批量删除")).toBeInTheDocument();
   });
 
-  // --- Batch delete feedback (three states: all success / partial / all failure) ---
+  // --- 批量删除反馈（三态：全部成功/部分失败/全部失败） ---
   async function setupBatchDelete() {
     mockGetStrategies.mockResolvedValue({
       items: [

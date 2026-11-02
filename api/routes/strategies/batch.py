@@ -383,7 +383,7 @@ class _BatchBacktestProcessor:
                 timeframe=per_period_items[0].timeframe if per_period_items else "",
                 avg_total_return=round(sum(returns) / len(returns), 4),
                 avg_sharpe_ratio=round(sum(sharpes) / len(sharpes), 4),
-                worst_max_drawdown=round(max(drawdowns), 4),
+                worst_max_drawdown=round(min(drawdowns), 4),
                 avg_fitness=round(sum(fitnesses) / len(fitnesses), 4),
                 qualified_count=qualified_count,
                 total_periods=len(periods),

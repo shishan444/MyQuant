@@ -56,7 +56,7 @@ export type ExecutionGenes = S["ExecutionGenesModel"];
 /** 风险基因 ← 后端 RiskGenesModel；direction/sl_mode 枚举收窄；sl_mode/atr_period 后端 default 兜底（openapi 因 default 标必填，消费端保持可选） */
 export type RiskGenes = Omit<S["RiskGenesModel"], "direction" | "sl_mode" | "atr_period"> & {
   direction: "long" | "short" | "mixed";
-  sl_mode?: "pct" | "atr";
+  sl_mode?: "pct" | "atr" | "trail" | "series";
   atr_period?: number;
 };
 

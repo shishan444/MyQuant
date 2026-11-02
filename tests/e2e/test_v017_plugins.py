@@ -32,14 +32,17 @@ class TestV017Plugins:
         assert len(root.inner_html()) > 200
 
     def test_plugins_has_sections(self, page: Page):
-        """关键区标题渲染：公式插件/词表/四层池/协议要点至少可辨。"""
+        """关键区标题渲染：公式插件/词表/四层池/协议要点全须在页。
+
+        五区块（Plugins.tsx 主组件无条件渲染，三态 loading/error/empty
+        由各区块 body 自理——SectionCard title 恒在）：三区标题任一
+        丢失即红（旧 or 形制任一命中即过，两区丢失静默漏检）。"""
         page.goto(BASE + "/plugins", timeout=10000)
         page.wait_for_load_state("domcontentloaded")
         _wait_react(page)
         content = page.content()
         assert "插件" in content
-        # 词表卡与四层池是静态+registry 混合区，标题独立可辨
-        assert "词表" in content or "四层" in content or "协议" in content
+        assert "词表" in content and "四层" in content and "协议" in content
 
     def test_plugins_screenshot(self, page: Page):
         page.goto(BASE + "/plugins", timeout=10000)

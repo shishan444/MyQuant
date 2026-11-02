@@ -1,4 +1,4 @@
-"""Verify endpoint tests: schema validation, comprehensive score calculation, history."""
+"""Verify 端点测试：schema 校验、综合评分计算、历史记录。"""
 
 import pytest
 
@@ -17,7 +17,7 @@ from api.schemas import (
 
 
 # ---------------------------------------------------------------------------
-# Schema tests
+# schema 测试
 # ---------------------------------------------------------------------------
 
 def test_verify_date_range_schema():
@@ -105,7 +105,7 @@ def test_verify_response_schema():
 
 
 # ---------------------------------------------------------------------------
-# Endpoint existence test
+# 端点存在性测试
 # ---------------------------------------------------------------------------
 
 def test_verify_endpoint_exists():
@@ -114,11 +114,11 @@ def test_verify_endpoint_exists():
 
 
 # ---------------------------------------------------------------------------
-# Comprehensive score calculation tests
+# 综合评分计算测试
 # ---------------------------------------------------------------------------
 
 def test_comprehensive_score_all_qualified():
-    """All 3 periods qualified → consistency_bonus=1.2."""
+    """三区间全达标 → consistency_bonus=1.2。"""
     fitnesses = [1.0, 1.2, 0.8]
     avg = sum(fitnesses) / 3
     qualified_count = 3
@@ -136,7 +136,7 @@ def test_comprehensive_score_partial_qualified():
     qualified_count = 2
     total = 3
     qualified_ratio = qualified_count / total
-    consistency_bonus = 1.0  # not all qualified
+    consistency_bonus = 1.0  # 非全达标
     score = avg * qualified_ratio * consistency_bonus
     assert abs(score - avg * (2/3)) < 0.001
 
@@ -159,13 +159,13 @@ def test_comprehensive_score_single_period():
     qualified_count = 1
     total = 1
     qualified_ratio = 1.0
-    consistency_bonus = 1.2  # all qualified (1/1)
+    consistency_bonus = 1.2  # 全达标（1/1）
     score = avg * qualified_ratio * consistency_bonus
     assert abs(score - 1.8) < 0.001
 
 
 # ---------------------------------------------------------------------------
-# History endpoint tests
+# 历史端点测试
 # ---------------------------------------------------------------------------
 
 def test_verify_history_schema():
@@ -292,3 +292,24 @@ def test_verify_history_item_thresholds_schema():
     assert item.total_trades == 12
     assert item.star == 2
     assert item.thresholds["drawdown_ok"] is None
+
+
+def test_threshold_follows_default_profile_single_source(monkeypatch):
+    """单源跟随（失效侧）：门槛值改 DEFAULT_PROFILE → 判定跟随——
+    封死复制常量实现形制（_threshold_star 若硬编码 0/0.25/5 而非引用
+    thresholds.py DEFAULT_PROFILE 单源，本例红；spec α Requirement
+    「门槛常量引用 thresholds.py DEFAULT_PROFILE 单源」的验收面）。
+    """
+    from core.analysis.thresholds import DEFAULT_PROFILE
+
+    row = _row(total_return=0.01, max_drawdown=-0.08, total_trades=10)
+    # 交易门槛 5→100：trades=10 由过转不过，star 3→2
+    monkeypatch.setitem(DEFAULT_PROFILE["rules"]["total_trades"], "value", 100)
+    t_patched, star_patched = _threshold_star(row)
+    assert t_patched["trades_enough"] is False
+    assert star_patched == 2
+    # 还原后同输入回到原判定（跟随是双向的——非一次性分支）
+    monkeypatch.undo()
+    t_restored, star_restored = _threshold_star(row)
+    assert t_restored["trades_enough"] is True
+    assert star_restored == 3

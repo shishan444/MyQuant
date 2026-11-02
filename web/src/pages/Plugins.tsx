@@ -287,7 +287,7 @@ function VocabularySection() {
   return (
     <SectionCard
       icon={LibraryBig}
-      title="研究词表（26 词公式 DSL）"
+      title={`研究词表（${data?.total ?? "…"} 词公式 DSL）`}
       subtitle="公式插件表达式的可用词白名单，按族分组；权威源为后端注册表（响应现算非快照）"
       testid="plugins-vocabulary"
     >
@@ -399,7 +399,7 @@ const PROTOCOL_POINTS: Array<{ icon: React.ElementType; title: string; detail: s
   {
     icon: ShieldCheck,
     title: "静态校验三关",
-    detail: "表达式词白名单（26 词注册表）、语法结构、插件列在注册表可达——任一不过即拒绝注册（422 结构化错误）。",
+    detail: "表达式词白名单（注册表现算）、语法结构、插件列在注册表可达——任一不过即拒绝注册（422 结构化错误）。",
   },
   {
     icon: FileClock,

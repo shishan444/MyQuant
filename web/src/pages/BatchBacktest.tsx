@@ -1,3 +1,9 @@
+/**
+ * 批跑回测页（路由 /batch-backtest）。多策略×多区间批量回测：策略
+ * 选择/日期区间/参数配置 → 跨区间聚合摘要（六列对齐 avg/worst/
+ * qualified_count 等）+逐区间结果行与展开明细。消费方：App 路由
+ * （页面入口）。
+ */
 import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -20,7 +26,7 @@ import type {
   BacktestResult,
 } from "@/types/api";
 
-/* ── Helpers ── */
+/* ── 辅助函数 ── */
 
 interface DateRange { start: string; end: string }
 
@@ -51,19 +57,19 @@ function formatDrawdownPct(v: number): string {
   return `${(Math.abs(v) * 100).toFixed(1)}%`;
 }
 
-/* ── Main Component ── */
+/* ── 主组件 ── */
 
 export function BatchBacktest() {
   const location = useLocation();
   const locationState = location.state as { strategy_ids?: string[] } | null;
 
-  // ── Strategy data ──
+  // ── 策略数据 ──
   const { data: strategyData, isLoading: strategiesLoading } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 500 })
   );
   const strategies = strategyData?.items ?? [];
 
-  // ── Selection state ──
+  // ── 选择态 ──
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
     if (locationState?.strategy_ids?.length) {
       return new Set(locationState.strategy_ids);
@@ -74,7 +80,7 @@ export function BatchBacktest() {
   const [qualifiedFilter, setQualifiedFilter] = useState<QualifiedFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ── Config state ──
+  // ── 配置态 ──
   const [dateRanges, setDateRanges] = useState<DateRange[]>([{ start: "", end: "" }]);
   const [params, setParams] = useState({
     init_cash: "100000",
@@ -84,7 +90,7 @@ export function BatchBacktest() {
   });
   const [configCollapsed, setConfigCollapsed] = useState(false);
 
-  // ── Result state ──
+  // ── 结果态 ──
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey>("avg_fitness");
   const [expandedStrategyId, setExpandedStrategyId] = useState<string | null>(null);
   const [detailMap, setDetailMap] = useState<Record<string, BacktestResult>>({});
@@ -92,10 +98,10 @@ export function BatchBacktest() {
   const [detailError, setDetailError] = useState<Record<string, string>>({});
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
 
-  // ── Stream hook ──
+  // ── 流式 hook ──
   const stream = useBatchBacktestStream();
 
-  // ── Filtered strategies ──
+  // ── 筛选后策略 ──
   const filteredStrategies = useMemo(() => {
     let items = [...strategies];
     if (starFilter === "4+") items = items.filter((s) => (s.verify_star ?? 0) >= 4);
@@ -117,7 +123,7 @@ export function BatchBacktest() {
   const filledRanges = useMemo(() => dateRanges.filter((r) => r.start && r.end), [dateRanges]);
   const canStart = selectedIds.size >= 1 && filledRanges.length >= 1 && stream.status !== "running";
 
-  // ── Stream results ──
+  // ── 流式结果 ──
   const summary = useMemo<BatchBacktestSummaryItem[]>(() => {
     if (stream.status === "done" && Array.isArray(stream.summary)) return stream.summary as BatchBacktestSummaryItem[];
     return [];
@@ -139,7 +145,7 @@ export function BatchBacktest() {
     return { total: summary.length, avgReturn, qualifiedRate, bestName: best.strategy_name };
   }, [summary]);
 
-  // ── Selection handlers ──
+  // ── 选择处理 ──
   const toggleStrategy = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -167,7 +173,7 @@ export function BatchBacktest() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // ── Config handlers ──
+  // ── 配置处理 ──
   const handleDateChange = useCallback((index: number, field: "start" | "end", value: string) => {
     setDateRanges((prev) => {
       const next = [...prev];
@@ -237,7 +243,7 @@ export function BatchBacktest() {
   return (
     <PageTransition>
       <div className="p-4 space-y-3 max-w-[1400px] mx-auto">
-        {/* Header */}
+        {/* 头部 */}
         <div className="flex items-center gap-2.5">
           <LineChart className="h-4 w-4 text-accent-gold" />
           <h1 className="text-sm font-semibold text-text-primary">批量回测</h1>
@@ -246,14 +252,14 @@ export function BatchBacktest() {
           </span>
         </div>
 
-        {/* ─── Config ─── */}
+        {/* ─── 配置 ─── */}
         {!configCollapsed && stream.status !== "running" && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             className="rounded-xl border border-border-default/50 bg-white/[0.01] p-4 space-y-4"
           >
-            {/* Strategy Selector */}
+            {/* 策略选择器 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-text-secondary">选择策略</label>
@@ -262,7 +268,7 @@ export function BatchBacktest() {
                 </span>
               </div>
 
-              {/* Filter bar */}
+              {/* 筛选栏 */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
                   {(["all", "4+", "3+"] as StarFilter[]).map((f) => (
@@ -289,7 +295,7 @@ export function BatchBacktest() {
                 </div>
               </div>
 
-              {/* Select actions */}
+              {/* 选择操作 */}
               <div className="flex items-center gap-2">
                 <AntButton type="text" size="small" className="!text-[10px]" onClick={selectAllFiltered} disabled={allFilteredSelected}>
                   全选当前
@@ -299,7 +305,7 @@ export function BatchBacktest() {
                 </AntButton>
               </div>
 
-              {/* Strategy table */}
+              {/* 策略表格 */}
               <div className="max-h-[220px] overflow-y-auto rounded-lg border border-border-default/30">
                 {strategiesLoading ? (
                   <div className="py-6 text-center">
@@ -370,7 +376,7 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Date ranges */}
+            {/* 日期区间 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-text-secondary">日期区间</label>
@@ -403,7 +409,7 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Params inline + Start */}
+            {/* 参数内联+开始 */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
                 <InlineParam label="资金" value={params.init_cash} onChange={(v) => setParams((p) => ({ ...p, init_cash: v }))} w="!w-24" />
@@ -419,7 +425,7 @@ export function BatchBacktest() {
           </motion.div>
         )}
 
-        {/* Collapsed config summary */}
+        {/* 收起态配置摘要 */}
         {configCollapsed && stream.status !== "running" && (
           <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30">
             <span className="text-xs text-text-secondary">
@@ -429,7 +435,7 @@ export function BatchBacktest() {
           </div>
         )}
 
-        {/* ─── Progress ─── */}
+        {/* ─── 进度 ─── */}
         {stream.status === "running" && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -458,7 +464,7 @@ export function BatchBacktest() {
           </motion.div>
         )}
 
-        {/* ─── Error ─── */}
+        {/* ─── 错误 ─── */}
         {stream.status === "error" && (
           <div className="rounded-xl border border-red-900/30 bg-white/[0.01] p-3 flex items-center gap-2">
             <X className="w-4 h-4 text-red-400 shrink-0" />
@@ -467,10 +473,10 @@ export function BatchBacktest() {
           </div>
         )}
 
-        {/* ─── Results ─── */}
+        {/* ─── 结果 ─── */}
         {stream.status === "done" && stats && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-            {/* Stats strip */}
+            {/* 指标条 */}
             <div className="flex items-center gap-5 px-1">
               <StatPill label="策略数" value={`${stats.total}`} />
               <StatPill label="平均收益" value={formatReturn(stats.avgReturn)} color={stats.avgReturn >= 0 ? "text-emerald-400" : "text-red-400"} />
@@ -503,7 +509,7 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Strategy result rows — 六列对齐（avg_total_return/avg_sharpe_ratio/worst_max_drawdown/avg_fitness/qualified_count/total_periods） */}
+            {/* 策略结果行 — 六列对齐（avg_total_return/avg_sharpe_ratio/worst_max_drawdown/avg_fitness/qualified_count/total_periods） */}
             <div className="space-y-1">
               <div className="grid grid-cols-[minmax(150px,1.4fr)_repeat(6,minmax(68px,0.75fr))_28px] gap-2 px-3 pb-1 text-[10px] text-text-secondary">
                 <span>策略</span>
@@ -544,7 +550,7 @@ export function BatchBacktest() {
   );
 }
 
-/* ── Sub-components ── */
+/* ── 子组件 ── */
 
 function InlineParam({ label, value, onChange, suffix, w = "!w-20" }: {
   label: string; value: string; onChange: (v: string) => void; suffix?: string; w?: string;

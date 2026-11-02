@@ -412,6 +412,39 @@ class TestVerifyHistoryAndSessions:
         ids = {i["result_id"] for i in response.json()["items"]}
         assert {"res-hist-0", "res-hist-1", "res-hist-2"} <= ids
 
+    def test_session_results_rows_carry_thresholds_and_star(
+        self, verify_client: TestClient,
+    ) -> None:
+        """alignment-batch α 端点组装面锚：GET sessions/{id}/results
+        每行附 thresholds 三布尔与 star（spec Requirement 主句）。
+
+        _history_items 若漏调 _threshold_star，函数层锚（test_api_verify）
+        与 schema 层锚（手工构造 VerifyHistoryItem）均不红——唯本例红。
+        history 端点与 sessions/results 共享 _history_items，锚一处即锚
+        两端点的同一组装路径。数据面：tr=0.1>0、dd=0.05<0.25、
+        trades=5>=5（含等号侧）→ 三门槛全过、star=3。
+        """
+        from core.persistence.repository.verify_session import save_verify_session
+        db_path = verify_client.app.state.db_path
+        save_verify_session(
+            db_path, session_id="sess-thresh",
+            strategy_ids='["strat-v1"]', data_ranges="[]",
+            init_cash=100000, fee=0.001, slippage=0.0005,
+        )
+        self._save_verify_result(db_path, "res-thresh", "sess-thresh")
+
+        response = verify_client.get(
+            "/api/strategies/verify/sessions/sess-thresh/results")
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["thresholds"] == {
+            "return_positive": True,
+            "drawdown_ok": True,
+            "trades_enough": True,
+        }
+        assert items[0]["star"] == 3
+
 
 class TestLeverageBoundValidation:
     """CARD-03：VerifyRequest.leverage 值域 [1, MAX_LEVERAGE]（422 面）。
