@@ -111,6 +111,15 @@ class TestOrderPaging:
         ts = [x["created_at"] for x in recs]
         assert ts == sorted(ts, reverse=True)
 
+    def test_verdict_three_states_all_present(self, client):
+        """Scenario「最近验证结论消费」：verdict 字段呈现三态——
+        全量响应 pass/fail/inconclusive 三值均如实可见（种子 6 条
+        三态循环各 2，降序时间流不吞任何一态）。"""
+        recs = client.get("/api/research/validation-records",
+                          params={"limit": 200}).json()["records"]
+        verdicts = {x["verdict"] for x in recs}
+        assert verdicts == {"pass", "fail", "inconclusive"}
+
     def test_paging_has_more(self, client):
         r1 = client.get("/api/research/validation-records", params={"limit": 4}).json()
         assert r1["has_more"] is True and len(r1["records"]) == 4
@@ -232,3 +241,52 @@ class TestEmbeddedAndMissing:
         # 共有字段同值：isolated 行 verdict 两视图一致
         for rid in ("vr_00", "vr_02"):
             assert mine[rid]["verdict"] == rep_iso[rid]["verdict"]
+
+
+class TestStagedLevelFilter:
+    """B3 值域修正（add-hypothesis-cards 任务 1，tester A3 组）：
+    _LEVELS 补 staged_validation——staged 过滤从 422 转绿；五值全合法
+    （composite/component 死值域保留：200 空结果非 422——契约保留
+    死值域，与数据分布无关）。"""
+
+    def _insert_staged(self, db):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        Session = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with Session() as sess:
+            sess.add(ValidationRecord(
+                record_id="vr_staged_1", hypothesis_id="fr_wb",
+                strategy_id="st_wb", level="staged_validation",
+                segmentation="auto", verdict="pass", range_hash="rh_st1",
+                params="{}", result="{}", created_at="2026-11-02T00:00:00+00:00"))
+            sess.commit()
+
+    def test_staged_filter_returns_staged_rows(self, client):
+        """A3-1：staged_validation 过滤 200 且行全 staged 级（行集与 DB
+        对账——瞬时计数不断言）。"""
+        self._insert_staged(client._db)
+        r = client.get("/api/research/validation-records",
+                       params={"level": "staged_validation"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["records"], "staged 记录在库——过滤不得空"
+        assert all(rec["level"] == "staged_validation"
+                   for rec in body["records"])
+
+    @pytest.mark.parametrize("level,expect_rows", [
+        ("isolated_backtest", True), ("random_window", True),
+        ("staged_validation", False),  # 未插种子时该客户端组为空但合法
+        ("composite", False), ("component", False),
+    ])
+    def test_five_levels_all_legal_no_422(self, client, level, expect_rows):
+        """A3-2：五值枚举全 200（死值域 composite/component=200 空结果
+        非 422——值域内保留）。expect_rows 仅标注该组种子形态，断言锚
+        是状态码与空集结构。"""
+        r = client.get("/api/research/validation-records",
+                       params={"level": level})
+        assert r.status_code == 200
+        body = r.json()
+        if not expect_rows:
+            # 本客户端组未插该级种子（staged 逐用例自插隔离）——空集合法
+            assert all(rec["level"] == level for rec in body["records"])

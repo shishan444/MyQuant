@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from . import (
     analysis,
     cases,
+    hypothesis_cards,
     hypotheses,
     indicator_query,
     log,
@@ -24,6 +25,7 @@ from . import (
 router = APIRouter()
 for _sub in (
     hypotheses,
+    hypothesis_cards,
     validation,
     validation_detail,
     analysis,
