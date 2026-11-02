@@ -28,6 +28,16 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 巨 page 钳制上限：offset=(page-1)*page_size 不得超过 SQLite 64 位
+# 整数上界 2^63-1，超界时 SQL 参数绑定 OverflowError 裸穿 500。钳后
+# 极端积 (_MAX_PAGE-1)*200≈2×10^17，较 2^63-1≈9.2×10^18 留 46 倍
+# 余量（page_size 钳制上限若上调，此余量随之重算）
+_MAX_PAGE = 10 ** 15
+# q 截断上限：超长串进 LIKE 徒增绑定开销，截断到 200 字符（沿仓库
+# 错误串截断惯例），不产 422；截断后按前缀子串匹配——超长精确查询
+# 语义放弃（截断放宽命中面：前 200 字符命中的行不一定含全串）
+_MAX_Q_LEN = 200
+
 
 @router.get("/hypothesis-cards")
 def hypothesis_cards(
@@ -57,6 +67,13 @@ def hypothesis_cards(
     # 钳制沿 /hypotheses、/log 同款（q/page/page_size 钳制语义不产 422）
     if page < 1:
         page = 1
+    # 巨 page 钳到上限（同「page<1 钳到 1」边界族，不回退缺省）：
+    # 防 offset 溢出 500，理由见 _MAX_PAGE 注释
+    if page > _MAX_PAGE:
+        page = _MAX_PAGE
+    # 巨 q 截断（超限取前 _MAX_Q_LEN 字符，不产 422）
+    if q is not None and len(q) > _MAX_Q_LEN:
+        q = q[:_MAX_Q_LEN]
     if page_size < 1 or page_size > 200:
         page_size = 50
     cur = decode_cursor(cursor)
