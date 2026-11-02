@@ -178,6 +178,31 @@ class TestSearchAndNullSemantics:
                               params={"q": empty}).json()
             assert body["total"] == all_total["total"]
 
+    def test_q_backslash_literal_not_escape_eaten(self, client):
+        """q 含 \\（LIKE escape 字符本身）按字面命中——转义实现三
+        案义字符（%/_/\\）端点面齐备：statement 含 \\ 的行被 q=\\ 命中，
+        \\ 不被当作 escape 前缀吞掉后续字符。"""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ResearchHypothesis
+        S = sessionmaker(bind=create_engine(f"sqlite:///{client._db}"))
+        with S() as sess:
+            for hid, stmt in (("hyp_bs", "趋势\\反转"), ("hyp_bn", "趋势反转")):
+                sess.add(ResearchHypothesis(
+                    hypothesis_id=hid, conditions="{}",
+                    conditions_hash=f"c{hid}", statement=stmt,
+                    data_ranges="[]", ranges_hash=f"r{hid}",
+                    status="superseded", created_at=_T.format(1),
+                    updated_at=_T.format(1)))
+            sess.commit()
+        body = client.get("/api/research/hypothesis-cards",
+                          params={"q": "\\"}).json()
+        assert [c["statement"] for c in body["items"]] == ["趋势\\反转"]
+        body2 = client.get("/api/research/hypothesis-cards",
+                           params={"q": "趋势\\"}).json()
+        assert [c["statement"] for c in body2["items"]] == ["趋势\\反转"], \
+            "对照行「趋势反转」（无 \\）不得被 \\ 前缀语义吞并命中"
+
     def test_q_underscore_literal_not_wildcard(self, client):
         """q 含 _ 按字面命中（LIKE 案义字符转义——'_' 不作单字符
         通配符）。对照行 '布林带X收窄'（X 占据 _ 位置）若 _ 被按

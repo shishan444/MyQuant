@@ -83,6 +83,35 @@ class TestCardsDeterminism:
         cards = rr.list_hypothesis_cards(db)
         assert [c["hypothesis_id"] for c in cards] == ["hyp_q", "hyp_p"]
 
+    def test_q_escape_literal_semantics_unit(self, db):
+        """④属性补强+⑤层级补全：q 案义三字符（%/_/\\）字面语义在
+        仓储层 unit 直构断言（不经 HTTP 层——转义是 _cards_filters
+        纯计算面）。对照行 AxB（X 占据 _ 位置）：q='A_B' 字面只命中
+        A_B，若 _ 按通配符解读则 AxB 同页命中。"""
+        with sessionmaker(bind=create_engine(f"sqlite:///{db}"))() as sess:
+            for hid, stmt in (("hyp_pc", "A%B"), ("hyp_us", "A_B"),
+                              ("hyp_bs", "A\\B"), ("hyp_xx", "AxB"),
+                              ("hyp_pl", "普通")):
+                sess.add(ResearchHypothesis(
+                    hypothesis_id=hid, conditions="{}",
+                    conditions_hash=f"c{hid}", statement=stmt,
+                    data_ranges="[]", ranges_hash=f"r{hid}",
+                    status="active", created_at="2026-10-01T00:00:00Z",
+                    updated_at="2026-10-01T00:00:00Z"))
+            sess.commit()
+        got = {c["hypothesis_id"]
+               for c in rr.list_hypothesis_cards(db, q="%")}
+        assert got == {"hyp_pc"}, "% 字面只命中含 % 的行"
+        got = {c["hypothesis_id"]
+               for c in rr.list_hypothesis_cards(db, q="_")}
+        assert got == {"hyp_us"}, "_ 字面只命中含 _ 的行（AxB 不命中）"
+        got = {c["hypothesis_id"]
+               for c in rr.list_hypothesis_cards(db, q="\\")}
+        assert got == {"hyp_bs"}, "\\（escape 字符本身）字面只命中含 \\ 的行"
+        got = {c["hypothesis_id"]
+               for c in rr.list_hypothesis_cards(db, q="A_B")}
+        assert got == {"hyp_us"}, "组合子串含 _ 仍字面语义（对照行 AxB 排除）"
+
     def test_total_is_filter_true_count(self, db):
         """A1-17：total=过滤口径真总数（跨页收集对账）。"""
         assert rr.count_hypothesis_cards(db) == 2
