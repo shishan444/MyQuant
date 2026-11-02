@@ -29,12 +29,14 @@ const RISK_RULES: { label: string; value: string; note?: string }[] = [
 /** 安全三件（REQ-2-14 目标态——总回撤熔断/篮子合计敞口/学费预算；工程现状未建，mainnet 裁决门前置） */
 const SAFETY_ITEMS = ["总回撤≥20% 全停", "篮子合计敞口上限", "学费预算·累计净亏损上限"];
 
-/** M1 四重门槛校验清单（呈现层——三层创建校验的目标态样貌） */
-const GATE_CHECKLIST = [
-  "策略已通过双关验证（V1+V2）",
-  "纸盘前向验证达标（qualification 凭证）",
-  "风控参数在安全底线内（1000U/5s/500U/50%）",
-  "人工裁决门确认（最终放行须人工确认）",
+/** M1 五要素门槛清单（①工程现状——live_trading.py:38/:48/:60 三层校验实锚；⑤目标态 REQ-2-14） */
+type GateItem = { text: string; tag?: "现状" | "目标态" };
+const GATE_CHECKLIST: GateItem[] = [
+  { text: "创建三层校验：DNA 形式校验 400／值域+插件源 422／交易兼容性 422", tag: "现状" },
+  { text: "候选资格：纸盘前向验证达标（qualification 凭证）" },
+  { text: "人工裁决门：最终放行须人工确认" },
+  { text: "起始资金 200U" },
+  { text: `安全三件：${SAFETY_ITEMS.join("／")}`, tag: "目标态" },
 ];
 
 /** B4 外部干预待确认（目标态预览样例——后端事件流不存在） */
@@ -288,13 +290,16 @@ export function LiveTrading() {
         data-testid="live-m1-modal"
       >
         <p className="text-xs text-text-muted mb-3">
-          四重门槛校验清单——目标态样貌呈现（三层创建校验非本轮实现承诺）。
+          五要素门槛清单——①创建三层校验为工程现状，②~⑤为目标态样貌呈现。
         </p>
         <ul className="space-y-2 mb-4">
           {GATE_CHECKLIST.map((g, i) => (
             <li key={i} className="flex items-start gap-2 text-xs text-text-secondary" data-testid={`live-m1-gate-${i}`}>
               <span className="mt-0.5 h-3.5 w-3.5 rounded-full border border-border-faint shrink-0" aria-hidden />
-              {g}
+              {g.tag && (
+                <span className={`text-[10px] ${g.tag === "目标态" ? "text-amber-400" : "text-text-muted"}`}>【{g.tag}】</span>
+              )}
+              {g.text}
             </li>
           ))}
         </ul>
