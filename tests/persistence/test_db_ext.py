@@ -478,10 +478,6 @@ class TestBacktestResult:
         assert result["qualified"] == 0
         assert result["satisfaction_json"] is None
 
-# ── Test: Verify Session CRUD（已随旧验证会话体系退役，retire-verify-sessions）──
-
-
-class TestBacktestResult:
     def test_backtest_result_with_session_id(self, initialized_db: Path) -> None:
         save_strategy(initialized_db, **_sample_strategy_data())
         save_backtest_result(
