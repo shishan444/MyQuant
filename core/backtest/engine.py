@@ -6,8 +6,8 @@
 
 价值与服务对象：全部回测指标（胜率/净期望/清算判定）的计算权威，
 「检查与考试同一量尺」的量尺本体——直接消费方为进化评估链
-（evolution/evaluation、evolution/engine）、策略验证链（api/runner、
-routes/strategies/verify、compare）与策略手动回测路由链
+（evolution/evaluation、evolution/engine）、策略对比回测链（compare）
+与策略手动回测路由链
 （routes/strategies/backtest + services/backtest_service）；间接经
 backtest_bridge.run_backtest_on_range 服务 validation_service 四
 路径（isolated/random_window/sandbox/staged）与 exit_sweep

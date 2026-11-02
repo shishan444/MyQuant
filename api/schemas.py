@@ -192,8 +192,8 @@ class DNAModel(BaseModel):
     # == v2 超集（add-ai-research-mcp 6.1）：承载 signal_sources 与 composition ==
     signal_sources: Optional[List[Dict[str, Any]]] = None
     composition: Optional[Dict[str, Any]] = None
-    # 入场触发策略（trigger-policy 卡5 / D11）：五消费面（evolution
-    # initial/champion、策略创建读回、compare、batch、verify）传输键
+    # 入场触发策略（trigger-policy 卡5 / D11）：四消费面（evolution
+    # initial/champion、策略创建读回、compare、batch）传输键
     entry_trigger_policy: Optional[Dict[str, Any]] = None
 
     def to_dna(self):
@@ -259,6 +259,10 @@ class StrategyResponse(BaseModel):
     parent_ids: Optional[str] = None
     tags: Optional[str] = None
     notes: Optional[str] = None
+    # 【冻结快照·retire-verify-sessions B5（design Q1 选项 A）】verify
+    # 组五列：统计累计写入者已随五端点删除（请求 404），历史值只读留档；
+    # 唯一写点=revalidate 归档重启的作废重置（置 0/NULL，重置前快照进
+    # 迁移事件 evidence）。读出反映旧验证会话体系时代的存量数据。
     verify_count: int = 0
     verify_avg_score: Optional[float] = None
     verify_best_score: Optional[float] = None
@@ -392,15 +396,16 @@ class CompareResponse(BaseModel):
 # ── 验证域模型（已退役）──
 # 旧验证会话体系 schema 族随 retire-verify-sessions 删除
 # （五端点 404；判定链路由 validation_records 体系承载）；
-# 日期范围模型保留（batch 回测请求字段在用，去 Verify 冠名）。
+# 日期范围模型 BacktestDateRange 移驻下方批量回测域分区
+# （batch 回测请求字段在用，去 Verify 冠名）。
+
+
+# ── 批量回测域模型 ──
 
 
 class BacktestDateRange(BaseModel):
     start: str
     end: str
-
-
-# ── 批量回测域模型 ──
 
 
 class BatchBacktestRequest(BaseModel):
