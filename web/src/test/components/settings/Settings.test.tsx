@@ -1,6 +1,6 @@
 /**
  * Settings 页测试（G6 AntD 迁移重写，新建）。
- * 断言语义=用户可见行为：tab 切换/通用保存链路/Binance 测试连接/模拟交易数值校验
+ * 断言语义=用户可见行为：tab 切换/通用保存链路/Binance 配置呈现/模拟交易数值校验
  * （失败保留草稿+错误就近——ui-state spec 场景）/指标 tab EMA 增删。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -106,12 +106,7 @@ describe("Settings（AntD）", () => {
     );
   });
 
-  it("Binance 测试连接：空凭证提示错误", async () => {
-    const { user } = setup();
-    await screen.findByText("Binance API 配置");
-    const { toast } = await import("sonner");
-    await user.click(screen.getByRole("button", { name: /测试连接/ }));
-    // 测试连接内置 1.5s 假延迟
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("请填写 API Key 和 Secret Key"), { timeout: 4000 });
-  });
+  // alignment-batch D5：假「测试连接」按钮已删（本地 setTimeout 假成功违背
+  // web-ui-truthfulness，后端也无凭证校验端点）——原「空凭证提示错误」用例
+  // 随假行为移除；凭证 masked 回显与保存链路见 test/pages/Settings.alignment.test.tsx
 });

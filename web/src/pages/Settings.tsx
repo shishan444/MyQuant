@@ -1,3 +1,8 @@
+/**
+ * 设置页（路由 /settings）。通用/交易/指标三域配置编辑——表单草稿由
+ * AntD Form 持有（失败保留草稿+错误就近展示），指标参数经 zustand
+ * persist store 持久化。消费方：App 路由（页面入口）。
+ */
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
@@ -126,7 +131,7 @@ export function Settings() {
 }
 
 // ---------------------------------------------------------------------------
-// General settings（表单草稿=AntD Form 唯一持有）
+// 通用设置（表单草稿=AntD Form 唯一持有）
 // ---------------------------------------------------------------------------
 
 type GeneralFormValues = Pick<AppConfig, "language" | "timezone" | "notify_evolution" | "notify_signal">;
@@ -195,67 +200,63 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 }
 
 // ---------------------------------------------------------------------------
-// Binance API settings（凭证回显风险 S1 记录在案：GET /api/config 明文回显，
-// 前端无修复项——移交后端容器；本页行为等价保留）
+// Binance API settings（凭证 masked 回显：GET /api/config 凭证键回 ***
+// 全掩码——B9.2 S1 后端已落地；保存走 PUT，*** 哨兵值后端跳过不覆盖
+// 已存密钥，前端无需特殊处理。「测试连接」假行为已删——后端无凭证
+// 校验端点，呈现只反映 GET 返回的真实 binance_connected 状态）
 // ---------------------------------------------------------------------------
 
 type BinanceFormValues = Pick<AppConfig, "binance_api_key" | "binance_secret_key">;
 
 function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
   const [form] = Form.useForm<BinanceFormValues>();
-  const [connected, setConnected] = useState(config.binance_connected);
-  const [testing, setTesting] = useState(false);
-
-  const handleTest = async () => {
-    setTesting(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    const { binance_api_key: apiKey, binance_secret_key: secretKey } = form.getFieldsValue();
-    setConnected(!!apiKey && !!secretKey);
-    setTesting(false);
-    if (apiKey && secretKey) {
-      toast.success("连接成功");
-    } else {
-      toast.error("请填写 API Key 和 Secret Key");
-    }
-  };
 
   const handleSave = () => {
     const values = form.getFieldsValue();
-    onSave({ ...values, binance_connected: connected });
+    // *** 掩码原样传回：PUT 哨兵语义识别含 *** 的凭证值=未修改，不覆盖已存值
+    onSave(values);
   };
 
   return (
     <GlassCard className="p-6 !mb-6" hover={false}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-medium text-text-primary">Binance API 配置</h2>
-        <div className="flex gap-2">
-          <AntButton size="small" onClick={handleTest} disabled={testing}>
-            {testing ? "测试中..." : "测试连接"}
-          </AntButton>
-          <AntButton size="small" type="primary" onClick={handleSave}>
-            保存
-          </AntButton>
-        </div>
+        <AntButton size="small" type="primary" onClick={handleSave} data-testid="binance-save">
+          保存
+        </AntButton>
       </div>
 
       <Form form={form} layout="horizontal" initialValues={config} className="!mb-0">
-        <Form.Item label="API Key" name="binance_api_key" className="!mb-3" colon={false}>
+        <Form.Item
+          label="API Key"
+          name="binance_api_key"
+          className="!mb-3"
+          colon={false}
+          data-testid="binance-api-key-field"
+          extra={<span className="text-xs text-text-muted">已配置时回显 ***（全掩码）；保持 *** 不变即不修改已存密钥，清空后保存即删除</span>}
+        >
           <Input.Password placeholder="输入 API Key" visibilityToggle={{ visible: false }} />
         </Form.Item>
         <Divider className="!my-3" />
-        <Form.Item label="Secret Key" name="binance_secret_key" className="!mb-3" colon={false}>
+        <Form.Item
+          label="Secret Key"
+          name="binance_secret_key"
+          className="!mb-3"
+          colon={false}
+          data-testid="binance-secret-key-field"
+        >
           <Input.Password placeholder="输入 Secret Key" visibilityToggle={{ visible: false }} />
         </Form.Item>
         <Divider className="!my-3" />
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" data-testid="binance-connected">
           <span className="text-sm text-text-secondary w-24 shrink-0">状态</span>
           <div className="flex items-center gap-2">
             <span
               className="inline-block h-2 w-2 rounded-full"
-              style={{ background: connected ? "#00C853" : "#484f58" }}
+              style={{ background: config.binance_connected ? "#00C853" : "#484f58" }}
             />
-            {/* 状态非纯颜色载体：文字伴随指示点 */}
-            <span className="text-xs text-text-secondary">{connected ? "已连接" : "未配置"}</span>
+            {/* 状态非纯颜色载体：文字伴随指示点（值=GET /api/config 真实回显） */}
+            <span className="text-xs text-text-secondary">{config.binance_connected ? "已连接" : "未配置"}</span>
           </div>
         </div>
       </Form>
@@ -264,7 +265,7 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
 }
 
 // ---------------------------------------------------------------------------
-// Trading settings（数值字段经 InputNumber+rules：失败保留草稿+错误就近展示）
+// 交易设置（数值字段经 InputNumber+rules：失败保留草稿+错误就近展示）
 // ---------------------------------------------------------------------------
 
 type TradingFormValues = Pick<AppConfig, "init_cash" | "maker_fee" | "taker_fee" | "max_positions">;
@@ -351,7 +352,7 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 }
 
 // ---------------------------------------------------------------------------
-// Indicator settings tab（zustand persist store 持久化；订阅形态：G17.1 终核
+// 指标设置 tab（zustand persist store 持久化；订阅形态：G17.1 终核
 // 裁决豁免 selector 化——设置编辑页渲染全部分区并调用全部 actions，
 // 字段级订阅无收益，全量订阅为正确形态）
 // ---------------------------------------------------------------------------
@@ -361,7 +362,7 @@ function IndicatorSettings() {
 
   return (
     <>
-      {/* EMA section */}
+      {/* EMA 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">EMA 配置</h2>
@@ -413,7 +414,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* BOLL section */}
+      {/* BOLL 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">BOLL 配置</h2>
@@ -462,7 +463,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* RSI section */}
+      {/* RSI 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">RSI 配置</h2>
@@ -511,7 +512,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* VOL section */}
+      {/* VOL 区 */}
       <GlassCard className="p-6 !mb-6" hover={false}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-medium text-text-primary">成交量配置</h2>
@@ -537,7 +538,7 @@ function IndicatorSettings() {
         </div>
       </GlassCard>
 
-      {/* Actions */}
+      {/* 操作 */}
       <div className="flex items-center justify-between">
         <AntButton size="small" onClick={settings.resetToDefaults}>
           恢复默认

@@ -3306,6 +3306,105 @@
         }
       }
     },
+    "/api/workbench/pending-events": {
+      "get": {
+        "tags": [
+          "workbench"
+        ],
+        "summary": "Pending Events",
+        "description": "全库现算聚合（响应时点快照；处理即消隐=前端据动作结果重拉）。",
+        "operationId": "pending_events_api_workbench_pending_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingEventsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/freshness/status": {
+      "get": {
+        "tags": [
+          "data"
+        ],
+        "summary": "Freshness Status",
+        "description": "透传 guardian.status()——挂点 request.app.state.paper_scheduler.registry.guardian。\n\n未装配（scheduler 未启动/守护器未建）→503 不伪装空态（区分「未运行」\n与「运行无数据」——data-freshness-guardian spec 降级语义）。",
+        "operationId": "freshness_status_api_data_freshness_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreshnessStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/integrity/monthly-matrix": {
+      "get": {
+        "tags": [
+          "data"
+        ],
+        "summary": "Integrity Monthly Matrix",
+        "description": "月矩阵 v2 分档两段（design §5.1）——只读现算零持久化（REJ-04 零修复建议）。",
+        "operationId": "integrity_monthly_matrix_api_data_integrity_monthly_matrix_get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "months_back",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 12,
+              "minimum": 1,
+              "default": 6,
+              "title": "Months Back"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonthlyMatrixResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scene/types": {
       "get": {
         "tags": [
@@ -4161,7 +4260,7 @@
           "research"
         ],
         "summary": "List Formula Plugins",
-        "description": "公式插件版本审计（历史版本可查，5.5）。",
+        "description": "公式插件版本审计（历史版本可查，5.5；审计两现算字段 alignment-batch β）。",
         "operationId": "list_formula_plugins_api_research_plugins_formula_get",
         "parameters": [
           {
@@ -4344,6 +4443,30 @@
                   },
                   "type": "array",
                   "title": "Response Signals Api Research Signals Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/vocabulary": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Vocabulary",
+        "description": "研究词表（alignment-batch γ）：FORMULA_FUNCTIONS 键集现算\n（formula.py 权威源，属性访问——响应跟随注册表，非启动快照），\n四族分组+双口径披露（caliber_note）。",
+        "operationId": "vocabulary_api_research_vocabulary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Vocabulary Api Research Vocabulary Get"
                 }
               }
             }
@@ -4715,6 +4838,128 @@
         }
       }
     },
+    "/api/research/validation-records": {
+      "get": {
+        "tags": [
+          "research",
+          "research"
+        ],
+        "summary": "List Validation Records Endpoint",
+        "description": "跨策略验证记录时间流（created_at 降序——「最近」消费语义）。\n\n四维可选过滤；level/verdict 非法值 422（沿 research_error_to_http\n结构化错误形制——本端点内联校验产同形 detail）；分页探测式\nhas_more（多取一条判定）。",
+        "operationId": "list_validation_records_endpoint_api_research_validation_records_get",
+        "parameters": [
+          {
+            "name": "hypothesis_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hypothesis Id"
+            }
+          },
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy Id"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verdict"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationRecordsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health Check",
@@ -4804,6 +5049,45 @@
         ],
         "title": "AnalysisRunRequest",
         "description": "五类模板统一入口（附.4）。"
+      },
+      "Availability": {
+        "properties": {
+          "qualify_pending": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualify Pending"
+          },
+          "trigger_deviation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Deviation"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "Availability"
       },
       "AvailableSource": {
         "properties": {
@@ -5136,6 +5420,21 @@
               }
             ],
             "title": "Equity Curve"
+          },
+          "sl_series": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sl Series"
           },
           "signals": {
             "anyOf": [
@@ -7218,6 +7517,36 @@
         ],
         "title": "FormulaPluginCreate"
       },
+      "FreshnessStatusResponse": {
+        "properties": {
+          "kline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kline"
+          },
+          "derivs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivs"
+          }
+        },
+        "type": "object",
+        "title": "FreshnessStatusResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -8010,6 +8339,46 @@
         "type": "object",
         "title": "LogicGenesModel"
       },
+      "LongPeriodRow": {
+        "properties": {
+          "timeframe": {
+            "type": "string",
+            "title": "Timeframe"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "coverage": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Coverage"
+          },
+          "gap_count": {
+            "type": "integer",
+            "title": "Gap Count"
+          },
+          "gaps": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Gaps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timeframe",
+          "status",
+          "coverage",
+          "gap_count",
+          "gaps"
+        ],
+        "title": "LongPeriodRow"
+      },
       "ModelPluginCreate": {
         "properties": {
           "name": {
@@ -8071,6 +8440,43 @@
           "data_end"
         ],
         "title": "ModelPluginCreate"
+      },
+      "MonthlyMatrixResponse": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "months_back": {
+            "type": "integer",
+            "title": "Months Back"
+          },
+          "short_period": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Short Period"
+          },
+          "long_period": {
+            "items": {
+              "$ref": "#/components/schemas/LongPeriodRow"
+            },
+            "type": "array",
+            "title": "Long Period"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "generated_at",
+          "months_back",
+          "short_period",
+          "long_period"
+        ],
+        "title": "MonthlyMatrixResponse"
       },
       "OhlcvResponse": {
         "properties": {
@@ -9066,6 +9472,65 @@
           "updated_at"
         ],
         "title": "PaperTaskResponse"
+      },
+      "PendingEvent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "PendingEvent"
+      },
+      "PendingEventsResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/PendingEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "degraded": {
+            "type": "integer",
+            "title": "Degraded",
+            "default": 0
+          },
+          "availability": {
+            "$ref": "#/components/schemas/Availability",
+            "default": {}
+          },
+          "scanned_tasks": {
+            "type": "integer",
+            "title": "Scanned Tasks",
+            "default": 0
+          },
+          "scanned_running_tasks": {
+            "type": "integer",
+            "title": "Scanned Running Tasks",
+            "default": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "title": "PendingEventsResponse"
       },
       "QueryIndicatorRequest": {
         "properties": {
@@ -10897,6 +11362,131 @@
         ],
         "title": "ValidationError"
       },
+      "ValidationRecordRow": {
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "title": "Record Id"
+          },
+          "hypothesis_id": {
+            "type": "string",
+            "title": "Hypothesis Id"
+          },
+          "strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Id"
+          },
+          "level": {
+            "type": "string",
+            "title": "Level"
+          },
+          "segmentation": {
+            "type": "string",
+            "title": "Segmentation"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "range_hash": {
+            "type": "string",
+            "title": "Range Hash"
+          },
+          "pollution_cause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pollution Cause"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "record_id",
+          "hypothesis_id",
+          "level",
+          "segmentation",
+          "verdict",
+          "range_hash",
+          "created_at"
+        ],
+        "title": "ValidationRecordRow"
+      },
+      "ValidationRecordsResponse": {
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationRecordRow"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records",
+          "total",
+          "offset",
+          "limit",
+          "has_more"
+        ],
+        "title": "ValidationRecordsResponse"
+      },
       "VerifyDateRange": {
         "properties": {
           "start": {
@@ -10967,6 +11557,11 @@
             "title": "Max Drawdown",
             "default": 0.0
           },
+          "total_trades": {
+            "type": "integer",
+            "title": "Total Trades",
+            "default": 0
+          },
           "fitness": {
             "type": "number",
             "title": "Fitness",
@@ -10975,6 +11570,32 @@
           "qualified": {
             "type": "integer",
             "title": "Qualified",
+            "default": 0
+          },
+          "thresholds": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thresholds"
+          },
+          "star": {
+            "type": "integer",
+            "title": "Star",
             "default": 0
           },
           "created_at": {

@@ -1,3 +1,8 @@
+/**
+ * 数据管理页（路由 /data）。数据集清单（质量条内嵌）+上传对话框
+ * （F0 遗留死操作 disabled 化）——文件名解析镜像后端 parse_filename。
+ * 消费方：App 路由（页面入口）。
+ */
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LoadingOutlined } from "@ant-design/icons";
@@ -34,7 +39,7 @@ import { formatNumber } from "@/lib/utils";
 import type { Dataset } from "@/types/api";
 
 // ---------------------------------------------------------------------------
-// Filename parsing (mirrors backend parse_filename logic)
+// 文件名解析（镜像后端 parse_filename 逻辑）
 // ---------------------------------------------------------------------------
 const FILENAME_RE = /^([A-Z]{3,10}USDT)-(\d+[mhdw])-/i;
 
@@ -82,7 +87,7 @@ function TableSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Upload Dialog（表单草稿以 AntD Form 为唯一持有者——ui-state spec）
+// 上传对话框（表单草稿以 AntD Form 为唯一持有者——ui-state spec）
 // ---------------------------------------------------------------------------
 function UploadDialog({
   open,
@@ -157,7 +162,7 @@ function UploadDialog({
       setSelectedFiles([]);
       form.resetFields();
     } catch {
-      // error handled by mutation onError
+      // 错误由 mutation onError 处理
     }
   }, [selectedFiles, effectiveSymbol, effectiveInterval, form, importCsv, importCsvBatch, onOpenChange]);
 
@@ -279,7 +284,7 @@ function UploadDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Main component
+// 主组件
 // ---------------------------------------------------------------------------
 import { IntegrityMatrix, FreshnessTable } from "@/components/data/IntegrityPanels";
 
@@ -450,7 +455,7 @@ export function DataManagement() {
         </GlassCard>
       </div>
       <div className="flex flex-col gap-4">
-        {/* Toolbar */}
+        {/* 工具栏 */}
         <GlassCard className="p-4" hover={false}>
           <div className="flex flex-wrap items-center gap-3">
             <AntButton
@@ -480,7 +485,7 @@ export function DataManagement() {
           </div>
         </GlassCard>
 
-        {/* Dataset Table（每行下方质量条：expandable 无缝嵌入） */}
+        {/* 数据集表（每行下方质量条：expandable 无缝嵌入） */}
         <GlassCard className="p-0 overflow-hidden" hover={false}>
           {isLoading ? (
             <div className="p-4">
@@ -504,7 +509,7 @@ export function DataManagement() {
           )}
         </GlassCard>
 
-        {/* Footer hint */}
+        {/* 页脚提示 */}
         <p className="text-xs text-text-muted text-center">
           建议至少准备6个月历史数据用于回测，支持 Binance Data Vision CSV
         </p>

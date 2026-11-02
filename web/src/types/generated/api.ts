@@ -1080,6 +1080,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workbench/pending-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending Events
+         * @description 全库现算聚合（响应时点快照；处理即消隐=前端据动作结果重拉）。
+         */
+        get: operations["pending_events_api_workbench_pending_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/data/freshness/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Freshness Status
+         * @description 透传 guardian.status()——挂点 request.app.state.paper_scheduler.registry.guardian。
+         *
+         *     未装配（scheduler 未启动/守护器未建）→503 不伪装空态（区分「未运行」
+         *     与「运行无数据」——data-freshness-guardian spec 降级语义）。
+         */
+        get: operations["freshness_status_api_data_freshness_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/data/integrity/monthly-matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Integrity Monthly Matrix
+         * @description 月矩阵 v2 分档两段（design §5.1）——只读现算零持久化（REJ-04 零修复建议）。
+         */
+        get: operations["integrity_monthly_matrix_api_data_integrity_monthly_matrix_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/scene/types": {
         parameters: {
             query?: never;
@@ -1430,7 +1493,7 @@ export interface paths {
         };
         /**
          * List Formula Plugins
-         * @description 公式插件版本审计（历史版本可查，5.5）。
+         * @description 公式插件版本审计（历史版本可查，5.5；审计两现算字段 alignment-batch β）。
          */
         get: operations["list_formula_plugins_api_research_plugins_formula_get"];
         put?: never;
@@ -1501,6 +1564,28 @@ export interface paths {
          * @description 可用信号列：内置 ∪ 插件，运行时合并（条目标注来源）。
          */
         get: operations["signals_api_research_signals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/vocabulary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Vocabulary
+         * @description 研究词表（alignment-batch γ）：FORMULA_FUNCTIONS 键集现算
+         *     （formula.py 权威源，属性访问——响应跟随注册表，非启动快照），
+         *     四族分组+双口径披露（caliber_note）。
+         */
+        get: operations["vocabulary_api_research_vocabulary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1615,6 +1700,30 @@ export interface paths {
         patch: operations["patch_feature_request_api_research_feature_requests__request_id__patch"];
         trace?: never;
     };
+    "/api/research/validation-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Validation Records Endpoint
+         * @description 跨策略验证记录时间流（created_at 降序——「最近」消费语义）。
+         *
+         *     四维可选过滤；level/verdict 非法值 422（沿 research_error_to_http
+         *     结构化错误形制——本端点内联校验产同形 detail）；分页探测式
+         *     has_more（多取一条判定）。
+         */
+        get: operations["list_validation_records_endpoint_api_research_validation_records_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1677,6 +1786,15 @@ export interface components {
             data_range: components["schemas"]["DataRangeItem"];
             /** Hypothesis Id */
             hypothesis_id?: string | null;
+        };
+        /** Availability */
+        Availability: {
+            /** Qualify Pending */
+            qualify_pending?: string | null;
+            /** Trigger Deviation */
+            trigger_deviation?: string | null;
+            /** Reason */
+            reason?: string | null;
         };
         /** AvailableSource */
         AvailableSource: {
@@ -1820,6 +1938,10 @@ export interface components {
             run_source: string;
             /** Equity Curve */
             equity_curve?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Sl Series */
+            sl_series?: {
                 [key: string]: unknown;
             }[] | null;
             /** Signals */
@@ -2632,6 +2754,17 @@ export interface components {
             /** Output Column */
             output_column?: string | null;
         };
+        /** FreshnessStatusResponse */
+        FreshnessStatusResponse: {
+            /** Kline */
+            kline?: {
+                [key: string]: unknown;
+            } | null;
+            /** Derivs */
+            derivs?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2974,6 +3107,23 @@ export interface components {
              */
             reduce_logic: string;
         };
+        /** LongPeriodRow */
+        LongPeriodRow: {
+            /** Timeframe */
+            timeframe: string;
+            /** Status */
+            status: string;
+            /** Coverage */
+            coverage: {
+                [key: string]: unknown;
+            };
+            /** Gap Count */
+            gap_count: number;
+            /** Gaps */
+            gaps: {
+                [key: string]: string;
+            }[];
+        };
         /** ModelPluginCreate */
         ModelPluginCreate: {
             /** Name */
@@ -3019,6 +3169,21 @@ export interface components {
             data_start: string;
             /** Data End */
             data_end: string;
+        };
+        /** MonthlyMatrixResponse */
+        MonthlyMatrixResponse: {
+            /** Symbol */
+            symbol: string;
+            /** Generated At */
+            generated_at: string;
+            /** Months Back */
+            months_back: number;
+            /** Short Period */
+            short_period: {
+                [key: string]: unknown;
+            };
+            /** Long Period */
+            long_period: components["schemas"]["LongPeriodRow"][];
         };
         /** OhlcvResponse */
         OhlcvResponse: {
@@ -3319,6 +3484,42 @@ export interface components {
             heartbeat_at?: string | null;
             /** Error Detail */
             error_detail?: string | null;
+        };
+        /** PendingEvent */
+        PendingEvent: {
+            /** Type */
+            type: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        /** PendingEventsResponse */
+        PendingEventsResponse: {
+            /** Events */
+            events: components["schemas"]["PendingEvent"][];
+            /**
+             * Degraded
+             * @default 0
+             */
+            degraded: number;
+            /** @default {} */
+            availability: components["schemas"]["Availability"];
+            /**
+             * Scanned Tasks
+             * @default 0
+             */
+            scanned_tasks: number;
+            /**
+             * Scanned Running Tasks
+             * @default 0
+             */
+            scanned_running_tasks: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /**
          * QueryIndicatorRequest
@@ -4110,6 +4311,48 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** ValidationRecordRow */
+        ValidationRecordRow: {
+            /** Record Id */
+            record_id: string;
+            /** Hypothesis Id */
+            hypothesis_id: string;
+            /** Strategy Id */
+            strategy_id?: string | null;
+            /** Level */
+            level: string;
+            /** Segmentation */
+            segmentation: string;
+            /** Verdict */
+            verdict: string;
+            /** Range Hash */
+            range_hash: string;
+            /** Pollution Cause */
+            pollution_cause?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ValidationRecordsResponse */
+        ValidationRecordsResponse: {
+            /** Records */
+            records: components["schemas"]["ValidationRecordRow"][];
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Has More */
+            has_more: boolean;
+        };
         /** VerifyDateRange */
         VerifyDateRange: {
             /** Start */
@@ -4149,6 +4392,11 @@ export interface components {
              */
             max_drawdown: number;
             /**
+             * Total Trades
+             * @default 0
+             */
+            total_trades: number;
+            /**
              * Fitness
              * @default 0
              */
@@ -4158,6 +4406,15 @@ export interface components {
              * @default 0
              */
             qualified: number;
+            /** Thresholds */
+            thresholds?: {
+                [key: string]: boolean | null;
+            } | null;
+            /**
+             * Star
+             * @default 0
+             */
+            star: number;
             /** Created At */
             created_at: string;
         };
@@ -6282,6 +6539,78 @@ export interface operations {
             };
         };
     };
+    pending_events_api_workbench_pending_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingEventsResponse"];
+                };
+            };
+        };
+    };
+    freshness_status_api_data_freshness_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreshnessStatusResponse"];
+                };
+            };
+        };
+    };
+    integrity_monthly_matrix_api_data_integrity_monthly_matrix_get: {
+        parameters: {
+            query: {
+                symbol: string;
+                months_back?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthlyMatrixResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_scene_types_api_scene_types_get: {
         parameters: {
             query?: never;
@@ -7031,6 +7360,28 @@ export interface operations {
             };
         };
     };
+    vocabulary_api_research_vocabulary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     read_market_snapshot_api_research_market_snapshot_get: {
         parameters: {
             query: {
@@ -7196,6 +7547,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_validation_records_endpoint_api_research_validation_records_get: {
+        parameters: {
+            query?: {
+                hypothesis_id?: string | null;
+                strategy_id?: string | null;
+                level?: string | null;
+                verdict?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationRecordsResponse"];
                 };
             };
             /** @description Validation Error */

@@ -14,10 +14,8 @@ import { Trading } from "@/pages/Trading";
 import { DataManagement } from "@/pages/DataManagement";
 import { Settings } from "@/pages/Settings";
 import { BatchBacktest } from "@/pages/BatchBacktest";
-import {
-  LivePlaceholder,
-  PluginsPlaceholder,
-} from "@/pages/placeholders";
+import { Plugins } from "@/pages/Plugins";
+import { LivePlaceholder } from "@/pages/placeholders";
 import { Workbench } from "@/pages/Workbench";
 
 const queryClient = new QueryClient({
@@ -41,7 +39,7 @@ const router = createBrowserRouter([
       { path: "/settings", element: <ErrorBoundary><Settings /></ErrorBoundary> },
       { path: "/workbench", element: <ErrorBoundary><Workbench /></ErrorBoundary> },
       { path: "/live", element: <ErrorBoundary><LivePlaceholder /></ErrorBoundary> },
-      { path: "/plugins", element: <ErrorBoundary><PluginsPlaceholder /></ErrorBoundary> },
+      { path: "/plugins", element: <ErrorBoundary><Plugins /></ErrorBoundary> },
     ],
   },
 ]);

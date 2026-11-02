@@ -1,6 +1,7 @@
 /**
- * Tests for Evolution page component.
- * Covers: loading state, empty state, config panel rendering, historical tasks.
+ * Evolution 页组件测试。覆盖：加载态、空态、只读参数面板
+ * （alignment-batch D3——发起归 MCP trigger_evolution，配置表单
+ * 已移除）、历史任务。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -14,6 +15,7 @@ vi.mock("@/services/evolution", () => ({
   getEvolutionHistory: vi.fn(),
   getDiscoveredStrategies: vi.fn(),
   getAllDiscoveredStrategies: vi.fn(),
+  getTaskStrategies: vi.fn(),
   createEvolutionTask: vi.fn(),
   stopEvolutionTask: vi.fn(),
   pauseEvolutionTask: vi.fn(),
@@ -42,7 +44,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-// Mock motion/react
+// mock motion/react
 vi.mock("motion/react", () => ({
   useReducedMotion: () => false,
   motion: new Proxy({}, {
@@ -62,7 +64,7 @@ vi.mock("motion/react", () => ({
   AnimatePresence: ({ children }: any) => <>{children}</>,
 }));
 
-// Mock evolution sub-components
+// mock 进化子组件
 vi.mock("@/components/evolution/SegmentedControl", () => ({
   SegmentedControl: ({ value, onChange }: any) => (
     <div data-testid="segmented-control" data-value={value}>
@@ -144,7 +146,7 @@ beforeEach(() => {
 });
 
 describe("Evolution page", () => {
-  // --- Loading state ---
+  // --- 加载态 ---
   it("shows loading skeleton when loading", () => {
     mockGetEvolutionTasks.mockReturnValue(new Promise(() => {}));
 
@@ -153,26 +155,30 @@ describe("Evolution page", () => {
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
-  // --- Empty state (no active task) ---
-  it("renders config form when no active task", async () => {
+  // --- 空态（无活动任务）：只读参数区+MCP 渠道提示 ---
+  it("renders readonly params area with MCP notice when no active task", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByTestId("segmented-control");
-    expect(screen.getByTestId("auto-config-form")).toBeInTheDocument();
-    expect(screen.getByText("探索配置")).toBeInTheDocument();
+    await screen.findByText("当前没有进化任务");
+    // 渠道披露：头注与空态段同屏，至少一处（getAllBy 容纳多处）
+    expect(screen.getAllByText(/MCP trigger_evolution/).length).toBeGreaterThan(0);
+    // D3：发起控件移除——配置表单不在
+    expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("auto-config-form")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("seed-config-form")).not.toBeInTheDocument();
   });
 
-  // --- Config form shows auto by default ---
-  it("shows auto config form by default", async () => {
+  // --- 只读参数（缺省无发起表单） ---
+  it("does not render launch form (readonly-only page)", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByTestId("auto-config-form");
-    expect(screen.getByTestId("segmented-control").dataset.value).toBe("auto");
+    await screen.findByText("任务参数");
+    expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
   });
 
-  // --- Progress section renders ---
+  // --- 进度区渲染 ---
   it("renders progress section", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
@@ -180,15 +186,15 @@ describe("Evolution page", () => {
     await screen.findByText("探索进度");
   });
 
-  // --- Empty state message ---
+  // --- 空态消息 ---
   it("shows empty state when no tasks at all", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByText("还没有探索记录");
+    await screen.findByText("还没有进化任务");
   });
 
-  // --- With completed tasks ---
+  // --- 有完成任务时 ---
   it("renders history section with completed tasks", async () => {
     const tasks: EvolutionTask[] = [
       {

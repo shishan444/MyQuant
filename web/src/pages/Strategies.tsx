@@ -1,3 +1,9 @@
+/**
+ * 06 策略中心·主页面。路由 /strategies，策略列表（检索/多选/排序/
+ * 批量操作）+行内展开（DNA 五段/回测指标/纸盘与验证记录入口）——
+ * 策略来源含人工/进化产出/假设登记多源（SourceBadge 标注）。
+ * 消费方：App 路由（用户经侧边导航进入的页面入口）。
+ */
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,14 +19,16 @@ import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button as AntButton, Input, Modal, Form, Select as AntSelect } from "antd";
 import { useStrategies, useDeleteStrategy, useUpdateStrategy } from "@/hooks/useStrategies";
-import { deleteStrategy } from "@/services/strategies";
+import { deleteStrategy, getStrategiesByStatus, getVerifyHistory } from "@/services/strategies";
+import { listTradingTasks } from "@/services/trading";
 import { toast } from "sonner";
 import { cn, getFitnessColor } from "@/lib/utils";
 import { INDICATOR_LABELS, CONDITION_TYPE_LABELS } from "@/lib/constants";
-import type { Strategy } from "@/types/api";
+import type { Strategy, DNA, VerifyHistoryResponse } from "@/types/api";
+import type { TradingTask } from "@/services/trading";
 
 // ---------------------------------------------------------------------------
-// Format helpers
+// 格式化辅助函数
 // ---------------------------------------------------------------------------
 
 function fmtReturn(value: number | undefined | null): string {
@@ -46,7 +54,7 @@ function fmtPF(value: number | undefined | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Source badge
+// 来源徽章
 // ---------------------------------------------------------------------------
 
 const SOURCE_STYLES: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
@@ -68,7 +76,73 @@ function SourceBadge({ source }: { source: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Edit dialog
+// 策略状态（六态——core/strategy/lifecycle/machine.py STRATEGY_STATUSES 单源值域）
+// ---------------------------------------------------------------------------
+
+/** 六态中文标签（语义=生命周期状态机注释：draft=假设转化草稿/active=可消费/paper=纸盘在验/candidate=达标候选/live=实盘在役/archived=归档） */
+const STRATEGY_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  active: "可消费",
+  paper: "纸盘在验",
+  candidate: "达标候选",
+  live: "实盘在役",
+  archived: "已归档",
+};
+
+const STRATEGY_STATUS_STYLES: Record<string, string> = {
+  draft: "bg-white/10 text-text-secondary",
+  active: "bg-emerald-400/15 text-emerald-400",
+  paper: "bg-info/15 text-info",
+  candidate: "bg-accent-purple/15 text-accent-purple",
+  live: "bg-amber-400/15 text-amber-400",
+  archived: "bg-white/[0.06] text-text-muted",
+};
+
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  if (!status) return null;
+  const label = STRATEGY_STATUS_LABELS[status] ?? status;
+  return (
+    <span
+      data-testid={`strategy-status-${status}`}
+      className={cn(
+        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap",
+        STRATEGY_STATUS_STYLES[status] ?? "bg-white/10 text-text-secondary",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** 六态筛选 chip（单选切换；计数=合并全量按 status 分组） */
+function StatusChip({ value, label, count, active, onClick }: {
+  value: string;
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: (v: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`status-chip-${value}`}
+      aria-pressed={active}
+      onClick={() => onClick(value)}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+        active
+          ? "border-accent-gold/60 bg-accent-gold/10 text-accent-gold"
+          : "border-border-default/50 text-text-secondary hover:border-border-default hover:text-text-primary",
+      )}
+    >
+      {label}
+      <span className="font-mono text-[11px] tabular-nums opacity-80">{count}</span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 编辑对话框
 // ---------------------------------------------------------------------------
 
 function EditStrategyDialog({
@@ -135,7 +209,7 @@ function EditStrategyDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Sort helpers
+// 排序辅助
 // ---------------------------------------------------------------------------
 
 type SortField = "verify_star" | "name" | "annual_return" | "max_drawdown" | "win_rate" | "profit_factor" | "total_trades" | "best_fitness" | "created_at";
@@ -160,7 +234,7 @@ function SortIcon({ field, currentSort }: { field: SortField; currentSort: { fie
 }
 
 // ---------------------------------------------------------------------------
-// DNA condition text
+// DNA 条件文本
 // ---------------------------------------------------------------------------
 
 function describeGene(gene: { indicator: string; params: Record<string, unknown>; role: string; condition?: { type: string; threshold?: number; ref_indicator?: string } }): string {
@@ -181,11 +255,151 @@ function describeGene(gene: { indicator: string; params: Record<string, unknown>
 }
 
 // ---------------------------------------------------------------------------
-// Row expand panel
+// 行展开面板
 // ---------------------------------------------------------------------------
 
-function ExpandPanel({ strategy, onRun, onPaperTrade, onSeedEvolve }: {
+/** 纸盘任务五态中文（值域=PaperTaskStatus；label 对齐 Trading 页 STATUS_BADGE_MAP） */
+const PT_STATUS_LABELS: Record<string, string> = {
+  pending: "排队中",
+  running: "运行中",
+  completed: "已完结",
+  stopped: "已停止",
+  error: "异常",
+};
+
+/** 验证历史行（VerifyHistoryResponse.items 元素——四段履历·验证段数据源） */
+type VerifyHistoryItem = VerifyHistoryResponse["items"][number];
+
+function DnaSegment({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wide text-text-muted/70">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
+
+/**
+ * DNA 五段呈现（alignment-batch D4）：信号基因/逻辑基因/风险基因/执行基因/
+ * 多周期层——StrategyDNA 五要素分段展示，段缺失如实呈现「—」。
+ */
+function DnaFiveSegments({ dna }: { dna?: DNA | null }) {
+  if (!dna) return <div className="text-xs text-text-muted">无 DNA 数据</div>;
+  const sg = dna.signal_genes;
+  const lg = dna.logic_genes;
+  const rg = dna.risk_genes;
+  const eg = dna.execution_genes;
+  const layers = dna.layers ?? [];
+  return (
+    <div className="flex flex-col gap-2 text-xs" data-testid="dna-five-segments">
+      <DnaSegment label={`信号基因（${sg.length}）`}>
+        {sg.length ? (
+          <>
+            {sg.slice(0, 6).map((gene, i) => (
+              <div key={i} className="text-text-secondary font-mono leading-relaxed truncate">{describeGene(gene)}</div>
+            ))}
+            {sg.length > 6 && <div className="text-text-muted text-[11px]">...+{sg.length - 6} 条件</div>}
+          </>
+        ) : <span className="text-text-muted">—</span>}
+      </DnaSegment>
+      <DnaSegment label="逻辑基因">
+        {lg ? (
+          <span className="text-text-secondary font-mono">
+            {lg.entry_logic} 入场 · {lg.exit_logic} 出场
+            {lg.add_logic && ` · ${lg.add_logic} 加仓`}
+            {lg.reduce_logic && ` · ${lg.reduce_logic} 减仓`}
+          </span>
+        ) : <span className="text-text-muted">—</span>}
+      </DnaSegment>
+      <DnaSegment label="风险基因">
+        {rg ? (
+          <span className="text-text-secondary font-mono">
+            {rg.direction === "long" ? "做多" : rg.direction === "short" ? "做空" : rg.direction === "mixed" ? "混合" : "—"}
+            {rg.leverage != null && ` · ${rg.leverage}x`}
+            {rg.sl_mode && ` · ${SL_MODE_LABELS[rg.sl_mode] ?? rg.sl_mode}`}
+            {rg.stop_loss != null && ` · SL ${(rg.stop_loss * 100).toFixed(1)}%`}
+            {rg.take_profit != null && ` · TP ${(rg.take_profit * 100).toFixed(1)}%`}
+            {rg.position_size != null && ` · 仓 ${(rg.position_size * 100).toFixed(0)}%`}
+          </span>
+        ) : <span className="text-text-muted">—</span>}
+      </DnaSegment>
+      <DnaSegment label="执行基因">
+        {eg ? (
+          <span className="text-text-secondary font-mono">{eg.symbol} · {eg.timeframe}</span>
+        ) : <span className="text-text-muted">—</span>}
+      </DnaSegment>
+      <DnaSegment label={`多周期层（${layers.length}）`}>
+        {layers.length ? (
+          <span className="text-text-secondary font-mono">
+            {layers.map((l) => `${l.timeframe}${l.role ? `(${l.role})` : ""}`).join(" · ")}
+          </span>
+        ) : <span className="text-text-muted">单层结构（无多周期层）</span>}
+      </DnaSegment>
+    </div>
+  );
+}
+
+function CareerSegment({ label, testid, children }: { label: string; testid: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5" data-testid={testid}>
+      <span className="text-[10px] uppercase tracking-wide text-text-muted/70">{label}</span>
+      <span className="text-text-secondary leading-relaxed">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * 四段履历前端聚合（alignment-batch D4，契约登记表三）：
+ * 诞生=Strategy 行 / 验证=ValidationRecord / 纸盘=PtTask / 审计=TransitionEvent。
+ * 审计段无查询端点（lifecycle 只暴露写迁移），如实披露不造数据。
+ */
+function CareerRecord({ strategy, verifyRecords, paperTasks }: {
   strategy: Strategy;
+  verifyRecords: VerifyHistoryItem[];
+  paperTasks: TradingTask[];
+}) {
+  const lastVerify = verifyRecords[0]; // 调用方保证倒序（verify/history 端点 created_at 倒序）
+  const lastTask = paperTasks[0]; // 同上（paper tasks 列表 created_at 倒序）
+  return (
+    <div className="flex flex-col gap-2 text-xs" data-testid="career-record">
+      <CareerSegment label="诞生" testid="career-segment-birth">
+        {new Date(strategy.created_at).toLocaleDateString()} · <SourceBadge source={strategy.source} />
+        {strategy.generation > 0 && ` · Gen ${strategy.generation}`}
+        {strategy.parent_ids && ` · 亲代 ${strategy.parent_ids}`}
+      </CareerSegment>
+      <CareerSegment label="验证" testid="career-segment-verify">
+        {verifyRecords.length === 0 ? (
+          <span className="text-text-muted">无验证记录</span>
+        ) : (
+          <>
+            {verifyRecords.length} 条 · 最近 {new Date(lastVerify.created_at).toLocaleDateString()}
+            {lastVerify.star > 0 && ` · ★${lastVerify.star}`}
+          </>
+        )}
+      </CareerSegment>
+      <CareerSegment label="纸盘" testid="career-segment-paper">
+        {paperTasks.length === 0 ? (
+          <span className="text-text-muted">无纸盘任务</span>
+        ) : (
+          <>
+            {paperTasks.length} 个任务 · 最近 {PT_STATUS_LABELS[lastTask.status] ?? lastTask.status}
+            {`（${new Date(lastTask.created_at).toLocaleDateString()}）`}
+          </>
+        )}
+      </CareerSegment>
+      <CareerSegment label="审计" testid="career-segment-audit">
+        <span className="text-text-muted">状态迁移事件查询端点未开放，暂无可呈现数据</span>
+      </CareerSegment>
+    </div>
+  );
+}
+
+function ExpandPanel({ strategy, verifyRecords, paperTasks, onRun, onPaperTrade, onSeedEvolve }: {
+  strategy: Strategy;
+  verifyRecords: VerifyHistoryItem[];
+  paperTasks: TradingTask[];
   onRun: () => void;
   onPaperTrade: () => void;
   onSeedEvolve: () => void;
@@ -211,13 +425,14 @@ function ExpandPanel({ strategy, onRun, onPaperTrade, onSeedEvolve }: {
       className="overflow-hidden"
     >
       <div className="ml-10 mr-4 mb-2 rounded-lg border border-border-default/30 bg-white/[0.01] p-4">
-        <div className="grid grid-cols-3 gap-6">
-          {/* Left: Strategy info */}
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-6">
+          {/* Col 1: 策略信息 */}
           <div className="flex flex-col gap-2 text-xs">
             <div className="text-[11px] text-text-muted font-medium mb-1">策略信息</div>
             <InfoRow label="交易对" value={strategy.symbol} />
             <InfoRow label="周期" value={strategy.timeframe} />
-            <InfoRow label="方向" value={rg?.direction === "long" ? "做多" : rg?.direction === "short" ? "做空" : "混合"} />
+            <InfoRow label="状态" value={<StatusBadge status={strategy.status} />} />
+            <InfoRow label="方向" value={rg?.direction === "long" ? "做多" : rg?.direction === "short" ? "做空" : rg?.direction === "mixed" ? "混合" : "--"} />
             <InfoRow label="杠杆" value={rg?.leverage ? `${rg.leverage}x` : "--"} valueClass="text-amber-400" />
             <InfoRow label="来源" value={<SourceBadge source={strategy.source} />} />
             {strategy.generation > 0 && <InfoRow label="进化代数" value={`Gen ${strategy.generation}`} />}
@@ -226,7 +441,7 @@ function ExpandPanel({ strategy, onRun, onPaperTrade, onSeedEvolve }: {
             {strategy.notes && <InfoRow label="备注" value={strategy.notes} valueClass="text-text-muted" />}
           </div>
 
-          {/* Middle: Backtest metrics */}
+          {/* Col 2: 回测指标 */}
           <div className="flex flex-col gap-3">
             <div className="text-[11px] text-text-muted font-medium">回测指标</div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
@@ -254,33 +469,17 @@ function ExpandPanel({ strategy, onRun, onPaperTrade, onSeedEvolve }: {
             )}
           </div>
 
-          {/* Right: DNA structure + actions */}
+          {/* Col 3: DNA 五段 */}
           <div className="flex flex-col gap-3">
-            <div className="text-[11px] text-text-muted font-medium">策略结构</div>
-            {dna?.signal_genes?.length ? (
-              <div className="flex flex-col gap-1 text-xs">
-                {dna.signal_genes.slice(0, 6).map((gene, i) => (
-                  <div key={i} className="text-text-secondary font-mono leading-relaxed truncate">
-                    {describeGene(gene)}
-                  </div>
-                ))}
-                {dna.signal_genes.length > 6 && (
-                  <div className="text-text-muted text-[11px]">...+{dna.signal_genes.length - 6} 条件</div>
-                )}
-              </div>
-            ) : (
-              <div className="text-xs text-text-muted">无 DNA 数据</div>
-            )}
+            <div className="text-[11px] text-text-muted font-medium">策略结构（DNA 五段）</div>
+            <DnaFiveSegments dna={dna} />
+          </div>
 
-            {rg && (
-              <div className="flex items-center gap-3 text-xs text-text-muted mt-1">
-                {rg.stop_loss != null && <span>止损 {(rg.stop_loss * 100).toFixed(1)}%</span>}
-                {rg.take_profit != null && <span>止盈 {(rg.take_profit * 100).toFixed(1)}%</span>}
-                {rg.position_size != null && <span>仓位 {(rg.position_size * 100).toFixed(0)}%</span>}
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2 mt-3">
+          {/* Col 4: 四段履历 + actions */}
+          <div className="flex flex-col gap-3">
+            <div className="text-[11px] text-text-muted font-medium">四段履历</div>
+            <CareerRecord strategy={strategy} verifyRecords={verifyRecords} paperTasks={paperTasks} />
+            <div className="flex flex-wrap gap-2 mt-auto pt-3 border-t border-border-default/30">
               <AntButton type="text" size="small" className="!text-xs" style={{ color: "#00C853" }} onClick={onRun}>
                 <Play className="h-3 w-3" /> 运行回测
               </AntButton>
@@ -328,7 +527,7 @@ function MetricItem({ label, value, positive }: { label: string; value: string; 
 }
 
 // ---------------------------------------------------------------------------
-// Strategy card row
+// 策略卡片行
 // ---------------------------------------------------------------------------
 
 const ROW_EASE: [number, number, number, number] = [0.25, 0.46, 0.45, 0.94];
@@ -346,6 +545,8 @@ const rowVariants = {
 interface StrategyRowProps {
   strategy: Strategy;
   index: number;
+  verifyRecords: VerifyHistoryItem[];
+  paperTasks: TradingTask[];
   selected: boolean;
   expanded: boolean;
   onToggleSelect: () => void;
@@ -358,7 +559,7 @@ interface StrategyRowProps {
 }
 
 function StrategyCardRow({
-  strategy, index, selected, expanded,
+  strategy, index, verifyRecords, paperTasks, selected, expanded,
   onToggleSelect, onToggleExpand, onDelete, onEdit, onRun, onPaperTrade, onSeedEvolve,
 }: StrategyRowProps) {
   const m = strategy.metrics;
@@ -381,7 +582,7 @@ function StrategyCardRow({
         )}
         style={{ originY: 0 }}
       >
-        {/* Checkbox */}
+        {/* 复选框 */}
         <td className="py-3 pl-3 pr-1 w-8">
           <input
             type="checkbox"
@@ -392,7 +593,7 @@ function StrategyCardRow({
           />
         </td>
 
-        {/* Star rating */}
+        {/* 星级 */}
         <td className="py-3 px-1 text-center">
           {(strategy.verify_star ?? 0) > 0 ? (
             <span className={cn(
@@ -408,20 +609,22 @@ function StrategyCardRow({
           ) : null}
         </td>
 
-        {/* Name */}
+        {/* 名称 */}
         <td className="py-3 px-2 cursor-pointer" onClick={onToggleExpand}>
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
               <ChevronRight className={cn("h-3 w-3 text-text-muted/40 transition-transform duration-200 shrink-0", expanded && "rotate-90")} />
-              <span className="text-sm font-medium text-text-primary truncate">
-                {strategy.name ?? strategy.strategy_id.slice(0, 8)}
+              {/* name=NULL 兜底契约（alignment-batch D4）：显示完整 strategy_id，不造名字 */}
+              <span className="text-sm font-medium text-text-primary truncate" data-testid="strategy-name">
+                {strategy.name ?? strategy.strategy_id}
               </span>
+              <StatusBadge status={strategy.status} />
               <SourceBadge source={strategy.source} />
             </div>
           </div>
         </td>
 
-        {/* Annual return */}
+        {/* 年化收益 */}
         <td className="py-3 px-2">
           <span className={cn(
             "font-mono text-[13px] font-semibold tabular-nums tracking-tight",
@@ -433,12 +636,12 @@ function StrategyCardRow({
           </span>
         </td>
 
-        {/* Drawdown */}
+        {/* 回撤 */}
         <td className="py-3 px-2">
           <span className="font-mono text-[13px] tabular-nums text-loss/80">{fmtDrawdown(m?.max_drawdown)}</span>
         </td>
 
-        {/* Win rate */}
+        {/* 胜率 */}
         <td className="py-3 px-2">
           <span className={cn(
             "font-mono text-[13px] tabular-nums",
@@ -448,7 +651,7 @@ function StrategyCardRow({
           </span>
         </td>
 
-        {/* Profit factor */}
+        {/* 盈亏比 */}
         <td className="py-3 px-2">
           <span className={cn(
             "font-mono text-[13px] tabular-nums",
@@ -458,28 +661,28 @@ function StrategyCardRow({
           </span>
         </td>
 
-        {/* Total trades */}
+        {/* 总交易数 */}
         <td className="py-3 px-2">
           <span className="font-mono text-[13px] tabular-nums text-text-secondary">
             {m?.total_trades ?? "--"}
           </span>
         </td>
 
-        {/* Data */}
+        {/* 数据 */}
         <td className="py-3 px-2">
           <span className="text-xs text-text-muted font-mono">
             {strategy.symbol} <span className="text-text-muted/40">/</span> {strategy.timeframe}
           </span>
         </td>
 
-        {/* Date */}
+        {/* 日期 */}
         <td className="py-3 px-2">
           <span className="font-mono text-xs text-text-muted/60 tabular-nums">
             {new Date(strategy.created_at).toLocaleDateString()}
           </span>
         </td>
 
-        {/* Actions */}
+        {/* 操作 */}
         <td className="py-3 pr-4 text-right w-28">
           <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all duration-200">
             <AntButton type="text" size="small" aria-label="运行回测" onClick={onRun} style={{ color: "#00b37a" }}>
@@ -498,13 +701,15 @@ function StrategyCardRow({
         </td>
       </motion.tr>
 
-      {/* Expand panel */}
+      {/* 展开面板 */}
       <AnimatePresence>
         {expanded && (
           <tr>
             <td colSpan={10} className="p-0 border-b border-border-default/30">
               <ExpandPanel
                 strategy={strategy}
+                verifyRecords={verifyRecords}
+                paperTasks={paperTasks}
                 onRun={onRun}
                 onPaperTrade={onPaperTrade}
                 onSeedEvolve={onSeedEvolve}
@@ -518,7 +723,7 @@ function StrategyCardRow({
 }
 
 // ---------------------------------------------------------------------------
-// Empty state with animation
+// 空状态（带动画）
 // ---------------------------------------------------------------------------
 
 function AnimatedEmptyState({ onNavigate }: { onNavigate: () => void }) {
@@ -558,7 +763,7 @@ function AnimatedEmptyState({ onNavigate }: { onNavigate: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Loading skeleton
+// 加载骨架屏
 // ---------------------------------------------------------------------------
 
 function LoadingSkeleton() {
@@ -590,7 +795,7 @@ function LoadingSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Main page
+// 主页面
 // ---------------------------------------------------------------------------
 
 const SORTABLE_COLUMNS: { field: SortField; label: string }[] = [
@@ -611,6 +816,7 @@ export function Strategies() {
   const searchQuery = searchParams.get("q") ?? "";
   const sourceFilter = searchParams.get("source") ?? "all";
   const verifyFilter = searchParams.get("verify") ?? "all";
+  const statusFilter = searchParams.get("status") ?? "all";
 
   const setSearchQuery = useCallback((v: string) => {
     setSearchParams((prev) => {
@@ -636,31 +842,88 @@ export function Strategies() {
     }, { replace: true });
   }, [setSearchParams]);
 
-  // Selection
+  const setStatusFilter = useCallback((v: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v !== "all") next.set("status", v); else next.delete("status");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // 选择状态
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Expand
+  // 展开状态
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Sort (client-side for metric columns, server-side for created_at)
+  // 排序（指标列客户端排，created_at 服务端排）
   const [sortState, setSortState] = useState<{ field: SortField; dir: SortDir }>({ field: "verify_star", dir: "desc" });
 
-  // Dialogs
+  // 对话框
   const [deleteTarget, setDeleteTarget] = useState<Strategy | null>(null);
   const [editTarget, setEditTarget] = useState<Strategy | null>(null);
   const [batchDeleteTargets, setBatchDeleteTargets] = useState<Strategy[]>([]);
 
-  // Data - use best_fitness as default sort
+  // 数据——缺省按 best_fitness 排序
   const { data, isLoading, isError, error, refetch } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 200 })
   );
+  // draft 补拉（alignment-batch D4）：列表端点 status 缺省视图排除 draft，
+  // 六态全可见需显式补一次 status=draft 查询（单值过滤参数，页面级合并）
+  const { data: draftData } = useQuery({
+    queryKey: ["strategies", "list", { status: "draft" }],
+    queryFn: () => getStrategiesByStatus("draft", { sort_by: "created_at", sort_order: "desc", limit: 200 }),
+  });
+  // 四段履历共享查询（页面级一次，展开面板按 strategy_id 过滤——多行展开零重复请求）
+  const { data: verifyHistory } = useQuery({
+    queryKey: ["strategies", "verify-history", "all"],
+    queryFn: () => getVerifyHistory({ limit: 500 }),
+  });
+  const { data: paperTasksAll } = useQuery({
+    queryKey: ["paper-trading", "tasks", "for-career"],
+    queryFn: () => listTradingTasks({ limit: 500 }),
+  });
   const deleteMutation = useDeleteStrategy();
 
-  const allStrategies: Strategy[] = data?.items ?? [];
+  const allStrategies: Strategy[] = useMemo(
+    () => [...(data?.items ?? []), ...(draftData?.items ?? [])],
+    [data, draftData],
+  );
 
-  // Client-side filtering
+  // 六态计数（chips 徽标；status 后端响应恒有值，null 兜底归 active）
+  const statusCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of allStrategies) {
+      const st = s.status ?? "active";
+      counts.set(st, (counts.get(st) ?? 0) + 1);
+    }
+    return counts;
+  }, [allStrategies]);
+
+  // 履历数据按 strategy_id 索引（展开面板直取，避免逐行重复过滤）
+  const verifyByStrategy = useMemo(() => {
+    const map = new Map<string, VerifyHistoryItem[]>();
+    for (const r of verifyHistory?.items ?? []) {
+      const list = map.get(r.strategy_id);
+      if (list) list.push(r); else map.set(r.strategy_id, [r]);
+    }
+    return map;
+  }, [verifyHistory]);
+  const paperByStrategy = useMemo(() => {
+    const map = new Map<string, TradingTask[]>();
+    for (const t of paperTasksAll?.tasks ?? []) {
+      const list = map.get(t.strategy_id);
+      if (list) list.push(t); else map.set(t.strategy_id, [t]);
+    }
+    return map;
+  }, [paperTasksAll]);
+
+  // 客户端过滤
   const filteredStrategies = useMemo(() => {
     let result = allStrategies;
+    if (statusFilter !== "all") {
+      result = result.filter((s) => (s.status ?? "active") === statusFilter);
+    }
     if (sourceFilter !== "all") {
       result = result.filter((s) => s.source === sourceFilter);
     }
@@ -689,9 +952,9 @@ export function Strategies() {
       );
     }
     return result;
-  }, [allStrategies, sourceFilter, verifyFilter, searchQuery]);
+  }, [allStrategies, statusFilter, sourceFilter, verifyFilter, searchQuery]);
 
-  // Client-side sorting
+  // 客户端排序
   const sortedStrategies = useMemo(() => {
     const accessor = METRIC_SORT_ACCESSORS[sortState.field];
     if (!accessor) return filteredStrategies;
@@ -705,7 +968,7 @@ export function Strategies() {
     });
   }, [filteredStrategies, sortState]);
 
-  // Selection helpers
+  // 选择辅助
   const allSelected = sortedStrategies.length > 0 && selectedIds.size === sortedStrategies.length;
   const toggleAll = () => {
     if (allSelected) setSelectedIds(new Set());
@@ -720,7 +983,7 @@ export function Strategies() {
     });
   };
 
-  // Sort toggle (two-state: desc ↔ asc)
+  // 排序切换（两态：desc ↔ asc）
   const cycleSort = (field: SortField) => {
     setSortState((prev) => {
       if (prev.field !== field) return { field, dir: "desc" };
@@ -728,7 +991,7 @@ export function Strategies() {
     });
   };
 
-  // Actions
+  // 操作
   const handleDelete = (id: string) => {
     deleteMutation.mutate(id, { onSuccess: () => setDeleteTarget(null) });
   };
@@ -767,10 +1030,10 @@ export function Strategies() {
     });
   };
 
-  // --- Loading ---
+  // --- 加载中 ---
   if (isLoading) return <LoadingSkeleton />;
 
-  // --- Error ---
+  // --- 错误 ---
   if (isError) {
     return (
       <PageTransition>
@@ -784,7 +1047,7 @@ export function Strategies() {
     );
   }
 
-  // --- Empty ---
+  // --- 空态 ---
   if (allStrategies.length === 0) {
     return (
       <PageTransition>
@@ -793,11 +1056,11 @@ export function Strategies() {
     );
   }
 
-  // --- Main ---
+  // --- 主体 ---
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* Toolbar */}
+        {/* 工具栏 */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-sm text-text-secondary">已保存策略</span>
@@ -806,7 +1069,7 @@ export function Strategies() {
             </span>
           </div>
 
-          {/* Batch actions */}
+          {/* 批量操作 */}
           {selectedIds.size > 0 && !allSelected && sortedStrategies.length > 0 && (
             <AntButton
               type="text"
@@ -898,7 +1161,28 @@ export function Strategies() {
           </div>
         </div>
 
-        {/* Strategy table */}
+        {/* 六态筛选 chips（alignment-batch D4：值域=生命周期状态机六态，带计数） */}
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="status-chips">
+          <StatusChip
+            value="all"
+            label="全部"
+            count={allStrategies.length}
+            active={statusFilter === "all"}
+            onClick={setStatusFilter}
+          />
+          {Object.keys(STRATEGY_STATUS_LABELS).map((st) => (
+            <StatusChip
+              key={st}
+              value={st}
+              label={STRATEGY_STATUS_LABELS[st]}
+              count={statusCounts.get(st) ?? 0}
+              active={statusFilter === st}
+              onClick={setStatusFilter}
+            />
+          ))}
+        </div>
+
+        {/* 策略表格 */}
         <div className="rounded-xl border border-border-default/50 overflow-hidden bg-white/[0.01]">
           <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
             <colgroup>
@@ -916,7 +1200,7 @@ export function Strategies() {
             </colgroup>
             <thead>
               <tr className="border-b border-border-default/40">
-                {/* Checkbox header */}
+                {/* 复选框表头 */}
                 <th className="py-2.5 pl-3 pr-1">
                   <input
                     type="checkbox"
@@ -925,7 +1209,7 @@ export function Strategies() {
                     className="h-3.5 w-3.5 rounded border-border-default/60 bg-transparent accent-accent-gold cursor-pointer"
                   />
                 </th>
-                {/* Star sort header */}
+                {/* 星级排序列头 */}
                 <th
                   className="py-2.5 text-center text-xs font-medium uppercase tracking-wider text-text-muted/60 whitespace-nowrap cursor-pointer hover:text-text-muted select-none"
                   onClick={() => cycleSort("verify_star")}
@@ -935,7 +1219,7 @@ export function Strategies() {
                     <SortIcon field="verify_star" currentSort={sortState} />
                   </span>
                 </th>
-                {/* Name sort */}
+                {/* 名称排序 */}
                 <th
                   className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-text-muted/60 whitespace-nowrap cursor-pointer hover:text-text-muted select-none"
                   onClick={() => cycleSort("name")}
@@ -945,7 +1229,7 @@ export function Strategies() {
                     <SortIcon field="name" currentSort={sortState} />
                   </span>
                 </th>
-                {/* Sortable metric columns */}
+                {/* 可排序指标列 */}
                 {SORTABLE_COLUMNS.map(({ field, label }) => (
                   <th
                     key={field}
@@ -958,11 +1242,11 @@ export function Strategies() {
                     </span>
                   </th>
                 ))}
-                {/* Data */}
+                {/* 数据 */}
                 <th className="py-2.5 text-left text-xs font-medium uppercase tracking-wider text-text-muted/60 whitespace-nowrap">
                   数据
                 </th>
-                {/* Actions */}
+                {/* 操作 */}
                 <th className="py-2.5 text-right pr-4 text-xs font-medium uppercase tracking-wider text-text-muted/60" />
               </tr>
             </thead>
@@ -980,6 +1264,8 @@ export function Strategies() {
                       key={strategy.strategy_id}
                       strategy={strategy}
                       index={i}
+                      verifyRecords={verifyByStrategy.get(strategy.strategy_id) ?? []}
+                      paperTasks={paperByStrategy.get(strategy.strategy_id) ?? []}
                       selected={selectedIds.has(strategy.strategy_id)}
                       expanded={expandedId === strategy.strategy_id}
                       onToggleSelect={() => toggleOne(strategy.strategy_id)}
@@ -997,7 +1283,7 @@ export function Strategies() {
           </table>
         </div>
 
-        {/* Single delete confirm */}
+        {/* 单删确认 */}
         <ConfirmDialog
           open={deleteTarget !== null}
           onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
@@ -1009,7 +1295,7 @@ export function Strategies() {
           loading={deleteMutation.isPending}
         />
 
-        {/* Batch delete confirm */}
+        {/* 批量删除确认 */}
         <ConfirmDialog
           open={batchDeleteTargets.length > 0}
           onOpenChange={(open) => { if (!open) setBatchDeleteTargets([]); }}
@@ -1020,7 +1306,7 @@ export function Strategies() {
           onConfirm={handleBatchDelete}
         />
 
-        {/* Edit dialog */}
+        {/* 编辑对话框 */}
         <EditStrategyDialog
           open={editTarget !== null}
           strategy={editTarget}

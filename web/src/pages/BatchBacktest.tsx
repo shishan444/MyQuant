@@ -1,10 +1,16 @@
+/**
+ * 批跑回测页（路由 /batch-backtest）。多策略×多区间批量回测：策略
+ * 选择/日期区间/参数配置 → 跨区间聚合摘要（六列对齐 avg/worst/
+ * qualified_count 等）+逐区间结果行与展开明细。消费方：App 路由
+ * （页面入口）。
+ */
 import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Play, X, ChevronDown, ChevronUp, LineChart,
-  Search, Check, Star,
+  Search, Check, Star, ArrowUpDown,
 } from "lucide-react";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Button as AntButton, Input, InputNumber, Progress } from "antd";
@@ -20,7 +26,7 @@ import type {
   BacktestResult,
 } from "@/types/api";
 
-/* ── Helpers ── */
+/* ── 辅助函数 ── */
 
 interface DateRange { start: string; end: string }
 
@@ -33,24 +39,37 @@ const DATE_PRESETS = [
 type StarFilter = "all" | "4+" | "3+";
 type QualifiedFilter = "all" | "qualified" | "unqualified";
 
+/** 结果排序键（alignment-batch D2：fitness 排序披露切换，至少两键） */
+type ResultSortKey = "avg_fitness" | "avg_sharpe_ratio";
+
+const RESULT_SORT_LABELS: Record<ResultSortKey, string> = {
+  avg_fitness: "平均 Fitness",
+  avg_sharpe_ratio: "平均夏普",
+};
+
 function formatReturn(v: number): string {
   const sign = v >= 0 ? "+" : "";
   return `${sign}${(v * 100).toFixed(2)}%`;
 }
 
-/* ── Main Component ── */
+/** 回撤口径归一：引擎 max_drawdown 为负值小数（drawdown.min() 直落），展示取 abs+百分数 */
+function formatDrawdownPct(v: number): string {
+  return `${(Math.abs(v) * 100).toFixed(1)}%`;
+}
+
+/* ── 主组件 ── */
 
 export function BatchBacktest() {
   const location = useLocation();
   const locationState = location.state as { strategy_ids?: string[] } | null;
 
-  // ── Strategy data ──
+  // ── 策略数据 ──
   const { data: strategyData, isLoading: strategiesLoading } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 500 })
   );
   const strategies = strategyData?.items ?? [];
 
-  // ── Selection state ──
+  // ── 选择态 ──
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
     if (locationState?.strategy_ids?.length) {
       return new Set(locationState.strategy_ids);
@@ -61,7 +80,7 @@ export function BatchBacktest() {
   const [qualifiedFilter, setQualifiedFilter] = useState<QualifiedFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ── Config state ──
+  // ── 配置态 ──
   const [dateRanges, setDateRanges] = useState<DateRange[]>([{ start: "", end: "" }]);
   const [params, setParams] = useState({
     init_cash: "100000",
@@ -71,17 +90,18 @@ export function BatchBacktest() {
   });
   const [configCollapsed, setConfigCollapsed] = useState(false);
 
-  // ── Result state ──
+  // ── 结果态 ──
+  const [resultSortKey, setResultSortKey] = useState<ResultSortKey>("avg_fitness");
   const [expandedStrategyId, setExpandedStrategyId] = useState<string | null>(null);
   const [detailMap, setDetailMap] = useState<Record<string, BacktestResult>>({});
   const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
   const [detailError, setDetailError] = useState<Record<string, string>>({});
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
 
-  // ── Stream hook ──
+  // ── 流式 hook ──
   const stream = useBatchBacktestStream();
 
-  // ── Filtered strategies ──
+  // ── 筛选后策略 ──
   const filteredStrategies = useMemo(() => {
     let items = [...strategies];
     if (starFilter === "4+") items = items.filter((s) => (s.verify_star ?? 0) >= 4);
@@ -103,11 +123,17 @@ export function BatchBacktest() {
   const filledRanges = useMemo(() => dateRanges.filter((r) => r.start && r.end), [dateRanges]);
   const canStart = selectedIds.size >= 1 && filledRanges.length >= 1 && stream.status !== "running";
 
-  // ── Stream results ──
+  // ── 流式结果 ──
   const summary = useMemo<BatchBacktestSummaryItem[]>(() => {
     if (stream.status === "done" && Array.isArray(stream.summary)) return stream.summary as BatchBacktestSummaryItem[];
     return [];
   }, [stream.status, stream.summary]);
+
+  // 排序键切换呈现（D2：当前键明示披露，降序）
+  const sortedSummary = useMemo(
+    () => [...summary].sort((a, b) => b[resultSortKey] - a[resultSortKey]),
+    [summary, resultSortKey]
+  );
 
   const stats = useMemo(() => {
     if (summary.length === 0) return null;
@@ -119,7 +145,7 @@ export function BatchBacktest() {
     return { total: summary.length, avgReturn, qualifiedRate, bestName: best.strategy_name };
   }, [summary]);
 
-  // ── Selection handlers ──
+  // ── 选择处理 ──
   const toggleStrategy = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -147,7 +173,7 @@ export function BatchBacktest() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // ── Config handlers ──
+  // ── 配置处理 ──
   const handleDateChange = useCallback((index: number, field: "start" | "end", value: string) => {
     setDateRanges((prev) => {
       const next = [...prev];
@@ -217,7 +243,7 @@ export function BatchBacktest() {
   return (
     <PageTransition>
       <div className="p-4 space-y-3 max-w-[1400px] mx-auto">
-        {/* Header */}
+        {/* 头部 */}
         <div className="flex items-center gap-2.5">
           <LineChart className="h-4 w-4 text-accent-gold" />
           <h1 className="text-sm font-semibold text-text-primary">批量回测</h1>
@@ -226,14 +252,14 @@ export function BatchBacktest() {
           </span>
         </div>
 
-        {/* ─── Config ─── */}
+        {/* ─── 配置 ─── */}
         {!configCollapsed && stream.status !== "running" && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             className="rounded-xl border border-border-default/50 bg-white/[0.01] p-4 space-y-4"
           >
-            {/* Strategy Selector */}
+            {/* 策略选择器 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-text-secondary">选择策略</label>
@@ -242,7 +268,7 @@ export function BatchBacktest() {
                 </span>
               </div>
 
-              {/* Filter bar */}
+              {/* 筛选栏 */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
                   {(["all", "4+", "3+"] as StarFilter[]).map((f) => (
@@ -269,7 +295,7 @@ export function BatchBacktest() {
                 </div>
               </div>
 
-              {/* Select actions */}
+              {/* 选择操作 */}
               <div className="flex items-center gap-2">
                 <AntButton type="text" size="small" className="!text-[10px]" onClick={selectAllFiltered} disabled={allFilteredSelected}>
                   全选当前
@@ -279,7 +305,7 @@ export function BatchBacktest() {
                 </AntButton>
               </div>
 
-              {/* Strategy table */}
+              {/* 策略表格 */}
               <div className="max-h-[220px] overflow-y-auto rounded-lg border border-border-default/30">
                 {strategiesLoading ? (
                   <div className="py-6 text-center">
@@ -350,7 +376,7 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Date ranges */}
+            {/* 日期区间 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-text-secondary">日期区间</label>
@@ -383,7 +409,7 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Params inline + Start */}
+            {/* 参数内联+开始 */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
                 <InlineParam label="资金" value={params.init_cash} onChange={(v) => setParams((p) => ({ ...p, init_cash: v }))} w="!w-24" />
@@ -399,7 +425,7 @@ export function BatchBacktest() {
           </motion.div>
         )}
 
-        {/* Collapsed config summary */}
+        {/* 收起态配置摘要 */}
         {configCollapsed && stream.status !== "running" && (
           <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30">
             <span className="text-xs text-text-secondary">
@@ -409,7 +435,7 @@ export function BatchBacktest() {
           </div>
         )}
 
-        {/* ─── Progress ─── */}
+        {/* ─── 进度 ─── */}
         {stream.status === "running" && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -438,7 +464,7 @@ export function BatchBacktest() {
           </motion.div>
         )}
 
-        {/* ─── Error ─── */}
+        {/* ─── 错误 ─── */}
         {stream.status === "error" && (
           <div className="rounded-xl border border-red-900/30 bg-white/[0.01] p-3 flex items-center gap-2">
             <X className="w-4 h-4 text-red-400 shrink-0" />
@@ -447,10 +473,10 @@ export function BatchBacktest() {
           </div>
         )}
 
-        {/* ─── Results ─── */}
+        {/* ─── 结果 ─── */}
         {stream.status === "done" && stats && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-            {/* Stats strip */}
+            {/* 指标条 */}
             <div className="flex items-center gap-5 px-1">
               <StatPill label="策略数" value={`${stats.total}`} />
               <StatPill label="平均收益" value={formatReturn(stats.avgReturn)} color={stats.avgReturn >= 0 ? "text-emerald-400" : "text-red-400"} />
@@ -461,9 +487,41 @@ export function BatchBacktest() {
               </div>
             </div>
 
-            {/* Strategy result rows */}
+            {/* 排序键披露切换（D2） */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-text-secondary" data-testid="batch-sort-label">
+                当前按 {RESULT_SORT_LABELS[resultSortKey]} 降序
+              </span>
+              <div className="flex items-center gap-1">
+                <ArrowUpDown className="w-3 h-3 text-text-secondary" />
+                {(Object.keys(RESULT_SORT_LABELS) as ResultSortKey[]).map((k) => (
+                  <AntButton
+                    key={k}
+                    type={resultSortKey === k ? "primary" : "text"}
+                    size="small"
+                    className="!text-[10px]"
+                    data-testid={`batch-sort-btn-${k}`}
+                    onClick={() => setResultSortKey(k)}
+                  >
+                    {RESULT_SORT_LABELS[k]}
+                  </AntButton>
+                ))}
+              </div>
+            </div>
+
+            {/* 策略结果行 — 六列对齐（avg_total_return/avg_sharpe_ratio/worst_max_drawdown/avg_fitness/qualified_count/total_periods） */}
             <div className="space-y-1">
-              {summary.map((item) => (
+              <div className="grid grid-cols-[minmax(150px,1.4fr)_repeat(6,minmax(68px,0.75fr))_28px] gap-2 px-3 pb-1 text-[10px] text-text-secondary">
+                <span>策略</span>
+                <span className="text-right" data-testid="batch-head-avg_total_return">平均收益</span>
+                <span className="text-right" data-testid="batch-head-avg_sharpe_ratio">平均夏普</span>
+                <span className="text-right" data-testid="batch-head-worst_max_drawdown" title="最差区间回撤（口径取绝对值）">最差回撤</span>
+                <span className="text-right" data-testid="batch-head-avg_fitness">平均Fitness</span>
+                <span className="text-right" data-testid="batch-head-qualified_count">达标数</span>
+                <span className="text-right" data-testid="batch-head-total_periods">区间数</span>
+                <span />
+              </div>
+              {sortedSummary.map((item) => (
                 <StrategyResultRow
                   key={item.strategy_id}
                   item={item}
@@ -492,7 +550,7 @@ export function BatchBacktest() {
   );
 }
 
-/* ── Sub-components ── */
+/* ── 子组件 ── */
 
 function InlineParam({ label, value, onChange, suffix, w = "!w-20" }: {
   label: string; value: string; onChange: (v: string) => void; suffix?: string; w?: string;
@@ -541,23 +599,32 @@ function StrategyResultRow({
   return (
     <div className="rounded-lg border border-border-default/30 overflow-hidden">
       <button
-        className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-white/[0.01] transition-colors"
+        className="w-full grid grid-cols-[minmax(150px,1.4fr)_repeat(6,minmax(68px,0.75fr))_28px] gap-2 px-3 py-2.5 items-center text-left hover:bg-white/[0.01] transition-colors"
         onClick={onToggle}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="text-xs text-text-primary font-medium truncate max-w-[180px]">{item.strategy_name}</span>
+        <span className="min-w-0" data-testid={`batch-result-row-${item.strategy_id}`}>
+          <span className="text-xs text-text-primary font-medium truncate block max-w-[180px]">{item.strategy_name}</span>
           <span className="text-[10px] font-mono text-text-muted">{item.symbol}/{item.timeframe}</span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <span className={cn("text-xs font-mono font-semibold", item.avg_total_return >= 0 ? "text-emerald-400" : "text-red-400")}>
-            {formatReturn(item.avg_total_return)}
-          </span>
-          <span className="text-[10px] font-mono text-accent-gold">F {item.avg_fitness.toFixed(2)}</span>
-          <span className={cn("text-[10px] font-mono", qualifiedRate >= 1 ? "text-emerald-400" : qualifiedRate > 0 ? "text-amber-400" : "text-text-muted")}>
-            {item.qualified_count}/{item.total_periods}
-          </span>
-          {expanded ? <ChevronUp className="h-3.5 w-3.5 text-text-secondary" /> : <ChevronDown className="h-3.5 w-3.5 text-text-secondary" />}
-        </div>
+        </span>
+        <span className={cn("text-xs font-mono font-semibold text-right", item.avg_total_return >= 0 ? "text-emerald-400" : "text-red-400")}>
+          {formatReturn(item.avg_total_return)}
+        </span>
+        <span className="text-[10px] font-mono text-right text-text-primary">
+          {item.avg_sharpe_ratio.toFixed(2)}
+        </span>
+        <span className="text-[10px] font-mono text-right text-text-primary">
+          {formatDrawdownPct(item.worst_max_drawdown)}
+        </span>
+        <span className="text-[10px] font-mono text-right text-accent-gold">
+          {item.avg_fitness.toFixed(2)}
+        </span>
+        <span className={cn("text-[10px] font-mono text-right", qualifiedRate >= 1 ? "text-emerald-400" : qualifiedRate > 0 ? "text-amber-400" : "text-text-muted")}>
+          {item.qualified_count}
+        </span>
+        <span className="text-[10px] font-mono text-right text-text-secondary">
+          {item.total_periods}
+        </span>
+        {expanded ? <ChevronUp className="h-3.5 w-3.5 text-text-secondary" /> : <ChevronDown className="h-3.5 w-3.5 text-text-secondary" />}
       </button>
 
       <AnimatePresence>

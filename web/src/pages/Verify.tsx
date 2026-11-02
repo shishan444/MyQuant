@@ -1,3 +1,9 @@
+/**
+ * 策略验证页（路由 /verify）。多策略×多区间验证：配置工具栏
+ * （预设/日期区间）→ 进度/结果（策略卡网格：区间条+聚合指标+
+ * 展开明细）+历史会话视图（三门槛点行/星级）。消费方：App 路由
+ * （页面入口）。
+ */
 import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
@@ -19,6 +25,8 @@ import {
 } from "@/hooks/useStrategies";
 import { cn, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
 import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse } from "@/types/api";
+import { ThresholdDots, VerifyStar, ThresholdsSummary, type VerifyHistoryRow } from "@/components/verify/VerifyThresholds";
+import { formatDrawdown } from "@/components/verify/thresholdsUtils";
 
 interface DateRange {
   start: string;
@@ -252,7 +260,7 @@ export function Verify() {
   return (
     <PageTransition>
       <div className="p-4 space-y-3 max-w-[1400px] mx-auto">
-        {/* Header */}
+        {/* 头部 */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="h-4 w-4 text-blue-400" />
@@ -281,7 +289,7 @@ export function Verify() {
           />
         ) : (
           <>
-            {/* Config Toolbar */}
+            {/* 配置工具栏 */}
             {configCollapsed && stream.status !== "running" ? (
               <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30">
                 <span className="text-xs text-text-secondary">
@@ -293,7 +301,7 @@ export function Verify() {
               </div>
             ) : (
               <div className="p-3 rounded-lg bg-slate-800/40 border border-slate-700/30 space-y-2">
-                {/* Line 1: Presets */}
+                {/* 行 1：预设 */}
                 <div className="flex items-center justify-between">
                   <div className="flex gap-1">
                     {DATE_PRESETS.map((p) => (
@@ -307,7 +315,7 @@ export function Verify() {
                   </AntButton>
                 </div>
 
-                {/* Date ranges */}
+                {/* 日期区间 */}
                 <div className="space-y-1">
                   {dateRanges.map((range, i) => (
                     <div key={i} className="flex items-center gap-2">
@@ -335,7 +343,7 @@ export function Verify() {
                   ))}
                 </div>
 
-                {/* Line 2: Params + Action */}
+                {/* 行 2：参数+操作 */}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1">
@@ -395,7 +403,7 @@ export function Verify() {
               </div>
             )}
 
-            {/* Progress Panel */}
+            {/* 进度面板 */}
             {stream.status === "running" && (
               <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/30 space-y-3">
                 <div className="flex items-center justify-between">
@@ -424,7 +432,7 @@ export function Verify() {
               </div>
             )}
 
-            {/* Error state */}
+            {/* 错误态 */}
             {stream.status === "error" && (
               <div className="p-3 rounded-lg bg-slate-800/40 border border-red-900/30 flex items-center gap-2">
                 <XIcon className="w-4 h-4 text-red-400" />
@@ -435,17 +443,17 @@ export function Verify() {
               </div>
             )}
 
-            {/* Results area */}
+            {/* 结果区 */}
             {stream.status === "done" && stats && (
               <>
-                {/* Stats strip */}
+                {/* 指标条 */}
                 <div className="flex items-center gap-4 px-1">
                   <Stat label="达标" value={`${stats.qualified}/${stats.total}`} trend={stats.qualified > 0 ? "up" : "neutral"} />
                   <Stat label="均分" value={stats.avgScore.toFixed(2)} trend={stats.avgScore > 0.5 ? "up" : stats.avgScore > 0.2 ? "neutral" : "down"} />
                   <Stat label="最佳" value={stats.bestName ?? "-"} trend="up" />
                 </div>
 
-                {/* Filter & Sort */}
+                {/* 筛选与排序 */}
                 <div className="flex items-center justify-between">
                   <div className="flex gap-1">
                     {(["all", "qualified", "unqualified"] as FilterKey[]).map((k) => (
@@ -476,7 +484,7 @@ export function Verify() {
                   </div>
                 </div>
 
-                {/* Strategy Cards Grid */}
+                {/* 策略卡网格 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
                   {displayItems.map((item, idx) => (
                     <StrategyCard
@@ -514,7 +522,7 @@ export function Verify() {
               </>
             )}
 
-            {/* Initial empty guidance */}
+            {/* 初始空态引导 */}
             {stream.status === "idle" && (
               <div className="py-12 text-center">
                 <ShieldCheck className="w-8 h-8 text-slate-600 mx-auto mb-3" />
@@ -529,7 +537,7 @@ export function Verify() {
   );
 }
 
-/* ── Sub-components ── */
+/* ── 子组件 ── */
 
 function Stat({ label, value, trend }: { label: string; value: string; trend: "up" | "down" | "neutral" }) {
   const color = trend === "up" ? "text-emerald-400" : trend === "down" ? "text-red-400" : "text-text-primary";
@@ -565,7 +573,7 @@ function StrategyCard({
 
   return (
     <GlassCard hover={false} className="p-3 space-y-2">
-      {/* Row 1: Header — clickable for expand */}
+      {/* 行 1：头部——点击展开 */}
       <button className="w-full text-left" onClick={onToggleExpand}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
@@ -609,14 +617,14 @@ function StrategyCard({
         </div>
       </button>
 
-      {/* Row 2: Period bars */}
+      {/* 行 2：区间条 */}
       <div className="flex gap-1">
         {item.per_period_metrics.map((pm, pi) => (
           <PeriodBar key={pi} pm={pm} />
         ))}
       </div>
 
-      {/* Row 3: Aggregate metrics */}
+      {/* 行 3：聚合指标 */}
       {strategy && (
         <div className="flex items-center gap-3 text-[10px] text-text-secondary">
           <span>{strategy.symbol}/{strategy.timeframe}</span>
@@ -624,10 +632,10 @@ function StrategyCard({
         </div>
       )}
 
-      {/* Expanded detail */}
+      {/* 展开详情 */}
       {expanded && (
         <div className="border-t border-slate-700/30 pt-2 space-y-2">
-          {/* DNA summary */}
+          {/* DNA 摘要 */}
           {strategy?.dna && (
             <div className="text-[10px] space-y-0.5">
               <div className="text-text-secondary font-medium">策略基因</div>
@@ -644,7 +652,7 @@ function StrategyCard({
             </div>
           )}
 
-          {/* Per-period detail table */}
+          {/* 逐区间明细表 */}
           <div className="text-[10px]">
             <div className="text-text-secondary font-medium mb-1">各区间详情</div>
             <table className="w-full">
@@ -675,7 +683,7 @@ function StrategyCard({
             </table>
           </div>
 
-          {/* Expanded action buttons */}
+          {/* 展开操作按钮 */}
           <div className="flex gap-2 pt-1">
             <AntButton
               size="small"
@@ -695,7 +703,7 @@ function StrategyCard({
         </div>
       )}
 
-      {/* Collapsed action buttons */}
+      {/* 收起操作按钮 */}
       {!expanded && (
         <div className="flex items-center gap-2 pt-1 border-t border-slate-700/20">
           {allQualified ? (
@@ -766,7 +774,7 @@ function AggregateMetrics({ periods }: { periods: VerifyPeriodSummary[] }) {
   if (periods.length === 0) return null;
   const avgReturn = periods.reduce((s, p) => s + p.total_return, 0) / periods.length;
   const avgSharpe = periods.reduce((s, p) => s + p.sharpe_ratio, 0) / periods.length;
-  const maxDD = Math.max(...periods.map((p) => p.max_drawdown));
+  const maxDD = Math.min(...periods.map((p) => p.max_drawdown));
 
   return (
     <>
@@ -777,7 +785,7 @@ function AggregateMetrics({ periods }: { periods: VerifyPeriodSummary[] }) {
   );
 }
 
-/* ── History View ── */
+/* ── 历史视图 ── */
 
 function HistoryView({
   sessionsData,
@@ -792,6 +800,9 @@ function HistoryView({
   setExpandedSessionId: (id: string | null) => void;
   sessionResults: VerifyHistoryResponse | undefined;
 }) {
+  // 行类型仅收窄 thresholds（生成源索引签名→三键具体形，见 VerifyThresholds）
+  const rows = sessionResults?.items as VerifyHistoryRow[] | undefined;
+
   if (sessionsLoading) {
     return (
       <div className="space-y-2">
@@ -853,36 +864,52 @@ function HistoryView({
             )}
 
             {isExpanded && (
-              <div className="px-3 pb-3 border-t border-slate-700/30 pt-2 overflow-x-auto">
-                {sessionResults ? (
-                  <table className="w-full text-[11px]">
-                    <thead>
-                      <tr className="border-b border-slate-700/40">
-                        <th className="py-1.5 text-left text-text-secondary font-medium">策略名</th>
-                        <th className="py-1.5 text-left text-text-secondary font-medium">品种/周期</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">年化</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">Fitness</th>
-                        <th className="py-1.5 text-center text-text-secondary font-medium">达标</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sessionResults.items.map((item) => (
-                        <tr key={item.result_id} className="border-b border-slate-700/10">
-                          <td className="py-1.5 text-text-primary truncate max-w-[120px]">{item.strategy_name ?? item.strategy_id}</td>
-                          <td className="py-1.5 text-text-secondary font-mono text-[10px]">{item.symbol}/{item.timeframe}</td>
-                          <td className={cn("py-1.5 text-center font-mono tabular-nums", item.total_return > 0 ? "text-emerald-400" : "text-red-400")}>
-                            {formatReturn(item.total_return)}
-                          </td>
-                          <td className={cn("py-1.5 text-center font-mono tabular-nums font-medium", getFitnessColor(item.fitness))}>
-                            {item.fitness.toFixed(2)}
-                          </td>
-                          <td className="py-1.5 text-center">
-                            {item.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <XIcon className="w-3 h-3 text-red-400/60 inline" />}
-                          </td>
+              <div className="px-3 pb-3 border-t border-slate-700/30 pt-2 overflow-x-auto space-y-2">
+                {rows ? (
+                  <>
+                    {/* B5 概要形制：星级+门槛点行+关键指标（不做全量字段铺开） */}
+                    <table className="w-full text-[11px]" data-testid="session-results-table">
+                      <thead>
+                        <tr className="border-b border-slate-700/40">
+                          <th className="py-1.5 text-left text-text-secondary font-medium">策略名</th>
+                          <th className="py-1.5 text-left text-text-secondary font-medium">品种/周期</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="门槛达标数机械换算（0-3）">星级</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="收益>0 / 回撤<25% / 交易数≥5 三门槛三态点">门槛</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">年化</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium" title="最差区间回撤（口径取绝对值）">回撤</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">交易</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">Fitness</th>
+                          <th className="py-1.5 text-center text-text-secondary font-medium">达标</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {rows.map((item) => (
+                          <tr key={item.result_id} className="border-b border-slate-700/10">
+                            <td className="py-1.5 text-text-primary truncate max-w-[120px]">{item.strategy_name ?? item.strategy_id}</td>
+                            <td className="py-1.5 text-text-secondary font-mono text-[10px]">{item.symbol}/{item.timeframe}</td>
+                            <td className="py-1.5 text-center"><VerifyStar star={item.star} /></td>
+                            <td className="py-1.5 text-center"><ThresholdDots thresholds={item.thresholds} /></td>
+                            <td className={cn("py-1.5 text-center font-mono tabular-nums", item.total_return > 0 ? "text-emerald-400" : "text-red-400")}>
+                              {formatReturn(item.total_return)}
+                            </td>
+                            <td className="py-1.5 text-center font-mono tabular-nums text-text-primary">
+                              {formatDrawdown(item.max_drawdown)}
+                            </td>
+                            <td className="py-1.5 text-center font-mono tabular-nums text-text-primary">
+                              {item.total_trades}
+                            </td>
+                            <td className={cn("py-1.5 text-center font-mono tabular-nums font-medium", getFitnessColor(item.fitness))}>
+                              {item.fitness.toFixed(2)}
+                            </td>
+                            <td className="py-1.5 text-center">
+                              {item.qualified ? <Check className="w-3 h-3 text-emerald-400 inline" /> : <XIcon className="w-3 h-3 text-red-400/60 inline" />}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ThresholdsSummary rows={rows} />
+                  </>
                 ) : (
                   <div className="py-4 text-center text-[11px] text-text-secondary">
                     <LoadingOutlined className="mr-1" /> 加载中...

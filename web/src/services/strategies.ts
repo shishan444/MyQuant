@@ -21,6 +21,18 @@ export async function getStrategies(params?: {
     return api.get("/api/strategies", { params });
 }
 
+/**
+ * 按状态显式查询（alignment-batch D4）：列表端点 status 缺省视图排除
+ * draft，六态全可见需补一次显式 status=draft 查询（单值过滤参数）。
+ */
+export async function getStrategiesByStatus(status: string, params?: {
+  sort_by?: string;
+  sort_order?: "asc" | "desc";
+  limit?: number;
+}): Promise<StrategyListResponse> {
+  return api.get("/api/strategies", { params: { status, ...params } });
+}
+
 export async function getStrategy(id: string): Promise<Strategy> {
     return api.get(`/api/strategies/${id}`);
 }

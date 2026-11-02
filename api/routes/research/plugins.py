@@ -87,7 +87,7 @@ def list_formula_plugins(
     name: Optional[str] = None,
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
-    """公式插件版本审计（历史版本可查，5.5）。"""
+    """公式插件版本审计（历史版本可查，5.5；审计两现算字段 alignment-batch β）。"""
     rows = rr.list_plugins(db_path, source="formula", name=name)
     for r in rows:
         if r["output_columns"]:
@@ -95,6 +95,8 @@ def list_formula_plugins(
                 r["output_columns"] = json.loads(r["output_columns"])
             except (json.JSONDecodeError, TypeError):
                 pass
+        cols = set(r["output_columns"] or []) if isinstance(r["output_columns"], list) else set()
+        r.update(ps.plugin_audit_fields(db_path, cols))
     return {"items": rows, "total": len(rows)}
 
 
