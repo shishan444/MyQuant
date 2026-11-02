@@ -2,7 +2,7 @@
 S-2——路由级行为面锚）。
 
 五引擎构造点补 db_path 透传后：series 档 fx 形式止损线经策略中心
-backtest/verify/compare 路由可用（引擎构造拿到 db_path→插件注册表
+backtest/compare 路由可用（引擎构造拿到 db_path→插件注册表
 可查→fx 列装载不再显式拒）。透传缺失时 fx 形式装载抛
 RESEARCH_DATA_INSUFFICIENT（fx 须 db_path）→ 路由结构化错——
 200/无 error 即透传生效的检出形制（真引擎真装载，无 mock）。
