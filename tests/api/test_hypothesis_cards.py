@@ -254,8 +254,13 @@ class TestPagingOrderAndAdhoc:
                            params={"page_size": 2}).json()
         cur = page1["next_cursor"]
         assert cur is not None
+        # 两侧同窗 page_size=2（CARD-01 修复后 null 活动时间行 cursor
+        # 路径可达，续页剩余行数>2——不同窗的全等是修复前 NULL 漏行
+        # 下的侥幸对齐；page=99 若被采纳 offset=196 应空，同窗相等
+        # 即证 page 被忽略且续页起点正确）
         by_cursor = client.get("/api/research/hypothesis-cards",
-                               params={"cursor": cur, "page": 99}).json()
+                               params={"cursor": cur, "page": 99,
+                                       "page_size": 2}).json()
         direct = client.get("/api/research/hypothesis-cards",
                             params={"page_size": 2, "page": 2}).json()
         assert [c["hypothesis_id"] for c in by_cursor["items"]] == \
