@@ -199,7 +199,7 @@ test.describe("视觉质量（截图矩阵落档）", () => {
     await page.goto("/strategies");
     await page.waitForTimeout(1200);
     await page.screenshot({ path: "e2e/screenshots/strategies-768.png" });
-    // 侧栏折叠按钮仍可达（不被裁切）
+    // Header（banner）仍可达（不被裁切）——侧栏折叠钮已随 M3 退役
     await expect(page.getByRole("banner")).toBeVisible();
   });
 });

@@ -55,7 +55,7 @@ describe("@theme 受控从源映射守卫（十组+两补档）", () => {
 });
 
 describe("antdTheme 槽位映射守卫", () => {
-  it("背景/文本/语义槽位与 tokens 同值（bg1/bg2 预混合实色除外——公式注释在位）", () => {
+  it("13 槽位全映射：直引九槽等值+预混合双槽 alpha 复算+border 双槽直引等值", () => {
     const tk = antdThemeConfig.token!;
     expect(tk.colorBgBase).toBe(BG.bg0);
     expect(tk.colorText).toBe(TEXT.primary);
@@ -65,5 +65,19 @@ describe("antdTheme 槽位映射守卫", () => {
     expect(tk.colorSuccess).toBe(POLARITY.up);
     expect(tk.colorError).toBe(POLARITY.down);
     expect(tk.colorWarning).toBe(STATE.warn);
+    // border 双槽=import BORDER 直引（hex8 原串）——引用等值断言
+    expect(tk.colorBorder).toBe(BORDER.default);
+    expect(tk.colorBorderSecondary).toBe(BORDER.line);
+    // 预混合双槽：tokens 半透明值叠于 bg0 的实色——alpha 混合公式复算断言
+    const blend = (fg: string, bg: string, alpha: number) => {
+      const h = (s: string) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+      const [fr, fgc, fb] = h(fg);
+      const [br, bgc, bb] = h(bg);
+      const c = [fr, fgc, fb].map((f, i) => Math.round(f * alpha + [br, bgc, bb][i] * (1 - alpha)));
+      return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+    };
+    // BG.bg1="#20224E66" alpha=0x66/255 叠 BG.bg0；BG.bg2="#2A2A5E99" alpha=0x99/255
+    expect(tk.colorBgContainer).toBe(blend("#20224E", "#0D0F24", 0x66 / 255));
+    expect(tk.colorBgElevated).toBe(blend("#2A2A5E", "#0D0F24", 0x99 / 255));
   });
 });

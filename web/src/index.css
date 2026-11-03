@@ -1,7 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
-/* Tailwind 分层引入：跳过 preflight（AntD reset 优先，避免双 reset 冲突）；
-   主题视觉语义唯一来源=AntD theme token（G4），本文件 @theme 仅过渡期保留布局 token
-   与旧视觉变量（页面批迁移期间旧 JSX 仍消费，删除断点=G13） */
+/* Tailwind 分层引入：跳过 preflight（AntD reset 优先，避免双 reset 冲突）。
+   主题权威=web/src/theme/tokens.ts（fe-shell-theme-cutover T1 收口）——本文件
+   @theme 与 :root 为受控从源（utility 编译期通道，值逐项与 tokens 同步，映射
+   守卫测试机器判定同名异值）；组件级视觉语义主载体=AntD theme token（antdTheme.ts
+   同为从源）。--color-chart-up/down 查证结论：全域零 utility 消费者（2026-11-03
+   rg 实证），保留定义归⑤收尾门清列处置。 */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
@@ -19,7 +22,7 @@
 
   /* 边框 */
   --color-border-default: #FFFFFF1A; /* 值从 tokens.ts BORDER.default 同步 */
-    --color-border-faint: #FFFFFF0E; /* 值从 tokens.ts BORDER.faint 同步——补档（原死 class 消费点） */
+      --color-border-faint: #FFFFFF0E; /* 值从 tokens.ts BORDER.faint 同步——补档（原死 class 消费点） */
   --color-border-hover: rgba(255, 255, 255, 0.15);
   --color-border-active: rgba(245, 158, 11, 0.5);
 
@@ -30,7 +33,7 @@
 
   /* 语义色 */
   --color-accent-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步（通道名保留 accent-gold） */
-    --color-attention-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步——语义金补档（原死 class 消费点） */
+      --color-attention-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步——语义金补档（原死 class 消费点） */
   --color-accent-purple: #8B5CF6;
   --color-profit: #2DD4BF; /* 值从 tokens.ts POLARITY.up 同步 */
   --color-loss: #FB7185; /* 值从 tokens.ts POLARITY.down 同步 */
