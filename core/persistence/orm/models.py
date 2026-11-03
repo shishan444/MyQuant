@@ -370,6 +370,9 @@ class LiveTradingTask(Base):
     loss_count: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('0'))
     last_bar_time: Mapped[Optional[str]] = mapped_column(Text)
     heartbeat_at: Mapped[Optional[str]] = mapped_column(Text)
+    # be-live-trading-chain 2.2：异常落 error_detail（W0 前端消费——
+    # paper tasks 表同名列先例）
+    error_detail: Mapped[Optional[str]] = mapped_column(Text)
     config_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
@@ -905,3 +908,26 @@ class StrategyTransitionEvent(Base):
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_json: Mapped[Optional[str]] = mapped_column(Text)  # 凭证载荷（JSON 字符串，可空=manual 边）
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class LiveDecision(Base):
+    """实盘决策快照（be-live-trading-chain D4——append-only 只增不删：
+    决策留痕唯一事实源，B6r 只读回放消费；API 面无 update/delete 通道
+    ——strategy_transition_event 同款）。reason_json 由 runner 写入端
+    定义结构，查询端透传不解释。"""
+
+    __tablename__ = "live_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    decision_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    task_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("live_trading_task.task_id"), nullable=False)
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[Optional[float]] = mapped_column(REAL)
+    size: Mapped[Optional[float]] = mapped_column(REAL)
+    reason_json: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    __table_args__ = (
+        Index("ix_live_decisions_task_bar", "task_id", "bar_time"),
+        {"sqlite_autoincrement": True},
+    )

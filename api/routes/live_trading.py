@@ -9,7 +9,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.deps import get_db_path
 from api.schemas import (
@@ -67,6 +67,52 @@ def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
         req.direction, req.config_json,
     )
     return repo.get_live_trading_task(db_path, task_id)
+
+
+@router.post("/tasks/{task_id}/start", response_model=LiveTradingTaskResponse)
+def start_task(task_id: str, request: Request, db_path=Depends(get_db_path)):
+    """D5 契约基线：pending→running；runner 装配挂 app.state（live_runner
+    ——paper_scheduler 先例形制；内核未建时占位 None+状态先行迁移可观察）。"""
+    try:
+        out = repo.transition_live_task(db_path, task_id, "start")
+    except repo.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not out:
+        raise HTTPException(404, detail="live trading task not found")
+    # runner 装配挂 app.state（内核待 D5 全链设计卡——占位在册）
+    request.app.state.live_runner = getattr(
+        request.app.state, "live_runner", None)
+    return out
+
+
+@router.post("/tasks/{task_id}/stop", response_model=LiveTradingTaskResponse)
+def stop_task(task_id: str, db_path=Depends(get_db_path)):
+    """D5：running→stopped（stop_reason 落因；graceful=当前 bar 完退出
+    ——runner 侧语义，状态迁移先行可观察）；停止已停 409。"""
+    try:
+        out = repo.transition_live_task(db_path, task_id, "stop")
+    except repo.IllegalTransition as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not out:
+        raise HTTPException(404, detail="live trading task not found")
+    return out
+
+
+@router.get("/tasks/{task_id}/decisions")
+def list_decisions(
+    task_id: str, limit: int = 50, offset: int = 0,
+    db_path=Depends(get_db_path),
+):
+    """D4 决策快照分页（append-only 只读——B6r 回放消费；零决策 200
+    空集如实〔D5 前/启动初期〕；404 平文本沿域内先例）。"""
+    if not repo.get_live_trading_task(db_path, task_id):
+        raise HTTPException(404, detail="live trading task not found")
+    rows, total = repo.list_live_decisions(
+        db_path, task_id, limit=limit + 1, offset=offset)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {"items": rows, "total": total, "offset": offset,
+            "limit": limit, "has_more": has_more}
 
 
 @router.get("/tasks", response_model=LiveTradingTaskListResponse)
