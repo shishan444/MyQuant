@@ -102,23 +102,36 @@ class TestHandshakeReachability:
 
 
 class TestLauncherFormPins:
-    """启动器形态文本锚定：官方路径各自走哪种形态（改启动器须同步本网）。"""
+    """启动器形态文本锚定：官方路径各自走哪种形态（改启动器须同步本网）。
 
-    def test_scripts_start_sh_uses_dash_m_form(self) -> None:
-        """统一入口 scripts/start.sh 以 `-m api` 拉起 API。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    三锚读实现权威 scripts/svc.sh（start.sh 已薄壳化，旧锚在 start.sh
+    上恒红——add-e2e-isolated-harness H3 迁移）；第四锚钉 start.sh 的
+    薄壳转发契约（exec+svc.sh+start "$@" 三要素）。
+    """
+
+    def test_scripts_svc_sh_uses_dash_m_form(self) -> None:
+        """实现权威 scripts/svc.sh 以 `-m api` 拉起 API。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert "-m api" in content
 
-    def test_scripts_start_sh_launches_mcp(self) -> None:
-        """统一入口 scripts/start.sh 以 `-m mcpserver.server` 拉起 MCP。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    def test_scripts_svc_sh_launches_mcp(self) -> None:
+        """实现权威 scripts/svc.sh 以 `-m mcpserver.server` 拉起 MCP。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert "-m mcpserver.server" in content
 
-    def test_scripts_start_sh_mcp_profile_default_research(self) -> None:
-        """统一入口默认 research 档（run.py 旧总入口语义继承——六步研究法
-        写入/执行工具须在默认面；readonly 经 MYQUANT_MCP_PROFILE 显式切换）。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    def test_scripts_svc_sh_mcp_profile_default_research(self) -> None:
+        """实现权威 svc.sh 默认 research 档（run.py 旧总入口语义继承——
+        六步研究法写入/执行工具须在默认面；readonly 经
+        MYQUANT_MCP_PROFILE 显式切换）。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert 'MYQUANT_MCP_PROFILE:-research' in content
+
+    def test_start_sh_is_thin_shell_forwarding(self) -> None:
+        """start.sh 为薄壳转发契约：exec + svc.sh + start "$@" 三要素。"""
+        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+        assert "exec" in content
+        assert "svc.sh" in content
+        assert 'start "$@"' in content
 
     def test_main_module_consumes_combo_app(self) -> None:
         """F3 修复核心锚定：__main__ 消费模块级组合实例（非自建裸 FastAPI）。"""
