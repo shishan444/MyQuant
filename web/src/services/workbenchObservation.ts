@@ -60,7 +60,6 @@ export interface ActiveHypothesisRow {
   hypothesis_id: string;
   statement?: string;
   status: string;
-  direction?: string;
   conditions?: {
     when_conditions?: Array<{
       subject?: { indicator?: string };
