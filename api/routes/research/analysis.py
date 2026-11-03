@@ -900,6 +900,62 @@ def run_analysis(
         raise research_error_to_http(exc) from exc
 
 
+_ANALYSIS_STATUS_LEGAL = ("pending", "running", "succeeded", "failed")
+
+
+@router.get("/analysis/tasks")
+def list_analysis_tasks(
+    status: Optional[str] = None,
+    template: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db_path: Path = Depends(get_db_path),
+) -> Dict[str, Any]:
+    """D8 分析任务时间流列表（be-workbench-support）：analysis_tasks
+    表跨任务视图，created_at desc。行=七字段（无 result——单查
+    /analysis/tasks/{task_id} 分工不变）；templates=_TEMPLATES 直取
+    （路由层单源 import 零抄录——前端 12 槽位清单来源）。"""
+    if status is not None and status not in _ANALYSIS_STATUS_LEGAL:
+        raise HTTPException(status_code=422, detail={
+            "code": "RESEARCH_PARAM_INVALID",
+            "message": "status 非法",
+            "detail": {"field": "status", "value": status,
+                       "legal_range": list(_ANALYSIS_STATUS_LEGAL)}})
+    if template is not None and template not in _TEMPLATES:
+        raise HTTPException(status_code=422, detail={
+            "code": "RESEARCH_PARAM_INVALID",
+            "message": "template 非法",
+            "detail": {"field": "template", "value": template,
+                       "legal_range": list(_TEMPLATES)}})
+    if not (1 <= limit <= 200):
+        raise HTTPException(status_code=422, detail={
+            "code": "RESEARCH_PARAM_INVALID",
+            "message": "limit 须在 1-200",
+            "detail": {"field": "limit", "value": limit,
+                       "legal_range": [1, 200]}})
+    if offset < 0:
+        raise HTTPException(status_code=422, detail={
+            "code": "RESEARCH_PARAM_INVALID",
+            "message": "offset 须 >=0",
+            "detail": {"field": "offset", "value": offset,
+                       "legal_range": ">=0"}})
+    rows, total = rr.list_analysis_tasks(
+        db_path, status=status, template=template,
+        limit=limit + 1, offset=offset)  # limit+1 探测 has_more
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    items = [{
+        "task_id": r["task_id"], "template": r["template"],
+        "status": r["status"], "created_at": r["created_at"],
+        "started_at": r.get("started_at"),
+        "finished_at": r.get("finished_at"),
+        "error_summary": r.get("reason"),
+    } for r in rows]
+    return {"items": items, "total": total, "offset": offset,
+            "limit": limit, "has_more": has_more,
+            "templates": list(_TEMPLATES)}
+
+
 @router.get("/analysis/tasks/{task_id}")
 def get_analysis_task(
     task_id: str,

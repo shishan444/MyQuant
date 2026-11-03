@@ -1009,6 +1009,29 @@ def update_analysis_task(
             AnalysisTask.task_id == task_id).values(**fields))
 
 
+def list_analysis_tasks(
+    db_path: Path, *,
+    status: Optional[str] = None,
+    template: Optional[str] = None,
+    limit: int = 50, offset: int = 0,
+) -> tuple[List[Dict[str, Any]], int]:
+    """跨任务分析任务时间流（D8——analysis_tasks 表的列表视图：
+    status/template SQL 过滤+created_at desc+count 配套）。空集=([], 0)。"""
+    stmt = select(AnalysisTask)
+    if status:
+        stmt = stmt.where(AnalysisTask.status == status)
+    if template:
+        stmt = stmt.where(AnalysisTask.template == template)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        total = conn.execute(
+            select(func.count()).select_from(stmt.subquery())).scalar_one()
+        rows = conn.execute(
+            stmt.order_by(AnalysisTask.created_at.desc())
+            .limit(limit).offset(offset)).mappings().all()
+    return [dict(r) for r in rows], int(total)
+
+
 def get_analysis_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
     engine = _engine_for(db_path)
     with engine.connect() as conn:
