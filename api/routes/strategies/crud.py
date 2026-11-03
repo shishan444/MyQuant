@@ -29,6 +29,7 @@ from core.persistence.repository.strategy import (
     find_by_gene_signature,
     get_strategy,
     list_strategies,
+    list_transition_events,
     save_strategy,
     update_strategy,
 )
@@ -363,6 +364,27 @@ def delete_strategy_endpoint(
                       "note": "非 draft 删除请求转归档（DELETE 端点）"})
     except LifecycleError as exc:
         raise _lifecycle_error_to_http(exc) from exc
+
+
+@router.get("/{strategy_id}/transitions")
+def list_strategy_transitions(
+    strategy_id: str, db_path: Path = Depends(get_db_path),
+):
+    """策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序
+    审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。"""
+    if get_strategy(db_path, strategy_id) is None:
+        raise HTTPException(404, detail="Strategy not found")
+    events = list_transition_events(db_path, strategy_id)
+    for e in events:
+        raw = e.pop("evidence_json", None)
+        try:
+            # t3r9 A1 修正：坏 JSON→None 不炸行（spec Scenario 三基准
+            # 一致；原 500 形态系实施漏看 spec——通道外手改面生产不可达，
+            # 降级语义以 spec 为准）
+            e["evidence"] = json.loads(raw) if raw else None
+        except (json.JSONDecodeError, TypeError):
+            e["evidence"] = None
+    return {"items": events, "total": len(events)}
 
 
 @router.post("/{strategy_id}/revalidate")

@@ -426,3 +426,19 @@ def batch_delete_by_source_task(
             score_summary=_score_summary(scores),
             deleted_count=deleted_count,
         )
+
+
+def list_transition_events(
+    db_path: Path, strategy_id: str,
+) -> List[Dict[str, Any]]:
+    """策略状态迁移事件史（be-strategy-transitions D7——审计段数据源：
+    created_at 升序时序回放；append-only 只增不删同 lifecycle 语义）。"""
+    from core.persistence.orm.models import StrategyTransitionEvent
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(StrategyTransitionEvent)
+            .where(StrategyTransitionEvent.strategy_id == strategy_id)
+            .order_by(StrategyTransitionEvent.created_at.asc())
+        ).mappings().all()
+    return [dict(r) for r in rows]
