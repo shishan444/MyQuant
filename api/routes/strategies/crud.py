@@ -365,6 +365,24 @@ def delete_strategy_endpoint(
         raise _lifecycle_error_to_http(exc) from exc
 
 
+@router.get("/{strategy_id}/transitions")
+def list_strategy_transitions(
+    strategy_id: str, db_path: Path = Depends(get_db_path),
+):
+    """策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序
+    审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。"""
+    from core.persistence.repository.strategy import list_transition_events
+    if get_strategy(db_path, strategy_id) is None:
+        raise HTTPException(404, detail="Strategy not found")
+    import json as _json
+    events = list_transition_events(db_path, strategy_id)
+    for e in events:
+        e["evidence"] = (
+            _json.loads(e.pop("evidence_json"))
+            if e.get("evidence_json") else None)
+    return {"items": events, "total": len(events)}
+
+
 @router.post("/{strategy_id}/revalidate")
 def revalidate_strategy_endpoint(
     strategy_id: str,
