@@ -5,7 +5,6 @@
  * 数值列 font-num；底注形制=端点未落地时「<区名>端点待建」可判别占位。
  */
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Bot, ClipboardList, ScrollText, Sigma } from "lucide-react";
 import {
   getActiveHypotheses,
   getMarketSnapshot,
@@ -114,7 +113,12 @@ export function ActiveHypothesesPanel() {
               <span className="truncate text-text-muted">
                 {h.data_ranges?.[0]
                   ? `${h.data_ranges[0].symbol} · ${h.data_ranges[0].timeframe}`
-                  : h.statement?.slice(0, 24) ?? ""}
+                  : ""}
+                {h.conditions?.when_conditions?.[0]
+                  ? ` ${h.conditions.when_conditions[0].subject?.indicator ?? ""}${
+                      h.conditions.when_conditions[0].action ?? ""
+                    }${h.conditions.when_conditions[0].target ?? ""}`
+                  : h.statement?.slice(0, 16) ?? ""}
               </span>
               <span className="ml-auto text-[10px] text-text-muted">余量列待聚合端点</span>
             </li>
@@ -153,7 +157,7 @@ export function ResearchLogPanel() {
         <p className="text-xs text-text-muted">暂无日志</p>
       ) : (
         <ul className="max-h-32 divide-y divide-border-faint overflow-y-auto">
-          {q.data!.items.slice(0, 8).map((e) => (
+          {q.data!.items.map((e) => (
             <li key={e.log_id} className="flex items-center gap-2 py-0.5 text-[11px]">
               <span className="font-mono text-text-muted">
                 {e.created_at.slice(5, 16).replace("T", " ")}
@@ -193,14 +197,3 @@ export function SchedulerStatusLine() {
     </div>
   );
 }
-
-/** B2 区聚合容器（五子区） */
-export function AILoopPanel({ children }: { children?: React.ReactNode }) {
-  return (
-    <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wide text-text-muted">
-      <Bot className="h-3 w-3" /> AI 循环动态
-      {children}
-    </div>
-  );
-}
-export const PanelIcons = { Sigma, ClipboardList, ScrollText, Activity };

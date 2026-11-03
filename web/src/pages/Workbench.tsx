@@ -208,11 +208,10 @@ function PageSections(props: {
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
             <HeartPulse className="h-3.5 w-3.5" /> 数据与系统健康
           </h2>
-          {/* 月矩阵缩略消费（C3 转交件接线——data-management-revamp 审查
-              CARD-03）：复用 09 页 IntegrityMatrix 组件（固定 BTCUSDT+6 月
-              只读——01 观察面零操作，详情/切档归 09 页导航）；api/mcp 进程
-              状态半句保留（真状态面待后续——B4 徽章删除时 web-ui-
-              truthfulness 口径不变） */}
+          {/* 月矩阵缩略消费（fe-workbench-wiring）：复用 09 页
+              IntegrityMatrix 组件（固定 BTCUSDT+5 月只读——01 观察面零
+              操作，详情/切档归 09 页导航）；api/mcp 进程状态为原型文案
+              照排+D1 底注（be-workbench-support 归档后接真值） */}
           <div className="flex items-center gap-3 text-xs">
             <Database className="h-3.5 w-3.5 text-text-muted" />
             <span className="text-text-muted">

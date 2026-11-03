@@ -49,7 +49,7 @@ const RECORDS = {
       segmentation: "", verdict: "pass", range_hash: "h", pollution_cause: null,
       created_at: "2026-11-01T00:00:00+00:00", params: {}, result: {} },
   ],
-  total: 1, offset: 0, limit: 8, has_more: false,
+  total: 1, offset: 0, limit: 3, has_more: false,
 };
 
 beforeEach(() => {
@@ -103,7 +103,7 @@ describe("Workbench（01 观察工作台）", () => {
 
   it("B2-3 空态", async () => {
     vi.mocked(wb.getValidationRecords).mockResolvedValue({
-      records: [], total: 0, offset: 0, limit: 8, has_more: false } as never);
+      records: [], total: 0, offset: 0, limit: 3, has_more: false } as never);
     setup();
     expect(await screen.findByText("暂无验证记录")).toBeInTheDocument();
   });
@@ -182,7 +182,7 @@ describe("Workbench（01 观察工作台）", () => {
     expect(screen.queryByText(/任务扫描达上限/)).not.toBeInTheDocument();
   });
 
-  it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+5 月只读（fe-workbench-wiring monthsBack 5→5）", async () => {
+  it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+5 月只读（fe-workbench-wiring monthsBack 6→5）", async () => {
     setup();
     // B4 区月矩阵缩略消费（复用 09 页组件，01 观察面零操作语义）
     expect(await screen.findByTestId("integrity-matrix")).toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("Workbench（01 观察工作台）", () => {
       expect.objectContaining({ symbol: "BTCUSDT", months_back: 5 }));
   });
 
-  it("CARD-03 api/mcp 半句如实呈现「待真状态面」（truthfulness 口径）", async () => {
+  it("CARD-03 api/mcp 原型文案照排+D1 底注（fe-workbench-wiring 形制）", async () => {
     setup();
     // fe-workbench-wiring：D1 前原型文案照排+底注（真状态面归 be-workbench-support D1 接线）
     expect(await screen.findByText(/api :8000 在线 · mcp :8800 在线/)).toBeInTheDocument();
