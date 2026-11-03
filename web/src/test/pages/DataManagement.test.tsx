@@ -1,7 +1,8 @@
 /**
- * 09 数据管理页 F2 双态提交特征测试（data-management-revamp CARD-02）：
- * symbol 输入 display/committed 双 state——中间态不触发请求、失焦/回车
- * 提交、空值不提交保留旧 committed。服务层全 mock（零外网红线）。
+ * 09 数据管理页完整性区特征测试。fe-asset-data-domain 4.3 后锚=双币
+ * 并列月矩阵（BTCUSDT/ETHUSDT 两请求）+保鲜 12 路满格（FIXED 键全集+
+ * 未扫占位）；原 CARD-02 单币双态提交用例随输入框退役改写。
+ * 服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -68,49 +69,29 @@ async function settled() {
   return vi.mocked(dwb.getMonthlyMatrix).mock.calls.length;
 }
 
-describe("DataManagement F2 双态提交（CARD-02）", () => {
-  it("输入中间态不触发 monthly-matrix 请求（display 态不进 queryKey）", async () => {
+describe("DataManagement 双币月矩阵（fe-asset-data-domain 4.3）", () => {
+  it("双币并列：BTCUSDT/ETHUSDT 两请求+双矩阵在场，单币输入框退役", async () => {
     setup();
-    const before = await settled();
-    const input = screen.getByLabelText(/矩阵 symbol/);
-    fireEvent.change(input, { target: { value: "ETH" } });
-    // display 层即时转换呈现，但不提交——请求次数不变
-    expect(input).toHaveValue("ETH");
-    expect(vi.mocked(dwb.getMonthlyMatrix).mock.calls.length).toBe(before);
-  });
-
-  it("回车提交：committed 更新并以新 symbol 发起请求", async () => {
-    setup();
-    await settled();
-    const input = screen.getByLabelText(/矩阵 symbol/);
-    fireEvent.change(input, { target: { value: "eth" } });
-    fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => {
       expect(dwb.getMonthlyMatrix).toHaveBeenCalledWith(
-        expect.objectContaining({ symbol: "ETH", months_back: 6 }));
-    });
-  });
-
-  it("失焦提交：blur 后以新 symbol 发起请求", async () => {
-    setup();
-    await settled();
-    const input = screen.getByLabelText(/矩阵 symbol/);
-    fireEvent.change(input, { target: { value: "SOL" } });
-    fireEvent.blur(input);
-    await waitFor(() => {
+        expect.objectContaining({ symbol: "BTCUSDT", months_back: 6 }));
       expect(dwb.getMonthlyMatrix).toHaveBeenCalledWith(
-        expect.objectContaining({ symbol: "SOL", months_back: 6 }));
+        expect.objectContaining({ symbol: "ETHUSDT", months_back: 6 }));
     });
+    // 双矩阵 testid 在场（integrity-matrix-{symbol}）
+    expect(await screen.findByTestId("integrity-matrix-BTCUSDT")).toBeInTheDocument();
+    expect(await screen.findByTestId("integrity-matrix-ETHUSDT")).toBeInTheDocument();
+    // 单币输入框退役（原 F2 双态提交机制随消费消亡）
+    expect(screen.queryByLabelText(/矩阵 symbol/)).not.toBeInTheDocument();
   });
 
-  it("空值不提交：清空后失焦保留旧 committed（不发起空请求）", async () => {
+  it("保鲜 12 路满格：FIXED 键全集在场（含未扫占位——键集不全恒满格）", async () => {
     setup();
-    const before = await settled();
-    const input = screen.getByLabelText(/矩阵 symbol/);
-    fireEvent.change(input, { target: { value: "" } });
-    fireEvent.blur(input);
-    fireEvent.keyDown(input, { key: "Enter" });
-    // 空值两次提交路径都不触发——次数与提交前一致
-    expect(vi.mocked(dwb.getMonthlyMatrix).mock.calls.length).toBe(before);
+    const table = await screen.findByTestId("freshness-table-fixed");
+    // 12 路键全集逐键在场
+    for (const key of ["BTCUSDT_1m", "BTCUSDT_4h", "ETHUSDT_1h", "ETHUSDT_30m"]) {
+      expect(table).toHaveTextContent(key);
+    }
+    expect(screen.getByText(/12 路 = 2 币 × 6 档/)).toBeInTheDocument();
   });
 });

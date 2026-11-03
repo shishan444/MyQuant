@@ -284,22 +284,14 @@ function UploadDialog({
 // ---------------------------------------------------------------------------
 // 主组件
 // ---------------------------------------------------------------------------
-import { IntegrityMatrix, FreshnessTable } from "@/components/data/IntegrityPanels";
+import { DualIntegrityMatrix, FreshnessTableFixed } from "@/components/data/IntegrityPanels";
 
 export function DataManagement() {
   const { modal } = App.useApp();
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
-  // 09 页完整性两区（data-management-revamp 组 C1/C2）：symbol 沿数据集首位+月窗 6
-  // matrix symbol 双态（CARD-02 F2）：display=输入框即时态，committed=查询
-  // 提交态（queryKey 消费）——失焦/回车才提交，杜绝每键一次 monthly-matrix
-  // 全量请求（staleTime 只对同 key 生效不兜底新 key，retry:1 还放大 404 中间态）
-  const [matrixSymbolInput, setMatrixSymbolInput] = useState("BTCUSDT");
-  const [matrixSymbol, setMatrixSymbol] = useState("BTCUSDT");
-  const commitMatrixSymbol = () => {
-    const v = matrixSymbolInput.toUpperCase().slice(0, 12).trim();
-    if (v) setMatrixSymbol(v);
-  };
+  // 09 页完整性两区：fe-asset-data-domain 4.3 双币并列（R9 生效态）——
+  // matrix symbol 双态输入框退役（原 CARD-02 F2 提交态机制随单币消费消亡）
   const [monthsBack, setMonthsBack] = useState(6);
 
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -416,35 +408,25 @@ export function DataManagement() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <GlassCard className="p-3" hover={false}>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs text-text-secondary">完整性月矩阵</span>
-            <div className="flex items-center gap-2">
-              <input
-                value={matrixSymbolInput}
-                onChange={(e) => setMatrixSymbolInput(e.target.value.toUpperCase().slice(0, 12))}
-                onBlur={commitMatrixSymbol}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitMatrixSymbol();
-                }}
-                className="w-24 rounded border border-border-default bg-transparent px-2 py-0.5 font-mono text-xs text-text-primary"
-                placeholder="symbol"
-                aria-label="矩阵 symbol（失焦或回车提交）"
-              />
-              <select
-                value={monthsBack}
-                onChange={(e) => setMonthsBack(Number(e.target.value))}
-                className="rounded border border-border-default bg-transparent px-1 py-0.5 text-xs text-text-secondary"
-                aria-label="月窗"
-              >
-                <option value={6}>近 6 月</option>
-                <option value={12}>近 12 月</option>
-              </select>
-            </div>
+            <span className="text-xs text-text-secondary">完整性月矩阵（双币并列）</span>
+            <select
+              value={monthsBack}
+              onChange={(e) => setMonthsBack(Number(e.target.value))}
+              className="rounded border border-border-default bg-transparent px-1 py-0.5 text-xs text-text-secondary"
+              aria-label="月窗"
+            >
+              <option value={6}>近 6 月</option>
+              <option value={12}>近 12 月</option>
+            </select>
           </div>
-          <IntegrityMatrix symbol={matrixSymbol} monthsBack={monthsBack} />
+          {/* fe-asset-data-domain 4.3：双币两请求并列（R9 生效态）——
+              单 symbol 输入框退役 */}
+          <DualIntegrityMatrix monthsBack={monthsBack} />
         </GlassCard>
         <GlassCard className="p-3" hover={false}>
-          <span className="mb-2 block text-xs text-text-secondary">数据保鲜（guardian 十二路）</span>
-          <FreshnessTable />
+          <span className="mb-2 block text-xs text-text-secondary">数据保鲜（guardian 十二路满格）</span>
+          {/* fe-asset-data-domain 4.3：12 键六态+未扫占位（键集不全时恒满格） */}
+          <FreshnessTableFixed />
         </GlassCard>
       </div>
       <div className="flex flex-col gap-4">
