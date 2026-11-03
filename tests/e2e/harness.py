@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Iterator
+from typing import IO
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_FAPI_DIR = PROJECT_ROOT / "data" / "market_fapi"
@@ -101,7 +101,7 @@ def wait_http_ready(
                 f"日志尾部：\n{log_tail(log_path)}"
             )
         try:
-            with urllib.request.urlopen(url, timeout=2) as resp:
+            with _DIRECT_OPENER.open(url, timeout=2) as resp:
                 if resp.status == 200:
                     return
                 last_error = f"HTTP {resp.status}"
@@ -112,6 +112,12 @@ def wait_http_ready(
         f"{description} 探活超时（{timeout}s，url={url}，last={last_error}）。\n"
         f"日志尾部：\n{log_tail(log_path)}"
     )
+
+
+# 探活直连 opener：绕过一切代理（本机 Surge 类系统代理会对不可达
+# localhost 端口回 503 而非拒绝连接——经代理探活既非确定性也掩盖真实
+# 连接形态；127.0.0.1 直连无代理正当性）。
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 @dataclass
@@ -236,18 +242,3 @@ def assert_no_residue(db_path: Path) -> None:
         residue = Path(f"{db_path}{suffix}")
         residue.unlink(missing_ok=True)
         assert not residue.exists(), f"临时库伴生文件未清理：{residue}"
-
-
-def db_sidecar_paths(db_path: Path) -> tuple[Path, Path, Path]:
-    """临时库三伴生路径（db/-shm/-wal，teardown unlink 与守护共用）。"""
-    return (
-        db_path,
-        Path(f"{db_path}-shm"),
-        Path(f"{db_path}-wal"),
-    )
-
-
-def iter_session_logs(base_dir: Path) -> Iterator[Path]:
-    """本会话子进程日志路径迭代（api.log/web.log，哨兵断言消费）。"""
-    yield base_dir / "api.log"
-    yield base_dir / "web.log"

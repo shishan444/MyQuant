@@ -51,6 +51,30 @@ class TestWaitReadyProcessExit:
             )
         assert "boom-early-exit" in str(excinfo.value), "错误信息未附日志尾部"
         assert proc.poll() == 3, "进程应已自行退出（无孤儿）"
+        # 已死进程的幂等清理：早退分支直接返回
+        harness.kill_process_group(proc)
+        # 日志不可读分支：错误信息降级为占位说明
+        assert "日志不可读" in harness.log_tail(tmp_path / "no-such.log")
+
+
+class TestWaitReadyConnectionRefused:
+    def test_unreachable_target_records_last_error(self, tmp_path: Path) -> None:
+        """无监听端口+长眠进程：URLError 分支计入 last_error 后超时。"""
+        log = tmp_path / "sleep.log"
+        proc = _spawn("import time; time.sleep(30)", log)
+        free_port = harness.probe_free_port()
+        try:
+            with pytest.raises(TimeoutError, match="URLError"):
+                harness.wait_http_ready(
+                    f"http://127.0.0.1:{free_port}/",
+                    proc,
+                    log,
+                    "unit-refused",
+                    timeout=1.0,
+                    interval=0.2,
+                )
+        finally:
+            harness.kill_process_group(proc)
 
 
 class TestWaitReadyTimeoutArmed:
@@ -63,7 +87,7 @@ class TestWaitReadyTimeoutArmed:
             "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
             "class H(BaseHTTPRequestHandler):\n"
             "    def do_GET(self):\n"
-            "        self.send_response(500)\n"
+            "        self.send_response(204)\n"
             "        self.end_headers()\n"
             "    def log_message(self, *a):\n"
             "        pass\n"
@@ -72,7 +96,7 @@ class TestWaitReadyTimeoutArmed:
         )
         log = tmp_path / "srv.log"
         proc = _spawn(f"exec(open({str(server)!r}).read())", log)
-        # 等服务实绑完成（探活超时形要求 last_error 是 HTTP 500 而非连接拒绝）
+        # 等服务实绑完成（204 恒不满足 ==200：走非 200 成功态分支而非连接拒绝）
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
