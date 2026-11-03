@@ -677,6 +677,7 @@ class LiveTradingTaskResponse(BaseModel):
     symbol: str
     timeframe: str
     status: str
+    stop_reason: Optional[str] = None  # be-live-trading-chain 停止落因透传
     config_json: Optional[str] = None
     direction: str = "mixed"
     position_side: str = ""
@@ -689,6 +690,7 @@ class LiveTradingTaskResponse(BaseModel):
     total_pnl: float = 0.0
     last_bar_time: Optional[str] = None
     heartbeat_at: Optional[str] = None
+    error_detail: Optional[str] = None  # be-live-trading-chain 2.2 透传
     created_at: str
     updated_at: str
 

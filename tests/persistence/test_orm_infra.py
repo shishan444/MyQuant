@@ -34,14 +34,15 @@ class TestModelMetadata:
     def test_table_count(self):
         from core.persistence.orm import Base
         active = set(Base.metadata.tables) - _LEGACY_PAPER_TABLES
-        # 23→25：验证明细两表（add-validation-detail B4）
-        assert len(active) == 25
+        # 23→25：验证明细两表（add-validation-detail B4）→26：live_decisions
+        # （be-live-trading-chain D4）
+        assert len(active) == 26
 
     def test_expected_tables_present(self):
         from core.persistence.orm import Base
         expected = {
             "backtest_result", "dataset_meta", "evolution_history",
-            "evolution_task", "generation_snapshot", "live_trading_task",
+            "evolution_task", "generation_snapshot", "live_trading_task", "live_decisions",  # be-live-trading-chain D4
             "strategy", "verify_session",
             # 研究域（add-ai-research-mcp）
             "research_hypotheses", "research_log", "analysis_tasks",
@@ -63,6 +64,7 @@ class TestModelMetadata:
         from core.persistence.orm import Base
         idx = {(t.name, i.name) for t in Base.metadata.sorted_tables for i in t.indexes}
         expected = {
+            ("live_decisions", "ix_live_decisions_task_bar"),  # be-live-trading-chain
             ("strategy", "idx_strategy_best_score"),
             ("strategy", "idx_strategy_gene_signature"),
             ("strategy", "idx_strategy_source"),
@@ -399,7 +401,7 @@ class TestAlembicBaseline:
         events = conn.execute(
             "SELECT COUNT(*) FROM strategy_transition_event").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "c3f8a2e6d9b1", \
+        assert len(ver) == 1 and ver[0][0] == "a9d4c2f8e7b3", \
             "版本记账真实到 head 恰一行"
         assert status == "paper", "upgrade 补存量分类（active×活跃任务→paper）"
         assert events == 0, "存量分类零事件（纯净性原则）"
@@ -444,7 +446,7 @@ class TestAlembicBaseline:
             " AND name IN ('trg_strategy_status_domain',"
             " 'trg_strategy_status_insert_domain')").fetchone()[0]
         conn.close()
-        assert len(ver) == 1 and ver[0][0] == "c3f8a2e6d9b1"
+        assert len(ver) == 1 and ver[0][0] == "a9d4c2f8e7b3"
         assert triggers_after == 2, "短路不重跑迁移，触发器不翻倍"
 
     def test_init_db_ext_three_branch_terminal_equivalence(self, tmp_path: Path):
