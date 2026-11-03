@@ -61,7 +61,7 @@ class TestConsoleErrors:
 
 
 class TestNavigation:
-    """Test client-side navigation between pages (当前 8 个路由)."""
+    """Test client-side navigation between pages (当前 9 个路由)."""
 
     # nav 链接对齐 Sidebar 实际清单（d9a6a0b 前端重构后：/lab 仍在路由表
     # 但已不在 nav；/verify 前端链接待 F4 联动退役——retire-verify-sessions
