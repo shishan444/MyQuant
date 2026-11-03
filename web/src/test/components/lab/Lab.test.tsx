@@ -410,5 +410,16 @@ describe("Lab - 保存链顺序用例（t3r4 CARD-A：验证→改参→保存�
       dna: { risk_genes: { stop_loss: number } };
     };
     expect(saved.dna.risk_genes.stop_loss).toBe(0.08);
+
+    // G2（t3r4）：保存成功=步⑤登记完成态——currentStep=4（「登记」当前+
+    // 完成文案）；同流程顺带覆盖，无需独立驱动
+    await waitFor(() => {
+      expect(screen.getByText(/已登记（步⑤完成）/)).toBeInTheDocument();
+    });
+    const nav = screen.getByLabelText("假设流水线步骤");
+    const active = Array.from(nav.querySelectorAll("button")).find(
+      (b) => b.className.includes("bg-accent-gold/10"),
+    );
+    expect(active?.textContent).toBe("5登记");
   });
 });

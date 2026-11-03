@@ -4,7 +4,7 @@
  * 已移除）、历史任务。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -97,20 +97,21 @@ vi.mock("@/components/EmptyState", () => ({
 vi.mock("@/components/ConfirmDialog", () => ({
   ConfirmDialog: () => null,
 }));
-
-vi.mock("@/components/evolution/StopConfirmDialog", () => ({
-  StopConfirmDialog: () => null,
-}));
+// StopConfirmDialog 真渲染（t3r4 G1b——停止流链断言需要真对话框 DOM；
+// 组件级三要件锚在 StopConfirmDialog.test）
 
 vi.mock("@/components/ui/skeleton", () => ({
   Skeleton: ({ className }: any) => <div className={className} data-testid="skeleton" />,
 }));
 
 import { Evolution } from "@/pages/Evolution";
-import { getEvolutionTasks } from "@/services/evolution";
+import { getEvolutionTasks, stopEvolutionTask, pauseEvolutionTask } from "@/services/evolution";
 import type { EvolutionTask } from "@/types/api";
+import { toast } from "sonner";
 
 const mockGetEvolutionTasks = vi.mocked(getEvolutionTasks);
+const mockStop = vi.mocked(stopEvolutionTask);
+const mockPause = vi.mocked(pauseEvolutionTask);
 
 function createWrapper() {
   const qc = new QueryClient({
@@ -211,5 +212,90 @@ describe("Evolution page", () => {
     render(<Evolution />, { wrapper: createWrapper() });
     await screen.findByText("历史任务");
     expect(screen.getByTestId("history-table")).toBeInTheDocument();
+  });
+});
+
+
+describe("Evolution 停止流链（t3r4 G1b/G6——spec R3 停止确认流）", () => {
+  /** running 任务蓝本（控制钮渲染条件 isActive） */
+  function runningTask(): EvolutionTask {
+    return {
+      task_id: "task-run-stop-1",
+      status: "running",
+      symbol: "BTCUSDT",
+      timeframe: "4h",
+      mode: "auto",
+      score_template: "balanced",
+      target_score: 80,
+      population_size: 15,
+      max_generations: 50,
+      elite_ratio: 0.5,
+      current_generation: 7,
+      created_at: new Date(Date.now() - 5000).toISOString(),
+      updated_at: new Date().toISOString(),
+      best_score: 66.6,
+      best_fitness: 2.5,
+      qualified_count: 0,
+      leverage: 2,
+      direction: "long",
+      data_start: "2026-01-01",
+      data_end: "2026-06-30",
+      data_row_count: 100,
+      indicator_pool: ["rsi"],
+      continuous: false,
+      strategy_threshold: 80,
+      strategy_count: 0,
+      exploration_efficiency: 0,
+      min_annual_return: 0.1,
+    } as EvolutionTask;
+  }
+
+  it("running 态点停止→对话框三要件→确认停止→stopEvolutionTask(task_id)", async () => {
+    mockGetEvolutionTasks.mockResolvedValue({ items: [runningTask()], total: 1 } as never);
+    mockStop.mockResolvedValue(undefined as never);
+
+    render(<Evolution />, { wrapper: createWrapper() });
+    // 顶部条控制钮（运行控制语义标注文案）
+    const stopBtn = await screen.findByRole("button", { name: /停止（当前代落库后退出）/ });
+    fireEvent.click(stopBtn);
+    // 对话框三要件真渲染（07-M1：标题问句+事实三句+双钮）
+    expect(await screen.findByText("停止该任务？")).toBeInTheDocument();
+    expect(screen.getByText(/停止即当前代完整落库后任务退出/)).toBeInTheDocument();
+    expect(screen.getByText(/任务数据保留，历史记录与产出策略仍可查看/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("stop-confirm-button"));
+    await waitFor(() => {
+      expect(mockStop).toHaveBeenCalledWith(
+        "task-run-stop-1", expect.anything(),
+      );
+    });
+  });
+
+  it("暂停接线：running 态点暂停→pauseEvolutionTask(task_id)", async () => {
+    mockGetEvolutionTasks.mockResolvedValue({ items: [runningTask()], total: 1 } as never);
+    mockPause.mockResolvedValue(undefined as never);
+
+    render(<Evolution />, { wrapper: createWrapper() });
+    const pauseBtn = await screen.findByRole("button", { name: /^暂停$/ });
+    fireEvent.click(pauseBtn);
+    await waitFor(() => {
+      expect(mockPause).toHaveBeenCalledWith(
+        "task-run-stop-1", expect.anything(),
+      );
+    });
+  });
+
+  it("409 如实呈现：停止失败→toast.error 携后端 detail（构造 IllegalTransition）", async () => {
+    mockGetEvolutionTasks.mockResolvedValue({ items: [runningTask()], total: 1 } as never);
+    mockStop.mockRejectedValue(new Error("操作失败: 状态不允许——任务已处于终态") as never);
+
+    render(<Evolution />, { wrapper: createWrapper() });
+    const stopBtn = await screen.findByRole("button", { name: /停止（当前代落库后退出）/ });
+    fireEvent.click(stopBtn);
+    fireEvent.click(await screen.findByTestId("stop-confirm-button"));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("状态不允许"),
+      );
+    });
   });
 });

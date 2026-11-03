@@ -92,6 +92,31 @@ beforeEach(() => {
 });
 
 describe("Strategies（06 策略库·对齐批）", () => {
+  it("星级位页级锚（t3r4 G3）：4 星行渲染五槽 svg，null 行无星级节点", async () => {
+    // 4 星变体：复用 ACTIVE 骨架覆写 verify_star
+    const starred = { ...ACTIVE, strategy_id: "st-star-4", verify_star: 4 };
+    const nullStar = { ...ACTIVE, strategy_id: "st-star-null", verify_star: null };
+    vi.mocked(strat.getStrategies).mockResolvedValue({
+      items: [starred, nullStar], total: 2,
+    } as never);
+    setup();
+    // draft 补拉行也在场（DRAFT mock 仍生效）——按 strategy_id 文本定位目标行
+    await screen.findAllByTestId("strategy-name");
+    const starRow = screen.getByText("st-star-4").closest("tr");
+    const nullRow = screen.getByText("st-star-null").closest("tr");
+    // 4 星行：StarRating 五槽（槽特征=fill-current/opacity-30——行内另有
+    // 操作钮 lucide svg，按槽特征计数；旧 ★n 数字形无此特征锚兼防回退）
+    const starSlots = starRow!.querySelectorAll(
+      'svg [class*="fill-current"], svg[class*="fill-current"], svg [class*="opacity-30"], svg[class*="opacity-30"]',
+    );
+    expect(starSlots.length).toBe(5);
+    // null 行：星级位不渲染（:599 条件 False 侧——无槽特征 svg）
+    const nullSlots = nullRow!.querySelectorAll(
+      'svg [class*="fill-current"], svg[class*="fill-current"], svg [class*="opacity-30"], svg[class*="opacity-30"]',
+    );
+    expect(nullSlots.length).toBe(0);
+  });
+
   it("name=NULL 兜底：行名显示完整 strategy_id（不截断不造名）", async () => {
     setup();
     const names = await screen.findAllByTestId("strategy-name");
