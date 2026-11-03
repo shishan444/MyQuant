@@ -16,6 +16,7 @@ import {
   stopTradingTask,
   cloneTradingTask,
   getTradingFills,
+  getTradingSignals,
   getTradingFunding,
   getTradingRunnerStatus,
   getTradingEquity,
@@ -38,6 +39,8 @@ const tradingKeys = {
   all: ["trading"] as const,
   tasks: () => [...tradingKeys.all, "tasks"] as const,
   task: (id: string) => [...tradingKeys.all, "task", id] as const,
+  signals: (id: string, limit?: number) =>
+    [...tradingKeys.all, "signals", id, limit ?? ""] as const,
   fills: (id: string) => [...tradingKeys.all, "fills", id] as const,
   equity: (id: string) => [...tradingKeys.all, "equity", id] as const,
   funding: (id: string) => [...tradingKeys.all, "funding", id] as const,
@@ -141,6 +144,13 @@ export function useTradingTask(taskId: string) {
 
 export function useTradingFills(taskId: string, limit?: number) {
   return useQuery(tradingFillsOptions(taskId, limit));
+}
+
+export function useTradingSignals(taskId: string, limit?: number) {
+  return useQuery({
+    queryKey: tradingKeys.signals(taskId, limit),
+    queryFn: () => getTradingSignals(taskId, { limit }),
+  });
 }
 
 export function useTradingEquity(taskId: string, limit?: number) {

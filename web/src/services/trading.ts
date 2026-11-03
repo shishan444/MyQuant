@@ -8,6 +8,7 @@ import type {
   EquitySnapshotList,
   FundingRecordList,
   PaperFillList,
+  PaperSignalList,
   TradingFinalReport,
   TradingReport,
   TradingRunnerStatus,
@@ -23,6 +24,7 @@ export type {
   FundingRecordList,
   PaperFill,
   PaperFillList,
+  PaperSignalList,
   TradingFinalReport,
   TradingReport,
   TradingReportDeviation,
@@ -81,6 +83,17 @@ export async function getTradingFills(
   params?: ListPageParams
 ): Promise<PaperFillList> {
     return api.get(`/api/paper-trading/tasks/${taskId}/fills`, {
+    params: { limit: params?.limit, offset: params?.offset },
+  });
+}
+
+/** 信号记录页 ← GET /api/paper-trading/tasks/{id}/signals
+ *  （fe-asset-data-domain 2.1——HUD 信号浮层与决策回溯数据源） */
+export async function getTradingSignals(
+  taskId: string,
+  params?: ListPageParams
+): Promise<PaperSignalList> {
+    return api.get(`/api/paper-trading/tasks/${taskId}/signals`, {
     params: { limit: params?.limit, offset: params?.offset },
   });
 }

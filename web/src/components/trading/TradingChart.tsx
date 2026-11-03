@@ -6,6 +6,8 @@ import { useChartIndicators, type SubChartType } from "@/hooks/useChartIndicator
 import { SymbolInfoBar } from "@/components/trading/SymbolInfoBar";
 import { fillsToSignals } from "@/components/charts/primitives";
 import type { PaperFill } from "@/services/trading";
+import { ChartHud } from "@/components/trading/ChartHud";
+import type { PaperSignal } from "@/types/api";
 import type { SignalData } from "@/components/charts/KlineChart";
 
 interface TradingChartProps {
@@ -20,6 +22,15 @@ interface TradingChartProps {
   stopLossPrice?: number | null;
   /** trail 观测序列（pt_equity.trail_sl_price 逐 bar——重演窗口移动线） */
   trailSeries?: Array<{ bar_time: string; trail_sl_price: number | null }>;
+  /** HUD 仓位浮层数据（fe-asset-data-domain 2.1——task 单查字段；null=空仓） */
+  position?: {
+    side: string | null;
+    quantity: number | null;
+    entryPrice: number | null;
+    upnl: number | null;
+  } | null;
+  /** HUD 信号浮层数据（signals 端点最近段） */
+  hudSignals?: PaperSignal[];
 }
 
 /** timeframe string -> minutes */
@@ -43,7 +54,7 @@ function barsAgoDate(timeframe: string, bars: number): string {
 }
 
 export function TradingChart({ symbol, timeframe, fills, height = 470, isActive, cumulativeFunding,
-  stopLossPrice, trailSeries }: TradingChartProps) {
+  stopLossPrice, trailSeries, position, hudSignals }: TradingChartProps) {
   // F1 标注挂载（paper-trading-revamp）：当前止损价=标量水平线（annotations
   // 价线族，chart ready 单次挂——SL 价为标量随任务刷新，重挂通道待后续组）；
   // trail 序列经 KlineChartHandle.setObservationSeries 命令式通道挂线
@@ -105,8 +116,22 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
     );
   }
 
+  const lastPrice = candleData?.length
+    ? (candleData[candleData.length - 1] as { close: number }).close
+    : null;
+
   return (
-    <div>
+    <div className="relative">
+      {/* HUD 四浮层（fe-asset-data-domain 2.1——va 变体叠加左上；内嵌图例
+          由 hideLegend 让位，分组折叠能力保留给其他消费方） */}
+      <ChartHud
+        symbol={symbol}
+        timeframe={timeframe}
+        lastPrice={lastPrice}
+        position={position ?? null}
+        signals={hudSignals ?? []}
+        fills={fills.slice(-2).reverse()}
+      />
       <SymbolInfoBar
         symbol={symbol}
         timeframe={timeframe}
@@ -148,6 +173,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
         volumeData={volumeData}
         subChartType={subChartType}
         height={height}
+        hideLegend
       />
     </div>
   );

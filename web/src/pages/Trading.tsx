@@ -35,6 +35,7 @@ import {
   useTradingFunding,
   useRunnerStatus,
   isTerminalStatus,
+  useTradingSignals,
 } from "@/hooks/useTrading";
 import { TradingChart } from "@/components/trading/TradingChart";
 import { EquityCurve } from "@/components/charts/EquityCurve";
@@ -387,6 +388,8 @@ function TaskDetailPanel({
   const stopMut = useStopTradingTask();
 
   const { data: fillData } = useTradingFills(task.task_id, 500);
+  // HUD 信号浮层（fe-asset-data-domain 2.1）：最近信号段（倒序）
+  const { data: signalData } = useTradingSignals(task.task_id, 20);
   const { data: equityData } = useTradingEquity(task.task_id, 500);
   const { data: fundingData } = useTradingFunding(task.task_id, 500);
   const { data: reportData } = useTradingReport(task.task_id);
@@ -589,6 +592,13 @@ function TaskDetailPanel({
           height={470}
           isActive={isActive}
           cumulativeFunding={equitySnapshots.at(-1)?.cumulative_funding}
+          position={{
+            side: hasPosition ? posSide : null,
+            quantity: task.position_quantity ?? null,
+            entryPrice: task.position_entry ?? null,
+            upnl: task.unrealized_pnl ?? null,
+          }}
+          hudSignals={[...(signalData?.signals ?? [])].reverse()}
         />
         {equitySnapshots.length > 0 && (
           <div className="mt-2 pt-2 border-t border-border-default">

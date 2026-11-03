@@ -497,6 +497,8 @@ export type TradingTaskList = Omit<S["PaperTaskListResponse"], "tasks"> & {
 
 /** 模拟成交 ← 后端 PaperFillResponse（形状一致；side/price 等可空字段透传） */
 export type PaperFill = S["PaperFillResponse"];
+export type PaperSignal = S["PaperSignalResponse"];
+export type PaperSignalList = S["PaperSignalListResponse"];
 
 /** 成交流水 ← 后端 PaperFillListResponse（fills+limit+offset+has_more 探测式分页） */
 export type PaperFillList = S["PaperFillListResponse"];
