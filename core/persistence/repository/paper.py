@@ -656,6 +656,43 @@ def sum_settled_funding_since(
     return float(v)
 
 
+def first_equity_at_or_after(
+    db_path: Path, task_id: str, since: str,
+) -> Optional[Dict[str, Any]]:
+    """指定时点起的首条权益快照（bar_time>=since 升序取一——D11 当日
+    基点分支用：当日首条快照=今日增量基线）。无匹配行返回 None。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(PtEquity).where(
+                PtEquity.task_id == task_id,
+                PtEquity.bar_time >= since)
+            .order_by(PtEquity.bar_time.asc()).limit(1)
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def sum_settled_funding_by_tasks(
+    db_path: Path, task_ids: Iterable[str],
+) -> Dict[str, float]:
+    """多任务 settled 资金费 SQL 批量聚合（GROUP BY task_id 一次查询
+    ——D11 fleet-summary 的 N+1 禁止约束；全任务口径不限起讫，与
+    sum_settled_funding_since 的 since 收窄版并存两语义）。空集=空 dict。"""
+    ids = list(task_ids)
+    if not ids:
+        return {}
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(PtFunding.task_id,
+                   func.coalesce(func.sum(PtFunding.amount), 0.0))
+            .where(PtFunding.task_id.in_(ids),
+                   PtFunding.status == "settled")
+            .group_by(PtFunding.task_id)
+        ).all()
+    return {task_id: float(v) for task_id, v in rows}
+
+
 def latest_equity_snapshot(
     db_path: Path, task_id: str,
 ) -> Optional[Dict[str, Any]]:
