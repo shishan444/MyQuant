@@ -11,6 +11,7 @@ evolution runner、research executor 与 socket.io 实时通道，
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,20 @@ except Exception:  # 包未安装（非 editable 运行）时回退常量，与 
     APP_VERSION = "0.16.0"
 
 
+def _default_db_path(project_root: Path) -> Path:
+    """db_path 缺省解析：MYQUANT_DB_PATH 置位则切库（e2e 隔离工具
+    fixture 的临时库注入通路），未置位保持项目根 data/quant.db
+    （svc.sh 常驻不设该 env——行为零变化）。显式传参优先于 env：
+    参数非 None 不进缺省分支，api_client 显式传参形制不可被 env
+    污染。与 alembic/env.py 的同名 env 语义同源（该处仅作
+    attributes/-x 通道之后的第三级回退，两处取值一致）。
+    """
+    env_db = os.environ.get("MYQUANT_DB_PATH")
+    if env_db:
+        return Path(env_db)
+    return project_root / "data" / "quant.db"
+
+
 def create_app(
     db_path: Path | None = None,
     data_dir: Path | None = None,
@@ -47,7 +62,9 @@ def create_app(
     """构造并配置 FastAPI 应用（全工程唯一应用工厂）。
 
     Args:
-        db_path: SQLite 库文件路径；缺省为项目根 data/quant.db。
+        db_path: SQLite 库文件路径；缺省读 MYQUANT_DB_PATH 环境变量
+            （e2e 隔离工具注入临时库的通路），未置位为项目根
+            data/quant.db。
         data_dir: Parquet 数据目录；缺省为项目根 FAPI_DATA_DIR（环境
             变量缺省 data/market_fapi——全工程唯一活跃数据域；旧
             现货归档域已整体删除，其独有的 30m/3d 冻结快照四文件
@@ -63,7 +80,7 @@ def create_app(
     # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
     project_root = Path(__file__).resolve().parent.parent
     if db_path is None:
-        db_path = project_root / "data" / "quant.db"
+        db_path = _default_db_path(project_root)
     if data_dir is None:
         from core.data.fapi.rest import fapi_env
 

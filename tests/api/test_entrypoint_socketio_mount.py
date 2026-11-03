@@ -126,3 +126,42 @@ class TestLauncherFormPins:
         assert "from api.app import app" in content
         # 排除自建裸 FastAPI 的旧形（= create_app() 赋值；注释提及历史不算）
         assert "= create_app()" not in content
+
+
+class TestCreateAppDbPathEnvResolution:
+    """MYQUANT_DB_PATH 缺省分支读点契约（add-e2e-isolated-harness H1a）。
+
+    三向锁定：无 env 缺省不变 / env 置位切库 / 双置传参优先。
+    ①直测解析函数——绝不触发 lifespan（缺省路径指向生产 quant.db，
+    lifespan 会 init_db_ext+恢复任务，单测不得触碰）；②③镜像
+    api_client 形制（tmp 双路径+with 块真跑 lifespan），隔离安全。
+    """
+
+    def test_no_env_default_resolution_unchanged(self, monkeypatch) -> None:
+        """无 env：缺省解析与改动前逐位一致（项目根 data/quant.db）。"""
+        monkeypatch.delenv("MYQUANT_DB_PATH", raising=False)
+        from api.app import _default_db_path
+        assert _default_db_path(PROJECT_ROOT) == PROJECT_ROOT / "data" / "quant.db"
+
+    def test_env_set_switches_db(self, tmp_path, monkeypatch) -> None:
+        """env 置位：经 lifespan 装配的 app.state.db_path==env 值，且
+        lifespan init_db_ext 建库建文件（生效文件锚）。"""
+        env_db = tmp_path / "env.db"
+        monkeypatch.setenv("MYQUANT_DB_PATH", str(env_db))
+        from api.app import create_app
+        app = create_app(data_dir=tmp_path / "data")
+        with TestClient(app):
+            assert Path(app.state.db_path) == env_db
+            assert env_db.exists(), "MYQUANT_DB_PATH 生效则临时库文件必在场"
+
+    def test_explicit_param_wins_over_env(self, tmp_path, monkeypatch) -> None:
+        """双置（显式传参+env 各一路径）：传参优先——api_client 显式
+        传参形制不可被 env 污染。"""
+        param_db = tmp_path / "param.db"
+        env_db = tmp_path / "env.db"
+        monkeypatch.setenv("MYQUANT_DB_PATH", str(env_db))
+        from api.app import create_app
+        app = create_app(db_path=param_db, data_dir=tmp_path / "data")
+        with TestClient(app):
+            assert Path(app.state.db_path) == param_db
+        assert not env_db.exists(), "env 路径不得被双置形态触碰"
