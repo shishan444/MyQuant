@@ -4,7 +4,7 @@
  * 展开明细）+历史会话视图（三门槛点行/星级）。消费方：App 路由
  * （页面入口）。
  */
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -147,6 +147,17 @@ export function Verify() {
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
 
   const stream = useVerifyStream();
+  // 同页闭环（V-I·Q3 修复）：失效时机=发起过的验证流离开 running
+  // （done/error——记录落库时点），非发起点击时——点击时 refetch 拉不到
+  // 未落库的新记录；重试路径（同走 start→running→done）同理受益
+  const prevStreamStatusRef = useRef(stream.status);
+  useEffect(() => {
+    const was = prevStreamStatusRef.current;
+    prevStreamStatusRef.current = stream.status;
+    if (was === "running" && stream.status !== "running") {
+      invalidateRecords();
+    }
+  }, [stream.status, invalidateRecords]);
   const { data: strategyData, isLoading: strategiesLoading } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 500 })
   );
@@ -195,9 +206,8 @@ export function Verify() {
   const canVerify = strategies.length > 0 && filledRanges.length > 0 && stream.status !== "running";
 
   const handleVerify = useCallback(() => {
-    // 同页闭环（fe-validation-records-page V-I）：发起成功后失效记录表
-    // queryKey——新记录出现在浏览表=发起与浏览同页闭环的验收判据
-    invalidateRecords();
+    // 同页闭环（fe-validation-records-page V-I）：失效时机在 stream 完成态
+    // effect（Q3 修复——见 stream.status 监听），此处不再点击时失效
     if (!canVerify) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ dateRanges, advancedParams }));
     stream.start({
@@ -572,7 +582,7 @@ export function Verify() {
               <RecordsTable filters={filters} onSelect={setSelectedRecord} selectedId={selectedRecord?.record_id} />
             </div>
             <div className="rounded-lg border border-border-faint p-2">
-              <RecordDetail recordId={selectedRecord?.record_id} />
+              <RecordDetail record={selectedRecord} />
             </div>
           </div>
         </div>
