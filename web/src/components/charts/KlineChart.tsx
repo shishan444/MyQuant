@@ -1,3 +1,4 @@
+import { POLARITY } from "@/theme/tokens";
 import { useLayoutEffect, useEffect, useRef, useMemo, useImperativeHandle, forwardRef, useState, useCallback } from "react";
 import {
   createChart,
@@ -284,7 +285,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         id: "triggers",
         label: "触发点",
         items: [
-          { id: "trigger_markers", label: `触发 (${memoizedTriggers.length})`, color: "#00C853", visible: true },
+          { id: "trigger_markers", label: `触发 (${memoizedTriggers.length})`, color: POLARITY.up, visible: true },
         ],
       });
     }
@@ -600,7 +601,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
           triggerMarkers.push({
             time: triggerTime,
             position: "aboveBar",
-            color: subtypeColor ?? (t.matched ? "#00C853" : "#EF4444"),
+            color: subtypeColor ?? (t.matched ? POLARITY.up : POLARITY.down),
             shape: "circle",
             text: subtypeLabel ? `${subtypeLabel}(${t.id})` : `(${t.id})`,
           });
@@ -689,7 +690,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         memoizedMacdData.histogram.map((d) => ({
           time: toTime(d.time),
           value: d.value,
-          color: d.value >= 0 ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)",
+          color: d.value >= 0 ? "rgba(45,212,191,0.6)" : "rgba(251,113,133,0.6)", /* T2：POLARITY 60% alpha 衍生 */
         })),
       );
       createdSeries.push(histogramSeries);
@@ -784,7 +785,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         const lastTime = toTime(allKdjPoints[allKdjPoints.length - 1].time);
 
         const ref80 = chart.addSeries(LineSeries, {
-          color: "rgba(239,68,68,0.4)",
+          color: "rgba(251,113,133,0.4)", /* T2：POLARITY.down 衍生 */
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,
@@ -795,7 +796,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         createdSeries.push(ref80);
 
         const ref20 = chart.addSeries(LineSeries, {
-          color: "rgba(34,197,94,0.4)",
+          color: "rgba(45,212,191,0.4)", /* T2：POLARITY.up 衍生 */
           lineWidth: 1,
           lineStyle: 2,
           priceLineVisible: false,

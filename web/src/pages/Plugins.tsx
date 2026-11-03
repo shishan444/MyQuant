@@ -460,7 +460,7 @@ export function Plugins() {
     <PageTransition>
       <div className="flex flex-col gap-6">
         <div>
-          <h1 className="text-lg font-medium text-text-primary">插件与组件库</h1>
+          <h1 className="text-lg font-medium text-text-primary">插件与组件</h1>
           <p className="text-sm text-text-muted mt-1">
             公式/模型插件审计、研究词表与数学组件四层池的只读披露——注册与迭代在研究侧进行
           </p>

@@ -75,22 +75,25 @@
 }
 
 :root {
-  /* shadcn/ui 暗色主题变量 */
-  --background: #0a0a0f;
-  --foreground: #f8fafc;
+  /* shadcn/ui 暗色主题变量（fe-shell-theme-cutover 第十一组对齐——值从 tokens.ts
+     同步：primary=ATTENTION.gold/destructive=POLARITY.down/accent 系=金 15% 与
+     STATE.warn/foreground 三级=TEXT 族/background=BG 族/border 族=BORDER 族；
+     零消费变量（popover/secondary/muted 族本体/ring）保留现值归⑤收尾门议） */
+  --background: #0D0F24;
+  --foreground: #F4F2FF;
   --popover: #1a1f2e;
-  --popover-foreground: #f8fafc;
-  --primary: #F59E0B;
-  --primary-foreground: #0a0a0f;
+  --popover-foreground: #F4F2FF;
+  --primary: #FFC76B;
+  --primary-foreground: #160F2E;
   --secondary: rgba(30, 36, 44, 0.7);
-  --secondary-foreground: #f8fafc;
+  --secondary-foreground: #F4F2FF;
   --muted: rgba(30, 36, 44, 0.7);
-  --muted-foreground: #64748b;
-  --accent: rgba(245, 158, 11, 0.15);
-  --accent-foreground: #fbbf24;
-  --destructive: #ef4444;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.1);
+  --muted-foreground: #78739B;
+  --accent: rgba(255, 199, 107, 0.15);
+  --accent-foreground: #FFC76B;
+  --destructive: #FB7185;
+  --border: #FFFFFF1A;
+  --input: #FFFFFF1A;
   --ring: rgba(245, 158, 11, 0.4);
 }
 

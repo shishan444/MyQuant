@@ -67,9 +67,9 @@ export const CHART_COLORS = {
   /** RSI line color */
   rsi: "#7C4DFF",
   /** RSI overbought zone fill (70 level) */
-  overbought: "rgba(255,23,68,0.3)",
+  overbought: "rgba(251,113,133,0.3)" /* T2：POLARITY.down 30% alpha 衍生 */,
   /** RSI oversold zone fill (30 level) */
-  oversold: "rgba(0,200,83,0.3)",
+  oversold: "rgba(45,212,191,0.3)" /* T2：POLARITY.up 30% alpha 衍生 */,
   /** Buy signal marker color */
   buySignal: POLARITY.up,
   /** Sell signal marker color */

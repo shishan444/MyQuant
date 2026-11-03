@@ -1,4 +1,12 @@
 import { theme as antdTheme, type ThemeConfig } from "antd";
+import {
+  BG,
+  BORDER,
+  TEXT,
+  POLARITY,
+  STATE,
+  ATTENTION,
+} from "@/theme/tokens";
 
 /**
  * AntD theme token 受控从源（fe-shell-theme-cutover T1）。
@@ -11,21 +19,21 @@ export const antdThemeConfig: ThemeConfig = {
   algorithm: antdTheme.darkAlgorithm,
   token: {
     // 背景层次（原 --color-bg-base/surface/elevated）
-    colorBgBase: "#0D0F24" /* BG.bg0 */,
-    colorBgContainer: "#151735" /* BG.bg1 预混合：#20224E66 叠 #0D0F24 */,
-    colorBgElevated: "#1E1F47" /* BG.bg2 预混合：#2A2A5E99 叠 #0D0F24 */,
+    colorBgBase: BG.bg0,
+    colorBgContainer: "#151735" /* BG.bg1 预混合实色（半透明不可直引） */,
+    colorBgElevated: "#1E1F47" /* BG.bg2 预混合实色 */,
     // 边框三态（原 --color-border-default/hover）
-    colorBorder: "rgba(255, 255, 255, 0.10)" /* BORDER.default=#FFFFFF1A */,
-    colorBorderSecondary: "rgba(255, 255, 255, 0.08)" /* BORDER.line=#FFFFFF14 */,
+    colorBorder: BORDER.default /* hex8 直引——与 tokens 引用等值 */,
+    colorBorderSecondary: BORDER.line,
     // 文本三级（原 --color-text-primary/secondary/muted）
-    colorText: "#F4F2FF" /* TEXT.primary */,
-    colorTextSecondary: "#A8A3C4" /* TEXT.secondary */,
-    colorTextTertiary: "#78739B" /* TEXT.tertiary */,
+    colorText: TEXT.primary,
+    colorTextSecondary: TEXT.secondary,
+    colorTextTertiary: TEXT.tertiary,
     // 语义色（原 --color-accent-gold/profit/loss/warning/info）
-    colorPrimary: "#FFC76B" /* ATTENTION.gold */,
-    colorSuccess: "#2DD4BF" /* POLARITY.up */,
-    colorError: "#FB7185" /* POLARITY.down */,
-    colorWarning: "#FCD34D" /* STATE.warn */,
+    colorPrimary: ATTENTION.gold,
+    colorSuccess: POLARITY.up,
+    colorError: POLARITY.down,
+    colorWarning: STATE.warn,
     colorInfo: "#8B5CF6",
     // 圆角（原 --radius-md 主档）
     borderRadius: 8,
