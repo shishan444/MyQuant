@@ -180,7 +180,8 @@ class TestExistingTablesUnchanged:
         # pt_signal（本 change）+ 验证明细两表（后续 add-validation-detail
         # 追加迁移——head 上移后同链建出，非本 change 爆炸半径）
         assert new_tables == {"pt_signal", "vr_trade_detail",
-                              "vr_equity_curve"}, f"新表集: {new_tables}"
+                              "vr_equity_curve", "live_decisions"}, \
+            f"新表集: {new_tables}"  # live_decisions 随 head 上移同链建出
         for t in sorted(before):
             if t == "pt_task":
                 # 追加面（paper-trading-revamp 组 B）：first_met_at 表尾追加
@@ -203,6 +204,11 @@ class TestExistingTablesUnchanged:
                     "pt_fill 既有列不得改动（含列序）"
                 assert set(after[t]) - set(before[t]) == {
                     "equity_before", "available_before", "margin_used"}
+            elif t == "live_trading_task":
+                assert after[t][:len(before[t])] == before[t], \
+                    f"{t} 既有列零改动: {before[t]} → {after[t]}"
+                assert after[t][len(before[t]):] == ["error_detail"], \
+                    f"live_trading_task 新增恰 error_detail: {after[t][len(before[t]):]}"
             else:
                 assert after[t] == before[t], \
                     f"{t} 既有列零改动（含列序）: {before[t]} → {after[t]}"

@@ -149,6 +149,9 @@ def create_app(
         runner = EvolutionRunner(
             db_path=db_path, data_dir=data_dir, max_workers=_maxw)
         app.state.evolution_runner = runner
+        # be-live-trading-chain：live_runner 装配占位（内核待 D5 全链
+        # 设计卡——装配点先例形制：evolution_runner/paper_scheduler 同层）
+        app.state.live_runner = None
 
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os

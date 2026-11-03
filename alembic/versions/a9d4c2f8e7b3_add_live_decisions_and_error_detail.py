@@ -22,6 +22,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    # 在场守卫（b8d4f2a6c9e1/c3f8a2e6d9b1 先例）：create_all 形库
+    # （init_db/ensure_research_tables 产物）已按 models 建出本表——
+    # stamp 旧 head 后 upgrade 防撞表
+    has_table = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='live_decisions'")).scalar() > 0
+    if has_table:
+        # error_detail 列同守卫（列在场则跳过——create_all 形库已带）
+        has_col = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM pragma_table_info"
+            "('live_trading_task') WHERE name='error_detail'")).scalar() > 0
+        if not has_col:
+            op.add_column(
+                "live_trading_task",
+                sa.Column("error_detail", sa.Text()))
+        return
     op.create_table(
         "live_decisions",
         sa.Column("id", sa.Integer(), primary_key=True),

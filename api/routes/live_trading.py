@@ -1,7 +1,8 @@
 """实盘交易（demo mode）REST API（第8步）—— /api/live-trading/*。
 
-任务 CRUD（创建/查询/列表/更新/删除）。Runner 循环的启动/停止（线程生命周期）
-属集成层，后续接入 app.state（参考 trading.py 的 TradingRunner 模式）。
+任务 CRUD（创建/查询/列表/更新/删除）+任务状态迁移（start/stop——
+be-live-trading-chain D5 契约基线）+决策快照查询（D4）。Runner 执行
+内核待 D5 全链设计卡（装配点=app.py lifespan 先例形制）。
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.deps import get_db_path
 from api.schemas import (
@@ -70,7 +71,7 @@ def create_task(req: LiveTradingTaskCreate, db_path=Depends(get_db_path)):
 
 
 @router.post("/tasks/{task_id}/start", response_model=LiveTradingTaskResponse)
-def start_task(task_id: str, request: Request, db_path=Depends(get_db_path)):
+def start_task(task_id: str, db_path=Depends(get_db_path)):
     """D5 契约基线：pending→running；runner 装配挂 app.state（live_runner
     ——paper_scheduler 先例形制；内核未建时占位 None+状态先行迁移可观察）。"""
     try:
@@ -79,9 +80,9 @@ def start_task(task_id: str, request: Request, db_path=Depends(get_db_path)):
         raise HTTPException(status_code=409, detail=str(e))
     if not out:
         raise HTTPException(404, detail="live trading task not found")
-    # runner 装配挂 app.state（内核待 D5 全链设计卡——占位在册）
-    request.app.state.live_runner = getattr(
-        request.app.state, "live_runner", None)
+    # runner 装配点=lifespan 一次装配（F-R2 t3r7：本处原自赋值占位系
+    # no-op 且路由层无装配先例——app.py lifespan 合 evolution_runner/
+    # paper_scheduler 先例形制）
     return out
 
 
@@ -100,7 +101,9 @@ def stop_task(task_id: str, db_path=Depends(get_db_path)):
 
 @router.get("/tasks/{task_id}/decisions")
 def list_decisions(
-    task_id: str, limit: int = 50, offset: int = 0,
+    task_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db_path=Depends(get_db_path),
 ):
     """D4 决策快照分页（append-only 只读——B6r 回放消费；零决策 200

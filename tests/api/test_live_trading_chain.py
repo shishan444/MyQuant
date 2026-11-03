@@ -130,12 +130,28 @@ class TestDecisions:
             assert r.status_code == 405, (method, r.status_code)
 
 
+class TestDecisionsParamValidation:
+    def test_limit_offset_422(self, client):
+        """F2 锚：负 limit 矛盾体（items=[] 且 has_more=True）与无上界
+        已由 Query(ge/le) 收口。"""
+        tid = _make_task(client)
+        for params in ({"limit": 0}, {"limit": -1}, {"limit": 501},
+                       {"offset": -1}):
+            r = client.get(f"/api/live-trading/tasks/{tid}/decisions",
+                           params=params)
+            assert r.status_code == 422, params
+
+
 class TestStartStop:
     def test_start_pending_to_running(self, client):
         tid = _make_task(client)
+        before = client.get(f"/api/live-trading/tasks/{tid}").json()["updated_at"]
         r = client.post(f"/api/live-trading/tasks/{tid}/start")
         assert r.status_code == 200
-        assert r.json()["status"] == "running"
+        body = r.json()
+        assert body["status"] == "running"
+        # F-R1 锚：CAS 直写仍刷 updated_at（丢刷新回归即红）
+        assert body["updated_at"] != before
 
     def test_start_running_409(self, client):
         tid = _make_task(client)

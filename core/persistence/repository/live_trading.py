@@ -128,23 +128,30 @@ def transition_live_task(
     runner 侧当前 bar 完退出，状态先行迁移可观察）。非法迁移 raise
     IllegalTransition；任务不存在 return {}（路由层判 404）。
     """
-    row = get_live_trading_task(db_path, task_id)
-    if row is None:
-        return {}
-    cur = row["status"]
-    if action == "start":
-        if cur not in ("pending",):
-            raise IllegalTransition(cur, action)
-        update_live_trading_task(
-            db_path, task_id, status="running", error_detail=None)
-    elif action == "stop":
-        if cur not in ("running",):
-            raise IllegalTransition(cur, action)
-        update_live_trading_task(
-            db_path, task_id, status="stopped",
-            stop_reason="user_stop")
-    else:
+    # F1 修复（t3r7-security）：读-检-写三步非原子——并发双停同窗双 200
+    # （契约「停止已停 409」漂移）。改 CAS 单条 UPDATE（WHERE 带期望前态，
+    # SQLite 单写者下单语句原子）；rowcount=0 再读实际态判 404/409
+    _TARGET = {
+        "start": ("pending", "running", {"error_detail": None}),
+        "stop": ("running", "stopped", {"stop_reason": "user_stop"}),
+    }
+    if action not in _TARGET:
         raise ValueError(f"unknown action: {action}")
+    expected, target, extra = _TARGET[action]
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(LiveTradingTask)
+            .where(LiveTradingTask.task_id == task_id,
+                   LiveTradingTask.status == expected)
+            # F-R1（t3r7）：CAS 直写须带 updated_at——原路径经
+            # update_live_trading_task 无条件刷新，直 update 丢刷新
+            .values(status=target, updated_at=_now(), **extra))
+    if result.rowcount == 0:
+        row = get_live_trading_task(db_path, task_id)
+        if row is None:
+            return {}  # 路由层 404
+        raise IllegalTransition(row["status"], action)
     out = get_live_trading_task(db_path, task_id)
     assert out is not None
     return out
