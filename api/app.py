@@ -41,14 +41,19 @@ except Exception:  # 包未安装（非 editable 运行）时回退常量，与 
 
 def _default_db_path(project_root: Path) -> Path:
     """db_path 缺省解析：MYQUANT_DB_PATH 置位则切库（e2e 隔离工具
-    fixture 的临时库注入通路），未置位保持项目根 data/quant.db
-    （svc.sh 常驻不设该 env——行为零变化）。显式传参优先于 env：
-    参数非 None 不进缺省分支，api_client 显式传参形制不可被 env
-    污染。与 alembic/env.py 的同名 env 语义同源（该处仅作
-    attributes/-x 通道之后的第三级回退，两处取值一致）。
+    fixture 的临时库注入通路），未置位保持项目根 data/quant.db。
+    svc.sh 常驻显式置位且钉死生产位（$APP_DIR/data/quant.db，解析
+    路径与缺省逐位一致——shell 残留 env 不再静默劫持常驻）。显式
+    传参优先于 env：参数非 None 不进缺省分支，api_client 显式传参
+    形制不可被 env 污染。与 alembic/env.py 的同名 env 语义同源（该处
+    仅作 attributes/-x 通道之后的第三级回退，两处取值一致）。
     """
     env_db = os.environ.get("MYQUANT_DB_PATH")
     if env_db:
+        # 切库事实留痕（warning 级，与 FAPI_STREAM_DISABLED 旁路披露
+        # 同形制：-m api 形态 root logger 无配置，info 会被默认
+        # WARNING 门槛拦截而不可见）
+        logger.warning("MYQUANT_DB_PATH 置位，业务库切换至 %s", env_db)
         return Path(env_db)
     return project_root / "data" / "quant.db"
 

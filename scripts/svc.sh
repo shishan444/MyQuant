@@ -80,8 +80,10 @@ stop_one() {  # $1=名称 $2=端口 $3=进程指纹
 
 cmd_start() {
     mkdir -p "$LOG_DIR"
+    # 钉死生产库路径（与缺省解析值逐位一致，行为不变）：MYQUANT_DB_PATH
+    # 切库语义专属测试工具（e2e fixture 注入临时库），shell 残留 env 不再静默劫持常驻
     start_one api "$API_PORT" "$APP_DIR" "curl -sf http://localhost:$API_PORT/api/health" \
-        "env PYTHONPATH=$APP_DIR $VENV_PY -m api" "$LOG_DIR/api.log" || exit 1
+        "env MYQUANT_DB_PATH=$APP_DIR/data/quant.db PYTHONPATH=$APP_DIR $VENV_PY -m api" "$LOG_DIR/api.log" || exit 1
     start_one mcp "$MCP_PORT" "$APP_DIR" "(exec 3<>/dev/tcp/127.0.0.1/$MCP_PORT)" \
         "env MYQUANT_MCP_PROFILE=${MYQUANT_MCP_PROFILE:-research} MYQUANT_MCP_PORT=$MCP_PORT PYTHONPATH=$APP_DIR $VENV_PY -m mcpserver.server" "$LOG_DIR/mcp.log" || exit 1
     start_one web "$WEB_PORT" "$APP_DIR/web" "curl -sf http://localhost:$WEB_PORT/" \
