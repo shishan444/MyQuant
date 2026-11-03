@@ -20,6 +20,19 @@ vi.mock("@/hooks/useStrategies", () => ({
   useSessionResults: vi.fn(),
 }));
 
+// Q2 修复（fix/fe-validation-forms-remediation）：浏览骨架数据源 mock——
+// 原缺失时 RecordsTable 以错误态渲染（「验证记录源暂不可达」）因无断言侥幸绿
+vi.mock("@/services/validationRecords", () => ({
+  getValidationRecordsPage: vi.fn().mockResolvedValue({
+    records: [], total: 0, offset: 0, limit: 50, has_more: false,
+  }),
+  getValidationRecordDetail: vi.fn(),
+  VALIDATION_LEVELS: [
+    "isolated_backtest", "random_window", "staged_validation", "composite", "component",
+  ],
+  VALIDATION_VERDICTS: ["pass", "fail", "inconclusive"],
+}));
+
 import { useStrategies, useVerifyStream, useVerifySessions, useSessionResults } from "@/hooks/useStrategies";
 
 function makeStrategy(): Strategy {
