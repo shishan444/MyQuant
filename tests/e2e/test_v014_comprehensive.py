@@ -157,7 +157,12 @@ class TestPageContent:
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
         content = page.content()
-        assert "BTCUSDT" in content or "币种" in content, "数据表格未找到"
+        # 两态皆合法（数据态解耦，同 v015 空态范式）：有注册数据集时表格
+        # 含交易对/币种表头；空库（e2e 自管 fixture 天然形态——datasets
+        # 注册表读业务库）时为导入引导空态
+        has_table = "BTCUSDT" in content or "币种" in content
+        has_empty = "还没有导入任何数据集" in content
+        assert has_table or has_empty, "数据表格未找到"
 
     def test_lab_page_has_strategy_lab_heading(self, page: Page):
         page.goto(BASE + "/lab", timeout=10000)
