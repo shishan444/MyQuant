@@ -111,10 +111,8 @@ def e2e_web(e2e_api: ServiceProcess) -> Iterator[ServiceProcess]:
 
 @pytest.fixture(scope="session")
 def browser_type_launch_args():
-    # Use the Playwright-managed chromium (installed via `playwright install`).
-    # The previous hardcoded executable_path pointed at a Linux cache path
-    # (/home/ss/.cache/.../chromium-1217/chrome-linux64) that does not exist on
-    # macOS or CI; omitting it lets Playwright locate the browser itself.
+    # 浏览器定位交给 Playwright 自管（playwright install 装的 chromium）：
+    # 不硬编码 executable_path——旧值是 Linux 缓存路径，macOS/CI 上不存在
     return {
         "headless": True,
     }
