@@ -71,7 +71,7 @@ class TestTransitions:
         body = r.json()
         assert body["total"] == 3
         items = body["items"]
-        # asc 时序（created_at 升序——同秒粒度下按插入序稳定）
+        # asc 时序（created_at 微秒级 ISO——连续 transit 互异保证确定性；极端同值 tie 下 rowid=插入序（t3r9 实测 EXPLAIN 走索引扫描））
         assert items[0]["from_status"] == "active"
         assert items[0]["to_status"] == "paper"
         assert items[0]["evidence"] == {"task": "pt_1"}
@@ -94,8 +94,9 @@ class TestTransitions:
                 "UPDATE strategy_transition_event SET evidence_json='{broken' "
                 "WHERE strategy_id=:sid").bindparams(sid=sid))
         r = client.get(f"/api/strategies/{sid}/transitions")
-        # 坏串 json.loads 抛——端点 500 如实（无吞咽通道）
-        assert r.status_code == 500
+        # 坏 JSON→None 不炸行（spec Scenario——t3r9 A1 修正后）
+        assert r.status_code == 200
+        assert r.json()["items"][0]["evidence"] is None
 
 
 class TestVerifyStarRider:

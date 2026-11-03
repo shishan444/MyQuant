@@ -29,6 +29,7 @@ from core.persistence.repository.strategy import (
     find_by_gene_signature,
     get_strategy,
     list_strategies,
+    list_transition_events,
     save_strategy,
     update_strategy,
 )
@@ -371,15 +372,18 @@ def list_strategy_transitions(
 ):
     """策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序
     审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。"""
-    from core.persistence.repository.strategy import list_transition_events
     if get_strategy(db_path, strategy_id) is None:
         raise HTTPException(404, detail="Strategy not found")
-    import json as _json
     events = list_transition_events(db_path, strategy_id)
     for e in events:
-        e["evidence"] = (
-            _json.loads(e.pop("evidence_json"))
-            if e.get("evidence_json") else None)
+        raw = e.pop("evidence_json", None)
+        try:
+            # t3r9 A1 修正：坏 JSON→None 不炸行（spec Scenario 三基准
+            # 一致；原 500 形态系实施漏看 spec——通道外手改面生产不可达，
+            # 降级语义以 spec 为准）
+            e["evidence"] = json.loads(raw) if raw else None
+        except (json.JSONDecodeError, TypeError):
+            e["evidence"] = None
     return {"items": events, "total": len(events)}
 
 
