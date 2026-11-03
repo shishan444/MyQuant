@@ -149,10 +149,11 @@ class TestTradingLayout:
         assert header.is_visible(), "Header not visible"
         title = header.locator("h1")
         title_text = title.text_content() or ""
-        # 等值断言（H3 重锁）：锚定路由标题现行文案「纸盘交易」——
-        # 拆除 or 兜底防标题漂移被「交易」子串侥幸吸收
-        assert "纸盘交易" in title_text, \
-            f"Expected 纸盘交易 in header title, got '{title_text}'"
+        # 双断言组合锚（fe-shell-theme-cutover M2/R1）：URL 锁+页题 exact 等值
+        # 「模拟交易」——空态文案含同子串（:104），故禁子串断言、用等值+路由双锁
+        assert "/trading" in page.url, f"Expected /trading in URL, got {page.url}"
+        assert title_text.strip() == "模拟交易", \
+            f"Expected 模拟交易 (exact) in header title, got '{title_text}'"
 
     def test_sidebar_visible(self, page: Page):
         _goto_trading(page)
@@ -171,6 +172,9 @@ class TestTradingHeader:
         page.wait_for_timeout(2000)
         assert page.locator("header").is_visible(), "Header not visible"
         content = page.locator("body").inner_text()
-        # H3 重锁：锚定 Sidebar 每页在场的「纸盘交易」——与数据态解耦
-        # （空库形态下空态文案含「模拟交易」子串，旧锚必假绿）
-        assert "纸盘交易" in content, "trading 页内容未渲染"
+        # 元素级组合锚（fe-shell-theme-cutover）：侧栏 link 元素在场+URL 锁——
+        # 禁 body 子串断言（空态文案含「模拟交易」子串假绿坑在案）
+        assert "/trading" in page.url, f"Expected /trading in URL, got {page.url}"
+        nav_link = page.locator("nav a[href='/trading']")
+        assert nav_link.count() >= 1, "模拟交易侧栏链接缺失"
+        assert "模拟交易" in nav_link.first.inner_text(), "侧栏链接文案非「模拟交易」"

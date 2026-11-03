@@ -86,12 +86,12 @@ class TestNavigation:
             page.wait_for_timeout(1000)
             assert route in page.url, f"Expected {route} in URL, got {page.url}"
 
-    def test_root_redirects_to_lab(self, page: Page):
-        """根路径重定向到 /lab (非 /data)."""
+    def test_root_redirects_to_workbench(self, page: Page):
+        """根路径重定向到 /workbench（fe-shell-theme-cutover M4：首页=观察工作台）."""
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        assert "/lab" in page.url, f"Expected redirect to /lab, got {page.url}"
+        assert "/workbench" in page.url, f"Expected redirect to /workbench, got {page.url}"
 
     def test_direct_url_access(self, page: Page):
         for route in ["/data", "/lab", "/evolution", "/strategies", "/settings"]:

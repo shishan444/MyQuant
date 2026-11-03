@@ -1,3 +1,4 @@
+import { POLARITY } from "@/theme/tokens";
 import { ColorType, LineStyle, CrosshairMode } from "lightweight-charts";
 import type { DeepPartial } from "lightweight-charts";
 import type { ChartOptions } from "lightweight-charts";
@@ -56,9 +57,9 @@ export const DARK_CHART_THEME: DeepPartial<ChartOptions> = {
  */
 export const CHART_COLORS = {
   /** Bullish candle body/wick color */
-  candleUp: "#00C853",
+  candleUp: POLARITY.up, /* T2：蜡烛涨色单源 tokens */
   /** Bearish candle body/wick color */
-  candleDown: "#FF1744",
+  candleDown: POLARITY.down, /* T2：蜡烛跌色单源 tokens */
   /** Fast EMA line color */
   emaFast: "#1E88E5",
   /** Slow EMA line color */
@@ -70,7 +71,7 @@ export const CHART_COLORS = {
   /** RSI oversold zone fill (30 level) */
   oversold: "rgba(0,200,83,0.3)",
   /** Buy signal marker color */
-  buySignal: "#00C853",
+  buySignal: POLARITY.up,
   /** Sell signal marker color */
-  sellSignal: "#FF1744",
+  sellSignal: POLARITY.down,
 } as const;

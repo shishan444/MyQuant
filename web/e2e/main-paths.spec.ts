@@ -4,25 +4,30 @@
  */
 import { test, expect } from "@playwright/test";
 
+// fe-shell-theme-cutover M2 三名回正：验证记录/模拟交易/插件与组件（原型权威）
 const NAV = [
   ["策略实验室", "/lab"],
   ["进化中心", "/evolution"],
   ["策略库", "/strategies"],
-  ["策略验证", "/verify"],
+  ["验证记录", "/verify"],
   ["批量回测", "/batch-backtest"],
-  ["纸盘交易", "/trading"],
+  ["模拟交易", "/trading"],
   ["数据管理", "/data"],
   ["设置", "/settings"],
   ["观察工作台", "/workbench"],
   ["实盘交易", "/live"],
-  ["插件与组件库", "/plugins"],
+  ["插件与组件", "/plugins"],
 ] as const;
 
 test.describe("主链路", () => {
-  test("01 导航：11 页可达且标题正确", async ({ page }) => {
+  test("01 导航：11 页可达且标题正确（双断言组合锚——URL 锁+页题 exact）", async ({ page }) => {
     for (const [label, path] of NAV) {
       await page.goto(path);
-      await expect(page.getByRole("heading", { name: label }).first()).toBeVisible();
+      // 路由锁：页面身份由 URL 判定（防他页文案供给）；页题锁 exact 全字匹配
+      await expect(page).toHaveURL(new RegExp(`${path}$`));
+      await expect(
+        page.getByRole("heading", { name: label, exact: true }).first(),
+      ).toBeVisible();
     }
   });
 
@@ -64,21 +69,21 @@ test.describe("主链路", () => {
     });
   });
 
-  test("05b 新路由：/workbench 真页+/live /plugins 占位", async ({ page }) => {
-    // workbench 真页（workbench-observation：B1 区标题可见）
+  test("05b 新路由：/workbench 真页+/live /plugins 路由可达页题正确", async ({ page }) => {
+    // fe-shell-theme-cutover 改写：原占位三连断言（h3 主体/占位文案/无 table+canvas）
+    // 随 b35d5f6（C8 占位组件删除）起现状即红——降为「路由可达+页题正确」组合锚；
+    // 页面内容级锚随 fe-asset-data-domain（08 改造）再立。
     await page.goto("/workbench");
     await expect(page.getByRole("heading", { name: "待裁决事件" })).toBeVisible();
     for (const [label, path] of [
       ["实盘交易", "/live"],
-      ["插件与组件库", "/plugins"],
+      ["插件与组件", "/plugins"],
     ] as const) {
       await page.goto(path);
-      // 占位主体 h3（避开 Header h1 同名标题）
-      await expect(page.locator("h3", { hasText: label })).toBeVisible();
-      await expect(page.getByText("本页面将在后续版本建设")).toBeVisible();
-      // 诚实占位负面断言：不呈现表格/图表等模拟数据形制
-      await expect(page.locator("table")).toHaveCount(0);
-      await expect(page.locator("canvas")).toHaveCount(0);
+      await expect(page).toHaveURL(new RegExp(`${path}$`));
+      await expect(
+        page.getByRole("heading", { name: label, exact: true }).first(),
+      ).toBeVisible();
     }
   });
 
@@ -113,35 +118,39 @@ test.describe("可访问性走查", () => {
   });
 });
 
-test.describe("侧栏形态基线（global-nav-shell）", () => {
-  const GROUP_TITLES = ["研究验证", "策略资产", "执行监控", "数据系统"];
+test.describe("侧栏形态基线（fe-shell-theme-cutover 平铺形制）", () => {
   const ALL_ITEMS = [
     "观察工作台",
-    "策略验证",
+    "验证记录",
     "批量回测",
     "进化中心",
-    "插件与组件库",
     "策略库",
-    "纸盘交易",
+    "模拟交易",
     "实盘交易",
     "数据管理",
     "设置",
+    "插件与组件",
   ];
+  const RETIRED_GROUP_TITLES = ["研究验证", "策略资产", "执行监控", "数据系统"];
 
-  test("12 四组分组标题+10 项全部渲染", async ({ page }) => {
+  test("12 平铺十项按原型顺序渲染+旧分组标题零残留", async ({ page }) => {
     await page.goto("/workbench");
     const nav = page.locator("nav");
-    for (const title of GROUP_TITLES) {
-      await expect(nav.getByText(title, { exact: true })).toBeVisible();
-    }
-    for (const label of ALL_ITEMS) {
-      await expect(nav.getByText(label, { exact: true })).toBeVisible();
+    const labels = await nav
+      .locator("a, [aria-disabled='true']")
+      .allInnerTexts();
+    expect(labels).toEqual(ALL_ITEMS);
+    for (const title of RETIRED_GROUP_TITLES) {
+      await expect(nav.getByText(title, { exact: true })).toHaveCount(0);
     }
   });
 
-  test("13 02 无高亮位：访问 /lab 侧栏零选中项", async ({ page }) => {
+  test("13 /lab 不入菜单：访问 /lab 侧栏零选中项且无策略实验室链接（M6）", async ({ page }) => {
     await page.goto("/lab");
     await expect(page.locator("nav a[aria-current='page']")).toHaveCount(0);
+    await expect(
+      page.locator("nav a", { hasText: "策略实验室" }),
+    ).toHaveCount(0);
   });
 
   test("14 工作台项选中态+08 禁用态", async ({ page }) => {
@@ -155,40 +164,15 @@ test.describe("侧栏形态基线（global-nav-shell）", () => {
     await expect(disabled).toContainText("实盘交易");
   });
 
-  test("15 折叠交互：点击折叠按钮隐藏分组标题，再点恢复", async ({ page }) => {
-    await page.goto("/workbench");
-    // 折叠按钮是 aside 内唯一 button（nav 项为 a/span，Header 按钮不在 aside 内）
-    const toggle = page.locator("aside button");
-    await toggle.click();
-    for (const title of GROUP_TITLES) {
-      await expect(page.locator("nav").getByText(title, { exact: true })).toHaveCount(0);
-    }
-    for (const label of ALL_ITEMS) {
-      await expect(page.locator("nav").getByText(label, { exact: true })).toHaveCount(0);
-    }
-    // 链接仍可达（9 条 NavLink），实盘禁用 span 保留
-    await expect(page.locator("nav a")).toHaveCount(9);
-    await expect(page.locator("nav span[aria-disabled='true']")).toHaveCount(1);
-    // 再点恢复展开（还原 localStorage 持久化状态，不污染后续用例）
-    await toggle.click();
-    for (const title of GROUP_TITLES) {
-      await expect(page.locator("nav").getByText(title, { exact: true })).toBeVisible();
-    }
-  });
+  // test 15（折叠交互）随 M3 折叠钮退役而退役——fe-shell-theme-cutover
 
-  test("16 窄视口分组渲染：375px 下四组标题与 10 项照常渲染", async ({ page }) => {
-    // 现状记录：侧栏无媒体查询分支，形制仅由 collapsed 决定——
-    // 窄视口不自动折叠、不隐藏分组标题
+  test("16 窄视口平铺渲染：375px 下十项照常渲染", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
     await page.goto("/workbench");
     const nav = page.locator("nav");
-    for (const title of GROUP_TITLES) {
-      await expect(nav.getByText(title, { exact: true })).toBeVisible();
-    }
     for (const label of ALL_ITEMS) {
       await expect(nav.getByText(label, { exact: true })).toBeVisible();
     }
-    // 08 实盘禁用态在窄视口下保持
     await expect(nav.locator("span[aria-disabled='true']")).toHaveCount(1);
   });
 });

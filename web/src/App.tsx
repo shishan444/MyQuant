@@ -28,7 +28,7 @@ const router = createBrowserRouter([
   {
     element: <AppLayout />,
     children: [
-      { index: true, element: <Navigate to="/lab" replace /> },
+      { index: true, element: <Navigate to="/workbench" replace /> },
       { path: "/lab", element: <ErrorBoundary><Lab /></ErrorBoundary> },
       { path: "/evolution", element: <ErrorBoundary><Evolution /></ErrorBoundary> },
       { path: "/strategies", element: <ErrorBoundary><Strategies /></ErrorBoundary> },
