@@ -3,7 +3,7 @@
 修复前为 D 类现状容忍锚定（-m 形态纯 FastAPI 不可达 404）——CARD-01
 落地后 __main__ 消费模块级组合实例（from api.app import app），两形
 态统一，本文件随正确行为改写：
-- `python -m api` 形态（统一入口 scripts/start.sh）与
+- `python -m api` 形态（实现权威 scripts/svc.sh）与
   `uvicorn api.app:app` 命令行形态同跑 ASGIApp(sio, other_asgi_app)
   组合实例，engine.io 握手 200 带 sid，REST 透传正常。
 - 启动器文本锚定保留（改启动形态须同步本网；run.py 总入口与 uvicorn
