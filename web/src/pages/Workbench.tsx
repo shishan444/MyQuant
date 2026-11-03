@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { AlertTriangle, Bot, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
+import { AlertTriangle, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
 import { IntegrityMatrix } from "@/components/data/IntegrityPanels";
 import {
@@ -8,6 +8,13 @@ import {
   getValidationRecords,
   type PendingEvent,
 } from "@/services/workbench";
+import {
+  ActiveHypothesesPanel,
+  AnalysisTasksPanel,
+  MarketSnapshotCard,
+  ResearchLogPanel,
+  SchedulerStatusLine,
+} from "@/components/workbench/ObservationPanels";
 
 /**
  * 01 观察工作台（workbench-observation 前端组）——五区只读观察页：
@@ -56,7 +63,7 @@ export function Workbench() {
   });
   const recordsQ = useQuery({
     queryKey: ["workbench", "validation-records"],
-    queryFn: () => getValidationRecords({ limit: 8 }),
+    queryFn: () => getValidationRecords({ limit: 3 }),
     refetchInterval: 60_000,
   });
 
@@ -147,13 +154,15 @@ function PageSections(props: {
         )}
       </GlassCard>
 
-      {/* B2 AI 循环动态区（五子区概要） */}
+      {/* B2 AI 循环动态区（五子区——fe-workbench-wiring 全量接线） */}
       <GlassCard className="p-3">
         <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
-          <Bot className="h-3.5 w-3.5" /> AI 循环动态
+          <TrendingUp className="h-3.5 w-3.5" /> AI 循环动态
           <span className="ml-auto text-[10px] text-text-muted">只读观察——操作归 MCP</span>
         </h2>
-        {/* B2-3 最近验证结论（组A 端点消费——概要默认） */}
+        <MarketSnapshotCard />
+        <ActiveHypothesesPanel />
+        {/* B2-3 最近验证结论（3 条——fe-workbench-wiring limit 8→3） */}
         <div className="mb-2">
           <p className="mb-1 text-[10px] uppercase tracking-wide text-text-muted">最近验证结论</p>
           {props.recordsError ? (
@@ -164,7 +173,7 @@ function PageSections(props: {
             <p className="text-xs text-text-muted">暂无验证记录</p>
           ) : (
             <ul className="divide-y divide-border-faint">
-              {props.records.slice(0, 5).map((r) => (
+              {props.records.slice(0, 3).map((r) => (
                 <li key={r.record_id} className="flex items-center gap-2 py-1 text-xs">
                   <span className={`font-mono ${VERDICT_COLOR[r.verdict] ?? ""}`}>
                     ● {r.verdict}
@@ -179,20 +188,20 @@ function PageSections(props: {
             </ul>
           )}
         </div>
-        <p className="text-[10px] text-text-muted">
-          行情快照/在途假设/分析任务/研究日志四子区随各域端点消费扩展（概要默认·展开详情）
-        </p>
+        <AnalysisTasksPanel />
+        <ResearchLogPanel />
       </GlassCard>
 
-      {/* B3 纸盘任务区 + B4 数据健康（占位概要——C6 后矩阵真数据） */}
+      {/* C 列纸盘任务区（fe-workbench-wiring：调度器行真值+舰队底注）+B4 */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <GlassCard className="p-3">
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
             <TrendingUp className="h-3.5 w-3.5" /> 纸盘任务
           </h2>
-          <p className="text-xs text-text-muted">
-            运行中任务卡（三维点：收益转正/笔数/触发一致性）与舰队权益行——消费
-            /api/paper-trading/tasks 列表面（任务卡渲染随 C5 消费面资产扩展）
+          <SchedulerStatusLine />
+          <p className="rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">
+            舰队汇总/任务卡/最近终态端点待建（be-workbench-support D11）——合计权益·今日
+            增量·三维达标卡随端点落地接线
           </p>
         </GlassCard>
         <GlassCard className="p-3">
@@ -206,10 +215,15 @@ function PageSections(props: {
               truthfulness 口径不变） */}
           <div className="flex items-center gap-3 text-xs">
             <Database className="h-3.5 w-3.5 text-text-muted" />
-            <span className="text-text-muted">api/mcp 进程状态——待真状态面</span>
+            <span className="text-text-muted">
+              api :8000 在线 · mcp :8800 在线
+            </span>
           </div>
+          <p className="mt-1 rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">
+            进程状态端点待建（be-workbench-support D1）——当前为原型文案照排
+          </p>
           <div className="mt-2">
-            <IntegrityMatrix symbol="BTCUSDT" monthsBack={6} />
+            <IntegrityMatrix symbol="BTCUSDT" monthsBack={5} />
           </div>
         </GlassCard>
       </div>

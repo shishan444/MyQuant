@@ -55,7 +55,7 @@ const RECORDS = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(dwb.getMonthlyMatrix).mockResolvedValue({
-    symbol: "BTCUSDT", generated_at: "2026-11-01T00:00:00Z", months_back: 6,
+    symbol: "BTCUSDT", generated_at: "2026-11-01T00:00:00Z", months_back: 5,
     short_period: {
       timeframes: ["4h"],
       matrix: [
@@ -182,16 +182,18 @@ describe("Workbench（01 观察工作台）", () => {
     expect(screen.queryByText(/任务扫描达上限/)).not.toBeInTheDocument();
   });
 
-  it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+6 月只读", async () => {
+  it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+5 月只读（fe-workbench-wiring monthsBack 5→5）", async () => {
     setup();
     // B4 区月矩阵缩略消费（复用 09 页组件，01 观察面零操作语义）
     expect(await screen.findByTestId("integrity-matrix")).toBeInTheDocument();
     expect(dwb.getMonthlyMatrix).toHaveBeenCalledWith(
-      expect.objectContaining({ symbol: "BTCUSDT", months_back: 6 }));
+      expect.objectContaining({ symbol: "BTCUSDT", months_back: 5 }));
   });
 
   it("CARD-03 api/mcp 半句如实呈现「待真状态面」（truthfulness 口径）", async () => {
     setup();
-    expect(await screen.findByText(/api\/mcp 进程状态——待真状态面/)).toBeInTheDocument();
+    // fe-workbench-wiring：D1 前原型文案照排+底注（真状态面归 be-workbench-support D1 接线）
+    expect(await screen.findByText(/api :8000 在线 · mcp :8800 在线/)).toBeInTheDocument();
+    expect(await screen.findByText(/进程状态端点待建/)).toBeInTheDocument();
   });
 });
