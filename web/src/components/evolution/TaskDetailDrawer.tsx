@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { POLARITY, DOMAIN } from "@/theme/tokens";
 import { X, Eye } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button as AntButton, Tag } from "antd";
@@ -245,7 +246,7 @@ function OverviewTab({
             <AntButton
               size="small"
               className="!text-[11px]"
-              style={{ color: "#34d399" }}
+              style={{ color: POLARITY.up }}
               onClick={() => onVisualVerify(championDna, task)}
             >
               <Eye className="h-3 w-3" />
@@ -254,7 +255,7 @@ function OverviewTab({
             <AntButton
               size="small"
               className="!text-[11px]"
-              style={{ color: "#c084fc" }}
+              style={{ color: DOMAIN.paper }}
               onClick={() => onSeedEvolve(championDna)}
             >
               以此为种子继续进化

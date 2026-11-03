@@ -5,7 +5,7 @@
  * 服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("@/services/datasets", () => ({
@@ -64,10 +64,6 @@ beforeEach(() => {
   } as never);
 });
 
-async function settled() {
-  await screen.findByTestId("integrity-matrix");
-  return vi.mocked(dwb.getMonthlyMatrix).mock.calls.length;
-}
 
 describe("DataManagement 双币月矩阵（fe-asset-data-domain 4.3）", () => {
   it("双币并列：BTCUSDT/ETHUSDT 两请求+双矩阵在场，单币输入框退役", async () => {

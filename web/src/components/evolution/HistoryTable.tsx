@@ -1,4 +1,5 @@
 import { useMemo, memo } from "react";
+import { DOMAIN } from "@/theme/tokens";
 import { Eye, Dna } from "lucide-react";
 import { Button as AntButton, Tag } from "antd";
 import { cn, formatNumber } from "@/lib/utils";
@@ -137,7 +138,7 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
               size="small"
               onClick={onSeedEvolve}
               aria-label="继续进化"
-              style={{ color: "#a78bfa" }}
+              style={{ color: DOMAIN.paper }}
             >
               <Dna className="h-3.5 w-3.5" />
             </AntButton>

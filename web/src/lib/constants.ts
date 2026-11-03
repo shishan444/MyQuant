@@ -280,22 +280,14 @@ export function isActiveStatus(status: EvolutionTaskStatus): boolean {
 // MTF (Multi-Timeframe) colors
 // ---------------------------------------------------------------------------
 
-export const MTF_TIMEFRAME_COLORS: Record<string, string> = {
-  "15m": "#3B82F6",
-  "1h": "#10B981",
-  "4h": "#F59E0B",
-  "1d": "#8B5CF6",
-  "3d": "#EF4444",
-};
+// 系列色族已迁 chartThemes.ts（白名单单源——fe-asset-data-domain 6.1）；
+// 此处 re-export 保消费方 import 路径稳定
+import { CHART_INDICATOR_SERIES_COLORS } from "@/components/charts/core/chartThemes";
 
-export const EMA_DEFAULT_COLORS = [
-  "#3B82F6",
-  "#10B981",
-  "#F59E0B",
-  "#8B5CF6",
-  "#EF4444",
-  "#EC4899",
-] as const;
+export {
+  MTF_TIMEFRAME_COLORS,
+  EMA_DEFAULT_COLORS,
+} from "@/components/charts/core/chartThemes";
 
 export const PATTERN_ACTIONS = [
   { value: "divergence_top", label: "顶背离" },
@@ -308,8 +300,8 @@ export const PATTERN_ACTIONS = [
 
 export const CHART_INDICATOR_DEFAULTS: import("@/types/api").ChartIndicatorConfig = {
   ema_periods: [10, 20, 50],
-  ema_colors: ["#3B82F6", "#10B981", "#F59E0B"],
-  boll: { enabled: true, period: 20, std: 2.0, color: "#F59E0B" },
+  ema_colors: CHART_INDICATOR_SERIES_COLORS.ema,
+  boll: { enabled: true, period: 20, std: 2.0, color: CHART_INDICATOR_SERIES_COLORS.boll },
   rsi: { enabled: true, period: 14, overbought: 70, oversold: 30 },
   vol: { enabled: true, position: "overlay" },
 };

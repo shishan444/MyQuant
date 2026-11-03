@@ -4,6 +4,7 @@ import { Button as AntButton } from "antd";
 import { Tag } from "antd";
 import { cn, formatPercent, formatNumber, getFitnessColor } from "@/lib/utils";
 import { getStrategyName, getStrategyType } from "@/lib/strategy-utils";
+import { POLARITY, DOMAIN, ATTENTION } from "@/theme/tokens";
 import type { DiscoveredStrategy, DNA } from "@/types/api";
 
 interface StrategyListProps {
@@ -201,7 +202,7 @@ const StrategyRow = memo(function StrategyRow({
             <AntButton
               type="text"
               size="small"
-              style={{ color: "#34d399" }}
+              style={{ color: POLARITY.up }}
               onClick={onVisualVerify}
               aria-label="回测"
             >
@@ -212,7 +213,7 @@ const StrategyRow = memo(function StrategyRow({
             <AntButton
               type="text"
               size="small"
-              style={{ color: "#fbbf24" }}
+              style={{ color: ATTENTION.gold }}
               onClick={onSave}
               aria-label="保存"
             >
@@ -222,7 +223,7 @@ const StrategyRow = memo(function StrategyRow({
           <AntButton
             type="text"
             size="small"
-            style={{ color: "#c084fc" }}
+            style={{ color: DOMAIN.paper }}
             onClick={onSeedEvolve}
             aria-label="继续进化"
           >

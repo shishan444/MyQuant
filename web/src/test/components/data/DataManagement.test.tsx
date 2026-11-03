@@ -91,7 +91,11 @@ describe("DataManagement（AntD）", () => {
 
   it("成功态：表格渲染数据集行与质量条文案", async () => {
     setup({ items: [makeDataset()] });
-    expect(await screen.findAllByText("BTCUSDT")).not.toHaveLength(0); // 币种+名称两列
+    // await 锚修正（fe-asset-data-domain 4.3 涟漪）：双币矩阵标题恒含
+    // BTCUSDT——原 findAllByText("BTCUSDT") 在月矩阵同步渲染后即通过，
+    // 此时数据集行可能尚未渲染（时序竞态）；改锚数据集行专属时间区间列
+    expect(await screen.findByText("2025-01-01 ~ 2025-06-01")).toBeInTheDocument();
+    expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThanOrEqual(1); // 币种列
     expect(screen.getByText("1h")).toBeInTheDocument();
     expect(screen.getByText("1000")).toBeInTheDocument(); // formatNumber(1000, 0)=toFixed(0)
     expect(screen.getByText("数据质量: 完整")).toBeInTheDocument();
@@ -102,16 +106,18 @@ describe("DataManagement（AntD）", () => {
     setup({
       items: [makeDataset(), makeDataset({ dataset_id: "d2", symbol: "ETHUSDT", interval: "4h" })],
     });
-    await screen.findAllByText("BTCUSDT");
+    await screen.findAllByText("2025-01-01 ~ 2025-06-01"); // 行级锚（两行同区间——all 形制）
     const search = screen.getByPlaceholderText("搜索币种...");
     await userEvent.type(search, "ETH");
-    expect(screen.queryAllByText("BTCUSDT")).toHaveLength(0);
-    expect(await screen.findAllByText("ETHUSDT")).not.toHaveLength(0);
+    // 月矩阵标题恒含两币 symbol（4.3 双币并列）——行消失断言改锚
+    // interval 列（BTC 行 1h 消失/ETH 行 4h 在场）
+    expect(screen.queryByText("1h")).not.toBeInTheDocument();
+    expect(await screen.findByText("4h")).toBeInTheDocument();
   });
 
   it("删除：确认弹层出现且确认后调用删除", async () => {
     const { user, mutateAsync } = setup({ items: [makeDataset()] });
-    await screen.findAllByText("BTCUSDT");
+    await screen.findByText("2025-01-01 ~ 2025-06-01"); // 行级锚（同竞态修正）
     await user.click(screen.getByRole("button", { name: "删除数据集 BTCUSDT 1h" }));
     // AntD modal.confirm 渲染到 body
     const dialog = await screen.findByRole("dialog");
@@ -122,12 +128,14 @@ describe("DataManagement（AntD）", () => {
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith("d1"));
   });
 
-  it("死操作 disabled：预览/Binance 导入不可点（可识别的不可用态）", async () => {
+  it("三死操作零残留（fe-asset-data-domain 4.2——D4 裁决移除非 disabled）", async () => {
+    // 行为变更锚：原「disabled 不可点」三操作（预览/实验室打开/Binance
+    // 导入）按 D4 裁决整组移除——负断言零残留
     setup({ items: [makeDataset()] });
-    await screen.findAllByText("BTCUSDT");
-    expect(screen.getByRole("button", { name: "预览数据集" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "在实验室打开" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "从 Binance 导入" })).toBeDisabled();
+    await screen.findByText("2025-01-01 ~ 2025-06-01");
+    expect(screen.queryByRole("button", { name: "预览数据集" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "在实验室打开" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "从 Binance 导入" })).not.toBeInTheDocument();
   });
 
   it("上传弹层：打开后表单三控件（Symbol 必填提示经 Form rules）", async () => {

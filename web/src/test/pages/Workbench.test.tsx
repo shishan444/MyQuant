@@ -185,7 +185,7 @@ describe("Workbench（01 观察工作台）", () => {
   it("CARD-03 B4 区接线：渲染 IntegrityMatrix 且固定 BTCUSDT+5 月只读（fe-workbench-wiring monthsBack 6→5）", async () => {
     setup();
     // B4 区月矩阵缩略消费（复用 09 页组件，01 观察面零操作语义）
-    expect(await screen.findByTestId("integrity-matrix")).toBeInTheDocument();
+    expect(await screen.findByTestId("integrity-matrix-BTCUSDT")).toBeInTheDocument();
     expect(dwb.getMonthlyMatrix).toHaveBeenCalledWith(
       expect.objectContaining({ symbol: "BTCUSDT", months_back: 5 }));
   });

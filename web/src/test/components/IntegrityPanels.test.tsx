@@ -73,7 +73,7 @@ describe("IntegrityMatrix（09-B2r 月矩阵）", () => {
     const green = { ...MATRIX, short_period: { timeframes: ["4h"], matrix: [MATRIX.short_period.matrix[0]] } };
     vi.mocked(dwb.getMonthlyMatrix).mockResolvedValue(green as never);
     setup(<IntegrityMatrix symbol="BTCUSDT" monthsBack={3} />);
-    await screen.findByTestId("integrity-matrix");
+    await screen.findByTestId("integrity-matrix-BTCUSDT");
     expect(screen.queryByText(/非完整月单元/)).toBeNull();
   });
 

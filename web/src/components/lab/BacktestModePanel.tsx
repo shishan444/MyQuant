@@ -8,6 +8,7 @@ import type { KlineChartHandle, SignalData } from "@/components/charts/KlineChar
 import { BacktestMetricsPanel } from "./BacktestMetricsPanel";
 import { EquityCurve } from "@/components/charts/EquityCurve";
 import { runBacktest } from "@/services/strategies";
+import { DOMAIN, ATTENTION } from "@/theme/tokens";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useChartIndicators } from "@/hooks/useChartIndicators";
 import type { SubChartType } from "@/hooks/useChartIndicators";
@@ -285,7 +286,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
                 onClick={handleSave}
                 disabled={saveStrategy.isPending}
                 className="!text-[11px]"
-                style={{ color: "#fbbf24" }}
+                style={{ color: ATTENTION.gold }}
               >
                 保存策略
               </AntButton>
@@ -293,7 +294,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
                 size="small"
                 onClick={() => navigate("/evolution", { state: { seedDna: dna } })}
                 className="!text-[11px]"
-                style={{ color: "#c084fc" }}
+                style={{ color: DOMAIN.paper }}
               >
                 <Dna className="h-3.5 w-3.5" />
                 继续优化

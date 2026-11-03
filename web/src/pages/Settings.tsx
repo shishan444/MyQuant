@@ -258,8 +258,7 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
           <span className="text-sm text-text-secondary w-24 shrink-0">状态</span>
           <div className="flex items-center gap-2">
             <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: config.binance_connected ? "#00C853" : "#484f58" }}
+              className={`inline-block h-2 w-2 rounded-full ${config.binance_connected ? "bg-profit" : "bg-text-muted"}`}
             />
             {/* 状态非纯颜色载体：文字伴随指示点（值=GET /api/config 真实回显） */}
             <span className="text-xs text-text-secondary">{config.binance_connected ? "已连接" : "未配置"}</span>

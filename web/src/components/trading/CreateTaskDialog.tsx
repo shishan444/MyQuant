@@ -92,7 +92,7 @@ export function CreateTaskDialog({
       onCancel={() => onOpenChange(false)}
       title={
         <span className="flex items-center gap-2">
-          <TrendingUp className="h-5 w-5" style={{ color: "#F59E0B" }} />
+          <TrendingUp className="h-5 w-5 text-accent-gold" />
           创建模拟交易任务
         </span>
       }

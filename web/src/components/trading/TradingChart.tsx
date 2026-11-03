@@ -8,6 +8,7 @@ import { fillsToSignals } from "@/components/charts/primitives";
 import type { PaperFill } from "@/services/trading";
 import { ChartHud } from "@/components/trading/ChartHud";
 import type { PaperSignal } from "@/types/api";
+import { ATTENTION } from "@/theme/tokens";
 import type { SignalData } from "@/components/charts/KlineChart";
 
 interface TradingChartProps {
@@ -65,7 +66,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
     if (stopLossPrice != null) {
       candleSeries.createPriceLine({
         price: stopLossPrice,
-        color: "#FBBF24",
+        color: ATTENTION.gold, // SL 价线金（tokens 通道）
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: true,

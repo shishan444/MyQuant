@@ -145,7 +145,7 @@ function TaskListItem({
               onClone();
             }}
           >
-            <Copy className="h-3 w-3" style={{ color: "#F59E0B" }} />
+            <Copy className="h-3 w-3 text-accent-gold" />
           </AntButton>
           <AntButton
             type="text"

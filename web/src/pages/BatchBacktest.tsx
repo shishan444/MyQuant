@@ -12,6 +12,7 @@ import {
   Play, X, ChevronDown, ChevronUp, LineChart,
   Search, Check, ArrowUpDown,
 } from "lucide-react";
+import { ATTENTION } from "@/theme/tokens";
 import { StarRating } from "@/components/StarRating";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Button as AntButton, Input, InputNumber, Progress } from "antd";
@@ -445,14 +446,14 @@ export function BatchBacktest() {
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <LoadingOutlined className="text-base" style={{ color: "#F59E0B" }} />
+                <LoadingOutlined className="text-base text-accent-gold" />
                 <span className="text-sm font-medium text-text-primary">批量回测中...</span>
               </div>
               <span className="text-xs font-mono text-text-secondary">
                 {stream.progress.current}/{stream.progress.total} 步骤
               </span>
             </div>
-            <Progress percent={progressPct} showInfo={false} size={{ height: 8 }} strokeColor="#F59E0B" />
+            <Progress percent={progressPct} showInfo={false} size={{ height: 8 }} strokeColor={ATTENTION.gold} />
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-secondary">
                 正在处理 {stream.currentGroup} · {stream.rangeLabel}

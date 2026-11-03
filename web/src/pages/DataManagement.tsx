@@ -34,6 +34,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
 import { useImportCsv, useImportCsvBatch, useDeleteDataset, useDatasets } from "@/hooks/useDatasets";
 import { formatNumber } from "@/lib/utils";
+import { POLARITY, STATE, TEXT } from "@/theme/tokens";
 import type { Dataset } from "@/types/api";
 
 // ---------------------------------------------------------------------------
@@ -58,10 +59,12 @@ const QUALITY_CFG: Record<
   Dataset["quality_status"],
   { value: number; color: string; label: string }
 > = {
-  complete: { value: 100, color: "#00C853", label: "数据质量: 完整" },
-  warning: { value: 90, color: "#FBBF24", label: "有缺口 <5%" },
-  error: { value: 60, color: "#EF4444", label: "缺口 >5%" },
-  unknown: { value: 0, color: "#64748b", label: "未知" },
+  // fe-asset-data-domain 6.1：质量档色改 tokens 实色 import（原四字面量；
+  // 消费方 antd Progress strokeColor 需实色）
+  complete: { value: 100, color: POLARITY.up, label: "数据质量: 完整" },
+  warning: { value: 90, color: STATE.warn, label: "有缺口 <5%" },
+  error: { value: 60, color: POLARITY.down, label: "缺口 >5%" },
+  unknown: { value: 0, color: TEXT.tertiary, label: "未知" },
 };
 
 function QualityBar({ status }: { status: Dataset["quality_status"] }) {
@@ -242,7 +245,7 @@ function UploadDialog({
         )}
 
         {detectedInfo && (
-          <div className="flex items-center gap-2 rounded-md px-3 py-2 text-xs" style={{ background: "rgba(0,200,83,0.1)", color: "#00C853" }}>
+          <div className="flex items-center gap-2 rounded-md bg-profit/10 px-3 py-2 text-xs text-profit">
             <CheckCircle2 />
             <span>已自动识别: {detectedInfo.symbol} / {detectedInfo.interval}</span>
           </div>
@@ -338,7 +341,7 @@ export function DataManagement() {
       title: "周期",
       dataIndex: "interval",
       render: (v: string) => (
-        <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs text-text-secondary" style={{ background: "rgba(245,158,11,0.12)" }}>
+        <span className="inline-flex items-center rounded-md bg-state-warn/10 px-1.5 py-0.5 text-xs text-text-secondary">
           {v}
         </span>
       ),
