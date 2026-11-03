@@ -171,7 +171,8 @@ class TestConfigureInjection:
 
 class TestPortConflictFailFast:
     def test_strict_port_conflict_error_carries_port(self, tmp_path: Path) -> None:
-        """端口冲突预占形：--strictPort 绑定失败退出，错误含端口号。"""
+        """端口冲突预占形（web 侧真实形态）：--strictPort 绑定失败退出，
+        错误含端口号。"""
         blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         blocker.bind(("127.0.0.1", 0))
         blocker.listen(1)
@@ -202,4 +203,35 @@ class TestPortConflictFailFast:
             assert "日志尾部" in str(excinfo.value)
         finally:
             harness.kill_process_group(proc)
+            blocker.close()
+
+    def test_api_port_occupied_early_exit_error_carries_port(
+        self, tmp_path: Path
+    ) -> None:
+        """端口冲突预占形（api 侧真实形态）：MYQUANT_API_PORT 被占时
+        `-m api` 的 uvicorn 绑定失败退出，探活走进程早退分支而非超时
+        空等——spec「端口冲突快速失败」的 uvicorn 形态（错误含端口号
+        与日志尾部，不静默改换端口重试）。"""
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        port = blocker.getsockname()[1]
+        service = harness.spawn_api_process(
+            api_port=port,
+            db_path=tmp_path / "e2e.db",
+            log_path=tmp_path / "api_conflict.log",
+        )
+        try:
+            with pytest.raises(RuntimeError, match=str(port)) as excinfo:
+                harness.wait_http_ready(
+                    f"http://127.0.0.1:{port}/api/health",
+                    service.proc,
+                    service.log_path,
+                    "e2e api",
+                    timeout=40,
+                )
+            assert "进程早退" in str(excinfo.value)
+            assert "日志尾部" in str(excinfo.value)
+        finally:
+            service.close()
             blocker.close()
