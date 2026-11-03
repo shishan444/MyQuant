@@ -264,7 +264,7 @@ export function Verify() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="h-4 w-4 text-blue-400" />
-            <h1 className="text-sm font-semibold text-text-primary">策略验证</h1>
+            <h1 className="text-sm font-semibold text-text-primary">验证记录</h1>
             <span className="text-[11px] font-mono text-text-secondary">
               {totalStrategies} 条策略 · {strategyGroups.length} 品种
             </span>

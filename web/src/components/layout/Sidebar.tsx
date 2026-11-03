@@ -2,26 +2,24 @@ import { Tooltip } from "antd";
 import { NavLink, useLocation } from "react-router";
 import {
   Dna,
-  BookOpen,
   ShieldCheck,
-  LineChart,
+  Layers,
+  Brain,
   TrendingUp,
   Database,
   Settings,
   LayoutDashboard,
   Puzzle,
-  Activity,
-  ChevronsLeft,
-  ChevronsRight,
+  Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/stores/app";
 
 /**
- * 全局导航壳层（global-nav-shell）——职能=四组目标信息架构的全局导航+折叠态形制，
+ * 全局导航壳层（global-nav-shell）——职能=平铺十项全局导航，
  * 导出 Sidebar（左侧导航）/Header（页头）/getPageTitle（路由→页题，供 Header 消费）。
  * 服务对象=AppLayout（AppLayout.tsx:2-3 引入 Sidebar 与 Header），由其组合 Sidebar 导航与 Header 页头。
- * 边界=不承担页面内容渲染（页面内容由 AppLayout 的 Outlet 挂载）。
+ * 边界=不承担页面内容渲染（页面内容由 AppLayout 的 Outlet 挂载）；
+ * /lab（策略实验室）保留路由不入菜单（fe-shell-theme-cutover M6 定位）。
  */
 interface NavItem {
   to: string;
@@ -31,50 +29,20 @@ interface NavItem {
   disabled?: boolean;
 }
 
-interface NavGroup {
-  /** null = 置顶组（工作台独立置顶，无分组标题） */
-  title: string | null;
-  items: NavItem[];
-}
-
 /**
- * 四组 10 项目标信息架构（global-nav-shell）：
- * 工作台置顶 + 研究验证 / 策略资产 / 执行监控 / 数据系统。
- * 02 假设工作台项缺位——/lab（旧策略实验室）随 C4 重构落地时补入研究验证组首位，
- * 在此之前访问 /lab 时侧栏零高亮。
+ * 平铺 10 项目标信息架构（前端原型还原 ①：四组分组与折叠钮退役，原型平铺权威）。
  */
-const NAV_GROUPS: NavGroup[] = [
-  {
-    title: null,
-    items: [{ to: "/workbench", icon: LayoutDashboard, label: "观察工作台" }],
-  },
-  {
-    title: "研究验证",
-    items: [
-      { to: "/verify", icon: ShieldCheck, label: "策略验证" },
-      { to: "/batch-backtest", icon: LineChart, label: "批量回测" },
-      { to: "/evolution", icon: Dna, label: "进化中心" },
-      { to: "/plugins", icon: Puzzle, label: "插件与组件库" },
-    ],
-  },
-  {
-    title: "策略资产",
-    items: [{ to: "/strategies", icon: BookOpen, label: "策略库" }],
-  },
-  {
-    title: "执行监控",
-    items: [
-      { to: "/trading", icon: TrendingUp, label: "纸盘交易" },
-      { to: "/live", icon: Activity, label: "实盘交易", disabled: true },
-    ],
-  },
-  {
-    title: "数据系统",
-    items: [
-      { to: "/data", icon: Database, label: "数据管理" },
-      { to: "/settings", icon: Settings, label: "设置" },
-    ],
-  },
+const NAV_ITEMS: NavItem[] = [
+  { to: "/workbench", icon: LayoutDashboard, label: "观察工作台" },
+  { to: "/verify", icon: ShieldCheck, label: "验证记录" },
+  { to: "/batch-backtest", icon: Layers, label: "批量回测" },
+  { to: "/evolution", icon: Dna, label: "进化中心" },
+  { to: "/strategies", icon: Brain, label: "策略库" },
+  { to: "/trading", icon: TrendingUp, label: "模拟交易" },
+  { to: "/live", icon: Radio, label: "实盘交易", disabled: true },
+  { to: "/data", icon: Database, label: "数据管理" },
+  { to: "/settings", icon: Settings, label: "设置" },
+  { to: "/plugins", icon: Puzzle, label: "插件与组件" },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -82,25 +50,23 @@ const PAGE_TITLES: Record<string, string> = {
   "/lab": "策略实验室",
   "/evolution": "进化中心",
   "/strategies": "策略库",
-  "/verify": "策略验证",
+  "/verify": "验证记录",
   "/batch-backtest": "批量回测",
-  "/trading": "纸盘交易",
+  "/trading": "模拟交易",
   "/data": "数据管理",
   "/settings": "设置",
   "/live": "实盘交易",
-  "/plugins": "插件与组件库",
+  "/plugins": "插件与组件",
 };
 
 export function getPageTitle(pathname: string): string {
   return PAGE_TITLES[pathname] || "MyQuant";
 }
 
-function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function NavItemLink({ item }: { item: NavItem }) {
   const { to, icon: Icon, label, disabled } = item;
 
-  const content = collapsed ? (
-    <Icon className="h-5 w-5" />
-  ) : (
+  const content = (
     <>
       <Icon className="h-5 w-5 shrink-0" />
       <span className="text-sm font-medium truncate">{label}</span>
@@ -108,43 +74,19 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
   );
 
   if (disabled) {
-    const disabledNode = (
-      <span
-        aria-disabled="true"
-        className={cn(
-          "flex h-12 items-center transition-colors cursor-not-allowed text-text-muted border-l-2 border-transparent",
-          collapsed ? "justify-center" : "gap-3 px-4"
-        )}
-      >
-        {content}
-      </span>
-    );
-    return collapsed ? (
+    return (
       <Tooltip placement="right" mouseEnterDelay={0} title={`${label}（建设中）`}>
-        {disabledNode}
+        <span
+          aria-disabled="true"
+          className="flex h-12 items-center gap-3 px-4 transition-colors cursor-not-allowed text-text-muted border-l-2 border-transparent"
+        >
+          {content}
+        </span>
       </Tooltip>
-    ) : (
-      disabledNode
     );
   }
 
-  return collapsed ? (
-    <Tooltip placement="right" mouseEnterDelay={0} title={label}>
-      <NavLink
-        to={to}
-        className={({ isActive }) =>
-          cn(
-            "flex h-12 items-center justify-center transition-colors",
-            isActive
-              ? "bg-accent-gold/10 text-accent-gold border-l-2 border-accent-gold"
-              : "text-text-secondary hover:text-text-primary hover:bg-white/5 border-l-2 border-transparent"
-          )
-        }
-      >
-        {content}
-      </NavLink>
-    </Tooltip>
-  ) : (
+  return (
     <NavLink
       to={to}
       className={({ isActive }) =>
@@ -162,62 +104,26 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 }
 
 export function Sidebar() {
-  const collapsed = useAppStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-
   return (
-    <>
-      <aside
-        className={cn(
-          "flex h-screen flex-col border-r border-border-default bg-bg-surface backdrop-blur-md transition-all duration-300 ease-[cubic-bezier(0.4,0.0,0.2,1)]",
-          collapsed ? "w-16" : "w-60"
-        )}
-      >
-        {/* Logo 区：品牌标识位；折叠态保留底边框占位，维持壳层高度 */}
-        <div className="flex h-12 items-center border-b border-border-default px-4">
-          {!collapsed && (
-            <span className="text-lg font-semibold text-accent-gold font-mono tracking-tight">
-              MyQuant
-            </span>
-          )}
-        </div>
+    <aside className="flex h-screen w-60 flex-col border-r border-border-default bg-bg-surface backdrop-blur-md">
+      {/* Logo 区：品牌标识位 */}
+      <div className="flex h-12 items-center border-b border-border-default px-4">
+        <span className="text-lg font-semibold text-accent-gold font-mono tracking-tight">
+          MyQuant
+        </span>
+      </div>
 
-        {/* Navigation：四组分组（折叠态隐藏分组标题） */}
-        <nav className="flex-1 overflow-y-auto py-2" aria-label="主导航">
-          {NAV_GROUPS.map((group, groupIndex) => (
-            <div key={group.title ?? `top-${groupIndex}`}>
-              {!collapsed && group.title !== null && (
-                <div className="px-4 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-                  {group.title}
-                </div>
-              )}
-              {group.items.map((item) => (
-                <NavItemLink key={item.to} item={item} collapsed={collapsed} />
-              ))}
-            </div>
-          ))}
-        </nav>
+      {/* Navigation：平铺十项（fe-shell-theme-cutover M1） */}
+      <nav className="flex-1 overflow-y-auto py-2" aria-label="主导航">
+        {NAV_ITEMS.map((item) => (
+          <NavItemLink key={item.to} item={item} />
+        ))}
+      </nav>
 
-        {/* 折叠开关：折叠时显示 ChevronsRight＝点击向右展开的提示方向 */}
-        <div className="border-t border-border-default p-2">
-          <button
-            onClick={toggleSidebar}
-            className="flex h-10 w-full items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
-          >
-            {collapsed ? (
-              <ChevronsRight className="h-5 w-5" />
-            ) : (
-              <ChevronsLeft className="h-5 w-5" />
-            )}
-          </button>
-          {!collapsed && (
-            <p className="mt-1 text-center text-xs text-text-muted">
-              v1.0.0
-            </p>
-          )}
-        </div>
-      </aside>
-    </>
+      <div className="border-t border-border-default p-2">
+        <p className="text-center text-xs text-text-muted">v1.0.0</p>
+      </div>
+    </aside>
   );
 }
 

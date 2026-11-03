@@ -1,3 +1,4 @@
+import { POLARITY } from "@/theme/tokens";
 import type {
   ISeriesApi,
   ISeriesPrimitive,
@@ -29,8 +30,8 @@ export interface PositionBandData {
 }
 
 const BAND_COLOR: Record<PositionBandData["side"], string> = {
-  long: "rgba(0, 200, 83, 0.08)",
-  short: "rgba(239, 68, 68, 0.08)",
+  long: "rgba(45,212,191,0.08)" /* T2：POLARITY.up 8% alpha 衍生 */,
+  short: "rgba(251,113,133,0.08)" /* T2：POLARITY.down 8% alpha 衍生 */,
 };
 
 interface BandCoords {

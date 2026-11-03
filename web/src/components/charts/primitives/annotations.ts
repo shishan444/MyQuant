@@ -1,3 +1,4 @@
+import { POLARITY } from "@/theme/tokens";
 import type { ISeriesApi, IPriceLine, Time } from "lightweight-charts";
 
 /**
@@ -48,7 +49,7 @@ export function toEntryLineOptions(data: EntryLineData) {
 export function toStopLossLineOptions(data: StopLossLineData) {
   return {
     price: data.price,
-    color: data.kind === "trail" ? "#FBBF24" : "#EF4444",
+    color: data.kind === "trail" ? "#FBBF24" : POLARITY.down, /* T2：非涨跌护栏语义沿 STATE.warn 金/trail 与 POLARITY.down */
     lineWidth: 1 as const,
     // LineStyle.Dashed=2（trail 档虚线——移动止损的「跟随」语义视觉区分）
     lineStyle: data.kind === "trail" ? 2 : 0,

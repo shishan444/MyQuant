@@ -101,8 +101,8 @@ describe("buildEquityOption", () => {
     };
     const stops = series.areaStyle.color.colorStops;
     expect(stops).toHaveLength(2);
-    expect(stops[0].color).toContain("rgba(0,200,83,0.3)");
-    expect(stops[1].color).toContain("rgba(0,200,83,0)");
+    expect(stops[0].color).toContain("rgba(45,212,191,0.3)");
+    expect(stops[1].color).toContain("rgba(45,212,191,0)");
   });
 
   it("formats money labels with K/M abbreviation", () => {

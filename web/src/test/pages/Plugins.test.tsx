@@ -1,5 +1,5 @@
 /**
- * 11 插件与组件库页单测（alignment-batch D6）。
+ * 11 插件与组件页单测（alignment-batch D6）。
  * B1 公式插件表（warmup null 语义）/B2 模型插件三态/B3 词表卡（族分组+
  * caliber_note 原文）/B4 四层池静态名单+registry 动态数/B5 协议要点；
  * 三态纪律（loading/error/empty）。服务层全 mock（零外网红线）。
@@ -83,7 +83,7 @@ beforeEach(() => {
   vi.mocked(svc.getSignalColumns).mockResolvedValue(SIGNALS as never);
 });
 
-describe("Plugins（11 插件与组件库）", () => {
+describe("Plugins（11 插件与组件）", () => {
   it("B1 公式插件表：行字段+warmup null 呈现「—（未在册）」+rejected 附原因", async () => {
     setup();
     expect(await screen.findByTestId("formula-table")).toBeInTheDocument();

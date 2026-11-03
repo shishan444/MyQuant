@@ -1,3 +1,4 @@
+import { POLARITY } from "@/theme/tokens";
 import type { Time } from "lightweight-charts";
 
 /**
@@ -25,15 +26,15 @@ export interface SignalMarker {
 
 /** 信号样式表（KlineChart SIGNAL_STYLE 的纯函数层权威源） */
 export const SIGNAL_STYLE: Record<string, Omit<SignalMarker, "time">> = {
-  buy: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "B" },
-  sell: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "S" },
-  open_long: { position: "belowBar", color: "#00C853", shape: "arrowUp", text: "OL" },
+  buy: { position: "belowBar", color: POLARITY.up, shape: "arrowUp", text: "B" },
+  sell: { position: "aboveBar", color: POLARITY.down, shape: "arrowDown", text: "S" },
+  open_long: { position: "belowBar", color: POLARITY.up, shape: "arrowUp", text: "OL" },
   close_long: { position: "aboveBar", color: "#FF9800", shape: "arrowDown", text: "CL" },
-  add_long: { position: "belowBar", color: "#00C853", shape: "circle", text: "AL" },
+  add_long: { position: "belowBar", color: POLARITY.up, shape: "circle", text: "AL" },
   reduce_long: { position: "aboveBar", color: "#FF9800", shape: "circle", text: "RL" },
-  open_short: { position: "aboveBar", color: "#FF1744", shape: "arrowDown", text: "OS" },
+  open_short: { position: "aboveBar", color: POLARITY.down, shape: "arrowDown", text: "OS" },
   close_short: { position: "belowBar", color: "#7C4DFF", shape: "arrowUp", text: "CS" },
-  add_short: { position: "aboveBar", color: "#FF1744", shape: "square", text: "AS" },
+  add_short: { position: "aboveBar", color: POLARITY.down, shape: "square", text: "AS" },
   reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
 };
 

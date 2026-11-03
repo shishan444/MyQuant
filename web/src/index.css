@@ -1,7 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
-/* Tailwind 分层引入：跳过 preflight（AntD reset 优先，避免双 reset 冲突）；
-   主题视觉语义唯一来源=AntD theme token（G4），本文件 @theme 仅过渡期保留布局 token
-   与旧视觉变量（页面批迁移期间旧 JSX 仍消费，删除断点=G13） */
+/* Tailwind 分层引入：跳过 preflight（AntD reset 优先，避免双 reset 冲突）。
+   主题权威=web/src/theme/tokens.ts（fe-shell-theme-cutover T1 收口）——本文件
+   @theme 与 :root 为受控从源（utility 编译期通道，值逐项与 tokens 同步，映射
+   守卫测试机器判定同名异值）；组件级视觉语义主载体=AntD theme token（antdTheme.ts
+   同为从源）。--color-chart-up/down 查证结论：全域零 utility 消费者（2026-11-03
+   rg 实证），保留定义归⑤收尾门清列处置。 */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
@@ -13,26 +16,28 @@
   --font-mono: "Geist Mono", "JetBrains Mono", monospace;
 
   /* 背景层次 */
-  --color-bg-base: #0a0a0f;
-  --color-bg-surface: rgba(22, 27, 34, 0.6);
-  --color-bg-elevated: rgba(30, 36, 44, 0.7);
+  --color-bg-base: #0D0F24; /* 值从 tokens.ts BG.bg0 同步 */
+  --color-bg-surface: #20224E66; /* 值从 tokens.ts BG.bg1 同步 */
+  --color-bg-elevated: #2A2A5E99; /* 值从 tokens.ts BG.bg2 同步 */
 
   /* 边框 */
-  --color-border-default: rgba(255, 255, 255, 0.08);
+  --color-border-default: #FFFFFF1A; /* 值从 tokens.ts BORDER.default 同步 */
+      --color-border-faint: #FFFFFF0E; /* 值从 tokens.ts BORDER.faint 同步——补档（原死 class 消费点） */
   --color-border-hover: rgba(255, 255, 255, 0.15);
   --color-border-active: rgba(245, 158, 11, 0.5);
 
   /* 文字 */
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #484f58;
+  --color-text-primary: #F4F2FF; /* 值从 tokens.ts TEXT.primary 同步——权威在 tokens.ts */
+  --color-text-secondary: #A8A3C4; /* 值从 tokens.ts TEXT.secondary 同步 */
+  --color-text-muted: #78739B; /* 值从 tokens.ts TEXT.tertiary 同步（通道名保留 muted） */
 
   /* 语义色 */
-  --color-accent-gold: #F59E0B;
+  --color-accent-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步（通道名保留 accent-gold） */
+      --color-attention-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步——语义金补档（原死 class 消费点） */
   --color-accent-purple: #8B5CF6;
-  --color-profit: #00C853;
-  --color-loss: #EF4444;
-  --color-warning: #FBBF24;
+  --color-profit: #2DD4BF; /* 值从 tokens.ts POLARITY.up 同步 */
+  --color-loss: #FB7185; /* 值从 tokens.ts POLARITY.down 同步 */
+  --color-warning: #FCD34D; /* 值从 tokens.ts STATE.warn 同步 */
   --color-info: #8B5CF6;
 
   /* 光晕 */
@@ -73,29 +78,32 @@
 }
 
 :root {
-  /* shadcn/ui 暗色主题变量 */
-  --background: #0a0a0f;
-  --foreground: #f8fafc;
+  /* shadcn/ui 暗色主题变量（fe-shell-theme-cutover 第十一组对齐——值从 tokens.ts
+     同步：primary=ATTENTION.gold/destructive=POLARITY.down/accent 系=金 15% 与
+     STATE.warn/foreground 三级=TEXT 族/background=BG 族/border 族=BORDER 族；
+     零消费变量（popover/secondary/muted 族本体/ring）保留现值归⑤收尾门议） */
+  --background: #0D0F24;
+  --foreground: #F4F2FF;
   --popover: #1a1f2e;
-  --popover-foreground: #f8fafc;
-  --primary: #F59E0B;
-  --primary-foreground: #0a0a0f;
+  --popover-foreground: #F4F2FF;
+  --primary: #FFC76B;
+  --primary-foreground: #160F2E;
   --secondary: rgba(30, 36, 44, 0.7);
-  --secondary-foreground: #f8fafc;
+  --secondary-foreground: #F4F2FF;
   --muted: rgba(30, 36, 44, 0.7);
-  --muted-foreground: #64748b;
-  --accent: rgba(245, 158, 11, 0.15);
-  --accent-foreground: #fbbf24;
-  --destructive: #ef4444;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.1);
+  --muted-foreground: #78739B;
+  --accent: rgba(255, 199, 107, 0.15);
+  --accent-foreground: #FFC76B;
+  --destructive: #FB7185;
+  --border: #FFFFFF1A;
+  --input: #FFFFFF1A;
   --ring: rgba(245, 158, 11, 0.4);
 }
 
 /* 全局基础样式 */
 body {
   margin: 0;
-  background: linear-gradient(180deg, #0a0a0f 0%, #020203 100%);
+  background: #0D0F24; /* 值从 tokens.ts BG.bg0 同步——旧近黑渐变随 fe-shell-theme-cutover 退役 */
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;

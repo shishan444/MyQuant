@@ -1,5 +1,5 @@
 /**
- * 03 策略验证对齐批单测（alignment-batch D1）。
+ * 03 验证记录对齐批单测（页面重构归 fe-validation-records-page 重写）（alignment-batch D1）。
  * 三门槛点行三态（true=绿/false=红/null=灰）+星级机械换算（0-3）+
  * 三态汇总计数（pass/fail/inconclusive）+B5 概要形制（星级+门槛+关键指标）。
  * 服务层全 mock（零外网红线）。
