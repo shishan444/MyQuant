@@ -1,7 +1,7 @@
-"""E2E tests for v0.17 Plugins page（alignment-batch D6 新页）。
+"""v0.17 Plugins 页 Playwright e2e 断言网（alignment-batch D6 新页）。
 
-只读页五区断言：页面可达+React 挂载+关键区标题渲染——全程 localhost
-双服务，零外网（e2e-external-api-mock-rule）。
+只读页五区断言：页面可达+React 挂载+关键区标题渲染——零前置（自管
+fixture），零外网。
 """
 
 import os

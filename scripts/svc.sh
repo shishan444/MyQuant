@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # svc.sh —— MyQuant 服务管理（三端一体：api + mcp + web）
 #
+# 定位（add-e2e-isolated-harness H4）：常驻服务组为用户日常观察运行面
+# 专用——固定端口 8000/8800/8080、单份 pid 文件与日志（并发实例互踢）。
+# 任何测试套件不得依赖或操作本服务组；e2e 测试一律走 tests/e2e 的
+# 自管 fixture（随机端口+临时业务库，见 tests/e2e/harness.py）。
+#
 # 用法: scripts/svc.sh start|stop|restart|status
 # 旧入口 start.sh / stop.sh / restart.sh 为转发薄壳。
 #
@@ -75,10 +80,12 @@ stop_one() {  # $1=名称 $2=端口 $3=进程指纹
 
 cmd_start() {
     mkdir -p "$LOG_DIR"
+    # 钉死生产库路径（与缺省解析值逐位一致，行为不变）：MYQUANT_DB_PATH
+    # 切库语义专属测试工具（e2e fixture 注入临时库），shell 残留 env 不再静默劫持常驻
     start_one api "$API_PORT" "$APP_DIR" "curl -sf http://localhost:$API_PORT/api/health" \
-        "env PYTHONPATH=$APP_DIR $VENV_PY -m api" "$LOG_DIR/api.log" || exit 1
+        "env MYQUANT_DB_PATH=$APP_DIR/data/quant.db PYTHONPATH=$APP_DIR $VENV_PY -m api" "$LOG_DIR/api.log" || exit 1
     start_one mcp "$MCP_PORT" "$APP_DIR" "(exec 3<>/dev/tcp/127.0.0.1/$MCP_PORT)" \
-        "env MYQUANT_MCP_PORT=$MCP_PORT PYTHONPATH=$APP_DIR $VENV_PY -m mcpserver.server" "$LOG_DIR/mcp.log" || exit 1
+        "env MYQUANT_MCP_PROFILE=${MYQUANT_MCP_PROFILE:-research} MYQUANT_MCP_PORT=$MCP_PORT PYTHONPATH=$APP_DIR $VENV_PY -m mcpserver.server" "$LOG_DIR/mcp.log" || exit 1
     start_one web "$WEB_PORT" "$APP_DIR/web" "curl -sf http://localhost:$WEB_PORT/" \
         "pnpm exec vite --host --port $WEB_PORT" "$LOG_DIR/web.log" || exit 1
     info "三端已就绪: api=$API_PORT mcp=$MCP_PORT web=${WEB_PORT}（日志目录: ${LOG_DIR}/）"

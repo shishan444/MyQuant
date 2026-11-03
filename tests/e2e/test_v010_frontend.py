@@ -1,4 +1,8 @@
-"""E2E test for v0.10 frontend - basic navigation and data page."""
+"""v0.10 前端基础页（首页导航+数据页）Playwright e2e 冒烟验收网。
+
+服务对象：前端各页验收（v010-v016 冒烟网一员，自管 fixture 零前置、
+零外网）——页面可达与关键内容渲染级，不构造业务数据。
+"""
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -8,7 +12,7 @@ BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
-    """Wait for React to hydrate by polling for content in #root."""
+    """轮询 #root 内容量判定 React 水合完成，超时抛 TimeoutError。"""
     import time
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:

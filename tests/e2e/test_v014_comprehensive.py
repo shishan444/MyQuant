@@ -1,8 +1,11 @@
-"""Comprehensive E2E test for frontend - console errors and navigation.
+"""前端综合面 Playwright e2e 冒烟验收网（v0.14）。
 
-Updated for current frontend: i18n (中文) + route restructure
-(/library → /strategies, +/verify /batch-backtest /trading) + settings tab 重组
-(通用/指标参数/数据管理/关于, 移除 Evolution Config/API Keys) + lab 改为假设验证工具.
+职能：console error 守护+导航+布局与页面内容三类断言，覆盖全部路由页。
+口径已对齐当前前端：i18n 中文化+路由重构（/library→/strategies，新增
+/verify /batch-backtest /trading）+settings 分区重组（通用/指标参数/数据
+管理/关于，移除 Evolution Config/API Keys）+lab 转型假设验证工具。
+服务对象：前端各页验收（v010-v016 冒烟网一员，自管 fixture 零前置、
+零外网）。
 """
 import pytest
 from playwright.sync_api import Page
@@ -12,7 +15,7 @@ BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
-    """Wait for React to hydrate by polling for content in #root."""
+    """轮询 #root 内容量判定 React 水合完成，超时抛 TimeoutError。"""
     import time
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
@@ -24,7 +27,7 @@ def _wait_react(page: Page, timeout: int = 8000):
 
 
 class TestConsoleErrors:
-    """Check for JavaScript console errors on each page."""
+    """逐页收集 JavaScript console error 并断言为零。"""
 
     def _collect_errors(self, page: Page, url: str) -> list[str]:
         errors: list[str] = []
@@ -58,7 +61,7 @@ class TestConsoleErrors:
 
 
 class TestNavigation:
-    """Test client-side navigation between pages (当前 8 个路由)."""
+    """Test client-side navigation between pages (当前 9 个路由)."""
 
     # nav 链接对齐 Sidebar 实际清单（d9a6a0b 前端重构后：/lab 仍在路由表
     # 但已不在 nav；/verify 前端链接待 F4 联动退役——retire-verify-sessions
@@ -100,7 +103,7 @@ class TestNavigation:
 
 
 class TestLayoutComponents:
-    """Test shared layout components render correctly."""
+    """共享布局组件（侧边栏/页头）渲染断言。"""
 
     def _goto_and_wait(self, page: Page, route: str = "/data"):
         page.goto(BASE + route, timeout=10000)
@@ -143,7 +146,7 @@ class TestLayoutComponents:
 
 
 class TestPageContent:
-    """Test page-specific content renders correctly (当前中文文案)."""
+    """页面级内容渲染断言（当前中文文案口径）。"""
 
     def test_data_page_has_import_button(self, page: Page):
         page.goto(BASE + "/data", timeout=10000)
@@ -157,7 +160,12 @@ class TestPageContent:
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
         content = page.content()
-        assert "BTCUSDT" in content or "币种" in content, "数据表格未找到"
+        # 两态皆合法（数据态解耦，同 v015 空态范式）：有注册数据集时表格
+        # 含交易对/币种表头；空库（e2e 自管 fixture 天然形态——datasets
+        # 注册表读业务库）时为导入引导空态
+        has_table = "BTCUSDT" in content or "币种" in content
+        has_empty = "还没有导入任何数据集" in content
+        assert has_table or has_empty, "数据表格未找到"
 
     def test_lab_page_has_strategy_lab_heading(self, page: Page):
         page.goto(BASE + "/lab", timeout=10000)

@@ -1,9 +1,9 @@
-"""E2E tests for the Strategies page (v0.16+).
+"""策略库页（/strategies）Playwright e2e 冒烟验收网（v0.16+）。
 
-Covers: page load, navigation, console errors, layout, search/filter UI,
-strategy card rendering.
-Full CRUD tests (create/edit/delete) require a running backend with data
-and are intentionally kept as smoke tests.
+职能：页面加载+导航+console error 守护+布局+搜索筛选控件与策略卡
+渲染断言。边界：CRUD 全量用例（创建/编辑/删除）需要带数据的真实
+后端，本网刻意保持冒烟级。服务对象：前端各页验收（v010-v016
+冒烟网一员，自管 fixture 零前置、零外网）。
 """
 
 import pytest
@@ -14,7 +14,7 @@ BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
-    """Wait for React to hydrate by polling for content in #root."""
+    """轮询 #root 内容量判定 React 水合完成，超时抛 TimeoutError。"""
     import time
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
@@ -26,14 +26,14 @@ def _wait_react(page: Page, timeout: int = 8000):
 
 
 def _goto_strategies(page: Page):
-    """Navigate to strategies page and wait for React hydration."""
+    """跳转策略库页并等待 React 水合完成。"""
     page.goto(BASE + "/strategies", timeout=10000)
     page.wait_for_load_state("domcontentloaded", timeout=10000)
     _wait_react(page)
 
 
 class TestStrategiesPageLoad:
-    """Strategies page renders without console errors."""
+    """策略库页渲染且无 console error。"""
 
     def test_no_console_errors(self, page: Page):
         errors: list[str] = []
@@ -56,10 +56,10 @@ class TestStrategiesPageLoad:
 
 
 class TestStrategiesEmptyState:
-    """When no strategies exist, the empty state UI renders correctly."""
+    """无策略时空态 UI 的渲染断言。"""
 
     def test_empty_state_or_strategy_list_renders(self, page: Page):
-        """Page shows either empty state or strategy list (depends on backend state)."""
+        """空态或策略列表任一形态即通过（形态取决于后端数据态）。"""
         _goto_strategies(page)
         content = page.content()
         has_empty = ("暂无" in content or "未找到" in content
@@ -69,7 +69,7 @@ class TestStrategiesEmptyState:
 
 
 class TestStrategiesNavigation:
-    """Navigation between Strategies and other pages."""
+    """策略库页与其他页之间的导航断言。"""
 
     def test_strategies_sidebar_link_exists(self, page: Page):
         page.goto(BASE, timeout=10000)
@@ -94,7 +94,7 @@ class TestStrategiesNavigation:
 
 
 class TestStrategiesLayout:
-    """Layout components render correctly on strategies page."""
+    """策略库页布局组件渲染断言。"""
 
     def test_header_title(self, page: Page):
         _goto_strategies(page)
@@ -112,7 +112,7 @@ class TestStrategiesLayout:
 
 
 class TestStrategiesSearchFilter:
-    """Search and filter controls render correctly."""
+    """搜索与筛选控件渲染断言。"""
 
     def test_search_input_visible(self, page: Page):
         _goto_strategies(page)
@@ -130,6 +130,6 @@ class TestStrategiesSearchFilter:
     def test_filter_controls_present(self, page: Page):
         _goto_strategies(page)
         content = page.content()
-        # At minimum, the page should have some filter or sort UI
+        # 断言下限：页面至少存在筛选或排序任一 UI
         has_filter = "全部来源" in content or "全部策略" in content or "筛选" in content or "排序" in content or "filter" in content.lower() or "sort" in content.lower()
         assert has_filter, "No filter/sort controls found on strategies page"

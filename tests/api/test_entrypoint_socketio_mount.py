@@ -3,7 +3,7 @@
 修复前为 D 类现状容忍锚定（-m 形态纯 FastAPI 不可达 404）——CARD-01
 落地后 __main__ 消费模块级组合实例（from api.app import app），两形
 态统一，本文件随正确行为改写：
-- `python -m api` 形态（统一入口 scripts/start.sh）与
+- `python -m api` 形态（实现权威 scripts/svc.sh）与
   `uvicorn api.app:app` 命令行形态同跑 ASGIApp(sio, other_asgi_app)
   组合实例，engine.io 握手 200 带 sid，REST 透传正常。
 - 启动器文本锚定保留（改启动形态须同步本网；run.py 总入口与 uvicorn
@@ -102,23 +102,36 @@ class TestHandshakeReachability:
 
 
 class TestLauncherFormPins:
-    """启动器形态文本锚定：官方路径各自走哪种形态（改启动器须同步本网）。"""
+    """启动器形态文本锚定：官方路径各自走哪种形态（改启动器须同步本网）。
 
-    def test_scripts_start_sh_uses_dash_m_form(self) -> None:
-        """统一入口 scripts/start.sh 以 `-m api` 拉起 API。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    三锚读实现权威 scripts/svc.sh（start.sh 已薄壳化，旧锚在 start.sh
+    上恒红——add-e2e-isolated-harness H3 迁移）；第四锚钉 start.sh 的
+    薄壳转发契约（exec+svc.sh+start "$@" 三要素）。
+    """
+
+    def test_scripts_svc_sh_uses_dash_m_form(self) -> None:
+        """实现权威 scripts/svc.sh 以 `-m api` 拉起 API。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert "-m api" in content
 
-    def test_scripts_start_sh_launches_mcp(self) -> None:
-        """统一入口 scripts/start.sh 以 `-m mcpserver.server` 拉起 MCP。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    def test_scripts_svc_sh_launches_mcp(self) -> None:
+        """实现权威 scripts/svc.sh 以 `-m mcpserver.server` 拉起 MCP。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert "-m mcpserver.server" in content
 
-    def test_scripts_start_sh_mcp_profile_default_research(self) -> None:
-        """统一入口默认 research 档（run.py 旧总入口语义继承——六步研究法
-        写入/执行工具须在默认面；readonly 经 MYQUANT_MCP_PROFILE 显式切换）。"""
-        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+    def test_scripts_svc_sh_mcp_profile_default_research(self) -> None:
+        """实现权威 svc.sh 默认 research 档（run.py 旧总入口语义继承——
+        六步研究法写入/执行工具须在默认面；readonly 经
+        MYQUANT_MCP_PROFILE 显式切换）。"""
+        content = (PROJECT_ROOT / "scripts" / "svc.sh").read_text(encoding="utf-8")
         assert 'MYQUANT_MCP_PROFILE:-research' in content
+
+    def test_start_sh_is_thin_shell_forwarding(self) -> None:
+        """start.sh 为薄壳转发契约：exec + svc.sh + start "$@" 三要素。"""
+        content = (PROJECT_ROOT / "scripts" / "start.sh").read_text(encoding="utf-8")
+        assert "exec" in content
+        assert "svc.sh" in content
+        assert 'start "$@"' in content
 
     def test_main_module_consumes_combo_app(self) -> None:
         """F3 修复核心锚定：__main__ 消费模块级组合实例（非自建裸 FastAPI）。"""
@@ -126,3 +139,42 @@ class TestLauncherFormPins:
         assert "from api.app import app" in content
         # 排除自建裸 FastAPI 的旧形（= create_app() 赋值；注释提及历史不算）
         assert "= create_app()" not in content
+
+
+class TestCreateAppDbPathEnvResolution:
+    """MYQUANT_DB_PATH 缺省分支读点契约（add-e2e-isolated-harness H1a）。
+
+    三向锁定：无 env 缺省不变 / env 置位切库 / 双置传参优先。
+    ①直测解析函数——绝不触发 lifespan（缺省路径指向生产 quant.db，
+    lifespan 会 init_db_ext+恢复任务，单测不得触碰）；②③镜像
+    api_client 形制（tmp 双路径+with 块真跑 lifespan），隔离安全。
+    """
+
+    def test_no_env_default_resolution_unchanged(self, monkeypatch) -> None:
+        """无 env：缺省解析与改动前逐位一致（项目根 data/quant.db）。"""
+        monkeypatch.delenv("MYQUANT_DB_PATH", raising=False)
+        from api.app import _default_db_path
+        assert _default_db_path(PROJECT_ROOT) == PROJECT_ROOT / "data" / "quant.db"
+
+    def test_env_set_switches_db(self, tmp_path, monkeypatch) -> None:
+        """env 置位：经 lifespan 装配的 app.state.db_path==env 值，且
+        lifespan init_db_ext 建库建文件（生效文件锚）。"""
+        env_db = tmp_path / "env.db"
+        monkeypatch.setenv("MYQUANT_DB_PATH", str(env_db))
+        from api.app import create_app
+        app = create_app(data_dir=tmp_path / "data")
+        with TestClient(app):
+            assert Path(app.state.db_path) == env_db
+            assert env_db.exists(), "MYQUANT_DB_PATH 生效则临时库文件必在场"
+
+    def test_explicit_param_wins_over_env(self, tmp_path, monkeypatch) -> None:
+        """双置（显式传参+env 各一路径）：传参优先——api_client 显式
+        传参形制不可被 env 污染。"""
+        param_db = tmp_path / "param.db"
+        env_db = tmp_path / "env.db"
+        monkeypatch.setenv("MYQUANT_DB_PATH", str(env_db))
+        from api.app import create_app
+        app = create_app(db_path=param_db, data_dir=tmp_path / "data")
+        with TestClient(app):
+            assert Path(app.state.db_path) == param_db
+        assert not env_db.exists(), "env 路径不得被双置形态触碰"

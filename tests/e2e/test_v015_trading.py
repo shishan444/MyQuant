@@ -1,7 +1,8 @@
 """Trading 页（模拟交易）Playwright e2e 冒烟测试网（v0.15+）。
 
-服务对象：前端 Trading 页验收（React+antd 单页应用；BASE 缺省
-localhost:8080，可用环境变量 E2E_WEB_URL 覆写）。
+服务对象：前端 Trading 页验收（React+antd 单页应用；BASE 由 conftest
+注入的自管 web 地址解析——缺省 localhost:8080 仅模块独立运行兜底，
+外部覆写语义已废除，conftest 为 E2E_WEB_URL 唯一权威）。
 覆盖面：空态、页面加载、导航、console error 守护、布局组件。
 边界：CRUD 全量用例（创建/暂停/停止/删除）需要带数据的真实后端，
 本网刻意保持冒烟级——只验页面骨架与守护面，不构造业务数据。
@@ -148,8 +149,10 @@ class TestTradingLayout:
         assert header.is_visible(), "Header not visible"
         title = header.locator("h1")
         title_text = title.text_content() or ""
-        assert "模拟交易" in title_text or "交易" in title_text, \
-            f"Expected 模拟交易 in header title, got '{title_text}'"
+        # 等值断言（H3 重锁）：锚定路由标题现行文案「纸盘交易」——
+        # 拆除 or 兜底防标题漂移被「交易」子串侥幸吸收
+        assert "纸盘交易" in title_text, \
+            f"Expected 纸盘交易 in header title, got '{title_text}'"
 
     def test_sidebar_visible(self, page: Page):
         _goto_trading(page)
@@ -168,4 +171,6 @@ class TestTradingHeader:
         page.wait_for_timeout(2000)
         assert page.locator("header").is_visible(), "Header not visible"
         content = page.locator("body").inner_text()
-        assert "模拟交易" in content, "trading 页内容未渲染"
+        # H3 重锁：锚定 Sidebar 每页在场的「纸盘交易」——与数据态解耦
+        # （空库形态下空态文案含「模拟交易」子串，旧锚必假绿）
+        assert "纸盘交易" in content, "trading 页内容未渲染"
