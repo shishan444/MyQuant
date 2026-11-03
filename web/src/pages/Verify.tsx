@@ -447,7 +447,7 @@ export function Verify() {
               <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/30 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <LoadingOutlined className="text-base" style={{ color: "#8B5CF6" }} />
+                    <LoadingOutlined className="text-base text-domain-paper" />
                     <span className="text-sm font-medium text-text-primary">验证中...</span>
                   </div>
                   <span className="text-xs font-mono text-text-secondary">
@@ -458,7 +458,7 @@ export function Verify() {
                   percent={stream.progress.total > 0 ? (stream.progress.current / stream.progress.total) * 100 : 0}
                   showInfo={false}
                   size={{ height: 6 }}
-                  strokeColor="#8B5CF6"
+                  strokeColor="var(--color-domain-paper)"
                 />
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-text-secondary">
@@ -743,7 +743,7 @@ function StrategyCard({
               size="small"
               onClick={onTrade}
               disabled={!hasDna}
-              style={allQualified ? { background: "#009966", borderColor: "#009966" } : undefined}
+              style={allQualified ? { background: "var(--color-profit)", borderColor: "var(--color-profit)" } : undefined}
             >
               <TrendingUp className="w-3 h-3 mr-1" /> 开始交易
             </AntButton>
@@ -762,12 +762,12 @@ function StrategyCard({
         <div className="flex items-center gap-2 pt-1 border-t border-slate-700/20">
           {allQualified ? (
             <AntButton size="small" onClick={onTrade} disabled={!hasDna}
-              className="!text-[10px]" style={{ background: "#009966", borderColor: "#009966" }}>
+              className="!text-[10px]" style={{ background: "var(--color-profit)", borderColor: "var(--color-profit)" }}>
               <Play className="w-3 h-3 mr-0.5" /> 开始交易
             </AntButton>
           ) : (
             <AntButton size="small" onClick={onEvolve} disabled={!hasDna}
-              className="!text-[10px]" style={{ background: "#1d4ed8", borderColor: "#1d4ed8" }}>
+              className="!text-[10px]" style={{ background: "var(--color-domain-paper)", borderColor: "var(--color-domain-paper)" }}>
               <Dna className="w-3 h-3 mr-0.5" /> 继续优化
             </AntButton>
           )}

@@ -21,7 +21,7 @@ interface CanvasTarget {
  * G-标注原语 · 持仓带（kline-common-layer 组 4）——时间区间竖带。
  * 数据接口 {entryTime, exitTime?, side}：持仓存活区间在时间轴上的半透明竖带
  * （long=绿系/short=红系；exitTime 缺省=持仓中，带延伸至图右缘）。
- * C5 纸盘（07 页）与 C4 假设工作台共用的共享资产。
+ * C5 模拟（07 页）与 C4 假设工作台共用的共享资产。
  */
 export interface PositionBandData {
   entryTime: Time;

@@ -10,9 +10,7 @@ import {
   Database,
   Upload,
   Search,
-  Eye,
   Trash2,
-  TrendingUp,
   FileUp,
   X,
   FileSpreadsheet,
@@ -36,6 +34,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
 import { useImportCsv, useImportCsvBatch, useDeleteDataset, useDatasets } from "@/hooks/useDatasets";
 import { formatNumber } from "@/lib/utils";
+import { POLARITY, STATE, TEXT } from "@/theme/tokens";
 import type { Dataset } from "@/types/api";
 
 // ---------------------------------------------------------------------------
@@ -60,10 +59,13 @@ const QUALITY_CFG: Record<
   Dataset["quality_status"],
   { value: number; color: string; label: string }
 > = {
-  complete: { value: 100, color: "#00C853", label: "数据质量: 完整" },
-  warning: { value: 90, color: "#FBBF24", label: "有缺口 <5%" },
-  error: { value: 60, color: "#EF4444", label: "缺口 >5%" },
-  unknown: { value: 0, color: "#64748b", label: "未知" },
+  // fe-asset-data-domain 6.1：质量档色改 tokens import（原四字面量；
+  // 实色与 var() 通道均可——本处经 tokens import 直取（t3r5 R2 注释修正：
+  // 原「strokeColor 需实色」系排查中途错误假设，真实崩溃因为测试锚竞态））
+  complete: { value: 100, color: POLARITY.up, label: "数据质量: 完整" },
+  warning: { value: 90, color: STATE.warn, label: "有缺口 <5%" },
+  error: { value: 60, color: POLARITY.down, label: "缺口 >5%" },
+  unknown: { value: 0, color: TEXT.tertiary, label: "未知" },
 };
 
 function QualityBar({ status }: { status: Dataset["quality_status"] }) {
@@ -244,7 +246,7 @@ function UploadDialog({
         )}
 
         {detectedInfo && (
-          <div className="flex items-center gap-2 rounded-md px-3 py-2 text-xs" style={{ background: "rgba(0,200,83,0.1)", color: "#00C853" }}>
+          <div className="flex items-center gap-2 rounded-md bg-profit/10 px-3 py-2 text-xs text-profit">
             <CheckCircle2 />
             <span>已自动识别: {detectedInfo.symbol} / {detectedInfo.interval}</span>
           </div>
@@ -286,29 +288,21 @@ function UploadDialog({
 // ---------------------------------------------------------------------------
 // 主组件
 // ---------------------------------------------------------------------------
-import { IntegrityMatrix, FreshnessTable } from "@/components/data/IntegrityPanels";
+import { DualIntegrityMatrix, FreshnessTableFixed } from "@/components/data/IntegrityPanels";
 
 export function DataManagement() {
   const { modal } = App.useApp();
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLowerCase();
-  // 09 页完整性两区（data-management-revamp 组 C1/C2）：symbol 沿数据集首位+月窗 6
-  // matrix symbol 双态（CARD-02 F2）：display=输入框即时态，committed=查询
-  // 提交态（queryKey 消费）——失焦/回车才提交，杜绝每键一次 monthly-matrix
-  // 全量请求（staleTime 只对同 key 生效不兜底新 key，retry:1 还放大 404 中间态）
-  const [matrixSymbolInput, setMatrixSymbolInput] = useState("BTCUSDT");
-  const [matrixSymbol, setMatrixSymbol] = useState("BTCUSDT");
-  const commitMatrixSymbol = () => {
-    const v = matrixSymbolInput.toUpperCase().slice(0, 12).trim();
-    if (v) setMatrixSymbol(v);
-  };
+  // 09 页完整性两区：fe-asset-data-domain 4.3 双币并列（R9 生效态）——
+  // matrix symbol 双态输入框退役（原 CARD-02 F2 提交态机制随单币消费消亡）
   const [monthsBack, setMonthsBack] = useState(6);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const deleteDataset = useDeleteDataset();
 
   // 数据查询下沉既有 hook（G5 修正：原页面内联 queryFn 与 useDatasets 重复）
-  const { data, isLoading } = useQuery(useDatasets());
+  const { data, isLoading, isError, refetch } = useQuery(useDatasets());
 
   const allDatasets: Dataset[] = data?.items ?? [];
 
@@ -348,7 +342,7 @@ export function DataManagement() {
       title: "周期",
       dataIndex: "interval",
       render: (v: string) => (
-        <span className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs text-text-secondary" style={{ background: "rgba(245,158,11,0.12)" }}>
+        <span className="inline-flex items-center rounded-md bg-state-warn/10 px-1.5 py-0.5 text-xs text-text-secondary">
           {v}
         </span>
       ),
@@ -375,13 +369,8 @@ export function DataManagement() {
       align: "right",
       render: (_, ds) => (
         <div className="flex items-center justify-end gap-1">
-          {/* F0 遗留死操作 disabled 化：预览/在实验室打开尚未接线（原 void 空操作） */}
-          <Tooltip title="预览（未开放）">
-            <AntButton type="text" size="small" icon={<Eye />} disabled aria-label="预览数据集" />
-          </Tooltip>
-          <Tooltip title="在实验室打开（未开放）">
-            <AntButton type="text" size="small" icon={<TrendingUp />} disabled aria-label="在实验室打开" />
-          </Tooltip>
+          {/* fe-asset-data-domain 4.2：预览/在实验室打开两死操作移除
+              （D4 裁决——原型 09 页无此操作，「接真」无原型依据不取） */}
           <Tooltip title="删除">
             <AntButton
               type="text"
@@ -398,13 +387,15 @@ export function DataManagement() {
   ];
 
   // 空态（非失败）：引导导入
-  if (!isLoading && allDatasets.length === 0) {
+  // G1 修复（t3r5 tester 退卡）：空态守卫补 !isError——错误时整页早退渲染
+  // 空态引导，下方 :463 区块级错误块不可达（W0 违反：失败呈现错误非空表）
+  if (!isLoading && !isError && allDatasets.length === 0) {
     return (
       <PageTransition>
         <EmptyState
           icon={Database}
           title="还没有导入任何数据集"
-          description="导入 CSV 文件或从 Binance 导入历史数据，开始量化分析"
+          description="上传 CSV 文件导入历史数据，开始量化分析"
           actions={[
             {
               label: "导入 CSV 文件",
@@ -423,35 +414,25 @@ export function DataManagement() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <GlassCard className="p-3" hover={false}>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs text-text-secondary">完整性月矩阵</span>
-            <div className="flex items-center gap-2">
-              <input
-                value={matrixSymbolInput}
-                onChange={(e) => setMatrixSymbolInput(e.target.value.toUpperCase().slice(0, 12))}
-                onBlur={commitMatrixSymbol}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitMatrixSymbol();
-                }}
-                className="w-24 rounded border border-border-default bg-transparent px-2 py-0.5 font-mono text-xs text-text-primary"
-                placeholder="symbol"
-                aria-label="矩阵 symbol（失焦或回车提交）"
-              />
-              <select
-                value={monthsBack}
-                onChange={(e) => setMonthsBack(Number(e.target.value))}
-                className="rounded border border-border-default bg-transparent px-1 py-0.5 text-xs text-text-secondary"
-                aria-label="月窗"
-              >
-                <option value={6}>近 6 月</option>
-                <option value={12}>近 12 月</option>
-              </select>
-            </div>
+            <span className="text-xs text-text-secondary">完整性月矩阵（双币并列）</span>
+            <select
+              value={monthsBack}
+              onChange={(e) => setMonthsBack(Number(e.target.value))}
+              className="rounded border border-border-default bg-transparent px-1 py-0.5 text-xs text-text-secondary"
+              aria-label="月窗"
+            >
+              <option value={6}>近 6 月</option>
+              <option value={12}>近 12 月</option>
+            </select>
           </div>
-          <IntegrityMatrix symbol={matrixSymbol} monthsBack={monthsBack} />
+          {/* fe-asset-data-domain 4.3：双币两请求并列（R9 生效态）——
+              单 symbol 输入框退役 */}
+          <DualIntegrityMatrix monthsBack={monthsBack} />
         </GlassCard>
         <GlassCard className="p-3" hover={false}>
-          <span className="mb-2 block text-xs text-text-secondary">数据保鲜（guardian 十二路）</span>
-          <FreshnessTable />
+          <span className="mb-2 block text-xs text-text-secondary">数据保鲜（guardian 十二路满格）</span>
+          {/* fe-asset-data-domain 4.3：12 键六态+未扫占位（键集不全时恒满格） */}
+          <FreshnessTableFixed />
         </GlassCard>
       </div>
       <div className="flex flex-col gap-4">
@@ -466,12 +447,7 @@ export function DataManagement() {
             >
               上传 CSV 文件
             </AntButton>
-            {/* F0 遗留死按钮 disabled 化：Binance 导入端点未提供 */}
-            <Tooltip title="Binance 导入端点未提供">
-              <AntButton size="small" icon={<FileUp />} disabled>
-                从 Binance 导入
-              </AntButton>
-            </Tooltip>
+            {/* fe-asset-data-domain 4.2：Binance 导入死按钮移除（D4——同上） */}
             <div className="relative ml-auto">
               <Input
                 placeholder="搜索币种..."
@@ -487,7 +463,16 @@ export function DataManagement() {
 
         {/* 数据集表（每行下方质量条：expandable 无缝嵌入） */}
         <GlassCard className="p-0 overflow-hidden" hover={false}>
-          {isLoading ? (
+          {isError ? (
+            /* fe-asset-data-domain 4.1：故障态可见（W0）——数据源失败呈现
+               错误行+重试，禁静默空表（TanStack retry 兜底自动重拉） */
+            <div className="flex flex-col items-center gap-2 py-10">
+              <p className="text-sm text-loss">数据集源暂不可达</p>
+              <AntButton size="small" onClick={() => refetch()}>
+                重试
+              </AntButton>
+            </div>
+          ) : isLoading ? (
             <div className="p-4">
               <TableSkeleton />
             </div>

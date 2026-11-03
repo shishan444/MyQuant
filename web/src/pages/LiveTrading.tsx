@@ -16,6 +16,9 @@ import {
 import { Button as AntButton, Modal } from "antd";
 import { toast } from "sonner";
 import { GlassCard } from "@/components/GlassCard";
+import { KlineChart } from "@/components/charts/KlineChart";
+import { useChartIndicators } from "@/hooks/useChartIndicators";
+import { CHART_VB } from "@/theme/tokens";
 import { listLiveTasks, type LiveTradingTask } from "@/services/liveTrading";
 
 /** 风控四条（risk_guard.py:37-40 工程现状权威源，非 PRD 契约值）——B5 一票否决行 */
@@ -33,7 +36,7 @@ const SAFETY_ITEMS = ["总回撤≥20% 全停", "篮子合计敞口上限", "学
 type GateItem = { text: string; tag?: "现状" | "目标态" };
 const GATE_CHECKLIST: GateItem[] = [
   { text: "创建三层校验：DNA 形式校验 400／值域+插件源 422／交易兼容性 422", tag: "现状" },
-  { text: "候选资格：纸盘前向验证达标（qualification 凭证）" },
+  { text: "候选资格：模拟前向验证达标（qualification 凭证）" },
   { text: "人工裁决门：最终放行须人工确认" },
   { text: "起始资金 200U" },
   { text: `安全三件：${SAFETY_ITEMS.join("／")}`, tag: "目标态" },
@@ -59,6 +62,39 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   stopped: { label: "规则停机", cls: "text-text-muted" },
   error: { label: "出错", cls: "text-loss" },
 };
+
+/** K 线深空图列（fe-asset-data-domain 3.1——原型 08 交易大图位）。
+ *  demo 域行情为真数据面（ohlcv 既有端点 BTCUSDT 1h 近 200 根）——
+ *  容器 vb 变体（CHART_VB 深空底）；蜡烛恒 POLARITY 走 chartThemes */
+function LiveKlineColumn() {
+  const { candleData, volumeData } = useChartIndicators({
+    symbol: "BTCUSDT",
+    timeframe: "1h",
+    dateRange: {
+      start: new Date(Date.now() - 200 * 3600_000).toISOString().slice(0, 10),
+      end: new Date().toISOString().slice(0, 10),
+    },
+    subChartType: "volume",
+  });
+  return (
+    <div
+      className="rounded-lg p-2"
+      style={{ backgroundColor: CHART_VB.bg, border: `1px solid ${CHART_VB.panel2}` }}
+      data-testid="live-kline-vb"
+    >
+      <p className="mb-1 px-1 text-[10px]" style={{ color: CHART_VB.dim }}>
+        BTCUSDT · 1h · 深空图列（demo 域行情为真数据；实盘链未建设）
+      </p>
+      {candleData?.length ? (
+        <KlineChart data={candleData} volumeData={volumeData} height={300} hideLegend />
+      ) : (
+        <p className="py-16 text-center text-xs" style={{ color: CHART_VB.dim }}>
+          行情装载中…
+        </p>
+      )}
+    </div>
+  );
+}
 
 function SectionCard({ icon: Icon, title, subtitle, children, testid }: {
   icon: React.ElementType;
@@ -130,8 +166,10 @@ export function LiveTrading() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 左列：B1 任务列表 */}
+      {/* fe-asset-data-domain 3.1：原型双列（左任务域 480 位/右交易图列 896 位）
+          ——三列改双列，右列头部挂 K 线深空图列（vb） */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[420px_1fr]">
+{/* 左列：B1 任务列表 */}
         <div className="space-y-4">
           <SectionCard icon={ListTree} title="任务列表" subtitle="demo 域任务（壳端点）" testid="live-b1">
             {q.isLoading && <p className="text-xs text-text-muted">装载中…</p>}
@@ -165,10 +203,7 @@ export function LiveTrading() {
               <p className="text-xs text-text-muted">未选中任务</p>
             )}
           </SectionCard>
-        </div>
 
-        {/* 中列：B2 头卡 + B3 仓位条 */}
-        <div className="space-y-4">
           <SectionCard icon={Activity} title="任务头卡" testid="live-b2">
             {selected ? (
               <div className="space-y-2">
@@ -195,27 +230,30 @@ export function LiveTrading() {
             )}
           </SectionCard>
 
-          {/* B3 仓位条（与 07-B3 同构形制；强平价「—」） */}
-          <SectionCard icon={Boxes} title="实盘仓位" subtitle="与纸盘仓位条同构" testid="live-b3">
-            {selected ? (
-              <div className="text-xs space-y-1.5">
-                <div className="flex justify-between"><span className="text-text-muted">方向/数量</span><dd className="font-mono">{selected.position_side || "—"} / {selected.position_qty?.toFixed(6) ?? "0"}</dd></div>
-                <div className="flex justify-between"><span className="text-text-muted">开仓价</span><dd className="font-mono">{selected.position_entry || "—"}</dd></div>
-                <div className="flex justify-between"><span className="text-text-muted">权益/未实现</span><dd className="font-mono">{selected.equity?.toFixed(2)} / {selected.unrealized_pnl?.toFixed(4)}</dd></div>
-                <div className="flex justify-between" title="demo 域无强平链——强平价不可计算">
-                  <span className="text-text-muted">强平价</span>
-                  <dd className="font-mono text-text-muted" data-testid="live-liquidation-dash">—</dd>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-text-muted">未选中任务</p>
-            )}
-          </SectionCard>
+          
         </div>
 
-        {/* 右列：B4 外部干预 + B6r 决策快照表 */}
+        {/* 右列（交易图列 896 位）：K 线深空 vb+B3+B4+B6r 快照 */}
         <div className="space-y-4">
-          {/* B4 外部干预待确认（金框——目标态预览样例） */}
+          <LiveKlineColumn />
+
+          {/* B3 仓位条（与 07-B3 同构形制；强平价「—」） */}<SectionCard icon={Boxes} title="实盘仓位" subtitle="与模拟仓位条同构" testid="live-b3">
+              {selected ? (
+                <div className="text-xs space-y-1.5">
+                  <div className="flex justify-between"><span className="text-text-muted">方向/数量</span><dd className="font-mono">{selected.position_side || "—"} / {selected.position_qty?.toFixed(6) ?? "0"}</dd></div>
+                  <div className="flex justify-between"><span className="text-text-muted">开仓价</span><dd className="font-mono">{selected.position_entry || "—"}</dd></div>
+                  <div className="flex justify-between"><span className="text-text-muted">权益/未实现</span><dd className="font-mono">{selected.equity?.toFixed(2)} / {selected.unrealized_pnl?.toFixed(4)}</dd></div>
+                  <div className="flex justify-between" title="demo 域无强平链——强平价不可计算">
+                    <span className="text-text-muted">强平价</span>
+                    <dd className="font-mono text-text-muted" data-testid="live-liquidation-dash">—</dd>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-text-muted">未选中任务</p>
+              )}
+            </SectionCard>
+
+{/* B4 外部干预待确认（金框——目标态预览样例） */}
           <div className="rounded-lg border-2 border-amber-400/60 bg-amber-400/5 p-4" data-testid="live-b4">
             <div className="flex items-center gap-2 mb-2">
               <Siren className="h-4 w-4 text-amber-400" />

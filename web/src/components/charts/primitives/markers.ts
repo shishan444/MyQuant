@@ -38,14 +38,14 @@ export const SIGNAL_STYLE: Record<string, Omit<SignalMarker, "time">> = {
   reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
 };
 
-/** 出场五 kind 归并为 close（信号动作词汇四值——与纸盘 fills 域的桥） */
+/** 出场五 kind 归并为 close（信号动作词汇四值——与模拟 fills 域的桥） */
 const EXIT_KINDS = new Set(["exit_sl", "exit_tp", "exit_max_hold", "exit_time", "exit_liquidation"]);
 
 export function fillAction(kind: string): SignalAction {
   return EXIT_KINDS.has(kind) ? "close" : (kind as SignalAction);
 }
 
-/** fills（纸盘成交）→ signals：出场全平类 side=null/缺省 不画（旧口径；side 三态对齐上游 PaperFill 契约） */
+/** fills（模拟成交）→ signals：出场全平类 side=null/缺省 不画（旧口径；side 三态对齐上游 PaperFill 契约） */
 export function fillsToSignals(
   fills: Array<{ kind: string; side?: string | null; bar_time: string }>,
 ): Array<{ type: string; timestamp: string }> {

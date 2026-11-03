@@ -21,7 +21,7 @@ const validEvolutionEvents = [
 ];
 
 /**
- * 纸盘新域七事件合法 payload（逐字段对齐契约源——core/paper_trading/
+ * 模拟交易域七事件合法 payload（逐字段对齐契约源——core/paper_trading/
  * runtime/executor.py _push 构造点 :409/:439/:674/:812/:858/:863/:867 +
  * api/realtime.py _emit_task_snapshot /trading 分支）。
  */

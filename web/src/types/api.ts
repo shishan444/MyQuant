@@ -469,14 +469,14 @@ export interface BatchBacktestSummaryItem {
 }
 
 // ---------------------------------------------------------------------------
-// Trading (纸盘交易域——/api/paper-trading 新域，rebuild-paper-trading 切换)
+// Trading (模拟交易域——/api/paper-trading 新域，rebuild-paper-trading 切换)
 // ---------------------------------------------------------------------------
 
 /** 任务状态 ← 后端 PaperTaskResponse.status（string），消费端判别联合收窄（五态） */
 export type PaperTaskStatus = "pending" | "running" | "completed" | "stopped" | "error";
 
 /**
- * 纸盘任务 ← 后端 PaperTaskResponse；status 收窄五态联合。
+ * 模拟任务 ← 后端 PaperTaskResponse；status 收窄五态联合。
  * 账户运行态组（balance/position_* 等）后端声明可选，未运行恒 null——
  * 消费端按可空透传（P0 权益修复：NULL 不折算 0 假值）。
  */
@@ -495,8 +495,10 @@ export type TradingTaskList = Omit<S["PaperTaskListResponse"], "tasks"> & {
   tasks: TradingTask[];
 };
 
-/** 纸盘成交 ← 后端 PaperFillResponse（形状一致；side/price 等可空字段透传） */
+/** 模拟成交 ← 后端 PaperFillResponse（形状一致；side/price 等可空字段透传） */
 export type PaperFill = S["PaperFillResponse"];
+export type PaperSignal = S["PaperSignalResponse"];
+export type PaperSignalList = S["PaperSignalListResponse"];
 
 /** 成交流水 ← 后端 PaperFillListResponse（fills+limit+offset+has_more 探测式分页） */
 export type PaperFillList = S["PaperFillListResponse"];

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { POLARITY, DOMAIN } from "@/theme/tokens";
 import { useMemo } from "react";
 import { useChartSettings } from "@/stores/chart-settings";
 import { useShallow } from "zustand/react/shallow";
@@ -154,7 +155,7 @@ export function useChartIndicators(
       indicators.push({
         id: "rsi",
         type: "rsi",
-        color: "#A78BFA",
+        color: DOMAIN.paper,
         data: indicatorResponse.rsi,
       });
     }
@@ -176,7 +177,7 @@ export function useChartIndicators(
       return {
         time: d.timestamp,
         value: d.volume,
-        color: isUp ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)",
+        color: isUp ? `${POLARITY.up}66` : `${POLARITY.down}66`,
       };
     });
   }, [candleData]);

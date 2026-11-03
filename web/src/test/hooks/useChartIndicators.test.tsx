@@ -149,7 +149,7 @@ describe("useChartIndicators", () => {
     expect(result.current.volumeData[0]).toEqual({
       time: "2025-01-01T00:00:00Z",
       value: 1000,
-      color: "rgba(34,197,94,0.4)",
+      color: "#2DD4BF66",
     });
   });
 

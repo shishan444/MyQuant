@@ -76,6 +76,9 @@ interface KlineChartProps {
   macdData?: { macd: Array<{ time: string; value: number }>; signal: Array<{ time: string; value: number }>; histogram: Array<{ time: string; value: number }> } | null;
   kdjData?: { k: Array<{ time: string; value: number }>; d: Array<{ time: string; value: number }>; j: Array<{ time: string; value: number }> } | null;
   equityData?: Array<{ time: string; value: number }>;
+  /** 隐藏内嵌图例（07 页 HUD 浮层承载信息面时传 true——图例分组折叠
+   *  能力本身保留，仅该消费方不呈现；fe-asset-data-domain 2.1） */
+  hideLegend?: boolean;
 }
 
 export interface KlineChartHandle {
@@ -129,6 +132,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   macdData,
   kdjData,
   equityData,
+  hideLegend,
 }, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -901,11 +905,13 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       </div>
 
       {/* Legend */}
-      <ChartEmbeddedLegend
-        groups={legendGroups}
-        onToggle={handleLegendToggle}
-        values={legendValues}
-      />
+      {!hideLegend && (
+        <ChartEmbeddedLegend
+          groups={legendGroups}
+          onToggle={handleLegendToggle}
+          values={legendValues}
+        />
+      )}
 
       <div ref={mainRef} className="h-full" />
     </div>

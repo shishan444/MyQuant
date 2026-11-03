@@ -33,6 +33,7 @@
 
   /* 语义色 */
   --color-accent-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步（通道名保留 accent-gold） */
+  --color-domain-paper: #A78BFA; /* 值从 tokens.ts DOMAIN.paper 同步（fe-asset-data-domain 1.1 补档——紫色域操作 utility） */
       --color-attention-gold: #FFC76B; /* 值从 tokens.ts ATTENTION.gold 同步——语义金补档（原死 class 消费点） */
   --color-accent-purple: #8B5CF6;
   --color-profit: #2DD4BF; /* 值从 tokens.ts POLARITY.up 同步 */

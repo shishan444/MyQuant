@@ -55,6 +55,30 @@ export const DARK_CHART_THEME: DeepPartial<ChartOptions> = {
 /**
  * Color palette for chart series and overlays.
  */
+/** 数据系列区分色族（fe-asset-data-domain 6.1 自 constants.ts 迁入——
+ *  周期档色/EMA 线色为系列区分语义，tokens 无对应族；集中白名单单源） */
+export const MTF_TIMEFRAME_COLORS: Record<string, string> = {
+  "15m": "#3B82F6",
+  "1h": "#10B981",
+  "4h": "#F59E0B",
+  "1d": "#8B5CF6",
+  "3d": "#EF4444",
+};
+
+export const EMA_DEFAULT_COLORS = [
+  "#3B82F6",
+  "#10B981",
+  "#F59E0B",
+  "#8B5CF6",
+  "#EF4444",
+  "#EC4899",
+] as const;
+
+export const CHART_INDICATOR_SERIES_COLORS = {
+  ema: ["#3B82F6", "#10B981", "#F59E0B"] as string[],
+  boll: "#F59E0B",
+};
+
 export const CHART_COLORS = {
   /** Bullish candle body/wick color */
   candleUp: POLARITY.up, /* T2：蜡烛涨色单源 tokens */

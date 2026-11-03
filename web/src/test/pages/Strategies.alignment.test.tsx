@@ -1,7 +1,7 @@
 /**
  * 06 策略库对齐批单测（alignment-batch D4）。
  * name=NULL 兜底（完整 strategy_id）/六态 chips（计数+筛选+draft 补拉合并）/
- * 四段履历聚合（诞生/验证/纸盘/审计）/DNA 五段呈现。
+ * 四段履历聚合（诞生/验证/模拟/审计）/DNA 五段呈现。
  * 服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -49,7 +49,7 @@ function mkStrategy(id: string, name: string | null, status: string) {
 }
 
 const ACTIVE = mkStrategy("st-active-0001-full-id", null, "active");
-const PAPER = mkStrategy("st-paper-0002", "纸盘策略A", "paper");
+const PAPER = mkStrategy("st-paper-0002", "模拟策略A", "paper");
 const DRAFT = mkStrategy("st-draft-0003", "草稿策略B", "draft");
 
 const VERIFY_HISTORY = {
@@ -142,11 +142,11 @@ describe("Strategies（06 策略库·对齐批）", () => {
     expect(await screen.findByText("草稿策略B")).toBeInTheDocument();
   });
 
-  it("六态筛选：点击 paper chip 仅剩纸盘行", async () => {
+  it("六态筛选：点击 paper chip 仅剩模拟行", async () => {
     setup();
     await screen.findByText("草稿策略B");
     fireEvent.click(screen.getByTestId("status-chip-paper"));
-    expect(screen.getByText("纸盘策略A")).toBeInTheDocument();
+    expect(screen.getByText("模拟策略A")).toBeInTheDocument();
     // framer-motion exit 动画：行移除有延迟，waitFor 等待消失
     await waitFor(() => expect(screen.queryByText("草稿策略B")).toBeNull());
     // name 兜底行（active）也被筛除——其兜底 id 文本不再呈现（paper 行仍在属正常）
@@ -156,11 +156,11 @@ describe("Strategies（06 策略库·对齐批）", () => {
   it("行内六态徽标呈现（status badge）", async () => {
     setup();
     expect(await screen.findByTestId("strategy-status-active")).toHaveTextContent("可消费");
-    expect(screen.getByTestId("strategy-status-paper")).toHaveTextContent("纸盘在验");
+    expect(screen.getByTestId("strategy-status-paper")).toHaveTextContent("模拟在验");
     expect(screen.getByTestId("strategy-status-draft")).toHaveTextContent("草稿");
   });
 
-  it("四段履历聚合：展开行呈现诞生/验证/纸盘/审计四段（审计如实披露无端点）", async () => {
+  it("四段履历聚合：展开行呈现诞生/验证/模拟/审计四段（审计如实披露无端点）", async () => {
     setup();
     await screen.findByText("草稿策略B");
     fireEvent.click(screen.getAllByTestId("strategy-name")[0]);
@@ -171,7 +171,7 @@ describe("Strategies（06 策略库·对齐批）", () => {
     const verifySeg = screen.getByTestId("career-segment-verify");
     expect(verifySeg).toHaveTextContent("1 条");
     expect(verifySeg).toHaveTextContent("★2");
-    // 纸盘段：1 个任务+最近状态（completed→已完结）
+    // 模拟段：1 个任务+最近状态（completed→已完结）
     expect(screen.getByTestId("career-segment-paper")).toHaveTextContent("1 个任务");
     expect(screen.getByTestId("career-segment-paper")).toHaveTextContent("已完结");
     // 审计段：无查询端点，如实披露

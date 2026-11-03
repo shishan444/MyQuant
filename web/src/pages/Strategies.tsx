@@ -1,6 +1,6 @@
 /**
  * 06 策略中心·主页面。路由 /strategies，策略列表（检索/多选/排序/
- * 批量操作）+行内展开（DNA 五段/回测指标/纸盘与验证记录入口）——
+ * 批量操作）+行内展开（DNA 五段/回测指标/模拟与验证记录入口）——
  * 策略来源含人工/进化产出/假设登记多源（SourceBadge 标注）。
  * 消费方：App 路由（用户经侧边导航进入的页面入口）。
  */
@@ -80,11 +80,11 @@ function SourceBadge({ source }: { source: string }) {
 // 策略状态（六态——core/strategy/lifecycle/machine.py STRATEGY_STATUSES 单源值域）
 // ---------------------------------------------------------------------------
 
-/** 六态中文标签（语义=生命周期状态机注释：draft=假设转化草稿/active=可消费/paper=纸盘在验/candidate=达标候选/live=实盘在役/archived=归档） */
+/** 六态中文标签（语义=生命周期状态机注释：draft=假设转化草稿/active=可消费/paper=模拟在验/candidate=达标候选/live=实盘在役/archived=归档） */
 const STRATEGY_STATUS_LABELS: Record<string, string> = {
   draft: "草稿",
   active: "可消费",
-  paper: "纸盘在验",
+  paper: "模拟在验",
   candidate: "达标候选",
   live: "实盘在役",
   archived: "已归档",
@@ -259,7 +259,7 @@ function describeGene(gene: { indicator: string; params: Record<string, unknown>
 // 行展开面板
 // ---------------------------------------------------------------------------
 
-/** 纸盘任务五态中文（值域=PaperTaskStatus；label 对齐 Trading 页 STATUS_BADGE_MAP） */
+/** 模拟任务五态中文（值域=PaperTaskStatus；label 对齐 Trading 页 STATUS_BADGE_MAP） */
 const PT_STATUS_LABELS: Record<string, string> = {
   pending: "排队中",
   running: "运行中",
@@ -353,7 +353,7 @@ function CareerSegment({ label, testid, children }: { label: string; testid: str
 
 /**
  * 四段履历前端聚合（alignment-batch D4，契约登记表三）：
- * 诞生=Strategy 行 / 验证=ValidationRecord / 纸盘=PtTask / 审计=TransitionEvent。
+ * 诞生=Strategy 行 / 验证=ValidationRecord / 模拟=PtTask / 审计=TransitionEvent。
  * 审计段无查询端点（lifecycle 只暴露写迁移），如实披露不造数据。
  */
 function CareerRecord({ strategy, verifyRecords, paperTasks }: {
@@ -380,9 +380,9 @@ function CareerRecord({ strategy, verifyRecords, paperTasks }: {
           </>
         )}
       </CareerSegment>
-      <CareerSegment label="纸盘" testid="career-segment-paper">
+      <CareerSegment label="模拟" testid="career-segment-paper">
         {paperTasks.length === 0 ? (
-          <span className="text-text-muted">无纸盘任务</span>
+          <span className="text-text-muted">无模拟任务</span>
         ) : (
           <>
             {paperTasks.length} 个任务 · 最近 {PT_STATUS_LABELS[lastTask.status] ?? lastTask.status}
@@ -481,13 +481,13 @@ function ExpandPanel({ strategy, verifyRecords, paperTasks, onRun, onPaperTrade,
             <div className="text-[11px] text-text-muted font-medium">四段履历</div>
             <CareerRecord strategy={strategy} verifyRecords={verifyRecords} paperTasks={paperTasks} />
             <div className="flex flex-wrap gap-2 mt-auto pt-3 border-t border-border-default/30">
-              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#00C853" }} onClick={onRun}>
+              <AntButton type="text" size="small" className="!text-xs text-profit" onClick={onRun}>
                 <Play className="h-3 w-3" /> 运行回测
               </AntButton>
-              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#00b37a" }} onClick={onPaperTrade}>
+              <AntButton type="text" size="small" className="!text-xs text-profit" onClick={onPaperTrade}>
                 <Zap className="h-3 w-3" /> 模拟交易
               </AntButton>
-              <AntButton type="text" size="small" className="!text-xs" style={{ color: "#8B5CF6" }} onClick={onSeedEvolve}>
+              <AntButton type="text" size="small" className="!text-xs text-domain-paper" onClick={onSeedEvolve}>
                 <GitBranch className="h-3 w-3" /> 继续进化
               </AntButton>
               <AntButton type="text" size="small" className="!text-xs !text-text-muted" onClick={handleCopy}>
@@ -679,10 +679,10 @@ function StrategyCardRow({
         {/* 操作 */}
         <td className="py-3 pr-4 text-right w-28">
           <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all duration-200">
-            <AntButton type="text" size="small" aria-label="运行回测" onClick={onRun} style={{ color: "#00b37a" }}>
+            <AntButton type="text" size="small" aria-label="运行回测" onClick={onRun} className="!text-xs text-profit">
               <Play className="h-3.5 w-3.5" />
             </AntButton>
-            <AntButton type="text" size="small" aria-label="模拟交易" onClick={onPaperTrade} style={{ color: "#c78d1e" }}>
+            <AntButton type="text" size="small" aria-label="模拟交易" onClick={onPaperTrade} className="!text-xs text-profit">
               <Zap className="h-3.5 w-3.5" />
             </AntButton>
             <AntButton type="text" size="small" aria-label="编辑策略" onClick={onEdit} className="!text-text-muted">
@@ -1068,8 +1068,7 @@ export function Strategies() {
             <AntButton
               type="text"
               size="small"
-              className="!text-xs"
-              style={{ color: "#F59E0B" }}
+              className="!text-xs text-accent-gold"
               onClick={() => setSelectedIds(new Set(sortedStrategies.map((s) => s.strategy_id)))}
             >
               全选当前筛选 ({sortedStrategies.length})

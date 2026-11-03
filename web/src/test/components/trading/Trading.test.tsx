@@ -19,6 +19,7 @@ vi.mock("@/hooks/useTrading", async (importOriginal) => {
     useCloneTradingTask: vi.fn(),
     useStopTradingTask: vi.fn(),
     useTradingFills: vi.fn(),
+    useTradingSignals: vi.fn(),
     useTradingEquity: vi.fn(),
     useTradingFunding: vi.fn(),
     useTradingReport: vi.fn(),
@@ -35,6 +36,13 @@ vi.mock("react-router", () => ({
 // EquityCurve（echarts/zrender）在 jsdom 无 canvas context 崩——非本文件被测面，stub 之
 vi.mock("@/components/charts/EquityCurve", () => ({
   EquityCurve: () => <div data-testid="equity-curve-stub" />,
+}));
+
+// KlineChart（lightweight-charts）jsdom 无 canvas context——HUD 用例的 await
+// 窗口内 rAF 异步绘制抛「Value is null」（run 级 unhandled）。非本文件被测面
+// （页级组装锚在 TradingChart 层，ChartHud 在其内），stub 之（TradingChart.test 同形制）
+vi.mock("@/components/charts/KlineChart", () => ({
+  KlineChart: () => <div data-testid="kline-chart-stub" />,
 }));
 
 // useChartIndicators 真实调用会 fetch 后端（测试环境不可达）；TradingChart 对空 candleData
@@ -67,12 +75,14 @@ import {
   useCloneTradingTask,
   useRunnerStatus,
   useTradingFills,
+  useTradingSignals,
   useTradingEquity,
   useTradingFunding,
   useTradingReport,
   useTradingFinalReport,
 } from "@/hooks/useTrading";
 import type { TradingTask } from "@/services/trading";
+import type { PaperFill, PaperSignal } from "@/types/api";
 
 const mockUseTradingTasks = vi.mocked(useTradingTasks);
 const mockUseDeleteTradingTask = vi.mocked(useDeleteTradingTask);
@@ -80,6 +90,7 @@ const mockUseStopTradingTask = vi.mocked(useStopTradingTask);
 const mockUseCloneTradingTask = vi.mocked(useCloneTradingTask);
 const mockUseRunnerStatus = vi.mocked(useRunnerStatus);
 const mockUseTradingFills = vi.mocked(useTradingFills);
+const mockUseTradingSignals = vi.mocked(useTradingSignals);
 const mockUseTradingEquity = vi.mocked(useTradingEquity);
 const mockUseTradingFunding = vi.mocked(useTradingFunding);
 const mockUseTradingReport = vi.mocked(useTradingReport);
@@ -143,6 +154,7 @@ beforeEach(() => {
   } as any);
 
   mockUseTradingFills.mockReturnValue(emptyQuery({ fills: [], limit: 500, offset: 0, has_more: false }) as any);
+  mockUseTradingSignals.mockReturnValue(emptyQuery({ signals: [] }) as any);
   mockUseTradingEquity.mockReturnValue(emptyQuery({ snapshots: [], limit: 500, offset: 0, has_more: false }) as any);
   mockUseTradingFunding.mockReturnValue(emptyQuery({ records: [], limit: 500, offset: 0, has_more: false }) as any);
   mockUseTradingReport.mockReturnValue(emptyQuery(undefined) as any);
@@ -341,6 +353,62 @@ describe("Trading page", () => {
     render(<Trading />, { wrapper: createWrapper() });
     // SymbolInfoBar 呈现尾条累计值（fmt 四位小数+非负带显式 +）
     expect(screen.getByText("+1.2500 USDT")).toBeInTheDocument();
+  });
+
+  // --- HUD 页级组装（fe-asset-data-domain 2.1——t3r5 G3：position 透传+hudSignals/fills 倒序） ---
+  it("wires HUD with position passthrough and newest-first signals/fills", async () => {
+    // 信号 fixture（API 正序=旧→新；seq 判别）
+    const makeSignal = (seq: number, kind: string): PaperSignal =>
+      ({
+        id: seq, task_id: "t1", strategy_id: "s1",
+        bar_time: `2026-11-01 0${seq}:00:00+00:00`, seq, signal_kind: kind,
+        direction: "long", size_fraction: null, gene_hits: [], indicator_snapshot: {},
+        outcome: "filled", reject_reason: null, fill_seq: seq, capped: null,
+        equity: 100000, balance: 100000, unrealized_pnl: -50,
+        position_side: "long", position_quantity: 0.01, position_margin: 50,
+        created_at: "2026-11-01T00:00:00Z",
+      }) as PaperSignal;
+    // 成交 fixture（API 正序=旧→新；price 判别）
+    const makeHudFill = (id: number, price: number): PaperFill =>
+      ({
+        id, task_id: "t1", bar_time: `2026-11-02 0${id}:00:00+00:00`, seq: id,
+        kind: "open", side: "buy", price, quantity: 0.01, fee: 1,
+        realized_pnl: null, reason: "gene_hit",
+      }) as PaperFill;
+
+    const task = makeTask({
+      task_id: "t1", status: "running", symbol: "BTCUSDT", timeframe: "4h",
+      position_side: "long", position_entry: 94000, position_quantity: 0.01,
+      unrealized_pnl: -50,
+    });
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks: [task], total: 1 },
+      isLoading: false, isError: false, isSuccess: true,
+    } as any);
+    // 信号 API 正序两条（seq 1 open / seq 2 close）——Trading.tsx reverse 后 HUD 最新在前
+    mockUseTradingSignals.mockReturnValue(
+      emptyQuery({ signals: [makeSignal(1, "open"), makeSignal(2, "close")] }) as any,
+    );
+    // 成交 API 正序三笔——TradingChart slice(-2).reverse() 后 HUD 最近两笔倒序
+    mockUseTradingFills.mockReturnValue(
+      emptyQuery({
+        fills: [makeHudFill(1, 91000), makeHudFill(2, 92000), makeHudFill(3, 93000)],
+        limit: 500, offset: 0, has_more: false,
+      }) as any,
+    );
+
+    render(<Trading />, { wrapper: createWrapper() });
+    const hud = await screen.findByTestId("chart-hud");
+    // position 透传（task 字段→HUD 仓位浮层真值——:595-600 映射）
+    expect(hud.textContent).toContain("做多");
+    expect(hud.textContent).toContain("开仓 94000.00");
+    expect(hud.textContent).toContain("浮盈亏 -50.00");
+    // hudSignals reverse（Trading.tsx:601）：最新 seq 2（平仓）呈现在 seq 1（开仓·filled）之前
+    const text = hud.textContent ?? "";
+    expect(text.indexOf("平仓 · filled")).toBeLessThan(text.indexOf("开仓 · filled"));
+    // fills slice(-2).reverse()（TradingChart）：最近两笔在场且最新在前，最旧 91000 被截
+    expect(text.indexOf("93000.00")).toBeLessThan(text.indexOf("92000.00"));
+    expect(text).not.toContain("91000.00");
   });
 
   // --- Delete confirmation flow ---

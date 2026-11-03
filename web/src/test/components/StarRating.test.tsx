@@ -5,7 +5,7 @@
  * 槽位恒 5（MiniStars 五槽蓝本），value 容 null（→0）。
  */
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { StarRating } from "@/components/StarRating";
 
 function filledCount(container: HTMLElement): number {

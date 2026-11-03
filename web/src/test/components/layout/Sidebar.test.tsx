@@ -5,7 +5,7 @@
  * 折叠态 describe 随 M3 整体退役（useAppStore 侧栏字段已删）。
  */
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { Sidebar, getPageTitle } from "@/components/layout/Sidebar";
 
@@ -24,7 +24,8 @@ const EXPECTED_ITEMS = [
 
 const RETIRED_NAMES = [
   "策略验证",
-  "纸盘交易",
+  "纸盘交易", // M2 退役名（菜单现名「模拟交易」——fe-asset-data-domain 2.2
+  // 术语清零只清呈现面，退役名负断言清单保留旧名本体防回退）
   "插件与组件库",
   "策略实验室",
 ] as const;

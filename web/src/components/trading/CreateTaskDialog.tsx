@@ -26,7 +26,7 @@ interface CreateFormValues {
 }
 
 /**
- * 创建纸盘任务（上盘流转形制）：只收策略编号+可选覆写——DNA 由后端从
+ * 创建模拟任务（上盘流转形制）：只收策略编号+可选覆写——DNA 由后端从
  * 策略库快照，timeframe/direction 恒从 DNA 抄录（无参数位，传入即 422）。
  * 覆写面：symbol/initial_cash/fee/slippage/leverage/window_bars/stop_loss_pct。
  */
@@ -92,7 +92,7 @@ export function CreateTaskDialog({
       onCancel={() => onOpenChange(false)}
       title={
         <span className="flex items-center gap-2">
-          <TrendingUp className="h-5 w-5" style={{ color: "#F59E0B" }} />
+          <TrendingUp className="h-5 w-5 text-accent-gold" />
           创建模拟交易任务
         </span>
       }

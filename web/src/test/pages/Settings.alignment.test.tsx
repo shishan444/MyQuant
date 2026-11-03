@@ -113,10 +113,17 @@ describe("Settings（10 设置·对齐批）", () => {
     expect(screen.getByLabelText("BOLL 周期")).toHaveValue("30");
   });
 
-  it("GET 失败兜底默认配置（init_cash 100000）", async () => {
+  it("GET 失败可见（fe-asset-data-domain 5.1）：错误态+重试，静默兜底退役", async () => {
+    // 行为变更锚：原「失败→DEFAULT_CONFIG 兜底渲染表单」被 W0 裁决废除
+    // （失败伪装成功）——现失败呈现错误态+重试钮，表单不渲染
     vi.mocked(api.get).mockRejectedValue(new Error("network") as never);
     setup();
-    const cashInput = await screen.findByLabelText("初始资金");
-    expect(cashInput).toHaveValue("100000");
+    expect(await screen.findByText("配置源暂不可达")).toBeInTheDocument();
+    // antd 两字按钮自动加空格（「重 试」）——匹配器容空白
+    expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("初始资金")).not.toBeInTheDocument();
+    // 重试点击 → 配置源重发（t3r5 G6——loadConfig 再调 GET：mount 1 次+重试 1 次）
+    fireEvent.click(screen.getByText(/重\s*试/));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
   });
 });

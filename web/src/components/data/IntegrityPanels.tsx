@@ -41,7 +41,7 @@ export function IntegrityMatrix({ symbol, monthsBack }: { symbol: string; months
   if (!d) return null;
 
   return (
-    <div className="space-y-3" data-testid="integrity-matrix">
+    <div className="space-y-3" data-testid={`integrity-matrix-${symbol}`}>
       {/* 短周期月矩阵（09-B2r）：月×周期格 */}
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
@@ -108,7 +108,38 @@ export function IntegrityMatrix({ symbol, monthsBack }: { symbol: string; months
   );
 }
 
-export function FreshnessTable() {
+
+
+/** 双币并列月矩阵（fe-asset-data-domain 4.3——R9 生效态：双币=前端两次
+ *  请求 BTCUSDT/ETHUSDT 并列呈现；单 symbol 输入框退役） */
+export function DualIntegrityMatrix({ monthsBack }: { monthsBack: number }) {
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-testid="dual-integrity">
+      <div>
+        <p className="mb-1 font-mono text-[11px] text-text-muted">BTCUSDT</p>
+        <IntegrityMatrix symbol="BTCUSDT" monthsBack={monthsBack} />
+      </div>
+      <div>
+        <p className="mb-1 font-mono text-[11px] text-text-muted">ETHUSDT</p>
+        <IntegrityMatrix symbol="ETHUSDT" monthsBack={monthsBack} />
+      </div>
+    </div>
+  );
+}
+
+/** 12 路订阅键全集（2 币 × 6 档——与 core/data/fapi/stream.py
+ *  FIXED_SUBSCRIBE_KEYS 同源常量的前端镜像；fe-asset-data-domain 4.3） */
+const FRESHNESS_FIXED_KEYS: string[] = [
+  "BTCUSDT", "ETHUSDT",
+].flatMap((sym) =>
+  // F1 修正（t3r5）：FAPI_TIMEFRAMES=1m/5m/15m/1h/4h/1d——30m 是被排除的
+  // 超集档（stream.py:76 注释明写），原 30m 为笔误致两格恒「未扫」假占位
+  ["1m", "5m", "15m", "1h", "4h", "1d"].map((tf) => `${sym}_${tf}`),
+);
+
+/** 保鲜 12 路满格表（4.3）：键集不全时按 FIXED_SUBSCRIBE_KEYS 补「未扫」
+ *  占位行（12 路恒满格——补位是展示层完整性非数据伪造，每行状态值如实） */
+export function FreshnessTableFixed() {
   const q = useQuery({
     queryKey: ["freshness", "status"],
     queryFn: getFreshnessStatus,
@@ -122,35 +153,47 @@ export function FreshnessTable() {
   const d = q.data;
   if (!d?.kline) return null;
 
-  const klineEntries = Object.entries(d.kline.keys ?? {});
-  const derivEntries = Object.entries(d.derivs?.symbols ?? {});
+  const keys = d.kline.keys ?? {};
+  // FIXED 键序恒满格：返回键显示实态；FIXED 中未返回者显示「未扫」占位
+  const rows = FRESHNESS_FIXED_KEYS.map((key) => ({
+    key,
+    state: key in keys ? String(keys[key]) : "未扫",
+    isPlaceholder: !(key in keys),
+  }));
+  // 返回键中 FIXED 外的键（超集周期等）尾随如实呈现
+  const extras = Object.keys(keys)
+    .filter((k) => !FRESHNESS_FIXED_KEYS.includes(k))
+    .map((key) => ({ key, state: String(keys[key]), isPlaceholder: false }));
 
   return (
-    <div className="space-y-2" data-testid="freshness-table">
+    <div className="space-y-2" data-testid="freshness-table-fixed">
       <div className="flex items-center gap-2 text-[10px] text-text-muted">
         <RefreshCw className="h-3 w-3" />
         上轮检查 {d.kline.last_run?.replace("T", " ").slice(0, 19) ?? "未运行"}
       </div>
-      {/* K 线十二路（键→六态） */}
-      <div className="flex flex-wrap gap-1.5">
-        {klineEntries.map(([key, state]) => (
-          <span key={key} className="rounded border border-border-faint px-1.5 py-0.5 font-mono text-[10px] text-text-secondary" title={String(state)}>
+      <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3">
+        {[...rows, ...extras].map(({ key, state, isPlaceholder }) => (
+          <span
+            key={key}
+            className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+              isPlaceholder
+                ? "border-border-faint bg-white/[0.02] text-text-muted"
+                : state === "fresh"
+                  ? "border-profit/30 text-profit"
+                  : state === "failed" || state === "error"
+                    ? "border-loss/30 text-loss"
+                    : "border-border-faint text-text-secondary"
+            }`}
+            title={`${key} · ${state}${isPlaceholder ? "（未扫——守护器键集未覆盖，占位非数据伪造）" : ""}`}
+          >
             {key}
-            <span className="ml-1 text-text-muted">·{String(state)}</span>
+            <span className="ml-1 text-text-muted">·{state}</span>
           </span>
         ))}
-        {klineEntries.length === 0 && <span className="text-[11px] text-text-muted">K 线路暂无检查记录</span>}
       </div>
-      {/* 衍生品（funding/oi） */}
-      {derivEntries.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {derivEntries.map(([sym]) => (
-            <span key={sym} className="rounded border border-border-faint px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-              {sym}·funding/oi
-            </span>
-          ))}
-        </div>
-      )}
+      <p className="text-[10px] text-text-muted">
+        12 路 = 2 币 × 6 档订阅键全集（FIXED_SUBSCRIBE_KEYS）；「未扫」=守护器未覆盖该键的展示层占位
+      </p>
     </div>
   );
 }

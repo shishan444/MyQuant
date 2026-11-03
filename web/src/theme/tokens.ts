@@ -55,7 +55,7 @@ export const ATTENTION = {
   gold: "#FFC76B",
 } as const;
 
-/** 纸盘域紫（07 页纸盘标识域） */
+/** 模拟域紫（07 页模拟标识域） */
 export const DOMAIN = {
   paper: "#A78BFA",
 } as const;
