@@ -81,7 +81,7 @@
   "target_score": number, "max_generations": number }
 ```
 
-## trading 通道业务事件（S→C，纸盘新域七事件）
+## trading 通道业务事件（S→C，模拟交易域七事件）
 
 > rebuild-paper-trading 切换（2026-10-17）：旧三事件（task_started 旧形 /
 > task_snapshot 旧形 / position_update）全退役，换新七事件族。

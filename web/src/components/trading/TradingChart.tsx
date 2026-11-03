@@ -73,7 +73,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
 
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
-  // 纸盘图表只装载最近 200 根数据
+  // 模拟图表只装载最近 200 根数据
   const dateRange = useMemo(() => ({ start: barsAgoDate(timeframe, 200) }), [timeframe]);
 
   const {

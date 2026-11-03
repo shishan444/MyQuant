@@ -345,6 +345,15 @@ function PoolsSection() {
       testid="plugins-pools"
     >
       <div className="flex flex-col gap-4">
+        {/* fe-asset-data-domain 5.2：静态快照标识常显（与 08 demo 角标同形制
+            ——be-plugin-pool-authority 归档后接 GET /api/plugins/pools 真值，
+            标识随替换退役） */}
+        <span
+          className="w-fit rounded border border-state-warn/40 bg-state-warn/10 px-1.5 py-0.5 text-[10px] text-state-warn"
+          data-testid="static-snapshot-badge"
+        >
+          静态快照 · 真值端点待建（be-plugin-pool-authority）
+        </span>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="pools-grid">
           {POOLS.map((pool) => (
             <div key={pool.name} className="rounded-lg border border-border-default/30 bg-white/[0.01] p-3" data-testid={`pool-${pool.name}`}>

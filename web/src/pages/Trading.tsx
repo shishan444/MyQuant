@@ -1,5 +1,5 @@
 /**
- * 交易页（路由 /trading）。纸盘任务双栏：左栏任务列表+右栏详情
+ * 交易页（路由 /trading）。模拟任务双栏：左栏任务列表+右栏详情
  * （K 线+权益曲线同卡主体、绩效指标与错误披露）——支持从
  * Strategies/Verify 页带 strategy_id 流转自动建盘。消费方：App
  * 路由（页面入口）。
@@ -620,7 +620,7 @@ function TaskDetailPanel({
             items={[
               {
                 key: "deviation",
-                label: <span className="text-xs text-text-secondary">偏差对照层（纸盘 vs 同区间回测预期）</span>,
+                label: <span className="text-xs text-text-secondary">偏差对照层（模拟 vs 同区间回测预期）</span>,
                 children: <DeviationLayer deviation={report.deviation} />,
               },
               {
@@ -717,7 +717,7 @@ function fmtNum(v: number | null | undefined, digits = 4): string {
   return v == null ? "-" : v.toFixed(digits);
 }
 
-/** 偏差对照层：diff 关键四指标差值（纸盘−回测）+归因披露 */
+/** 偏差对照层：diff 关键四指标差值（模拟−回测）+归因披露 */
 function DeviationLayer({ deviation }: { deviation: NonNullable<Parameters<typeof MetricsDashboard>[0]["report"]>["deviation"] }) {
   if (deviation.unavailable_reason) {
     return (
@@ -742,7 +742,7 @@ function DeviationLayer({ deviation }: { deviation: NonNullable<Parameters<typeo
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {diffs.map((d) => (
           <div key={d.label} className="rounded border border-border-default px-2 py-1.5">
-            <span className="text-[10px] text-text-muted block">{d.label}（纸盘−回测）</span>
+            <span className="text-[10px] text-text-muted block">{d.label}（模拟−回测）</span>
             <span
               className={cn(
                 "font-num text-sm",

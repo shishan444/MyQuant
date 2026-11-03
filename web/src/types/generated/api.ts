@@ -138,8 +138,8 @@ export interface paths {
          *
          *     挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
          *     前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
-         *     （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
-         *     或被非终态纸盘任务（pending/running）引用 → 422
+         *     （status ∈ {paper, candidate, live}——模拟在验/达标候选/实盘在役）
+         *     或被非终态模拟任务（pending/running）引用 → 422
          *     BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
          *     pt_active_count 与处置提示——先撤盘/归档后再清理）。
          */
@@ -3404,7 +3404,7 @@ export interface components {
         };
         /**
          * PaperTaskCreate
-         * @description 创建纸盘任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
+         * @description 创建模拟任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
          *     库流转快照——design §11 偏差 2「消灭手工抄写」）。
          *
          *     window_bars 四形态编码（spec 上盘流转 Requirement）：不传=缺省 180；

@@ -1,5 +1,5 @@
 /**
- * K 线标注原语统一出口（kline-common-layer 组 4）——C4 假设工作台/C5 纸盘共享资产。
+ * K 线标注原语统一出口（kline-common-layer 组 4）——C4 假设工作台/C5 模拟共享资产。
  * 通道分族：竖带=attachPrimitive（PositionBand）/价线=createPriceLine/标记=createSeriesMarkers
  * （官方 primitive 插件）；纯函数映射层（fillsToSignals/signalsToMarkers/toXxxOptions）独立可测。
  */

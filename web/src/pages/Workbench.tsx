@@ -18,13 +18,13 @@ import {
 
 /**
  * 01 观察工作台（workbench-observation 前端组）——五区只读观察页：
- * B1 待裁决事件（金色置顶）/B2 AI 循环动态五子区/B3 纸盘任务/B4 数据健康。
+ * B1 待裁决事件（金色置顶）/B2 AI 循环动态五子区/B3 模拟任务/B4 数据健康。
  * 全页零操作（观察面——动作经导航跳转各域页）；四态覆盖（载入/空/错误/数据）。
  */
 
 const EVENT_META: Record<PendingEvent["type"], { label: string; desc: string; nav: string }> = {
   union_exhausted: { label: "并集耗尽", desc: "验证数据段已全部判过——需评估是否收束该假设", nav: "/lab" },
-  qualify_pending: { label: "达标待停", desc: "纸盘任务两维已满足——待人工停止出终判报告", nav: "/trading" },
+  qualify_pending: { label: "达标待停", desc: "模拟任务两维已满足——待人工停止出终判报告", nav: "/trading" },
   trigger_deviation: { label: "触发差异", desc: "终判触发一致性未过（差异>10%）——需归因", nav: "/trading" },
 };
 
@@ -192,11 +192,11 @@ function PageSections(props: {
         <ResearchLogPanel />
       </GlassCard>
 
-      {/* C 列纸盘任务区（fe-workbench-wiring：调度器行真值+舰队底注）+B4 */}
+      {/* C 列模拟任务区（fe-workbench-wiring：调度器行真值+舰队底注）+B4 */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <GlassCard className="p-3">
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
-            <TrendingUp className="h-3.5 w-3.5" /> 纸盘任务
+            <TrendingUp className="h-3.5 w-3.5" /> 模拟任务
           </h2>
           <SchedulerStatusLine />
           <p className="rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">

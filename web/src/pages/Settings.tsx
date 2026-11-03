@@ -44,26 +44,22 @@ interface AppConfig {
   max_positions: number;
 }
 
-const DEFAULT_CONFIG: AppConfig = {
-  language: "zh-CN",
-  timezone: "UTC+8",
-  notify_evolution: true,
-  notify_signal: true,
-  binance_api_key: "",
-  binance_secret_key: "",
-  binance_connected: false,
-  init_cash: 100000,
-  maker_fee: 0.1,
-  taker_fee: 0.1,
-  max_positions: 1,
-};
-
 export function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  // fe-asset-data-domain 5.1：GET 失败可见（原 catch 静默回退 DEFAULT_CONFIG
+  // =失败伪装成功——W0 禁静默回退；错误态+重试，DEFAULT_CONFIG 兜底退役）
+  const [configError, setConfigError] = useState(false);
+
+  const loadConfig = useCallback(() => {
+    setConfigError(false);
+    api.get<AppConfig>("/api/config")
+      .then(setConfig)
+      .catch(() => setConfigError(true));
+  }, []);
 
   useEffect(() => {
-    api.get<AppConfig>("/api/config").then(setConfig).catch(() => setConfig(DEFAULT_CONFIG));
-  }, []);
+    loadConfig();
+  }, [loadConfig]);
 
   const savePartial = useCallback(async (updates: Partial<AppConfig>) => {
     try {
@@ -74,6 +70,19 @@ export function Settings() {
       toast.error("保存失败");
     }
   }, []);
+
+  if (configError) {
+    return (
+      <PageTransition>
+        <div className="flex flex-col items-center gap-3 py-16">
+          <p className="text-sm text-loss">配置源暂不可达</p>
+          <AntButton size="small" onClick={loadConfig}>
+            重试
+          </AntButton>
+        </div>
+      </PageTransition>
+    );
+  }
 
   if (!config) {
     return (
@@ -154,11 +163,8 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
       </div>
 
       <Form form={form} layout="horizontal" initialValues={config} className="!mb-0">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-text-secondary">主题</span>
-          <span className="text-sm text-text-primary">深色模式</span>
-        </div>
-        <Divider className="!my-3" />
+        {/* fe-asset-data-domain 5.1：原「主题=深色模式」死文案删除（无对应
+            功能的假呈现）；主题由 tokens 权威源承载非设置项 */}
         <Form.Item label="语言" name="language" className="!mb-3" colon={false}>
           <Select
             className="w-40"
@@ -341,11 +347,8 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
         >
           <InputNumber className="w-24 font-num" />
         </Form.Item>
-        <Divider className="!my-3" />
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-text-secondary" style={{ flex: "0 0 84px" }}>数据刷新</span>
-          <span className="text-sm text-text-primary">实时 (WebSocket)</span>
-        </div>
+        {/* fe-asset-data-domain 5.1：原「数据刷新=实时 (WebSocket)」死文案
+            删除（无对应功能的假呈现） */}
       </Form>
     </GlassCard>
   );

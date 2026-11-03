@@ -33,7 +33,7 @@ const SAFETY_ITEMS = ["总回撤≥20% 全停", "篮子合计敞口上限", "学
 type GateItem = { text: string; tag?: "现状" | "目标态" };
 const GATE_CHECKLIST: GateItem[] = [
   { text: "创建三层校验：DNA 形式校验 400／值域+插件源 422／交易兼容性 422", tag: "现状" },
-  { text: "候选资格：纸盘前向验证达标（qualification 凭证）" },
+  { text: "候选资格：模拟前向验证达标（qualification 凭证）" },
   { text: "人工裁决门：最终放行须人工确认" },
   { text: "起始资金 200U" },
   { text: `安全三件：${SAFETY_ITEMS.join("／")}`, tag: "目标态" },
@@ -196,7 +196,7 @@ export function LiveTrading() {
           </SectionCard>
 
           {/* B3 仓位条（与 07-B3 同构形制；强平价「—」） */}
-          <SectionCard icon={Boxes} title="实盘仓位" subtitle="与纸盘仓位条同构" testid="live-b3">
+          <SectionCard icon={Boxes} title="实盘仓位" subtitle="与模拟仓位条同构" testid="live-b3">
             {selected ? (
               <div className="text-xs space-y-1.5">
                 <div className="flex justify-between"><span className="text-text-muted">方向/数量</span><dd className="font-mono">{selected.position_side || "—"} / {selected.position_qty?.toFixed(6) ?? "0"}</dd></div>

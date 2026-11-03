@@ -203,7 +203,7 @@ export const mockBacktestResult: BacktestResult = {
 // Mock: Trading types（/api/paper-trading 新域）
 // ---------------------------------------------------------------------------
 
-/** 纸盘任务行（PaperTaskResponse 形制——五态状态机+账户运行态组） */
+/** 模拟任务行（PaperTaskResponse 形制——五态状态机+账户运行态组） */
 export const mockTradingTask: TradingTask = {
   task_id: "t1",
   status: "stopped",
@@ -266,7 +266,7 @@ export const mockTradingReport: TradingReport = {
     backtest: { total_return: 0.018, sharpe_ratio: 1.6, max_drawdown: -0.007, win_rate: 0.6 },
     diff: { total_return: 0.002, sharpe_ratio: 0.2, max_drawdown: -0.001, win_rate: 0 },
     unavailable_reason: null,
-    attribution_notes: ["资金费：纸盘按真实资金费率逐点结算，回测按固定 0.001 估算"],
+    attribution_notes: ["资金费：模拟按真实资金费率逐点结算，回测按固定 0.001 估算"],
   },
   evidence: {
     bars_run: 100,
@@ -280,7 +280,7 @@ export const mockTradingReport: TradingReport = {
   },
 };
 
-/** 纸盘成交（PaperFillResponse 形制） */
+/** 模拟成交（PaperFillResponse 形制） */
 export const mockPaperFill: PaperFill = {
   id: 1,
   task_id: "t1",

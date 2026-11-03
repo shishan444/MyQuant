@@ -10,9 +10,7 @@ import {
   Database,
   Upload,
   Search,
-  Eye,
   Trash2,
-  TrendingUp,
   FileUp,
   X,
   FileSpreadsheet,
@@ -308,7 +306,7 @@ export function DataManagement() {
   const deleteDataset = useDeleteDataset();
 
   // 数据查询下沉既有 hook（G5 修正：原页面内联 queryFn 与 useDatasets 重复）
-  const { data, isLoading } = useQuery(useDatasets());
+  const { data, isLoading, isError, refetch } = useQuery(useDatasets());
 
   const allDatasets: Dataset[] = data?.items ?? [];
 
@@ -375,13 +373,8 @@ export function DataManagement() {
       align: "right",
       render: (_, ds) => (
         <div className="flex items-center justify-end gap-1">
-          {/* F0 遗留死操作 disabled 化：预览/在实验室打开尚未接线（原 void 空操作） */}
-          <Tooltip title="预览（未开放）">
-            <AntButton type="text" size="small" icon={<Eye />} disabled aria-label="预览数据集" />
-          </Tooltip>
-          <Tooltip title="在实验室打开（未开放）">
-            <AntButton type="text" size="small" icon={<TrendingUp />} disabled aria-label="在实验室打开" />
-          </Tooltip>
+          {/* fe-asset-data-domain 4.2：预览/在实验室打开两死操作移除
+              （D4 裁决——原型 09 页无此操作，「接真」无原型依据不取） */}
           <Tooltip title="删除">
             <AntButton
               type="text"
@@ -404,7 +397,7 @@ export function DataManagement() {
         <EmptyState
           icon={Database}
           title="还没有导入任何数据集"
-          description="导入 CSV 文件或从 Binance 导入历史数据，开始量化分析"
+          description="上传 CSV 文件导入历史数据，开始量化分析"
           actions={[
             {
               label: "导入 CSV 文件",
@@ -466,12 +459,7 @@ export function DataManagement() {
             >
               上传 CSV 文件
             </AntButton>
-            {/* F0 遗留死按钮 disabled 化：Binance 导入端点未提供 */}
-            <Tooltip title="Binance 导入端点未提供">
-              <AntButton size="small" icon={<FileUp />} disabled>
-                从 Binance 导入
-              </AntButton>
-            </Tooltip>
+            {/* fe-asset-data-domain 4.2：Binance 导入死按钮移除（D4——同上） */}
             <div className="relative ml-auto">
               <Input
                 placeholder="搜索币种..."
@@ -487,7 +475,16 @@ export function DataManagement() {
 
         {/* 数据集表（每行下方质量条：expandable 无缝嵌入） */}
         <GlassCard className="p-0 overflow-hidden" hover={false}>
-          {isLoading ? (
+          {isError ? (
+            /* fe-asset-data-domain 4.1：故障态可见（W0）——数据源失败呈现
+               错误行+重试，禁静默空表（TanStack retry 兜底自动重拉） */
+            <div className="flex flex-col items-center gap-2 py-10">
+              <p className="text-sm text-loss">数据集源暂不可达</p>
+              <AntButton size="small" onClick={() => refetch()}>
+                重试
+              </AntButton>
+            </div>
+          ) : isLoading ? (
             <div className="p-4">
               <TableSkeleton />
             </div>

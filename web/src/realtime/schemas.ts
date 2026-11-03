@@ -112,7 +112,7 @@ export const EvolutionEvent = z.discriminatedUnion("type", [
 export type EvolutionEvent = z.infer<typeof EvolutionEvent>;
 
 // ---------------------------------------------------------------------------
-// trading 通道业务事件（纸盘新域七事件——payload 实证：core/paper_trading/
+// trading 通道业务事件（模拟交易域七事件——payload 实证：core/paper_trading/
 // runtime/executor.py _push 构造点 + api/realtime.py _emit_task_snapshot）
 // ---------------------------------------------------------------------------
 
