@@ -625,6 +625,15 @@ def _build_detail_payload(
                 "size": abs(float(row["Size"])),
                 "direction": str(row["Direction"]),
                 "pnl": None if pd.isna(pnl_val) else float(pnl_val),
+                # 决策理由（D6）：执行器可得判定事实快照——条件级触发
+                # 明细在 vbt 组合器封装内不可得，trigger 如实 null（禁
+                # 捏造）；side/direction/status 为可得事实
+                "decision_json": json.dumps({
+                    "trigger": None,
+                    "side": "entry",
+                    "direction": str(row["Direction"]),
+                    "status": str(row.get("Status", "")),
+                }, ensure_ascii=False),
             })
 
     return {"trades": trades, "equity": equity_row}
