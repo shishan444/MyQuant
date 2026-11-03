@@ -1,7 +1,8 @@
 """v0.18 实盘交易预览页 Playwright e2e 断言网（live-trading-preview C8）。
 
-demo-only 目标态预览页断言：可达+demo 域标注+八区块——零前置（自管
-fixture），零外网。
+demo-only 目标态预览页断言：可达+demo 域标注+八区块+K 线深空图列
+（fe-asset-data-domain 3.1 双列布局后右列头部 vb 图列锚）——零前置
+（自管 fixture），零外网。
 """
 
 import os
@@ -46,6 +47,9 @@ class TestV018LivePreview:
         content = page.content()
         assert "demo 域预览" in content
         assert "目标态预览" in content
+        # fe-asset-data-domain 3.1：K 线深空图列（vb 变体）在页——右列头部位
+        assert page.locator('[data-testid="live-kline-vb"]').count() == 1
+        assert "深空图列" in content
         assert "任务列表" in content
         assert "任务头卡" in content
         assert "实盘仓位" in content

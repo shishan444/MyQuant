@@ -178,3 +178,33 @@ class TestTradingHeader:
         nav_link = page.locator("nav a[href='/trading']")
         assert nav_link.count() >= 1, "模拟交易侧栏链接缺失"
         assert "模拟交易" in nav_link.first.inner_text(), "侧栏链接文案非「模拟交易」"
+
+
+class TestTradingHud:
+    """07 HUD 四浮层内容级锚（fe-asset-data-domain 2.3）。
+
+    双断言形制（URL+元素级 testid）+条件态：HUD 随任务详情卡渲染——
+    库内有任务时断言四浮层元素级在场；无任务时保守早退不断言失败。
+    实况注记（2026-11-03 变异验证实录）：pytest e2e 自管 fixture 为隔离
+    库（无任务）→本用例在此恒走空态早退=空态安全性锚；元素级真值主锚
+    在 ChartHud.test.tsx 四用例（组件级）+8080 走查轨（元素级路径可达
+    环境）承载。
+    """
+
+    def test_hud_present_when_task_exists(self, page: Page):
+        _goto_trading(page)
+        page.wait_for_timeout(2500)
+        assert "/trading" in page.url, f"URL 锁失败: {page.url}"
+        # 空态分支：无任务时页面呈现空态文案（保守锚——v015 :104 既有）
+        body = page.locator("body").inner_text()
+        if "暂无模拟交易任务" in body:
+            return  # 库内无任务——HUD 组件级锚承载本面
+        # 有任务：详情卡在页 → HUD 四浮层元素级锚
+        hud = page.locator('[data-testid="chart-hud"]')
+        assert hud.count() >= 1, "有任务但 chart-hud 未渲染"
+        hud_text = hud.first.inner_text()
+        assert "BTCUSDT" in hud_text or "ETHUSDT" in hud_text, "标题浮层缺标的"
+        assert "最新" in hud_text, "标题浮层缺最新价"
+        assert "仓位" in hud_text, "仓位浮层缺标题"
+        assert "信号" in hud_text, "信号浮层缺标题"
+        assert "成交" in hud_text, "成交浮层缺标题"
