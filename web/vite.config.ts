@@ -5,6 +5,13 @@ import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
+// proxy target 统一 env 化（e2e 隔离工具 fixture 经 VITE_API_PROXY_TARGET
+// 注入临时 api 地址——node 层 process.env 读取，非客户端 bundle 面）；
+// 缺省仍指常驻 8000，观察面行为零变化。/socket.io 为前端实时链路必经
+// （三条 socket.io 连接全走页面 origin 相对路径，条目缺失则断连重连
+// 循环），与 /api、/ws 逃生口共用同一 target。
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8000";
+
 export default defineConfig({
   plugins: [
     react(),
@@ -28,11 +35,15 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: apiProxyTarget,
         changeOrigin: true,
       },
+      "/socket.io": {
+        target: apiProxyTarget,
+        ws: true,
+      },
       "/ws": {
-        target: "ws://localhost:8000",
+        target: apiProxyTarget,
         ws: true,
       },
     },
