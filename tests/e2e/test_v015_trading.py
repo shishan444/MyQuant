@@ -1,7 +1,8 @@
 """Trading 页（模拟交易）Playwright e2e 冒烟测试网（v0.15+）。
 
-服务对象：前端 Trading 页验收（React+antd 单页应用；BASE 缺省
-localhost:8080，可用环境变量 E2E_WEB_URL 覆写）。
+服务对象：前端 Trading 页验收（React+antd 单页应用；BASE 由 conftest
+注入的自管 web 地址解析——缺省 localhost:8080 仅模块独立运行兜底，
+外部覆写语义已废除，conftest 为 E2E_WEB_URL 唯一权威）。
 覆盖面：空态、页面加载、导航、console error 守护、布局组件。
 边界：CRUD 全量用例（创建/暂停/停止/删除）需要带数据的真实后端，
 本网刻意保持冒烟级——只验页面骨架与守护面，不构造业务数据。
