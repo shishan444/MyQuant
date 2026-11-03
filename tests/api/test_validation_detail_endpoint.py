@@ -176,7 +176,8 @@ class TestIsolatedPositive:
         for t in ex["trades"]:
             assert set(t) == {"seq", "entry_time", "exit_time",
                               "entry_price", "exit_price", "size",
-                              "direction", "pnl"}
+                              "direction", "pnl",
+                              "decision"}  # D6 决策理由透传（新验证非 None）
             assert t["direction"] in ("Long", "Short")
         # 紧凑形制透传（fixture 数据连续无洞）
         assert ex["equity"]["grid_aligned"] is True

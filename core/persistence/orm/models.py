@@ -850,6 +850,10 @@ class VrTradeDetail(Base):
     size: Mapped[float] = mapped_column(REAL, nullable=False)
     direction: Mapped[str] = mapped_column(Text, nullable=False)  # Long/Short 原值
     pnl: Mapped[Optional[float]] = mapped_column(REAL)  # vbt PnL 原值，NULLable
+    # 决策理由 JSON（be-validation-decision-records D6）：执行器记 trade 时
+    # 可得的判定事实快照；条件级触发明细在 vbt 组合器封装内不可得——
+    # trigger 如实 null（不捏造），演进位待引擎暴露
+    decision_json: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class VrEquityCurve(Base):

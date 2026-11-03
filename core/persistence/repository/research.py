@@ -701,6 +701,11 @@ def get_validation_executions(
                 "size": t["size"],
                 "direction": t["direction"],
                 "pnl": t["pnl"],
+                # 决策理由透传（D6）：JSON 解析；存量行 NULL→None 如实
+                # （前端「无理由留痕」呈现依据）
+                "decision": (
+                    json.loads(t["decision_json"])
+                    if t["decision_json"] else None),
             })
 
     executions = []
