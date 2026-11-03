@@ -1,4 +1,8 @@
-"""E2E test for v0.11 Strategy Lab page."""
+"""v0.11 Strategy Lab 页（策略实验室）Playwright e2e 冒烟验收网。
+
+服务对象：前端 Lab 页验收（v010-v016 冒烟网一员，自管 fixture 零前置、
+零外网）——页面可达+信号编辑面与回测入口存在性，冒烟级不构造业务数据。
+"""
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -8,7 +12,7 @@ BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
-    """Wait for React to hydrate."""
+    """等待 React 水合完成（v010 同款轮询判据）。"""
     import time
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
@@ -32,7 +36,7 @@ class TestV011Lab:
         page.goto(BASE + "/lab", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        # Should have some signal-related UI elements
+        # 信号面存在性断言口径：中英文关键词宽匹配（页面文案语言不锁定）
         content = page.content().lower()
         assert "信号" in content or "入场" in content or "出场" in content or "entry" in content or "signal" in content or "rsi" in content, \
             "No signal editor content found"

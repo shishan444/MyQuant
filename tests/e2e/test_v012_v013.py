@@ -1,4 +1,8 @@
-"""E2E tests for v0.12 Evolution Center + v0.13 Library + Settings."""
+"""v0.12 进化中心+v0.13 组件库与设置页 Playwright e2e 冒烟验收网。
+
+服务对象：前端 Evolution/Library/Settings 页验收（v010-v016 冒烟网
+一员，自管 fixture 零前置、零外网）——页面可达与渲染级冒烟。
+"""
 
 import pytest
 from playwright.sync_api import Page
