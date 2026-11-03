@@ -100,7 +100,9 @@ describe("Verify（AntD）", () => {
   });
 
   it("配置区：策略计数+日期预设+日期输入", async () => {
-    setup([makeStrategy()]);
+    const { user } = setup([makeStrategy()]);
+    // fe-validation-records-page：发起器默认折叠——先开折叠区
+    await user.click(screen.getByRole("button", { name: /发起器 · 历史会话/ }));
     // 计数经主按钮锚定（文本跨 JSX 节点）：开始验证 (1)
     expect(await screen.findByRole("button", { name: /开始验证\s*\(1\)/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "近3月" })).toBeInTheDocument();
@@ -111,10 +113,12 @@ describe("Verify（AntD）", () => {
 
   it("历史切换：点击进入历史视图（空记录态）再返回", async () => {
     const { user } = setup([makeStrategy()]);
+    // fe-validation-records-page：先开折叠区（发起器默认折叠）
+    await user.click(screen.getByRole("button", { name: /发起器 · 历史会话/ }));
     await screen.findByRole("button", { name: /开始验证\s*\(1\)/ });
-    await user.click(screen.getByRole("button", { name: /历史记录/ }));
+    await user.click(screen.getByRole("button", { name: /历史会话/ }));
     expect(await screen.findByText("暂无验证记录")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /返回验证/ }));
+    await user.click(screen.getByRole("button", { name: /返回发起器/ }));
     expect(await screen.findByRole("button", { name: /开始验证\s*\(1\)/ })).toBeInTheDocument();
   });
 });

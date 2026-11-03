@@ -18,6 +18,13 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import {
+  FilterBar,
+  RecordDetail,
+  RecordsTable,
+  useInvalidateRecords,
+} from "@/components/validationRecords/RecordBrowser";
+import type { ValidationRecordRow as ValidationRecordRowLite } from "@/services/validationRecords";
+import {
   useStrategies,
   useVerifyStream,
   useVerifySessions,
@@ -129,6 +136,11 @@ export function Verify() {
   });
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [view, setView] = useState<"verify" | "history">("verify");
+  // fe-validation-records-page：浏览骨架态+发起器折叠态
+  const [filters, setFilters] = useState<{ idType: string; id?: string; level?: string; verdict?: string }>({ idType: "hypothesis_id" });
+  const [selectedRecord, setSelectedRecord] = useState<ValidationRecordRowLite | undefined>(undefined);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const invalidateRecords = useInvalidateRecords();
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [filterKey, setFilterKey] = useState<FilterKey>("all");
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
@@ -183,6 +195,9 @@ export function Verify() {
   const canVerify = strategies.length > 0 && filledRanges.length > 0 && stream.status !== "running";
 
   const handleVerify = useCallback(() => {
+    // 同页闭环（fe-validation-records-page V-I）：发起成功后失效记录表
+    // queryKey——新记录出现在浏览表=发起与浏览同页闭环的验收判据
+    invalidateRecords();
     if (!canVerify) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ dateRanges, advancedParams }));
     stream.start({
@@ -260,24 +275,38 @@ export function Verify() {
   return (
     <PageTransition>
       <div className="p-4 space-y-3 max-w-[1400px] mx-auto">
-        {/* 头部 */}
+        {/* 头部（fe-validation-records-page：浏览为主水体） */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="h-4 w-4 text-blue-400" />
             <h1 className="text-sm font-semibold text-text-primary">验证记录</h1>
-            <span className="text-[11px] font-mono text-text-secondary">
-              {totalStrategies} 条策略 · {strategyGroups.length} 品种
-            </span>
           </div>
           <AntButton
-            type={view === "history" ? "primary" : "text"}
             size="small"
-            onClick={() => setView(view === "history" ? "verify" : "history")}
+            type={launcherOpen ? "primary" : "text"}
+            onClick={() => setLauncherOpen(!launcherOpen)}
+            data-testid="launcher-toggle"
           >
-            <History className="w-3 h-3 mr-1" />
-            {view === "history" ? "返回验证" : "历史记录"}
+            {launcherOpen ? "收起发起器" : "发起器 · 历史会话"}
           </AntButton>
         </div>
+
+        {/* 发起器+历史会话折叠区（R5+R7-b：默认折叠不挤占骨架；逻辑零改动迁入） */}
+        {launcherOpen && (
+        <div className="space-y-2 rounded-lg border border-border-faint bg-bg-base/40 p-3" data-testid="launcher-panel">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wide text-text-muted">
+              批量验证发起器（次级能力区） · {totalStrategies} 条策略 · {strategyGroups.length} 品种
+            </span>
+            <AntButton
+              type={view === "history" ? "primary" : "text"}
+              size="small"
+              onClick={() => setView(view === "history" ? "verify" : "history")}
+            >
+              <History className="w-3 h-3 mr-1" />
+              {view === "history" ? "返回发起器" : "历史会话"}
+            </AntButton>
+          </div>
 
         {view === "history" ? (
           <HistoryView
@@ -532,6 +561,21 @@ export function Verify() {
             )}
           </>
         )}
+        </div>
+        )}
+
+        {/* 浏览骨架主体：筛选→记录表→详情（fe-validation-records-page） */}
+        <div className="space-y-2" data-testid="records-browser">
+          <FilterBar onSearch={(f) => { setFilters(f); setSelectedRecord(undefined); }} />
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border border-border-faint p-2">
+              <RecordsTable filters={filters} onSelect={setSelectedRecord} selectedId={selectedRecord?.record_id} />
+            </div>
+            <div className="rounded-lg border border-border-faint p-2">
+              <RecordDetail recordId={selectedRecord?.record_id} />
+            </div>
+          </div>
+        </div>
       </div>
     </PageTransition>
   );
