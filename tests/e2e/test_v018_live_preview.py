@@ -1,7 +1,7 @@
-"""E2E tests for v0.18 Live trading preview page（live-trading-preview C8）。
+"""v0.18 实盘交易预览页 Playwright e2e 断言网（live-trading-preview C8）。
 
-demo-only 目标态预览页断言：可达+demo 域标注+八区块——全程 localhost
-双服务，零外网（e2e-external-api-mock-rule）。
+demo-only 目标态预览页断言：可达+demo 域标注+八区块——零前置（自管
+fixture），零外网。
 """
 
 import os

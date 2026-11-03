@@ -1,6 +1,6 @@
 """E2E 自管服务组 conftest（add-e2e-isolated-harness H1 重写）。
 
-以前 e2e 依赖常驻双服务（svc.sh web:8080 + api:8000）——载旧码、并发
+以前 e2e 依赖常驻双进程（svc.sh web:8080 + api:8000）——载旧码、并发
 互踢、写生产业务库三重问题。现在 session fixture 拉起一次性双进程，
 机制件在同目录 harness.py（单元用例直测对象）。两层结构：
 
