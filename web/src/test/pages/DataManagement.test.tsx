@@ -85,7 +85,7 @@ describe("DataManagement 双币月矩阵（fe-asset-data-domain 4.3）", () => {
     setup();
     const table = await screen.findByTestId("freshness-table-fixed");
     // 12 路键全集逐键在场
-    for (const key of ["BTCUSDT_1m", "BTCUSDT_4h", "ETHUSDT_1h", "ETHUSDT_30m"]) {
+    for (const key of ["BTCUSDT_1m", "BTCUSDT_4h", "ETHUSDT_1h", "ETHUSDT_1d"]) {
       expect(table).toHaveTextContent(key);
     }
     expect(screen.getByText(/12 路 = 2 币 × 6 档/)).toBeInTheDocument();

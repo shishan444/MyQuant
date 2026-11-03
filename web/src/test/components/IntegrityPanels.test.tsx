@@ -3,6 +3,9 @@
  * 审查阶段补网：原零单测）。
  * 三态格渲染/缺口申报清单（REJ-04 申报制）/长周期整体行/503 态/空态
 * /错误态——服务层全 mock，零真实请求（测试外网硬红线）。
+ * t3r5（fe-asset-data-domain 4.3）：保鲜表用例随生产消费方迁移至
+ * FreshnessTableFixed（12 路满格+未扫占位+超集尾随+503）——旧
+ * FreshnessTable 生产引用已零，用例不再锚死代码。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -13,7 +16,7 @@ vi.mock("@/services/dataWorkbench", () => ({
   getFreshnessStatus: vi.fn(),
 }));
 
-import { IntegrityMatrix, FreshnessTable } from "@/components/data/IntegrityPanels";
+import { IntegrityMatrix, FreshnessTableFixed } from "@/components/data/IntegrityPanels";
 import * as dwb from "@/services/dataWorkbench";
 
 function setup(node: React.ReactNode) {
@@ -99,34 +102,62 @@ describe("IntegrityMatrix（09-B2r 月矩阵）", () => {
   });
 });
 
-describe("FreshnessTable（09-B6r 保鲜表）", () => {
-  it("正常态：kline 键六态徽章+last_run+derivs 徽章", async () => {
-    setup(<FreshnessTable />);
-    // 键与六态分属父子节点——容器级 textContent 断言
-    const box = await screen.findByTestId("freshness-table");
+describe("FreshnessTableFixed（09 保鲜 12 路满格——fe-asset-data-domain 4.3）", () => {
+  // t3r5 迁移（G2）：原 FreshnessTable 用例随生产消费方切 Fixed 迁移改写
+  // （旧组件生产引用已零；derivs 徽章面随旧组件退役消失——Fixed 只呈现
+  // kline 12 路键集，语义迁移=空态改全占位、正常态改混合键集可区分）。
+  it("混合键集：实态与「未扫」占位同屏可区分+超集键尾随+12 键恒满格", async () => {
+    vi.mocked(dwb.getFreshnessStatus).mockResolvedValue({
+      kline: {
+        last_run: "2026-11-01T08:00:00+00:00",
+        keys: {
+          BTCUSDT_1m: "skipped_no_file", // 实态（已扫·无文件）
+          BTCUSDT_4h: "fresh", // 实态
+          BTCUSDT_30m: "fresh", // 超集键（FIXED 12 键之外——F1 后 30m 为被排除档）
+        } as Record<string, string>,
+      },
+      derivs: { last_run: null, symbols: {} },
+    } as never);
+    setup(<FreshnessTableFixed />);
+    const box = await screen.findByTestId("freshness-table-fixed");
+    // 实态行状态值原样（与占位可区分——spec THEN 原文）
+    expect(box.textContent).toContain("BTCUSDT_1m·skipped_no_file");
     expect(box.textContent).toContain("BTCUSDT_4h·fresh");
-    expect(box.textContent).toContain("BTCUSDT_1h·stale");
+    // FIXED 键未返回 →「未扫」占位（5m 不在返回键集）
+    expect(box.textContent).toContain("BTCUSDT_5m·未扫");
+    expect(box.textContent).toContain("ETHUSDT_4h·未扫");
+    // 超集键尾随在场
+    expect(box.textContent).toContain("BTCUSDT_30m·fresh");
+    // 12 FIXED 键恒满格（2 币×6 档逐键在场——FAPI_TIMEFRAMES 1m/5m/15m/1h/4h/1d）
+    for (const key of ["BTCUSDT", "ETHUSDT"].flatMap((sym) =>
+      ["1m", "5m", "15m", "1h", "4h", "1d"].map((tf) => `${sym}_${tf}`))) {
+      expect(box.textContent).toContain(key);
+    }
+    // last_run 呈现
     expect(box.textContent).toContain("上轮检查 2026-11-01 08:00:00");
-    expect(box.textContent).toContain("BTCUSDT·funding/oi");
+  });
+
+  it("空键集（守护器首轮未完成）：12 键全「未扫」+未运行", async () => {
+    vi.mocked(dwb.getFreshnessStatus).mockResolvedValue({
+      kline: { last_run: null, keys: {} },
+      derivs: { last_run: null, symbols: {} },
+    } as never);
+    setup(<FreshnessTableFixed />);
+    const box = await screen.findByTestId("freshness-table-fixed");
+    expect(box.textContent).toContain("BTCUSDT_1m·未扫");
+    expect(box.textContent).toContain("ETHUSDT_4h·未扫");
+    expect(box.textContent).toContain("上轮检查 未运行");
   });
 
   it("503 态：kline/derivs 双 null 如实呈现守护器未装配", async () => {
     vi.mocked(dwb.getFreshnessStatus).mockResolvedValue({ kline: null, derivs: null } as never);
-    setup(<FreshnessTable />);
+    setup(<FreshnessTableFixed />);
     expect(await screen.findByText(/保鲜守护器未装配/)).toBeInTheDocument();
   });
 
   it("错误态（isError）同走未装配文案", async () => {
     vi.mocked(dwb.getFreshnessStatus).mockRejectedValue(new Error("503") as never);
-    setup(<FreshnessTable />);
+    setup(<FreshnessTableFixed />);
     expect(await screen.findByText(/保鲜守护器未装配/)).toBeInTheDocument();
-  });
-
-  it("空态：kline.keys 空记录「暂无检查记录」", async () => {
-    const empty = { ...FRESH, kline: { last_run: null, keys: {} } };
-    vi.mocked(dwb.getFreshnessStatus).mockResolvedValue(empty as never);
-    setup(<FreshnessTable />);
-    expect(await screen.findByText(/K 线路暂无检查记录/)).toBeInTheDocument();
-    expect(screen.getByText(/上轮检查 未运行/)).toBeInTheDocument();
   });
 });

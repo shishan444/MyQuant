@@ -59,8 +59,9 @@ const QUALITY_CFG: Record<
   Dataset["quality_status"],
   { value: number; color: string; label: string }
 > = {
-  // fe-asset-data-domain 6.1：质量档色改 tokens 实色 import（原四字面量；
-  // 消费方 antd Progress strokeColor 需实色）
+  // fe-asset-data-domain 6.1：质量档色改 tokens import（原四字面量；
+  // 实色与 var() 通道均可——本处经 tokens import 直取（t3r5 R2 注释修正：
+  // 原「strokeColor 需实色」系排查中途错误假设，真实崩溃因为测试锚竞态））
   complete: { value: 100, color: POLARITY.up, label: "数据质量: 完整" },
   warning: { value: 90, color: STATE.warn, label: "有缺口 <5%" },
   error: { value: 60, color: POLARITY.down, label: "缺口 >5%" },
@@ -386,7 +387,9 @@ export function DataManagement() {
   ];
 
   // 空态（非失败）：引导导入
-  if (!isLoading && allDatasets.length === 0) {
+  // G1 修复（t3r5 tester 退卡）：空态守卫补 !isError——错误时整页早退渲染
+  // 空态引导，下方 :463 区块级错误块不可达（W0 违反：失败呈现错误非空表）
+  if (!isLoading && !isError && allDatasets.length === 0) {
     return (
       <PageTransition>
         <EmptyState

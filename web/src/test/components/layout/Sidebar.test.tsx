@@ -5,7 +5,7 @@
  * 折叠态 describe 随 M3 整体退役（useAppStore 侧栏字段已删）。
  */
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { Sidebar, getPageTitle } from "@/components/layout/Sidebar";
 

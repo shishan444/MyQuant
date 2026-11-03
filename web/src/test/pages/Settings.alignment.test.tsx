@@ -122,5 +122,8 @@ describe("Settings（10 设置·对齐批）", () => {
     // antd 两字按钮自动加空格（「重 试」）——匹配器容空白
     expect(screen.getByText(/重\s*试/)).toBeInTheDocument();
     expect(screen.queryByLabelText("初始资金")).not.toBeInTheDocument();
+    // 重试点击 → 配置源重发（t3r5 G6——loadConfig 再调 GET：mount 1 次+重试 1 次）
+    fireEvent.click(screen.getByText(/重\s*试/));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
   });
 });

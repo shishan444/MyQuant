@@ -204,7 +204,7 @@ export function LiveTrading() {
             )}
           </SectionCard>
 
-<SectionCard icon={Activity} title="任务头卡" testid="live-b2">
+          <SectionCard icon={Activity} title="任务头卡" testid="live-b2">
             {selected ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">

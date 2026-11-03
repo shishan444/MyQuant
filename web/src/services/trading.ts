@@ -93,7 +93,7 @@ export async function getTradingSignals(
   taskId: string,
   params?: ListPageParams
 ): Promise<PaperSignalList> {
-    return api.get(`/api/paper-trading/tasks/${taskId}/signals`, {
+  return api.get(`/api/paper-trading/tasks/${taskId}/signals`, {
     params: { limit: params?.limit, offset: params?.offset },
   });
 }

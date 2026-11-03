@@ -139,6 +139,11 @@ describe("Plugins（11 插件与组件）", () => {
     expect(screen.getByTestId("pool-观察池").textContent).toContain("GARCH");
     // 静态投影来源标注
     expect(screen.getByText(/名单来源：研究需求文档（静态投影）/)).toBeInTheDocument();
+    // fe-asset-data-domain 5.2：静态快照标识常显（t3r5 G5——R5 可判别锚：
+    // 不冒充真数据，真值端点待建披露在场）
+    const badge = screen.getByTestId("static-snapshot-badge");
+    expect(badge.textContent).toContain("静态快照");
+    expect(badge.textContent).toContain("be-plugin-pool-authority");
     // 动态数=插件条目（formula 1+model 1=2，builtin 1 除外）
     expect(await screen.findByTestId("pools-registered-count")).toHaveTextContent("已注册插件列 2");
   });

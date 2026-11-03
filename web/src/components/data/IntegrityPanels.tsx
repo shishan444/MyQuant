@@ -108,52 +108,6 @@ export function IntegrityMatrix({ symbol, monthsBack }: { symbol: string; months
   );
 }
 
-export function FreshnessTable() {
-  const q = useQuery({
-    queryKey: ["freshness", "status"],
-    queryFn: getFreshnessStatus,
-    refetchInterval: 120_000,
-  });
-
-  if (q.isError || (q.data && q.data.kline === null && q.data.derivs === null)) {
-    return <p className="text-xs text-loss">保鲜守护器未装配（503）——状态不可用</p>;
-  }
-  if (q.isLoading) return <p className="text-xs text-text-muted">保鲜表装载中…</p>;
-  const d = q.data;
-  if (!d?.kline) return null;
-
-  const klineEntries = Object.entries(d.kline.keys ?? {});
-  const derivEntries = Object.entries(d.derivs?.symbols ?? {});
-
-  return (
-    <div className="space-y-2" data-testid="freshness-table">
-      <div className="flex items-center gap-2 text-[10px] text-text-muted">
-        <RefreshCw className="h-3 w-3" />
-        上轮检查 {d.kline.last_run?.replace("T", " ").slice(0, 19) ?? "未运行"}
-      </div>
-      {/* K 线十二路（键→六态） */}
-      <div className="flex flex-wrap gap-1.5">
-        {klineEntries.map(([key, state]) => (
-          <span key={key} className="rounded border border-border-faint px-1.5 py-0.5 font-mono text-[10px] text-text-secondary" title={String(state)}>
-            {key}
-            <span className="ml-1 text-text-muted">·{String(state)}</span>
-          </span>
-        ))}
-        {klineEntries.length === 0 && <span className="text-[11px] text-text-muted">K 线路暂无检查记录</span>}
-      </div>
-      {/* 衍生品（funding/oi） */}
-      {derivEntries.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {derivEntries.map(([sym]) => (
-            <span key={sym} className="rounded border border-border-faint px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-              {sym}·funding/oi
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 /** 双币并列月矩阵（fe-asset-data-domain 4.3——R9 生效态：双币=前端两次
@@ -178,7 +132,9 @@ export function DualIntegrityMatrix({ monthsBack }: { monthsBack: number }) {
 const FRESHNESS_FIXED_KEYS: string[] = [
   "BTCUSDT", "ETHUSDT",
 ].flatMap((sym) =>
-  ["1m", "5m", "15m", "30m", "1h", "4h"].map((tf) => `${sym}_${tf}`),
+  // F1 修正（t3r5）：FAPI_TIMEFRAMES=1m/5m/15m/1h/4h/1d——30m 是被排除的
+  // 超集档（stream.py:76 注释明写），原 30m 为笔误致两格恒「未扫」假占位
+  ["1m", "5m", "15m", "1h", "4h", "1d"].map((tf) => `${sym}_${tf}`),
 );
 
 /** 保鲜 12 路满格表（4.3）：键集不全时按 FIXED_SUBSCRIBE_KEYS 补「未扫」

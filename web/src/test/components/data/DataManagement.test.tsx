@@ -41,16 +41,18 @@ function makeDataset(overrides: Partial<Dataset> = {}): Dataset {
   };
 }
 
-function setup(reactQueryData?: { items?: Dataset[]; isLoading?: boolean }) {
+function setup(reactQueryData?: { items?: Dataset[]; isLoading?: boolean; error?: boolean }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // mock queryOptions：queryFn 返回注入数据（加载态=永 pending）
+  // mock queryOptions：queryFn 返回注入数据（加载态=永 pending；error=reject）
   const items = reactQueryData?.items;
+  const queryFn = reactQueryData?.isLoading
+    ? vi.fn(() => new Promise(() => {}))
+    : reactQueryData?.error
+      ? vi.fn(() => Promise.reject(new Error("模拟 500")))
+      : vi.fn(() => Promise.resolve({ items: items ?? [], total: items?.length ?? 0 }));
   vi.mocked(useDatasets).mockReturnValue({
     queryKey: ["datasets"],
-    queryFn:
-      reactQueryData?.isLoading
-        ? () => new Promise(() => {})
-        : () => Promise.resolve({ items: items ?? [], total: items?.length ?? 0 }),
+    queryFn,
   } as never);
   const mutateAsync = vi.fn();
   vi.mocked(useDeleteDataset).mockReturnValue({
@@ -70,7 +72,7 @@ function setup(reactQueryData?: { items?: Dataset[]; isLoading?: boolean }) {
       </ConfigProvider>
     </QueryClientProvider>,
   );
-  return { user, qc, utils, mutateAsync };
+  return { user, qc, utils, mutateAsync, queryFn };
 }
 
 describe("DataManagement（AntD）", () => {
@@ -136,6 +138,20 @@ describe("DataManagement（AntD）", () => {
     expect(screen.queryByRole("button", { name: "预览数据集" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "在实验室打开" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "从 Binance 导入" })).not.toBeInTheDocument();
+  });
+
+  it("数据集失败可见（fe-asset-data-domain 4.1——W0 禁静默空表）：区块级错误+重试入口", async () => {
+    // spec Scenario「数据集失败可见」锚（t3r5 G1）：/api/data/datasets 失败
+    // → 错误行+重试按钮在场，数据行与空态引导文案均不渲染（错误≠空）
+    const { user, queryFn } = setup({ error: true });
+    expect(await screen.findByText("数据集源暂不可达")).toBeInTheDocument();
+    // antd 两字按钮自动加空格（「重 试」）——匹配器容空白
+    expect(screen.getByRole("button", { name: /重\s*试/ })).toBeInTheDocument();
+    expect(screen.queryByText("2025-01-01 ~ 2025-06-01")).not.toBeInTheDocument();
+    expect(screen.queryByText("还没有导入任何数据集")).not.toBeInTheDocument();
+    // 重试入口点击 → 查询重发（refetch 语义）
+    await user.click(screen.getByRole("button", { name: /重\s*试/ }));
+    await vi.waitFor(() => expect(queryFn.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
   it("上传弹层：打开后表单三控件（Symbol 必填提示经 Form rules）", async () => {
