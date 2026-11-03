@@ -46,21 +46,19 @@ class PendingEventsResponse(BaseModel):
     truncated: bool = False    # 达扫描上限（终态或运行中任一面）——可能漏扫
 
 
-def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
-    """并集耗尽：active 态假设逐个 query_union_balance，remaining_bars==0（§7.3 单字段判定式）。
+def _iter_union_balances(db_path, data_dir, degraded_out: dict):
+    """active 假设×区间并集现算共享流（QA-1 提取——t3r6：D9 与
+    union_exhausted 原 25 行主体逐字双写，单侧修复必漂移）。
 
-    全量扫（CARD-01）：iter_all_pages 翻页（单源——判定类读场景的既有
-    帮助函数，isolation/hypothesis_service 先例），替单页 limit=50 静默
-    截断（>50 active 假设时后半静默漏扫）。
-    bounds_cache（CARD-02）：请求内 (symbol,timeframe)→data_bounds 缓存
-    ——逐假设不重复装载 parquet 边界；装载失败（raise）未入缓存即
-    「失败不缓存」，同符号后续假设自然重试。
+    产 (假设行, 区间 dict, balance dict) 三元组流；per-假设失败即时
+    写入 degraded_out["count"]（holder 形制——早断消费方也能读到已
+    发生失败数；原函数对象属性形制在早断/多请求下失真，弃）。CARD-01
+    全量翻页/CARD-02 bounds_cache「失败不缓存」两形制原样承载。
     """
     from core.analysis.isolation import iter_all_pages
     from core.analysis.validation_service import (
         load_data_bounds, query_union_balance)
     from core.persistence.repository import research as rr
-    events: List[PendingEvent] = []
     degraded = 0
     bounds_cache: Dict[tuple, tuple] = {}
     all_active = iter_all_pages(
@@ -83,17 +81,34 @@ def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]
                     symbol=dr["symbol"], timeframe=dr["timeframe"],
                     hypothesis_id=hyp["hypothesis_id"],
                     data_bounds=bounds_cache[key])
-                if bal.get("remaining_bars") == 0:
-                    events.append(PendingEvent(type="union_exhausted", payload={
-                        "hypothesis_id": hyp["hypothesis_id"],
-                        "symbol": dr["symbol"], "timeframe": dr["timeframe"],
-                        "remaining_bars": 0}))
-                    break  # 一假设一事件（首个耗尽区间即报）
+                yield hyp, dr, bal
         except Exception as exc:  # noqa: BLE001——fail-open 观察面
             degraded += 1
-            logger.warning("union_exhausted 扫描跳过 %s: %s",
+            degraded_out["count"] = degraded  # 即时写（早断可读）
+            logger.warning("union_balance 扫描跳过 %s: %s",
                            hyp.get("hypothesis_id"), exc)
-    return events, degraded
+
+
+def _union_exhausted_events(db_path, data_dir) -> tuple[List[PendingEvent], int]:
+    """并集耗尽：active 态假设逐区间 remaining_bars==0（§7.3 单字段判定式
+    ——首命中即报，一假设一事件）。遍历骨架经 _iter_union_balances 共享
+    （QA-1 提取后本函数只余消费判定）。"""
+    events: List[PendingEvent] = []
+    dg = {"count": 0}
+    produced: set = set()
+    for hyp, dr, bal in _iter_union_balances(db_path, data_dir, dg):
+        hid = hyp["hypothesis_id"]
+        if hid in produced:
+            continue  # 一假设一事件——已报假设的剩余区间跳过，
+            # 后续假设继续扫（原 break 仅跳区间循环的语义保全——QA-1
+            # 提取时误断整流致第二假设漏判，bounds_cache 用例拦截）
+        if bal.get("remaining_bars") == 0:
+            events.append(PendingEvent(type="union_exhausted", payload={
+                "hypothesis_id": hid,
+                "symbol": dr["symbol"], "timeframe": dr["timeframe"],
+                "remaining_bars": 0}))
+            produced.add(hid)
+    return events, dg["count"]
 
 
 def _qualify_pending_events(db_path) -> tuple[List[PendingEvent], int, int]:
@@ -270,12 +285,15 @@ def process_status() -> Dict[str, Any]:
     离线事实（前端呈现离线态）。纯 GET 幂等零副作用。"""
     import os
     import socket
-    port = int(os.environ.get("MYQUANT_MCP_PORT", "8800"))
     mcp_online, mcp_detail = True, None
     try:
+        # S-1 修复（t3r6-security）：env 解析并入探活 try——非法端口值
+        # 走 offline 分支（detail 注明配置非法）而非端点 500（端点自身
+        # 5xx 仅组装异常的契约自我一致）
+        port = int(os.environ.get("MYQUANT_MCP_PORT", "8800"))
         with socket.create_connection(("127.0.0.1", port), timeout=0.5):
             pass
-    except Exception as exc:  # noqa: BLE001——探活失败是离线事实非错误
+    except Exception as exc:  # noqa: BLE001——探活失败/配置非法均离线事实
         mcp_online, mcp_detail = False, str(exc)[:200]
     return {
         "api": {"online": True, "detail": None},
@@ -293,41 +311,19 @@ def hypothesis_union_remains(
     （union_exhausted 扫描的余量披露版——exhausted 只报 remaining==0，
     本端点逐区间披露余量数值）。iter_all_pages 全量翻页+bounds_cache
     请求内缓存（与 _union_exhausted_events 同形制）；fail-open per-假设
-    degraded 计数。消费方=②观察台假设卡组余量列。"""
-    from core.analysis.isolation import iter_all_pages
-    from core.analysis.validation_service import (
-        load_data_bounds, query_union_balance)
-    from core.persistence.repository import research as rr
+    degraded 计数。消费方=②观察台假设卡组余量列。遍历骨架经
+    _iter_union_balances 共享（QA-1 提取——与 union_exhausted 单源）。"""
     items: List[Dict[str, Any]] = []
-    degraded = 0
-    bounds_cache: Dict[tuple, tuple] = {}
-    all_active = iter_all_pages(
-        lambda off, lim: rr.list_hypotheses(
-            db_path, status="active", offset=off, limit=lim, order="asc"))
-    for hyp in all_active:
-        try:
-            ranges = json.loads(hyp.get("data_ranges") or "[]")
-            for dr in ranges:
-                key = (dr["symbol"], dr["timeframe"])
-                if key not in bounds_cache:
-                    bounds_cache[key] = load_data_bounds(
-                        data_dir, dr["symbol"], dr["timeframe"])
-                bal = query_union_balance(
-                    db_path, data_dir,
-                    symbol=dr["symbol"], timeframe=dr["timeframe"],
-                    hypothesis_id=hyp["hypothesis_id"],
-                    data_bounds=bounds_cache[key])
-                items.append({
-                    "hypothesis_id": hyp["hypothesis_id"],
-                    "symbol": dr["symbol"], "timeframe": dr["timeframe"],
-                    "remaining_bars": bal.get("remaining_bars"),
-                    "judged_bars": bal.get("judged_bars"),
-                })
-        except Exception as exc:  # noqa: BLE001——fail-open 观察面
-            degraded += 1
-            logger.warning("union_remains 扫描跳过 %s: %s",
-                           hyp.get("hypothesis_id"), exc)
-    return {"items": items, "degraded": degraded, "generated_at": _now_iso()}
+    dg = {"count": 0}
+    for hyp, dr, bal in _iter_union_balances(db_path, data_dir, dg):
+        items.append({
+            "hypothesis_id": hyp["hypothesis_id"],
+            "symbol": dr["symbol"], "timeframe": dr["timeframe"],
+            "remaining_bars": bal.get("remaining_bars"),
+            "judged_bars": bal.get("judged_bars"),
+        })
+    return {"items": items, "degraded": dg["count"],
+            "generated_at": _now_iso()}
 
 
 @router.get("/fleet-summary")
@@ -345,7 +341,8 @@ def fleet_summary(db_path=Depends(get_db_path)) -> Dict[str, Any]:
     funding 表 SQL 批量聚合（N+1 禁）；dims 两维现算单源。
     """
     from datetime import datetime, time as dtime, timezone
-    from api.routes.paper_trading import _task_response_from, _latest_equity_of
+    from api.routes.paper_trading import (
+        _latest_equity_of, _tasks_to_responses)
     from core.paper_trading.qualification import evaluate_two_dimensions
     from core.persistence.repository import paper as paper_repo
 
@@ -370,6 +367,12 @@ def fleet_summary(db_path=Depends(get_db_path)) -> Dict[str, Any]:
     # funding_sum SQL 批量（N+1 禁——一次 group by 全任务）
     funding_sums = paper_repo.sum_settled_funding_by_tasks(
         db_path, {r["task_id"] for r in all_rows})
+
+    # TD-B 修复（t3r6）：tasks 行 research_status 走 _tasks_to_responses
+    # 批查现算（与 /trading 列表同源同值——原快照列恒传在策略状态随动后
+    # 两端口分歧；批查 2 查常数形制同款）
+    responses_by_tid = {
+        r.task_id: r for r in _tasks_to_responses(db_path, all_rows)}
 
     degraded = 0
     task_items: List[Dict[str, Any]] = []
@@ -404,10 +407,9 @@ def fleet_summary(db_path=Depends(get_db_path)) -> Dict[str, Any]:
                     int(row.get("total_trades") or 0))
                 dims.update(d2)
 
-            # 约束 a：_task_response_from 单点复用（model_dump 归一 dict
-            # 后叠加 D11 增量字段——既有字段映射零重写）
-            base = _task_response_from(
-                row, row.get("research_status_snapshot") or "").model_dump()
+            # 约束 a：响应构造单点复用（_tasks_to_responses 产物按
+            # task_id 索引——model_dump 归一 dict 后叠加 D11 增量字段）
+            base = responses_by_tid[tid].model_dump()
             base.update({
                 "equity": equity, "day_delta": day_delta,
                 "realized_pnl": row.get("total_pnl"),
@@ -427,11 +429,15 @@ def fleet_summary(db_path=Depends(get_db_path)) -> Dict[str, Any]:
             logger.warning("fleet_summary 跳过 %s: %s",
                            row.get("task_id"), exc)
 
-    # recent_terminal：近终态行（updated_at desc，截 10）
+    # recent_terminal：近终态行（stopped_at desc 截 10——TD-A 修复：
+    # 原继承 created_at desc，>10 终态任务时截取集合错位为「最近创建
+    # 的终态」非「最近停止的」）
     recent_terminal = [
         {"task_id": r["task_id"], "status": r["status"],
          "stopped_at": r.get("stopped_at"), "total_pnl": r.get("total_pnl")}
-        for r in terminal_rows[:10]]
+        for r in sorted(
+            terminal_rows,
+            key=lambda r: r.get("stopped_at") or "", reverse=True)[:10]]
 
     fleet = {
         "active": {
@@ -447,4 +453,8 @@ def fleet_summary(db_path=Depends(get_db_path)) -> Dict[str, Any]:
     }
     return {"fleet": fleet, "tasks": task_items,
             "recent_terminal": recent_terminal,
-            "degraded": degraded, "generated_at": _now_iso()}
+            "degraded": degraded,
+            # TD-C 披露（t3r6）：达扫描上限可能漏扫（CARD-07 哲学——
+            # >1000 任务时 fleet 计数为截断值，如实告知非静默）
+            "truncated": len(all_rows) >= TERMINAL_SCAN_LIMIT,
+            "generated_at": _now_iso()}

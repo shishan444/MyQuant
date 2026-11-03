@@ -318,8 +318,8 @@ class TestFleetSummary:
 
     def test_active_day_delta_cross_day_baseline(self, client):
         """分支二：跨日任务→基点=当日首条快照（昨日快照不作基点）。"""
-        yesterday = (_now_iso()[:10] and
-                     (datetime.now(timezone.utc) - timedelta(days=1)).isoformat())
+        yesterday = (datetime.now(timezone.utc)
+                     - timedelta(days=1)).isoformat()
         tid = _make_pt_task(client._db, status="running",
                             balance=102_000.0, created_at=yesterday)
         _append_equity(client._db, tid, yesterday, 100_000.0)
@@ -392,6 +392,77 @@ class TestFleetSummary:
         row = next(t for t in body["tasks"] if t["task_id"] == tid)
         assert set(row["dims"].keys()) == {
             "pnl_positive", "trades_enough", "first_met_at"}
+
+    def test_recent_terminal_stopped_order(self, client):
+        """TD-A 锚：recent_terminal 按 stopped_at desc（>10 时截最近停）。"""
+        from core.persistence.repository.paper import PtTask, _engine_for
+        from sqlalchemy import update
+        # 造两任务：先创建的后停止（stopped_at 更晚）——排序应后者在前
+        t1 = _make_pt_task(client._db, status="stopped", task_id="pt_ord_1")
+        t2 = _make_pt_task(client._db, status="stopped", task_id="pt_ord_2")
+        eng = _engine_for(client._db)
+        early = "2026-01-01T00:00:00+00:00"
+        late = "2026-02-01T00:00:00+00:00"
+        with eng.begin() as conn:
+            conn.execute(update(PtTask).where(PtTask.task_id == t1).values(
+                created_at="2025-12-01T00:00:00+00:00", stopped_at=early))
+            conn.execute(update(PtTask).where(PtTask.task_id == t2).values(
+                created_at="2025-12-15T00:00:00+00:00", stopped_at=late))
+        r = client.get("/api/workbench/fleet-summary")
+        rt = r.json()["recent_terminal"]
+        assert [x["task_id"] for x in rt] == [t2, t1]  # 停止晚者前
+
+    def test_research_status_resolved_not_snapshot(self, client):
+        """TD-B 锚：research_status 走 resolve 现算（与 /trading 同源）——
+        造策略行 active+draft_to_active 事件，fleet 行应呈 active 非快照。"""
+        from core.persistence.repository import paper as paper_repo
+        from core.persistence.repository.paper import _engine_for
+        from sqlalchemy import update
+        tid = _make_pt_task(client._db, status="running", balance=100_000.0,
+                            task_id="pt_rs_1")
+        # 快照列写 draft（若走快照口径则 fleet 呈 draft——现算口径应随
+        # strategy 行 active 而呈 active）
+        eng = _engine_for(client._db)
+        with eng.begin() as conn:
+            conn.execute(update(PtTaskAnd := __import__(
+                "core.persistence.repository.paper", fromlist=["PtTask"]
+            ).PtTask).where(PtTaskAnd.task_id == tid).values(
+                research_status_snapshot="draft"))
+        # 造 strategy 行（active）
+        from core.persistence.orm.models import Strategy as PStrategy
+        from sqlalchemy import insert
+        with eng.begin() as conn:
+            conn.execute(insert(PStrategy).values(
+                strategy_id="st_pt_rs_1", name="t", symbol="BTCUSDT",
+                timeframe="4h", status="active", source="lab",
+                created_at=_now_iso(), updated_at=_now_iso(),
+                gene_signature="x", generation=0,
+                dna_json="{}"))
+        r = client.get("/api/workbench/fleet-summary")
+        row = next(x for x in r.json()["tasks"] if x["task_id"] == tid)
+        # TD-B 分歧面锚：resolve 三序现算（strategy.active+无事件+
+        # qualified=None→unverified）——快照口径恒呈 draft（research_status
+        # 值域=研究四态非 strategy.status，t3r6 TD-B 审查修正实录）
+        assert row["research_status"] == "unverified"
+
+    def test_fleet_aggregate_arithmetic(self, client):
+        """fleet 聚合算术锚（t3r6 缺口补——原只断 row 级）。"""
+        _make_pt_task(client._db, status="running", balance=100_000.0,
+                      initial_cash=100_000.0, task_id="pt_agg_1")
+        _make_pt_task(client._db, status="running", balance=105_000.0,
+                      initial_cash=100_000.0, task_id="pt_agg_2")
+        r = client.get("/api/workbench/fleet-summary")
+        a = r.json()["fleet"]["active"]
+        assert a["task_count"] == 2
+        assert a["equity"] == pytest.approx(205_000.0)
+        # 两任务当日新建无快照→基点各=initial_cash→day_start=200000
+        assert a["day_start_equity"] == pytest.approx(200_000.0)
+        assert a["day_delta"] == pytest.approx(5_000.0)
+
+    def test_truncated_false_under_limit(self, client):
+        """TD-C 锚：未达上限 truncated=False（披露字段在场）。"""
+        _make_pt_task(client._db, status="running", balance=100_000.0)
+        assert client.get("/api/workbench/fleet-summary").json()["truncated"] is False
 
     def test_no_persistence_side_effect(self, client):
         """组 0 骨架：只读现算零持久化——库文件 mtime 不因请求变化。"""
