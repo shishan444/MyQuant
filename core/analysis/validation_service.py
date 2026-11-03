@@ -625,15 +625,15 @@ def _build_detail_payload(
                 "size": abs(float(row["Size"])),
                 "direction": str(row["Direction"]),
                 "pnl": None if pd.isna(pnl_val) else float(pnl_val),
-                # 决策理由（D6）：执行器可得判定事实快照——条件级触发
-                # 明细在 vbt 组合器封装内不可得，trigger 如实 null（禁
-                # 捏造）；side/direction/status 为可得事实
-                "decision_json": json.dumps({
-                    "trigger": None,
-                    "side": "entry",
-                    "direction": str(row["Direction"]),
-                    "status": str(row.get("Status", "")),
-                }, ensure_ascii=False),
+                # 决策理由（D6·t3r8 CARD-1 修正）：极简形 {"trigger": null}
+                # ——条件级触发明细在 vbt 组合器封装内不可得（如实 null 禁
+                # 捏造）；原 side/direction/status 三键经对质确认零增量
+                # （side 恒 entry 无区分度/direction 复制顶层同源列/status
+                # 与 exit_time 一一对应），伪装数据键全撤——引擎暴露触发
+                # 明细后在此扩形（exit 侧承载位同步设计，vbt 行含进出
+                # 两决策时点）
+                "decision_json": json.dumps(
+                    {"trigger": None}, ensure_ascii=False),
             })
 
     return {"trades": trades, "equity": equity_row}

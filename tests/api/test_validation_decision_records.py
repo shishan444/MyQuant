@@ -44,7 +44,7 @@ class TestDetailPayload:
                 "Exit Timestamp": [pd.Timestamp("2026-01-02")],
                 "Avg Entry Price": [100.0], "Avg Exit Price": [105.0],
                 "Size": [1.0], "PnL": [5.0],
-                "Direction": ["Long"], "Status": ["Closed Trade"]}),
+                "Direction": ["Long"], "Status": ["Closed"]}),
             "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
         }
         out = _build_detail_payload(
@@ -53,10 +53,9 @@ class TestDetailPayload:
             timeframe="1d")
         assert len(out["trades"]) == 1
         dec = json.loads(out["trades"][0]["decision_json"])
-        assert dec["trigger"] is None  # 条件级不可得——如实 null 禁捏造
-        assert dec["side"] == "entry"
-        assert dec["direction"] == "Long"
-        assert dec["status"] == "Closed Trade"
+        # 极简形（t3r8 CARD-1）：唯一键 trigger=null——条件级不可得如实；
+        # 零增量键（side/direction/status）经对质全撤
+        assert dec == {"trigger": None}
 
 
 class TestTransmit:
@@ -85,8 +84,7 @@ class TestTransmit:
                      "entry_price": 100.0, "exit_price": 105.0,
                      "size": 1.0, "direction": "Long", "pnl": 5.0,
                      "decision_json": json.dumps(
-                         {"trigger": None, "side": "entry",
-                          "direction": "Long"})},
+                         {"trigger": None})},  # 极简形（写入端同形）
                     {"exec_ref": "main", "exec_index": 0, "seq": 1,
                      "range_start": "2026-01-01", "range_end": "2026-01-02",
                      "entry_time": "2026-01-02", "exit_time": None,
@@ -106,8 +104,7 @@ class TestTransmit:
         assert len(execs) == 1
         trades = execs[0]["trades"]
         # 新记录形：JSON 解析透传
-        assert trades[0]["decision"] == {
-            "trigger": None, "side": "entry", "direction": "Long"}
+        assert trades[0]["decision"] == {"trigger": None}
         # 存量形：NULL→None 如实
         assert trades[1]["decision"] is None
 
@@ -125,5 +122,5 @@ class TestTransmit:
         body = r.json()
         assert body["detail_available"] is True
         tr = body["executions"][0]["trades"]
-        assert tr[0]["decision"]["side"] == "entry"
+        assert tr[0]["decision"] == {"trigger": None}
         assert tr[1]["decision"] is None
