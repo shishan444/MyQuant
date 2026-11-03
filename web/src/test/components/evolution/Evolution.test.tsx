@@ -64,28 +64,8 @@ vi.mock("motion/react", () => ({
   AnimatePresence: ({ children }: any) => <>{children}</>,
 }));
 
-// mock 进化子组件
-vi.mock("@/components/evolution/SegmentedControl", () => ({
-  SegmentedControl: ({ value, onChange }: any) => (
-    <div data-testid="segmented-control" data-value={value}>
-      <button onClick={() => onChange("auto")}>Auto</button>
-      <button onClick={() => onChange("seed")}>Seed</button>
-    </div>
-  ),
-}));
-
-vi.mock("@/components/evolution/AutoConfigForm", () => ({
-  AutoConfigForm: () => <div data-testid="auto-config-form">Auto Config</div>,
-}));
-
-vi.mock("@/components/evolution/SeedConfigForm", () => ({
-  SeedConfigForm: () => <div data-testid="seed-config-form">Seed Config</div>,
-}));
-
-vi.mock("@/components/evolution/ProgressPanel", () => ({
-  ProgressPanel: () => <div data-testid="progress-panel">Progress</div>,
-}));
-
+// mock 进化子组件（五死件 AutoConfigForm/SeedConfigForm/QuickPresets/
+// ProgressPanel/SegmentedControl 已随 fe-research-execution-domain 3.3 移除）
 vi.mock("@/components/evolution/ScoreTrendChart", () => ({
   ScoreTrendChart: () => <div data-testid="score-trend-chart">Chart</div>,
 }));
@@ -96,10 +76,6 @@ vi.mock("@/components/evolution/StrategyList", () => ({
 
 vi.mock("@/components/evolution/HistoryTable", () => ({
   HistoryTable: () => <div data-testid="history-table">History</div>,
-}));
-
-vi.mock("@/components/evolution/QuickPresets", () => ({
-  QuickPresets: () => <div data-testid="quick-presets">Presets</div>,
 }));
 
 vi.mock("@/components/evolution/TaskDetailDrawer", () => ({
@@ -120,6 +96,10 @@ vi.mock("@/components/EmptyState", () => ({
 
 vi.mock("@/components/ConfirmDialog", () => ({
   ConfirmDialog: () => null,
+}));
+
+vi.mock("@/components/evolution/StopConfirmDialog", () => ({
+  StopConfirmDialog: () => null,
 }));
 
 vi.mock("@/components/ui/skeleton", () => ({
@@ -163,7 +143,7 @@ describe("Evolution page", () => {
     await screen.findByText("当前没有进化任务");
     // 渠道披露：头注与空态段同屏，至少一处（getAllBy 容纳多处）
     expect(screen.getAllByText(/MCP trigger_evolution/).length).toBeGreaterThan(0);
-    // D3：发起控件移除——配置表单不在
+    // D3：发起控件移除（fe-research-execution-domain 3.3 死件已物理删除）
     expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
     expect(screen.queryByTestId("auto-config-form")).not.toBeInTheDocument();
     expect(screen.queryByTestId("seed-config-form")).not.toBeInTheDocument();
@@ -178,20 +158,22 @@ describe("Evolution page", () => {
     expect(screen.queryByTestId("segmented-control")).not.toBeInTheDocument();
   });
 
-  // --- 进度区渲染 ---
-  it("renders progress section", async () => {
+  // --- 三列布局（fe-research-execution-domain 3.1：参数/趋势/发现策略常驻） ---
+  it("renders three-column sections (params / trend / discovered)", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByText("探索进度");
+    await screen.findByText("任务参数");
+    expect(screen.getByText("评分趋势 · 历代最优")).toBeInTheDocument();
+    expect(screen.getByText(/发现策略 · 前沿个体/)).toBeInTheDocument();
   });
 
-  // --- 空态消息 ---
+  // --- 空态消息（顶部条空态；EmptyState 卡已随布局重排退役） ---
   it("shows empty state when no tasks at all", async () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: [], total: 0 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByText("还没有进化任务");
+    await screen.findByText("当前没有进化任务");
   });
 
   // --- 有完成任务时 ---
@@ -227,7 +209,7 @@ describe("Evolution page", () => {
     mockGetEvolutionTasks.mockResolvedValue({ items: tasks, total: 1 });
 
     render(<Evolution />, { wrapper: createWrapper() });
-    await screen.findByText("历史探索");
+    await screen.findByText("历史任务");
     expect(screen.getByTestId("history-table")).toBeInTheDocument();
   });
 });

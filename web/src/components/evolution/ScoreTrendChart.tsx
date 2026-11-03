@@ -3,10 +3,14 @@
  *
  * 数据变换在 utils/evolutionChart.ts，option 构造在
  * charts/core/scoreTrendOption（纯函数，L1 直测）。
+ * 容器底色=CHART_VA（fe-research-execution-domain 3.1——05 进化图表
+ * 琥珀终端风：va-bg 底+va-line 描边+va-amber 最优强调系；线色仍走
+ * 全局 CHART_PALETTE，蜡烛恒等规则不适用本图非 K 线）。
  */
 import { useEffect, useMemo, useRef } from "react";
 import { echarts } from "@/components/charts/core/echartsCore";
 import { buildScoreTrendOption } from "@/components/charts/core/scoreTrendOption";
+import { CHART_VA } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
 import { transformChartData, type ChartTransformResult } from "@/utils/evolutionChart";
 
@@ -61,8 +65,11 @@ export function ScoreTrendChart({
 
   if (!hasData) {
     return (
-      <div className="flex h-[200px] items-center justify-center">
-        <span className="text-xs text-slate-600">暂无趋势数据</span>
+      <div
+        className="flex h-[200px] items-center justify-center rounded"
+        style={{ backgroundColor: CHART_VA.bg, color: CHART_VA.dim }}
+      >
+        <span className="text-xs">暂无趋势数据</span>
       </div>
     );
   }
@@ -70,10 +77,15 @@ export function ScoreTrendChart({
   const lastRecord = data[data.length - 1];
 
   return (
-    <div>
+    <div
+      className="rounded p-2"
+      style={{ backgroundColor: CHART_VA.bg, border: `1px solid ${CHART_VA.line}` }}
+    >
       <div className="h-[200px] w-full" ref={containerRef} />
-      {/* Legend */}
-      <div className="mt-1 flex items-center justify-center gap-4 text-[10px] text-slate-600">
+      {/* Legend（文字色=va-dim；色块沿全局调色板） */}
+      <div
+        className="mt-1 flex items-center justify-center gap-4 text-[10px]"
+        style={{ color: CHART_VA.dim }}>
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 bg-amber-400" />
           综合得分
@@ -108,27 +120,26 @@ export function ScoreTrendChart({
           最优更新
         </span>
       </div>
-      {/* Summary stats */}
+      {/* Summary stats（最优刷新=va-amber 强调系） */}
       <div className="mt-2 flex items-center justify-center gap-4 text-[10px]">
-        <span className="text-slate-500">
+        <span style={{ color: CHART_VA.amber }}>
           最优刷新 {stats.totalChampionChanges} 次
         </span>
-        <span className={stats.maxStagnation > 10 ? "text-orange-400" : "text-slate-500"}>
+        <span
+          style={{
+            color:
+              stats.maxStagnation > 10 ? CHART_VA.amber : CHART_VA.dim,
+          }}
+        >
           最长停滞 {stats.maxStagnation} 代
         </span>
         {lastRecord?.diversity != null && typeof lastRecord.diversity === "number" && (
-          <span className={
-            lastRecord.diversity > 0.7
-              ? "text-emerald-400/70"
-              : lastRecord.diversity > 0.4
-                ? "text-amber-400/70"
-                : "text-red-400/70"
-          }>
+          <span style={{ color: CHART_VA.dim }}>
             当前多样性 {(lastRecord.diversity * 100).toFixed(0)}%
           </span>
         )}
         {stats.populationCount > 1 && (
-          <span className="text-cyan-400/70">
+          <span style={{ color: CHART_VA.dim }}>
             {stats.populationCount} 个种群
           </span>
         )}

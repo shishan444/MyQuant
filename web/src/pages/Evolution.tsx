@@ -1,7 +1,9 @@
 /**
- * 05 进化中心·主页面（alignment-batch D3 只读折中）。路由 /evolution，
- * 呈现任务参数回显/探索进度/发现策略/产出两源（champion+snapshot）/
- * 历史记录——任务发起归 MCP trigger_evolution，本页只回显不发起点。
+ * 05 进化中心·主页面（fe-research-execution-domain 3.1 布局还原）。
+ * 路由 /evolution。原型 05 画框形制：顶部条（进化中任务名+暂停/停止
+ * +指标行）→上行三列（左=任务参数〔原型 B2 表单位，alignment-batch D3
+ * 只读折中——发起归 MCP trigger_evolution〕/中=评分趋势〔CHART_VA〕
+ * /右=发现策略+产出两源〔champion+snapshot〕）→历史任务表（B5）。
  * 数据经 react-query 拉取+活动任务 WS 实时更新；图表数据以
  * lastActiveTaskId 兜底，任务完成后仍保留。消费方：App 路由
  * （用户经侧边导航进入的页面入口）。
@@ -14,8 +16,6 @@ import { toast } from "sonner";
 
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
-import { EmptyState } from "@/components/EmptyState";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Skeleton } from "antd";
 
 import { TaskRuntimePanel } from "@/components/evolution/TaskRuntimePanel";
@@ -24,6 +24,7 @@ import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import { StrategyList } from "@/components/evolution/StrategyList";
 import { HistoryTable } from "@/components/evolution/HistoryTable";
 import { TaskDetailDrawer } from "@/components/evolution/TaskDetailDrawer";
+import { StopConfirmDialog } from "@/components/evolution/StopConfirmDialog";
 
 import {
   useEvolutionTasks,
@@ -249,180 +250,137 @@ export function Evolution() {
     <PageTransition>
       <div className="flex flex-col gap-4">
         {/* ================================================================== */}
-        {/* Area 1 - 任务参数（只读回显，发起归 MCP trigger_evolution）        */}
+        {/* 顶部条（原型 05-B3 进度头+进度注升格：任务名+指标行+暂停/停止）    */}
         {/* ================================================================== */}
-        <div>
-          <GlassCard className="p-5" hover={false}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-slate-400">任务参数</h2>
-              <span className="text-[11px] text-slate-600">
-                只读回显 · 任务发起经 MCP trigger_evolution
-              </span>
-            </div>
-
-            {currentTask ? (
-              <TaskParamsSummary task={currentTask} />
-            ) : (
-              <div className="mt-4 flex flex-col items-center gap-3 py-6">
-                <Dna className="h-10 w-10 text-slate-700" />
-                <p className="text-xs text-slate-500">当前没有进化任务</p>
-                <p className="text-[11px] text-slate-600 text-center">
-                  任务发起已迁移至 MCP trigger_evolution，本页回显任务参数、运行进度与产出策略
-                </p>
-              </div>
-            )}
-          </GlassCard>
-        </div>
-
-        {/* ================================================================== */}
-        {/* Area 2 - 探索进度                                                 */}
-        {/* ================================================================== */}
-        <GlassCard className="p-5" hover={false}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Dna
-                className={
-                  currentTask
-                    ? "h-4 w-4 text-amber-400"
-                    : "h-4 w-4 text-slate-600"
-                }
-              />
-              <h3
-                className={
-                  currentTask
-                    ? "text-sm font-medium text-slate-200"
-                    : "text-sm font-medium text-slate-600"
-                }
-              >
-                探索进度
-              </h3>
-            </div>
-            {currentTask && (
-              <span className="font-mono text-xs text-slate-500">
-                {currentTask.symbol} /{" "}
-                {formatTimeframeDisplay(currentTask)}
-              </span>
-            )}
-          </div>
-
+        <GlassCard className="px-5 py-3" hover={false}>
           {currentTask ? (
-            <div className="mt-4 flex flex-col gap-4">
-              <TaskRuntimePanel
-                task={currentTask}
-                onPause={handlePause}
-                onResume={handleResume}
-                onStop={() => setStopTarget(currentTask)}
-                pausePending={pauseTask.isPending}
-                stopPending={stopTask.isPending}
-                resumePending={resumeTask.isPending}
-              />
-              <ScoreTrendChart
-                records={historyRecords}
-                targetScore={targetScore}
-              />
-            </div>
+            <TaskRuntimePanel
+              task={currentTask}
+              onPause={handlePause}
+              onResume={handleResume}
+              onStop={() => setStopTarget(currentTask)}
+              pausePending={pauseTask.isPending}
+              stopPending={stopTask.isPending}
+              resumePending={resumeTask.isPending}
+            />
           ) : (
-            <div className="mt-4 flex flex-col items-center gap-3 py-6">
-              <Dna className="h-12 w-12 text-slate-700" />
-              <p className="text-xs text-slate-500">
-                没有正在进行的探索任务
-              </p>
-              <p className="text-[11px] text-slate-600">
-                任务发起后此处呈现运行进度
+            <div className="flex flex-wrap items-center gap-3 py-1.5">
+              <Dna className="h-4 w-4 text-text-muted" />
+              <p className="text-xs text-text-secondary">当前没有进化任务</p>
+              <p className="text-[11px] text-text-muted">
+                任务发起经 MCP trigger_evolution，本页回显任务与产出
               </p>
             </div>
           )}
         </GlassCard>
 
         {/* ================================================================== */}
-        {/* Area 3 - 发现的策略                                               */}
+        {/* 上行三列（原型 05-B2 参数 / B3 趋势 / B4 发现策略）               */}
         {/* ================================================================== */}
-        {effectiveStrategies.length > 0 && (
-          <div>
-            <GlassCard className="p-5" hover={false}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-slate-400">
-                  发现策略{" "}
-                  <span className="font-mono text-slate-600">
-                    ({effectiveStrategies.length})
-                  </span>
-                </h3>
-              </div>
-              <div className="mt-3">
-                <StrategyList
-                  strategies={effectiveStrategies}
-                  expandedId={expandedStrategyId}
-                  onToggleExpand={handleToggleExpand}
-                  onSeedEvolve={handleSeedEvolve}
-                  onSave={handleSaveStrategy}
-                  onVisualVerify={handleStrategyBacktest}
-                />
-              </div>
-            </GlassCard>
-          </div>
-        )}
-
-        {/* ================================================================== */}
-        {/* Area 3.5 - 产出策略两源（champion / snapshot）                     */}
-        {/* ================================================================== */}
-        {!!historyTaskId && (
-          <GlassCard className="p-5" hover={false} data-testid="evolved-sources-card">
+        <div className="grid gap-4 lg:grid-cols-[300px_1fr_380px]">
+          {/* 左列 - 任务参数（原型 B2 表单位：发起归 MCP，D3 只读折中回显） */}
+          <GlassCard className="p-4" hover={false}>
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-slate-400">
-                产出策略（冠军与代际快照）
-              </h3>
+              <h3 className="text-sm font-medium text-text-secondary">任务参数</h3>
+              {currentTask && (
+                <span className="font-mono text-[11px] text-text-muted">
+                  {currentTask.symbol} / {formatTimeframeDisplay(currentTask)}
+                </span>
+              )}
             </div>
+            {currentTask ? (
+              <TaskParamsSummary task={currentTask} />
+            ) : (
+              <p className="mt-4 text-xs text-text-muted">
+                发起任务后此处回显参数（品种/种群/代数/指标池等）
+              </p>
+            )}
+            <p className="mt-3 border-t border-border-faint pt-2 text-[10px] text-text-muted">
+              只读回显 · 任务发起经 MCP trigger_evolution
+            </p>
+          </GlassCard>
+
+          {/* 中列 - 评分趋势（原型 B3 趋势图，CHART_VA 容器） */}
+          <GlassCard className="p-4" hover={false}>
+            <h3 className="text-sm font-medium text-text-secondary">
+              评分趋势 · 历代最优
+            </h3>
             <div className="mt-3">
-              <EvolvedStrategySources
-                strategies={taskStrategiesData?.strategies ?? []}
-                loading={taskStrategiesLoading}
-                error={taskStrategiesError ? (taskStrategiesError as Error).message : null}
-              />
+              <ScoreTrendChart records={historyRecords} targetScore={targetScore} />
             </div>
           </GlassCard>
-        )}
+
+          {/* 右列 - 发现策略+产出两源（原型 B4 前沿个体） */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <GlassCard className="p-4" hover={false}>
+              <h3 className="text-sm font-medium text-text-secondary">
+                发现策略 · 前沿个体{" "}
+                <span className="font-mono text-[11px] text-text-muted">
+                  ({effectiveStrategies.length})
+                </span>
+              </h3>
+              <div className="mt-3">
+                {effectiveStrategies.length > 0 ? (
+                  <StrategyList
+                    strategies={effectiveStrategies}
+                    expandedId={expandedStrategyId}
+                    onToggleExpand={handleToggleExpand}
+                    onSeedEvolve={handleSeedEvolve}
+                    onSave={handleSaveStrategy}
+                    onVisualVerify={handleStrategyBacktest}
+                  />
+                ) : (
+                  <p className="py-4 text-xs text-text-muted">
+                    暂无发现策略——进化过程摘取的有效个体将在此呈现
+                  </p>
+                )}
+              </div>
+            </GlassCard>
+
+            {!!historyTaskId && (
+              <GlassCard className="p-4" hover={false} data-testid="evolved-sources-card">
+                <h3 className="text-sm font-medium text-text-secondary">
+                  产出策略（冠军与代际快照）
+                </h3>
+                <div className="mt-3">
+                  <EvolvedStrategySources
+                    strategies={taskStrategiesData?.strategies ?? []}
+                    loading={taskStrategiesLoading}
+                    error={taskStrategiesError ? (taskStrategiesError as Error).message : null}
+                  />
+                </div>
+              </GlassCard>
+            )}
+          </div>
+        </div>
 
         {/* ================================================================== */}
-        {/* Area 5 - 历史记录                                                 */}
+        {/* 历史任务表（原型 05-B5，常驻）                                     */}
         {/* ================================================================== */}
-        {historicalTasks.length > 0 && (
-          <GlassCard className="p-5" hover={false}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-slate-400">
-                历史探索
-              </h3>
-            </div>
-            <div className="mt-3">
+        <GlassCard className="p-4" hover={false}>
+          <h3 className="text-sm font-medium text-text-secondary">历史任务</h3>
+          <div className="mt-3">
+            {historicalTasks.length > 0 ? (
               <HistoryTable
                 tasks={historicalTasks}
                 onViewTask={handleViewTask}
                 onSeedEvolve={handleSeedEvolve}
               />
-            </div>
-          </GlassCard>
-        )}
+            ) : (
+              <p className="py-2 text-xs text-text-muted">
+                暂无历史任务——完成的任务将在此呈现
+              </p>
+            )}
+          </div>
+        </GlassCard>
 
-        {/* 完全无任务 - 显示空状态 */}
-        {allTasks.length === 0 && !currentTask && (
-          <GlassCard className="p-5" hover={false}>
-            <EmptyState
-              icon={Dna}
-              title="还没有进化任务"
-              description="任务发起经 MCP trigger_evolution 调用；发起后本页回显任务参数、运行进度与产出策略。"
-            />
-          </GlassCard>
-        )}
-
-        {/* 停止确认对话框 */}
-        <ConfirmDialog
+        {/* 停止确认对话框（07-M1 规格：标题问句+事实三句+双钮） */}
+        <StopConfirmDialog
           open={stopTarget !== null}
           onOpenChange={(open) => {
             if (!open) setStopTarget(null);
           }}
-          title="停止探索任务"
-          description={`确定要停止探索任务「${stopTarget?.task_id.slice(0, 8) ?? ""}」吗？已探索的进度将被保留，已发现的有效策略仍可查看。`}
-          confirmLabel="停止"
-          variant="destructive"
+          taskId={stopTarget?.task_id ?? null}
           onConfirm={handleStopConfirm}
           loading={stopTask.isPending}
         />

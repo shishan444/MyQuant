@@ -420,7 +420,10 @@ export function Lab() {
         signal_genes: [...entrySignals, ...exitSignals],
         logic_genes: { entry_logic: "AND", exit_logic: "OR" },
         execution_genes: { timeframe, symbol: pair },
-        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long", sl_mode: "pct", atr_period: 14 },
+        // 保存链修复（fe-research-execution-domain P02-3）：risk_genes 取
+        // 高级参数面板实际值（原全字面量与面板输入脱节——改参数→保存→重开
+        // 值一致为验收）；sl_mode/atr_period 面板无对应控件，保留档位默认
+        risk_genes: { stop_loss: btStopLoss, take_profit: btTakeProfit, position_size: btPositionSize, leverage: btLeverage, direction: btDirection, sl_mode: "pct", atr_period: 14 },
       };
       await createStrategyMutation.mutateAsync({
         name: data.name,

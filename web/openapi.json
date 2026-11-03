@@ -3694,6 +3694,110 @@
         }
       }
     },
+    "/api/research/hypothesis-cards": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Hypothesis Cards",
+        "description": "主任务卡片查询：status 等值+q 子串过滤，recent_activity_at\n降序（次序键 hypothesis_id），cursor keyset 续页（提供时 page 被\n忽略），total 为过滤口径真总数。",
+        "operationId": "hypothesis_cards_api_research_hypothesis_cards_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Hypothesis Cards Api Research Hypothesis Cards Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/validate-backtest": {
       "post": {
         "tags": [
@@ -4023,6 +4127,51 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Translate Hypothesis Api Research Translate  Hypothesis Id  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/validation-records/{record_id}/detail": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Validation Record Detail",
+        "description": "验证明细整份读取：两态判定序（404 资源不存在 / 200 空骨架）。",
+        "operationId": "validation_record_detail_api_research_validation_records__record_id__detail_get",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Validation Record Detail Api Research Validation Records  Record Id  Detail Get"
                 }
               }
             }
