@@ -1,5 +1,5 @@
 /**
- * 03 验证记录对齐批单测（页面重构归 fe-validation-records-page 重写）（alignment-batch D1）。
+ * 03 验证记录对齐批单测（页面已重构为浏览骨架+发起器折叠区——本批锚定折叠区内历史会话与三门槛组件行为）（alignment-batch D1）。
  * 三门槛点行三态（true=绿/false=红/null=灰）+星级机械换算（0-3）+
  * 三态汇总计数（pass/fail/inconclusive）+B5 概要形制（星级+门槛+关键指标）。
  * 服务层全 mock（零外网红线）。
@@ -104,7 +104,9 @@ beforeEach(() => {
 
 async function openHistoryResults() {
   setup();
-  fireEvent.click(screen.getByText("历史记录"));
+  // fe-validation-records-page：发起器+历史迁入折叠区（R5+R7-b）——两步进入
+    fireEvent.click(screen.getByText("发起器 · 历史会话"));
+    fireEvent.click(screen.getByText("历史会话"));
   fireEvent.click(await screen.findByText("2026-10-05 10:00"));
   await screen.findByTestId("session-results-table");
 }
@@ -187,6 +189,8 @@ describe("CARD-01 结果卡概要取较深回撤", () => {
     );
 
     setup();
+    // fe-validation-records-page：发起器默认折叠——先开折叠区再进入发起器
+    fireEvent.click(screen.getByText("发起器 · 历史会话"));
     // 等策略列表加载（按钮计数 0→1），再点近3月预设填区间、点开始验证
     // 触发 stream.start（捕获 callbacks）
     await screen.findByText(/开始验证 \(1\)/);
