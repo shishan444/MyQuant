@@ -313,3 +313,47 @@ describe("Lab - sl_series observation series (CARD-01)", () => {
     expect(received.every((d) => d === null)).toBe(true);
   });
 });
+
+describe("Lab - 五步真实落点与 K 线常驻（fe-research-execution-domain 1.2）", () => {
+  /** 步骤条当前步判定：nav 内指定步名按钮持有当前步高亮 class */
+  function currentStepName(): string {
+    const nav = screen.getByLabelText("假设流水线步骤");
+    const active = Array.from(nav.querySelectorAll("button")).find(
+      (b) => b.className.includes("bg-accent-gold/10"),
+    );
+    return active?.textContent?.replace(/^\d+/, "") ?? "";
+  }
+
+  it("hypothesis 无结果：步①构建为当前步，中列 K 线已常驻在页", () => {
+    render(<Lab />, { wrapper: createWrapper() });
+    expect(currentStepName()).toBe("构建");
+    // K 线常驻：未验证时中列即在（含引导注）
+    expect(screen.getByTestId("kline-chart")).toBeInTheDocument();
+    expect(screen.getByText("构建并验证后叠加买卖信号")).toBeInTheDocument();
+  });
+
+  it("backtest 模式（routeState.dna 进入）：步④沙盒为当前步", () => {
+    mockLocationState = { dna: mockDNA };
+    render(<Lab />, { wrapper: createWrapper() });
+    expect(currentStepName()).toBe("沙盒");
+  });
+
+  it("hypothesis 验证完成：步③案例为当前步（结果即案例面）", async () => {
+    vi.mocked(useValidateRules).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({
+        total_trades: 0, buy_signals: [], sell_signals: [],
+        win_rate: null, win_trades: 0, loss_trades: 0,
+        total_return_pct: 0, avg_return_pct: 0,
+      }),
+      isPending: false,
+    } as unknown as ReturnType<typeof useValidateRules>);
+    render(<Lab />, { wrapper: createWrapper() });
+    const addBtns = screen.getAllByText("添加条件");
+    fireEvent.click(addBtns[0]);
+    fireEvent.click(addBtns[1]);
+    fireEvent.click(screen.getByText("验证策略"));
+    await waitFor(() => {
+      expect(currentStepName()).toBe("案例");
+    });
+  });
+});

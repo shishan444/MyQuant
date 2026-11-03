@@ -156,7 +156,13 @@ export function Lab() {
   const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [hypoSubChartType] = useState<SubChartType>("volume");
-  const [hypoFetchEnabled, setHypoFetchEnabled] = useState(false);
+  // K 线常驻（fe-research-execution-domain 1.2）：中列 K 线全程在页——
+  // 未验证时也随数据源拉取呈现（原 false→验证后才拉）
+  const [hypoFetchEnabled, setHypoFetchEnabled] = useState(true);
+  // 步⑤登记完成态（五步真实落点）：保存成功置位、重验/清空重置
+  const [registered, setRegistered] = useState(false);
+  // 五步条已到达最远步（回跳上界——真实落点驱动，非硬编码）
+  const [furthestStep, setFurthestStep] = useState(0);
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
@@ -384,6 +390,7 @@ export function Lab() {
       });
       setRuleResult(res);
       setHypoFetchEnabled(true);
+      setRegistered(false);
     } catch {
       // 由 mutation 处理
     }
@@ -393,7 +400,7 @@ export function Lab() {
     setEntryConditions([]);
     setExitConditions([]);
     setRuleResult(null);
-    setHypoFetchEnabled(false);
+    setRegistered(false);
   }, []);
 
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
@@ -436,6 +443,7 @@ export function Lab() {
       });
       toast.success("策略已保存");
       setSaveDialogOpen(false);
+      setRegistered(true);
     } catch {
       // 由 mutation 处理
     }
@@ -474,23 +482,55 @@ export function Lab() {
     return parts.join(" / ");
   }, [pair, timeframe, entryConditions, exitConditions]);
 
+  // -- 五步真实落点（fe-research-execution-domain 1.2）--
+  // ①构建/②预检=hypothesis 模式（②=验证完成态并入结果步）；③案例检视=
+  // hypothesis 有结果（中列 K 线信号标记即案例面）；④沙盒回测=scene·backtest
+  // 模式；⑤登记入台账=保存完成态（registered）
+  const currentStep = registered
+    ? 4
+    : labMode === "hypothesis"
+      ? (hasResult ? 2 : 0)
+      : 3;
+  useEffect(() => {
+    setFurthestStep((f) => Math.max(f, currentStep));
+  }, [currentStep]);
+
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* 02-B1 五步流水线条（hypothesis-workbench 组 3.1）——三模式到
-            五步的映射：构建=假设验证模式 / 预检=模式内预检态 / 案例=场景
-            验证 / 沙盒=策略回测 / 登记=模式内登记动作；步骤条呈现映射态 */}
+        {/* 02-B1 五步流水线条——五步真实落点（fe-research-execution-domain 1.2）：
+            步①②③=hypothesis（③有结果态）/步④=scene·backtest/步⑤=保存完成态 */}
         <HypothesisStepper
-          current={labMode === "hypothesis" ? 0 : labMode === "scene" ? 2 : 3}
-          furthest={4}
+          current={currentStep}
+          furthest={furthestStep}
           onStepClick={(i: number) => {
-            if (i === 0) setLabMode("hypothesis");
-            else if (i === 2) setLabMode("scene");
-            else if (i === 3) setLabMode("backtest");
+            if (i === 4) {
+              setLabMode("hypothesis");
+            } else if (i === 3) {
+              setLabMode("backtest");
+            } else {
+              setLabMode("hypothesis");
+              if (i === 2) {
+                // 步③案例检视=中列 K 线信号面锚点
+                document
+                  .getElementById("lab-kline-section")
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }
           }}
         />
 
-        {/* 模式切换 */}
+        {/* 场景验证模式（复合面板全宽——自带选择器/图表/标注/结果） */}
+        {labMode === "scene" && (
+          <GlassCard className="p-5" hover={false}>
+            <SceneModePanel
+              initialSymbol={pair}
+              initialTimeframe={timeframe}
+            />
+          </GlassCard>
+        )}
+
+        {/* 模式切换（三模式保全入口——全模式可见，含 scene 回跳） */}
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
           <button
             type="button"
@@ -530,10 +570,21 @@ export function Lab() {
           </button>
         </div>
 
-        {/* 回测模式 */}
-        {labMode === "backtest" && (
-          <GlassCard className="p-5" hover={false}>
-            <div className="flex flex-col gap-5">
+        {/* hypothesis 三列主体（原型 02-B2 构建面板/B3 图表主列/B4 步骤面板）
+            与 backtest 左配置+右结果（BacktestModePanel 自带 K 线与结果） */}
+        {labMode !== "scene" && (
+          <div
+            className={
+              labMode === "hypothesis"
+                ? "grid items-start gap-4 lg:grid-cols-[290px_1fr_320px]"
+                : "grid items-start gap-4 lg:grid-cols-[380px_1fr]"
+            }
+          >
+            {/* 左列：当前模式配置 */}
+            <div className="flex flex-col gap-3">
+              {/* 回测模式配置（左列位） */}
+              {labMode === "backtest" && (
+                <div className="flex flex-col gap-4 rounded-lg border border-border-default bg-bg-base/40 p-3">
               {/* 配置区（可折叠） */}
               {btConfigCollapsed ? (
                 <div className="flex items-center justify-between">
@@ -777,60 +828,11 @@ export function Lab() {
                   </div>
                 </div>
               )}
-
-              {/* 回测结果面板 */}
-              {backtestDna ? (
-                <BacktestModePanel
-                  ref={backtestPanelRef}
-                  onResult={(r) => setSlSeries(
-                    r.sl_series && r.sl_series.length > 0
-                      ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
-                      : null)}
-                  dna={{
-                    ...backtestDna,
-                    risk_genes: {
-                      ...backtestDna.risk_genes,
-                      leverage: btLeverage,
-                      direction: btDirection,
-                      stop_loss: btStopLoss,
-                      take_profit: btTakeProfit,
-                      position_size: btPositionSize,
-                    },
-                  }}
-                  symbol={backtestSymbol}
-                  timeframe={backtestTimeframe}
-                  dataStart={backtestDateRange.start || undefined}
-                  dataEnd={backtestDateRange.end || undefined}
-                  fee={btFee}
-                  slippage={btSlippage}
-                  initCash={btInitCash}
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-3 py-12 text-center">
-                  <BarChart3 className="h-10 w-10 text-slate-700" />
-                  <p className="text-xs text-slate-500">
-                    从上方选择一个策略，或从进化中心跳转
-                  </p>
                 </div>
               )}
-            </div>
-          </GlassCard>
-        )}
 
-        {/* 场景模式 */}
-        {labMode === "scene" && (
-          <GlassCard className="p-5" hover={false}>
-            <SceneModePanel
-              initialSymbol={pair}
-              initialTimeframe={timeframe}
-            />
-          </GlassCard>
-        )}
-
-        {/* hypothesis 模式（Lab 原始 UI） */}
-        {labMode === "hypothesis" && (
-          <>
-        {/* Region 1：条件构建器 */}
+              {/* hypothesis 构建器（左列位——02-B2 规律构建器） */}
+              {labMode === "hypothesis" && (
         <GlassCard className="p-4" hover={false}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-text-primary">规律构建器</h3>
@@ -972,136 +974,188 @@ export function Lab() {
             </div>
           )}
         </GlassCard>
-
-        {/* 空态/加载/结果 */}
-
-        {!hasResult && !isLoading && (
-          <GlassCard className="p-8" hover={false}>
-            <div className="flex flex-col items-center gap-4">
-              <FlaskConical className="h-16 w-16 text-text-muted/30" />
-              <div className="flex flex-col items-center gap-1 text-center">
-                <h3 className="text-base font-medium text-text-secondary">
-                  配置入场和出场规则, 验证策略效果
-                </h3>
-                <p className="text-sm text-text-muted">
-                  添加入场条件和出场条件, 然后点击"验证策略"
-                </p>
-              </div>
+              )}
             </div>
-          </GlassCard>
-        )}
 
-        {isLoading && (
-          <>
-            <GlassCard className="p-4" hover={false}>
-              <div className="flex items-center gap-6">
-                <Skeleton className="h-6 w-24" />
-                <Skeleton className="h-6 w-32" />
-                <Skeleton className="h-6 w-40" />
-              </div>
-            </GlassCard>
-            <GlassCard className="p-4" hover={false}>
-              <Skeleton className="h-[450px] w-full rounded-lg" />
-            </GlassCard>
-          </>
-        )}
-
-        {hasResult && !isLoading && ruleResult && (
-          <>
-            {/* 指标摘要 */}
-            <GlassCard className="p-3" hover={false}>
-              <div className="flex items-center gap-6 text-xs">
-                <span className="text-text-secondary">
-                  交易次数: <span className="font-medium text-text-primary">{ruleResult.total_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  胜率: <span className={`font-medium ${ruleResult.win_rate != null && ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
-                    {ruleResult.win_rate != null ? `${ruleResult.win_rate}%` : "-"}
-                  </span>
-                </span>
-                <span className="text-text-secondary">
-                  盈利: <span className="font-medium text-profit">{ruleResult.win_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  亏损: <span className="font-medium text-loss">{ruleResult.loss_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  累计收益: <span className={`font-medium ${ruleResult.total_return_pct >= 0 ? "text-profit" : "text-loss"}`}>
-                    {ruleResult.total_return_pct}%
-                  </span>
-                </span>
-                <span className="text-text-secondary">
-                  平均收益: <span className="font-medium text-text-primary">{ruleResult.avg_return_pct}%</span>
-                </span>
-              </div>
-            </GlassCard>
-
-            {/* 无交易提示 */}
-            {ruleResult.total_trades === 0 && (
+            {/* 右列位（backtest）：BacktestModePanel 复合面板（自带 K 线与结果） */}
+            {labMode === "backtest" && (
               <GlassCard className="p-4" hover={false}>
-                <div className="flex flex-col items-center gap-3 text-center">
-                  <p className="text-sm text-text-muted">未找到符合条件的交易信号</p>
-                  <div className="flex items-center gap-2">
-                    <AntButton size="small" onClick={handleClearAll}>
-                      调整条件
-                    </AntButton>
-                    <AntButton size="small" onClick={() => handleQuickDate(0)}>
-                      扩大时间范围
-                    </AntButton>
+                {backtestDna ? (
+                  <BacktestModePanel
+                    ref={backtestPanelRef}
+                    onResult={(r) => setSlSeries(
+                      r.sl_series && r.sl_series.length > 0
+                        ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
+                        : null)}
+                    dna={{
+                      ...backtestDna,
+                      risk_genes: {
+                        ...backtestDna.risk_genes,
+                        leverage: btLeverage,
+                        direction: btDirection,
+                        stop_loss: btStopLoss,
+                        take_profit: btTakeProfit,
+                        position_size: btPositionSize,
+                      },
+                    }}
+                    symbol={backtestSymbol}
+                    timeframe={backtestTimeframe}
+                    dataStart={backtestDateRange.start || undefined}
+                    dataEnd={backtestDateRange.end || undefined}
+                    fee={btFee}
+                    slippage={btSlippage}
+                    initCash={btInitCash}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-12 text-center">
+                    <BarChart3 className="h-10 w-10 text-slate-700" />
+                    <p className="text-xs text-slate-500">
+                      从左侧选择一个策略，或从进化中心跳转
+                    </p>
                   </div>
-                </div>
+                )}
               </GlassCard>
             )}
 
-            {/* K 线图（含买卖信号） */}
-            <GlassCard className="p-4" hover={false} id="lab-kline-section">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-3 text-xs text-text-muted">
-                  <span className="font-medium text-text-secondary">
-                    {pair} / {timeframe}
-                  </span>
-                  {ruleResult.buy_signals.length > 0 && (
-                    <span className="text-profit">买入 {ruleResult.buy_signals.length}</span>
-                  )}
-                  {ruleResult.sell_signals.length > 0 && (
-                    <span className="text-loss">卖出 {ruleResult.sell_signals.length}</span>
-                  )}
+            {/* hypothesis 中列：K 线常驻（02-B3 图表主列·主体系紫底——
+                未验证时也随数据源呈现；信号标记与 SL 观测线随验证结果叠加） */}
+            {labMode === "hypothesis" && (
+              <>
+              <GlassCard className="p-4" hover={false} id="lab-kline-section">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-xs text-text-muted">
+                    <span className="font-medium text-text-secondary">
+                      {pair} / {timeframe}
+                    </span>
+                    {ruleResult?.buy_signals.length ? (
+                      <span className="text-profit">买入 {ruleResult.buy_signals.length}</span>
+                    ) : null}
+                    {ruleResult?.sell_signals.length ? (
+                      <span className="text-loss">卖出 {ruleResult.sell_signals.length}</span>
+                    ) : null}
+                    {!hasResult && <span>构建并验证后叠加买卖信号</span>}
+                  </div>
+                  <ChartToolbar
+                    onZoomIn={() => chartRef.current?.zoomIn()}
+                    onZoomOut={() => chartRef.current?.zoomOut()}
+                    onReset={() => chartRef.current?.resetView()}
+                    onFullscreen={() => {
+                      const el = document.getElementById("lab-kline-section");
+                      if (el && !document.fullscreenElement) {
+                        el.requestFullscreen().catch(() => {});
+                      } else {
+                        document.exitFullscreen().catch(() => {});
+                      }
+                    }}
+                  />
                 </div>
-                <ChartToolbar
-                  onZoomIn={() => chartRef.current?.zoomIn()}
-                  onZoomOut={() => chartRef.current?.zoomOut()}
-                  onReset={() => chartRef.current?.resetView()}
-                  onFullscreen={() => {
-                    const el = document.getElementById("lab-kline-section");
-                    if (el && !document.fullscreenElement) {
-                      el.requestFullscreen().catch(() => {});
-                    } else {
-                      document.exitFullscreen().catch(() => {});
-                    }
-                  }}
-                />
-              </div>
-              <KlineChart
-                ref={chartRef}
-                onChartReady={() => {
-                  // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
-                  // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
-                  // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
-                  // （React commit 序），handle 恒就绪）
-                  chartRef.current?.setObservationSeries(visibleSlSeries);
-                }}
-                data={candleData ?? []}
-                indicators={chartIndicators}
-                bollData={chartBollData}
-                signals={chartSignals}
-                height={650}
-                volumeData={volumeData}
-                subChartType={hypoSubChartType}
-                macdData={hypoMacdData}
-                kdjData={hypoKdjData}
-              />
-            </GlassCard>
-          </>
+                {isLoading ? (
+                  <Skeleton className="h-[450px] w-full rounded-lg" />
+                ) : (
+                  <KlineChart
+                    ref={chartRef}
+                    onChartReady={() => {
+                      // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
+                      // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
+                      // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
+                      // （React commit 序），handle 恒就绪）
+                      chartRef.current?.setObservationSeries(visibleSlSeries);
+                    }}
+                    data={candleData ?? []}
+                    indicators={chartIndicators}
+                    bollData={chartBollData}
+                    signals={chartSignals}
+                    height={520}
+                    volumeData={volumeData}
+                    subChartType={hypoSubChartType}
+                    macdData={hypoMacdData}
+                    kdjData={hypoKdjData}
+                  />
+                )}
+              </GlassCard>
+
+              {/* hypothesis 右列：结果面板（02-B4 步骤面板位——指标+口径+登记动作） */}
+              <GlassCard className="p-4" hover={false}>
+                {!hasResult && !isLoading && (
+                  <div className="flex flex-col items-center gap-3 py-8 text-center">
+                    <FlaskConical className="h-10 w-10 text-text-muted/30" />
+                    <p className="text-xs text-text-secondary">
+                      配置入场和出场规则, 验证策略效果
+                    </p>
+                    <p className="text-[11px] text-text-muted">
+                      添加入场条件和出场条件, 然后点击"验证策略"
+                    </p>
+                  </div>
+                )}
+
+                {hasResult && !isLoading && ruleResult && (
+                  <div className="flex flex-col gap-3">
+                    {/* 口径注（原型 B4：沙盒回测·不计判定并集·不构成验证证据） */}
+                    <p className="text-[10px] text-state-warn">
+                      沙盒回测 · 不计判定并集 · 不构成验证证据
+                    </p>
+
+                    {/* 指标摘要（纵向排——右列窄位） */}
+                    <div className="flex flex-col gap-1.5 text-xs">
+                      <span className="text-text-secondary">
+                        交易次数: <span className="font-num font-medium text-text-primary">{ruleResult.total_trades}</span>
+                      </span>
+                      <span className="text-text-secondary">
+                        胜率: <span className={`font-num font-medium ${ruleResult.win_rate != null && ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
+                          {ruleResult.win_rate != null ? `${ruleResult.win_rate}%` : "-"}
+                        </span>
+                      </span>
+                      <span className="text-text-secondary">
+                        盈利/亏损: <span className="font-num font-medium text-profit">{ruleResult.win_trades}</span>
+                        {" / "}
+                        <span className="font-num font-medium text-loss">{ruleResult.loss_trades}</span>
+                      </span>
+                      <span className="text-text-secondary">
+                        累计收益: <span className={`font-num font-medium ${ruleResult.total_return_pct >= 0 ? "text-profit" : "text-loss"}`}>
+                          {ruleResult.total_return_pct}%
+                        </span>
+                      </span>
+                      <span className="text-text-secondary">
+                        平均收益: <span className="font-num font-medium text-text-primary">{ruleResult.avg_return_pct}%</span>
+                      </span>
+                    </div>
+
+                    {/* 无交易引导 */}
+                    {ruleResult.total_trades === 0 && (
+                      <div className="flex flex-col items-center gap-2 py-2 text-center">
+                        <p className="text-xs text-text-muted">未找到符合条件的交易信号</p>
+                        <div className="flex items-center gap-2">
+                          <AntButton size="small" onClick={handleClearAll}>
+                            调整条件
+                          </AntButton>
+                          <AntButton size="small" onClick={() => handleQuickDate(0)}>
+                            扩大时间范围
+                          </AntButton>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 登记动作（步⑤——保存入策略库） */}
+                    {ruleResult.total_trades > 0 && (
+                      <AntButton
+                        onClick={() => setSaveDialogOpen(true)}
+                        disabled={createStrategyMutation.isPending}
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        保存为策略
+                      </AntButton>
+                    )}
+                    {registered && (
+                      <p className="text-[10px] text-profit">
+                        已登记（步⑤完成）——策略入台账，后续经隔离验证取证
+                      </p>
+                    )}
+                  </div>
+                )}
+              </GlassCard>
+              </>
+            )}
+          </div>
         )}
 
         {/* 保存策略对话框 */}
@@ -1114,8 +1168,6 @@ export function Lab() {
           matchRate={ruleResult?.win_rate ?? 0}
           totalCount={ruleResult?.total_trades ?? 0}
         />
-          </>
-        )}
       </div>
     </PageTransition>
   );
