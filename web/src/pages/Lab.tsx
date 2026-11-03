@@ -99,6 +99,32 @@ function getDefaultDates(): { start: string; end: string } {
 // 组件
 // ---------------------------------------------------------------------------
 
+// 输入框样式常量（CARD-C：date 四处/number 六处逐字复制收口——宽度为
+// number 档唯一变量，其余类名共享）
+const DATE_INPUT_CLS =
+  "h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer";
+const NUM_INPUT_BASE =
+  "h-7 {W} rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold";
+const NUM_INPUT_CLS = (w: string) => NUM_INPUT_BASE.replace("{W}", w);
+
+/** 按标的过滤数据源→周期去重选项（CARD-C：reduce/find O(n²) 与 Set 两份
+ *  同逻辑实现收口为单实现——空源/无匹配回退全档常量） */
+function buildTimeframeOptions(
+  sources: Array<{ symbol: string; timeframe: string }> | undefined,
+  symbol: string,
+): { value: string; label: string }[] {
+  if (!sources?.length) return [...TIMEFRAME_SELECT_OPTIONS];
+  const seen = new Set<string>();
+  const opts: { value: string; label: string }[] = [];
+  for (const s of sources) {
+    if (s.symbol === symbol && !seen.has(s.timeframe)) {
+      seen.add(s.timeframe);
+      opts.push({ value: s.timeframe, label: s.timeframe });
+    }
+  }
+  return opts.length > 0 ? opts : [...TIMEFRAME_SELECT_OPTIONS];
+}
+
 export function Lab() {
   // -- Router state (DNA from Evolution) --
   const location = useLocation();
@@ -249,20 +275,14 @@ export function Lab() {
     return opts.length > 0 ? opts : SYMBOL_OPTIONS;
   }, [sourcesData]);
 
-  const dynamicTimeframeOptions = useMemo(() => {
-    if (!sourcesData?.sources?.length) return TIMEFRAME_SELECT_OPTIONS;
-    const filtered = sourcesData.sources.filter((s) => s.symbol === pair);
-    if (filtered.length === 0) return TIMEFRAME_SELECT_OPTIONS;
-    const seen = new Set<string>();
-    const opts: { value: string; label: string }[] = [];
-    for (const s of filtered) {
-      if (!seen.has(s.timeframe)) {
-        seen.add(s.timeframe);
-        opts.push({ value: s.timeframe, label: s.timeframe });
-      }
-    }
-    return opts.length > 0 ? opts : TIMEFRAME_SELECT_OPTIONS;
-  }, [sourcesData, pair]);
+  const dynamicTimeframeOptions = useMemo(
+    () => buildTimeframeOptions(sourcesData?.sources, pair),
+    [sourcesData, pair],
+  );
+  const backtestTimeframeOptions = useMemo(
+    () => buildTimeframeOptions(sourcesData?.sources, backtestSymbol),
+    [sourcesData, backtestSymbol],
+  );
 
   // 自动设置缺省日期区间
   useEffect(() => {
@@ -447,7 +467,10 @@ export function Lab() {
     } catch {
       // 由 mutation 处理
     }
-  }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation]);
+  }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation,
+    // CARD-A（t3r4 P1）：risk_genes 消费的五个面板 state 必须入 deps——
+    // 缺失时「验证→改参→保存」顺序走旧闭包存旧值（spec 保存链一致 scenario）
+    btStopLoss, btTakeProfit, btPositionSize, btLeverage, btDirection]);
 
   // -- Buy/Sell signals for chart --
   const chartSignals = useMemo(() => {
@@ -648,18 +671,7 @@ export function Lab() {
                         onChange={setBacktestTimeframe}
                         className="!w-24 !text-xs"
                         aria-label="回测周期"
-                        options={
-                          (sourcesData?.sources?.filter((s) => s.symbol === backtestSymbol).length ?? 0) > 0
-                            ? sourcesData!.sources
-                                .filter((s) => s.symbol === backtestSymbol)
-                                .reduce<{ value: string; label: string }[]>((acc, s) => {
-                                  if (!acc.find((a) => a.value === s.timeframe)) {
-                                    acc.push({ value: s.timeframe, label: s.timeframe });
-                                  }
-                                  return acc;
-                                }, [])
-                            : [...TIMEFRAME_SELECT_OPTIONS]
-                        }
+                        options={backtestTimeframeOptions}
                       />
 
                       <input
@@ -668,7 +680,7 @@ export function Lab() {
                         onChange={(e) =>
                           setBacktestDateRange((prev) => ({ ...prev, start: e.target.value }))
                         }
-                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                        className={DATE_INPUT_CLS}
                       />
                       <span className="text-xs text-text-muted">~</span>
                       <input
@@ -677,7 +689,7 @@ export function Lab() {
                         onChange={(e) =>
                           setBacktestDateRange((prev) => ({ ...prev, end: e.target.value }))
                         }
-                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                        className={DATE_INPUT_CLS}
                       />
 
                       <div className="flex items-center gap-1">
@@ -743,7 +755,7 @@ export function Lab() {
                             max={0.01}
                             value={btFee}
                             onChange={(e) => setBtFee(Number(e.target.value))}
-                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-20")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -755,7 +767,7 @@ export function Lab() {
                             max={0.01}
                             value={btSlippage}
                             onChange={(e) => setBtSlippage(Number(e.target.value))}
-                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-20")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -766,7 +778,7 @@ export function Lab() {
                             min={1000}
                             value={btInitCash}
                             onChange={(e) => setBtInitCash(Number(e.target.value))}
-                            className="h-7 w-28 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-28")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -778,7 +790,7 @@ export function Lab() {
                             max={0.5}
                             value={btStopLoss}
                             onChange={(e) => setBtStopLoss(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -790,7 +802,7 @@ export function Lab() {
                             max={1}
                             value={btTakeProfit}
                             onChange={(e) => setBtTakeProfit(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -802,7 +814,7 @@ export function Lab() {
                             max={1}
                             value={btPositionSize}
                             onChange={(e) => setBtPositionSize(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                       </div>
@@ -894,7 +906,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, start: e.target.value }))
                     }
-                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    className={DATE_INPUT_CLS}
                   />
                   <span className="text-xs text-text-muted">~</span>
                   <input
@@ -903,7 +915,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, end: e.target.value }))
                     }
-                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    className={DATE_INPUT_CLS}
                   />
 
                   <div className="flex items-center gap-1">

@@ -357,3 +357,58 @@ describe("Lab - 五步真实落点与 K 线常驻（fe-research-execution-domain
     });
   });
 });
+
+describe("Lab - 保存链顺序用例（t3r4 CARD-A：验证→改参→保存→断言新值）", () => {
+  it("验证后改止损参数再保存：risk_genes 取面板当前值而非验证时刻旧值", async () => {
+    const saveMutate = vi.fn().mockResolvedValue({});
+    vi.mocked(useValidateRules).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({
+        total_trades: 3,
+        buy_signals: [{ time: "2025-01-01 00:00:00+00:00" }],
+        sell_signals: [],
+        win_rate: 60, win_trades: 2, loss_trades: 1,
+        total_return_pct: 5, avg_return_pct: 1.6,
+      }),
+      isPending: false,
+    } as unknown as ReturnType<typeof useValidateRules>);
+    const { useCreateStrategy } = await import("@/hooks/useStrategies");
+    vi.mocked(useCreateStrategy).mockReturnValue({
+      mutateAsync: saveMutate,
+      isPending: false,
+    } as never);
+
+    render(<Lab />, { wrapper: createWrapper() });
+    // 1) hypothesis 验证（ruleResult 落地）
+    const addBtns = screen.getAllByText("添加条件");
+    fireEvent.click(addBtns[0]);
+    fireEvent.click(addBtns[1]);
+    fireEvent.click(screen.getByText("验证策略"));
+    await waitFor(() => {
+      expect(screen.getByText(/沙盒回测 · 不计判定并集/)).toBeInTheDocument();
+    });
+
+    // 2) 切 backtest 展开高级参数改止损 0.05→0.08
+    fireEvent.click(screen.getByText("策略回测"));
+    fireEvent.click(screen.getByText("高级参数"));
+    const stopInput = screen.getByDisplayValue("0.05");
+    fireEvent.change(stopInput, { target: { value: "0.08" } });
+
+    // 3) 切回 hypothesis 保存为策略
+    fireEvent.click(screen.getByText("假设验证"));
+    // 构器操作行与结果面板双钮并存——取结果面板位（第二个）
+    fireEvent.click(screen.getAllByText("保存为策略")[1]);
+    fireEvent.change(screen.getByPlaceholderText("输入策略名称"), {
+      target: { value: "顺序用例策略" },
+    });
+    fireEvent.click(screen.getByText("确认保存"));
+
+    // 4) 断言：保存的 risk_genes.stop_loss 是改后的 0.08（旧闭包则存 0.05）
+    await waitFor(() => {
+      expect(saveMutate).toHaveBeenCalledTimes(1);
+    });
+    const saved = saveMutate.mock.calls[0][0] as {
+      dna: { risk_genes: { stop_loss: number } };
+    };
+    expect(saved.dna.risk_genes.stop_loss).toBe(0.08);
+  });
+});

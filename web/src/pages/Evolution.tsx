@@ -51,6 +51,24 @@ function formatTimeframeDisplay(task: EvolutionTask): string {
     : task.timeframe.toUpperCase();
 }
 
+/** 跳 Lab 导航 state 组装（CARD-B：handleVisualVerify/handleStrategyBacktest
+ *  原两份逐字双写收口为单实现——dataStart/dataEnd 取任务显式域，
+ *  缺失回退 data_time_* 时间戳日期面） */
+function buildLabNavState(
+  dna: DNA,
+  symbol: string,
+  timeframe: string,
+  task: EvolutionTask | null,
+): { dna: DNA; symbol: string; timeframe: string; dataStart?: string; dataEnd?: string } {
+  return {
+    dna,
+    symbol,
+    timeframe,
+    dataStart: task?.data_start || task?.data_time_start?.slice(0, 10) || undefined,
+    dataEnd: task?.data_end || task?.data_time_end?.slice(0, 10) || undefined,
+  };
+}
+
 export function Evolution() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -183,15 +201,7 @@ export function Evolution() {
 
   const handleVisualVerify = useCallback(
     (dna: DNA, task: EvolutionTask) => {
-      navigate("/lab", {
-        state: {
-          dna,
-          symbol: task.symbol,
-          timeframe: task.timeframe,
-          dataStart: task.data_start || task.data_time_start?.slice(0, 10) || undefined,
-          dataEnd: task.data_end || task.data_time_end?.slice(0, 10) || undefined,
-        },
-      });
+      navigate("/lab", { state: buildLabNavState(dna, task.symbol, task.timeframe, task) });
     },
     [navigate]
   );
@@ -215,15 +225,8 @@ export function Evolution() {
   const handleStrategyBacktest = useCallback(
     (strategy: DiscoveredStrategy) => {
       if (!strategy.dna) return;
-      const task = currentTask;
       navigate("/lab", {
-        state: {
-          dna: strategy.dna,
-          symbol: strategy.symbol,
-          timeframe: strategy.timeframe,
-          dataStart: task?.data_start || task?.data_time_start?.slice(0, 10) || undefined,
-          dataEnd: task?.data_end || task?.data_time_end?.slice(0, 10) || undefined,
-        },
+        state: buildLabNavState(strategy.dna, strategy.symbol, strategy.timeframe, currentTask),
       });
     },
     [navigate, currentTask]
@@ -454,8 +457,8 @@ function TaskParamsSummary({ task }: { task: EvolutionTask }) {
     >
       {rows.map((r) => (
         <div key={r.label} className="flex items-baseline gap-2 min-w-0" data-testid={`task-param-${r.label}`}>
-          <span className="text-[11px] text-slate-500 shrink-0">{r.label}</span>
-          <span className="text-xs font-mono text-slate-200 truncate" title={r.title ?? r.value}>
+          <span className="shrink-0 text-[11px] text-text-muted">{r.label}</span>
+          <span className="truncate font-mono text-xs text-text-secondary" title={r.title ?? r.value}>
             {r.value}
           </span>
         </div>

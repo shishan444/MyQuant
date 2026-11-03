@@ -134,7 +134,12 @@ export function ScoreTrendChart({
           最长停滞 {stats.maxStagnation} 代
         </span>
         {lastRecord?.diversity != null && typeof lastRecord.diversity === "number" && (
-          <span style={{ color: CHART_VA.dim }}>
+          <span
+            // 对质 1（t3r4）：多样性分档语义保留——琥珀终端风下收为两档
+            //（原三档 emerald/amber/red 的「绿=好」在 va 域无对应色且多样性
+            // 高低无好坏定论；<0.4 低多样性提示与「最长停滞」警示同 amber 通道）
+            style={{ color: lastRecord.diversity <= 0.4 ? CHART_VA.amber : CHART_VA.dim }}
+          >
             当前多样性 {(lastRecord.diversity * 100).toFixed(0)}%
           </span>
         )}
