@@ -50,7 +50,8 @@ test.describe("主链路", () => {
 
   test("04 Evolution：历史任务表 + 详情抽屉图表", async ({ page }) => {
     await page.goto("/evolution");
-    await expect(page.getByText("历史探索")).toBeVisible();
+    // fe-research-execution-domain 3.1：标题「历史探索」→「历史任务」（原型 05-B5 文案）
+    await expect(page.getByText("历史任务")).toBeVisible();
     await page.waitForFunction(() => document.querySelectorAll("table tbody tr").length > 0, {
       timeout: 10_000,
     });

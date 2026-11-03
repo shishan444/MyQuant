@@ -313,3 +313,113 @@ describe("Lab - sl_series observation series (CARD-01)", () => {
     expect(received.every((d) => d === null)).toBe(true);
   });
 });
+
+describe("Lab - 五步真实落点与 K 线常驻（fe-research-execution-domain 1.2）", () => {
+  /** 步骤条当前步判定：nav 内指定步名按钮持有当前步高亮 class */
+  function currentStepName(): string {
+    const nav = screen.getByLabelText("假设流水线步骤");
+    const active = Array.from(nav.querySelectorAll("button")).find(
+      (b) => b.className.includes("bg-accent-gold/10"),
+    );
+    return active?.textContent?.replace(/^\d+/, "") ?? "";
+  }
+
+  it("hypothesis 无结果：步①构建为当前步，中列 K 线已常驻在页", () => {
+    render(<Lab />, { wrapper: createWrapper() });
+    expect(currentStepName()).toBe("构建");
+    // K 线常驻：未验证时中列即在（含引导注）
+    expect(screen.getByTestId("kline-chart")).toBeInTheDocument();
+    expect(screen.getByText("构建并验证后叠加买卖信号")).toBeInTheDocument();
+  });
+
+  it("backtest 模式（routeState.dna 进入）：步④沙盒为当前步", () => {
+    mockLocationState = { dna: mockDNA };
+    render(<Lab />, { wrapper: createWrapper() });
+    expect(currentStepName()).toBe("沙盒");
+  });
+
+  it("hypothesis 验证完成：步③案例为当前步（结果即案例面）", async () => {
+    vi.mocked(useValidateRules).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({
+        total_trades: 0, buy_signals: [], sell_signals: [],
+        win_rate: null, win_trades: 0, loss_trades: 0,
+        total_return_pct: 0, avg_return_pct: 0,
+      }),
+      isPending: false,
+    } as unknown as ReturnType<typeof useValidateRules>);
+    render(<Lab />, { wrapper: createWrapper() });
+    const addBtns = screen.getAllByText("添加条件");
+    fireEvent.click(addBtns[0]);
+    fireEvent.click(addBtns[1]);
+    fireEvent.click(screen.getByText("验证策略"));
+    await waitFor(() => {
+      expect(currentStepName()).toBe("案例");
+    });
+  });
+});
+
+describe("Lab - 保存链顺序用例（t3r4 CARD-A：验证→改参→保存→断言新值）", () => {
+  it("验证后改止损参数再保存：risk_genes 取面板当前值而非验证时刻旧值", async () => {
+    const saveMutate = vi.fn().mockResolvedValue({});
+    vi.mocked(useValidateRules).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({
+        total_trades: 3,
+        buy_signals: [{ time: "2025-01-01 00:00:00+00:00" }],
+        sell_signals: [],
+        win_rate: 60, win_trades: 2, loss_trades: 1,
+        total_return_pct: 5, avg_return_pct: 1.6,
+      }),
+      isPending: false,
+    } as unknown as ReturnType<typeof useValidateRules>);
+    const { useCreateStrategy } = await import("@/hooks/useStrategies");
+    vi.mocked(useCreateStrategy).mockReturnValue({
+      mutateAsync: saveMutate,
+      isPending: false,
+    } as never);
+
+    render(<Lab />, { wrapper: createWrapper() });
+    // 1) hypothesis 验证（ruleResult 落地）
+    const addBtns = screen.getAllByText("添加条件");
+    fireEvent.click(addBtns[0]);
+    fireEvent.click(addBtns[1]);
+    fireEvent.click(screen.getByText("验证策略"));
+    await waitFor(() => {
+      expect(screen.getByText(/沙盒回测 · 不计判定并集/)).toBeInTheDocument();
+    });
+
+    // 2) 切 backtest 展开高级参数改止损 0.05→0.08
+    fireEvent.click(screen.getByText("策略回测"));
+    fireEvent.click(screen.getByText("高级参数"));
+    const stopInput = screen.getByDisplayValue("0.05");
+    fireEvent.change(stopInput, { target: { value: "0.08" } });
+
+    // 3) 切回 hypothesis 保存为策略
+    fireEvent.click(screen.getByText("假设验证"));
+    // 构器操作行与结果面板双钮并存——取结果面板位（第二个）
+    fireEvent.click(screen.getAllByText("保存为策略")[1]);
+    fireEvent.change(screen.getByPlaceholderText("输入策略名称"), {
+      target: { value: "顺序用例策略" },
+    });
+    fireEvent.click(screen.getByText("确认保存"));
+
+    // 4) 断言：保存的 risk_genes.stop_loss 是改后的 0.08（旧闭包则存 0.05）
+    await waitFor(() => {
+      expect(saveMutate).toHaveBeenCalledTimes(1);
+    });
+    const saved = saveMutate.mock.calls[0][0] as {
+      dna: { risk_genes: { stop_loss: number } };
+    };
+    expect(saved.dna.risk_genes.stop_loss).toBe(0.08);
+
+    // G2（t3r4）：保存成功=步⑤登记完成态——currentStep=4（「登记」当前+
+    // 完成文案）；同流程顺带覆盖，无需独立驱动
+    await waitFor(() => {
+      expect(screen.getByText(/已登记（步⑤完成）/)).toBeInTheDocument();
+    });
+    const nav = screen.getByLabelText("假设流水线步骤");
+    const active = Array.from(nav.querySelectorAll("button")).find(
+      (b) => b.className.includes("bg-accent-gold/10"),
+    );
+    expect(active?.textContent).toBe("5登记");
+  });
+});

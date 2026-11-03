@@ -10,8 +10,9 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Play, X, ChevronDown, ChevronUp, LineChart,
-  Search, Check, Star, ArrowUpDown,
+  Search, Check, ArrowUpDown,
 } from "lucide-react";
+import { StarRating } from "@/components/StarRating";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Button as AntButton, Input, InputNumber, Progress } from "antd";
 import { PageTransition } from "@/components/PageTransition";
@@ -361,7 +362,7 @@ export function BatchBacktest() {
                             {s.symbol}/{s.timeframe}
                           </td>
                           <td className="py-1.5 px-2 text-center">
-                            <MiniStars value={s.verify_star} />
+                            <StarRating value={s.verify_star} />
                           </td>
                           <td className="py-1.5 px-2 text-right">
                             <span className="text-[9px] px-1 py-0.5 rounded bg-white/[0.03] text-text-secondary">
@@ -469,7 +470,7 @@ export function BatchBacktest() {
           <div className="rounded-xl border border-red-900/30 bg-white/[0.01] p-3 flex items-center gap-2">
             <X className="w-4 h-4 text-red-400 shrink-0" />
             <span className="text-xs text-red-400 flex-1">{stream.error}</span>
-            <AntButton type="text" size="small" onClick={handleReset}>重试</AntButton>
+            <AntButton type="text" size="small" onClick={handleReset}>重置</AntButton>
           </div>
         )}
 
@@ -562,17 +563,6 @@ function InlineParam({ label, value, onChange, suffix, w = "!w-20" }: {
         size="small" className={cn("!text-[11px]", w)} aria-label={label} />
       {suffix && <span className="text-[10px] text-text-secondary">{suffix}</span>}
     </div>
-  );
-}
-
-function MiniStars({ value }: { value?: number | null }) {
-  const n = value ?? 0;
-  return (
-    <span className={cn("text-[10px] flex items-center justify-center gap-px", n >= 4 ? "text-amber-400" : n >= 3 ? "text-blue-400" : "text-text-muted")}>
-      {Array.from({ length: 5 }, (_, i) => (
-        <Star key={i} className={cn("h-2.5 w-2.5", i < n ? "fill-current" : "opacity-30")} />
-      ))}
-    </span>
   );
 }
 

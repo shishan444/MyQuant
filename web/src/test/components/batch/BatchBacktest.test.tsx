@@ -120,6 +120,23 @@ describe("BatchBacktest（AntD）", () => {
     vi.clearAllMocks();
   });
 
+  it("星级位页级锚（t3r4 G3）：4 星策略行渲染 StarRating 五槽 svg", async () => {
+    // fixture makeStrategy verify_star:4——策略选择表行内 StarRating 五槽
+    setup();
+    const rows = await screen.findAllByRole("row");
+    const svgCount = rows.reduce(
+      (n, r) => n + r.querySelectorAll("svg").length, 0,
+    );
+    // 两策略行各 5 槽（4 星 fixture——旧 ★n 数字形无 svg，此锚兼防数字形回退）
+    expect(svgCount).toBeGreaterThanOrEqual(10);
+  });
+
+  it("失败态「重置」双锚（t3r4 G4）：error 态重置在场+重试不在场", async () => {
+    setup({ streamStatus: "error" });
+    expect(await screen.findByText("重置")).toBeInTheDocument();
+    expect(screen.queryByText("重试")).not.toBeInTheDocument();
+  });
+
   it("策略选择：勾选行联动已选计数", async () => {
     const { user } = setup();
     await screen.findByText("Alpha");

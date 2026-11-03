@@ -99,6 +99,32 @@ function getDefaultDates(): { start: string; end: string } {
 // 组件
 // ---------------------------------------------------------------------------
 
+// 输入框样式常量（CARD-C：date 四处/number 六处逐字复制收口——宽度为
+// number 档唯一变量，其余类名共享）
+const DATE_INPUT_CLS =
+  "h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer";
+const NUM_INPUT_BASE =
+  "h-7 {W} rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold";
+const NUM_INPUT_CLS = (w: string) => NUM_INPUT_BASE.replace("{W}", w);
+
+/** 按标的过滤数据源→周期去重选项（CARD-C：reduce/find O(n²) 与 Set 两份
+ *  同逻辑实现收口为单实现——空源/无匹配回退全档常量） */
+function buildTimeframeOptions(
+  sources: Array<{ symbol: string; timeframe: string }> | undefined,
+  symbol: string,
+): { value: string; label: string }[] {
+  if (!sources?.length) return [...TIMEFRAME_SELECT_OPTIONS];
+  const seen = new Set<string>();
+  const opts: { value: string; label: string }[] = [];
+  for (const s of sources) {
+    if (s.symbol === symbol && !seen.has(s.timeframe)) {
+      seen.add(s.timeframe);
+      opts.push({ value: s.timeframe, label: s.timeframe });
+    }
+  }
+  return opts.length > 0 ? opts : [...TIMEFRAME_SELECT_OPTIONS];
+}
+
 export function Lab() {
   // -- Router state (DNA from Evolution) --
   const location = useLocation();
@@ -156,7 +182,13 @@ export function Lab() {
   const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [hypoSubChartType] = useState<SubChartType>("volume");
-  const [hypoFetchEnabled, setHypoFetchEnabled] = useState(false);
+  // K 线常驻（fe-research-execution-domain 1.2）：中列 K 线全程在页——
+  // 未验证时也随数据源拉取呈现（原 false→验证后才拉）
+  const [hypoFetchEnabled, setHypoFetchEnabled] = useState(true);
+  // 步⑤登记完成态（五步真实落点）：保存成功置位、重验/清空重置
+  const [registered, setRegistered] = useState(false);
+  // 五步条已到达最远步（回跳上界——真实落点驱动，非硬编码）
+  const [furthestStep, setFurthestStep] = useState(0);
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
@@ -243,20 +275,14 @@ export function Lab() {
     return opts.length > 0 ? opts : SYMBOL_OPTIONS;
   }, [sourcesData]);
 
-  const dynamicTimeframeOptions = useMemo(() => {
-    if (!sourcesData?.sources?.length) return TIMEFRAME_SELECT_OPTIONS;
-    const filtered = sourcesData.sources.filter((s) => s.symbol === pair);
-    if (filtered.length === 0) return TIMEFRAME_SELECT_OPTIONS;
-    const seen = new Set<string>();
-    const opts: { value: string; label: string }[] = [];
-    for (const s of filtered) {
-      if (!seen.has(s.timeframe)) {
-        seen.add(s.timeframe);
-        opts.push({ value: s.timeframe, label: s.timeframe });
-      }
-    }
-    return opts.length > 0 ? opts : TIMEFRAME_SELECT_OPTIONS;
-  }, [sourcesData, pair]);
+  const dynamicTimeframeOptions = useMemo(
+    () => buildTimeframeOptions(sourcesData?.sources, pair),
+    [sourcesData, pair],
+  );
+  const backtestTimeframeOptions = useMemo(
+    () => buildTimeframeOptions(sourcesData?.sources, backtestSymbol),
+    [sourcesData, backtestSymbol],
+  );
 
   // 自动设置缺省日期区间
   useEffect(() => {
@@ -384,6 +410,7 @@ export function Lab() {
       });
       setRuleResult(res);
       setHypoFetchEnabled(true);
+      setRegistered(false);
     } catch {
       // 由 mutation 处理
     }
@@ -393,7 +420,7 @@ export function Lab() {
     setEntryConditions([]);
     setExitConditions([]);
     setRuleResult(null);
-    setHypoFetchEnabled(false);
+    setRegistered(false);
   }, []);
 
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
@@ -420,7 +447,10 @@ export function Lab() {
         signal_genes: [...entrySignals, ...exitSignals],
         logic_genes: { entry_logic: "AND", exit_logic: "OR" },
         execution_genes: { timeframe, symbol: pair },
-        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long", sl_mode: "pct", atr_period: 14 },
+        // 保存链修复（fe-research-execution-domain P02-3）：risk_genes 取
+        // 高级参数面板实际值（原全字面量与面板输入脱节——改参数→保存→重开
+        // 值一致为验收）；sl_mode/atr_period 面板无对应控件，保留档位默认
+        risk_genes: { stop_loss: btStopLoss, take_profit: btTakeProfit, position_size: btPositionSize, leverage: btLeverage, direction: btDirection, sl_mode: "pct", atr_period: 14 },
       };
       await createStrategyMutation.mutateAsync({
         name: data.name,
@@ -433,10 +463,14 @@ export function Lab() {
       });
       toast.success("策略已保存");
       setSaveDialogOpen(false);
+      setRegistered(true);
     } catch {
       // 由 mutation 处理
     }
-  }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation]);
+  }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation,
+    // CARD-A（t3r4 P1）：risk_genes 消费的五个面板 state 必须入 deps——
+    // 缺失时「验证→改参→保存」顺序走旧闭包存旧值（spec 保存链一致 scenario）
+    btStopLoss, btTakeProfit, btPositionSize, btLeverage, btDirection]);
 
   // -- Buy/Sell signals for chart --
   const chartSignals = useMemo(() => {
@@ -471,23 +505,55 @@ export function Lab() {
     return parts.join(" / ");
   }, [pair, timeframe, entryConditions, exitConditions]);
 
+  // -- 五步真实落点（fe-research-execution-domain 1.2）--
+  // ①构建/②预检=hypothesis 模式（②=验证完成态并入结果步）；③案例检视=
+  // hypothesis 有结果（中列 K 线信号标记即案例面）；④沙盒回测=scene·backtest
+  // 模式；⑤登记入台账=保存完成态（registered）
+  const currentStep = registered
+    ? 4
+    : labMode === "hypothesis"
+      ? (hasResult ? 2 : 0)
+      : 3;
+  useEffect(() => {
+    setFurthestStep((f) => Math.max(f, currentStep));
+  }, [currentStep]);
+
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* 02-B1 五步流水线条（hypothesis-workbench 组 3.1）——三模式到
-            五步的映射：构建=假设验证模式 / 预检=模式内预检态 / 案例=场景
-            验证 / 沙盒=策略回测 / 登记=模式内登记动作；步骤条呈现映射态 */}
+        {/* 02-B1 五步流水线条——五步真实落点（fe-research-execution-domain 1.2）：
+            步①②③=hypothesis（③有结果态）/步④=scene·backtest/步⑤=保存完成态 */}
         <HypothesisStepper
-          current={labMode === "hypothesis" ? 0 : labMode === "scene" ? 2 : 3}
-          furthest={4}
+          current={currentStep}
+          furthest={furthestStep}
           onStepClick={(i: number) => {
-            if (i === 0) setLabMode("hypothesis");
-            else if (i === 2) setLabMode("scene");
-            else if (i === 3) setLabMode("backtest");
+            if (i === 4) {
+              setLabMode("hypothesis");
+            } else if (i === 3) {
+              setLabMode("backtest");
+            } else {
+              setLabMode("hypothesis");
+              if (i === 2) {
+                // 步③案例检视=中列 K 线信号面锚点
+                document
+                  .getElementById("lab-kline-section")
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }
           }}
         />
 
-        {/* 模式切换 */}
+        {/* 场景验证模式（复合面板全宽——自带选择器/图表/标注/结果） */}
+        {labMode === "scene" && (
+          <GlassCard className="p-5" hover={false}>
+            <SceneModePanel
+              initialSymbol={pair}
+              initialTimeframe={timeframe}
+            />
+          </GlassCard>
+        )}
+
+        {/* 模式切换（三模式保全入口——全模式可见，含 scene 回跳） */}
         <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
           <button
             type="button"
@@ -527,10 +593,21 @@ export function Lab() {
           </button>
         </div>
 
-        {/* 回测模式 */}
-        {labMode === "backtest" && (
-          <GlassCard className="p-5" hover={false}>
-            <div className="flex flex-col gap-5">
+        {/* hypothesis 三列主体（原型 02-B2 构建面板/B3 图表主列/B4 步骤面板）
+            与 backtest 左配置+右结果（BacktestModePanel 自带 K 线与结果） */}
+        {labMode !== "scene" && (
+          <div
+            className={
+              labMode === "hypothesis"
+                ? "grid items-start gap-4 lg:grid-cols-[290px_1fr_320px]"
+                : "grid items-start gap-4 lg:grid-cols-[380px_1fr]"
+            }
+          >
+            {/* 左列：当前模式配置 */}
+            <div className="flex flex-col gap-3">
+              {/* 回测模式配置（左列位） */}
+              {labMode === "backtest" && (
+                <div className="flex flex-col gap-4 rounded-lg border border-border-default bg-bg-base/40 p-3">
               {/* 配置区（可折叠） */}
               {btConfigCollapsed ? (
                 <div className="flex items-center justify-between">
@@ -594,18 +671,7 @@ export function Lab() {
                         onChange={setBacktestTimeframe}
                         className="!w-24 !text-xs"
                         aria-label="回测周期"
-                        options={
-                          (sourcesData?.sources?.filter((s) => s.symbol === backtestSymbol).length ?? 0) > 0
-                            ? sourcesData!.sources
-                                .filter((s) => s.symbol === backtestSymbol)
-                                .reduce<{ value: string; label: string }[]>((acc, s) => {
-                                  if (!acc.find((a) => a.value === s.timeframe)) {
-                                    acc.push({ value: s.timeframe, label: s.timeframe });
-                                  }
-                                  return acc;
-                                }, [])
-                            : [...TIMEFRAME_SELECT_OPTIONS]
-                        }
+                        options={backtestTimeframeOptions}
                       />
 
                       <input
@@ -614,7 +680,7 @@ export function Lab() {
                         onChange={(e) =>
                           setBacktestDateRange((prev) => ({ ...prev, start: e.target.value }))
                         }
-                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                        className={DATE_INPUT_CLS}
                       />
                       <span className="text-xs text-text-muted">~</span>
                       <input
@@ -623,7 +689,7 @@ export function Lab() {
                         onChange={(e) =>
                           setBacktestDateRange((prev) => ({ ...prev, end: e.target.value }))
                         }
-                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                        className={DATE_INPUT_CLS}
                       />
 
                       <div className="flex items-center gap-1">
@@ -689,7 +755,7 @@ export function Lab() {
                             max={0.01}
                             value={btFee}
                             onChange={(e) => setBtFee(Number(e.target.value))}
-                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-20")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -701,7 +767,7 @@ export function Lab() {
                             max={0.01}
                             value={btSlippage}
                             onChange={(e) => setBtSlippage(Number(e.target.value))}
-                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-20")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -712,7 +778,7 @@ export function Lab() {
                             min={1000}
                             value={btInitCash}
                             onChange={(e) => setBtInitCash(Number(e.target.value))}
-                            className="h-7 w-28 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-28")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -724,7 +790,7 @@ export function Lab() {
                             max={0.5}
                             value={btStopLoss}
                             onChange={(e) => setBtStopLoss(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -736,7 +802,7 @@ export function Lab() {
                             max={1}
                             value={btTakeProfit}
                             onChange={(e) => setBtTakeProfit(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -748,7 +814,7 @@ export function Lab() {
                             max={1}
                             value={btPositionSize}
                             onChange={(e) => setBtPositionSize(Number(e.target.value))}
-                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                            className={NUM_INPUT_CLS("w-16")}
                           />
                         </div>
                       </div>
@@ -774,60 +840,11 @@ export function Lab() {
                   </div>
                 </div>
               )}
-
-              {/* 回测结果面板 */}
-              {backtestDna ? (
-                <BacktestModePanel
-                  ref={backtestPanelRef}
-                  onResult={(r) => setSlSeries(
-                    r.sl_series && r.sl_series.length > 0
-                      ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
-                      : null)}
-                  dna={{
-                    ...backtestDna,
-                    risk_genes: {
-                      ...backtestDna.risk_genes,
-                      leverage: btLeverage,
-                      direction: btDirection,
-                      stop_loss: btStopLoss,
-                      take_profit: btTakeProfit,
-                      position_size: btPositionSize,
-                    },
-                  }}
-                  symbol={backtestSymbol}
-                  timeframe={backtestTimeframe}
-                  dataStart={backtestDateRange.start || undefined}
-                  dataEnd={backtestDateRange.end || undefined}
-                  fee={btFee}
-                  slippage={btSlippage}
-                  initCash={btInitCash}
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-3 py-12 text-center">
-                  <BarChart3 className="h-10 w-10 text-slate-700" />
-                  <p className="text-xs text-slate-500">
-                    从上方选择一个策略，或从进化中心跳转
-                  </p>
                 </div>
               )}
-            </div>
-          </GlassCard>
-        )}
 
-        {/* 场景模式 */}
-        {labMode === "scene" && (
-          <GlassCard className="p-5" hover={false}>
-            <SceneModePanel
-              initialSymbol={pair}
-              initialTimeframe={timeframe}
-            />
-          </GlassCard>
-        )}
-
-        {/* hypothesis 模式（Lab 原始 UI） */}
-        {labMode === "hypothesis" && (
-          <>
-        {/* Region 1：条件构建器 */}
+              {/* hypothesis 构建器（左列位——02-B2 规律构建器） */}
+              {labMode === "hypothesis" && (
         <GlassCard className="p-4" hover={false}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-text-primary">规律构建器</h3>
@@ -889,7 +906,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, start: e.target.value }))
                     }
-                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    className={DATE_INPUT_CLS}
                   />
                   <span className="text-xs text-text-muted">~</span>
                   <input
@@ -898,7 +915,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, end: e.target.value }))
                     }
-                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    className={DATE_INPUT_CLS}
                   />
 
                   <div className="flex items-center gap-1">
@@ -969,136 +986,188 @@ export function Lab() {
             </div>
           )}
         </GlassCard>
-
-        {/* 空态/加载/结果 */}
-
-        {!hasResult && !isLoading && (
-          <GlassCard className="p-8" hover={false}>
-            <div className="flex flex-col items-center gap-4">
-              <FlaskConical className="h-16 w-16 text-text-muted/30" />
-              <div className="flex flex-col items-center gap-1 text-center">
-                <h3 className="text-base font-medium text-text-secondary">
-                  配置入场和出场规则, 验证策略效果
-                </h3>
-                <p className="text-sm text-text-muted">
-                  添加入场条件和出场条件, 然后点击"验证策略"
-                </p>
-              </div>
+              )}
             </div>
-          </GlassCard>
-        )}
 
-        {isLoading && (
-          <>
-            <GlassCard className="p-4" hover={false}>
-              <div className="flex items-center gap-6">
-                <Skeleton className="h-6 w-24" />
-                <Skeleton className="h-6 w-32" />
-                <Skeleton className="h-6 w-40" />
-              </div>
-            </GlassCard>
-            <GlassCard className="p-4" hover={false}>
-              <Skeleton className="h-[450px] w-full rounded-lg" />
-            </GlassCard>
-          </>
-        )}
-
-        {hasResult && !isLoading && ruleResult && (
-          <>
-            {/* 指标摘要 */}
-            <GlassCard className="p-3" hover={false}>
-              <div className="flex items-center gap-6 text-xs">
-                <span className="text-text-secondary">
-                  交易次数: <span className="font-medium text-text-primary">{ruleResult.total_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  胜率: <span className={`font-medium ${ruleResult.win_rate != null && ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
-                    {ruleResult.win_rate != null ? `${ruleResult.win_rate}%` : "-"}
-                  </span>
-                </span>
-                <span className="text-text-secondary">
-                  盈利: <span className="font-medium text-profit">{ruleResult.win_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  亏损: <span className="font-medium text-loss">{ruleResult.loss_trades}</span>
-                </span>
-                <span className="text-text-secondary">
-                  累计收益: <span className={`font-medium ${ruleResult.total_return_pct >= 0 ? "text-profit" : "text-loss"}`}>
-                    {ruleResult.total_return_pct}%
-                  </span>
-                </span>
-                <span className="text-text-secondary">
-                  平均收益: <span className="font-medium text-text-primary">{ruleResult.avg_return_pct}%</span>
-                </span>
-              </div>
-            </GlassCard>
-
-            {/* 无交易提示 */}
-            {ruleResult.total_trades === 0 && (
+            {/* 右列位（backtest）：BacktestModePanel 复合面板（自带 K 线与结果） */}
+            {labMode === "backtest" && (
               <GlassCard className="p-4" hover={false}>
-                <div className="flex flex-col items-center gap-3 text-center">
-                  <p className="text-sm text-text-muted">未找到符合条件的交易信号</p>
-                  <div className="flex items-center gap-2">
-                    <AntButton size="small" onClick={handleClearAll}>
-                      调整条件
-                    </AntButton>
-                    <AntButton size="small" onClick={() => handleQuickDate(0)}>
-                      扩大时间范围
-                    </AntButton>
+                {backtestDna ? (
+                  <BacktestModePanel
+                    ref={backtestPanelRef}
+                    onResult={(r) => setSlSeries(
+                      r.sl_series && r.sl_series.length > 0
+                        ? { data: r.sl_series, symbol: backtestSymbol, timeframe: backtestTimeframe }
+                        : null)}
+                    dna={{
+                      ...backtestDna,
+                      risk_genes: {
+                        ...backtestDna.risk_genes,
+                        leverage: btLeverage,
+                        direction: btDirection,
+                        stop_loss: btStopLoss,
+                        take_profit: btTakeProfit,
+                        position_size: btPositionSize,
+                      },
+                    }}
+                    symbol={backtestSymbol}
+                    timeframe={backtestTimeframe}
+                    dataStart={backtestDateRange.start || undefined}
+                    dataEnd={backtestDateRange.end || undefined}
+                    fee={btFee}
+                    slippage={btSlippage}
+                    initCash={btInitCash}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-12 text-center">
+                    <BarChart3 className="h-10 w-10 text-slate-700" />
+                    <p className="text-xs text-slate-500">
+                      从左侧选择一个策略，或从进化中心跳转
+                    </p>
                   </div>
-                </div>
+                )}
               </GlassCard>
             )}
 
-            {/* K 线图（含买卖信号） */}
-            <GlassCard className="p-4" hover={false} id="lab-kline-section">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-3 text-xs text-text-muted">
-                  <span className="font-medium text-text-secondary">
-                    {pair} / {timeframe}
-                  </span>
-                  {ruleResult.buy_signals.length > 0 && (
-                    <span className="text-profit">买入 {ruleResult.buy_signals.length}</span>
-                  )}
-                  {ruleResult.sell_signals.length > 0 && (
-                    <span className="text-loss">卖出 {ruleResult.sell_signals.length}</span>
-                  )}
+            {/* hypothesis 中列：K 线常驻（02-B3 图表主列·主体系紫底——
+                未验证时也随数据源呈现；信号标记与 SL 观测线随验证结果叠加） */}
+            {labMode === "hypothesis" && (
+              <>
+              <GlassCard className="p-4" hover={false} id="lab-kline-section">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-xs text-text-muted">
+                    <span className="font-medium text-text-secondary">
+                      {pair} / {timeframe}
+                    </span>
+                    {ruleResult?.buy_signals.length ? (
+                      <span className="text-profit">买入 {ruleResult.buy_signals.length}</span>
+                    ) : null}
+                    {ruleResult?.sell_signals.length ? (
+                      <span className="text-loss">卖出 {ruleResult.sell_signals.length}</span>
+                    ) : null}
+                    {!hasResult && <span>构建并验证后叠加买卖信号</span>}
+                  </div>
+                  <ChartToolbar
+                    onZoomIn={() => chartRef.current?.zoomIn()}
+                    onZoomOut={() => chartRef.current?.zoomOut()}
+                    onReset={() => chartRef.current?.resetView()}
+                    onFullscreen={() => {
+                      const el = document.getElementById("lab-kline-section");
+                      if (el && !document.fullscreenElement) {
+                        el.requestFullscreen().catch(() => {});
+                      } else {
+                        document.exitFullscreen().catch(() => {});
+                      }
+                    }}
+                  />
                 </div>
-                <ChartToolbar
-                  onZoomIn={() => chartRef.current?.zoomIn()}
-                  onZoomOut={() => chartRef.current?.zoomOut()}
-                  onReset={() => chartRef.current?.resetView()}
-                  onFullscreen={() => {
-                    const el = document.getElementById("lab-kline-section");
-                    if (el && !document.fullscreenElement) {
-                      el.requestFullscreen().catch(() => {});
-                    } else {
-                      document.exitFullscreen().catch(() => {});
-                    }
-                  }}
-                />
-              </div>
-              <KlineChart
-                ref={chartRef}
-                onChartReady={() => {
-                  // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
-                  // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
-                  // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
-                  // （React commit 序），handle 恒就绪）
-                  chartRef.current?.setObservationSeries(visibleSlSeries);
-                }}
-                data={candleData ?? []}
-                indicators={chartIndicators}
-                bollData={chartBollData}
-                signals={chartSignals}
-                height={650}
-                volumeData={volumeData}
-                subChartType={hypoSubChartType}
-                macdData={hypoMacdData}
-                kdjData={hypoKdjData}
-              />
-            </GlassCard>
-          </>
+                {isLoading ? (
+                  <Skeleton className="h-[450px] w-full rounded-lg" />
+                ) : (
+                  <KlineChart
+                    ref={chartRef}
+                    onChartReady={() => {
+                      // 互斥布局重挂载衔接锚（审查定性：模式切换下 KlineChart 重挂，
+                      // onChartReady 是唯一重挂信号——可见序列未变时 effect 不重跑，
+                      // 线会丢；此处经 handle 通道补挂。ref 赋值先于本回调
+                      // （React commit 序），handle 恒就绪）
+                      chartRef.current?.setObservationSeries(visibleSlSeries);
+                    }}
+                    data={candleData ?? []}
+                    indicators={chartIndicators}
+                    bollData={chartBollData}
+                    signals={chartSignals}
+                    height={520}
+                    volumeData={volumeData}
+                    subChartType={hypoSubChartType}
+                    macdData={hypoMacdData}
+                    kdjData={hypoKdjData}
+                  />
+                )}
+              </GlassCard>
+
+              {/* hypothesis 右列：结果面板（02-B4 步骤面板位——指标+口径+登记动作） */}
+              <GlassCard className="p-4" hover={false}>
+                {!hasResult && !isLoading && (
+                  <div className="flex flex-col items-center gap-3 py-8 text-center">
+                    <FlaskConical className="h-10 w-10 text-text-muted/30" />
+                    <p className="text-xs text-text-secondary">
+                      配置入场和出场规则, 验证策略效果
+                    </p>
+                    <p className="text-[11px] text-text-muted">
+                      添加入场条件和出场条件, 然后点击"验证策略"
+                    </p>
+                  </div>
+                )}
+
+                {hasResult && !isLoading && ruleResult && (
+                  <div className="flex flex-col gap-3">
+                    {/* 口径注（原型 B4：沙盒回测·不计判定并集·不构成验证证据） */}
+                    <p className="text-[10px] text-state-warn">
+                      沙盒回测 · 不计判定并集 · 不构成验证证据
+                    </p>
+
+                    {/* 指标摘要（纵向排——右列窄位） */}
+                    <div className="flex flex-col gap-1.5 text-xs">
+                      <span className="text-text-secondary">
+                        交易次数: <span className="font-num font-medium text-text-primary">{ruleResult.total_trades}</span>
+                      </span>
+                      <span className="text-text-secondary">
+                        胜率: <span className={`font-num font-medium ${ruleResult.win_rate != null && ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
+                          {ruleResult.win_rate != null ? `${ruleResult.win_rate}%` : "-"}
+                        </span>
+                      </span>
+                      <span className="text-text-secondary">
+                        盈利/亏损: <span className="font-num font-medium text-profit">{ruleResult.win_trades}</span>
+                        {" / "}
+                        <span className="font-num font-medium text-loss">{ruleResult.loss_trades}</span>
+                      </span>
+                      <span className="text-text-secondary">
+                        累计收益: <span className={`font-num font-medium ${ruleResult.total_return_pct >= 0 ? "text-profit" : "text-loss"}`}>
+                          {ruleResult.total_return_pct}%
+                        </span>
+                      </span>
+                      <span className="text-text-secondary">
+                        平均收益: <span className="font-num font-medium text-text-primary">{ruleResult.avg_return_pct}%</span>
+                      </span>
+                    </div>
+
+                    {/* 无交易引导 */}
+                    {ruleResult.total_trades === 0 && (
+                      <div className="flex flex-col items-center gap-2 py-2 text-center">
+                        <p className="text-xs text-text-muted">未找到符合条件的交易信号</p>
+                        <div className="flex items-center gap-2">
+                          <AntButton size="small" onClick={handleClearAll}>
+                            调整条件
+                          </AntButton>
+                          <AntButton size="small" onClick={() => handleQuickDate(0)}>
+                            扩大时间范围
+                          </AntButton>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 登记动作（步⑤——保存入策略库） */}
+                    {ruleResult.total_trades > 0 && (
+                      <AntButton
+                        onClick={() => setSaveDialogOpen(true)}
+                        disabled={createStrategyMutation.isPending}
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        保存为策略
+                      </AntButton>
+                    )}
+                    {registered && (
+                      <p className="text-[10px] text-profit">
+                        已登记（步⑤完成）——策略入台账，后续经隔离验证取证
+                      </p>
+                    )}
+                  </div>
+                )}
+              </GlassCard>
+              </>
+            )}
+          </div>
         )}
 
         {/* 保存策略对话框 */}
@@ -1111,8 +1180,6 @@ export function Lab() {
           matchRate={ruleResult?.win_rate ?? 0}
           totalCount={ruleResult?.total_trades ?? 0}
         />
-          </>
-        )}
       </div>
     </PageTransition>
   );

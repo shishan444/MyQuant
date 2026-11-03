@@ -14,6 +14,7 @@ import {
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
   Copy, Check, X, GitBranch, LineChart, AlertCircle,
 } from "lucide-react";
+import { StarRating } from "@/components/StarRating";
 import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -596,14 +597,7 @@ function StrategyCardRow({
         {/* 星级 */}
         <td className="py-3 px-1 text-center">
           {(strategy.verify_star ?? 0) > 0 ? (
-            <span className={cn(
-              "text-xs font-mono font-semibold",
-              strategy.verify_star === 5 ? "text-amber-400" :
-              (strategy.verify_star ?? 0) >= 3 ? "text-blue-400" :
-              "text-slate-400"
-            )}>
-              ★{strategy.verify_star}
-            </span>
+            <StarRating value={strategy.verify_star} />
           ) : (strategy.verify_count ?? 0) > 0 ? (
             <span className="text-xs text-slate-600">--</span>
           ) : null}
