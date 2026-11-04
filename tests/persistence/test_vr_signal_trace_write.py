@@ -107,6 +107,34 @@ def test_trace_write_failure_rolls_back(tmp_path: Path, monkeypatch):
         _save(db, "rec_d", trace=TRACE_ROWS)
     # 整体回滚：记录不在库（同事务原子性）
     assert _three_bools(db, "rec_d") is None
+
+
+def test_corrupted_gene_hits_structured_reject(tmp_path: Path):
+    """CARD-10：gene_hits 损坏行→结构化拒绝（422 非炸 500）+行级定位。
+
+    库内直改损坏串（外部改写/截断形态）经 get_vr_signal_trace_rows
+    读出→ResearchError RESEARCH_STORED_DATA_INVALID，detail 携带
+    幂等键族四标识+parse_error（损坏行可精确定位——涉安项的取证面）。
+    """
+    from core.analysis.errors import ResearchError
+    db = tmp_path / "w.db"
+    _seed(db)
+    _save(db, "rec_corrupt", trace=TRACE_ROWS)
+    from core.persistence.orm.engine import engine_for
+    with engine_for(db).begin() as conn:
+        conn.execute(text(
+            "UPDATE vr_signal_trace SET gene_hits = '{oops'"
+            " WHERE record_id = :rid AND seq = 0 AND event_code = 30"),
+            {"rid": "rec_corrupt"})
+    with pytest.raises(ResearchError) as ei:
+        rr.get_vr_signal_trace_rows(db, "rec_corrupt")
+    assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
+    assert ei.value.status == 422
+    d = ei.value.detail
+    assert d["record_id"] == "rec_corrupt"
+    assert d["exec_ref"] == "main"
+    assert d["seq"] == 0
+    assert "parse_error" in d, "损坏串取证信息必须在场"
     assert rr.get_vr_signal_trace_rows(db, "rec_d") == []
 
 

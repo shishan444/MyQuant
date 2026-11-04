@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from sqlalchemy import and_, func, insert, or_, select, update
 
+from core.analysis.errors import load_stored_json  # 轻量定义点（errors.py 头部声明：任何模块可安全模块级 import）
 from core.persistence.orm.models import (
     AnalysisTask,
     FeatureRequest,
@@ -706,7 +707,13 @@ def get_vr_signal_trace_rows(
          "seq": r["seq"], "outcome": r["outcome"], "reason": r["reason"],
          "event_code": r["event_code"], "size": r["size"],
          "price": r["price"], "capped": r["capped"],
-         "gene_hits": (json.loads(r["gene_hits"])
+         "gene_hits": (load_stored_json(
+                           r["gene_hits"],
+                           source="vr_signal_trace.gene_hits",
+                           detail={"record_id": record_id,
+                                   "exec_ref": r["exec_ref"],
+                                   "bar_time": r["bar_time"],
+                                   "seq": r["seq"]})
                        if r["gene_hits"] else None)}
         for r in rows]
 
