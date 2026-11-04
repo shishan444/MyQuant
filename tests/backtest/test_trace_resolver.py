@@ -215,6 +215,102 @@ class TestCapped:
                          "risk_fraction": None})
         assert rows[0]["capped"] is None
 
+    # 阶段四闸门补：_expected_qty 防御分支全集（阶段四盲区消解——
+    # price/value 守卫、risk_budget 档 rf 缺失/止损距离不可比两态）
+    @pytest.mark.parametrize("risk_params, tag", [
+        pytest.param({"position_mode": "fixed", "size_pct": 0.3,
+                      "sl_mode": "pct", "sl_stop": 0.05,
+                      "risk_fraction": None}, "fixed 完整（对照）",
+                     id="fixed 完整（对照）"),
+        pytest.param({"position_mode": "risk_budget",
+                      "sl_mode": "pct", "sl_stop": 0.05,
+                      "risk_fraction": None},
+                     "risk_budget 缺 rf", id="risk_budget 缺 rf"),
+        pytest.param({"position_mode": "risk_budget",
+                      "sl_mode": "pct", "sl_stop": 0.0,
+                      "risk_fraction": 0.1},
+                     "risk_budget 止损距离 0", id="risk_budget 止损距离 0"),
+        pytest.param({"position_mode": "risk_budget",
+                      "sl_mode": "atr", "sl_stop": 0.05,
+                      "risk_fraction": 0.1},
+                     "atr 档距离不可得", id="atr 档距离不可得"),
+    ])
+    def test_expected_qty_defensive_none_paths(self, risk_params, tag):
+        """防御分支：plan=None→capped=None（不崩不假报的如实不可比）。"""
+        rows = resolve_signal_trace(
+            _buf({1: 10}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 100.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params=risk_params)
+        if tag == "fixed 完整（对照）":
+            # 对照组：plan=value×0.3/100=300，实际 100→截断比值
+            assert rows[0]["capped"] == pytest.approx(100.0 / 300.0)
+        else:
+            assert rows[0]["capped"] is None, f"{tag} 应走防御 None"
+
+    def test_price_or_value_nonpositive_guard(self):
+        """price/value 守卫：非正价或非正权益→plan None→capped None。"""
+        bad_price = _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                              "size": 100.0, "ep": 0.0, "xp": 0.0}])
+        rows = resolve_signal_trace(
+            _buf({1: 10}), IDX, None, bad_price,
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params=RISK_PCT)
+        assert rows[0]["capped"] is None, "price≤0 须防御 None"
+        rows2 = resolve_signal_trace(
+            _buf({1: 10}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 100.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([0.0] * 4, index=IDX),
+            risk_params=RISK_PCT)
+        assert rows2[0]["capped"] is None, "value≤0 须防御 None"
+
+    def test_value_curve_missing_first_bar_fallback(self):
+        """value_curve 缺失（None）→init_cash 常数退化（首 bar 退化路径）。"""
+        rows = resolve_signal_trace(
+            _buf({0: 10}), IDX, None,
+            _trades([{"entry": "2024-01-01 00:00", "exit": None,
+                      "size": 30.0, "ep": 100.0, "xp": 0.0}]),
+            init_cash=100000.0,
+            risk_params=RISK_PCT)  # plan=100000×0.3/100=300→30/300=0.1
+        assert rows[0]["capped"] == pytest.approx(0.1)
+
+    def test_value_curve_present_first_bar_uses_arr0(self):
+        """value_curve 在场+pos=0 → value_arr[0]（曲线首值退化分支）。"""
+        rows = resolve_signal_trace(
+            _buf({0: 10}), IDX, None,
+            _trades([{"entry": "2024-01-01 00:00", "exit": None,
+                      "size": 240.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([80000.0, 99000.0, 99000.0, 99000.0],
+                                  index=IDX),
+            risk_params=RISK_PCT)
+        # plan=value_arr[0]×0.3/100=80000×0.3/100=240 恰满额→None；
+        # 若误走 init_cash（100000）则 plan=300，240/300=0.8 假报截断
+        assert rows[0]["capped"] is None, (
+            "pos=0 应取 value_arr[0]——plan=240 恰满额（走 init_cash "
+            "会得 0.8 假报，可判别）")
+
+    def test_trade_row_entry_nat_skips_entry_bucket(self):
+        """trades 行 entry 时间戳 NaT——不进 entry 配对桶（:201 false 侧）。
+
+        _trades 工具 entry 恒有值（生产链 vbt Entry Timestamp 亦恒有
+        ——vbt 0.28.5 实测唯 Exit 可 NaT）；本用例手造 DataFrame 直
+        达 false 侧：防御行不崩+行照常产出（对照无消费=rejected 形态）。
+        """
+        trades = pd.DataFrame({
+            "Entry Timestamp": [pd.NaT],
+            "Exit Timestamp": [pd.NaT],
+            "Size": [100.0], "Avg Entry Price": [100.0],
+            "Avg Exit Price": [0.0]})
+        rows = resolve_signal_trace(
+            _buf({1: 10}), IDX, None, trades,
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params=RISK_PCT)
+        assert rows[0]["event_code"] == 10
+        assert rows[0]["outcome"] == "rejected", (
+            "双 NaT 行无对照可配——rejected（无成交对照）如实")
+
 
 class TestSeqAssignment:
     """seq 分配：引擎行先求值层后、层内 event_code 升序、同 bar 0 起。"""

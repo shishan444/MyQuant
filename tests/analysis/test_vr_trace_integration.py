@@ -423,6 +423,87 @@ class TestDisclosureKeys:
         assert result2.get("mtf_gated_bars") is None, (
             "v2 单周期无门控面=null 透传，不得捏造计数")
 
+    def test_mtf_random_aggregate_and_detail_per_exec(
+            self, db, data_dir, hypothesis_id):
+        """阶段四闸门补：multi-份门控合计+detail 份级 metrics 提取。
+
+        契约（设计卡 2.3）：mtf_gated_bars「N=各份合计」——random 多
+        份聚合走 _aggregate_mtf_gated_bars 求和（isolated 单份直取不
+        经聚合，此前未测）；trail_series 份级内嵌 random=windows[i].
+        metrics（validation_detail 份提取路径）——detail executions
+        各份携带（trail 档非 null/非 trail 档 null，键在场）。
+        """
+        from api.routes.research.validation_detail import (
+            validation_record_detail)
+        # 职责一：MTF 聚合求和路径（mtf_gated_bars=int 各份合计——
+        # MTF 门控下窗口零成交亦走 sum，路径覆盖与成交无关）
+        save_strategy(db, strategy_id="st_mtf_agg",
+                      dna_json=_mtf_dna().to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out = random_window_test(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_mtf_agg", symbol="BTCUSDT", timeframe="4h",
+            data_start="2023-01-01T00:00:00Z",
+            data_end="2023-05-01T00:00:00Z",
+            window_bars=120, n_windows=2, seed=11)
+        result = json.loads(rr.get_validation_record_by_id(
+            db, out["record_id"])["result"])
+        assert isinstance(result.get("mtf_gated_bars"), int), (
+            "random×MTF 记录级计数须为各份合计 int（聚合求和路径）")
+        # 职责二：trail 份级内嵌正向证据——单周期 trail 档（有成交
+        # 窗口）random：windows[i].metrics 携带 trail_series 非 null
+        # +detail 份提取（validation_detail random 分支）非 null
+        save_strategy(db, strategy_id="st_trail_rnd",
+                      dna_json=_dna(sl_mode="trail").to_json(),
+                      symbol="BTCUSDT", timeframe="4h")
+        out2 = random_window_test(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_trail_rnd", symbol="BTCUSDT", timeframe="4h",
+            data_start="2023-01-01T00:00:00Z",
+            data_end="2023-05-01T00:00:00Z",
+            window_bars=120, n_windows=2, seed=11)
+        rid2 = out2["record_id"]
+        r2 = json.loads(rr.get_validation_record_by_id(db, rid2)["result"])
+        carried = [w.get("metrics", {}).get("trail_series") is not None
+                   for w in r2["windows"]]
+        assert any(carried), (
+            "trail 档份 metrics 应携带 trail_series（有成交窗口）")
+        detail = validation_record_detail(rid2, db_path=db)
+        execs = detail["executions"]
+        assert len(execs) == 2, "random 两窗两份"
+        for i, ex in enumerate(execs):
+            assert "trail_series" in ex, (
+                "detail 份级 trail_series 键缺失——random 档份提取路径断裂")
+            if carried[i]:
+                assert ex["trail_series"] is not None, (
+                    "份 metrics 携带时 detail 提取须非 null（内嵌传递）")
+        # 职责三：全份无门控面→None 传播（聚合分支另一态）。复用
+        # out2（st_trail_rnd 单周期 DNA 无 mtf_mode——各份均无门控面）；
+        # 不另 save _dna() 形态：gene_signature 不含 sl_mode，与
+        # st_trail_rnd 同签名会被 save 去重吞掉（实测坑：get 落空）
+        assert r2.get("mtf_gated_bars") is None, (
+            "全份无门控面→None 传播（聚合分支的另一态）")
+
+    def test_staged_detail_per_exec_trail_key(self, db, data_dir,
+                                               hypothesis_id):
+        """阶段四闸门补：staged 档 detail 份级 metrics 提取路径。
+
+        validation_detail staged 分支（segments[i].metrics 份提取）——
+        键在场断言（非 trail 档样本值 null，与 isolated 档同语义）。
+        """
+        from api.routes.research.validation_detail import (
+            validation_record_detail)
+        out = run_staged_validation(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id=save_strategy_and_return(db),
+            symbol="BTCUSDT", timeframe="4h",
+            start="2023-03-01T00:00:00Z", end="2023-04-20T00:00:00Z")
+        detail = validation_record_detail(out["record_id"], db_path=db)
+        assert len(detail["executions"]) >= 2, "staged 多段多份"
+        for ex in detail["executions"]:
+            assert "trail_series" in ex, (
+                "detail 份级 trail_series 键缺失——staged 档份提取路径断裂")
+
 
 def save_strategy_and_return(db) -> str:
     save_strategy(db, strategy_id="st_plain", dna_json=_dna().to_json(),
@@ -451,6 +532,46 @@ class TestDetailEndpointKeys:
         assert ex["exec_ref"] == "main"
         assert isinstance(ex["trace_rows"], list)
         assert "trail_series" in ex
+
+    def test_composite_level_defensive_empty_metrics(self, db,
+                                                     hypothesis_id):
+        """阶段四闸门补：死值域 level 的防御路径（composite/component）。
+
+        需有份明细（executions 非空——无明细在 per_exec 分支前即
+        return False 骨架，走不到防御分支）：per_exec_metrics 三分支
+        （isolated/random/staged）皆不匹配 composite→空列表→下游 idx
+        越界退化 {}——端点不崩+trail_series null 如实（缺键语义）。
+        """
+        from api.routes.research.validation_detail import (
+            validation_record_detail)
+        from core.persistence.orm.engine import engine_for
+        from sqlalchemy import text
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "INSERT INTO validation_records (record_id, hypothesis_id,"
+                " strategy_id, level, segmentation, params, result, verdict,"
+                " range_hash, created_at) VALUES"
+                " ('rec_comp', :h, NULL, 'composite', '', '{}',"
+                " '{\"metrics\": {}}', 'pass', 'rh_c',"
+                " '2026-01-01T00:00:00Z')"), {"h": hypothesis_id})
+        from core.persistence.orm.models import VrEquityCurve
+        from sqlalchemy.orm import Session
+        from core.persistence.orm.engine import engine_for as _ef
+        with Session(_ef(db)) as sess:
+            sess.add(VrEquityCurve(
+                record_id="rec_comp", exec_ref="main", exec_index=0,
+                range_start="2024-01-01T00:00:00Z",
+                range_end="2024-01-02T00:00:00Z", grid_aligned=1,
+                timeframe="4h", start="2024-01-01T00:00:00Z", length=1,
+                timestamps='["2024-01-01T00:00:00Z"]',
+                values="[100000.0]"))
+            sess.commit()
+        detail = validation_record_detail("rec_comp", db_path=db)
+        assert detail["detail_available"] is True
+        ex = detail["executions"][0]
+        assert ex["trail_series"] is None, (
+            "composite 死值域份 metrics 越界退化 {}——trail_series "
+            "缺键 null 如实（防御分支不崩不捏造）")
 
     def test_legacy_record_null_flags(self, db, data_dir, hypothesis_id,
                                       strategy_saved):

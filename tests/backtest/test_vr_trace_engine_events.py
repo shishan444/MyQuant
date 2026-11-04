@@ -177,3 +177,46 @@ class TestTrailAddContinuity:
                     f"加仓 bar {bt} 线值 {ts.iloc[i]} 低于前一有效值 "
                     f"{prev.iloc[-1]}——加仓重置了峰值（跳变红线）")
         assert checked, "无带前值的加仓 bar——机械验空转（样本须换）"
+
+
+class TestInsufficientFundsAndFallback:
+    """阶段四闸门补：31/32 码引擎侧确定性触发（行为覆盖消解）。
+
+    扫参实证的触发条件已固化入 vr_trace_gen 样本（liq_reentry_funds
+    =清算残值与开仓门槛的量级差；risk_budget_fallback=risk_fraction
+    0.0 使 qty 恒 0 回退百分比仓）——码集断言+行语义断言双锚。
+    """
+
+    def test_insufficient_funds_code31_present(self):
+        """31 码：清算后再入场资金不足——rejected+决策族 reason+无成交。
+
+        行语义（engine :880-885）：is_liquidated 且仓位已平+entry 信号
+        在场+value_now<min_required→NoOrder（未发单）。
+        """
+        _, _, rows = _resolve("liq_reentry_funds")
+        rej = [r for r in rows if r["event_code"] == 31]
+        assert rej, "31 码行缺失——清算后再入场资金不足分支未被触发"
+        for r in rej:
+            assert r["outcome"] == "rejected"
+            assert r["reason"] == "insufficient_funds"
+            assert r["size"] is None and r["price"] is None
+
+    def test_risk_budget_fallback_code32_present(self):
+        """32 码：qty≤0 回退百分比仓发单——有成交对照=filled+reason=32。
+
+        行语义（engine :1311-1314）：risk_budget 档 qty≤0 保留 size_pct
+        百分比仓发单（回退单）；outcome 由 resolver 与成交对照定。
+        """
+        _, _, rows = _resolve("risk_budget_fallback", risk_params={
+            "position_mode": "risk_budget", "sl_mode": "pct",
+            "sl_stop": 0.05, "risk_fraction": 0.0, "size_pct": 0.3,
+            "add_fraction": 0.1})
+        fb = [r for r in rows if r["event_code"] == 32]
+        assert fb, "32 码行缺失——风险预算回退分支未被触发"
+        for r in fb:
+            assert r["reason"] == "risk_budget_fallback"
+            # 有成交对照=filled（回退单实际发单）；rejected+32 需无成交
+            # 对照——样本 EMA 触发面恒有成交，filled 形态为预期态
+            assert r["outcome"] in ("filled", "rejected")
+            if r["outcome"] == "filled":
+                assert r["size"] is not None and r["price"] is not None

@@ -300,6 +300,51 @@ SAMPLES: Dict[str, Dict[str, Any]] = {
         },
         "engine": {"init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005},
     },
+    "liq_reentry_funds": {
+        # 阶段四闸门补：31 码（清算后再入场资金不足）确定性触发——
+        # 高门槛（base_price 100000→min_required≈1000）+小残值
+        # （init_cash 200 全仓 50 倍杠杆，清算损失穿透保证金）+
+        # liquidation_edge 尾段企稳 RSI 回升>20 再触发入场。扫参
+        # 实证：8-30 倍档残值仍过门槛只到 22 码（liq_small_cash 同
+        # 形态），31 需残值与门槛的量级差。
+        "gen": {"scenario": "liquidation_edge", "seed": 1010, "n": 400,
+                "base_price": 100000.0, "freq": "4h"},
+        "dna": {
+            "signal_genes": [
+                _gene("RSI", {"period": 14}, "entry_trigger", "rsi",
+                      {"type": "gt", "threshold": 20}),
+                _gene("RSI", {"period": 14}, "exit_trigger", "rsi",
+                      {"type": "gt", "threshold": 85}),
+            ],
+            "logic_genes": _logic(),
+            "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+            "risk_genes": _risk(direction="long", stop_loss=0.05,
+                                leverage=50, position_size=1.0),
+        },
+        "engine": {"init_cash": 200.0, "fee": 0.001, "slippage": 0.0005},
+    },
+    "risk_budget_fallback": {
+        # 阶段四闸门补：32 码（风险预算回退）引擎侧确定性触发——
+        # risk_fraction=0.0 使 risk_budget_qty 恒 0（qty≤0）逐次
+        # 回退 fixed 百分比仓发单（resolver 对照成交=filled+
+        # reason=risk_budget_fallback 形态；对照无成交=rejected）
+        "gen": {"scenario": "normal", "seed": 1111, "n": 300,
+                "base_price": 40000.0, "freq": "4h"},
+        "dna": {
+            "signal_genes": [
+                _gene("EMA", {"period": 21}, "entry_trigger", "ema",
+                      {"type": "price_above"}),
+                _gene("EMA", {"period": 21}, "exit_trigger", "ema",
+                      {"type": "price_below"}),
+            ],
+            "logic_genes": _logic(),
+            "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+            "risk_genes": _risk(direction="long", stop_loss=0.05,
+                                position_mode="risk_budget",
+                                risk_fraction=0.0),
+        },
+        "engine": {"init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005},
+    },
 }
 
 
