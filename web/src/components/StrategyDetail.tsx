@@ -9,7 +9,7 @@ interface StrategyDetailProps {
     annual_return: number;
     sharpe_ratio: number;
     max_drawdown: number;
-    win_rate: number;
+    win_rate: number | null;  // 零交易=null 缺失语义（:246 渲染已判）
     calmar_ratio: number;
     total_trades: number;
   };

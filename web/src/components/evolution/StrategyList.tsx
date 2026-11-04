@@ -179,8 +179,8 @@ const StrategyRow = memo(function StrategyRow({
         {/* Win rate */}
         <MetricValue
           className="w-14"
-          value={m ? `${(m.win_rate * 100).toFixed(1)}%` : "-"}
-          positive={m ? m.win_rate > 0.5 : undefined}
+          value={m && m.win_rate != null ? `${(m.win_rate * 100).toFixed(1)}%` : "-"}
+          positive={m && m.win_rate != null ? m.win_rate > 0.5 : undefined}
         />
 
         {/* Trade count */}
@@ -465,8 +465,8 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
             />
             <DetailMetric
               label="胜率"
-              value={`${(m.win_rate * 100).toFixed(1)}%`}
-              positive={m.win_rate > 0.5}
+              value={m.win_rate != null ? `${(m.win_rate * 100).toFixed(1)}%` : "—"}
+              positive={m.win_rate != null ? m.win_rate > 0.5 : false}
             />
             <DetailMetric
               label="交易次数"

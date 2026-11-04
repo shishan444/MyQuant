@@ -15,6 +15,13 @@
  * 后端未声明 response_model 的端点响应、纯前端本地类型。
  */
 import type { components } from "./generated/api";
+// 旧验证会话体系类型冻结（retire-verify-sessions F4 联动债务——2026-11-02
+// 退役后端会话端点时未同批再生成 openapi，B1 生成物再生成
+// 〔upgrade-validation-records-list 3.1②〕正确移除退役 schema 后，
+// 旧消费方〔Verify.tsx 会话列表/VerifyThresholds 历史〕的类型引用
+// 由本冻结文件承载（形状自退役前 main 生成物逐字提取）；F4 前端
+// hooks 退役时一并删除本文件与全部引用）
+import type { components as VS } from "./generated-verify-frozen";
 
 type S = components["schemas"];
 
@@ -395,34 +402,34 @@ export interface ChartIndicatorsResponse {
 // ---------------------------------------------------------------------------
 
 /** 验证日期区间 ← 后端 VerifyDateRange */
-export type VerifyDateRange = S["VerifyDateRange"];
+export type VerifyDateRange = VS["schemas"]["VerifyDateRange"];
 
 /** 验证请求 ← 后端 VerifyRequest */
-export type VerifyRequest = S["VerifyRequest"];
+export type VerifyRequest = VS["schemas"]["VerifyRequest"];
 
 /** 验证明细 ← 后端 VerifyResultItem */
-export type VerifyResultItem = S["VerifyResultItem"];
+export type VerifyResultItem = VS["schemas"]["VerifyResultItem"];
 
 /** 周期汇总 ← 后端 VerifyPeriodSummary */
-export type VerifyPeriodSummary = S["VerifyPeriodSummary"];
+export type VerifyPeriodSummary = VS["schemas"]["VerifyPeriodSummary"];
 
 /** 策略汇总 ← 后端 VerifySummaryItem */
-export type VerifySummaryItem = S["VerifySummaryItem"];
+export type VerifySummaryItem = VS["schemas"]["VerifySummaryItem"];
 
 /** 验证响应 ← 后端 VerifyResponse */
-export type VerifyResponse = S["VerifyResponse"];
+export type VerifyResponse = VS["schemas"]["VerifyResponse"];
 
 /** 验证历史条目 ← 后端 VerifyHistoryItem */
-export type VerifyHistoryItem = S["VerifyHistoryItem"];
+export type VerifyHistoryItem = VS["schemas"]["VerifyHistoryItem"];
 
 /** 验证历史响应 ← 后端 VerifyHistoryResponse */
-export type VerifyHistoryResponse = S["VerifyHistoryResponse"];
+export type VerifyHistoryResponse = VS["schemas"]["VerifyHistoryResponse"];
 
 /** 验证会话 ← 后端 VerifySessionResponse */
-export type VerifySession = S["VerifySessionResponse"];
+export type VerifySession = VS["schemas"]["VerifySessionResponse"];
 
 /** 验证会话列表 ← 后端 VerifySessionListResponse */
-export type VerifySessionListResponse = S["VerifySessionListResponse"];
+export type VerifySessionListResponse = VS["schemas"]["VerifySessionListResponse"];
 
 // ---------------------------------------------------------------------------
 // Batch Backtest (multi-strategy × multi-period detailed backtesting)
