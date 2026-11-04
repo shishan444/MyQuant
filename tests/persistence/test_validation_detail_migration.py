@@ -42,8 +42,7 @@ _TRADE_COLUMNS = (
     ("size", "REAL", True),
     ("direction", "TEXT", True),
     ("pnl", "REAL", False),
-    # 决策理由（be-validation-decision-records D6——NULLable）
-    ("decision_json", "TEXT", False),
+    # decision_json 退役（retire-vr-decision-json——a8e4f7d2c9b3 列撤）
 )
 
 # vr_equity_curve 12 列权威字典

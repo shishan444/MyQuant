@@ -174,10 +174,10 @@ class TestIsolatedPositive:
         # B2-9：逐笔笔数==metrics.total_trades（对账锚）
         assert len(ex["trades"]) == out["metrics"]["total_trades"]
         for t in ex["trades"]:
+            # decision 键退役（retire-vr-decision-json——键不在场断言）
             assert set(t) == {"seq", "entry_time", "exit_time",
                               "entry_price", "exit_price", "size",
-                              "direction", "pnl",
-                              "decision"}  # D6 决策理由透传（新验证非 None）
+                              "direction", "pnl"}
             assert t["direction"] in ("Long", "Short")
         # 紧凑形制透传（fixture 数据连续无洞）
         assert ex["equity"]["grid_aligned"] is True
