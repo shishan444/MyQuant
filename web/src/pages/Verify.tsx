@@ -18,12 +18,9 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import {
-  FilterBar,
-  RecordDetail,
-  RecordsTable,
+  RecordsBrowser,
   useInvalidateRecords,
 } from "@/components/validationRecords/RecordBrowser";
-import type { ValidationRecordRow as ValidationRecordRowLite } from "@/services/validationRecords";
 import {
   useStrategies,
   useVerifyStream,
@@ -136,9 +133,7 @@ export function Verify() {
   });
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [view, setView] = useState<"verify" | "history">("verify");
-  // fe-validation-records-page：浏览骨架态+发起器折叠态
-  const [filters, setFilters] = useState<{ idType: string; id?: string; level?: string; verdict?: string }>({ idType: "hypothesis_id" });
-  const [selectedRecord, setSelectedRecord] = useState<ValidationRecordRowLite | undefined>(undefined);
+  // fe-validation-records-page：发起器折叠态（浏览骨架态下沉 RecordsBrowser）
   const [launcherOpen, setLauncherOpen] = useState(false);
   const invalidateRecords = useInvalidateRecords();
   const [sortKey, setSortKey] = useState<SortKey>("score");
@@ -574,18 +569,9 @@ export function Verify() {
         </div>
         )}
 
-        {/* 浏览骨架主体：筛选→记录表→详情（fe-validation-records-page） */}
-        <div className="space-y-2" data-testid="records-browser">
-          <FilterBar onSearch={(f) => { setFilters(f); setSelectedRecord(undefined); }} />
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded-lg border border-border-faint p-2">
-              <RecordsTable filters={filters} onSelect={setSelectedRecord} selectedId={selectedRecord?.record_id} />
-            </div>
-            <div className="rounded-lg border border-border-faint p-2">
-              <RecordDetail record={selectedRecord} />
-            </div>
-          </div>
-        </div>
+        {/* 浏览骨架主体：筛选→卡片流（独立滚动）→明细（常驻）——
+            upgrade-validation-records-list 5.1 L6 左右分栏 */}
+        <RecordsBrowser />
       </div>
     </PageTransition>
   );

@@ -70,6 +70,16 @@ interface KlineChartProps {
   bollData?: BollingerBandData;
   volumeData?: Array<{ time: string; value: number; color?: string }>;
   mtfIndicators?: MTFIndicatorData[];
+  /** 自定义标记通道（upgrade-validation-records-list 5.2 D2）：消费方
+   *  自控色/形/文案（色点单源映射）时优先于 signals——两者并存本通道
+   *  生效，向后兼容（缺省 undefined 行为与现状逐位一致） */
+  signalMarkers?: Array<{
+    time: string;
+    position: "aboveBar" | "belowBar";
+    color: string;
+    shape: "arrowUp" | "arrowDown" | "circle" | "square";
+    text: string;
+  }>;
   /** 图表与 series 创建完成后回调一次。 */
   onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
   subChartType?: "volume" | "macd" | "rsi" | "kdj" | "equity";
@@ -127,6 +137,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   bollData,
   volumeData,
   mtfIndicators,
+  signalMarkers,
   onChartReady,
   subChartType = "rsi",
   macdData,
@@ -171,6 +182,13 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const memoizedIndicators = useMemo(() => indicators ?? [], [indicators]);
   const memoizedSignals = useMemo(() => signals ?? [], [signals]);
   const memoizedTriggers = useMemo(() => triggers ?? [], [triggers]);
+  const memoizedSignalMarkers = useMemo(
+    () =>
+      signalMarkers?.map((m) => ({ ...m, time: toTime(m.time) }))
+        .filter((m) => typeof m.time === "number" && !isNaN(m.time as number))
+        .sort((a, b) => (a.time as number) - (b.time as number)) ?? null,
+    [signalMarkers],
+  );
   const memoizedBollData = useMemo(() => bollData, [bollData]);
   const memoizedVolumeData = useMemo(() => volumeData, [volumeData]);
   const memoizedMtfIndicators = useMemo(() => mtfIndicators ?? [], [mtfIndicators]);
@@ -557,8 +575,11 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       triggerOffsetSeriesRef.current = null;
     }
 
-    // 信号标记挂蜡烛 series（样式表与映射收敛在 primitives/markers——CARD-04 双写归一）
-    const markers = signalsToMarkers(memoizedSignals, toTime);
+    // 信号标记挂蜡烛 series（样式表与映射收敛在 primitives/markers——CARD-04 双写归一）；
+    // 自定义标记通道（signalMarkers）优先——消费方自控色的单源映射
+    const markers = memoizedSignalMarkers
+      ? memoizedSignalMarkers
+      : signalsToMarkers(memoizedSignals, toTime);
 
     if (markersPluginRef.current) {
       markersPluginRef.current.setMarkers(markers);
@@ -631,7 +652,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       mainChart.timeScale().fitContent();
       initialFitDoneRef.current = true;
     }
-  }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
+  }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedSignalMarkers, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
 
   // -------------------------------------------------------------------------
   // Sub-chart data update (generic: supports volume, macd, rsi, kdj)

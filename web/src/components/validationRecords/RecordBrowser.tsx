@@ -1,95 +1,137 @@
 /**
- * 验证记录浏览组件族（fe-validation-records-page + Q1/Q4/Q5 修复）——页面级私有（契约三）。
- * 骨架：V-S 筛选栏→V-T 记录表→V-D0~D4 详情五形态。
- * 分页语义沿端点契约：level/verdict 行级过滤不进 total（前端同口径显示——如实披露）。
- * Q1 修复（fix/fe-validation-forms-remediation）：详情四形态由占位文案改
- * 端点真值渲染——V-D1 params 三键展开（实查 params 无 dna 键，留档）；
- * V-D2 K 线复核=executions 选中份 trades 笔对双标+ohlcv 真值 K 线
- * （CHART_VC 容器底+POLARITY 蜡烛走 chartThemes）+多份选择器；
- * V-D3 资金曲线=equity values 消费（grid_aligned compact 形制按
- * start+length×timeframe 重建时间轴，全时间戳形制直用）。
- * Q4：filters 变化重置 offset（翻页后改筛选招死局空态修复）。
- * Q5：FilterBar onSearch 类型 id 可选化，删双重断言。
+ * 验证记录浏览列表域（upgrade-validation-records-list 5.1——L1-L6）。
+ * 卡片流四段卡（标识徽标/statement 引文两行截断/区间币种笔数/收益夏普
+ * 回撤固定槽——指标取行内嵌 result JSON 直读）+搜索三路由（hyp_/st_
+ * 前缀+statement 关键词）+筛选（verdict 四枚带计数联动=verdict_counts+
+ * 类型三枚中文标签+泛化 toggle 交集）+排序三键（服务端执行）+懒加载
+ * （每批 50+滚动到底+失败重试不丢内容+已加载 N/总数 M+无值落尾披露）
+ * +左右分栏（左卡片流独立滚动/右明细常驻）。
+ * 分页语义沿端点契约：六维过滤 WHERE 下推——total=过滤基数、页满恒
+ * limit（B2 终态；旧「行级过滤不进 total」口径句已退役）。
  */
-import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button as AntButton, Select, Input, Tabs } from "antd";
-import { FileSearch, RotateCcw, Search } from "lucide-react";
-import { KlineChart } from "@/components/charts/KlineChart";
-import { CHART_VC } from "@/theme/tokens";
-import { getOhlcvBySymbol } from "@/services/datasets";
+import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { Button as AntButton, Input, Select, Switch } from "antd";
+import { RotateCcw, Search } from "lucide-react";
 import {
-  getValidationRecordDetail,
   getValidationRecordsPage,
-  VALIDATION_LEVELS,
-  VALIDATION_VERDICTS,
-  type ValidationDetailResponse,
+  VALIDATION_TYPE_OPTIONS,
   type ValidationRecordRow,
-  type VrExecution,
-  type VrTrade,
+  type ValidationSort,
 } from "@/services/validationRecords";
+import {
+  buildCardModel,
+  DEFAULT_LIST_FILTERS,
+  parseSearch,
+  type ListFilters,
+} from "./traceSemantics";
+import { RecordDetail } from "./RecordDetail";
 
-const VERDICT_COLOR: Record<string, string> = {
-  pass: "text-profit", fail: "text-loss", inconclusive: "text-text-muted",
-};
+export type { ValidationRecordRow } from "@/services/validationRecords";
+export type { ListFilters } from "./traceSemantics";
 
-/** V-S 筛选栏（前缀路由：hyp_ → hypothesis_id，否则 strategy_id） */
+const VERDICT_OPTIONS = [
+  { value: undefined, label: "全部", mark: "●" },
+  { value: "pass", label: "pass", mark: "✓" },
+  { value: "fail", label: "fail", mark: "✗" },
+  { value: "inconclusive", label: "证据不足", mark: "◐" },
+] as const;
+
+const SORT_OPTIONS: Array<{ value: ValidationSort; label: string }> = [
+  { value: "time_desc", label: "时间 ▼新" },
+  { value: "total_return_desc", label: "收益" },
+  { value: "verdict_quality", label: "结果" },
+];
+
+/** V-S 筛选栏（L2/L3/L4——搜索三路由+verdict 四枚带计数+类型三枚+
+ *  泛化 toggle+排序三键+重置；全部服务端执行） */
 export function FilterBar({
-  onSearch,
+  filters,
+  onChange,
+  counts,
 }: {
-  onSearch: (q: {
-    idType: "hypothesis_id" | "strategy_id";
-    id?: string;
-    level?: string;
-    verdict?: string;
-  }) => void;
+  filters: ListFilters;
+  onChange: (f: ListFilters) => void;
+  counts?: {
+    total: number;
+    pass: number;
+    fail: number;
+    inconclusive: number;
+  };
 }) {
   const [text, setText] = useState("");
-  const [level, setLevel] = useState<string | undefined>();
-  const [verdict, setVerdict] = useState<string | undefined>();
-  const fire = (t = text, l = level, v = verdict) => {
-    const trimmed = t.trim();
-    onSearch({
-      idType: trimmed.startsWith("hyp_") ? "hypothesis_id" : "strategy_id",
-      id: trimmed || undefined,
-      level: l,
-      verdict: v,
-    });
-  };
+  const fire = (patch: Partial<ListFilters>) => onChange({ ...filters, ...patch });
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2" data-testid="vr-filter-bar">
       <Input
         prefix={<Search className="h-3 w-3" />}
-        placeholder="输入假设 ID（hyp_…）或策略 ID"
+        placeholder="假设/策略 ID（hyp_/st_ 前缀）或 statement 关键词"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onPressEnter={() => fire()}
+        onPressEnter={() => fire(parseSearch(text))}
         size="small"
-        className="!w-64 !text-xs"
+        className="!w-72 !text-xs"
         allowClear
+        data-testid="vr-search-input"
       />
       <Select
-        placeholder="来源（level）"
-        value={level}
-        onChange={(v) => { setLevel(v); fire(text, v, verdict); }}
-        allowClear
         size="small"
-        className="!w-40"
-        options={VALIDATION_LEVELS.map((l) => ({ value: l, label: l }))}
-      />
-      <Select
-        placeholder="状态（verdict）"
-        value={verdict}
-        onChange={(v) => { setVerdict(v); fire(text, level, v); }}
+        className="!w-36"
+        value={filters.level}
+        placeholder="类型"
         allowClear
-        size="small"
-        className="!w-32"
-        options={VALIDATION_VERDICTS.map((v) => ({ value: v, label: v }))}
+        onChange={(v) => fire({ level: v })}
+        options={VALIDATION_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+        data-testid="vr-type-select"
       />
+      <span className="flex items-center gap-1 text-[10px] text-text-muted">
+        泛化
+        <Switch
+          size="small"
+          checked={filters.generalization === true}
+          onChange={(v) => fire({ generalization: v || undefined })}
+          data-testid="vr-generalization-toggle"
+        />
+      </span>
+      <div className="flex items-center gap-1" data-testid="vr-verdict-group">
+        {VERDICT_OPTIONS.map((o) => {
+          const active = filters.verdict === o.value;
+          return (
+            <AntButton
+              key={o.label}
+              size="small"
+              type={active ? "primary" : "text"}
+              className="!text-[11px]"
+              onClick={() => fire({ verdict: o.value })}
+              data-testid={`vr-verdict-${o.value ?? "all"}`}
+            >
+              {o.mark} {o.label}
+              {counts ? ` ${o.value === undefined ? counts.total : counts[o.value]}` : ""}
+            </AntButton>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-1" data-testid="vr-sort-group">
+        {SORT_OPTIONS.map((o) => (
+          <AntButton
+            key={o.value}
+            size="small"
+            type={filters.sort === o.value ? "primary" : "text"}
+            className="!text-[11px]"
+            onClick={() => fire({ sort: o.value })}
+            data-testid={`vr-sort-${o.value}`}
+          >
+            {o.label}
+          </AntButton>
+        ))}
+      </div>
       <AntButton
         size="small"
         icon={<RotateCcw className="h-3 w-3" />}
-        onClick={() => { setText(""); setLevel(undefined); setVerdict(undefined); fire("", undefined, undefined); }}
+        onClick={() => {
+          setText("");
+          onChange({ ...DEFAULT_LIST_FILTERS });
+        }}
       >
         重置
       </AntButton>
@@ -97,337 +139,257 @@ export function FilterBar({
   );
 }
 
-/** V-T 记录表（limit 50+加载更多 has_more 驱动；Q4：filters 变化重置 offset） */
-export function RecordsTable({
+const VERDICT_BADGE: Record<string, { text: string; cls: string }> = {
+  pass: { text: "✓ 通过", cls: "text-profit" },
+  fail: { text: "✗ 未通过", cls: "text-loss" },
+  inconclusive: { text: "◐ 证据不足", cls: "text-attention-gold" },
+};
+
+function fmtPct(v: number): string {
+  return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+}
+
+/** L1 卡片流四段卡（视觉权威源：原型 03 帧卡片——标识徽标/statement
+ *  引文两行截断/区间币种笔数/收益夏普回撤固定槽） */
+export function RecordCard({
+  row,
+  selected,
+  onSelect,
+}: {
+  row: ValidationRecordRow;
+  selected: boolean;
+  onSelect: (r: ValidationRecordRow) => void;
+}) {
+  const m = buildCardModel(row);
+  const badge = VERDICT_BADGE[row.verdict] ?? { text: row.verdict, cls: "" };
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(row)}
+      data-testid={`vr-card-${row.record_id}`}
+      className={`w-full rounded-md border border-border-faint bg-bg-base/40 p-2.5 text-left transition-colors hover:border-border-default ${
+        selected ? "border-selected bg-accent-gold/5" : ""
+      }`}
+    >
+      {/* 段 1：标识与判定徽标 */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-mono text-[11px] text-text-secondary">
+            {row.record_id}
+          </span>
+          <span className="shrink-0 rounded border border-border-faint px-1 text-[10px] text-text-muted">
+            {m.typeLabel}
+          </span>
+        </span>
+        <span className={`shrink-0 text-[11px] font-medium ${badge.cls}`}>
+          {badge.text}
+        </span>
+      </div>
+      {/* 段 2：statement 引文两行截断（无关联显「—」） */}
+      <p
+        className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-text-secondary"
+        title={m.statement ?? undefined}
+      >
+        {m.statement ? `「${m.statement}」` : "—"}
+      </p>
+      {/* 段 3：区间 · 币种 · 笔数 */}
+      <p className="mt-1 font-num text-[10px] text-text-muted">
+        {m.rangeLabel} · {m.symbol ?? "—"} · {m.trades ?? "—"} 笔
+      </p>
+      {/* 段 4：收益 · 夏普 · 回撤固定槽（result 直读；空显「无指标留痕」） */}
+      {m.metrics ? (
+        <p className="mt-1 flex items-baseline gap-3 font-num text-xs">
+          <span
+            className={`font-medium ${
+              m.metrics.total_return! >= 0 ? "text-profit" : "text-loss"
+            }`}
+          >
+            {fmtPct(m.metrics.total_return!)}
+          </span>
+          {m.worstLabel && (
+            <span className="text-[9px] text-text-muted">{m.worstLabel}</span>
+          )}
+          <span className="text-text-secondary">
+            夏普 {m.metrics.sharpe_ratio?.toFixed(2) ?? "—"}
+          </span>
+          <span className="text-text-secondary">
+            回撤{" "}
+            {m.metrics.max_drawdown != null
+              ? `${(m.metrics.max_drawdown * 100).toFixed(1)}%`
+              : "—"}
+          </span>
+        </p>
+      ) : (
+        <p className="mt-1 text-[10px] text-text-muted">无指标留痕</p>
+      )}
+    </button>
+  );
+}
+
+/** L5 懒加载卡片流（useInfiniteQuery——三批拼接无重复无跳号：offset
+ *  递增+服务端次序键稳定；失败重试不丢已加载页） */
+export function RecordCards({
   filters,
   onSelect,
   selectedId,
+  onCounts,
 }: {
-  filters: { idType: string; id?: string; level?: string; verdict?: string };
+  filters: ListFilters;
   onSelect: (r: ValidationRecordRow) => void;
   selectedId?: string;
+  onCounts?: (c: {
+    total: number;
+    pass: number;
+    fail: number;
+    inconclusive: number;
+  }) => void;
 }) {
-  const [offset, setOffset] = useState(0);
-  // Q4：筛选维度变化即回到第一页——翻页后改筛选的 offset 残留会构造
-  // 越界空集死局（无 UI 途径回页首）
-  useEffect(() => { setOffset(0); }, [filters]);
-  const q = useQuery({
-    queryKey: ["validation-records-page", filters, offset],
-    queryFn: () =>
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const q = useInfiniteQuery({
+    queryKey: ["validation-records-page", filters],
+    queryFn: ({ pageParam }) =>
       getValidationRecordsPage({
-        [filters.idType]: filters.id,
+        [filters.idType === "q" ? "q" : filters.idType]: filters.idType === "q"
+          ? filters.q
+          : filters.id,
         level: filters.level,
         verdict: filters.verdict,
+        generalization: filters.generalization,
+        sort: filters.sort,
         limit: 50,
-        offset,
+        offset: pageParam,
       }),
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.has_more ? last.offset + last.limit : undefined,
   });
-  const rows = q.data?.records ?? [];
-  return (
-    <div>
-      {q.isError ? (
-        <p className="text-xs text-loss">验证记录源暂不可达（稍后自动重试）</p>
-      ) : q.isLoading ? (
-        <p className="text-xs text-text-muted">装载中…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-xs text-text-muted">无匹配记录</p>
-      ) : (
-        <>
-          <p className="mb-1 text-[10px] text-text-muted">
-            本页 {rows.length} 条
-            {q.data?.has_more ? "（更多可加载）" : ""}
-            {filters.level || filters.verdict ? " · 过滤计数为行级口径（与全库 total 分列）" : ""}
-          </p>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border-default text-left text-[10px] text-text-muted">
-                <th className="py-1">时间</th><th>假设</th><th>策略</th><th>level</th><th>verdict</th><th>段</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.record_id}
-                  onClick={() => onSelect(r)}
-                  className={`cursor-pointer border-b border-border-faint hover:bg-white/5 ${
-                    selectedId === r.record_id ? "bg-accent-gold/10" : ""
-                  }`}
-                >
-                  <td className="font-num py-1 text-text-muted">
-                    {r.created_at.slice(0, 16).replace("T", " ")}
-                  </td>
-                  <td className="font-mono text-text-secondary">{r.hypothesis_id}</td>
-                  <td className="font-mono text-text-muted">{r.strategy_id ?? "—"}</td>
-                  <td className="text-text-muted">{r.level}</td>
-                  <td className={`font-mono ${VERDICT_COLOR[r.verdict] ?? ""}`}>{r.verdict}</td>
-                  <td className="text-text-muted">{r.segmentation || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {q.data?.has_more && (
-            <AntButton size="small" type="text" className="mt-1" onClick={() => setOffset(offset + 50)}>
-              加载更多
-            </AntButton>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
+  const pages = q.data?.pages ?? [];
+  const rows = pages.flatMap((p) => p.records);
+  const first = pages[0];
+  const total = first?.total ?? 0;
 
-/* ── Q1 三形态真值渲染 ── */
+  // 计数联动上抛（verdict 四枚带计数=verdict_counts；与 total 同基数）
+  useEffect(() => {
+    if (first) {
+      onCounts?.({
+        total: first.total,
+        pass: first.verdict_counts?.pass ?? 0,
+        fail: first.verdict_counts?.fail ?? 0,
+        inconclusive: first.verdict_counts?.inconclusive ?? 0,
+      });
+    }
+  }, [first, onCounts]);
 
-/** 周期字符串 → 秒数（compact 时间轴重建用；全档覆盖数据目录档位） */
-function timeframeSeconds(tf: string): number {
-  const m: Record<string, number> = {
-    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "4h": 14400, "1d": 86400, "3d": 259200,
+  // 筛选维度变化回到顶部（翻页后改筛选的滚动残留防御——Q4 同族）
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [filters]);
+
+  // 收窄前解构（isFetchNextPageError 分支里 q 被收窄为 never——判别
+  // 联合的类型面现象，运行时无碍；解构绕开收窄）
+  const fetchNext = q.fetchNextPage;
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+      if (q.hasNextPage && !q.isFetchingNextPage) void fetchNext();
+    }
   };
-  return m[tf] ?? 0;
-}
 
-/** V-D3 资金曲线：equity values → 时间轴点对（compact 按 start+length×tf 重建） */
-function equityPoints(exec: VrExecution): Array<{ time: string; value: number }> {
-  const eq = exec.equity;
-  if (!eq?.values?.length) return [];
-  if (eq.timestamps && eq.timestamps.length === eq.values.length) {
-    return eq.timestamps.map((t, i) => ({ time: t, value: eq.values[i] }));
+  // 首页失败=全失败态（无内容可保留）；翻页失败（isError 且已有页）
+  // =已加载内容保留+底部重试行——失败重试不丢内容
+  if (q.isError && pages.length === 0) {
+    return (
+      <div className="flex flex-col items-start gap-2 py-6">
+        <p className="text-xs text-loss">验证记录源暂不可达</p>
+        <AntButton size="small" onClick={() => void q.refetch()}>
+          重试
+        </AntButton>
+      </div>
+    );
   }
-  // compact 形制：start+length×timeframe 重建等距时间轴
-  const sec = timeframeSeconds(eq.timeframe);
-  if (!eq.start || !sec) return eq.values.map((_, i) => ({ time: String(i), value: eq.values[i] }));
-  const startMs = new Date(eq.start.replace(" ", "T") + (eq.start.includes("+") ? "" : "Z")).getTime();
-  if (!Number.isFinite(startMs)) return eq.values.map((_, i) => ({ time: String(i), value: eq.values[i] }));
-  return eq.values.map((v, i) => ({
-    time: new Date(startMs + i * sec * 1000).toISOString(),
-    value: v,
-  }));
-}
+  if (q.isLoading) return <p className="text-xs text-text-muted">装载中…</p>;
 
-/** trades 笔对 → K 线双标信号（direction 定买卖语义：long entry=buy/exit=sell；short 反转） */
-function tradeSignals(trades: VrTrade[]): Array<{ type: "buy" | "sell"; timestamp: string }> {
-  const out: Array<{ type: "buy" | "sell"; timestamp: string }> = [];
-  for (const t of trades ?? []) {
-    if (!t.entry_time || !t.exit_time) continue;
-    const long = t.direction !== "short";
-    out.push({ type: long ? "buy" : "sell", timestamp: t.entry_time });
-    out.push({ type: long ? "sell" : "buy", timestamp: t.exit_time });
-  }
-  return out;
-}
-
-/** V-D1 参数回显：行 params 三键展开（实查 params 形制={request_range,
- *  range_hash, threshold_profile}——无 dna 键，DNA 摘要无处取如实留档） */
-function ParamsPanel({ record }: { record: ValidationRecordRow }) {
-  const params = record.params as Record<string, unknown> | null;
-  if (!params || Object.keys(params).length === 0) {
-    return <p className="text-xs text-text-muted">该记录无 params 留痕</p>;
-  }
-  const rr = (params as { request_range?: Record<string, string> }).request_range;
-  return (
-    <div className="flex flex-col gap-2 text-xs">
-      {rr && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1" data-testid="vr-request-range">
-          {[["symbol", "标的"], ["timeframe", "周期"], ["start", "起始"], ["end", "结束"]].map(
-            ([k, label]) => (
-              <span key={k} className="flex items-baseline gap-2">
-                <span className="text-[10px] text-text-muted">{label}</span>
-                <span className="font-mono text-text-secondary">{rr[k] ?? "—"}</span>
-              </span>
-            ),
-          )}
-        </div>
-      )}
-      <span className="flex items-baseline gap-2">
-        <span className="text-[10px] text-text-muted">range_hash</span>
-        <span className="truncate font-mono text-[10px] text-text-muted" title={String(params.range_hash ?? "")}>
-          {String(params.range_hash ?? "—")}
-        </span>
-      </span>
-      <span className="flex items-baseline gap-2">
-        <span className="text-[10px] text-text-muted">threshold_profile</span>
-        <span className="font-mono text-text-secondary">{String(params.threshold_profile ?? "—")}</span>
-      </span>
-      <p className="text-[10px] text-text-muted">
-        params 留痕不含 dna 键（实测 2026-11-03）——DNA 摘要无处取，如实呈现验证请求参数
-      </p>
-    </div>
-  );
-}
-
-/** V-D2 K 线复核：选中份 trades 双标+ohlcv 真值 K 线（CHART_VC 容器底） */
-function KlineReview({
-  exec,
-  symbol,
-}: {
-  exec: VrExecution;
-  symbol: string | undefined;
-}) {
-  const tf = exec.equity?.timeframe;
-  const q = useQuery({
-    queryKey: ["vr-kline", symbol, tf, exec.range_start, exec.range_end],
-    queryFn: () =>
-      getOhlcvBySymbol(symbol!, tf!, {
-        start: exec.range_start || undefined,
-        end: exec.range_end || undefined,
-      }),
-    enabled: !!symbol && !!tf,
-  });
-  const signals = tradeSignals(exec.trades ?? []);
-  if (!symbol || !tf) {
-    return <p className="text-xs text-text-muted">行 params 无 request_range.symbol——K 线区间不可定</p>;
-  }
-  if (q.isError) return <p className="text-xs text-loss">K 线源暂不可达（稍后自动重试）</p>;
-  if (q.isLoading) return <p className="text-xs text-text-muted">K 线装载中…</p>;
-  const candles = q.data?.data ?? [];
   return (
     <div
-      className="rounded p-2"
-      style={{ backgroundColor: CHART_VC.bg, border: `1px solid ${CHART_VC.teal}22` }}
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="flex max-h-[calc(100vh-260px)] flex-col gap-2 overflow-y-auto pr-1"
+      data-testid="vr-card-scroll"
     >
-      <p className="mb-1 text-[10px]" style={{ color: CHART_VC.dim }}>
-        {symbol} · {tf} · {exec.range_start || "?"} ~ {exec.range_end || "?"} · 双标 {signals.length}（trades {exec.trades?.length ?? 0} 笔）
-      </p>
-      {candles.length === 0 ? (
-        <p className="py-6 text-center text-xs" style={{ color: CHART_VC.dim }}>
-          该区间无 K 线数据
+      {/* 排序落尾披露（L4——unsortable_count 与 total 同基数） */}
+      {filters.sort === "total_return_desc" && (first?.unsortable_count ?? 0) > 0 && (
+        <p className="text-[10px] text-attention-gold" data-testid="vr-unsortable-note">
+          {first!.unsortable_count} 条无收益值已列末尾
+        </p>
+      )}
+      {rows.length === 0 ? (
+        <p className="py-6 text-xs text-text-muted">
+          无匹配记录——调整筛选或搜索词后重试
         </p>
       ) : (
-        <KlineChart data={candles} signals={signals} height={300} />
+        rows.map((r) => (
+          <RecordCard
+            key={r.record_id}
+            row={r}
+            selected={selectedId === r.record_id}
+            onSelect={onSelect}
+          />
+        ))
+      )}
+      <p className="pt-1 text-[10px] text-text-muted" data-testid="vr-load-status">
+        已加载 {rows.length} / 总数 {total} 条
+        {q.isFetchingNextPage
+          ? " · 加载中…"
+          : q.hasNextPage
+            ? " · 下拉自动加载下一批"
+            : " · 已全部加载"}
+      </p>
+      {q.isFetchNextPageError && (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-loss">本批加载失败</span>
+          <AntButton
+            size="small"
+            className="!text-[10px]"
+            onClick={() => void fetchNext()}
+          >
+            重试
+          </AntButton>
+        </div>
       )}
     </div>
   );
 }
 
-/** V-D3 资金曲线渲染（等距时间轴文本呈现——echarts 面积图组件依赖
- *  EQUITY_MIN_POINTS 聚合层，明细逐点表格呈现契约等价且 jsdom 可测） */
-function EquityReview({ exec, initCash }: { exec: VrExecution; initCash: number | null }) {
-  const pts = equityPoints(exec);
-  const eq = exec.equity;
-  if (pts.length === 0) {
-    return <p className="text-xs text-text-muted">该执行份无 equity 留痕</p>;
-  }
-  const compact = eq?.grid_aligned === true;
-  const first = pts[0].value;
-  const last = pts[pts.length - 1].value;
-  const baseline = initCash ?? first;
-  const delta = ((last - baseline) / baseline) * 100;
+/** 浏览骨架宿主（L6 左右分栏：左卡片流独立滚动/右明细常驻） */
+export function RecordsBrowser() {
+  const [filters, setFilters] = useState<ListFilters>(DEFAULT_LIST_FILTERS);
+  const [selected, setSelected] = useState<ValidationRecordRow | undefined>();
+  const [counts, setCounts] = useState<
+    | { total: number; pass: number; fail: number; inconclusive: number }
+    | undefined
+  >();
+  // 筛选/排序变化清选中（选中行可能已不在结果集）
+  const handleFilters = (f: ListFilters) => {
+    setFilters(f);
+    setSelected(undefined);
+  };
   return (
-    <div className="flex flex-col gap-2 text-xs" data-testid="vr-equity">
-      <p className="text-[10px] text-text-muted">
-        {compact
-          ? `compact 形制（start=${eq.start} + ${eq.length}×${eq.timeframe} 时间轴重建）`
-          : "全时间戳形制（timestamps 直用）"}
-        · {pts.length} 点 · 基准 {baseline.toFixed(0)}
-      </p>
-      <div className="flex items-baseline gap-4">
-        <span className="font-num text-text-secondary">首 {first.toFixed(1)}</span>
-        <span className="font-num text-text-secondary">末 {last.toFixed(1)}</span>
-        <span className={`font-num font-medium ${delta >= 0 ? "text-profit" : "text-loss"}`}>
-          {delta >= 0 ? "+" : ""}{delta.toFixed(2)}%
-        </span>
+    <div className="space-y-2" data-testid="records-browser">
+      <FilterBar filters={filters} onChange={handleFilters} counts={counts} />
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="rounded-lg border border-border-faint p-2">
+          <RecordCards
+            filters={filters}
+            onSelect={setSelected}
+            selectedId={selected?.record_id}
+            onCounts={setCounts}
+          />
+        </div>
+        <div className="rounded-lg border border-border-faint p-2">
+          <RecordDetail record={selected} />
+        </div>
       </div>
-      {/* 逐点序列（前 12 点+末点抽样呈现——完整序列在 DOM 属性留档） */}
-      <div
-        className="grid grid-cols-3 gap-x-3 gap-y-0.5 font-num text-[10px] text-text-muted"
-        data-count={pts.length}
-      >
-        {pts.slice(0, 12).map((p, i) => (
-          <span key={`${p.time}-${i}`} className="truncate" title={p.time}>
-            {p.value.toFixed(1)}
-          </span>
-        ))}
-        {pts.length > 12 && <span className="text-text-muted">… 共 {pts.length} 点（末 {pts[pts.length - 1].value.toFixed(1)}）</span>}
-      </div>
-    </div>
-  );
-}
-
-/** V-D 详情区（五形态：默认空态/参数回显/K线复核/资金曲线/决策记录） */
-export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
-  const recordId = record?.record_id;
-  const q = useQuery({
-    queryKey: ["validation-record-detail", recordId],
-    queryFn: () => getValidationRecordDetail(recordId!),
-    enabled: !!recordId,
-  });
-  // 多份选择器（隔离验证单份常态；多份=组合验证等）
-  const [execIdx, setExecIdx] = useState(0);
-  useEffect(() => { setExecIdx(0); }, [recordId]);
-
-  if (!record || !recordId) {
-    return (
-      <p className="flex items-center gap-2 text-xs text-text-muted">
-        <FileSearch className="h-3.5 w-3.5" /> 选择一条记录查看详情
-      </p>
-    );
-  }
-  if (q.isError) return <p className="text-xs text-loss">详情源暂不可达（稍后自动重试）</p>;
-  if (q.isLoading) return <p className="text-xs text-text-muted">装载中…</p>;
-  const d: ValidationDetailResponse = q.data!;
-  if (!d.detail_available) {
-    return (
-      <p className="text-xs text-text-muted">
-        该记录为历史无留痕形态（detail_available=false）——不可复核，空骨架如实呈现
-      </p>
-    );
-  }
-  const unk = (v: number | null) => (v == null ? "未知" : String(v));
-  const exec = d.executions[Math.min(execIdx, d.executions.length - 1)];
-  const symbol = (record.params as { request_range?: { symbol?: string } } | null)
-    ?.request_range?.symbol;
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap gap-3 text-xs">
-        <span className="font-mono text-text-secondary">{d.hypothesis_id}</span>
-        <span className={VERDICT_COLOR[d.verdict] ?? ""}>{d.verdict}</span>
-        <span className="text-text-muted">{d.level}</span>
-        <span className="font-num text-text-muted">
-          资金 {unk(d.init_cash)} · 费率 {unk(d.fee)} · 滑点 {unk(d.slippage)}
-        </span>
-      </div>
-      {d.executions.length > 1 && (
-        <Select
-          size="small"
-          className="mb-2 !w-56"
-          value={execIdx}
-          onChange={setExecIdx}
-          options={d.executions.map((e, i) => ({
-            value: i,
-            label: `份 ${i + 1} · ${e.exec_ref}（${e.range_start || "?"} ~ ${e.range_end || "?"}）`,
-          }))}
-        />
-      )}
-      <Tabs
-        size="small"
-        items={[
-          {
-            key: "params",
-            label: "参数回显",
-            children: <ParamsPanel record={record} />,
-          },
-          {
-            key: "kline",
-            label: "K线复核",
-            children: exec ? <KlineReview exec={exec} symbol={symbol} /> : <p className="text-xs text-text-muted">无执行份</p>,
-          },
-          {
-            key: "equity",
-            label: "资金曲线",
-            children: exec ? <EquityReview exec={exec} initCash={d.init_cash} /> : <p className="text-xs text-text-muted">无执行份</p>,
-          },
-          {
-            key: "decisions",
-            label: "决策记录",
-            children: (
-              <p className="rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">
-                决策记录数据面待建（be-validation-decision-records D6）——落地后 trades 逐笔 decision 渲染
-              </p>
-            ),
-          },
-        ]}
-      />
     </div>
   );
 }
