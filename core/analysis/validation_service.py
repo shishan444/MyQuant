@@ -563,14 +563,21 @@ def _resolve_trace_rows(
     from core.backtest.trace_resolver import resolve_signal_trace
 
     rg = dna.risk_genes
+    # size_pct 物化对齐装配单源（positioning/resolve.py
+    # _materialize_legacy：initial_fraction>0 优先否则 position_size；
+    # position_size 恒非 None 无第三分支——CARD-01 线索 7）
     size_pct = (
         float(rg.initial_fraction)
-        if rg.initial_fraction is not None
-        else float(rg.position_size) if rg.position_size is not None
-        else None)
+        if rg.initial_fraction is not None and rg.initial_fraction > 0
+        else float(rg.position_size))
     risk_params = {
         "position_mode": rg.position_mode or "fixed",
         "size_pct": size_pct,
+        # 加仓物化缺省 0.1（同 engine 装载段——11 码期望量重放消费；
+        # 装配单点在此，不进 positioning/resolve.py）
+        "add_fraction": (
+            float(rg.add_fraction)
+            if rg.add_fraction is not None else 0.1),
         "sl_mode": rg.sl_mode or "pct",
         "sl_stop": float(rg.stop_loss) if rg.stop_loss else 0.0,
         "risk_fraction": (

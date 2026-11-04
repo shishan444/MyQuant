@@ -60,9 +60,16 @@ _EXIT_CODES = frozenset({12, 13, 20, 21, 22, 23, 24, 25})
 _UNMAPPED_PLACEHOLDER = -1  # 求值层行 event_code（swallowed 无引擎码）
 
 
-def _expected_qty(risk_params: Dict[str, Any], price: float,
+def _expected_qty(risk_params: Dict[str, Any], event_code: int, price: float,
                   value_now: float) -> Optional[float]:
     """期望下单量重放（与 _position_sizing_disclosure 同款对齐假设）。
+
+    按码分派（CARD-01）：10 码首仓=档位公式（fixed=size_pct 百分比
+    仓/risk_budget=rf÷(price×sl_stop) 数量仓重放）；11 码加仓无档位
+    分支——引擎 add 分支恒走 add_value=value_now×add_fraction
+    （百分比路径，risk_budget 档亦然）；32 码降级回退单走 size_pct
+    百分比仓（qty≤0 回退分支的指挥键是 size_pct，与首仓 rf 公式
+    无关——混用即满额单假报截断）。
 
     value_now=订单 bar 前一 bar 期末组合价值（首 bar 退化 init_cash
     ——调用方传入的 value_curve 已含）；stop_dist 取 pct/trail 档
@@ -72,6 +79,16 @@ def _expected_qty(risk_params: Dict[str, Any], price: float,
     """
     if price <= 0.0 or value_now <= 0.0:
         return None
+    if event_code == 11:
+        add_fraction = risk_params.get("add_fraction")
+        if add_fraction is None or add_fraction <= 0.0:
+            return None
+        return value_now * float(add_fraction) / price
+    if event_code == 32:
+        size_pct = risk_params.get("size_pct")
+        if size_pct is None or size_pct <= 0.0:
+            return None
+        return value_now * float(size_pct) / price
     mode = risk_params.get("position_mode") or "fixed"
     if mode == "risk_budget":
         rf = risk_params.get("risk_fraction")
@@ -112,8 +129,8 @@ def resolve_signal_trace(
             对照实测下全部引擎发单码行 outcome=rejected）。
         exec_ref: 份标识（错误消息定位上下文+行携带）。
         init_cash: 初始资金（value_curve 缺失时的重放退化值）。
-        risk_params: 仓位口径参数（position_mode/size_pct/sl_mode/
-            sl_stop/risk_fraction——capped 重放）。
+        risk_params: 仓位口径参数（position_mode/size_pct/add_fraction/
+            sl_mode/sl_stop/risk_fraction——capped 重放按码分派）。
         value_curve: 原始组合价值曲线（放大/资金费前——value_now
             单源；None 退化 init_cash 常数）。
 
@@ -252,7 +269,8 @@ def resolve_signal_trace(
                 and ev.get("size") is not None and ev.get("price")):
             pos = ev["pos"]
             value_now = _value_at(pos) if pos is not None else float(init_cash)
-            plan = _expected_qty(risk_params, ev["price"], value_now)
+            plan = _expected_qty(
+                risk_params, ev["event_code"], ev["price"], value_now)
             if plan is not None and plan > 0.0:
                 ratio = ev["size"] / plan
                 if 0.0 < ratio < 1.0:

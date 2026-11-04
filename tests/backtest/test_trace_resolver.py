@@ -159,6 +159,62 @@ class TestCapped:
             risk_params=RISK_PCT)  # plan=50000×0.3/100=150 → 150/150=None
         assert rows[0]["capped"] is None
 
+    # CARD-01 三态锚：期望量按码分派（11 码分母=add_fraction——引擎
+    # add 分支恒走百分比路径；32 码分母=size_pct——qty≤0 回退单的指挥
+    # 键）。三态 risk_params 均带 add_fraction 键走真实公式路径——缺键
+    # 走 plan=None→capped=None 防御路径测不到分母。
+    _ADD_PCT = {"position_mode": "fixed", "size_pct": 0.2,
+                "add_fraction": 0.1, "sl_mode": "pct", "sl_stop": 0.05,
+                "risk_fraction": None}
+
+    def test_add_code11_full_fill_is_none(self):
+        # plan=100000×0.1/100=100 恰满额→None；分母若错用 size_pct
+        # （plan=200）会假报 0.5 截断——两分母值显式不同以证分码
+        rows = resolve_signal_trace(
+            _buf({1: 11}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 100.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params=self._ADD_PCT)
+        assert rows[0]["capped"] is None
+
+    def test_add_code11_truncated_ratio_uses_add_fraction(self):
+        # plan=100，实际 75→0.75；分母若错用 size_pct 得 75/200=0.375
+        rows = resolve_signal_trace(
+            _buf({1: 11}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 75.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params=self._ADD_PCT)
+        assert rows[0]["capped"] == pytest.approx(0.75)
+
+    def test_fallback_code32_full_fill_is_none(self):
+        # 回退单=size_pct 百分比仓：plan=100000×0.1/100=100 恰满额→None；
+        # 公式若错用 rf÷(price×sl_stop)（plan=2000）会假报 0.05 截断
+        rows = resolve_signal_trace(
+            _buf({1: 32}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 100.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params={"position_mode": "risk_budget", "sl_mode": "pct",
+                         "sl_stop": 0.05, "risk_fraction": 0.1,
+                         "size_pct": 0.1, "add_fraction": None})
+        assert rows[0]["capped"] is None
+
+    def test_add_code11_missing_add_fraction_defensive_none(self):
+        # 缺键防御路径：add_fraction 缺→plan=None→capped=None（不崩
+        # 不假报；生产链 _resolve_trace_rows 物化缺省 0.1，此态仅直调可
+        # 达——与带键满额 None 路径不同，锁定防御分支存在）
+        rows = resolve_signal_trace(
+            _buf({1: 11}), IDX, None,
+            _trades([{"entry": "2024-01-01 04:00", "exit": None,
+                      "size": 100.0, "ep": 100.0, "xp": 0.0}]),
+            value_curve=pd.Series([100000.0] * 4, index=IDX),
+            risk_params={"position_mode": "fixed", "size_pct": 0.2,
+                         "sl_mode": "pct", "sl_stop": 0.05,
+                         "risk_fraction": None})
+        assert rows[0]["capped"] is None
+
 
 class TestSeqAssignment:
     """seq 分配：引擎行先求值层后、层内 event_code 升序、同 bar 0 起。"""
