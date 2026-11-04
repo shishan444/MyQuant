@@ -478,4 +478,7 @@ class TestDetailEndpointKeys:
         detail = validation_record_detail(rid, db_path=db)
         assert detail["signal_trace"] is None
         assert detail["executions"][0]["trace_rows"] == []
+        # spec「存量降级」THEN 第三要素（CARD-05 补）：
+        # trail_series=null——样本非 trail 档，metrics 落 null 透传
+        assert detail["executions"][0]["trail_series"] is None
         # 合法降级：端点正常返回（无异常抛出即证——200 语义）
