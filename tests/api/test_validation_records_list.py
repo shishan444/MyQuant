@@ -150,22 +150,21 @@ class TestFilterPagingInteraction:
     """
 
     def test_level_filter_page_empty_but_has_more(self, client):
-        """页空但 has_more=True：页窗口内零命中而时间流仍有后页。
-
-        limit=3 页 1 窗口=[vr_05,vr_04,vr_03]（全 random_window），
-        isolated 命中 0；探测取第 4 条存在 → has_more=True。消费方
-        须以 has_more 驱动翻页（见 records=[] 不得视为终页）。
-        """
+        """B2 过滤基数分页（upgrade-validation-records-list 4.1 同批
+        核改——旧行级过滤「页空而 has_more=True」行为退役）：level
+        SQL 下推后当页即命中、total=过滤基数、页满恒 limit。"""
         r1 = client.get("/api/research/validation-records",
                         params={"level": "isolated_backtest", "limit": 3}).json()
-        assert r1["records"] == []
-        assert r1["has_more"] is True
-        # 页 2（offset=3）窗口=[vr_02,vr_01,vr_00] 全命中——翻页可恢复
-        r2 = client.get("/api/research/validation-records",
-                        params={"level": "isolated_backtest", "limit": 3,
-                                "offset": 3}).json()
-        assert [x["record_id"] for x in r2["records"]] == ["vr_02", "vr_01", "vr_00"]
-        assert r2["has_more"] is False
+        # 六维口径：isolated 基数 3（vr_00/01/02）——页 1 即满页命中
+        assert [x["record_id"] for x in r1["records"]] == \
+               ["vr_02", "vr_01", "vr_00"]
+        assert r1["total"] == 3
+        assert r1["has_more"] is False
+        # 无命中 level：页空且 has_more=False（total=0 同步过滤基数）
+        r0 = client.get("/api/research/validation-records",
+                        params={"level": "component", "limit": 3}).json()
+        assert r0["records"] == [] and r0["total"] == 0
+        assert r0["has_more"] is False
 
     def test_level_filter_cross_page_collect_complete(self, client):
         """跨页遍历完整性：has_more 驱动步进至终页，命中总数==该级基数。"""

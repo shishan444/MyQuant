@@ -72,16 +72,17 @@ def list_validation_records_endpoint(
     db_path=Depends(get_db_path),
     data_dir=Depends(get_data_dir),
 ) -> ValidationRecordsResponse:
-    """跨策略验证记录列表（upgrade-validation-records-list B1——
-    sort/q/generalization 检索增量+行级 statement+计数两键）。
+    """跨策略验证记录列表（upgrade-validation-records-list B2 终态——
+    sort/q/generalization 检索+六维过滤下推）。
 
     sort 封闭枚举四值（time_desc 缺省=现状零变化/time_asc/
     total_return_desc 按 worst 值参排 NULL 落尾/verdict_quality 品质
     序）；q 关键词搜索（statement LIKE、%/_ 通配符字面化）；level/
     verdict 非法值 422（沿内联校验先例）；generalization 独立 bool
-    泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。B1 双口径：
-    q/泛化=过滤后分页进 total，level/verdict=行级过滤不进 total
-    （B2 语义翻转统一六维）。
+    泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。全六维过滤
+    （hypothesis_id/strategy_id/q/generalization/level/verdict）SQL
+    WHERE 下推——total=全部过滤维基数、页满恒 limit（过滤后结果集
+    分页）；verdict_counts/unsortable_count 与 total 同基数。
     """
     from api.routes.research.common import research_error_to_http
     from core.analysis.errors import ResearchError
@@ -118,26 +119,23 @@ def list_validation_records_endpoint(
         except (ValueError, TypeError):
             return None  # 坏 JSON 如实 None（不捏造不抛——观察面）
 
-    # B1 检索：sort/q/generalization 经仓储 SQL（过滤下推+排序表达式）；
-    # level/verdict 仍行级过滤（B1 双口径——B2 统一六维下推）
+    # B2 六维下推（upgrade-validation-records-list 4.1）：level/verdict
+    # 经仓储 WHERE（形参 B1 预置）——全过滤维 SQL 下推，total/counts=
+    # 六维基数，页满恒 limit（旧「行级过滤当页行数<limit 而 total 不变」
+    # 行为退役）
     rows = rr.list_validation_records(
         db_path,
         hypothesis_id=hypothesis_id, strategy_id=strategy_id,
         offset=offset, limit=limit + 1,
         order="asc" if sort == "time_asc" else "desc",
         q=(q or None), generalization=generalization, sort=sort,
+        level=level, verdict=verdict,
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
 
-    # level/verdict 行级过滤（B1 过渡态：分页之后取段内命中——
-    # 过滤维不改变页窗口；total 口径不含两维〔B2 翻转〕）
     out_rows: List[ValidationRecordRow] = []
     for r in rows:
-        if level is not None and r["level"] != level:
-            continue
-        if verdict is not None and r["verdict"] != verdict:
-            continue
         out_rows.append(ValidationRecordRow(
             record_id=r["record_id"], hypothesis_id=r["hypothesis_id"],
             strategy_id=r["strategy_id"], level=r["level"],
@@ -149,10 +147,12 @@ def list_validation_records_endpoint(
             statement=r.get("statement"),
         ))
 
-    # 计数四维口径（B1.4——q/泛化进 total；level/verdict 不进〔B2 并入〕）
+    # 计数六维口径（B2.1——total=全部过滤维基数；verdict_counts/
+    # unsortable_count 同基数）
     agg = rr.validation_records_aggregates(
         db_path, hypothesis_id=hypothesis_id, strategy_id=strategy_id,
-        q=(q or None), generalization=generalization)
+        q=(q or None), generalization=generalization,
+        level=level, verdict=verdict)
     return ValidationRecordsResponse(
         records=out_rows, total=agg["total"], offset=offset, limit=limit,
         has_more=has_more,

@@ -1849,16 +1849,17 @@ export interface paths {
         };
         /**
          * List Validation Records Endpoint
-         * @description 跨策略验证记录列表（upgrade-validation-records-list B1——
-         *     sort/q/generalization 检索增量+行级 statement+计数两键）。
+         * @description 跨策略验证记录列表（upgrade-validation-records-list B2 终态——
+         *     sort/q/generalization 检索+六维过滤下推）。
          *
          *     sort 封闭枚举四值（time_desc 缺省=现状零变化/time_asc/
          *     total_return_desc 按 worst 值参排 NULL 落尾/verdict_quality 品质
          *     序）；q 关键词搜索（statement LIKE、%/_ 通配符字面化）；level/
          *     verdict 非法值 422（沿内联校验先例）；generalization 独立 bool
-         *     泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。B1 双口径：
-         *     q/泛化=过滤后分页进 total，level/verdict=行级过滤不进 total
-         *     （B2 语义翻转统一六维）。
+         *     泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。全六维过滤
+         *     （hypothesis_id/strategy_id/q/generalization/level/verdict）SQL
+         *     WHERE 下推——total=全部过滤维基数、页满恒 limit（过滤后结果集
+         *     分页）；verdict_counts/unsortable_count 与 total 同基数。
          */
         get: operations["list_validation_records_endpoint_api_research_validation_records_get"];
         put?: never;

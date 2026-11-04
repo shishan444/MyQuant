@@ -182,14 +182,14 @@ class TestGeneralization:
         assert a["total"] == b["total"] == 3
 
     def test_generalization_with_level_intersection(self, env):
+        # B2 六维下推（4.1 同批核改）：泛化 ∧ level 取交集进 total
         out = _list(env, generalization="true",
                     level="isolated_backtest")
-        assert out["total"] == 1  # 泛化一维进 total（rec_h）
-        # 行级交集：rec_h 亦 isolated——仍出记录（交集非并集）
+        assert out["total"] == 1  # rec_h（泛化且 isolated）
         assert [x["record_id"] for x in out["records"]] == ["rec_h"]
-        # 负对照：泛化 ∧ level=random_window → 行空而 total 不变
+        # 负对照：泛化 ∧ level=random_window → 六维基数 0
         out2 = _list(env, generalization="true", level="random_window")
-        assert out2["total"] == 1 and out2["records"] == []
+        assert out2["total"] == 0 and out2["records"] == []
 
     def test_generalization_bad_form_422(self, env):
         r = env["client"].get(
@@ -206,13 +206,13 @@ class TestCountsDualCaliber:
         out = _list(env, q="关键词XYZ")
         assert sum(out["verdict_counts"].values()) == out["total"] == 2
 
-    def test_dual_caliber_coexists(self, env):
-        """B1 过渡态双口径并存可判别：q 进 total，level 不进。"""
+    def test_six_dim_caliber(self, env):
+        """B2 六维口径（4.1 同批核改——B1 双口径负例退役）：q∧level
+        交集进 total。"""
         out = _list(env, q="关键词XYZ", level="random_window")
-        # total=四维（q 过滤基数 2）——level 行级过滤不改 total
-        assert out["total"] == 2
-        # 当页行=行级过滤后清空（无 random_window 记录）
-        assert out["records"] == []
+        assert out["total"] == 0 and out["records"] == []
+        out2 = _list(env, q="关键词XYZ", level="isolated_backtest")
+        assert out2["total"] == 2  # 两命中记录均 isolated
 
     def test_default_caliber_unchanged(self, env):
         """缺省（不传新参）total 与现状两维逐位一致。"""
