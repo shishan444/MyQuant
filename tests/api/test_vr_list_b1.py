@@ -654,6 +654,60 @@ class TestSortSecondaryKeys:
         assert desc == list(reversed(asc))
 
 
+@pytest.fixture()
+def worstrouteenv(tmp_path):
+    """三型 worst 键位路由库：isolated/random/staged 各自键位取值
+    参与统一降序（design B1.3 键位表——三型键位互不通用是必要性）。"""
+    d = tmp_path / "b1wr"
+    d.mkdir()
+    db = d / "b1wr.db"
+    init_db_ext(db)
+    ensure_research_tables(db)
+    from core.persistence.orm.models import ValidationRecord
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+    rows = [
+        ("r_iso", "isolated_backtest",
+         {"metrics": {"total_return": 0.03}}),
+        ("r_rnd", "random_window",
+         {"summary": {"worst_window": {
+             "metrics": {"total_return": 0.10}}}}),
+        ("r_stg", "staged_validation",
+         {"summary": {"worst_segment": {"total_return": -0.05}}}),
+        ("r_rnd_null", "random_window",
+         {"summary": {}}),  # 无 worst_window → NULL 落尾
+    ]
+    with S() as sess:
+        for i, (rid, level, result) in enumerate(rows):
+            sess.add(ValidationRecord(
+                record_id=rid, hypothesis_id="adhoc", strategy_id=None,
+                level=level, segmentation="", verdict="pass",
+                range_hash=f"rh_{rid}", params="{}",
+                result=json.dumps(result),
+                created_at=f"2026-11-0{i + 1}T00:00:00+00:00"))
+        sess.commit()
+    from api.app import create_app
+    app = create_app(db_path=db, data_dir=d)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield {"client": client}
+
+
+class TestWorstRouteSorting:
+    """B1.3 属性补强（阶段四闸门步骤四）：三型 level 的 worst 键位
+    路由在 sort=total_return_desc 下各自取值参与统一降序——键位互不
+    通用（random 路由错至 isolated 键位即 NULL 落尾即红）。"""
+
+    def test_three_level_key_routes_unified_desc(self, worstrouteenv):
+        out = worstrouteenv["client"].get(
+            "/api/research/validation-records",
+            params={"sort": "total_return_desc", "limit": 200}).json()
+        assert [x["record_id"] for x in out["records"]] == [
+            "r_rnd", "r_iso", "r_stg", "r_rnd_null"], (
+            "三型各按自身键位取值统一降序；键位错路由即取不到值落尾红")
+        assert out["unsortable_count"] == 1, "仅无 worst_window 一条不可排"
+
+
 class TestGeneratedArtifacts:
     """T2-A9 生成物面（B1.7②）：openapi.json+api.ts 新参数新键进面
     防漂移锚——再生成漏项即红（沿 test_dna_policy_transport 先例形制）。"""
