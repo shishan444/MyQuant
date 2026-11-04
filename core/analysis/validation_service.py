@@ -1445,8 +1445,17 @@ def run_staged_validation(
     worst = min(seg_results, key=lambda r: r["metrics"]["total_return"])
     best = max(seg_results, key=lambda r: r["metrics"]["total_return"])
     summary = {
+        # worst 段五键（upgrade-validation-records-list 2.2——两键补
+        # 五键：+sharpe_ratio/max_drawdown 从 worst 段 metrics 直取；
+        # 仅新写入记录生效，存量 staged 两键缺前端容缺 null）
         "worst_segment": {"label": worst["label"],
-                          "total_return": worst["metrics"]["total_return"]},
+                          "total_return": worst["metrics"]["total_return"],
+                          "sharpe_ratio": worst["metrics"].get(
+                              "sharpe_ratio"),
+                          "max_drawdown": worst["metrics"].get(
+                              "max_drawdown"),
+                          "total_trades": worst["metrics"].get(
+                              "total_trades")},
         "spread": best["metrics"]["total_return"]
         - worst["metrics"]["total_return"],
         "all_pass": verdict == "pass",

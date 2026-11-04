@@ -1,4 +1,3 @@
-import { POLARITY } from "@/theme/tokens";
 import type {
   ISeriesApi,
   ISeriesPrimitive,

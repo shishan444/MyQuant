@@ -32,12 +32,16 @@ function mapCondition(
   const target = cond.target || "0";
 
   let params: Record<string, number> = {};
+  // subject 混合形制收窄（0.2.13 起参数化指标为结构化对象——字符串
+  // 兼容旧形；非字符串按未知指标走缺省参数族）
+  const indicatorName = typeof indicator === "string"
+    ? indicator : (indicator as { indicator?: string })?.indicator ?? "";
   // Try to extract period from common indicator patterns
-  if (indicator.toLowerCase() === "rsi") {
+  if (indicatorName.toLowerCase() === "rsi") {
     params = { period: 14 };
-  } else if (indicator.toLowerCase() === "ema") {
+  } else if (indicatorName.toLowerCase() === "ema") {
     params = { period: 20 };
-  } else if (indicator.toLowerCase() === "macd") {
+  } else if (indicatorName.toLowerCase() === "macd") {
     params = { fast: 12, slow: 26, signal: 9 };
   }
 
@@ -56,7 +60,7 @@ function mapCondition(
   }
 
   return {
-    indicator: indicator.toUpperCase(),
+    indicator: indicatorName.toUpperCase(),
     params,
     role,
     field: null,

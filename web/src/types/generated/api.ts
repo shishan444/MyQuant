@@ -85,6 +85,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategies/{strategy_id}/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Strategy Transitions
+         * @description 策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序
+         *     审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。
+         */
+        get: operations["list_strategy_transitions_api_strategies__strategy_id__transitions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies/{strategy_id}/revalidate": {
         parameters: {
             query?: never;
@@ -138,8 +159,8 @@ export interface paths {
          *
          *     挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
          *     前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
-         *     （status ∈ {paper, candidate, live}——模拟在验/达标候选/实盘在役）
-         *     或被非终态模拟任务（pending/running）引用 → 422
+         *     （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
+         *     或被非终态纸盘任务（pending/running）引用 → 422
          *     BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
          *     pt_active_count 与处置提示——先撤盘/归档后再清理）。
          */
@@ -185,114 +206,6 @@ export interface paths {
          * @description 多策略回测对比（逐策略执行，失败条目隔离不拖累整体）。
          */
         post: operations["compare_strategies_api_strategies_compare_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/verify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Verify Strategies
-         * @description 多日期区间验证策略。
-         *
-         *     逐 (strategy, date_range) 对回测并计算 fitness；按策略聚合综合
-         *     评分 = avg_fitness × qualified_ratio × consistency_bonus。
-         *     执行体收口 _VerifyProcessor（与流式端点共用）。
-         */
-        post: operations["verify_strategies_api_strategies_verify_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/verify/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Verify Strategies Stream
-         * @description B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。
-         *
-         *     断线语义（B8.0 ②）：任务跑完并落库（verify_session 持久化在），
-         *     重连恢复面=GET /verify/sessions/{session_id}/results。
-         *     取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。
-         */
-        post: operations["verify_strategies_stream_api_strategies_verify_stream_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/verify/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Verify History
-         * @description 历史验证结果（backtest_result 按 run_source='verify' 过滤）。
-         */
-        get: operations["get_verify_history_api_strategies_verify_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/verify/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Sessions
-         * @description 验证会话列表（按创建时间序）。
-         */
-        get: operations["list_sessions_api_strategies_verify_sessions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/strategies/verify/sessions/{session_id}/results": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Session Results
-         * @description 指定验证会话的回测结果。
-         */
-        get: operations["get_session_results_api_strategies_verify_sessions__session_id__results_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -756,6 +669,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/live-trading/tasks/{task_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Task
+         * @description D5 契约基线：pending→running；runner 装配挂 app.state（live_runner
+         *     ——paper_scheduler 先例形制；内核未建时占位 None+状态先行迁移可观察）。
+         */
+        post: operations["start_task_api_live_trading_tasks__task_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/live-trading/tasks/{task_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Task
+         * @description D5：running→stopped（stop_reason 落因；graceful=当前 bar 完退出
+         *     ——runner 侧语义，状态迁移先行可观察）；停止已停 409。
+         */
+        post: operations["stop_task_api_live_trading_tasks__task_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/live-trading/tasks/{task_id}/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Decisions
+         * @description D4 决策快照分页（append-only 只读——B6r 回放消费；零决策 200
+         *     空集如实〔D5 前/启动初期〕；404 平文本沿域内先例）。
+         */
+        get: operations["list_decisions_api_live_trading_tasks__task_id__decisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/live-trading/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -1092,6 +1068,84 @@ export interface paths {
          * @description 全库现算聚合（响应时点快照；处理即消隐=前端据动作结果重拉）。
          */
         get: operations["pending_events_api_workbench_pending_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workbench/process-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Process Status
+         * @description D1 进程状态：api.online 恒 true（响应本身即存活证明）；mcp=TCP
+         *     探活 127.0.0.1:{MYQUANT_MCP_PORT 缺省 8800}（mcpserver/server.py:96
+         *     同源环境变量），connect 超时 500ms。探活失败≠端点错误——200 返回
+         *     离线事实（前端呈现离线态）。纯 GET 幂等零副作用。
+         */
+        get: operations["process_status_api_workbench_process_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workbench/hypothesis-union-remains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hypothesis Union Remains
+         * @description D9 active 假设并集余量聚合：query_union_balance 单源复用全量披露
+         *     （union_exhausted 扫描的余量披露版——exhausted 只报 remaining==0，
+         *     本端点逐区间披露余量数值）。iter_all_pages 全量翻页+bounds_cache
+         *     请求内缓存（与 _union_exhausted_events 同形制）；fail-open per-假设
+         *     degraded 计数。消费方=②观察台假设卡组余量列。遍历骨架经
+         *     _iter_union_balances 共享（QA-1 提取——与 union_exhausted 单源）。
+         */
+        get: operations["hypothesis_union_remains_api_workbench_hypothesis_union_remains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workbench/fleet-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fleet Summary
+         * @description D11 舰队汇总（paper-overview 扩形）。
+         *
+         *     三契约要素：①口径双分解（active=running 主呈现/all=全部副呈现，
+         *     今日增量仅 active——终态任务无当日 bar 推进）；②当日基点三分支
+         *     （当日新建无当日快照→initial_cash；跨日→当日首条快照；无当日快照
+         *     非当日新建→no_bar_today+基点=最新快照；UTC 00:00 日界）；③公式
+         *     单源（equity=_latest_equity_of import 复用——禁第二份）。
+         *     两合并约束：tasks 行单点复用 _task_response_from（D11 增量字段
+         *     叠加不重写字段映射——保 /trading 同源同值）；runner-status 不并入
+         *     （fleet.active.task_count 取 DB 查询非 scheduler）。funding_sum=
+         *     funding 表 SQL 批量聚合（N+1 禁）；dims 两维现算单源。
+         */
+        get: operations["fleet_summary_api_workbench_fleet_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1455,6 +1509,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/analysis/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Analysis Tasks
+         * @description D8 分析任务时间流列表（be-workbench-support）：analysis_tasks
+         *     表跨任务视图，created_at desc。行=七字段（无 result——单查
+         *     /analysis/tasks/{task_id} 分工不变）；templates=_TEMPLATES 直取
+         *     （路由层单源 import 零抄录——前端 12 槽位清单来源）。
+         */
+        get: operations["list_analysis_tasks_api_research_analysis_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/analysis/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -1568,6 +1645,27 @@ export interface paths {
          * @description 模型插件配置：同步校验 + 异步训练（202 + 句柄轮询）。
          */
         post: operations["create_model_plugin_api_research_plugins_model_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/plugins/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plugin Pools
+         * @description 四层池名单（be-plugin-pool-authority D10）：core/strategy/pools.py
+         *     单源直出（快照权威自需求文档升格入工程）；纯 GET 幂等零副作用。
+         */
+        get: operations["get_plugin_pools_api_research_plugins_pools_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1751,11 +1849,17 @@ export interface paths {
         };
         /**
          * List Validation Records Endpoint
-         * @description 跨策略验证记录时间流（created_at 降序——「最近」消费语义）。
+         * @description 跨策略验证记录列表（upgrade-validation-records-list B2 终态——
+         *     sort/q/generalization 检索+六维过滤下推）。
          *
-         *     四维可选过滤；level/verdict 非法值 422（沿 research_error_to_http
-         *     结构化错误形制——本端点内联校验产同形 detail）；分页探测式
-         *     has_more（多取一条判定）。
+         *     sort 封闭枚举四值（time_desc 缺省=现状零变化/time_asc/
+         *     total_return_desc 按 worst 值参排 NULL 落尾/verdict_quality 品质
+         *     序）；q 关键词搜索（statement LIKE、%/_ 通配符字面化）；level/
+         *     verdict 非法值 422（沿内联校验先例）；generalization 独立 bool
+         *     泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。全六维过滤
+         *     （hypothesis_id/strategy_id/q/generalization/level/verdict）SQL
+         *     WHERE 下推——total=全部过滤维基数、页满恒 limit（过滤后结果集
+         *     分页）；verdict_counts/unsortable_count 与 total 同基数。
          */
         get: operations["list_validation_records_endpoint_api_research_validation_records_get"];
         put?: never;
@@ -1853,6 +1957,13 @@ export interface components {
         AvailableSourcesResponse: {
             /** Sources */
             sources: components["schemas"]["AvailableSource"][];
+        };
+        /** BacktestDateRange */
+        BacktestDateRange: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
         };
         /** BacktestRequest */
         BacktestRequest: {
@@ -2020,7 +2131,7 @@ export interface components {
             /** Strategy Ids */
             strategy_ids: string[];
             /** Data Ranges */
-            data_ranges: components["schemas"]["VerifyDateRange"][];
+            data_ranges: components["schemas"]["BacktestDateRange"][];
             /**
              * Init Cash
              * @default 100000
@@ -3061,6 +3172,8 @@ export interface components {
             timeframe: string;
             /** Status */
             status: string;
+            /** Stop Reason */
+            stop_reason?: string | null;
             /** Config Json */
             config_json?: string | null;
             /**
@@ -3112,6 +3225,8 @@ export interface components {
             last_bar_time?: string | null;
             /** Heartbeat At */
             heartbeat_at?: string | null;
+            /** Error Detail */
+            error_detail?: string | null;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -3404,7 +3519,7 @@ export interface components {
         };
         /**
          * PaperTaskCreate
-         * @description 创建模拟任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
+         * @description 创建纸盘任务（上盘流转：REST 只收 strategy_id，DNA 由后端从策略
          *     库流转快照——design §11 偏差 2「消灭手工抄写」）。
          *
          *     window_bars 四形态编码（spec 上盘流转 Requirement）：不传=缺省 180；
@@ -4381,6 +4496,8 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             } | null;
+            /** Statement */
+            statement?: string | null;
         };
         /** ValidationRecordsResponse */
         ValidationRecordsResponse: {
@@ -4394,266 +4511,12 @@ export interface components {
             limit: number;
             /** Has More */
             has_more: boolean;
-        };
-        /** VerifyDateRange */
-        VerifyDateRange: {
-            /** Start */
-            start: string;
-            /** End */
-            end: string;
-        };
-        /** VerifyHistoryItem */
-        VerifyHistoryItem: {
-            /** Result Id */
-            result_id: string;
-            /** Strategy Id */
-            strategy_id: string;
-            /** Strategy Name */
-            strategy_name?: string | null;
-            /** Symbol */
-            symbol: string;
-            /** Timeframe */
-            timeframe: string;
-            /** Data Start */
-            data_start: string;
-            /** Data End */
-            data_end: string;
-            /**
-             * Total Return
-             * @default 0
-             */
-            total_return: number;
-            /**
-             * Sharpe Ratio
-             * @default 0
-             */
-            sharpe_ratio: number;
-            /**
-             * Max Drawdown
-             * @default 0
-             */
-            max_drawdown: number;
-            /**
-             * Total Trades
-             * @default 0
-             */
-            total_trades: number;
-            /**
-             * Fitness
-             * @default 0
-             */
-            fitness: number;
-            /**
-             * Qualified
-             * @default 0
-             */
-            qualified: number;
-            /** Thresholds */
-            thresholds?: {
-                [key: string]: boolean | null;
-            } | null;
-            /**
-             * Star
-             * @default 0
-             */
-            star: number;
-            /** Created At */
-            created_at: string;
-        };
-        /** VerifyHistoryResponse */
-        VerifyHistoryResponse: {
-            /** Items */
-            items: components["schemas"]["VerifyHistoryItem"][];
-            /** Total */
-            total: number;
-        };
-        /** VerifyPeriodSummary */
-        VerifyPeriodSummary: {
-            /** Data Start */
-            data_start: string;
-            /** Data End */
-            data_end: string;
-            /**
-             * Total Return
-             * @default 0
-             */
-            total_return: number;
-            /**
-             * Sharpe Ratio
-             * @default 0
-             */
-            sharpe_ratio: number;
-            /**
-             * Max Drawdown
-             * @default 0
-             */
-            max_drawdown: number;
-            /**
-             * Fitness
-             * @default 0
-             */
-            fitness: number;
-            /**
-             * Qualified
-             * @default false
-             */
-            qualified: boolean;
-        };
-        /** VerifyRequest */
-        VerifyRequest: {
-            /** Strategy Ids */
-            strategy_ids: string[];
-            /** Data Ranges */
-            data_ranges: components["schemas"]["VerifyDateRange"][];
-            /**
-             * Init Cash
-             * @default 100000
-             */
-            init_cash: number;
-            /**
-             * Fee
-             * @default 0.001
-             */
-            fee: number;
-            /**
-             * Slippage
-             * @default 0.0005
-             */
-            slippage: number;
-            /**
-             * Leverage
-             * @default 1
-             */
-            leverage: number;
-        };
-        /** VerifyResponse */
-        VerifyResponse: {
-            /** Results */
-            results: components["schemas"]["VerifyResultItem"][];
-            /** Summary */
-            summary: components["schemas"]["VerifySummaryItem"][];
-        };
-        /** VerifyResultItem */
-        VerifyResultItem: {
-            /** Strategy Id */
-            strategy_id: string;
-            /** Data Start */
-            data_start: string;
-            /** Data End */
-            data_end: string;
-            /**
-             * Total Return
-             * @default 0
-             */
-            total_return: number;
-            /**
-             * Sharpe Ratio
-             * @default 0
-             */
-            sharpe_ratio: number;
-            /**
-             * Max Drawdown
-             * @default 0
-             */
-            max_drawdown: number;
-            /** Win Rate */
-            win_rate?: number | null;
-            /**
-             * Total Trades
-             * @default 0
-             */
-            total_trades: number;
-            /**
-             * Profit Factor
-             * @default 0
-             */
-            profit_factor: number;
-            /**
-             * Fitness
-             * @default 0
-             */
-            fitness: number;
-            /**
-             * Qualified
-             * @default false
-             */
-            qualified: boolean;
-            /** Error */
-            error?: string | null;
-        };
-        /** VerifySessionListResponse */
-        VerifySessionListResponse: {
-            /** Items */
-            items: components["schemas"]["VerifySessionResponse"][];
-            /** Total */
-            total: number;
-        };
-        /** VerifySessionResponse */
-        VerifySessionResponse: {
-            /** Session Id */
-            session_id: string;
-            /** Status */
-            status: string;
-            /** Strategy Ids */
-            strategy_ids: string;
-            /** Data Ranges */
-            data_ranges: string;
-            /** Init Cash */
-            init_cash: number;
-            /** Fee */
-            fee: number;
-            /** Slippage */
-            slippage: number;
-            /** Summary Json */
-            summary_json?: string | null;
-            /**
-             * Total Results
-             * @default 0
-             */
-            total_results: number;
-            /**
-             * Total Strategies
-             * @default 0
-             */
-            total_strategies: number;
-            /** Error Message */
-            error_message?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Completed At */
-            completed_at?: string | null;
-        };
-        /** VerifySummaryItem */
-        VerifySummaryItem: {
-            /** Strategy Id */
-            strategy_id: string;
-            /** Strategy Name */
-            strategy_name: string;
-            /**
-             * Comprehensive Score
-             * @default 0
-             */
-            comprehensive_score: number;
-            /**
-             * Avg Fitness
-             * @default 0
-             */
-            avg_fitness: number;
-            /**
-             * Qualified Count
-             * @default 0
-             */
-            qualified_count: number;
-            /**
-             * Total Periods
-             * @default 0
-             */
-            total_periods: number;
-            /**
-             * Per Period Metrics
-             * @default []
-             */
-            per_period_metrics: components["schemas"]["VerifyPeriodSummary"][];
+            /** Verdict Counts */
+            verdict_counts: {
+                [key: string]: number;
+            };
+            /** Unsortable Count */
+            unsortable_count: number;
         };
     };
     responses: never;
@@ -4889,6 +4752,37 @@ export interface operations {
             };
         };
     };
+    list_strategy_transitions_api_strategies__strategy_id__transitions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     revalidate_strategy_endpoint_api_strategies__strategy_id__revalidate_post: {
         parameters: {
             query?: never;
@@ -5008,166 +4902,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompareResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    verify_strategies_api_strategies_verify_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VerifyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VerifyResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    verify_strategies_stream_api_strategies_verify_stream_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VerifyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_verify_history_api_strategies_verify_history_get: {
-        parameters: {
-            query?: {
-                strategy_id?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VerifyHistoryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_sessions_api_strategies_verify_sessions_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VerifySessionListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_session_results_api_strategies_verify_sessions__session_id__results_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VerifyHistoryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5994,6 +5728,102 @@ export interface operations {
             };
         };
     };
+    start_task_api_live_trading_tasks__task_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveTradingTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_task_api_live_trading_tasks__task_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveTradingTaskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_decisions_api_live_trading_tasks__task_id__decisions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_task_api_live_trading_tasks__task_id__get: {
         parameters: {
             query?: never;
@@ -6601,6 +6431,72 @@ export interface operations {
             };
         };
     };
+    process_status_api_workbench_process_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    hypothesis_union_remains_api_workbench_hypothesis_union_remains_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    fleet_summary_api_workbench_fleet_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     freshness_status_api_data_freshness_status_get: {
         parameters: {
             query?: never;
@@ -7191,6 +7087,42 @@ export interface operations {
             };
         };
     };
+    list_analysis_tasks_api_research_analysis_tasks_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                template?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_analysis_task_api_research_analysis_tasks__task_id__get: {
         parameters: {
             query?: never;
@@ -7424,6 +7356,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_plugin_pools_api_research_plugins_pools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -7679,6 +7633,9 @@ export interface operations {
                 strategy_id?: string | null;
                 level?: string | null;
                 verdict?: string | null;
+                sort?: string;
+                q?: string | null;
+                generalization?: boolean | null;
                 limit?: number;
                 offset?: number;
             };

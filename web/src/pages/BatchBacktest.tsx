@@ -681,7 +681,7 @@ function PeriodDetailRow({
         </td>
         <td className="py-1.5 text-center font-mono text-text-primary">{result.sharpe_ratio.toFixed(2)}</td>
         <td className="py-1.5 text-center font-mono text-text-primary">{(result.max_drawdown * 100).toFixed(1)}%</td>
-        <td className="py-1.5 text-center font-mono text-text-primary">{(result.win_rate * 100).toFixed(1)}%</td>
+        <td className="py-1.5 text-center font-mono text-text-primary">{result.win_rate != null ? (result.win_rate * 100).toFixed(1) + "%" : "—"}</td>
         <td className="py-1.5 text-center font-mono text-text-primary">{result.total_trades}</td>
         <td className="py-1.5 text-center font-mono text-accent-gold">{result.fitness.toFixed(2)}</td>
         <td className="py-1.5 text-center">

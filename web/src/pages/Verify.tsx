@@ -18,12 +18,9 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import {
-  FilterBar,
-  RecordDetail,
-  RecordsTable,
+  RecordsBrowser,
   useInvalidateRecords,
 } from "@/components/validationRecords/RecordBrowser";
-import type { ValidationRecordRow as ValidationRecordRowLite } from "@/services/validationRecords";
 import {
   useStrategies,
   useVerifyStream,
@@ -31,7 +28,7 @@ import {
   useSessionResults,
 } from "@/hooks/useStrategies";
 import { cn, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
-import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse } from "@/types/api";
+import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse, VerifySession } from "@/types/api";
 import { ThresholdDots, VerifyStar, ThresholdsSummary, type VerifyHistoryRow } from "@/components/verify/VerifyThresholds";
 import { formatDrawdown } from "@/components/verify/thresholdsUtils";
 
@@ -136,9 +133,7 @@ export function Verify() {
   });
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [view, setView] = useState<"verify" | "history">("verify");
-  // fe-validation-records-page：浏览骨架态+发起器折叠态
-  const [filters, setFilters] = useState<{ idType: string; id?: string; level?: string; verdict?: string }>({ idType: "hypothesis_id" });
-  const [selectedRecord, setSelectedRecord] = useState<ValidationRecordRowLite | undefined>(undefined);
+  // fe-validation-records-page：发起器折叠态（浏览骨架态下沉 RecordsBrowser）
   const [launcherOpen, setLauncherOpen] = useState(false);
   const invalidateRecords = useInvalidateRecords();
   const [sortKey, setSortKey] = useState<SortKey>("score");
@@ -242,8 +237,10 @@ export function Verify() {
     else if (sortKey === "qualified") items.sort((a, b) => b.qualified_count - a.qualified_count || b.comprehensive_score - a.comprehensive_score);
     else if (sortKey === "return") {
       items.sort((a, b) => {
-        const aRet = a.per_period_metrics.reduce((s, p) => s + p.total_return, 0);
-        const bRet = b.per_period_metrics.reduce((s, p) => s + p.total_return, 0);
+        const aRet = (a as { per_period_metrics?: Array<{ total_return: number }> })
+          .per_period_metrics!.reduce((s: number, p: { total_return: number }) => s + p.total_return, 0);
+        const bRet = (b as { per_period_metrics?: Array<{ total_return: number }> })
+          .per_period_metrics!.reduce((s: number, p: { total_return: number }) => s + p.total_return, 0);
         return bRet - aRet;
       });
     }
@@ -574,18 +571,9 @@ export function Verify() {
         </div>
         )}
 
-        {/* 浏览骨架主体：筛选→记录表→详情（fe-validation-records-page） */}
-        <div className="space-y-2" data-testid="records-browser">
-          <FilterBar onSearch={(f) => { setFilters(f); setSelectedRecord(undefined); }} />
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded-lg border border-border-faint p-2">
-              <RecordsTable filters={filters} onSelect={setSelectedRecord} selectedId={selectedRecord?.record_id} />
-            </div>
-            <div className="rounded-lg border border-border-faint p-2">
-              <RecordDetail record={selectedRecord} />
-            </div>
-          </div>
-        </div>
+        {/* 浏览骨架主体：筛选→卡片流（独立滚动）→明细（常驻）——
+            upgrade-validation-records-list 5.1 L6 左右分栏 */}
+        <RecordsBrowser />
       </div>
     </PageTransition>
   );
@@ -673,7 +661,7 @@ function StrategyCard({
 
       {/* 行 2：区间条 */}
       <div className="flex gap-1">
-        {item.per_period_metrics.map((pm, pi) => (
+        {(item as { per_period_metrics?: VerifyPeriodSummary[] }).per_period_metrics!.map((pm: VerifyPeriodSummary, pi: number) => (
           <PeriodBar key={pi} pm={pm} />
         ))}
       </div>
@@ -720,7 +708,7 @@ function StrategyCard({
                 </tr>
               </thead>
               <tbody>
-                {item.per_period_metrics.map((pm, i) => (
+                {(item as { per_period_metrics?: VerifyPeriodSummary[] }).per_period_metrics!.map((pm: VerifyPeriodSummary, i: number) => (
                   <tr key={i} className="border-b border-slate-700/10">
                     <td className="py-0.5 text-text-secondary font-mono">{pm.data_start.slice(0, 10)}~{pm.data_end.slice(0, 10)}</td>
                     <td className={cn("py-0.5 text-center font-mono", pm.total_return >= 0 ? "text-emerald-400" : "text-red-400")}>
@@ -879,7 +867,7 @@ function HistoryView({
 
   return (
     <div className="space-y-2">
-      {sessionsData.items.map((session) => {
+      {sessionsData.items.map((session: VerifySession) => {
         const isExpanded = expandedSessionId === session.session_id;
         const ranges: Array<{ start: string; end: string }> = (() => { try { return JSON.parse(session.data_ranges); } catch { return []; } })();
         const strategyCount = (() => { try { return JSON.parse(session.strategy_ids).length; } catch { return 0; } })();

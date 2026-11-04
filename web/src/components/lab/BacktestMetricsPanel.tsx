@@ -24,8 +24,8 @@ export function BacktestMetricsPanel({ result }: BacktestMetricsPanelProps) {
     },
     {
       label: "胜率",
-      value: `${(result.win_rate * 100).toFixed(1)}%`,
-      color: result.win_rate > 0.5 ? "text-emerald-400" : result.win_rate > 0.3 ? "text-amber-400" : "text-red-400",
+      value: result.win_rate != null ? `${(result.win_rate * 100).toFixed(1)}%` : "—",
+      color: result.win_rate != null ? (result.win_rate > 0.5 ? "text-emerald-400" : result.win_rate > 0.3 ? "text-amber-400" : "text-red-400") : "text-zinc-400",
     },
     {
       label: "交易次数",

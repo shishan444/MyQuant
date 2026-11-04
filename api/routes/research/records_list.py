@@ -37,6 +37,9 @@ class ValidationRecordRow(BaseModel):
     created_at: str
     params: Optional[Dict[str, Any]] = None   # JSON 解析嵌入（坏 JSON→None 如实）
     result: Optional[Dict[str, Any]] = None   # NULL 列→None（三态不捏造）
+    # 假设原话引文（upgrade-validation-records-list B1.2——LEFT JOIN
+    # 取 statement；无匹配行 null——adhoc/假设已删如实，前端显「—」）
+    statement: Optional[str] = None
 
 
 class ValidationRecordsResponse(BaseModel):
@@ -45,6 +48,13 @@ class ValidationRecordsResponse(BaseModel):
     offset: int
     limit: int
     has_more: bool
+    # verdict 分布（B1.2——三键恒在场 0=该 verdict 无记录；口径与
+    # total 同基数）
+    verdict_counts: Dict[str, int]
+    # 无收益值记录数（B1.2——sort=total_return_desc 时 worst 值缺失
+    # 计数供落尾披露；其他 sort 值恒 0：语义键在场值退化，前端免判
+    # sort 分支）
+    unsortable_count: int
 
 
 @router.get("/validation-records", response_model=ValidationRecordsResponse)
@@ -54,21 +64,37 @@ def list_validation_records_endpoint(
     strategy_id: Optional[str] = Query(None),
     level: Optional[str] = Query(None),
     verdict: Optional[str] = Query(None),
+    sort: str = Query("time_desc"),
+    q: Optional[str] = Query(None),
+    generalization: Optional[bool] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db_path=Depends(get_db_path),
     data_dir=Depends(get_data_dir),
 ) -> ValidationRecordsResponse:
-    """跨策略验证记录时间流（created_at 降序——「最近」消费语义）。
+    """跨策略验证记录列表（upgrade-validation-records-list B2 终态——
+    sort/q/generalization 检索+六维过滤下推）。
 
-    四维可选过滤；level/verdict 非法值 422（沿 research_error_to_http
-    结构化错误形制——本端点内联校验产同形 detail）；分页探测式
-    has_more（多取一条判定）。
+    sort 封闭枚举四值（time_desc 缺省=现状零变化/time_asc/
+    total_return_desc 按 worst 值参排 NULL 落尾/verdict_quality 品质
+    序）；q 关键词搜索（statement LIKE、%/_ 通配符字面化）；level/
+    verdict 非法值 422（沿内联校验先例）；generalization 独立 bool
+    泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。全六维过滤
+    （hypothesis_id/strategy_id/q/generalization/level/verdict）SQL
+    WHERE 下推——total=全部过滤维基数、页满恒 limit（过滤后结果集
+    分页）；verdict_counts/unsortable_count 与 total 同基数。
     """
     from api.routes.research.common import research_error_to_http
     from core.analysis.errors import ResearchError
 
+    _SORTS = ("time_desc", "time_asc", "total_return_desc",
+              "verdict_quality")
     try:
+        if sort not in _SORTS:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"sort 非法: {sort!r}（值域 {_SORTS}）",
+                status=422, detail={"field": "sort", "value": sort})
         if level is not None and level not in _LEVELS:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
@@ -93,26 +119,23 @@ def list_validation_records_endpoint(
         except (ValueError, TypeError):
             return None  # 坏 JSON 如实 None（不捏造不抛——观察面）
 
-    # 仓储现函数降序不支持（order 缺省 asc）——取 count 后按 keyset 降序
-    # 复用 list_validation_records：order 参数直传（仓储已支持 order 形参）
+    # B2 六维下推（upgrade-validation-records-list 4.1）：level/verdict
+    # 经仓储 WHERE（形参 B1 预置）——全过滤维 SQL 下推，total/counts=
+    # 六维基数，页满恒 limit（旧「行级过滤当页行数<limit 而 total 不变」
+    # 行为退役）
     rows = rr.list_validation_records(
         db_path,
         hypothesis_id=hypothesis_id, strategy_id=strategy_id,
-        offset=offset, limit=limit + 1, order="desc",
+        offset=offset, limit=limit + 1,
+        order="asc" if sort == "time_asc" else "desc",
+        q=(q or None), generalization=generalization, sort=sort,
+        level=level, verdict=verdict,
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
 
-    # level/verdict 过滤在 SQL 仓储面无对应形参（仓储仅两维）——行级
-    # 过滤在分页之后取段内命中（时间流语义：过滤维不改变页窗口）。
-    # 注：count 口径按两维（与仓储一致）；level/verdict 行级过滤不进
-    # total（total=两维过滤基数——页语义基准，如实披露）。
     out_rows: List[ValidationRecordRow] = []
     for r in rows:
-        if level is not None and r["level"] != level:
-            continue
-        if verdict is not None and r["verdict"] != verdict:
-            continue
         out_rows.append(ValidationRecordRow(
             record_id=r["record_id"], hypothesis_id=r["hypothesis_id"],
             strategy_id=r["strategy_id"], level=r["level"],
@@ -121,10 +144,19 @@ def list_validation_records_endpoint(
             pollution_cause=r["pollution_cause"],
             created_at=r["created_at"],
             params=_embed(r["params"]), result=_embed(r["result"]),
+            statement=r.get("statement"),
         ))
 
-    total = rr.count_validation_records(
-        db_path, hypothesis_id=hypothesis_id, strategy_id=strategy_id)
+    # 计数六维口径（B2.1——total=全部过滤维基数；verdict_counts/
+    # unsortable_count 同基数）
+    agg = rr.validation_records_aggregates(
+        db_path, hypothesis_id=hypothesis_id, strategy_id=strategy_id,
+        q=(q or None), generalization=generalization,
+        level=level, verdict=verdict)
     return ValidationRecordsResponse(
-        records=out_rows, total=total, offset=offset, limit=limit,
-        has_more=has_more)
+        records=out_rows, total=agg["total"], offset=offset, limit=limit,
+        has_more=has_more,
+        verdict_counts={"pass": agg["pass"], "fail": agg["fail"],
+                        "inconclusive": agg["inconclusive"]},
+        unsortable_count=(agg["unsortable_count"]
+                          if sort == "total_return_desc" else 0))

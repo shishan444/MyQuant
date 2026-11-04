@@ -39,6 +39,9 @@ export interface ValidationRecordRow {
   created_at: string;
   params: Record<string, unknown> | null;
   result: Record<string, unknown> | null;
+  /** 假设原话（列表 LEFT JOIN research_hypotheses——无关联 null，
+   *  upgrade-validation-records-list B1.2；adhoc/假设已删如实 null） */
+  statement: string | null;
 }
 
 export interface ValidationRecordsResponse {
@@ -47,6 +50,10 @@ export interface ValidationRecordsResponse {
   offset: number;
   limit: number;
   has_more: boolean;
+  /** verdict 计数三键恒在场（与 total 同基数——六维过滤口径） */
+  verdict_counts: { pass: number; fail: number; inconclusive: number };
+  /** sort=total_return_desc 时无收益值记录计数（落尾披露）；其他 sort 恒 0 */
+  unsortable_count: number;
 }
 
 export async function getPendingEvents(): Promise<PendingEventsResponse> {
@@ -59,6 +66,13 @@ export async function getValidationRecords(params?: {
   strategy_id?: string;
   level?: string;
   verdict?: string;
+  /** 排序封闭枚举四值（time_desc 缺省/time_asc/total_return_desc/
+   *  verdict_quality——服务端执行，upgrade-validation-records-list L4） */
+  sort?: string;
+  /** statement 关键词（LIKE %q%、通配符字面化——L2） */
+  q?: string;
+  /** 泛化过滤（true=仅跨标的记录，与 level 取交集——⑦终裁 toggle） */
+  generalization?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<ValidationRecordsResponse> {
