@@ -40,6 +40,16 @@ COMPOSITE_WINDOW_MULTIPLIER = 1.2
 # 证据闸门缺省样本线（profile 无 total_trades 规则时的兜底；0.2.11）
 _MIN_TRADES_DEFAULT = 5
 
+# judge 判定输入键白名单（add-vr-signal-trace 任务 6.1——A6 守卫②）：
+# judge 实读的 metrics 键封闭集（rules 遍历+硬编码 total_trades 两路
+# 的键域上界）。新增披露键（trail_series/mtf_gated_bars 等）落在集
+# 外——判定协议与披露面隔离的结构保证（四锚测试锁：实读两路/在产
+# profile 工厂/注入新键判定不变/解析器拒绝行为）。profile 面若开放
+# 运行时配置，本防线须升级为消费点准入校验（演进条件注记——本轮
+# 不预建）。
+JUDGE_METRIC_KEYS = frozenset({
+    "total_return", "max_drawdown", "total_trades"})
+
 # 门槛比较算子表（公开：verify 域三门槛现算等消费方复用，单源维护）
 OPS = {
     "gt": lambda v, t: v > t,

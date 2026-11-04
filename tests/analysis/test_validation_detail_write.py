@@ -131,7 +131,11 @@ class TestBridgeWithDetail:
         assert len(out) == 5
         metrics, trade_returns, actual_warmup, bars_used, detail = out
         assert set(detail) == {"equity", "trades_df",
-                               "init_cash", "fee", "slippage"}
+                               "init_cash", "fee", "slippage",
+                               # add-vr-signal-trace 组 5 追加四键（传
+                               # 引用——resolver/记录级聚合消费）
+                               "swallowed", "trace_buf",
+                               "mtf_gated_bars", "value_curve"}
         # 缺省三键=管道默认值（实际生效实参——未显式传参形态）
         assert detail["init_cash"] == 100000.0
         assert detail["fee"] == 0.001

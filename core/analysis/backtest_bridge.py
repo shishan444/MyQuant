@@ -41,12 +41,22 @@ def _collect_needed_tfs(dna, exec_tf: str) -> set:
 def _slice_signal_set(sig_set, index: pd.Index):
     """SignalSet 序列字段按请求区间索引切回（enhanced ⊇ 请求区间，
     reindex 不产生缺失行）；非序列字段（degraded_layers/
-    mtf_diagnostics）原样保留。引擎按 .values 取信号数组，切回后
-    序列与 bt_df 严格等长对齐。"""
+    mtf_diagnostics/mtf_gated_bars）原样保留。引擎按 .values 取信号
+    数组，切回后序列与 bt_df 严格等长对齐。"""
     from core.strategy.executor import SignalSet
 
     def _cut(s):
         return s.reindex(index) if s is not None else None
+
+    # swallowed 行按区间过滤（CARD-04）：组装在 enhanced 全段（含
+    # warmup 前缀）上跑，bar_time 落在请求区间外的行（warmup 段冲突
+    # 行）不随份注入；全滤空归 None（SignalSet 语义：无行不建列表）
+    if sig_set.swallowed is None:
+        swallowed = None
+    else:
+        in_range = {str(ts) for ts in index}
+        swallowed = ([row for row in sig_set.swallowed
+                      if row.get("bar_time") in in_range] or None)
 
     return SignalSet(
         entries=_cut(sig_set.entries),
@@ -57,6 +67,8 @@ def _slice_signal_set(sig_set, index: pd.Index):
         entry_direction=_cut(sig_set.entry_direction),
         mtf_diagnostics=sig_set.mtf_diagnostics,
         confidence=_cut(sig_set.confidence),
+        swallowed=swallowed,
+        mtf_gated_bars=sig_set.mtf_gated_bars,
     )
 
 
@@ -235,16 +247,33 @@ def run_backtest_on_range(
             [{"time": str(t), "value": None if pd.isna(v) else float(v)}
              for t, v in result.sl_series.items()]
             if getattr(result, "sl_series", None) is not None else None),
+        # trail 档逐 bar 止损线真值（add-vr-signal-trace 组 5）：引擎
+        # 缓冲单源（result.trail_series——禁事后重算），[{time,value}]
+        # 形制与 sl_series 同位同款；非 trail 档 null 透传。份级归属经
+        # metrics 内嵌自动成立（isolated 直嵌/random=windows[i].metrics/
+        # staged=segments[i].metrics——三入口 result_json 组装零改动）
+        "trail_series": (
+            [{"time": str(t), "value": None if pd.isna(v) else float(v)}
+             for t, v in result.trail_series.items()]
+            if getattr(result, "trail_series", None) is not None else None),
     }
     if with_detail:
         # B4 明细载荷（传引用不复制——组装/落盘在验证服务层）；
-        # 三参数键=实际生效实参（显式传参与默认两形态同源）
+        # 三参数键=实际生效实参（显式传参与默认两形态同源）。
+        # add-vr-signal-trace 追加四键（传引用）：swallowed=求值层吞没
+        # 行（resolver 合并输入）/trace_buf=事件码矩阵（resolver 输入）
+        # /mtf_gated_bars=份级门控计数（入口记录级聚合）/value_curve=
+        # 原始组合价值曲线（resolver capped 重放单源——放大/资金费前）
         detail = {
             "equity": result.equity_curve,
             "trades_df": result.trades_df,
             "init_cash": init_cash,
             "fee": fee,
             "slippage": slippage,
+            "swallowed": getattr(result, "swallowed_rows", None),
+            "trace_buf": getattr(result, "trace_buf", None),
+            "mtf_gated_bars": getattr(result, "mtf_gated_bars", None),
+            "value_curve": getattr(result, "value_curve_raw", None),
         }
         return (metrics, result.trade_returns, actual_warmup_bars,
                 len(bt_df), detail)

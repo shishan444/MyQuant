@@ -702,15 +702,25 @@ def apply_decision_gate(
         confluence_pass = synthesis.confluence_score >= threshold
 
     # 双门控入场
+    entries_gated = entries & ~ (direction_pass & confluence_pass)
     entries = entries & direction_pass & confluence_pass
 
     # 加仓信号走放宽共振（threshold 的 80%）
     add_confluence_pass = pd.Series(True, index=adds.index)
     if mtf_mode in ("confluence", "direction+confluence"):
         add_confluence_pass = synthesis.confluence_score >= threshold * 0.8
+    adds_gated = adds & ~ add_confluence_pass
     adds = adds & add_confluence_pass
 
     # 离场与减仓不过滤
+
+    # 门控拦截 bar 计数（add-vr-signal-trace 组 3.2）：计数=被本面门控
+    # 实际拦下的原始触发 bar 数——entries 面「原始触发 ∧ ¬(direction_
+    # pass∧confluence_pass)」、adds 面「原始触发 ∧ ¬add_confluence_
+    # pass」各自判定后按 bar 去重合计（同一 bar 两面均被拦计 1——语义
+    # 是「N 根 bar」非事件数）；透出 SignalSet.mtf_gated_bars（记录级
+    # 聚合在验证入口层——random/staged 多份求和、mtf_mode 传播 None）
+    mtf_gated_bars = int((entries_gated | adds_gated).sum())
 
     return SignalSet(
         entries=entries,
@@ -719,6 +729,8 @@ def apply_decision_gate(
         reduces=reduces,
         degraded_layers=exec_signal_set.degraded_layers,
         entry_direction=exec_signal_set.entry_direction,
+        swallowed=exec_signal_set.swallowed,
+        mtf_gated_bars=mtf_gated_bars,
         mtf_diagnostics={
             "direction_score": synthesis.direction_score,
             "confluence_score": synthesis.confluence_score,
@@ -850,6 +862,12 @@ def _build_exec_signal_set(
 
     # 入场与离场同 bar 并存时入场让位——单点 helper（等价内联两行
     # +抹杀率告警，fix-executor-column-and-exit-guard D5）
+    # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装层
+    # 重算 both，调用点零改动）
+    from core.strategy.executor import swallowed_rows
+    _swallowed: list = []
+    swallowed_rows(combined_entries & combined_exits,
+                   "entry_exit_conflict", _swallowed)
     combined_entries = _apply_entry_exit_mutex(
         combined_entries, combined_exits)
 
@@ -858,6 +876,7 @@ def _build_exec_signal_set(
         exits=combined_exits,
         adds=combined_adds,
         reduces=combined_reduces,
+        swallowed=(_swallowed or None),
     )
 
 

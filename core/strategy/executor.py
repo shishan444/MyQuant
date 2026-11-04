@@ -98,6 +98,34 @@ class SignalSet:
     # condition/role/timeframe）。MTF 新引擎路径恒 None（合成门控打破
     # 逐基因归因，见 dna_to_signal_set docstring）
     hits: dict | None = None
+    # 求值层吞没行（add-vr-signal-trace 组 3——缺省 None 零侵入沿 hits
+    # 先例）：[{bar_time: ISO, reason}]，reason 两值 entry_exit_conflict
+    # （同 bar 进出场互斥清洗——出场保留进场被吞）/add_inhibited（加仓
+    # 抑制基因清洗）。生产点=三个 SignalSet 出口组装层（单周期/MTF
+    # legacy 组合出口/新引擎执行层合并出口）重算——_apply_entry_exit_
+    # mutex 本体与全部共享调用点零改动；排序与 seq 分配归 trace_resolver
+    swallowed: "list[dict] | None" = None
+    # MTF 决策门控拦截 bar 计（add-vr-signal-trace 组 3——apply_decision_
+    # gate 计数出口透出）：None=DNA 无门控面（mtf_mode None——与 0=门控
+    # 全过严格区分）；计数公式=被本面门控实际拦下的原始触发 bar 数
+    # （entries 严格双门/adds 0.8 放宽共振门，同 bar 两面被拦计 1——bar
+    # 去重）。记录级聚合（多份求和/null 传播）在验证入口层
+    mtf_gated_bars: "int | None" = None
+
+
+def swallowed_rows(mask: "pd.Series", reason: str,
+                   acc: list) -> None:
+    """吞没行收集（add-vr-signal-trace 组 3——组装层公共小工具）。
+
+    mask 为 True 的 bar 逐个产出 {bar_time: ISO, reason} 行（自然时序
+    ——索引有序前提由信号 Series 保证）；acc 就地追加（None 语义由
+    调用方决定：无行不建列表，保持 SignalSet.swallowed 缺省 None）。
+    消费面=executor 三个 SignalSet 出口+mtf_engine 执行层合并出口+
+    signal_assembly 组合出口（CARD-04 升公共名——消跨层私有 import，
+    CARD-03 event_policy 先例同方向）。
+    """
+    for ts in mask.index[mask.fillna(False)]:
+        acc.append({"bar_time": str(ts), "reason": reason})
 
 
 # 求值披露的角色族映射（with_hits 装配面）：四信号族各自的成员角色=
@@ -1063,6 +1091,11 @@ def dna_to_signal_set(
             combined_entries = _apply_entry_trigger_policy(
                 dna, combined_entries)
 
+        # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装
+        # 层重算 both，跨层组合后最终语义层的冲突面）
+        _swallowed_mtf: list = []
+        swallowed_rows(combined_entries & combined_exits,
+                       "entry_exit_conflict", _swallowed_mtf)
         combined_entries = _apply_entry_exit_mutex(
             combined_entries, combined_exits)
 
@@ -1080,6 +1113,7 @@ def dna_to_signal_set(
             degraded_layers=degraded_count,
             entry_direction=entry_direction,
             hits=mtf_hits,
+            swallowed=(_swallowed_mtf or None),
         )
 
     # 单周期模式
@@ -1174,8 +1208,14 @@ def dna_to_signal_set(
 
     # 抑制组合（DC-1）：adds=(trigger AND guard) AND NOT(inhibitor 任一
     # 成立)——独立角色承载布尔 NOT（不取反 action 映射，cross 类锚点）
+    # 累加变量名避开公共函数名 swallowed_rows（CARD-04 升名后同名
+    # 遮蔽致函数不可调用）
+    swallowed_acc: list = []
     if add_inhibitors:
         inhibited = pd.concat(add_inhibitors, axis=1).any(axis=1)
+        # 求值层吞没行·加仓抑制面（add-vr-signal-trace 组 3——原始
+        # adds 与 inhibited 的交集 bar，清洗前捕获）
+        swallowed_rows(adds & inhibited, "add_inhibited", swallowed_acc)
         adds = adds & ~inhibited
 
     all_reduce = reduce_triggers + reduce_guards
@@ -1186,6 +1226,10 @@ def dna_to_signal_set(
     # 清洗后再段化会把被清洗连续段断裂产生伪段首）
     if apply_trigger_policy:
         entries = _apply_entry_trigger_policy(dna, entries)
+
+    # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装层
+    # 重算 both：被清洗的进场 bar；_apply_entry_exit_mutex 调用点零改动）
+    swallowed_rows(entries & exits, "entry_exit_conflict", swallowed_acc)
 
     # 同 bar 开平互斥清洗（单点 helper——等价内联两行+抹杀率告警）
     entries = _apply_entry_exit_mutex(entries, exits)
@@ -1216,6 +1260,7 @@ def dna_to_signal_set(
         reduces=reduces,
         entry_direction=entry_direction,
         hits=hits,
+        swallowed=(swallowed_acc or None),
     )
 
 

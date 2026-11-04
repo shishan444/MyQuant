@@ -280,6 +280,7 @@ def ensure_research_tables(db_path: Path) -> None:
         SignalRegistryEntry,
         ValidationRecord,
         VrEquityCurve,
+        VrSignalTrace,
         VrTradeDetail,
     )
     from core.persistence.orm.engine import engine_for
@@ -290,6 +291,7 @@ def ensure_research_tables(db_path: Path) -> None:
         ModelPlugin.__table__, SignalRegistryEntry.__table__,
         FeatureRequest.__table__, ValidationRecord.__table__,
         VrTradeDetail.__table__, VrEquityCurve.__table__,
+        VrSignalTrace.__table__,
     ]
     from core.persistence.orm import Base
 

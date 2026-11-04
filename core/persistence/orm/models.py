@@ -570,6 +570,15 @@ class ValidationRecord(Base):
     # 'gene_tf_drift'；NULL=未标注（存量不回填）
     pollution_cause: Mapped[Optional[str]] = mapped_column(Text)
     components: Mapped[Optional[str]] = mapped_column(Text)  # JSON 分量证据 record_id 清单
+    # 信号留痕三布尔（add-vr-signal-trace §2.2——打标口径=「本批留痕
+    # 管线执行成功」非「事件有无」：trace 形参非 None 即打 1 无论行数
+    # （零信号记录=通道在而事实空）；NULL=产生于能力上线前（合法降级
+    # 态，不回填不重跑）。三列独立存在为三消费面（信号回溯/逐笔语义/
+    # 止损线）跨 change 分期与逐面降级保留数据契约位。沿工程 Integer
+    # 0/1 布尔形制（VrEquityCurve.grid_aligned 先例）
+    signal_trace: Mapped[Optional[int]] = mapped_column(Integer)
+    trade_semantics: Mapped[Optional[int]] = mapped_column(Integer)
+    stop_price: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -887,6 +896,59 @@ class VrEquityCurve(Base):
     length: Mapped[Optional[int]] = mapped_column(Integer)  # 紧凑形制：点数
     timestamps: Mapped[Optional[str]] = mapped_column(Text)  # 降级形制：JSON 数组
     values: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 浮点数组
+
+
+# == 验证信号留痕域（1 表，add-vr-signal-trace 组 1）==
+# 字段级权威源：openspec 变更 add-vr-signal-trace design.md §2.1；
+# 与 Alembic 迁移件、ensure_research_tables 三处同步声明（三重声明
+# 纪律——两方不一致时 create_all 静默架空）。append-only：repository
+# 只提供 insert+query。
+class VrSignalTrace(Base):
+    """验证信号留痕·事件级行（每信号事件一行）：信号回溯页签数据底座。
+
+    事件三族（outcome 值域）：filled=触发且成交（策略动作蓝族+风控
+    出场金族）/rejected=决策层拒绝未成交/swallowed=求值层清洗未达
+    引擎（吞与拒不混——求值层清洗与决策层拒绝是两类不同事实）。
+    """
+
+    __tablename__ = "vr_signal_trace"
+    __table_args__ = (
+        # (record_id, exec_ref, bar_time, seq) 唯一：幂等键族防御层
+        # （同记录重插理论不可达——幂等由 find_validation_by_identity
+        # 前置保证，沿 VrTradeDetail 语义）；第四成员 seq=同 bar 同份
+        # 事件序（重放同构）
+        Index("ux_vr_signal_trace", "record_id", "exec_ref",
+              "bar_time", "seq", unique=True),
+        Index("ix_vr_signal_trace_query", "record_id", "exec_ref"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    record_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("validation_records.record_id"))
+    # 份标识（与 VrEquityCurve/VrTradeDetail 同域同键）：isolated="main"
+    # /random="win_{i}"/staged=段 label
+    exec_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    # 执行锚 bar 的 ISO 时间（成交/拒绝 bar——两锚在本表同为执行 bar）
+    bar_time: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)  # 同 bar 同份内事件序 0 起
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)  # filled/rejected/swallowed
+    # 枚举五值两族：决策层 exposure_cap/insufficient_funds/
+    # risk_budget_fallback+求值层 entry_exit_conflict/add_inhibited；
+    # filled 行一般 NULL（例外：risk_budget_fallback 回退成交——Q1
+    # 对照实测裁决，reason 回填披露降级路径）
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    # 缓冲矩阵原始码（蓝族 10-13/金族 20-25/灰族 30-34，分配表见
+    # trace_resolver 单源映射；未映射码装载即 raise fail-fast）
+    event_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    size: Mapped[Optional[float]] = mapped_column(REAL)  # filled 行成交数量
+    price: Mapped[Optional[float]] = mapped_column(REAL)  # filled 行成交价
+    # 截断比例=实际成交量÷计划下单量∈(0,1)（Q2 裁决 2026-11-04：
+    # 比值——越接近 1 越接近足额；仅截断行写值，未截断/不可比 NULL）
+    capped: Mapped[Optional[float]] = mapped_column(REAL)
+    # 触发基因命中项数组 JSON（每项六字段与 pt_signal.gene_hits 同构
+    # ——gene_index/indicator/field/condition/role/timeframe）；无命中
+    # 信息 NULL
+    gene_hits: Mapped[Optional[str]] = mapped_column(Text)
 
 
 # == strategy lifecycle 域（1 表，build-strategy-lifecycle 1.2）==

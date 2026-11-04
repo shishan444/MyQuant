@@ -52,12 +52,16 @@ _ISOLATED_KEYS = {
     # 执行配置披露（research-execution-config-alignment 1.1 卡 A——
     # 纯增量键，沿 direction 先例入顶层契约集；原 11 键演进为 12 键）
     "risk_genes_disclosure",
+    # MTF 门控拦截计数（add-vr-signal-trace 组 5.1——纯增量顶层键）
+    "mtf_gated_bars",
 }
 _STAGED_KEYS = {
     "record_id", "verdict", "duplicated", "strategy_id", "hypothesis_id",
     "segmentation", "request_range", "warmup_bars", "segments", "summary",
     "judged_ranges", "direction",
     "risk_genes_disclosure",
+    # MTF 门控拦截计数（add-vr-signal-trace 组 5.1——纯增量顶层键）
+    "mtf_gated_bars",
 }
 
 

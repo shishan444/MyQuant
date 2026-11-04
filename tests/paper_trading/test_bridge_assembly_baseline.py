@@ -52,6 +52,9 @@ class TestBridgeBaseline:
             "signal_counts": {"entries": 0, "exits": 400, "adds": 0, "reduces": 0},
             # hypothesis-workbench 组 2 新键（pct 档 None——见 test_sl_series_output）
             "sl_series": None,
+            # trail 档逐 bar 止损线（add-vr-signal-trace——pct 档 None
+            # 与 sl_series 同位同款）
+            "trail_series": None,
         }
         assert warmup == 30
         assert bars == 400
