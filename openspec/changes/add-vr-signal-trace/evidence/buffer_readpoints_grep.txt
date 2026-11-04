@@ -1,0 +1,59 @@
+443:    # trace_buf：事件码矩阵（n_bars×1，0.0=无事件；resolver 消费）
+444:    trace_buf: "np.ndarray | None" = None
+446:    # trail_buf[:,0] 转换——沿 sl_series 先例；非 trail 档 None；
+775:                  trace_buf, trail_buf):
+822:        trace_buf: 信号留痕缓冲（add-vr-signal-trace——纯写入通道：
+823:            每事件一格 trace_buf[i,col]=事件码〔蓝族 10-13/金族 20-25
+828:        trail_buf: trail 档止损线逐 bar 真值缓冲（NaN=无值；trail
+870:            trace_buf[i, col] = 22.0  # 留痕：清算余仓强平
+884:            trace_buf[i, col] = 31.0  # 留痕：资金不足（清算后再入场）
+910:            trace_buf[i, col] = 22.0  # 留痕：清算触发强平
+932:                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（pct·多）
+944:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（pct·多）
+960:                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（pct·空）
+972:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（pct·空）
+996:                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（series·多）
+1008:                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（series·空）
+1022:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（series·多）
+1035:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（series·空）
+1057:                    trail_buf[i, col] = sl_level
+1061:                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（trail·多）
+1072:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（trail·多）
+1090:                    trail_buf[i, col] = sl_level
+1093:                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（trail·空）
+1104:                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（trail·空）
+1123:                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（atr·多）
+1134:                        trace_buf[i, col] = 21.0  # 留痕：TP 出场（atr·多）
+1149:                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（atr·空）
+1160:                        trace_buf[i, col] = 21.0  # 留痕：TP 出场（atr·空）
+1185:            trace_buf[i, col] = 23.0  # 留痕：持仓金额防线出场
+1210:            trace_buf[i, col] = 24.0  # 留痕：固定时刻出场
+1230:            trace_buf[i, col] = 25.0  # 留痕：max_hold 时间出场
+1244:        trace_buf[i, col] = 13.0  # 留痕：信号离场
+1310:                trace_buf[i, col] = 10.0  # 留痕：入场（数量仓）
+1314:                trace_buf[i, col] = 32.0
+1316:            trace_buf[i, col] = 10.0  # 留痕：入场（百分比仓）
+1329:        trace_buf[i, col] = 12.0  # 留痕：减仓信号
+1344:            trace_buf[i, col] = 30.0  # 留痕：敞口上限拒绝
+1359:        trace_buf[i, col] = 11.0  # 留痕：加仓信号
+1566:        # 消费后清空防跨 run 泄漏）。trail_buf NaN=无值（非 trail 档
+1567:        # 不写）；trace_buf 0.0=无事件
+1569:        trace_buf_sim = np.zeros((n_bars_sim, 1), dtype=np.float64)
+1570:        trail_buf_sim = np.full((n_bars_sim, 1), np.nan, dtype=np.float64)
+1571:        self._last_trace_buf = trace_buf_sim
+1572:        self._last_trail_buf = trail_buf_sim
+1617:            trace_buf_sim,
+1618:            trail_buf_sim,
+1783:        _trace_buf = getattr(self, "_last_trace_buf", None)
+1784:        _trail_buf = getattr(self, "_last_trail_buf", None)
+1787:        self._last_trace_buf = None
+1788:        self._last_trail_buf = None
+1792:            pd.Series(_trail_buf[:, 0], index=enhanced_df.index,
+1794:            if _trail_buf is not None else None)
+1822:            trace_buf=_trace_buf,
+2031:        trace_buf_batch = np.zeros((N, M), dtype=np.float64)
+2032:        trail_buf_batch = np.full((N, M), np.nan, dtype=np.float64)
+2033:        self._last_trace_buf = None
+2034:        self._last_trail_buf = None
+2074:            trace_buf_batch,
+2075:            trail_buf_batch,

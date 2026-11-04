@@ -189,7 +189,12 @@ class TestIsolatedStatsInvariance:
                            "start": req_start.isoformat(),
                            "end": req_end.isoformat()})
         assert out["verdict"] == "inconclusive"  # 小样本证据闸门（<5 笔）
-        assert out["metrics"] == ISOLATED_FROZEN[tf]
+        # 冻结键逐位不变（add-vr-signal-trace 起 metrics 携带新披露键
+        # trail_series——披露面纯增量，冻结锚只锁行为指标键）
+        frozen = ISOLATED_FROZEN[tf]
+        metrics = out["metrics"]
+        assert all(metrics.get(k) == v for k, v in frozen.items()), (
+            {k: metrics.get(k) for k in frozen if metrics.get(k) != v})
 
 
 class TestStagedStatsInvariance:

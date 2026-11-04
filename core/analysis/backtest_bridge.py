@@ -235,16 +235,33 @@ def run_backtest_on_range(
             [{"time": str(t), "value": None if pd.isna(v) else float(v)}
              for t, v in result.sl_series.items()]
             if getattr(result, "sl_series", None) is not None else None),
+        # trail 档逐 bar 止损线真值（add-vr-signal-trace 组 5）：引擎
+        # 缓冲单源（result.trail_series——禁事后重算），[{time,value}]
+        # 形制与 sl_series 同位同款；非 trail 档 null 透传。份级归属经
+        # metrics 内嵌自动成立（isolated 直嵌/random=windows[i].metrics/
+        # staged=segments[i].metrics——三入口 result_json 组装零改动）
+        "trail_series": (
+            [{"time": str(t), "value": None if pd.isna(v) else float(v)}
+             for t, v in result.trail_series.items()]
+            if getattr(result, "trail_series", None) is not None else None),
     }
     if with_detail:
         # B4 明细载荷（传引用不复制——组装/落盘在验证服务层）；
-        # 三参数键=实际生效实参（显式传参与默认两形态同源）
+        # 三参数键=实际生效实参（显式传参与默认两形态同源）。
+        # add-vr-signal-trace 追加四键（传引用）：swallowed=求值层吞没
+        # 行（resolver 合并输入）/trace_buf=事件码矩阵（resolver 输入）
+        # /mtf_gated_bars=份级门控计数（入口记录级聚合）/value_curve=
+        # 原始组合价值曲线（resolver capped 重放单源——放大/资金费前）
         detail = {
             "equity": result.equity_curve,
             "trades_df": result.trades_df,
             "init_cash": init_cash,
             "fee": fee,
             "slippage": slippage,
+            "swallowed": getattr(result, "swallowed_rows", None),
+            "trace_buf": getattr(result, "trace_buf", None),
+            "mtf_gated_bars": getattr(result, "mtf_gated_bars", None),
+            "value_curve": getattr(result, "value_curve_raw", None),
         }
         return (metrics, result.trade_returns, actual_warmup_bars,
                 len(bt_df), detail)

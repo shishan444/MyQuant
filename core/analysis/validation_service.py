@@ -550,6 +550,49 @@ def _hypothesis_precheck(
     return None
 
 
+def _resolve_trace_rows(
+    detail: Dict[str, Any], dna, exec_ref: str,
+) -> List[Dict[str, Any]]:
+    """份级留痕行解析（add-vr-signal-trace 任务 5.1——resolver 接线）。
+
+    桥 detail 载荷（equity 索引=trace_buf 行轴〔切回请求区间后〕/
+    trades_df/swallowed/trace_buf/value_curve）+DNA 风控参数 →
+    vr_signal_trace 行列表（record_id 由落库层补）。三入口共用——
+    漏一处=该类型新记录三布尔 NULL 被验收锚打红。
+    """
+    from core.backtest.trace_resolver import resolve_signal_trace
+
+    rg = dna.risk_genes
+    size_pct = (
+        float(rg.initial_fraction)
+        if rg.initial_fraction is not None
+        else float(rg.position_size) if rg.position_size is not None
+        else None)
+    risk_params = {
+        "position_mode": rg.position_mode or "fixed",
+        "size_pct": size_pct,
+        "sl_mode": rg.sl_mode or "pct",
+        "sl_stop": float(rg.stop_loss) if rg.stop_loss else 0.0,
+        "risk_fraction": (
+            float(rg.risk_fraction)
+            if rg.risk_fraction is not None else None),
+    }
+    return resolve_signal_trace(
+        detail.get("trace_buf"), detail["equity"].index,
+        detail.get("swallowed"), detail.get("trades_df"),
+        exec_ref=exec_ref, init_cash=detail.get("init_cash", 100000.0),
+        risk_params=risk_params,
+        value_curve=detail.get("value_curve"))
+
+
+def _aggregate_mtf_gated_bars(values: List[Any]) -> Any:
+    """记录级门控计数聚合：全份 None（无门控面）→None 传播；否则求和
+    （mtf_mode 是 DNA 级属性——三份同态，混态理论不可达）。"""
+    if all(v is None for v in values):
+        return None
+    return sum(v for v in values if v is not None)
+
+
 def _build_detail_payload(
     detail: Dict[str, Any], *,
     exec_ref: str, exec_index: int,
@@ -743,6 +786,9 @@ def run_isolated_backtest(
         # 组装单点；幂等重放经 result_json 内嵌键自动同构
         "risk_genes_disclosure": _risk_disclosure(
             db_path, dna, hypothesis_id),
+        # MTF 门控拦截计数（add-vr-signal-trace 组 5.1——记录级顶层
+        # 键；isolated 单份直取，null=无门控面与 0=门控全过严格区分）
+        "mtf_gated_bars": detail.get("mtf_gated_bars"),
     }, ensure_ascii=False)
     params_json = json.dumps({
         "request_range": request_range, "range_hash": rh,
@@ -758,7 +804,10 @@ def run_isolated_backtest(
         detail=[_build_detail_payload(
             detail, exec_ref="main", exec_index=0,
             range_start=request_range["start"],
-            range_end=request_range["end"], timeframe=timeframe)])
+            range_end=request_range["end"], timeframe=timeframe)],
+        # 信号留痕第五写（add-vr-signal-trace 组 5.1）：trace 参数非
+        # None 即三布尔打标——管线通而事实空（空列表）亦打
+        trace=_resolve_trace_rows(detail, dna, "main"))
 
     # 统一返回体（unify-tool-return-contract 规则①）：经单一映射函数
     # 与幂等分支同构（11 键全顶层；warmup 与 result_json 同 4 子键；
@@ -864,6 +913,8 @@ def random_window_test(
     windows = []
     detail_execs: List[Dict[str, Any]] = []  # B4：逐窗明细（win_{i} 与窗口顺序一致）
     exec_params: Dict[str, float] = {}  # B4：执行参数三键（各窗同值，循环内幂等覆写）
+    trace_rows_all: List[Dict[str, Any]] = []  # 留痕行（各窗拼接——份级 exec_ref 随行）
+    mtf_gated_per_exec: List[Any] = []  # 份级门控计数（记录级聚合输入）
     for i, off in enumerate(offsets):
         w_start = ds + off * bar_delta
         w_end = w_start + window_bars * bar_delta
@@ -877,6 +928,10 @@ def random_window_test(
             w_detail, exec_ref=f"win_{i}", exec_index=i,
             range_start=str(w_start.isoformat()),
             range_end=str(w_end.isoformat()), timeframe=timeframe))
+        # 信号留痕（add-vr-signal-trace 组 5.1）：逐窗解析+份级计数收集
+        trace_rows_all.extend(
+            _resolve_trace_rows(w_detail, dna, f"win_{i}"))
+        mtf_gated_per_exec.append(w_detail.get("mtf_gated_bars"))
         verdict, details = judge(metrics, threshold_profile,
                                  trade_returns=w_returns)
         windows.append({
@@ -919,9 +974,14 @@ def random_window_test(
                            # 方向披露（add-direction-channel A4）：幂等
                            # 重放提取源；纯增量键
                            "direction": dna.risk_genes.direction,
-                           "risk_genes_disclosure": disclosure},
+                           "risk_genes_disclosure": disclosure,
+                           # 记录级门控计数（add-vr-signal-trace 组 5.1
+                           # ——各窗求和；全 None→None 传播）
+                           "mtf_gated_bars": _aggregate_mtf_gated_bars(
+                               mtf_gated_per_exec)},
                           ensure_ascii=False),
-        verdict=agg, range_hash=rh, detail=detail_execs)
+        verdict=agg, range_hash=rh, detail=detail_execs,
+        trace=trace_rows_all)
 
     return {"record_id": record_id, "seed": seed,
             # 0.3.3 G6：顶层 verdict（值=在场 agg 聚合判定）——与幂等
@@ -1183,12 +1243,29 @@ def _auto_segments(
             "RESEARCH_DATA_INSUFFICIENT",
             "区间太短切不出段（机械判读未产出任何段）",
             detail={"symbol": symbol, "timeframe": timeframe})
-    return [{"label": seg["type"], "start": seg["start"], "end": seg["end"],
-             "bars": int(seg["bars"]),
-             "adx_mean": seg.get("adx_mean"),
-             "atr_pct_mean": seg.get("atr_pct_mean"),
-             "atr_pct_pct_mean": seg.get("atr_pct_pct_mean")}
-            for seg in raw]
+    # auto 段 label 唯一化（add-vr-signal-trace 实施发现修复）：label
+    # =段 type 映射值，同 type 多段（如两个「趋势」段）时重复——
+    # exec_ref/VrEquityCurve 幂等键 (record_id, exec_ref) 撞 UNIQUE
+    # 整记录回滚（B4 既有潜伏缺陷，长区间 auto 分段真实可达）。重复
+    # 时加序号后缀（首个保持原名零影响）
+    return _label_segments(raw)
+
+
+def _label_segments(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """auto 段清单落 label（type 映射值+重复序号后缀——唯一化见调用处注释）。"""
+    seen: dict = {}
+    out: List[Dict[str, Any]] = []
+    for seg in raw:
+        t = seg["type"]
+        n = seen.get(t, 0)
+        label = t if n == 0 else f"{t}_{n + 1}"
+        seen[t] = n + 1
+        out.append({"label": label, "start": seg["start"],
+                    "end": seg["end"], "bars": int(seg["bars"]),
+                    "adx_mean": seg.get("adx_mean"),
+                    "atr_pct_mean": seg.get("atr_pct_mean"),
+                    "atr_pct_pct_mean": seg.get("atr_pct_pct_mean")})
+    return out
 
 
 def run_staged_validation(
@@ -1313,6 +1390,8 @@ def run_staged_validation(
     seg_results: List[Dict[str, Any]] = []
     detail_execs: List[Dict[str, Any]] = []  # B4：逐段明细（exec_ref=段 label）
     exec_params: Dict[str, float] = {}  # B4：执行参数三键（各段同值）
+    trace_rows_all: List[Dict[str, Any]] = []  # 留痕行（各段拼接——份级 exec_ref 随行）
+    mtf_gated_per_exec: List[Any] = []  # 份级门控计数（记录级聚合输入）
     for seg_idx, seg in enumerate(seg_list):
         seg_start = seg["start"].isoformat()
         seg_end = seg["end"].isoformat()
@@ -1340,6 +1419,10 @@ def run_staged_validation(
         detail_execs.append(_build_detail_payload(
             seg_detail, exec_ref=seg["label"], exec_index=seg_idx,
             range_start=seg_start, range_end=seg_end, timeframe=timeframe))
+        # 信号留痕（add-vr-signal-trace 组 5.1）：逐段解析+份级计数收集
+        trace_rows_all.extend(
+            _resolve_trace_rows(seg_detail, dna, seg["label"]))
+        mtf_gated_per_exec.append(seg_detail.get("mtf_gated_bars"))
         entry["metrics"] = metrics
         entry["bars_used"] = int(bars_used)
         seg_verdict, seg_details = judge(metrics,
@@ -1389,13 +1472,18 @@ def run_staged_validation(
                                # 纯增量键，幂等重放提取源
                                "direction": dna.risk_genes.direction,
                                "risk_genes_disclosure": disclosure,
+                               # 记录级门控计数（add-vr-signal-trace 组
+                               # 5.1——各段求和；全 None→None 传播）
+                               "mtf_gated_bars": _aggregate_mtf_gated_bars(
+                                   mtf_gated_per_exec),
                                # 写入侧补齐不变量（unify-tool-return-
                                # contract）：result_json 内嵌完整首次
                                # payload 键——幂等重放数据源完备
                                "request_range": request_range,
                                "warmup_bars": int(warmup_bars)},
                               ensure_ascii=False),
-            verdict=verdict, range_hash=rh, detail=detail_execs)
+            verdict=verdict, range_hash=rh, detail=detail_execs,
+            trace=trace_rows_all)
     else:
         # adhoc（或无 verdict）纯日志留痕——验证记录 hypothesis_id 为
         # 非空外键，无挂靠物理不产生记录；verdict 照报、record_id=None
@@ -1420,7 +1508,10 @@ def run_staged_validation(
          "warmup_bars": int(warmup_bars)},
         {"segments": seg_results, "summary": summary,
          "direction": dna.risk_genes.direction,
-         "risk_genes_disclosure": disclosure},
+         "risk_genes_disclosure": disclosure,
+         # 记录级门控计数（add-vr-signal-trace——与 result_json 同值；
+         # 幂等重放经 result 顶层化同构带出）
+         "mtf_gated_bars": _aggregate_mtf_gated_bars(mtf_gated_per_exec)},
         judged=judged)
 
 

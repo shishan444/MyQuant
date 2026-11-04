@@ -180,8 +180,9 @@ class TestExistingTablesUnchanged:
         # pt_signal（本 change）+ 验证明细两表（后续 add-validation-detail
         # 追加迁移——head 上移后同链建出，非本 change 爆炸半径）
         assert new_tables == {"pt_signal", "vr_trade_detail",
-                              "vr_equity_curve", "live_decisions"}, \
-            f"新表集: {new_tables}"  # live_decisions 随 head 上移同链建出
+                              "vr_equity_curve", "live_decisions",
+                              "vr_signal_trace"}, \
+            f"新表集: {new_tables}"  # live_decisions/vr_signal_trace 随 head 上移同链建出
         for t in sorted(before):
             if t == "pt_task":
                 # 追加面（paper-trading-revamp 组 B）：first_met_at 表尾追加
@@ -209,6 +210,14 @@ class TestExistingTablesUnchanged:
                     f"{t} 既有列零改动: {before[t]} → {after[t]}"
                 assert after[t][len(before[t]):] == ["error_detail"], \
                     f"live_trading_task 新增恰 error_detail: {after[t][len(before[t]):]}"
+            elif t == "validation_records":
+                # add-vr-signal-trace 组 1：表尾追加三布尔（signal_trace/
+                # trade_semantics/stop_price）——既有列零改动（含列序）
+                assert after[t][:len(before[t])] == before[t], \
+                    f"{t} 既有列零改动（含列序）: {before[t]} → {after[t]}"
+                assert after[t][len(before[t]):] == [
+                    "signal_trace", "trade_semantics", "stop_price"], \
+                    f"validation_records 新增恰三布尔: {after[t][len(before[t]):]}"
             else:
                 assert after[t] == before[t], \
                     f"{t} 既有列零改动（含列序）: {before[t]} → {after[t]}"

@@ -30,6 +30,7 @@ from core.persistence.orm.models import (
     Strategy,
     ValidationRecord,
     VrEquityCurve,
+    VrSignalTrace,
     VrTradeDetail,
 )
 from core.persistence.orm.engine import engine_for as _engine_for
@@ -581,8 +582,9 @@ def save_validation_with_log(
     components: Optional[str] = None,
     log_id: Optional[str] = None,
     detail: Optional[List[Dict[str, Any]]] = None,
+    trace: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """原子多写：validation_records + research_log(validate) + 明细两表。
+    """原子多写：validation_records + research_log(validate) + 明细两表+留痕表。
 
     segmentation：0.3.3 G7 幂等第五维（分段身份——默认空串=非分段，
     隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。
@@ -591,6 +593,14 @@ def save_validation_with_log(
     明细表（签名向后兼容——沙盒/既有调用方零适配）。携带时四写同一
     事务：任一失败整体回滚——「记录在而明细残缺」不可达（specs
     「验证明细原子落盘」）。
+    trace（add-vr-signal-trace 任务 4.2）：信号留痕行列表（trace_
+    resolver 产物，行级含 exec_ref/bar_time/seq/outcome/reason/
+    event_code/size/price/capped/gene_hits）。缺省 None 行为逐位
+    一致（沙盒/其他调用方零适配）；非 None（含空列表——管线通而
+    事实空）时第五写：行批量 INSERT VrSignalTrace+记录三布尔打 1，
+    与四写同一事务——「记录在而留痕残缺」不可达（打标与数据一致
+    性由同事务结构性封死）。三布尔打标口径=「本批留痕管线执行成功」
+    非事件有无。
     """
     engine = _engine_for(db_path)
     now = _now()
@@ -606,6 +616,9 @@ def save_validation_with_log(
             verdict=verdict,
             range_hash=range_hash,
             components=components,
+            **(
+                {"signal_trace": 1, "trade_semantics": 1, "stop_price": 1}
+                if trace is not None else {}),
             created_at=now,
         ))
         conn.execute(insert(ResearchLog).values(
@@ -625,6 +638,12 @@ def save_validation_with_log(
                 if trade_rows:
                     rows = [dict(t, record_id=record_id) for t in trade_rows]
                     conn.execute(insert(VrTradeDetail), rows)
+        # 第五写（add-vr-signal-trace 任务 4.2）：留痕行批量落库——
+        # trace 参数 None 即整块跳过（行为与现状逐位一致）；非 None
+        # 且非空时行落库（record_id 由本层补——resolver 行不含）
+        if trace:
+            conn.execute(insert(VrSignalTrace), [
+                dict(t, record_id=record_id) for t in trace])
 
 
 def find_validation_by_identity(
@@ -662,6 +681,34 @@ def get_validation_record_by_id(
                 ValidationRecord.record_id == record_id)
         ).mappings().first()
     return dict(row) if row is not None else None
+
+
+def get_vr_signal_trace_rows(
+    db_path: Path, record_id: str, exec_ref: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """留痕行读取（add-vr-signal-trace 任务 4.2）。
+
+    按 (exec_ref, bar_time, seq) 升序；exec_ref 过滤可选（None=全份）。
+    无行返回 []（判读协议：三布尔 true+全份空=W0 缺陷态；三布尔
+    null+空=合法存量降级——判别在 detail 端点组合两源完成）。
+    """
+    engine = _engine_for(db_path)
+    stmt = select(VrSignalTrace).where(
+        VrSignalTrace.record_id == record_id)
+    if exec_ref is not None:
+        stmt = stmt.where(VrSignalTrace.exec_ref == exec_ref)
+    stmt = stmt.order_by(
+        VrSignalTrace.exec_ref, VrSignalTrace.bar_time, VrSignalTrace.seq)
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [
+        {"exec_ref": r["exec_ref"], "bar_time": r["bar_time"],
+         "seq": r["seq"], "outcome": r["outcome"], "reason": r["reason"],
+         "event_code": r["event_code"], "size": r["size"],
+         "price": r["price"], "capped": r["capped"],
+         "gene_hits": (json.loads(r["gene_hits"])
+                       if r["gene_hits"] else None)}
+        for r in rows]
 
 
 def get_validation_executions(

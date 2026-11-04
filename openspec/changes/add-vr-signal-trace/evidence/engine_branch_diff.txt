@@ -1,0 +1,387 @@
+diff --git a/core/backtest/engine.py b/core/backtest/engine.py
+index efad91a..59d5284 100644
+--- a/core/backtest/engine.py
++++ b/core/backtest/engine.py
+@@ -439,6 +439,23 @@ class BacktestResult:
+     # caliber_note=跨环境口径差固定文案（回测连续折算 vs 纸盘/live
+     # 8h 结算点）。纯增量键。
+     funding: dict | None = None
++    # ── 信号留痕通道产物（add-vr-signal-trace——纯增量，缺省 None）──
++    # trace_buf：事件码矩阵（n_bars×1，0.0=无事件；resolver 消费）
++    trace_buf: "np.ndarray | None" = None
++    # trail_series：trail 档逐 bar 止损线真值（engine.run 组装时自
++    # trail_buf[:,0] 转换——沿 sl_series 先例；非 trail 档 None；
++    # 禁事后重算——重算须复刻全部生命周期规则任一漏即线形漂移）
++    trail_series: "pd.Series | None" = None
++    # swallowed_rows：求值层吞没行（SignalSet.swallowed 透传——
++    # [{bar_time, reason}] 形制；resolver 合并进留痕行）
++    swallowed_rows: list | None = None
++    # value_curve_raw：原始组合价值曲线（portfolio.value() 放大/资金
++    # 费调整前——resolver capped 重放的单源：期望下单量的 value_now
++    # 对齐基准，与 _position_sizing_disclosure 同款对齐假设）
++    value_curve_raw: "pd.Series | None" = None
++    # mtf_gated_bars：MTF 决策门控拦截 bar 计（SignalSet 透传——
++    # null=DNA 无门控面与 0=门控全过严格区分；记录级聚合在入口层）
++    mtf_gated_bars: "int | None" = None
+ 
+ 
+ @njit
+@@ -754,7 +771,8 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                   fee, slippage,
+                   high_arr, low_arr, direction_signal,
+                   bar_ts_minutes, tf_minutes,
+-                  mmr_tier_max, mmr_tier_rate):
++                  mmr_tier_max, mmr_tier_rate,
++                  trace_buf, trail_buf):
+     """逐 bar 订单回调（实时 SL/TP 与清算判定；SL 段按 sl_mode 三分派）。
+ 
+     判定序（关键决策）：清算检查先于 SL/TP——杠杆仓权益击穿维持线
+@@ -801,6 +819,15 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             _apply_leverage_to_equity 后处理）。
+         high_arr, low_arr: bar 内 SL/TP 判定用 2D 高低价。
+         direction_signal: 2D 方向信号（+1=多，−1=空；mixed 模式用）。
++        trace_buf: 信号留痕缓冲（add-vr-signal-trace——纯写入通道：
++            每事件一格 trace_buf[i,col]=事件码〔蓝族 10-13/金族 20-25
++            /灰族 30-34〕，0.0=无事件；装配段构造经 order_args 传入
++            〔vbt 生命周期链：pre_sim 返回值+order_args 按序填形参——
++            数组须由 Python 侧构造持有引用，仿真后结果提取可达〕；
++            本函数内仅赋值零读回、不参与任何判定（REJ-01 纯写入）
++        trail_buf: trail 档止损线逐 bar 真值缓冲（NaN=无值；trail
++            分支峰值更新点后写当 bar sl_level，非 trail 档不写——
++            结果经 BacktestResult.trail_series 单源透出，禁事后重算）
+     """
+     i = c.i
+     col = c.col
+@@ -840,6 +867,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+     if is_liquidated[col] > 0.5:
+         if c.position_now != 0.0:
+             peak_price[col] = 0.0
++            trace_buf[i, col] = 22.0  # 留痕：清算余仓强平
+             return vbt_nb.order_nb(
+                 size=np.float64(-c.position_now),
+                 size_type=np.int64(0),
+@@ -853,6 +881,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+         current_price = c.close[i, col]
+         min_required = current_price * (1.0 + fee + slippage) * 0.01  # 单股成本 1% 的最低开仓门槛
+         if c.value_now < min_required:
++            trace_buf[i, col] = 31.0  # 留痕：资金不足（清算后再入场）
+             return NoOrder  # 资金不足
+         # 复位清算标记，落入下方入场逻辑
+         is_liquidated[col] = 0.0
+@@ -878,6 +907,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             entry_price[col] = 0.0
+             funding_acc[col] = 0.0
+             peak_price[col] = 0.0
++            trace_buf[i, col] = 22.0  # 留痕：清算触发强平
+             return vbt_nb.order_nb(
+                 size=np.float64(-c.position_now),
+                 size_type=np.int64(0),
+@@ -899,6 +929,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                 tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                 # SL：bar LOW 触碰止损线
+                 if sl_stop > 0.0 and bar_low <= sl_level:
++                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（pct·多）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -910,6 +941,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     )
+                 # TP：bar HIGH 触及止盈线
+                 if tp_stop > 0.0 and bar_high >= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（pct·多）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -925,6 +957,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                 tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                 # SL：bar HIGH 触碰止损线
+                 if sl_stop > 0.0 and bar_high >= sl_level:
++                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（pct·空）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -936,6 +969,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     )
+                 # TP：bar LOW 触及止盈线
+                 if tp_stop > 0.0 and bar_low <= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（pct·空）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -959,6 +993,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             if line == line:  # NaN guard：线值无效 bar 无 SL 约束
+                 if c.position_now > 0.0:
+                     if bar_low <= line:
++                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（series·多）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -970,6 +1005,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                         )
+                 else:
+                     if bar_high >= line:
++                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（series·空）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -983,6 +1019,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             if c.position_now > 0.0:
+                 tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                 if tp_stop > 0.0 and bar_high >= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（series·多）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -995,6 +1032,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             else:
+                 tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                 if tp_stop > 0.0 and bar_low <= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（series·空）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -1013,9 +1051,14 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     peak = bar_high
+                 peak_price[col] = peak
+                 sl_level = peak * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
++                # 留痕：trail 档逐 bar 止损线真值（峰值更新后当 bar 线
++                # ——含触发 bar；sl_stop=0 防御不写防与 NaN 无值态混淆）
++                if sl_stop > 0.0:
++                    trail_buf[i, col] = sl_level
+                 # TP 沿 pct 语义锚入场价（trail 与 TP 并存，SL 先 TP 后）
+                 tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+                 if sl_stop > 0.0 and bar_low <= sl_level:
++                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（trail·多）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -1026,6 +1069,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                         slippage=effective_slippage,
+                     )
+                 if tp_stop > 0.0 and bar_high >= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（trail·多）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -1041,8 +1085,12 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     peak = bar_low
+                 peak_price[col] = peak
+                 sl_level = peak * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
++                # 留痕：trail 档逐 bar 止损线真值（空头对称）
++                if sl_stop > 0.0:
++                    trail_buf[i, col] = sl_level
+                 tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+                 if sl_stop > 0.0 and bar_high >= sl_level:
++                    trace_buf[i, col] = 20.0  # 留痕：SL 出场（trail·空）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -1053,6 +1101,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                         slippage=effective_slippage,
+                     )
+                 if tp_stop > 0.0 and bar_low <= tp_level:
++                    trace_buf[i, col] = 21.0  # 留痕：TP 出场（trail·空）
+                     entry_price[col] = 0.0
+                     funding_acc[col] = 0.0
+                     peak_price[col] = 0.0
+@@ -1071,6 +1120,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     sl_level = ep - sl_stop * atr_value if sl_stop > 0.0 else 0.0
+                     tp_level = ep + tp_stop * atr_value if tp_stop > 0.0 else 0.0
+                     if sl_stop > 0.0 and bar_low <= sl_level:
++                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（atr·多）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -1081,6 +1131,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                             slippage=effective_slippage,
+                         )
+                     if tp_stop > 0.0 and bar_high >= tp_level:
++                        trace_buf[i, col] = 21.0  # 留痕：TP 出场（atr·多）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -1095,6 +1146,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                     sl_level = ep + sl_stop * atr_value if sl_stop > 0.0 else 0.0
+                     tp_level = ep - tp_stop * atr_value if tp_stop > 0.0 else 0.0
+                     if sl_stop > 0.0 and bar_high >= sl_level:
++                        trace_buf[i, col] = 20.0  # 留痕：SL 出场（atr·空）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -1105,6 +1157,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+                             slippage=effective_slippage,
+                         )
+                     if tp_stop > 0.0 and bar_low <= tp_level:
++                        trace_buf[i, col] = 21.0  # 留痕：TP 出场（atr·空）
+                         entry_price[col] = 0.0
+                         funding_acc[col] = 0.0
+                         peak_price[col] = 0.0
+@@ -1129,6 +1182,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+         loss = -(c.position_now * (current_price - entry_price[col])) \
+             + funding_acc[col]
+         if loss >= max_position_losses[col]:
++            trace_buf[i, col] = 23.0  # 留痕：持仓金额防线出场
+             entry_price[col] = 0.0
+             funding_acc[col] = 0.0
+             peak_price[col] = 0.0
+@@ -1153,6 +1207,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+     if time_exits[col] >= 0.0 and c.position_now != 0.0:
+         r = (time_exits[col] - (bar_ts_minutes[i] % 1440.0)) % 1440.0
+         if r < tf_minutes:
++            trace_buf[i, col] = 24.0  # 留痕：固定时刻出场
+             entry_price[col] = 0.0
+             funding_acc[col] = 0.0
+             peak_price[col] = 0.0
+@@ -1172,6 +1227,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+     # 0=禁用（装配层 None→0.0 物化，首判即假——存量行为精确等价）
+     if max_holds[col] > 0.5 and c.position_now != 0.0 and entry_price[col] > 0.0:
+         if (i - entry_bar[col] + 1.0) >= max_holds[col]:
++            trace_buf[i, col] = 25.0  # 留痕：max_hold 时间出场
+             entry_price[col] = 0.0
+             funding_acc[col] = 0.0
+             peak_price[col] = 0.0
+@@ -1185,6 +1241,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+ 
+     # 离场信号
+     if exits[i, col] > 0.5 and c.position_now != 0.0:
++        trace_buf[i, col] = 13.0  # 留痕：信号离场
+         entry_price[col] = 0.0
+         funding_acc[col] = 0.0
+         peak_price[col] = 0.0
+@@ -1250,6 +1307,13 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             if qty > 0.0:
+                 order_size = np.float64(qty * dir_sign)
+                 order_size_type = np.int64(0)  # 数量仓
++                trace_buf[i, col] = 10.0  # 留痕：入场（数量仓）
++            else:
++                # 留痕：风险预算降级（qty≤0 回退百分比仓发单——Q1 对照
++                # 实测裁决：outcome 由 resolver 与成交对照定，非恒拒绝）
++                trace_buf[i, col] = 32.0
++        else:
++            trace_buf[i, col] = 10.0  # 留痕：入场（百分比仓）
+         return vbt_nb.order_nb(
+             size=order_size,
+             size_type=order_size_type,
+@@ -1262,6 +1326,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+     # 现状复用 position_size 的参数串用——50% 非 30%）
+     if reduces[i, col] > 0.5 and c.position_now != 0.0:
+         reduce_amount = c.position_now * exit_fractions[col]
++        trace_buf[i, col] = 12.0  # 留痕：减仓信号
+         return vbt_nb.order_nb(
+             size=np.float64(-reduce_amount),
+             size_type=np.int64(0),
+@@ -1276,6 +1341,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+         notional_now = abs(c.position_now) * current_price
+         add_value = c.value_now * add_fractions[col]
+         if notional_now + add_value > c.value_now * max_exposures[col]:
++            trace_buf[i, col] = 30.0  # 留痕：敞口上限拒绝
+             return NoOrder
+         old_pos = abs(c.position_now)
+         old_ep = entry_price[col]
+@@ -1290,6 +1356,7 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
+             add_dir = np.int64(0)   # 多（加多）
+         else:
+             add_dir = np.int64(1)   # 空（加空）
++        trace_buf[i, col] = 11.0  # 留痕：加仓信号
+         return vbt_nb.order_nb(
+             size=np.float64(add_shares),
+             size_type=np.int64(0),  # 绝对股数（名义=权益×add_fraction 精确语义）
+@@ -1493,6 +1560,19 @@ class BacktestEngine:
+                 )
+             direction_signal_2d = np.ones_like(entries_2d)
+ 
++        # 信号留痕缓冲（add-vr-signal-trace）：装配段构造+order_args
++        # 尾传（数组 Python 侧持有引用——仿真后结果提取可达；vbt 生命
++        # 周期链按序填形参）；实例属性透传沿 _last_sl_col 先例（组装段
++        # 消费后清空防跨 run 泄漏）。trail_buf NaN=无值（非 trail 档
++        # 不写）；trace_buf 0.0=无事件
++        n_bars_sim = len(enhanced_df)
++        trace_buf_sim = np.zeros((n_bars_sim, 1), dtype=np.float64)
++        trail_buf_sim = np.full((n_bars_sim, 1), np.nan, dtype=np.float64)
++        self._last_trace_buf = trace_buf_sim
++        self._last_trail_buf = trail_buf_sim
++        self._last_swallowed = getattr(sig_set, "swallowed", None)
++        self._last_mtf_gated_bars = getattr(sig_set, "mtf_gated_bars", None)
++
+         pf = vbt.Portfolio.from_order_func(
+             close,
+             order_func_nb,
+@@ -1534,6 +1614,8 @@ class BacktestEngine:
+             np.float64(tf_minutes_val),
+             _mm_tier_arrays()[0],
+             _mm_tier_arrays()[1],
++            trace_buf_sim,
++            trail_buf_sim,
+             pre_sim_func_nb=pre_sim_func_nb,
+             init_cash=self.init_cash,
+             freq=None,
+@@ -1562,6 +1644,9 @@ class BacktestEngine:
+         equity_curve = portfolio.value()
+         if isinstance(equity_curve, pd.DataFrame):
+             equity_curve = equity_curve.iloc[:, 0]
++        # 原始组合价值曲线（放大/资金费调整前——留痕 resolver capped
++        # 重放的单源，add-vr-signal-trace）
++        value_curve_raw = equity_curve
+ 
+         # 取 vbt 原始 cash 算 position_value = equity − cash（资金费计费基数）
+         position_values_arr = None
+@@ -1692,6 +1777,22 @@ class BacktestEngine:
+             if _sl_col is not None
+             else None)
+ 
++        # ── 信号留痕通道产物接线（add-vr-signal-trace——实例属性消费
++        # 即清，沿 _last_sl_col 先例；batch_run 装配段已清 None 故批量
++        # 结果天然不带留痕产物〔缓冲照写不落库〕）──
++        _trace_buf = getattr(self, "_last_trace_buf", None)
++        _trail_buf = getattr(self, "_last_trail_buf", None)
++        _swallowed = getattr(self, "_last_swallowed", None)
++        _mtf_gated = getattr(self, "_last_mtf_gated_bars", None)
++        self._last_trace_buf = None
++        self._last_trail_buf = None
++        self._last_swallowed = None
++        self._last_mtf_gated_bars = None
++        trail_series_out = (
++            pd.Series(_trail_buf[:, 0], index=enhanced_df.index,
++                      name="trail_price")
++            if _trail_buf is not None else None)
++
+         return BacktestResult(
+             total_return=raw_return,
+             sharpe_ratio=float(sharpe),
+@@ -1718,6 +1819,11 @@ class BacktestEngine:
+             excess_return=metrics.get("excess_return"),
+             signal_counts=signal_counts,
+             funding=funding_disclosure,
++            trace_buf=_trace_buf,
++            trail_series=trail_series_out,
++            swallowed_rows=_swallowed,
++            value_curve_raw=value_curve_raw,
++            mtf_gated_bars=_mtf_gated,
+         )
+ 
+     def run(
+@@ -1919,6 +2025,15 @@ class BacktestEngine:
+             enhanced_df, exec_tf)
+         funding_rates_2d = np.tile(
+             funding_rates_1d.reshape(-1, 1), (1, M))
++        # 信号留痕缓冲（add-vr-signal-trace）：批量路径缓冲照写（numba
++        # 同函数不可分支）但结果不解析不落库（batch 无验证记录语境）——
++        # 实例属性显式清空防上一 run() 残留泄入本批量循环的组装段
++        trace_buf_batch = np.zeros((N, M), dtype=np.float64)
++        trail_buf_batch = np.full((N, M), np.nan, dtype=np.float64)
++        self._last_trace_buf = None
++        self._last_trail_buf = None
++        self._last_swallowed = None
++        self._last_mtf_gated_bars = None
+ 
+         # 4. 单次 vbt 调用——close 平铺 M 列对齐信号矩阵
+         close_2d = np.tile(
+@@ -1956,6 +2071,8 @@ class BacktestEngine:
+             np.float64(tf_minutes_val),
+             _mm_tier_arrays()[0],
+             _mm_tier_arrays()[1],
++            trace_buf_batch,
++            trail_buf_batch,
+             pre_sim_func_nb=pre_sim_func_nb,
+             init_cash=self.init_cash,
+             freq=None,
