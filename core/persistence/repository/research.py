@@ -919,10 +919,15 @@ _REC_TIMEFRAME_EXPR = case(
 
 # 基准侧标的/周期（策略原生——strategy.parent_ids 首父假设的
 # data_ranges 首段；裸串形制 parent_ids〔parse_parent_ids 先例〕经
-# json_valid 分支归一；strategy.symbol/timeframe 兜底）
-_PARENT_HYP_ID = func.coalesce(
-    func.json_extract(Strategy.parent_ids, "$[0]"),
-    case((func.json_valid(Strategy.parent_ids) == 0, Strategy.parent_ids)))
+# json_valid 分支归一；strategy.symbol/timeframe 兜底）。CASE 先验
+# json_valid 而非 COALESCE 嵌套——SQLite COALESCE 首参先求值，裸串
+# parent_ids 在 json_extract 即抛 malformed JSON，兜底分支不可达；
+# parent_ids NULL 时 json_valid=NULL 两分支皆不中→NULL（等价旧形）
+_PARENT_HYP_ID = case(
+    (func.json_valid(Strategy.parent_ids) == 1,
+     func.json_extract(Strategy.parent_ids, "$[0]")),
+    (func.json_valid(Strategy.parent_ids) == 0, Strategy.parent_ids),
+    )
 _PARENT_DATA_RANGES = (
     select(ResearchHypothesis.data_ranges)
     .where(ResearchHypothesis.hypothesis_id == _PARENT_HYP_ID)
@@ -931,12 +936,21 @@ _PARENT_DATA_RANGES = (
     # join hypotheses 时吸收 FROM 致空子查询
     .correlate(Strategy)
     .scalar_subquery())
-_BASE_SYMBOL_EXPR = func.coalesce(
-    func.json_extract(_PARENT_DATA_RANGES, "$[0].symbol"),
-    Strategy.symbol)
-_BASE_TIMEFRAME_EXPR = func.coalesce(
-    func.json_extract(_PARENT_DATA_RANGES, "$[0].timeframe"),
-    Strategy.timeframe)
+# data_ranges 同为无机制保证恒 JSON 的列——同族先验 json_valid 防裸串
+# 炸；与 _PARENT_HYP_ID 不同形之处：提取面全落 Strategy.symbol/
+# timeframe 兜底（design 契约——data_ranges NULL/裸串/JSON 提取缺键
+# 皆列兜底，NULL 非 parent_ids 的等 NULL 语义），故 else 而非双分支
+_BASE_SYMBOL_EXPR = case(
+    (func.json_valid(_PARENT_DATA_RANGES) == 1,
+     func.coalesce(func.json_extract(_PARENT_DATA_RANGES, "$[0].symbol"),
+                   Strategy.symbol)),
+    else_=Strategy.symbol)
+_BASE_TIMEFRAME_EXPR = case(
+    (func.json_valid(_PARENT_DATA_RANGES) == 1,
+     func.coalesce(func.json_extract(_PARENT_DATA_RANGES,
+                                     "$[0].timeframe"),
+                   Strategy.timeframe)),
+    else_=Strategy.timeframe)
 # 泛化断言面（B1.4 边界四条）：symbol 双侧非 NULL 且不等 ∧ timeframe
 # 双侧非 NULL 且相等（NULL 任侧=保守漏判不判泛化；跨周期显式排除；
 # 不限策略状态——标的事实非状态事实）
