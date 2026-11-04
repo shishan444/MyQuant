@@ -265,6 +265,27 @@ class TestFailFast:
                 None, IDX,
                 [{"bar_time": str(IDX[0]), "reason": "mystery"}], None)
 
+    @pytest.mark.parametrize("bad_reason", [
+        pytest.param("exposure_cap", id="decision 族·敞口上限"),
+        pytest.param("insufficient_funds", id="decision 族·资金不足"),
+        pytest.param("risk_budget_fallback", id="decision 族·风险预算回退"),
+        pytest.param(None, id="缺 reason 键"),
+    ])
+    def test_decision_family_reason_in_swallowed_rows_raises(
+            self, bad_reason):
+        """CARD-02②反查域收紧锚：swallowed_rows 只认求值层两 reason。
+
+        decision 族三值是合法映射表 reason（引擎 trace_buf 直达），
+        从 swallowed_rows 传入=上游装配错位——fail-fast 拒绝非静默
+        映射（旧全表反查会映射到 30-32 键产出语义错乱行）。None
+        reason（缺键）旧反查含 {None: 码} 键静默映射 25——同拦。
+        """
+        row = {"bar_time": str(IDX[0])}
+        if bad_reason is not None:
+            row["reason"] = bad_reason
+        with pytest.raises(ValueError, match="未映射吞没原因"):
+            resolve_signal_trace(None, IDX, [row], None)
+
 
 class TestIdempotentDedup:
     def test_identical_rows_deduped(self):

@@ -23,6 +23,8 @@ trail_buf 不入本模块——trail_series 已由 engine.run 单源产出
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -57,7 +59,15 @@ EVENT_REASON_MAP: Dict[int, Dict[str, Optional[str]]] = {
 # 独立配对行，两类时间戳各自可对齐执行 bar）
 _ENTRY_CODES = frozenset({10, 11})
 _EXIT_CODES = frozenset({12, 13, 20, 21, 22, 23, 24, 25})
-_UNMAPPED_PLACEHOLDER = -1  # 求值层行 event_code（swallowed 无引擎码）
+# 吞没行反查域（CARD-02②收紧）：求值层两 reason 独占（分配表单源引用
+# ——reason 字面只在 EVENT_REASON_MAP 写一次）。decision 族 reason
+# （exposure_cap/insufficient_funds/risk_budget_fallback）语义属引擎
+# 决策层留痕（trace_buf 直达），从 swallowed_rows 传入即上游装配错位
+# ——resolver fail-fast 拒绝，与 2.5 分配表语义对齐
+_SWALLOWED_REASON_CODE = {
+    EVENT_REASON_MAP[33]["reason"]: 33,
+    EVENT_REASON_MAP[34]["reason"]: 34,
+}
 
 
 def _expected_qty(risk_params: Dict[str, Any], event_code: int, price: float,
@@ -229,8 +239,7 @@ def resolve_signal_trace(
     # ④ swallowed 行合并（层序 1——引擎行先求值层后）
     for sw in (swallowed_rows or []):
         reason = sw.get("reason")
-        code = {v["reason"]: k for k, v in EVENT_REASON_MAP.items()}.get(
-            reason)
+        code = _SWALLOWED_REASON_CODE.get(reason)
         if code is None:
             raise ValueError(
                 f"trace_resolver 未映射吞没原因 {reason!r}: "
@@ -291,9 +300,19 @@ def resolve_signal_trace(
 
 
 def engine_written_event_codes() -> frozenset:
-    """引擎写入点事件码枚举（分配表全集——映射表完整性断言消费）。
+    """引擎写入点事件码枚举（engine.py 源静态提取——映射表完整性
+    断言消费）。
 
-    tests 锚（T1-U1 强档）：本集 ⊆ EVENT_REASON_MAP 键集——静态结构
-    断言，引擎新增写入码而映射表未同步时 CI 层首拦。
+    从 core/backtest/engine.py 源文本按写入点形制 trace_buf[i, col]
+    = NN.0 正则提取（CARD-02①：写入点形制统一已取证——37 处赋值无
+    异形；注释行 trace_buf[i,col]=事件码 无空格形制不匹配）。文件
+    路径以 __file__ 相对定位，读取在调用时执行（免 import 环耦合），
+    不缓存（断言消费频度低）。tests 锚（T1-U3 强档）：本集 ⊆
+    EVENT_REASON_MAP 键集——引擎新增写入码而映射表未同步时 CI 层
+    首拦（此前返回映射表全集=自反恒真，断言无保护力）。
     """
-    return frozenset(EVENT_REASON_MAP.keys())
+    engine_src = Path(__file__).resolve().parent / "engine.py"
+    return frozenset(
+        int(code_text) for code_text in re.findall(
+            r"trace_buf\[i, col\] = (\d+)\.0",
+            engine_src.read_text(encoding="utf-8")))
