@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from sqlalchemy import and_, func, insert, or_, select, update
+from sqlalchemy import and_, case, func, insert, or_, select, update
 
 from core.analysis.errors import load_stored_json  # 轻量定义点（errors.py 头部声明：任何模块可安全模块级 import）
 from core.persistence.orm.models import (
@@ -808,20 +808,45 @@ def list_validation_records(
     offset: int = 0, limit: int = 50,
     cursor: Optional[Tuple[str, str]] = None,
     order: str = "asc",
+    q: Optional[str] = None,
+    generalization: Optional[bool] = None,
+    sort: Optional[str] = None,
+    level: Optional[str] = None,
+    verdict: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """验证记录列表（分页双轨：offset/limit 原样——iter_all_pages 的
     fetch_page 契约不动；cursor=(created_at, record_id) keyset 严格
-    比较，order 缺省 asc）。count 配套 count_validation_records。"""
+    比较，order 缺省 asc）。count 配套 count_validation_records。
+
+    B1 扩展形参（upgrade-validation-records-list 1.1——全部缺省 None
+    行为与现状逐位一致，签名锚测试锁定四处调用点零适配）：
+    - q：statement 关键词（LIKE %q%，%/_ 经 ESCAPE 字面化——搜索词
+      含通配符按字面匹配不放大匹配面）；恒 LEFT JOIN research_
+      hypotheses 取行级 statement 键（无匹配行 null——adhoc 如实）
+    - generalization：true=仅泛化记录（记录标的≠策略原生标的——双路
+      COALESCE+timeframe 相等断言，NULL 任侧保守漏判，B1.4 边界四条）
+    - sort：四值封闭枚举（time_desc/time_asc/total_return_desc/
+      verdict_quality——B1.3 worst 双路径 SQL+verdict 品质序；sort
+      模式走 ORDER BY 表达式链，cursor keyset 无效忽略）
+    - level/verdict：B1 期形参预置（仓储 WHERE 下推通道；端点 B2
+      接线——B1 期不传）
+    """
     engine = _engine_for(db_path)
     stmt = _apply_keyset(
-        select(ValidationRecord),
+        select(ValidationRecord, ResearchHypothesis.statement)
+        .join(ResearchHypothesis, ValidationRecord.hypothesis_id
+              == ResearchHypothesis.hypothesis_id, isouter=True),
         ValidationRecord.created_at, ValidationRecord.record_id,
         cursor, order,
     ).offset(offset).limit(limit)
+    stmt = _apply_vr_filters(stmt, q=q, generalization=generalization,
+                             level=level, verdict=verdict)
     if hypothesis_id is not None:
         stmt = stmt.where(ValidationRecord.hypothesis_id == hypothesis_id)
     if strategy_id is not None:
         stmt = stmt.where(ValidationRecord.strategy_id == strategy_id)
+    if sort is not None:
+        stmt = stmt.order_by(None).order_by(*_vr_sort_expressions(sort))
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
 
@@ -830,9 +855,21 @@ def count_validation_records(
     db_path: Path, *,
     hypothesis_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
+    q: Optional[str] = None,
+    generalization: Optional[bool] = None,
+    level: Optional[str] = None,
+    verdict: Optional[str] = None,
 ) -> int:
-    """验证记录真总数（过滤口径与 list_validation_records 一致）。"""
-    stmt = select(func.count()).select_from(ValidationRecord)
+    """验证记录真总数（过滤口径与 list_validation_records 一致——
+    B1 四维：hypothesis_id+strategy_id+q+generalization；level/verdict
+    形参 B2 接线后并入六维口径）。"""
+    stmt = (
+        select(func.count())
+        .select_from(ValidationRecord)
+        .join(ResearchHypothesis, ValidationRecord.hypothesis_id
+              == ResearchHypothesis.hypothesis_id, isouter=True))
+    stmt = _apply_vr_filters(stmt, q=q, generalization=generalization,
+                             level=level, verdict=verdict)
     if hypothesis_id is not None:
         stmt = stmt.where(ValidationRecord.hypothesis_id == hypothesis_id)
     if strategy_id is not None:
@@ -840,6 +877,186 @@ def count_validation_records(
     engine = _engine_for(db_path)
     with engine.connect() as conn:
         return conn.execute(stmt).scalar_one()
+
+
+# ── B1 过滤/排序 SQL 表达式（upgrade-validation-records-list 1.1）──
+# worst 双路径（B1.3）：三型 level 各自的 result/params JSON 键位路由
+# （validation_service 实锚：isolated result $.metrics.total_return /
+# random result $.summary.worst_window.metrics.total_return / staged
+# result $.summary.worst_segment.total_return——composite/component
+# 死值域落 NULL 计入 unsortable）。
+_WORST_RETURN_EXPR = case(
+    (ValidationRecord.level == "isolated_backtest",
+     func.json_extract(ValidationRecord.result, "$.metrics.total_return")),
+    (ValidationRecord.level == "random_window",
+     func.json_extract(ValidationRecord.result,
+                       "$.summary.worst_window.metrics.total_return")),
+    (ValidationRecord.level == "staged_validation",
+     func.json_extract(ValidationRecord.result,
+                       "$.summary.worst_segment.total_return")),
+    )
+
+# 记录侧标的/周期（B1.4 泛化双路——三型键位路由）
+_REC_SYMBOL_EXPR = case(
+    (ValidationRecord.level == "isolated_backtest",
+     func.json_extract(ValidationRecord.result, "$.symbol")),
+    (ValidationRecord.level == "random_window",
+     func.json_extract(ValidationRecord.params, "$.symbol")),
+    (ValidationRecord.level == "staged_validation",
+     func.json_extract(ValidationRecord.params,
+                       "$.request_range.symbol")),
+    )
+
+_REC_TIMEFRAME_EXPR = case(
+    (ValidationRecord.level == "isolated_backtest",
+     func.json_extract(ValidationRecord.result, "$.timeframe")),
+    (ValidationRecord.level == "random_window",
+     func.json_extract(ValidationRecord.params, "$.timeframe")),
+    (ValidationRecord.level == "staged_validation",
+     func.json_extract(ValidationRecord.params,
+                       "$.request_range.timeframe")),
+    )
+
+# 基准侧标的/周期（策略原生——strategy.parent_ids 首父假设的
+# data_ranges 首段；裸串形制 parent_ids〔parse_parent_ids 先例〕经
+# json_valid 分支归一；strategy.symbol/timeframe 兜底）
+_PARENT_HYP_ID = func.coalesce(
+    func.json_extract(Strategy.parent_ids, "$[0]"),
+    case((func.json_valid(Strategy.parent_ids) == 0, Strategy.parent_ids)))
+_PARENT_DATA_RANGES = (
+    select(ResearchHypothesis.data_ranges)
+    .where(ResearchHypothesis.hypothesis_id == _PARENT_HYP_ID)
+    # 显式只关联 strategy（parent_ids 来源经外层行引用）；research_
+    # hypotheses 保持子查询独立 FROM——防 auto-correlate 在外层已
+    # join hypotheses 时吸收 FROM 致空子查询
+    .correlate(Strategy)
+    .scalar_subquery())
+_BASE_SYMBOL_EXPR = func.coalesce(
+    func.json_extract(_PARENT_DATA_RANGES, "$[0].symbol"),
+    Strategy.symbol)
+_BASE_TIMEFRAME_EXPR = func.coalesce(
+    func.json_extract(_PARENT_DATA_RANGES, "$[0].timeframe"),
+    Strategy.timeframe)
+# 泛化断言面（B1.4 边界四条）：symbol 双侧非 NULL 且不等 ∧ timeframe
+# 双侧非 NULL 且相等（NULL 任侧=保守漏判不判泛化；跨周期显式排除；
+# 不限策略状态——标的事实非状态事实）
+_GENERALIZATION_EXPR = and_(
+    _REC_SYMBOL_EXPR.isnot(None),
+    _BASE_SYMBOL_EXPR.isnot(None),
+    _REC_SYMBOL_EXPR != _BASE_SYMBOL_EXPR,
+    _REC_TIMEFRAME_EXPR.isnot(None),
+    _BASE_TIMEFRAME_EXPR.isnot(None),
+    _REC_TIMEFRAME_EXPR == _BASE_TIMEFRAME_EXPR,
+)
+# verdict 品质序（B1.3——pass→inconclusive→fail 好的在前；fail 与
+# pass 时间序混排不沉底）
+_VERDICT_QUALITY_EXPR = case(
+    (ValidationRecord.verdict == "pass", 0),
+    (ValidationRecord.verdict == "inconclusive", 1),
+    (ValidationRecord.verdict == "fail", 2),
+    else_=3,
+)
+_SORT_KEYS = {
+    "time_desc": [ValidationRecord.created_at.desc(),
+                  ValidationRecord.record_id.desc()],
+    "time_asc": [ValidationRecord.created_at.asc(),
+                 ValidationRecord.record_id.asc()],
+    "total_return_desc": [
+        case((_WORST_RETURN_EXPR.is_(None), 1), else_=0).asc(),
+        _WORST_RETURN_EXPR.desc(),
+        ValidationRecord.created_at.desc(),
+        ValidationRecord.record_id.desc()],
+    "verdict_quality": [
+        _VERDICT_QUALITY_EXPR.asc(),
+        ValidationRecord.created_at.desc(),
+        ValidationRecord.record_id.desc()],
+}
+
+
+def _vr_sort_expressions(sort: str) -> list:
+    """sort 枚举 → ORDER BY 表达式链（NULL 前缀键显式落尾——不依赖
+    SQLite NULL 排序缺省，确定次序契约）。"""
+    keys = _SORT_KEYS.get(sort)
+    if keys is None:
+        raise ValueError(f"sort 非法: {sort!r}（值域 {sorted(_SORT_KEYS)}）")
+    return keys
+
+
+def _apply_vr_filters(stmt, *, q=None, generalization=None,
+                      level=None, verdict=None):
+    """WHERE 下推（B1.4）：q LIKE ESCAPE 字面化+泛化断言+level/verdict
+    等值（B2 接线）；全部缺省 None 零表达式=现状逐位一致。"""
+    if level is not None:
+        stmt = stmt.where(ValidationRecord.level == level)
+    if verdict is not None:
+        stmt = stmt.where(ValidationRecord.verdict == verdict)
+    if q:
+        # %/_/\\ 字面化（ESCAPE '\'）——搜索词含通配符按字面匹配
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace(
+            "_", "\\_")
+        stmt = stmt.where(ResearchHypothesis.statement.like(
+            f"%{escaped}%", escape="\\"))
+    if generalization:
+        # 泛化断言需策略侧两表在位（LEFT JOIN strategies——非泛化查询
+        # 不 join 零开销）
+        stmt = stmt.join(
+            Strategy, ValidationRecord.strategy_id == Strategy.strategy_id,
+            isouter=True).where(_GENERALIZATION_EXPR)
+    return stmt
+
+
+def validation_records_aggregates(
+    db_path: Path, *,
+    hypothesis_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    q: Optional[str] = None,
+    generalization: Optional[bool] = None,
+    level: Optional[str] = None,
+    verdict: Optional[str] = None,
+) -> Dict[str, Any]:
+    """聚合查询（B1.2）：verdict_counts 三键恒在场+unsortable_count。
+
+    口径与 count 同基数（当前过滤维全集）；unsortable=worst 值缺失
+    （NULL 键位或死值域 level）计数——非 total_return_desc 排序时
+    端点恒报 0（语义键在场值退化），仓储如实计数两态均可判别。
+    """
+    from sqlalchemy import literal
+
+    filters = []
+    if hypothesis_id is not None:
+        filters.append(ValidationRecord.hypothesis_id == hypothesis_id)
+    if strategy_id is not None:
+        filters.append(ValidationRecord.strategy_id == strategy_id)
+
+    def _base(select_cols):
+        stmt = select(*select_cols).select_from(ValidationRecord)
+        stmt = stmt.join(
+            ResearchHypothesis, ValidationRecord.hypothesis_id
+            == ResearchHypothesis.hypothesis_id, isouter=True)
+        stmt = _apply_vr_filters(stmt, q=q, generalization=generalization,
+                                 level=level, verdict=verdict)
+        for f in filters:
+            stmt = stmt.where(f)
+        return stmt
+
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        v = ValidationRecord
+        agg = _base([
+            func.sum(case((v.verdict == "pass", 1), else_=0)),
+            func.sum(case((v.verdict == "fail", 1), else_=0)),
+            func.sum(case((v.verdict == "inconclusive", 1), else_=0)),
+            func.count(literal(1)),
+        ])
+        row = conn.execute(agg).one()
+        unsort = _base([func.count(literal(1))]).where(
+            _WORST_RETURN_EXPR.is_(None))
+        n_unsort = conn.execute(unsort).scalar_one()
+    return {
+        "pass": int(row[0] or 0), "fail": int(row[1] or 0),
+        "inconclusive": int(row[2] or 0), "total": int(row[3] or 0),
+        "unsortable_count": int(n_unsort or 0),
+    }
 
 
 # ============================================================ 主任务卡片（B1 只读聚合，add-hypothesis-cards）

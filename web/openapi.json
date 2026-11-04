@@ -410,6 +410,47 @@
         }
       }
     },
+    "/api/strategies/{strategy_id}/transitions": {
+      "get": {
+        "tags": [
+          "strategies"
+        ],
+        "summary": "List Strategy Transitions",
+        "description": "策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序\n审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。",
+        "operationId": "list_strategy_transitions_api_strategies__strategy_id__transitions_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Strategy Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/strategies/{strategy_id}/revalidate": {
       "post": {
         "tags": [
@@ -564,239 +605,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CompareResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/strategies/verify": {
-      "post": {
-        "tags": [
-          "strategies"
-        ],
-        "summary": "Verify Strategies",
-        "description": "多日期区间验证策略。\n\n逐 (strategy, date_range) 对回测并计算 fitness；按策略聚合综合\n评分 = avg_fitness × qualified_ratio × consistency_bonus。\n执行体收口 _VerifyProcessor（与流式端点共用）。",
-        "operationId": "verify_strategies_api_strategies_verify_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifyResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/strategies/verify/stream": {
-      "post": {
-        "tags": [
-          "strategies"
-        ],
-        "summary": "Verify Strategies Stream",
-        "description": "B8.3 流式批：POST 返回 session_id，进度经 socket.io /streams 下发。\n\n断线语义（B8.0 ②）：任务跑完并落库（verify_session 持久化在），\n重连恢复面=GET /verify/sessions/{session_id}/results。\n取消语义（B8.0 ①）：C→S cancel 事件协作取消（步粒度）。",
-        "operationId": "verify_strategies_stream_api_strategies_verify_stream_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/strategies/verify/history": {
-      "get": {
-        "tags": [
-          "strategies"
-        ],
-        "summary": "Get Verify History",
-        "description": "历史验证结果（backtest_result 按 run_source='verify' 过滤）。",
-        "operationId": "get_verify_history_api_strategies_verify_history_get",
-        "parameters": [
-          {
-            "name": "strategy_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Strategy Id"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifyHistoryResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/strategies/verify/sessions": {
-      "get": {
-        "tags": [
-          "strategies"
-        ],
-        "summary": "List Sessions",
-        "description": "验证会话列表（按创建时间序）。",
-        "operationId": "list_sessions_api_strategies_verify_sessions_get",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifySessionListResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/strategies/verify/sessions/{session_id}/results": {
-      "get": {
-        "tags": [
-          "strategies"
-        ],
-        "summary": "Get Session Results",
-        "description": "指定验证会话的回测结果。",
-        "operationId": "get_session_results_api_strategies_verify_sessions__session_id__results_get",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifyHistoryResponse"
                 }
               }
             }
@@ -2325,6 +2133,156 @@
         }
       }
     },
+    "/api/live-trading/tasks/{task_id}/start": {
+      "post": {
+        "tags": [
+          "live-trading"
+        ],
+        "summary": "Start Task",
+        "description": "D5 契约基线：pending→running；runner 装配挂 app.state（live_runner\n——paper_scheduler 先例形制；内核未建时占位 None+状态先行迁移可观察）。",
+        "operationId": "start_task_api_live_trading_tasks__task_id__start_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveTradingTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live-trading/tasks/{task_id}/stop": {
+      "post": {
+        "tags": [
+          "live-trading"
+        ],
+        "summary": "Stop Task",
+        "description": "D5：running→stopped（stop_reason 落因；graceful=当前 bar 完退出\n——runner 侧语义，状态迁移先行可观察）；停止已停 409。",
+        "operationId": "stop_task_api_live_trading_tasks__task_id__stop_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveTradingTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live-trading/tasks/{task_id}/decisions": {
+      "get": {
+        "tags": [
+          "live-trading"
+        ],
+        "summary": "List Decisions",
+        "description": "D4 决策快照分页（append-only 只读——B6r 回放消费；零决策 200\n空集如实〔D5 前/启动初期〕；404 平文本沿域内先例）。",
+        "operationId": "list_decisions_api_live_trading_tasks__task_id__decisions_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/live-trading/tasks/{task_id}": {
       "get": {
         "tags": [
@@ -3328,6 +3286,78 @@
         }
       }
     },
+    "/api/workbench/process-status": {
+      "get": {
+        "tags": [
+          "workbench"
+        ],
+        "summary": "Process Status",
+        "description": "D1 进程状态：api.online 恒 true（响应本身即存活证明）；mcp=TCP\n探活 127.0.0.1:{MYQUANT_MCP_PORT 缺省 8800}（mcpserver/server.py:96\n同源环境变量），connect 超时 500ms。探活失败≠端点错误——200 返回\n离线事实（前端呈现离线态）。纯 GET 幂等零副作用。",
+        "operationId": "process_status_api_workbench_process_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Process Status Api Workbench Process Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workbench/hypothesis-union-remains": {
+      "get": {
+        "tags": [
+          "workbench"
+        ],
+        "summary": "Hypothesis Union Remains",
+        "description": "D9 active 假设并集余量聚合：query_union_balance 单源复用全量披露\n（union_exhausted 扫描的余量披露版——exhausted 只报 remaining==0，\n本端点逐区间披露余量数值）。iter_all_pages 全量翻页+bounds_cache\n请求内缓存（与 _union_exhausted_events 同形制）；fail-open per-假设\ndegraded 计数。消费方=②观察台假设卡组余量列。遍历骨架经\n_iter_union_balances 共享（QA-1 提取——与 union_exhausted 单源）。",
+        "operationId": "hypothesis_union_remains_api_workbench_hypothesis_union_remains_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Hypothesis Union Remains Api Workbench Hypothesis Union Remains Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workbench/fleet-summary": {
+      "get": {
+        "tags": [
+          "workbench"
+        ],
+        "summary": "Fleet Summary",
+        "description": "D11 舰队汇总（paper-overview 扩形）。\n\n三契约要素：①口径双分解（active=running 主呈现/all=全部副呈现，\n今日增量仅 active——终态任务无当日 bar 推进）；②当日基点三分支\n（当日新建无当日快照→initial_cash；跨日→当日首条快照；无当日快照\n非当日新建→no_bar_today+基点=最新快照；UTC 00:00 日界）；③公式\n单源（equity=_latest_equity_of import 复用——禁第二份）。\n两合并约束：tasks 行单点复用 _task_response_from（D11 增量字段\n叠加不重写字段映射——保 /trading 同源同值）；runner-status 不并入\n（fleet.active.task_count 取 DB 查询非 scheduler）。funding_sum=\nfunding 表 SQL 批量聚合（N+1 禁）；dims 两维现算单源。",
+        "operationId": "fleet_summary_api_workbench_fleet_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Fleet Summary Api Workbench Fleet Summary Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/data/freshness/status": {
       "get": {
         "tags": [
@@ -4228,6 +4258,94 @@
         }
       }
     },
+    "/api/research/analysis/tasks": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "List Analysis Tasks",
+        "description": "D8 分析任务时间流列表（be-workbench-support）：analysis_tasks\n表跨任务视图，created_at desc。行=七字段（无 result——单查\n/analysis/tasks/{task_id} 分工不变）；templates=_TEMPLATES 直取\n（路由层单源 import 零抄录——前端 12 槽位清单来源）。",
+        "operationId": "list_analysis_tasks_api_research_analysis_tasks_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "template",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Template"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Analysis Tasks Api Research Analysis Tasks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/analysis/tasks/{task_id}": {
       "get": {
         "tags": [
@@ -4538,6 +4656,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/plugins/pools": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Get Plugin Pools",
+        "description": "四层池名单（be-plugin-pool-authority D10）：core/strategy/pools.py\n单源直出（快照权威自需求文档升格入工程）；纯 GET 幂等零副作用。",
+        "operationId": "get_plugin_pools_api_research_plugins_pools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Plugin Pools Api Research Plugins Pools Get"
                 }
               }
             }
@@ -4994,7 +5136,7 @@
           "research"
         ],
         "summary": "List Validation Records Endpoint",
-        "description": "跨策略验证记录时间流（created_at 降序——「最近」消费语义）。\n\n四维可选过滤；level/verdict 非法值 422（沿 research_error_to_http\n结构化错误形制——本端点内联校验产同形 detail）；分页探测式\nhas_more（多取一条判定）。",
+        "description": "跨策略验证记录列表（upgrade-validation-records-list B1——\nsort/q/generalization 检索增量+行级 statement+计数两键）。\n\nsort 封闭枚举四值（time_desc 缺省=现状零变化/time_asc/\ntotal_return_desc 按 worst 值参排 NULL 落尾/verdict_quality 品质\n序）；q 关键词搜索（statement LIKE、%/_ 通配符字面化）；level/\nverdict 非法值 422（沿内联校验先例）；generalization 独立 bool\n泛化过滤（⑦终裁 toggle——可与 level 组合取交集）。B1 双口径：\nq/泛化=过滤后分页进 total，level/verdict=行级过滤不进 total\n（B2 语义翻转统一六维）。",
         "operationId": "list_validation_records_endpoint_api_research_validation_records_get",
         "parameters": [
           {
@@ -5059,6 +5201,48 @@
                 }
               ],
               "title": "Verdict"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "time_desc",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "generalization",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Generalization"
             }
           },
           {
@@ -5293,6 +5477,24 @@
           "sources"
         ],
         "title": "AvailableSourcesResponse"
+      },
+      "BacktestDateRange": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "BacktestDateRange"
       },
       "BacktestRequest": {
         "properties": {
@@ -5698,7 +5900,7 @@
           },
           "data_ranges": {
             "items": {
-              "$ref": "#/components/schemas/VerifyDateRange"
+              "$ref": "#/components/schemas/BacktestDateRange"
             },
             "type": "array",
             "title": "Data Ranges"
@@ -8318,6 +8520,17 @@
             "type": "string",
             "title": "Status"
           },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Reason"
+          },
           "config_json": {
             "anyOf": [
               {
@@ -8395,6 +8608,17 @@
               }
             ],
             "title": "Heartbeat At"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
           },
           "created_at": {
             "type": "string",
@@ -11586,6 +11810,17 @@
               }
             ],
             "title": "Result"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement"
           }
         },
         "type": "object",
@@ -11624,6 +11859,17 @@
           "has_more": {
             "type": "boolean",
             "title": "Has More"
+          },
+          "verdict_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Verdict Counts"
+          },
+          "unsortable_count": {
+            "type": "integer",
+            "title": "Unsortable Count"
           }
         },
         "type": "object",
@@ -11632,510 +11878,11 @@
           "total",
           "offset",
           "limit",
-          "has_more"
+          "has_more",
+          "verdict_counts",
+          "unsortable_count"
         ],
         "title": "ValidationRecordsResponse"
-      },
-      "VerifyDateRange": {
-        "properties": {
-          "start": {
-            "type": "string",
-            "title": "Start"
-          },
-          "end": {
-            "type": "string",
-            "title": "End"
-          }
-        },
-        "type": "object",
-        "required": [
-          "start",
-          "end"
-        ],
-        "title": "VerifyDateRange"
-      },
-      "VerifyHistoryItem": {
-        "properties": {
-          "result_id": {
-            "type": "string",
-            "title": "Result Id"
-          },
-          "strategy_id": {
-            "type": "string",
-            "title": "Strategy Id"
-          },
-          "strategy_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Strategy Name"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "timeframe": {
-            "type": "string",
-            "title": "Timeframe"
-          },
-          "data_start": {
-            "type": "string",
-            "title": "Data Start"
-          },
-          "data_end": {
-            "type": "string",
-            "title": "Data End"
-          },
-          "total_return": {
-            "type": "number",
-            "title": "Total Return",
-            "default": 0.0
-          },
-          "sharpe_ratio": {
-            "type": "number",
-            "title": "Sharpe Ratio",
-            "default": 0.0
-          },
-          "max_drawdown": {
-            "type": "number",
-            "title": "Max Drawdown",
-            "default": 0.0
-          },
-          "total_trades": {
-            "type": "integer",
-            "title": "Total Trades",
-            "default": 0
-          },
-          "fitness": {
-            "type": "number",
-            "title": "Fitness",
-            "default": 0.0
-          },
-          "qualified": {
-            "type": "integer",
-            "title": "Qualified",
-            "default": 0
-          },
-          "thresholds": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Thresholds"
-          },
-          "star": {
-            "type": "integer",
-            "title": "Star",
-            "default": 0
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "result_id",
-          "strategy_id",
-          "symbol",
-          "timeframe",
-          "data_start",
-          "data_end",
-          "created_at"
-        ],
-        "title": "VerifyHistoryItem"
-      },
-      "VerifyHistoryResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/VerifyHistoryItem"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total"
-        ],
-        "title": "VerifyHistoryResponse"
-      },
-      "VerifyPeriodSummary": {
-        "properties": {
-          "data_start": {
-            "type": "string",
-            "title": "Data Start"
-          },
-          "data_end": {
-            "type": "string",
-            "title": "Data End"
-          },
-          "total_return": {
-            "type": "number",
-            "title": "Total Return",
-            "default": 0.0
-          },
-          "sharpe_ratio": {
-            "type": "number",
-            "title": "Sharpe Ratio",
-            "default": 0.0
-          },
-          "max_drawdown": {
-            "type": "number",
-            "title": "Max Drawdown",
-            "default": 0.0
-          },
-          "fitness": {
-            "type": "number",
-            "title": "Fitness",
-            "default": 0.0
-          },
-          "qualified": {
-            "type": "boolean",
-            "title": "Qualified",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "data_start",
-          "data_end"
-        ],
-        "title": "VerifyPeriodSummary"
-      },
-      "VerifyRequest": {
-        "properties": {
-          "strategy_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Strategy Ids"
-          },
-          "data_ranges": {
-            "items": {
-              "$ref": "#/components/schemas/VerifyDateRange"
-            },
-            "type": "array",
-            "title": "Data Ranges"
-          },
-          "init_cash": {
-            "type": "number",
-            "title": "Init Cash",
-            "default": 100000.0
-          },
-          "fee": {
-            "type": "number",
-            "title": "Fee",
-            "default": 0.001
-          },
-          "slippage": {
-            "type": "number",
-            "title": "Slippage",
-            "default": 0.0005
-          },
-          "leverage": {
-            "type": "integer",
-            "maximum": 10.0,
-            "minimum": 1.0,
-            "title": "Leverage",
-            "default": 1
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "strategy_ids",
-          "data_ranges"
-        ],
-        "title": "VerifyRequest"
-      },
-      "VerifyResponse": {
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/VerifyResultItem"
-            },
-            "type": "array",
-            "title": "Results"
-          },
-          "summary": {
-            "items": {
-              "$ref": "#/components/schemas/VerifySummaryItem"
-            },
-            "type": "array",
-            "title": "Summary"
-          }
-        },
-        "type": "object",
-        "required": [
-          "results",
-          "summary"
-        ],
-        "title": "VerifyResponse"
-      },
-      "VerifyResultItem": {
-        "properties": {
-          "strategy_id": {
-            "type": "string",
-            "title": "Strategy Id"
-          },
-          "data_start": {
-            "type": "string",
-            "title": "Data Start"
-          },
-          "data_end": {
-            "type": "string",
-            "title": "Data End"
-          },
-          "total_return": {
-            "type": "number",
-            "title": "Total Return",
-            "default": 0.0
-          },
-          "sharpe_ratio": {
-            "type": "number",
-            "title": "Sharpe Ratio",
-            "default": 0.0
-          },
-          "max_drawdown": {
-            "type": "number",
-            "title": "Max Drawdown",
-            "default": 0.0
-          },
-          "win_rate": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Win Rate"
-          },
-          "total_trades": {
-            "type": "integer",
-            "title": "Total Trades",
-            "default": 0
-          },
-          "profit_factor": {
-            "type": "number",
-            "title": "Profit Factor",
-            "default": 0.0
-          },
-          "fitness": {
-            "type": "number",
-            "title": "Fitness",
-            "default": 0.0
-          },
-          "qualified": {
-            "type": "boolean",
-            "title": "Qualified",
-            "default": false
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          }
-        },
-        "type": "object",
-        "required": [
-          "strategy_id",
-          "data_start",
-          "data_end"
-        ],
-        "title": "VerifyResultItem"
-      },
-      "VerifySessionListResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/VerifySessionResponse"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total"
-        ],
-        "title": "VerifySessionListResponse"
-      },
-      "VerifySessionResponse": {
-        "properties": {
-          "session_id": {
-            "type": "string",
-            "title": "Session Id"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "strategy_ids": {
-            "type": "string",
-            "title": "Strategy Ids"
-          },
-          "data_ranges": {
-            "type": "string",
-            "title": "Data Ranges"
-          },
-          "init_cash": {
-            "type": "number",
-            "title": "Init Cash"
-          },
-          "fee": {
-            "type": "number",
-            "title": "Fee"
-          },
-          "slippage": {
-            "type": "number",
-            "title": "Slippage"
-          },
-          "summary_json": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary Json"
-          },
-          "total_results": {
-            "type": "integer",
-            "title": "Total Results",
-            "default": 0
-          },
-          "total_strategies": {
-            "type": "integer",
-            "title": "Total Strategies",
-            "default": 0
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "session_id",
-          "status",
-          "strategy_ids",
-          "data_ranges",
-          "init_cash",
-          "fee",
-          "slippage",
-          "created_at"
-        ],
-        "title": "VerifySessionResponse"
-      },
-      "VerifySummaryItem": {
-        "properties": {
-          "strategy_id": {
-            "type": "string",
-            "title": "Strategy Id"
-          },
-          "strategy_name": {
-            "type": "string",
-            "title": "Strategy Name"
-          },
-          "comprehensive_score": {
-            "type": "number",
-            "title": "Comprehensive Score",
-            "default": 0.0
-          },
-          "avg_fitness": {
-            "type": "number",
-            "title": "Avg Fitness",
-            "default": 0.0
-          },
-          "qualified_count": {
-            "type": "integer",
-            "title": "Qualified Count",
-            "default": 0
-          },
-          "total_periods": {
-            "type": "integer",
-            "title": "Total Periods",
-            "default": 0
-          },
-          "per_period_metrics": {
-            "items": {
-              "$ref": "#/components/schemas/VerifyPeriodSummary"
-            },
-            "type": "array",
-            "title": "Per Period Metrics",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": [
-          "strategy_id",
-          "strategy_name"
-        ],
-        "title": "VerifySummaryItem"
       }
     }
   }

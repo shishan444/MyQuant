@@ -499,6 +499,10 @@ _KNOWN_GAPS = frozenset({
     # 值域校验（HTTP 查询参数面，非 MCP 工具参数——AST 扫描形制①收进；
     # 无场景专属 hint 需求，走通用文案，有意豁免）
     "level", "verdict",
+    # upgrade-validation-records-list B1：records 列表端点 sort 内联
+    # 封闭枚举 422 面（HTTP 查询参数面非 MCP 工具参数——同 level/
+    # verdict 先例；q/generalization 非 422 值域面不入扫描）
+    "sort",
 })
 
 
