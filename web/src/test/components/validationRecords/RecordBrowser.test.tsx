@@ -138,9 +138,9 @@ function makeDetail(over: Partial<ValidationDetailResponse> = {}): ValidationDet
         range_end: "2026-09-01",
         trades: [
           { seq: 0, entry_time: "2026-04-02 00:00:00+00:00", exit_time: "2026-04-03 00:00:00+00:00",
-            entry_price: 100, exit_price: 110, size: 1, direction: "long", pnl: 10, decision: { trigger: null } },
+            entry_price: 100, exit_price: 110, size: 1, direction: "long", pnl: 10 },
           { seq: 1, entry_time: "2026-04-05 00:00:00+00:00", exit_time: null,
-            entry_price: 105, exit_price: null, size: 1, direction: "long", pnl: null, decision: { trigger: null } },
+            entry_price: 105, exit_price: null, size: 1, direction: "long", pnl: null },
         ],
         equity: { grid_aligned: true, timeframe: "30m", start: "2026-04-01 00:00:00+00:00", length: 4, timestamps: null, values: [100000, 101000, 100500, 112400] },
         trail_series: [{ time: "2026-04-01 00:00:00+00:00", value: 98000 }],

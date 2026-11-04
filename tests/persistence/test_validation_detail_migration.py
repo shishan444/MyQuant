@@ -84,8 +84,8 @@ def legacy_db(tmp_path: Path) -> Path:
 class TestDetailSchema:
     """实库 schema 面：两明细表结构（直查 PRAGMA，不读声明）。"""
 
-    def test_trade_table_15_columns(self, legacy_db: Path) -> None:
-        """15 列齐（D6 后）：列名/类型/NOT NULL 逐列对权威字典。"""
+    def test_trade_table_14_columns(self, legacy_db: Path) -> None:
+        """14 列齐：列名/类型/NOT NULL 逐列对权威字典。"""
         _alembic(legacy_db, "upgrade", "head")
         with _conn(legacy_db) as conn:
             cols = [(r[1], r[2].upper(), bool(r[3]))

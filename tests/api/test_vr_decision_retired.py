@@ -16,6 +16,7 @@ pytestmark = [pytest.mark.integration]
 
 from fastapi.testclient import TestClient
 
+from core.analysis import validation_service as vs_mod
 from core.analysis.executor import ensure_research_tables
 from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.validation_service import run_isolated_backtest
@@ -112,11 +113,10 @@ def test_orm_and_schema_key_absent(env):
         conn.close()
 
 
-def test_repository_source_no_decision_json():
+def test_source_no_decision_json():
     """防复发源级锚：仓储与写侧源文本零 decision_json 残留。"""
     import inspect
-    for mod in (rr, __import__(
-            "core.analysis.validation_service", fromlist=["x"])):
+    for mod in (rr, vs_mod):
         src = inspect.getsource(mod)
         # 只查使用形制（列引用/键写入）——退役说明注释不在禁域
         assert '["decision_json"]' not in src, "生产列引用残留"

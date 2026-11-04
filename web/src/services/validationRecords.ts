@@ -54,8 +54,6 @@ export interface VrTrade {
   size: number | null;
   direction: string | null;
   pnl: number | null;
-  /** 决策理由（D6 极简形 {"trigger": null}——触发明细不可得如实 null） */
-  decision: { trigger: string | null } | null;
 }
 
 /** equity 双形制：values 恒在；grid_aligned=true 为 compact（timestamps=null，
