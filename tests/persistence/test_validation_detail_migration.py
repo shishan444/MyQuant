@@ -42,8 +42,7 @@ _TRADE_COLUMNS = (
     ("size", "REAL", True),
     ("direction", "TEXT", True),
     ("pnl", "REAL", False),
-    # 决策理由（be-validation-decision-records D6——NULLable）
-    ("decision_json", "TEXT", False),
+    # decision_json 退役（retire-vr-decision-json——a8e4f7d2c9b3 列撤）
 )
 
 # vr_equity_curve 12 列权威字典
@@ -85,8 +84,8 @@ def legacy_db(tmp_path: Path) -> Path:
 class TestDetailSchema:
     """实库 schema 面：两明细表结构（直查 PRAGMA，不读声明）。"""
 
-    def test_trade_table_15_columns(self, legacy_db: Path) -> None:
-        """15 列齐（D6 后）：列名/类型/NOT NULL 逐列对权威字典。"""
+    def test_trade_table_14_columns(self, legacy_db: Path) -> None:
+        """14 列齐：列名/类型/NOT NULL 逐列对权威字典。"""
         _alembic(legacy_db, "upgrade", "head")
         with _conn(legacy_db) as conn:
             cols = [(r[1], r[2].upper(), bool(r[3]))
@@ -207,7 +206,8 @@ class TestTripleDeclaration:
 
 
 class TestUpgradePath:
-    """存量库升级路径：既有数据完好+历史明细零行（零回填的库级面）。"""
+    """存量库升级路径：既有数据完好+历史明细零行（零回填的库级面）
+    +退役迁移对称闭链（T3-3）。"""
 
     def test_legacy_data_survives_and_no_backfill(
             self, legacy_db: Path) -> None:
@@ -239,3 +239,21 @@ class TestUpgradePath:
                 "SELECT COUNT(*) FROM vr_equity_curve").fetchone()[0]
         assert rec == ("rec_hist1", "pass"), "存量记录升级后必须完好"
         assert t_cnt == 0 and e_cnt == 0, "历史记录零回填（明细零行）"
+
+    def test_retire_migration_roundtrip_restores_and_drops_column(
+            self, legacy_db: Path) -> None:
+        """退役迁移对称闭链（T3-3）：downgrade 一步恢复 decision_json
+        列（当初 a9d4c2f8e7b3 所加 TEXT 形），再 upgrade 撤净——
+        列级往返（阶段四前仅有 tester 临时库实证，此处入回归网）。"""
+        _alembic(legacy_db, "upgrade", "head")
+        _alembic(legacy_db, "downgrade", "f7c3d9a5e2b8")
+        with _conn(legacy_db) as conn:
+            cols = {r[1]: r[2].upper() for r in
+                    conn.execute("PRAGMA table_info(vr_trade_detail)")}
+        assert cols.get("decision_json") == "TEXT", \
+            "downgrade 须恢复 decision_json TEXT 列（对称闭链）"
+        _alembic(legacy_db, "upgrade", "head")
+        with _conn(legacy_db) as conn:
+            names = [r[1] for r in
+                     conn.execute("PRAGMA table_info(vr_trade_detail)")]
+        assert "decision_json" not in names, "再 upgrade 须撤净（往返闭合）"

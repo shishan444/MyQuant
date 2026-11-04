@@ -675,15 +675,10 @@ def _build_detail_payload(
                 "size": abs(float(row["Size"])),
                 "direction": str(row["Direction"]),
                 "pnl": None if pd.isna(pnl_val) else float(pnl_val),
-                # 决策理由（D6·t3r8 CARD-1 修正）：极简形 {"trigger": null}
-                # ——条件级触发明细在 vbt 组合器封装内不可得（如实 null 禁
-                # 捏造）；原 side/direction/status 三键经对质确认零增量
-                # （side 恒 entry 无区分度/direction 复制顶层同源列/status
-                # 与 exit_time 一一对应），伪装数据键全撤——引擎暴露触发
-                # 明细后在此扩形（exit 侧承载位同步设计，vbt 行含进出
-                # 两决策时点）
-                "decision_json": json.dumps(
-                    {"trigger": None}, ensure_ascii=False),
+                # decision_json 退役（retire-vr-decision-json 任务 1）：
+                # 逐笔决策过程披露由 vr_signal_trace 事件级行承载
+                # （add-vr-signal-trace 兑现——reason/capped/事件码全量
+                # 在场，本键 {"trigger": null} 极简形零信息量已撤）
             })
 
     return {"trades": trades, "equity": equity_row}
