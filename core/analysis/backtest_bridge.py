@@ -41,12 +41,22 @@ def _collect_needed_tfs(dna, exec_tf: str) -> set:
 def _slice_signal_set(sig_set, index: pd.Index):
     """SignalSet 序列字段按请求区间索引切回（enhanced ⊇ 请求区间，
     reindex 不产生缺失行）；非序列字段（degraded_layers/
-    mtf_diagnostics）原样保留。引擎按 .values 取信号数组，切回后
-    序列与 bt_df 严格等长对齐。"""
+    mtf_diagnostics/mtf_gated_bars）原样保留。引擎按 .values 取信号
+    数组，切回后序列与 bt_df 严格等长对齐。"""
     from core.strategy.executor import SignalSet
 
     def _cut(s):
         return s.reindex(index) if s is not None else None
+
+    # swallowed 行按区间过滤（CARD-04）：组装在 enhanced 全段（含
+    # warmup 前缀）上跑，bar_time 落在请求区间外的行（warmup 段冲突
+    # 行）不随份注入；全滤空归 None（SignalSet 语义：无行不建列表）
+    if sig_set.swallowed is None:
+        swallowed = None
+    else:
+        in_range = {str(ts) for ts in index}
+        swallowed = ([row for row in sig_set.swallowed
+                      if row.get("bar_time") in in_range] or None)
 
     return SignalSet(
         entries=_cut(sig_set.entries),
@@ -57,6 +67,8 @@ def _slice_signal_set(sig_set, index: pd.Index):
         entry_direction=_cut(sig_set.entry_direction),
         mtf_diagnostics=sig_set.mtf_diagnostics,
         confidence=_cut(sig_set.confidence),
+        swallowed=swallowed,
+        mtf_gated_bars=sig_set.mtf_gated_bars,
     )
 
 

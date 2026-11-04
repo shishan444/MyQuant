@@ -113,13 +113,16 @@ class SignalSet:
     mtf_gated_bars: "int | None" = None
 
 
-def _swallowed_rows(mask: "pd.Series", reason: str,
-                    acc: list) -> None:
-    """吞没行收集（add-vr-signal-trace 组 3——组装层专用小工具）。
+def swallowed_rows(mask: "pd.Series", reason: str,
+                   acc: list) -> None:
+    """吞没行收集（add-vr-signal-trace 组 3——组装层公共小工具）。
 
     mask 为 True 的 bar 逐个产出 {bar_time: ISO, reason} 行（自然时序
     ——索引有序前提由信号 Series 保证）；acc 就地追加（None 语义由
     调用方决定：无行不建列表，保持 SignalSet.swallowed 缺省 None）。
+    消费面=executor 三个 SignalSet 出口+mtf_engine 执行层合并出口+
+    signal_assembly 组合出口（CARD-04 升公共名——消跨层私有 import，
+    CARD-03 event_policy 先例同方向）。
     """
     for ts in mask.index[mask.fillna(False)]:
         acc.append({"bar_time": str(ts), "reason": reason})
@@ -1091,8 +1094,8 @@ def dna_to_signal_set(
         # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装
         # 层重算 both，跨层组合后最终语义层的冲突面）
         _swallowed_mtf: list = []
-        _swallowed_rows(combined_entries & combined_exits,
-                        "entry_exit_conflict", _swallowed_mtf)
+        swallowed_rows(combined_entries & combined_exits,
+                       "entry_exit_conflict", _swallowed_mtf)
         combined_entries = _apply_entry_exit_mutex(
             combined_entries, combined_exits)
 
@@ -1205,12 +1208,14 @@ def dna_to_signal_set(
 
     # 抑制组合（DC-1）：adds=(trigger AND guard) AND NOT(inhibitor 任一
     # 成立)——独立角色承载布尔 NOT（不取反 action 映射，cross 类锚点）
-    swallowed_rows: list = []
+    # 累加变量名避开公共函数名 swallowed_rows（CARD-04 升名后同名
+    # 遮蔽致函数不可调用）
+    swallowed_acc: list = []
     if add_inhibitors:
         inhibited = pd.concat(add_inhibitors, axis=1).any(axis=1)
         # 求值层吞没行·加仓抑制面（add-vr-signal-trace 组 3——原始
         # adds 与 inhibited 的交集 bar，清洗前捕获）
-        _swallowed_rows(adds & inhibited, "add_inhibited", swallowed_rows)
+        swallowed_rows(adds & inhibited, "add_inhibited", swallowed_acc)
         adds = adds & ~inhibited
 
     all_reduce = reduce_triggers + reduce_guards
@@ -1224,7 +1229,7 @@ def dna_to_signal_set(
 
     # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装层
     # 重算 both：被清洗的进场 bar；_apply_entry_exit_mutex 调用点零改动）
-    _swallowed_rows(entries & exits, "entry_exit_conflict", swallowed_rows)
+    swallowed_rows(entries & exits, "entry_exit_conflict", swallowed_acc)
 
     # 同 bar 开平互斥清洗（单点 helper——等价内联两行+抹杀率告警）
     entries = _apply_entry_exit_mutex(entries, exits)
@@ -1255,7 +1260,7 @@ def dna_to_signal_set(
         reduces=reduces,
         entry_direction=entry_direction,
         hits=hits,
-        swallowed=(swallowed_rows or None),
+        swallowed=(swallowed_acc or None),
     )
 
 

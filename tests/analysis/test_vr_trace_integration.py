@@ -226,6 +226,57 @@ class TestThreeEntryPointsTrace:
         assert _flags(db, rid) == (1, 1, 1), "零信号也须打标（管线通）"
         assert rr.get_vr_signal_trace_rows(db, rid) == []
 
+    def test_v2_plugin_source_swallowed_end_to_end(
+            self, db, data_dir, hypothesis_id):
+        """CARD-04 端到端锚：v2 插件源（formula）路径 swallowed 不丢。
+
+        修复前组装出口（assemble_signal_set）丢弃 base.swallowed——
+        v2 路径 swallowed 行恒无而三布尔照打 1（正是 W0「有标记而数据
+        空」缺陷态）。契约（设计卡 2.6）：求值层吞没行经 SignalSet→
+        bridge→validation_service 交 resolver，与路径无关——插件源
+        路径同权。构造：同条件 entry/exit trigger（lt 50 同 RSI 列=
+        同 bar 必冲突）+formula 插件源（v2 组装分支必走）。
+        """
+        from core.analysis.plugin_service import register_formula_plugin
+        from core.analysis.registry_meta import available_signal_columns
+        register_formula_plugin(db, name="f_v2_conflict",
+                                expression="zscore(close, 20)")
+        fcol = next(c["column_key"] for c in available_signal_columns(db)
+                    if c["source"] == "formula")
+        # 分量证据前置（组合加严门 6.5 双源判据 (a)：component_eval
+        # 日志=翻译试算供给面——summary.column 精确匹配即放行）
+        rr.append_research_log(
+            db, hypothesis_id=None, entry_type="component_eval",
+            ref_id="st_v2_conflict", data_ranges="[]",
+            summary=json.dumps({"column": fcol, "source": "formula",
+                                "evaluated_bars": 100}))
+        v2_dna = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           "rsi_14", {"type": "lt", "threshold": 50}),
+                # 同条件 exit=同 bar 冲突面（entry_exit_conflict 必产）
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                           "rsi_14", {"type": "lt", "threshold": 50})],
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[{"type": "formula", "ref": fcol}])
+        save_strategy(db, strategy_id="st_v2_conflict",
+                      dna_json=v2_dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h")
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_v2_conflict",
+            request_range=_range("2023-03-01T00:00:00Z",
+                                 "2023-03-20T00:00:00Z"))
+        rid = out["record_id"]
+        assert _flags(db, rid) == (1, 1, 1)
+        rows = rr.get_vr_signal_trace_rows(db, rid)
+        swallowed = [r for r in rows if r["outcome"] == "swallowed"]
+        assert swallowed, ("v2 插件源路径 swallowed 行丢失——组装出口"
+                           " 透传断裂（CARD-04 缺陷态：三布尔 1 而行空）")
+        assert all(r["reason"] == "entry_exit_conflict"
+                   for r in swallowed), "同 bar 冲突行 reason 必属求值层族"
+
 
 class TestIdempotentAndPrecheck:
     """T1-I8 幂等锚+T1-S3 precheck 409 不变锚。"""
@@ -307,6 +358,70 @@ class TestDisclosureKeys:
             db, plain["record_id"])["result"])
         assert result2.get("mtf_gated_bars") is None, (
             "无门控面必须 null——与 0=门控全过严格区分")
+
+    def test_v2_mtf_gated_bars_passthrough(self, db, data_dir,
+                                            hypothesis_id):
+        """CARD-04 端到端锚：v2 插件源∧MTF 并存时 mtf_gated_bars 透传。
+
+        修复前组装出口不透传 base.mtf_gated_bars——v2+MTF 组合态计数
+        恒 null（丢失非「无门控面」）。契约（设计卡 2.3）：计数经
+        SignalSet 透出→组装出口透传→result_json 顶层，null 与计数
+        严格区分。v2 单周期无门控面=null 透传同锚（v2 路径的 null 面
+        也须不丢不捏造）。
+        """
+        from core.analysis.plugin_service import register_formula_plugin
+        from core.analysis.registry_meta import available_signal_columns
+        register_formula_plugin(db, name="f_v2_mtf",
+                                expression="zscore(close, 20)")
+        fcol = next(c["column_key"] for c in available_signal_columns(db)
+                    if c["source"] == "formula")
+        # 分量证据前置（同 v2 冲突锚：component_eval 供给面构造）
+        rr.append_research_log(
+            db, hypothesis_id=None, entry_type="component_eval",
+            ref_id="st_v2_mtf", data_ranges="[]",
+            summary=json.dumps({"column": fcol, "source": "formula",
+                                "evaluated_bars": 100}))
+        v2_mtf = StrategyDNA(
+            layers=_mtf_dna().layers,
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            mtf_mode="direction+confluence", confluence_threshold=0.3,
+            signal_sources=[{"type": "formula", "ref": fcol}])
+        save_strategy(db, strategy_id="st_v2_mtf",
+                      dna_json=v2_mtf.to_json(), symbol="BTCUSDT",
+                      timeframe="4h")
+        out = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_v2_mtf",
+            request_range=_range("2023-03-01T00:00:00Z",
+                                 "2023-03-20T00:00:00Z"))
+        result = json.loads(rr.get_validation_record_by_id(
+            db, out["record_id"])["result"])
+        assert isinstance(result.get("mtf_gated_bars"), int), (
+            "v2∧MTF 并存时计数必须透传（int）——组装出口丢失即缺陷态"
+            "（与无门控面 null 不可区分）")
+        # 退化对照：v2 单周期（无 mtf_mode）null 透传——v2 路径的
+        # null 面不捏造计数
+        v2_plain = StrategyDNA(
+            signal_genes=[_gene(SignalRole.ENTRY_TRIGGER),
+                          SignalGene("RSI", {"period": 14},
+                                     SignalRole.EXIT_TRIGGER, "rsi_14",
+                                     {"type": "gt", "threshold": 65})],
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[{"type": "formula", "ref": fcol}])
+        save_strategy(db, strategy_id="st_v2_plain",
+                      dna_json=v2_plain.to_json(), symbol="BTCUSDT",
+                      timeframe="4h")
+        out2 = run_isolated_backtest(
+            db, data_dir, hypothesis_id=hypothesis_id,
+            strategy_id="st_v2_plain",
+            request_range=_range("2023-05-01T00:00:00Z",
+                                 "2023-05-20T00:00:00Z"))
+        result2 = json.loads(rr.get_validation_record_by_id(
+            db, out2["record_id"])["result"])
+        assert result2.get("mtf_gated_bars") is None, (
+            "v2 单周期无门控面=null 透传，不得捏造计数")
 
 
 def save_strategy_and_return(db) -> str:

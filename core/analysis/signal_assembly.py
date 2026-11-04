@@ -40,7 +40,8 @@ def assemble_signal_set(
     v2 流程：规则源（dna_to_signal_set 原路径）→ 插件源求值（formula
     现算 / model walk-forward 现算）→ composition 组合三模式 → SignalSet。
     """
-    from core.strategy.executor import SignalSet, dna_to_signal_set
+    from core.strategy.executor import (
+        SignalSet, dna_to_signal_set, swallowed_rows)
 
     plugin_sources = [
         s for s in (dna.signal_sources or [])
@@ -155,6 +156,14 @@ def assemble_signal_set(
     if "add_suppress" in combined:
         adds = adds & ~combined["add_suppress"]
 
+    # 组合态吞没行（CARD-04）：base 求值层行透传+组合后 entries 与最终
+    # 出场通道的同 bar 冲突面捕获——只捕获不清洗（引擎出场优先兜底
+    # 维持现状，信号行为零变化）；与 base 行的同 bar 重复由
+    # trace_resolver 幂等键族去重兜底
+    _swallowed: list = list(base.swallowed or [])
+    swallowed_rows(combined_entries & exits, "entry_exit_conflict",
+                   _swallowed)
+
     return SignalSet(
         entries=combined_entries,
         exits=exits,
@@ -164,6 +173,8 @@ def assemble_signal_set(
         entry_direction=base.entry_direction,
         mtf_diagnostics=base.mtf_diagnostics,
         confidence=base.confidence,
+        swallowed=(_swallowed or None),
+        mtf_gated_bars=base.mtf_gated_bars,
     )
 
 

@@ -864,10 +864,10 @@ def _build_exec_signal_set(
     # +抹杀率告警，fix-executor-column-and-exit-guard D5）
     # 求值层吞没行·同 bar 互斥面（add-vr-signal-trace 组 3——组装层
     # 重算 both，调用点零改动）
-    from core.strategy.executor import _swallowed_rows
+    from core.strategy.executor import swallowed_rows
     _swallowed: list = []
-    _swallowed_rows(combined_entries & combined_exits,
-                    "entry_exit_conflict", _swallowed)
+    swallowed_rows(combined_entries & combined_exits,
+                   "entry_exit_conflict", _swallowed)
     combined_entries = _apply_entry_exit_mutex(
         combined_entries, combined_exits)
 
