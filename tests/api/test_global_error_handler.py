@@ -125,8 +125,13 @@ def _scan_api_domain() -> tuple[dict, dict]:
                     and any(a.name == "research_error_to_http" for a in node.names)):
                 sem_rows.append((node.lineno, "import"))
             elif (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Name)
-                    and node.func.id == "research_error_to_http"):
+                    and ((isinstance(node.func, ast.Name)
+                          and node.func.id == "research_error_to_http")
+                         # 属性调用形式（common.research_error_to_http）——
+                         # 防回潮锚不留识别盲区：经模块导入再属性调用
+                         # 的新增消费点同样计入守护面
+                         or (isinstance(node.func, ast.Attribute)
+                             and node.func.attr == "research_error_to_http"))):
                 sem_rows.append((node.lineno, "call"))
         if catch_stmts:
             catches[rel] = tuple(s for _, s in sorted(catch_stmts))
