@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from unicodedata import category as _unicode_category
 
 import pandas as pd
 
@@ -1158,6 +1159,24 @@ def _validate_explicit_segments(
                 "RESEARCH_PARAM_INVALID",
                 f"段 #{i} 缺键: {missing}（须三键 {{label, start, end}}）",
                 detail={"param": f"segments[{i}]", "missing": missing})
+        # TD-05 label 值域（强转后、时间解析前——优先于时间错报）：
+        # ≤64 Unicode 码点+无 Cc 控制字符（中文/emoji/全角空格合法），
+        # 封住存储放大与 detail 端点整份回显放大两个面
+        label = str(seg["label"])
+        if len(label) > 64:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 非法: 超过 64 Unicode 码点",
+                detail={"param": f"segments[{i}].label",
+                        "length": len(label)})
+        ctrl = next((ch for ch in label
+                     if _unicode_category(ch) == "Cc"), None)
+        if ctrl is not None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 非法: 含控制字符 U+{ord(ctrl):04X}",
+                detail={"param": f"segments[{i}].label",
+                        "length": len(label)})
         try:
             s, e = _parse_ts(seg["start"]), _parse_ts(seg["end"])
         except Exception as exc:
@@ -1178,7 +1197,7 @@ def _validate_explicit_segments(
                 detail={"param": f"segments[{i}]",
                         "prev_end": prev_end.isoformat(),
                         "start": seg["start"]})
-        out.append({"label": str(seg["label"]), "start": s, "end": e})
+        out.append({"label": label, "start": s, "end": e})
         prev_end = e
     # 恰好覆盖：首段起于请求起点、末段止于请求终点、相邻相接（缝隙
     # 表现为某段起点晚于前段终点——上面重叠检查放行 s >= prev_end，

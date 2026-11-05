@@ -619,3 +619,63 @@ class TestGateBlindSpotFill:
         with pytest.raises(ResearchError) as ei:
             _auto_segments(env["data_dir"], SYMBOL, "1d", start, end)
         assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+
+class TestLabelValueDomain:
+    """repay-vr-review-debts TD-05：显式段 label 值域（≤64 Unicode
+    码点+无 Cc 控制字符；中文/emoji/全角空格合法）——越域
+    RESEARCH_PARAM_INVALID 拒绝（detail.param=segments[i].label 带实际
+    长度），封存储放大与 detail 回显放大。"""
+
+    def _one_seg(self, env, label):
+        return [{"label": label, "start": env["start"],
+                 "end": env["end"]}]
+
+    def test_64_passes_65_and_1000_rejected(self, env):
+        out = _call(env, segmentation="explicit",
+                    segments=self._one_seg(env, "a" * 64))
+        assert out["segments"][0]["label"] == "a" * 64
+        for n in (65, 1000):
+            with pytest.raises(ResearchError) as ei:
+                _call(env, segmentation="explicit",
+                      segments=self._one_seg(env, "a" * n))
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert ei.value.detail["param"] == "segments[0].label"
+            assert ei.value.detail["length"] == n
+
+    @pytest.mark.parametrize("ctrl", ["\x00", "\x1f", "\x7f", "\x85"],
+                             ids=["U+0000", "U+001F", "U+007F", "U+0085"])
+    def test_cc_control_chars_rejected(self, env, ctrl):
+        for label in (ctrl, f"合{ctrl}法", f"ab{ctrl}"):
+            with pytest.raises(ResearchError) as ei:
+                _call(env, segmentation="explicit",
+                      segments=self._one_seg(env, label))
+            assert ei.value.code == "RESEARCH_PARAM_INVALID"
+            assert ei.value.detail["param"] == "segments[0].label"
+
+    def test_legal_labels_pass(self, env):
+        """64 码点中文/emoji/全角空格/数字 label 全合法。"""
+        for label in ("段" * 64, "🚀" * 21 + "🚀",  # 22 emoji=22 码点
+                      "　" * 64,  # 全角空格 U+3000
+                      "12345"):
+            out = _call(env, segmentation="explicit",
+                        segments=self._one_seg(env, label))
+            assert out["segments"][0]["label"] == label
+
+    def test_label_error_precedes_time_error(self, env):
+        """label 非法+时间也非法 → 报 label 错（检查序锚）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, segmentation="explicit",
+                  segments=[{"label": "a" * 65,
+                             "start": "not-a-time", "end": "bogus"}])
+        assert ei.value.detail["param"] == "segments[0].label"
+
+    def test_empty_and_missing_keep_existing_rejection(self, env):
+        """空串（缺键语义）与缺 label 走既有拒绝非值域分支。"""
+        for payload in ([{"label": "", "start": env["start"],
+                          "end": env["end"]}],
+                        [{"start": env["start"], "end": env["end"]}]):
+            with pytest.raises(ResearchError) as ei:
+                _call(env, segmentation="explicit", segments=payload)
+            assert ei.value.detail["param"] == "segments[0]"
+            assert "missing" in ei.value.detail
