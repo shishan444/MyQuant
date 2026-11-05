@@ -1181,7 +1181,8 @@ def dna_to_signal_set(
             # unify-tool-return-contract D7 第二静默面收口：本 except 块
             # 内唯一 ValueError 源即列解析（_get_indicator_column）与
             # 求值路径——「静默跳过该基因」退役，结构化拒绝直达顶层
-            # （路由层转 422）；已知 type 畸形参数防御分支（全 False）
+            # （冒泡应用层全局兜底 research_error_to_http 单源转
+            # 422）；已知 type 畸形参数防御分支（全 False）
             # 属 evaluate_condition 内部形态，不经此面
             raise ResearchError(
                 "RESEARCH_CONDITION_INVALID",

@@ -589,7 +589,8 @@ def register_model_plugin(
     if handle["fast_path"]:
         # 不应发生（estimated_cost 强制重组路径）；防御处理。
         # 0.3.2 卡5：失败子路径已删——executor 快路径失败现直接 raise
-        # （结构化 500 经 plugins 路由 ResearchError 收尾），本段仅剩
+        # （结构化 500 冒泡应用层全局兜底 research_error_to_http 单源
+        # 转出站），本段仅剩
         # 成功直返防御（防未来 fast_path 复活时伪 task 陷阱）
         return {"plugin_id": plugin_id, "status": handle["status"],
                 "task_id": task_id, "signal_column": signal_column,
