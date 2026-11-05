@@ -16,10 +16,7 @@ from fastapi.responses import JSONResponse
 import pandas as pd
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.common import (
-    require_known_timeframe,
-    research_error_to_http,
-)
+from api.routes.research.common import require_known_timeframe
 from api.schemas import AnalysisRunRequest
 from core.analysis.executor import get_executor
 from core.analysis.hypothesis_service import ResearchError
@@ -501,7 +498,7 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         # 判定装载（run_analysis 入口）不扩（design Decision 3）。
         # forward_bars/min_samples 自由 Dict 可选透传（默认 24/30）。
         # load_with_warmup 抛的 ResearchError（WARMUP/PARAM_INVALID 等）在
-        # 快路径经 except ResearchError 冒泡转 422；重组路径（线程池）落
+        # 快路径冒泡至应用层全局兜底转 422；重组路径（线程池）落
         # failed 终态，reason 前缀 [code]（executor 结构化收尾）。
         # 0.4.1 R2：conditions 键组分派（键形制判据 D9——旧组逐字节
         # 冻结；conditions 含长度 1 统一走 S2 引用并集前扩装载 +
@@ -827,77 +824,74 @@ def run_analysis(
             "code": "RESEARCH_TEMPLATE_UNKNOWN",
             "message": f"未知模板: {payload.template}（可用: {_TEMPLATES}）",
             "detail": None})
-    try:
-        # P0 错误通道：非法周期前置 422——否则装载层 validate_known_interval
-        # 抛裸 ValueError 落 500
-        require_known_timeframe(
-            payload.data_range.timeframe, "data_range.timeframe")
-        # 卡1 接线：必填键存在性前置（校验先于装载——省无谓 IO；
-        # 缺键 422 含键名，消灭裸 KeyError→伪 task 家族）
-        _require_required_keys(payload.template, payload.params)
-        # 0.3.3 C-β：heavy 判定改 index-only 计数——原全量预载（装载
-        # 后丢弃/与模板首装双倍 IO）退役；各分支模板保持各自首装
-        # （每请求每分支恰好一次真实装载）
-        rows = _count_rows_index_only(
-            data_dir, payload.data_range.model_dump())
-        if rows < 50:
-            # min_bars 语义对齐（load_and_prepare_df 缺省 50——切片后
-            # 不足即「数据不足」）：经 _load_df 复现原 DATA_INSUFFICIENT
-            # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
-            rows = len(_load_df(data_dir, payload.data_range.model_dump()))
-        heavy = (payload.template in ("pattern_mining", "screen_patterns")
-                 or rows > _HEAVY_ROWS
-                 or (payload.template == "exit_sweep"
-                     and _exit_sweep_group_heavy(payload.params)))
+    # P0 错误通道：非法周期前置 422——否则装载层 validate_known_interval
+    # 抛裸 ValueError 落 500
+    require_known_timeframe(
+        payload.data_range.timeframe, "data_range.timeframe")
+    # 卡1 接线：必填键存在性前置（校验先于装载——省无谓 IO；
+    # 缺键 422 含键名，消灭裸 KeyError→伪 task 家族）
+    _require_required_keys(payload.template, payload.params)
+    # 0.3.3 C-β：heavy 判定改 index-only 计数——原全量预载（装载
+    # 后丢弃/与模板首装双倍 IO）退役；各分支模板保持各自首装
+    # （每请求每分支恰好一次真实装载）
+    rows = _count_rows_index_only(
+        data_dir, payload.data_range.model_dump())
+    if rows < 50:
+        # min_bars 语义对齐（load_and_prepare_df 缺省 50——切片后
+        # 不足即「数据不足」）：经 _load_df 复现原 DATA_INSUFFICIENT
+        # 先抛通道，预载退役不改变小样本请求的拒绝码与错误序
+        rows = len(_load_df(data_dir, payload.data_range.model_dump()))
+    heavy = (payload.template in ("pattern_mining", "screen_patterns")
+             or rows > _HEAVY_ROWS
+             or (payload.template == "exit_sweep"
+                 and _exit_sweep_group_heavy(payload.params)))
 
-        if payload.template == "screen_patterns":
-            # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；
-            # 计算完成后写 screen 留痕（在 stop_check 覆盖范围内——
-            # 超时中断不产生留痕，计算完成的窄竞态窗口宁多留不漏拦）
-            import uuid as _uuid
+    if payload.template == "screen_patterns":
+        # 专属提交路径：task_id 预生成（留痕 ref_id 供闭包引用）；
+        # 计算完成后写 screen 留痕（在 stop_check 覆盖范围内——
+        # 超时中断不产生留痕，计算完成的窄竞态窗口宁多留不漏拦）
+        import uuid as _uuid
 
-            screen_task_id = f"ant_{_uuid.uuid4().hex[:12]}"
+        screen_task_id = f"ant_{_uuid.uuid4().hex[:12]}"
 
-            def _screen_job(stop_check):
-                out = _run_template(payload, data_dir, db_path)
-                _log_screen(db_path, payload, screen_task_id, out)
-                return json.dumps(out, ensure_ascii=False, default=str)
-
-            return _submit_analysis(
-                payload, _screen_job, task_id=screen_task_id)
-
-        if not heavy:
-            # 卡4/D15：快路径失败结构化直返——ResearchError 冒泡 422
-            # （既有通道）；其余异常转 RESEARCH_TEMPLATE_INTERNAL 500
-            # （不穿伪 task_id 异步外衣）。失败可见可审计完整落点=
-            # 响应+logger+研究日志（raise 前落库，留痕不被异常吞掉）
-            try:
-                result = _run_template(payload, data_dir, db_path)
-            except ResearchError:
-                raise
-            except Exception as exc:  # noqa: BLE001 —— 模板内部失败
-                logger.warning("分析快路径失败 %s: %s", payload.template, exc)
-                _log_analysis(db_path, payload,
-                              failure="RESEARCH_TEMPLATE_INTERNAL")
-                raise ResearchError(
-                    "RESEARCH_TEMPLATE_INTERNAL",
-                    f"模板执行失败: {type(exc).__name__}",
-                    status=500,
-                    detail={"template": payload.template,
-                            "exception_type": type(exc).__name__,
-                            "summary": str(exc)[:200]}) from exc
-            _log_result(db_path, payload, result)
-            return result
-
-        # 重组路径：202 + 句柄（线程池执行器；完成回调内落日志）
-        def _job(stop_check):
+        def _screen_job(stop_check):
             out = _run_template(payload, data_dir, db_path)
-            _log_result(db_path, payload, out)
+            _log_screen(db_path, payload, screen_task_id, out)
             return json.dumps(out, ensure_ascii=False, default=str)
 
-        return _submit_analysis(payload, _job)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+        return _submit_analysis(
+            payload, _screen_job, task_id=screen_task_id)
+
+    if not heavy:
+        # 卡4/D15：快路径失败结构化直返——ResearchError 冒泡至
+        # 应用层全局兜底出站；其余异常转 RESEARCH_TEMPLATE_INTERNAL
+        # 500（不穿伪 task_id 异步外衣）。失败可见可审计完整落点=
+        # 响应+logger+研究日志（raise 前落库，留痕不被异常吞掉）
+        try:
+            result = _run_template(payload, data_dir, db_path)
+        except ResearchError:
+            raise
+        except Exception as exc:  # noqa: BLE001 —— 模板内部失败
+            logger.warning("分析快路径失败 %s: %s", payload.template, exc)
+            _log_analysis(db_path, payload,
+                          failure="RESEARCH_TEMPLATE_INTERNAL")
+            raise ResearchError(
+                "RESEARCH_TEMPLATE_INTERNAL",
+                f"模板执行失败: {type(exc).__name__}",
+                status=500,
+                detail={"template": payload.template,
+                        "exception_type": type(exc).__name__,
+                        "summary": str(exc)[:200]}) from exc
+        _log_result(db_path, payload, result)
+        return result
+
+    # 重组路径：202 + 句柄（线程池执行器；完成回调内落日志）
+    def _job(stop_check):
+        out = _run_template(payload, data_dir, db_path)
+        _log_result(db_path, payload, out)
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+    return _submit_analysis(payload, _job)
 
 
 _ANALYSIS_STATUS_LEGAL = ("pending", "running", "succeeded", "failed")

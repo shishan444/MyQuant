@@ -84,29 +84,25 @@ def list_validation_records_endpoint(
     WHERE 下推——total=全部过滤维基数、页满恒 limit（过滤后结果集
     分页）；verdict_counts/unsortable_count 与 total 同基数。
     """
-    from api.routes.research.common import research_error_to_http
     from core.analysis.errors import ResearchError
 
     _SORTS = ("time_desc", "time_asc", "total_return_desc",
               "verdict_quality")
-    try:
-        if sort not in _SORTS:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"sort 非法: {sort!r}（值域 {_SORTS}）",
-                status=422, detail={"field": "sort", "value": sort})
-        if level is not None and level not in _LEVELS:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"level 非法: {level!r}（值域 {_LEVELS}）",
-                status=422, detail={"field": "level", "value": level})
-        if verdict is not None and verdict not in _VERDICTS:
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"verdict 非法: {verdict!r}（值域 {_VERDICTS}）",
-                status=422, detail={"field": "verdict", "value": verdict})
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    if sort not in _SORTS:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"sort 非法: {sort!r}（值域 {_SORTS}）",
+            status=422, detail={"field": "sort", "value": sort})
+    if level is not None and level not in _LEVELS:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"level 非法: {level!r}（值域 {_LEVELS}）",
+            status=422, detail={"field": "level", "value": level})
+    if verdict is not None and verdict not in _VERDICTS:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"verdict 非法: {verdict!r}（值域 {_VERDICTS}）",
+            status=422, detail={"field": "verdict", "value": verdict})
 
     import json as _json
 
