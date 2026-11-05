@@ -552,3 +552,41 @@ class TestTriggerDeviation:
         assert len(events) == 1
         assert events[0]["payload"]["task_id"] == "wb_t1"
         assert events[0]["payload"]["deviation_ratio"] == 0.25
+
+
+class TestCorruptReportFailOpen:
+    """repay-vr-review-debts TD-02：pt_report.report_json 坏值下
+    workbench 两消费点（pending-events 的 trigger 扫描/process-status
+    源可用性）仍观察面降级——外层 except Exception 吞错语义不变
+    （ResearchError 不穿出不 500）。"""
+
+    def _env(self, client):
+        import sqlite3
+
+        from core.persistence.repository import paper
+        from core.paper_trading.reporting import finalize_report
+
+        paper.create_task(
+            client._db, task_id="pt_wbcorp01", strategy_id="st_wb",
+            dna_snapshot_json='{"risk_genes": {"leverage": 2}}',
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        paper.update_task(client._db, "pt_wbcorp01", status="running",
+                          started_at="2026-10-01T00:00:00+00:00")
+        paper.update_task(client._db, "pt_wbcorp01", status="completed",
+                          stopped_at="2026-10-02T00:00:00+00:00")
+        finalize_report(
+            client._db, client._data_dir, "pt_wbcorp01",
+            generated_at="2026-10-02T00:00:00+00:00")
+        conn = sqlite3.connect(client._db)
+        conn.execute(
+            "UPDATE pt_report SET report_json=? WHERE task_id=?",
+            ('{"broken": ', "pt_wbcorp01"))
+        conn.commit()
+        conn.close()
+
+    def test_pending_events_still_200_degraded(self, client):
+        self._env(client)
+        r = client.get("/api/workbench/pending-events")
+        assert r.status_code == 200, r.text
+        assert "events" in r.json()

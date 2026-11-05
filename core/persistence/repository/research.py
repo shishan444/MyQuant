@@ -770,8 +770,19 @@ def get_validation_executions(
             equity.update({"start": eq["start"], "length": eq["length"],
                            "timestamps": None})
         else:
-            equity.update({"timestamps": json.loads(eq["timestamps"])})
-        equity["values"] = json.loads(eq["values"])
+            # 紧凑形制外 timestamps 为库内 JSON 列——结构化通道解析
+            # （repay-vr-review-debts TD-02 点位 1）
+            equity.update({"timestamps": load_stored_json(
+                eq["timestamps"], source="vr_equity_curve.timestamps",
+                detail={"record_id": record_id,
+                        "exec_ref": eq["exec_ref"],
+                        "exec_index": eq["exec_index"]})})
+        # values 两形制恒为 JSON 列（紧凑形制仅 timestamps 缺省）
+        equity["values"] = load_stored_json(
+            eq["values"], source="vr_equity_curve.values",
+            detail={"record_id": record_id,
+                    "exec_ref": eq["exec_ref"],
+                    "exec_index": eq["exec_index"]})
         executions.append({
             "exec_ref": eq["exec_ref"],
             "exec_index": eq["exec_index"],

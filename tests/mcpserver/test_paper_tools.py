@@ -637,3 +637,41 @@ class TestCrossChannelRealRest:
         assert "error" in result
         assert result["error"]["code"] == "PAPER_TIMEFRAME_NOT_SUPPORTED"
         assert result["error"]["detail"]["timeframe"] == "30m"
+
+    def test_query_signals_corrupt_gene_hits_422_via_mcp(self, cross):
+        """repay-vr-review-debts TD-02 辅锚：pt_signal.gene_hits 坏值
+        经 MCP query_paper_signals→tool_safe 错误通道结构化返回
+        PAPER_STORED_DATA_INVALID（与 REST 同链同码——5.6）。"""
+        mcp, db, _ = cross
+        from core.persistence.repository import paper
+
+        paper.create_task(
+            db, task_id="pt_mcpbad001", strategy_id="st-cross",
+            dna_snapshot_json='{"risk_genes": {"leverage": 2}}',
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        paper.save_signals(db, "pt_mcpbad001", [{
+            "strategy_id": "st-cross",
+            "bar_time": "2026-10-20T00:00:00+00:00",
+            "exec_bar_time": "2026-10-20T04:00:00+00:00",
+            "seq": 1, "signal_kind": "open", "direction": "long",
+            "size_fraction": 0.5,
+            "gene_hits": '[{"gene_index": 0}]',
+            "indicator_snapshot": '{"rsi_14": 25.0}',
+            "outcome": "filled", "reject_reason": None, "fill_seq": 1,
+            "capped": None, "equity": 100_000.0, "balance": 100_000.0,
+            "unrealized_pnl": 0.0, "position_side": None,
+            "position_quantity": None, "position_margin": None,
+            "created_at": "2026-10-20T00:00:00+00:00"}])
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE pt_signal SET gene_hits=? WHERE task_id=?",
+            ('{"broken": ', "pt_mcpbad001"))
+        conn.commit()
+        conn.close()
+
+        result = mcp.registered["query_paper_signals"]("pt_mcpbad001")
+        assert "error" in result, result
+        assert result["error"]["code"] == "PAPER_STORED_DATA_INVALID"
+        assert result["error"]["detail"]["task_id"] == "pt_mcpbad001"

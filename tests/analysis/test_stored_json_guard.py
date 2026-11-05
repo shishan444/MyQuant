@@ -276,3 +276,34 @@ class TestModelPluginConfigCorrupt:
         assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
         assert ei.value.detail["ref"] == "model_m"
         assert "parse_error" in ei.value.detail
+
+
+class TestCodeParamSwitch:
+    """TD-02 通道扩展：load_stored_json 的 code 形参可切换错误码
+    （纸盘域 PAPER_STORED_DATA_INVALID）；缺省行为逐字节不变。"""
+
+    def test_default_code_unchanged(self):
+        from core.analysis.errors import load_stored_json
+        with pytest.raises(ResearchError) as ei:
+            load_stored_json(BROKEN_JSON, source="t.c", detail={"k": 1})
+        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["k"] == 1
+        assert "parse_error" in ei.value.detail
+
+    def test_paper_code_switch(self):
+        from core.analysis.errors import load_stored_json
+        with pytest.raises(ResearchError) as ei:
+            load_stored_json(BROKEN_JSON, source="pt_signal.gene_hits",
+                             detail={"task_id": "t1"},
+                             code="PAPER_STORED_DATA_INVALID")
+        assert ei.value.code == "PAPER_STORED_DATA_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["task_id"] == "t1"
+
+    def test_valid_json_roundtrip_both_modes(self):
+        from core.analysis.errors import load_stored_json
+        obj = {"a": [1, 2]}
+        assert load_stored_json(json.dumps(obj), source="t.c") == obj
+        assert load_stored_json(json.dumps(obj), source="t.c",
+                                code="PAPER_STORED_DATA_INVALID") == obj
