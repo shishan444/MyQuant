@@ -161,3 +161,35 @@ def test_d1_converter_consumers_frozen():
         "research_error_to_http 消费点漂移——须显式更新预期清单：\n"
         f"实际: {consumers}\n预期: {dict(_EXPECTED_CONSUMERS)}"
     )
+
+
+@pytest.mark.parametrize("status", [422, 404, 409, 500])
+def test_b1_handwritten_vs_global_handler_byte_identical(api_client, status):
+    """B1 字节级对拍：手写块形态与全局 handler 冒泡输出逐字节一致。
+
+    自包含证明（不依赖删除前后时序基线）：路由 X 重现删除前的
+    手写捕获转换形态，路由 Y 无捕获冒泡全局兜底；独立期望锚由
+    A1 承担，两层分工防同源假绿。
+    """
+    from api.routes.research.common import research_error_to_http
+
+    @api_client.app.get("/__probe/b1x")
+    def probe_x_handwritten():
+        try:
+            raise ResearchError(code="PROBE_PARITY", message="对拍探针",
+                                status=status, detail={"s": status})
+        except ResearchError as exc:
+            raise research_error_to_http(exc) from exc
+
+    @api_client.app.get("/__probe/b1y")
+    def probe_y_bubble():
+        raise ResearchError(code="PROBE_PARITY", message="对拍探针",
+                            status=status, detail={"s": status})
+
+    rx = api_client.get("/__probe/b1x")
+    ry = api_client.get("/__probe/b1y")
+
+    assert rx.status_code == ry.status_code
+    assert rx.content == ry.content
+    assert (rx.headers.get("content-type")
+            == ry.headers.get("content-type"))

@@ -95,7 +95,7 @@ def _body(template, params, **range_extra):
 
 class TestRandomWindowGhostHypothesis404:
     """CARD-05 REST 透传锚：伪造 hypothesis_id 的 random-window-test
-    → 404（服务层 RESEARCH_HYPOTHESIS_NOT_FOUND 经 research_error_to_http
+    → 404（服务层 RESEARCH_HYPOTHESIS_NOT_FOUND 冒泡应用层全局兜底
     透传——原 200 直写虚挂记录行为消灭的端点级固化）。"""
 
     def test_ghost_hypothesis_404(self, api_client, error_env):
@@ -107,6 +107,7 @@ class TestRandomWindowGhostHypothesis404:
             "data_end": "2024-03-01T00:00:00Z",
             "window_bars": 60, "n_windows": 2, "seed": 7})
         assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_NOT_FOUND"
         assert "hyp_ghost" in resp.text
 
 
