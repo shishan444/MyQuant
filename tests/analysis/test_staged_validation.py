@@ -679,3 +679,56 @@ class TestLabelValueDomain:
                 _call(env, segmentation="explicit", segments=payload)
             assert ei.value.detail["param"] == "segments[0]"
             assert "missing" in ei.value.detail
+
+
+class TestLabelDuplicate:
+    """CARD-01（repay-vr-review-debts 批次三）：显式段 label 跨段不
+    重复——重复以 RESEARCH_PARAM_INVALID 拒绝（detail.param=
+    segments[i].label 指明重复段序）；查重在值域检查后、时间解析前
+    （重复+时间非法先报重复）。前置拒绝理由：重复 label 落库撞
+    vr_equity_curve (record_id, exec_ref) UNIQUE 约束裸穿 500。"""
+
+    def _mid(self, env, i):
+        return env["df"].index[i].isoformat()
+
+    def test_two_segs_same_label_rejected(self, env):
+        """两段同名 → 段 #1 拒（重复段序如实指明）。"""
+        mid = self._mid(env, 1650)
+        with pytest.raises(ResearchError) as ei:
+            _call(env, segmentation="explicit", segments=[
+                {"label": "趋势", "start": env["start"], "end": mid},
+                {"label": "趋势", "start": mid, "end": env["end"]}])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "segments[1].label"
+
+    def test_duplicate_precedes_time_error(self, env):
+        """重复 label+时间也非法 → 先报 label 重复（检查序锚：
+        查重在时间解析前——不落 IntegrityError 裸穿面）。"""
+        mid = self._mid(env, 1650)
+        with pytest.raises(ResearchError) as ei:
+            _call(env, segmentation="explicit", segments=[
+                {"label": "a", "start": env["start"], "end": mid},
+                {"label": "a", "start": "not-a-time",
+                 "end": "bogus"}])
+        assert ei.value.detail["param"] == "segments[1].label"
+
+    def test_three_seg_aba_rejects_third(self, env):
+        """A-B-A 三段 → 段 #2 拒（与段 #0 重复，非相邻也拒）。"""
+        m1, m2 = self._mid(env, 1400), self._mid(env, 2000)
+        with pytest.raises(ResearchError) as ei:
+            _call(env, segmentation="explicit", segments=[
+                {"label": "A", "start": env["start"], "end": m1},
+                {"label": "B", "start": m1, "end": m2},
+                {"label": "A", "start": m2, "end": env["end"]}])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "segments[2].label"
+
+    def test_distinct_labels_multi_seg_pass(self, env):
+        """对拍封误伤面：不同 label 多段合法通过（label 保留进输出）。"""
+        m1, m2 = self._mid(env, 1400), self._mid(env, 2000)
+        out = _call(env, segmentation="explicit", segments=[
+            {"label": "段一", "start": env["start"], "end": m1},
+            {"label": "段二", "start": m1, "end": m2},
+            {"label": "段三", "start": m2, "end": env["end"]}])
+        assert [s["label"] for s in out["segments"]] == ["段一", "段二",
+                                                         "段三"]
