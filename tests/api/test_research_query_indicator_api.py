@@ -74,6 +74,21 @@ class TestQueryIndicatorRoute:
             assert detail["code"] == code
             assert detail["message"]
 
+    def test_missing_indicator_key_422(self, api_client, q_env):
+        """单组形制缺 indicator 键（0.4.1 转可选后的路由级缺键拒绝）
+        ——路由内主动构造 ResearchError 冒泡应用层全局兜底出站，
+        阶段四盲区消解补测（覆盖表 70 行原未触达）。"""
+        api_client.app.state.db_path = q_env["db"]
+        api_client.app.state.data_dir = q_env["data_dir"]
+        payload = _payload()
+        payload.pop("indicator")
+        resp = api_client.post("/api/research/query-indicator", json=payload)
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "indicator"
+        assert "indicator" in detail["message"]
+
     def test_zero_audit_trail(self, api_client, q_env):
         """Q2 契约：读数零留痕——成功调用前后 log 计数不变。"""
         api_client.app.state.db_path = q_env["db"]

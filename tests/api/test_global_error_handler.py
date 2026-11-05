@@ -71,6 +71,49 @@ def test_a4_singleton_handler_registered():
     assert ResearchError in _fastapi_app.exception_handlers
 
 
+@pytest.mark.parametrize(
+    ("code", "message", "status", "detail", "expected_detail"),
+    [
+        pytest.param("C_1", "常规", 422, {"k": 1},
+                     {"code": "C_1", "message": "常规", "detail": {"k": 1}},
+                     id="缺省态四元组"),
+        pytest.param("", "空码", 404, None,
+                     {"code": "", "message": "空码", "detail": None},
+                     id="空码-null明细-404"),
+        pytest.param("LONG_CODE_X" * 8, "长消息" * 40, 409,
+                     {"nested": {"a": [1, 2], "b": {"c": None}}},
+                     {"code": "LONG_CODE_X" * 8, "message": "长消息" * 40,
+                      "detail": {"nested": {"a": [1, 2], "b": {"c": None}}}},
+                     id="长值-嵌套明细-409"),
+        pytest.param("S_500", "服务端形态", 500, {},
+                     {"code": "S_500", "message": "服务端形态", "detail": {}},
+                     id="空字典明细-500"),
+        pytest.param("S_503", "边界状态码", 503, "标量明细",
+                     {"code": "S_503", "message": "边界状态码",
+                      "detail": "标量明细"},
+                     id="非常用状态码-标量明细"),
+    ],
+)
+def test_a5_converter_identity_mapping_invariant(
+        code, message, status, detail, expected_detail):
+    """A5 转换单源不变量：任意四元组经 research_error_to_http 恒等映射
+    ——status_code 透传无变换（禁硬编码的函数级证明）、detail 三键
+    键集恒定、三值直通无丢失（期望手写字面构造，不经被测实现生成）。
+
+    全链路透传由 A2 承担（探针路由四态），本用例锚转换函数本身的
+    映射不变量（契约：转换规则单源且无第二语义）。
+    """
+    from api.routes.research.common import research_error_to_http
+
+    exc = ResearchError(code=code, message=message,
+                        status=status, detail=detail)
+    http_exc = research_error_to_http(exc)
+
+    assert http_exc.status_code == status
+    assert http_exc.detail == expected_detail
+    assert set(http_exc.detail) == {"code", "message", "detail"}
+
+
 # ---------------------------------------------------------------------------
 # D 组·静态对账锚（防回潮，无 IO；沿 TD-02 锚先例形制）
 # ---------------------------------------------------------------------------
