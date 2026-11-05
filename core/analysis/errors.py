@@ -16,7 +16,11 @@ from typing import Any
 
 
 class ResearchError(Exception):
-    """研究域错误：code + http_status + message + detail（路由层转 HTTPException）。"""
+    """研究域错误：code + status + message + detail。
+
+    未捕获冒泡至应用层全局 handler（api/app.py），经
+    research_error_to_http 单源转 HTTPException 出站。
+    """
 
     def __init__(self, code: str, message: str, *, status: int = 422, detail: Any = None):
         super().__init__(message)
