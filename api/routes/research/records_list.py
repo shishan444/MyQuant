@@ -65,7 +65,7 @@ def list_validation_records_endpoint(
     level: Optional[str] = Query(None),
     verdict: Optional[str] = Query(None),
     sort: str = Query("time_desc"),
-    q: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, max_length=200),
     generalization: Optional[bool] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

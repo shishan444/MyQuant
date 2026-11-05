@@ -1406,6 +1406,15 @@ class BacktestEngine:
         重放对齐假设（诚实披露）：value_now=订单 bar 前一 bar 期末
         组合价值（portfolio.value() 曲线，首 bar 退化 init_cash）
         ——numba 侧 c.value_now 即订单决策时点的当前组合价值。
+
+        orders_capped 按引擎留痕事件码分派（repay-vr-review-debts
+        TD-01）：仅首仓数量仓（码 10）参与 rf 重放截断计数；加仓单
+        （码 11，引擎路径超限=跳过发单而非截断）与 rf 降级回退单
+        （码 32，size_pct 满额路径）不产生计数——orders_capped 语义
+        收窄为「risk_budget 档首仓单重放中名义敞口超限截断的笔数」。
+        事件码不可判的行（batch_run 装配段清空留痕缓冲后的批评估
+        路径、直调不传缓冲形制）不产生计数（orders_capped==0 +
+        replay_status=="ok" 如实呈现）。
         """
         rg = dna.risk_genes
         mode = rg.position_mode or "fixed"
@@ -1437,6 +1446,18 @@ class BacktestEngine:
             atr_col = (
                 _load_atr_column(enhanced_df, int(rg.atr_period))
                 if rg.sl_mode != "pct" else None)
+            # TD-01 按事件码分派（repay-vr-review-debts）：码 10（risk_
+            # budget 首仓数量仓）走 rf 公式对照计数；码 11（加仓——引擎
+            # 路径敞口超限=跳过发单〔码 30〕非截断，进 trades 的加仓行
+            # 恒足额）与码 32（rf 降级回退单，size_pct 满额路径）引擎
+            # 路径无敞口截断语义，跳过对照不计数（正确公式下对照恒零
+            # ——跳过优于保留恒不命中的重放死代码）；不可判（留痕缓冲
+            # 不在——batch_run 装配段清空后走独立批缓冲/直调形制；pos
+            # 越界；码未知）同样跳过——保守不虚报。与 trace_resolver.
+            # _expected_qty 按码分派同构（语义不合流：resolver 侧 capped
+            # 为实际÷计划比值，本处为公式内截断布尔计数）。
+            trace_buf = getattr(self, "_last_trace_buf", None)
+            n_bars = len(enhanced_df)
             capped = 0
             sizes = []
             for k in range(len(trades)):
@@ -1444,6 +1465,14 @@ class BacktestEngine:
                 price = float(trades["Avg Entry Price"].iloc[k])
                 size = abs(float(trades["Size"].iloc[k]))
                 sizes.append(size)
+                if trace_buf is not None and 0 <= pos < n_bars:
+                    code = int(trace_buf[pos, 0])
+                else:
+                    code = None
+                if code != 10:
+                    # 11/32/不可判行不参与 rf 对照计数（sizes 全行
+                    # 统计语义保持——循环头部 append 不动）
+                    continue
                 if pos <= 0:
                     value_now = float(self.init_cash)
                 else:

@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from core.analysis.errors import ResearchError
+from core.analysis.errors import ResearchError, load_stored_json
 from core.data.timeframes import TF_SECONDS
 from core.paper_trading.constants import PAPER_MIN_BARS, PAPER_MIN_TRADES
 from core.persistence.repository import paper
@@ -166,7 +166,14 @@ def get_final_report(
         "report_version": row["report_version"],
         "generated_at": row["generated_at"],
         "as_of": row["as_of"],
-        "report": json.loads(row["report_json"]),
+        # TD-02 点位 7：固化 report_json 库内 JSON 列结构化解析（损坏
+        # 422 PAPER_STORED_DATA_INVALID——防未来接线裸穿；本函数生产
+        # 零调用已核验）
+        "report": load_stored_json(
+            row["report_json"], source="pt_report.report_json",
+            detail={"task_id": row["task_id"],
+                    "report_version": row["report_version"]},
+            code="PAPER_STORED_DATA_INVALID"),
     }
 
 
@@ -311,8 +318,12 @@ def _deviation_layer(
 
     # 杠杆缝隙处理（design §6.4）：bridge 无 leverage 参数，回测引擎读
     # DNA risk_genes.leverage——deepcopy 快照后写入任务覆写值，bridge 零改动
-    dna_override = deepcopy(
-        StrategyDNA.from_dict(json.loads(task["dna_snapshot_json"])))
+    # TD-02 点位 8：dna_snapshot_json 损坏属工程错误——结构化拒绝使
+    # 报告生成显式失败，不走 unavailable 降级（工程错误≠计算性失败）
+    dna_override = deepcopy(StrategyDNA.from_dict(load_stored_json(
+        task["dna_snapshot_json"], source="pt_task.dna_snapshot_json",
+        detail={"task_id": task["task_id"]},
+        code="PAPER_STORED_DATA_INVALID")))
     dna_override.risk_genes.leverage = int(task["leverage"])
 
     try:

@@ -770,8 +770,19 @@ def get_validation_executions(
             equity.update({"start": eq["start"], "length": eq["length"],
                            "timestamps": None})
         else:
-            equity.update({"timestamps": json.loads(eq["timestamps"])})
-        equity["values"] = json.loads(eq["values"])
+            # 紧凑形制外 timestamps 为库内 JSON 列——结构化通道解析
+            # （repay-vr-review-debts TD-02 点位 1）
+            equity.update({"timestamps": load_stored_json(
+                eq["timestamps"], source="vr_equity_curve.timestamps",
+                detail={"record_id": record_id,
+                        "exec_ref": eq["exec_ref"],
+                        "exec_index": eq["exec_index"]})})
+        # values 两形制恒为 JSON 列（紧凑形制仅 timestamps 缺省）
+        equity["values"] = load_stored_json(
+            eq["values"], source="vr_equity_curve.values",
+            detail={"record_id": record_id,
+                    "exec_ref": eq["exec_ref"],
+                    "exec_index": eq["exec_index"]})
         executions.append({
             "exec_ref": eq["exec_ref"],
             "exec_index": eq["exec_index"],
@@ -824,7 +835,10 @@ def list_validation_records(
       COALESCE+timeframe 相等断言，NULL 任侧保守漏判，B1.4 边界四条）
     - sort：四值封闭枚举（time_desc/time_asc/total_return_desc/
       verdict_quality——B1.3 worst 双路径 SQL+verdict 品质序；sort
-      模式走 ORDER BY 表达式链，cursor keyset 无效忽略）
+      模式走 ORDER BY 表达式链重设排序，cursor 的 keyset WHERE
+      条件仍会生效——同传产生混合翻页语义（过滤按 cursor、排序
+      按 sort），当前生产调用面无此组合，组合语义未定义、调用
+      方不得同传）
     - level/verdict：B1 期形参预置（仓储 WHERE 下推通道；端点 B2
       接线——B1 期不传）
     """

@@ -1344,3 +1344,108 @@ class TestMountSymbolFinalValueGuard:
         _seed_strategy(db, timeframe="4h", symbol="SOLUSDT")
         row = _create(client, symbol="ETHUSDT")
         assert row["symbol"] == "ETHUSDT"
+
+
+class TestStoredJsonCorruptRejected:
+    """repay-vr-review-debts TD-02：纸盘域库内 JSON 列损坏 → 422
+    PAPER_STORED_DATA_INVALID（点位 5-8：pt_signal.gene_hits/
+    indicator_snapshot + pt_task.dna_snapshot_json + pt_report.
+    report_json），不裸穿 500、不 unavailable 降级掩盖。"""
+
+    @staticmethod
+    def _corrupt(db: Path, table: str, column: str, where: str,
+                 value: str = '{"broken": ') -> None:
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute(
+            f"UPDATE {table} SET {column}=? WHERE {where}", (value,))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _assert_422_paper(resp, source_field, extra_keys):
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PAPER_STORED_DATA_INVALID"
+        assert source_field in detail["message"], detail["message"]
+        for k in extra_keys:
+            assert k in detail["detail"]
+        assert "parse_error" in detail["detail"]
+
+    def _signals_env(self, paper_api):
+        client, db = paper_api
+        _seed_strategy(db)
+        tid = _seed_terminal(db)
+        TestSignalEndpoints._seed_signals(db, tid)
+        return client, db, tid
+
+    def test_signals_corrupt_gene_hits_422(self, paper_api) -> None:
+        client, db, tid = self._signals_env(paper_api)
+        self._corrupt(db, "pt_signal", "gene_hits", "seq=4")
+        resp = client.get(f"/api/paper-trading/tasks/{tid}/signals")
+        self._assert_422_paper(
+            resp, "pt_signal.gene_hits", ["task_id", "bar_time", "seq"])
+
+    def test_signals_corrupt_indicator_snapshot_422(self, paper_api) -> None:
+        client, db, tid = self._signals_env(paper_api)
+        self._corrupt(db, "pt_signal", "indicator_snapshot", "seq=4")
+        resp = client.get(f"/api/paper-trading/tasks/{tid}/signals")
+        self._assert_422_paper(
+            resp, "pt_signal.indicator_snapshot",
+            ["task_id", "bar_time", "seq"])
+
+    def _running_with_equity(self, paper_api):
+        """running 任务+权益行（触达滚动报告 deviation 层的 dna
+        快照读取——无区间数据时该层早退不触达点位 8）。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        from core.persistence.repository import paper
+
+        paper.create_task(
+            db, task_id="pt_tcorr01", strategy_id="st-1",
+            dna_snapshot_json='{"risk_genes": {"leverage": 2}}',
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified")
+        paper.update_task(db, "pt_tcorr01", status="running",
+                          started_at=BASE_TIME)
+        paper.append_bar(
+            db, "pt_tcorr01", bar_time=BASE_TIME, fills=[],
+            funding=[], equity={"equity": 100_000.0, "balance": 100_000.0,
+                                "unrealized_pnl": 0.0,
+                                "position_side": None})
+        return client, db
+
+    def test_rolling_report_corrupt_dna_snapshot_422(self, paper_api) -> None:
+        """点位 8：dna_snapshot_json 损坏属工程错误——滚动报告端点
+        422 显式失败（对照计算性失败仍 unavailable 降级，见
+        test_reporting 真桥锚——两语义分立）。"""
+        client, db = self._running_with_equity(paper_api)
+        self._corrupt(db, "pt_task", "dna_snapshot_json",
+                      "task_id='pt_tcorr01'")
+        resp = client.get("/api/paper-trading/tasks/pt_tcorr01/report")
+        self._assert_422_paper(
+            resp, "pt_task.dna_snapshot_json", ["task_id"])
+
+    def test_rolling_report_intact_dna_no_422(self, paper_api) -> None:
+        """构造对拍：同环境完好快照不 422（真桥 ResearchError 走
+        unavailable 降级——点位 8 只拦快照损坏）。"""
+        client, db = self._running_with_equity(paper_api)
+        resp = client.get("/api/paper-trading/tasks/pt_tcorr01/report")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["deviation"]["backtest"] is None
+
+    def test_final_report_corrupt_report_json_422(self, paper_api) -> None:
+        """点位 7：固化版 report_json 损坏 → final 端点 422。"""
+        client, db = paper_api
+        _seed_strategy(db)
+        tid = _seed_terminal(db)
+        from core.paper_trading.reporting import finalize_report
+
+        assert finalize_report(
+            db, client.app.state.data_dir, tid,
+            generated_at=BASE_TIME) is not None
+        self._corrupt(db, "pt_report", "report_json",
+                      f"task_id='{tid}'")
+        resp = client.get(f"/api/paper-trading/tasks/{tid}/report/final")
+        self._assert_422_paper(
+            resp, "pt_report.report_json", ["task_id", "report_version"])

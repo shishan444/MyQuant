@@ -764,8 +764,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         当时权益×min(leverage,max_exposure) 超限截断+orders_capped
         计数披露；risk_budget 须同时声明 risk_fraction 与 stop_loss
         ——止损距离是仓位公式分母；回测报告 metrics 携带 position_
-        sizing 六子键（mode/risk_fraction/leverage_cap/orders_
-        capped/avg_entry_size/max_entry_size）；组间配对对照表：
+        sizing 七子键（mode/risk_fraction/leverage_cap/replay_
+        status/orders_capped/avg_entry_size/max_entry_size）；
+        组间配对对照表：
         risk_budget 只管首仓，加仓仍按 add_fraction 固定比例、
         max_exposure 全局取严、exit_fraction 比例语义不变）；
         risk_fraction∈(0,0.5]（每笔风险预算占当时权益比例）；

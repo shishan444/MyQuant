@@ -343,3 +343,74 @@ class TestDegradedPassthrough:
             "B2-9 降级形态对账：len(timestamps)==len(values)"
         # 直插 params 三键读取侧如实呈现（值任取——读取面无值域约束）
         assert body["init_cash"] == 1.0 and body["fee"] == 2.0
+
+
+class TestStoredJsonCorruptRejected:
+    """repay-vr-review-debts TD-02：库内 JSON 列损坏 → 422
+    RESEARCH_STORED_DATA_INVALID 结构化拒绝（点位 1-4：equity
+    timestamps/values + params/result），不裸穿 500。"""
+
+    def _seed_record(self, db_path, hypothesis_id, *, params="{}",
+                     result="{}"):
+        rr.save_validation_with_log(
+            db_path, record_id="rec_corrupt", hypothesis_id=hypothesis_id,
+            strategy_id="st_x", level="isolated_backtest",
+            params=params, result=result, verdict="pass",
+            range_hash="rh_corrupt")
+
+    def _seed_equity(self, db_path, timestamps, values):
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.orm.models import VrEquityCurve
+        from sqlalchemy import insert
+        with engine_for(db_path).begin() as conn:
+            conn.execute(insert(VrEquityCurve).values(
+                record_id="rec_corrupt", exec_ref="main", exec_index=0,
+                range_start="s", range_end="e", grid_aligned=0,
+                timeframe="4h", start=None, length=None,
+                timestamps=timestamps, values=values))
+
+    def _get(self, api_client):
+        return api_client.get(
+            "/api/research/validation-records/rec_corrupt/detail")
+
+    @staticmethod
+    def _assert_422(r, source_field, extra_keys):
+        assert r.status_code == 422, r.text
+        body = r.json()["detail"]
+        assert body["code"] == "RESEARCH_STORED_DATA_INVALID"
+        assert source_field in body["message"], body["message"]
+        assert body["detail"]["record_id"] == "rec_corrupt"
+        for k in extra_keys:
+            assert k in body["detail"]
+        assert "parse_error" in body["detail"]
+
+    def test_corrupt_params_rejected(self, api_client, db_path,
+                                     hypothesis_id):
+        self._seed_record(db_path, hypothesis_id,
+                          params='{"init_cash": 1.0,', result="{}")
+        self._assert_422(self._get(api_client),
+                         "validation_records.params", [])
+
+    def test_corrupt_result_rejected(self, api_client, db_path,
+                                     hypothesis_id):
+        self._seed_record(db_path, hypothesis_id, params="{}",
+                          result='{"metrics": {"trades": 3}')
+        self._assert_422(self._get(api_client),
+                         "validation_records.result", [])
+
+    def test_corrupt_equity_timestamps_rejected(self, api_client, db_path,
+                                                hypothesis_id):
+        self._seed_record(db_path, hypothesis_id)
+        self._seed_equity(db_path, '["2023-03-01", "2023-03', '[100.0]')
+        self._assert_422(self._get(api_client),
+                         "vr_equity_curve.timestamps",
+                         ["exec_ref", "exec_index"])
+
+    def test_corrupt_equity_values_rejected(self, api_client, db_path,
+                                            hypothesis_id):
+        self._seed_record(db_path, hypothesis_id)
+        self._seed_equity(db_path,
+                          '["2023-03-01T00:00:00+00:00"]', '[100.0, 101')
+        self._assert_422(self._get(api_client),
+                         "vr_equity_curve.values",
+                         ["exec_ref", "exec_index"])

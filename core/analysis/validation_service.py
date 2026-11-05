@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from unicodedata import category as _unicode_category
 
 import pandas as pd
 
@@ -1141,7 +1142,8 @@ def _validate_explicit_segments(
     req_start: str, req_end: str,
 ) -> List[Dict[str, Any]]:
     """显式段列表校验（恰好切分语义：段在请求区间内、并集恰覆盖、
-    相邻相接不重叠、时间升序；三键齐备）——违反拒第一违规段。
+    相邻相接不重叠、时间升序；三键齐备、label 跨段不重复）——
+    违反拒第一违规段。
     """
     if not segments:
         raise ResearchError(
@@ -1150,6 +1152,7 @@ def _validate_explicit_segments(
             detail={"param": "segments"})
     rs, re_ = _parse_ts(req_start), _parse_ts(req_end)
     prev_end: Optional[datetime] = None
+    seen_labels: set = set()
     out: List[Dict[str, Any]] = []
     for i, seg in enumerate(segments):
         missing = [k for k in ("label", "start", "end") if not seg.get(k)]
@@ -1158,6 +1161,34 @@ def _validate_explicit_segments(
                 "RESEARCH_PARAM_INVALID",
                 f"段 #{i} 缺键: {missing}（须三键 {{label, start, end}}）",
                 detail={"param": f"segments[{i}]", "missing": missing})
+        # TD-05 label 值域（强转后、时间解析前——优先于时间错报）：
+        # ≤64 Unicode 码点+无 Cc 控制字符（中文/emoji/全角空格合法），
+        # 封住存储放大与 detail 端点整份回显放大两个面
+        label = str(seg["label"])
+        if len(label) > 64:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 非法: 超过 64 Unicode 码点",
+                detail={"param": f"segments[{i}].label",
+                        "length": len(label)})
+        ctrl = next((ch for ch in label
+                     if _unicode_category(ch) == "Cc"), None)
+        if ctrl is not None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 非法: 含控制字符 U+{ord(ctrl):04X}",
+                detail={"param": f"segments[{i}].label",
+                        "length": len(label)})
+        # label 跨段重复校验（值域后、时间解析前）：重复 label 落库时撞
+        # vr_equity_curve (record_id, exec_ref) UNIQUE 约束，IntegrityError
+        # 会裸穿 API 成 500，故在校验层前置拒绝
+        if label in seen_labels:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 重复: {label}",
+                detail={"param": f"segments[{i}].label",
+                        "duplicate": label})
+        seen_labels.add(label)
         try:
             s, e = _parse_ts(seg["start"]), _parse_ts(seg["end"])
         except Exception as exc:
@@ -1178,7 +1209,7 @@ def _validate_explicit_segments(
                 detail={"param": f"segments[{i}]",
                         "prev_end": prev_end.isoformat(),
                         "start": seg["start"]})
-        out.append({"label": str(seg["label"]), "start": s, "end": e})
+        out.append({"label": label, "start": s, "end": e})
         prev_end = e
     # 恰好覆盖：首段起于请求起点、末段止于请求终点、相邻相接（缝隙
     # 表现为某段起点晚于前段终点——上面重叠检查放行 s >= prev_end，
