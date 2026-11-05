@@ -116,6 +116,14 @@ HINTS: Dict[str, str] = {
     "RESEARCH_INDICATOR_UNKNOWN":
         "指标不在注册表：查看 detail.available_indicators 清单"
         "（元数据经 list_indicators 查询）",
+    # 指标依赖装配（core/features/indicators.py 三处+patterns/
+    # divergence.py 两处）：detail 的 indicator=声明方、dependency=
+    # 问题依赖、chain=循环依赖完整链
+    "RESEARCH_INDICATOR_DEPENDENCY_FAILED":
+        "指标依赖装配失败：按 detail 的 dependency 定位问题依赖"
+        "（indicator 为声明方），chain 为循环依赖声明的完整链——"
+        "依赖不在注册表或链成环属声明错误，修 depends_on 声明；"
+        "计算失败按 message 内层异常修指标参数或数据",
     "RESEARCH_PARAM_INVALID":
         "模板参数非法：查看 detail 的 param/legal_range"
         "（各参数面的合法形制以 detail 为准）",
@@ -149,6 +157,15 @@ HINTS: Dict[str, str] = {
         "支持大区间分区间验证）",
     "FEATURE_REQUEST_NOT_FOUND":
         "需求单不存在：核对 request_id 或用 list_feature_requests 查询",
+    # ---- 纸盘域（库内 JSON 列结构化解析——load_stored_json 经 code
+    # 形参派发域码，抛出点 api/routes/paper_trading.py 与 core/
+    # paper_trading/reporting.py）
+    "PAPER_STORED_DATA_INVALID":
+        "纸盘库内持久化数据损坏（非请求参数错误，重试无效）：按 detail 的"
+        "parse_error 与记录标识（task_id/bar_time/seq/report_version）"
+        "定位损坏行（message 点名 pt_signal/pt_report 等表.字段），"
+        "核对是否被外部改写或数据迁移遗留；持续出现附 detail "
+        "提交问题报告",
     # ---- MCP 客户端侧
     "MCP_ENDPOINT_NOT_ALLOWED":
         "端点不在当前档位白名单：readonly 档只读；研究执行需 research 档"
