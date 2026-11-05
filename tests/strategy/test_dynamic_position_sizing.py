@@ -576,3 +576,104 @@ class TestGateCompletions:
         assert validate_dna(_dna(position_mode="risk_budget",
                                  risk_fraction=0.04,
                                  stop_loss=0.05)).is_valid
+
+
+class TestOrdersCappedEventCodeDispatch:
+    """repay-vr-review-debts TD-01：orders_capped 按引擎留痕事件码
+    分派——仅首仓单（码 10）参与 rf 重放截断计数；加仓单（码 11，
+    引擎路径超限=跳过发单而非截断）与 rf 降级回退单（码 32）不产生
+    计数；事件码不可判（留痕缓冲不在：直调/batch_run 装配段清空后）
+    不产生计数（orders_capped==0 + replay_status=="ok"）。"""
+
+    def _run_sample_add(self):
+        """risk_budget_add 样本（atr 档距离逐笔变）：加仓成交与首仓
+        截断跨回合并存的构造（33 回合 11 截断+12 张加仓单）。"""
+        from tests.fixtures.vr_trace_gen import build_sample
+
+        s = build_sample("risk_budget_add")
+        from core.backtest.engine import BacktestEngine
+        eng = BacktestEngine(
+            init_cash=s["init_cash"], fee=s["fee"],
+            slippage=s["slippage"])
+        res, pf = eng.run_with_portfolio(s["dna"], s["df"])
+        return res, pf
+
+    def test_add_fills_do_not_inflate_capped(self):
+        """①②：含加仓成交回测 orders_capped 仅计首仓截断（独立重放
+        对账——加仓单在场而不虚报截断）。"""
+        res, pf = self._run_sample_add()
+        ps = res.metrics_dict["position_sizing"]
+        # 加仓单在场（orders 数超出「每回合一进一出」基线）
+        n_tr = pf.trades.count()
+        assert pf.orders.count() > 2 * n_tr - 1, \
+            "样本前提失效：无加仓成交（换构造或查样本）"
+        # 独立重放：10 码 trades 行中 rf 名义超限数（披露同公式、
+        # 独立实现——期望值不经被测函数得出）
+        import pandas as pd
+
+        from tests.fixtures.vr_trace_gen import build_sample
+        from core.backtest.engine import _load_atr_column, \
+            risk_budget_qty
+
+        s = build_sample("risk_budget_add")
+        df, rg = s["df"], s["dna"].risk_genes
+        tr = pf.trades.records_readable
+        val = pf.value()
+        val = val.iloc[:, 0] if isinstance(val, pd.DataFrame) else val
+        idx = df.index.get_indexer(pd.DatetimeIndex(tr["Entry Timestamp"]))
+        atr_col = _load_atr_column(df, int(rg.atr_period))
+        expect = 0
+        for k in range(len(tr)):
+            pos = int(idx[k])
+            price = float(tr["Avg Entry Price"].iloc[k])
+            vn = float(val.values[pos - 1]) if pos > 0 else 100000.0
+            stop_dist = 1.0 * float(atr_col[pos])
+            _, hit = risk_budget_qty(
+                vn, price, stop_dist, float(rg.risk_fraction),
+                float(rg.leverage),
+                float(rg.max_exposure) if rg.max_exposure is not None
+                else 1.0)
+            expect += int(hit)
+        assert expect > 0, "样本前提失效：无首仓截断回合"
+        assert ps["orders_capped"] == expect, \
+            f"orders_capped={ps['orders_capped']} 应==首仓截断重放数" \
+            f" {expect}（加仓行不得虚增计数）"
+        assert ps["replay_status"] == "ok"
+
+    def test_direct_call_without_trace_buf_capped_zero(self):
+        """③直调形制：实例无留痕缓冲（getattr None）→ orders_capped
+        ==0 + replay_status=="ok"（F-B4-1 :332 族直调路径的键值锚）。"""
+        from core.backtest.engine import BacktestEngine
+
+        df = make_enhanced_df(n=400, seed=42)
+        dna = make_dna(entry_value=30, exit_value=70)
+        dna.risk_genes.position_mode = "risk_budget"
+        dna.risk_genes.risk_fraction = 0.04
+        dna.risk_genes.stop_loss = 0.05
+        eng = BacktestEngine()
+        assert getattr(eng, "_last_trace_buf", None) is None
+        res, pf = eng.run_with_portfolio(dna, df)
+        assert res.total_trades > 0
+        ps = res.metrics_dict["position_sizing"]
+        assert ps["orders_capped"] == 0, "码不可判行不产生计数"
+        assert ps["replay_status"] == "ok"
+
+    def test_batch_run_risk_budget_capped_zero_and_ok(self):
+        """③b⑥：batch_run 公开入口键值锚——装配段清空留痕缓冲后走
+        None 分支：orders_capped==0 + replay_status=="ok"（锁完整
+        链路：入口→装配段清空→批组装→披露 None 分支）。改前红承载
+        样本：risk_budget 档 batch（funding_batch 的 batch 面 fixed 档
+        恒 0 不能承载）。"""
+        from core.backtest.engine import BacktestEngine
+        from tests.fixtures.vr_trace_gen import build_sample
+
+        s = build_sample("risk_budget_add")
+        eng = BacktestEngine(
+            init_cash=s["init_cash"], fee=s["fee"],
+            slippage=s["slippage"])
+        results = eng.batch_run([s["dna"]], s["df"])
+        assert len(results) == 1
+        ps = results[0].metrics_dict["position_sizing"]
+        assert ps["orders_capped"] == 0, \
+            "batch_run 路径留痕缓冲不在——码不可判不产生计数"
+        assert ps["replay_status"] == "ok"

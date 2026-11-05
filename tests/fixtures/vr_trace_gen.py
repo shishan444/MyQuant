@@ -176,6 +176,33 @@ SAMPLES: Dict[str, Dict[str, Any]] = {
         },
         "engine": {"init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005},
     },
+    "risk_budget_add": {
+        # repay-vr-review-debts TD-01 行为变化承载样本：risk_budget 档
+        # （atr 档距离逐笔变——rf 名义随 ATR 相对波动跨 cap 边界）+
+        # 加仓成交（11 码，足额回合内）+首仓截断回合（10 码）并存
+        # ——orders_capped 按码分派前后的行为变化由此样本 golden 锁定
+        # （首仓截断=顶格 cap 后该回合加仓必拒——截断回合与加仓回合
+        # 经 ATR 逐笔动态跨回合并存）
+        "gen": {"scenario": "volatile", "seed": 303, "n": 400,
+                "base_price": 40000.0, "freq": "4h"},
+        "dna": {
+            "signal_genes": [
+                _gene("EMA", {"period": 21}, "entry_trigger", "ema",
+                      {"type": "price_above"}),
+                _gene("EMA", {"period": 7}, "add_trigger", "ema",
+                      {"type": "price_above"}),
+                _gene("EMA", {"period": 21}, "exit_trigger", "ema",
+                      {"type": "price_below"}),
+            ],
+            "logic_genes": _logic(),
+            "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+            "risk_genes": _risk(
+                direction="long", sl_mode="atr", stop_loss=1.0,
+                position_mode="risk_budget", risk_fraction=0.03,
+                leverage=1, max_exposure=1.0, add_fraction=0.1),
+        },
+        "engine": {"init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005},
+    },
     "risk_budget_cap": {
         "gen": {"scenario": "volatile", "seed": 707, "n": 400,
                 "base_price": 40000.0, "freq": "4h"},
