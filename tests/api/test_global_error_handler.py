@@ -9,6 +9,9 @@ research_error_to_http 生成，防同源假绿）、A2 状态透传四态参数
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -66,3 +69,95 @@ def test_a4_singleton_handler_registered():
     from api.app import _fastapi_app
 
     assert ResearchError in _fastapi_app.exception_handlers
+
+
+# ---------------------------------------------------------------------------
+# D 组·静态对账锚（防回潮，无 IO；沿 TD-02 锚先例形制）
+# ---------------------------------------------------------------------------
+
+_API_ROOT = Path(__file__).resolve().parents[2] / "api"
+
+# except ResearchError 豁免清单（带副作用的显式捕获）——新增须显式
+# 更新本清单并在锚消息注明理由；纯转换捕获一律冒泡走全局兜底
+_EXPECTED_CATCHES = {
+    # rejected 审计块：先落审计记录再转结构化拒绝（业务契约）
+    "api/routes/research/plugins.py": ("except ResearchError as exc:",),
+    # 宽窄双通道窄通道：bare re-raise 防吞（删则 ResearchError 掉进
+    # 宽通道被转 RESEARCH_TEMPLATE_INTERNAL 500）
+    "api/routes/research/analysis.py": ("except ResearchError:",),
+}
+
+# research_error_to_http 消费点（文件 + 语句语义）：hypothesis_cards 为
+# 主动构造本地转换（非捕获、design §3 范围外不动项）
+_EXPECTED_CONSUMERS = {
+    "api/app.py": ("import", "call"),  # 模块级 import + 全局 handler 调用
+    "api/routes/research/common.py": ("def",),  # 唯一定义
+    "api/routes/research/plugins.py": ("import", "call"),  # 模块级 import + 保留块调用
+    "api/routes/research/hypothesis_cards.py": ("import", "call"),  # 函数内 import + 主动构造转换
+}
+
+
+def _scan_api_domain() -> tuple[dict, dict]:
+    """api 域静态扫描（ast 语义级，免疫注释/docstring 干扰）。
+
+    Returns:
+        (catches, consumers)——catches: 文件 → except 语句原文元组；
+        consumers: 文件 → 语句语义元组（import/def/call，按行号序）。
+    """
+    catches: dict[str, tuple] = {}
+    consumers: dict[str, tuple] = {}
+    for py in sorted(_API_ROOT.rglob("*.py")):
+        rel = f"api/{py.relative_to(_API_ROOT)}"
+        text = py.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        tree = ast.parse(text)
+        catch_stmts = []
+        sem_rows = []
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ExceptHandler)
+                    and isinstance(node.type, ast.Name)
+                    and node.type.id in ("ResearchError", "_ResearchError")):
+                catch_stmts.append((node.lineno, lines[node.lineno - 1].strip()))
+            elif (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "research_error_to_http"):
+                sem_rows.append((node.lineno, "def"))
+            elif (isinstance(node, ast.ImportFrom)
+                    and any(a.name == "research_error_to_http" for a in node.names)):
+                sem_rows.append((node.lineno, "import"))
+            elif (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "research_error_to_http"):
+                sem_rows.append((node.lineno, "call"))
+        if catch_stmts:
+            catches[rel] = tuple(s for _, s in sorted(catch_stmts))
+        if sem_rows:
+            consumers[rel] = tuple(s for _, s in sorted(sem_rows))
+    return catches, consumers
+
+
+def test_d1_catch_sites_frozen():
+    """D1 锚一：except ResearchError 点位与豁免清单精确相等。
+
+    纪律：未来合法新增带副作用的 ResearchError 捕获（审计/降级等）
+    须显式更新 _EXPECTED_CATCHES；纯转换捕获一律冒泡走应用层全局
+    兜底（api/app.py），不得新增本地转换点。
+    """
+    catches, _ = _scan_api_domain()
+    assert catches == dict(_EXPECTED_CATCHES), (
+        "except ResearchError 点位漂移——豁免清单须显式更新并注明理由：\n"
+        f"实际: {catches}\n预期: {dict(_EXPECTED_CATCHES)}"
+    )
+
+
+def test_d1_converter_consumers_frozen():
+    """D1 锚二：research_error_to_http 消费点与预期精确相等。
+
+    纪律：转换函数消费面收敛为四文件七处（app 全局兜底 / common
+    定义 / plugins 保留块 / hypothesis_cards 主动构造）；新增消费点
+    须显式更新 _EXPECTED_CONSUMERS 并注明语义。
+    """
+    _, consumers = _scan_api_domain()
+    assert consumers == dict(_EXPECTED_CONSUMERS), (
+        "research_error_to_http 消费点漂移——须显式更新预期清单：\n"
+        f"实际: {consumers}\n预期: {dict(_EXPECTED_CONSUMERS)}"
+    )

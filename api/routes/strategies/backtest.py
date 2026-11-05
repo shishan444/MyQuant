@@ -48,7 +48,6 @@ from api.schemas import (
     StrategyUpdate,
 )
 from core.backtest import engine as _bt_engine_mod
-from core.analysis.errors import ResearchError  # 轻量定义点直取（errors.py 唯一权威）
 from core.scoring.scorer import score_strategy
 from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
@@ -115,14 +114,9 @@ def backtest_strategy(
     # strategy_id 分支 timeframe 取策略行值（自洽调用自然通过，兼防
     # 直改库的行/DNA 周期漂移）；内联分支对显式传参异轴生效。
     from core.analysis.backtest_bridge import ensure_timeframe_consistent
-    from core.analysis.errors import ResearchError as _ResearchError
-    from api.routes.research.common import research_error_to_http
 
-    try:
-        ensure_timeframe_consistent(
-            dna, timeframe, strategy_id=strategy_id)
-    except _ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    ensure_timeframe_consistent(
+        dna, timeframe, strategy_id=strategy_id)
 
     # 装载数据集（白名单校验后直拼路径）
     # 命名白名单拒绝式校验（dataset_id 直拼读取路径，对齐 csv_importer 生成侧契约）
@@ -199,15 +193,11 @@ def backtest_strategy(
         )
 
     # 执行器 raise 化后的传播配套（CARD-08）：非法条件类型等经
-    # engine.run 冒泡的 ResearchError 转结构化 422，不裸穿 500
-    # （与验证端点 validate.py catch 形制对齐——装载/评分链零
-    # ResearchError 抛出面，捕获面收口在引擎执行单点）
-    try:
-        result = engine.run(
-            dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-    except ResearchError as exc:
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
+    # engine.run 冒泡的 ResearchError 冒泡应用层全局兜底转结构化
+    # 422，不裸穿 500（装载/评分链零 ResearchError 抛出面，冒泡
+    # 面单点收口在引擎执行）
+    result = engine.run(
+        dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
     metrics = backtest_service.fallback_metrics(result)
     score_result = score_strategy(
