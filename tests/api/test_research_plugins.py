@@ -88,6 +88,11 @@ class TestFormulaPlugin:
             "name": "cheat", "expression": "shift(close, -5)"})
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "RESEARCH_FORMULA_INVALID"
+        # rejected 审计记录在场（保留块副作用契约——经审计端点可查）
+        audit = api_client.get(
+            "/api/research/plugins/formula?name=cheat").json()
+        rejected = [r for r in audit["items"] if r["status"] == "rejected"]
+        assert rejected, "rejected 留档须在场"
         # rejected 只留记录不注册
         cols = api_client.get("/api/research/signals").json()
         assert not any("cheat" in c["column_key"] for c in cols)

@@ -193,3 +193,22 @@ def test_b1_handwritten_vs_global_handler_byte_identical(api_client, status):
     assert rx.content == ry.content
     assert (rx.headers.get("content-type")
             == ry.headers.get("content-type"))
+
+
+def test_c3_explicit_broad_catch_takes_priority(api_client):
+    """C3 宽捕获优先级探针：路由内 except Exception 先于全局兜底。
+
+    workbench fail-open 观察面的机理对应物——显式宽捕获吞掉
+    ResearchError 返回降级响应，不冒泡全局 handler。
+    """
+    @api_client.app.get("/__probe/c3")
+    def probe_c3_fail_open():
+        try:
+            raise ResearchError(code="PROBE_SWALLOWED", message="被宽捕获吞掉")
+        except Exception:  # noqa: BLE001 —— 探针：fail-open 形态
+            return {"degraded": True}
+
+    resp = api_client.get("/__probe/c3")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"degraded": True}
