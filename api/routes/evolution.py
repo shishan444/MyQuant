@@ -221,17 +221,12 @@ def create_task(
         # CARD-01（event-triggers 批次三）：进化任务入口同款早拒绝
         # ——initial_dna 的 entry_trigger_policy 形制校验先于任务落库
         # （runner 异步消费，落库后拒绝只能失败整个任务）；与 strategies
-        # 路由同形制（ResearchError→HTTPException 共享底座）
-        from core.analysis.hypothesis_service import ResearchError
-        try:
-            dna = payload.initial_dna.to_dna()
-            from core.analysis.event_policy import validate_policy
-            # 回写归一形（security 观察项采纳）：显式 none 归一 None 落库
-            # =与缺省同存储同签名（D4 幂等签名）；非法形赋值前 422
-            dna.entry_trigger_policy = validate_policy(dna.entry_trigger_policy)
-        except ResearchError as exc:
-            from api.routes.research.common import research_error_to_http
-            raise research_error_to_http(exc) from exc
+        # 路由同形制（ResearchError 冒泡应用层全局兜底）
+        dna = payload.initial_dna.to_dna()
+        from core.analysis.event_policy import validate_policy
+        # 回写归一形（security 观察项采纳）：显式 none 归一 None 落库
+        # =与缺省同存储同签名（D4 幂等签名）；非法形赋值前 422
+        dna.entry_trigger_policy = validate_policy(dna.entry_trigger_policy)
 
         # 手工 DNA 拒绝收敛 _common 单源 helper（CARD-05）：值域校验
         # （review-042 CARD-15——initial_dna 坏值 422 先于落库，唯祖先

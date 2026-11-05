@@ -67,19 +67,16 @@ def create_model_plugin(
     data_dir: Path = Depends(get_data_dir),
 ):
     """模型插件配置：同步校验 + 异步训练（202 + 句柄轮询）。"""
-    try:
-        out = ps.register_model_plugin(
-            db_path, data_dir,
-            name=payload.name, features=payload.features,
-            template=payload.template, params=payload.params,
-            target=payload.target, symbol=payload.symbol,
-            timeframe=payload.timeframe,
-            data_start=payload.data_start, data_end=payload.data_end)
-        if out.get("status") == "pending":
-            return JSONResponse(status_code=202, content=out)
-        return out
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    out = ps.register_model_plugin(
+        db_path, data_dir,
+        name=payload.name, features=payload.features,
+        template=payload.template, params=payload.params,
+        target=payload.target, symbol=payload.symbol,
+        timeframe=payload.timeframe,
+        data_start=payload.data_start, data_end=payload.data_end)
+    if out.get("status") == "pending":
+        return JSONResponse(status_code=202, content=out)
+    return out
 
 
 @router.get("/plugins/pools")

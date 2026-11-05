@@ -689,8 +689,8 @@ def _cond_number(cond: Dict, key: str, default, cast=float):
     """动作数值键取值（F-2：坏值结构化拒绝而非裸 float()/int() 穿 500）。
 
     弱类型入口（run_analysis 的 condition 为任意 dict）下 SNR 动作的
-    proximity_pct 等键可为不可解析值——ResearchError 经 Lab/分析路由
-    既有的 research_error_to_http 兜底转 422。cast 保留原类型语义
+    proximity_pct 等键可为不可解析值——ResearchError 冒泡应用层
+    全局兜底（research_error_to_http 单源）转 422。cast 保留原类型语义
     （lookback 的 int 对 "10.5" 依旧拒绝，不隐式截断）。
     """
     from core.analysis.hypothesis_service import ResearchError

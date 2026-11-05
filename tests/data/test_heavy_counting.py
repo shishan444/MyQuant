@@ -111,13 +111,14 @@ class TestIndexOnlyCounting:
 class TestSmallSampleGuard:
     """特征网：C-β 重构保留的小样本错误序——index-only 计数 < 50 时
     经 _load_df 复现原 DATA_INSUFFICIENT 先抛通道（预载退役不改变
-    小样本请求的拒绝码）。锚定现状拒绝码与 HTTP 出站形制。"""
+    小样本请求的拒绝码）。锚定现状拒绝码（HTTP 出站形制由
+    tests/api/test_global_error_handler.py 全局兜底族承载——路由
+    捕获收敛后函数直调下 ResearchError 直抛）。"""
 
     def test_rows_below_min_bars_keeps_data_insufficient(self, tmp_path):
-        from fastapi import HTTPException
-
         from api.routes.research.analysis import run_analysis
         from api.schemas import AnalysisRunRequest, DataRangeItem
+        from core.analysis.errors import ResearchError
         from core.persistence.db_ext import init_db_ext
 
         df = _env(tmp_path, n=900)
@@ -135,7 +136,7 @@ class TestSmallSampleGuard:
             data_range=DataRangeItem(
                 symbol=rng["symbol"], timeframe=rng["timeframe"],
                 start=rng["start"], end=rng["end"]))
-        with pytest.raises(HTTPException) as ei:
+        with pytest.raises(ResearchError) as ei:
             run_analysis(payload, db_path=db, data_dir=tmp_path)
-        assert ei.value.status_code == 422
-        assert ei.value.detail["code"] == "RESEARCH_DATA_INSUFFICIENT"
+        assert ei.value.status == 422
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"

@@ -99,7 +99,8 @@ def _param_number(params: Dict[str, Any], key: str, cast=float, min_value=None,
     """detector 数值参数取值（F-2：坏值结构化拒绝而非裸 float()/int() 穿 500）。
 
     params 为 default_params 与请求合并后的 dict（key 必在）。坏值
-    raise ResearchError 经 scene 路由兜底转 422。cast 保留原类型语义
+    raise ResearchError 冒泡应用层全局兜底（research_error_to_http
+    单源）转 422。cast 保留原类型语义
     （int 对 "10.5" 依旧拒绝，不隐式截断）；非有限数拒绝——json.loads
     接受 NaN/Infinity 字面量，NaN 比较恒 False 漏过值域、inf 恒触发/
     静默无结果、经 int() 转换还 OverflowError 裸穿；min_value 提供时

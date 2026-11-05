@@ -1,7 +1,7 @@
 """时点行情快照端点（add-market-snapshot 2.1）。
 
 GET 只读先例（照 hypotheses.py list_hypotheses）：query 直收透传
-服务层；ResearchError 统一 research_error_to_http 透传。返回结构即
+服务层；ResearchError 冒泡应用层全局兜底透传。返回结构即
 服务层形制（顶层 symbol/as_of/window_days/notes/timeframes），路由层
 零新增字段——响应体积 2KB 约束余量紧。
 """
@@ -13,9 +13,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir, get_db_path
-from api.routes.research.common import research_error_to_http
 from core.analysis import market_snapshot as ms
-from core.analysis.hypothesis_service import ResearchError
 
 router = APIRouter()
 
@@ -37,9 +35,6 @@ def read_market_snapshot(
     tfs: Optional[list[str]] = None
     if timeframes is not None:
         tfs = [t.strip() for t in timeframes.split(",") if t.strip()]
-    try:
-        return ms.get_market_snapshot(
-            db_path, data_dir, symbol=symbol,
-            timeframes=tfs, as_of=as_of)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    return ms.get_market_snapshot(
+        db_path, data_dir, symbol=symbol,
+        timeframes=tfs, as_of=as_of)

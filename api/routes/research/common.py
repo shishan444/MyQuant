@@ -1,9 +1,12 @@
 """research 路由公共工具层（零兄弟依赖）。
 
-服务对象：research 子包各路由（analysis/cases/indicator_query/
-plugins/snapshot/validation/hypotheses），范围外 api/routes/validate
-经 hypotheses 的 re-export 间接消费。价值：ResearchError ->
-HTTPException 转换契约单点维护，路由层 except 形制统一。
+消费面按符号：research_error_to_http——api/app.py 全局 exception
+handler（唯一子包外消费方）、plugins.py 审计保留点（rejected 留档
+后转换）、hypothesis_cards.py 本地转换（status 值域校验）；
+require_known_timeframe——analysis/cases/hypotheses/indicator_query/
+validation；encode/decode_cursor——hypotheses/hypothesis_cards/log。
+价值：ResearchError -> HTTPException 转换单源维护；路由层纯转换
+捕获已删，未捕获异常冒泡至应用层全局兜底复用同一转换出站。
 职责边界：只收无路由状态的纯工具；不 import 任何兄弟模块——
 本模块是子包内共享底座，向上依赖会形成循环。
 """

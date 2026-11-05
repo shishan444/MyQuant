@@ -22,12 +22,12 @@ from core.persistence.repository import research as rr
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# research_error_to_http 已迁 common（子包共享底座）；本模块自用直取
+# research_error_to_http 已迁 common（子包共享底座）；ResearchError
+# 捕获删除后走全局兜底，本模块仅取分页与周期校验工具
 from api.routes.research.common import (
     decode_cursor,
     encode_cursor,
     require_known_timeframe,
-    research_error_to_http,
 )
 
 
@@ -46,75 +46,72 @@ def register_hypothesis(
     data_dir: Path = Depends(get_data_dir),
 ) -> HypothesisResponse:
     """登记假设：结构化 WHEN/THEN 条件 + 人话陈述 + 数据区间。"""
-    try:
-        # symbol/timeframe 在数据目录可达（422 RESEARCH_SYMBOL_NOT_FOUND）
-        from core.data.mtf_loader import find_parquet, safe_symbol
-        for i, r in enumerate(payload.data_ranges):
-            # P0 错误通道：非法周期前置 422——否则 find_parquet 内
-            # validate_known_interval 抛裸 ValueError 落 500
-            require_known_timeframe(r.timeframe, f"data_ranges[{i}].timeframe")
-            # F-1：探测统一走 safe_symbol 清洗（与下方 timeframe 探测
-            # 同函数一致——原始 symbol 直传在符号含分隔符时会变成
-            # 存在性 oracle，纯收紧）
-            if find_parquet(data_dir, safe_symbol(r.symbol), r.timeframe) is None:
-                raise ResearchError(
-                    "RESEARCH_SYMBOL_NOT_FOUND",
-                    f"data_ranges[{i}] 无数据: {r.symbol} {r.timeframe}",
-                    detail={"field": f"data_ranges[{i}]",
-                            "symbol": r.symbol, "timeframe": r.timeframe})
+    # symbol/timeframe 在数据目录可达（422 RESEARCH_SYMBOL_NOT_FOUND）
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    for i, r in enumerate(payload.data_ranges):
+        # P0 错误通道：非法周期前置 422——否则 find_parquet 内
+        # validate_known_interval 抛裸 ValueError 落 500
+        require_known_timeframe(r.timeframe, f"data_ranges[{i}].timeframe")
+        # F-1：探测统一走 safe_symbol 清洗（与下方 timeframe 探测
+        # 同函数一致——原始 symbol 直传在符号含分隔符时会变成
+        # 存在性 oracle，纯收紧）
+        if find_parquet(data_dir, safe_symbol(r.symbol), r.timeframe) is None:
+            raise ResearchError(
+                "RESEARCH_SYMBOL_NOT_FOUND",
+                f"data_ranges[{i}] 无数据: {r.symbol} {r.timeframe}",
+                detail={"field": f"data_ranges[{i}]",
+                        "symbol": r.symbol, "timeframe": r.timeframe})
 
-        # 0.2.14：when 条件 timeframe 键去重逐周期可达校验（与
-        # data_ranges 可达同族同层早失败）；N2：拒绝 detail 附
-        # find_parquet 探测的实际可得周期清单——「周期非法」与
-        # 「周期无数据」语义区分
-        from core.data.timeframes import TF_SECONDS
-        _cond = payload.conditions.model_dump()
-        _required_tfs = []
-        for c in _cond["when_conditions"]:
-            tf_key = c.get("timeframe")
-            if (tf_key and tf_key not in _required_tfs
-                    and tf_key != payload.data_ranges[0].timeframe):
-                _required_tfs.append(tf_key)
-        if _required_tfs:
-            safe = safe_symbol(payload.data_ranges[0].symbol)
-            _available = [tf for tf in TF_SECONDS
-                          if find_parquet(data_dir, safe, tf) is not None]
-            for tf_key in _required_tfs:
-                if tf_key in _available:
-                    continue
-                raise ResearchError(
-                    "RESEARCH_SYMBOL_NOT_FOUND",
-                    f"when 条件 timeframe={tf_key} 无数据: "
-                    f"{payload.data_ranges[0].symbol} {tf_key}",
-                    detail={"field": "when_conditions.timeframe",
-                            "symbol": payload.data_ranges[0].symbol,
-                            "timeframe": tf_key,
-                            "available_timeframes": _available})
+    # 0.2.14：when 条件 timeframe 键去重逐周期可达校验（与
+    # data_ranges 可达同族同层早失败）；N2：拒绝 detail 附
+    # find_parquet 探测的实际可得周期清单——「周期非法」与
+    # 「周期无数据」语义区分
+    from core.data.timeframes import TF_SECONDS
+    _cond = payload.conditions.model_dump()
+    _required_tfs = []
+    for c in _cond["when_conditions"]:
+        tf_key = c.get("timeframe")
+        if (tf_key and tf_key not in _required_tfs
+                and tf_key != payload.data_ranges[0].timeframe):
+            _required_tfs.append(tf_key)
+    if _required_tfs:
+        safe = safe_symbol(payload.data_ranges[0].symbol)
+        _available = [tf for tf in TF_SECONDS
+                      if find_parquet(data_dir, safe, tf) is not None]
+        for tf_key in _required_tfs:
+            if tf_key in _available:
+                continue
+            raise ResearchError(
+                "RESEARCH_SYMBOL_NOT_FOUND",
+                f"when 条件 timeframe={tf_key} 无数据: "
+                f"{payload.data_ranges[0].symbol} {tf_key}",
+                detail={"field": "when_conditions.timeframe",
+                        "symbol": payload.data_ranges[0].symbol,
+                        "timeframe": tf_key,
+                        "available_timeframes": _available})
 
-        # 分批组键并入 conditions（DC-13：非 None 才写键——缺省不写键
-        # 保 conditions_hash 连续；组键在 conditions 内自然进身份指纹）
-        conditions = payload.conditions.model_dump()
-        for gk in ("exit_partial_conditions", "add_trigger_conditions",
-                   "add_suppress_conditions"):
-            gvals = getattr(payload, gk)
-            if gvals is not None:
-                conditions[gk] = [c.model_dump() for c in gvals]
+    # 分批组键并入 conditions（DC-13：非 None 才写键——缺省不写键
+    # 保 conditions_hash 连续；组键在 conditions 内自然进身份指纹）
+    conditions = payload.conditions.model_dump()
+    for gk in ("exit_partial_conditions", "add_trigger_conditions",
+               "add_suppress_conditions"):
+        gvals = getattr(payload, gk)
+        if gvals is not None:
+            conditions[gk] = [c.model_dump() for c in gvals]
 
-        out = hs.register_hypothesis(
-            db_path,
-            conditions=conditions,
-            statement=payload.statement,
-            data_ranges=[r.model_dump() for r in payload.data_ranges],
-            provenance=(payload.provenance.model_dump()
-                        if payload.provenance else None),
-            precheck_data_dir=data_dir,   # 登记自动预检（D6，Q1 裁 A）
-            trigger_policy=payload.trigger_policy,  # 整体级触发策略（卡2）
-            strategy_params=payload.strategy_params,  # 策略层参数声明块（0.4.2 R1）
-            direction=payload.direction,  # 交易方向（add-direction-channel A1）
-        )
-        return HypothesisResponse(**out)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    out = hs.register_hypothesis(
+        db_path,
+        conditions=conditions,
+        statement=payload.statement,
+        data_ranges=[r.model_dump() for r in payload.data_ranges],
+        provenance=(payload.provenance.model_dump()
+                    if payload.provenance else None),
+        precheck_data_dir=data_dir,   # 登记自动预检（D6，Q1 裁 A）
+        trigger_policy=payload.trigger_policy,  # 整体级触发策略（卡2）
+        strategy_params=payload.strategy_params,  # 策略层参数声明块（0.4.2 R1）
+        direction=payload.direction,  # 交易方向（add-direction-channel A1）
+    )
+    return HypothesisResponse(**out)
 
 
 @router.get("/hypotheses", response_model=HypothesisListResponse)
@@ -173,10 +170,7 @@ def transition_hypothesis(
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     """状态迁移：active -> supported|refuted|superseded（必引证据）。"""
-    try:
-        return hs.transition_hypothesis(
-            db_path, hypothesis_id,
-            target_status=payload.target_status,
-            evidence_ref=payload.evidence_ref)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    return hs.transition_hypothesis(
+        db_path, hypothesis_id,
+        target_status=payload.target_status,
+        evidence_ref=payload.evidence_ref)

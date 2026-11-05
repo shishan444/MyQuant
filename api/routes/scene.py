@@ -2,7 +2,7 @@
 
 职能：暴露 core.validation.scene 的场景探测器清单与历史数据回放
 验证（触发统计/前瞻收益分布）。服务对象：web Lab 场景页。
-职责边界：传输校验与 ResearchError→HTTP 映射，检测与统计在引擎层。
+职责边界：传输校验（ResearchError 冒泡应用层全局兜底），检测与统计在引擎层。
 """
 from __future__ import annotations
 
@@ -102,24 +102,17 @@ def run_scene(
     data_dir: Path = Depends(get_data_dir),
 ) -> SceneResponse:
     """对历史数据跑场景验证（触发统计与前瞻收益分布）。"""
-    from core.analysis.hypothesis_service import ResearchError
-    from api.routes.research.common import research_error_to_http
 
-    try:
-        result = run_scene_verification(
-            symbol=payload.symbol,
-            timeframe=payload.timeframe,
-            scene_type=payload.scene_type,
-            params=payload.params,
-            horizons=payload.horizons,
-            data_start=payload.data_start,
-            data_end=payload.data_end,
-            data_dir=str(data_dir),
-        )
-    except ResearchError as exc:
-        # 坏参数/未知 timeframe 结构化拒绝（与 validate.py 两端点同款兜底），
-        # 不裸穿 500
-        raise research_error_to_http(exc) from exc
+    result = run_scene_verification(
+        symbol=payload.symbol,
+        timeframe=payload.timeframe,
+        scene_type=payload.scene_type,
+        params=payload.params,
+        horizons=payload.horizons,
+        data_start=payload.data_start,
+        data_end=payload.data_end,
+        data_dir=str(data_dir),
+    )
 
     meta = SCENE_META.get(payload.scene_type, {})
     if not meta:

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_data_dir, get_db_path
-from core.analysis.errors import ResearchError, load_stored_json
+from core.analysis.errors import load_stored_json
 from core.data.validation import validate_symbol
 from core.paper_trading.constants import (
     PAPER_SYMBOL_WHITELIST,
@@ -720,34 +720,30 @@ def get_signals(
     _require_task(db_path, task_id)
     # TD-02 点位 5/6：gene_hits/indicator_snapshot 库内 JSON 列走结构化
     # 通道（PAPER_STORED_DATA_INVALID 域码）；损坏 422 带行级定位
-    try:
-        rows, has_more = _paged(
-            paper.list_signals(
-                db_path, task_id, kind=kind, outcome=outcome,
-                bar_time_start=bar_time_start, bar_time_end=bar_time_end,
-                limit=limit + 1, offset=offset),
-            limit)
-        return PaperSignalListResponse(
-            signals=[PaperSignalResponse(
-                **{**r,
-                   "gene_hits": load_stored_json(
-                       r["gene_hits"], source="pt_signal.gene_hits",
-                       detail={"task_id": task_id,
-                               "bar_time": r["bar_time"],
-                               "seq": r["seq"]},
-                       code="PAPER_STORED_DATA_INVALID"),
-                   "indicator_snapshot": load_stored_json(
-                       r["indicator_snapshot"],
-                       source="pt_signal.indicator_snapshot",
-                       detail={"task_id": task_id,
-                               "bar_time": r["bar_time"],
-                               "seq": r["seq"]},
-                       code="PAPER_STORED_DATA_INVALID")})
-                     for r in rows],
-            limit=limit, offset=offset, has_more=has_more)
-    except ResearchError as exc:
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
+    rows, has_more = _paged(
+        paper.list_signals(
+            db_path, task_id, kind=kind, outcome=outcome,
+            bar_time_start=bar_time_start, bar_time_end=bar_time_end,
+            limit=limit + 1, offset=offset),
+        limit)
+    return PaperSignalListResponse(
+        signals=[PaperSignalResponse(
+            **{**r,
+               "gene_hits": load_stored_json(
+                   r["gene_hits"], source="pt_signal.gene_hits",
+                   detail={"task_id": task_id,
+                           "bar_time": r["bar_time"],
+                           "seq": r["seq"]},
+                   code="PAPER_STORED_DATA_INVALID"),
+               "indicator_snapshot": load_stored_json(
+                   r["indicator_snapshot"],
+                   source="pt_signal.indicator_snapshot",
+                   detail={"task_id": task_id,
+                           "bar_time": r["bar_time"],
+                           "seq": r["seq"]},
+                   code="PAPER_STORED_DATA_INVALID")})
+                 for r in rows],
+        limit=limit, offset=offset, has_more=has_more)
 
 
 @router.get("/tasks/{task_id}/report")
@@ -760,12 +756,6 @@ def get_report(
     当前版，三层退化自解释）。"""
     try:
         return build_report(db_path, data_dir, task_id)
-    except ResearchError as exc:
-        # TD-02 点位 8 出口：任务级快照损坏（dna_snapshot_json 等）
-        # 属工程错误——422 结构化拒绝，不降级不裸穿（与对照计算性
-        # 失败的 ValueError→404 分立）
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404,
                             detail="paper task not found") from exc
@@ -782,11 +772,6 @@ def get_final(
     版本机制）；未结题→409 "task not concluded"；终态无固化版→404。"""
     try:
         result = get_final_report(db_path, task_id, version)
-    except ResearchError as exc:
-        # TD-02 点位 7 出口：固化 report_json 损坏属工程错误——422
-        # 结构化拒绝（PAPER_STORED_DATA_INVALID）
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
     except TaskNotConcludedError as exc:
         raise HTTPException(status_code=409,
                             detail="task not concluded") from exc

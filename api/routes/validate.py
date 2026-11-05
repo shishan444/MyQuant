@@ -3,7 +3,7 @@
 职能：WHEN/THEN 假设验证与进出场规则评估的 REST 入口，路由层构建
 多周期求值上下文（MtfEvalContext）后委托 core.validation 执行。
 服务对象：web Lab 验证页。
-职责边界：传输校验与 ResearchError→HTTP 映射，判定逻辑在引擎层。
+职责边界：传输校验（ResearchError 冒泡应用层全局兜底），判定逻辑在引擎层。
 """
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.deps import get_db_path, get_data_dir
-from core.analysis.hypothesis_service import ResearchError
 from core.validation.engine import validate_hypothesis
 from core.validation.rule_engine import evaluate_rules
 
@@ -141,30 +140,23 @@ def run_validation(
         base_tf=payload.base_timeframe or payload.timeframe)
     # trigger-policy 卡3：登记侧同款形制校验与归一（显式 none=缺省），
     # 归一形传引擎——bars 数据长度上界的求值侧校验在引擎内（数据已加载）
-    # CARD-04：相邻同构 try/except 合并单 try（两个 ResearchError 源
-    # ——policy 形制与引擎求值——共用一次结构化转换；mtf_ctx 构建
-    # 留外，非 ResearchError 通道不进合并）
+    # 0.2.14 起 policy 形制与引擎求值两处 ResearchError 源共用冒泡
+    # 通道（应用层全局兜底出站；CARD-04 捕获合并形制已随全局兜底删除）
     from core.analysis.event_policy import validate_policy
-    try:
-        normalized_policy = validate_policy(payload.trigger_policy)
-        result = validate_hypothesis(
-            pair=payload.pair,
-            timeframe=payload.timeframe,
-            start=payload.start,
-            end=payload.end,
-            when_conditions=[c.model_dump() for c in payload.when],
-            then_conditions=[c.model_dump() for c in payload.then],
-            indicator_params=payload.indicator_params,
-            data_dir=str(data_dir),
-            base_timeframe=payload.base_timeframe,
-            mtf=mtf_ctx,
-            trigger_policy=normalized_policy,
-        )
-    except ResearchError as exc:
-        # 0.2.14：高周期条件结构化拒绝（不可达/warmup 不足/低周期键）
-        # 与 trigger-policy 形制拒绝共用通道，转结构化 422 不裸穿 500
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
+    normalized_policy = validate_policy(payload.trigger_policy)
+    result = validate_hypothesis(
+        pair=payload.pair,
+        timeframe=payload.timeframe,
+        start=payload.start,
+        end=payload.end,
+        when_conditions=[c.model_dump() for c in payload.when],
+        then_conditions=[c.model_dump() for c in payload.then],
+        indicator_params=payload.indicator_params,
+        data_dir=str(data_dir),
+        base_timeframe=payload.base_timeframe,
+        mtf=mtf_ctx,
+        trigger_policy=normalized_policy,
+    )
 
     return ValidateResponse(
         match_rate=result.match_rate,
@@ -210,20 +202,16 @@ def run_rule_validation(
 
     mtf_ctx = MtfEvalContext(
         data_dir=data_dir, symbol=payload.pair, base_tf=payload.timeframe)
-    try:
-        result = evaluate_rules(
-            symbol=payload.pair,
-            timeframe=payload.timeframe,
-            start=payload.start,
-            end=payload.end,
-            entry_conditions=[c.model_dump() for c in payload.entry_conditions],
-            exit_conditions=[c.model_dump() for c in payload.exit_conditions],
-            data_dir=str(data_dir),
-            mtf=mtf_ctx,
-        )
-    except ResearchError as exc:
-        from api.routes.research.common import research_error_to_http
-        raise research_error_to_http(exc) from exc
+    result = evaluate_rules(
+        symbol=payload.pair,
+        timeframe=payload.timeframe,
+        start=payload.start,
+        end=payload.end,
+        entry_conditions=[c.model_dump() for c in payload.entry_conditions],
+        exit_conditions=[c.model_dump() for c in payload.exit_conditions],
+        data_dir=str(data_dir),
+        mtf=mtf_ctx,
+    )
 
     return RuleValidateResponse(
         buy_signals=[

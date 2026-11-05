@@ -17,19 +17,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import RestAuthMiddleware, get_cors_origins, warn_if_no_api_key
 
 logger = logging.getLogger("app")
 
+from core.analysis.errors import ResearchError
 from core.persistence.db_ext import init_db_ext
 from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
 from .routes import live_trading as live_trading_route
 from .routes import paper_trading as paper_trading_route
+from .routes.research.common import research_error_to_http
 from .schemas import HealthResponse
 
 try:
@@ -301,6 +303,15 @@ def create_app(
         version=APP_VERSION,
         lifespan=lifespan,
     )
+
+    # 研究域业务错误全局兜底：任何路由未捕获的 ResearchError 冒泡至
+    # 应用层，经单源转换 research_error_to_http 出站（status 透传、
+    # detail 三段，api-error-contract「ResearchError 出站全局兜底」）。
+    # 路由内显式捕获（带副作用的审计/宽窄双通道保留点、fail-open 宽
+    # 捕获）由 Python 异常语义天然先于本兜底生效。
+    @app.exception_handler(ResearchError)
+    async def research_error_exception_handler(request: Request, exc: ResearchError):
+        raise research_error_to_http(exc) from exc
 
     # A2 准入中间件：Host 白名单（防 DNS rebinding）+ API key（可选启用）。
     # 注册顺序刻意先于 CORS——add_middleware 为 insert(0)，后注册者更外层，

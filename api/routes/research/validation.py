@@ -17,16 +17,12 @@ from api.schemas import (
     StagedValidationRequest,
 )
 from core.analysis import validation_service as vs
-from core.analysis.hypothesis_service import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from api.routes.research.common import (
-    require_known_timeframe,
-    research_error_to_http,
-)
+from api.routes.research.common import require_known_timeframe
 
 
 @router.post("/validate-backtest")
@@ -36,19 +32,16 @@ def validate_backtest(
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
     """隔离回测：判定并集拒绝 + warmup 推导前扩 + 门槛机械判定。"""
-    try:
-        # P0 错误通道：非法周期前置 422——否则装载层裸 ValueError 落 500
-        require_known_timeframe(
-            payload.request_range.timeframe, "request_range.timeframe")
-        return vs.run_isolated_backtest(
-            db_path, data_dir,
-            hypothesis_id=payload.hypothesis_id,
-            strategy_id=payload.strategy_id,
-            request_range=payload.request_range.model_dump(),
-            threshold_profile=payload.threshold_profile,
-        )
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    # P0 错误通道：非法周期前置 422——否则装载层裸 ValueError 落 500
+    require_known_timeframe(
+        payload.request_range.timeframe, "request_range.timeframe")
+    return vs.run_isolated_backtest(
+        db_path, data_dir,
+        hypothesis_id=payload.hypothesis_id,
+        strategy_id=payload.strategy_id,
+        request_range=payload.request_range.model_dump(),
+        threshold_profile=payload.threshold_profile,
+    )
 
 
 @router.post("/staged-validation")
@@ -61,19 +54,16 @@ def staged_validation(
     段级门槛三态 + 全段汇总 verdict（挂假设时可被 transition 引用）；
     双模互斥（auto 机械判读 / explicit 段列表）；写入双路径（挂假设
     一体记录 / adhoc 纯日志）。"""
-    try:
-        require_known_timeframe(payload.timeframe, "timeframe")
-        return vs.run_staged_validation(
-            db_path, data_dir,
-            strategy_id=payload.strategy_id,
-            hypothesis_id=payload.hypothesis_id,
-            symbol=payload.symbol, timeframe=payload.timeframe,
-            start=payload.start, end=payload.end,
-            segmentation=payload.segmentation,
-            segments=payload.segments,
-        )
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    require_known_timeframe(payload.timeframe, "timeframe")
+    return vs.run_staged_validation(
+        db_path, data_dir,
+        strategy_id=payload.strategy_id,
+        hypothesis_id=payload.hypothesis_id,
+        symbol=payload.symbol, timeframe=payload.timeframe,
+        start=payload.start, end=payload.end,
+        segmentation=payload.segmentation,
+        segments=payload.segments,
+    )
 
 
 @router.post("/backtest-sandbox")
@@ -84,18 +74,15 @@ def backtest_sandbox(
 ) -> Dict[str, Any]:
     """沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
     不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。"""
-    try:
-        require_known_timeframe(payload.timeframe, "timeframe")
-        return vs.run_sandbox_backtest(
-            db_path, data_dir,
-            strategy_id=payload.strategy_id,
-            symbol=payload.symbol, timeframe=payload.timeframe,
-            start=payload.start, end=payload.end,
-            fee=payload.fee, slippage=payload.slippage,
-            init_cash=payload.init_cash,
-            hypothesis_id=payload.hypothesis_id)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    require_known_timeframe(payload.timeframe, "timeframe")
+    return vs.run_sandbox_backtest(
+        db_path, data_dir,
+        strategy_id=payload.strategy_id,
+        symbol=payload.symbol, timeframe=payload.timeframe,
+        start=payload.start, end=payload.end,
+        fee=payload.fee, slippage=payload.slippage,
+        init_cash=payload.init_cash,
+        hypothesis_id=payload.hypothesis_id)
 
 
 @router.post("/random-window-test")
@@ -105,18 +92,15 @@ def random_window_test(
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
     """随机窗口抽查（种子记录于验证记录，可复现）。"""
-    try:
-        require_known_timeframe(payload.timeframe, "timeframe")
-        return vs.random_window_test(
-            db_path, data_dir,
-            strategy_id=payload.strategy_id,
-            symbol=payload.symbol, timeframe=payload.timeframe,
-            data_start=payload.data_start, data_end=payload.data_end,
-            window_bars=payload.window_bars, n_windows=payload.n_windows,
-            seed=payload.seed, hypothesis_id=payload.hypothesis_id,
-        )
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    require_known_timeframe(payload.timeframe, "timeframe")
+    return vs.random_window_test(
+        db_path, data_dir,
+        strategy_id=payload.strategy_id,
+        symbol=payload.symbol, timeframe=payload.timeframe,
+        data_start=payload.data_start, data_end=payload.data_end,
+        window_bars=payload.window_bars, n_windows=payload.n_windows,
+        seed=payload.seed, hypothesis_id=payload.hypothesis_id,
+    )
 
 
 @router.get("/union-balance")
@@ -135,13 +119,10 @@ def union_balance(
     bar+1×TF)）。与隔离验证的重叠拦截同一账本两出口——查询 remaining
     段发起隔离验证不被拒。
     """
-    try:
-        require_known_timeframe(timeframe, "timeframe")
-        return vs.query_union_balance(
-            db_path, data_dir,
-            symbol=symbol, timeframe=timeframe, hypothesis_id=hypothesis_id)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    require_known_timeframe(timeframe, "timeframe")
+    return vs.query_union_balance(
+        db_path, data_dir,
+        symbol=symbol, timeframe=timeframe, hypothesis_id=hypothesis_id)
 
 
 @router.get("/validation/{strategy_id}/report")
@@ -337,16 +318,13 @@ def translate_hypothesis(
     from core.analysis.hypothesis_to_strategy import translate_hypothesis as _t
     from pydantic import BaseModel as _BM  # noqa: F401
 
-    try:
-        # security S-2（fix-review B6）：strategy_timeframe 裸 str——前置
-        # 值域校验消两路 500 冒出面（非法 tf 在 find_parquet 装载路径
-        # 抛裸 ValueError；analysis.py :799 同款先例，校验先于转化）。
-        # R2（fix-mtf-execution-consistency）：缺省 None=继承哨兵——
-        # 只对非 None 值校验（None 经 translate 继承假设基准周期）
-        if payload is not None and payload.strategy_timeframe is not None:
-            require_known_timeframe(
-                payload.strategy_timeframe, "strategy_timeframe")
-        kw = payload.model_dump() if payload else {}
-        return _t(db_path, hypothesis_id=hypothesis_id, data_dir=data_dir, **kw)
-    except ResearchError as exc:
-        raise research_error_to_http(exc) from exc
+    # security S-2（fix-review B6）：strategy_timeframe 裸 str——前置
+    # 值域校验消两路 500 冒出面（非法 tf 在 find_parquet 装载路径
+    # 抛裸 ValueError；analysis.py :799 同款先例，校验先于转化）。
+    # R2（fix-mtf-execution-consistency）：缺省 None=继承哨兵——
+    # 只对非 None 值校验（None 经 translate 继承假设基准周期）
+    if payload is not None and payload.strategy_timeframe is not None:
+        require_known_timeframe(
+            payload.strategy_timeframe, "strategy_timeframe")
+    kw = payload.model_dump() if payload else {}
+    return _t(db_path, hypothesis_id=hypothesis_id, data_dir=data_dir, **kw)
