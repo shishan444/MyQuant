@@ -107,12 +107,29 @@ class TestHintRegistry:
     """1.2 注册表对拍：覆盖服务端实际抛出的全部 ResearchError 码。"""
 
     def test_registry_covers_all_raised_codes(self) -> None:
-        """静态扫描 core/analysis + api/routes 的 raise ResearchError 码，注册表须全覆盖。"""
+        """静态扫描 core/ + api/ 全域的 ResearchError 码，注册表须全覆盖。
+
+        CARD-02（repay-vr-review-debts 批次三）扩域：原仅 core/analysis
+        +api/routes。三模式取码（对账口径：字面量 34+分派 2=36）——
+        ①raise 字面量；②load_stored_json 的 code= keyword 分派码
+        （限定函数名：不限则 strategy 生命周期族等 9 码的 code= 传参
+        误入误报）；③load_stored_json 定义处缺省形参码（TD-02 通道
+        缺省 RESEARCH_STORED_DATA_INVALID 经变量构造 raise，字面量
+        模式抓不到）。单向断言（raised ⊆ HINTS）：注册表多出的
+        MCP 层降级码不裁。
+        """
         raised: set[str] = set()
-        for src_dir in ("core/analysis", "api/routes"):
+        for src_dir in ("core", "api"):
             for path in (REPO_ROOT / src_dir).rglob("*.py"):
                 text = path.read_text(encoding="utf-8")
-                raised.update(re.findall(r'ResearchError\(\s*"([A-Z_]+)"', text))
+                raised.update(re.findall(
+                    r'ResearchError\(\s*"([A-Z_]+)"', text))
+                raised.update(re.findall(
+                    r'load_stored_json\([^)]*?code\s*=\s*"([A-Z_]+)"',
+                    text))
+                raised.update(re.findall(
+                    r'def\s+load_stored_json\([^)]*?'
+                    r'code:\s*str\s*=\s*"([A-Z_]+)"', text))
         assert raised, "扫描结果为空——源码路径或提取模式失效"
         missing = raised - HINTS.keys()
         assert not missing, f"注册表缺码（hint 不可行动）: {sorted(missing)}"
