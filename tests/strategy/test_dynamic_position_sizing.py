@@ -583,7 +583,13 @@ class TestOrdersCappedEventCodeDispatch:
     分派——仅首仓单（码 10）参与 rf 重放截断计数；加仓单（码 11，
     引擎路径超限=跳过发单而非截断）与 rf 降级回退单（码 32）不产生
     计数；事件码不可判（留痕缓冲不在：直调/batch_run 装配段清空后）
-    不产生计数（orders_capped==0 + replay_status=="ok"）。"""
+    不产生计数（orders_capped==0 + replay_status=="ok"）。
+
+    行源事实（CARD-04 探针实证）：vectorbt 把加仓成交并入回合 trade
+    record——trades 行恒为回合首仓行（码 10），11/32 码行在 trades
+    行源不可达；TD-01 的可观察行为差在码不可判路径（batch_run/直调
+    orders_capped→0，本类键值锚承载），run 路径 orders_capped 修复
+    前后恒等。"""
 
     def _run_sample_add(self):
         """risk_budget_add 样本（atr 档距离逐笔变）：加仓成交与首仓
@@ -599,16 +605,18 @@ class TestOrdersCappedEventCodeDispatch:
         return res, pf
 
     def test_add_fills_do_not_inflate_capped(self):
-        """①②：含加仓成交回测 orders_capped 仅计首仓截断（独立重放
-        对账——加仓单在场而不虚报截断）。"""
+        """①②：含加仓成交回测的 orders_capped 对账（CARD-04 判据
+        换源如实落地）。行源事实（探针实证）：vectorbt 把加仓成交
+        并入回合 trade record——trades 行恒为回合首仓行（码 10），
+        11/32 码行在 trades 行源不可达；TD-01 的可观察行为差在码
+        不可判路径（batch_run/直调 orders_capped→0），由本类
+        batch_run/直调键值锚承载。"""
         res, pf = self._run_sample_add()
         ps = res.metrics_dict["position_sizing"]
-        # 加仓单在场（orders 数超出「每回合一进一出」基线）
+        # 加仓单在场披露（orders 层）：超出「每回合一进一出」基线
         n_tr = pf.trades.count()
         assert pf.orders.count() > 2 * n_tr - 1, \
             "样本前提失效：无加仓成交（换构造或查样本）"
-        # 独立重放：10 码 trades 行中 rf 名义超限数（披露同公式、
-        # 独立实现——期望值不经被测函数得出）
         import pandas as pd
 
         from tests.fixtures.vr_trace_gen import build_sample
@@ -618,9 +626,23 @@ class TestOrdersCappedEventCodeDispatch:
         s = build_sample("risk_budget_add")
         df, rg = s["df"], s["dna"].risk_genes
         tr = pf.trades.records_readable
+        # 行源前提独立判别（防 trades 聚合形制无声漂移）：Entry 严格
+        # 落于前一笔 Entry..Exit 区间内=独立加仓 trade 行——当前聚合
+        # 形制下应恒 0（加仓并入回合，不产生独立 trade 行）
+        entries = pd.DatetimeIndex(tr["Entry Timestamp"])
+        exits = pd.DatetimeIndex(tr["Exit Timestamp"])
+        n_add_rows = sum(
+            1 for k in range(1, n_tr) if entries[k] < exits[k - 1])
+        assert n_add_rows == 0, (
+            f"trades 聚合形制漂移：出现 {n_add_rows} 行独立加仓 "
+            "trade 行——本对账的行源前提（trades 全行为回合首仓行）"
+            "失效，须重审判据而非径直放行")
+        # 独立重放：首仓回合行 rf 名义超限数（披露同公式、独立实现
+        # ——期望值不经被测函数得出；行源全行为首仓行，对账面=首仓
+        # 全行）
         val = pf.value()
         val = val.iloc[:, 0] if isinstance(val, pd.DataFrame) else val
-        idx = df.index.get_indexer(pd.DatetimeIndex(tr["Entry Timestamp"]))
+        idx = df.index.get_indexer(entries)
         atr_col = _load_atr_column(df, int(rg.atr_period))
         expect = 0
         for k in range(len(tr)):
@@ -636,8 +658,9 @@ class TestOrdersCappedEventCodeDispatch:
             expect += int(hit)
         assert expect > 0, "样本前提失效：无首仓截断回合"
         assert ps["orders_capped"] == expect, \
-            f"orders_capped={ps['orders_capped']} 应==首仓截断重放数" \
-            f" {expect}（加仓行不得虚增计数）"
+            f"orders_capped={ps['orders_capped']} 应==首仓回合行 rf" \
+            f" 名义超限重放数 {expect}（trades 全行为回合首仓行" \
+            "——对账面=首仓全行）"
         assert ps["replay_status"] == "ok"
 
     def test_direct_call_without_trace_buf_capped_zero(self):
