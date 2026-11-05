@@ -589,4 +589,11 @@ class TestCorruptReportFailOpen:
         self._env(client)
         r = client.get("/api/workbench/pending-events")
         assert r.status_code == 200, r.text
-        assert "events" in r.json()
+        body = r.json()
+        assert "events" in body
+        # 降级标记实证（防漏扫假绿——tester 探针实测锚定）：trigger
+        # 扫描逐任务 except 计数 degraded≥1 + 源可用性整体 except →
+        # trigger_deviation=unavailable——证明坏值被降级路径实际处理
+        # 而非任务漏扫（:167/:256 两消费点同一请求内都被穿过）
+        assert body["degraded"] >= 1
+        assert body["availability"]["trigger_deviation"] == "unavailable"
