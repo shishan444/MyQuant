@@ -1142,7 +1142,8 @@ def _validate_explicit_segments(
     req_start: str, req_end: str,
 ) -> List[Dict[str, Any]]:
     """显式段列表校验（恰好切分语义：段在请求区间内、并集恰覆盖、
-    相邻相接不重叠、时间升序；三键齐备）——违反拒第一违规段。
+    相邻相接不重叠、时间升序；三键齐备、label 跨段不重复）——
+    违反拒第一违规段。
     """
     if not segments:
         raise ResearchError(
@@ -1151,6 +1152,7 @@ def _validate_explicit_segments(
             detail={"param": "segments"})
     rs, re_ = _parse_ts(req_start), _parse_ts(req_end)
     prev_end: Optional[datetime] = None
+    seen_labels: set = set()
     out: List[Dict[str, Any]] = []
     for i, seg in enumerate(segments):
         missing = [k for k in ("label", "start", "end") if not seg.get(k)]
@@ -1177,6 +1179,16 @@ def _validate_explicit_segments(
                 f"段 #{i} label 非法: 含控制字符 U+{ord(ctrl):04X}",
                 detail={"param": f"segments[{i}].label",
                         "length": len(label)})
+        # label 跨段重复校验（值域后、时间解析前）：重复 label 落库时撞
+        # vr_equity_curve (record_id, exec_ref) UNIQUE 约束，IntegrityError
+        # 会裸穿 API 成 500，故在校验层前置拒绝
+        if label in seen_labels:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"段 #{i} label 重复: {label}",
+                detail={"param": f"segments[{i}].label",
+                        "duplicate": label})
+        seen_labels.add(label)
         try:
             s, e = _parse_ts(seg["start"]), _parse_ts(seg["end"])
         except Exception as exc:
