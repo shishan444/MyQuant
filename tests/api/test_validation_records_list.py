@@ -313,3 +313,26 @@ class TestStagedLevelFilter:
         if not expect_rows:
             # 本客户端组未插该级种子（staged 逐用例自插隔离）——空集合法
             assert all(rec["level"] == level for rec in body["records"])
+
+
+class TestQMaxLength:
+    """TD-06：q 搜索词长度上限 200（FastAPI 原生 validation 形制——
+    与 limit ge/le 同族传输层约束，不走 RESEARCH_ 结构化码；负向断言
+    防形制漂移）。"""
+
+    def test_q_200_chars_accepted(self, client):
+        r = client.get("/api/research/validation-records",
+                       params={"q": "a" * 200})
+        assert r.status_code == 200
+        assert isinstance(r.json()["records"], list)
+
+    def test_q_201_chars_rejected_native_422(self, client):
+        r = client.get("/api/research/validation-records",
+                       params={"q": "a" * 201})
+        assert r.status_code == 422
+        body = r.json()
+        # FastAPI 原生 validation error：detail 为数组形
+        assert isinstance(body["detail"], list), body
+        # 负向断言：不走 RESEARCH_ 结构化码（两形制并存边界）
+        assert "code" not in body
+        assert not any("RESEARCH_" in str(item) for item in body["detail"])

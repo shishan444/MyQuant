@@ -824,7 +824,10 @@ def list_validation_records(
       COALESCE+timeframe 相等断言，NULL 任侧保守漏判，B1.4 边界四条）
     - sort：四值封闭枚举（time_desc/time_asc/total_return_desc/
       verdict_quality——B1.3 worst 双路径 SQL+verdict 品质序；sort
-      模式走 ORDER BY 表达式链，cursor keyset 无效忽略）
+      模式走 ORDER BY 表达式链重设排序，cursor 的 keyset WHERE
+      条件仍会生效——同传产生混合翻页语义（过滤按 cursor、排序
+      按 sort），当前生产调用面无此组合，组合语义未定义、调用
+      方不得同传）
     - level/verdict：B1 期形参预置（仓储 WHERE 下推通道；端点 B2
       接线——B1 期不传）
     """
