@@ -511,8 +511,10 @@ class TestExposureConsistency:
         assert checked >= 1, "应有可推导的非截断笔"
 
     def test_v4g_position_sizing_seven_subkeys(self):
-        """V4g 披露子键全键在场（裁决 A=七键入契：六子键+F-B4-1 安全
-        语义键 replay_status——failed 时统计三键 None 不虚标）。"""
+        """V4g 披露子键全键在场（裁决 A=七键入契：mode/risk_fraction/
+        leverage_cap/orders_capped/avg_entry_size/max_entry_size 六
+        基础披露键+F-B4-1 安全语义键 replay_status——failed 时统计
+        三键 None 不虚标）。"""
         df = make_enhanced_df(n=300, seed=42)
         dna = self._dna(df, "pct", 0.05)
         from core.backtest.engine import BacktestEngine
