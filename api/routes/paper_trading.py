@@ -746,10 +746,8 @@ def get_signals(
                      for r in rows],
             limit=limit, offset=offset, has_more=has_more)
     except ResearchError as exc:
-        raise HTTPException(
-            status_code=exc.status,
-            detail={"code": exc.code, "message": exc.message,
-                    "detail": exc.detail}) from exc
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
 
 
 @router.get("/tasks/{task_id}/report")
@@ -766,10 +764,8 @@ def get_report(
         # TD-02 点位 8 出口：任务级快照损坏（dna_snapshot_json 等）
         # 属工程错误——422 结构化拒绝，不降级不裸穿（与对照计算性
         # 失败的 ValueError→404 分立）
-        raise HTTPException(
-            status_code=exc.status,
-            detail={"code": exc.code, "message": exc.message,
-                    "detail": exc.detail}) from exc
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404,
                             detail="paper task not found") from exc
@@ -789,10 +785,8 @@ def get_final(
     except ResearchError as exc:
         # TD-02 点位 7 出口：固化 report_json 损坏属工程错误——422
         # 结构化拒绝（PAPER_STORED_DATA_INVALID）
-        raise HTTPException(
-            status_code=exc.status,
-            detail={"code": exc.code, "message": exc.message,
-                    "detail": exc.detail}) from exc
+        from api.routes.research.common import research_error_to_http
+        raise research_error_to_http(exc) from exc
     except TaskNotConcludedError as exc:
         raise HTTPException(status_code=409,
                             detail="task not concluded") from exc
