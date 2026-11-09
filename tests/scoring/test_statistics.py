@@ -283,10 +283,12 @@ class TestBootDiff:
         [pytest.param({"B": 0}, r"B=0", id="零 B"),
          pytest.param({"B": 2.5}, r"B=2.5", id="非整 B"),
          pytest.param({"B": True}, r"B=True", id="bool B（CARD-01）"),
-         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）")],
+         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）"),
+         pytest.param({"ci": 0.0}, r"ci=0.0", id="零置信"),
+         pytest.param({"ci": 1.0}, r"ci=1.0", id="满置信")],
     )
     def test_invalid_B_rejected(self, kwargs, match):
-        """B 校验与 boot_ci 同款（CARD-01 三层统一——库层兜底）。"""
+        """B/ci 校验与 boot_ci 同款（CARD-01 三层统一——库层兜底）。"""
         with pytest.raises(ValueError, match=match):
             boot_diff(self.X, self.Y, **kwargs)
 
