@@ -944,3 +944,95 @@ class TestQualificationWidthViaThreshold:
         assert list(got.fillna(False)) == list(expect)
         assert expect.any() and not expect.all(), \
             "样例须两侧都命中（资格宽收窄/未收窄——检出力）"
+
+
+# ----------------------------------------------------------- 属性补强（闸门步骤4）
+
+class TestPropertyReinforcement:
+    """纯计算面不变量（TESTING_V3「不变量与属性」法——随机采样
+    参数/数据域，一类输入应保持的关系；采样确定性 seed 固定）。"""
+
+    @staticmethod
+    def _sample_params(rng, n=12):
+        """域内确定性采样（float 取两位小数保证 str 编码往返精确）。"""
+        reg = [{"window": int(rng.integers(20, 241)),
+                "width_thr": round(float(rng.uniform(0.01, 0.30)), 2),
+                "min_len": int(rng.integers(10, 201))}
+               for _ in range(n)]
+        ch = [{"edge_window": int(rng.integers(20, 481)),
+               "q_low": round(float(rng.uniform(0.01, 0.49)), 2),
+               "q_high": round(float(rng.uniform(0.51, 0.99)), 2),
+               "buffer": round(float(rng.uniform(0.0, 1.0)), 2)}
+              for _ in range(n)]
+        return reg, ch
+
+    def test_naming_roundtrip_property(self):
+        """命名三层往返性质：域内随机参数 × 全输出 field——resolve
+        正向 == encode 编码 ∈ 产列自拼集合，decode 逆解码还原
+        {indicator, field, params}（比默认单组的既有锚域更宽）。"""
+        rng = np.random.default_rng(21)
+        reg_params, ch_params = self._sample_params(rng)
+        df = _mk_df([100.0] * 12, [101.0] * 12, [99.0] * 12)
+        for name, samples in (("BoxRegime", reg_params),
+                              ("BoxChannel", ch_params)):
+            for params in samples:
+                produced = set(_compute_indicator(df, name, params))
+                for f in INDICATOR_REGISTRY[name].output_fields:
+                    forward = resolve_indicator_column(name, params, f)
+                    assert forward == encode_column_ref(name, params, f)
+                    assert forward in produced
+                    decoded = decode_column_ref(forward)
+                    assert decoded["indicator"] == name
+                    assert decoded["field"] == f
+                    assert decoded["params"] == params
+
+    def test_cross_params_hook_uniform_judgment_property(self):
+        """cross_params 钩子归一面性质：域内随机 q_low<q_high 全通过、
+        镜像倒挂全拒绝（含等值）——判据与采样无关的一致性。"""
+        rng = np.random.default_rng(22)
+        _, ch_params = self._sample_params(rng, n=20)
+        hook = INDICATOR_REGISTRY["BoxChannel"].cross_params
+        for p in ch_params:
+            assert p["q_low"] < p["q_high"]
+            assert hook(p) is None, p
+            inverted = dict(p, q_low=p["q_high"], q_high=p["q_low"])
+            assert hook(inverted) is not None, inverted
+            assert hook({**p, "q_low": p["q_high"]}) is not None  # 等值
+
+    def test_box_regime_channel_ordering_property(self):
+        """BoxRegime 自洽不变量（任意随机数据 width≤thr ⇔ state=1；
+        established=1 ⇒ state=1）＋BoxChannel 分位单调与破坏线包络
+        （upper ≥ lower、break_high ≥ upper ≥ lower ≥ break_low——
+        buffer≥0 下恒成立）。"""
+        reg_p = {"window": 8, "width_thr": 0.08, "min_len": 4}
+        ch_p = {"edge_window": 8, "q_low": 0.10, "q_high": 0.90,
+                "buffer": 0.25}
+        for seed in (31, 32, 33):
+            rng = np.random.default_rng(seed)
+            n = 90
+            close = 100 + rng.normal(0, 2, n).cumsum()
+            spread = rng.uniform(0.5, 9, n)
+            df = pd.DataFrame({
+                "open": close, "high": close + spread, "low": close - spread,
+                "close": close, "volume": 1.0,
+            }, index=pd.date_range("2024-01-01", periods=n, freq="1h",
+                                   tz="UTC", name="timestamp"))
+            r = _compute_indicator(df, "BoxRegime", reg_p)
+            state = r["boxreg_8_0.08_4_box_state"]
+            width = r["boxreg_8_0.08_4_box_width"]
+            est = r["boxreg_8_0.08_4_box_established"]
+            assert state.isin([0.0, 1.0]).all()
+            assert ((width <= 0.08).fillna(False).astype(float)
+                    == state).all(), "width≤thr ⇔ state=1 自洽"
+            assert not ((est == 1.0) & (state == 0.0)).any(), \
+                "established ⇒ state（成熟态蕴含当根箱体态）"
+            c = _compute_indicator(df, "BoxChannel", ch_p)
+            upper = c["boxch_8_0.1_0.9_0.25_upper"]
+            lower = c["boxch_8_0.1_0.9_0.25_lower"]
+            bh = c["boxch_8_0.1_0.9_0.25_break_high"]
+            bl = c["boxch_8_0.1_0.9_0.25_break_low"]
+            valid = upper.notna() & lower.notna()
+            assert (upper[valid] >= lower[valid]).all(), \
+                "分位单调：q_high 分位 ≥ q_low 分位"
+            assert ((bh[valid] >= upper[valid]) & (lower[valid] >= bl[valid])
+                    ).all(), "buffer≥0 破坏线包络：break_high≥upper、lower≥break_low"
