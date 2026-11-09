@@ -596,7 +596,9 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
                                     candidates=[500]),
         },
         output_fields=["cond_vol"],
-        supported_conditions=["gt", "lt"],
+        # within_bars_after 为全指标通用时序动作（CARD-02 统一携带
+        # 契约——BoxChannel 补挂先例，与 gt/lt 条件语义族正交）
+        supported_conditions=["gt", "lt", "within_bars_after"],
         naming="garch",
         compute_mode="lazy",
         # 平稳性拒绝（含等号）：α+β≥1 时递推方差不收敛——与

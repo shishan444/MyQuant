@@ -430,8 +430,10 @@ PROFILES: Dict[str, IndicatorProfile] = {
     # == information (3)（add-champion-indicators——注册表全覆盖锚要求）==
     "ShannonEntropy": IndicatorProfile(
         # 环境开关件（低熵分位放行——模式一 demo gate 形制）
+        # 推荐面=批量预铺参数组（对齐契约：profile ⊆ _DEFAULT_PARAMS
+        # ——面板值 240 经 candidates/显式传参，不进预铺推荐）
         recommended_roles=["entry_guard", "exit_guard"],
-        recommended_params={"window": [96, 240], "rank_window": [500]},
+        recommended_params={"window": [96], "rank_window": [500]},
         recommended_conditions=[
             ConditionPreset("lt", [0.35], target_field="entropy_pct"),
             ConditionPreset("gt", [0.65], target_field="entropy_pct"),
@@ -449,8 +451,10 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "EfficiencyRatio": IndicatorProfile(
         # 环境开关件（高 ER 分位放行——走势干净趋势有效）
+        # 推荐面=批量预铺参数组（demo gate 消费形制 w=24 经显式传参
+        # 复现，不进预铺推荐）
         recommended_roles=["entry_guard", "exit_guard"],
-        recommended_params={"window": [24, 96], "rank_window": [500]},
+        recommended_params={"window": [96], "rank_window": [500]},
         recommended_conditions=[
             ConditionPreset("gt", [0.65], target_field="er_pct"),
             ConditionPreset("lt", [0.35], target_field="er_pct"),

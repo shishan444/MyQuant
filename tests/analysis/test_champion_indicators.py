@@ -172,7 +172,7 @@ class TestRegistrationAndNaming:
         assert set(INDICATOR_REGISTRY["CUSUM"].supported_conditions) \
             == {"gt", "lt", "eq", "within_bars_after"}
         assert set(INDICATOR_REGISTRY["GARCHFilter"].supported_conditions) \
-            == {"gt", "lt"}
+            == {"gt", "lt", "within_bars_after"}
 
     def test_lazy_compute_mode(self):
         """compute_mode=lazy（BoxChannel 先例——rank_window 500 长窗在
