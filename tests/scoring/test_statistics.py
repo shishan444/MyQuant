@@ -206,12 +206,22 @@ class TestBootCI:
         ("kwargs", "match"),
         [pytest.param({"B": 0}, r"B=0", id="零 B"),
          pytest.param({"B": 2.5}, r"B=2.5", id="非整 B"),
+         pytest.param({"B": True}, r"B=True", id="bool B（CARD-01）"),
+         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）"),
          pytest.param({"ci": 0.0}, r"ci=0.0", id="零置信"),
          pytest.param({"ci": 1.0}, r"ci=1.0", id="满置信")],
     )
     def test_invalid_params_rejected(self, kwargs, match):
         with pytest.raises(ValueError, match=match):
             boot_ci([1.0, 2.0, 3.0], **kwargs)
+
+    def test_b_upper_bound_inclusive(self):
+        """上限 BOOT_B_MAX=100_000 含等号合法（边界两侧——拒绝用例
+        在参数化「超上限」档）。"""
+        from core.scoring.statistics import BOOT_B_MAX
+        assert BOOT_B_MAX == 100_000
+        lo, hi = boot_ci([1.0, 2.0, 3.0], B=BOOT_B_MAX)
+        assert lo <= hi
 
     def test_interval_brackets_sample_mean(self):
         # 重抽样均值分布以观测均值为中心（percentile 区间覆盖之）
@@ -267,6 +277,18 @@ class TestBootDiff:
     def test_small_sample_rejected(self, x, y):
         with pytest.raises(ValueError, match="两侧各至少 3 个观测"):
             boot_diff(x, y)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [pytest.param({"B": 0}, r"B=0", id="零 B"),
+         pytest.param({"B": 2.5}, r"B=2.5", id="非整 B"),
+         pytest.param({"B": True}, r"B=True", id="bool B（CARD-01）"),
+         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）")],
+    )
+    def test_invalid_B_rejected(self, kwargs, match):
+        """B 校验与 boot_ci 同款（CARD-01 三层统一——库层兜底）。"""
+        with pytest.raises(ValueError, match=match):
+            boot_diff(self.X, self.Y, **kwargs)
 
 
 class TestBootR9CrossCheck:

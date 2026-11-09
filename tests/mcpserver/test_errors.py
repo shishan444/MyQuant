@@ -560,6 +560,19 @@ class TestParamHintScenariosParity:
         assert "> 0" in mpl_hint and "有限数" in mpl_hint
         assert "inf" in mpl_hint  # inf 拒绝的引导要素（SEC-02）
 
+    def test_bare_b_seed_scenarios_readable(self):
+        """裸键 B/seed 场景文案（CARD-01：ruler_compare 壳层前置
+        422 的 detail.param 面）：键在场＋文案含值域要素（B 上限与
+        三层统一值一致——与 BOOT_B_MAX 同源对拍）。"""
+        from mcpserver.errors import _PARAM_HINT_SCENARIOS
+        from core.scoring.statistics import BOOT_B_MAX
+
+        b_hint = _PARAM_HINT_SCENARIOS["B"]
+        assert "正整数" in b_hint
+        assert f"1~{BOOT_B_MAX}" in b_hint, "B 场景文案与库层上限同源"
+        s_hint = _PARAM_HINT_SCENARIOS["seed"]
+        assert "整数" in s_hint
+
 
 class TestMutualExclusionThreeFaceMcp:
     """族 2d 三面对拍·MCP 参数面（add-position-sizing-params 6.3）。

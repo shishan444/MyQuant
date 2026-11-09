@@ -442,8 +442,14 @@ class TestSignificanceMethod:
         ("cfg", "param"),
         [pytest.param({"method": "bootstrap_ci", "B": 0}, "B", id="零 B"),
          pytest.param({"method": "bootstrap_ci", "B": 1.5}, "B", id="非整 B"),
+         pytest.param({"method": "bootstrap_ci", "B": True}, "B",
+                      id="bool B（CARD-01）"),
+         pytest.param({"method": "bootstrap_ci", "B": 100_001}, "B",
+                      id="超上限 B（CARD-01）"),
          pytest.param({"method": "bootstrap_ci", "seed": "x"}, "seed",
-                      id="非整 seed")],
+                      id="非整 seed"),
+         pytest.param({"method": "bootstrap_ci", "seed": True}, "seed",
+                      id="bool seed（CARD-01）")],
     )
     def test_invalid_bootstrap_params_rejected(self, cfg, param) -> None:
         df = _make_df()

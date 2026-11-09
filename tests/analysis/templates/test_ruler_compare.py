@@ -784,3 +784,39 @@ class TestRulerCompareShell:
                 data_ranges=[env["rng"]], identify_window=iw)
         assert ei.value.detail["param"] == "identify_window"
         assert ei.value.detail["legal_range"] == "(0,1]"
+
+    @pytest.mark.parametrize(
+        ("b_or_s", "bad"),
+        [pytest.param({"B": 3000.5}, 3000.5, id="非整 B"),
+         pytest.param({"B": True}, True, id="bool B"),
+         pytest.param({"B": 0}, 0, id="零 B"),
+         pytest.param({"B": 100_001}, 100_001, id="超上限 B"),
+         pytest.param({"seed": "x"}, "x", id="非整 seed"),
+         pytest.param({"seed": True}, True, id="bool seed")],
+    )
+    def test_b_seed_precheck_rejected(self, vr_db, env, b_or_s, bad):
+        """B/seed 前置 422（CARD-01）：detail 裸键 param="B"/"seed"
+        （MCP 场景表面）——非整/bool/超上限在壳层拦截，不裸穿
+        boot_ci/np 层。"""
+        self._seed_record(vr_db, env["rng"])
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="wave",
+                trade_source={"kind": "validation",
+                              "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]], **b_or_s)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] in ("B", "seed")
+        assert ei.value.detail.get("actual", bad) == bad
+
+    def test_b_upper_bound_inclusive_full_run(self, vr_db, env):
+        """B=BOOT_B_MAX（100_000）含等号合法：全链可跑（上限边界
+        两侧——拒绝档在参数化「超上限」）。"""
+        from core.scoring.statistics import BOOT_B_MAX
+        self._seed_record(vr_db, env["rng"])
+        out = ruler_compare(
+            vr_db, env["data_dir"], env["rng"], mode="wave",
+            trade_source={"kind": "validation", "record_id": "rec_cmp"},
+            data_ranges=[env["rng"]], B=BOOT_B_MAX)
+        assert out["payload"]["n_for_ci"] == 3
+        assert out["confidence"]["B"] == BOOT_B_MAX
