@@ -127,6 +127,54 @@ class TestZigzagRules:
         assert waves[1]["amp"] == 63 / 60 - 1  # 全精度精确断言
         assert waves[1]["dur"] == 1
 
+    def test_rule1b_equal_price_bar_updates_nothing(self):
+        """方向未定态的等值 bar（p == 极值候选）：既非新高也非新低，
+        极值候选不变（else 内 p>ext_p / p<ext_p 两分支均不命中——
+        阶段四盲区消解补：等值 bar 路径此前零覆盖）。
+
+        人工推导 [100,102,102,96]：102 首根更新候选→102；bar2 与
+        候选等值不动；96≤102×0.95=96.9 确认 pivot(102) 转下行。
+        """
+        waves = compute_zigzag_waves(
+            _df_from_closes([100, 102, 102, 96])["close"], 0.05)
+        # [100,102,102,96] 仅产生单个 pivot(102)（首确认）——无浪
+        assert waves == [], "单个 pivot 不构成浪"
+
+
+class TestZigzagInvariants:
+    """zigzag 状态机结构不变量（阶段四属性补强——pivot 链性质）。"""
+
+    def test_consecutive_waves_chained_and_alternating_synthetic(self):
+        """不变量①②：确认浪序列首尾相接（wave[i].end == wave[i+1].start）
+        且方向严格交替（long/short 相间）——zigzag pivot 链的数学性质。
+
+        人工推导 [100,60,120,50,130,100] thr=0.05：pivots=100→60→120
+        →50→130 四个确认（每段反向运动均 ≥5%），末端候选 100 未确认
+        剔除——浪链 4 条交替相接。
+        """
+        waves = compute_zigzag_waves(
+            _df_from_closes([100, 60, 120, 50, 130, 100])["close"], 0.05)
+        assert len(waves) == 4
+        for a, b in zip(waves, waves[1:]):
+            assert a["end_price"] == b["start_price"], "相邻浪共享 pivot"
+            assert a["direction"] != b["direction"], "方向严格交替"
+
+    def test_consecutive_waves_chained_and_alternating_real(self):
+        """不变量在真实数据上成立（右端固定 2026-11-07——活数据追加
+        不破坏历史 bar）。"""
+        path = Path("data/market_fapi/BTCUSDT_4h.parquet")
+        if not path.exists():
+            pytest.skip("真实数据不在库")
+        df = pd.read_parquet(path)
+        df = df[df.index <= pd.Timestamp("2026-11-07", tz="UTC")]
+        waves = compute_zigzag_waves(df["close"], threshold=0.05)
+        assert len(waves) > 2
+        for a, b in zip(waves, waves[1:]):
+            assert a["end"] == b["start"], "相邻浪共享 pivot"
+            assert a["direction"] != b["direction"], "方向严格交替"
+        dirs = {w["direction"] for w in waves}
+        assert dirs == {"long", "short"}, "两向均出现"
+
 
 class TestWaveInventoryTemplate:
     """模板输出与边界（任务 3.3）。"""

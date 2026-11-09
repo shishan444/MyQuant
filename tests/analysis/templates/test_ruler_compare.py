@@ -223,6 +223,52 @@ class TestTradeSource:
         with pytest.raises(ResearchError, match="无逐笔行"):
             load_validation_trades(vr_db, "rec_empty", RNG)
 
+    @pytest.mark.parametrize("record_id", ["", None, 123])
+    def test_record_id_bad_form_rejected(self, record_id):
+        """trade_source.record_id 非字符串/空 → 422 附合法形制。"""
+        with pytest.raises(ResearchError) as ei:
+            validate_trade_source(
+                {"kind": "validation", "record_id": record_id})
+        assert ei.value.detail["param"] == "trade_source.record_id"
+
+    def test_malformed_params_json_falls_back_then_rejected(self, vr_db):
+        """params 列坏 JSON → 解析 fallback {} → 走「无单区间
+        request_range」拒绝（拒绝信息指明根因，不裸 JSONDecodeError）。"""
+        from sqlalchemy import text
+        from core.persistence.orm.engine import engine_for
+        _insert_record(vr_db, "rec_badjson", RNG, [
+            _mk_trade("2026-07-02", "2026-07-03", "long", 100, 105, 5)])
+        with engine_for(vr_db).begin() as conn:
+            conn.execute(text(
+                "UPDATE validation_records SET params = '{bad json' "
+                "WHERE record_id = 'rec_badjson'"))
+        with pytest.raises(ResearchError, match="request_range"):
+            load_validation_trades(vr_db, "rec_badjson", RNG)
+
+    def test_missing_init_cash_rejected(self, vr_db):
+        """记录 params 有 request_range 但缺实际生效 init_cash → 422
+        （净均值口径分母缺失显式拒绝）。"""
+        import json as _json
+        from sqlalchemy import text
+        from core.persistence.orm.engine import engine_for
+        _insert_record(vr_db, "rec_nocash", RNG, [
+            _mk_trade("2026-07-02", "2026-07-03", "long", 100, 105, 5)])
+        rng_only = _json.dumps({"request_range": RNG})
+        with engine_for(vr_db).begin() as conn:
+            conn.execute(text(
+                "UPDATE validation_records SET params = :p "
+                "WHERE record_id = 'rec_nocash'"), {"p": rng_only})
+        with pytest.raises(ResearchError) as ei:
+            load_validation_trades(vr_db, "rec_nocash", RNG)
+        assert "init_cash" in ei.value.message
+
+    def test_all_open_trades_rejected(self, vr_db):
+        """交易清单全部为持仓中行（无已出场交易可对照）→ 422。"""
+        rows = [_mk_trade("2026-07-05", None, "long", 100, 101, None)]
+        _insert_record(vr_db, "rec_allopen", RNG, rows)
+        with pytest.raises(ResearchError, match="全部为持仓中行"):
+            load_validation_trades(vr_db, "rec_allopen", RNG)
+
 
 # ------------------------------------------------- 5.2 浪模式计算核心
 
@@ -312,6 +358,16 @@ class TestWaveCompareCore:
         assert "区间无浪" in out["disclosure"]
         assert out["n_trades"] == 1, "交易侧统计照出"
         assert out["unmatched_trades"] == 1
+
+    def test_zero_span_wave_capture_none(self):
+        """匹配到零幅浪（start_price==end_price）→ capture=None（span=0
+        防御路径——阶段四盲区消解补）。"""
+        waves = [_mk_wave("2026-07-01", "2026-07-11", "long", 100.0, 100.0)]
+        t = _mk_trade("2026-07-05", "2026-07-08", "long", 100, 105, 5)
+        out = compare_wave([t], waves)
+        assert out["unmatched_trades"] == 0
+        assert out["per_trade"][0]["matched"] is True
+        assert out["per_trade"][0]["capture"] is None
 
 
 # ------------------------------------------------- 5.3 箱模式计算核心
@@ -425,6 +481,16 @@ class TestBoxCompareCore:
         out = compare_box([t1, t2], df, edge_window=1)
         assert out["trades_months_distinct"] == 2
         assert out["monthly_frequency"] == pytest.approx(1.0)
+
+    def test_entry_at_first_bar_no_sl_line_defensive(self):
+        """入场恰在 df 首 bar（e=0 无前一根通道值）→ box_h/sl_line=
+        None 防御披露态（仅对侧判定，不炸）——阶段四盲区消解补。"""
+        df = _mk_box_df([100.0, 60.0, 70.0, 70.0])
+        t = self._trade(df, 0, 3)
+        out = compare_box([t], df, edge_window=1)
+        assert out["n_trades"] == 1
+        assert out["n_opposite"] + out["n_stop_line"] + out[
+            "n_other"] == 1
 
 
 # ------------------------------------------------- demo 算例复算（5.2/5.3）
@@ -852,3 +918,33 @@ class TestRulerCompareShell:
             data_ranges=[env["rng"]], B=BOOT_B_MAX)
         assert out["payload"]["n_for_ci"] == 3
         assert out["confidence"]["B"] == BOOT_B_MAX
+
+    def test_edge_q_joint_order_rejected(self, vr_db, env):
+        """edge_q_low/edge_q_high 各自值域合法但 low ≥ high → 联合
+        422（param="edge_q_low|edge_q_high"——CARD-04 保留的联合校验）。"""
+        self._seed_record(vr_db, env["rng"])
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="box",
+                trade_source={"kind": "validation",
+                              "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]], edge_window=30,
+                edge_q_low=0.5, edge_q_high=0.3)
+        assert ei.value.detail["param"] == "edge_q_low|edge_q_high"
+
+    @pytest.mark.parametrize("mode", ["wave", "box"])
+    def test_insufficient_data_rejected(self, vr_db, env, mode):
+        """评估区间完全在数据外 → RESEARCH_DATA_INSUFFICIENT（wave
+        前扩装载与 box edge_window 前扩装载两分支同款）。记录级区间
+        校验先于装载——须为空区间单插匹配记录。"""
+        gone = dict(env["rng"], start="2025-01-01", end="2025-02-01")
+        _insert_record(vr_db, "rec_gone", gone, [
+            _mk_trade("2025-01-05", "2025-01-10", "long", 100, 105, 5)])
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], gone, mode=mode,
+                trade_source={"kind": "validation",
+                              "record_id": "rec_gone"},
+                data_ranges=[gone],
+                **({} if mode == "wave" else {"edge_window": 30}))
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"

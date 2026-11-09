@@ -62,6 +62,52 @@ class TestGuardPure:
         assert "returns" in ei.value.detail["legal_range"]
 
 
+class TestFloatGuardPure:
+    """_require_float_range 纯函数属性（CARD-04 新守卫——阶段四属性
+    补强：值域不变量与 legal_range 记法一致性）。"""
+
+    def test_in_domain_representative_values_pass(self) -> None:
+        """不变量：域内代表值（含合法端点/整型实参/int 边界值）零拒绝。"""
+        from core.analysis.templates.param_guard import _require_float_range
+        _require_float_range(0.5, name="x", lo=0, hi=1,
+                             lo_excl=True, hi_excl=True)
+        _require_float_range(0.01, name="x", lo=0, hi=1,
+                             lo_excl=True, hi_excl=True)
+        _require_float_range(0.99, name="x", lo=0, hi=1,
+                             lo_excl=True, hi_excl=True)
+        _require_float_range(1, name="x", lo=0, hi=1, lo_excl=True)  # int 实参
+        _require_float_range(0.25, name="x", lo=0)                    # 单侧界
+        _require_float_range(3, name="x", lo=0)                       # int 大值
+
+    @pytest.mark.parametrize("bad", [True, "0.5", "abc", None, [0.5]])
+    def test_raw_form_rejected(self, bad) -> None:
+        """不变量：bool/字符串/None/列表原始形一律拒（不转换）。"""
+        from core.analysis.templates.param_guard import _require_float_range
+        with pytest.raises(ResearchError) as ei:
+            _require_float_range(bad, name="x", lo=0, hi=1)
+        assert ei.value.detail["param"] == "x"
+
+    @pytest.mark.parametrize(
+        ("kwargs", "value", "expected_range"),
+        [pytest.param(dict(lo=0, hi=1, lo_excl=True, hi_excl=True),
+                      0.0, "(0,1)", id="双开"),
+         pytest.param(dict(lo=0, hi=1, lo_excl=True), 1.1, "(0,1]",
+                      id="开下闭上"),
+         pytest.param(dict(lo=0, hi=1), 1.1, "[0,1]", id="双闭"),
+         pytest.param(dict(lo=0), -0.1, "[0,inf)", id="无上界"),
+         pytest.param(dict(hi=1), 1.5, "(-inf,1]", id="无下界（hi 闭）")],
+    )
+    def test_legal_range_notation_matches_bounds(self, kwargs, value,
+                                                 expected_range) -> None:
+        """不变量：legal_range 记法与 lo/hi/开闭界参数严格一致——
+        记法是错误即文档（值域声明的唯一出站面）。触发值取各域外
+        侧（域内值零拒绝）。"""
+        from core.analysis.templates.param_guard import _require_float_range
+        with pytest.raises(ResearchError) as ei:
+            _require_float_range(value, name="x", **kwargs)
+        assert ei.value.detail["legal_range"] == expected_range
+
+
 class TestTimeAndWindowGuards:
     """TD-A 时间窗/时间形守卫（trigger-policy tasks 2.1/2.2 纯函数段）。
 

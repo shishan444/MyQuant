@@ -76,3 +76,20 @@ class TestEvaluationRulerMcp:
         assert body["params"]["mode"] == "wave"
         assert body["params"]["trade_source"]["record_id"] == "rec_x"
         assert "hypothesis_id" not in body, "对照不携带假设关联"
+
+    def test_condition_stats_significance_passthrough(self, monkeypatch):
+        """condition_stats significance 段经 MCP 透传（阶段五层级补全
+        ——params.significance 子键原样到 API body）。"""
+        mcp, captured, run_async = self._capture(monkeypatch)
+        run_async(mcp.call_tool("run_analysis", {
+            "template": "condition_stats",
+            "params": {"indicator": "EMA",
+                       "params": {"period": 10},
+                       "condition": {"subject": "close", "action": "gt",
+                                     "target": 60000},
+                       "significance": {"method": "bootstrap_ci",
+                                        "B": 500, "seed": 7}},
+            "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2026-07-01", "end": "2026-11-07"}))
+        sig = captured["body"]["params"]["significance"]
+        assert sig == {"method": "bootstrap_ci", "B": 500, "seed": 7}

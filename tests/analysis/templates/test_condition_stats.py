@@ -368,6 +368,27 @@ class TestPerspectiveDisclosure:
             "平局样本使 1−win_rate 换算失真（披露语义成立）"
 
 
+class TestConditionsFormEcho:
+    """conditions 数组形式的 echo 路径（阶段四盲区消解：conditions
+    形式＋顶层 indicator 同传的 echo 两行此前零覆盖——既有 conditions
+    用例均不传 indicator）。"""
+
+    def test_conditions_with_indicator_echoed(self) -> None:
+        """conditions 形式下顶层 indicator 有值 → echo 回显
+        indicator/params/conditions 三键（求值仍以条目内条件为准）。"""
+        df = _make_df(300)
+        out = condition_stats(
+            df, indicator="EMA", params={"period": 10},
+            conditions=[{"subject": "close", "action": "gt",
+                         "target": float(df["close"].median())}],
+            data_ranges=RANGES, forward_bars=5, min_samples=5).to_dict()
+        p = out["payload"]
+        assert p["indicator"] == "EMA"
+        assert p["params"] == {"period": 10}
+        assert len(p["conditions"]) == 1
+        assert "condition" not in p, "conditions 形式不带单条件键"
+
+
 class TestSignificanceMethod:
     """显著性段可选 method 升级（add-evaluation-ruler 任务 2.1）。
 

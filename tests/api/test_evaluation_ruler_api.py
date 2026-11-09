@@ -283,3 +283,84 @@ class TestRulerCompareRoute:
                            "start": "2025-01-01", "end": "2025-04-20"}})
         assert resp2.status_code == 422
         assert resp2.json()["detail"]["code"] == "RESEARCH_TEMPLATE_UNKNOWN"
+
+    @pytest.mark.parametrize("tpl, params", [
+        ("wave_inventory", {}),
+        ("box_inventory", {"window": 3, "min_len": 2}),
+    ])
+    def test_insufficient_data_rejected(self, ruler_client, tpl, params):
+        """路由层数据不足拒绝＋分派段 None 分支不可达判定锚（阶段四
+        盲区消解）。调用图依据：run_analysis 端点预检查（rows<50 时
+        _load_df 复现 DATA_INSUFFICIENT 先抛，analysis.py:944-948）先于
+        _run_template 分派段装载——预检查保证请求区间 ≥50 行后，分派段
+        装载切片 [load_start, end) ⊇ 请求区间恒有数据，wave/box 分派段
+        的 df None raise（:386/:435）经公开路由不可达（防御纵深冗余层）。
+        message 锚=原始请求区间（无 warmup 前扩）——若未来预检查退役、
+        分派段拦截顶上，message 变前扩区间即红，逼同步更新本判定。"""
+        resp = ruler_client.post("/api/research/analysis", json=_body(
+            tpl, params, start="2023-01-01", end="2023-02-01"))
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_DATA_INSUFFICIENT"
+        assert "[2023-01-01, 2023-02-01)" in detail["message"], \
+            "拒绝出自预检查（原始区间无前扩）——分派段 None 分支不可达锚"
+
+
+class TestConditionStatsSignificanceRoute:
+    """condition_stats significance 经真实路由的集成面（阶段五层级
+    补全——ai-research-tools MODIFIED 增量此前只有模板直调层）。
+
+    独立长数据 fixture：EMA warmup 按注册表上限推导为 600 bar（保守
+    取向），公共 ruler_data_dir（601 根）起点前扩不足——造 900 根。"""
+
+    @pytest.fixture()
+    def stats_env(self, db_path, tmp_path):
+        from MyQuant.api.app import create_app
+        from fastapi.testclient import TestClient
+
+        d = tmp_path / "data"
+        d.mkdir()
+        rng_ = np.random.default_rng(5)
+        n = 900
+        close = 100 + np.cumsum(rng_.normal(0, 0.5, n))
+        idx = pd.date_range("2025-01-01", periods=n, freq="4h", tz="UTC",
+                            name="timestamp")
+        pd.DataFrame({
+            "open": close, "high": close + 0.2, "low": close - 0.2,
+            "close": close, "volume": rng_.uniform(100, 800, n),
+        }, index=idx).to_parquet(d / "TESTUSDT_4h.parquet")
+        app = create_app(db_path=db_path, data_dir=d)
+        with TestClient(app) as c:
+            # 低分位阈值：区间内命中约九成（防随机游走窗口性零命中）
+            yield c, float(np.quantile(close, 0.1))
+
+    def _stats_body(self, params, target):
+        return {"template": "condition_stats",
+                "params": {**params, "condition": {
+                    "subject": "close", "action": "gt", "target": target}},
+                "data_range": {"symbol": "TESTUSDT", "timeframe": "4h",
+                               "start": "2025-04-20", "end": "2025-05-20"}}
+
+    def test_bootstrap_ci_via_route(self, stats_env):
+        """params.significance 经 /api/research/analysis 全链 → 200 且
+        显著性段 method=bootstrap_ci＋CI 附着。"""
+        client, target = stats_env
+        resp = client.post("/api/research/analysis", json=self._stats_body(
+            {"indicator": "EMA", "params": {"period": 10},
+             "significance": {"method": "bootstrap_ci", "B": 500}}, target))
+        assert resp.status_code == 200, resp.text
+        out = resp.json()
+        fs = out["confidence"]["forward_significance"]
+        assert fs["method"] == "bootstrap_ci"
+        assert fs["boot_diff_ci"] is not None and len(
+            fs["boot_diff_ci"]) == 2
+        assert fs["B"] == 500
+
+    def test_default_t_test_via_route(self, stats_env):
+        """不携带 significance 经路由 → 缺省 t 检验（存量路径集成锚）。"""
+        client, target = stats_env
+        resp = client.post("/api/research/analysis", json=self._stats_body(
+            {"indicator": "EMA", "params": {"period": 10}}, target))
+        assert resp.status_code == 200, resp.text
+        fs = resp.json()["confidence"]["forward_significance"]
+        assert fs["method"] == "t_test_vs_baseline"
