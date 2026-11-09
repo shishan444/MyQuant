@@ -407,6 +407,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        condition_stats 另支持可选 params.significance 显著性段：method ∈
+        t_test_vs_baseline（缺省，输出与既有行为逐位一致——p 值为条件组
+        前向收益均值 vs 全体 bar 前向收益均值的单样本 t 检验，仅在间隔
+        ≥ forward_bars 的去重叠信号子集上计算）|bootstrap_ci（可附 B/seed，
+        语义与评测尺子 bootstrap 统计件一致——均值差 percentile CI、
+        同种子可复现、n<3 时 CI=null 附样本数披露）。
         方向口径（包四 GAP-01 披露）：win_rate 与 forward_return_mean 为
         做多持有口径（收益=价格涨跌幅）；short 视角下做空胜率=收益为负
         比例（零收益样本不计入胜方，不可用 1−win_rate 换算）——返回体
