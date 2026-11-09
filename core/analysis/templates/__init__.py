@@ -18,6 +18,7 @@ from core.analysis.templates.pattern_mining import similar_at_time
 from core.analysis.templates.param_sweep import param_sweep
 from core.analysis.templates.precheck_hypothesis import precheck_hypothesis
 from core.analysis.templates.regime_split import regime_split
+from core.analysis.templates.ruler_compare import ruler_compare
 from core.analysis.templates.screen_patterns import screen_patterns
 from core.analysis.templates.segment_narrative import segment_narrative
 from core.analysis.templates.wave_inventory import wave_inventory
@@ -34,6 +35,7 @@ __all__ = [
     "param_sweep",
     "precheck_hypothesis",
     "regime_split",
+    "ruler_compare",
     "screen_patterns",
     "segment_narrative",
     "wave_inventory",

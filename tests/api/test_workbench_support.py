@@ -183,7 +183,7 @@ class TestAnalysisTasksList:
         # templates 与 _TEMPLATES 同源（12 全集）
         from api.routes.research.analysis import _TEMPLATES
         assert body["templates"] == list(_TEMPLATES)
-        assert len(body["templates"]) == 14
+        assert len(body["templates"]) == 15
         # created_at desc + 七字段行（无 result/params）
         first = body["items"][0]
         assert set(first.keys()) == {

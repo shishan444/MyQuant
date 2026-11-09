@@ -137,3 +137,138 @@ class TestBoxInventoryRoute:
         logs = rr.list_research_log(db_path)
         assert not [l for l in logs if l.get("entry_type") == "validate"], \
             "拦截请求不产生判定留痕"
+
+
+class TestRulerCompareRoute:
+    @pytest.fixture()
+    def vr_db(self, db_path):
+        from core.analysis.executor import ensure_research_tables
+        from core.persistence.db_ext import init_db_ext
+        from sqlalchemy import text
+        from core.persistence.orm.engine import engine_for
+
+        init_db_ext(db_path)
+        ensure_research_tables(db_path)
+        with engine_for(db_path).begin() as conn:
+            conn.execute(text(
+                "INSERT INTO research_hypotheses (hypothesis_id,"
+                " conditions, conditions_hash, statement, data_ranges,"
+                " ranges_hash, status, created_at, updated_at) VALUES"
+                " ('hyp_rr', '[]', 'ch_rr', 's', '[]', 'rh_rr',"
+                " 'active', '2026-01-01T00:00:00Z',"
+                " '2026-01-01T00:00:00Z')"))
+        rng = {"symbol": "TESTUSDT", "timeframe": "4h",
+               "start": "2025-01-01", "end": "2025-04-20"}
+        rows = [
+            ("2025-02-05 04:00:00+00:00", "2025-02-12 04:00:00+00:00",
+             "Long", 62.0, 80.0, 3.0),
+            ("2025-02-20 04:00:00+00:00", "2025-02-25 04:00:00+00:00",
+             "Long", 70.0, 95.0, 2.0),
+            ("2025-03-01 04:00:00+00:00", "2025-03-05 04:00:00+00:00",
+             "Short", 100.0, 90.0, 1.5),
+        ]
+        import json as _json
+        params = _json.dumps({"request_range": rng, "init_cash": 100.0,
+                              "fee": 0.001, "slippage": 0.0005})
+        with engine_for(db_path).begin() as conn:
+            conn.execute(text(
+                "INSERT INTO validation_records (record_id,"
+                " hypothesis_id, level, segmentation, params, result,"
+                " verdict, range_hash, created_at) VALUES"
+                " ('rec_rr', 'hyp_rr', 'isolated_backtest', '',"
+                " :params, '{}', 'pass', 'x', '2026-01-01T00:00:00Z')"),
+                {"params": params})
+            for i, (et, xt, d, ep, xp, pnl) in enumerate(rows):
+                conn.execute(text(
+                    "INSERT INTO vr_trade_detail (record_id, exec_ref,"
+                    " exec_index, range_start, range_end, seq,"
+                    " entry_time, exit_time, entry_price, exit_price,"
+                    " size, direction, pnl) VALUES"
+                    " ('rec_rr', 'main', 0, :rs, :re, :seq, :et, :xt,"
+                    " :ep, :xp, 1.0, :dir, :pnl)"),
+                    {"rs": rng["start"], "re": rng["end"], "seq": i,
+                     "et": et, "xt": xt, "ep": ep, "xp": xp, "dir": d,
+                     "pnl": pnl})
+        return db_path
+
+    @pytest.fixture()
+    def cmp_client(self, vr_db, ruler_data_dir):
+        from MyQuant.api.app import create_app
+        from fastapi.testclient import TestClient
+
+        app = create_app(db_path=vr_db, data_dir=ruler_data_dir)
+        with TestClient(app) as c:
+            yield c
+
+    def _body(self, params, **extra):
+        body = {"template": "ruler_compare", "params": params,
+                "data_range": {"symbol": "TESTUSDT", "timeframe": "4h",
+                               "start": "2025-01-01",
+                               "end": "2025-04-20"}}
+        body.update(extra)
+        return body
+
+    def test_wave_mode_full_route(self, cmp_client):
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            {"mode": "wave",
+             "trade_source": {"kind": "validation",
+                              "record_id": "rec_rr"}}))
+        assert resp.status_code == 200, resp.text
+        out = resp.json()
+        assert out["template"] == "ruler_compare"
+        assert out["payload"]["mode"] == "wave"
+        assert out["sample_size"] == 3
+
+    def test_box_mode_full_route(self, cmp_client):
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            {"mode": "box", "edge_window": 24,
+             "trade_source": {"kind": "validation",
+                              "record_id": "rec_rr"}}))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["payload"]["box"]["n_trades"] == 3
+
+    @pytest.mark.parametrize("params", [
+        {},
+        {"mode": "wave"},
+        {"trade_source": {"kind": "validation", "record_id": "rec_rr"}},
+    ])
+    def test_missing_required_keys_rejected(self, cmp_client, params):
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            params))
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail.get("detail", {}).get("param") in (
+            "mode", "trade_source", "mode|trade_source"), detail
+
+    def test_backtest_guidance_422(self, cmp_client):
+        """kind=backtest → 422 附防污染指引文案（与 5.1 拒绝面并列）。"""
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            {"mode": "wave",
+             "trade_source": {"kind": "backtest",
+                              "record_id": "rec_rr"}}))
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert "沙盒回测不落库逐笔（防污染纪律）" in detail["message"]
+        assert "隔离验证记录 record_id" in detail["message"]
+
+    def test_hypothesis_id_rejected(self, cmp_client):
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            {"mode": "wave",
+             "trade_source": {"kind": "validation",
+                              "record_id": "rec_rr"}},
+            hypothesis_id="hyp_rr"))
+        assert resp.status_code == 422
+        assert "不适用假设关联" in resp.json()["detail"]["message"]
+
+    def test_unknown_template_still_rejected(self, cmp_client):
+        resp = cmp_client.post("/api/research/analysis", json=self._body(
+            {"mode": "wave"}))
+        # ruler_compare 已注册——未知模板名走另一断言（保留族级负向锚）
+        resp2 = cmp_client.post("/api/research/analysis", json={
+            "template": "ruler_compare_x", "params": {},
+            "data_range": {"symbol": "TESTUSDT", "timeframe": "4h",
+                           "start": "2025-01-01", "end": "2025-04-20"}})
+        assert resp2.status_code == 422
+        assert resp2.json()["detail"]["code"] == "RESEARCH_TEMPLATE_UNKNOWN"

@@ -29,7 +29,7 @@ _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
               "regime_split", "precheck_hypothesis", "segment_narrative",
               "counter_profile", "exit_sweep", "wave_inventory",
-              "box_inventory")
+              "box_inventory", "ruler_compare")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -224,6 +224,8 @@ _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
     "counter_profile": (("condition", "direction"), ("conditions", "direction")),
     "exit_sweep": (("condition", "direction", "grid"),
                    ("conditions", "direction", "grid")),
+    # add-evaluation-ruler：对照模板双必填（mode+trade_source）
+    "ruler_compare": (("mode", "trade_source"),),
 }
 
 
@@ -388,6 +390,24 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         return _with_derivatives_coverage(wave_inventory(
             df, data_ranges=ranges, request_start=start_ts,
             threshold=threshold, warmup_bars=warmup_bars).to_dict(), df)
+
+    if payload.template == "ruler_compare":
+        # 对照模板（add-evaluation-ruler）：自装载模板壳（exit_sweep
+        # 先例——db 读验证记录+行情装载收敛在壳内，不走 derivatives
+        # 覆盖包装——无共享装载 df）；hypothesis_id 已被分派层 D5
+        # 拦截（回望性统计不烧判定并集）
+        from core.analysis.templates.ruler_compare import ruler_compare
+        return ruler_compare(
+            db_path, data_dir, rng,
+            mode=p["mode"], trade_source=p["trade_source"],
+            data_ranges=ranges,
+            threshold=p.get("threshold", 0.05),
+            identify_window=p.get("identify_window", 0.3),
+            edge_window=p.get("edge_window"),
+            edge_q_low=p.get("edge_q_low", 0.10),
+            edge_q_high=p.get("edge_q_high", 0.90),
+            buffer=p.get("buffer", 0.25),
+            B=p.get("B", 3000), seed=p.get("seed", 42))
 
     if payload.template == "box_inventory":
         # 箱体盘点（add-evaluation-ruler）：warmup=window 前扩只用不算
