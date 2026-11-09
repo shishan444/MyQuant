@@ -448,6 +448,29 @@ class TestPermutationEntropyContract:
         pd.testing.assert_series_equal(
             pe["perm_10_3_pe_pct"], expect_pct, check_names=False)
 
+    def test_current_bar_shock_two_sided(self):
+        """当根突变双面（D2①②分界）：t 根 pe 可变、t 根 pe_pct 不变
+        （shift(1) 前根取值）——确定性构造：交替双态（pe 恒定非零）＋
+        t 根巨变引入新模式。"""
+        # 交替 [平,涨] 循环：模式恒 (1,2)/(2,1) 两种→pe 稳定
+        closes = []
+        px = 100.0
+        for d in [0.0, 1.0] * 160:
+            px += d
+            closes.append(px)
+        df = _mk_df(closes)
+        p = {"window": 50, "pattern_len": 4}
+        a = self._cols(df, p)
+        t = 300
+        assert a["perm_50_4_pe"].iloc[t] > 0.0  # 检出力
+        df2 = df.copy()
+        df2.iloc[t, df2.columns.get_loc("close")] = 50.0
+        b = self._cols(df2, p)
+        assert b["perm_50_4_pe"].iloc[t] != a["perm_50_4_pe"].iloc[t], \
+            "当根突变须改变 t 根 pe（新符号引入新模式）"
+        assert b["perm_50_4_pe_pct"].iloc[t] == a[
+            "perm_50_4_pe_pct"].iloc[t], "t 根 pct 不变（shift(1)）"
+
     def test_frozen_demo_one_bar_offset_property(self):
         """冻结 demo 错位性质断言（r7_bench.py:86 复刻——窗不含当根）：
         内置 pe[i] ≡ demo pe[i+1]（公式逐字复刻、窗右端差一根）。"""
@@ -939,3 +962,80 @@ class TestConditionChainFaces:
             gate = evaluate_condition(col, df["close"],
                                       {"type": "gt", "threshold": 0.0})
             assert (gate == (col > 0.0)).all()
+
+
+# ----------------------------------------------------------- 10.1 参数域 ε 负向
+
+class TestParamDomainEpsilon:
+    """每件参数下界−ε/上界+ε 各 422（_resolve_indicator_ref 域拒绝）
+    ＋界内边界值正常（恰下界/恰上界通过——闭区间语义）。"""
+
+    CASES = {
+        "ShannonEntropy": {"window": (10, 500), "rank_window": (100, 500)},
+        "PermutationEntropy": {"window": (50, 500),
+                               "pattern_len": (2, 8)},
+        "EfficiencyRatio": {"window": (10, 500),
+                            "rank_window": (100, 500)},
+        "CUSUM": {"sd_window": (100, 500), "drift": (0.0, 2.0),
+                  "threshold": (1.0, 20.0)},
+        "GARCHFilter": {"alpha": (0.01, 0.50), "beta": (0.50, 0.99),
+                        "init_window": (250, 500)},
+    }
+
+    def _mk_params(self, indicator, key, value):
+        base = {k: p[0] for k, p in self.CASES[indicator].items()}
+        base[key] = value
+        return base
+
+    @pytest.mark.parametrize(
+        ("indicator", "key", "value"),
+        [(ind, k, lo - eps)
+         for ind, params in CASES.items()
+         for k, (lo, hi) in params.items()
+         for eps in ([1] if float(lo).is_integer() else [0.01])]
+        + [(ind, k, hi + eps)
+           for ind, params in CASES.items()
+           for k, (lo, hi) in params.items()
+           for eps in ([1] if float(hi).is_integer() else [0.01])],
+        ids=lambda v: f"{v}")
+    def test_out_of_domain_rejected(self, indicator, key, value):
+        from core.analysis.column_ref import (
+            ColumnRefError, _resolve_indicator_ref)
+        with pytest.raises(ColumnRefError) as ei:
+            _resolve_indicator_ref({
+                "indicator": indicator,
+                "params": self._mk_params(indicator, key, value),
+                "field": _subject_field(indicator)})
+        assert ei.value.code == "PARAM_INVALID"
+        assert key in ei.value.detail.get("key", "")
+
+    @pytest.mark.parametrize(
+        ("indicator", "key", "value"),
+        [(ind, k, lo)
+         for ind, params in CASES.items()
+         for k, (lo, hi) in params.items()]
+        + [(ind, k, hi)
+           for ind, params in CASES.items()
+           for k, (lo, hi) in params.items()],
+        ids=lambda v: f"{v}")
+    def test_boundary_values_accepted(self, indicator, key, value):
+        """界内边界值正常（恰下界/恰上界——闭区间；GARCH 边界组合
+        alpha+beta=1.51 时仍受 cross_params 拒绝是联合约束非域约束，
+        本面只验逐参数域）。"""
+        from core.analysis.column_ref import _resolve_indicator_ref
+        # GARCH 恰上界组合 alpha=0.50/beta=0.99 → 和 1.49<1 通过；
+        # 逐参数边界替换其余参数取下界，避免联合越界干扰域判定面
+        try:
+            ref = _resolve_indicator_ref({
+                "indicator": indicator,
+                "params": self._mk_params(indicator, key, value),
+                "field": _subject_field(indicator)})
+            assert ref.params[key] == value
+        except Exception as exc:
+            # GARCH alpha 上界 0.50 与 beta 下界 0.50 组合和恰 1.0 →
+            # cross_params 拒绝（联合约束）——非域拒绝，按预期收
+            if indicator == "GARCHFilter" and \
+                    "alpha+beta" in str(exc):
+                assert key in ("alpha", "beta")
+            else:
+                raise
