@@ -204,6 +204,25 @@ class TestTradeSource:
         assert len(trades) == 1, "持仓中行排除于全部指标"
         assert open_n == 1
 
+    def test_exit_time_outside_range_rejected(self, vr_db):
+        """逐笔级双键校验：entry 合法而 exit_time 越界（评估区间
+        [2026-07-01, 2026-11-07) 外）→ 422 附 seq+violating=exit_time
+        （spec 区间不一致 scenario 的逐笔级双键完备）。"""
+        rows = [_mk_trade("2026-07-02", "2026-12-01", "long", 100, 105, 5)]
+        _insert_record(vr_db, "rec_exit_out", RNG, rows)
+        with pytest.raises(ResearchError) as ei:
+            load_validation_trades(vr_db, "rec_exit_out", RNG)
+        assert ei.value.detail["seq"] == 0
+        assert ei.value.detail["violating"] == "exit_time"
+
+    def test_empty_trade_rows_rejected(self, vr_db):
+        """n 三档的 0 档现状记录：记录无逐笔行 → load 层 422（拒绝
+        先于 build_result 的 min_samples 路径——防御纵深两道均
+        fail-loud，此处锚现状行为面）。"""
+        _insert_record(vr_db, "rec_empty", RNG, [])
+        with pytest.raises(ResearchError, match="无逐笔行"):
+            load_validation_trades(vr_db, "rec_empty", RNG)
+
 
 # ------------------------------------------------- 5.2 浪模式计算核心
 
@@ -250,6 +269,26 @@ class TestWaveCompareCore:
         out = compare_wave([t1, t2], self.WAVES)
         assert out["identified_waves"] == 1, "同浪识别率分子只计 1 浪"
         assert out["identification_rate"] == pytest.approx(1 / 2)
+
+    def test_overlapping_same_direction_waves_first_match(self):
+        """多浪重叠取第一匹配（spec 浪模式条款）：两条同向浪时间重叠
+        [07-05, 07-11]，入场落在重叠段 → 归时间序第一条（wave_index=0）；
+        入场落在仅第二条的尾段 → 第二条。重叠浪对为手工构造（compare_wave
+        纯函数吃清单——不要求浪来自 zigzag 可达序列）。"""
+        waves = [
+            _mk_wave("2026-07-01", "2026-07-11", "long", 100.0, 120.0),
+            _mk_wave("2026-07-05", "2026-07-15", "long", 110.0, 130.0),
+        ]
+        in_overlap = _mk_trade("2026-07-06", "2026-07-09", "long",
+                               112, 118, 5)
+        out = compare_wave([in_overlap], waves)
+        assert out["per_trade"][0]["matched"] is True
+        assert out["per_trade"][0]["wave_index"] == 0, \
+            "重叠段归时间序第一条浪"
+        in_second_only = _mk_trade("2026-07-13", "2026-07-14", "long",
+                                   128, 129, 5)
+        out2 = compare_wave([in_second_only], waves)
+        assert out2["per_trade"][0]["wave_index"] == 1
 
     def test_capture_directionalized_both_sides(self):
         """捕获=方向化价差÷|end−start|：多 (exit−entry)/span、
@@ -354,6 +393,29 @@ class TestBoxCompareCore:
         t = self._trade(df, 8, 11, "long")
         out = compare_box([t], df, edge_window=2)
         assert out["n_stop_line"] == 1, "sl_line=q10−buffer×box_h（减法）"
+
+    def test_short_sl_line_addition_form_mirror(self):
+        """空头镜像加法形式（spec 箱模式条款：sl_line=q90+buffer×box_h
+        ——加法/减法形制）：同 (90,110) 振荡窗 q90=108、box_h=16 →
+        空头 sl=108+0.25×16=112；乘法（错）108×1.25=135。空头入场后
+        收盘 115：加法触止损（115≥112）；乘法不触（115<135）且 115
+        恒高于对侧沿 q10 → 归「其他」——分类翻转判别。"""
+        head = [90.0, 110.0] * 4
+        df = _mk_box_df(head + [115.0] * 4)
+        t = self._trade(df, 8, 11, "short")
+        out = compare_box([t], df, edge_window=2)
+        assert out["n_stop_line"] == 1, "空头 sl=q90+buffer×box_h（加法）"
+        assert out["n_other"] == 0
+
+    def test_short_opposite_side_is_q10(self):
+        """空头对侧沿=q10（镜像完备）：空头入场后收盘跌破 q10 →
+        对侧类（e−1 通道=100、box_h=0 → sl=100 恰在场，85<100 不触
+        空头止损——85≥sl 才触）。"""
+        df = _mk_box_df([100.0] * 6 + [85.0] * 4)
+        out = compare_box([self._trade(df, 6, 9, "short")], df,
+                          edge_window=1)
+        assert out["n_opposite"] == 1
+        assert out["n_stop_line"] == 0
 
     def test_monthly_frequency_denominator(self):
         """月频分母=distinct(entry_time YYYY-MM) 下限 1。"""
@@ -636,3 +698,89 @@ class TestRulerCompareShell:
             trade_source={"kind": "validation", "record_id": "rec_cmp"},
             data_ranges=[env["rng"]])
         assert a == b
+
+    def test_net_mean_caliber_hand_computed(self, vr_db, env):
+        """净均值口径手算锚（spec 浪模式条款）：net_i=逐笔 pnl÷init_cash
+        ×100（百分比形，pnl 已含费滑不后扣）。三笔 pnl 3.0/2.0/1.5、
+        init_cash=100 → mean=(3.0+2.0+1.5)/3≈2.1667、win_rate=1.0。"""
+        self._seed_record(vr_db, env["rng"])
+        out = ruler_compare(
+            vr_db, env["data_dir"], env["rng"], mode="wave",
+            trade_source={"kind": "validation", "record_id": "rec_cmp"},
+            data_ranges=[env["rng"]])
+        p = out["payload"]
+        assert p["net_mean_pct"] == pytest.approx(6.5 / 3, rel=1e-12)
+        assert p["win_rate"] == pytest.approx(1.0)
+        assert p["n_for_ci"] == 3
+        assert p["net_ci_pct"] is not None, "n=3 附着 CI"
+        assert "init_cash" in p["net_caliber"], "口径声明含分母来源"
+
+    def test_edge_window_frozen_default_1h(self, vr_db, tmp_path):
+        """edge_window timeframe 冻结默认（tasks 5.3：1h=240/15m=480
+        默认）：1h 轴不传 edge_window → 用 240 且全程 200 出结果。"""
+        import numpy as np
+        d = tmp_path / "data"
+        d.mkdir()
+        n = 600
+        closes = np.linspace(100.0, 160.0, n)
+        idx = pd.date_range("2025-12-22", periods=n, freq="1h", tz="UTC",
+                            name="timestamp")
+        pd.DataFrame({"open": closes, "high": closes + 0.3,
+                      "low": closes - 0.3, "close": closes,
+                      "volume": 1.0}, index=idx).to_parquet(
+            d / "TESTUSDT_1h.parquet")
+        rng = {"symbol": "TESTUSDT", "timeframe": "1h",
+               "start": "2026-01-01", "end": "2026-01-10"}
+        rows = [
+            _mk_trade("2026-01-02 05:00:00+00:00",
+                      "2026-01-03 05:00:00+00:00", "long", 101, 103, 2.0),
+            _mk_trade("2026-01-04 05:00:00+00:00",
+                      "2026-01-05 05:00:00+00:00", "long", 103, 105, 2.0),
+            _mk_trade("2026-01-06 05:00:00+00:00",
+                      "2026-01-07 05:00:00+00:00", "long", 105, 107, 2.0),
+        ]
+        _insert_record(vr_db, "rec_1h", rng, rows, init_cash=100.0)
+        out = ruler_compare(
+            vr_db, d, rng, mode="box",
+            trade_source={"kind": "validation", "record_id": "rec_1h"},
+            data_ranges=[rng])
+        assert out["payload"]["box"]["edge_window"] == 240
+        assert out["payload"]["box"]["n_trades"] == 3
+
+    def test_edge_window_non_frozen_tf_rejected(self, vr_db, env):
+        """非标轴（4h）缺 edge_window → 422 附「无冻结默认」与冻结表
+        detail（frozen_defaults 含 1h=240/15m=480——15m 值经权威源
+        detail 面承载）。"""
+        self._seed_record(vr_db, env["rng"])
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="box",
+                trade_source={"kind": "validation",
+                              "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]])
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert "无冻结默认" in ei.value.message
+        assert ei.value.detail["param"] == "edge_window"
+        assert ei.value.detail["frozen_defaults"] == {"1h": 240,
+                                                      "15m": 480}
+
+    def test_unknown_mode_rejected(self, vr_db, env):
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="both",
+                trade_source={"kind": "validation", "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]])
+        assert ei.value.detail["param"] == "mode"
+        assert ei.value.detail["legal_range"] == ["wave", "box"]
+
+    @pytest.mark.parametrize("iw", [0, -0.3, 1.5, 2.0])
+    def test_identify_window_out_of_range_rejected(self, vr_db, env, iw):
+        self._seed_record(vr_db, env["rng"])
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="wave",
+                trade_source={"kind": "validation",
+                              "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]], identify_window=iw)
+        assert ei.value.detail["param"] == "identify_window"
+        assert ei.value.detail["legal_range"] == "(0,1]"

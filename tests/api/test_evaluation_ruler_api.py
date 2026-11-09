@@ -82,6 +82,9 @@ class TestBoxInventoryRoute:
             "hypothesis_id": "hyp_probe"})
         assert resp.status_code == 422
         assert "不适用假设关联" in resp.json()["detail"]["message"]
+
+
+class TestWaveInventoryRoute:
     def test_registered_in_templates_and_runs(self, ruler_client):
         resp = ruler_client.post("/api/research/analysis",
                                  json=_body("wave_inventory", {}))
@@ -232,7 +235,10 @@ class TestRulerCompareRoute:
         {"mode": "wave"},
         {"trade_source": {"kind": "validation", "record_id": "rec_rr"}},
     ])
-    def test_missing_required_keys_rejected(self, cmp_client, params):
+    def test_missing_required_keys_rejected(self, cmp_client, params,
+                                            db_path):
+        """research-error-channel MODIFIED 条款 scenario：缺必填键 422
+        且不产生任务记录（判定并集零留痕）。"""
         resp = cmp_client.post("/api/research/analysis", json=self._body(
             params))
         assert resp.status_code == 422
@@ -240,6 +246,11 @@ class TestRulerCompareRoute:
         assert detail["code"] == "RESEARCH_PARAM_INVALID"
         assert detail.get("detail", {}).get("param") in (
             "mode", "trade_source", "mode|trade_source"), detail
+        from core.persistence.repository import research as rr
+        logs = rr.list_research_log(db_path)
+        assert not [l for l in logs
+                    if l.get("entry_type") == "validate"], \
+            "缺键拒绝不产生任务记录"
 
     def test_backtest_guidance_422(self, cmp_client):
         """kind=backtest → 422 附防污染指引文案（与 5.1 拒绝面并列）。"""
