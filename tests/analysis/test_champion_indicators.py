@@ -7,7 +7,12 @@ ShannonEntropy/PermutationEntropy（信息熵族）/EfficiencyRatio（效率比�
 
 复算锚形制（box 先例）：works/research/consensus-ema 冻结脚本的公式在
 测试内独立重演（研究脚本不进生产 import）；熵族窗口口径与冻结 demo 的
-一格之差见 TestEntropyWindowBoundary（对质登记）。
+一格之差已裁决（2026-11-09 team-lead 裁 a 含当根）：spec MUST
+Requirement 正文（含当根＋三分类独立 Requirement）为行为权威，demo
+为研究脚本参照非行为权威；结构统计列族统一含当根（BoxRegime width
+先例）保总则一致——两段式锚（含当根窗公式重导逐位一致＋错位性质
+断言披露口径差）落地，见 TestShannonEntropyContract/
+TestPermutationEntropyContract 的 frozen_demo 用例。
 """
 from __future__ import annotations
 
@@ -355,10 +360,12 @@ class TestShannonEntropyContract:
             out["shan_96_500_entropy_pct"], pct_expect, check_names=False)
 
     def test_frozen_demo_one_bar_offset_property(self):
-        """冻结 demo 错位性质断言（对质登记面）：demo 循环窗 sv[i-w:i]
-        不含当根、内置 rolling 含当根——同一公式窗右端差一根：
-        内置 entropy[i] ≡ demo entropy[i+1]、内置 pct[i] ≡ demo pct[i+1]
-        （窗内容恒等的错位传导）。"""
+        """冻结 demo 错位性质断言（裁决 a 落点——2026-11-09）：demo
+        循环窗 sv[i-w:i] 不含当根、内置 rolling 含当根（spec MUST 正文
+        为行为权威，demo 为参照——结构统计列族统一含当根，BoxRegime
+        width 先例）；同一公式窗右端差一根：内置 entropy[i] ≡ demo
+        entropy[i+1]、内置 pct[i] ≡ demo pct[i+1]（窗内容恒等的错位
+        传导）。"""
         df = _mk_walk_df(700, seed=11)
         demo_ent, demo_pct = _demo_shannon(df["close"], w=96, rw=500)
         out = self._cols(df)
@@ -472,8 +479,9 @@ class TestPermutationEntropyContract:
             "perm_50_4_pe_pct"].iloc[t], "t 根 pct 不变（shift(1)）"
 
     def test_frozen_demo_one_bar_offset_property(self):
-        """冻结 demo 错位性质断言（r7_bench.py:86 复刻——窗不含当根）：
-        内置 pe[i] ≡ demo pe[i+1]（公式逐字复刻、窗右端差一根）。"""
+        """冻结 demo 错位性质断言（r7_bench.py:86 复刻——窗不含当根；
+        裁决 a 同款：spec MUST 含当根为行为权威）：内置 pe[i] ≡ demo
+        pe[i+1]（公式逐字复刻、窗右端差一根）。"""
         df = _mk_walk_df(700, seed=13)
         demo_pe = _demo_perm_pe(df["close"], w=240, m=4)
         out = self._cols(df)

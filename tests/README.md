@@ -427,7 +427,7 @@
 
 | 能力 | 验证责任摘要 | 证据位置 | 缺口 |
 |---|---|---|---|
-| ShannonEntropy（information 类） | 三法确定样例（恒定=0/均匀三态=1/手算混合分布——期望不经被测内核）＋NaN 头窗非零填充＋当根突变双面（entropy 可变/entropy_pct 不变）＋复算锚（含当根窗公式重导逐位一致＋冻结 demo r9_d2_arms.py:34 错位性质断言——内置[i]≡demo[i+1]）＋warmup 静态锚 3000＋参数域 ε 负向 | `analysis/test_champion_indicators.py` | 熵族窗口口径（D2 含当根 vs demo 不含当根）对质登记——裁决后若翻转窗口切片，改动点=compute 两函数窗界+错位断言两组 |
+| ShannonEntropy（information 类） | 三法确定样例（恒定=0/均匀三态=1/手算混合分布——期望不经被测内核）＋NaN 头窗非零填充＋当根突变双面（entropy 可变/entropy_pct 不变）＋复算锚（含当根窗公式重导逐位一致＋冻结 demo r9_d2_arms.py:34 错位性质断言——内置[i]≡demo[i+1]）＋warmup 静态锚 3000＋参数域 ε 负向 | `analysis/test_champion_indicators.py` | 熵族窗口口径已裁决（2026-11-09 裁 a 含当根——spec MUST 正文为行为权威、demo 为参照；spec Scenario「与冻结 demo 逐位一致」措辞勘误挂最终呈批由用户确认） |
 | PermutationEntropy（information 类） | 单模式=0（首位平符号窗对照>0）＋归一分母口径样例（实际出现模式数——两模式近均分≈满熵）＋当根突变双面＋冻结 demo r7_bench.py:86 错位性质断言＋warmup 静态锚 1500（pattern_len 非周期不入白名单）＋参数域 ε 负向 | `analysis/test_champion_indicators.py` | 同上（对质登记面） |
 | EfficiencyRatio（information 类） | 单调=1/交替锯齿=0/w=4 手算（5/7）＋NaN 头窗＋当根突变双面＋双形制复算锚（er 与 r7_bench.py:137 逐位一致——demo rolling 含当根无口径差；er_pct 显式传 w=24 与 r9_d2_arms.py:45 逐位一致）＋warmup 静态锚 3000＋参数域 ε 负向 | `analysis/test_champion_indicators.py` | — |
 | CUSUM（structure 类） | 递推核 _cusum_core 注入 z 与 r7_bench.py:141 复刻变点索引集合一致（三参数组）＋恰等不触发两侧（z 恰=threshold 不触发/越界触发归零）＋z=drift 恰耗尽＋NaN 期 s=0/cp=False＋端到端全循环（上漂触发/归零/下漂触发）＋递推列截断不变量＋warmup 静态锚 1500＋参数域 ε 负向 | `analysis/test_champion_indicators.py` | — |

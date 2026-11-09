@@ -18,10 +18,12 @@ EfficiencyRatio（Kaufman 效率比）——information 类目；CUSUM（双边
 r7_bench.py:86、ER r7_bench.py:137＋r9_d2_arms.py:45、CUSUM
 r7_bench.py:141、GARCH r7_breakout.py:116-125。
 
-熵族窗口口径注记（对质登记）：冻结 demo 循环窗 sv[i-w:i] 不含当根
-（研究脚本防前视一格保守习惯），本实现按 D2 总则取 rolling 含当根窗
-——同一公式、窗右端差一根：内置 entropy[i] ≡ demo entropy[i+1]（错位
-性质断言入测试）。
+熵族窗口口径注记（2026-11-09 裁决 a）：冻结 demo 循环窗 sv[i-w:i]
+不含当根（研究脚本防前视一格保守习惯），本实现按 D2 总则取 rolling
+含当根窗（spec MUST Requirement 正文为行为权威、demo 为研究脚本参照
+——结构统计列族统一含当根，BoxRegime width 先例保总则一致）；同一
+公式、窗右端差一根：内置 entropy[i] ≡ demo entropy[i+1]（错位性质
+断言入测试）。
 """
 from __future__ import annotations
 
