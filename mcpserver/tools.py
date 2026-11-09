@@ -378,14 +378,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile|exit_sweep
+        counter_profile|exit_sweep|wave_inventory
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
-        validate_range；screen_patterns/regime_split 无必填键。
+        validate_range；screen_patterns/regime_split/wave_inventory 无必填键。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
@@ -557,7 +557,17 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         全序 unsupported>spike>indeterminate>plateau；判定标尺内建
         不可传）；单轴长度 1 推论：固定止损只扫止盈时整体结论恒不超
         过 spike（单点无法证明稳健——预期行为非可疑信号）；组数>10
-        或行数超阈值走 202+轮询。"""
+        或行数超阈值走 202+轮询。
+        wave_inventory 浪清单盘点（add-evaluation-ruler，快路径）：无
+        必填键；可选 params.threshold（zigzag 转折确认门槛，默认 0.05
+        小数形制）与 params.warmup_bars（请求区间前扩 bar 数，默认 500
+        ，只用不算——前扩不足不拒绝、以 boundary_effect.warmup_data_
+        sufficient 披露）。输出=已确认浪清单（start/end/direction/
+        amp/dur，amp 为小数形制幅度）+summary+boundary_effect；末端未
+        确认 pivot 剔除；零浪区间 422（扩区间提示）。跨查询可比性：
+        zigzag 有起点效应——不同 start 的清单不同，不可直接混用拼接。
+        回望性契约：浪清单是行情结构事实，不适用假设关联（携带
+        hypothesis_id 即 422），不作策略条件或实盘信号输入。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

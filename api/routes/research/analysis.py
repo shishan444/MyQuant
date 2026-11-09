@@ -28,10 +28,15 @@ router = APIRouter()
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
               "regime_split", "precheck_hypothesis", "segment_narrative",
-              "counter_profile", "exit_sweep")
+              "counter_profile", "exit_sweep", "wave_inventory")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
+
+# 不适用假设关联的模板名单（add-evaluation-ruler D5——回望性行情
+# 结构事实与对照指标：hypothesis_id 显式 422 拒绝，一处拦截覆盖
+# 名单内全部模板；既有透传模板零变化）
+_HYPOTHESIS_INAPPLICABLE = ("wave_inventory", "box_inventory", "ruler_compare")
 
 
 def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
@@ -313,6 +318,19 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
     rng = payload.data_range.model_dump()
     p = dict(payload.params)
     ranges = [rng]
+    # D5 回望性契约拦截（add-evaluation-ruler）：行情结构底账与对照
+    # 指标不适用假设关联——行情结构事实非策略判定，不烧判定并集、
+    # 不作策略输入；显式拒绝优于静默吞键（模板本体不可达）
+    if (payload.template in _HYPOTHESIS_INAPPLICABLE
+            and payload.hypothesis_id is not None):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "行情结构底账不适用假设关联：hypothesis_id 被拒绝"
+            "（浪/箱体底账与对照指标是回望性行情结构事实，不进入"
+            "任何假设判定并集，也不作策略条件或实盘信号输入）",
+            detail={"param": "hypothesis_id",
+                    "template": payload.template,
+                    "hint": "移除 hypothesis_id（底账查询不需要假设关联）"})
     # 0.2.14：路由统一构建多周期求值上下文（研究链 base_tf=请求
     # data_range.timeframe；五模板统一透传——screen 候选恒基准周期
     # 形制、ctx 自然不被消费，统一形制降低分支遗漏）
@@ -339,6 +357,36 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             db_path=db_path)
         mtf_ctx.eval_start = request_start
         return df, request_start
+
+    if payload.template == "wave_inventory":
+        # 浪清单盘点（add-evaluation-ruler）：前扩装载「只用不算＋披露
+        # 不拒绝」形制——load_with_warmup 的严格 warmup 不足拒绝与
+        # warmup_data_sufficient 披露契约冲突（全历史起点复算锚的前扩
+        # 为 0 属合法披露态），前扩起点在此显式计算（TF_MINUTES 同源表，
+        # warmup_bars 校验前置——负值参与前扩起点计算须装载前拒绝）
+        from core.analysis.templates.wave_inventory import (
+            validate_wave_inventory_params, wave_inventory)
+        from core.analysis.warmup_loader import TF_MINUTES, to_utc
+        from core.data.mtf_loader import load_and_prepare_df
+        threshold = p.get("threshold", 0.05)
+        warmup_bars = p.get("warmup_bars", 500)
+        validate_wave_inventory_params(threshold, warmup_bars)
+        tf_minutes = TF_MINUTES.get(rng["timeframe"], 240)
+        start_ts = to_utc(pd.Timestamp(rng["start"]))
+        load_start = (start_ts - pd.Timedelta(
+            minutes=tf_minutes * warmup_bars)).isoformat()
+        df = load_and_prepare_df(
+            data_dir, rng["symbol"], rng["timeframe"],
+            data_start=load_start, data_end=rng["end"],
+            compute_indicators=False)
+        if df is None:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"区间数据不足: {rng['symbol']} {rng['timeframe']} "
+                f"[{load_start}, {rng['end']})")
+        return _with_derivatives_coverage(wave_inventory(
+            df, data_ranges=ranges, request_start=start_ts,
+            threshold=threshold, warmup_bars=warmup_bars).to_dict(), df)
 
     if payload.template == "screen_patterns":
         # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 主公式推导：

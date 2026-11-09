@@ -299,8 +299,8 @@ def test_g3_required_keys_match_route_table() -> None:
             for key in group:
                 assert key in seg, \
                     f"{tpl} 键组表键 {key} 未在其披露段在场（互拍断裂）"
-    # 无必填键三模板的声明在场
-    assert "screen_patterns/regime_split无必填键" in seg_required
+    # 无必填键模板的声明在场（add-evaluation-ruler 起 wave_inventory 并入）
+    assert "screen_patterns/regime_split/wave_inventory无必填键" in seg_required
     assert "无必填键" in seg_map["segment_narrative"]
 
 
