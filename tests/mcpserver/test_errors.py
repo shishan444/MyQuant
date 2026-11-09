@@ -420,7 +420,8 @@ def _scan_param_invalid_keys():
     # 三函数 name= 关键字实参 + case_inspection._validate_range_param
     # 的首位位置实参（name 形参）——guard 内 detail={"param": name}
     # 为变量形，调用点即值源
-    guard_funcs = {"_require_int_range", "_require_enum",
+    guard_funcs = {"_require_int_range", "_require_float_range",
+                   "_require_enum",
                    "_require_time_window", "_require_iso_datetime",
                    "_validate_range_param"}
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(

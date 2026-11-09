@@ -773,8 +773,14 @@ class TestRulerCompareShell:
         assert ei.value.detail["param"] == "mode"
         assert ei.value.detail["legal_range"] == ["wave", "box"]
 
-    @pytest.mark.parametrize("iw", [0, -0.3, 1.5, 2.0])
+    @pytest.mark.parametrize(
+        "iw", [0, -0.3, 1.5, 2.0,
+               pytest.param("0.3", id="字符串数字（CARD-04）"),
+               pytest.param(True, id="bool（CARD-04）")])
     def test_identify_window_out_of_range_rejected(self, vr_db, env, iw):
+        """identify_window 值域 (0,1]（CARD-04 迁 _require_float_range
+        后：字符串数字/bool 按原始形一律 422——旧 float() 形制下
+        "0.3" 静默放行、True 经 float 转 1.0 落域内放行）。"""
         self._seed_record(vr_db, env["rng"])
         with pytest.raises(ResearchError) as ei:
             ruler_compare(
@@ -784,6 +790,32 @@ class TestRulerCompareShell:
                 data_ranges=[env["rng"]], identify_window=iw)
         assert ei.value.detail["param"] == "identify_window"
         assert ei.value.detail["legal_range"] == "(0,1]"
+
+    @pytest.mark.parametrize(
+        ("kw", "param"),
+        [pytest.param({"buffer": True}, "buffer",
+                      id="bool buffer（CARD-04）"),
+         pytest.param({"buffer": "0.25"}, "buffer",
+                      id="字符串数字 buffer（CARD-04）"),
+         pytest.param({"edge_q_low": "0.1"}, "edge_q_low",
+                      id="字符串数字 edge_q_low（CARD-04）"),
+         pytest.param({"edge_window": 24.5}, "edge_window",
+                      id="浮点 edge_window（CARD-04）")])
+    def test_numeric_params_raw_form_rejected(self, vr_db, env, kw, param):
+        """壳层数值参数原始形校验（CARD-04 迁 guard 单源）：bool/
+        字符串数字/浮点 int 形一律 422（旧形制 buffer=True 走
+        isinstance(int,float) 放行、edge_window=24.5 被 int 洗）。"""
+        self._seed_record(vr_db, env["rng"])
+        call_kw = {"edge_window": 30}  # 4h 轴无冻结默认，垫底合法值
+        call_kw.update(kw)
+        with pytest.raises(ResearchError) as ei:
+            ruler_compare(
+                vr_db, env["data_dir"], env["rng"], mode="box",
+                trade_source={"kind": "validation",
+                              "record_id": "rec_cmp"},
+                data_ranges=[env["rng"]], **call_kw)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == param
 
     @pytest.mark.parametrize(
         ("b_or_s", "bad"),

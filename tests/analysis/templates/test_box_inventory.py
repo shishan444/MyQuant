@@ -194,6 +194,30 @@ class TestBoxInventoryTemplate:
             box_inventory(df, data_ranges=RANGES, timeframe="1h", **base)
         assert ei.value.detail["param"] == param
 
+    @pytest.mark.parametrize(
+        ("kwargs", "param"),
+        [pytest.param({"window": 120.7}, "window",
+                      id="浮点 window 不再 int() 洗（CARD-04）"),
+         pytest.param({"window": "120"}, "window",
+                      id="字符串数字 window（CARD-04）"),
+         pytest.param({"window": True}, "window",
+                      id="bool window（CARD-04）"),
+         pytest.param({"min_len": "48"}, "min_len",
+                      id="字符串数字 min_len（CARD-04）"),
+         pytest.param({"width_thr": "0.08"}, "width_thr",
+                      id="字符串数字 width_thr（CARD-04）")])
+    def test_raw_form_rejected_no_silent_coercion(self, kwargs, param):
+        """resolve 返原始形＋guard 原始形校验（CARD-04）：旧形制
+        resolve_box_params 内 int(window) 会把 120.7/'120'/'1' 洗成
+        合法 int 静默放行（int(True)=1 同族）——现一律 422。"""
+        df = _mk_df([4.0] * 10)
+        base = {"window": 3, "min_len": 2, "width_thr": 0.08}
+        base.update(kwargs)
+        with pytest.raises(ResearchError) as ei:
+            box_inventory(df, data_ranges=RANGES, timeframe="1h", **base)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == param
+
     def test_missing_end_rejected(self):
         df = _mk_df([4.0] * 10)
         with pytest.raises(ResearchError, match="无开放右端"):

@@ -181,6 +181,25 @@ class TestWaveInventoryTemplate:
             self._mk([100, 105, 90], warmup_bars=wb)
         assert ei.value.detail["param"] == "warmup_bars"
 
+    @pytest.mark.parametrize(
+        ("kwargs", "param"),
+        [pytest.param({"threshold": "0.05"}, "threshold",
+                      id="字符串数字 threshold（CARD-04）"),
+         pytest.param({"threshold": True}, "threshold",
+                      id="bool threshold（CARD-04）"),
+         pytest.param({"warmup_bars": True}, "warmup_bars",
+                      id="bool warmup_bars（CARD-04）"),
+         pytest.param({"warmup_bars": "500"}, "warmup_bars",
+                      id="字符串数字 warmup_bars（CARD-04）")])
+    def test_raw_form_rejected_no_silent_coercion(self, kwargs, param):
+        """原始形校验不转换（CARD-04 迁 param_guard 单源）：字符串数字
+        一律 422（旧 float() 形制下 "0.05" 静默放行）；bool 一律 422
+        （旧形制下 warmup_bars=True 走 int 子类 isinstance 放行）。"""
+        with pytest.raises(ResearchError) as ei:
+            self._mk([100, 105, 90], **kwargs)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == param
+
     def test_missing_end_rejected(self):
         with pytest.raises(ResearchError, match="无开放右端"):
             self._mk([100, 105, 90],
