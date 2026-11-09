@@ -378,14 +378,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile|exit_sweep
+        counter_profile|exit_sweep|wave_inventory|box_inventory|ruler_compare
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
-        validate_range；screen_patterns/regime_split 无必填键。
+        validate_range；screen_patterns/regime_split/wave_inventory/
+        box_inventory 无必填键；ruler_compare 须 mode+trade_source。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
@@ -406,6 +407,12 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         并集（「只用不算」契约）。
         condition_stats 支持 params.forward_bars（前向持有期
         bar 数，默认 24）与 params.min_samples（小样本下限，默认 30）。
+        condition_stats 另支持可选 params.significance 显著性段：method ∈
+        t_test_vs_baseline（缺省，输出与既有行为逐位一致——p 值为条件组
+        前向收益均值 vs 全体 bar 前向收益均值的单样本 t 检验，仅在间隔
+        ≥ forward_bars 的去重叠信号子集上计算）|bootstrap_ci（可附 B/seed，
+        语义与评测尺子 bootstrap 统计件一致——均值差 percentile CI、
+        同种子可复现、n<3 时 CI=null 附样本数披露）。
         方向口径（包四 GAP-01 披露）：win_rate 与 forward_return_mean 为
         做多持有口径（收益=价格涨跌幅）；short 视角下做空胜率=收益为负
         比例（零收益样本不计入胜方，不可用 1−win_rate 换算）——返回体
@@ -557,7 +564,52 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         全序 unsupported>spike>indeterminate>plateau；判定标尺内建
         不可传）；单轴长度 1 推论：固定止损只扫止盈时整体结论恒不超
         过 spike（单点无法证明稳健——预期行为非可疑信号）；组数>10
-        或行数超阈值走 202+轮询。"""
+        或行数超阈值走 202+轮询。
+        wave_inventory 浪清单盘点（add-evaluation-ruler，快路径）：无
+        必填键；可选 params.threshold（zigzag 转折确认门槛，默认 0.05
+        小数形制）与 params.warmup_bars（请求区间前扩 bar 数，默认 500
+        ，只用不算——前扩不足不拒绝、以 boundary_effect.warmup_data_
+        sufficient 披露）。输出=已确认浪清单（start/end/direction/
+        amp/dur，amp 为小数形制幅度）+summary+boundary_effect；末端未
+        确认 pivot 剔除；零浪区间 422（扩区间提示）。跨查询可比性：
+        zigzag 有起点效应——不同 start 的清单不同，不可直接混用拼接。
+        回望性契约：浪清单是行情结构事实，不适用假设关联（携带
+        hypothesis_id 即 422），不作策略条件或实盘信号输入。
+        box_inventory 箱体盘点（add-evaluation-ruler，快路径）：无必填
+        键；timeframe 感知默认 params.window/min_len（1h=(120,48)、
+        15m=(240,96)，其余轴两键必填——缺失 422 附该轴无冻结默认）；
+        params.width_thr（宽度门槛，默认 0.08 小数形制，含等号）。
+        口径：hi/lo 滚动幅度（rolling window 高低差÷收盘滚动均值）
+        连续存活达 min_len 成箱；段判定与起止仅取区间内 bar（区间首
+        bar 落长箱体中部时从首 bar 重新起算并标 truncated_start）；
+        warmup=window 前扩只用不算。输出=箱清单+summary（箱数/按箱
+        起点月份去重计月的月均/箱高统计）。两口径披露：盘点口径=
+        hi/lo 幅度（结构存在性），对照口径=分位沿（ruler_compare 交易
+        判定）——参数族独立、不可互换。回望性契约同 wave_inventory
+        （不适用假设关联；幂等；不作策略输入）。
+        ruler_compare 对照指标（add-evaluation-ruler，快路径——两种
+        盈利模式的验收尺子）：params 必填 mode（wave|box）+
+        trade_source（唯一合法形制 {"kind":"validation","record_id":
+        "rec_..."}——kind="backtest" 即 422 附「沙盒回测不落库逐笔
+        （防污染纪律）；对照指标请引用隔离验证记录 record_id」指引；
+        未知 kind/引用不存在 422 附合法形制；校验顺序=kind 拦截在
+        前）。区间双级校验：验证记录区间与评估区间时间戳归一后须
+        全值相等（不等 422 附两侧值，不静默截断）；逐笔 entry_time/
+        exit_time 须落评估区间（持仓中行排除并披露计数）。wave 模式
+        可选 params.threshold（默认 0.05）与 identify_window（识别窗
+        口占比，默认 0.3）：识别率（按浪去重）/捕获率分布/净均值
+        （逐笔 PnL 已含费滑 ÷ init_cash 百分比形）bootstrap CI/胜率；
+        区间无浪时识别率/捕获率 null 并披露。box 模式可选 edge_window
+        （1h=240/15m=480 冻结默认，其余轴必填 422 附该轴无冻结默认）/
+        edge_q_low、edge_q_high（默认 0.10/0.90）/buffer（推定止损
+        缓冲，默认 0.25）：先到对侧比例+三分类计数（对侧/止损线/
+        其他——其他计入分母并单独披露）+月频（分母=交易月份去重）。
+        底账内部现算（复用两盘点 compute 核心）；净均值 CI 的 B/seed
+        可参数化（默认 3000/42；B 须为 1~100000 正整数，同种子可
+        复现）；装载差异注记：demo
+        参考实现的浪池以数据全历史起点计 zigzag，平台按评估区间前扩
+        500 bar 装载，复算对账以 ±1pp 门限承载该差异面。回望性契约：
+        幂等可复算、不作策略条件输入、不烧判定并集。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

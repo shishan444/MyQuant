@@ -109,7 +109,8 @@ HINTS: Dict[str, str] = {
         "模板名不在册：template ∈ condition_stats|distribution_compare|"
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
         "param_sweep|regime_split|precheck_hypothesis|segment_narrative|"
-        "counter_profile|exit_sweep",
+        "counter_profile|exit_sweep|wave_inventory|box_inventory|"
+        "ruler_compare",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
@@ -205,6 +206,58 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                   "（detail 的 limit/actual 披露实际值）",
     "condition|conditions": "condition 与 conditions 须二选一"
                             "（键组分派，直调方同样须遵守）",
+    # 评测尺子族参数面（add-evaluation-ruler）
+    "threshold": "zigzag 转折门槛非法：threshold 须为 (0,1) 开区间"
+                 "小数（如 0.05=5%）",
+    "warmup_bars": "warmup bar 数非法：须为非负整数（前扩只用不算，"
+                   "不足不拒绝、以 boundary_effect 披露）",
+    "data_range.end": "浪/箱体盘点无开放右端形制：data_range.end "
+                      "须为显式 UTC 时间戳",
+    "hypothesis_id": "行情结构底账不适用假设关联：移除 hypothesis_id"
+                     "（底账不进判定并集、不作策略输入）",
+    "significance.method": "显著性方法未知：method ∈ t_test_vs_baseline"
+                           "（缺省，存量行为）|bootstrap_ci（bootstrap "
+                           "均值差 CI）",
+    "significance.B": "significance.B 须为正整数（bootstrap 重抽样次数）",
+    "significance.seed": "significance.seed 须为整数（随机种子）",
+    "window|min_len": "该轴无冻结默认：window 与 min_len 必填"
+                      "（冻结默认仅 1h=(120,48)/15m=(240,96)）",
+    "window": "window 须为正整数（滚动窗宽 bar 数）",
+    "min_len": "min_len 须为正整数（成箱最小连续 bar 数）",
+    "width_thr": "width_thr 须为 (0,1) 开区间小数（宽度门槛，含等号）",
+    # 对照模板参数面（add-evaluation-ruler）
+    "mode": "对照模式未知：mode ∈ wave（浪模式：识别率/捕获率/净均值"
+            "CI）|box（箱体模式：先到对侧比例/三分类/月频）",
+    "trade_source": "交易清单来源形制非法：唯一合法 {kind:"
+                    "\"validation\", record_id:\"rec_...\"}"
+                    "（隔离验证记录）",
+    "trade_source.kind": "kind 拒绝：沙盒回测不落库逐笔（防污染纪律）"
+                        "——对照指标请引用隔离验证记录 record_id"
+                        "（未知 kind 附合法形制）",
+    "trade_source.record_id": "验证记录不存在：record_id 须为隔离验证"
+                             "记录（rec_...）——run_isolated_backtest "
+                             "产物",
+    "trade_source.record.range": "验证记录区间与评估区间不一致（归一后"
+                                "须全值相等，不静默截断）——改用一致"
+                                "区间重试",
+    "trade_source.record.init_cash": "引用记录缺实际生效 init_cash"
+                                    "（净均值分母）——非标准记录不可"
+                                    "对照",
+    "trades": "逐笔时间越界（seq+时间在 detail 披露）：对照区间须"
+              "完整覆盖全部交易，不做静默截断",
+    "edge_window": "边沿滚动窗宽非法：须为正整数（1h=240/15m=480 "
+                  "冻结默认，其余轴必填）",
+    "edge_q_low|edge_q_high": "分位参数非法：0 < edge_q_low < "
+                             "edge_q_high < 1（默认 0.10/0.90）",
+    "edge_q_low": "edge_q_low 须为 (0,1) 开区间小数（下分位沿，"
+                  "默认 0.10；另须 edge_q_low < edge_q_high）",
+    "edge_q_high": "edge_q_high 须为 (0,1) 开区间小数（上分位沿，"
+                   "默认 0.90；另须 edge_q_low < edge_q_high）",
+    "buffer": "buffer 须为非负数（推定止损缓冲，默认 0.25）",
+    "identify_window": "identify_window 须在 (0,1]（识别窗口占比，"
+                       "默认 0.3）",
+    "B": "B 须为 1~100000 正整数（bootstrap 重抽样次数）",
+    "seed": "seed 须为整数（随机种子）",
     # 转化执行周期（fix-mtf-execution-consistency R2）：A1 异周期继承
     # 拒绝的 detail.param 面
     "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"

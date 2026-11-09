@@ -6,6 +6,9 @@
 horizons 422 附 legal_range），主 spec 有界语义锚定，不消费本守卫。
 守卫链：bool 排除（bool 是 int 子类的静默接受陷阱）→ 非 int →
 lo/hi 越界 → 422 RESEARCH_PARAM_INVALID 附 legal_range（错误即文档）；
+浮点族 _require_float_range 同链（原始形不转换——字符串数字一律拒，
+float() 静默转换与裸 ValueError 并存违反 research-error-channel :113；
+开闭界随 lo_excl/hi_excl）；
 枚举型字符串封闭值域（枚举外拒——消灭静默落入兜底分支的结论污染，
 如 distribution_compare 的 transform 非法串被当 raw 语义）。
 
@@ -66,6 +69,46 @@ def _require_int_range(
             f"{name} 非法: {value!r}",
             detail={"param": name,
                     "legal_range": f"{lo_s}..{hi_s}"})
+
+
+def _require_float_range(
+    value: Any, *, name: str,
+    lo: Optional[float] = None, hi: Optional[float] = None,
+    lo_excl: bool = False, hi_excl: bool = False,
+) -> None:
+    """浮点参数守卫：bool 排除 → 非 int/float → lo/hi 越界 → 422 附
+    legal_range（开闭界随 lo_excl/hi_excl，区间记法 (0, 1) / (0, 1]）。
+
+    原始形校验不转换：字符串数字一律拒——float() 静默转换会让同函数
+    内「'abc' 裸 ValueError 落 500 与 '0.5' 静默放行」并存（research-
+    error-channel :113 禁止），bool 同为 int 子类陷阱随附排除。
+
+    Args:
+        value: 待校验参数值（原始形，未清洗）。
+        name: 参数名（错误 message/detail 与 legal_range 的锚）。
+        lo: 下界（None=该侧无界；0 为有效下界）。
+        hi: 上界（None=该侧无界）。
+        lo_excl: 下界开（True 时 value == lo 亦拒，如 (0,1) 的 0）。
+        hi_excl: 上界开（True 时 value == hi 亦拒）。
+
+    Raises:
+        ResearchError: RESEARCH_PARAM_INVALID（422）——detail 附
+            legal_range（开闭区间记法，None 侧显示 ±inf）。
+    """
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or (lo is not None and (value <= lo if lo_excl
+                                    else value < lo))
+            or (hi is not None and (value >= hi if hi_excl
+                                    else value > hi))):
+        lo_s = lo if lo is not None else "-inf"
+        hi_s = hi if hi is not None else "inf"
+        lo_b = "(" if lo_excl or lo is None else "["
+        hi_b = ")" if hi_excl or hi is None else "]"
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"{name} 非法: {value!r}",
+            detail={"param": name,
+                    "legal_range": f"{lo_b}{lo_s},{hi_s}{hi_b}"})
 
 
 def _require_enum(

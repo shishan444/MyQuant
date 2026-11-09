@@ -366,3 +366,132 @@ class TestPerspectiveDisclosure:
         assert (v > 0).mean() == 1 / 3 and (v < 0).mean() == 1 / 3
         assert (v > 0).mean() + (v < 0).mean() < 1.0, \
             "平局样本使 1−win_rate 换算失真（披露语义成立）"
+
+
+class TestConditionsFormEcho:
+    """conditions 数组形式的 echo 路径（阶段四盲区消解：conditions
+    形式＋顶层 indicator 同传的 echo 两行此前零覆盖——既有 conditions
+    用例均不传 indicator）。"""
+
+    def test_conditions_with_indicator_echoed(self) -> None:
+        """conditions 形式下顶层 indicator 有值 → echo 回显
+        indicator/params/conditions 三键（求值仍以条目内条件为准）。"""
+        df = _make_df(300)
+        out = condition_stats(
+            df, indicator="EMA", params={"period": 10},
+            conditions=[{"subject": "close", "action": "gt",
+                         "target": float(df["close"].median())}],
+            data_ranges=RANGES, forward_bars=5, min_samples=5).to_dict()
+        p = out["payload"]
+        assert p["indicator"] == "EMA"
+        assert p["params"] == {"period": 10}
+        assert len(p["conditions"]) == 1
+        assert "condition" not in p, "conditions 形式不带单条件键"
+
+
+class TestSignificanceMethod:
+    """显著性段可选 method 升级（add-evaluation-ruler 任务 2.1）。
+
+    两断言面：缺省路径逐位不变（payload 逐键对拍）；bootstrap_ci
+    路径 CI 在位（method 声明/参数回显/样本量披露）。
+    """
+
+    def test_default_path_bitwise_unchanged(self) -> None:
+        """缺省（不携带）与显式 t_test_vs_baseline 两态 payload 逐位
+        一致，且与不传参数的存量键序全同。"""
+        df = _make_df()
+        base = condition_stats(df, **_gt_median_kwargs(df)).payload
+        explicit = condition_stats(
+            df, **_gt_median_kwargs(df),
+            significance={"method": "t_test_vs_baseline"}).payload
+        assert base == explicit
+        sig = base["confidence"] if "confidence" in base else None
+        # 直调 payload 不含 confidence（三要素顶层）；显著性段经
+        # confidence 通道——以模板直调再走 to_dict 校验
+        out = condition_stats(
+            df, **_gt_median_kwargs(df)).to_dict()
+        fs = out["confidence"]["forward_significance"]
+        assert fs["method"] == "t_test_vs_baseline"
+        assert list(fs) == ["method", "p_value", "for", "n_overlapped",
+                            "n_total_signals", "baseline_mean"], \
+            "缺省显著性段键序逐字节冻结"
+
+    def test_bootstrap_ci_path_ci_attached(self) -> None:
+        df = _make_df()
+        out = condition_stats(
+            df, **_gt_median_kwargs(df),
+            significance={"method": "bootstrap_ci"}).to_dict()
+        fs = out["confidence"]["forward_significance"]
+        assert fs["method"] == "bootstrap_ci"
+        assert fs["p_value"] is None
+        ci = fs["boot_diff_ci"]
+        assert isinstance(ci, list) and len(ci) == 2 and ci[0] <= ci[1]
+        assert fs["n_cond"] == fs["n_total_signals"] > 0
+        assert fs["n_baseline"] >= fs["n_cond"]
+        assert fs["B"] == 3000 and fs["seed"] == 42
+
+    def test_bootstrap_ci_seed_reproducible(self) -> None:
+        df = _make_df()
+        kwargs = _gt_median_kwargs(df)
+        a = condition_stats(df, **kwargs,
+                            significance={"method": "bootstrap_ci"})
+        b = condition_stats(df, **kwargs,
+                            significance={"method": "bootstrap_ci"})
+        assert (a.to_dict()["confidence"]["forward_significance"]
+                ["boot_diff_ci"]
+                == b.to_dict()["confidence"]["forward_significance"]
+                ["boot_diff_ci"])
+
+    def test_bootstrap_ci_params_echo_and_b_custom(self) -> None:
+        df = _make_df()
+        out = condition_stats(
+            df, **_gt_median_kwargs(df),
+            significance={"method": "bootstrap_ci", "B": 500,
+                          "seed": 7}).to_dict()
+        fs = out["confidence"]["forward_significance"]
+        assert fs["B"] == 500 and fs["seed"] == 7
+
+    def test_unknown_method_rejected(self) -> None:
+        df = _make_df()
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, **_gt_median_kwargs(df),
+                            significance={"method": "permutation"})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "significance.method"
+
+    @pytest.mark.parametrize(
+        ("cfg", "param"),
+        [pytest.param({"method": "bootstrap_ci", "B": 0}, "B", id="零 B"),
+         pytest.param({"method": "bootstrap_ci", "B": 1.5}, "B", id="非整 B"),
+         pytest.param({"method": "bootstrap_ci", "B": True}, "B",
+                      id="bool B（CARD-01）"),
+         pytest.param({"method": "bootstrap_ci", "B": 100_001}, "B",
+                      id="超上限 B（CARD-01）"),
+         pytest.param({"method": "bootstrap_ci", "seed": "x"}, "seed",
+                      id="非整 seed"),
+         pytest.param({"method": "bootstrap_ci", "seed": True}, "seed",
+                      id="bool seed（CARD-01）")],
+    )
+    def test_invalid_bootstrap_params_rejected(self, cfg, param) -> None:
+        df = _make_df()
+        with pytest.raises(ResearchError) as ei:
+            condition_stats(df, **_gt_median_kwargs(df), significance=cfg)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == f"significance.{param}"
+
+    def test_small_n_bootstrap_ci_null_with_disclosure(self) -> None:
+        """n<3 附着层契约：CI=null＋样本数披露（min_samples=0 放行
+        小样本，验证捕获面不拒报告）。"""
+        df = _make_df(n=80)
+        med = df["close"].median()
+        # 构造恰 2 个有效前向信号的条件：close > 极高阈值只命中尾部
+        thr = float(df["close"].quantile(0.995))
+        out = condition_stats(
+            df, indicator="EMA", params={"period": 10},
+            condition={"subject": "close", "action": "gt", "target": thr},
+            data_ranges=RANGES, min_samples=0,
+            significance={"method": "bootstrap_ci", "B": 50}).to_dict()
+        fs = out["confidence"]["forward_significance"]
+        assert fs["n_cond"] < 3
+        assert fs["boot_diff_ci"] is None
+        assert fs["n_baseline"] > 0, "样本量披露仍在场"

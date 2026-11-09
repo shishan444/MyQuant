@@ -4,12 +4,21 @@ benjamini_hochberg 另有 tests/accuracy/test_statistics_fdr.py 的
 裁判层独立视角（add-screen-patterns 交付物），两者并存：本文件为
 scoring 域内权威直测。期望值均独立手算（Wilson 公式 / BH 逐秩
 step-up 回填），不用被测实现生成自身期望。
+
+bootstrap 两函数（add-evaluation-ruler）同域直测：确定性/拒绝面/
+方向镜像/常数收敛/覆盖性质/r9 demo 交叉对账（r9_d4_final.py 前提链
+确定性复现，A0 行 CI 逐位一致——期望值为 r9 实跑登记值，非本实现
+自产）。
 """
+import numpy as np
+import pandas as pd
 import pytest
+from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
-from core.scoring.statistics import benjamini_hochberg, wilson_interval
+from core.scoring.statistics import (
+    benjamini_hochberg, boot_ci, boot_diff, wilson_interval)
 
 
 class TestWilsonIntervalValues:
@@ -153,3 +162,152 @@ class TestWilsonProperty:
         assert lower <= p + 1e-12
         assert p <= upper + 1e-12
         assert upper <= 1.0
+
+
+class TestBootCI:
+    """单样本均值 percentile CI（add-evaluation-ruler 任务 1.1）。
+
+    快照锚：SAMPLE 五值首跑（B=3000/ci=0.95/seed=42）端点登记为
+    常量——同参数必同果的回归锚，防后续漂移。
+    """
+
+    SAMPLE = [1.0, 2.0, 3.5, -0.5, 4.0, 2.5, 1.5, 3.0]
+    SNAPSHOT = (1.125, 3.0625)  # 首跑锁定（2026-11-09）
+
+    def test_same_seed_bitwise_identical(self):
+        a = boot_ci(self.SAMPLE)
+        b = boot_ci(self.SAMPLE)
+        assert a == b
+
+    def test_snapshot_anchor(self):
+        lo, hi = boot_ci(self.SAMPLE)
+        assert (lo, hi) == self.SNAPSHOT
+
+    def test_different_seed_or_B_may_differ_same_params_identical(self):
+        base = boot_ci(self.SAMPLE)
+        alt_seed = boot_ci(self.SAMPLE, seed=7)
+        # 不同 seed 允许异果（同快照则该断言天然弱化——种子 7 实测不同）
+        assert alt_seed == boot_ci(self.SAMPLE, seed=7)
+        alt_B = boot_ci(self.SAMPLE, B=500)
+        assert alt_B == boot_ci(self.SAMPLE, B=500)
+        assert (alt_seed != base) or (alt_B != base)
+
+    def test_constant_sample_converges_without_special_case(self):
+        lo, hi = boot_ci([5.0] * 10)
+        assert lo == 5.0
+        assert hi == 5.0
+
+    @pytest.mark.parametrize("n", [0, 1, 2])
+    def test_small_sample_rejected(self, n):
+        with pytest.raises(ValueError, match="至少 3 个观测"):
+            boot_ci([1.0, 2.0, 3.0][:n] if n else [])
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [pytest.param({"B": 0}, r"B=0", id="零 B"),
+         pytest.param({"B": 2.5}, r"B=2.5", id="非整 B"),
+         pytest.param({"B": True}, r"B=True", id="bool B（CARD-01）"),
+         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）"),
+         pytest.param({"ci": 0.0}, r"ci=0.0", id="零置信"),
+         pytest.param({"ci": 1.0}, r"ci=1.0", id="满置信")],
+    )
+    def test_invalid_params_rejected(self, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            boot_ci([1.0, 2.0, 3.0], **kwargs)
+
+    def test_b_upper_bound_inclusive(self):
+        """上限 BOOT_B_MAX=100_000 含等号合法（边界两侧——拒绝用例
+        在参数化「超上限」档）。"""
+        from core.scoring.statistics import BOOT_B_MAX
+        assert BOOT_B_MAX == 100_000
+        lo, hi = boot_ci([1.0, 2.0, 3.0], B=BOOT_B_MAX)
+        assert lo <= hi
+
+    def test_interval_brackets_sample_mean(self):
+        # 重抽样均值分布以观测均值为中心（percentile 区间覆盖之）
+        lo, hi = boot_ci(self.SAMPLE)
+        mean = sum(self.SAMPLE) / len(self.SAMPLE)
+        assert lo <= mean <= hi
+
+    def test_coverage_property_normal(self):
+        """覆盖性质：标称 95% CI 以标称覆盖率含总体均值（二项容忍界）。
+
+        M=40、p=0.95 → σ=sqrt(.95×.05/40)≈0.0344，3σ 下限 ≈0.847；
+        B=800 控时长（覆盖性质与重抽样次数弱耦合）。
+        """
+        master = np.random.default_rng(7)
+        hits = 0
+        for i in range(40):
+            sample = master.normal(0.5, 1.0, 60)
+            lo, hi = boot_ci(sample, B=800, seed=100 + i)
+            hits += int(lo <= 0.5 <= hi)
+        assert hits / 40 >= 0.847
+
+
+class TestBootDiff:
+    """双样本均值差 CI（方向 x_minus_y 显式）。"""
+
+    X = [1.0, 2.0, 3.0, 2.5, 1.5, 2.0]
+    Y = [0.5, 0.0, 1.0, 0.2, 0.8, 0.4]
+
+    def test_direction_brackets_true_diff(self):
+        lo, hi = boot_diff(self.X, self.Y)
+        true_diff = sum(self.X) / len(self.X) - sum(self.Y) / len(self.Y)
+        assert lo <= true_diff <= hi
+        assert hi > 0  # X 均值显著大于 Y（构造使然）
+
+    def test_swap_arguments_mirror(self):
+        lo, hi = boot_diff(self.X, self.Y)
+        lo2, hi2 = boot_diff(self.Y, self.X)
+        # 镜像=符号翻转（蒙特卡洛噪声内容差：两次调用消耗序不同，
+        # 断言符号与量级，容差取区间宽度的 5%）
+        width = hi - lo
+        assert hi2 == pytest.approx(-lo, abs=0.05 * width)
+        assert lo2 == pytest.approx(-hi, abs=0.05 * width)
+
+    def test_same_seed_bitwise_identical(self):
+        assert boot_diff(self.X, self.Y) == boot_diff(self.X, self.Y)
+
+    @pytest.mark.parametrize(
+        ("x", "y"),
+        [pytest.param([1.0], [1.0, 2.0, 3.0], id="x 不足"),
+         pytest.param([1.0, 2.0, 3.0], [1.0, 2.0], id="y 不足"),
+         pytest.param([], [1.0, 2.0, 3.0], id="x 空")],
+    )
+    def test_small_sample_rejected(self, x, y):
+        with pytest.raises(ValueError, match="两侧各至少 3 个观测"):
+            boot_diff(x, y)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [pytest.param({"B": 0}, r"B=0", id="零 B"),
+         pytest.param({"B": 2.5}, r"B=2.5", id="非整 B"),
+         pytest.param({"B": True}, r"B=True", id="bool B（CARD-01）"),
+         pytest.param({"B": 100_001}, r"B=100001", id="超上限 B（CARD-01）"),
+         pytest.param({"ci": 0.0}, r"ci=0.0", id="零置信"),
+         pytest.param({"ci": 1.0}, r"ci=1.0", id="满置信")],
+    )
+    def test_invalid_B_rejected(self, kwargs, match):
+        """B/ci 校验与 boot_ci 同款（CARD-01 三层统一——库层兜底）。"""
+        with pytest.raises(ValueError, match=match):
+            boot_diff(self.X, self.Y, **kwargs)
+
+
+class TestBootR9CrossCheck:
+    """r9 demo 交叉对账（任务 1.2——交叉第二通道，非期望值权威）。
+
+    前提链：r9_d4_final.py 模块级 default_rng(42) 在 main() 的首个
+    消耗 = arm 循环首臂 A0 锁箱行的 boot_ci；本实现同种子首调、
+    逐次等长 choice 同构——满足前提链时端点逐位一致（零容差）。
+    期望值为 r9 实跑登记值（2026-11-09），非本实现自产。
+    """
+
+    def test_a0_lock_ci_bitwise_matches_r9(self):
+        fixture = (Path(__file__).resolve().parents[1] / "fixtures"
+                   / "evaluation_ruler" / "r9_d2_trades_lock.csv")
+        t = pd.read_csv(fixture)
+        net = t[(t.seg == "lock") & (t.arm == "A0")]["net"].values
+        assert len(net) == 60
+        lo, hi = boot_ci(net)
+        assert lo == pytest.approx(-0.34321666666666667, rel=1e-15)
+        assert hi == pytest.approx(0.7847854166666666, rel=1e-15)

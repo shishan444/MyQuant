@@ -60,6 +60,14 @@ _SEG_SCREEN = ("screen_patterns全谱扫描", "param_sweep参数稳健性检查"
 _SEG_SEGMENT = ("segment_narrative区间事件摘要", "counter_profile反例画像")
 _SEG_ASYNC = ("同步/异步分界：", "screen_patterns全谱扫描")
 _SEG_REQUIRED = ("params必填键（缺键422detail含键名）：", "支持conditions条件数组形制")
+# wave_inventory 段（add-evaluation-ruler）：起点=段名，终点=docstring 尾
+_SEG_WAVE = ("wave_inventory浪清单盘点", "box_inventory箱体盘点")
+_SEG_BOX = ("box_inventory箱体盘点", "ruler_compare对照指标")
+_SEG_RULER = ("ruler_compare对照指标", '"""')
+# condition_stats significance 披露段（CARD-03）：起点=forward_bars 句
+# （_SEG_OVERVIEW 既有终点锚——插入点即其后），终点=方向口径句
+_SEG_CONDSIG = ("condition_stats支持params.forward_bars",
+                "方向口径（包四GAP-01披露）")
 _SEG_ACTIONS = ("当前可用比较动作全集", "同步/异步分界：")
 # R4 时序动作段（fix-mtf-execution-consistency）——与动作全集段共终点
 _SEG_WBA = ("时序动作（fix-mtf-execution-consistencyR4起）：", "同步/异步分界：")
@@ -128,7 +136,7 @@ GROUP1_ANCHORS: tuple = (
                 "distribution_compare须column/group_a/group_b",
                 "correlation_scan须signal_column", "event_study须condition",
                 "pattern_mining须as_of", "param_sweep须indicator+condition",
-                "screen_patterns/regime_split无必填键"),
+                "screen_patterns/regime_split/wave_inventory/box_inventory无必填键；ruler_compare须mode+trade_source"),
         covered=("distribution_compare", "correlation_scan", "pattern_mining"),
         scope="params 必填键段", basis="tools.py:335-340 ×路由 _TEMPLATE_REQUIRED_KEYS",
     ),
@@ -178,6 +186,56 @@ GROUP1_ANCHORS: tuple = (
         covered=("exit_sweep",),
         scope="exit_sweep 段落",
         basis="A4 既有披露（0.4.1 R6——不挂假设句 :471 保留硬约束）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-wave_inventory段-核心要素",
+        source="tools", seg_start=_SEG_WAVE[0], seg_end=_SEG_WAVE[1],
+        kind="token_set",
+        tokens=("params.threshold", "params.warmup_bars", "只用不算",
+                "warmup_data_sufficient", "boundary_effect", "起点效应",
+                "不适用假设关联", "不可直接混用拼接"),
+        covered=("wave_inventory",),
+        scope="wave_inventory 段落",
+        basis="add-evaluation-ruler spec evaluation-ruler 披露义务"
+             "（跨查询禁混用/回望性契约）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-box_inventory段-核心要素",
+        source="tools", seg_start=_SEG_BOX[0], seg_end=_SEG_BOX[1],
+        kind="token_set",
+        tokens=("params.window/min_len", "params.width_thr",
+                "1h=(120,48)", "15m=(240,96)", "该轴无冻结默认",
+                "truncated_start", "只用不算", "不可互换"),
+        covered=("box_inventory",),
+        scope="box_inventory 段落",
+        basis="add-evaluation-ruler spec 箱体盘点条款"
+             "（timeframe 感知默认/截断语义/两口径披露）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-ruler_compare段-核心要素",
+        source="tools", seg_start=_SEG_RULER[0], seg_end=_SEG_RULER[1],
+        kind="token_set",
+        tokens=("mode（wave|box）", "trade_source", "rec_...",
+                "沙盒回测不落库逐笔", "隔离验证记录record_id",
+                "不静默截断", "识别率", "先到对侧比例", "edge_window",
+                "1h=240/15m=480", "±1pp"),
+        covered=("ruler_compare",),
+        scope="ruler_compare 段落",
+        basis="add-evaluation-ruler spec 对照指标三 Requirement"
+             "（数据来源与区间校验/浪模式/箱体模式）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-condition_stats段-significance披露",
+        source="tools", seg_start=_SEG_CONDSIG[0], seg_end=_SEG_CONDSIG[1],
+        kind="token_set",
+        tokens=("params.significance", "t_test_vs_baseline", "bootstrap_ci",
+                "B/seed", "缺省", "逐位一致", "去重叠"),
+        covered=("condition_stats",),
+        scope="condition_stats significance 段（CARD-03 能力声明面）",
+        basis="add-evaluation-ruler ai-research-tools delta「条件统计的"
+              "前向收益语义」bootstrap 可选路径条款×CARD-03 docstring 披露"
+              "（五要素：形制/method 值域/缺省逐位不变/params 可附 B/seed/"
+              "去重叠子集口径）",
     ),
     DisclosureAnchor(
         anchor_id="G1-precheck段-既有要素",
@@ -658,7 +716,8 @@ REGISTERED_TEMPLATES: tuple = (
     "condition_stats", "distribution_compare", "correlation_scan",
     "event_study", "pattern_mining", "screen_patterns", "param_sweep",
     "regime_split", "precheck_hypothesis", "segment_narrative",
-    "counter_profile", "exit_sweep",
+    "counter_profile", "exit_sweep", "wave_inventory", "box_inventory",
+    "ruler_compare",
 )
 
 # ②能力自述条目登记键集 ∪ 白名单 == CAPABILITY_DOC 条目标题提取集
