@@ -222,3 +222,95 @@ class TestReceiptLogicGenes:
         assert t_b["same_dna_existing"] is True
         assert t_b["strategy_id"] == d_id
         assert t_b["logic_genes"]["exit_logic"] == "OR"
+
+
+class TestReceiptDirtyRowConvergence:
+    """回执脏行收敛（_logic_genes_of_row 值域收敛——CARD-02 库存
+    畸形防御族）。
+
+    可达性说明（阶段四消解判定）：防御三分支经 translate 四返回点
+    结构性不可达——幂等点对坏 JSON 行因 exec_tf 不可解析判「漂移
+    draft 放行重建」（_find_draft_by_parent continue），分流域
+    _dna_equivalent 不可证=不命中，新建点 dna_json 恒为新构正常产物。
+    故分支消解以单元直调承载（与 _dna_equivalent 测试同款形制），
+    另配行为锚锁定「坏 draft 行穿透建新且回执不炸」。"""
+
+    _ALL_AND = {"entry_logic": "AND", "exit_logic": "AND",
+                "add_logic": "AND", "reduce_logic": "AND"}
+
+    @pytest.mark.parametrize(
+        "bad_json",
+        [pytest.param("{not-valid-json", id="非法 JSON 串"),
+         pytest.param('{"logic_genes": "oops"}', id="段非 dict"),
+         pytest.param('{"logic_genes": {"exit_logic": "garbage"}}',
+                      id="通道脏值"),
+         pytest.param('{"logic_genes": null}', id="段缺失 None"),
+         pytest.param("", id="空串")])
+    def test_dirty_row_converges_default(self, bad_json):
+        """畸形/段非 dict/脏值通道/段缺失/空串 → 一律回显缺省全
+        "AND"（脏值不反射，回执不炸）。"""
+        from core.analysis.hypothesis_to_strategy import _logic_genes_of_row
+
+        assert _logic_genes_of_row(bad_json) == self._ALL_AND
+
+    def test_dirty_draft_row_rebuilds_not_crashes(self, db):
+        """行为锚：谱系 draft 行 dna_json 损坏 → 重译穿透建新
+        （幂等收窄判定 exec_tf 不可解析=放行重建，旧产物保留审计），
+        新产物回执正常回显 "OR"——坏行不挡重建、不炸回执。"""
+        from core.persistence.repository.strategy import update_strategy
+
+        h = _register(db, exit_logic="or")
+        first = translate_hypothesis(db, hypothesis_id=h)
+        update_strategy(db, strategy_id=first["strategy_id"],
+                        dna_json="{not-valid-json")
+        second = translate_hypothesis(db, hypothesis_id=h)
+        assert second["duplicated"] is False
+        assert second["strategy_id"] != first["strategy_id"]
+        assert second["logic_genes"]["exit_logic"] == "OR"
+
+
+class TestLogicKeyCombinationProperty:
+    """两键全组合性质锚（阶段四属性补强——纯计算面）：两键 ×
+    {缺省, and, or} 九组合的映射与签名编码性质。
+
+    性质：①映射封闭——产物四通道恒在 {"AND","OR"}；②无串位——
+    exit 键只影响 exit 通道、partial 键只影响 reduce 通道；③邻通道
+    免疫——entry/add 通道恒 "AND"（Q-E2 加仓合取不受两键影响）；
+    ④签名段双条件——"xlor:or" 在签名中 iff exit 键=="or"，rlor 同理
+    （"有值才编码"不变量，显式 and 与缺省同签名）。"""
+
+    @pytest.mark.parametrize(
+        ("exit_key", "partial_key"),
+        [(e, p) for e in (None, "and", "or") for p in (None, "and", "or")],
+        ids=[f"exit={e}-partial={p}"
+             for e in (None, "and", "or") for p in (None, "and", "or")])
+    def test_combination_mapping_and_signature(self, db, exit_key,
+                                               partial_key):
+        from core.strategy.dna import StrategyDNA
+
+        cond = _cond()
+        cond["exit_partial_conditions"] = [
+            {"subject": {"indicator": "RSI", "params": {"period": 14},
+                         "field": "rsi"}, "action": "gt", "target": 75}]
+        h = _register(db, conditions=cond, exit_logic=exit_key,
+                      partial_exit_logic=partial_key)
+        _, dna = _translate_dna(db, h)
+
+        lg = dna["logic_genes"]
+        exp_exit = "OR" if exit_key == "or" else "AND"
+        exp_reduce = "OR" if partial_key == "or" else "AND"
+        # ①映射封闭 + ②无串位（各键只动自己通道）
+        assert set(lg.values()) <= {"AND", "OR"}
+        assert lg["exit_logic"] == exp_exit
+        assert lg["reduce_logic"] == exp_reduce
+        # ③邻通道免疫
+        assert lg["entry_logic"] == "AND"
+        assert lg["add_logic"] == "AND"
+
+        # ④签名段双条件（"有值才编码"）
+        sig = StrategyDNA.from_json(
+            get_strategy(
+                db, translate_hypothesis(db, hypothesis_id=h)
+                ["strategy_id"])["dna_json"]).gene_signature
+        assert ("xlor:or" in sig) == (exit_key == "or")
+        assert ("rlor:or" in sig) == (partial_key == "or")
