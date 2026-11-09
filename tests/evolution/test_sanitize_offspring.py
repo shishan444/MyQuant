@@ -170,6 +170,55 @@ class TestSanitizedFitnessPenalty:
         assert score > 0  # 与上一用例同款固定样本同款值域（非零锚）
 
 
+class TestCrossParamsSanitizeDimension:
+    """CARD-02（S-1 executor 面堵口）：cross_params 违约经可达性维
+    （_get_indicator_column 试解析抛 ValueError）sanitize 剔除——
+    S7e column_unreachable 同通道；进化链不因违约基因崩溃、剔除留痕。"""
+
+    def _garch_violating_gene(self):
+        return make_signal_gene(
+            indicator="GARCHFilter",
+            params={"alpha": 0.5, "beta": 0.6, "init_window": 500},
+            condition_type="gt", condition_value=0.0)
+
+    def test_violating_gene_removed_and_annotated(self):
+        """违约基因剔除＋sanitized:column_unreachable 注记（合法类型、
+        逐参数域内、联合违约——结构维与可达性维分别拦不住的形态），
+        其余基因保留（S7a 同构）。"""
+        df = make_enhanced_df(n=50)
+        dna = make_dna()
+        bad = self._garch_violating_gene()
+        dna.signal_genes = [bad, *dna.signal_genes]
+        n_before = len(dna.signal_genes)
+
+        result = validate_offspring(dna, enhanced_df=df)
+
+        assert result is dna, "原地修改返回同一实例"
+        assert bad not in result.signal_genes, "违约基因被剔除"
+        assert len(result.signal_genes) == n_before - 1
+        assert any("sanitized:column_unreachable:GARCHFilter" in op
+                   for op in dna.mutation_ops), \
+            f"注记应含 sanitized:column_unreachable:GARCHFilter，" \
+            f"got {dna.mutation_ops}"
+        roles = [g.role for g in result.signal_genes]
+        assert SignalRole.ENTRY_TRIGGER in roles
+        assert SignalRole.EXIT_TRIGGER in roles
+
+    def test_all_violating_entry_genes_eliminated(self):
+        """全部 entry 基因违约 → sanitize 剔除后零 ENTRY_TRIGGER 连锁
+        淘汰（ValueError——繁殖循环换随机个体；淘汰属连锁语义，区分于
+        sanitize 本身不抛）。"""
+        df = make_enhanced_df(n=50)
+        dna = make_dna()
+        dna.signal_genes = [
+            self._garch_violating_gene(),
+            make_signal_gene(role=SignalRole.EXIT_TRIGGER,
+                             condition_value=70),
+        ]
+        with pytest.raises(ValueError, match="ENTRY_TRIGGER"):
+            validate_offspring(dna, enhanced_df=df)
+
+
 class TestStructuralChecksPreserved:
     """既有结构校验维持 raise 形（fix-executor-batch-health 基线不回归）。"""
 

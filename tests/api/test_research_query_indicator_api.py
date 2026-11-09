@@ -107,6 +107,25 @@ class TestQueryIndicatorRoute:
         assert detail["detail"]["indicator"] == "SessionRange"
         assert "倒序" in detail["detail"]["violation"]
 
+    def test_garch_cross_params_api_passthrough(self, api_client, q_env):
+        """champion 阶段四层级补全：GARCHFilter alpha+beta≥1（各在
+        分域内、联合违约）经真实路由透传——422 RESEARCH_PARAM_INVALID
+        ＋param=params 整组形制＋violation 含 alpha+beta 平稳性文本
+        （与 SessionRange 版同构，champion 新钩子指标面）。"""
+        api_client.app.state.db_path = q_env["db"]
+        api_client.app.state.data_dir = q_env["data_dir"]
+        resp = api_client.post(
+            "/api/research/query-indicator",
+            json=_payload(indicator="GARCHFilter",
+                          params={"alpha": 0.5, "beta": 0.6,
+                                  "init_window": 500}))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "params"
+        assert detail["detail"]["indicator"] == "GARCHFilter"
+        assert "alpha+beta" in detail["detail"]["violation"]
+
     def test_zero_audit_trail(self, api_client, q_env):
         """Q2 契约：读数零留痕——成功调用前后 log 计数不变。"""
         api_client.app.state.db_path = q_env["db"]

@@ -24,8 +24,8 @@ class TestRegistryStructureAnchor:
     def test_registry_key_count_unchanged(self):
         from core.features.registry import INDICATOR_REGISTRY
 
-        assert len(INDICATOR_REGISTRY) == 50, \
-            "指标注册表键数为 50（箱体两件入库后快照；措辞维护见 box 变更）"
+        assert len(INDICATOR_REGISTRY) == 55, \
+            "指标注册表键数为 55（champion 五件入库后快照；措辞维护见 champion 变更）"
 
     def test_no_wave_or_box_entries(self):
         """zigzag 类清单条目域判定（add-box-capability 措辞维护）：

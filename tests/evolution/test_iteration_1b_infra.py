@@ -253,7 +253,9 @@ class TestRegistryNamingField:
                        # structure（add-session-structure-expression）
                        "session", "pivot", "supertrend",
                        # structure（add-box-capability）
-                       "boxreg", "boxch"}
+                       "boxreg", "boxch",
+                       # information/structure（add-champion-indicators）
+                       "shan", "perm", "erf", "cus", "garch"}
         for name, defn in INDICATOR_REGISTRY.items():
             assert defn.naming in valid_modes, \
                 f"{name} has invalid naming mode: {defn.naming}"

@@ -92,6 +92,14 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "BoxRegime": [{"window": 120, "width_thr": 0.08, "min_len": 48}],
     "BoxChannel": [{"edge_window": 240, "q_low": 0.10, "q_high": 0.90,
                     "buffer": 0.25}],
+    # == information (3) / structure (2)（add-champion-indicators）==
+    # default 取研究冻结值（demo gate/面板）；compute_mode=lazy 批量
+    # 预铺跳过（BoxChannel 先例），条件链/研究链单点现算不受影响
+    "ShannonEntropy": [{"window": 96, "rank_window": 500}],
+    "PermutationEntropy": [{"window": 240, "pattern_len": 4}],
+    "EfficiencyRatio": [{"window": 96, "rank_window": 500}],
+    "CUSUM": [{"sd_window": 500, "drift": 0.5, "threshold": 5.0}],
+    "GARCHFilter": [{"alpha": 0.08, "beta": 0.90, "init_window": 500}],
     # ML indicators (compute_mode="lazy", skipped by default)
     "FractalEntropy": [{"bins": 10, "lookback": 100}],
 }
@@ -528,6 +536,44 @@ def _compute_indicator(
         new_cols.update(compute_box_channel(
             df, name, {"edge_window": edge_window, "q_low": q_low,
                        "q_high": q_high, "buffer": buffer}))
+    # == information (3) / structure (2)（add-champion-indicators）==
+    # 分支内逐键解包（AST 参数域对拍锚要求——同 box 先例）
+    elif name == "ShannonEntropy":
+        from core.features.champion_indicators import compute_shannon_entropy
+        window = int(params["window"])
+        rank_window = int(params["rank_window"])
+        new_cols.update(compute_shannon_entropy(
+            df, name, {"window": window, "rank_window": rank_window}))
+    elif name == "PermutationEntropy":
+        from core.features.champion_indicators import (
+            compute_permutation_entropy)
+        window = int(params["window"])
+        pattern_len = int(params["pattern_len"])
+        new_cols.update(compute_permutation_entropy(
+            df, name, {"window": window, "pattern_len": pattern_len}))
+    elif name == "EfficiencyRatio":
+        from core.features.champion_indicators import (
+            compute_efficiency_ratio)
+        window = int(params["window"])
+        rank_window = int(params["rank_window"])
+        new_cols.update(compute_efficiency_ratio(
+            df, name, {"window": window, "rank_window": rank_window}))
+    elif name == "CUSUM":
+        from core.features.champion_indicators import compute_cusum
+        sd_window = int(params["sd_window"])
+        drift = float(params["drift"])
+        threshold = float(params["threshold"])
+        new_cols.update(compute_cusum(
+            df, name, {"sd_window": sd_window, "drift": drift,
+                       "threshold": threshold}))
+    elif name == "GARCHFilter":
+        from core.features.champion_indicators import compute_garch_filter
+        alpha = float(params["alpha"])
+        beta = float(params["beta"])
+        init_window = int(params["init_window"])
+        new_cols.update(compute_garch_filter(
+            df, name, {"alpha": alpha, "beta": beta,
+                       "init_window": init_window}))
     return new_cols
 
 

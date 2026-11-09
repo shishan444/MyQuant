@@ -1,7 +1,7 @@
-"""指标注册表：指标元数据的数据结构与 50 指标定义（全链单源权威）。
+"""指标注册表：指标元数据的数据结构与 55 指标定义（全链单源权威）。
 
 职能：定义 ParamDef（参数域）、IndicatorDef（指标定义）、
-INDICATOR_REGISTRY（50 指标注册表）与 get_interchangeable（同类
+INDICATOR_REGISTRY（55 指标注册表）与 get_interchangeable（同类
 互换集查询）。
 价值与服务对象：全工程指标元数据唯一权威——19 个生产文件消费
 （analysis 域 13 / strategy 2 / evolution 1 / features 1 /
@@ -68,7 +68,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# 指标注册表（50 指标，9 类别——类别分节标签见下方各 == 分节）
+# 指标注册表（55 指标，10 类别——类别分节标签见下方各 == 分节）
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -523,6 +523,91 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "q_low 须小于 q_high（通道倒挂无意义）"
             if p["q_low"] >= p["q_high"] else None),
     ),
+
+    # == information (3)（add-champion-indicators——R216 冠军信息度量件） ==
+    "ShannonEntropy": IndicatorDef(
+        category="information",
+        params={
+            # 参数域上界取研究冻结值 max 500（derive_warmup 静态推导
+            # sum_of_max×3 下 4h 轴可装载——design 参数域收窄裁决）；
+            # default 取 demo gate 冻结值 w=96，candidates 收录面板值 240
+            "window": ParamDef("int", 10, 500, 96, 10,
+                               candidates=[96, 240]),
+            "rank_window": ParamDef("int", 100, 500, 500, 50),
+        },
+        output_fields=["entropy", "entropy_pct"],
+        supported_conditions=["gt", "lt", "eq", "within_bars_after"],
+        naming="shan",
+        # lazy（BoxChannel 先例）：rank_window 500 长窗在批量标准样本
+        # （500 根）上 pct 列全 NaN 超 5% 纪律——批量预铺跳过；条件链/
+        # 研究链/装载层单点现算不受影响
+        compute_mode="lazy",
+    ),
+    "PermutationEntropy": IndicatorDef(
+        category="information",
+        params={
+            "window": ParamDef("int", 50, 500, 240, 50),
+            # pattern_len 非周期参数不进 warmup 白名单（不产生 rolling
+            # 数据前缀——design D8）
+            "pattern_len": ParamDef("int", 2, 8, 4, 1),
+        },
+        output_fields=["pe", "pe_pct"],
+        supported_conditions=["gt", "lt", "eq", "within_bars_after"],
+        naming="perm",
+        compute_mode="lazy",
+    ),
+    "EfficiencyRatio": IndicatorDef(
+        category="information",
+        params={
+            # default 取面板冻结值 w=96，candidates 收录 demo gate 消费
+            # 形制 w=24（显式传参复现——r9_d2_arms.py:45 双形制锚）
+            "window": ParamDef("int", 10, 500, 96, 10,
+                               candidates=[24, 96]),
+            "rank_window": ParamDef("int", 100, 500, 500, 50),
+        },
+        output_fields=["er", "er_pct"],
+        supported_conditions=["gt", "lt", "eq", "within_bars_after"],
+        naming="erf",
+        compute_mode="lazy",
+    ),
+
+    # == structure (2)（add-champion-indicators——变点与条件波动率件） ==
+    "CUSUM": IndicatorDef(
+        category="structure",
+        params={
+            "sd_window": ParamDef("int", 100, 500, 500, 50),
+            "drift": ParamDef("float", 0.0, 2.0, 0.5, 0.1),
+            "threshold": ParamDef("float", 1.0, 20.0, 5.0, 0.5),
+        },
+        output_fields=["s_pos", "s_neg", "cp_up", "cp_down"],
+        # cp_up/cp_down 为布尔数值列（True=1.0）——eq 1=变点事件消费
+        supported_conditions=["gt", "lt", "eq", "within_bars_after"],
+        naming="cus",
+        compute_mode="lazy",
+    ),
+    "GARCHFilter": IndicatorDef(
+        category="structure",
+        params={
+            "alpha": ParamDef("float", 0.01, 0.50, 0.08, 0.01),
+            "beta": ParamDef("float", 0.50, 0.99, 0.90, 0.01),
+            # 下界 250 消 ω 统计窗疑虑（方差相对标准误 ≤9%）；demo 2000
+            # 越域值走纯核直调对账（design D7）
+            "init_window": ParamDef("int", 250, 500, 500, 50,
+                                    candidates=[500]),
+        },
+        output_fields=["cond_vol"],
+        # within_bars_after 为全指标通用时序动作（CARD-02 统一携带
+        # 契约——BoxChannel 补挂先例，与 gt/lt 条件语义族正交）
+        supported_conditions=["gt", "lt", "within_bars_after"],
+        naming="garch",
+        compute_mode="lazy",
+        # 平稳性拒绝（含等号）：α+β≥1 时递推方差不收敛——与
+        # BoxChannel/SessionRange 同钩子通道（validate_params 与
+        # resolve_column_ref 同钩同判）
+        cross_params=lambda p: (
+            "alpha+beta 须小于 1（GARCH 平稳性——递推方差收敛前提）"
+            if p["alpha"] + p["beta"] >= 1 else None),
+    ),
 }
 
 
@@ -661,6 +746,41 @@ def resolve_indicator_column(
         buffer = float(params["buffer"])
         field = field_name or "upper"
         return f"boxch_{edge_window}_{q_low}_{q_high}_{buffer}_{field}"
+
+    if naming == "shan":
+        # 冠军五件（add-champion-indicators）：int 参数链_field 后缀形
+        window = int(params["window"])
+        rank_window = int(params["rank_window"])
+        field = field_name or "entropy"
+        return f"shan_{window}_{rank_window}_{field}"
+
+    if naming == "perm":
+        window = int(params["window"])
+        pattern_len = int(params["pattern_len"])
+        field = field_name or "pe"
+        return f"perm_{window}_{pattern_len}_{field}"
+
+    if naming == "erf":
+        window = int(params["window"])
+        rank_window = int(params["rank_window"])
+        field = field_name or "er"
+        return f"erf_{window}_{rank_window}_{field}"
+
+    if naming == "cus":
+        # float 编码（str 形制——0.5 → "0.5"、5.0 → "5.0"）
+        sd_window = int(params["sd_window"])
+        drift = float(params["drift"])
+        threshold = float(params["threshold"])
+        field = field_name or "s_pos"
+        return f"cus_{sd_window}_{drift}_{threshold}_{field}"
+
+    if naming == "garch":
+        # float 编码（str 形制——0.08 → "0.08"、0.90 → "0.9"）
+        alpha = float(params["alpha"])
+        beta = float(params["beta"])
+        init_window = int(params["init_window"])
+        field = field_name or "cond_vol"
+        return f"garch_{alpha}_{beta}_{init_window}_{field}"
 
     if naming == "dc":
         period = int(params["period"])

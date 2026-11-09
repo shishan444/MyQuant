@@ -20,6 +20,13 @@ def compute_fractal_entropy(
     Rolling window entropy measures market complexity/randomness.
     Low entropy indicates a trending regime; high entropy indicates random walk.
 
+    语义分诊（add-champion-indicators D9 互指）：本件为分形维数熵——
+    对数收益直方分桶的分布熵，度量价格自相似复杂度；与 ShannonEntropy
+    （information 类，三态涨跌方向分布熵）是不同的度量对象。R245 探针
+    实证：本件内置可用但判别力弱于本地香农熵（研究档案 R217 :239）——
+    涨跌方向结构度量用 ShannonEntropy，分形自相似度量用本件；两件
+    互指分诊、判别力差异以此披露。
+
     Args:
         close: Close price series.
         bins: Number of bins for return distribution discretization.

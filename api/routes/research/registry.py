@@ -54,7 +54,7 @@ _CALIBER_NOTE = (
 
 @router.get("/indicators")
 def indicators() -> List[Dict[str, Any]]:
-    """内置指标元数据（50 项，含 lookback——warmup 推导依据）。"""
+    """内置指标元数据（55 项，含 lookback——warmup 推导依据）。"""
     return indicator_metadata()
 
 
