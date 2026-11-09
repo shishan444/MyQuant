@@ -222,17 +222,14 @@ def compare_wave(
     waves: List[Dict[str, Any]],
     *,
     identify_window: float = DEFAULT_IDENTIFY_WINDOW,
-    B: int = DEFAULT_B, seed: int = DEFAULT_SEED,
 ) -> Dict[str, Any]:
     """浪模式对照计算核心（纯函数——交易行×浪清单）。
 
     浪-笔匹配：入场时点落入 [浪起, 浪止] 闭区间且方向一致（多浪
     重叠取时间序第一匹配）；识别=入场距浪起 ≤ identify_window×浪长
     （时间比例，含等号）；识别率按浪去重；捕获=方向化价差÷浪幅。
-    n<3 时 CI=null 附样本数（附着层契约）。
+    n<3 时 CI=null 附样本数（附着层契约——bootstrap 全在 _net_stats）。
     """
-    from core.scoring.statistics import boot_ci
-
     n_waves = len(waves)
     matched: List[Optional[Dict[str, Any]]] = []
     identified_wave_ids: set = set()
@@ -318,7 +315,6 @@ def compare_box(
     edge_q_low: float = DEFAULT_EDGE_Q_LOW,
     edge_q_high: float = DEFAULT_EDGE_Q_HIGH,
     buffer: float = DEFAULT_BOX_BUFFER,
-    B: int = DEFAULT_B, seed: int = DEFAULT_SEED,
 ) -> Dict[str, Any]:
     """箱模式对照计算核心（纯函数——交易行×行情 df）。
 
@@ -533,7 +529,7 @@ def ruler_compare(
         all_waves = compute_zigzag_waves(df["close"], threshold=threshold)
         waves = [w for w in all_waves if w["start"] >= start_ts]
         wave_stats = compare_wave(
-            trades, waves, identify_window=identify_window, B=B, seed=seed)
+            trades, waves, identify_window=identify_window)
         net = _net_stats(trades, init_cash, B=B, seed=seed)
         payload["wave"] = wave_stats
         payload["threshold"] = float(threshold)
@@ -564,7 +560,7 @@ def ruler_compare(
                 f"[{load_start}, {rng['end']})")
         box_stats = compare_box(
             trades, df, edge_window=edge_window, edge_q_low=edge_q_low,
-            edge_q_high=edge_q_high, buffer=buffer, B=B, seed=seed)
+            edge_q_high=edge_q_high, buffer=buffer)
         net = _net_stats(trades, init_cash, B=B, seed=seed)
         payload["box"] = box_stats
         payload.update(net)
