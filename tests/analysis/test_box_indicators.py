@@ -389,6 +389,11 @@ class TestBoxRegimeConditions:
         gt1 = evaluate_condition(state, df["close"],
                                  {"type": "gt", "threshold": 1})
         assert not gt1.any()
+        # spec R1 布尔条件语义 THEN：「gt 1 恒 False」警示入 docstring
+        from core.features import structure_indicators as si
+        doc = si.compute_box_regime.__doc__ or ""
+        assert "gt 1" in doc and "恒 False" in doc, \
+            "docstring 须携带 gt 1 恒 False 勿踩警示（披露义务）"
 
     def test_within_bars_after_bool_subject(self):
         """within_bars_after 布尔 subject（1/0）时序锚：inner=eq 1、
@@ -811,3 +816,131 @@ class TestCaliberBoundary:
             ["upper", "lower", "channel_width", "break_high", "break_low"]
         assert set(INDICATOR_REGISTRY["BoxRegime"].output_fields) \
             .isdisjoint(INDICATOR_REGISTRY["BoxChannel"].output_fields)
+
+
+# --------------------------------------------- 补网：BoxRegime 参数域（值域归设计卡）
+
+class TestBoxRegimeParamDomain:
+    """BoxRegime 参数域拒绝（spec R1「值域与默认归设计卡」：
+    window 20-240/width_thr 0.01-0.30/min_len 10-200——域外经登记链
+    422 结构化拒绝；与 BoxChannel test_param_domain_rejected 同形制）。"""
+
+    BASE = {"window": 120, "width_thr": 0.08, "min_len": 48}
+
+    @pytest.mark.parametrize(
+        ("params", "key"),
+        [pytest.param({"window": 19}, "window", id="window 下界外"),
+         pytest.param({"window": 241}, "window", id="window 上界外"),
+         pytest.param({"width_thr": 0.005}, "width_thr",
+                      id="width_thr 下界外"),
+         pytest.param({"width_thr": 0.31}, "width_thr",
+                      id="width_thr 上界外"),
+         pytest.param({"min_len": 9}, "min_len", id="min_len 下界外"),
+         pytest.param({"min_len": 201}, "min_len", id="min_len 上界外")])
+    def test_param_domain_rejected(self, params, key):
+        base = dict(self.BASE)
+        base.update(params)
+        with pytest.raises(ColumnRefError) as ei:
+            _resolve_indicator_ref({"indicator": "BoxRegime",
+                                    "params": base, "field": "box_state"})
+        assert ei.value.code == "PARAM_INVALID"
+        assert key in ei.value.detail.get("key", "")
+
+    def test_param_keyset_exactly_contract_three(self):
+        """参数键集恰为契约三键（值域面之外的键层面锁——多余参数
+        不得静默混入）。"""
+        assert set(INDICATOR_REGISTRY["BoxRegime"].params) == \
+            {"window", "width_thr", "min_len"}
+
+
+# --------------------------------------------- 补网：BoxChannel 五面补齐（缺三面）
+
+class TestBoxChannelRemainingFaces:
+    """BoxChannel 五面补齐：query_indicator 归约/假设登记＋翻译
+    （condition_stats 与回测求值两面由 TestBoxChannelParams 承载——
+    行动指令「五面全通」的两件对等要求）。"""
+
+    def test_face_query_indicator_reductions(self):
+        """面一 query_indicator：latest 归约五列全算＋warmup_bars=1440
+        数值锚（真实数据；不在库 skip——demo 复算先例。三归约全带超
+        归约摘要字节上限 2048——RESEARCH_PARAM_INVALID 既有约束，
+        五列件取轻档；quantiles/slope 归约机制为全指标通用面，由
+        BoxRegime 版用例承载）。"""
+        if not (MARKET / "BTCUSDT_1h.parquet").exists():
+            pytest.skip("真实数据不在库（data/market_fapi）")
+        from core.analysis.indicator_query import query_indicator
+        p = {"edge_window": 240, "q_low": 0.10, "q_high": 0.90,
+             "buffer": 0.25}
+        out = query_indicator(
+            MARKET, symbol="BTCUSDT", timeframe="1h",
+            indicator="BoxChannel", params=p,
+            start="2026-09-01", end="2026-11-01",
+            reductions=["latest"])
+        assert out["indicator"] == "BoxChannel"
+        assert out["warmup_bars"] == 1440
+        reds = out["reductions"]["boxch_240_0.1_0.9_0.25_channel_width"]
+        assert set(reds) == {"latest"}
+
+    def test_face_register_and_translate(self, tmp_path):
+        """面三/四 假设登记＋翻译：BoxChannel price_below break_low
+        条件（D2 破箱认错语义）登记入册并翻译为 SignalGene。"""
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        p = {"edge_window": 240, "q_low": 0.10, "q_high": 0.90,
+             "buffer": 0.25}
+        cond = {"subject": {"indicator": "BoxChannel", "field": "break_low",
+                            "params": p},
+                "action": "price_below", "target": 0}
+        then = {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                "action": "gt", "target": 50}
+        hyp = register_hypothesis(
+            db, conditions={"when_conditions": [cond],
+                            "then_conditions": [then]},
+            statement="收盘破箱体破坏线后离场",
+            strategy_params={"stop_loss": 0.05},
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
+                          "start": "2026-01-01", "end": "2026-03-01"}])
+        assert hyp["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hyp["hypothesis_id"])
+        assert "BoxChannel(break_low)" in out["genes"]
+
+
+# --------------------------------------------- 补网：资格宽经 threshold 承载（R2）
+
+class TestQualificationWidthViaThreshold:
+    """资格宽分界（spec R2 条件族 scenario THEN）：资格宽阈值不进
+    指标参数——由策略条件 threshold 承载（channel_width lt 阈值）。"""
+
+    def test_param_keyset_excludes_qualification_width(self):
+        """BoxChannel 参数键集恰四键——资格宽阈值不在指标参数
+        （不进参数的直接断言，非仅间接锁定）。"""
+        assert set(INDICATOR_REGISTRY["BoxChannel"].params) == \
+            {"edge_window", "q_low", "q_high", "buffer"}
+
+    def test_channel_width_lt_via_strategy_threshold(self):
+        """channel_width lt 阈值经 evaluate_condition threshold 承载：
+        求值结果与独立重演 (channel_width < thr) 逐位一致——样例保证
+        两侧（收窄/未收窄）都命中（检出力）。"""
+        from core.strategy.executor import evaluate_condition
+        rng = np.random.default_rng(13)
+        n = 160
+        close = 100 + rng.normal(0, 3, n).cumsum()
+        df = _mk_df(close.tolist())
+        p = {"edge_window": 20, "q_low": 0.10, "q_high": 0.90,
+             "buffer": 0.25}
+        out = _compute_indicator(df, "BoxChannel", p)
+        cw = out["boxch_20_0.1_0.9_0.25_channel_width"]
+        assert cw.notna().sum() > 100, "构造器索引对齐假绿防线"
+        thr = float(cw.dropna().median())
+        got = evaluate_condition(cw, df["close"], {"type": "lt",
+                                                   "threshold": thr})
+        expect = (cw < thr).fillna(False)
+        assert list(got.fillna(False)) == list(expect)
+        assert expect.any() and not expect.all(), \
+            "样例须两侧都命中（资格宽收窄/未收窄——检出力）"
