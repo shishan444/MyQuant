@@ -526,7 +526,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
                 min_samples=p.get("min_samples", 30),
                 hypothesis_id=payload.hypothesis_id,
                 mtf=mtf_ctx,
-                trigger_policy=p.get("trigger_policy")).to_dict(), df)
+                trigger_policy=p.get("trigger_policy"),
+                significance=p.get("significance")).to_dict(), df)
         # indicator 值域前置（param_sweep 同款纪律——特征网实施暴露的
         # 补接：非法值经 derive_warmup 抛裸 KeyError 落 500，非缺键类
         # 参数错误应 422）
@@ -543,7 +544,8 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             min_samples=p.get("min_samples", 30),
             hypothesis_id=payload.hypothesis_id,
             mtf=mtf_ctx,
-            trigger_policy=p.get("trigger_policy")).to_dict(), df)
+            trigger_policy=p.get("trigger_policy"),
+            significance=p.get("significance")).to_dict(), df)
 
     if payload.template == "precheck_hypothesis":
         # 假设预检（add-hypothesis-precheck 2.1）：三层预检自装载（两维

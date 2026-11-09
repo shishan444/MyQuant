@@ -73,6 +73,7 @@ def condition_stats(
     hypothesis_id: str | None = None,
     mtf: "MtfEvalContext | None" = None,
     trigger_policy: Dict[str, Any] | None = None,
+    significance: Dict[str, Any] | None = None,
 ) -> AnalysisResult:
     """条件频率与信号后前向收益统计。
 
@@ -94,6 +95,12 @@ def condition_stats(
         request_start: 请求区间起点。None 时统计段=全 df（向后兼容）；
             非 None 时 df 视为含 warmup 前缀的装载结果，统计段取
             work.index >= request_start 的 bar（前缀只用不算）。
+        significance: 显著性段可选配置（add-evaluation-ruler）：
+            {"method": "bootstrap_ci", "B": 3000, "seed": 42}——method
+            缺省/为 "t_test_vs_baseline" 时存量行为逐位不变；bootstrap_ci
+            时显著性以条件组 vs baseline 前向收益均值差的 bootstrap
+            CI 呈现（x_minus_y 方向，种子可复现；n<3 时 CI=null 附
+            样本数披露）。
 
     Raises:
         ResearchError: 未知指标；forward_bars/min_samples 非法（附
@@ -190,6 +197,35 @@ def condition_stats(
     bas_fwd = fwd[in_stat].dropna()
     baseline_mean = float(bas_fwd.mean()) if len(bas_fwd) else None
 
+    # 显著性段配置解析（add-evaluation-ruler 可选升级）：缺省走存量
+    # t 检验（键序逐字节冻结锚）；bootstrap_ci 走均值差 CI 附着。
+    # method/B/seed 非法在此 422（值校验前置），n<3 的库函数 ValueError
+    # 才属附着层捕获面（CI=null＋样本数披露，不拒报告）
+    sig_cfg = significance or {}
+    sig_method = sig_cfg.get("method", "t_test_vs_baseline")
+    if sig_method not in ("t_test_vs_baseline", "bootstrap_ci"):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"significance.method 未知: {sig_method!r}",
+            detail={"param": "significance.method",
+                    "legal_range": ["t_test_vs_baseline",
+                                    "bootstrap_ci"]})
+    sig_B = sig_cfg.get("B", 3000)
+    sig_seed = sig_cfg.get("seed", 42)
+    if sig_method == "bootstrap_ci":
+        if not (isinstance(sig_B, int) and sig_B >= 1):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"significance.B 须为正整数: {sig_B!r}",
+                detail={"param": "significance.B",
+                        "legal_form": "正整数（重抽样次数）"})
+        if not isinstance(sig_seed, int):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"significance.seed 须为整数: {sig_seed!r}",
+                detail={"param": "significance.seed",
+                        "legal_form": "整数（随机种子）"})
+
     # 去重叠 t 检验（0.2.1 同口径——第四消费方收敛至 condition_kernel
     # p_value_for 共享实现，消除双实现漂移面；返回 (p, n_overlapped)，
     # baseline None / 样本<2 / 零方差时 p 为 None）
@@ -203,6 +239,32 @@ def condition_stats(
         "n_total_signals": int(len(valid)),
         "baseline_mean": baseline_mean,
     }
+    if sig_method == "bootstrap_ci":
+        # 均值差 bootstrap CI（x_minus_y：条件组−baseline；样本口径与
+        # 描述统计一致——valid/bas_fwd 全样本，去重叠披露键照出）。
+        # n<3 由库函数 fail-loud，附着层捕获转 CI=null（诊断态披露，
+        # 样本量信息仍在场——与评测尺子统计件 n 三档契约一致）
+        from core.scoring.statistics import boot_diff
+        ci_out: list[float] | None
+        try:
+            lo, hi = boot_diff(valid.values, bas_fwd.values,
+                               B=sig_B, seed=sig_seed)
+            ci_out = [float(lo), float(hi)]
+        except ValueError:
+            ci_out = None
+        forward_significance = {
+            "method": "bootstrap_ci",
+            "p_value": None,
+            "for": "forward_return_mean_vs_baseline",
+            "boot_diff_ci": ci_out,
+            "n_cond": int(len(valid)),
+            "n_baseline": int(len(bas_fwd)),
+            "B": int(sig_B),
+            "seed": int(sig_seed),
+            "n_overlapped": int(n_overlapped),
+            "n_total_signals": int(len(valid)),
+            "baseline_mean": baseline_mean,
+        }
 
     rate_interval = _wilson_interval(n_hit, n_total)
     confidence = {
