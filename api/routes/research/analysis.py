@@ -28,7 +28,8 @@ router = APIRouter()
 _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
               "regime_split", "precheck_hypothesis", "segment_narrative",
-              "counter_profile", "exit_sweep", "wave_inventory")
+              "counter_profile", "exit_sweep", "wave_inventory",
+              "box_inventory")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
@@ -387,6 +388,38 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
         return _with_derivatives_coverage(wave_inventory(
             df, data_ranges=ranges, request_start=start_ts,
             threshold=threshold, warmup_bars=warmup_bars).to_dict(), df)
+
+    if payload.template == "box_inventory":
+        # 箱体盘点（add-evaluation-ruler）：warmup=window 前扩只用不算
+        # （rolling 在含前缀 df 上收敛，段提取切回区间内——读法 A）。
+        # 参数解析在前扩起点计算前（window 参与前扩；非冻结轴缺参/
+        # 非法值在装载前 422）
+        from core.analysis.templates.box_inventory import (
+            box_inventory, resolve_box_params,
+            validate_box_inventory_params)
+        from core.analysis.warmup_loader import TF_MINUTES, to_utc
+        from core.data.mtf_loader import load_and_prepare_df
+        width_thr = p.get("width_thr", 0.08)
+        window_r, min_len_r = resolve_box_params(
+            rng["timeframe"], p.get("window"), p.get("min_len"))
+        validate_box_inventory_params(window_r, min_len_r, width_thr)
+        tf_minutes = TF_MINUTES.get(rng["timeframe"], 240)
+        start_ts = to_utc(pd.Timestamp(rng["start"]))
+        load_start = (start_ts - pd.Timedelta(
+            minutes=tf_minutes * window_r)).isoformat()
+        df = load_and_prepare_df(
+            data_dir, rng["symbol"], rng["timeframe"],
+            data_start=load_start, data_end=rng["end"],
+            compute_indicators=False)
+        if df is None:
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT",
+                f"区间数据不足: {rng['symbol']} {rng['timeframe']} "
+                f"[{load_start}, {rng['end']})")
+        return _with_derivatives_coverage(box_inventory(
+            df, data_ranges=ranges, timeframe=rng["timeframe"],
+            request_start=start_ts, window=window_r, min_len=min_len_r,
+            width_thr=width_thr).to_dict(), df)
 
     if payload.template == "screen_patterns":
         # 全谱扫描：warmup 覆盖全部枚举指标（derive_warmup 主公式推导：

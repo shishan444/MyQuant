@@ -7,6 +7,7 @@ core.analysis.result.build_result（三要素强制：样本量/置信/数据区
 enrich 须与预算计算同源（同一集合喂装载/求值/预算三处），拆到路由层
 会复制引用收集链；IO 面收敛在模板壳内，计算面仍纯（compute 层无 IO）。
 """
+from core.analysis.templates.box_inventory import box_inventory
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.counter_profile import counter_profile
 from core.analysis.templates.correlation_scan import correlation_scan
@@ -22,6 +23,7 @@ from core.analysis.templates.segment_narrative import segment_narrative
 from core.analysis.templates.wave_inventory import wave_inventory
 
 __all__ = [
+    "box_inventory",
     "condition_stats",
     "counter_profile",
     "correlation_scan",

@@ -378,14 +378,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile|exit_sweep|wave_inventory
+        counter_profile|exit_sweep|wave_inventory|box_inventory
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
         须 column/group_a/group_b；correlation_scan 须 signal_column；
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
-        validate_range；screen_patterns/regime_split/wave_inventory 无必填键。
+        validate_range；screen_patterns/regime_split/wave_inventory/
+        box_inventory 无必填键。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
@@ -567,7 +568,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         确认 pivot 剔除；零浪区间 422（扩区间提示）。跨查询可比性：
         zigzag 有起点效应——不同 start 的清单不同，不可直接混用拼接。
         回望性契约：浪清单是行情结构事实，不适用假设关联（携带
-        hypothesis_id 即 422），不作策略条件或实盘信号输入。"""
+        hypothesis_id 即 422），不作策略条件或实盘信号输入。
+        box_inventory 箱体盘点（add-evaluation-ruler，快路径）：无必填
+        键；timeframe 感知默认 params.window/min_len（1h=(120,48)、
+        15m=(240,96)，其余轴两键必填——缺失 422 附该轴无冻结默认）；
+        params.width_thr（宽度门槛，默认 0.08 小数形制，含等号）。
+        口径：hi/lo 滚动幅度（rolling window 高低差÷收盘滚动均值）
+        连续存活达 min_len 成箱；段判定与起止仅取区间内 bar（区间首
+        bar 落长箱体中部时从首 bar 重新起算并标 truncated_start）；
+        warmup=window 前扩只用不算。输出=箱清单+summary（箱数/按箱
+        起点月份去重计月的月均/箱高统计）。两口径披露：盘点口径=
+        hi/lo 幅度（结构存在性），对照口径=分位沿（ruler_compare 交易
+        判定）——参数族独立、不可互换。回望性契约同 wave_inventory
+        （不适用假设关联；幂等；不作策略输入）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

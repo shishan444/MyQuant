@@ -58,7 +58,30 @@ def _body(template, params, **range_kw):
     return {"template": template, "params": params, "data_range": r}
 
 
-class TestWaveInventoryRoute:
+class TestBoxInventoryRoute:
+    def test_box_registered_and_runs_with_frozen_default(self, ruler_client):
+        """box 走 run_analysis：1h 冻结默认 (120,48)——4h 轴无冻结默认
+        422（该轴必填），改显式参数后可跑（截断末段成箱）。"""
+        resp = ruler_client.post("/api/research/analysis", json=_body(
+            "box_inventory", {}))
+        assert resp.status_code == 422
+        assert "无冻结默认" in resp.json()["detail"]["message"]
+        resp = ruler_client.post("/api/research/analysis", json=_body(
+            "box_inventory", {"window": 3, "min_len": 2}))
+        assert resp.status_code == 200, resp.text
+        out = resp.json()
+        assert out["template"] == "box_inventory"
+        assert out["sample_size"] == len(out["payload"]["boxes"])
+
+    def test_box_hypothesis_id_rejected(self, ruler_client):
+        resp = ruler_client.post("/api/research/analysis", json={
+            "template": "box_inventory",
+            "params": {"window": 3, "min_len": 2},
+            "data_range": {"symbol": "TESTUSDT", "timeframe": "4h",
+                           "start": "2025-01-01", "end": "2025-04-01"},
+            "hypothesis_id": "hyp_probe"})
+        assert resp.status_code == 422
+        assert "不适用假设关联" in resp.json()["detail"]["message"]
     def test_registered_in_templates_and_runs(self, ruler_client):
         resp = ruler_client.post("/api/research/analysis",
                                  json=_body("wave_inventory", {}))

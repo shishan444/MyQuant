@@ -109,7 +109,7 @@ HINTS: Dict[str, str] = {
         "模板名不在册：template ∈ condition_stats|distribution_compare|"
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
         "param_sweep|regime_split|precheck_hypothesis|segment_narrative|"
-        "counter_profile|exit_sweep|wave_inventory",
+        "counter_profile|exit_sweep|wave_inventory|box_inventory",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
@@ -219,6 +219,11 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                            "均值差 CI）",
     "significance.B": "significance.B 须为正整数（bootstrap 重抽样次数）",
     "significance.seed": "significance.seed 须为整数（随机种子）",
+    "window|min_len": "该轴无冻结默认：window 与 min_len 必填"
+                      "（冻结默认仅 1h=(120,48)/15m=(240,96)）",
+    "window": "window 须为正整数（滚动窗宽 bar 数）",
+    "min_len": "min_len 须为正整数（成箱最小连续 bar 数）",
+    "width_thr": "width_thr 须为 (0,1) 开区间小数（宽度门槛，含等号）",
     # 转化执行周期（fix-mtf-execution-consistency R2）：A1 异周期继承
     # 拒绝的 detail.param 面
     "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"
