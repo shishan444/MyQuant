@@ -27,11 +27,14 @@ SYMBOL = "BTCUSDT"
 def combo_env(tmp_path: Path):
     """900 bar 4h 合成数据（先降后升趋势）+ 独立 db。"""
     rng = np.random.default_rng(42)
-    n = 900
-    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
+    # 1200 bar（前移加长——add-box-capability 白名单扩容后特征矩阵
+    # warmup 上限 720：请求起点 2024-04-11 前需 ≥720 bar 前缀；期望
+    # 断言均数据驱动（df 切片独立重演），数据形状变化不碰手算锚）
+    n = 1200
+    idx = pd.date_range("2023-11-12", periods=n, freq="4h", tz="UTC",
                         name="timestamp")
-    seg1 = np.linspace(68000, 58000, 550)
-    seg2 = np.linspace(58000, 72000, n - 550)
+    seg1 = np.linspace(68000, 58000, 860)
+    seg2 = np.linspace(58000, 72000, n - 860)
     close = np.concatenate([seg1, seg2]) + rng.normal(0, 120, n)
     df = pd.DataFrame({
         "open": close, "high": close + 100, "low": close - 100,
