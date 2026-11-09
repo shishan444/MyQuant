@@ -405,3 +405,12 @@
 - 退役面账本：tests/data 删 26 用例（update_market_data/fetch_klines 族——符号级判定：唯一被测符号在删除清单即删）+tests/scripts 四件归档 works/历史脚本/（test_recalc_bb_semantics/test_pollution_rescan 本批移、rescan_verification/recalc_c5 前批已移）——全量基线缩减 44，数字下降非用例失败
 - 活跃域残留判定双形式（一次性判定不设常驻测试——防注释误报护甲，设计卡裁定）：字面量形 `grep -rn 'data/market' --include='*.py' core/ api/ mcpserver/ scripts/ tests/ | grep -v market_fapi | grep -v market_backup`+拼接形 `grep -rEn '"data" */ *"market"' ...`——输出按三类分拣（活跃改/冻结豁免/历史或构造豁免），豁免清单留档 commit message；data/ 不在 .gitignore parquet 规则覆盖内（防误加面待裁定）
 - 锚值纪律：域或区间变更后 docstring 中一切数字（锚值/行数/起点/bar 数）须实测重录——机械平移的旧数字不因断言宽松而暴露（A4 锚 1755→1203、4383 行、736/2206 bar 实录）；「现状记录」用例断言宽松故侥幸绿，docstring 直换+构造目录随改指一致化是唯一可信面
+
+## 十七区 · add-evaluation-ruler（评测尺子）
+
+| 能力 | 验证责任摘要 | 证据位置 | 缺口 |
+|---|---|---|---|
+| bootstrap 统计件（单样本均值 CI/双样本均值差 CI；condition_stats 显著性可选 bootstrap_ci 路径同 change） | 同种子逐位可复现（快照锚）＋A0 锁箱行 CI 与 r9_d4_final.py 前提链逐位交叉对账（hex 级）；n<3 fail-loud；方向镜像；常数收敛；标称覆盖率二项容忍界；condition_stats 缺省路径 payload 逐键不变+bootstrap_ci CI 在位/拒绝面 | `scoring/test_statistics.py`（TestBootCI/TestBootDiff/TestBootR9CrossCheck）+`analysis/templates/test_condition_stats.py`（TestSignificanceMethod） | — |
+| wave_inventory 浪清单盘点 | zigzag 五规则独立单测（期望值人工推导、等号/ULP 边界两侧）；demo 底账逐行复算（BTC 79=40/39、ETH 159=82/77 五列全量，右端固定 2026-11-07）；边界效应披露（warmup_data_sufficient/excluded_boundary_waves）；零浪/越界/缺 end/幂等 | `analysis/templates/test_wave_inventory.py` | 复算依赖生产 parquet（历史 bar 不变前提——右端显式固定为硬性复现条件） |
+| box_inventory 箱体盘点 | 边界族（NaN 期/恰 min_len/min_len−1/width 恰等号/箱高=段内均值）＋截断段语义（truncated_start/区间内重新起算）＋月均合成锚＋timeframe 冻结默认/非冻结轴缺参 422＋demo 四轴复算（49/2.3、34/1.9、82/3.3、26/1.5——右端口径裁量注记：demo 箱账实际未截右端，按生成时点全量对账） | `analysis/templates/test_box_inventory.py` | 同上（右端固定 2026-11-09） |
+| ruler_compare 对照指标（数据来源双级校验/浪模式/箱体模式） | 交易来源唯一路（backtest 指引文案/kind 拦截先于引用解析——校验顺序断言）＋区间一致性（记录级归一全值相等附两侧值/逐笔越界附 seq/混合时间戳归一正例/持仓中行排除披露）＋浪-笔匹配手算算例（闭区间边界/识别窗含等号/同浪去重/方向化捕获/零浪 null）＋箱三分类手算算例（e−1 冻结取根专门样例/减法形制断言/先触者归类/月频分母）＋D4 锁箱三臂复算（识别率 7/22、7/22、6/22；捕获中位 54%/35%/37%；A0 CI 逐位）＋D3 对侧率复算（1h 15%/15m 26% ±1pp）＋模板壳（import 复用断言/来源分级负向/幂等/n 三档） | `analysis/templates/test_ruler_compare.py`+`api/test_evaluation_ruler_api.py`（注册负向锚/D5 拦截负向双锚/路由集成）+`mcpserver/test_evaluation_ruler_mcp.py`（透传三模板） | 复算依赖生产 parquet 同上；B1/C 臂 CI 容差 ±0.05pp（demo 共享 rng 流后续消耗 vs 平台独立 seed——MC 端点差，非装载差异） |
