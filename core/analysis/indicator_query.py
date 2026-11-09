@@ -132,6 +132,19 @@ def validate_params(indicator: str, params: Dict[str, Any]) -> None:
                 f"参数 {key}={value} 超出范围（合法 {p.min}..{p.max}）",
                 detail={"param": f"params.{key}", "value": value,
                         "legal_range": [p.min, p.max]})
+    # 跨参数约束钩子（security S-1 收口——与 column_ref.resolve_column_ref
+    # 同钩同判）：逐参数域校验通过后的联合校验（如 SessionRange 时段
+    # 倒序）。本函数接受字符串数字（"1439"），不 float 归一则钩子内
+    # 数值比较语义错；detail 披露原始形便于回看。无钩子指标零行为变化
+    hook = defn.cross_params
+    if hook is not None:
+        violation = hook({k: float(v) for k, v in params.items()})
+        if violation is not None:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"{indicator} 跨参数约束不满足: {violation}",
+                detail={"param": "params", "indicator": indicator,
+                        "params": dict(params), "violation": violation})
 
 
 def _validate_reductions(reductions: Optional[List[str]]) -> List[str]:

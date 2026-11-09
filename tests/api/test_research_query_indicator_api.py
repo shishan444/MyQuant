@@ -89,6 +89,24 @@ class TestQueryIndicatorRoute:
         assert detail["detail"]["param"] == "indicator"
         assert "indicator" in detail["message"]
 
+    def test_cross_params_rejection_passthrough(self, api_client, q_env):
+        """CARD-02 层级补全：cross_params 跨参数约束经真实路由透传——
+        SessionRange 倒序（域内两参、逐参数域校验放行）→ 422 结构化码
+        ＋钩子整组 detail 形制（param=params，与单键 params.{key} 区分）。
+        服务面行为锚在 test_indicator_query.TestCrossParamsHook。"""
+        api_client.app.state.db_path = q_env["db"]
+        api_client.app.state.data_dir = q_env["data_dir"]
+        resp = api_client.post(
+            "/api/research/query-indicator",
+            json=_payload(indicator="SessionRange",
+                          params={"start_minute": 1439, "end_minute": 0}))
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["param"] == "params"
+        assert detail["detail"]["indicator"] == "SessionRange"
+        assert "倒序" in detail["detail"]["violation"]
+
     def test_zero_audit_trail(self, api_client, q_env):
         """Q2 契约：读数零留痕——成功调用前后 log 计数不变。"""
         api_client.app.state.db_path = q_env["db"]

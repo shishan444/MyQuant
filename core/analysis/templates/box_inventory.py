@@ -84,7 +84,13 @@ def compute_box_segments(
     request_start: Optional[pd.Timestamp],
     window: int, min_len: int, width_thr: float,
 ) -> List[Dict[str, Any]]:
-    """滚动窗高低幅度收窄段提取（纯计算核心，模板与对照共用）。
+    """滚动窗高低幅度收窄段提取（装载层消费 BoxRegime——段提取留模板）。
+
+    计算核心单源在 BoxRegime 指标列（add-box-capability D3 装载层
+    消费）：box_state/box_width 经 _compute_indicator 装载，与策略
+    条件链同路；段提取/读法 A 区间语义（首 bar 重算＋截断标记）留
+    模板层。段提取消费边界：只消费 box_state 列（禁用
+    box_established——其段边界后移 min_len−1 根与 demo 箱锚不符）。
 
     Args:
         df: 含 high/low/close 列（DatetimeIndex UTC；rolling 在含
@@ -99,11 +105,17 @@ def compute_box_segments(
         dur（区间内长度）、box_height（段内 width 均值，小数形制）、
         truncated_start（段横跨区间起点时 True）。
     """
-    hi = df["high"].rolling(window).max()
-    lo = df["low"].rolling(window).min()
-    mid = df["close"].rolling(window).mean()
-    width = (hi - lo) / mid  # 分母=滚动均值（非当根价）
-    state = (width <= width_thr).fillna(False)
+    from core.features.indicators import _compute_indicator
+    from core.features.registry import resolve_indicator_column
+
+    params = {"window": window, "width_thr": float(width_thr),
+              "min_len": min_len}
+    cols = _compute_indicator(df, "BoxRegime", params)
+    # 布尔列数值形（True=1.0）回 bool 供段提取真值判定
+    state = cols[resolve_indicator_column(
+        "BoxRegime", params, "box_state")].astype(bool)
+    width = cols[resolve_indicator_column(
+        "BoxRegime", params, "box_width")]
 
     req_ts = (to_utc(pd.Timestamp(request_start))
               if request_start is not None else None)

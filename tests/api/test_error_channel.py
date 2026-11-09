@@ -59,13 +59,15 @@ _MISSING_CASES = [
 def error_env(tmp_path: Path):
     """900 bar 4h 合成数据（含趋势段使金叉可触发）+ 独立 db。"""
     rng = np.random.default_rng(42)
-    n = 900
-    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
+    # 1200 bar（前移加长——add-box-capability 特征矩阵 warmup 上限
+    # 720 需前缀；谷底 bar 860 后金叉落统计段内；交叉手算为
+    # df 全量独立重演，数据驱动不受形状影响）
+    n = 1200
+    idx = pd.date_range("2023-11-12", periods=n, freq="4h", tz="UTC",
                         name="timestamp")
     # 两段趋势拼接（先降后升）——SMA50/sma_200 交叉必然发生
-    seg1 = np.linspace(68000, 58000, 550)   # 谷底 bar 550：金叉落统计段内
-    seg2 = np.linspace(58000, 72000, n - 550)
-    # n=900：sma_200 金叉需 600 bar warmup 前缀 + 统计段余量
+    seg1 = np.linspace(68000, 58000, 860)   # 谷底 bar 850：金叉落统计段内
+    seg2 = np.linspace(58000, 72000, n - 860)
     close = np.concatenate([seg1, seg2]) + rng.normal(0, 120, n)
     df = pd.DataFrame({
         "open": close, "high": close + 100, "low": close - 100,

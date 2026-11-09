@@ -169,6 +169,83 @@ class TestValidation:
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
 
 
+class TestCrossParamsHook:
+    """CARD-02（security S-1 收口）：validate_params 与
+    resolve_column_ref 同钩同判——cross_params 跨参数约束在
+    query_indicator 校验链执行（修复前仅逐参数域校验，倒序旁路：
+    SessionRange 域 0-1439 两参重叠，倒挂组合域校验放行）。"""
+
+    def test_inverted_int_rejected_with_hook_detail(self, env):
+        """倒序 int 形拒绝＋钩子 detail 形制（param=params 整组——
+        与域校验 params.{key} 形制区分；原始形 params/违规消息披露）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, indicator="SessionRange",
+                  params={"start_minute": 1439, "end_minute": 0})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        d = ei.value.detail
+        assert d["param"] == "params", "钩子 detail 整组形制（非域校验单键）"
+        assert d["indicator"] == "SessionRange"
+        assert d["params"] == {"start_minute": 1439, "end_minute": 0}
+        assert "倒序" in d["violation"]
+
+    def test_inverted_string_digits_rejected(self, env):
+        """倒序字符串数字形同样拒绝（钩子收 float 归一副本）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, indicator="SessionRange",
+                  params={"start_minute": "1439", "end_minute": "0"})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "params"
+
+    def test_equal_boundary_rejected(self, env):
+        """等值拒绝（钩子语义 >= 含等号——与域校验的含等号先例同构）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, indicator="SessionRange",
+                  params={"start_minute": 420, "end_minute": 420})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "params"
+
+    def test_legal_paths_zero_regression(self, env):
+        """合法路径零回归：int 形（全天时段）经服务入口照常出归约。"""
+        out_int = _call(env, indicator="SessionRange",
+                        params={"start_minute": 0, "end_minute": 1439},
+                        reductions=["latest"])
+        assert out_int["indicator"] == "SessionRange"
+
+    def test_float_normalization_unit_face(self):
+        """float 归一单元锚：validate_params 接受字符串数字（"9"/"100"
+        数值 9<100 合法），钩子收 float 归一副本后数值比较——不归一
+        则 "9">="100" 字典序比较会误拒；倒序字符串形同拒。直调单元面
+        （[9,100] 时段在 1d bar 上无命中会撞求值域判空——归一锚与
+        求值域无关，须在校验层锚）。"""
+        from core.analysis.indicator_query import validate_params
+        validate_params("SessionRange",
+                        {"start_minute": "9", "end_minute": "100"})  # 不抛
+        with pytest.raises(ResearchError) as ei:
+            validate_params("SessionRange",
+                            {"start_minute": "1439", "end_minute": "0"})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+    def test_no_hook_indicator_zero_behavior(self, env):
+        """无钩子指标（EMA cross_params=None）零行为——合法路径照常。"""
+        out = _call(env, indicator="EMA", params={"period": 14},
+                    reductions=["latest"])
+        assert out["indicator"] == "EMA"
+
+    def test_box_channel_domain_guard_path_unchanged(self, env):
+        """BoxChannel 面零行为变化（CARD-02 任务书核验项）：q 分侧域
+        [0.01,0.49]/[0.51,0.99] 不重叠——倒挂组合必先撞域校验
+        （detail 形制 params.q_low 单键，非钩子整组形制）；修复后
+        仍走域校验路径，钩子在该面不可达（防御性冗余，与
+        test_box_indicators 集成面注释口径一致）。"""
+        with pytest.raises(ResearchError) as ei:
+            _call(env, indicator="BoxChannel",
+                  params={"edge_window": 240, "q_low": 0.9,
+                          "q_high": 0.5, "buffer": 0.25})
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.detail["param"] == "params.q_low", \
+            "BoxChannel 倒挂在 validate_params 走域校验路径（分侧域不重叠）"
+
+
 class TestLoading:
     def test_explicit_start_effective(self, env):
         start = "2024-03-01T00:00:00Z"  # 距数据起点 > 200 bar

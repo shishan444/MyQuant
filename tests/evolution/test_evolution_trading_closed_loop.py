@@ -113,7 +113,7 @@ class TestChampionToPaperMountClosedLoop:
         db, task_id, champion = mounted_task
         row = paper.get_task(db, task_id)
         roundtrip = StrategyDNA.from_json(row["dna_snapshot_json"])
-        df = make_ohlcv(120, "4h")
+        df = make_ohlcv(300, "4h")
         sig_champion = dna_to_signal_set(champion, df)
         sig_roundtrip = dna_to_signal_set(roundtrip, df)
         pd.testing.assert_series_equal(
@@ -130,7 +130,7 @@ class TestChampionToPaperMountClosedLoop:
         db, task_id, champion = mounted_task
         row = paper.get_task(db, task_id)
         roundtrip = StrategyDNA.from_json(row["dna_snapshot_json"])
-        df = make_ohlcv(120, "4h")
+        df = make_ohlcv(300, "4h")
         engine = BacktestEngine(init_cash=100_000)
         result_champion = engine.run(champion, df)
         result_roundtrip = engine.run(roundtrip, df)

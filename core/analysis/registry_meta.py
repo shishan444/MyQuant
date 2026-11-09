@@ -23,6 +23,11 @@ _PERIOD_LIKE_PARAMS = frozenset({
     # Pivot 确认延迟双参（add-session-structure-expression：bar 数语义
     # ——left+right 求和为 warmup 收敛需求）
     "left", "right",
+    # 箱体两件滚动窗参数（add-box-capability：bar 数语义，rolling 数据
+    # 前缀需求——left/right 先例）。min_len 不入：段长参数不产生 rolling
+    # 数据前缀（established 列头部 False 是语义正确非数据缺失）；扩容
+    # 对既有 48 件零命中（参数名交集为空，测试锚锁）
+    "window", "edge_window",
 })
 
 # 小数比率语义列（add-threshold-unit-warning C-1）：值域量级以 1 为界的
@@ -62,7 +67,7 @@ def _indicator_lookback(defn: Any) -> int:
 
 
 def indicator_metadata() -> List[Dict[str, Any]]:
-    """内置 48 指标元数据只读外化（含 lookback 与参数空间）。"""
+    """内置 50 指标元数据只读外化（含 lookback 与参数空间）。"""
     out: List[Dict[str, Any]] = []
     for name, defn in INDICATOR_REGISTRY.items():
         out.append({
