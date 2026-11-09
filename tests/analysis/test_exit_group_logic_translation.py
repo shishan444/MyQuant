@@ -176,3 +176,49 @@ class TestReceiptLogicGenes:
         assert t_or["same_dna_existing"] is False
         assert t_or["logic_genes"]["exit_logic"] == "OR"
         assert t_and["logic_genes"]["exit_logic"] == "AND"
+
+    def test_active_reuse_receipt_from_row(self, db):
+        """active 命中返回点（回执四返回点收尾——新建/幂等/分流建新
+        三点已有，本点补齐）：假设 A（or）翻译得 draft D → 挂 pass
+        验证记录 → 经生命周期迁移服务（credential 唯一合法通道）转正
+        active → 假设 B（同 conditions 同 symbol/timeframe、异区间
+        start——conditions+ranges 双 hash 之一异即独立身份）翻译 →
+        同签名且基因型等价命中 active D → reuse 回执 logic_genes 读
+        行回显 "OR"（披露的就是落库的）。"""
+        from sqlalchemy import insert
+
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.orm.models import ValidationRecord
+        from core.strategy.lifecycle.service import transit
+
+        # A：登记（or）→ 翻译得 draft D
+        h_a = _register(db, exit_logic="or")
+        t_a = translate_hypothesis(db, hypothesis_id=h_a)
+        d_id = t_a["strategy_id"]
+
+        # 挂 (hypothesis_id, strategy_id, verdict=pass) 凭证 → 转正
+        rid = "vr_active_reuse_probe"
+        from core.persistence.timestamps import utc_now_iso as _now
+        with engine_for(db).begin() as conn:
+            conn.execute(insert(ValidationRecord).values(
+                record_id=rid, hypothesis_id=h_a, strategy_id=d_id,
+                level="isolated_backtest", params="{}", verdict="pass",
+                range_hash="active-reuse-probe", created_at=_now()))
+        out = transit(db, d_id, target="active", trigger="credential",
+                      evidence={"record_ids": [rid]})
+        assert out["migrated"] is True
+
+        # B：同 conditions 同 symbol/timeframe、异 start（独立身份、
+        # 同 DNA）→ 翻译命中 active D
+        ranges_b = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                     "start": "2024-02-01T00:00:00Z",
+                     "end": "2024-06-01T00:00:00Z"}]
+        reg_b = register_hypothesis(
+            db, conditions=_cond(), statement="active reuse B",
+            data_ranges=ranges_b, strategy_params={"stop_loss": 0.05},
+            exit_logic="or")
+        assert reg_b["duplicated"] is False  # ranges 异 → 独立假设
+        t_b = translate_hypothesis(db, hypothesis_id=reg_b["hypothesis_id"])
+        assert t_b["same_dna_existing"] is True
+        assert t_b["strategy_id"] == d_id
+        assert t_b["logic_genes"]["exit_logic"] == "OR"

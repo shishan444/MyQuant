@@ -198,3 +198,51 @@ class TestNormalizationAndIdentity:
         row = rr.get_hypothesis(db, out["hypothesis_id"])
         import json
         assert "exit_logic" not in json.loads(row["conditions"])
+
+
+class TestPartialChannelNormalization:
+    """partial 通道登记级归一三锚（scaled delta scenario「部分离场
+    组内 OR 登记」THEN 第三分句——「显式 "and" 与缺省两形指纹相等」
+    的 partial 通道直接断言；此前仅 exit 通道有，partial 通道若漏
+    归一〔显式 and 写键〕时：hash 分叉建双实体〔本类①能抓〕、产物
+    逐位一致〔translation 级测试抓不到——翻译层只认 "or"〕）。"""
+
+    @staticmethod
+    def _group_cond() -> dict:
+        cond = _cond()
+        cond["exit_partial_conditions"] = [
+            {"subject": {"indicator": "RSI", "params": {"period": 14},
+                         "field": "rsi"}, "action": "gt", "target": 75}]
+        return cond
+
+    def test_partial_explicit_and_same_identity_as_missing(self, db):
+        """带组假设：先无键登记、再显式 partial_exit_logic="and"
+        登记 → duplicated=True 同 id（两形条件指纹相等——归一形
+        「or」才写键）。"""
+        cond = self._group_cond()
+        first = _register(db, conditions=cond)
+        second = _register(db, conditions=cond, partial_exit_logic="and")
+        assert second["duplicated"] is True
+        assert second["hypothesis_id"] == first["hypothesis_id"]
+
+    def test_partial_or_conditions_persisted(self, db):
+        """带组+or 登记 → conditions_json 顶层 partial_exit_logic
+        =="or"（翻译层 reduce 通道读键的落库直接锚）。"""
+        from core.persistence.repository import research as rr
+        import json
+
+        out = _register(db, conditions=self._group_cond(),
+                        partial_exit_logic="or")
+        row = rr.get_hypothesis(db, out["hypothesis_id"])
+        assert json.loads(row["conditions"])["partial_exit_logic"] == "or"
+
+    def test_partial_explicit_and_not_persisted(self, db):
+        """带组+显式 "and" 登记 → conditions_json 顶层无
+        partial_exit_logic 键（归一删除——与缺省同字面）。"""
+        from core.persistence.repository import research as rr
+        import json
+
+        out = _register(db, conditions=self._group_cond(),
+                        partial_exit_logic="and")
+        row = rr.get_hypothesis(db, out["hypothesis_id"])
+        assert "partial_exit_logic" not in json.loads(row["conditions"])

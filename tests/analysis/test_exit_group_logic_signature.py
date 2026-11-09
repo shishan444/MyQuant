@@ -208,6 +208,49 @@ class TestSignatureSplitsIdentity:
         t_or = translate_hypothesis(db, hypothesis_id=h_or)
         assert t_or["strategy_id"] != t_and["strategy_id"]
 
+    def test_partial_or_product_signature_contains_rlor(self, db):
+        """partial 通道翻译产物级锚（scaled delta scenario「部分
+        离场组内 OR 翻译」THEN 第二分句——产物 gene_signature 含
+        "rlor:or" 段）：带组+partial_exit_logic="or" 登记翻译 →
+        产物签名含 rlor:or 且异于无键产物签名（此前仅单元级
+        LogicGenes 直构有段断言，缺登记→翻译全链产物锚）。"""
+        cond = {
+            "when_conditions": [
+                {"subject": {"indicator": "RSI",
+                             "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "lt", "target": 30}],
+            "then_conditions": [
+                {"subject": {"indicator": "RSI",
+                             "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "gt", "target": 70}],
+            "exit_partial_conditions": [
+                {"subject": {"indicator": "RSI",
+                             "params": {"period": 14},
+                             "field": "rsi"},
+                 "action": "gt", "target": 75}],
+        }
+        ranges = [{"symbol": "BTCUSDT", "timeframe": "4h",
+                   "start": "2024-01-01T00:00:00Z",
+                   "end": "2024-06-01T00:00:00Z"}]
+
+        def _register_with(partial_exit_logic=None) -> str:
+            out = register_hypothesis(
+                db, conditions=json.loads(json.dumps(cond)),
+                statement="rlor 产物签名测试", data_ranges=ranges,
+                strategy_params={"stop_loss": 0.05},
+                partial_exit_logic=partial_exit_logic)
+            return out["hypothesis_id"]
+
+        h_plain = _register_with()
+        h_or = _register_with(partial_exit_logic="or")
+        sig_plain = self._product_signature(db, h_plain)
+        sig_or = self._product_signature(db, h_or)
+        assert "rlor:or" in sig_or
+        assert "rlor:or" not in sig_plain
+        assert sig_or != sig_plain
+
 
 class TestDnaEquivalentCoversLogicKeys:
     """④_dna_equivalent 第二道复核含逻辑键（to_dict 全量比对）。"""
