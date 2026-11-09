@@ -28,6 +28,12 @@ _PERIOD_LIKE_PARAMS = frozenset({
     # 数据前缀（established 列头部 False 是语义正确非数据缺失）；扩容
     # 对既有 48 件零命中（参数名交集为空，测试锚锁）
     "window", "edge_window",
+    # 冠军五件滚动窗参数（add-champion-indicators：bar 数语义——
+    # rank_window 分位基准列 rolling 前缀、sd_window zscore 标准化
+    # 窗、init_window GARCH 锚定窗，均产生 rolling 数据前缀需求）。
+    # pattern_len/drift/threshold/alpha/beta 不入：非周期参数不产生
+    # rolling 数据前缀；扩容对既有 50 件零命中（测试锚锁）
+    "rank_window", "sd_window", "init_window",
 })
 
 # 小数比率语义列（add-threshold-unit-warning C-1）：值域量级以 1 为界的
@@ -67,7 +73,7 @@ def _indicator_lookback(defn: Any) -> int:
 
 
 def indicator_metadata() -> List[Dict[str, Any]]:
-    """内置 50 指标元数据只读外化（含 lookback 与参数空间）。"""
+    """内置 55 指标元数据只读外化（含 lookback 与参数空间）。"""
     out: List[Dict[str, Any]] = []
     for name, defn in INDICATOR_REGISTRY.items():
         out.append({

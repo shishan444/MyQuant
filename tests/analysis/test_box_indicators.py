@@ -63,7 +63,7 @@ class TestRegistrationAndNaming:
         for name in ("BoxRegime", "BoxChannel"):
             d = INDICATOR_REGISTRY[name]
             assert d.category == "structure"
-        assert len(INDICATOR_REGISTRY) == 50
+        assert len(INDICATOR_REGISTRY) == 55  # champion 五件入库后（2026-11-09）
         assert len(INDICATOR_REGISTRY["BoxRegime"].output_fields) == 3
         assert len(INDICATOR_REGISTRY["BoxChannel"].output_fields) == 5
 
@@ -126,15 +126,20 @@ class TestRegistrationAndNaming:
         assert cp["edge_window"].default == 240
 
     def test_period_like_expansion_zero_regression(self):
-        """白名单扩容自带零回归扫描：既有 48 件参数名与新增两键
-        零命中＋既有件 warmup 推导不因扩容改变。"""
+        """白名单扩容自带零回归扫描：既有件参数名与新增两键零命中
+        （排除集随 champion 五件入库扩至七件——五件自带 window/
+        rank_window 参数属合法消费非冲突）＋既有件 warmup 推导不因
+        扩容改变。"""
         from core.analysis.registry_meta import (
             _PERIOD_LIKE_PARAMS, derive_warmup)
         assert {"window", "edge_window"} <= _PERIOD_LIKE_PARAMS
         assert "min_len" not in _PERIOD_LIKE_PARAMS
         newkeys = {"window", "edge_window"}
+        owners = {"BoxRegime", "BoxChannel", "ShannonEntropy",
+                  "PermutationEntropy", "EfficiencyRatio", "CUSUM",
+                  "GARCHFilter"}
         hits = [(n, k) for n, d in INDICATOR_REGISTRY.items()
-                if n not in ("BoxRegime", "BoxChannel")
+                if n not in owners
                 for k in d.params if k in newkeys]
         assert hits == [], f"扩容撞既有参数名: {hits}"
         # 既有件推导锚（扩容前后同值——left/right 先例不受影响）

@@ -374,6 +374,45 @@ def _build_decoders() -> List[Tuple[re.Pattern, str, Dict[str, Any]]]:
                  "param_groups": {"1": "edge_window", "2": "q_low",
                                   "3": "q_high", "4": "buffer"},
                  "float_groups": {"q_low", "q_high", "buffer"}}))
+        elif naming == "shan":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^shan_{pat_num}_{pat_num}_({fields_alt})$"), name,
+                {"field_group": "3",
+                 "param_groups": {"1": "window", "2": "rank_window"},
+                 "float_groups": set()}))
+        elif naming == "perm":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^perm_{pat_num}_{pat_num}_({fields_alt})$"), name,
+                {"field_group": "3",
+                 "param_groups": {"1": "window", "2": "pattern_len"},
+                 "float_groups": set()}))
+        elif naming == "erf":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^erf_{pat_num}_{pat_num}_({fields_alt})$"), name,
+                {"field_group": "3",
+                 "param_groups": {"1": "window", "2": "rank_window"},
+                 "float_groups": set()}))
+        elif naming == "cus":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^cus_{pat_num}_{pat_float}_{pat_float}_({fields_alt})$"),
+                name,
+                {"field_group": "4",
+                 "param_groups": {"1": "sd_window", "2": "drift",
+                                  "3": "threshold"},
+                 "float_groups": {"drift", "threshold"}}))
+        elif naming == "garch":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^garch_{pat_float}_{pat_float}_{pat_num}_({fields_alt})$"),
+                name,
+                {"field_group": "4",
+                 "param_groups": {"1": "alpha", "2": "beta",
+                                  "3": "init_window"},
+                 "float_groups": {"alpha", "beta"}}))
         elif naming == "dc":
             fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
             rules.append((re.compile(

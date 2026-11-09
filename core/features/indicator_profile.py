@@ -47,7 +47,7 @@ _LT = ConditionPreset("lt", [])
 _EQ_1 = ConditionPreset("eq", [1])
 
 # ---------------------------------------------------------------------------
-# Indicator profiles (50 indicators)
+# Indicator profiles (55 indicators)
 # ---------------------------------------------------------------------------
 
 PROFILES: Dict[str, IndicatorProfile] = {
@@ -426,5 +426,59 @@ PROFILES: Dict[str, IndicatorProfile] = {
             ConditionPreset("price_below", [], target_field="upper"),
         ],
         follow_probability=0.50,
+    ),
+    # == information (3)（add-champion-indicators——注册表全覆盖锚要求）==
+    "ShannonEntropy": IndicatorProfile(
+        # 环境开关件（低熵分位放行——模式一 demo gate 形制）
+        recommended_roles=["entry_guard", "exit_guard"],
+        recommended_params={"window": [96, 240], "rank_window": [500]},
+        recommended_conditions=[
+            ConditionPreset("lt", [0.35], target_field="entropy_pct"),
+            ConditionPreset("gt", [0.65], target_field="entropy_pct"),
+        ],
+        follow_probability=0.50,
+    ),
+    "PermutationEntropy": IndicatorProfile(
+        recommended_roles=["entry_guard", "exit_guard"],
+        recommended_params={"window": [240], "pattern_len": [4]},
+        recommended_conditions=[
+            ConditionPreset("lt", [0.35], target_field="pe_pct"),
+            ConditionPreset("gt", [0.65], target_field="pe_pct"),
+        ],
+        follow_probability=0.45,
+    ),
+    "EfficiencyRatio": IndicatorProfile(
+        # 环境开关件（高 ER 分位放行——走势干净趋势有效）
+        recommended_roles=["entry_guard", "exit_guard"],
+        recommended_params={"window": [24, 96], "rank_window": [500]},
+        recommended_conditions=[
+            ConditionPreset("gt", [0.65], target_field="er_pct"),
+            ConditionPreset("lt", [0.35], target_field="er_pct"),
+        ],
+        follow_probability=0.50,
+    ),
+    # == structure (2)（add-champion-indicators）==
+    "CUSUM": IndicatorProfile(
+        # 变点事件作触发（cp_up eq 1=当根检出上漂变点）
+        recommended_roles=["entry_trigger", "exit_trigger"],
+        recommended_params={"sd_window": [500], "drift": [0.5],
+                            "threshold": [5.0]},
+        recommended_conditions=[
+            ConditionPreset("eq", [1], target_field="cp_up"),
+            ConditionPreset("eq", [1], target_field="cp_down"),
+        ],
+        follow_probability=0.45,
+    ),
+    "GARCHFilter": IndicatorProfile(
+        # 波幅预判辅助（止损距离自适应与仓位调节的辅助输入——R216
+        # 适用域：不当入场信号）
+        recommended_roles=["exit_guard"],
+        recommended_params={"alpha": [0.08], "beta": [0.90],
+                            "init_window": [500]},
+        recommended_conditions=[
+            ConditionPreset("gt", [], target_field="cond_vol"),
+            ConditionPreset("lt", [], target_field="cond_vol"),
+        ],
+        follow_probability=0.45,
     ),
 }
