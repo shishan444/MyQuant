@@ -16,6 +16,10 @@ from typing import Sequence
 
 import numpy as np
 
+# bootstrap 重抽样次数上限（评测尺子三层统一值：本库函数兜底层与
+# analysis 附着层前置校验同源引用，防三处字面量各写一份漂移）
+BOOT_B_MAX = 100_000
+
 
 def wilson_interval(
     successes: int, total: int, z: float = 1.96
@@ -113,7 +117,7 @@ def boot_ci(
 
     Args:
         sample: 样本观测值（至少 3 个）。
-        B: 重抽样次数，默认 3000。
+        B: 重抽样次数，默认 3000（上限 BOOT_B_MAX）。
         ci: 置信水平，默认 0.95（percentile 2.5/97.5）。
         seed: 随机种子，默认 42。
 
@@ -123,14 +127,17 @@ def boot_ci(
     Raises:
         ValueError: 样本数 < 3（fail-loud——附着层捕获后以 CI=null＋
             样本数披露呈现，此处显式抛错优于静默产无意义区间）；
-            B 非正整数或 ci 不在 (0,1)（无区间意义）。
+            B 非 [1, BOOT_B_MAX] 正整数（bool 排除——int 子类的
+            True 会静默当 1 次重抽样）或 ci 不在 (0,1)（无区间意义）。
     """
     x = np.asarray(sample, dtype=float)
     if len(x) < 3:
         raise ValueError(
             f"样本数 {len(x)} < 3——bootstrap 均值 CI 需至少 3 个观测")
-    if not (isinstance(B, int) and B >= 1):
-        raise ValueError(f"B={B!r} 须为正整数（重抽样次数）")
+    if (isinstance(B, bool) or not isinstance(B, int)
+            or not 1 <= B <= BOOT_B_MAX):
+        raise ValueError(
+            f"B={B!r} 须为 1~{BOOT_B_MAX} 正整数（重抽样次数）")
     if not (0.0 < ci < 1.0):
         raise ValueError(f"ci={ci!r} 须在 (0,1)——置信水平无区间意义")
 
@@ -161,7 +168,7 @@ def boot_diff(
     Args:
         x: 第一组样本（至少 3 个）。
         y: 第二组样本（至少 3 个）。
-        B: 重抽样次数，默认 3000。
+        B: 重抽样次数，默认 3000（上限 BOOT_B_MAX）。
         ci: 置信水平，默认 0.95。
         seed: 随机种子，默认 42。
 
@@ -169,7 +176,8 @@ def boot_diff(
         (lower, upper)——mean(x)−mean(y) 的 percentile 区间端点。
 
     Raises:
-        ValueError: 任一侧样本数 < 3，或 B/ci 非法（同 boot_ci）。
+        ValueError: 任一侧样本数 < 3，或 B/ci 非法（同 boot_ci——
+            含 bool 排除与 BOOT_B_MAX 上限兜底）。
     """
     xs = np.asarray(x, dtype=float)
     ys = np.asarray(y, dtype=float)
@@ -177,8 +185,10 @@ def boot_diff(
         raise ValueError(
             f"样本数不足——bootstrap 均值差 CI 需两侧各至少 3 个观测"
             f"（n_x={len(xs)}, n_y={len(ys)}）")
-    if not (isinstance(B, int) and B >= 1):
-        raise ValueError(f"B={B!r} 须为正整数（重抽样次数）")
+    if (isinstance(B, bool) or not isinstance(B, int)
+            or not 1 <= B <= BOOT_B_MAX):
+        raise ValueError(
+            f"B={B!r} 须为 1~{BOOT_B_MAX} 正整数（重抽样次数）")
     if not (0.0 < ci < 1.0):
         raise ValueError(f"ci={ci!r} 须在 (0,1)——置信水平无区间意义")
 

@@ -35,6 +35,7 @@ from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.warmup_loader import to_utc
+from core.scoring.statistics import BOOT_B_MAX
 
 
 def _wilson_interval(successes: int, n: int, z: float = 1.96) -> list[float]:
@@ -213,13 +214,17 @@ def condition_stats(
     sig_B = sig_cfg.get("B", 3000)
     sig_seed = sig_cfg.get("seed", 42)
     if sig_method == "bootstrap_ci":
-        if not (isinstance(sig_B, int) and sig_B >= 1):
+        # bool 排除（int 子类陷阱——True 静默当 1 次重抽样）＋上限
+        # BOOT_B_MAX（与 ruler_compare 壳层/scoring 库兜底三层同源）
+        if (isinstance(sig_B, bool) or not isinstance(sig_B, int)
+                or not 1 <= sig_B <= BOOT_B_MAX):
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
-                f"significance.B 须为正整数: {sig_B!r}",
+                f"significance.B 须为 1~{BOOT_B_MAX} 正整数: {sig_B!r}",
                 detail={"param": "significance.B",
-                        "legal_form": "正整数（重抽样次数）"})
-        if not isinstance(sig_seed, int):
+                        "legal_form": f"正整数 1~{BOOT_B_MAX}"
+                                      "（重抽样次数）"})
+        if isinstance(sig_seed, bool) or not isinstance(sig_seed, int):
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"significance.seed 须为整数: {sig_seed!r}",

@@ -34,6 +34,7 @@ import pandas as pd
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import build_result
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
+from core.scoring.statistics import BOOT_B_MAX
 
 # 浪模式参数默认（demo 冻结值）
 DEFAULT_THRESHOLD = 0.05
@@ -480,6 +481,23 @@ def ruler_compare(
             f"buffer 须为非负数: {buffer!r}",
             detail={"param": "buffer", "actual": buffer,
                     "legal_range": ">=0"})
+    # B/seed 前置 422（condition_stats significance 同族契约）：不前置
+    # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
+    # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
+    # 静默截断。bool 排除（int 子类陷阱——True 静默当 1 次重抽样）。
+    if (isinstance(B, bool) or not isinstance(B, int)
+            or not 1 <= B <= BOOT_B_MAX):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
+            detail={"param": "B", "actual": B,
+                    "legal_range": f"1..{BOOT_B_MAX}"})
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"seed 须为整数: {seed!r}",
+            detail={"param": "seed", "actual": seed,
+                    "legal_form": "整数（随机种子）"})
     record_id = validate_trade_source(trade_source)
 
     # 记录级+逐笔级校验（5.1）与交易清单装载

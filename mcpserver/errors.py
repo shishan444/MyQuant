@@ -252,6 +252,8 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "buffer": "buffer 须为非负数（推定止损缓冲，默认 0.25）",
     "identify_window": "identify_window 须在 (0,1]（识别窗口占比，"
                        "默认 0.3）",
+    "B": "B 须为 1~100000 正整数（bootstrap 重抽样次数）",
+    "seed": "seed 须为整数（随机种子）",
     # 转化执行周期（fix-mtf-execution-consistency R2）：A1 异周期继承
     # 拒绝的 detail.param 面
     "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"
