@@ -372,6 +372,16 @@ class StrategyDNA:
             parts.append(gene_part)
         parts.append(f"lev:{self.risk_genes.leverage}")
         parts.append(f"dir:{self.risk_genes.direction}")
+        # 组内 OR 编码段（add-exit-group-or D4）：exit_logic（xlor）/
+        # reduce_logic（rlor）通道值为 "OR" 时才追加——沿 @tf「有值才
+        # 编码」先例（缺省 "AND" 存量签名逐位不变）；防同签名异出场
+        # 语义（同条件 or/and 两假设天然异签名，translate 分流/库去重/
+        # 进化 exclude-set 三消费方不互判）。插入位=dir: 段后、层结构
+        # 段前（全量既有 AND 策略签名零漂移）。
+        if self.logic_genes.exit_logic == "OR":
+            parts.append("xlor:or")
+        if self.logic_genes.reduce_logic == "OR":
+            parts.append("rlor:or")
         # 层结构计入签名（M3 修复：同基因不同分层配置不再同签名）
         if self.layers:
             for layer in self.layers:

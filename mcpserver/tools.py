@@ -722,7 +722,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             exit_partial_conditions: Optional[list[dict[str, Any]]] = None,
             add_trigger_conditions: Optional[list[dict[str, Any]]] = None,
             add_suppress_conditions: Optional[list[dict[str, Any]]] = None,
-            direction: Optional[str] = None) -> Dict[str, Any]:
+            direction: Optional[str] = None,
+            exit_logic: Optional[str] = None,
+            partial_exit_logic: Optional[str] = None) -> Dict[str, Any]:
         """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
         对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
         {indicator, params, field}（多输出指标 field 必填，参数空间经
@@ -861,7 +863,22 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         两条独立假设，各自独立幂等/判定并集/谱系族）；翻译直通产物
         risk_genes.direction（做空策略价格下跌产生正收益）；登记响应
         回显 direction 键（新建/幂等命中均携带）；非法值 422
-        RESEARCH_PARAM_INVALID（detail 含 field/legal_range）。"""
+        RESEARCH_PARAM_INVALID（detail 含 field/legal_range）。
+        exit_logic/partial_exit_logic 可选（出场组内逻辑——add-exit-
+        group-or）：值域 {"and","or"} 小写封闭枚举（大写同值 422）；exit_
+        logic 作用于 then_conditions 全部离场组（桶内任一内置出场条件
+        触发即离场）、partial_exit_logic 作用于 exit_partial_conditions
+        部分离场组；缺省与显式 "and" 语义相同（同指纹同实体——归一形
+        「or」才入条件指纹，同条件集 and/or=两条独立假设）；
+        partial_exit_logic 传值而 exit_partial_conditions 组缺失
+        422（逻辑键无作用组）；翻译映射产物 logic_genes.exit_logic/
+        reduce_logic（"or"→"OR"，缺省 AND 产物逐位不变），
+        gene_signature 追加 xlor:or/rlor:or 段（缺省签名逐位不变）；
+        插件列与内置条件混组时组内 OR 仅作用于内置条件子集
+        （插件源维持独立 AND 通道后跨源 AND 并入——合成语义
+        (内置1 OR 内置2) AND (插件A AND 插件B)）；add_trigger/
+        add_suppress 组不设逻辑键（加仓语义维持合取——加仓产物
+        add_logic 恒 AND）；翻译回执回显 logic_genes 键（实际生效值）。"""
         body: Dict[str, Any] = {
             "conditions": {"when_conditions": when_conditions,
                            "then_conditions": then_conditions},
@@ -880,6 +897,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["add_suppress_conditions"] = add_suppress_conditions
         if direction is not None:
             body["direction"] = direction
+        if exit_logic is not None:
+            body["exit_logic"] = exit_logic
+        if partial_exit_logic is not None:
+            body["partial_exit_logic"] = partial_exit_logic
         return api.post("/api/research/hypotheses", body)
 
     @mcp.tool()

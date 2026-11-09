@@ -110,6 +110,8 @@ def register_hypothesis(
         trigger_policy=payload.trigger_policy,  # 整体级触发策略（卡2）
         strategy_params=payload.strategy_params,  # 策略层参数声明块（0.4.2 R1）
         direction=payload.direction,  # 交易方向（add-direction-channel A1）
+        exit_logic=payload.exit_logic,  # 出场组内逻辑（add-exit-group-or D2）
+        partial_exit_logic=payload.partial_exit_logic,  # 部分离场组内逻辑
     )
     return HypothesisResponse(**out)
 

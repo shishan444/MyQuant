@@ -608,6 +608,8 @@ def register_hypothesis(
     trigger_policy: Optional[Dict[str, Any]] = None,
     strategy_params: Optional[Dict[str, Any]] = None,
     direction: Optional[str] = None,
+    exit_logic: Optional[str] = None,
+    partial_exit_logic: Optional[str] = None,
 ) -> Dict[str, Any]:
     """登记假设（校验链 + 幂等 + 原子写）。
 
@@ -893,6 +895,41 @@ def register_hypothesis(
             detail={"field": "direction", "legal_range": ["long", "short"]})
     if direction == "short":
         conditions["direction"] = "short"
+
+    # 3.8 组内逻辑键校验与归一（add-exit-group-or D2）：exit_logic 作用于
+    #     then_conditions（then 本必填非空——无组存在性检查），
+    #     partial_exit_logic 作用于 exit_partial_conditions。校验四条：
+    #     ①值域 {"and","or"} 小写封闭（大写 "AND"/"OR" 与 "xor" 同拒——
+    #     conditions 层小写、翻译产物 LogicGenes 层大写，防实现混淆）；
+    #     ②组存在性——键传值而作用组缺失 422（逻辑键无作用组）；
+    #     ③组内条目形制与第 1 步既有同构校验链共用（逻辑键是组级标量，
+    #     不触碰条目面——校验链零改动）；④标量无嵌套（dict/list 子
+    #     结构落入 not in 集合判定天然 422，与 direction 同族）。
+    #     归一形 "or" 才写键（direction/trigger_policy 先例）：显式
+    #     "and" 与缺省一律不写键——两形 conditions_hash 相等（同指纹
+    #     同实体）；写键先于第 4 步 hash，指纹输入与 conditions_json
+    #     落库同源。add_trigger/add_suppress 组不设逻辑键（Q-E2 裁决
+    #     不扩——加仓语义维持合取）。
+    for _lk, _lk_val, _host_group in (
+            ("exit_logic", exit_logic, None),
+            ("partial_exit_logic", partial_exit_logic,
+             "exit_partial_conditions")):
+        if _lk_val is None:
+            continue
+        if _lk_val not in ("and", "or"):
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"{_lk} 须为 and|or 之一（小写封闭枚举）: {_lk_val!r}",
+                detail={"field": _lk, "value": _lk_val,
+                        "legal_values": ["and", "or"]})
+        if _host_group is not None and _host_group not in conditions:
+            raise ResearchError(
+                "RESEARCH_CONDITION_INVALID",
+                f"{_lk} 逻辑键无作用组：{_host_group} 缺失"
+                "（逻辑键须与作用组同在）",
+                detail={"field": _lk, "host_group": _host_group})
+        if _lk_val == "or":
+            conditions[_lk] = "or"
 
     # 4. 幂等（四分支——strategy-param-declaration 规格）
     conditions_hash = hash_json(conditions)

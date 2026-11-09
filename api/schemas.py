@@ -861,6 +861,14 @@ class HypothesisCreate(BaseModel):
     # 缺省 None 与显式 "long" 语义相同（同指纹同实体）；归一形
     # short 才写 conditions 顶层键（服务层写键进身份指纹）
     direction: Optional[str] = None
+    # 组内逻辑键两枚（add-exit-group-or D1/D2）：弱形制字符串键——
+    # 值域 {and, or} 小写封闭枚举的权威校验在服务层（422 错误即
+    # 文档）；缺省 None 与显式 "and" 语义相同（归一形 "or" 才写
+    # conditions 顶层键进身份指纹）；exit_logic 作用于 then_conditions
+    # 全部离场组、partial_exit_logic 作用于 exit_partial_conditions
+    # 部分离场组（键传值而作用组缺失 422）
+    exit_logic: Optional[str] = None
+    partial_exit_logic: Optional[str] = None
 
 
 class HypothesisTransitionRequest(BaseModel):
