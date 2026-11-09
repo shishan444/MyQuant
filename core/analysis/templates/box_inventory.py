@@ -26,6 +26,8 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.templates.param_guard import (
+    _require_float_range, _require_int_range)
 from core.analysis.warmup_loader import to_utc
 
 # timeframe 感知冻结默认（demo 冻结值：1h=(120,48)/15m=(240,96)）
@@ -40,7 +42,12 @@ def resolve_box_params(
     window: Optional[int],
     min_len: Optional[int],
 ) -> tuple[int, int]:
-    """timeframe 感知默认参数解析（非冻结轴两参数必填）。"""
+    """timeframe 感知默认参数解析（非冻结轴两参数必填）。
+
+    不做 int() 转换、返回原始形：先行转换会把 120.7/'120' 洗成合法
+    int 架空后续校验（静默截断）——类型/值域校验实效归
+    validate_box_inventory_params，两函数恒成对调用（resolve→validate）。
+    """
     defaults = BOX_DEFAULT_PARAMS.get(timeframe)
     if window is None:
         window = defaults[0] if defaults else None
@@ -55,31 +62,21 @@ def resolve_box_params(
                     "frozen_defaults": {k: list(v)
                                         for k, v in
                                         BOX_DEFAULT_PARAMS.items()}})
-    return int(window), int(min_len)
+    return window, min_len
 
 
 def validate_box_inventory_params(
     window: int, min_len: int, width_thr: float
 ) -> None:
-    """参数前置校验（路由装载前调用——window 参与前扩起点计算）。"""
-    if not (isinstance(window, int) and window >= 1):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"window 须为正整数: {window!r}",
-            detail={"param": "window", "actual": window,
-                    "legal_range": ">=1"})
-    if not (isinstance(min_len, int) and min_len >= 1):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"min_len 须为正整数: {min_len!r}",
-            detail={"param": "min_len", "actual": min_len,
-                    "legal_range": ">=1"})
-    if not (0.0 < float(width_thr) < 1.0):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"width_thr 须在 (0,1) 开区间: {width_thr!r}",
-            detail={"param": "width_thr", "actual": width_thr,
-                    "legal_range": "(0,1)"})
+    """参数前置校验（路由装载前调用——window 参与前扩起点计算）。
+
+    委托 param_guard 单源（bool 排除＋字符串数字拒——同 wave_inventory
+    的静默转换收口）。"""
+    _require_int_range(window, name="window", lo=1)
+    _require_int_range(min_len, name="min_len", lo=1)
+    _require_float_range(
+        width_thr, name="width_thr", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
 
 
 def compute_box_segments(

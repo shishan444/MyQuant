@@ -249,6 +249,10 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                   "冻结默认，其余轴必填）",
     "edge_q_low|edge_q_high": "分位参数非法：0 < edge_q_low < "
                              "edge_q_high < 1（默认 0.10/0.90）",
+    "edge_q_low": "edge_q_low 须为 (0,1) 开区间小数（下分位沿，"
+                  "默认 0.10；另须 edge_q_low < edge_q_high）",
+    "edge_q_high": "edge_q_high 须为 (0,1) 开区间小数（上分位沿，"
+                   "默认 0.90；另须 edge_q_low < edge_q_high）",
     "buffer": "buffer 须为非负数（推定止损缓冲，默认 0.25）",
     "identify_window": "identify_window 须在 (0,1]（识别窗口占比，"
                        "默认 0.3）",

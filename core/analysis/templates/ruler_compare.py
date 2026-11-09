@@ -33,6 +33,8 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import build_result
+from core.analysis.templates.param_guard import (
+    _require_float_range, _require_int_range)
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
 from core.scoring.statistics import BOOT_B_MAX
 
@@ -460,27 +462,26 @@ def ruler_compare(
             f"mode 未知: {mode!r}",
             detail={"param": "mode", "actual": mode,
                     "legal_range": ["wave", "box"]})
-    if not (0.0 < float(identify_window) <= 1.0):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"identify_window 须在 (0,1]: {identify_window!r}",
-            detail={"param": "identify_window", "actual": identify_window,
-                    "legal_range": "(0,1]"})
-    if not (0.0 < float(edge_q_low) < 1.0
-            and 0.0 < float(edge_q_high) < 1.0
-            and edge_q_low < edge_q_high):
+    # 数值参数校验委托 param_guard 单源（bool 排除＋字符串数字拒——
+    # 原 float() 静默转换会让 'abc' 裸 ValueError 落 500 与 '0.5'
+    # 静默放行并存；bool(True) 经 float 转 1.0 落域内同族陷阱）
+    _require_float_range(
+        identify_window, name="identify_window", lo=0, hi=1,
+        lo_excl=True)
+    _require_float_range(
+        edge_q_low, name="edge_q_low", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    _require_float_range(
+        edge_q_high, name="edge_q_high", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    if edge_q_low >= edge_q_high:
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
             detail={"param": "edge_q_low|edge_q_high",
                     "actual": [edge_q_low, edge_q_high],
                     "legal_range": "0 < edge_q_low < edge_q_high < 1"})
-    if not (isinstance(buffer, (int, float)) and buffer >= 0):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"buffer 须为非负数: {buffer!r}",
-            detail={"param": "buffer", "actual": buffer,
-                    "legal_range": ">=0"})
+    _require_float_range(buffer, name="buffer", lo=0)
     # B/seed 前置 422（condition_stats significance 同族契约）：不前置
     # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
     # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
@@ -549,12 +550,7 @@ def ruler_compare(
                     detail={"param": "edge_window",
                             "timeframe": rng["timeframe"],
                             "frozen_defaults": BOX_EDGE_WINDOW_DEFAULTS})
-        if not (isinstance(edge_window, int) and edge_window >= 1):
-            raise ResearchError(
-                "RESEARCH_PARAM_INVALID",
-                f"edge_window 须为正整数: {edge_window!r}",
-                detail={"param": "edge_window", "actual": edge_window,
-                        "legal_range": ">=1"})
+        _require_int_range(edge_window, name="edge_window", lo=1)
         load_start = (start_ts - pd.Timedelta(
             minutes=tf_minutes * edge_window)).isoformat()
         df = load_and_prepare_df(

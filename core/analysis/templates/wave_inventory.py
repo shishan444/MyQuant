@@ -30,6 +30,8 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import AnalysisResult, build_result
+from core.analysis.templates.param_guard import (
+    _require_float_range, _require_int_range)
 from core.analysis.warmup_loader import to_utc
 
 # 浪清单默认门槛（demo 冻结值：4h 轴 5% 波段）
@@ -44,19 +46,14 @@ def validate_wave_inventory_params(
     threshold: float, warmup_bars: int
 ) -> None:
     """参数前置校验（路由装载前调用——warmup_bars 参与前扩起点计算，
-    负值须在装载前拒绝而非装载后）。"""
-    if not (0.0 < float(threshold) < 1.0):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"threshold 须在 (0,1) 开区间: {threshold!r}",
-            detail={"param": "threshold", "actual": threshold,
-                    "legal_range": "(0,1)"})
-    if not (isinstance(warmup_bars, int) and warmup_bars >= 0):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"warmup_bars 须为非负整数: {warmup_bars!r}",
-            detail={"param": "warmup_bars", "actual": warmup_bars,
-                    "legal_range": ">=0"})
+    负值须在装载前拒绝而非装载后）。
+
+    委托 param_guard 单源（bool 排除＋字符串数字拒——原 float() 静默
+    转换会让 'abc' 裸 ValueError 落 500 与 '0.5' 静默放行并存）。"""
+    _require_float_range(
+        threshold, name="threshold", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    _require_int_range(warmup_bars, name="warmup_bars", lo=0)
 
 
 def compute_zigzag_waves(
