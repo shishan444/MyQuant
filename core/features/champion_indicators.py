@@ -186,8 +186,8 @@ def _cusum_core(
     z: np.ndarray, drift: float, threshold: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """双边累积和递推核（demo r7_bench.py:141-148 递推形制——
-    输入注入面：测试与跨指标组合（对任意标准化序列做 CUSUM）直调
-    本核）。
+    输入注入面：测试与下游 Python 代码经显式 import 直调本核注入
+    标准化序列）。
 
     NaN 输入：s 置 0、cp=False（未标准化期无累积）。返回
     (s_pos, s_neg, cp_up, cp_down)；cp 列为 1.0/0.0 数值布尔。
@@ -241,10 +241,13 @@ def compute_cusum(
     前 k 根输出与全序列前 k 根逐位一致。
 
     跨指标组合表达路径（披露——不在件内内置）：demo E 族「CUSUM of
-    GARCH-z」（对 GARCH 条件波动率标准化的残差做变点检测）属公式
-    插件组合消费——经 signals/formula.py 插件表达式组合 GARCHFilter
-    cond_vol 列与本件递推核 _cusum_core（cusum 递推以插件列输入），
-    本件仅内置 rolling zscore 自包含形制。
+    GARCH-z」（对 GARCH 条件波动率标准化的残差做变点检测）的组合
+    消费当前形态=模块内递推核 _cusum_core（私有实现——测试与下游
+    Python 代码经显式 import 直调注入标准化序列，如对 GARCHFilter
+    cond_vol 标准化的残差——demo E 族 r7_breakout.py 形制）；
+    formula.py 表达式组合属未来扩展（fx 白名单现无 cusum 词——
+    design Non-Goals「rolling_rank 进公式白名单」同族），不在当前
+    能力面；本件仅内置 rolling zscore 自包含形制。
 
     R216 适用域：上漂 −4.34（反向用——变点后动量衰减语义）；变点
     事件消费（cp_up eq 1 = 当根检出上漂变点）＋within_bars_after
