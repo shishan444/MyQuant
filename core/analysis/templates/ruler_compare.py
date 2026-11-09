@@ -13,8 +13,10 @@ request_range 与评估区间时间戳归一后全值相等，不等 422 附两�
 ——不做静默截断）＋逐笔级（entry_time/exit_time 落评估区间，持仓中
 行除外、排除并披露计数）。
 
-底账内部现算：复用两盘点 compute 核心（compute_zigzag_waves /
-compute_box_segments——不复制算法、不引用既有任务持久化产物）。
+底账内部现算：浪模式复用 compute_zigzag_waves（不复制算法、不引用
+既有任务持久化产物）；箱模式计算核心单源在 BoxChannel 指标列
+（add-box-capability D3 装载层消费——upper/lower/break 经
+_compute_indicator 装载，与策略条件链同路，零独立内核）。
 装载差异面注记：demo 参考实现（r9 系列）的浪池以数据全历史起点计
 zigzag；平台按评估区间前扩 warmup_bars（默认 500）装载，区间远端
 短前扩下首段方向判定可能与全历史起点分立（zigzag 起点效应）——
@@ -316,37 +318,44 @@ def compare_box(
     edge_q_high: float = DEFAULT_EDGE_Q_HIGH,
     buffer: float = DEFAULT_BOX_BUFFER,
 ) -> Dict[str, Any]:
-    """箱模式对照计算核心（纯函数——交易行×行情 df）。
+    """箱模式对照计算核心（装载层消费 BoxChannel——add-box-capability
+    D3 单源迁移：边沿计算核心单源在指标列，与策略条件链同路）。
 
-    边沿=滚动分位通道前一根取值（q10/q90=close.rolling(edge_window)
-    .quantile(q).shift(1)，防当根自引用）；对侧=逐 bar 动态沿当根判定
-    （含入场当根即触）；止损推定线冻结于入场前一根（e−1）通道值：
-    sl_line = q10 − buffer×box_h（多头）/ q90 + buffer×box_h（空头
-    镜像——减法/加法形制），box_h=(q90−q10)；序判定=逐 bar 时间序
-    先触者归类（同 bar 对侧优先，demo 同构）；判定窗 [入场 bar,
-    出场 bar)（出场当根收盘已离场不判定）；至出场均未触=其他（计入
-    分母并单独披露）。
+    边沿=BoxChannel 指标列（upper/lower=滚动分位通道前一根取值
+    shift(1)，防当根自引用）；对侧=逐 bar 动态沿当根判定（含入场
+    当根即触）；止损推定线守门三句：①公式单源在 BoxChannel 列
+    （break_low/break_high=沿±buffer×通道宽——本函数零独立公式）
+    ②取值 e−1 根列值（入场前一根）③冻结语义在消费侧（入场时点
+    冻结常数线，判定窗内不随 bar 滚动——禁逐 bar 消费滚动列值做
+    分类判定）。序判定=逐 bar 时间序先触者归类（同 bar 对侧优先，
+    demo 同构）；判定窗 [入场 bar, 出场 bar)（出场当根收盘已离场
+    不判定）；至出场均未触=其他（计入分母并单独披露）。
     """
-    q_low_s = df["close"].rolling(edge_window).quantile(
-        edge_q_low).shift(1)
-    q_high_s = df["close"].rolling(edge_window).quantile(
-        edge_q_high).shift(1)
+    from core.features.indicators import _compute_indicator
+    from core.features.registry import resolve_indicator_column
+
+    params = {"edge_window": edge_window, "q_low": float(edge_q_low),
+              "q_high": float(edge_q_high), "buffer": float(buffer)}
+    cols = _compute_indicator(df, "BoxChannel", params)
+    q_low_s = cols[resolve_indicator_column("BoxChannel", params, "lower")]
+    q_high_s = cols[resolve_indicator_column("BoxChannel", params, "upper")]
+    bl_s = cols[resolve_indicator_column(
+        "BoxChannel", params, "break_low")]
+    bh_s = cols[resolve_indicator_column(
+        "BoxChannel", params, "break_high")]
 
     n_opposite = n_stop = n_other = 0
     for t in trades:
         loc = df.index.get_indexer(
             [t["entry_time"], t["exit_time"]], method="nearest")
         e_i, x_i = int(loc[0]), int(loc[1])
-        # 入场前一根通道值（入场时点冻结；e=0 时前一根无通道值=无推定
-        # 止损线，仅对侧判定——防御披露态）
-        q10_e = (float(q_low_s.iloc[e_i - 1]) if e_i >= 1 else None)
-        q90_e = (float(q_high_s.iloc[e_i - 1]) if e_i >= 1 else None)
-        box_h = (q90_e - q10_e) if (q10_e is not None
-                                    and q90_e is not None) else None
+        # 入场前一根破坏线列值（入场时点冻结常数线——守门三句 ②③；
+        # e=0 时前一根无列值=无推定止损线，仅对侧判定——防御披露态）
         sl_line = None
-        if box_h is not None:
-            sl_line = (q10_e - buffer * box_h if t["direction"] == "long"
-                       else q90_e + buffer * box_h)
+        if e_i >= 1:
+            sl_line = (float(bl_s.iloc[e_i - 1])
+                       if t["direction"] == "long"
+                       else float(bh_s.iloc[e_i - 1]))
         reason = "other"
         for j in range(e_i, x_i):  # 出场当根不判定（已离场）
             c = float(df["close"].iloc[j])
