@@ -685,6 +685,41 @@ class TestCusumContract:
             pd.testing.assert_series_equal(
                 part[col], full[col].iloc[:200], check_names=False)
 
+    def test_current_bar_shock_consumes_current_bar(self):
+        """当根突变——③类递推状态列「仅消费当根输入者可变」确定样例
+        （总则 Requirement 第六条：s_pos/cp_up 消费当根 z——z[t] 由含
+        当根的 rolling zscore 产生，修改当根收盘必改变当根输出）。
+        确定性构造：平稳段（突变前 cp_up[t]=0 前置检出）＋t 根 +50%
+        巨变（z[t]≈10σ ≫ threshold）→ cp_up[t] 0→1 当根触发、
+        s_pos[t] 归零；t 之前输出不变（信息集只向当根传导）。"""
+        rng = np.random.default_rng(9)
+        r = rng.normal(0.0, 0.004, 320)
+        df = _mk_df(100.0 * np.exp(np.cumsum(r)))
+        p = {"sd_window": 100, "drift": 0.5, "threshold": 5.0}
+        a = self._cols(df, p)
+        t = 280
+        assert a["cus_100_0.5_5.0_cp_up"].iloc[t] == 0.0, \
+            "前置检出力：平稳段 t 根未触发"
+        df2 = df.copy()
+        df2.iloc[t, df2.columns.get_loc("close")] = \
+            df["close"].iloc[t] * 1.5
+        b = self._cols(df2, p)
+        assert b["cus_100_0.5_5.0_cp_up"].iloc[t] == 1.0, \
+            "当根突变须当根触发 cp_up（③类消费当根输入）"
+        assert b["cus_100_0.5_5.0_s_pos"].iloc[t] == 0.0, \
+            "触发根 s_pos 归零"
+        assert np.array_equal(
+            a["cus_100_0.5_5.0_s_pos"].to_numpy()[:t],
+            b["cus_100_0.5_5.0_s_pos"].to_numpy()[:t]), \
+            "t 之前输出不因当根突变改变"
+
+    def test_warmup_1500_static(self):
+        """warmup 静态数值锚 1500（=500×3——sd_window 入白名单、
+        drift/threshold 非周期参数不入；D10 五锚 3000/1500/3000/
+        1500/1500 之第四锚——task 2.4 完成标准在位核验）。"""
+        from core.analysis.registry_meta import derive_warmup
+        assert derive_warmup(["CUSUM"]) == 1500
+
 
 # ----------------------------------------------------------- 2.5 GARCHFilter
 
@@ -789,9 +824,80 @@ class TestGarchFilterContract:
         doc = ci.compute_garch_filter.__doc__ or ""
         assert "收敛越慢" in doc and "β=0.99" in doc
 
+    def test_current_bar_shock_lags_one_bar(self):
+        """当根突变——③类递推状态列「不消费当根输入者」对照面（总则
+        Requirement 第六条）：cond_vol[t]=√(ω+α·r[t−1]²+β·s2[t−1])
+        只用前一根收益与历史状态——修改当根收盘不改变当根 cond_vol
+        （严格相等），冲击经 r[t] 传导至 t+1 根才可见（信息集边界
+        ≤当根的可观察证明——与 CUSUM 当根可变面合成③类双面）。"""
+        df = _mk_walk_df(700, seed=42)
+        a = self._cols(df)
+        t = 600
+        df2 = df.copy()
+        df2.iloc[t, df2.columns.get_loc("close")] = \
+            df["close"].iloc[t] * 1.5
+        b = self._cols(df2)
+        ca, cb = a["garch_0.08_0.9_500_cond_vol"], \
+            b["garch_0.08_0.9_500_cond_vol"]
+        assert ca.iloc[t] == cb.iloc[t], \
+            "当根收盘突变不改变当根 cond_vol（不消费 r[t]）"
+        assert ca.iloc[t + 1] != cb.iloc[t + 1], \
+            "冲击经 r[t] 传导至 t+1 根（α·r[t]² 入递推）"
+        assert np.array_equal(
+            ca.to_numpy()[:t], cb.to_numpy()[:t]), \
+            "t 之前输出不因当根突变改变"
+
     def test_warmup_1500_static(self):
         from core.analysis.registry_meta import derive_warmup
         assert derive_warmup(["GARCHFilter"]) == 1500
+
+
+# ------------------------------------------------- docstring 义务面（MUST）
+
+class TestDocstringDisclosureFaces:
+    """spec MUST docstring 披露义务面（工程先例：β 敏感性/gt 1 警示
+    同为 docstring 断言入测试）。匹配前规整换行与空白——docstring
+    源码折行会把中文关键词拆至两行（实测「实际出现模式数」跨行）。"""
+
+    @staticmethod
+    def _flat(doc: str) -> str:
+        return doc.replace("\n", "").replace(" ", "")
+
+    def test_fractal_shannon_bidirectional_crossref(self):
+        """熵族↔FractalEntropy 双向互指（总则 Requirement 第六条 MUST
+        ——判别力差异入 docstring：R245 探针实证双方各披露）。"""
+        from core.features import champion_indicators as ci
+        from core.features import ml_indicators as mi
+        shan_doc = self._flat(ci.compute_shannon_entropy.__doc__ or "")
+        frac_doc = self._flat(mi.compute_fractal_entropy.__doc__ or "")
+        assert "FractalEntropy" in shan_doc, \
+            "香农熵件 docstring 须互指 FractalEntropy"
+        assert "ShannonEntropy" in frac_doc, \
+            "FractalEntropy docstring 须反向互指（D9）"
+        assert "判别力" in shan_doc and "判别力" in frac_doc, \
+            "判别力差异双向披露"
+
+    def test_cusum_combo_expression_disclosed(self):
+        """CUSUM 跨指标组合表达路径披露（Requirement 第四条 MUST——
+        「CUSUM of GARCH-z」属公式插件组合消费，docstring 披露表达
+        路径、不在件内内置）。"""
+        from core.features import champion_indicators as ci
+        doc = self._flat(ci.compute_cusum.__doc__ or "")
+        assert "GARCH" in doc and "组合" in doc
+
+    def test_garch_replay_path_disclosed(self):
+        """GARCH 复算路径披露（Requirement 第五条 scenario——demo
+        init=2000 越域值走纯核直调对账路径，docstring 披露）。"""
+        from core.features import champion_indicators as ci
+        doc = self._flat(ci.compute_garch_filter.__doc__ or "")
+        assert "2000" in doc and "纯核直调" in doc
+
+    def test_perm_denominator_note_disclosed(self):
+        """排列熵归一分母口径注记（Requirement 第二条 scenario——
+        实际出现模式数 vs 理论上限的差异在 docstring 注记）。"""
+        from core.features import champion_indicators as ci
+        doc = self._flat(ci.compute_permutation_entropy.__doc__ or "")
+        assert "实际出现模式数" in doc
 
 
 # ----------------------------------------------------------- 9.1 条件链五面
