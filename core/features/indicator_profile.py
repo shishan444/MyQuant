@@ -47,7 +47,7 @@ _LT = ConditionPreset("lt", [])
 _EQ_1 = ConditionPreset("eq", [1])
 
 # ---------------------------------------------------------------------------
-# Indicator profiles (40 indicators)
+# Indicator profiles (52 indicators)
 # ---------------------------------------------------------------------------
 
 PROFILES: Dict[str, IndicatorProfile] = {
@@ -397,5 +397,34 @@ PROFILES: Dict[str, IndicatorProfile] = {
             ConditionPreset("role_reversal", []),
         ],
         follow_probability=0.60,
+    ),
+    # == structure (2)（add-box-capability——注册表全覆盖锚要求）==
+    "BoxRegime": IndicatorProfile(
+        # 箱体态作环境守卫（结构存在性判定——布尔列推荐 eq 1/gt 0.5）
+        recommended_roles=["entry_guard", "exit_guard"],
+        # 推荐面=批量预铺参数组（对齐契约：profile ⊆ _DEFAULT_PARAMS
+        # ——15m 冻结值 240/96 经 candidates/显式传参，不进预铺推荐）
+        recommended_params={"window": [120], "width_thr": [0.08],
+                            "min_len": [48]},
+        recommended_conditions=[
+            ConditionPreset("eq", [1], target_field="box_state"),
+            ConditionPreset("gt", [0.5], target_field="box_state"),
+            ConditionPreset("eq", [1], target_field="box_established"),
+        ],
+        follow_probability=0.50,
+    ),
+    "BoxChannel": IndicatorProfile(
+        # 破坏判定作触发（收盘对破坏线/沿的位置关系）
+        recommended_roles=["entry_trigger", "exit_trigger"],
+        # 推荐面=批量预铺参数组（480 冻结值经 candidates/显式传参）
+        recommended_params={"edge_window": [240], "q_low": [0.1],
+                            "q_high": [0.9], "buffer": [0.25]},
+        recommended_conditions=[
+            ConditionPreset("price_below", [], target_field="break_low"),
+            ConditionPreset("price_above", [], target_field="break_high"),
+            ConditionPreset("price_above", [], target_field="lower"),
+            ConditionPreset("price_below", [], target_field="upper"),
+        ],
+        follow_probability=0.50,
     ),
 }
