@@ -87,6 +87,11 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
                      {"start_minute": 60, "end_minute": 480}],
     "Pivot": [{"left": 5, "right": 5}],
     "Supertrend": [{"atr_period": 10, "multiplier": 3.0}],
+    # == structure (2)（add-box-capability）==：default 取 1h 冻结值
+    # （15m 冻结值 240/96、480 经 candidates/显式传参走单点现算）
+    "BoxRegime": [{"window": 120, "width_thr": 0.08, "min_len": 48}],
+    "BoxChannel": [{"edge_window": 240, "q_low": 0.10, "q_high": 0.90,
+                    "buffer": 0.25}],
     # ML indicators (compute_mode="lazy", skipped by default)
     "FractalEntropy": [{"bins": 10, "lookback": 100}],
 }
@@ -505,6 +510,24 @@ def _compute_indicator(
         mult = float(params["multiplier"])
         new_cols.update(compute_supertrend(
             df, name, {"atr_period": atr_p, "multiplier": mult}))
+    # == structure (2)（add-box-capability）==
+    elif name == "BoxRegime":
+        from core.features.structure_indicators import compute_box_regime
+        window = int(params["window"])
+        width_thr = float(params["width_thr"])
+        min_len = int(params["min_len"])
+        new_cols.update(compute_box_regime(
+            df, name, {"window": window, "width_thr": width_thr,
+                       "min_len": min_len}))
+    elif name == "BoxChannel":
+        from core.features.structure_indicators import compute_box_channel
+        edge_window = int(params["edge_window"])
+        q_low = float(params["q_low"])
+        q_high = float(params["q_high"])
+        buffer = float(params["buffer"])
+        new_cols.update(compute_box_channel(
+            df, name, {"edge_window": edge_window, "q_low": q_low,
+                       "q_high": q_high, "buffer": buffer}))
     return new_cols
 
 

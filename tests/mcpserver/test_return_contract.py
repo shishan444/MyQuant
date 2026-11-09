@@ -137,7 +137,7 @@ class TestCountAndParityReentry:
 
     def test_indicator_count_assertions_exist(self):
         from core.features.registry import INDICATOR_REGISTRY
-        assert len(INDICATOR_REGISTRY) == 48
+        assert len(INDICATOR_REGISTRY) == 50
 
     def test_research_tools_tier_registered(self):
         """两档工具集非空（自足注册——TOOL_TIERS 由装配函数运行时填充

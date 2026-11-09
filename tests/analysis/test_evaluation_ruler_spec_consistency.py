@@ -24,17 +24,21 @@ class TestRegistryStructureAnchor:
     def test_registry_key_count_unchanged(self):
         from core.features.registry import INDICATOR_REGISTRY
 
-        assert len(INDICATOR_REGISTRY) == 48, \
-            "指标注册表键数须与交付前一致（48）"
+        assert len(INDICATOR_REGISTRY) == 50, \
+            "指标注册表键数为 50（箱体两件入库后快照；措辞维护见 box 变更）"
 
     def test_no_wave_or_box_entries(self):
+        """zigzag 类清单条目域判定（add-box-capability 措辞维护）：
+        原 substring 形制（wave/box/zigzag）误伤箱体指标（BoxRegime/
+        BoxChannel 是注册指标非清单产物）——收窄为 zigzag 存在性判定
+        （防前视前提不相容，永不入库，永真不受计数演进影响）；清单
+        列名泄漏面由 test_ruler_columns_not_registry_outputs 承载。"""
         from core.features.registry import INDICATOR_REGISTRY
 
         forbidden = [k for k in INDICATOR_REGISTRY
-                     if any(t in k.lower()
-                            for t in ("wave", "box", "zigzag"))]
+                     if "zigzag" in k.lower()]
         assert forbidden == [], \
-            f"浪/箱清单不得进指标注册表（防前视前提不相容）: {forbidden}"
+            f"zigzag 清单不得进指标注册表（防前视前提不相容）: {forbidden}"
 
     def test_ruler_columns_not_registry_outputs(self):
         """清单列名作条件 subject 不可达（负向锚）：盘点/对照输出列

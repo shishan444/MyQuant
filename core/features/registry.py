@@ -1,7 +1,7 @@
-"""指标注册表：指标元数据的数据结构与 48 指标定义（全链单源权威）。
+"""指标注册表：指标元数据的数据结构与 50 指标定义（全链单源权威）。
 
 职能：定义 ParamDef（参数域）、IndicatorDef（指标定义）、
-INDICATOR_REGISTRY（48 指标注册表）与 get_interchangeable（同类
+INDICATOR_REGISTRY（50 指标注册表）与 get_interchangeable（同类
 互换集查询）。
 价值与服务对象：全工程指标元数据唯一权威——19 个生产文件消费
 （analysis 域 13 / strategy 2 / evolution 1 / features 1 /
@@ -68,7 +68,7 @@ class IndicatorDef:
 
 
 # ---------------------------------------------------------------------------
-# 指标注册表（48 指标，9 类别——类别分节标签见下方各 == 分节）
+# 指标注册表（50 指标，9 类别——类别分节标签见下方各 == 分节）
 # ---------------------------------------------------------------------------
 
 INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
@@ -479,6 +479,50 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         supported_conditions=["gt", "lt", "cross_above", "cross_below", "within_bars_after"],
         naming="supertrend",
     ),
+
+    # == structure (2)（add-box-capability——箱体识别件与沿通道件） ==
+    "BoxRegime": IndicatorDef(
+        category="structure",
+        params={
+            # default 取 1h 冻结值、candidates 收录 15m 冻结值（demo
+            # r9_d1 冻结：1h=(120,48)/15m=(240,96)——15m 轴须显式传参）
+            "window": ParamDef("int", 20, 240, 120, 20,
+                               candidates=[120, 240]),
+            "width_thr": ParamDef("float", 0.01, 0.30, 0.08, 0.01),
+            "min_len": ParamDef("int", 10, 200, 48, 8, candidates=[48, 96]),
+        },
+        output_fields=["box_state", "box_width", "box_established"],
+        supported_conditions=["gt", "lt", "eq", "within_bars_after"],
+        naming="boxreg",
+    ),
+    "BoxChannel": IndicatorDef(
+        category="structure",
+        params={
+            # default 取 1h 冻结值、candidates 收录 15m 冻结值（demo
+            # r9_d3 冻结：1h=240/15m=480——15m 轴须显式传参）
+            "edge_window": ParamDef("int", 20, 480, 240, 20,
+                                    candidates=[240, 480]),
+            "q_low": ParamDef("float", 0.01, 0.49, 0.10, 0.01),
+            "q_high": ParamDef("float", 0.51, 0.99, 0.90, 0.01),
+            "buffer": ParamDef("float", 0.0, 1.0, 0.25, 0.05),
+        },
+        output_fields=["upper", "lower", "channel_width",
+                       "break_high", "break_low"],
+        # within_bars_after 为全指标通用时序动作（CARD-02 统一携带
+        # 契约——与八条件语义族正交，见 S6b 断言）
+        supported_conditions=["price_above", "price_below",
+                              "cross_above_series", "cross_below_series",
+                              "touch_bounce", "role_reversal", "gt", "lt",
+                              "within_bars_after"],
+        naming="boxch",
+        # lazy（VolumeProfile 先例）：edge_window 240/480 长窗在批量
+        # 标准样本（500 根）尾部段 NaN 占比超平台 5% 纪律——批量预铺
+        # 跳过；研究链/条件链/装载层单点现算不受影响
+        compute_mode="lazy",
+        cross_params=lambda p: (
+            "q_low 须小于 q_high（通道倒挂无意义）"
+            if p["q_low"] >= p["q_high"] else None),
+    ),
 }
 
 
@@ -600,6 +644,23 @@ def resolve_indicator_column(
         mult = float(params["multiplier"])
         field = field_name or "upper"
         return f"kc_{ema_p}_{atr_p}_{mult}_{field}"
+
+    if naming == "boxreg":
+        # float 编码（supertrend 同款 str 形制——0.08 → "0.08"）
+        window = int(params["window"])
+        width_thr = float(params["width_thr"])
+        min_len = int(params["min_len"])
+        field = field_name or "box_state"
+        return f"boxreg_{window}_{width_thr}_{min_len}_{field}"
+
+    if naming == "boxch":
+        # float 编码（str 形制——0.10 → "0.1"、0.90 → "0.9"）
+        edge_window = int(params["edge_window"])
+        q_low = float(params["q_low"])
+        q_high = float(params["q_high"])
+        buffer = float(params["buffer"])
+        field = field_name or "upper"
+        return f"boxch_{edge_window}_{q_low}_{q_high}_{buffer}_{field}"
 
     if naming == "dc":
         period = int(params["period"])

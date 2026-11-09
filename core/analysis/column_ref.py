@@ -356,6 +356,24 @@ def _build_decoders() -> List[Tuple[re.Pattern, str, Dict[str, Any]]]:
                 {"field_group": "4", "param_groups":
                  {"1": "ema_period", "2": "atr_period", "3": "multiplier"},
                  "float_groups": {"multiplier"}}))
+        elif naming == "boxreg":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^boxreg_{pat_num}_{pat_float}_{pat_num}_({fields_alt})$"),
+                name,
+                {"field_group": "4",
+                 "param_groups": {"1": "window", "2": "width_thr",
+                                  "3": "min_len"},
+                 "float_groups": {"width_thr"}}))
+        elif naming == "boxch":
+            fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
+            rules.append((re.compile(
+                rf"^boxch_{pat_num}_{pat_float}_{pat_float}_{pat_float}_"
+                rf"({fields_alt})$"), name,
+                {"field_group": "5",
+                 "param_groups": {"1": "edge_window", "2": "q_low",
+                                  "3": "q_high", "4": "buffer"},
+                 "float_groups": {"q_low", "q_high", "buffer"}}))
         elif naming == "dc":
             fields_alt = "|".join(re.escape(f) for f in defn.output_fields)
             rules.append((re.compile(
