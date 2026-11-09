@@ -497,10 +497,14 @@ def translate_hypothesis(
                     hit_row.get("dna_json") or "", declared_params,
                     undeterminable=_declared_undetermined),
                 # 身份回读（规则②）：direction/max_hold 按收敛缺省
-                # （S2f 锚）；execution_timeframe 读行取产物实际周期
+                # （S2f 锚）；execution_timeframe 读行取产物实际周期；
+                # logic_genes 读行回显实际生效值（add-exit-group-or D3
+                # ——披露的就是落库的，与 execution_timeframe 同款读行）
                 **_translate_receipt(
                     "long", None, None, "fixed", None, False,
-                    execution_timeframe=hit_row.get("timeframe"))}
+                    execution_timeframe=hit_row.get("timeframe"),
+                    logic_genes=_logic_genes_of_row(
+                        hit_row.get("dna_json") or ""))}
 
     # 库内 JSON 解析兜底（CARD-02）：conditions/data_ranges 由登记侧
     # 序列化，损坏时结构化拒绝点名假设，不裸炸 500
@@ -632,9 +636,20 @@ def translate_hypothesis(
     risk_genes = _declared_risk_genes(declared_params)  # 声明块映射（0.4.2 R1）
     risk_genes.direction = conditions.get("direction") or "long"
 
+    # 组内逻辑键（add-exit-group-or D3）：conditions 顶层 exit_logic/
+    # partial_exit_logic（登记归一形——「or」才写键）小写→大写映射
+    # 构造 LogicGenes；无键/显式 and（归一删除）路径缺省构造，产物
+    # dna_json 逐位不变。add_trigger/add_suppress 组不设逻辑键（Q-E2
+    # 裁决不扩——add_logic 通道恒缺省，加仓语义维持合取）。
+    logic_genes = LogicGenes()
+    if conditions.get("exit_logic") == "or":
+        logic_genes.exit_logic = "OR"
+    if conditions.get("partial_exit_logic") == "or":
+        logic_genes.reduce_logic = "OR"
+
     dna = StrategyDNA(
         signal_genes=genes,
-        logic_genes=LogicGenes(),
+        logic_genes=logic_genes,
         execution_genes=ExecutionGenes(
             symbol=strategy_symbol, timeframe=strategy_timeframe),
         risk_genes=risk_genes,
@@ -682,7 +697,9 @@ def translate_hypothesis(
                     _identity["time_exit_utc"],
                     _identity["position_mode"],
                     _identity["risk_fraction"], True,
-                    execution_timeframe=active_hit.get("timeframe"))}
+                    execution_timeframe=active_hit.get("timeframe"),
+                    logic_genes=_logic_genes_of_row(
+                        active_hit.get("dna_json") or ""))}
     draft_hit = next(
         (r for r in same_dna
          if r.get("status") == "draft"
@@ -706,7 +723,9 @@ def translate_hypothesis(
                     _identity["time_exit_utc"],
                     _identity["position_mode"],
                     _identity["risk_fraction"], False,
-                    execution_timeframe=draft_hit.get("timeframe"))}
+                    execution_timeframe=draft_hit.get("timeframe"),
+                    logic_genes=_logic_genes_of_row(
+                        draft_hit.get("dna_json") or ""))}
 
     strategy_id = f"st_{uuid.uuid4().hex[:12]}"
     # 组件装载试算（unblock-research-validation B 段：DNA 组装后落库前，
@@ -746,7 +765,8 @@ def translate_hypothesis(
                 risk_genes.direction, risk_genes.max_hold,
                 risk_genes.time_exit_utc,
                 risk_genes.position_mode, risk_genes.risk_fraction,
-                False, execution_timeframe=strategy_timeframe)}
+                False, execution_timeframe=strategy_timeframe,
+                logic_genes=_logic_genes_of_row(dna_json))}
 
 
 def _translate_conditions(
@@ -1232,6 +1252,29 @@ def _risk_genes_of_row(row: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
 
+def _logic_genes_of_row(row_dna_json: str) -> Dict[str, Any]:
+    """策略行 dna_json → logic_genes 回显 dict（add-exit-group-or D3
+    回执纯增键消费）。
+
+    值域收敛（脏值不反射——与 _identity_reflection 同族）：四通道
+    （entry/exit/add/reduce）值非 {"AND","OR"} 一律回显缺省 "AND"；
+    段缺失/坏 JSON/非 dict 回显 LogicGenes 缺省全 "AND"，不炸回执。
+    """
+    from core.strategy.dna import LogicGenes
+    default = LogicGenes().to_dict()
+    try:
+        lg = json.loads(row_dna_json or "{}").get("logic_genes")
+    except (json.JSONDecodeError, TypeError):
+        return default
+    if not isinstance(lg, dict):
+        return default
+    out = dict(default)
+    for k in default:
+        if lg.get(k) in ("AND", "OR"):
+            out[k] = lg[k]
+    return out
+
+
 def _risk_genes_disclosure(row_dna_json: str,
                            declared_params: Optional[dict],
                            undeterminable: bool = False) -> dict:
@@ -1317,13 +1360,18 @@ def _translate_receipt(direction: str, max_hold, time_exit,
                         position_mode, risk_fraction,
                         reuse: bool,
                         execution_timeframe: Optional[str] = None,
+                        logic_genes: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """翻译回执身份七键（四返回点统一形制——time_exit_utc 任务 6
     增键、position_mode/risk_fraction 任务 4 增键（K1 回执接线补齐），
     回执面与声明面同步；值域收敛+bool 排除与 _identity_reflection
     同族同款；execution_timeframe 第七键（fix-mtf-execution-
     consistency R2）=产物 execution_genes.timeframe（缺省继承后值——
-    纯增量披露，旧消费方零适配）。"""
+    纯增量披露，旧消费方零适配）；logic_genes 第八键（add-exit-
+    group-or D3——纯增回显产物组内逻辑实际生效值，缺省 AND 与显式
+    OR 两形均回显；None 收敛 LogicGenes 缺省，四返回点一律传
+    _logic_genes_of_row 收敛产物）。"""
+    from core.strategy.dna import LogicGenes
     return {
         "direction": direction if direction in ("long", "short") else "long",
         # bool 排除（security F-5）：与 _identity_reflection 同族——
@@ -1343,4 +1391,7 @@ def _translate_receipt(direction: str, max_hold, time_exit,
         "reuse_note": _REUSE_NOTE if reuse else None,
         # 第七键：产物执行周期（R2 披露——缺省继承假设基准可查）
         "execution_timeframe": execution_timeframe,
+        # 第八键：组内逻辑回显（add-exit-group-or D3——披露的就是
+        # 落库的；值域收敛形与 _identity_reflection 同族）
+        "logic_genes": logic_genes or LogicGenes().to_dict(),
     }
