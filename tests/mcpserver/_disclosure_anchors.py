@@ -64,6 +64,10 @@ _SEG_REQUIRED = ("params必填键（缺键422detail含键名）：", "支持cond
 _SEG_WAVE = ("wave_inventory浪清单盘点", "box_inventory箱体盘点")
 _SEG_BOX = ("box_inventory箱体盘点", "ruler_compare对照指标")
 _SEG_RULER = ("ruler_compare对照指标", '"""')
+# condition_stats significance 披露段（CARD-03）：起点=forward_bars 句
+# （_SEG_OVERVIEW 既有终点锚——插入点即其后），终点=方向口径句
+_SEG_CONDSIG = ("condition_stats支持params.forward_bars",
+                "方向口径（包四GAP-01披露）")
 _SEG_ACTIONS = ("当前可用比较动作全集", "同步/异步分界：")
 # R4 时序动作段（fix-mtf-execution-consistency）——与动作全集段共终点
 _SEG_WBA = ("时序动作（fix-mtf-execution-consistencyR4起）：", "同步/异步分界：")
@@ -219,6 +223,19 @@ GROUP1_ANCHORS: tuple = (
         scope="ruler_compare 段落",
         basis="add-evaluation-ruler spec 对照指标三 Requirement"
              "（数据来源与区间校验/浪模式/箱体模式）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-condition_stats段-significance披露",
+        source="tools", seg_start=_SEG_CONDSIG[0], seg_end=_SEG_CONDSIG[1],
+        kind="token_set",
+        tokens=("params.significance", "t_test_vs_baseline", "bootstrap_ci",
+                "B/seed", "缺省", "逐位一致", "去重叠"),
+        covered=("condition_stats",),
+        scope="condition_stats significance 段（CARD-03 能力声明面）",
+        basis="add-evaluation-ruler ai-research-tools delta「条件统计的"
+              "前向收益语义」bootstrap 可选路径条款×CARD-03 docstring 披露"
+              "（五要素：形制/method 值域/缺省逐位不变/params 可附 B/seed/"
+              "去重叠子集口径）",
     ),
     DisclosureAnchor(
         anchor_id="G1-precheck段-既有要素",
