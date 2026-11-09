@@ -590,6 +590,23 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     # 经注册表解析列名（编码命名权威）
     reg = INDICATOR_REGISTRY.get(indicator)
     if reg is not None:
+        # 跨参数约束钩子（CARD-02：S-1 executor 面堵口——与
+        # column_ref._resolve_indicator_ref / indicator_query.validate_
+        # params 同钩同判；手工 DNA/变异产物直达本函数的第三条取列
+        # 路径在此拦截，进化链 validate_offspring 同函数同获 sanitize）。
+        # float 归一副本（手工 DNA 参数可为字符串数字——indicator_
+        # query.py 钩子段同款）；归一/取键失败归 bad_param_key 文案族
+        if reg.cross_params is not None:
+            try:
+                violation = reg.cross_params(
+                    {k: float(v) for k, v in params.items()})
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    _bad_param_key_message(indicator, params)) from exc
+            if violation is not None:
+                raise ValueError(
+                    f"Cannot resolve/compute indicator {indicator} "
+                    f"with params {params}: {violation}")
         try:
             col = resolve_indicator_column(
                 indicator, params, gene.field_name or "", reg.naming
