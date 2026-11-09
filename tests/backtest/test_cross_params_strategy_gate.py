@@ -133,3 +133,74 @@ class TestLegalPathNotDisturbed:
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
         assert ei.value.detail["cause"].endswith(
             "bad or missing parameter key")
+
+
+class TestHookParityAcrossPaths:
+    """S-1 核心承诺「三条取列路径同钩同判」的性质面（阶段四属性补强）：
+    研究链 validate_params / column_ref._resolve_indicator_ref 与策略链
+    _get_indicator_column 对同一参数组的拒/过判定恒一致——样本含
+    合法/违约/恰等 1.0 边界混合（固定样例可复现）。"""
+
+    # (alpha, beta, 违约)——恰等 1.0 三组（上/中/下界分布）＋越界两组
+    # ＋合法四组（含 0.99 紧贴界内）。前提：样本组均在各自分域内
+    # （alpha∈[0.01,0.5]、beta∈[0.5,0.99]）——研究链入口有逐参数域
+    # 校验而策略链取列路径不做（既有语义，域外值属研究链拦截面），
+    # 三面同判性质在「分域内、联合越界」的样本空间上成立
+    CASES = [
+        (0.08, 0.90, False),
+        (0.20, 0.79, False),
+        (0.02, 0.97, False),
+        (0.25, 0.74, False),
+        (0.50, 0.50, True),
+        (0.01, 0.99, True),
+        (0.30, 0.70, True),
+        (0.50, 0.60, True),
+        (0.40, 0.80, True),
+    ]
+
+    @pytest.fixture(scope="class")
+    def shared_df(self):
+        return make_enhanced_df(n=700)
+
+    @pytest.mark.parametrize(
+        ("a", "b", "violating"), CASES,
+        ids=[f"a{a}_b{b}_{'reject' if v else 'pass'}"
+             for a, b, v in CASES])
+    def test_three_paths_agree(self, shared_df, a, b, violating):
+        params = {"alpha": a, "beta": b, "init_window": 500}
+
+        # 面一 研究链 validate_params
+        from core.analysis.indicator_query import validate_params
+        research = False
+        try:
+            validate_params("GARCHFilter", params)
+        except ResearchError as exc:
+            research = exc.code == "RESEARCH_PARAM_INVALID"
+
+        # 面二 研究链 column_ref 解析
+        from core.analysis.column_ref import (
+            ColumnRefError, _resolve_indicator_ref)
+        resolve = False
+        try:
+            _resolve_indicator_ref({
+                "indicator": "GARCHFilter", "params": params,
+                "field": "cond_vol"})
+        except ColumnRefError as exc:
+            resolve = exc.code == "PARAM_INVALID"
+
+        # 面三 策略链取列（CARD-02 堵口路径）
+        gene = make_signal_gene(
+            indicator="GARCHFilter", params=params,
+            condition_type="gt", condition_value=0.0)
+        clear_indicator_cache()
+        executor_rejected = False
+        try:
+            col = _get_indicator_column(shared_df, gene)
+            assert col.notna().sum() > 0, \
+                "合法组现算须产出非空列（过≠空转）"
+        except ValueError as exc:
+            executor_rejected = "Cannot resolve/compute" in str(exc)
+
+        assert research == resolve == executor_rejected == violating, \
+            f"三面判定不一致: research={research} resolve={resolve} " \
+            f"executor={executor_rejected} 预期违约={violating}"
