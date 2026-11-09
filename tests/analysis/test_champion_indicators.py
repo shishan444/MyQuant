@@ -21,6 +21,7 @@ pytestmark = [pytest.mark.unit]
 
 from core.features.indicators import _compute_indicator
 from core.features.registry import INDICATOR_REGISTRY, resolve_indicator_column
+from core.analysis.column_ref import encode_column_ref
 
 MARKET = Path("data/market_fapi")
 
@@ -760,3 +761,181 @@ class TestGarchFilterContract:
     def test_warmup_1500_static(self):
         from core.analysis.registry_meta import derive_warmup
         assert derive_warmup(["GARCHFilter"]) == 1500
+
+
+# ----------------------------------------------------------- 9.1 条件链五面
+
+# 五件条件链面参数（域内值——合成数据检出力与请求开销平衡）
+_CHAIN_PARAMS = {
+    "ShannonEntropy": {"window": 50, "rank_window": 100},
+    "PermutationEntropy": {"window": 50, "pattern_len": 4},
+    "EfficiencyRatio": {"window": 24, "rank_window": 100},
+    "CUSUM": {"sd_window": 100, "drift": 0.5, "threshold": 5.0},
+    "GARCHFilter": {"alpha": 0.08, "beta": 0.90, "init_window": 250},
+}
+
+
+def _chain_df(n=320, seed=31):
+    """条件链合成数据：正态随机游走（含波动聚集段——GARCH/CUSUM
+    检出力）。"""
+    rng = np.random.default_rng(seed)
+    r = np.concatenate([
+        rng.normal(0.0, 0.004, 120),
+        rng.normal(0.0, 0.012, 80),   # 高波动段
+        rng.normal(0.0, 0.004, n - 200),
+    ])
+    return _mk_df(100.0 * np.exp(np.cumsum(r)))
+
+
+def _subject_field(indicator: str) -> str:
+    return INDICATOR_REGISTRY[indicator].output_fields[0]
+
+
+class TestConditionChainFaces:
+    """五面×五件（任务 9.1）：query_indicator 归约/condition_stats/
+    假设登记/翻译/回测求值——每件五面各一用例（参数化 5×5=25）。"""
+
+    @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
+    def test_face_query_indicator_reductions(self, indicator):
+        """面一 query_indicator：latest/quantiles/trend_slope 三归约可算
+        （真实数据 4h——warmup 前缀满足 3000 静态推导；不在库 skip）。"""
+        if not (MARKET / "BTCUSDT_4h.parquet").exists():
+            pytest.skip("真实数据不在库（data/market_fapi）")
+        from core.analysis.indicator_query import query_indicator
+        from core.analysis.registry_meta import derive_warmup
+        params = _CHAIN_PARAMS[indicator]
+        out = query_indicator(
+            MARKET, symbol="BTCUSDT", timeframe="4h", indicator=indicator,
+            params=params, start="2026-09-01", end="2026-11-01",
+            reductions=["latest", "quantiles", "trend_slope"])
+        assert out["indicator"] == indicator
+        assert out["warmup_bars"] == derive_warmup([indicator])
+        from core.analysis.column_ref import encode_column_ref
+        col = encode_column_ref(indicator, params,
+                                _subject_field(indicator))
+        reds = out["reductions"][col]
+        assert set(reds) == {"latest", "quantiles", "trend_slope"}
+        assert reds["latest"]["value"] is not None
+
+    @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
+    def test_face_condition_stats(self, indicator):
+        """面二 condition_stats：结构化 subject 条件统计——hit_count
+        与 df 切片独立重演一致。"""
+        from core.analysis.templates.condition_stats import condition_stats
+        params = _CHAIN_PARAMS[indicator]
+        field = _subject_field(indicator)
+        df = _chain_df()
+        out = condition_stats(
+            df, indicator=indicator, params=params,
+            condition={
+                "subject": {"indicator": indicator, "params": params,
+                            "field": field},
+                "action": "gt", "target": 0.0},
+            data_ranges=[{"symbol": "T", "timeframe": "1h",
+                          "start": "2024-01-01", "end": "2024-01-14"}],
+            min_samples=1).to_dict()
+        p = out["payload"]
+        col = _compute_indicator(df, indicator, params)[
+            encode_column_ref(indicator, params, field)]
+        total = int((col > 0.0).sum())
+        assert p["hit_count"] == total
+        assert p["hit_count"] > 0, "检出力：样例须有命中"
+
+    @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
+    def test_face_register_and_translate(self, indicator, tmp_path):
+        """面三/四 假设登记＋翻译：条件登记入册并翻译为 SignalGene
+        （indicator/params 原样传递——box 先例形制）。"""
+        from core.analysis.hypothesis_service import register_hypothesis
+        from core.analysis.hypothesis_to_strategy import (
+            translate_hypothesis)
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        params = _CHAIN_PARAMS[indicator]
+        field = _subject_field(indicator)
+        action = "gt"  # 五件 supported_conditions 全含 gt
+        cond = {"subject": {"indicator": indicator, "field": field,
+                            "params": params},
+                "action": action, "target": 0.0}
+        then = {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                "action": "gt", "target": 50}
+        hyp = register_hypothesis(
+            db, conditions={"when_conditions": [cond],
+                            "then_conditions": [then]},
+            statement=f"{indicator} 环境开关后动量走强",
+            strategy_params={"stop_loss": 0.05},
+            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
+                          "start": "2026-01-01", "end": "2026-03-01"}])
+        assert hyp["hypothesis_id"]
+        out = translate_hypothesis(db, hypothesis_id=hyp["hypothesis_id"])
+        assert f"{indicator}({field})" in out["genes"]
+
+    @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
+    def test_face_evaluate_condition(self, indicator):
+        """面五回测求值：gt 0.0 行为锚（与手写比较逐位一致）。"""
+        from core.strategy.executor import evaluate_condition
+        params = _CHAIN_PARAMS[indicator]
+        field = _subject_field(indicator)
+        df = _chain_df()
+        col = _compute_indicator(df, indicator, params)[
+            encode_column_ref(indicator, params, field)]
+        got = evaluate_condition(col, df["close"],
+                                 {"type": "gt", "threshold": 0.0})
+        assert (got == (col > 0.0)).all()
+        assert got.any(), "检出力"
+
+    @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
+    def test_demo_gate_consumption_replay(self, indicator):
+        """demo gate 消费复现（模式一环境开关形制）：entropy_pct lt
+        0.35（香农熵件）——evaluate_condition 产出与 demo 公式手写比较
+        逐位一致；其余件以各自 pct/布尔列 lt/gt 阈值同形制复现。"""
+        from core.strategy.executor import evaluate_condition
+        params = _CHAIN_PARAMS[indicator]
+        df = _chain_df()
+        if indicator == "ShannonEntropy":
+            col = _compute_indicator(df, indicator, params)[
+                "shan_50_100_entropy_pct"]
+            gate = evaluate_condition(col, df["close"],
+                                      {"type": "lt", "threshold": 0.35})
+            expect = (col < 0.35).fillna(False)
+            assert (gate == expect).all()
+            assert expect.any() and not expect.all(), \
+                "gate 掩码须混合（检出力）"
+        elif indicator == "PermutationEntropy":
+            col = _compute_indicator(df, indicator, params)[
+                "perm_50_4_pe_pct"]
+            gate = evaluate_condition(col, df["close"],
+                                      {"type": "lt", "threshold": 0.35})
+            assert (gate == (col < 0.35).fillna(False)).all()
+        elif indicator == "EfficiencyRatio":
+            col = _compute_indicator(df, indicator, params)[
+                "erf_24_100_er_pct"]
+            gate = evaluate_condition(col, df["close"],
+                                      {"type": "gt", "threshold": 0.65})
+            assert (gate == (col > 0.65).fillna(False)).all()
+        elif indicator == "CUSUM":
+            # 布尔列条件语义锚：cp_up True=1.0——eq 1/gt 0.5 等价、
+            # gt 1 恒 False 负向锚（box_state 先例同款）
+            out = _compute_indicator(df, indicator, params)
+            cp_up = out["cus_100_0.5_5.0_cp_up"]
+            close = df["close"]
+            eq1 = evaluate_condition(cp_up, close, {"type": "eq"})
+            gt05 = evaluate_condition(cp_up, close,
+                                      {"type": "gt", "threshold": 0.5})
+            assert (eq1 == (cp_up == 1.0)).all()
+            assert (gt05 == (cp_up > 0.5)).all()
+            gt1 = evaluate_condition(cp_up, close,
+                                     {"type": "gt", "threshold": 1})
+            assert not gt1.any(), "cp_up gt 1 恒 False（值域 {0.0,1.0}）"
+            # docstring 披露义务（gt 1 恒 False 警示在件 docstring）
+            from core.features import champion_indicators as ci
+            assert "gt 1" in (ci.compute_cusum.__doc__ or "")
+        else:  # GARCHFilter——连续正值列 gt 阈值形制
+            col = _compute_indicator(df, indicator, params)[
+                "garch_0.08_0.9_250_cond_vol"]
+            gate = evaluate_condition(col, df["close"],
+                                      {"type": "gt", "threshold": 0.0})
+            assert (gate == (col > 0.0)).all()
