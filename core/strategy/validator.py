@@ -77,8 +77,8 @@ MAX_POSITION_LOSS_MIN = 0.0  # 开区间下界（0 排除；无上界）
 # V）：结构判据单源——validate_dna R-1b 成员判定与消息渲染同源引用；
 # rule=规则条目（恒裸键，无 ref 要求），formula/model=插件源（须带
 # ref）。插件子集 ("formula","model") 在 _entry_plugin_sources/
-# has_plugin_sources/R-1c 三处以字面量存在（消费语义各自独立，本
-# change 不重构——扩源类型需三处联动，记为已知债）
+# _exit_plugin_sources/has_plugin_sources/R-1c 四处以字面量存在（消费
+# 语义各自独立，不重构——扩源类型需四处联动，记为已知债）
 SIGNAL_SOURCE_TYPES = ("formula", "model", "rule")
 
 
@@ -97,6 +97,27 @@ def _entry_plugin_sources(dna: StrategyDNA) -> List[dict]:
         if isinstance(s, dict)
         and s.get("type") in ("formula", "model")
         and s.get("role", "entry") == "entry"
+    ]
+
+
+def _exit_plugin_sources(dna: StrategyDNA) -> List[dict]:
+    """role=="exit" 的插件源条目（出场判据的插件源面）。
+
+    fr_296f43410afb 修复③（sandbox-and-report-supplement D5③）：公式
+    插件出场腿只进 signal_sources 不进 signal_genes（翻译面插件条件
+    按源级 role 分桶），出场判据只查基因即漏报 no exit——判据语义修正
+    为「有出场信号源」（与进场判据同构对称）。仅显式 role=="exit" 的
+    type∈{"formula","model"} 源构成出场面；role 缺省/entry（缺省=entry
+    全链契约）与 exit_partial（部分离场通道，不构成全部出场完备——
+    与 REDUCE 基因不顶替出场完备同理）不顶替出场；MTF 真分层不豁免
+    层缺出场基因（与进场判据同形，复制形态随顶层同判）。
+    """
+    sources = dna.signal_sources
+    return [
+        s for s in (sources if isinstance(sources, list) else [])
+        if isinstance(s, dict)
+        and s.get("type") in ("formula", "model")
+        and s.get("role") == "exit"
     ]
 
 
@@ -202,8 +223,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
         ]
         # 进场判据双源（recognize-plugin-source-dna T2）：ENTRY 角色基因
-        # 与 role 解释为 entry 的插件源任一在场即过；插件源不顶替出场
-        # （exit 判据不变）。
+        # 与 role 解释为 entry 的插件源任一在场即过。
         if not entry_signals and not _entry_plugin_sources(dna):
             errors.append("No entry signal defined (need at least one entry_trigger or entry_guard)")
 
@@ -211,7 +231,13 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             g for g in dna.signal_genes
             if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)
         ]
-        if not exit_signals:
+        # 出场判据双源（fr_296f43410afb 修复③）：EXIT 角色基因与
+        # role=="exit" 的插件源任一在场即过（与进场判据同构对称——
+        # 校验语义=「有出场信号源」而非「有出场基因」）；role 缺省/
+        # entry/exit_partial 源不顶替出场（历史「插件源不顶替出场」
+        # 绝对表述修正为角色对称形——strategy-expression「信号源实质
+        # 判定」条款 MODIFIED 承载），两侧皆空方构成 no exit 拒绝。
+        if not exit_signals and not _exit_plugin_sources(dna):
             errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
 
         # mixed 方向须至少一个 DIRECTION 基因
@@ -240,26 +266,35 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         # （纯插件策略顶层插件源可顶替层 entry）；真分层维持强制（AND
         # 组合下层缺 entry=该层恒假=组合恒假，放行等于放行无意义策略；
         # OR 组合维持现状从严——无存量与生产者证据不放开）。
+        # 出场面对称同形（fr_296f43410afb 修复③）：顶层 exit 面=
+        # EXIT 角色基因或 role=="exit" 插件源，复制形态层 exit 判据
+        # 随顶层同判；真分层不豁免层缺出场基因（与进场判据同形）。
         top_entry_present = bool(
             [g for g in dna.signal_genes
              if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)]
             or _entry_plugin_sources(dna))
+        top_exit_present = bool(
+            [g for g in dna.signal_genes
+             if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)]
+            or _exit_plugin_sources(dna))
         for layer in dna.layers:
             layer_entry = [
                 g for g in layer.signal_genes
                 if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
             ]
-            if not layer_entry:
-                is_mirror_layer = (
-                    len(dna.layers) == 1
-                    and layer.signal_genes == dna.signal_genes)
-                if not (is_mirror_layer and top_entry_present):
-                    errors.append(f"Layer {layer.timeframe}: no entry signal defined")
             layer_exit = [
                 g for g in layer.signal_genes
                 if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)
             ]
-            if not layer_exit:
+            if not layer_entry or not layer_exit:
+                is_mirror_layer = (
+                    len(dna.layers) == 1
+                    and layer.signal_genes == dna.signal_genes)
+            if not layer_entry and not (
+                    is_mirror_layer and top_entry_present):
+                errors.append(f"Layer {layer.timeframe}: no entry signal defined")
+            if not layer_exit and not (
+                    is_mirror_layer and top_exit_present):
                 errors.append(f"Layer {layer.timeframe}: no exit signal defined")
             if layer.role not in (None, "trend", "execution", "structure", "zone"):
                 errors.append(f"Layer {layer.timeframe}: invalid role '{layer.role}'")

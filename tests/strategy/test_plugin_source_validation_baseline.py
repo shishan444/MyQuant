@@ -355,12 +355,18 @@ class TestGuardGreenBaseline:
             f"存量混合形态行 {sid} 应维持通过：{result.errors}")
 
     def test_g7_plugin_source_does_not_substitute_exit(self):
-        """G7 插件源不顶替出场（T2 契约「exit 判据不变——signal_genes
-        无 EXIT 角色基因仍报错」）：ENTRY 基因在场（entry 面由基因
-        满足）+无 EXIT 基因+插件源在场 → 仍报 "No exit signal
-        defined"。现有红灯批用例的 exit 面均由 EXIT 基因满足，若
-        实现误让插件源（或 role:"exit" 源）顶替出场判据，全套不红
-        ——本锚补该护栏（2026-10-19 tester 复核补锚 C-1）。"""
+        """G7 entry 角色插件源不顶替出场：ENTRY 基因在场（entry 面由
+        基因满足）+无 EXIT 基因+无 role 键插件源（缺省=entry 语义）在
+        场 → 仍报 "No exit signal defined"（出场判据只认 EXIT 角色基
+        因与显式 role=="exit" 源）。
+
+        契约演进注记：本锚原锚定 T2「exit 判据不变（插件源不顶替
+        出场）」绝对表述（2026-10-19 tester 复核补锚 C-1）；fr_296f43
+        410afb 修复③（sandbox-and-report-supplement）将该表述反转为
+        角色对称形——显式 role=="exit" 源现顶替出场判据（见
+        test_exit_plugin_source_validation.py），本锚护栏面相应收窄为
+        「非 exit 角色源不顶替出场」（缺省/entry/exit_partial 同不
+        顶替，spec scenario「出场两侧皆空仍拒」）。"""
         dna = StrategyDNA(
             signal_genes=[_entry_gene()],
             signal_sources=[_formula_source()],

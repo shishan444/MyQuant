@@ -329,8 +329,10 @@ def _build_lineage(db_path: Path, strategy_id: str) -> Dict[str, Any]:
 
 class TranslateRequest(BaseModel):
     """转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准
-    周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。"""
-    strategy_symbol: str = "BTCUSDT"
+    周期 data_ranges[0].timeframe——回执 execution_timeframe 可查；
+    fr_296f43410afb 修复①：strategy_symbol 缺省 None=继承区间源
+    data_ranges[0].symbol，显式传参优先）。"""
+    strategy_symbol: Optional[str] = None
     strategy_timeframe: Optional[str] = None
 
 

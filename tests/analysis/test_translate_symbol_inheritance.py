@@ -1,0 +1,199 @@
+"""translate symbol 缺省继承锚（fr_296f43410afb 修复①——非分歧面）。
+
+锚点面（断言从 design D5①「缺省值从 BTCUSDT 常量改为继承
+data_ranges[0].symbol；显式传参优先」推导）：
+- 缺省继承主锚（修复前红）：ETHUSDT 假设不传 strategy_symbol →
+  产物 symbol=ETHUSDT（execution_genes.symbol 与 strategy 行
+  symbol 列双面）——修复前缺省 BTCUSDT 常量在非 BTC 假设上产物
+  错标（缺陷①本体，evidence=st_755c04c53a96 库存行）。
+- 显式传 symbol 零变化：显式传参照常转化且产物=显式值。
+- 守卫锚：data_ranges 畸形/首条目缺 symbol 键＋缺省请求 → 结构化
+  拒绝 422（与 timeframe 继承守卫同款形制——param/need_hint/
+  data_ranges 回显）。
+- 兼容面：BTCUSDT 假设缺省请求产物仍 BTCUSDT（继承值恰为旧常量）。
+
+幂等重译回纠（design D5① 后半）另列——见对质裁决后补锚。
+"""
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+pytestmark = [pytest.mark.integration]
+
+from core.analysis.executor import ensure_research_tables
+from core.analysis.hypothesis_service import (
+    ResearchError, register_hypothesis)
+from core.analysis.hypothesis_to_strategy import translate_hypothesis
+from core.persistence.db_ext import init_db_ext
+from core.persistence.repository.strategy import get_strategy
+
+
+@pytest.fixture()
+def db(tmp_path: Path) -> Path:
+    d = tmp_path / "q.db"
+    init_db_ext(d)
+    ensure_research_tables(d)
+    return d
+
+
+def _ranges(symbol: str) -> list:
+    return [{"symbol": symbol, "timeframe": "4h",
+             "start": "2024-01-01T00:00:00Z",
+             "end": "2024-02-01T00:00:00Z"}]
+
+
+_CONDS = {
+    "when_conditions": [
+        {"subject": {"indicator": "RSI", "params": {"period": 14},
+                     "field": "rsi"}, "action": "lt", "target": 35}],
+    "then_conditions": [
+        {"subject": {"indicator": "RSI", "params": {"period": 30},
+                     "field": "rsi"}, "action": "gt", "target": 60}],
+}
+
+
+def _hyp(db: Path, symbol: str) -> str:
+    return register_hypothesis(
+        db, conditions=_CONDS, statement="symbol 继承测试",
+        data_ranges=_ranges(symbol),
+        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+
+
+def _symbol_of(db: Path, sid: str) -> tuple:
+    row = get_strategy(db, sid)
+    dna = json.loads(row["dna_json"])
+    return row["symbol"], dna["execution_genes"]["symbol"]
+
+
+class TestSymbolDefaultInheritance:
+    """缺省继承（修复①前半——修复前红）。"""
+
+    @pytest.mark.parametrize("symbol", ["ETHUSDT", "BTCUSDT"])
+    def test_default_inherits_range_source_symbol(self, db, symbol):
+        """缺省请求产物 symbol=data_ranges[0].symbol（修复前恒
+        BTCUSDT——ETHUSDT 格即缺陷①错标本体；BTCUSDT 格为兼容面：
+        继承值恰为旧常量，产物不变）。"""
+        hid = _hyp(db, symbol)
+        out = translate_hypothesis(db, hypothesis_id=hid)
+        col_sym, dna_sym = _symbol_of(db, out["strategy_id"])
+        assert dna_sym == symbol
+        assert col_sym == symbol
+
+    def test_explicit_symbol_takes_precedence(self, db):
+        """显式传 symbol 零变化：产物=显式值（用户指定优先——
+        显式 ETHUSDT 传给 ETHUSDT 假设与缺省同值但路径独立）。"""
+        hid = _hyp(db, "ETHUSDT")
+        out = translate_hypothesis(
+            db, hypothesis_id=hid, strategy_symbol="ETHUSDT")
+        col_sym, dna_sym = _symbol_of(db, out["strategy_id"])
+        assert dna_sym == "ETHUSDT"
+        assert col_sym == "ETHUSDT"
+
+    def test_explicit_symbol_cross_market_allowed(self, db):
+        """显式跨市场传参维持既有自由度（显式 BTCUSDT 传给 ETHUSDT
+        假设——修复不收窄显式路径，行为与修复前一致）。"""
+        hid = _hyp(db, "ETHUSDT")
+        out = translate_hypothesis(
+            db, hypothesis_id=hid, strategy_symbol="BTCUSDT")
+        _, dna_sym = _symbol_of(db, out["strategy_id"])
+        assert dna_sym == "BTCUSDT"
+
+
+class TestSymbolInheritanceGuard:
+    """继承守卫（与 timeframe 守卫同款形制）。"""
+
+    @pytest.mark.parametrize(
+        "ranges_json",
+        ['["4h"]', "[]"],
+        ids=["首元素非dict", "空数组"])
+    def test_malformed_ranges_rejected_422(self, db, ranges_json):
+        """畸形 data_ranges＋缺省 symbol → 结构化拒绝（无继承源
+        不静默落 None 触发 DB 层延迟爆炸——CARD-24 同族收口）。"""
+        hid = _hyp(db, "ETHUSDT")
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=? "
+                "WHERE hypothesis_id=?", (ranges_json, hid))
+        with pytest.raises(ResearchError) as exc:
+            translate_hypothesis(
+                db, hypothesis_id=hid, strategy_timeframe="4h")
+        assert exc.value.code == "RESEARCH_PARAM_INVALID"
+        assert exc.value.status == 422
+        assert "symbol" in str(exc.value.message)
+        assert exc.value.detail["param"] == "strategy_symbol"
+
+    def test_missing_symbol_key_rejected_422(self, db):
+        """首条目缺 symbol 键（手工数据）→ 同款拒绝（守卫覆盖
+        键缺失形态——get("symbol") 假值含 None/空串）。"""
+        hid = _hyp(db, "ETHUSDT")
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=? "
+                "WHERE hypothesis_id=?",
+                (json.dumps([{"timeframe": "4h", "start": "2024-01-01",
+                              "end": "2024-02-01"}]), hid))
+        with pytest.raises(ResearchError) as exc:
+            translate_hypothesis(
+                db, hypothesis_id=hid, strategy_timeframe="4h")
+        assert exc.value.code == "RESEARCH_PARAM_INVALID"
+        assert exc.value.detail["param"] == "strategy_symbol"
+
+
+def _mislabel_row(db: Path, sid: str) -> None:
+    """把产物行手工错标为 BTCUSDT（模拟修复前缺省常量时代落库——
+    st_755c04c53a96 库存形态的同构构造）。"""
+    from core.persistence.repository.strategy import update_strategy
+    row = get_strategy(db, sid)
+    dna = json.loads(row["dna_json"])
+    dna["execution_genes"]["symbol"] = "BTCUSDT"
+    update_strategy(db, strategy_id=sid, symbol="BTCUSDT",
+                    dna_json=json.dumps(dna, ensure_ascii=False, indent=2))
+
+
+class TestIdempotentRetranslateCorrection:
+    """幂等回纠（design D5① 后半——lead 裁 A 回写纠正）。"""
+
+    def test_mislabeled_row_corrected_on_default_retranslate(self, db):
+        """主锚：存量错标行（产物 BTCUSDT、假设区间源 ETHUSDT）缺省
+        重译 → 策略行 symbol 列与 dna_json.execution_genes.symbol 均
+        回纠为 ETHUSDT（不静默延续错标——缺陷①「幂等不更新」面）。"""
+        hid = _hyp(db, "ETHUSDT")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        sid = first["strategy_id"]
+        _mislabel_row(db, sid)
+        second = translate_hypothesis(db, hypothesis_id=hid)
+        assert second["duplicated"] is True
+        assert second["strategy_id"] == sid, "回纠不重建（谱系幂等保持）"
+        col_sym, dna_sym = _symbol_of(db, sid)
+        assert col_sym == "ETHUSDT", "symbol 列回纠"
+        assert dna_sym == "ETHUSDT", "dna_json.execution_genes.symbol 回纠"
+
+    def test_explicit_symbol_retranslate_does_not_correct(self, db):
+        """显式传参不触发回纠（用户意图优先）：错标行＋显式传
+        BTCUSDT 重译 → 行保持 BTCUSDT（不覆盖显式决定）。"""
+        hid = _hyp(db, "ETHUSDT")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        sid = first["strategy_id"]
+        _mislabel_row(db, sid)
+        second = translate_hypothesis(
+            db, hypothesis_id=hid, strategy_symbol="BTCUSDT")
+        assert second["duplicated"] is True
+        col_sym, _ = _symbol_of(db, sid)
+        assert col_sym == "BTCUSDT", "显式路径零回纠"
+
+    def test_well_labeled_row_unchanged_on_retranslate(self, db):
+        """非错标行缺省重译 → 行逐位不变（回纠判据不误伤正常幂等——
+        无写发生的零副作用锚）。"""
+        hid = _hyp(db, "ETHUSDT")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        sid = first["strategy_id"]
+        before = get_strategy(db, sid)
+        second = translate_hypothesis(db, hypothesis_id=hid)
+        assert second["duplicated"] is True
+        after = get_strategy(db, sid)
+        assert before["symbol"] == after["symbol"] == "ETHUSDT"
+        assert before["dna_json"] == after["dna_json"], \
+            "正常行重译 dna_json 逐位不变（无回纠写）"

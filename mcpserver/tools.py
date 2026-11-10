@@ -1091,11 +1091,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def translate_hypothesis_to_strategy(
-            hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
+            hypothesis_id: str, strategy_symbol: str | None = None,
             strategy_timeframe: str | None = None) -> Dict[str, Any]:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
+        品种契约：strategy_symbol 缺省 None=继承区间源
+        data_ranges[0].symbol（登记面强制全条目同 symbol；存量无可用
+        symbol 假设拒绝并指引显式传参；显式传参优先零变化）。
         执行周期契约：strategy_timeframe 缺省 None=继承假设基准周期
 （data_ranges[0].timeframe；存量异周期假设拒绝并指引显式传参）；
 回执 execution_timeframe 键披露产物执行周期。
