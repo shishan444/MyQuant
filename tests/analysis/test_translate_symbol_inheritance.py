@@ -199,26 +199,27 @@ class TestIdempotentRetranslateCorrection:
             "正常行重译 dna_json 逐位不变（无回纠写）"
 
     def test_broken_dna_row_degrades_not_raises(self, db):
-        """坏行降级锚（CARD-02）：错标行＋dna_json 损坏 → 缺省重译
-        放行重建不炸，新行 symbol 正确标注（错标的「不静默延续」由
-        重建天然达成），回执正常回显。
+        """坏行降级锚（CARD-02 可达性两侧之一·base_tf 可解析侧）：
+        错标行＋dna_json 损坏 → 缺省重译放行重建不炸，新行 symbol
+        正确标注（错标的「不静默延续」由重建天然达成），回执正常回显。
 
-        可达性判定（与 exit-OR TestReceiptDirtyRowConvergence 同款
-        结论）：坏 dna_json 行在 _find_draft_by_parent 幂等查询即因
-        exec_tf 不可解析判「漂移 draft 放行重建」——**到不了回纠段**
-        （回纠前置=行被谱系幂等命中=exec_tf==基准= dna_json 必可解析
-        且 execution_genes 为 dict）。回纠段 :526-535 的坏行降级
-        （JSONDecodeError/TypeError/AttributeError → 跳过回纠返回
-        存量行）为防御纵深——对齐 :503-508 hit_ranges 降级先例，结
-        构性不可达下保持错误通道契约静态合规（security 线索 Low→
-        architect 裁 P2 入卡）。"""
+        可达性判定（tester 6aab9149 复核修正后结论——两侧并存）：
+        base_tf 可解析（登记面形制）时，坏 dna_json 行在
+        _find_draft_by_parent 幂等查询即因 exec_tf 不可解析判「漂移
+        draft 放行重建」——本侧到不了回纠段；**base_tf=None**（
+        data_ranges 条目缺 timeframe——手工/历史库行可绕过登记面）
+        时 :1261 不进 exec_tf 收窄、退回现行幂等——坏行被谱系命中
+        进入回纠段，降级分支真实可达（可达面锚见下一
+        test_broken_dna_row_hit_degrades_in_correction_segment——
+        修复前该路径裸炸 JSONDecodeError 裸穿错误通道，即 CARD-02
+        修复的真实承载面；security 线索 Low→architect 裁 P2 入卡）。"""
         from core.persistence.repository.strategy import update_strategy
 
         hid = _hyp(db, "ETHUSDT")
         first = translate_hypothesis(db, hypothesis_id=hid)
         sid = first["strategy_id"]
-        # 错标＋坏 dna_json 双重构造（坏 JSON 在幂等查询即放行重建
-        # ——回纠段降级不可达的行为面证明）
+        # 错标＋坏 dna_json 双重构造（base_tf 可解析侧：坏 JSON 在
+        # 幂等查询即放行重建——漂移收窄行为面）
         update_strategy(db, strategy_id=sid, symbol="BTCUSDT",
                         dna_json="{not-valid-json")
         second = translate_hypothesis(db, hypothesis_id=hid)
