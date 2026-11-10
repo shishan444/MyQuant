@@ -524,8 +524,16 @@ def translate_hypothesis(
         if (not _symbol_explicit and hit_row and _inherit_symbol
                 and hit_row.get("symbol") != _inherit_symbol):
             import json as _json
-            _dna = _json.loads(hit_row.get("dna_json") or "{}")
-            _exec = _dna.get("execution_genes")
+            # 坏行降级（CARD-02）：坏 dna_json（非法 JSON/非 dict 形）
+            # 无从构造回写——跳过回纠返回存量行，不裸炸也不抛 422
+            # （幂等命中返回是主路径，坏行不应阻断——与上方 hit_ranges
+            # :503-508 降级先例同族；回执镜像经 _identity_reflection
+            # 值域收敛不依赖 dna_json 可解析）
+            try:
+                _dna = _json.loads(hit_row.get("dna_json") or "{}")
+                _exec = _dna.get("execution_genes")
+            except (_json.JSONDecodeError, TypeError, AttributeError):
+                _exec = None
             if isinstance(_exec, dict):
                 _exec["symbol"] = _inherit_symbol
                 _dna["execution_genes"] = _exec

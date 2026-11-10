@@ -197,3 +197,37 @@ class TestIdempotentRetranslateCorrection:
         assert before["symbol"] == after["symbol"] == "ETHUSDT"
         assert before["dna_json"] == after["dna_json"], \
             "正常行重译 dna_json 逐位不变（无回纠写）"
+
+    def test_broken_dna_row_degrades_not_raises(self, db):
+        """坏行降级锚（CARD-02）：错标行＋dna_json 损坏 → 缺省重译
+        放行重建不炸，新行 symbol 正确标注（错标的「不静默延续」由
+        重建天然达成），回执正常回显。
+
+        可达性判定（与 exit-OR TestReceiptDirtyRowConvergence 同款
+        结论）：坏 dna_json 行在 _find_draft_by_parent 幂等查询即因
+        exec_tf 不可解析判「漂移 draft 放行重建」——**到不了回纠段**
+        （回纠前置=行被谱系幂等命中=exec_tf==基准= dna_json 必可解析
+        且 execution_genes 为 dict）。回纠段 :526-535 的坏行降级
+        （JSONDecodeError/TypeError/AttributeError → 跳过回纠返回
+        存量行）为防御纵深——对齐 :503-508 hit_ranges 降级先例，结
+        构性不可达下保持错误通道契约静态合规（security 线索 Low→
+        architect 裁 P2 入卡）。"""
+        from core.persistence.repository.strategy import update_strategy
+
+        hid = _hyp(db, "ETHUSDT")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        sid = first["strategy_id"]
+        # 错标＋坏 dna_json 双重构造（坏 JSON 在幂等查询即放行重建
+        # ——回纠段降级不可达的行为面证明）
+        update_strategy(db, strategy_id=sid, symbol="BTCUSDT",
+                        dna_json="{not-valid-json")
+        second = translate_hypothesis(db, hypothesis_id=hid)
+        assert second["duplicated"] is False, "坏行放行重建（幂等不命中）"
+        assert second["strategy_id"] != sid
+        # 新行正确标注（缺省继承链承载——错标未延续）；坏旧行保留审计
+        col_sym, dna_sym = _symbol_of(db, second["strategy_id"])
+        assert col_sym == "ETHUSDT"
+        assert dna_sym == "ETHUSDT"
+        assert get_strategy(db, sid)["dna_json"] == "{not-valid-json"
+        # 回执正常回显（新建分支——不依赖坏行可解析）
+        assert second["direction"] == "long"
