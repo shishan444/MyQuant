@@ -40,7 +40,7 @@ def _df(prices) -> pd.DataFrame:
     }, index=idx)
 
 
-def _sig(entry_bars, exit_bars=(), n=None):
+def _sig(entry_bars, exit_bars=(), add_bars=(), n=None):
     n = n or N
     idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
                         name="timestamp")
@@ -50,6 +50,8 @@ def _sig(entry_bars, exit_bars=(), n=None):
         e.iloc[b] = 1.0
     for b in exit_bars:
         x.iloc[b] = 1.0
+    for b in add_bars:
+        a.iloc[b] = 1.0
     return SignalSet(entries=e, exits=x, adds=a, reduces=z.copy())
 
 
@@ -74,12 +76,15 @@ def _prices(path_108=108.0):
     return ([100.0] * 10 + [120.0] * 10 + [path_108] * 40)
 
 
-def _run(prices, sig, *, halt=None, n=None):
+def _run(prices, sig, *, halt=None, n=None, dna=None, task_leverage=None,
+         task_margin_cap=None):
     df = _df(prices)
     return BacktestEngine(
         init_cash=10000, fee=0.0, slippage=0.0,
+        task_leverage=task_leverage, task_margin_cap=task_margin_cap,
         halt_drawdown_pct=halt).run(
-        _dna(), df, dfs_by_timeframe={"4h": df}, signal_set=sig)
+        dna if dna is not None else _dna(), df,
+        dfs_by_timeframe={"4h": df}, signal_set=sig)
 
 
 class TestThreeStates:
@@ -149,3 +154,64 @@ class TestEntryBlockedExitAlive:
         assert len(res.trades_df) == 1
         assert res.halt_info["halted"] is True
         assert 36.0 in set(res.trace_buf[:, 0])
+
+
+class TestAddsAliveAfterHalt:
+    """halted 后加仓照常（D3① 语义=仅 entries 屏蔽——加减仓是持仓
+    管理非开新仓；引擎加仓通道不经熔断分支）。spec「停止开新仓（持仓
+    与平仓照常）」对加仓侧未显式归类，本锚按 design D3「触发后
+    entries 屏蔽」锚定现行语义（spec 含糊处已随特征网报告上报）。"""
+
+    def test_add_fills_after_halt(self):
+        """入场 50 股（position_size=0.5）→触发→bar30 加仓照常成交：
+        add_value=value_now(8000)×0.36=2880@60=48 股——总 98 股、
+        halted=true、同一笔 trade（加仓并入）。
+
+        曲线尾段 60：峰值 50×120+5000=11000 → 50×60+5000=8000
+        回撤 27.3%≥10% 触发（bar20）。"""
+        from core.strategy.dna import RiskGenes as _RG
+        dna = StrategyDNA(
+            signal_genes=[_gene()], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=_RG(direction="long", position_size=0.5,
+                           leverage=1, add_fraction=0.36,
+                           stop_loss=0.9))
+        res = _run(_prices(60.0), _sig([1], add_bars=[30]), halt=0.1,
+                   dna=dna)
+        assert res.halt_info is not None and res.halt_info["halted"] is True
+        assert float(res.trades_df["Size"].sum()) == 98.0, \
+            "入场 50＋halted 后加仓 48 照常成交（adds 不被屏蔽）"
+        assert len(res.trades_df) == 1, "加仓并入同一 trade 行"
+
+
+class TestComboWithTaskCap:
+    """③层任务级封顶与熔断同场并存（同一 Requirement 两可选参数面的
+    组合格——互不干扰：缩量照计、触发照屏）。"""
+
+    def test_scaled_entry_and_halt_coexist(self):
+        """入场 fixed 0.5（名义 5000）被③顶 10000×0.04×3=1200 缩至
+        12 股；随后峰值 10240→9520（价 120→60）回撤 7.03%≥5% 触发
+        （bar21 判定——前一 bar 期末价值口径）；触发后出场照常（bar25
+        信号→26 成交）、空仓后 bar30 再入场被屏蔽（码 36）——③层缩
+        量、熔断触发、出场存活、再入场屏蔽四证据并存。"""
+        from core.strategy.dna import RiskGenes as _RG
+        dna = StrategyDNA(
+            signal_genes=[_gene()], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=_RG(direction="long", position_size=0.5,
+                           leverage=3, max_exposure=2.0,
+                           stop_loss=0.9))
+        res = _run(_prices(60.0), _sig([1, 30], exit_bars=[25]), halt=0.05,
+                   dna=dna, task_leverage=3, task_margin_cap=0.04)
+        # ③层证据：缩量计数＋生效面
+        face = res.metrics_dict["position_sizing"]
+        assert face["capped_by_task_cap"] == 1
+        assert face["task_cap"] == {"margin_cap": 0.04,
+                                    "effective_leverage": 3.0}
+        # 熔断证据：触发＋触发后出场照常＋空仓后再入场屏蔽
+        assert res.halt_info is not None and res.halt_info["halted"] is True
+        assert 13.0 in set(res.trace_buf[:, 0]), "触发后出场信号照常成交"
+        assert 36.0 in set(res.trace_buf[:, 0]), "空仓后再入场被熔断屏蔽"
+        assert float(res.trades_df["Size"].sum()) == 12.0, \
+            "入场 5000 缩至顶 1200=12 股（halted 屏蔽不误伤已成交）"
+        assert len(res.trades_df) == 1, "bar31 再入场被熔断屏蔽"

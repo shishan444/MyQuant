@@ -59,7 +59,7 @@ def _entry_dna():
 
 class _HaltHarness:
     def __init__(self, tmp_path: Path, *, halt_drawdown_pct=None,
-                 with_halted_state=False):
+                 with_halted_state=False, dna=None):
         self.data_dir = tmp_path / "market"
         self.data_dir.mkdir()
         self.df = _price_df()
@@ -69,7 +69,8 @@ class _HaltHarness:
         init_db_ext(self.db)
         self.task_id = paper.create_task(
             self.db, strategy_id="strat-halt",
-            dna_snapshot_json=_entry_dna().to_json(),
+            dna_snapshot_json=(dna if dna is not None
+                               else _entry_dna()).to_json(),
             symbol="BTCUSDT", timeframe="4h",
             research_status_snapshot="unverified",
             initial_cash=10_000.0, leverage=1,
@@ -146,6 +147,32 @@ class TestHaltTriggeredPaper:
         assert all(s["signal_kind"] == "open" for s in rejects)
         # 运行态不回落（单向置位——重启续态）
         assert task["halted_at"] == "2024-01-02T00:00:00+00:00"
+
+    def test_exit_fills_after_runtime_halt(self, tmp_path):
+        """用例 C（平仓照常正向锚——spec scenario「后续开仓请求被
+        拦截（平仓照常）」的平仓侧行为证明；用例 B 恢复态只证拦截面，
+        本用例补运行中触发后的平仓面）：SL 10% 线在 bar20 价格跳 84
+        时触发平仓（exit_sl 照常成交），同 bar 熔断判定触发（回撤
+        16%≥5%）——平仓成交时点 ≥ halted_at；触发后的开仓意图全部
+        落 rejected（halted_drawdown）而 exit 族零拒绝。"""
+        dna = make_dna(entry_condition="lt", entry_value=70,
+                       exit_condition="gt", exit_value=99.5,
+                       direction="long", stop_loss=0.1, take_profit=0.2,
+                       position_size=1.0)
+        h = _HaltHarness(tmp_path, halt_drawdown_pct=0.05, dna=dna)
+        task = h.run_all()
+        assert task["halted_at"] is not None, "回撤 16%≥5% 触发熔断"
+        fills = paper.list_fills(h.db, h.task_id, limit=1000)
+        exits = [f for f in fills if f["kind"].startswith("exit")]
+        assert exits, "触发后 SL 平仓照常成交（exit_sl）"
+        assert all(f["bar_time"] >= task["halted_at"] for f in exits), \
+            "平仓发生在熔断触发时点或之后（非触发前存量成交）"
+        signals = paper.list_signals(h.db, h.task_id, limit=2000)
+        halted_rejects = [s for s in signals
+                          if s.get("reject_reason") == "halted_drawdown"]
+        assert halted_rejects, "触发后开仓意图被拦（运行中拦截面）"
+        assert all(s["signal_kind"] == "open" for s in halted_rejects), \
+            "熔断拦截只落 open 意图（exit 族零拒绝）"
 
 
 class TestUnconfiguredUnchanged:

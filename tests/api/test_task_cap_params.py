@@ -177,7 +177,9 @@ class TestHaltDrawdown:
 
 
 class TestIsolatedRoutesSameValidator:
-    """隔离验证三入口与沙盒路同一校验单源（A3——同坏输入同 422）。"""
+    """隔离验证三入口（staged/random-window/validate-backtest）与沙盒路
+    同一校验单源（A3——同坏输入同 422；require_task_cap_params 四路由
+    消费点接线全查）。"""
 
     @pytest.mark.parametrize(("endpoint", "extra"), [
         ("/api/research/staged-validation",
@@ -195,3 +197,45 @@ class TestIsolatedRoutesSameValidator:
         detail = resp.json()["detail"]
         assert detail["code"] == "RESEARCH_PARAM_INVALID"
         assert detail["detail"]["field"] == "leverage"
+
+    def test_validate_backtest_reject_leverage_4(self, api_client):
+        """隔离回测入口（嵌套 request_range 形制——第四消费点）：
+        同坏输入同 422 附 legal_range。"""
+        resp = api_client.post("/api/research/validate-backtest", json={
+            "hypothesis_id": "hyp_x", "strategy_id": "st_x",
+            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                              "start": "2024-02-05", "end": "2024-03-01"},
+            "leverage": 4})
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["field"] == "leverage"
+        assert detail["detail"]["legal_range"] == "[1,3]"
+
+
+class TestSandboxSingleParamPath:
+    """单传一参（部分传参形态——D1「未传两参=③层不生效」的边界格）：
+    ③层不构成顶（引擎两参都传才启用），但 task_params 回显实传单键
+    （无 effective_leverage——无 task_cap 面可提取）。"""
+
+    def test_margin_cap_only_no_third_layer(self, seeded):
+        client, sid = seeded
+        resp = client.post("/api/research/backtest-sandbox", json={
+            **SANDBOX_BODY, "strategy_id": sid, "margin_cap": 0.45})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["task_params"] == {"margin_cap": 0.45}
+        assert "effective_leverage" not in body["task_params"], \
+            "③层未启用（缺 leverage）不产 min 链面"
+        assert "position_sizing" not in body["metrics"], \
+            "引擎③层未启用无披露面（与全不传同形）"
+
+    def test_leverage_only_no_third_layer(self, seeded):
+        client, sid = seeded
+        resp = client.post("/api/research/backtest-sandbox", json={
+            **SANDBOX_BODY, "strategy_id": sid, "leverage": 3})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["task_params"] == {"leverage": 3}
+        assert "effective_leverage" not in body["task_params"]
+        assert "position_sizing" not in body["metrics"]
