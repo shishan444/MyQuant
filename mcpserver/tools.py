@@ -1257,16 +1257,20 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                          window_bars: Optional[int] = None,
                          window_unlimited: bool = False,
                          stop_loss_pct: Optional[float] = None,
+                         halt_drawdown_pct: Optional[float] = None,
                          ) -> Dict[str, Any]:
         """挂载纸盘任务（上盘=把策略库条目送去实时前向验证）。参数面与
         REST 创建完全一致——仅验证条件参数（初始资金/杠杆/费滑/品种/
-        验证窗口/停止条件），**不含任何策略语义参数**：方向与执行周期
-        以策略 DNA 为准，AI 无法经挂载覆写信号语义。创建恒受理（201
-        pending 行；并发满载时排队不拒绝）。验证窗口三入口同语义：
-        不传 window_bars=缺省 180 根；N≥1=N 根窗口到点自动结题；
-        window_unlimited=True=不限期（不自动结题，转译 REST
-        window_bars=null 同语义）——window_unlimited=true 与
-        window_bars 显式值同传被互斥校验拒绝（两种窗口表达不可并存）。
+        验证窗口/停止条件/账户级硬熔断阈值），**不含任何策略语义参数**：
+        方向与执行周期以策略 DNA 为准，AI 无法经挂载覆写信号语义。
+        创建恒受理（201 pending 行；并发满载时排队不拒绝）。验证窗口
+        三入口同语义：不传 window_bars=缺省 180 根；N≥1=N 根窗口
+        到点自动结题；window_unlimited=True=不限期（不自动结题，
+        转译 REST window_bars=null 同语义）——window_unlimited=true
+        与 window_bars 显式值同传被互斥校验拒绝（两种窗口表达不可
+        并存）。halt_drawdown_pct∈(0,1)（sandbox-and-report-supplement
+        D3②）：权益自峰值回撤达阈值拦截开新仓（持仓/平仓照常），
+        不传=不启用（数值留空待用户给后续零代码启用）。
         策略演化不影响已挂载任务（创建时 DNA 快照自包含）。"""
         if window_unlimited and window_bars is not None:
             return {"error": errors.error_payload(
@@ -1291,6 +1295,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["window_bars"] = window_bars
         if stop_loss_pct is not None:
             body["stop_loss_pct"] = stop_loss_pct
+        if halt_drawdown_pct is not None:
+            body["halt_drawdown_pct"] = halt_drawdown_pct
         return api.post("/api/paper-trading/tasks", body)
 
     @mcp.tool()
