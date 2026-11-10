@@ -516,6 +516,44 @@ class TestClone:
         # 源值不被克隆侧改动
         assert paper.get_task(db, tid)["halt_drawdown_pct"] == 0.15
 
+    def test_clone_resets_halt_runtime_state(self, tmp_path: Path):
+        """克隆运行态归零锚（CARD-01 补充面——tester 回归补）：halt_
+        drawdown_pct 是参数列随克隆继承，halted_at/halt_reason 是运行
+        态列必须归零——新任务 pending 重新起跑，不得继承源任务已触发
+        的熔断状态（复制面与归零面的分界显式锚，防将来运行态列被误
+        加入复制面）。构造：带值源＋手工置位 halted_at 后克隆。"""
+        from sqlalchemy import text
+
+        from core.persistence.orm.engine import engine_for
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        self._seed_strategy(db)
+        tid = paper.create_task(
+            db, task_id="pt_haltclone00rt", strategy_id="strat-1",
+            dna_snapshot_json='{"risk_genes": {"leverage": 5}}',
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=50_000.0, fee=0.001, slippage=0.0005,
+            leverage=5, window_bars=180, halt_drawdown_pct=0.15)
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "UPDATE pt_task SET halted_at=:t, halt_reason=:r"
+                " WHERE task_id=:id"), {
+                "t": "2024-01-02T00:00:00+00:00",
+                "r": "equity_drawdown_from_peak_ge_halt_drawdown_pct",
+                "id": tid})
+
+        cloned = paper.clone_task(db, tid)
+        assert cloned["halted_at"] is None, "运行态 halted_at 归零"
+        assert cloned["halt_reason"] is None, "运行态 halt_reason 归零"
+        assert cloned["status"] == "pending", "新任务 pending 重新起跑"
+        assert cloned["halt_drawdown_pct"] == 0.15, \
+            "参数列归继承面（与运行态归零并存——复制/归零分界）"
+        # 源任务运行态不被克隆侧改动
+        src = paper.get_task(db, tid)
+        assert src["halted_at"] == "2024-01-02T00:00:00+00:00"
+
     def test_clone_missing_task_and_strategy(self, tmp_path: Path):
         from core.persistence.repository import paper
 
