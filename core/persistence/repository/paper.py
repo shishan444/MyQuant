@@ -780,6 +780,10 @@ def clone_task(
         slippage=source["slippage"], leverage=source["leverage"],
         window_bars=source["window_bars"],
         stop_loss_pct=source["stop_loss_pct"],
+        # 熔断参数同源复制（sandbox-and-report-supplement CARD-01：
+        # 任务级覆写面完整继承——NULL 源→NULL 同样复制〔不启用语义
+        # 不随克隆隐式改变〕）
+        halt_drawdown_pct=source["halt_drawdown_pct"],
     )
     return get_task(db_path, tid)
 

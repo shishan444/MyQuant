@@ -478,7 +478,7 @@ class TestClone:
         # 同源复制面
         for col in ("strategy_id", "dna_snapshot_json", "symbol", "timeframe",
                     "initial_cash", "fee", "slippage", "leverage",
-                    "window_bars", "stop_loss_pct"):
+                    "window_bars", "stop_loss_pct", "halt_drawdown_pct"):
             assert cloned[col] == paper.get_task(db, tid)[col], col
         # 归零面
         assert cloned["bars_processed"] == 0
@@ -491,6 +491,30 @@ class TestClone:
         # 数据不串任务
         assert paper.list_fills(db, cloned["task_id"]) == []
         assert len(paper.list_fills(db, tid)) == 1
+
+    def test_clone_copies_halt_drawdown_with_value(self, tmp_path: Path):
+        """带值源的熔断参数继承（CARD-01 锚——architect-2 警示：NULL
+        源→NULL 克隆恒等抓不到漏传，必须以带值源断言继承值）。"""
+        from core.persistence.repository import paper
+
+        db = _make_db(tmp_path)
+        self._seed_strategy(db)
+        # 带值源直建（update_task 白名单不含本列——创建面是唯一写值
+        # 路径，create_task 直传）
+        tid = paper.create_task(
+            db, task_id="pt_haltclone0001", strategy_id="strat-1",
+            dna_snapshot_json='{"risk_genes": {"leverage": 5}}',
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            initial_cash=50_000.0, fee=0.001, slippage=0.0005,
+            leverage=5, window_bars=180,
+            halt_drawdown_pct=0.15)
+
+        cloned = paper.clone_task(db, tid)
+        assert cloned["halt_drawdown_pct"] == 0.15, \
+            "克隆须继承源任务熔断阈值（漏传即 NULL 静默丢参）"
+        # 源值不被克隆侧改动
+        assert paper.get_task(db, tid)["halt_drawdown_pct"] == 0.15
 
     def test_clone_missing_task_and_strategy(self, tmp_path: Path):
         from core.persistence.repository import paper
