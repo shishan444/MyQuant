@@ -77,3 +77,26 @@ class TestRunBacktestTaskCapMcp:
         body = captured["body"]
         for key in ("leverage", "margin_cap", "halt_drawdown_pct"):
             assert key not in body, f"缺省调用不应携带 {key}"
+
+
+class TestMountPaperTaskHaltMcp:
+    """mount_paper_task 熔断参数透传（阶段四闸门消解：带值侧
+    :1299 条件携带分支未覆盖——缺省侧由既有 mount 用例走通）。"""
+
+    def test_halt_passthrough_with_value(self, monkeypatch):
+        from mcpserver.server import build_server
+        from tests.mcpserver.test_contract_parity import run_async
+
+        mcp, api = build_server(profile="research", base_url="http://x")
+        captured: dict = {}
+
+        def _post(path, json_body=None):
+            captured.update(path=path, body=json_body)
+            return {"task_id": "pt_1", "status": "pending"}
+
+        api.post = _post
+        run_async(mcp.call_tool("mount_paper_task", {
+            "strategy_id": "st_1", "halt_drawdown_pct": 0.15}))
+        assert captured["path"] == "/api/paper-trading/tasks"
+        assert captured["body"]["halt_drawdown_pct"] == 0.15, \
+            "带值挂载须携带熔断阈值（纸盘路 D3② 参数面）"

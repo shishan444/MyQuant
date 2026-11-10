@@ -483,6 +483,55 @@ class TestDimensionMount:
             _call(vr_db, env["data_dir"], gone, dimension="wave")
         assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
 
+    def test_box_insufficient_data_rejected(self, vr_db, env):
+        """box 分支数据不足（阶段四闸门消解：box 装载 df None 拒绝
+        面 :236-237 与 wave 分支各自独立 raise）——同构造换
+        dimension=box＋显式 edge_window（4h 无冻结默认不抢跑）。"""
+        gone = dict(env["rng"], start="2025-01-01", end="2025-02-01")
+        _insert_record(vr_db, "rec_a", gone, [
+            _mk_trade("2025-01-05", "2025-01-10", "long", 100, 105, 5)])
+        _insert_record(vr_db, "rec_b", gone, [
+            _mk_trade("2025-01-06", "2025-01-11", "long", 100, 103, 2)])
+        with pytest.raises(ResearchError) as ei:
+            _call(vr_db, env["data_dir"], gone, dimension="box",
+                  edge_window=24)
+        assert ei.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+    def test_box_frozen_default_1h_hit(self, vr_db, tmp_path):
+        """1h 冻结默认命中（阶段四闸门消解：edge_window 缺省自动取
+        1h=240 的分支——4h 无默认拒绝已测，命中侧补全；1h 轴数据
+        前扩覆盖 240 根装载前提）。"""
+        import numpy as np
+        d = tmp_path / "data1h"
+        d.mkdir()
+        n = 1200
+        closes = np.concatenate([
+            np.linspace(100, 60.2, 400), [63.5],
+            np.linspace(63.9, 110, 399), [104.0],
+            np.linspace(104, 80, 400)])
+        idx = pd.date_range("2026-01-01", periods=len(closes), freq="1h",
+                            tz="UTC", name="timestamp")
+        pd.DataFrame({"open": closes, "high": closes + 0.3,
+                      "low": closes - 0.3, "close": closes,
+                      "volume": 1.0}, index=idx).to_parquet(
+            d / "TESTUSDT_1h.parquet")
+        rng = {"symbol": "TESTUSDT", "timeframe": "1h",
+               "start": "2026-02-01", "end": "2026-03-01"}
+        _insert_record(vr_db, "rec_a", rng, [
+            _mk_trade("2026-02-05", "2026-02-12", "long", 62, 80, 3.0),
+            _mk_trade("2026-02-20", "2026-02-25", "long", 70, 95, 2.0),
+            _mk_trade("2026-02-26", "2026-02-27", "short", 100, 90, 1.5)])
+        _insert_record(vr_db, "rec_b", rng, [
+            _mk_trade("2026-02-05", "2026-02-12", "long", 62, 80, 1.5),
+            _mk_trade("2026-02-20", "2026-02-25", "long", 70, 95, 1.0),
+            _mk_trade("2026-02-26", "2026-02-27", "short", 100, 90, 0.7)])
+        out = _call(vr_db, d, rng, dimension="box")  # edge_window 缺省
+        p = out["payload"]
+        assert p["dimension"] == "box"
+        for g in ("group_a", "group_b"):
+            assert "opposite_rate" in p[g]["box"], \
+                "1h 冻结默认命中不拒（240 自动取）"
+
 
 # ------------------------------------------------- B3 demo 语义锚
 

@@ -59,10 +59,19 @@ def _entry_dna():
 
 class _HaltHarness:
     def __init__(self, tmp_path: Path, *, halt_drawdown_pct=None,
-                 with_halted_state=False, dna=None):
+                 with_halted_state=False, dna=None, base=None):
         self.data_dir = tmp_path / "market"
         self.data_dir.mkdir()
-        self.df = _price_df()
+        if base is not None:
+            idx = pd.date_range("2024-01-01", periods=_N, freq="4h",
+                                tz="UTC", name="timestamp")
+            p = np.asarray(base, dtype=float) * (
+                1.0 + 0.0005 * np.sin(np.arange(_N) * 1.7))
+            self.df = pd.DataFrame({
+                "open": p, "high": p * 1.001, "low": p * 0.999,
+                "close": p, "volume": np.full(_N, 100.0)}, index=idx)
+        else:
+            self.df = _price_df()
         save_parquet(self.df, self.data_dir / "BTCUSDT_4h.parquet")
         self.enhanced = compute_all_indicators(self.df)
         self.db = tmp_path / "paper.db"
@@ -128,6 +137,28 @@ class TestHaltTriggeredPaper:
         task = h.run_all()
         assert task["halted_at"] is None
         assert task["halt_reason"] is None
+
+    def test_peak_tracking_updates_from_new_high(self, tmp_path):
+        """峰值更新区分锚（阶段四闸门消解：峰值更新分支 :1043-1044
+        未覆盖）：曲线 100×20→112×10→84×30、halt=0.2、TP 0.2（线
+        120，112 不触）/SL 0.2（线 80，84 不触）不抢先出场——开仓后
+        112 段权益 11200 为新高（峰值自初值 10000 上移），84 段回撤
+        (11200−8400)/11200=25%≥20% 触发。若峰值不更新（错用初值
+        10000）：回撤 16%＜20% 不触发——halted_at 断言区分两口径
+        （峰值跟踪正确性=回撤判定的分母正确性）。"""
+        dna = make_dna(entry_condition="lt", entry_value=70,
+                       exit_condition="gt", exit_value=99.5,
+                       direction="long", stop_loss=0.2, take_profit=0.2,
+                       position_size=1.0)
+        h = _HaltHarness(
+            tmp_path, halt_drawdown_pct=0.2, dna=dna,
+            base=[100.0] * 20 + [112.0] * 10 + [84.0] * 30)
+        task = h.run_all()
+        assert task["halted_at"] is not None, \
+            "峰值随新高 11200 更新后 25% 回撤≥20% 触发（不更新口径 "\
+            "16%<20% 不触发——断言即区分）"
+        assert task["halt_reason"] == (
+            "equity_drawdown_from_peak_ge_halt_drawdown_pct")
 
     def test_halted_state_blocks_all_open_intents(self, tmp_path):
         """用例 B（拦截行为）：恢复态 halted 任务（halted_at 已置位）
