@@ -281,6 +281,12 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"
                           "不一致）：显式传 strategy_timeframe 指定执行"
                           "周期，或修正假设 data_ranges 后重新登记",
+    # 转化品种（fr_296f43410afb 修复①，sandbox-and-report-supplement
+    # 块 C）：symbol 缺省继承守卫拒绝的 detail.param 面（畸形
+    # data_ranges/首条目缺 symbol 键）
+    "strategy_symbol": "转化品种无法缺省继承（data_ranges 无可用 "
+                       "symbol）：显式传 strategy_symbol 指定策略品种，"
+                       "或修正假设 data_ranges 后重新登记",
     "stop_loss": "止损参数越域：值域随 sl_mode 分档（pct 档与 atr 档"
                  "不同）——查看 detail.legal_range 与 sl_mode，按档修正",
     "events": "事件数超上限：缩小区间或收窄 indicators 指标集"

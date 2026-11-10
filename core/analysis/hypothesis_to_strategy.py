@@ -285,9 +285,11 @@ def _run_formula_trial(
     装载单源（fr_296f43410afb 修复④）：与登记预检/回测同走
     load_and_prepare_df（衍生品合并＋派生基础列注入权威——裸
     load_parquet 不合并 funding_rate/open_interest，funding 基插件
-    求值静默缺列即 translate 路径 all_nan 缺陷本体）。装载门槛随之
-    统一为 min_bars=50（原裸装载无门槛——生产 parquet 远超，短数据
-    试算语义与登记预检对齐）。
+    求值静默缺列即 translate 路径 all_nan 缺陷本体）。min_bars=1
+    显式放宽装载门槛：50 根缺省面向全量装载，试算自有 head 最小
+    装载语义（need_rows = max(warmup+8, 32)）与逐组件 notna>0 质量
+    门——占位短行情夹具（40 根形制）是「试算只求可执行」的合法
+    形态，不因装载权威化收紧。
     """
     from core.analysis.plugin_service import (
         enrich_with_plugin_columns, plugin_columns_lookback)
@@ -303,7 +305,7 @@ def _run_formula_trial(
             detail={"data_range": rng, "reason": "no_parquet"})
     df = load_and_prepare_df(
         Path(data_dir), rng["symbol"], rng["timeframe"],
-        compute_indicators=False)
+        min_bars=1, compute_indicators=False)
     if df is None or len(df) == 0:
         raise ResearchError(
             "RESEARCH_SYMBOL_NOT_FOUND",
