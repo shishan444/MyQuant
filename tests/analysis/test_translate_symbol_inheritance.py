@@ -230,6 +230,8 @@ class TestIdempotentRetranslateCorrection:
         assert col_sym == "ETHUSDT"
         assert dna_sym == "ETHUSDT"
         assert get_strategy(db, sid)["dna_json"] == "{not-valid-json"
+        # 回执正常回显（新建分支——不依赖坏行可解析）
+        assert second["direction"] == "long"
 
     def test_broken_dna_row_hit_degrades_in_correction_segment(self, db):
         """坏行命中降级锚（CARD-02 可达面——与上一锚构成可达性两侧）：
@@ -268,5 +270,3 @@ class TestIdempotentRetranslateCorrection:
         assert row["dna_json"] == "{not-valid-json", "存量行逐位不变"
         assert second["direction"] == "long", \
             "回执值域收敛正常回显（不依赖坏行可解析）"
-        # 回执正常回显（新建分支——不依赖坏行可解析）
-        assert second["direction"] == "long"
