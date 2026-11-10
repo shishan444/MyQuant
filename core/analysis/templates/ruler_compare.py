@@ -94,20 +94,22 @@ def validate_trade_source(trade_source: Any) -> str:
     return record_id
 
 
-def load_validation_trades(
+def resolve_validation_record(
     db_path: Path, record_id: str, rng: Dict[str, str],
-) -> tuple[List[Dict[str, Any]], float]:
-    """验证记录读取与区间一致性双级校验（任务 5.1）。
+) -> tuple[Dict[str, str], float]:
+    """验证记录存在性与记录级区间一致性校验（公共校验件——
+    ruler_compare 与 ab_compare 同源消费，sandbox-and-report-supplement
+    D4「校验链复用非复制」提取）。
 
     Returns:
-        (逐笔行列表, init_cash, excluded_open_trades)。逐笔行含归一后
-        的 entry_time/exit_time（pd.Timestamp）/direction（long|short）
-        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+        (rec_range_norm, init_cash)。rec_range_norm 为记录 request_range
+        归一后形制 {symbol, timeframe, start, end}（时间戳 to_utc 归一、
+        isoformat 出站——双记录对照的相等比较基准）。
 
     Raises:
         ResearchError: 引用不存在（附合法形制）；记录无单区间
             request_range；symbol/timeframe 不一致；记录级区间归一后
-            不相等（附两侧归一值）；逐笔越界（附 seq+时间）。
+            不相等（附两侧归一值）；缺实际生效 init_cash。
     """
     from core.persistence.repository import research as rr
 
@@ -162,7 +164,35 @@ def load_validation_trades(
             "引用的验证记录缺实际生效 init_cash（净均值口径分母）",
             detail={"param": "trade_source.record.init_cash",
                     "record_id": record_id})
+    rec_range_norm = {
+        "symbol": req_range["symbol"], "timeframe": req_range["timeframe"],
+        "start": rec_start.isoformat(), "end": rec_end.isoformat()}
+    return rec_range_norm, float(init_cash)
 
+
+def load_record_trades(
+    db_path: Path, record_id: str, rng: Dict[str, str],
+) -> tuple[List[Dict[str, Any]], int]:
+    """验证记录逐笔装载与逐笔级校验（公共校验件——持仓中排除/逐笔
+    区间越界拒绝；ruler_compare 与 ab_compare 同源消费）。
+
+    Args:
+        rng: 评估区间（记录级一致性已由 resolve_validation_record
+            前置保证——逐笔越界判定归一自评估区间）。
+
+    Returns:
+        (逐笔行列表, excluded_open_trades)。逐笔行含归一后的
+        entry_time/exit_time（pd.Timestamp）/direction（long|short）
+        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+
+    Raises:
+        ResearchError: 记录无逐笔行；逐笔越界（附 seq+时间）；
+            交易清单全部为持仓中行。
+    """
+    from core.persistence.repository import research as rr
+
+    req_start = to_utc(pd.Timestamp(rng["start"]))
+    req_end = to_utc(pd.Timestamp(rng["end"]))
     executions = rr.get_validation_executions(db_path, record_id)
     trades: List[Dict[str, Any]] = []
     for exec_i, exe in enumerate(executions):
@@ -214,7 +244,29 @@ def load_validation_trades(
             "交易清单全部为持仓中行（无已出场交易可对照）",
             detail={"param": "trades",
                     "excluded_open_trades": open_excluded})
-    return closed, float(init_cash), open_excluded
+    return closed, open_excluded
+
+
+def load_validation_trades(
+    db_path: Path, record_id: str, rng: Dict[str, str],
+) -> tuple[List[Dict[str, Any]], float, int]:
+    """验证记录读取与区间一致性双级校验（任务 5.1；组合壳——校验
+    本体在 resolve_validation_record/load_record_trades 两公共件，
+    供 ab_compare 双记录同源消费）。
+
+    Returns:
+        (逐笔行列表, init_cash, excluded_open_trades)。逐笔行含归一后
+        的 entry_time/exit_time（pd.Timestamp）/direction（long|short）
+        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+
+    Raises:
+        ResearchError: 引用不存在（附合法形制）；记录无单区间
+            request_range；symbol/timeframe 不一致；记录级区间归一后
+            不相等（附两侧归一值）；逐笔越界（附 seq+时间）。
+    """
+    _, init_cash = resolve_validation_record(db_path, record_id, rng)
+    trades, open_excluded = load_record_trades(db_path, record_id, rng)
+    return trades, init_cash, open_excluded
 
 
 # ----------------------------------------------------------- 浪模式核心
@@ -230,7 +282,7 @@ def compare_wave(
     浪-笔匹配：入场时点落入 [浪起, 浪止] 闭区间且方向一致（多浪
     重叠取时间序第一匹配）；识别=入场距浪起 ≤ identify_window×浪长
     （时间比例，含等号）；识别率按浪去重；捕获=方向化价差÷浪幅。
-    n<3 时 CI=null 附样本数（附着层契约——bootstrap 全在 _net_stats）。
+    n<3 时 CI=null 附样本数（附着层契约——bootstrap 全在 net_stats）。
     """
     n_waves = len(waves)
     matched: List[Optional[Dict[str, Any]]] = []
@@ -382,8 +434,6 @@ def compare_box(
         else:
             n_other += 1
 
-    months = ({t["entry_time"].strftime("%Y-%m") for t in trades}
-              if trades else set())
     n_total = len(trades)
     return {
         "n_trades": n_total,
@@ -394,20 +444,20 @@ def compare_box(
         "edge_window": edge_window,
         "edge_q_low": float(edge_q_low), "edge_q_high": float(edge_q_high),
         "buffer": float(buffer),
-        # 月频分母=交易月份去重计数（下限 1）
-        "monthly_frequency": (n_total / max(len(months), 1))
-        if n_total else None,
-        "trades_months_distinct": len(months),
+        # 月频口径单源在 monthly_frequency_stats（sandbox-report-
+        # supplement 对质②提取——本处与 ab_compare 同源消费）
+        **monthly_frequency_stats(trades),
     }
 
 
 # ----------------------------------------------------------- 净值侧统计
 
-def _net_stats(
+def net_stats(
     trades: List[Dict[str, Any]], init_cash: float,
     *, B: int = DEFAULT_B, seed: int = DEFAULT_SEED,
 ) -> Dict[str, Any]:
-    """费后净均值统计：net_i = pnl_i（已含费滑）÷ init_cash ×100。"""
+    """费后净均值统计（公共件——ruler_compare 与 ab_compare 同源
+    消费）：net_i = pnl_i（已含费滑）÷ init_cash ×100。"""
     from core.scoring.statistics import boot_ci
 
     nets = [t["pnl"] / init_cash * 100.0 for t in trades
@@ -425,6 +475,77 @@ def _net_stats(
         if nets else None,
         "net_caliber": "逐笔 PnL（已含费滑）÷ init_cash（百分比形）",
     }
+
+
+def monthly_frequency_stats(
+    trades: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """月频统计（公共件——ruler_compare 箱模式与 ab_compare 两组指标
+    同源消费，sandbox-and-report-supplement 对质②提取）：分母=交易
+    月份去重计数（entry_time YYYY-MM，下限 1）。"""
+    months = ({t["entry_time"].strftime("%Y-%m") for t in trades}
+              if trades else set())
+    n_total = len(trades)
+    return {
+        "monthly_frequency": (n_total / max(len(months), 1))
+        if n_total else None,
+        "trades_months_distinct": len(months),
+    }
+
+
+# ----------------------------------------------------------- 对照公共校验件
+
+def validate_compare_numeric_params(
+    identify_window: float, edge_q_low: float, edge_q_high: float,
+    buffer: float, B: int, seed: int,
+) -> None:
+    """对照族数值参数校验单源（公共件——ruler_compare 与 ab_compare
+    两壳同源消费，sandbox-and-report-supplement 对质①提取）：六参数
+    域校验＋edge_q 联合＋B/seed 前置 422。mode/dimension 值校验各壳
+    自留（值域不同构）。
+
+    Raises:
+        ResearchError: 任一参数越域（422——bool 排除＋字符串数字拒，
+            委托 param_guard 单源；B/seed 非法不前置则裸穿 boot 统计
+            件/np 层——bool 排除为 int 子类陷阱防御）。
+    """
+    # 数值参数校验委托 param_guard 单源（bool 排除＋字符串数字拒——
+    # 原 float() 静默转换会让 'abc' 裸 ValueError 落 500 与 '0.5'
+    # 静默放行并存；bool(True) 经 float 转 1.0 落域内同族陷阱）
+    _require_float_range(
+        identify_window, name="identify_window", lo=0, hi=1,
+        lo_excl=True)
+    _require_float_range(
+        edge_q_low, name="edge_q_low", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    _require_float_range(
+        edge_q_high, name="edge_q_high", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    if edge_q_low >= edge_q_high:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
+            detail={"param": "edge_q_low|edge_q_high",
+                    "actual": [edge_q_low, edge_q_high],
+                    "legal_range": "0 < edge_q_low < edge_q_high < 1"})
+    _require_float_range(buffer, name="buffer", lo=0)
+    # B/seed 前置 422（condition_stats significance 同族契约）：不前置
+    # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
+    # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
+    # 静默截断。bool 排除（int 子类陷阱——True 静默当 1 次重抽样）。
+    if (isinstance(B, bool) or not isinstance(B, int)
+            or not 1 <= B <= BOOT_B_MAX):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
+            detail={"param": "B", "actual": B,
+                    "legal_range": f"1..{BOOT_B_MAX}"})
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"seed 须为整数: {seed!r}",
+            detail={"param": "seed", "actual": seed,
+                    "legal_form": "整数（随机种子）"})
 
 
 # ----------------------------------------------------------- 模板壳
@@ -467,43 +588,9 @@ def ruler_compare(
             f"mode 未知: {mode!r}",
             detail={"param": "mode", "actual": mode,
                     "legal_range": ["wave", "box"]})
-    # 数值参数校验委托 param_guard 单源（bool 排除＋字符串数字拒——
-    # 原 float() 静默转换会让 'abc' 裸 ValueError 落 500 与 '0.5'
-    # 静默放行并存；bool(True) 经 float 转 1.0 落域内同族陷阱）
-    _require_float_range(
-        identify_window, name="identify_window", lo=0, hi=1,
-        lo_excl=True)
-    _require_float_range(
-        edge_q_low, name="edge_q_low", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    _require_float_range(
-        edge_q_high, name="edge_q_high", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    if edge_q_low >= edge_q_high:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
-            detail={"param": "edge_q_low|edge_q_high",
-                    "actual": [edge_q_low, edge_q_high],
-                    "legal_range": "0 < edge_q_low < edge_q_high < 1"})
-    _require_float_range(buffer, name="buffer", lo=0)
-    # B/seed 前置 422（condition_stats significance 同族契约）：不前置
-    # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
-    # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
-    # 静默截断。bool 排除（int 子类陷阱——True 静默当 1 次重抽样）。
-    if (isinstance(B, bool) or not isinstance(B, int)
-            or not 1 <= B <= BOOT_B_MAX):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
-            detail={"param": "B", "actual": B,
-                    "legal_range": f"1..{BOOT_B_MAX}"})
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"seed 须为整数: {seed!r}",
-            detail={"param": "seed", "actual": seed,
-                    "legal_form": "整数（随机种子）"})
+    # 六参数域校验单源（对照族公共件——与 ab_compare 同源消费）
+    validate_compare_numeric_params(
+        identify_window, edge_q_low, edge_q_high, buffer, B, seed)
     record_id = validate_trade_source(trade_source)
 
     # 记录级+逐笔级校验（5.1）与交易清单装载
@@ -539,7 +626,7 @@ def ruler_compare(
         waves = [w for w in all_waves if w["start"] >= start_ts]
         wave_stats = compare_wave(
             trades, waves, identify_window=identify_window)
-        net = _net_stats(trades, init_cash, B=B, seed=seed)
+        net = net_stats(trades, init_cash, B=B, seed=seed)
         payload["wave"] = wave_stats
         payload["threshold"] = float(threshold)
         payload.update(net)
@@ -570,7 +657,7 @@ def ruler_compare(
         box_stats = compare_box(
             trades, df, edge_window=edge_window, edge_q_low=edge_q_low,
             edge_q_high=edge_q_high, buffer=buffer)
-        net = _net_stats(trades, init_cash, B=B, seed=seed)
+        net = net_stats(trades, init_cash, B=B, seed=seed)
         payload["box"] = box_stats
         payload.update(net)
         sample_size = len(trades)

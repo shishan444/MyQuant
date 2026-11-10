@@ -398,8 +398,10 @@ class TestMapIntegrity:
     """T1-U3 映射表完整性结构断言——CI 层首拦（引擎新增码未同步即红）。"""
 
     def test_map_covers_full_allocation_domain(self):
+        # 35=任务级封顶缩量／36=熔断屏蔽开新仓
+        # （sandbox-and-report-supplement ③层＋D3①）
         assert set(EVENT_REASON_MAP.keys()) == (
-            set(range(10, 14)) | set(range(20, 26)) | set(range(30, 35)))
+            set(range(10, 14)) | set(range(20, 26)) | set(range(30, 37)))
 
     def test_engine_codes_subset_of_map(self):
         assert engine_written_event_codes() <= frozenset(
@@ -407,7 +409,8 @@ class TestMapIntegrity:
 
     def test_reason_domain_two_families(self):
         decision_family = {"exposure_cap", "insufficient_funds",
-                           "risk_budget_fallback"}
+                           "risk_budget_fallback", "task_cap_scaled",
+                           "halted_entry_blocked"}
         eval_family = {"entry_exit_conflict", "add_inhibited"}
         reasons = {v["reason"] for v in EVENT_REASON_MAP.values()
                    if v["reason"] is not None}

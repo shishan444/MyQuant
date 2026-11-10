@@ -94,14 +94,19 @@ class TestCard24MalformedRangesGuard:
 
     def test_explicit_param_bypasses_guard(self, db):
         """显式传参不进继承分支不受守卫（用户指定优先于继承——
-        畸形 data_ranges+显式传参照常转化）。"""
+        畸形 data_ranges+显式传参照常转化）。
+
+        fr_296f43410afb 修复①注记：symbol 缺省继承后同款独立守卫
+        ——畸形 data_ranges 下缺省 symbol 无继承源即拒；本锚的守卫
+        绕过面须两参数全显式（各自独立守卫，显式者各自绕过）。"""
         hid = _hyp(db, "30m")
         with sqlite3.connect(db) as conn:
             conn.execute(
                 "UPDATE research_hypotheses SET data_ranges=? "
                 "WHERE hypothesis_id=?", ('["4h"]', hid))
         out = translate_hypothesis(
-            db, hypothesis_id=hid, strategy_timeframe="30m")
+            db, hypothesis_id=hid, strategy_symbol="BTCUSDT",
+            strategy_timeframe="30m")
         assert out["execution_timeframe"] == "30m"
 
 

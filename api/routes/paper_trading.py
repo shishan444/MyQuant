@@ -69,6 +69,10 @@ class PaperTaskCreate(BaseModel):
     symbol: Optional[str] = None
     window_bars: Optional[int] = Field(180, ge=1)
     stop_loss_pct: Optional[float] = Field(None, gt=0, le=1)
+    # 账户级硬熔断（sandbox-and-report-supplement D3②）：权益自峰值
+    # 回撤比率阈值 (0,1) 开区间；None/缺省=不启用（数值留空待用户给
+    # 后续零代码启用）
+    halt_drawdown_pct: Optional[float] = Field(None, gt=0, lt=1)
 
     @field_validator("symbol")
     @classmethod
@@ -117,6 +121,11 @@ class PaperTaskResponse(BaseModel):
     position_trail_peak: Optional[float] = None
     position_entry_bar_seq: Optional[int] = None
     unrealized_pnl: Optional[float] = None
+    # 账户级硬熔断（D3②）：参数列＋触发运行态（NULL/None=未配置/
+    # 未触发——可查询面）
+    halt_drawdown_pct: Optional[float] = None
+    halted_at: Optional[str] = None
+    halt_reason: Optional[str] = None
     # 统计组
     total_trades: int
     # 达标判定两维（查询期现算+first_met_at 直读——paper-trading-revamp 组 B4）
@@ -315,6 +324,9 @@ def _task_response_from(row: dict, research_status: str) -> PaperTaskResponse:
         fee=row["fee"], slippage=row["slippage"],
         leverage=row["leverage"], window_bars=row["window_bars"],
         stop_loss_pct=row["stop_loss_pct"],
+        halt_drawdown_pct=row.get("halt_drawdown_pct"),
+        halted_at=row.get("halted_at"),
+        halt_reason=row.get("halt_reason"),
         bars_processed=row["bars_processed"],
         last_bar_time=row["last_bar_time"],
         balance=row["balance"], position_side=row["position_side"],
@@ -454,7 +466,8 @@ def create_task(
         leverage=(body.leverage if body.leverage is not None
                   else dna.risk_genes.leverage),
         window_bars=body.window_bars,
-        stop_loss_pct=body.stop_loss_pct)
+        stop_loss_pct=body.stop_loss_pct,
+        halt_drawdown_pct=body.halt_drawdown_pct)
     # 分派移入事务内重读（C3-02/S-1：TOCTOU 防护恢复——原三态分派
     # 的 transit 事务内校验被四分支改造删除，此处以「事务内重读
     # Strategy.status 再分派」为更严格实现：并发归档/转正在事务内

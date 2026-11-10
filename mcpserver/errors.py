@@ -110,7 +110,7 @@ HINTS: Dict[str, str] = {
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
         "param_sweep|regime_split|precheck_hypothesis|segment_narrative|"
         "counter_profile|exit_sweep|wave_inventory|box_inventory|"
-        "ruler_compare",
+        "ruler_compare|ab_compare",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
@@ -226,8 +226,26 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "min_len": "min_len 须为正整数（成箱最小连续 bar 数）",
     "width_thr": "width_thr 须为 (0,1) 开区间小数（宽度门槛，含等号）",
     # 对照模板参数面（add-evaluation-ruler）
-    "mode": "对照模式未知：mode ∈ wave（浪模式：识别率/捕获率/净均值"
-            "CI）|box（箱体模式：先到对侧比例/三分类/月频）",
+    "mode": "对照模式未知：ruler_compare mode ∈ wave（浪模式：识别率/"
+            "捕获率/净均值CI）|box（箱体模式：先到对侧比例/三分类/"
+            "月频）；ab_compare mode 固定 \"ab\"（A/B 双记录对照）",
+    # A/B 对照参数面（sandbox-and-report-supplement B4——新校验面
+    # 随第 16 模板登记；mode/trade_source 族键与 ruler_compare 共用）
+    "dimension": "A/B 对照维度未知：dimension ∈ none（默认——仅两组"
+                "指标+组间差）|wave（挂识别率/捕获率）|box（挂先到"
+                "对侧比例）",
+    "trade_source_a|trade_source_b": "双记录区间不等（两侧归一值在 "
+                                     "detail 披露）：A/B 对照须两记录 "
+                                     "data_range 全值相等——改用同区间"
+                                     "记录重试",
+    # 任务级封顶参数面（sandbox-and-report-supplement）：leverage 与
+    # margin_cap 共用 require_task_cap_params 校验单源——扫描键按
+    # detail.field 取（leverage 已有 PtTask 覆写先例面，此处补 margin_cap）
+    "margin_cap": "margin_cap 非法：须为 (0,0.60] 小数（需求 60% 资金"
+                  "使用上限硬约束封顶，恰 0.60 合法、0/负值拒绝）",
+    "halt_drawdown_pct": "halt_drawdown_pct 非法：须为 (0,1) 开区间"
+                         "回撤比率（0/1/负值拒绝——熔断保命参数，"
+                         "未配置=不启用）",
     "trade_source": "交易清单来源形制非法：唯一合法 {kind:"
                     "\"validation\", record_id:\"rec_...\"}"
                     "（隔离验证记录）",
@@ -263,6 +281,12 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "strategy_timeframe": "转化执行周期无法缺省继承（data_ranges 周期"
                           "不一致）：显式传 strategy_timeframe 指定执行"
                           "周期，或修正假设 data_ranges 后重新登记",
+    # 转化品种（fr_296f43410afb 修复①，sandbox-and-report-supplement
+    # 块 C）：symbol 缺省继承守卫拒绝的 detail.param 面（畸形
+    # data_ranges/首条目缺 symbol 键）
+    "strategy_symbol": "转化品种无法缺省继承（data_ranges 无可用 "
+                       "symbol）：显式传 strategy_symbol 指定策略品种，"
+                       "或修正假设 data_ranges 后重新登记",
     "stop_loss": "止损参数越域：值域随 sl_mode 分档（pct 档与 atr 档"
                  "不同）——查看 detail.legal_range 与 sl_mode，按档修正",
     "events": "事件数超上限：缩小区间或收窄 indicators 指标集"

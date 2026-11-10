@@ -456,6 +456,11 @@ class BacktestResult:
     # mtf_gated_bars：MTF 决策门控拦截 bar 计（SignalSet 透传——
     # null=DNA 无门控面与 0=门控全过严格区分；记录级聚合在入口层）
     mtf_gated_bars: "int | None" = None
+    # halt_info：账户级硬熔断三态披露（sandbox-and-report-supplement
+    # D3①——None=未配置（响应无键）；配置后 {halted: false}＝未触发
+    # /{halted: true, halted_at, halt_reason}＝触发。D3 范围界定：
+    # halted 记录不构成验证证据（证据地位待验证协议侧裁决）。
+    halt_info: "dict | None" = None
 
 
 @njit
@@ -772,7 +777,8 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                   high_arr, low_arr, direction_signal,
                   bar_ts_minutes, tf_minutes,
                   mmr_tier_max, mmr_tier_rate,
-                  trace_buf, trail_buf):
+                  trace_buf, trail_buf, task_cap_mult,
+                  halt_dd, peak_equity, halted, halted_bar):
     """逐 bar 订单回调（实时 SL/TP 与清算判定；SL 段按 sl_mode 三分派）。
 
     判定序（关键决策）：清算检查先于 SL/TP——杠杆仓权益击穿维持线
@@ -828,6 +834,19 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         trail_buf: trail 档止损线逐 bar 真值缓冲（NaN=无值；trail
             分支峰值更新点后写当 bar sl_level，非 trail 档不写——
             结果经 BacktestResult.trail_series 单源透出，禁事后重算）
+        task_cap_mult: 任务级封顶乘数（D1 合成序③层，
+            margin_cap×有效杠杆=min(DNA leverage, 任务级 leverage)；
+            0.0=禁用哨兵〔未传两参——③层不生效，存量逐位不变〕）。
+            顶=当 bar 权益×乘数；缩量至顶非跳过（与②层加仓超限
+            跳过语义分界）；缩量动作写留痕码 35。
+        halt_dd: 熔断阈值比率（D3①——0.0=未配置禁用哨兵）。
+        peak_equity/halted/halted_bar: 熔断三状态（1 元素可变数组，
+            装配段构造——沿 trace_buf 形制经 order_args 传入）：
+            peak_equity=权益峰值跟踪、halted=触发标志、halted_bar=
+            触发 bar 索引（Python 侧转时间戳出 halted_at）。判定=
+            峰值回撤 (peak−value_now)/peak ≥ halt_dd（含等号）；
+            触发后仅屏蔽 entries（出场/减仓/加仓照常——D3 范围），
+            被屏蔽的入场写留痕码 36。
     """
     i = c.i
     col = c.col
@@ -846,6 +865,20 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     # 费滑按基础费率收——杠杆放大由 _apply_leverage_to_equity 后处理
     effective_fee = fee
     effective_slippage = slippage
+
+    # ── 账户级硬熔断判定（sandbox-and-report-supplement D3①）──
+    # 峰值跟踪先于一切出场判定（当 bar 决策时点组合价值参与峰值）；
+    # 触发条件 (peak−value_now)/peak ≥ halt_dd 含等号（spec 显式）。
+    # 触发是单向的（halted 置位不回落——权益修复不自动恢复开仓）。
+    # 0.0=未配置禁用哨兵（首判即假——存量逐位不变）。
+    if halt_dd > 0.0:
+        if c.value_now > peak_equity[col]:
+            peak_equity[col] = c.value_now
+        if halted[col] < 0.5 and peak_equity[col] > 0.0:
+            if (peak_equity[col] - c.value_now) / peak_equity[col] \
+                    >= halt_dd:
+                halted[col] = 1.0
+                halted_bar[col] = float(i)
 
     # funding_acc 当 bar 旁路累计（永续口径——卡 C 3.3，先于一切出场
     # return：出场 bar 也计费）。计费=名义敞口×当 bar 费率×方向
@@ -1253,8 +1286,13 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
             slippage=effective_slippage,
         )
 
-    # 入场信号
+    # 入场信号（熔断屏蔽：halted 置位后不再开新仓——持仓/平仓/加减仓
+    # 照常；被屏蔽的入场写留痕码 36〔rejected 族——halted_entry_
+    # blocked〕）
     if entries[i, col] > 0.5 and c.position_now == 0.0:
+        if halt_dd > 0.0 and halted[col] > 0.5:
+            trace_buf[i, col] = 36.0  # 留痕：熔断屏蔽开新仓
+            return NoOrder
         entry_price[col] = current_price
         entry_bar[col] = float(i)  # 持有计数起点（每次入场独立重计）
         peak_price[col] = current_price  # trail 峰值重置为成交价（开仓重锚）
@@ -1314,6 +1352,26 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
                 trace_buf[i, col] = 32.0
         else:
             trace_buf[i, col] = 10.0  # 留痕：入场（百分比仓）
+        # ── ③任务级封顶（sandbox-and-report-supplement D1 合成序③层
+        #    ——缩量至顶非跳过；series×risk_budget 不可达兜底分支提前
+        #    return，不进③（装载层已拒路径，缩量无语义））。顶=当 bar
+        #    权益×margin_cap×有效杠杆（装配侧 min 链已并入乘数）；
+        #    入场 bar position_now==0，单笔名义即总敞口。数量仓按价格
+        #    折算、百分比仓按权益折算（vbt 百分比基准=value_now）；
+        #    触发缩量写留痕码 35（发单但缩量——filled_or_rejected 族）。
+        #    0.0=禁用哨兵（未传两参），首判即假——存量逐位不变 ──
+        if task_cap_mult > 0.0:
+            _cap_task = c.value_now * task_cap_mult
+            if order_size_type == 0:
+                if abs(order_size) * current_price > _cap_task:
+                    order_size = np.float64(
+                        (_cap_task / current_price) * dir_sign)
+                    trace_buf[i, col] = 35.0  # 留痕：任务级封顶缩量
+            else:
+                if abs(order_size) * c.value_now > _cap_task:
+                    order_size = np.float64(
+                        (_cap_task / c.value_now) * dir_sign)
+                    trace_buf[i, col] = 35.0  # 留痕：任务级封顶缩量
         return vbt_nb.order_nb(
             size=order_size,
             size_type=order_size_type,
@@ -1343,6 +1401,21 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         if notional_now + add_value > c.value_now * max_exposures[col]:
             trace_buf[i, col] = 30.0  # 留痕：敞口上限拒绝
             return NoOrder
+        # ── ③任务级封顶（加仓路）：总敞口=现有+新增，缩量至顶非跳过
+        #    （与②层超限跳过语义分界——同 bar ②先判：超②界跳过、②
+        #    放行超③顶缩量）；余量≤0（存量敞口已在顶上）无缩量空间
+        #    =不发单（缩至零退化形），留痕码 35 由 resolver 判
+        #    rejected+task_cap_scaled。0.0=禁用哨兵——存量逐位不变。
+        #    缩量标志延后写码（11 加仓码先写、35 缩量信息优先覆盖）──
+        _task_scaled_add = False
+        if task_cap_mult > 0.0:
+            _cap_task_add = c.value_now * task_cap_mult
+            if notional_now + add_value > _cap_task_add:
+                add_value = _cap_task_add - notional_now
+                _task_scaled_add = True
+                if add_value <= 0.0:
+                    trace_buf[i, col] = 35.0  # 留痕：任务级封顶缩至零
+                    return NoOrder
         old_pos = abs(c.position_now)
         old_ep = entry_price[col]
         add_shares = add_value / current_price
@@ -1357,6 +1430,10 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
         else:
             add_dir = np.int64(1)   # 空（加空）
         trace_buf[i, col] = 11.0  # 留痕：加仓信号
+        if _task_scaled_add:
+            # ③缩量发单（35 覆盖 11——缩量信息优先；resolver 对照成交
+            # 判 filled+task_cap_scaled，size=缩后值）
+            trace_buf[i, col] = 35.0
         return vbt_nb.order_nb(
             size=np.float64(add_shares),
             size_type=np.int64(0),  # 绝对股数（名义=权益×add_fraction 精确语义）
@@ -1372,7 +1449,10 @@ class BacktestEngine:
     """vectorbt 回测引擎（Portfolio.from_order_func 形制）。"""
 
     def __init__(self, init_cash: float = 100000, fee: float = 0.001,
-                 slippage: float = 0.0005, db_path=None):
+                 slippage: float = 0.0005, db_path=None,
+                 task_leverage: int | None = None,
+                 task_margin_cap: float | None = None,
+                 halt_drawdown_pct: float | None = None):
         self.init_cash = init_cash
         self.fee = fee
         self.slippage = slippage
@@ -1380,6 +1460,18 @@ class BacktestEngine:
         # 插件注册表查询经 db_path；None=不支持 fx 形制（装载显式拒
         # ——桥层/路由传入，纯计算直调面仅指标形制可用）
         self.db_path = db_path
+        # 任务级封顶两参（sandbox-and-report-supplement D1 合成序③层）：
+        # 权威=请求参数；None=该层不生效（合成序退化为既有两层，存量
+        # 行为逐位不变）。③层启用条件=两参都传（顶公式
+        # 权益×margin_cap×有效杠杆 缺一不可算）——单传一参不启用。
+        self.task_leverage = task_leverage
+        self.task_margin_cap = task_margin_cap
+        # 账户级硬熔断（sandbox-and-report-supplement D3①——沙盒路）：
+        # 权益自峰值回撤达阈值（≥含等号）停止开新仓（持仓/平仓照常）；
+        # None=不启用（三态：未配置不写响应键）。判定口径=引擎组合
+        # 当 bar 价值 c.value_now（原始口径——杠杆放大后处理前的执行
+        # 内嵌可达值；与响应权益曲线〔放大后〕的口径差在此披露）。
+        self.halt_drawdown_pct = halt_drawdown_pct
 
     def _position_sizing_disclosure(
         self, dna, portfolio, enhanced_df,
@@ -1389,7 +1481,9 @@ class BacktestEngine:
 
         {mode, risk_fraction, leverage_cap, replay_status,
         orders_capped, avg_entry_size, max_entry_size}——mode/
-        risk_fraction 为声明面。replay_status（F-B4-1 失败不虚标）：
+        risk_fraction 为声明面；③层任务级封顶启用（两参都传）时纯增
+        第八键 capped_by_task_cap（未传两参无键——存量七子键逐位不变）。
+        replay_status（F-B4-1 失败不虚标）：
         统计三键的可信度状态，恒带两态——"ok"=值可信（fixed 档声明
         面确定 / risk_budget 重放成功含零交易）；"failed"=重放异常，
         orders_capped 与 avg/max_entry_size 置 None（此前失败路径
@@ -1430,6 +1524,15 @@ class BacktestEngine:
             "avg_entry_size": None,
             "max_entry_size": None,
         }
+        # 任务级封顶计数（sandbox-and-report-supplement D1 ③层）：
+        # 计数源=引擎留痕码 35 行数（fixed/数量仓/加仓全部缩量动作——
+        # 发单但缩量与缩至零不发单两形态都计；码 35 与 orders_capped
+        # 计数域分立：后者仅码 10 的②层截断重放对照）。
+        if (self.task_leverage is not None
+                and self.task_margin_cap is not None):
+            _tb = getattr(self, "_last_trace_buf", None)
+            out["capped_by_task_cap"] = (
+                int((_tb == 35.0).sum()) if _tb is not None else 0)
         if mode != "risk_budget" or rg.risk_fraction is None:
             return out  # fixed 档：声明面即全部（size 恒定=position_size）
         try:
@@ -1601,6 +1704,36 @@ class BacktestEngine:
         self._last_trail_buf = trail_buf_sim
         self._last_swallowed = getattr(sig_set, "swallowed", None)
         self._last_mtf_gated_bars = getattr(sig_set, "mtf_gated_bars", None)
+        # 任务级封顶乘数（D1 合成序③层）：启用=两参都传；
+        # 有效杠杆=min(DNA 声明, 任务级)（min 链单点——任务级只收严
+        # 不放宽）；乘数=margin_cap×有效杠杆，0.0=禁用哨兵进 njit
+        # （未传两参首判即假，存量逐位不变）
+        if (self.task_leverage is not None
+                and self.task_margin_cap is not None):
+            effective_task_leverage = min(
+                leverage, float(self.task_leverage))
+            task_cap_mult_val = float(self.task_margin_cap) \
+                * effective_task_leverage
+        else:
+            effective_task_leverage = None
+            task_cap_mult_val = 0.0
+        # 生效面披露（实例属性——run() 响应组装消费后清空防跨 run
+        # 泄漏，沿 _last_sl_col 先例；None=③层未启用不写键）
+        self._last_task_cap = (
+            {"margin_cap": float(self.task_margin_cap),
+             "effective_leverage": effective_task_leverage}
+            if effective_task_leverage is not None else None)
+        # 熔断三状态数组（D3①——单元素可变数组经 order_args 传入；
+        # peak 初值 0=首 bar 必更新；halted_bar -1=未触发哨兵）
+        halt_dd_val = (float(self.halt_drawdown_pct)
+                       if self.halt_drawdown_pct is not None else 0.0)
+        peak_equity_sim = np.zeros(1, dtype=np.float64)
+        halted_sim = np.zeros(1, dtype=np.float64)
+        halted_bar_sim = np.full(1, -1.0, dtype=np.float64)
+        self._last_halt_state = (
+            {"halt_drawdown_pct": float(self.halt_drawdown_pct),
+             "halted": halted_sim, "halted_bar": halted_bar_sim}
+            if self.halt_drawdown_pct is not None else None)
 
         pf = vbt.Portfolio.from_order_func(
             close,
@@ -1645,6 +1778,15 @@ class BacktestEngine:
             _mm_tier_arrays()[1],
             trace_buf_sim,
             trail_buf_sim,
+            # 任务级封顶乘数（③层——0.0=禁用哨兵；见 order_func_nb
+            # docstring 的乘数语义与 _build_portfolio 装配段 min 链）
+            np.float64(task_cap_mult_val),
+            # 熔断四参（D3①：阈值标量＋三状态数组——未配置时阈值
+            # 0.0 首判即假，状态数组照传不写）
+            np.float64(halt_dd_val),
+            peak_equity_sim,
+            halted_sim,
+            halted_bar_sim,
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,
@@ -1786,7 +1928,30 @@ class BacktestEngine:
         # 口径；fixed 档 size 恒定只报 mode/参数面）
         position_sizing_disclosure = self._position_sizing_disclosure(
             dna, portfolio, enhanced_df)
+        # ③层生效面披露（sandbox-and-report-supplement：装配段
+        # _last_task_cap={margin_cap 实参, effective_leverage=min 链值}；
+        # None=③层未启用不写键——存量逐位不变；消费即清防跨 run 泄漏）
+        _task_cap = getattr(self, "_last_task_cap", None)
+        self._last_task_cap = None
+        if _task_cap is not None:
+            position_sizing_disclosure["task_cap"] = _task_cap
         metrics["position_sizing"] = position_sizing_disclosure
+        # 熔断三态组装（D3①：装配段状态数组→halt_info；halted_at=
+        # 触发 bar 的开盘时刻〔enhanced_df 索引〕；未配置 None=响应
+        # 无键。消费即清防跨 run 泄漏）
+        halt_info_out = None
+        _halt_state = getattr(self, "_last_halt_state", None)
+        self._last_halt_state = None
+        if _halt_state is not None:
+            _halted = bool(_halt_state["halted"][0] > 0.5)
+            halt_info_out = {"halted": _halted}
+            if _halted:
+                _hbar = int(_halt_state["halted_bar"][0])
+                halt_info_out["halted_at"] = (
+                    str(enhanced_df.index[_hbar])
+                    if 0 <= _hbar < len(enhanced_df.index) else None)
+                halt_info_out["halt_reason"] = (
+                    "equity_drawdown_from_peak_ge_halt_drawdown_pct")
 
         if len(equity_curve) >= 2 and equity_curve.iloc[0] > 0:
             raw_return = float(equity_curve.iloc[-1] / equity_curve.iloc[0] - 1)
@@ -1855,6 +2020,7 @@ class BacktestEngine:
             swallowed_rows=_swallowed,
             value_curve_raw=value_curve_raw,
             mtf_gated_bars=_mtf_gated,
+            halt_info=halt_info_out,
         )
 
     def run(
@@ -2104,6 +2270,14 @@ class BacktestEngine:
             _mm_tier_arrays()[1],
             trace_buf_batch,
             trail_buf_batch,
+            # 任务级封顶乘数：批量路径不承载任务级参数（进化种群评估
+            # 无请求参数面）——恒禁用哨兵 0.0，③层在批量路径不生效；
+            # 熔断四参同理禁用（0.0＋零状态数组——签名对齐）
+            np.float64(0.0),
+            np.float64(0.0),
+            np.zeros(1, dtype=np.float64),
+            np.zeros(1, dtype=np.float64),
+            np.full(1, -1.0, dtype=np.float64),
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,

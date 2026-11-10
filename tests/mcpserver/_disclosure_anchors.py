@@ -63,7 +63,9 @@ _SEG_REQUIRED = ("params必填键（缺键422detail含键名）：", "支持cond
 # wave_inventory 段（add-evaluation-ruler）：起点=段名，终点=docstring 尾
 _SEG_WAVE = ("wave_inventory浪清单盘点", "box_inventory箱体盘点")
 _SEG_BOX = ("box_inventory箱体盘点", "ruler_compare对照指标")
-_SEG_RULER = ("ruler_compare对照指标", '"""')
+_SEG_RULER = ("ruler_compare对照指标", "ab_compareA/B对照")
+# ab_compare 段（sandbox-and-report-supplement）：起点=段名，终点=docstring 尾
+_SEG_AB = ("ab_compareA/B对照", '"""')
 # condition_stats significance 披露段（CARD-03）：起点=forward_bars 句
 # （_SEG_OVERVIEW 既有终点锚——插入点即其后），终点=方向口径句
 _SEG_CONDSIG = ("condition_stats支持params.forward_bars",
@@ -223,6 +225,19 @@ GROUP1_ANCHORS: tuple = (
         scope="ruler_compare 段落",
         basis="add-evaluation-ruler spec 对照指标三 Requirement"
              "（数据来源与区间校验/浪模式/箱体模式）",
+    ),
+    DisclosureAnchor(
+        anchor_id="G1-ab_compare段-核心要素",
+        source="tools", seg_start=_SEG_AB[0], seg_end=_SEG_AB[1],
+        kind="token_set",
+        tokens=("trade_source_a/trade_source_b", "全值相等", "两侧值",
+                "params.dimension", "none|wave|box", "boot_diff", "a−b",
+                "n≥3", "底账现算一次两组共享", "±1pp", "不烧判定并集"),
+        covered=("ab_compare",),
+        scope="ab_compare 段落",
+        basis="sandbox-and-report-supplement spec evaluation-ruler delta"
+             "「对照指标·A/B 结构对照」Requirement（双记录区间相等/"
+             "dimension 三值/组间差 CI/回望性三锚）",
     ),
     DisclosureAnchor(
         anchor_id="G1-condition_stats段-significance披露",
@@ -717,7 +732,7 @@ REGISTERED_TEMPLATES: tuple = (
     "event_study", "pattern_mining", "screen_patterns", "param_sweep",
     "regime_split", "precheck_hypothesis", "segment_narrative",
     "counter_profile", "exit_sweep", "wave_inventory", "box_inventory",
-    "ruler_compare",
+    "ruler_compare", "ab_compare",
 )
 
 # ②能力自述条目登记键集 ∪ 白名单 == CAPABILITY_DOC 条目标题提取集

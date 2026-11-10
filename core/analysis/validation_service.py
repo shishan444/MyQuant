@@ -686,13 +686,22 @@ def _build_detail_payload(
 
 
 def _params_exec_keys(detail: Dict[str, Any]) -> Dict[str, float]:
-    """params 三键提取（B4）：init_cash/fee/slippage=实际生效实参。
+    """params 执行参数键提取（B4 三键＋A3 五键化）：init_cash/fee/
+    slippage=实际生效实参；leverage/margin_cap=任务级封顶两参
+    （sandbox-and-report-supplement——传了才写：桥 detail 仅在实参
+    非 None 时写键，未传两参键集逐位不变，init_cash 等三键语义与
+    ruler 取值链零影响）。
 
     值源=桥 detail 载荷回显（桥以生效形参填充——显式传参与默认两形
     态同源，不在此硬编码默认值）。
     """
-    return {"init_cash": detail["init_cash"], "fee": detail["fee"],
-            "slippage": detail["slippage"]}
+    out = {"init_cash": detail["init_cash"], "fee": detail["fee"],
+           "slippage": detail["slippage"]}
+    if detail.get("leverage") is not None:
+        out["leverage"] = detail["leverage"]
+    if detail.get("margin_cap") is not None:
+        out["margin_cap"] = detail["margin_cap"]
+    return out
 
 
 def run_isolated_backtest(
@@ -704,6 +713,8 @@ def run_isolated_backtest(
     request_range: Dict[str, str],
     threshold_profile: Optional[Dict[str, Any]] = None,
     rerun_mode: bool = False,
+    leverage: Optional[int] = None,
+    margin_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     """隔离回测（判定流见模块 docstring）。
 
@@ -764,7 +775,8 @@ def run_isolated_backtest(
         run_backtest_on_range(
             db_path, data_dir, dna, symbol, timeframe,
             request_range["start"], request_range["end"], warmup_bars,
-            strategy_id=strategy_id, with_detail=True))
+            strategy_id=strategy_id, with_detail=True,
+            task_leverage=leverage, task_margin_cap=margin_cap))
 
     # 门槛机械判定（组合用收紧 profile；三段闸门含证据闸门/CI）
     verdict, details = judge(metrics, effective_profile,
@@ -835,6 +847,8 @@ def random_window_test(
     seed: int = 42,
     threshold_profile: Optional[Dict[str, Any]] = None,
     hypothesis_id: Optional[str] = None,
+    leverage: Optional[int] = None,
+    margin_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     """随机窗口抽查（种子可复现）。
 
@@ -925,7 +939,8 @@ def random_window_test(
             run_backtest_on_range(
                 db_path, data_dir, dna, symbol, timeframe,
                 str(w_start.isoformat()), str(w_end.isoformat()), warmup_bars,
-                strategy_id=strategy_id, with_detail=True))
+                strategy_id=strategy_id, with_detail=True,
+                task_leverage=leverage, task_margin_cap=margin_cap))
         exec_params = _params_exec_keys(w_detail)
         detail_execs.append(_build_detail_payload(
             w_detail, exec_ref=f"win_{i}", exec_index=i,
@@ -1008,6 +1023,9 @@ def run_sandbox_backtest(
     slippage: float = 0.0005,
     init_cash: float = 100000.0,
     hypothesis_id: Optional[str] = None,
+    leverage: Optional[int] = None,
+    margin_cap: Optional[float] = None,
+    halt_drawdown_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错，不判门槛、不入验证记录。
 
@@ -1015,9 +1033,14 @@ def run_sandbox_backtest(
     并集（封堵"先偷看后验证"），不挂时以 adhoc 日志留痕。
     区间 bar 数超上限拒绝（防爆超时，引导走隔离验证协议）。
 
+    任务级封顶两参（sandbox-and-report-supplement D1 ③层——路由层
+    已完成值域校验）：leverage/margin_cap 透传引擎；两参都传时③层
+    生效（缩量至顶＋capped_by_task_cap 计数＋task_cap 生效面披露），
+    未传逐位不变。
+
     Returns:
         {"strategy_id", "symbol", "timeframe", "metrics", "bars_used",
-         "hypothesis_id", "sandbox": True}
+         "hypothesis_id", "sandbox": True, "task_params"?}
     """
     # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
     tf_minutes = TF_MINUTES.get(timeframe, 240)
@@ -1042,7 +1065,9 @@ def run_sandbox_backtest(
     metrics, _trade_returns, actual_warmup, bars_used = run_backtest_on_range(
         db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
         init_cash=init_cash, fee=fee, slippage=slippage,
-        strategy_id=strategy_id)
+        strategy_id=strategy_id,
+        task_leverage=leverage, task_margin_cap=margin_cap,
+        task_halt_drawdown_pct=halt_drawdown_pct)
 
     # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
     # 取该假设全部日志条目 data_ranges，现成无需改动）
@@ -1057,11 +1082,34 @@ def run_sandbox_backtest(
         summary=f"sandbox backtest {symbol} {timeframe} [{start},{end}) "
                 f"fee={fee} slippage={slippage}")
 
-    return {"strategy_id": strategy_id, "symbol": symbol, "timeframe": timeframe,
-            "metrics": metrics, "bars_used": bars_used,
-            "warmup_bars": actual_warmup,
-            "hypothesis_id": hypothesis_id, "sandbox": True,
-            "note": "沙盒结果不构成验证证据；关联假设的区间已计入判定并集"}
+    # 任务级参数回显（A1：实际生效值——请求实参逐键传了才写；
+    # 有效杠杆=min(DNA 声明, 任务级) 从 metrics.position_sizing.task_cap
+    # 提取（引擎装配段 min 链单源），两参都传才生成）
+    response = {"strategy_id": strategy_id, "symbol": symbol,
+                "timeframe": timeframe,
+                "metrics": metrics, "bars_used": bars_used,
+                "warmup_bars": actual_warmup,
+                "hypothesis_id": hypothesis_id, "sandbox": True,
+                "note": "沙盒结果不构成验证证据；关联假设的区间已计入判定并集"}
+    if leverage is not None or margin_cap is not None:
+        task_params: Dict[str, Any] = {}
+        if leverage is not None:
+            task_params["leverage"] = leverage
+        if margin_cap is not None:
+            task_params["margin_cap"] = margin_cap
+        task_cap_face = (metrics.get("position_sizing") or {}).get(
+            "task_cap")
+        if task_cap_face is not None:
+            task_params["effective_leverage"] = task_cap_face[
+                "effective_leverage"]
+        response["task_params"] = task_params
+    # 熔断三态回显（D3①：halt_drawdown_pct 传入时写 halt_info——
+    # 未触发 {halted: false}／触发附 halted_at/halt_reason；未配置
+    # 无键。halted 记录不构成验证证据（证据地位待验证协议侧裁决））
+    if halt_drawdown_pct is not None:
+        response["halt_info"] = metrics.get("halt_info") or {
+            "halted": False}
+    return response
 
 
 def _missing_component_evidence(
@@ -1313,6 +1361,8 @@ def run_staged_validation(
     end: str,
     segmentation: str = "auto",
     segments: Optional[List[Dict[str, str]]] = None,
+    leverage: Optional[int] = None,
+    margin_cap: Optional[float] = None,
 ) -> Dict[str, Any]:
     """分段验证（检查⑤的分题型成绩单）。
 
@@ -1444,7 +1494,8 @@ def run_staged_validation(
             run_backtest_on_range(
                 db_path, data_dir, dna, symbol, timeframe,
                 seg_start, seg_end, warmup_bars, strategy_id=strategy_id,
-                with_detail=True))
+                with_detail=True,
+                task_leverage=leverage, task_margin_cap=margin_cap))
         # B4：段明细（exec_ref=段 label——auto 段为 type 映射值）；
         # adhoc 路径（无记录）明细收集但随本分支丢弃——无 record_id
         # 物理不可落，零明细行

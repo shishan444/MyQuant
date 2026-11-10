@@ -49,6 +49,10 @@ _BAR_STATE_COLUMNS = frozenset({
     "position_trail_peak", "position_entry_bar_seq", "unrealized_pnl",
     "pending_intent_json", "total_trades", "win_count", "loss_count",
     "total_pnl", "first_met_at", "heartbeat_at", "updated_at",
+    # 熔断触发运行态（sandbox-and-report-supplement D3②）：首触发
+    # 单次写（None→非 None），halt_drawdown_pct 是创建时参数不进每
+    # bar 状态面
+    "halted_at", "halt_reason",
 })
 
 # pt_task 状态机合法前态单源（design §5.1 五态+§7.1 端点 4 未拾取撤销
@@ -220,6 +224,7 @@ def create_task(
     leverage: int = 1,
     window_bars: Optional[int] = None,
     stop_loss_pct: Optional[float] = None,
+    halt_drawdown_pct: Optional[float] = None,
     task_id: Optional[str] = None,
     conn: Optional[Connection] = None,
 ) -> str:
@@ -238,7 +243,8 @@ def create_task(
         dna_snapshot_json=dna_snapshot_json, symbol=symbol,
         timeframe=timeframe, initial_cash=initial_cash, fee=fee,
         slippage=slippage, leverage=leverage, window_bars=window_bars,
-        stop_loss_pct=stop_loss_pct, bars_processed=0,
+        stop_loss_pct=stop_loss_pct, halt_drawdown_pct=halt_drawdown_pct,
+        bars_processed=0,
         research_status_snapshot=research_status_snapshot,
         created_at=now, updated_at=now,
     )
@@ -656,6 +662,19 @@ def sum_settled_funding_since(
     return float(v)
 
 
+def max_equity(db_path: Path, task_id: str) -> Optional[float]:
+    """任务权益历史峰值（sandbox-and-report-supplement D3②——熔断
+    峰值恢复单点；append-only 全量 MAX，无行 None=首跑兜底
+    initial_cash 由调用方物化）。"""
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        from sqlalchemy import func as _func
+        return conn.execute(
+            select(_func.max(PtEquity.equity)).where(
+                PtEquity.task_id == task_id)
+        ).scalar()
+
+
 def first_equity_at_or_after(
     db_path: Path, task_id: str, since: str,
 ) -> Optional[Dict[str, Any]]:
@@ -761,6 +780,10 @@ def clone_task(
         slippage=source["slippage"], leverage=source["leverage"],
         window_bars=source["window_bars"],
         stop_loss_pct=source["stop_loss_pct"],
+        # 熔断参数同源复制（sandbox-and-report-supplement CARD-01：
+        # 任务级覆写面完整继承——NULL 源→NULL 同样复制〔不启用语义
+        # 不随克隆隐式改变〕）
+        halt_drawdown_pct=source["halt_drawdown_pct"],
     )
     return get_task(db_path, tid)
 

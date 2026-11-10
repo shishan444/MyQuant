@@ -281,11 +281,19 @@ def _run_formula_trial(
     在 rng 区间最小装载（warmup 按组件 lookback）逐组件求值
     （enrich_with_plugin_columns 单元复用）；成功返回 evaluated_bars，
     失败抛 ResearchError（调用方决定拒绝或降级语义）。
+
+    装载单源（fr_296f43410afb 修复④）：与登记预检/回测同走
+    load_and_prepare_df（衍生品合并＋派生基础列注入权威——裸
+    load_parquet 不合并 funding_rate/open_interest，funding 基插件
+    求值静默缺列即 translate 路径 all_nan 缺陷本体）。min_bars=1
+    显式放宽装载门槛：50 根缺省面向全量装载，试算自有 head 最小
+    装载语义（need_rows = max(warmup+8, 32)）与逐组件 notna>0 质量
+    门——占位短行情夹具（40 根形制）是「试算只求可执行」的合法
+    形态，不因装载权威化收紧。
     """
     from core.analysis.plugin_service import (
         enrich_with_plugin_columns, plugin_columns_lookback)
-    from core.data.mtf_loader import find_parquet, safe_symbol
-    from core.data.storage import load_parquet
+    from core.data.mtf_loader import find_parquet, load_and_prepare_df, safe_symbol
     import pandas as pd
 
     path = find_parquet(Path(data_dir), safe_symbol(rng["symbol"]),
@@ -295,7 +303,9 @@ def _run_formula_trial(
             "RESEARCH_SYMBOL_NOT_FOUND",
             f"公式组件试算数据不可达: {rng['symbol']} {rng['timeframe']}",
             detail={"data_range": rng, "reason": "no_parquet"})
-    df = load_parquet(path)
+    df = load_and_prepare_df(
+        Path(data_dir), rng["symbol"], rng["timeframe"],
+        min_bars=1, compute_indicators=False)
     if df is None or len(df) == 0:
         raise ResearchError(
             "RESEARCH_SYMBOL_NOT_FOUND",
@@ -431,11 +441,16 @@ def translate_hypothesis(
     db_path: Path,
     *,
     hypothesis_id: str,
-    strategy_symbol: str = "BTCUSDT",
+    strategy_symbol: Optional[str] = None,
     strategy_timeframe: Optional[str] = None,
     data_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """把 active 假设转化为**草稿策略**（draft，验证对象；不要求 pass 前置）。
+
+    strategy_symbol 缺省契约（fr_296f43410afb 修复①）：None=继承
+    data_ranges[0].symbol（登记面强制全条目同 symbol，区间源唯一——
+    修复前缺省 BTCUSDT 常量在 ETHUSDT 等非 BTC 假设上产物错标）；
+    显式传参优先（用户指定，行为不变）。
 
     risk_genes 映射（0.4.2 R1）：假设声明块（strategy_params 列）非空
     → 逐参数写入产物 risk_genes（"declared"）；NULL/空 → RiskGenes()
@@ -474,6 +489,11 @@ def translate_hypothesis(
     declared_params, _declared_undetermined = _load_declared_params(raw_params)
     risk_origin = "declared" if declared_params else "platform_default"
 
+    # symbol 显式传参标记（fr_296f43410afb 修复①幂等回纠触发面）：
+    # 继承解析会把缺省 None 补齐为区间源具体值——先记录再解析；
+    # 幂等回纠只对缺省路径生效（显式传参=用户意图优先不触发）。
+    _symbol_explicit = strategy_symbol is not None
+
     # 幂等：谱系中 draft 产物存在即返回（转正后无 draft，可对新假设重译）
     existing_draft = _find_draft_by_parent(db_path, hypothesis_id)
     if existing_draft is not None:
@@ -487,8 +507,54 @@ def translate_hypothesis(
         except (ResearchError, TypeError, KeyError):
             hit_ranges = []
         hit_row = get_strategy(db_path, existing_draft) or {}
+        # 幂等回纠（fr_296f43410afb 修复①，lead 裁 A）：缺省路径命中
+        # 存量错标行（产物 symbol≠假设区间源——修复前缺省 BTCUSDT 常
+        # 量时代落库）时回写纠正策略行（symbol 列＋dna_json.
+        # execution_genes.symbol，序列化保持 to_json 同形制），不静默
+        # 延续错标；显式传参不触发（用户意图优先）。gene_signature
+        # 不编码 symbol——回纠无签名列失配；同签名分流经 _dna_
+        # equivalent 比对 execution_genes.symbol，错标行在分流两分支
+        # 天然不命中穿透新建（回纠落点唯一=本谱系幂等分支）。继承源
+        # 就地取 hit_ranges[0].symbol（本分支在主流程 data_ranges 解
+        # 析与 symbol 继承之前——strategy_symbol 此时尚为 None）；区
+        # 间不可解析/首条目无 symbol 时跳过回纠（无从判基准，不炸）。
+        _inherit_symbol = (
+            hit_ranges[0].get("symbol")
+            if hit_ranges and isinstance(hit_ranges[0], dict) else None)
+        if (not _symbol_explicit and hit_row and _inherit_symbol
+                and hit_row.get("symbol") != _inherit_symbol):
+            import json as _json
+            # 坏行降级（CARD-02）：坏 dna_json（非法 JSON/非 dict 形）
+            # 无从构造回写——跳过回纠返回存量行，不裸炸也不抛 422
+            # （幂等命中返回是主路径，坏行不应阻断——与上方 hit_ranges
+            # :503-508 降级先例同族；回执镜像经 _identity_reflection
+            # 值域收敛不依赖 dna_json 可解析）
+            try:
+                _dna = _json.loads(hit_row.get("dna_json") or "{}")
+                _exec = _dna.get("execution_genes")
+            except (_json.JSONDecodeError, TypeError, AttributeError):
+                _exec = None
+            if isinstance(_exec, dict):
+                _exec["symbol"] = _inherit_symbol
+                _dna["execution_genes"] = _exec
+                from core.persistence.repository.strategy import (
+                    update_strategy)
+                update_strategy(
+                    db_path, strategy_id=existing_draft,
+                    symbol=_inherit_symbol,
+                    dna_json=_json.dumps(
+                        _dna, ensure_ascii=False, indent=2))
+                hit_row = get_strategy(db_path, existing_draft) or {}
         _backfill_component_eval(
             db_path, existing_draft, hit_row, hit_ranges, data_dir)
+        # 身份回读全字段（fr_296f43410afb 修复②）：回执=库存事实镜像
+        # 非重新构造——direction/max_hold/time_exit_utc/position_mode/
+        # risk_fraction 五键经 _identity_reflection 读库存行（修复前
+        # 硬编码 long/None/None/fixed/None 占位值，与被命中产物行实际
+        # 落库值不一致）；execution_timeframe 读行取产物实际周期；
+        # logic_genes 读行回显实际生效值（add-exit-group-or D3——
+        # 最小面键形制不变）。
+        _hit_identity = _identity_reflection(hit_row)
         return {"strategy_id": existing_draft, "status": "draft",
                 "duplicated": True, "same_dna_existing": False,
                 "risk_genes": risk_origin,
@@ -496,12 +562,11 @@ def translate_hypothesis(
                 "risk_genes_disclosure": _risk_genes_disclosure(
                     hit_row.get("dna_json") or "", declared_params,
                     undeterminable=_declared_undetermined),
-                # 身份回读（规则②）：direction/max_hold 按收敛缺省
-                # （S2f 锚）；execution_timeframe 读行取产物实际周期；
-                # logic_genes 读行回显实际生效值（add-exit-group-or D3
-                # ——披露的就是落库的，与 execution_timeframe 同款读行）
                 **_translate_receipt(
-                    "long", None, None, "fixed", None, False,
+                    _hit_identity["direction"], _hit_identity["max_hold"],
+                    _hit_identity["time_exit_utc"],
+                    _hit_identity["position_mode"],
+                    _hit_identity["risk_fraction"], False,
                     execution_timeframe=hit_row.get("timeframe"),
                     logic_genes=_logic_genes_of_row(
                         hit_row.get("dna_json") or ""))}
@@ -558,6 +623,26 @@ def translate_hypothesis(
                         "timeframes": hyp_tfs,
                         "need_hint": "显式传 strategy_timeframe 指定执行周期"})
         strategy_timeframe = data_ranges[0].get("timeframe") if data_ranges else None
+
+    # symbol 缺省继承（fr_296f43410afb 修复①）：None=继承区间源
+    # data_ranges[0].symbol（登记面强制全条目同 symbol——跨币种拒绝
+    # 在上方已拦，区间源唯一）；显式传参优先零变化。守卫与 timeframe
+    # 继承同款形制：畸形 data_ranges（空/首元素非 dict）或首条目缺
+    # symbol 键时结构化拒绝并指引显式传参（不静默落 None 触发 DB 层
+    # IntegrityError 延迟爆炸）。注意显式 timeframe＋缺省 symbol 组合
+    # 不走上方 timeframe 守卫分支——此处独立守卫覆盖该路径。
+    if strategy_symbol is None:
+        if (not data_ranges or not isinstance(data_ranges[0], dict)
+                or not data_ranges[0].get("symbol")):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                "存量假设 data_ranges 无可用 symbol，无法确定继承基准——"
+                "请修正数据或显式传 strategy_symbol",
+                detail={"param": "strategy_symbol",
+                        "data_ranges": data_ranges,
+                        "need_hint": "显式传 strategy_symbol 指定策略"
+                                     "品种"})
+        strategy_symbol = data_ranges[0]["symbol"]
 
     # 多周期防线与双组翻译经 S4 公共入口（0.4.1）：防线循环原形在
     # build_signal_genes 内（与翻译能力同点权威单源）；跨币种防线

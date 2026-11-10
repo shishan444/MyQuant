@@ -1,4 +1,4 @@
-"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：参数化模板（0.4.1 增 segment_narrative/counter_profile/exit_sweep；add-evaluation-ruler 增评测尺子模板族）。
+"""分析模板集（add-ai-research-mcp 2.x + add-screen-patterns）：参数化模板（0.4.1 增 segment_narrative/counter_profile/exit_sweep；add-evaluation-ruler 增评测尺子模板族；sandbox-and-report-supplement 增 ab_compare A/B 对照）。
 
 模板是纯计算（DataFrame 输入 → AnalysisResult 输出），不做 IO、
 不感知 HTTP；数据装载由调用方（路由/编排层）完成。全部出口经
@@ -7,6 +7,7 @@ core.analysis.result.build_result（三要素强制：样本量/置信/数据区
 enrich 须与预算计算同源（同一集合喂装载/求值/预算三处），拆到路由层
 会复制引用收集链；IO 面收敛在模板壳内，计算面仍纯（compute 层无 IO）。
 """
+from core.analysis.templates.ab_compare import ab_compare
 from core.analysis.templates.box_inventory import box_inventory
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.counter_profile import counter_profile
@@ -24,6 +25,7 @@ from core.analysis.templates.segment_narrative import segment_narrative
 from core.analysis.templates.wave_inventory import wave_inventory
 
 __all__ = [
+    "ab_compare",
     "box_inventory",
     "condition_stats",
     "counter_profile",

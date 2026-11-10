@@ -378,7 +378,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile|exit_sweep|wave_inventory|box_inventory|ruler_compare
+        counter_profile|exit_sweep|wave_inventory|box_inventory|ruler_compare|
+        ab_compare
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
@@ -386,7 +387,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split/wave_inventory/
-        box_inventory 无必填键；ruler_compare 须 mode+trade_source。
+        box_inventory 无必填键；ruler_compare 须 mode+trade_source；
+        ab_compare 须 mode+trade_source_a+trade_source_b。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
@@ -609,7 +611,25 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         复现）；装载差异注记：demo
         参考实现的浪池以数据全历史起点计 zigzag，平台按评估区间前扩
         500 bar 装载，复算对账以 ±1pp 门限承载该差异面。回望性契约：
-        幂等可复算、不作策略条件输入、不烧判定并集。"""
+        幂等可复算、不作策略条件输入、不烧判定并集。
+        ab_compare A/B 对照（sandbox-and-report-supplement，快路径——
+        两组隔离验证记录的交易级对照）：params 必填 mode（固定"ab"）+
+        trade_source_a/trade_source_b（各为唯一合法形制
+        {"kind":"validation","record_id":"rec_..."}——kind="backtest"
+        即 422 附防污染指引，同 ruler_compare；校验链经公共校验件
+        同源消费）。双记录 data_range 归一后须全值相等（不等 422 附
+        两侧值——对照前提不满足，不做静默截断）。可选 params.dimension
+        ∈ none|wave|box（默认 none）：两组各自指标（净均值/胜率/月频，
+        组内 CI n 三档同款）＋组间净均值差 boot_diff CI（方向 a−b；
+        B/seed 可参数化默认 3000/42；两侧各 n≥3 才附着 CI，否则 null
+        附两侧样本数）；wave/box 挂载两组各自的结构指标（识别率/
+        捕获率 或 先到对侧比例）——底账现算一次两组共享（同底账不同
+        策略臂），参数族同 ruler_compare（threshold/identify_window
+        与 edge_window/edge_q_low/edge_q_high/buffer）。装载差异注记：
+        demo 参考实现（r9_d4_final.py）的组间差为共享 rng 流后续消耗、
+        平台为独立 seed=42 首耗——bootstrap 端点蒙特卡洛差由 ±1pp
+        对账门限承载。回望性契约同 ruler_compare（幂等可复算、不作
+        策略输入、不烧判定并集——携带 hypothesis_id 即 422）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,
@@ -995,17 +1015,38 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     def run_backtest(strategy_id: str, symbol: str, timeframe: str,
                      start: str, end: str, fee: float = 0.001,
                      slippage: float = 0.0005, init_cash: float = 100000.0,
-                     hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
+                     hypothesis_id: Optional[str] = None,
+                     leverage: Optional[int] = None,
+                     margin_cap: Optional[float] = None,
+                     halt_drawdown_pct: Optional[float] = None
+                     ) -> Dict[str, Any]:
         """沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
         不判门槛、不构成验证证据）。纪律：挂 hypothesis_id 时该区间计入
         判定并集（此后同区间的隔离验证会被拒——先偷看不获利）；超 bar
-        上限被拒，走隔离验证。"""
+        上限被拒，走隔离验证。
+        任务级封顶两参（可选）：leverage 整数 [1,3]／margin_cap
+        (0,0.60]（硬约束封顶，越界 422 附 legal_range）；两参都传时
+        本次回测名义敞口 ≤ 权益×margin_cap×有效杠杆（有效杠杆=
+        min(DNA 声明, 任务级)），超顶单笔缩量至顶非跳过（响应
+        metrics.position_sizing 披露 capped_by_task_cap 计数）；
+        未传参该层不生效。
+        账户级硬熔断（可选）：halt_drawdown_pct∈(0,1)——权益自峰值
+        回撤达阈值（≥含等号）停止开新仓（持仓与平仓照常）；响应
+        halt_info 三态（未配置不写键/未触发 halted:false/触发
+        halted:true＋halted_at＋halt_reason）。halted 记录不构成
+        验证证据（证据地位待验证协议侧裁决）。"""
         body: Dict[str, Any] = {"strategy_id": strategy_id, "symbol": symbol,
                                 "timeframe": timeframe, "start": start,
                                 "end": end, "fee": fee,
                                 "slippage": slippage, "init_cash": init_cash}
         if hypothesis_id:
             body["hypothesis_id"] = hypothesis_id
+        if leverage is not None:
+            body["leverage"] = leverage
+        if margin_cap is not None:
+            body["margin_cap"] = margin_cap
+        if halt_drawdown_pct is not None:
+            body["halt_drawdown_pct"] = halt_drawdown_pct
         return api.post("/api/research/backtest-sandbox", body)
 
     @mcp.tool()
@@ -1050,11 +1091,14 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     @mcp.tool()
     @tool_safe
     def translate_hypothesis_to_strategy(
-            hypothesis_id: str, strategy_symbol: str = "BTCUSDT",
+            hypothesis_id: str, strategy_symbol: str | None = None,
             strategy_timeframe: str | None = None) -> Dict[str, Any]:
         """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
         pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
         （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
+        品种契约：strategy_symbol 缺省 None=继承区间源
+        data_ranges[0].symbol（登记面强制全条目同 symbol；存量无可用
+        symbol 假设拒绝并指引显式传参；显式传参优先零变化）。
         执行周期契约：strategy_timeframe 缺省 None=继承假设基准周期
 （data_ranges[0].timeframe；存量异周期假设拒绝并指引显式传参）；
 回执 execution_timeframe 键披露产物执行周期。
@@ -1213,16 +1257,20 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                          window_bars: Optional[int] = None,
                          window_unlimited: bool = False,
                          stop_loss_pct: Optional[float] = None,
+                         halt_drawdown_pct: Optional[float] = None,
                          ) -> Dict[str, Any]:
         """挂载纸盘任务（上盘=把策略库条目送去实时前向验证）。参数面与
         REST 创建完全一致——仅验证条件参数（初始资金/杠杆/费滑/品种/
-        验证窗口/停止条件），**不含任何策略语义参数**：方向与执行周期
-        以策略 DNA 为准，AI 无法经挂载覆写信号语义。创建恒受理（201
-        pending 行；并发满载时排队不拒绝）。验证窗口三入口同语义：
-        不传 window_bars=缺省 180 根；N≥1=N 根窗口到点自动结题；
-        window_unlimited=True=不限期（不自动结题，转译 REST
-        window_bars=null 同语义）——window_unlimited=true 与
-        window_bars 显式值同传被互斥校验拒绝（两种窗口表达不可并存）。
+        验证窗口/停止条件/账户级硬熔断阈值），**不含任何策略语义参数**：
+        方向与执行周期以策略 DNA 为准，AI 无法经挂载覆写信号语义。
+        创建恒受理（201 pending 行；并发满载时排队不拒绝）。验证窗口
+        三入口同语义：不传 window_bars=缺省 180 根；N≥1=N 根窗口
+        到点自动结题；window_unlimited=True=不限期（不自动结题，
+        转译 REST window_bars=null 同语义）——window_unlimited=true
+        与 window_bars 显式值同传被互斥校验拒绝（两种窗口表达不可
+        并存）。halt_drawdown_pct∈(0,1)（sandbox-and-report-supplement
+        D3②）：权益自峰值回撤达阈值拦截开新仓（持仓/平仓照常），
+        不传=不启用（数值留空待用户给后续零代码启用）。
         策略演化不影响已挂载任务（创建时 DNA 快照自包含）。"""
         if window_unlimited and window_bars is not None:
             return {"error": errors.error_payload(
@@ -1247,6 +1295,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             body["window_bars"] = window_bars
         if stop_loss_pct is not None:
             body["stop_loss_pct"] = stop_loss_pct
+        if halt_drawdown_pct is not None:
+            body["halt_drawdown_pct"] = halt_drawdown_pct
         return api.post("/api/paper-trading/tasks", body)
 
     @mcp.tool()
