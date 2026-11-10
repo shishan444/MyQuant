@@ -168,7 +168,11 @@ class TestAddsAliveAfterHalt:
         halted=true、同一笔 trade（加仓并入）。
 
         曲线尾段 60：峰值 50×120+5000=11000 → 50×60+5000=8000
-        回撤 27.3%≥10% 触发（bar20）。"""
+        回撤 27.3%≥10% 触发（bar21 判定——c.value_now 为决策时点前
+        一 bar 期末价值口径，bar20 回调用 bar19 期末价 120 无回撤；
+        组合用例同口径注记）。stop_loss=0.9 显式宽线：缺省 0.05 会
+        在尾段腰斩处触发 SL 平仓，bar30 加仓时 position_now==0 加仓
+        分支前置不满足（构造偏差非熔断行为）。"""
         from core.strategy.dna import RiskGenes as _RG
         dna = StrategyDNA(
             signal_genes=[_gene()], logic_genes=LogicGenes(),
