@@ -222,6 +222,40 @@ class TestSharedValidationChain:
         assert "不落库逐笔" in ei.value.message
         assert "不存在" not in ei.value.message
 
+    @pytest.mark.parametrize(
+        "bad",
+        [pytest.param({"identify_window": 1.5}, id="identify_window 越上界"),
+         pytest.param({"identify_window": True}, id="bool identify_window"),
+         pytest.param({"buffer": "0.25"}, id="字符串数字 buffer"),
+         pytest.param({"edge_q_low": 0.5, "edge_q_high": 0.3},
+                      id="edge_q 联合反转"),
+         pytest.param({"B": 3000.5}, id="非整 B"),
+         pytest.param({"B": True}, id="bool B"),
+         pytest.param({"seed": "x"}, id="非整 seed"),
+         pytest.param({"seed": True}, id="bool seed")])
+    def test_numeric_param_rejection_parity_with_ruler(
+            self, vr_db, tmp_path, bad):
+        """参数面平价锚（对质①提取的护栏——同坏参数 ab_compare 与
+        ruler_compare 同 code/message/detail）：六参数域校验单源在
+        validate_compare_numeric_params，本断言机械证明两壳同源消费
+        ——未来改 BOOT_B_MAX 语义或 bool 排除规则只动公共件一处，
+        漂移即红。参数校验先于 trade_source 解析（无需库记录）。"""
+        with pytest.raises(ResearchError) as ruler_ei:
+            ruler_compare(
+                vr_db, tmp_path, RNG, mode="wave",
+                trade_source={"kind": "validation", "record_id": "rec_x"},
+                data_ranges=[RNG], **bad)
+        with pytest.raises(ResearchError) as ab_ei:
+            ab_compare(
+                vr_db, tmp_path, RNG, mode="ab",
+                trade_source_a={"kind": "validation",
+                                "record_id": "rec_a"},
+                trade_source_b={"kind": "validation", "record_id": "rec_b"},
+                data_ranges=[RNG], **bad)
+        assert ab_ei.value.code == ruler_ei.value.code
+        assert ab_ei.value.message == ruler_ei.value.message
+        assert ab_ei.value.detail == ruler_ei.value.detail
+
 
 # ------------------------------------------------- B2 模板壳集成
 

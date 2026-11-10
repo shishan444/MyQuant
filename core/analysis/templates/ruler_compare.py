@@ -434,8 +434,6 @@ def compare_box(
         else:
             n_other += 1
 
-    months = ({t["entry_time"].strftime("%Y-%m") for t in trades}
-              if trades else set())
     n_total = len(trades)
     return {
         "n_trades": n_total,
@@ -446,10 +444,9 @@ def compare_box(
         "edge_window": edge_window,
         "edge_q_low": float(edge_q_low), "edge_q_high": float(edge_q_high),
         "buffer": float(buffer),
-        # 月频分母=交易月份去重计数（下限 1）
-        "monthly_frequency": (n_total / max(len(months), 1))
-        if n_total else None,
-        "trades_months_distinct": len(months),
+        # 月频口径单源在 monthly_frequency_stats（sandbox-report-
+        # supplement 对质②提取——本处与 ab_compare 同源消费）
+        **monthly_frequency_stats(trades),
     }
 
 
@@ -478,6 +475,77 @@ def net_stats(
         if nets else None,
         "net_caliber": "逐笔 PnL（已含费滑）÷ init_cash（百分比形）",
     }
+
+
+def monthly_frequency_stats(
+    trades: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """月频统计（公共件——ruler_compare 箱模式与 ab_compare 两组指标
+    同源消费，sandbox-and-report-supplement 对质②提取）：分母=交易
+    月份去重计数（entry_time YYYY-MM，下限 1）。"""
+    months = ({t["entry_time"].strftime("%Y-%m") for t in trades}
+              if trades else set())
+    n_total = len(trades)
+    return {
+        "monthly_frequency": (n_total / max(len(months), 1))
+        if n_total else None,
+        "trades_months_distinct": len(months),
+    }
+
+
+# ----------------------------------------------------------- 对照公共校验件
+
+def validate_compare_numeric_params(
+    identify_window: float, edge_q_low: float, edge_q_high: float,
+    buffer: float, B: int, seed: int,
+) -> None:
+    """对照族数值参数校验单源（公共件——ruler_compare 与 ab_compare
+    两壳同源消费，sandbox-and-report-supplement 对质①提取）：六参数
+    域校验＋edge_q 联合＋B/seed 前置 422。mode/dimension 值校验各壳
+    自留（值域不同构）。
+
+    Raises:
+        ResearchError: 任一参数越域（422——bool 排除＋字符串数字拒，
+            委托 param_guard 单源；B/seed 非法不前置则裸穿 boot 统计
+            件/np 层——bool 排除为 int 子类陷阱防御）。
+    """
+    # 数值参数校验委托 param_guard 单源（bool 排除＋字符串数字拒——
+    # 原 float() 静默转换会让 'abc' 裸 ValueError 落 500 与 '0.5'
+    # 静默放行并存；bool(True) 经 float 转 1.0 落域内同族陷阱）
+    _require_float_range(
+        identify_window, name="identify_window", lo=0, hi=1,
+        lo_excl=True)
+    _require_float_range(
+        edge_q_low, name="edge_q_low", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    _require_float_range(
+        edge_q_high, name="edge_q_high", lo=0, hi=1,
+        lo_excl=True, hi_excl=True)
+    if edge_q_low >= edge_q_high:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
+            detail={"param": "edge_q_low|edge_q_high",
+                    "actual": [edge_q_low, edge_q_high],
+                    "legal_range": "0 < edge_q_low < edge_q_high < 1"})
+    _require_float_range(buffer, name="buffer", lo=0)
+    # B/seed 前置 422（condition_stats significance 同族契约）：不前置
+    # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
+    # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
+    # 静默截断。bool 排除（int 子类陷阱——True 静默当 1 次重抽样）。
+    if (isinstance(B, bool) or not isinstance(B, int)
+            or not 1 <= B <= BOOT_B_MAX):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
+            detail={"param": "B", "actual": B,
+                    "legal_range": f"1..{BOOT_B_MAX}"})
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"seed 须为整数: {seed!r}",
+            detail={"param": "seed", "actual": seed,
+                    "legal_form": "整数（随机种子）"})
 
 
 # ----------------------------------------------------------- 模板壳
@@ -520,43 +588,9 @@ def ruler_compare(
             f"mode 未知: {mode!r}",
             detail={"param": "mode", "actual": mode,
                     "legal_range": ["wave", "box"]})
-    # 数值参数校验委托 param_guard 单源（bool 排除＋字符串数字拒——
-    # 原 float() 静默转换会让 'abc' 裸 ValueError 落 500 与 '0.5'
-    # 静默放行并存；bool(True) 经 float 转 1.0 落域内同族陷阱）
-    _require_float_range(
-        identify_window, name="identify_window", lo=0, hi=1,
-        lo_excl=True)
-    _require_float_range(
-        edge_q_low, name="edge_q_low", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    _require_float_range(
-        edge_q_high, name="edge_q_high", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    if edge_q_low >= edge_q_high:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
-            detail={"param": "edge_q_low|edge_q_high",
-                    "actual": [edge_q_low, edge_q_high],
-                    "legal_range": "0 < edge_q_low < edge_q_high < 1"})
-    _require_float_range(buffer, name="buffer", lo=0)
-    # B/seed 前置 422（condition_stats significance 同族契约）：不前置
-    # 则两条裸穿路径——n≥3 时 B/seed 非法直落 boot_ci/np 层裸
-    # ValueError/TypeError；n<3 时 B=3000.5 走 confidence 披露 int(B)
-    # 静默截断。bool 排除（int 子类陷阱——True 静默当 1 次重抽样）。
-    if (isinstance(B, bool) or not isinstance(B, int)
-            or not 1 <= B <= BOOT_B_MAX):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
-            detail={"param": "B", "actual": B,
-                    "legal_range": f"1..{BOOT_B_MAX}"})
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"seed 须为整数: {seed!r}",
-            detail={"param": "seed", "actual": seed,
-                    "legal_form": "整数（随机种子）"})
+    # 六参数域校验单源（对照族公共件——与 ab_compare 同源消费）
+    validate_compare_numeric_params(
+        identify_window, edge_q_low, edge_q_high, buffer, B, seed)
     record_id = validate_trade_source(trade_source)
 
     # 记录级+逐笔级校验（5.1）与交易清单装载

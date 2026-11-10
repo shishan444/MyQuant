@@ -36,38 +36,25 @@ import pandas as pd
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.result import build_result
-from core.analysis.templates.param_guard import _require_float_range
 from core.analysis.templates.ruler_compare import (
     BOX_EDGE_WINDOW_DEFAULTS, DEFAULT_B, DEFAULT_COMPARE_WARMUP_BARS,
     DEFAULT_IDENTIFY_WINDOW, DEFAULT_SEED, DEFAULT_THRESHOLD,
-    compare_box, compare_wave, load_record_trades, net_stats,
-    resolve_validation_record, validate_trade_source)
+    compare_box, compare_wave, load_record_trades,
+    monthly_frequency_stats, net_stats, resolve_validation_record,
+    validate_compare_numeric_params, validate_trade_source)
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
-from core.scoring.statistics import BOOT_B_MAX
 
 _DIMENSIONS = ("none", "wave", "box")
-
-
-def _monthly_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """月频（口径与 ruler_compare 箱模式同构：分母=交易月份去重计数，
-    下限 1）。"""
-    months = ({t["entry_time"].strftime("%Y-%m") for t in trades}
-              if trades else set())
-    n_total = len(trades)
-    return {
-        "monthly_frequency": (n_total / max(len(months), 1))
-        if n_total else None,
-        "trades_months_distinct": len(months),
-    }
 
 
 def _group_stats(
     trades: List[Dict[str, Any]], init_cash: float,
     *, B: int = DEFAULT_B, seed: int = DEFAULT_SEED,
 ) -> Dict[str, Any]:
-    """单组指标：net_stats（净均值/胜率/组内 CI——n 三档同款）＋月频。"""
+    """单组指标：net_stats（净均值/胜率/组内 CI——n 三档同款）＋月频
+    （monthly_frequency_stats 公共件——与 ruler_compare 箱模式同源）。"""
     out: Dict[str, Any] = net_stats(trades, init_cash, B=B, seed=seed)
-    out.update(_monthly_stats(trades))
+    out.update(monthly_frequency_stats(trades))
     return out
 
 
@@ -155,39 +142,10 @@ def ab_compare(
             f"dimension 未知: {dimension!r}",
             detail={"param": "dimension", "actual": dimension,
                     "legal_range": list(_DIMENSIONS)})
-    # 数值参数校验委托 param_guard 单源（同 ruler_compare——bool 排除＋
-    # 字符串数字拒；统一前置校验面，dimension=none 下不消费同校验）
-    _require_float_range(
-        identify_window, name="identify_window", lo=0, hi=1,
-        lo_excl=True)
-    _require_float_range(
-        edge_q_low, name="edge_q_low", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    _require_float_range(
-        edge_q_high, name="edge_q_high", lo=0, hi=1,
-        lo_excl=True, hi_excl=True)
-    if edge_q_low >= edge_q_high:
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            "edge_q_low/edge_q_high 须在 (0,1) 且 low < high",
-            detail={"param": "edge_q_low|edge_q_high",
-                    "actual": [edge_q_low, edge_q_high],
-                    "legal_range": "0 < edge_q_low < edge_q_high < 1"})
-    _require_float_range(buffer, name="buffer", lo=0)
-    # B/seed 前置 422（ruler_compare 同款契约）
-    if (isinstance(B, bool) or not isinstance(B, int)
-            or not 1 <= B <= BOOT_B_MAX):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"B 须为 1~{BOOT_B_MAX} 正整数: {B!r}",
-            detail={"param": "B", "actual": B,
-                    "legal_range": f"1..{BOOT_B_MAX}"})
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ResearchError(
-            "RESEARCH_PARAM_INVALID",
-            f"seed 须为整数: {seed!r}",
-            detail={"param": "seed", "actual": seed,
-                    "legal_form": "整数（随机种子）"})
+    # 六参数域校验单源（对照族公共件——与 ruler_compare 同源消费；
+    # 统一前置校验面，dimension=none 下不消费同校验）
+    validate_compare_numeric_params(
+        identify_window, edge_q_low, edge_q_high, buffer, B, seed)
     record_id_a = validate_trade_source(trade_source_a)
     record_id_b = validate_trade_source(trade_source_b)
 
