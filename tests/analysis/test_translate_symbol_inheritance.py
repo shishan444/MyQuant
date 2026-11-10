@@ -229,5 +229,43 @@ class TestIdempotentRetranslateCorrection:
         assert col_sym == "ETHUSDT"
         assert dna_sym == "ETHUSDT"
         assert get_strategy(db, sid)["dna_json"] == "{not-valid-json"
+
+    def test_broken_dna_row_hit_degrades_in_correction_segment(self, db):
+        """坏行命中降级锚（CARD-02 可达面——与上一锚构成可达性两侧）：
+        base_tf=None（data_ranges 条目缺 timeframe——手工/历史库行可
+        绕过登记面 RESEARCH_RANGE_INVALID 校验的形态）时
+        _find_draft_by_parent :1261 不进 exec_tf 收窄分支、退回现行
+        幂等——坏 dna_json 错标行被谱系命中**进入回纠段**：修复前
+        （5d2264c3^）该路径裸炸 JSONDecodeError 裸穿错误通道，修复后
+        跳过回纠返回存量行（错标保持、行逐位不变、回执经 _identity_
+        reflection 值域收敛正常回显）。降级分支真实可达非死代码。"""
+        from core.persistence.repository.strategy import update_strategy
+
+        hid = _hyp(db, "ETHUSDT")
+        first = translate_hypothesis(db, hypothesis_id=hid)
+        sid = first["strategy_id"]
+        # 库行 UPDATE 构造 base_tf=None（条目去 timeframe）——登记面
+        # 会拒此形制（RESEARCH_RANGE_INVALID），故经库行构造
+        with sqlite3.connect(db) as conn:
+            conn.execute(
+                "UPDATE research_hypotheses SET data_ranges=?"
+                " WHERE hypothesis_id=?",
+                (json.dumps([{"symbol": "ETHUSDT",
+                              "start": "2024-01-01T00:00:00Z",
+                              "end": "2024-02-01T00:00:00Z"}]), hid))
+            conn.commit()
+        # 错标＋坏 dna_json 双构造（同上一锚；差异面在 base_tf）
+        update_strategy(db, strategy_id=sid, symbol="BTCUSDT",
+                        dna_json="{not-valid-json")
+        second = translate_hypothesis(db, hypothesis_id=hid,
+                                      strategy_timeframe="4h")
+        assert second["duplicated"] is True, \
+            "base_tf=None 退回现行幂等（坏行命中而非放行重建）"
+        assert second["strategy_id"] == sid
+        row = get_strategy(db, sid)
+        assert row["symbol"] == "BTCUSDT", "坏 dna_json 回纠被跳过（错标保持）"
+        assert row["dna_json"] == "{not-valid-json", "存量行逐位不变"
+        assert second["direction"] == "long", \
+            "回执值域收敛正常回显（不依赖坏行可解析）"
         # 回执正常回显（新建分支——不依赖坏行可解析）
         assert second["direction"] == "long"
