@@ -110,7 +110,7 @@ HINTS: Dict[str, str] = {
         "correlation_scan|event_study|pattern_mining|screen_patterns|"
         "param_sweep|regime_split|precheck_hypothesis|segment_narrative|"
         "counter_profile|exit_sweep|wave_inventory|box_inventory|"
-        "ruler_compare",
+        "ruler_compare|ab_compare",
     "RESEARCH_COLUMN_NOT_AVAILABLE":
         "引用了模板不可用列：查看 detail.available_columns 清单；指标条件"
         "（如 rsi_14）请改用 condition_stats（支持指标参数计算）",
@@ -226,8 +226,18 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "min_len": "min_len 须为正整数（成箱最小连续 bar 数）",
     "width_thr": "width_thr 须为 (0,1) 开区间小数（宽度门槛，含等号）",
     # 对照模板参数面（add-evaluation-ruler）
-    "mode": "对照模式未知：mode ∈ wave（浪模式：识别率/捕获率/净均值"
-            "CI）|box（箱体模式：先到对侧比例/三分类/月频）",
+    "mode": "对照模式未知：ruler_compare mode ∈ wave（浪模式：识别率/"
+            "捕获率/净均值CI）|box（箱体模式：先到对侧比例/三分类/"
+            "月频）；ab_compare mode 固定 \"ab\"（A/B 双记录对照）",
+    # A/B 对照参数面（sandbox-and-report-supplement B4——新校验面
+    # 随第 16 模板登记；mode/trade_source 族键与 ruler_compare 共用）
+    "dimension": "A/B 对照维度未知：dimension ∈ none（默认——仅两组"
+                "指标+组间差）|wave（挂识别率/捕获率）|box（挂先到"
+                "对侧比例）",
+    "trade_source_a|trade_source_b": "双记录区间不等（两侧归一值在 "
+                                     "detail 披露）：A/B 对照须两记录 "
+                                     "data_range 全值相等——改用同区间"
+                                     "记录重试",
     # 任务级封顶参数面（sandbox-and-report-supplement）：leverage 与
     # margin_cap 共用 require_task_cap_params 校验单源——扫描键按
     # detail.field 取（leverage 已有 PtTask 覆写先例面，此处补 margin_cap）

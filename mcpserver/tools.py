@@ -378,7 +378,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         """执行参数化分析。template ∈ condition_stats|distribution_compare|
         correlation_scan|event_study|pattern_mining|screen_patterns|
         param_sweep|regime_split|precheck_hypothesis|segment_narrative|
-        counter_profile|exit_sweep|wave_inventory|box_inventory|ruler_compare
+        counter_profile|exit_sweep|wave_inventory|box_inventory|ruler_compare|
+        ab_compare
         （重组走 202+task_id 轮询，响应含 poll 提示）。区间半开
         [start,end) UTC。params 必填键（缺键 422 detail 含键名）：
         condition_stats 须 indicator/params/condition；distribution_compare
@@ -386,7 +387,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         event_study 须 condition；pattern_mining 须 as_of；param_sweep 须
         indicator+condition；precheck_hypothesis 须 when_conditions+
         validate_range；screen_patterns/regime_split/wave_inventory/
-        box_inventory 无必填键；ruler_compare 须 mode+trade_source。
+        box_inventory 无必填键；ruler_compare 须 mode+trade_source；
+        ab_compare 须 mode+trade_source_a+trade_source_b。
         condition_stats/event_study/regime_split 支持 conditions 条件数组形制
         （0.4.1 起；regime_split 2026-10-14 起）：与旧键组二选一（同传 422 指明互斥——condition_stats
         旧组 indicator+params+condition ∥ 新组 conditions；event_study
@@ -609,7 +611,25 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         复现）；装载差异注记：demo
         参考实现的浪池以数据全历史起点计 zigzag，平台按评估区间前扩
         500 bar 装载，复算对账以 ±1pp 门限承载该差异面。回望性契约：
-        幂等可复算、不作策略条件输入、不烧判定并集。"""
+        幂等可复算、不作策略条件输入、不烧判定并集。
+        ab_compare A/B 对照（sandbox-and-report-supplement，快路径——
+        两组隔离验证记录的交易级对照）：params 必填 mode（固定"ab"）+
+        trade_source_a/trade_source_b（各为唯一合法形制
+        {"kind":"validation","record_id":"rec_..."}——kind="backtest"
+        即 422 附防污染指引，同 ruler_compare；校验链经公共校验件
+        同源消费）。双记录 data_range 归一后须全值相等（不等 422 附
+        两侧值——对照前提不满足，不做静默截断）。可选 params.dimension
+        ∈ none|wave|box（默认 none）：两组各自指标（净均值/胜率/月频，
+        组内 CI n 三档同款）＋组间净均值差 boot_diff CI（方向 a−b；
+        B/seed 可参数化默认 3000/42；两侧各 n≥3 才附着 CI，否则 null
+        附两侧样本数）；wave/box 挂载两组各自的结构指标（识别率/
+        捕获率 或 先到对侧比例）——底账现算一次两组共享（同底账不同
+        策略臂），参数族同 ruler_compare（threshold/identify_window
+        与 edge_window/edge_q_low/edge_q_high/buffer）。装载差异注记：
+        demo 参考实现（r9_d4_final.py）的组间差为共享 rng 流后续消耗、
+        平台为独立 seed=42 首耗——bootstrap 端点蒙特卡洛差由 ±1pp
+        对账门限承载。回望性契约同 ruler_compare（幂等可复算、不作
+        策略输入、不烧判定并集——携带 hypothesis_id 即 422）。"""
         body = {
             "template": template, "params": params,
             "data_range": {"symbol": symbol, "timeframe": timeframe,

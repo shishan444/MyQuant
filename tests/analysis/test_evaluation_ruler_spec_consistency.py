@@ -2,7 +2,8 @@
 
 三件套一致性以单测断言承载：registry 结构锚（键数 48、无浪/箱条目
 ——清单列对条件链不可达为负向锚）、注册同步结构面（_TEMPLATES
-计数 15、ruler_compare 必填键组、必填键表为权威源）、spec 条款
+计数 16〔ab_compare 并入后快照〕、ruler_compare/ab_compare 必填键
+组、必填键表为权威源）、spec 条款
 行为锚（「其他」类单独披露/跨查询禁混用披露/沙盒引用拒绝——行为
 级断言汇总，细节用例在各模板测试文件）。
 
@@ -60,12 +61,14 @@ class TestRegistryStructureAnchor:
 class TestRegistrationSyncStructure:
     """research-error-channel「模板必填键前置校验」MODIFIED 对齐。"""
 
-    def test_templates_total_15(self):
+    def test_templates_total_16(self):
         from api.routes.research.analysis import _TEMPLATES
 
-        assert len(_TEMPLATES) == 15, \
-            "本 change 落地后模板总数 15（存量 12+新增 3）"
-        for name in ("wave_inventory", "box_inventory", "ruler_compare"):
+        assert len(_TEMPLATES) == 16, \
+            "ab_compare 落地后模板总数 16（research-error-channel 计数" \
+            "快照——权威指针 _TEMPLATE_REQUIRED_KEYS 表述保持）"
+        for name in ("wave_inventory", "box_inventory", "ruler_compare",
+                     "ab_compare"):
             assert name in _TEMPLATES
 
     def test_ruler_required_keys_group(self):
@@ -73,6 +76,8 @@ class TestRegistrationSyncStructure:
 
         assert _TEMPLATE_REQUIRED_KEYS["ruler_compare"] == (
             ("mode", "trade_source"),)
+        assert _TEMPLATE_REQUIRED_KEYS["ab_compare"] == (
+            ("mode", "trade_source_a", "trade_source_b"),)
 
     def test_required_keys_table_subset_of_enum(self):
         """键组表（权威源）⊆ 模板枚举——表引用不悬空。"""

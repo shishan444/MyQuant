@@ -601,12 +601,12 @@ class TestD4WaveReconciliation:
             exp["ided"] / _NW_TOTAL, abs=0.01)
         cap_med = float(pd.Series(ided_caps).median())
         assert cap_med == pytest.approx(exp["cap_med"], abs=0.01),             f"{arm} 捕获中位对账"
-        from core.analysis.templates.ruler_compare import _net_stats
+        from core.analysis.templates.ruler_compare import net_stats
         trades_all = [_mk_trade(r.entry_t, r.exit_t,
                                 "long" if r.dir == "多" else "short",
                                 r.entry, r.out, r.net, seq=i)
                       for i, r in enumerate(sub.itertuples())]
-        net = _net_stats(trades_all, init_cash=100.0)
+        net = net_stats(trades_all, init_cash=100.0)
         lo, hi = net["net_ci_pct"]
         # CI 容差分档：A0 臂为 demo rng 首耗（与平台独立 seed 同构，
         # ±1pp 内通过）；B1/C 臂在 demo 为共享 rng 流的后续消耗、

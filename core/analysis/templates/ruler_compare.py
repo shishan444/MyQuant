@@ -94,20 +94,22 @@ def validate_trade_source(trade_source: Any) -> str:
     return record_id
 
 
-def load_validation_trades(
+def resolve_validation_record(
     db_path: Path, record_id: str, rng: Dict[str, str],
-) -> tuple[List[Dict[str, Any]], float]:
-    """验证记录读取与区间一致性双级校验（任务 5.1）。
+) -> tuple[Dict[str, str], float]:
+    """验证记录存在性与记录级区间一致性校验（公共校验件——
+    ruler_compare 与 ab_compare 同源消费，sandbox-and-report-supplement
+    D4「校验链复用非复制」提取）。
 
     Returns:
-        (逐笔行列表, init_cash, excluded_open_trades)。逐笔行含归一后
-        的 entry_time/exit_time（pd.Timestamp）/direction（long|short）
-        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+        (rec_range_norm, init_cash)。rec_range_norm 为记录 request_range
+        归一后形制 {symbol, timeframe, start, end}（时间戳 to_utc 归一、
+        isoformat 出站——双记录对照的相等比较基准）。
 
     Raises:
         ResearchError: 引用不存在（附合法形制）；记录无单区间
             request_range；symbol/timeframe 不一致；记录级区间归一后
-            不相等（附两侧归一值）；逐笔越界（附 seq+时间）。
+            不相等（附两侧归一值）；缺实际生效 init_cash。
     """
     from core.persistence.repository import research as rr
 
@@ -162,7 +164,35 @@ def load_validation_trades(
             "引用的验证记录缺实际生效 init_cash（净均值口径分母）",
             detail={"param": "trade_source.record.init_cash",
                     "record_id": record_id})
+    rec_range_norm = {
+        "symbol": req_range["symbol"], "timeframe": req_range["timeframe"],
+        "start": rec_start.isoformat(), "end": rec_end.isoformat()}
+    return rec_range_norm, float(init_cash)
 
+
+def load_record_trades(
+    db_path: Path, record_id: str, rng: Dict[str, str],
+) -> tuple[List[Dict[str, Any]], int]:
+    """验证记录逐笔装载与逐笔级校验（公共校验件——持仓中排除/逐笔
+    区间越界拒绝；ruler_compare 与 ab_compare 同源消费）。
+
+    Args:
+        rng: 评估区间（记录级一致性已由 resolve_validation_record
+            前置保证——逐笔越界判定归一自评估区间）。
+
+    Returns:
+        (逐笔行列表, excluded_open_trades)。逐笔行含归一后的
+        entry_time/exit_time（pd.Timestamp）/direction（long|short）
+        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+
+    Raises:
+        ResearchError: 记录无逐笔行；逐笔越界（附 seq+时间）；
+            交易清单全部为持仓中行。
+    """
+    from core.persistence.repository import research as rr
+
+    req_start = to_utc(pd.Timestamp(rng["start"]))
+    req_end = to_utc(pd.Timestamp(rng["end"]))
     executions = rr.get_validation_executions(db_path, record_id)
     trades: List[Dict[str, Any]] = []
     for exec_i, exe in enumerate(executions):
@@ -214,7 +244,29 @@ def load_validation_trades(
             "交易清单全部为持仓中行（无已出场交易可对照）",
             detail={"param": "trades",
                     "excluded_open_trades": open_excluded})
-    return closed, float(init_cash), open_excluded
+    return closed, open_excluded
+
+
+def load_validation_trades(
+    db_path: Path, record_id: str, rng: Dict[str, str],
+) -> tuple[List[Dict[str, Any]], float, int]:
+    """验证记录读取与区间一致性双级校验（任务 5.1；组合壳——校验
+    本体在 resolve_validation_record/load_record_trades 两公共件，
+    供 ab_compare 双记录同源消费）。
+
+    Returns:
+        (逐笔行列表, init_cash, excluded_open_trades)。逐笔行含归一后
+        的 entry_time/exit_time（pd.Timestamp）/direction（long|short）
+        /entry_price/exit_price/pnl/seq；持仓中行已排除。
+
+    Raises:
+        ResearchError: 引用不存在（附合法形制）；记录无单区间
+            request_range；symbol/timeframe 不一致；记录级区间归一后
+            不相等（附两侧归一值）；逐笔越界（附 seq+时间）。
+    """
+    _, init_cash = resolve_validation_record(db_path, record_id, rng)
+    trades, open_excluded = load_record_trades(db_path, record_id, rng)
+    return trades, init_cash, open_excluded
 
 
 # ----------------------------------------------------------- 浪模式核心
@@ -230,7 +282,7 @@ def compare_wave(
     浪-笔匹配：入场时点落入 [浪起, 浪止] 闭区间且方向一致（多浪
     重叠取时间序第一匹配）；识别=入场距浪起 ≤ identify_window×浪长
     （时间比例，含等号）；识别率按浪去重；捕获=方向化价差÷浪幅。
-    n<3 时 CI=null 附样本数（附着层契约——bootstrap 全在 _net_stats）。
+    n<3 时 CI=null 附样本数（附着层契约——bootstrap 全在 net_stats）。
     """
     n_waves = len(waves)
     matched: List[Optional[Dict[str, Any]]] = []
@@ -403,11 +455,12 @@ def compare_box(
 
 # ----------------------------------------------------------- 净值侧统计
 
-def _net_stats(
+def net_stats(
     trades: List[Dict[str, Any]], init_cash: float,
     *, B: int = DEFAULT_B, seed: int = DEFAULT_SEED,
 ) -> Dict[str, Any]:
-    """费后净均值统计：net_i = pnl_i（已含费滑）÷ init_cash ×100。"""
+    """费后净均值统计（公共件——ruler_compare 与 ab_compare 同源
+    消费）：net_i = pnl_i（已含费滑）÷ init_cash ×100。"""
     from core.scoring.statistics import boot_ci
 
     nets = [t["pnl"] / init_cash * 100.0 for t in trades
@@ -539,7 +592,7 @@ def ruler_compare(
         waves = [w for w in all_waves if w["start"] >= start_ts]
         wave_stats = compare_wave(
             trades, waves, identify_window=identify_window)
-        net = _net_stats(trades, init_cash, B=B, seed=seed)
+        net = net_stats(trades, init_cash, B=B, seed=seed)
         payload["wave"] = wave_stats
         payload["threshold"] = float(threshold)
         payload.update(net)
@@ -570,7 +623,7 @@ def ruler_compare(
         box_stats = compare_box(
             trades, df, edge_window=edge_window, edge_q_low=edge_q_low,
             edge_q_high=edge_q_high, buffer=buffer)
-        net = _net_stats(trades, init_cash, B=B, seed=seed)
+        net = net_stats(trades, init_cash, B=B, seed=seed)
         payload["box"] = box_stats
         payload.update(net)
         sample_size = len(trades)

@@ -29,15 +29,17 @@ _TEMPLATES = ("condition_stats", "distribution_compare", "correlation_scan",
               "event_study", "pattern_mining", "screen_patterns", "param_sweep",
               "regime_split", "precheck_hypothesis", "segment_narrative",
               "counter_profile", "exit_sweep", "wave_inventory",
-              "box_inventory", "ruler_compare")
+              "box_inventory", "ruler_compare", "ab_compare")
 # 数据行数超过此值或模板为 pattern_mining/screen_patterns → 重组路径
 # （screen 恒 heavy：枚举空间 × 持有期的全谱计算天然超过快路径阈值）
 _HEAVY_ROWS = 10000
 
 # 不适用假设关联的模板名单（add-evaluation-ruler D5——回望性行情
 # 结构事实与对照指标：hypothesis_id 显式 422 拒绝，一处拦截覆盖
-# 名单内全部模板；既有透传模板零变化）
-_HYPOTHESIS_INAPPLICABLE = ("wave_inventory", "box_inventory", "ruler_compare")
+# 名单内全部模板；既有透传模板零变化；ab_compare 同契并入——
+# sandbox-and-report-supplement D4 拦截名单扩枚）
+_HYPOTHESIS_INAPPLICABLE = ("wave_inventory", "box_inventory",
+                            "ruler_compare", "ab_compare")
 
 
 def _count_rows_index_only(data_dir: Path, r: Dict[str, str]) -> int:
@@ -224,8 +226,10 @@ _TEMPLATE_REQUIRED_KEYS: Dict[str, tuple] = {
     "counter_profile": (("condition", "direction"), ("conditions", "direction")),
     "exit_sweep": (("condition", "direction", "grid"),
                    ("conditions", "direction", "grid")),
-    # add-evaluation-ruler：对照模板双必填（mode+trade_source）
+    # add-evaluation-ruler：对照模板双必填（mode+trade_source）；
+    # sandbox-and-report-supplement：A/B 对照三必填（第 16 模板）
     "ruler_compare": (("mode", "trade_source"),),
+    "ab_compare": (("mode", "trade_source_a", "trade_source_b"),),
 }
 
 
@@ -401,6 +405,26 @@ def _run_template(payload: AnalysisRunRequest, data_dir: Path, db_path: Path) ->
             db_path, data_dir, rng,
             mode=p["mode"], trade_source=p["trade_source"],
             data_ranges=ranges,
+            threshold=p.get("threshold", 0.05),
+            identify_window=p.get("identify_window", 0.3),
+            edge_window=p.get("edge_window"),
+            edge_q_low=p.get("edge_q_low", 0.10),
+            edge_q_high=p.get("edge_q_high", 0.90),
+            buffer=p.get("buffer", 0.25),
+            B=p.get("B", 3000), seed=p.get("seed", 42))
+
+    if payload.template == "ab_compare":
+        # A/B 对照模板（sandbox-and-report-supplement D4）：ruler_compare
+        # 同款自装载模板壳——校验链经公共校验件同源消费；hypothesis_id
+        # 已被分派层拦截（回望性对照不烧判定并集，名单扩枚本模板）
+        from core.analysis.templates.ab_compare import ab_compare
+        return ab_compare(
+            db_path, data_dir, rng,
+            mode=p["mode"],
+            trade_source_a=p["trade_source_a"],
+            trade_source_b=p["trade_source_b"],
+            data_ranges=ranges,
+            dimension=p.get("dimension", "none"),
             threshold=p.get("threshold", 0.05),
             identify_window=p.get("identify_window", 0.3),
             edge_window=p.get("edge_window"),
