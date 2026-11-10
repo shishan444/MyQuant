@@ -180,10 +180,11 @@ class TestAnalysisTasksList:
         body = r.json()
         assert body["total"] == 3
         assert body["has_more"] is False
-        # templates 与 _TEMPLATES 同源（12 全集）
+        # templates 与 _TEMPLATES 同源（全集计数快照——ab_compare
+        # 第 16 模板并入后 16；同源性行为级证据见 mutation_red 用例）
         from api.routes.research.analysis import _TEMPLATES
         assert body["templates"] == list(_TEMPLATES)
-        assert len(body["templates"]) == 15
+        assert len(body["templates"]) == 16
         # created_at desc + 七字段行（无 result/params）
         first = body["items"][0]
         assert set(first.keys()) == {
