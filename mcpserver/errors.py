@@ -228,6 +228,14 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     # 对照模板参数面（add-evaluation-ruler）
     "mode": "对照模式未知：mode ∈ wave（浪模式：识别率/捕获率/净均值"
             "CI）|box（箱体模式：先到对侧比例/三分类/月频）",
+    # 任务级封顶参数面（sandbox-and-report-supplement）：leverage 与
+    # margin_cap 共用 require_task_cap_params 校验单源——扫描键按
+    # detail.field 取（leverage 已有 PtTask 覆写先例面，此处补 margin_cap）
+    "margin_cap": "margin_cap 非法：须为 (0,0.60] 小数（需求 60% 资金"
+                  "使用上限硬约束封顶，恰 0.60 合法、0/负值拒绝）",
+    "halt_drawdown_pct": "halt_drawdown_pct 非法：须为 (0,1) 开区间"
+                         "回撤比率（0/1/负值拒绝——熔断保命参数，"
+                         "未配置=不启用）",
     "trade_source": "交易清单来源形制非法：唯一合法 {kind:"
                     "\"validation\", record_id:\"rec_...\"}"
                     "（隔离验证记录）",

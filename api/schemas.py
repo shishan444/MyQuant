@@ -919,6 +919,10 @@ class IsolatedBacktestRequest(BaseModel):
     strategy_id: str
     request_range: DataRangeItem
     threshold_profile: Optional[Dict[str, Any]] = None
+    # 任务级封顶两参（sandbox-and-report-supplement A3——隔离验证路
+    # 与沙盒路覆写语义一致；值域校验在路由层 require_task_cap_params）
+    leverage: Optional[float] = None
+    margin_cap: Optional[float] = None
 
 
 class StagedValidationRequest(BaseModel):
@@ -937,6 +941,9 @@ class StagedValidationRequest(BaseModel):
     end: str
     segmentation: str = "auto"
     segments: Optional[List[Dict[str, Any]]] = None
+    # 任务级封顶两参（sandbox-and-report-supplement A3——各段统一覆写）
+    leverage: Optional[float] = None
+    margin_cap: Optional[float] = None
 
 
 class SandboxBacktestRequest(BaseModel):
@@ -954,6 +961,15 @@ class SandboxBacktestRequest(BaseModel):
     slippage: float = Field(default=0.0005, ge=0)
     init_cash: float = Field(default=100000.0, ge=1)
     hypothesis_id: Optional[str] = None
+    # 任务级封顶两参（sandbox-and-report-supplement D1 ③层）：宽松
+    # float 类型，值域（leverage 整数 [1,3]／margin_cap (0,0.60]）在
+    # 路由层 require_task_cap_params 单点收窄（结构化 422 附
+    # legal_range）；None=不生效（存量逐位不变）
+    leverage: Optional[float] = None
+    margin_cap: Optional[float] = None
+    # 账户级硬熔断（D3①——沙盒路）：权益自峰值回撤比率阈值 (0,1)，
+    # None=不启用；值域校验在路由层（422 附 legal_range）
+    halt_drawdown_pct: Optional[float] = None
 
 
 class RandomWindowRequest(BaseModel):
@@ -966,6 +982,9 @@ class RandomWindowRequest(BaseModel):
     n_windows: int = 8
     seed: int = 42
     hypothesis_id: Optional[str] = None
+    # 任务级封顶两参（sandbox-and-report-supplement A3——各窗统一覆写）
+    leverage: Optional[float] = None
+    margin_cap: Optional[float] = None
 
 
 class AnalysisRunRequest(BaseModel):

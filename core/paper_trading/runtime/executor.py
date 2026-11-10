@@ -292,6 +292,20 @@ class PaperTaskExecutor:
         # 态，无信号 bar 是沉默不是反证）
         self._min_notional_streak = 0
         self._finalized = False
+        # 账户级硬熔断状态（sandbox-and-report-supplement D3②）：
+        # halt_drawdown_pct=None（NULL）=不启用（未配置任务行为逐位
+        # 不变——判定短路）；峰值恢复=pt_equity 历史峰值（append-only
+        # 权威，重启自愈）；halted_at 恢复读 task 行（首触发单次写，
+        # 触发后单向不回落）。峰值初值兜底 initial_cash（零权益行=
+        # 首跑任务）。
+        self._halt_dd = task_row.get("halt_drawdown_pct")
+        self._halted_at: Optional[str] = task_row.get("halted_at")
+        self._halt_reason: Optional[str] = task_row.get("halt_reason")
+        self._peak_equity = None
+        if self._halt_dd is not None:
+            self._peak_equity = (
+                paper_repo.max_equity(self.db_path, self.task_id)
+                or float(task_row["initial_cash"]))
 
         # feed 订阅（主周期+MTF 辅周期；forming 过滤在 feed 侧）
         self._main_sub: Optional[FeedSubscription] = None
@@ -1019,6 +1033,21 @@ class PaperTaskExecutor:
         #    ——同输入同时点纯读，Q-4；ledger 状态自第 5 步后不变，
         #    求值前移使拒绝行与 pending 上下文并入第 6 步同 bar 事务） ──
         snap = self.ledger.snapshot(bar.close, bar.seq)
+        # 熔断峰值跟踪与触发判定（D3②——bar 边界判：成交后快照权益
+        # 参与峰值；回撤 (peak−equity)/peak ≥ 阈值〔含等号〕首触发
+        # 置位〔单向不回落——权益修复不自动恢复开仓〕；触发事实随
+        # 本 bar 第 6 步落库；halted_at 由 bar_time 携带）。None=未
+        # 配置短路（存量逐位不变）
+        if (self._halt_dd is not None and self._halted_at is None
+                and self._peak_equity is not None):
+            if snap.equity > self._peak_equity:
+                self._peak_equity = snap.equity
+            if self._peak_equity > 0.0 and (
+                    (self._peak_equity - snap.equity) / self._peak_equity
+                    >= float(self._halt_dd)):
+                self._halted_at = bar_time
+                self._halt_reason = (
+                    "equity_drawdown_from_peak_ge_halt_drawdown_pct")
         post = self.interpreter.interpret(bar, signals, snap, self.params)
         hits = sig_set.hits
         for rej in post.rejections:
@@ -1112,6 +1141,24 @@ class PaperTaskExecutor:
         恒回退 fixed。
         """
         snap_before = self.ledger.snapshot(bar.close, bar.seq)
+        # 熔断拦截（D3②：开仓前判定——halted 置位后 open 意图被拦，
+        # 持仓与既有平仓逻辑照常〔close/exit 族不进本分支〕）：落
+        # rejected 信号行（沿成交层拦截显式化形制，不入 ledger——
+        # 不产生资金变动）。未配置/未触发短路零影响。
+        if (intent.kind == "open" and self._halted_at is not None):
+            exec_bar_time_bt = (bar.timestamp.isoformat()
+                                if bar.timestamp is not None else str(bar.seq))
+            signal_rows.append(self._signal_row(
+                outcome="rejected",
+                reject_reason="halted_drawdown",
+                bar_time=signal_bar_time, exec_bar_time=exec_bar_time_bt,
+                seq=seq, kind=intent.kind,
+                direction=intent.direction or None,
+                size_fraction=intent.size_fraction,
+                gene_hits=gene_hits,
+                indicator_snapshot=indicator_snapshot,
+                account=self._account_fields(snap_before)))
+            return
         # 最小名义值阈值注入（change paper-depletion-terminal 任务 2：
         # 启动装载表按任务 symbol 取——白名单币恒有值；表缺键 None=
         # 不判定防御形态）
@@ -1319,6 +1366,11 @@ class PaperTaskExecutor:
                 "win_count": self.win_count,
                 "loss_count": self.loss_count,
                 "total_pnl": self.total_pnl,
+                # 熔断触发运行态（D3②：首触发单次写——白名单键，值
+                # None 时 update 侧按既有白名单语义跳过/写 NULL 均不
+                # 破坏「首触发单次写」；显式传 None 保持未触发态）
+                "halted_at": self._halted_at,
+                "halt_reason": self._halt_reason,
                 "heartbeat_at": utc_now_iso(),
             },
         )

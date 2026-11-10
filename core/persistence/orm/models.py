@@ -639,6 +639,13 @@ class PtTask(Base):
     win_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     loss_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     total_pnl: Mapped[float] = mapped_column(REAL, nullable=False, server_default=text('0'))
+    # 账户级硬熔断（sandbox-and-report-supplement D3②——纸盘路）：
+    # halt_drawdown_pct=任务级覆写参数（REAL nullable，NULL=不启用
+    # ——数值留空待用户给后续零代码启用）；halted_at/halt_reason=
+    # 触发运行态记录（首触发单次写，可查询；未触发恒 NULL）
+    halt_drawdown_pct: Mapped[Optional[float]] = mapped_column(REAL)
+    halted_at: Mapped[Optional[str]] = mapped_column(Text)
+    halt_reason: Mapped[Optional[str]] = mapped_column(Text)
     # 创建时研究状态快照（§9.2 四值：draft/unverified/verified/
     # verification_failed）。创建时点审计+查询期现算双句式
     # （build-strategy-lifecycle 5.3）：本列=创建时点审计事实（创建/

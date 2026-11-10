@@ -187,6 +187,9 @@ def run_backtest_on_range(
     fee: float = 0.001, slippage: float = 0.0005,
     strategy_id: str | None = None,
     with_detail: bool = False,
+    task_leverage: int | None = None,
+    task_margin_cap: float | None = None,
+    task_halt_drawdown_pct: float | None = None,
 ) -> (Tuple[Dict[str, Any], np.ndarray | None, int, int]
       | Tuple[Dict[str, Any], np.ndarray | None, int, int, Dict[str, Any]]):
     """[start-warmup, end) 装载算指标/组装插件信号 → 切回 [start,end) 回测。
@@ -201,6 +204,10 @@ def run_backtest_on_range(
             复制（明细组装在落盘层）；三参数键=实际生效实参值。缺省
             False 返回四元组逐位不变（六生产消费方+19 处测试解包零
             波及——硬约束，见 change design §3.2）。
+        task_leverage, task_margin_cap: 任务级封顶两参
+            （sandbox-and-report-supplement D1 ③层；None=不生效——
+            存量逐位不变）。detail 载荷回显两键（传了才写——
+            _params_exec_keys 五键化的值源）。
 
     Returns:
         (metrics, trade_returns, actual_warmup_bars, bars_used)——
@@ -216,7 +223,9 @@ def run_backtest_on_range(
         strategy_id=strategy_id)
 
     engine = bt_engine_mod.BacktestEngine(
-        init_cash=init_cash, fee=fee, slippage=slippage, db_path=db_path)
+        init_cash=init_cash, fee=fee, slippage=slippage, db_path=db_path,
+        task_leverage=task_leverage, task_margin_cap=task_margin_cap,
+        halt_drawdown_pct=task_halt_drawdown_pct)
     result = engine.run(dna, bt_df, dfs_by_timeframe=dfs_by_timeframe,
                         signal_set=signal_set)
     metrics = {
@@ -257,6 +266,22 @@ def run_backtest_on_range(
              for t, v in result.trail_series.items()]
             if getattr(result, "trail_series", None) is not None else None),
     }
+    # 任务级封顶披露（sandbox-and-report-supplement ③层）：③启用
+    # （两参都传）时 metrics 纯增 position_sizing 键——引擎 disclosure
+    # 单源（capped_by_task_cap 计数＋task_cap 生效面）；未传两参不写
+    # 键，存量 metrics 键集与值逐位不变
+    if task_leverage is not None and task_margin_cap is not None:
+        _ps_face = (getattr(result, "metrics_dict", None) or {}).get(
+            "position_sizing")
+        if _ps_face is not None:
+            metrics["position_sizing"] = _ps_face
+    # 熔断三态披露（D3①）：halt_drawdown_pct 传入时 metrics 纯增
+    # halt_info 键（未触发 {halted: false}／触发 +halted_at+halt_reason）；
+    # 未配置不写键（存量逐位不变）。halt 不进 detail 执行参数面
+    # （隔离验证路不进熔断——D3 范围界定）
+    if task_halt_drawdown_pct is not None:
+        metrics["halt_info"] = getattr(result, "halt_info", None) or {
+            "halted": False}
     if with_detail:
         # B4 明细载荷（传引用不复制——组装/落盘在验证服务层）；
         # 三参数键=实际生效实参（显式传参与默认两形态同源）。
@@ -275,6 +300,13 @@ def run_backtest_on_range(
             "mtf_gated_bars": getattr(result, "mtf_gated_bars", None),
             "value_curve": getattr(result, "value_curve_raw", None),
         }
+        # 任务级两参回显（sandbox-and-report-supplement A3 五键化值源：
+        # 传了才写——未传两参 detail 逐位不变，_params_exec_keys 键集
+        # 纯扩、init_cash 等三键语义零影响）
+        if task_leverage is not None:
+            detail["leverage"] = task_leverage
+        if task_margin_cap is not None:
+            detail["margin_cap"] = task_margin_cap
         return (metrics, result.trade_returns, actual_warmup_bars,
                 len(bt_df), detail)
     return metrics, result.trade_returns, actual_warmup_bars, len(bt_df)

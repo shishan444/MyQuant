@@ -47,6 +47,55 @@ def require_known_timeframe(timeframe: str, field: str) -> None:
                     "legal_range": sorted(TF_SECONDS)})
 
 
+def require_task_cap_params(
+    leverage: Optional[float] = None,
+    margin_cap: Optional[float] = None,
+) -> None:
+    """任务级封顶两参值域校验（sandbox-and-report-supplement D1）。
+
+    值域=需求硬约束进参数域封顶：leverage 整数 [1,3]（右闭两端皆
+    合法）、margin_cap 实数 (0,0.60]（左开右闭——恰 0.60 合法、0
+    与负值拒绝）；非整数 leverage 拒绝（引擎杠杆语义=整数倍）。未传
+    （None）直通——③层不生效（合成序退化为既有两层）。schema 层
+    取宽松 float 收窄在此单点（结构化 422 附 legal_range，非 pydantic
+    默认错误形制——与 require_known_timeframe 同款先例）。
+    """
+    if leverage is not None:
+        if (not float(leverage).is_integer()
+                or not 1 <= float(leverage) <= 3):
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"leverage 非法（整数 [1,3] 封顶——需求 3x 硬约束）: "
+                f"{leverage!r}",
+                detail={"field": "leverage", "value": leverage,
+                        "legal_range": "[1,3]", "legal_form": "int"})
+    if margin_cap is not None:
+        if not 0.0 < float(margin_cap) <= 0.60:
+            raise ResearchError(
+                "RESEARCH_PARAM_INVALID",
+                f"margin_cap 非法（(0,0.60] 封顶——需求 60% 硬约束）: "
+                f"{margin_cap!r}",
+                detail={"field": "margin_cap", "value": margin_cap,
+                        "legal_range": "(0,0.60]"})
+
+
+def require_halt_drawdown_pct(halt_drawdown_pct: Optional[float]) -> None:
+    """熔断阈值值域校验（sandbox-and-report-supplement D3）。
+
+    值域=(0,1) 开区间比率（0/1/负值/越界拒绝——0 无意义、1 恒不触发
+    同为非法配置面）；未传（None）直通=不启用（三态之「未配置」）。
+    """
+    if halt_drawdown_pct is not None and not 0.0 < float(
+            halt_drawdown_pct) < 1.0:
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"halt_drawdown_pct 非法（(0,1) 开区间回撤比率）: "
+            f"{halt_drawdown_pct!r}",
+            detail={"field": "halt_drawdown_pct",
+                    "value": halt_drawdown_pct,
+                    "legal_range": "(0,1)"})
+
+
 def encode_cursor(created_at: str, pk: str) -> str:
     """keyset 游标编码：(created_at, 主键) -> "created_at|pk"。
 

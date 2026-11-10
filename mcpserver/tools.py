@@ -995,17 +995,38 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
     def run_backtest(strategy_id: str, symbol: str, timeframe: str,
                      start: str, end: str, fee: float = 0.001,
                      slippage: float = 0.0005, init_cash: float = 100000.0,
-                     hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
+                     hypothesis_id: Optional[str] = None,
+                     leverage: Optional[int] = None,
+                     margin_cap: Optional[float] = None,
+                     halt_drawdown_pct: Optional[float] = None
+                     ) -> Dict[str, Any]:
         """沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
         不判门槛、不构成验证证据）。纪律：挂 hypothesis_id 时该区间计入
         判定并集（此后同区间的隔离验证会被拒——先偷看不获利）；超 bar
-        上限被拒，走隔离验证。"""
+        上限被拒，走隔离验证。
+        任务级封顶两参（可选）：leverage 整数 [1,3]／margin_cap
+        (0,0.60]（硬约束封顶，越界 422 附 legal_range）；两参都传时
+        本次回测名义敞口 ≤ 权益×margin_cap×有效杠杆（有效杠杆=
+        min(DNA 声明, 任务级)），超顶单笔缩量至顶非跳过（响应
+        metrics.position_sizing 披露 capped_by_task_cap 计数）；
+        未传参该层不生效。
+        账户级硬熔断（可选）：halt_drawdown_pct∈(0,1)——权益自峰值
+        回撤达阈值（≥含等号）停止开新仓（持仓与平仓照常）；响应
+        halt_info 三态（未配置不写键/未触发 halted:false/触发
+        halted:true＋halted_at＋halt_reason）。halted 记录不构成
+        验证证据（证据地位待验证协议侧裁决）。"""
         body: Dict[str, Any] = {"strategy_id": strategy_id, "symbol": symbol,
                                 "timeframe": timeframe, "start": start,
                                 "end": end, "fee": fee,
                                 "slippage": slippage, "init_cash": init_cash}
         if hypothesis_id:
             body["hypothesis_id"] = hypothesis_id
+        if leverage is not None:
+            body["leverage"] = leverage
+        if margin_cap is not None:
+            body["margin_cap"] = margin_cap
+        if halt_drawdown_pct is not None:
+            body["halt_drawdown_pct"] = halt_drawdown_pct
         return api.post("/api/research/backtest-sandbox", body)
 
     @mcp.tool()

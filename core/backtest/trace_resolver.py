@@ -52,12 +52,19 @@ EVENT_REASON_MAP: Dict[int, Dict[str, Optional[str]]] = {
     32: {"outcome": "filled_or_rejected", "reason": "risk_budget_fallback"},
     33: {"outcome": "swallowed", "reason": "entry_exit_conflict"},
     34: {"outcome": "swallowed", "reason": "add_inhibited"},
+    # 35=任务级封顶缩量（sandbox-and-report-supplement D1 ③层）：发单
+    # 但缩量（filled——size 为缩后值）或缩至零不发单（rejected）——
+    # 与 32 同为对照实测两态族
+    35: {"outcome": "filled_or_rejected", "reason": "task_cap_scaled"},
+    # 36=熔断屏蔽开新仓（sandbox-and-report-supplement D3①）：halted
+    # 置位后的入场信号被屏蔽（不发单——rejected 族；出场/加减仓照常）
+    36: {"outcome": "rejected", "reason": "halted_entry_blocked"},
 }
 
 # 对照分派：entry 类码查 trade 行 Entry Timestamp、exit 类码查
 # Exit Timestamp（vbt records_readable 配对记录——加仓/减仓各成
 # 独立配对行，两类时间戳各自可对齐执行 bar）
-_ENTRY_CODES = frozenset({10, 11})
+_ENTRY_CODES = frozenset({10, 11, 35})
 _EXIT_CODES = frozenset({12, 13, 20, 21, 22, 23, 24, 25})
 # 吞没行反查域（CARD-02②收紧）：求值层两 reason 独占（分配表单源引用
 # ——reason 字面只在 EVENT_REASON_MAP 写一次）。decision 族 reason
