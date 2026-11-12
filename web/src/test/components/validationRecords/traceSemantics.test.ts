@@ -261,4 +261,38 @@ describe("snapToBars 吸附（契约 K）", () => {
     expect(snapToBars(["2026-04-02T00:00:00Z"], dayBars, 0).dropped).toBe(1);
     expect(snapToBars(["garbage"], dayBars, 86400).dropped).toBe(1);
   });
+
+  it("CARD-03 malformed bar 混入不串位：落点取自身所属 bar 的 timestamp（同域索引回填）", () => {
+    // 首位混入：吸附域 [04-01,04-02,04-03]——旧版回填 bars[idx] 串到 bars[0]="bad-date-xx"
+    const leadBad = [
+      { timestamp: "bad-date-xx" },
+      { timestamp: "2026-04-01T00:00:00Z" },
+      { timestamp: "2026-04-02T00:00:00Z" },
+      { timestamp: "2026-04-03T00:00:00Z" },
+    ];
+    const r1 = snapToBars(["2026-04-01T12:00:00Z"], leadBad, 86400);
+    expect(r1.snapped).toEqual([
+      { from: "2026-04-01T12:00:00Z", to: "2026-04-01T00:00:00Z" },
+    ]);
+    // 中位混入：点 04-02 18:00 归 barEpochs idx=1——旧版回填 bars[1]="bad-date-xx"（错一根）
+    const midBad = [
+      { timestamp: "2026-04-01T00:00:00Z" },
+      { timestamp: "bad-date-xx" },
+      { timestamp: "2026-04-02T00:00:00Z" },
+      { timestamp: "2026-04-03T00:00:00Z" },
+    ];
+    const r2 = snapToBars(["2026-04-02T18:00:00Z"], midBad, 86400);
+    expect(r2.snapped).toEqual([
+      { from: "2026-04-02T18:00:00Z", to: "2026-04-02T00:00:00Z" },
+    ]);
+    // malformed bar 不构成可落点域+drop 语义未动（malformed 点/早于首 bar 丢弃计数）
+    const r3 = snapToBars(
+      ["garbage", "2026-03-31T00:00:00Z", "2026-04-01T06:00:00Z"],
+      leadBad, 86400,
+    );
+    expect(r3.snapped).toEqual([
+      { from: "2026-04-01T06:00:00Z", to: "2026-04-01T00:00:00Z" },
+    ]);
+    expect(r3.dropped).toBe(2);
+  });
 });
