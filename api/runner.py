@@ -302,14 +302,98 @@ class EvolutionRunner(threading.Thread):
             logger.info("任务 %s 当代落库后暂停退出", task_id)
         except TaskStopRequested:
             logger.info("Task %s stopped via TaskController", task_id)
-            # batch1 D3 语义注记: 失败/中止路径的无条件写是「异常终态最后写」——
-            # 前态必然 running（单线程执行流内），不接动作前态守护
-            update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
+            # 失败/中止路径的无条件写是「异常终态最后写」——前态必然 running
+            # （单线程执行流内），不接动作前态守护。user_stop 出口冠军资产化
+            # （快照恢复链）见 _persist_champion_on_user_stop：状态先行，恢复
+            # 链/入库失败转 champion_persist_failed（champion_dna 保留程度
+            # 取决于失败点）
+            self._persist_champion_on_user_stop(task_row, task_id)
         except Exception:
             logger.error("Task %s failed", task_id, exc_info=True)
             update_task(self.db_path, task_id, status="stopped", stop_reason="error")
         finally:
             _active_controllers.pop(task_id, None)
+
+    def _persist_champion_asset(
+        self,
+        task_row: Dict[str, Any],
+        task_id: str,
+        champion: StrategyDNA,
+        best_score: Optional[float],
+        generation: int,
+        metrics_json: Optional[str] = None,
+    ) -> None:
+        """终态冠军入库（双出口共用动作本体）。
+
+        经 save_strategy 同签名去重（保留更优）幂等——重复终态/跨任务
+        同签名冠军零副作用。参数差异点（best_score/generation/metrics_json）
+        由出口调用方传入。任一步异常上抛，由调用方失败分支转
+        champion_persist_failed（spec evolution-task-lifecycle：终态冠军
+        入策略库 + 失败可见与幂等）。
+        """
+        from core.persistence.repository.strategy import save_strategy
+        from core.strategy.dna import generate_strategy_name
+
+        save_strategy(
+            self.db_path,
+            strategy_id=champion.strategy_id,
+            dna_json=champion.to_json(),
+            symbol=task_row.get("symbol", "BTCUSDT"),
+            timeframe=task_row.get("timeframe", "4h"),
+            name=generate_strategy_name(champion),
+            source="evolution",
+            source_task_id=task_id,
+            best_score=best_score,
+            generation=generation,
+            gene_signature=champion.gene_signature,
+            metrics_json=metrics_json,
+        )
+
+    def _persist_champion_on_user_stop(self, task_row: Dict[str, Any], task_id: str) -> None:
+        """user_stop 出口冠军资产化（快照恢复链五步）。
+
+        执行序：①状态先行 stopped/user_stop（异常上抛走 _run_task 既有
+        error 出口——不吞错）；②快照 top1 恢复 champion；③无快照=正常
+        终止（无冠军可资产化，champion_dna 保持空——现状语义）；④补写
+        champion_dna（不带 status 无条件写）；⑤save_strategy（best_score/
+        generation 取快照值、metrics_json=None 显式缺失——快照表无
+        metrics 列，不造第二份）。
+
+        ②⑤ 间任一步异常：champion_persist_failed 失败形制（status 已
+        stopped 只改 reason；champion_dna 保留程度取决于失败点——恢复
+        成功后失败=非空、恢复链早期失败=空）。失败分支处理完即方法返回
+        （不抛出——异常边界兑现「失败可见上报」而不干扰 _run_task 控制流）。
+        """
+        # ① 状态先行（异常上抛走 error 出口）
+        update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
+
+        champion: Optional[StrategyDNA] = None
+        try:
+            # ② 快照 top1 恢复
+            from core.persistence.repository.evolution import list_top_snapshots
+            snaps = list_top_snapshots(self.db_path, task_id, limit=1)
+            if not snaps:
+                # ③ 无快照=正常终止（无冠军可资产化，现状语义）
+                logger.info("Task %s user_stop 无代际快照，无冠军可资产化", task_id)
+                return
+            snap = snaps[0]
+            champion = StrategyDNA.from_json(snap["best_dna"])
+            # ④ 补写 champion_dna（不带 status 无条件写）
+            update_task(self.db_path, task_id, champion_dna=champion)
+            # ⑤ 入库（快照表无 metrics 列，metrics_json=None 显式缺失）
+            self._persist_champion_asset(
+                task_row, task_id, champion,
+                best_score=snap["best_score"],
+                generation=snap["generation"],
+                metrics_json=None,
+            )
+        except Exception:
+            # 失败形制：status 已 stopped 保持，只改 reason
+            logger.error(
+                "Task %s champion persist failed via user_stop restore chain (strategy_id=%s)",
+                task_id, getattr(champion, "strategy_id", None), exc_info=True,
+            )
+            update_task(self.db_path, task_id, stop_reason="champion_persist_failed")
 
     def _execute_task(self, task_row: Dict[str, Any], task_id: str, controller: TaskController) -> None:
         """任务完整执行体（全部异常上抛至 _run_task 边界统一处理）。"""
@@ -572,7 +656,13 @@ class EvolutionRunner(threading.Thread):
                             "generation": global_gen,
                         })
                     except Exception:
-                        logger.debug("strategy extract failed", exc_info=True)
+                        # 失败可见上报（fix-evolution-champion-persist）：
+                        # 吞错面修复——qualified 抽取失败不再静默降级为
+                        # debug，error 级结构化日志承载归因通道
+                        logger.error(
+                            "Task %s: strategy extract failed (strategy_id=%s)",
+                            task_id, ind.strategy_id, exc_info=True,
+                        )
 
             # 代际完成推送（附冠军 DNA）
             ws_payload = {
@@ -685,6 +775,38 @@ class EvolutionRunner(threading.Thread):
 
         # 冠军落库（completed 前态守护见下）
         if champion is not None:
+            # 终态冠军入库先于 completed 终态写入（前态={running} 下唯一解：
+            # 先 completed 后入库失败则无法改写终态）——失败转
+            # stopped/champion_persist_failed 并提前 return（不执行 completed
+            # 写入/champion_metrics/OOS/收尾推送——evolution_complete 推送缺席
+            # 与 stopped 出口既有语义一致）
+            try:
+                champion_rec = champion_tracker.get_champion()
+                champion_diag = getattr(champion, "_eval_diagnostics", None)
+                self._persist_champion_asset(
+                    task_row, task_id, champion,
+                    best_score=result["champion_fitness"],
+                    generation=champion_rec.generation if champion_rec else 0,
+                    metrics_json=(
+                        json.dumps(champion_diag.get("raw_metrics"))
+                        if champion_diag and champion_diag.get("raw_metrics")
+                        else None
+                    ),
+                )
+            except Exception:
+                logger.error(
+                    "Task %s champion persist failed (strategy_id=%s)",
+                    task_id, champion.strategy_id, exc_info=True,
+                )
+                update_task(
+                    self.db_path, task_id,
+                    status="stopped",
+                    champion_dna=champion,
+                    stop_reason="champion_persist_failed",
+                    expected_statuses=("running",),
+                )
+                return
+
             # batch1 D3: completed 前态守护 {running}——与路由 stop 写入的竞态中
             # 先到者胜（先 completed 则 stop 被 409 拒绝；先 stopped 则本写不生效）
             update_task(

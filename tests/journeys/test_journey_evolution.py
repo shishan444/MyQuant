@@ -112,15 +112,32 @@ def test_evolution_closed_loop_l2(evo_client):
         )
 
     # ── D6: 终态后产出可取（跨步引用一致）
-    # R-9（已登记）：tasks/{id}/strategies 返回 champion_dna 内嵌 id，
-    # 不保证已写策略表（低分场景 404）——跨步引用以查策略表的
-    # discovered-strategies 端点锚定
+    # 终态冠军入库（fix-evolution-champion-persist）：completed 出口冠军
+    # 必入策略库——eff.strategies 冠军条目 ⇒ 库行可取且 discovered 列表
+    # 含同 id 行；discovered 空 ⇔ 无冠军条目（champion=None）。R-9 注记
+    # （champion 内嵌 id 404 不视为断言失败）随缺口闭合退役。
     eff = client.get(f"/api/evolution/tasks/{task_id}/strategies").json()
     eff_items = eff.get("strategies") or []
     assert isinstance(eff_items, list)
 
     disc = client.get(f"/api/evolution/tasks/{task_id}/discovered-strategies").json()
     disc_items = disc if isinstance(disc, list) else disc.get("strategies", [])
+    disc_ids = {s.get("strategy_id") or s.get("id") for s in disc_items}
+
+    # 有冠军条目 ⇒ 其 id 经 GET /api/strategies 200 且 discovered 含同 id
+    # （R-9 一致性缺口闭合锚；变异验证义务见 tasks 2.1）
+    for s in eff_items:
+        if s.get("source") != "champion":
+            continue
+        sid = s.get("strategy_id")
+        assert sid, "冠军条目缺 strategy_id"
+        assert client.get(f"/api/strategies/{sid}").status_code == 200, (
+            f"冠军 {sid} 经 GET /api/strategies 不可取回（终态冠军入库断裂）"
+        )
+        assert sid in disc_ids, (
+            f"冠军 {sid} 不在 discovered-strategies——入库行 source_task_id 过滤失效"
+        )
+
     if disc_items:
         # 有产出：每个 id 在策略表可取回（跨步引用不断裂）
         for s in disc_items[:3]:
@@ -130,8 +147,13 @@ def test_evolution_closed_loop_l2(evo_client):
                 f"策略表产出 {sid} 取不回"
             )
     else:
-        # score=0 场景（RSI 训练窗无交易）：策略表无行——champion 内嵌 id
-        # 在策略表 404（R-9 一致性缺口的实证面，不视为断言失败）
+        # completed 出口 discovered 空 ⇔ 无冠军条目（champion=None：
+        # 种群全淘汰/无评估；0 分个体也是合法冠军必入库，score=0 场景
+        # 走上分支）。原守卫断言保留：有得分产出但 discovered 空仍断裂
+        champ_entries = [s for s in eff_items if s.get("source") == "champion"]
+        assert not champ_entries, (
+            "discovered-strategies 为空但存在冠军条目——终态冠军入库未落库"
+        )
         assert all(float(g.get("best_score") or 0.0) == 0.0 for g in gens), (
             "有得分产出但 discovered-strategies 为空——跨步引用断裂"
         )
