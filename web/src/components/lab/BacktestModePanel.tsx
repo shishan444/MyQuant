@@ -6,7 +6,7 @@ import { Button as AntButton } from "antd";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, SignalData } from "@/components/charts/KlineChart";
 import { BacktestMetricsPanel } from "./BacktestMetricsPanel";
-import { EquityCurve } from "@/components/charts/EquityCurve";
+import { EquityLineChart as EquityCurve } from "@/components/charts/EquityLineChart";
 import { runBacktest } from "@/services/strategies";
 import { DOMAIN, ATTENTION } from "@/theme/tokens";
 import { useCreateStrategy } from "@/hooks/useStrategies";

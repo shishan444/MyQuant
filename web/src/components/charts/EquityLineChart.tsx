@@ -1,0 +1,91 @@
+/**
+ * 权益曲线共享组件（lightweight-charts 单库形态，fe-chart-single-lib 组 2）。
+ * Trading/Lab/BatchBacktest 共用；resolveEquityColor 随迁本文件。
+ * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
+ */
+import { useEffect, useRef } from 'react';
+import { createChart, LineSeries } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import { POLARITY, ATTENTION } from '@/theme/tokens';
+
+/** equity 点（UTC ISO 串时间轴，echarts 旧形制承继，装配时转 epoch 秒） */
+export interface EquityPoint {
+  timestamp: string;
+  value: number;
+}
+
+/** 少于 2 点无法绘制曲线（空态与 MIN_POINTS 语义逐字承继） */
+export const EQUITY_MIN_POINTS = 2;
+
+function formatMoney(v: number): string {
+  if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(2) + 'M';
+  if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(1) + 'K';
+  return '$' + v.toFixed(0);
+}
+
+/** 终点盈亏决定曲线色（双着色分立）：无基准金色；有基准按终点比较，持平按盈利计 */
+export function resolveEquityColor(data, baseline) {
+  if (baseline == null) return ATTENTION.gold;
+  const last = data[data.length - 1]?.value ?? baseline;
+  return last >= baseline ? POLARITY.up : POLARITY.down;
+}
+
+export interface EquityCurveProps {
+  data: EquityPoint[];
+  /** 初始资金基准；提供时按终点盈亏着色，缺省金色 */
+  baseline?: number;
+  height?: number;
+}
+
+export function EquityLineChart({ data, baseline, height = 200 }: EquityCurveProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi | null>(null);
+  const hasData = data.length >= EQUITY_MIN_POINTS;
+  // jsdom 降级：canvas.getContext 不存在即无绘制面（jsdom 无 canvas 实现）
+  const canDraw = typeof document !== 'undefined' &&
+    document.createElement('canvas').getContext != null;
+
+  useEffect(() => {
+    if (!hasData || !canDraw || !containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
+    });
+    chartRef.current = chart;
+    const series = chart.addSeries(LineSeries, { lineWidth: 1.5 });
+    seriesRef.current = series;
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, [hasData, canDraw]);
+
+  useEffect(() => {
+    if (!hasData || !canDraw || !chartRef.current || !seriesRef.current) return;
+    const series = seriesRef.current;
+    series.setData(data.map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value })));
+    series.applyOptions({
+      color: resolveEquityColor(data, baseline),
+      priceFormat: { type: 'price', precision: 0, minMove: 1 },
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    chartRef.current.priceScale('right').applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.1, bottom: 0.1 },
+      // 旧形制 y 轴 ±500 padding 的近似等价（百分比 margin，视觉余量语义一致）
+    });
+    chartRef.current.timeScale().fitContent();
+  }, [data, baseline, canDraw]);
+
+  if (!hasData) {
+    return (
+      <div className='flex items-center justify-center rounded-lg border border-border-default' style={{ height }}>
+        <span className='text-xs text-text-muted'>数据不足，无法绘制资金曲线</span>
+      </div>
+    );
+  }
+  return <div ref={containerRef} style={{ height }} />;
+}

@@ -38,7 +38,7 @@ import {
   useTradingSignals,
 } from "@/hooks/useTrading";
 import { TradingChart } from "@/components/trading/TradingChart";
-import { EquityCurve } from "@/components/charts/EquityCurve";
+import { EquityLineChart as EquityCurve } from "@/components/charts/EquityLineChart";
 import { MetricsDashboard } from "@/components/trading/MetricsDashboard";
 import { QualificationLayer } from "@/components/trading/QualificationLayer";
 import { RunnerStatusBadge } from "@/components/trading/RunnerStatusBadge";
