@@ -76,6 +76,7 @@ vi.mock("@/components/charts/KlineChart", () => ({
         data-markers-text={(props.signalMarkers ?? []).map((m) => m.text).join("|")}
         data-height={props.height}
         data-equity-len={props.equityData?.length ?? 0}
+        data-equity-times={(props.equityData ?? []).map((p) => (p as { time: string }).time).join(",")}
         data-subchart={props.subChartType ?? ""}
         data-len={props.data?.length ?? 0}
         data-indicators={props.indicators?.length ?? 0}
@@ -891,9 +892,9 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
   it("契约 J：手动开关——EMA 开→追加请求成线；同参数与 DNA 合并去重", async () => {
     mockGetStrategy.mockResolvedValue(makeStrategy(DNA_FIX));
     mockChartInd.mockImplementation((
-      _s: string, _t: string, params: Record<string, unknown>,
+      _s: string, _t: string, params?: Record<string, unknown>,
     ) => Promise.resolve(
-      params.ema_periods
+      params?.ema_periods
         ? { ema: { "50": [{ time: "2026-04-05 00:00:00+00:00", value: 1 }] }, boll: null, rsi: null, macd: null, kdj: null }
         : { ema: {}, boll: { upper: [], middle: [], lower: [] }, rsi: null, macd: null, kdj: null },
     ) as never);
@@ -953,5 +954,92 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
     await waitFor(() =>
       expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m"),
     );
+  });
+
+  it("契约 K 增量：equity/trail 吸附落点——切 1d 后时间列落日 bar+同 bar 保尾值合并", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // trail 两点半径点（04-02 06:00/18:00）+equity timestamps 直用两点——同落 04-02 日 bar
+    d.executions[0].trail_series = [
+      { time: "2026-04-02 06:00:00+00:00", value: 98000 },
+      { time: "2026-04-02 18:00:00+00:00", value: 99000 },
+    ];
+    d.executions[0].equity = {
+      grid_aligned: false, timeframe: "30m", start: null, length: 2,
+      timestamps: ["2026-04-02 06:00:00+00:00", "2026-04-02 18:00:00+00:00"],
+      values: [100000, 101000],
+    };
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准 30m：吸附短路——equity/trail 原时间列原点数
+    const kline0 = await screen.findByTestId("vr-kline");
+    expect(kline0).toHaveAttribute("data-equity-len", "2");
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toHaveLength(2);
+    });
+    // 切 1d：两点均落 [04-02, 04-03) 同一日 bar——同 bar 保尾值合并 1 点，
+    // equity 时间列=日 bar 时间戳（吸附只改时间锚不改值）
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-equity-len", "1");
+      expect(kline).toHaveAttribute("data-equity-times", "2026-04-02 00:00:00+00:00");
+    });
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([{ time: "2026-04-02 00:00:00+00:00", value: 99000 }]);
+    });
+  });
+
+  it("契约 K 增量：无数据档禁用回路——切 1d 端点 404→该档选项禁用+自动回基准+禁用点击零新请求", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) =>
+      tf === "1d"
+        ? Promise.reject(new Error("404"))
+        : Promise.resolve({
+            data: Array.from({ length: 5 }, (_, i) => ({
+              timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+            })),
+          }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1d：端点 404→error 态→deadTfs 收录+viewTf 自动回基准（基准档缓存重现在图）
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    // 1d 选项禁用态在场；禁用项点击零新请求（1d 调用数恒 1）
+    openTfSelect();
+    const optDisabled = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    const optEl = optDisabled.closest(".ant-select-item-option");
+    expect(optEl?.className).toContain("ant-select-item-option-disabled");
+    fireEvent.click(optEl ?? optDisabled);
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.filter((c) => c[1] === "1d")).toHaveLength(1);
+    });
   });
 });
