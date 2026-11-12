@@ -103,37 +103,26 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
     if (['completed', 'stopped', 'failed'].includes(String(task.status))) break
     await page_wait(1000)
   }
-  // D-4（已登记 findings，高优先）：真服务进化在 per-individual fallback
-  // 路径触发 DNA 环变性（is_mtf 翻转→ValueError）。TestClient 上下文
-  // batch_run 成功可完成；真服务偶发 fallback 即 failed——哨兵化接受
-  // failed 终态（修复后收紧为 completed）
-  expect(['completed', 'failed']).toContain(task.status)
+  // T-D4 复验位：真服务进化终态 completed-only（fallback ValueError 根因
+  // 已由 3c833753 消除；本断言红=复验捕获残留→按 proposal 升级条款转为
+  // 修复任务）
+  expect(task.status).toBe('completed')
 
   // ── 冠军产出（终态后可取）
   const eff = await (await request.get(`${API}/api/evolution/tasks/${taskId}/strategies`)).json()
   expect(Array.isArray(eff.strategies)).toBe(true)
 
-  // ── verify 复验：R-10（已登记）：真服务 POST /api/strategies 500
-  // （TestClient 同 payload 201——环境差异待查）；策略创建依赖段留跟进，
-  // verify 端到端口径已由 journeys/consistency 层锚定（同窗全等+聚合自洽）
+  // ── R-10 复验段（T-R10 复验位）：两次 POST 同 payload 断言（下方实现）
 
   // ── 模拟盘（纸盘新域）：库内策略上盘 → 停止（状态机收敛）。
   // 旧域 dna_json 直传已退役（frontend-switch-and-retire R.1）——新域
-  // 创建只收 strategy_id（DNA 由后端从策略库流转快照）。优先复用本
-  // 链路进化产出的库内策略（冠军上盘的闭环语义）；进化 failed 无产
-  // 出时回退库内任一策略（R-10 在册：真服务 POST /api/strategies 500，
-  // 不走先落库路径）
-  let strategyId: string | undefined
+  // 创建只收 strategy_id（DNA 由后端从策略库流转快照）
+  // 冠军直查直挂（判别式第 1 行 e2e 面：200+201 双断言在位）
   const evolved = Array.isArray(eff.strategies) ? eff.strategies : []
-  if (evolved.length > 0) {
-    strategyId = (evolved[0] as Record<string, unknown>).strategy_id as string
-  } else {
-    const pool = await (await request.get(`${API}/api/strategies?limit=1`)).json()
-    // StrategyListResponse 键名为 items（api/schemas.py StrategyListResponse）
-    const first = Array.isArray(pool.items) ? pool.items[0] : undefined
-    strategyId = first?.strategy_id as string | undefined
-  }
-  expect(strategyId, '上盘策略源（进化产出或库内既有）').toBeTruthy()
+  expect(evolved.length, '冠军产出非空（终态冠军入库已修复）').toBeGreaterThan(0)
+  const strategyId = (evolved[0] as Record<string, unknown>).strategy_id as string
+  const chk = await request.get(`${API}/api/strategies/${strategyId}`)
+  expect(chk.status()).toBe(200)
 
   const pt = await request.post(`${API}/api/paper-trading/tasks`, {
     data: { strategy_id: strategyId },
@@ -149,6 +138,19 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
     await page_wait(500)
   }
   expect(stopped).toBe(true)
+
+  // ── R-10 真服务复验段（T-R10 复验位）：两次 POST /api/strategies 同
+  // payload——首次 200/201、二次 200+duplicated=true（B8 预检分流现状）。
+  // 本复验=首次真服务证据（PRD 验收 4 前半「不再 500」）
+  const dup1 = await request.post(`${API}/api/strategies`, {
+    data: { dna: DNA, name: 'e2e-r10-a', symbol: 'E2ECL', timeframe: '4h' },
+  })
+  expect([200, 201]).toContain(dup1.status())
+  const dup2 = await request.post(`${API}/api/strategies`, {
+    data: { dna: DNA, name: 'e2e-r10-a', symbol: 'E2ECL', timeframe: '4h' },
+  })
+  expect(dup2.status()).toBe(200)
+  expect((await dup2.json()).duplicated).toBe(true)
 
   const del = await request.delete(`${API}/api/data/datasets/E2ECL_4h`)
   expect([200, 204]).toContain(del.status())
