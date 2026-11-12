@@ -1,7 +1,10 @@
-"""冠军行挂盘分派锚（fix-evolution-champion-persist M4，判别式第 1/3 行挂盘 201）。
+"""冠军行挂盘分派锚（fix-evolution-champion-persist M4）。
 
-L1 主文件不承载（TestClient lifespan 线程会拖死批次，既有服务线程形制所限）；
-落 tests/paper_trading/ 既有族旁——与纸盘域既有挂盘端点测试同环境形制。
+判别式（design D6）挂盘列三面：第 1 行 completed 冠军 201；第 3 行
+user_stop 快照恢复冠军 201；第 5 行入库失败冠军 404（唯一合法例外）。
+L1 主文件不承载（TestClient lifespan 线程会拖死批次，既有服务线程
+形制所限）；落 tests/paper_trading/ 既有族旁——与纸盘域既有挂盘端点
+测试同环境形制。
 """
 from __future__ import annotations
 
@@ -72,3 +75,89 @@ def test_champion_row_mounts_paper_task_201(tmp_path):
             "strategy_id": champion.strategy_id,
         })
         assert r.status_code == 201, f"挂盘受理: {r.status_code} {r.text[:200]}"
+
+
+def test_user_stop_restored_champion_mounts_201(tmp_path):
+    """user_stop 快照恢复冠军挂盘 201（判别式第 3 行挂盘面）。
+
+    停止时序：代 2 评估入口抛 TaskStopRequested（engine 批量路径
+    stop_check() 先行、无 except 包裹直上抛），代 1 快照已落库。
+    """
+    from core.features.indicators import compute_all_indicators
+    from api.runner import EvolutionRunner, TaskStopRequested
+    from api.app import create_app
+    from fastapi.testclient import TestClient
+
+    db = tmp_path / "cp-mount-us.db"
+    init_db_ext(db)
+    data_dir = tmp_path / "datamountus"; data_dir.mkdir()
+
+    task_row = _make_task(db, "cp-mount-us")
+    enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
+    runner = EvolutionRunner(db_path=db, data_dir=data_dir)
+    call_count = 0
+
+    def eval_with_stop_at_gen2(pop, *a, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise TaskStopRequested()
+        return [_stub_score(d) for d in pop]
+
+    with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
+         patch("api.runner_progress._push_ws"), \
+         patch.object(runner, "_evaluate_population", eval_with_stop_at_gen2):
+        runner._run_task(task_row)
+
+    row = get_task(db, "cp-mount-us")
+    assert row["status"] == "stopped"
+    assert row["stop_reason"] == "user_stop"
+    assert row["champion_dna"], "快照恢复前提：champion_dna 已补写"
+
+    champion = StrategyDNA.from_json(row["champion_dna"])
+    app = create_app(db_path=db, data_dir=data_dir)
+    with TestClient(app) as client:
+        r = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": champion.strategy_id,
+        })
+        assert r.status_code == 201, \
+            f"user_stop 恢复冠军挂盘受理: {r.status_code} {r.text[:200]}"
+
+
+def test_persist_failed_champion_not_mountable_404(tmp_path):
+    """入库失败冠军：库中不可查+挂盘 404（判别式第 5 行——唯一合法例外）。"""
+    from core.features.indicators import compute_all_indicators
+    from api.runner import EvolutionRunner
+    from api.app import create_app
+    from fastapi.testclient import TestClient
+
+    db = tmp_path / "cp-mount-f.db"
+    init_db_ext(db)
+    data_dir = tmp_path / "datamountf"; data_dir.mkdir()
+
+    task_row = _make_task(db, "cp-mount-f")
+    enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
+    runner = EvolutionRunner(db_path=db, data_dir=data_dir)
+
+    with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
+         patch("api.runner_progress._push_ws"), \
+         patch.object(runner, "_evaluate_population",
+                      lambda pop, *a, **kw: [_stub_score(d) for d in pop]), \
+         patch("core.persistence.repository.strategy.save_strategy",
+               side_effect=RuntimeError("injected persist failure")):
+        runner._run_task(task_row)
+
+    row = get_task(db, "cp-mount-f")
+    assert row["stop_reason"] == "champion_persist_failed", "入库失败前提"
+    assert row["champion_dna"], "completed 出口失败：champion_dna 恒照写"
+
+    champion = StrategyDNA.from_json(row["champion_dna"])
+    app = create_app(db_path=db, data_dir=data_dir)
+    with TestClient(app) as client:
+        r_get = client.get(f"/api/strategies/{champion.strategy_id}")
+        assert r_get.status_code == 404, "库中不可查（唯一合法例外）"
+        r_post = client.post("/api/paper-trading/tasks", json={
+            "strategy_id": champion.strategy_id,
+        })
+        assert r_post.status_code == 404, \
+            f"入库失败冠军挂盘: {r_post.status_code} {r_post.text[:200]}"

@@ -8,9 +8,9 @@ M2 失败例外：入库/恢复链失败 → stopped+champion_persist_failed+err
 0 分冠军也是合法冠军必入库。M4 挂盘分派锚落 tests/paper_trading/ 既有族
 （本文件不承载）。
 
-判别式（design D6）第 1/3/4/5 行行为由本文件承载；第 6 行 (stopped, error)
-无保证不测。形制对齐 tests/evolution/test_evolution_runner_happy_path.py
-（tmp_db + stub 评估注入）。
+判别式（design D6）第 1（含 0 分子面）/2/3/4/5 行行为由本文件承载；第 6 行
+(stopped, error) 无保证不测。形制对齐 tests/evolution/test_evolution_runner_
+happy_path.py（tmp_db + stub 评估注入）。
 """
 from __future__ import annotations
 
@@ -106,6 +106,81 @@ class TestCompletedExitPersist:
         assert lib_row["source_task_id"] == "cp-11"
         assert lib_row["status"] == "active"
         assert lib_row["best_score"] == pytest.approx(_stub_score(champion), rel=1e-9)
+
+    def test_zero_score_champion_persisted(self, tmp_path):
+        """判别式第 1 行「含 0 分」子面：0 分冠军也是合法冠军必入库。
+
+        champion_fitness 初始 -1.0，best_fitness > -1 即记录——全种群
+        0 分时冠军=当代首位个体（engine.py:347 严格大于判定）。
+        """
+        from core.features.indicators import compute_all_indicators
+        from core.persistence.repository.strategy import get_strategy
+
+        db = tmp_path / "cp-z0.db"
+        init_db_ext(db)
+        data_dir = tmp_path / "dataz0"; data_dir.mkdir()
+
+        task_row = _make_task(db, "cp-z0")
+        task_row["max_generations"] = 2
+        task_row["continuous"] = 0
+        enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
+
+        from api.runner import EvolutionRunner
+        runner = EvolutionRunner(db_path=db, data_dir=data_dir)
+        with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
+             patch("api.runner_progress._push_ws"), \
+             patch.object(runner, "_evaluate_population",
+                          lambda pop, *a, **kw: [0.0 for _ in pop]):
+            runner._run_task(task_row)
+
+        row = get_task(db, "cp-z0")
+        assert row["status"] == "completed", \
+            f"0 分冠军任务照常完成: {row['status']}/{row.get('stop_reason')}"
+        assert row["champion_dna"], "0 分冠军也是合法冠军（>-1 即记录）"
+
+        champion = StrategyDNA.from_json(row["champion_dna"])
+        lib_row = get_strategy(db, champion.strategy_id)
+        assert lib_row is not None, "0 分冠军必入库（判别式第 1 行含 0 分）"
+        assert lib_row["best_score"] == 0.0
+        assert lib_row["status"] == "active"
+
+
+class TestCompletedNoChampion:
+    """M3 空边界（判别式第 2 行）：completed 无冠军 → 无义务。"""
+
+    def test_no_champion_completed_no_obligation(self, tmp_path):
+        """全代 best_fitness <= -1.0 → champion=None → 照常 completed、零入库。
+
+        构造依据 engine.py:347-349：best_fitness 严格大于 champion_fitness
+        （初始 -1.0）才记录——全负分时冠军恒 None，runner 走 855 else
+        分支直写 completed（无 champion_dna、无入库动作）。
+        """
+        from core.features.indicators import compute_all_indicators
+        from core.persistence.repository.strategy import list_strategies
+
+        db = tmp_path / "cp-nc.db"
+        init_db_ext(db)
+        data_dir = tmp_path / "datanc"; data_dir.mkdir()
+
+        task_row = _make_task(db, "cp-nc")
+        task_row["max_generations"] = 2
+        task_row["continuous"] = 0
+        enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
+
+        from api.runner import EvolutionRunner
+        runner = EvolutionRunner(db_path=db, data_dir=data_dir)
+        with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
+             patch("api.runner_progress._push_ws"), \
+             patch.object(runner, "_evaluate_population",
+                          lambda pop, *a, **kw: [-10.0 for _ in pop]):
+            runner._run_task(task_row)
+
+        row = get_task(db, "cp-nc")
+        assert row["status"] == "completed", \
+            f"无冠军任务照常完成: {row['status']}/{row.get('stop_reason')}"
+        assert row["stop_reason"] == "max_generations"
+        assert not row["champion_dna"], "无冠军：champion_dna 无义务（保持空）"
+        assert not list_strategies(db, source_task_id="cp-nc"), "无冠军零入库"
 
 
 class TestCompletedFailures:
@@ -343,3 +418,7 @@ class TestUserStopExitRestore:
         assert row["status"] == "stopped"
         assert row["stop_reason"] == "champion_persist_failed"
         assert row["champion_dna"], "恢复成功后失败：champion_dna 保留非空"
+
+        from core.persistence.repository.strategy import list_strategies
+        assert not list_strategies(db, source_task_id="cp-us4"), \
+            "user_stop 恢复后入库失败：库无行（不可查，唯一合法例外）"
