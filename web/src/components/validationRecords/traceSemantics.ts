@@ -410,12 +410,15 @@ export function snapToBars(
     const t = toTime(ts);
     return typeof t === "number" ? t : null;
   };
-  const barEpochs: number[] = [];
+  // 同域索引（epoch 与 timestamp 成对）：malformed bar 不进吸附域（现状
+  // 同），二分与回填同取本域——barEpochs 单独压栈时跳过 malformed 会使
+  // 索引与 bars 错位，回填 bars[idx] 串到错误的 bar（CARD-03）
+  const barDomain: Array<{ e: number; ts: string }> = [];
   for (const b of bars) {
     const e = epochOf(b.timestamp);
-    if (e != null) barEpochs.push(e);
+    if (e != null) barDomain.push({ e, ts: b.timestamp });
   }
-  if (barEpochs.length === 0 || tfSec <= 0) return { snapped: [], dropped: times.length };
+  if (barDomain.length === 0 || tfSec <= 0) return { snapped: [], dropped: times.length };
   const snapped: SnapResult["snapped"] = [];
   let dropped = 0;
   for (const t of times) {
@@ -426,23 +429,23 @@ export function snapToBars(
     }
     // 二分：找最后一根 bar.time <= te 的 bar（左闭右开归属）
     let lo = 0;
-    let hi = barEpochs.length - 1;
+    let hi = barDomain.length - 1;
     let idx = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (barEpochs[mid] <= te) {
+      if (barDomain[mid].e <= te) {
         idx = mid;
         lo = mid + 1;
       } else {
         hi = mid - 1;
       }
     }
-    if (idx < 0 || te >= barEpochs[idx] + tfSec) {
+    if (idx < 0 || te >= barDomain[idx].e + tfSec) {
       // 早于首 bar 或超出尾 bar 覆盖域
       dropped++;
       continue;
     }
-    snapped.push({ from: t, to: bars[idx].timestamp });
+    snapped.push({ from: t, to: barDomain[idx].ts });
   }
   return { snapped, dropped };
 }
