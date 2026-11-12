@@ -46,30 +46,6 @@ def _make_task(db, task_id: str, **overrides) -> dict:
     return task_row
 
 
-def _run_evolution(db, data_dir, task_row, eval_fn=None):
-    """跑一次 _run_task（patch 数据加载与 ws 推送，评估可注入）。
-
-    eval_fn 注入 TaskStopRequested 的可行性与时序锚：engine 批量评估路径
-    为 stop_check() → evaluate_population(population)——stop_check 调用后
-    才进批量评估，TaskStopRequested 自批量评估入口抛出无 except 包裹，
-    直上抛至 _run_task except TaskStopRequested 分支（core/evolution/
-    engine.py:325-332 形制）。
-    """
-    from api.runner import EvolutionRunner
-    from core.features.indicators import compute_all_indicators
-
-    runner = EvolutionRunner(db_path=db, data_dir=data_dir)
-    task_row.setdefault("max_generations", 2)
-    task_row.setdefault("continuous", 0)
-    enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
-    with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
-         patch("api.runner_progress._push_ws"), \
-         patch.object(runner, "_evaluate_population", eval_fn or (
-             lambda pop, *a, **kw: [_stub_score(d) for d in pop])):
-        runner._run_task(task_row)
-    return runner
-
-
 class TestCompletedExitPersist:
     """M1：completed 出口冠军入库不变式（判别式第 1 行）。"""
 
