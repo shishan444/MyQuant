@@ -110,3 +110,15 @@ describe("tokens 头注计数对账（assessor 案——spec THEN「缺一处双
     expect(declared).toBe(46);
   });
 });
+
+describe("CHART_VC 色板校准锚（upgrade-vr-responsive-layout P-5）", () => {
+  it("五键精确值快照：teal/dim 校准新值+bg/float/text 维持——任一键回改必红", () => {
+    expect(CHART_VC).toEqual({
+      bg: "#0B0D12",
+      float: "#141922CC",
+      teal: "#40E0D0",
+      text: "#E6EAF2",
+      dim: "#98A2B8",
+    });
+  });
+});

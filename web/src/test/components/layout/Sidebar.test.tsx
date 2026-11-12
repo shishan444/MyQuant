@@ -3,6 +3,7 @@
  * 平铺十项原序+三名回正（验证记录/模拟交易/插件与组件）+零分组标题负断言+
  * /lab 不入菜单负断言+实盘禁用维持+getPageTitle 三新名。
  * 折叠态 describe 随 M3 整体退役（useAppStore 侧栏字段已删）。
+ * 宽度锚（upgrade-vr-responsive-layout P-3）：w-48 收窄特征网。
  */
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -82,6 +83,16 @@ describe("Sidebar 平铺形制（M1）", () => {
       .getByText("实盘交易")
       .closest('[aria-disabled="true"]');
     expect(disabled).not.toBeNull();
+  });
+});
+
+describe("Sidebar 宽度锚（upgrade-vr-responsive-layout P-3）", () => {
+  it("根 aside 挂 w-48（192px）——w-60 回退必红", () => {
+    const { container } = renderSidebar();
+    const aside = container.querySelector("aside");
+    expect(aside).not.toBeNull();
+    expect(aside).toHaveClass("w-48");
+    expect(aside).not.toHaveClass("w-60");
   });
 });
 

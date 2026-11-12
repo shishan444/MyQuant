@@ -3,6 +3,10 @@
  * 三门槛点行三态（true=绿/false=红/null=灰）+星级机械换算（0-3）+
  * 三态汇总计数（pass/fail/inconclusive）+B5 概要形制（星级+门槛+关键指标）。
  * 服务层全 mock（零外网红线）。
+ * P-1 容器满宽不可达判定（upgrade-vr-responsive-layout 阶段四闸门锚）：
+ * 本页撤 max-w-[1400px]/mx-auto 两 class 无单测 class 锚——jsdom class 负
+ * 断言对「满宽几何」保护力弱（class 存在与否≠像素满宽），几何判定归
+ * e2e main-paths 01 页打开+三档视口截图矩阵（tasks.md 2.2 实施证据落档）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";

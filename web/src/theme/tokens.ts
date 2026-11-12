@@ -105,9 +105,9 @@ export const CHART_VB = {
 export const CHART_VC = {
   bg: "#0B0D12",
   float: "#141922CC",
-  teal: "#2DD4BF",
+  teal: "#40E0D0",
   text: "#E6EAF2",
-  dim: "#828CA0",
+  dim: "#98A2B8",
 } as const;
 
 /**

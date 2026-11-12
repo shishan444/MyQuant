@@ -105,7 +105,7 @@ function NavItemLink({ item }: { item: NavItem }) {
 
 export function Sidebar() {
   return (
-    <aside className="flex h-screen w-60 flex-col border-r border-border-default bg-bg-surface backdrop-blur-md">
+    <aside className="flex h-screen w-48 flex-col border-r border-border-default bg-bg-surface backdrop-blur-md">
       {/* Logo 区：品牌标识位 */}
       <div className="flex h-12 items-center border-b border-border-default px-4">
         <span className="text-lg font-semibold text-accent-gold font-mono tracking-tight">

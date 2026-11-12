@@ -9,7 +9,7 @@
  * 网红线）；KlineChart mock（jsdom 不渲染真图——采集 signalMarkers 与
  * 命令式句柄）。
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -29,8 +29,8 @@ vi.mock("@/services/datasets", () => ({
 }));
 
 // KlineChart mock：React 19 ref prop 直传——渲染期注入命令式句柄
-// （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数
-// 经 data 属性透出
+// （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数与
+// height prop 经 data 属性透出
 const mockChartHandle = {
   scrollToTime: vi.fn(),
   setObservationSeries: vi.fn(),
@@ -41,6 +41,7 @@ const mockChartHandle = {
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: (props: {
     signalMarkers?: Array<unknown>;
+    height?: number;
     ref?: { current: unknown };
   }) => {
     if (props.ref) props.ref.current = mockChartHandle;
@@ -48,6 +49,7 @@ vi.mock("@/components/charts/KlineChart", () => ({
       <div
         data-testid="vr-kline"
         data-markers={props.signalMarkers?.length ?? 0}
+        data-height={props.height}
       />
     );
   },
@@ -546,5 +548,84 @@ describe("色点单源（三视图同色——V2 出场对齐金族）", () => {
     const goldRgb = `rgb(${[TRACE_FAMILY_COLOR.risk.slice(1, 3), TRACE_FAMILY_COLOR.risk.slice(3, 5), TRACE_FAMILY_COLOR.risk.slice(5, 7)]
       .map((h) => parseInt(h, 16)).join(", ")})`;
     expect(dot?.getAttribute("style")).toContain(`background-color: ${goldRgb}`);
+  });
+});
+
+describe("RecordDetail 图高视口化（upgrade-vr-responsive-layout P-2 特征锚）", () => {
+  // max(round(innerHeight × 0.55), 420)——jsdom 默认 768，用例内显式
+  // 定义视口高并还原（沿 setup.ts matchMedia 的 defineProperty 形制）
+  function setViewportHeight(px: number) {
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      writable: true,
+      value: px,
+    });
+  }
+  afterEach(() => setViewportHeight(768));
+
+  it("高视口换算：innerHeight=1000 → round(0.55×1000)=550 传入 KlineChart", async () => {
+    setViewportHeight(1000);
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute(
+      "data-height",
+      "550",
+    );
+  });
+
+  it("矮窗口下限：innerHeight=700 → round(385)<420 → 420 下限生效", async () => {
+    setViewportHeight(700);
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute(
+      "data-height",
+      "420",
+    );
+  });
+
+  it.each([
+    [300, 420], // 远低于下限（165→420）
+    [700, 420], // design P-2 验收判定例（385→420）
+    [764, 420], // 换算恰好触下限（420.2→round 420）
+    [765, 421], // 越过下限首点（420.75→round 421）
+  ])(
+    "下限不变量：innerHeight=%i → 图高恒 max(round(0.55h), 420)=%i",
+    async (viewport, expected) => {
+      setViewportHeight(viewport);
+      mockDetail.mockResolvedValue(makeDetail());
+      ui(<RecordDetail record={makeRow()} />);
+      expect(await screen.findByTestId("vr-kline")).toHaveAttribute(
+        "data-height",
+        String(expected),
+      );
+    },
+  );
+
+  it("resize 跟随：550 → 420（下限）→ 1100 逐步重算（局部监听）", async () => {
+    setViewportHeight(1000);
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute(
+      "data-height",
+      "550",
+    );
+    // 760×0.55=418 → round 418 < 420 → 下限
+    setViewportHeight(760);
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute(
+        "data-height",
+        "420",
+      );
+    });
+    // 2000×0.55=1100 > 420 → 直通
+    setViewportHeight(2000);
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute(
+        "data-height",
+        "1100",
+      );
+    });
   });
 });

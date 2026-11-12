@@ -4,6 +4,10 @@
  * avg_fitness/qualified_count/total_periods）+fitness 排序键披露切换
  * （当前键文案明示+两键切换真实重排）。
  * 服务层全 mock（零外网红线）；stream hook 状态注入（done）。
+ * P-1 容器满宽不可达判定（upgrade-vr-responsive-layout 阶段四闸门锚）：
+ * 本页撤 max-w-[1400px]/mx-auto 两 class 无单测 class 锚——jsdom class 负
+ * 断言对「满宽几何」保护力弱（class 存在与否≠像素满宽），几何判定归
+ * e2e main-paths 08 页打开+三档视口截图矩阵（tasks.md 2.2 实施证据落档）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
