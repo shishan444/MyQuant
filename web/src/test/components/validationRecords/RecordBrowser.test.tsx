@@ -583,6 +583,24 @@ describe("RecordDetail 图高视口化（upgrade-vr-responsive-layout P-2 特征
     );
   });
 
+  it.each([
+    [300, 420], // 远低于下限（165→420）
+    [700, 420], // design P-2 验收判定例（385→420）
+    [764, 420], // 换算恰好触下限（420.2→round 420）
+    [765, 421], // 越过下限首点（420.75→round 421）
+  ])(
+    "下限不变量：innerHeight=%i → 图高恒 max(round(0.55h), 420)=%i",
+    async (viewport, expected) => {
+      setViewportHeight(viewport);
+      mockDetail.mockResolvedValue(makeDetail());
+      ui(<RecordDetail record={makeRow()} />);
+      expect(await screen.findByTestId("vr-kline")).toHaveAttribute(
+        "data-height",
+        String(expected),
+      );
+    },
+  );
+
   it("resize 跟随：550 → 420（下限）→ 1100 逐步重算（局部监听）", async () => {
     setViewportHeight(1000);
     mockDetail.mockResolvedValue(makeDetail());
