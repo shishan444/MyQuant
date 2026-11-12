@@ -274,6 +274,21 @@ describe("KlineChart Lab 直引装配面 props 组合冒烟（panes 化行为不
   });
 });
 
+describe("KlineChart 主副 pane stretch factor 3:1（upgrade-vr-responsive-layout P-4）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("主 pane 0.75 / 副 pane（addPane 返回）0.25——回退 0.78/0.22 必红", () => {
+    const { reg } = setup();
+    const panes = reg.charts[0].panes();
+    // panes[0]=主 pane；末位=addPane 新建返回的副 pane（mock 闭包数组直取）
+    expect(panes[0].setStretchFactor).toHaveBeenCalledWith(0.75);
+    expect(panes[panes.length - 1].setStretchFactor).toHaveBeenCalledWith(0.25);
+  });
+});
+
 describe("KlineChart 纯函数层（core/time toTime）", () => {
   it("ISO 与空格分隔形制都转 UTCTimestamp 秒", () => {
     expect(toTime("2026-01-01T00:00:00")).toBe(toTime("2026-01-01 00:00:00"));
