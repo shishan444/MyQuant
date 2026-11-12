@@ -34,10 +34,6 @@ export const CHART_PALETTE = {
   gridLine: "rgba(100,116,139,0.15)",
 } as const;
 
-/** #RRGGBB + alpha → rgba() 字符串 */
-export function withAlpha(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
+/** #RRGGBB + alpha → rgba() 字符串（fe-polarity-calibration 1.1：
+ *  定义迁 chartThemes.ts，本文件随 fe-chart-single-lib 主态退役前
+ *  不再持有实现——消费方 equityOption.ts 已改引 chartThemes） */

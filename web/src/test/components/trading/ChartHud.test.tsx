@@ -73,7 +73,7 @@ describe("ChartHud 四浮层（va 变体真值锚）", () => {
     const hud = screen.getByTestId("chart-hud");
     expect(hud).toHaveTextContent("做空");
     expect(hud).toHaveTextContent("浮盈亏 -50.00");
-    // 负浮盈亏取色=POLARITY.down（#FB7185——jsdom rgb 序列化）
+    // 负浮盈亏取色=POLARITY.down（jsdom rgb 序列化）
     const upnlSpan = [...hud.querySelectorAll("span")].find((s) =>
       s.textContent?.includes("浮盈亏") && s.hasAttribute("style"));
     expect(upnlSpan?.getAttribute("style")).toContain("rgb(251, 113, 133)");

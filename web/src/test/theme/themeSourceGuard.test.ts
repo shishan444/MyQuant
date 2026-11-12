@@ -42,6 +42,7 @@ describe("@theme 受控从源映射守卫（十组+两补档）", () => {
     ["color-bg-surface", BG.bg1],
     ["color-bg-elevated", BG.bg2],
     ["color-warning", STATE.warn],
+    ["destructive", POLARITY.down], // fe-polarity-calibration 1.2：:root --destructive 入守卫
   ];
 
   it.each(mapping)("@theme --%s === tokens 值 %s", (name, expected) => {
