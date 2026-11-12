@@ -378,8 +378,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     // -- Sub-chart (generic, series created dynamically per type) --
     // kline-common-layer 组 3：单 chart 多 pane（共用时间轴，替代双 chart+useChartSync）
     const subPane = mainChart.addPane();
-    subPane.setStretchFactor(0.22);
-    mainChart.panes()[0].setStretchFactor(0.78);
+    subPane.setStretchFactor(0.25);
+    mainChart.panes()[0].setStretchFactor(0.75);
 
     // -- ResizeObserver --
     const resizeObserver = new ResizeObserver((entries) => {

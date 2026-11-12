@@ -179,6 +179,17 @@ function KlineReview({
       }),
     enabled: !!symbol && !!timeframe,
   });
+  // P-2 图高视口化：55% 视口高、420px 下限（矮窗口防不可用）——
+  // 局部 resize 响应，不引全局依赖
+  const [chartHeight, setChartHeight] = useState(() =>
+    Math.max(Math.round(window.innerHeight * 0.55), 420),
+  );
+  useEffect(() => {
+    const onResize = () =>
+      setChartHeight(Math.max(Math.round(window.innerHeight * 0.55), 420));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   // trail 止损线：trail_series 真值挂线（引擎单源——禁前端重算）；
   // NaN/undefined 段传 null 由原语层断线。依赖含 q.isSuccess——K 线
   // 装载完成才渲染图表（ref 就绪晚于本 effect 首跑，装载完成信号驱动
@@ -246,7 +257,7 @@ function KlineReview({
           该区间无 K 线数据
         </p>
       ) : (
-        <KlineChart data={candles} signalMarkers={markers} height={300} ref={chartRef} />
+        <KlineChart data={candles} signalMarkers={markers} height={chartHeight} ref={chartRef} />
       )}
     </div>
   );
