@@ -10,19 +10,21 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-vi.mock("@/services/datasets", () => ({ getOhlcvBySymbol: vi.fn() }));
+vi.mock("@/services/datasets", () => ({ getOhlcvBySymbol: vi.fn(), getChartIndicators: vi.fn() }));
 
-import { getOhlcvBySymbol } from "@/services/datasets";
+import { getChartIndicators, getOhlcvBySymbol } from "@/services/datasets";
 import type { VrExecution } from "@/services/validationRecords";
 import {
   barsInExecRange,
   buildEquitySeries,
   perExecEquityPoints,
   useFullRangeKline,
+  useOverlayIndicators,
 } from "@/components/validationRecords/fullRangeData";
 import { toTime } from "@/components/charts/core/time";
 
 const mockOhlcv = vi.mocked(getOhlcvBySymbol);
+const mockIndicators = vi.mocked(getChartIndicators);
 
 /** 4h bar 生成器（epoch 对齐；ISO 带 Z——OHLCV 端点实形 +00:00 等价换算） */
 function bars4h(fromIso: string, n: number) {
@@ -249,5 +251,90 @@ describe("barsInExecRange 纯函数（change-2 CARD-01 单源谓词——阶段�
   it("malformed 边界：任一端不可解析返回空（区间无法界定——对账归零/锚空/主图空态同因）", () => {
     expect(barsInExecRange(BARS, execOf("bad-date-xx", "2026-04-03"))).toEqual([]);
     expect(barsInExecRange(BARS, execOf("2026-04-02", "not-a-date"))).toEqual([]);
+  });
+});
+
+describe("useOverlayIndicators（契约 I）", () => {
+  function renderInd(
+    overlays: Parameters<typeof useOverlayIndicators>[0],
+    klineLastEpoch: number | null,
+  ) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    return renderHook(
+      () =>
+        useOverlayIndicators(
+          overlays,
+          "BTCUSDT",
+          "4h",
+          "2025-11-04T00:00:00+00:00",
+          "2025-11-06T20:00:00+00:00",
+          klineLastEpoch,
+        ),
+      { wrapper },
+    );
+  }
+  const epoch = (iso: string) => Date.parse(iso) / 1000;
+
+  it("ok 态：参数面与 K 线同锚（start/end/limit 50000）+ema 聚合串+逐 BB 组请求+映射 id/色值", async () => {
+    mockIndicators.mockImplementation(((_s: string, _t: string, params: Record<string, unknown>) => {
+      if (params.ema_periods) {
+        return Promise.resolve({
+          ema: { "7": [{ time: "2025-11-06T20:00:00Z", value: 1 }], "50": [{ time: "2025-11-06T20:00:00Z", value: 2 }] },
+          boll: null, rsi: null, macd: null, kdj: null,
+        });
+      }
+      return Promise.resolve({
+        ema: {},
+        boll: {
+          upper: [{ time: "2025-11-06T20:00:00Z", value: 3 }],
+          middle: [{ time: "2025-11-06T20:00:00Z", value: 4 }],
+          lower: [{ time: "2025-11-06T20:00:00Z", value: 5 }],
+        },
+        rsi: null, macd: null, kdj: null,
+      });
+    }) as never);
+    const { result } = renderInd(
+      [{ kind: "EMA", period: 7 }, { kind: "EMA", period: 50 }, { kind: "BB", period: 20, std: 2 }],
+      epoch("2025-11-06T20:00:00Z"),
+    );
+    await waitFor(() => expect(result.current.state).toBe("ok"));
+    // 两次请求：EMA 聚合一发（7,50）+BB 一发（参数同名直映射）
+    expect(mockIndicators).toHaveBeenCalledTimes(2);
+    expect(mockIndicators).toHaveBeenCalledWith("BTCUSDT", "4h", expect.objectContaining({
+      start: "2025-11-04T00:00:00+00:00",
+      end: "2025-11-06T20:00:00+00:00",
+      limit: 50000,
+      ema_periods: "7,50",
+    }));
+    expect(mockIndicators).toHaveBeenCalledWith("BTCUSDT", "4h", expect.objectContaining({
+      boll_enabled: true, boll_period: 20, boll_std: 2,
+    }));
+    // 映射：id/色值（EMA 主图蓝、BB 三带金系 middle 88 alpha）
+    const ids = result.current.indicators.map((i) => `${i.id}:${i.color}`);
+    expect(ids).toContain("dna_ema_7:#5B9DFF");
+    expect(ids).toContain("dna_bb_20_2_middle:#FBBF2488");
+    expect(result.current.tailLagged).toBe(false);
+  });
+
+  it("尾点校验：指标尾点 < K 线尾 bar → tailLagged=true（照画可用段）", async () => {
+    mockIndicators.mockResolvedValue({
+      ema: { "50": [{ time: "2025-11-05T00:00:00Z", value: 1 }] },
+      boll: null, rsi: null, macd: null, kdj: null,
+    } as never);
+    const { result } = renderInd([{ kind: "EMA", period: 50 }], epoch("2025-11-06T20:00:00Z"));
+    await waitFor(() => expect(result.current.state).toBe("ok"));
+    expect(result.current.tailLagged).toBe(true);
+  });
+
+  it("error 态：指标源降级（K 线与 marker 不受阻）；空 overlays 直 ok", async () => {
+    mockIndicators.mockRejectedValue(new Error("boom"));
+    const { result } = renderInd([{ kind: "EMA", period: 50 }], null);
+    await waitFor(() => expect(result.current.state).toBe("error"));
+    expect(result.current.indicators).toEqual([]);
+    const empty = renderInd([], null);
+    expect(empty.result.current.state).toBe("ok");
   });
 });

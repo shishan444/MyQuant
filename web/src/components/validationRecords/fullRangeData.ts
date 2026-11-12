@@ -17,9 +17,10 @@
  *   视图主图三处共用——契约 E 渲染层过滤的取数谓词）。
  */
 import { useQuery } from "@tanstack/react-query";
-import { getOhlcvBySymbol } from "@/services/datasets";
+import { getChartIndicators, getOhlcvBySymbol } from "@/services/datasets";
 import { toTime } from "@/components/charts/core/time";
 import type { VrExecution } from "@/services/validationRecords";
+import type { DnaOverlay } from "./traceSemantics";
 
 /** K 线 bar（与 KlineChart CandleData 结构同形） */
 export interface FullRangeBar {
@@ -91,7 +92,10 @@ export function useFullRangeKline(
   executions: VrExecution[],
   symbol: string | null,
   timeframe: string | null,
+  /** 视图周期（契约 K：缺省=基准 timeframe；切换后 K 线按该档重拉） */
+  viewTf?: string | null,
 ): FullRangeResult {
+  const fetchTf = viewTf ?? timeframe;
   const bounds = executions.length
     ? {
         minStart: executions.reduce(
@@ -106,14 +110,14 @@ export function useFullRangeKline(
     : { minStart: null, maxEnd: null };
 
   const q = useQuery({
-    queryKey: ["vr-kline-full", symbol, timeframe, bounds.minStart, bounds.maxEnd],
+    queryKey: ["vr-kline-full", symbol, fetchTf, bounds.minStart, bounds.maxEnd],
     queryFn: () =>
-      getOhlcvBySymbol(symbol!, timeframe!, {
+      getOhlcvBySymbol(symbol!, fetchTf!, {
         start: bounds.minStart ?? undefined,
         end: bounds.maxEnd ?? undefined,
         limit: FETCH_LIMIT,
       }),
-    enabled: !!symbol && !!timeframe && !!bounds.minStart && !!bounds.maxEnd,
+    enabled: !!symbol && !!fetchTf && !!bounds.minStart && !!bounds.maxEnd,
   });
 
   if (q.isError) return { state: "error" };
@@ -130,7 +134,7 @@ export function useFullRangeKline(
   const endEpoch = bounds.maxEnd ? epochOf(bounds.maxEnd) : null;
   const lastEpoch = candles.length ? epochOf(candles[candles.length - 1].timestamp) : null;
   if (endEpoch != null && (lastEpoch == null || lastEpoch < endEpoch)) {
-    const tfSec = timeframe ? timeframeSeconds(timeframe) : 0;
+    const tfSec = fetchTf ? timeframeSeconds(fetchTf) : 0;
     const missing = lastEpoch != null && tfSec > 0
       ? Math.max(1, Math.round((endEpoch - lastEpoch) / tfSec))
       : null;
@@ -224,4 +228,156 @@ export function buildEquitySeries(
     }
   }
   return out;
+}
+
+/** ── 契约 I：DNA/手动叠加指标拉取与装载 ── */
+
+/** 主图指标线形制（与 KlineChart indicators 通道结构同形——id 同域去重） */
+export interface IndicatorLine {
+  id: string;
+  type: string;
+  color: string;
+  data: Array<{ time: string; value: number }>;
+}
+
+export interface IndicatorLoadResult {
+  state: "loading" | "ok" | "error";
+  indicators: IndicatorLine[];
+  /** 尾点校验不等（指标尾点 < K 线尾 bar——截断/缺数据，照画可用段） */
+  tailLagged: boolean;
+}
+
+/** EMA 主图蓝系（CHART_VB.blue 同源）/BB 金系三带（middle 88 alpha 沿
+ *  bollData 通道先例）/手动线 88 alpha 区分 DNA 线（契约 I/J） */
+const EMA_DNA_COLOR = "#5B9DFF";
+const EMA_MANUAL_COLOR = "#5B9DFF88";
+const BB_UPPER_COLOR = "#FBBF24";
+const BB_MIDDLE_COLOR = "#FBBF2488";
+const BB_LOWER_COLOR = "#FBBF24";
+
+import type { ChartIndicatorsResponse } from "@/types/api";
+
+/**
+ * 叠加指标拉取 hook（契约 I）：DNA 与手动叠加共用通道——输入 overlay
+ * 列表（KlineReview 侧合并 DNA+手动并按 id 去重后传入），按当前视图
+ * 周期与 K 线同区间拉取（start/end/limit 同锚）。请求聚合：全部 EMA
+ * periods 一次请求（逗号串）、逐 BB 参数组各一次（n≤2 实际）。尾点
+ * 校验：各线尾点 epoch >= K 线尾 bar epoch（klineLastEpoch），不等→
+ * tailLagged=true（「指标数据不完整」提示+照画可用段）。error=指标源
+ * 降级（K 线与 marker 不受阻——指标是叠加层非主数据）。
+ */
+export function useOverlayIndicators(
+  overlays: Array<DnaOverlay & { manual?: boolean }>,
+  symbol: string | null,
+  timeframe: string | null,
+  start: string | null,
+  end: string | null,
+  klineLastEpoch: number | null,
+): IndicatorLoadResult {
+  const emaPeriods = [...new Set(overlays.filter((o) => o.kind === "EMA").map((o) => o.period))];
+  const bbGroups = [...new Map(
+    overlays
+      .filter((o): o is Extract<DnaOverlay, { kind: "BB" }> & { manual?: boolean } => o.kind === "BB")
+      .map((o) => [`${o.period}:${o.std}`, o] as const),
+  ).values()];
+  const hasAny = emaPeriods.length > 0 || bbGroups.length > 0;
+
+  const q = useQuery({
+    queryKey: [
+      "vr-overlay-indicators",
+      symbol,
+      timeframe,
+      start,
+      end,
+      emaPeriods.join(","),
+      bbGroups.map((b) => `${b.period}:${b.std}`).join(";"),
+    ],
+    queryFn: async () => {
+      // 请求序携带组号：EMA 一发聚合+逐 BB 组各一发——响应显式对位（端点
+      // boll 响应不回传参数，靠请求序映射）
+      type Tagged = ({ kind: "ema" } | { kind: "bb"; group: number }) & ChartIndicatorsResponse;
+      const reqs: Array<Promise<Tagged>> = [];
+      if (emaPeriods.length > 0) {
+        reqs.push(
+          getChartIndicators(symbol!, timeframe!, {
+            start: start ?? undefined,
+            end: end ?? undefined,
+            limit: FETCH_LIMIT,
+            ema_periods: emaPeriods.join(","),
+          }).then((r) => ({ kind: "ema" as const, ...r })),
+        );
+      }
+      bbGroups.forEach((bb, group) => {
+        reqs.push(
+          getChartIndicators(symbol!, timeframe!, {
+            start: start ?? undefined,
+            end: end ?? undefined,
+            limit: FETCH_LIMIT,
+            boll_enabled: true,
+            boll_period: bb.period,
+            boll_std: bb.std,
+          }).then((r) => ({ kind: "bb" as const, group, ...r })),
+        );
+      });
+      return Promise.all(reqs);
+    },
+    enabled: !!symbol && !!timeframe && !!start && !!end && hasAny,
+    retry: false,
+  });
+
+  if (!hasAny) return { state: "ok", indicators: [], tailLagged: false };
+  if (q.isError) return { state: "error", indicators: [], tailLagged: false };
+  if (q.isLoading || !q.data) return { state: "loading", indicators: [], tailLagged: false };
+
+  const manualEma = new Set(
+    overlays
+      .filter((o): o is Extract<DnaOverlay, { kind: "EMA" }> & { manual?: boolean } => o.kind === "EMA" && !!o.manual)
+      .map((o) => o.period),
+  );
+  const manualBb = new Set(
+    overlays
+      .filter((o): o is Extract<DnaOverlay, { kind: "BB" }> & { manual?: boolean } => o.kind === "BB" && !!o.manual)
+      .map((o) => `${o.period}:${o.std}`),
+  );
+  const indicators: IndicatorLine[] = [];
+  let tailLagged = false;
+  const checkTail = (line: Array<{ time: string; value: number }>) => {
+    if (line.length === 0) return;
+    const t = toTime(line[line.length - 1].time);
+    if (klineLastEpoch != null && typeof t === "number" && t < klineLastEpoch) tailLagged = true;
+  };
+  for (const resp of q.data) {
+    if (resp.kind === "ema") {
+      for (const [period, pts] of Object.entries(resp.ema ?? {})) {
+        if (!pts) continue;
+        checkTail(pts);
+        indicators.push({
+          id: `dna_ema_${period}`,
+          type: "ema",
+          color: manualEma.has(Number(period)) ? EMA_MANUAL_COLOR : EMA_DNA_COLOR,
+          data: pts,
+        });
+      }
+    } else {
+      const group = bbGroups[resp.group];
+      if (!group || resp.boll == null) continue;
+      const manual = manualBb.has(`${group.period}:${group.std}`);
+      const prefix = `dna_bb_${group.period}_${group.std}`;
+      for (const [band, color] of [
+        ["upper", BB_UPPER_COLOR],
+        ["middle", BB_MIDDLE_COLOR],
+        ["lower", BB_LOWER_COLOR],
+      ] as const) {
+        const pts = resp.boll[band] ?? [];
+        checkTail(pts);
+        indicators.push({
+          id: `${prefix}_${band}`,
+          type: "line",
+          color: manual ? EMA_MANUAL_COLOR : color,
+          data: pts,
+        });
+      }
+    }
+  }
+  return { state: "ok", indicators, tailLagged };
 }
