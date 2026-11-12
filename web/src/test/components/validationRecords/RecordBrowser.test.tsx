@@ -30,7 +30,10 @@ vi.mock("@/services/datasets", () => ({
 
 // KlineChart mock：React 19 ref prop 直传——渲染期注入命令式句柄
 // （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数/
-// 文案、height、equityData 长度经 data 属性透出
+// 文案、height、equityData 长度经 data 属性透出；data 长度（CARD-01
+// 契约 E 主图过滤锚）与 onChartReady 同步触发（真组件在 chart 就绪时
+// 调——RecordDetail 段带挂载链经此回调，mock 侧同步调以建立 bands
+// 捕获通道，attachSegmentBand 层 mock、toSegmentBands 真实现保真）
 const mockChartHandle = {
   scrollToTime: vi.fn(),
   setObservationSeries: vi.fn(),
@@ -38,15 +41,28 @@ const mockChartHandle = {
   zoomOut: vi.fn(),
   resetView: vi.fn(),
 };
+const mockBandSetData = vi.fn();
+vi.mock("@/components/charts/primitives/segmentBand", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/components/charts/primitives/segmentBand")
+  >("@/components/charts/primitives/segmentBand");
+  return {
+    ...actual,
+    attachSegmentBand: vi.fn(() => ({ setData: mockBandSetData })),
+  };
+});
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: (props: {
     signalMarkers?: Array<{ text?: string }>;
     height?: number;
     equityData?: Array<unknown>;
     subChartType?: string;
+    data?: Array<unknown>;
+    onChartReady?: (chart: unknown, series: unknown) => void;
     ref?: { current: unknown };
   }) => {
     if (props.ref) props.ref.current = mockChartHandle;
+    props.onChartReady?.(null, { fake: "series" });
     return (
       <div
         data-testid="vr-kline"
@@ -55,6 +71,7 @@ vi.mock("@/components/charts/KlineChart", () => ({
         data-height={props.height}
         data-equity-len={props.equityData?.length ?? 0}
         data-subchart={props.subChartType ?? ""}
+        data-len={props.data?.length ?? 0}
       />
     );
   },
@@ -69,6 +86,7 @@ import {
   type ListFilters,
 } from "@/components/validationRecords/traceSemantics";
 import { RecordDetail } from "@/components/validationRecords/RecordDetail";
+import { toTime } from "@/components/charts/core/time";
 import {
   getValidationRecordsPage,
   getValidationRecordDetail,
@@ -539,6 +557,65 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(mockChartHandle.scrollToTime).toHaveBeenCalledWith(
       "2026-04-02 00:00:00+00:00",
     );
+  });
+
+  it("契约 E 单份视图主图过滤（change-2 CARD-01）：data-len=该份闭端 bar 数+trail/bands 单份切换+零 bar 份空态", async () => {
+    const d = makeDetail();
+    // 份 2（i=1）趋势：04-02~04-04 闭端恰 3 根蜡烛（beforeEach 5 根在 04-01~04-05）
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-04",
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 2,
+        timestamps: ["2026-04-02 00:00:00+00:00", "2026-04-02 00:30:00+00:00"],
+        values: [100000, 101500],
+      },
+      trace_rows: [makeTrace({ exec_ref: "趋势", bar_time: "2026-04-03 00:00:00+00:00" })],
+      trail_series: [{ time: "2026-04-02 00:00:00+00:00", value: 97000 }],
+    });
+    // 份 3（i=2）缺口：04-11~04-20 闭端零 bar——单份空态新可达分支
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "缺口", exec_index: 2,
+      range_start: "2026-04-11", range_end: "2026-04-20",
+      equity: { grid_aligned: false, timeframe: "30m", start: null, length: 0, timestamps: null, values: [] },
+      trace_rows: [], trail_series: null, trades: [],
+    });
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    // all 态：主图画全区间 5 根；段带=3 份 3 条
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-len", "5");
+    await waitFor(() => {
+      const last = mockBandSetData.mock.calls[mockBandSetData.mock.calls.length - 1]?.[0];
+      expect(last).toHaveLength(3);
+    });
+    // 切份 2·趋势：data-len=3（闭端过滤——修复前恒 5）；trail=该份单段（非拼接）；
+    // bands=该份 1 条（label=趋势）
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    const opt = await screen.findByText("份 2 · 趋势（2026-04-02 → 2026-04-04）", { exact: false });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => expect(screen.getByTestId("vr-view-mode")).toHaveTextContent("单份 趋势"));
+    expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "3");
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([{ time: "2026-04-02 00:00:00+00:00", value: 97000 }]);
+    });
+    await waitFor(() => {
+      const last = mockBandSetData.mock.calls[mockBandSetData.mock.calls.length - 1]?.[0];
+      expect(last).toEqual([
+        { startTime: toTime("2026-04-02"), endTime: toTime("2026-04-04"), label: "趋势" },
+      ]);
+    });
+    // 切份 3·缺口：闭端零 bar →「该区间无 K 线数据」空态（图不渲染）
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    const opt2 = await screen.findByText("份 3 · 缺口（2026-04-11 → 2026-04-20）", { exact: false });
+    fireEvent.click(opt2.closest(".ant-select-item-option") ?? opt2);
+    await waitFor(() => expect(screen.getByTestId("vr-view-mode")).toHaveTextContent("单份 缺口"));
+    expect(await screen.findByText("该区间无 K 线数据")).toBeInTheDocument();
+    expect(screen.queryByTestId("vr-kline")).toBeNull();
   });
 
   it("detail_available=false：不可复核空骨架如实", async () => {
