@@ -8,7 +8,7 @@ import { createChart, LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { POLARITY, ATTENTION } from '@/theme/tokens';
 
-/** equity 点（UTC ISO 串时间轴，echarts 旧形制承继，装配时转 epoch 秒） */
+/** equity 点（UTC ISO 串时间轴，旧形制承继，装配时转 epoch 秒） */
 export interface EquityPoint {
   timestamp: string;
   value: number;

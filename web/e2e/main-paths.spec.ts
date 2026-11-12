@@ -58,7 +58,7 @@ test.describe("主链路", () => {
     await page.locator("table tbody tr").first().locator("button").first().click();
     await expect(page.getByRole("button", { name: "进化曲线" })).toBeVisible();
     await page.getByRole("button", { name: "进化曲线" }).click();
-    // ScoreTrend echarts canvas 真实渲染（G14）
+    // ScoreTrend canvas 真实渲染（G14）
     await expect(page.locator("canvas").first()).toBeVisible();
   });
 

@@ -30,7 +30,7 @@ import type { EvolutionHistoryRecord } from "@/types/api";
 import { transformChartData, type ChartTransformResult } from "@/utils/evolutionChart";
 
 // 系列色归宿（design D5）：scoreLine/fitnessLine/champion 直接 import tokens；
-// avgLine/targetLine/axisLabel 三字面沿 chartPalette 现值——组 4.1 色值迁移
+// avgLine/targetLine/axisLabel 三字面为图表系列区分色（tokens 无对应族）
 // 步统一迁 chartThemes 常量区（本组件先字面引用）。
 const AVG_LINE_COLOR = "rgba(168,85,247,0.4)";
 const TARGET_LINE_COLOR = "#94A3B8";
@@ -149,7 +149,7 @@ export function ScoreTrendChart({
     bestScore.setData(
       data.map((d) => ({ time: genToTime(d.generation), value: d.bestScore })),
     );
-    // fitness 缺代以 whitespace 断点承载（旧 echarts null 断点等价）
+    // fitness 缺代以 whitespace 断点承载（断线语义）
     bestFitness?.setData(
       data.map((d) =>
         d.bestFitness != null
