@@ -1,3 +1,16 @@
+/**
+ * KlineChart——全库唯一的 lightweight-charts K 线渲染组件
+ *
+ * 职能：统一承担 K 线、指标线、标记与多 pane 副图的可视化渲染，并对消费方
+ * 暴露命令式句柄 KlineChartHandle（视口操作与观测序列挂线）。
+ * 价值与服务对象：六消费方三条链共用一套渲染形制——策略研究链（Lab
+ * hypothesis 模式主图、BacktestModePanel 回测结果图、SceneModePanel 场景
+ * 模式图）、实盘呈现链（TradingChart 实盘 K 线与 trail 线、LiveTrading
+ * 直播页精简形态）、验证复核链（RecordDetail 验证记录 D2 复核图）。
+ * 职责边界：只管渲染与视口命令——数据全经 props 进入（本组件不取数、
+ * 不做业务判定）；主题色单源于 chartThemes 与 theme/tokens，指标开关
+ * 状态经 stores/chart-settings，标记与观测序列原语经 charts/primitives。
+ */
 import { POLARITY } from "@/theme/tokens";
 import { useLayoutEffect, useEffect, useRef, useMemo, useImperativeHandle, forwardRef, useState, useCallback } from "react";
 import {
@@ -27,7 +40,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { BollingerBandData, MTFIndicatorData, LegendGroup, LegendItem } from "@/types/chart";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
 interface CandleData {
@@ -57,7 +70,7 @@ interface TriggerMarker {
   id: number;
   time: string;
   matched: boolean;
-  subtype?: string; // "double_top" | "head_shoulders_top" | "triple_top"
+  subtype?: string; // subtype 值域（形态识别子类型）："double_top" | "head_shoulders_top" | "triple_top"
 }
 
 interface KlineChartProps {
@@ -107,9 +120,10 @@ export interface KlineChartHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
+/** 原始蜡烛数组 → lightweight-charts 数据点：过滤非法时间戳，按时间升序排列（库要求时间升序）。 */
 function toCandleData(data: CandleData[]) {
   const mapped = data.map((d) => ({
     time: toTime(d.timestamp),
@@ -124,7 +138,7 @@ function toCandleData(data: CandleData[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// 组件
 // ---------------------------------------------------------------------------
 
 const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineChart({
@@ -167,7 +181,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const onChartReadyRef = useRef(onChartReady);
   onChartReadyRef.current = onChartReady;
 
-  // Legend state
+  // 图例状态
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
   const [legendValues, setLegendValues] = useState<Record<string, string>>({});
 
@@ -176,7 +190,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     useShallow((s) => ({ emaList: s.emaList, boll: s.boll })),
   );
 
-  // Fullscreen state
+  // 全屏状态
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // memo 化保证引用稳定，effect 依赖数组不随渲染抖动
@@ -341,12 +355,15 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }, []);
 
   // -------------------------------------------------------------------------
-  // Chart creation / destruction
+  // 图表创建 / 销毁
   // -------------------------------------------------------------------------
+  // 职责契约：挂载期一次性创建 chart 基础设施（主图与蜡烛 series、副 pane、
+  // ResizeObserver、十字光标订阅），卸载期整体销毁并清位全部 series ref。
+  // 不承担数据装载——各 series 的数据由下方数据更新 effect 增量挂载。
   useLayoutEffect(() => {
     if (!mainRef.current) return;
 
-    // -- Main chart --
+    // -- 主图 --
     const mainChart = createChart(mainRef.current, {
       ...DARK_CHART_THEME,
       width: mainRef.current.clientWidth,
@@ -377,13 +394,13 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       onChartReadyRef.current(mainChart, candleSeries);
     }
 
-    // -- Sub-chart (generic, series created dynamically per type) --
+    // -- 副图（通用形态——series 按类型在数据更新段动态创建）--
     // kline-common-layer 组 3：单 chart 多 pane（共用时间轴，替代双 chart+useChartSync）
     const subPane = mainChart.addPane();
     subPane.setStretchFactor(0.25);
     mainChart.panes()[0].setStretchFactor(0.75);
 
-    // -- ResizeObserver --
+    // -- ResizeObserver 宽度增量通道 --
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width } = entry.contentRect;
@@ -445,17 +462,20 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }, [height]);
 
   // -------------------------------------------------------------------------
-  // Data updates
+  // 数据更新
   // -------------------------------------------------------------------------
+  // 职责契约：响应数据类 props 变化，增量同步主图各 series——蜡烛、指标线、
+  // BOLL、量能、MTF、信号标记与触发点偏移线（先清失效 series 再挂新数据）；
+  // 首次蜡烛装载后 fitContent 一次。
   useEffect(() => {
     const mainChart = mainChartRef.current;
     const candleSeries = candleSeriesRef.current;
     if (!mainChart || !candleSeries) return;
 
-    // -- Candle data --
+    // -- 蜡烛数据 --
     candleSeries.setData(memoizedCandles);
 
-    // -- Remove stale indicator series --
+    // -- 清理失效指标 series（id 已不在当前 indicators 中的先移除）--
     for (const [id, series] of indicatorSeriesRefs.current) {
       const stillExists = memoizedIndicators.some((i) => i.id === id);
       if (!stillExists) {
@@ -464,7 +484,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     }
 
-    // -- Indicator lines --
+    // -- 指标线 --
     for (const indicator of memoizedIndicators) {
       let series = indicatorSeriesRefs.current.get(indicator.id);
       if (!series) {
@@ -481,7 +501,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       );
     }
 
-    // -- EMA lines from chart settings --
+    // -- EMA 线（启用集来自 chart settings）--
     const emaList = chartSettings.emaList.filter((e) => e.enabled);
     // 移除失效 EMA series
     for (const [id, series] of indicatorSeriesRefs.current) {
@@ -492,7 +512,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     }
     // EMA 数据经 indicators prop 到达（后端计算），此处不新建 series——EMA series 统一走 indicators 通道
 
-    // -- BOLL bands --
+    // -- BOLL 布林带（上/中/下轨三条线，整体先清后挂）--
     for (const s of bollSeriesRefs.current) {
       mainChart.removeSeries(s);
     }
@@ -532,7 +552,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       bollSeriesRefs.current = [upperSeries, middleSeries, lowerSeries];
     }
 
-    // -- Volume --
+    // -- 成交量（主图叠加，独立 vol 价格刻度贴底）--
     if (volumeSeriesRef.current) {
       mainChart.removeSeries(volumeSeriesRef.current);
       volumeSeriesRef.current = null;
@@ -556,7 +576,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       volumeSeriesRef.current = volSeries;
     }
 
-    // -- MTF indicators --
+    // -- MTF 跨周期指标 --
     for (const s of mtfSeriesRefs.current) {
       mainChart.removeSeries(s);
     }
@@ -579,7 +599,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     }
 
-    // -- Build markers (signals on candle, triggers on offset series) --
+    // -- 构建标记（信号标记挂蜡烛 series，触发点标记挂偏移 series）--
 
     // 移除旧触发点偏移 series
     if (triggerOffsetSeriesRef.current) {
@@ -659,7 +679,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     }
 
-    // -- Fit content and set price range --
+    // -- 首次 fitContent 自适应视口（价格区间由 autoScale+scaleMargins 承担）--
     if (!initialFitDoneRef.current && memoizedCandles.length > 0) {
       mainChart.timeScale().fitContent();
       initialFitDoneRef.current = true;
@@ -667,8 +687,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedSignalMarkers, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
 
   // -------------------------------------------------------------------------
-  // Sub-chart data update (generic: supports volume, macd, rsi, kdj)
+  // 副图数据更新（通用：支持 volume/macd/rsi/kdj/equity）
   // -------------------------------------------------------------------------
+  // 职责契约：按 subChartType 在副 pane（pane=1）重建全部副图 series——
+  // 先整体移除旧 series 再按类型挂新（类型切换=全量重建），完毕 fitContent。
   const rsiIndicator = memoizedIndicators.find((i) => i.type === "rsi");
   const rsiData = useMemo(
     () =>
@@ -880,7 +902,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     chart.timeScale().fitContent();
   }, [memoizedSubChartType, rsiData, memoizedMacdData, memoizedKdjData, memoizedVolumeData, memoizedEquityData]);
 
-  // Fullscreen toggle
+  // 全屏切换（document Fullscreen API，容器级进出）
   const handleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -897,7 +919,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       className="relative"
       style={{ height: isFullscreen ? "100vh" : height }}
     >
-      {/* Toolbar */}
+      {/* 工具栏 */}
       <div className="absolute right-2 top-2 z-20">
         <ChartToolbar
           onZoomIn={() => {
@@ -937,7 +959,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         />
       </div>
 
-      {/* Legend */}
+      {/* 图例 */}
       {!hideLegend && (
         <ChartEmbeddedLegend
           groups={legendGroups}
