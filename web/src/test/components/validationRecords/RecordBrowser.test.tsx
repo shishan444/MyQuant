@@ -547,6 +547,48 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(await screen.findByText(/detail_available=false/)).toBeInTheDocument();
   });
 
+  it("视图切换 D3/V1 联动（activeExecIdx 跟随）：切份 1 后 D3 末值与成交表=份 1 数据，切回全区间归份 0", async () => {
+    const d = makeDetail();
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-11", range_end: "2026-04-20",
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 2,
+        timestamps: ["2026-04-11 00:00:00+00:00", "2026-04-11 00:30:00+00:00"],
+        values: [100000, 101500],
+      },
+      trades: [{
+        seq: 0, entry_time: "2026-04-12 00:00:00+00:00", exit_time: null,
+        entry_price: 200, exit_price: null, size: 1, direction: "long", pnl: null,
+      }],
+      trace_rows: [],
+      trail_series: null,
+    });
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    // 缺省全区间：activeExecIdx=0 → D3 末值=份 0（112400.0）
+    expect(await screen.findByTestId("vr-equity")).toHaveTextContent("末 112400.0");
+    // 切份 1：D3 末值=101500.0；V1 成交记录表=份 1 单笔（2026-04-12 入场）
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    // 份 N 从 1 起（=i+1）——趋势为数组第 2 份即「份 2」
+    const opt = await screen.findByText("份 2 · 趋势（2026-04-11 → 2026-04-20）", { exact: false });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-equity")).toHaveTextContent("末 101500.0");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "成交记录" }));
+    expect(await screen.findByTestId("vr-trade-row-0")).toHaveTextContent("2026-04-12 00:00");
+    expect(screen.queryByTestId("vr-trade-row-1")).toBeNull();
+    // 切回全区间：activeExecIdx 归 0 → D3 末值回份 0
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    const allOpt = await screen.findByText("全区间（全部份连续）");
+    fireEvent.click(allOpt.closest(".ant-select-item-option") ?? allOpt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-equity")).toHaveTextContent("末 112400.0");
+    });
+  });
+
   it("多份视图选择器（契约 E）：缺省全区间+全份合并标记；份选择器含全区间首项", async () => {
     const d = makeDetail();
     d.executions.push({

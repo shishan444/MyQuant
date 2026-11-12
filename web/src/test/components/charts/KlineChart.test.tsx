@@ -328,6 +328,40 @@ describe("KlineChart height 运行时变化增量通道（CARD-01 回归锚）",
   });
 });
 
+describe("KlineChart setObservationSeries 命令式通道 whitespace 断线（upgrade-vr-fullrange-chart 消费方波及锚）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("null 值点产 whitespace 项直达 Line series setData——TradingChart/Lab/RecordDetail 三消费方共享通道（修正前 filter 剔除后剩余点被连成线）", () => {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    const ref = createRef<KlineChartHandle>();
+    render(<KlineChart ref={ref} data={CANDLES as never} height={400} />);
+    act(() => {
+      ref.current?.setObservationSeries([
+        { time: "2026-01-01 00:00:00+00:00", value: 98765.4 },
+        { time: "2026-01-01 04:00:00+00:00", value: null },
+        { time: "2026-01-01 08:00:00+00:00", value: 99999.9 },
+      ]);
+    });
+    const main = registry.charts[0];
+    // 观测线=携带特征值的 Line series（本渲染无 indicators/boll——Line 唯一）
+    const obs = main.series.find(
+      (s: { seriesType: string; setData: { mock: { calls: unknown[][] } } }) =>
+        s.seriesType === "Line" && JSON.stringify(s.setData.mock.calls[0]?.[0] ?? "").includes("98765"),
+    );
+    expect(obs).toBeTruthy();
+    const data = obs.setData.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(data).toHaveLength(3);
+    // 中间 null 值点=whitespace 项（无 value 键，真断线不画）
+    expect("value" in data[1]).toBe(false);
+    expect(data[0]).toMatchObject({ value: 98765.4 });
+    expect(data[2]).toMatchObject({ value: 99999.9 });
+  });
+});
+
 describe("KlineChart 纯函数层（core/time toTime）", () => {
   it("ISO 与空格分隔形制都转 UTCTimestamp 秒", () => {
     expect(toTime("2026-01-01T00:00:00")).toBe(toTime("2026-01-01 00:00:00"));
@@ -379,7 +413,7 @@ describe("KlineChart onCrosshairMove 回调（upgrade-vr-fullrange-chart 契约 
   function renderBare(extra: { onCrosshairMove?: (p: unknown) => void } = {}) {
     registry.charts.length = 0;
     registry.crosshairHandlers.length = 0;
-    render(<KlineChart data={CANDLES as never} height={400} {...(extra as never)} />);
+    render(<KlineChart data={CANDLES as never} height={400} {...extra} />);
   }
   it("缺省 undefined 行为不变：crosshair 订阅仍建立（legend 路径），无回调不炸", () => {
     renderBare();
