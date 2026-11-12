@@ -21,7 +21,7 @@ import { useStrategies, useBatchBacktestStream } from "@/hooks/useStrategies";
 import { fetchBatchBacktestDetail } from "@/services/strategies";
 import { cn, monthsAgo, todayISO } from "@/lib/utils";
 import { BacktestMetricsPanel } from "@/components/lab";
-import { EquityCurve } from "@/components/charts/EquityCurve";
+import { EquityLineChart as EquityCurve } from "@/components/charts/EquityLineChart";
 import type {
   BatchBacktestResultItem,
   BatchBacktestSummaryItem,

@@ -114,10 +114,6 @@ vi.mock("@/components/charts/KlineChart", async () => {
   };
 });
 
-// Mock EquityCurve（echarts canvas——jsdom 崩，沿 BacktestModePanel.test 形制）
-vi.mock("@/components/charts/EquityCurve", () => ({
-  EquityCurve: vi.fn(() => <div data-testid="equity-curve" />),
-}));
 
 // Mock BacktestMetricsPanel / StrategyDetail（回测完成态子面板）
 vi.mock("@/components/lab/BacktestMetricsPanel", () => ({

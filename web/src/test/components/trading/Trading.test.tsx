@@ -33,9 +33,8 @@ vi.mock("react-router", () => ({
   useNavigate: vi.fn(() => vi.fn()),
 }));
 
-// EquityCurve（echarts/zrender）在 jsdom 无 canvas context 崩——非本文件被测面，stub 之
-vi.mock("@/components/charts/EquityCurve", () => ({
-  EquityCurve: () => <div data-testid="equity-curve-stub" />,
+vi.mock("@/components/charts/EquityLineChart", () => ({
+  EquityLineChart: () => <div data-testid="equity-curve-stub" />,
 }));
 
 // KlineChart（lightweight-charts）jsdom 无 canvas context——HUD 用例的 await

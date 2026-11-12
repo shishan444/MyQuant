@@ -1,18 +1,41 @@
 /**
- * 进化得分趋势图（echarts）。
+ * 进化得分趋势图（lightweight-charts 单库形态，fe-chart-single-lib 组 3）。
  *
- * 数据变换在 utils/evolutionChart.ts，option 构造在
- * charts/core/scoreTrendOption（纯函数，L1 直测）。
- * 容器底色=CHART_VA（fe-research-execution-domain 3.1——05 进化图表
- * 琥珀终端风：va-bg 底+va-line 描边+va-amber 最优强调系；线色仍走
- * 全局 CHART_PALETTE，蜡烛恒等规则不适用本图非 K 线）。
+ * 数据变换在 utils/evolutionChart.ts（不动）；装配按 design D2 修订清单：
+ * 四 LineSeries（bestScore 金/bestFitness 青条件在场/cumulativeBest 半透明
+ * 青点线恒在/avgScore 紫蚂蚁线）+双 priceLine 二选一（无 fitness→目标线/
+ * 有→达标线）+champion 与种群边界 markers（lightweight 无竖线原语，边界
+ * 竖线族改 marker 承载）。容器底色=CHART_VA（琥珀终端风，形制沿旧）。
+ * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
  */
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/components/charts/core/echartsCore";
-import { buildScoreTrendOption } from "@/components/charts/core/scoreTrendOption";
-import { CHART_VA } from "@/theme/tokens";
+import {
+  createChart,
+  createSeriesMarkers,
+  LineSeries,
+  LineStyle,
+  CrosshairMode,
+} from "lightweight-charts";
+import type {
+  IChartApi,
+  ISeriesApi,
+  ISeriesMarkersPluginApi,
+  SeriesMarker,
+  Time,
+  UTCTimestamp,
+} from "lightweight-charts";
+import { withAlpha } from "@/components/charts/core/chartThemes";
+import { CHART_VA, POLARITY, ATTENTION } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
 import { transformChartData, type ChartTransformResult } from "@/utils/evolutionChart";
+
+// 系列色归宿（design D5）：scoreLine/fitnessLine/champion 直接 import tokens；
+// avgLine/targetLine/axisLabel 三字面为图表系列区分色（tokens 无对应族）
+// 步统一迁 chartThemes 常量区（本组件先字面引用）。
+const AVG_LINE_COLOR = "rgba(168,85,247,0.4)";
+const TARGET_LINE_COLOR = "#94A3B8";
+const AXIS_LABEL_COLOR = "#64748B";
+const GRID_LINE_COLOR = "rgba(100,116,139,0.15)";
 
 interface ScoreTrendChartProps {
   records: EvolutionHistoryRecord[];
@@ -20,48 +43,189 @@ interface ScoreTrendChartProps {
   targetFitness?: number;
 }
 
+/** generation → epoch 秒承载（lightweight time 轴数值原语；tick 文本回显代数） */
+const genToTime = (gen: number) => gen as UTCTimestamp;
+
+interface TrendSeries {
+  bestScore: ISeriesApi<"Line"> | null;
+  bestFitness: ISeriesApi<"Line"> | null;
+  cumulativeBest: ISeriesApi<"Line"> | null;
+  avgScore: ISeriesApi<"Line"> | null;
+}
+
+const EMPTY_SERIES: TrendSeries = {
+  bestScore: null,
+  bestFitness: null,
+  cumulativeBest: null,
+  avgScore: null,
+};
+
 export function ScoreTrendChart({
   records,
   targetScore,
   targetFitness = 1.0,
 }: ScoreTrendChartProps) {
-  const { data, championChanges, boundaries, stats }: ChartTransformResult = useMemo(
+  const { data, championChanges, stats }: ChartTransformResult = useMemo(
     () => transformChartData(records),
     [records],
   );
 
   const hasFitnessData = data.some((d) => d.bestFitness != null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<TrendSeries>(EMPTY_SERIES);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const hasData = data.length > 0;
+  // jsdom 降级：canvas.getContext 不存在即无绘制面（jsdom 无 canvas 实现）
+  const canDraw = typeof document !== "undefined" &&
+    document.createElement("canvas").getContext != null;
 
   useEffect(() => {
-    if (!hasData || !containerRef.current) return;
-    const chart = echarts.init(containerRef.current);
+    if (!hasData || !canDraw || !containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: { background: { color: "transparent" }, textColor: AXIS_LABEL_COLOR },
+      grid: {
+        vertLines: { color: GRID_LINE_COLOR, style: LineStyle.Dotted },
+        horzLines: { color: GRID_LINE_COLOR, style: LineStyle.Dotted },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderVisible: false },
+      timeScale: {
+        borderVisible: false,
+        timeVisible: false,
+        secondsVisible: false,
+        // x 轴=代数（旧 category 轴形制随迁：epoch 秒承载，tick 文本回代数）
+        tickMarkFormatter: (time: Time) => String(Number(time)),
+      },
+      localization: { timeFormatter: (time: Time) => `第 ${Number(time)} 代` },
+    });
     chartRef.current = chart;
-    const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(containerRef.current);
+
+    const bestScore = chart.addSeries(LineSeries, {
+      color: ATTENTION.gold,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    // 适应度线条件在场（hasFitnessData）——series 集合随判定整体重建
+    const bestFitness = hasFitnessData
+      ? chart.addSeries(LineSeries, {
+          color: POLARITY.up,
+          lineWidth: 2.5,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+    const cumulativeBest = chart.addSeries(LineSeries, {
+      color: withAlpha(POLARITY.up, 0.5),
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    const avgScore = chart.addSeries(LineSeries, {
+      color: AVG_LINE_COLOR,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    seriesRef.current = { bestScore, bestFitness, cumulativeBest, avgScore };
+
     return () => {
-      observer.disconnect();
-      chart.dispose();
+      chart.remove();
       chartRef.current = null;
+      seriesRef.current = EMPTY_SERIES;
+      markersRef.current = null;
     };
-  }, [hasData]);
+  }, [hasData, canDraw, hasFitnessData]);
 
   useEffect(() => {
-    if (!hasData || !chartRef.current) return;
-    chartRef.current.setOption(
-      buildScoreTrendOption({
-        data,
-        championChanges,
-        boundaries,
-        targetScore,
-        targetFitness,
-        hasFitnessData,
-      }),
-      { notMerge: true },
+    if (!hasData || !canDraw || !chartRef.current) return;
+    const { bestScore, bestFitness, cumulativeBest, avgScore } = seriesRef.current;
+    if (!bestScore || !cumulativeBest || !avgScore) return;
+
+    bestScore.setData(
+      data.map((d) => ({ time: genToTime(d.generation), value: d.bestScore })),
     );
-  }, [hasData, data, championChanges, boundaries, targetScore, targetFitness, hasFitnessData]);
+    // fitness 缺代以 whitespace 断点承载（断线语义）
+    bestFitness?.setData(
+      data.map((d) =>
+        d.bestFitness != null
+          ? { time: genToTime(d.generation), value: d.bestFitness }
+          : { time: genToTime(d.generation) },
+      ),
+    );
+    cumulativeBest.setData(
+      data.map((d) => ({ time: genToTime(d.generation), value: d.cumulativeBest })),
+    );
+    avgScore.setData(
+      data.map((d) => ({ time: genToTime(d.generation), value: d.avgScore })),
+    );
+
+    // 双 priceLine 二选一（旧 markLine 归属随迁：目标线挂 bestScore、达标线挂 bestFitness）
+    const targetSeries = hasFitnessData ? bestFitness : bestScore;
+    if (targetSeries) {
+      for (const line of targetSeries.priceLines()) targetSeries.removePriceLine(line);
+      targetSeries.createPriceLine(
+        hasFitnessData
+          ? {
+              price: targetFitness,
+              color: POLARITY.up,
+              lineWidth: 1.5,
+              lineStyle: LineStyle.Dashed,
+              title: "达标线",
+            }
+          : {
+              price: targetScore,
+              color: TARGET_LINE_COLOR,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              title: `目标 ${targetScore}`,
+            },
+      );
+    }
+
+    // champion 菱形散点→circle marker（旧 symbolSize 8）；种群边界竖线族→
+    // gold 方块+种群号 marker（lightweight 无竖线原语——D2 修订承载形）
+    const championMarkers: SeriesMarker<Time>[] = championChanges.map(
+      (c): SeriesMarker<Time> => ({
+        time: genToTime(c.generation),
+        position: "inBar",
+        color: POLARITY.up,
+        shape: "circle",
+        size: 8,
+      }),
+    );
+    const boundaryMarkers: SeriesMarker<Time>[] = data
+      .filter((d) => d.isPopulationBoundary)
+      .map(
+        (d): SeriesMarker<Time> => ({
+          time: genToTime(d.generation),
+          position: "aboveBar",
+          color: ATTENTION.gold,
+          shape: "square",
+          size: 6,
+          text: `P${d.population}`,
+        }),
+      );
+    const markers = [...championMarkers, ...boundaryMarkers].sort(
+      (a, b) => Number(a.time) - Number(b.time),
+    );
+    if (markersRef.current) {
+      markersRef.current.setMarkers(markers);
+    } else {
+      markersRef.current = createSeriesMarkers(bestScore, markers);
+    }
+
+    // Y 域随迁近似（旧全集 min/max ±padding → autoScale+scaleMargins 0.1）
+    chartRef.current.priceScale("right").applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.1, bottom: 0.1 },
+    });
+    chartRef.current.timeScale().fitContent();
+  }, [hasData, canDraw, hasFitnessData, data, championChanges, targetScore, targetFitness]);
 
   if (!hasData) {
     return (

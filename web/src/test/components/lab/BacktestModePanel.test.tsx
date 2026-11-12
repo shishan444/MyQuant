@@ -37,10 +37,6 @@ vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: vi.fn(() => <div data-testid="kline-chart" />),
 }));
 
-// Mock EquityCurve 规避 jsdom 下 echarts canvas 问题
-vi.mock("@/components/charts/EquityCurve", () => ({
-  EquityCurve: vi.fn(() => <div data-testid="equity-curve" />),
-}));
 
 // Mock StrategyDetail
 vi.mock("@/components/StrategyDetail", () => ({
