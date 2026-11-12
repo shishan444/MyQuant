@@ -1,21 +1,32 @@
 /**
- * 验证记录明细复核四形态（upgrade-validation-records-list 5.2——
- * D1-D3/V1-V4）。D1 参数回显两行（statement 全文逐字+union-balance
- * 余量——各自数据源不可达各自降级）；D2 K 线四类动作标记+止损线
- * （trail 档取 trail_series 真值禁重算；标记/逐笔/点行定位统一成交锚）；
+ * 验证记录明细复核四形态（upgrade-validation-records-list 5.2 +
+ * upgrade-vr-fullrange-chart 全区间重构）。D1 参数回显两行（statement
+ * 全文逐字+union-balance 余量——各自数据源不可达各自降级）；D2 K 线
+ * 复核=全区间单张连续图（契约 A 四态装载/B 段界竖带/C equity 副图同轴/
+ * D marker 单源带价+crosshair 读数/E 单份筛选前端过滤/F trail 拼接）；
  * D3 资金曲线+一致性核对行（isolated 恒等断言、random/staged worst
- * 窗口/最弱段统计身份标签）；V1 三页签结构驱动恒三；V2 逐笔表（开平
- * 双价/未平仓如实/色点单源三视图同色）；V3 信号回溯（四元判读+reason
- * 五值两族+capped 披露+MTF 门控提示行）；V4 三布尔独立降级（null=
- * 代际陈述中性小标、缺陷态异常带 record_id）。
+ * 窗口/最弱段统计身份标签——数据源与副图同锚）；V1 三页签结构驱动恒三
+ * （权益明细页签与 K 线同锚）；V2 逐笔表（开平双价/未平仓如实/色点单源
+ * 三视图同色）；V3 信号回溯（四元判读+reason 五值两族+capped 披露+MTF
+ * 门控提示行）；V4 三布尔独立降级（null=代际陈述中性小标、缺陷态异常
+ * 带 record_id）。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Select, Tabs } from "antd";
 import { FileSearch } from "lucide-react";
 import { KlineChart, type KlineChartHandle } from "@/components/charts/KlineChart";
+import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitives/segmentBand";
+import { toTime } from "@/components/charts/core/time";
 import { CHART_VC } from "@/theme/tokens";
-import { getOhlcvBySymbol } from "@/services/datasets";
+import {
+  barsInExecRange,
+  buildEquitySeries,
+  perExecEquityPoints,
+  useFullRangeKline,
+  type FullRangeBar,
+  type FullRangeResult,
+} from "./fullRangeData";
 import {
   getUnionBalance,
   getValidationRecordDetail,
@@ -30,36 +41,49 @@ import {
   TRACE_FAMILY_COLOR,
   eventSemantics,
   recordSymbolTimeframe,
+  traceMarkers,
 } from "./traceSemantics";
 
 const VERDICT_COLOR: Record<string, string> = {
   pass: "text-profit", fail: "text-loss", inconclusive: "text-attention-gold",
 };
 
-/** 周期字符串 → 秒数（compact 时间轴重建用；全档覆盖数据目录档位） */
-function timeframeSeconds(tf: string): number {
-  const m: Record<string, number> = {
-    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "4h": 14400, "1d": 86400, "3d": 259200,
-  };
-  return m[tf] ?? 0;
+/** 视图状态：全区间（缺省主视图）| 指定执行份（单份筛选前端过滤） */
+type ViewSel = "all" | number;
+
+/** 字符串时间 → epoch 秒（toTime 单源；malformed 回退 null） */
+function epochOfTime(ts: string): number | null {
+  const t = toTime(ts);
+  return typeof t === "number" ? t : null;
 }
 
-/** equity values → 时间轴点对（compact 按 start+length×tf 重建） */
-function equityPoints(exec: VrExecution): Array<{ time: string; value: number }> {
-  const eq = exec.equity;
-  if (!eq?.values?.length) return [];
-  if (eq.timestamps && eq.timestamps.length === eq.values.length) {
-    return eq.timestamps.map((t, i) => ({ time: t, value: eq.values[i] }));
+/** epoch 秒 → ISO 带 Z 串 */
+const isoOf = (sec: number) => new Date(sec * 1000).toISOString();
+
+/** trail 全区间拼接（契约 F）：各份 trail_series concat+段界 null 断点
+ *  （原语层产 whitespace 真断线——跨段连线误导）；单份原样返回 */
+function concatTrail(
+  executions: VrExecution[],
+): Array<{ time: string; value: number | null }> | null {
+  const parts = executions
+    .map((e) => e.trail_series ?? [])
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return null;
+  const out: Array<{ time: string; value: number | null }> = [];
+  let lastEpoch: number | null = null;
+  for (const part of parts) {
+    const firstEpoch = epochOfTime(part[0].time);
+    if (out.length > 0 && firstEpoch != null) {
+      const brk = firstEpoch - 1;
+      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
+    }
+    for (const p of part) {
+      out.push({ time: p.time, value: p.value ?? null });
+      const pe = epochOfTime(p.time);
+      if (pe != null) lastEpoch = pe;
+    }
   }
-  const sec = timeframeSeconds(eq.timeframe);
-  if (!eq.start || !sec) return eq.values.map((_, i) => ({ time: String(i), value: eq.values[i] }));
-  const startMs = new Date(eq.start.replace(" ", "T") + (eq.start.includes("+") ? "" : "Z")).getTime();
-  if (!Number.isFinite(startMs)) return eq.values.map((_, i) => ({ time: String(i), value: eq.values[i] }));
-  return eq.values.map((v, i) => ({
-    time: new Date(startMs + i * sec * 1000).toISOString(),
-    value: v,
-  }));
+  return out;
 }
 
 const fmtTime = (t?: string | null) => (t ? t.slice(0, 16).replace("T", " ") : "—");
@@ -156,29 +180,27 @@ function ParamsEcho({
   );
 }
 
-/* ── D2 K 线复核（四类动作标记+止损线；trail 真值；统一成交锚） ── */
+/* ── D2 K 线复核（全区间单图：契约 A 四态装载/B 段界竖带/C equity 副图/
+    D marker 单源带价+crosshair/E 单份筛选/F trail 拼接） ── */
 function KlineReview({
-  exec,
+  executions,
+  fr,
+  view,
   symbol,
   timeframe,
   stopPrice,
   chartRef,
 }: {
-  exec: VrExecution;
+  executions: VrExecution[];
+  fr: FullRangeResult;
+  view: ViewSel;
   symbol: string | null;
   timeframe: string | null;
   stopPrice: boolean | null;
   chartRef: React.RefObject<KlineChartHandle | null>;
 }) {
-  const q = useQuery({
-    queryKey: ["vr-kline", symbol, timeframe, exec.range_start, exec.range_end],
-    queryFn: () =>
-      getOhlcvBySymbol(symbol!, timeframe!, {
-        start: exec.range_start || undefined,
-        end: exec.range_end || undefined,
-      }),
-    enabled: !!symbol && !!timeframe,
-  });
+  const execIdx = view === "all" ? -1 : view;
+  const exec = execIdx >= 0 ? executions[execIdx] : null;
   // P-2 图高视口化：55% 视口高、420px 下限（矮窗口防不可用）——
   // 局部 resize 响应，不引全局依赖
   const [chartHeight, setChartHeight] = useState(() =>
@@ -190,41 +212,58 @@ function KlineReview({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  // trail 止损线：trail_series 真值挂线（引擎单源——禁前端重算）；
-  // NaN/undefined 段传 null 由原语层断线。依赖含 q.isSuccess——K 线
-  // 装载完成才渲染图表（ref 就绪晚于本 effect 首跑，装载完成信号驱动
-  // 重挂线）
-  const trail = exec.trail_series ?? null;
+
+  const bars: FullRangeBar[] = fr.state === "loading" || fr.state === "error" ? [] : fr.candles;
+  const chartReady = fr.state !== "loading" && fr.state !== "error";
+  // 契约 E：单份视图主图只画该份闭端区间（渲染层过滤——queryKey 与拉取
+  // 仍全区间；与对账/equity 锚序列共用 barsInExecRange 单源）
+  const viewCandles = exec ? barsInExecRange(bars, exec) : bars;
+
+  // 契约 C：equity 副图数据（全份拼接带段界断点/单份序列无断点——同源同锚）
+  const equityData = useMemo(
+    () => (exec ? perExecEquityPoints(exec, bars) : buildEquitySeries(executions, bars)),
+    [exec, executions, bars],
+  );
+  // 契约 D：marker 单源合并（traceMarkers 带价；全份 flatMap 按 time 升序）
+  const markers = useMemo(() => {
+    const src = exec ? [exec] : executions;
+    return src
+      .flatMap((e) => traceMarkers(e.trace_rows))
+      .sort((a, b) => (epochOfTime(a.time) ?? 0) - (epochOfTime(b.time) ?? 0));
+  }, [exec, executions]);
+  // 契约 F：trail 挂线（全份拼接带段界断点/单份现状行为）
+  const trail = useMemo(
+    () => (exec ? exec.trail_series : concatTrail(executions)),
+    [exec, executions],
+  );
   useEffect(() => {
     const chart = chartRef.current;
     chart?.setObservationSeries(
       trail ? trail.map((p) => ({ time: p.time, value: p.value ?? null })) : null,
     );
     return () => chart?.setObservationSeries(null);
-  }, [trail, chartRef, q.isSuccess]);
-  const markers = useMemo(
-    () =>
-      exec.trace_rows
-        .filter((r) => r.outcome === "filled")
-        .flatMap((r) => {
-          const sem = eventSemantics(r.event_code);
-          if (!sem) return [];
-          return [{
-            time: r.bar_time,
-            position: (sem.action === "open" || sem.action === "add"
-              ? "belowBar"
-              : "aboveBar") as "belowBar" | "aboveBar",
-            color: TRACE_FAMILY_COLOR[sem.family],
-            shape: (sem.action === "open"
-              ? "arrowUp"
-              : sem.action === "exit"
-                ? "arrowDown"
-                : "circle") as "arrowUp" | "arrowDown" | "circle",
-            text: sem.markerText,
-          }];
-        }),
-    [exec.trace_rows],
+  }, [trail, chartRef, chartReady]);
+
+  // 契约 B：段界竖带（多带单控制器；单份视图只画选中段界）
+  const bandCtlRef = useRef<{ setData: (b: ReturnType<typeof toSegmentBands> | null) => void } | null>(null);
+  const bands = useMemo(
+    () => toSegmentBands(exec ? [exec] : executions),
+    [exec, executions],
   );
+  useEffect(() => {
+    bandCtlRef.current?.setData(bands);
+  }, [bands]);
+  // 契约 D：crosshair 读数（无悬停显空；OHLC 由 viewCandles 按 param.time
+  // 查行——与主图同源，单份视图只在闭端区间内可查）
+  const [hover, setHover] = useState<{ time: string; o: number; h: number; l: number; c: number } | null>(null);
+  const onCrosshairMove = useCallback((param: { time?: unknown }) => {
+    if (param.time == null || typeof param.time !== "number") {
+      setHover(null);
+      return;
+    }
+    const bar = viewCandles.find((b) => epochOfTime(b.timestamp) === param.time);
+    setHover(bar ? { time: bar.timestamp, o: bar.open, h: bar.high, l: bar.low, c: bar.close } : null);
+  }, [viewCandles]);
 
   if (!symbol || !timeframe) {
     return (
@@ -233,10 +272,32 @@ function KlineReview({
       </p>
     );
   }
-  if (q.isError) return <p className="text-xs text-loss">K 线源暂不可达（稍后自动重试）</p>;
-  if (q.isLoading) return <p className="text-xs text-text-muted">K 线装载中…</p>;
-  const candles = q.data?.data ?? [];
-  const filled = exec.trace_rows.filter((r) => r.outcome === "filled");
+  if (fr.state === "error") {
+    return <p className="text-xs text-loss">K 线源暂不可达（稍后自动重试）</p>;
+  }
+  if (fr.state === "loading") {
+    return <p className="text-xs text-text-muted">K 线装载中…</p>;
+  }
+
+  // 契约 A 四态提示（ok 态无提示——截断与对账不等各自如实提示不静默）
+  const stateMsg =
+    fr.state === "truncated"
+      ? `K 线数据被截断（limit 50000）：区间尾部 ${fr.truncatedMissing ?? "?"} 根缺失`
+      : fr.state === "mismatch"
+        ? fr.mismatchedExecs
+            .map((m) => `份 ${m.exec_ref}：K 线 ${m.bars} 根 vs 权益 ${m.points} 点`)
+            .join("；")
+        : null;
+
+  const rangeLabel = exec
+    ? `${exec.range_start || "?"} → ${exec.range_end || "?"}`
+    : `${executions[0]?.range_start || "?"} → ${executions[executions.length - 1]?.range_end || "?"}（全区间 ${executions.length} 份）`;
+  const filledCount = (exec ? [exec] : executions).reduce(
+    (n, e) => n + e.trace_rows.filter((r) => r.outcome === "filled").length,
+    0,
+  );
+  const tradesCount = (exec ? [exec] : executions).reduce((n, e) => n + e.trades.length, 0);
+
   return (
     <div
       className="rounded p-2"
@@ -244,34 +305,62 @@ function KlineReview({
       data-testid="vr-kline-review"
     >
       <p className="mb-1 text-[10px]" style={{ color: CHART_VC.dim }}>
-        {symbol} · {timeframe} · {exec.range_start || "?"} → {exec.range_end || "?"} ·
-        标记 {markers.length}（filled 留痕 {filled.length} 行 · trades {exec.trades.length} 笔）
+        {symbol} · {timeframe} · {rangeLabel} ·
+        标记 {markers.length}（filled 留痕 {filledCount} 行 · trades {tradesCount} 笔）
+        <span className="ml-2" data-testid="vr-view-mode">
+          {exec ? `单份 ${exec.exec_ref}` : "全区间"}
+        </span>
+      </p>
+      {/* crosshair 读数行（mono 小字——marker 悬停时间由 crosshair 落 bar 读数承担） */}
+      <p className="mb-1 font-mono text-[10px]" style={{ color: CHART_VC.dim }} data-testid="vr-crosshair-info">
+        {hover
+          ? `${hover.time}  O ${hover.o} H ${hover.h} L ${hover.l} C ${hover.c}`
+          : "—"}
       </p>
       <p className="mb-1 flex flex-wrap gap-x-3 text-[10px]" style={{ color: CHART_VC.dim }}>
-        <span style={{ color: TRACE_FAMILY_COLOR.strategy }}>▲开多/▲加多/▽减仓/▼平多=策略动作</span>
+        <span style={{ color: TRACE_FAMILY_COLOR.strategy }}>▲开多/▲加多/▽减仓/▼平多=策略动作（标=动作+成交价）</span>
         <span style={{ color: TRACE_FAMILY_COLOR.risk }}>▼平多（金）=风控出场族</span>
         <span>止损线{trail ? "（trail 真值）" : stopPrice === null ? "（产生于能力上线前）" : "（非 trail 档无序列）"}</span>
       </p>
-      {candles.length === 0 ? (
+      {stateMsg && (
+        <p className="mb-1 rounded border border-attention-gold/40 px-2 py-0.5 text-[10px] text-attention-gold" data-testid="vr-kline-state">
+          {stateMsg}
+        </p>
+      )}
+      {viewCandles.length === 0 ? (
         <p className="py-6 text-center text-xs" style={{ color: CHART_VC.dim }}>
           该区间无 K 线数据
         </p>
       ) : (
-        <KlineChart data={candles} signalMarkers={markers} height={chartHeight} ref={chartRef} />
+        <KlineChart
+          data={viewCandles}
+          signalMarkers={markers}
+          height={chartHeight}
+          ref={chartRef}
+          subChartType="equity"
+          equityData={equityData}
+          onChartReady={(_, series) => {
+            bandCtlRef.current = attachSegmentBand(series);
+            bandCtlRef.current.setData(bands);
+          }}
+          onCrosshairMove={onCrosshairMove}
+        />
       )}
     </div>
   );
 }
 
-/* ── D3 资金曲线+一致性核对行 ── */
+/* ── D3 资金曲线+一致性核对行（数据源与副图同锚——perExecEquityPoints） ── */
 function EquityReview({
   exec,
+  bars,
   record,
 }: {
   exec: VrExecution;
+  bars: FullRangeBar[];
   record: ValidationRecordRow;
 }) {
-  const pts = equityPoints(exec);
+  const pts = perExecEquityPoints(exec, bars);
   const eq = exec.equity;
   if (pts.length === 0) {
     return (
@@ -546,9 +635,9 @@ function SignalTrace({
   );
 }
 
-/* ── V1 决策记录三页签（结构驱动恒三——权益明细页签） ── */
-function EquityPointsTable({ exec }: { exec: VrExecution }) {
-  const pts = equityPoints(exec);
+/* ── V1 决策记录三页签（结构驱动恒三——权益明细页签与 K 线/副图严格同锚） ── */
+function EquityPointsTable({ exec, bars }: { exec: VrExecution; bars: FullRangeBar[] }) {
+  const pts = perExecEquityPoints(exec, bars);
   if (pts.length === 0) {
     return <p className="py-3 text-center text-xs text-text-muted">该份无权益明细</p>;
   }
@@ -582,12 +671,20 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     queryFn: () => getValidationRecordDetail(recordId!),
     enabled: !!recordId,
   });
-  // 多份选择器（隔离验证单份常态；多份=random 各窗/staged 各段——份
-  // 标识 exec_ref 与段清单逐份一致）
-  const [execIdx, setExecIdx] = useState(0);
-  useEffect(() => { setExecIdx(0); }, [recordId]);
+  // 视图状态（契约 E）：缺省全区间主视图；单份=前端过滤可选视图。
+  // D3/V1 消费当前聚焦份（全区间态缺省份 1）
+  const [view, setView] = useState<ViewSel>("all");
+  useEffect(() => { setView("all"); }, [recordId]);
   const chartRef = useRef<KlineChartHandle | null>(null);
   const locate = (time: string) => chartRef.current?.scrollToTime(time);
+  // 全区间装载（hooks 无条件区——早退前调用；明细未就绪/不可用时空
+  // executions 恒 loading 态，bounds null 不发请求）
+  const st = record ? recordSymbolTimeframe(record) : { symbol: null, timeframe: null };
+  const fr = useFullRangeKline(
+    q.data?.detail_available === true ? q.data.executions : [],
+    st.symbol,
+    st.timeframe,
+  );
 
   if (!record || !recordId) {
     return (
@@ -606,8 +703,10 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
       </p>
     );
   }
-  const { symbol, timeframe } = recordSymbolTimeframe(record);
-  const exec = d.executions[Math.min(execIdx, d.executions.length - 1)];
+  const { symbol, timeframe } = st;
+  const bars: FullRangeBar[] = fr.state === "loading" || fr.state === "error" ? [] : fr.candles;
+  const activeExecIdx = view === "all" ? 0 : Math.min(view, d.executions.length - 1);
+  const exec = d.executions[activeExecIdx];
   return (
     <div className="space-y-3">
       {/* 头部：标识+verdict+V4 三布尔能力徽标 */}
@@ -623,26 +722,31 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
         <Select
           size="small"
           className="!w-64"
-          value={Math.min(execIdx, d.executions.length - 1)}
-          onChange={setExecIdx}
-          options={d.executions.map((e, i) => ({
-            value: i,
-            label: `份 ${i + 1} · ${e.exec_ref}（${e.range_start || "?"} → ${e.range_end || "?"}）`,
-          }))}
+          value={view}
+          onChange={(v) => setView(v)}
+          options={[
+            { value: "all", label: "全区间（全部份连续）" },
+            ...d.executions.map((e, i) => ({
+              value: i,
+              label: `份 ${i + 1} · ${e.exec_ref}（${e.range_start || "?"} → ${e.range_end || "?"}）`,
+            })),
+          ]}
         />
       )}
       {exec ? (
         <>
-          {/* D2 K 线复核 */}
+          {/* D2 K 线复核（全区间单图） */}
           <KlineReview
-            exec={exec}
+            executions={d.executions}
+            fr={fr}
+            view={view}
             symbol={symbol}
             timeframe={timeframe}
             stopPrice={d.stop_price}
             chartRef={chartRef}
           />
           {/* D3 资金曲线 */}
-          <EquityReview exec={exec} record={record} />
+          <EquityReview exec={exec} bars={bars} record={record} />
           {/* V1 决策记录三页签（结构驱动恒三） */}
           <Tabs
             size="small"
@@ -662,7 +766,7 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
               {
                 key: "equity-points",
                 label: "权益明细",
-                children: <EquityPointsTable exec={exec} />,
+                children: <EquityPointsTable exec={exec} bars={bars} />,
               },
             ]}
           />

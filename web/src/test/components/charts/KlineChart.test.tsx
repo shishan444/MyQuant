@@ -328,6 +328,40 @@ describe("KlineChart height 运行时变化增量通道（CARD-01 回归锚）",
   });
 });
 
+describe("KlineChart setObservationSeries 命令式通道 whitespace 断线（upgrade-vr-fullrange-chart 消费方波及锚）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("null 值点产 whitespace 项直达 Line series setData——TradingChart/Lab/RecordDetail 三消费方共享通道（修正前 filter 剔除后剩余点被连成线）", () => {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    const ref = createRef<KlineChartHandle>();
+    render(<KlineChart ref={ref} data={CANDLES as never} height={400} />);
+    act(() => {
+      ref.current?.setObservationSeries([
+        { time: "2026-01-01 00:00:00+00:00", value: 98765.4 },
+        { time: "2026-01-01 04:00:00+00:00", value: null },
+        { time: "2026-01-01 08:00:00+00:00", value: 99999.9 },
+      ]);
+    });
+    const main = registry.charts[0];
+    // 观测线=携带特征值的 Line series（本渲染无 indicators/boll——Line 唯一）
+    const obs = main.series.find(
+      (s: { seriesType: string; setData: { mock: { calls: unknown[][] } } }) =>
+        s.seriesType === "Line" && JSON.stringify(s.setData.mock.calls[0]?.[0] ?? "").includes("98765"),
+    );
+    expect(obs).toBeTruthy();
+    const data = obs.setData.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(data).toHaveLength(3);
+    // 中间 null 值点=whitespace 项（无 value 键，真断线不画）
+    expect("value" in data[1]).toBe(false);
+    expect(data[0]).toMatchObject({ value: 98765.4 });
+    expect(data[2]).toMatchObject({ value: 99999.9 });
+  });
+});
+
 describe("KlineChart 纯函数层（core/time toTime）", () => {
   it("ISO 与空格分隔形制都转 UTCTimestamp 秒", () => {
     expect(toTime("2026-01-01T00:00:00")).toBe(toTime("2026-01-01 00:00:00"));
@@ -335,5 +369,66 @@ describe("KlineChart 纯函数层（core/time toTime）", () => {
   });
   it("malformed 输入回退 date-only 切片不抛错", () => {
     expect(toTime("bad-date-xx")).toBe("bad-date-xx".slice(0, 10));
+  });
+});
+
+describe("KlineChart equity 副图 whitespace 透传与首值参考线（upgrade-vr-fullrange-chart 契约 C）", () => {
+  const eqBars = [
+    { time: "2026-01-01T00:00:00Z", value: 100000 },
+    { time: "2026-01-01T04:00:00Z" }, // 段界断点（无 value）
+    { time: "2026-01-01T08:00:00Z", value: 101000 },
+  ];
+  function renderEquity(data: Array<{ time: string; value?: number }>) {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    return render(
+      <KlineChart data={CANDLES as never} subChartType="equity" equityData={data} height={400} />,
+    );
+  }
+  it("whitespace 项透传 setData（无 value 键）——断点项不丢", () => {
+    renderEquity(eqBars);
+    const reg = registry;
+    const lines = reg.charts[0].series.filter((s: { seriesType: string }) => s.seriesType === "Line");
+    // 第一条 Line=equity 曲线：3 项全透传，中项无 value 键
+    const eq = lines[0];
+    expect(eq.setData).toHaveBeenCalledWith([
+      { time: expect.any(Number), value: 100000 },
+      { time: expect.any(Number) },
+      { time: expect.any(Number), value: 101000 },
+    ]);
+  });
+  it("首 value 点参考线：首项为 whitespace 时参考线不挂 NaN（取首个带 value 项）", () => {
+    renderEquity([{ time: "2026-01-01T00:00:00Z" }, ...eqBars.slice(1)]);
+    const reg = registry;
+    const lines = reg.charts[0].series.filter((s: { seriesType: string }) => s.seriesType === "Line");
+    // 第二条 Line=参考线：两锚点值=首带 value 项 100000（非 undefined）
+    const ref = lines[1];
+    const calls = ref.setData.mock.calls[0][0] as Array<{ value?: number }>;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((p) => p.value === 101000)).toBe(true); // 唯一带值项 101000（slice(1) 后）
+  });
+});
+
+describe("KlineChart onCrosshairMove 回调（upgrade-vr-fullrange-chart 契约 D）", () => {
+  function renderBare(extra: { onCrosshairMove?: (p: unknown) => void } = {}) {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    render(<KlineChart data={CANDLES as never} height={400} {...extra} />);
+  }
+  it("缺省 undefined 行为不变：crosshair 订阅仍建立（legend 路径），无回调不炸", () => {
+    renderBare();
+    expect(registry.crosshairHandlers.length).toBeGreaterThan(0);
+    expect(() =>
+      registry.crosshairHandlers.forEach((h) => h({ time: undefined, seriesData: new Map() })),
+    ).not.toThrow();
+  });
+  it("回调透传：param 原样到达消费方（含无 time 形）", () => {
+    const onCrosshairMove = vi.fn();
+    renderBare({ onCrosshairMove: onCrosshairMove as never });
+    const param = { time: 12345, seriesData: new Map() };
+    act(() => {
+      registry.crosshairHandlers.forEach((h) => h(param));
+    });
+    expect(onCrosshairMove).toHaveBeenCalledWith(param);
   });
 });

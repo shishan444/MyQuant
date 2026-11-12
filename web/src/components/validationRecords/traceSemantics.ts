@@ -85,7 +85,8 @@ export const OUTCOME_LABELS: Record<VrTraceRow["outcome"], string> = {
 };
 
 /** K 线四类动作标记（trace_rows filled 行 → 标记形制；标记/逐笔/定位
- *  统一成交锚=bar_time 执行锚） */
+ *  统一成交锚=bar_time 执行锚）。text=动作名+成交价（price null 历史行
+ *  仅动作名不伪造——EVENT_SEMANTICS 唯一权威，其余映射逐位不动） */
 export function traceMarkers(rows: VrTraceRow[]): Array<{
   time: string;
   position: "aboveBar" | "belowBar";
@@ -107,7 +108,7 @@ export function traceMarkers(rows: VrTraceRow[]): Array<{
         shape: sem.action === "open" || sem.action === "exit"
           ? (sem.action === "open" ? ("arrowUp" as const) : ("arrowDown" as const))
           : ("circle" as const),
-        text: sem.markerText,
+        text: sem.markerText + (r.price != null ? ` ${r.price.toFixed(1)}` : ""),
       };
     })
     .filter((m): m is NonNullable<typeof m> => m !== null);
