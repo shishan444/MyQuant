@@ -77,6 +77,7 @@ vi.mock("@/components/charts/KlineChart", () => ({
         data-height={props.height}
         data-equity-len={props.equityData?.length ?? 0}
         data-equity-times={(props.equityData ?? []).map((p) => (p as { time: string }).time).join(",")}
+        data-equity-vals={(props.equityData ?? []).map((p) => (p as { value?: number }).value).join(",")}
         data-subchart={props.subChartType ?? ""}
         data-len={props.data?.length ?? 0}
         data-indicators={props.indicators?.length ?? 0}
@@ -1040,6 +1041,136 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
     fireEvent.click(optEl ?? optDisabled);
     await waitFor(() => {
       expect(mockOhlcv.mock.calls.filter((c) => c[1] === "1d")).toHaveLength(1);
+    });
+  });
+});
+
+describe("段界同 bar 重复时间戳合并（change-3 CARD-01——P0 回归锚）", () => {
+  function noAdjacentDup(times: string): boolean {
+    const arr = times.split(",");
+    return arr.every((t, i) => i === 0 || t !== arr[i - 1]);
+  }
+  const makeStrategy = (dna: unknown) =>
+    ({ dna, strategy_id: "st_y1", name: "s", generation: 1 }) as never;
+
+  it("snap 系触发面：两份跨段吸附落同一日 bar——切 1d 后 equity/trail 无相邻重复 time（末项替换为后值）+基准对照", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // 份 1（main，range 04-01~04-02）：降级 timestamps 直用 3 点（区间 2 bar≠3 值）
+    d.executions[0].range_start = "2026-04-01";
+    d.executions[0].range_end = "2026-04-02";
+    d.executions[0].equity = {
+      grid_aligned: false, timeframe: "30m", start: null, length: 3,
+      timestamps: ["2026-04-01 12:00:00+00:00", "2026-04-01 18:00:00+00:00", "2026-04-02 06:00:00+00:00"],
+      values: [100000, 100500, 101000],
+    };
+    d.executions[0].trail_series = [
+      { time: "2026-04-01 12:00:00+00:00", value: 97000 },
+      { time: "2026-04-02 06:00:00+00:00", value: 98000 },
+    ];
+    // 份 2（趋势，range 04-02~04-03）：直用 3 点——吸附后首点与份 1 末点同落 04-02 日 bar
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-03",
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 3,
+        timestamps: ["2026-04-02 18:00:00+00:00", "2026-04-03 06:00:00+00:00", "2026-04-03 18:00:00+00:00"],
+        values: [102000, 102500, 103000],
+      },
+      trail_series: [
+        { time: "2026-04-02 18:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 06:00:00+00:00", value: 99500 },
+      ],
+      trace_rows: [],
+    });
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准对照（30m）：6 值点+段界断点 1=7 项，无相邻重复（重复缺陷不在基准态呈现）
+    const kline0 = await screen.findByTestId("vr-kline");
+    expect(kline0).toHaveAttribute("data-equity-len", "7");
+    expect(noAdjacentDup(kline0.getAttribute("data-equity-times") ?? "")).toBe(true);
+    // 切 1d：两段首尾同落 04-02 日 bar——末项替换为后值（102000），恰 3 项无相邻重复
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-equity-len", "3");
+      expect(kline.getAttribute("data-equity-times")).toBe(
+        "2026-04-01 00:00:00+00:00,2026-04-02 00:00:00+00:00,2026-04-03 00:00:00+00:00",
+      );
+      expect(kline.getAttribute("data-equity-vals")).toBe("100500,102000,103000");
+    });
+    // trail 同构：段 1 末 98000 与段 2 首 99000 同 bar 合并取后值——3 项
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([
+        { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ]);
+    });
+  });
+
+  it("buildEquitySeries/concatTrail 触发面：基准视图两份 zip 相接共享边界 bar——无相邻重复+合并取后值", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // 份 1（main，04-01~04-02 闭端 2 bar）zip：values 2 点锚 [04-01 bar, 04-02 bar]
+    d.executions[0].range_start = "2026-04-01";
+    d.executions[0].range_end = "2026-04-02";
+    d.executions[0].equity = {
+      grid_aligned: true, timeframe: "30m", start: null, length: 2,
+      timestamps: null, values: [100000, 101000],
+    };
+    d.executions[0].trail_series = [
+      { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+      { time: "2026-04-02 00:00:00+00:00", value: 98000 },
+    ];
+    // 份 2（趋势，04-02~04-03）：zip 首点=04-02 bar——与份 1 末点同一时间戳（explicit 相接）
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-03",
+      equity: {
+        grid_aligned: true, timeframe: "30m", start: null, length: 2,
+        timestamps: null, values: [102000, 103000],
+      },
+      trail_series: [
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ],
+      trace_rows: [],
+    });
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准视图即触发：04-02 bar 两份各锚一次——合并取后值（102000）恰 3 项无重复
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline.getAttribute("data-equity-times")).toBe(
+      "2026-04-01 00:00:00+00:00,2026-04-02 00:00:00+00:00,2026-04-03 00:00:00+00:00",
+    );
+    expect(kline.getAttribute("data-equity-vals")).toBe("100000,102000,103000");
+    // concatTrail 同构：04-02 同时间戳合并取后值 99000——3 项
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([
+        { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ]);
     });
   });
 });
