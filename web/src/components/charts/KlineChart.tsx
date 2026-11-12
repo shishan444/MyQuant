@@ -162,6 +162,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   // 观测序列线句柄（CARD-01 命令式通道——挂/换先清旧，消费方驱动）
   const observationSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const initialFitDoneRef = useRef(false);
+  // 首建高度只取首渲染值（useRef 初值语义）——运行时变化走增量通道（CARD-01）
+  const initialHeightRef = useRef(height);
   const onChartReadyRef = useRef(onChartReady);
   onChartReadyRef.current = onChartReady;
 
@@ -348,7 +350,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     const mainChart = createChart(mainRef.current, {
       ...DARK_CHART_THEME,
       width: mainRef.current.clientWidth,
-      height,
+      height: initialHeightRef.current,
       rightPriceScale: {
         ...DARK_CHART_THEME.rightPriceScale,
         autoScale: true,
@@ -430,6 +432,16 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       observationSeriesRef.current = null; // chart.remove() 已整体销毁，ref 清位防悬垂
       initialFitDoneRef.current = false;
     };
+    // 图表全生命周期只建/销毁一次（依赖空数组）：若依赖含 height，变化时
+    // 会整体 remove 重建，而数据挂载 effect 不随之重跑，重建后的图表将
+    // 永远没有数据——运行时高度变化由下方增量 effect 承接（CARD-01）
+  }, []);
+
+  // 运行时高度增量通道：height prop 变化不重建图表，仅调整 chart 高度
+  // （与上方 ResizeObserver 的 width 增量通道同形制；六消费方仅
+  // RecordDetail 传运行时 height，恒常量消费方不触发）
+  useEffect(() => {
+    mainChartRef.current?.applyOptions({ height });
   }, [height]);
 
   // -------------------------------------------------------------------------
