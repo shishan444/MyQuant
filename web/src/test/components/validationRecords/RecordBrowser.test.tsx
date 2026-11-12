@@ -26,7 +26,12 @@ vi.mock("@/services/validationRecords", async () => {
 
 vi.mock("@/services/datasets", () => ({
   getOhlcvBySymbol: vi.fn(),
+  getChartIndicators: vi.fn(),
 }));
+vi.mock("@/services/strategies", async () => {
+  const actual = await vi.importActual("@/services/strategies");
+  return { ...actual, getStrategy: vi.fn() };
+});
 
 // KlineChart mock：React 19 ref prop 直传——渲染期注入命令式句柄
 // （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数/
@@ -58,6 +63,7 @@ vi.mock("@/components/charts/KlineChart", () => ({
     equityData?: Array<unknown>;
     subChartType?: string;
     data?: Array<unknown>;
+    indicators?: Array<unknown>;
     onChartReady?: (chart: unknown, series: unknown) => void;
     ref?: { current: unknown };
   }) => {
@@ -70,8 +76,11 @@ vi.mock("@/components/charts/KlineChart", () => ({
         data-markers-text={(props.signalMarkers ?? []).map((m) => m.text).join("|")}
         data-height={props.height}
         data-equity-len={props.equityData?.length ?? 0}
+        data-equity-times={(props.equityData ?? []).map((p) => (p as { time: string }).time).join(",")}
+        data-equity-vals={(props.equityData ?? []).map((p) => (p as { value?: number }).value).join(",")}
         data-subchart={props.subChartType ?? ""}
         data-len={props.data?.length ?? 0}
+        data-indicators={props.indicators?.length ?? 0}
       />
     );
   },
@@ -94,7 +103,8 @@ import {
   type ValidationDetailResponse,
   type VrTraceRow,
 } from "@/services/validationRecords";
-import { getOhlcvBySymbol } from "@/services/datasets";
+import { getChartIndicators, getOhlcvBySymbol } from "@/services/datasets";
+import { getStrategy } from "@/services/strategies";
 import type { ValidationRecordRow } from "@/services/workbench";
 import { TRACE_FAMILY_COLOR } from "@/components/validationRecords/traceSemantics";
 
@@ -102,6 +112,8 @@ const mockList = vi.mocked(getValidationRecordsPage);
 const mockDetail = vi.mocked(getValidationRecordDetail);
 const mockUnion = vi.mocked(getUnionBalance);
 const mockOhlcv = vi.mocked(getOhlcvBySymbol);
+const mockChartInd = vi.mocked(getChartIndicators);
+const mockGetStrategy = vi.mocked(getStrategy);
 
 function makeRow(over: Partial<ValidationRecordRow> = {}): ValidationRecordRow {
   return {
@@ -174,6 +186,22 @@ function makeDetail(over: Partial<ValidationDetailResponse> = {}): ValidationDet
     ],
     ...over,
   };
+}
+
+/** 视图选择器开合（契约 L 后页面有两 combobox——按「全区间」显示值
+ *  锚定视图选择器的 ant-select 根，开下拉后返回 document 供选项查找） */
+function openViewSelect() {
+  const sel = document.querySelector('[data-testid="vr-view-select"]');
+  if (!(sel instanceof HTMLElement)) throw new Error("视图选择器未找到");
+  fireEvent.mouseDown(sel.querySelector(".ant-select-selector") ?? sel);
+}
+
+/** 周期选择器开合（工具区 vr-tf-select 作用域锚定） */
+function openTfSelect() {
+  const toolbar = screen.getByTestId("vr-toolbar");
+  const sel = toolbar.querySelector(".ant-select");
+  if (!sel) throw new Error("周期选择器未找到");
+  fireEvent.mouseDown(sel.querySelector(".ant-select-selector") ?? sel);
 }
 
 function ui(node: ReactNode) {
@@ -593,7 +621,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     });
     // 切份 2·趋势：data-len=3（闭端过滤——修复前恒 5）；trail=该份单段（非拼接）；
     // bands=该份 1 条（label=趋势）
-    fireEvent.mouseDown(screen.getByRole("combobox"));
+    openViewSelect();
     const opt = await screen.findByText("份 2 · 趋势（2026-04-02 → 2026-04-04）", { exact: false });
     fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
     await waitFor(() => expect(screen.getByTestId("vr-view-mode")).toHaveTextContent("单份 趋势"));
@@ -610,7 +638,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
       ]);
     });
     // 切份 3·缺口：闭端零 bar →「该区间无 K 线数据」空态（图不渲染）
-    fireEvent.mouseDown(screen.getByRole("combobox"));
+    openViewSelect();
     const opt2 = await screen.findByText("份 3 · 缺口（2026-04-11 → 2026-04-20）", { exact: false });
     fireEvent.click(opt2.closest(".ant-select-item-option") ?? opt2);
     await waitFor(() => expect(screen.getByTestId("vr-view-mode")).toHaveTextContent("单份 缺口"));
@@ -647,7 +675,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     // 缺省全区间：activeExecIdx=0 → D3 末值=份 0（112400.0）
     expect(await screen.findByTestId("vr-equity")).toHaveTextContent("末 112400.0");
     // 切份 1：D3 末值=101500.0；V1 成交记录表=份 1 单笔（2026-04-12 入场）
-    fireEvent.mouseDown(screen.getByRole("combobox"));
+    openViewSelect();
     // 份 N 从 1 起（=i+1）——趋势为数组第 2 份即「份 2」
     const opt = await screen.findByText("份 2 · 趋势（2026-04-11 → 2026-04-20）", { exact: false });
     fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
@@ -658,7 +686,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(await screen.findByTestId("vr-trade-row-0")).toHaveTextContent("2026-04-12 00:00");
     expect(screen.queryByTestId("vr-trade-row-1")).toBeNull();
     // 切回全区间：activeExecIdx 归 0 → D3 末值回份 0
-    fireEvent.mouseDown(screen.getByRole("combobox"));
+    openViewSelect();
     const allOpt = await screen.findByText("全区间（全部份连续）");
     fireEvent.click(allOpt.closest(".ant-select-item-option") ?? allOpt);
     await waitFor(() => {
@@ -700,11 +728,11 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     });
     // 份选择器在场（「全区间」首项+份清单——antd options 不落 DOM，
     // 经视图模式标与 combobox 在场共同锚定）
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox").length).toBeGreaterThanOrEqual(2);
     // 切单份（契约 E 五过滤要素）：视图模式标=单份段名；markers=该份 1；
     // equity=该份 4 点无段界断点；queryKey 不变不重拉（mockOhlcv 调用数不变）
     const callsBefore = mockOhlcv.mock.calls.length;
-    fireEvent.mouseDown(screen.getByRole("combobox"));
+    openViewSelect();
     const opt = await screen.findByText("份 1 · main（2026-04-01 → 2026-09-01）", { exact: false });
     fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
     await waitFor(() => {
@@ -810,6 +838,380 @@ describe("RecordDetail 图高视口化（upgrade-vr-responsive-layout P-2 特征
         "data-height",
         "1100",
       );
+    });
+  });
+});
+
+describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（upgrade-vr-indicator-overlay）", () => {
+  function makeStrategy(dna: unknown) {
+    return { dna, strategy_id: "st_y1", name: "s", generation: 1 } as never;
+  }
+  const DNA_FIX = {
+    signal_genes: [
+      { indicator: "BB", params: { period: 20, std: 2 }, field: "middle" },
+      { indicator: "EMA", params: { period: 50 } },
+      { indicator: "RSI", params: { period: 14 } },
+      { indicator: "ATR", params: { period: 14 } },
+    ],
+    layers: [{ timeframe: "1d", signal_genes: [{ indicator: "EMA", params: { period: 20 } }] }],
+  };
+
+  it("契约 H/I：DNA 引用指标自动叠加——徽标组（含降级标注）+indicators 通道+参数一致", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(DNA_FIX));
+    mockChartInd.mockResolvedValue({
+      ema: { "50": [{ time: "2026-04-05 00:00:00+00:00", value: 1 }] },
+      boll: {
+        upper: [{ time: "2026-04-05 00:00:00+00:00", value: 2 }],
+        middle: [{ time: "2026-04-05 00:00:00+00:00", value: 3 }],
+        lower: [{ time: "2026-04-05 00:00:00+00:00", value: 4 }],
+      },
+      rsi: null, macd: null, kdj: null,
+    } as never);
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    await waitFor(() => expect(mockGetStrategy).toHaveBeenCalled());
+    const badges = await screen.findByTestId("vr-dna-badges");
+    expect(badges).toHaveTextContent("BB(20,2)·中轨");
+    expect(badges).toHaveTextContent("EMA(50)");
+    expect(badges).toHaveTextContent("RSI");
+    expect(badges).toHaveTextContent("ATR");
+    expect(badges).toHaveTextContent("跨周期层·EMA");
+    // 请求参数与策略一致：ema_periods=50+boll 20/2（与 K 线同锚 start/end/limit）
+    await waitFor(() => expect(mockChartInd).toHaveBeenCalledTimes(2));
+    expect(mockChartInd).toHaveBeenCalledWith("BTCUSDT", "30m", expect.objectContaining({
+      ema_periods: "50", limit: 50000,
+    }));
+    expect(mockChartInd).toHaveBeenCalledWith("BTCUSDT", "30m", expect.objectContaining({
+      boll_enabled: true, boll_period: 20, boll_std: 2,
+    }));
+    // 指标通道：EMA 1 线+BB 3 线=4 线进 KlineChart
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-indicators", "4");
+    });
+  });
+
+  it("契约 J：手动开关——EMA 开→追加请求成线；同参数与 DNA 合并去重", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(DNA_FIX));
+    mockChartInd.mockImplementation((
+      _s: string, _t: string, params?: Record<string, unknown>,
+    ) => Promise.resolve(
+      params?.ema_periods
+        ? { ema: { "50": [{ time: "2026-04-05 00:00:00+00:00", value: 1 }] }, boll: null, rsi: null, macd: null, kdj: null }
+        : { ema: {}, boll: { upper: [], middle: [], lower: [] }, rsi: null, macd: null, kdj: null },
+    ) as never);
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    await screen.findByTestId("vr-kline");
+    await waitFor(() => expect(mockChartInd).toHaveBeenCalledTimes(2));
+    // 开手动 EMA（同参数 50——与 DNA 线合并不新增线）
+    fireEvent.click(screen.getByTestId("vr-manual-ema"));
+    await waitFor(() => expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-indicators", "4"));
+    // 不同参数各自成线（聚合串形制）已由 useOverlayIndicators 单测锚
+    // （fullRangeData.test「ema 聚合串+逐 BB 组请求」）——此处 UI 面锚
+    // 开关交互与同参数合并去重即止
+  });
+
+  it("契约 K：周期切换——K 线按新档重拉（queryKey 维度）+标记吸附到高周期 bar+基准徽标恒显", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 06:00:00+00:00" }),
+      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-03 18:00:00+00:00" }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    // 基准 30m 请求→5 根 30m bar；1d 请求→3 根日 bar（04-01/02/03）
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准徽标恒显 + 缺省 30m
+    expect(await screen.findByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    const kline0 = screen.getByTestId("vr-kline");
+    expect(kline0).toHaveAttribute("data-markers", "2");
+    // 切 1d：K 线重拉（第二档调用）+两标记吸附到 04-02/04-03 日 bar（无丢失）
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.some((c) => c[1] === "1d")).toBe(true);
+    });
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-markers", "2");
+      expect(kline).toHaveAttribute("data-markers-text", "▲开多 100.0|▼平多 100.0");
+    });
+    // 切回基准：queryKey 复基准档
+    openTfSelect();
+    const optBack = await screen.findByText("30m", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(optBack.closest(".ant-select-item-option") ?? optBack);
+    await waitFor(() =>
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m"),
+    );
+  });
+
+  it("契约 K 增量：equity/trail 吸附落点——切 1d 后时间列落日 bar+同 bar 保尾值合并", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // trail 两点半径点（04-02 06:00/18:00）+equity timestamps 直用两点——同落 04-02 日 bar
+    d.executions[0].trail_series = [
+      { time: "2026-04-02 06:00:00+00:00", value: 98000 },
+      { time: "2026-04-02 18:00:00+00:00", value: 99000 },
+    ];
+    d.executions[0].equity = {
+      grid_aligned: false, timeframe: "30m", start: null, length: 2,
+      timestamps: ["2026-04-02 06:00:00+00:00", "2026-04-02 18:00:00+00:00"],
+      values: [100000, 101000],
+    };
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准 30m：吸附短路——equity/trail 原时间列原点数
+    const kline0 = await screen.findByTestId("vr-kline");
+    expect(kline0).toHaveAttribute("data-equity-len", "2");
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toHaveLength(2);
+    });
+    // 切 1d：两点均落 [04-02, 04-03) 同一日 bar——同 bar 保尾值合并 1 点，
+    // equity 时间列=日 bar 时间戳（吸附只改时间锚不改值）
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-equity-len", "1");
+      expect(kline).toHaveAttribute("data-equity-times", "2026-04-02 00:00:00+00:00");
+    });
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([{ time: "2026-04-02 00:00:00+00:00", value: 99000 }]);
+    });
+  });
+
+  it("契约 K 增量：无数据档禁用回路——切 1d 端点 404→该档选项禁用+自动回基准+禁用点击零新请求", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) =>
+      tf === "1d"
+        ? Promise.reject(new Error("404"))
+        : Promise.resolve({
+            data: Array.from({ length: 5 }, (_, i) => ({
+              timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+            })),
+          }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1d：端点 404→error 态→deadTfs 收录+viewTf 自动回基准（基准档缓存重现在图）
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    // 1d 选项禁用态在场；禁用项点击零新请求（1d 调用数恒 1）
+    openTfSelect();
+    const optDisabled = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    const optEl = optDisabled.closest(".ant-select-item-option");
+    expect(optEl?.className).toContain("ant-select-item-option-disabled");
+    fireEvent.click(optEl ?? optDisabled);
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.filter((c) => c[1] === "1d")).toHaveLength(1);
+    });
+  });
+});
+
+describe("段界同 bar 重复时间戳合并（change-3 CARD-01——P0 回归锚）", () => {
+  function noAdjacentDup(times: string): boolean {
+    const arr = times.split(",");
+    return arr.every((t, i) => i === 0 || t !== arr[i - 1]);
+  }
+  const makeStrategy = (dna: unknown) =>
+    ({ dna, strategy_id: "st_y1", name: "s", generation: 1 }) as never;
+
+  it("snap 系触发面：两份跨段吸附落同一日 bar——切 1d 后 equity/trail 无相邻重复 time（末项替换为后值）+基准对照", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // 份 1（main，range 04-01~04-02）：降级 timestamps 直用 3 点（区间 2 bar≠3 值）
+    d.executions[0].range_start = "2026-04-01";
+    d.executions[0].range_end = "2026-04-02";
+    d.executions[0].equity = {
+      grid_aligned: false, timeframe: "30m", start: null, length: 3,
+      timestamps: ["2026-04-01 12:00:00+00:00", "2026-04-01 18:00:00+00:00", "2026-04-02 06:00:00+00:00"],
+      values: [100000, 100500, 101000],
+    };
+    d.executions[0].trail_series = [
+      { time: "2026-04-01 12:00:00+00:00", value: 97000 },
+      { time: "2026-04-02 06:00:00+00:00", value: 98000 },
+    ];
+    // 份 2（趋势，range 04-02~04-03）：直用 3 点——吸附后首点与份 1 末点同落 04-02 日 bar
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-03",
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 3,
+        timestamps: ["2026-04-02 18:00:00+00:00", "2026-04-03 06:00:00+00:00", "2026-04-03 18:00:00+00:00"],
+        values: [102000, 102500, 103000],
+      },
+      trail_series: [
+        { time: "2026-04-02 18:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 06:00:00+00:00", value: 99500 },
+      ],
+      trace_rows: [],
+    });
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准对照（30m）：6 值点+段界断点 1=7 项，无相邻重复（重复缺陷不在基准态呈现）
+    const kline0 = await screen.findByTestId("vr-kline");
+    expect(kline0).toHaveAttribute("data-equity-len", "7");
+    expect(noAdjacentDup(kline0.getAttribute("data-equity-times") ?? "")).toBe(true);
+    // 切 1d：两段首尾同落 04-02 日 bar——末项替换为后值（102000），恰 3 项无相邻重复
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-equity-len", "3");
+      expect(kline.getAttribute("data-equity-times")).toBe(
+        "2026-04-01 00:00:00+00:00,2026-04-02 00:00:00+00:00,2026-04-03 00:00:00+00:00",
+      );
+      expect(kline.getAttribute("data-equity-vals")).toBe("100500,102000,103000");
+    });
+    // trail 同构：段 1 末 98000 与段 2 首 99000 同 bar 合并取后值——3 项
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([
+        { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ]);
+    });
+  });
+
+  it("buildEquitySeries/concatTrail 触发面：基准视图两份 zip 相接共享边界 bar——无相邻重复+合并取后值", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    const d = makeDetail();
+    // 份 1（main，04-01~04-02 闭端 2 bar）zip：values 2 点锚 [04-01 bar, 04-02 bar]
+    d.executions[0].range_start = "2026-04-01";
+    d.executions[0].range_end = "2026-04-02";
+    d.executions[0].equity = {
+      grid_aligned: true, timeframe: "30m", start: null, length: 2,
+      timestamps: null, values: [100000, 101000],
+    };
+    d.executions[0].trail_series = [
+      { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+      { time: "2026-04-02 00:00:00+00:00", value: 98000 },
+    ];
+    // 份 2（趋势，04-02~04-03）：zip 首点=04-02 bar——与份 1 末点同一时间戳（explicit 相接）
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-03",
+      equity: {
+        grid_aligned: true, timeframe: "30m", start: null, length: 2,
+        timestamps: null, values: [102000, 103000],
+      },
+      trail_series: [
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ],
+      trace_rows: [],
+    });
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准视图即触发：04-02 bar 两份各锚一次——合并取后值（102000）恰 3 项无重复
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline.getAttribute("data-equity-times")).toBe(
+      "2026-04-01 00:00:00+00:00,2026-04-02 00:00:00+00:00,2026-04-03 00:00:00+00:00",
+    );
+    expect(kline.getAttribute("data-equity-vals")).toBe("100000,102000,103000");
+    // concatTrail 同构：04-02 同时间戳合并取后值 99000——3 项
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([
+        { time: "2026-04-01 00:00:00+00:00", value: 97000 },
+        { time: "2026-04-02 00:00:00+00:00", value: 99000 },
+        { time: "2026-04-03 00:00:00+00:00", value: 99500 },
+      ]);
+    });
+  });
+});
+
+describe("切档假态豁免组件面（change-3 CARD-02——源头豁免回归锚）", () => {
+  const makeStrategy = (dna: unknown) =>
+    ({ dna, strategy_id: "st_y1", name: "s", generation: 1 }) as never;
+
+  it("基准 mismatch 构造仍告警+切 1d 后提示行不在场（假 truncated/mismatch 消除）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 份 range_end 收到 04-03（末 bar 覆盖窗内——先过 truncated 判定）：
+    // 基准 30m 闭端 3 根（04-01~04-03）≠equity 4 点——真 mismatch
+    const d = makeDetail();
+    d.executions[0].range_end = "2026-04-03";
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准视图：真 mismatch 告警在场（份级定位）
+    const state = await screen.findByTestId("vr-kline-state");
+    expect(state).toHaveTextContent("份 main：K 线 3 根 vs 权益 4 点");
+    // 切 1d：修复前 1d 闭端 3 根≠4 点假 mismatch+末 bar<range_end 假 truncated；
+    // 修复后源头豁免——恒 ok 态，提示行不在场
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.some((c) => c[1] === "1d")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toBeInTheDocument();
+      expect(screen.queryByTestId("vr-kline-state")).toBeNull();
     });
   });
 });

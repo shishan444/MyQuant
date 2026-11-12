@@ -10,19 +10,21 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-vi.mock("@/services/datasets", () => ({ getOhlcvBySymbol: vi.fn() }));
+vi.mock("@/services/datasets", () => ({ getOhlcvBySymbol: vi.fn(), getChartIndicators: vi.fn() }));
 
-import { getOhlcvBySymbol } from "@/services/datasets";
+import { getChartIndicators, getOhlcvBySymbol } from "@/services/datasets";
 import type { VrExecution } from "@/services/validationRecords";
 import {
   barsInExecRange,
   buildEquitySeries,
   perExecEquityPoints,
   useFullRangeKline,
+  useOverlayIndicators,
 } from "@/components/validationRecords/fullRangeData";
 import { toTime } from "@/components/charts/core/time";
 
 const mockOhlcv = vi.mocked(getOhlcvBySymbol);
+const mockIndicators = vi.mocked(getChartIndicators);
 
 /** 4h bar 生成器（epoch 对齐；ISO 带 Z——OHLCV 端点实形 +00:00 等价换算） */
 function bars4h(fromIso: string, n: number) {
@@ -47,12 +49,12 @@ function makeExec(over: Partial<VrExecution> = {}): VrExecution {
   };
 }
 
-function ui(execs: VrExecution[]) {
+function ui(execs: VrExecution[], viewTf?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  return renderHook(() => useFullRangeKline(execs, "BTCUSDT", "4h"), { wrapper });
+  return renderHook(() => useFullRangeKline(execs, "BTCUSDT", "4h", viewTf), { wrapper });
 }
 
 beforeEach(() => {
@@ -249,5 +251,149 @@ describe("barsInExecRange 纯函数（change-2 CARD-01 单源谓词——阶段�
   it("malformed 边界：任一端不可解析返回空（区间无法界定——对账归零/锚空/主图空态同因）", () => {
     expect(barsInExecRange(BARS, execOf("bad-date-xx", "2026-04-03"))).toEqual([]);
     expect(barsInExecRange(BARS, execOf("2026-04-02", "not-a-date"))).toEqual([]);
+  });
+});
+
+describe("useOverlayIndicators（契约 I）", () => {
+  function renderInd(
+    overlays: Parameters<typeof useOverlayIndicators>[0],
+    klineLastEpoch: number | null,
+  ) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    return renderHook(
+      () =>
+        useOverlayIndicators(
+          overlays,
+          "BTCUSDT",
+          "4h",
+          "2025-11-04T00:00:00+00:00",
+          "2025-11-06T20:00:00+00:00",
+          klineLastEpoch,
+        ),
+      { wrapper },
+    );
+  }
+  const epoch = (iso: string) => Date.parse(iso) / 1000;
+
+  it("ok 态：参数面与 K 线同锚（start/end/limit 50000）+ema 聚合串+逐 BB 组请求+映射 id/色值", async () => {
+    mockIndicators.mockImplementation(((_s: string, _t: string, params: Record<string, unknown>) => {
+      if (params.ema_periods) {
+        return Promise.resolve({
+          ema: { "7": [{ time: "2025-11-06T20:00:00Z", value: 1 }], "50": [{ time: "2025-11-06T20:00:00Z", value: 2 }] },
+          boll: null, rsi: null, macd: null, kdj: null,
+        });
+      }
+      return Promise.resolve({
+        ema: {},
+        boll: {
+          upper: [{ time: "2025-11-06T20:00:00Z", value: 3 }],
+          middle: [{ time: "2025-11-06T20:00:00Z", value: 4 }],
+          lower: [{ time: "2025-11-06T20:00:00Z", value: 5 }],
+        },
+        rsi: null, macd: null, kdj: null,
+      });
+    }) as never);
+    const { result } = renderInd(
+      [{ kind: "EMA", period: 7 }, { kind: "EMA", period: 50 }, { kind: "BB", period: 20, std: 2 }],
+      epoch("2025-11-06T20:00:00Z"),
+    );
+    await waitFor(() => expect(result.current.state).toBe("ok"));
+    // 两次请求：EMA 聚合一发（7,50）+BB 一发（参数同名直映射）
+    expect(mockIndicators).toHaveBeenCalledTimes(2);
+    expect(mockIndicators).toHaveBeenCalledWith("BTCUSDT", "4h", expect.objectContaining({
+      start: "2025-11-04T00:00:00+00:00",
+      end: "2025-11-06T20:00:00+00:00",
+      limit: 50000,
+      ema_periods: "7,50",
+    }));
+    expect(mockIndicators).toHaveBeenCalledWith("BTCUSDT", "4h", expect.objectContaining({
+      boll_enabled: true, boll_period: 20, boll_std: 2,
+    }));
+    // 映射：id/色值（EMA 主图蓝、BB 三带金系 middle 88 alpha）
+    const ids = result.current.indicators.map((i) => `${i.id}:${i.color}`);
+    expect(ids).toContain("dna_ema_7:#5B9DFF");
+    expect(ids).toContain("dna_bb_20_2_middle:#FBBF2488");
+    expect(result.current.tailLagged).toBe(false);
+  });
+
+  it("尾点校验：指标尾点 < K 线尾 bar → tailLagged=true（照画可用段）", async () => {
+    mockIndicators.mockResolvedValue({
+      ema: { "50": [{ time: "2025-11-05T00:00:00Z", value: 1 }] },
+      boll: null, rsi: null, macd: null, kdj: null,
+    } as never);
+    const { result } = renderInd([{ kind: "EMA", period: 50 }], epoch("2025-11-06T20:00:00Z"));
+    await waitFor(() => expect(result.current.state).toBe("ok"));
+    expect(result.current.tailLagged).toBe(true);
+  });
+
+  it("error 态：指标源降级（K 线与 marker 不受阻）；空 overlays 直 ok", async () => {
+    mockIndicators.mockRejectedValue(new Error("boom"));
+    const { result } = renderInd([{ kind: "EMA", period: 50 }], null);
+    await waitFor(() => expect(result.current.state).toBe("error"));
+    expect(result.current.indicators).toEqual([]);
+    const empty = renderInd([], null);
+    expect(empty.result.current.state).toBe("ok");
+  });
+});
+
+describe("切档源头豁免与 truncated 覆盖域判法（change-3 CARD-02）", () => {
+  /** 1d 粗档 bar 生成器（ISO 带 Z） */
+  const bars1d = (days: string[]) =>
+    days.map((d) => ({ timestamp: `${d}T00:00:00Z`, open: 100, high: 110, low: 90, close: 105 }));
+
+  const EXEC_6PT = (rangeEnd: string) =>
+    makeExec({
+      range_start: "2025-11-04T00:00:00+00:00",
+      range_end: rangeEnd,
+      equity: {
+        grid_aligned: true, timeframe: "4h", start: "2025-11-04T00:00:00+00:00",
+        length: 6, timestamps: null, values: Array.from({ length: 6 }, (_, i) => 100 + i),
+      },
+    });
+
+  it("非基准档双豁免：对账不等不 mismatch+range_end 落末根 bar 覆盖窗不 truncated——恒 ok 且 execAligned 置空", async () => {
+    // 1d 粗档 3 根（11-04/05/06）；末 bar 11-06T00 覆盖窗 [11-06T00, 11-07T00) 含 range_end 11-06T20；
+    // 份 equity 6 点 vs 1d 闭端 3 根必不等（修复前假 truncated+假 mismatch 两连误报）
+    const execs = [EXEC_6PT("2025-11-06T20:00:00+00:00")];
+    mockOhlcv.mockResolvedValue({ data: bars1d(["2025-11-04", "2025-11-05", "2025-11-06"]) } as never);
+    const { result } = ui(execs, "1d");
+    await waitFor(() => expect(result.current.state).not.toBe("loading"));
+    expect(result.current.state).toBe("ok");
+    if (result.current.state === "ok") {
+      expect(result.current.execAligned).toEqual({});
+    }
+  });
+
+  it("基准边界：末 bar==range_end 完整不报；缺恰一根（lastEpoch+tfSec==endEpoch）仍 truncated（严格 > 不漏报）", async () => {
+    const execs = [EXEC_6PT("2025-11-04T20:00:00+00:00")];
+    // 完整：6 根 4h 末 bar==end
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 6) } as never);
+    const r1 = ui(execs);
+    await waitFor(() => expect(r1.result.current.state).not.toBe("loading"));
+    expect(r1.result.current.state).toBe("ok");
+    r1.unmount();
+    // 缺恰一根：5 根末 bar 11-04T16，16h+4h==20h 不严格> → coversEnd=false 仍报
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 5) } as never);
+    const r2 = ui(execs);
+    await waitFor(() => expect(r2.result.current.state).not.toBe("loading"));
+    expect(r2.result.current.state).toBe("truncated");
+    if (r2.result.current.state === "truncated") {
+      expect(r2.result.current.truncatedMissing).toBe(1);
+    }
+  });
+
+  it("表外周期 tfSec=0：完整态不翻报（coversEnd 退化直比+对账豁免）", async () => {
+    // "2h" 不在档表→tfSec=0；末 bar==range_end（lastEpoch>=endEpoch 直比过）→ok
+    const execs = [EXEC_6PT("2025-11-04T20:00:00+00:00")];
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 6) } as never);
+    const { result } = ui(execs, "2h");
+    await waitFor(() => expect(result.current.state).not.toBe("loading"));
+    expect(result.current.state).toBe("ok");
+    if (result.current.state === "ok") {
+      expect(result.current.execAligned).toEqual({});
+    }
   });
 });

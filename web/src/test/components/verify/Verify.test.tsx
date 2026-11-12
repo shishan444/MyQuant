@@ -15,6 +15,9 @@ import type { Strategy } from "@/types/api";
 
 vi.mock("@/hooks/useStrategies", () => ({
   useStrategies: vi.fn(),
+  // upgrade-vr-indicator-overlay：RecordDetail 引入 useStrategy（queryOptions
+  // 形制）——未选中记录时 enabled=false 不发请求，桩返回空 queryOptions
+  useStrategy: vi.fn(() => ({ queryKey: ["strategies", "detail", ""], queryFn: vi.fn(), enabled: false })),
   useVerifyStream: vi.fn(),
   useVerifySessions: vi.fn(),
   useSessionResults: vi.fn(),

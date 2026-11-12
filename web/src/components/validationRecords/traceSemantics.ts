@@ -6,6 +6,7 @@
  * trace_resolver EVENT_REASON_MAP），不自算不推断。
  */
 import { CHART_VB, ATTENTION, TEXT } from "@/theme/tokens";
+import { toTime } from "@/components/charts/core/time";
 import type { ValidationRecordRow, ValidationSort } from "@/services/validationRecords";
 import type { VrTraceRow } from "@/services/validationRecords";
 
@@ -282,4 +283,169 @@ export function recordSymbolTimeframe(row: ValidationRecordRow): {
       | { timeframe?: string }
       | undefined)?.timeframe ?? null,
   };
+}
+
+/** ══ 契约 H/L：DNA 指标提取与降级文案（upgrade-vr-indicator-overlay）══ */
+
+/** 降级文案常量（契约 L——可断言契约串，组件/e2e 引用同源） */
+export const OVERLAY_UNSUPPORTED_TEXT = "该指标暂不支持叠加";
+export const OVERLAY_SUBCHART_TEXT = "副图已用于资金曲线，暂不叠加";
+export const OVERLAY_MTF_TEXT = "跨周期层指标暂不叠加";
+export const LAYER_NOTE = "跨周期层";
+
+export interface DnaOverlayEma {
+  kind: "EMA";
+  period: number;
+}
+export interface DnaOverlayBb {
+  kind: "BB";
+  period: number;
+  std: number;
+  /** 基因引用的输出轨（middle 等——端点固定返回三带完整线，field 仅供徽标披露） */
+  field?: string;
+}
+export type DnaOverlay = DnaOverlayEma | DnaOverlayBb;
+
+/** DNA 指标三分判别结果（overlayable=主图可叠加/subChartOnly=副图族降级/
+ *  unsupported=注册表其余键+跨周期层——裁决亮出非静默丢弃） */
+export interface DnaIndicatorExtract {
+  overlayable: DnaOverlay[];
+  subChartOnly: Array<{ kind: "RSI" | "MACD" | "KDJ"; raw: unknown }>;
+  unsupported: Array<{ indicator: string; note?: string }>;
+}
+
+interface GeneLike {
+  indicator?: unknown;
+  params?: unknown;
+  field?: unknown;
+}
+
+/**
+ * Strategy["dna"] → 指标三分判别（契约 H）。判定表机械化：
+ * EMA→overlayable（params.period 直映射 ema_periods）；BB→overlayable
+ * （period/std 同名直映射——实测锚 st_8fac17534a47 {period:20,std:2}
+ * field=middle）；RSI/MACD/KDJ→subChartOnly；注册表其余键→unsupported；
+ * layers 各层 signal_genes 全族→unsupported（跨周期层）。多基因聚合：
+ * 多 EMA periods 去重、多 BB 参数组去重、同参数重复基因去重；形态异常
+ * 归 unsupported 不报错；dna 缺失/genes 空→三分全空。
+ */
+export function dnaIndicators(dna: unknown): DnaIndicatorExtract {
+  const out: DnaIndicatorExtract = { overlayable: [], subChartOnly: [], unsupported: [] };
+  if (!dna || typeof dna !== "object") return out;
+  const genes = (dna as { signal_genes?: unknown }).signal_genes;
+  if (Array.isArray(genes)) {
+    const seenEma = new Set<number>();
+    const seenBb = new Set<string>();
+    const seenSub = new Set<string>();
+    for (const g of genes as GeneLike[]) {
+      const ind = g?.indicator;
+      const params = (g?.params ?? {}) as Record<string, unknown>;
+      if (ind === "EMA" && typeof params.period === "number") {
+        if (!seenEma.has(params.period)) {
+          seenEma.add(params.period);
+          out.overlayable.push({ kind: "EMA", period: params.period });
+        }
+      } else if (
+        ind === "BB" &&
+        typeof params.period === "number" &&
+        typeof params.std === "number"
+      ) {
+        const key = `${params.period}:${params.std}`;
+        if (!seenBb.has(key)) {
+          seenBb.add(key);
+          out.overlayable.push({
+            kind: "BB",
+            period: params.period,
+            std: params.std,
+            ...(typeof g.field === "string" ? { field: g.field } : {}),
+          });
+        }
+      } else if (ind === "RSI" || ind === "MACD" || ind === "KDJ") {
+        if (!seenSub.has(ind)) {
+          seenSub.add(ind);
+          out.subChartOnly.push({ kind: ind, raw: g });
+        }
+      } else {
+        out.unsupported.push({ indicator: String(ind ?? "?") });
+      }
+    }
+  }
+  const layers = (dna as { layers?: unknown }).layers;
+  if (Array.isArray(layers)) {
+    for (const layer of layers as Array<{ signal_genes?: unknown }>) {
+      const lg = layer?.signal_genes;
+      if (!Array.isArray(lg)) continue;
+      for (const g of lg as GeneLike[]) {
+        out.unsupported.push({
+          indicator: String(g?.indicator ?? "?"),
+          note: OVERLAY_MTF_TEXT,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** ══ 契约 K：时间点吸附（周期切换查看粒度——执行语义锚恒为基准周期）══ */
+
+export interface SnapResult {
+  /** 逐点吸附结果（保留输入序；超域点不出现） */
+  snapped: Array<{ from: string; to: string }>;
+  /** 超域（早于首 bar 或 >= 尾 bar+tf）丢弃计数 */
+  dropped: number;
+}
+
+/**
+ * 基准周期时间点吸附到目标周期 bars（契约 K）：t 落在 bar 的
+ * [bar.time, bar.time+tf) 左闭右开区间→挂该 bar（t==bar.time 恰开盘挂
+ * 该 bar；t==下一根开盘挂下一根）。实现=有序 bars 二分查找；超域点丢弃
+ * 并计数披露。bars 须 epoch 升序（与装载输出去重序一致）。
+ */
+export function snapToBars(
+  times: string[],
+  bars: Array<{ timestamp: string }>,
+  tfSec: number,
+): SnapResult {
+  const epochOf = (ts: string): number | null => {
+    const t = toTime(ts);
+    return typeof t === "number" ? t : null;
+  };
+  // 同域索引（epoch 与 timestamp 成对）：malformed bar 不进吸附域（现状
+  // 同），二分与回填同取本域——barEpochs 单独压栈时跳过 malformed 会使
+  // 索引与 bars 错位，回填 bars[idx] 串到错误的 bar（CARD-03）
+  const barDomain: Array<{ e: number; ts: string }> = [];
+  for (const b of bars) {
+    const e = epochOf(b.timestamp);
+    if (e != null) barDomain.push({ e, ts: b.timestamp });
+  }
+  if (barDomain.length === 0 || tfSec <= 0) return { snapped: [], dropped: times.length };
+  const snapped: SnapResult["snapped"] = [];
+  let dropped = 0;
+  for (const t of times) {
+    const te = epochOf(t);
+    if (te == null) {
+      dropped++;
+      continue;
+    }
+    // 二分：找最后一根 bar.time <= te 的 bar（左闭右开归属）
+    let lo = 0;
+    let hi = barDomain.length - 1;
+    let idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (barDomain[mid].e <= te) {
+        idx = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (idx < 0 || te >= barDomain[idx].e + tfSec) {
+      // 早于首 bar 或超出尾 bar 覆盖域
+      dropped++;
+      continue;
+    }
+    snapped.push({ from: t, to: barDomain[idx].ts });
+  }
+  return { snapped, dropped };
 }

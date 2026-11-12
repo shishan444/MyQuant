@@ -153,3 +153,146 @@ describe("eventSemantics/traceMarkers（色点单源+四类动作）", () => {
     expect(withoutPrice.text).toBe("▲加多");
   });
 });
+
+/* ══ 契约 H/K：DNA 指标提取+吸附（upgrade-vr-indicator-overlay）══ */
+import {
+  dnaIndicators,
+  snapToBars,
+  OVERLAY_UNSUPPORTED_TEXT,
+  OVERLAY_SUBCHART_TEXT,
+  OVERLAY_MTF_TEXT,
+  LAYER_NOTE,
+} from "@/components/validationRecords/traceSemantics";
+
+describe("dnaIndicators 三分判别（契约 H）", () => {
+  it("判定表：EMA/BB→overlayable（实测锚参数直映射）、RSI/MACD/KDJ→subChartOnly、其余→unsupported", () => {
+    const out = dnaIndicators({
+      signal_genes: [
+        { indicator: "BB", params: { period: 20, std: 2 }, field: "middle" },
+        { indicator: "EMA", params: { period: 50 } },
+        { indicator: "RSI", params: { period: 14 } },
+        { indicator: "ATR", params: { period: 14 } },
+      ],
+    });
+    expect(out.overlayable).toEqual([
+      { kind: "BB", period: 20, std: 2, field: "middle" },
+      { kind: "EMA", period: 50 },
+    ]);
+    expect(out.subChartOnly.map((s) => s.kind)).toEqual(["RSI"]);
+    expect(out.unsupported).toEqual([{ indicator: "ATR" }]);
+  });
+
+  it("多基因聚合：多 EMA periods 去重+多 BB 参数组去重+同参数重复去重", () => {
+    const out = dnaIndicators({
+      signal_genes: [
+        { indicator: "EMA", params: { period: 50 } },
+        { indicator: "EMA", params: { period: 7 } },
+        { indicator: "EMA", params: { period: 50 } },
+        { indicator: "BB", params: { period: 20, std: 2 } },
+        { indicator: "BB", params: { period: 20, std: 2 } },
+        { indicator: "BB", params: { period: 26, std: 2.5 } },
+      ],
+    });
+    expect(out.overlayable).toEqual([
+      { kind: "EMA", period: 50 },
+      { kind: "EMA", period: 7 },
+      { kind: "BB", period: 20, std: 2 },
+      { kind: "BB", period: 26, std: 2.5 },
+    ]);
+  });
+
+  it("layers 各层 signal_genes 全族→unsupported 跨周期层；缺失值三分全空不报错", () => {
+    const out = dnaIndicators({
+      signal_genes: [{ indicator: "EMA", params: { period: 50 } }],
+      layers: [
+        { timeframe: "1d", signal_genes: [{ indicator: "EMA", params: { period: 20 } }] },
+        { timeframe: "1d", signal_genes: [{ indicator: "MACD" }] },
+      ],
+    });
+    expect(out.unsupported).toEqual([
+      { indicator: "EMA", note: OVERLAY_MTF_TEXT },
+      { indicator: "MACD", note: OVERLAY_MTF_TEXT },
+    ]);
+    // 缺失值族
+    expect(dnaIndicators(null)).toEqual({ overlayable: [], subChartOnly: [], unsupported: [] });
+    expect(dnaIndicators({ signal_genes: [] })).toEqual({ overlayable: [], subChartOnly: [], unsupported: [] });
+    expect(dnaIndicators({ signal_genes: [{ indicator: "EMA", params: {} }] }).unsupported)
+      .toEqual([{ indicator: "EMA" }]);
+  });
+
+  it("降级文案常量（契约 L——可断言契约串）", () => {
+    expect(OVERLAY_UNSUPPORTED_TEXT).toBe("该指标暂不支持叠加");
+    expect(OVERLAY_SUBCHART_TEXT).toBe("副图已用于资金曲线，暂不叠加");
+    expect(OVERLAY_MTF_TEXT).toBe("跨周期层指标暂不叠加");
+    expect(LAYER_NOTE).toBe("跨周期层");
+  });
+});
+
+describe("snapToBars 吸附（契约 K）", () => {
+  const dayBars = [
+    { timestamp: "2026-04-01T00:00:00Z" },
+    { timestamp: "2026-04-02T00:00:00Z" },
+    { timestamp: "2026-04-03T00:00:00Z" },
+  ];
+  it("左闭右开归属：t==bar.time 挂该 bar；t==下一根开盘挂下一根；段中点挂所在 bar", () => {
+    const r = snapToBars(
+      ["2026-04-01T00:00:00Z", "2026-04-02T00:00:00Z", "2026-04-02T12:00:00Z"],
+      dayBars,
+      86400,
+    );
+    expect(r.snapped.map((p) => p.to)).toEqual([
+      "2026-04-01T00:00:00Z",
+      "2026-04-02T00:00:00Z",
+      "2026-04-02T00:00:00Z",
+    ]);
+    expect(r.dropped).toBe(0);
+  });
+  it("超域点丢弃并计数（早于首 bar 与晚于尾 bar 覆盖域）", () => {
+    const r = snapToBars(
+      ["2026-03-31T00:00:00Z", "2026-04-02T06:00:00Z", "2026-04-04T00:00:00Z"],
+      dayBars,
+      86400,
+    );
+    expect(r.snapped.map((p) => p.to)).toEqual(["2026-04-02T00:00:00Z"]);
+    expect(r.dropped).toBe(2);
+  });
+  it("空 bars/tf<=0 全丢；malformed 时间点丢弃", () => {
+    expect(snapToBars(["x"], [], 86400)).toEqual({ snapped: [], dropped: 1 });
+    expect(snapToBars(["2026-04-02T00:00:00Z"], dayBars, 0).dropped).toBe(1);
+    expect(snapToBars(["garbage"], dayBars, 86400).dropped).toBe(1);
+  });
+
+  it("CARD-03 malformed bar 混入不串位：落点取自身所属 bar 的 timestamp（同域索引回填）", () => {
+    // 首位混入：吸附域 [04-01,04-02,04-03]——旧版回填 bars[idx] 串到 bars[0]="bad-date-xx"
+    const leadBad = [
+      { timestamp: "bad-date-xx" },
+      { timestamp: "2026-04-01T00:00:00Z" },
+      { timestamp: "2026-04-02T00:00:00Z" },
+      { timestamp: "2026-04-03T00:00:00Z" },
+    ];
+    const r1 = snapToBars(["2026-04-01T12:00:00Z"], leadBad, 86400);
+    expect(r1.snapped).toEqual([
+      { from: "2026-04-01T12:00:00Z", to: "2026-04-01T00:00:00Z" },
+    ]);
+    // 中位混入：点 04-02 18:00 归 barEpochs idx=1——旧版回填 bars[1]="bad-date-xx"（错一根）
+    const midBad = [
+      { timestamp: "2026-04-01T00:00:00Z" },
+      { timestamp: "bad-date-xx" },
+      { timestamp: "2026-04-02T00:00:00Z" },
+      { timestamp: "2026-04-03T00:00:00Z" },
+    ];
+    const r2 = snapToBars(["2026-04-02T18:00:00Z"], midBad, 86400);
+    expect(r2.snapped).toEqual([
+      { from: "2026-04-02T18:00:00Z", to: "2026-04-02T00:00:00Z" },
+    ]);
+    // malformed bar 不构成可落点域+drop 语义未动（malformed 点/早于首 bar 丢弃计数）
+    const r3 = snapToBars(
+      ["garbage", "2026-03-31T00:00:00Z", "2026-04-01T06:00:00Z"],
+      leadBad, 86400,
+    );
+    expect(r3.snapped).toEqual([
+      { from: "2026-04-01T06:00:00Z", to: "2026-04-01T00:00:00Z" },
+    ]);
+    expect(r3.dropped).toBe(2);
+  });
+});

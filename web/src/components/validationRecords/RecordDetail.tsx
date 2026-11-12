@@ -13,7 +13,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Select, Tabs } from "antd";
+import { useStrategy } from "@/hooks/useStrategies";
+import { InputNumber, Select, Switch, Tabs } from "antd";
 import { FileSearch } from "lucide-react";
 import { KlineChart, type KlineChartHandle } from "@/components/charts/KlineChart";
 import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitives/segmentBand";
@@ -23,7 +24,10 @@ import {
   barsInExecRange,
   buildEquitySeries,
   perExecEquityPoints,
+  timeframeSeconds,
   useFullRangeKline,
+  useOverlayIndicators,
+  type EquityPoint,
   type FullRangeBar,
   type FullRangeResult,
 } from "./fullRangeData";
@@ -36,12 +40,19 @@ import {
   type VrTraceRow,
 } from "@/services/validationRecords";
 import {
+  LAYER_NOTE,
   OUTCOME_LABELS,
+  OVERLAY_MTF_TEXT,
+  OVERLAY_SUBCHART_TEXT,
+  OVERLAY_UNSUPPORTED_TEXT,
   REASON_LABELS,
   TRACE_FAMILY_COLOR,
+  dnaIndicators,
   eventSemantics,
   recordSymbolTimeframe,
+  snapToBars,
   traceMarkers,
+  type DnaIndicatorExtract,
 } from "./traceSemantics";
 
 const VERDICT_COLOR: Record<string, string> = {
@@ -60,6 +71,97 @@ function epochOfTime(ts: string): number | null {
 /** epoch 秒 → ISO 带 Z 串 */
 const isoOf = (sec: number) => new Date(sec * 1000).toISOString();
 
+/** 视图周期八档常量（契约 K——A1 全集，数据目录实有档） */
+const VIEW_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "3d"] as const;
+
+/** BB field 徽标中文（契约 L——如「BB(20,2)·中轨」） */
+const BB_FIELD_LABEL: Record<string, string> = {
+  upper: "上轨", middle: "中轨", lower: "下轨",
+};
+
+/** 值点分段吸附（契约 K）：逐段吸附到目标 bar（同 bar 保尾值）+段间断点
+ *  重算（epoch−1 守卫）——段界重置语义不变（吸附只改时间锚） */
+function snapSeriesParts(
+  parts: Array<Array<{ time: string; value: number }>>,
+  bars: FullRangeBar[],
+  tfSec: number,
+): EquityPoint[] {
+  const out: EquityPoint[] = [];
+  let lastEpoch: number | null = null;
+  for (const part of parts) {
+    if (part.length === 0) continue;
+    const r = snapToBars(part.map((p) => p.time), bars, tfSec);
+    const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
+    const seg: Array<{ time: string; value: number }> = [];
+    for (const p of part) {
+      const to = toOf.get(p.time);
+      if (to === undefined) continue;
+      const last = seg[seg.length - 1];
+      if (last && last.time === to) last.value = p.value; // 同 bar 保尾值
+      else seg.push({ time: to, value: p.value });
+    }
+    if (seg.length === 0) continue;
+    const firstE = epochOfTime(seg[0].time);
+    if (out.length > 0 && firstE != null) {
+      const brk = firstE - 1;
+      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk) });
+    }
+    // 段界同 bar 合并：吸附后两段首尾落同一根 bar（out 末项与 seg 首项同
+    // time）时末项替换为 seg 首项——段界重置在该 bar 内不可表示（合并取
+    // 后值，与段内同 bar 保尾值规则统一）
+    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
+      out[out.length - 1] = seg[0];
+      out.push(...seg.slice(1));
+    } else {
+      out.push(...seg);
+    }
+    const pe = epochOfTime(seg[seg.length - 1].time);
+    if (pe != null) lastEpoch = pe;
+  }
+  return out;
+}
+
+/** trail 值点分段吸附（契约 K）——trail 通道断点为 null 值点（与 equity
+ *  whitespace 同语义），段内未定义期在粗粒度下并段（保尾值） */
+function snapTrailParts(
+  parts: Array<Array<{ time: string; value: number }>>,
+  bars: FullRangeBar[],
+  tfSec: number,
+): Array<{ time: string; value: number | null }> {
+  const out: Array<{ time: string; value: number | null }> = [];
+  let lastEpoch: number | null = null;
+  for (const part of parts) {
+    if (part.length === 0) continue;
+    const r = snapToBars(part.map((p) => p.time), bars, tfSec);
+    const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
+    const seg: Array<{ time: string; value: number }> = [];
+    for (const p of part) {
+      const to = toOf.get(p.time);
+      if (to === undefined) continue;
+      const last = seg[seg.length - 1];
+      if (last && last.time === to) last.value = p.value;
+      else seg.push({ time: to, value: p.value });
+    }
+    if (seg.length === 0) continue;
+    const firstE = epochOfTime(seg[0].time);
+    if (out.length > 0 && firstE != null) {
+      const brk = firstE - 1;
+      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
+    }
+    // 段界同 bar 合并（同 snapSeriesParts——吸附后两段首尾落同一根 bar 时
+    // 合并取后值，段界重置在该 bar 内不可表示）
+    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
+      out[out.length - 1] = seg[0];
+      out.push(...seg.slice(1));
+    } else {
+      out.push(...seg);
+    }
+    const pe = epochOfTime(seg[seg.length - 1].time);
+    if (pe != null) lastEpoch = pe;
+  }
+  return out;
+}
+
 /** trail 全区间拼接（契约 F）：各份 trail_series concat+段界 null 断点
  *  （原语层产 whitespace 真断线——跨段连线误导）；单份原样返回 */
 function concatTrail(
@@ -77,7 +179,15 @@ function concatTrail(
       const brk = firstEpoch - 1;
       if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
     }
-    for (const p of part) {
+    // 段界同 bar 合并：相邻两份 trail 首尾同一时间戳（explicit 相接拓扑）
+    // 时合并取后值——段界重置在该 bar 内不可表示
+    let start = 0;
+    if (out.length > 0 && out[out.length - 1].time === part[0].time) {
+      out[out.length - 1] = { time: part[0].time, value: part[0].value ?? null };
+      start = 1;
+    }
+    for (let i = start; i < part.length; i++) {
+      const p = part[i];
       out.push({ time: p.time, value: p.value ?? null });
       const pe = epochOfTime(p.time);
       if (pe != null) lastEpoch = pe;
@@ -190,6 +300,11 @@ function KlineReview({
   timeframe,
   stopPrice,
   chartRef,
+  extract,
+  hasStrategy,
+  viewTf,
+  deadTfs,
+  onViewTf,
 }: {
   executions: VrExecution[];
   fr: FullRangeResult;
@@ -198,6 +313,13 @@ function KlineReview({
   timeframe: string | null;
   stopPrice: boolean | null;
   chartRef: React.RefObject<KlineChartHandle | null>;
+  /** DNA 指标三分判别（契约 H——strategy_id null 时三分全空） */
+  extract: DnaIndicatorExtract;
+  hasStrategy: boolean;
+  /** 视图周期（契约 K：null=基准；切换仅查看粒度，执行语义锚恒基准） */
+  viewTf: string | null;
+  deadTfs: ReadonlySet<string>;
+  onViewTf: (tf: string | null) => void;
 }) {
   const execIdx = view === "all" ? -1 : view;
   const exec = execIdx >= 0 ? executions[execIdx] : null;
@@ -215,27 +337,90 @@ function KlineReview({
 
   const bars: FullRangeBar[] = fr.state === "loading" || fr.state === "error" ? [] : fr.candles;
   const chartReady = fr.state !== "loading" && fr.state !== "error";
+
+  // ── 契约 J：手动叠加开关（页面局部 state——不入 chart-settings 全局 store） ──
+  const [emaOn, setEmaOn] = useState(false);
+  const [emaPeriod, setEmaPeriod] = useState<number>(50);
+  const [bbOn, setBbOn] = useState(false);
+  const [bbPeriod, setBbPeriod] = useState<number>(20);
+  const [bbStd, setBbStd] = useState<number>(2.0);
+
+  // ── 契约 I：叠加指标拉取（DNA+手动合并，id 同域去重——同参数手动线并入 DNA 线） ──
+  const minStart = executions.length
+    ? executions.reduce((acc, e) => (acc == null || e.range_start < acc ? e.range_start : acc), null as string | null)
+    : null;
+  const maxEnd = executions.length
+    ? executions.reduce((acc, e) => (acc == null || e.range_end > acc ? e.range_end : acc), null as string | null)
+    : null;
+  const overlays = useMemo(() => {
+    const list: Array<import("./traceSemantics").DnaOverlay & { manual?: boolean }> = [...extract.overlayable];
+    if (bbOn && !list.some((o) => o.kind === "BB" && o.period === bbPeriod && o.std === bbStd)) {
+      list.push({ kind: "BB", period: bbPeriod, std: bbStd, manual: true });
+    }
+    if (emaOn && !list.some((o) => o.kind === "EMA" && o.period === emaPeriod)) {
+      list.push({ kind: "EMA", period: emaPeriod, manual: true });
+    }
+    return list;
+  }, [extract.overlayable, emaOn, emaPeriod, bbOn, bbPeriod, bbStd]);
+  const klineLastEpoch = bars.length ? epochOfTime(bars[bars.length - 1].timestamp) : null;
+  const ind = useOverlayIndicators(
+    overlays,
+    symbol,
+    viewTf ?? timeframe,
+    minStart,
+    maxEnd,
+    klineLastEpoch,
+  );
+
+  // ── 契约 K：周期切换吸附（基准周期视图短路直挂——零吸附开销） ──
+  const snapActive = viewTf != null && timeframe != null && viewTf !== timeframe && bars.length > 0;
+  const snapTfSec = timeframeSeconds(viewTf ?? timeframe ?? "");
   // 契约 E：单份视图主图只画该份闭端区间（渲染层过滤——queryKey 与拉取
   // 仍全区间；与对账/equity 锚序列共用 barsInExecRange 单源）
   const viewCandles = exec ? barsInExecRange(bars, exec) : bars;
 
-  // 契约 C：equity 副图数据（全份拼接带段界断点/单份序列无断点——同源同锚）
-  const equityData = useMemo(
-    () => (exec ? perExecEquityPoints(exec, bars) : buildEquitySeries(executions, bars)),
-    [exec, executions, bars],
-  );
-  // 契约 D：marker 单源合并（traceMarkers 带价；全份 flatMap 按 time 升序）
-  const markers = useMemo(() => {
+  // 契约 C：equity 副图数据（全份拼接带段界断点/单份序列无断点——同源同锚；
+  // 高周期视图=留痕自锚独立重建+吸附，值与段界重置语义不变）
+  const equityData = useMemo(() => {
+    if (snapActive) {
+      const parts = (exec ? [exec] : executions).map((e) => perExecEquityPoints(e, []));
+      return snapSeriesParts(parts, bars, snapTfSec);
+    }
+    return exec ? perExecEquityPoints(exec, bars) : buildEquitySeries(executions, bars);
+  }, [exec, executions, bars, snapActive, snapTfSec]);
+  // 契约 D：marker 单源合并（traceMarkers 带价；全份 flatMap 按 time 升序；
+  // 高周期视图吸附到所在 bar——左闭右开，超域丢弃计数披露）
+  const markersRaw = useMemo(() => {
     const src = exec ? [exec] : executions;
     return src
       .flatMap((e) => traceMarkers(e.trace_rows))
       .sort((a, b) => (epochOfTime(a.time) ?? 0) - (epochOfTime(b.time) ?? 0));
   }, [exec, executions]);
-  // 契约 F：trail 挂线（全份拼接带段界断点/单份现状行为）
-  const trail = useMemo(
-    () => (exec ? exec.trail_series : concatTrail(executions)),
-    [exec, executions],
-  );
+  const markers = useMemo(() => {
+    if (!snapActive) return { list: markersRaw, dropped: 0 };
+    const r = snapToBars(markersRaw.map((m) => m.time), bars, snapTfSec);
+    const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
+    return {
+      list: markersRaw
+        .filter((m) => toOf.has(m.time))
+        .map((m) => ({ ...m, time: toOf.get(m.time)! })),
+      dropped: r.dropped,
+    };
+  }, [markersRaw, snapActive, snapTfSec, bars]);
+  // 契约 F：trail 挂线（全份拼接带段界断点/单份现状行为；高周期视图
+  // 值点分段吸附+段界断点重算）
+  const trail = useMemo(() => {
+    const parts = (exec ? [exec] : executions).map((e) =>
+      (e.trail_series ?? []).filter(
+        (p) => p.value != null && Number.isFinite(p.value as number),
+      ) as Array<{ time: string; value: number }>,
+    );
+    if (snapActive) {
+      const snapped = snapTrailParts(parts, bars, snapTfSec);
+      return snapped.length > 0 ? snapped : null;
+    }
+    return exec ? exec.trail_series : concatTrail(executions);
+  }, [exec, executions, snapActive, snapTfSec, bars]);
   useEffect(() => {
     const chart = chartRef.current;
     chart?.setObservationSeries(
@@ -298,6 +483,63 @@ function KlineReview({
   );
   const tradesCount = (exec ? [exec] : executions).reduce((n, e) => n + e.trades.length, 0);
 
+  // 契约 L：DNA 徽标组（overlayable 实参+subChartOnly/unsupported 降级 tooltip）
+  const dnaBadges = (
+    <span className="flex flex-wrap items-center gap-1" data-testid="vr-dna-badges">
+      {!hasStrategy && (
+        <span className="rounded border border-border-faint px-1 text-[10px] text-text-muted" title="无策略关联">
+          无策略关联——DNA 指标叠加不可用
+        </span>
+      )}
+      {hasStrategy && extract.overlayable.length === 0 && extract.subChartOnly.length === 0 && extract.unsupported.length === 0 && (
+        <span className="rounded border border-border-faint px-1 text-[10px] text-text-muted">
+          DNA 无引用指标
+        </span>
+      )}
+      {extract.overlayable.map((o) => (
+        <span
+          key={o.kind === "EMA" ? `ema${o.period}` : `bb${o.period}_${o.std}`}
+          className="rounded border px-1 text-[10px]"
+          style={{ color: CHART_VC.teal, borderColor: `${CHART_VC.teal}44` }}
+          title="DNA 引用指标（参数与策略一致）"
+        >
+          {o.kind === "EMA" ? `EMA(${o.period})` : `BB(${o.period},${o.std})${o.field ? `·${BB_FIELD_LABEL[o.field] ?? o.field}` : ""}`}
+        </span>
+      ))}
+      {extract.subChartOnly.map((o) => (
+        <span
+          key={o.kind}
+          className="rounded border border-attention-gold/40 px-1 text-[10px] text-attention-gold"
+          title={OVERLAY_SUBCHART_TEXT}
+        >
+          {o.kind}
+        </span>
+      ))}
+      {extract.unsupported.map((o, i) => (
+        <span
+          key={`${o.indicator}-${i}`}
+          className="rounded border border-border-faint px-1 text-[10px] text-text-muted"
+          title={o.note ?? OVERLAY_UNSUPPORTED_TEXT}
+        >
+          {o.note === OVERLAY_MTF_TEXT ? `${LAYER_NOTE}·${o.indicator}` : o.indicator}
+        </span>
+      ))}
+      {ind.state === "loading" && (
+        <span className="text-[10px] text-text-muted">指标装载中…</span>
+      )}
+      {ind.state === "error" && (
+        <span className="rounded border border-attention-gold/40 px-1 text-[10px] text-attention-gold">
+          指标源暂不可达（叠加降级）
+        </span>
+      )}
+      {ind.state === "ok" && ind.tailLagged && (
+        <span className="rounded border border-attention-gold/40 px-1 text-[10px] text-attention-gold" title="指标尾点早于 K 线尾 bar——截断/缺数据">
+          指标数据不完整
+        </span>
+      )}
+    </span>
+  );
+
   return (
     <div
       className="rounded p-2"
@@ -306,17 +548,72 @@ function KlineReview({
     >
       <p className="mb-1 text-[10px]" style={{ color: CHART_VC.dim }}>
         {symbol} · {timeframe} · {rangeLabel} ·
-        标记 {markers.length}（filled 留痕 {filledCount} 行 · trades {tradesCount} 笔）
+        标记 {markers.list.length}（filled 留痕 {filledCount} 行 · trades {tradesCount} 笔）
+        {snapActive && markers.dropped > 0 && `（${markers.dropped} 个标记超出区间）`}
         <span className="ml-2" data-testid="vr-view-mode">
           {exec ? `单份 ${exec.exec_ref}` : "全区间"}
         </span>
       </p>
-      {/* crosshair 读数行（mono 小字——marker 悬停时间由 crosshair 落 bar 读数承担） */}
-      <p className="mb-1 font-mono text-[10px]" style={{ color: CHART_VC.dim }} data-testid="vr-crosshair-info">
-        {hover
-          ? `${hover.time}  O ${hover.o} H ${hover.h} L ${hover.l} C ${hover.c}`
-          : "—"}
-      </p>
+      {/* 契约 L 工具区：crosshair 读数（左）｜周期 Select+基准徽标+手动开关（右） */}
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-[10px]" style={{ color: CHART_VC.dim }} data-testid="vr-crosshair-info">
+          {hover
+            ? `${hover.time}  O ${hover.o} H ${hover.h} L ${hover.l} C ${hover.c}`
+            : "—"}
+        </p>
+        <span className="flex flex-wrap items-center gap-1.5 text-[10px]" data-testid="vr-toolbar">
+          <span className="rounded border border-border-faint px-1 text-text-muted" data-testid="vr-base-tf">
+            基准 {timeframe ?? "—"}
+          </span>
+          <Select
+            size="small"
+            className="!w-20"
+            value={viewTf ?? timeframe ?? undefined}
+            onChange={(v) => onViewTf(v === timeframe ? null : v)}
+            options={VIEW_TFS.map((tf) => ({
+              value: tf,
+              label: tf,
+              disabled: tf !== timeframe && deadTfs.has(tf),
+            }))}
+            data-testid="vr-tf-select"
+          />
+          <Switch size="small" checked={emaOn} onChange={setEmaOn} data-testid="vr-manual-ema" />
+          <span className="text-text-muted">EMA</span>
+          <InputNumber
+            size="small"
+            className="!w-14"
+            min={1}
+            max={500}
+            value={emaPeriod}
+            onChange={(v) => setEmaPeriod(Number(v) || 50)}
+            disabled={!emaOn}
+          />
+          <Switch size="small" checked={bbOn} onChange={setBbOn} data-testid="vr-manual-bb" />
+          <span className="text-text-muted">BB</span>
+          <InputNumber
+            size="small"
+            className="!w-12"
+            min={1}
+            max={500}
+            value={bbPeriod}
+            onChange={(v) => setBbPeriod(Number(v) || 20)}
+            disabled={!bbOn}
+          />
+          <InputNumber
+            size="small"
+            className="!w-12"
+            min={0.1}
+            max={5}
+            step={0.5}
+            value={bbStd}
+            onChange={(v) => setBbStd(Number(v) || 2.0)}
+            disabled={!bbOn}
+          />
+        </span>
+      </div>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        {dnaBadges}
+      </div>
       <p className="mb-1 flex flex-wrap gap-x-3 text-[10px]" style={{ color: CHART_VC.dim }}>
         <span style={{ color: TRACE_FAMILY_COLOR.strategy }}>▲开多/▲加多/▽减仓/▼平多=策略动作（标=动作+成交价）</span>
         <span style={{ color: TRACE_FAMILY_COLOR.risk }}>▼平多（金）=风控出场族</span>
@@ -334,11 +631,13 @@ function KlineReview({
       ) : (
         <KlineChart
           data={viewCandles}
-          signalMarkers={markers}
+          signalMarkers={markers.list}
           height={chartHeight}
           ref={chartRef}
           subChartType="equity"
           equityData={equityData}
+          indicators={ind.state === "ok" ? ind.indicators : undefined}
+          hideLegend
           onChartReady={(_, series) => {
             bandCtlRef.current = attachSegmentBand(series);
             bandCtlRef.current.setData(bands);
@@ -674,16 +973,39 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
   // 视图状态（契约 E）：缺省全区间主视图；单份=前端过滤可选视图。
   // D3/V1 消费当前聚焦份（全区间态缺省份 1）
   const [view, setView] = useState<ViewSel>("all");
-  useEffect(() => { setView("all"); }, [recordId]);
+  // 视图周期（契约 K）：null=基准（执行语义锚）；无数据档禁用集（请求后降级）
+  const [viewTf, setViewTf] = useState<string | null>(null);
+  const [deadTfs, setDeadTfs] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setView("all");
+    setViewTf(null);
+    setDeadTfs(new Set());
+  }, [recordId]);
   const chartRef = useRef<KlineChartHandle | null>(null);
   const locate = (time: string) => chartRef.current?.scrollToTime(time);
   // 全区间装载（hooks 无条件区——早退前调用；明细未就绪/不可用时空
-  // executions 恒 loading 态，bounds null 不发请求）
+  // executions 恒 loading 态，bounds null 不发请求）；viewTf 维度=契约 K
+  // 切换查看粒度（start/end 不变）
   const st = record ? recordSymbolTimeframe(record) : { symbol: null, timeframe: null };
   const fr = useFullRangeKline(
     q.data?.detail_available === true ? q.data.executions : [],
     st.symbol,
     st.timeframe,
+    viewTf,
+  );
+  // 契约 K：无数据档降级——视图周期下端点失败→该档禁用+回基准（零额外请求）
+  useEffect(() => {
+    if (fr.state === "error" && viewTf != null) {
+      setDeadTfs((prev) => new Set(prev).add(viewTf));
+      setViewTf(null);
+    }
+  }, [fr.state, viewTf]);
+  // 契约 H：策略 DNA → 指标三分判别（strategy_id null=adhoc/历史→三分全空）
+  const strategyId = q.data?.detail_available === true ? q.data.strategy_id : null;
+  const strat = useQuery({ ...useStrategy(strategyId ?? ""), enabled: !!strategyId });
+  const dnaExtract = useMemo(
+    () => dnaIndicators((strat.data as { dna?: unknown } | undefined)?.dna),
+    [strat.data],
   );
 
   if (!record || !recordId) {
@@ -724,6 +1046,7 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
           className="!w-64"
           value={view}
           onChange={(v) => setView(v)}
+          data-testid="vr-view-select"
           options={[
             { value: "all", label: "全区间（全部份连续）" },
             ...d.executions.map((e, i) => ({
@@ -744,6 +1067,11 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
             timeframe={timeframe}
             stopPrice={d.stop_price}
             chartRef={chartRef}
+            extract={dnaExtract}
+            hasStrategy={!!strategyId}
+            viewTf={viewTf}
+            deadTfs={deadTfs}
+            onViewTf={setViewTf}
           />
           {/* D3 资金曲线 */}
           <EquityReview exec={exec} bars={bars} record={record} />
