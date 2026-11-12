@@ -49,12 +49,12 @@ function makeExec(over: Partial<VrExecution> = {}): VrExecution {
   };
 }
 
-function ui(execs: VrExecution[]) {
+function ui(execs: VrExecution[], viewTf?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  return renderHook(() => useFullRangeKline(execs, "BTCUSDT", "4h"), { wrapper });
+  return renderHook(() => useFullRangeKline(execs, "BTCUSDT", "4h", viewTf), { wrapper });
 }
 
 beforeEach(() => {
@@ -336,5 +336,64 @@ describe("useOverlayIndicators（契约 I）", () => {
     expect(result.current.indicators).toEqual([]);
     const empty = renderInd([], null);
     expect(empty.result.current.state).toBe("ok");
+  });
+});
+
+describe("切档源头豁免与 truncated 覆盖域判法（change-3 CARD-02）", () => {
+  /** 1d 粗档 bar 生成器（ISO 带 Z） */
+  const bars1d = (days: string[]) =>
+    days.map((d) => ({ timestamp: `${d}T00:00:00Z`, open: 100, high: 110, low: 90, close: 105 }));
+
+  const EXEC_6PT = (rangeEnd: string) =>
+    makeExec({
+      range_start: "2025-11-04T00:00:00+00:00",
+      range_end: rangeEnd,
+      equity: {
+        grid_aligned: true, timeframe: "4h", start: "2025-11-04T00:00:00+00:00",
+        length: 6, timestamps: null, values: Array.from({ length: 6 }, (_, i) => 100 + i),
+      },
+    });
+
+  it("非基准档双豁免：对账不等不 mismatch+range_end 落末根 bar 覆盖窗不 truncated——恒 ok 且 execAligned 置空", async () => {
+    // 1d 粗档 3 根（11-04/05/06）；末 bar 11-06T00 覆盖窗 [11-06T00, 11-07T00) 含 range_end 11-06T20；
+    // 份 equity 6 点 vs 1d 闭端 3 根必不等（修复前假 truncated+假 mismatch 两连误报）
+    const execs = [EXEC_6PT("2025-11-06T20:00:00+00:00")];
+    mockOhlcv.mockResolvedValue({ data: bars1d(["2025-11-04", "2025-11-05", "2025-11-06"]) } as never);
+    const { result } = ui(execs, "1d");
+    await waitFor(() => expect(result.current.state).not.toBe("loading"));
+    expect(result.current.state).toBe("ok");
+    if (result.current.state === "ok") {
+      expect(result.current.execAligned).toEqual({});
+    }
+  });
+
+  it("基准边界：末 bar==range_end 完整不报；缺恰一根（lastEpoch+tfSec==endEpoch）仍 truncated（严格 > 不漏报）", async () => {
+    const execs = [EXEC_6PT("2025-11-04T20:00:00+00:00")];
+    // 完整：6 根 4h 末 bar==end
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 6) } as never);
+    const r1 = ui(execs);
+    await waitFor(() => expect(r1.result.current.state).not.toBe("loading"));
+    expect(r1.result.current.state).toBe("ok");
+    r1.unmount();
+    // 缺恰一根：5 根末 bar 11-04T16，16h+4h==20h 不严格> → coversEnd=false 仍报
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 5) } as never);
+    const r2 = ui(execs);
+    await waitFor(() => expect(r2.result.current.state).not.toBe("loading"));
+    expect(r2.result.current.state).toBe("truncated");
+    if (r2.result.current.state === "truncated") {
+      expect(r2.result.current.truncatedMissing).toBe(1);
+    }
+  });
+
+  it("表外周期 tfSec=0：完整态不翻报（coversEnd 退化直比+对账豁免）", async () => {
+    // "2h" 不在档表→tfSec=0；末 bar==range_end（lastEpoch>=endEpoch 直比过）→ok
+    const execs = [EXEC_6PT("2025-11-04T20:00:00+00:00")];
+    mockOhlcv.mockResolvedValue({ data: bars4h("2025-11-04T00:00:00Z", 6) } as never);
+    const { result } = ui(execs, "2h");
+    await waitFor(() => expect(result.current.state).not.toBe("loading"));
+    expect(result.current.state).toBe("ok");
+    if (result.current.state === "ok") {
+      expect(result.current.execAligned).toEqual({});
+    }
   });
 });

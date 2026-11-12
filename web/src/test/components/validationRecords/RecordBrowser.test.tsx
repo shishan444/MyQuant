@@ -1174,3 +1174,44 @@ describe("段界同 bar 重复时间戳合并（change-3 CARD-01——P0 回归�
     });
   });
 });
+
+describe("切档假态豁免组件面（change-3 CARD-02——源头豁免回归锚）", () => {
+  const makeStrategy = (dna: unknown) =>
+    ({ dna, strategy_id: "st_y1", name: "s", generation: 1 }) as never;
+
+  it("基准 mismatch 构造仍告警+切 1d 后提示行不在场（假 truncated/mismatch 消除）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 份 range_end 收到 04-03（末 bar 覆盖窗内——先过 truncated 判定）：
+    // 基准 30m 闭端 3 根（04-01~04-03）≠equity 4 点——真 mismatch
+    const d = makeDetail();
+    d.executions[0].range_end = "2026-04-03";
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    // 基准视图：真 mismatch 告警在场（份级定位）
+    const state = await screen.findByTestId("vr-kline-state");
+    expect(state).toHaveTextContent("份 main：K 线 3 根 vs 权益 4 点");
+    // 切 1d：修复前 1d 闭端 3 根≠4 点假 mismatch+末 bar<range_end 假 truncated；
+    // 修复后源头豁免——恒 ok 态，提示行不在场
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.some((c) => c[1] === "1d")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toBeInTheDocument();
+      expect(screen.queryByTestId("vr-kline-state")).toBeNull();
+    });
+  });
+});
