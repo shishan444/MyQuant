@@ -164,10 +164,16 @@ class TestRunnerBranchGaps:
         assert row["status"] == "completed"
 
     def test_strategy_extract_failure_degrades(self, tmp_path, caplog):
-        """达标抽取失败降级：qualified 个体+save_strategy 抛错→debug
-        日志+任务仍 completed（抽取非关键路径）。"""
+        """达标抽取失败形制（fix-evolution-champion-persist 语义升级）：
+        qualified 个体+save_strategy 抛错——代际抽取失败被捕获不中断进化
+        （error 日志非静默），终态段冠军入库同注入点失败转
+        champion_persist_failed 可见上报（spec ADDED：入库失败 MUST NOT
+        吞错后呈现成功完成）。"""
         db, runner = self._mk_runner(tmp_path)
         self._run(runner, db, "ext-1", qualified=True, with_diag=True,
                   save_strategy_effect=RuntimeError("构造抽取失败"))
         row = get_task(db, "ext-1")
-        assert row["status"] == "completed", "抽取失败不得中断任务"
+        assert row["status"] == "stopped", "终态入库失败可见上报"
+        assert row["stop_reason"] == "champion_persist_failed"
+        assert row["champion_dna"], "champion_dna 照写保留进化事实"
+        assert "extract failed" in caplog.text, "代际抽取失败 error 日志在案"
