@@ -289,6 +289,45 @@ describe("KlineChart 主副 pane stretch factor 3:1（upgrade-vr-responsive-layo
   });
 });
 
+describe("KlineChart height 运行时变化增量通道（CARD-01 回归锚）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  function renderChart(height: number) {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    const utils = render(<KlineChart data={CANDLES as never} height={height} />);
+    return { ...utils, reg: registry };
+  }
+
+  it("锚①②③ height 400→650：零重建（chart 恒 1/createChart 1 次/remove 0）+applyOptions 收 {height:650}+蜡烛 setData 恒一次", () => {
+    const { rerender, reg } = renderChart(400);
+    rerender(<KlineChart data={CANDLES as never} height={650} />);
+    // 锚①：height 变化不触发创建/销毁 effect 重跑（旧依赖 [height] 会 remove 重建）
+    expect(reg.charts).toHaveLength(1);
+    expect(vi.mocked(lightweightCharts.createChart)).toHaveBeenCalledTimes(1);
+    expect(reg.charts[0].remove).not.toHaveBeenCalled();
+    // 锚②：高度走增量通道（与 ResizeObserver 的 width 通道同形制）
+    expect(reg.charts[0].applyOptions).toHaveBeenCalledWith({ height: 650 });
+    // 锚③：数据挂载 effect 依赖不含 height——重建场景的「重建后无数据」缺陷不复在
+    expect(candleSeriesOf(reg).setData).toHaveBeenCalledTimes(1);
+  });
+
+  it("锚④ 对照组 height 不变重渲染：零重建零重挂零增量（applyOptions 恒首挂 1 次）", () => {
+    const { rerender, reg } = renderChart(400);
+    rerender(<KlineChart data={CANDLES as never} height={400} />);
+    expect(reg.charts).toHaveLength(1);
+    expect(vi.mocked(lightweightCharts.createChart)).toHaveBeenCalledTimes(1);
+    expect(reg.charts[0].remove).not.toHaveBeenCalled();
+    expect(candleSeriesOf(reg).setData).toHaveBeenCalledTimes(1);
+    // 增量 effect 仅首挂天然一次（{height:400} 初值），重渲染无追加调用
+    expect(reg.charts[0].applyOptions).toHaveBeenCalledTimes(1);
+    expect(reg.charts[0].applyOptions).toHaveBeenCalledWith({ height: 400 });
+  });
+});
+
 describe("KlineChart 纯函数层（core/time toTime）", () => {
   it("ISO 与空格分隔形制都转 UTCTimestamp 秒", () => {
     expect(toTime("2026-01-01T00:00:00")).toBe(toTime("2026-01-01 00:00:00"));
