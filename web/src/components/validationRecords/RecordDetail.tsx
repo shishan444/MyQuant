@@ -20,6 +20,7 @@ import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitive
 import { toTime } from "@/components/charts/core/time";
 import { CHART_VC } from "@/theme/tokens";
 import {
+  barsInExecRange,
   buildEquitySeries,
   perExecEquityPoints,
   useFullRangeKline,
@@ -214,6 +215,9 @@ function KlineReview({
 
   const bars: FullRangeBar[] = fr.state === "loading" || fr.state === "error" ? [] : fr.candles;
   const chartReady = fr.state !== "loading" && fr.state !== "error";
+  // 契约 E：单份视图主图只画该份闭端区间（渲染层过滤——queryKey 与拉取
+  // 仍全区间；与对账/equity 锚序列共用 barsInExecRange 单源）
+  const viewCandles = exec ? barsInExecRange(bars, exec) : bars;
 
   // 契约 C：equity 副图数据（全份拼接带段界断点/单份序列无断点——同源同锚）
   const equityData = useMemo(
@@ -249,16 +253,17 @@ function KlineReview({
   useEffect(() => {
     bandCtlRef.current?.setData(bands);
   }, [bands]);
-  // 契约 D：crosshair 读数（无悬停显空；OHLC 由 candles 按 param.time 查行）
+  // 契约 D：crosshair 读数（无悬停显空；OHLC 由 viewCandles 按 param.time
+  // 查行——与主图同源，单份视图只在闭端区间内可查）
   const [hover, setHover] = useState<{ time: string; o: number; h: number; l: number; c: number } | null>(null);
   const onCrosshairMove = useCallback((param: { time?: unknown }) => {
     if (param.time == null || typeof param.time !== "number") {
       setHover(null);
       return;
     }
-    const bar = bars.find((b) => epochOfTime(b.timestamp) === param.time);
+    const bar = viewCandles.find((b) => epochOfTime(b.timestamp) === param.time);
     setHover(bar ? { time: bar.timestamp, o: bar.open, h: bar.high, l: bar.low, c: bar.close } : null);
-  }, [bars]);
+  }, [viewCandles]);
 
   if (!symbol || !timeframe) {
     return (
@@ -322,13 +327,13 @@ function KlineReview({
           {stateMsg}
         </p>
       )}
-      {fr.candles.length === 0 ? (
+      {viewCandles.length === 0 ? (
         <p className="py-6 text-center text-xs" style={{ color: CHART_VC.dim }}>
           该区间无 K 线数据
         </p>
       ) : (
         <KlineChart
-          data={fr.candles}
+          data={viewCandles}
           signalMarkers={markers}
           height={chartHeight}
           ref={chartRef}

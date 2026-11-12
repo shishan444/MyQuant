@@ -13,6 +13,8 @@
  *   重建——网格同构守卫保证 compact 真等距）+ 段界 whitespace 断点。
  * - perExecEquityPoints：单份序列（与副图同源同锚），供单份视图与
  *   V1 权益明细页签消费。
+ * - barsInExecRange：份区间闭端过滤单源（对账计数/equity 锚序列/单份
+ *   视图主图三处共用——契约 E 渲染层过滤的取数谓词）。
  */
 import { useQuery } from "@tanstack/react-query";
 import { getOhlcvBySymbol } from "@/services/datasets";
@@ -41,6 +43,22 @@ export function timeframeSeconds(tf: string): number {
 function epochOf(ts: string): number | null {
   const t = toTime(ts);
   return typeof t === "number" ? t : null;
+}
+
+/** 份区间闭端过滤：epoch 闭端 [range_start, range_end] 内的 bar 子集
+ *  （malformed 边界返回空——任一端不可解析即无法界定区间）。对账计数、
+ *  equity 锚序列、单份视图主图三处共用的单一实现（契约 E） */
+export function barsInExecRange(
+  bars: FullRangeBar[],
+  exec: VrExecution,
+): FullRangeBar[] {
+  const s = epochOf(exec.range_start);
+  const t = epochOf(exec.range_end);
+  if (s == null || t == null) return [];
+  return bars.filter((b) => {
+    const be = epochOf(b.timestamp);
+    return be != null && be >= s && be <= t;
+  });
 }
 
 /** ── 契约 A：四态判别联合 ── */
@@ -123,14 +141,7 @@ export function useFullRangeKline(
   const mismatchedExecs: MismatchedExec[] = [];
   const execAligned: Record<string, boolean> = {};
   for (const e of executions) {
-    const s = epochOf(e.range_start);
-    const t = epochOf(e.range_end);
-    const bars = candles.filter(
-      (c) => {
-        const ce = epochOf(c.timestamp);
-        return ce != null && s != null && t != null && ce >= s && ce <= t;
-      },
-    ).length;
+    const bars = barsInExecRange(candles, e).length;
     const aligned = bars === e.equity.values.length;
     execAligned[e.exec_ref] = aligned;
     if (!aligned) mismatchedExecs.push({ exec_ref: e.exec_ref, bars, points: e.equity.values.length });
@@ -151,14 +162,7 @@ export type EquityPoint = { time: string; value: number } | { time: string };
 function execAnchoredPoints(exec: VrExecution, bars: FullRangeBar[]): Array<{ time: string; value: number }> {
   const values = exec.equity.values;
   if (values.length === 0) return [];
-  const s = epochOf(exec.range_start);
-  const t = epochOf(exec.range_end);
-  const inRange = (s != null && t != null)
-    ? bars.filter((b) => {
-        const be = epochOf(b.timestamp);
-        return be != null && be >= s && be <= t;
-      }).map((b) => b.timestamp)
-    : [];
+  const inRange = barsInExecRange(bars, exec).map((b) => b.timestamp);
   if (inRange.length === values.length) {
     return values.map((v, i) => ({ time: inRange[i], value: v }));
   }
