@@ -352,8 +352,10 @@ class EvolutionRunner(threading.Thread):
     def _persist_champion_on_user_stop(self, task_row: Dict[str, Any], task_id: str) -> None:
         """user_stop 出口冠军资产化（快照恢复链五步）。
 
-        执行序：①状态先行 stopped/user_stop（异常上抛走 _run_task 既有
-        error 出口——不吞错）；②快照 top1 恢复 champion；③无快照=正常
+        执行序：①状态先行 stopped/user_stop（若本步 update_task 抛异常，
+        该调用位于 except TaskStopRequested 块内，异常不被同 try 后续
+        except Exception 捕获而穿透线程边界——与既有形制一致，任务行
+        滞留 running 待重启清理；审查裁定记 TD 不在本 change 行为升级）；②快照 top1 恢复 champion；③无快照=正常
         终止（无冠军可资产化，champion_dna 保持空——现状语义）；④补写
         champion_dna（不带 status 无条件写）；⑤save_strategy（best_score/
         generation 取快照值、metrics_json=None 显式缺失——快照表无
@@ -362,7 +364,7 @@ class EvolutionRunner(threading.Thread):
         ②⑤ 间任一步异常：champion_persist_failed 失败形制（status 已
         stopped 只改 reason；champion_dna 保留程度取决于失败点——恢复
         成功后失败=非空、恢复链早期失败=空）。失败分支处理完即方法返回
-        （不抛出——异常边界兑现「失败可见上报」而不干扰 _run_task 控制流）。
+        （except 块内补写失败同样穿透——注释如实化，见审查卡 1）。
         """
         # ① 状态先行（异常上抛走 error 出口）
         update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
@@ -788,7 +790,7 @@ class EvolutionRunner(threading.Thread):
                     best_score=result["champion_fitness"],
                     generation=champion_rec.generation if champion_rec else 0,
                     metrics_json=(
-                        json.dumps(champion_diag.get("raw_metrics"))
+                        json.dumps(champion_diag.get("raw_metrics"), allow_nan=False)
                         if champion_diag and champion_diag.get("raw_metrics")
                         else None
                     ),
@@ -798,13 +800,20 @@ class EvolutionRunner(threading.Thread):
                     "Task %s champion persist failed (strategy_id=%s)",
                     task_id, champion.strategy_id, exc_info=True,
                 )
-                update_task(
+                _applied = update_task(
                     self.db_path, task_id,
                     status="stopped",
                     champion_dna=champion,
                     stop_reason="champion_persist_failed",
                     expected_statuses=("running",),
                 )
+                if not _applied:
+                    # SEC-1（审查低危）：前态守护被拒（stop 竞态窗口）——
+                    # 失败上报通道①（stop_reason）静默丢失，补 warning 留痕
+                    logger.warning(
+                        "Task %s champion persist failure record rejected "
+                        "(pre-state no longer running)", task_id,
+                    )
                 return
 
             # batch1 D3: completed 前态守护 {running}——与路由 stop 写入的竞态中

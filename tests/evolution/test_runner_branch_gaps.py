@@ -163,7 +163,7 @@ class TestRunnerBranchGaps:
         row = get_task(db, "mtf-1")
         assert row["status"] == "completed"
 
-    def test_strategy_extract_failure_degrades(self, tmp_path, caplog):
+    def test_strategy_extract_failure_visible_report(self, tmp_path, caplog):
         """达标抽取失败形制（fix-evolution-champion-persist 语义升级）：
         qualified 个体+save_strategy 抛错——代际抽取失败被捕获不中断进化
         （error 日志非静默），终态段冠军入库同注入点失败转
