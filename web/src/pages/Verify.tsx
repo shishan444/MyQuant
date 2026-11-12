@@ -27,7 +27,7 @@ import {
   useVerifySessions,
   useSessionResults,
 } from "@/hooks/useStrategies";
-import { cn, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
+import { cn, formatTimestamp, getFitnessColor, monthsAgo, todayISO } from "@/lib/utils";
 import type { VerifySummaryItem, VerifyPeriodSummary, Strategy, DNA, SignalGene, VerifySessionListResponse, VerifyHistoryResponse, VerifySession } from "@/types/api";
 import { ThresholdDots, VerifyStar, ThresholdsSummary, type VerifyHistoryRow } from "@/components/verify/VerifyThresholds";
 import { formatDrawdown } from "@/components/verify/thresholdsUtils";
@@ -329,7 +329,7 @@ export function Verify() {
             {configCollapsed && stream.status !== "running" ? (
               <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30">
                 <span className="text-xs text-text-secondary">
-                  已验证 {filledRanges.length} 个区间 ({filledRanges.map((r) => `${r.start.slice(0, 10)}~${r.end.slice(0, 10)}`).join("、")}) · {advancedParams.init_cash} 资金
+                  已验证 {filledRanges.length} 个区间 ({filledRanges.map((r) => `${formatTimestamp(r.start, "date")}~${formatTimestamp(r.end, "date")}`).join("、")}) · {advancedParams.init_cash} 资金
                 </span>
                 <AntButton type="text" size="small" onClick={() => { setConfigCollapsed(false); stream.reset(); }}>
                   重新验证
@@ -710,7 +710,7 @@ function StrategyCard({
               <tbody>
                 {(item as { per_period_metrics?: VerifyPeriodSummary[] }).per_period_metrics!.map((pm: VerifyPeriodSummary, i: number) => (
                   <tr key={i} className="border-b border-slate-700/10">
-                    <td className="py-0.5 text-text-secondary font-mono">{pm.data_start.slice(0, 10)}~{pm.data_end.slice(0, 10)}</td>
+                    <td className="py-0.5 text-text-secondary font-mono">{formatTimestamp(pm.data_start, "date")}~{formatTimestamp(pm.data_end, "date")}</td>
                     <td className={cn("py-0.5 text-center font-mono", pm.total_return >= 0 ? "text-emerald-400" : "text-red-400")}>
                       {formatReturn(pm.total_return)}
                     </td>
@@ -881,7 +881,7 @@ function HistoryView({
               <div className="flex items-center gap-2.5">
                 <Clock className="h-3 w-3 text-text-secondary" />
                 <span className="text-xs text-text-primary font-mono">
-                  {session.created_at.slice(0, 16).replace("T", " ")}
+                  {formatTimestamp(session.created_at, "minute")}
                 </span>
                 <Tag
                   className="!m-0 !text-[9px] !leading-4"
@@ -893,7 +893,7 @@ function HistoryView({
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-500">
-                  {ranges.map((r) => `${r.start.slice(0, 10)}~${r.end.slice(0, 10)}`).join("、")}
+                  {ranges.map((r) => `${formatTimestamp(r.start, "date")}~${formatTimestamp(r.end, "date")}`).join("、")}
                 </span>
                 {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-text-secondary" /> : <ChevronDown className="h-3.5 w-3.5 text-text-secondary" />}
               </div>

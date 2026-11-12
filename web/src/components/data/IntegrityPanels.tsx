@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, CircleDashed, RefreshCw } from "lucide-react";
+import { formatTimestamp } from "@/lib/utils";
 import {
   getMonthlyMatrix,
   getFreshnessStatus,
@@ -83,7 +84,7 @@ export function IntegrityMatrix({ symbol, monthsBack }: { symbol: string; months
               <StatusDot status={row.status} />
               <span className="font-mono text-text-secondary">{row.timeframe}</span>
               <span className="text-text-muted">
-                {row.coverage.bars} 根 · {row.coverage.first_bar?.slice(0, 10) ?? "—"} ~ {row.coverage.last_bar?.slice(0, 10) ?? "—"}
+                {row.coverage.bars} 根 · {formatTimestamp(row.coverage.first_bar, "date")} ~ {formatTimestamp(row.coverage.last_bar, "date")}
                 {row.gap_count > 0 && ` · 缺口 ${row.gap_count} 处`}
               </span>
             </div>
@@ -169,7 +170,7 @@ export function FreshnessTableFixed() {
     <div className="space-y-2" data-testid="freshness-table-fixed">
       <div className="flex items-center gap-2 text-[10px] text-text-muted">
         <RefreshCw className="h-3 w-3" />
-        上轮检查 {d.kline.last_run?.replace("T", " ").slice(0, 19) ?? "未运行"}
+        上轮检查 {d.kline.last_run ? formatTimestamp(d.kline.last_run, "second") : "未运行"}
       </div>
       <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3">
         {[...rows, ...extras].map(({ key, state, isPlaceholder }) => (

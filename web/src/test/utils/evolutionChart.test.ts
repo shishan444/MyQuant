@@ -150,7 +150,7 @@ describe("transformChartData", () => {
       makeRecord({ generation: 3, best_score: 50, top3_summary: "pop=2" }),
     ];
     const result = transformChartData(records);
-    // gen 3 is a boundary, stagnation resets
+    // gen 3 是种群边界，停滞计数清零
     expect(result.data[2].stagnationCount).toBe(0);
   });
 

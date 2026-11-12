@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock api client before importing services
+// import services 之前先 Mock api client
 vi.mock("@/services/api", () => ({
   api: {
     get: vi.fn(),

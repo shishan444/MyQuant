@@ -70,7 +70,7 @@ function getActionsForSubject(subject: string, isThen: boolean): ActionOption[] 
     return VOLUME_ACTIONS;
   }
 
-  // For indicator subjects, include pattern actions only for oscillators
+  // 指标主体：仅振荡类指标保留形态动作
   if (INDICATOR_PATTERN_SUBJECTS.has(subject)) {
     return INDICATOR_ACTIONS;
   }
@@ -79,7 +79,7 @@ function getActionsForSubject(subject: string, isThen: boolean): ActionOption[] 
 
 const LABEL_MAP: Record<string, string> = {};
 const allActions = [...PRICE_ACTIONS, ...VOLUME_ACTIONS, ...INDICATOR_ACTIONS, ...THEN_DIRECTION_ACTIONS,
-  // Add unique new actions for label map
+  // 补充未重复的新动作供标签映射
   { value: "touch_bounce", label: "触碰反弹", category: "支撑压力类" },
   { value: "role_reversal", label: "角色转换", category: "支撑压力类" },
   { value: "cross_above_series", label: "上穿指标线", category: "穿越类" },

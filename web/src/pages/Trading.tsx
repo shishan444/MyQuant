@@ -20,7 +20,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { EmptyState } from "@/components/EmptyState";
 import { App, Button as AntButton, Collapse, Input, Table, Tabs, Tag, type TableProps } from "antd";
-import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import { cn, formatCurrency, formatPercent, formatTimestamp } from "@/lib/utils";
 import {
   useTradingTasks,
   useTradingFills,
@@ -557,7 +557,7 @@ function TaskDetailPanel({
               {task.qualification_progress.trades_enough ? "●" : "○"} 笔数≥5
             </span>
             {task.qualification_progress.first_met_at && (
-              <span>两维首满足 {task.qualification_progress.first_met_at.replace("T", " ")}</span>
+              <span>两维首满足 {formatTimestamp(task.qualification_progress.first_met_at, "full")}</span>
             )}
           </div>
         )}
@@ -857,7 +857,7 @@ const FILL_COLUMNS: TableProps<PaperFill>["columns"] = [
     title: "时间",
     dataIndex: "bar_time",
     render: (v: string) => (
-      <span className="text-xs text-text-muted">{v.slice(0, 19).replace("T", " ")}</span>
+      <span className="text-xs text-text-muted">{formatTimestamp(v, "second")}</span>
     ),
   },
   {
@@ -921,7 +921,7 @@ const FUNDING_COLUMNS: TableProps<FundingRecord>["columns"] = [
     title: "结算时刻",
     dataIndex: "settle_time",
     render: (v: string) => (
-      <span className="text-xs text-text-muted">{v.slice(0, 19).replace("T", " ")}</span>
+      <span className="text-xs text-text-muted">{formatTimestamp(v, "second")}</span>
     ),
   },
   {

@@ -33,12 +33,12 @@ export function RuleConditionRow({
   };
 
   const handleSubjectChange = (subject: string) => {
-    // Reset action and target when subject changes
+    // subject 变更时重置 action 与 target
     onChange({ ...condition, subject, action: "", target: "" });
   };
 
   const handleActionChange = (action: string) => {
-    // Reset target when action changes
+    // action 变更时重置 target
     onChange({ ...condition, action, target: "" });
   };
 

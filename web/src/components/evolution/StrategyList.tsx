@@ -324,7 +324,7 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
 
   return (
     <div className="rounded-lg border border-slate-700/30 bg-white/[0.02] px-4 py-3 ml-7 mr-0 mb-2">
-      {/* Layers or flat genes */}
+      {/* 分层或平铺基因 */}
       {dna.layers && dna.layers.length > 0 ? (
         dna.layers.map((layer, idx) => {
           const roleLabel =

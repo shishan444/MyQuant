@@ -49,7 +49,7 @@ export function RuleConditionGroup({
 
   const handleDelete = (index: number) => {
     const next = conditions.filter((_, i) => i !== index);
-    // Ensure first remaining condition has logic IF
+    // 确保余下首条条件的逻辑词为 IF
     if (next.length > 0 && next[0].logic !== "IF") {
       next[0] = { ...next[0], logic: "IF" };
     }

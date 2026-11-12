@@ -266,12 +266,12 @@ describe("useEvolutionWebSocket", () => {
       });
     });
 
-    // Task cache should be updated
+    // 任务缓存应已更新
     const taskData = qc.getQueryData(evolutionKeys.task("task1")) as Record<string, unknown>;
     expect(taskData.current_generation).toBe(6);
     expect(taskData.best_score).toBe(72);
 
-    // History should have new record
+    // 历史应含新记录
     const historyData = qc.getQueryData(evolutionKeys.history("task1")) as { records: unknown[] };
     expect(historyData.records).toHaveLength(2);
   });

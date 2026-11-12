@@ -59,7 +59,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
 
     const datasetId = `${symbol}_${timeframe}`;
 
-    // Fetch chart indicators (only after backtest has a result)
+    // 拉图表指标（仅回测有结果后启用）
     const {
       candleData,
       chartIndicators,
@@ -81,7 +81,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
       setResult(null);
       setOhlcvWarning(null);
 
-      // Apply leverage override to DNA copy
+      // 对 DNA 副本应用杠杆覆写
       const dnaCopy: DNA = {
         ...dna,
         risk_genes: { ...dna.risk_genes },
@@ -109,7 +109,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
         .finally(() => setLoading(false));
     }
 
-    // Expose runBacktestAction to parent via ref (useRef thunk to avoid stale closure)
+    // 经 ref 暴露 runBacktestAction 给父组件（useRef 持最新函数防闭包过期）
     const latestRunBacktest = useRef(runBacktestAction);
     latestRunBacktest.current = runBacktestAction;
 
@@ -177,7 +177,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
 
         {result && (
           <>
-            {/* OHLCV warning */}
+            {/* OHLCV 预警 */}
             {ohlcvWarning && (
               <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -185,7 +185,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
               </div>
             )}
 
-            {/* K-line chart with trade signals + indicators */}
+            {/* K 线图（交易信号+指标） */}
             {candleData && candleData.length > 0 && (
               <div>
                 <div className="mb-2 flex items-center justify-between">
@@ -195,7 +195,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
                       {symbol} / {timeframe}
                     </span>
                   </h4>
-                  {/* Sub-chart indicator selector */}
+                  {/* 副图指标选择器 */}
                   <div className="flex items-center gap-0.5">
                     <span className="mr-1 text-[11px] text-slate-500">副图</span>
                     {(["volume", "macd", "rsi", "kdj", "equity"] as const).map((t) => (

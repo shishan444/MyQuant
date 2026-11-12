@@ -6,7 +6,7 @@ import { useChartSettings } from "@/stores/chart-settings";
 
 describe("useChartSettings", () => {
   beforeEach(() => {
-    // Reset to defaults before each test
+    // 每个用例前重置为缺省值
     useChartSettings.getState().resetToDefaults();
   });
 
@@ -64,7 +64,7 @@ describe("useChartSettings", () => {
     useChartSettings.getState().setBoll({ period: 999 });
     useChartSettings.getState().resetToDefaults();
     expect(useChartSettings.getState().boll.period).not.toBe(999);
-    // EMA list should be back to defaults
+    // EMA 清单应回到缺省值
     const lastEma = useChartSettings.getState().emaList[useChartSettings.getState().emaList.length - 1];
     expect(lastEma.period).not.toBe(999);
   });

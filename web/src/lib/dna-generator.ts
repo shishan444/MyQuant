@@ -36,7 +36,7 @@ function mapCondition(
   // 兼容旧形；非字符串按未知指标走缺省参数族）
   const indicatorName = typeof indicator === "string"
     ? indicator : (indicator as { indicator?: string })?.indicator ?? "";
-  // Try to extract period from common indicator patterns
+  // 从常见指标模式提取周期参数
   if (indicatorName.toLowerCase() === "rsi") {
     params = { period: 14 };
   } else if (indicatorName.toLowerCase() === "ema") {
@@ -45,7 +45,7 @@ function mapCondition(
     params = { fast: 12, slow: 26, signal: 9 };
   }
 
-  // Build condition dict
+  // 构造条件字典
   // condType 经 CONDITION_TYPE_MAP 收敛到契约枚举；阈值经 threshold 字段承载
   // （后端 executor 消费键）；无阈值时回退固定 1 保持条件可求值
   const condTypeNarrow = condType as SignalGene["condition"]["type"];
@@ -74,12 +74,12 @@ export function generateDnaFromValidation(
   pair: string,
   timeframe: string
 ): DNA {
-  // Map WHEN conditions to entry triggers
+  // WHEN 条件映射为入场触发器
   const signal_genes = [
     ...when
       .filter((c) => c.subject)
       .map((c) => mapCondition(c, "entry_trigger")),
-    // Map THEN conditions to exit triggers
+    // THEN 条件映射为出场触发器
     ...then
       .filter((c) => c.subject)
       .map((c) => mapCondition(c, "exit_trigger")),

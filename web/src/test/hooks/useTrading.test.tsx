@@ -7,7 +7,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-// Mock API services before any imports that use them
+// 在任何使用方 import 之前先 Mock API services
 vi.mock("@/services/trading", () => ({
   listTradingTasks: vi.fn(),
   getTradingTask: vi.fn(),

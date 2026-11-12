@@ -41,7 +41,7 @@ export function timeframeSeconds(tf: string): number {
 }
 
 /** 字符串时间 → epoch 秒（经 toTime 单源；malformed 回退 null） */
-function epochOf(ts: string): number | null {
+export function epochOf(ts: string): number | null {
   const t = toTime(ts);
   return typeof t === "number" ? t : null;
 }
@@ -72,7 +72,7 @@ export interface MismatchedExec {
 
 export type FullRangeResult =
   | { state: "loading" }
-  | { state: "error" }
+  | { state: "error"; /** REQ-4 判死分流的类型判据源（ApiError.status 可达） */ error: unknown }
   | {
       state: "ok" | "truncated" | "mismatch";
       /** 去重合并后的全区间 bar 序（truncated/mismatch 态照常返回照画） */
@@ -94,6 +94,8 @@ export function useFullRangeKline(
   timeframe: string | null,
   /** 视图周期（契约 K：缺省=基准 timeframe；切换后 K 线按该档重拉） */
   viewTf?: string | null,
+  /** REQ-4 重试序号：非 404 失败档重切时递增（queryKey 变化强制重发） */
+  retrySeq = 0,
 ): FullRangeResult {
   const fetchTf = viewTf ?? timeframe;
   const bounds = executions.length
@@ -110,7 +112,7 @@ export function useFullRangeKline(
     : { minStart: null, maxEnd: null };
 
   const q = useQuery({
-    queryKey: ["vr-kline-full", symbol, fetchTf, bounds.minStart, bounds.maxEnd],
+    queryKey: ["vr-kline-full", symbol, fetchTf, bounds.minStart, bounds.maxEnd, retrySeq],
     queryFn: () =>
       getOhlcvBySymbol(symbol!, fetchTf!, {
         start: bounds.minStart ?? undefined,
@@ -120,7 +122,7 @@ export function useFullRangeKline(
     enabled: !!symbol && !!fetchTf && !!bounds.minStart && !!bounds.maxEnd,
   });
 
-  if (q.isError) return { state: "error" };
+  if (q.isError) return { state: "error", error: q.error };
   if (q.isLoading || !q.data) return { state: "loading" };
 
   // 去重不变量：Map by timestamp 保序去重 + epoch 升序（呈现防线）
@@ -169,6 +171,58 @@ export function useFullRangeKline(
 }
 
 /** ── 契约 C：equity 序列构建 ── */
+
+/**
+ * 段界拼接原语（fe-recorddetail-td-deadtfs 组 1 REQ-3a）：已压好点的段
+ * 序列拼接+段界 whitespace 断点+段界同 bar 合并。断点取下段首点
+ * epoch−1 秒（严格落在两段之间——库要求数据时间严格递增，与下段首值
+ * 同时间戳的 whitespace 会构成重复时间项）；brk>lastEpoch 守卫防逆序；
+ * 相邻两段首尾同一时间戳（explicit 相接拓扑）时 out 末项替换为下段首项
+ * （段界重置在该 bar 内不可表示，合并取后值——与段内同 bar 保尾值规则
+ * 统一）。逻辑逐字承自原四函数（buildEquitySeries/snapSeriesParts/
+ * snapTrailParts/concatTrail——后者已薄包装接本原语）。
+ *
+ * 类型参数：TSeg=段元素形态；TOut=输出项形态（equity 族断点为
+ * {time} whitespace、trail 族断点为 {time,value:null} null 值点）。
+ */
+export function concatSegmentsWithBreaks<TSeg, TOut>(
+  segments: TSeg[][],
+  opts: {
+    /** 段首元素的时间串（断点 epoch 与段界合并的判定基准） */
+    firstTime: (seg: TSeg[]) => string;
+    /** 输出项的时间串 */
+    itemTime: (item: TOut) => string;
+    /** 断点项构造（equity 族 whitespace / trail 族 null 值点） */
+    makeBreak: (epochSec: number) => TOut;
+    /** 段 → 输出项序列映射（含 null 归一等段内形制转换） */
+    toItems: (seg: TSeg[]) => TOut[];
+  },
+): TOut[] {
+  const out: TOut[] = [];
+  let lastEpoch: number | null = null;
+  for (const seg of segments) {
+    if (seg.length === 0) continue;
+    const items = opts.toItems(seg);
+    if (items.length === 0) continue;
+    const firstEpoch = epochOf(opts.firstTime(seg));
+    if (out.length > 0 && firstEpoch != null) {
+      const brk = firstEpoch - 1;
+      if (lastEpoch != null && brk > lastEpoch) out.push(opts.makeBreak(brk));
+    }
+    let start = 0;
+    if (out.length > 0 && opts.itemTime(out[out.length - 1]) === opts.firstTime(seg)) {
+      out[out.length - 1] = items[0];
+      start = 1;
+    }
+    for (let i = start; i < items.length; i++) {
+      const item = items[i];
+      out.push(item);
+      const pe = epochOf(opts.itemTime(item));
+      if (pe != null) lastEpoch = pe;
+    }
+  }
+  return out;
+}
 
 /** whitespace 断点项（无 value——lightweight-charts 官方断线机制） */
 export type EquityPoint = { time: string; value: number } | { time: string };
@@ -223,32 +277,15 @@ export function buildEquitySeries(
   executions: VrExecution[],
   bars: FullRangeBar[],
 ): EquityPoint[] {
-  const out: EquityPoint[] = [];
-  let lastEpoch: number | null = null;
-  for (const exec of executions) {
-    const pts = execAnchoredPoints(exec, bars);
-    if (pts.length === 0) continue;
-    const firstEpoch = epochOf(pts[0].time);
-    if (out.length > 0 && firstEpoch != null) {
-      const brk = firstEpoch - 1;
-      if (lastEpoch != null && brk > lastEpoch) out.push({ time: new Date(brk * 1000).toISOString() });
-    }
-    // 段界同 bar 合并：相邻两份锚到同一根边界 bar（explicit 相接拓扑——
-    // 前份 range_end==后份 range_start）时 out 末项替换为下段首点——段界
-    // 重置在该 bar 内不可表示（合并取后值，与段内同 bar 保尾值规则统一）
-    let start = 0;
-    if (out.length > 0 && out[out.length - 1].time === pts[0].time) {
-      out[out.length - 1] = pts[0];
-      start = 1;
-    }
-    for (let i = start; i < pts.length; i++) {
-      const p = pts[i];
-      out.push(p);
-      const pe = epochOf(p.time);
-      if (pe != null) lastEpoch = pe;
-    }
-  }
-  return out;
+  return concatSegmentsWithBreaks(
+    executions.map((exec) => execAnchoredPoints(exec, bars)),
+    {
+      firstTime: (seg) => seg[0].time,
+      itemTime: (item) => item.time,
+      makeBreak: (brk) => ({ time: new Date(brk * 1000).toISOString() }),
+      toItems: (seg) => seg,
+    },
+  );
 }
 
 /** ── 契约 I：DNA/手动叠加指标拉取与装载 ── */

@@ -10,6 +10,7 @@ import {
   getMarketSnapshot,
   getResearchLog,
 } from "@/services/workbenchObservation";
+import { formatTimestamp } from "@/lib/utils";
 import { getTradingRunnerStatus } from "@/services/trading";
 
 function ErrLine({ name }: { name: string }) {
@@ -81,7 +82,7 @@ export function MarketSnapshotCard() {
       )}
       {tf?.as_of && (
         <p className="mt-1 font-num text-[9px] text-text-muted">
-          as_of {tf.as_of.slice(0, 16).replace("T", " ")}
+          as_of {formatTimestamp(tf.as_of, "minute")}
           {tf.window_bars ? ` · 窗 ${tf.window_bars} bar` : ""}
         </p>
       )}

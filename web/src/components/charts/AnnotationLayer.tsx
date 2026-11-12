@@ -1,4 +1,4 @@
-/** Canvas overlay for chart annotations (horizontal lines, boxes). */
+/** 图表标注的 Canvas 覆盖层（水平线/矩形框）——绘制交互与视口联动重绘。 */
 import { useEffect, useRef, useCallback } from "react";
 import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
 
@@ -33,7 +33,7 @@ export function AnnotationLayer({
   const drawingRef = useRef<{ startX: number; startY: number } | null>(null);
   const rafRef = useRef<number>(0);
 
-  // Re-render annotations when chart pans/zooms
+  // 图表平移/缩放时重绘标注
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
     const chart = chartApi;
@@ -107,7 +107,7 @@ export function AnnotationLayer({
     }
   }, [chartApi, candleSeries, annotations, chartContainerRef]);
 
-  // Subscribe to visible range changes for re-rendering
+  // 订阅可见区间变化触发重绘
   useEffect(() => {
     if (!chartApi) return;
 
@@ -123,12 +123,12 @@ export function AnnotationLayer({
     };
   }, [chartApi, redraw]);
 
-  // Redraw when annotations change
+  // 标注集变化时重绘
   useEffect(() => {
     redraw();
   }, [redraw]);
 
-  // Mouse handlers for drawing
+  // 绘制用鼠标事件处理器
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!activeTool) return;
     const rect = e.currentTarget.getBoundingClientRect();

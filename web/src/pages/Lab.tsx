@@ -26,6 +26,7 @@ import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { ChartToolbar } from "@/components/charts/ChartToolbar";
 import { Button as AntButton, Select as AntSelect, Skeleton } from "antd";
+import { formatTimestamp } from "@/lib/utils";
 
 import {
   RuleConditionGroup,
@@ -213,7 +214,7 @@ export function Lab() {
     chartRef.current?.setObservationSeries(visibleSlSeries);
   }, [visibleSlSeries]);
 
-  // -- Chart indicators hook (shared for hypothesis mode) --
+  // -- 图表指标 hook（假设模式共用） --
   const {
     candleData,
     chartIndicators,
@@ -233,10 +234,10 @@ export function Lab() {
   const validateMutation = useValidateRules();
   const createStrategyMutation = useCreateStrategy();
 
-  // -- Available data sources --
+  // -- 可用数据源 --
   const { data: sourcesData } = useQuery(useAvailableSources());
 
-  // -- Strategy library (for backtest strategy selector) --
+  // -- 策略库（回测策略选择器用） --
   const { data: strategiesData } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 100 })
   );
@@ -305,13 +306,13 @@ export function Lab() {
     }
   }, [pair, timeframe, sourcesData]);
 
-  // -- Backtest quick date handler --
+  // -- 回测快捷日期处理 --
   const handleBtQuickDate = useCallback(
     (days: number) => {
       const match = sourcesData?.sources?.find(
         (s) => s.symbol === backtestSymbol && s.timeframe === backtestTimeframe
       );
-      const endStr = match?.time_end ? match.time_end.slice(0, 10) : toLocalDateStr(new Date());
+      const endStr = match?.time_end ? formatTimestamp(match.time_end, "date") : toLocalDateStr(new Date());
       const endDate = new Date(endStr);
       let startDate: Date;
       if (days === 0) {
@@ -328,10 +329,10 @@ export function Lab() {
     [sourcesData, backtestSymbol, backtestTimeframe],
   );
 
-  // -- baseTimeframe = timeframe (data source period) --
+  // -- baseTimeframe = timeframe（数据源周期） --
   const baseTimeframe = timeframe;
 
-  // -- Derived --
+  // -- 派生值 --
   const hasConditions = entryConditions.length > 0 && exitConditions.length > 0;
   const isLoading = validateMutation.isPending;
   const hasResult = ruleResult !== null;
@@ -472,7 +473,7 @@ export function Lab() {
     // 缺失时「验证→改参→保存」顺序走旧闭包存旧值（spec 保存链一致 scenario）
     btStopLoss, btTakeProfit, btPositionSize, btLeverage, btDirection]);
 
-  // -- Buy/Sell signals for chart --
+  // -- 图表买卖信号 --
   const chartSignals = useMemo(() => {
     if (!ruleResult) return [];
     const signals: Array<{ type: "buy" | "sell"; timestamp: string }> = [];

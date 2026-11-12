@@ -8,7 +8,7 @@ import {
   formatNumber,
   formatPercentValue,
   formatDuration,
-  formatDateTime,
+  formatTimestamp,
   cn,
   getFitnessColor,
 } from "@/lib/utils";
@@ -82,23 +82,22 @@ describe("formatDuration", () => {
 
   it("invalid input handles gracefully", () => {
     const result = formatDuration("invalid", "invalid");
-    // Invalid dates produce NaN in getTime(), which falls through to hours
+    // 非法日期在 getTime() 产生 NaN，落入小时分支
     expect(typeof result).toBe("string");
   });
 });
 
-describe("formatDateTime", () => {
-  it("formats ISO string", () => {
-    const result = formatDateTime("2024-06-15T14:30:00Z");
-    // Result depends on locale, just verify it's a non-empty string
-    expect(result.length).toBeGreaterThan(0);
+describe("formatTimestamp", () => {
+  it("四档形制逐档锚（REQ-3d F1-F4）", () => {
+    expect(formatTimestamp("2024-06-15T14:30:00+00:00", "minute")).toBe("2024-06-15 14:30");
+    expect(formatTimestamp("2024-06-15T14:30:00+00:00", "second")).toBe("2024-06-15 14:30:00");
+    expect(formatTimestamp("2024-06-15T14:30:00+00:00", "full")).toBe("2024-06-15 14:30:00+00:00");
+    expect(formatTimestamp("2024-06-15T14:30:00+00:00", "date")).toBe("2024-06-15");
   });
 
-  it("invalid input returns fallback string", () => {
-    const result = formatDateTime("not-a-date");
-    // Invalid date -> toLocaleString returns "Invalid Date"
-    expect(typeof result).toBe("string");
-    expect(result.length).toBeGreaterThan(0);
+  it("null/undefined 回退破折号", () => {
+    expect(formatTimestamp(null, "minute")).toBe("\u2014");
+    expect(formatTimestamp(undefined, "date")).toBe("\u2014");
   });
 });
 

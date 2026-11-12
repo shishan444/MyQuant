@@ -1,4 +1,4 @@
-/** React Query hooks for scene verification. */
+/** 场景验证的 React Query hooks——场景模式面板消费。 */
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { verifyScene } from "@/services/scene";

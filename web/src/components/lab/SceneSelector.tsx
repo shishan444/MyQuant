@@ -1,9 +1,9 @@
-/** Scene template selector with multi-select checkboxes and parameter controls. */
+/** 场景模板选择器：多选勾选框+参数控件。 */
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { SceneTypeInfo } from "@/types/scene";
 
-/** Parameter schemas for each scene type. */
+/** 各场景类型的参数 schema。 */
 const SCENE_PARAM_SCHEMAS: Record<string, Array<{
   key: string;
   label: string;
@@ -12,7 +12,7 @@ const SCENE_PARAM_SCHEMAS: Record<string, Array<{
   step: number;
   defaultValue: number;
 }>> = {
-  // Sub-patterns of top_pattern share the same params as their parent
+  // top_pattern 的子模式与父模式共用同一组参数
   double_top: [
     { key: "lookback", label: "回看K线数", min: 3, max: 20, step: 1, defaultValue: 5 },
     { key: "confirmation_bars", label: "确认K线数", min: 3, max: 20, step: 1, defaultValue: 5 },
@@ -48,7 +48,7 @@ const SCENE_PARAM_SCHEMAS: Record<string, Array<{
   ],
 };
 
-// Sub-type color map for badge coloring
+// 子类型→徽标配色映射
 const SUBTYPE_COLORS: Record<string, string> = {
   double_top: "bg-amber-400/15 text-amber-400 border-amber-400/30",
   head_shoulders_top: "bg-purple-400/15 text-purple-400 border-purple-400/30",
@@ -79,7 +79,7 @@ export function SceneSelector({
   direction,
   onDirectionChange,
 }: SceneSelectorProps) {
-  // Group types by group field
+  // 按 group 字段分组
   const groups = useMemo(() => {
     const map = new Map<string, SceneTypeInfo[]>();
     for (const t of types) {
@@ -90,7 +90,7 @@ export function SceneSelector({
     return Array.from(map.entries());
   }, [types]);
 
-  // Collect param schemas for all selected types (deduped)
+  // 收集全部选中类型的参数 schema（按 key 去重）
   const paramSchemas = useMemo(() => {
     const seen = new Set<string>();
     const schemas: typeof SCENE_PARAM_SCHEMAS[string] = [];
@@ -108,7 +108,7 @@ export function SceneSelector({
     return schemas;
   }, [selectedIds]);
 
-  // Direction selector: show if any selected type needs it
+  // 方向选择器：任一选中类型需要时才显示
   const directionOptions = selectedIds.has("support_resistance")
     ? [
         { value: "support", label: "支撑位" },

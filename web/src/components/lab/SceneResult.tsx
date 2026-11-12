@@ -1,4 +1,4 @@
-/** Scene verification result display. */
+/** 场景验证结果呈现。 */
 import { useMemo } from "react";
 import { TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
 import type { SceneVerifyResponse, SceneTriggerDetail } from "@/types/scene";
@@ -58,7 +58,7 @@ export function SceneResult({ result, onLocateTrigger }: SceneResultProps) {
         </div>
       )}
 
-      {/* Per-horizon breakdown table */}
+      {/* 逐观察期分解表 */}
       {result.statistics_by_horizon.length > 0 && (
         <div className="rounded-lg border border-slate-700/20">
           <table className="w-full text-[11px]">
@@ -112,12 +112,12 @@ export function SceneResult({ result, onLocateTrigger }: SceneResultProps) {
         </div>
       )}
 
-      {/* Distribution for primary horizon */}
+      {/* 主观察期分布 */}
       {firstHorizon && firstHorizon.distribution.length > 0 && (
         <DistributionBarChart buckets={firstHorizon.distribution} />
       )}
 
-      {/* Trigger list (top 20) */}
+      {/* 触发清单（前 20） */}
       {result.trigger_details.length > 0 && (
         <TriggerList triggers={result.trigger_details} onLocate={onLocateTrigger} />
       )}

@@ -95,6 +95,7 @@ import {
   type ListFilters,
 } from "@/components/validationRecords/traceSemantics";
 import { RecordDetail } from "@/components/validationRecords/RecordDetail";
+import { ApiError } from "@/services/api";
 import { toTime } from "@/components/charts/core/time";
 import {
   getValidationRecordsPage,
@@ -224,6 +225,12 @@ beforeEach(() => {
       timestamp: `2026-04-0${i + 1} 00:00:00+00:00`,
       open: 100 + i, high: 105 + i, low: 95 + i, close: 100 + i, volume: 10,
     })),
+  } as never);
+  // union 余量查询默认实现（REQ-4 前既有脆弱点：裸 vi.fn() 返回 undefined
+  // 触发 react-query 崩溃——各测试显式设置时自行覆盖，此为安全默认）
+  mockUnion.mockResolvedValue({
+    hypothesis_id: "hyp_x1", symbol: "BTCUSDT", timeframe: "30m",
+    judged: [], remaining_bars: 0, remaining: [], remaining_time: "",
   } as never);
 });
 
@@ -1015,7 +1022,7 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
       _s: string, tf: string,
     ) =>
       tf === "1d"
-        ? Promise.reject(new Error("404"))
+        ? Promise.reject(new ApiError("client", "404", 404))
         : Promise.resolve({
             data: Array.from({ length: 5 }, (_, i) => ({
               timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
@@ -1043,6 +1050,77 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
       expect(mockOhlcv.mock.calls.filter((c) => c[1] === "1d")).toHaveLength(1);
     });
   });
+
+  it("契约 K 增量（REQ-4 判死分流）：非 404 失败——档位不禁用+提示条在场+重切该档必重发", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    let calls1h = 0;
+    let failNext = true;
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h") {
+        calls1h += 1;
+        if (failNext) return Promise.reject(new ApiError("server", "boom", 500));
+      }
+      return Promise.resolve({
+        data: Array.from({ length: 5 }, (_, i) => ({
+          timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5,
+          close: 1.5,
+        })),
+      }) as never;
+    });
+    ui(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline").then((el) => el.getAttribute("data-len")).catch(() => null)).toBe("5");
+    // 切 1h → 500 失败：档位不禁用（deadTfs 零收录）+提示条在场+回基准
+    openTfSelect();
+    const opt = await screen.findByText("1h", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 选项未禁用（非 404 不入 deadTfs）
+    openTfSelect();
+    const opt1h = await screen.findByText("1h", { selector: ".ant-select-item-option-content" });
+    expect(opt1h.closest(".ant-select-item-option")?.className).not.toContain("ant-select-item-option-disabled");
+    // 重切 1h：retrySeq+1 → queryKey 变化 → mock 调用数 +1（重发确证）
+    fireEvent.click(opt1h.closest(".ant-select-item-option") ?? opt1h);
+    failNext = false;
+    await waitFor(() => {
+      expect(mockOhlcv.mock.calls.filter((c) => c[1] === "1h")).toHaveLength(2);
+    });
+    // 重试成功：数据正常显示
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline").getAttribute("data-len")).toBe("5");
+    });
+  });
+
+  it("契约 K 增量（REQ-4 判死分流）：裸网络错误（非 ApiError）同走非 404 通道", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h") return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({
+        data: Array.from({ length: 5 }, (_, i) => ({
+          timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+        })),
+      }) as never;
+    });
+    ui(<RecordDetail record={makeRow()} />);
+    await screen.findByTestId("vr-kline").then((el) => expect(el.getAttribute("data-len")).toBe("5"));
+        openTfSelect();
+    const opt = await screen.findByText("1h", { selector: ".ant-select-item-option-content" })
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    // 404 零收录断言（选项不禁用）
+    openTfSelect();
+    const opt1h = await screen.findByText("1h", { selector: ".ant-select-item-option-content" });
+    expect(opt1h.closest(".ant-select-item-option")?.className).not.toContain("ant-select-item-option-disabled");
+  });
+
 });
 
 describe("段界同 bar 重复时间戳合并（change-3 CARD-01——P0 回归锚）", () => {
