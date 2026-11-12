@@ -116,7 +116,7 @@ export interface KlineChartHandle {
   /**
    * 挂/换/清观测序列线（hypothesis-workbench CARD-01：不暴露 chart 实例的
    * 命令式通道——挂/重挂/清完整生命周期由消费方经本句柄驱动）。
-   * 传 null/空数组=清线；NaN/null 值点在原语层过滤（未定义期断线）。
+   * 传 null/空数组=清线；NaN/null 值点在原语层产 whitespace 项（未定义期断线不画）。
    */
   setObservationSeries: (
     points: Array<{ time: string; value: number | null }> | null,
