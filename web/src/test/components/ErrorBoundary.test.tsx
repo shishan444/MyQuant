@@ -6,13 +6,13 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
-// Component that throws on render
+// 渲染即抛错的测试组件
 function ThrowError({ error }: { error: string }): never {
   throw new Error(error);
 }
 
 describe("ErrorBoundary", () => {
-  // Suppress console.error from React error boundary
+  // 屏蔽 React error boundary 的 console.error
   const originalConsoleError = console.error;
   beforeEach(() => {
     console.error = vi.fn();
@@ -62,11 +62,11 @@ describe("ErrorBoundary", () => {
     // Error state
     expect(screen.getByText("Something went wrong rendering this page.")).toBeInTheDocument();
 
-    // Fix the error and click retry
+    // 修复错误源后点击重试
     shouldThrow = false;
     fireEvent.click(screen.getByText("Retry"));
 
-    // Should now show recovered content
+    // 此时应显示恢复后的内容
     expect(screen.getByTestId("recovered")).toBeInTheDocument();
   });
 

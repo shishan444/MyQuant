@@ -89,7 +89,7 @@ export function useVerifyStrategies() {
   });
 }
 
-// ── Streaming hooks share one factory; only real differences are parameterised ──
+// ── 流式 hooks 共用一个工厂；真实差异全部参数化 ──
 
 type VerifyStreamPayload = Parameters<typeof api.verifyStrategiesStream>[0];
 type VerifyStreamComplete = {
@@ -98,7 +98,7 @@ type VerifyStreamComplete = {
   results: unknown[];
 };
 
-/** Progressive verify SSE stream. Stores session_id and invalidates verify-sessions. */
+/** 渐进式验证 SSE 流——存 session_id 并 invalidate verify-sessions。 */
 export const useVerifyStream = createStreamHook<VerifyStreamPayload, VerifyStreamComplete>({
   streamFn: (payload, callbacks, signal) =>
     api.verifyStrategiesStream(payload, callbacks, signal),

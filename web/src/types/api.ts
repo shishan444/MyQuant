@@ -373,7 +373,7 @@ export type RuleValidateRequest = S["RuleValidateRequest"];
 export type RuleValidateResponse = S["RuleValidateResponse"];
 
 // ---------------------------------------------------------------------------
-// Chart indicators (computed by backend)
+// 图表指标（后端计算）
 // ---------------------------------------------------------------------------
 
 /** 图表指标响应 ← /api/data/chart-indicators 端点（响应未声明 response_model），按实际 JSON 形状 */
@@ -432,7 +432,7 @@ export type VerifySession = VS["schemas"]["VerifySessionResponse"];
 export type VerifySessionListResponse = VS["schemas"]["VerifySessionListResponse"];
 
 // ---------------------------------------------------------------------------
-// Batch Backtest (multi-strategy × multi-period detailed backtesting)
+// 批量回测（多策略 × 多周期细粒度回测）
 // ---------------------------------------------------------------------------
 
 /** 批量回测请求 ← 后端 BatchBacktestRequest */

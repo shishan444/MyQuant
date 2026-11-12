@@ -102,18 +102,18 @@ export const CHART_COLORS = {
   candleUp: POLARITY.up, /* T2：蜡烛涨色单源 tokens */
   /** Bearish candle body/wick color */
   candleDown: POLARITY.down, /* T2：蜡烛跌色单源 tokens */
-  /** Fast EMA line color */
+  /** 快线 EMA 颜色 */
   emaFast: "#1E88E5",
-  /** Slow EMA line color */
+  /** 慢线 EMA 颜色 */
   emaSlow: "#FF9800",
-  /** RSI line color */
+  /** RSI 线颜色 */
   rsi: "#7C4DFF",
-  /** RSI overbought zone fill (70 level) */
+  /** RSI 超买区填充（70 位） */
   overbought: withAlpha(POLARITY.down, 0.3),
-  /** RSI oversold zone fill (30 level) */
+  /** RSI 超卖区填充（30 位） */
   oversold: withAlpha(POLARITY.up, 0.3),
-  /** Buy signal marker color */
+  /** 买入信号标记色 */
   buySignal: POLARITY.up,
-  /** Sell signal marker color */
+  /** 卖出信号标记色 */
   sellSignal: POLARITY.down,
 } as const;

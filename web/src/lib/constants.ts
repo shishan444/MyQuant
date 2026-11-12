@@ -30,7 +30,7 @@ export const TIMEFRAME_LABELS: Record<string, string> = {
   "3d": "3D",
 };
 
-// Full options for selects (Chinese labels, broader set)
+// 下拉全量选项（中文标签、更全集）
 export const TIMEFRAME_SELECT_OPTIONS = [
   { value: "15m", label: "15分钟" },
   { value: "1h", label: "1小时" },
@@ -39,7 +39,7 @@ export const TIMEFRAME_SELECT_OPTIONS = [
   { value: "1w", label: "1周" },
 ] as const;
 
-// Short labels for evolution forms
+// 演化表单用短标签
 export const TIMEFRAME_FORM_OPTIONS = [
   { value: "1d", label: "1D" },
   { value: "3d", label: "3D" },
@@ -51,19 +51,19 @@ export const TIMEFRAME_FORM_OPTIONS = [
   { value: "1m", label: "1M" },
 ] as const;
 
-// Timeframe duration in minutes (for sorting)
+// 周期档时长（分钟，供排序）
 export const TF_DURATION: Record<string, number> = {
   "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
   "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
   "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
 };
 
-/** Sort timeframes by duration, longest first */
+/** 周期档按时长降序排序（最长在前） */
 export function sortTimeframesLongestFirst(tfs: string[]): string[] {
   return [...tfs].sort((a, b) => (TF_DURATION[b] ?? 0) - (TF_DURATION[a] ?? 0));
 }
 
-/** Role labels for ordered timeframe slots */
+/** 有序周期槽位的角色标签 */
 export const TF_LAYER_ROLES = ["趋势", "判断", "确认", "执行"];
 
 // ---------------------------------------------------------------------------
@@ -220,21 +220,21 @@ export const CONDITION_OPTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Score template labels (for display in task details)
+// 评分模板标签（任务详情展示用）
 // ---------------------------------------------------------------------------
 
 export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
   explorer: "收益探索",
   optimizer: "稳健收益",
   max_return: "极致收益",
-  // Legacy aliases
+  // 历史别名
   profit_first: "收益优先",
   steady: "稳健优先",
   risk_first: "风控优先",
 };
 
 // ---------------------------------------------------------------------------
-// Default requirements for fitness evaluation
+// 适应度评估的缺省需求
 // ---------------------------------------------------------------------------
 
 export const REQUIREMENTS_DEFAULTS = {

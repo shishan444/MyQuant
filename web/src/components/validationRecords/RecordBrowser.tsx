@@ -387,7 +387,7 @@ export function RecordsBrowser() {
           />
         </div>
         <div className="rounded-lg border border-border-faint p-2">
-          <RecordDetail record={selected} />
+          <RecordDetail key={selected?.record_id} record={selected} />
         </div>
       </div>
     </div>

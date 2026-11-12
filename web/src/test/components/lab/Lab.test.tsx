@@ -171,7 +171,7 @@ describe("Lab - autoRun removal", () => {
 
     render(<Lab />, { wrapper: createWrapper() });
 
-    // runBacktest should NOT be called on mount
+    // 挂载时不应调用 runBacktest
     expect(runBacktest).not.toHaveBeenCalled();
   });
 
@@ -186,7 +186,7 @@ describe("Lab - autoRun removal", () => {
 
     render(<Lab />, { wrapper: createWrapper() });
 
-    // Should be in backtest mode (tab active)
+    // 应处于回测模式（tab 激活）
     expect(screen.getByText("策略回测")).toBeInTheDocument();
   });
 
@@ -195,7 +195,7 @@ describe("Lab - autoRun removal", () => {
 
     render(<Lab />, { wrapper: createWrapper() });
 
-    // Should show hypothesis mode UI elements
+    // 应显示假设模式的界面元素
     expect(screen.getByText("假设验证")).toBeInTheDocument();
     expect(screen.getByText("规律构建器")).toBeInTheDocument();
   });
@@ -209,9 +209,9 @@ describe("Lab - autoRun removal", () => {
 
     render(<Lab />, { wrapper: createWrapper() });
 
-    // Config panel should be collapsed (showing summary) with the symbol
+    // 配置面板应折叠（呈摘要态）并显示币种
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
-    // runBacktest should NOT have been called (user needs to click)
+    // 不应已调用 runBacktest（需用户点击）
     expect(runBacktest).not.toHaveBeenCalled();
   });
 

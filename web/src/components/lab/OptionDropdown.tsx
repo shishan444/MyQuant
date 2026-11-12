@@ -10,27 +10,26 @@ export interface OptionItem {
 }
 
 interface OptionDropdownProps {
-  /** Current selected value. */
+  /** 当前选中值。 */
   value: string;
-  /** Label shown on the trigger button (caller resolves it, e.g. getSubjectLabel). */
+  /** 触发按钮上显示的标签（调用方解析，如 getSubjectLabel）。 */
   label: string;
-  /** Flat option list; grouped by `category` at render time. */
+  /** 扁平选项表；渲染时按 category 分组。 */
   options: OptionItem[];
   onChange: (value: string) => void;
-  /** Show the search input. SubjectDropdown uses it, ActionDropdown does not. */
+  /** 是否显示搜索框。SubjectDropdown 用，ActionDropdown 不用。 */
   searchable?: boolean;
-  /** DropdownPortal width. */
+  /** DropdownPortal 宽度。 */
   width?: number;
-  /** Tailwind max-height class for the option list, e.g. "max-h-56". */
+  /** 选项表的 Tailwind max-height class，如 "max-h-56"。 */
   maxHeightClass?: string;
   searchPlaceholder?: string;
 }
 
 /**
- * Shared "trigger button + portal + grouped option list" dropdown used by
- * SubjectDropdown and ActionDropdown. Removes duplicated trigger styling,
- * portal wiring and category rendering; only the real differences
- * (searchable / width / maxHeight / options source) are parameterised.
+ * SubjectDropdown 与 ActionDropdown 共用的「触发按钮+portal+分组选项表」
+ * 下拉——收敛触发样式、portal 接线与分组渲染的重复；真实差异
+ * （可搜索/宽度/最大高/选项源）全部参数化。
  */
 export function OptionDropdown({
   value,

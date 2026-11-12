@@ -62,14 +62,14 @@ export function StrategyDetail({
   const metrics = champion_metrics;
   const dimScores = champion_dimension_scores;
 
-  // Parse satisfaction data for per-dimension display
+  // 解析达标数据供逐维展示
   const satisfactionEntries = champion_satisfaction
     ? Object.entries(champion_satisfaction) as Array<[string, { actual: number; required: number; ratio: number; met: boolean }]>
     : null;
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
-      {/* Fitness and qualified status */}
+      {/* 适应度与达标状态 */}
       {(champion_fitness != null || champion_qualified != null) && (
         <div className="flex items-center gap-3 text-xs">
           {champion_fitness != null && (
@@ -263,7 +263,7 @@ export function StrategyDetail({
         </div>
       )}
 
-      {/* Per-dimension satisfaction details (replaces dimension_scores) */}
+      {/* 逐维达标明细（取代 dimension_scores） */}
       {satisfactionEntries && satisfactionEntries.length > 0 && (
         <div className="mt-1 rounded-lg border border-slate-700/30 p-3">
           <div className="mb-2 text-xs font-medium text-slate-300">

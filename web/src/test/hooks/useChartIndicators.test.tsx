@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-// Mock API services before any imports that use them
+// 在任何使用方 import 之前先 Mock API services
 vi.mock("@/services/datasets", () => ({
   getOhlcvBySymbol: vi.fn(),
   getChartIndicators: vi.fn(),
@@ -75,9 +75,9 @@ describe("useChartIndicators", () => {
       { wrapper: createWrapper() },
     );
 
-    // Even if the query fires due to queryOptions internal enabled,
-    // the key behavior is that no data should be returned to the consumer
-    // when our external enabled is false (e.g. before user triggers action)
+    // 即便 queryOptions 内部 enabled 导致查询发出，
+    // 关键行为是外部 enabled 为 false 时（如用户未触发动作前）
+    // 消费方不应拿到任何数据
     expect(result.current.candleData).toBeUndefined();
     expect(result.current.chartIndicators).toEqual([]);
     expect(result.current.chartBollData).toBeUndefined();
@@ -146,7 +146,7 @@ describe("useChartIndicators", () => {
       expect(result.current.volumeData.length).toBe(5);
     });
 
-    // First candle: close >= open, should be green
+    // 首根 K 线：close >= open，应为绿柱
     expect(result.current.volumeData[0]).toEqual({
       time: "2025-01-01T00:00:00Z",
       value: 1000,

@@ -7,6 +7,7 @@
  */
 import { CHART_VB, ATTENTION, TEXT } from "@/theme/tokens";
 import { toTime } from "@/components/charts/core/time";
+import { formatTimestamp } from "@/lib/utils";
 import type { ValidationRecordRow, ValidationSort } from "@/services/validationRecords";
 import type { VrTraceRow } from "@/services/validationRecords";
 
@@ -142,8 +143,8 @@ const LEVEL_LABELS: Record<string, string> = {
 };
 
 function fmtRange(start?: string | null, end?: string | null): string {
-  const s = start?.slice(0, 10);
-  const e = end?.slice(0, 10);
+  const s = start != null ? formatTimestamp(start, "date") : undefined;
+  const e = end != null ? formatTimestamp(end, "date") : undefined;
   if (!s && !e) return "—";
   return `${s || "?"} → ${e || "?"}`;
 }

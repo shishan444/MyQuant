@@ -136,7 +136,7 @@ function OverviewTab({
     { label: "种群大小", value: String(task.population_size) },
   ];
 
-  // Build requirements display items from task data
+  // 由任务数据构造达标要求展示项
   const req = task.requirements;
   const requirementItems = req ? [
     { label: "最低年化收益", value: `${(req.min_annual_return * 100).toFixed(0)}%` },
@@ -178,7 +178,7 @@ function OverviewTab({
         </div>
       </Section>
 
-      {/* Requirements (replaces score template) */}
+      {/* 达标要求（取代评分模板） */}
       {requirementItems && (
         <Section title="达标要求">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2">
@@ -191,7 +191,7 @@ function OverviewTab({
           </div>
         </Section>
       )}
-      {/* Fallback: show score template if no requirements */}
+      {/* 降级：无达标要求时显示评分模板 */}
       {!requirementItems && task.score_template && (
         <Section title="评分模板 (旧)">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2">

@@ -45,14 +45,15 @@ export interface ChartTransformResult {
 }
 
 // ---------------------------------------------------------------------------
-// Parsing
+// 解析
 // ---------------------------------------------------------------------------
 
-/** Parse the pipe-delimited top3_summary string from the backend. */
+/** 解析后端 top3_summary 竖线分隔串——形如 "best=85.2|pop=2|diag={...}"，
+ *  提取 population/avgTrades/diversity 三值；非法串返回空对象不抛错。 */
 export function parseDiagnostics(top3Summary?: string): ParsedDiagnostics {
   if (!top3Summary) return {};
   try {
-    // Format: "best=85.2|pop=2|diag={...}"
+    // 形如 "best=85.2|pop=2|diag={...}"
     const parts = top3Summary.split("|");
     let population: number | undefined;
     let raw: Record<string, unknown> | undefined;
@@ -85,10 +86,11 @@ export function parseDiagnostics(top3Summary?: string): ParsedDiagnostics {
 }
 
 // ---------------------------------------------------------------------------
-// Transformation
+// 转换
 // ---------------------------------------------------------------------------
 
-/** Transform raw evolution history records into chart-ready data. */
+/** 原始演化历史记录转图表就绪数据——五遍扫描：数据点映射/种群边界/
+ *  累计最优/冠军变更+逐代差分/停滞计数；空记录返回全空结构。 */
 export function transformChartData(
   records: EvolutionHistoryRecord[]
 ): ChartTransformResult {
@@ -96,7 +98,7 @@ export function transformChartData(
     return { data: [], championChanges: [], boundaries: [], stats: { maxStagnation: 0, totalChampionChanges: 0, populationCount: 0 } };
   }
 
-  // Pass 1: Map raw records to chart data points
+  // Pass 1：原始记录映射为图表数据点
   const chartData: ChartDataPoint[] = records.map((r) => {
     const diag = parseDiagnostics(r.top3_summary);
     return {
@@ -105,7 +107,7 @@ export function transformChartData(
       avgScore: r.avg_score,
       bestFitness: r.best_fitness,
       avgFitness: r.avg_fitness,
-      cumulativeBest: r.best_score, // placeholder, computed in pass 2
+      cumulativeBest: r.best_score, // 占位值——Pass 3 覆写
       prevBestScore: undefined,
       isChampionChange: false,
       stagnationCount: 0,
@@ -116,7 +118,7 @@ export function transformChartData(
     };
   });
 
-  // Pass 2: Detect population boundaries
+  // Pass 2：检测种群边界（population 值变更处）
   const boundaries: number[] = [];
   for (let i = 1; i < chartData.length; i++) {
     if (chartData[i].population !== chartData[i - 1].population) {
@@ -126,16 +128,16 @@ export function transformChartData(
   }
   const populationCount = new Set(chartData.map((d) => d.population)).size;
 
-  // Pass 3: Compute cumulative best (global, never decreases)
+  // Pass 3：计算累计最优（全局单调不降）
   let cumBest = -Infinity;
   for (const point of chartData) {
     cumBest = Math.max(cumBest, point.bestScore);
     point.cumulativeBest = cumBest;
   }
 
-  // Pass 4: Champion changes + per-generation delta
-  // runningMax tracks the global all-time best (only increases) for champion detection.
-  // prevGenScore tracks the previous generation's score for delta display.
+  // Pass 4：冠军变更+逐代差分
+  // runningMax 追踪全局历史最优（只增不减），用于冠军变更判定。
+  // prevGenScore 追踪上一代得分，用于差分显示。
   let runningMax = -Infinity;
   let prevGenScore: number | undefined;
   const changes: ChartDataPoint[] = [];
@@ -154,7 +156,7 @@ export function transformChartData(
     prevGenScore = point.bestScore;
   }
 
-  // Pass 5: Stagnation count (resets at population boundaries)
+  // Pass 5：停滞计数（种群边界清零重计）
   let stagnationCounter = 0;
   let runningBest = -Infinity;
   let maxStagnation = 0;

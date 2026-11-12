@@ -17,18 +17,18 @@ export interface UseChartIndicatorsParams {
   symbol: string;
   timeframe: string;
   dateRange: { start?: string; end?: string };
-  /** Which sub-chart indicator is active. Defaults to "volume". */
+  /** 当前激活的副图指标，缺省 "volume"。 */
   subChartType?: SubChartType;
-  /** Whether to run the queries. Defaults to true. */
+  /** 是否执行查询，缺省 true。 */
   enabled?: boolean;
-  /** Refetch interval in ms for OHLCV query. Defaults to false (no refetch). */
+  /** OHLCV 查询的重取间隔（毫秒），缺省 false（不重取）。 */
   refetchInterval?: number | false;
-  /** Row limit for OHLCV and indicator queries. Defaults to 50000. */
+  /** OHLCV 与指标查询的行数上限，缺省 50000。 */
   limit?: number;
 }
 
 export interface UseChartIndicatorsResult {
-  /** Raw OHLCV candle data */
+  /** 原始 OHLCV K 线数据 */
   candleData:
     | Array<{
         timestamp: string;
@@ -40,13 +40,13 @@ export interface UseChartIndicatorsResult {
       }>
     | undefined;
 
-  /** EMA + RSI lines for main chart */
+  /** 主图 EMA+RSI 线 */
   chartIndicators: IndicatorData[];
-  /** Bollinger Band data */
+  /** 布林带数据 */
   chartBollData: BollingerBandData | undefined;
-  /** Volume histogram data */
+  /** 成交量柱数据 */
   volumeData: Array<{ time: string; value: number; color: string }>;
-  /** MACD sub-chart data */
+  /** MACD 副图数据 */
   macdData: {
     macd: Array<{ time: string; value: number }>;
     signal: Array<{ time: string; value: number }>;
@@ -122,7 +122,7 @@ export function useChartIndicators(
     ],
   );
 
-  // Query 2: Chart indicators (depends on candle data being available)
+  // Query 2：图表指标（依赖 K 线数据已就绪）
   const { data: indicatorResponse, isLoading: isLoadingIndicators } = useQuery({
     ...chartIndicatorOptions(
       symbol,
@@ -169,7 +169,7 @@ export function useChartIndicators(
     return indicatorResponse.boll;
   }, [indicatorResponse?.boll, chartSettings.boll.enabled]);
 
-  // Transform: Volume histogram data from candle data
+  // 转换：由 K 线数据生成成交量柱
   const volumeData = useMemo(() => {
     if (!candleData) return [];
     return candleData.map((d) => {

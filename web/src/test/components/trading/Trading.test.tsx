@@ -7,7 +7,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-// Mock all hooks - use importOriginal to get all exports, then override specific ones
+// Mock 全部 hooks——importOriginal 取全量导出后仅覆写指定项
 vi.mock("@/hooks/useTrading", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useTrading")>();
   return {
@@ -322,7 +322,7 @@ describe("Trading page", () => {
     } as any);
 
     render(<Trading />, { wrapper: createWrapper() });
-    // Master-Detail: symbol in sidebar (span) and detail panel (h2)
+    // Master-Detail：币种同时出现在侧栏（span）与详情面板（h2）
     expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThanOrEqual(2);
   });
 

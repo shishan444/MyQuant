@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { AlertTriangle, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
 import { IntegrityMatrix } from "@/components/data/IntegrityPanels";
+import { formatTimestamp } from "@/lib/utils";
 import {
   getPendingEvents,
   getValidationRecords,
@@ -181,7 +182,7 @@ function PageSections(props: {
                   <span className="font-mono text-text-secondary">{r.hypothesis_id}</span>
                   <span className="text-text-muted">{r.level}</span>
                   <span className="ml-auto font-mono text-[10px] text-text-muted">
-                    {r.created_at.slice(0, 16).replace("T", " ")}
+                    {formatTimestamp(r.created_at, "minute")}
                   </span>
                 </li>
               ))}

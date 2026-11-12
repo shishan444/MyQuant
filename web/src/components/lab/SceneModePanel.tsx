@@ -1,4 +1,4 @@
-/** Scene verification mode panel: template selection + chart + annotations + results. */
+/** 场景验证模式面板：模板多选+K 线图+标注绘制+结果呈现四区。 */
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Crosshair, Minus, Square, X, Eye } from "lucide-react";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ import { getSceneTypes, verifyScene } from "@/services/scene";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
 import type { SceneVerifyResponse, SceneTriggerDetail } from "@/types/scene";
 
-// Default params per scene type (sub-patterns inherit from parent)
+// 各场景类型缺省参数（子模式继承父模式）
 const SCENE_DEFAULT_PARAMS: Record<string, Record<string, number>> = {
   double_top: { lookback: 5, confirmation_bars: 5, min_prominence_pct: 0.5 },
   head_shoulders_top: { lookback: 5, confirmation_bars: 5, min_prominence_pct: 0.5 },
@@ -40,7 +40,7 @@ const SCENE_DEFAULT_DIRECTION: Record<string, string> = {
   mean_reversion: "below",
 };
 
-/** Merge multiple SceneVerifyResponse into a single combined view. */
+/** 多个 SceneVerifyResponse 合并为单一组合视图（触发明细拼合、统计取首份代表）。 */
 function mergeResponses(responses: SceneVerifyResponse[]): SceneVerifyResponse {
   if (responses.length === 0) {
     return {
@@ -58,7 +58,7 @@ function mergeResponses(responses: SceneVerifyResponse[]): SceneVerifyResponse {
   const labels = responses.map((r) => r.scene_label).filter(Boolean);
   const warnings = responses.flatMap((r) => r.warnings);
 
-  // Use statistics from the first response as representative
+  // 统计取首份响应作代表
   const stats = responses[0].statistics_by_horizon;
 
   return {
@@ -91,7 +91,7 @@ export function SceneModePanel({
     try { return localStorage.getItem("scene_dataEnd") ?? ""; } catch { return ""; }
   });
 
-  // Persist date range on change
+  // 日期区间变更即持久化到 localStorage
   useEffect(() => {
     try {
       if (dataStart) localStorage.setItem("scene_dataStart", dataStart);
@@ -99,28 +99,28 @@ export function SceneModePanel({
     } catch {}
   }, [dataStart, dataEnd]);
 
-  // Scene selection - multi-select
+  // 场景选择（多选）
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [params, setParams] = useState<Record<string, number>>({});
   const [direction, setDirection] = useState("support");
 
-  // Result
+  // 验证结果
   const [result, setResult] = useState<SceneVerifyResponse | null>(null);
 
-  // Loading state for parallel requests
+  // 并行请求的装载态
   const [isValidating, setIsValidating] = useState(false);
 
-  // Chart + annotation state
+  // 图表+标注状态
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [activeTool, setActiveTool] = useState<"line" | "box" | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
 
-  // Sub-chart indicator type
+  // 副图指标类型
   const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
-  // Shared chart indicators hook (replaces manual OHLCV + indicator fetching)
+  // 共享图表指标 hook（取代手工拉 OHLCV+指标）
   const {
     candleData,
     chartIndicators,
@@ -135,7 +135,7 @@ export function SceneModePanel({
     subChartType,
   });
 
-  // Fetch scene types
+  // 拉取场景类型清单
   const { data: typesData } = useQuery({
     queryKey: ["sceneTypes"],
     queryFn: getSceneTypes,
@@ -143,7 +143,7 @@ export function SceneModePanel({
   });
   const sceneTypes = typesData?.types ?? [];
 
-  // Available sources for symbol dropdown
+  // 币种下拉的可用数据源
   const { data: sourcesData } = useQuery(useAvailableSources());
   const dynamicSymbols = (() => {
     if (!sourcesData?.sources?.length) return SYMBOL_OPTIONS;
@@ -158,7 +158,7 @@ export function SceneModePanel({
     return opts.length > 0 ? opts : SYMBOL_OPTIONS;
   })();
 
-  // Toggle a scene type in the multi-select
+  // 多选集合中切换一个场景类型
   const handleToggleType = useCallback((typeId: string) => {
     setSelectedTypes((prev) => {
       const next = new Set(prev);
@@ -172,17 +172,17 @@ export function SceneModePanel({
     setResult(null);
   }, []);
 
-  // Update params when selected types change
+  // 选中类型集变化时更新参数
   useEffect(() => {
     if (selectedTypes.size > 0) {
-      // Merge default params from all selected types
+      // 合并全部选中类型的缺省参数
       const merged: Record<string, number> = {};
       for (const id of selectedTypes) {
         Object.assign(merged, SCENE_DEFAULT_PARAMS[id] ?? {});
       }
       setParams(merged);
 
-      // Direction from first selected type that needs it
+      // 方向取第一个需要它的选中类型
       for (const id of selectedTypes) {
         if (id in SCENE_DEFAULT_DIRECTION) {
           setDirection(SCENE_DEFAULT_DIRECTION[id]);
@@ -223,7 +223,7 @@ export function SceneModePanel({
         mergedParams.annotation_price = lineAnnotation.price;
       }
 
-      // Fire parallel requests for each selected type
+      // 每个选中类型各发一路并行请求
       const requests = Array.from(selectedTypes).map((sceneType) =>
         verifyScene({
           symbol,
@@ -248,12 +248,12 @@ export function SceneModePanel({
 
   const handleLocateTrigger = useCallback(
     (_trigger: SceneTriggerDetail) => {
-      // Future: scroll chart to trigger time
+      // 预留：滚动图表到触发时刻
     },
     [],
   );
 
-  // Convert triggers to chart markers (scene-specific logic, not part of shared hook)
+  // 触发明细转图表标记（场景特有逻辑，不入共享 hook）
   const chartTriggers = result?.trigger_details?.slice(0, 50).map((t) => ({
     id: t.id,
     time: t.timestamp,
@@ -265,7 +265,7 @@ export function SceneModePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Data source row */}
+      {/* 数据源行 */}
       <div className="flex items-center gap-3">
         <span className="w-14 shrink-0 text-xs text-slate-400">数据源</span>
         <AntSelect
@@ -347,7 +347,7 @@ export function SceneModePanel({
               框选
             </button>
 
-            {/* Sub-chart indicator selector */}
+            {/* 副图指标选择器 */}
             <div className="flex items-center gap-0.5 ml-auto">
               <span className="text-[11px] text-slate-500 mr-1">副图</span>
               {(["volume", "macd", "rsi", "kdj"] as const).map((t) => (
@@ -367,7 +367,7 @@ export function SceneModePanel({
               ))}
             </div>
 
-            {/* Active annotations list */}
+            {/* 生效中标注清单 */}
             {annotations.length > 0 && (
               <div className="flex items-center gap-1 ml-2">
                 {annotations.map((ann) => (
@@ -395,7 +395,7 @@ export function SceneModePanel({
             )}
           </div>
 
-          {/* Chart container with annotation overlay */}
+          {/* 图表容器（叠标注层） */}
           <div ref={chartContainerRef} className="relative">
             <KlineChart
               data={candleData}

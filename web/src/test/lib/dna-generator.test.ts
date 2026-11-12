@@ -56,7 +56,7 @@ describe("generateDnaFromValidation", () => {
       { logic: "AND", subject: "EMA", action: "cross_above", target: "20" },
     ];
     const dna = generateDnaFromValidation(whenEmpty, [], "BTCUSDT", "4h");
-    // Only EMA should be included (empty subject filtered)
+    // 仅 EMA 应入选（空 subject 被过滤）
     expect(dna.signal_genes).toHaveLength(1);
     expect(dna.signal_genes[0].indicator).toBe("EMA");
   });

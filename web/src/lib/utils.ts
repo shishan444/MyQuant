@@ -53,17 +53,30 @@ export function formatDuration(start: string, end: string): string {
   }
 }
 
-export function formatDateTime(t: string): string {
-  try {
-    return new Date(t).toLocaleString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return t;
+/**
+ * 时间戳格式化四档单函数（fe-recorddetail-td-deadtfs 组 5 REQ-3d）。
+ *
+ * 职能：UTC ISO 串截断为四档显示形制（全部 UTC 串处理非本地时区）。
+ * 四档："minute"=YYYY-MM-DD HH:mm（T→空格）；"second"=含秒截断；
+ * "full"=完整串仅 T→空格；"date"=YYYY-MM-DD。null/undefined→"—"。
+ * 服务对象：验证记录/交易/验证执行等页面的时间列显示收编点。
+ * 边界：非 ISO 串输出未定义（调用方保证输入为 ISO 形制）；本地时区
+ * 显示语义不在本函数（lib/formatDateTime 已退役）。
+ */
+export function formatTimestamp(
+  ts: string | null | undefined,
+  form: "minute" | "second" | "full" | "date",
+): string {
+  if (ts == null) return "\u2014";
+  switch (form) {
+    case "minute":
+      return ts.slice(0, 16).replace("T", " ");
+    case "second":
+      return ts.slice(0, 19).replace("T", " ");
+    case "full":
+      return ts.replace("T", " ");
+    case "date":
+      return ts.slice(0, 10);
   }
 }
 

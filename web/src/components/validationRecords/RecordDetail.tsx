@@ -18,11 +18,14 @@ import { InputNumber, Select, Switch, Tabs } from "antd";
 import { FileSearch } from "lucide-react";
 import { KlineChart, type KlineChartHandle } from "@/components/charts/KlineChart";
 import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitives/segmentBand";
-import { toTime } from "@/components/charts/core/time";
+import { formatTimestamp } from "@/lib/utils";
+import { ApiError } from "@/services/api";
 import { CHART_VC } from "@/theme/tokens";
 import {
   barsInExecRange,
   buildEquitySeries,
+  concatSegmentsWithBreaks,
+  epochOf,
   perExecEquityPoints,
   timeframeSeconds,
   useFullRangeKline,
@@ -62,12 +65,6 @@ const VERDICT_COLOR: Record<string, string> = {
 /** 视图状态：全区间（缺省主视图）| 指定执行份（单份筛选前端过滤） */
 type ViewSel = "all" | number;
 
-/** 字符串时间 → epoch 秒（toTime 单源；malformed 回退 null） */
-function epochOfTime(ts: string): number | null {
-  const t = toTime(ts);
-  return typeof t === "number" ? t : null;
-}
-
 /** epoch 秒 → ISO 带 Z 串 */
 const isoOf = (sec: number) => new Date(sec * 1000).toISOString();
 
@@ -86,52 +83,8 @@ function snapSeriesParts(
   bars: FullRangeBar[],
   tfSec: number,
 ): EquityPoint[] {
-  const out: EquityPoint[] = [];
-  let lastEpoch: number | null = null;
-  for (const part of parts) {
-    if (part.length === 0) continue;
-    const r = snapToBars(part.map((p) => p.time), bars, tfSec);
-    const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
-    const seg: Array<{ time: string; value: number }> = [];
-    for (const p of part) {
-      const to = toOf.get(p.time);
-      if (to === undefined) continue;
-      const last = seg[seg.length - 1];
-      if (last && last.time === to) last.value = p.value; // 同 bar 保尾值
-      else seg.push({ time: to, value: p.value });
-    }
-    if (seg.length === 0) continue;
-    const firstE = epochOfTime(seg[0].time);
-    if (out.length > 0 && firstE != null) {
-      const brk = firstE - 1;
-      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk) });
-    }
-    // 段界同 bar 合并：吸附后两段首尾落同一根 bar（out 末项与 seg 首项同
-    // time）时末项替换为 seg 首项——段界重置在该 bar 内不可表示（合并取
-    // 后值，与段内同 bar 保尾值规则统一）
-    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
-      out[out.length - 1] = seg[0];
-      out.push(...seg.slice(1));
-    } else {
-      out.push(...seg);
-    }
-    const pe = epochOfTime(seg[seg.length - 1].time);
-    if (pe != null) lastEpoch = pe;
-  }
-  return out;
-}
-
-/** trail 值点分段吸附（契约 K）——trail 通道断点为 null 值点（与 equity
- *  whitespace 同语义），段内未定义期在粗粒度下并段（保尾值） */
-function snapTrailParts(
-  parts: Array<Array<{ time: string; value: number }>>,
-  bars: FullRangeBar[],
-  tfSec: number,
-): Array<{ time: string; value: number | null }> {
-  const out: Array<{ time: string; value: number | null }> = [];
-  let lastEpoch: number | null = null;
-  for (const part of parts) {
-    if (part.length === 0) continue;
+  const segs = parts.map((part) => {
+    if (part.length === 0) return [];
     const r = snapToBars(part.map((p) => p.time), bars, tfSec);
     const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
     const seg: Array<{ time: string; value: number }> = [];
@@ -142,24 +95,43 @@ function snapTrailParts(
       if (last && last.time === to) last.value = p.value;
       else seg.push({ time: to, value: p.value });
     }
-    if (seg.length === 0) continue;
-    const firstE = epochOfTime(seg[0].time);
-    if (out.length > 0 && firstE != null) {
-      const brk = firstE - 1;
-      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
+    return seg;
+  });
+  return concatSegmentsWithBreaks(segs, {
+    firstTime: (seg) => seg[0].time,
+    itemTime: (item) => item.time,
+    makeBreak: (brk) => ({ time: isoOf(brk) }),
+    toItems: (seg) => seg,
+  });
+}
+
+/** trail 值点分段吸附（契约 K）——trail 通道断点为 null 值点（与 equity
+ *  whitespace 同语义），段内未定义期在粗粒度下并段（保尾值） */
+function snapTrailParts(
+  parts: Array<Array<{ time: string; value: number }>>,
+  bars: FullRangeBar[],
+  tfSec: number,
+): Array<{ time: string; value: number | null }> {
+  const segs = parts.map((part) => {
+    if (part.length === 0) return [];
+    const r = snapToBars(part.map((p) => p.time), bars, tfSec);
+    const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
+    const seg: Array<{ time: string; value: number }> = [];
+    for (const p of part) {
+      const to = toOf.get(p.time);
+      if (to === undefined) continue;
+      const last = seg[seg.length - 1];
+      if (last && last.time === to) last.value = p.value;
+      else seg.push({ time: to, value: p.value });
     }
-    // 段界同 bar 合并（同 snapSeriesParts——吸附后两段首尾落同一根 bar 时
-    // 合并取后值，段界重置在该 bar 内不可表示）
-    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
-      out[out.length - 1] = seg[0];
-      out.push(...seg.slice(1));
-    } else {
-      out.push(...seg);
-    }
-    const pe = epochOfTime(seg[seg.length - 1].time);
-    if (pe != null) lastEpoch = pe;
-  }
-  return out;
+    return seg;
+  });
+  return concatSegmentsWithBreaks(segs, {
+    firstTime: (seg) => seg[0].time,
+    itemTime: (item) => item.time,
+    makeBreak: (brk) => ({ time: isoOf(brk), value: null }),
+    toItems: (seg) => seg,
+  });
 }
 
 /** trail 全区间拼接（契约 F）：各份 trail_series concat+段界 null 断点
@@ -171,32 +143,15 @@ function concatTrail(
     .map((e) => e.trail_series ?? [])
     .filter((p) => p.length > 0);
   if (parts.length === 0) return null;
-  const out: Array<{ time: string; value: number | null }> = [];
-  let lastEpoch: number | null = null;
-  for (const part of parts) {
-    const firstEpoch = epochOfTime(part[0].time);
-    if (out.length > 0 && firstEpoch != null) {
-      const brk = firstEpoch - 1;
-      if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
-    }
-    // 段界同 bar 合并：相邻两份 trail 首尾同一时间戳（explicit 相接拓扑）
-    // 时合并取后值——段界重置在该 bar 内不可表示
-    let start = 0;
-    if (out.length > 0 && out[out.length - 1].time === part[0].time) {
-      out[out.length - 1] = { time: part[0].time, value: part[0].value ?? null };
-      start = 1;
-    }
-    for (let i = start; i < part.length; i++) {
-      const p = part[i];
-      out.push({ time: p.time, value: p.value ?? null });
-      const pe = epochOfTime(p.time);
-      if (pe != null) lastEpoch = pe;
-    }
-  }
-  return out;
+  return concatSegmentsWithBreaks(parts, {
+    firstTime: (seg) => seg[0].time,
+    itemTime: (item) => item.time,
+    makeBreak: (brk) => ({ time: isoOf(brk), value: null }),
+    toItems: (seg) => seg.map((p) => ({ time: p.time, value: p.value ?? null })),
+  });
 }
 
-const fmtTime = (t?: string | null) => (t ? t.slice(0, 16).replace("T", " ") : "—");
+const fmtTime = (t?: string | null) => formatTimestamp(t, "minute");
 const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 const unk = (v: number | null) => (v == null ? "未知" : String(v));
 
@@ -335,7 +290,10 @@ function KlineReview({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const bars: FullRangeBar[] = fr.state === "loading" || fr.state === "error" ? [] : fr.candles;
+  const bars: FullRangeBar[] = useMemo(
+    () => (fr.state === "loading" || fr.state === "error" ? [] : fr.candles),
+    [fr],
+  );
   const chartReady = fr.state !== "loading" && fr.state !== "error";
 
   // ── 契约 J：手动叠加开关（页面局部 state——不入 chart-settings 全局 store） ──
@@ -362,7 +320,7 @@ function KlineReview({
     }
     return list;
   }, [extract.overlayable, emaOn, emaPeriod, bbOn, bbPeriod, bbStd]);
-  const klineLastEpoch = bars.length ? epochOfTime(bars[bars.length - 1].timestamp) : null;
+  const klineLastEpoch = bars.length ? epochOf(bars[bars.length - 1].timestamp) : null;
   const ind = useOverlayIndicators(
     overlays,
     symbol,
@@ -394,7 +352,7 @@ function KlineReview({
     const src = exec ? [exec] : executions;
     return src
       .flatMap((e) => traceMarkers(e.trace_rows))
-      .sort((a, b) => (epochOfTime(a.time) ?? 0) - (epochOfTime(b.time) ?? 0));
+      .sort((a, b) => (epochOf(a.time) ?? 0) - (epochOf(b.time) ?? 0));
   }, [exec, executions]);
   const markers = useMemo(() => {
     if (!snapActive) return { list: markersRaw, dropped: 0 };
@@ -446,7 +404,7 @@ function KlineReview({
       setHover(null);
       return;
     }
-    const bar = viewCandles.find((b) => epochOfTime(b.timestamp) === param.time);
+    const bar = viewCandles.find((b) => epochOf(b.timestamp) === param.time);
     setHover(bar ? { time: bar.timestamp, o: bar.open, h: bar.high, l: bar.low, c: bar.close } : null);
   }, [viewCandles]);
 
@@ -976,11 +934,9 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
   // 视图周期（契约 K）：null=基准（执行语义锚）；无数据档禁用集（请求后降级）
   const [viewTf, setViewTf] = useState<string | null>(null);
   const [deadTfs, setDeadTfs] = useState<ReadonlySet<string>>(new Set());
-  useEffect(() => {
-    setView("all");
-    setViewTf(null);
-    setDeadTfs(new Set());
-  }, [recordId]);
+  // REQ-4 重试序号与失败档标记（D5.3 重切失败档必重发——queryKey 携序号）
+  const [failedTf, setFailedTf] = useState<string | null>(null);
+  const [retrySeq, setRetrySeq] = useState(0);
   const chartRef = useRef<KlineChartHandle | null>(null);
   const locate = (time: string) => chartRef.current?.scrollToTime(time);
   // 全区间装载（hooks 无条件区——早退前调用；明细未就绪/不可用时空
@@ -992,15 +948,34 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     st.symbol,
     st.timeframe,
     viewTf,
+    retrySeq,
   );
-  // 契约 K：无数据档降级——视图周期下端点失败→该档禁用+回基准（零额外请求）
-  useEffect(() => {
-    if (fr.state === "error" && viewTf != null) {
+  // REQ-4：重切非 404 失败档时递增序号（queryKey 携序号强制重发）
+  const handleViewTf = (tf: string | null) => {
+    setViewTf(tf);
+    if (tf !== null && tf === failedTf) setRetrySeq((s) => s + 1);
+  };
+  // 契约 K 判死分流（REQ-4/D5——render 期前值推导消解 set-state-in-effect）：
+  // 404=档位无数据（禁用+回基准，零额外请求）；非 404=暂态失败（不入
+  // deadTfs+回基准+提示条可见+重切该档必重发）。judgedError 引用稳定
+  // （react-query 对同一失败持有同一 error 引用）防渲染循环
+  const [judgedError, setJudgedError] = useState<unknown>(null);
+  if (fr.state === "error" && viewTf != null && judgedError !== fr.error) {
+    setJudgedError(fr.error);
+    const is404 = fr.error instanceof ApiError && fr.error.status === 404;
+    if (is404) {
       setDeadTfs((prev) => new Set(prev).add(viewTf));
-      setViewTf(null);
+    } else {
+      setFailedTf(viewTf);
     }
-  }, [fr.state, viewTf]);
-  // 契约 H：策略 DNA → 指标三分判别（strategy_id null=adhoc/历史→三分全空）
+    setViewTf(null);
+  }
+  // 非 404 暂态失败提示条（渲染期派生；重试成功清除失败标记）
+  if (failedTf != null && viewTf === failedTf && fr.state === "ok") {
+    // 用户重切失败档且该档查询成功 → 清除失败标记（提示条随之消失）
+    setFailedTf(null);
+  }
+  const tfFetchFailed = failedTf != null;
   const strategyId = q.data?.detail_available === true ? q.data.strategy_id : null;
   const strat = useQuery({ ...useStrategy(strategyId ?? ""), enabled: !!strategyId });
   const dnaExtract = useMemo(
@@ -1059,6 +1034,12 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
       {exec ? (
         <>
           {/* D2 K 线复核（全区间单图） */}
+          {/* REQ-4：非 404 暂态失败提示条（重切该档可重试） */}
+          {tfFetchFailed && (
+            <p className="text-xs text-loss" data-testid="vr-tf-fetch-failed">
+              {failedTf} 档拉取失败（网络/服务异常），可重试——重切该档位即可
+            </p>
+          )}
           <KlineReview
             executions={d.executions}
             fr={fr}
@@ -1071,7 +1052,7 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
             hasStrategy={!!strategyId}
             viewTf={viewTf}
             deadTfs={deadTfs}
-            onViewTf={setViewTf}
+            onViewTf={handleViewTf}
           />
           {/* D3 资金曲线 */}
           <EquityReview exec={exec} bars={bars} record={record} />

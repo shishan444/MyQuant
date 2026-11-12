@@ -122,7 +122,7 @@ export const mockIndicatorResponse: ChartIndicatorsResponse = {
 };
 
 // ---------------------------------------------------------------------------
-// Mock: chartSettings store default state
+// Mock：chartSettings store 缺省状态
 // ---------------------------------------------------------------------------
 
 export const mockChartSettings = {

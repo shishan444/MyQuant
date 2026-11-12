@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { PaperFill } from "@/services/trading";
 
-// Mock hooks and child components
+// Mock 掉 hooks 与子组件
 vi.mock("@/hooks/useChartIndicators", () => ({
   useChartIndicators: vi.fn(),
 }));
@@ -72,7 +72,7 @@ describe("TradingChart", () => {
     expect(screen.getByTestId("signal-count").textContent).toBe("0");
   });
 
-  // --- includes add/reduce actions as signals ---
+  // --- 加仓/减仓动作也作信号 ---
   it("includes fills with kind other than open as signals", () => {
     const fills = [
       makeFill({ id: 1, kind: "add", bar_time: "2025-01-05T08:00:00Z" }),

@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { VerifyProgressEvent } from "@/services/strategies";
 
-/** Shared streaming state for SSE-driven progressive operations. */
+/** SSE 渐进式操作的共享流状态——verify/backtest 等流式任务共用形制。 */
 export interface StreamState {
   status: "idle" | "running" | "done" | "error";
   progress: { current: number; total: number };
@@ -22,17 +22,17 @@ export interface StreamCallbacks<TComplete> {
 }
 
 interface StreamHookConfig<TPayload, TComplete extends { summary: unknown[]; results: unknown[] }> {
-  /** SSE stream driver, e.g. api.verifyStrategiesStream. */
+  /** SSE 流驱动函数，如 api.verifyStrategiesStream。 */
   streamFn: (
     payload: TPayload,
     callbacks: StreamCallbacks<TComplete>,
     signal: AbortSignal,
   ) => void;
-  /** Toast error prefix, e.g. "验证失败". */
+  /** Toast 错误前缀，如「验证失败」。 */
   errorLabel: string;
-  /** When set, the matching field of onComplete data is stored as sessionId. */
+  /** 指定后，onComplete 数据的同名字段存为 sessionId。 */
   sessionIdKey?: keyof TComplete;
-  /** Extra side effect on completion, e.g. invalidate queries. */
+  /** 完成时的附加副作用，如 invalidate queries。 */
   onCompleteExtra?: (qc: QueryClient) => void;
 }
 

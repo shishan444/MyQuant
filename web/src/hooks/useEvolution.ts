@@ -155,14 +155,14 @@ export function useEvolutionWebSocket(taskId: string | null) {
         const update = result.event;
 
         switch (update.type) {
-          // Handle task_started: runner has begun execution
+          // task_started：runner 已开始执行
           case "task_started": {
             qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
             qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
             break;
           }
 
-          // Handle task_snapshot: progress recovery on WS reconnect
+          // task_snapshot：WS 重连后的进度恢复
           case "task_snapshot": {
             qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
               if (!old) {
@@ -183,7 +183,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
             break;
           }
 
-          // Handle phase_changed: runner phase transition
+          // phase_changed：runner 阶段迁移
           case "phase_changed": {
             qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
               if (!old) return old;
@@ -206,7 +206,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
           }
 
           case "strategy_discovered": {
-            // Invalidate per-task discovered strategies
+            // invalidate 单任务的已发现策略
             qc.invalidateQueries({
               queryKey: evolutionKeys.discovered(currentTaskId),
             });
@@ -221,7 +221,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
             const gen = update.type === "generation_complete" ? update : null;
             qc.setQueryData(evolutionKeys.task(currentTaskId), (old: unknown) => {
               if (!old) {
-                // Cache not ready yet -- trigger refetch as fallback
+                // 缓存未就绪——回退触发 refetch
                 qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
                 return old;
               }
@@ -242,7 +242,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
               };
             });
 
-            // Directly merge history record into cache for instant chart update
+            // 历史记录直接并入缓存，图表即时更新
             if (update.type === "generation_complete") {
               qc.setQueryData(evolutionKeys.history(currentTaskId), (old: unknown) => {
                 if (!old) return old;
@@ -255,7 +255,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
                   created_at: new Date().toISOString(),
                 };
                 const records = prev.records ?? [];
-                // Avoid duplicate if this generation already exists
+                // 该代已存在时去重跳过
                 if (records.some((r) => r.generation === newRecord.generation)) return old;
                 return { ...prev, records: [...records, newRecord] };
               });

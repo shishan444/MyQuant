@@ -108,7 +108,7 @@ export function TargetInput({ value, onChange, action, subject: _subject, baseTi
     );
   }
 
-  // Form F: series cross actions -> indicator target dropdown
+  // Form F：序列穿越类动作 → 指标线目标下拉
   if (isSeriesCrossAction(action)) {
     return (
       <CrossTargetDropdown
@@ -186,7 +186,7 @@ export function TargetInput({ value, onChange, action, subject: _subject, baseTi
     );
   }
 
-  // Form A: cross/touch/breakout/breakdown -> select indicator line
+  // Form A：穿越/触碰/突破/跌破 → 选指标线
   if (isCrossAction(action)) {
     return (
       <CrossTargetDropdown
@@ -198,7 +198,7 @@ export function TargetInput({ value, onChange, action, subject: _subject, baseTi
     );
   }
 
-  // Form C: spike/shrink -> multiplier input
+  // Form C：放量/缩量 → 倍数输入
   if (isMultiplierAction(action)) {
     const numVal = value || "2";
     return (
@@ -217,7 +217,7 @@ export function TargetInput({ value, onChange, action, subject: _subject, baseTi
     );
   }
 
-  // Form B: gt/lt -> number input with % or absolute
+  // Form B：大于/小于 → 数字输入（百分比或绝对值）
   const numVal = value || "0";
   return (
     <div className="flex items-center gap-1">

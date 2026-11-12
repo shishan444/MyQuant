@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock axios before importing services
+// import services 之前先 Mock axios
 vi.mock("@/services/api", () => ({
   api: {
     get: vi.fn(),

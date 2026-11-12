@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-// Mock motion/react to avoid animation issues in tests
+// Mock motion/react 规避测试中的动画问题
 vi.mock("motion/react", () => ({
   useReducedMotion: () => false,
   motion: {
@@ -103,7 +103,7 @@ describe("StrategyDetail", () => {
     expect(screen.getByText("max_drawdown")).toBeInTheDocument();
     expect(screen.getByText("win_rate")).toBeInTheDocument();
 
-    // Check actual values rendered
+    // 核对渲染出的实际值
     expect(screen.getByText("0.250")).toBeInTheDocument();
   });
 

@@ -32,12 +32,12 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-// Mock KlineChart to avoid canvas/lightweight-charts issues in jsdom
+// Mock KlineChart 规避 jsdom 下 canvas/lightweight-charts 问题
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: vi.fn(() => <div data-testid="kline-chart" />),
 }));
 
-// Mock EquityCurve to avoid echarts canvas issues in jsdom
+// Mock EquityCurve 规避 jsdom 下 echarts canvas 问题
 vi.mock("@/components/charts/EquityCurve", () => ({
   EquityCurve: vi.fn(() => <div data-testid="equity-curve" />),
 }));
@@ -91,13 +91,13 @@ describe("BacktestModePanel", () => {
   it("does NOT auto-run backtest on mount", () => {
     render(<BacktestModePanel {...defaultProps} />, { wrapper: createWrapper() });
 
-    // runBacktest should NOT have been called on mount
+    // 挂载时不应调用 runBacktest
     expect(runBacktest).not.toHaveBeenCalled();
   });
 
   it("has no autoRun prop in the interface", () => {
-    // Type-level test: ensure BacktestModePanelProps does not accept autoRun
-    // This verifies at runtime that autoRun is not a valid prop
+    // 类型级测试：确保 BacktestModePanelProps 不接受 autoRun
+    // 运行时验证 autoRun 不是合法 prop
     const props = { ...defaultProps };
     expect(props).not.toHaveProperty("autoRun");
   });
@@ -124,7 +124,7 @@ describe("BacktestModePanel", () => {
       { wrapper: createWrapper() },
     );
 
-    // Manually trigger via ref (simulates parent button click)
+    // 经 ref 手动触发（模拟父组件按钮点击）
     ref.current?.runBacktest();
 
     await waitFor(() => {
@@ -144,13 +144,13 @@ describe("BacktestModePanel", () => {
       { wrapper: createWrapper() },
     );
 
-    // No indicator fetch before running backtest
+    // 回测运行前不拉取指标
     expect(getChartIndicators).not.toHaveBeenCalled();
 
-    // Trigger backtest
+    // 触发回测
     ref.current?.runBacktest();
 
-    // Wait for backtest to complete and indicators to be fetched
+    // 等回测完成并拉到指标
     await waitFor(() => {
       expect(getChartIndicators).toHaveBeenCalled();
     });
@@ -164,7 +164,7 @@ describe("BacktestModePanel", () => {
       { wrapper: createWrapper() },
     );
 
-    // No sub-chart selector before backtest
+    // 回测前无副图选择器
     expect(screen.queryByText("VOLUME")).not.toBeInTheDocument();
 
     ref.current?.runBacktest();
