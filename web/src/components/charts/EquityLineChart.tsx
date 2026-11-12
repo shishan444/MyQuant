@@ -17,14 +17,8 @@ export interface EquityPoint {
 /** 少于 2 点无法绘制曲线（空态与 MIN_POINTS 语义逐字承继） */
 export const EQUITY_MIN_POINTS = 2;
 
-function formatMoney(v: number): string {
-  if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(2) + 'M';
-  if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(1) + 'K';
-  return '$' + v.toFixed(0);
-}
-
 /** 终点盈亏决定曲线色（双着色分立）：无基准金色；有基准按终点比较，持平按盈利计 */
-export function resolveEquityColor(data, baseline) {
+export function resolveEquityColor(data: EquityPoint[], baseline?: number) {
   if (baseline == null) return ATTENTION.gold;
   const last = data[data.length - 1]?.value ?? baseline;
   return last >= baseline ? POLARITY.up : POLARITY.down;
@@ -40,11 +34,11 @@ export interface EquityCurveProps {
 export function EquityLineChart({ data, baseline, height = 200 }: EquityCurveProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const hasData = data.length >= EQUITY_MIN_POINTS;
-  // jsdom 降级：canvas.getContext 不存在即无绘制面（jsdom 无 canvas 实现）
+  // jsdom 降级：getContext("2d") 调用判空（jsdom 方法存在但返回 null，无绘制面）
   const canDraw = typeof document !== 'undefined' &&
-    document.createElement('canvas').getContext != null;
+    document.createElement('canvas').getContext('2d') != null;
 
   useEffect(() => {
     if (!hasData || !canDraw || !containerRef.current) return;
@@ -53,7 +47,7 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
       layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(LineSeries, { lineWidth: 1.5 });
+    const series = chart.addSeries(LineSeries, { lineWidth: 2 });
     seriesRef.current = series;
     return () => {
       chart.remove();
@@ -65,7 +59,12 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
   useEffect(() => {
     if (!hasData || !canDraw || !chartRef.current || !seriesRef.current) return;
     const series = seriesRef.current;
-    series.setData(data.map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value })));
+    // 后端三路输入信任面兜底：非法 timestamp 串经 Date.parse 产 NaN，lightweight
+    // setData 对 NaN time 会 throw 崩组件树——剔除非法项，全部非法时空数组照常走 setData
+    const points = data
+      .filter((d) => !Number.isNaN(Date.parse(d.timestamp)))
+      .map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }));
+    series.setData(points);
     series.applyOptions({
       color: resolveEquityColor(data, baseline),
       priceFormat: { type: 'price', precision: 0, minMove: 1 },

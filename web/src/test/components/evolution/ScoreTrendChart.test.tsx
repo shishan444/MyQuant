@@ -4,7 +4,7 @@
  * lightweight-charts 以 fake registry 承载调用序列（形制对齐 KlineChart.test）。
  * transformChartData 独立 L1 在 evolutionChart.test.ts，此处不重测。
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 vi.mock("lightweight-charts", () => {
@@ -110,14 +110,24 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("ScoreTrendChart 装配（fake registry）", () => {
+  // canDraw 为 getContext("2d") 调用判空（C-2 修复形制）——jsdom 原生返回 null
+  // 会让装配路径不触发；装配锚须还原浏览器形制（2d 上下文非空）才走到 createChart
+  let ctxSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    ctxSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue({} as CanvasRenderingContext2D);
+  });
+  afterEach(() => ctxSpy.mockRestore());
+
   it("creates 4 line series with palette/width anchors when fitness data present", () => {
     render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
     const series = seriesPanel();
     expect(series).toHaveLength(4);
     // bestScore 金 2px 实线
     expect(series[0].options).toMatchObject({ color: ATTENTION.gold, lineWidth: 2 });
-    // bestFitness 青 2.5px 实线（条件在场）
-    expect(series[1].options).toMatchObject({ color: POLARITY.up, lineWidth: 2.5 });
+    // bestFitness 青 2px 实线（条件在场；LineWidth 合法域 1|2|3|4）
+    expect(series[1].options).toMatchObject({ color: POLARITY.up, lineWidth: 2 });
     // cumulativeBest 半透明青 1px 点线（恒在）
     expect(series[2].options).toMatchObject({
       color: withAlpha(POLARITY.up, 0.5),
@@ -152,7 +162,7 @@ describe("ScoreTrendChart 装配（fake registry）", () => {
     render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
     const series = seriesPanel();
     expect(series[1].createPriceLine).toHaveBeenCalledWith(
-      expect.objectContaining({ price: 1.0, color: POLARITY.up, lineWidth: 1.5, title: "达标线" }),
+      expect.objectContaining({ price: 1.0, color: POLARITY.up, lineWidth: 1, title: "达标线" }),
     );
     // 二选一：bestScore series 无目标线
     expect(series[0].createPriceLine).not.toHaveBeenCalled();

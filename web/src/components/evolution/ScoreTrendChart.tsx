@@ -24,18 +24,14 @@ import type {
   Time,
   UTCTimestamp,
 } from "lightweight-charts";
-import { withAlpha } from "@/components/charts/core/chartThemes";
+import { withAlpha, SCORE_TREND_AVG_LINE_COLOR, SCORE_TREND_TARGET_LINE_COLOR, SCORE_TREND_AXIS_LABEL_COLOR, SCORE_TREND_GRID_LINE_COLOR } from "@/components/charts/core/chartThemes";
 import { CHART_VA, POLARITY, ATTENTION } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
 import { transformChartData, type ChartTransformResult } from "@/utils/evolutionChart";
 
 // 系列色归宿（design D5）：scoreLine/fitnessLine/champion 直接 import tokens；
-// avgLine/targetLine/axisLabel 三字面为图表系列区分色（tokens 无对应族）
-// 步统一迁 chartThemes 常量区（本组件先字面引用）。
-const AVG_LINE_COLOR = "rgba(168,85,247,0.4)";
-const TARGET_LINE_COLOR = "#94A3B8";
-const AXIS_LABEL_COLOR = "#64748B";
-const GRID_LINE_COLOR = "rgba(100,116,139,0.15)";
+// avgLine/targetLine/axisLabel/grid 四字面已迁 chartThemes 常量区（组 4.1 归宿，
+// 字面值原样），本组件经 import 引用。
 
 interface ScoreTrendChartProps {
   records: EvolutionHistoryRecord[];
@@ -76,18 +72,18 @@ export function ScoreTrendChart({
   const seriesRef = useRef<TrendSeries>(EMPTY_SERIES);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const hasData = data.length > 0;
-  // jsdom 降级：canvas.getContext 不存在即无绘制面（jsdom 无 canvas 实现）
+  // jsdom 降级：getContext("2d") 调用判空（jsdom 方法存在但返回 null，无绘制面）
   const canDraw = typeof document !== "undefined" &&
-    document.createElement("canvas").getContext != null;
+    document.createElement("canvas").getContext("2d") != null;
 
   useEffect(() => {
     if (!hasData || !canDraw || !containerRef.current) return;
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      layout: { background: { color: "transparent" }, textColor: AXIS_LABEL_COLOR },
+      layout: { background: { color: "transparent" }, textColor: SCORE_TREND_AXIS_LABEL_COLOR },
       grid: {
-        vertLines: { color: GRID_LINE_COLOR, style: LineStyle.Dotted },
-        horzLines: { color: GRID_LINE_COLOR, style: LineStyle.Dotted },
+        vertLines: { color: SCORE_TREND_GRID_LINE_COLOR, style: LineStyle.Dotted },
+        horzLines: { color: SCORE_TREND_GRID_LINE_COLOR, style: LineStyle.Dotted },
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderVisible: false },
@@ -112,7 +108,7 @@ export function ScoreTrendChart({
     const bestFitness = hasFitnessData
       ? chart.addSeries(LineSeries, {
           color: POLARITY.up,
-          lineWidth: 2.5,
+          lineWidth: 2,
           priceLineVisible: false,
           lastValueVisible: false,
         })
@@ -125,7 +121,7 @@ export function ScoreTrendChart({
       lastValueVisible: false,
     });
     const avgScore = chart.addSeries(LineSeries, {
-      color: AVG_LINE_COLOR,
+      color: SCORE_TREND_AVG_LINE_COLOR,
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
@@ -173,13 +169,13 @@ export function ScoreTrendChart({
           ? {
               price: targetFitness,
               color: POLARITY.up,
-              lineWidth: 1.5,
+              lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               title: "达标线",
             }
           : {
               price: targetScore,
-              color: TARGET_LINE_COLOR,
+              color: SCORE_TREND_TARGET_LINE_COLOR,
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               title: `目标 ${targetScore}`,

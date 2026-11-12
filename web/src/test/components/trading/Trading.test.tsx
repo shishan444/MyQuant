@@ -33,6 +33,9 @@ vi.mock("react-router", () => ({
   useNavigate: vi.fn(() => vi.fn()),
 }));
 
+// EquityLineChart 页面级 stub 有意保留（fe-chart-single-lib 审查 C-3① 裁决）：
+// 本文件是 Trading 页级大测试，真组件渲染面过大；真组件的装配正确性（线色/
+// setData 点数/降级形态）由 EquityLineChart.test 承载，此处仅验证页面组装锚
 vi.mock("@/components/charts/EquityLineChart", () => ({
   EquityLineChart: () => <div data-testid="equity-curve-stub" />,
 }));
