@@ -17,6 +17,7 @@ import type { VrExecution } from "@/services/validationRecords";
 import {
   barsInExecRange,
   buildEquitySeries,
+  concatSegmentsWithBreaks,
   perExecEquityPoints,
   useFullRangeKline,
   useOverlayIndicators,
@@ -395,5 +396,69 @@ describe("切档源头豁免与 truncated 覆盖域判法（change-3 CARD-02）"
     if (result.current.state === "ok") {
       expect(result.current.execAligned).toEqual({});
     }
+  });
+});
+
+describe("concatSegmentsWithBreaks 段界原语六族（change-3 T3.1）", () => {
+  /** 最简段元素/输出项同形（TSeg=TOut）；断点标记 v=null（trail 族 null 值点形制） */
+  type Pt = { t: string; v: number | null };
+  const iso = (sec: number) => new Date(sec * 1000).toISOString();
+  const pt = (sec: number, v: number): Pt => ({ t: iso(sec), v });
+  const brkOf = (sec: number): Pt => ({ t: iso(sec), v: null });
+  /** 恒等映射 opts（toItems=段直通；断点=下段首 epoch−1 秒） */
+  const idOpts = {
+    firstTime: (seg: Pt[]) => seg[0].t,
+    itemTime: (item: Pt) => item.t,
+    makeBreak: (epochSec: number): Pt => ({ t: iso(epochSec), v: null }),
+    toItems: (seg: Pt[]) => seg,
+  };
+
+  it("跨段相接（下段首=上段末+1 秒）：brk==lastEpoch 守卫不出断点，两段直连", () => {
+    const s1 = [pt(100, 1), pt(101, 2)];
+    const s2 = [pt(102, 3), pt(103, 4)]; // 首项 102=上段末 101+1 → brk=101 不> 101
+    const out = concatSegmentsWithBreaks([s1, s2], idOpts);
+    expect(out).toEqual(s1.concat(s2));
+    expect(out.some((p) => p.v === null)).toBe(false);
+  });
+
+  it("隔窗（段间有间隙）：出断点 @下段首 epoch−1，严格介于两段之间", () => {
+    const s1 = [pt(100, 1), pt(101, 2)];
+    const s2 = [pt(200, 3), pt(201, 4)]; // 间隙 99 秒 → brk=199 > 101
+    const out = concatSegmentsWithBreaks([s1, s2], idOpts);
+    expect(out).toEqual([pt(100, 1), pt(101, 2), brkOf(199), pt(200, 3), pt(201, 4)]);
+    expect(toTime(out[2].t) as number).toBe(199); // 断点 epoch=下段首 200−1
+  });
+
+  it("同 bar 合并（下段首时间==输出末项时间）：末项替换取后值，不重复 push", () => {
+    const s1 = [pt(100, 1), pt(110, 2)];
+    const s2 = [pt(110, 99), pt(120, 3)]; // 首项与 s1 末项同 bar → 合并取后值
+    const out = concatSegmentsWithBreaks([s1, s2], idOpts);
+    expect(out).toEqual([pt(100, 1), pt(110, 99), pt(120, 3)]);
+  });
+
+  it("空段过滤：[] 段与 toItems 映射后空段均跳过，不干扰段界断点", () => {
+    const s1 = [pt(100, 1)];
+    const s3 = [pt(300, 5)];
+    // 段数组空段：直接跳过
+    expect(concatSegmentsWithBreaks([s1, [], s3], idOpts)).toEqual([pt(100, 1), brkOf(299), pt(300, 5)]);
+    // toItems 映射后为空（过滤型映射整段滤空）：与空段同效
+    const dropOpts = { ...idOpts, toItems: (seg: Pt[]) => seg.filter((p) => typeof p.v === "number" && p.v < 50) };
+    expect(concatSegmentsWithBreaks([s1, [pt(200, 99)], s3], dropOpts)).toEqual([pt(100, 1), brkOf(299), pt(300, 5)]);
+  });
+
+  it("单段直通：无断点无合并恒等输出；空输入空输出", () => {
+    const s1 = [pt(100, 1), pt(101, 2), pt(102, 3)];
+    expect(concatSegmentsWithBreaks([s1], idOpts)).toEqual(s1);
+    expect(concatSegmentsWithBreaks([], idOpts)).toEqual([]);
+  });
+
+  it("降级路径（malformed 时间项容忍）：段首不可解析不出断点照常拼接，malformed 项不更新 lastEpoch", () => {
+    const s1 = [pt(100, 1), pt(101, 2)];
+    const sBad: Pt[] = [{ t: "bad-date", v: 7 }]; // toTime 回退 string → epochOf null
+    const s3 = [pt(300, 9), pt(301, 10)];
+    const out = concatSegmentsWithBreaks([s1, sBad, s3], idOpts);
+    // sBad 段：firstEpoch null → 断点守卫跳过，不前置断点不合并，照常进输出；
+    // s3 段：lastEpoch 仍为 101（malformed 项不更新）→ brk=299 > 101 出断点
+    expect(out).toEqual([pt(100, 1), pt(101, 2), { t: "bad-date", v: 7 }, brkOf(299), pt(300, 9), pt(301, 10)]);
   });
 });
