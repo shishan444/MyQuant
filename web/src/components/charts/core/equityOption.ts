@@ -2,7 +2,8 @@
  * 权益曲线 option 构造（纯函数，L1 直测入口）。
  */
 import type { ChartOption } from "./echartsCore";
-import { CHART_PALETTE, withAlpha } from "./chartPalette";
+import { CHART_PALETTE } from "./chartPalette";
+import { withAlpha } from "./chartThemes";
 
 export interface EquityPoint {
   timestamp: string;

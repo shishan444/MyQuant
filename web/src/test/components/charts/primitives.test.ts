@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import type { IChartApi, IPriceLine, ISeriesApi, Time } from "lightweight-charts";
+import { POLARITY } from "@/theme/tokens";
 import {
   fillsToSignals,
   signalsToMarkers,
@@ -85,15 +86,15 @@ describe("markers 纯函数层", () => {
 
   it("SIGNAL_STYLE 十值逐值锚（CARD-04 双写收敛同值替换——期望=收敛前 KlineChart 内联表历史基线）", () => {
     expect(SIGNAL_STYLE).toEqual({
-      buy: { position: "belowBar", color: "#2DD4BF", shape: "arrowUp", text: "B" },
-      sell: { position: "aboveBar", color: "#FB7185", shape: "arrowDown", text: "S" },
-      open_long: { position: "belowBar", color: "#2DD4BF", shape: "arrowUp", text: "OL" },
+      buy: { position: "belowBar", color: POLARITY.up, shape: "arrowUp", text: "B" },
+      sell: { position: "aboveBar", color: POLARITY.down, shape: "arrowDown", text: "S" },
+      open_long: { position: "belowBar", color: POLARITY.up, shape: "arrowUp", text: "OL" },
       close_long: { position: "aboveBar", color: "#FF9800", shape: "arrowDown", text: "CL" },
-      add_long: { position: "belowBar", color: "#2DD4BF", shape: "circle", text: "AL" },
+      add_long: { position: "belowBar", color: POLARITY.up, shape: "circle", text: "AL" },
       reduce_long: { position: "aboveBar", color: "#FF9800", shape: "circle", text: "RL" },
-      open_short: { position: "aboveBar", color: "#FB7185", shape: "arrowDown", text: "OS" },
+      open_short: { position: "aboveBar", color: POLARITY.down, shape: "arrowDown", text: "OS" },
       close_short: { position: "belowBar", color: "#7C4DFF", shape: "arrowUp", text: "CS" },
-      add_short: { position: "aboveBar", color: "#FB7185", shape: "square", text: "AS" },
+      add_short: { position: "aboveBar", color: POLARITY.down, shape: "square", text: "AS" },
       reduce_short: { position: "belowBar", color: "#7C4DFF", shape: "square", text: "RS" },
     });
   });
@@ -113,7 +114,7 @@ describe("价线族纯函数层", () => {
     });
     expect(toStopLossLineOptions({ price: 59000, kind: "fixed", visible: true })).toMatchObject({
       lineStyle: 0,
-      color: "#FB7185",
+      color: POLARITY.down,
       title: "SL",
     });
   });

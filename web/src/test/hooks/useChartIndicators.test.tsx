@@ -15,6 +15,7 @@ vi.mock("@/stores/chart-settings", () => ({
 }));
 
 import { useChartIndicators } from "@/hooks/useChartIndicators";
+import { POLARITY } from "@/theme/tokens";
 import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
 import { useChartSettings } from "@/stores/chart-settings";
 import { mockOhlcvData, mockIndicatorResponse, mockChartSettings } from "@/test/fixtures";
@@ -149,7 +150,7 @@ describe("useChartIndicators", () => {
     expect(result.current.volumeData[0]).toEqual({
       time: "2025-01-01T00:00:00Z",
       value: 1000,
-      color: "#2DD4BF66",
+      color: `${POLARITY.up}66`,
     });
   });
 
