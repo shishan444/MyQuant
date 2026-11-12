@@ -115,7 +115,7 @@ export const INDICATOR_FLAT_LIST = [
 ];
 
 // ---------------------------------------------------------------------------
-// Indicator display labels (abbreviation + Chinese name)
+// 指标显示名（缩写+中文名）
 // ---------------------------------------------------------------------------
 
 export const INDICATOR_LABELS: Record<string, string> = {
@@ -325,7 +325,7 @@ export const DIRECTION_OPTIONS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Stop reason labels
+// 停止原因标签
 // ---------------------------------------------------------------------------
 
 export const STOP_REASON_LABELS: Record<string, string> = {

@@ -284,7 +284,7 @@ function CurveTab({
     return <p className="text-xs text-slate-500">暂无进化曲线数据</p>;
   }
 
-  // Detect champion changes
+  // 检测 champion 变更
   let prevBest = -Infinity;
   const enrichedRecords = records.map((r) => {
     const isChampionChange = r.best_score > prevBest;
