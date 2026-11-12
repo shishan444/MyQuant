@@ -15,6 +15,7 @@ vi.mock("@/services/datasets", () => ({ getOhlcvBySymbol: vi.fn() }));
 import { getOhlcvBySymbol } from "@/services/datasets";
 import type { VrExecution } from "@/services/validationRecords";
 import {
+  barsInExecRange,
   buildEquitySeries,
   perExecEquityPoints,
   useFullRangeKline,
@@ -221,5 +222,32 @@ describe("buildEquitySeries/perExecEquityPoints（契约 C）", () => {
     const single = perExecEquityPoints(exec, bars);
     const built = buildEquitySeries([exec], bars).filter((p) => "value" in p);
     expect(built).toEqual(single);
+  });
+});
+
+describe("barsInExecRange 纯函数（change-2 CARD-01 单源谓词——阶段四属性锚）", () => {
+  const BARS = ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04"].map((d, i) => ({
+    timestamp: `${d} 00:00:00+00:00`,
+    open: i, high: i, low: i, close: i,
+  }));
+  const execOf = (s: string, e: string) =>
+    ({ range_start: s, range_end: e }) as VrExecution;
+
+  it("闭端含界：起止两端 bar 计入（[04-02, 04-03] → 恰两根含两端）", () => {
+    const out = barsInExecRange(BARS, execOf("2026-04-02", "2026-04-03"));
+    expect(out.map((b) => b.timestamp)).toEqual([
+      "2026-04-02 00:00:00+00:00",
+      "2026-04-03 00:00:00+00:00",
+    ]);
+  });
+
+  it("区间恰全量与零交集两端：[首,末] 全过、区间外空", () => {
+    expect(barsInExecRange(BARS, execOf("2026-04-01", "2026-04-04"))).toHaveLength(4);
+    expect(barsInExecRange(BARS, execOf("2026-04-11", "2026-04-20"))).toEqual([]);
+  });
+
+  it("malformed 边界：任一端不可解析返回空（区间无法界定——对账归零/锚空/主图空态同因）", () => {
+    expect(barsInExecRange(BARS, execOf("bad-date-xx", "2026-04-03"))).toEqual([]);
+    expect(barsInExecRange(BARS, execOf("2026-04-02", "not-a-date"))).toEqual([]);
   });
 });
