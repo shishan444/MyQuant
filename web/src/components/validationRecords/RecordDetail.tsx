@@ -106,7 +106,15 @@ function snapSeriesParts(
       const brk = firstE - 1;
       if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk) });
     }
-    out.push(...seg);
+    // 段界同 bar 合并：吸附后两段首尾落同一根 bar（out 末项与 seg 首项同
+    // time）时末项替换为 seg 首项——段界重置在该 bar 内不可表示（合并取
+    // 后值，与段内同 bar 保尾值规则统一）
+    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
+      out[out.length - 1] = seg[0];
+      out.push(...seg.slice(1));
+    } else {
+      out.push(...seg);
+    }
     const pe = epochOfTime(seg[seg.length - 1].time);
     if (pe != null) lastEpoch = pe;
   }
@@ -140,7 +148,14 @@ function snapTrailParts(
       const brk = firstE - 1;
       if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
     }
-    out.push(...seg);
+    // 段界同 bar 合并（同 snapSeriesParts——吸附后两段首尾落同一根 bar 时
+    // 合并取后值，段界重置在该 bar 内不可表示）
+    if (out.length > 0 && out[out.length - 1].time === seg[0].time) {
+      out[out.length - 1] = seg[0];
+      out.push(...seg.slice(1));
+    } else {
+      out.push(...seg);
+    }
     const pe = epochOfTime(seg[seg.length - 1].time);
     if (pe != null) lastEpoch = pe;
   }
@@ -164,7 +179,15 @@ function concatTrail(
       const brk = firstEpoch - 1;
       if (lastEpoch != null && brk > lastEpoch) out.push({ time: isoOf(brk), value: null });
     }
-    for (const p of part) {
+    // 段界同 bar 合并：相邻两份 trail 首尾同一时间戳（explicit 相接拓扑）
+    // 时合并取后值——段界重置在该 bar 内不可表示
+    let start = 0;
+    if (out.length > 0 && out[out.length - 1].time === part[0].time) {
+      out[out.length - 1] = { time: part[0].time, value: part[0].value ?? null };
+      start = 1;
+    }
+    for (let i = start; i < part.length; i++) {
+      const p = part[i];
       out.push({ time: p.time, value: p.value ?? null });
       const pe = epochOfTime(p.time);
       if (pe != null) lastEpoch = pe;

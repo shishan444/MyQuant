@@ -221,7 +221,16 @@ export function buildEquitySeries(
       const brk = firstEpoch - 1;
       if (lastEpoch != null && brk > lastEpoch) out.push({ time: new Date(brk * 1000).toISOString() });
     }
-    for (const p of pts) {
+    // 段界同 bar 合并：相邻两份锚到同一根边界 bar（explicit 相接拓扑——
+    // 前份 range_end==后份 range_start）时 out 末项替换为下段首点——段界
+    // 重置在该 bar 内不可表示（合并取后值，与段内同 bar 保尾值规则统一）
+    let start = 0;
+    if (out.length > 0 && out[out.length - 1].time === pts[0].time) {
+      out[out.length - 1] = pts[0];
+      start = 1;
+    }
+    for (let i = start; i < pts.length; i++) {
+      const p = pts[i];
       out.push(p);
       const pe = epochOf(p.time);
       if (pe != null) lastEpoch = pe;
