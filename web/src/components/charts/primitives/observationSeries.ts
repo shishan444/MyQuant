@@ -28,8 +28,10 @@ const DEFAULT_STYLE = {
  * 挂载单条观测序列线（纯挂载通道，无生命周期管理——挂/重挂/清由
  * 消费方经自己的句柄通道驱动）。
  *
- * NaN/null 点过滤（观测值未定义期断线不画）；无有效点或挂载失败
- * 返回 null（观测面容错——不阻塞主图，异常静默由消费方注释承接）。
+ * NaN/null 点产 whitespace 项（观测值未定义期真断线——与 docstring
+ * 宣称一致的实现；修正前 filter 剔除后剩余点被连成线）；无有效点或
+ * 挂载失败返回 null（观测面容错——不阻塞主图，异常静默由消费方
+ * 注释承接）。
  */
 export function attachObservationSeries(
   chart: IChartApi,
@@ -50,10 +52,12 @@ export function attachObservationSeries(
       title: style?.title ?? "",
     });
     series.setData(
-      valid.map((p) => ({
-        time: toTime(p.time) as UTCTimestamp,
-        value: p.value as number,
-      })),
+      // 无效点产 whitespace 项（无 value 键）——未定义期断线不画
+      points.map((p) =>
+        p.value != null && Number.isFinite(p.value)
+          ? { time: toTime(p.time) as UTCTimestamp, value: p.value }
+          : { time: toTime(p.time) as UTCTimestamp },
+      ),
     );
     return series;
   } catch {

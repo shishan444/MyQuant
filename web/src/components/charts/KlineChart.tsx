@@ -95,10 +95,14 @@ interface KlineChartProps {
   }>;
   /** 图表与 series 创建完成后回调一次。 */
   onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
+  /** 十字光标移动回调（缺省 undefined 零行为变化——signalMarkers 先例
+   *  模式；消费方读 param.time/seriesData 呈现悬停读数，无悬停时 param
+   *  无 time 由消费方决定空态/尾 bar） */
+  onCrosshairMove?: (param: MouseEventParams) => void;
   subChartType?: "volume" | "macd" | "rsi" | "kdj" | "equity";
   macdData?: { macd: Array<{ time: string; value: number }>; signal: Array<{ time: string; value: number }>; histogram: Array<{ time: string; value: number }> } | null;
   kdjData?: { k: Array<{ time: string; value: number }>; d: Array<{ time: string; value: number }>; j: Array<{ time: string; value: number }> } | null;
-  equityData?: Array<{ time: string; value: number }>;
+  equityData?: Array<{ time: string; value?: number }>;
   /** 隐藏内嵌图例（07 页 HUD 浮层承载信息面时传 true——图例分组折叠
    *  能力本身保留，仅该消费方不呈现；fe-asset-data-domain 2.1） */
   hideLegend?: boolean;
@@ -153,6 +157,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   mtfIndicators,
   signalMarkers,
   onChartReady,
+  onCrosshairMove,
   subChartType = "rsi",
   macdData,
   kdjData,
@@ -180,6 +185,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const initialHeightRef = useRef(height);
   const onChartReadyRef = useRef(onChartReady);
   onChartReadyRef.current = onChartReady;
+  const onCrosshairMoveRef = useRef(onCrosshairMove);
+  onCrosshairMoveRef.current = onCrosshairMove;
 
   // 图例状态
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
@@ -412,8 +419,9 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
 
     resizeObserver.observe(mainRef.current);
 
-    // 十字光标移动时刷新图例数值
+    // 十字光标移动时刷新图例数值+透传消费方回调（缺省 undefined 零行为变化）
     mainChart.subscribeCrosshairMove((param: MouseEventParams) => {
+      onCrosshairMoveRef.current?.(param);
       if (!param.time || !param.seriesData) {
         return;
       }
@@ -875,27 +883,36 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         title: "Equity",
       }, SUB_PANE);
       equitySeries.setData(
-        memoizedEquityData.map((d) => ({ time: toTime(d.time), value: d.value })),
+        // whitespace 断点项直接透传（无 value 键——库原生断线机制）
+        memoizedEquityData.map((d) =>
+          d.value !== undefined
+            ? { time: toTime(d.time), value: d.value }
+            : { time: toTime(d.time) },
+        ),
       );
       createdSeries.push(equitySeries);
 
-      // 初始资金参考线（取首点值）
-      const firstVal = memoizedEquityData[0].value;
-      const eqStartTime = toTime(memoizedEquityData[0].time);
-      const eqEndTime = toTime(memoizedEquityData[memoizedEquityData.length - 1].time);
-      const refLine = chart.addSeries(LineSeries, {
-        color: "rgba(148,163,184,0.3)",
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      }, SUB_PANE);
-      refLine.setData([
-        { time: eqStartTime, value: firstVal },
-        { time: eqEndTime, value: firstVal },
-      ]);
-      createdSeries.push(refLine);
+      // 初始资金参考线（取全序列首个带 value 点——段界 whitespace 项
+      // 不承载值；全 whitespace 退化序列无参考线）
+      const firstPt = memoizedEquityData.find((d) => d.value !== undefined);
+      if (firstPt && firstPt.value !== undefined) {
+        const firstVal = firstPt.value;
+        const eqStartTime = toTime(firstPt.time);
+        const eqEndTime = toTime(memoizedEquityData[memoizedEquityData.length - 1].time);
+        const refLine = chart.addSeries(LineSeries, {
+          color: "rgba(148,163,184,0.3)",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        }, SUB_PANE);
+        refLine.setData([
+          { time: eqStartTime, value: firstVal },
+          { time: eqEndTime, value: firstVal },
+        ]);
+        createdSeries.push(refLine);
+      }
     }
 
     subChartSeriesRefs.current = createdSeries;

@@ -337,3 +337,64 @@ describe("KlineChart 纯函数层（core/time toTime）", () => {
     expect(toTime("bad-date-xx")).toBe("bad-date-xx".slice(0, 10));
   });
 });
+
+describe("KlineChart equity 副图 whitespace 透传与首值参考线（upgrade-vr-fullrange-chart 契约 C）", () => {
+  const eqBars = [
+    { time: "2026-01-01T00:00:00Z", value: 100000 },
+    { time: "2026-01-01T04:00:00Z" }, // 段界断点（无 value）
+    { time: "2026-01-01T08:00:00Z", value: 101000 },
+  ];
+  function renderEquity(data: Array<{ time: string; value?: number }>) {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    return render(
+      <KlineChart data={CANDLES as never} subChartType="equity" equityData={data} height={400} />,
+    );
+  }
+  it("whitespace 项透传 setData（无 value 键）——断点项不丢", () => {
+    renderEquity(eqBars);
+    const reg = registry;
+    const lines = reg.charts[0].series.filter((s: { seriesType: string }) => s.seriesType === "Line");
+    // 第一条 Line=equity 曲线：3 项全透传，中项无 value 键
+    const eq = lines[0];
+    expect(eq.setData).toHaveBeenCalledWith([
+      { time: expect.any(Number), value: 100000 },
+      { time: expect.any(Number) },
+      { time: expect.any(Number), value: 101000 },
+    ]);
+  });
+  it("首 value 点参考线：首项为 whitespace 时参考线不挂 NaN（取首个带 value 项）", () => {
+    renderEquity([{ time: "2026-01-01T00:00:00Z" }, ...eqBars.slice(1)]);
+    const reg = registry;
+    const lines = reg.charts[0].series.filter((s: { seriesType: string }) => s.seriesType === "Line");
+    // 第二条 Line=参考线：两锚点值=首带 value 项 100000（非 undefined）
+    const ref = lines[1];
+    const calls = ref.setData.mock.calls[0][0] as Array<{ value?: number }>;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((p) => p.value === 101000)).toBe(true); // 唯一带值项 101000（slice(1) 后）
+  });
+});
+
+describe("KlineChart onCrosshairMove 回调（upgrade-vr-fullrange-chart 契约 D）", () => {
+  function renderBare(extra: { onCrosshairMove?: (p: unknown) => void } = {}) {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    render(<KlineChart data={CANDLES as never} height={400} {...(extra as never)} />);
+  }
+  it("缺省 undefined 行为不变：crosshair 订阅仍建立（legend 路径），无回调不炸", () => {
+    renderBare();
+    expect(registry.crosshairHandlers.length).toBeGreaterThan(0);
+    expect(() =>
+      registry.crosshairHandlers.forEach((h) => h({ time: undefined, seriesData: new Map() })),
+    ).not.toThrow();
+  });
+  it("回调透传：param 原样到达消费方（含无 time 形）", () => {
+    const onCrosshairMove = vi.fn();
+    renderBare({ onCrosshairMove: onCrosshairMove as never });
+    const param = { time: 12345, seriesData: new Map() };
+    act(() => {
+      registry.crosshairHandlers.forEach((h) => h(param));
+    });
+    expect(onCrosshairMove).toHaveBeenCalledWith(param);
+  });
+});

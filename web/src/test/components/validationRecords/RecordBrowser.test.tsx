@@ -29,8 +29,8 @@ vi.mock("@/services/datasets", () => ({
 }));
 
 // KlineChart mock：React 19 ref prop 直传——渲染期注入命令式句柄
-// （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数与
-// height prop 经 data 属性透出
+// （scrollToTime/setObservationSeries 采集调用），signalMarkers 计数/
+// 文案、height、equityData 长度经 data 属性透出
 const mockChartHandle = {
   scrollToTime: vi.fn(),
   setObservationSeries: vi.fn(),
@@ -40,8 +40,10 @@ const mockChartHandle = {
 };
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: (props: {
-    signalMarkers?: Array<unknown>;
+    signalMarkers?: Array<{ text?: string }>;
     height?: number;
+    equityData?: Array<unknown>;
+    subChartType?: string;
     ref?: { current: unknown };
   }) => {
     if (props.ref) props.ref.current = mockChartHandle;
@@ -49,7 +51,10 @@ vi.mock("@/components/charts/KlineChart", () => ({
       <div
         data-testid="vr-kline"
         data-markers={props.signalMarkers?.length ?? 0}
+        data-markers-text={(props.signalMarkers ?? []).map((m) => m.text).join("|")}
         data-height={props.height}
+        data-equity-len={props.equityData?.length ?? 0}
+        data-subchart={props.subChartType ?? ""}
       />
     );
   },
@@ -417,9 +422,25 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     d.mtf_gated_bars = 7;
     mockDetail.mockResolvedValue(d);
     ui(<RecordDetail record={makeRow()} />);
-    // D2 标记数=filled 行（10/11/20/12——rejected/swallowed 不进标记）
+    // D2 全区间装载（契约 A）：显式 limit 50000 + 全区间 start/end 单次拉取
+    await waitFor(() => {
+      expect(mockOhlcv).toHaveBeenCalledWith(
+        "BTCUSDT", "30m",
+        expect.objectContaining({ start: "2026-04-01", end: "2026-09-01", limit: 50000 }),
+      );
+    });
+    // D2 标记数=filled 行（10/11/20/12——rejected/swallowed 不进标记）；
+    // text=动作名+成交价（契约 D——traceMarkers 单源带价，按 time 升序）
     const kline = await screen.findByTestId("vr-kline");
     expect(kline).toHaveAttribute("data-markers", "4");
+    expect(kline).toHaveAttribute(
+      "data-markers-text",
+      "▲开多 100.0|▲加多 100.0|▼平多 98.0|▽减仓 100.0",
+    );
+    // 契约 C：equity 副图（subChartType=equity；mock 5 bar vs 4 值 mismatch
+    // → 份级降级锚 compact 重建 4 点——zip 前提由按份对账保证）
+    expect(kline).toHaveAttribute("data-subchart", "equity");
+    expect(kline).toHaveAttribute("data-equity-len", "4");
     // trail_series 真值挂线（禁重算——setObservationSeries 以原值调用）
     await waitFor(() => {
       expect(mockChartHandle.setObservationSeries).toHaveBeenCalledWith(
@@ -474,7 +495,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(eq).toHaveTextContent("窗口 main（最差窗口）");
   });
 
-  it("D3 空曲线空态（零 bar 区间如实呈现）", async () => {
+  it("D3 空曲线空态（零 bar 区间如实呈现）+equity 副图不渲染（全空→equityData=[]）", async () => {
     const d = makeDetail();
     d.executions[0].equity = {
       grid_aligned: true, timeframe: "30m", start: null, length: 0,
@@ -483,6 +504,9 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     mockDetail.mockResolvedValue(d);
     ui(<RecordDetail record={makeRow()} />);
     expect(await screen.findByTestId("vr-equity")).toHaveTextContent("无 equity 留痕");
+    // 契约 C 空态：全空→equityData=[]（副图 KlineChart 内部 length>0 门不渲染）
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-equity-len", "0");
   });
 
   it("V4 四元判读：signal_trace null→代际陈述；能力徽标上线前", async () => {
@@ -523,13 +547,54 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(await screen.findByText(/detail_available=false/)).toBeInTheDocument();
   });
 
-  it("多份选择器：executions>1 时呈现份选择（份标识=段清单）", async () => {
+  it("多份视图选择器（契约 E）：缺省全区间+全份合并标记；份选择器含全区间首项", async () => {
     const d = makeDetail();
-    d.executions.push({ ...d.executions[0], exec_ref: "趋势", exec_index: 1 });
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-11", range_end: "2026-04-20",
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 2,
+        timestamps: ["2026-04-11 00:00:00+00:00", "2026-04-11 00:30:00+00:00"],
+        values: [100000, 101500],
+      },
+      trace_rows: [makeTrace({ exec_ref: "趋势", bar_time: "2026-04-12 00:00:00+00:00" })],
+      trail_series: [{ time: "2026-04-11 00:00:00+00:00", value: 97000 }],
+    });
     mockDetail.mockResolvedValue(d);
     ui(<RecordDetail record={makeRow()} />);
-    const combo = await screen.findByRole("combobox");
-    expect(combo).toBeInTheDocument();
+    // 缺省 viewAll：视图模式标=全区间；两份 trace 各 1 filled 行合并=2 标记；
+    // equity 全区间拼接=份1 4 点+段界断点 1+份2 2 点=7 项
+    expect(await screen.findByTestId("vr-view-mode")).toHaveTextContent("全区间");
+    const kline = screen.getByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers", "2");
+    expect(kline).toHaveAttribute("data-equity-len", "7");
+    // trail 全区间拼接（契约 F）：份1 真值+段界 null 断点+份2 真值（跨段不连线）
+    await waitFor(() => {
+      const calls = mockChartHandle.setObservationSeries.mock.calls;
+      const last = calls[calls.length - 1][0] as Array<{ time: string; value: number | null }>;
+      expect(last).toEqual([
+        { time: "2026-04-01 00:00:00+00:00", value: 98000 },
+        { time: "2026-04-10T23:59:59.000Z", value: null },
+        { time: "2026-04-11 00:00:00+00:00", value: 97000 },
+      ]);
+    });
+    // 份选择器在场（「全区间」首项+份清单——antd options 不落 DOM，
+    // 经视图模式标与 combobox 在场共同锚定）
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    // 切单份（契约 E 五过滤要素）：视图模式标=单份段名；markers=该份 1；
+    // equity=该份 4 点无段界断点；queryKey 不变不重拉（mockOhlcv 调用数不变）
+    const callsBefore = mockOhlcv.mock.calls.length;
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    const opt = await screen.findByText("份 1 · main（2026-04-01 → 2026-09-01）", { exact: false });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-view-mode")).toHaveTextContent("单份 main");
+    });
+    const kline2 = screen.getByTestId("vr-kline");
+    expect(kline2).toHaveAttribute("data-markers", "1");
+    expect(kline2).toHaveAttribute("data-equity-len", "4");
+    expect(mockOhlcv.mock.calls.length).toBe(callsBefore);
   });
 });
 

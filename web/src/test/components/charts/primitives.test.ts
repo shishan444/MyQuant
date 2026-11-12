@@ -18,6 +18,11 @@ import {
   attachStopLossLine,
 } from "@/components/charts/primitives";
 import { toTime } from "@/components/charts/core/time";
+import {
+  SegmentBand,
+  attachSegmentBand,
+  toSegmentBands,
+} from "@/components/charts/primitives/segmentBand";
 
 describe("markers 纯函数层", () => {
   it("fillsToSignals：出场 side=null/缺省 不画、五 exit kind 归并 close", () => {
@@ -255,5 +260,148 @@ describe("价线族挂载通道", () => {
     expect(series.createPriceLine).not.toHaveBeenCalled();
     expect(attachStopLossLine(series, { price: 60000, kind: "trail", visible: true })).toBeTruthy();
     expect(series.createPriceLine).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 段界竖带原语（upgrade-vr-fullrange-chart 契约 B）——多带单控制器、
+// 双色交替、段名文字、超域跳过、全清（jsdom 下 canvas 调用采集断言）
+// ---------------------------------------------------------------------------
+function mkSegHarness(coords: Record<string, number | null>) {
+  const timeToCoordinate = vi.fn((t: string) => (t in coords ? coords[t] : null));
+  const timeScale = { timeToCoordinate };
+  const chart = { timeScale: vi.fn(() => timeScale) } as unknown as IChartApi;
+  const requestUpdate = vi.fn();
+  const band = new SegmentBand();
+  band.attached({ chart, requestUpdate });
+  return { band, requestUpdate };
+}
+
+describe("SegmentBand 段界竖带（契约 B）", () => {
+  it("toSegmentBands：执行份映射段带数据（时间经 toTime 数字形、label=exec_ref）", () => {
+    const bands = toSegmentBands([
+      { exec_ref: "趋势", range_start: "2026-01-01 00:00:00", range_end: "2026-01-02 00:00:00" },
+    ]);
+    expect(bands).toEqual([{
+      startTime: toTime("2026-01-01 00:00:00"),
+      endTime: toTime("2026-01-02 00:00:00"),
+      label: "趋势",
+    }]);
+  });
+
+  it("attachSegmentBand：attachPrimitive 一次+返回 setData 通道", () => {
+    const series = mkSeries();
+    const { primitive, setData } = attachSegmentBand(series);
+    expect(series.attachPrimitive).toHaveBeenCalledWith(primitive);
+    expect(() => setData([{ startTime: 1 as never, endTime: 2 as never, label: "x" }])).not.toThrow();
+  });
+
+  it("多带渲染：双色交替+段名 fillText+全量替换+全清", () => {
+    const { band } = mkSegHarness({ t1: 10, t2: 100, t3: 200, t4: 300 });
+    band.setData([
+      { startTime: "t1" as never, endTime: "t2" as never, label: "趋势" },
+      { startTime: "t3" as never, endTime: "t4" as never, label: "震荡" },
+    ]);
+    band.updateAllViews();
+    const fillRect = vi.fn();
+    const fillText = vi.fn();
+    const styles: string[] = [];
+    const ctx = {
+      fillRect,
+      fillText,
+      set fillStyle(v: string) { styles.push(v); },
+      get fillStyle() { return styles[styles.length - 1] ?? ""; },
+      font: "",
+      textBaseline: "",
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+    };
+    const scope = { context: ctx, mediaSize: { width: 600, height: 300 } };
+    for (const view of band.paneViews()) {
+      view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
+    }
+    // 两带各一次 fillRect；双色交替（8% → 14%）
+    expect(fillRect).toHaveBeenCalledTimes(2);
+    expect(fillRect).toHaveBeenNthCalledWith(1, 10, 0, 90, 300);
+    expect(fillRect).toHaveBeenNthCalledWith(2, 200, 0, 100, 300);
+    expect(styles).toContain("rgba(59,130,246,0.08)");
+    expect(styles).toContain("rgba(59,130,246,0.14)");
+    // 段名文字带内顶部（x1+4、10px、TEXT.primary 色）
+    expect(fillText).toHaveBeenCalledTimes(2);
+    expect(fillText).toHaveBeenNthCalledWith(1, "趋势", 14, 4);
+    expect(styles).toContain("#F4F2FF");
+    // 全量替换：setData 新集替换旧集（一换一）
+    band.setData([{ startTime: "t1" as never, endTime: "t2" as never, label: "新段" }]);
+    band.updateAllViews();
+    const fillRect2 = vi.fn();
+    const ctx2 = { ...ctx, fillRect: fillRect2, fillText: vi.fn() };
+    for (const view of band.paneViews()) {
+      view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb({ context: ctx2, mediaSize: scope.mediaSize }) } as never);
+    }
+    expect(fillRect2).toHaveBeenCalledTimes(1);
+    // 全清：null → 零渲染
+    band.setData(null);
+    band.updateAllViews();
+    const fillRect3 = vi.fn();
+    const ctx3 = { ...ctx, fillRect: fillRect3, fillText: vi.fn() };
+    for (const view of band.paneViews()) {
+      view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb({ context: ctx3, mediaSize: scope.mediaSize }) } as never);
+    }
+    expect(fillRect3).not.toHaveBeenCalled();
+  });
+
+  it("超域跳过：任一端坐标转换 null（超可视域）该带不渲染", () => {
+    const { band } = mkSegHarness({ t1: 10 }); // t2 无坐标
+    band.setData([{ startTime: "t1" as never, endTime: "t2" as never, label: "x" }]);
+    band.updateAllViews();
+    const fillRect = vi.fn();
+    const ctx = { fillRect, fillText: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn() };
+    const scope = { context: ctx, mediaSize: { width: 600, height: 300 } };
+    for (const view of band.paneViews()) {
+      view.renderer()?.draw({ useMediaCoordinateSpace: (cb: (s: typeof scope) => void) => cb(scope) } as never);
+    }
+    expect(fillRect).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 观测序列断线顺修（upgrade-vr-fullrange-chart 契约 F）——无效点产
+// whitespace 真断线（修正前 filter 剔除后剩余点连线）
+// ---------------------------------------------------------------------------
+import { attachObservationSeries, type ObservationPoint } from "@/components/charts/primitives/observationSeries";
+
+describe("attachObservationSeries whitespace 断线（契约 F）", () => {
+  function mkObsChart() {
+    const series: any[] = [];
+    const chart = {
+      addSeries: vi.fn(() => {
+        const s = { setData: vi.fn() };
+        series.push(s);
+        return s;
+      }),
+    } as never;
+    return { chart, series };
+  }
+  it("无效点产 whitespace 项（不剔除——序列保留位次真断线）", () => {
+    const { chart, series } = mkObsChart();
+    const pts: ObservationPoint[] = [
+      { time: "2026-01-01T00:00:00Z", value: 100 },
+      { time: "2026-01-01T04:00:00Z", value: null },
+      { time: "2026-01-01T08:00:00Z", value: 101 },
+    ];
+    attachObservationSeries(chart, pts);
+    expect(series[0].setData).toHaveBeenCalledWith([
+      { time: expect.any(Number), value: 100 },
+      { time: expect.any(Number) },
+      { time: expect.any(Number), value: 101 },
+    ]);
+  });
+  it("全无效点返回 null（无有效点容错）", () => {
+    const { chart, series } = mkObsChart();
+    expect(
+      attachObservationSeries(chart, [
+        { time: "2026-01-01T00:00:00Z", value: null },
+      ]),
+    ).toBeNull();
+    expect(series).toHaveLength(0);
   });
 });

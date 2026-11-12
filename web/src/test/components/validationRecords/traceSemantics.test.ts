@@ -138,8 +138,18 @@ describe("eventSemantics/traceMarkers（色点单源+四类动作）", () => {
     ];
     const markers = traceMarkers(rows);
     expect(markers).toHaveLength(2);
-    expect(markers[0]).toMatchObject({ position: "belowBar", shape: "arrowUp", text: "▲开多" });
+    expect(markers[0]).toMatchObject({ position: "belowBar", shape: "arrowUp", text: "▲开多 100.0" });
     expect(markers[0].color).toBe(TRACE_FAMILY_COLOR.strategy);
-    expect(markers[1]).toMatchObject({ position: "aboveBar", shape: "arrowDown", color: TRACE_FAMILY_COLOR.risk });
+    expect(markers[1]).toMatchObject({ position: "aboveBar", shape: "arrowDown", color: TRACE_FAMILY_COLOR.risk, text: "▼平多 90.0" });
+  });
+
+  it("价格形制（upgrade-vr-fullrange-chart 契约 D）：有价=动作名+空格+一位小数；无价仅动作名不伪造", () => {
+    const rows = [
+      { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 103209.28, capped: null, gene_hits: null },
+      { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 11, size: 1, price: null, capped: null, gene_hits: null },
+    ];
+    const [withPrice, withoutPrice] = traceMarkers(rows);
+    expect(withPrice.text).toBe("▲开多 103209.3");
+    expect(withoutPrice.text).toBe("▲加多");
   });
 });
