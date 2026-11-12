@@ -133,22 +133,34 @@ export function useFullRangeKline(
   // 判定序 error→truncated→mismatch→ok（先判先赢）
   const endEpoch = bounds.maxEnd ? epochOf(bounds.maxEnd) : null;
   const lastEpoch = candles.length ? epochOf(candles[candles.length - 1].timestamp) : null;
-  if (endEpoch != null && (lastEpoch == null || lastEpoch < endEpoch)) {
-    const tfSec = fetchTf ? timeframeSeconds(fetchTf) : 0;
-    const missing = lastEpoch != null && tfSec > 0
-      ? Math.max(1, Math.round((endEpoch - lastEpoch) / tfSec))
-      : null;
-    return { state: "truncated", candles, truncatedMissing: missing, mismatchedExecs: [], execAligned: {} };
+  const tfSec = fetchTf ? timeframeSeconds(fetchTf) : 0;
+  if (endEpoch != null) {
+    // truncated=尾 bar 覆盖域判法（两粒度通用）：末根 bar 覆盖
+    // [lastEpoch, lastEpoch+tfSec)，range_end 落入覆盖窗（或已达端点）
+    // 即完整——非基准档 range_end 落末根粗档 bar 覆盖窗内不再误报；基准
+    // 档与 lastEpoch<endEpoch 直比逐位等价（含 tfSec=0 表外周期退化档）
+    const coversEnd =
+      lastEpoch != null && (lastEpoch >= endEpoch || lastEpoch + tfSec > endEpoch);
+    if (!coversEnd) {
+      const missing = lastEpoch != null && tfSec > 0
+        ? Math.max(1, Math.round((endEpoch - lastEpoch) / tfSec))
+        : null;
+      return { state: "truncated", candles, truncatedMissing: missing, mismatchedExecs: [], execAligned: {} };
+    }
   }
 
   // 按份对账（三型统一：每执行份闭端 bar 数==该份 equity.values.length）
+  // ——等式语义锚=基准粒度：闭端 bar 数只在基准档与 equity 点数可对齐，
+  // 非基准档跳过对账（切档不产生假 mismatch——契约 K）
   const mismatchedExecs: MismatchedExec[] = [];
   const execAligned: Record<string, boolean> = {};
-  for (const e of executions) {
-    const bars = barsInExecRange(candles, e).length;
-    const aligned = bars === e.equity.values.length;
-    execAligned[e.exec_ref] = aligned;
-    if (!aligned) mismatchedExecs.push({ exec_ref: e.exec_ref, bars, points: e.equity.values.length });
+  if (fetchTf === timeframe) {
+    for (const e of executions) {
+      const bars = barsInExecRange(candles, e).length;
+      const aligned = bars === e.equity.values.length;
+      execAligned[e.exec_ref] = aligned;
+      if (!aligned) mismatchedExecs.push({ exec_ref: e.exec_ref, bars, points: e.equity.values.length });
+    }
   }
   if (mismatchedExecs.length > 0) {
     return { state: "mismatch", candles, truncatedMissing: null, mismatchedExecs, execAligned };
