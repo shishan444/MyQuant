@@ -115,7 +115,17 @@
 - readonly 19：list_data_sources ✓ list_strategies ✓ get_strategy ✓ list_evolution_tasks ✓ list_indicators ✓ list_signal_columns ✓ get_market_snapshot ✓ union_balance ✓ list_hypotheses ✓ get_hypothesis ✓ get_research_log ✓ get_analysis_task ✓ get_validation_report ✓ list_feature_requests ✓ list_paper_tasks ✓（含本次补 status 缺省侧）get_paper_task ✓ get_paper_report ✓ get_paper_history ✓ query_paper_signals ✓
 - research 23：run_analysis ✓ inspect_cases ✓ query_indicator ✓（含本次补 indicator 缺省侧）register_hypothesis ✓ transition_hypothesis ✓ run_isolated_validation ✓ run_random_window_test ✓ run_staged_validation ✓ run_backtest ✓ register_formula_plugin ✓ register_model_plugin ✓ translate_hypothesis_to_strategy ✓ submit_feature_request ✓ trigger_evolution ✓ poll_evolution_task ✓ stop_evolution_task ✓ pause_evolution_task ✓ resume_evolution_task ✓ get_evolution_strategies ✓ update_strategy_metadata ✓ batch_delete_strategies ✓ mount_paper_task ✓ unmount_paper_task ✓
 
-## 八、待拍板
+## 八、C-4 全量终验（2026-11-13）
+
+命令：`./venv/bin/python -m pytest --ignore=tests/e2e --cov-report=json:coverage.json -q -n 3`（正式 addopts 含 mcpserver），证据 `/tmp/mcp-c4-fullrun.log`，671.85s。
+
+- **9285 passed, 2 skipped, 0 failed**（exit=0；较 C-1 基线 9282 多 3：+2 补齐用例，+1 为 C-1 基线 xdist 偶发红本次转绿——印证偶发判定）。
+- **全局 coverage 96.56% ≥96**（`Required test coverage of 96% reached`）。
+- coverage.json 含 mcpserver 全部五文件条目；**mcpserver/tools.py：348 stmts / 0 miss / 122 branch / 0 partial / 100.00%**。
+- 主判据三件全达成：42 分支全触达（局部终验见第七节）＋两注册函数及嵌套工具定义行 term-missing 无 missing（行级+分支级双零）＋全量 96。CRAP 复测按 TC-C1 裁决（2026-11-12）不作合入判定项——本 change 纯测试零生产代码改动，覆盖率是 CRAP 公式唯一决定变量，主判据即其充分上游证据。
+- 纯测试纪律 diff 锚核验：分支对 main 全部变更＝pytest.ini（addopts 增列一行，唯一生产面）＋2 个测试文件＋本盘点档——生产代码行为 diff 为零。
+
+## 九、待拍板
 
 1. 5 必补项按实测差集不重复补（既有 tests/api 用例已承载）——若评审口径要求该 5 项必须在 tests/mcpserver 目录内有用例，需另裁决并说明重复建设的必要性。
 2. server.py:102（`__main__` 入口行）missing 在本 change 范围外（两注册函数与嵌套工具定义均在 tools.py），不处理。
