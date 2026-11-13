@@ -364,6 +364,11 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "status": "假设状态值域外：status ∈ {active, supported, refuted,"
               " superseded, abandoned}（状态机五值——supported 存量"
               "零仍属合法；查看 detail.legal_range）",
+    # 信号组合参数面（fix-silent-degradation R-7）：combine_signals
+    # 未知 logic 显式拒绝的 detail.param 面（原静默首信号副本收口）
+    "logic": "logic 取值非法：检查 DNA logic_genes 的 entry_logic/"
+             "exit_logic/add_logic/reduce_logic 与 cross_layer_logic，"
+             "合法值 AND/OR",
 }
 
 

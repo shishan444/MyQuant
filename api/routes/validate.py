@@ -38,7 +38,12 @@ class ConditionInput(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    pair: str
+    # pair 长度防线（fix-silent-degradation 审查批 SEC-1）：超长输入
+    # 在 pydantic 层 422——原裸 str 直穿 R-2 预检 find_parquet 的
+    # exists()，ENAMETOOLONG OSError 逃逸 500（246A 实测在案）；
+    # max_length=32 对齐 symbol 值域治理专项预设上界（现实交易对
+    # ≤20 字符，32 充裕）
+    pair: str = Field(..., max_length=32)
     timeframe: str
     start: str
     end: str
@@ -144,6 +149,27 @@ def run_validation(
     # 通道（应用层全局兜底出站；CARD-04 捕获合并形制已随全局兜底删除）
     from core.analysis.event_policy import validate_policy
     normalized_policy = validate_policy(payload.trigger_policy)
+    # R-2：数据可达预检（文件级）——品种写错/周期无数据在入口显式
+    # 422 拒绝，与「条件不触发」的 200 空结果区分（对齐 hypotheses
+    # 登记链「结构→可达」先例）；MtfEvalContext 构建与 policy 形式
+    # 校验不动，预检插在其后
+    from core.analysis.errors import ResearchError
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    try:
+        _pq = find_parquet(data_dir, safe_symbol(payload.pair), payload.timeframe)
+    except (ValueError, OSError):
+        # ValueError=非法 timeframe（engine 既有 422 转换承载，预检
+        # 不抢占）；OSError=文件系统层异常（exists() ENAMETOOLONG 等
+        # 长度防线残余形态）——engine MTF_DATA_EXCEPTIONS 降级承载
+        # （R-3 语义），预检只承载「确定性无数据」判据，两类均放行
+        pass
+    else:
+        if _pq is None:
+            raise ResearchError(
+                "RESEARCH_SYMBOL_NOT_FOUND",
+                f"pair/timeframe 无数据: {payload.pair} {payload.timeframe}",
+                detail={"field": "pair", "symbol": payload.pair,
+                        "timeframe": payload.timeframe})
     result = validate_hypothesis(
         pair=payload.pair,
         timeframe=payload.timeframe,

@@ -303,9 +303,11 @@ class TestValidateHypothesis:
             data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h",
         )
         secret = "boom /internal/secret/path.db"
+        # R-3：注入换数据类 OSError（装载段仅捕 MTF_DATA_EXCEPTIONS，
+        # RuntimeError 上抛）；日志发出点改为共享函数所在 mtf 模块
         with patch("core.validation.mtf.load_mtf_data",
-                   side_effect=RuntimeError(secret)), \
-             caplog.at_level(logging.WARNING, logger="core.validation.engine"):
+                   side_effect=OSError(secret)), \
+             caplog.at_level(logging.WARNING, logger="core.validation.mtf"):
             result = validate_hypothesis(
                 "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
                 when_conditions=[{"subject": "close", "action": "gt", "target": 0}],
@@ -351,7 +353,7 @@ class TestValidateHypothesis:
         )
 
         def _boom(*args, **kwargs):
-            raise RuntimeError("mtf boom")
+            raise OSError("mtf boom")  # R-3：数据类异常（回退族）
 
         with patch("core.validation.mtf.load_mtf_data", side_effect=_boom):
             result = validate_hypothesis(
@@ -880,7 +882,9 @@ class TestEvaluateRules:
         monkeypatch.setenv("FAPI_DATA_DIR", str(tmp_path))
         from core.analysis.condition_kernel import MtfEvalContext
         ctx = MtfEvalContext(data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
-        with patch.object(mod, "load_mtf_data", return_value={}):
+        # R-3：rule_engine 改调共享 enrich_with_mtf 后绑定已删，
+        # patch 点迁至 mtf 模块（空返回跳过合并的语义不变，发生在共享函数内）
+        with patch("core.validation.mtf.load_mtf_data", return_value={}):
             result = mod.evaluate_rules(
                 "TESTUSDT", "4h", None, None,   # start/end 缺省：不过滤
                 entry_conditions=[{"subject": "close", "action": "lt",
@@ -899,8 +903,10 @@ class TestEvaluateRules:
         同构）——异常原文只进日志不回传；rule_engine 失败后回退单周期
         继续求值（「falling back」文案如实）。
 
-        patch 点为消费者模块名（rule_engine 模块级 from-import，与
-        engine.py 函数内延迟 import 的 patch 点不同）。
+        R-3（fix-silent-degradation）：注入换数据类 OSError（装载段仅
+        捕 MTF_DATA_EXCEPTIONS，RuntimeError 上抛）；两引擎改调共享
+        enrich_with_mtf 后 patch 点统一为 mtf 模块（rule_engine 不再
+        直接绑定 load_mtf_data），日志发出点同为 mtf 模块。
         """
         import logging
         from pathlib import Path
@@ -912,8 +918,8 @@ class TestEvaluateRules:
         ctx = MtfEvalContext(
             data_dir=Path(tmp_path), symbol="TESTUSDT", base_tf="4h")
         secret = "boom /internal/secret/rule.db"
-        with patch("core.validation.rule_engine.load_mtf_data",
-                   side_effect=RuntimeError(secret)), \
+        with patch("core.validation.mtf.load_mtf_data",
+                   side_effect=OSError(secret)), \
              caplog.at_level(logging.WARNING):
             result = evaluate_rules(
                 "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
@@ -928,7 +934,7 @@ class TestEvaluateRules:
         assert all(secret not in w for w in result.warnings), \
             "异常原文不得回传客户端"
         mtf_logs = [r for r in caplog.records
-                    if r.name.endswith("rule_engine") and "MTF" in r.getMessage()]
+                    if r.name.endswith("mtf") and "MTF" in r.getMessage()]
         assert mtf_logs and secret in mtf_logs[0].getMessage(), \
             "日志须携带异常原文"
         assert mtf_logs[0].exc_info, "日志须带堆栈"
@@ -1029,9 +1035,9 @@ class TestEvaluateRules:
         assert ok.total_trades >= 1
 
         def _boom(*args, **kwargs):
-            raise RuntimeError("mtf boom")
+            raise OSError("mtf boom")  # R-3：数据类异常（回退族）
 
-        with patch("core.validation.rule_engine.load_mtf_data", side_effect=_boom):
+        with patch("core.validation.mtf.load_mtf_data", side_effect=_boom):
             degraded = evaluate_rules(
                 "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
                 entry_conditions=[
@@ -1240,3 +1246,248 @@ class TestStage4BlindSpotFill:
         cond = {"subject": "volume", "action": "shrink", "target": "baseline"}
         mask = _evaluate_single_condition(df, cond)
         assert bool(mask.tolist()[10])
+
+
+# ===========================================================================
+# 11. R-3 MTF 装载捕获面收窄（fix-silent-degradation：两引擎共享段）
+# ===========================================================================
+
+class TestEnrichWithMtfSingleSource:
+    """R-3：两引擎 MTF 装载-合并段消费同一共享实现（单源）。"""
+
+    @staticmethod
+    def _prepare(tmp_path):
+        from core.analysis.condition_kernel import MtfEvalContext
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=100))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=40, freq="1d"))
+        return MtfEvalContext(
+            data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
+
+    def test_engine_consumes_shared_impl(self, tmp_path, monkeypatch):
+        """engine 的 MTF 段消费 core.validation.mtf.enrich_with_mtf——
+        patch 模块属性即被触达（私有副本/本地改名即红）。"""
+        import core.validation.mtf as mtf_mod
+        from core.validation.engine import validate_hypothesis
+
+        ctx = self._prepare(tmp_path)
+        calls = []
+        real = mtf_mod.enrich_with_mtf
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(mtf_mod, "enrich_with_mtf", _spy)
+        validate_hypothesis(
+            "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+            when_conditions=[{"subject": "close", "action": "gt", "target": 0}],
+            then_conditions=[{"subject": "close", "action": "rise",
+                              "target": 1, "timeframe": "1d"}],
+            data_dir=str(tmp_path), mtf=ctx,
+        )
+        assert calls, "engine 未消费共享 enrich_with_mtf"
+
+    def test_rule_engine_consumes_shared_impl(self):
+        """rule_engine 的 MTF 段消费同一共享实现。
+
+        rule_engine 为模块级 from-import（绑定在 import 时落定，patch
+        源模块属性不更新本地绑定——spy 形制对它无效），改用绑定身份
+        断言：私有改写（本地重定义/换源 import）即 is 断言红。
+        """
+        import core.validation.mtf as mtf_mod
+        import core.validation.rule_engine as re_mod
+        assert re_mod.enrich_with_mtf is mtf_mod.enrich_with_mtf, \
+            "rule_engine 的 enrich_with_mtf 不指向 core.validation.mtf 单源"
+
+    def test_engine_has_no_private_copy(self):
+        """engine（函数内 import 形制）无私有副本：模块全域不含本地
+        定义（私有改写即红；消费证据由 spy 用例承载）。"""
+        import re
+        import inspect
+        import core.validation.engine as eng_mod
+        source = inspect.getsource(eng_mod)
+        assert not re.search(r"^def enrich_with_mtf\s*\(", source, re.MULTILINE), \
+            "engine 出现 enrich_with_mtf 私有定义（须消费 mtf 单源）"
+
+    def test_exactly_two_production_consumers(self):
+        """生产域（core/api）消费面恰两引擎文件（域判定，第三消费方
+        即红——共享提取面限定两引擎）。"""
+        import re
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        consumers = set()
+        for src_dir in ("core", "api"):
+            for path in (repo_root / src_dir).rglob("*.py"):
+                text = path.read_text(encoding="utf-8")
+                if path.name == "mtf.py":
+                    continue  # 定义宿主（定义与内部调用不算消费）
+                if re.search(r"\benrich_with_mtf\s*\(", text):
+                    consumers.add(str(path))
+        assert consumers == {
+            str(repo_root / "core" / "validation" / "engine.py"),
+            str(repo_root / "core" / "validation" / "rule_engine.py"),
+        }, f"消费面须恰为两引擎文件: {sorted(consumers)}"
+
+
+class TestMtfLoadExceptionScopeEngines:
+    """R-3：两引擎装载段捕获面收窄——数据类回退/非数据类上抛。"""
+
+    FIXED_MSG = "MTF data loading failed, falling back to single timeframe"
+
+    @staticmethod
+    def _prepare(tmp_path):
+        from core.analysis.condition_kernel import MtfEvalContext
+        _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=100))
+        _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=40, freq="1d"))
+        return MtfEvalContext(
+            data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
+
+    def _run_engine(self, tmp_path, ctx):
+        from core.validation.engine import validate_hypothesis
+        return validate_hypothesis(
+            "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+            when_conditions=[{"subject": "close", "action": "gt", "target": 0}],
+            then_conditions=[{"subject": "close", "action": "rise",
+                              "target": 1, "timeframe": "1d"}],
+            data_dir=str(tmp_path), mtf=ctx,
+        )
+
+    def _run_rule_engine(self, tmp_path, ctx):
+        from core.validation.rule_engine import evaluate_rules
+        return evaluate_rules(
+            "TESTUSDT", "4h", "2024-01-01", "2025-01-01",
+            entry_conditions=[{"subject": "close", "action": "lt",
+                               "target": 105, "timeframe": "1d"}],
+            exit_conditions=[{"subject": "close", "action": "gt",
+                              "target": 100}],
+            data_dir=str(tmp_path), mtf=ctx,
+        )
+
+    @pytest.mark.parametrize("exc_factory", [
+        lambda: FileNotFoundError("missing"),
+        lambda: __import__("pyarrow.lib", fromlist=["ArrowInvalid"]).ArrowInvalid("truncated"),
+        lambda: KeyError("missing col"),
+        lambda: ValueError("bad value"),
+    ], ids=["FileNotFoundError", "ArrowInvalid", "KeyError", "ValueError"])
+    @pytest.mark.parametrize("engine", ["engine", "rule_engine"],
+                             ids=["engine", "rule_engine"])
+    def test_data_exception_fallback_both_engines(
+            self, tmp_path, monkeypatch, exc_factory, engine):
+        """数据类四形态（含 OSError 子类与 ValueError 子类）×两引擎：
+        回退单周期求值+固定文案逐字。"""
+        import core.validation.mtf as mtf_mod
+
+        ctx = self._prepare(tmp_path)
+        exc = exc_factory()
+        monkeypatch.setattr(
+            mtf_mod, "load_mtf_data",
+            lambda *a, **k: (_ for _ in ()).throw(exc))
+        runner = self._run_engine if engine == "engine" else self._run_rule_engine
+        result = runner(tmp_path, ctx)
+        assert self.FIXED_MSG in result.warnings
+        assert str(exc) not in "".join(result.warnings)
+
+    @pytest.mark.parametrize("exc", [TypeError, AttributeError, RuntimeError],
+                             ids=["TypeError", "AttributeError", "RuntimeError"])
+    @pytest.mark.parametrize("engine", ["engine", "rule_engine"],
+                             ids=["engine", "rule_engine"])
+    def test_non_data_exception_raises_both_engines(
+            self, tmp_path, monkeypatch, exc, engine):
+        """非数据类三形态×两引擎：上抛显性失败（不被吞为降级 warning）。"""
+        import core.validation.mtf as mtf_mod
+
+        ctx = self._prepare(tmp_path)
+
+        def _boom(*args, **kwargs):
+            raise exc("code bug")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        runner = self._run_engine if engine == "engine" else self._run_rule_engine
+        with pytest.raises(exc):
+            runner(tmp_path, ctx)
+
+    def test_truncated_parquet_real_fallback(self, tmp_path):
+        """真实坏数据注入（不经 mock）：高周期 parquet 物理截断 →
+        ArrowInvalid（ValueError 族）→ 回退+固定文案。
+
+        防坑（tasks B-3）：截断文件=回退分支（有文案）；删高周期文件
+        =静默跳过分支（find_parquet None→continue 无 warning）——两
+        分支不混用，本用例走截断分支。形制取 engine 的 then-only
+        引用（entry/when 不带 timeframe 键）：rule_engine 的 entry
+        掩码投影链（condition_kernel load_raw）会二次读同一截断文件
+        裸抛——投影链不在本 change 捕获面（三处装载段限定），属架构
+        现状，不以本用例锚定。
+        """
+        ctx = self._prepare(tmp_path)
+        high = tmp_path / "TESTUSDT_1d.parquet"
+        raw = high.read_bytes()
+        high.write_bytes(raw[: len(raw) // 2])  # 物理截断
+
+        result = self._run_engine(tmp_path, ctx)
+        assert self.FIXED_MSG in result.warnings
+
+
+class TestMtfDegradationApiSurface:
+    """R-3 API 面 L2：/api/validate 的 MTF 装载异常出站形制。"""
+
+    @pytest.fixture
+    def _mtf_ready(self, tmp_data_dir):
+        """基准 4h 与引用 1d 双文件在库（条件周期可达校验先行通过）。"""
+        _write_parquet(tmp_data_dir, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_data_dir, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        return {
+            "pair": "TESTUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2025-01-01",
+            "when": [{"subject": "close", "action": "gt", "target": "0",
+                      "timeframe": "1d"}],
+            "then": [{"subject": "close", "action": "rise", "target": "1"}],
+        }
+
+    def test_data_exception_200_with_fixed_warning(
+            self, api_client, _mtf_ready, monkeypatch):
+        """数据类装载失败 → 200 + warnings 含固定分类文案。"""
+        import core.validation.mtf as mtf_mod
+
+        def _boom(*args, **kwargs):
+            raise OSError("disk error")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        resp = api_client.post("/api/validate", json=_mtf_ready)
+        assert resp.status_code == 200
+        assert any(
+            "MTF data loading failed, falling back to single timeframe"
+            in w for w in resp.json()["warnings"])
+
+    def test_non_data_exception_500_default_channel(
+            self, db_path, tmp_data_dir, monkeypatch):
+        """非数据类（装载代码自身缺陷）→ 非 ResearchError 走 FastAPI
+        默认 500 通道（缺陷显性化，不吞为降级结果）。
+
+        TestClient 默认 raise_server_exceptions=True 会把服务器异常
+        直接 raise——自建 raise_server_exceptions=False 的 client 才
+        能断言 500 出站形制（api_client fixture 形制同 conftest）。
+        """
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+        import core.validation.mtf as mtf_mod
+
+        _write_parquet(tmp_data_dir, "TESTUSDT_4h", _sine_ohlcv(n=200))
+        _write_parquet(tmp_data_dir, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
+        payload = {
+            "pair": "TESTUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2025-01-01",
+            "when": [{"subject": "close", "action": "gt", "target": "0",
+                      "timeframe": "1d"}],
+            "then": [{"subject": "close", "action": "rise", "target": "1"}],
+        }
+
+        def _boom(*args, **kwargs):
+            raise TypeError("code bug")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        app = create_app(db_path=db_path, data_dir=tmp_data_dir)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/validate", json=payload)
+        assert resp.status_code == 500

@@ -115,7 +115,7 @@ def validate_hypothesis(
     from pathlib import Path
     from core.analysis.hypothesis_service import ResearchError
     from core.data.mtf_loader import safe_symbol, find_parquet
-    from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
+    from core.validation.mtf import enrich_with_mtf
 
     if data_dir is None:
         from core.data.fapi.rest import default_data_dir
@@ -168,27 +168,12 @@ def validate_hypothesis(
     warnings: List[str] = []
 
     if referenced_tfs:
-        try:
-            mtf_data = load_mtf_data(pair, list(referenced_tfs), start, end, data_dir)
-            if mtf_data:
-                # 各高周期 DataFrame 分别算指标
-                mtf_with_indicators = {}
-                for tf, tf_df in mtf_data.items():
-                    mtf_with_indicators[tf] = compute_all_indicators(tf_df)
-
-                base_tf_minutes = get_timeframe_minutes(timeframe)
-                tf_minutes_map = {tf: get_timeframe_minutes(tf) for tf in mtf_with_indicators}
-                enhanced_df = merge_to_base(
-                    enhanced_df, mtf_with_indicators,
-                    base_tf_minutes, tf_minutes_map,
-                )
-        except Exception as exc:
-            # 异常原文只进日志不回传（live_trading dna 预检同款取舍：
-            # 异常文本形态不可控，warnings 面向客户端固定分类文案）
-            logger.warning(
-                "MTF 数据装载失败，回退单周期求值: %r", exc, exc_info=exc)
-            warnings.append(
-                "MTF data loading failed, falling back to single timeframe")
+        # R-3（fix-silent-degradation）：装载-合并段与 rule_engine 共享
+        # 单点 enrich_with_mtf（原逐字重复段收口；数据类异常回退单周期
+        # 求值+固定文案 warning、非数据类上抛显性失败——取舍见其实现）
+        enhanced_df, _w = enrich_with_mtf(
+            enhanced_df, pair, timeframe, sorted(referenced_tfs), start, end, data_dir)
+        warnings.extend(_w)
 
     # Evaluate WHEN conditions（mtf 上下文透传——Lab 链高周期条件掩码投影）
     when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings, mtf=mtf)

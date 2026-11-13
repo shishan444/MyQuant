@@ -73,18 +73,73 @@ class TestCrossAboveNoThreshold:
 
 
 class TestCombineSignalsUnknownLogic:
-    """combine_signals with unknown logic string returns first signal copy."""
+    """R-7 改写锚：combine_signals 未知 logic → ResearchError 显式拒绝
+    （原静默返回首信号副本——非法 DNA 产出「看似正常但只有首信号」
+    的无声错误结果，fix-silent-degradation 收口）。"""
 
-    def test_combine_signals_unknown_logic_returns_first(self):
+    def test_combine_signals_unknown_logic_raises_four_key_detail(self):
+        from core.analysis.errors import ResearchError
+
         idx = pd.date_range("2024-01-01", periods=5, freq="4h", tz="UTC")
         s1 = pd.Series([True, False, True, False, True], index=idx)
         s2 = pd.Series([False, True, False, True, False], index=idx)
 
-        result = combine_signals([s1, s2], "XOR")
+        with pytest.raises(ResearchError) as ei:
+            combine_signals([s1, s2], "XOR")
 
-        assert result.tolist() == [True, False, True, False, True]
-        # Verify it is a copy, not the original object
-        assert result is not s1
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        detail = ei.value.detail
+        assert detail["param"] == "logic"
+        assert detail["value"] == "XOR"
+        assert detail["legal_values"] == ["AND", "OR"]
+        assert "AND/OR" in detail["hint"]
+
+    @pytest.mark.parametrize("bad_logic", [
+        None, "", "and", "or", "And", " XOR ", 0,
+    ], ids=["None", "空串", "小写and", "小写or", "首大写", "带空白", "非串0"])
+    def test_value_domain_boundary_all_rejected(self, bad_logic):
+        """④ 值域边界：None/空串/小写/任意非 AND/OR 值均经 else 同拒
+        （防宽松匹配——大小写/去空白归一不存在）。"""
+        from core.analysis.errors import ResearchError
+
+        idx = pd.date_range("2024-01-01", periods=3, freq="4h", tz="UTC")
+        signals = [pd.Series([True, False, True], index=idx)]
+
+        with pytest.raises(ResearchError):
+            combine_signals(signals, bad_logic)
+
+    @pytest.mark.parametrize("logic,n_signals,expected", [
+        # 信号池 s1=[T,T,F] s2=[T,F,F] s3=[F,T,F]（期望独立手算）
+        ("AND", 1, [True, True, False]),
+        ("AND", 2, [True, False, False]),
+        ("AND", 3, [False, False, False]),
+        ("OR", 1, [True, True, False]),
+        ("OR", 2, [True, True, False]),
+        ("OR", 3, [True, True, False]),
+    ], ids=["AND-1", "AND-2", "AND-3", "OR-1", "OR-2", "OR-3"])
+    def test_legal_and_or_regression(self, logic, n_signals, expected):
+        """② 合法 AND/OR × 1/2/3 信号回归逐位不变（单信号＝首信号副本
+        语义；AND 全交集、OR 全并集——期望为独立手算值非重算）。"""
+        idx = pd.date_range("2024-01-01", periods=3, freq="4h", tz="UTC")
+        pool = [
+            pd.Series([True, True, False], index=idx),
+            pd.Series([True, False, False], index=idx),
+            pd.Series([False, True, False], index=idx),
+        ]
+        signals = pool[:n_signals]
+
+        result = combine_signals(signals, logic)
+
+        assert result.tolist() == expected
+
+    @pytest.mark.parametrize("bad_logic", ["XOR", None], ids=["XOR", "None"])
+    def test_empty_list_branch_precedes_logic_check(self, bad_logic):
+        """③ 空列表分支先于 logic 检查：[] 与 []＋非法 logic → False
+        series 不 raise（空信号集无 logic 行为后果）。"""
+        result = combine_signals([], bad_logic)
+        assert isinstance(result, pd.Series)
+        assert result.empty
+        assert not result.any()
 
 
 class TestEvaluateLayerAllGenesFail:

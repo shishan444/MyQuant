@@ -384,6 +384,23 @@ class TestPrepareValidation:
         assert task["status"] == "error"
         assert "indicators_unavailable" in task["error_detail"]
 
+    def test_unknown_logic_dna_rejected_at_mount(self, tmp_path):
+        """R-7 冒泡面③④（fix-silent-degradation）：非法 logic DNA
+        装载期即拒——SEC-3（审查批）起通道前移：装载期 validate_dna
+        值域拒绝（invalid_dna 通道，原为信号试算 indicators_unavailable
+        通道），运行期实际不可达（数据完整、异常源是 logic 值域）。"""
+        dna = make_dna()
+        dna.logic_genes.entry_logic = "XOR"
+        h = _Harness(tmp_path, dna=dna)
+        full = make_ohlcv(n=50, freq="4h", seed=_SEED, base_price=100.0)
+        save_parquet(full, h.data_dir / "BTCUSDT_4h.parquet")
+        ex = h.make_executor()
+        assert ex.prepare() is False
+        task = h.task()
+        assert task["status"] == "error"
+        assert "invalid_dna" in task["error_detail"]
+        assert "entry_logic" in task["error_detail"]
+
     def test_invalid_dna_rejected(self, tmp_path):
         """非法 DNA 组合（risk_budget 缺 risk_fraction）装载拒绝。"""
         dna = make_dna()

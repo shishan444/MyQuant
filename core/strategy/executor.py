@@ -498,7 +498,15 @@ def combine_signals(signal_list: list[pd.Series], logic: str) -> pd.Series:
             result = result | s
         return result
     else:
-        return signal_list[0].copy()
+        # R-7（fix-silent-degradation）：未知 logic 显式拒绝（原静默
+        # 返回首信号副本——非法 DNA 产出「看似正常但只有首信号」的
+        # 错误无声结果）；空列表分支已在前置返回，不受影响
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            f"logic 未知: {logic!r}",
+            detail={"param": "logic", "value": logic,
+                    "legal_values": ["AND", "OR"],
+                    "hint": "logic 须为 AND/OR 之一"})
 
 
 _indicator_column_cache: dict = {}
