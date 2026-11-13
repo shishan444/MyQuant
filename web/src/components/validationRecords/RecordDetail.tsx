@@ -18,7 +18,7 @@ import { InputNumber, Select, Switch, Tabs } from "antd";
 import { FileSearch } from "lucide-react";
 import { KlineChart, type KlineChartHandle } from "@/components/charts/KlineChart";
 import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitives/segmentBand";
-import { formatTimestamp } from "@/lib/utils";
+import { formatPercent, formatTimestamp } from "@/lib/utils";
 import { ApiError } from "@/services/api";
 import { CHART_VC } from "@/theme/tokens";
 import {
@@ -152,7 +152,6 @@ function concatTrail(
 }
 
 const fmtTime = (t?: string | null) => formatTimestamp(t, "minute");
-const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 const unk = (v: number | null) => (v == null ? "未知" : String(v));
 
 /* ── V4 三布尔能力徽标（独立降级——true 正常/false 缺陷带 record_id/
@@ -640,7 +639,7 @@ function EquityReview({
       ?.total_return;
     if (typeof claimed === "number") {
       const ok = Math.abs(delta / 100 - claimed) < 1e-6;
-      consistency = { text: `与声称收益一致性核对：终值 ${fmtPct(claimed)}`, ok };
+      consistency = { text: `与声称收益一致性核对：终值 ${formatPercent(claimed)}`, ok };
     }
   } else if (record.level === "random_window") {
     const worst = (result.summary as

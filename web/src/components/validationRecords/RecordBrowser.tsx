@@ -19,6 +19,7 @@ import {
   type ValidationRecordRow,
   type ValidationSort,
 } from "@/services/validationRecords";
+import { formatPercent } from "@/lib/utils";
 import {
   buildCardModel,
   DEFAULT_LIST_FILTERS,
@@ -145,10 +146,6 @@ const VERDICT_BADGE: Record<string, { text: string; cls: string }> = {
   inconclusive: { text: "◐ 证据不足", cls: "text-attention-gold" },
 };
 
-function fmtPct(v: number): string {
-  return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
-}
-
 /** L1 卡片流四段卡（视觉权威源：原型 03 帧卡片——标识徽标/statement
  *  引文两行截断/区间币种笔数/收益夏普回撤固定槽） */
 export function RecordCard({
@@ -204,7 +201,7 @@ export function RecordCard({
               m.metrics.total_return! >= 0 ? "text-profit" : "text-loss"
             }`}
           >
-            {fmtPct(m.metrics.total_return!)}
+            {formatPercent(m.metrics.total_return!)}
           </span>
           {m.worstLabel && (
             <span className="text-[9px] text-text-muted">{m.worstLabel}</span>
