@@ -27,7 +27,7 @@ function themeVar(name: string): string | undefined {
   return m?.[1]?.trim();
 }
 
-describe("@theme 受控从源映射守卫（十组+两补档）", () => {
+describe("@theme+:root 受控从源映射守卫（@theme 十三组+:root 声称同步面）", () => {
   const mapping: Array<[string, string]> = [
     ["color-text-primary", TEXT.primary],
     ["color-text-secondary", TEXT.secondary],
@@ -42,11 +42,34 @@ describe("@theme 受控从源映射守卫（十组+两补档）", () => {
     ["color-bg-surface", BG.bg1],
     ["color-bg-elevated", BG.bg2],
     ["color-warning", STATE.warn],
+    // ── :root shadcn 块「声称同步即受守卫」通则（fe-polarity-calibration
+    // spec：无「声称而不受控」的半从源）——块注释声称面 9 项全集入守卫。
+    // destructive=1.2 先行；其余 8 项=T2.4 扩容（tester3）：background=BG 族/
+    // foreground 三级=TEXT 族/primary=ATTENTION.gold/accent 系/border 族；
+    // 零消费保留项（popover/secondary/muted 本体/ring）注释明示「保留现值
+    // 归⑤收尾门议」非声称同步，不入。
     ["destructive", POLARITY.down], // fe-polarity-calibration 1.2：:root --destructive 入守卫
+    ["background", BG.bg0], // T2.4：:root --background=BG.bg0
+    ["foreground", TEXT.primary], // T2.4：:root --foreground=TEXT.primary
+    ["muted-foreground", TEXT.tertiary], // T2.4：:root --muted-foreground=TEXT.tertiary
+    ["primary", ATTENTION.gold], // T2.4：:root --primary=ATTENTION.gold
+    ["accent-foreground", ATTENTION.gold], // T2.4：:root --accent-foreground=ATTENTION.gold
+    ["border", BORDER.default], // T2.4：:root --border=BORDER.default
+    ["input", BORDER.default], // T2.4：:root --input=BORDER.default
   ];
 
-  it.each(mapping)("@theme --%s === tokens 值 %s", (name, expected) => {
+  it.each(mapping)("--%s === tokens 值 %s", (name, expected) => {
     expect(themeVar(name)).toBe(expected);
+  });
+
+  it("--accent === ATTENTION.gold 15% alpha（「accent 系=金 15%」声称——rgba 解析形免排版敏感）", () => {
+    const m = themeVar("accent")?.match(/^rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)$/);
+    expect(m, "--accent 应为 rgba(r,g,b,a) 形").toBeDefined();
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(ATTENTION.gold.slice(i, i + 2), 16));
+    expect(Number(m![1])).toBe(r);
+    expect(Number(m![2])).toBe(g);
+    expect(Number(m![3])).toBe(b);
+    expect(Number(m![4])).toBeCloseTo(0.15, 6);
   });
 
   it("body 背景为 tokens bg0 纯色（旧近黑渐变退役）", () => {

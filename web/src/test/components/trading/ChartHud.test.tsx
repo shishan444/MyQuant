@@ -9,8 +9,13 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ChartHud } from "@/components/trading/ChartHud";
-import { CHART_VA } from "@/theme/tokens";
+import { CHART_VA, POLARITY } from "@/theme/tokens";
 import type { PaperFill, PaperSignal } from "@/types/api";
+
+// hex → jsdom CSSOM 序列化 rgb 元组（fe-polarity-calibration T2.5：断言值
+// 与源同源——期望从 tokens 派生而非 rgb 字面第二实现，调值自动跟随）
+const rgbTuple = (hex: string): string =>
+  [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ");
 
 const fill = {
   id: 1, task_id: "t1", bar_time: "2026-11-01 00:00:00+00:00", seq: 0,
@@ -73,10 +78,11 @@ describe("ChartHud 四浮层（va 变体真值锚）", () => {
     const hud = screen.getByTestId("chart-hud");
     expect(hud).toHaveTextContent("做空");
     expect(hud).toHaveTextContent("浮盈亏 -50.00");
-    // 负浮盈亏取色=POLARITY.down（jsdom rgb 序列化）
+    // 负浮盈亏取色=POLARITY.down（jsdom rgb 序列化；期望=rgbTuple(POLARITY.down)
+    // 引用形——fe-polarity-calibration T2.5「断言值与源同源」，rgb 字面形退役）
     const upnlSpan = [...hud.querySelectorAll("span")].find((s) =>
       s.textContent?.includes("浮盈亏") && s.hasAttribute("style"));
-    expect(upnlSpan?.getAttribute("style")).toContain("rgb(251, 113, 133)");
+    expect(upnlSpan?.getAttribute("style")).toContain(`rgb(${rgbTuple(POLARITY.down)})`);
   });
 
   it("信号/成交浮层：kind+outcome 与成交回执真值", () => {
