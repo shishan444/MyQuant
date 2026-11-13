@@ -973,9 +973,16 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     }
     setViewTf(null);
   }
-  // 非 404 暂态失败提示条（渲染期派生；重试成功清除该档失败标记）
-  if (viewTf != null && failedTfs.has(viewTf) && fr.state === "ok") {
-    // 用户重切失败档且该档查询成功 → 移除该档标记（该档提示行随之消失）
+  // 非 404 暂态失败提示条（渲染期派生；该档装载即清除失败标记——
+  // ok/truncated/mismatch 三态同分支携带 candles 照画，数据在场即非失败，
+  // 否则截断/对账不等档重试成功后「失败可重试」提示条与已装载数据同屏矛盾）
+  if (
+    viewTf != null &&
+    failedTfs.has(viewTf) &&
+    fr.state !== "error" &&
+    fr.state !== "loading"
+  ) {
+    // 用户重切失败档且该档查询装载（含截断/对账不等告警态）→ 移除该档标记
     setFailedTfs((prev) => {
       const next = new Set(prev);
       next.delete(viewTf);
