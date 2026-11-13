@@ -94,8 +94,10 @@ export function useFullRangeKline(
   timeframe: string | null,
   /** 视图周期（契约 K：缺省=基准 timeframe；切换后 K 线按该档重拉） */
   viewTf?: string | null,
-  /** REQ-4 重试序号：非 404 失败档重切时递增（queryKey 变化强制重发） */
-  retrySeq = 0,
+  /** REQ-4 重试序号（per-tf 映射）：非 404 失败档重切时该档递增；queryKey
+   *  只取当前档序号——他档递增不动当前档缓存身份，基准档序号恒 0（判死
+   *  分流只在非基准视图写入），回基准永不因他档重试 miss 缓存 */
+  retrySeqs: Record<string, number> = {},
 ): FullRangeResult {
   const fetchTf = viewTf ?? timeframe;
   const bounds = executions.length
@@ -112,7 +114,7 @@ export function useFullRangeKline(
     : { minStart: null, maxEnd: null };
 
   const q = useQuery({
-    queryKey: ["vr-kline-full", symbol, fetchTf, bounds.minStart, bounds.maxEnd, retrySeq],
+    queryKey: ["vr-kline-full", symbol, fetchTf, bounds.minStart, bounds.maxEnd, fetchTf != null ? retrySeqs[fetchTf] ?? 0 : 0],
     queryFn: () =>
       getOhlcvBySymbol(symbol!, fetchTf!, {
         start: bounds.minStart ?? undefined,

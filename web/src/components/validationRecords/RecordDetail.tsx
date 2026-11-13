@@ -934,9 +934,10 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
   // 视图周期（契约 K）：null=基准（执行语义锚）；无数据档禁用集（请求后降级）
   const [viewTf, setViewTf] = useState<string | null>(null);
   const [deadTfs, setDeadTfs] = useState<ReadonlySet<string>>(new Set());
-  // REQ-4 重试序号与失败档标记（D5.3 重切失败档必重发——queryKey 携序号）
+  // REQ-4 重试序号（per-tf）与失败档标记（D5.3 重切失败档必重发——
+  // queryKey 只携当前档序号，他档重试不动基准档缓存身份）
   const [failedTf, setFailedTf] = useState<string | null>(null);
-  const [retrySeq, setRetrySeq] = useState(0);
+  const [retrySeqs, setRetrySeqs] = useState<Record<string, number>>({});
   const chartRef = useRef<KlineChartHandle | null>(null);
   const locate = (time: string) => chartRef.current?.scrollToTime(time);
   // 全区间装载（hooks 无条件区——早退前调用；明细未就绪/不可用时空
@@ -948,12 +949,13 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     st.symbol,
     st.timeframe,
     viewTf,
-    retrySeq,
+    retrySeqs,
   );
-  // REQ-4：重切非 404 失败档时递增序号（queryKey 携序号强制重发）
+  // REQ-4：重切非 404 失败档时递增该档序号（queryKey 携序号强制重发）
   const handleViewTf = (tf: string | null) => {
     setViewTf(tf);
-    if (tf !== null && tf === failedTf) setRetrySeq((s) => s + 1);
+    if (tf !== null && tf === failedTf)
+      setRetrySeqs((prev) => ({ ...prev, [tf]: (prev[tf] ?? 0) + 1 }));
   };
   // 契约 K 判死分流（REQ-4/D5——render 期前值推导消解 set-state-in-effect）：
   // 404=档位无数据（禁用+回基准，零额外请求）；非 404=暂态失败（不入
