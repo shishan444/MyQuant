@@ -24,7 +24,7 @@ import { deleteStrategy, getStrategiesByStatus, getVerifyHistory } from "@/servi
 import { listTradingTasks } from "@/services/trading";
 import { toast } from "sonner";
 import { cn, getFitnessColor } from "@/lib/utils";
-import { INDICATOR_LABELS, CONDITION_TYPE_LABELS } from "@/lib/constants";
+import { INDICATOR_LABELS, CONDITION_TYPE_LABELS, SL_MODE_LABELS } from "@/lib/constants";
 import type { Strategy, DNA, VerifyHistoryResponse } from "@/types/api";
 import type { TradingTask } from "@/services/trading";
 
@@ -280,7 +280,6 @@ function DnaSegment({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
 
 /**
  * DNA 五段呈现（alignment-batch D4）：信号基因/逻辑基因/风险基因/执行基因/

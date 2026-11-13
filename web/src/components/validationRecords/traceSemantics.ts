@@ -153,7 +153,9 @@ export function buildCardModel(row: ValidationRecordRow): RecordCardModel {
   const params = (row.params ?? {}) as Record<string, unknown>;
   const result = (row.result ?? {}) as Record<string, unknown>;
   const typeLabel = LEVEL_LABELS[row.level] ?? row.level;
-  const base = { typeLabel, statement: row.statement };
+  // statement 生成物为可选键（Pydantic 默认值字段不进 required——运行时
+  // 恒在场，D-1 探针双证）；边界处 undefined 归一为 null（视图模型必带键）
+  const base = { typeLabel, statement: row.statement ?? null };
 
   // 记录级区间/币种（三型 params 形状路由——isolated/staged=
   // request_range 四键、random=data_start/data_end+symbol 平铺）
