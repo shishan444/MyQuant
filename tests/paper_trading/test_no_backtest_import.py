@@ -84,13 +84,16 @@ class TestNoBacktestImport:
             if "core/backtest" not in text:
                 continue
             rel = str(path.relative_to(_PAPER_DIR))
-            # 注释行集（tokenize——字符串内的 # 不算注释）
+            # 纯注释行集（tokenize COMMENT + 行首 # 双条件——
+            # 字符串内的 # 不算注释 token，行内尾注的代码行不放行）
             comment_lines: set[int] = set()
+            lines = text.splitlines()
             for tok in tokenize.generate_tokens(
                     io.StringIO(text).readline):
                 if tok.type == tokenize.COMMENT:
-                    comment_lines.update(range(tok.start[0],
-                                               tok.end[0] + 1))
+                    if lines[tok.start[0] - 1].strip().startswith("#"):
+                        comment_lines.update(range(tok.start[0],
+                                                   tok.end[0] + 1))
             # docstring 行集（ast——模块/类/函数体首语句的字符串）
             docstring_lines: set[int] = set()
             tree = ast.parse(text)

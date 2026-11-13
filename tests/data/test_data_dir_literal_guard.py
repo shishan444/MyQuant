@@ -71,13 +71,20 @@ def _prod_python_files() -> list[Path]:
 
 
 def _comment_and_docstring_lines(text: str) -> set[int]:
-    """注释行集（tokenize——字符串内的 # 不算）∪ docstring 行集
-    （ast——模块/类/函数体首语句字符串，先例 test_no_backtest_import
-    同形制）。"""
+    """纯注释行集（tokenize COMMENT + 行首 # 双条件）∪ docstring
+    行集（ast——模块/类/函数体首语句字符串，先例
+    test_no_backtest_import 同形制）。双条件堵两个误差方向：
+    纯行首判断会对三引号字符串内以 # 开头的行误豁免，tokenize
+    保证字符串内 # 不算注释 token；纯 tokenize 有行内尾注盲区
+    （代码 + # 注释整行被吞），行首 # 保证只豁免纯注释行。"""
     comment_lines: set[int] = set()
+    lines = text.splitlines()
     for tok in tokenize.generate_tokens(io.StringIO(text).readline):
         if tok.type == tokenize.COMMENT:
-            comment_lines.update(range(tok.start[0], tok.end[0] + 1))
+            # 只把纯注释行收进豁免集：行内尾注（代码 + # 注释）
+            # 的代码部分仍在守卫扫描面，不放行
+            if lines[tok.start[0] - 1].strip().startswith("#"):
+                comment_lines.update(range(tok.start[0], tok.end[0] + 1))
     docstring_lines: set[int] = set()
     tree = ast.parse(text)
     for node in ast.walk(tree):
