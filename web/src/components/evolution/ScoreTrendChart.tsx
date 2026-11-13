@@ -142,22 +142,33 @@ export function ScoreTrendChart({
     const { bestScore, bestFitness, cumulativeBest, avgScore } = seriesRef.current;
     if (!bestScore || !cumulativeBest || !avgScore) return;
 
+    // value 面兜底：非法 value（NaN/Infinity/非数）dev 构建经 checkLineItem
+    // 断言 throw 崩组件树、production 构建断言剥除后静默进数据模型——装配层
+    // 剔除；bestFitness null=断线 whitespace 语义承载，不滤点
+    const safeData = data.filter(
+      (d) =>
+        Number.isFinite(d.bestScore) &&
+        Number.isFinite(d.avgScore) &&
+        Number.isFinite(d.cumulativeBest) &&
+        (d.bestFitness == null || Number.isFinite(d.bestFitness)),
+    );
+
     bestScore.setData(
-      data.map((d) => ({ time: genToTime(d.generation), value: d.bestScore })),
+      safeData.map((d) => ({ time: genToTime(d.generation), value: d.bestScore })),
     );
     // fitness 缺代以 whitespace 断点承载（断线语义）
     bestFitness?.setData(
-      data.map((d) =>
+      safeData.map((d) =>
         d.bestFitness != null
           ? { time: genToTime(d.generation), value: d.bestFitness }
           : { time: genToTime(d.generation) },
       ),
     );
     cumulativeBest.setData(
-      data.map((d) => ({ time: genToTime(d.generation), value: d.cumulativeBest })),
+      safeData.map((d) => ({ time: genToTime(d.generation), value: d.cumulativeBest })),
     );
     avgScore.setData(
-      data.map((d) => ({ time: genToTime(d.generation), value: d.avgScore })),
+      safeData.map((d) => ({ time: genToTime(d.generation), value: d.avgScore })),
     );
 
     // 双 priceLine 二选一（旧 markLine 归属随迁：目标线挂 bestScore、达标线挂 bestFitness）
