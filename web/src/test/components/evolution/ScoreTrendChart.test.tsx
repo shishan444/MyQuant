@@ -277,6 +277,15 @@ describe("ScoreTrendChart component", () => {
     expect(createChartMock).not.toHaveBeenCalled();
   });
 
+  it("数据充足 + jsdom 无 canvas：降级跳过 init，legend/summary 照常在场", () => {
+    // 本 describe 不 stub getContext（jsdom 原生返回 null → canDraw=false 降级路径）；
+    // 显式锚定降级契约：不初始化图表但不吞掉组件的 DOM 面（D3 机制在 ScoreTrend 侧）
+    render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
+    expect(createChartMock).not.toHaveBeenCalled();
+    expect(screen.getByText("综合得分")).toBeInTheDocument();
+    expect(screen.getByText(/最优刷新 2 次/)).toBeInTheDocument();
+  });
+
   it("renders legend and stats for fitness form", () => {
     render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
     // legend（有适应度数据 → 适应度+达标线）
