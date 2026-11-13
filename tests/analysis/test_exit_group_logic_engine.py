@@ -13,7 +13,6 @@ backtest L3 链路内部消费同一 SignalSet.exits）——exits 布尔即回�
 离场行为的决定输入，行为锚在此层与回测层等价。
 """
 
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -174,20 +173,15 @@ class TestAndFormBitwiseIdentical:
                     list(getattr(ss_plain, ch)), f"{ch} 通道逐位一致"
 
 
-class TestZeroChangeProof:
-    """4.1③零改动双证之一：变更集文件清单断言（既有 executor/装配
-    测试全绿由 7.1 全量回归与局部跑承载）。"""
-
-    def test_git_diff_excludes_engine_and_assembly(self):
-        """本 change 变更集不含 core/strategy/executor.py 与
-        core/analysis/signal_assembly.py（D7 引擎/装配零改动）。"""
-        repo = Path(__file__).resolve().parents[2]
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "main...HEAD"],
-            cwd=repo, capture_output=True, text=True, check=True)
-        changed = {line for line in result.stdout.splitlines() if line}
-        assert "core/strategy/executor.py" not in changed
-        assert "core/analysis/signal_assembly.py" not in changed
+# 退役记录（fix-silent-degradation B-9 裁决 A，2026-11-13）：原
+# TestZeroChangeProof.test_git_diff_excludes_engine_and_assembly 是
+# exit_group_logic change「4.1③ 零改动双证」的专项证明——断言
+# git diff main...HEAD 变更集不含 executor.py 与 signal_assembly.py。
+# 一次性零变化证据被常驻化为测试，隐含「main 之后无其他 change 触碰
+# 该两文件」假设；R-7（fix-silent-degradation 任务书规定动作）合法
+# 修改 executor.py 即撞红（全量 9262 绿中唯一红）。专项证明使命已随
+# exit_group_logic 归档完成，常驻断言退役；零变化原始证据以该 change
+# 归档时的提交清单审计承载。
 
 
 class TestMixedGroupBoundary:
