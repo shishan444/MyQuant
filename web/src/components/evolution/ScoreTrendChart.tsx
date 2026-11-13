@@ -17,6 +17,7 @@ import {
   CrosshairMode,
 } from "lightweight-charts";
 import type {
+  AutoscaleInfo,
   IChartApi,
   ISeriesApi,
   ISeriesMarkersPluginApi,
@@ -173,25 +174,40 @@ export function ScoreTrendChart({
 
     // 双 priceLine 二选一（旧 markLine 归属随迁：目标线挂 bestScore、达标线挂 bestFitness）
     const targetSeries = hasFitnessData ? bestFitness : bestScore;
+    const targetValue = hasFitnessData ? targetFitness : targetScore;
     if (targetSeries) {
       for (const line of targetSeries.priceLines()) targetSeries.removePriceLine(line);
       targetSeries.createPriceLine(
         hasFitnessData
           ? {
-              price: targetFitness,
+              price: targetValue,
               color: POLARITY.up,
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               title: "达标线",
             }
           : {
-              price: targetScore,
+              price: targetValue,
               color: SCORE_TREND_TARGET_LINE_COLOR,
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
-              title: `目标 ${targetScore}`,
+              title: `目标 ${targetValue}`,
             },
       );
+      // 目标线入值域（D2 随迁项）：库 autoScale 值域只按 series 数据计算，
+      // priceLine 不参与——线值越出数据域时整条被裁不可见。在承载 series 上
+      // 包装默认 autoscaleInfoProvider 把线值并入 min/max；线值是 props 动态
+      // 值，本 effect 依赖含之，重跑时 applyOptions 换新闭包，不致陈旧。
+      targetSeries.applyOptions({
+        autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+          const res = original();
+          if (res?.priceRange) {
+            res.priceRange.minValue = Math.min(res.priceRange.minValue, targetValue);
+            res.priceRange.maxValue = Math.max(res.priceRange.maxValue, targetValue);
+          }
+          return res;
+        },
+      });
     }
 
     // champion 菱形散点→circle marker（旧 symbolSize 8）；种群边界竖线族→
@@ -226,7 +242,8 @@ export function ScoreTrendChart({
       markersRef.current = createSeriesMarkers(bestScore, markers);
     }
 
-    // Y 域随迁近似（旧全集 min/max ±padding → autoScale+scaleMargins 0.1）
+    // Y 域随迁近似：值域=series 数据+目标线（上方 provider 并入），余量以
+    // scaleMargins 0.1 承载（旧显式 padding 的等价形）
     chartRef.current.priceScale("right").applyOptions({
       autoScale: true,
       scaleMargins: { top: 0.1, bottom: 0.1 },
