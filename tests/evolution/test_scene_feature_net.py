@@ -1254,12 +1254,19 @@ class TestRunSceneVerificationFeature:
         assert result.total_triggers == 0
         assert any("No scene occurrences" in w for w in result.warnings)
 
-    def test_run_cross_timeframe_mtf_failure_returns_warning(self, tmp_path):
+    @pytest.mark.parametrize("exc", [
+        ValueError("bad value"), FileNotFoundError("missing"),
+        KeyError("missing col"),
+    ], ids=["ValueError", "FileNotFoundError", "KeyError"])
+    def test_run_cross_timeframe_mtf_failure_returns_warning(self, tmp_path, exc):
+        """R-3 改写锚（原 RuntimeError 单值注入→数据类参数化三值）：
+        scene 装载数据类异常 → 空结果+"MTF loading failed" 文案
+        （回退语义与现状逐字一致）。"""
         from core.validation.scene.scene_engine import run_scene_verification
         data_dir = self._write_parquet(tmp_path)
 
         def _boom(*args, **kwargs):
-            raise RuntimeError("mtf data unavailable")
+            raise exc
 
         with patch("core.validation.mtf.load_mtf_data", side_effect=_boom), \
              patch(
@@ -1295,19 +1302,28 @@ class TestRunSceneVerificationFeature:
         assert not any("MTF" in w for w in result.warnings), \
             "空返回静默跳过——无 MTF 警告"
 
-    def test_mtf_failure_warning_fixed_and_leak_free(self, tmp_path, caplog):
+    @pytest.mark.parametrize("exc_factory", [
+        lambda s: ValueError(s), lambda s: FileNotFoundError(s),
+        lambda s: KeyError(s),
+    ], ids=["ValueError", "FileNotFoundError", "KeyError"])
+    def test_mtf_failure_warning_fixed_and_leak_free(self, tmp_path, caplog, exc_factory):
         """专项① leak-free 锚：警告固定文案「MTF loading failed」
         （无 fallback 宣称——scene_engine 失败即返回空结果，文案如实）
         +异常原文只进日志不回传。caplog 经 root 传播捕获（scene_engine
         模块存在裸名加载身份，logger 名不恒定——不指定 logger 名）。
+
+        R-3 改写锚（原 RuntimeError 单值注入→数据类参数化三值）：
+        非数据类已上抛（见 TestSceneMtfExceptionScope），本锚限定
+        数据类回退面的 leak-free 三断言。
         """
         import logging
         from core.validation.scene.scene_engine import run_scene_verification
         data_dir = self._write_parquet(tmp_path)
         secret = "boom /internal/secret/scene.db"
+        exc = exc_factory(secret)
 
         def _boom(*args, **kwargs):
-            raise RuntimeError(secret)
+            raise exc
 
         with patch("core.validation.mtf.load_mtf_data", side_effect=_boom), \
              patch(
@@ -1766,3 +1782,141 @@ class TestInvariantsFeature:
         agg = result[0]
         assert agg.total_triggers == 3
         assert agg.win_rate == pytest.approx(round(2 / 3 * 100, 1))
+
+
+# ---------------------------------------------------------------------------
+# R-3 scene 第三处捕获面收窄（fix-silent-degradation）
+# ---------------------------------------------------------------------------
+
+class TestSceneMtfExceptionScope:
+    """R-3：scene_engine 装载段仅捕数据类异常——非数据类上抛、API
+    出站形制、真实坏数据、结构边界守卫与单源常量消费。"""
+
+    @pytest.mark.parametrize("exc", [TypeError, AttributeError, RuntimeError],
+                             ids=["TypeError", "AttributeError", "RuntimeError"])
+    def test_non_data_exception_raises(self, tmp_path, caplog, exc):
+        """② 非数据类三值直调（cross_timeframe）→ pytest.raises 原样
+        上抛；caplog 无降级日志（未进 except 分支＝未被吞为空结果）。"""
+        import logging
+        from core.validation.scene.scene_engine import run_scene_verification
+        data_dir = _scene_write_parquet(tmp_path)
+
+        def _boom(*args, **kwargs):
+            raise exc("code bug")
+
+        with caplog.at_level(logging.WARNING), \
+             patch("core.validation.mtf.load_mtf_data", side_effect=_boom), \
+             patch(
+                 "core.validation.scene.scene_engine.compute_all_indicators",
+                 side_effect=lambda df: df,
+             ):
+            with pytest.raises(exc):
+                run_scene_verification(
+                    symbol="TESTUSDT", timeframe="4h",
+                    scene_type="cross_timeframe", data_dir=data_dir,
+                )
+        assert not any("MTF loading failed" in r.getMessage()
+                       for r in caplog.records), "未走降级分支"
+
+    @staticmethod
+    def _write_scene_pair(tmp_data_dir):
+        """建 scene 基准 4h 数据（API/真实坏数据用例共用）。"""
+        from core.data.storage import save_parquet
+        save_parquet(make_ohlcv(n=200, freq="4h"),
+                     tmp_data_dir / "TESTUSDT_4h.parquet")
+
+    def test_scene_api_data_exception_200_with_warning(
+            self, api_client, tmp_data_dir, monkeypatch):
+        """③ API 出站面（数据类）：POST /api/validate/scene → 200 +
+        warnings 含固定文案（断言形制与两引擎组分列——scene 文案无
+        fallback 宣称）。"""
+        import core.validation.mtf as mtf_mod
+
+        self._write_scene_pair(tmp_data_dir)
+
+        def _boom(*args, **kwargs):
+            raise OSError("disk error")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        resp = api_client.post("/api/validate/scene", json={
+            "symbol": "TESTUSDT", "timeframe": "4h",
+            "scene_type": "cross_timeframe",
+        })
+        assert resp.status_code == 200
+        assert any("MTF loading failed" in w for w in resp.json()["warnings"])
+
+    def test_scene_api_non_data_exception_500(
+            self, db_path, tmp_data_dir, monkeypatch):
+        """③ API 出站面（非数据类）：经 scene 路由（直调无 try/except）
+        非 ResearchError 走 FastAPI 默认 500 通道。"""
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+        import core.validation.mtf as mtf_mod
+
+        self._write_scene_pair(tmp_data_dir)
+
+        def _boom(*args, **kwargs):
+            raise TypeError("code bug")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        app = create_app(db_path=db_path, data_dir=tmp_data_dir)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/api/validate/scene", json={
+                "symbol": "TESTUSDT", "timeframe": "4h",
+                "scene_type": "cross_timeframe",
+            })
+        assert resp.status_code == 500
+
+    def test_truncated_parquet_real_empty_result(self, tmp_path):
+        """④ 真实坏数据注入（非 mock side_effect）：高周期 parquet 物理
+        截断 → 真实 ArrowInvalid（ValueError 族）→ 空结果+固定文案。
+
+        防坑：须先建后截断——直接不建高周期文件＝静默跳过分支
+        （load_mtf_data 空返回继续单周期检测，无 warning）。"""
+        from core.validation.scene.scene_engine import run_scene_verification
+        from core.data.storage import save_parquet
+
+        save_parquet(make_ohlcv(n=200, freq="4h"),
+                     tmp_path / "TESTUSDT_4h.parquet")
+        high = tmp_path / "TESTUSDT_1d.parquet"
+        save_parquet(make_ohlcv(n=60, freq="1d"), high)
+        raw = high.read_bytes()
+        high.write_bytes(raw[: len(raw) // 2])  # 物理截断
+
+        result = run_scene_verification(
+            symbol="TESTUSDT", timeframe="4h",
+            scene_type="cross_timeframe", data_dir=str(tmp_path),
+        )
+        assert result.total_triggers == 0
+        assert any("MTF loading failed" in w for w in result.warnings)
+
+    def test_scene_engine_not_import_enrich_with_mtf(self):
+        """⑤ 结构边界守卫：scene_engine 不消费共享提取面（裁决钉死
+        共享限定两引擎——scene 失败语义不同不合并，防提取面误扩）。"""
+        import inspect
+        from core.validation.scene import scene_engine
+        assert "enrich_with_mtf" not in inspect.getsource(scene_engine)
+
+    def test_scene_consumes_single_source_constant(self):
+        """⑥ 单源断言（scene 侧）：捕获清单消费 core.validation.mtf 的
+        MTF_DATA_EXCEPTIONS 单源常量（import 源+except 行形制；无第二
+        处元组书写）。"""
+        import re
+        import inspect
+        from core.validation.scene import scene_engine
+        source = inspect.getsource(scene_engine)
+        assert re.search(
+            r"from core\.validation\.mtf import \(\s*MTF_DATA_EXCEPTIONS",
+            source), "import 源须为 core.validation.mtf 单源常量"
+        assert "except MTF_DATA_EXCEPTIONS as exc:" in source
+        assert not re.search(r"except\s*\(\s*OSError", source), \
+            "scene 不得第二处书写异常清单元组"
+
+
+def _scene_write_parquet(tmp_path, symbol="TESTUSDT", timeframe="4h"):
+    """TestSceneMtfExceptionScope 用的基准数据构造（与锚类 helper 同形）。"""
+    from core.data.storage import save_parquet
+    save_parquet(make_ohlcv(n=200, freq=timeframe),
+                 tmp_path / f"{symbol}_{timeframe}.parquet")
+    return str(tmp_path)

@@ -183,7 +183,8 @@ def run_scene_verification(
     if detector_key == "cross_timeframe":
         higher_tf = params.get("higher_tf", "1d")
         try:
-            from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
+            from core.validation.mtf import (
+                MTF_DATA_EXCEPTIONS, load_mtf_data, merge_to_base, get_timeframe_minutes)
             mtf_data = load_mtf_data(
                 symbol, [higher_tf],
                 data_start or "", data_end or "",
@@ -197,10 +198,12 @@ def run_scene_verification(
                     enhanced_df, mtf_with_indicators,
                     base_minutes, tf_minutes_map,
                 )
-        except Exception as exc:
+        except MTF_DATA_EXCEPTIONS as exc:
             # 异常原文只进日志不回传（engine.py CARD-05 同款取舍）——
             # 本处失败即返回空结果（无回退单周期路径），文案如实不含
-            # fallback 宣称
+            # fallback 宣称；R-3（fix-silent-degradation）：捕获面收窄
+            # 为数据类异常清单（单源常量）——装载代码自身缺陷类异常
+            # 上抛显性失败，不再吞为空结果降级
             logger.warning(
                 "MTF 数据装载失败，场景验证返回空结果: %r", exc, exc_info=exc)
             warnings.append("MTF loading failed")
