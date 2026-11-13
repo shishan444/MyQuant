@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-// Mock react-router
+// Mock react-router：截获 useLocation/useNavigate，测试经 mockLocationState 注入导航态（模拟携带 DNA 跳转进入 Lab 的场景），导航调用经 mockNavigate 可断言
 const mockNavigate = vi.fn();
 let mockLocationState: Record<string, unknown> | null = null;
 
@@ -156,7 +156,7 @@ beforeEach(() => {
 
 describe("Lab - autoRun removal", () => {
   it("does NOT auto-run backtest when navigated from Evolution with DNA", () => {
-    // Simulate navigation from Evolution page
+    // 模拟从 Evolution 页携带 DNA 跳转进入（autoRun 移除后的行为锚：进入不自动回测）
     mockLocationState = {
       dna: mockDNA,
       symbol: "BTCUSDT",

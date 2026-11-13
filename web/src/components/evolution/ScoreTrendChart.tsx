@@ -17,6 +17,7 @@ import {
   CrosshairMode,
 } from "lightweight-charts";
 import type {
+  AutoscaleInfo,
   IChartApi,
   ISeriesApi,
   ISeriesMarkersPluginApi,
@@ -142,11 +143,13 @@ export function ScoreTrendChart({
     const { bestScore, bestFitness, cumulativeBest, avgScore } = seriesRef.current;
     if (!bestScore || !cumulativeBest || !avgScore) return;
 
-    // value 面兜底：非法 value（NaN/Infinity/非数）dev 构建经 checkLineItem
-    // 断言 throw 崩组件树、production 构建断言剥除后静默进数据模型——装配层
-    // 剔除；bestFitness null=断线 whitespace 语义承载，不滤点
+    // value/time 面兜底：非法数值（NaN/Infinity/非数）dev 构建经库内部断言
+    // throw 崩组件树、production 断言剥除后静默进数据模型——装配层剔除
+    //（generation 脏值与 value 同炸，与 EquityLineChart timestamp 面同款
+    // 纪律）；bestFitness null=断线 whitespace 语义承载，不滤点
     const safeData = data.filter(
       (d) =>
+        Number.isFinite(d.generation) &&
         Number.isFinite(d.bestScore) &&
         Number.isFinite(d.avgScore) &&
         Number.isFinite(d.cumulativeBest) &&
@@ -173,40 +176,59 @@ export function ScoreTrendChart({
 
     // 双 priceLine 二选一（旧 markLine 归属随迁：目标线挂 bestScore、达标线挂 bestFitness）
     const targetSeries = hasFitnessData ? bestFitness : bestScore;
+    const targetValue = hasFitnessData ? targetFitness : targetScore;
     if (targetSeries) {
       for (const line of targetSeries.priceLines()) targetSeries.removePriceLine(line);
       targetSeries.createPriceLine(
         hasFitnessData
           ? {
-              price: targetFitness,
+              price: targetValue,
               color: POLARITY.up,
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               title: "达标线",
             }
           : {
-              price: targetScore,
+              price: targetValue,
               color: SCORE_TREND_TARGET_LINE_COLOR,
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
-              title: `目标 ${targetScore}`,
+              title: `目标 ${targetValue}`,
             },
       );
+      // 目标线入值域（D2 随迁项）：库 autoScale 值域只按 series 数据计算，
+      // priceLine 不参与——线值越出数据域时整条被裁不可见。在承载 series 上
+      // 包装默认 autoscaleInfoProvider 把线值并入 min/max；线值是 props 动态
+      // 值，本 effect 依赖含之，重跑时 applyOptions 换新闭包，不致陈旧。
+      targetSeries.applyOptions({
+        autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+          const res = original();
+          if (res?.priceRange) {
+            res.priceRange.minValue = Math.min(res.priceRange.minValue, targetValue);
+            res.priceRange.maxValue = Math.max(res.priceRange.maxValue, targetValue);
+          }
+          return res;
+        },
+      });
     }
 
     // champion 菱形散点→circle marker（旧 symbolSize 8）；种群边界竖线族→
     // gold 方块+种群号 marker（lightweight 无竖线原语——D2 修订承载形）
-    const championMarkers: SeriesMarker<Time>[] = championChanges.map(
-      (c): SeriesMarker<Time> => ({
-        time: genToTime(c.generation),
-        position: "inBar",
-        color: POLARITY.up,
-        shape: "circle",
-        size: 8,
-      }),
-    );
+    // markers 两数据源（championChanges/种群边界）独立于 safeData 构造，
+    // generation 面各自补滤（同上纪律；脏 time 经库断言崩渲染）
+    const championMarkers: SeriesMarker<Time>[] = championChanges
+      .filter((c) => Number.isFinite(c.generation))
+      .map(
+        (c): SeriesMarker<Time> => ({
+          time: genToTime(c.generation),
+          position: "inBar",
+          color: POLARITY.up,
+          shape: "circle",
+          size: 8,
+        }),
+      );
     const boundaryMarkers: SeriesMarker<Time>[] = data
-      .filter((d) => d.isPopulationBoundary)
+      .filter((d) => d.isPopulationBoundary && Number.isFinite(d.generation))
       .map(
         (d): SeriesMarker<Time> => ({
           time: genToTime(d.generation),
@@ -226,7 +248,8 @@ export function ScoreTrendChart({
       markersRef.current = createSeriesMarkers(bestScore, markers);
     }
 
-    // Y 域随迁近似（旧全集 min/max ±padding → autoScale+scaleMargins 0.1）
+    // Y 域随迁近似：值域=series 数据+目标线（上方 provider 并入），余量以
+    // scaleMargins 0.1 承载（旧显式 padding 的等价形）
     chartRef.current.priceScale("right").applyOptions({
       autoScale: true,
       scaleMargins: { top: 0.1, bottom: 0.1 },
@@ -306,7 +329,7 @@ export function ScoreTrendChart({
         )}
         <span className="flex items-center gap-1">
           <span
-            className="inline-block h-2 w-2 rotate-45"
+            className="inline-block h-2 w-2 rounded-full"
             style={{ backgroundColor: POLARITY.up }}
           />
           最优更新

@@ -4,8 +4,9 @@
  * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
  */
 import { useEffect, useRef } from 'react';
-import { createChart, LineSeries } from 'lightweight-charts';
+import { createChart, AreaSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import { withAlpha } from '@/components/charts/core/chartThemes';
 import { POLARITY, ATTENTION } from '@/theme/tokens';
 
 /** equity 点（UTC ISO 串时间轴，旧形制承继，装配时转 epoch 秒） */
@@ -34,7 +35,7 @@ export interface EquityCurveProps {
 export function EquityLineChart({ data, baseline, height = 200 }: EquityCurveProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const hasData = data.length >= EQUITY_MIN_POINTS;
   // jsdom 降级：getContext("2d") 调用判空（jsdom 方法存在但返回 null，无绘制面）
   const canDraw = typeof document !== 'undefined' &&
@@ -47,7 +48,10 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
       layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(LineSeries, { lineWidth: 2 });
+    // AreaSeries 承载线+面积渐变（旧 echarts areaStyle 形制随迁）：渐变三色
+    // 属动态着色（resolveEquityColor 依赖 baseline），统一在数据 effect 的
+    // applyOptions 设置——两 effect 同轮 commit 内先后执行，首帧前已就位
+    const series = chart.addSeries(AreaSeries, { lineWidth: 2 });
     seriesRef.current = series;
     return () => {
       chart.remove();
@@ -63,12 +67,23 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     // setData 对 NaN time 会 throw 崩组件树；非法 value（NaN/Infinity/非数）在
     // development 构建经 checkLineItem 断言 throw、production 构建断言剥除后静默
     // 进数据模型——两面一并剔除非法项，全部非法时空数组照常走 setData
-    const points = data
-      .filter((d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value))
-      .map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }));
+    // 过滤一次两用：绘制与着色同取过滤后序列——原始末点 value 脏（被剔除）
+    // 时若按原始 data 取末点，NaN >= baseline 恒 false 误显亏损色，而曲线
+    // 实际末点是最后一个有效点
+    const validData = data.filter(
+      (d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value),
+    );
+    const points = validData.map(
+      (d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }),
+    );
     series.setData(points);
+    // AreaSeries 线条色选项名是 lineColor（非 LineSeries 的 color）；渐变
+    // 顶色 0.3 透明度→底色全透明随线色三态（up/down/gold）动态更新
+    const lineColor = resolveEquityColor(validData, baseline);
     series.applyOptions({
-      color: resolveEquityColor(data, baseline),
+      lineColor,
+      topColor: withAlpha(lineColor, 0.3),
+      bottomColor: withAlpha(lineColor, 0),
       priceFormat: { type: 'price', precision: 0, minMove: 1 },
       priceLineVisible: false,
       lastValueVisible: false,
