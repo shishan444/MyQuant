@@ -9,7 +9,7 @@ vi.mock("@/services/datasets", () => ({
   getChartIndicators: vi.fn(),
 }));
 
-// Mock Zustand store
+// mock Zustand store（chart-settings 桩位）
 vi.mock("@/stores/chart-settings", () => ({
   useChartSettings: vi.fn(),
 }));
@@ -63,7 +63,7 @@ describe("useChartIndicators", () => {
       limit: 50000,
     }));
 
-    // Indicators fetched after candleData is available
+    // 指标在 candleData 就绪后才拉取（依赖时序锚）
     await waitFor(() => {
       expect(getChartIndicators).toHaveBeenCalled();
     });
@@ -96,7 +96,7 @@ describe("useChartIndicators", () => {
       expect(result.current.chartIndicators.length).toBeGreaterThan(0);
     });
 
-    // Should have EMA 10 and EMA 20 (enabled in mockChartSettings)
+    // 应有 EMA 10 与 EMA 20（mockChartSettings 已启用）
     const emaIndicators = result.current.chartIndicators.filter((i) => i.type === "ema");
     expect(emaIndicators).toHaveLength(2);
     expect(emaIndicators[0].id).toBe("ema_10");
