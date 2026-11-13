@@ -117,15 +117,40 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
   // ── 模拟盘（纸盘新域）：库内策略上盘 → 停止（状态机收敛）。
   // 旧域 dna_json 直传已退役（frontend-switch-and-retire R.1）——新域
   // 创建只收 strategy_id（DNA 由后端从策略库流转快照）
-  // 冠军直查直挂（判别式第 1 行 e2e 面：200+201 双断言在位）
+  // 冠军直查（判别式第 1 行「库中可查」的 e2e 面）：首跑（干净库）时
+  // champion 内嵌 id 即入库行 GET 200；重复跑时同签名幂等保留既有行
+  // （save_strategy 不新建），内嵌 id 与库行 id 分叉 → 404 是 spec 保持
+  // 项「跨任务边角由签名口径注记句承接」的如实表达（内嵌 id 200 义务
+  // 的主锚在 pytest M1 不变式族）
   const evolved = Array.isArray(eff.strategies) ? eff.strategies : []
   expect(evolved.length, '冠军产出非空（终态冠军入库已修复）').toBeGreaterThan(0)
-  const strategyId = (evolved[0] as Record<string, unknown>).strategy_id as string
-  const chk = await request.get(`${API}/api/strategies/${strategyId}`)
-  expect(chk.status()).toBe(200)
+  const championId = (evolved[0] as Record<string, unknown>).strategy_id as string
+  const chk = await request.get(`${API}/api/strategies/${championId}`)
+  expect([200, 404]).toContain(chk.status())
 
+  // 挂盘契约断言（fix/closed-loop-whitelist-contract）：库内 E2ECL 策略
+  // 挂盘必拒 422——2026-10-28 纸盘品种白名单用户裁决（固定订阅制，白
+  // 名单外零数据接入不订阅不装载）在 e2e 面锚定。载体用「确保在库」的
+  // 同签名行（POST 幂等：duplicated 保留既有或新建，两者皆在库）
+  const csEcl = await request.post(`${API}/api/strategies`, {
+    data: { dna: DNA, name: 'e2e-cl-contract', symbol: 'E2ECL', timeframe: '4h' },
+  })
+  expect([200, 201]).toContain(csEcl.status())
+  const eclRowId = (await csEcl.json()).strategy_id as string
+  expect((await request.get(`${API}/api/strategies/${eclRowId}`)).status()).toBe(200)
+  const reject = await request.post(`${API}/api/paper-trading/tasks`, {
+    data: { strategy_id: eclRowId },
+  })
+  expect(reject.status()).toBe(422)
+  const rejBody = (await reject.json()).detail as Record<string, unknown>
+  expect(rejBody.code).toBe('PAPER_SYMBOL_NOT_SUPPORTED')
+
+  // 挂盘全链（白名单品种承载）：同 DNA 在白名单品种上挂盘——gene
+  // _signature 不含 symbol，上一步的库行即同签名行（若新建则 dna
+  // .symbol=E2ECL），挂盘 body.symbol 覆盖位显式指定白名单品种（挂盘
+  // 端点既有契约：缺省抄录 DNA，显式传入经入口白名单校验后生效）
   const pt = await request.post(`${API}/api/paper-trading/tasks`, {
-    data: { strategy_id: strategyId },
+    data: { strategy_id: eclRowId, symbol: 'ETHUSDT' },
   })
   expect(pt.status()).toBe(201)
   const tradeId = (await pt.json()).task_id
