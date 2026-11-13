@@ -143,11 +143,13 @@ export function ScoreTrendChart({
     const { bestScore, bestFitness, cumulativeBest, avgScore } = seriesRef.current;
     if (!bestScore || !cumulativeBest || !avgScore) return;
 
-    // value 面兜底：非法 value（NaN/Infinity/非数）dev 构建经 checkLineItem
-    // 断言 throw 崩组件树、production 构建断言剥除后静默进数据模型——装配层
-    // 剔除；bestFitness null=断线 whitespace 语义承载，不滤点
+    // value/time 面兜底：非法数值（NaN/Infinity/非数）dev 构建经库内部断言
+    // throw 崩组件树、production 断言剥除后静默进数据模型——装配层剔除
+    //（generation 脏值与 value 同炸，与 EquityLineChart timestamp 面同款
+    // 纪律）；bestFitness null=断线 whitespace 语义承载，不滤点
     const safeData = data.filter(
       (d) =>
+        Number.isFinite(d.generation) &&
         Number.isFinite(d.bestScore) &&
         Number.isFinite(d.avgScore) &&
         Number.isFinite(d.cumulativeBest) &&
@@ -212,17 +214,21 @@ export function ScoreTrendChart({
 
     // champion 菱形散点→circle marker（旧 symbolSize 8）；种群边界竖线族→
     // gold 方块+种群号 marker（lightweight 无竖线原语——D2 修订承载形）
-    const championMarkers: SeriesMarker<Time>[] = championChanges.map(
-      (c): SeriesMarker<Time> => ({
-        time: genToTime(c.generation),
-        position: "inBar",
-        color: POLARITY.up,
-        shape: "circle",
-        size: 8,
-      }),
-    );
+    // markers 两数据源（championChanges/种群边界）独立于 safeData 构造，
+    // generation 面各自补滤（同上纪律；脏 time 经库断言崩渲染）
+    const championMarkers: SeriesMarker<Time>[] = championChanges
+      .filter((c) => Number.isFinite(c.generation))
+      .map(
+        (c): SeriesMarker<Time> => ({
+          time: genToTime(c.generation),
+          position: "inBar",
+          color: POLARITY.up,
+          shape: "circle",
+          size: 8,
+        }),
+      );
     const boundaryMarkers: SeriesMarker<Time>[] = data
-      .filter((d) => d.isPopulationBoundary)
+      .filter((d) => d.isPopulationBoundary && Number.isFinite(d.generation))
       .map(
         (d): SeriesMarker<Time> => ({
           time: genToTime(d.generation),
