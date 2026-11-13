@@ -362,6 +362,56 @@ class TestUserStopExitRestore:
         assert row["stop_reason"] == "champion_persist_failed"
         assert not row["champion_dna"], "恢复链早期失败：champion_dna 保持空"
 
+    def test_user_stop_restore_parse_failure_from_json(self, tmp_path):
+        """判别式第 5 行 user_stop 解析步失败（spec 场景 7 两步之解析步，G7）：
+        快照读取正常、StrategyDNA.from_json(快照 best_dna) 失败 → 与读取步
+        同形（champion_persist_failed+champion_dna 空+库无行）。注入按调用序
+        条件化：from_json 本路径两次调用（:424 任务启动解析 initial_dna 在先、
+        :382 恢复链解析快照在后），第 2 次抛、第 1 次走原实现。
+        """
+        from api.runner import EvolutionRunner, TaskStopRequested
+        from core.features.indicators import compute_all_indicators
+        from core.persistence.repository.strategy import list_strategies
+        from core.strategy.dna import StrategyDNA
+
+        db = tmp_path / "cp-us5.db"
+        init_db_ext(db)
+        data_dir = tmp_path / "dataus5"; data_dir.mkdir()
+
+        task_row = _make_task(db, "cp-us5")
+        task_row["max_generations"] = 2
+        enhanced_df = compute_all_indicators(make_ohlcv(120, "4h"))
+        runner = EvolutionRunner(db_path=db, data_dir=data_dir)
+        call_count = 0
+        orig_from_json = StrategyDNA.from_json
+        from_json_calls = {"n": 0}
+
+        def eval_with_stop_at_gen2(pop, *a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise TaskStopRequested()
+            return [_stub_score(d) for d in pop]
+
+        def from_json_fail_on_snapshot(s):
+            from_json_calls["n"] += 1
+            if from_json_calls["n"] == 2:
+                raise RuntimeError("injected from_json parse failure")
+            return orig_from_json(s)
+
+        with patch("core.data.mtf_loader.load_and_prepare_df", return_value=enhanced_df), \
+             patch("api.runner_progress._push_ws"), \
+             patch.object(runner, "_evaluate_population", eval_with_stop_at_gen2), \
+             patch.object(StrategyDNA, "from_json", from_json_fail_on_snapshot):
+            runner._run_task(task_row)
+
+        assert from_json_calls["n"] >= 2, "注入前提：恢复链解析步确被触达"
+        row = get_task(db, "cp-us5")
+        assert row["status"] == "stopped"
+        assert row["stop_reason"] == "champion_persist_failed"
+        assert not row["champion_dna"], "解析步失败：champion_dna 保持空"
+        assert not list_strategies(db, source_task_id="cp-us5"), "解析步失败库无行"
+
 
     def test_user_stop_restore_then_persist_failure_keeps_dna(self, tmp_path):
         """判别式第 5 行 user_stop 恢复成功后失败：champion_dna 保留非空。"""
