@@ -329,7 +329,7 @@ export function ScoreTrendChart({
         )}
         <span className="flex items-center gap-1">
           <span
-            className="inline-block h-2 w-2 rotate-45"
+            className="inline-block h-2 w-2 rounded-full"
             style={{ backgroundColor: POLARITY.up }}
           />
           最优更新
