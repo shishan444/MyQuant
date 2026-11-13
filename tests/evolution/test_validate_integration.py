@@ -37,7 +37,8 @@ class TestValidateAPI:
     """Tests for POST /api/validate endpoint."""
 
     def test_validate_with_no_data(self, client):
-        """Should return empty result when no data files exist."""
+        """R-2 改写锚（fix-silent-degradation）：数据目录无请求文件 →
+        422 RESEARCH_SYMBOL_NOT_FOUND（原 200 空结果静默收口）。"""
         resp = client.post("/api/validate", json={
             "pair": "BTCUSDT",
             "timeframe": "4h",
@@ -46,35 +47,68 @@ class TestValidateAPI:
             "when": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "cross_above", "target": "70", "logic": "AND"}],
             "then": [{"subject": "close", "action": "drops_pct", "target": "2", "logic": "AND"}],
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "match_rate" in data
-        assert "total_count" in data
-        assert data["total_count"] == 0
+        assert resp.status_code == 422
+        body = resp.json()["detail"]
+        assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
+        assert body["detail"]["symbol"] == "BTCUSDT"
+        assert body["detail"]["timeframe"] == "4h"
 
-    def test_validate_accepts_base_timeframe(self, client):
-        """Should accept base_timeframe field without error."""
+    def test_validate_accepts_base_timeframe(self, client, tmp_data_dir):
+        """Should accept base_timeframe field without error.
+
+        R-2：本文件 tmp_data_dir 为空目录，原「无文件→200」靠静默
+        空结果承载；预检后无文件即 422，故建基准文件保原意图
+        （base_timeframe 字段可接受，非缺数据语义）。"""
+        import pandas as pd
+        df = pd.DataFrame({
+            "open": [100.0, 101.0, 102.0],
+            "high": [105.0, 106.0, 107.0],
+            "low": [95.0, 96.0, 97.0],
+            "close": [103.0, 104.0, 105.0],
+            "volume": [1000.0, 1100.0, 1200.0],
+        }, index=pd.date_range("2024-01-01", periods=3, freq="15min", tz="UTC"))
+        df.index.name = "timestamp"
+        df.to_parquet(tmp_data_dir / "BTCUSDT_15m.parquet")
+        # R-2：原 rises_pct/drops_pct 动作不在合法动作集——此前靠
+        # 「无数据静默空结果」短路从未触达条件校验（侥幸绿）；建数据
+        # 后换合法动作保「base_timeframe 字段可接受」原意图
         resp = client.post("/api/validate", json={
             "pair": "BTCUSDT",
             "timeframe": "15m",
             "base_timeframe": "15m",
             "start": "2024-01-01",
             "end": "2024-06-01",
-            "when": [{"subject": "close", "action": "rises_pct", "target": "1", "logic": "AND"}],
-            "then": [{"subject": "close", "action": "drops_pct", "target": "1", "logic": "AND"}],
+            "when": [{"subject": "close", "action": "gt", "target": "0", "logic": "AND"}],
+            "then": [{"subject": "close", "action": "lt", "target": "999999", "logic": "AND"}],
         })
         assert resp.status_code == 200
 
-    def test_validate_condition_with_timeframe(self, client):
-        """Should accept timeframe field in conditions without error."""
+    def test_validate_condition_with_timeframe(self, client, tmp_data_dir):
+        """Should accept timeframe field in conditions without error.
+
+        R-2：同上，建基准文件保原意图（条件 timeframe 键可接受）；
+        引用周期 4h 须在库（0.2.14 条件周期可达校验，缺文件 422）。"""
+        import pandas as pd
+        df = pd.DataFrame({
+            "open": [100.0, 101.0, 102.0],
+            "high": [105.0, 106.0, 107.0],
+            "low": [95.0, 96.0, 97.0],
+            "close": [103.0, 104.0, 105.0],
+            "volume": [1000.0, 1100.0, 1200.0],
+        }, index=pd.date_range("2024-01-01", periods=3, freq="15min", tz="UTC"))
+        df.index.name = "timestamp"
+        df.to_parquet(tmp_data_dir / "BTCUSDT_15m.parquet")
+        df.to_parquet(tmp_data_dir / "BTCUSDT_4h.parquet")
+        # R-2：同上——rises_pct/drops_pct 非法动作靠静默短路掩护，
+        # 建数据后换合法动作保「条件 timeframe 键可接受」原意图
         resp = client.post("/api/validate", json={
             "pair": "BTCUSDT",
             "timeframe": "15m",
             "base_timeframe": "15m",
             "start": "2024-01-01",
             "end": "2024-06-01",
-            "when": [{"subject": "close", "action": "rises_pct", "target": "1", "logic": "AND", "timeframe": "4h"}],
-            "then": [{"subject": "close", "action": "drops_pct", "target": "1", "logic": "AND"}],
+            "when": [{"subject": "close", "action": "gt", "target": "0", "logic": "AND", "timeframe": "4h"}],
+            "then": [{"subject": "close", "action": "lt", "target": "999999", "logic": "AND"}],
         })
         assert resp.status_code == 200
         data = resp.json()

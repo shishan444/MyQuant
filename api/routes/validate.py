@@ -144,6 +144,23 @@ def run_validation(
     # 通道（应用层全局兜底出站；CARD-04 捕获合并形制已随全局兜底删除）
     from core.analysis.event_policy import validate_policy
     normalized_policy = validate_policy(payload.trigger_policy)
+    # R-2：数据可达预检（文件级）——品种写错/周期无数据在入口显式
+    # 422 拒绝，与「条件不触发」的 200 空结果区分（对齐 hypotheses
+    # 登记链「结构→可达」先例）；MtfEvalContext 构建与 policy 形式
+    # 校验不动，预检插在其后
+    from core.analysis.errors import ResearchError
+    from core.data.mtf_loader import find_parquet, safe_symbol
+    try:
+        _pq = find_parquet(data_dir, safe_symbol(payload.pair), payload.timeframe)
+    except ValueError:
+        pass  # 非法 timeframe：engine 既有 422 转换承载，预检不抢占
+    else:
+        if _pq is None:
+            raise ResearchError(
+                "RESEARCH_SYMBOL_NOT_FOUND",
+                f"pair/timeframe 无数据: {payload.pair} {payload.timeframe}",
+                detail={"field": "pair", "symbol": payload.pair,
+                        "timeframe": payload.timeframe})
     result = validate_hypothesis(
         pair=payload.pair,
         timeframe=payload.timeframe,
