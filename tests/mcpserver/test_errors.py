@@ -327,6 +327,7 @@ class TestParamHintScenarioDispatch:
         "condition.action": "legal_values",
         "data_range": "区间",
         "condition|conditions": "二选一",
+        "logic": "logic_genes",
     }
 
     @pytest.mark.parametrize(
@@ -337,8 +338,10 @@ class TestParamHintScenarioDispatch:
             ("condition.action", "legal_values"),
             ("data_range", "区间"),
             ("condition|conditions", "二选一"),
+            ("logic", "logic_genes"),
         ],
-        ids=["前向持有期", "小样本阈值", "比较动作", "区间参数", "键组分派"])
+        ids=["前向持有期", "小样本阈值", "比较动作", "区间参数", "键组分派",
+             "信号组合logic"])
     def test_each_scene_hint_excludes_other_scenes(self, param, marker):
         """互不串面：场景 hint 含自身参数面判别词，且不含任何其他
         场景的判别词（错配文案回归即红）。"""
