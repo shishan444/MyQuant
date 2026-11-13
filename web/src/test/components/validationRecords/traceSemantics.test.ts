@@ -122,6 +122,95 @@ describe("buildCardModel 三型提取（卡片四段对照逐值）", () => {
   });
 });
 
+/* ══ 库值 symbol/timeframe 值域闸（fix-ohlcv-path-segment-encoding 契约 1；
+    validation-records-page「库值 symbol/timeframe 值域闸」Requirement）══ */
+
+describe("recordSymbolTimeframe 值域闸（三型统一出口过闸）", () => {
+  // T6：三型合法提取照旧——闸门加入后合法值逐字段原值返回（零误杀）
+  it("T6 三型合法提取照旧：isolated result 直嵌 / random params 平铺 / staged request_range", () => {
+    const iso = makeRow({
+      level: "isolated_backtest",
+      params: { request_range: { symbol: "BTCUSDT", timeframe: "4h", start: "2026-08-01", end: "2026-09-30" } },
+      result: { symbol: "BTCUSDT", timeframe: "4h" },
+    });
+    expect(recordSymbolTimeframe(iso)).toEqual({ symbol: "BTCUSDT", timeframe: "4h" });
+
+    const rnd = makeRow({
+      level: "random_window",
+      params: { symbol: "ETHUSDT", timeframe: "1h", data_start: "2026-01-01", data_end: "2026-06-30" },
+    });
+    expect(recordSymbolTimeframe(rnd)).toEqual({ symbol: "ETHUSDT", timeframe: "1h" });
+
+    const stg = makeRow({
+      level: "staged_validation",
+      params: { request_range: { symbol: "XRPUSDT", timeframe: "1d", start: "2026-02-01", end: "2026-05-01" } },
+    });
+    expect(recordSymbolTimeframe(stg)).toEqual({ symbol: "XRPUSDT", timeframe: "1d" });
+  });
+
+  // T6·P2：合法形态全覆盖（字符类+长度闭区间双侧）——symbol/timeframe
+  // 两字段同形传入，证明白名单对合法形态零误杀
+  it.each([
+    { value: "BTCUSDT", note: "纯字母数字" },
+    { value: "BTC-USDT", note: "连字符" },
+    { value: "BTC_USDT", note: "下划线" },
+    { value: "1h", note: "小写周期" },
+    { value: "1D", note: "混合大小写别名" },
+    { value: "A".repeat(32), note: "恰好 32 字符（长度上界）" },
+    { value: "x", note: "恰好 1 字符（长度下界）" },
+  ])("T6·P2 合法形态原值放行：$note", ({ value }) => {
+    const row = makeRow({
+      level: "isolated_backtest",
+      result: { symbol: value, timeframe: value },
+    });
+    expect(recordSymbolTimeframe(row)).toEqual({ symbol: value, timeframe: value });
+  });
+
+  // T7：isolated 型 result.symbol 污染——闸后 null、timeframe 独立保留
+  it("T7 isolated 污染 symbol 闸为 null（timeframe 独立判定保留）", () => {
+    const row = makeRow({
+      level: "isolated_backtest",
+      result: { symbol: "../evil", timeframe: "4h" },
+    });
+    expect(recordSymbolTimeframe(row)).toEqual({ symbol: null, timeframe: "4h" });
+  });
+
+  // T7a：其余型（staged）request_range.symbol 污染——第三型同闸直接证据
+  //（T7/T9 只覆盖 isolated/random 两型，「三型统一出口过闸」需第三型在位）
+  it("T7a staged request_range.symbol 污染同闸为 null", () => {
+    const row = makeRow({
+      level: "staged_validation",
+      params: { request_range: { symbol: "../evil", timeframe: "4h", start: "2026-02-01", end: "2026-05-01" } },
+    });
+    expect(recordSymbolTimeframe(row)).toEqual({ symbol: null, timeframe: "4h" });
+  });
+
+  // T8：非法形态闸为 null——含点形态结构性排除（encodeURIComponent 对
+  // '.' 恒等、'..' 可被 URL 规范化重组，见 SYMBOL_TIMEFRAME_RE 注释）
+  it.each([
+    { value: "A".repeat(33), note: "33 字符超长" },
+    { value: "", note: "空串" },
+    { value: "BTC.USDT", note: "含点" },
+    { value: "..", note: "纯点段" },
+    { value: "BTC\\USDT", note: "含反斜杠" },
+  ])("T8 非法形态闸为 null：$note", ({ value }) => {
+    const row = makeRow({
+      level: "isolated_backtest",
+      result: { symbol: value, timeframe: "4h" },
+    });
+    expect(recordSymbolTimeframe(row)).toEqual({ symbol: null, timeframe: "4h" });
+  });
+
+  // T9：random 型单侧污染独立判定——timeframe 污染闸 null、symbol 原值
+  it("T9 random 单侧污染：timeframe 污染 null、symbol 原值保留", () => {
+    const row = makeRow({
+      level: "random_window",
+      params: { symbol: "BTCUSDT", timeframe: "a#b", data_start: "2026-01-01", data_end: "2026-06-30" },
+    });
+    expect(recordSymbolTimeframe(row)).toEqual({ symbol: "BTCUSDT", timeframe: null });
+  });
+});
+
 describe("eventSemantics/traceMarkers（色点单源+四类动作）", () => {
   it("蓝族 10-13/金族 20-25/灰族不在标记（仅 filled）", () => {
     expect(eventSemantics(10)).toMatchObject({ action: "open", family: "strategy", markerText: "▲开多" });

@@ -253,8 +253,21 @@ export function buildCardModel(row: ValidationRecordRow): RecordCardModel {
   };
 }
 
-/** 选中行三型 symbol/timeframe 提取（K 线复核与 union-balance 入参） */
-export function recordSymbolTimeframe(row: ValidationRecordRow): {
+/** 库值 symbol/timeframe 白名单（字符级值域闸）：
+ *  实存形态 [A-Z0-9]+（代码与契约快照字面全集）；含 '-' 输入形态由后端
+ *  safe_symbol 契约佐证（"BTC-USDT" 与 "BTCUSDT" 同文件）；'_' 为文件名
+ *  拼接符上界容差；结构性排除 '.' 与 '/'——encodeURIComponent 对 '.' 恒等、
+ *  整段 '..' 会被 new URL 规范化重组致路径偏移，含点形态一律闸下。 */
+const SYMBOL_TIMEFRAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+/** 值域闸：库值过白名单放行原值，否则 null（与既有 ?? null 链的缺失语义同构） */
+function gateLibValue(v: string | null): string | null {
+  return v !== null && SYMBOL_TIMEFRAME_RE.test(v) ? v : null;
+}
+
+/** 选中行三型 symbol/timeframe 原值提取（私有：三型差异原样保留，
+ *  出口统一由 recordSymbolTimeframe 过闸） */
+function extractRawSymbolTimeframe(row: ValidationRecordRow): {
   symbol: string | null;
   timeframe: string | null;
 } {
@@ -284,6 +297,19 @@ export function recordSymbolTimeframe(row: ValidationRecordRow): {
       | { timeframe?: string }
       | undefined)?.timeframe ?? null,
   };
+}
+
+/** 选中行三型 symbol/timeframe 提取（K 线复核与 union-balance 入参）。
+ *  库值值域闸（validation-records-page「库值 symbol/timeframe 值域闸」
+ *  Requirement）：三型提取结果统一出口过闸，不匹配置 null（缺失语义，
+ *  与 ?? null 链同构）、两字段独立判定——污染库值不透传、不报错。 */
+export function recordSymbolTimeframe(row: ValidationRecordRow): {
+  symbol: string | null;
+  timeframe: string | null;
+} {
+  const raw = extractRawSymbolTimeframe(row);
+  // 出口统一过闸：三型提取结果同一条白名单，闸门与提取同址
+  return { symbol: gateLibValue(raw.symbol), timeframe: gateLibValue(raw.timeframe) };
 }
 
 /** ══ 契约 H/L：DNA 指标提取与降级文案（upgrade-vr-indicator-overlay）══ */
