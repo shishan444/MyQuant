@@ -285,6 +285,15 @@ class TestToolBehavior:
         assert (method, url) == ("GET", "/api/paper-trading/tasks")
         assert params == {"limit": 50, "offset": 0, "status": "running"}
 
+    def test_list_paper_tasks_status_omitted(self) -> None:
+        """status 缺省不带键（过滤面可选——无过滤全量列表查询）。"""
+        mcp, api = _register("readonly")
+        mcp.registered["list_paper_tasks"]()
+        method, url, params = api.calls[-1]
+        assert (method, url) == ("GET", "/api/paper-trading/tasks")
+        assert params == {"limit": 20, "offset": 0}, \
+            "缺省不带 status 键，limit 缺省 20 透传"
+
 
 class TestMountFullParamAssembly:
     """mount 全参 body 组装分支（闸门盲区消解——fee/slippage/symbol/

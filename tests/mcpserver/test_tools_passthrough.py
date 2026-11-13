@@ -136,3 +136,21 @@ class TestValidationToolsPostThrough:
         assert url == "/api/research/staged-validation"
         assert body["segmentation"] == "explicit"
         assert body["segments"] == [{"label": "segA"}]
+
+
+class TestQueryIndicatorBareBody:
+    """query_indicator 可选键全缺省侧（indicator/groups/params/reductions/
+    start/end 均 is not None 透传——缺省侧不带键；单组/批量互斥交 API
+    单一事实源判，工具层不吞键）。"""
+
+    def test_no_optional_keys_bare_body(self):
+        mcp, api = _FakeMcp(), _FakeApi()
+        from mcpserver import tools as tools_mod
+
+        tools_mod.register_research_tools(mcp, api)
+        mcp.registered["query_indicator"](
+            symbol="BTCUSDT", timeframe="4h")
+        url, body = api.posts[0]
+        assert url == "/api/research/query-indicator"
+        assert body == {"symbol": "BTCUSDT", "timeframe": "4h"}, \
+            "可选键缺省侧不带 indicator/groups 等键（裸 body）"
