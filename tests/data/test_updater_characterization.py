@@ -206,6 +206,47 @@ class TestDefaultDirResolution:
         assert write_path.parent == tmp_path  # setenv 分支：缺省随 env 同源切换（写入侧读 env——R-1 b/c）
         assert not (tmp_path / "data").exists()
 
+    @patch("core.data.updater.merge_parquet")
+    @patch("core.data.updater.fetch_funding_history")
+    def test_funding_default_relative_branch_anchors_repo_root(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        """相对路径分支（funding）：缺省写入拼工程根而非 cwd——
+        chdir 漂移面下相对值目录不在 cwd 生成（返回值正确性由
+        test_rest.py TestDefaultDataDir 相对分支独立推导锚定，本用例
+        锚写入侧与单点同源）。"""
+        monkeypatch.setenv("FAPI_DATA_DIR", "probe_rel_dir")
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=5, freq="8h", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
+        )
+
+        update_funding_data("BTCUSDT")
+
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == default_data_dir()  # 相对分支与单点同源（拼工程根）
+        assert not (tmp_path / "probe_rel_dir").exists()  # cwd 拼接行为不发生
+
+    @patch("core.data.updater.merge_parquet")
+    @patch("core.data.updater.fetch_open_interest_history")
+    def test_open_interest_default_unset_anchors_repo_root(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        """未设分支（oi 函数）：缺省写入路径与解析单点同源（工程根
+        锚定）——updater 两函数各自独立改调行，oi 侧未设分支单独
+        锚定（funding 侧由 funding 未设分支用例承载）。"""
+        monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
+        )
+
+        update_open_interest_data("BTCUSDT", timeframes=["5m"])
+
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == default_data_dir()  # 未设分支：工程根锚定（与 funding 同源）
+        assert not (tmp_path / "data").exists()  # cwd 相对行为已消除
+
 
 class TestMergeParquetReturnValue:
     """merge_parquet 返回值契约（CARD-07：None → pd.DataFrame）。

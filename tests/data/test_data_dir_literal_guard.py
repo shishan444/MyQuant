@@ -20,6 +20,16 @@ market_fapi 字符串常量命中仅 rest.py FAPI_DATA_DIR_DEFAULT 赋值
 - core/paper_trading/runtime/scheduler.py __init__ docstring 参数段
   与 _default_data_dir docstring（委托语义自述，A-2 第 6 条更新）。
 
+断言三（旧域 data/market 字面量零残留）：生产域代码位置
+data/market 旧域路径字面量零命中（data-directory-governance
+「默认目录无旧域残留」Scenario 的常驻面——rg 复核仅一次性证据）。
+活跃域名前缀撞车排除：值含 market_fapi（如 "data/market_fapi"）
+不计旧域命中。注释与 docstring 位置豁免（在案：scheduler.py:555
+与 recovery.py:186 的 CARD-05 历史缺陷档案描述——「曾指向不存在
+的 core/data/market」披露语义，非活跃引用）。tests/ 域不在生产
+代码面（tests/paper_trading/test_fapi_assembly.py 构造 data/market
+旧域目录属负向验证 fixture，是 S1 契约的行为级测试本体）。
+
 断言二（生产域零 __file__ 数据目录锚定回潮）：生产域（core/
 api/ mcpserver/ scripts/，与断言一同域）代码位置出现 `__file__`
 路径锚定的文件白名单（非数据目录锚定或唯一单点）：
@@ -155,6 +165,44 @@ class TestMarketFapiLiteralSinglePoint:
             "生产代码面 market_fapi 字面量仅 FAPI_DATA_DIR_DEFAULT 单点"
             "（data-directory-governance 字面量单点 Scenario；缺省目录"
             f"解析经 default_data_dir 单点）: {offenders}")
+
+
+class TestOldDomainLiteralZero:
+    """旧域零残留：生产域代码位置 data/market 字面量零命中。
+
+    data-directory-governance「默认目录无旧域残留」Scenario——
+    缺省目录改回旧域（如 Path("data/market")）的回潮面，守卫一
+    （market_fapi 单点）与守卫二（__file__ 锚定）均不拦，本守卫
+    专责。全库检索中的 works/ 豁免域与 tests/ 负向 fixture 边界
+    见模块 docstring。
+    """
+
+    def test_code_position_old_domain_literals_are_zero(self):
+        """代码位置（字符串常量节点）含 data/market 且不含
+        market_fapi（前缀撞车排除）的命中为零。"""
+        offenders: list[str] = []
+        for path in _prod_python_files():
+            rel = path.relative_to(_REPO).as_posix()
+            text = path.read_text(encoding="utf-8")
+            if "data/market" not in text:
+                continue
+            allowed_lines = _comment_and_docstring_lines(text)
+            tree = ast.parse(text)
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant)
+                        and isinstance(node.value, str)
+                        and "data/market" in node.value
+                        and "market_fapi" not in node.value):
+                    continue
+                if node.lineno in allowed_lines:
+                    continue  # 注释/docstring 位置豁免（白名单披露）
+                offenders.append(
+                    f"{rel}:{node.lineno}: {node.value!r}")
+        assert offenders == [], (
+            "生产代码面旧域 data/market 路径字面量零残留"
+            "（data-directory-governance 默认目录无旧域残留 Scenario；"
+            "缺省目录解析经 default_data_dir 单点，旧域不得作默认值/"
+            f"写入路径/拼接缺省回潮）: {offenders}")
 
 
 class TestCoreFileAnchorWhitelist:
