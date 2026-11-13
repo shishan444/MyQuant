@@ -213,6 +213,57 @@ describe("ScoreTrendChart 装配（fake registry）", () => {
     unmount();
     expect(registry.charts[0].remove).toHaveBeenCalled();
   });
+
+  // CARD-03（security S-1）：value 面有限性兜底——四路 setData 前整点过滤
+  // （谓词=三 value 列有限性合取+bestFitness null 豁免），脏点剔除不崩、
+  // 余点照常；null（断线语义）与 NaN（非法值）分叉处置是谓词核心语义
+  it("filters non-finite best_score records（NaN 整点剔除，四路同步）", () => {
+    const dirty = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 58, best_fitness: 0.9 }),
+      makeRecord({ generation: 3, best_score: Number.NaN, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={dirty} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    expect(series).toHaveLength(4);
+    for (const s of series) {
+      expect(s.setData).toHaveBeenCalledTimes(1);
+      expect(s.setData.mock.calls[0][0]).toHaveLength(2);
+    }
+  });
+
+  it("keeps best_fitness=null points as whitespace 断线（null 不剔点）", () => {
+    // 后端违约形制注入：类型面已把后端 null 收窄为可选（types/api.ts:173/:178），
+    // 运行时直传 null 模拟真实到达的断线代——cast 不改变注入值本身
+    const backendNull = null as unknown as number;
+    const withGap = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 55, best_fitness: backendNull }),
+      makeRecord({ generation: 3, best_score: 52, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={withGap} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    // null=断线语义承载：点保留（四路 3 点），bestFitness 路该点无 value
+    for (const s of series) {
+      expect(s.setData.mock.calls[0][0]).toHaveLength(3);
+    }
+    const fitnessPoints = series[1].setData.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(fitnessPoints[1]).not.toHaveProperty("value");
+    expect(fitnessPoints[0]).toHaveProperty("value", 0.6);
+  });
+
+  it("filters best_fitness=NaN records（NaN 非断线语义，整点剔除）", () => {
+    const dirty = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 55, best_fitness: Number.NaN }),
+      makeRecord({ generation: 3, best_score: 52, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={dirty} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    for (const s of series) {
+      expect(s.setData.mock.calls[0][0]).toHaveLength(2);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
