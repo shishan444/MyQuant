@@ -101,7 +101,21 @@
 - **全局 coverage 96.56% ≥96——闸门通过**（`Required test coverage of 96% reached. Total coverage: 96.56%`），mcpserver 纳入后未跌破。
 - 1 failed, 9282 passed, 2 skipped。唯一 failed＝`tests/evolution/test_concurrency_model.py::TestPopulationOffsetFix::test_core_gen_continuity_and_no_regression`（POST /api/evolution/tasks/oc1/stop 409≠200）——**单进程复跑通过**（`-o addopts=""` 定向，1 passed，证据 `/tmp/mcp-c1-failed-repro.log`），判定为 xdist 三并发下偶发（并发不兼容），非本 change 引入（本 change diff 仅 pytest.ini 测量面一行，不触碰任何端点行为）。
 
-## 七、待拍板
+## 七、C-2/C-3 补齐与逐名打勾（2026-11-13 终验）
+
+补齐用例 2 条（实测差集全消）：
+
+1. `test_paper_tools.py` `TestToolBehavior.test_list_paper_tasks_status_omitted`——list_paper_tasks 不传 status，断言 params == {"limit": 20, "offset": 0}（无 status 键）。
+2. `test_tools_passthrough.py` `TestQueryIndicatorBareBody.test_no_optional_keys_bare_body`——query_indicator 只传 symbol/timeframe，断言 body 全等两键（indicator/groups 等可选键缺省不带）。
+
+局部终验（触达面 50 文件，`--cov-branch` 口径，证据 `/tmp/mcp-c23-local.log`）：**mcpserver/tools.py 348 stmts / 0 miss / 122 branch / 0 partial / 100%**，854 passed（+2 新用例）；装配级守卫（test_server / test_stdio_l3 / test_http_l3）全绿。验收行级判定达成：两注册函数及嵌套工具定义行无 missing，分支 partial 清零。
+
+逐名打勾（断言归属详见第三节表）：
+
+- readonly 19：list_data_sources ✓ list_strategies ✓ get_strategy ✓ list_evolution_tasks ✓ list_indicators ✓ list_signal_columns ✓ get_market_snapshot ✓ union_balance ✓ list_hypotheses ✓ get_hypothesis ✓ get_research_log ✓ get_analysis_task ✓ get_validation_report ✓ list_feature_requests ✓ list_paper_tasks ✓（含本次补 status 缺省侧）get_paper_task ✓ get_paper_report ✓ get_paper_history ✓ query_paper_signals ✓
+- research 23：run_analysis ✓ inspect_cases ✓ query_indicator ✓（含本次补 indicator 缺省侧）register_hypothesis ✓ transition_hypothesis ✓ run_isolated_validation ✓ run_random_window_test ✓ run_staged_validation ✓ run_backtest ✓ register_formula_plugin ✓ register_model_plugin ✓ translate_hypothesis_to_strategy ✓ submit_feature_request ✓ trigger_evolution ✓ poll_evolution_task ✓ stop_evolution_task ✓ pause_evolution_task ✓ resume_evolution_task ✓ get_evolution_strategies ✓ update_strategy_metadata ✓ batch_delete_strategies ✓ mount_paper_task ✓ unmount_paper_task ✓
+
+## 八、待拍板
 
 1. 5 必补项按实测差集不重复补（既有 tests/api 用例已承载）——若评审口径要求该 5 项必须在 tests/mcpserver 目录内有用例，需另裁决并说明重复建设的必要性。
 2. server.py:102（`__main__` 入口行）missing 在本 change 范围外（两注册函数与嵌套工具定义均在 tools.py），不处理。
