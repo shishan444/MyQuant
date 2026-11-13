@@ -63,12 +63,18 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     // setData 对 NaN time 会 throw 崩组件树；非法 value（NaN/Infinity/非数）在
     // development 构建经 checkLineItem 断言 throw、production 构建断言剥除后静默
     // 进数据模型——两面一并剔除非法项，全部非法时空数组照常走 setData
-    const points = data
-      .filter((d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value))
-      .map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }));
+    // 过滤一次两用：绘制与着色同取过滤后序列——原始末点 value 脏（被剔除）
+    // 时若按原始 data 取末点，NaN >= baseline 恒 false 误显亏损色，而曲线
+    // 实际末点是最后一个有效点
+    const validData = data.filter(
+      (d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value),
+    );
+    const points = validData.map(
+      (d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }),
+    );
     series.setData(points);
     series.applyOptions({
-      color: resolveEquityColor(data, baseline),
+      color: resolveEquityColor(validData, baseline),
       priceFormat: { type: 'price', precision: 0, minMove: 1 },
       priceLineVisible: false,
       lastValueVisible: false,
