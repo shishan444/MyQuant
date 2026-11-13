@@ -63,7 +63,14 @@ export async function getOhlcvBySymbol(
   timeframe: string,
   params?: { start?: string; end?: string; limit?: number }
 ): Promise<OhlcvData> {
-    return api.get(`/api/data/ohlcv/${symbol}/${timeframe}`, { params });
+    // K 线请求路径段编码（kline-data-supply「K 线请求路径段编码」Requirement）：
+  // symbol/timeframe 经 encodeURIComponent 拼入路径段，入参不得改变 pathname
+  // 结构或注入 query/fragment；合法值（BTCUSDT/1h 等 unreserved 集）编码恒等，
+  // URL 与编码前逐字一致
+  return api.get(
+    `/api/data/ohlcv/${encodeURIComponent(symbol)}/${encodeURIComponent(timeframe)}`,
+    { params },
+  );
 }
 
 export async function getChartIndicators(
@@ -88,5 +95,9 @@ export async function getChartIndicators(
     limit?: number;
   }
 ): Promise<ChartIndicatorsResponse> {
-    return api.get(`/api/data/chart-indicators/${symbol}/${timeframe}`, { params });
+    // 同 getOhlcvBySymbol：路径段编码（kline-data-supply 同 Requirement）
+  return api.get(
+    `/api/data/chart-indicators/${encodeURIComponent(symbol)}/${encodeURIComponent(timeframe)}`,
+    { params },
+  );
 }
