@@ -8,6 +8,7 @@ import {
   getPendingEvents,
   getValidationRecords,
   type PendingEvent,
+  type PendingEventsAvailability,
 } from "@/services/workbench";
 import {
   ActiveHypothesesPanel,
@@ -96,13 +97,9 @@ function PageSections(props: {
   truncated: boolean;
   scannedTasks: number;
   scannedRunningTasks: number;
-  // availability 完整形（services/workbench.ts:17 三字段——历史 props 窄化
-  // 丢 trigger_deviation，CARD-05 恢复消费）
-  availability?: {
-    qualify_pending: string | null;
-    trigger_deviation: string | null;
-    reason: string | null;
-  };
+  // availability 完整形（PendingEventsAvailability 生成 schema 三字段
+  // ——历史 props 窄化丢 trigger_deviation，CARD-05 恢复消费）
+  availability?: PendingEventsAvailability;
   eventsLoading: boolean;
   eventsError: boolean;
   records: import("@/services/workbench").ValidationRecordRow[];
