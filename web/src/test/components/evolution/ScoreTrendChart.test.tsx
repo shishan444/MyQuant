@@ -58,7 +58,11 @@ vi.mock("lightweight-charts", () => {
 
 import * as lightweightCharts from "lightweight-charts";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
-import { withAlpha } from "@/components/charts/core/chartThemes";
+import {
+  withAlpha,
+  SCORE_TREND_AVG_LINE_COLOR,
+  SCORE_TREND_TARGET_LINE_COLOR,
+} from "@/components/charts/core/chartThemes";
 import { POLARITY, ATTENTION } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
 
@@ -234,9 +238,26 @@ describe("ScoreTrendChart component", () => {
     expect(screen.getByText(/2 个种群/)).toBeInTheDocument();
   });
 
+  it("renders legend swatches in tokens 单源引用形（CARD-01：七色块与 series 实际色一致）", () => {
+    // 图例色块=标签项容器（getByText 命中 flex span）的首子元素；断言值=
+    // tokens/chartThemes 引用（与对应 series 装配色同源——错位回退必红）
+    const swatch = (label: string) =>
+      screen.getByText(label).firstElementChild as HTMLElement;
+    render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
+    expect(swatch("综合得分")).toHaveStyle({ backgroundColor: ATTENTION.gold });
+    expect(swatch("适应度")).toHaveStyle({ backgroundColor: POLARITY.up });
+    expect(swatch("累计最佳")).toHaveStyle({ borderColor: withAlpha(POLARITY.up, 0.5) });
+    expect(swatch("平均得分")).toHaveStyle({ borderColor: SCORE_TREND_AVG_LINE_COLOR });
+    expect(swatch("达标线")).toHaveStyle({ borderColor: POLARITY.up });
+    expect(swatch("最优更新")).toHaveStyle({ backgroundColor: POLARITY.up });
+  });
+
   it("shows 目标线 legend instead when no fitness data", () => {
     render(<ScoreTrendChart records={noFitnessRecords} targetScore={60} />);
     expect(screen.getByText("目标线")).toBeInTheDocument();
     expect(screen.queryByText("适应度")).not.toBeInTheDocument();
+    // 目标线色块同入单源锚（CARD-01 两处同值项一并改引用形）
+    const swatch = screen.getByText("目标线").firstElementChild as HTMLElement;
+    expect(swatch).toHaveStyle({ borderColor: SCORE_TREND_TARGET_LINE_COLOR });
   });
 });
