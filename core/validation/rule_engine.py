@@ -23,7 +23,7 @@ from core.validation.engine import (
     _resolve_subject,
     _resolve_target,
 )
-from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
+from core.validation.mtf import enrich_with_mtf
 
 logger = logging.getLogger(__name__)
 
@@ -157,26 +157,12 @@ def evaluate_rules(
             referenced_tfs.add(cond_tf)
 
     if referenced_tfs:
-        try:
-            mtf_data = load_mtf_data(symbol, list(referenced_tfs), start, end, data_dir)
-            if mtf_data:
-                mtf_with_indicators: Dict[str, pd.DataFrame] = {}
-                for tf_key, tf_df in mtf_data.items():
-                    mtf_with_indicators[tf_key] = compute_all_indicators(tf_df)
-
-                base_tf_minutes = get_timeframe_minutes(timeframe)
-                tf_minutes_map = {tf_key: get_timeframe_minutes(tf_key) for tf_key in mtf_with_indicators}
-                enhanced_df = merge_to_base(
-                    enhanced_df, mtf_with_indicators,
-                    base_tf_minutes, tf_minutes_map,
-                )
-        except Exception as exc:
-            # 异常原文只进日志不回传（engine.py CARD-05 同款取舍：
-            # 异常文本形态不可控，warnings 面向客户端固定分类文案）
-            logger.warning(
-                "MTF 数据装载失败，回退单周期求值: %r", exc, exc_info=exc)
-            warnings.append(
-                "MTF data loading failed, falling back to single timeframe")
+        # R-3（fix-silent-degradation）：装载-合并段与 engine 共享单点
+        # enrich_with_mtf（原逐字重复段收口；数据类异常回退单周期求值+
+        # 固定文案 warning、非数据类上抛显性失败——取舍见其实现）
+        enhanced_df, _w = enrich_with_mtf(
+            enhanced_df, symbol, timeframe, sorted(referenced_tfs), start, end, data_dir)
+        warnings.extend(_w)
 
     # ------------------------------------------------------------------
     # 4. 进出场条件求值
