@@ -20,17 +20,28 @@ market_fapi 字符串常量命中仅 rest.py FAPI_DATA_DIR_DEFAULT 赋值
 - core/paper_trading/runtime/scheduler.py __init__ docstring 参数段
   与 _default_data_dir docstring（委托语义自述，A-2 第 6 条更新）。
 
-断言二（core/ 零 __file__ 数据目录锚定回潮）：core/ 内代码位置
-出现 `__file__` 路径锚定的文件白名单（非数据目录锚定或唯一单点）：
+断言二（生产域零 __file__ 数据目录锚定回潮）：生产域（core/
+api/ mcpserver/ scripts/，与断言一同域）代码位置出现 `__file__`
+路径锚定的文件白名单（非数据目录锚定或唯一单点）：
 - core/data/fapi/rest.py：_REPO_ROOT——default_data_dir 的工程根
   锚定基点（A-1 落位，全工程唯一数据目录锚定单点）；
 - core/persistence/db_ext.py：_REPO_ROOT——业务库（quant.db）
   路径锚定，非行情数据目录；
 - core/logging/config.py：日志配置 project_root 推导；
 - core/backtest/trace_resolver.py：engine.py 源码文件读取
-  （trace 解析用，非目录锚定）。
-白名单外文件出现 __file__ 锚定即红（典型回潮形：引擎/调度器绕开
-单点自行 `Path(__file__).resolve().parents[N] / ...` 推导——原
+  （trace 解析用，非目录锚定）；
+- api/app.py：project_root——_default_db_path 缺省与 lifespan
+  读 config.yaml 的定位基点（非数据目录；data_dir 缺省同段
+  已改调 default_data_dir 单点）；
+- api/__main__.py：project_root——sys.path 运行入口注入；
+- scripts/export_openapi.py：project_root——sys.path 注入＋
+  web/openapi.json 输出定位；
+- scripts/adopt_alembic_baseline.py：PROJECT_ROOT——sys.path 注入；
+- scripts/vacuum_quant_db.py：quant.db 缺省路径锚定（argparse
+  default，与 db_ext.py:41 同用途族，非行情数据目录）。
+mcpserver/ 零 __file__ 锚定（摸底在案）。白名单外文件出现
+__file__ 锚定即红（典型回潮形：引擎/调度器绕开单点自行
+`Path(__file__).resolve().parents[N] / ...` 推导——原
 fix-data-dir-single-source 消除的四引擎+scheduler 独立锚定链）。
 
 收敛域边界（specs 披露）：works/ 研究一次性脚本与历史档案不在
@@ -53,12 +64,17 @@ _REPO = Path(__file__).resolve().parents[2]
 # 生产域（活跃目录全集——works/ 豁免见模块 docstring）
 _PROD_DIRS = ("core", "api", "mcpserver", "scripts")
 
-# 断言二白名单：core/ 内合法 __file__ 锚定文件（用途登记见 docstring）
+# 断言二白名单：生产域合法 __file__ 锚定文件（用途登记见 docstring）
 _CORE_FILE_ANCHOR_WHITELIST = frozenset({
     "core/data/fapi/rest.py",
     "core/persistence/db_ext.py",
     "core/logging/config.py",
     "core/backtest/trace_resolver.py",
+    "api/app.py",
+    "api/__main__.py",
+    "scripts/export_openapi.py",
+    "scripts/adopt_alembic_baseline.py",
+    "scripts/vacuum_quant_db.py",
 })
 
 
@@ -145,11 +161,12 @@ class TestCoreFileAnchorWhitelist:
     """core/ 零 __file__ 数据目录锚定回潮：锚定文件白名单外零命中。"""
 
     def test_file_anchor_confined_to_whitelist(self):
-        """core/ 代码位置 __file__ 路径锚定仅白名单四文件（用途登记
-        见模块 docstring）；白名单外文件出现 `__file__` 锚定即红
-        （绕开 default_data_dir 自行推导的回潮面）。"""
+        """生产域代码位置 __file__ 路径锚定仅白名单九文件（core/ 4
+        ＋api/ 2＋scripts/ 3，用途登记见模块 docstring）；白名单外
+        文件出现 `__file__` 锚定即红（绕开 default_data_dir 自行
+        推导的回潮面）。"""
         offenders: list[str] = []
-        for path in sorted((_REPO / "core").rglob("*.py")):
+        for path in _prod_python_files():
             rel = path.relative_to(_REPO).as_posix()
             text = path.read_text(encoding="utf-8")
             if "__file__" not in text:
