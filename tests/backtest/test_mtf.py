@@ -166,3 +166,108 @@ class TestMergeToBase:
         # OHLCV 后缀列全量投影（5 基础 + 5 后缀）
         assert len(result.columns) == len(base.columns) + 5
         assert "close_4h" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# R-3 enrich_with_mtf（fix-silent-degradation）：两引擎共享段
+# ---------------------------------------------------------------------------
+
+class TestMtfDataExceptionsSingleSource:
+    """R-3：MTF 数据类异常清单单源契约（值断言＋全工程唯一书写）。"""
+
+    def test_value_equals_contract(self):
+        from core.validation.mtf import MTF_DATA_EXCEPTIONS
+        # 值断言（非仅存在断言）：清单恰为三数据类异常
+        assert MTF_DATA_EXCEPTIONS == (OSError, ValueError, KeyError)
+
+    def test_single_definition_project_wide(self):
+        """生产域（core/api/scripts）仅 core/validation/mtf.py 一处顶层赋值。"""
+        import re
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        hits = []
+        for src_dir in ("core", "api", "scripts"):
+            for path in (repo_root / src_dir).rglob("*.py"):
+                text = path.read_text(encoding="utf-8")
+                if re.search(r"^MTF_DATA_EXCEPTIONS\s*=", text, re.MULTILINE):
+                    hits.append(str(path))
+        assert hits == [str(repo_root / "core" / "validation" / "mtf.py")], (
+            f"异常清单须单源于 mtf.py，检测到第二处书写: {hits}")
+
+
+class TestEnrichWithMtf:
+    """R-3：enrich_with_mtf 函数级三面（正常合并/数据类回退/非数据类上抛）。"""
+
+    @staticmethod
+    def _write_pair(tmp_path):
+        """建 15m 基准与 4h 高周期 parquet（走真实装载链）。"""
+        base = _make_ohlcv_df("2024-01-01", 48, "15min")
+        base.index.name = "timestamp"
+        base.to_parquet(tmp_path / "TESTUSDT_15m.parquet")
+        high = _make_ohlcv_df("2024-01-01", 6, "4h")
+        high.index.name = "timestamp"
+        high.to_parquet(tmp_path / "TESTUSDT_4h.parquet")
+        return base
+
+    def test_normal_merge(self, tmp_path):
+        """正常面：高周期在库 → 合并帧含带后缀高周期列，warnings 空。"""
+        from core.validation.mtf import enrich_with_mtf
+
+        base = self._write_pair(tmp_path)
+        out, warnings = enrich_with_mtf(
+            base, "TESTUSDT", "15m", ["4h"], "2024-01-01", "2024-01-02", str(tmp_path))
+        assert any(c.endswith("_4h") for c in out.columns)
+        assert warnings == []
+
+    @pytest.mark.parametrize("exc", [
+        OSError("disk error"), ValueError("bad value"), KeyError("missing col"),
+    ], ids=["OSError", "ValueError", "KeyError"])
+    def test_data_exception_fallback(self, tmp_path, monkeypatch, caplog, exc):
+        """数据类回退面：返回原帧＋固定文案 warning；异常原文只进日志。"""
+        import logging
+
+        import core.validation.mtf as mtf_mod
+        from core.validation.mtf import enrich_with_mtf
+
+        base = self._write_pair(tmp_path)
+
+        def _boom(*args, **kwargs):
+            raise exc
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        with caplog.at_level(logging.WARNING, logger="core.validation.mtf"):
+            out, warnings = enrich_with_mtf(
+                base, "TESTUSDT", "15m", ["4h"], "2024-01-01", "2024-01-02", str(tmp_path))
+        assert out is base  # 原帧回退（同一对象）
+        assert warnings == [
+            "MTF data loading failed, falling back to single timeframe"]
+        assert str(exc) not in "".join(warnings)  # 异常原文不回传
+        assert any("MTF 数据装载失败" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("exc", [TypeError, AttributeError, RuntimeError],
+                             ids=["TypeError", "AttributeError", "RuntimeError"])
+    def test_non_data_exception_raises(self, tmp_path, monkeypatch, exc):
+        """非数据类上抛面：装载代码自身缺陷类异常不被吞为回退。"""
+        import core.validation.mtf as mtf_mod
+        from core.validation.mtf import enrich_with_mtf
+
+        base = self._write_pair(tmp_path)
+
+        def _boom(*args, **kwargs):
+            raise exc("code bug")
+
+        monkeypatch.setattr(mtf_mod, "load_mtf_data", _boom)
+        with pytest.raises(exc):
+            enrich_with_mtf(
+                base, "TESTUSDT", "15m", ["4h"], "2024-01-01", "2024-01-02", str(tmp_path))
+
+    def test_empty_referenced_tfs(self, tmp_path):
+        """空清单回归：空装载 → 原帧返回零 warning。"""
+        from core.validation.mtf import enrich_with_mtf
+
+        base = self._write_pair(tmp_path)
+        out, warnings = enrich_with_mtf(
+            base, "TESTUSDT", "15m", [], "2024-01-01", "2024-01-02", str(tmp_path))
+        assert out is base
+        assert warnings == []

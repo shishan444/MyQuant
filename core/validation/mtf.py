@@ -10,6 +10,7 @@ find_parquet/safe_symbol 共享路径发现，反向无依赖）。
 """
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -18,6 +19,9 @@ import pandas as pd
 
 from core.data.storage import load_parquet
 from core.data.timeframes import TF_SECONDS
+from core.features.indicators import compute_all_indicators
+
+logger = logging.getLogger(__name__)
 
 # B4.1 归一：分钟表由统一秒表推导（消除第三张 TF 表）
 _TF_MINUTES: Dict[str, int] = {tf: sec // 60 for tf, sec in TF_SECONDS.items()}
@@ -142,3 +146,63 @@ def merge_to_base(
         result = pd.concat([result, projected], axis=1)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# 两引擎共享的 MTF 装载-合并段（R-3 fix-silent-degradation）
+# ---------------------------------------------------------------------------
+# MTF 装载数据类异常清单：三处捕获面（engine/rule_engine 的共享段与
+# scene_engine 的收窄位）共用本单一定义，异常清单不得存在第二处书写。
+# 非清单异常（装载代码自身缺陷 TypeError/AttributeError 等）不入捕获
+# 面——上抛显性失败，不再吞为降级求值结果
+MTF_DATA_EXCEPTIONS = (OSError, ValueError, KeyError)
+
+
+def enrich_with_mtf(
+    enhanced_df: pd.DataFrame,
+    pair: str,
+    base_tf: str,
+    referenced_tfs: List[str],
+    start: Optional[str],
+    end: Optional[str],
+    data_dir: str,
+) -> tuple[pd.DataFrame, List[str]]:
+    """装载高周期数据、算指标并合并进基准帧（两引擎共享段）。
+
+    数据类异常（MTF_DATA_EXCEPTIONS）→回退返回原帧+固定分类文案
+    warning（异常原文只进日志）；非数据类异常上抛显性失败。
+
+    Args:
+        enhanced_df: 基准周期已算指标的帧。
+        pair: 交易对。
+        base_tf: 基准周期（分钟换算与装载基准）。
+        referenced_tfs: 条件引用的高周期清单。
+        start: 区间起始日。
+        end: 区间截止日。
+        data_dir: 行情数据目录。
+
+    Returns:
+        (合并帧或原帧, warnings)。
+    """
+    warnings: List[str] = []
+    try:
+        mtf_data = load_mtf_data(pair, referenced_tfs, start, end, data_dir)
+        if mtf_data:
+            mtf_with_indicators: Dict[str, pd.DataFrame] = {}
+            for tf, tf_df in mtf_data.items():
+                mtf_with_indicators[tf] = compute_all_indicators(tf_df)
+
+            base_tf_minutes = get_timeframe_minutes(base_tf)
+            tf_minutes_map = {tf: get_timeframe_minutes(tf) for tf in mtf_with_indicators}
+            enhanced_df = merge_to_base(
+                enhanced_df, mtf_with_indicators,
+                base_tf_minutes, tf_minutes_map,
+            )
+    except MTF_DATA_EXCEPTIONS as exc:
+        # 异常原文只进日志不回传（live_trading dna 预检同款取舍：
+        # 异常文本形态不可控，warnings 面向客户端固定分类文案）
+        logger.warning(
+            "MTF 数据装载失败，回退单周期求值: %r", exc, exc_info=exc)
+        warnings.append(
+            "MTF data loading failed, falling back to single timeframe")
+    return enhanced_df, warnings
