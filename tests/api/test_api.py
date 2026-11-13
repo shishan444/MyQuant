@@ -558,6 +558,45 @@ class TestStrategyBacktest:
         )
         assert response.status_code == 404
 
+
+class TestBacktestUnknownLogicBubbles422:
+    """R-7 冒泡面①（fix-silent-degradation）：内联 DNA 非法 logic 经
+    回测引擎 combine_signals raise ResearchError → 应用层全局兜底 422
+    出站（与既有 RESEARCH_NOT_EXPRESSIBLE 同通道，零适配）。"""
+
+    def test_inline_dna_unknown_logic_returns_422(self, client: TestClient) -> None:
+        import pandas as pd
+
+        # 完整数据在库（装载与指标计算通过——异常发生在信号组合段）
+        data_dir = client.app.state.data_dir
+        df = pd.DataFrame(
+            {"open": [100.0] * 30, "high": [101.0] * 30,
+             "low": [99.0] * 30, "close": [100.0] * 30,
+             "volume": [1000.0] * 30},
+            index=pd.date_range(
+                "2024-01-01", periods=30, freq="4h", tz="UTC"),
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+
+        dna = _sample_dna_dict()
+        dna["logic_genes"]["entry_logic"] = "XOR"
+        response = client.post(
+            "/api/strategies/backtest",
+            json={
+                "dna": dna,
+                "symbol": "BTCUSDT",
+                "timeframe": "4h",
+                "dataset_id": "BTCUSDT_4h",
+            },
+        )
+        assert response.status_code == 422
+        body = response.json()["detail"]
+        assert body["code"] == "RESEARCH_PARAM_INVALID"
+        assert body["detail"]["param"] == "logic"
+        assert body["detail"]["value"] == "XOR"
+
+
 # ── Test: Strategy Compare ──
 
 class TestStrategyCompare:

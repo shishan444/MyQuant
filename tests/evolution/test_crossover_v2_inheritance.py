@@ -275,3 +275,19 @@ class TestEvaluationPluginReject:
         assert out["score"] == 0.0
         assert out.get("error") is True
         assert "PLUGIN_SOURCES_UNSUPPORTED" in str(out.get("reason", ""))
+
+    def test_unknown_logic_individual_zero_score(self, tmp_path):
+        """R-7 冒泡面②（fix-silent-degradation）：非法 logic 个体经
+        evaluate_dna 惩罚分通道 0 分+error 淘汰——原为静默返回首信号
+        副本的假得分。"""
+        import pandas as pd
+
+        from core.evolution.evaluation import evaluate_dna
+
+        dna = _rule_dna()
+        dna.logic_genes.entry_logic = "XOR"
+        out = evaluate_dna(
+            dna, self._task_row(), tmp_path,
+            enhanced_df=pd.DataFrame({"close": [100.0] * 5}))
+        assert out["score"] == 0.0
+        assert out.get("error") is True
