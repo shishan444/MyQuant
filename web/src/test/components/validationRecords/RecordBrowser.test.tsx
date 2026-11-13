@@ -1150,13 +1150,13 @@ describe("特征测试网（proto-b 现状记录——REQ-4 retrySeq/failedTf �
     fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
   };
 
-  // 特征 A（副作用①现状锚——修复后预期转红作回归检测器）：retrySeq 是
-  // RecordDetail 组件级单值，进 useFullRangeKline queryKey 末位且作用于
-  // 所有档位（含基准档）。非 404 失败档重切递增（0→1）后若再失败回基
-  // 准，基准档 queryKey 的 seq 位已变 → 缓存 miss 重拉。旧代码（REQ-4
-  // 机制引入前）该路径零请求命中——本测试把「递增前零重拉 vs 递增后
-  // miss 重拉」两段现状分层钉住
-  it("特征：非 404 失败档重切递增后再失败回基准——首回基准零重拉（seq 恒 0），次回基准缓存 miss 重拉（30m 调用 1→2）", async () => {
+  // 特征 A（验收标准②契约锚——CARD-01 后由副作用①检测锚翻转而来）：
+  // 原 retrySeq 组件级单值曾作用于所有档位 queryKey，非 404 失败档重切
+  // 递增后再失败回基准会 miss 基准档缓存重拉（旧实现本锚断 30m 调用
+  // 1→2，CARD-01 落地实测转红即检测器命中）；CARD-01 改 per-tf 映射
+  // （queryKey 只取当前档序号，基准档键永不写入恒 0）——本锚翻转为新
+  // 契约：递增只影响该档 queryKey，两段回基准基准档均缓存命中零重拉
+  it("特征：非 404 失败档重切递增后再失败回基准——两段回基准均零重拉（30m 调用恒 1，per-tf 序号不动基准档缓存身份）", async () => {
     mockGetStrategy.mockResolvedValue(makeStrategy(null));
     mockDetail.mockResolvedValue(makeDetail());
     mockOhlcv.mockImplementation((_s: string, tf: string) => {
@@ -1165,8 +1165,8 @@ describe("特征测试网（proto-b 现状记录——REQ-4 retrySeq/failedTf �
     });
     uiProd(<RecordDetail record={makeRow()} />);
     expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
-    // 切 1h → 500 失败：failedTf="1h" + 自动回基准。seq 未动 → 基准档
-    // queryKey ["vr-kline-full",…,"30m",…,0] 未变 → 缓存命中零重拉
+    // 切 1h → 500 失败：failedTf="1h" + 自动回基准。任何档序号未动 →
+    // 基准档 queryKey ["vr-kline-full",…,"30m",…,0] 未变 → 缓存命中零重拉
     await pickTf("1h");
     await waitFor(() => {
       expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
@@ -1178,9 +1178,9 @@ describe("特征测试网（proto-b 现状记录——REQ-4 retrySeq/failedTf �
       expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
     });
     expect(callsOf("30m")).toBe(1);
-    // 重切 1h（failedTf 命中 → seq 0→1）→ 又失败 → 再回基准。基准档
-    // queryKey seq 位=1 ≠ 缓存 seq=0 → miss 重拉（副作用①现状——此断
-    // 言修复后预期转红：回基准档零重拉为验收标准②）
+    // 重切 1h（failedTf 命中 → 该档序号 0→1）→ 又失败 → 再回基准。
+    // per-tf：基准档序号恒 0 → 基准档 queryKey 与缓存一致 → 零重拉
+    //（验收标准②：非 404 重切递增只影响该 tf 的 queryKey）
     await pickTf("1h");
     await waitFor(() => {
       expect(callsOf("1h")).toBe(2);
@@ -1189,7 +1189,7 @@ describe("特征测试网（proto-b 现状记录——REQ-4 retrySeq/failedTf �
       expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
     });
     await waitFor(() => {
-      expect(callsOf("30m")).toBe(2);
+      expect(callsOf("30m")).toBe(1);
     });
     await waitFor(() => {
       expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
