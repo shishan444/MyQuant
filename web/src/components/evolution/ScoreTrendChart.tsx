@@ -247,36 +247,57 @@ export function ScoreTrendChart({
         className="mt-1 flex items-center justify-center gap-4 text-[10px]"
         style={{ color: CHART_VA.dim }}>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 bg-amber-400" />
+          <span
+            className="inline-block h-0.5 w-4"
+            style={{ backgroundColor: ATTENTION.gold }}
+          />
           综合得分
         </span>
         {hasFitnessData && (
           <span className="flex items-center gap-1">
-            <span className="inline-block h-0.5 w-4 bg-emerald-500" />
+            <span
+              className="inline-block h-0.5 w-4"
+              style={{ backgroundColor: POLARITY.up }}
+            />
             适应度
           </span>
         )}
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t border-dashed border-emerald-400/50" />
+          <span
+            className="inline-block h-0.5 w-4 border-t border-dashed"
+            style={{ borderColor: withAlpha(POLARITY.up, 0.5) }}
+          />
           累计最佳
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t border-dashed border-purple-400/40" />
+          <span
+            className="inline-block h-0.5 w-4 border-t border-dashed"
+            style={{ borderColor: SCORE_TREND_AVG_LINE_COLOR }}
+          />
           平均得分
         </span>
         {hasFitnessData ? (
           <span className="flex items-center gap-1">
-            <span className="inline-block h-0.5 w-4 border-t border-dashed border-emerald-500" />
+            <span
+              className="inline-block h-0.5 w-4 border-t border-dashed"
+              style={{ borderColor: POLARITY.up }}
+            />
             达标线
           </span>
         ) : (
           <span className="flex items-center gap-1">
-            <span className="inline-block h-0.5 w-4 border-t border-dashed border-slate-400" />
+            <span
+              className="inline-block h-0.5 w-4 border-t border-dashed"
+              style={{ borderColor: SCORE_TREND_TARGET_LINE_COLOR }}
+            />
             目标线
           </span>
         )}
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rotate-45 bg-emerald-500" />
+          <span
+            className="inline-block h-2 w-2 rotate-45"
+            style={{ backgroundColor: POLARITY.up }}
+          />
           最优更新
         </span>
       </div>
