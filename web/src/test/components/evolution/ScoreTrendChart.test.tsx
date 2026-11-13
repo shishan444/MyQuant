@@ -58,7 +58,11 @@ vi.mock("lightweight-charts", () => {
 
 import * as lightweightCharts from "lightweight-charts";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
-import { withAlpha } from "@/components/charts/core/chartThemes";
+import {
+  withAlpha,
+  SCORE_TREND_AVG_LINE_COLOR,
+  SCORE_TREND_TARGET_LINE_COLOR,
+} from "@/components/charts/core/chartThemes";
 import { POLARITY, ATTENTION } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
 
@@ -209,6 +213,57 @@ describe("ScoreTrendChart 装配（fake registry）", () => {
     unmount();
     expect(registry.charts[0].remove).toHaveBeenCalled();
   });
+
+  // CARD-03（security S-1）：value 面有限性兜底——四路 setData 前整点过滤
+  // （谓词=三 value 列有限性合取+bestFitness null 豁免），脏点剔除不崩、
+  // 余点照常；null（断线语义）与 NaN（非法值）分叉处置是谓词核心语义
+  it("filters non-finite best_score records（NaN 整点剔除，四路同步）", () => {
+    const dirty = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 58, best_fitness: 0.9 }),
+      makeRecord({ generation: 3, best_score: Number.NaN, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={dirty} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    expect(series).toHaveLength(4);
+    for (const s of series) {
+      expect(s.setData).toHaveBeenCalledTimes(1);
+      expect(s.setData.mock.calls[0][0]).toHaveLength(2);
+    }
+  });
+
+  it("keeps best_fitness=null points as whitespace 断线（null 不剔点）", () => {
+    // 后端违约形制注入：类型面已把后端 null 收窄为可选（types/api.ts:173/:178），
+    // 运行时直传 null 模拟真实到达的断线代——cast 不改变注入值本身
+    const backendNull = null as unknown as number;
+    const withGap = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 55, best_fitness: backendNull }),
+      makeRecord({ generation: 3, best_score: 52, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={withGap} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    // null=断线语义承载：点保留（四路 3 点），bestFitness 路该点无 value
+    for (const s of series) {
+      expect(s.setData.mock.calls[0][0]).toHaveLength(3);
+    }
+    const fitnessPoints = series[1].setData.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(fitnessPoints[1]).not.toHaveProperty("value");
+    expect(fitnessPoints[0]).toHaveProperty("value", 0.6);
+  });
+
+  it("filters best_fitness=NaN records（NaN 非断线语义，整点剔除）", () => {
+    const dirty = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: 2, best_score: 55, best_fitness: Number.NaN }),
+      makeRecord({ generation: 3, best_score: 52, best_fitness: 1.1 }),
+    ];
+    render(<ScoreTrendChart records={dirty} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    for (const s of series) {
+      expect(s.setData.mock.calls[0][0]).toHaveLength(2);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -234,9 +289,26 @@ describe("ScoreTrendChart component", () => {
     expect(screen.getByText(/2 个种群/)).toBeInTheDocument();
   });
 
+  it("renders legend swatches in tokens 单源引用形（CARD-01：七色块与 series 实际色一致）", () => {
+    // 图例色块=标签项容器（getByText 命中 flex span）的首子元素；断言值=
+    // tokens/chartThemes 引用（与对应 series 装配色同源——错位回退必红）
+    const swatch = (label: string) =>
+      screen.getByText(label).firstElementChild as HTMLElement;
+    render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />);
+    expect(swatch("综合得分")).toHaveStyle({ backgroundColor: ATTENTION.gold });
+    expect(swatch("适应度")).toHaveStyle({ backgroundColor: POLARITY.up });
+    expect(swatch("累计最佳")).toHaveStyle({ borderColor: withAlpha(POLARITY.up, 0.5) });
+    expect(swatch("平均得分")).toHaveStyle({ borderColor: SCORE_TREND_AVG_LINE_COLOR });
+    expect(swatch("达标线")).toHaveStyle({ borderColor: POLARITY.up });
+    expect(swatch("最优更新")).toHaveStyle({ backgroundColor: POLARITY.up });
+  });
+
   it("shows 目标线 legend instead when no fitness data", () => {
     render(<ScoreTrendChart records={noFitnessRecords} targetScore={60} />);
     expect(screen.getByText("目标线")).toBeInTheDocument();
     expect(screen.queryByText("适应度")).not.toBeInTheDocument();
+    // 目标线色块同入单源锚（CARD-01 两处同值项一并改引用形）
+    const swatch = screen.getByText("目标线").firstElementChild as HTMLElement;
+    expect(swatch).toHaveStyle({ borderColor: SCORE_TREND_TARGET_LINE_COLOR });
   });
 });

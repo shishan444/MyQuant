@@ -60,9 +60,11 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     if (!hasData || !canDraw || !chartRef.current || !seriesRef.current) return;
     const series = seriesRef.current;
     // 后端三路输入信任面兜底：非法 timestamp 串经 Date.parse 产 NaN，lightweight
-    // setData 对 NaN time 会 throw 崩组件树——剔除非法项，全部非法时空数组照常走 setData
+    // setData 对 NaN time 会 throw 崩组件树；非法 value（NaN/Infinity/非数）在
+    // development 构建经 checkLineItem 断言 throw、production 构建断言剥除后静默
+    // 进数据模型——两面一并剔除非法项，全部非法时空数组照常走 setData
     const points = data
-      .filter((d) => !Number.isNaN(Date.parse(d.timestamp)))
+      .filter((d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value))
       .map((d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }));
     series.setData(points);
     series.applyOptions({

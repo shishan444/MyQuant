@@ -4,6 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { IChartApi, IPriceLine, ISeriesApi, Time } from "lightweight-charts";
 import { POLARITY } from "@/theme/tokens";
+import { withAlpha } from "@/components/charts/core/chartThemes";
 import {
   fillsToSignals,
   signalsToMarkers,
@@ -205,9 +206,11 @@ describe("PositionBand 挂载与生命周期", () => {
   });
 
   it("draw 颜色分区：long=绿系半透明、short=红系半透明", () => {
+    // 期望值=withAlpha 引用形（T2.5「断言值与源同源」收口，G3）——涨跌
+    // 极性色不从字面抄录，与生产 positionBand 派生同源
     for (const [side, rgba] of [
-      ["long", "rgba(45,212,191,0.08)"],
-      ["short", "rgba(251,113,133,0.08)"],
+      ["long", withAlpha(POLARITY.up, 0.08)],
+      ["short", withAlpha(POLARITY.down, 0.08)],
     ] as const) {
       const { band } = mkBandHarness({ entry: 10 });
       band.setData({ entryTime: "entry" as never, side });

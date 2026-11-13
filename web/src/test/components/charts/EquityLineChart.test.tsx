@@ -106,6 +106,21 @@ describe("EquityLineChart 装配（fake registry）", () => {
     expect(series.setData).toHaveBeenCalledTimes(1);
     expect(series.setData.mock.calls[0][0]).toHaveLength(3);
   });
+
+  it("filters non-finite value points before setData（NaN/null 两形制剔除不崩）", () => {
+    // CARD-03（security S-1）：value 面有限性兜底——dev 构建 checkLineItem 对
+    // NaN throw（typeof 过首条、isSafeValue 恒 false 次条拦）、null/字符串首条
+    // 拦；production 断言剥除后静默脏数据。NaN 与 null 同为 Number.isFinite 拦截面
+    const poisoned = [
+      ...pts(3, 100300),
+      { timestamp: "2026-04-01T09:00:00Z", value: Number.NaN },
+      { timestamp: "2026-04-01T10:00:00Z", value: null as unknown as number },
+    ];
+    render(<EquityLineChart data={poisoned} />);
+    const series = registry.charts[0].series[0];
+    expect(series.setData).toHaveBeenCalledTimes(1);
+    expect(series.setData.mock.calls[0][0]).toHaveLength(3);
+  });
 });
 
 describe("EquityLineChart jsdom 降级形态", () => {

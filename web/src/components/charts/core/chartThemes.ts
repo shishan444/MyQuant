@@ -10,8 +10,9 @@ import type { ChartOptions } from "lightweight-charts";
  * 职能：token 十六进制色到带透明度 rgba 色的纯函数换算。
  * 价值：图表衍生色（区域填充/虚线族）以 tokens 单源为基底派生，
  * 不再各自维护 rgba 字面第二实现。
- * 服务对象：chartThemes 衍生色常量与图表装配代码（原消费方
- * equityOption.ts 已改引本处）。
+ * 服务对象：chartThemes 衍生色常量（CHART_COLORS.overbought/oversold）
+ * 与 ScoreTrendChart 装配（累计最佳线 withAlpha(POLARITY.up, 0.5)）；
+ * 原消费方 equityOption.ts 已随 echarts 退役删除。
  * 边界：只接受 #RRGGBB 形制（七字符），其他形制输出不可预期。
  */
 export function withAlpha(hex: string, alpha: number): string {
@@ -21,10 +22,8 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/**
- * Dark theme configuration for TradingView Lightweight Charts.
- * Uses semi-transparent dark background, muted text, and dotted grid lines.
- */
+/** K 线图表暗色主题配置（TradingView Lightweight Charts options 基底：
+ *  半透明暗背景/弱化文本/点状网格——服务 KlineChart 装配，唯一消费方） */
 export const DARK_CHART_THEME: DeepPartial<ChartOptions> = {
   layout: {
     background: {
@@ -70,9 +69,7 @@ export const DARK_CHART_THEME: DeepPartial<ChartOptions> = {
   },
 };
 
-/**
- * Color palette for chart series and overlays.
- */
+/** 图表系列与覆盖物的区分色常量族区段（各族语义与单源口径见各自注） */
 /** 数据系列区分色族（fe-asset-data-domain 6.1 自 constants.ts 迁入——
  *  周期档色/EMA 线色为系列区分语义，tokens 无对应族；集中白名单单源） */
 export const MTF_TIMEFRAME_COLORS: Record<string, string> = {
@@ -106,9 +103,9 @@ export const SCORE_TREND_AXIS_LABEL_COLOR = "#64748B";
 export const SCORE_TREND_GRID_LINE_COLOR = "rgba(100,116,139,0.15)";
 
 export const CHART_COLORS = {
-  /** Bullish candle body/wick color */
+  /** 阳线实体/影线颜色 */
   candleUp: POLARITY.up, /* T2：蜡烛涨色单源 tokens */
-  /** Bearish candle body/wick color */
+  /** 阴线实体/影线颜色 */
   candleDown: POLARITY.down, /* T2：蜡烛跌色单源 tokens */
   /** 快线 EMA 颜色 */
   emaFast: "#1E88E5",
