@@ -99,6 +99,7 @@ function seriesPanel() {
   return chart.series as Array<{
     options: { color?: string; lineWidth?: number; lineStyle?: number };
     setData: ReturnType<typeof vi.fn>;
+    applyOptions: ReturnType<typeof vi.fn>;
     createPriceLine: ReturnType<typeof vi.fn>;
     markers?: unknown;
   }>;
@@ -178,6 +179,53 @@ describe("ScoreTrendChart 装配（fake registry）", () => {
     expect(series[0].createPriceLine).toHaveBeenCalledWith(
       expect.objectContaining({ price: 60, color: "#94A3B8", lineWidth: 1, title: "目标 60" }),
     );
+  });
+
+  it("目标线并入 autoscale 值域（provider 包装默认实现，CARD-02）", () => {
+    // 修复行为锚（a8e8134f）：库 autoScale 值域只按 series 数据算、priceLine
+    // 不参与——线值越出数据域时整条被裁。承载 series（无 fitness → 目标线挂
+    // bestScore）经 applyOptions 挂 autoscaleInfoProvider，把线值并入 min/max
+    render(<ScoreTrendChart records={noFitnessRecords} targetScore={60} />);
+    const series = seriesPanel();
+    expect(series[0].applyOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ autoscaleInfoProvider: expect.any(Function) }),
+    );
+    const provider = series[0].applyOptions.mock.calls
+      .map((c) => c[0] as { autoscaleInfoProvider?: (orig: () => unknown) => unknown })
+      .find((o) => o?.autoscaleInfoProvider)?.autoscaleInfoProvider as (
+      orig: () => unknown,
+    ) => { priceRange?: { minValue: number; maxValue: number } };
+    // 越域场景（进化初期得分 50-55，目标 60）：maxValue 并入线值
+    const expanded = provider(() => ({ priceRange: { minValue: 50, maxValue: 55 } })) as {
+      priceRange: { minValue: number; maxValue: number };
+    };
+    expect(expanded.priceRange).toEqual({ minValue: 50, maxValue: 60 });
+    // original 无值域时原样透传 null，不造域
+    expect(provider(() => null)).toBeNull();
+  });
+
+  it("达标线并入 autoscale 值域（fitness 形态 provider 挂 bestFitness series，CARD-02）", () => {
+    // 线值=props targetFitness（0.5）：provider 闭包捕获的是 render 时的
+    // 实际 props 值，非默认值——构造线值低于数据域场景验 minValue 方向
+    render(<ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={0.5} />);
+    const series = seriesPanel();
+    // 承载 series 是 bestFitness（series[1]），非承载的 bestScore 不挂 provider
+    expect(series[1].applyOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ autoscaleInfoProvider: expect.any(Function) }),
+    );
+    expect(series[0].applyOptions).not.toHaveBeenCalledWith(
+      expect.objectContaining({ autoscaleInfoProvider: expect.any(Function) }),
+    );
+    const provider = series[1].applyOptions.mock.calls
+      .map((c) => c[0] as { autoscaleInfoProvider?: (orig: () => unknown) => unknown })
+      .find((o) => o?.autoscaleInfoProvider)?.autoscaleInfoProvider as (
+      orig: () => unknown,
+    ) => { priceRange?: { minValue: number; maxValue: number } };
+    // 线值低于数据域场景（fitness 数据域 0.6-1.1，达标线 0.5）：minValue 并入
+    const expanded = provider(() => ({ priceRange: { minValue: 0.6, maxValue: 1.1 } })) as {
+      priceRange: { minValue: number; maxValue: number };
+    };
+    expect(expanded.priceRange).toEqual({ minValue: 0.5, maxValue: 1.1 });
   });
 
   it("carries champion circles and boundary squares as ordered markers", () => {
@@ -263,6 +311,57 @@ describe("ScoreTrendChart 装配（fake registry）", () => {
     for (const s of series) {
       expect(s.setData.mock.calls[0][0]).toHaveLength(2);
     }
+  });
+
+  it("filters non-finite generation records（脏 time 整点剔除，四路同步，CARD-04）", () => {
+    // 修复行为锚（beff1d7a）：generation 脏值（NaN/null）dev 构建经库断言
+    // throw 崩组件树、production 静默进数据模型——与 value 面同滤；脏点剔除
+    // 后余点四路同步（gen1/gen4 存留）
+    const dirty = [
+      makeRecord({ generation: 1, best_score: 50, best_fitness: 0.6 }),
+      makeRecord({ generation: Number.NaN, best_score: 70, best_fitness: 0.9 }),
+      makeRecord({ generation: null as unknown as number, best_score: 52, best_fitness: 1.1 }),
+      makeRecord({ generation: 4, best_score: 55, best_fitness: 1.0 }),
+    ];
+    render(<ScoreTrendChart records={dirty} targetScore={60} targetFitness={1.0} />);
+    const series = seriesPanel();
+    expect(series).toHaveLength(4);
+    for (const s of series) {
+      expect(s.setData).toHaveBeenCalledTimes(1);
+      expect(s.setData.mock.calls[0][0]).toHaveLength(2);
+    }
+  });
+
+  it("champion 脏 generation 补滤：markers 不含脏 time 冠军点（CARD-04）", () => {
+    // markers 两数据源独立于 safeData 构造：transform 层按原始 records 判冠军
+    //（gen2 score 70 > 50 入 championChanges），组件层 championMarkers 滤掉
+    // 脏 generation——markers 只含合法冠军 gen1
+    const dirtyChampion = [
+      makeRecord({ generation: 1, best_score: 50 }),
+      makeRecord({ generation: Number.NaN, best_score: 70 }),
+    ];
+    render(<ScoreTrendChart records={dirtyChampion} targetScore={60} />);
+    expect(createSeriesMarkersMock).toHaveBeenCalledTimes(1);
+    const markers = createSeriesMarkersMock.mock.calls[0][1] as Array<{ time: number }>;
+    expect(markers.map((m) => Number(m.time))).toEqual([1]);
+  });
+
+  it("boundary 脏 generation 补滤：种群边界脏 time 不入 markers（CARD-04）", () => {
+    // gen3 pop 1→2 触发 isPopulationBoundary（transform 层按原始 records 判定），
+    // 组件层 boundaryMarkers 滤掉脏 generation——markers 只含两合法冠军点
+    const dirtyBoundary = [
+      makeRecord({ generation: 1, best_score: 50, top3_summary: "pop=1" }),
+      makeRecord({ generation: 2, best_score: 58, top3_summary: "pop=1" }),
+      makeRecord({ generation: Number.NaN, best_score: 52, top3_summary: "pop=2" }),
+    ];
+    render(<ScoreTrendChart records={dirtyBoundary} targetScore={60} />);
+    expect(createSeriesMarkersMock).toHaveBeenCalledTimes(1);
+    const markers = createSeriesMarkersMock.mock.calls[0][1] as Array<{
+      time: number;
+      shape: string;
+    }>;
+    expect(markers.map((m) => Number(m.time))).toEqual([1, 2]);
+    expect(markers.every((m) => m.shape === "circle")).toBe(true);
   });
 });
 

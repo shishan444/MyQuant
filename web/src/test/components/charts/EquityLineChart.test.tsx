@@ -78,6 +78,17 @@ describe("resolveEquityColor 双语义分立", () => {
     // baseline >= baseline 恒真 → up（导出函数可直调到达；组件层该形态走空态早退）
     expect(resolveEquityColor([], 100000)).toBe(POLARITY.up);
   });
+
+  it("着色不变量：结果只依赖末点与 baseline，中间路径不改变（属性面）", () => {
+    // 对任意有限中间序列保持的关系：同末点同 baseline 恒同色——升/降/
+    // 锯齿三条中间路径互异，末点一致则色一致（着色语义=终点盈亏判定）
+    const mk = (vals: number[]) =>
+      vals.map((v, i) => ({ timestamp: `2026-04-01T0${i}:00:00Z`, value: v }));
+    const paths = [mk([99000, 99500, 101000]), mk([103000, 102000, 101000]), mk([99000, 103000, 99000, 101000])];
+    const colors = new Set(paths.map((p) => resolveEquityColor(p, 100000)));
+    expect(colors.size).toBe(1);
+    expect([...colors][0]).toBe(POLARITY.up);
+  });
 });
 
 describe("EquityLineChart 装配（fake registry）", () => {
@@ -183,6 +194,23 @@ describe("EquityLineChart 装配（fake registry）", () => {
     const series = registry.charts[0].series[0];
     expect(series.setData).toHaveBeenCalledTimes(1);
     expect(series.setData.mock.calls[0][0]).toHaveLength(3);
+  });
+
+  it("末点脏 value 剔除后按有效末点着色（着色与绘制同源，CARD-05）", () => {
+    // 修复行为锚（d70f64ba）：原始末点 value 脏（被 validData 剔除）时，着色
+    // 不得取原始末点——NaN >= baseline 恒 false 会误显亏损色；着色取过滤后
+    // 序列末点（101200 > baseline → up），与实际绘制末点同源
+    const poisoned = [
+      { timestamp: "2026-04-01T00:00:00Z", value: 101000 },
+      { timestamp: "2026-04-01T01:00:00Z", value: 101200 },
+      { timestamp: "2026-04-01T02:00:00Z", value: Number.NaN },
+    ];
+    render(<EquityLineChart data={poisoned} baseline={100000} />);
+    const series = registry.charts[0].series[0];
+    expect(series.setData.mock.calls[0][0]).toHaveLength(2);
+    expect(series.applyOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ lineColor: POLARITY.up }),
+    );
   });
 });
 
