@@ -6,6 +6,7 @@
  */
 import { Tag } from "antd";
 import type { EvolvedStrategy } from "@/types/api";
+import { SL_MODE_LABELS } from "@/lib/constants";
 
 interface EvolvedStrategySourcesProps {
   strategies: EvolvedStrategy[];
@@ -24,8 +25,6 @@ function sourceBadge(s: EvolvedStrategy) {
   );
 }
 
-/** sl_mode 档位展示标签（Strategies.tsx SL_MODE_LABELS 同形制；取值单源=后端 dna.py SL_MODES 四档） */
-const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
 
 function DnaSummary({ dna }: { dna: EvolvedStrategy["dna"] }) {
   const risk = dna.risk_genes;

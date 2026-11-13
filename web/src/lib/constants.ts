@@ -337,3 +337,11 @@ export const STOP_REASON_LABELS: Record<string, string> = {
   error: "运行异常",
   invalid_dna: "无效种子DNA",
 };
+
+// ---------------------------------------------------------------------------
+// SL 档位标签
+// ---------------------------------------------------------------------------
+
+/** sl_mode 档位展示标签（取值单源=后端 core/strategy/dna.py:92 SL_MODES
+ *  四档 pct/atr/trail/series；缺键回退英文原文由消费位 `?? 原值` 承载） */
+export const SL_MODE_LABELS: Record<string, string> = { pct: "百分比档", atr: "ATR 档", trail: "移动档", series: "序列档" };
